@@ -1,5 +1,7 @@
-# The generated plan is byte-compared by plan --check, and the tooling parses
-# Markdown strictly: keep text sources LF on every platform.
+# The generated plan is byte-compared by plan --check, the tooling parses
+# Markdown strictly, and LICENSE must stay byte-identical to the FSF text:
+# keep text sources LF on every platform.
+LICENSE text eol=lf
 *.md text eol=lf
 *.py text eol=lf
 *.yml text eol=lf

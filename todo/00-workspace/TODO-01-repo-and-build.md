@@ -58,7 +58,7 @@ Recto is open source from the first public commit (D2), and the CLA must exist b
 3. Make the first commit of exactly the current tree plus these files, then push to the GitHub remote the operator created. Done when: `git log --oneline` shows the initial commit and the remote carries it; `python scripts/todo-graph.py validate` still passes on the committed tree.
 
 - [x] `LICENSE`, `CLA.md`, `CONTRIBUTING.md`, `NOTICE.md`, `README.md` at the root. Done when: a reader landing on the repository learns the license, how to contribute and where the plan lives without asking. Cheaper substitute: a README that says "coming soon" and defers the CLA.
-- [ ] First commit pushed, including `design/`, `resources/`, `docs/plans/`, `todo/`, `scripts/`, `.claude/skills/`. Done when: a clean clone elsewhere validates the TODO graph (`python scripts/todo-graph.py plan --check` exits 0).
+- [x] First commit pushed, including `design/`, `resources/`, `docs/plans/`, `todo/`, `scripts/`, `.claude/skills/`. Done when: a clean clone elsewhere validates the TODO graph (`python scripts/todo-graph.py plan --check` exits 0).
 - [ ] Commit: `repo: initial commit, design, plan and todo system`
 
 **Test checkpoint:** in a fresh clone under `R:\scratch`, `python -m unittest tests.scripts.test_todo_graph` passes and `python scripts/todo-graph.py validate` prints the section count, proving the committed tree is self-contained.

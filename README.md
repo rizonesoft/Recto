@@ -4,7 +4,7 @@
 
 *the right-hand page*
 
-Recto is an open-source PDF viewer and converter for Windows 11: a fast, quiet reader built on MuPDF with a native WinUI 3 interface, which also converts (PDF to images, text and Word; images and Office documents to PDF) and organizes pages (merge, split, reorder, rotate, encrypt). It is free software under the [GNU Affero General Public License, version 3 or later](LICENSE), and will be distributed through the Microsoft Store as MSIX.
+Recto is being built as an open-source PDF viewer and converter for Windows 11: a fast, quiet reader on MuPDF with a native WinUI 3 interface, which will also convert (PDF to images, text and Word; images and Office documents to PDF) and organize pages (merge, split, reorder, rotate, encrypt). It is free software under the [GNU Affero General Public License, version 3 or later](LICENSE), and will be distributed through the Microsoft Store as MSIX.
 
 **Status: pre-code.** This repository currently contains the approved design, the foundation plan and the machine-validated execution plan that will build version 1 milestone by milestone. There is no downloadable build yet.
 
