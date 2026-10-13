@@ -1,0 +1,89 @@
+<!--
+  Recto colour tokens for WinUI 3. Merge into App.xaml:
+    <ResourceDictionary.MergedDictionaries>
+      <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+      <ResourceDictionary Source="ms-appx:///Styles/RectoColors.xaml" />
+    </ResourceDictionary.MergedDictionaries>
+  The SystemAccentColor ramp replaces the Windows accent so stock controls (buttons, toggles,
+  selection, focus) use Recto vermilion. Values mirror design/tokens/colors.json.
+-->
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Color x:Key="SystemAccentColorLight3">#FFF48A6E</Color>
+    <Color x:Key="SystemAccentColorLight2">#FFF0603C</Color>
+    <Color x:Key="SystemAccentColorLight1">#FFE65A33</Color>
+    <Color x:Key="SystemAccentColor">#FFD94E28</Color>
+    <Color x:Key="SystemAccentColorDark1">#FFC8431F</Color>
+    <Color x:Key="SystemAccentColorDark2">#FFA93717</Color>
+    <Color x:Key="SystemAccentColorDark3">#FF85290F</Color>
+
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Light">
+            <SolidColorBrush x:Key="RectoWindowBrush" Color="#FFEEF1F6" />
+            <SolidColorBrush x:Key="RectoSurfaceBrush" Color="#FFFAFAFA" />
+            <SolidColorBrush x:Key="RectoRaisedBrush" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="RectoCanvasBrush" Color="#FFE6E7EA" />
+            <SolidColorBrush x:Key="RectoBorderBrush" Color="#FFE5E5E5" />
+            <SolidColorBrush x:Key="RectoBorderStrongBrush" Color="#FFD6D9DF" />
+            <SolidColorBrush x:Key="RectoTextBrush" Color="#FF1B1B1B" />
+            <SolidColorBrush x:Key="RectoTextSecondaryBrush" Color="#FF5C5C5C" />
+            <SolidColorBrush x:Key="RectoAccentBrush" Color="#FFC8431F" />
+            <SolidColorBrush x:Key="RectoAccentHoverBrush" Color="#FFA93717" />
+            <SolidColorBrush x:Key="RectoOnAccentBrush" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="RectoAccentTextBrush" Color="#FFA93717" />
+            <SolidColorBrush x:Key="RectoAccentTintBrush" Color="#FFFBE4DC" />
+            <SolidColorBrush x:Key="RectoSearchHitBrush" Color="#FFF6CDBF" />
+            <SolidColorBrush x:Key="RectoSearchHitCurrentBrush" Color="#FFC8431F" />
+            <SolidColorBrush x:Key="RectoTextSelectionBrush" Color="#2EC8431F" />
+            <SolidColorBrush x:Key="RectoSuccessBrush" Color="#FF0F7B0F" />
+            <SolidColorBrush x:Key="RectoWarningBrush" Color="#FF8A5300" />
+            <SolidColorBrush x:Key="RectoDangerBrush" Color="#FFB3261E" />
+        </ResourceDictionary>
+
+        <ResourceDictionary x:Key="Dark">
+            <SolidColorBrush x:Key="RectoWindowBrush" Color="#FF1B1A19" />
+            <SolidColorBrush x:Key="RectoSurfaceBrush" Color="#FF232120" />
+            <SolidColorBrush x:Key="RectoRaisedBrush" Color="#FF2A2826" />
+            <SolidColorBrush x:Key="RectoCanvasBrush" Color="#FF141312" />
+            <SolidColorBrush x:Key="RectoBorderBrush" Color="#FF3A3734" />
+            <SolidColorBrush x:Key="RectoBorderStrongBrush" Color="#FF4A4642" />
+            <SolidColorBrush x:Key="RectoTextBrush" Color="#FFEDEAE4" />
+            <SolidColorBrush x:Key="RectoTextSecondaryBrush" Color="#FFB8B2A8" />
+            <SolidColorBrush x:Key="RectoAccentBrush" Color="#FFF0603C" />
+            <SolidColorBrush x:Key="RectoAccentHoverBrush" Color="#FFF48A6E" />
+            <SolidColorBrush x:Key="RectoOnAccentBrush" Color="#FF1B1A19" />
+            <SolidColorBrush x:Key="RectoAccentTextBrush" Color="#FFF48A6E" />
+            <SolidColorBrush x:Key="RectoAccentTintBrush" Color="#FF3A2620" />
+            <SolidColorBrush x:Key="RectoSearchHitBrush" Color="#FFFFD8A8" />
+            <SolidColorBrush x:Key="RectoSearchHitCurrentBrush" Color="#FFF0603C" />
+            <SolidColorBrush x:Key="RectoTextSelectionBrush" Color="#38F0603C" />
+            <SolidColorBrush x:Key="RectoSuccessBrush" Color="#FF7DD3A0" />
+            <SolidColorBrush x:Key="RectoWarningBrush" Color="#FFE2C27A" />
+            <SolidColorBrush x:Key="RectoDangerBrush" Color="#FFFF9A85" />
+        </ResourceDictionary>
+
+        <ResourceDictionary x:Key="HighContrast">
+            <SolidColorBrush x:Key="RectoWindowBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="RectoSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="RectoRaisedBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="RectoCanvasBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="RectoBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="RectoBorderStrongBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="RectoTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="RectoTextSecondaryBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="RectoAccentBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="RectoAccentHoverBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="RectoOnAccentBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+            <SolidColorBrush x:Key="RectoAccentTextBrush" Color="{ThemeResource SystemColorHotlightColor}" />
+            <SolidColorBrush x:Key="RectoAccentTintBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="RectoSearchHitBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="RectoSearchHitCurrentBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="RectoTextSelectionBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="RectoSuccessBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="RectoWarningBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="RectoDangerBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+</ResourceDictionary>

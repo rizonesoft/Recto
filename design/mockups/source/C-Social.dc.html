@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recto C: GitHub social preview</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.sug{display:flex;align-items:center;gap:14px;height:52px;padding:0 18px;border-radius:12px;font-size:18px;color:#17152B}
+.sug i{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center}
+</style>
+</helmet>
+<div style="width:1280px;height:640px;position:relative;overflow:hidden;background:#F6F5FB;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;color:#17152B">
+  <div style="position:absolute;left:80px;top:80px;display:flex;align-items:center;gap:20px">
+    <svg viewBox="0 0 64 64" width="84" height="84" role="img" aria-label="Recto icon"><rect x="2" y="2" width="60" height="60" rx="16" fill="#5B4FE0"></rect><path fill-rule="evenodd" fill="#FFFFFF" d="M18 14 H35 A11 11 0 0 1 35 36 H27 V50 H18 Z M27 22 V28 H34 A3 3 0 0 0 34 22 Z"></path><path d="M31 36 H41 L49 50 H39 Z" fill="#C9C4FF"></path></svg>
+    <div style="font-family:'Instrument Sans',sans-serif;font-size:84px;font-weight:600;letter-spacing:-2.5px;line-height:84px">Recto</div>
+  </div>
+  <div style="position:absolute;left:80px;top:208px;width:500px;display:flex;flex-direction:column;gap:18px">
+    <div style="font-family:'Instrument Sans',sans-serif;font-size:40px;font-weight:600;line-height:48px;letter-spacing:-0.8px">Read, convert and organize PDFs on Windows.</div>
+    <div style="font-size:20px;line-height:28px;color:#3A3752">Free and open source. Built in C++ on WinUI 3 and MuPDF.</div>
+    <div style="font-size:17px;color:#4A3FD0;margin-top:20px">github.com/[OWNER]/recto</div>
+  </div>
+  <div aria-hidden="true" style="position:absolute;left:640px;top:150px;width:580px;background:#FFFFFF;border-radius:22px;box-shadow:0 2px 4px rgba(23,21,43,.06),0 30px 70px rgba(23,21,43,.16);overflow:hidden">
+    <div style="display:flex;align-items:center;gap:16px;height:76px;padding:0 24px;border-bottom:1px solid #EEEDF6"><svg class="ic" viewBox="0 0 24 24" style="width:26px;height:26px;color:#5B4FE0"><path d="M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM20 20l-4.2-4.2"></path></svg><span style="font-size:24px">pdf to w<span style="display:inline-block;width:2px;height:26px;background:#5B4FE0;vertical-align:-5px;margin-left:2px"></span></span></div>
+    <div style="padding:10px">
+      <div class="sug" style="background:#EFEDFF"><i style="background:#5B4FE0;color:#FFFFFF"><svg class="ic" viewBox="0 0 24 24" style="width:18px;height:18px"><path d="M6 3h8l5 5v13H6zM14 3v5h5M8.5 12l1.2 5 2.3-4 2.3 4 1.2-5"></path></svg></i><span><b>PDF to W</b>ord</span></div>
+      <div class="sug"><i style="background:#EFEDFF;color:#4A3FD0"><svg class="ic" viewBox="0 0 24 24" style="width:18px;height:18px"><path d="M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M15 9h.01"></path></svg></i><span>PDF to images</span></div>
+      <div class="sug"><i style="background:#EFEDFF;color:#4A3FD0"><svg class="ic" viewBox="0 0 24 24" style="width:18px;height:18px"><path d="M7 4v4l5 5 5-5V4M12 13v7"></path></svg></i><span>Combine PDFs</span></div>
+      <div class="sug"><i style="background:#EFEDFF;color:#4A3FD0"><svg class="ic" viewBox="0 0 24 24" style="width:18px;height:18px"><path d="M4 8h16v11H4zM9 8V5h6v3M4 13h16"></path></svg></i><span>Office to PDF</span></div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":640}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

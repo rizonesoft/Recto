@@ -1,0 +1,42 @@
+name: plan-gates
+
+# The TODO graph is the execution plan: a malformed graph or a stale
+# generated plan fails CI like any other defect. The app build workflow
+# arrives with the M0 scaffold (D00 T01 §4) and does not replace this one.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'todo/**'
+      - 'scripts/**'
+      - 'tests/scripts/**'
+      - '.claude/skills/**'
+      - '.gitattributes'
+      - '.github/workflows/plan.yml'
+  pull_request:
+    paths:
+      - 'todo/**'
+      - 'scripts/**'
+      - 'tests/scripts/**'
+      - '.claude/skills/**'
+      - '.gitattributes'
+      - '.github/workflows/plan.yml'
+
+jobs:
+  plan-gates:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Stamp ancestry checks need real history, not a shallow checkout.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test the TODO graph tooling
+        run: python -m unittest tests.scripts.test_todo_graph
+      - name: Validate the TODO tree
+        run: python scripts/todo-graph.py validate
+      - name: Check the generated plan is current
+        run: python scripts/todo-graph.py plan --check

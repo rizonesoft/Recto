@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recto D: Settings, layout presets</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#C8431F}a:hover{color:#A93717}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.tb{display:flex;align-items:center;gap:8px;height:30px;padding:0 6px 0 12px;border-radius:8px;font-size:12px;color:#5C5C5C;text-decoration:none;white-space:nowrap}
+.tb.on{background:#FFFFFF;color:#1B1B1B;box-shadow:0 1px 3px rgba(0,0,0,.10)}
+.wc{width:46px;height:44px;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:#1B1B1B}
+.ib{width:32px;height:32px;border:0;border-radius:8px;background:transparent;color:#1B1B1B;display:flex;align-items:center;justify-content:center;flex:none;text-decoration:none}
+.ib.on{background:#FBE4DC;color:#C8431F}
+.tx{width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:inherit;display:flex;align-items:center;justify-content:center}
+.cap{font-size:12px;color:#5C5C5C}
+.gh{margin:22px 0 8px 6px;font-size:12px;font-weight:600;color:#5C5C5C;letter-spacing:.6px}
+.grp{flex:none;background:#FFFFFF;border-radius:16px;border:1px solid #E5E5E5;overflow:hidden}
+.r{display:flex;align-items:center;gap:16px;min-height:58px;padding:10px 20px;box-sizing:border-box;border-top:1px solid #F0F0F0}
+.r .t{display:flex;flex-direction:column;gap:2px;flex-grow:1}
+.r .t b{font-weight:600;font-size:14px}
+.seg{display:flex;padding:3px;background:#F0F0F0;border-radius:10px;gap:2px}
+.seg button{height:28px;padding:0 12px;border:0;border-radius:8px;background:transparent;font:inherit;font-size:12px;color:#5C5C5C}
+.seg button.on{background:#FFFFFF;color:#1B1B1B;font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.pre{display:flex;flex-direction:column;gap:10px;border:0;background:transparent;padding:0;font:inherit;text-align:left;color:#1B1B1B}
+.wf{height:150px;border-radius:12px;background:#EEF1F6;position:relative;overflow:hidden;display:block}
+.wf span{position:absolute;display:block}
+</style>
+</head>
+<body>
+<div style="width:1440px;height:900px;display:flex;flex-direction:column;background:#EEF1F6;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;font-size:14px;color:#1B1B1B;overflow:hidden">
+  <div style="height:44px;display:flex;align-items:center;gap:4px;padding-left:14px;flex:none">
+    <svg viewBox="0 0 64 64" width="20" height="20" aria-hidden="true"><rect x="2" y="2" width="60" height="60" rx="14" fill="#2A2826"></rect><rect x="13" y="10" width="38" height="45" rx="3" fill="#F5F4F0"></rect><path d="M34 5 H47 V33 L40.5 27 L34 33 Z" fill="#F0603C"></path></svg>
+    <span style="font-family:'Newsreader',Georgia,serif;font-size:17px;font-weight:500;margin:0 14px 0 8px">Recto</span>
+    <a class="tb" href="D-Home.html" aria-label="Home"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"></path></svg></a>
+    <div class="tb on"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"></path></svg>Settings<button class="tx" aria-label="Close tab"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>
+    <div style="flex-grow:1"></div>
+    <a class="ib on" href="D-Layout.html" aria-label="Settings"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"></path></svg></a>
+    <button class="wc" aria-label="Minimize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M5 12h14"></path></svg></button>
+    <button class="wc" aria-label="Maximize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M5 5h14v14H5z"></path></svg></button>
+    <button class="wc" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+  </div>
+  <main style="flex-grow:1;min-height:0;overflow:hidden;display:flex;justify-content:center;padding-top:24px">
+    <div style="width:900px;display:flex;flex-direction:column">
+      <h1 style="margin:0;font-family:'Segoe UI Variable Display','Segoe UI',sans-serif;font-size:32px;font-weight:600">Settings</h1>
+      <div class="gh">LAYOUT</div>
+      <div class="grp" style="padding:20px">
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px" role="radiogroup" aria-label="Layout preset">
+          <button class="pre" role="radio" aria-checked="true">
+            <span class="wf" style="box-shadow:0 0 0 2px #FFFFFF,0 0 0 4px #C8431F"><span style="left:0;right:0;top:0;height:14px;background:#E2E6EE"></span><span style="left:58px;right:58px;top:24px;bottom:0;background:#FFFFFF"></span><span style="left:8px;top:24px;width:34px;bottom:40px;border-radius:6px;background:#FFFFFF;box-shadow:0 2px 6px rgba(0,0,0,.15)"></span><span style="left:50%;bottom:10px;width:120px;margin-left:-60px;height:18px;border-radius:7px;background:#FFFFFF;box-shadow:0 2px 6px rgba(0,0,0,.18)"></span><span style="left:50%;bottom:16px;width:18px;margin-left:34px;height:6px;border-radius:3px;background:#C8431F"></span></span>
+            <span style="display:flex;align-items:center;gap:8px;font-weight:600">Focus<span style="font-size:11px;font-weight:600;padding:1px 8px;border-radius:9px;background:#FBE4DC;color:#A93717">Default</span></span>
+            <span class="cap" style="line-height:17px">Floating toolbar under the page. Panels float over the page and hide when you don't need them.</span>
+          </button>
+          <button class="pre" role="radio" aria-checked="false">
+            <span class="wf" style="box-shadow:0 0 0 1px #E0E0E0"><span style="left:0;right:0;top:0;height:14px;background:#E2E6EE"></span><span style="left:0;top:14px;width:16px;bottom:0;background:#E2E6EE"></span><span style="left:16px;right:0;top:14px;height:14px;background:#FAFAFA;border-bottom:1px solid #E0E0E0"></span><span style="left:16px;top:29px;width:36px;bottom:0;background:#FAFAFA;border-right:1px solid #E0E0E0"></span><span style="left:76px;right:24px;top:36px;bottom:0;background:#FFFFFF"></span><span style="right:30px;top:17px;width:22px;height:8px;border-radius:2px;background:#C8431F"></span></span>
+            <span style="font-weight:600">Classic</span>
+            <span class="cap" style="line-height:17px">Command bar along the top, navigation rail and a docked pane on the left.</span>
+          </button>
+          <button class="pre" role="radio" aria-checked="false">
+            <span class="wf" style="box-shadow:0 0 0 1px #E0E0E0;background:#232120"><span style="left:0;right:0;top:0;height:14px;background:#1B1A19"></span><span style="left:0;right:0;top:14px;height:12px;background:#2A2826"></span><span style="right:0;top:26px;width:48px;bottom:0;background:#2A2826"></span><span style="left:0;right:48px;bottom:0;height:28px;background:#1B1A19"></span><span style="left:70px;right:110px;top:34px;bottom:34px;background:#F5F4F0"></span><span style="left:20px;top:5px;width:18px;height:4px;border-radius:2px;background:#F0603C"></span></span>
+            <span style="font-weight:600">Reading room</span>
+            <span class="cap" style="line-height:17px">Mode switcher in the title bar, page filmstrip along the bottom, inspector on the right.</span>
+          </button>
+        </div>
+      </div>
+      <div class="gh">FINE-TUNE THE LAYOUT <span style="font-weight:400;letter-spacing:0">· changing any of these switches the preset to Custom</span></div>
+      <div class="grp">
+        <div class="r" style="border-top:0"><span class="t"><b>Page toolbar</b><span class="cap">Docked along the top, or floating under the page</span></span><div class="seg"><button>Top</button><button class="on">Floating, bottom</button></div></div>
+        <div class="r"><span class="t"><b>Side panels</b><span class="cap">Thumbnails, outline and search</span></span><div class="seg"><button>Docked</button><button class="on">Floating</button></div></div>
+        <div class="r"><span class="t"><b>Page thumbnails</b></span><div class="seg"><button class="on">Side panel</button><button>Filmstrip at the bottom</button></div></div>
+        <div class="r"><span class="t"><b>Search and outline</b></span><div class="seg"><button class="on">Left</button><button>Right</button></div></div>
+        <div class="r"><span class="t"><b>Navigation</b><span class="cap">How you move between Home, Convert and Organize</span></span><div class="seg"><button class="on">Tabs and command box</button><button>Left rail</button><button>Title bar modes</button></div></div>
+      </div>
+      <div class="gh">THEME</div>
+      <div class="grp">
+        <div class="r" style="border-top:0"><span class="t"><b>App theme</b></span><div class="seg"><button>Light</button><button>Dark</button><button class="on">Follow Windows</button></div></div>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

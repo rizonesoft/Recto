@@ -1,0 +1,7 @@
+# The generated plan is byte-compared by plan --check, and the tooling parses
+# Markdown strictly: keep text sources LF on every platform.
+*.md text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf

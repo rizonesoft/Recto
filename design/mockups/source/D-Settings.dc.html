@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recto D: Settings</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#C8431F}a:hover{color:#A93717}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.disp{font-family:'Segoe UI Variable Display','Segoe UI',sans-serif}
+.tb{display:flex;align-items:center;gap:8px;height:30px;padding:0 6px 0 12px;border-radius:8px;font-size:12px;color:#5C5C5C;text-decoration:none;max-width:240px;white-space:nowrap}
+.tb.on{background:#FFFFFF;color:#1B1B1B;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.wc{width:46px;height:44px;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:#1B1B1B}
+.ib{width:32px;height:32px;border:0;border-radius:8px;background:transparent;color:#1B1B1B;display:flex;align-items:center;justify-content:center;flex:none;text-decoration:none}
+.ib.on{background:#FBE4DC;color:#C8431F}
+.tx{width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:inherit;display:flex;align-items:center;justify-content:center}
+.cap{font-size:12px;color:#5C5C5C}
+.grp{flex:none;background:#FFFFFF;border-radius:16px;box-shadow:0 1px 2px rgba(0,0,0,.05);overflow:hidden}
+.r{display:flex;align-items:center;gap:16px;min-height:54px;padding:8px 20px;box-sizing:border-box;border-top:1px solid #F0F0F0}
+.r:first-child{border-top:0}
+.r .t{display:flex;flex-direction:column;gap:2px;flex-grow:1;min-width:0}
+.r .t b{font-weight:600;font-size:14px}
+.gh{margin:16px 0 8px 6px;font-size:12px;font-weight:600;color:#5C5C5C;letter-spacing:.6px}
+.seg{display:flex;padding:3px;background:#F3F3F3;border-radius:10px;gap:2px}
+.seg button{height:28px;padding:0 12px;border:0;border-radius:8px;background:transparent;font:inherit;font-size:12px;color:#5C5C5C}
+.seg button.on{background:#FFFFFF;color:#1B1B1B;font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.dd{display:flex;align-items:center;gap:8px;height:32px;padding:0 12px;border-radius:10px;border:1px solid #E0E0E0;background:#FFFFFF;font:inherit;font-size:13px;color:#1B1B1B}
+.sw{width:42px;height:24px;border-radius:12px;border:0;position:relative;padding:0}
+.sw i{position:absolute;top:3px;width:18px;height:18px;border-radius:9px;background:#FFFFFF;box-shadow:0 1px 2px rgba(0,0,0,.2);display:block}
+</style>
+</helmet>
+<div style="width:1440px;height:900px;display:flex;flex-direction:column;background:#EEF1F6;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;font-size:14px;color:#1B1B1B;overflow:hidden">
+  <div style="height:44px;display:flex;align-items:center;gap:4px;padding-left:14px;flex:none">
+    <svg viewBox="0 0 64 64" width="20" height="20" aria-hidden="true"><rect x="2" y="2" width="60" height="60" rx="14" fill="#2A2826"></rect><rect x="13" y="10" width="38" height="45" rx="3" fill="#F5F4F0"></rect><path d="M34 5 H47 V33 L40.5 27 L34 33 Z" fill="#F0603C"></path></svg><span style="font-family:'Newsreader',Georgia,serif;font-size:17px;font-weight:500;margin:0 14px 0 8px">Recto</span>
+    <a class="tb" href="D-Home.dc.html"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="{{i.home}}"></path></svg></a>
+    <div class="tb on"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="{{i.gear}}"></path></svg>Settings<button class="tx" aria-label="Close tab"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button></div>
+    <div style="flex-grow:1"></div>
+    <a class="ib on" href="D-Settings.dc.html" aria-label="Settings"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.gear}}"></path></svg></a>
+    <button class="wc" aria-label="Minimize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.min}}"></path></svg></button>
+    <button class="wc" aria-label="Maximize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.max}}"></path></svg></button>
+    <button class="wc" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button>
+  </div>
+  <main style="flex-grow:1;min-height:0;overflow:hidden;display:flex;justify-content:center;padding-top:28px">
+    <div style="width:760px;display:flex;flex-direction:column">
+      <div style="display:flex;align-items:center;gap:16px"><h1 class="disp" style="margin:0;font-size:34px;font-weight:600;letter-spacing:-0.6px;flex-grow:1">Settings</h1><label style="display:flex;align-items:center;gap:8px;width:260px;height:36px;padding:0 12px;box-sizing:border-box;border-radius:10px;background:#FFFFFF;border:1px solid #E0E0E0;color:#5C5C5C"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.search}}"></path></svg><input aria-label="Find a setting" placeholder="Find a setting" style="border:0;outline:0;font:inherit;font-size:13px;flex-grow:1;background:transparent"></label></div>
+      <div class="gh">APPEARANCE</div>
+      <div class="grp">
+        <div class="r"><span class="t"><b>Theme</b></span><div class="seg"><button>Light</button><button>Dark</button><button class="on">Follow Windows</button></div></div>
+        <div class="r"><span class="t"><b>Pages in dark theme</b><span class="cap">How page colours look when the app is dark</span></span><div class="seg"><button>Original</button><button class="on">Dimmed</button><button>Inverted</button></div></div>
+        <div class="r"><span class="t"><b>Toolbar position</b><span class="cap">Where the floating page toolbar sits</span></span><div class="seg"><button>Top</button><button class="on">Bottom</button></div></div>
+      </div>
+      <div class="gh">READING</div>
+      <div class="grp">
+        <div class="r"><span class="t"><b>Default zoom</b></span><button class="dd">Fit width<svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.cd}}"></path></svg></button></div>
+        <div class="r"><span class="t"><b>Page layout</b></span><button class="dd">Continuous<svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.cd}}"></path></svg></button></div>
+        <div class="r"><span class="t"><b>Ask before opening links</b><span class="cap">Web and file links inside a PDF</span></span><button class="sw" role="switch" aria-checked="true" aria-label="Ask before opening links" style="background:#C8431F"><i style="right:3px"></i></button></div>
+        <div class="r"><span class="t"><b>Remember where I stopped reading</b></span><button class="sw" role="switch" aria-checked="true" aria-label="Remember reading position" style="background:#C8431F"><i style="right:3px"></i></button></div>
+      </div>
+      <div class="gh">CONVERTING</div>
+      <div class="grp">
+        <div class="r"><span class="t"><b>Office to PDF converter</b><span class="cap">Found Microsoft Office. LibreOffice isn't installed.</span></span><button class="dd">Automatic<svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.cd}}"></path></svg></button></div>
+        <div class="r"><span class="t"><b>Save converted files</b></span><button class="dd">Next to the original<svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.cd}}"></path></svg></button></div>
+      </div>
+      <div class="gh">PERFORMANCE AND PRIVACY</div>
+      <div class="grp">
+        <div class="r"><span class="t"><b>Page cache</b><span class="cap">More memory makes big files smoother</span></span><span style="display:flex;align-items:center;gap:12px;font-size:13px"><span style="width:160px;height:4px;border-radius:2px;background:#E0E0E0;position:relative;display:block"><span style="position:absolute;left:0;top:0;width:54px;height:4px;border-radius:2px;background:#C8431F;display:block"></span><span style="position:absolute;left:46px;top:-7px;width:18px;height:18px;border-radius:9px;background:#FFFFFF;box-shadow:0 1px 3px rgba(0,0,0,.3);display:block"></span></span>512 MB</span></div>
+        <div class="r"><span class="t"><b>Send crash reports</b><span class="cap">Crash details only, never your documents</span></span><button class="sw" role="switch" aria-checked="false" aria-label="Send crash reports" style="background:#D5D5D5"><i style="left:3px"></i></button></div>
+      </div>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+renderVals() {
+const i={search:"M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM20 20l-4.2-4.2",gear:"M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1",cd:"M6 9l6 6 6-6",x:"M6 6l12 12M18 6L6 18",min:"M5 12h14",max:"M5 5h14v14H5z",home:"M4 11l8-7 8 7v9h-5v-6H9v6H4z"};
+return {i};
+}
+}
+</script>
+</body>
+</html>

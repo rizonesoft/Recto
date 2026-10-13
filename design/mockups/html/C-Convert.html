@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recto C: Convert</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#4A3FD0}a:hover{color:#3529A8}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.disp{font-family:'Instrument Sans','Segoe UI Variable Display','Segoe UI',sans-serif}
+.tb{display:flex;align-items:center;gap:8px;height:30px;padding:0 6px 0 12px;border-radius:8px;font-size:12px;color:#55526B;text-decoration:none;max-width:240px;white-space:nowrap}
+.tb.on{background:#FFFFFF;color:#17152B;box-shadow:0 1px 3px rgba(23,21,43,.12)}
+.wc{width:46px;height:44px;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:#17152B}
+.ib{width:32px;height:32px;border:0;border-radius:8px;background:transparent;color:#17152B;display:flex;align-items:center;justify-content:center;flex:none;text-decoration:none}
+.tx{width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:inherit;display:flex;align-items:center;justify-content:center}
+.cap{font-size:12px;color:#55526B}
+.st{display:flex;align-items:center;gap:10px;font-size:14px;color:#55526B}
+.st i{width:28px;height:28px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-style:normal;font-size:13px;font-weight:600}
+.line{flex-grow:1;height:2px;border-radius:1px;background:#E4E2EF}
+.oc{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:20px;border-radius:16px;background:#FFFFFF;border:1.5px solid #E4E2EF;font:inherit;text-align:left;color:#17152B;position:relative;height:168px;box-sizing:border-box}
+.oc i{width:44px;height:44px;border-radius:12px;background:#EFEDFF;color:#4A3FD0;display:flex;align-items:center;justify-content:center}
+.oc i .ic{width:22px;height:22px}
+.chip{display:flex;align-items:center;gap:8px;height:32px;padding:0 6px 0 12px;border-radius:16px;background:#FFFFFF;border:1px solid #E4E2EF;font-size:13px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:40px;padding:0 20px;border-radius:10px;border:1px solid #E4E2EF;background:#FFFFFF;font:inherit;font-size:14px;color:#17152B;white-space:nowrap}
+.btn.p{background:#5B4FE0;border-color:#5B4FE0;color:#FFFFFF;font-weight:600}
+</style>
+</head>
+<body>
+<div style="width:1440px;height:900px;display:flex;flex-direction:column;background:#F6F5FB;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;font-size:14px;color:#17152B;overflow:hidden;position:relative">
+  <div style="height:44px;display:flex;align-items:center;gap:4px;padding-left:14px;flex:none">
+    <svg viewBox="0 0 64 64" width="20" height="20" aria-hidden="true" style="margin-right:10px"><rect x="2" y="2" width="60" height="60" rx="16" fill="#5B4FE0"></rect><path fill-rule="evenodd" fill="#FFFFFF" d="M18 14 H35 A11 11 0 0 1 35 36 H27 V50 H18 Z M27 22 V28 H34 A3 3 0 0 0 34 22 Z"></path><path d="M31 36 H41 L49 50 H39 Z" fill="#C9C4FF"></path></svg>
+    <a class="tb" href="C-Home.html"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"></path></svg></a>
+    <div class="tb on"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="M4 8h14l-4-4M20 16H6l4 4"></path></svg>Convert<button class="tx" aria-label="Close tab"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>
+    <div style="flex-grow:1"></div>
+    <a class="ib" href="C-Settings.html" aria-label="Settings"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"></path></svg></a>
+    <button class="wc" aria-label="Minimize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M5 12h14"></path></svg></button>
+    <button class="wc" aria-label="Maximize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M5 5h14v14H5z"></path></svg></button>
+    <button class="wc" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+  </div>
+  <main style="flex-grow:1;display:flex;flex-direction:column;align-items:center;padding-top:28px">
+    <div style="width:980px;display:flex;flex-direction:column;gap:26px">
+      <div style="display:flex;align-items:center;gap:14px" aria-label="Steps">
+        <span class="st"><i style="background:#5B4FE0;color:#FFFFFF"><svg class="ic" viewBox="0 0 24 24" style="width:14px;stroke-width:2.4" aria-hidden="true"><path d="M5 12l5 5 9-10"></path></svg></i>Files</span>
+        <span class="line" style="background:#5B4FE0"></span>
+        <span class="st" style="color:#17152B;font-weight:600"><i style="background:#FFFFFF;color:#4A3FD0;box-shadow:0 0 0 2px #5B4FE0">2</i>What to make</span>
+        <span class="line"></span>
+        <span class="st"><i style="background:#ECEBF3;color:#55526B">3</i>Options</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <h1 class="disp" style="margin:0;font-size:34px;font-weight:600;letter-spacing:-0.6px">What do you want to make?</h1>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <span class="chip"><svg class="ic" viewBox="0 0 24 24" style="color:#4A3FD0" aria-hidden="true"><path d="M6 3h8l5 5v13H6zM14 3v5h5"></path></svg>Thesis draft v3.pdf<button class="tx" aria-label="Remove"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></span>
+          <span class="chip"><svg class="ic" viewBox="0 0 24 24" style="color:#4A3FD0" aria-hidden="true"><path d="M6 3h8l5 5v13H6zM14 3v5h5"></path></svg>Invoice INV-0417.pdf<button class="tx" aria-label="Remove"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></span>
+          <span class="chip"><svg class="ic" viewBox="0 0 24 24" style="color:#4A3FD0" aria-hidden="true"><path d="M6 3h8l5 5v13H6zM14 3v5h5"></path></svg>Lease agreement 2026.pdf<button class="tx" aria-label="Remove"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></span>
+          <button class="chip" style="font:inherit;font-size:13px;color:#4A3FD0;padding:0 12px"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Add</button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px" role="radiogroup" aria-label="Output">
+        
+          <button class="oc" role="radio" style="border-color:#5B4FE0;box-shadow:0 0 0 3px #E3DFFF">
+            <i style="background:#5B4FE0;color:#FFFFFF"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l5 5v13H6zM14 3v5h5M8.5 12l1.2 5 2.3-4 2.3 4 1.2-5"></path></svg></i>
+            <span style="font-weight:600;font-size:15px">Word document</span>
+            <span class="cap" style="font-size:12px;line-height:17px">Editable DOCX, one per PDF</span>
+            <span style="position:absolute;right:14px;top:14px;width:22px;height:22px;border-radius:11px;background:#5B4FE0;color:#FFFFFF;display:flex;align-items:center;justify-content:center"><svg class="ic" viewBox="0 0 24 24" style="width:13px;stroke-width:2.6" aria-hidden="true"><path d="M5 12l5 5 9-10"></path></svg></span>
+          </button>
+        
+          <button class="oc" role="radio" style="">
+            <i style=""><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M15 9h.01"></path></svg></i>
+            <span style="font-weight:600;font-size:15px">Images</span>
+            <span class="cap" style="font-size:12px;line-height:17px">PNG, JPEG, TIFF or BMP per page</span>
+            
+          </button>
+        
+          <button class="oc" role="radio" style="">
+            <i style=""><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14M12 6v13M9 19h6"></path></svg></i>
+            <span style="font-weight:600;font-size:15px">Plain text</span>
+            <span class="cap" style="font-size:12px;line-height:17px">The text of every page</span>
+            
+          </button>
+        
+          <button class="oc" role="radio" style="">
+            <i style=""><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v4l5 5 5-5V4M12 13v7"></path></svg></i>
+            <span style="font-weight:600;font-size:15px">One combined PDF</span>
+            <span class="cap" style="font-size:12px;line-height:17px">Join the 3 files in order</span>
+            
+          </button>
+        
+          <button class="oc" role="radio" style="">
+            <i style=""><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v7l-5 5v4M12 11l5 5v4"></path></svg></i>
+            <span style="font-weight:600;font-size:15px">Split files</span>
+            <span class="cap" style="font-size:12px;line-height:17px">By ranges or every N pages</span>
+            
+          </button>
+        
+          <button class="oc" role="radio" style="">
+            <i style=""><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 11h12v9H6zM8 11V8a4 4 0 0 1 8 0v3"></path></svg></i>
+            <span style="font-weight:600;font-size:15px">Protected PDF</span>
+            <span class="cap" style="font-size:12px;line-height:17px">Add a password, AES-256</span>
+            
+          </button>
+        
+          <button class="oc" role="radio" style="">
+            <i style=""><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 11h12v9H6zM8 11V8a4 4 0 0 1 7.5-2"></path></svg></i>
+            <span style="font-weight:600;font-size:15px">Unlocked PDF</span>
+            <span class="cap" style="font-size:12px;line-height:17px">Remove a password you know</span>
+            
+          </button>
+        
+          <button class="oc" role="radio" style="opacity:.55">
+            <i style=""><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l5 5v13H6zM14 3v5h5"></path></svg></i>
+            <span style="font-weight:600;font-size:15px">PDF from Office</span>
+            <span class="cap" style="font-size:12px;line-height:17px">Add Word, Excel or PowerPoint files to use this</span>
+            
+          </button>
+        
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;padding-top:6px">
+        <span class="cap" style="font-size:13px;flex-grow:1">Word works best on text documents. Tables and columns may need tidying.</span>
+        <button class="btn">Back</button>
+        <button class="btn p">Next: options</button>
+      </div>
+    </div>
+  </main>
+  <aside aria-label="Queue" style="position:absolute;right:20px;bottom:20px;width:300px;background:#FFFFFF;border-radius:16px;box-shadow:0 2px 4px rgba(23,21,43,.06),0 16px 40px rgba(23,21,43,.16);padding:14px 16px;display:flex;flex-direction:column;gap:10px">
+    <div style="display:flex;align-items:center;gap:10px"><svg viewBox="0 0 36 36" width="28" height="28" aria-hidden="true"><circle cx="18" cy="18" r="14" fill="none" stroke="#ECEBF3" stroke-width="4"></circle><circle cx="18" cy="18" r="14" fill="none" stroke="#5B4FE0" stroke-width="4" stroke-dasharray="88" stroke-dashoffset="34" transform="rotate(-90 18 18)" stroke-linecap="round"></circle></svg><span style="font-weight:600;font-size:13px;flex-grow:1">2 conversions running</span><button class="tx" aria-label="Expand queue" style="width:28px;height:28px"><svg class="ic" viewBox="0 0 24 24" style="transform:rotate(-90deg)" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></button></div>
+    <div style="display:flex;flex-direction:column;gap:4px;font-size:12px"><div style="display:flex;justify-content:space-between"><span>MuPDF API reference.pdf to PNG</span><span class="cap">13%</span></div><div style="display:flex;justify-content:space-between"><span>Quarterly review.pptx to PDF</span><span class="cap">Waiting</span></div></div>
+  </aside>
+</div>
+</body>
+</html>

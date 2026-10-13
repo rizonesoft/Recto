@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recto C: App icon</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@600;700&amp;display=swap">
+<style>
+body{margin:0}
+.lbl{font-size:12px;font-weight:600;color:#55526B;letter-spacing:.6px}
+.sz{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:10px;font-size:11px}
+</style>
+</helmet>
+<div style="width:1280px;height:900px;box-sizing:border-box;padding:48px;background:#F6F5FB;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;color:#17152B;display:grid;grid-template-columns:440px minmax(0,1fr);gap:48px">
+  <div style="display:flex;flex-direction:column;gap:14px">
+    <span class="lbl">MASTER, CONSTRUCTION</span>
+    <div style="width:440px;height:440px;background:#FFFFFF;border-radius:16px;position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden;box-shadow:0 1px 2px rgba(23,21,43,.05)">
+      <svg viewBox="0 0 64 64" width="400" height="400" role="img" aria-label="Recto icon, version C, with construction lines"><rect x="2" y="2" width="60" height="60" rx="16" fill="#5B4FE0"></rect><path fill-rule="evenodd" fill="#FFFFFF" d="M18 14 H35 A11 11 0 0 1 35 36 H27 V50 H18 Z M27 22 V28 H34 A3 3 0 0 0 34 22 Z"></path><path d="M31 36 H41 L49 50 H39 Z" fill="#C9C4FF"></path><g fill="none" stroke="#FFB547" stroke-width=".25" stroke-dasharray="1 1"><circle cx="35" cy="25" r="11"></circle><circle cx="34" cy="25" r="3"></circle><path d="M18 8V56M27 8V56M8 14H56M8 36H56M8 50H56"></path><path d="M27 36 L53 75"></path></g></svg>
+    </div>
+    <div style="display:flex;gap:12px;align-items:center;font-size:12px;color:#3A3752">
+      <span style="width:16px;height:16px;border-radius:4px;background:#5B4FE0;display:block"></span>#5B4FE0
+      <span style="width:16px;height:16px;border-radius:4px;background:#C9C4FF;display:block"></span>#C9C4FF
+      <span style="width:16px;height:16px;border-radius:4px;background:#FFFFFF;border:1px solid #E4E2EF;display:block"></span>#FFFFFF
+      <span style="width:16px;height:16px;border-radius:4px;background:#6C61F0;display:block"></span>#6C61F0 dark
+    </div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:28px">
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <span class="lbl">SIZES, LIGHT AND DARK</span>
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+        <div style="background:#FFFFFF;border-radius:12px;padding:20px;display:flex;align-items:flex-end;gap:22px;height:132px;box-sizing:border-box">
+          <sc-for list="{{sizes}}" as="s" hint-placeholder-count="5"><div class="sz" style="color:#55526B"><svg viewBox="0 0 64 64" width="{{s.px}}" height="{{s.px}}" aria-hidden="true"><rect x="2" y="2" width="60" height="60" rx="16" fill="#5B4FE0"></rect><path fill-rule="evenodd" fill="#FFFFFF" d="M18 14 H35 A11 11 0 0 1 35 36 H27 V50 H18 Z M27 22 V28 H34 A3 3 0 0 0 34 22 Z"></path><path d="M31 36 H41 L49 50 H39 Z" fill="{{s.leg}}"></path></svg>{{s.label}}</div></sc-for>
+        </div>
+        <div style="background:#121022;border-radius:12px;padding:20px;display:flex;align-items:flex-end;gap:22px;height:132px;box-sizing:border-box">
+          <sc-for list="{{sizes}}" as="s" hint-placeholder-count="5"><div class="sz" style="color:#A9A6C4"><svg viewBox="0 0 64 64" width="{{s.px}}" height="{{s.px}}" aria-hidden="true"><rect x="2" y="2" width="60" height="60" rx="16" fill="#6C61F0"></rect><path fill-rule="evenodd" fill="#FFFFFF" d="M18 14 H35 A11 11 0 0 1 35 36 H27 V50 H18 Z M27 22 V28 H34 A3 3 0 0 0 34 22 Z"></path><path d="M31 36 H41 L49 50 H39 Z" fill="{{s.leg}}"></path></svg>{{s.label}}</div></sc-for>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <span class="lbl">TASKBAR</span>
+      <div style="height:56px;border-radius:12px;background:#E9E8F1;display:flex;align-items:center;justify-content:center;gap:6px">
+        <span style="width:40px;height:40px;display:flex;align-items:center;justify-content:center"><span style="width:24px;height:24px;border-radius:6px;background:#C3C1D3;display:block"></span></span>
+        <span style="width:40px;height:40px;display:flex;align-items:center;justify-content:center"><span style="width:24px;height:24px;border-radius:6px;background:#C3C1D3;display:block"></span></span>
+        <span style="width:40px;height:40px;border-radius:6px;background:rgba(255,255,255,.75);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px"><svg viewBox="0 0 64 64" width="24" height="24" aria-hidden="true"><rect x="2" y="2" width="60" height="60" rx="16" fill="#5B4FE0"></rect><path fill-rule="evenodd" fill="#FFFFFF" d="M18 14 H35 A11 11 0 0 1 35 36 H27 V50 H18 Z M27 22 V28 H34 A3 3 0 0 0 34 22 Z"></path><path d="M31 36 H41 L49 50 H39 Z" fill="#FFFFFF"></path></svg><span style="width:16px;height:3px;border-radius:2px;background:#5B4FE0;display:block"></span></span>
+        <span style="width:40px;height:40px;display:flex;align-items:center;justify-content:center"><span style="width:24px;height:24px;border-radius:6px;background:#C3C1D3;display:block"></span></span>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:150px 310px minmax(0,1fr);gap:20px;align-items:end">
+      <div style="display:flex;flex-direction:column;gap:12px"><span class="lbl">STORE TILE</span>
+        <div style="width:150px;height:150px;border-radius:12px;background:#5B4FE0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:#FFFFFF"><svg viewBox="12 8 42 48" width="64" height="72" aria-hidden="true"><path fill-rule="evenodd" fill="#FFFFFF" d="M18 14 H35 A11 11 0 0 1 35 36 H27 V50 H18 Z M27 22 V28 H34 A3 3 0 0 0 34 22 Z"></path><path d="M31 36 H41 L49 50 H39 Z" fill="#C9C4FF"></path></svg><span style="font-family:'Instrument Sans',sans-serif;font-size:16px;font-weight:600">Recto</span></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px"><span class="lbl">WIDE TILE</span>
+        <div style="width:310px;height:150px;border-radius:12px;background:#5B4FE0;display:flex;align-items:center;gap:16px;padding:0 30px;box-sizing:border-box;color:#FFFFFF"><svg viewBox="12 8 42 48" width="64" height="72" aria-hidden="true"><path fill-rule="evenodd" fill="#FFFFFF" d="M18 14 H35 A11 11 0 0 1 35 36 H27 V50 H18 Z M27 22 V28 H34 A3 3 0 0 0 34 22 Z"></path><path d="M31 36 H41 L49 50 H39 Z" fill="#C9C4FF"></path></svg><span style="font-family:'Instrument Sans',sans-serif;font-size:44px;font-weight:600;letter-spacing:-1px">Recto</span></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px"><span class="lbl">PDF FILE ICON IN EXPLORER</span>
+        <div style="height:150px;border-radius:12px;background:#FFFFFF;display:flex;align-items:center;justify-content:center">
+          <div style="display:flex;flex-direction:column;align-items:center;gap:6px;font-size:12px"><svg viewBox="0 0 48 64" width="72" height="96" aria-hidden="true"><path d="M4 6 Q4 2 8 2 H32 L46 16 V58 Q46 62 42 62 H8 Q4 62 4 58 Z" fill="#FFFFFF" stroke="#D9D7E6" stroke-width="1.5"></path><path d="M32 2 V12 Q32 16 36 16 H46" fill="#EFEDFF" stroke="#D9D7E6" stroke-width="1.5"></path><g transform="translate(11 22) scale(.4)"><rect x="2" y="2" width="60" height="60" rx="16" fill="#5B4FE0"></rect><path fill-rule="evenodd" fill="#FFFFFF" d="M18 14 H35 A11 11 0 0 1 35 36 H27 V50 H18 Z M27 22 V28 H34 A3 3 0 0 0 34 22 Z"></path></g><text x="24" y="56" text-anchor="middle" font-size="7" font-weight="700" fill="#4A3FD0" font-family="Segoe UI, sans-serif">PDF</text></svg>Lease agreement 2026.pdf</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":900}}'>
+class Component extends DCLogic {
+renderVals() {
+const sizes=[{px:64,label:"64",leg:"#C9C4FF"},{px:48,label:"48",leg:"#C9C4FF"},{px:32,label:"32",leg:"#C9C4FF"},{px:24,label:"24",leg:"#FFFFFF"},{px:16,label:"16",leg:"#FFFFFF"}];
+return {sizes};
+}
+}
+</script>
+</body>
+</html>

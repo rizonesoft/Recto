@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recto B: Organize, split</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#F48A6E}a:hover{color:#F7A890}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.serif{font-family:'Newsreader',Georgia,serif}
+.mo{height:46px;padding:0 14px;border:0;background:transparent;font:inherit;font-size:13px;color:#B8B2A8;position:relative;text-decoration:none;display:flex;align-items:center}
+.mo.on{color:#EDEAE4;font-weight:600}
+.mo.on::after{content:"";position:absolute;left:14px;right:14px;bottom:0;height:3px;border-radius:2px 2px 0 0;background:#F0603C}
+.ib{width:34px;height:34px;border:0;border-radius:6px;background:transparent;color:#EDEAE4;display:flex;align-items:center;justify-content:center;flex:none;text-decoration:none}
+.wc{width:46px;height:46px;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:#EDEAE4}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:34px;padding:0 14px;border-radius:6px;border:1px solid #4A4642;background:#2E2C2A;font:inherit;font-size:13px;color:#EDEAE4;white-space:nowrap}
+.btn.p{background:#F0603C;border-color:#F0603C;color:#1B1A19;font-weight:600}
+.cap{font-size:12px;color:#B8B2A8}
+.seg{display:flex;padding:3px;background:#1B1A19;border-radius:8px;gap:2px;border:1px solid #34312E}
+.seg button{height:30px;padding:0 16px;border:0;border-radius:6px;background:transparent;font:inherit;font-size:13px;color:#B8B2A8}
+.seg button.on{background:#3A3734;color:#EDEAE4;font-weight:600}
+.pc{position:relative;display:flex;flex-direction:column;align-items:center;gap:8px;border:0;background:transparent;font:inherit;padding:0}
+.bar{height:4px;border-radius:2px;background:#CFCBC3;display:block}
+.rad{display:flex;align-items:center;gap:10px;font-size:14px;color:#EDEAE4}
+.rad i{width:18px;height:18px;border-radius:9px;border:1.5px solid #8F897F;box-sizing:border-box;display:flex;align-items:center;justify-content:center}
+.rg{display:grid;grid-template-columns:10px minmax(0,1fr);gap:10px;padding:12px;border-radius:8px;background:#1B1A19;border:1px solid #34312E}
+.rin{height:32px;box-sizing:border-box;border-radius:6px;border:1px solid #4A4642;background:#232120;color:#EDEAE4;padding:0 10px;font:inherit;font-size:13px;width:100%}
+</style>
+</head>
+<body>
+<div style="width:1440px;height:900px;display:flex;flex-direction:column;background:#1F1E1C;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;font-size:14px;color:#EDEAE4;overflow:hidden">
+  <div style="height:46px;display:flex;align-items:center;padding-left:14px;background:#1B1A19;flex:none;border-bottom:1px solid #2E2C2A">
+    <svg viewBox="0 0 64 64" width="22" height="22" aria-hidden="true"><rect x="2" y="2" width="60" height="60" rx="14" fill="#2A2826"></rect><rect x="15" y="10" width="34" height="44" rx="3" fill="#F5F4F0"></rect><path d="M38 6 H46 V26 L42 22 L38 26 Z" fill="#F0603C"></path></svg>
+    <span class="serif" style="font-size:20px;font-weight:500;margin:0 26px 0 10px">Recto</span>
+    <nav style="display:flex;height:46px" aria-label="Mode">
+      <a class="mo" href="B-Home.html">Home</a><a class="mo" href="B-Viewer.html">Read</a><a class="mo" href="B-Convert.html">Convert</a><a class="mo on" href="B-Organize.html">Organize</a>
+    </nav>
+    <div style="flex-grow:1"></div>
+    <a class="ib" href="B-Settings.html" aria-label="Settings"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"></path></svg></a>
+    <span style="width:8px"></span>
+    <button class="wc" aria-label="Minimize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M5 12h14"></path></svg></button>
+    <button class="wc" aria-label="Maximize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M5 5h14v14H5z"></path></svg></button>
+    <button class="wc" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+  </div>
+  <div style="display:flex;flex-grow:1;min-height:0">
+    <main style="flex-grow:1;min-width:0;padding:28px 40px;display:flex;flex-direction:column;gap:22px;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:18px">
+        <div style="flex-grow:1"><h1 class="serif" style="margin:0;font-size:36px;font-weight:500">Split a PDF</h1><div class="cap" style="font-size:13px;margin-top:4px">Lease agreement 2026.pdf · 14 pages</div></div>
+        <div class="seg" role="tablist" aria-label="Organize mode"><button role="tab">Combine</button><button class="on" role="tab">Split</button><button role="tab">Reorder</button></div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:26px 30px;padding-top:6px">
+        
+          <div class="pc">
+            <span style="width:112px;height:145px;background:#F5F4F0;display:flex;flex-direction:column;gap:5px;padding:14px 12px;box-sizing:border-box;box-shadow:0 0 0 3px #F0603C,0 6px 16px rgba(0,0,0,.4)"><span class="bar" style="width:60%;height:5px;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:92%"></span><span class="bar" style="width:96%"></span><span class="bar" style="width:70%"></span><span style="height:5px"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:84%"></span></span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D3CFC7"><span style="width:8px;height:8px;border-radius:4px;background:#F0603C;display:block"></span>1</span>
+            
+          </div>
+        
+          <div class="pc">
+            <span style="width:112px;height:145px;background:#F5F4F0;display:flex;flex-direction:column;gap:5px;padding:14px 12px;box-sizing:border-box;box-shadow:0 0 0 3px #F0603C,0 6px 16px rgba(0,0,0,.4)"><span class="bar" style="width:60%;height:5px;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:92%"></span><span class="bar" style="width:96%"></span><span class="bar" style="width:70%"></span><span style="height:5px"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:84%"></span></span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D3CFC7"><span style="width:8px;height:8px;border-radius:4px;background:#F0603C;display:block"></span>2</span>
+            
+          </div>
+        
+          <div class="pc">
+            <span style="width:112px;height:145px;background:#F5F4F0;display:flex;flex-direction:column;gap:5px;padding:14px 12px;box-sizing:border-box;box-shadow:0 0 0 3px #F0603C,0 6px 16px rgba(0,0,0,.4)"><span class="bar" style="width:60%;height:5px;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:92%"></span><span class="bar" style="width:96%"></span><span class="bar" style="width:70%"></span><span style="height:5px"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:84%"></span></span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D3CFC7"><span style="width:8px;height:8px;border-radius:4px;background:#F0603C;display:block"></span>3</span>
+            
+          </div>
+        
+          <div class="pc">
+            <span style="width:112px;height:145px;background:#F5F4F0;display:flex;flex-direction:column;gap:5px;padding:14px 12px;box-sizing:border-box;box-shadow:0 0 0 3px #F0603C,0 6px 16px rgba(0,0,0,.4)"><span class="bar" style="width:60%;height:5px;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:92%"></span><span class="bar" style="width:96%"></span><span class="bar" style="width:70%"></span><span style="height:5px"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:84%"></span></span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D3CFC7"><span style="width:8px;height:8px;border-radius:4px;background:#F0603C;display:block"></span>4</span>
+            
+              <span style="position:absolute;right:-17px;top:-8px;height:166px;width:2px;background:repeating-linear-gradient(#EDEAE4 0 6px,transparent 6px 11px);display:block"></span>
+              <button aria-label="Remove split" style="position:absolute;right:-30px;top:56px;width:28px;height:28px;border-radius:14px;border:0;background:#EDEAE4;color:#1B1A19;display:flex;align-items:center;justify-content:center"><svg class="ic" viewBox="0 0 24 24" style="width:15px;height:15px" aria-hidden="true"><path d="M6 4a2.5 2.5 0 1 0 0 5a2.5 2.5 0 0 0 0-5zM6 15a2.5 2.5 0 1 0 0 5a2.5 2.5 0 0 0 0-5zM8 8l12 10M8 16L20 6"></path></svg></button>
+            
+          </div>
+        
+          <div class="pc">
+            <span style="width:112px;height:145px;background:#F5F4F0;display:flex;flex-direction:column;gap:5px;padding:14px 12px;box-sizing:border-box;box-shadow:0 0 0 3px #E2C27A,0 6px 16px rgba(0,0,0,.4)"><span class="bar" style="width:60%;height:5px;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:92%"></span><span class="bar" style="width:96%"></span><span class="bar" style="width:70%"></span><span style="height:5px"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:84%"></span></span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D3CFC7"><span style="width:8px;height:8px;border-radius:4px;background:#E2C27A;display:block"></span>5</span>
+            
+          </div>
+        
+          <div class="pc">
+            <span style="width:112px;height:145px;background:#F5F4F0;display:flex;flex-direction:column;gap:5px;padding:14px 12px;box-sizing:border-box;box-shadow:0 0 0 3px #E2C27A,0 6px 16px rgba(0,0,0,.4)"><span class="bar" style="width:60%;height:5px;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:92%"></span><span class="bar" style="width:96%"></span><span class="bar" style="width:70%"></span><span style="height:5px"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:84%"></span></span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D3CFC7"><span style="width:8px;height:8px;border-radius:4px;background:#E2C27A;display:block"></span>6</span>
+            
+          </div>
+        
+          <div class="pc">
+            <span style="width:112px;height:145px;background:#F5F4F0;display:flex;flex-direction:column;gap:5px;padding:14px 12px;box-sizing:border-box;box-shadow:0 0 0 3px #E2C27A,0 6px 16px rgba(0,0,0,.4)"><span class="bar" style="width:60%;height:5px;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:92%"></span><span class="bar" style="width:96%"></span><span class="bar" style="width:70%"></span><span style="height:5px"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:84%"></span></span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D3CFC7"><span style="width:8px;height:8px;border-radius:4px;background:#E2C27A;display:block"></span>7</span>
+            
+          </div>
+        
+          <div class="pc">
+            <span style="width:112px;height:145px;background:#F5F4F0;display:flex;flex-direction:column;gap:5px;padding:14px 12px;box-sizing:border-box;box-shadow:0 0 0 3px #E2C27A,0 6px 16px rgba(0,0,0,.4)"><span class="bar" style="width:60%;height:5px;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:92%"></span><span class="bar" style="width:96%"></span><span class="bar" style="width:70%"></span><span style="height:5px"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:84%"></span></span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D3CFC7"><span style="width:8px;height:8px;border-radius:4px;background:#E2C27A;display:block"></span>8</span>
+            
+          </div>
+        
+          <div class="pc">
+            <span style="width:112px;height:145px;background:#F5F4F0;display:flex;flex-direction:column;gap:5px;padding:14px 12px;box-sizing:border-box;box-shadow:0 0 0 3px #E2C27A,0 6px 16px rgba(0,0,0,.4)"><span class="bar" style="width:60%;height:5px;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:92%"></span><span class="bar" style="width:96%"></span><span class="bar" style="width:70%"></span><span style="height:5px"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:84%"></span></span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D3CFC7"><span style="width:8px;height:8px;border-radius:4px;background:#E2C27A;display:block"></span>9</span>
+            
+              <span style="position:absolute;right:-17px;top:-8px;height:166px;width:2px;background:repeating-linear-gradient(#EDEAE4 0 6px,transparent 6px 11px);display:block"></span>
+              <button aria-label="Remove split" style="position:absolute;right:-30px;top:56px;width:28px;height:28px;border-radius:14px;border:0;background:#EDEAE4;color:#1B1A19;display:flex;align-items:center;justify-content:center"><svg class="ic" viewBox="0 0 24 24" style="width:15px;height:15px" aria-hidden="true"><path d="M6 4a2.5 2.5 0 1 0 0 5a2.5 2.5 0 0 0 0-5zM6 15a2.5 2.5 0 1 0 0 5a2.5 2.5 0 0 0 0-5zM8 8l12 10M8 16L20 6"></path></svg></button>
+            
+          </div>
+        
+          <div class="pc">
+            <span style="width:112px;height:145px;background:#F5F4F0;display:flex;flex-direction:column;gap:5px;padding:14px 12px;box-sizing:border-box;box-shadow:0 0 0 3px #7FA3C8,0 6px 16px rgba(0,0,0,.4)"><span class="bar" style="width:60%;height:5px;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:92%"></span><span class="bar" style="width:96%"></span><span class="bar" style="width:70%"></span><span style="height:5px"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:84%"></span></span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D3CFC7"><span style="width:8px;height:8px;border-radius:4px;background:#7FA3C8;display:block"></span>10</span>
+            
+          </div>
+        
+          <div class="pc">
+            <span style="width:112px;height:145px;background:#F5F4F0;display:flex;flex-direction:column;gap:5px;padding:14px 12px;box-sizing:border-box;box-shadow:0 0 0 3px #7FA3C8,0 6px 16px rgba(0,0,0,.4)"><span class="bar" style="width:60%;height:5px;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:92%"></span><span class="bar" style="width:96%"></span><span class="bar" style="width:70%"></span><span style="height:5px"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:84%"></span></span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D3CFC7"><span style="width:8px;height:8px;border-radius:4px;background:#7FA3C8;display:block"></span>11</span>
+            
+          </div>
+        
+          <div class="pc">
+            <span style="width:112px;height:145px;background:#F5F4F0;display:flex;flex-direction:column;gap:5px;padding:14px 12px;box-sizing:border-box;box-shadow:0 0 0 3px #7FA3C8,0 6px 16px rgba(0,0,0,.4)"><span class="bar" style="width:60%;height:5px;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:92%"></span><span class="bar" style="width:96%"></span><span class="bar" style="width:70%"></span><span style="height:5px"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:84%"></span></span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D3CFC7"><span style="width:8px;height:8px;border-radius:4px;background:#7FA3C8;display:block"></span>12</span>
+            
+          </div>
+        
+          <div class="pc">
+            <span style="width:112px;height:145px;background:#F5F4F0;display:flex;flex-direction:column;gap:5px;padding:14px 12px;box-sizing:border-box;box-shadow:0 0 0 3px #7FA3C8,0 6px 16px rgba(0,0,0,.4)"><span class="bar" style="width:60%;height:5px;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:92%"></span><span class="bar" style="width:96%"></span><span class="bar" style="width:70%"></span><span style="height:5px"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:84%"></span></span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D3CFC7"><span style="width:8px;height:8px;border-radius:4px;background:#7FA3C8;display:block"></span>13</span>
+            
+          </div>
+        
+          <div class="pc">
+            <span style="width:112px;height:145px;background:#F5F4F0;display:flex;flex-direction:column;gap:5px;padding:14px 12px;box-sizing:border-box;box-shadow:0 0 0 3px #7FA3C8,0 6px 16px rgba(0,0,0,.4)"><span class="bar" style="width:60%;height:5px;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:92%"></span><span class="bar" style="width:96%"></span><span class="bar" style="width:70%"></span><span style="height:5px"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:84%"></span></span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:#D3CFC7"><span style="width:8px;height:8px;border-radius:4px;background:#7FA3C8;display:block"></span>14</span>
+            
+          </div>
+        
+      </div>
+      <div class="cap" style="font-size:13px;display:flex;align-items:center;gap:8px;margin-top:auto"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18zM12 11v6M12 7.5v.01"></path></svg>Click between two pages to add or remove a split.</div>
+    </main>
+    <aside style="width:380px;flex:none;background:#232120;border-left:1px solid #34312E;padding:28px 24px;box-sizing:border-box;display:flex;flex-direction:column;gap:18px" aria-label="Split settings">
+      <h2 class="serif" style="margin:0;font-size:24px;font-weight:500">How to split</h2>
+      <div style="display:flex;flex-direction:column;gap:12px" role="radiogroup">
+        <label class="rad"><i style="border-color:#F0603C"><span style="width:8px;height:8px;border-radius:4px;background:#F0603C;display:block"></span></i>By page ranges</label>
+        <label class="rad"><i></i>Every <input class="rin" value="5" style="width:52px" aria-label="Pages per file"> pages</label>
+        <label class="rad"><i></i>One file per page</label>
+      </div>
+      <h3 style="margin:6px 0 0;font-size:13px;font-weight:600;color:#D3CFC7">3 files</h3>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        
+          <div class="rg"><span style="width:10px;height:100%;border-radius:3px;background:#F0603C;display:block"></span><span style="display:flex;flex-direction:column;gap:6px;min-width:0"><span style="display:flex;justify-content:space-between;font-size:13px"><b style="font-weight:600">Pages 1–4</b><span class="cap">4 pages</span></span><input class="rin" value="Lease agreement 2026 part 1.pdf" aria-label="File name"></span></div>
+        
+          <div class="rg"><span style="width:10px;height:100%;border-radius:3px;background:#E2C27A;display:block"></span><span style="display:flex;flex-direction:column;gap:6px;min-width:0"><span style="display:flex;justify-content:space-between;font-size:13px"><b style="font-weight:600">Pages 5–9</b><span class="cap">5 pages</span></span><input class="rin" value="Lease agreement 2026 part 2.pdf" aria-label="File name"></span></div>
+        
+          <div class="rg"><span style="width:10px;height:100%;border-radius:3px;background:#7FA3C8;display:block"></span><span style="display:flex;flex-direction:column;gap:6px;min-width:0"><span style="display:flex;justify-content:space-between;font-size:13px"><b style="font-weight:600">Pages 10–14</b><span class="cap">5 pages</span></span><input class="rin" value="Lease agreement 2026 part 3.pdf" aria-label="File name"></span></div>
+        
+      </div>
+      <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D3CFC7">Save to<span style="display:flex;gap:8px"><input class="rin" value="Documents\Home"><button class="btn">Browse</button></span></label>
+      <button class="btn p" style="height:42px;margin-top:auto"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4a2.5 2.5 0 1 0 0 5a2.5 2.5 0 0 0 0-5zM6 15a2.5 2.5 0 1 0 0 5a2.5 2.5 0 0 0 0-5zM8 8l12 10M8 16L20 6"></path></svg>Split into 3 files</button>
+    </aside>
+  </div>
+</div>
+</body>
+</html>

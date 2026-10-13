@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recto A: Convert</title>
+<style>
+body{margin:0}
+a{color:#2459D6}a:hover{color:#1A47B0}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.tab{display:flex;align-items:center;gap:8px;height:36px;padding:0 4px 0 12px;border-radius:8px 8px 0 0;font-size:12px;color:#3B3B3B;width:220px;box-sizing:border-box}
+.tab.on{background:#FAFAFA;color:#1B1B1B;box-shadow:0 0 0 1px rgba(0,0,0,.06)}
+.tab span{flex-grow:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tx{width:28px;height:28px;border:0;background:transparent;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#3B3B3B;flex:none}
+.wc{width:46px;height:44px;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:#1B1B1B}
+.ri{width:60px;height:54px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;border-radius:6px;border:0;background:transparent;font:inherit;font-size:11px;color:#3B3B3B;position:relative;text-decoration:none}
+.ri.on{background:rgba(0,0,0,.05);color:#1B1B1B;font-weight:600}
+.ri.on::before{content:"";position:absolute;left:0;top:17px;width:3px;height:20px;border-radius:2px;background:#2459D6}
+.ri .ic{width:20px;height:20px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:32px;padding:0 12px;border-radius:4px;border:1px solid #D9D9D9;border-bottom-color:#C4C4C4;background:#FFFFFF;font:inherit;font-size:13px;color:#1B1B1B;white-space:nowrap;text-decoration:none}
+.btn.p{background:#2459D6;border-color:#1F4FC0;border-bottom-color:#183F9C;color:#FFFFFF}
+.cap{font-size:12px;color:#5C5C5C}
+.card{background:#FFFFFF;border:1px solid #E5E5E5;border-radius:8px}
+.h{font-family:'Segoe UI Variable Display','Segoe UI',sans-serif;font-weight:600}
+.tile{display:flex;flex-direction:column;gap:10px;padding:18px;box-sizing:border-box;text-decoration:none;color:#1B1B1B;height:188px}
+.tile i{width:40px;height:40px;border-radius:8px;background:#E8EEFC;color:#2459D6;display:flex;align-items:center;justify-content:center}
+.tile i .ic{width:22px;height:22px}
+.chip{font-size:11px;padding:2px 7px;border-radius:10px;background:#F0F0F0;color:#3B3B3B}
+.job{display:flex;flex-direction:column;gap:8px;padding:14px 16px;border-top:1px solid #EFEFEF}
+.pb{height:4px;border-radius:2px;background:#E0E0E0;position:relative;overflow:hidden}
+</style>
+</head>
+<body>
+<div style="width:1440px;height:900px;display:flex;flex-direction:column;background:#EEF1F6;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;font-size:14px;color:#1B1B1B;overflow:hidden">
+  <div style="height:44px;display:flex;align-items:flex-end;padding-left:12px;flex:none">
+    <div style="display:flex;align-items:center;gap:8px;height:44px;padding-right:14px">
+      <svg viewBox="0 0 64 64" width="18" height="18" aria-hidden="true"><path d="M6 16 L29 11 V55 L6 59 Z" fill="#C9D7F8"></path><path d="M33 11 H49 L58 20 V55 H33 Z" fill="#2459D6"></path><path d="M49 11 V20 H58 Z" fill="#9DB8F2"></path></svg>
+      <span style="font-size:12px">Recto</span>
+    </div>
+    <div class="tab on"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h14l-4-4M20 16H6l4 4"></path></svg><span>Convert</span><button class="tx" aria-label="Close tab"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>
+    <div class="tab"><svg class="ic" viewBox="0 0 24 24" style="color:#2459D6" aria-hidden="true"><path d="M6 3h8l5 5v13H6zM14 3v5h5"></path></svg><span>Recto foundation plan.pdf</span></div>
+    <button class="tx" aria-label="New tab" style="margin:0 0 4px 4px"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
+    <div style="flex-grow:1"></div>
+    <button class="wc" aria-label="Minimize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M5 12h14"></path></svg></button>
+    <button class="wc" aria-label="Maximize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M5 5h14v14H5z"></path></svg></button>
+    <button class="wc" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+  </div>
+  <div style="display:flex;flex-grow:1;min-height:0">
+    <nav style="width:72px;flex:none;display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 0" aria-label="Main">
+      <a class="ri" href="A-Home.html"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"></path></svg>Home</a>
+      <a class="ri" href="A-Viewer.html"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l5 5v13H6zM14 3v5h5"></path></svg>Read</a>
+      <a class="ri on" href="A-Convert.html"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h14l-4-4M20 16H6l4 4"></path></svg>Convert</a>
+      <a class="ri" href="A-Organize.html"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"></path></svg>Organize</a>
+      <div style="flex-grow:1"></div>
+      <a class="ri" href="A-Settings.html"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"></path></svg>Settings</a>
+    </nav>
+    <main style="flex-grow:1;min-width:0;background:#FAFAFA;border-top-left-radius:8px;border-top:1px solid #E5E5E5;border-left:1px solid #E5E5E5;display:flex;overflow:hidden">
+      <div style="flex-grow:1;min-width:0;padding:32px 36px;display:flex;flex-direction:column;gap:20px">
+        <div style="display:flex;align-items:flex-end;gap:16px">
+          <div style="flex-grow:1"><h1 class="h" style="margin:0;font-size:28px">Convert</h1><p class="cap" style="margin:6px 0 0;font-size:13px">Pick a conversion, or drop files on a tile.</p></div>
+        </div>
+        <div role="status" style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:6px;background:#DFF6DD;border:1px solid #C7E9C4;font-size:13px">
+          <svg class="ic" viewBox="0 0 24 24" style="color:#0F7B0F;width:18px;height:18px" aria-hidden="true"><path d="M5 12l5 5 9-10"></path></svg>
+          <span><b>Office to PDF is ready.</b> Found Microsoft Word, Excel and PowerPoint on this PC.</span>
+          <div style="flex-grow:1"></div>
+          <a href="A-Settings.html" style="font-size:13px">Change converter</a>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px">
+          
+            <a class="card tile" href="A-Dialogs.html">
+              <i><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M15 9h.01"></path></svg></i>
+              <span style="font-weight:600;font-size:15px">PDF to images</span>
+              <span class="cap" style="font-size:12px;line-height:17px">Save pages as pictures at the resolution you choose.</span>
+              <span style="display:flex;gap:4px;margin-top:auto;flex-wrap:wrap"><span class="chip">PNG</span><span class="chip">JPEG</span><span class="chip">TIFF</span><span class="chip">BMP</span></span>
+            </a>
+          
+            <a class="card tile" href="A-Dialogs.html">
+              <i><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20V9M7 14l5-5 5 5M5 4h14"></path></svg></i>
+              <span style="font-weight:600;font-size:15px">Images to PDF</span>
+              <span class="cap" style="font-size:12px;line-height:17px">Turn photos and scans into one PDF. Fit to image, A4 or Letter.</span>
+              <span style="display:flex;gap:4px;margin-top:auto;flex-wrap:wrap"><span class="chip">PNG</span><span class="chip">JPEG</span><span class="chip">TIFF</span></span>
+            </a>
+          
+            <a class="card tile" href="A-Dialogs.html">
+              <i><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14M12 6v13M9 19h6"></path></svg></i>
+              <span style="font-weight:600;font-size:15px">PDF to text</span>
+              <span class="cap" style="font-size:12px;line-height:17px">Extract the text of every page.</span>
+              <span style="display:flex;gap:4px;margin-top:auto;flex-wrap:wrap"><span class="chip">TXT</span></span>
+            </a>
+          
+            <a class="card tile" href="A-Dialogs.html">
+              <i><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l5 5v13H6zM14 3v5h5M8.5 12l1.2 5 2.3-4 2.3 4 1.2-5"></path></svg></i>
+              <span style="font-weight:600;font-size:15px">PDF to Word</span>
+              <span class="cap" style="font-size:12px;line-height:17px">Editable DOCX. Best for text documents.</span>
+              <span style="display:flex;gap:4px;margin-top:auto;flex-wrap:wrap"><span class="chip">DOCX</span></span>
+            </a>
+          
+            <a class="card tile" href="A-Dialogs.html">
+              <i><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16v11H4zM9 8V5h6v3M4 13h16"></path></svg></i>
+              <span style="font-weight:600;font-size:15px">Office to PDF</span>
+              <span class="cap" style="font-size:12px;line-height:17px">Word, Excel and PowerPoint files, through Office or LibreOffice.</span>
+              <span style="display:flex;gap:4px;margin-top:auto;flex-wrap:wrap"><span class="chip">DOCX</span><span class="chip">XLSX</span><span class="chip">PPTX</span><span class="chip">ODT</span></span>
+            </a>
+          
+            <a class="card tile" href="A-Dialogs.html">
+              <i><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v4l5 5 5-5V4M12 13v7"></path></svg></i>
+              <span style="font-weight:600;font-size:15px">Combine PDFs</span>
+              <span class="cap" style="font-size:12px;line-height:17px">Join files in the order you set.</span>
+              <span style="display:flex;gap:4px;margin-top:auto;flex-wrap:wrap"><span class="chip">PDF</span></span>
+            </a>
+          
+            <a class="card tile" href="A-Dialogs.html">
+              <i><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v7l-5 5v4M12 11l5 5v4"></path></svg></i>
+              <span style="font-weight:600;font-size:15px">Split a PDF</span>
+              <span class="cap" style="font-size:12px;line-height:17px">By page ranges, every N pages, or one file per page.</span>
+              <span style="display:flex;gap:4px;margin-top:auto;flex-wrap:wrap"><span class="chip">PDF</span></span>
+            </a>
+          
+            <a class="card tile" href="A-Dialogs.html">
+              <i><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 11h12v9H6zM8 11V8a4 4 0 0 1 8 0v3"></path></svg></i>
+              <span style="font-weight:600;font-size:15px">Protect a PDF</span>
+              <span class="cap" style="font-size:12px;line-height:17px">Add or remove a password. AES-256 encryption.</span>
+              <span style="display:flex;gap:4px;margin-top:auto;flex-wrap:wrap"><span class="chip">PDF</span></span>
+            </a>
+          
+        </div>
+      </div>
+      <aside style="width:380px;flex:none;border-left:1px solid #E8E8E8;background:#FFFFFF;display:flex;flex-direction:column" aria-label="Conversion queue">
+        <div style="display:flex;align-items:center;gap:8px;padding:20px 16px 14px">
+          <h2 class="h" style="margin:0;font-size:16px;flex-grow:1">Queue</h2>
+          <span class="cap">2 running, 1 waiting</span>
+        </div>
+        <div class="job">
+          <div style="display:flex;align-items:center;gap:10px"><svg class="ic" viewBox="0 0 24 24" style="color:#2459D6;width:18px;height:18px" aria-hidden="true"><path d="M6 3h8l5 5v13H6zM14 3v5h5M8.5 12l1.2 5 2.3-4 2.3 4 1.2-5"></path></svg><span style="font-weight:600;font-size:13px;flex-grow:1">Thesis draft v3.pdf</span><button class="tx" aria-label="Cancel"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>
+          <div class="cap">To Word (DOCX) · page 53 of 86</div>
+          <div class="pb"><span style="position:absolute;left:0;top:0;bottom:0;width:62%;background:#2459D6;display:block"></span></div>
+        </div>
+        <div class="job">
+          <div style="display:flex;align-items:center;gap:10px"><svg class="ic" viewBox="0 0 24 24" style="color:#2459D6;width:18px;height:18px" aria-hidden="true"><path d="M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M15 9h.01"></path></svg><span style="font-weight:600;font-size:13px;flex-grow:1">MuPDF API reference.pdf</span><button class="tx" aria-label="Cancel"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>
+          <div class="cap">To PNG, 150 dpi · page 41 of 312</div>
+          <div class="pb"><span style="position:absolute;left:0;top:0;bottom:0;width:13%;background:#2459D6;display:block"></span></div>
+        </div>
+        <div class="job">
+          <div style="display:flex;align-items:center;gap:10px"><svg class="ic" viewBox="0 0 24 24" style="color:#5C5C5C;width:18px;height:18px" aria-hidden="true"><path d="M4 8h16v11H4zM9 8V5h6v3M4 13h16"></path></svg><span style="font-weight:600;font-size:13px;flex-grow:1">Quarterly review.pptx</span><button class="tx" aria-label="Remove"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>
+          <div class="cap">To PDF through PowerPoint · waiting</div>
+        </div>
+        <div class="job">
+          <div style="display:flex;align-items:center;gap:10px"><svg class="ic" viewBox="0 0 24 24" style="color:#0F7B0F;width:18px;height:18px" aria-hidden="true"><path d="M5 12l5 5 9-10"></path></svg><span style="font-weight:600;font-size:13px;flex-grow:1">Scanned receipts.pdf</span></div>
+          <div class="cap">Split into 23 files · done in 4 s</div>
+          <div style="display:flex;gap:8px"><button class="btn" style="height:28px">Open folder</button><button class="btn" style="height:28px">Show files</button></div>
+        </div>
+        <div class="job">
+          <div style="display:flex;align-items:center;gap:10px"><svg class="ic" viewBox="0 0 24 24" style="color:#C42B1C;width:18px;height:18px" aria-hidden="true"><path d="M12 4l9 16H3zM12 10v5M12 17.5v.01"></path></svg><span style="font-weight:600;font-size:13px;flex-grow:1">Lease agreement 2026.pdf</span></div>
+          <div style="font-size:12px;color:#A4262C">To Word failed: the file needs a password.</div>
+          <div style="display:flex;gap:8px"><button class="btn" style="height:28px">Enter password</button><button class="btn" style="height:28px">Dismiss</button></div>
+        </div>
+        <div style="margin-top:auto;padding:14px 16px;border-top:1px solid #EFEFEF;display:flex;gap:8px"><button class="btn" style="flex-grow:1">Clear finished</button><button class="btn" style="flex-grow:1">Open output folder</button></div>
+      </aside>
+    </main>
+  </div>
+</div>
+</body>
+</html>

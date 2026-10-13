@@ -1,0 +1,528 @@
+"""The canonical Recto TODO graph: parse todo/NN-domain/TODO-NN-*.md, validate it, order it, project the plan.
+
+Adapted from swisshotelschool-coza's scripts/lib/todo_graph.py (itself a port of rizonetech-com's
+scripts/lib/workflow.py), extended with the ScratchPad and Resolute format rules that fit Recto:
+Adjacency declarations, bidirectional XREFs, index coverage, frozen freeze checks, and durable
+deferrals. Rules: todo/README.md.
+"""
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parents[2]
+PLAN = "todo/implementation-plan.md"
+REF = re.compile(r"(?:D(?P<d>\d{2})\s+)?(?:T(?P<t>\d{2})\s+)?§(?P<s>[1-9]\d*)")
+ROW = re.compile(r"^\|\s*(\d+)\s*\|\s*§(\d+)\s*\|\s*([^|]+)\|\s*([^|]*)\|\s*\[([ x])\]\s*\|$")
+# What a section needs from outside the repository. The WAITING values are people, companies, or the
+# operator's own hands: a section naming one stays blocked until the answer is recorded and the Need
+# is removed from the section.
+NEEDS = {"windows-host", "arm64-host", "display-session", "office", "libreoffice", "store-account",
+         "attended", "owner-decision", "third-party", "operator"}
+WAITING = {"owner-decision", "third-party", "operator"}
+STATUSES = {"draft", "active", "blocked", "done", "superseded"}
+VERDICTS = {"clean", "fixed", "stopped-at-3"}
+ADJACENCY_KEYS = ["list", "document", "settings", "reporting", "notifications", "permissions",
+                  "audit", "exchange", "reverse"]
+PHASES = {
+    0: "M0 Repository and build",
+    1: "M1 Engine core",
+    2: "M2 Viewer",
+    3: "M3 Text",
+    4: "M4 Conversions A",
+    5: "M5 Conversions B",
+    6: "M6 Ship",
+    7: "After v1",
+    99: "Manual, operator only",
+}
+MAX_SECTIONS_PER_FILE = 55
+MAX_ITEMS_PER_SECTION = 30
+
+
+class Refused(ValueError):
+    pass
+
+
+def require(condition, message):
+    if not condition:
+        raise Refused(message)
+
+
+def read_text(path):
+    return Path(path).read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
+
+
+def atomic(path, data):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as out:
+            out.write(data)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def normalize(value, domain, todo):
+    m = REF.fullmatch(value.strip().strip("`"))
+    require(m is not None, f"invalid section reference: {value}")
+    return f"D{m['d'] or domain} T{m['t'] or todo} §{m['s']}"
+
+
+def find_ref(text, domain, todo):
+    m = REF.search(text)
+    if m is None:
+        return None
+    return f"D{m['d'] or domain} T{m['t'] or todo} §{m['s']}"
+
+
+def field(body, name, required=True):
+    values = re.findall(r"^(?:> )?\*\*" + re.escape(name) + r":\*\*\s*(.+)$", body, re.M)
+    require(len(values) <= 1, f"duplicate {name} field")
+    require(values or not required, f"missing {name} field")
+    return values[0].strip() if values else ""
+
+
+@dataclass
+class Section:
+    ref: str
+    path: str
+    number: int
+    title: str
+    phase: int
+    depends: list
+    needs: list
+    done: bool
+    status: str
+    body: str
+    receipt: str
+    order: int = 0
+
+    def public(self):
+        return {k: v for k, v in asdict(self).items() if k != "body"}
+
+
+def front_matter(text, relative):
+    parts = text.split("---\n", 2)
+    require(len(parts) == 3 and not parts[0], f"missing frontmatter: {relative}")
+    front = {}
+    for line in parts[1].splitlines():
+        m = re.fullmatch(r"([a-z_]+):\s*(.+)", line)
+        require(m is not None and m[1] not in front, f"invalid or duplicate frontmatter: {relative}")
+        front[m[1]] = m[2].strip().strip('"')
+    return front, parts[2]
+
+
+def receipt_ok(root, receipt, ref, stamp_sha):
+    require(re.fullmatch(r"docs/reviews/[a-z0-9][a-z0-9.-]*\.json", receipt or "") is not None,
+            f"invalid receipt path: {ref}")
+    path = Path(root) / receipt
+    require(path.is_file() and not path.is_symlink(), f"missing receipt: {ref}")
+    try:
+        data = json.loads(read_text(path))
+    except ValueError:
+        raise Refused(f"receipt is not JSON: {ref}") from None
+    receipt_data_ok(data, ref, stamp_sha)
+
+
+def receipt_data_ok(data, ref, stamp_sha):
+    require(isinstance(data, dict), f"receipt is not an object: {ref}")
+    require(data.get("ref") == ref and data.get("implementation_sha") == stamp_sha,
+            f"receipt does not match its stamp: {ref}")
+    rounds = data.get("reviews")
+    require(isinstance(rounds, list) and rounds and all(
+        isinstance(r, dict) and isinstance(r.get("round"), int)
+        and isinstance(r.get("report"), str) and r["report"]
+        and isinstance(r.get("verdict"), str) and r["verdict"] in VERDICTS for r in rounds),
+        f"receipt has no valid review rounds (verdict one of {', '.join(sorted(VERDICTS))}): {ref}")
+    checks = data.get("checks")
+    require(isinstance(checks, list) and checks and all(isinstance(c, str) and c.strip() for c in checks),
+            f"receipt has no checks: {ref}")
+    require(isinstance(data.get("date"), str)
+            and re.fullmatch(r"\d{4}-\d{2}-\d{2}", data["date"]) is not None,
+            f"receipt has no valid date: {ref}")
+
+
+def adjacency_of(body, relative, domain, todo):
+    """Parse the one **Adjacency:** line inside ## Outcome. Returns {key: (state, owner_ref_or_None)}."""
+    require("## Outcome\n" in body, f"missing Outcome: {relative}")
+    outcome = body.split("## Outcome\n", 1)[1].split("\n## ", 1)[0]
+    lines = re.findall(r"^\*\*Adjacency:\*\*\s*(.+)$", outcome, re.M)
+    require(len(lines) == 1, f"exactly one Adjacency line inside Outcome required: {relative}")
+    result = {}
+    blanket = re.fullmatch(r"all=not-applicable\s*\((.+)\)", lines[0].strip())
+    if blanket:
+        require(blanket[1].strip(), f"adjacency blanket needs a reason: {relative}")
+        return {key: ("not-applicable", None) for key in ADJACENCY_KEYS}
+    entries = [e.strip() for e in re.split(r";\s*(?=[a-z]+=)", lines[0]) if e.strip()]
+    for entry in entries:
+        m = re.fullmatch(r"([a-z]+)=applicable(?:\s*@\s*(.+))?", entry)
+        if m:
+            key, owner = m[1], None
+            require(key in ADJACENCY_KEYS and key not in result,
+                    f"adjacency key unknown or duplicated ({key}): {relative}")
+            if m[2]:
+                owner = find_ref(m[2], domain, todo)
+                require(owner is not None, f"adjacency owner does not parse ({entry}): {relative}")
+            result[key] = ("applicable", owner)
+            continue
+        m = re.fullmatch(r"([a-z]+)=not-applicable\s*\(([^)]+)\)", entry)
+        require(m is not None, f"adjacency entry malformed ({entry}): {relative}")
+        key = m[1]
+        require(key in ADJACENCY_KEYS and key not in result,
+                f"adjacency key unknown or duplicated ({key}): {relative}")
+        require(m[2].strip(), f"adjacency not-applicable needs a reason ({key}): {relative}")
+        result[key] = ("not-applicable", None)
+    require(set(result) == set(ADJACENCY_KEYS),
+            f"adjacency must declare every key exactly once (missing "
+            f"{', '.join(sorted(set(ADJACENCY_KEYS) - set(result)))}): {relative}")
+    return result
+
+
+def xrefs_of(body, domain, todo):
+    refs = []
+    for line in body.splitlines():
+        if "-> XREF:" not in line:
+            continue
+        ref = find_ref(line.split("-> XREF:", 1)[1], domain, todo)
+        require(ref is not None, f"XREF line names no section: {line.strip()}")
+        refs.append(ref)
+    return refs
+
+
+def graph(root=ROOT):
+    """Parse every TODO file strictly; a malformed row or section refuses, it is never read as empty."""
+    root = Path(root)
+    sections, ids, files = {}, {}, {}
+    paths = sorted((root / "todo").glob("[0-9][0-9]-*/TODO-*.md"))
+    require(bool(paths), "canonical TODO tree is missing or empty")
+    for path in paths:
+        require(not path.is_symlink(), f"symlink TODO: {path}")
+        relative = path.relative_to(root).as_posix()
+        name = re.fullmatch(r"TODO-(\d{2})-[a-z0-9-]+\.md", path.name)
+        require(name is not None, f"invalid TODO filename: {relative}")
+        d, t = path.parent.name[:2], name[1]
+        front, body = front_matter(read_text(path), relative)
+        required = {"schema_version", "id", "domain", "status", "title"}
+        optional = {"depends_on", "frozen", "track", "superseded_by"}
+        require(required <= front.keys() and not front.keys() - required - optional,
+                f"frontmatter fields: {relative}")
+        require(front["schema_version"] == "1" and front["domain"] == path.parent.name,
+                f"schema/domain mismatch: {relative}")
+        require(re.fullmatch(r"[a-z][a-z0-9-]{0,58}[a-z0-9]", front["id"])
+                and front["id"] not in ids, f"invalid/duplicate id: {relative}")
+        require(front["status"] in STATUSES, f"unknown status: {relative}")
+        frozen = front.get("frozen", "false")
+        require(frozen in {"true", "false"}, f"frozen must be true or false: {relative}")
+        file_deps = json.loads(front.get("depends_on", "[]"))
+        require(isinstance(file_deps, list) and all(isinstance(x, str) for x in file_deps),
+                "depends_on must be a JSON string array")
+        ids[front["id"]] = relative
+        files[relative] = (front, file_deps, [], xrefs_of(body, d, t),
+                           adjacency_of(body, relative, d, t))
+        for label in ("Goal", "Current state"):
+            field(body, label)
+        for label in ("Inputs", "Outcome", "Implementation Order", "Verification"):
+            require(f"## {label}\n" in body, f"missing {label}: {relative}")
+        table = body.split("## Implementation Order\n", 1)[1].split("\n## ", 1)[0]
+        rows, orders = {}, []
+        for line in table.splitlines():
+            if not line.startswith("|"):
+                continue
+            m = ROW.fullmatch(line)
+            if not m:
+                require("§" not in line and "[" not in line,
+                        f"malformed implementation row: {relative}")
+                continue
+            order, n = int(m[1]), int(m[2])
+            require(n not in rows, f"duplicate section row: {relative} §{n}")
+            orders.append(order)
+            rows[n] = m
+        require(rows and orders == list(range(1, len(rows) + 1)),
+                f"invalid implementation order: {relative}")
+        require(len(rows) <= MAX_SECTIONS_PER_FILE,
+                f"over {MAX_SECTIONS_PER_FILE} sections; split into a new file: {relative}")
+        headings = list(re.finditer(r"^## (\d+)\. (.+)$", body, re.M))
+        numbers = [int(m[1]) for m in headings]
+        require(numbers == sorted(set(numbers)) and set(numbers) == set(rows),
+                f"row/body mismatch: {relative}")
+        require(body.rfind("## Verification\n") > headings[-1].start(),
+                f"Verification must follow numbered sections: {relative}")
+        for h in headings:
+            n = int(h[1])
+            section_body = body[h.end():].split("\n## ", 1)[0].strip()
+            ref = f"D{d} T{t} §{n}"
+            require(ref not in sections, f"duplicate address: {ref}")
+            phase = field(section_body, "Phase")
+            require(phase.isdigit() and int(phase) in PHASES, f"invalid Phase: {ref}")
+            raw = field(section_body, "Needs")
+            needs = [] if raw == "none" else [v.strip() for v in raw.split(",")]
+            require(len(needs) == len(set(needs)) and set(needs) <= NEEDS,
+                    f"unknown/duplicate Needs: {ref}")
+            dep = rows[n][4].strip()
+            deps = [] if dep == "--" else [normalize(v, d, t) for v in dep.split(",")]
+            require(len(deps) == len(set(deps)), f"duplicate dependency: {ref}")
+            checks = re.findall(r"^- \[([ x])\] (.+)$", section_body, re.M)
+            require(1 <= len(checks) <= MAX_ITEMS_PER_SECTION and checks[-1][1].startswith("Commit:"),
+                    f"1-{MAX_ITEMS_PER_SECTION} items, Commit last required: {ref}")
+            require("**Build order:**" in section_body and "Done when:" in section_body,
+                    f"executable Build order required: {ref}")
+            require("`" in field(section_body, "Test checkpoint"),
+                    f"runnable Test checkpoint required: {ref}")
+            surface = field(section_body, "Surface")
+            require(surface in {"yes", "no"}, f"Surface must be yes/no: {ref}")
+            if surface == "yes":
+                for label in ("Fidelity", "Job", "Treatment", "Chrome"):
+                    field(section_body, label)
+            freeze_check = field(section_body, "Freeze check", False)
+            require(bool(freeze_check) == (frozen == "true"),
+                    f"Freeze check must match frozen frontmatter: {ref}")
+            done = rows[n][5] == "x"
+            stamp_line = field(section_body, "Verified", False)
+            receipt = field(section_body, "Review", False).strip("`")
+            require(done == bool(stamp_line) == bool(receipt),
+                    f"checkbox/stamp/receipt mismatch: {ref}")
+            if done:
+                require(all(x[0] == "x" for x in checks), f"unfinished stamped checklist: {ref}")
+                m = re.fullmatch(r"\d{4}-\d{2}-\d{2} \| §" + str(n) + r" \| ([0-9a-f]{40})", stamp_line)
+                require(m is not None, f"invalid stamp: {ref}")
+                receipt_ok(root, receipt, ref, m[1])
+            sections[ref] = Section(ref, relative, n, h[2], int(phase), deps, needs, done,
+                                    front["status"], section_body, receipt, int(rows[n][1]))
+            files[relative][2].append(ref)
+    for relative, (front, file_deps, refs, xrefs, adjacency) in files.items():
+        require(len(set(file_deps)) == len(file_deps), f"duplicate file dependencies: {relative}")
+        for dep in file_deps:
+            require(dep in ids and ids[dep] != relative,
+                    f"unresolved/self file dependency: {relative}")
+            for ref in refs:
+                sections[ref].depends = list(dict.fromkeys(
+                    sections[ref].depends + files[ids[dep]][2]))
+        if front["status"] == "superseded":
+            successor = front.get("superseded_by", "")
+            require(successor in ids and ids[successor] != relative,
+                    f"superseded TODO must name its successor: {relative}")
+        else:
+            require((front["status"] == "done") == all(sections[r].done for r in refs),
+                    f"file status disagrees with stamps: {relative}")
+        for key, (state, owner) in adjacency.items():
+            if owner is not None:
+                require(owner in sections, f"adjacency owner unresolved ({key} @ {owner}): {relative}")
+        for target in xrefs:
+            require(target in sections, f"unresolved XREF target {target}: {relative}")
+            target_file = sections[target].path
+            if target_file == relative:
+                continue
+            back = files[target_file][3]
+            require(any(sections[b].path == relative for b in back if b in sections),
+                    f"one-sided XREF {target} has no pointer back: {relative}")
+    # Deferrals carry an owner or they are abandonments; a shipped owner makes a live deferral stale.
+    for row in sections.values():
+        for marker in ("Deferred", "Resolved"):
+            for line in re.findall(r"^> \*\*" + marker + r":\*\*\s*(.+)$", row.body, re.M):
+                owner = find_ref(line.split("-> XREF:", 1)[1], row.ref[1:3], row.ref[5:7]) \
+                    if "-> XREF:" in line else None
+                require(owner is not None and owner in sections,
+                        f"{marker} without a resolving owner: {row.ref}")
+                if marker == "Deferred":
+                    require(not sections[owner].done,
+                            f"stale deferral, owner {owner} shipped; close it as Resolved: {row.ref}")
+    _index_coverage(root, files)
+    visiting, visited = set(), set()
+
+    def visit(ref):
+        require(ref in sections, f"unresolved dependency: {ref}")
+        require(ref not in visiting, f"dependency cycle: {ref}")
+        if ref in visited:
+            return
+        visiting.add(ref)
+        for dep in sections[ref].depends:
+            visit(dep)
+            require(sections[dep].phase <= sections[ref].phase,
+                    f"prerequisite in later phase: {ref} -> {dep}")
+            require(not sections[ref].done or sections[dep].done,
+                    f"stamped section has open dependency: {ref}")
+        visiting.remove(ref)
+        visited.add(ref)
+
+    for ref in sections:
+        visit(ref)
+    return sections
+
+
+def _index_coverage(root, files):
+    root_index = root / "todo/TODO-00-INDEX.md"
+    require(root_index.is_file(), "missing todo/TODO-00-INDEX.md")
+    root_text = read_text(root_index)
+    by_domain = {}
+    for relative in files:
+        by_domain.setdefault(Path(relative).parent.name, []).append(Path(relative).name)
+    for domain, names in by_domain.items():
+        index = root / "todo" / domain / "INDEX.md"
+        require(index.is_file(), f"missing domain index: todo/{domain}/INDEX.md")
+        text = read_text(index)
+        for filename in names:
+            require(filename in text, f"missing from domain index: {domain}/{filename}")
+            require(filename in root_text, f"missing from root index: {filename}")
+
+
+def disposition(row, rows):
+    """0 ready, 3 already verified, 4 waiting (inactive file, open prerequisite, or a person to answer)."""
+    if row.done:
+        return 3
+    if row.status != "active" or set(row.needs) & WAITING \
+            or any(not rows[d].done for d in row.depends):
+        return 4
+    return 0
+
+
+def ordered(sections):
+    result, pending = [], sorted(
+        sections, key=lambda r: (sections[r].phase, sections[r].path, sections[r].order))
+    while pending:
+        ref = next(r for r in pending if all(d in result for d in sections[r].depends))
+        result.append(ref)
+        pending.remove(ref)
+    return [sections[r] for r in result]
+
+
+def markdown_table(headers, rows):
+    cells = [headers, *rows]
+    widths = [max(3, *(len(row[i]) for row in cells)) for i in range(len(headers))]
+
+    def render(row):
+        return "| " + " | ".join(cell.ljust(width) for cell, width in zip(row, widths)) + " |"
+
+    return [render(headers), render(["-" * width for width in widths]),
+            *(render(row) for row in rows)]
+
+
+def projection(root=ROOT):
+    all_rows = graph(root)
+    rows = ordered(all_rows)
+    lines = ["# Recto implementation plan", "",
+             "Generated by `python scripts/todo-graph.py plan --sync`; do not edit by hand. Edit the "
+             "TODO sections (including their Phase and Needs fields) and regenerate. The boxes below "
+             "are a projection of each file's Implementation Order table and flip in exactly one "
+             "place: the stamp written by review.", "",
+             "The acceptance bar is `docs/plans/2026-10-13-recto-foundation.md` (architecture, "
+             "milestones M0 to M6, performance targets) plus `design/SPEC.md` (the interface). "
+             "Format and rules: `todo/README.md`. Run sections with the `process-plan`, "
+             "`process-phase` and `process-todo-section` skills; "
+             "`python scripts/todo-graph.py query ready` lists what can run now. Pasting a whole "
+             "row from a table below into `process todo section:` is a complete instruction.", ""]
+    checks = {row.ref: re.findall(r"^- \[([ x])\] (.+)$", row.body, re.M) for row in rows}
+    for phase in sorted({row.phase for row in rows}):
+        phase_rows = [row for row in rows if row.phase == phase]
+        item_count = sum(len(checks[row.ref]) for row in phase_rows)
+        title = f"Phase {phase}: {PHASES[phase]}" if phase in PHASES else f"Phase {phase}"
+        lines += [f"### {title}", "", f"Sections: {len(phase_rows)} | Checklist items: {item_count}", ""]
+        lines += markdown_table(
+            ["Status", "Reference", "Deliverable", "Needs", "Items"],
+            [[f"[{'x' if row.done else ' '}]", row.ref, row.title,
+              ", ".join(row.needs) or "none", str(len(checks[row.ref]))] for row in phase_rows],
+        )
+        lines.append("")
+    total_items = sum(len(items) for items in checks.values())
+    completed_items = sum(state == "x" for items in checks.values() for state, _ in items)
+    ready = sum(disposition(r, all_rows) == 0 for r in rows)
+    lines += [f"Progress: {sum(r.done for r in rows)}/{len(rows)} verified sections, "
+              f"{ready} ready to run now.", "",
+              f"Checklist: {completed_items}/{total_items} items completed (includes Commit items).", ""]
+    return "\n".join(lines)
+
+
+def projections(root=ROOT, sync=False):
+    expected = projection(root)
+    target = Path(root) / PLAN
+    if sync:
+        atomic(target, expected)
+    else:
+        require(target.is_file() and read_text(target) == expected,
+                f"stale projection: {PLAN}; run plan --sync")
+
+
+def deferrals(root=ROOT):
+    rows = graph(root)
+    found = []
+    for row in ordered(rows):
+        for marker in ("Deferred", "Resolved"):
+            for line in re.findall(r"^> \*\*" + marker + r":\*\*\s*(.+)$", row.body, re.M):
+                found.append({"ref": row.ref, "state": marker.lower(), "text": line.strip()})
+    return found
+
+
+def adjacency_report(root=ROOT):
+    graph(root)  # validation is what makes the declarations trustworthy
+    report = {}
+    for path in sorted((Path(root) / "todo").glob("[0-9][0-9]-*/TODO-*.md")):
+        relative = path.relative_to(root).as_posix()
+        _, body = front_matter(read_text(path), relative)
+        parsed = adjacency_of(body, relative, path.parent.name[:2],
+                              re.fullmatch(r"TODO-(\d{2})-[a-z0-9-]+\.md", path.name)[1])
+        report[relative] = {key: (state if owner is None else f"{state} @ {owner}")
+                             for key, (state, owner) in parsed.items()}
+    return report
+
+
+def stamp(root, ref, sha, reviews, checks, date):
+    """Close a section: write its receipt, tick its row and checklist, add the Verified and Review lines."""
+    root = Path(root)
+    rows = graph(root)
+    require(ref in rows, "unresolved section: " + ref)
+    row = rows[ref]
+    require(not row.done, f"already verified: {ref}")
+    require(all(rows[d].done for d in row.depends), f"open prerequisite: {ref}")
+    require(not set(row.needs) & WAITING,
+            f"still waiting on {', '.join(sorted(set(row.needs) & WAITING))}: {ref}")
+    require(re.fullmatch(r"[0-9a-f]{40}", sha) is not None,
+            "the implementation SHA must be a full 40-character commit")
+    kind = subprocess.run(["git", "-C", str(root), "cat-file", "-t", sha],
+                          capture_output=True, text=True, timeout=30)
+    require(kind.returncode == 0 and kind.stdout.strip() == "commit", "not a commit: " + sha)
+    on_branch = subprocess.run(["git", "-C", str(root), "merge-base", "--is-ancestor", sha, "HEAD"],
+                               capture_output=True, timeout=30)
+    require(on_branch.returncode == 0, "commit is not on this branch: " + sha)
+    open_items = re.findall(r"^- \[ \] (?!Commit:)(.+)$", row.body, re.M)
+    require(not open_items,
+            f"unticked checklist items in {ref}: {open_items[0] if open_items else ''}")
+    slug = re.sub(r"[^a-z0-9]+", "-", ref.lower().replace("§", "s")).strip("-")
+    receipt = f"docs/reviews/{slug}.json"
+    data = {"ref": ref, "title": row.title, "implementation_sha": sha, "date": date,
+            "reviews": reviews, "checks": checks}
+    receipt_data_ok(data, ref, sha)  # every argument is checked before anything is written
+    receipt_path = root / receipt
+    require(not receipt_path.exists(), f"receipt already exists: {receipt}")
+    path = root / row.path
+    original = read_text(path)
+    text = original
+    body = row.body
+    new_body = re.sub(r"^- \[ \] (Commit:.+)$", r"- [x] \1", body, flags=re.M)
+    new_body += f"\n\n> **Verified:** {date} | §{row.number} | {sha}\n> **Review:** `{receipt}`"
+    require(text.count(body) == 1, f"section body is not unique in {row.path}")
+    text = text.replace(body, new_body)
+    line = re.compile(r"^(\|\s*\d+\s*\|\s*§" + str(row.number) + r"\s*\|[^\n]*\|\s*)\[ \](\s*\|)$", re.M)
+    require(len(line.findall(text)) == 1, f"implementation row not found: {ref}")
+    text = line.sub(r"\1[x]\2", text)
+    siblings = [r for r in rows.values() if r.path == row.path and r.ref != ref]
+    if all(r.done for r in siblings):
+        text, n = re.subn(r"\A(---\n(?:.*\n)*?)status: [a-z]+\n", r"\1status: done\n", text, count=1)
+        require(n == 1, f"frontmatter status not found: {row.path}")
+    atomic(receipt_path, json.dumps(data, indent=2) + "\n")
+    atomic(path, text)
+    try:
+        graph(root)
+    except Refused:
+        atomic(path, original)  # leave the graph as it was
+        receipt_path.unlink()
+        raise
+    return receipt

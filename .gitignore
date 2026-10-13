@@ -1,0 +1,14 @@
+# Derived output: always reproducible from the tracked sources.
+build/
+__pycache__/
+*.pyc
+
+# Visual Studio and MSBuild output (lands with the M0 scaffold, D00 T01 §3).
+.vs/
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+
+# Local tooling state.
+.tools/

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recto C: Search and selection</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:#4A3FD0}a:hover{color:#3529A8}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.tb{display:flex;align-items:center;gap:8px;height:30px;padding:0 6px 0 12px;border-radius:8px;font-size:12px;color:#55526B;text-decoration:none;max-width:240px;white-space:nowrap}
+.tb.on{background:#FFFFFF;color:#17152B;box-shadow:0 1px 3px rgba(23,21,43,.12)}
+.tb span{overflow:hidden;text-overflow:ellipsis}
+.wc{width:46px;height:44px;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:#17152B}
+.ib{width:36px;height:36px;border:0;border-radius:10px;background:transparent;color:#17152B;display:flex;align-items:center;justify-content:center;flex:none;text-decoration:none}
+.ib.on{background:#EFEDFF;color:#4A3FD0}
+.sb{width:30px;height:30px;border:0;border-radius:8px;background:transparent;color:#17152B;display:flex;align-items:center;justify-content:center;flex:none;font:inherit;font-size:12px;font-weight:600}
+.sb.on{background:#EFEDFF;color:#4A3FD0}
+.tx{width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:inherit;display:flex;align-items:center;justify-content:center}
+.sep{width:1px;height:22px;background:#E4E2EF;margin:0 4px}
+.cap{font-size:12px;color:#55526B}
+.hit{background:#E3DFFF;border-radius:2px}
+.cur{background:#5B4FE0;color:#FFFFFF;border-radius:2px}
+.selx{background:rgba(91,79,224,.18)}
+.res{display:flex;gap:10px;padding:9px 12px;border-radius:10px;font-size:13px;line-height:18px;color:#3A3752;border:0;background:transparent;text-align:left;font-family:inherit;width:100%}
+.res b{color:#17152B;background:#E3DFFF;font-weight:600;border-radius:2px}
+.res em{font-style:normal;font-size:11px;color:#55526B;flex:none;width:34px}
+.fb{display:flex;align-items:center;gap:6px;height:32px;padding:0 10px;border:0;background:transparent;color:#FFFFFF;font:inherit;font-size:13px;border-radius:8px;white-space:nowrap}
+</style>
+</helmet>
+<div style="width:1440px;height:900px;display:flex;flex-direction:column;background:#F6F5FB;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;font-size:14px;color:#17152B;overflow:hidden">
+  <div style="height:44px;display:flex;align-items:center;gap:4px;padding-left:14px;flex:none">
+    <svg viewBox="0 0 64 64" width="20" height="20" aria-hidden="true" style="margin-right:10px"><rect x="2" y="2" width="60" height="60" rx="16" fill="#5B4FE0"></rect><path fill-rule="evenodd" fill="#FFFFFF" d="M18 14 H35 A11 11 0 0 1 35 36 H27 V50 H18 Z M27 22 V28 H34 A3 3 0 0 0 34 22 Z"></path><path d="M31 36 H41 L49 50 H39 Z" fill="#C9C4FF"></path></svg>
+    <a class="tb" href="C-Home.dc.html"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="{{i.home}}"></path></svg></a>
+    <div class="tb on"><span>Recto foundation plan.pdf</span><button class="tx" aria-label="Close tab"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button></div>
+    <button class="ib" aria-label="New tab" style="width:30px;height:30px"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="{{i.plus}}"></path></svg></button>
+    <div style="flex-grow:1"></div>
+    <button style="display:flex;align-items:center;gap:10px;width:340px;height:30px;padding:0 10px;border-radius:8px;border:1px solid #E4E2EF;background:#FFFFFF;font:inherit;font-size:12px;color:#55526B"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="{{i.search}}"></path></svg><span style="flex-grow:1;text-align:left">Search, open or run a command</span><span style="font-size:11px">Ctrl K</span></button>
+    <div style="flex-grow:1"></div>
+    <a class="ib" href="C-Settings.dc.html" aria-label="Settings" style="width:32px;height:32px"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.gear}}"></path></svg></a>
+    <button class="wc" aria-label="Minimize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.min}}"></path></svg></button>
+    <button class="wc" aria-label="Maximize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.max}}"></path></svg></button>
+    <button class="wc" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button>
+  </div>
+  <div style="flex-grow:1;min-height:0;position:relative;background:#ECEBF3;border-top-left-radius:12px;border-top-right-radius:12px;margin:0 6px;overflow:hidden;display:flex;justify-content:center;padding-top:28px">
+    <article style="width:700px;height:880px;flex:none;background:#FFFFFF;border-radius:2px;box-shadow:0 2px 6px rgba(23,21,43,.08),0 12px 40px rgba(23,21,43,.10);padding:56px 70px;box-sizing:border-box;font-family:Cambria,Georgia,serif;color:#17152B;display:flex;flex-direction:column;gap:12px;font-size:13px;line-height:21px;margin-right:180px">
+      <h3 style="margin:0;font-size:15px">4.2 MuPDF's rules, as Recto applies them</h3>
+      <p style="margin:0">1. <b>Locks first.</b> The base context is created with a lock table of FZ_LOCK_MAX locks. Without it, cloning a context is not allowed and nothing below is safe.</p>
+      <p style="margin:0">2. <b>One context per thread.</b> Every thread that calls MuPDF has its own fz_context, made with fz_clone_context(base) at thread start.</p>
+      <p style="margin:0">3. <b>A document belongs to one thread.</b> An fz_document and every fz_page loaded from it are used only on that document's actor thread.</p>
+      <p style="margin:0">4. <b><span class="cur">Display lists</span> are the hand-off.</b> The actor builds an fz_<span class="hit">display_list</span> for a page. <span class="selx">Once built, a <span class="hit">display list</span> is read-only and can be rendered by many threads at the same time, each with its own context.</span> This is how rendering runs in parallel while the document stays single-threaded.</p>
+      <p style="margin:0">5. <b>Other objects move, but are never shared.</b> A pixmap, buffer or stext page made on one thread may be passed to another, provided only one thread uses it at a time.</p>
+      <p style="margin:0">6. <b>Reference counts are thread-safe; the objects are not.</b> fz_keep and fz_drop may run on any thread with that thread's context.</p>
+    </article>
+    <div role="toolbar" aria-label="Selection" style="position:absolute;left:300px;top:250px;display:flex;align-items:center;gap:2px;padding:4px;background:#17152B;border-radius:12px;box-shadow:0 10px 28px rgba(23,21,43,.35)">
+      <button class="fb" style="background:#2E2A52"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.copy}}"></path></svg>Copy</button>
+      <button class="fb"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.search}}"></path></svg>Find</button>
+      <button class="fb"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.link}}"></path></svg>Link</button>
+    </div>
+    <section aria-label="Find in document" style="position:absolute;right:16px;top:16px;width:380px;background:#FFFFFF;border-radius:16px;box-shadow:0 2px 4px rgba(23,21,43,.06),0 16px 40px rgba(23,21,43,.16);overflow:hidden">
+      <div style="display:flex;align-items:center;gap:6px;padding:8px 8px 8px 14px;border-bottom:1px solid #EEEDF6">
+        <svg class="ic" viewBox="0 0 24 24" style="color:#5B4FE0" aria-hidden="true"><path d="{{i.search}}"></path></svg>
+        <input aria-label="Find" value="display list" style="border:0;outline:0;font:inherit;font-size:14px;flex-grow:1;min-width:0;background:transparent;color:#17152B">
+        <span class="cap" style="white-space:nowrap">2 of 14</span>
+        <button class="sb" aria-label="Previous"><svg class="ic" viewBox="0 0 24 24" style="transform:rotate(-90deg)" aria-hidden="true"><path d="{{i.cr}}"></path></svg></button>
+        <button class="sb" aria-label="Next"><svg class="ic" viewBox="0 0 24 24" style="transform:rotate(90deg)" aria-hidden="true"><path d="{{i.cr}}"></path></svg></button>
+        <button class="sb" aria-label="Close find"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button>
+      </div>
+      <div style="display:flex;gap:6px;padding:8px 14px;border-bottom:1px solid #EEEDF6"><button class="sb" aria-label="Match case" style="width:auto;padding:0 10px;border:1px solid #E4E2EF">Aa</button><button class="sb" aria-label="Whole words" style="width:auto;padding:0 10px;border:1px solid #E4E2EF">Whole word</button><div style="flex-grow:1"></div><span class="cap" style="align-self:center">4 pages</span></div>
+      <div style="padding:6px;display:flex;flex-direction:column;gap:1px">
+        <button class="res"><em>p. 4</em><span>…immutable, shareable wrapper over fz_<b>display_list</b>…</span></button>
+        <button class="res"><em>p. 5</em><span>…for a page, builds an fz_<b>display_list</b>…</span></button>
+        <button class="res" style="background:#EFEDFF;color:#17152B"><em style="color:#4A3FD0;font-weight:600">p. 5</em><span>4. <b>Display lists</b> are the hand-off. The actor builds…</span></button>
+        <button class="res"><em>p. 5</em><span>…Once built, a <b>display list</b> is read-only…</span></button>
+        <button class="res"><em>p. 6</em><span>…builds an fz_<b>display_list</b> (fz_new_<b>display_list</b>…</span></button>
+        <button class="res"><em>p. 7</em><span>rc_render_tile(fz_context *ctx, fz_<b>display_list</b> *list…</span></button>
+        <a href="C-Search.dc.html" style="font-size:13px;padding:8px 12px">Show all 14 results</a>
+      </div>
+    </section>
+    <div role="toolbar" aria-label="Document commands" style="position:absolute;left:50%;bottom:22px;transform:translateX(-50%);display:flex;align-items:center;gap:2px;padding:6px;background:#FFFFFF;border-radius:16px;box-shadow:0 2px 4px rgba(23,21,43,.06),0 12px 36px rgba(23,21,43,.18)">
+      <button class="ib" aria-label="Pages panel"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.side}}"></path></svg></button>
+      <span class="sep"></span>
+      <span style="font-size:13px;padding:0 8px;white-space:nowrap"><b>5</b> <span class="cap" style="font-size:13px">/ 9</span></span>
+      <span class="sep"></span>
+      <span style="font-size:13px;width:52px;text-align:center">100%</span>
+      <span class="sep"></span>
+      <a class="ib on" href="C-Viewer.dc.html" aria-label="Find"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.search}}"></path></svg></a>
+      <a href="C-Convert.dc.html" style="display:flex;align-items:center;gap:8px;height:36px;padding:0 14px;border-radius:10px;background:#5B4FE0;color:#FFFFFF;font-size:13px;font-weight:600;text-decoration:none"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.convert}}"></path></svg>Convert</a>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+renderVals() {
+const i={search:"M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM20 20l-4.2-4.2",convert:"M4 8h14l-4-4M20 16H6l4 4",gear:"M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1",cr:"M9 6l6 6-6 6",x:"M6 6l12 12M18 6L6 18",min:"M5 12h14",max:"M5 5h14v14H5z",plus:"M12 5v14M5 12h14",home:"M4 11l8-7 8 7v9h-5v-6H9v6H4z",side:"M4 5h16v14H4zM9 5v14",copy:"M8 8h11v12H8zM5 16V4h11",link:"M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"};
+return {i};
+}
+}
+</script>
+</body>
+</html>

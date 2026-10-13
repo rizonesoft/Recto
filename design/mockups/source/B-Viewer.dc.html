@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recto B: Viewer</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#F48A6E}a:hover{color:#F7A890}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.serif{font-family:'Newsreader',Georgia,serif}
+.mo{height:46px;padding:0 14px;border:0;background:transparent;font:inherit;font-size:13px;color:#B8B2A8;position:relative;text-decoration:none;display:flex;align-items:center}
+.mo.on{color:#EDEAE4;font-weight:600}
+.mo.on::after{content:"";position:absolute;left:14px;right:14px;bottom:0;height:3px;border-radius:2px 2px 0 0;background:#F0603C}
+.ib{width:34px;height:34px;border:0;border-radius:6px;background:transparent;color:#EDEAE4;display:flex;align-items:center;justify-content:center;flex:none;text-decoration:none}
+.ib.on{background:#3A3734}
+.wc{width:46px;height:46px;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:#EDEAE4}
+.pill{display:flex;align-items:center;gap:8px;height:30px;padding:0 4px 0 12px;border-radius:15px;font-size:12px;color:#B8B2A8;max-width:240px;box-sizing:border-box}
+.pill.on{background:#3A3734;color:#EDEAE4}
+.pill span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.px{width:24px;height:24px;border:0;border-radius:12px;background:transparent;color:inherit;display:flex;align-items:center;justify-content:center;flex:none}
+.sep{width:1px;height:22px;background:#3A3734;margin:0 6px}
+.cap{font-size:12px;color:#B8B2A8}
+.it{height:44px;padding:0 4px;border:0;background:transparent;font:inherit;font-size:13px;color:#B8B2A8;position:relative}
+.it.on{color:#EDEAE4;font-weight:600}
+.it.on::after{content:"";position:absolute;left:4px;right:4px;bottom:0;height:2px;background:#F0603C}
+.kv{display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px;padding:9px 0;border-top:1px solid #34312E;font-size:13px}
+.kv span:first-child{color:#B8B2A8}
+.th{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:11px;color:#B8B2A8;border:0;background:transparent;font-family:inherit;padding:0}
+.bar{height:3px;border-radius:2px;background:#CFCBC3;display:block}
+.doc td{padding:5px 8px;border-top:1px solid #D9D6D0;font-size:10.5px;line-height:15px;vertical-align:top}
+.doc th{padding:5px 8px;font-size:10.5px;text-align:left;border-bottom:1.5px solid #1F1D1B}
+</style>
+</helmet>
+<div style="width:1440px;height:900px;display:flex;flex-direction:column;background:#1F1E1C;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;font-size:14px;color:#EDEAE4;overflow:hidden">
+  <div style="height:46px;display:flex;align-items:center;padding-left:14px;background:#1B1A19;flex:none;border-bottom:1px solid #2E2C2A">
+    <svg viewBox="0 0 64 64" width="22" height="22" aria-hidden="true"><rect x="2" y="2" width="60" height="60" rx="14" fill="#2A2826"></rect><rect x="15" y="10" width="34" height="44" rx="3" fill="#F5F4F0"></rect><path d="M38 6 H46 V26 L42 22 L38 26 Z" fill="#F0603C"></path></svg>
+    <span class="serif" style="font-size:20px;font-weight:500;margin:0 26px 0 10px">Recto</span>
+    <nav style="display:flex;height:46px" aria-label="Mode">
+      <a class="mo" href="B-Home.dc.html">Home</a><a class="mo on" href="B-Viewer.dc.html">Read</a><a class="mo" href="B-Convert.dc.html">Convert</a><a class="mo" href="B-Organize.dc.html">Organize</a>
+    </nav>
+    <div style="flex-grow:1"></div>
+    <a class="ib" href="B-Settings.dc.html" aria-label="Settings"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.gear}}"></path></svg></a>
+    <span style="width:8px"></span>
+    <button class="wc" aria-label="Minimize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.min}}"></path></svg></button>
+    <button class="wc" aria-label="Maximize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.max}}"></path></svg></button>
+    <button class="wc" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button>
+  </div>
+  <div style="height:48px;display:flex;align-items:center;gap:6px;padding:0 10px;background:#232120;border-bottom:1px solid #34312E;flex:none">
+    <div class="pill on"><span>Recto foundation plan.pdf</span><button class="px" aria-label="Close document"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button></div>
+    <div class="pill"><span>Lease agreement 2026.pdf</span><button class="px" aria-label="Close document"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button></div>
+    <button class="ib" aria-label="Open a document"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.plus}}"></path></svg></button>
+    <div style="flex-grow:1"></div>
+    <div role="toolbar" aria-label="Document commands" style="display:flex;align-items:center;gap:2px">
+      <button class="ib" aria-label="Save a copy"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.save}}"></path></svg></button>
+      <button class="ib" aria-label="Print"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.print}}"></path></svg></button>
+      <span class="sep"></span>
+      <button class="ib" aria-label="Zoom out"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.zout}}"></path></svg></button>
+      <button style="height:30px;padding:0 10px;border-radius:6px;border:1px solid #4A4642;background:#2E2C2A;color:#EDEAE4;font:inherit;font-size:13px">90%</button>
+      <button class="ib" aria-label="Zoom in"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.zin}}"></path></svg></button>
+      <button class="ib" aria-label="Fit width"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.fit}}"></path></svg></button>
+      <span class="sep"></span>
+      <button class="ib" aria-label="Two-page spread"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.spread}}"></path></svg></button>
+      <button class="ib" aria-label="Rotate"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.rotate}}"></path></svg></button>
+      <a class="ib" href="B-Search.dc.html" aria-label="Find"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.search}}"></path></svg></a>
+      <span class="sep"></span>
+      <button class="ib on" aria-label="Show inspector"><svg class="ic" viewBox="0 0 24 24" style="transform:scaleX(-1)" aria-hidden="true"><path d="{{i.side}}"></path></svg></button>
+    </div>
+  </div>
+  <div style="display:flex;flex-grow:1;min-height:0">
+    <div style="flex-grow:1;min-width:0;display:flex;flex-direction:column">
+      <div style="flex-grow:1;min-height:0;background:#141312;display:flex;justify-content:center;padding-top:28px;overflow:hidden">
+        <article class="doc" style="width:620px;height:802px;flex:none;background:#FFFFFF;box-shadow:0 10px 40px rgba(0,0,0,.6);padding:64px 72px;box-sizing:border-box;font-family:Cambria,Georgia,serif;color:#1F1D1B;display:flex;flex-direction:column;gap:12px">
+          <h1 style="margin:0;font-size:26px;font-weight:700">Recto: foundation plan</h1>
+          <p style="margin:0;font-size:11px;color:#55504A">Status: draft for implementation. Written 2026-10-13. Review again at the end of milestone M1.</p>
+          <p style="margin:6px 0 0;font-size:12px;line-height:19px">Recto is an open-source PDF viewer and converter for Windows, written in C and C++ with a WinUI 3 interface. This plan records every decision made so far, the architecture, the MuPDF thread-safety setup, and the milestones to version 1.</p>
+          <h2 style="margin:8px 0 0;font-size:17px">1. Decisions</h2>
+          <table style="border-collapse:collapse;width:100%">
+            <tr><th>#</th><th>Decision</th><th>Choice</th></tr>
+            <tr><td>D1</td><td>Product name</td><td>Recto, the right-hand page of an open book</td></tr>
+            <tr><td>D2</td><td>License</td><td>AGPL-3.0-or-later, open source from the first public commit</td></tr>
+            <tr><td>D3</td><td>PDF engine</td><td>MuPDF, pinned to a release tag</td></tr>
+            <tr><td>D4</td><td>UI</td><td>WinUI 3 on Windows App SDK 2.4.0, C++/WinRT</td></tr>
+            <tr><td>D5</td><td>Languages</td><td>C17 for the bridge, C++20 for everything else</td></tr>
+            <tr><td>D6</td><td>Distribution</td><td>MSIX through the Microsoft Store</td></tr>
+            <tr><td>D7</td><td>v1 conversions</td><td>Images, text, merge, split, Office to PDF, PDF to Word</td></tr>
+            <tr><td>D8</td><td>Target</td><td>Windows 11, x64 and ARM64</td></tr>
+          </table>
+        </article>
+      </div>
+      <div style="height:116px;flex:none;background:#1B1A19;border-top:1px solid #2E2C2A;display:flex;align-items:center;gap:14px;padding:0 16px" aria-label="Page filmstrip">
+        <button class="ib" aria-label="Previous page"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.cl}}"></path></svg></button>
+        <div style="display:flex;gap:14px;flex-grow:1;justify-content:center">
+          <sc-for list="{{film}}" as="f" hint-placeholder-count="9">
+            <button class="th"><span style="width:56px;height:72px;background:#F5F4F0;padding:8px 7px;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;{{f.ring}}"><span class="bar" style="width:70%;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:86%"></span><span class="bar" style="width:94%"></span><span class="bar" style="width:60%"></span></span><span style="{{f.num}}">{{f.n}}</span></button>
+          </sc-for>
+        </div>
+        <button class="ib" aria-label="Next page"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.cr}}"></path></svg></button>
+        <span class="cap" style="width:90px;text-align:right">Page 1 of 9</span>
+      </div>
+    </div>
+    <aside style="width:320px;flex:none;background:#232120;border-left:1px solid #34312E;display:flex;flex-direction:column;padding:0 20px;box-sizing:border-box" aria-label="Inspector">
+      <div style="display:flex;gap:18px;border-bottom:1px solid #34312E" role="tablist"><button class="it" role="tab">Outline</button><a class="it" role="tab" href="B-Search.dc.html" style="text-decoration:none;display:flex;align-items:center">Search</a><button class="it on" role="tab">Info</button></div>
+      <h2 class="serif" style="margin:18px 0 10px;font-size:22px;font-weight:500">Document</h2>
+      <div>
+        <sc-for list="{{info}}" as="k" hint-placeholder-count="9"><div class="kv"><span>{{k.k}}</span><span>{{k.v}}</span></div></sc-for>
+      </div>
+      <h3 style="margin:18px 0 6px;font-size:13px;font-weight:600">Fonts</h3>
+      <div class="cap" style="font-size:13px;line-height:22px">Cambria, embedded subset<br>Cambria Bold, embedded subset<br>Consolas, embedded subset</div>
+    </aside>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+renderVals() {
+const i={search:"M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM20 20l-4.2-4.2",save:"M12 4v11M7 10l5 5 5-5M5 20h14",print:"M7 9V4h10v5M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M7 14h10v6H7z",zin:"M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM20 20l-4.2-4.2M8 11h6M11 8v6",zout:"M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM20 20l-4.2-4.2M8 11h6",rotate:"M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7",gear:"M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1",cr:"M9 6l6 6-6 6",cl:"M15 6l-6 6 6 6",x:"M6 6l12 12M18 6L6 18",min:"M5 12h14",max:"M5 5h14v14H5z",plus:"M12 5v14M5 12h14",side:"M4 5h16v14H4zM9 5v14",fit:"M4 12h16M7 9l-3 3 3 3M17 9l3 3-3 3",spread:"M3 5h8v14H3zM13 5h8v14h-8z"};
+const film=[1,2,3,4,5,6,7,8,9].map(n=>({n:String(n),ring:n===1?"box-shadow:0 0 0 2px #1B1A19,0 0 0 4px #F0603C":"",num:n===1?"color:#EDEAE4;font-weight:600":""}));
+const info=[{k:"Title",v:"Recto: foundation plan"},{k:"Author",v:"[Author name]"},{k:"Pages",v:"9"},{k:"Page size",v:"Letter, 8.5 × 11 in"},{k:"PDF version",v:"1.7"},{k:"File size",v:"[File size]"},{k:"Created",v:"13 Oct 2026, 18:10"},{k:"Producer",v:"[PDF producer]"},{k:"Security",v:"No password"}];
+return {i,film,info};
+}
+}
+</script>
+</body>
+</html>

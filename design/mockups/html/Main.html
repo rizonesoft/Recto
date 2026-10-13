@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recto design directions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&amp;family=Newsreader:opsz,wght@6..72,500;6..72,600&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#1E4FC2}a:hover{color:#163C94}
+.sw{display:flex;flex-direction:column;gap:6px;font-size:12px;color:#4A4A4A}
+.sw i{display:block;width:72px;height:40px;border-radius:6px;border:1px solid rgba(0,0,0,.08)}
+.li{display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:20px;color:#2B2B2B}
+.li b{flex:none;width:6px;height:6px;border-radius:3px;margin-top:7px}
+.go{display:inline-flex;align-items:center;justify-content:center;height:40px;padding:0 18px;border-radius:6px;font-weight:600;font-size:14px;text-decoration:none}
+</style>
+</head>
+<body>
+<div style="width:1440px;height:900px;box-sizing:border-box;padding:56px 64px;background:#F4F4F6;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;color:#1B1B1B;display:flex;flex-direction:column;gap:36px">
+  <div style="display:flex;flex-direction:column;gap:8px">
+    <h1 style="margin:0;font-family:'Segoe UI Variable Display','Segoe UI',system-ui,sans-serif;font-size:40px;font-weight:600;letter-spacing:-0.5px">Recto design directions</h1>
+    <p style="margin:0;font-size:16px;color:#4A4A4A">Three complete directions for the WinUI 3 app. Each has its own page on this canvas with every screen, the icon, the README banner and the social preview.</p>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:32px;flex-grow:1">
+
+    <div style="background:#FFFFFF;border:1px solid #E3E3E6;border-radius:12px;padding:32px;display:flex;flex-direction:column;gap:24px">
+      <div style="display:flex;align-items:center;gap:20px">
+        <svg viewBox="0 0 64 64" width="88" height="88" role="img" aria-label="Version A icon: an open book with a solid right-hand page"><path d="M6 16 L29 11 V55 L6 59 Z" fill="#C9D7F8"></path><path d="M11 24 L24 21.5 M11 31 L24 28.5 M11 38 L24 35.5" stroke="#8EABEF" stroke-width="3" stroke-linecap="round"></path><path d="M33 11 H49 L58 20 V55 H33 Z" fill="#2459D6"></path><path d="M49 11 V20 H58 Z" fill="#9DB8F2"></path><rect x="38" y="29" width="15" height="3" rx="1.5" fill="#FFFFFF"></rect><rect x="38" y="36" width="15" height="3" rx="1.5" fill="#FFFFFF" opacity=".75"></rect><rect x="38" y="43" width="10" height="3" rx="1.5" fill="#FFFFFF" opacity=".75"></rect></svg>
+        <div><div style="font-size:13px;font-weight:600;color:#2459D6;letter-spacing:.4px">VERSION A</div><div style="font-family:'Segoe UI Variable Display','Segoe UI',sans-serif;font-size:30px;font-weight:600">Fluent Classic</div></div>
+      </div>
+      <p style="margin:0;font-size:15px;line-height:22px;color:#333">Looks like it shipped with Windows 11. Mica, tabs in the title bar, a left navigation rail and a full command bar.</p>
+      <div style="display:flex;gap:10px"><div class="sw"><i style="background:#2459D6"></i>#2459D6</div><div class="sw"><i style="background:#EEF1F6"></i>#EEF1F6</div><div class="sw"><i style="background:#FFFFFF"></i>#FFFFFF</div><div class="sw"><i style="background:#1B1B1B"></i>#1B1B1B</div></div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div class="li"><b style="background:#2459D6"></b>Light first, dark theme matches Windows</div>
+        <div class="li"><b style="background:#2459D6"></b>Thumbnails, outline and search share one left pane</div>
+        <div class="li"><b style="background:#2459D6"></b>Wordmark in Segoe UI Variable Display</div>
+      </div>
+      <div style="margin-top:auto"><a class="go" href="A-Home.html" style="background:#2459D6;color:#FFFFFF">See version A</a></div>
+    </div>
+
+    <div style="background:#1B1A19;border:1px solid #1B1A19;border-radius:12px;padding:32px;display:flex;flex-direction:column;gap:24px;color:#EDEAE4">
+      <div style="display:flex;align-items:center;gap:20px">
+        <svg viewBox="0 0 64 64" width="88" height="88" role="img" aria-label="Version B icon: a page with a vermilion bookmark ribbon"><rect x="2" y="2" width="60" height="60" rx="14" fill="#2A2826"></rect><rect x="15" y="10" width="34" height="44" rx="3" fill="#F5F4F0"></rect><path d="M38 6 H46 V26 L42 22 L38 26 Z" fill="#F0603C"></path><rect x="20" y="30" width="20" height="2.6" rx="1.3" fill="#8A857D"></rect><rect x="20" y="36" width="24" height="2.6" rx="1.3" fill="#8A857D"></rect><rect x="20" y="42" width="16" height="2.6" rx="1.3" fill="#8A857D"></rect></svg>
+        <div><div style="font-size:13px;font-weight:600;color:#F48A6E;letter-spacing:.4px">VERSION B</div><div style="font-family:'Newsreader',Georgia,serif;font-size:34px;font-weight:500">Ink</div></div>
+      </div>
+      <p style="margin:0;font-size:15px;line-height:22px;color:#D3CFC7">A dark reading room. Read, Convert and Organize modes sit in the title bar; a page filmstrip runs along the bottom.</p>
+      <div style="display:flex;gap:10px"><div class="sw" style="color:#BDB8AF"><i style="background:#F0603C"></i>#F0603C</div><div class="sw" style="color:#BDB8AF"><i style="background:#1B1A19;border-color:#4A4744"></i>#1B1A19</div><div class="sw" style="color:#BDB8AF"><i style="background:#2A2826"></i>#2A2826</div><div class="sw" style="color:#BDB8AF"><i style="background:#EDEAE4"></i>#EDEAE4</div></div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div class="li" style="color:#EDEAE4"><b style="background:#F0603C"></b>Dark first, warm neutrals, light theme included</div>
+        <div class="li" style="color:#EDEAE4"><b style="background:#F0603C"></b>Search and outline in a right-hand inspector</div>
+        <div class="li" style="color:#EDEAE4"><b style="background:#F0603C"></b>Wordmark in Newsreader, a book serif</div>
+      </div>
+      <div style="margin-top:auto"><a class="go" href="B-Home.html" style="background:#F0603C;color:#1B1A19">See version B</a></div>
+    </div>
+
+    <div style="background:#FFFFFF;border:1px solid #E3E3E6;border-radius:12px;padding:32px;display:flex;flex-direction:column;gap:24px">
+      <div style="display:flex;align-items:center;gap:20px">
+        <svg viewBox="0 0 64 64" width="88" height="88" role="img" aria-label="Version C icon: a geometric R monogram on violet"><rect x="2" y="2" width="60" height="60" rx="16" fill="#5B4FE0"></rect><path fill-rule="evenodd" fill="#FFFFFF" d="M18 14 H35 A11 11 0 0 1 35 36 H27 V50 H18 Z M27 22 V28 H34 A3 3 0 0 0 34 22 Z"></path><path d="M31 36 H41 L49 50 H39 Z" fill="#C9C4FF"></path></svg>
+        <div><div style="font-size:13px;font-weight:600;color:#5B4FE0;letter-spacing:.4px">VERSION C</div><div style="font-family:'Instrument Sans',sans-serif;font-size:32px;font-weight:600;letter-spacing:-0.5px">Focus</div></div>
+      </div>
+      <p style="margin:0;font-size:15px;line-height:22px;color:#333">The chrome gets out of the way. A floating toolbar under the page, panels that slide in as cards, one box to search, open and convert.</p>
+      <div style="display:flex;gap:10px"><div class="sw"><i style="background:#5B4FE0"></i>#5B4FE0</div><div class="sw"><i style="background:#C9C4FF"></i>#C9C4FF</div><div class="sw"><i style="background:#F6F5FB"></i>#F6F5FB</div><div class="sw"><i style="background:#17152B"></i>#17152B</div></div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div class="li"><b style="background:#5B4FE0"></b>Light first, near-black violet dark theme</div>
+        <div class="li"><b style="background:#5B4FE0"></b>Command box on Home, Ctrl+K everywhere</div>
+        <div class="li"><b style="background:#5B4FE0"></b>Wordmark in Instrument Sans</div>
+      </div>
+      <div style="margin-top:auto"><a class="go" href="C-Home.html" style="background:#5B4FE0;color:#FFFFFF">See version C</a></div>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,67 @@
+{
+  "$description": "Recto colour tokens. One accent (vermilion) in both themes. Light uses cool Fluent neutrals, dark uses warm charcoal neutrals. See design/SPEC.md section 4.",
+  "accentRamp": {
+    "SystemAccentColorLight3": "#F48A6E",
+    "SystemAccentColorLight2": "#F0603C",
+    "SystemAccentColorLight1": "#E65A33",
+    "SystemAccentColor": "#D94E28",
+    "SystemAccentColorDark1": "#C8431F",
+    "SystemAccentColorDark2": "#A93717",
+    "SystemAccentColorDark3": "#85290F"
+  },
+  "light": {
+    "window": "#EEF1F6",
+    "surface": "#FAFAFA",
+    "raised": "#FFFFFF",
+    "canvas": "#E6E7EA",
+    "border": "#E5E5E5",
+    "borderStrong": "#D6D9DF",
+    "text": "#1B1B1B",
+    "textSecondary": "#5C5C5C",
+    "accent": "#C8431F",
+    "accentHover": "#A93717",
+    "onAccent": "#FFFFFF",
+    "accentText": "#A93717",
+    "accentTint": "#FBE4DC",
+    "searchHit": "#F6CDBF",
+    "searchHitCurrent": "#C8431F",
+    "textSelection": "rgba(200, 67, 31, 0.18)",
+    "success": "#0F7B0F",
+    "warning": "#8A5300",
+    "danger": "#B3261E"
+  },
+  "dark": {
+    "window": "#1B1A19",
+    "surface": "#232120",
+    "raised": "#2A2826",
+    "canvas": "#141312",
+    "border": "#3A3734",
+    "borderStrong": "#4A4642",
+    "text": "#EDEAE4",
+    "textSecondary": "#B8B2A8",
+    "accent": "#F0603C",
+    "accentHover": "#F48A6E",
+    "onAccent": "#1B1A19",
+    "accentText": "#F48A6E",
+    "accentTint": "#3A2620",
+    "searchHit": "#FFD8A8",
+    "searchHitCurrent": "#F0603C",
+    "textSelection": "rgba(240, 96, 60, 0.22)",
+    "success": "#7DD3A0",
+    "warning": "#E2C27A",
+    "danger": "#FF9A85"
+  },
+  "pageColourInDarkTheme": {
+    "original": "#FFFFFF",
+    "dimmed": "#D9D5CE",
+    "invertedBackground": "#1B1A19",
+    "invertedText": "#EDEAE4"
+  },
+  "brand": {
+    "iconTile": "#2A2826",
+    "iconTileEdgeOnDark": "#4A4642",
+    "iconPage": "#F5F4F0",
+    "iconRibbon": "#F0603C",
+    "iconLines": "#8A857D"
+  }
+}

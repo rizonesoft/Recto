@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recto A: Dialogs and states</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:#2459D6}a:hover{color:#1A47B0}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.lbl{font-size:12px;font-weight:600;color:#5C5C5C;letter-spacing:.3px}
+.dlg{background:#FFFFFF;border:1px solid #E0E0E0;border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,.16);overflow:hidden;display:flex;flex-direction:column}
+.bd{padding:24px;display:flex;flex-direction:column;gap:14px}
+.ft{padding:20px 24px;background:#F3F3F3;border-top:1px solid #E5E5E5;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.t{margin:0;font-family:'Segoe UI Variable Display','Segoe UI',sans-serif;font-size:20px;font-weight:600}
+.p{margin:0;font-size:14px;line-height:20px;color:#1B1B1B}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:32px;padding:0 12px;border-radius:4px;border:1px solid #D9D9D9;border-bottom-color:#C4C4C4;background:#FFFFFF;font:inherit;font-size:14px;color:#1B1B1B;white-space:nowrap}
+.btn.p2{background:#2459D6;border-color:#1F4FC0;border-bottom-color:#183F9C;color:#FFFFFF}
+.in{height:32px;box-sizing:border-box;border:1px solid #D9D9D9;border-bottom-color:#8A8A8A;border-radius:4px;padding:0 10px;font:inherit;font-size:14px;width:100%}
+.fl{display:flex;flex-direction:column;gap:6px;font-size:14px}
+.seg{display:flex;padding:2px;background:#EDEDED;border-radius:6px;gap:2px}
+.seg button{flex:1;height:28px;border:0;border-radius:4px;background:transparent;font:inherit;font-size:13px;color:#3B3B3B}
+.seg button.on{background:#FFFFFF;color:#1B1B1B;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.cap{font-size:12px;color:#5C5C5C}
+</style>
+</helmet>
+<div style="width:1440px;height:1000px;box-sizing:border-box;padding:40px;background:#E9EBEF;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;color:#1B1B1B;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:40px;align-content:start">
+
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <span class="lbl">PASSWORD PROMPT, WRONG PASSWORD STATE</span>
+    <div class="dlg" role="dialog" aria-label="Password required">
+      <div class="bd">
+        <div style="width:40px;height:40px;border-radius:20px;background:#E8EEFC;color:#2459D6;display:flex;align-items:center;justify-content:center"><svg class="ic" viewBox="0 0 24 24" style="width:20px;height:20px" aria-hidden="true"><path d="{{i.lock}}"></path></svg></div>
+        <h2 class="t">This PDF is protected</h2>
+        <p class="p">Enter the password to open Lease agreement 2026.pdf.</p>
+        <label class="fl">Password<input class="in" type="password" value="hunter22" style="border-color:#C42B1C;border-bottom:2px solid #C42B1C"></label>
+        <span style="font-size:12px;color:#A4262C;display:flex;gap:6px;align-items:center"><svg class="ic" viewBox="0 0 24 24" style="width:14px;height:14px" aria-hidden="true"><path d="{{i.warn}}"></path></svg>That password didn't work. Try again.</span>
+        <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox">Show password</label>
+      </div>
+      <div class="ft"><button class="btn p2">Open</button><button class="btn">Cancel</button></div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <span class="lbl">CONVERSION OPTIONS, PDF TO IMAGES</span>
+    <div class="dlg" role="dialog" aria-label="PDF to images">
+      <div class="bd" style="gap:16px">
+        <h2 class="t">PDF to images</h2>
+        <p class="cap" style="margin:-8px 0 0;font-size:13px">Recto foundation plan.pdf · 9 pages</p>
+        <div class="fl">Format<div class="seg"><button class="on">PNG</button><button>JPEG</button><button>TIFF</button><button>BMP</button></div></div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+          <label class="fl">Resolution<button class="btn" style="justify-content:space-between">150 dpi<svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.cd}}"></path></svg></button></label>
+          <label class="fl">Pages<input class="in" value="All"></label>
+        </div>
+        <label class="fl">Save to<span style="display:flex;gap:8px"><input class="in" value="R:\GitHub\PDF\docs\images"><button class="btn">Browse</button></span></label>
+        <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" checked>Open the folder when done</label>
+        <span class="cap">9 PNG files, about 4 MB</span>
+      </div>
+      <div class="ft"><button class="btn p2">Convert</button><button class="btn">Cancel</button></div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <span class="lbl">OFFICE CONVERTER NOT FOUND</span>
+    <div class="dlg" role="dialog" aria-label="Office converter needed">
+      <div class="bd">
+        <div style="width:40px;height:40px;border-radius:20px;background:#FFF4CE;color:#8A5300;display:flex;align-items:center;justify-content:center"><svg class="ic" viewBox="0 0 24 24" style="width:20px;height:20px" aria-hidden="true"><path d="{{i.office}}"></path></svg></div>
+        <h2 class="t">Office to PDF needs Microsoft Office or LibreOffice</h2>
+        <p class="p">Neither is installed on this PC. Recto uses one of them to read Word, Excel and PowerPoint files. Install either one, then try again.</p>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <a href="https://www.libreoffice.org/" style="font-size:14px">Get LibreOffice (free)</a>
+          <a href="https://www.microsoft.com/microsoft-365" style="font-size:14px">Get Microsoft 365</a>
+        </div>
+      </div>
+      <div class="ft" style="grid-template-columns:minmax(0,1fr)"><button class="btn">Close</button></div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <span class="lbl">FILE COULD NOT BE OPENED</span>
+    <div class="dlg" role="dialog" aria-label="Could not open file">
+      <div class="bd">
+        <div style="width:40px;height:40px;border-radius:20px;background:#FDE7E9;color:#C42B1C;display:flex;align-items:center;justify-content:center"><svg class="ic" viewBox="0 0 24 24" style="width:20px;height:20px" aria-hidden="true"><path d="{{i.warn}}"></path></svg></div>
+        <h2 class="t">Recto couldn't open this file</h2>
+        <p class="p">Invoice INV-0417.pdf is damaged or isn't a PDF.</p>
+        <details style="font-size:13px"><summary style="cursor:pointer">Details</summary><div style="margin-top:8px;font-family:Consolas,monospace;font-size:12px;background:#F6F6F6;padding:10px;border-radius:4px">[MuPDF error message]</div></details>
+      </div>
+      <div class="ft"><button class="btn">Copy details</button><button class="btn p2">Close</button></div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <span class="lbl">REPLACE ORIGINAL AFTER PROTECTING</span>
+    <div class="dlg" role="dialog" aria-label="Replace the original">
+      <div class="bd">
+        <h2 class="t">Replace the original file?</h2>
+        <p class="p">Recto saved the protected copy as <b>Lease agreement 2026 (protected).pdf</b>. You can replace the original with it, or keep both.</p>
+        <p class="cap" style="margin:0;font-size:13px">Anyone who opens the protected copy will need the password.</p>
+      </div>
+      <div class="ft"><button class="btn p2">Replace</button><button class="btn">Keep both</button></div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <span class="lbl">LINK IN A DOCUMENT</span>
+    <div class="dlg" role="dialog" aria-label="Open link">
+      <div class="bd">
+        <h2 class="t">Open this link?</h2>
+        <p class="p">The document wants to open a web page in your browser:</p>
+        <div style="font-family:Consolas,monospace;font-size:13px;background:#F6F6F6;padding:10px;border-radius:4px;word-break:break-all">https://learn.microsoft.com/windows/apps/windows-app-sdk/</div>
+        <label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox">Always open links from this document</label>
+      </div>
+      <div class="ft"><button class="btn p2">Open link</button><button class="btn">Cancel</button></div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:10px;grid-column:span 2">
+    <span class="lbl">WINDOWS NOTIFICATION, CONVERSION FINISHED</span>
+    <div style="width:364px;background:#F9F9F9;border:1px solid #E0E0E0;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:16px;display:flex;flex-direction:column;gap:12px">
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#3B3B3B"><svg viewBox="0 0 64 64" width="16" height="16" aria-hidden="true"><path d="M6 16 L29 11 V55 L6 59 Z" fill="#C9D7F8"></path><path d="M33 11 H49 L58 20 V55 H33 Z" fill="#2459D6"></path><path d="M49 11 V20 H58 Z" fill="#9DB8F2"></path></svg>Recto</div>
+      <div style="font-size:14px;font-weight:600">Thesis draft v3.docx is ready</div>
+      <div style="font-size:13px;color:#3B3B3B">Converted 86 pages to Word.</div>
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px"><button class="btn">Open file</button><button class="btn">Show in folder</button></div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1000}}'>
+class Component extends DCLogic {
+renderVals() {
+const i={cd:"M6 9l6 6 6-6",office:"M4 8h16v11H4zM9 8V5h6v3M4 13h16",lock:"M6 11h12v9H6zM8 11V8a4 4 0 0 1 8 0v3",warn:"M12 4l9 16H3zM12 10v5M12 17.5v.01"};
+return {i};
+}
+}
+</script>
+</body>
+</html>

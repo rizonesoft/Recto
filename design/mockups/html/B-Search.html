@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recto B: Search and selection</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#F48A6E}a:hover{color:#F7A890}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.serif{font-family:'Newsreader',Georgia,serif}
+.mo{height:46px;padding:0 14px;border:0;background:transparent;font:inherit;font-size:13px;color:#B8B2A8;position:relative;text-decoration:none;display:flex;align-items:center}
+.mo.on{color:#EDEAE4;font-weight:600}
+.mo.on::after{content:"";position:absolute;left:14px;right:14px;bottom:0;height:3px;border-radius:2px 2px 0 0;background:#F0603C}
+.ib{width:34px;height:34px;border:0;border-radius:6px;background:transparent;color:#EDEAE4;display:flex;align-items:center;justify-content:center;flex:none;text-decoration:none}
+.ib.on{background:#3A3734}
+.wc{width:46px;height:46px;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:#EDEAE4}
+.pill{display:flex;align-items:center;gap:8px;height:30px;padding:0 4px 0 12px;border-radius:15px;font-size:12px;color:#B8B2A8;max-width:240px;box-sizing:border-box}
+.pill.on{background:#3A3734;color:#EDEAE4}
+.pill span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.px{width:24px;height:24px;border:0;border-radius:12px;background:transparent;color:inherit;display:flex;align-items:center;justify-content:center;flex:none}
+.sep{width:1px;height:22px;background:#3A3734;margin:0 6px}
+.cap{font-size:12px;color:#B8B2A8}
+.it{height:44px;padding:0 4px;border:0;background:transparent;font:inherit;font-size:13px;color:#B8B2A8;position:relative;text-decoration:none;display:flex;align-items:center}
+.it.on{color:#EDEAE4;font-weight:600}
+.it.on::after{content:"";position:absolute;left:4px;right:4px;bottom:0;height:2px;background:#F0603C}
+.th{display:flex;flex-direction:column;align-items:center;gap:5px;font-size:11px;color:#B8B2A8;border:0;background:transparent;font-family:inherit;padding:0}
+.bar{height:3px;border-radius:2px;background:#CFCBC3;display:block}
+.hit{background:#FFD8A8;border-radius:2px}
+.cur{background:#F0603C;color:#FFFFFF;border-radius:2px}
+.selx{background:rgba(240,96,60,.22)}
+.res{display:flex;flex-direction:column;gap:3px;padding:10px 12px;border-radius:8px;font-size:13px;line-height:18px;color:#D3CFC7;border:0;background:transparent;text-align:left;font-family:inherit}
+.res b{color:#1B1A19;background:#FFD8A8;font-weight:600;border-radius:2px;padding:0 1px}
+.chipb{height:28px;padding:0 12px;border-radius:14px;border:1px solid #4A4642;background:transparent;color:#D3CFC7;font:inherit;font-size:12px}
+.chipb.on{background:#3A2620;border-color:#F0603C;color:#F7A890}
+.fb{display:flex;align-items:center;gap:6px;height:34px;padding:0 12px;border:0;background:transparent;color:#EDEAE4;font:inherit;font-size:13px;border-radius:17px;white-space:nowrap}
+</style>
+</head>
+<body>
+<div style="width:1440px;height:900px;display:flex;flex-direction:column;background:#1F1E1C;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;font-size:14px;color:#EDEAE4;overflow:hidden">
+  <div style="height:46px;display:flex;align-items:center;padding-left:14px;background:#1B1A19;flex:none;border-bottom:1px solid #2E2C2A">
+    <svg viewBox="0 0 64 64" width="22" height="22" aria-hidden="true"><rect x="2" y="2" width="60" height="60" rx="14" fill="#2A2826"></rect><rect x="15" y="10" width="34" height="44" rx="3" fill="#F5F4F0"></rect><path d="M38 6 H46 V26 L42 22 L38 26 Z" fill="#F0603C"></path></svg>
+    <span class="serif" style="font-size:20px;font-weight:500;margin:0 26px 0 10px">Recto</span>
+    <nav style="display:flex;height:46px" aria-label="Mode">
+      <a class="mo" href="B-Home.html">Home</a><a class="mo on" href="B-Viewer.html">Read</a><a class="mo" href="B-Convert.html">Convert</a><a class="mo" href="B-Organize.html">Organize</a>
+    </nav>
+    <div style="flex-grow:1"></div>
+    <a class="ib" href="B-Settings.html" aria-label="Settings"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"></path></svg></a>
+    <span style="width:8px"></span>
+    <button class="wc" aria-label="Minimize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M5 12h14"></path></svg></button>
+    <button class="wc" aria-label="Maximize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M5 5h14v14H5z"></path></svg></button>
+    <button class="wc" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+  </div>
+  <div style="height:48px;display:flex;align-items:center;gap:6px;padding:0 10px;background:#232120;border-bottom:1px solid #34312E;flex:none">
+    <div class="pill on"><span>Recto foundation plan.pdf</span><button class="px" aria-label="Close document"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>
+    <div class="pill"><span>Lease agreement 2026.pdf</span><button class="px" aria-label="Close document"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>
+    <button class="ib" aria-label="Open a document"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
+    <div style="flex-grow:1"></div>
+    <div role="toolbar" aria-label="Document commands" style="display:flex;align-items:center;gap:2px">
+      <button class="ib" aria-label="Save a copy"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg></button>
+      <button class="ib" aria-label="Print"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 9V4h10v5M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M7 14h10v6H7z"></path></svg></button>
+      <span class="sep"></span>
+      <button style="height:30px;padding:0 10px;border-radius:6px;border:1px solid #4A4642;background:#2E2C2A;color:#EDEAE4;font:inherit;font-size:13px">100%</button>
+      <span class="sep"></span>
+      <button class="ib on" aria-label="Find"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM20 20l-4.2-4.2"></path></svg></button>
+      <button class="ib on" aria-label="Show inspector"><svg class="ic" viewBox="0 0 24 24" style="transform:scaleX(-1)" aria-hidden="true"><path d="M4 5h16v14H4zM9 5v14"></path></svg></button>
+    </div>
+  </div>
+  <div style="display:flex;flex-grow:1;min-height:0">
+    <div style="flex-grow:1;min-width:0;display:flex;flex-direction:column">
+      <div style="flex-grow:1;min-height:0;background:#141312;display:flex;justify-content:center;padding-top:28px;overflow:hidden;position:relative">
+        <article style="width:700px;height:860px;flex:none;background:#FFFFFF;box-shadow:0 10px 40px rgba(0,0,0,.6);padding:56px 70px;box-sizing:border-box;font-family:Cambria,Georgia,serif;color:#1F1D1B;display:flex;flex-direction:column;gap:12px;font-size:13px;line-height:21px">
+          <h3 style="margin:0;font-size:15px">4.2 MuPDF's rules, as Recto applies them</h3>
+          <p style="margin:0">1. <b>Locks first.</b> The base context is created with a lock table of FZ_LOCK_MAX locks. Without it, cloning a context is not allowed and nothing below is safe.</p>
+          <p style="margin:0">2. <b>One context per thread.</b> Every thread that calls MuPDF has its own fz_context, made with fz_clone_context(base) at thread start.</p>
+          <p style="margin:0">3. <b>A document belongs to one thread.</b> An fz_document and every fz_page loaded from it are used only on that document's actor thread.</p>
+          <p style="margin:0">4. <b><span class="cur">Display lists</span> are the hand-off.</b> The actor builds an fz_<span class="hit">display_list</span> for a page. <span class="selx">Once built, a <span class="hit">display list</span> is read-only and can be rendered by many threads at the same time, each with its own context.</span> This is how rendering runs in parallel while the document stays single-threaded.</p>
+          <p style="margin:0">5. <b>Other objects move, but are never shared.</b> A pixmap, buffer or stext page made on one thread may be passed to another, provided only one thread uses it at a time.</p>
+          <p style="margin:0">6. <b>Reference counts are thread-safe; the objects are not.</b> fz_keep and fz_drop may run on any thread with that thread's context.</p>
+        </article>
+        <div role="toolbar" aria-label="Selection" style="position:absolute;left:318px;top:258px;display:flex;align-items:center;gap:2px;padding:4px;background:#2A2826;border:1px solid #4A4642;border-radius:22px;box-shadow:0 10px 28px rgba(0,0,0,.5)">
+          <button class="fb" style="background:#3A3734"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h11v12H8zM5 16V4h11"></path></svg>Copy</button>
+          <button class="fb"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM20 20l-4.2-4.2"></path></svg>Find this</button>
+          <button class="fb"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"></path></svg>Copy page link</button>
+          <button class="fb" aria-label="More"><svg class="ic" viewBox="0 0 24 24" style="stroke-width:2.6" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01"></path></svg></button>
+        </div>
+      </div>
+      <div style="height:116px;flex:none;background:#1B1A19;border-top:1px solid #2E2C2A;display:flex;align-items:center;gap:14px;padding:0 16px" aria-label="Page filmstrip">
+        <div style="display:flex;gap:14px;flex-grow:1;justify-content:center">
+          
+            <button class="th"><span style="width:56px;height:72px;background:#F5F4F0;padding:8px 7px;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;"><span class="bar" style="width:70%;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:86%"></span><span class="bar" style="width:94%"></span></span><span style="display:flex;align-items:center;gap:4px;">1<span style="width:6px;height:6px;border-radius:3px;display:block;background:transparent"></span></span></button>
+          
+            <button class="th"><span style="width:56px;height:72px;background:#F5F4F0;padding:8px 7px;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;"><span class="bar" style="width:70%;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:86%"></span><span class="bar" style="width:94%"></span></span><span style="display:flex;align-items:center;gap:4px;">2<span style="width:6px;height:6px;border-radius:3px;display:block;background:transparent"></span></span></button>
+          
+            <button class="th"><span style="width:56px;height:72px;background:#F5F4F0;padding:8px 7px;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;"><span class="bar" style="width:70%;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:86%"></span><span class="bar" style="width:94%"></span></span><span style="display:flex;align-items:center;gap:4px;">3<span style="width:6px;height:6px;border-radius:3px;display:block;background:transparent"></span></span></button>
+          
+            <button class="th"><span style="width:56px;height:72px;background:#F5F4F0;padding:8px 7px;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;"><span class="bar" style="width:70%;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:86%"></span><span class="bar" style="width:94%"></span></span><span style="display:flex;align-items:center;gap:4px;">4<span style="width:6px;height:6px;border-radius:3px;display:block;background:#F0603C"></span></span></button>
+          
+            <button class="th"><span style="width:56px;height:72px;background:#F5F4F0;padding:8px 7px;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;box-shadow:0 0 0 2px #1B1A19,0 0 0 4px #F0603C"><span class="bar" style="width:70%;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:86%"></span><span class="bar" style="width:94%"></span></span><span style="display:flex;align-items:center;gap:4px;color:#EDEAE4;font-weight:600">5<span style="width:6px;height:6px;border-radius:3px;display:block;background:#F0603C"></span></span></button>
+          
+            <button class="th"><span style="width:56px;height:72px;background:#F5F4F0;padding:8px 7px;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;"><span class="bar" style="width:70%;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:86%"></span><span class="bar" style="width:94%"></span></span><span style="display:flex;align-items:center;gap:4px;">6<span style="width:6px;height:6px;border-radius:3px;display:block;background:#F0603C"></span></span></button>
+          
+            <button class="th"><span style="width:56px;height:72px;background:#F5F4F0;padding:8px 7px;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;"><span class="bar" style="width:70%;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:86%"></span><span class="bar" style="width:94%"></span></span><span style="display:flex;align-items:center;gap:4px;">7<span style="width:6px;height:6px;border-radius:3px;display:block;background:#F0603C"></span></span></button>
+          
+            <button class="th"><span style="width:56px;height:72px;background:#F5F4F0;padding:8px 7px;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;"><span class="bar" style="width:70%;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:86%"></span><span class="bar" style="width:94%"></span></span><span style="display:flex;align-items:center;gap:4px;">8<span style="width:6px;height:6px;border-radius:3px;display:block;background:transparent"></span></span></button>
+          
+            <button class="th"><span style="width:56px;height:72px;background:#F5F4F0;padding:8px 7px;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;"><span class="bar" style="width:70%;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:86%"></span><span class="bar" style="width:94%"></span></span><span style="display:flex;align-items:center;gap:4px;">9<span style="width:6px;height:6px;border-radius:3px;display:block;background:transparent"></span></span></button>
+          
+        </div>
+        <span class="cap" style="width:150px;text-align:right">Hits on pages 4 to 7</span>
+      </div>
+    </div>
+    <aside style="width:340px;flex:none;background:#232120;border-left:1px solid #34312E;display:flex;flex-direction:column;gap:12px;padding:0 16px 16px;box-sizing:border-box;overflow:hidden" aria-label="Inspector">
+      <div style="display:flex;gap:18px;border-bottom:1px solid #34312E" role="tablist"><button class="it" role="tab">Outline</button><button class="it on" role="tab">Search</button><a class="it" role="tab" href="B-Viewer.html">Info</a></div>
+      <label style="display:flex;align-items:center;gap:8px;height:38px;padding:0 4px 0 12px;box-sizing:border-box;border-radius:8px;background:#1B1A19;border:1.5px solid #F0603C"><svg class="ic" viewBox="0 0 24 24" style="color:#B8B2A8" aria-hidden="true"><path d="M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM20 20l-4.2-4.2"></path></svg><input aria-label="Find in document" value="display list" style="border:0;outline:0;background:transparent;color:#EDEAE4;font:inherit;font-size:14px;flex-grow:1;min-width:0"><button class="px" aria-label="Clear" style="color:#B8B2A8"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></label>
+      <div style="display:flex;gap:6px"><button class="chipb">Match case</button><button class="chipb">Whole words</button><button class="chipb on">This document</button></div>
+      <div style="display:flex;align-items:center;gap:6px"><span class="cap" style="flex-grow:1;font-size:13px">2 of 14 results</span><button class="ib" aria-label="Previous result"><svg class="ic" viewBox="0 0 24 24" style="transform:rotate(-90deg)" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></button><button class="ib" aria-label="Next result"><svg class="ic" viewBox="0 0 24 24" style="transform:rotate(90deg)" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></button></div>
+      <div style="display:flex;flex-direction:column;gap:2px">
+        <div class="serif" style="font-size:15px;padding:4px 12px 0;color:#B8B2A8">Page 5</div>
+        <button class="res">…for a page, builds an fz_<b>display_list</b>…</button>
+        <button class="res" style="background:#3A2620;box-shadow:inset 3px 0 0 #F0603C;color:#EDEAE4">4. <b>Display lists</b> are the hand-off. The actor builds…</button>
+        <button class="res">…Once built, a <b>display list</b> is read-only…</button>
+        <div class="serif" style="font-size:15px;padding:10px 12px 0;color:#B8B2A8">Page 6</div>
+        <button class="res">…builds an fz_<b>display_list</b> (fz_new_<b>display_list</b>…</button>
+        <div class="serif" style="font-size:15px;padding:10px 12px 0;color:#B8B2A8">Page 7</div>
+        <button class="res">rc_render_tile(fz_context *ctx, fz_<b>display_list</b> *list…</button>
+      </div>
+    </aside>
+  </div>
+</div>
+</body>
+</html>

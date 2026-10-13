@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recto B: Settings</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#F48A6E}a:hover{color:#F7A890}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.serif{font-family:'Newsreader',Georgia,serif}
+.mo{height:46px;padding:0 14px;border:0;background:transparent;font:inherit;font-size:13px;color:#B8B2A8;position:relative;text-decoration:none;display:flex;align-items:center}
+.ib{width:34px;height:34px;border:0;border-radius:6px;background:transparent;color:#EDEAE4;display:flex;align-items:center;justify-content:center;flex:none;text-decoration:none}
+.ib.on{background:#3A3734}
+.wc{width:46px;height:46px;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:#EDEAE4}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:34px;padding:0 14px;border-radius:6px;border:1px solid #4A4642;background:#2E2C2A;font:inherit;font-size:13px;color:#EDEAE4;white-space:nowrap}
+.dd{justify-content:space-between;min-width:220px}
+.cap{font-size:12px;color:#B8B2A8}
+.sn{display:flex;align-items:center;gap:12px;height:40px;padding:0 12px;border-radius:8px;font-size:14px;color:#D3CFC7;text-decoration:none;border:0;background:transparent;font-family:inherit;width:100%;text-align:left}
+.sn.on{background:#2A2826;color:#EDEAE4;font-weight:600;box-shadow:inset 3px 0 0 #F0603C}
+.row{display:flex;align-items:center;gap:20px;padding:18px 0;border-top:1px solid #34312E}
+.row .t{display:flex;flex-direction:column;gap:3px;flex-grow:1}
+.row .t b{font-weight:600;font-size:14px}
+.thc{display:flex;flex-direction:column;gap:10px;border:0;background:transparent;padding:0;font:inherit;font-size:13px;color:#EDEAE4;align-items:flex-start}
+.thp{width:180px;height:112px;border-radius:10px;overflow:hidden;display:flex;flex-direction:column}
+.pgc{display:flex;flex-direction:column;align-items:center;gap:8px;border:0;background:transparent;padding:0;font:inherit;font-size:12px;color:#D3CFC7}
+.mini{width:64px;height:82px;display:flex;flex-direction:column;gap:5px;padding:10px 8px;box-sizing:border-box}
+.mini span{height:3px;border-radius:2px;display:block}
+</style>
+</helmet>
+<div style="width:1440px;height:900px;display:flex;flex-direction:column;background:#1F1E1C;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;font-size:14px;color:#EDEAE4;overflow:hidden">
+  <div style="height:46px;display:flex;align-items:center;padding-left:14px;background:#1B1A19;flex:none;border-bottom:1px solid #2E2C2A">
+    <svg viewBox="0 0 64 64" width="22" height="22" aria-hidden="true"><rect x="2" y="2" width="60" height="60" rx="14" fill="#2A2826"></rect><rect x="15" y="10" width="34" height="44" rx="3" fill="#F5F4F0"></rect><path d="M38 6 H46 V26 L42 22 L38 26 Z" fill="#F0603C"></path></svg>
+    <span class="serif" style="font-size:20px;font-weight:500;margin:0 26px 0 10px">Recto</span>
+    <nav style="display:flex;height:46px" aria-label="Mode">
+      <a class="mo" href="B-Home.dc.html">Home</a><a class="mo" href="B-Viewer.dc.html">Read</a><a class="mo" href="B-Convert.dc.html">Convert</a><a class="mo" href="B-Organize.dc.html">Organize</a>
+    </nav>
+    <div style="flex-grow:1"></div>
+    <a class="ib on" href="B-Settings.dc.html" aria-label="Settings"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.gear}}"></path></svg></a>
+    <span style="width:8px"></span>
+    <button class="wc" aria-label="Minimize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.min}}"></path></svg></button>
+    <button class="wc" aria-label="Maximize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.max}}"></path></svg></button>
+    <button class="wc" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button>
+  </div>
+  <div style="display:flex;flex-grow:1;min-height:0">
+    <nav style="width:260px;flex:none;background:#1B1A19;border-right:1px solid #2E2C2A;padding:28px 14px;box-sizing:border-box;display:flex;flex-direction:column;gap:2px" aria-label="Settings sections">
+      <h1 class="serif" style="margin:0 12px 18px;font-size:30px;font-weight:500">Settings</h1>
+      <button class="sn on"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.gear}}"></path></svg>General</button>
+      <button class="sn"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.doc}}"></path></svg>Reading</button>
+      <button class="sn"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.convert}}"></path></svg>Converting</button>
+      <button class="sn"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.grid}}"></path></svg>Performance</button>
+      <button class="sn"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.lock}}"></path></svg>Privacy</button>
+      <button class="sn"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.kbd}}"></path></svg>Keyboard shortcuts</button>
+      <a class="sn" href="B-About.dc.html"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.info}}"></path></svg>About Recto</a>
+    </nav>
+    <main style="flex-grow:1;min-width:0;padding:32px 56px;display:flex;flex-direction:column;overflow:hidden;max-width:980px">
+      <h2 class="serif" style="margin:0 0 18px;font-size:34px;font-weight:500">General</h2>
+      <div style="display:flex;flex-direction:column;gap:14px;padding-bottom:22px">
+        <div style="font-weight:600">Theme</div>
+        <div style="display:flex;gap:20px" role="radiogroup" aria-label="Theme">
+          <button class="thc" role="radio" aria-checked="true"><span class="thp" style="background:#1B1A19;box-shadow:0 0 0 2px #1F1E1C,0 0 0 4px #F0603C"><span style="height:18px;background:#141312;display:block"></span><span style="flex-grow:1;display:flex;justify-content:center;align-items:center;background:#141312"><span style="width:56px;height:72px;background:#F5F4F0;display:block"></span></span></span>Dark</button>
+          <button class="thc" role="radio" aria-checked="false"><span class="thp" style="background:#F7F6F3;box-shadow:0 0 0 1px #4A4642"><span style="height:18px;background:#EFEDE9;display:block"></span><span style="flex-grow:1;display:flex;justify-content:center;align-items:center;background:#E4E1DC"><span style="width:56px;height:72px;background:#FFFFFF;display:block"></span></span></span>Light</button>
+          <button class="thc" role="radio" aria-checked="false"><span class="thp" style="box-shadow:0 0 0 1px #4A4642;flex-direction:row"><span style="width:50%;background:#141312;display:flex;align-items:center;justify-content:flex-end"><span style="width:28px;height:72px;background:#F5F4F0;display:block"></span></span><span style="width:50%;background:#E4E1DC;display:flex;align-items:center"><span style="width:28px;height:72px;background:#FFFFFF;display:block"></span></span></span>Follow Windows</button>
+        </div>
+      </div>
+      <div class="row">
+        <span class="t"><b>Pages in dark theme</b><span class="cap" style="font-size:13px">Dimmed pages are easier on the eyes at night</span></span>
+        <div style="display:flex;gap:16px" role="radiogroup" aria-label="Page colour">
+          <button class="pgc" role="radio" aria-checked="false"><span class="mini" style="background:#FFFFFF;box-shadow:0 0 0 1px #4A4642"><span style="background:#3A3734;width:70%"></span><span style="background:#B9B4AC"></span><span style="background:#B9B4AC;width:80%"></span></span>Original</button>
+          <button class="pgc" role="radio" aria-checked="true"><span class="mini" style="background:#CFCBC3;box-shadow:0 0 0 2px #1F1E1C,0 0 0 4px #F0603C"><span style="background:#3A3734;width:70%"></span><span style="background:#8F897F"></span><span style="background:#8F897F;width:80%"></span></span>Dimmed</button>
+          <button class="pgc" role="radio" aria-checked="false"><span class="mini" style="background:#1B1A19;box-shadow:0 0 0 1px #4A4642"><span style="background:#EDEAE4;width:70%"></span><span style="background:#6E685F"></span><span style="background:#6E685F;width:80%"></span></span>Inverted</button>
+        </div>
+      </div>
+      <div class="row"><span class="t"><b>Accent colour</b><span class="cap" style="font-size:13px">Recto's vermilion, or your Windows accent</span></span><button class="btn dd">Recto vermilion<svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.cd}}"></path></svg></button></div>
+      <div class="row"><span class="t"><b>When Recto starts</b><span class="cap" style="font-size:13px">Show Home, or reopen the documents from last time</span></span><button class="btn dd">Reopen last documents<svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.cd}}"></path></svg></button></div>
+      <div class="row"><span class="t"><b>Language</b><span class="cap" style="font-size:13px">Uses your Windows display language by default</span></span><button class="btn dd">Windows default<svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.cd}}"></path></svg></button></div>
+      <div class="row"><span class="t"><b>Default PDF app</b><span class="cap" style="font-size:13px">Recto is your default app for .pdf files</span></span><span style="display:flex;align-items:center;gap:8px;font-size:13px;color:#7DD3A0"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.check}}"></path></svg>Set</span></div>
+    </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+renderVals() {
+const i={gear:"M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1",cd:"M6 9l6 6 6-6",x:"M6 6l12 12M18 6L6 18",min:"M5 12h14",max:"M5 5h14v14H5z",doc:"M6 3h8l5 5v13H6zM14 3v5h5",convert:"M4 8h14l-4-4M20 16H6l4 4",grid:"M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",lock:"M6 11h12v9H6zM8 11V8a4 4 0 0 1 8 0v3",info:"M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18zM12 11v6M12 7.5v.01",check:"M5 12l5 5 9-10",kbd:"M3 7h18v10H3zM7 11h.01M11 11h.01M15 11h.01M8 14h8"};
+return {i};
+}
+}
+</script>
+</body>
+</html>

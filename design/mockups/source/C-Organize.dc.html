@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recto C: Organize, reorder pages</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#4A3FD0}a:hover{color:#3529A8}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.disp{font-family:'Instrument Sans','Segoe UI Variable Display','Segoe UI',sans-serif}
+.tb{display:flex;align-items:center;gap:8px;height:30px;padding:0 6px 0 12px;border-radius:8px;font-size:12px;color:#55526B;text-decoration:none;max-width:240px;white-space:nowrap}
+.tb.on{background:#FFFFFF;color:#17152B;box-shadow:0 1px 3px rgba(23,21,43,.12)}
+.wc{width:46px;height:44px;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:#17152B}
+.ib{width:32px;height:32px;border:0;border-radius:8px;background:transparent;color:#17152B;display:flex;align-items:center;justify-content:center;flex:none;text-decoration:none}
+.tx{width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:inherit;display:flex;align-items:center;justify-content:center}
+.cap{font-size:12px;color:#55526B}
+.seg{display:flex;padding:3px;background:#ECEBF3;border-radius:10px;gap:2px}
+.seg button{height:30px;padding:0 16px;border:0;border-radius:8px;background:transparent;font:inherit;font-size:13px;color:#55526B}
+.seg button.on{background:#FFFFFF;color:#17152B;font-weight:600;box-shadow:0 1px 3px rgba(23,21,43,.12)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border-radius:10px;border:1px solid #E4E2EF;background:#FFFFFF;font:inherit;font-size:13px;color:#17152B;white-space:nowrap}
+.btn.p{background:#5B4FE0;border-color:#5B4FE0;color:#FFFFFF;font-weight:600}
+.pc{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:8px;border:0;background:transparent;font:inherit;padding:10px 0 6px;border-radius:14px;height:196px;box-sizing:border-box}
+.bar{height:4px;border-radius:2px;background:#D9D7E6;display:block}
+.ab{display:flex;align-items:center;gap:8px;height:38px;padding:0 12px;border:0;border-radius:10px;background:transparent;color:#FFFFFF;font:inherit;font-size:13px;white-space:nowrap}
+</style>
+</helmet>
+<div style="width:1440px;height:900px;display:flex;flex-direction:column;background:#F6F5FB;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;font-size:14px;color:#17152B;overflow:hidden">
+  <div style="height:44px;display:flex;align-items:center;gap:4px;padding-left:14px;flex:none">
+    <svg viewBox="0 0 64 64" width="20" height="20" aria-hidden="true" style="margin-right:10px"><rect x="2" y="2" width="60" height="60" rx="16" fill="#5B4FE0"></rect><path fill-rule="evenodd" fill="#FFFFFF" d="M18 14 H35 A11 11 0 0 1 35 36 H27 V50 H18 Z M27 22 V28 H34 A3 3 0 0 0 34 22 Z"></path><path d="M31 36 H41 L49 50 H39 Z" fill="#C9C4FF"></path></svg>
+    <a class="tb" href="C-Home.dc.html"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="{{i.home}}"></path></svg></a>
+    <div class="tb on"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="{{i.grid}}"></path></svg>Organize: Thesis draft v3.pdf<button class="tx" aria-label="Close tab"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button></div>
+    <div style="flex-grow:1"></div>
+    <a class="ib" href="C-Settings.dc.html" aria-label="Settings"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.gear}}"></path></svg></a>
+    <button class="wc" aria-label="Minimize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.min}}"></path></svg></button>
+    <button class="wc" aria-label="Maximize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.max}}"></path></svg></button>
+    <button class="wc" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button>
+  </div>
+  <div style="flex-grow:1;min-height:0;position:relative;background:#ECEBF3;border-top-left-radius:12px;border-top-right-radius:12px;margin:0 6px;overflow:hidden;padding:24px 36px;display:flex;flex-direction:column;gap:20px">
+    <div style="display:flex;align-items:center;gap:16px">
+      <div style="flex-grow:1"><h1 class="disp" style="margin:0;font-size:28px;font-weight:600;letter-spacing:-0.4px">Thesis draft v3.pdf</h1><div class="cap" style="font-size:13px;margin-top:2px">86 pages · 2 pages moved, 1 rotated</div></div>
+      <div class="seg" role="tablist" aria-label="Organize mode"><button role="tab">Combine</button><button role="tab">Split</button><button class="on" role="tab">Reorder</button></div>
+      <button class="btn">Undo</button>
+      <button class="btn">Save as copy</button>
+      <button class="btn p">Save</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:10px 18px">
+      <sc-for list="{{pages}}" as="p" hint-placeholder-count="16">
+        <button class="pc" style="{{p.card}}" aria-label="Page {{p.n}}">
+          <span style="width:{{p.w}};height:{{p.h}};background:#FFFFFF;box-shadow:0 2px 8px rgba(23,21,43,.12);display:flex;flex-direction:column;gap:5px;padding:12px 11px;box-sizing:border-box;border-radius:3px"><span class="bar" style="width:60%;height:5px;background:#17152B"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:90%"></span><span class="bar" style="width:96%"></span><span class="bar" style="width:66%"></span><span style="height:3px"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:84%"></span></span>
+          <span style="font-size:12px;{{p.num}}">{{p.n}}</span>
+          <sc-if value="{{p.sel}}" hint-placeholder-val="{{false}}"><span style="position:absolute;top:16px;right:22px;width:22px;height:22px;border-radius:11px;background:#5B4FE0;color:#FFFFFF;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 2px #FFFFFF"><svg class="ic" viewBox="0 0 24 24" style="width:13px;stroke-width:2.6" aria-hidden="true"><path d="{{i.check}}"></path></svg></span></sc-if>
+          <sc-if value="{{p.rot}}" hint-placeholder-val="{{false}}"><span style="position:absolute;top:16px;left:18px;height:20px;padding:0 6px;border-radius:10px;background:#17152B;color:#FFFFFF;font-size:10px;display:flex;align-items:center;gap:4px"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="{{i.rotate}}"></path></svg>90°</span></sc-if>
+        </button>
+      </sc-for>
+    </div>
+    <div role="toolbar" aria-label="Selected pages" style="position:absolute;left:50%;bottom:22px;transform:translateX(-50%);display:flex;align-items:center;gap:2px;padding:6px 6px 6px 16px;background:#17152B;border-radius:16px;box-shadow:0 16px 40px rgba(23,21,43,.35)">
+      <span style="color:#FFFFFF;font-size:13px;font-weight:600;margin-right:10px;white-space:nowrap">3 pages selected</span>
+      <button class="ab"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.rotate}}"></path></svg>Rotate</button>
+      <button class="ab"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.move}}"></path></svg>Move to…</button>
+      <button class="ab"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.up}}"></path></svg>Extract to new PDF</button>
+      <button class="ab" style="color:#FFB4AB"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.trash}}"></path></svg>Delete</button>
+      <button class="ab" aria-label="Clear selection" style="width:38px;padding:0;justify-content:center"><svg class="ic" viewBox="0 0 24 24" style="width:13px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+renderVals() {
+const i={rotate:"M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7",grid:"M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",gear:"M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1",x:"M6 6l12 12M18 6L6 18",min:"M5 12h14",max:"M5 5h14v14H5z",check:"M5 12l5 5 9-10",home:"M4 11l8-7 8 7v9h-5v-6H9v6H4z",trash:"M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13",up:"M12 20V9M7 14l5-5 5 5M5 4h14",move:"M5 12h14M15 8l4 4-4 4M9 5H5v14h4"};
+const pages=[];
+for(let n=1;n<=16;n++){
+const sel=(n===5||n===6||n===9), rot=(n===11);
+pages.push({n:String(n),sel,rot,w:rot?"140px":"112px",h:rot?"108px":"145px",card:sel?"background:#E3DFFF;box-shadow:inset 0 0 0 2px #5B4FE0":"",num:sel?"color:#4A3FD0;font-weight:600":"color:#55526B"});
+}
+return {i,pages};
+}
+}
+</script>
+</body>
+</html>

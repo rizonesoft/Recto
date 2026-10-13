@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recto B: Home</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#F48A6E}a:hover{color:#F7A890}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.serif{font-family:'Newsreader',Georgia,serif}
+.mo{height:46px;padding:0 14px;border:0;background:transparent;font:inherit;font-size:13px;color:#B8B2A8;position:relative;text-decoration:none;display:flex;align-items:center}
+.mo.on{color:#EDEAE4;font-weight:600}
+.mo.on::after{content:"";position:absolute;left:14px;right:14px;bottom:0;height:3px;border-radius:2px 2px 0 0;background:#F0603C}
+.ib{width:34px;height:34px;border:0;border-radius:6px;background:transparent;color:#EDEAE4;display:flex;align-items:center;justify-content:center;flex:none}
+.wc{width:46px;height:46px;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:#EDEAE4}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:34px;padding:0 14px;border-radius:6px;border:1px solid #4A4642;background:#2E2C2A;font:inherit;font-size:13px;color:#EDEAE4;white-space:nowrap;text-decoration:none}
+.btn.p{background:#F0603C;border-color:#F0603C;color:#1B1A19;font-weight:600}
+.cap{font-size:12px;color:#B8B2A8}
+.tool{display:flex;align-items:center;gap:14px;height:46px;padding:0 14px;border-radius:8px;text-decoration:none;color:#EDEAE4;font-size:14px}
+.tool i{width:30px;height:30px;border-radius:15px;background:#3A2620;color:#F48A6E;display:flex;align-items:center;justify-content:center}
+.bar{height:4px;border-radius:2px;background:#CFCBC3;display:block}
+.rr{display:grid;grid-template-columns:minmax(0,1fr) 200px 80px 140px;align-items:center;height:40px;padding:0 12px;border-top:1px solid #34312E;font-size:13px}
+</style>
+</helmet>
+<div style="width:1440px;height:900px;display:flex;flex-direction:column;background:#1F1E1C;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;font-size:14px;color:#EDEAE4;overflow:hidden">
+  <div style="height:46px;display:flex;align-items:center;padding-left:14px;background:#1B1A19;flex:none;border-bottom:1px solid #2E2C2A">
+    <svg viewBox="0 0 64 64" width="22" height="22" aria-hidden="true"><rect x="2" y="2" width="60" height="60" rx="14" fill="#2A2826"></rect><rect x="15" y="10" width="34" height="44" rx="3" fill="#F5F4F0"></rect><path d="M38 6 H46 V26 L42 22 L38 26 Z" fill="#F0603C"></path></svg>
+    <span class="serif" style="font-size:20px;font-weight:500;margin:0 26px 0 10px">Recto</span>
+    <nav style="display:flex;height:46px" aria-label="Mode">
+      <a class="mo on" href="B-Home.dc.html">Home</a><a class="mo" href="B-Viewer.dc.html">Read</a><a class="mo" href="B-Convert.dc.html">Convert</a><a class="mo" href="B-Organize.dc.html">Organize</a>
+    </nav>
+    <div style="flex-grow:1"></div>
+    <a class="ib" href="B-Settings.dc.html" aria-label="Settings"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.gear}}"></path></svg></a>
+    <span style="width:8px"></span>
+    <button class="wc" aria-label="Minimize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.min}}"></path></svg></button>
+    <button class="wc" aria-label="Maximize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.max}}"></path></svg></button>
+    <button class="wc" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button>
+  </div>
+  <div style="flex-grow:1;min-height:0;padding:40px 56px;display:grid;grid-template-columns:420px minmax(0,1fr);gap:56px">
+    <div style="display:flex;flex-direction:column;gap:20px">
+      <h1 class="serif" style="margin:0;font-size:34px;font-weight:500">Open a file</h1>
+      <div style="height:236px;border:1.5px dashed #5A5550;border-radius:12px;background:#232120;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;flex:none">
+        <svg class="ic" viewBox="0 0 24 24" style="width:36px;height:36px;color:#F48A6E" aria-hidden="true"><path d="{{i.up}}"></path></svg>
+        <div style="font-size:16px;font-weight:600">Drop PDFs here</div>
+        <div style="display:flex;align-items:center;gap:10px"><button class="btn p"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.folder}}"></path></svg>Choose a file</button><span class="cap">or press Ctrl+O</span></div>
+      </div>
+      <h2 class="cap" style="margin:12px 0 0;font-size:12px;font-weight:600;letter-spacing:.8px">TOOLS</h2>
+      <div style="display:flex;flex-direction:column;gap:2px">
+        <sc-for list="{{tools}}" as="t" hint-placeholder-count="6">
+          <a class="tool" href="{{t.href}}"><i><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{t.icon}}"></path></svg></i><span style="flex-grow:1">{{t.t}}</span><svg class="ic" viewBox="0 0 24 24" style="color:#8F897F" aria-hidden="true"><path d="{{i.cr}}"></path></svg></a>
+        </sc-for>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:20px;min-width:0">
+      <h2 class="serif" style="margin:0;font-size:34px;font-weight:500">Continue reading</h2>
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px">
+        <sc-for list="{{cont}}" as="c" hint-placeholder-count="3">
+          <a href="B-Viewer.dc.html" style="display:flex;gap:16px;padding:16px;border-radius:12px;background:#2A2826;text-decoration:none;color:#EDEAE4">
+            <span style="width:96px;height:124px;flex:none;background:#F5F4F0;padding:12px 10px;box-sizing:border-box;display:flex;flex-direction:column;gap:5px;box-shadow:0 4px 12px rgba(0,0,0,.4)"><span class="bar" style="width:70%;height:6px;background:#3A3734"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:90%"></span><span class="bar" style="width:96%"></span><span class="bar" style="width:60%"></span><span style="height:4px"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:85%"></span></span>
+            <span style="display:flex;flex-direction:column;gap:6px;min-width:0;flex-grow:1">
+              <span style="font-weight:600;font-size:14px;line-height:19px">{{c.name}}</span>
+              <span class="cap">{{c.loc}}</span>
+              <span style="margin-top:auto;display:flex;flex-direction:column;gap:6px"><span class="cap">Page {{c.page}} of {{c.of}}</span><span style="height:4px;border-radius:2px;background:#3A3734;display:block;position:relative"><span style="position:absolute;left:0;top:0;bottom:0;border-radius:2px;background:#F0603C;display:block;width:{{c.pct}}"></span></span></span>
+            </span>
+          </a>
+        </sc-for>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;margin-top:20px">
+        <h2 class="serif" style="margin:0;font-size:24px;font-weight:500;flex-grow:1">Recent files</h2>
+        <label style="display:flex;align-items:center;gap:8px;width:260px;height:34px;padding:0 10px;box-sizing:border-box;border-radius:6px;background:#2A2826;border:1px solid #3A3734;color:#B8B2A8"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.search}}"></path></svg><input aria-label="Filter recent files" placeholder="Filter" style="border:0;outline:0;background:transparent;color:#EDEAE4;font:inherit;font-size:13px;flex-grow:1"></label>
+      </div>
+      <div>
+        <div class="rr cap" style="border-top:0;font-weight:600"><span>Name</span><span>Folder</span><span>Pages</span><span>Opened</span></div>
+        <sc-for list="{{recent}}" as="r" hint-placeholder-count="6">
+          <div class="rr"><span style="display:flex;align-items:center;gap:10px;min-width:0"><svg class="ic" viewBox="0 0 24 24" style="color:#F48A6E" aria-hidden="true"><path d="{{i.doc}}"></path></svg><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{r.name}}</span></span><span class="cap" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{r.loc}}</span><span class="cap">{{r.pages}}</span><span class="cap">{{r.when}}</span></div>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+renderVals() {
+const i={search:"M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM20 20l-4.2-4.2",folder:"M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",gear:"M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1",cr:"M9 6l6 6-6 6",x:"M6 6l12 12M18 6L6 18",min:"M5 12h14",max:"M5 5h14v14H5z",doc:"M6 3h8l5 5v13H6zM14 3v5h5",img:"M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M15 9h.01",merge:"M7 4v4l5 5 5-5V4M12 13v7",split:"M12 4v7l-5 5v4M12 11l5 5v4",word:"M6 3h8l5 5v13H6zM14 3v5h5M8.5 12l1.2 5 2.3-4 2.3 4 1.2-5",office:"M4 8h16v11H4zM9 8V5h6v3M4 13h16",lock:"M6 11h12v9H6zM8 11V8a4 4 0 0 1 8 0v3",up:"M12 20V9M7 14l5-5 5 5M5 4h14"};
+const tools=[{t:"Combine PDFs",icon:i.merge,href:"B-Organize.dc.html"},{t:"Split a PDF",icon:i.split,href:"B-Organize.dc.html"},{t:"PDF to Word",icon:i.word,href:"B-Convert.dc.html"},{t:"PDF to images",icon:i.img,href:"B-Convert.dc.html"},{t:"Office to PDF",icon:i.office,href:"B-Convert.dc.html"},{t:"Protect a PDF",icon:i.lock,href:"B-Convert.dc.html"}];
+const cont=[{name:"Thesis draft v3.pdf",loc:"OneDrive\\University",page:"53",of:"86",pct:"62%"},{name:"MuPDF API reference.pdf",loc:"Documents\\Dev",page:"141",of:"312",pct:"45%"},{name:"Recto foundation plan.pdf",loc:"R:\\GitHub\\PDF\\docs",page:"6",of:"9",pct:"67%"}];
+const recent=[{name:"Lease agreement 2026.pdf",loc:"Documents\\Home",pages:"14",when:"Yesterday"},{name:"Invoice INV-0417.pdf",loc:"Downloads",pages:"1",when:"10 Oct 2026"},{name:"Scanned receipts.pdf",loc:"Desktop",pages:"23",when:"28 Sep 2026"},{name:"Quarterly review.pdf",loc:"Documents\\Work",pages:"31",when:"21 Sep 2026"},{name:"Boarding pass.pdf",loc:"Downloads",pages:"2",when:"14 Sep 2026"},{name:"Warranty card.pdf",loc:"Documents\\Home",pages:"4",when:"2 Sep 2026"}];
+return {i,tools,cont,recent};
+}
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recto D: Icon, wordmark and colour tokens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,500;1,6..72,400&amp;display=swap">
+<style>
+body{margin:0}
+.lbl{font-size:12px;font-weight:600;color:#5C5C5C;letter-spacing:.6px}
+.tk{display:grid;grid-template-columns:150px 34px 72px 34px 72px;align-items:center;gap:8px;font-size:12px;height:30px}
+.tk i{width:34px;height:22px;border-radius:5px;display:block;box-shadow:inset 0 0 0 1px rgba(0,0,0,.1)}
+</style>
+</head>
+<body>
+<div style="width:1280px;height:900px;box-sizing:border-box;padding:44px 48px;background:#FFFFFF;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;color:#1B1B1B;display:grid;grid-template-columns:520px minmax(0,1fr);gap:48px">
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <span class="lbl">APP ICON</span>
+    <div style="display:flex;gap:16px">
+      <div style="width:252px;height:252px;border-radius:14px;background:#EEF1F6;display:flex;align-items:center;justify-content:center"><svg viewBox="0 0 64 64" width="190" height="190" role="img" aria-label="Recto icon on light"><rect x="2" y="2" width="60" height="60" rx="14" fill="#2A2826"></rect><rect x="15" y="10" width="34" height="44" rx="3" fill="#F5F4F0"></rect><path d="M38 6 H46 V26 L42 22 L38 26 Z" fill="#F0603C"></path><rect x="20" y="30" width="20" height="2.6" rx="1.3" fill="#8A857D"></rect><rect x="20" y="36" width="24" height="2.6" rx="1.3" fill="#8A857D"></rect><rect x="20" y="42" width="16" height="2.6" rx="1.3" fill="#8A857D"></rect></svg></div>
+      <div style="width:252px;height:252px;border-radius:14px;background:#141312;display:flex;align-items:center;justify-content:center"><svg viewBox="0 0 64 64" width="190" height="190" role="img" aria-label="Recto icon on dark"><rect x="2" y="2" width="60" height="60" rx="14" fill="#2A2826" stroke="#4A4642" stroke-width="1"></rect><rect x="15" y="10" width="34" height="44" rx="3" fill="#F5F4F0"></rect><path d="M38 6 H46 V26 L42 22 L38 26 Z" fill="#F0603C"></path><rect x="20" y="30" width="20" height="2.6" rx="1.3" fill="#8A857D"></rect><rect x="20" y="36" width="24" height="2.6" rx="1.3" fill="#8A857D"></rect><rect x="20" y="42" width="16" height="2.6" rx="1.3" fill="#8A857D"></rect></svg></div>
+    </div>
+    <span class="cap" style="font-size:12px;color:#5C5C5C">On dark surfaces the tile gets a 1 px #4A4642 edge so it doesn't disappear. Below 24 px, drop the text lines.</span>
+    <span class="lbl" style="margin-top:12px">WORDMARK AND LOCKUP</span>
+    <div style="height:120px;border-radius:14px;background:#EEF1F6;display:flex;align-items:center;gap:18px;padding:0 28px">
+      <svg viewBox="0 0 64 64" width="64" height="64" aria-hidden="true"><rect x="2" y="2" width="60" height="60" rx="14" fill="#2A2826"></rect><rect x="15" y="10" width="34" height="44" rx="3" fill="#F5F4F0"></rect><path d="M38 6 H46 V26 L42 22 L38 26 Z" fill="#F0603C"></path></svg>
+      <span style="font-family:'Newsreader',Georgia,serif;font-size:64px;font-weight:500;letter-spacing:-1px;color:#1B1B1B">Recto</span>
+    </div>
+    <div style="height:120px;border-radius:14px;background:#1B1A19;display:flex;align-items:center;gap:18px;padding:0 28px">
+      <svg viewBox="0 0 64 64" width="64" height="64" aria-hidden="true"><rect x="2" y="2" width="60" height="60" rx="14" fill="#2A2826" stroke="#4A4642" stroke-width="1"></rect><rect x="15" y="10" width="34" height="44" rx="3" fill="#F5F4F0"></rect><path d="M38 6 H46 V26 L42 22 L38 26 Z" fill="#F0603C"></path></svg>
+      <span style="font-family:'Newsreader',Georgia,serif;font-size:64px;font-weight:500;letter-spacing:-1px;color:#EDEAE4">Recto</span>
+      <span style="font-family:'Newsreader',Georgia,serif;font-size:20px;font-style:italic;color:#B8B2A8;margin-left:auto">the right-hand page</span>
+    </div>
+    <span class="cap" style="font-size:12px;color:#5C5C5C">Wordmark: Newsreader Medium. Everything else in the app: Segoe UI Variable.</span>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <span class="lbl">COLOUR TOKENS</span>
+    <div class="tk" style="font-weight:600;color:#5C5C5C"><span>Token</span><span></span><span>Light</span><span></span><span>Dark</span></div>
+    
+      <div class="tk"><span>Window (title bar)</span><i style="background:#EEF1F6"></i><span style="font-family:Consolas,monospace">#EEF1F6</span><i style="background:#1B1A19"></i><span style="font-family:Consolas,monospace">#1B1A19</span></div>
+    
+      <div class="tk"><span>Surface</span><i style="background:#FAFAFA"></i><span style="font-family:Consolas,monospace">#FAFAFA</span><i style="background:#232120"></i><span style="font-family:Consolas,monospace">#232120</span></div>
+    
+      <div class="tk"><span>Raised</span><i style="background:#FFFFFF"></i><span style="font-family:Consolas,monospace">#FFFFFF</span><i style="background:#2A2826"></i><span style="font-family:Consolas,monospace">#2A2826</span></div>
+    
+      <div class="tk"><span>Canvas behind pages</span><i style="background:#E6E7EA"></i><span style="font-family:Consolas,monospace">#E6E7EA</span><i style="background:#141312"></i><span style="font-family:Consolas,monospace">#141312</span></div>
+    
+      <div class="tk"><span>Border</span><i style="background:#E5E5E5"></i><span style="font-family:Consolas,monospace">#E5E5E5</span><i style="background:#3A3734"></i><span style="font-family:Consolas,monospace">#3A3734</span></div>
+    
+      <div class="tk"><span>Text</span><i style="background:#1B1B1B"></i><span style="font-family:Consolas,monospace">#1B1B1B</span><i style="background:#EDEAE4"></i><span style="font-family:Consolas,monospace">#EDEAE4</span></div>
+    
+      <div class="tk"><span>Secondary text</span><i style="background:#5C5C5C"></i><span style="font-family:Consolas,monospace">#5C5C5C</span><i style="background:#B8B2A8"></i><span style="font-family:Consolas,monospace">#B8B2A8</span></div>
+    
+      <div class="tk"><span>Accent</span><i style="background:#C8431F"></i><span style="font-family:Consolas,monospace">#C8431F</span><i style="background:#F0603C"></i><span style="font-family:Consolas,monospace">#F0603C</span></div>
+    
+      <div class="tk"><span>Text on accent</span><i style="background:#FFFFFF"></i><span style="font-family:Consolas,monospace">#FFFFFF</span><i style="background:#1B1A19"></i><span style="font-family:Consolas,monospace">#1B1A19</span></div>
+    
+      <div class="tk"><span>Accent as text</span><i style="background:#C8431F"></i><span style="font-family:Consolas,monospace">#C8431F</span><i style="background:#F48A6E"></i><span style="font-family:Consolas,monospace">#F48A6E</span></div>
+    
+      <div class="tk"><span>Accent tint</span><i style="background:#FBE4DC"></i><span style="font-family:Consolas,monospace">#FBE4DC</span><i style="background:#3A2620"></i><span style="font-family:Consolas,monospace">#3A2620</span></div>
+    
+    <span class="lbl" style="margin-top:16px">ACCENT IN USE</span>
+    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px">
+      <div style="border-radius:12px;background:#FAFAFA;border:1px solid #E5E5E5;padding:16px;display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;gap:8px"><span style="height:32px;padding:0 14px;border-radius:8px;background:#C8431F;color:#FFFFFF;font-size:13px;font-weight:600;display:flex;align-items:center">Convert</span><span style="height:32px;padding:0 14px;border-radius:8px;background:#FFFFFF;border:1px solid #E0E0E0;font-size:13px;display:flex;align-items:center">Cancel</span></div>
+        <div style="height:30px;border-radius:6px;background:#FBE4DC;box-shadow:inset 3px 0 0 #C8431F;font-size:13px;display:flex;align-items:center;padding:0 12px">4.5 Thread map</div>
+        <span style="font-size:13px;color:#C8431F">Open output folder</span>
+      </div>
+      <div style="border-radius:12px;background:#232120;border:1px solid #3A3734;padding:16px;display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;gap:8px"><span style="height:32px;padding:0 14px;border-radius:8px;background:#F0603C;color:#1B1A19;font-size:13px;font-weight:600;display:flex;align-items:center">Convert</span><span style="height:32px;padding:0 14px;border-radius:8px;background:#2E2C2A;border:1px solid #4A4642;color:#EDEAE4;font-size:13px;display:flex;align-items:center">Cancel</span></div>
+        <div style="height:30px;border-radius:6px;background:#3A2620;box-shadow:inset 3px 0 0 #F0603C;font-size:13px;display:flex;align-items:center;padding:0 12px;color:#EDEAE4">4.5 Thread map</div>
+        <span style="font-size:13px;color:#F48A6E">Open output folder</span>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

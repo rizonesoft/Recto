@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recto B: Dialogs and states</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#F48A6E}a:hover{color:#F7A890}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.lbl{font-size:12px;font-weight:600;color:#B8B2A8;letter-spacing:.6px}
+.dlg{background:#2A2826;border:1px solid #3F3B37;border-radius:14px;box-shadow:0 24px 60px rgba(0,0,0,.55);display:flex;flex-direction:column;gap:16px;padding:26px}
+.t{margin:0;font-family:'Newsreader',Georgia,serif;font-size:26px;font-weight:500;line-height:30px}
+.p{margin:0;font-size:14px;line-height:21px;color:#D3CFC7}
+.ft{display:flex;justify-content:flex-end;gap:8px;margin-top:6px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border-radius:6px;border:1px solid #4A4642;background:#33302D;font:inherit;font-size:14px;color:#EDEAE4;white-space:nowrap}
+.btn.p2{background:#F0603C;border-color:#F0603C;color:#1B1A19;font-weight:600}
+.in{height:38px;box-sizing:border-box;border-radius:8px;border:1px solid #4A4642;background:#1B1A19;color:#EDEAE4;padding:0 12px;font:inherit;font-size:14px;width:100%}
+.fl{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#D3CFC7}
+.seg{display:flex;padding:3px;background:#1B1A19;border-radius:8px;gap:2px;border:1px solid #3A3734}
+.seg button{flex:1;height:30px;border:0;border-radius:6px;background:transparent;font:inherit;font-size:13px;color:#B8B2A8}
+.seg button.on{background:#3A3734;color:#EDEAE4;font-weight:600}
+.cap{font-size:12px;color:#B8B2A8}
+.ico{width:44px;height:44px;border-radius:22px;display:flex;align-items:center;justify-content:center}
+</style>
+</head>
+<body>
+<div style="width:1440px;height:1000px;box-sizing:border-box;padding:40px;background:#141312;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;color:#EDEAE4;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:36px 40px;align-content:start">
+
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <span class="lbl">PASSWORD PROMPT, WRONG PASSWORD</span>
+    <div class="dlg" role="dialog" aria-label="Password required">
+      <div class="ico" style="background:#3A2620;color:#F48A6E"><svg class="ic" viewBox="0 0 24 24" style="width:22px;height:22px" aria-hidden="true"><path d="M6 11h12v9H6zM8 11V8a4 4 0 0 1 8 0v3"></path></svg></div>
+      <h2 class="t">This PDF is locked</h2>
+      <p class="p">Lease agreement 2026.pdf needs a password to open.</p>
+      <label class="fl">Password<input class="in" type="password" value="hunter22" style="border-color:#FF9A85"></label>
+      <span style="font-size:13px;color:#FF9A85">That password didn't work. Try again.</span>
+      <div class="ft"><button class="btn">Cancel</button><button class="btn p2">Unlock</button></div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <span class="lbl">CONVERSION OPTIONS, PDF TO IMAGES</span>
+    <div class="dlg" role="dialog" aria-label="PDF to images">
+      <h2 class="t">PDF to images</h2>
+      <p class="cap" style="margin:-10px 0 0;font-size:13px">Recto foundation plan.pdf · 9 pages</p>
+      <div class="fl">Format<div class="seg"><button class="on">PNG</button><button>JPEG</button><button>TIFF</button><button>BMP</button></div></div>
+      <div class="fl">Resolution<div class="seg"><button>72</button><button class="on">150</button><button>300</button><button>600 dpi</button></div></div>
+      <label class="fl">Pages<input class="in" value="1-3, 7"></label>
+      <label class="fl">Save to<span style="display:flex;gap:8px"><input class="in" value="R:\GitHub\PDF\docs\images"><button class="btn">Browse</button></span></label>
+      <div class="ft"><span class="cap" style="margin-right:auto;align-self:center">4 PNG files</span><button class="btn">Cancel</button><button class="btn p2">Convert</button></div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <span class="lbl">OFFICE CONVERTER NOT FOUND</span>
+    <div class="dlg" role="dialog" aria-label="Office converter needed">
+      <div class="ico" style="background:#3A3320;color:#E2C27A"><svg class="ic" viewBox="0 0 24 24" style="width:22px;height:22px" aria-hidden="true"><path d="M4 8h16v11H4zM9 8V5h6v3M4 13h16"></path></svg></div>
+      <h2 class="t">Office to PDF needs Microsoft Office or LibreOffice</h2>
+      <p class="p">Neither is installed on this PC. Install one, then try Quarterly review.pptx again.</p>
+      <div style="display:flex;flex-direction:column;gap:8px;font-size:14px"><a href="https://www.libreoffice.org/">Get LibreOffice (free)</a><a href="https://www.microsoft.com/microsoft-365">Get Microsoft 365</a></div>
+      <div class="ft"><button class="btn">Close</button></div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <span class="lbl">FILE COULD NOT BE OPENED</span>
+    <div class="dlg" role="dialog" aria-label="Could not open file">
+      <div class="ico" style="background:#3A2220;color:#FF9A85"><svg class="ic" viewBox="0 0 24 24" style="width:22px;height:22px" aria-hidden="true"><path d="M12 4l9 16H3zM12 10v5M12 17.5v.01"></path></svg></div>
+      <h2 class="t">Recto couldn't open this file</h2>
+      <p class="p">Invoice INV-0417.pdf is damaged or isn't a PDF.</p>
+      <details style="font-size:13px;color:#D3CFC7"><summary>Details</summary><div style="margin-top:8px;font-family:Consolas,monospace;font-size:12px;background:#1B1A19;padding:10px;border-radius:6px">[MuPDF error message]</div></details>
+      <div class="ft"><button class="btn">Copy details</button><button class="btn p2">Close</button></div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <span class="lbl">REPLACE ORIGINAL AFTER PROTECTING</span>
+    <div class="dlg" role="dialog" aria-label="Replace the original">
+      <h2 class="t">Replace the original?</h2>
+      <p class="p">The protected copy is saved as <b style="color:#EDEAE4">Lease agreement 2026 (protected).pdf</b>. Replace the original with it, or keep both files.</p>
+      <div class="ft"><button class="btn">Keep both</button><button class="btn p2">Replace</button></div>
+    </div>
+    <span class="lbl" style="margin-top:22px">LEAVE ORGANIZE WITH UNSAVED CHANGES</span>
+    <div class="dlg" role="dialog" aria-label="Unsaved changes">
+      <h2 class="t">Save your split first?</h2>
+      <p class="p">You set up 3 files from Lease agreement 2026.pdf but haven't saved them.</p>
+      <div class="ft"><button class="btn">Discard</button><button class="btn">Cancel</button><button class="btn p2">Save files</button></div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:10px">
+    <span class="lbl">LINK IN A DOCUMENT</span>
+    <div class="dlg" role="dialog" aria-label="Open link">
+      <h2 class="t">Open this link?</h2>
+      <p class="p">The document wants to open a web page:</p>
+      <div style="font-family:Consolas,monospace;font-size:13px;background:#1B1A19;padding:10px 12px;border-radius:6px;word-break:break-all;color:#EDEAE4">https://learn.microsoft.com/windows/apps/windows-app-sdk/</div>
+      <label style="display:flex;gap:8px;align-items:center;font-size:13px;color:#D3CFC7"><input type="checkbox">Always open links from this document</label>
+      <div class="ft"><button class="btn">Cancel</button><button class="btn p2">Open link</button></div>
+    </div>
+    <span class="lbl" style="margin-top:22px">IN-APP TOAST</span>
+    <div role="status" style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;background:#EDEAE4;color:#1B1A19;box-shadow:0 12px 30px rgba(0,0,0,.5);font-size:14px"><svg class="ic" viewBox="0 0 24 24" style="color:#1F7A4A;width:18px;height:18px" aria-hidden="true"><path d="M5 12l5 5 9-10"></path></svg><span style="flex-grow:1"><b>Thesis draft v3.docx</b> is ready</span><button style="height:30px;padding:0 12px;border-radius:6px;border:0;background:#1B1A19;color:#EDEAE4;font:inherit;font-size:13px">Open</button></div>
+  </div>
+
+</div>
+</body>
+</html>

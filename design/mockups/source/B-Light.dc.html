@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recto B: Light theme with spread and outline</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#C8431F}a:hover{color:#9E3217}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.serif{font-family:'Newsreader',Georgia,serif}
+.mo{height:46px;padding:0 14px;border:0;background:transparent;font:inherit;font-size:13px;color:#5E5951;position:relative;text-decoration:none;display:flex;align-items:center}
+.mo.on{color:#1F1D1B;font-weight:600}
+.mo.on::after{content:"";position:absolute;left:14px;right:14px;bottom:0;height:3px;border-radius:2px 2px 0 0;background:#C8431F}
+.ib{width:34px;height:34px;border:0;border-radius:6px;background:transparent;color:#1F1D1B;display:flex;align-items:center;justify-content:center;flex:none;text-decoration:none}
+.ib.on{background:#E6E2DC}
+.wc{width:46px;height:46px;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:#1F1D1B}
+.pill{display:flex;align-items:center;gap:8px;height:30px;padding:0 4px 0 12px;border-radius:15px;font-size:12px;color:#5E5951;max-width:240px;box-sizing:border-box}
+.pill.on{background:#E6E2DC;color:#1F1D1B}
+.pill span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.px{width:24px;height:24px;border:0;border-radius:12px;background:transparent;color:inherit;display:flex;align-items:center;justify-content:center;flex:none}
+.sep{width:1px;height:22px;background:#DAD6CF;margin:0 6px}
+.cap{font-size:12px;color:#5E5951}
+.it{height:44px;padding:0 4px;border:0;background:transparent;font:inherit;font-size:13px;color:#5E5951;position:relative;text-decoration:none;display:flex;align-items:center}
+.it.on{color:#1F1D1B;font-weight:600}
+.it.on::after{content:"";position:absolute;left:4px;right:4px;bottom:0;height:2px;background:#C8431F}
+.ol{display:flex;align-items:center;gap:6px;min-height:34px;border:0;background:transparent;border-radius:6px;font:inherit;font-size:13px;color:#1F1D1B;text-align:left;width:100%;box-sizing:border-box;padding-right:8px}
+.ol span{flex-grow:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ol em{font-style:normal;font-size:12px;color:#5E5951}
+.th{display:flex;flex-direction:column;align-items:center;gap:6px;font-size:11px;color:#5E5951;border:0;background:transparent;font-family:inherit;padding:0}
+.bar{height:5px;border-radius:2px;background:#C9C5BE;display:block}
+.tb{height:3px;border-radius:2px;background:#C9C5BE;display:block}
+</style>
+</helmet>
+<div style="width:1440px;height:900px;display:flex;flex-direction:column;background:#F7F6F3;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;font-size:14px;color:#1F1D1B;overflow:hidden">
+  <div style="height:46px;display:flex;align-items:center;padding-left:14px;background:#EFEDE9;flex:none;border-bottom:1px solid #E1DDD7">
+    <svg viewBox="0 0 64 64" width="22" height="22" aria-hidden="true"><rect x="2" y="2" width="60" height="60" rx="14" fill="#2A2826"></rect><rect x="15" y="10" width="34" height="44" rx="3" fill="#F5F4F0"></rect><path d="M38 6 H46 V26 L42 22 L38 26 Z" fill="#F0603C"></path></svg>
+    <span class="serif" style="font-size:20px;font-weight:500;margin:0 26px 0 10px">Recto</span>
+    <nav style="display:flex;height:46px" aria-label="Mode">
+      <a class="mo" href="B-Home.dc.html">Home</a><a class="mo on" href="B-Viewer.dc.html">Read</a><a class="mo" href="B-Convert.dc.html">Convert</a><a class="mo" href="B-Organize.dc.html">Organize</a>
+    </nav>
+    <div style="flex-grow:1"></div>
+    <a class="ib" href="B-Settings.dc.html" aria-label="Settings"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.gear}}"></path></svg></a>
+    <span style="width:8px"></span>
+    <button class="wc" aria-label="Minimize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.min}}"></path></svg></button>
+    <button class="wc" aria-label="Maximize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.max}}"></path></svg></button>
+    <button class="wc" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button>
+  </div>
+  <div style="height:48px;display:flex;align-items:center;gap:6px;padding:0 10px;background:#FBFAF8;border-bottom:1px solid #E1DDD7;flex:none">
+    <div class="pill on"><span>Recto foundation plan.pdf</span><button class="px" aria-label="Close document"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button></div>
+    <div class="pill"><span>MuPDF API reference.pdf</span><button class="px" aria-label="Close document"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button></div>
+    <button class="ib" aria-label="Open a document"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.plus}}"></path></svg></button>
+    <div style="flex-grow:1"></div>
+    <div role="toolbar" aria-label="Document commands" style="display:flex;align-items:center;gap:2px">
+      <button class="ib" aria-label="Save a copy"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.save}}"></path></svg></button>
+      <button class="ib" aria-label="Print"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.print}}"></path></svg></button>
+      <span class="sep"></span>
+      <button class="ib" aria-label="Zoom out"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.zout}}"></path></svg></button>
+      <button style="height:30px;padding:0 10px;border-radius:6px;border:1px solid #D6D1CA;background:#FFFFFF;color:#1F1D1B;font:inherit;font-size:13px">64%</button>
+      <button class="ib" aria-label="Zoom in"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.zin}}"></path></svg></button>
+      <span class="sep"></span>
+      <button class="ib on" aria-label="Two-page spread"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.spread}}"></path></svg></button>
+      <button class="ib" aria-label="Rotate"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.rotate}}"></path></svg></button>
+      <a class="ib" href="B-Search.dc.html" aria-label="Find"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.search}}"></path></svg></a>
+      <span class="sep"></span>
+      <button class="ib on" aria-label="Show inspector"><svg class="ic" viewBox="0 0 24 24" style="transform:scaleX(-1)" aria-hidden="true"><path d="{{i.side}}"></path></svg></button>
+    </div>
+  </div>
+  <div style="display:flex;flex-grow:1;min-height:0">
+    <div style="flex-grow:1;min-width:0;display:flex;flex-direction:column">
+      <div style="flex-grow:1;min-height:0;background:#E4E1DC;display:flex;justify-content:center;align-items:flex-start;padding-top:36px;overflow:hidden">
+        <div style="display:flex;box-shadow:0 10px 30px rgba(60,40,20,.18)">
+          <article style="width:430px;height:556px;background:#FFFFFF;padding:40px 44px;box-sizing:border-box;font-family:Cambria,Georgia,serif;color:#1F1D1B;display:flex;flex-direction:column;gap:7px;border-right:1px solid #E6E2DC">
+            <div style="font-size:12px;font-weight:700">4.5 Thread map</div>
+            <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:#CFCBC3;font-size:7px;line-height:10px">
+              <span style="background:#EFEDE9;padding:3px;font-weight:700">Thread</span><span style="background:#EFEDE9;padding:3px;font-weight:700">Context</span><span style="background:#EFEDE9;padding:3px;font-weight:700">Owns</span>
+              <span style="background:#FFFFFF;padding:3px">UI (XAML)</span><span style="background:#FFFFFF;padding:3px">none</span><span style="background:#FFFFFF;padding:3px">XAML tree, view models</span>
+              <span style="background:#FFFFFF;padding:3px">Presentation</span><span style="background:#FFFFFF;padding:3px">none</span><span style="background:#FFFFFF;padding:3px">Swap chain, D2D context</span>
+              <span style="background:#FFFFFF;padding:3px">DocumentActor</span><span style="background:#FFFFFF;padding:3px">clone</span><span style="background:#FFFFFF;padding:3px">fz_document, pages, lists</span>
+              <span style="background:#FFFFFF;padding:3px">Render worker</span><span style="background:#FFFFFF;padding:3px">clone</span><span style="background:#FFFFFF;padding:3px">the pixmap it renders</span>
+            </div>
+            <div style="font-size:12px;font-weight:700;margin-top:8px">4.6 Opening and viewing a document</div>
+            <span class="bar" style="width:100%"></span><span class="bar" style="width:94%"></span><span class="bar" style="width:97%"></span><span class="bar" style="width:60%"></span>
+            <span style="height:4px"></span>
+            <span class="bar" style="width:100%"></span><span class="bar" style="width:91%"></span><span class="bar" style="width:84%"></span>
+            <span style="height:4px"></span>
+            <span class="bar" style="width:98%"></span><span class="bar" style="width:100%"></span><span class="bar" style="width:70%"></span>
+            <div style="margin-top:auto;font-size:7px;color:#5E5951;text-align:center">6</div>
+          </article>
+          <article style="width:430px;height:556px;background:#FFFFFF;padding:40px 44px;box-sizing:border-box;font-family:Cambria,Georgia,serif;color:#1F1D1B;display:flex;flex-direction:column;gap:7px">
+            <div style="font-size:12px;font-weight:700">4.7 Rendering one tile</div>
+            <div style="background:#F2F0EC;padding:10px;display:flex;flex-direction:column;gap:5px">
+              <span class="bar" style="width:70%;background:#A8A39B"></span><span class="bar" style="width:84%;background:#A8A39B"></span><span class="bar" style="width:76%;background:#A8A39B;margin-left:12px"></span><span class="bar" style="width:66%;background:#A8A39B;margin-left:12px"></span><span class="bar" style="width:58%;background:#A8A39B;margin-left:12px"></span><span class="bar" style="width:30%;background:#A8A39B"></span>
+            </div>
+            <div style="font-size:9px;font-weight:700;margin-top:6px">Notes on the tile path</div>
+            <span class="bar" style="width:100%"></span><span class="bar" style="width:88%"></span><span class="bar" style="width:96%"></span><span class="bar" style="width:74%"></span>
+            <span class="bar" style="width:100%"></span><span class="bar" style="width:92%"></span><span class="bar" style="width:55%"></span>
+            <div style="margin-top:auto;font-size:7px;color:#5E5951;text-align:center">7</div>
+          </article>
+        </div>
+      </div>
+      <div style="height:116px;flex:none;background:#EFEDE9;border-top:1px solid #E1DDD7;display:flex;align-items:center;gap:22px;padding:0 16px;justify-content:center" aria-label="Spread filmstrip">
+        <sc-for list="{{film}}" as="f" hint-placeholder-count="5">
+          <button class="th"><span style="display:flex;gap:1px;{{f.ring}}"><span style="width:44px;height:58px;background:#FFFFFF;display:flex;flex-direction:column;gap:3px;padding:7px 6px;box-sizing:border-box;box-shadow:0 1px 3px rgba(0,0,0,.15)"><span class="tb" style="width:70%;background:#5E5951"></span><span class="tb" style="width:100%"></span><span class="tb" style="width:86%"></span></span><span style="width:44px;height:58px;background:{{f.right}};display:flex;flex-direction:column;gap:3px;padding:7px 6px;box-sizing:border-box;box-shadow:0 1px 3px rgba(0,0,0,.15)"><span class="tb" style="width:100%"></span><span class="tb" style="width:80%"></span></span></span><span style="{{f.num}}">{{f.n}}</span></button>
+        </sc-for>
+      </div>
+    </div>
+    <aside style="width:320px;flex:none;background:#FBFAF8;border-left:1px solid #E1DDD7;display:flex;flex-direction:column;padding:0 14px;box-sizing:border-box;overflow:hidden" aria-label="Inspector">
+      <div style="display:flex;gap:18px;border-bottom:1px solid #E1DDD7;padding:0 6px" role="tablist"><button class="it on" role="tab">Outline</button><a class="it" role="tab" href="B-Search.dc.html">Search</a><a class="it" role="tab" href="B-Viewer.dc.html">Info</a></div>
+      <div style="display:flex;flex-direction:column;gap:1px;padding-top:10px">
+        <sc-for list="{{outline}}" as="o" hint-placeholder-count="14">
+          <button class="ol" style="{{o.st}}"><svg class="ic" viewBox="0 0 24 24" style="{{o.chev}}" aria-hidden="true"><path d="{{o.icon}}"></path></svg><span>{{o.t}}</span><em>{{o.p}}</em></button>
+        </sc-for>
+      </div>
+    </aside>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+renderVals() {
+const i={search:"M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM20 20l-4.2-4.2",save:"M12 4v11M7 10l5 5 5-5M5 20h14",print:"M7 9V4h10v5M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M7 14h10v6H7z",zin:"M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM20 20l-4.2-4.2M8 11h6M11 8v6",zout:"M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM20 20l-4.2-4.2M8 11h6",rotate:"M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7",gear:"M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1",cr:"M9 6l6 6-6 6",x:"M6 6l12 12M18 6L6 18",min:"M5 12h14",max:"M5 5h14v14H5z",plus:"M12 5v14M5 12h14",side:"M4 5h16v14H4zM9 5v14",spread:"M3 5h8v14H3zM13 5h8v14h-8z",dot:""};
+const film=[["1",0],["2–3",0],["4–5",0],["6–7",1],["8–9",0]].map(([n,on])=>({n,right:n==="1"?"transparent":"#FFFFFF",ring:on?"box-shadow:0 0 0 2px #EFEDE9,0 0 0 4px #C8431F":"",num:on?"color:#1F1D1B;font-weight:600":""}));
+const rows=[["1. Decisions",0,"c","1"],["2. Tech stack",0,"c","2"],["3. Architecture",0,"c","3"],["4. MuPDF thread-safety setup",0,"o","4"],["4.1 Why the C bridge",1,"","4"],["4.2 MuPDF's rules",1,"","5"],["4.3 Lock implementation",1,"","5"],["4.4 Error handling",1,"","5"],["4.5 Thread map",1,"sel","6"],["4.6 Opening a document",1,"","6"],["4.7 Rendering one tile",1,"","7"],["4.8 Presentation thread",1,"","7"],["5. Conversions (v1)",0,"c","8"],["6. UI outline",0,"c","8"],["7. Milestones",0,"c","9"]];
+const outline=rows.map(([t,l,s,p])=>({t,p,icon:(s==="c"||s==="o")?i.cr:i.dot,chev:"width:12px;height:12px;"+(s==="o"?"transform:rotate(90deg)":""),st:"padding-left:"+(l*20+6)+"px;"+(s==="sel"?"background:#FBE4DC;font-weight:600;box-shadow:inset 3px 0 0 #C8431F":"")}));
+return {i,film,outline};
+}
+}
+</script>
+</body>
+</html>

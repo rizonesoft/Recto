@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recto D: Dialogs and states</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#C8431F}a:hover{color:#A93717}
+.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.lbl{font-size:12px;font-weight:600;color:#5C5C5C;letter-spacing:.6px}
+.dlg{background:#FFFFFF;border-radius:20px;box-shadow:0 2px 4px rgba(0,0,0,.06),0 24px 60px rgba(0,0,0,.16);display:flex;flex-direction:column;gap:14px;padding:28px}
+.ctr{align-items:center;text-align:center}
+.t{margin:0;font-family:'Segoe UI Variable Display','Segoe UI',sans-serif;font-size:22px;font-weight:600;letter-spacing:-0.3px}
+.p{margin:0;font-size:14px;line-height:21px;color:#3B3B3B}
+.stk{display:flex;flex-direction:column;gap:8px;width:100%;margin-top:4px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:42px;padding:0 16px;border-radius:12px;border:1px solid #E0E0E0;background:#FFFFFF;font:inherit;font-size:14px;color:#1B1B1B;white-space:nowrap}
+.btn.p2{background:#C8431F;border-color:#C8431F;color:#FFFFFF;font-weight:600}
+.btn.gh{border-color:transparent;color:#C8431F}
+.in{height:42px;box-sizing:border-box;border-radius:12px;border:1px solid #E0E0E0;background:#EEF1F6;padding:0 14px;font:inherit;font-size:14px;width:100%;color:#1B1B1B}
+.ico{width:52px;height:52px;border-radius:16px;display:flex;align-items:center;justify-content:center}
+.seg{display:flex;padding:3px;background:#F3F3F3;border-radius:10px;gap:2px}
+.seg button{flex:1;height:30px;border:0;border-radius:8px;background:transparent;font:inherit;font-size:13px;color:#5C5C5C}
+.seg button.on{background:#FFFFFF;color:#1B1B1B;font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.fl{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#3B3B3B;text-align:left;width:100%}
+.cap{font-size:12px;color:#5C5C5C}
+.sug{display:flex;align-items:center;gap:12px;height:42px;padding:0 12px;border-radius:10px;font-size:14px;border:0;background:transparent;font-family:inherit;color:#1B1B1B;width:100%;text-align:left}
+.sug.on{background:#FBE4DC}
+.sug i{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;background:#F3F3F3;color:#5C5C5C}
+.sug em{font-style:normal;margin-left:auto;font-size:12px;color:#5C5C5C}
+kbd{font-family:inherit;font-size:11px;padding:2px 6px;border-radius:5px;background:#EBEBEB;color:#5C5C5C;border:1px solid #DADADA}
+</style>
+</helmet>
+<div style="width:1440px;height:1080px;box-sizing:border-box;padding:40px;background:#E6E7EA;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;color:#1B1B1B;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:36px 40px;align-items:start">
+
+  <div style="display:flex;flex-direction:column;gap:28px">
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <span class="lbl">PASSWORD PROMPT, WRONG PASSWORD</span>
+      <div class="dlg ctr" role="dialog" aria-label="Password required">
+        <div class="ico" style="background:#FBE4DC;color:#C8431F"><svg class="ic" viewBox="0 0 24 24" style="width:24px;height:24px" aria-hidden="true"><path d="{{i.lock}}"></path></svg></div>
+        <h2 class="t">Enter the password</h2>
+        <p class="p">Lease agreement 2026.pdf is protected.</p>
+        <input class="in" type="password" value="hunter22" aria-label="Password" style="border-color:#D13438;background:#FFF5F5">
+        <span style="font-size:13px;color:#B3261E">That password didn't work.</span>
+        <div class="stk"><button class="btn p2">Open</button><button class="btn gh">Cancel</button></div>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <span class="lbl">FILE COULD NOT BE OPENED</span>
+      <div class="dlg ctr" role="dialog" aria-label="Could not open file">
+        <div class="ico" style="background:#FDECEC;color:#B3261E"><svg class="ic" viewBox="0 0 24 24" style="width:24px;height:24px" aria-hidden="true"><path d="{{i.warn}}"></path></svg></div>
+        <h2 class="t">Couldn't open this file</h2>
+        <p class="p">Invoice INV-0417.pdf is damaged or isn't a PDF.</p>
+        <div class="stk"><button class="btn p2">OK</button><button class="btn gh">Copy error details</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:28px">
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <span class="lbl">COMMAND BOX, CTRL+K INSIDE A DOCUMENT</span>
+      <div style="background:#FFFFFF;border-radius:18px;box-shadow:0 2px 4px rgba(0,0,0,.06),0 24px 60px rgba(0,0,0,.18);overflow:hidden" role="dialog" aria-label="Command box">
+        <label style="display:flex;align-items:center;gap:12px;height:56px;padding:0 16px;border-bottom:1px solid #EBEBEB"><svg class="ic" viewBox="0 0 24 24" style="width:20px;height:20px;color:#C8431F" aria-hidden="true"><path d="{{i.search}}"></path></svg><input aria-label="Command" value="rot" style="border:0;outline:0;font:inherit;font-size:17px;flex-grow:1;background:transparent;color:#1B1B1B"><kbd>Esc</kbd></label>
+        <div style="padding:6px">
+          <div class="cap" style="padding:6px 12px 2px;font-weight:600">This document</div>
+          <button class="sug on"><i style="background:#C8431F;color:#FFFFFF"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.rotate}}"></path></svg></i><span><b>Rot</b>ate page right</span><em>Ctrl+R</em></button>
+          <button class="sug"><i><svg class="ic" viewBox="0 0 24 24" style="transform:scaleX(-1)" aria-hidden="true"><path d="{{i.rotate}}"></path></svg></i><span><b>Rot</b>ate page left</span><em>Ctrl+Shift+R</em></button>
+          <button class="sug"><i><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.grid}}"></path></svg></i><span><b>Rot</b>ate pages in Organize</span></button>
+          <div class="cap" style="padding:8px 12px 2px;font-weight:600">Go to</div>
+          <button class="sug"><i><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.doc}}"></path></svg></i><span>Page 7: 4.7 Rendering one tile</span></button>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <span class="lbl">OFFICE CONVERTER NOT FOUND</span>
+      <div class="dlg ctr" role="dialog" aria-label="Office converter needed">
+        <div class="ico" style="background:#FFF4D6;color:#8A5300"><svg class="ic" viewBox="0 0 24 24" style="width:24px;height:24px" aria-hidden="true"><path d="{{i.office}}"></path></svg></div>
+        <h2 class="t">Install Office or LibreOffice</h2>
+        <p class="p">Recto needs one of them to turn Word, Excel and PowerPoint files into PDFs. Neither is on this PC.</p>
+        <div class="stk"><a class="btn p2" href="https://www.libreoffice.org/" style="text-decoration:none">Get LibreOffice (free)</a><a class="btn" href="https://www.microsoft.com/microsoft-365" style="text-decoration:none">Get Microsoft 365</a><button class="btn gh">Not now</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:28px">
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <span class="lbl">CONVERSION OPTIONS, PDF TO IMAGES</span>
+      <div class="dlg" role="dialog" aria-label="PDF to images">
+        <h2 class="t">PDF to images</h2>
+        <p class="cap" style="margin:-8px 0 0;font-size:13px">Recto foundation plan.pdf · 9 pages</p>
+        <div class="fl">Format<div class="seg"><button class="on">PNG</button><button>JPEG</button><button>TIFF</button><button>BMP</button></div></div>
+        <div class="fl">Quality<div class="seg"><button>Screen, 72</button><button class="on">Standard, 150</button><button>Print, 300</button></div></div>
+        <label class="fl">Pages<input class="in" value="All pages"></label>
+        <div class="stk" style="flex-direction:row"><button class="btn gh" style="flex:1">Cancel</button><button class="btn p2" style="flex:2">Save 9 images</button></div>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <span class="lbl">LINK IN A DOCUMENT</span>
+      <div class="dlg" role="dialog" aria-label="Open link">
+        <h2 class="t">Open this link?</h2>
+        <div style="font-family:Consolas,monospace;font-size:13px;background:#EEF1F6;padding:10px 12px;border-radius:10px;word-break:break-all">https://learn.microsoft.com/windows/apps/windows-app-sdk/</div>
+        <div class="stk" style="flex-direction:row"><button class="btn gh" style="flex:1">Cancel</button><button class="btn p2" style="flex:2">Open in browser</button></div>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <span class="lbl">REPLACE ORIGINAL AFTER PROTECTING</span>
+      <div class="dlg" role="dialog" aria-label="Replace the original">
+        <h2 class="t">Replace the original?</h2>
+        <p class="p">The protected copy is saved next to it. Replace the original, or keep both.</p>
+        <div class="stk" style="flex-direction:row"><button class="btn" style="flex:1">Keep both</button><button class="btn p2" style="flex:1">Replace</button></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1080}}'>
+class Component extends DCLogic {
+renderVals() {
+const i={search:"M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM20 20l-4.2-4.2",rotate:"M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7",grid:"M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",doc:"M6 3h8l5 5v13H6zM14 3v5h5",office:"M4 8h16v11H4zM9 8V5h6v3M4 13h16",lock:"M6 11h12v9H6zM8 11V8a4 4 0 0 1 8 0v3",warn:"M12 4l9 16H3zM12 10v5M12 17.5v.01"};
+return {i};
+}
+}
+</script>
+</body>
+</html>
