@@ -1,0 +1,25 @@
+{
+  "ref": "D00 T01 \u00a71",
+  "title": "Git repository and repo-face files",
+  "implementation_sha": "25ac228f91ce0b778fe49565da5ae1b551242d5b",
+  "date": "2026-10-13",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/00-workspace/D00-T01-s1.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "fresh clone at 25ac228: python -m unittest tests.scripts.test_todo_graph -> Ran 36 tests OK",
+    "fresh clone at 25ac228: python scripts/todo-graph.py validate -> valid: 81 sections; plan --check -> plan current",
+    "fresh Windows clone: LICENSE 34523 bytes LF sha256 8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef",
+    "gh run list: plan-gates 38470516311 and 38471142484 both success",
+    "gh api repos/rizonesoft/RectoPDF/license -> AGPL-3.0"
+  ]
+}

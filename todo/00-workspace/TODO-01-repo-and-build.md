@@ -35,7 +35,7 @@ track: M0
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | Git repository and repo-face files | -- | [ ] |
+| 1 | §1 | Git repository and repo-face files | -- | [x] |
 | 2 | §2 | MuPDF submodule pinned with Recto config | §1 | [ ] |
 | 3 | §3 | Solution scaffold with one-command build | §2 | [ ] |
 | 4 | §4 | GitHub Actions build and test CI | §3 | [ ] |
@@ -59,9 +59,14 @@ Recto is open source from the first public commit (D2), and the CLA must exist b
 
 - [x] `LICENSE`, `CLA.md`, `CONTRIBUTING.md`, `NOTICE.md`, `README.md` at the root. Done when: a reader landing on the repository learns the license, how to contribute and where the plan lives without asking. Cheaper substitute: a README that says "coming soon" and defers the CLA.
 - [x] First commit pushed, including `design/`, `resources/`, `docs/plans/`, `todo/`, `scripts/`, `.claude/skills/`. Done when: a clean clone elsewhere validates the TODO graph (`python scripts/todo-graph.py plan --check` exits 0).
-- [ ] Commit: `repo: initial commit, design, plan and todo system`
+- [x] Commit: `repo: initial commit, design, plan and todo system`
 
 **Test checkpoint:** in a fresh clone under `R:\scratch`, `python -m unittest tests.scripts.test_todo_graph` passes and `python scripts/todo-graph.py validate` prints the section count, proving the committed tree is self-contained.
+
+> **Duration:** 2026-10-13T21:19:35Z to 2026-10-13T21:33:24Z
+
+> **Verified:** 2026-10-13 | §1 | 25ac228f91ce0b778fe49565da5ae1b551242d5b
+> **Review:** `docs/reviews/d00-t01-s1.json`
 
 ## 2. MuPDF submodule pinned with Recto config
 
