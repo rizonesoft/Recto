@@ -20,6 +20,14 @@
           Condition="'$(MSBuildProjectName)' == 'libthirdparty'">
     <ItemGroup>
       <ClCompile Remove="..\..\thirdparty\mujs\one.c" />
+      <!-- MSBuild Remove of a non-matching path is silent, so assert on what
+           remains: any MuJS compile item still present after the removal
+           (an upstream rename on a future pin bump, or a wiring mistake)
+           fails the build here instead of quietly shipping MuJS. -->
+      <_RectoMuJsLeftovers Include="@(ClCompile)"
+                           Condition="$([System.String]::Copy('%(ClCompile.Identity)').ToLowerInvariant().Contains('mujs'))" />
     </ItemGroup>
+    <Error Condition="'@(_RectoMuJsLeftovers)' != ''"
+           Text="Recto: MuJS sources are still in libthirdparty's compile list after the D12 exclusion (@(_RectoMuJsLeftovers)). Fix build/mupdf-win32.targets for this MuPDF pin; do not build with JavaScript." />
   </Target>
 </Project>

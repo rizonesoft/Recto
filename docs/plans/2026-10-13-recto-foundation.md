@@ -73,7 +73,8 @@ Recto/
   CONTRIBUTING.md
   CLA.md
   third_party/mupdf/        git submodule, pinned release tag
-  build/mupdf-config.h      Recto's MuPDF feature config (FZ_ENABLE_JS 0, font choices)
+  build/mupdf-config.h      Recto's MuPDF feature config (FZ_ENABLE_JS 0; all other upstream defaults kept, decided D00 T01 §2)
+  build/mupdf-win32.targets MSBuild wiring excluding the MuJS unity file from the win32 build (D12, D00 T01 §2)
   src/bridge/               C only
   src/core/
   src/services/
@@ -391,7 +392,7 @@ The reference machine is to be chosen in M0 (one mid-range x64 laptop and one AR
 | Item | Needed by |
 |---|---|
 | Trademark search for "Recto" (USPTO, EUIPO) and Store name reservation | M0 |
-| MuPDF release tag to pin | M0 |
+| MuPDF release tag to pin: chosen 1.28.5 (`8ad45e92`), pinned 2026-10-13 in D00 T01 §2 | M0 |
 | Reference machines for section 8 | M0 |
 | Print API choice | M6 |
 | Whether PDF to DOCX needs Recto's own layout work after the M5 review | M5 |
