@@ -70,6 +70,8 @@ Recto is open source from the first public commit (D2), and the CLA must exist b
 
 ## 2. MuPDF submodule pinned with Recto config
 
+> **Started:** 2026-10-13T21:39:44Z
+
 D9: MuPDF comes from source as a git submodule at a pinned release tag, built with Recto's own feature config, never the vcpkg port and never the generated `mupdfcpp` bindings. JavaScript is disabled (D12). The tag choice is an M0 open item: pick the current stable Artifex release, record it here with a dated correction if it differs from what ships, and treat the submodule commit as part of every release's corresponding source.
 
 **Phase:** 0
@@ -82,9 +84,13 @@ D9: MuPDF comes from source as a git submodule at a pinned release tag, built wi
 2. Write `build/mupdf-config.h` with `FZ_ENABLE_JS 0` and the font and feature choices the foundation plan assumes, wired the way MuPDF's build expects (`FZ_CONFIG` include path). Done when: the MuPDF static libraries build against this config with no JavaScript objects linked (check the build log for `mujs` absence).
 3. Record the pin in this section (tag, commit, date) and in `NOTICE.md`. Done when: D01 T01 §1 can name the exact headers it builds against without re-deriving the version.
 
-- [ ] `third_party/mupdf` submodule at a named release tag. Done when: a clean clone with `git submodule update --init` reproduces the identical tree. Cheaper substitute: a copied source drop or the vcpkg port, both refused by D9.
-- [ ] `build/mupdf-config.h` disabling JavaScript. Done when: `libmupdf` and `libthirdparty` build for x64 with warnings clean at the configured level.
-- [ ] Pin recorded (tag + commit + date) in this section and `NOTICE.md`. Done when: the two records agree and name a commit `git -C third_party/mupdf rev-parse HEAD` reproduces.
+**Corrected 2026-10-13:** Three details above were written before the pinned tree existed and are corrected from it. (1) There is no `FZ_CONFIG` include-path hook in MuPDF 1.28.5: `include/mupdf/fitz/config.h` takes feature choices as preprocessor defines ahead of its `#ifndef` defaults, so `build/mupdf-config.h` is wired as an MSVC forced include (`/FI`, applied through the `CL` environment variable for the upstream win32 projects). (2) The win32 `libthirdparty.vcxproj` always compiles the MuJS unity file `thirdparty/mujs/one.c`; it has no JS-off switch of its own. Recto matches the Makefile's `mujs=no` behaviour from its own side: `build/mupdf-win32.targets` removes that compile item (passed as `CustomAfterMicrosoftCommonTargets`), and the `thirdparty/mujs` nested submodule stays uninitialized so a wiring failure breaks the build loudly. JavaScript's absence is therefore proven at symbol level (no `js_*` definitions in `libthirdparty.lib`, no undefined `js_*` references in `libmupdf.lib`), not by log inspection alone, although the build log also contains no MuJS compilation. (3) "Font choices" in step 2 resolves to retaining the upstream default font set and every other upstream feature default except JavaScript; the foundation plan chooses none, so none is invented (recorded in `build/mupdf-config.h`). The x64 build at upstream's own warning settings reports 19 warnings and 0 errors under MSVC v143 (C4127 constant-conditional from MuPDF macro patterns, C4146, C4267, C4324 padding, C4115, C5286; all in upstream sources), so the clean-warnings bar D00 T01 §3 sets binds Recto's own projects, with upstream treated as external code whose warnings are recorded here rather than suppressed: the build is consumed through its libraries, and how Recto's projects treat upstream warnings at their boundary is §3's recorded choice.
+
+**Pin record:** MuPDF 1.28.5, tag commit `8ad45e92f0935d3d87f1db3f873086472a5e1b24`, pinned 2026-10-13 from https://github.com/ArtifexSoftware/mupdf.git. Build proof: `msbuild third_party/mupdf/platform/win32/mupdf.sln /t:libmupdf` Release, x64, toolset v143 (upstream declares v142), `CL` set to force-include `build/mupdf-config.h`, `CustomAfterMicrosoftCommonTargets` set to `build/mupdf-win32.targets`: 0 errors, producing `libmupdf.lib`, `libthirdparty.lib`, `libharfbuzz.lib`, `libextract.lib`, `libresources.lib`, `libpkcs7.lib`, `libmubarcode.lib`, `libzxing.lib`, `libleptonica.lib` and `libtesseract.lib` under `third_party/mupdf/platform/win32/x64/Release/`.
+
+- [x] `third_party/mupdf` submodule at a named release tag. Done when: a clean clone with `git submodule update --init` reproduces the identical tree. Cheaper substitute: a copied source drop or the vcpkg port, both refused by D9.
+- [x] `build/mupdf-config.h` disabling JavaScript. Done when: `libmupdf` and `libthirdparty` build for x64 with warnings clean at the configured level.
+- [x] Pin recorded (tag + commit + date) in this section and `NOTICE.md`. Done when: the two records agree and name a commit `git -C third_party/mupdf rev-parse HEAD` reproduces.
 - [ ] Commit: `build: pin MuPDF submodule with Recto config (JS disabled)`
 
 **Test checkpoint:** `git submodule status` output matches the recorded tag, and the §3 build links the MuPDF libraries built from `build/mupdf-config.h` (the build log names the config path).

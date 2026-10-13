@@ -1,5 +1,9 @@
-# Derived output: always reproducible from the tracked sources.
-build/
+# Derived output: always reproducible from the tracked sources. The one
+# tracked file under build/ is Recto's MuPDF feature config, which the
+# foundation plan (section 3.2) places at build/mupdf-config.h.
+build/*
+!build/mupdf-config.h
+!build/mupdf-win32.targets
 __pycache__/
 *.pyc
 

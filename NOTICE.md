@@ -6,7 +6,7 @@ Recto itself is licensed under the [GNU Affero General Public License, version 3
 
 | Component | Purpose | License | Lands in |
 | --------- | ------- | ------- | -------- |
-| MuPDF (Artifex) | PDF parsing, rendering, text, document writers. Built from a pinned release tag as a git submodule with Recto's own config, JavaScript disabled. MuPDF bundles its own third-party libraries (including FreeType, HarfBuzz, libjpeg, OpenJPEG, zlib, Little CMS, jbig2dec and extract); each is itemized with its license here when the pin lands. | GNU Affero General Public License, version 3 | D00 T01 §2 |
+| MuPDF (Artifex) | PDF parsing, rendering, text, document writers. Pinned 2026-10-13: release 1.28.5, tag commit `8ad45e92f0935d3d87f1db3f873086472a5e1b24`, git submodule at `third_party/mupdf`, built with Recto's config in `build/mupdf-config.h` (JavaScript disabled; the MuJS nested submodule is not initialized and no MuJS code is compiled). Not yet linked into Recto code; linking starts with the bridge in D01. MuPDF's bundled third-party libraries are itemized per component with their licenses by the D07 T02 §2 build-derived audit. | GNU Affero General Public License, version 3 | D00 T01 §2 (pinned) |
 | Windows App SDK 2.4.0 (Microsoft) | WinUI 3 application framework for the packaged app. | MIT License | D00 T01 §3 |
 | GoogleTest | Unit tests only; not shipped in the application. The vcpkg manifest naming it lands with the scaffold; the runner wiring follows in the test backbone. | BSD 3-Clause License | D00 T01 §3 (manifest), D00 T03 §1 (wiring) |
 
