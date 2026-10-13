@@ -1,0 +1,24 @@
+{
+  "ref": "D00 T01 \u00a72",
+  "title": "MuPDF submodule pinned with Recto config",
+  "implementation_sha": "433c72e34da3f4aeffde1cc0461d490f3ef32f42",
+  "date": "2026-10-14",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T01-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/00-workspace/D00-T01-s2.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "msbuild mupdf.sln /t:libmupdf Release x64 v143 with CL forced-include and Recto targets -> 0 errors, 19 upstream warnings, 10 libs produced",
+    "dumpbin /symbols: libmupdf UNDEF js_* refs 0, libthirdparty js_* externals 0; build log has no MuJS compilation; thirdparty/mujs uninitialized",
+    "clean clone: git submodule status 8ad45e92f0935d3d87f1db3f873086472a5e1b24, describe --tags --exact-match 1.28.5, validate valid 81 sections, plan current",
+    "MuJS guard proven both ways: committed targets exit 0, misspelled remove path errors Recto guard exit 1"
+  ]
+}

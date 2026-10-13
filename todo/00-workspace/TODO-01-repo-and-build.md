@@ -36,7 +36,7 @@ track: M0
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | Git repository and repo-face files | -- | [x] |
-| 2 | §2 | MuPDF submodule pinned with Recto config | §1 | [ ] |
+| 2 | §2 | MuPDF submodule pinned with Recto config | §1 | [x] |
 | 3 | §3 | Solution scaffold with one-command build | §2 | [ ] |
 | 4 | §4 | GitHub Actions build and test CI | §3 | [ ] |
 | 5 | §5 | Reference machines and performance baseline record | §3 | [ ] |
@@ -91,9 +91,14 @@ D9: MuPDF comes from source as a git submodule at a pinned release tag, built wi
 - [x] `third_party/mupdf` submodule at a named release tag. Done when: a clean clone reproduces the identical pinned tree with `git submodule update --init` plus the nested init in the Pin record (every nested submodule except `thirdparty/mujs`, which stays uninitialized on purpose). Cheaper substitute: a copied source drop or the vcpkg port, both refused by D9.
 - [x] `build/mupdf-config.h` disabling JavaScript. Done when: `libmupdf` and `libthirdparty` build for x64 with 0 errors and no MuJS objects (the Corrected note records the 19 upstream warnings at upstream's own settings; Recto's zero-warning bar binds Recto's own projects from §3).
 - [x] Pin recorded (tag + commit + date) in this section and `NOTICE.md`. Done when: the two records agree and name a commit `git -C third_party/mupdf rev-parse HEAD` reproduces.
-- [ ] Commit: `build: pin MuPDF submodule with Recto config (JS disabled)`
+- [x] Commit: `build: pin MuPDF submodule with Recto config (JS disabled)`
 
 **Test checkpoint:** `git submodule status` output matches the recorded tag, and the §3 build links the MuPDF libraries built from `build/mupdf-config.h` (the build log names the config path).
+
+> **Duration:** 2026-10-13T21:39:44Z to 2026-10-13T22:05:54Z
+
+> **Verified:** 2026-10-14 | §2 | 433c72e34da3f4aeffde1cc0461d490f3ef32f42
+> **Review:** `docs/reviews/d00-t01-s2.json`
 
 ## 3. Solution scaffold with one-command build
 

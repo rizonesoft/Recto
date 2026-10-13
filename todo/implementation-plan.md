@@ -11,7 +11,7 @@ Sections: 11 | Checklist items: 37
 | Status | Reference  | Deliverable                                        | Needs          | Items |
 | ------ | ---------- | -------------------------------------------------- | -------------- | ----- |
 | [x]    | D00 T01 §1 | Git repository and repo-face files                 | none           | 3     |
-| [ ]    | D00 T01 §2 | MuPDF submodule pinned with Recto config           | windows-host   | 4     |
+| [x]    | D00 T01 §2 | MuPDF submodule pinned with Recto config           | windows-host   | 4     |
 | [ ]    | D00 T01 §3 | Solution scaffold with one-command build           | windows-host   | 4     |
 | [ ]    | D00 T01 §4 | GitHub Actions build and test CI                   | windows-host   | 3     |
 | [ ]    | D00 T01 §5 | Reference machines and performance baseline record | owner-decision | 3     |
@@ -148,6 +148,6 @@ Sections: 4 | Checklist items: 12
 | [ ]    | D99 T01 §3 | Partner Center account and app reservation  | operator, store-account | 3     |
 | [ ]    | D99 T01 §4 | Reference machines confirmed                | operator                | 3     |
 
-Progress: 1/81 verified sections, 2 ready to run now.
+Progress: 2/81 verified sections, 2 ready to run now.
 
-Checklist: 14/248 items completed (includes Commit items).
+Checklist: 15/248 items completed (includes Commit items).
