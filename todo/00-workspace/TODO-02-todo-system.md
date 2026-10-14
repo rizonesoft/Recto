@@ -42,6 +42,9 @@ track: M0
 
 The engine is the strict core: parse every TODO file, refuse anything malformed with a named reason, order sections by phase and dependency, generate the plan, and stamp only against real commits with review receipts. Recto's extensions over the swisshotelschool port are the milestone Phase vocabulary, the Recto Needs vocabulary, Surface sections requiring Fidelity, Job, Treatment and Chrome, the frozen Freeze check rule, executable Adjacency declarations, bidirectional XREFs, index coverage, durable deferrals and the 55-section file cap. Built 2026-10-13; the stamp waits on D00 T01 §1 for a commit to cite.
 
+> **Started:** 2026-10-13 -- initial port in `720725c`; review-driven hardening completed 2026-10-14
+> **Corrected:** 2026-10-14 -- Hardened `scripts/lib/todo_graph.py`, `scripts/todo-graph.py` and `tests/scripts/test_todo_graph.py` for Round 1 review findings: transactional stamp rollback across receipt, TODO and plan writes; strict rejection of malformed checklist lines, empty fields, missing TODO headings, section `0`, and non-step `Build order` blocks; verification of review report files and stamped git commits during graph validation; domain-qualified root index coverage; Windows backslash path resolution in `extract_ref`; iterative explicit-stack dependency traversal for deep graphs; and expanded the unit test suite from 35 to 50 tooling tests plus the live repository test (51 total).
+
 **Phase:** 0
 **Needs:** none
 **Surface:** no
@@ -50,7 +53,7 @@ The engine is the strict core: parse every TODO file, refuse anything malformed 
 
 1. Port the engine to `scripts/lib/todo_graph.py` with Recto's vocabularies and rules. Done when: `python scripts/todo-graph.py validate` prints the section count for the seeded tree and exits 0.
 2. Add the CLI in `scripts/todo-graph.py`: `validate`, `build`, `render`, `plan --sync` and `--check`, `query ready|blocked|stats|deferred|adjacency`, `resolve` (accepting a pasted plan row), `classify`, `stamp`. Done when: `plan --check` exits 0 after `--sync` and exits 2 after a section edit without a sync.
-3. Tests in `tests/scripts/test_todo_graph.py` covering every refusal (malformed row, row without body, cycle, later-phase prerequisite, unknown Need, missing index entry, malformed Adjacency, one-sided XREF, surface without Fidelity, freeze mismatch, ownerless deferral, stamp without receipt) and the live repository tree. Done when: `python -m unittest tests.scripts.test_todo_graph` passes, 35 tooling tests plus the repository test.
+3. Tests in `tests/scripts/test_todo_graph.py` covering every refusal (malformed row, row without body, cycle, later-phase prerequisite, unknown Need, missing index entry, malformed Adjacency, one-sided XREF, surface without Fidelity, freeze mismatch, ownerless deferral, stale deferral, 55-section and 30-item caps, superseded without successor, malformed checklist item, empty Build order or field, missing review report, fabricated commit SHA, stamp without receipt, failed stamp write rollback) and the live repository tree. Done when: `python -m unittest tests.scripts.test_todo_graph` passes, 50 tooling tests plus the repository test.
 
 - [x] Graph library and command line in `scripts/lib/todo_graph.py` and `scripts/todo-graph.py`. Done when: the validator refuses a malformed tree with a named reason instead of reading it as empty.
 - [x] Tests for every refusal and for the live tree in `tests/scripts/test_todo_graph.py`. Done when: the suite passes against the seeded graph.

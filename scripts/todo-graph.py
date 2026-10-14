@@ -24,7 +24,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from todo_graph import (ROOT, Refused, adjacency_report, atomic, deferrals, disposition,  # noqa: E402
-                        graph, ordered, projections, require, stamp)
+                        extract_ref, graph, ordered, projections, require, stamp)
 
 
 def review_round(value):
@@ -32,20 +32,6 @@ def review_round(value):
     require(len(parts) == 3 and parts[0].isdigit() and parts[1],
             f"--review takes round:report:verdict, not {value!r}")
     return {"round": int(parts[0]), "report": parts[1], "verdict": parts[2]}
-
-
-def extract_ref(text, rows):
-    """Resolve whatever the caller had in front of them: a DNN TNN §N reference, a pasted plan row,
-    or a '<path> §N' pair. Returns (ref_or_None, exit_code): 1 no such section, 2 no reference."""
-    m = re.search(r"D(\d{2})\s+T(\d{2})\s+§(\d+)", text)
-    if m:
-        ref = f"D{m[1]} T{m[2]} §{int(m[3])}"
-        return (ref, 0) if ref in rows else (ref, 1)
-    m = re.search(r"(\d{2})-[a-z0-9-]+/TODO-(\d{2})-[a-z0-9-]+\.md\s*§(\d+)", text)
-    if m:
-        ref = f"D{m[1]} T{m[2]} §{int(m[3])}"
-        return (ref, 0) if ref in rows else (ref, 1)
-    return None, 2
 
 
 def main():
@@ -71,8 +57,7 @@ def main():
     s.add_argument("--date", default=date.today().isoformat())
     args = p.parse_args()
     if args.command == "stamp":
-        receipt = stamp(ROOT, args.ref, args.sha, args.review, args.checks, args.date)
-        projections(sync=True)
+        receipt = stamp(ROOT, args.ref, args.sha, args.review, args.checks, args.date, sync_plan=True)
         print(f"stamped {args.ref}; receipt {receipt}; plan synchronized")
         return 0
     rows = graph()

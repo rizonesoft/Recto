@@ -18,7 +18,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 PLAN = "todo/implementation-plan.md"
 REF = re.compile(r"(?:D(?P<d>\d{2})\s+)?(?:T(?P<t>\d{2})\s+)?§(?P<s>[1-9]\d*)")
-ROW = re.compile(r"^\|\s*(\d+)\s*\|\s*§(\d+)\s*\|\s*([^|]+)\|\s*([^|]*)\|\s*\[([ x])\]\s*\|$")
+ROW = re.compile(r"^\|\s*([1-9]\d*)\s*\|\s*§([1-9]\d*)\s*\|\s*([^|]+)\|\s*([^|]*)\|\s*\[([ x])\]\s*\|$")
 # What a section needs from outside the repository. The WAITING values are people, companies, or the
 # operator's own hands: a section naming one stays blocked until the answer is recorded and the Need
 # is removed from the section.
@@ -85,8 +85,26 @@ def find_ref(text, domain, todo):
     return f"D{m['d'] or domain} T{m['t'] or todo} §{m['s']}"
 
 
+def extract_ref(text, rows):
+    """Resolve whatever the caller had in front of them: a DNN TNN §N reference, a pasted plan row,
+    or a '<path> §N' pair (POSIX or Windows path). Returns (ref_or_None, exit_code): 1 no such
+    section, 2 no reference."""
+    normalized = text.replace("\\", "/")
+    m = re.search(r"D(\d{2})\s+T(\d{2})\s+§([1-9]\d*)", normalized)
+    if m:
+        ref = f"D{m[1]} T{m[2]} §{int(m[3])}"
+        return (ref, 0) if ref in rows else (ref, 1)
+    m = re.search(r"(\d{2})-[a-z0-9-]+/TODO-(\d{2})-[a-z0-9-]+\.md\s*§([1-9]\d*)", normalized)
+    if m:
+        ref = f"D{m[1]} T{m[2]} §{int(m[3])}"
+        return (ref, 0) if ref in rows else (ref, 1)
+    return None, 2
+
+
 def field(body, name, required=True):
-    values = re.findall(r"^(?:> )?\*\*" + re.escape(name) + r":\*\*\s*(.+)$", body, re.M)
+    empty = re.findall(r"^(?:> )?\*\*" + re.escape(name) + r":\*\*[ \t]*$", body, re.M)
+    require(not empty, f"missing {name} field")
+    values = re.findall(r"^(?:> )?\*\*" + re.escape(name) + r":\*\*[ \t]*(.+)$", body, re.M)
     require(len(values) <= 1, f"duplicate {name} field")
     require(values or not required, f"missing {name} field")
     return values[0].strip() if values else ""
@@ -122,7 +140,23 @@ def front_matter(text, relative):
     return front, parts[2]
 
 
-def receipt_ok(root, receipt, ref, stamp_sha):
+def commit_ok(root, sha):
+    kind = subprocess.run(["git", "-C", str(root), "cat-file", "-t", sha],
+                          capture_output=True, text=True, timeout=30)
+    require(kind.returncode == 0 and kind.stdout.strip() == "commit", "not a commit: " + sha)
+    on_branch = subprocess.run(["git", "-C", str(root), "merge-base", "--is-ancestor", sha, "HEAD"],
+                               capture_output=True, timeout=30)
+    require(on_branch.returncode == 0, "commit is not on this branch: " + sha)
+
+
+def _head_commits(root):
+    res = subprocess.run(["git", "-C", str(root), "rev-list", "HEAD"],
+                         capture_output=True, text=True, timeout=30)
+    require(res.returncode == 0, f"git repository with HEAD commit required for stamped sections: {root}")
+    return set(res.stdout.splitlines())
+
+
+def receipt_ok(root, receipt, ref, stamp_sha, commits=None):
     require(re.fullmatch(r"docs/reviews/[a-z0-9][a-z0-9.-]*\.json", receipt or "") is not None,
             f"invalid receipt path: {ref}")
     path = Path(root) / receipt
@@ -131,10 +165,12 @@ def receipt_ok(root, receipt, ref, stamp_sha):
         data = json.loads(read_text(path))
     except ValueError:
         raise Refused(f"receipt is not JSON: {ref}") from None
-    receipt_data_ok(data, ref, stamp_sha)
+    receipt_data_ok(data, ref, stamp_sha, root=root)
+    if commits is None or stamp_sha not in commits:
+        commit_ok(root, stamp_sha)
 
 
-def receipt_data_ok(data, ref, stamp_sha):
+def receipt_data_ok(data, ref, stamp_sha, root=None):
     require(isinstance(data, dict), f"receipt is not an object: {ref}")
     require(data.get("ref") == ref and data.get("implementation_sha") == stamp_sha,
             f"receipt does not match its stamp: {ref}")
@@ -144,6 +180,15 @@ def receipt_data_ok(data, ref, stamp_sha):
         and isinstance(r.get("report"), str) and r["report"]
         and isinstance(r.get("verdict"), str) and r["verdict"] in VERDICTS for r in rounds),
         f"receipt has no valid review rounds (verdict one of {', '.join(sorted(VERDICTS))}): {ref}")
+    if root is not None:
+        for r in rounds:
+            report = Path(r["report"])
+            require(not report.is_absolute() and ".." not in report.parts,
+                    f"invalid review report path ({r['report']}): {ref}")
+            report_path = Path(root) / report
+            require(report_path.is_file() and not report_path.is_symlink()
+                    and bool(read_text(report_path).strip()),
+                    f"missing or empty review report ({r['report']}): {ref}")
     checks = data.get("checks")
     require(isinstance(checks, list) and checks and all(isinstance(c, str) and c.strip() for c in checks),
             f"receipt has no checks: {ref}")
@@ -203,6 +248,7 @@ def graph(root=ROOT):
     """Parse every TODO file strictly; a malformed row or section refuses, it is never read as empty."""
     root = Path(root)
     sections, ids, files = {}, {}, {}
+    head_commits = None
     paths = sorted((root / "todo").glob("[0-9][0-9]-*/TODO-*.md"))
     require(bool(paths), "canonical TODO tree is missing or empty")
     for path in paths:
@@ -226,6 +272,8 @@ def graph(root=ROOT):
         file_deps = json.loads(front.get("depends_on", "[]"))
         require(isinstance(file_deps, list) and all(isinstance(x, str) for x in file_deps),
                 "depends_on must be a JSON string array")
+        require(re.search(r"\A\n*# TODO-\d{2} -- .+\n", body) is not None,
+                f"missing TODO heading: {relative}")
         ids[front["id"]] = relative
         files[relative] = (front, file_deps, [], xrefs_of(body, d, t),
                            adjacency_of(body, relative, d, t))
@@ -253,7 +301,7 @@ def graph(root=ROOT):
                 f"over {MAX_SECTIONS_PER_FILE} sections; split into a new file: {relative}")
         headings = list(re.finditer(r"^## (\d+)\. (.+)$", body, re.M))
         numbers = [int(m[1]) for m in headings]
-        require(numbers == sorted(set(numbers)) and set(numbers) == set(rows),
+        require(all(n >= 1 for n in numbers) and numbers == sorted(set(numbers)) and set(numbers) == set(rows),
                 f"row/body mismatch: {relative}")
         require(body.rfind("## Verification\n") > headings[-1].start(),
                 f"Verification must follow numbered sections: {relative}")
@@ -271,11 +319,29 @@ def graph(root=ROOT):
             dep = rows[n][4].strip()
             deps = [] if dep == "--" else [normalize(v, d, t) for v in dep.split(",")]
             require(len(deps) == len(set(deps)), f"duplicate dependency: {ref}")
-            checks = re.findall(r"^- \[([ x])\] (.+)$", section_body, re.M)
-            require(1 <= len(checks) <= MAX_ITEMS_PER_SECTION and checks[-1][1].startswith("Commit:"),
-                    f"1-{MAX_ITEMS_PER_SECTION} items, Commit last required: {ref}")
-            require("**Build order:**" in section_body and "Done when:" in section_body,
+            for line in section_body.splitlines():
+                if re.match(r"^\s*[-*+]\s*\[(?![^\]]+\]\()", line):
+                    require(re.fullmatch(r"- \[([ x])\] \S.*", line) is not None,
+                            f"malformed checklist item: {ref}")
+            require("**Build order:**\n" in section_body and "\n- [" in section_body,
                     f"executable Build order required: {ref}")
+            after_bo = section_body.split("**Build order:**\n", 1)[1]
+            for line in after_bo.splitlines():
+                if re.match(r"^\s*[-*+](\s|$)", line):
+                    require(re.fullmatch(r"- \[([ x])\] \S.*", line) is not None,
+                            f"malformed checklist item: {ref}")
+            build_block = after_bo.split("\n- [", 1)[0]
+            non_empty_bo = [line for line in build_block.splitlines() if line.strip()]
+            build_steps = [int(m[1]) for m in re.finditer(r"^(\d+)\. \S.+$", build_block, re.M)]
+            require(build_steps and len(build_steps) == len(non_empty_bo)
+                    and build_steps == list(range(1, len(build_steps) + 1))
+                    and ("Done when:" in build_block or "Done when for both:" in build_block),
+                    f"executable Build order required: {ref}")
+            checks = re.findall(r"^- \[([ x])\] (.+)$", section_body, re.M)
+            require(2 <= len(checks) <= MAX_ITEMS_PER_SECTION
+                    and checks[-1][1].startswith("Commit:")
+                    and not any(c[1].startswith("Commit:") for c in checks[:-1]),
+                    f"2-{MAX_ITEMS_PER_SECTION} items (at least one work item, Commit last) required: {ref}")
             require("`" in field(section_body, "Test checkpoint"),
                     f"runnable Test checkpoint required: {ref}")
             surface = field(section_body, "Surface")
@@ -295,7 +361,9 @@ def graph(root=ROOT):
                 require(all(x[0] == "x" for x in checks), f"unfinished stamped checklist: {ref}")
                 m = re.fullmatch(r"\d{4}-\d{2}-\d{2} \| §" + str(n) + r" \| ([0-9a-f]{40})", stamp_line)
                 require(m is not None, f"invalid stamp: {ref}")
-                receipt_ok(root, receipt, ref, m[1])
+                if head_commits is None:
+                    head_commits = _head_commits(root)
+                receipt_ok(root, receipt, ref, m[1], head_commits)
             sections[ref] = Section(ref, relative, n, h[2], int(phase), deps, needs, done,
                                     front["status"], section_body, receipt, int(rows[n][1]))
             files[relative][2].append(ref)
@@ -338,24 +406,30 @@ def graph(root=ROOT):
                             f"stale deferral, owner {owner} shipped; close it as Resolved: {row.ref}")
     _index_coverage(root, files)
     visiting, visited = set(), set()
-
-    def visit(ref):
-        require(ref in sections, f"unresolved dependency: {ref}")
-        require(ref not in visiting, f"dependency cycle: {ref}")
-        if ref in visited:
-            return
-        visiting.add(ref)
-        for dep in sections[ref].depends:
-            visit(dep)
-            require(sections[dep].phase <= sections[ref].phase,
-                    f"prerequisite in later phase: {ref} -> {dep}")
-            require(not sections[ref].done or sections[dep].done,
-                    f"stamped section has open dependency: {ref}")
-        visiting.remove(ref)
-        visited.add(ref)
-
-    for ref in sections:
-        visit(ref)
+    for start in sections:
+        if start in visited:
+            continue
+        stack = [(start, 0)]
+        visiting.add(start)
+        while stack:
+            ref, idx = stack[-1]
+            deps = sections[ref].depends
+            if idx < len(deps):
+                dep = deps[idx]
+                stack[-1] = (ref, idx + 1)
+                require(dep in sections, f"unresolved dependency: {dep}")
+                require(dep not in visiting, f"dependency cycle: {dep}")
+                require(sections[dep].phase <= sections[ref].phase,
+                        f"prerequisite in later phase: {ref} -> {dep}")
+                require(not sections[ref].done or sections[dep].done,
+                        f"stamped section has open dependency: {ref}")
+                if dep not in visited:
+                    visiting.add(dep)
+                    stack.append((dep, 0))
+            else:
+                stack.pop()
+                visiting.remove(ref)
+                visited.add(ref)
     return sections
 
 
@@ -372,7 +446,7 @@ def _index_coverage(root, files):
         text = read_text(index)
         for filename in names:
             require(filename in text, f"missing from domain index: {domain}/{filename}")
-            require(filename in root_text, f"missing from root index: {filename}")
+            require(f"{domain}/{filename}" in root_text, f"missing from root index: {domain}/{filename}")
 
 
 def disposition(row, rows):
@@ -386,11 +460,12 @@ def disposition(row, rows):
 
 
 def ordered(sections):
-    result, pending = [], sorted(
+    result, placed, pending = [], set(), sorted(
         sections, key=lambda r: (sections[r].phase, sections[r].path, sections[r].order))
     while pending:
-        ref = next(r for r in pending if all(d in result for d in sections[r].depends))
+        ref = next(r for r in pending if all(d in placed for d in sections[r].depends))
         result.append(ref)
+        placed.add(ref)
         pending.remove(ref)
     return [sections[r] for r in result]
 
@@ -474,7 +549,7 @@ def adjacency_report(root=ROOT):
     return report
 
 
-def stamp(root, ref, sha, reviews, checks, date):
+def stamp(root, ref, sha, reviews, checks, date, sync_plan=False):
     """Close a section: write its receipt, tick its row and checklist, add the Verified and Review lines."""
     root = Path(root)
     rows = graph(root)
@@ -486,12 +561,7 @@ def stamp(root, ref, sha, reviews, checks, date):
             f"still waiting on {', '.join(sorted(set(row.needs) & WAITING))}: {ref}")
     require(re.fullmatch(r"[0-9a-f]{40}", sha) is not None,
             "the implementation SHA must be a full 40-character commit")
-    kind = subprocess.run(["git", "-C", str(root), "cat-file", "-t", sha],
-                          capture_output=True, text=True, timeout=30)
-    require(kind.returncode == 0 and kind.stdout.strip() == "commit", "not a commit: " + sha)
-    on_branch = subprocess.run(["git", "-C", str(root), "merge-base", "--is-ancestor", sha, "HEAD"],
-                               capture_output=True, timeout=30)
-    require(on_branch.returncode == 0, "commit is not on this branch: " + sha)
+    commit_ok(root, sha)
     open_items = re.findall(r"^- \[ \] (?!Commit:)(.+)$", row.body, re.M)
     require(not open_items,
             f"unticked checklist items in {ref}: {open_items[0] if open_items else ''}")
@@ -499,7 +569,7 @@ def stamp(root, ref, sha, reviews, checks, date):
     receipt = f"docs/reviews/{slug}.json"
     data = {"ref": ref, "title": row.title, "implementation_sha": sha, "date": date,
             "reviews": reviews, "checks": checks}
-    receipt_data_ok(data, ref, sha)  # every argument is checked before anything is written
+    receipt_data_ok(data, ref, sha, root=root)  # every argument is checked before anything is written
     receipt_path = root / receipt
     require(not receipt_path.exists(), f"receipt already exists: {receipt}")
     path = root / row.path
@@ -517,12 +587,25 @@ def stamp(root, ref, sha, reviews, checks, date):
     if all(r.done for r in siblings):
         text, n = re.subn(r"\A(---\n(?:.*\n)*?)status: [a-z]+\n", r"\1status: done\n", text, count=1)
         require(n == 1, f"frontmatter status not found: {row.path}")
-    atomic(receipt_path, json.dumps(data, indent=2) + "\n")
-    atomic(path, text)
+    plan_path = root / PLAN
+    original_plan = read_text(plan_path) if plan_path.is_file() else None
     try:
+        atomic(receipt_path, json.dumps(data, indent=2) + "\n")
+        atomic(path, text)
         graph(root)
-    except Refused:
-        atomic(path, original)  # leave the graph as it was
-        receipt_path.unlink()
+        if sync_plan or original_plan is not None:
+            projections(root, sync=True)
+    except Exception:
+        receipt_path.unlink(missing_ok=True)
+        try:
+            if not path.is_file() or read_text(path) != original:
+                atomic(path, original)
+        finally:
+            if original_plan is not None:
+                if not plan_path.is_file() or read_text(plan_path) != original_plan:
+                    atomic(plan_path, original_plan)
+            elif plan_path.exists():
+                plan_path.unlink(missing_ok=True)
         raise
     return receipt
+

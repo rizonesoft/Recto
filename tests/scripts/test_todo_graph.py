@@ -58,10 +58,15 @@ class Tree(unittest.TestCase):
             self.index(name, domain)
 
     def index(self, name, domain="00-workspace"):
-        for path in (self.root / "todo" / domain / "INDEX.md", self.root / "todo/TODO-00-INDEX.md"):
-            existing = path.read_text(encoding="utf-8") if path.exists() else "# Index\n"
-            if name not in existing:
-                path.write_text(existing + f"- {name}\n", encoding="utf-8")
+        domain_index = self.root / "todo" / domain / "INDEX.md"
+        existing = domain_index.read_text(encoding="utf-8") if domain_index.exists() else "# Index\n"
+        if name not in existing:
+            domain_index.write_text(existing + f"- {name}\n", encoding="utf-8")
+        root_index = self.root / "todo/TODO-00-INDEX.md"
+        root_existing = root_index.read_text(encoding="utf-8") if root_index.exists() else "# Index\n"
+        entry = f"{domain}/{name}"
+        if entry not in root_existing:
+            root_index.write_text(root_existing + f"- {entry}\n", encoding="utf-8")
 
     def refuses(self, fragment):
         with self.assertRaises(tg.Refused) as ctx:
@@ -116,6 +121,34 @@ class Graph(Tree):
             "- [ ] Commit: `x: a`", "- [ ] Commit: `x: a`\n- [ ] After."))
         self.refuses("Commit last")
 
+    def test_malformed_checklist_item_refuses(self):
+        for bad in ("- [?] Work.", "- [] Work.", "- [X] Work.", "- Work without checkbox."):
+            self.write(todo_file([(1, "A", 0, "none", "--")]).replace("- [ ] Work.", bad))
+            self.refuses("malformed checklist item")
+
+    def test_empty_build_order_refuses(self):
+        text = todo_file([(1, "A", 0, "none", "--")]).replace(
+            "1. Do it. Done when: it shows.\n\n- [ ] Work.",
+            "- [ ] Work. Done when: it shows.")
+        self.write(text)
+        self.refuses("executable Build order required")
+
+    def test_empty_field_does_not_borrow_next_line(self):
+        text = todo_file([(1, "A", 0, "none", "--")]).replace(
+            "**Test checkpoint:** `true` exits 0.",
+            "**Test checkpoint:**\n> **Deferred:** `later` -> XREF: D00 T01 §1")
+        self.write(text)
+        self.refuses("missing Test checkpoint field")
+
+    def test_missing_todo_heading_refuses(self):
+        text = todo_file([(1, "A", 0, "none", "--")]).replace("# TODO-01 -- A\n\n", "")
+        self.write(text)
+        self.refuses("missing TODO heading")
+
+    def test_section_zero_refuses(self):
+        self.write(todo_file([(0, "Zero", 0, "none", "--")]))
+        self.refuses("malformed implementation row")
+
     def test_waiting_needs_are_not_ready(self):
         self.write(todo_file([(1, "A", 0, "owner-decision, windows-host", "--")]))
         rows = tg.graph(self.root)
@@ -147,6 +180,13 @@ class Graph(Tree):
         (self.root / "todo/TODO-00-INDEX.md").write_text("# Index\n", encoding="utf-8")
         (self.root / "todo/00-workspace/INDEX.md").write_text("# Index\n", encoding="utf-8")
         self.refuses("missing from domain index")
+
+    def test_root_index_requires_domain_qualified_entry(self):
+        self.write(todo_file([(1, "A", 0, "none", "--")], ident="first"))
+        self.write(todo_file([(1, "B", 1, "none", "--")], ident="second", domain="01-engine"),
+                   name="TODO-01-a.md", domain="01-engine", index=False)
+        (self.root / "todo/01-engine/INDEX.md").write_text("# Index\n- TODO-01-a.md\n", encoding="utf-8")
+        self.refuses("missing from root index: 01-engine/TODO-01-a.md")
 
     def test_adjacency_missing_key_refuses(self):
         text = todo_file([(1, "A", 0, "none", "--")]).replace(
@@ -197,6 +237,21 @@ class Graph(Tree):
         self.write(text)
         self.refuses("without a resolving owner")
 
+    def test_max_sections_per_file_refuses(self):
+        rows = [(n, f"S{n}", 0, "none", "--") for n in range(1, 57)]
+        self.write(todo_file(rows))
+        self.refuses("over 55 sections")
+
+    def test_max_items_per_section_refuses(self):
+        many = "\n".join(f"- [ ] Item {i}." for i in range(1, 31))
+        text = todo_file([(1, "A", 0, "none", "--")]).replace("- [ ] Work.", many)
+        self.write(text)
+        self.refuses("2-30 items")
+
+    def test_superseded_without_successor_refuses(self):
+        self.write(todo_file([(1, "A", 0, "none", "--")], status="superseded"))
+        self.refuses("superseded TODO must name its successor")
+
     def test_projection_check_detects_drift(self):
         self.write(todo_file([(1, "A", 0, "none", "--")]))
         tg.projections(self.root, sync=True)
@@ -207,11 +262,41 @@ class Graph(Tree):
         with self.assertRaises(tg.Refused):
             tg.projections(self.root)
 
+    def test_resolve_accepts_windows_and_posix_paths_and_plan_rows(self):
+        self.write(todo_file([(1, "A", 0, "none", "--")]))
+        rows = tg.graph(self.root)
+        for query in (
+            "D00 T01 §1",
+            "| [ ] | D00 T01 §1 | A | none | 2 |",
+            "todo/00-workspace/TODO-01-a.md §1",
+            r"R:\GitHub\RectoPDF\todo\00-workspace\TODO-01-a.md §1",
+        ):
+            self.assertEqual(tg.extract_ref(query, rows), ("D00 T01 §1", 0))
+        self.assertEqual(tg.extract_ref(r"R:\GitHub\RectoPDF\todo\00-workspace\TODO-01-a.md §9", rows),
+                         ("D00 T01 §9", 1))
+        self.assertEqual(tg.extract_ref("no reference here", rows), (None, 2))
+
+    def test_deep_dependency_chain_validates_without_recursion_error(self):
+        prev = "--"
+        for file_num in range(1, 21):
+            rows = []
+            for sec_num in range(1, 56):
+                rows.append((sec_num, f"S{sec_num}", 0, "none", prev))
+                prev = f"D00 T{file_num:02d} §{sec_num}"
+            self.write(todo_file(rows, ident=f"file-{file_num:02d}"),
+                       name=f"TODO-{file_num:02d}-chain.md")
+        parsed = tg.graph(self.root)
+        self.assertEqual(len(parsed), 1100)
+        self.assertEqual(len(tg.ordered(parsed)), 1100)
+
 
 class Stamp(Tree):
     def setUp(self):
         super().setUp()
         self.write(todo_file([(1, "A", 0, "none", "--"), (2, "B", 0, "owner-decision", "--")]))
+        report_path = self.root / "docs/reviews/00-workspace/D00-T01-s1.md"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text("# Review findings\n", encoding="utf-8")
         for args in (["init", "-q"], ["config", "user.email", "t@example.com"],
                      ["config", "user.name", "T"], ["add", "-A"], ["commit", "-qm", "x"]):
             subprocess.run(["git", "-C", str(self.root), *args], check=True)
@@ -233,6 +318,17 @@ class Stamp(Tree):
         self.assertEqual(json.loads((self.root / receipt).read_text(encoding="utf-8"))
                          ["implementation_sha"], self.sha)
 
+    def test_stale_deferral_refuses_when_owner_stamps(self):
+        self.tick_work()
+        path = self.root / "todo/00-workspace/TODO-01-a.md"
+        text = path.read_text(encoding="utf-8")
+        target = "## 2. B\n"
+        path.write_text(text.replace(target, target + "\n> **Deferred:** wait on 1 -> XREF: §1\n"),
+                        encoding="utf-8")
+        with self.assertRaises(tg.Refused) as ctx:
+            tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
+        self.assertIn("stale deferral", str(ctx.exception))
+
     def test_unticked_items_refuse(self):
         with self.assertRaises(tg.Refused) as ctx:
             tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
@@ -252,6 +348,16 @@ class Stamp(Tree):
         with self.assertRaises(tg.Refused):
             tg.stamp(self.root, "D00 T01 §1", self.sha, [], ["true -> ok"], "2026-10-13")
 
+    def test_missing_review_report_refuses(self):
+        self.tick_work()
+        missing = [{"round": 1, "report": "docs/reviews/00-workspace/missing.md", "verdict": "clean"}]
+        with self.assertRaises(tg.Refused) as ctx:
+            tg.stamp(self.root, "D00 T01 §1", self.sha, missing, ["true -> ok"], "2026-10-13")
+        self.assertIn("missing or empty review report", str(ctx.exception))
+        tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
+        (self.root / "docs/reviews/00-workspace/D00-T01-s1.md").unlink()
+        self.refuses("missing or empty review report")
+
     def test_receipt_for_another_commit_refuses(self):
         self.tick_work()
         receipt = tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
@@ -260,6 +366,18 @@ class Stamp(Tree):
         (self.root / receipt).write_text(json.dumps(data), encoding="utf-8")
         self.refuses("receipt does not match its stamp")
 
+    def test_matching_fabricated_sha_in_stamp_and_receipt_refuses(self):
+        self.tick_work()
+        receipt = tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
+        fake_sha = "0" * 40
+        todo_path = self.root / "todo/00-workspace/TODO-01-a.md"
+        todo_path.write_text(todo_path.read_text(encoding="utf-8").replace(self.sha, fake_sha),
+                             encoding="utf-8")
+        receipt_path = self.root / receipt
+        receipt_path.write_text(receipt_path.read_text(encoding="utf-8").replace(self.sha, fake_sha),
+                                encoding="utf-8")
+        self.refuses("not a commit")
+
     def snapshot(self):
         return {str(f.relative_to(self.root)): f.read_bytes()
                 for f in self.root.rglob("*") if f.is_file() and ".git" not in f.parts}
@@ -267,7 +385,7 @@ class Stamp(Tree):
     def test_bad_verdict_writes_nothing(self):
         self.tick_work()
         before = self.snapshot()
-        bad = [{"round": 1, "report": "docs/reviews/x.md", "verdict": "cleen"}]
+        bad = [{"round": 1, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": "cleen"}]
         with self.assertRaises(tg.Refused):
             tg.stamp(self.root, "D00 T01 §1", self.sha, bad, ["true -> ok"], "2026-10-13")
         self.assertEqual(self.snapshot(), before)
@@ -279,6 +397,33 @@ class Stamp(Tree):
         with self.assertRaises(tg.Refused):
             tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "13 Oct")
         self.assertEqual(self.snapshot(), before)
+
+    def test_failed_stamp_write_rolls_back_receipt_and_allows_retry(self):
+        self.tick_work()
+        tg.projections(self.root, sync=True)
+        before = self.snapshot()
+        real_atomic = tg.atomic
+        calls = []
+
+        def fail_on_second_write(path, data):
+            calls.append(path)
+            if len(calls) == 2:
+                raise OSError("simulated disk write failure")
+            return real_atomic(path, data)
+
+        tg.atomic = fail_on_second_write
+        try:
+            with self.assertRaises(OSError):
+                tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"],
+                         "2026-10-13", sync_plan=True)
+        finally:
+            tg.atomic = real_atomic
+        self.assertFalse((self.root / "docs/reviews/d00-t01-s1.json").exists())
+        self.assertEqual(self.snapshot(), before)
+        receipt = tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"],
+                           "2026-10-13", sync_plan=True)
+        self.assertTrue((self.root / receipt).is_file())
+        tg.projections(self.root)
 
     def test_stamping_the_last_section_marks_the_file_done(self):
         path = self.root / "todo/00-workspace/TODO-02-b.md"
@@ -317,3 +462,4 @@ class Repository(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
