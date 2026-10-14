@@ -97,7 +97,7 @@ Create `Recto.sln`, `Directory.Build.props`, `Directory.Build.targets`, `vcpkg.j
 
 > **Started:** 2026-10-14 -- agent session (`40f8013`, updated for native `recto-pdf` C++20 module)
 
-> **Corrected:** 2026-10-14 -- two environmental facts recorded perAGENTS.md working rules:
+> **Corrected:** 2026-10-14 -- two environmental facts recorded per AGENTS.md working rules:
 > 1. **Toolset `v145` (Visual Studio 2026):** MSBuild in VS 2022 (`v143`) has no `ApplicationType\Windows Store\10.0\Platforms\ARM64` directory, so a WinUI 3 project (`ApplicationType=Windows Store`) cannot build `ARM64` there; VS 2026 (`18.5`, toolset `v145`, MSVC `14.51.36231`) ships both `x64` and `ARM64` under `Windows Store\10.0`. `Directory.Build.props`, `Recto.vcxproj`, `build/build.ps1` and `CONTRIBUTING.md` bind `v145`.
 > 2. **Native C++20 `recto-pdf` (`src/pdf`):** Replaces `third_party/mupdf` and `src/bridge` (`recto-bridge`). Every project in `Recto.sln` is Recto's own C++20 code and compiles with **0 errors and 0 warnings** under `/W4 /WX /permissive- /utf-8 /Zc:preprocessor` across `Debug` and `Release` on both `x64` and `ARM64`.
 

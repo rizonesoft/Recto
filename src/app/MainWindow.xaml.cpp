@@ -5,10 +5,13 @@
 #include "MainWindow.g.cpp"
 #endif
 
+#include "recto_services.h"
+
 namespace winrt::Recto::implementation {
 
 MainWindow::MainWindow()
 {
+	(void)recto::services::abi_version();
 	Title(L"Recto");
 }
 
