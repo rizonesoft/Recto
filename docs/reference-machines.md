@@ -9,7 +9,7 @@ Milestone M2 and M6 performance claims (`D06 T01 §4`) are bound to `Release` bu
 | Attribute | Primary x64 Reference Machine (Binding Baseline) | Secondary ARM64 Target Profile (Non-Binding Until `D99 T01 §4`) |
 | --------- | ------------------------------------------------ | --------------------------------------------------------------- |
 | **Role** | Primary development, test, and binding section 8 benchmark host | `ARM64` cross-compilation gate (`v145`) and non-binding Windows 11 `ARM64` target profile (no physical `ARM64` device attached yet; specific device deferred to `D99 T01 §4`) |
-| **Architecture** | `x64` (`x64-based PC`) | `ARM64` (Windows 11 on ARM) |
+| **Architecture** | `x64` (`x64-based PC`) | `ARM64` (`ARMv8.x-A` / `AArch64`, Windows 11 on ARM) |
 | **Manufacturer / System** | ASUS (`System Product Name`) | Windows 11 ARM64 target class (to be pinned to a specific device in `D99 T01 §4`) |
 | **CPU** | 11th Gen Intel(R) Core(TM) i5-11600K @ 3.90 GHz | Qualcomm Snapdragon X series target class |
 | **Physical Cores / Threads** | 6 physical cores / 12 logical processors (`MaxClockSpeed = 3912 MHz`) | Target class: 10 to 12 physical cores |
@@ -19,7 +19,7 @@ Milestone M2 and M6 performance claims (`D06 T01 §4`) are bound to `Release` bu
 | **OS Drive (`C:\`)** | Corsair MP600 PRO XT NVMe SSD (`1000.2 GB` decimal / `1,000,202,273,280` B physical, `930.4 GiB` NTFS partition) | PCIe Gen4 NVMe SSD |
 | **Workspace Drive (`R:\`)** | Micron `MTFDKCD512QFM-1BD1AABLA` NVMe SSD (`512.1 GB` decimal / `512,105,932,800` B physical, `474.7 GiB` NTFS partition) | Local PCIe Gen4 NVMe SSD |
 | **Operating System** | Microsoft Windows 11 Business 64-bit, Version `10.0.26300` (Build `26300`) | Microsoft Windows 11 64-bit (`ARM64`), Version `24H2` or later (`Build >= 26100`) |
-| **Compiler & SDK** | Visual Studio 2026 (`18.5`, toolset `v145`, MSVC `14.51.36231`), Windows 11 SDK `10.0.26100.0` (min `10.0.22621.0`), Windows App SDK `2.4.0` | Visual Studio 2026 (`18.5`, toolset `v145`, MSVC `14.51.36231` `Hostx64\arm64`), Windows 11 SDK `10.0.26100.0` (min `10.0.22621.0`), Windows App SDK `2.4.0` |
+| **Compiler & SDK** | Visual Studio 2026 `18.10.3` (`18.10.12224.181`, MSBuild `18.10.1.42706`, toolset `v145`, MSVC `14.51.36231`), Windows 11 SDK `10.0.26100.0` (min `10.0.22621.0`), Windows App SDK `2.4.0` | Visual Studio 2026 `18.10.3` (`18.10.12224.181`, toolset `v145`, MSVC `14.51.36231` `Hostx64\arm64`), Windows 11 SDK `10.0.26100.0` (min `10.0.22621.0`), Windows App SDK `2.4.0` |
 
 ## 2. Section 8 Performance Targets Bound to This Baseline
 
@@ -66,5 +66,8 @@ Get-CimInstance Win32_VideoController | Select-Object Name, DriverVersion, Adapt
 Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber, OSArchitecture
 Get-ItemProperty -Path 'HKCU:\Control Panel\Desktop\WindowMetrics' -Name AppliedDPI -ErrorAction SilentlyContinue | Select-Object AppliedDPI
 Get-Partition -DriveLetter C, R -ErrorAction SilentlyContinue | ForEach-Object { $d = Get-Disk -Number $_.DiskNumber; [PSCustomObject]@{ Drive=$_.DriveLetter; Model=$d.Model; BusType=$d.BusType; PartitionGiB=[math]::Round($_.Size/1GB,1) } }
+$vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -version '[18.0,19.0)' -property installationPath
 & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -version '[18.0,19.0)' -property installationVersion
+& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -version '[18.0,19.0)' -property catalog_productDisplayVersion
+Get-ChildItem "$vsPath\VC\Tools\MSVC" | Select-Object -ExpandProperty Name
 ```

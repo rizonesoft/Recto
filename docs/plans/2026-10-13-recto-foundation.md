@@ -407,7 +407,7 @@ Each milestone ends with a runnable build and an explicit "done when" check.
 
 ## 8. Performance Targets
 
-Measured in Release builds on the primary reference Windows 11 host machine (`11th Gen Intel Core i5-11600K`, 6C/12T, 32 GB RAM, NVIDIA GeForce RTX 2060, NVMe SSD, Windows 11 Build `26300` at `3840 x 2160` `144 DPI`, recorded in [`docs/reference-machines.md`](../reference-machines.md) in `D00 T01 §5`, with `ARM64` cross-compiled and verified against the `ARM64` target profile in [`docs/reference-machines.md`](../reference-machines.md)):
+Measured in Release builds on the primary reference Windows 11 host machine (`11th Gen Intel Core i5-11600K`, 6C/12T, 32 GB RAM, NVIDIA GeForce RTX 2060, NVMe SSD, Windows 11 Build `26300` at `3840 x 2160` `144 DPI`, recorded in [`docs/reference-machines.md`](../reference-machines.md) in `D00 T01 §5`; `ARM64` is compile-and-link verified only, and the `ARM64` column in [`docs/reference-machines.md`](../reference-machines.md) is a non-binding target profile until `D99 T01 §4` names a physical device):
 
 | Metric | Target |
 | ------ | ------ |
@@ -450,7 +450,7 @@ Must all be true before the M6 release (and any optional Microsoft Store submiss
 ## 11. Open Items to Resolve During Implementation
 
 1. **Trademark & optional Store name reservation** for "Recto" (owner-only manual action in `D99 T01 §1` and `§3`).
-2. **Reference benchmark machine (resolved 2026-10-14 in `D00 T01 §5`):** The primary development host machine (`11th Gen Intel Core i5-11600K`, 32 GB RAM, RTX 2060, NVMe SSD, Windows 11 Build `26300`) and the secondary `ARM64` target profile are recorded in [`docs/reference-machines.md`](../reference-machines.md).
+2. **Reference benchmark machine (primary `x64` host resolved 2026-10-14 in `D00 T01 §5`; physical `ARM64` device deferred to `D99 T01 §4`):** The primary development host machine (`11th Gen Intel Core i5-11600K`, 32 GB RAM, RTX 2060, NVMe SSD, Windows 11 Build `26300`) and the non-binding `ARM64` target profile are recorded in [`docs/reference-machines.md`](../reference-machines.md), with naming a specific physical `ARM64` benchmark device deferred to `D99 T01 §4`.
 3. **20-document PDF -> Word test corpus** assembled before M5 (`D04 T03 §2`) to evaluate `DocxWriter` layout and table reconstruction quality.
 4. **WinUI 3 printing API verification** at the start of M6 (`D07 T01 §1`: confirm `PrintManagerInterop::GetForWindow` + `ID2D1PrintControl` vs WinRT print document source behavior on Windows App SDK 2.4.0).
 5. **Opt-in crash reporting & Post-v1 broker architecture (resolved 2026-10-14):** `D07 T02 §3` uses a local minidump-plus-log save-and-share `.zip` bundle (zero network telemetry), and `D06 T02 §3` pre-approves the D13 shared-memory `DisplayList`/`PageText`/`Bitmap` AppContainer broker architecture.
