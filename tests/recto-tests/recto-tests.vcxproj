@@ -58,6 +58,9 @@
     <ClCompile Include="scaffold_smoke.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\src\pdf\recto-pdf.vcxproj">
+      <Project>{A720FA8C-20AE-5233-98DC-FC49F525A2F8}</Project>
+    </ProjectReference>
     <ProjectReference Include="..\..\src\core\recto-core.vcxproj">
       <Project>{CE387B87-7B19-52DC-8E62-D0F8A0F6203D}</Project>
     </ProjectReference>
