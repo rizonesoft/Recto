@@ -14,7 +14,7 @@ Sections: 11 | Checklist items: 32
 | [x]    | D00 T01 §2 | PDF engine dependency policy (native `recto-pdf`, MuPDF retired) | windows-host | 3     |
 | [x]    | D00 T01 §3 | Solution scaffold for all modules, x64 and ARM64                 | windows-host | 3     |
 | [x]    | D00 T01 §5 | Reference benchmark machines recorded                            | windows-host | 2     |
-| [ ]    | D00 T02 §1 | Graph engine, CLI and tests                                      | none         | 3     |
+| [x]    | D00 T02 §1 | Graph engine, CLI and tests                                      | none         | 3     |
 | [ ]    | D00 T02 §2 | Skills, rules and the CI gate                                    | none         | 4     |
 | [ ]    | D00 T01 §4 | Build CI for x64 and ARM64                                       | windows-host | 2     |
 | [ ]    | D00 T02 §3 | Seeded graph and generated plan                                  | none         | 4     |
@@ -166,6 +166,6 @@ Sections: 4 | Checklist items: 12
 | [ ]    | D99 T01 §3 | Partner Center account and app reservation  | operator, store-account | 3     |
 | [ ]    | D99 T01 §4 | Reference machines confirmed                | operator                | 3     |
 
-Progress: 4/99 verified sections, 3 ready to run now.
+Progress: 5/99 verified sections, 3 ready to run now.
 
-Checklist: 19/296 items completed (includes Commit items).
+Checklist: 20/296 items completed (includes Commit items).

@@ -1,0 +1,28 @@
+{
+  "ref": "D00 T02 \u00a71",
+  "title": "Graph engine, CLI and tests",
+  "implementation_sha": "77a72bd92f60597c92f669fcb6de82751be184da",
+  "date": "2026-10-14",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T02-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/00-workspace/D00-T02-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/00-workspace/D00-T02-s1.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "python -m unittest tests.scripts.test_todo_graph -> Ran 51 tests in 22.059s / OK (exit 0)",
+    "python scripts/todo-graph.py validate -> valid: 99 sections (exit 0)",
+    "python scripts/todo-graph.py plan --check -> plan current (exit 0)"
+  ]
+}

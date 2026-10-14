@@ -34,7 +34,7 @@ track: M0
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | Graph engine, CLI and tests | D00 T01 §1 | [ ] |
+| 1 | §1 | Graph engine, CLI and tests | D00 T01 §1 | [x] |
 | 2 | §2 | Skills, rules and the CI gate | §1 | [ ] |
 | 3 | §3 | Seeded graph and generated plan | §2 | [ ] |
 
@@ -57,9 +57,12 @@ The engine is the strict core: parse every TODO file, refuse anything malformed 
 
 - [x] Graph library and command line in `scripts/lib/todo_graph.py` and `scripts/todo-graph.py`. Done when: the validator refuses a malformed tree with a named reason instead of reading it as empty.
 - [x] Tests for every refusal and for the live tree in `tests/scripts/test_todo_graph.py`. Done when: the suite passes against the seeded graph.
-- [ ] Commit: `todo: port the strict TODO graph engine and tests`
+- [x] Commit: `todo: port the strict TODO graph engine and tests`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_todo_graph` passes in full (including the Repository test against this tree), and `python scripts/todo-graph.py plan --check` exits 0.
+
+> **Verified:** 2026-10-14 | §1 | 77a72bd92f60597c92f669fcb6de82751be184da
+> **Review:** `docs/reviews/d00-t02-s1.json`
 
 ## 2. Skills, rules and the CI gate
 
