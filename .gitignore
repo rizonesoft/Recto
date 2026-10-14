@@ -4,13 +4,19 @@
 build/*
 !build/mupdf-config.h
 !build/mupdf-win32.targets
+!build/build-mupdf.ps1
+!build/build.ps1
 __pycache__/
 *.pyc
+
+# vcpkg manifest installs: derived from vcpkg.json on every machine
+vcpkg_installed/
 
 # Visual Studio and MSBuild output (lands with the M0 scaffold, D00 T01 §3).
 .vs/
 [Bb]in/
 [Oo]bj/
+[Gg]enerated Files/
 *.user
 *.suo
 

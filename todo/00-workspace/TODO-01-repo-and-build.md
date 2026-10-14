@@ -102,7 +102,11 @@ D9: MuPDF comes from source as a git submodule at a pinned release tag, built wi
 
 ## 3. Solution scaffold with one-command build
 
+> **Started:** 2026-10-13T22:34:18Z
+
 Foundation plan sections 3.1 and 3.2 fix the module table and layout; D14 fixes MSBuild for every project and vcpkg manifest mode for test-only dependencies. The scaffold's job is that every later section lands in a project that already builds, with the dependency rules (only the bridge sees MuPDF headers) mechanically visible from the project references.
+
+**Decided 2026-10-13 (toolset):** the build standardizes on Visual Studio 2026 and the v145 toolset everywhere, MuPDF included. D14 names no Visual Studio version; the choice was forced by evidence: VS 2022 (v143, used for the §2 MuPDF proof) ships no Windows Store ARM64 platform (`MSBuild\Microsoft\VC\v170\Application Type\Windows Store\10.0\Platforms` holds ARM, Win32 and x64 only), so the WinUI app cannot target ARM64 there at all, while VS 2026 has it. The packages pinned here are Microsoft.WindowsAppSDK 2.4.0 (decision D3) and Microsoft.Windows.CppWinRT 3.0.260818.1, the first CppWinRT that compiles against the MSVC 14.51 STL (2.0.x forces `/await`, which 14.51's STL hard-errors on). The MuPDF stamp and proofs of §2 stand for the pin and its JS exclusion; the compiler that builds the pinned tree changes from v143 to v145 as of this section, recorded rather than silent because §2's stamp cited the v143 build log.
 
 **Phase:** 0
 **Needs:** windows-host
@@ -114,8 +118,8 @@ Foundation plan sections 3.1 and 3.2 fix the module table and layout; D14 fixes 
 2. Encode the dependency rules as project references exactly as the module table states, plus `vcpkg.json` (manifest mode, GoogleTest only) and a `Directory.Build.props` carrying language versions and warning levels. Done when: adding a forbidden reference (app to bridge) is the only way to break the rule, and no project needs a machine-local path.
 3. Add the one-command build entry (`build.cmd` or documented `msbuild Recto.sln` invocation covering restore, both architectures, both configurations) and document it in `CONTRIBUTING.md`. Done when: a clean clone plus that command yields all artifacts for x64 and ARM64.
 
-- [ ] `Recto.sln` and the eight projects with correct references. Done when: `msbuild Recto.sln -p:Configuration=Release -p:Platform=x64` and the ARM64 equivalent both exit 0. Cheaper substitute: one monolithic app project that "will be split later".
-- [ ] `vcpkg.json` manifest with GoogleTest, consumed by `recto-tests` only. Done when: `recto-tests` runs one trivial passing test and no shipping project links a vcpkg artifact.
+- [x] `Recto.sln` and the eight projects with correct references. Done when: `msbuild Recto.sln -p:Configuration=Release -p:Platform=x64` and the ARM64 equivalent both exit 0. Cheaper substitute: one monolithic app project that "will be split later".
+- [x] `vcpkg.json` manifest with GoogleTest, consumed by `recto-tests` only. Done when: `recto-tests` runs one trivial passing test and no shipping project links a vcpkg artifact.
 - [ ] One-command build documented in `CONTRIBUTING.md`. Done when: the command as written, run verbatim on a clean clone, succeeds.
 - [ ] Commit: `build: solution scaffold for all Recto modules, x64 and ARM64`
 
@@ -131,7 +135,7 @@ M0's done-when is a clean clone building both architectures in CI with one comma
 
 **Build order:**
 
-1. Add `.github/workflows/build.yml` on Windows runners: checkout with submodules, the §3 one-command build for x64 and ARM64, then `recto-tests`. Done when: a push that breaks compilation fails the workflow and names the failing project.
+1. Add `.github/workflows/build.yml` on Windows runners that provide Visual Studio 2026 (the §3 toolset decision; a VS 2022 image cannot build the ARM64 app): checkout with submodules, the §3 one-command build for x64 and ARM64, then `recto-tests`. Done when: a push that breaks compilation fails the workflow and names the failing project.
 2. Upload build logs (and, once packaging exists, the MSIX) as workflow artifacts. Done when: a failed ARM64 build is diagnosable from the artifact without owning an ARM64 machine.
 3. Mark `plan-gates` and the build workflow as required checks in the repository settings note in D99 T01 §2. Done when: the manual setup section names both checks verbatim.
 

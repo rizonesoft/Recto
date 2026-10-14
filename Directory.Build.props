@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Shared compiler rules for Recto's own projects (decision D14).
+     The upstream MuPDF projects under third_party/mupdf are excluded by the
+     project-name condition below: they keep upstream's own settings, with
+     their 19 recorded warnings (D00 T01 section 2), and are consumed only
+     through their libraries. That exclusion is the recorded warning
+     boundary: Recto's zero-warning bar binds the projects named here. -->
+<Project>
+  <PropertyGroup Condition="$(MSBuildProjectName.StartsWith('recto-')) Or '$(MSBuildProjectName)' == 'Recto'">
+    <PlatformToolset>v145</PlatformToolset>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+    <CharacterSet>Unicode</CharacterSet>
+    <!-- Compile flags (warning level, language standards, runtime) are
+         ClCompile item metadata in VC projects, not properties; they live
+         in Directory.Build.targets next to this file. -->
+    <OutDir>$(MSBuildThisFileDirectory)build\bin\$(Platform)\$(Configuration)\$(MSBuildProjectName)\</OutDir>
+    <IntDir>$(MSBuildThisFileDirectory)build\obj\$(MSBuildProjectName)\$(Platform)\$(Configuration)\</IntDir>
+  </PropertyGroup>
+</Project>

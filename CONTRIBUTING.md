@@ -19,7 +19,15 @@ The design's source of truth is [`design/SPEC.md`](design/SPEC.md); architecture
 
 ## Building
 
-There is no buildable application code yet: the repository currently holds the design, the foundation plan and the execution plan. The one-command build (Visual Studio solution, x64 and ARM64) lands with `D00 T01 §3` in [`todo/00-workspace/TODO-01-repo-and-build.md`](todo/00-workspace/TODO-01-repo-and-build.md), and this section will name that command verbatim when it does.
+Requirements: Windows 11, Visual Studio 2026 with the Desktop development with C++ workload (v145 toolset and its bundled vcpkg) and the Windows 11 SDK 10.0.26100, network access for the first restore. VS 2022 cannot substitute: it ships no Windows Store ARM64 platform, so the app does not build for ARM64 there. Then, from a clean clone, one command builds everything (x64 and ARM64, Debug and Release) and runs the x64 tests:
+
+```powershell
+git clone https://github.com/rizonesoft/RectoPDF.git
+cd RectoPDF
+.\build.cmd
+```
+
+`build.cmd` fetches the MuPDF submodule and its nested thirdparty sources (all except MuJS, which stays uninitialized by design, see `build/mupdf-win32.targets`), restores the NuGet packages, installs the vcpkg manifest (GoogleTest, test-only) and builds `Recto.sln`. Narrow it with `.\build.cmd -Platform x64 -Configuration Release`. Artifacts land under `build/bin/<Platform>/<Configuration>/<Project>/`; run the tests any time with `build\bin\x64\Release\recto-tests\recto-tests.exe`. In Visual Studio, open `Recto.sln` and build as usual; the `mupdf` project is a Makefile wrapper and skips quickly when the MuPDF libraries are already built from the pinned commit and Recto config.
 
 Today you can run the plan tooling, which needs only Python 3:
 
