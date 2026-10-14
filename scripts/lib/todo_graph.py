@@ -60,10 +60,11 @@ def read_text(path):
 def atomic(path, data):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    raw = data if isinstance(data, bytes) else data.encode("utf-8")
     fd, temporary = tempfile.mkstemp(dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as out:
-            out.write(data)
+        with os.fdopen(fd, "wb") as out:
+            out.write(raw)
             out.flush()
             os.fsync(out.fileno())
         os.replace(temporary, path)
@@ -611,11 +612,11 @@ def stamp(root, ref, sha, reviews, checks, date, sync_plan=False):
         receipt_path.unlink(missing_ok=True)
         try:
             if not path.is_file() or path.read_bytes() != original_bytes:
-                path.write_bytes(original_bytes)
+                atomic(path, original_bytes)
         finally:
             if original_plan_bytes is not None:
                 if not plan_path.is_file() or plan_path.read_bytes() != original_plan_bytes:
-                    plan_path.write_bytes(original_plan_bytes)
+                    atomic(plan_path, original_plan_bytes)
             elif plan_path.exists():
                 plan_path.unlink(missing_ok=True)
         raise

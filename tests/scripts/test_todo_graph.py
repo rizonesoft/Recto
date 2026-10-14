@@ -420,23 +420,24 @@ class Stamp(Tree):
         tg.projections(self.root, sync=True)
         before = self.snapshot()
         real_atomic = tg.atomic
-        calls = []
+        for fail_at in (2, 3):
+            calls = []
 
-        def fail_on_second_write(path, data):
-            calls.append(path)
-            if len(calls) == 2:
-                raise OSError("simulated disk write failure")
-            return real_atomic(path, data)
+            def fail_on_nth_write(path, data, target=fail_at):
+                calls.append(path)
+                if len(calls) == target:
+                    raise OSError("simulated disk write failure")
+                return real_atomic(path, data)
 
-        tg.atomic = fail_on_second_write
-        try:
-            with self.assertRaises(OSError):
-                tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"],
-                         "2026-10-13", sync_plan=True)
-        finally:
-            tg.atomic = real_atomic
-        self.assertFalse((self.root / "docs/reviews/d00-t01-s1.json").exists())
-        self.assertEqual(self.snapshot(), before)
+            tg.atomic = fail_on_nth_write
+            try:
+                with self.assertRaises(OSError):
+                    tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"],
+                             "2026-10-13", sync_plan=True)
+            finally:
+                tg.atomic = real_atomic
+            self.assertFalse((self.root / "docs/reviews/d00-t01-s1.json").exists())
+            self.assertEqual(self.snapshot(), before)
         receipt = tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"],
                            "2026-10-13", sync_plan=True)
         self.assertTrue((self.root / receipt).is_file())
