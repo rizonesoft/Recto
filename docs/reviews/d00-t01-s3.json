@@ -1,0 +1,18 @@
+{
+  "ref": "D00 T01 \u00a73",
+  "title": "Solution scaffold for all modules, x64 and ARM64",
+  "implementation_sha": "5e3d9a687e2e23cb900032a929f1c280757ac6f0",
+  "date": "2026-10-14",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T01-s3.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    ".\\build.cmd -> Build succeeded 0 Warning(s) 0 Error(s) across Debug|x64, Release|x64, Debug|ARM64, Release|ARM64; recto-tests.exe 3/3 PASSED (PdfEngineReportsAbiVersionOne, CoreReportsThePdfEngineAbi, ServicesReportTheCoreAbi)",
+    "Warning-as-error proof in src/core/core.cpp -> error C2220: the following warning is treated as an error / warning C4189 (exit 1)",
+    "Downward-only include isolation proof (#include MainWindow.xaml.h in src/core/core.cpp) -> error C1083: Cannot open include file: 'MainWindow.xaml.h' (exit 1)"
+  ]
+}

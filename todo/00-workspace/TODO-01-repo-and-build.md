@@ -38,7 +38,7 @@ track: M0
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | Git repository and repo-face files | -- | [x] |
 | 2 | §2 | PDF engine dependency policy (native `recto-pdf`, MuPDF retired) | §1 | [x] |
-| 3 | §3 | Solution scaffold for all modules, x64 and ARM64 | §2 | [ ] |
+| 3 | §3 | Solution scaffold for all modules, x64 and ARM64 | §2 | [x] |
 | 4 | §4 | Build CI for x64 and ARM64 | §3, D00 T02 §2 | [ ] |
 | 5 | §5 | Reference benchmark machines recorded | §1 | [ ] |
 
@@ -113,9 +113,12 @@ Create `Recto.sln`, `Directory.Build.props`, `Directory.Build.targets`, `vcpkg.j
 
 - [x] `Recto.sln`, `Directory.Build.props`, `Directory.Build.targets`, `vcpkg.json` and all seven module projects created with plan 3.1's downward-only include paths. Done when: `msbuild Recto.sln /p:Configuration=Release /p:Platform=x64` and `/p:Platform=ARM64` both exit 0 with 0 warnings across all seven projects. Cheaper substitute: building x64 only and leaving ARM64 project configurations unverified, violating D15.
 - [x] One-command build script (`build.cmd` / `build/build.ps1`) documented and working from a clean clone. Done when: `.\build.cmd` exits 0 and runs the initial `recto-tests` binary (1 passing smoke test per library).
-- [ ] Commit: `build: solution scaffold for all Recto modules, x64 and ARM64`
+- [x] Commit: `build: solution scaffold for all Recto modules, x64 and ARM64`
 
 **Test checkpoint:** `.\build.cmd` exits 0 with 0 warnings on both `x64` and `ARM64`, and `build\bin\x64\Release\recto-tests\recto-tests.exe` reports 3 passing tests (`PdfEngineReportsAbiVersionOne`, `CoreReportsThePdfEngineAbi`, `ServicesReportTheCoreAbi`).
+
+> **Verified:** 2026-10-14 | §3 | 5e3d9a687e2e23cb900032a929f1c280757ac6f0
+> **Review:** `docs/reviews/d00-t01-s3.json`
 
 ## 4. Build CI for x64 and ARM64
 
