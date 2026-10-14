@@ -53,7 +53,7 @@ In order: frontmatter, `# TODO-NN -- Title`, `> **Goal:**`, `> **Current state:*
 
 ### The Implementation Order table is the dependency graph
 
-Every `## N.` body section has exactly one row (`Order`, `§N`, `Deliverable`, `Depends On`, `[ ]`), and every row has exactly one body section. The validator enforces both directions, refuses cycles, refuses a prerequisite in a later phase than its consumer, and refuses a ticked row without its stamp. A file holds at most 55 sections: past that, the next work opens a new file in the same domain, split by subject. Section numbers are permanent addresses and are never renumbered.
+Every `## N.` body section has exactly one row (`Order`, `§N`, `Deliverable`, `Depends On`, `[ ]`), and every row has exactly one body section. Both the `Deliverable` cell and the `## N. <Title>` heading must be at most 88 characters (`MAX_DELIVERABLE_LEN = 88`) so Markdown tables never wrap in the editor. The validator enforces both directions, refuses cycles, refuses a prerequisite in a later phase than its consumer, and refuses a ticked row without its stamp. A file holds at most 55 sections: past that, the next work opens a new file in the same domain, split by subject. Section numbers are permanent addresses and are never renumbered.
 
 ### Cross-reference notation
 
@@ -124,10 +124,10 @@ python -m unittest tests.scripts.test_todo_graph   # the tooling's own tests
 | `add-todo` | Front door. Route new work to the right domain, file and section. |
 | `create-todo` | Author a whole new TODO file, wire XREFs, update indexes. |
 | `groom-plan` | Harden the tree for a weaker executor: sequence, drift, gaps, complete features. |
-| `process-todo-section` | Fact-check the plan, correct what has drifted, then ship exactly one section. |
+| `process-todo-section` | Fact-check the plan, fix drift, then ship one section. |
 | `review-todo-section` | Quality gate after implementation; writes the stamp through `stamp`. |
 | `process-todo-file` | Loose-end sweep and closure when every section is `[x]`. |
-| `process-phase` | Attended phase runner: repair and gap-audit the phase, then ship it to 100% or park it. |
+| `process-phase` | Attended phase runner: audit the phase, then ship or park it. |
 | `process-plan` | Front door for `implementation-plan.md`; chains ready phases. |
 
 When something needs doing, start at `add-todo`. Reaching for `create-todo` directly tends to produce a second TODO over an existing one.
@@ -135,6 +135,7 @@ When something needs doing, start at `add-todo`. Reaching for `create-todo` dire
 ## Rules for every file
 
 - One line per paragraph and per list item in Markdown prose; no em dashes or en dashes in new text.
+- Keep every section heading (`## N. <Title>`), `Deliverable` cell, and index scope cell `<= 88` characters (`MAX_DELIVERABLE_LEN = 88`) so Markdown tables never wrap in the editor. Move detailed parenthetical symbol lists, file paths, CLI flags, and SPEC references into the section's context paragraph or checklist items.
 - A defect noticed outside the current work is filed in `todo/findings.md` with `file:line`, not fixed on the side inside someone else's commit; scheduling it means writing a section through `add-todo`.
 - Questions that need a person are not TODO rows without a Need: the section names `owner-decision` or `third-party` and records the answer before the Need is removed.
 - Standing product decisions live in the foundation plan (D1 to D17). A section that effectively revises one records the correction there and here, dated, never silently.

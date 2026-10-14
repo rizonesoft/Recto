@@ -22,8 +22,8 @@ Copy `.claude/skills/create-todo/todo-template.md` (same file as `todo/templates
 - **Current state:** what exists right now, measured, with real paths and real gaps.
 - **Inputs:** the plan and SPEC sections, existing files with what each section consumes, and `-> XREF:` lines to related work.
 - **Outcome:** observable end states, plus the one `**Adjacency:**` line (every key exactly once, or `all=not-applicable (reason)`) and an `**Adjacency rationale:**` paragraph. Silence is not a decision.
-- **Implementation Order:** one row per section with real `Depends On` edges. The table is the dependency graph.
-- **Sections:** context, Phase, Needs, Surface, Build order with a `Done when:` per step, micro-step checklist ending in `Commit:`, runnable Test checkpoint, Fidelity/Job/Treatment/Chrome on surface sections, Freeze check in frozen files.
+- **Implementation Order:** one row per section with real `Depends On` edges (`Deliverable` cell `<= 88` characters). The table is the dependency graph.
+- **Sections:** `## N. <Title>` (`<= 88` characters, matching `Deliverable`), context, Phase, Needs, Surface, Build order with a `Done when:` per step, micro-step checklist ending in `Commit:`, runnable Test checkpoint, Fidelity/Job/Treatment/Chrome on surface sections, Freeze check in frozen files.
 - **Verification:** the file-level checks `process-todo-file` will run.
 
 Size sections by what holds together: at most 30 checklist items per section, at most 55 sections per file (split by subject into a new file; section numbers are permanent addresses). Every section must be implementable with zero conversation context: no "as discussed".

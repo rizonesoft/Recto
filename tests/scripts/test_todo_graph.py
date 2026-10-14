@@ -253,6 +253,10 @@ class Graph(Tree):
         self.write(text)
         self.refuses("2-30 items")
 
+    def test_deliverable_or_title_over_max_len_refuses(self):
+        self.write(todo_file([(1, "X" * 89, 0, "none", "--")]))
+        self.refuses("deliverable/title over 88 chars (wraps raw md table): D00 T01 §1")
+
     def test_superseded_without_successor_refuses(self):
         self.write(todo_file([(1, "A", 0, "none", "--")], status="superseded"))
         self.refuses("superseded TODO must name its successor")

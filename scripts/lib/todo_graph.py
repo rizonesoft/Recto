@@ -42,6 +42,7 @@ PHASES = {
 }
 MAX_SECTIONS_PER_FILE = 55
 MAX_ITEMS_PER_SECTION = 30
+MAX_DELIVERABLE_LEN = 88
 
 
 class Refused(ValueError):
@@ -321,6 +322,9 @@ def graph(root=ROOT):
             section_body = body[h.end():].split("\n## ", 1)[0].strip()
             ref = f"D{d} T{t} §{n}"
             require(ref not in sections, f"duplicate address: {ref}")
+            require(len(rows[n][3].strip()) <= MAX_DELIVERABLE_LEN
+                    and len(h[2].strip()) <= MAX_DELIVERABLE_LEN,
+                    f"deliverable/title over {MAX_DELIVERABLE_LEN} chars (wraps raw md table): {ref}")
             phase = field(section_body, "Phase")
             require(phase.isdigit() and int(phase) in PHASES, f"invalid Phase: {ref}")
             raw = field(section_body, "Needs")

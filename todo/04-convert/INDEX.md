@@ -9,7 +9,7 @@ One job frame for every conversion, then Recto's native C++20 converters: `PdfWr
 | TODO | Title | Status |
 | ---- | ----- | :----: |
 | [TODO-01](./TODO-01-jobs-and-queue.md) | Conversion Jobs and the Queue | active |
-| [TODO-02](./TODO-02-pdf-conversions-a.md) | Conversions A: PDF Writer, Images/SVG/XPS, Text, OCR, Table/Image Extraction and Optimization | active |
+| [TODO-02](./TODO-02-pdf-conversions-a.md) | Conversions A: PDF Writer, Images/SVG/XPS, Text, OCR, Table/Image Extraction & Optimize | active |
 | [TODO-03](./TODO-03-pdf-to-word.md) | PDF to Word (DOCX and RTF): 3-Mode Native OpenXML/RTF Writer and Quality Review | active |
 | [TODO-04](./TODO-04-office-to-pdf.md) | Office, HTML and Markdown to PDF: Built-in C++20 Engine, Office COM and LibreOffice | active |
 | [TODO-05](./TODO-05-excel-web-and-compliance.md) | PDF to Excel/CSV/XML, HTML5/Markdown/EPUB/LaTeX, and PDF/A, PDF/UA & ZUGFeRD Compliance | active |

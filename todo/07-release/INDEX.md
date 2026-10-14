@@ -26,7 +26,7 @@ From a working app to a shippable desktop and portable product: printing on the 
 ## Out of scope
 
 - The operator's account, name and reservation steps (99-manual)
-- Post-v1 sandbox implementation (designed in 06 T02 §3, built after v1)
+- Post-v1 sandbox implementation (designed in 06 T02 §5, built after v1)
 
 ---
 

@@ -5,7 +5,7 @@ description: Process exactly one TODO section end to end. Resolve it, validate a
 
 # Process TODO Section
 
-One section. One commit. The section is the contract, and a contract is checked before it is signed.
+The section is the contract, and a contract is checked before it is signed.
 
 Processing a section is two jobs, in order. First establish that the plan is sound: internally consistent, still true of the code and of its governing documents, buildable as written, and verifiable when built. Then implement it. Do not improvise around the plan, and do not implement a plan you have found to be wrong. Correct it in the file, visibly, then build the corrected version.
 
@@ -28,12 +28,12 @@ It prints the path, title, phase, needs, dependencies (met and unmet) and the se
 | Exit | Meaning | Do this |
 | :-: | --- | --- |
 | 0 | Resolved, open, dependencies met, no waiting Need | Proceed to step 1 |
-| 1 | No such section | Stop. Report the reference as unresolvable rather than guessing a near match. |
+| 1 | No such section | Stop. Report the reference as unresolvable; do not guess. |
 | 2 | No section reference in the input | Stop and ask which section. |
-| 3 | The section is already `[x]` | Do not process it. Hand to `review-todo-section` in audit stance. |
-| 4 | Waiting: unmet dependencies, an inactive file, or a person Need (`owner-decision`, `third-party`, `operator`) | Stop at the gate and name what it waits on. |
+| 3 | The section is already `[x]` | Hand to `review-todo-section` in audit stance. |
+| 4 | Waiting: unmet deps, inactive file, or Need | Stop at the gate and name what it waits on. |
 
-Use the printed `skill_arg` (`DNN TNN §N`) as the canonical form for the rest of the run, including the commit message and the review call.
+Use the printed `skill_arg` (`DNN TNN §N`) as the canonical form for the rest of the run, including the commit message and the review call. Exit 4 includes person Needs (`owner-decision`, `third-party`, `operator`).
 
 If the section carries `windows-host`, `arm64-host`, `display-session`, `office`, `libreoffice` or `attended` in Needs, confirm that environment is actually reachable before writing `Started:`. If it is not, stop and say what the section waits on: starting an environment-bound section without the environment burns a session producing nothing committable.
 
@@ -44,11 +44,11 @@ Stop here if another writer holds the tree. Check `git status` for unfamiliar un
 ## Execution discipline
 
 - **Validate before building.** Step 2 is a gate, not a formality.
-- **Follow the corrected contract.** The checklist items define the scope. Adjacent wrongness gets filed with `add-todo` (or in `todo/findings.md` with `file:line` when it is genuinely out of scope), not fixed in passing inside this section's commit. Recto's standing rule to fix what you find applies at the owning layer with its own owner; it does not widen this commit.
-- **One section is one logical commit.** Review fix-loop commits append to that candidate range, never amend. Plan corrections ride in the section commit or land as their own `todo:` commit first when substantial.
+- **Follow the corrected contract.** The checklist items define the scope. Adjacent wrongness gets filed with `add-todo` (or in `todo/findings.md` with `file:line` when it is genuinely out of scope), not fixed in passing inside this section's work. Recto's standing rule to fix what you find applies at the owning layer with its own owner; it does not widen this section.
+- **Commits follow logical steps.** A section may be committed in one or more commits as steps complete; review fix-loop commits append to the candidate range, never amend. Plan corrections ride with the section commits or land as their own `todo:` commit first when substantial.
 - **Never mark `[x]` without evidence.** The Implementation Order row flips only through `stamp`, after review. This skill never flips a row itself.
 - **User data first.** Every file write follows the foundation plan's saving rule: temporary file in the destination folder, then `ReplaceFileW` or `MoveFileExW`. Read back what was written. Destructive paths are confirmed. The checkpoint exercises a failure path, not only the happy path.
-- **The layer rules hold.** Only `src/bridge` includes MuPDF headers; the UI thread never calls the bridge; a document belongs to its actor thread. A fix that violates the module table is wrong even when it works.
+- **The layer rules hold.** `src/pdf` owns the native PDF engine; the UI thread never parses or renders PDFs; a document belongs to its actor thread. A fix that violates the module table is wrong even when it works.
 - **Fidelity is the bar on surfaces.** Build against `design/SPEC.md` and its screenshot, using tokens from `design/tokens/RectoColors.xaml` only. No hex value on a control.
 
 ## Workflow
@@ -63,13 +63,13 @@ Seven questions, each answered against the repository and the governing document
 
 | Check | What you are asking | The failure it catches |
 | ----- | ------------------- | ---------------------- |
-| Legitimacy | Does a real source demand this: the foundation plan, the SPEC, MuPDF documentation, a user need? | Work invented by the plan, built faithfully, wanted by nobody |
-| Currency | Do the files, classes, versions and API shapes it names still exist and behave that way? | A section pinned to a path or count that moved |
-| Consistency | Do its items agree with each other, the Current state, and the sections it depends on? | Two items specifying different things; the later silently wins |
-| Correctness | Are the behaviors it states what the source says (MuPDF threading rules, WinUI behavior, SPEC tokens)? | A stale behavior ported confidently into code |
-| Sufficiency | Is there enough here to build without inventing? Are decisions made or dumped on the implementer? | A section that becomes a design session |
-| Verifiability | Can the Test checkpoint run, and can it fail? Do named fixtures and corpus files exist? | A checkpoint that passes by being unfalsifiable |
-| Accuracy | Is every concrete claim still literally true: paths, counts, versions, references, deferrals? | Authority that quietly cites things that moved |
+| Legitimacy | Does the plan, SPEC, or user need demand this? | Invented work wanted by nobody |
+| Currency | Do named files, classes, versions and APIs match? | Pinning to a moved path or count |
+| Consistency | Do items agree with Current state and dependencies? | Conflicting items in one section |
+| Correctness | Do behaviors match PDF, WinUI, and SPEC rules? | Stale behavior ported into code |
+| Sufficiency | Can this be built without inventing decisions? | A section turning into design |
+| Verifiability | Can the checkpoint run and fail on real fixtures? | An unfalsifiable checkpoint |
+| Accuracy | Are paths, counts, versions, and references true? | Citing things that quietly moved |
 
 Ground each answer: `python scripts/todo-graph.py validate`, searches over `src/` and `tests/` for the named symbols, `git log --oneline -5 -- <touched paths>`. Check deferrals in both directions with `python scripts/todo-graph.py query deferred`: deferrals this section owns are part of its scope; deferrals this section wrote get re-read against today's tree (owner shipped means close it as `Resolved:`; description drifted means correct it; work quietly done elsewhere means verify it, close the deferral, and tick the owner's item).
 
@@ -97,7 +97,7 @@ Execute the checkpoint command and read the output. Quote the result in the comm
 
 ### 7. Commit, then hand to review
 
-Commit as one section commit with evidence in the body:
+Commit the section work (in one or more commits as steps complete), recording the checkpoint evidence in the final implementation commit body:
 
 ```text
 <area>: <what now works> (<DNN TNN §N>)

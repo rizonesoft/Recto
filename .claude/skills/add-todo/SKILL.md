@@ -25,13 +25,13 @@ Read the candidates. A home exists when a section's scope already covers the wor
 | Outcome | When | Do this |
 | ------- | ---- | ------- |
 | Already covered | A section owns it | Point at the section. File nothing. |
-| Fits a section | An open section's scope covers it | Add a checklist item there, or extend the section body. Never touch a `[x]` section's checklist. |
-| Needs a section | Real work with no owner, inside an existing file's scope | Add a new `## N.` section in numerical position (never after `## Verification`) with its Implementation Order row, then sync the plan. |
+| Fits a section | Open section covers it | Add checklist item or extend body; never edit `[x]`. |
+| Needs a section | Unowned in existing file | Add `## N.` section and Order row, then sync plan. |
 | Needs a file | A new subject no file owns | Delegate to `create-todo`. |
 
 ### 3. New sections are born complete
 
-A new section carries everything the format requires from birth (`todo/README.md`): context paragraph, `**Phase:**`, `**Needs:**`, `**Surface:**`, a numbered `**Build order:**` whose every step has an observable `Done when:`, a micro-step checklist (one action, named path in backticks, done-when, cheaper substitute on UI and write items) ending in `Commit:`, and a runnable `**Test checkpoint:**` in backticks. A surface section also carries Fidelity (naming the `design/SPEC.md` section and screenshot), Job, Treatment and Chrome. A section in a `frozen: true` file carries a `**Freeze check:**`. A section filed as a one-line stub is a plan defect, not a head start.
+A new section carries everything the format requires from birth (`todo/README.md`): a `## N. <Title>` heading and matching `Deliverable` cell of at most 88 characters, context paragraph, `**Phase:**`, `**Needs:**`, `**Surface:**`, a numbered `**Build order:**` whose every step has an observable `Done when:`, a micro-step checklist (one action, named path in backticks, done-when, cheaper substitute on UI and write items) ending in `Commit:`, and a runnable `**Test checkpoint:**` in backticks. A surface section also carries Fidelity (naming the `design/SPEC.md` section and screenshot), Job, Treatment and Chrome. A section in a `frozen: true` file carries a `**Freeze check:**`. A section filed as a one-line stub is a plan defect, not a head start.
 
 Give it a dependency edge, not a wish. If it must wait on another section, say so in `Depends On`; if it truly stands alone, `--`. A prerequisite may not sit in a later phase than its consumer.
 
