@@ -436,6 +436,7 @@ class Stamp(Tree):
                              "2026-10-13", sync_plan=True)
             finally:
                 tg.atomic = real_atomic
+            self.assertEqual(len(calls), 4 if fail_at == 3 else 2)
             self.assertFalse((self.root / "docs/reviews/d00-t01-s1.json").exists())
             self.assertEqual(self.snapshot(), before)
         receipt = tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"],
