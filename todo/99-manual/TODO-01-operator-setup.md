@@ -18,6 +18,7 @@ track: M0
 - `design/SPEC.md` sections 3.5 (banner and social preview files and the `[OWNER]` replacement), 3.1 (icon), and `design/brand/github-banner.png`, `design/brand/github-social-preview.png`.
 - `docs/plans/2026-10-13-recto-foundation.md` sections 1 (D1, D6), 8, 11 (trademark search and name reservation, reference machines, both needed by M0).
 - -> XREF: D00 T01 §1 -- the repository this file finishes the public face of; §2 here assumes the first push happened there.
+- -> XREF: D00 T01 §5 -- records the primary x64 benchmark host machine resolved on 2026-10-14 and defers naming a specific physical ARM64 device to §4 here.
 - -> XREF: D07 T02 §4 -- the submission that uses the Partner Center app and identity created in §3 here.
 
 ## Outcome
@@ -25,7 +26,7 @@ track: M0
 - "Recto" is trademark-searched with the result recorded, and the Store name is reserved (or a rename decision is taken before any listing exists).
 - The GitHub repository shows the banner, description, topics and social preview a visitor should see.
 - Partner Center holds the app reservation whose identity values D07 T01 §2 packages with.
-- The two reference machines are named and confirmed for D00 T01 §5's record.
+- The secondary physical `ARM64` reference device (when attached) and the clean-machine install-proof plan are confirmed alongside `D00 T01 §5`'s primary `x64` host record.
 
 **Adjacency:** all=not-applicable (operator procedures in external systems; their lists, documents and settings live in GitHub, the trademark registers and Partner Center, and this file only records their outcomes)
 
@@ -99,7 +100,9 @@ Enroll in the Microsoft Partner Center Windows developer program under the owner
 
 ## 4. Reference machines confirmed
 
-D00 T01 §5 needs the owner's call: one mid-range x64 laptop and one ARM64 laptop that plan section 8's targets bind to. This section is the decision and its proof: name both machines (model, CPU, RAM, GPU, Windows build, display scale), confirm they are available for M2 and release measurements, and record whether a clean VM host exists for D07 T01 §3's install proof (or which physical machine resets for it).
+On 2026-10-14, the owner resolved the primary `x64` benchmark baseline (`D00 T01 §5`) to use the primary `x64` development desktop recorded in `docs/reference-machines.md`. This operator section owns the remaining physical-hardware confirmations: naming a specific physical `ARM64` Windows 11 machine in `docs/reference-machines.md` when one is attached for runtime benchmarking, and recording the clean-machine plan (VM image or resettable physical host) for `D07 T01 §3`'s installer and portable verification.
+
+> **Corrected:** 2026-10-14 -- Updated after the 2026-10-14 owner decision (`docs/plans/2026-10-13-recto-foundation.md` section 11 item 2) resolved the primary `x64` reference machine in `D00 T01 §5`; this section now tracks attaching and naming a physical `ARM64` device and confirming the clean-machine host for `D07 T01 §3`.
 
 **Phase:** 99
 **Needs:** operator
@@ -107,14 +110,14 @@ D00 T01 §5 needs the owner's call: one mid-range x64 laptop and one ARM64 lapto
 
 **Build order:**
 
-1. Choose and record both machines in `docs/reference-machines.md` (created by D00 T01 §5 from this decision). Done when: D00 T01 §5's `owner-decision` Need can be removed with this section cited.
+1. When a physical `ARM64` Windows 11 device is attached, record its exact hardware and OS fingerprint in `docs/reference-machines.md` (replacing the non-binding `ARM64` target profile from `D00 T01 §5`). Done when: `docs/reference-machines.md` names a specific `ARM64` machine with a reproducible hardware fingerprint.
 2. Confirm the clean-machine plan for install proof (VM image or resettable host) and who runs attended sessions on it. Done when: D07 T01 §3 can name its machine in advance.
 
-- [ ] Both machines named with specs and availability. Done when: performance quotes elsewhere can cite them unambiguously. Cheaper substitute: "the dev box plus whatever ARM device turns up".
+- [ ] Specific physical `ARM64` machine named with specs and availability in `docs/reference-machines.md` (complementing the `D00 T01 §5` primary `x64` host). Done when: `ARM64` runtime performance quotes can cite it unambiguously. Cheaper substitute: leaving the non-binding target class profile in place while claiming `ARM64` runtime measurements.
 - [ ] Clean-machine plan recorded. Done when: the install-proof section has a machine before it needs one.
 - [ ] Commit: `manual: reference machines and clean-machine plan confirmed`
 
-**Test checkpoint:** `docs/reference-machines.md` exists with both machines, and D00 T01 §5 resolves without its waiting Need once updated.
+**Test checkpoint:** `docs/reference-machines.md` records both the primary `x64` machine and a specific physical `ARM64` machine, and the clean-machine host is documented for `D07 T01 §3`.
 
 ## Verification
 
