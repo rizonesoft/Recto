@@ -7,7 +7,7 @@ description: Quality-gate a just-implemented TODO section with self-review, inde
 
 The gate between "code exists" and "the row says `[x]`". Nothing else may flip that row, and the flip happens only through `python scripts/todo-graph.py stamp`, which refuses a section with unticked items, an open prerequisite, a waiting Need, or no review evidence.
 
-Review is mandatory and independent: the implementing session self-reviews, but at least one review round comes from a reviewer that did not write the candidate (a separate agent session or model family). Every round is recorded in a findings file; the stamp's receipt names the rounds. A verdict with no record is an opinion.
+Review is mandatory and independent: the implementing session self-reviews, and at least one review round comes from an independent reviewer running `Claude Opus 5.5 (Medium)` via the Antigravity CLI (`agy --model claude-opus-5-5-medium --mode plan -p "<review prompt>"`). Every round is recorded in a findings file; the stamp's receipt names the rounds. A verdict with no record is an opinion.
 
 ## Use this skill when
 
@@ -37,25 +37,32 @@ Name the candidate: the implementation commit, or the commit range when fix-loop
 
 Work the three questions across the diff and its blast radius. Fix what you find, then re-ask them. Look specifically for the failure modes this codebase invites:
 
-- A MuPDF call on the wrong thread, a context shared across threads, or a `fz_try` region with a C++ object in scope (foundation plan section 4).
-- A bridge function that can return out of `fz_try`, or a local changed in `fz_try` and read after it without `fz_var`.
-- A tile cached after abort, a pixmap stride assumed to be `width * 4`, a cookie written without the interlocked mirror.
+- A `recto::pdf::Document` call on the wrong thread, a document instance shared across threads instead of owned by a single `DocumentActor`, or unbounded recursion/allocation on hostile PDF inputs (foundation plan sections 3 and 4).
+- An engine or parser function that throws or aborts instead of returning `PdfResult<T>` / `PdfError`.
+- A tile cached after abort, a bitmap stride assumed to be `width * 4`, or a `CancelToken` polled without cooperative abort semantics.
 - A file write that is not temp-then-replace, or originals modified in place by Organize operations.
 - Office automation without `AutomationSecurity` forced off, or a document link opened without asking.
 - A hex colour, font size or glyph set directly on a control instead of SPEC tokens and Segoe Fluent Icons.
 - A setting nothing reads, a command unreachable from the command box, a control with no `AutomationProperties.Name`.
 - A test that passes without exercising the behavior.
 
-### 3. Independent review rounds
+### 3. Independent review rounds (`Claude Opus 5.5 (Medium)`)
 
-Run the lenses as separate passes over the candidate, at least one round by a reviewer independent of the implementer, and record every round in the findings file: round number, reviewer, candidate SHA, per-lens verdicts (`approve`, `needs-attention` with numbered findings naming `file:line`, or `advisory`), and the quoted gate outputs (the Live proof).
+Run the lenses as separate passes over the candidate, at least one round by the independent `Claude Opus 5.5 (Medium)` reviewer invoked via:
+
+```powershell
+$prompt = Get-Content "<scratch-review-prompt.md>" -Raw
+agy --model claude-opus-5-5-medium --mode plan -p $prompt
+```
+
+Record every round in the findings file: round number, reviewer (`Claude Opus 5.5 (Medium)` via `agy --model claude-opus-5-5-medium`), candidate SHA, per-lens verdicts (`approve`, `needs-attention` with numbered findings naming `file:line`, or `advisory`), and the quoted gate outputs (the Live proof).
 
 | Lens | Asks |
 | ---- | ---- |
 | `adversarial` | How does this fail on hostile input: malformed PDFs, races, abort paths, macro-bearing Office files, links? |
 | `consistency` | Does it agree with the tree: module rules, naming, shared controls, settings store, error shape? |
 | `integration` | Do callers and consumers still hold: actor contract, tile hand-off, job queue, shell slots? |
-| `source-defect` | When a MuPDF, WinUI or SPEC detail is at stake: is the source read correctly and is any deviation declared? |
+| `source-defect` | When a PDF 1.7/2.0, OpenXML, WinUI or SPEC detail is at stake: is the source read correctly and is any deviation declared? |
 | `design` | On a surface: the rendered result judged against the SPEC screenshot and tokens, never source alone. |
 | `record` | Is the record honest: evidence matches what ran, deferrals name owners, the flip is earned? |
 
