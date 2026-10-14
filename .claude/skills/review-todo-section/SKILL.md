@@ -52,7 +52,7 @@ Run the lenses as separate passes over the candidate, at least one round by the 
 
 ```powershell
 $prompt = Get-Content "<scratch-review-prompt.md>" -Raw
-agy --model claude-opus-5-5-medium --mode plan -p $prompt
+agy --model claude-opus-5-5-medium --mode plan --dangerously-skip-permissions -p $prompt
 ```
 
 Record every round in the findings file: round number, reviewer (`Claude Opus 5.5 (Medium)` via `agy --model claude-opus-5-5-medium`), candidate SHA, per-lens verdicts (`approve`, `needs-attention` with numbered findings naming `file:line`, or `advisory`), and the quoted gate outputs (the Live proof).
