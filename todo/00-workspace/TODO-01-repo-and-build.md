@@ -40,7 +40,7 @@ track: M0
 | 2 | §2 | PDF engine dependency policy (native `recto-pdf`, MuPDF retired) | §1 | [x] |
 | 3 | §3 | Solution scaffold for all modules, x64 and ARM64 | §2 | [x] |
 | 4 | §4 | Build CI for x64 and ARM64 | §3, D00 T02 §2 | [ ] |
-| 5 | §5 | Reference benchmark machines recorded | §1 | [ ] |
+| 5 | §5 | Reference benchmark machines recorded | §1 | [x] |
 
 ## 1. Git repository and repo-face files
 
@@ -155,9 +155,12 @@ Foundation plan section 8 binds performance targets to the primary reference Win
 2. Verify that `owner-decision` has been removed from this section's `**Needs:**` line under the 2026-10-14 owner decision. Done when: `python scripts/todo-graph.py query blocked` no longer lists `D00 T01 §5` as waiting on an owner decision.
 
 - [x] `docs/reference-machines.md` committed and linked from `docs/plans/2026-10-13-recto-foundation.md` section 8 and 11. Done when: the primary x64 host machine is specified strongly enough that another person can tell whether a measurement came from it, and the secondary `ARM64` profile is explicitly marked non-binding until `D99 T01 §4` names a physical `ARM64` device.
-- [ ] Commit: `docs: record x64 and ARM64 reference benchmark machines`
+- [x] Commit: `docs: record x64 and ARM64 reference benchmark machines`
 
 **Test checkpoint:** `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` exit 0, and `docs/reference-machines.md` contains zero `TODO` or `TBD` tokens.
+
+> **Verified:** 2026-10-14 | §5 | c0f764763e8017306f8df19741625f5839b8dc9b
+> **Review:** `docs/reviews/d00-t01-s5.json`
 
 ## Verification
 
