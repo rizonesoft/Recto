@@ -7,7 +7,7 @@ description: Quality-gate a just-implemented TODO section with self-review, inde
 
 The gate between "code exists" and "the row says `[x]`". Nothing else may flip that row, and the flip happens only through `python scripts/todo-graph.py stamp`, which refuses a section with unticked items, an open prerequisite, a waiting Need, or no review evidence.
 
-Review is mandatory and independent: the implementing session self-reviews, and at least one review round comes from an independent reviewer running `Claude Opus 5.5 (Medium)` via the Antigravity CLI (`agy --model claude-opus-5-5-medium --mode plan -p "<review prompt>"`). Every round is recorded in a findings file; the stamp's receipt names the rounds. A verdict with no record is an opinion.
+Review is mandatory and independent: the implementing session self-reviews, and at least one review round comes from an independent reviewer running `GPT-6 Astra` (`gpt-6-astra`) via the Codex CLI (`Get-Content "<scratch-review-prompt.md>" -Raw | codex exec -m gpt-6-astra --ephemeral -`). Every round is recorded in a findings file; the stamp's receipt names the rounds. A verdict with no record is an opinion.
 
 ## Use this skill when
 
@@ -46,16 +46,15 @@ Work the three questions across the diff and its blast radius. Fix what you find
 - A setting nothing reads, a command unreachable from the command box, a control with no `AutomationProperties.Name`.
 - A test that passes without exercising the behavior.
 
-### 3. Independent review rounds (`Claude Opus 5.5 (Medium)`)
+### 3. Independent review rounds (`GPT-6 Astra` via `codex`)
 
-Run the lenses as separate passes over the candidate, at least one round by the independent `Claude Opus 5.5 (Medium)` reviewer invoked via:
+Run the lenses as separate passes over the candidate, at least one round by the independent `GPT-6 Astra` (`gpt-6-astra`) reviewer invoked via:
 
 ```powershell
-$prompt = Get-Content "<scratch-review-prompt.md>" -Raw
-agy --model claude-opus-5-5-medium --mode plan --dangerously-skip-permissions -p $prompt
+Get-Content "<scratch-review-prompt.md>" -Raw | codex exec -m gpt-6-astra --ephemeral -
 ```
 
-Record every round in the findings file: round number, reviewer (`Claude Opus 5.5 (Medium)` via `agy --model claude-opus-5-5-medium`), candidate SHA, per-lens verdicts (`approve`, `needs-attention` with numbered findings naming `file:line`, or `advisory`), and the quoted gate outputs (the Live proof).
+Record every round in the findings file: round number, reviewer (`GPT-6 Astra` via `codex exec -m gpt-6-astra`), candidate SHA, per-lens verdicts (`approve`, `needs-attention` with numbered findings naming `file:line`, or `advisory`), and the quoted gate outputs (the Live proof).
 
 | Lens | Asks |
 | ---- | ---- |
