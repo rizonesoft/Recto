@@ -3,44 +3,47 @@ schema_version: 1
 id: selection-and-search
 domain: 03-text
 status: active
-title: "TODO-01 -- Text Extraction, Selection and Search"
+title: "TODO-01 -- Text Extraction, Built-in OCR, Selection and Search"
 track: M3
 ---
 
-# TODO-01 -- Text Extraction, Selection and Search
+# TODO-01 -- Text Extraction, Built-in OCR, Selection and Search
 
-> **Goal:** Page text becomes usable: extracted once per page on the actor, selectable with mouse and keyboard over the rendered page, copyable faithfully, and searchable with the SPEC find card, hit highlighting and next and previous that never miss a hit in the corpus text set (M3's done-when).
+> **Goal:** Give every page (digital or scanned) one shared `PageText` model in `recto-pdf` and `recto-core`: native structured text extraction from content streams and `/ToUnicode` maps, built-in `Windows.Media.Ocr` recognition for scanned pages, quad-precise pointer and keyboard selection with the SPEC floating toolbar and context menu, and non-blocking `Ctrl+F` search with true counts across multi-hundred-page documents.
 
-> **Current state:** Measured 2026-10-13. No text code exists. D01 provides the actor that will build stext beside display lists; D02 T02 §3 defines the page-geometry model selection and highlights anchor to; D02 T03 §2 provides the panel host find lives in. The behavior is fixed by SPEC 9.3 (find card, result list, hit colours, selection toolbar and context menu), the search brushes in SPEC section 4, F3 keys in section 10, and the plan's text writers (section 5, `fz_new_stext_page_from_page`) whose extraction this file shares with D04 T02 §4.
+> **Current state:** Measured 2026-10-14. No text or OCR code exists yet. `D01 T02` provides the content-stream interpreter, DirectWrite font loader and `DocumentActor`; `D02 T02` provides the page coordinate mapping (`§3`); `D02 T03` provides the panel hosting contract (`§2`). The UI boards are `design/screenshots/D-Search.png` and `design/screenshots/explorations/B-Search.png` (Reading room inspector search tab and filmstrip hit markers), governed by `design/SPEC.md` section 9.3.
 
 ## Inputs
 
-- `design/SPEC.md` sections 4 (`RectoSearchHitBrush`, `RectoSearchHitCurrentBrush`, `RectoTextSelectionBrush`), 9.3, 10, 11 (selection announced to screen readers); board `design/screenshots/D-Search.png`, with `explorations/B-Search.png` for the Reading room inspector form.
-- `docs/plans/2026-10-13-recto-foundation.md` sections 4.2 rule 5 (stext pages move between threads, never shared), 5 (text extraction), 7 (M3).
-- -> XREF: D02 T02 §3 -- the geometry model whose page mapping §2 here renders selection over; mapping corrections flow back there, never a second mapping here.
-- -> XREF: D02 T03 §2 -- the panel host whose card and inspector forms §3's find surface fills per preset.
+- `design/SPEC.md` sections 4 (`RectoSearchHitBrush`, `RectoSearchHitCurrentBrush`, `RectoTextSelectionBrush`), 9.3 (Search and selection), 9.7 (Reading: automatic OCR on scanned pages; Converting: OCR language), 10 (`Ctrl+F`, `F3`, `Shift+F3`), 11 (selection announced to screen readers).
+- `docs/plans/2026-10-13-recto-foundation.md` sections 3.3 (`PageText`), 5 (Searchable PDF OCR and PDF to text), 6.3 (`PageText` shared across selection, search, OCR and UIA), 7 (M3 done-when).
+- -> XREF: D02 T02 §2 -- selection and search highlights composite over the page geometry and tile canvas built in `D02 T02`.
+- -> XREF: D02 T03 §3 -- the Reading room Search inspector tab and filmstrip hit badges plug into the panel host established in `D02 T03`.
+- -> XREF: D04 T03 §1 -- `DocxWriter` (PDF to Word) consumes `PageText` (including OCR-populated `PageText` on scanned pages) from §1 and §4 here.
 
 ## Outcome
 
-- Selecting text on any corpus page highlights exactly the glyphs chosen, copies the same characters MuPDF extracts, and offers Copy, Find and page-link actions where the SPEC puts them.
-- Find reports true counts, lists results with context, walks hits in order across pages, and highlights current versus other hits in the SPEC brushes.
-- Scanned (image-only) pages behave honestly: no selectable text, find reports zero, OCR stays a named after-v1 item (plan section 2).
+- `recto-pdf` extracts `PageText` (`Blocks -> Lines -> Spans -> Chars` with quad bounding boxes in page points, font metadata, and reading-order clustering) on the `DocumentActor` thread, and `recto-cli text` and `recto-cli find` expose it from the command line.
+- Selecting text on a page paints `RectoTextSelectionBrush` over character quads, shows the dark floating toolbar (`Copy`, `Find`, `Link`) above the selection and the full context menu on right-click (`Copy`, `Find`, `Select all on page`, `Copy page link`), and announces selection changes to screen readers.
+- `Ctrl+F` opens the find card (top-right in Focus/Classic, Search inspector tab with filmstrip markers in Reading room), searches all pages off the UI thread without stalling scroll, highlights matches in `RectoSearchHitBrush` and the current match in `RectoSearchHitCurrentBrush`, and supports `Match case` and `Whole word`.
+- Scanned pages (pages with zero extractable text and page-covering images) are recognized on the background `RenderPool` via Recto's C++20 image preprocessor + `Windows.Media.Ocr` (`OcrEngine`), populating `PageText` so selection, copy, `Ctrl+F`, UIA screen readers, and downstream converters work seamlessly on scanned PDFs.
 
-**Adjacency:** list=applicable @ D03 T01 §3; document=not-applicable (no printed output); settings=not-applicable (match case and whole word are find-session state on the card itself, owned in section 3, not app settings); reporting=not-applicable (hit counts live on the find card); notifications=not-applicable (none originate here); permissions=not-applicable (copy respects no role model in a single-user viewer); audit=not-applicable (selection is transient view state); exchange=applicable @ D03 T01 §2; reverse=not-applicable (clearing a selection or closing find is view state, built into sections 2 and 3)
+**Adjacency:** list=applicable @ D03 T01 §3; document=not-applicable (text export and searchable PDF save are conversion jobs in D04 T02 §4); settings=applicable @ D02 T04 §2; reporting=not-applicable (no reports); notifications=applicable @ D03 T02 §3; permissions=not-applicable (copy permission flags are reported in Info, D02 T03 §3); audit=not-applicable (search history is not persisted); exchange=applicable @ D03 T01 §2; reverse=applicable @ D03 T01 §2
 
-**Adjacency rationale:** The list surface is the find results list and the exchange surface is the clipboard (copy out, with find-from-selection as its inward twin), both owned inside this file. PDF-to-text export as a file is a conversion, owned by D04 T02 §4 over the same extraction built in section 1, and is deliberately not claimed here.
+**Adjacency rationale:** The list surface is the find results list (`§3`), exchange is copying selected text and page links to the Windows clipboard (`§2`), and reverse is clearing selection and closing/clearing find (`§2`, `§3`). Screen-reader announcements for selection and find counts are wired through `D03 T02 §3`, and the automatic-OCR and OCR-language toggles live in Settings (`D02 T04 §2`).
 
 ## Implementation Order
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | Stext extraction and the text model | D01 T02 §1 | [ ] |
-| 2 | §2 | Selection rendering, copy and actions | §1, D02 T02 §3 | [ ] |
-| 3 | §3 | Find engine and the find card | §1, D02 T03 §2 | [ ] |
+| 1 | §1 | Native `PageText` extraction model and `recto-cli text` | D01 T02 §3, D01 T03 §1 | [ ] |
+| 2 | §2 | Quad-precise text selection, floating toolbar, context menu and clipboard | §1, D02 T02 §3 | [ ] |
+| 3 | §3 | Non-blocking find engine and `Ctrl+F` search card | §2, D02 T03 §2 | [ ] |
+| 4 | §4 | Built-in OCR pipeline (`Windows.Media.Ocr`) for scanned pages | §1, §3 | [ ] |
 
-## 1. Stext extraction and the text model
+## 1. Native `PageText` extraction model and `recto-cli text`
 
-The actor builds an `fz_stext_page` per page on demand, cached beside its display list, and hands the core an immutable page-text model: blocks, lines and character quads in page space, reading order as MuPDF reports it, plus the plain-text serialization other consumers share (clipboard in §2, D04's text writer, D03 T02's UIA provider). Bridge additions follow D01 T01's status pattern; the model crosses to the UI side as Recto types, built once and read many times (plan rule 5: built on the actor, then moved, never shared mutably).
+Implement `src/pdf/page_text.cpp` in `recto-pdf`: during or alongside content-stream interpretation, map every glyph run (`Tj`, `TJ`, `'`, `"`) through the font's `/ToUnicode` CMap or encoding table and text matrix (`Tm * CTM`) to Unicode codepoints with exact quad bounding boxes in page points, font name/size/weight/italic flags, and baseline angle. Coalesce characters into words, lines (de-hyphenating soft hyphens and joining kerning splits from `TJ` adjustments), columns, and reading-order blocks. Expose `get_page_text` on `DocumentActor` (cached in an LRU alongside `DisplayList`) and add `recto-cli text <file.pdf>` to print UTF-8 page text.
 
 **Phase:** 3
 **Needs:** windows-host
@@ -48,65 +51,95 @@ The actor builds an `fz_stext_page` per page on demand, cached beside its displa
 
 **Build order:**
 
-1. Add `src/bridge/stext.c`: build stext for a page on the owner's clone, walk it into flat core structs (quad, unicode codepoints, block and line breaks), with the dehyphenation and spacing choices MuPDF's options expose recorded as constants. Done when: extracted text for the `tests/corpus/text/` set matches the expected strings in `recto-tests` character for character.
-2. Cache extracted pages on the actor with the display-list cache's lifetime rules, and expose `PageText` lookup by page index through `DocumentHandle`. Done when: repeated selection and find over one page extract once (actor telemetry in tests), and closing the document frees the cache (ASan clean).
+1. Implement `PageText` (`Block`, `Line`, `Span`, `CharQuad`) and `src/pdf/page_text.cpp` coalescing positioned glyphs into reading-order blocks (handling two-column layouts, rotated text, `TJ` kerning offsets, and ligature expansion `fi`/`fl`/`ff`/`ffi`/`ffl`). Done when: `PdfText.*` unit tests extract exact UTF-8 strings and monotonically ordered character quads from single-column, two-column, and rotated corpus pages.
+2. Wire `DocumentActor::get_page_text` and add `recto-cli text <file.pdf> [--pages <range>]`. Done when: `recto-cli text` outputs match the expected text fixtures for `tests/corpus/text/` under ASan.
 
-- [ ] Bridge stext walk into `PageText` core types. Done when: multi-column and rotated corpus pages extract in the order their fixtures state. Cheaper substitute: OCR-style line guessing or a text dump with no geometry, which selection cannot use.
-- [ ] Actor-side extraction cache. Done when: a 500-page document searched end to end holds text memory within a stated bound (cache eviction quoted in tests).
-- [ ] Commit: `text: stext extraction into a cached PageText model`
+- [ ] `PageText` builder in `src/pdf/page_text.cpp` with reading-order column/block clustering, `TJ` kerning threshold handling, and ligature normalization. Done when: a two-column corpus page extracts column 1 top-to-bottom before column 2, rather than interleaving lines across the gutter. Cheaper substitute: dumping raw `Tj` strings in stream order with no coordinate clustering.
+- [ ] `DocumentActor` caching and `recto-cli text` verb. Done when: `recto-cli text` passes all `tests/corpus/text/` fixtures under ASan.
+- [ ] Commit: `text: implement native PageText extraction model and recto-cli text`
 
-**Test checkpoint:** `recto-tests --gtest_filter=Text.*` passes under ASan over the full text corpus with exact-match fixtures (quote files and character counts).
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfText.*` passes under ASan across single-column, two-column, rotated and ligature fixtures.
 
-## 2. Selection rendering, copy and actions
+## 2. Quad-precise text selection, floating toolbar, context menu and clipboard
 
-Selection lives on the presentation layer as an overlay in page space: pointer down, drag and keyboard extension select by character quad (with word and line snapping on double and triple click as stock readers do), rendered with `RectoTextSelectionBrush` under the page's colour mode in a way that stays visible in all three modes. SPEC 9.3's floating selection toolbar (Copy, Find, Link) and the full context menu (copy, find, select all on page, copy page link) act on it; copy puts the extracted characters on the clipboard with newlines where lines break; selection changes announce through UI Automation (full provider in D03 T02 §1, the announcement hooks land here).
-
-**Phase:** 3
-**Needs:** windows-host, display-session
-**Surface:** yes
-
-**Fidelity:** SPEC section 9.3 with `design/screenshots/D-Search.png` (selection and its toolbar on the page).
-**Job:** The user can take text out of a document accurately and act on what they selected. Consumer: the clipboard's next paste, find (§3 seeded from selection), and page links pasted elsewhere that Recto reopens at the page.
-**Treatment:** Quad-precise overlay selection over §1's model, rendered by the presentation thread with the page. Cheaper substitute that fails the checkpoint: line-rectangle selection that copies whole lines the user did not choose, or pixel-space selection that breaks at zoom.
-**Chrome:** consume §1's `PageText`, D02 T02 §3's geometry, the SPEC dark selection toolbar shape and stock context menu styling. Do not invent a second text-geometry mapping for hits (§3 reuses this one).
-
-**Build order:**
-
-1. Hit-testing and selection state: point to character through quads at any zoom, rotation and layout (including two-page), drag autoscroll at edges, keyboard selection with the caret anchored for UIA. Done when: scripted selections on corpus pages at three zooms and two rotations select exactly the fixture substrings.
-2. Rendering and actions: selection quads composited per colour mode, the floating toolbar positioned above the selection (flipping below at the top edge), context menu, clipboard write with readback, copy page link producing a link Recto itself resolves on paste-open (file plus page), Find seeding §3. Done when: paste into a plain editor yields the fixture string byte for byte, and the announcements fire (observed through an automation listener in tests).
-
-- [ ] Quad-precise selection across zoom, rotation and layouts. Done when: rotated-page selection copies in reading order, not visual order. Cheaper substitute that fails the checkpoint: selecting by rendered pixels with no reading-order model.
-- [ ] Selection toolbar, context menu, clipboard and page-link round-trip. Done when: a copied page link pasted into the command box (D02 T03 §4) opens the file at that page.
-- [ ] Commit: `text: selectable pages with copy, find-from-selection and page links`
-
-**Test checkpoint:** screenshots against `D-Search.png` in findings, scripted substring selections exact at three zooms, and clipboard readback quoted byte-identical for five corpus selections.
-
-## 3. Find engine and the find card
-
-Find runs over §1's text model for the whole document (actor-extracted page by page with progress), honoring Match case and Whole word, reporting the true total and per-page distribution the SPEC card shows ("2 of 14", "4 pages", up to six context results plus Show all). Hits render with `RectoSearchHitBrush`, the current with `RectoSearchHitCurrentBrush` and on-accent text; next and previous (Enter, F3, Shift+F3) walk in reading order, scrolling and switching pages as needed. The card hosts at top-right of the canvas in Focus and Classic, and as the inspector Search tab in Reading room with filmstrip hit marks (SPEC 9.3, `B-Search.png`).
+Implement interactive text selection over `DocumentView` (`src/app` and `src/services`): pointer drag (character-by-character, double-click word, triple-click line/paragraph) and keyboard `Shift+Arrow` selection hit-test against `PageText` quads through `D02 T02 §3`'s page-to-viewport transform, paint `RectoTextSelectionBrush` (accent at 18% light / 22% dark) over the selected quads, and display the SPEC 9.3 dark floating selection toolbar (`Copy`, `Find`, `Link` to copy a `#page=N` reference) above the selection and the full right-click context menu (`Copy`, `Find`, `Select all on page`, `Copy page link`).
 
 **Phase:** 3
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** SPEC section 9.3 with `D-Search.png`, and `explorations/B-Search.png` for the inspector form and filmstrip marks.
-**Job:** The user can find every occurrence of a string in the document and walk them in order. Consumer: navigation only; find changes no document state, and closing it clears highlights.
-**Treatment:** Search over the shared `PageText` model with incremental per-page extraction, cancellable when the query changes. Cheaper substitute that fails the checkpoint: searching only loaded pages, or a find that blocks the UI extracting a 500-page document up front.
-**Chrome:** consume the panel hosting from D02 T03 §2, the search brushes from tokens, and §2's quad rendering for highlights. Do not invent a second results list or highlight path.
+**Fidelity:** SPEC sections 4 (`RectoTextSelectionBrush`), 9.3 (floating selection toolbar and context menu), 10 (`Ctrl+C`, `Ctrl+A`, `Esc`), 11 (36 epx hit targets in floating toolbar; selection status announced), with `design/screenshots/D-Search.png`.
+**Job:** The user can select text on any page, copy it cleanly to the clipboard, search for the selected phrase, or copy a page link. Consumer: the Windows clipboard, the find card (§3), and the UIA text provider (`D03 T02 §1`).
+**Treatment:** Hit-testing and painting over `PageText` character quads in page space so zoom and rotation never shift selection bounds. Cheaper substitute that fails the checkpoint: rectangular rubber-band selection that ignores line flow, or losing the selection when zooming.
+**Chrome:** consume `RectoTextSelectionBrush`, the dark floating bar tokens (`#1B1A19` / `#2A2826`), and Segoe Fluent Icons (`Copy`, `Find`, `Link`). Do not invent a second selection store separate from `D03 T02 §1`.
 
 **Build order:**
 
-1. Find engine in `recto-core`: query over `PageText` with case and whole-word rules over Unicode text, normalization choices recorded (what counts as a word boundary, how ligatures and soft hyphens match), results as (page, quad range) in reading order. Done when: the text corpus verification (D06 T01 §2's expected hit tables) matches exactly, including zero-hit and whole-word edge fixtures.
-2. The card and inspector forms with result contexts (match bolded), counts, per-page summary, walk keys, filmstrip marks in Reading room, and Esc restoring focus to the page. Done when: a driven session finds, walks and closes exactly as `D-Search.png`, keyboard only.
+1. Implement selection state and hit-testing (`SelectionModel` in `src/services`) supporting single-click clear, drag char range, double-click word, triple-click line, `Ctrl+A` (select all on current page), and multi-page drag selection, rendered as quad overlays on the presentation surface. Done when: zooming or rotating with active selection preserves the exact selected character range and quads.
+2. Build the dark floating toolbar (`Copy`, `Find`, `Link` with 36 epx hit targets) and right-click `MenuFlyout` (`Copy`, `Find`, `Select all on page`, `Copy page link`), wiring `Ctrl+C` and `Copy` to place normalized UTF-8 text on the clipboard and `Find` to open §3's find card seeded with the selection. Done when: selecting across two lines and pressing `Ctrl+C` places the exact text on the clipboard and `Esc` clears selection.
 
-- [ ] Engine with recorded normalization rules and exact corpus counts. Done when: changing the query mid-extraction cancels cleanly with no stale hits painted. Cheaper substitute that fails the checkpoint: byte search over extracted dumps that cannot map back to quads.
-- [ ] Find card plus inspector form and filmstrip marks. Done when: the surface-completeness account covers every SPEC 9.3 element in both forms.
-- [ ] Commit: `text: find with true counts, highlights and the SPEC find card`
+- [ ] Quad-precise pointer and keyboard selection preserved across zoom and rotation. Done when: double-click, triple-click, drag and `Ctrl+A` match expected character ranges in `TextSelection.*`. Cheaper substitute: single-line-only selection or clearing selection on every scroll/zoom tick.
+- [ ] Floating selection toolbar (36 epx targets) and context menu with working `Copy`, `Find` and `Link`. Done when: rendered screenshot matches `D-Search.png` selection treatment and clipboard readback matches the fixture string.
+- [ ] Commit: `text: add quad-precise text selection, floating toolbar and context menu`
 
-**Test checkpoint:** `recto-tests --gtest_filter=Find.*` green over the text corpus with exact hit tables (quote queries and counts), and driven screenshots against both search boards in findings. M3's search done-when ("finds every hit in the corpus text set") closes on this evidence.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=TextSelection.*` passes, and display-session screenshots verify the floating selection toolbar and quad highlight against `D-Search.png`.
+
+## 3. Non-blocking find engine and `Ctrl+F` search card
+
+Implement the background find engine in `src/core/search.cpp` (plus `recto-cli find <file.pdf> <query> [--case] [--whole-word]`) and the SPEC 9.3 find surfaces:
+- In Focus and Classic presets: the top-right floating card (`D-Search.png`) with query box, `"2 of 14"`, previous/next (`F3` / `Shift+F3`), close (`Esc`), `Match case` and `Whole word` toggles, `"4 pages"` summary, up to 6 context result rows with bolded match text and page number, and `"Show all N results"`.
+- In Reading room preset: the same search view hosted in the right inspector's `Search` tab (`explorations/B-Search.png`) with hit markers on the bottom filmstrip thumbnails.
+- On the page canvas: all matches highlighted in `RectoSearchHitBrush` and the active match in `RectoSearchHitCurrentBrush` with `RectoOnAccentBrush` text.
+
+**Phase:** 3
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** SPEC sections 4 (`RectoSearchHitBrush`, `RectoSearchHitCurrentBrush`), 9.3, 10 (`Ctrl+F`, `F3`, `Shift+F3`, `Esc`), with `design/screenshots/D-Search.png` and `design/screenshots/explorations/B-Search.png`.
+**Job:** The user can find every occurrence of a word or phrase across a large PDF immediately without stalling scrolling, see each match in context, and jump between hits. Consumer: the document view scrolls to the current match and paints hit quads; `D06 T01 §2` verifies the find tables.
+**Treatment:** Incremental background search across pages starting from the current visible page outward, cancelling stale queries via `CancelToken` as the user types, with recorded Unicode case-folding, ligature (`fi` matching `"fi"`), and soft-hyphen normalization rules. Cheaper substitute that fails the checkpoint: searching only already-rendered pages or blocking the UI thread while scanning a 500-page PDF.
+**Chrome:** consume `RectoSearchHitBrush`, `RectoSearchHitCurrentBrush`, and the shared search view-model across both the floating card and the Reading room inspector tab. Do not duplicate search state between presets.
+
+**Build order:**
+
+1. Implement `src/core/search.cpp` (Unicode case-folding, ligature and soft-hyphen normalization, `Match case`, `Whole word`, snippet extraction with bold spans, and `CancelToken` cancellation) and `recto-cli find`. Done when: `Search.*` tests verify exact hit counts, page counts, and snippets across multi-page, ligature, and hyphenated fixtures under ASan.
+2. Build the `FindCard` / Reading room `Search` inspector tab and filmstrip hit markers, wire `Ctrl+F`, `F3`, `Shift+F3` and `Esc`, and render hit quads on the presentation canvas. Done when: searching a 200-page PDF updates results progressively while scrolling stays at 60 fps, and both Focus (`D-Search.png`) and Reading room (`B-Search.png`) surfaces match their boards.
+
+- [ ] Background find engine with ligature/hyphen normalization, `Match case`, `Whole word`, and `recto-cli find`. Done when: `recto-tests.exe --gtest_filter=Search.*` passes under ASan. Cheaper substitute: `std::string::find` on ASCII bytes that misses `fi` ligatures, non-ASCII case folding, and line-break hyphens.
+- [ ] `Ctrl+F` floating card, Reading room Search inspector tab, filmstrip hit markers, and page hit highlights (`RectoSearchHitBrush` / `RectoSearchHitCurrentBrush`). Done when: screenshots match `D-Search.png` and `B-Search.png` and rapid typing cancels prior passes cleanly.
+- [ ] Commit: `text: implement non-blocking find engine and Ctrl+F search surfaces`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Search.*` passes under ASan, and display-session screenshots confirm both `D-Search.png` and `explorations/B-Search.png`.
+
+## 4. Built-in OCR pipeline (`Windows.Media.Ocr`) for scanned pages
+
+Implement `src/core/ocr_pipeline.cpp` (`OcrPipeline`) using Windows 11's native `Windows.Media.Ocr` (`OcrEngine`):
+1. Detect scanned pages automatically (pages where `PageText` has 0 extractable characters and raster image XObjects cover >= 50% of the page box) or on explicit user command.
+2. Render the scanned page at 300 DPI on a `RenderPool` worker, run Recto's C++20 image preprocessor (auto-deskew for small page tilt, contrast normalization, and adaptive Sauvola/Otsu thresholding into an `IBuffer` / `SoftwareBitmap`), and invoke `OcrEngine::RecognizeAsync` for the configured Windows OCR language (`TryCreateFromUserProfileLanguages` or the language selected in Settings).
+3. Map recognized `OcrLine` and `OcrWord` bounding rects back to PDF page points (`CharQuad`, `Span`, `Line`, `Block`) and populate the page's `PageText` in `DocumentActor` so pointer selection, `Ctrl+C` copy, `Ctrl+F` search, UIA screen readers (`D03 T02 §1`), `recto-cli ocr <file.pdf>`, `PDF -> Text` (`D04 T02 §4`), and `PDF -> Word` (`D04 T03 §1`) all work on scanned PDFs.
+
+**Phase:** 3
+**Needs:** windows-host
+**Surface:** yes
+
+**Fidelity:** SPEC sections 9.3 (selection and search work identically once OCR populates `PageText`) and 9.7 (Reading: automatic OCR on scanned pages; Converting: OCR language).
+**Job:** A user opening a scanned PDF can select text, copy it, search it with `Ctrl+F`, and read it with a screen reader without installing third-party OCR software. Consumer: `DocumentActor`'s `PageText` cache, `D03 T02 §1` UIA provider, `D04 T02 §4` searchable-PDF writer, and `D04 T03 §1` `DocxWriter`.
+**Treatment:** Background `OcrPipeline` with C++20 deskew/contrast preprocessing feeding `Windows.Media.Ocr`, cancellable via `CancelToken`, caching recognized `PageText` per page on the actor. Cheaper substitute that fails the checkpoint: running OCR on the UI thread, skipping image preprocessing on low-contrast scans, or storing OCR text in a separate side-channel that selection and UIA cannot read.
+**Chrome:** consume the existing `PageText` overlays and polite status announcement (`D03 T02 §3`); no extra modal chrome blocks reading while background OCR completes.
+
+**Build order:**
+
+1. Implement `src/core/ocr_pipeline.cpp`: scanned-page detector, 300 DPI page rasterization + C++20 deskew and contrast preprocessor, `Windows.Media.Ocr::OcrEngine` invocation with `CancelToken` support, and `OcrResult -> PageText` coordinate mapping. Add `recto-cli ocr <file.pdf> --text` for headless verification. Done when: `Ocr.*` tests run on the scanned raster corpus PDF (`tests/corpus/text/scanned.pdf`) and extract the expected text and word bounding boxes with > 98% character accuracy.
+2. Wire automatic and on-demand OCR into `DocumentActor` and `Search` (honoring the `Automatic OCR on scanned pages` and `OCR language` settings from `D02 T04 §2`). Done when: opening `scanned.pdf` in the viewer makes its words selectable by mouse and searchable via `Ctrl+F` with accurate highlight quads over the scanned image.
+
+- [ ] `OcrPipeline` (`src/core/ocr_pipeline.cpp`) with C++20 image preprocessing, `Windows.Media.Ocr` integration, `PageText` quad mapping, and `recto-cli ocr`. Done when: `recto-tests.exe --gtest_filter=Ocr.*` extracts the expected text and word quads from `tests/corpus/text/scanned.pdf` under ASan. Cheaper substitute: returning empty `PageText` on scanned pages and deferring OCR past v1.
+- [ ] Seamless viewer selection and `Ctrl+F` search over OCR-recognized scanned pages. Done when: `Ctrl+F` on `scanned.pdf` highlights the recognized words at their exact image coordinates.
+- [ ] Commit: `text: add built-in Windows.Media.Ocr pipeline for scanned PDFs`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Ocr.*` passes under ASan, and `recto-cli ocr tests/corpus/text/scanned.pdf --text` prints the expected recognized text.
 
 ## Verification
 
-- Selection exactness, clipboard fidelity and find counts proven on the text corpus, not sampled impressions.
-- Image-only pages: honest no-text behavior in selection and find, with OCR remaining the named after-v1 item.
-- `recto-tests` full suite green; `python scripts/todo-graph.py validate` passes.
+- M3 text and OCR obligations (`docs/plans/2026-10-13-recto-foundation.md` section 7): `Ctrl+F` finds every occurrence across a multi-hundred-page PDF without blocking scrolling, scanned PDFs become selectable and searchable via built-in OCR, and selection/copy/search match `design/SPEC.md` section 9.3.
+- `recto-tests` (`PdfText.*`, `TextSelection.*`, `Search.*`, `Ocr.*`) green under ASan.
+- `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` exit 0.

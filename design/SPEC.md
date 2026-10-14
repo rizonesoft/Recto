@@ -183,12 +183,12 @@ A 560 to 720 epx card, radius 20, centred near the top. Sections: "This document
 A three-step flow in one page, 980 epx wide, centred:
 
 1. **Files**: drop zone or file picker; files appear as removable chips. PDFs and Office files can be mixed.
-2. **What to make**: a grid of large option cards (Word document, Images, Plain text, One combined PDF, Split files, Protected PDF, Unlocked PDF, PDF from Office). Options that don't apply to the chosen files are disabled with a reason ("Add Word, Excel or PowerPoint files to use this"). The selected card has a 1.5 epx accent border, a 3 epx accent-tint glow and a check badge.
-3. **Options**: the options for the chosen output. PDF to images: format (PNG, JPEG, TIFF, BMP), resolution (72, 150, 300, 600 dpi), pages, save location (`D-Dialogs.png`, top right). PDF to Word: pages, save location, what to do if the file exists (`explorations/B-Convert.png`). Split: method and ranges (`explorations/B-Organize.png`).
+2. **What to make**: a grid of large option cards (Word document, Searchable PDF (OCR), Images, Plain text, One combined PDF, Split files, Protected PDF, Unlocked PDF, PDF from Office). Options that don't apply to the chosen files are disabled with a reason ("Add Word, Excel or PowerPoint files to use this"). The selected card has a 1.5 epx accent border, a 3 epx accent-tint glow and a check badge.
+3. **Options**: the options for the chosen output. PDF to images: format (PNG, JPEG, TIFF, BMP), resolution (72, 150, 300, 600 dpi), pages, save location (`D-Dialogs.png`, top right). PDF to Word: pages, OCR for scanned pages toggle, save location, what to do if the file exists (`explorations/B-Convert.png`). Searchable PDF (OCR): language (Installed Windows OCR languages), pages, save location. Split: method and ranges (`explorations/B-Organize.png`).
 
 A hint line next to Back and Next says what the chosen conversion is good at. The queue is a floating card in the bottom-right corner showing running jobs with a progress ring; it expands into the full list with cancel, open folder and error actions (`explorations/A-Convert.png` shows the full list and its states: running, waiting, done, failed with "Enter password").
 
-If Office to PDF is chosen and neither Office nor LibreOffice is installed, show the "Install Office or LibreOffice" dialog (section 9.9).
+Office to PDF uses Recto's built-in OpenXML and RTF engine by default when no external suite is installed, or Microsoft Office COM (with macros disabled) or LibreOffice when selected in Settings. If the user explicitly forces Microsoft Office or LibreOffice in Settings and that suite is not installed, show the "Install Office or LibreOffice" dialog (section 9.9) with a one-click option to use Recto's built-in converter.
 
 ### 9.6 Organize (`D-Organize.png`)
 
@@ -202,11 +202,11 @@ Leaving Organize with unsaved changes shows the "Save your changes first?" dialo
 
 ### 9.7 Settings (`D-Layout.png`, `D-Settings.png`)
 
-A single centred column, 760 to 900 epx, with grouped cards. Order: Layout (preset cards with mini wireframes, then the five fine-tune settings), Theme (Light, Dark, Follow Windows; pages in dark theme), Reading (default zoom, page layout, ask before opening links, remember reading position), Converting (Office to PDF converter: Automatic, Microsoft Office, LibreOffice, showing what was found; where to save converted files), Performance and privacy (page cache 128 MB to 2 GB, default 512 MB; send crash reports, off by default), Default PDF app (opens the Windows Default apps page), About. A "Find a setting" box filters rows as the user types.
+A single centred column, 760 to 900 epx, with grouped cards. Order: Layout (preset cards with mini wireframes, then the five fine-tune settings), Theme (Light, Dark, Follow Windows; pages in dark theme), Reading (default zoom, page layout, ask before opening links, remember reading position, automatic OCR on scanned pages), Converting (Office to PDF converter: Automatic, Built-in OpenXML engine, Microsoft Office, LibreOffice, showing what was found; OCR language; where to save converted files), Performance and privacy (page cache 128 MB to 2 GB, default 512 MB; send crash reports, off by default), Default PDF app (opens the Windows Default apps page), About. A "Find a setting" box filters rows as the user types.
 
 ### 9.8 About (`D-About.png`)
 
-Icon, wordmark, version and architecture, one sentence on what Recto is and its license (GNU Affero General Public License, version 3 or later), a details box (Windows App SDK version, MuPDF version, source link to the exact tag), buttons View source (accent), License, Copy version info, links to report a problem, contribute and keyboard shortcuts, and a "Built with" card listing third-party components and their licenses (MuPDF, Windows App SDK, FreeType, HarfBuzz, libjpeg, OpenJPEG, zlib, Little CMS, jbig2dec, extract, Newsreader). Version strings in the mockups are placeholders.
+Icon, wordmark, version and architecture, one sentence on what Recto is and its license (GNU General Public License, version 3 or later), a details box (Windows App SDK version, `recto-pdf` engine version, source link to the exact tag), buttons View source (accent), License, Copy version info, links to report a problem, contribute and keyboard shortcuts, and a "Built with" card listing components and their licenses (`recto-pdf` native C++20 engine, Windows App SDK, Windows Platform Direct2D/DirectWrite/WIC/CNG/`Windows.Media.Ocr`, Newsreader). Version strings in the mockups are placeholders.
 
 ### 9.9 Dialogs and system states (`D-Dialogs.png`)
 
@@ -216,7 +216,7 @@ All dialogs are `ContentDialog` restyled to radius 20 with 28 epx padding. Alert
 |---|---|---|
 | Password | Lock icon, "Enter the password", "<file> is protected.", password box. Wrong password: red border and "That password didn't work." | Open, Cancel |
 | Could not open | Warning icon, "Couldn't open this file", "<file> is damaged or isn't a PDF." | OK, Copy error details |
-| Office converter missing | Office icon, "Install Office or LibreOffice", why it is needed | Get LibreOffice (free), Get Microsoft 365, Not now |
+| Office converter missing | Office icon, "Install Office or LibreOffice", shown when a specific external suite is forced in Settings or when legacy binary Office formats (`.doc`, `.xls`, `.ppt`) need an external suite | Use built-in converter, Get LibreOffice (free), Get Microsoft 365, Not now |
 | Conversion options | Section 9.5 step 3 | Cancel, "Save 9 images" (the verb and count reflect the job) |
 | Link in a document | "Open this link?", the full URL in a monospace box | Cancel, Open in browser |
 | Replace original | "Replace the original?", explains the protected copy | Keep both, Replace |

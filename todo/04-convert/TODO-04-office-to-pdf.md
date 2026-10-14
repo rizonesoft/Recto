@@ -3,43 +3,50 @@ schema_version: 1
 id: office-to-pdf
 domain: 04-convert
 status: active
-title: "TODO-04 -- Office to PDF (COM and LibreOffice)"
+title: "TODO-04 -- Office to PDF: Built-in OpenXML/RTF Engine, Office COM and LibreOffice"
 track: M5
 ---
 
-# TODO-04 -- Office to PDF (COM and LibreOffice)
+# TODO-04 -- Office to PDF: Built-in OpenXML/RTF Engine, Office COM and LibreOffice
 
-> **Goal:** Word, Excel and PowerPoint documents (and their ODF and RTF kin) become PDFs through the converter the machine already has: Microsoft Office by COM with macros forcibly disabled, else LibreOffice headless in an isolated profile, else the SPEC dialog telling the user exactly what to install. Recto never bundles either (D10).
+> **Goal:** Deliver `Office -> PDF` conversion that works out of the box on every Windows 11 machine with zero external installs via Recto's built-in C++20 OpenXML (`.docx`, `.xlsx`, `.pptx`) and `.rtf` parser + DirectWrite/Direct2D PDF layout engine (`src/core/office_to_pdf.cpp`), while also supporting optional 1:1 native Microsoft Office COM automation (`AutomationSecurity = msoAutomationSecurityForceDisable`) and LibreOffice headless execution when installed and selected.
 
-> **Current state:** Measured 2026-10-13. No code exists. The whole design is plan section 5.1: ProgID detection, one STA office-bridge thread (plan 4.5), `AutomationSecurity = msoAutomationSecurityForceDisable` (3) before opening anything, read-only open, `ExportAsFixedFormat`, close without saving, quit only an instance Recto started; the LibreOffice path with `-env:UserInstallation` pointed at a Recto-owned temp profile and a 120-second kill timeout; inputs `.doc .docx .rtf .odt .xls .xlsx .ods .ppt .pptx .odp`. The Settings converter selector (Automatic, Microsoft Office, LibreOffice, showing what was found) is D02 T04 §2's row; detection depth lives here per that file's deferral.
+> **Current state:** Measured 2026-10-14. No Office-to-PDF code exists yet. On 2026-10-14 decision D10 was expanded so Recto includes its own native C++20 OpenXML and RTF to PDF engine as the always-available built-in converter, alongside optional Microsoft Office COM and LibreOffice adapters behind `IOfficeConverter`.
 
 ## Inputs
 
-- `docs/plans/2026-10-13-recto-foundation.md` sections 1 (D10), 4.5 (office bridge thread), 5.1 (the whole design), 7 (M5: tested with Office present, LibreOffice only, and neither), 9 (macros disabled).
-- `design/SPEC.md` sections 9.5 (PDF from Office card), 9.7 (converter selector), 9.9 (converter-missing dialog).
+- `docs/plans/2026-10-13-recto-foundation.md` sections 1 (D7, D10, D12), 5 (`Office -> PDF` row) and 5.1 (`Office -> PDF` security and converter rules), 7 (M5 done-when: `.docx`, `.xlsx`, `.pptx`, `.rtf` convert cleanly and macro-bearing `.docm` verified not to execute its macro), 9 (security rules 3 and 5).
+- `design/SPEC.md` sections 2 (Principle 5: macros never run), 9.5 (`PDF from Office` card), 9.7 (Converting: Office to PDF converter selector showing Automatic, Built-in OpenXML engine, Microsoft Office, LibreOffice), 9.9 (`Install Office or LibreOffice` dialog when an external suite is explicitly forced or needed for legacy binary `.doc`/`.xls`/`.ppt`).
+- -> XREF: D04 T01 §2 -- registers the `PDF from Office` card, file-type applicability rules, and converter selection into the Convert page and `JobQueue`.
+- -> XREF: D06 T02 §1 -- the security audit in `D06 T02 §1` re-runs the macro-suppression (`msoAutomationSecurityForceDisable` and `vbaProject.bin` ignore) and safe-subprocess (`CreateProcessW`) proofs built here.
 
 ## Outcome
 
-- On an Office machine, the supported documents convert through Office with macros provably unable to run.
-- On a LibreOffice-only machine, they convert headless without disturbing a LibreOffice the user has open.
-- With neither, the user gets the SPEC dialog and no job pretends to run; the produced PDFs open in Recto as ordinary documents.
+- Any Windows 11 machine converts `.docx`, `.xlsx`, `.pptx`, and `.rtf` files to vector PDFs out of the box using Recto's built-in C++20 OpenXML/RTF layout engine (`src/core/office_to_pdf.cpp`), with zero external software installed.
+- When Microsoft Office is installed and selected (or chosen by Automatic mode when preferred for complex legacy binary `.doc`/`.xls`/`.ppt` files), the STA COM adapter converts via Word, Excel, and PowerPoint with `AutomationSecurity = msoAutomationSecurityForceDisable` (3) so VBA macros never execute.
+- When LibreOffice is installed and selected, the headless adapter runs `soffice.exe` via `CreateProcessW` in an isolated temp profile and a kill-on-close Win32 Job Object.
+- If a user explicitly forces Microsoft Office or LibreOffice in Settings when neither is installed (or drops a legacy binary `.doc`/`.xls`/`.ppt` with no external suite present), the SPEC 9.9 dialog explains the choice and offers one-click fallback to Recto's built-in converter where applicable.
 
-**Adjacency:** all=not-applicable (converters inside the D04 T01 frame; queue, notices, save settings and cancel are owned there, and detection results surface in the Settings row owned by D02 T04 §2)
+**Adjacency:** all=not-applicable (converter engines and adapters inside `D04 T01`'s Convert frame; converter preference setting is owned by `D02 T04 §2` and read here)
 
-**Adjacency rationale:** The only new surface is the missing-converter dialog in section 4, which is a state of the SPEC dialog family rather than a record or list. Converter selection is a setting whose value, label and consumer are split deliberately: D02 T04 §2 renders it, section 1 here computes what it shows, sections 2 and 3 obey it.
+**Adjacency rationale:** The `PDF from Office` card, queue UI, and settings selector live in `D04 T01` and `D02 T04 §2`. This file owns the built-in OpenXML/RTF engine, the optional COM and LibreOffice adapters, converter detection, and the macro-safety proofs.
 
 ## Implementation Order
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | Converter detection and the selection rule | D04 T01 §1 | [ ] |
-| 2 | §2 | Microsoft Office COM path | §1 | [ ] |
-| 3 | §3 | LibreOffice headless path | §1 | [ ] |
-| 4 | §4 | Missing-converter dialog and three-machine proof | §2, §3 | [ ] |
+| 1 | §1 | Built-in C++20 OpenXML (`.docx`, `.xlsx`, `.pptx`) and `.rtf` to PDF engine | D04 T02 §1, D04 T03 §1 | [ ] |
+| 2 | §2 | Converter detection and Microsoft Office COM adapter with macros forced off | §1 | [ ] |
+| 3 | §3 | LibreOffice headless adapter with Job Object isolation | §1 | [ ] |
+| 4 | §4 | Convert UI wiring, Settings integration and missing-suite dialog | §2, §3, D04 T01 §2, D02 T04 §2 | [ ] |
 
-## 1. Converter detection and the selection rule
+## 1. Built-in C++20 OpenXML (`.docx`, `.xlsx`, `.pptx`) and `.rtf` to PDF engine
 
-Detection is one service answering three questions for Settings and for job routing: is Office present (which of `Word.Application`, `Excel.Application`, `PowerPoint.Application` resolve), is LibreOffice present (registry install path to a runnable `soffice`), and what does the user's selector (Automatic, Office, LibreOffice) therefore choose per document family. Detection must be cheap, cached per app run, and honest under test doubles so §4's neither-machine case is provable without uninstalling anything.
+Implement `src/core/office_to_pdf.cpp` using `zip_archive.cpp` (`D04 T03 §1`), a bounded XML/RTF reader (enforcing zip-bomb and entity-expansion caps and ignoring any `vbaProject.bin` macro streams), DirectWrite text layout (`IDWriteTextLayout`), and `PdfWriter` (`D04 T02 §1`):
+- **Word (`.docx`) and Rich Text (`.rtf`):** Parse page setup (`w:pgSz`, `w:pgMar`), styles, numbering/lists, paragraphs, formatted runs (fonts, sizes, bold, italic, underline, colour, highlight), tables (`w:tbl` rows, cells, borders, shading), headers/footers, and embedded images (`word/media/*`); paginate with DirectWrite line/page breaking and emit vector text and image streams via `PdfWriter`.
+- **Excel (`.xlsx`):** Parse `xl/sharedStrings.xml`, `xl/styles.xml`, and `xl/worksheets/sheet*.xml`; compute column widths and row heights, format numbers/dates, draw cell borders/fills, and paginate sheets onto portrait/landscape PDF pages via `PdfWriter`.
+- **PowerPoint (`.pptx`):** Parse `ppt/presentation.xml` slide dimensions and `ppt/slides/slide*.xml` (plus slide layout/master shapes, text frames, fills, and images); emit one PDF page per slide via `PdfWriter`.
+- Expose `recto-cli office-to-pdf <in.docx|xlsx|pptx|rtf> --out <out.pdf> [--engine <builtin|office|libreoffice>]`.
 
 **Phase:** 5
 **Needs:** windows-host
@@ -47,18 +54,20 @@ Detection is one service answering three questions for Settings and for job rout
 
 **Build order:**
 
-1. Write `src/services/office_detect.cpp`: ProgID resolution without launching the applications, LibreOffice path discovery, per-family capability table, and the selector's resolution to a concrete path or none. Done when: unit tests over injected registry and ProgID fakes cover Office-only, LibreOffice-only, both, neither, and partial-Office (Word without Excel) cases.
-2. Feed D02 T04 §2's selector row ("showing what was found") from this service. Done when: this machine's Settings row names the actual installed converter versions or their absence truthfully.
+1. Implement the `.docx` and `.rtf` parsers and DirectWrite pagination -> `PdfWriter` pipeline in `src/core/office_to_pdf.cpp`. Done when: `OfficeToPdf.BuiltinDocxAndRtf` converts corpus `.docx` (paragraphs, headings, tables, images) and `.rtf` files into valid multi-page vector PDFs whose extracted `PageText` contains all source text and whose `vbaProject.bin` in a `.docm` is ignored completely.
+2. Implement the `.xlsx` (sheets, shared strings, styles, grid pagination) and `.pptx` (slides, text boxes, shapes, images) parsers in `src/core/office_to_pdf.cpp`, plus `recto-cli office-to-pdf --engine builtin`. Done when: `OfficeToPdf.BuiltinXlsxAndPptx` converts corpus `.xlsx` and `.pptx` files into valid vector PDFs with expected page counts and extractable cell/slide text under ASan.
 
-- [ ] Detection service with the five-case test matrix. Done when: no detection path starts an Office process (process list asserted in test). Cheaper substitute: checking file associations, which say nothing about automation.
-- [ ] Settings row driven by real detection. Done when: forcing LibreOffice on an Office machine routes jobs there (proven in §3).
-- [ ] Commit: `convert: Office and LibreOffice detection with the selection rule`
+- [ ] Built-in C++20 `.docx` and `.rtf` to PDF layout engine over DirectWrite and `PdfWriter`. Done when: `.docx` (with tables and images) and `.rtf` corpus files convert to vector PDFs with zero external dependencies under ASan. Cheaper substitute: requiring Microsoft Office or LibreOffice for every `.docx` conversion.
+- [ ] Built-in C++20 `.xlsx` and `.pptx` to PDF layout engine and `recto-cli office-to-pdf --engine builtin`. Done when: `.xlsx` and `.pptx` corpus files convert to vector PDFs whose `PageText` matches the source cells and slide titles.
+- [ ] Commit: `convert: implement built-in C++20 OpenXML (.docx, .xlsx, .pptx) and .rtf to PDF engine`
 
-**Test checkpoint:** `recto-tests --gtest_filter=OfficeDetect.*` passes with the five cases (quote the matrix), and the Settings row on this machine reads truthfully (screenshot in §4's findings).
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OfficeToPdf.Builtin*` passes under ASan across `.docx`, `.docm`, `.xlsx`, `.pptx` and `.rtf` corpus files with `--engine builtin`.
 
-## 2. Microsoft Office COM path
+## 2. Converter detection and Microsoft Office COM adapter with macros forced off
 
-The plan 5.1 sequence on one dedicated STA thread (the office bridge, plan 4.5): create or reuse per the rule (quit only what Recto started; never hijack the user's running instance's documents), set `AutomationSecurity` to force-disable before any open, open read-only with converters and macros inert, `ExportAsFixedFormat` to the job's temp destination, close without saving. Password-protected and corrupt documents fail as typed job results (D04 T01 §1), never as modal Office dialogs: alerts are suppressed for the job's documents and every failure surfaces as data.
+Implement converter detection (`src/services/office_converter.cpp`) probing installed Microsoft Office (`Word.Application`, `Excel.Application`, `PowerPoint.Application` CLSIDs) and LibreOffice (`soffice.exe` in registry App Paths and standard Program Files paths), and implement the STA worker-thread Microsoft Office COM adapter (`src/services/office_com.cpp`) per foundation plan section 5.1:
+- Sets `Visible = VARIANT_FALSE`, `DisplayAlerts = 0`, and **`AutomationSecurity = msoAutomationSecurityForceDisable` (3)** before opening any file.
+- Opens with `ReadOnly = VARIANT_TRUE` and `AddToRecentFiles = VARIANT_FALSE`, exports to a sibling temp path (`ExportAsFixedFormat` / `SaveAs`), commits via `AtomicFileWriter`, closes without saving, and calls `Quit()` on the spawned application instance under a per-job timeout.
 
 **Phase:** 5
 **Needs:** windows-host, office
@@ -66,61 +75,58 @@ The plan 5.1 sequence on one dedicated STA thread (the office bridge, plan 4.5):
 
 **Build order:**
 
-1. Implement `src/services/office_com.cpp` for Word, Excel and PowerPoint export behind the job contract, with per-app format constants isolated in one table. Done when: corpus `.docx`, `.xlsx` and `.pptx` files (generated per corpus rules) convert to PDFs that `recto-cli info` describes correctly.
-2. Macro-safety proof: a generated macro-bearing document whose macro would write a marker file converts with the marker absent, and `AutomationSecurity`'s set-before-open ordering is asserted by construction (the open call is unreachable before the set). Done when: the test is in the suite and the marker's absence is the assertion.
-3. Instance hygiene: Recto-started instances quit at job end (process count returns to baseline); a user-running instance is never quit and its open documents are untouched. Done when: both cases are demonstrated in the driven test with process listings.
+1. Implement `detect_office_converters()` (reporting Built-in OpenXML engine as always present, plus detected Microsoft Office and LibreOffice installations, with injectable mock overrides for tests) and the STA COM adapter for Word, Excel and PowerPoint in `src/services/office_com.cpp`. Done when: on a host with Office installed, `.docx`, `.xlsx`, `.pptx` and `.rtf` convert to PDF via `--engine office` with zero orphaned `WINWORD.EXE` / `EXCEL.EXE` / `POWERPNT.EXE` processes after completion or cancellation.
+2. Build a macro-bearing test fixture (`tests/corpus/convert/macro-canary.docm` containing an `AutoOpen` / `Document_Open` macro that attempts to write a canary file in `TempDir`) and run it through the COM adapter. Done when: the PDF is produced cleanly and the canary file does **not** exist on disk, proving `msoAutomationSecurityForceDisable` suppressed macro execution.
 
-- [ ] COM export for the three families on the STA bridge thread. Done when: cancelling the job closes its document and leaves no output and no orphan process. Cheaper substitute: automating on the UI thread, which freezes the app for the conversion's duration.
-- [ ] Macro marker test proving force-disable. Done when: the marker file demonstrably does not exist after conversion.
-- [ ] Commit: `convert: Office to PDF over COM with macros forced off`
+- [ ] STA COM adapter (`src/services/office_com.cpp`) for Word, Excel and PowerPoint with timeout and process cleanup. Done when: `OfficeToPdf.ComRoundTrip` converts all four formats and leaves zero orphaned Office processes. Cheaper substitute: invoking Office on the UI thread or leaving `AutomationSecurity` at its default value.
+- [ ] Macro-canary proof (`macro-canary.docm`) verifying `msoAutomationSecurityForceDisable` prevents `AutoOpen` execution. Done when: `OfficeToPdf.ComMacroBlocked` passes with the canary file absent.
+- [ ] Commit: `convert: add Microsoft Office COM adapter with AutomationSecurity forced off`
 
-**Test checkpoint:** `recto-tests --gtest_filter=OfficeCom.*` on an Office host quotes the three-family conversions plus macro-marker absence, ASan not applicable to the COM boundary itself (recorded as such).
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OfficeToPdf.Com*` passes on the Office-equipped host, confirming PDF output and zero canary file creation from `macro-canary.docm`.
 
-## 3. LibreOffice headless path
+## 3. LibreOffice headless adapter with Job Object isolation
 
-`soffice --headless --convert-to pdf` into the job's temp folder with a Recto-owned `-env:UserInstallation` profile so a running user instance is never disturbed, macro security set in that profile to never execute, a 120-second default timeout that kills the process tree, and stdout captured into the job's error details on failure. Parallel jobs get distinct profiles and outdirs (the two-at-once bound from D04 T01 §1 applies).
+Implement the optional LibreOffice headless adapter (`src/services/office_libreoffice.cpp`) per foundation plan section 5.1 and security rule 5: invoke `soffice.exe --headless --norestore --nolockcheck -env:UserInstallation=<isolated-temp-file-url> --convert-to pdf --outdir <temp>` using `CreateProcessW` (never `cmd.exe` or `system()`), assign the process to a Win32 Job Object configured with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, monitor `CancelToken` and a timeout, and commit the resulting PDF through `AtomicFileWriter`.
 
 **Phase:** 5
-**Needs:** windows-host, libreoffice
+**Needs:** windows-host
 **Surface:** no
 
 **Build order:**
 
-1. Implement `src/services/libreoffice.cpp`: profile seeding with macro security hard-off, process launch with timeout and tree-kill, output discovery (the converter names outputs itself; map them back to the job's chosen names through the atomic helper, D04 T02 §1). Done when: the §2 corpus set converts through LibreOffice with a user LibreOffice window open alongside, untouched.
-2. Timeout and failure honesty: a pathological document (corpus-generated) exceeding the timeout dies as a named job failure with captured output. Done when: no `soffice` process survives the timeout in the test's process listing.
+1. Implement `src/services/office_libreoffice.cpp` with `CreateProcessW`, explicit argument quoting, isolated temp `UserInstallation` profile directory (cleaned up by `TempDir`), Win32 Job Object termination on cancel/timeout, and `AtomicFileWriter` commit. Done when: unit tests using a mock/stub process (and real `soffice.exe` when present) prove that tripping `CancelToken` terminates the child process tree immediately and leaves zero temp profile or partial PDF files behind.
+2. Verify no macro execution on `macro-canary.docm` (LibreOffice headless disables macros by default; pass explicit macro-off configuration in the temporary profile as defense-in-depth). Done when: `OfficeToPdf.LibreOffice*` passes under ASan.
 
-- [ ] Headless conversion in an isolated profile. Done when: two concurrent jobs convert without profile collision. Cheaper substitute: using the user's default profile, which collides with their open LibreOffice (the exact failure plan 5.1 designs out).
-- [ ] Timeout with process-tree kill. Done when: the pathological case fails in bounded time with its captured output attached.
-- [ ] Commit: `convert: Office documents to PDF via headless LibreOffice`
+- [ ] `CreateProcessW` + Win32 Job Object (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) adapter with isolated temp profile and atomic commit. Done when: `OfficeToPdf.LibreOfficeCancelAndIsolation` proves child-process termination and temp-dir cleanup on cancel. Cheaper substitute: `std::system()` or shared default user profile that deadlocks when LibreOffice is already open.
+- [ ] Commit: `convert: add LibreOffice headless adapter with Job Object process isolation`
 
-**Test checkpoint:** `recto-tests --gtest_filter=LibreOffice.*` quotes corpus conversions (info-verified), concurrent-pair run clean, timeout case bounded with no surviving processes.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OfficeToPdf.LibreOffice*` passes under ASan.
 
-## 4. Missing-converter dialog and three-machine proof
+## 4. Convert UI wiring, Settings integration and missing-suite dialog
 
-SPEC 9.9's dialog when the resolution is none: what is needed and why, Get LibreOffice (free), Get Microsoft 365, Not now; the Convert card for Office files is disabled with its SPEC reason before that point per input set, and the dialog is the backstop when a job still lands there (converter removed between detection and run, covered by re-resolving at job start). M5's done-when is the triptych: Office present, LibreOffice only, neither, each proven; the neither case uses §1's test doubles at integration level, recorded as such.
+Connect `IOfficeConverter` (`Automatic`, `Built-in OpenXML engine`, `Microsoft Office`, `LibreOffice`) to the `PDF from Office` card in `ConvertPage` (`design/SPEC.md` section 9.5), the `Office to PDF converter` selector in Settings (`SPEC` section 9.7, `D02 T04 §2`), and the `Install Office or LibreOffice` dialog (`SPEC` section 9.9, `D-Dialogs.png` when the user forces an external suite that is not installed or attempts to convert a legacy binary `.doc`/`.xls`/`.ppt` without Office/LibreOffice).
 
 **Phase:** 5
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** SPEC sections 9.5 and 9.9 with `design/screenshots/D-Dialogs.png` (converter-missing dialog) and `D-Convert.png`.
-**Job:** The user is never stuck wondering why an Office file will not convert, and always has the next step. Consumer: the buttons open the vendors' pages in the browser; after installing, detection (§1) picks the converter up without reinstalling Recto.
-**Treatment:** One dialog in the shared dialog family, reached from card enablement and from the job's `NeedsConverter` result alike. Cheaper substitute that fails the checkpoint: a generic "conversion failed" with no path forward.
-**Chrome:** consume the D02 T01 §4 dialog style and the §1 detection service. Do not invent a second detection or dialog.
+**Fidelity:** SPEC sections 9.5 (`PDF from Office` card enable/disable rule), 9.7 (Converting group selector), and 9.9 (`Install Office or LibreOffice` dialog with `D-Dialogs.png`).
+**Job:** The user can convert Office documents to PDF seamlessly using the built-in engine or their preferred installed suite, and gets a clear, helpful dialog if they request an external suite that is not installed. Consumer: `JobQueue` and the viewer.
+**Treatment:** Strategy selection reading `Settings -> Converting -> Office to PDF converter`, defaulting `Automatic` to the built-in OpenXML/RTF engine for `.docx`/`.xlsx`/`.pptx`/`.rtf` (or Microsoft Office COM when installed and preferred), and showing the SPEC 9.9 dialog via injectable detection state when an unavailable external suite is required. Cheaper substitute that fails the checkpoint: failing silently in the queue when an external suite is missing, or disabling `PDF from Office` on machines without Microsoft Office even though the built-in OpenXML engine is present.
+**Chrome:** consume the Convert step 2 card from `D04 T01 §2`, the Settings row from `D02 T04 §2`, and the shared dialog style from `D02 T01 §4`.
 
 **Build order:**
 
-1. The dialog plus card enablement for Office inputs driven by §1, and job-start re-resolution. Done when: with detection forced to none, the card disables with its reason and a forced job lands in the dialog, both captured.
-2. The triptych run: Office host (§2), LibreOffice host (§3), neither (integration test doubles) each converting or refusing the same document, recorded as M5 evidence in the findings. Done when: all three outcomes are quoted side by side.
+1. Wire `PDF from Office` card applicability in `ConvertPage` (enabled whenever `.docx`, `.doc`, `.xlsx`, `.xls`, `.pptx`, `.ppt` or `.rtf` files are in the chip list; disabled with `"Add Word, Excel or PowerPoint files to use this"` when only PDFs/images are present) and connect the Settings converter selector to live detection results. Done when: `ConvertPage` converts `.docx`, `.xlsx`, `.pptx` and `.rtf` end to end through the queue on a machine with zero external suites using the built-in engine.
+2. Wire the `Install Office or LibreOffice` dialog (`D-Dialogs.png`) when an unavailable external suite is forced or required for legacy binary formats, and drive all three converter states (Built-in, Office COM, Missing-suite dialog) in tests. Done when: screenshot of the dialog matches `D-Dialogs.png` and all three states pass in `OfficeToPdf.Ui*`.
 
-- [ ] Missing-converter dialog in both arrival paths. Done when: installing LibreOffice after seeing it makes the card enable on next detection refresh. Cheaper substitute that fails the checkpoint: caching "none" for the app's lifetime.
-- [ ] Three-machine proof recorded. Done when: the M5 row of plan section 7 can be quoted complete for Office to PDF.
-- [ ] Commit: `convert: missing-converter dialog and the three-machine proof`
+- [ ] `PDF from Office` card, Settings converter selector (`Automatic`, `Built-in OpenXML engine`, `Microsoft Office`, `LibreOffice`), and queue execution wired end to end. Done when: `.docx`, `.xlsx`, `.pptx` and `.rtf` convert via the queue using the built-in engine and via Office COM. Cheaper substitute: hard-coding one converter path and ignoring the Settings selector.
+- [ ] `Install Office or LibreOffice` dialog (`SPEC 9.9`) driven and verified when an external suite is forced/needed and absent. Done when: display-session screenshot matches `D-Dialogs.png`.
+- [ ] Commit: `convert: wire Office to PDF UI, Settings selector and missing-suite dialog`
 
-**Test checkpoint:** dialog screenshots against `D-Dialogs.png` and the triptych outcomes quoted in findings.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OfficeToPdf.*` passes, and display-session screenshots confirm the `PDF from Office` card states and the `D-Dialogs.png` missing-converter dialog.
 
 ## Verification
 
-- M5 done-when complete with D04 T03: both converters proven, neither-machine honest.
-- Macros provably inert on both paths (COM marker test, LibreOffice hard-off profile).
-- `recto-tests` full suite green; `python scripts/todo-graph.py validate` passes.
+- M5 Office-to-PDF obligations (`docs/plans/2026-10-13-recto-foundation.md` section 7): `.docx`, `.xlsx`, `.pptx` and `.rtf` convert cleanly to PDF via the built-in C++20 engine and via Microsoft Office COM when installed, and `macro-canary.docm` is proven not to execute its macro.
+- `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` exit 0.

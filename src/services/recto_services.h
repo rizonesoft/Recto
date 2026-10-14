@@ -6,7 +6,7 @@
 namespace recto::services {
 
 // Services ABI version, backed by the core ABI so the chain
-// services -> core -> bridge is exercised from the first build.
+// services -> core -> pdf is exercised from the first build.
 [[nodiscard]] int abi_version();
 
 } // namespace recto::services

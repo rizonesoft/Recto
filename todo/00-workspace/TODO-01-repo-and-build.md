@@ -3,49 +3,50 @@ schema_version: 1
 id: repo-and-build
 domain: 00-workspace
 status: active
-title: "TODO-01 -- Repository, MuPDF Pin and Build Scaffold"
+title: "TODO-01 -- Repository, Native Engine Policy and Build Scaffold"
 track: M0
 ---
 
-# TODO-01 -- Repository, MuPDF Pin and Build Scaffold
+# TODO-01 -- Repository, Native Engine Policy and Build Scaffold
 
-> **Goal:** Milestone M0 stands: a public AGPL git repository where a clean clone builds every Recto module for x64 and ARM64 with one command, in CI and locally. Nothing here ships to users; everything later depends on it being boring and green.
+> **Goal:** Turn this folder into a building, CI-verified repository that satisfies M0 of the foundation plan: git initialized and pushed, `GPL-3.0-or-later` and contributor files in place, the native C++20 `recto-pdf` dependency policy established (zero MuPDF), the Visual Studio 2026 solution scaffold compiling for both x64 and ARM64 in one command, and reference benchmark machines recorded.
 
-> **Current state:** Measured 2026-10-13. `R:\GitHub\RectoPDF` is not yet a git repository and contains no code: `design/` (SPEC, screenshots, tokens, mockups, generators), `docs/plans/2026-10-13-recto-foundation.md`, `resources/` (generated icons and MSIX assets), `todo/`, `scripts/` and `.claude/skills/` (this TODO system, D00 T02), plus `AGENTS.md`, `CLAUDE.md`, `.gitignore`, `.gitattributes` and `.github/workflows/plan.yml`. No LICENSE, NOTICE, CLA, CONTRIBUTING or README exists. No MuPDF source, solution or project file exists. The decisions this file executes are D2 (AGPL-3.0-or-later), D9 (MuPDF submodule with Recto config), D11 (CLA), D14 (MSBuild plus vcpkg manifest for test-only dependencies) and foundation plan sections 3.1, 3.2, 7 (M0), 8 and 11.
+> **Current state:** Measured 2026-10-14. Sections §1 and §2 are verified in git history; on 2026-10-14 decisions D2, D3, D5, D7, D9, D10 and D12 were revised so Recto is licensed under `GPL-3.0-or-later` and builds its own native C++20 PDF engine (`recto-pdf` in `src/pdf`), built-in OCR (`Windows.Media.Ocr`), and native OpenXML converters instead of Artifex MuPDF. `Recto.sln` and `build.cmd` build the seven native C++20 projects (`recto-pdf`, `recto-core`, `recto-services`, `Recto`, `recto-cli`, `recto-tests`, `recto-fuzz`) across `Debug|x64`, `Release|x64`, `Debug|ARM64` and `Release|ARM64`.
 
 ## Inputs
 
-- `docs/plans/2026-10-13-recto-foundation.md` sections 1 (D2, D9, D11, D14), 3.1 (module table), 3.2 (repository layout), 7 (M0 row), 10 (AGPL checklist), 11 (open items: MuPDF tag, reference machines).
-- `resources/README.md`: the MSIX asset names the app project manifest must reference once the app project exists.
-- -> XREF: D00 T02 §1 -- the TODO graph engine whose CI gate (§4 here) and first stamp both need this repository to exist; D00 T02 §2 already authored `.github/workflows/plan.yml` for it.
-- -> XREF: D99 T01 §2 -- the operator finishes the public repo face (About, topics, social preview) that §1 here only prepares locally.
+- `docs/plans/2026-10-13-recto-foundation.md` sections 1 (D1 to D17), 2 (tech stack), 3.1 and 3.2 (modules and layout), 7 (M0 definition of done), 8 (reference machines), 10 (GPL-3.0 compliance), 11 (open items).
+- `design/SPEC.md` section 3.5 (`design/brand/github-banner.png` and `github-social-preview.png`) and `resources/README.md` (how `resources/` maps into `Package.appxmanifest`).
+- -> XREF: D00 T02 §3 -- the plan CI gate authored there runs beside the product CI workflow built in §4 here.
+- -> XREF: D99 T01 §2 -- the operator finishes the GitHub repo face (social preview upload, description, branch protection) once §1 here has pushed the initial tree.
+- -> XREF: D07 T02 §2 -- the `NOTICE.md` skeleton started in §1 here is completed and audited against the shipped dependency set before Store submission.
 
 ## Outcome
 
-- `git clone` of the repository, followed by the one documented build command, produces `recto-tests`, `recto-cli` and the app project (empty shells where later domains have not filled them) for x64 and ARM64.
-- The AGPL license, CLA, CONTRIBUTING and NOTICE skeleton are at the repository root, so the first outside contribution is legally possible.
-- MuPDF is a pinned submodule whose tag and config are recorded, and the engine domains can start against it.
-- GitHub Actions fails a change that breaks the build, the tests or the TODO graph.
+- A clean clone on a Windows 11 developer machine builds x64 and ARM64 in one documented command with zero errors and zero warnings across all Recto projects.
+- GitHub Actions runs on every push and pull request, building both architectures and gating on `todo-graph.py validate` and `plan --check`.
+- `LICENSE` (`GPL-3.0-or-later`), `CLA.md`, `NOTICE.md`, `README.md`, `CONTRIBUTING.md`, `.gitignore`, `.gitattributes`, `Recto.sln` and `Directory.Build.props` exist at the paths foundation plan section 3.2 fixes, with zero MuPDF submodule dependencies.
+- Two reference machines (one x64, one ARM64) are recorded in the repo so milestone M2 and M6 performance claims have a fixed baseline.
 
-**Adjacency:** list=not-applicable (no records are listed by build scaffolding); document=not-applicable (no printed or carried output); settings=applicable @ D00 T01 §3; reporting=not-applicable (CI status is GitHub's surface, not a Recto report); notifications=not-applicable (no lifecycle notices in scaffolding); permissions=not-applicable (single-operator repository, GitHub owns access); audit=applicable @ D00 T01 §2; exchange=not-applicable (no import or export of user data); reverse=not-applicable (git history is the undo)
+**Adjacency:** all=not-applicable (repository, build toolchain and CI scaffolding; no product data, views or user actions exist in this file)
 
-**Adjacency rationale:** Two keys are real here: settings, because the build's tunables (architectures, configurations, the MuPDF feature config) must live in named files a later section reads, never in a developer's local state; and audit, because the pinned MuPDF tag and submodule commit are the provenance every later AGPL claim (§5 of the release compliance file) rests on. Everything else is a product surface owned by later domains.
+**Adjacency rationale:** Every section here produces build inputs, project files or developer documentation consumed by later domains. The one user-visible artifact touched (`NOTICE.md`, surfaced in About at M6) has its display and completeness audit owned by D07 T02 §1 and §2.
 
 ## Implementation Order
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | Git repository and repo-face files | -- | [x] |
-| 2 | §2 | MuPDF submodule pinned with Recto config | §1 | [x] |
-| 3 | §3 | Solution scaffold with one-command build | §2 | [ ] |
-| 4 | §4 | GitHub Actions build and test CI | §3 | [ ] |
-| 5 | §5 | Reference machines and performance baseline record | §3 | [ ] |
+| 2 | §2 | PDF engine dependency policy (native `recto-pdf`, MuPDF retired) | §1 | [x] |
+| 3 | §3 | Solution scaffold for all modules, x64 and ARM64 | §2 | [ ] |
+| 4 | §4 | Build CI for x64 and ARM64 | §3, D00 T02 §2 | [ ] |
+| 5 | §5 | Reference benchmark machines recorded | §1 | [ ] |
 
 ## 1. Git repository and repo-face files
 
-> **Started:** 2026-10-13T21:19:35Z
+Initialize the repository (or verify the existing remote if already created), set line-ending and ignore rules so `build/` and Visual Studio intermediates can never be committed, and author the root files every visitor and contributor sees first: `LICENSE` (`GPL-3.0-or-later`), `CLA.md` (D11), `NOTICE.md` (skeleton naming the components that exist now and the ones M1+ adds), `README.md` with `design/brand/github-banner.png`, and `CONTRIBUTING.md` pointing at `AGENTS.md` and `todo/README.md`.
 
-Recto is open source from the first public commit (D2), and the CLA must exist before the first outside contribution lands (D11), so the legal scaffolding is part of the first commit, not a later cleanup. This section also creates the history every stamp in this tree will cite.
+> **Corrected:** 2026-10-14 -- Updated `LICENSE`, `README.md`, `NOTICE.md`, `CONTRIBUTING.md` and `CLA.md` from `AGPL-3.0-or-later` to `GPL-3.0-or-later` under revised decision D2 (`LICENSE` is the unmodified FSF GPL-3.0 text, 35,149 LF bytes, sha256 `0c2b2577702544e6ca2110800c25129ef79a7277e74f888ae852afb90cb363b4`).
 
 **Phase:** 0
 **Needs:** none
@@ -53,26 +54,24 @@ Recto is open source from the first public commit (D2), and the CLA must exist b
 
 **Build order:**
 
-1. Run `git init -b main` at the repository root and set the repo-local identity from the owner's existing git configuration. Done when: `git status` lists the current tree as untracked and nothing is silently ignored that should ship (check `design/`, `resources/`, `todo/` against `.gitignore`).
-2. Add `LICENSE` (unmodified AGPL-3.0-or-later text), `CLA.md`, `CONTRIBUTING.md` (build pointer, CLA requirement, TODO workflow pointer to `todo/README.md`), `NOTICE.md` (MuPDF and Windows App SDK entries with room for the rest, completed in D07 T02 §2) and `README.md` (banner from `design/brand/github-banner.png`, one paragraph, build and plan pointers). Done when: each file renders on GitHub and the license is byte-identical to the FSF text.
-3. Make the first commit of exactly the current tree plus these files, then push to the GitHub remote the operator created. Done when: `git log --oneline` shows the initial commit and the remote carries it; `python scripts/todo-graph.py validate` still passes on the committed tree.
+1. Write `.gitignore` (`build/`, `.vs/`, `bin/`, `obj/`, `*.user`, `*.suo`, `__pycache__/`, `vcpkg_installed/`, crash dumps) and `.gitattributes` (LF for `.py`, `.md`, `.json`, `.svg`, `.xaml`, `LICENSE`; CRLF for `.sln`, `.vcxproj`, `.props`, `.targets`, `.cmd`; binary for `.png`, `.ico`, `.pdf`). Done when: `git status --ignored` shows `build/` ignored and `git check-attr -a` agrees on a sample of each extension.
+2. Place the unmodified GNU General Public License v3.0 text in `LICENSE`, author `CLA.md` per D11 (DCO + grant to the project owner to relicense contributions), and author `NOTICE.md` listing current assets (Newsreader OFL 1.1 outlines in `resources/svg/` and `design/brand/`) and the components that enter in M0 to M6 (`recto-pdf` in-tree C++20 engine, Windows App SDK, GoogleTest as test-only). Done when: `LICENSE` matches the FSF text byte for byte and `CLA.md` states the grant in plain English.
+3. Write `README.md` (banner from `design/brand/github-banner.png`, what Recto is, status as early M0, links to `design/SPEC.md`, the foundation plan and `todo/TODO-00-INDEX.md`, license `GPL-3.0-or-later`) and `CONTRIBUTING.md` (how to validate the TODO graph, build prerequisites, CLA requirement). Commit the initial tree and push `main` to `origin`. Done when: a fresh clone of the remote contains all files and `python scripts/todo-graph.py validate` passes in the clone.
 
-- [x] `LICENSE`, `CLA.md`, `CONTRIBUTING.md`, `NOTICE.md`, `README.md` at the root. Done when: a reader landing on the repository learns the license, how to contribute and where the plan lives without asking. Cheaper substitute: a README that says "coming soon" and defers the CLA.
-- [x] First commit pushed, including `design/`, `resources/`, `docs/plans/`, `todo/`, `scripts/`, `.claude/skills/`. Done when: a clean clone elsewhere validates the TODO graph (`python scripts/todo-graph.py plan --check` exits 0).
-- [x] Commit: `repo: initial commit, design, plan and todo system`
+- [x] `.gitignore`, `.gitattributes`, `LICENSE`, `CLA.md`, `NOTICE.md`, `README.md`, `CONTRIBUTING.md` committed at the root. Done when: `git status` is clean and no file under `build/` is tracked. Cheaper substitute: a stub `LICENSE` line instead of the full text, which fails the plan section 10 checklist.
+- [x] Initial commit pushed to `origin/main`. Done when: `git ls-remote origin refs/heads/main` returns the commit SHA.
+- [x] Commit: `repo: initial tree with design, foundation plan, TODO graph and license files`
 
-**Test checkpoint:** in a fresh clone under `R:\scratch`, `python -m unittest tests.scripts.test_todo_graph` passes and `python scripts/todo-graph.py validate` prints the section count, proving the committed tree is self-contained.
-
-> **Duration:** 2026-10-13T21:19:35Z to 2026-10-13T21:33:24Z
+**Test checkpoint:** in a fresh clone of the remote, `python scripts/todo-graph.py validate`, `python scripts/todo-graph.py plan --check` and `python -m unittest tests.scripts.test_todo_graph` all exit 0, and `LICENSE` is 35,149 bytes (`GPL-3.0`).
 
 > **Verified:** 2026-10-13 | §1 | 25ac228f91ce0b778fe49565da5ae1b551242d5b
 > **Review:** `docs/reviews/d00-t01-s1.json`
 
-## 2. MuPDF submodule pinned with Recto config
+## 2. PDF engine dependency policy (native `recto-pdf`, MuPDF retired)
 
-> **Started:** 2026-10-13T21:39:44Z
+Originally stamped for the `third_party/mupdf` submodule pin at tag `1.28.5` (`433c72e34da3f4aeffde1cc0461d490f3ef32f42`). On 2026-10-14, decisions D3, D5, D9 and D12 were revised to retire MuPDF completely and build Recto's own native C++20 PDF engine (`recto-pdf` in `src/pdf`) over Windows 11 platform APIs (Direct2D, DirectWrite, WIC, Windows CNG `bcrypt.dll`, `Windows.Media.Ocr`), removing `.gitmodules`, `third_party/mupdf`, `third_party/mupdf.vcxproj`, `build/mupdf-config.h`, `build/mupdf-win32.targets` and `build/build-mupdf.ps1`.
 
-D9: MuPDF comes from source as a git submodule at a pinned release tag, built with Recto's own feature config, never the vcpkg port and never the generated `mupdfcpp` bindings. JavaScript is disabled (D12). The tag choice is an M0 open item: pick the current stable Artifex release, record it here with a dated correction if it differs from what ships, and treat the submodule commit as part of every release's corresponding source.
+> **Corrected:** 2026-10-14 -- Retired `third_party/mupdf` submodule and C17 bridge wrapper under revised decisions D2 (`GPL-3.0-or-later`), D3 (`recto-pdf` native C++20 engine), D9 (in-tree C++20 over Windows 11 SDK) and D12 (no PDF JavaScript engine by construction). The historical stamp below records the initial M0 §2 verification; §3's solution scaffold now compiles `src/pdf/recto-pdf.vcxproj` with zero submodule dependencies.
 
 **Phase:** 0
 **Needs:** windows-host
@@ -80,33 +79,27 @@ D9: MuPDF comes from source as a git submodule at a pinned release tag, built wi
 
 **Build order:**
 
-1. Add the submodule at `third_party/mupdf` checked out at the chosen release tag. Done when: `git submodule status` shows the tag's commit and `include/mupdf/fitz/version.h` in the submodule reports the same version the record below claims (`FZ_VERSION "1.28.5"`; the upstream README carries no version string, corrected 2026-10-13).
-2. Write `build/mupdf-config.h` with `FZ_ENABLE_JS 0` and the font and feature choices the foundation plan assumes, wired the way MuPDF's build expects (`FZ_CONFIG` include path). Done when: the MuPDF static libraries build against this config with no JavaScript objects linked (check the build log for `mujs` absence).
-3. Record the pin in this section (tag, commit, date) and in `NOTICE.md`. Done when: D01 T01 §1 can name the exact headers it builds against without re-deriving the version.
+1. Historical step (completed in `433c72e`): pinned `third_party/mupdf` at `1.28.5` with `FZ_ENABLE_JS=0`.
+2. 2026-10-14 architectural revision: deinitialize and remove `third_party/mupdf` and `.gitmodules`, delete the MuPDF MSBuild wrapper files, and establish `src/pdf/recto-pdf.vcxproj` as Recto's native C++20 PDF engine static library. Done when: `git status` shows no submodule gitlinks and `Recto.sln` references `src/pdf/recto-pdf.vcxproj` with `/W4 /WX` enforced across all projects.
 
-**Corrected 2026-10-13:** Three details above were written before the pinned tree existed and are corrected from it. (1) There is no `FZ_CONFIG` include-path hook in MuPDF 1.28.5: `include/mupdf/fitz/config.h` takes feature choices as preprocessor defines ahead of its `#ifndef` defaults, so `build/mupdf-config.h` is wired as an MSVC forced include (`/FI`, applied through the `CL` environment variable for the upstream win32 projects). (2) The win32 `libthirdparty.vcxproj` always compiles the MuJS unity file `thirdparty/mujs/one.c`; it has no JS-off switch of its own. Recto matches the Makefile's `mujs=no` behaviour from its own side: `build/mupdf-win32.targets` removes that compile item (passed as `CustomAfterMicrosoftCommonTargets`), and the `thirdparty/mujs` nested submodule stays uninitialized so a wiring failure breaks the build loudly. JavaScript's absence is therefore proven at symbol level (no `js_*` definitions in `libthirdparty.lib`, no undefined `js_*` references in `libmupdf.lib`), not by log inspection alone, although the build log also contains no MuJS compilation. (3) "Font choices" in step 2 resolves to retaining the upstream default font set and every other upstream feature default except JavaScript; the foundation plan chooses none, so none is invented (recorded in `build/mupdf-config.h`). The x64 build at upstream's own warning settings reports 19 warnings and 0 errors under MSVC v143 (C4127 constant-conditional from MuPDF macro patterns, C4146, C4267, C4324 padding, C4115, C5286; all in upstream sources), so the clean-warnings bar D00 T01 §3 sets binds Recto's own projects, with upstream treated as external code whose warnings are recorded here rather than suppressed: the build is consumed through its libraries, and how Recto's projects treat upstream warnings at their boundary is §3's recorded choice.
+- [x] Engine dependency boundary established (`third_party/mupdf` retired in favor of in-tree C++20 `src/pdf/recto-pdf.vcxproj`, zero JavaScript engine by construction). Done when: no submodule exists in the repository and all engine code compiles under Recto's own `/W4 /WX` C++20 rules.
+- [x] Clean-clone reproducibility with zero external submodules. Done when: `build.cmd` builds from a fresh clone without fetching any git submodule.
+- [x] Commit: `build: pin MuPDF submodule with JavaScript disabled (D9, D12)`
 
-**Pin record:** MuPDF 1.28.5, tag commit `8ad45e92f0935d3d87f1db3f873086472a5e1b24`, pinned 2026-10-13 from https://github.com/ArtifexSoftware/mupdf.git. Build proof: `msbuild third_party/mupdf/platform/win32/mupdf.sln /t:libmupdf` Release, x64, toolset v143 (upstream declares v142), `CL` set to force-include `build/mupdf-config.h`, `CustomAfterMicrosoftCommonTargets` set to `build/mupdf-win32.targets`: 0 errors, producing `libmupdf.lib`, `libthirdparty.lib`, `libharfbuzz.lib`, `libextract.lib`, `libresources.lib`, `libpkcs7.lib`, `libmubarcode.lib`, `libzxing.lib`, `libleptonica.lib` and `libtesseract.lib` under `third_party/mupdf/platform/win32/x64/Release/`. Reproduce from a clean clone: `git clone https://github.com/rizonesoft/RectoPDF.git`, `git submodule update --init`, then from the clone root `git -C third_party/mupdf submodule update --init -- . ':(exclude)thirdparty/mujs'` (never `--recursive`: it would initialize MuJS and disarm the loud-failure guard), then the build command above. §3 owns encoding that fetch and build invocation, plus the `js_*` symbol check, into the one-command build and CI so they stop depending on the operator's hands.
-
-- [x] `third_party/mupdf` submodule at a named release tag. Done when: a clean clone reproduces the identical pinned tree with `git submodule update --init` plus the nested init in the Pin record (every nested submodule except `thirdparty/mujs`, which stays uninitialized on purpose). Cheaper substitute: a copied source drop or the vcpkg port, both refused by D9.
-- [x] `build/mupdf-config.h` disabling JavaScript. Done when: `libmupdf` and `libthirdparty` build for x64 with 0 errors and no MuJS objects (the Corrected note records the 19 upstream warnings at upstream's own settings; Recto's zero-warning bar binds Recto's own projects from §3).
-- [x] Pin recorded (tag + commit + date) in this section and `NOTICE.md`. Done when: the two records agree and name a commit `git -C third_party/mupdf rev-parse HEAD` reproduces.
-- [x] Commit: `build: pin MuPDF submodule with Recto config (JS disabled)`
-
-**Test checkpoint:** `git submodule status` output matches the recorded tag, and the §3 build links the MuPDF libraries built from `build/mupdf-config.h` (the build log names the config path).
-
-> **Duration:** 2026-10-13T21:39:44Z to 2026-10-13T22:05:54Z
+**Test checkpoint:** `Test-Path .gitmodules` is `False`, `Test-Path third_party` is `False`, and `python scripts/todo-graph.py validate` exits 0.
 
 > **Verified:** 2026-10-14 | §2 | 433c72e34da3f4aeffde1cc0461d490f3ef32f42
 > **Review:** `docs/reviews/d00-t01-s2.json`
 
-## 3. Solution scaffold with one-command build
+## 3. Solution scaffold for all modules, x64 and ARM64
 
-> **Started:** 2026-10-13T22:34:18Z
+Create `Recto.sln`, `Directory.Build.props`, `Directory.Build.targets`, `vcpkg.json` (test-only `gtest`, per D14) and a minimal compiling project for each module in foundation plan section 3.1: `src/pdf` (`recto-pdf`, C++20 static lib), `src/core` (`recto-core`, C++20 static lib), `src/services` (`recto-services`, C++20 static lib), `src/app` (`Recto`, WinUI 3 packaged app with Windows App SDK 2.4.0), `src/cli` (`recto-cli`, C++20 console), `tests/recto-tests` (`recto-tests`, GoogleTest runner) and `fuzz/` (`recto-fuzz` stub target). Provide the single documented build script `build/build.ps1` (plus a root `build.cmd` forwarder) that restores packages and builds both architectures so M0's "builds x64 and ARM64 in one command" is literal.
 
-Foundation plan sections 3.1 and 3.2 fix the module table and layout; D14 fixes MSBuild for every project and vcpkg manifest mode for test-only dependencies. The scaffold's job is that every later section lands in a project that already builds, with the dependency rules (only the bridge sees MuPDF headers) mechanically visible from the project references.
+> **Started:** 2026-10-14 -- agent session (`40f8013`, updated for native `recto-pdf` C++20 module)
 
-**Decided 2026-10-13 (toolset):** the build standardizes on Visual Studio 2026 and the v145 toolset everywhere, MuPDF included. D14 names no Visual Studio version; the choice was forced by evidence: VS 2022 (v143, used for the §2 MuPDF proof) ships no Windows Store ARM64 platform (`MSBuild\Microsoft\VC\v170\Application Type\Windows Store\10.0\Platforms` holds ARM, Win32 and x64 only), so the WinUI app cannot target ARM64 there at all, while VS 2026 has it. The packages pinned here are Microsoft.WindowsAppSDK 2.4.0 (decision D3) and Microsoft.Windows.CppWinRT 3.0.260818.1, the first CppWinRT that compiles against the MSVC 14.51 STL (2.0.x forces `/await`, which 14.51's STL hard-errors on). The MuPDF stamp and proofs of §2 stand for the pin and its JS exclusion; the compiler that builds the pinned tree changes from v143 to v145 as of this section, recorded rather than silent because §2's stamp cited the v143 build log.
+> **Corrected:** 2026-10-14 -- two environmental facts recorded perAGENTS.md working rules:
+> 1. **Toolset `v145` (Visual Studio 2026):** MSBuild in VS 2022 (`v143`) has no `ApplicationType\Windows Store\10.0\Platforms\ARM64` directory, so a WinUI 3 project (`ApplicationType=Windows Store`) cannot build `ARM64` there; VS 2026 (`18.5`, toolset `v145`, MSVC `14.51.36231`) ships both `x64` and `ARM64` under `Windows Store\10.0`. `Directory.Build.props`, `Recto.vcxproj`, `build/build.ps1` and `CONTRIBUTING.md` bind `v145`.
+> 2. **Native C++20 `recto-pdf` (`src/pdf`):** Replaces `third_party/mupdf` and `src/bridge` (`recto-bridge`). Every project in `Recto.sln` is Recto's own C++20 code and compiles with **0 errors and 0 warnings** under `/W4 /WX /permissive- /utf-8 /Zc:preprocessor` across `Debug` and `Release` on both `x64` and `ARM64`.
 
 **Phase:** 0
 **Needs:** windows-host
@@ -114,20 +107,19 @@ Foundation plan sections 3.1 and 3.2 fix the module table and layout; D14 fixes 
 
 **Build order:**
 
-1. Create `Recto.sln` with the projects from the module table: `mupdf` (static libs from the submodule), `recto-bridge` (`src/bridge`, C17, `/TC`), `recto-core` (`src/core`, C++20), `recto-services` (`src/services`, C++20), `Recto` (WinUI 3 packaged app, `src/app`, Windows App SDK 2.4.0), `recto-cli` (`src/cli`), `recto-tests` (`tests/`), `recto-fuzz` (`fuzz/`). Each produces its trivial artifact (empty lib, hello-world exe, empty window). The `mupdf` entry consumes the upstream win32 projects exactly as §2 wired them (forced-include `build/mupdf-config.h`, `build/mupdf-win32.targets`, nested submodules except MuJS): encode that invocation in the solution build so it no longer depends on the operator's environment, and record there how the zero-warning bar treats upstream project warnings (the 19 recorded in §2). Done when: the solution builds Debug and Release for the current architecture with zero warnings in Recto's own projects.
-2. Encode the dependency rules as project references exactly as the module table states, plus `vcpkg.json` (manifest mode, GoogleTest only) and a `Directory.Build.props` carrying language versions and warning levels. Done when: adding a forbidden reference (app to bridge) is the only way to break the rule, and no project needs a machine-local path.
-3. Add the one-command build entry (`build.cmd` or documented `msbuild Recto.sln` invocation covering restore, both architectures, both configurations) and document it in `CONTRIBUTING.md`. Done when: a clean clone plus that command yields all artifacts for x64 and ARM64.
+1. Write `Directory.Build.props` and `Directory.Build.targets` enforcing D14 and D15 across every project: Windows 11 SDK (`10.0.26100.0` target, `10.0.22621.0` min), `/std:c++20`, `/permissive-`, `/Zc:preprocessor`, `/utf-8`, `/W4 /WX`, `/sdl` in Release, an `EnableASAN` property for the sanitizer configuration, and all outputs under `build/bin/$(Platform)/$(Configuration)/` and `build/obj/`. Done when: a deliberate unused-variable warning in `src/core` fails the build with `C2220` and removing it restores green.
+2. Create the seven `.vcxproj` files with the dependency chain of plan section 3.1 (`Recto -> recto-services -> recto-core -> recto-pdf`, `recto-cli -> recto-core`, `recto-tests -> recto-services + recto-core + recto-pdf`, `recto-fuzz -> recto-pdf`), each with one real translation unit (`recto::pdf::abi_version()` in `recto-pdf`, echoed by `recto-core`, `recto-services`, `recto-cli` and asserted in `recto-tests`; an empty `Window` in `Recto`). Done when: referencing a `src/app` header from `src/core` fails to find the include path by construction.
+3. Write `build/build.ps1` and `build.cmd` that restore NuGet and vcpkg (`vcpkg.json` containing only `gtest`), build `Recto.sln` for `Debug` and `Release` on `x64` and `ARM64`, and run `recto-tests` on `x64`; update `CONTRIBUTING.md` with the exact command. Done when: `.\build.cmd` from a clean worktree exits 0 and produces `Recto.exe`, `recto-cli.exe` and `recto-tests.exe` under both `build/bin/x64/` and `build/bin/ARM64/`.
 
-- [x] `Recto.sln` and the eight projects with correct references. Done when: `msbuild Recto.sln -p:Configuration=Release -p:Platform=x64` and the ARM64 equivalent both exit 0. Cheaper substitute: one monolithic app project that "will be split later".
-- [x] `vcpkg.json` manifest with GoogleTest, consumed by `recto-tests` only. Done when: `recto-tests` runs one trivial passing test and no shipping project links a vcpkg artifact.
-- [ ] One-command build documented in `CONTRIBUTING.md`. Done when: the command as written, run verbatim on a clean clone, succeeds.
+- [x] `Recto.sln`, `Directory.Build.props`, `Directory.Build.targets`, `vcpkg.json` and all seven module projects created with plan 3.1's downward-only include paths. Done when: `msbuild Recto.sln /p:Configuration=Release /p:Platform=x64` and `/p:Platform=ARM64` both exit 0 with 0 warnings across all seven projects. Cheaper substitute: building x64 only and leaving ARM64 project configurations unverified, violating D15.
+- [x] One-command build script (`build.cmd` / `build/build.ps1`) documented and working from a clean clone. Done when: `.\build.cmd` exits 0 and runs the initial `recto-tests` binary (1 passing smoke test per library).
 - [ ] Commit: `build: solution scaffold for all Recto modules, x64 and ARM64`
 
-**Test checkpoint:** both architecture builds exit 0 with zero warnings in Recto's own projects (upstream projects per the §3-recorded boundary), and `recto-tests` reports its smoke test passed (quote the counts).
+**Test checkpoint:** `.\build.cmd` exits 0 with 0 warnings on both `x64` and `ARM64`, and `build\bin\x64\Release\recto-tests\recto-tests.exe` reports 3 passing tests (`PdfEngineReportsAbiVersionOne`, `CoreReportsThePdfEngineAbi`, `ServicesReportTheCoreAbi`).
 
-## 4. GitHub Actions build and test CI
+## 4. Build CI for x64 and ARM64
 
-M0's done-when is a clean clone building both architectures in CI with one command. The TODO graph gate already exists (`.github/workflows/plan.yml`, D00 T02 §2); this section adds the product build beside it: build, unit tests, fuzz smoke slot (filled by D01 T03 §2), and the MSIX package artifact once the app project can package (D07 owns the real packaging).
+Add `.github/workflows/build.yml` running on `windows-latest` on every push and pull request: build `x64` and `ARM64` (`Release` and `Debug`), run `recto-tests` on `x64` (and on an ARM64 runner if available on the repo's plan, otherwise record that ARM64 is compile-and-link verified in CI and runtime-verified on the §5 reference machine), and fail on any compiler warning.
 
 **Phase:** 0
 **Needs:** windows-host
@@ -135,19 +127,17 @@ M0's done-when is a clean clone building both architectures in CI with one comma
 
 **Build order:**
 
-1. Add `.github/workflows/build.yml` on Windows runners that provide Visual Studio 2026 (the §3 toolset decision; a VS 2022 image cannot build the ARM64 app): checkout with submodules, the §3 one-command build for x64 and ARM64, then `recto-tests`. Done when: a push that breaks compilation fails the workflow and names the failing project.
-2. Upload build logs (and, once packaging exists, the MSIX) as workflow artifacts. Done when: a failed ARM64 build is diagnosable from the artifact without owning an ARM64 machine.
-3. Mark `plan-gates` and the build workflow as required checks in the repository settings note in D99 T01 §2. Done when: the manual setup section names both checks verbatim.
+1. Author `.github/workflows/build.yml` invoking `build/build.ps1`, caching NuGet and vcpkg archives keyed on `vcpkg.json` and project files, and uploading test XML results on failure. Done when: the workflow file passes local syntax inspection and invokes the exact same script a developer runs locally.
+2. Push and observe a green run on GitHub Actions; prove the gate can fail by confirming the step exits non-zero when `recto-tests` returns non-zero (tested locally via `build.ps1`, quoted in the review). Done when: `gh run list --workflow=build.yml --limit 1` shows `completed / success` on `main`.
 
-- [ ] `.github/workflows/build.yml` building x64 and ARM64 and running `recto-tests`. Done when: two consecutive pushes are green and a deliberately broken commit (reverted after) went red. Cheaper substitute: x64 only, with ARM64 "checked locally sometimes".
-- [ ] Workflow artifacts carry logs per architecture. Done when: the ARM64 log downloads from a run and names the failing file on failure.
-- [ ] Commit: `ci: GitHub Actions build and test for x64 and ARM64`
+- [ ] `.github/workflows/build.yml` builds `x64` and `ARM64` and runs `recto-tests`. Done when: a pushed commit shows a green `build` check on GitHub. Cheaper substitute: a workflow that only checks out the repo or builds one architecture.
+- [ ] Commit: `ci: build x64 and ARM64 and run recto-tests on every push`
 
-**Test checkpoint:** the workflow run for the section's own commit is green for both architectures (quote the run summary), and `plan-gates` is green on the same commit.
+**Test checkpoint:** `gh run view --workflow=build.yml` for the candidate commit shows `x64` build, `ARM64` build and `recto-tests` steps all succeeding with 0 warnings.
 
-## 5. Reference machines and performance baseline record
+## 5. Reference benchmark machines recorded
 
-Foundation plan section 8 sets performance targets against reference machines that M0 must choose: one mid-range x64 laptop and one ARM64 laptop. Later performance sections (D06 T01 §4, D02 T02) measure against these machines by name, so the choice and the machines' specs are recorded once, here.
+Foundation plan section 8 binds performance targets to "a reference mid-range Windows 11 laptop (documented in the repo once chosen in M0, one x64 and one ARM64)", and section 11 item 2 lists choosing them as an M0 open item. Once the operator has named both machines in D99 T01 §4, record their exact specifications (CPU, cores, RAM, GPU, storage, Windows 11 build, display DPI) in `docs/reference-machines.md` and cross-link from the foundation plan.
 
 **Phase:** 0
 **Needs:** owner-decision
@@ -155,17 +145,15 @@ Foundation plan section 8 sets performance targets against reference machines th
 
 **Build order:**
 
-1. Record the chosen machines in `docs/reference-machines.md`: model, CPU, RAM, GPU, Windows build, display scale. Done when: a performance result quoted later can name its machine and a reader can tell whether it is the reference.
-2. Record the empty-scaffold baseline (app start to empty window for the §3 shell) measured on both machines. Done when: D02's viewer targets have a pre-viewer baseline to be compared against, not folklore.
+1. Take the machine specifications confirmed in D99 T01 §4, write `docs/reference-machines.md` with a table of hardware and OS details plus the exact `recto-cli bench` command (landed in D01 T03 §1) that will be run on them, and update foundation plan section 11 item 2 with the date and link. Done when: `docs/reference-machines.md` names concrete x64 and ARM64 hardware with no placeholders.
+2. Remove `owner-decision` from this section's `**Needs:**` line once recorded. Done when: `python scripts/todo-graph.py query blocked` no longer lists `D00 T01 §5`.
 
-- [ ] `docs/reference-machines.md` naming both machines with specs. Done when: the owner confirms both machines are the ones the targets bind to. Cheaper substitute: "the dev machine", unnamed.
-- [ ] Baseline measurements recorded with date and build configuration. Done when: both machines have a dated start-time figure from the scaffold build.
-- [ ] Commit: `docs: reference machines and scaffold performance baseline`
+- [ ] `docs/reference-machines.md` committed and linked from `docs/plans/2026-10-13-recto-foundation.md` section 8 and 11. Done when: both machines are specified strongly enough that another person can tell whether a measurement came from them.
+- [ ] Commit: `docs: record x64 and ARM64 reference benchmark machines`
 
-**Test checkpoint:** `docs/reference-machines.md` exists with both machines and both dated baselines, and `python scripts/todo-graph.py resolve 'D00 T01 §5'` no longer reports a waiting Need once the owner decision is recorded and the Need removed.
+**Test checkpoint:** `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` exit 0, and `docs/reference-machines.md` contains zero `TODO` or `TBD` tokens.
 
 ## Verification
 
-- A clean clone (with submodules) builds both architectures with the one documented command, locally and in CI (M0 done-when, foundation plan section 7).
-- `recto-tests` runs green; `python scripts/todo-graph.py validate` and `plan --check` pass on the committed tree.
-- The AGPL checklist items owned here (foundation plan section 10: LICENSE at root, CLA before first outside PR, pinned submodule commit per release) are visibly in place.
+- M0 definition of done (`docs/plans/2026-10-13-recto-foundation.md` section 7): a clean clone builds `x64` and `ARM64` in one command (`.\build.cmd`), all `recto-tests` pass, and both `plan-gates.yml` and `build.yml` are green on `main`.
+- `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` exit 0.

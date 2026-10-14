@@ -1,10 +1,7 @@
 # Derived output: always reproducible from the tracked sources. The one
-# tracked file under build/ is Recto's MuPDF feature config, which the
-# foundation plan (section 3.2) places at build/mupdf-config.h.
+# tracked file under build/ is Recto's one-command build driver at
+# build/build.ps1.
 build/*
-!build/mupdf-config.h
-!build/mupdf-win32.targets
-!build/build-mupdf.ps1
 !build/build.ps1
 __pycache__/
 *.pyc

@@ -1,404 +1,434 @@
-# Recto: foundation plan
+# Recto: Foundation Plan
 
-Status: draft for implementation. Written 2026-10-13. Review again at the end of milestone M1, when the engine core has run under load.
+- **Date:** 2026-10-13 (revised 2026-10-14 for native `recto-pdf` engine, built-in OCR, native converters, and `GPL-3.0-or-later`)
+- **Status:** Approved foundation for implementation
+- **Target:** Open-source Windows 11 PDF viewer, OCR tool and document converter (WinUI 3, C++20, native `recto-pdf` engine, MSIX on the Microsoft Store)
+- **Design reference:** `design/SPEC.md` (direction "D . Merged")
 
-Recto is an open-source PDF viewer and converter for Windows, written in C and C++ with a WinUI 3 interface. This plan records every decision made so far, the architecture, the MuPDF thread-safety setup, and the milestones to version 1.
+This document records the technical decisions, architecture, threading contract, milestones, and acceptance criteria for Recto v1. It exists so implementation does not stall on undecided fundamentals and so known hard problems (`recto-pdf` parsing and rendering fidelity, multi-threaded actor and tile safety, built-in OCR, native OpenXML conversions, GPLv3 compliance, untrusted PDF input) are designed in from the start instead of retrofitted.
+
+---
 
 ## 1. Decisions
 
-| # | Decision | Choice | Reversal cost |
-|---|---|---|---|
-| D1 | Product name | **Recto** (the right-hand page of an open book) | Low before the Store listing, high after. Run a USPTO/EUIPO trademark search before reserving the Store name. |
-| D2 | License | **AGPL-3.0-or-later**, open source from the first public commit | High. Relicensing later needs consent from every contributor unless a CLA is in place (see D11). |
-| D3 | PDF engine | **MuPDF** (AGPL), pinned to a release tag | Very high. The engine shapes the bridge, the threading model and every converter. |
-| D4 | UI | **WinUI 3** on Windows App SDK **2.4.0** (latest stable, released 2026-08-13), C++/WinRT | High. |
-| D5 | Languages | C17 for the MuPDF bridge, C++20 for everything else, intrinsics for hot loops, MASM only where profiling proves a gain | Low per module. |
-| D6 | Distribution | **MSIX through the Microsoft Store**, with the AGPL given as the app's own license terms in Partner Center | Medium. |
-| D7 | v1 conversions | PDF to images, images to PDF, PDF to text, merge, split, Office to PDF, PDF to Word (DOCX) | Per feature. |
-| D8 | Target OS and CPUs | Windows 11, x64 and ARM64 | Low. Adding Windows 10 later only needs testing, not design changes. |
-| D9 | MuPDF integration | Git submodule built from source with Recto's own MuPDF config, not the vcpkg port and not the generated C++ bindings (`mupdfcpp`) | Medium. See section 4.1 for why. |
-| D10 | Office to PDF source | Use Microsoft Office through COM when installed, else an installed LibreOffice, else tell the user what to install. Recto does not bundle LibreOffice. | Low. Bundling LibreOffice later adds several hundred MB and a download flow, but no core change. |
-| D11 | Contributor terms | Contributor License Agreement (CLA) required from the first outside contribution | Low now, impossible to add retroactively for past contributions. |
-| D12 | PDF JavaScript | MuPDF built with JavaScript **disabled** (`FZ_ENABLE_JS 0`) | Low. Forms that rely on JS calculations will not compute until it is enabled. |
-| D13 | Process isolation | v1 parses PDFs in-process. A sandboxed broker process is planned after v1 (section 9). | Medium. The bridge boundary in section 4 is designed so it can move behind IPC later. |
-| D14 | Build system | Visual Studio with MSBuild for all projects, vcpkg manifest mode for test-only dependencies | Medium. WinUI 3 C++ templates are MSBuild and NuGet based. |
-| D15 | Visual identity | Icon: a white page with a vermilion bookmark ribbon on a charcoal tile. Wordmark: Newsreader (SIL OFL 1.1). Interface text: Segoe UI Variable. | Low before the Store listing, medium after. |
-| D16 | Colour | One accent, vermilion, in both themes: `#C8431F` on light surfaces, `#F0603C` on dark. Light theme uses cool Fluent neutrals; dark theme uses warm charcoal neutrals. Full tokens in section 6.1. | Low. Tokens live in one resource dictionary. |
-| D17 | Layout | One app shell whose layout comes from independent settings (toolbar position, docked or floating panels, thumbnail placement, inspector side). Three named presets: **Focus** (default), **Classic** and **Reading room**. Not three separate shells. | Medium. Three separate shells would triple UI work for every feature. |
+Every row below is a binding decision for v1. Changing one requires updating this table with the date, reason, and cost of reversing.
 
-## 2. Tech stack
+| # | Topic | Decision | Reason | Cost to reverse |
+| - | ----- | -------- | ------ | --------------- |
+| D1 | Product name | **Recto** | Matches `design/SPEC.md` and all generated brand and MSIX assets. Run a USPTO and EUIPO trademark search and reserve the Microsoft Store name in M0 before investing in public listings. | Low before Store submission (`build_resources.py` regenerates wordmarks); high after a Store listing exists. |
+| D2 | Project license | **GPL-3.0-or-later** (revised 2026-10-14 from `AGPL-3.0-or-later`) | Retiring Artifex MuPDF (D3, D9) removes the sole AGPL dependency; `GPL-3.0-or-later` gives strong copyleft protection for a desktop application while simplifying library compatibility and distribution. Copyright stays with the project owner via a lightweight CLA so future licensing remains possible. | High once external contributors land without a CLA; low with a CLA in place from commit 1. |
+| D3 | PDF engine | **Recto's own native C++20 PDF engine (`recto-pdf`)** (revised 2026-10-14 from Artifex MuPDF) | Full ownership of the PDF 1.7 and 2.0 parser, stream filters, decryptor, content-stream interpreter, display-list builder, structured text extractor, and writer; zero C `setjmp`/`longjmp` boundary, zero external engine licensing constraints, and direct integration with Direct2D, DirectWrite, WIC, Windows CNG and `Windows.Media.Ocr`. | High (core engine module), mitigated by keeping `recto-pdf` behind a clean static-library boundary (`src/pdf`). |
+| D4 | UI framework | **WinUI 3 (Windows App SDK 2.4.0) in C++20 / C++/WinRT** | Matches `design/SPEC.md` ("Native first. Use stock WinUI 3 controls..."). Same language as the engine; no .NET runtime or P/Invoke marshalling for tile buffers. | High (full UI rewrite). |
+| D5 | Language boundary | **`recto-pdf` (C++20) -> `recto-core` (C++20) -> `recto-services` (C++20) -> `Recto` (C++20/WinRT)** (revised 2026-10-14) | Every module is native C++20. `recto-pdf` uses typed `PdfResult<T>` / `PdfError` values (never exceptions or `longjmp` for malformed document data); `recto-core` owns actors, tile rendering, OCR and converters; `recto-services` owns GPU presentation, job queues and settings; `Recto` owns WinUI XAML surfaces. | Low-medium (`recto-pdf` is a self-contained static library). |
+| D6 | Distribution | **MSIX, signed, distributed through the Microsoft Store** (using Recto's own license terms, not the standard Store EULA) and GitHub Releases | Store handles install, updates, file associations, and code signing trust. Submitting with custom license terms is required for GPLv3 compatibility. | Low. |
+| D7 | v1 conversion scope | **PDF <-> Images, PDF -> Text, Searchable PDF (OCR), PDF -> Word (`.docx`), Office -> PDF, Merge, Split, Rotate/Delete/Reorder, Encrypt/Decrypt** (revised 2026-10-14 to include Searchable PDF OCR in v1) | Matches `design/SPEC.md` sections 9.5 and 9.6 and adds first-class built-in OCR. HTML/EPUB/Markdown, digital signatures, redaction, and annotations stay post-v1. | Low (each converter is a job type behind the same queue). |
+| D8 | Build system | **MSBuild (`.sln` + `.vcxproj`) as primary** for all C++20 modules | First-class support for WinUI 3, XAML compiler, MIDL3, PRI resources, and MSIX packaging in Visual Studio 2026 (`v145`) and GitHub Actions. | Medium. |
+| D9 | PDF engine dependencies | **In-tree C++20 `recto-pdf` over Windows 11 platform APIs (`Direct2D`, `DirectWrite`, `WIC`, `bcrypt.dll` CNG, `Windows.Media.Ocr`)** (revised 2026-10-14; MuPDF submodule retired) | Zero external C/C++ engine submodule; cryptography (`AES-128`, `AES-256`, `RC4`, `SHA-256`/`384`/`512`), image codecs (`JPEG`, `JPEG2000`, `PNG`, `TIFF`, `BMP`), font rasterization, and OCR use hardened OS components that ship with Windows 11. | Low-medium. |
+| D10 | Office -> PDF strategy | **Built-in C++20 OpenXML (`.docx`, `.xlsx`, `.pptx`) and `.rtf` parser + DirectWrite/Direct2D PDF layout engine first; optional Microsoft Office COM automation (`AutomationSecurity = ForceDisable`) or LibreOffice headless when installed** (revised 2026-10-14) | Users convert modern Office documents out of the box with zero external installs while keeping 1:1 native Microsoft Office COM pagination available when Office is installed. Never bundle LibreOffice (saves ~300 MB). | Low (strategy pattern behind `IOfficeConverter`). |
+| D11 | Contributor model | **DCO + lightweight CLA** granting the project owner a license to relicense contributions | Needed so the project can respond to Store policy changes or offer dual licensing later without tracking down every contributor. | Irreversible once contributions land without it. |
+| D12 | Untrusted-input posture | **No PDF JavaScript execution in `recto-pdf` by construction; Office macros forced off during COM conversion; external links always prompt** (revised 2026-10-14) | Eliminates the largest class of PDF and Office exploits at design time (`recto-pdf` never implements a JS interpreter; `/JS` and `/JavaScript` actions are parsed as inert metadata). | Trivial. |
+| D13 | Process model | **Single process in v1**, with `recto-pdf` and `recto-core` kept strictly free of UI types so `recto-pdf` can move into a sandboxed AppContainer broker process after v1 | Full multi-process sandboxing in v1 doubles IPC complexity before the viewer exists; keeping `recto-pdf` narrow preserves the option at low cost. | Medium if the boundary is respected; high if UI types leak into `recto-pdf` or `recto-core`. |
+| D14 | Compiler, warnings, sanitizers | **MSVC (`v145`), `/std:c++20 /permissive- /Zc:preprocessor /utf-8 /W4 /WX`, `/sdl` in Release, AddressSanitizer CI job on `recto-pdf`, `recto-core` and `recto-tests`** | `recto-pdf` parses untrusted binary PDFs and Office ZIP containers; `/W4 /WX` and ASan catch memory errors when introduced. | Low. |
+| D15 | Target OS and architectures | **Windows 11 22H2+ (build 22621+), x64 and ARM64 from M0** | Matches `design/SPEC.md` (Mica Alt, Segoe UI Variable, Segoe Fluent Icons, `Windows.Media.Ocr`). Building ARM64 from M0 prevents x64-only assumptions from accumulating. | Low in M0; high if deferred to M6. |
+| D16 | Logging and diagnostics | **Structured ring-buffer logger + ETW (`TraceLoggingWrite`)**, dumped on crash or via "Copy error details" | Multi-threaded actor, tile and job bugs are nearly impossible to diagnose without a low-overhead timeline. No telemetry leaves the machine unless the user opts in (`design/SPEC.md` section 9.7). | Low. |
+| D17 | Layout presets | **One `ShellPage`, five layout settings, named slots** (`design/SPEC.md` section 8) | Focus, Classic, and Reading room are three preset combinations of five settings, never three separate shells. | High if violated. |
 
-| Layer | Technology | Purpose |
-|---|---|---|
-| UI framework | WinUI 3, Windows App SDK 2.4.0, C++/WinRT | Window, controls, navigation, dialogs |
-| Page surface | `SwapChainPanel`, Direct3D 11, Direct2D (multithreaded factory), DXGI flip-model swap chain | Tiled page display with smooth zoom and scroll |
-| PDF engine | MuPDF (C library) | Parsing, rendering, text, search, merge, split, encryption, document writers |
-| Image encode and decode | Windows Imaging Component (WIC), plus MuPDF's own image loaders | PNG, JPEG, TIFF, BMP output; image input for images to PDF |
-| PDF to DOCX | MuPDF `docx` document writer (built on Artifex's `extract` library) | v1 Word export |
-| Office to PDF | Office COM automation (`ExportAsFixedFormat`), LibreOffice headless (`soffice --convert-to pdf`) | v1 Office import |
-| OCR (after v1) | `Windows.Media.Ocr`, with Tesseract as the option for more languages | Scanned documents |
-| SIMD | AVX2 intrinsics (x64), NEON intrinsics (ARM64), scalar fallback | Pixel format conversion, downscaling |
-| Unit tests | GoogleTest (via vcpkg) | Engine and services |
-| Security testing | MSVC AddressSanitizer, libFuzzer | Bridge and parser inputs |
-| CI | GitHub Actions, Windows runners, x64 and ARM64 builds | Build, test, fuzz smoke run, MSIX package |
-| Packaging | MSIX, Microsoft Store | Install, update, `.pdf` file association |
+---
 
-## 3. Architecture
+## 2. Tech Stack
 
-### 3.1 Modules
+| Layer | Choice | Notes |
+| ----- | ------ | ----- |
+| OS | Windows 11 22H2+ (`10.0.22621.0` min, `10.0.26100.0` target SDK) | Required for Mica Alt, Segoe UI Variable, Segoe Fluent Icons, `Windows.Media.Ocr` |
+| Architectures | `x64`, `ARM64` | Both built in CI on every push |
+| Toolchain | Visual Studio 2026 (`v145`), MSVC C++20 | `/W4 /WX /permissive- /utf-8 /Zc:preprocessor` |
+| UI | WinUI 3, Windows App SDK `2.4.0`, C++/WinRT | Stock controls + `design/tokens/RectoColors.xaml` |
+| Page surface | `SwapChainPanel` + Direct3D 11 + Direct2D 1.3 + DirectWrite | Tiled rendering from background presentation thread |
+| PDF engine | `recto-pdf` (`src/pdf`, in-tree C++20) | PDF 1.7 / 2.0 lexer, XRef tables and streams, incremental updates, damaged-file recovery, Flate/Predictor/LZW/ASCII85/ASCIIHex/RunLength/CCITT filters, WIC JPEG/JPX decoding, CNG `bcrypt.dll` RC4/AES-128/AES-256 decryption and encryption, content stream interpreter, Direct2D/DirectWrite display-list builder, `PageText` extractor, PDF writer and graft organizer |
+| Built-in OCR | `Windows.Media.Ocr` (`OcrEngine`) + C++20 image preprocessor + `recto-pdf` searchable-PDF writer | Deskew, contrast normalization, adaptive thresholding, `OcrEngine` word/line bounding boxes, invisible text (`3 Tr`) PDF layer synthesis, and live `PageText` population for scanned pages |
+| Native converters | In-tree C++20 OpenXML (`.docx`, `.xlsx`, `.pptx`) and `.rtf` engine + optional Office COM / LibreOffice | Native ZIP + XML reader/writer for `PDF -> DOCX` and built-in `Office -> PDF`, plus optional Microsoft Office COM (`AutomationSecurity = ForceDisable`) or LibreOffice headless |
+| Packaging | Single-project MSIX | Assets from `resources/msix/Assets/` (see `resources/README.md`) |
+| Unit / integration tests | GoogleTest via vcpkg manifest mode (test-only dependency) | Runs in CI on every push, with and without ASan |
+| Fuzzing | MSVC `/fsanitize=fuzzer` + `/fsanitize=address` | Harnesses for `recto-pdf` parser, stream filters, decryptor, content streams, and OpenXML ZIP reader |
 
-| Module | Type | Language | Depends on | Must not depend on |
-|---|---|---|---|---|
-| `mupdf` | static libs (`libmupdf`, `libthirdparty`) | C | nothing | everything else |
-| `recto-bridge` | static lib | C17 | `mupdf` | C++, WinRT |
-| `recto-core` | static lib | C++20 | `recto-bridge` | WinRT, XAML, MuPDF headers |
-| `recto-services` | static lib | C++20 | `recto-core`, Win32, D3D11/D2D, WIC, COM | XAML |
-| `Recto` | WinUI 3 packaged app | C++/WinRT | `recto-services` | `recto-bridge`, MuPDF headers |
-| `recto-cli` | console exe | C++20 | `recto-core` | WinRT |
-| `recto-tests` | GoogleTest exe | C++20 | `recto-core`, `recto-services` | |
-| `recto-fuzz` | libFuzzer exe | C17/C++20 | `recto-bridge` | |
+---
 
-The rule behind the table: only `recto-bridge` includes MuPDF headers. Everything above it sees Recto's own types. This keeps `setjmp`/`longjmp` error handling out of C++ (section 4.4) and lets the bridge move into a separate sandbox process later (D13).
+## 3. Solution Structure
 
-`recto-cli` exists so the engine can be tested, profiled and fuzz-reproduced without the UI: `recto-cli render in.pdf --page 3 --zoom 2 out.png`, `recto-cli convert in.pdf out.docx`.
+### 3.1 Modules and Dependency Rule
 
-### 3.2 Repository layout
+Dependencies flow strictly downward. No upward includes, no friend hacks, no XAML headers below `src/app`.
 
-```
-Recto/
-  Recto.sln
-  vcpkg.json
-  LICENSE                   AGPL-3.0 text
-  NOTICE.md                 third-party licenses (MuPDF, Windows App SDK, etc.)
-  CONTRIBUTING.md
-  CLA.md
-  third_party/mupdf/        git submodule, pinned release tag
-  build/mupdf-config.h      Recto's MuPDF feature config (FZ_ENABLE_JS 0; all other upstream defaults kept, decided D00 T01 §2)
-  build/mupdf-win32.targets MSBuild wiring excluding the MuJS unity file from the win32 build (D12, D00 T01 §2)
-  src/bridge/               C only
-  src/core/
-  src/services/
-  src/app/                  WinUI 3 project, Package.appxmanifest
-  src/cli/
-  tests/
-  tests/corpus/             PDFs for regression tests
-  fuzz/
-  docs/plans/
-  docs/specs/
+```text
++-------------------------------------------------------------+
+|  Recto (src/app, WinUI 3 EXE, C++20 / C++/WinRT)            |
+|  ShellPage, DocumentView, ConvertPage, OrganizePage, ...    |
++------------------------------+------------------------------+
+                               |
+                               v
++-------------------------------------------------------------+
+|  recto-services (src/services, static lib, C++20)           |
+|  PresentationThread, JobQueue, OfficeComAdapter,            |
+|  SettingsService, RecentFilesStore, UiaTextRangeModel       |
++------------------------------+------------------------------+
+                               |
+                               v
++-------------------------------------------------------------+
+|  recto-core (src/core, static lib, C++20)                   |
+|  Runtime, DocumentActor, RenderPool, TileScheduler,         |
+|  OcrPipeline, DocxWriter, OfficeToPdfEngine, PageOps        |
++------------------------------+------------------------------+
+                               |
+                               v
++-------------------------------------------------------------+
+|  recto-pdf (src/pdf, static lib, C++20)                     |
+|  Lexer, XRefParser, StreamFilters, Crypto (CNG),            |
+|  Document, Page, ContentInterpreter, FontLoader,            |
+|  DisplayList, PageText, PdfWriter, GraftMap                 |
++-------------------------------------------------------------+
 ```
 
-### 3.3 Core types (`recto-core`)
+Two additional executables link against `recto-core` and `recto-pdf` (never `src/app`):
 
-| Type | Responsibility |
-|---|---|
-| `Runtime` | Process-wide singleton. Owns the lock array and the base `fz_context` through the bridge. Created at app start, destroyed last. |
-| `DocumentHandle` | The UI's reference to one open document. Thin, copyable, posts requests to the document's actor thread. |
-| `DocumentActor` | One thread per open document. Owns that document's `fz_context` clone, its `fz_document`, its `fz_page` objects and its display list cache. |
-| `DisplayList` | Ref-counted, immutable, shareable wrapper over `fz_display_list`. The only page data that crosses threads. |
-| `TileKey` | `(documentId, pageIndex, zoomBucket, rotation, tileX, tileY, renderFlags)` |
-| `Tile` | Rendered BGRA premultiplied pixels for one `TileKey`. |
-| `RenderPool` | Fixed worker threads, each with its own `fz_context` clone. Rasterizes `DisplayList` regions into `Tile`s. |
-| `CancelToken` | Wraps an `fz_cookie`. Cancel sets `abort`, progress reads `progress` and `progress_max`. |
-| `ConversionJob` | One conversion. Runs on its own thread with its own context clone and its own `fz_document` instance. |
-| `PdfError` | C++ exception carrying the MuPDF error code and message, thrown only above the bridge. |
+- **`recto-cli`** (`src/cli`): command-line tool (`recto-cli info`, `render`, `text`, `find`, `ocr`, `pdf-to-images`, `images-to-pdf`, `pdf-to-docx`, `office-to-pdf`, `merge`, `split`, `encrypt`, `decrypt`, `bench`, `stress`). Built in M1 so every engine, OCR and conversion feature is testable and scriptable before UI exists.
+- **`recto-tests`** (`tests/recto-tests`): GoogleTest runner for `recto-pdf`, `recto-core`, and `recto-services`.
 
-## 4. MuPDF thread-safety setup
+### 3.2 Repository Layout
 
-MuPDF is safe to use from many threads only when the application follows its rules. This section is the contract every engine change must keep.
-
-### 4.1 Why the C bridge and not `mupdfcpp`
-
-MuPDF ships generated C++ bindings that turn errors into C++ exceptions and manage per-thread contexts automatically. Recto does not use them, for two reasons. First, generating them needs Python and libclang in the build, which adds a fragile step to every MuPDF update. Second, they hide which context a call runs on, and Recto's design depends on controlling exactly that: one owning thread per document, and render workers that never touch a document. A small hand-written C bridge gives that control.
-
-### 4.2 MuPDF's rules, as Recto applies them
-
-1. **Locks first.** The base context is created with a lock table (`fz_locks_context`) of `FZ_LOCK_MAX` locks. Without it, cloning a context is not allowed and nothing below is safe.
-2. **One context per thread.** Every thread that calls MuPDF has its own `fz_context`, made with `fz_clone_context(base)` at thread start. Clones share the resource store (fonts, decoded images, glyph cache), protected by those locks.
-3. **A document belongs to one thread.** An `fz_document` and every `fz_page` loaded from it are used only on that document's `DocumentActor` thread. No other thread calls any function on them.
-4. **Display lists are the hand-off.** The actor builds an `fz_display_list` for a page. Once built, a display list is read-only and can be rendered by many threads at the same time, each with its own context. This is how rendering runs in parallel while the document stays single-threaded.
-5. **Other objects move, but are never shared.** A pixmap, buffer or stext page made on one thread may be passed to another, provided only one thread uses it at a time.
-6. **Reference counts are thread-safe; the objects are not.** `fz_keep_*` and `fz_drop_*` may run on any thread with that thread's context. This is what lets a worker drop a display list the actor created.
-7. **Clones die before the base.** All clones are dropped, and all their threads joined, before the base context is dropped.
-
-### 4.3 Lock implementation
-
-Use Win32 `SRWLOCK`s. MuPDF never takes the same lock twice on one thread, so non-recursive slim locks are correct and cheaper than critical sections. The callbacks must never throw and never block on anything but the lock.
-
-```c
-/* src/bridge/runtime.c */
-#include <windows.h>
-#include <mupdf/fitz.h>
-
-static SRWLOCK g_fz_locks[FZ_LOCK_MAX];
-
-static void rc_lock(void *user, int lock)   { AcquireSRWLockExclusive(&((SRWLOCK *)user)[lock]); }
-static void rc_unlock(void *user, int lock) { ReleaseSRWLockExclusive(&((SRWLOCK *)user)[lock]); }
-
-static fz_locks_context g_locks = { g_fz_locks, rc_lock, rc_unlock };
-
-fz_context *rc_runtime_create(size_t store_bytes)
-{
-    for (int i = 0; i < FZ_LOCK_MAX; i++)
-        InitializeSRWLock(&g_fz_locks[i]);
-
-    fz_context *base = fz_new_context(NULL, &g_locks, store_bytes);
-    if (!base)
-        return NULL;
-
-    fz_try(base)
-        fz_register_document_handlers(base);
-    fz_catch(base)
-    {
-        fz_drop_context(base);
-        return NULL;
-    }
-    return base;
-}
+```text
+RectoPDF/
+|-- Recto.sln
+|-- Directory.Build.props          # Shared warnings, /utf-8, /permissive-, SDK version, ASan toggle
+|-- Directory.Build.targets
+|-- vcpkg.json                     # Test-only dependencies (gtest)
+|-- LICENSE                        # GPL-3.0-or-later full text
+|-- NOTICE.md                      # Third-party attributions and licenses
+|-- CLA.md                         # Contributor License Agreement
+|-- build/
+|   \-- build.ps1                  # One-command build and test driver
+|-- src/
+|   |-- pdf/                       # recto-pdf (C++20 static lib: PDF 1.7/2.0 parser, filters, crypto, display lists, text, writer)
+|   |-- core/                      # recto-core (C++20 static lib: actors, tile render pool, OCR pipeline, DOCX/Office converters)
+|   |-- services/                  # recto-services (C++20 static lib: D3D11/D2D presentation, job queue, settings, recents)
+|   |-- cli/                       # recto-cli (C++20 console app)
+|   \-- app/                       # Recto (WinUI 3 packaged app)
+|-- tests/
+|   |-- recto-tests/               # GoogleTest suite
+|   \-- corpus/                    # Small, redistributable test PDFs & Office files + LICENSE per file
+|-- fuzz/                          # libFuzzer harnesses (fuzz_open, fuzz_filters, fuzz_render, fuzz_text)
+|-- resources/                     # Generated icons and MSIX assets (do not hand-edit)
+|-- design/                        # SPEC.md, tokens, mockups, screenshots
+\-- docs/
+    \-- plans/
+        \-- 2026-10-13-recto-foundation.md
 ```
 
-The lock array and the `fz_locks_context` are static so they outlive every context. Start with `store_bytes` at 256 MB (`FZ_STORE_DEFAULT`) and tune in M2 against the tile cache budget.
+### 3.3 Key Core Types (`src/pdf` and `src/core`)
 
-### 4.4 Error handling across the C/C++ line
+```cpp
+namespace recto::pdf {
 
-MuPDF reports errors with `fz_try`/`fz_always`/`fz_catch`, built on `setjmp`/`longjmp`. A `longjmp` that skips C++ frames with destructors is undefined behaviour under MSVC's default `/EHsc`. The bridge exists to make that impossible:
+enum class ErrorCode {
+    Ok,
+    FileNotFound,
+    AccessDenied,
+    NeedsPassword,
+    WrongPassword,
+    DamagedFormat,
+    UnsupportedFeature,
+    Cancelled,
+    IoError,
+    OutOfMemory,
+    InternalError,
+};
 
-- `recto-bridge` is compiled as C (`/TC`). No C++ object can exist between an `fz_try` and the code that throws.
-- Every bridge function catches every MuPDF error and returns a status: `typedef struct { int code; char message[256]; } rc_status;`. `recto-core` turns a non-zero status into a `PdfError` exception.
-- Inside bridge code: never `return`, `break` or `goto` out of an `fz_try` block; put cleanup in `fz_always`; mark every local that is changed inside `fz_try` and read in `fz_catch` or after with `fz_var(x)`.
-- Callbacks from MuPDF into Recto (locks, warnings, allocation) are plain C functions or `noexcept` C++ functions that never throw.
-- Each context gets warning and error callbacks (`fz_set_warning_callback`, `fz_set_error_callback`) that write to Recto's log, tagged with the thread name.
+struct PdfError {
+    ErrorCode code;
+    std::string message; // Safe to log and show in "Copy error details"
+};
 
-### 4.5 Thread map
+template <typename T>
+using PdfResult = std::expected<T, PdfError>; // Or equivalent C++20 result value type
 
-| Thread | Count | Context | Owns | Never does |
-|---|---|---|---|---|
-| UI (XAML dispatcher) | 1 | none | XAML tree, view models | Call the bridge, wait on any engine thread |
-| Presentation | 1 per open document view | none | `SwapChainPanel` swap chain, D2D device context | Call the bridge |
-| `DocumentActor` | 1 per open document | clone | `fz_document`, `fz_page`s, display list cache, stext cache | Rasterize tiles |
-| Render worker | `max(2, cores - 2)`, shared by all documents | clone, made at thread start | the pixmap it is rendering | Touch an `fz_document` or `fz_page` |
-| Conversion job | 1 per running job, at most 2 at once | clone | its own `fz_document` instance and writer | Share anything with the viewer's actor |
-| Office bridge | 1 STA thread while an Office conversion runs | none | COM objects for Word, Excel, PowerPoint | Call the bridge |
+struct PageSizePt { float width_pt; float height_pt; int rotation_deg; };
 
-### 4.6 Opening and viewing a document
+} // namespace recto::pdf
 
-1. The UI calls `Runtime::open(path)`. This starts a `DocumentActor` thread, which clones the base context and calls `fz_open_document`.
-2. If `fz_needs_password` is true, the actor reports it; the UI asks for the password and posts it back for `fz_authenticate_password`.
-3. The actor reports page count, page sizes and the outline (`fz_load_outline`) to the UI.
-4. For each page the viewport needs, the actor loads the `fz_page`, builds an `fz_display_list` (`fz_new_display_list_from_page`, which includes annotations and form widgets), keeps it in an LRU cache of about 16 pages, and hands a kept reference to the render scheduler.
-5. The scheduler queues tiles in priority order: visible tiles at the current zoom, then visible tiles at neighbouring zoom buckets, then the next and previous pages, then thumbnails.
+namespace recto::core {
 
-### 4.7 Rendering one tile (render worker)
+struct DocumentId { uint64_t value; };
 
-```c
-/* src/bridge/render.c, runs on a render worker with its own ctx */
-rc_status rc_render_tile(fz_context *ctx, fz_display_list *list,
-                         fz_matrix page_ctm, fz_irect tile,
-                         fz_cookie *cookie, fz_pixmap **out)
-{
-    rc_status st = {0};
-    fz_pixmap *pix = NULL;
-    fz_device *dev = NULL;
-    fz_var(pix);
-    fz_var(dev);
+struct TileKey {
+    DocumentId doc;
+    int32_t page_index;
+    int32_t zoom_bucket;   // Discrete bucket index, e.g. 100%, 125%, 150%, 200%
+    int32_t tile_x;        // In 512x512 px tile units at zoom_bucket
+    int32_t tile_y;
+    uint16_t rotation_deg; // 0, 90, 180, 270
+    uint8_t colour_mode;   // Original, Dimmed, Inverted (applied at composite time; key stays 0 unless baked)
+};
 
-    fz_try(ctx)
-    {
-        /* BGRA with alpha: premultiplied, matches DXGI_FORMAT_B8G8R8A8_UNORM */
-        pix = fz_new_pixmap_with_bbox(ctx, fz_device_bgr(ctx), tile, NULL, 1);
-        fz_clear_pixmap_with_value(ctx, pix, 0xFF);           /* opaque white paper */
-        dev = fz_new_draw_device(ctx, page_ctm, pix);
-        fz_run_display_list(ctx, list, dev, page_ctm, fz_rect_from_irect(tile), cookie);
-        fz_close_device(ctx, dev);
-    }
-    fz_always(ctx)
-        fz_drop_device(ctx, dev);
-    fz_catch(ctx)
-    {
-        fz_drop_pixmap(ctx, pix);
-        pix = NULL;
-        rc_status_from_error(ctx, &st);
-    }
-    *out = pix;
-    return st;
-}
+// Reference-counted, immutable once recorded on the DocumentActor thread.
+// Safe to read concurrently from any number of RenderPool worker threads.
+class DisplayList;
+class PageText;     // Immutable structured text + quad geometry for one page (native PDF text or OCR)
+class CancelToken;  // Wraps std::atomic<bool> for cooperative render/job cancellation
+
+} // namespace recto::core
 ```
 
-Notes on the tile path:
+---
 
-- The pixmap's bbox is the tile's rectangle in device space, so the whole-page matrix (`fz_scale(zoom, zoom)` combined with rotation) is used unchanged. No per-tile translation is needed.
-- Tiles are 512 by 512 device pixels.
-- Zoom renders at discrete buckets. While the exact zoom renders, the presentation thread stretches the nearest cached bucket so the page never goes blank.
-- When a tile scrolls out of view before it finishes, the scheduler sets `cookie->abort` (write it with `InterlockedExchange` on a `volatile long` mirror; MuPDF polls the field). If `cookie->incomplete` or `cookie->abort` is set when the run returns, the tile is discarded and never cached.
-- After the run, the worker creates the GPU texture itself with `ID3D11Device::CreateTexture2D`, passing the pixmap samples as initial data (the D3D11 device is free-threaded; the immediate context is not). It then drops the pixmap and posts the texture to the presentation thread.
-- `fz_pixmap` stride can be larger than `width * 4`; always pass `fz_pixmap_stride` as the row pitch.
+## 4. `recto-pdf` Engine and Threading Contract
 
-### 4.8 Presentation thread
+This is the most important technical section in this plan. Every contributor and every review checks engine changes against these rules.
 
-`SwapChainPanel` allows drawing from a background thread, so each document view has its own presentation thread. The UI thread only sends it viewport state (scroll offset, zoom, size, DPI scale). The presentation thread draws visible tiles with Direct2D (`D2D1_FACTORY_TYPE_MULTI_THREADED`) and presents. It is the only user of that view's `ID3D11DeviceContext` and `ID2D1DeviceContext`. The tile texture cache lives here, with an LRU budget of 512 MB to start.
+### 4.1 What `recto-pdf` Implements (`src/pdf`)
 
-### 4.9 Conversion jobs
+1. **Lexer, Indirect Objects, and Cross-Reference Parser:**
+   - Binary-safe PDF 1.0 to 2.0 tokenizer supporting comments, booleans, integers, reals, literal strings (nested balanced parentheses, octal escapes), hex strings, names (`#XX` escapes), arrays, dictionaries, streams, and indirect references (`N G R`).
+   - Classic cross-reference (`xref`) tables, PDF 1.5+ compressed cross-reference streams (`/Type /XRef`, `/W` field widths, object streams `/Type /ObjStm`), hybridized XRef tables, linearized ("Fast Web View") documents, and multi-generation incremental updates (`/Prev` chain with cycle detection).
+   - Damaged-file recovery scanner: if `startxref` or the XRef chain is corrupt or truncated, scans the file byte stream for `N G obj` headers and reconstructs the object index on the fly.
+2. **Stream Filter Pipeline:**
+   - Composable, bounded-memory decoding pipeline supporting chained filters (`/Filter` arrays with `/DecodeParms`):
+     - `FlateDecode` (RFC 1950/1951 zlib/deflate) and `LZWDecode` (early/late code-size change) with TIFF Predictor 2 and PNG Predictors 10 to 15 (None, Sub, Up, Average, Paeth).
+     - `ASCIIHexDecode`, `ASCII85Decode`, and `RunLengthDecode`.
+     - `CCITTFaxDecode` (ITU-T T.4 Group 3 1D/2D and T.6 Group 4 monochrome facsimile decompression for scanned documents).
+     - `DCTDecode` (JPEG) and `JPXDecode` (JPEG 2000) decoded via Windows Imaging Component (WIC) into premultiplied BGRA or grayscale bitmaps.
+   - Zip-bomb and decompression ratio guards: every stream decode enforces a configurable byte ceiling (default 256 MB per stream) and recursion limit (default 64 nested objects) so hostile inputs fail with `ErrorCode::DamagedFormat`, never an OOM crash.
+3. **Standard Security Handler (Decryption and Encryption via Windows CNG `bcrypt.dll`):**
+   - Full support for PDF Standard Security Handler revisions `R=2, 3, 4` (`RC4` 40-bit to 128-bit and `AES-128` CBC with per-object MD5 key derivation) and `R=5, 6` (`AES-256` CBC with Algorithm 2.B SHA-256/SHA-384/SHA-512 iterative password validation and file encryption key unwrapping), plus `/EncryptMetadata` handling.
+   - All cryptographic primitives execute through Windows Next Generation Cryptography (`bcrypt.dll`), zero custom crypto implementations.
+4. **Page Tree, Resources, and Content-Stream Interpreter:**
+   - Flattens `/Pages` hierarchy with cycle detection, resolving inherited `/MediaBox`, `/CropBox`, `/Rotate`, and `/Resources`.
+   - Stack-based content-stream state machine executing PDF graphics operators:
+     - Graphics state stack (`q`, `Q`, `cm`, `w`, `J`, `j`, `M`, `d`, `ri`, `i`, `gs` / `/ExtGState` with stroke/fill alpha `CA`/`ca` and blend modes).
+     - Path construction and painting (`m`, `l`, `c`, `v`, `y`, `h`, `re`, `S`, `s`, `f`, `F`, `f*`, `B`, `B*`, `b`, `b*`, `n`) and clipping paths (`W`, `W*`).
+     - Colour spaces (`/DeviceGray`, `/DeviceRGB`, `/DeviceCMYK` with ICC/standard RGB conversion, `/Indexed`, `/Separation`, `/ICCBased` via WCS/Direct2D, and tiling/shading patterns).
+     - Text state and positioning (`BT`, `ET`, `Tc`, `Tw`, `Tz`, `TL`, `Tf`, `Tr`, `Ts`, `Td`, `TD`, `Tm`, `T*`, `Tj`, `TJ`, `'`, `"`).
+     - Images and XObjects (`Do` for `/Subtype /Image`, inline images `BI`/`ID`/`EI`, and recursive `/Subtype /Form` XObjects with depth bounds).
+5. **Font Loading and Glyph Mapping:**
+   - Maps PDF font descriptors (`/Subtype /TrueType`, `/Type1`, `/MMType1`, `/Type0` CIDFontType0/CIDFontType2, `/OpenType`, and `/Type3` procedural fonts) to DirectWrite (`IDWriteFontFace` via a custom in-memory `IDWriteFontFileLoader` for embedded font streams, CFF/Type 1 charstring-to-path outline conversion where needed, and system fallback fonts for the Standard 14 PDF fonts: Helvetica, Times, Courier, Symbol, ZapfDingbats).
+   - Decodes character codes to Unicode via `/ToUnicode` CMap streams, predefined Adobeencodings (`WinAnsiEncoding`, `MacRomanEncoding`, `StandardEncoding`), and glyph names (`Adobe Glyph List`) so both glyph rendering and `PageText` extraction share exact character positions.
+6. **PDF Writer and Graft Organizer:**
+   - Serializes clean PDF 1.7 documents (`PdfWriter`) and incremental/full rewrites with `FlateDecode` compression, cross-reference tables, and optional `AES-256` (`R=6`) encryption.
+   - `GraftMap` copies indirect object subgraphs across source documents while deduplicating shared resources (fonts, images, colour spaces) for zero-recompression merge, split, reorder, rotate, delete, and extract operations.
 
-A conversion never shares the viewer's document. Each `ConversionJob` thread clones the base context, opens its own `fz_document` from the file, runs, and drops everything before it exits. This costs one extra parse per job and removes every possible contention with viewing. Progress comes from the job's `fz_cookie` and is posted to the UI with `DispatcherQueue::TryEnqueue`.
+### 4.2 Thread Ownership Rules
 
-### 4.10 Shutdown order
+1. **`recto::pdf::Document` is single-owner per thread:** A parsed `pdf::Document` and its lazy object cache belong to the single `DocumentActor` thread (or isolated conversion job thread) that opened it. No mutex sits inside `pdf::Document`'s inner object parser.
+2. **Cross-thread page representations are immutable:** The `DocumentActor` interprets a page's content stream once and produces an immutable, reference-counted `DisplayList` (and, when requested, an immutable `PageText` snapshot).
+3. **`RenderPool` workers only read immutable `DisplayList`s:** Worker threads rasterize `DisplayList`s into 512x512 BGRA tile bitmaps (via per-worker Direct2D `ID2D1DeviceContext` / WIC bitmap render targets or software rasterizer) in parallel, checking `CancelToken` between command batches.
+4. **Strict error values, zero exceptions across boundaries:** Malformed PDF objects, truncated streams, and bad passwords return `PdfResult<T>` with a descriptive `PdfError`. No parser failure ever throws an unhandled exception or terminates the process.
 
-1. Cancel every cookie (render, conversion).
-2. Stop the scheduler and join the render workers. Each drops its clone on the way out.
-3. Join conversion jobs. Each drops its document, writer and clone.
-4. Tell each `DocumentActor` to drop its display lists, pages and document, then its clone, and join it.
-5. Release D3D and D2D resources on the presentation threads, then join them.
-6. Drop the base context last.
+### 4.3 Runtime and Thread Map
 
-A debug build asserts that the count of live clones is zero before step 6.
+Recto creates one `recto::core::Runtime` at startup and destroys it after all documents, views, and jobs have closed.
 
-### 4.11 Thread-safety tests
+```text
++-------------------------------------------------------------------+
+| UI Thread (WinUI 3 DispatcherQueue)                               |
+|   Never calls recto-pdf. Never blocks on an engine thread.        |
+|   Sends messages to DocumentActors; receives callbacks via queue. |
++-----------------+----------------------------------+--------------+
+                  |                                  ^
+                  | commands (open, load page,       | SwapChainPanel
+                  | extract text, outline, search)   | presents
+                  v                                  |
++---------------------------------+  +---------------+--------------+
+| DocumentActor Thread (1 / doc)  |  | Presentation Thread (1/view) |
+|   Owns pdf::Document            |  |   Owns D3D11/D2D context     |
+|   Parses XRef, pages, outlines  |  |   Owns tile texture cache    |
+|   Builds DisplayList & PageText |  |   Composites visible tiles   |
++-----------------+---------------+  +---------------+--------------+
+                  |                                  ^
+                  | Arc<const DisplayList>           | completed tiles
+                  v                                  |
++----------------------------------------------------+--------------+
+| RenderPool Worker Threads (N = clamp(cores - 2, 2, 8))            |
+|   Each worker owns its own D2D/WIC raster target                  |
+|   Renders 512x512 tiles from DisplayList with CancelToken         |
+|   Runs OCR preprocessing + Windows.Media.Ocr off the UI thread    |
++-------------------------------------------------------------------+
 
-| Test | Proves |
-|---|---|
-| 8 workers render the same display list 1,000 times; compare pixels to a single-threaded render | Display lists are safe to share; output is deterministic |
-| Open 20 documents at once, scroll all of them, close in random order | Actor isolation and shutdown order |
-| Cancel tiles at random points during rendering | Abort path leaks nothing and never caches partial tiles |
-| Run conversion jobs while viewing the same file | Job isolation |
-| All of the above under AddressSanitizer | No use-after-free across threads |
-| Debug lock wrapper records lock order per thread and asserts on inversion | No new lock ordering bugs from Recto's own locks |
-
-## 5. Conversions (v1)
-
-All MuPDF conversions use the same document writer pattern on a `ConversionJob` thread:
-
-```c
-fz_document_writer *w = fz_new_document_writer(ctx, out_path, format, options);
-for each page:
-    fz_page *page = fz_load_page(ctx, doc, i);
-    fz_device *dev = fz_begin_page(ctx, w, fz_bound_page(ctx, page));
-    fz_run_page(ctx, page, dev, fz_identity, cookie);
-    fz_end_page(ctx, w);
-    fz_drop_page(ctx, page);
-fz_close_document_writer(ctx, w);
-fz_drop_document_writer(ctx, w);
++-------------------------------------------------------------------+
+| Conversion Job Threads (bounded pool, max 2 concurrent jobs)      |
+|   Each job opens its OWN pdf::Document (never shares viewer's)    |
++-------------------------------------------------------------------+
 ```
 
-| Conversion | How | Notes |
-|---|---|---|
-| PDF to images | Render each page at the chosen DPI with the tile path (whole page as one tile), encode with WIC | PNG, JPEG (quality setting), TIFF (multi-page option), BMP. WIC gives ARM64-native encoders and colour management. |
-| Images to PDF | Open each image with MuPDF (it opens PNG, JPEG, TIFF and others as one-page documents) and write them through the `pdf` document writer | Page size options: fit to image, A4, Letter, with margins. |
-| PDF to text | `text` document writer, or `fz_new_stext_page_from_page` for custom output | Plain text v1. HTML output is a small addition later (`html` writer). |
-| Merge | Create a PDF with `pdf_create_document`, copy pages from each source with `pdf_graft_mapped_page` and one `pdf_graft_map` per source, save with `pdf_save_document` | Keep bookmarks from sources as top-level outline entries (stretch goal for v1). |
-| Split | Same grafting into one new document per range | Ranges, every N pages, or one file per page. |
-| Rotate, delete, reorder pages | `pdf_*` page tree functions on a copy, then save | Never modify the open viewer document in place. |
-| Encrypt, decrypt | `pdf_write_options` with `do_encrypt = PDF_ENCRYPT_AES_256`, passwords and permissions | Save to a new file, then offer to replace. |
-| PDF to Word | `docx` document writer | Good for flowing text; multi-column pages, tables and floating images come out rough. Ship it labelled as "editable Word (best for text documents)". Measure quality on the test corpus in M5 and decide whether layout work is needed. |
-| Office to PDF | See 5.1 | |
+### 4.4 Opening a Document and Recording Display Lists
 
-Saving rules for every write: write to a temporary file in the destination folder, then replace with `ReplaceFileW` or `MoveFileExW`, so a crash never leaves a half-written file.
+1. UI thread calls `Runtime::open(path)` -> spawns a `DocumentActor` thread for that tab and returns a lightweight `DocumentHandle`.
+2. On the actor thread:
+   - Opens the memory-mapped or buffered file stream and parses the header, trailer, and XRef table/stream (with damaged-file fallback if needed).
+   - If the document is encrypted and the empty user password does not authenticate, posts `NeedsPassword` to the UI thread and waits on its actor queue for `ProvidePassword(utf8)` or `Cancel`.
+   - Reads page count, page dimensions/rotations, metadata, security summary, font inventory, and outline tree into plain C++ structs and posts `DocumentOpened` to the UI thread.
+3. Immediately after `DocumentOpened`, the UI can size the scroll canvas and draw page outlines (`design/SPEC.md` section 9.2: "show page outlines at the right size immediately and fill them as tiles arrive").
+4. When the viewport needs page `p`, the `TileScheduler` asks the actor for `DisplayList(p)` (cached in an LRU of ~32 pages on the actor). The actor interprets page `p`'s content stream into an immutable `DisplayList` and hands `std::shared_ptr<const DisplayList>` to the `RenderPool`.
 
-### 5.1 Office to PDF
+### 4.5 Rendering Tiles and Zoom
 
-1. Detect Microsoft Office: query the COM ProgIDs `Word.Application`, `Excel.Application`, `PowerPoint.Application`.
-2. If present, run on a dedicated STA thread. Before opening any file set `AutomationSecurity = msoAutomationSecurityForceDisable` (3) so macros in untrusted documents never run. Open read-only, call `ExportAsFixedFormat` with the PDF format constant, close without saving, and `Quit` the app if Recto started it.
-3. If Office is missing, detect LibreOffice from its registry install path. Run `soffice --headless --convert-to pdf --outdir <temp dir> <file>` with `-env:UserInstallation=file:///<Recto temp profile>` so it cannot collide with a LibreOffice window the user has open. Kill it after a timeout (default 120 s).
-4. If neither is installed, show a message with links to both and stop.
-5. Supported inputs: `.doc`, `.docx`, `.rtf`, `.odt`, `.xls`, `.xlsx`, `.ods`, `.ppt`, `.pptx`, `.odp`.
+1. Each `RenderPool` worker pops the highest-priority `TileRequest` from the `TileScheduler`:
+   - Priority order: **(1)** visible tiles of the current page at current zoom bucket, **(2)** visible tiles of adjacent visible pages, **(3)** a 1-tile ring around the viewport (prefetch), **(4)** thumbnail strip requests.
+   - Requests for tiles that scrolled out of the viewport or belong to an old zoom bucket have their `CancelToken` tripped before or during rendering.
+2. The worker clears a `512 x 512` premultiplied BGRA target (white for normal pages; alpha preserved) and replays the `DisplayList` with the tile transform (zoom bucket scale + page rotation + tile offset), checking `CancelToken` periodically so a cancelled high-DPI tile aborts within a few milliseconds.
+3. **GPU upload rule:** `ID3D11Device` is free-threaded; `ID3D11DeviceContext` is not. Workers create an immutable `ID3D11Texture2D` via `ID3D11Device::CreateTexture2D(&desc, &initialData, &tex)` (passing the rendered BGRA buffer and explicit row stride in `D3D11_SUBRESOURCE_DATA`) and post the texture handle to the presentation thread.
+4. **Zooming without blanking (`design/SPEC.md` section 9.2 and section 12):** While the user zooms, the presentation thread immediately scales the nearest already-cached zoom bucket's tiles on the GPU, then swaps in sharp tiles from the new zoom bucket as workers finish them.
 
-Both paths run separate programs, so they do not affect Recto's AGPL obligations.
+### 4.6 Presentation Thread (`SwapChainPanel`)
 
-## 6. UI design
+Each `DocumentView` owns one presentation thread:
 
-The full interface specification, tokens, icon files and screenshots are in `design/` (start with `design/SPEC.md`). This section summarises it; where they differ, `design/SPEC.md` wins.
+- Owns the `IDXGISwapChain1` attached to the `SwapChainPanel` via `ISwapChainPanelNative::SetSwapChain`, plus its own `ID3D11DeviceContext` and `ID2D1DeviceContext` (created from a `D2D1_FACTORY_TYPE_MULTI_THREADED` factory).
+- Owns the **tile texture cache** (`TileKey -> ComPtr<ID3D11Texture2D>`), budgeted by byte size (`Settings -> Performance and privacy -> Page cache`, default **512 MB**, range 128 MB to 2 GB per `design/SPEC.md` section 9.7), with LRU eviction weighted by distance from the current viewport.
+- Applies dark-theme page colour modes (`Original`, `Dimmed` towards `#D9D5CE`, `Inverted` with image preservation) in the presentation shader/blend stage so switching page colour modes re-renders zero tiles.
+- UI thread never touches the D3D11/D2D context; it only posts viewport state (`scroll_offset`, `zoom`, `viewport_size`, `dpi_scale`, `page_colour_mode`) to the presentation thread.
 
-- Custom title bar holding a `TabView` (one tab per open document) and a command box (Ctrl+K) that searches files, pages and commands.
-- Centre: the document view (`SwapChainPanel`), continuous vertical scroll by default, single page and two-page spread as options.
-- Home: the command box, a drop target, and recent files with reading position.
-- Convert: a three-step flow (files, what to make, options) with a job queue that stays visible.
-- Organize: Combine, Split and Reorder modes over one page grid.
-- Settings: theme, page colour in dark theme, layout preset and its four settings, default zoom, links, Office converter, save location, cache size, crash reports.
-- Accessibility: keyboard navigation everywhere, high contrast, and a UI Automation text provider for page text (M3).
+### 4.7 Conversion and OCR Jobs
 
-### 6.1 Colour tokens
+A conversion or batch OCR job **never** shares a `pdf::Document` with an open viewer tab. Each job runs on a job thread and opens its own `pdf::Document` from disk (prompting for a password in the queue UI if needed, per `design/SPEC.md` section 9.5). This guarantees that:
 
-| Token | Light | Dark |
-|---|---|---|
-| Window (title bar) | `#EEF1F6` | `#1B1A19` |
-| Surface (panes, toolbar) | `#FAFAFA` | `#232120` |
-| Raised (cards, menus) | `#FFFFFF` | `#2A2826` |
-| Canvas behind pages | `#E6E7EA` | `#141312` |
-| Border | `#E5E5E5` | `#3A3734` |
-| Text | `#1B1B1B` | `#EDEAE4` |
-| Secondary text | `#5C5C5C` | `#B8B2A8` |
-| Accent (fills, focus, selection) | `#C8431F` | `#F0603C` |
-| Text on accent | `#FFFFFF` | `#1B1A19` |
-| Accent as text or icon | `#A93717` | `#F48A6E` |
-| Accent tint (selected row) | `#FBE4DC` | `#3A2620` |
+- A slow conversion or OCR pass never stalls scrolling or tile rendering in the viewer.
+- Page-tree mutations (merge, split, rotate, delete, reorder, encrypt, OCR layer injection) cannot corrupt the viewer's open document.
 
-All text pairs meet WCAG AA (4.5:1). The tokens live in one `ResourceDictionary` with `ThemeDictionaries` for Light, Dark and HighContrast; no control sets a colour directly.
+### 4.8 Shutdown Order
 
-### 6.2 Layout presets
+`Runtime::~Runtime()` enforces a strict teardown order:
 
-| Setting | Focus (default) | Classic | Reading room |
-|---|---|---|---|
-| Page toolbar | Floating, bottom centre | Docked command bar, top | Docked strip, top |
-| Side panels | Floating cards over the canvas | Docked left pane | Docked right inspector |
-| Thumbnails | In the left card | In the left pane | Filmstrip along the bottom |
-| Navigation (Home, Convert, Organize) | Title bar tabs and command box | Left rail | Title bar mode switcher |
+1. Trip all active `CancelToken`s.
+2. Join all `DocumentActor` threads (each actor destroys its `pdf::Document` and drops its `DisplayList` cache).
+3. Join all `ConversionJob` threads.
+4. Drain and join all `RenderPool` worker threads (every `shared_ptr<const DisplayList>` is now released).
+5. Join all `PresentationThread`s.
+6. Assert in Debug builds that live `Document`, `DisplayList`, and worker-context counters equal zero.
 
-Implementation: one `ShellPage` hosts the same `DocumentView`, `PageToolbar`, `ThumbnailList`, `OutlineTree` and `SearchPanel` controls in every preset. A `LayoutSettings` view model holds the four settings; the shell moves the controls between named host slots (top bar, bottom overlay, left dock, right dock, left overlay, bottom dock) when a setting changes. `ThumbnailList` switches its `ItemsRepeater` layout between vertical and horizontal. Changing any single setting turns the preset name to "Custom".
+### 4.9 Thread-Safety Verification Battery
+
+These checks are part of **M1's definition of done**, not deferred to M6:
+
+- **Determinism test:** Render every page of 10 corpus PDFs with 1 worker thread and with 8 worker threads shuffling tile order; assert byte-for-byte identical RGBA output for every page.
+- **Cancellation storm test:** Open a 200-page PDF, issue 1,000 random viewport jumps and zoom changes across 8 workers while tripping `CancelToken`s every 5 ms for 30 seconds under **AddressSanitizer**; assert zero crashes, zero leaks, and clean shutdown.
+- **Multi-document stress test:** Open and close 20 documents concurrently on separate `DocumentActor` threads while rendering tiles and extracting text; assert the live-object counters return to zero on close.
+
+---
+
+## 5. Conversions, Built-in OCR, and Page Operations
+
+Every operation runs as a cancellable job on `JobQueue` (`src/services`), reports per-page progress, and writes output via **write-to-temp-file-then-atomic-replace** (`ReplaceFileW` / `MoveFileExW(..., MOVEFILE_REPLACE_EXISTING)`) in the target directory so a cancelled or failed job never leaves a half-written file or clobbers the user's original.
+
+| Operation | Milestone | Mechanism | Notes |
+| --------- | --------- | --------- | ----- |
+| **PDF -> Images** (PNG, JPEG, TIFF, BMP at 72/150/300/600 DPI) | M4 | `recto-pdf` `DisplayList` rasterization at target DPI -> Windows Imaging Component (`IWICBitmapEncoder`) | Streamed page-by-page so a 500-page export at 600 DPI does not hold 500 bitmaps in RAM. |
+| **Images -> PDF** | M4 | WIC decode (preserving original JPEG stream bytes where possible for lossless `DCTDecode` embedding, otherwise `FlateDecode` image XObject) -> `PdfWriter` | Preserves EXIF orientation (`IWICMetadataQueryReader`); optional one-page-per-image or fit-to-A4/Letter. |
+| **PDF -> Plain text** (`.txt`) | M4 | `recto-pdf` `PageText` extractor (reading-order blocks, lines, UTF-8 output) + automatic `OcrPipeline` fallback on scanned pages | Writes UTF-8 (no BOM by default). If a document has 0 extractable characters and images covering the page, runs built-in OCR automatically or prompts per settings. |
+| **Searchable PDF (OCR)** | M3 / M4 | `OcrPipeline` (`src/core`): renders scanned page at 300 DPI -> C++20 image preprocessing (deskew, contrast normalization, adaptive binarization) -> `Windows.Media.Ocr` (`OcrEngine`) -> `PdfWriter` injects an invisible text layer (`3 Tr` rendering mode) positioned over each recognized word box | Works offline using installed Windows 11 language packs. Also feeds live viewer `PageText` in M3 so users can select, copy, `Ctrl+F` search, and use screen readers on scanned PDFs immediately without saving a new file first. |
+| **Merge PDFs** ("One combined PDF", Organize -> Combine) | M4 | `PdfWriter` + one `GraftMap` per source document | One `GraftMap` per source PDF preserves shared font and image objects without re-rendering and without cross-document object ID collisions. Copies source outline trees as top-level bookmark entries named after each source file. |
+| **Split PDF** ("Split files", Organize -> Split) | M4 | `PdfWriter` + `GraftMap` per output range (by explicit ranges, every N pages, or one file per page) | Shared range-spec parser (`1-3, 5, 8-12`) refuses invalid ranges before writing any file. |
+| **Rotate / Delete / Reorder / Extract** (Organize -> Reorder) | M4 | `PdfWriter` + `GraftMap` permutation and `/Rotate` delta on a **copy** | Never mutates the viewer's open `pdf::Document` in place. "Save" writes to a sibling temp file, then atomically replaces the original (`design/SPEC.md` section 9.9 "Replace the original?" dialog) and reloads the viewer tab. |
+| **Encrypt / Decrypt PDF** ("Protected PDF", "Unlocked PDF") | M4 | `PdfWriter` with Standard Security Handler `R=6` (`AES-256` via Windows CNG `bcrypt.dll`) for encryption; authenticated load + unencrypted write for decryption | Supports user password, owner password, and permission flags (print, copy, edit, annotate). |
+| **PDF -> Word (`.docx`)** | M5 | Native C++20 `DocxWriter` (`src/core/docx_writer.cpp`) over `PageText`, vector paths, and page images (plus `OcrPipeline` for scanned pages) | Builds a standards-compliant ECMA-376 OpenXML `.docx` ZIP package (`[Content_Types].xml`, `_rels/.rels`, `word/document.xml`, `word/styles.xml`, `word/media/*`): reconstructs reading-order paragraphs, headings (by font size/weight clustering), multi-column sections, tables (from ruling lines and aligned text grids), inline styling (bold, italic, colour, font family), and embedded images. |
+| **Office -> PDF** (`.docx`, `.xlsx`, `.pptx`, `.rtf`) | M5 | **Path A (built-in default):** Native C++20 OpenXML (`.docx`, `.xlsx`, `.pptx`) and `.rtf` parser + DirectWrite/Direct2D page layout -> `PdfWriter`. **Path B (when installed and selected):** Microsoft Office COM (`AutomationSecurity = msoAutomationSecurityForceDisable`). **Path C (when installed and selected):** LibreOffice headless | Works out of the box on a clean Windows 11 machine with zero external installs via the built-in OpenXML/RTF engine, while supporting 1:1 native Microsoft Office COM or LibreOffice conversion when installed. |
+
+### 5.1 Office -> PDF Security and Converter Rules
+
+- **Built-in OpenXML / RTF Engine (always available):**
+  - Parses `.docx` (paragraphs, runs, tables, lists, headers/footers, inline images, page setup), `.xlsx` (shared strings, worksheets, cell formatting, column widths, gridlines), `.pptx` (slides, master shapes, text frames, images), and `.rtf` into Recto's layout primitives, shapes text with DirectWrite, and emits vector PDF pages via `PdfWriter`.
+  - Enforces zip-bomb and XML entity expansion limits on every OpenXML container.
+- **Microsoft Office COM Automation (optional high-fidelity path for `.docx`/`.doc`, `.xlsx`/`.xls`, `.pptx`/`.ppt`):**
+  - Runs on a dedicated STA worker thread in `recto-services`.
+  - Sets `Application.Visible = VARIANT_FALSE`, `Application.DisplayAlerts = 0`, and **`Application.AutomationSecurity = msoAutomationSecurityForceDisable` (3)** so macros in untrusted Office files **never** execute during conversion.
+  - Opens read-only (`ReadOnly = VARIANT_TRUE`, `AddToRecentFiles = VARIANT_FALSE`), exports to PDF, closes without saving, and calls `Quit()` on the instance Recto spawned, enforced by a per-job timeout.
+- **LibreOffice Headless (optional fallback path):**
+  - Invokes `soffice.exe --headless --norestore --nolockcheck -env:UserInstallation=<isolated-temp-profile-url> --convert-to pdf --outdir <temp>` with `CreateProcessW` (no `cmd.exe` shell interpolation) and a job object (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`) so cancelling kills child processes cleanly.
+
+---
+
+## 6. Interface and Accessibility
+
+`design/SPEC.md` is the authoritative UI specification. Key engineering points that affect `src/services` and `src/app`:
+
+### 6.1 Tokens and Assets
+
+- Merge `design/tokens/RectoColors.xaml` into `App.xaml`. No XAML or C++ file under `src/app` may hard-code a hex colour.
+- Copy `resources/msix/Assets/` into the app project and wire `Package.appxmanifest` exactly as documented in `resources/README.md` (including the `.pdf` `uap:FileTypeAssociation` pointing to `Assets\FileTypes\PdfFile.png` and splash screen background `#1B1A19`).
+- Load in-app SVGs (`wordmark-*.svg`, `layout-*.svg`, `drop-files-*.svg`, `ribbon-marker*.svg`) via `SvgImageSource` switched by theme dictionaries.
+
+### 6.2 One Shell, Five Settings (`design/SPEC.md` section 8)
+
+`ShellPage` declares the eight named slots (`TitleBarSlot`, `TopBarSlot`, `BottomOverlaySlot`, `LeftDockSlot`, `RightDockSlot`, `LeftOverlaySlot`, `RightOverlaySlot`, `BottomDockSlot`). The same `PageToolbar`, `SidePanel`, `ThumbnailList`, and `FindCard` instances are reparented between slots when `LayoutSettings` changes. Switching presets must never recreate `DocumentView` or lose scroll, zoom, or selection state.
+
+### 6.3 Text Selection, Search, Built-in OCR, and UI Automation (`design/SPEC.md` sections 9.3, 11)
+
+- `DocumentActor` extracts a `PageText` structure per page (`Blocks -> Lines -> Spans -> Chars` with quad bounding boxes in page points).
+- When a page has no extractable text (`chars.empty()`) and contains page-covering raster images, `DocumentActor` can transparently run `OcrPipeline` (`Windows.Media.Ocr`) on the page so `PageText` is populated with recognized words and quads.
+- The **same** `PageText` instance drives:
+  1. Pointer text selection + floating selection toolbar (`Copy`, `Find`, `Link`).
+  2. `Ctrl+F` search highlights (`RectoSearchHitBrush`, `RectoSearchHitCurrentBrush`) and result snippets.
+  3. A custom `AutomationPeer` implementing `ITextProvider` / `ITextRangeProvider` so Narrator and NVDA can read and select page text on both digital and scanned PDFs.
+
+---
 
 ## 7. Milestones
 
+Each milestone ends with a runnable build and an explicit "done when" check.
+
 | Milestone | Scope | Done when |
-|---|---|---|
-| **M0 Repository and build** | Git repo, AGPL LICENSE, NOTICE, CLA, CONTRIBUTING; MuPDF submodule at a pinned tag with `mupdf-config.h`; solution with all module projects; x64 and ARM64 builds; GitHub Actions CI | A clean clone builds both architectures in CI with one command |
-| **M1 Engine core** | Bridge, runtime and locks (4.3), error bridge (4.4), `DocumentActor`, display list cache, `RenderPool`, cancel tokens, `recto-cli render`; thread-safety tests (4.11); fuzz target for open and render | All 4.11 tests pass under ASan; `recto-cli` renders the corpus with no crashes; fuzzer runs 1 hour clean |
-| **M2 Viewer** | WinUI shell, tabs, `SwapChainPanel` presentation thread, tiles, scroll, zoom, rotate, thumbnails, outline, links, password prompt, recent files | Targets in section 8 met on the reference machine |
-| **M3 Text** | Text selection, copy, find with highlight and next/previous, UI Automation text provider | Search finds every hit in the corpus text set |
-| **M4 Conversions A** | PDF to images, images to PDF, PDF to text, merge, split, page reorder/rotate/delete, encrypt/decrypt, job queue UI | Each conversion round-trips the corpus with no errors |
-| **M5 Conversions B** | PDF to DOCX, Office to PDF (both paths) | DOCX quality reviewed on 20 corpus files; Office path tested with Office present, LibreOffice only, and neither |
-| **M6 Ship** | Printing, MSIX packaging, `.pdf` file association, Store listing with AGPL terms, About dialog with source link, crash reporting, localization-ready resource files | Store certification passes |
+| --------- | ----- | --------- |
+| **M0: Repository & Build** | Git repo, `LICENSE` (`GPL-3.0-or-later`), `NOTICE.md`, `CLA.md`, `Recto.sln` (`recto-pdf`, `recto-core`, `recto-services`, `Recto`, `recto-cli`, `recto-tests`, `recto-fuzz`), GoogleTest + initial test corpus, GitHub Actions CI building `x64` and `ARM64` + ASan job, trademark check and Store name reservation. | A clean clone builds `x64` and `ARM64` in one command and CI is green. |
+| **M1: Engine Core (`recto-pdf` & `recto-core`)** | `recto-pdf` lexer, XRef tables/streams, damaged-file recovery, stream filters, CNG `bcrypt.dll` RC4/AES-128/AES-256 decryption, page tree, content-stream interpreter, DirectWrite font loader, `DisplayList` and `PageText` builder; `DocumentActor`, `RenderPool`, `TileScheduler` with cancellation; `recto-cli info\|render\|text\|bench\|stress`; initial `fuzz_open` and `fuzz_render` targets. | All three tests in the section 4.9 Thread-Safety Verification Battery pass under ASan, and `fuzz_open` runs 1 hour clean on the seed corpus. |
+| **M2: Viewer** | `ShellPage` with title-bar tabs (`TabView`), `RectoColors.xaml`, all three layout presets (Focus, Classic, Reading room), `DocumentView` (`SwapChainPanel` + presentation thread + tile cache + stretched-tile zoom + continuous/single/two-page layouts + rotation + dark page modes), Home with Recent files and remembered reading position, Pages (thumbnails) & Outline panels, Info panel, Command box (`Ctrl+K`), Settings (`design/SPEC.md` section 9.7), password & error dialogs, link prompt dialog, drag-and-drop & file activation. | Can open, read, zoom, rotate, and switch presets on a 500-page PDF in light, dark, and high-contrast themes at the performance targets in section 8. |
+| **M3: Text, OCR & Accessibility** | `PageText` integration, text selection + floating selection toolbar + context menu, `Ctrl+F` find card (and Reading room Search inspector tab) with highlights and result list, built-in `Windows.Media.Ocr` pipeline for scanned pages (live viewer OCR + searchable-PDF export), UI Automation `ITextProvider` for page text, full keyboard navigation audit (`design/SPEC.md` section 10) and screen-reader announcements. | Search finds every occurrence across a multi-hundred-page PDF without blocking scrolling; scanned pages become selectable and searchable via built-in OCR; Narrator can read page text; every toolbar/menu command is reachable from `Ctrl+K`. |
+| **M4: Conversions A & Organize** | `JobQueue` + bottom-right queue card + Windows toast / in-app toast notifications; Convert 3-step flow (`design/SPEC.md` section 9.5) for PDF <-> Images, PDF -> Text, Searchable PDF (OCR), One combined PDF, Split files, Protected PDF (`AES-256`), Unlocked PDF; Organize page (`design/SPEC.md` section 9.6) with Combine, Split, and Reorder modes, floating selection bar, undo, and "Save your changes first?" / "Replace the original?" dialogs. | Each conversion and organize operation round-trips the test corpus with no errors; cancelling a job mid-way leaves no partial output files. |
+| **M5: Conversions B (Word & Office)** | Native C++20 `DocxWriter` (`PDF -> Word .docx`) with paragraph/heading/column/table reconstruction and quality review across a 20-document corpus; built-in C++20 OpenXML (`.docx`, `.xlsx`, `.pptx`) and `.rtf` `Office -> PDF` engine plus optional Microsoft Office COM (`AutomationSecurity = ForceDisable`) and LibreOffice headless adapters. | 20-document PDF -> Word review meets the quality bar; `.docx`, `.xlsx`, `.pptx` and `.rtf` convert cleanly to PDF out of the box via the built-in engine and via Office COM when installed, with a macro-bearing test `.docm` verified not to execute its macro. |
+| **M6: Polish, Printing, Store Release** | Printing (`Ctrl+P` via the Windows print dialog using Direct2D print control / `PrintManagerInterop`), About screen (`design/SPEC.md` section 9.8) with full third-party notices and source link, opt-in crash dump helper, localization-ready `.resw` strings, MSIX packaging & signing for `x64` and `ARM64`, Store listing with custom `GPL-3.0-or-later` license terms. | Clean-machine MSIX install test passes on `x64` and `ARM64`, file association shows the Recto `.pdf` icon, and Microsoft Store certification passes. |
 
-Printing note: confirm in M6 which print path works in a Windows App SDK 2.x desktop app (`PrintManagerInterop` with the window handle, or Direct2D's `ID2D1PrintControl`) before designing the print UI.
+---
 
-## 8. Performance targets
+## 8. Performance Targets
 
-| Measure | Target |
-|---|---|
-| First page visible after opening a 100-page text PDF | under 300 ms |
-| Scrolling | 60 fps with no blank tiles at normal scroll speed |
-| Zoom change | Stretched preview in the same frame, sharp tiles within 150 ms |
-| Memory with one 500-page document open | under 600 MB |
-| App start to empty window | under 1 s |
+Measured in Release builds on a reference mid-range Windows 11 laptop (documented in the repo once chosen in M0, one x64 and one ARM64):
 
-The reference machine is to be chosen in M0 (one mid-range x64 laptop and one ARM64 laptop).
+| Metric | Target |
+| ------ | ------ |
+| Cold launch to interactive Home window | **< 400 ms** |
+| Open a 100-page text PDF to first visible page rendered | **< 300 ms** |
+| Scroll frame time with cached tiles | **<= 16.6 ms (60 fps)** at p95; **0 blank frames** at normal reading scroll speed |
+| Zoom change | Stretched preview in the **same frame (< 16 ms)**; sharp tiles replace within **150 ms** |
+| Working set with one 500-page PDF open (default 512 MB tile cache cap) | **< 600 MB** |
 
-## 9. Security
+---
 
-- Treat every PDF and Office file as hostile.
-- Fuzz the bridge from M1, and keep a fuzz job in CI.
-- JavaScript disabled in MuPDF (D12). Office macros disabled during conversion (5.1).
-- Links to web addresses and files ask before opening. Launch actions in PDFs are never executed.
-- After v1: move the bridge into a broker process running in an AppContainer with no file or network access, talking to the app over a shared-memory channel. The module rules in 3.1 keep this a contained change.
+## 9. Security and Untrusted Input
 
-## 10. AGPL compliance checklist
+Treat every PDF and every Office document as hostile input:
 
-- [ ] LICENSE (AGPL-3.0) at the repo root, and the license shown in the About dialog.
-- [ ] About dialog links to the exact source of the running version (tag per release).
-- [ ] NOTICE lists MuPDF and its bundled third-party libraries, Windows App SDK (MIT) and every other dependency, each with its license.
-- [ ] Every dependency checked for AGPL compatibility before it is added.
-- [ ] Partner Center listing uses Recto's own license terms (AGPL), not the Store's standard license.
-- [ ] CLA in place before the first outside pull request is merged.
-- [ ] Each release tag includes the MuPDF submodule commit, so the full corresponding source is reproducible.
+1. **No PDF JavaScript:** `recto-pdf` does not contain a JavaScript engine (`D12`). `/JS` and `/JavaScript` actions in PDF catalogs, annotations, and form fields are never executed.
+2. **Bounded parsing and decoding:** Every `recto-pdf` recursive parser, `/Prev` XRef chain, `/Form` XObject nesting, and stream decompression filter enforces explicit depth and byte caps so cyclic references and decompression bombs fail cleanly with `ErrorCode::DamagedFormat`.
+3. **No Office macros:** COM conversion sets `AutomationSecurity = msoAutomationSecurityForceDisable`. Built-in OpenXML conversion ignores `vbaProject.bin` macro streams completely.
+4. **No silent external actions:** Clicking a web or file link in a PDF opens the `Open this link?` confirmation dialog (`design/SPEC.md` section 9.9) showing the full URL in monospace unless the user explicitly turns off "Ask before opening links" in Settings. PDF `Launch` actions (`/S /Launch`) are **never** executed, even if that setting is off.
+5. **Safe subprocess execution:** When invoking `soffice.exe`, use `CreateProcessW` with an explicit application path and argument formatting, never `cmd.exe /c` or `system()`.
+6. **Fuzzing:** `fuzz_open`, `fuzz_filters`, `fuzz_render`, and `fuzz_text` run under ASan + libFuzzer; any crash becomes a regression test in `tests/corpus/broken/`.
+7. **Post-v1 sandboxing path (D13):** Because `recto-pdf` is a pure C++20 library with no UI dependencies, a post-v1 release can move `recto-pdf` into a restricted AppContainer worker process (`lpacNoigher` / no network / no filesystem access, fed file handles via broker IPC) without touching `src/app`.
 
-## 11. Open items
+---
 
-| Item | Needed by |
-|---|---|
-| Trademark search for "Recto" (USPTO, EUIPO) and Store name reservation | M0 |
-| MuPDF release tag to pin: chosen 1.28.5 (`8ad45e92`), pinned 2026-10-13 in D00 T01 §2 | M0 |
-| Reference machines for section 8 | M0 |
-| Print API choice | M6 |
-| Whether PDF to DOCX needs Recto's own layout work after the M5 review | M5 |
+## 10. `GPL-3.0-or-later` and Third-Party Compliance Checklist
 
-## Sources
+Must all be true before the M6 Store submission:
 
-- [Windows App SDK release channels](https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/release-channels)
-- [Windows App SDK 2.0 release notes](https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/release-notes/windows-app-sdk-2-0)
-- MuPDF documentation on multi-threading and the `multi-threaded.c` example in the MuPDF source tree (`docs/examples/`)
+- [ ] Root `LICENSE` is the unmodified `GPL-3.0` text; `About` (`design/SPEC.md` section 9.8) displays "GNU General Public License, version 3 or later" and opens the license text.
+- [ ] `About -> View source` links to the public GitHub repository at the exact git tag corresponding to the shipped MSIX version (`vX.Y.Z`).
+- [ ] `NOTICE.md` and `About -> Built with` list every shipped component and its license (`recto-pdf` under `GPL-3.0-or-later`, Windows App SDK under MIT, Newsreader wordmark outlines under SIL OFL 1.1).
+- [ ] Every linked library is verified compatible with `GPL-3.0-or-later` (no proprietary or GPL-incompatible static libraries).
+- [ ] Microsoft Store submission provides Recto's own `GPL-3.0-or-later` license terms in Partner Center rather than the default Microsoft Store Standard Application License Terms (which conflict with GPLv3 section 7).
+- [ ] `CLA.md` is in the repo before any external pull request is merged.
+
+---
+
+## 11. Open Items to Resolve During Implementation
+
+1. **Trademark & Store name reservation** for "Recto" (M0, owner action in `D99 T01 §1` and `§3`).
+2. **Reference benchmark machines** (one x64, one ARM64) recorded in `docs/reference-machines.md` for section 8 measurements (`D99 T01 §4`, `D00 T01 §5`).
+3. **20-document PDF -> Word test corpus** assembled before M5 (`D04 T03 §2`) to evaluate `DocxWriter` layout and table reconstruction quality.
+4. **WinUI 3 printing API verification** at the start of M6 (`D07 T01 §1`: confirm `PrintManagerInterop::GetForWindow` + `ID2D1PrintControl` vs WinRT print document source behavior on Windows App SDK 2.4.0).

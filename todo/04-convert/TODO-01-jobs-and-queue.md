@@ -9,9 +9,9 @@ track: M4
 
 # TODO-01 -- Conversion Jobs and the Queue
 
-> **Goal:** Every conversion in Recto runs the same way: an isolated job on its own thread with its own document instance, progress and cancellation through its cookie, at most two at once, visible in the SPEC queue card with honest states, and completion announced by toast or Windows notification. The individual converters (T02 to T04) plug into this frame and write nothing else.
+> **Goal:** Every conversion in Recto runs the same way: an isolated job on its own thread with its own `recto::pdf::Document` instance, progress and cancellation through its `CancelToken`, at most two at once, visible in the SPEC queue card with honest states, and completion announced by toast or Windows notification. The individual converters (T02 to T04) plug into this frame and write nothing else.
 
-> **Current state:** Measured 2026-10-13. No code exists. The isolation contract is foundation plan 4.9 (a conversion never shares the viewer's document; progress via `fz_cookie` posted with `DispatcherQueue::TryEnqueue`), the writer pattern is plan section 5, and the surfaces are SPEC 9.5 (three-step Convert page, queue card states running, waiting, done, failed with "Enter password") and 9.9 (finished-conversion notification and toast), boards `D-Convert.png` and `explorations/A-Convert.png`, `A-Dialogs.png`, `B-Dialogs.png`. Shutdown joins jobs at their registered point (D01 T02 §4).
+> **Current state:** Measured 2026-10-14. No code exists. The isolation contract is foundation plan 4.9 (a conversion never shares the viewer's document; progress via `CancelToken` posted with `DispatcherQueue::TryEnqueue`), the writer pattern is plan section 5, and the surfaces are SPEC 9.5 (three-step Convert page, queue card states running, waiting, done, failed with "Enter password") and 9.9 (finished-conversion notification and toast), boards `D-Convert.png` and `explorations/A-Convert.png`, `A-Dialogs.png`, `B-Dialogs.png`. Shutdown joins jobs at their registered point (D01 T02 §4).
 
 ## Inputs
 
@@ -19,6 +19,8 @@ track: M4
 - `design/SPEC.md` sections 9.5, 9.9, 11 (announcements twin via D03 T02 §3's sink).
 - -> XREF: D05 T02 §4 -- Organize saves run as jobs on this frame (a page-operation save is a conversion with a progress and a failure mode); the job contract below is what that section consumes.
 - -> XREF: D04 T02 §1 -- the first real converters register against §1's contract and re-prove its isolation with a live writer.
+- -> XREF: D04 T03 §1 -- the native `DocxWriter` registers the Word document card and step 3 options against §2's converter-card registry.
+- -> XREF: D04 T04 §1 -- the `Office -> PDF` converters register the PDF from Office card and `NeedsConverter` recovery path against §1 and §2 here.
 
 ## Outcome
 
@@ -40,7 +42,7 @@ track: M4
 
 ## 1. ConversionJob runtime and job contract
 
-Plan 4.9 as an enforceable contract: a job type registers a factory producing a `ConversionJob` (inputs, options struct, run function); the runtime runs at most two concurrently, each on its own thread with a fresh context clone and its own opened documents, exposing progress (cookie-polled, throttled to the UI), cancel, and a terminal result (outputs written, or an error with the engine message and a recovery kind: none, needs-password, needs-converter). Output writes follow plan section 5's rule: temp file in the destination folder, then replace; a cancelled or failed job removes its temp files and creates nothing.
+Plan 4.9 as an enforceable contract: a job type registers a factory producing a `ConversionJob` (inputs, options struct, run function); the runtime runs at most two concurrently, each on its own thread with its own opened `recto::pdf::Document` instances, exposing progress (`CancelToken`-polled, throttled to the UI), cancel, and a terminal result (outputs written, or an error with the engine message and a recovery kind: none, needs-password, needs-converter). Output writes follow plan section 5's rule: temp file in the destination folder, then replace; a cancelled or failed job removes its temp files and creates nothing.
 
 **Phase:** 4
 **Needs:** windows-host
@@ -48,7 +50,7 @@ Plan 4.9 as an enforceable contract: a job type registers a factory producing a 
 
 **Build order:**
 
-1. Write `src/services/conversion.cpp`: job registry, the two-at-once runner with FIFO waiting, per-job clone lifecycle joined into `Runtime` shutdown, cookie progress polling marshalled to the UI. Done when: a test job type (page-count copy through the writer pattern) runs two-up over corpus files while a viewer document of the same file stays responsive and unaffected (battery row 4 at services level).
+1. Write `src/services/conversion.cpp`: job registry, the two-at-once runner with FIFO waiting, per-job lifecycle joined into `Runtime` shutdown, `CancelToken` progress polling marshalled to the UI. Done when: a test job type (page-count copy through the writer pattern) runs two-up over corpus files while a viewer document of the same file stays responsive and unaffected (battery row 4 at services level).
 2. Result and recovery contract: typed outcomes including `NeedsPassword` carrying the job's inputs for resubmission and `NeedsConverter` for D04 T04 §4. Done when: the encrypted corpus file's job fails as `NeedsPassword` (not a generic error) and resubmits successfully with the password supplied.
 
 - [ ] Isolated runner with the two-at-once bound. Done when: a third submitted job demonstrably waits and starts on completion of the first. Cheaper substitute: unbounded threads per job, which reintroduces contention plan 4.9 exists to remove.

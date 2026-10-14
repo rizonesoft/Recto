@@ -33,7 +33,7 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>..\src\bridge;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\src\pdf;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <Link>
@@ -44,7 +44,7 @@
     <ClCompile Include="fuzz_smoke.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\src\bridge\recto-bridge.vcxproj">
+    <ProjectReference Include="..\src\pdf\recto-pdf.vcxproj">
       <Project>{A720FA8C-20AE-5233-98DC-FC49F525A2F8}</Project>
     </ProjectReference>
   </ItemGroup>

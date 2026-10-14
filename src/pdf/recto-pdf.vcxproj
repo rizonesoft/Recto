@@ -8,7 +8,7 @@
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{A720FA8C-20AE-5233-98DC-FC49F525A2F8}</ProjectGuid>
-    <RootNamespace>recto_bridge</RootNamespace>
+    <RootNamespace>recto_pdf</RootNamespace>
     <Keyword>Win32Proj</Keyword>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -35,19 +35,11 @@
     <ClCompile>
       <AdditionalIncludeDirectories>%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
-      <CompileAs>CompileAsC</CompileAs>
     </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="bridge.c" />
-    <ClInclude Include="recto_bridge.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="..\..\third_party\mupdf.vcxproj">
-      <Project>{B2C02BF2-76BA-5F9E-86E0-F5CA73350F33}</Project>
-      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
-      <LinkLibraryDependencies>false</LinkLibraryDependencies>
-    </ProjectReference>
+    <ClCompile Include="pdf.cpp" />
+    <ClInclude Include="recto_pdf.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

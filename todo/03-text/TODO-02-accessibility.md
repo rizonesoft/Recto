@@ -39,7 +39,7 @@ track: M3
 
 ## 1. UI Automation text provider for pages
 
-A custom `AutomationPeer` for `DocumentView` implementing the text pattern over §1 of D03 T01's `PageText`: document range, ranges by unit (character, word, line, page), selection synchronized both ways with the visual selection, text attributes where stext provides them, and scrolling a range into view through the view's geometry. The peer serves the visible document, extracting pages through the actor as ranges demand them, with the same caching the visual path uses.
+A custom `AutomationPeer` for `DocumentView` implementing the text pattern over §1 of D03 T01's `PageText`: document range, ranges by unit (character, word, line, page), selection synchronized both ways with the visual selection, text attributes where `PageText` provides them (including OCR-recognized text layers from D03 T01 §4), and scrolling a range into view through the view's geometry. The peer serves the visible document, extracting pages through the actor as ranges demand them, with the same caching the visual path uses.
 
 **Phase:** 3
 **Needs:** windows-host, display-session

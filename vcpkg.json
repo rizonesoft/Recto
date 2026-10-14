@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
   "name": "recto",
   "version-string": "0.1.0",
-  "description": "Recto test-only dependencies. Shipping code takes nothing from vcpkg (decision D14): MuPDF is the pinned submodule, everything else is the Windows SDK or NuGet.",
+  "description": "Recto test-only dependencies. Shipping code takes nothing from vcpkg (decision D14): recto-pdf and recto-core are authored in-tree in C++20 over the Windows 11 platform SDK and NuGet.",
   "dependencies": [
     "gtest"
   ]

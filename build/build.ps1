@@ -4,12 +4,10 @@
 #     cd RectoPDF
 #     .\build.cmd
 #
-# That fetches the MuPDF submodule and its nested thirdparty sources
-# (every nested submodule except MuJS, which stays uninitialized by
-# design), restores NuGet packages, installs the vcpkg manifest
-# (GoogleTest, test-only), and builds Recto.sln for x64 and ARM64 in
-# Debug and Release. Exit code 0 only when the last build also passed
-# the x64 test binaries.
+# That restores NuGet packages, installs the vcpkg manifest (GoogleTest,
+# test-only), and builds Recto.sln for x64 and ARM64 in Debug and
+# Release. Exit code 0 only when the build also passed the x64 test
+# binaries.
 #
 # Options: -Platform x64|ARM64 (default both), -Configuration
 # Debug|Release (default both), -SkipTests. Requirements: Visual Studio
@@ -34,14 +32,6 @@ $msbuild = Join-Path $vs 'MSBuild\Current\Bin\MSBuild.exe'
 if (-not $env:VCPKG_ROOT) { $env:VCPKG_ROOT = Join-Path $vs 'VC\vcpkg' }
 Write-Host "MSBuild:  $msbuild"
 Write-Host "VCPKG_ROOT: $env:VCPKG_ROOT"
-
-git submodule update --init
-if ($LASTEXITCODE -ne 0) { throw 'git submodule update --init failed' }
-if (-not (Test-Path 'third_party\mupdf\thirdparty\freetype\include\freetype\freetype.h')) {
-    # Never --recursive: it would initialize MuJS (see build/mupdf-win32.targets).
-    git -C third_party/mupdf submodule update --init -- . ':(exclude)thirdparty/mujs'
-    if ($LASTEXITCODE -ne 0) { throw 'nested submodule init failed' }
-}
 
 foreach ($plat in $Platform) {
     foreach ($cfg in $Configuration) {

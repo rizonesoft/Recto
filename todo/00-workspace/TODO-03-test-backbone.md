@@ -3,82 +3,43 @@ schema_version: 1
 id: test-backbone
 domain: 00-workspace
 status: active
-title: "TODO-03 -- Test Backbone"
+title: "TODO-03 -- Test Backbone: GoogleTest, Corpus and ASan"
 track: M0
 ---
 
-# TODO-03 -- Test Backbone
+# TODO-03 -- Test Backbone: GoogleTest, Corpus and ASan
 
-> **Goal:** The test machinery every later domain's checkpoint runs on exists and is boring: a GoogleTest runner wired into the build, a licensed and provenanced PDF corpus, sanitizer and warning configurations, so that an engine section can say "run the suite" and mean something falsifiable.
+> **Goal:** Stand up the test runner, the redistributable test corpus with per-file license provenance, and the AddressSanitizer build job so every M1+ section can write a real failing-then-passing test in `recto-tests` and run engine code under ASan in CI.
 
-> **Current state:** Measured 2026-10-13. The only tests in the repository are the TODO tooling tests (`tests/scripts/test_todo_graph.py`, Python). No C or C++ code, solution or corpus exists. The foundation plan fixes the choices this file executes: GoogleTest via vcpkg manifest mode for test-only dependencies (D14, section 2), MSVC AddressSanitizer and libFuzzer for security testing (sections 2 and 9), the thread-safety test battery (section 4.11, owned by D01 T03 §3) and a regression corpus under `tests/corpus/` (section 3.2). This file builds the backbone; D06 writes the suites that run on it.
+> **Current state:** Measured 2026-10-14. `tests/recto-tests` exists from `D00 T01 §3` with three scaffold ABI tests; `tests/corpus/` does not exist yet, and no ASan CI job runs yet.
 
 ## Inputs
 
-- `docs/plans/2026-10-13-recto-foundation.md` sections 2 (test stack), 3.2 (`tests/`, `tests/corpus/`, `fuzz/`), 4.11 (the battery this backbone must be able to host), 9 (security testing).
-- -> XREF: D06 T01 §1 -- the golden render suite is the first real consumer of the corpus and runner built here; its fixture format requirements flow back into §2.
+- `docs/plans/2026-10-13-recto-foundation.md` sections 2 (GoogleTest via vcpkg manifest, MSVC ASan), 3.2 (`tests/recto-tests/`, `tests/corpus/`), 4.9 (thread-safety battery runs under ASan), 7 (M0 scope), 9 (fuzz crashes become regression files in `tests/corpus/broken/`), 10 (third-party license tracking).
+- -> XREF: D01 T03 §2 -- the fuzz targets use `tests/corpus/seeds/` and promote crashes into `tests/corpus/broken/` under the provenance rule established in §2 here.
+- -> XREF: D06 T01 §1 -- the golden render, text expectation and conversion round-trip suites in D06 T01 consume the corpus folders and helper APIs created here.
 
 ## Outcome
 
-- `recto-tests` runs locally and in CI with one command, filters by suite name, and fails the build on a red test.
-- `tests/corpus/` holds a small, licensed starter corpus with a provenance record per file, and the rules for adding to it are written down.
-- An AddressSanitizer configuration builds and runs the suite, ready for the engine battery in D01.
+- `recto-tests` has shared fixture helpers (corpus path resolution, temporary directory RAII with clean teardown, pixel buffer comparison, and `PdfResult` assertion macros) ready for M1 to M5 tests.
+- `tests/corpus/` holds a small, redistributable set of real PDFs (1-page text, multi-page two-column with outline and links, rotated pages, image-bearing page, scanned image-only page for OCR, AES-256 encrypted PDF with a known password, and intentionally malformed files in `broken/`) with `tests/corpus/PROVENANCE.md` recording the license and origin of every file.
+- An AddressSanitizer build configuration (`/fsanitize=address`) compiles `recto-pdf`, `recto-core`, `recto-services` and `recto-tests` and runs as a dedicated CI job on every push.
 
-**Adjacency:** list=not-applicable (test discovery is the runner's own listing); document=not-applicable (no user-carried output); settings=applicable @ D00 T03 §3; reporting=applicable @ D00 T03 §1; notifications=not-applicable (CI status is GitHub's surface); permissions=not-applicable (no roles in a test harness); audit=applicable @ D00 T03 §2; exchange=not-applicable (no user data moves); reverse=not-applicable (tests create nothing to undo)
+**Adjacency:** all=not-applicable (test runner infrastructure, fixtures and sanitizer configuration; no user-facing surfaces or product data)
 
-**Adjacency rationale:** Settings (the sanitizer and warning configurations) and reporting (test results a stamp can quote) are the backbone's real surfaces. Audit is the corpus provenance record: an unlicensed or unprovenanced PDF in the corpus is a legal defect in an AGPL repository, so every file carries its source. The rest belong to the product domains.
+**Adjacency rationale:** The corpus files are test inputs stored in git, not user documents. Provenance is tracked in `tests/corpus/PROVENANCE.md` and audited by a test in §2 so no unlicensed PDF can slip into the repository.
 
 ## Implementation Order
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | GoogleTest runner wired into build and CI | D00 T01 §3 | [ ] |
-| 2 | §2 | Corpus layout, provenance and starter set | §1 | [ ] |
-| 3 | §3 | Sanitizer and warning configurations | §1 | [ ] |
+| 1 | §1 | GoogleTest harness and test fixture utilities | D00 T01 §3 | [ ] |
+| 2 | §2 | Redistributable test corpus with provenance check | §1 | [ ] |
+| 3 | §3 | AddressSanitizer build and CI job | §1, D00 T01 §4 | [ ] |
 
-## 1. GoogleTest runner wired into build and CI
+## 1. GoogleTest harness and test fixture utilities
 
-D14 keeps vcpkg for test-only dependencies so no shipping binary inherits a test framework. The runner must support the section workflow's habit: filtered runs while iterating (`--gtest_filter`), full runs at file closeout, machine-readable results a stamp can quote.
-
-**Phase:** 0
-**Needs:** windows-host
-**Surface:** no
-
-**Build order:**
-
-1. Fill `vcpkg.json` (manifest mode, GoogleTest pinned) and wire `recto-tests` to it from the D00 T01 §3 scaffold, with test discovery by suite prefix (`Bridge.*`, `Actor.*`, and so on as domains land). Done when: `recto-tests --gtest_list_tests` enumerates the starter suites.
-2. Add starter suites that prove the harness can fail: one passing arithmetic-free smoke test per project boundary (bridge link, core link, services link) plus one deliberately failing test behind a flag, removed after proving the failure path. Done when: a failing test turns the local run and the CI job red with the test named.
-3. Wire the full run into `.github/workflows/build.yml` (D00 T01 §4) for x64 and ARM64 with the XML or JSON results uploaded as artifacts. Done when: a stamp can quote `recto-tests` counts from the CI artifact.
-
-- [ ] `vcpkg.json` plus `recto-tests` discovery and filtering. Done when: `--gtest_filter` runs exactly the named suite. Cheaper substitute: a custom assert main that cannot filter or report counts.
-- [ ] Failure path proven locally and in CI, then the planted failure removed. Done when: the red run and the following green run are both in CI history.
-- [ ] Commit: `test: GoogleTest backbone via vcpkg manifest`
-
-**Test checkpoint:** `recto-tests` exits 0 with the starter suites green on both architectures (quote counts), and exits non-zero naming the test when one is forced to fail.
-
-## 2. Corpus layout, provenance and starter set
-
-Every engine claim in this plan is measured against real PDFs: rendering goldens, the search text set, conversion round-trips, fuzz seeds. The corpus is therefore a legal and a technical artifact: each file needs a source and a license compatible with redistribution in an AGPL repository, recorded where the file lives.
-
-**Phase:** 0
-**Needs:** none
-**Surface:** no
-
-**Build order:**
-
-1. Create `tests/corpus/` layout by purpose (`render/`, `text/`, `convert/`, `broken/`, `seeds/`) and `tests/corpus/README.md` stating the provenance rule: every file is self-generated, public domain, or under a named license recorded beside it. Done when: a contributor adding a file knows exactly what record it needs.
-2. Generate the starter set with Recto-owned tooling where possible (scripted PDF generation checked in beside the outputs): multi-page text, rotated pages, image pages, an encrypted file with a known password, an outlined file, a damaged file, a two-column file for later DOCX review. Done when: each purpose folder holds at least the files its first consuming section names.
-3. Record provenance per file in `tests/corpus/PROVENANCE.md` (file, generator or source, license, date). Done when: every corpus file has a row and D06 T01 §1 can consume the render set without a license question.
-
-- [ ] Corpus layout and provenance rules in `tests/corpus/README.md`. Done when: the rule would refuse an anonymous PDF dropped in without a record.
-- [ ] Starter corpus generated and provenanced. Done when: `recto-cli` (D01 T03 §1) will have a file for every verb on day one. Cheaper substitute: PDFs copied from the web with unknown licensing.
-- [ ] Commit: `test: corpus layout with provenance and starter set`
-
-**Test checkpoint:** every file under `tests/corpus/` appears in `PROVENANCE.md` (a count comparison in the commit body), and the starter set opens or refuses exactly as its folder promises once D01 T03 §1 exists (recorded then if the CLI lands later).
-
-## 3. Sanitizer and warning configurations
-
-The engine's thread-safety and hostile-input claims are only as good as the configurations that check them. This section lands the MSVC AddressSanitizer solution configuration and the warnings-as-errors bar once, so later sections inherit them instead of reinventing flags per project.
+Flesh out `tests/recto-tests` beyond the §3 smoke test: add `tests/recto-tests/test_support.h` and `.cpp` providing corpus path lookup (`recto::test::corpus_path("render/simple.pdf")` resolving from the binary location or `RECTO_CORPUS_DIR`), a `TempDir` RAII helper that creates a unique folder under the system temp path and removes it on scope exit, and a deterministic byte-and-pixel comparison helper that reports the first differing coordinate.
 
 **Phase:** 0
 **Needs:** windows-host
@@ -86,18 +47,54 @@ The engine's thread-safety and hostile-input claims are only as good as the conf
 
 **Build order:**
 
-1. Add solution configurations for ASan (Debug+ASan, x64 first) covering `recto-bridge`, `recto-core`, `recto-tests` and `recto-fuzz`, with the ASan runtime deployment the test runner needs. Done when: the §1 starter suites run green under ASan and a planted heap overflow in a scratch test is reported with a stack.
-2. Set the warning bar in `Directory.Build.props`: `/W4` (or the scaffold's chosen level), warnings as errors, static analysis where MSBuild offers it, per-language (`/TC` bridge kept C-clean). Done when: a new warning fails the local build identically to CI.
-3. Document how a section runs its ASan pass in `CONTRIBUTING.md`. Done when: D01 T03 §3 can cite the command instead of inventing one.
+1. Implement `test_support.h` and `test_support.cpp` in `tests/recto-tests/` with `corpus_path`, `TempDir` (using `std::filesystem`, long-path safe `\\?\` handling where needed), and `expect_rgba_equal(actual, expected, width, height, stride)`. Done when: unit tests in `tests/recto-tests/support_tests.cpp` verify that `TempDir` cleans up its directory on destruction and that `expect_rgba_equal` catches a planted single-channel difference at `(x, y)`.
+2. Verify `--gtest_filter` and XML output (`--gtest_output=xml:...`) work cleanly from `build/build.ps1`. Done when: `recto-tests.exe --gtest_filter=Support.*` runs only the support suite and exits 0.
 
-- [ ] ASan configuration building and running the suites. Done when: the planted-overflow proof is quoted in the commit body and then removed. Cheaper substitute: ASan flags on one project only, leaving the bridge unchecked.
-- [ ] Warnings-as-errors bar shared by local and CI builds. Done when: both fail on the same planted warning.
-- [ ] Commit: `test: ASan configuration and warnings-as-errors bar`
+- [ ] `test_support.h/.cpp` and `support_tests.cpp` compiled into `recto-tests`. Done when: both positive and planted-mismatch assertions pass in `Support.*`. Cheaper substitute: hard-coding relative paths like `..\..\tests\corpus` that break depending on the working directory.
+- [ ] Commit: `test: add corpus path, TempDir and pixel comparison helpers to recto-tests`
 
-**Test checkpoint:** `recto-tests` green under ASan with the planted overflow reported before its removal (quote the ASan summary), and a planted warning fails both local and CI builds.
+**Test checkpoint:** `build\bin\x64\Release\recto-tests\recto-tests.exe --gtest_filter=Support.*` exits 0 and runs at least 3 tests covering path resolution, temp directory cleanup and pixel diff detection.
+
+## 2. Redistributable test corpus with provenance check
+
+Create `tests/corpus/` with sub-folders `render/`, `text/`, `convert/`, `broken/`, and `seeds/`, populated with small, clean PDFs generated deterministically by a checked-in script (`scripts/build-corpus.py` or a small generator) or taken from CC0 / public-domain sources, plus `tests/corpus/README.md` and `tests/corpus/PROVENANCE.md` listing every file, its SHA-256, its license, and what feature it exercises (classic XRef, compressed XRef stream, incremental update, multi-page text, outline, internal/external links, 90/180/270 rotation, embedded JPEG/PNG, scanned raster page for OCR, AES-128 and AES-256 encryption with password `"recto-test"`, and truncated/corrupt headers in `broken/`). Add a `Corpus.Provenance` test in `recto-tests` that walks `tests/corpus/` and fails if any file on disk is missing from `PROVENANCE.md` or has a mismatched SHA-256.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Author the deterministic corpus generator and populate `tests/corpus/{render,text,convert,broken,seeds}/` along with `tests/corpus/README.md` and `tests/corpus/PROVENANCE.md`. Keep total corpus size under 5 MB. Done when: every category above has at least one representative file and `PROVENANCE.md` lists the SHA-256 and license of each.
+2. Add `Corpus.Provenance` in `tests/recto-tests/corpus_tests.cpp` verifying that the set of files under `tests/corpus/` (excluding `README.md` and `PROVENANCE.md`) matches the table in `PROVENANCE.md` 1-for-1 by path and SHA-256. Done when: dropping an unlisted dummy file into `tests/corpus/render/` fails `Corpus.Provenance` with the unlisted path named, and removing it restores green.
+
+- [ ] `tests/corpus/` populated (`render/`, `text/`, `convert/`, `broken/`, `seeds/`) with `README.md` and `PROVENANCE.md`. Done when: total size is under 5 MB and every file has a license and SHA-256 entry. Cheaper substitute: committing random PDFs scraped from the web without license provenance, which violates `GPL-3.0-or-later` distribution rules.
+- [ ] `Corpus.Provenance` test enforces 1-for-1 coverage and SHA-256 match. Done when: planted-unlisted-file failure is demonstrated in review notes and the clean tree passes.
+- [ ] Commit: `test: seed redistributable PDF test corpus with automated provenance check`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Corpus.Provenance` exits 0 and reports the verified file count.
+
+## 3. AddressSanitizer build and CI job
+
+Wire `/fsanitize=address` through `Directory.Build.props` when `/p:EnableASAN=true` is passed on `x64` (`recto-pdf`, `recto-core`, `recto-services`, `recto-cli`, `recto-tests`), ensuring the ASan runtime DLL (`clang_rt.asan_dynamic-x86_64.dll`) is on `PATH` or copied beside `recto-tests.exe`, and add an `asan` job to `.github/workflows/build.yml` that builds and runs `recto-tests` under ASan on every push.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Configure `EnableASAN` in `Directory.Build.props` / `Directory.Build.targets` (disabling incremental linking `/INCREMENTAL:NO` and debug edit-and-continue when ASan is active, per MSVC requirements) and add `-EnableASAN` support to `build/build.ps1`. Done when: `powershell -File build/build.ps1 -Platform x64 -Configuration Release -EnableASAN` compiles all engine and test targets and runs `recto-tests.exe` cleanly.
+2. Prove ASan is actually instrumented in `recto-tests.exe` (for example by checking `dumpbin /dependents recto-tests.exe` for `clang_rt.asan_dynamic-x86_64.dll` and temporarily running a death test or planted out-of-bounds read during local verification), then add the `asan` job to `.github/workflows/build.yml`. Done when: CI runs the `asan` job green on `main`.
+
+- [ ] `/p:EnableASAN=true` builds `recto-pdf`, `recto-core`, `recto-services`, `recto-cli` and `recto-tests` cleanly and runs `recto-tests` under ASan. Done when: `dumpbin /dependents` confirms the ASan runtime is linked and `recto-tests` exits 0. Cheaper substitute: setting the MSBuild property without passing `/fsanitize=address` to `ClCompile`, which passes tests without sanitizing anything.
+- [ ] `.github/workflows/build.yml` runs the ASan job on every push. Done when: `gh run view` shows the `asan` job green.
+- [ ] Commit: `ci: enable AddressSanitizer build and test job for engine and services`
+
+**Test checkpoint:** `powershell -File build/build.ps1 -Platform x64 -Configuration Release -EnableASAN` exits 0, `dumpbin /dependents` on `recto-tests.exe` lists `clang_rt.asan_dynamic-x86_64.dll`, and the CI `asan` job is green.
 
 ## Verification
 
-- A new engine section can name its suite, filter and corpus files without inventing harness machinery.
-- `python scripts/todo-graph.py validate` passes; the corpus provenance count matches the corpus file count.
-- CI runs the suites on both architectures (D00 T01 §4) and the ASan pass is one documented command away.
+- `recto-tests` runs both normal and ASan configurations green locally and in CI.
+- `Corpus.Provenance` verifies every file under `tests/corpus/`.
+- `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` exit 0.

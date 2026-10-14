@@ -3,9 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "mupdf", "third_party\mupdf.vcxproj", "{B2C02BF2-76BA-5F9E-86E0-F5CA73350F33}"
-EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "recto-bridge", "src\bridge\recto-bridge.vcxproj", "{A720FA8C-20AE-5233-98DC-FC49F525A2F8}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "recto-pdf", "src\pdf\recto-pdf.vcxproj", "{A720FA8C-20AE-5233-98DC-FC49F525A2F8}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "recto-core", "src\core\recto-core.vcxproj", "{CE387B87-7B19-52DC-8E62-D0F8A0F6203D}"
 EndProject
@@ -27,14 +25,6 @@ Global
 		Release|x64 = Release|x64
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{B2C02BF2-76BA-5F9E-86E0-F5CA73350F33}.Debug|ARM64.ActiveCfg = Debug|ARM64
-		{B2C02BF2-76BA-5F9E-86E0-F5CA73350F33}.Debug|ARM64.Build.0 = Debug|ARM64
-		{B2C02BF2-76BA-5F9E-86E0-F5CA73350F33}.Debug|x64.ActiveCfg = Debug|x64
-		{B2C02BF2-76BA-5F9E-86E0-F5CA73350F33}.Debug|x64.Build.0 = Debug|x64
-		{B2C02BF2-76BA-5F9E-86E0-F5CA73350F33}.Release|ARM64.ActiveCfg = Release|ARM64
-		{B2C02BF2-76BA-5F9E-86E0-F5CA73350F33}.Release|ARM64.Build.0 = Release|ARM64
-		{B2C02BF2-76BA-5F9E-86E0-F5CA73350F33}.Release|x64.ActiveCfg = Release|x64
-		{B2C02BF2-76BA-5F9E-86E0-F5CA73350F33}.Release|x64.Build.0 = Release|x64
 		{A720FA8C-20AE-5233-98DC-FC49F525A2F8}.Debug|ARM64.ActiveCfg = Debug|ARM64
 		{A720FA8C-20AE-5233-98DC-FC49F525A2F8}.Debug|ARM64.Build.0 = Debug|ARM64
 		{A720FA8C-20AE-5233-98DC-FC49F525A2F8}.Debug|x64.ActiveCfg = Debug|x64

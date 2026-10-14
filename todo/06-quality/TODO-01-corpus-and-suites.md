@@ -11,7 +11,7 @@ track: M1
 
 > **Goal:** The evidence suites the milestones close on: golden render comparisons for the engine and viewer, exact text and find tables for the text corpus, conversion round-trips for every M4 and M5 converter, and the performance harness that measures foundation plan section 8's targets on the named reference machines.
 
-> **Current state:** Measured 2026-10-13. No suites exist; D00 T03 will provide the runner, corpus folders (`render/`, `text/`, `convert/`, `broken/`, `seeds/`) with provenance, and the ASan configuration. Individual sections already name their own fixtures (single-threaded reference renders, extraction strings, hit tables); this file turns those into maintained suites with refresh rules, so a later optimization or MuPDF pin bump is judged against recorded expectations, not memory.
+> **Current state:** Measured 2026-10-14. No suites exist; D00 T03 will provide the runner, corpus folders (`render/`, `text/`, `convert/`, `broken/`, `seeds/`) with provenance, and the ASan configuration. Individual sections already name their own fixtures (single-threaded reference renders, extraction strings, hit tables, OCR scanned pages); this file turns those into maintained suites with refresh rules, so a later optimization or `recto-pdf` rendering change is judged against recorded expectations, not memory.
 
 ## Inputs
 
@@ -22,8 +22,8 @@ track: M1
 
 ## Outcome
 
-- A MuPDF pin bump or an engine change produces a named, reviewable golden diff, or silence that means identical output.
-- Find and extraction correctness is a table that either matches or refuses, per corpus file.
+- An engine rendering change produces a named, reviewable golden diff, or silence that means identical output.
+- Find, extraction, and OCR correctness is a table that either matches or refuses, per corpus file.
 - Performance targets are numbers measured on named machines by a repeatable harness, quoted identically by every section that claims them.
 
 **Adjacency:** all=not-applicable (test suites over other files behavior; their lists are the corpus folders and their reports are test output owned by the runner in D00 T03 §1)
@@ -41,7 +41,7 @@ track: M1
 
 ## 1. Golden render comparison suite
 
-Deterministic rendering made contractual: every `tests/corpus/render/` file renders at stated zooms and rotations through `recto-cli`, compared pixel-exactly against committed goldens (the plan's battery already proves worker-count independence; this suite pins the pixels themselves). Goldens refresh only through a named command that rewrites them, and a refresh is its own commit whose body states why pixels legitimately changed (pin bump, stated rendering fix), reviewed like code.
+Deterministic rendering made contractual: every `tests/corpus/render/` file renders at stated zooms and rotations through `recto-cli`, compared pixel-exactly against committed goldens (the plan's battery already proves worker-count independence; this suite pins the pixels themselves). Goldens refresh only through a named command that rewrites them, and a refresh is its own commit whose body states why pixels legitimately changed (stated `recto-pdf` rendering fix), reviewed like code.
 
 **Phase:** 1
 **Needs:** windows-host
@@ -60,7 +60,7 @@ Deterministic rendering made contractual: every `tests/corpus/render/` file rend
 
 ## 2. Text and find verification tables
 
-M3's done-when made durable: per text-corpus file, the expected extracted text (D03 T01 §1's fixtures), plus find tables (query, options, expected total, expected per-page counts, first-hit context) exercised through the engine and, at services level, through the find walk order. Tables live as data files beside the corpus so adding a case is adding rows, and the unscanned-versus-scanned distinction is a first-class expectation.
+M3's done-when made durable: per text-corpus file, the expected extracted text (D03 T01 §1's fixtures), plus find tables (query, options, expected total, expected per-page counts, first-hit context) exercised through the engine and, at services level, through the find walk order. Tables live as data files beside the corpus so adding a case is adding rows, and the unscanned-versus-scanned (pre- and post-OCR) distinction is a first-class expectation.
 
 **Phase:** 3
 **Needs:** windows-host
@@ -79,7 +79,7 @@ M3's done-when made durable: per text-corpus file, the expected extracted text (
 
 ## 3. Conversion round-trip suite
 
-Plan section 7's M4 rule (each conversion round-trips the corpus with no errors) and M5's verification halves, as one suite over `tests/corpus/convert/`: every converter (images, images-to-PDF, text, merge, split, reorder set, encrypt and decrypt, DOCX validity, Office paths where the host provides them) runs its applicable files, and outputs verify by the strongest cheap oracle per kind (render equality, info equality, byte fixture, unzip-and-parse, permission readback). Host-dependent legs (Office, LibreOffice) skip with a named line when their converter is absent, never silently.
+Plan section 7's M4 rule (each conversion round-trips the corpus with no errors) and M5's verification halves, as one suite over `tests/corpus/convert/`: every converter (images, images-to-PDF, text, searchable-PDF OCR, merge, split, reorder set, encrypt and decrypt, native `DocxWriter` DOCX validity, built-in OpenXML/RTF `Office -> PDF`, plus optional Office COM and LibreOffice paths where the host provides them) runs its applicable files, and outputs verify by the strongest cheap oracle per kind (render equality, info equality, byte fixture, unzip-and-parse, permission readback). Optional external-converter legs (Office COM, LibreOffice) skip with a named line when absent, never silently, while the built-in OpenXML/RTF leg always runs on every host.
 
 **Phase:** 4
 **Needs:** windows-host
@@ -88,10 +88,10 @@ Plan section 7's M4 rule (each conversion round-trips the corpus with no errors)
 **Build order:**
 
 1. Write `RoundTrips.*` driving the services-level converters (not the UI) over the convert corpus with per-converter oracles. Done when: the suite enumerates converter-by-file applicability from data, so a new corpus file joins every applicable leg automatically.
-2. Wire the host-dependent legs with explicit skip lines naming the missing converter, and run the full matrix on hosts that have them (results recorded in D04 T04 §4's triptych). Done when: CI output states which legs ran and which skipped, per run.
+2. Wire the optional external-converter legs with explicit skip lines naming the missing external converter while always running the built-in OpenXML/RTF engine, and run the full matrix on hosts that have Office or LibreOffice (results recorded in D04 T04 §4's comparison). Done when: CI output states which legs ran and which skipped, per run.
 
 - [ ] Round-trip matrix over the convert corpus. Done when: a converter regression (planted wrong page order in split) fails exactly its leg. Cheaper substitute: asserting only that outputs exist and are non-empty.
-- [ ] Explicit host-dependent skips. Done when: a no-Office CI run prints the skip lines the section specifies.
+- [ ] Explicit external-converter skips with built-in OpenXML always active. Done when: a no-Office CI run prints the skip lines for external converters while passing the built-in OpenXML leg.
 - [ ] Commit: `test: conversion round-trip suite over the convert corpus`
 
 **Test checkpoint:** `recto-tests --gtest_filter=RoundTrips.*` green under ASan with the applicability matrix and skip lines quoted.

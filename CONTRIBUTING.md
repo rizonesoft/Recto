@@ -1,35 +1,16 @@
 # Contributing to Recto
 
-Recto is open source from its first public commit, under the [GNU Affero General Public License, version 3 or later](LICENSE). Contributions are welcome: code, tests, documentation and corpus files.
+Recto is built milestone by milestone from a validated TODO graph in [`todo/`](./todo/TODO-00-INDEX.md), governed by the architecture plan in [`docs/plans/2026-10-13-recto-foundation.md`](./docs/plans/2026-10-13-recto-foundation.md) and the interface specification in [`design/SPEC.md`](./design/SPEC.md).
 
-## Contributor License Agreement
+## Before you start
 
-Every contributor must agree to the [Contributor License Agreement](CLA.md) before a first contribution is merged (decision D11 in the foundation plan). It keeps future relicensing possible without hunting down every past contributor. State your agreement in your first pull request, in the form CLA.md specifies.
+1. Read [`AGENTS.md`](./AGENTS.md) for the non-negotiable architecture and interface rules (`recto-pdf` owns low-level PDF parsing and serialization, one `DocumentActor` thread per open document, immutable `DisplayList`s across threads, tokens only from `design/tokens/RectoColors.xaml`, atomic file writes).
+2. Check [`todo/implementation-plan.md`](./todo/implementation-plan.md) or run `python scripts/todo-graph.py query ready` to see what work is dependency-safe right now. Every change corresponds to a section (`DNN TNN §N`), or captures a new one first under [`todo/README.md`](./todo/README.md).
+3. Review [`CLA.md`](./CLA.md). Every pull request must include the contributor license agreement confirmation statement before it can be merged.
 
-## How work is planned
+## Validation gates
 
-All work runs through the TODO graph in [`todo/`](todo/). That tree is the execution plan, and it is machine-validated; [`todo/implementation-plan.md`](todo/implementation-plan.md) is generated from it and is never edited by hand.
-
-- Read [`todo/README.md`](todo/README.md) first: it is the format spec (section addresses, dependency graph, stamps).
-- Find ready work with `python scripts/todo-graph.py query ready`, and inspect any row with `python scripts/todo-graph.py resolve 'D00 T01 §1'`.
-- New work is filed as a section in the owning TODO file (or a new TODO file when no file owns the subject), never only as an issue or a comment in code. The `add-todo` and `create-todo` skills under [`.claude/skills/`](.claude/skills/) describe the routing and authoring workflow that maintainers use.
-- One TODO section is one logical commit, closed by an independent review and a stamp (`python scripts/todo-graph.py stamp`), which is the only way a plan row flips to `[x]`.
-
-The design's source of truth is [`design/SPEC.md`](design/SPEC.md); architecture, decisions and milestones live in [`docs/plans/2026-10-13-recto-foundation.md`](docs/plans/2026-10-13-recto-foundation.md). Working rules for humans and agents alike are in [`AGENTS.md`](AGENTS.md).
-
-## Building
-
-Requirements: Windows 11, Visual Studio 2026 with the Desktop development with C++ workload (v145 toolset and its bundled vcpkg) and the Windows 11 SDK 10.0.26100, network access for the first restore. VS 2022 cannot substitute: it ships no Windows Store ARM64 platform, so the app does not build for ARM64 there. Then, from a clean clone, one command builds everything (x64 and ARM64, Debug and Release) and runs the x64 tests:
-
-```powershell
-git clone https://github.com/rizonesoft/RectoPDF.git
-cd RectoPDF
-.\build.cmd
-```
-
-`build.cmd` fetches the MuPDF submodule and its nested thirdparty sources (all except MuJS, which stays uninitialized by design, see `build/mupdf-win32.targets`), restores the NuGet packages, installs the vcpkg manifest (GoogleTest, test-only) and builds `Recto.sln`. Narrow it with `.\build.cmd -Platform x64 -Configuration Release`. Artifacts land under `build/bin/<Platform>/<Configuration>/<Project>/`; run the tests any time with `build\bin\x64\Release\recto-tests\recto-tests.exe`. In Visual Studio, open `Recto.sln` and build as usual; the `mupdf` project is a Makefile wrapper and skips quickly when the MuPDF libraries are already built from the pinned commit and Recto config.
-
-Today you can run the plan tooling, which needs only Python 3:
+Every change to `todo/` or `scripts/` must pass the graph gates locally and in CI (`plan-gates`):
 
 ```powershell
 python scripts/todo-graph.py validate
@@ -37,7 +18,22 @@ python scripts/todo-graph.py plan --check
 python -m unittest tests.scripts.test_todo_graph
 ```
 
-## Commits
+Never edit `todo/implementation-plan.md` by hand; regenerate it with `python scripts/todo-graph.py plan --sync`.
 
-- Trunk-based `main`, concise imperative messages. Section work uses `<area>: <what now works> (<DNN TNN §N>)` with the test checkpoint evidence in the body; plan-only changes use `todo: ...`.
-- Never rewrite pushed history, never bypass hooks, and keep generated files out of hand edits: `todo/implementation-plan.md` regenerates with `python scripts/todo-graph.py plan --sync`, and everything in `resources/` regenerates with `design/tools/build_resources.py` (see [`resources/README.md`](resources/README.md)).
+## Building the solution
+
+From a clean clone, one command restores NuGet packages, installs the vcpkg manifest (`gtest`, test-only), builds every project in `Recto.sln` (`recto-pdf`, `recto-core`, `recto-services`, `Recto`, `recto-cli`, `recto-tests`, `recto-fuzz`) for x64 and ARM64 in Debug and Release, and runs the x64 test binaries:
+
+```powershell
+.\build.cmd
+```
+
+Pass `-Platform x64` or `-Configuration Release` (or `-SkipTests`) through `build.cmd` to narrow a local run; see `build/build.ps1` for the full option list.
+
+**Prerequisites:** Windows 11, Visual Studio 2026 with the Desktop development with C++ and WinUI application development workloads (v145 toolset, MSVC x64 and ARM64 compilers, Windows 11 SDK 10.0.26100, and the bundled `VC\vcpkg`), `git`, and network access on the first restore. Visual Studio 2022 cannot substitute: its MSBuild lacks the Windows Store ARM64 platform targets that the WinUI app project requires (`D00 T01 §3`).
+
+## Pull requests and commits
+
+- Branch from `main`, keep one logical section per commit, and cite the section reference (`DNN TNN §N`) in the commit body.
+- Do not include credentials, signing material or private paths in commits, logs or pull-request descriptions.
+- By submitting a pull request, you agree to the [`CLA.md`](./CLA.md) terms under `GPL-3.0-or-later`.

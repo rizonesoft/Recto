@@ -20,7 +20,7 @@ Authoring PDF structure: graft-based page operations in the engine (merge, split
 
 ## In scope
 
-- `pdf_ops` bridge and core operation lists, shared range parsing
+- `recto-pdf` `PdfWriter` and `GraftMap` (`src/pdf/graft.cpp`), `recto-core` page operation lists, and shared range parsing
 - The page grid, selection action bar, per-source and per-part colour, undo, save guard
 
 ## Out of scope

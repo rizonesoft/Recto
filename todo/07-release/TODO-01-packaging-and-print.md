@@ -63,7 +63,7 @@ First the decision, recorded with its evidence: spike both candidate paths on Wi
 
 ## 2. MSIX package, assets and association
 
-The package the Store ships: MSIX built from the app project for x64 and ARM64 (bundle or per-architecture packages as Partner Center wants), identity from the reservation (D99 T01 §3) with development identity clearly separated, capabilities audited to the minimum a document app needs, generated assets verified present at every scale the manifest references, the `.pdf` association with its file-type logos, and version numbering tied to release tags (each tag carrying the MuPDF submodule commit, plan section 10).
+The package the Store ships: MSIX built from the app project for x64 and ARM64 (bundle or per-architecture packages as Partner Center wants), identity from the reservation (D99 T01 §3) with development identity clearly separated, capabilities audited to the minimum a document app needs, generated assets verified present at every scale the manifest references, the `.pdf` association with its file-type logos, and version numbering tied to release tags (plan section 10).
 
 **Phase:** 6
 **Needs:** windows-host

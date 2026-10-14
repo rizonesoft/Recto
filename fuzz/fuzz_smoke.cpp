@@ -1,7 +1,8 @@
 // Scaffold fuzz entry point (D00 T01 section 3). The real libFuzzer
-// targets over the bridge's open and render paths land in D01 T03
-// section 2 and replace this file's plain main with the libFuzzer one.
-#include "recto_bridge.h"
+// targets over recto-pdf's open, stream-filter and render paths land in
+// D01 T03 section 2 and replace this file's plain main with the libFuzzer
+// harness.
+#include "recto_pdf.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -9,11 +10,11 @@
 
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size)
 {
-	// Nothing parses input yet; touching the bridge proves the link chain
-	// fuzz -> bridge.
+	// Nothing parses input yet; touching recto-pdf proves the link chain
+	// fuzz -> pdf.
 	(void)data;
 	(void)size;
-	(void)rc_bridge_abi_version();
+	(void)recto::pdf::abi_version();
 	return 0;
 }
 

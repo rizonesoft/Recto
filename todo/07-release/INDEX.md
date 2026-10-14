@@ -2,14 +2,14 @@
 
 > **Phase 6 (M6 Ship)**
 
-From a working app to a Store product: printing on the decided API, MSIX packaging with the audited manifest, clean-machine install proof, the About page and full AGPL compliance, and the submission that ends at certification.
+From a working app to a Store product: printing on the decided API, MSIX packaging with the audited manifest, clean-machine install proof, the About page and full GPL-3.0-or-later compliance, and the submission that ends at certification.
 
 ## TODOs
 
 | TODO | Title | Status |
 | ---- | ----- | :----: |
 | [TODO-01](./TODO-01-packaging-and-print.md) | Printing, MSIX Packaging and Install | active |
-| [TODO-02](./TODO-02-store-and-compliance.md) | About, AGPL Compliance and Store Submission | active |
+| [TODO-02](./TODO-02-store-and-compliance.md) | About, GPL-3.0-or-later Compliance and Store Submission | active |
 
 ## Completed
 

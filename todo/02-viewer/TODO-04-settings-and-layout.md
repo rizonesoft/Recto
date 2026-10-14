@@ -11,7 +11,7 @@ track: M2
 
 > **Goal:** The shell becomes the SPEC's shape-shifter: one settings store with every SPEC 9.7 group, the three layout presets (Focus, Classic, Reading room) plus honest "Custom" driven by moving shared controls between slots, theme including dark page colour, and the complete SPEC section 10 keyboard map audited end to end.
 
-> **Current state:** Measured 2026-10-13. No code exists. D02 T01 §2 will declare the slot hosts and a `LayoutSettings` placeholder; T02 and T03 build the controls that move. Everything is decided: SPEC section 8 (the five layout settings composing three presets, D17: one shell, not three), 9.7 (Settings groups and order, find-a-setting), 4 (theme and page colour), 10 (keyboard table), 11 (animations off honored), 12 (motion), with boards `D-Layout.png`, `D-Settings.png`, `D-Classic.png`, `D-ReadingRoom.png`. Settings values already consumed elsewhere: ask-before-links and page colour (D02 T02 §4), remember reading position (D02 T03 §1), tile cache size (D02 T02 §2), Office converter choice (D04 T04 §1), crash reports (D07 T02 §3).
+> **Current state:** Measured 2026-10-14. No code exists. D02 T01 §2 will declare the slot hosts and a `LayoutSettings` placeholder; T02 and T03 build the controls that move. Everything is decided: SPEC section 8 (the five layout settings composing three presets, D17: one shell, not three), 9.7 (Settings groups and order, find-a-setting), 4 (theme and page colour), 10 (keyboard table), 11 (animations off honored), 12 (motion), with boards `D-Layout.png`, `D-Settings.png`, `D-Classic.png`, `D-ReadingRoom.png`. Settings values already consumed elsewhere: ask-before-links and page colour (D02 T02 §4), remember reading position (D02 T03 §1), tile cache size (D02 T02 §2), OCR language and Office converter choice (D03 T01 §4, D04 T04 §2), crash reports (D07 T02 §3).
 
 ## Inputs
 
@@ -65,7 +65,7 @@ One store, one writer: a settings service persisting to app local data with atom
 
 ## 2. Settings page, all groups
 
-SPEC 9.7 end to end: one centred column (760 to 900 epx), groups in the SPEC order (Layout with preset cards and the five fine-tune rows, Theme, Reading, Converting, Performance and privacy, Default PDF app, About entry), group labels per SPEC section 5, and a Find a setting box filtering rows as the user types. Every row's consumer must already exist or land with its named owner: cache size (128 MB to 2 GB, default 512 MB) drives D02 T02 §2's budget, converter choice shows what was found (D04 T04 §1), crash reports default off and gate D07 T02 §3.
+SPEC 9.7 end to end: one centred column (760 to 900 epx), groups in the SPEC order (Layout with preset cards and the five fine-tune rows, Theme, Reading, Converting, Performance and privacy, Default PDF app, About entry), group labels per SPEC section 5, and a Find a setting box filtering rows as the user types. Every row's consumer must already exist or land with its named owner: cache size (128 MB to 2 GB, default 512 MB) drives D02 T02 §2's budget, OCR language and Office converter choice show built-in and detected options (D03 T01 §4, D04 T04 §2), crash reports default off and gate D07 T02 §3.
 
 **Phase:** 2
 **Needs:** windows-host, display-session
@@ -79,10 +79,10 @@ SPEC 9.7 end to end: one centred column (760 to 900 epx), groups in the SPEC ord
 **Build order:**
 
 1. Layout and Theme groups wired to §1 and §3: preset cards with wireframes, five fine-tune rows, theme selector, page colour selector. Done when: every control applies live and matches its board.
-2. Reading, Converting (converter selector showing detected installs, save-location choice), Performance and privacy (cache slider bounded 128 MB to 2 GB applying to the live texture cache, crash reports toggle default off), Default PDF app (opens the Windows Default apps page), About navigation (to D07 T02 §1's page, placeholder until then). Done when: each value has a quoted consumer behavior in the findings (cache budget changes telemetry, converter selector reflects this machine's installs).
+2. Reading, Converting (OCR language selector and Office converter selector showing built-in OpenXML plus detected Office/LibreOffice installs, save-location choice), Performance and privacy (cache slider bounded 128 MB to 2 GB applying to the live texture cache, crash reports toggle default off), Default PDF app (opens the Windows Default apps page), About navigation (to D07 T02 §1's page, placeholder until then). Done when: each value has a quoted consumer behavior in the findings (cache budget changes telemetry, converter selector reflects built-in plus this machine's installs).
 3. Find a setting: filters rows by label text across groups, empty groups collapse, Esc clears. Done when: typing "cache", "dark" and "office" each leave exactly the right rows visible in driven tests.
 
-- [ ] All SPEC 9.7 groups present and live. Done when: the surface-completeness account lists every 9.7 row working or deferred to its named owner section (converter detection depth to D04 T04 §1, About content to D07 T02 §1). Cheaper substitute that fails the checkpoint: rows that persist but nothing reads.
+- [ ] All SPEC 9.7 groups present and live. Done when: the surface-completeness account lists every 9.7 row working or deferred to its named owner section (converter detection depth to D04 T04 §2, About content to D07 T02 §1). Cheaper substitute that fails the checkpoint: rows that persist but nothing reads.
 - [ ] Find a setting filtering. Done when: a search with no matches shows the honest empty state, not a blank page.
 - [ ] Commit: `viewer: Settings page with all SPEC 9.7 groups live`
 

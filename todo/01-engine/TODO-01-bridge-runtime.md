@@ -3,106 +3,127 @@ schema_version: 1
 id: bridge-runtime
 domain: 01-engine
 status: active
-title: "TODO-01 -- MuPDF Bridge Runtime"
+title: "TODO-01 -- Native PDF Parser, Filters, Crypto and Document Model"
 frozen: true
 track: M1
 ---
 
-# TODO-01 -- MuPDF Bridge Runtime
+# TODO-01 -- Native PDF Parser, Filters, Crypto and Document Model
 
-> **Goal:** `src/bridge` exists as the only code that includes MuPDF headers: it creates the locked base context every other context clones from, turns every MuPDF error into a returned status (never a `longjmp` across C++), and exposes document open, password, outline and page information to `recto-core` in Recto's own types.
+> **Goal:** Build the parser, stream-filter, decryption and document-model half of `recto-pdf` (`src/pdf`, C++20): a binary-safe PDF 1.7 and 2.0 lexer and indirect object parser, classic XRef tables, compressed XRef streams (`PDF 1.5+`), incremental updates and damaged-file recovery, the full stream filter pipeline (`FlateDecode`, `PngPredictor`, `LZWDecode`, `ASCII85Decode`, `ASCIIHexDecode`, `RunLengthDecode`, `CCITTFaxDecode`, `DCTDecode` and `JPXDecode` via WIC), Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via Windows CNG `bcrypt.dll`), and the `pdf::Document` page-tree, metadata, outline and link model.
 
-> **Current state:** Measured 2026-10-13. No C or C++ code exists. D00 T01 §2 will pin the MuPDF submodule and `build/mupdf-config.h` (JavaScript disabled, D12); §3 creates the empty `recto-bridge` project with the right references. The contract this file implements is foundation plan sections 4.1 to 4.4: why a hand-written C bridge instead of `mupdfcpp`, the seven threading rules, the `SRWLOCK` lock table, and the `rc_status` error shape. This file is `frozen: true`: the threading contract it establishes is what every later engine section is checked against.
+> **Current state:** Measured 2026-10-14. `src/pdf/recto-pdf.vcxproj` compiles the scaffold `recto::pdf::abi_version()` entry point. No PDF parsing code exists yet; `D00 T03` will provide the GoogleTest fixtures, the redistributable test corpus, and the ASan job.
 
 ## Inputs
 
-- `docs/plans/2026-10-13-recto-foundation.md` sections 4.1 (bridge rationale), 4.2 (the seven rules), 4.3 (lock implementation, with the reference `runtime.c`), 4.4 (error handling across the C and C++ line), 3.3 (`Runtime`, `PdfError` core types).
-- MuPDF documentation on multi-threading and the `multi-threaded.c` example in the pinned submodule's `docs/examples/`.
-- -> XREF: D06 T02 §1 -- the security review that later proves the bridge's hostile-input posture (no JavaScript objects, errors contained) still holds; its findings land here if the bridge is where they belong.
+- `docs/plans/2026-10-13-recto-foundation.md` sections 1 (D3, D5, D9, D12, D14, D16), 3.1 to 3.3 (`src/pdf`, `PdfResult<T>`, `PdfError`, `ErrorCode`), 4.1 (what `recto-pdf` implements), 4.2 (thread ownership rules), 9 (security and untrusted input).
+- ISO 32000-1:2008 (PDF 1.7) and ISO 32000-2:2020 (PDF 2.0) specifications for syntax, XRef streams, filter parameters, and encryption algorithms.
+- -> XREF: D01 T02 §1 -- the content-stream interpreter and `DocumentActor` in `D01 T02` consume `pdf::Document`, decoded content streams, and page resource dictionaries produced here.
+- -> XREF: D04 T02 §1 -- `PdfWriter` in `D04 T02 §1` shares the object model, filter encoders and CNG cryptographic primitives built here.
+- -> XREF: D06 T02 §1 -- the hostile-input audit in `D06 T02 §1` verifies the recursion caps, stream decompression ceilings, and absence of JavaScript execution implemented here.
 
 ## Outcome
 
-- `rc_runtime_create` produces a base context with a full `FZ_LOCK_MAX` lock table; clones can be made from any thread and outlive nothing they should not.
-- No MuPDF error can escape the bridge as control flow: every bridge function returns `rc_status`, and `recto-core` turns a failure into `PdfError`.
-- A document can be opened, password-checked and described (page count, page sizes, outline, metadata) through Recto types alone.
+- `recto::pdf::Document::open` parses valid and incrementally updated PDF 1.0 to 2.0 documents, reconstructs damaged XRef tables via the fallback object scanner, and returns typed `PdfError` values on corrupt or truncated inputs without throwing exceptions or leaking memory.
+- Every standard PDF stream filter (`FlateDecode`, predictors, `LZWDecode`, `ASCII85Decode`, `ASCIIHexDecode`, `RunLengthDecode`, `CCITTFaxDecode` Group 3/4, `DCTDecode` JPEG, `JPXDecode` JPEG2000) decodes within enforced byte ceilings.
+- Encrypted PDFs (`RC4` 40-128 bit, `AES-128` `R=4`, `AES-256` `R=5..6`) report `ErrorCode::NeedsPassword`, authenticate user and owner passwords via Windows CNG `bcrypt.dll`, and transparently decrypt indirect strings and streams.
+- Document description (page count, page boxes and rotations, metadata, security summary, font inventory, outline tree, page link annotations) is exposed in plain C++20 structs.
 
-**Adjacency:** all=not-applicable (a C library boundary with no records, surfaces or user data of its own; its diagnostics surface is the warning and error callback wired in section 2, owned here)
+**Adjacency:** all=not-applicable (low-level C++20 PDF format parser and object model in `src/pdf`; all user surfaces live in domains 02 to 05 and 07)
 
-**Adjacency rationale:** The bridge's only user-visible adjunct is the log its MuPDF warning and error callbacks feed, which is a diagnostic trail, not an audit record over domain data. Everything a user would call a surface (lists, settings, documents, notifications) belongs to the viewer and services domains that consume this boundary.
+**Adjacency rationale:** `recto-pdf` has no UI, settings store or notification channel of its own. Its error diagnostics feed the D16 ring buffer and the viewer's "Couldn't open this file -> Copy error details" dialog owned by D02 T01 §4.
 
 ## Implementation Order
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | Locks and base context | D00 T01 §3 | [ ] |
-| 2 | §2 | Error bridge and logging callbacks | §1 | [ ] |
-| 3 | §3 | Document open and description API | §2 | [ ] |
+| 1 | §1 | `PdfResult`, error diagnostics, lexer and indirect object parser | D00 T01 §3, D00 T03 §1 | [ ] |
+| 2 | §2 | Classic XRef tables, compressed XRef streams and damaged-file recovery | §1, D00 T03 §2 | [ ] |
+| 3 | §3 | Stream filter pipeline and WIC image decoders | §2 | [ ] |
+| 4 | §4 | Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` via CNG) and document description | §3 | [ ] |
 
-## 1. Locks and base context
+## 1. `PdfResult`, error diagnostics, lexer and indirect object parser
 
-MuPDF is safe from many threads only when the base context is created with a lock table; without it, cloning is not allowed and nothing above the bridge is sound. The lock array and `fz_locks_context` are static so they outlive every context, the callbacks are plain C functions that never throw and never block on anything but the lock, and `SRWLOCK`s are correct because MuPDF never takes the same lock twice on one thread (foundation plan 4.3).
-
-**Phase:** 1
-**Needs:** windows-host
-**Surface:** no
-
-**Build order:**
-
-1. Write `src/bridge/runtime.c` and `src/bridge/recto_bridge.h`: the static lock array, `rc_lock` and `rc_unlock`, `rc_runtime_create(store_bytes)` registering document handlers inside `fz_try`, and `rc_runtime_destroy` plus clone create and drop helpers. Done when: a test clones the base from 8 threads at once, drops every clone, and destroys the base with no crash and a live-clone count of zero.
-2. Start `store_bytes` at 256 MB (`FZ_STORE_DEFAULT`) behind the create parameter, per plan 4.3, tuned later in M2 against the tile budget. Done when: the value is a parameter with the default named in one place, not a literal scattered through callers.
-
-- [ ] `src/bridge/runtime.c` with the lock table and base context. Done when: the 8-thread clone test passes under the D00 T03 §3 ASan configuration. Cheaper substitute: a lock-free single context with a global mutex added later, which voids every rule in plan 4.2.
-- [ ] Live-clone accounting (debug counter incremented on clone, decremented on drop, asserted zero at destroy). Done when: leaking a clone in a test trips the assert in Debug.
-- [ ] Commit: `bridge: locked base context and clone lifecycle`
-
-**Freeze check:** The section 4.11 clone and shutdown invariants hold as written in the foundation plan: locks first, one context per thread, clones die before the base. Proven by the multi-threaded clone test in `recto-tests` (`Bridge.ClonesFromManyThreads`) run under ASan; the fixture is the test itself, committed in `tests/`.
-
-**Test checkpoint:** `recto-tests --gtest_filter=Bridge.*` passes under ASan with the clone-storm test green (quote pass count and zero sanitizer findings).
-
-## 2. Error bridge and logging callbacks
-
-MuPDF errors are `setjmp` and `longjmp`; a `longjmp` over C++ frames with destructors is undefined under `/EHsc`, which is the bridge's reason to exist (plan 4.4). The rules: bridge code is C only; cleanup lives in `fz_always`; every local changed inside `fz_try` and read after it is marked `fz_var`; nothing returns, breaks or gotos out of an `fz_try` block; callers see `rc_status { int code; char message[256]; }` and nothing else.
+Define the foundational `recto::pdf` result and object types in `src/pdf/`: `ErrorCode`, `PdfError`, `PdfResult<T>`, the D16 thread-safe diagnostic ring buffer (`recto::pdf::diagnostics_tail()`), and `PdfValue` (`null`, `bool`, `int64_t`, `double`, `PdfString`, `PdfName`, `PdfArray`, `PdfDict`, `PdfStream`, `IndirectRef`). Implement the binary-safe PDF lexer (`src/pdf/lexer.cpp`) and recursive-descent object parser (`src/pdf/parser.cpp`) with explicit nesting depth bounds (max 64 nested arrays/dictionaries).
 
 **Phase:** 1
 **Needs:** windows-host
 **Surface:** no
+**Freeze check:** Verify that `src/pdf` uses `PdfResult<T>` for all parse failures (never unhandled C++ exceptions across module boundaries), enforces the 64-level recursion cap on nested arrays and dictionaries, and holds zero mutable global parser state so distinct `pdf::Document` instances on separate threads share nothing.
 
 **Build order:**
 
-1. Add `rc_status` and `rc_status_from_error` to `recto_bridge.h`, plus the internal pattern every bridge function follows, demonstrated on one real function (document open from §3 may stub forward). Done when: a test feeding the `tests/corpus/broken/` file gets a non-zero status with MuPDF's message, and the process continues to open a good file after.
-2. Install warning and error callbacks (`fz_set_warning_callback`, `fz_set_error_callback`) on the base context routing to Recto's log with a thread-name tag, as plain C functions that cannot throw. Done when: opening the damaged corpus file produces a tagged log line and a clean status, in that order.
+1. Author `src/pdf/recto_pdf.h`, `src/pdf/error.h/.cpp` (with the D16 bounded diagnostic ring buffer) and `src/pdf/object.h/.cpp` defining `PdfValue` and dictionary lookup helpers. Done when: unit tests construct, query and clone nested dictionaries and arrays under ASan with zero leaks.
+2. Implement `src/pdf/lexer.cpp` and `src/pdf/parser.cpp` covering PDF comments (`%`), numbers, literal strings (nested balanced parentheses, octal `\ddd` and line-continuation escapes), hex strings (`<...>`), names (`/Name` with `#XX` hex escapes), arrays (`[...]`), dictionaries (`<<...>>`), indirect object definitions (`N G obj ... endobj`), and indirect references (`N G R`). Done when: `PdfParser.*` tests parse every token kind, reject 65-deep nested arrays with `ErrorCode::DamagedFormat`, and handle truncated tokens at every byte offset without reading past the buffer.
 
-- [ ] `rc_status` error shape used by every bridge entry point. Done when: `grep` over `src/bridge` finds no bridge function returning a raw MuPDF object without a status. Cheaper substitute: letting `fz_throw` unwind into C++ "because it worked in the test".
-- [ ] Warning and error callbacks to the Recto log. Done when: the damaged-file test asserts a log line naming the thread.
-- [ ] Commit: `bridge: rc_status error bridge and MuPDF logging callbacks`
+- [ ] `PdfResult<T>`, `PdfError`, diagnostic ring buffer, and `PdfValue` model implemented in `src/pdf/`. Done when: `PdfParser.Diagnostics` verifies ring-buffer wraparound and thread-safe error recording. Cheaper substitute: throwing `std::runtime_error` on malformed PDF tokens.
+- [ ] Binary-safe lexer and bounded object parser (`src/pdf/lexer.cpp`, `src/pdf/parser.cpp`). Done when: byte-by-byte truncation tests on sample object streams return `ErrorCode::DamagedFormat` at every cut point under ASan.
+- [ ] Commit: `pdf: add PdfResult, diagnostic ring, lexer and bounded object parser`
 
-**Freeze check:** No C++ frame can sit between an `fz_try` and a throw: `recto-bridge` remains `/TC` C only, and the damaged-file test (`Bridge.DamagedFileReturnsStatus`) proves errors arrive as values. The build itself is the fixture: a `.cpp` file in the bridge project fails review on sight.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfParser.*` passes under ASan with 0 warnings.
 
-**Test checkpoint:** `recto-tests --gtest_filter=Bridge.*` passes under ASan, including the damaged-file and not-a-PDF cases returning statuses (quote the messages).
+## 2. Classic XRef tables, compressed XRef streams and damaged-file recovery
 
-## 3. Document open and description API
-
-The actor's front door (plan 4.6 steps 1 to 3): open a document on the caller's context clone, report password need, authenticate, and describe the document (page count, per-page bounds, outline, core metadata) in plain C structs the core can copy. Loading pages and building display lists belong to D01 T02; this section stops at description so the boundary is provable before rendering enters.
+Implement `src/pdf/xref.cpp`: locate `startxref` from the end of the file, follow `/Prev` chains across incremental updates with cycle detection, parse classic `xref` subsections and trailer dictionaries, parse PDF 1.5+ cross-reference stream objects (`/Type /XRef` with `/W` field widths and `/Index` subsections) and compressed object streams (`/Type /ObjStm` once `FlateDecode` from §3 is wired, with uncompressed/identity hooks tested here), and implement the damaged-file fallback scanner that linearly scans the file for `N G obj` headers when `startxref` or an XRef table is corrupt.
 
 **Phase:** 1
 **Needs:** windows-host
 **Surface:** no
+**Freeze check:** Confirm that lazy object resolution (`Document::resolve(IndirectRef)`) mutates only the owning `pdf::Document`'s object table, detects cyclic indirect-reference chains (`A -> B -> A`) via a per-call visited set, and caps `/Prev` trailer chains at 256 revisions.
 
 **Build order:**
 
-1. Implement `src/bridge/document.c`: open from path and from memory buffer, `rc_document_needs_password`, `rc_document_authenticate`, page count, `rc_page_bounds`, outline walk into a flat array (title, depth, page index), metadata getters (title, author, producer, dates, PDF version where MuPDF exposes it). Every function follows the §2 pattern. Done when: tests over the corpus starter set (D00 T03 §2) assert page counts, the encrypted file demands then accepts its known password, and the outlined file returns its entries in order.
-2. Define the matching `recto-core` types (`PdfError` from `rc_status`, document description structs) in `src/core/` with no MuPDF header visible. Done when: `recto-core` compiles with the bridge header as its only engine include and a core-side test describes a corpus file end to end.
+1. Implement classic `xref` table parsing, trailer merging across `/Prev` incremental updates, and cycle detection on both `/Prev` offsets and indirect reference chains. Done when: a multi-revision incremental-update test PDF resolves updated objects from the newest generation and a cyclic `/Prev` trailer fails with `ErrorCode::DamagedFormat`.
+2. Implement `/Type /XRef` binary entry unpacking (`/W [w1 w2 w3]`, `/Index`) and `/Type /ObjStm` offset table parsing, plus the damaged-file `N G obj` recovery scanner. Done when: corrupting the `startxref` offset of a corpus PDF still opens and resolves all objects via the recovery scanner, and `broken/` files without any objects return `ErrorCode::DamagedFormat`.
 
-- [ ] `src/bridge/document.c` open, password and description functions. Done when: wrong password returns a distinct status from damaged file, and neither crashes. Cheaper substitute: exposing `fz_document*` upward "temporarily".
-- [ ] `recto-core` description types and `PdfError`. Done when: the core test prints the same page count and outline the corpus provenance records.
-- [ ] Commit: `bridge: document open, password and description API`
+- [ ] Classic `xref`, `/Prev` incremental updates, and `/Type /XRef` + `/Type /ObjStm` parsing with cycle detection. Done when: classic and 1.5+ cross-reference fixtures resolve every indirect object identically. Cheaper substitute: supporting only classic ASCII `xref` tables, which fails on modern PDFs produced by Word, Chrome and Acrobat.
+- [ ] Damaged-file fallback scanner reconstructs the object index when `startxref` is corrupt. Done when: a corpus PDF with a zeroed `xref` table recovers all pages and metadata in `PdfXref.DamagedRecovery`.
+- [ ] Commit: `pdf: implement XRef tables, compressed XRef streams and damaged-file recovery`
 
-**Freeze check:** Document objects stay on the context that opened them: the API takes the caller's `fz_context*` explicitly and stores no document in globals; `Bridge.DocumentStaysOnOwnerContext` opens on one clone and describes from the same clone across the suite. Cross-thread misuse is unrepresentable above the bridge because core never sees the handle type.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfXref.*` passes under ASan across classic, incremental, compressed XRef and damaged-xref fixtures.
 
-**Test checkpoint:** `recto-tests --gtest_filter=Bridge.*:Core.*` passes under ASan over the full starter corpus (quote files exercised and results).
+## 3. Stream filter pipeline and WIC image decoders
+
+Implement `src/pdf/filters.cpp` for chained stream filters (`/Filter` single name or array, `/DecodeParms`): `FlateDecode` (RFC 1950 zlib header + RFC 1951 deflate), `LZWDecode` (variable-width LZW with `/EarlyChange`), TIFF Predictor 2 and PNG Predictors 10 to 15 (None, Sub, Up, Average, Paeth), `ASCIIHexDecode`, `ASCII85Decode`, `RunLengthDecode`, `CCITTFaxDecode` (Group 3 1D/2D and Group 4 2D monochrome fax decompression with `/K`, `/Columns`, `/BlackIs1`), and WIC-backed `DCTDecode` (JPEG) and `JPXDecode` (JPEG 2000). Enforce a per-stream decoded output ceiling (default 256 MB) so decompression bombs abort cleanly.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that stream filters are stateless functions operating on caller-supplied spans/buffers (or thread-local WIC factories initialized per worker/actor thread), never sharing COM/WIC decoder instances across threads, and enforcing the 256 MB decompression cap before allocation growth.
+
+**Build order:**
+
+1. Implement `FlateDecode`, `LZWDecode`, TIFF/PNG predictors, `ASCIIHexDecode`, `ASCII85Decode`, and `RunLengthDecode`, plus the chained filter runner and 256 MB output cap. Wire `FlateDecode` + PNG predictor into §2's `/Type /XRef` and `/Type /ObjStm` loader. Done when: compressed XRef streams and chained `[ /ASCII85Decode /FlateDecode ]` streams decode byte-exactly against known test vectors, and a 10 KB deflate bomb targeting 512 MB aborts with `ErrorCode::DamagedFormat`.
+2. Implement `CCITTFaxDecode` (Group 3 and Group 4 tables) and WIC-backed `DCTDecode` / `JPXDecode` image stream decoding. Done when: monochrome CCITT scanned-page streams and embedded JPEG/JPX image streams decode to expected pixel buffers under ASan.
+
+- [ ] Stateless filter pipeline (`Flate`, `LZW`, TIFF/PNG predictors, `ASCII85`, `ASCIIHex`, `RunLength`, `CCITTFax`) with 256 MB decompression bomb guard. Done when: all filter test vectors and compressed XRef/ObjStm corpus files decode cleanly and the bomb vector refuses safely. Cheaper substitute: unbounded buffer doubling on corrupt `/Length` or deflate streams.
+- [ ] WIC `DCTDecode` and `JPXDecode` decoders with per-thread COM/WIC safety. Done when: embedded JPEG image XObjects in the corpus decode to exact dimensions and pixel values.
+- [ ] Commit: `pdf: implement stream filter pipeline, CCITT fax and WIC image decoders`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan covering every filter, predictor, CCITT Group 4, JPEG decode and decompression-bomb refusal.
+
+## 4. Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` via CNG) and document description
+
+Implement `src/pdf/crypto.cpp` using Windows Next Generation Cryptography (`bcrypt.dll`): Standard Security Handler revisions `R=2, 3, 4` (`RC4` 40 to 128-bit and `AES-128` CBC with MD5 key derivation and `/CF` crypt filters) and `R=5, 6` (`AES-256` CBC with Algorithm 2.B iterative SHA-256/SHA-384/SHA-512 password validation and file encryption key unwrapping). Then implement `src/pdf/document.cpp` exposing the flattened `/Pages` tree (with inherited `/MediaBox`, `/CropBox`, `/Rotate`, `/Resources` and cycle detection), `/Info` and XMP metadata, security and permissions summary, document font inventory, hierarchical `/Outlines` bookmark tree, and per-page `/Annots` link annotations (internal destinations and external URIs, with `/Launch` and `/JavaScript` flagged inert).
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Confirm that `bcrypt.dll` algorithm handles are either opened per operation or held read-only, decryption integrates into `pdf::Document`'s single-owner object loader so strings and streams are decrypted once on the owning actor thread, and `/Launch` / `/JavaScript` actions are never executed.
+
+**Build order:**
+
+1. Implement `src/pdf/crypto.cpp` (`R=2..6` password verification, file encryption key derivation, and per-object `RC4` / `AES-128` / `AES-256` string and stream decryption via `bcrypt.dll`). Done when: an unauthenticated encrypted corpus PDF returns `ErrorCode::NeedsPassword`, a wrong password returns `ErrorCode::WrongPassword`, and `"recto-test"` unlocks both `AES-128` (`R=4`) and `AES-256` (`R=6`) fixtures and decodes their page streams.
+2. Implement `src/pdf/document.cpp` (`Document::open`, `authenticate`, page tree traversal with cycle guard, page geometry `PageSizePt`, metadata, security flags, font list, `/Outlines` tree, and `/Annots` link extraction). Done when: `PdfDocument.*` tests read page count, dimensions, rotations, metadata, outlines, links, fonts, and security details across the entire `tests/corpus/` set, and every `tests/corpus/broken/` file fails gracefully with a `PdfError`.
+
+- [ ] Windows CNG (`bcrypt.dll`) Standard Security Handler (`R=2..6`, `RC4`, `AES-128`, `AES-256`) integrated into object and stream loading. Done when: encrypted corpus files unlock with the user or owner password and report exact permission flags. Cheaper substitute: supporting only unencrypted PDFs or rolling custom unverified crypto routines.
+- [ ] Page tree, metadata, outline tree, font inventory, and link annotation extraction with cyclic `/Pages` and `/Outlines` protection. Done when: all `render/`, `text/`, `convert/` and `broken/` corpus files pass `PdfDocument.*` under ASan.
+- [ ] Commit: `pdf: add CNG decryption (R2-R6) and document page-tree, outline and link model`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfCrypto.*:PdfDocument.*` passes under ASan across encrypted, outlined, linked, rotated and broken corpus files.
 
 ## Verification
 
-- `grep` proves only `src/bridge` includes MuPDF headers anywhere under `src/`.
-- The full `Bridge.*` and `Core.*` suites pass under ASan; `python scripts/todo-graph.py validate` passes.
-- No JavaScript is linked (the D00 T01 §2 config check still holds with real code above it).
+- `recto-tests.exe --gtest_filter=Pdf*` passes in both Debug and Release and under AddressSanitizer with 0 warnings.
+- Every file in `tests/corpus/broken/` returns a typed `PdfError` with zero crashes or leaks.
+- `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` exit 0.

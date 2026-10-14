@@ -121,14 +121,14 @@ SPEC 9.2 and 9.9: a password-protected file shows the password dialog before any
 **Surface:** yes
 
 **Fidelity:** SPEC section 9.9 dialog table with `design/screenshots/D-Dialogs.png` (password and could-not-open boards).
-**Job:** The user can unlock a protected document or understand precisely why one would not open. Consumer: the actor (the password attempt is posted back for `fz_authenticate_password`); the log (copied error details).
+**Job:** The user can unlock a protected document or understand precisely why one would not open. Consumer: the actor (the password attempt is posted back for `pdf::Document::authenticate`); the log (copied error details).
 **Treatment:** Two `ContentDialog`s in the shared dialog style later dialogs reuse. Cheaper substitute that fails the checkpoint: `MessageBox`-style stock dialogs, or opening a protected tab showing blank pages behind the prompt.
 **Chrome:** consume the dialog style, tokens and Segoe Fluent glyphs (lock, warning) established here for all SPEC 9.9 dialogs. Do not invent per-dialog styling.
 
 **Build order:**
 
 1. Password dialog wired to the actor's needs-password report: submit posts the attempt, success proceeds to description, failure stays with the error state, Cancel closes the tab through the §2 teardown. Done when: the encrypted corpus file opens with its known password, refuses a wrong one in place, and Cancel leaves no actor behind.
-2. Could-not-open dialog carrying the `PdfError` message with Copy error details (file name, error text, Recto and MuPDF versions) to the clipboard. Done when: every `tests/corpus/broken/` file lands here with text a bug report could use verbatim.
+2. Could-not-open dialog carrying the `PdfError` message with Copy error details (file name, error text, Recto and `recto-pdf` engine versions) to the clipboard. Done when: every `tests/corpus/broken/` file lands here with text a bug report could use verbatim.
 
 - [ ] Password dialog with retry and cancel semantics. Done when: no page content renders behind it at any point. Cheaper substitute that fails the checkpoint: closing and reopening the dialog per attempt, losing the entered state.
 - [ ] Could-not-open dialog with copyable details. Done when: the pasted details name the file and the engine error without a path into the user's private folders beyond what they opened.

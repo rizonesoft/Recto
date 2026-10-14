@@ -78,7 +78,7 @@ SPEC 8.3: one side-panel card switching between Pages (thumbnails with page numb
 **Build order:**
 
 1. `ThumbnailList` with virtualized realization, scheduler requests at the thumbnail bucket by visible range, current-page ring and ribbon marker, click and keyboard navigation scrolling the view. Done when: a 500-page document's panel scrolls fluidly with bounded thumbnail memory (telemetry quoted) and the current page stays marked while reading.
-2. `OutlineTree` from the bridge outline (D01 T01 §3): hierarchy, expand state, current-section tracking from the view's current page, activation scrolling the view. Done when: the outlined corpus file tracks correctly in both directions, and a document with no outline shows the panel's honest empty state.
+2. `OutlineTree` from the `recto-pdf` outline (D01 T01 §4): hierarchy, expand state, current-section tracking from the view's current page, activation scrolling the view. Done when: the outlined corpus file tracks correctly in both directions, and a document with no outline shows the panel's honest empty state.
 3. Panel host behavior: switcher between Pages and Outline, close, Ctrl+B, narrow-window auto-close under 1100 epx on page click (SPEC section 7). Done when: both floating and docked slot placements behave identically (verified by moving slots under D02 T04 §1's test hook or manually here).
 
 - [ ] Thumbnail list reusing the tile path at a thumbnail bucket. Done when: rotation changes thumbnails without stale images (keys carry rotation, D01 T02 §2). Cheaper substitute that fails the checkpoint: downscaling full-page tiles already in the texture cache as the only source.
@@ -89,7 +89,7 @@ SPEC 8.3: one side-panel card switching between Pages (thumbnails with page numb
 
 ## 3. Document Info panel
 
-SPEC 9.2's Info list: title, author, pages, page size, PDF version, file size, created date, producer, security and fonts, shown as the Reading room inspector content and as Properties from the toolbar's More menu elsewhere (D02 T02 §3 named that deferral). Values come from the bridge description API plus two additions (security summary and the font list), formatted for reading (page size in mm and inches, dates localized), with copyable text.
+SPEC 9.2's Info list: title, author, pages, page size, PDF version, file size, created date, producer, security and fonts, shown as the Reading room inspector content and as Properties from the toolbar's More menu elsewhere (D02 T02 §3 named that deferral). Values come from the `recto-pdf` description API (D01 T01 §4: metadata, encryption summary and the font list), formatted for reading (page size in mm and inches, dates localized), with copyable text.
 
 **Phase:** 2
 **Needs:** windows-host, display-session
@@ -97,15 +97,15 @@ SPEC 9.2's Info list: title, author, pages, page size, PDF version, file size, c
 
 **Fidelity:** SPEC section 9.2 with `design/screenshots/D-ReadingRoom.png` (inspector Info tab).
 **Job:** The user can learn what a document is (origin, size, protection, fonts) without leaving Recto. Consumer: nobody downstream computes from it; it is a read surface whose accuracy is the product.
-**Treatment:** One Info content control hosted in inspector or dialog by preset. Cheaper substitute that fails the checkpoint: a raw metadata dump with MuPDF's unformatted strings.
+**Treatment:** One Info content control hosted in inspector or dialog by preset. Cheaper substitute that fails the checkpoint: a raw metadata dump with unformatted PDF dictionary strings.
 **Chrome:** consume the panel header pattern from §2 and Caption/Body typography per SPEC section 5. Do not invent a second property-grid visual language.
 
 **Build order:**
 
-1. Extend the bridge description API (D01 T01 §3 follow-on section there if the shape changes; otherwise here as bridge additions): encryption summary (method, permissions as readable flags) and per-document font list (name, type, embedded or not). Done when: the encrypted corpus file reports AES and its permissions accurately, and the font list matches MuPDF's own reporting for the corpus set.
+1. Wire `DocumentActor` description queries from `recto-pdf` (D01 T01 §4): encryption summary (method, permissions as readable flags) and per-document font list (name, type, embedded or not). Done when: the encrypted corpus file reports AES and its permissions accurately, and the font list matches `recto-cli info` for the corpus set.
 2. Build the Info content with formatted values and text selection or copy, hosted in the inspector slot and in a Properties dialog from More. Done when: both hosts show identical values for the same document, side by side with the board.
 
-- [ ] Security and fonts through the bridge in Recto types. Done when: a permissions-restricted corpus file (added via D05 T01 §3 when it lands; until then generated per corpus rules) reads correctly. Cheaper substitute that fails the checkpoint: "Encrypted: yes" with no method or permissions.
+- [ ] Security and fonts through `DocumentActor` in Recto types. Done when: a permissions-restricted corpus file (added via D05 T01 §3 when it lands; until then generated per corpus rules) reads correctly. Cheaper substitute that fails the checkpoint: "Encrypted: yes" with no method or permissions.
 - [ ] Info content in both hosts. Done when: screen-reader names read label and value pairs in order.
 - [ ] Commit: `viewer: document Info panel with security and fonts`
 

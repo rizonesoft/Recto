@@ -1,22 +1,20 @@
-# Third-party notices
+# Third-Party Notices
 
-Recto itself is licensed under the [GNU Affero General Public License, version 3 or later](LICENSE). This file records the third-party components Recto uses and the license each one ships under. It is a skeleton until the first component is actually linked: entries appear when the component lands (the MuPDF pin in `D00 T01 §2` records its exact version and submodule commit here), and the complete, build-derived audit is owned by `D07 T02 §2`, which also feeds the About page's Built-with list. Nothing below claims a version that has not been pinned yet.
+Recto is distributed under the GNU General Public License, version 3 or later (`GPL-3.0-or-later`); see [`LICENSE`](./LICENSE) for the full text.
 
-## Planned components (not yet linked)
+This file records the third-party components and assets that exist in the repository today and the components that will enter the build as the milestones land.
+The full build-derived audit and compatibility record is owned by [`todo/07-release/TODO-02-store-and-compliance.md`](./todo/07-release/TODO-02-store-and-compliance.md) section 2 before version 1 ships, and the in-app **About -> Built with** list is generated from the same data so the two cannot drift.
 
-| Component | Purpose | License | Lands in |
-| --------- | ------- | ------- | -------- |
-| MuPDF (Artifex) | PDF parsing, rendering, text, document writers. Pinned 2026-10-13: release 1.28.5, tag commit `8ad45e92f0935d3d87f1db3f873086472a5e1b24`, git submodule at `third_party/mupdf`, built with Recto's config in `build/mupdf-config.h` (JavaScript disabled; the MuJS nested submodule is not initialized and no MuJS code is compiled). Not yet linked into Recto code; linking starts with the bridge in D01. MuPDF's bundled third-party libraries are itemized per component with their licenses by the D07 T02 §2 build-derived audit. | GNU Affero General Public License, version 3 | D00 T01 §2 (pinned) |
-| Windows App SDK 2.4.0 (Microsoft) | WinUI 3 application framework for the packaged app. | MIT License | D00 T01 §3 |
-| GoogleTest | Unit tests only; not shipped in the application. The vcpkg manifest naming it lands with the scaffold; the runner wiring follows in the test backbone. | BSD 3-Clause License | D00 T01 §3 (manifest), D00 T03 §1 (wiring) |
+## Present in the repository now (M0)
 
-## Assets
+| Component | Path | License | Notes |
+| --------- | ---- | ------- | ----- |
+| Newsreader font outlines | `resources/svg/wordmark-*.svg`, `resources/svg/lockup-*.svg`, `design/brand/*.png` | SIL Open Font License 1.1 | Used only for the "Recto" wordmark and tagline, converted to SVG paths; the font file itself is not shipped in the app package. Copyright the Newsreader Project Authors. |
 
-| Asset | Notes | License |
-| ----- | ----- | ------- |
-| Newsreader (Google Fonts) | The wordmark typeface. Only outlined letterforms ship (see `resources/README.md`); the font itself is not distributed with the app. | SIL Open Font License 1.1 |
-| Segoe Fluent Icons | The system icon font, supplied by Windows at runtime; nothing is bundled. | Provided by Windows |
+## Entering the build in M0 to M6 (none vendored in shipping code; tracked here so the roster is never implicit)
 
-## How this file stays true
-
-A component is added here in the same commit that first links or redistributes it, with its exact version. The pre-release audit in `D07 T02 §2` re-derives this list from the actual build and refuses a release whose notices and linked libraries disagree.
+| Component | Enters at | Expected license | Shipped in app? |
+| --------- | --------- | ---------------- | --------------- |
+| Recto PDF Engine (`recto-pdf`) | `D00 T01 §3` (scaffold), `D01` (engine) | `GPL-3.0-or-later` | Yes (authored in-tree in C++20; zero MuPDF dependency; uses Windows 11 platform APIs: Direct2D, DirectWrite, WIC, Windows CNG `bcrypt.dll`, `Windows.Media.Ocr`) |
+| Windows App SDK 2.4.0 and `Microsoft.Windows.CppWinRT` | `D00 T01 §3` (NuGet) | MIT | Yes |
+| GoogleTest | `D00 T01 §3` (manifest), `D00 T03 §1` (wiring) | BSD-3-Clause | No (test runner only, per decision D14) |

@@ -3,45 +3,49 @@ schema_version: 1
 id: pdf-conversions-a
 domain: 04-convert
 status: active
-title: "TODO-02 -- Conversions A: Images, Images to PDF, Text"
+title: "TODO-02 -- Conversions A: PDF Writer, Images, Text and Searchable OCR PDF"
 track: M4
 ---
 
-# TODO-02 -- Conversions A: Images, Images to PDF, Text
+# TODO-02 -- Conversions A: PDF Writer, Images, Text and Searchable OCR PDF
 
-> **Goal:** The M4 MuPDF-native conversions ship as queue jobs: PDF to images at a chosen DPI and format, images assembled into a PDF at a chosen page size, and PDF to plain text, each through the plan's writer pattern, each honest about what it is good at, each round-tripping the corpus without errors.
+> **Goal:** Build `recto-pdf`'s native `PdfWriter` and the atomic temp-then-replace file helper, then deliver the M4 conversions that run on them: PDF to images (PNG, JPEG, TIFF, BMP at 72/150/300/600 DPI), images to PDF (EXIF orientation honored, lossless JPEG `DCTDecode` pass-through), PDF to plain text (`.txt` with automatic OCR fallback on scanned pages), and Searchable PDF (OCR) injecting an invisible (`3 Tr`) selectable text layer over scanned pages.
 
-> **Current state:** Measured 2026-10-13. No code exists. The mechanics are plan section 5's rows: whole-page renders encoded with WIC (PNG, JPEG with quality, multi-page TIFF option, BMP), images opened by MuPDF as one-page documents and written through the `pdf` writer (fit-to-image, A4, Letter with margins), and the `text` writer over the same extraction D03 T01 §1 builds. Surfaces are SPEC 9.5 step 3 forms (`D-Dialogs.png` top-right for images; `B-Convert.png` for the options shape) inside D04 T01 §2's frame.
+> **Current state:** Measured 2026-10-14. No writer or converter code exists yet. `D01` provides `recto-pdf` parsing and rendering, `D03 T01` provides `PageText` (`§1`) and `OcrPipeline` (`§4`), and `D04 T01` provides the isolated `JobQueue` and 3-step Convert page.
 
 ## Inputs
 
-- `docs/plans/2026-10-13-recto-foundation.md` section 5 (writer pattern, the three conversion rows, the atomic saving rule), section 2 (WIC row).
-- `design/SPEC.md` sections 9.5 (options per output, replace-existing rule), 9.9 (Replace original dialog where a conversion targets its source's name).
-- -> XREF: D05 T01 §1 -- the graft-based page operations share this file's writer plumbing and atomic save helper (§1); the helper's contract is agreed here and consumed there.
-- -> XREF: D04 T01 §1 -- the job contract these converters register against; isolation is re-proven here with a real writer.
+- `docs/plans/2026-10-13-recto-foundation.md` sections 4.1 item 6 (`PdfWriter`), 4.7 (job isolation), 5 (PDF -> Images, Images -> PDF, PDF -> Plain text, Searchable PDF OCR, atomic replace rule).
+- `design/SPEC.md` sections 9.5 (Convert step 2 and step 3 options for Images, Plain text, Searchable PDF OCR) and 9.9 (Conversion options dialog, Replace original dialog).
+- -> XREF: D01 T01 §1 -- `PdfWriter` in `src/pdf/writer.cpp` serializes `PdfValue` objects, `FlateDecode` streams, and cross-reference tables using `D01 T01`'s object and filter primitives.
+- -> XREF: D04 T01 §2 -- each converter registers its option schema and job factory into `D04 T01 §2`'s 3-step Convert page and queue.
+- -> XREF: D05 T01 §1 -- `D05 T01`'s merge, split, reorder and AES-256 encrypt operations build directly on `PdfWriter` and the `AtomicFileWriter` created in §1 here.
 
 ## Outcome
 
-- Any corpus PDF renders to a folder of images at the chosen DPI with page-range control, pixel-matching `recto-cli` reference renders at the same settings.
-- A set of images becomes one PDF in order at the chosen page size, openable everywhere, with orientation and margins honored.
-- A text PDF becomes a `.txt` equal to the extraction fixtures, and an image-only PDF produces an empty-but-honest result the UI names as scanned (OCR remains after v1).
+- `PdfWriter` (`src/pdf/writer.cpp`) writes valid, compressed PDF 1.7 documents, and `AtomicFileWriter` guarantees that every save writes to a sibling temporary file and atomically replaces the target only on clean completion, leaving zero partial files on cancellation or error.
+- PDF to Images streams pages at 72, 150, 300 or 600 DPI through WIC encoders (PNG, JPEG, TIFF, BMP) with bounded memory.
+- Images to PDF packs one or many images into a clean PDF, honoring EXIF orientation and embedding JPEG streams directly via `DCTDecode` without lossy re-encoding.
+- PDF to Text and Searchable PDF (OCR) export UTF-8 `.txt` and sandwich-layer searchable PDFs (`3 Tr` invisible text aligned to `OcrPipeline` word boxes), exposed both in the Convert UI and in `recto-cli`.
 
-**Adjacency:** list=not-applicable (outputs are files in Explorer, listed by the queue during the job per D04 T01 §2); document=applicable @ D04 T02 §2; settings=applicable @ D02 T04 §2; reporting=not-applicable (per-job results are the queue's, D04 T01 §3); notifications=applicable @ D04 T01 §3; permissions=not-applicable (no roles; encrypted inputs refuse through the job recovery in D04 T01 §1); audit=not-applicable (no conversion history kept, per D04 T01's stated boundary); exchange=applicable @ D04 T02 §3; reverse=not-applicable (converting back is another named conversion, images to PDF in section 3, not an undo)
+**Adjacency:** all=not-applicable (converter engines and option bindings inside `D04 T01`'s Convert frame; queue, notifications and save-location settings are owned by `D04 T01` and `D02 T04 §2`)
 
-**Adjacency rationale:** These sections are the exchange surface itself (formats in and out), with section 2 as the document user carry-away. Save-location and replace-existing defaults are settings values owned by D02 T04 §2 and read here. Nothing here needs its own list, report or audit beyond the queue's per-job truth.
+**Adjacency rationale:** The Convert page list, queue card, completion notifications, and Replace-original dialog belong to `D04 T01`. This file supplies the `PdfWriter` foundation and four concrete conversion engines that plug into that frame.
 
 ## Implementation Order
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | Writer plumbing and atomic save helper | D04 T01 §1 | [ ] |
-| 2 | §2 | PDF to images | §1 | [ ] |
-| 3 | §3 | Images to PDF | §1 | [ ] |
-| 4 | §4 | PDF to text | §1, D03 T01 §1 | [ ] |
+| 1 | §1 | `PdfWriter` and atomic temp-then-replace file helper | D01 T02 §4, D04 T01 §1 | [ ] |
+| 2 | §2 | PDF to images (PNG, JPEG, TIFF, BMP at 72-600 DPI) | §1, D04 T01 §2 | [ ] |
+| 3 | §3 | Images to PDF with EXIF orientation and lossless JPEG pass-through | §1, D04 T01 §2 | [ ] |
+| 4 | §4 | PDF to plain text and Searchable PDF (OCR) sandwich writer | §1, D03 T01 §4, D04 T01 §2 | [ ] |
 
-## 1. Writer plumbing and atomic save helper
+## 1. `PdfWriter` and atomic temp-then-replace file helper
 
-Plan section 5's pattern as shared bridge and services code: open a document writer for a format, run pages through it with the job's cookie, close, drop; plus the output-path helper implementing the saving rule (temp in destination, `ReplaceFileW` or `MoveFileExW`, name-collision policy from the job options: keep both with a suffix, or replace, asked per SPEC 9.9 when the target is the source itself). D05's graft operations reuse both halves.
+Implement `src/pdf/writer.cpp` (`recto::pdf::PdfWriter`) and `src/core/atomic_file.cpp` (`recto::core::AtomicFileWriter`):
+- `PdfWriter`: allocates indirect objects, compresses streams with `FlateDecode` (RFC 1950/1951 deflate), builds `/Catalog` and balanced `/Pages` trees, writes standard `xref` tables and trailer dictionaries with `/ID` hashes, and supports streaming objects to disk.
+- `AtomicFileWriter`: creates a uniquely named sibling temporary file in the destination folder, flushes (`FlushFileBuffers`), and commits via `ReplaceFileW` / `MoveFileExW(..., MOVEFILE_REPLACE_EXISTING)` only when `commit()` is called; its destructor deletes the temp file automatically if `commit()` was not reached (cancellation, error, or scope exit).
 
 **Phase:** 4
 **Needs:** windows-host
@@ -49,88 +53,91 @@ Plan section 5's pattern as shared bridge and services code: open a document wri
 
 **Build order:**
 
-1. Add `src/bridge/writer.c` (`rc_write_document` over the plan's loop for a format and options string, per-page progress through the cookie) and `src/services/output_path.cpp` (temp naming, collision policy, atomic replace, cleanup on failure). Done when: a copy-conversion of every good corpus PDF (pdf writer, identity) round-trips byte-comparable page counts and renderable output, and a killed mid-write test leaves the previous destination file intact.
-2. Prove job isolation with a real writer: convert a file while it is open in the viewer path (services-level viewer session), scrolling simulated through the scheduler. Done when: D04 T01 §1's isolation test passes against this writer under ASan.
+1. Implement `AtomicFileWriter` in `src/core/atomic_file.cpp` and `PdfWriter` in `src/pdf/writer.cpp` (object allocation, `FlateDecode` encoder, page tree builder, `xref` and trailer serializer). Done when: `PdfWriter.*` creates a new multi-page PDF from scratch that `recto::pdf::Document::open` parses and renders cleanly.
+2. Prove the atomic cancellation guarantee in `AtomicFile.*`: aborting a write mid-stream or tripping `CancelToken` leaves the destination directory free of temp files and leaves any pre-existing target file byte-for-byte untouched. Done when: both new-file cancel and replace-existing cancel pass under ASan.
 
-- [ ] Bridge writer loop plus atomic output helper. Done when: no converter in T02 to T04 or D05 needs its own save code (search proves one helper). Cheaper substitute: writing directly to the destination, which a crash turns into a corrupted only copy.
-- [ ] Identity round-trip over the corpus as the plumbing proof. Done when: outputs re-open in `recto-cli info` with matching page counts for every good file.
-- [ ] Commit: `convert: document-writer plumbing with atomic saves`
+- [ ] `PdfWriter` in `src/pdf/writer.cpp` serializing valid PDF 1.7 files with `FlateDecode` stream compression. Done when: a written document reopens in `recto-pdf` with zero XRef warnings. Cheaper substitute: writing uncompressed streams or invalid placeholder `xref` offsets that rely on damaged-file recovery.
+- [ ] `AtomicFileWriter` enforcing sibling temp-file write, flush, and atomic replace or automatic cleanup on cancel/error. Done when: `AtomicFile.*` proves an existing target file's SHA-256 is unchanged after a cancelled overwrite.
+- [ ] Commit: `pdf: add PdfWriter and AtomicFileWriter temp-then-replace helper`
 
-**Test checkpoint:** `recto-tests --gtest_filter=Convert.*` passes under ASan: round-trips, kill-mid-write integrity, isolation while viewing (quote file counts).
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfWriter.*:AtomicFile.*` passes under ASan.
 
-## 2. PDF to images
+## 2. PDF to images (PNG, JPEG, TIFF, BMP at 72-600 DPI)
 
-Each selected page rendered whole at the chosen DPI through the display-list path (one page-sized tile, plan section 5) and encoded with WIC: PNG, JPEG (quality), TIFF (one multi-page file or per-page), BMP. Options per SPEC 9.5: format, resolution 72, 150, 300, 600, page range, destination, naming pattern. Rotation is honored as viewed; transparent pages flatten onto white exactly like the tile path.
-
-**Phase:** 4
-**Needs:** windows-host, display-session
-**Surface:** yes
-
-**Fidelity:** SPEC section 9.5 step 3 with `design/screenshots/D-Dialogs.png` (conversion options dialog) inside `D-Convert.png`'s flow.
-**Job:** The user can get faithful pictures of pages at print or screen resolution. Consumer: whatever opens the images next; goldens (D06 T01 §3) compare this output.
-**Treatment:** Engine renders plus WIC encode, registered as a job card. Cheaper substitute that fails the checkpoint: screenshotting the viewer surface at window resolution.
-**Chrome:** consume the Convert frame, options-dialog shape and job plumbing. Do not invent a second export dialog layout for later converters.
-
-**Build order:**
-
-1. Register the images converter: whole-page render service reusing D01 T02's display lists at render-job isolation, WIC encoders with format options, per-page output naming (`name-p3.png` pattern) through §1's helper. Done when: 150 and 300 dpi PNGs of a corpus page pixel-match `recto-cli render` at the same scale.
-2. Options form per the board (format, DPI, pages, destination with the replace-existing choice) and the hint line ("Best for sharing or printing single pages"). Done when: the full SPEC option set is present and the surface account is clean.
-
-- [ ] Images converter with WIC formats and DPI control. Done when: multi-page TIFF opens with all pages in order in a stock viewer. Cheaper substitute that fails the checkpoint: MuPDF's own PNG writer only, losing JPEG quality and TIFF (plan section 5 names WIC deliberately).
-- [ ] Options form and page-range handling. Done when: an out-of-range page request refuses before the job starts, in the form, not as a job failure.
-- [ ] Commit: `convert: PDF to images (PNG, JPEG, TIFF, BMP) via WIC`
-
-**Test checkpoint:** `recto-tests --gtest_filter=Convert.Images` pixel-compares against CLI references at two DPIs (quoted), TIFF page count verified, screenshot of the options form against the board in findings.
-
-## 3. Images to PDF
-
-Images in the order given become pages: MuPDF opens each image (PNG, JPEG, TIFF and friends) as a one-page document and the `pdf` writer assembles them; page size options fit-to-image, A4 or Letter with margins, orientation following each image. EXIF orientation is honored so phone photos land upright; unreadable images fail the job per-file with names, not silently skipped.
+Implement `src/core/pdf_to_images.cpp`, `recto-cli pdf-to-images`, and the Convert step 3 options panel for **Images** (`design/SPEC.md` section 9.5 and `D-Dialogs.png` top right): format (`PNG`, `JPEG`, `TIFF`, `BMP` encoded via WIC `IWICBitmapEncoder`), resolution (`72`, `150`, `300`, `600` DPI), page range, and save location. Pages render and encode one at a time so a 500-page export at 600 DPI holds only one page bitmap in memory at a time.
 
 **Phase:** 4
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** SPEC section 9.5 (the "PDF from images" path through the same three steps) with `D-Convert.png`.
-**Job:** The user can bind scans and photos into one PDF. Consumer: any PDF reader, including Recto reopening the result.
-**Treatment:** MuPDF image documents through the pdf writer, not hand-built PDF objects. Cheaper substitute that fails the checkpoint: embedding images at fixed A4 regardless of aspect, cropped.
-**Chrome:** consume the Convert frame and §1 helper. Do not invent a separate importer page.
+**Fidelity:** SPEC sections 9.5 (Images card and step 3 options) and 9.9 (`D-Dialogs.png` top-right Conversion options card: `"Save 9 images"` button label reflecting the job count).
+**Job:** The user can export any page range of a PDF to standard image files at their chosen DPI. Consumer: external image tools, and `D06 T01 §3`'s round-trip suite.
+**Treatment:** Streamed page-by-page `DisplayList` rasterization at target DPI into WIC encoders (`GUID_ContainerFormatPng`, `Jpeg`, `Tiff`, `Bmp`) with DPI metadata written into each image header and `AtomicFileWriter` per output file. Cheaper substitute that fails the checkpoint: rendering all pages into RAM before writing, or ignoring the DPI metadata field on the output image.
+**Chrome:** consume the Convert step 3 host from `D04 T01 §2` and the shared page-range parser.
 
 **Build order:**
 
-1. Register the converter: ordered image inputs (chips reorderable in step 1), page-size policy, per-image orientation from EXIF where present. Done when: the image corpus set assembles into a PDF whose page sizes and order match the options, verified by `recto-cli info` and a render comparison.
-2. Failure honesty: unsupported or corrupt images listed by name in the job result, job succeeds only when every input is in. Done when: a planted corrupt image fails the job naming it, with no partial PDF left.
+1. Implement `pdf_to_images` in `src/core/pdf_to_images.cpp` and `recto-cli pdf-to-images <in.pdf> --out <dir> --format <png|jpeg|tiff|bmp> --dpi <72|150|300|600> [--pages <range>]`. Done when: exporting a corpus file in all four formats at 150 and 300 DPI produces valid image files whose decoded dimensions and DPI metadata match the page size * DPI, and cancelling mid-job removes any partial current page file.
+2. Wire the Images option panel in `ConvertPage` (`src/app`), updating the primary action button text dynamically (`"Save N images"`). Done when: the rendered options card matches `D-Dialogs.png` and completes an export through the queue.
 
-- [ ] Images-to-PDF converter with page-size policies. Done when: fit-to-image preserves pixel dimensions as page points per the stated scale. Cheaper substitute that fails the checkpoint: re-encoding every image to JPEG (lossy, plan says write through, not transcode by default).
-- [ ] Per-file failure naming. Done when: mixed good and bad inputs produce no output and a complete bad list.
-- [ ] Commit: `convert: images to PDF with page-size policies`
+- [ ] Streamed PDF-to-images converter across PNG, JPEG, TIFF and BMP at 72/150/300/600 DPI with WIC DPI metadata. Done when: `ConvertImages.*` verifies pixel dimensions, DPI headers, and bounded memory on a multi-page export under ASan. Cheaper substitute: supporting PNG only or hard-coding 96 DPI.
+- [ ] Convert step 3 Images UI wired to `JobQueue` with dynamic `"Save N images"` verb. Done when: display-session screenshot matches `D-Dialogs.png` and cancellation mid-run leaves zero partial files.
+- [ ] Commit: `convert: implement PDF to images (PNG, JPEG, TIFF, BMP) at 72-600 DPI`
 
-**Test checkpoint:** `recto-cli info` and render comparisons verify the assembled PDFs (quoted), corrupt-input case naming the file, screenshot of the flow in findings.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=ConvertImages.*` passes under ASan, and the Convert Images UI screenshot matches `D-Dialogs.png`.
 
-## 4. PDF to text
+## 3. Images to PDF with EXIF orientation and lossless JPEG pass-through
 
-The `text` writer (or stext serialization where custom shaping is needed) over D03 T01 §1's extraction, page by page with page-break form feeds as the stated separator policy, written as UTF-8. The result equals the extraction fixtures for the text corpus; scanned files produce an empty file and a job result that says the document has no text layer (the honest-conversion rule, SPEC section 2), pointing at nothing it cannot do (OCR is after v1, plan section 2).
+Implement `src/core/images_to_pdf.cpp`, `recto-cli images-to-pdf`, and the Convert flow when image files (`.png`, `.jpg`, `.jpeg`, `.tif`, `.tiff`, `.bmp`) are dropped or picked in step 1: pack one or multiple images into a single PDF via `PdfWriter`, reading EXIF orientation (`System.Photo.Orientation` via `IWICMetadataQueryReader`) so rotated camera photos appear upright, embedding JPEG streams directly as `/Filter /DCTDecode` image XObjects without lossy re-compression, and encoding non-JPEG images with `FlateDecode`.
 
 **Phase:** 4
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** SPEC section 9.5 (Plain text card) with `D-Convert.png`; the output's fidelity is to D03 T01's fixtures, checked as bytes.
-**Job:** The user can get a document's words as a text file. Consumer: editors and scripts downstream.
-**Treatment:** The shared extraction, one serialization. Cheaper substitute that fails the checkpoint: a second ad-hoc extraction in the converter that disagrees with selection and find.
-**Chrome:** consume the Convert frame; the options are pages and destination only. Do not invent encoding options v1 does not promise.
+**Fidelity:** SPEC section 9.5 (Convert flow accepting image inputs to build a PDF).
+**Job:** The user can turn a set of images or scans into a clean, standards-compliant PDF without degrading JPEG quality or ending up with sideways photos. Consumer: the viewer (can open the result immediately) and `D06 T01 §3`'s image round-trip test.
+**Treatment:** Direct `DCTDecode` stream embedding for JPEGs, `FlateDecode` RGB/Gray/Alpha SoftMask for PNG/TIFF/BMP, EXIF orientation transform applied to the page/image matrix, and optional original-size vs fit-to-A4/Letter page sizing. Cheaper substitute that fails the checkpoint: decoding JPEGs to bitmaps and re-encoding them as lossy JPEGs or huge uncompressed streams, or ignoring EXIF orientation tags.
+**Chrome:** consume the Convert step 1 file chips and step 3 options host from `D04 T01 §2`.
 
 **Build order:**
 
-1. Register the text converter over §1's writer plumbing with the separator and encoding policy stated in its hint line. Done when: output for every text-corpus file byte-matches the D03 T01 §1 fixtures under the stated policy.
-2. No-text honesty: image-only input completes with the scanned-document result wording and an empty file only when the user confirms that is what they want at options time (the form detects and says so before running). Done when: the scanned corpus file's flow shows the warning before any job starts.
+1. Implement `images_to_pdf` in `src/core/images_to_pdf.cpp` and `recto-cli images-to-pdf <img1> [img2...] --out <out.pdf>`. Done when: converting a JPEG with an EXIF 90-degree orientation tag and a PNG with alpha produces a valid 2-page PDF whose embedded JPEG stream bytes match the source JPEG and whose rendered pages match the upright source images.
+2. Wire image file selection and options into `ConvertPage`. Done when: dropping three images onto Convert produces a 3-page PDF through the queue.
 
-- [ ] Text converter byte-equal to extraction fixtures. Done when: multi-column reading order matches find's order for the same file. Cheaper substitute that fails the checkpoint: the MuPDF text writer with default options where they disagree with D03's recorded choices, unexamined.
-- [ ] Scanned-document honesty before the job runs. Done when: no empty file is ever produced silently.
-- [ ] Commit: `convert: PDF to plain text over the shared extraction`
+- [ ] `images_to_pdf` with lossless JPEG `DCTDecode` pass-through, PNG alpha `/SMask` support, and EXIF orientation handling. Done when: `ConvertImagesToPdf.*` verifies upright rendering of EXIF-rotated JPEGs and lossless stream identity under ASan. Cheaper substitute: ignoring EXIF orientation or re-compressing JPEGs.
+- [ ] Convert UI flow for image inputs wired to `JobQueue`. Done when: a multi-image drop converts cleanly and opens in a viewer tab.
+- [ ] Commit: `convert: implement images to PDF with EXIF orientation and JPEG pass-through`
 
-**Test checkpoint:** `recto-tests --gtest_filter=Convert.Text` byte-compares the text corpus (quoted), the scanned-file pre-run warning captured in findings. M4's text done-when closes with §2 and §3 evidence in D06 T01 §3.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=ConvertImagesToPdf.*` passes under ASan.
+
+## 4. PDF to plain text and Searchable PDF (OCR) sandwich writer
+
+Implement `src/core/pdf_to_text.cpp` and `src/core/searchable_pdf.cpp`:
+- **PDF to Plain Text (`.txt`):** Extracts reading-order UTF-8 text per page via `PageText` (`D03 T01 §1`), automatically running `OcrPipeline` (`D03 T01 §4`) on scanned pages so scanned PDFs export real text instead of an empty `.txt` file.
+- **Searchable PDF (OCR):** Takes a scanned (or mixed) PDF, runs `OcrPipeline` (`Windows.Media.Ocr`) on pages that lack text, and uses `PdfWriter` (`§1`) to write a new PDF that preserves the original page visual stream and appends a calibrated invisible text layer (`BT 3 Tr ... Tf ... Tm (...) Tj ET`) aligned to each recognized word quad so the resulting PDF is selectable and searchable in every PDF reader.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** SPEC section 9.5 (Plain text and Searchable PDF OCR cards and options).
+**Job:** The user can extract clean UTF-8 text from any PDF or turn a scanned image-only PDF into a permanently searchable, selectable PDF. Consumer: external editors and any standard PDF viewer opening the saved searchable PDF.
+**Treatment:** `PageText` + `OcrPipeline` for `.txt`, and `PdfWriter` + `3 Tr` invisible text operators for Searchable PDF. Cheaper substitute that fails the checkpoint: producing a 0-byte `.txt` file on scanned PDFs, or rasterizing digital vector pages when only scanned pages needed an OCR text layer.
+**Chrome:** consume the Convert step 2 cards (`Plain text`, `Searchable PDF (OCR)`) and step 3 options host from `D04 T01 §2`.
+
+**Build order:**
+
+1. Implement `pdf_to_text` (`src/core/pdf_to_text.cpp`) and `searchable_pdf` (`src/core/searchable_pdf.cpp`, writing `3 Tr` invisible text runs using a compact embedded or Standard-14 font scaled to each `OcrWord` quad), plus `recto-cli pdf-to-text` and `recto-cli ocr <in.pdf> --out <searchable.pdf>`. Done when: running `searchable_pdf` on `tests/corpus/text/scanned.pdf` produces a PDF that has native extractable `PageText` (without re-running OCR) and renders pixel-identically to the input scan.
+2. Wire the **Plain text** and **Searchable PDF (OCR)** cards and step 3 options (page range, OCR language, save location) into `ConvertPage`. Done when: both conversions run through the queue with progress and cancellation.
+
+- [ ] `pdf_to_text` (with automatic OCR fallback on scanned pages) and `searchable_pdf` (`3 Tr` invisible text sandwich writer) in `src/core/`. Done when: `tests/corpus/text/scanned.pdf` converts to a searchable PDF whose native `PageText` matches the OCR text and whose visual pixels are unchanged (`ConvertTextAndOcr.*`). Cheaper substitute: visible text overlays that deface the scanned page image.
+- [ ] Plain text and Searchable PDF (OCR) cards and options wired in `ConvertPage`. Done when: driven queue tests complete both jobs and verify cancellation leaves no temp files.
+- [ ] Commit: `convert: add PDF to text and Searchable PDF (OCR) invisible-text writer`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=ConvertTextAndOcr.*` passes under ASan (verifying both `.txt` output and `3 Tr` searchable PDF round-trip on `scanned.pdf`).
 
 ## Verification
 
-- M4 round-trip rule (plan section 7) for the three converters: every good corpus file converts without error, outputs verify by re-opening or pixel and byte comparison.
-- `recto-tests` full suite green; `python scripts/todo-graph.py validate` passes.
+- `PdfWriter`, `AtomicFileWriter`, PDF to images, images to PDF, PDF to text, and Searchable PDF (OCR) all pass under ASan and round-trip in `D06 T01 §3`.
+- Cancelling any conversion mid-job leaves zero temporary or partial files in the output directory.
+- `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` exit 0.

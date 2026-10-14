@@ -124,12 +124,12 @@ The trust and comfort layer of viewing: link annotations hit-test and highlight,
 
 **Fidelity:** SPEC sections 4 and 9.9 (link dialog) with `D-Focus-Dark.png` (dimmed pages) and `D-Dialogs.png`.
 **Job:** The user can follow a document's links safely and read it comfortably in the dark. Consumer: the Settings reading group (D02 T04 §2) owns the ask-before-links and page-colour values this section reads.
-**Treatment:** Link data from the actor (annotation rects in page space), hit-tested through §3's geometry; colour modes applied in the tile shader or blend, not by re-rendering. Cheaper substitute that fails the checkpoint: shell-executing URLs directly, or inverting by re-rendering pages through MuPDF.
+**Treatment:** Link data from the actor (annotation rects in page space), hit-tested through §3's geometry; colour modes applied in the tile shader or blend, not by re-rendering. Cheaper substitute that fails the checkpoint: shell-executing URLs directly, or inverting by re-rendering pages through `recto-pdf`.
 **Chrome:** consume the §4 dialog style from D02 T01 §4 for the link prompt; page colour reads the one settings value. Do not invent a second prompt or per-document colour state.
 
 **Build order:**
 
-1. Link extraction on the actor (bridge addition: link rects, destinations and URIs per page, cached with the display list's lifetime) and hover, cursor and keyboard activation in the view. Done when: the corpus link file's internal links navigate and its external link produces the dialog with the full URL in a monospace box, opening only on confirmation.
+1. Link extraction on the actor (`recto-pdf` link rects, destinations and URIs per page from D01 T01 §4, cached with the display list's lifetime) and hover, cursor and keyboard activation in the view. Done when: the corpus link file's internal links navigate and its external link produces the dialog with the full URL in a monospace box, opening only on confirmation.
 2. Launch-action and file-attachment refusal: actions other than internal go-to and confirmed URI are inert and, where the SPEC gives them a surface, explained. Done when: a crafted corpus file with a launch action (generated per D00 T03 §2 rules) does nothing on click beyond the refusal path.
 3. Page colour modes in compositing plus F11 full screen with edge-reveal chrome. Done when: Dimmed matches `D-Focus-Dark.png` page tone, Inverted leaves an image's colours intact on the image corpus page, and full screen restores exactly on F11 or Esc.
 

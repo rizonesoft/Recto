@@ -61,7 +61,7 @@ D1's condition, before any public listing investment: search the USPTO (TESS) an
 
 ## 2. GitHub repository face
 
-After D00 T01 §1's first push: set the repository description ("Open-source PDF viewer and converter for Windows", matching the social preview), topics (for example pdf, pdf-viewer, winui, windows, mupdf, converter), replace `[OWNER]` in `design/brand/github-social-preview.png` by regenerating it through the design tooling or an image edit, upload it under Settings, General, Social preview, confirm the README banner renders, and set branch protection on `main` requiring the `plan-gates` and build checks (names exactly as D00 T01 §4 records them) once both workflows have run.
+After D00 T01 §1's first push: set the repository description ("Open-source PDF viewer and converter for Windows", matching the social preview), topics (for example pdf, pdf-viewer, winui, windows, ocr, converter), replace `[OWNER]` in `design/brand/github-social-preview.png` by regenerating it through the design tooling or an image edit, upload it under Settings, General, Social preview, confirm the README banner renders, and set branch protection on `main` requiring the `plan-gates` and build checks (names exactly as D00 T01 §4 records them) once both workflows have run.
 
 **Phase:** 99
 **Needs:** operator
