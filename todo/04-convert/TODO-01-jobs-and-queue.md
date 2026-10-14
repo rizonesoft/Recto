@@ -99,8 +99,8 @@ SPEC 9.9's completion behavior: window not focused raises a Windows notification
 
 **Build order:**
 
-1. Notification and toast delivery keyed on window focus at job completion, with activation handling.
-2. Error actions in the expanded queue: Enter password flow (SPEC dialog from D02 T01 §4 reused), open folder, dismiss; failed multi-file jobs report per-file outcomes. Done when for both: the encrypted-file job completes through the queue's own password action in the driven test, and both notification forms are captured in findings.
+1. Notification and toast delivery keyed on window focus at job completion, with activation handling. Done when: both notification forms (unfocused Windows notification and focused in-app toast) fire with working `Open file` and `Show in folder` actions and are captured in findings.
+2. Error actions in the expanded queue: Enter password flow (SPEC dialog from D02 T01 §4 reused), open folder, dismiss; failed multi-file jobs report per-file outcomes. Done when: the encrypted-file job completes through the queue's own password action in the driven test.
 
 - [ ] Focus-aware completion notices with working actions. Done when: Open file from a notification opens the produced file in a Recto tab (or its handler for non-PDF outputs). Cheaper substitute that fails the checkpoint: notifications that only inform.
 - [ ] Password recovery from the queue. Done when: the resubmitted job replaces the failed entry's state rather than duplicating it.

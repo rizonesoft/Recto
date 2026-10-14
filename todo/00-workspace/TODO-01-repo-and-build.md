@@ -79,7 +79,7 @@ Originally stamped for the `third_party/mupdf` submodule pin at tag `1.28.5` (`4
 
 **Build order:**
 
-1. Historical step (completed in `433c72e`): pinned `third_party/mupdf` at `1.28.5` with `FZ_ENABLE_JS=0`.
+1. Historical step (completed in `433c72e`): pinned `third_party/mupdf` at `1.28.5` with `FZ_ENABLE_JS=0`. Done when: recorded in git history at `433c72e`.
 2. 2026-10-14 architectural revision: deinitialize and remove `third_party/mupdf` and `.gitmodules`, delete the MuPDF MSBuild wrapper files, and establish `src/pdf/recto-pdf.vcxproj` as Recto's native C++20 PDF engine static library. Done when: `git status` shows no submodule gitlinks and `Recto.sln` references `src/pdf/recto-pdf.vcxproj` with `/W4 /WX` enforced across all projects.
 
 - [x] Engine dependency boundary established (`third_party/mupdf` retired in favor of in-tree C++20 `src/pdf/recto-pdf.vcxproj`, zero JavaScript engine by construction). Done when: no submodule exists in the repository and all engine code compiles under Recto's own `/W4 /WX` C++20 rules.

@@ -181,14 +181,24 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
         and isinstance(r.get("verdict"), str) and r["verdict"] in VERDICTS for r in rounds),
         f"receipt has no valid review rounds (verdict one of {', '.join(sorted(VERDICTS))}): {ref}")
     if root is not None:
+        root_path = Path(root)
+        root_resolved = root_path.resolve()
         for r in rounds:
-            report = Path(r["report"])
-            require(not report.is_absolute() and ".." not in report.parts,
-                    f"invalid review report path ({r['report']}): {ref}")
-            report_path = Path(root) / report
-            require(report_path.is_file() and not report_path.is_symlink()
+            raw_report = r["report"]
+            report = Path(raw_report)
+            require(re.fullmatch(r"docs/reviews/[A-Za-z0-9_./-]+\.md", raw_report) is not None
+                    and not report.is_absolute() and not report.drive and not report.root
+                    and ".." not in report.parts,
+                    f"invalid review report path ({raw_report}): {ref}")
+            cur = root_path
+            for part in report.parts:
+                cur = cur / part
+                require(not cur.is_symlink(), f"invalid review report path ({raw_report}): {ref}")
+            report_path = root_path / report
+            require(report_path.is_file()
+                    and report_path.resolve().is_relative_to(root_resolved)
                     and bool(read_text(report_path).strip()),
-                    f"missing or empty review report ({r['report']}): {ref}")
+                    f"missing or empty review report ({raw_report}): {ref}")
     checks = data.get("checks")
     require(isinstance(checks, list) and checks and all(isinstance(c, str) and c.strip() for c in checks),
             f"receipt has no checks: {ref}")
@@ -332,10 +342,11 @@ def graph(root=ROOT):
                             f"malformed checklist item: {ref}")
             build_block = after_bo.split("\n- [", 1)[0]
             non_empty_bo = [line for line in build_block.splitlines() if line.strip()]
-            build_steps = [int(m[1]) for m in re.finditer(r"^(\d+)\. \S.+$", build_block, re.M)]
+            build_matches = list(re.finditer(r"^(\d+)\. (\S.+)$", build_block, re.M))
+            build_steps = [int(m[1]) for m in build_matches]
             require(build_steps and len(build_steps) == len(non_empty_bo)
                     and build_steps == list(range(1, len(build_steps) + 1))
-                    and ("Done when:" in build_block or "Done when for both:" in build_block),
+                    and all("Done when:" in m[2] for m in build_matches),
                     f"executable Build order required: {ref}")
             checks = re.findall(r"^- \[([ x])\] (.+)$", section_body, re.M)
             require(2 <= len(checks) <= MAX_ITEMS_PER_SECTION
@@ -573,6 +584,7 @@ def stamp(root, ref, sha, reviews, checks, date, sync_plan=False):
     receipt_path = root / receipt
     require(not receipt_path.exists(), f"receipt already exists: {receipt}")
     path = root / row.path
+    original_bytes = path.read_bytes()
     original = read_text(path)
     text = original
     body = row.body
@@ -588,22 +600,22 @@ def stamp(root, ref, sha, reviews, checks, date, sync_plan=False):
         text, n = re.subn(r"\A(---\n(?:.*\n)*?)status: [a-z]+\n", r"\1status: done\n", text, count=1)
         require(n == 1, f"frontmatter status not found: {row.path}")
     plan_path = root / PLAN
-    original_plan = read_text(plan_path) if plan_path.is_file() else None
+    original_plan_bytes = plan_path.read_bytes() if plan_path.is_file() else None
     try:
         atomic(receipt_path, json.dumps(data, indent=2) + "\n")
         atomic(path, text)
         graph(root)
-        if sync_plan or original_plan is not None:
+        if sync_plan or original_plan_bytes is not None:
             projections(root, sync=True)
     except Exception:
         receipt_path.unlink(missing_ok=True)
         try:
-            if not path.is_file() or read_text(path) != original:
-                atomic(path, original)
+            if not path.is_file() or path.read_bytes() != original_bytes:
+                path.write_bytes(original_bytes)
         finally:
-            if original_plan is not None:
-                if not plan_path.is_file() or read_text(plan_path) != original_plan:
-                    atomic(plan_path, original_plan)
+            if original_plan_bytes is not None:
+                if not plan_path.is_file() or plan_path.read_bytes() != original_plan_bytes:
+                    plan_path.write_bytes(original_plan_bytes)
             elif plan_path.exists():
                 plan_path.unlink(missing_ok=True)
         raise

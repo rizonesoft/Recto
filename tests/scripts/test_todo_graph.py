@@ -132,6 +132,11 @@ class Graph(Tree):
             "- [ ] Work. Done when: it shows.")
         self.write(text)
         self.refuses("executable Build order required")
+        missing_second = todo_file([(1, "A", 0, "none", "--")]).replace(
+            "1. Do it. Done when: it shows.",
+            "1. Do it. Done when: it shows.\n2. Second step without acceptance criterion.")
+        self.write(missing_second)
+        self.refuses("executable Build order required")
 
     def test_empty_field_does_not_borrow_next_line(self):
         text = todo_file([(1, "A", 0, "none", "--")]).replace(
@@ -277,17 +282,24 @@ class Graph(Tree):
         self.assertEqual(tg.extract_ref("no reference here", rows), (None, 2))
 
     def test_deep_dependency_chain_validates_without_recursion_error(self):
-        prev = "--"
         for file_num in range(1, 21):
             rows = []
             for sec_num in range(1, 56):
-                rows.append((sec_num, f"S{sec_num}", 0, "none", prev))
-                prev = f"D00 T{file_num:02d} §{sec_num}"
+                if file_num == 20 and sec_num == 55:
+                    dep = "--"
+                elif sec_num < 55:
+                    dep = f"D00 T{file_num:02d} §{sec_num + 1}"
+                else:
+                    dep = f"D00 T{file_num + 1:02d} §1"
+                rows.append((sec_num, f"S{sec_num}", 0, "none", dep))
             self.write(todo_file(rows, ident=f"file-{file_num:02d}"),
                        name=f"TODO-{file_num:02d}-chain.md")
         parsed = tg.graph(self.root)
         self.assertEqual(len(parsed), 1100)
-        self.assertEqual(len(tg.ordered(parsed)), 1100)
+        ordered_refs = [r.ref for r in tg.ordered(parsed)]
+        self.assertEqual(len(ordered_refs), 1100)
+        self.assertEqual(ordered_refs[0], "D00 T20 §55")
+        self.assertEqual(ordered_refs[-1], "D00 T01 §1")
 
 
 class Stamp(Tree):
@@ -350,6 +362,11 @@ class Stamp(Tree):
 
     def test_missing_review_report_refuses(self):
         self.tick_work()
+        for bad_path in (r"\Users\outside.md", "../outside.md", "docs/reviews/../outside.md", "outside.md"):
+            bad_round = [{"round": 1, "report": bad_path, "verdict": "clean"}]
+            with self.assertRaises(tg.Refused) as ctx:
+                tg.stamp(self.root, "D00 T01 §1", self.sha, bad_round, ["true -> ok"], "2026-10-13")
+            self.assertIn("invalid review report path", str(ctx.exception))
         missing = [{"round": 1, "report": "docs/reviews/00-workspace/missing.md", "verdict": "clean"}]
         with self.assertRaises(tg.Refused) as ctx:
             tg.stamp(self.root, "D00 T01 §1", self.sha, missing, ["true -> ok"], "2026-10-13")
