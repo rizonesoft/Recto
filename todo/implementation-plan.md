@@ -8,19 +8,19 @@ The acceptance bar is `docs/plans/2026-10-13-recto-foundation.md` (architecture,
 
 Sections: 11 | Checklist items: 32
 
-| Status | Reference  | Deliverable                                                      | Needs          | Items |
-| ------ | ---------- | ---------------------------------------------------------------- | -------------- | ----- |
-| [x]    | D00 T01 §1 | Git repository and repo-face files                               | none           | 3     |
-| [x]    | D00 T01 §2 | PDF engine dependency policy (native `recto-pdf`, MuPDF retired) | windows-host   | 3     |
-| [ ]    | D00 T01 §3 | Solution scaffold for all modules, x64 and ARM64                 | windows-host   | 3     |
-| [ ]    | D00 T01 §5 | Reference benchmark machines recorded                            | owner-decision | 2     |
-| [ ]    | D00 T02 §1 | Graph engine, CLI and tests                                      | none           | 3     |
-| [ ]    | D00 T02 §2 | Skills, rules and the CI gate                                    | none           | 4     |
-| [ ]    | D00 T01 §4 | Build CI for x64 and ARM64                                       | windows-host   | 2     |
-| [ ]    | D00 T02 §3 | Seeded graph and generated plan                                  | none           | 4     |
-| [ ]    | D00 T03 §1 | GoogleTest harness and test fixture utilities                    | windows-host   | 2     |
-| [ ]    | D00 T03 §2 | Redistributable test corpus with provenance check                | windows-host   | 3     |
-| [ ]    | D00 T03 §3 | AddressSanitizer build and CI job                                | windows-host   | 3     |
+| Status | Reference  | Deliverable                                                      | Needs        | Items |
+| ------ | ---------- | ---------------------------------------------------------------- | ------------ | ----- |
+| [x]    | D00 T01 §1 | Git repository and repo-face files                               | none         | 3     |
+| [x]    | D00 T01 §2 | PDF engine dependency policy (native `recto-pdf`, MuPDF retired) | windows-host | 3     |
+| [ ]    | D00 T01 §3 | Solution scaffold for all modules, x64 and ARM64                 | windows-host | 3     |
+| [ ]    | D00 T01 §5 | Reference benchmark machines recorded                            | windows-host | 2     |
+| [ ]    | D00 T02 §1 | Graph engine, CLI and tests                                      | none         | 3     |
+| [ ]    | D00 T02 §2 | Skills, rules and the CI gate                                    | none         | 4     |
+| [ ]    | D00 T01 §4 | Build CI for x64 and ARM64                                       | windows-host | 2     |
+| [ ]    | D00 T02 §3 | Seeded graph and generated plan                                  | none         | 4     |
+| [ ]    | D00 T03 §1 | GoogleTest harness and test fixture utilities                    | windows-host | 2     |
+| [ ]    | D00 T03 §2 | Redistributable test corpus with provenance check                | windows-host | 3     |
+| [ ]    | D00 T03 §3 | AddressSanitizer build and CI job                                | windows-host | 3     |
 
 ### Phase 1: M1 Engine core
 
@@ -43,101 +43,117 @@ Sections: 12 | Checklist items: 36
 
 ### Phase 2: M2 Viewer
 
-Sections: 17 | Checklist items: 52
+Sections: 18 | Checklist items: 55
 
-| Status | Reference  | Deliverable                                        | Needs                                   | Items |
-| ------ | ---------- | -------------------------------------------------- | --------------------------------------- | ----- |
-| [ ]    | D02 T01 §1 | App project, manifest, assets and tokens           | windows-host, display-session           | 3     |
-| [ ]    | D02 T01 §2 | Title bar, tabs and shell slots                    | windows-host, display-session           | 3     |
-| [ ]    | D02 T01 §3 | Open paths: picker, drop, command line, activation | windows-host, display-session           | 3     |
-| [ ]    | D02 T01 §4 | Password and could-not-open dialogs                | windows-host, display-session           | 3     |
-| [ ]    | D02 T02 §1 | SwapChainPanel and presentation thread             | windows-host, display-session           | 3     |
-| [ ]    | D02 T02 §2 | Tile integration and texture cache                 | windows-host, display-session           | 3     |
-| [ ]    | D02 T02 §3 | Scroll, zoom, rotate and page layouts              | windows-host, display-session           | 4     |
-| [ ]    | D02 T02 §4 | Links, page colour modes and view states           | windows-host, display-session           | 3     |
-| [ ]    | D02 T03 §1 | Home, recents and reading position                 | windows-host, display-session           | 3     |
-| [ ]    | D02 T03 §2 | Pages and Outline panels                           | windows-host, display-session           | 3     |
-| [ ]    | D02 T03 §3 | Document Info panel                                | windows-host, display-session           | 3     |
-| [ ]    | D02 T03 §4 | Command box (Ctrl+K)                               | windows-host, display-session           | 3     |
-| [ ]    | D02 T04 §1 | Settings store and layout preset engine            | windows-host, display-session           | 3     |
-| [ ]    | D02 T04 §2 | Settings page, all groups                          | windows-host, display-session           | 3     |
-| [ ]    | D02 T04 §3 | Theme, page colour and motion compliance           | windows-host, display-session           | 3     |
-| [ ]    | D02 T04 §4 | Keyboard map completeness audit                    | windows-host, display-session           | 3     |
-| [ ]    | D06 T01 §4 | Performance targets harness                        | windows-host, display-session, attended | 3     |
+| Status | Reference  | Deliverable                                                                                                  | Needs                         | Items |
+| ------ | ---------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------- | ----- |
+| [ ]    | D02 T01 §1 | App project, manifest, assets and tokens                                                                     | windows-host, display-session | 3     |
+| [ ]    | D02 T01 §2 | Title bar, tabs and shell slots                                                                              | windows-host, display-session | 3     |
+| [ ]    | D02 T01 §3 | Open paths: picker, drop, command line, activation                                                           | windows-host, display-session | 3     |
+| [ ]    | D02 T01 §4 | Password and could-not-open dialogs                                                                          | windows-host, display-session | 3     |
+| [ ]    | D02 T02 §1 | SwapChainPanel and presentation thread                                                                       | windows-host, display-session | 3     |
+| [ ]    | D02 T02 §2 | Tile integration and texture cache                                                                           | windows-host, display-session | 3     |
+| [ ]    | D02 T02 §3 | Scroll, zoom, rotate and page layouts                                                                        | windows-host, display-session | 4     |
+| [ ]    | D02 T02 §4 | Links, page colour modes and view states                                                                     | windows-host, display-session | 3     |
+| [ ]    | D02 T03 §1 | Home, recents and reading position                                                                           | windows-host, display-session | 3     |
+| [ ]    | D02 T03 §2 | Pages and Outline panels                                                                                     | windows-host, display-session | 3     |
+| [ ]    | D02 T03 §3 | Document Info panel                                                                                          | windows-host, display-session | 3     |
+| [ ]    | D02 T03 §4 | Command box (Ctrl+K)                                                                                         | windows-host, display-session | 3     |
+| [ ]    | D02 T03 §5 | Interactive Bookmark Editor, Layers (OCG), Attachments & Portfolios, and Editable Info/XMP/ViewerPreferences | windows-host, display-session | 3     |
+| [ ]    | D02 T04 §1 | Settings store, Portable mode path resolver and layout preset engine                                         | windows-host, display-session | 3     |
+| [ ]    | D02 T04 §2 | Settings page, all groups (including Portable mode toggle)                                                   | windows-host, display-session | 3     |
+| [ ]    | D02 T04 §3 | Theme, page colour and motion compliance                                                                     | windows-host, display-session | 3     |
+| [ ]    | D02 T04 §4 | Keyboard map completeness audit                                                                              | windows-host, display-session | 3     |
+| [ ]    | D06 T01 §4 | Performance targets harness                                                                                  | windows-host, display-session | 3     |
 
 ### Phase 3: M3 Text
 
-Sections: 8 | Checklist items: 24
+Sections: 13 | Checklist items: 39
 
-| Status | Reference  | Deliverable                                                               | Needs                         | Items |
-| ------ | ---------- | ------------------------------------------------------------------------- | ----------------------------- | ----- |
-| [ ]    | D03 T01 §1 | Native `PageText` extraction model and `recto-cli text`                   | windows-host                  | 3     |
-| [ ]    | D03 T01 §2 | Quad-precise text selection, floating toolbar, context menu and clipboard | windows-host, display-session | 3     |
-| [ ]    | D03 T01 §3 | Non-blocking find engine and `Ctrl+F` search card                         | windows-host, display-session | 3     |
-| [ ]    | D03 T01 §4 | Built-in OCR pipeline (`Windows.Media.Ocr`) for scanned pages             | windows-host                  | 3     |
-| [ ]    | D03 T02 §1 | UI Automation text provider for pages                                     | windows-host, display-session | 3     |
-| [ ]    | D03 T02 §2 | Keyboard order, names and focus audit                                     | windows-host, display-session | 3     |
-| [ ]    | D03 T02 §3 | Announcements and live regions                                            | windows-host, display-session | 3     |
-| [ ]    | D06 T01 §2 | Text and find verification tables                                         | windows-host                  | 3     |
+| Status | Reference  | Deliverable                                                                             | Needs                         | Items |
+| ------ | ---------- | --------------------------------------------------------------------------------------- | ----------------------------- | ----- |
+| [ ]    | D03 T01 §1 | Native `PageText` extraction model and `recto-cli text`                                 | windows-host                  | 3     |
+| [ ]    | D03 T01 §2 | Quad-precise text selection, floating toolbar, context menu and clipboard               | windows-host, display-session | 3     |
+| [ ]    | D03 T01 §3 | Non-blocking find engine (`Match case`, `Whole word`, `Regex`) and `Ctrl+F` search card | windows-host, display-session | 3     |
+| [ ]    | D03 T01 §4 | Built-in OCR pipeline (`Windows.Media.Ocr`) for scanned and vector-outlined text pages  | windows-host                  | 3     |
+| [ ]    | D03 T01 §5 | Content-stream Find & Replace (`Ctrl+H`) and Compare PDFs View (`Ctrl+Shift+D`)         | windows-host, display-session | 3     |
+| [ ]    | D03 T02 §1 | UI Automation text provider for pages                                                   | windows-host, display-session | 3     |
+| [ ]    | D03 T02 §2 | Keyboard order, names and focus audit                                                   | windows-host, display-session | 3     |
+| [ ]    | D03 T02 §3 | Announcements and live regions                                                          | windows-host, display-session | 3     |
+| [ ]    | D03 T03 §1 | Annotations and markup engine, `/AP` synthesis and `XFDF`/`JSON` I/O                    | none                          | 3     |
+| [ ]    | D03 T03 §2 | Viewer Markup and Annotation Bar (`Ctrl+Shift+A`), canvas handles and Comments panel    | windows-host, display-session | 3     |
+| [ ]    | D03 T03 §3 | AcroForms, XFA-to-AcroForm converter, calculation order and form data I/O               | none                          | 3     |
+| [ ]    | D03 T03 §4 | On-canvas interactive form filling, Form Designer Bar and Field Properties Inspector    | windows-host, display-session | 3     |
+| [ ]    | D06 T01 §2 | Text and find verification tables                                                       | windows-host                  | 3     |
 
 ### Phase 4: M4 Conversions A
 
-Sections: 15 | Checklist items: 45
+Sections: 21 | Checklist items: 63
 
-| Status | Reference  | Deliverable                                                        | Needs                         | Items |
-| ------ | ---------- | ------------------------------------------------------------------ | ----------------------------- | ----- |
-| [ ]    | D04 T01 §1 | ConversionJob runtime and job contract                             | windows-host                  | 3     |
-| [ ]    | D04 T01 §2 | Convert page frame and queue UI                                    | windows-host, display-session | 3     |
-| [ ]    | D04 T01 §3 | Completion notifications and error actions                         | windows-host, display-session | 3     |
-| [ ]    | D04 T02 §1 | `PdfWriter` and atomic temp-then-replace file helper               | windows-host                  | 3     |
-| [ ]    | D04 T02 §2 | PDF to images (PNG, JPEG, TIFF, BMP at 72-600 DPI)                 | windows-host, display-session | 3     |
-| [ ]    | D04 T02 §3 | Images to PDF with EXIF orientation and lossless JPEG pass-through | windows-host, display-session | 3     |
-| [ ]    | D04 T02 §4 | PDF to plain text and Searchable PDF (OCR) sandwich writer         | windows-host, display-session | 3     |
-| [ ]    | D05 T01 §1 | Graft merge and split                                              | windows-host                  | 3     |
-| [ ]    | D05 T01 §2 | Reorder, rotate, delete and extract on a copy                      | windows-host                  | 3     |
-| [ ]    | D05 T01 §3 | Encrypt and decrypt (AES-256)                                      | windows-host                  | 3     |
-| [ ]    | D05 T02 §1 | Page grid, selection model and Reorder                             | windows-host, display-session | 3     |
-| [ ]    | D05 T02 §2 | Combine mode                                                       | windows-host, display-session | 3     |
-| [ ]    | D05 T02 §3 | Split mode                                                         | windows-host, display-session | 3     |
-| [ ]    | D05 T02 §4 | Save flows and the unsaved-changes guard                           | windows-host, display-session | 3     |
-| [ ]    | D06 T01 §3 | Conversion round-trip suite                                        | windows-host                  | 3     |
+| Status | Reference  | Deliverable                                                                                                             | Needs                         | Items |
+| ------ | ---------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------- | ----- |
+| [ ]    | D04 T01 §1 | ConversionJob runtime and job contract                                                                                  | windows-host                  | 3     |
+| [ ]    | D04 T01 §2 | Convert page frame and queue UI                                                                                         | windows-host, display-session | 3     |
+| [ ]    | D04 T01 §3 | Completion notifications and error actions                                                                              | windows-host, display-session | 3     |
+| [ ]    | D04 T02 §1 | `PdfWriter` and atomic temp-then-replace file helper                                                                    | windows-host                  | 3     |
+| [ ]    | D04 T02 §2 | PDF to images, multipage TIFF, animated GIF, vector SVG and OpenXPS                                                     | windows-host, display-session | 3     |
+| [ ]    | D04 T02 §3 | Images, SVG and XPS to PDF with EXIF orientation and lossless JPEG pass-through                                         | windows-host, display-session | 3     |
+| [ ]    | D04 T02 §4 | PDF to plain text and Searchable PDF (OCR) sandwich writer                                                              | windows-host, display-session | 3     |
+| [ ]    | D04 T02 §5 | Table and Image Extractor engine, Convert card and Viewer Extractor Bar                                                 | windows-host, display-session | 3     |
+| [ ]    | D04 T02 §6 | PDF Optimizer, Compressor, Font Subsetter and Fast Web View Linearizer                                                  | windows-host, display-session | 3     |
+| [ ]    | D05 T01 §1 | Graft merge and split                                                                                                   | windows-host                  | 3     |
+| [ ]    | D05 T01 §2 | Reorder, rotate, delete and extract on a copy                                                                           | windows-host                  | 3     |
+| [ ]    | D05 T01 §3 | Encrypt and decrypt (AES-256)                                                                                           | windows-host                  | 3     |
+| [ ]    | D05 T01 §4 | Insert blank page, crop/resize boxes, watermarks, headers/footers and Bates numbering                                   | windows-host                  | 3     |
+| [ ]    | D05 T01 §5 | Digital signatures (PKCS#7, PAdES, RFC 3161) and true physical redaction & sanitization                                 | windows-host                  | 3     |
+| [ ]    | D05 T02 §1 | Page grid, selection model and Reorder                                                                                  | windows-host, display-session | 3     |
+| [ ]    | D05 T02 §2 | Combine mode                                                                                                            | windows-host, display-session | 3     |
+| [ ]    | D05 T02 §3 | Split mode                                                                                                              | windows-host, display-session | 3     |
+| [ ]    | D05 T02 §4 | Save flows and the unsaved-changes guard                                                                                | windows-host, display-session | 3     |
+| [ ]    | D05 T02 §5 | Interactive Crop/Resize, Watermark, Header/Footer and Bates Numbering dialogs with live preview                         | windows-host, display-session | 3     |
+| [ ]    | D05 T02 §6 | Viewer Redaction and Sanitize Bar (`Ctrl+Shift+X`), Signature Banner, Sign Dialog (`Ctrl+Shift+G`) and Signatures panel | windows-host, display-session | 3     |
+| [ ]    | D06 T01 §3 | Conversion round-trip suite                                                                                             | windows-host                  | 3     |
 
 ### Phase 5: M5 Conversions B
 
-Sections: 6 | Checklist items: 17
+Sections: 10 | Checklist items: 29
 
-| Status | Reference  | Deliverable                                                                 | Needs                         | Items |
-| ------ | ---------- | --------------------------------------------------------------------------- | ----------------------------- | ----- |
-| [ ]    | D04 T03 §1 | Native C++20 OpenXML `.docx` ZIP writer and layout/table reconstructor      | windows-host                  | 3     |
-| [ ]    | D04 T03 §2 | Convert UI wiring, 20-document quality review and layout tuning             | windows-host, display-session | 3     |
-| [ ]    | D04 T04 §1 | Built-in C++20 OpenXML (`.docx`, `.xlsx`, `.pptx`) and `.rtf` to PDF engine | windows-host                  | 3     |
-| [ ]    | D04 T04 §2 | Converter detection and Microsoft Office COM adapter with macros forced off | windows-host, office          | 3     |
-| [ ]    | D04 T04 §3 | LibreOffice headless adapter with Job Object isolation                      | windows-host                  | 2     |
-| [ ]    | D04 T04 §4 | Convert UI wiring, Settings integration and missing-suite dialog            | windows-host, display-session | 3     |
+| Status | Reference  | Deliverable                                                                                                | Needs                         | Items |
+| ------ | ---------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------- | ----- |
+| [ ]    | D04 T03 §1 | Native C++20 `.docx` and `.rtf` writers (Flowing, Exact, Continuous) and table reconstructor               | windows-host                  | 3     |
+| [ ]    | D04 T03 §2 | Convert UI wiring, 20-document quality review and layout tuning                                            | windows-host, display-session | 3     |
+| [ ]    | D04 T04 §1 | Built-in C++20 OpenXML (`.docx`, `.xlsx`, `.pptx`), `.rtf`, `HTML/CSS`, `Markdown` and `CSV` to PDF engine | windows-host                  | 3     |
+| [ ]    | D04 T04 §2 | Converter detection and Microsoft Office COM adapter with macros forced off                                | windows-host, office          | 3     |
+| [ ]    | D04 T04 §3 | LibreOffice headless adapter with Job Object isolation                                                     | windows-host                  | 2     |
+| [ ]    | D04 T04 §4 | Convert UI wiring, Settings integration and missing-suite dialog                                           | windows-host, display-session | 3     |
+| [ ]    | D04 T05 §1 | PDF to Excel (`.xlsx`), `.csv` and `.xml` (`XlsxWriter`) and Convert UI                                    | windows-host, display-session | 3     |
+| [ ]    | D04 T05 §2 | PDF to HTML5 (Fixed and Flowing), Markdown (`.md`), EPUB 3 (`.epub`) and LaTeX (`.tex`) and Convert UI     | windows-host, display-session | 3     |
+| [ ]    | D04 T05 §3 | PDF/A (`1a/1b/2a/2b/2u/3a/3b/3u`), PDF/UA-1 (`/StructTreeRoot`) and ZUGFeRD / Factur-X engine              | windows-host                  | 3     |
+| [ ]    | D04 T05 §4 | Viewer Standards and E-Invoice Side Panel and `PDF/A & E-Invoice` Convert Card                             | windows-host, display-session | 3     |
 
 ### Phase 6: M6 Ship
 
 Sections: 9 | Checklist items: 27
 
-| Status | Reference  | Deliverable                                         | Needs                                         | Items |
-| ------ | ---------- | --------------------------------------------------- | --------------------------------------------- | ----- |
-| [ ]    | D06 T02 §1 | Hostile-input rules audit                           | windows-host, display-session                 | 3     |
-| [ ]    | D06 T02 §2 | Continuous fuzz operation and crash triage          | windows-host                                  | 3     |
-| [ ]    | D07 T01 §1 | Print API decision and printing                     | windows-host, display-session, attended       | 3     |
-| [ ]    | D07 T01 §2 | MSIX package, assets and association                | windows-host                                  | 3     |
-| [ ]    | D07 T01 §3 | Clean-machine install and default-app proof         | windows-host, display-session, attended       | 3     |
-| [ ]    | D07 T02 §1 | About page with license and Built-with              | windows-host, display-session                 | 3     |
-| [ ]    | D07 T02 §2 | NOTICE completion and dependency license audit      | none                                          | 3     |
-| [ ]    | D07 T02 §3 | Crash reporting (opt-in) and localization readiness | windows-host, display-session, owner-decision | 3     |
-| [ ]    | D07 T02 §4 | Store listing, submission and certification         | store-account, attended, windows-host         | 3     |
+| Status | Reference  | Deliverable                                                                        | Needs                         | Items |
+| ------ | ---------- | ---------------------------------------------------------------------------------- | ----------------------------- | ----- |
+| [ ]    | D06 T02 §1 | Hostile-input rules audit                                                          | windows-host, display-session | 3     |
+| [ ]    | D06 T02 §2 | Continuous fuzz operation and crash triage                                         | windows-host                  | 3     |
+| [ ]    | D07 T01 §1 | Print API decision and printing                                                    | windows-host, display-session | 3     |
+| [ ]    | D07 T01 §2 | Inno Setup installer (Full & Portable), Portable archive and optional MSIX         | windows-host                  | 3     |
+| [ ]    | D07 T01 §3 | Automated Full Install, Portable Install, association and upgrade proof            | windows-host, display-session | 3     |
+| [ ]    | D07 T02 §1 | About page with license and Built-with                                             | windows-host, display-session | 3     |
+| [ ]    | D07 T02 §2 | NOTICE completion and dependency license audit                                     | none                          | 3     |
+| [ ]    | D07 T02 §3 | Crash reporting (opt-in local minidump-plus-log bundle) and localization readiness | windows-host, display-session | 3     |
+| [ ]    | D07 T02 §4 | Release bundle, GitHub Release runbook and optional Store submission kit           | windows-host                  | 3     |
 
 ### Phase 7: After v1
 
 Sections: 1 | Checklist items: 3
 
-| Status | Reference  | Deliverable                          | Needs          | Items |
-| ------ | ---------- | ------------------------------------ | -------------- | ----- |
-| [ ]    | D06 T02 §3 | Post-v1 broker process design record | owner-decision | 3     |
+| Status | Reference  | Deliverable                          | Needs | Items |
+| ------ | ---------- | ------------------------------------ | ----- | ----- |
+| [ ]    | D06 T02 §3 | Post-v1 broker process design record | none  | 3     |
 
 ### Phase 99: Manual, operator only
 
@@ -150,6 +166,6 @@ Sections: 4 | Checklist items: 12
 | [ ]    | D99 T01 §3 | Partner Center account and app reservation  | operator, store-account | 3     |
 | [ ]    | D99 T01 §4 | Reference machines confirmed                | operator                | 3     |
 
-Progress: 2/83 verified sections, 2 ready to run now.
+Progress: 2/99 verified sections, 3 ready to run now.
 
-Checklist: 16/248 items completed (includes Commit items).
+Checklist: 16/296 items completed (includes Commit items).

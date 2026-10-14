@@ -3,32 +3,36 @@ schema_version: 1
 id: page-operations
 domain: 05-organize
 status: active
-title: "TODO-01 -- Page Operations: Merge, Split, Reorder, Encrypt"
+title: "TODO-01 -- Page Operations, Stamping, Digital Signatures and True Redaction"
 track: M4
 ---
 
-# TODO-01 -- Page Operations: Merge, Split, Reorder, Encrypt
+# TODO-01 -- Page Operations, Stamping, Digital Signatures and True Redaction
 
-> **Goal:** The engine-side page surgery behind Organize and the Convert cards: graft-based merge and split, reorder, rotate, delete and extract on a copy, and CNG `AES-256` (`R=6`) encrypt and decrypt, all as `recto-pdf` (`src/pdf/graft.cpp`, `src/pdf/writer.cpp`, `src/pdf/crypto.cpp`) and `recto-core` operations the job frame runs, never modifying an open viewer document in place.
+> **Goal:** The engine-side page surgery, stamping, cryptographic signing, and true redaction behind Organize, the Viewer security bars, and the Convert cards: graft-based merge and split, reorder, rotate, delete, insert blank page, crop/resize page boxes, watermarks, headers/footers, Bates numbering, CNG `AES-256` (`R=6`) encrypt and decrypt, X.509 / PKCS#12 / Windows Certificate Store / PAdES / RFC 3161 digital signatures and verification (`src/pdf/signature.cpp`), and true physical content-stream redaction and document sanitization (`src/pdf/redactor.cpp`), all as `recto-pdf` and `recto-core` operations that never modify an open viewer document in place.
 
-> **Current state:** Measured 2026-10-14. No code exists. The mechanisms are plan section 5's rows: `recto::pdf::PdfWriter` with one `recto::pdf::GraftMap` per source for merge and split, page-tree functions on a copy for reorder, rotate and delete, `PdfWriteOptions` with Windows CNG (`bcrypt.dll`) `AES-256` (`R=6`) encryption, all saved through the atomic rule. Engine work follows `D01 T01`'s `Result<T>` pattern in `src/pdf/graft.cpp`, `src/pdf/writer.cpp`, and `src/pdf/crypto.cpp`; D04 T02 §1's writer plumbing and output helper are shared by agreement.
+> **Current state:** Measured 2026-10-14. No code exists. The mechanisms are plan section 5's rows: `recto::pdf::PdfWriter` with one `recto::pdf::GraftMap` per source for merge and split, page-tree functions on a copy for reorder, rotate, delete, blank-page insertion and box cropping, `src/core/stamp_watermark.cpp` for watermarks, headers/footers and Bates numbering, `src/pdf/crypto.cpp` for `AES-256` (`R=6`) encryption, `src/pdf/signature.cpp` for PKCS#7 / PAdES digital signatures, and `src/pdf/redactor.cpp` for physical redaction and sanitization, all saved through the atomic rule.
 
 ## Inputs
 
-- `docs/plans/2026-10-13-recto-foundation.md` section 5 (Merge, Split, Rotate/delete/reorder, Encrypt/decrypt rows and the stretch goal of source bookmarks as outline entries), section 4.9 (job isolation).
-- `design/SPEC.md` sections 9.5 (One combined PDF, Split files, Protected and Unlocked cards) and 9.6 (the operations the Organize UI performs).
+- `docs/plans/2026-10-13-recto-foundation.md` decisions D9 and D12; sections 4.1 (`graft.cpp`, `crypto.cpp`, `signature.cpp`, `redactor.cpp`), 4.9 (job isolation), 5 (Merge, Split, Rotate/delete/reorder/crop, Watermarks/headers/footers/Bates, Encrypt/decrypt, Digital Signatures, True Redaction & Sanitization), and 9 (security rules).
+- `design/SPEC.md` sections 8.2 (`Redaction & Sanitize Bar`, `Signature Status Banner & Sign Mode`), 8.3 (`Signatures & Standards` side panel), 9.5 (`Protected & Signed PDF` and `Unlocked PDF` cards), 9.6 (`Organize` tools), and 9.9 (`Watermark`, `Header/Footer & Bates`, `Crop & Resize`, `Sanitize Document`, and `Sign Document` dialogs).
 - -> XREF: D04 T02 §1 -- the shared writer plumbing and atomic save helper this file consumes; graft-map needs (per-source maps) feed back into that plumbing's shape.
-- -> XREF: D05 T02 §1 -- the Organize grid whose edits compile down to this file's operation list; the operation vocabulary is agreed here.
+- -> XREF: D05 T02 §1 -- the Organize grid, dialogs, and viewer security bars whose edits compile down to this file's operation list; the operation vocabulary is agreed here.
+- -> XREF: D06 T02 §1 -- the security audit in `D06 T02 §1` verifies physical glyph/pixel removal after redaction and metadata/hidden-data eradication after sanitization.
 
 ## Outcome
 
 - Merging N PDFs yields one PDF with pages in the stated order, byte-level page content preserved by grafting (no re-render), verifiable page by page.
 - Splitting by ranges, every N, or per page yields exactly the stated files; reorder, rotate, delete and extract round-trip through render comparison.
 - Encryption produces AES-256 (`R=6`) files with the stated permissions that other readers honor; decryption with the right password produces a clean unprotected copy, and the wrong password is a typed refusal.
+- Blank-page insertion, `/MediaBox`/`/CropBox`/`/TrimBox`/`/BleedBox`/`/ArtBox` cropping and page resizing, vector/image watermarks, headers/footers, and Bates numbering (`src/core/stamp_watermark.cpp`) produce clean vector PDF streams and CLI operations.
+- `src/pdf/signature.cpp` signs and verifies PDFs using PKCS#12 (`.pfx`/`.p12`) and the Windows Certificate Store (`crypt32.dll` / `bcrypt.dll`) with PKCS#7 detached and PAdES (`B-B`, `B-T`, `B-LT`), `/DSS` revocation data, RFC 3161 timestamps, `/DocMDP` certification, and incremental-save multi-signature support.
+- `src/pdf/redactor.cpp` permanently removes text runs, vector paths, and image pixels inside redaction rectangles (never merely drawing a black box over selectable text) and sanitizes hidden metadata, scripts, attachments, and layers.
 
 **Adjacency:** all=not-applicable (engine operations inside the D04 T01 job frame; cards, queue, notices and save settings are owned there and by D02 T04 §2)
 
-**Adjacency rationale:** This file is the verb library the Convert cards and the Organize UI call. Its surfaces are other files' surfaces: the cards and grid (D04 T01, D05 T02), the queue, and the save dialogs. Permissions in the PDF sense (print, copy, edit flags) are data the encrypt operation writes, exercised in section 3's tests, not an app permission system.
+**Adjacency rationale:** This file is the verb library the Convert cards, Organize UI, and Viewer security bars (`D05 T02`) call. Its surfaces live in `D04 T01` and `D05 T02`.
 
 ## Implementation Order
 
@@ -37,6 +41,8 @@ track: M4
 | 1 | §1 | Graft merge and split | D04 T02 §1 | [ ] |
 | 2 | §2 | Reorder, rotate, delete and extract on a copy | §1 | [ ] |
 | 3 | §3 | Encrypt and decrypt (AES-256) | §1 | [ ] |
+| 4 | §4 | Insert blank page, crop/resize boxes, watermarks, headers/footers and Bates numbering | §2 | [ ] |
+| 5 | §5 | Digital signatures (PKCS#7, PAdES, RFC 3161) and true physical redaction & sanitization | §3, D01 T02 §4 | [ ] |
 
 ## 1. Graft merge and split
 
@@ -95,8 +101,57 @@ Encrypt: save a copy with `PdfWriteOptions` using Windows CNG (`bcrypt.dll`) `AE
 
 **Test checkpoint:** `recto-tests --gtest_filter=PageOps.*` green under ASan: encrypt-decrypt render equality, permission readback, wrong-password refusal (quoted).
 
+## 4. Insert blank page, crop/resize boxes, watermarks, headers/footers and Bates numbering
+
+Implement `src/core/stamp_watermark.cpp` and extend `src/core/page_ops.cpp`:
+- **Insert Blank Page & Crop / Resize Page Boxes:** Insert blank pages at any index with configurable dimensions (`Match current page`, `A4`, `Letter`, `Legal`, `Custom pt/mm/in`) and orientation; update `/MediaBox`, `/CropBox`, `/TrimBox`, `/BleedBox`, and `/ArtBox` (with `Auto-Detect White Margins` via `DisplayList` bounding box inspection) or rescale page content streams (`q sx 0 0 sy tx ty cm ... Q`) to a new target paper size.
+- **Watermarks & Stamps (`src/core/stamp_watermark.cpp`):** Inject reusable Form XObjects (`/Subtype /Form`) behind (prepend to `/Contents`) or in front of (append to `/Contents`) page streams with `/ExtGState` opacity (`/ca`, `/CA`), rotation angle (`-90` to `+90` degrees), 9-point anchor grid or tiled pattern, page-range and even/odd filters, supporting both formatted text watermarks and image/PDF vector logo watermarks.
+- **Headers, Footers & Legal Bates Numbering:** Render left, center, and right header/footer zones with dynamic tokens (`{page}`, `{total}`, `{date}`, `{filename}`, `{author}`) and legal **Bates Numbering** (configurable prefix, suffix, zero-padded digit width e.g. `000001`, start number, multi-document sequential numbering across batches, and optional `Shrink page content to avoid overlapping existing text`).
+- Expose `recto-cli watermark`, `recto-cli bates`, and `recto-cli crop`.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement blank-page insertion, page-box cropping (`Auto-Detect White Margins`), and page content rescaling in `src/core/page_ops.cpp`, plus `recto-cli crop`. Done when: `PageOps.CropAndResize` inserts blank pages, crops margins, and rescales an A4 page to Letter with exact bounding box and visual verification under ASan.
+2. Implement text/image watermarks, 3-zone headers/footers, and Bates numbering (including shrink-to-avoid-overlap) in `src/core/stamp_watermark.cpp`, plus `recto-cli watermark` and `recto-cli bates`. Done when: `StampWatermark.*` stamps a multi-page PDF with watermarks and `CASE-000101`..`CASE-000110` Bates numbers and verifies that `PageText` extracts the exact stamped Bates strings on each page.
+
+- [ ] Blank-page insertion, `/MediaBox`/`/CropBox`/`/TrimBox`/`/BleedBox`/`/ArtBox` cropping, auto-margin detection, and page rescaling. Done when: `PageOps.CropAndResize` passes under ASan. Cheaper substitute: modifying `/CropBox` only when the user requested full page rescaling.
+- [ ] Watermarks (text/image, under/over, opacity, rotation, tiling), 3-zone headers/footers, and Bates numbering (`src/core/stamp_watermark.cpp`). Done when: `StampWatermark.*` passes under ASan.
+- [ ] Commit: `organize: add blank page insertion, crop/resize, watermarks, headers/footers and Bates numbering`
+
+**Test checkpoint:** `recto-tests --gtest_filter=PageOps.CropAndResize:StampWatermark.*` passes under ASan.
+
+## 5. Digital signatures (PKCS#7, PAdES, RFC 3161) and true physical redaction & sanitization
+
+Implement `src/pdf/signature.cpp` (`recto::pdf::SignatureEngine`) and `src/pdf/redactor.cpp` (`recto::pdf::Redactor`):
+- **Digital Signatures (`src/pdf/signature.cpp`):**
+  - *Signing:* Load X.509 certificates and private keys from PKCS#12 (`.pfx` / `.p12`) files or the Windows Certificate Store (`CertOpenSystemStoreW(..., L"MY")`, supporting hardware tokens/smartcards via NCrypt) using Windows CryptoAPI / CNG (`crypt32.dll`, `bcrypt.dll`, `ncrypt.dll`). Write a `/FT /Sig` signature field and `/Type /Sig` dictionary with `/ByteRange [0 offset1 offset2 len2]` covering the entire file except the hex-encoded `/Contents` placeholder, compute SHA-256 / SHA-384 / SHA-512 CMS signed attributes (`CryptSignMessage` / `CMSG_SIGNED`), support both `/adbe.pkcs7.detached` and **PAdES** (`/ETSI.CAdES.detached`, `B-B`, `B-T`, `B-LT`, `B-LTA`), attach RFC 3161 Time-Stamp Authority (`TSA`) tokens and `/DSS` (Document Security Store) OCSP/CRL revocation responses, support `/DocMDP` certification permissions (`P=1, 2, 3`), synthesize visible signature `/AP` appearances (drawn ink, uploaded image, or typed signature + signer details), and write via **incremental save** (`D01 T02 §4`) so existing signatures remain valid when adding a counter-signature.
+  - *Verification:* Verify `/ByteRange` digest integrity against file bytes, validate the CMS/CAdES cryptographic signature, build the X.509 certificate chain (`CertGetCertificateChain`), check revocation status and embedded `/DSS` / RFC 3161 timestamps, and detect any unauthorized incremental modifications after signing.
+- **True Physical Redaction & Document Sanitization (`src/pdf/redactor.cpp`):**
+  - *Physical Redaction:* Given a list of page redaction rectangles (from manual selection, text search, or regex patterns in `D03 T01 §3`), rewrite each affected page's `/Contents` stream and Form XObjects: split any `Tj`/`TJ` text string whose glyph quads intersect a redaction box and delete the intersecting characters completely from the content stream; clip or remove intersecting vector path segments; overwrite intersecting pixel regions in embedded `/Subtype /Image` XObjects with solid fill; remove matching entries from `/Annots`, `/StructTreeRoot`, and `/Outlines`; and paint the burn-in overlay rectangle with optional exemption code text (e.g., `FOIA (b)(6)`).
+  - *Sanitization (`sanitize_document`):* Strip `/Info`, `/Metadata` XMP streams, `/Names /JavaScript`, `/OpenAction`, `/AA`, `/Launch`, `/Names /EmbeddedFiles`, `/Annots` comments/form data, `/OCProperties` hidden layers, `/PieceInfo`, page `/Thumb` thumbnails, and compact the cross-reference table via full rewrite so zero deleted historical objects remain in the file.
+- Expose `recto-cli sign`, `recto-cli verify`, `recto-cli redact`, and `recto-cli sanitize`.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement X.509 / PKCS#12 / Windows Cert Store signing (`PKCS#7` and `PAdES`), `/ByteRange` incremental-save serialization, visible `/AP` signature appearance synthesis, RFC 3161 timestamping, `/DSS` embedding, and signature verification in `src/pdf/signature.cpp`, plus `recto-cli sign` and `recto-cli verify`. Done when: `PdfSignature.*` generates a test X.509 keypair via CNG, signs a PDF twice via incremental save (two counter-signatures), verifies both signatures as valid, and detects tampering if a single byte outside `/Contents` is modified.
+2. Implement physical content-stream redaction (glyph-run splitting, vector clipping, image pixel scrubbing, burn-in overlay) and document sanitization in `src/pdf/redactor.cpp`, plus `recto-cli redact` and `recto-cli sanitize`. Done when: `PdfRedactor.*` redacts a target word and an image region, and verifies that neither `PageText` extraction nor raw decompressed stream byte search finds the redacted characters anywhere in the output file under ASan.
+
+- [ ] Cryptographic PDF signing and verification (`src/pdf/signature.cpp`: PKCS#12 & Windows Cert Store, `PKCS#7` & `PAdES`, `/DocMDP`, visible `/AP`, incremental multi-signing). Done when: `PdfSignature.*` passes under ASan covering single sign, multi-sign incremental save, verification, and tamper detection. Cheaper substitute: drawing a visual signature stamp without a cryptographic `/ByteRange` CMS signature dictionary.
+- [ ] True physical content-stream redaction and one-click document sanitization (`src/pdf/redactor.cpp`). Done when: `PdfRedactor.*` proves zero residual redacted bytes in decompressed streams and complete removal of hidden metadata/scripts/layers after sanitization. Cheaper substitute: drawing a black rectangle over text while leaving the underlying `Tj`/`TJ` string in the content stream.
+- [ ] Commit: `pdf: add cryptographic digital signatures (PKCS#7/PAdES) and true physical redactor`
+
+**Test checkpoint:** `recto-tests --gtest_filter=PdfSignature.*:PdfRedactor.*` passes under ASan.
+
 ## Verification
 
-- M4's merge, split, reorder, rotate, delete, encrypt and decrypt rows (plan section 7 via section 5) each round-trip the corpus with render-level evidence, ready for D06 T01 §3's suite.
-- No operation path opens the viewer's document instance (isolation re-proven in §3's queue flow).
+- M4's merge, split, reorder, rotate, delete, blank-page insert, crop/resize, watermarks, headers/footers, Bates numbering, encrypt/decrypt, digital signatures, and true redaction/sanitization each pass under ASan and round-trip in `D06 T01 §3`'s suite.
+- No operation path modifies the open viewer's document instance in place.
 - `python scripts/todo-graph.py validate` passes.

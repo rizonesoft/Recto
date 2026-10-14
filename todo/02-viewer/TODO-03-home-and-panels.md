@@ -9,25 +9,27 @@ track: M2
 
 # TODO-03 -- Home, Panels, Document Info and the Command Box
 
-> **Goal:** The surfaces around the page: Home with recents and remembered reading position, the Pages and Outline side panels, the document Info panel, and the Ctrl+K command box that reaches every command, each matching its SPEC board and reusing the shell slots and tile path instead of inventing parallel machinery.
+> **Goal:** The surfaces around the page: Home with recents and remembered reading position, the Pages and Outline side panels (with interactive Bookmark editing), the Layers (OCG) and Attachments & Portfolio side panels, the document Info, XMP and Viewer Preferences panel, and the Ctrl+K command box that reaches every command, each matching its SPEC board and reusing the shell slots and tile path instead of inventing parallel machinery.
 
-> **Current state:** Measured 2026-10-13. No code exists. D02 T01 provides the shell and open paths; D02 T02 provides the view, current-page rule and thumbnail-capable tile path. The designs are fixed: SPEC 9.1 (Home), 8.3 (floating side panel), 9.2 (Info panel contents), 9.4 (command box), with boards `D-Home.png`, `D-Focus-Light.png`, `D-ReadingRoom.png` (inspector) and `D-Dialogs.png` (command box). Recent-file and reading-position storage shape is this file's to define, read later by no one else.
+> **Current state:** Measured 2026-10-14. No code exists. D02 T01 provides the shell and open paths; D02 T02 provides the view, current-page rule and thumbnail-capable tile path. The designs are fixed: SPEC 9.1 (Home), 8.3 (floating and docked side panels: Pages, Outline with Bookmark Editor, Layers, Attachments & Portfolio), 9.2 (Info, XMP and Viewer Preferences panel), 9.4 (command box), with boards `D-Home.png`, `D-Focus-Light.png`, `D-ReadingRoom.png` (inspector) and `D-Dialogs.png` (command box). Recent-file and reading-position storage shape is this file's to define, read later by no one else.
 
 ## Inputs
 
-- `design/SPEC.md` sections 8.3, 9.1, 9.2 (Info list), 9.4, 10 (Ctrl+K, Ctrl+B, Ctrl+G), 11; `resources/svg/drop-files-*.svg`, `resources/svg/ribbon-marker*.svg`, `resources/svg/filetype-pdf*.svg` (recent covers fall back to rendered first pages).
+- `design/SPEC.md` sections 8.3, 9.1, 9.2 (Info, XMP & Viewer Preferences list and editor), 9.4, 10 (Ctrl+K, Ctrl+B, Ctrl+G), 11; `resources/svg/drop-files-*.svg`, `resources/svg/ribbon-marker*.svg`, `resources/svg/filetype-pdf*.svg` (recent covers fall back to rendered first pages).
 - -> XREF: D03 T01 §3 -- find lives in this file's panel family (top-right card in Focus and Classic, inspector tab in Reading room per SPEC 9.3); the panel hosting contract is agreed in §2 here and filled there.
+- -> XREF: D03 T03 §2 -- the Comments (Annotations) side panel plugs into the side-panel switcher built in §2 and §5 here.
 - -> XREF: D02 T04 §1 -- presets relocate these panels between slots and switch the thumbnail list orientation; the controls built here must survive reparenting unchanged.
 
 ## Outcome
 
 - Home opens anything fast: inline command box, six recents with covers and last-opened day, correct empty state, and reading position restored per file.
-- Pages and Outline panels track and drive the current page in both directions, in floating and docked slots.
+- Pages, Outline (with interactive Bookmark CRUD and heading auto-generation), Layers (OCG visibility toggles), and Attachments & Portfolio (`/EmbeddedFiles` and `/Collection` inspect/extract/add/remove) panels track and drive the document in both floating and docked slots.
+- Info, XMP & Viewer Preferences panel displays and edits `/Info`, XMP metadata, and `/ViewerPreferences` (`DisplayDocTitle`, `FitWindow`, `CenterWindow`, `HideToolbar`, `PageMode`, `PageLayout`).
 - Every command in the app is reachable and runnable from Ctrl+K, with documents, pages and outline entries as first-class results.
 
-**Adjacency:** list=applicable @ D02 T03 §1; document=not-applicable (no printed output from these surfaces); settings=applicable @ D02 T04 §2; reporting=not-applicable (no reports); notifications=not-applicable (none originate here); permissions=not-applicable (no roles; a missing recent file is a state, handled in section 1, not a refusal); audit=not-applicable (recents are user state with a clear-history control in Settings, not an audit trail); exchange=not-applicable (copy page link belongs to D03 T01 §2); reverse=applicable @ D02 T03 §1
+**Adjacency:** list=applicable @ D02 T03 §1; document=applicable @ D02 T03 §5; settings=applicable @ D02 T04 §2; reporting=not-applicable (no reports); notifications=not-applicable (none originate here); permissions=not-applicable (no roles; a missing recent file is a state, handled in section 1, not a refusal); audit=not-applicable (recents are user state with a clear-history control in Settings, not an audit trail); exchange=applicable @ D02 T03 §5; reverse=applicable @ D02 T03 §1
 
-**Adjacency rationale:** The list surface is Recents itself, and its reverse is removing a recent and forgetting a reading position, both owned in section 1 so the record can shrink as deliberately as it grows. Settings appears because "remember reading position" is a SPEC 9.7 toggle whose consumer is section 1; the value lives in D02 T04 §2 and is read here. Search-shaped listing (find results) belongs to D03 and is not claimed here.
+**Adjacency rationale:** The list surface is Recents itself, and its reverse is removing a recent and forgetting a reading position, both owned in section 1 so the record can shrink as deliberately as it grows. Section 5 owns attachment/portfolio file extraction and insertion (`exchange`) and saving updated bookmarks, portfolios, or metadata/viewer-preferences to a copy (`document`). Settings appears because "remember reading position" is a SPEC 9.7 toggle whose consumer is section 1; the value lives in D02 T04 §2 and is read here. Search-shaped listing (find results) belongs to D03 and is not claimed here.
 
 ## Implementation Order
 
@@ -37,6 +39,7 @@ track: M2
 | 2 | §2 | Pages and Outline panels | D02 T02 §3 | [ ] |
 | 3 | §3 | Document Info panel | §2 | [ ] |
 | 4 | §4 | Command box (Ctrl+K) | §1, §2 | [ ] |
+| 5 | §5 | Interactive Bookmark Editor, Layers (OCG), Attachments & Portfolios, and Editable Info/XMP/ViewerPreferences | §2, §3, D01 T02 §4 | [ ] |
 
 ## 1. Home, recents and reading position
 
@@ -134,6 +137,34 @@ SPEC 9.4: a 560 to 720 epx top-centred card with sections This document, Go to (
 - [ ] Commit: `viewer: Ctrl+K command box over a single command registry`
 
 **Test checkpoint:** driven keyboard-only session in findings (open file, go to outline entry, run rotate, open Settings, all from Ctrl+K), screenshots against `D-Dialogs.png`, registry completeness test green.
+
+## 5. Interactive Bookmark Editor, Layers (OCG), Attachments & Portfolios, and Editable Info/XMP/ViewerPreferences
+
+Complete the SPEC 8.3 and 9.2 document-structure panels and their `recto-pdf` engines (`src/pdf/ocg.cpp`, `src/pdf/portfolio.cpp`, `src/pdf/outlines_edit.cpp`):
+1. **Interactive Bookmark Editor (Outline panel):** Add bookmark at current page/zoom (`GoTo` destination), rename, add child bookmark, drag or keyboard reorder/nest, delete, or auto-generate bookmarks from document heading styles, and save to a copy.
+2. **Layers (Optional Content Groups / OCG) engine & panel:** Parse `/OCProperties` (`/OCGs`, `/D` default visibility, `/Order`, and `BDC /OC ... EMC` conditional content streams in `src/pdf/ocg.cpp`), expose the **Layers** tab in the side panel with eye toggles that re-record/composite the visible layers live on `DocumentActor`, plus `Reset to Default Visibility` and `Flatten Visible Layers`.
+3. **Attachments & PDF Portfolios engine & panel:** Parse, extract, add, and delete embedded files (`/Names /EmbeddedFiles` and `FileAttachment` annotations) and **PDF Portfolios (`/Collection`)** in `src/pdf/portfolio.cpp`, surfaced in the **Attachments & Portfolio** side panel with file icon, name, size, modified date, description, `Open` (prompting before opening external file types per SPEC 9.9), `Save / Extract`, `Add File`, `Remove`, and `Save as PDF Portfolio`.
+4. **Editable Info, XMP Metadata & Viewer Preferences:** Extend the §3 Info panel with `Edit Info & Preferences` (`Title`, `Author`, `Subject`, `Keywords`, custom XMP metadata properties, and `/ViewerPreferences` flags `DisplayDocTitle`, `FitWindow`, `CenterWindow`, `HideToolbar`, `HideMenubar`, initial `PageMode` and `PageLayout`, and initial open page).
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** SPEC sections 8.3 (Outline Bookmark Editor, Layers panel, Attachments & Portfolio panel) and 9.2 (Editable Info, XMP & Viewer Preferences panel) with `D-Focus-Light.png` and `D-ReadingRoom.png`.
+**Job:** The user can edit document bookmarks, toggle PDF layers (`OCG`), extract or bundle attachments and PDF Portfolios, and edit document metadata and viewer preferences. Consumer: `DocumentActor` (live layer visibility and outline navigation) and saved PDF copies.
+**Treatment:** Native `recto-pdf` support for `/OCProperties`, `/EmbeddedFiles`, `/Collection`, `/Outlines` writing, `/Info` + XMP packet synchronization, and `/ViewerPreferences` hosted in the shared side-panel switcher. Cheaper substitute that fails the checkpoint: read-only outlines, ignoring `BDC /OC` layer blocks when rendering, or showing `/Info` without XMP or `/ViewerPreferences` editing.
+**Chrome:** consume the §2 side-panel switcher, `TreeView` styling, and `RectoColors.xaml` tokens across Focus, Classic, and Reading room slots.
+
+**Build order:**
+
+1. Implement `src/pdf/ocg.cpp` (`/OCProperties` parsing and conditional `BDC /OC` display-list filtering), `src/pdf/portfolio.cpp` (`/EmbeddedFiles` and `/Collection` portfolio read/write/extract), and outline/metadata/viewer-preferences serialization in `src/pdf/document.cpp`. Done when: `PdfOcg.*`, `PdfPortfolio.*`, and `PdfOutlinesEdit.*` unit tests toggle layer visibility, round-trip embedded files and portfolios, and update `/Outlines`, `/Info`, XMP, and `/ViewerPreferences` under ASan.
+2. Build the **Layers** panel, **Attachments & Portfolio** panel, **Outline** edit controls (add, rename, nest, reorder, delete), and **Info & Viewer Preferences** edit mode in `src/app`, registering all commands in the §4 `Ctrl+K` registry. Done when: toggling an OCG layer updates the rendered page immediately, extracting an attachment writes the exact bytes to disk, and edited bookmarks and metadata persist in the saved copy.
+
+- [ ] `src/pdf/ocg.cpp`, `src/pdf/portfolio.cpp`, and outline/metadata/viewer-preferences editing in `recto-pdf`. Done when: `recto-tests.exe --gtest_filter=PdfOcg.*:PdfPortfolio.*:PdfOutlinesEdit.*` passes under ASan. Cheaper substitute: ignoring `/OCProperties` or `/EmbeddedFiles` during document load.
+- [ ] Layers panel, Attachments & Portfolio panel, Interactive Bookmark Editor, and Editable Info/XMP/ViewerPreferences UI wired in all three layout presets. Done when: driven UI tests in `Panels.OcgPortfolioAndOutlines` verify live layer toggling, attachment extraction, bookmark editing, and `Ctrl+K` reachability.
+- [ ] Commit: `viewer: add Bookmark Editor, OCG Layers panel, Attachments/Portfolio panel, and Info/XMP/ViewerPreferences editor`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfOcg.*:PdfPortfolio.*:PdfOutlinesEdit.*:Panels.*` passes under ASan, with display-session screenshots of the Layers, Attachments/Portfolio, Bookmark Editor, and Info/Preferences panels recorded in findings.
 
 ## Verification
 

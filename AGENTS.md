@@ -4,7 +4,7 @@ Agent instructions for this repository. Claude Code loads this file through the 
 
 ## What is here
 
-Recto is an open-source (`GPL-3.0-or-later`) PDF viewer, OCR tool and document converter for Windows: Recto's own native C++20 PDF engine (`recto-pdf`), C++20 concurrency, OCR and conversion runtime (`recto-core` and `recto-services`), and a WinUI 3 (Windows App SDK 2.4.0, C++/WinRT) app, distributed as MSIX through the Microsoft Store. The repository holds the approved design, the foundation plan, the shipping graphics, the module scaffold, and the TODO execution plan that builds version 1 milestone by milestone (M0 to M6).
+Recto is an open-source (`GPL-3.0-or-later`) PDF viewer, OCR tool and document converter for Windows: Recto's own native C++20 PDF engine (`recto-pdf`), C++20 concurrency, OCR and conversion runtime (`recto-core` and `recto-services`), and a WinUI 3 (Windows App SDK 2.4.0, C++/WinRT) app, distributed via Inno Setup (full installer and self-contained portable mode, plus an in-app Portable mode setting) and GitHub Releases, with optional MSIX packaging for the Microsoft Store. The repository holds the approved design, the foundation plan, the shipping graphics, the module scaffold, and the TODO execution plan that builds version 1 milestone by milestone (M0 to M6).
 
 | Path | Purpose |
 | ---- | ------- |
@@ -31,12 +31,12 @@ For TODO work, use the skill that owns the step: capture through `add-todo`, aut
 
 These come from foundation plan sections 3 and 4. A change that needs to break one records the correction in the plan first, dated, with the cost of reversing it.
 
-- `recto-pdf` (`src/pdf`, compiled as C++20) is Recto's own native PDF 1.7 and 2.0 engine: zero MuPDF, zero C `setjmp`/`longjmp`, and zero PDF JavaScript execution by construction (D3, D9, D12). Every parser, stream filter, decryptor, content-stream interpreter and writer operation returns typed `PdfResult<T>` / `PdfError` values and bounds recursion and allocation against hostile inputs.
+- `recto-pdf` (`src/pdf`, compiled as C++20) is Recto's own native PDF 1.7 and 2.0 engine: zero MuPDF, zero C `setjmp`/`longjmp`, and zero PDF JavaScript execution by construction (D3, D9, D12). Every parser, stream filter, decryptor, digital signature verifier/signer (`crypt32.dll`/`bcrypt.dll`), content-stream interpreter, operator editor, form/annotation engine, redactor/sanitizer, PDF/A & PDF/UA & ZUGFeRD/Factur-X compliance engine, linearizer, and writer operation returns typed `PdfResult<T>` / `PdfError` values and bounds recursion and allocation against hostile inputs.
 - One `DocumentActor` thread per open document owns its `recto::pdf::Document` instance and page object graph; immutable, reference-counted `DisplayList`s and `PageText` snapshots are the only page data that crosses threads to `RenderPool` workers; workers rasterize tiles in parallel with cooperative `CancelToken` abort; actors and workers join before `Runtime` shuts down. Files that touch this contract are `frozen: true` and carry a Freeze check per section.
-- The UI thread never parses or renders PDFs and never blocks on an engine thread. Conversion and OCR jobs open their own `recto::pdf::Document` instance; they never share the viewer's.
-- Built-in OCR (`Windows.Media.Ocr` + image preprocessing + searchable-PDF invisible-text layer synthesis) and native C++20 document converters (`PDF <-> DOCX` OpenXML, built-in `Office -> PDF` OpenXML/RTF parser + layout engine with optional Microsoft Office COM when installed) live in `recto-core` and `recto-services` with zero bundled external runtimes (D7, D10).
-- Treat every PDF and Office file as hostile: Office macros forced off during COM conversion, document links ask before opening, PDF launch and JavaScript actions never execute.
-- Every file write is temp-file-then-replace in the destination folder. Organize operations always work on a copy; the open viewer document is never modified in place.
+- The UI thread never parses or renders PDFs and never blocks on an engine thread. Conversion, authoring, redaction, signing, optimization, and OCR jobs open their own `recto::pdf::Document` instance; they never share the viewer's.
+- Built-in OCR (`Windows.Media.Ocr` + image preprocessing + vector-outlined-text OCR + searchable-PDF invisible-text layer synthesis) and native C++20 document converters (3-mode `PDF -> Word .docx/.rtf` Flowing/Exact/Continuous + orthogonal-line & grid table reconstruction, `PDF -> Excel .xlsx/.csv/.xml`, `PDF -> HTML5/Markdown/EPUB/LaTeX/SVG/XPS/Multipage TIFF/Animated GIF`, and built-in `Office/HTML/Markdown/XPS/SVG -> PDF` layout engine with optional Microsoft Office COM when installed) live in `recto-core` and `recto-services` with zero bundled external runtimes (D7, D10).
+- Treat every PDF, Office, and HTML file as hostile: Office macros forced off during COM conversion, HTML scripts disabled, document links and portfolio attachments ask before opening, PDF launch and JavaScript actions never execute, and true redaction strips underlying content stream objects before drawing redaction overlays.
+- Every file write is temp-file-then-replace in the destination folder. Organize and authoring operations always work on a copy; the open viewer document is never modified in place.
 
 ## Interface rules
 

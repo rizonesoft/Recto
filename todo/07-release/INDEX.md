@@ -2,14 +2,14 @@
 
 > **Phase 6 (M6 Ship)**
 
-From a working app to a Store product: printing on the decided API, MSIX packaging with the audited manifest, clean-machine install proof, the About page and full GPL-3.0-or-later compliance, and the submission that ends at certification.
+From a working app to a shippable desktop and portable product: printing on the decided API, Inno Setup installer (`Full Install` and `Self-Contained Portable`) plus standalone Portable `.zip` and optional MSIX packaging, automated install/portable/upgrade proof, the About page and full GPL-3.0-or-later compliance, local crash report bundles, and the release bundle + optional Store submission kit.
 
 ## TODOs
 
 | TODO | Title | Status |
 | ---- | ----- | :----: |
-| [TODO-01](./TODO-01-packaging-and-print.md) | Printing, MSIX Packaging and Install | active |
-| [TODO-02](./TODO-02-store-and-compliance.md) | About, GPL-3.0-or-later Compliance and Store Submission | active |
+| [TODO-01](./TODO-01-packaging-and-print.md) | Printing, Inno Setup (Full & Portable) Installer, Optional MSIX and Install Proof | active |
+| [TODO-02](./TODO-02-store-and-compliance.md) | About, GPL-3.0-or-later Compliance, Local Crash Bundle and Release Distribution | active |
 
 ## Completed
 
@@ -20,8 +20,8 @@ From a working app to a Store product: printing on the decided API, MSIX packagi
 
 ## In scope
 
-- Print path decision and implementation, MSIX for x64 and ARM64, install and upgrade proof
-- About, NOTICE and license audit, opt-in crash reporting, localization readiness, Store runbook and submission
+- Print path decision and implementation, Inno Setup installer (`Full` + `Self-Contained Portable`) and Portable `.zip` for x64 and ARM64, optional MSIX packaging, automated install, portable and upgrade proof
+- About, NOTICE and license audit, opt-in local minidump-plus-log crash bundle, localization readiness, GitHub Release bundle and optional Store submission runbook
 
 ## Out of scope
 

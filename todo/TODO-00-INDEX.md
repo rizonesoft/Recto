@@ -15,18 +15,18 @@ The live execution plan for building Recto to version 1. Format spec: [README.md
 | No. | Domain | Milestone | Purpose |
 | :-: | ------ | :-------: | ------- |
 | 00 | [Workspace](./00-workspace/INDEX.md) | M0 | Git repo, GPL-3.0 repo-face files, native `recto-pdf` policy, solution scaffold, CI, this TODO system, test backbone. |
-| 01 | [Engine](./01-engine/INDEX.md) | M1 | Native C++20 `recto-pdf` parser, stream filters, CNG crypto, content interpreter, fonts, display lists, document actors, tile rendering, CLI, fuzz targets, the thread-safety battery. Frozen domain. |
-| 02 | [Viewer](./02-viewer/INDEX.md) | M2 | WinUI shell and tabs, tiled document view, Home and panels, command box, Settings, layout presets, theme. |
-| 03 | [Text](./03-text/INDEX.md) | M3 | Native text extraction, built-in `Windows.Media.Ocr` pipeline for scanned pages, selection and copy, find, UI Automation text provider, accessibility audit. |
-| 04 | [Convert](./04-convert/INDEX.md) | M4, M5 | Job frame and queue, PDF to images, images to PDF, PDF to text, searchable OCR PDF, native C++20 PDF to Word (`.docx`), built-in OpenXML/RTF Office to PDF plus optional COM/LibreOffice. |
-| 05 | [Organize](./05-organize/INDEX.md) | M4 | Page operations (graft merge, split, reorder, rotate, delete, extract, AES-256 encrypt/decrypt) and the Combine, Split and Reorder grid. |
+| 01 | [Engine](./01-engine/INDEX.md) | M1 | Native C++20 `recto-pdf` parser (PDF 1.7 & 2.0), stream filters (Flate, LZW, RunLength, CCITT, JBIG2, DCT, JPX), CNG crypto, content interpreter, fonts, incremental save, display lists, document actors, tile rendering, CLI, fuzz targets, the thread-safety battery. Frozen domain. |
+| 02 | [Viewer](./02-viewer/INDEX.md) | M2 | WinUI shell and tabs, tiled document view, Home, Pages, interactive Bookmark Editor, Layers (OCG), Attachments & Portfolios, editable Info/XMP/ViewerPreferences, command box, Settings (including Portable mode), layout presets, theme. |
+| 03 | [Text](./03-text/INDEX.md) | M3 | Native text extraction, built-in `Windows.Media.Ocr` pipeline (scanned pages & vector-outlined text), selection and copy, find with regex, content-stream Find & Replace (`Ctrl+H`), Compare PDFs (`Ctrl+Shift+D`), 15 annotation/markup types (`Ctrl+Shift+A`), AcroForm/XFA-to-AcroForm engine and Form Designer, UI Automation text provider, accessibility audit. |
+| 04 | [Convert](./04-convert/INDEX.md) | M4, M5 | Job frame and queue, PDF <-> images/multipage TIFF/GIF/SVG/XPS, PDF to text, searchable OCR PDF, Table & Image Extractor, PDF Optimizer & Fast Web View Linearizer, 3-mode native C++20 PDF to Word (`.docx` & `.rtf`), PDF to Excel (`.xlsx`, `.csv`, `.xml`), PDF to HTML5/Markdown/EPUB 3/LaTeX, PDF/A-1/2/3, PDF/UA-1 & ZUGFeRD/Factur-X compliance, built-in OpenXML/RTF/HTML/Markdown/CSV to PDF plus optional COM/LibreOffice. |
+| 05 | [Organize](./05-organize/INDEX.md) | M4 | Page operations (graft merge, split, reorder, rotate, delete, extract, blank-page insert, crop/resize, watermarks, headers/footers, Bates numbering, AES-256 encrypt/decrypt, PKCS#7/PAdES/RFC 3161 digital signatures, true physical redaction & sanitization) and the Combine, Split, Reorder, Redaction (`Ctrl+Shift+X`) and Sign (`Ctrl+Shift+G`) UIs. |
 | 06 | [Quality](./06-quality/INDEX.md) | all | Golden, text, round-trip and performance suites; hostile-input audit; fuzz operations; broker design. |
-| 07 | [Release](./07-release/INDEX.md) | M6 | Printing, MSIX packaging and install, About and GPL-3.0 compliance, Store submission. |
-| 99 | [Manual](./99-manual/INDEX.md) | 99 | Operator-only steps: trademark, repository face, Partner Center, reference machines. No agent runner takes these rows. |
+| 07 | [Release](./07-release/INDEX.md) | M6 | Printing, Inno Setup (`Full` & `Self-Contained Portable`) installer, Portable `.zip`, optional MSIX packaging, automated install/portable proof, About and GPL-3.0 compliance, local crash bundle, and release distribution. |
+| 99 | [Manual](./99-manual/INDEX.md) | 99 | Operator-only steps: trademark, repository face, optional Partner Center, reference machines. No agent runner takes these rows. |
 
 ## Coverage: every promise in the governing documents, and who owns it
 
-Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 for the native C++20 `recto-pdf` engine, built-in OCR, native converters, and `GPL-3.0-or-later`. A claim found later with no owner gets a row here and a section through `add-todo` before it gets code.
+Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 for the native C++20 `recto-pdf` engine, built-in OCR, full SautinSoft / Aspose.PDF / Syncfusion feature set, native converters, Inno Setup Full & Portable distribution, Portable mode setting, and `GPL-3.0-or-later`. A claim found later with no owner gets a row here and a section through `add-todo` before it gets code.
 
 | Promise | Owned by |
 | ------- | -------- |
@@ -34,26 +34,28 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 | This TODO system itself | D00 T02 |
 | Test backbone, corpus provenance, ASan | D00 T03 |
 | `recto-pdf` lexer, XRef parser, stream filters, CNG decryption, document open and description (plan 4.1 to 4.4) | D01 T01 |
-| Content-stream interpreter, DirectWrite font loader, `DisplayList`, `DocumentActor`, `RenderPool`, `TileScheduler`, cancellation, shutdown (plan 4.1 to 4.8) | D01 T02 |
+| Content-stream interpreter, DirectWrite font loader, incremental save, `DisplayList`, `DocumentActor`, `RenderPool`, `TileScheduler`, cancellation, shutdown (plan 4.1 to 4.8) | D01 T02 |
 | `recto-cli`, fuzz targets, the 4.9 battery, M1 done-when | D01 T03 |
 | App shell, title-bar tabs, open paths, password and error dialogs (SPEC 8, 9.2, 9.9) | D02 T01 |
 | Presentation thread, tiles on screen, layouts, zoom, links, page colour (SPEC 9.2) | D02 T02 |
-| Home and recents, Pages and Outline, Info, command box (SPEC 9.1, 8.3, 9.4) | D02 T03 |
-| Settings page, layout presets, theme, keyboard map (SPEC 8, 9.7, 10) | D02 T04 |
-| Native `PageText` extraction, built-in `Windows.Media.Ocr` for scanned pages, selection, copy, find (SPEC 9.3, plan 5, 6.3) | D03 T01 |
+| Home and recents, Pages, interactive Bookmark Editor, Layers (OCG), Attachments & Portfolios, editable Info/XMP/ViewerPreferences, command box (SPEC 9.1, 8.3, 9.2, 9.4) | D02 T03 |
+| Settings page (including Portable mode `<exe-dir>\data\` toggle and live migration), layout presets, theme, keyboard map (SPEC 8, 9.7, 10) | D02 T04 |
+| Native `PageText` extraction, built-in `Windows.Media.Ocr` (scanned pages & vector-outlined text), selection, copy, find (with regex), content-stream Find & Replace (`Ctrl+H`), Compare PDFs (`Ctrl+Shift+D`) (SPEC 9.3, 9.3.1, plan 5, 6.3) | D03 T01 |
 | UIA text provider, keyboard order and names, announcements (SPEC 11) | D03 T02 |
+| All 15 annotation/markup types, `/AP` synthesis, flattening, `XFDF`/`JSON` I/O, Markup Bar (`Ctrl+Shift+A`), Comments panel, AcroForms, XFA-to-AcroForm converter, `/CO` calculations, form data I/O, and Form Designer (SPEC 8.2, 8.3, plan 4.1, 5) | D03 T03 |
 | Job runtime, Convert page, queue, completion notices (SPEC 9.5, 9.9) | D04 T01 |
-| `PdfWriter` and atomic saves, PDF to images, images to PDF, PDF to text, searchable OCR PDF (plan 5) | D04 T02 |
-| Native C++20 `DocxWriter` (PDF to Word `.docx`) and the 20-file quality review (plan 5, 11) | D04 T03 |
-| Built-in C++20 OpenXML/RTF Office to PDF engine plus optional Office COM (macros off) and LibreOffice (plan 5.1, D10) | D04 T04 |
-| `GraftMap` merge, split, reorder, rotate, delete, extract, CNG AES-256 encrypt and decrypt (plan 5) | D05 T01 |
-| Organize grid: Combine, Split, Reorder, save guard (SPEC 9.6) | D05 T02 |
+| `PdfWriter` and atomic saves, PDF <-> images/multipage TIFF/GIF/SVG/XPS, PDF to text, searchable OCR PDF, `TableExtractor` & `ImageExtractor` (plus Viewer Extractor Bar), `PdfOptimizer` & Fast Web View `Linearizer` (SPEC 8.2, 9.5, 9.9, plan 5) | D04 T02 |
+| 3-mode (`Flowing`, `Exact`, `Continuous`) native C++20 `DocxWriter` & `RtfWriter` (`PDF -> Word .docx & .rtf`) and the 20-file quality review (SPEC 9.5, plan 5, 11) | D04 T03 |
+| Built-in C++20 OpenXML/RTF/HTML/Markdown/CSV to PDF engine plus optional Office COM (macros off) and LibreOffice (SPEC 9.5, plan 5.1, D10) | D04 T04 |
+| Native C++20 `XlsxWriter` (`.xlsx`, `.csv`, `.xml`), `WebDocWriter` (`HTML5`, `.md`, `.epub`, `.tex`), and `ComplianceEngine` (`PDF/A-1/2/3`, `PDF/UA-1`, `ZUGFeRD / Factur-X`) + Standards Side Panel (SPEC 8.3, 9.5, plan 4.1, 5) | D04 T05 |
+| `GraftMap` merge, split, reorder, rotate, delete, extract, blank-page insert, crop/resize, watermarks, headers/footers, Bates numbering, CNG AES-256 encrypt/decrypt, PKCS#7/PAdES/RFC 3161 digital signatures, and true physical redaction & sanitization (plan 4.1, 5) | D05 T01 |
+| Organize grid (`Combine`, `Split`, `Reorder`), live-preview `Crop/Resize`, `Watermark`, and `Header/Footer & Bates` dialogs, Viewer `Redaction & Sanitize Bar` (`Ctrl+Shift+X`), `Sign Document Dialog` (`Ctrl+Shift+G`), and `Signatures` side panel (SPEC 8.2, 8.3, 9.6, 9.9) | D05 T02 |
 | Goldens, text tables, round-trips, performance targets (plan 8) | D06 T01 |
 | Security rules audit, fuzz operations, broker design (plan 9, D13) | D06 T02 |
-| Printing decision and implementation, MSIX, clean install (plan 7 M6) | D07 T01 |
-| About, NOTICE and GPL-3.0 license audit, crash opt-in, Store submission (plan 10) | D07 T02 |
-| Trademark search, repo face, Partner Center, reference machines (D1, plan 11) | D99 T01 |
-| Sandboxed broker process | Designed in D06 T02 §3; built after v1 (D13) |
+| Printing decision and implementation, Inno Setup (`Full` & `Self-Contained Portable`) installer, Portable `.zip`, optional MSIX, automated install/portable proof (plan 7 M6, D6) | D07 T01 |
+| About, NOTICE and GPL-3.0 license audit, opt-in local crash bundle, GitHub Release bundle and optional Store submission kit (plan 10, D6, D16) | D07 T02 |
+| Trademark search, repo face, optional Partner Center, reference machines (D1, plan 11) | D99 T01 |
+| Sandboxed broker process | Pre-approved design in D06 T02 §3; built after v1 (D13) |
 
 ## Active TODOs
 
@@ -61,25 +63,27 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 - [00 Workspace] [TODO-02 The TODO Graph System](./00-workspace/TODO-02-todo-system.md): engine, CLI and tests; the eight skills, rules and plan CI gate; this seeded graph.
 - [00 Workspace] [TODO-03 Test Backbone](./00-workspace/TODO-03-test-backbone.md): GoogleTest via vcpkg, licensed corpus, ASan and warning bar.
 - [01 Engine] [TODO-01 Native PDF Parser, Filters, Crypto and Document Model](./01-engine/TODO-01-bridge-runtime.md): `recto-pdf` lexer, XRef tables/streams, damaged-file recovery, stream filters, CNG `bcrypt.dll` decryption, document open and description. Frozen.
-- [01 Engine] [TODO-02 Content Interpreter, Display Lists, Document Actor and Render Pool](./01-engine/TODO-02-actor-and-render.md): content-stream interpreter, DirectWrite font loader, immutable `DisplayList`s, actor threads, tile rendering, scheduler with cancellation, ordered shutdown. Frozen.
+- [01 Engine] [TODO-02 Content Interpreter, Display Lists, Document Actor and Render Pool](./01-engine/TODO-02-actor-and-render.md): content-stream interpreter, DirectWrite font loader, incremental save, immutable `DisplayList`s, actor threads, tile rendering, scheduler with cancellation, ordered shutdown. Frozen.
 - [01 Engine] [TODO-03 recto-cli, Fuzz Targets and the Thread-Safety Battery](./01-engine/TODO-03-cli-and-fuzz.md): CLI verbs, libFuzzer targets, the 4.9 suite as M1's evidence. Frozen.
-- [02 Viewer] [TODO-01 App Shell, Tabs and Document Lifecycle](./02-viewer/TODO-01-app-shell.md): packaged app, tokens, title-bar tabs and slots, four open paths, shell dialogs.
+- [02 Viewer] [TODO-01 App Shell, Tabs and Document Lifecycle](./02-viewer/TODO-01-app-shell.md): self-contained unpackaged and MSIX-ready app, tokens, title-bar tabs and slots, four open paths, shell dialogs.
 - [02 Viewer] [TODO-02 Document View](./02-viewer/TODO-02-document-view.md): presentation thread, tile cache, scroll and zoom, layouts, safe links, page colour, full screen.
-- [02 Viewer] [TODO-03 Home, Panels, Document Info and the Command Box](./02-viewer/TODO-03-home-and-panels.md): recents and reading position, thumbnails and outline, Info, Ctrl+K over one registry.
-- [02 Viewer] [TODO-04 Settings, Layout Presets and Theme](./02-viewer/TODO-04-settings-and-layout.md): settings store, preset engine over slots, all SPEC 9.7 groups, theme, the keyboard audit.
-- [03 Text] [TODO-01 Text Extraction, Built-in OCR, Selection and Search](./03-text/TODO-01-selection-and-search.md): native `PageText` extractor, built-in `Windows.Media.Ocr` pipeline for scanned pages, quad-precise selection and copy, find with true counts.
+- [02 Viewer] [TODO-03 Home, Panels, Document Info and the Command Box](./02-viewer/TODO-03-home-and-panels.md): recents and reading position, thumbnails, interactive bookmark editor, layers (OCG), attachments/portfolios, editable Info/XMP/ViewerPreferences, Ctrl+K over one registry.
+- [02 Viewer] [TODO-04 Settings, Layout Presets and Theme](./02-viewer/TODO-04-settings-and-layout.md): settings store, Portable mode path resolver and live migration, preset engine over slots, all SPEC 9.7 groups, theme, the keyboard audit.
+- [03 Text] [TODO-01 Text Extraction, Built-in OCR, Selection and Search](./03-text/TODO-01-selection-and-search.md): native `PageText` extractor, built-in `Windows.Media.Ocr` pipeline (scanned pages & vector-outlined text), quad-precise selection and copy, find with regex, content-stream Find & Replace (`Ctrl+H`), and Compare PDFs (`Ctrl+Shift+D`).
 - [03 Text] [TODO-02 Accessibility](./03-text/TODO-02-accessibility.md): UIA text provider, keyboard order and names inventory, polite announcements.
+- [03 Text] [TODO-03 Interactive Annotations, Markup, AcroForms and Form Designer](./03-text/TODO-03-annotations-and-forms.md): 15 annotation/markup types, `/AP` synthesis, flattening, `XFDF`/`JSON` I/O, Markup Bar (`Ctrl+Shift+A`), Comments panel, AcroForm & XFA-to-AcroForm engine, and Form Designer.
 - [04 Convert] [TODO-01 Conversion Jobs and the Queue](./04-convert/TODO-01-jobs-and-queue.md): isolated job runtime, the Convert page frame, queue card, completion notices.
-- [04 Convert] [TODO-02 Conversions A](./04-convert/TODO-02-pdf-conversions-a.md): `PdfWriter` and atomic saves, PDF to images, images to PDF, PDF to text, and searchable OCR PDF export.
-- [04 Convert] [TODO-03 PDF to Word (DOCX)](./04-convert/TODO-03-pdf-to-word.md): native C++20 `DocxWriter` (OpenXML ZIP + layout/table reconstruction) and the 20-file quality review.
-- [04 Convert] [TODO-04 Office to PDF](./04-convert/TODO-04-office-to-pdf.md): built-in C++20 OpenXML/RTF to PDF engine, optional Microsoft Office COM with macros off, optional LibreOffice headless.
-- [05 Organize] [TODO-01 Page Operations](./05-organize/TODO-01-page-operations.md): `GraftMap` merge and split, copy-based edits, CNG AES-256 encrypt and decrypt.
-- [05 Organize] [TODO-02 Organize Modes](./05-organize/TODO-02-organize-ui.md): the page grid in Reorder, Combine and Split, saves as jobs, unsaved-changes guard.
+- [04 Convert] [TODO-02 Conversions A: PDF Writer, Images/SVG/XPS, Text, OCR, Table/Image Extraction and Optimization](./04-convert/TODO-02-pdf-conversions-a.md): `PdfWriter` and atomic saves, PDF <-> images/multipage TIFF/GIF/SVG/XPS, PDF to text, searchable OCR PDF, `TableExtractor` & `ImageExtractor`, `PdfOptimizer` & Fast Web View `Linearizer`.
+- [04 Convert] [TODO-03 PDF to Word (DOCX and RTF): 3-Mode Native OpenXML/RTF Writer and Quality Review](./04-convert/TODO-03-pdf-to-word.md): 3-mode (`Flowing`, `Exact`, `Continuous`) native C++20 `DocxWriter` and `RtfWriter` and the 20-file quality review.
+- [04 Convert] [TODO-04 Office, HTML and Markdown to PDF: Built-in C++20 Engine, Office COM and LibreOffice](./04-convert/TODO-04-office-to-pdf.md): built-in C++20 OpenXML/RTF/HTML/Markdown/CSV to PDF engine, optional Microsoft Office COM with macros off, optional LibreOffice headless.
+- [04 Convert] [TODO-05 PDF to Excel/CSV/XML, HTML5/Markdown/EPUB/LaTeX, and PDF/A, PDF/UA & ZUGFeRD Compliance](./04-convert/TODO-05-excel-web-and-compliance.md): native C++20 `XlsxWriter`, `WebDocWriter`, and `ComplianceEngine` (`PDF/A`, `PDF/UA-1`, `ZUGFeRD / Factur-X`) + Viewer Standards side panel.
+- [05 Organize] [TODO-01 Page Operations, Stamping, Digital Signatures and True Redaction](./05-organize/TODO-01-page-operations.md): `GraftMap` merge and split, copy-based edits, blank-page insert, crop/resize, watermarks, headers/footers, Bates numbering, CNG AES-256 encrypt/decrypt, PKCS#7/PAdES/RFC 3161 digital signatures, and physical redaction & sanitization.
+- [05 Organize] [TODO-02 Organize UI, Crop/Watermark/Bates Dialogs, Redaction Bar and Digital Signatures UI](./05-organize/TODO-02-organize-ui.md): the page grid in Reorder, Combine and Split, live-preview Crop/Watermark/Bates dialogs, Viewer Redaction & Sanitize Bar (`Ctrl+Shift+X`), Sign Document Dialog (`Ctrl+Shift+G`), and Signatures panel.
 - [06 Quality] [TODO-01 Golden, Text, Round-Trip and Performance Suites](./06-quality/TODO-01-corpus-and-suites.md): pixel goldens, expectation tables, round-trip matrix, plan section 8 harness.
-- [06 Quality] [TODO-02 Hostile-Input Rules, Fuzz Operations and the Broker Design](./06-quality/TODO-02-security-and-fuzzing.md): plan section 9 audit, scheduled fuzzing with triage, D13 design record.
-- [07 Release] [TODO-01 Printing, MSIX Packaging and Install](./07-release/TODO-01-packaging-and-print.md): print API decision, packages both architectures, clean-machine and upgrade proof.
-- [07 Release] [TODO-02 About, GPL-3.0 Compliance and Store Submission](./07-release/TODO-02-store-and-compliance.md): About with generated truth, NOTICE audit, opt-in crash reporting, submission to certification.
-- [99 Manual] [TODO-01 Operator Setup (Manual)](./99-manual/TODO-01-operator-setup.md): trademark search, repository face, Partner Center reservation, reference machines. Operator only.
+- [06 Quality] [TODO-02 Hostile-Input Rules, Fuzz Operations and the Broker Design](./06-quality/TODO-02-security-and-fuzzing.md): plan section 9 audit, scheduled fuzzing with triage, pre-approved D13 shared-memory broker design record.
+- [07 Release] [TODO-01 Printing, Inno Setup (Full & Portable) Installer, Optional MSIX and Install Proof](./07-release/TODO-01-packaging-and-print.md): print API decision, Inno Setup Full & Portable installer, Portable `.zip`, optional MSIX, automated install/portable/upgrade proof.
+- [07 Release] [TODO-02 About, GPL-3.0-or-later Compliance, Local Crash Bundle and Release Distribution](./07-release/TODO-02-store-and-compliance.md): About with generated truth, NOTICE audit, opt-in local minidump-plus-log crash bundle, GitHub Release bundle and optional Store submission kit.
+- [99 Manual] [TODO-01 Operator Setup (Manual)](./99-manual/TODO-01-operator-setup.md): trademark search, repository face, optional Partner Center reservation, reference machines. Operator only.
 
 ## Completed TODOs
 

@@ -115,7 +115,7 @@ Group labels above settings groups are 12 px Semibold, all caps, letter spacing 
 
 ## 6. Icons
 
-Use **Segoe Fluent Icons** (the system icon font) for every interface glyph, through `FontIcon` or `SymbolIcon`. The stroke icons in the mockups are placeholders that show which concept goes where; pick the matching Segoe Fluent glyph (home, open file, save, print, zoom in, zoom out, fit width, rotate, find, settings, more, page, pages grid, outline list, two-page view, moon for page dimming, convert, combine, split, lock, unlock, image, text, Word document, Office, warning, info, check, close, add, copy, link, undo, delete).
+Use **Segoe Fluent Icons** (the system icon font) for every interface glyph, through `FontIcon` or `SymbolIcon`. The stroke icons in the mockups are placeholders that show which concept goes where; pick the matching Segoe Fluent glyph (home, open file, save, print, zoom in, zoom out, fit width, rotate, find, replace, settings, more, page, pages grid, outline list, bookmark add, two-page view, moon for page dimming, convert, combine, split, lock, unlock, certificate, verified badge, shield/sanitize, redact, highlight, underline, strikeout, sticky note, text box, callout, inking pen, shapes, stamp, form field, table grid, layers, paperclip attachment, portfolio folder, crop, resize, watermark, header/footer, compress/optimize, compare side-by-side, accessibility tag, invoice, image, text, Word document, Excel sheet, HTML code, Markdown, warning, info, check, close, add, copy, link, undo, redo, delete).
 
 Icon sizes: 16 epx in toolbars and lists, 20 epx in the navigation rail, 24 epx in dialog headers.
 
@@ -146,13 +146,31 @@ Slots: title bar, top bar, bottom overlay, left dock, right dock, left overlay, 
 
 Left to right: small icon (20 epx), wordmark "Recto" (Newsreader, 17 epx), Home tab (icon only), one tab per open document (`TabView`, max 240 epx, close button on hover and on the active tab), new tab (+), the command box button centred in the remaining space ("Search, open or run a command", shows "Ctrl K"), settings, then the system caption buttons. The title bar is draggable everywhere except on interactive elements. In Reading room the mode switcher (Home, Read, Convert, Organize, underline indicator in accent) replaces the Home tab and document tabs move to the strip below.
 
-### 8.2 Floating page toolbar (Focus)
+### 8.2 Floating page toolbar (Focus) and contextual mode bars
 
-A single row on `RectoRaisedBrush`, radius 16, 6 epx padding, centred 22 epx above the bottom of the canvas. Order: side panel toggle | previous page, "3 / 9" (click to type a page), next page | zoom out, zoom % (click for presets: fit width, fit page, 50 to 400%), zoom in, fit width | find, rotate, print | **Convert** (accent button) | more (save a copy, page layout, two-page view, page colour, properties). Toggled buttons use `RectoAccentTintBrush` with accent-coloured glyphs. The toolbar fades to 40% opacity after 3 s without pointer movement while reading and returns on hover or keyboard focus; it never hides completely.
+A single row on `RectoRaisedBrush`, radius 16, 6 epx padding, centred 22 epx above the bottom of the canvas. Order: side panel toggle | previous page, "3 / 9" (click to type a page), next page | zoom out, zoom % (click for presets: fit width, fit page, 50 to 400%), zoom in, fit width | find, rotate, annotate/tools toggle, print | **Convert** (accent button) | more (save a copy, page layout, two-page view, page colour, form designer, redact & sanitize, sign document, compare PDFs, extract tables/images, crop & page setup, watermark & header/footer, optimize PDF, properties). Toggled buttons use `RectoAccentTintBrush` with accent-coloured glyphs. The toolbar fades to 40% opacity after 3 s without pointer movement while reading and returns on hover or keyboard focus; it never hides completely.
 
-### 8.3 Floating side panel (Focus)
+When the user activates an authoring or inspection tool from the toolbar, side panel or `Ctrl+K`, a compact **contextual mode bar** (same `RectoRaisedBrush`, radius 16, 6 epx padding, docked directly above the floating toolbar in Focus or below the top command bar in Classic/Reading room; `Esc` closes it) appears:
 
-A card 16 epx from the canvas edges, radius 16, `RectoRaisedBrush` at 90% opacity with acrylic where available. Header row: panel name, switch to the other panel (Pages, Outline), close. Pages shows thumbnails with page numbers; the current page has a 2 epx accent ring and the vermilion ribbon marker on its top-right edge. Outline is a `TreeView`; the current section is highlighted with `RectoAccentTintBrush` and a 3 epx accent bar on the left. Search opens as its own card (section 9.3).
+1. **Markup & Annotation Bar (`Ctrl+Shift+A`):** Text markup tools (`Highlight`, `Underline`, `StrikeOut`, `Squiggly`), `Sticky Note`, `FreeText` (text box and callout with leader line), `Ink` (freehand pen and eraser), `Shapes` (rectangle, ellipse, line, arrow, polygon, polyline), `Stamp` picker (`Approved`, `Confidential`, `Draft`, `Final`, `Void`, custom text/image stamp), `Attachment Pin`, `Link` region tool, a style popover (colour swatch tokens, opacity slider, stroke width, font size), `Undo` / `Redo`, and `Flatten`. Selected annotations on the page show 8-point resize/move handles on the canvas.
+2. **Form Fill & Form Designer Bar:** Interactive AcroForm (and XFA-converted) fields are fillable directly on the page canvas at all times (text boxes, checkboxes, radio buttons, combo boxes, list boxes, push buttons, signature fields, with tab-order keyboard navigation and required-field indicators). Toggling **Edit Form** opens the Form Designer bar: place new fields (`Text Field`, `Checkbox`, `Radio Button`, `Dropdown`, `List Box`, `Button`, `Signature Box`) by dragging on the page, align/resize handles, a Field Properties flyout (field name, tooltip, default value, font, read-only/required flags, calculation order), `Import Data` / `Export Data` (`JSON`, `XFDF`, `FDF`, `XML`), `Reset Form`, and `Flatten Form`.
+3. **Redaction & Sanitize Bar (`Ctrl+Shift+X`):** `Mark Text / Area` tool (drag over text quads or rectangular regions to create redaction marks outlined in `RectoDangerBrush`), `Redaction Appearance` popover (fill colour and optional overlay code text such as `[REDACTED]` or FOIA exemption codes), `Preview Redacted` toggle, **`Apply Redactions`** (accent danger button that writes a new copy with underlying glyphs, vector paths, and clipped image pixels permanently stripped from content streams), and **`Sanitize Document`** (opens the Sanitize dialog to strip hidden metadata, XMP, embedded files, scripts, actions, and incremental history).
+4. **Table & Image Extractor Bar:** `Select Table Region` tool (auto-detects tables on the page or lets the user draw/adjust a table bounding box and column/row dividers on the canvas), opens a live bottom preview drawer showing extracted cells, with `Export to Excel (.xlsx)`, `Export to CSV`, `Copy Table`, and `Extract Page Images`.
+5. **Signature Banner & Sign Mode (`Ctrl+Shift+G`):** When a PDF contains digital signatures, a quiet status banner appears at the top of the canvas (`RectoSurfaceBrush` with `RectoSuccessBrush`, `RectoWarningBrush` or `RectoDangerBrush` badge: "Signed and all signatures are valid", "Signed with unsigned changes after signing", or "Signature verification failed") with `View Signatures` and `Sign`. Activating **Sign Document** prompts the user to drag a signature rectangle on the page (or choose an invisible signature) and opens the Sign Document dialog (section 9.9).
+
+### 8.3 Floating side panel (Focus) and docked panels
+
+A card 16 epx from the canvas edges, radius 16, `RectoRaisedBrush` at 90% opacity with acrylic where available. Header row: panel name, panel switcher menu, panel-specific action button, close (`Ctrl+B`). All panels share the same control instances across Focus (floating card), Classic (left dock) and Reading room (right inspector):
+
+- **Pages:** Thumbnails with page numbers; the current page has a 2 epx accent ring and the vermilion ribbon marker on its top-right edge. Right-clicking a thumbnail offers `Insert Blank Page`, `Rotate Right/Left`, `Crop Page`, `Extract Page`, and `Delete Page`.
+- **Outline (with Bookmark Editor):** Hierarchical `TreeView` of document bookmarks; the current section is highlighted with `RectoAccentTintBrush` and a 3 epx accent bar on the left. Header actions allow adding a bookmark at the current page/zoom, auto-generating an outline from document headings, renaming, nesting/reordering via drag-and-drop or keyboard, and deleting bookmarks (saved as a copy or queued job).
+- **Comments (Annotations):** Lists all annotations and markup grouped by page, filterable by type, author or search text. Selecting an item scrolls to and highlights the annotation on the canvas; supports inline replies, status changes, delete, `Flatten All`, and `Import / Export XFDF or JSON`.
+- **Layers (OCG):** Displays the document's Optional Content Groups (`/OCProperties`) with eye visibility toggles that re-composite the page immediately, `Reset to Default Visibility`, and `Flatten Visible Layers`.
+- **Attachments & Portfolio:** Lists embedded files (`/EmbeddedFiles` and file-attachment annotations) and **PDF Portfolio (`/Collection`)** items with file icon, name, size, modified date, and description. Actions: `Open` (prompts before launching external types), `Save / Extract`, `Add File`, `Remove`, and `Save as PDF Portfolio`.
+- **Signatures & Standards (PDF/A, PDF/UA, ZUGFeRD / Factur-X):**
+  - *Signatures tab:* Lists every digital signature and timestamp in revision order: signer common name, issuer, signing time, reason, location, cryptographic digest status, certificate chain trust, LTV (`DSS`) status, and `View Signed Revision`.
+  - *Standards & Accessibility tab:* Runs on-demand validation for **PDF/A** (`1a/1b/2a/2b/2u/3a/3b/3u`) and **PDF/UA-1 (ISO 14289)** accessibility rules, displaying a pass/fail checklist (clicking a failure highlights the page/element), an interactive **Structure Tag Tree (`/StructTreeRoot`)** inspector where users can inspect/auto-tag semantic elements (`H1`-`H6`, `P`, `Table`, `Figure`) and edit `/Alt` text, plus a one-click `Convert to PDF/A` action.
+  - *E-Invoice (ZUGFeRD / Factur-X) tab:* Shown automatically (or via inspector) when a PDF/A-3 document contains an embedded `factur-x.xml` or `zugferd-invoice.xml` electronic invoice; renders the structured invoice data (Invoice #, Issue Date, Seller, Buyer, Currency, Line Items table, Tax breakdown, Grand Total) alongside the visual PDF page, with `Export XML` and `Validate EN 16931`.
 
 ## 9. Screens
 
@@ -164,45 +182,84 @@ Empty state (no recent files): hide the Recent section and show "Drop a PDF anyw
 
 ### 9.2 Viewer (`D-Focus-Light.png`, `D-Focus-Dark.png`, `D-Classic.png`, `D-ReadingRoom.png`)
 
-Continuous vertical scroll by default; single page and two-page spread are options (two-page shows the cover alone, then pairs). Pages are centred on the canvas with 16 epx between them. Zoom with Ctrl+wheel, pinch or the toolbar; while zooming, stretch the nearest rendered tiles so the page never goes blank (see the plan, section 4.7). The Info panel (Reading room inspector, or "Properties" from More in other presets) lists title, author, pages, page size, PDF version, file size, created date, producer, security and fonts (`D-ReadingRoom.png`).
+Continuous vertical scroll by default; single page and two-page spread are options (two-page shows the cover alone, then pairs). Pages are centred on the canvas with 16 epx between them. Zoom with Ctrl+wheel, pinch or the toolbar; while zooming, stretch the nearest rendered tiles so the page never goes blank (see the plan, section 4.7).
+
+The **Info, XMP & Viewer Preferences panel** (Reading room inspector, or "Properties" from More in other presets) lists title, author, subject, keywords, pages, page size (in mm, inches and pt), PDF version, PDF/A or PDF/UA conformance badge, file size, created and modified dates, creator, producer, linearized (Fast Web View) status, security/permissions summary, and embedded font inventory (`D-ReadingRoom.png`). Clicking **Edit Info & Preferences** lets the user edit `/Info` fields, custom XMP metadata properties, and `/ViewerPreferences` (`DisplayDocTitle`, `FitWindow`, `CenterWindow`, `HideToolbar`, `HideMenubar`, initial `PageMode` and `PageLayout`, initial open page) and save to a copy.
 
 Loading: show page outlines at the right size immediately and fill them as tiles arrive; never a spinner over the whole window. Password-protected files show the password dialog before any page appears.
 
-### 9.3 Search and selection (`D-Search.png`)
+### 9.3 Search, Find & Replace, Selection, and Document Comparison (`D-Search.png`)
 
-Ctrl+F opens a find card at the top right of the canvas: query field, "2 of 14", previous and next, close; a second row with Match case and Whole word toggles and "4 pages"; then up to six results with page numbers and the match in bold, and "Show all N results". Matches on the page use `RectoSearchHitBrush`; the current match uses `RectoSearchHitCurrentBrush` with `RectoOnAccentBrush` text. In Reading room the same content lives in the inspector's Search tab and the filmstrip marks pages with hits (`explorations/B-Search.png`).
+`Ctrl+F` opens a find card at the top right of the canvas: query field, "2 of 14", previous and next, close; a second row with `Match case`, `Whole word` and `Regex` (regular expression) toggles and "4 pages"; then up to six results with page numbers and the match in bold, and "Show all N results". Matches on the page use `RectoSearchHitBrush`; the current match uses `RectoSearchHitCurrentBrush` with `RectoOnAccentBrush` text. In Reading room the same content lives in the inspector's Search tab and the filmstrip marks pages with hits (`explorations/B-Search.png`).
 
-Selecting text shows a small dark toolbar above the selection: Copy, Find, Link (copy a link to this page). Right-click shows the full context menu (copy, find, select all on page, copy page link). The status of the selection is announced to screen readers.
+Pressing `Ctrl+H` (or clicking the **Replace** chevron in the find card) expands a **Find & Replace** row beneath the query field: a `Replace with` text box, `Replace` (replaces the current match and advances) and `Replace All` (replaces every match across the page or document, refluxing glyph spacing in the content stream and saving via the atomic copy flow).
+
+Selecting text shows a small dark toolbar above the selection: `Copy`, `Highlight`, `Strikeout`, `Redact`, `Find`, `Link` (copy a link to this page). Right-click shows the full context menu (`Copy`, `Copy with Formatting`, `Highlight`, `Underline`, `Strikeout`, `Add Note`, `Mark for Redaction`, `Find`, `Select all on page`, `Copy page link`, `Export Selection as Table`). The status of the selection is announced to screen readers.
+
+#### 9.3.1 Compare PDFs (`Ctrl+Shift+D`)
+
+Choosing **Compare PDFs** opens a comparison view within the active tab (or a dedicated Compare tab): a header bar picks Document A (original) and Document B (revised), switches between **Side-by-Side Synchronized View** (two `DocumentView` canvases scrolling and zooming in lockstep) and **Visual Overlay Diff View** (blending both pages with additions in `RectoSuccessBrush` tint and deletions in `RectoDangerBrush` tint), and opens a **Changes panel** on the right listing every text insertion, deletion, replacement, and graphic change by page number. Clicking any change jumps both canvases to the exact quad.
 
 ### 9.4 Command box (Ctrl+K) (`D-Dialogs.png`, top centre)
 
-A 560 to 720 epx card, radius 20, centred near the top. Sections: "This document" (commands for the open file), "Go to" (pages and outline entries), "Files" (recent and indexed files), "Actions" (conversions and app commands). Each row: icon, label with the typed characters in bold, shortcut on the right. Esc closes. Every toolbar and menu command must be reachable here.
+A 560 to 720 epx card, radius 20, centred near the top. Sections: "This document" (commands for the open file, including annotate, form edit, sign, redact, sanitize, watermark, crop, optimize, compare, compliance check), "Go to" (pages, outline entries, comments, form fields), "Files" (recent and indexed files), "Actions" (conversions and app commands). Each row: icon, label with the typed characters in bold, shortcut on the right. Esc closes. Every toolbar and menu command must be reachable here.
 
 ### 9.5 Convert (`D-Convert.png`)
 
 A three-step flow in one page, 980 epx wide, centred:
 
-1. **Files**: drop zone or file picker; files appear as removable chips. PDFs and Office files can be mixed.
-2. **What to make**: a grid of large option cards (Word document, Searchable PDF (OCR), Images, Plain text, One combined PDF, Split files, Protected PDF, Unlocked PDF, PDF from Office). Options that don't apply to the chosen files are disabled with a reason ("Add Word, Excel or PowerPoint files to use this"). The selected card has a 1.5 epx accent border, a 3 epx accent-tint glow and a check badge.
-3. **Options**: the options for the chosen output. PDF to images: format (PNG, JPEG, TIFF, BMP), resolution (72, 150, 300, 600 dpi), pages, save location (`D-Dialogs.png`, top right). PDF to Word: pages, OCR for scanned pages toggle, save location, what to do if the file exists (`explorations/B-Convert.png`). Searchable PDF (OCR): language (Installed Windows OCR languages), pages, save location. Split: method and ranges (`explorations/B-Organize.png`).
+1. **Files**: drop zone or file picker; files appear as removable chips. PDFs, Office files (`.docx`, `.rtf`, `.doc`, `.xlsx`, `.csv`, `.xls`, `.pptx`, `.ppt`), web/markup files (`.html`, `.md`, `.xml`, `.tex`), `.xps`, `.svg`, and images (`.png`, `.jpg`, `.tiff`, `.bmp`, `.gif`) can be mixed.
+2. **What to make**: a grid of large option cards:
+   - **Word document (`.docx`, `.rtf`)**
+   - **Excel & Data (`.xlsx`, `.csv`, `.xml`)**
+   - **HTML5, Markdown, EPUB & LaTeX (`.html`, `.md`, `.epub`, `.tex`)**
+   - **Images, Multipage TIFF, SVG & XPS (`.png`, `.jpg`, `.tiff`, `.bmp`, `.gif`, `.svg`, `.xps`)**
+   - **Searchable PDF (OCR)**
+   - **Plain text (`.txt`)**
+   - **Extract Tables & Images**
+   - **PDF/A & E-Invoice (ZUGFeRD / Factur-X)**
+   - **Optimize & Compress PDF**
+   - **One combined PDF**
+   - **Split files**
+   - **Protected & Signed PDF**
+   - **Unlocked PDF**
+   - **PDF from Office, HTML, Markdown & Images**
+   Options that don't apply to the chosen files are disabled with a reason ("Add Word, Excel, PowerPoint, HTML or Markdown files to use this"). The selected card has a 1.5 epx accent border, a 3 epx accent-tint glow and a check badge.
+3. **Options**: the options for the chosen output:
+   - *PDF to Word (`.docx` / `.rtf`):* Output format (`.docx` or `.rtf`), Reconstruction mode (**Flowing** paragraphs/headings/lists/columns for natural editing, **Exact** positioned frames preserving fixed coordinates, or **Continuous** flow without page breaks), Reconstruct tables from vector ruling lines and aligned grids toggle, Image handling (`Keep all`, `Skip images`, target DPI), Font embedding/mapping, OCR mode (`Automatic on scanned pages`, `Force OCR on all pages`, `OCR vector-outlined text curves`, `Off`), pages, save location, file-exists rule (`explorations/B-Convert.png`).
+   - *PDF to Excel (`.xlsx` / `.csv` / `.xml`):* Output format, Sheet layout (`One sheet per table`, `One sheet per page`, `Single combined sheet`), Detect borderless aligned tables toggle, OCR scanned tables toggle, pages, save location.
+   - *PDF to HTML5 / Markdown / EPUB / LaTeX:* Output format (`.html`, `.md`, `.epub`, `.tex`), HTML layout (`Flowing responsive` or `Fixed exact`), Asset mode (`Single self-contained HTML` or `Folder with external CSS/images/fonts`), pages, save location.
+   - *PDF to Images / Multipage TIFF / SVG / XPS:* Format (`PNG`, `JPEG`, `Single-page TIFF`, `Multipage TIFF`, `BMP`, `GIF`, `Animated GIF`, `SVG`, `XPS`), resolution (`72`, `150`, `300`, `600`, `1200` dpi), colour mode (`Colour`, `Grayscale`, `Monochrome 1-bit`), TIFF compression (`LZW`, `CCITT Group 4`, `JPEG`), pages, save location (`D-Dialogs.png`, top right).
+   - *Extract Tables & Images:* What to extract (`All embedded images`, `Vector graphics as SVG`, `All detected tables as .xlsx/.csv`), minimum image dimension filter (`Skip icons smaller than 32 x 32 px`), pages, save folder.
+   - *Searchable PDF (OCR):* Language (Installed Windows OCR languages), Deskew & enhance contrast toggle, **OCR vector-outlined text** toggle, pages, save location.
+   - *PDF/A & E-Invoice (ZUGFeRD / Factur-X):* Conformance level (`PDF/A-1b`, `1a`, `2b`, `2u`, `2a`, `3b`, `3u`, `3a`), Embed ZUGFeRD / Factur-X EN 16931 XML toggle (pick existing XML or fill basic invoice header/line items), save location.
+   - *Optimize & Compress PDF:* Preset (`High quality`, `Balanced`, `Smallest file`, `Custom`), Image downsampling DPI and JPEG/Flate quality, Subset fonts & deduplicate streams toggle, Strip metadata/annotations toggle, **Linearize for Fast Web View** toggle, live estimated size reduction preview, save location.
+   - *Protected & Signed PDF:* Encrypt with `AES-256` passwords and permission flags (print, copy, edit, annotate, fill forms), and/or apply an X.509 Digital Signature (`.pfx` or Windows Certificate Store, PAdES, optional RFC 3161 timestamp server URL).
+   - *PDF from Office, HTML, Markdown & Images:* Page size (`Original`, `A4`, `Letter`), orientation, margins, HTML/Markdown CSS print styling toggle, save location.
+   - *Split:* method and ranges (`explorations/B-Organize.png`).
 
 A hint line next to Back and Next says what the chosen conversion is good at. The queue is a floating card in the bottom-right corner showing running jobs with a progress ring; it expands into the full list with cancel, open folder and error actions (`explorations/A-Convert.png` shows the full list and its states: running, waiting, done, failed with "Enter password").
 
-Office to PDF uses Recto's built-in OpenXML and RTF engine by default when no external suite is installed, or Microsoft Office COM (with macros disabled) or LibreOffice when selected in Settings. If the user explicitly forces Microsoft Office or LibreOffice in Settings and that suite is not installed, show the "Install Office or LibreOffice" dialog (section 9.9) with a one-click option to use Recto's built-in converter.
+Office to PDF uses Recto's built-in OpenXML and RTF engine by default when no external suite is installed, or Microsoft Office COM (with macros disabled) or LibreOffice when selected in Settings. HTML, Markdown, XPS, SVG, and Image to PDF always run natively in-tree with zero external dependencies. If the user explicitly forces Microsoft Office or LibreOffice in Settings and that suite is not installed, show the "Install Office or LibreOffice" dialog (section 9.9) with a one-click option to use Recto's built-in converter.
 
 ### 9.6 Organize (`D-Organize.png`)
 
-One page grid with three modes in a segmented control: Combine, Split and Reorder. Header: file name, a summary of unsaved changes ("2 pages moved, 1 rotated"), Undo, Save as copy, Save (accent).
+One page grid with three primary modes in a segmented control (**Combine**, **Split** and **Reorder**) plus a suite of **Page & Document Tools** in the header bar (`Insert Blank Page`, `Crop & Resize`, `Header / Footer & Bates`, `Watermark`, `Sign`, `Sanitize`, `Flatten`). Header: file name, a summary of unsaved changes ("2 pages moved, 1 rotated, watermark added"), Undo, Redo, Save as copy, Save (accent).
 
-- **Reorder** (`D-Organize.png`): drag pages to move them; click, Ctrl+click and Shift+click to select. A dark floating action bar appears at the bottom when pages are selected: "3 pages selected", Rotate, Move to, Extract to new PDF, Delete (danger colour), clear selection. Rotated pages show a "90°" badge.
-- **Combine** (`explorations/A-Organize.png`): file chips with a colour per source file, Add files, pages tinted along their bottom edge by source, drop indicator while dragging, output file name and "Save combined PDF".
-- **Split** (`explorations/B-Organize.png`): click between two pages to add or remove a split; each part gets a colour, and a side panel lists parts with page ranges and editable file names, plus split methods (by ranges, every N pages, one file per page).
+- **Reorder** (`D-Organize.png`): drag pages to move them; click, Ctrl+click and Shift+click to select. A dark floating action bar appears at the bottom when pages are selected: "3 pages selected", `Rotate`, `Insert Blank`, `Crop / Resize`, `Move to`, `Extract to new PDF`, `Delete` (danger colour), clear selection. Rotated pages show a "90°" badge; cropped pages show a crop badge.
+- **Combine** (`explorations/A-Organize.png`): file chips with a colour per source file, Add files, pages tinted along their bottom edge by source, drop indicator while dragging, output file name, bookmark generation option, and "Save combined PDF".
+- **Split** (`explorations/B-Organize.png`): click between two pages to add or remove a split; each part gets a colour, and a side panel lists parts with page ranges and editable file names, plus split methods (by ranges, every N pages, one file per page, or by top-level bookmark).
+- **Page & Document Tools (dialogs with live page preview over the working copy):**
+  - *Insert Blank Page:* Pick page size (match selected page, `A4`, `Letter`, custom), orientation, count, and insertion position (before/after selection, start, end).
+  - *Crop & Resize Pages:* Interactive crop handles over the page preview adjusting `/CropBox`, `/MediaBox`, `/BleedBox` or `/TrimBox` in `mm`/`in`/`pt`, auto-crop white margins button, or scale/resize page dimensions to a target paper size (`A4`, `Letter`, `Legal`, custom), applied to selected pages, odd/even pages, or all pages.
+  - *Header, Footer, Page Numbers & Bates Numbering:* Six-zone editor (Top-Left, Top-Centre, Top-Right, Bottom-Left, Bottom-Centre, Bottom-Right) with live preview, one-click tokens (`Page X of Y`, Roman/Arabic numerals, Date, File Name), font/size/colour/margin controls, and a **Bates Numbering** tab (prefix, suffix, start number, digit padding across single or multiple files).
+  - *Watermark & Stamp:* Text, image, or PDF-page watermark with live preview, rotation angle (`-90°` to `+90°`), opacity slider, scale, position grid, layer (`Behind page content` or `Over page content`), and page range.
 
 Leaving Organize with unsaved changes shows the "Save your changes first?" dialog (Discard, Cancel, Save).
 
 ### 9.7 Settings (`D-Layout.png`, `D-Settings.png`)
 
-A single centred column, 760 to 900 epx, with grouped cards. Order: Layout (preset cards with mini wireframes, then the five fine-tune settings), Theme (Light, Dark, Follow Windows; pages in dark theme), Reading (default zoom, page layout, ask before opening links, remember reading position, automatic OCR on scanned pages), Converting (Office to PDF converter: Automatic, Built-in OpenXML engine, Microsoft Office, LibreOffice, showing what was found; OCR language; where to save converted files), Performance and privacy (page cache 128 MB to 2 GB, default 512 MB; send crash reports, off by default), Default PDF app (opens the Windows Default apps page), About. A "Find a setting" box filters rows as the user types.
+A single centred column, 760 to 900 epx, with grouped cards. Order: Layout (preset cards with mini wireframes, then the five fine-tune settings), Theme (Light, Dark, Follow Windows; pages in dark theme), Reading (default zoom, page layout, ask before opening links, remember reading position, automatic OCR on scanned pages, highlight form fields), Converting (Office to PDF converter: Automatic, Built-in OpenXML engine, Microsoft Office, LibreOffice, showing what was found; default PDF to Word reconstruction mode: Flowing, Exact, Continuous; OCR language; where to save converted files), Signatures and security (verify signatures when opening, default timestamp server URL), Performance and privacy (Portable mode toggle: "Store settings, recent files, cache and temporary files in a data folder next to Recto.exe", migrating existing settings and recents when toggled; page cache 128 MB to 2 GB, default 512 MB; save local crash report bundles, off by default), Default PDF app (opens the Windows Default apps page), About. A "Find a setting" box filters rows as the user types.
 
 ### 9.8 About (`D-About.png`)
 
@@ -219,6 +276,11 @@ All dialogs are `ContentDialog` restyled to radius 20 with 28 epx padding. Alert
 | Office converter missing | Office icon, "Install Office or LibreOffice", shown when a specific external suite is forced in Settings or when legacy binary Office formats (`.doc`, `.xls`, `.ppt`) need an external suite | Use built-in converter, Get LibreOffice (free), Get Microsoft 365, Not now |
 | Conversion options | Section 9.5 step 3 | Cancel, "Save 9 images" (the verb and count reflect the job) |
 | Link in a document | "Open this link?", the full URL in a monospace box | Cancel, Open in browser |
+| Sign document | Certificate picker (`.pfx`/`.p12` file or Windows Certificate Store), appearance preview (Type, Draw, or Image + signer details), Reason, Location, Timestamp server URL, PAdES level | Cancel, Sign and save copy |
+| Apply redactions & sanitize | Warning icon, summary of marked redactions and hidden items to strip (metadata, XMP, embedded files, actions, incremental revisions) | Cancel, Apply and save copy |
+| Watermark / Header & Footer / Bates | Two-column form: settings on the left (text/image, tokens, font, opacity, rotation, margins, page range) and a live rendered page preview on the right | Cancel, Apply |
+| Crop & resize pages | Interactive crop box over live page preview, box selector (`CropBox`, `MediaBox`, `BleedBox`, `TrimBox`), margin inputs (`mm`/`in`/`pt`), auto-crop white margins, or target paper size | Cancel, Apply |
+| Optimize & compress PDF | Preset selector, image DPI/quality controls, font subsetting, stream deduplication, Fast Web View linearization toggle, and estimated before/after size bar | Cancel, Save optimized copy |
 | Replace original | "Replace the original?", explains the protected copy | Keep both, Replace |
 | Unsaved Organize changes | "Save your changes first?" | Discard, Cancel, Save |
 
@@ -231,8 +293,14 @@ Finished conversions raise a Windows notification ("Thesis draft v3.docx is read
 | Ctrl+O | Open file |
 | Ctrl+K | Command box |
 | Ctrl+F, F3, Shift+F3 | Find, next match, previous match |
+| Ctrl+H | Find and replace text |
 | Ctrl+P | Print (system print dialog) |
-| Ctrl+Shift+S | Save a copy |
+| Ctrl+S, Ctrl+Shift+S | Save changes (to copy or prompt), Save a copy |
+| Ctrl+Z, Ctrl+Y | Undo, Redo (in Organize, Markup, Form Editor, Redaction) |
+| Ctrl+Shift+A | Toggle Markup and Annotation bar |
+| Ctrl+Shift+X | Toggle Redaction and Sanitize bar |
+| Ctrl+Shift+G | Sign document |
+| Ctrl+Shift+D | Compare PDFs |
 | Ctrl+W, Ctrl+Tab, Ctrl+Shift+Tab | Close tab, next tab, previous tab |
 | Ctrl+Plus, Ctrl+Minus | Zoom in, zoom out |
 | Ctrl+0, Ctrl+1 | Fit width, actual size |
@@ -242,17 +310,17 @@ Finished conversions raise a Windows notification ("Thesis draft v3.docx is read
 | Ctrl+B | Show or hide the side panel |
 | Ctrl+, | Settings |
 | F11 | Full screen (hides the title bar and toolbar until the pointer reaches the top or bottom edge) |
-| Esc | Close the topmost card, menu or dialog |
+| Esc | Close the topmost card, mode bar, menu or dialog |
 
 ## 11. Accessibility
 
-- Every control is reachable by keyboard in a logical order: title bar, toolbar, side panel, page.
+- Every control is reachable by keyboard in a logical order: title bar, toolbar, active mode bar, side panel, page (including interactive form fields and annotations in reading/tab order).
 - Focus uses the stock WinUI focus visual in the accent colour.
 - Icon-only buttons have `AutomationProperties.Name` and a tooltip with the shortcut.
-- Page text is exposed through a UI Automation text provider (plan milestone M3) so screen readers can read and select it.
-- Hit targets are at least 32 × 32 epx (36 in the floating toolbar).
+- Page text, interactive form fields, and tagged PDF structure (`/StructTreeRoot` when present) are exposed through UI Automation providers (plan milestone M3) so screen readers can read, navigate headings/tables, fill forms, and select text.
+- Hit targets are at least 32 × 32 epx (36 in the floating toolbar and mode bars).
 - Respect "Show animations in Windows"; when off, the toolbar does not fade and panels appear without motion.
-- Colour is never the only signal: selected pages also get a check badge, errors also get an icon and text.
+- Colour is never the only signal: selected pages also get a check badge, signature states and errors also get an icon and text.
 
 ## 12. Motion
 

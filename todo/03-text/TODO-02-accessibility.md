@@ -18,6 +18,7 @@ track: M3
 - `design/SPEC.md` sections 9.3 (selection announcements), 10, 11 (the whole contract), 4 (HighContrast dictionary).
 - `docs/plans/2026-10-13-recto-foundation.md` sections 6 (UIA text provider at M3), 7 (M3 row).
 - Microsoft UI Automation provider documentation for `ITextProvider`, `ITextRangeProvider` and WinUI `AutomationPeer` authoring.
+- -> XREF: D03 T03 §4 -- Interactive form fields and annotation comments expose UIA peers alongside the page text provider
 
 ## Outcome
 

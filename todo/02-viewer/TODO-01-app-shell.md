@@ -41,25 +41,25 @@ track: M2
 
 ## 1. App project, manifest, assets and tokens
 
-The packaged app skeleton with the SPEC's foundations wired before any screen is drawn: generated assets in place, the token dictionary merged, theme dictionaries (Light, Dark, HighContrast) live, and the window icon set. Getting tokens in first is what makes "no hex on a control" enforceable from the first XAML file.
+The WinUI 3 app skeleton with the SPEC's foundations wired before any screen is drawn: configured for both self-contained unpackaged execution (`WindowsAppSDKSelfContained` for Inno Setup Full and Portable installs, D6) and optional MSIX packaging (`Package.appxmanifest` and `resources/msix/Assets/`), the token dictionary merged, theme dictionaries (Light, Dark, HighContrast) live, and the window icon set. Getting tokens in first is what makes "no hex on a control" enforceable from the first XAML file.
 
 **Phase:** 2
 **Needs:** windows-host, display-session
 **Surface:** yes
 
 **Fidelity:** SPEC sections 3 and 4 with `design/screenshots/D-Brand.png` (icon, wordmark, tokens) and `D-Focus-Dark.png` (dark surfaces). Placement and colours match the boards through tokens, never literals.
-**Job:** The user can launch Recto and recognize it (icon, wordmark, vermilion accent) in either theme. Consumer: every later surface reads these tokens and assets.
-**Treatment:** Stock WinUI 3 packaged app with `RectoColors.xaml` merged into `App.xaml` and the system accent ramp replaced per SPEC section 4. Cheaper substitute that fails the checkpoint: per-control colours or the Windows blue accent left in place.
+**Job:** The user can launch Recto (both unpackaged/portable and MSIX-packaged) and recognize it (icon, wordmark, vermilion accent) in either theme. Consumer: every later surface reads these tokens and assets.
+**Treatment:** Stock WinUI 3 app supporting self-contained unpackaged deployment (`WindowsPackageType=None` default for Inno Setup and Portable mode, with optional MSIX packaging via `Package.appxmanifest`) and `RectoColors.xaml` merged into `App.xaml` with the system accent ramp replaced per SPEC section 4. Cheaper substitute that fails the checkpoint: per-control colours or the Windows blue accent left in place.
 **Chrome:** consume `design/tokens/RectoColors.xaml` brushes and stock `ThemeDictionaries`; wordmark and icons from `resources/svg/` via `SvgImageSource` with light and dark theme resources. Do not invent a second theme mechanism.
 
 **Build order:**
 
-1. Copy `resources/msix/Assets/` into `src/app/Assets/`, author `src/app/Package.appxmanifest` per `resources/README.md` (identity placeholder values where the Store will assign real ones, `.pdf` file-type association with `Assets\FileTypes\PdfFile.png`, splash background `#1B1A19` through the token-named value in the manifest as the README shows). Done when: the package builds and the app tile and splash render the Recto icon, not the template's.
+1. Copy `resources/msix/Assets/` into `src/app/Assets/`, author `src/app/Package.appxmanifest` per `resources/README.md` (`.pdf` file-type association with `Assets\FileTypes\PdfFile.png`, splash background `#1B1A19`), and configure `src/app/Recto.vcxproj` so `Recto.exe` runs self-contained (`WindowsAppSDKSelfContained=true`) for unpackaged/portable execution while keeping `Package.appxmanifest` ready for optional MSIX builds. Done when: `Recto.exe` launches directly from the build output folder with zero MSIX registration required and the manifest and assets are in place.
 2. Merge `design/tokens/RectoColors.xaml` into `App.xaml`, set the window icon from `resources/ico/recto.ico` (`AppWindow.SetIcon`), and verify the accent mapping SPEC section 4 warns about against Windows App SDK 2.4.0, adjusting the ramp (not controls) if it differs. Done when: a stock accent `Button` renders `#C8431F` in light and `#F0603C` in dark, sampled on the rendered window.
 
-- [ ] Manifest, assets and app entry in `src/app/`. Done when: the packaged app installs from the build output and launches to an empty branded window. Cheaper substitute that fails the checkpoint: unpackaged-only wiring that skips the manifest asset rules.
+- [ ] Self-contained unpackaged and MSIX-ready app entry, manifest and assets in `src/app/`. Done when: `Recto.exe` launches directly from the build output to an empty branded window and `src/app/Package.appxmanifest` carries the full asset mapping. Cheaper substitute that fails the checkpoint: skipping `resources/msix/Assets/` or requiring manual MSIX sideloading before `Recto.exe` can start.
 - [ ] Token dictionary merged with Light, Dark and HighContrast dictionaries. Done when: no XAML in `src/app` contains a `#` hex colour outside `RectoColors.xaml` (search proves it).
-- [ ] Commit: `app: packaged WinUI shell skeleton with Recto tokens and assets`
+- [ ] Commit: `app: WinUI shell skeleton with Recto tokens and assets`
 
 **Test checkpoint:** the app launches in light and dark themes on the display-session host with the accent sampled at `#C8431F` and `#F0603C`, and the hex search over `src/app` (excluding the token file) returns nothing.
 

@@ -24,7 +24,7 @@ The WinUI app as the SPEC's one shell: title-bar tabs, the tiled document view, 
 
 - `src/app` shell, slots, tabs, open paths, shell dialogs (password, could-not-open)
 - Presentation thread, tile compositing, scroll, zoom, layouts, links, page colour
-- Home and recents, Pages and Outline, Info, Ctrl+K, Settings, presets, theme, keyboard map
+- Home and recents, Pages, interactive Outline and Bookmark Editor, Layers (OCG) toggle panel, Attachments and PDF Portfolios (`/EmbeddedFiles` and `/Collection`), editable Info/XMP/ViewerPreferences, Ctrl+K, Settings, presets, theme, keyboard map
 
 ## Out of scope
 

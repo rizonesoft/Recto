@@ -79,7 +79,7 @@ M3's done-when made durable: per text-corpus file, the expected extracted text (
 
 ## 3. Conversion round-trip suite
 
-Plan section 7's M4 rule (each conversion round-trips the corpus with no errors) and M5's verification halves, as one suite over `tests/corpus/convert/`: every converter (images, images-to-PDF, text, searchable-PDF OCR, merge, split, reorder set, encrypt and decrypt, native `DocxWriter` DOCX validity, built-in OpenXML/RTF `Office -> PDF`, plus optional Office COM and LibreOffice paths where the host provides them) runs its applicable files, and outputs verify by the strongest cheap oracle per kind (render equality, info equality, byte fixture, unzip-and-parse, permission readback). Optional external-converter legs (Office COM, LibreOffice) skip with a named line when absent, never silently, while the built-in OpenXML/RTF leg always runs on every host.
+Plan section 7's M4 rule (each conversion round-trips the corpus with no errors) and M5's verification halves, as one suite over `tests/corpus/convert/`: every converter (images, multipage TIFF, GIF, vector SVG and OpenXPS, images/SVG/XPS-to-PDF, text, searchable-PDF OCR, `TableExtractor` and `ImageExtractor`, `PdfOptimizer` and Fast Web View `Linearizer`, merge, split, reorder set, blank-page insert, crop/resize, watermarks, headers/footers and Bates numbering, encrypt and decrypt, PKCS#7/PAdES digital signatures, physical redaction and sanitization, 3-mode `DocxWriter` and `RtfWriter` validity, `XlsxWriter` `.xlsx`/`.csv`/`.xml`, `WebDocWriter` HTML5/Markdown/EPUB 3/LaTeX, `ComplianceEngine` PDF/A-1/2/3, PDF/UA-1 and ZUGFeRD/Factur-X, built-in OpenXML/RTF/HTML/Markdown/CSV `-> PDF`, plus optional Office COM and LibreOffice paths where the host provides them) runs its applicable files, and outputs verify by the strongest cheap oracle per kind (render equality, info equality, byte fixture, unzip-and-parse, compliance validator, signature verification, redaction stream check, permission readback). Optional external-converter legs (Office COM, LibreOffice) skip with a named line when absent, never silently, while the built-in C++20 engines always run on every host.
 
 **Phase:** 4
 **Needs:** windows-host
@@ -98,22 +98,22 @@ Plan section 7's M4 rule (each conversion round-trips the corpus with no errors)
 
 ## 4. Performance targets harness
 
-Plan section 8 as measurements, not aspirations: a harness (CLI-driven for engine timings, app-driven for presentation timings) measuring first-page-visible on a generated 100-page text PDF, scroll frame times over a scripted trace, zoom preview and sharp-tile latency, memory with a 500-page document open, and cold start to empty window, each reported against its target on the D00 T01 §5 reference machines. The harness records dated results under `docs/perf/`; CI runs a smoke subset with loose bounds (shared runners are not reference machines, stated plainly) while the binding numbers come from the named machines.
+Plan section 8 as measurements, not aspirations: a harness (CLI-driven for engine timings, app-driven for presentation timings) measuring first-page-visible on a generated 100-page text PDF, scroll frame times over a scripted trace, zoom preview and sharp-tile latency, memory with a 500-page document open, and cold start to empty window, each reported against its target on the D00 T01 §5 primary reference host machine. The harness records dated results under `docs/perf/`; CI runs a smoke subset with loose bounds (shared runners are not reference machines, stated plainly) while the binding numbers come from the named reference machine.
 
 **Phase:** 2
-**Needs:** windows-host, display-session, attended
+**Needs:** windows-host, display-session
 **Surface:** no
 
 **Build order:**
 
 1. Build the measurement harness and the generated benchmark documents (100-page text, 500-page mixed) under corpus provenance rules. Done when: one command produces the five numbers with machine, build and date stamped.
-2. Record the M2 baseline on both reference machines in `docs/perf/`, and state per target whether it is met, missed with an owning section filed, or pending a later milestone's surface. Done when: M2's done-when ("targets in section 8 met on the reference machine") is quotable target by target.
+2. Record the M2 baseline on the primary reference host machine in `docs/perf/`, and state per target whether it is met, missed with an owning section filed, or pending a later milestone's surface. Done when: M2's done-when ("targets in section 8 met on the reference machine") is quotable target by target.
 
 - [ ] Harness producing the five target numbers. Done when: repeat runs on one machine agree within noise the harness itself reports (median and spread). Cheaper substitute: stopwatch anecdotes in review findings, unrepeatable by the next reader.
 - [ ] Dated reference-machine baselines with misses filed to owners. Done when: no target is silently unmeasured.
 - [ ] Commit: `test: performance harness for plan section 8 targets`
 
-**Test checkpoint:** the `tests/perf/` harness output for both machines quoted in findings against each target, with repeatability spreads and owners for any miss.
+**Test checkpoint:** the `tests/perf/` harness output for the reference host machine quoted in findings against each target, with repeatability spreads and owners for any miss.
 
 ## Verification
 

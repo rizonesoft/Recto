@@ -19,8 +19,9 @@ track: M4
 - `design/SPEC.md` sections 9.5, 9.9, 11 (announcements twin via D03 T02 §3's sink).
 - -> XREF: D05 T02 §4 -- Organize saves run as jobs on this frame (a page-operation save is a conversion with a progress and a failure mode); the job contract below is what that section consumes.
 - -> XREF: D04 T02 §1 -- the first real converters register against §1's contract and re-prove its isolation with a live writer.
-- -> XREF: D04 T03 §1 -- the native `DocxWriter` registers the Word document card and step 3 options against §2's converter-card registry.
+- -> XREF: D04 T03 §1 -- the native `DocxWriter` and `RtfWriter` register the Word document card and step 3 options against §2's converter-card registry.
 - -> XREF: D04 T04 §1 -- the `Office -> PDF` converters register the PDF from Office card and `NeedsConverter` recovery path against §1 and §2 here.
+- -> XREF: D04 T05 §1 -- the Excel/CSV/XML, HTML5/Markdown/EPUB/LaTeX, and PDF/A/PDF-UA/ZUGFeRD converters register their cards and step 3 options against §2's converter-card registry.
 
 ## Outcome
 

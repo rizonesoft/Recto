@@ -2,16 +2,17 @@
 
 > **Phases 4 and 5 (M4 Conversions A, M5 Conversions B)**
 
-One job frame for every conversion, then Recto's native C++20 converters: `PdfWriter` and atomic saves, PDF to images, images to PDF, PDF to text, and Searchable PDF (OCR) in M4; native C++20 `DocxWriter` (`PDF -> Word .docx`) with its 20-document quality review and built-in C++20 OpenXML/RTF `Office -> PDF` engine (plus optional Microsoft Office COM with macros off or LibreOffice) in M5. Honest conversion (SPEC principle 4) is this domain's standing rule.
+One job frame for every conversion, then Recto's native C++20 converters: `PdfWriter` and atomic saves, PDF to images, multipage TIFF, animated GIF, vector SVG and OpenXPS, images/SVG/XPS to PDF, PDF to text, Searchable PDF (OCR), Table and Image Extraction, and PDF Optimization/Linearization in M4; 3-mode native C++20 `DocxWriter` and `RtfWriter` (`PDF -> Word .docx & .rtf`) with its 20-document quality review, built-in C++20 OpenXML/RTF/HTML/Markdown/CSV `-> PDF` engine (plus optional Microsoft Office COM with macros off or LibreOffice), `XlsxWriter` (`PDF -> Excel .xlsx, .csv, .xml`), `WebDocWriter` (`PDF -> HTML5, Markdown, EPUB 3, LaTeX`), and `ComplianceEngine` (`PDF/A-1/2/3 a/b/u`, `PDF/UA-1`, `ZUGFeRD / Factur-X`) in M5. Honest conversion (SPEC principle 4) is this domain's standing rule.
 
 ## TODOs
 
 | TODO | Title | Status |
 | ---- | ----- | :----: |
 | [TODO-01](./TODO-01-jobs-and-queue.md) | Conversion Jobs and the Queue | active |
-| [TODO-02](./TODO-02-pdf-conversions-a.md) | Conversions A: PDF Writer, Images, Text and Searchable OCR PDF | active |
-| [TODO-03](./TODO-03-pdf-to-word.md) | PDF to Word (DOCX): Native OpenXML Writer and Quality Review | active |
-| [TODO-04](./TODO-04-office-to-pdf.md) | Office to PDF: Built-in OpenXML/RTF Engine, Office COM and LibreOffice | active |
+| [TODO-02](./TODO-02-pdf-conversions-a.md) | Conversions A: PDF Writer, Images/SVG/XPS, Text, OCR, Table/Image Extraction and Optimization | active |
+| [TODO-03](./TODO-03-pdf-to-word.md) | PDF to Word (DOCX and RTF): 3-Mode Native OpenXML/RTF Writer and Quality Review | active |
+| [TODO-04](./TODO-04-office-to-pdf.md) | Office, HTML and Markdown to PDF: Built-in C++20 Engine, Office COM and LibreOffice | active |
+| [TODO-05](./TODO-05-excel-web-and-compliance.md) | PDF to Excel/CSV/XML, HTML5/Markdown/EPUB/LaTeX, and PDF/A, PDF/UA & ZUGFeRD Compliance | active |
 
 ## Completed
 
@@ -23,8 +24,9 @@ One job frame for every conversion, then Recto's native C++20 converters: `PdfWr
 ## In scope
 
 - Isolated job runtime (`JobQueue`), the three-step Convert page, the queue card, completion notices
-- Native `PdfWriter`, atomic saves, Searchable PDF (OCR) invisible-text sandwich export, and all conversions of decision D7
-- Native C++20 `DocxWriter` (`PDF -> Word`) and built-in C++20 OpenXML/RTF `Office -> PDF` engine plus optional COM/LibreOffice adapters
+- Native `PdfWriter`, atomic saves, Searchable PDF (OCR) invisible-text sandwich export, `TableExtractor` and `ImageExtractor` (plus the Viewer `Table & Image Extractor Bar`), `PdfOptimizer`, font subsetter, and Fast Web View `Linearizer`
+- 3-mode (`Flowing`, `Exact`, `Continuous`) native C++20 `DocxWriter` and `RtfWriter` (`PDF -> Word .docx & .rtf`) and built-in C++20 OpenXML/RTF/HTML/Markdown/CSV `-> PDF` engine plus optional COM/LibreOffice adapters
+- Native C++20 `XlsxWriter` (`PDF -> .xlsx, .csv, .xml`), `WebDocWriter` (`PDF -> HTML5, .md, .epub, .tex`), and `ComplianceEngine` (`PDF/A`, `PDF/UA-1`, `ZUGFeRD / Factur-X` + Viewer `Standards & E-Invoice` side panel)
 
 ## Out of scope
 

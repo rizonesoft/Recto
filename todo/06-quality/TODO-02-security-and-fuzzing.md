@@ -18,7 +18,8 @@ track: M6
 - `docs/plans/2026-10-13-recto-foundation.md` sections 1 (D12, D13), 3.1 (the boundary the broker moves), 9 (the whole security posture).
 - -> XREF: D01 T01 §2 -- the `recto-pdf` parser, stream-filter, and error boundary the §1 audit reads first; audit findings against `recto-pdf` land as sections in that file's domain.
 - -> XREF: D01 T03 §2 -- the fuzz targets and seed corpus this file's operation runs, grows and triages.
-- -> XREF: D04 T04 §2 -- the macro-suppression (`msoAutomationSecurityForceDisable` and `vbaProject.bin` ignore) and safe-subprocess (`CreateProcessW`) proofs re-run by the §1 audit here.
+- -> XREF: D04 T04 §2 -- the macro-suppression (`msoAutomationSecurityForceDisable` and `vbaProject.bin` ignore), HTML remote-network/script blocking, and safe-subprocess (`CreateProcessW`) proofs re-run by the §1 audit here.
+- -> XREF: D05 T01 §5 -- the physical redaction (glyph/path/pixel stream removal) and document sanitization (`sanitize_document`) proofs re-run by the §1 audit here.
 
 ## Outcome
 
@@ -34,13 +35,13 @@ track: M6
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | Hostile-input rules audit | D02 T02 §4, D04 T04 §2 | [ ] |
+| 1 | §1 | Hostile-input rules audit | D02 T02 §4, D04 T04 §2, D05 T01 §5 | [ ] |
 | 2 | §2 | Continuous fuzz operation and crash triage | D01 T03 §2 | [ ] |
 | 3 | §3 | Post-v1 broker process design record | §1 | [ ] |
 
 ## 1. Hostile-input rules audit
 
-One pass, one record (`docs/security-audit.md`), rule by rule from plan section 9 and D12: no JavaScript engine linked anywhere in `recto-pdf` or dependencies (symbol-level check on built libraries and test that `/JS` actions are ignored), macros inert across built-in OpenXML (`vbaProject.bin` ignored), Office COM, and LibreOffice paths (the D04 T04 marker tests re-run), links ask and launch actions inert (D02 T02 §4's crafted files re-driven), `recto-pdf` containing every parse error as a `Result<T>` status over the broken corpus plus the fuzz seed corpus with decompression-ratio and recursion bounds enforced, and no path where document content reaches a shell, a script engine or an auto-opened handler. Findings become sections through `add-todo` in their owning domains; this section stamps on the audit's completeness, with critical findings filed and named, not on their absence.
+One pass, one record (`docs/security-audit.md`), rule by rule from plan section 9 and D12: no JavaScript engine linked anywhere in `recto-pdf` or dependencies (symbol-level check on built libraries and test that `/JS` actions are ignored), macros inert across built-in OpenXML (`vbaProject.bin` ignored), Office COM, and LibreOffice paths (the D04 T04 marker tests re-run), HTML-to-PDF `<script>` and remote `http://`/`https://` fetches blocked (`D04 T04 §1`), physical redaction (`D05 T01 §5`) leaving zero redacted glyphs or image pixels in raw streams and sanitization stripping all hidden metadata/layers/scripts, links ask and launch actions inert (D02 T02 §4's crafted files re-driven), `recto-pdf` containing every parse error as a `Result<T>` status over the broken corpus plus the fuzz seed corpus with decompression-ratio and recursion bounds enforced, and no path where document content reaches a shell, a script engine or an auto-opened handler. Findings become sections through `add-todo` in their owning domains; this section stamps on the audit's completeness, with critical findings filed and named, not on their absence.
 
 **Phase:** 6
 **Needs:** windows-host, display-session
@@ -78,22 +79,22 @@ The operating loop over D01 T03 §2's targets: scheduled longer runs beyond the 
 
 ## 3. Post-v1 broker process design record
 
-Plan D13 and section 9's last bullet, designed before it is needed: move `recto-pdf` into a broker process in an AppContainer with no file or network access, the app passing file bytes or handles in and receiving `DisplayList`s, `PageText`, and `Bitmap` tiles over a shared-memory channel. The record (`docs/specs/YYYY-MM-DD-broker-process-design.md` per repo convention for specs) decides: the IPC surface (which `recto::pdf::*` calls cross, how display lists and bitmaps transfer without copies where it matters), actor and job placement, capability and handle brokering for file access, crash containment and restart semantics, and the performance cost model against plan section 8. No code in v1; the design's job is to keep D01's boundary honest by proving the move is contained as claimed.
+Plan D13 and section 9's last bullet, pre-approved on 2026-10-14: move `recto-pdf` into a broker process in a restricted AppContainer (`lpacNoigher`, zero file or network access), with the host process passing read-only file handles or memory-mapped sections in and receiving immutable `DisplayList`s, `PageText`, and `Bitmap` tiles over a shared-memory channel (`CreateFileMappingW` / `MapViewOfFile`). The record (`docs/specs/2026-10-14-broker-process-design.md` per repo convention for specs) documents: the exact IPC surface against the shipped `src/pdf/recto_pdf.h` header (which `recto::pdf::*` calls cross, how display lists, text snapshots, and bitmaps transfer zero-copy over shared memory), actor and job placement, capability and handle brokering for file access, crash containment and automatic actor restart semantics, and the performance cost model against plan section 8. No broker code ships in v1; the design's job is to keep D01's boundary honest by proving the move is contained as claimed.
 
 **Phase:** 7
-**Needs:** owner-decision
+**Needs:** none
 **Surface:** no
 
 **Build order:**
 
 1. Inventory the true `recto-pdf` public surface as built (every `recto::pdf::*` entry, its ownership transfers) and classify each call as broker-side, app-side or split. Done when: no call requires a mutable `Document` object on both sides, or the exceptions are named as design costs.
-2. Write the design record with the IPC and shared-memory layout, AppContainer capability set, restart semantics and the migration sequence from the in-process engine. Done when: the owner approves it as the post-v1 direction (recorded decision with reversal cost) or rejects it with the alternative recorded.
+2. Write the design record `docs/specs/2026-10-14-broker-process-design.md` for the pre-approved D13 shared-memory `DisplayList`/`PageText`/`Bitmap` AppContainer broker architecture, including the IPC message schema, shared-memory ring/arena layout, AppContainer capability set, restart semantics, and the migration sequence from the in-process engine. Done when: the specification is complete and verified against the as-built `src/pdf` headers.
 
 - [ ] `recto-pdf` surface inventory against the as-built headers. Done when: generated from `src/pdf/recto_pdf.h` by script or table-checked against it, not from memory. Cheaper substitute: designing against an imagined boundary instead of the shipped one.
-- [ ] Approved design record in `docs/specs/`. Done when: D13's "contained change" claim is either substantiated by the inventory or corrected in the plan.
+- [ ] Pre-approved D13 shared-memory broker design record in `docs/specs/`. Done when: D13's "contained change" claim is substantiated by the inventory against the shipped headers.
 - [ ] Commit: `docs: broker process design for post-v1 sandboxing (D13)`
 
-**Test checkpoint:** the inventory regenerates from `src/pdf` headers with an empty diff against the record's table, and the owner decision is recorded (removing this section's `owner-decision` Need at stamp time).
+**Test checkpoint:** the inventory regenerates from `src/pdf` headers with an empty diff against the record's table, and `python scripts/todo-graph.py validate` exits 0.
 
 ## Verification
 

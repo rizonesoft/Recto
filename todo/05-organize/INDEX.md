@@ -2,14 +2,14 @@
 
 > **Phase 4 (M4, with Conversions A)**
 
-Authoring PDF structure: graft-based page operations in the engine (merge, split, reorder, rotate, delete, extract, encrypt, decrypt) and SPEC 9.6's one-grid Organize page with Combine, Split and Reorder modes. Operations always work on a copy.
+Authoring PDF structure and security: graft-based page operations in the engine (merge, split, reorder, rotate, delete, extract, insert blank page, crop/resize boxes), watermarks, headers/footers and Bates numbering (`src/core/stamp_watermark.cpp`), `AES-256` (`R=6`) encrypt/decrypt, X.509 / PKCS#12 / Windows Certificate Store / PAdES / RFC 3161 digital signatures (`src/pdf/signature.cpp`), and true physical content-stream redaction and sanitization (`src/pdf/redactor.cpp`), paired with SPEC 9.6's Organize grid, live-preview authoring dialogs, and the Viewer's Redaction & Sanitize Bar (`Ctrl+Shift+X`) and Digital Signature surfaces (`Ctrl+Shift+G`). Operations always work on a copy.
 
 ## TODOs
 
 | TODO | Title | Status |
 | ---- | ----- | :----: |
-| [TODO-01](./TODO-01-page-operations.md) | Page Operations: Merge, Split, Reorder, Encrypt | active |
-| [TODO-02](./TODO-02-organize-ui.md) | Organize: Combine, Split and Reorder Modes | active |
+| [TODO-01](./TODO-01-page-operations.md) | Page Operations, Stamping, Digital Signatures and True Redaction | active |
+| [TODO-02](./TODO-02-organize-ui.md) | Organize UI, Crop/Watermark/Bates Dialogs, Redaction Bar and Digital Signatures UI | active |
 
 ## Completed
 
@@ -20,13 +20,13 @@ Authoring PDF structure: graft-based page operations in the engine (merge, split
 
 ## In scope
 
-- `recto-pdf` `PdfWriter` and `GraftMap` (`src/pdf/graft.cpp`), `recto-core` page operation lists, and shared range parsing
-- The page grid, selection action bar, per-source and per-part colour, undo, save guard
+- `recto-pdf` `PdfWriter` and `GraftMap` (`src/pdf/graft.cpp`), `recto-core` page operation lists, blank-page insertion, page-box cropping/rescaling, watermarks, headers/footers, and Bates numbering (`src/core/stamp_watermark.cpp`)
+- `AES-256` (`R=6`) encryption/decryption (`src/pdf/crypto.cpp`), `PKCS#7` / `PAdES` / `RFC 3161` digital signatures (`src/pdf/signature.cpp`), and true physical content-stream redaction and sanitization (`src/pdf/redactor.cpp`)
+- The Organize page grid (`Combine`, `Split`, `Reorder`), live-preview `Crop & Resize`, `Watermark`, and `Header/Footer & Bates` dialogs, and the Viewer's `Redaction & Sanitize Bar` (`Ctrl+Shift+X`), `Sign Document Dialog` (`Ctrl+Shift+G`), and `Signatures` side panel
 
 ## Out of scope
 
-- The Convert page's cards over the same operations (04)
-- Content editing (text and image edits inside pages): not a v1 feature
+- Format conversions to Word/Excel/HTML/Images (`04-convert`)
 
 ---
 

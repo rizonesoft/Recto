@@ -9,84 +9,84 @@ track: M2
 
 # TODO-04 -- Settings, Layout Presets and Theme
 
-> **Goal:** The shell becomes the SPEC's shape-shifter: one settings store with every SPEC 9.7 group, the three layout presets (Focus, Classic, Reading room) plus honest "Custom" driven by moving shared controls between slots, theme including dark page colour, and the complete SPEC section 10 keyboard map audited end to end.
+> **Goal:** The shell becomes the SPEC's shape-shifter: one settings store with every SPEC 9.7 group (including **Portable mode** storing settings, recents, cache and temp files in `<exe-dir>\data\`), the three layout presets (Focus, Classic, Reading room) plus honest "Custom" driven by moving shared controls between slots, theme including dark page colour, and the complete SPEC section 10 keyboard map audited end to end.
 
-> **Current state:** Measured 2026-10-14. No code exists. D02 T01 §2 will declare the slot hosts and a `LayoutSettings` placeholder; T02 and T03 build the controls that move. Everything is decided: SPEC section 8 (the five layout settings composing three presets, D17: one shell, not three), 9.7 (Settings groups and order, find-a-setting), 4 (theme and page colour), 10 (keyboard table), 11 (animations off honored), 12 (motion), with boards `D-Layout.png`, `D-Settings.png`, `D-Classic.png`, `D-ReadingRoom.png`. Settings values already consumed elsewhere: ask-before-links and page colour (D02 T02 §4), remember reading position (D02 T03 §1), tile cache size (D02 T02 §2), OCR language and Office converter choice (D03 T01 §4, D04 T04 §2), crash reports (D07 T02 §3).
+> **Current state:** Measured 2026-10-14. No code exists. D02 T01 §2 will declare the slot hosts and a `LayoutSettings` placeholder; T02 and T03 build the controls that move. Everything is decided: SPEC section 8 (the five layout settings composing three presets, D17: one shell, not three), 9.7 (Settings groups and order, Portable mode toggle with live `<exe-dir>\data\` migration, find-a-setting), 4 (theme and page colour), 10 (keyboard table), 11 (animations off honored), 12 (motion), with boards `D-Layout.png`, `D-Settings.png`, `D-Classic.png`, `D-ReadingRoom.png`. Settings values already consumed elsewhere: ask-before-links and page colour (D02 T02 §4), remember reading position (D02 T03 §1), tile cache size (D02 T02 §2), OCR language and Office converter choice (D03 T01 §4, D04 T04 §2), local crash report bundles (D07 T02 §3), and Portable mode install (`D07 T01 §2`).
 
 ## Inputs
 
 - `design/SPEC.md` sections 4, 8, 9.7, 10, 11, 12; `resources/svg/layout-{focus,classic,readingroom}-{light,dark}.svg` (preset card wireframes).
-- `docs/plans/2026-10-13-recto-foundation.md` sections 1 (D17), 6.2 (preset implementation summary).
+- `docs/plans/2026-10-13-recto-foundation.md` sections 1 (D6 Portable mode, D17), 6.2 (preset implementation summary).
 - -> XREF: D02 T01 §2 -- the slot hosts and placeholder this file's preset engine drives; slot names agreed there are consumed unchanged here.
 - -> XREF: D02 T03 §2 -- the panels and thumbnail list whose reparenting and orientation switching §1 here must prove.
 
 ## Outcome
 
 - Switching presets rearranges the same live controls (toolbar, panels, thumbnails, navigation) with document state untouched; changing any of the five fine-tune settings renames the preset to Custom.
-- Every SPEC 9.7 setting exists, persists, and has a working consumer; find-a-setting filters rows live.
+- Every SPEC 9.7 setting exists, persists, and has a working consumer (including **Portable mode**, which detects `<exe-dir>\data\portable.mode` at startup and migrates `settings.json`, `recents.json`, cache and temp directories between `%LOCALAPPDATA%\Recto` and `<exe-dir>\data\` when toggled in Settings); find-a-setting filters rows live.
 - Light, Dark and Follow Windows themes plus the page colour setting apply live, and every SPEC section 10 shortcut does what the table says.
 
 **Adjacency:** list=applicable @ D02 T04 §2; document=not-applicable (no printed output); settings=applicable @ D02 T04 §2; reporting=not-applicable (no reports); notifications=not-applicable (none originate here); permissions=not-applicable (no roles); audit=not-applicable (settings history is not kept, by design); exchange=not-applicable (no settings import or export in v1, a stated non-goal); reverse=applicable @ D02 T04 §1
 
-**Adjacency rationale:** Settings is this file's whole subject, and its list is the find-a-setting filter over its own rows. The reverse surface is returning to a named preset (and to defaults per group) after fine-tuning, owned by the preset engine in section 1: a layout the user can only leave by reinstalling would be a defect. Settings export is deliberately not a v1 surface; the store format is documented JSON-free app data, and the non-goal is stated rather than silent.
+**Adjacency rationale:** Settings is this file's whole subject, and its list is the find-a-setting filter over its own rows. The reverse surface is returning to a named preset (and to defaults per group) after fine-tuning, owned by the preset engine in section 1: a layout the user can only leave by reinstalling would be a defect. Settings export is deliberately not a v1 surface; the store format is documented app data in `%LOCALAPPDATA%\Recto` or `<exe-dir>\data\` in Portable mode, and the non-goal is stated rather than silent.
 
 ## Implementation Order
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | Settings store and layout preset engine | D02 T03 §2 | [ ] |
-| 2 | §2 | Settings page, all groups | §1 | [ ] |
+| 1 | §1 | Settings store, Portable mode path resolver and layout preset engine | D02 T03 §2 | [ ] |
+| 2 | §2 | Settings page, all groups (including Portable mode toggle) | §1 | [ ] |
 | 3 | §3 | Theme, page colour and motion compliance | §1 | [ ] |
 | 4 | §4 | Keyboard map completeness audit | §2, §3 | [ ] |
 
-## 1. Settings store and layout preset engine
+## 1. Settings store, Portable mode path resolver and layout preset engine
 
-One store, one writer: a settings service persisting to app local data with atomic writes, typed accessors per setting with SPEC defaults, and change notifications consumers subscribe to. `LayoutSettings` holds the five SPEC section 8 settings (toolbar position, panel kind, thumbnail placement, search and outline side, navigation kind); the preset engine maps the three named presets to value sets, moves the shared controls between the shell's named slots, switches `ThumbnailList` orientation, and derives the preset name (Focus, Classic, Reading room, or Custom when any value deviates).
+One store, one writer: a settings and app-paths service (`src/services/settings.cpp` and `src/services/app_paths.cpp`) that resolves the active data directory (`<exe-dir>\data\` when `<exe-dir>\data\portable.mode` exists or Portable mode is enabled, otherwise `%LOCALAPPDATA%\Recto\`), persists with atomic writes, provides typed accessors per setting with SPEC defaults, migrates `settings.json` and `recents.json` atomically when `set_portable_mode(bool)` is toggled, and fires change notifications consumers subscribe to. `LayoutSettings` holds the five SPEC section 8 settings (toolbar position, panel kind, thumbnail placement, search and outline side, navigation kind); the preset engine maps the three named presets to value sets, moves the shared controls between the shell's named slots, switches `ThumbnailList` orientation, and derives the preset name (Focus, Classic, Reading room, or Custom when any value deviates).
 
 **Phase:** 2
 **Needs:** windows-host, display-session
 **Surface:** yes
 
 **Fidelity:** SPEC section 8 table with `D-Focus-Light.png`, `D-Classic.png` and `D-ReadingRoom.png` as the three outcomes of the same controls.
-**Job:** The user can arrange Recto the way they read, without losing their place. Consumer: every moved control keeps its state and bindings; the Settings page (§2) writes, surfaces read.
-**Treatment:** Reparenting live controls between named slots, per D17. Cheaper substitute that fails the checkpoint: rebuilding the shell per preset (state loss), or three shells (tripled maintenance, refused by the plan).
+**Job:** The user can arrange Recto the way they read, without losing their place, and run Recto either as a standard install or a self-contained portable app. Consumer: every moved control keeps its state and bindings; `RecentFilesStore`, temp directories and crash bundles read `AppPaths::data_dir()`; the Settings page (§2) writes, surfaces read.
+**Treatment:** Reparenting live controls between named slots, per D17, plus `AppPaths` portable detection and atomic migration. Cheaper substitute that fails the checkpoint: rebuilding the shell per preset (state loss), three shells (tripled maintenance, refused by the plan), or hard-coding `%LOCALAPPDATA%` so portable installs leak files onto the host.
 **Chrome:** consume the slot hosts from D02 T01 §2 and the controls from D02 T02 and T03 unchanged. Do not invent preset-specific control variants.
 
 **Build order:**
 
-1. Settings service in `src/services/settings.cpp`: typed values with defaults from SPEC 9.7, atomic persistence, change events, a test seam for in-memory values. Done when: a value changed, app restarted, reads back identical, and a corrupted store file falls back to defaults with a logged parse failure (same degrade rule as recents).
+1. Settings and app-paths service in `src/services/settings.cpp`: typed values with defaults from SPEC 9.7, startup detection of `<exe-dir>\data\portable.mode`, `set_portable_mode(bool)` atomic migration of `settings.json` and `recents.json` between `%LOCALAPPDATA%\Recto\` and `<exe-dir>\data\`, atomic persistence, change events, and a test seam for in-memory or custom root paths. Done when: a value changed, app restarted, reads back identical; toggling Portable mode moves settings and recents cleanly to `<exe-dir>\data\` (writing `portable.mode`) and back; and a corrupted store file falls back to defaults with a logged parse failure.
 2. Preset engine: value sets for the three presets, slot moves for toolbar, panels and navigation, thumbnail orientation switch, preset-name derivation. Done when: cycling Focus to Classic to Reading room and back with a document open preserves page, zoom, panel state and scroll, verified by driven test.
 
-- [ ] Persistent typed settings store with one writer. Done when: no other code writes the settings file (search proves the single writer). Cheaper substitute that fails the checkpoint: `ApplicationData` roaming values written from every page.
+- [ ] Persistent typed settings store with one writer and Portable mode path resolution (`<exe-dir>\data\` vs `%LOCALAPPDATA%\Recto\`). Done when: no other code writes the settings file (search proves the single writer) and Portable mode writes zero files to `%LOCALAPPDATA%\Recto`. Cheaper substitute that fails the checkpoint: `ApplicationData` roaming values written from every page.
 - [ ] Preset engine over slots with the Custom rule. Done when: changing one fine-tune value flips the Settings preset label to Custom immediately.
-- [ ] Commit: `viewer: settings store and layout preset engine over shell slots`
+- [ ] Commit: `viewer: settings store, portable mode resolver and layout preset engine over shell slots`
 
-**Test checkpoint:** `recto-tests --gtest_filter=Settings.Presets` green, screenshots of all three presets against their boards in findings, with the state-preservation cycle driven and the corrupted-store degrade proven.
+**Test checkpoint:** `recto-tests --gtest_filter=Settings.Presets:Settings.PortableMode` green, screenshots of all three presets against their boards in findings, with the state-preservation cycle, Portable mode migration and corrupted-store degrade proven.
 
-## 2. Settings page, all groups
+## 2. Settings page, all groups (including Portable mode toggle)
 
-SPEC 9.7 end to end: one centred column (760 to 900 epx), groups in the SPEC order (Layout with preset cards and the five fine-tune rows, Theme, Reading, Converting, Performance and privacy, Default PDF app, About entry), group labels per SPEC section 5, and a Find a setting box filtering rows as the user types. Every row's consumer must already exist or land with its named owner: cache size (128 MB to 2 GB, default 512 MB) drives D02 T02 §2's budget, OCR language and Office converter choice show built-in and detected options (D03 T01 §4, D04 T04 §2), crash reports default off and gate D07 T02 §3.
+SPEC 9.7 end to end: one centred column (760 to 900 epx), groups in the SPEC order (Layout with preset cards and the five fine-tune rows, Theme, Reading, Converting, Signatures and security, Performance and privacy including the **Portable mode** toggle, Default PDF app, About entry), group labels per SPEC section 5, and a Find a setting box filtering rows as the user types. Every row's consumer must already exist or land with its named owner: Portable mode migrates `<exe-dir>\data\` vs `%LOCALAPPDATA%\Recto\`, cache size (128 MB to 2 GB, default 512 MB) drives D02 T02 §2's budget, OCR language and Office converter choice show built-in and detected options (D03 T01 §4, D04 T04 §2), local crash report bundles default off and gate D07 T02 §3.
 
 **Phase:** 2
 **Needs:** windows-host, display-session
 **Surface:** yes
 
 **Fidelity:** SPEC section 9.7 with `D-Layout.png` (Layout group and preset cards) and `D-Settings.png` (remaining groups).
-**Job:** The user can find and change every tunable Recto has, and see it apply. Consumer: each row writes the store (§1); the named feature sections read their values from it.
+**Job:** The user can find and change every tunable Recto has (including toggling Portable mode in place), and see it apply. Consumer: each row writes the store (§1); the named feature sections read their values from it.
 **Treatment:** Stock settings controls (`ToggleSwitch`, `ComboBox`, `NumberBox`, sliders) in grouped cards, preset cards using the shipped wireframe SVGs. Cheaper substitute that fails the checkpoint: a settings page whose rows are inert placeholders for later milestones.
 **Chrome:** consume the preset wireframe graphics, grouped-card shape (radius 16, SPEC section 7) and the store from §1. Do not invent a second appearance for settings rows anywhere (converter and AI-free options all live here).
 
 **Build order:**
 
 1. Layout and Theme groups wired to §1 and §3: preset cards with wireframes, five fine-tune rows, theme selector, page colour selector. Done when: every control applies live and matches its board.
-2. Reading, Converting (OCR language selector and Office converter selector showing built-in OpenXML plus detected Office/LibreOffice installs, save-location choice), Performance and privacy (cache slider bounded 128 MB to 2 GB applying to the live texture cache, crash reports toggle default off), Default PDF app (opens the Windows Default apps page), About navigation (to D07 T02 §1's page, placeholder until then). Done when: each value has a quoted consumer behavior in the findings (cache budget changes telemetry, converter selector reflects built-in plus this machine's installs).
-3. Find a setting: filters rows by label text across groups, empty groups collapse, Esc clears. Done when: typing "cache", "dark" and "office" each leave exactly the right rows visible in driven tests.
+2. Reading, Converting (OCR language selector, default PDF to Word reconstruction mode selector, and Office converter selector showing built-in OpenXML plus detected Office/LibreOffice installs, save-location choice), Signatures and security (verify signatures when opening, default timestamp server URL), Performance and privacy (**Portable mode** toggle showing the active data path and migrating `<exe-dir>\data\` vs `%LOCALAPPDATA%\Recto\` when switched, cache slider bounded 128 MB to 2 GB applying to the live texture cache, local crash report bundles toggle default off), Default PDF app (opens the Windows Default apps page), About navigation (to D07 T02 §1's page, placeholder until then). Done when: each value has a quoted consumer behavior in the findings (Portable mode toggle migrates files and updates the active data path, cache budget changes telemetry, converter selector reflects built-in plus this machine's installs).
+3. Find a setting: filters rows by label text across groups, empty groups collapse, Esc clears. Done when: typing "portable", "cache", "dark" and "office" each leave exactly the right rows visible in driven tests.
 
-- [ ] All SPEC 9.7 groups present and live. Done when: the surface-completeness account lists every 9.7 row working or deferred to its named owner section (converter detection depth to D04 T04 §2, About content to D07 T02 §1). Cheaper substitute that fails the checkpoint: rows that persist but nothing reads.
+- [ ] All SPEC 9.7 groups present and live (including the Portable mode toggle). Done when: the surface-completeness account lists every 9.7 row working or deferred to its named owner section (converter detection depth to D04 T04 §2, About content to D07 T02 §1). Cheaper substitute that fails the checkpoint: rows that persist but nothing reads.
 - [ ] Find a setting filtering. Done when: a search with no matches shows the honest empty state, not a blank page.
-- [ ] Commit: `viewer: Settings page with all SPEC 9.7 groups live`
+- [ ] Commit: `viewer: Settings page with all SPEC 9.7 groups and Portable mode live`
 
-**Test checkpoint:** screenshots against `D-Layout.png` and `D-Settings.png`, cache-slider telemetry change quoted, and the three find-a-setting queries driven green.
+**Test checkpoint:** screenshots against `D-Layout.png` and `D-Settings.png`, Portable mode migration and cache-slider telemetry change quoted, and the find-a-setting queries driven green.
 
 ## 3. Theme, page colour and motion compliance
 
