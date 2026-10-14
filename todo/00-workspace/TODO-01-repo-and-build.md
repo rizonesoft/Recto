@@ -142,6 +142,8 @@ Add `.github/workflows/build.yml` running on `windows-latest` on every push and 
 
 Foundation plan section 8 binds performance targets to the primary reference Windows 11 host machine (and cross-compiled/secondary ARM64 verification), and section 11 item 2 was resolved on 2026-10-14 to use this host machine as the primary reference benchmark machine. Query and record this host machine's exact specifications (CPU, cores, RAM, GPU, storage, Windows 11 build, display DPI) plus the ARM64 cross-compile / emulator target profile in `docs/reference-machines.md` and cross-link from the foundation plan.
 
+> **Started:** 2026-10-14 -- agent session
+
 **Phase:** 0
 **Needs:** windows-host
 **Surface:** no
@@ -151,7 +153,7 @@ Foundation plan section 8 binds performance targets to the primary reference Win
 1. Query this host machine's hardware and OS specifications (`Get-CimInstance Win32_Processor`, `Win32_ComputerSystem`, `Win32_VideoController`, `Win32_OperatingSystem`) and write `docs/reference-machines.md` with a table of hardware and OS details (primary x64 host machine plus ARM64 target profile) and the exact `recto-cli bench` command (landed in D01 T03 §1) that runs on them, and verify foundation plan section 11 item 2 links to `docs/reference-machines.md`. Done when: `docs/reference-machines.md` names concrete hardware specifications with no placeholders.
 2. Verify that `owner-decision` has been removed from this section's `**Needs:**` line under the 2026-10-14 owner decision. Done when: `python scripts/todo-graph.py query blocked` no longer lists `D00 T01 §5` as waiting on an owner decision.
 
-- [ ] `docs/reference-machines.md` committed and linked from `docs/plans/2026-10-13-recto-foundation.md` section 8 and 11. Done when: the primary host machine and ARM64 profile are specified strongly enough that another person can tell whether a measurement came from them.
+- [x] `docs/reference-machines.md` committed and linked from `docs/plans/2026-10-13-recto-foundation.md` section 8 and 11. Done when: the primary host machine and ARM64 profile are specified strongly enough that another person can tell whether a measurement came from them.
 - [ ] Commit: `docs: record x64 and ARM64 reference benchmark machines`
 
 **Test checkpoint:** `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` exit 0, and `docs/reference-machines.md` contains zero `TODO` or `TBD` tokens.
