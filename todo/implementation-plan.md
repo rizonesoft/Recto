@@ -115,11 +115,11 @@ Sections: 45 | Checklist items: 373
 
 ### Phase 3: M3 Text
 
-Sections: 28 | Checklist items: 213
+Sections: 28 | Checklist items: 214
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
-| [ ]    | D03 T01 §1  | Native `PageText` glyph-to-Unicode extraction and column reading-order clustering        | windows-host                  | 8     |
+| [ ]    | D03 T01 §1  | Native `PageText` glyph-to-Unicode extraction and column reading-order clustering        | windows-host                  | 9     |
 | [ ]    | D03 T01 §2  | `DocumentActor::get_page_text` LRU cache and `recto-cli text` command                    | windows-host                  | 7     |
 | [ ]    | D03 T01 §3  | Quad-precise pointer and keyboard text selection (`SelectionModel`)                      | windows-host, display-session | 9     |
 | [ ]    | D03 T01 §4  | Dark floating selection toolbar, right-click context menu and clipboard copy             | windows-host, display-session | 8     |
@@ -229,7 +229,7 @@ Sections: 24 | Checklist items: 168
 
 ### Phase 6: M6 Ship
 
-Sections: 20 | Checklist items: 133
+Sections: 20 | Checklist items: 134
 
 | Status | Reference  | Deliverable                                                                              | Needs                         | Items |
 | ------ | ---------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -252,7 +252,7 @@ Sections: 20 | Checklist items: 133
 | [ ]    | D07 T02 §4 | Opt-in local crash report bundle writer (`MiniDumpNormal` + D16 ring log `.zip` prompt)  | windows-host, display-session | 7     |
 | [ ]    | D07 T02 §5 | Localization readiness (`Resources.resw` `x:Uid` extraction and 40% pseudolocale check)  | windows-host, display-session | 6     |
 | [ ]    | D07 T02 §6 | GitHub Release runbook (`docs/release-and-store-runbook.md`) and Store submission kit    | windows-host, display-session | 7     |
-| [ ]    | D07 T02 §7 | End-to-end v1 distribution bundle (`Setup.exe`, `Portable.zip`, `SHA256SUMS.txt`) & GPL  | windows-host, display-session | 6     |
+| [ ]    | D07 T02 §7 | End-to-end v1 distribution bundle (`Setup.exe`, `Portable.zip`, `SHA256SUMS.txt`) & GPL  | windows-host, display-session | 7     |
 
 ### Phase 99: Manual, operator only
 
@@ -267,4 +267,4 @@ Sections: 4 | Checklist items: 20
 
 Progress: 7/205 verified sections, 4 ready to run now.
 
-Checklist: 28/1469 items completed (includes Commit items).
+Checklist: 28/1471 items completed (includes Commit items).

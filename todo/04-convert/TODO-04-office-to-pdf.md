@@ -22,7 +22,7 @@ track: M5
 - -> XREF: D04 T01 §4 -- registers the `PDF from Office, HTML, Markdown & Images` card, file-type applicability rules, and `NeedsConverter` recovery path into the Convert page (`§4`) and `QueueCard` (`§7`).
 - -> XREF: D04 T02 §2 -- `office_to_pdf.cpp` (§1, §2) and `html_md_to_pdf.cpp` (§3) emit vector PDFs via `D04 T02 §2`'s `PdfWriter` and `D04 T02 §1`'s `AtomicFileWriter`.
 - -> XREF: D04 T03 §1 -- `office_to_pdf.cpp` (§1, §2) reads OpenXML `.docx`, `.xlsx`, and `.pptx` ZIP packages via `D04 T03 §1`'s `zip_archive.cpp`.
-- -> XREF: D06 T02 §2 -- the security audit in `D06 T02 §2` re-runs the macro-suppression (`msoAutomationSecurityForceDisable` and `vbaProject.bin` ignore), HTML external network/script blocking, and safe-subprocess (`CreateProcessW`) proofs built here.
+- -> XREF: D06 T02 §2 -- the security audit in `D06 T02 §2` re-runs the macro-suppression (`msoAutomationSecurityForceDisable` and `vbaProject.bin` ignore), HTML external network/script blocking, and safe-subprocess (`CreateProcessW`) proofs built here, and `fuzz_openxml_zip` (`D06 T02 §3`) fuzzes the OpenXML `.docx`/`.xlsx`/`.pptx` parsers (`§1`, `§2`).
 
 ## Outcome
 
