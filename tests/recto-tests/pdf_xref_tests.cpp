@@ -1096,6 +1096,31 @@ TEST(PdfXref, DamagedRecovery)
 		auto rec_attempts = XrefTable::recover_damaged_xref(as_bytes(hostile), /*max_total_entries=*/8u);
 		RECTO_EXPECT_ERR(rec_attempts, ErrorCode::DamagedFormat);
 	}
+
+	// 6. Repeated valid revisions of a non-catalog object followed by a large payload do not
+	//    trigger quadratic fallback reparsing, and UINT32_MAX object IDs synthesize `/Size`
+	//    as 4294967296 without 32-bit unsigned wraparound.
+	{
+		std::string repeated_valid = "%PDF-1.7\n";
+		for (int i = 0; i < 1000; ++i) {
+			repeated_valid += "2 0 obj null endobj\n";
+		}
+		repeated_valid += "2 0 obj (";
+		repeated_valid.append(65536u, 'A');
+		repeated_valid += ") endobj\n";
+
+		auto rec_no_cat = XrefTable::recover_damaged_xref(as_bytes(repeated_valid));
+		RECTO_EXPECT_ERR(rec_no_cat, ErrorCode::DamagedFormat);
+
+		const std::string max_id_pdf =
+			"%PDF-1.7\n4294967295 0 obj\n<< /Type /Catalog >>\nendobj\n";
+		auto rec_max_id = XrefTable::recover_damaged_xref(as_bytes(max_id_pdf));
+		RECTO_ASSERT_OK(rec_max_id);
+		EXPECT_EQ(
+			rec_max_id->root_ref(),
+			(IndirectRef{std::numeric_limits<uint32_t>::max(), 0u}));
+		EXPECT_EQ(rec_max_id->trailer().get_int("Size"), 4294967296LL);
+	}
 }
 
 TEST(PdfXref, RejectsBrokenFiles)
