@@ -683,6 +683,21 @@ public:
 	// seek target when no token has been consumed since construction/seek).
 	[[nodiscard]] size_t position() const noexcept;
 
+	// Returns the furthest byte offset physically scanned by this Lexer
+	// instance (including speculative lookahead in peek_token and stream
+	// terminator scans).
+	[[nodiscard]] size_t max_scanned_offset() const noexcept
+	{
+		return std::max(max_scanned_offset_, cursor_);
+	}
+
+	void record_scanned_offset(size_t byte_offset) noexcept
+	{
+		max_scanned_offset_ = std::max(
+			max_scanned_offset_,
+			std::min(byte_offset, input_.size()));
+	}
+
 	[[nodiscard]] bool at_eof() const noexcept
 	{
 		return position() >= input_.size();
@@ -773,6 +788,7 @@ private:
 	std::span<const uint8_t> input_{};
 	size_t cursor_{0};
 	size_t logical_cursor_{0};
+	size_t max_scanned_offset_{0};
 	bool emit_comments_{false};
 	size_t max_token_bytes_{kMaxLexerTokenBytes};
 	std::unique_ptr<LookaheadEntry[]> lookahead_buf_{};

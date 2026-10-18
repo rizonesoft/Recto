@@ -198,6 +198,7 @@ void Lexer::set_emit_comments(bool enabled) noexcept
 {
 	if (emit_comments_ != enabled) {
 		emit_comments_ = enabled;
+		record_scanned_offset(cursor_);
 		cursor_ = logical_cursor_;
 		clear_lookahead();
 	}
@@ -206,13 +207,16 @@ void Lexer::set_emit_comments(bool enabled) noexcept
 void Lexer::set_max_token_bytes(size_t max_bytes) noexcept
 {
 	max_token_bytes_ = std::min(max_bytes, kMaxLexerTokenBytes);
+	record_scanned_offset(cursor_);
 	cursor_ = logical_cursor_;
 	clear_lookahead();
 }
 
 void Lexer::seek(size_t byte_offset) noexcept
 {
+	record_scanned_offset(cursor_);
 	cursor_ = std::min(byte_offset, input_.size());
+	record_scanned_offset(cursor_);
 	logical_cursor_ = cursor_;
 	clear_lookahead();
 }
@@ -241,12 +245,14 @@ PdfResult<Token> Lexer::next_token() noexcept
 		logical_cursor_ = cursor_;
 		return res;
 	} catch (const std::bad_alloc&) {
+		record_scanned_offset(cursor_);
 		cursor_ = saved_cursor;
 		return PdfError{
 			ErrorCode::OutOfMemory,
 			"Out of memory in Lexer::next_token",
 			logical_cursor_};
 	} catch (...) {
+		record_scanned_offset(cursor_);
 		cursor_ = saved_cursor;
 		return PdfError{
 			ErrorCode::InternalError,
@@ -278,6 +284,7 @@ PdfResult<Token> Lexer::peek_token(size_t lookahead_index) noexcept
 			if (!res.has_value()) {
 				// Restore cursor_ so a failed speculative lookahead does not
 				// silently consume the malformed token before next_token().
+				record_scanned_offset(cursor_);
 				cursor_ = saved_cursor;
 				return std::move(res).error();
 			}
@@ -294,12 +301,14 @@ PdfResult<Token> Lexer::peek_token(size_t lookahead_index) noexcept
 			(lookahead_head_ + clamped_index) % lookahead_capacity_;
 		return lookahead_buf_[target_idx].token;
 	} catch (const std::bad_alloc&) {
+		record_scanned_offset(cursor_);
 		cursor_ = saved_cursor;
 		return PdfError{
 			ErrorCode::OutOfMemory,
 			"Out of memory in Lexer::peek_token",
 			logical_cursor_};
 	} catch (...) {
+		record_scanned_offset(cursor_);
 		cursor_ = saved_cursor;
 		return PdfError{
 			ErrorCode::InternalError,
@@ -312,6 +321,7 @@ PdfResult<uint64_t> Lexer::consume_stream_eol() noexcept
 {
 	// Synchronize physical cursor with the exact byte offset immediately after
 	// the last consumed token (`stream`), discarding any speculative lookahead.
+	record_scanned_offset(cursor_);
 	cursor_ = logical_cursor_;
 	clear_lookahead();
 

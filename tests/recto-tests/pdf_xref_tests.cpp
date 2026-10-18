@@ -1181,6 +1181,18 @@ TEST(PdfXref, DamagedRecovery)
 		hostile_trailer += "1 0 obj\n<< /Type /Catalog /Pages 3 0 R >>\nendobj\n";
 		auto rec_trailer_budget = XrefTable::recover_damaged_xref(as_bytes(hostile_trailer));
 		RECTO_EXPECT_ERR(rec_trailer_budget, ErrorCode::DamagedFormat);
+
+		// Malformed non-stream objects whose literal string happens to contain "endstream"
+		// only charge the bytes actually scanned by Lexer/Parser, not the entire remaining file.
+		std::string literal_endstream_pdf = "%PDF-1.7\n";
+		for (int i = 0; i < 5; ++i) {
+			literal_endstream_pdf += "2 0 obj (endstream) nope\n";
+		}
+		literal_endstream_pdf += "1 0 obj\n<< /Type /Catalog /Pages 3 0 R >>\nendobj\n";
+		literal_endstream_pdf += std::string(102400u, ' ');
+		auto rec_literal_endstream = XrefTable::recover_damaged_xref(as_bytes(literal_endstream_pdf));
+		RECTO_ASSERT_OK(rec_literal_endstream);
+		EXPECT_EQ(rec_literal_endstream->root_ref(), (IndirectRef{1u, 0u}));
 	}
 
 	// 6. Single-pass catalog fallback without secondary reparsing, and UINT32_MAX object IDs

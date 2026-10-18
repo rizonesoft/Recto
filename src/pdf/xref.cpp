@@ -82,129 +82,6 @@ constexpr std::string_view kEofMarker = "%%EOF";
 	return p;
 }
 
-[[nodiscard]] size_t scan_one_raw_token(
-	std::span<const uint8_t> bytes,
-	size_t p,
-	bool* out_is_regular = nullptr) noexcept
-{
-	if (out_is_regular != nullptr) {
-		*out_is_regular = false;
-	}
-	p = skip_pdf_whitespace_and_comments(bytes, p);
-	if (p >= bytes.size()) {
-		return bytes.size();
-	}
-	const uint8_t b = bytes[p];
-	if (b == '(') {
-		++p;
-		size_t paren_depth = 1u;
-		while (p < bytes.size()) {
-			const uint8_t c = bytes[p++];
-			if (c == '\\') {
-				if (p >= bytes.size()) {
-					return bytes.size();
-				}
-				++p;
-			} else if (c == '(') {
-				++paren_depth;
-			} else if (c == ')') {
-				--paren_depth;
-				if (paren_depth == 0u) {
-					return p;
-				}
-			}
-		}
-		return bytes.size();
-	}
-	if (b == '<') {
-		if (p + 1u < bytes.size() && bytes[p + 1u] == '<') {
-			return p + 2u;
-		}
-		++p;
-		while (p < bytes.size()) {
-			const uint8_t c = bytes[p++];
-			if (c == '>') {
-				return p;
-			}
-			if (Lexer::is_pdf_whitespace(c)) {
-				continue;
-			}
-			const bool is_hex = (c >= '0' && c <= '9') ||
-				(c >= 'a' && c <= 'f') ||
-				(c >= 'A' && c <= 'F');
-			if (!is_hex) {
-				return p;
-			}
-		}
-		return bytes.size();
-	}
-	if (b == '>') {
-		if (p + 1u < bytes.size() && bytes[p + 1u] == '>') {
-			return p + 2u;
-		}
-		return p + 1u;
-	}
-	if (b == '/') {
-		++p;
-		while (p < bytes.size() && Lexer::is_pdf_regular(bytes[p])) {
-			if (bytes[p] == '#' && p + 2u >= bytes.size()) {
-				return bytes.size();
-			}
-			++p;
-		}
-		return p;
-	}
-	if (Lexer::is_pdf_regular(b)) {
-		if (out_is_regular != nullptr) {
-			*out_is_regular = true;
-		}
-		while (p < bytes.size() && Lexer::is_pdf_regular(bytes[p])) {
-			++p;
-		}
-		return p;
-	}
-	return p + 1u;
-}
-
-[[nodiscard]] size_t furthest_lexer_scan_offset(
-	std::span<const uint8_t> bytes,
-	size_t start_pos,
-	const Lexer& lexer,
-	const PdfError* err) noexcept
-{
-	size_t end_pos = lexer.position();
-	if (err == nullptr) {
-		return end_pos;
-	}
-	if (err->byte_offset.has_value()) {
-		end_pos = std::max(
-			end_pos,
-			static_cast<size_t>(std::min<uint64_t>(*err->byte_offset, bytes.size())));
-	}
-	if (err->message == "Unterminated PDF literal string" ||
-		err->message == "Truncated backslash escape in PDF literal string" ||
-		err->message == "Unterminated PDF hexadecimal string" ||
-		err->message == "Truncated #XX hex escape in PDF name object" ||
-		err->message == "Unterminated PDF dictionary: unexpected EOF before '>>'" ||
-		err->message == "Unterminated PDF array: unexpected EOF before ']'" ||
-		err->message == "Unterminated PDF stream: missing 'endstream' keyword") {
-		return bytes.size();
-	}
-	if (err->message == "Expected 'endobj' keyword after indirect object body") {
-		for (size_t k = start_pos; k < end_pos; ++k) {
-			if (bytes[k] == 'e' && matches_token_at(bytes, k, "endstream")) {
-				return bytes.size();
-			}
-		}
-	}
-	bool first_is_regular = false;
-	size_t spec_end = scan_one_raw_token(bytes, lexer.position(), &first_is_regular);
-	if (first_is_regular && spec_end < bytes.size()) {
-		spec_end = scan_one_raw_token(bytes, spec_end, nullptr);
-	}
-	return std::max(end_pos, spec_end);
-}
-
 [[nodiscard]] bool contains_eof_marker(std::span<const uint8_t> tail) noexcept
 {
 	if (tail.size() < kEofMarker.size()) {
@@ -806,13 +683,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 				tr_lexer.seek(pos + 7u);
 				Parser tr_parser(tr_lexer);
 				auto tr_res = tr_parser.parse_dictionary();
-				const size_t tr_scan_end = std::max(
-					furthest_lexer_scan_offset(
-						file_bytes,
-						pos + 7u,
-						tr_lexer,
-						tr_res.has_value() ? nullptr : &tr_res.error()),
-					pos + 7u);
+				const size_t tr_scan_end = std::max(tr_lexer.max_scanned_offset(), pos + 7u);
 				cumulative_parse_bytes += static_cast<uint64_t>(tr_scan_end - pos);
 				if (!tr_res.has_value() && tr_res.error().code == ErrorCode::OutOfMemory) {
 					return tr_res.error();
@@ -914,11 +785,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 								});
 							const size_t next_pos = std::max(obj_parser.lexer().position(), p + 3u);
 							const size_t obj_scan_end = std::max(
-								furthest_lexer_scan_offset(
-									file_bytes,
-									pos,
-									obj_parser.lexer(),
-									parsed_obj.has_value() ? nullptr : &parsed_obj.error()),
+								obj_parser.lexer().max_scanned_offset(),
 								next_pos);
 							cumulative_parse_bytes += static_cast<uint64_t>(obj_scan_end - pos);
 							if (!parsed_obj.has_value()) {

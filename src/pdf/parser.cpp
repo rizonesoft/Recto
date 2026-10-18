@@ -38,6 +38,7 @@ struct TerminatorScanner {
 	size_t cached_converge_limit{0};
 	size_t cached_tok_pos{0};
 	size_t scan_steps{0};
+	size_t max_offset{0};
 	bool has_cache{false};
 
 	[[nodiscard]] size_t find_token_after_endstream(size_t endstream_pos) noexcept
@@ -50,11 +51,13 @@ struct TerminatorScanner {
 			++scan_steps;
 		}
 		if (p >= input.size()) {
+			max_offset = std::max(max_offset, input.size());
 			return input.size();
 		}
 		++scan_steps;
 		// Any non-whitespace, non-comment token on the same line is immediate.
 		if (input[p] != '\r' && input[p] != '\n' && input[p] != '%') {
+			max_offset = std::max(max_offset, p + 1u);
 			return p;
 		}
 		// Otherwise p is at '\r', '\n', or '%', which skips to EOL and then
@@ -80,6 +83,7 @@ struct TerminatorScanner {
 			}
 			break;
 		}
+		max_offset = std::max(max_offset, std::min(cur + 1u, input.size()));
 		cached_converge_limit = cur;
 		cached_tok_pos = cur;
 		has_cache = true;
@@ -91,6 +95,9 @@ struct TerminatorScanner {
 		bool require_endobj_terminator) noexcept
 	{
 		const size_t cur = find_token_after_endstream(endstream_pos);
+		max_offset = std::max(
+			max_offset,
+			std::min(cur + kEndobjKeyword.size() + 1u, input.size()));
 		if (matches_keyword_at(input, cur, kEndobjKeyword)) {
 			return true;
 		}
@@ -101,11 +108,15 @@ struct TerminatorScanner {
 [[nodiscard]] bool is_endstream_followed_by_terminator(
 	std::span<const uint8_t> input,
 	size_t endstream_pos,
-	bool require_endobj_terminator) noexcept
+	bool require_endobj_terminator,
+	size_t* out_max_offset = nullptr) noexcept
 {
 	TerminatorScanner scanner{input};
 	const bool ok = scanner.is_followed_by_terminator(endstream_pos, require_endobj_terminator);
 	g_last_terminator_scan_steps = scanner.scan_steps;
+	if (out_max_offset != nullptr) {
+		*out_max_offset = scanner.max_offset;
+	}
 	return ok;
 }
 
@@ -693,11 +704,16 @@ PdfResult<std::span<const uint8_t>> Parser::parse_stream_slice_impl(
 				(input[kw_pos] == ' ' || input[kw_pos] == '\t')) {
 				++kw_pos;
 			}
+			lexer_->record_scanned_offset(kw_pos + kEndstreamKeyword.size());
 			if (matches_keyword_at(input, kw_pos, kEndstreamKeyword)) {
-				if (is_endstream_followed_by_terminator(
-						input,
-						kw_pos,
-						require_endobj_terminator)) {
+				size_t term_max_offset = 0;
+				const bool has_term = is_endstream_followed_by_terminator(
+					input,
+					kw_pos,
+					require_endobj_terminator,
+					&term_max_offset);
+				lexer_->record_scanned_offset(term_max_offset);
+				if (has_term) {
 					lexer_->seek(kw_pos + kEndstreamKeyword.size());
 					return input.subspan(stream_start, static_cast<size_t>(len_u64));
 				}
@@ -742,6 +758,12 @@ PdfResult<std::span<const uint8_t>> Parser::parse_stream_slice_impl(
 			}
 		}
 		g_last_terminator_scan_steps = scanner.scan_steps;
+		lexer_->record_scanned_offset(
+			strict_match.has_value()
+				? std::max(*strict_match + kEndstreamKeyword.size(), scanner.max_offset)
+				: input.size());
+	} else {
+		lexer_->record_scanned_offset(input.size());
 	}
 
 	if (!strict_match.has_value() && declared_kw_pos.has_value()) {
