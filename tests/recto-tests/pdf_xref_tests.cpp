@@ -416,8 +416,7 @@ TEST(PdfXref, CyclicPrevAndRevisionCeiling)
 		RECTO_EXPECT_ERR(XrefTable::parse(as_bytes(pdf_257)), ErrorCode::DamagedFormat);
 	}
 
-	// 4. Hybrid /XRefStm guards: cyclic, out-of-bounds, or non-integer fail with DamagedFormat;
-	// valid in-bounds /XRefStm returns UnsupportedFeature prior to §6.
+	// 4. Hybrid /XRefStm guards and valid hybrid /XRefStm unpacking (ISO 32000-1 7.5.8.4).
 	{
 		std::string pdf_base = "%PDF-1.7\n";
 		const size_t obj1_off = pdf_base.size();
@@ -444,12 +443,12 @@ TEST(PdfXref, CyclicPrevAndRevisionCeiling)
 			std::to_string(xref_off) + "\n%%EOF\n";
 		RECTO_EXPECT_ERR(XrefTable::parse(as_bytes(pdf_bad_stm)), ErrorCode::DamagedFormat);
 
-		// Valid in-bounds /XRefStm -> UnsupportedFeature prior to §6.
-		std::string pdf_valid_stm = pdf_base +
+		// /XRefStm pointing to a non-stream indirect object -> DamagedFormat.
+		std::string pdf_non_stream_stm = pdf_base +
 			"xref\n0 2\n0000000000 65535 f \n" + std::to_string(obj1_off) +
 			" 0 n\ntrailer\n<< /Size 3 /Root 1 0 R /XRefStm " + std::to_string(stm_off) +
 			" >>\nstartxref\n" + std::to_string(xref_off) + "\n%%EOF\n";
-		RECTO_EXPECT_ERR(XrefTable::parse(as_bytes(pdf_valid_stm)), ErrorCode::UnsupportedFeature);
+		RECTO_EXPECT_ERR(XrefTable::parse(as_bytes(pdf_non_stream_stm)), ErrorCode::DamagedFormat);
 	}
 
 	// 5. Cumulative allocation ceiling across subsections and across /Prev revisions,
@@ -595,5 +594,483 @@ TEST(PdfXref, CyclicIndirectRef)
 	}
 }
 
+TEST(PdfXref, XrefStreamUnpack)
+{
+	auto parse_dict_str = [](std::string_view src) -> PdfDict {
+		Parser p(as_bytes(src));
+		auto res = p.parse_dictionary();
+		EXPECT_TRUE(res.has_value()) << res.error().message.view();
+		return res.has_value() ? std::move(*res) : PdfDict{};
+	};
+
+	// 1. Multi-subsection /Index [0 2 5 2 10 1] with /W [1 4 2] (7 bytes per row):
+	//    - obj 0: type 0 (free), next=0, gen=65535
+	//    - obj 1: type 1 (uncompressed), offset=0x100, gen=3
+	//    - obj 5: type 2 (compressed), obj_stm=9, index=4
+	//    - obj 6: type 0 (free), next=8, gen=2
+	//    - obj 10: type 3 (unknown future type -> treated as free per ISO 32000-1 7.5.8.3)
+	{
+		const PdfDict dict = parse_dict_str(
+			"<< /Type /XRef /Size 11 /Root 1 3 R /Info 5 0 R "
+			"/W [1 4 2] /Index [0 2 5 2 10 1] >>");
+
+		const uint8_t payload[] = {
+			// obj 0: type 0, next 0, gen 65535
+			0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF,
+			// obj 1: type 1, offset 0x00000100 (256), gen 3
+			0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x03,
+			// obj 5: type 2, obj_stm 9, index 4
+			0x02, 0x00, 0x00, 0x00, 0x09, 0x00, 0x04,
+			// obj 6: type 0, next 8, gen 2
+			0x00, 0x00, 0x00, 0x00, 0x08, 0x00, 0x02,
+			// obj 10: type 3 (unknown), f2=123, f3=45
+			0x03, 0x00, 0x00, 0x00, 0x7B, 0x00, 0x2D,
+		};
+
+		XrefTable table;
+		uint64_t total_rows = 0;
+		RECTO_ASSERT_OK(XrefTable::unpack_xref_stream(
+			dict,
+			payload,
+			/*file_size=*/4096,
+			/*header_offset=*/16,
+			table,
+			total_rows));
+		EXPECT_EQ(total_rows, 5u);
+		EXPECT_EQ(table.root_ref(), (IndirectRef{1u, 3u}));
+		EXPECT_EQ(table.info_ref(), (IndirectRef{5u, 0u}));
+
+		ASSERT_NE(table.find(0), nullptr);
+		EXPECT_TRUE(table.find(0)->is_free());
+		EXPECT_EQ(table.find(0)->generation, 65535u);
+
+		ASSERT_NE(table.find(1), nullptr);
+		EXPECT_TRUE(table.find(1)->is_uncompressed());
+		EXPECT_EQ(table.find(1)->byte_offset, 256u + 16u);
+		EXPECT_EQ(table.find(1)->generation, 3u);
+
+		EXPECT_EQ(table.find(2), nullptr);
+		EXPECT_EQ(table.find(3), nullptr);
+		EXPECT_EQ(table.find(4), nullptr);
+
+		ASSERT_NE(table.find(5), nullptr);
+		EXPECT_TRUE(table.find(5)->is_compressed());
+		EXPECT_EQ(table.find(5)->obj_stm_num, 9u);
+		EXPECT_EQ(table.find(5)->obj_stm_index, 4u);
+		EXPECT_EQ(table.find(5)->generation, 0u);
+
+		ASSERT_NE(table.find(6), nullptr);
+		EXPECT_TRUE(table.find(6)->is_free());
+		EXPECT_EQ(table.find(6)->byte_offset, 8u);
+		EXPECT_EQ(table.find(6)->generation, 2u);
+
+		ASSERT_NE(table.find(10), nullptr);
+		EXPECT_TRUE(table.find(10)->is_free());
+	}
+
+	// 2. Implicit type 1 when w1 == 0 (/W [0 8 0] -> 8-byte offset, default type 1, default gen 0)
+	//    and default /Index [0 /Size].
+	{
+		const PdfDict dict = parse_dict_str(
+			"<< /Type /XRef /Size 3 /Root 1 0 R /W [0 8 0] >>");
+
+		const uint8_t payload[] = {
+			// obj 0 (implicit type 1 on obj 0 is treated as free entry 0)
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+			// obj 1: 8-byte big-endian offset 0x0000000000000240 (576), implicit gen 0
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x40,
+			// obj 2: 8-byte big-endian offset 0x0000000000000480 (1152), implicit gen 0
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x80,
+		};
+
+		XrefTable table;
+		uint64_t total_rows = 0;
+		RECTO_ASSERT_OK(XrefTable::unpack_xref_stream(
+			dict,
+			payload,
+			/*file_size=*/4096,
+			/*header_offset=*/0,
+			table,
+			total_rows));
+		EXPECT_EQ(total_rows, 3u);
+
+		ASSERT_NE(table.find(0), nullptr);
+		EXPECT_TRUE(table.find(0)->is_free());
+
+		ASSERT_NE(table.find(1), nullptr);
+		EXPECT_TRUE(table.find(1)->is_uncompressed());
+		EXPECT_EQ(table.find(1)->byte_offset, 0x240u);
+		EXPECT_EQ(table.find(1)->generation, 0u);
+
+		ASSERT_NE(table.find(2), nullptr);
+		EXPECT_TRUE(table.find(2)->is_uncompressed());
+		EXPECT_EQ(table.find(2)->byte_offset, 0x480u);
+		EXPECT_EQ(table.find(2)->generation, 0u);
+	}
+
+	// 3. Truncated /Type /XRef stream payload shorter than sum(count_i) * (w1 + w2 + w3) -> DamagedFormat.
+	{
+		const PdfDict dict = parse_dict_str(
+			"<< /Type /XRef /Size 4 /Root 1 0 R /W [1 2 2] /Index [0 2 3 2] >>");
+		// sum(count_i) = 4, w1 + w2 + w3 = 5 -> requires 20 bytes; supply 19 bytes.
+		const std::vector<uint8_t> short_payload(19, 0u);
+		XrefTable table;
+		uint64_t total_rows = 0;
+		RECTO_EXPECT_ERR(
+			XrefTable::unpack_xref_stream(dict, short_payload, 4096, 0, table, total_rows),
+			ErrorCode::DamagedFormat);
+
+		// Also verify full XrefTable::parse rejects a PDF whose /Type /XRef stream is truncated.
+		std::string pdf = "%PDF-1.6\n";
+		const size_t off1 = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog >>\nendobj\n";
+		const size_t xref_off = pdf.size();
+		// /Size 3 with /W [1 2 1] requires 3 * 4 = 12 bytes, but stream has only 8 bytes.
+		std::string raw_8(8, '\0');
+		raw_8[4] = 1;
+		raw_8[6] = static_cast<char>(off1);
+		pdf += "2 0 obj\n<< /Type /XRef /Size 3 /Root 1 0 R /W [1 2 1] /Length 8 >>\nstream\n";
+		pdf += raw_8;
+		pdf += "\nendstream\nendobj\nstartxref\n" + std::to_string(xref_off) + "\n%%EOF\n";
+		RECTO_EXPECT_ERR(XrefTable::parse(as_bytes(pdf)), ErrorCode::DamagedFormat);
+	}
+
+	// 4. Malformed /Index arrays (odd element count, empty, negative first ID, negative count,
+	//    non-integer element, 32-bit overflow) and invalid /W arrays -> DamagedFormat.
+	{
+		const std::vector<uint8_t> valid_buf(64, 0u);
+		const char* bad_dicts[] = {
+			// Odd /Index element count
+			"<< /Type /XRef /Size 4 /Root 1 0 R /W [1 2 1] /Index [0 2 3] >>",
+			// Empty /Index
+			"<< /Type /XRef /Size 4 /Root 1 0 R /W [1 2 1] /Index [] >>",
+			// Negative first ID in /Index
+			"<< /Type /XRef /Size 4 /Root 1 0 R /W [1 2 1] /Index [-1 2] >>",
+			// Negative count in /Index
+			"<< /Type /XRef /Size 4 /Root 1 0 R /W [1 2 1] /Index [0 -2] >>",
+			// Non-integer in /Index
+			"<< /Type /XRef /Size 4 /Root 1 0 R /W [1 2 1] /Index [0 (two)] >>",
+			// 32-bit object number overflow in /Index
+			"<< /Type /XRef /Size 4 /Root 1 0 R /W [1 2 1] /Index [4294967295 2] >>",
+			// w1 + w2 + w3 == 0
+			"<< /Type /XRef /Size 2 /Root 1 0 R /W [0 0 0] >>",
+			// wi > 8
+			"<< /Type /XRef /Size 2 /Root 1 0 R /W [1 9 1] >>",
+			// wi < 0
+			"<< /Type /XRef /Size 2 /Root 1 0 R /W [-1 2 1] >>",
+			// /W wrong element count
+			"<< /Type /XRef /Size 2 /Root 1 0 R /W [1 2] >>",
+			// Missing /Type /XRef
+			"<< /Size 2 /Root 1 0 R /W [1 2 1] >>",
+			// Invalid /Size 0
+			"<< /Type /XRef /Size 0 /Root 1 0 R /W [1 2 1] >>",
+		};
+
+		for (const char* d_str : bad_dicts) {
+			const PdfDict d = parse_dict_str(d_str);
+			XrefTable table;
+			uint64_t total_rows = 0;
+			RECTO_EXPECT_ERR(
+				XrefTable::unpack_xref_stream(d, valid_buf, 4096, 0, table, total_rows),
+				ErrorCode::DamagedFormat);
+		}
+	}
+}
+
+TEST(PdfXref, ObjectStream)
+{
+	// 1. Corpus fixture render/compressed-xref-2p.pdf (/Type /XRef with PNG Up predictor + /Type /ObjStm).
+	{
+		const auto bytes = test::read_file_bytes(
+			test::corpus_path("render/compressed-xref-2p.pdf"));
+		ASSERT_FALSE(bytes.empty());
+
+		auto xref_res = XrefTable::parse(bytes);
+		RECTO_ASSERT_OK(xref_res);
+		const XrefTable& xref = *xref_res;
+
+		EXPECT_EQ(xref.pdf_version(), "1.6");
+		EXPECT_EQ(xref.revision_count(), 1u);
+		EXPECT_FALSE(xref.recovered());
+		EXPECT_EQ(xref.root_ref(), (IndirectRef{1u, 0u}));
+		EXPECT_EQ(xref.info_ref(), (IndirectRef{8u, 0u}));
+		EXPECT_EQ(xref.cached_obj_stream_count(), 0u);
+
+		// Objects 1, 2, 3, 4, 7, 8 are compressed in ObjStm 9 at indices 0..5.
+		const uint32_t comp_ids[] = {1u, 2u, 3u, 4u, 7u, 8u};
+		for (size_t idx = 0; idx < 6u; ++idx) {
+			const XrefEntry* e = xref.find(comp_ids[idx]);
+			ASSERT_NE(e, nullptr) << "missing compressed object " << comp_ids[idx];
+			EXPECT_TRUE(e->is_compressed());
+			EXPECT_EQ(e->obj_stm_num, 9u);
+			EXPECT_EQ(e->obj_stm_index, idx);
+		}
+
+		// Resolve all 6 compressed objects and verify ObjStm 9 is decoded and cached once.
+		auto cat = xref.resolve_object(bytes, IndirectRef{1u, 0u});
+		RECTO_ASSERT_OK(cat);
+		ASSERT_TRUE(cat->is_dict());
+		EXPECT_EQ(cat->as_dict()->get_name("Type"), "Catalog");
+		EXPECT_EQ(cat->as_dict()->get_ref("Pages"), (IndirectRef{2u, 0u}));
+		EXPECT_EQ(xref.cached_obj_stream_count(), 1u);
+
+		auto pages = xref.resolve_object(bytes, IndirectRef{2u, 0u});
+		RECTO_ASSERT_OK(pages);
+		ASSERT_TRUE(pages->is_dict());
+		EXPECT_EQ(pages->as_dict()->get_name("Type"), "Pages");
+		EXPECT_EQ(pages->as_dict()->get_int("Count"), 2);
+
+		auto p1 = xref.resolve_object(bytes, IndirectRef{3u, 0u});
+		RECTO_ASSERT_OK(p1);
+		ASSERT_TRUE(p1->is_dict());
+		EXPECT_EQ(p1->as_dict()->get_name("Type"), "Page");
+		EXPECT_EQ(p1->as_dict()->get_ref("Contents"), (IndirectRef{5u, 0u}));
+
+		auto p2 = xref.resolve_object(bytes, IndirectRef{4u, 0u});
+		RECTO_ASSERT_OK(p2);
+		ASSERT_TRUE(p2->is_dict());
+		EXPECT_EQ(p2->as_dict()->get_name("Type"), "Page");
+		EXPECT_EQ(p2->as_dict()->get_ref("Contents"), (IndirectRef{6u, 0u}));
+
+		auto font = xref.resolve_object(bytes, IndirectRef{7u, 0u});
+		RECTO_ASSERT_OK(font);
+		ASSERT_TRUE(font->is_dict());
+		EXPECT_EQ(font->as_dict()->get_name("BaseFont"), "Helvetica");
+
+		auto info = xref.resolve_object(bytes, IndirectRef{8u, 0u});
+		RECTO_ASSERT_OK(info);
+		ASSERT_TRUE(info->is_dict());
+		ASSERT_NE(info->as_dict()->get_string("Title"), nullptr);
+		EXPECT_EQ(
+			info->as_dict()->get_string("Title")->as_byte_view(),
+			"Recto Compressed XRef 2P");
+		EXPECT_EQ(xref.cached_obj_stream_count(), 1u);
+
+		// Uncompressed page content streams 5 and 6 also resolve cleanly.
+		auto stm5 = xref.resolve_object(bytes, IndirectRef{5u, 0u});
+		RECTO_ASSERT_OK(stm5);
+		EXPECT_TRUE(stm5->is_stream());
+		auto stm6 = xref.resolve_object(bytes, IndirectRef{6u, 0u});
+		RECTO_ASSERT_OK(stm6);
+		EXPECT_TRUE(stm6->is_stream());
+	}
+
+	// 2. Seed fixture seeds/seed-xref-objstm.pdf.
+	{
+		const auto seed_bytes = test::read_file_bytes(
+			test::corpus_path("seeds/seed-xref-objstm.pdf"));
+		ASSERT_FALSE(seed_bytes.empty());
+
+		auto xref_res = XrefTable::parse(seed_bytes);
+		RECTO_ASSERT_OK(xref_res);
+		for (uint32_t oid : {1u, 2u, 3u, 4u, 5u, 6u}) {
+			RECTO_ASSERT_OK(xref_res->resolve_object(seed_bytes, IndirectRef{oid, 0u}));
+		}
+	}
+
+	// 3. Refuse nested /ObjStm -> /ObjStm (type-2 XRef entry pointing to an object that is itself type-2).
+	{
+		const auto bytes = test::read_file_bytes(
+			test::corpus_path("render/compressed-xref-2p.pdf"));
+		auto xref_res = XrefTable::parse(bytes);
+		RECTO_ASSERT_OK(xref_res);
+		XrefTable xref = std::move(*xref_res);
+
+		// Object 12 compressed inside object 11, while object 11 is compressed inside object 9.
+		xref.set_entry(11u, XrefEntry{XrefEntryKind::Compressed, 0u, 9u, 0u, 0u});
+		xref.set_entry(12u, XrefEntry{XrefEntryKind::Compressed, 0u, 11u, 0u, 0u});
+
+		RECTO_EXPECT_ERR(
+			xref.resolve_object(bytes, IndirectRef{12u, 0u}),
+			ErrorCode::DamagedFormat);
+	}
+
+	// 4. Refuse indirect `stream` objects, `N G obj` headers, and nested `/Type /ObjStm` dictionaries
+	//    stored inside an `/ObjStm` stream payload per ISO 32000-1 section 7.5.7.
+	{
+		auto build_pdf_with_objstm_body = [](std::string_view inner_obj_text) -> std::string {
+			const std::string hdr = "1 0 ";
+			const std::string stm_payload = hdr + std::string(inner_obj_text);
+			std::string pdf = "%PDF-1.7\n";
+			const size_t off5 = pdf.size();
+			pdf += "5 0 obj\n<< /Type /ObjStm /N 1 /First " + std::to_string(hdr.size()) +
+				" /Length " + std::to_string(stm_payload.size()) + " >>\nstream\n" +
+				stm_payload + "\nendstream\nendobj\n";
+			const size_t off6 = pdf.size();
+			// /Type /XRef stream with /W [1 2 1], /Size 7:
+			// 0: free, 1: compressed in 5 idx 0, 2..4: free, 5: uncompressed at off5, 6: uncompressed at off6
+			std::string xref_bytes(7 * 4, '\0');
+			// 0: free gen 255
+			xref_bytes[3] = '\xFF';
+			// 1: type 2, stm 5, idx 0
+			xref_bytes[4] = 2;
+			xref_bytes[6] = 5;
+			xref_bytes[7] = 0;
+			// 5: type 1, off5, gen 0
+			xref_bytes[20] = 1;
+			xref_bytes[21] = static_cast<char>((off5 >> 8) & 0xFF);
+			xref_bytes[22] = static_cast<char>(off5 & 0xFF);
+			// 6: type 1, off6, gen 0
+			xref_bytes[24] = 1;
+			xref_bytes[25] = static_cast<char>((off6 >> 8) & 0xFF);
+			xref_bytes[26] = static_cast<char>(off6 & 0xFF);
+
+			pdf += "6 0 obj\n<< /Type /XRef /Size 7 /Root 1 0 R /W [1 2 1] /Length " +
+				std::to_string(xref_bytes.size()) + " >>\nstream\n" + xref_bytes +
+				"\nendstream\nendobj\nstartxref\n" + std::to_string(off6) + "\n%%EOF\n";
+			return pdf;
+		};
+
+		// 4a. Stream object inside /ObjStm -> DamagedFormat.
+		{
+			const std::string bad_stream_pdf = build_pdf_with_objstm_body(
+				"<< /Length 4 >>\nstream\nabcd\nendstream");
+			auto xref_res = XrefTable::parse(as_bytes(bad_stream_pdf));
+			RECTO_ASSERT_OK(xref_res);
+			RECTO_EXPECT_ERR(
+				xref_res->resolve_object(as_bytes(bad_stream_pdf), IndirectRef{1u, 0u}),
+				ErrorCode::DamagedFormat);
+		}
+
+		// 4b. Indirect `1 0 obj ... endobj` wrapper inside /ObjStm -> DamagedFormat.
+		{
+			const std::string bad_obj_pdf = build_pdf_with_objstm_body(
+				"1 0 obj << /Type /Catalog >> endobj");
+			auto xref_res = XrefTable::parse(as_bytes(bad_obj_pdf));
+			RECTO_ASSERT_OK(xref_res);
+			RECTO_EXPECT_ERR(
+				xref_res->resolve_object(as_bytes(bad_obj_pdf), IndirectRef{1u, 0u}),
+				ErrorCode::DamagedFormat);
+		}
+
+		// 4c. Dictionary with /Type /ObjStm inside /ObjStm -> DamagedFormat.
+		{
+			const std::string bad_nested_dict_pdf = build_pdf_with_objstm_body(
+				"<< /Type /ObjStm /N 1 /First 4 >>");
+			auto xref_res = XrefTable::parse(as_bytes(bad_nested_dict_pdf));
+			RECTO_ASSERT_OK(xref_res);
+			RECTO_EXPECT_ERR(
+				xref_res->resolve_object(as_bytes(bad_nested_dict_pdf), IndirectRef{1u, 0u}),
+				ErrorCode::DamagedFormat);
+		}
+	}
+}
+
+TEST(PdfXref, DamagedRecovery)
+{
+	// 1. Corpus fixture tests/corpus/broken/corrupt-xref-recoverable.pdf:
+	//    strict XrefTable::parse fails, while XrefTable::recover_damaged_xref and
+	//    XrefTable::parse(..., /*allow_recovery=*/true) recover all objects 1..6.
+	{
+		const auto bytes = test::read_file_bytes(
+			test::corpus_path("broken/corrupt-xref-recoverable.pdf"));
+		ASSERT_FALSE(bytes.empty());
+
+		RECTO_EXPECT_ERR(XrefTable::parse(bytes), ErrorCode::DamagedFormat);
+
+		auto rec_res = XrefTable::recover_damaged_xref(bytes);
+		RECTO_ASSERT_OK(rec_res);
+		const XrefTable& xref = *rec_res;
+
+		EXPECT_TRUE(xref.recovered());
+		EXPECT_EQ(xref.pdf_version(), "1.7");
+		EXPECT_EQ(xref.root_ref(), (IndirectRef{1u, 0u}));
+		EXPECT_EQ(xref.info_ref(), (IndirectRef{6u, 0u}));
+		EXPECT_EQ(xref.trailer().get_int("Size"), 7);
+
+		for (uint32_t obj_id = 1u; obj_id <= 6u; ++obj_id) {
+			auto val = xref.resolve_object(bytes, IndirectRef{obj_id, 0u});
+			RECTO_ASSERT_OK(val);
+		}
+
+		auto cat = xref.resolve_object(bytes, IndirectRef{1u, 0u});
+		RECTO_ASSERT_OK(cat);
+		EXPECT_EQ(cat->as_dict()->get_name("Type"), "Catalog");
+
+		auto info = xref.resolve_object(bytes, IndirectRef{6u, 0u});
+		RECTO_ASSERT_OK(info);
+		EXPECT_EQ(
+			info->as_dict()->get_string("Title")->as_byte_view(),
+			"Recoverable Xref Fixture");
+
+		// Also verify XrefTable::parse with allow_recovery = true recovers cleanly.
+		auto parse_rec = XrefTable::parse(bytes, kMaxXrefTotalEntries, /*allow_recovery=*/true);
+		RECTO_ASSERT_OK(parse_rec);
+		EXPECT_TRUE(parse_rec->recovered());
+		EXPECT_EQ(parse_rec->root_ref(), (IndirectRef{1u, 0u}));
+	}
+
+	// 2. Damaged PDF where no trailer dictionary survives at all:
+	//    recover_damaged_xref locates /Root from the indirect object with /Type /Catalog
+	//    and /Info from metadata keys, and respects newer revisions of the same object.
+	{
+		std::string pdf = "%PDF-1.7\n";
+		pdf += "% 99 0 obj << /Type /Catalog >> endobj inside a comment line must be ignored\n";
+		pdf += "1 0 obj\n<< /Type /Pages /Kids [2 0 R] /Count 1 >>\nendobj\n";
+		pdf += "2 0 obj\n<< /Type /Page /Parent 1 0 R /MediaBox [0 0 612 792] >>\nendobj\n";
+		pdf += "5 0 obj\n<< /Type /Catalog /Pages 1 0 R >>\nendobj\n";
+		pdf += "6 0 obj\n<< /Title (First Title) /Author (Recto) >>\nendobj\n";
+		// Later revision of object 6 overrides earlier definition.
+		pdf += "6 0 obj\n<< /Title (Updated Recovery Title) /Author (Recto) >>\nendobj\n";
+		// Truncated xref table with no surviving trailer dictionary.
+		pdf += "xref\n0 7\nGARBAGE_NO_TRAILER\n";
+
+		auto rec_res = XrefTable::recover_damaged_xref(as_bytes(pdf));
+		RECTO_ASSERT_OK(rec_res);
+		const XrefTable& xref = *rec_res;
+
+		EXPECT_TRUE(xref.recovered());
+		EXPECT_EQ(xref.root_ref(), (IndirectRef{5u, 0u}));
+		EXPECT_EQ(xref.info_ref(), (IndirectRef{6u, 0u}));
+		EXPECT_EQ(xref.trailer().get_int("Size"), 7);
+		EXPECT_EQ(xref.find(99u), nullptr);
+
+		auto info = xref.resolve_object(as_bytes(pdf), IndirectRef{6u, 0u});
+		RECTO_ASSERT_OK(info);
+		EXPECT_EQ(
+			info->as_dict()->get_string("Title")->as_byte_view(),
+			"Updated Recovery Title");
+	}
+}
+
+TEST(PdfXref, RejectsBrokenFiles)
+{
+	struct BrokenCase {
+		const char* rel_path;
+		ErrorCode expected_code;
+		DiagnosticId expected_diag;
+	};
+
+	const BrokenCase cases[] = {
+		{"broken/empty-0b.pdf", ErrorCode::NotAPdf, DiagnosticId::NotAPdfHeader},
+		{"broken/non-pdf-header.pdf", ErrorCode::NotAPdf, DiagnosticId::NotAPdfHeader},
+		{"broken/truncated-header.pdf", ErrorCode::DamagedFormat, DiagnosticId::DamagedHeader},
+		{"broken/truncated-stream.pdf", ErrorCode::DamagedFormat, DiagnosticId::DamagedTrailer},
+	};
+
+	for (const BrokenCase& tc : cases) {
+		const auto bytes = test::read_file_bytes(test::corpus_path(tc.rel_path));
+		if (std::string_view(tc.rel_path) == "broken/empty-0b.pdf") {
+			EXPECT_TRUE(bytes.empty());
+		} else {
+			ASSERT_FALSE(bytes.empty()) << tc.rel_path;
+		}
+
+		clear_diagnostics();
+		auto parse_res = XrefTable::parse(bytes);
+		RECTO_EXPECT_ERR(parse_res, tc.expected_code);
+		const auto diags = diagnostics_tail();
+		ASSERT_FALSE(diags.empty()) << tc.rel_path;
+		EXPECT_EQ(diags.front().diagnostic_id, tc.expected_diag) << tc.rel_path;
+
+		clear_diagnostics();
+		auto rec_res = XrefTable::recover_damaged_xref(bytes);
+		RECTO_EXPECT_ERR(rec_res, tc.expected_code);
+		const auto rec_diags = diagnostics_tail();
+		ASSERT_FALSE(rec_diags.empty()) << tc.rel_path;
+	}
+}
+
 } // namespace
 } // namespace recto::pdf
+

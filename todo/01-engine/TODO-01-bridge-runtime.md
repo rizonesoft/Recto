@@ -226,17 +226,19 @@ Complete `src/pdf/xref.cpp` with PDF 1.5+ cross-reference streams, compressed ob
 **Surface:** no
 **Freeze check:** Confirm that `/Type /ObjStm` caching is local to the owning `pdf::Document` instance and that nested `/ObjStm -> /ObjStm` chains are refused.
 
+> **Started:** 2026-10-18
+
 **Build order:**
 
 1. Implement `/Type /XRef` binary entry unpacking (`/W`, `/Index`), `/Type /ObjStm` header and object extraction (decoding compressed stream payloads through `§7`'s `decode_stream`), and `recover_damaged_xref` linear scanner in `src/pdf/xref.cpp`. Done when: `xref.cpp` compiles cleanly on `x64` and `ARM64` and `render/compressed-xref-2p.pdf` resolves all compressed objects.
 2. Extend `tests/recto-tests/pdf_xref_tests.cpp` testing `/Type /XRef` unpacking, `/Type /ObjStm` extraction, `tests/corpus/broken/corrupt-xref-recoverable.pdf` recovery, and unrecoverable `broken/` files (`empty-0b.pdf`, `non-pdf-header.pdf`, `truncated-header.pdf`). Done when: all `PdfXref.*` tests pass under ASan.
 
-- [ ] Unpack `/Type /XRef` binary records for any valid `/W [w1 w2 w3]` combination (`0 <= wi <= 8`, `w1 + w2 + w3 > 0`) and `/Index` subsection array. Done when: `PdfXref.XrefStreamUnpack` verifies type 0, type 1, type 2, and `w1 = 0` (implicit type 1) records. Cheaper substitute: supporting only classic ASCII `xref` tables, which fails on modern PDFs from Word, Chrome and Acrobat.
-- [ ] Validate `/Type /XRef` stream length against `sum(count_i) * (w1 + w2 + w3)` and reject malformed `/Index` arrays (odd element count or negative IDs) with `ErrorCode::DamagedFormat`. Done when: truncated `/XRef` streams fail cleanly under ASan.
-- [ ] Parse `/Type /ObjStm` streams (`/N`, `/First`), extract inner objects by index `0..N-1`, and cache decoded object streams per `pdf::Document` so sibling objects in the same `/ObjStm` do not re-decompress the stream. Done when: `PdfXref.ObjectStream` resolves multiple compressed objects from one `/ObjStm`.
-- [ ] Refuse nested `/ObjStm` (a type-2 XRef entry pointing to an object that is itself type-2) and refuse indirect `stream` objects inside an `/ObjStm` per ISO 32000-1 section 7.5.7. Done when: a crafted nested `/ObjStm` returns `ErrorCode::DamagedFormat`.
-- [ ] Implement `recover_damaged_xref` scanning the file for `N G obj` definitions and locating `/Root` from surviving `trailer` dictionaries or by identifying the indirect object with `/Type /Catalog`. Done when: `tests/corpus/broken/corrupt-xref-recoverable.pdf` recovers all objects and opens cleanly in `PdfXref.DamagedRecovery`.
-- [ ] Verify that `broken/empty-0b.pdf`, `broken/non-pdf-header.pdf`, and `broken/truncated-header.pdf` return `ErrorCode::NotAPdf` or `ErrorCode::DamagedFormat` with diagnostic ring entries recorded. Done when: `PdfXref.RejectsBrokenFiles` passes under ASan.
+- [x] Unpack `/Type /XRef` binary records for any valid `/W [w1 w2 w3]` combination (`0 <= wi <= 8`, `w1 + w2 + w3 > 0`) and `/Index` subsection array. Done when: `PdfXref.XrefStreamUnpack` verifies type 0, type 1, type 2, and `w1 = 0` (implicit type 1) records. Cheaper substitute: supporting only classic ASCII `xref` tables, which fails on modern PDFs from Word, Chrome and Acrobat.
+- [x] Validate `/Type /XRef` stream length against `sum(count_i) * (w1 + w2 + w3)` and reject malformed `/Index` arrays (odd element count or negative IDs) with `ErrorCode::DamagedFormat`. Done when: truncated `/XRef` streams fail cleanly under ASan.
+- [x] Parse `/Type /ObjStm` streams (`/N`, `/First`), extract inner objects by index `0..N-1`, and cache decoded object streams per `pdf::Document` so sibling objects in the same `/ObjStm` do not re-decompress the stream. Done when: `PdfXref.ObjectStream` resolves multiple compressed objects from one `/ObjStm`.
+- [x] Refuse nested `/ObjStm` (a type-2 XRef entry pointing to an object that is itself type-2) and refuse indirect `stream` objects inside an `/ObjStm` per ISO 32000-1 section 7.5.7. Done when: a crafted nested `/ObjStm` returns `ErrorCode::DamagedFormat`.
+- [x] Implement `recover_damaged_xref` scanning the file for `N G obj` definitions and locating `/Root` from surviving `trailer` dictionaries or by identifying the indirect object with `/Type /Catalog`. Done when: `tests/corpus/broken/corrupt-xref-recoverable.pdf` recovers all objects and opens cleanly in `PdfXref.DamagedRecovery`.
+- [x] Verify that `broken/empty-0b.pdf`, `broken/non-pdf-header.pdf`, and `broken/truncated-header.pdf` return `ErrorCode::NotAPdf` or `ErrorCode::DamagedFormat` with diagnostic ring entries recorded. Done when: `PdfXref.RejectsBrokenFiles` passes under ASan.
 - [ ] Commit: `pdf: add PDF 1.5+ XRef streams, ObjStm parser and damaged-file recovery scanner`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfXref.*` passes under ASan across classic, incremental, compressed XRef, ObjStm, and damaged-xref fixtures.

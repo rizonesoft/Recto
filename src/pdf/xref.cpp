@@ -1,9 +1,14 @@
-// Classic PDF cross-reference table parser, trailer merger, incremental /Prev
-// chain follower, and cycle-guarded indirect object resolver (ISO 32000-1
-// sections 7.5.4 and 7.5.6; D01 T01 section 5).
+// PDF cross-reference table and stream parser (classic `xref` tables, PDF 1.5+
+// `/Type /XRef` streams, `/Type /ObjStm` compressed object streams, hybrid
+// `/XRefStm`), trailer merger, incremental `/Prev` chain follower,
+// damaged-file recovery scanner, and cycle-guarded indirect object resolver
+// (ISO 32000-1 sections 7.5.4, 7.5.6, 7.5.7, and 7.5.8; D01 T01 sections 5-6).
 #include "xref.h"
 
+#include "filters.h"
+
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <limits>
 #include <new>
@@ -112,6 +117,26 @@ constexpr std::string_view kEofMarker = "%%EOF";
 	return {};
 }
 
+[[nodiscard]] PdfResult<void> overwrite_trailer_from_revision(
+	PdfDict& merged,
+	const PdfDict& rev_trailer)
+{
+	constexpr std::string_view kMergedKeys[] = {
+		"Root",
+		"Info",
+		"Encrypt",
+		"ID",
+		"Size",
+	};
+	for (const std::string_view key : kMergedKeys) {
+		if (const PdfValue* val = rev_trailer.get(key)) {
+			RECTO_PDF_TRY(PdfValue cloned, val->deep_clone());
+			merged.set(key, std::move(cloned));
+		}
+	}
+	return {};
+}
+
 [[nodiscard]] PdfError make_xref_error(
 	ErrorCode code,
 	DiagnosticId diag_id,
@@ -122,6 +147,49 @@ constexpr std::string_view kEofMarker = "%%EOF";
 {
 	record_diagnostic(code, diag_id, byte_offset, object_num, generation_num);
 	return PdfError(code, message, byte_offset, object_num, generation_num);
+}
+
+[[nodiscard]] constexpr uint64_t read_big_endian_field(
+	const uint8_t* ptr,
+	size_t width) noexcept
+{
+	uint64_t val = 0;
+	for (size_t i = 0; i < width; ++i) {
+		val = (val << 8u) | static_cast<uint64_t>(ptr[i]);
+	}
+	return val;
+}
+
+// Parses a `/Type /XRef` stream object at `stream_offset` using only integer
+// `/Length` (or `TerminatorScanner` fallback) because `/Type /XRef` streams are
+// parsed while constructing the cross-reference table.
+[[nodiscard]] PdfResult<IndirectObject> parse_xref_stream_object_at(
+	std::span<const uint8_t> file_bytes,
+	uint64_t stream_offset)
+{
+	if (stream_offset >= file_bytes.size()) {
+		return make_xref_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedXRef,
+			"Cross-reference stream byte offset exceeds file bounds",
+			stream_offset);
+	}
+	Parser parser(file_bytes);
+	parser.seek(static_cast<size_t>(stream_offset));
+	auto obj_res = parser.parse_indirect_object();
+	if (!obj_res.has_value()) {
+		return obj_res.error();
+	}
+	if (!obj_res->value.is_stream()) {
+		return make_xref_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedXRef,
+			"Expected indirect stream object at cross-reference stream offset",
+			stream_offset,
+			obj_res->ref.obj_num,
+			obj_res->ref.gen_num);
+	}
+	return obj_res;
 }
 
 } // namespace
@@ -281,7 +349,237 @@ PdfResult<uint64_t> XrefTable::locate_startxref_offset(
 	}
 }
 
-PdfResult<XrefTable> XrefTable::parse(
+PdfResult<void> XrefTable::unpack_xref_stream(
+	const PdfDict& xref_dict,
+	std::span<const uint8_t> decoded_bytes,
+	uint64_t file_size,
+	uint64_t header_offset,
+	XrefTable& table,
+	uint64_t& total_rows_parsed,
+	uint64_t max_total_entries) noexcept
+{
+	try {
+		const uint64_t effective_max_entries =
+			std::min<uint64_t>(max_total_entries, kMaxXrefTotalEntries);
+
+		const auto type_name = xref_dict.get_name("Type");
+		if (!type_name.has_value() || *type_name != "XRef") {
+			return make_xref_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedXRef,
+				"Cross-reference stream dictionary is missing /Type /XRef");
+		}
+
+		const auto size_opt = xref_dict.get_int("Size");
+		if (!size_opt.has_value() ||
+			*size_opt <= 0 ||
+			static_cast<uint64_t>(*size_opt) >
+				static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) + 1ULL) {
+			return make_xref_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedXRef,
+				"Cross-reference stream dictionary has missing or invalid /Size");
+		}
+		const uint64_t dict_size = static_cast<uint64_t>(*size_opt);
+
+		const PdfArray* w_arr = xref_dict.get_array("W");
+		if (w_arr == nullptr || w_arr->size() != 3u) {
+			return make_xref_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedXRef,
+				"Cross-reference stream dictionary requires 3-element /W array");
+		}
+
+		std::array<size_t, 3> w{};
+		for (size_t i = 0; i < 3; ++i) {
+			const auto wi = (*w_arr)[i].as_int();
+			if (!wi.has_value() || *wi < 0 || *wi > 8) {
+				return make_xref_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedXRef,
+					"Cross-reference stream /W field width must be in 0..8 bytes");
+			}
+			w[i] = static_cast<size_t>(*wi);
+		}
+		const size_t entry_stride = w[0] + w[1] + w[2];
+		if (entry_stride == 0) {
+			return make_xref_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedXRef,
+				"Cross-reference stream /W field widths cannot sum to zero");
+		}
+
+		struct SubsectionSpan {
+			uint64_t first_id{0};
+			uint64_t count{0};
+		};
+		std::vector<SubsectionSpan> subsections;
+		uint64_t stream_row_count = 0;
+
+		if (const PdfValue* index_val = xref_dict.get("Index")) {
+			const PdfArray* index_arr = index_val->as_array();
+			if (index_arr == nullptr || index_arr->empty() || (index_arr->size() % 2u) != 0u) {
+				return make_xref_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedXRef,
+					"Malformed /Index array in /Type /XRef stream (expected even number of integers)");
+			}
+			subsections.reserve(index_arr->size() / 2u);
+			for (size_t i = 0; i < index_arr->size(); i += 2u) {
+				const auto first_opt = (*index_arr)[i].as_int();
+				const auto count_opt = (*index_arr)[i + 1].as_int();
+				if (!first_opt.has_value() || !count_opt.has_value() ||
+					*first_opt < 0 || *count_opt < 0 ||
+					*first_opt > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) ||
+					*count_opt > static_cast<int64_t>(kMaxXrefSubsectionCount)) {
+					return make_xref_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedXRef,
+						"Invalid or negative subsection pair in /Type /XRef /Index array");
+				}
+				const uint64_t first_id = static_cast<uint64_t>(*first_opt);
+				const uint64_t count = static_cast<uint64_t>(*count_opt);
+				if (first_id + count >
+					static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) + 1ULL) {
+					return make_xref_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedXRef,
+						"/Index subsection object range overflows 32-bit object numbers");
+				}
+				if (count > effective_max_entries - total_rows_parsed ||
+					count > effective_max_entries - stream_row_count) {
+					return make_xref_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedXRef,
+						"Cumulative /Type /XRef entry count exceeds maximum budget");
+				}
+				total_rows_parsed += count;
+				stream_row_count += count;
+				subsections.push_back(SubsectionSpan{first_id, count});
+			}
+		} else {
+			if (dict_size > kMaxXrefSubsectionCount ||
+				dict_size > effective_max_entries - total_rows_parsed) {
+				return make_xref_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedXRef,
+					"/Type /XRef default /Index [0 /Size] exceeds maximum entry budget");
+			}
+			total_rows_parsed += dict_size;
+			stream_row_count = dict_size;
+			subsections.push_back(SubsectionSpan{0u, dict_size});
+		}
+
+		const uint64_t required_bytes = stream_row_count * static_cast<uint64_t>(entry_stride);
+		if (decoded_bytes.size() < required_bytes) {
+			return make_xref_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedXRef,
+				"Decoded /Type /XRef stream payload is shorter than sum(count_i) * (w1 + w2 + w3)");
+		}
+
+		size_t cursor = 0;
+		for (const SubsectionSpan& sub : subsections) {
+			for (uint64_t i = 0; i < sub.count; ++i) {
+				const uint8_t* rec = decoded_bytes.data() + cursor;
+				cursor += entry_stride;
+
+				const uint64_t field1 = (w[0] == 0u) ? 1ULL : read_big_endian_field(rec, w[0]);
+				const uint64_t field2 = read_big_endian_field(rec + w[0], w[1]);
+				const uint64_t field3 = read_big_endian_field(rec + w[0] + w[1], w[2]);
+				const uint32_t obj_num = static_cast<uint32_t>(sub.first_id + i);
+
+				if (field1 == 0ULL) {
+					if (field3 > std::numeric_limits<uint16_t>::max()) {
+						return make_xref_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedXRef,
+							"Type-0 XRef stream entry generation overflows 16 bits",
+							std::nullopt,
+							obj_num);
+					}
+					const uint16_t gen = static_cast<uint16_t>(field3);
+					table.entries_.try_emplace(
+						obj_num,
+						XrefEntry{XrefEntryKind::Free, field2, 0u, 0u, gen});
+				} else if (field1 == 1ULL) {
+					if (field3 > std::numeric_limits<uint16_t>::max()) {
+						return make_xref_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedXRef,
+							"Type-1 XRef stream entry generation overflows 16 bits",
+							std::nullopt,
+							obj_num);
+					}
+					const uint16_t gen = static_cast<uint16_t>(field3);
+					if (obj_num == 0u) {
+						table.entries_.try_emplace(
+							0u,
+							XrefEntry{XrefEntryKind::Free, field2, 0u, 0u, gen});
+						continue;
+					}
+					if (field2 > file_size - header_offset ||
+						field2 + header_offset >= file_size) {
+						return make_xref_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedXRef,
+							"Type-1 XRef stream entry offset points outside file bounds",
+							field2,
+							obj_num,
+							gen);
+					}
+					table.entries_.try_emplace(
+						obj_num,
+						XrefEntry{
+							XrefEntryKind::Uncompressed,
+							field2 + header_offset,
+							0u,
+							0u,
+							gen});
+				} else if (field1 == 2ULL) {
+					if (obj_num == 0u ||
+						field2 == 0ULL ||
+						field2 > std::numeric_limits<uint32_t>::max() ||
+						field3 > std::numeric_limits<uint32_t>::max()) {
+						return make_xref_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedXRef,
+							"Invalid type-2 compressed XRef stream entry fields",
+							std::nullopt,
+							obj_num);
+					}
+					table.entries_.try_emplace(
+						obj_num,
+						XrefEntry{
+							XrefEntryKind::Compressed,
+							0u,
+							static_cast<uint32_t>(field2),
+							static_cast<uint32_t>(field3),
+							0u});
+				} else {
+					// Per ISO 32000-1 section 7.5.8.3, unknown entry types in an XRef
+					// stream are treated as null (free) references so newer PDF
+					// extensions do not break readers.
+					table.entries_.try_emplace(
+						obj_num,
+						XrefEntry{XrefEntryKind::Free, 0u, 0u, 0u, 0u});
+				}
+			}
+		}
+
+		return merge_trailer_from_revision(table.trailer_, xref_dict);
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(
+			ErrorCode::OutOfMemory,
+			"Out of memory while unpacking /Type /XRef stream");
+	} catch (...) {
+		return make_pdf_error(
+			ErrorCode::InternalError,
+			"Unexpected exception while unpacking /Type /XRef stream");
+	}
+}
+
+PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 	std::span<const uint8_t> file_bytes,
 	uint64_t max_total_entries) noexcept
 {
@@ -290,15 +588,353 @@ PdfResult<XrefTable> XrefTable::parse(
 			std::min<uint64_t>(max_total_entries, kMaxXrefTotalEntries);
 		std::string version_str;
 		RECTO_PDF_TRY(const uint64_t header_off, locate_header_offset(file_bytes, &version_str));
-		RECTO_PDF_TRY(const uint64_t raw_startxref, locate_startxref_offset(file_bytes));
 
-		if (raw_startxref > file_bytes.size() - header_off ||
-			raw_startxref + header_off >= file_bytes.size()) {
+		record_diagnostic(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedXRef,
+			header_off);
+
+		XrefTable table;
+		table.header_offset_ = header_off;
+		table.pdf_version_ = std::move(version_str);
+		table.revision_count_ = 1u;
+		table.recovered_ = true;
+		table.entries_.emplace(
+			0u,
+			XrefEntry{XrefEntryKind::Free, 0u, 0u, 0u, 65535u});
+
+		uint64_t objects_discovered = 0;
+		uint32_t max_obj_num = 0;
+		std::optional<IndirectRef> catalog_candidate;
+		std::optional<IndirectRef> info_candidate;
+
+		// Linearly scan from header_off for `<N> <G> obj` and `trailer << ... >>`.
+		size_t pos = static_cast<size_t>(header_off);
+		while (pos < file_bytes.size()) {
+			const uint8_t b = file_bytes[pos];
+
+			// Skip PDF comment lines so `% 1 0 obj` or `% trailer` inside comments are ignored.
+			if (b == '%') {
+				while (pos < file_bytes.size() &&
+					   file_bytes[pos] != '\n' &&
+					   file_bytes[pos] != '\r') {
+					++pos;
+				}
+				continue;
+			}
+
+			// Check for `trailer` keyword at token boundary.
+			if (b == 't' && matches_token_at(file_bytes, pos, "trailer")) {
+				Lexer tr_lexer(file_bytes);
+				tr_lexer.seek(pos + 7u);
+				Parser tr_parser(tr_lexer);
+				auto tr_res = tr_parser.parse_dictionary();
+				if (!tr_res.has_value() && tr_res.error().code == ErrorCode::OutOfMemory) {
+					return tr_res.error();
+				}
+				if (tr_res.has_value()) {
+					auto ov_res = overwrite_trailer_from_revision(table.trailer_, *tr_res);
+					if (!ov_res.has_value()) {
+						return ov_res.error();
+					}
+					pos = tr_lexer.position();
+					continue;
+				}
+			}
+
+			// Check for `<N> <G> obj` at a token boundary where `<N>` starts with an ASCII digit.
+			if (b >= '0' && b <= '9' &&
+				(pos == 0 || !Lexer::is_pdf_regular(file_bytes[pos - 1]))) {
+				size_t p = pos;
+				uint64_t obj_num_u64 = 0;
+				size_t digits_n = 0;
+				while (p < file_bytes.size() &&
+					   file_bytes[p] >= '0' &&
+					   file_bytes[p] <= '9' &&
+					   digits_n <= 10u) {
+					obj_num_u64 = obj_num_u64 * 10ULL + static_cast<uint64_t>(file_bytes[p] - '0');
+					++p;
+					++digits_n;
+				}
+				if (digits_n >= 1u &&
+					digits_n <= 10u &&
+					obj_num_u64 > 0ULL &&
+					obj_num_u64 <= std::numeric_limits<uint32_t>::max() &&
+					p < file_bytes.size() &&
+					Lexer::is_pdf_whitespace(file_bytes[p])) {
+					while (p < file_bytes.size() && Lexer::is_pdf_whitespace(file_bytes[p])) {
+						++p;
+					}
+					uint64_t gen_u64 = 0;
+					size_t digits_g = 0;
+					while (p < file_bytes.size() &&
+						   file_bytes[p] >= '0' &&
+						   file_bytes[p] <= '9' &&
+						   digits_g <= 5u) {
+						gen_u64 = gen_u64 * 10ULL + static_cast<uint64_t>(file_bytes[p] - '0');
+						++p;
+						++digits_g;
+					}
+					if (digits_g >= 1u &&
+						digits_g <= 5u &&
+						gen_u64 <= std::numeric_limits<uint16_t>::max() &&
+						p < file_bytes.size() &&
+						Lexer::is_pdf_whitespace(file_bytes[p])) {
+						while (p < file_bytes.size() && Lexer::is_pdf_whitespace(file_bytes[p])) {
+							++p;
+						}
+						if (matches_token_at(file_bytes, p, "obj")) {
+							if (objects_discovered >= effective_max_entries) {
+								return make_xref_error(
+									ErrorCode::DamagedFormat,
+									DiagnosticId::DamagedXRef,
+									"Damaged-file recovery exceeded maximum object entry budget",
+									pos);
+							}
+							const uint32_t obj_num = static_cast<uint32_t>(obj_num_u64);
+							const uint16_t gen_num = static_cast<uint16_t>(gen_u64);
+
+							// Parse the object at `pos` to verify it is a valid indirect object
+							// and to inspect its dictionary for `/Type /Catalog`, `/Type /XRef`,
+							// or `/Type /ObjStm`, as well as advancing `pos` past any binary stream payload.
+							Parser obj_parser(file_bytes);
+							obj_parser.seek(pos);
+							auto parsed_obj = obj_parser.parse_indirect_object(
+								[&table, file_bytes, obj_num](IndirectRef len_ref) -> PdfResult<int64_t> {
+									if (len_ref.obj_num == obj_num || !table.contains(len_ref.obj_num)) {
+										return make_pdf_error(
+											ErrorCode::DamagedFormat,
+											"Indirect /Length target not yet scanned during recovery");
+									}
+									auto val_res = table.resolve_object(file_bytes, len_ref);
+									if (!val_res.has_value()) {
+										return std::move(val_res).error();
+									}
+									const auto len_int = val_res->as_int();
+									if (!len_int.has_value()) {
+										return make_pdf_error(
+											ErrorCode::DamagedFormat,
+											"Indirect /Length object is not an integer");
+									}
+									return *len_int;
+								});
+							if (!parsed_obj.has_value()) {
+								if (parsed_obj.error().code == ErrorCode::OutOfMemory ||
+									parsed_obj.error().code == ErrorCode::DecompressionLimitExceeded ||
+									parsed_obj.error().message ==
+										"Unterminated PDF stream: missing 'endstream' keyword") {
+									return parsed_obj.error();
+								}
+							} else {
+								++objects_discovered;
+								if (obj_num > max_obj_num) {
+									max_obj_num = obj_num;
+								}
+								// Later revisions in the file override earlier definitions of the same object.
+								table.entries_[obj_num] = XrefEntry{
+									XrefEntryKind::Uncompressed,
+									static_cast<uint64_t>(pos),
+									0u,
+									0u,
+									gen_num};
+
+								const PdfDict* d = parsed_obj->value.as_dict();
+								if (d == nullptr && parsed_obj->value.is_stream()) {
+									d = &parsed_obj->value.as_stream()->dict;
+								}
+								if (d != nullptr) {
+									const auto type_opt = d->get_name("Type");
+									if (type_opt.has_value() && *type_opt == "Catalog") {
+										catalog_candidate = IndirectRef{obj_num, gen_num};
+									} else if (type_opt.has_value() && *type_opt == "XRef") {
+										auto ov_res = overwrite_trailer_from_revision(table.trailer_, *d);
+										if (!ov_res.has_value()) {
+											return ov_res.error();
+										}
+									} else if (
+										!type_opt.has_value() &&
+										(d->contains("Title") ||
+										 d->contains("Author") ||
+										 d->contains("Producer") ||
+										 d->contains("CreationDate"))) {
+										info_candidate = IndirectRef{obj_num, gen_num};
+									}
+
+									// Also unpack any intact `/Type /ObjStm` stream discovered during recovery
+									// so compressed objects inside object streams remain accessible.
+									if (type_opt.has_value() &&
+										*type_opt == "ObjStm" &&
+										parsed_obj->value.is_stream()) {
+										const auto n_opt = d->get_int("N");
+										const auto first_opt = d->get_int("First");
+										auto dec_stm = decode_stream(*parsed_obj->value.as_stream());
+										if (!dec_stm.has_value() &&
+											(dec_stm.error().code == ErrorCode::OutOfMemory ||
+											 dec_stm.error().code == ErrorCode::DecompressionLimitExceeded)) {
+											return dec_stm.error();
+										}
+										if (n_opt.has_value() &&
+											*n_opt > 0 &&
+											*n_opt <= static_cast<int64_t>(kMaxObjStmEntries) &&
+											first_opt.has_value() &&
+											*first_opt >= 0 &&
+											dec_stm.has_value() &&
+											static_cast<size_t>(*first_opt) <= dec_stm->size()) {
+											const std::span<const uint8_t> hdr_span(
+												dec_stm->data(),
+												static_cast<size_t>(*first_opt));
+											Lexer hdr_lex(hdr_span);
+											for (int64_t idx = 0; idx < *n_opt; ++idx) {
+												Token id_tok;
+												Token off_tok;
+												PdfError herr;
+												if (!next_non_comment_token(hdr_lex, id_tok, herr) ||
+													!next_non_comment_token(hdr_lex, off_tok, herr)) {
+													break;
+												}
+												if (id_tok.kind == TokenKind::Integer &&
+													id_tok.int_value > 0 &&
+													id_tok.int_value <=
+														static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) &&
+													off_tok.kind == TokenKind::Integer &&
+													off_tok.int_value >= 0) {
+													const uint32_t inner_id =
+														static_cast<uint32_t>(id_tok.int_value);
+													const auto existing_it = table.entries_.find(inner_id);
+													if (existing_it == table.entries_.end() ||
+														existing_it->second.is_compressed()) {
+														if (existing_it == table.entries_.end()) {
+															if (objects_discovered >= effective_max_entries) {
+																return make_xref_error(
+																	ErrorCode::DamagedFormat,
+																	DiagnosticId::DamagedXRef,
+																	"Damaged-file recovery exceeded maximum object entry budget",
+																	pos);
+															}
+															++objects_discovered;
+														}
+														table.entries_[inner_id] = XrefEntry{
+															XrefEntryKind::Compressed,
+															0u,
+															obj_num,
+															static_cast<uint32_t>(idx),
+															0u};
+														if (inner_id > max_obj_num) {
+															max_obj_num = inner_id;
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+
+								const size_t next_pos = obj_parser.lexer().position();
+								pos = (next_pos > pos) ? next_pos : (p + 3u);
+								continue;
+							}
+						}
+					}
+				}
+			}
+
+			++pos;
+		}
+
+		// If no uncompressed `/Type /Catalog` was found and no surviving trailer
+		// provided a valid `/Root`, check compressed objects inside `/Type /ObjStm`.
+		auto has_valid_root_entry = [&table]() noexcept -> bool {
+			const auto root_opt = table.trailer_.get_ref("Root");
+			if (!root_opt.has_value()) {
+				return false;
+			}
+			const XrefEntry* e = table.find(root_opt->obj_num);
+			return e != nullptr && !e->is_free();
+		};
+
+		if (!has_valid_root_entry() && !catalog_candidate.has_value()) {
+			for (const auto& [cid, centry] : table.entries_) {
+				if (!centry.is_compressed()) {
+					continue;
+				}
+				auto cval = table.resolve_object(file_bytes, IndirectRef{cid, 0u});
+				if (cval.has_value() && cval->is_dict()) {
+					const auto ctype = cval->as_dict()->get_name("Type");
+					if (ctype.has_value() && *ctype == "Catalog") {
+						catalog_candidate = IndirectRef{cid, 0u};
+						break;
+					}
+				}
+			}
+		}
+
+		if (!has_valid_root_entry() && catalog_candidate.has_value()) {
+			table.trailer_.set("Root", PdfValue(*catalog_candidate));
+		}
+		if (!table.trailer_.contains("Info") && info_candidate.has_value()) {
+			table.trailer_.set("Info", PdfValue(*info_candidate));
+		}
+		if (!table.trailer_.contains("Size")) {
+			table.trailer_.set("Size", PdfValue(static_cast<int64_t>(max_obj_num + 1u)));
+		}
+
+		if (!has_valid_root_entry() || objects_discovered == 0u) {
 			return make_xref_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedXRef,
+				"Damaged-file recovery could not locate any valid /Type /Catalog root object",
+				header_off);
+		}
+
+		return table;
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(
+			ErrorCode::OutOfMemory,
+			"Out of memory while recovering damaged cross-reference table");
+	} catch (...) {
+		return make_pdf_error(
+			ErrorCode::InternalError,
+			"Unexpected exception while recovering damaged cross-reference table");
+	}
+}
+
+PdfResult<XrefTable> XrefTable::parse(
+	std::span<const uint8_t> file_bytes,
+	uint64_t max_total_entries,
+	bool allow_recovery) noexcept
+{
+	try {
+		const uint64_t effective_max_entries =
+			std::min<uint64_t>(max_total_entries, kMaxXrefTotalEntries);
+		std::string version_str;
+		RECTO_PDF_TRY(const uint64_t header_off, locate_header_offset(file_bytes, &version_str));
+
+		auto try_recover = [&](PdfError primary_err) -> PdfResult<XrefTable> {
+			if (!allow_recovery ||
+				primary_err.code == ErrorCode::OutOfMemory ||
+				primary_err.code == ErrorCode::DecompressionLimitExceeded) {
+				return primary_err;
+			}
+			auto rec = recover_damaged_xref(file_bytes, effective_max_entries);
+			if (rec.has_value()) {
+				return rec;
+			}
+			return primary_err;
+		};
+
+		auto startxref_res = locate_startxref_offset(file_bytes);
+		if (!startxref_res.has_value()) {
+			return try_recover(std::move(startxref_res).error());
+		}
+		const uint64_t raw_startxref = *startxref_res;
+
+		if (raw_startxref > file_bytes.size() - header_off ||
+			raw_startxref + header_off >= file_bytes.size()) {
+			return try_recover(make_xref_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedXRef,
 				"startxref byte offset points outside file bounds",
-				raw_startxref);
+				raw_startxref));
 		}
 
 		XrefTable table;
@@ -332,198 +968,254 @@ PdfResult<XrefTable> XrefTable::parse(
 			Token kw_tok;
 			PdfError err;
 			if (!next_non_comment_token(lexer, kw_tok, err)) {
-				return err;
-			}
-			if (!kw_tok.is_keyword("xref")) {
-				return make_xref_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedXRef,
-					"Expected 'xref' keyword at cross-reference table offset",
-					current_xref_offset);
+				return try_recover(std::move(err));
 			}
 
-			// Parse one or more `<first_id> <count>` subsections until `trailer`.
-			while (true) {
-				Token first_tok;
-				if (!next_non_comment_token(lexer, first_tok, err)) {
-					return err;
-				}
-				if (first_tok.is_keyword("trailer")) {
-					break;
-				}
-				if (first_tok.kind != TokenKind::Integer ||
-					first_tok.int_value < 0 ||
-					first_tok.int_value > static_cast<int64_t>(std::numeric_limits<uint32_t>::max())) {
-					return make_xref_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedXRef,
-						"Invalid first object number in xref subsection header",
-						first_tok.byte_offset);
-				}
-
-				Token count_tok;
-				if (!next_non_comment_token(lexer, count_tok, err)) {
-					return err;
-				}
-				if (count_tok.kind != TokenKind::Integer ||
-					count_tok.int_value < 0 ||
-					count_tok.int_value > static_cast<int64_t>(kMaxXrefSubsectionCount)) {
-					return make_xref_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedXRef,
-						"Invalid or excessive object count in xref subsection header",
-						count_tok.byte_offset);
-				}
-
-				const uint64_t first_id = static_cast<uint64_t>(first_tok.int_value);
-				const uint64_t count = static_cast<uint64_t>(count_tok.int_value);
-				if (first_id + count >
-					static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) + 1ULL) {
-					return make_xref_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedXRef,
-						"xref subsection object range overflows 32-bit object numbers",
-						first_tok.byte_offset);
-				}
-				if (count > effective_max_entries - total_rows_parsed) {
-					return make_xref_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedXRef,
-						"Cumulative xref entry count across subsections exceeds maximum budget",
-						count_tok.byte_offset);
-				}
-				total_rows_parsed += count;
-
-				for (uint64_t i = 0; i < count; ++i) {
-					Token off_tok;
-					Token gen_tok;
-					Token flag_tok;
-					if (!next_non_comment_token(lexer, off_tok, err) ||
-						!next_non_comment_token(lexer, gen_tok, err) ||
-						!next_non_comment_token(lexer, flag_tok, err)) {
-						return err;
+			PdfDict rev_trailer;
+			if (kw_tok.is_keyword("xref")) {
+				// Classic ASCII `xref` table followed by `trailer << ... >>`.
+				while (true) {
+					Token first_tok;
+					if (!next_non_comment_token(lexer, first_tok, err)) {
+						return try_recover(std::move(err));
+					}
+					if (first_tok.is_keyword("trailer")) {
+						break;
+					}
+					if (first_tok.kind != TokenKind::Integer ||
+						first_tok.int_value < 0 ||
+						first_tok.int_value > static_cast<int64_t>(std::numeric_limits<uint32_t>::max())) {
+						return try_recover(make_xref_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedXRef,
+							"Invalid first object number in xref subsection header",
+							first_tok.byte_offset));
 					}
 
-					if (off_tok.kind != TokenKind::Integer || off_tok.int_value < 0) {
+					Token count_tok;
+					if (!next_non_comment_token(lexer, count_tok, err)) {
+						return try_recover(std::move(err));
+					}
+					if (count_tok.kind != TokenKind::Integer ||
+						count_tok.int_value < 0 ||
+						count_tok.int_value > static_cast<int64_t>(kMaxXrefSubsectionCount)) {
+						return try_recover(make_xref_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedXRef,
+							"Invalid or excessive object count in xref subsection header",
+							count_tok.byte_offset));
+					}
+
+					const uint64_t first_id = static_cast<uint64_t>(first_tok.int_value);
+					const uint64_t count = static_cast<uint64_t>(count_tok.int_value);
+					if (first_id + count >
+						static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) + 1ULL) {
+						return try_recover(make_xref_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedXRef,
+							"xref subsection object range overflows 32-bit object numbers",
+							first_tok.byte_offset));
+					}
+					if (count > effective_max_entries - total_rows_parsed) {
 						return make_xref_error(
 							ErrorCode::DamagedFormat,
 							DiagnosticId::DamagedXRef,
-							"Invalid byte offset in classic xref entry",
-							off_tok.byte_offset);
+							"Cumulative xref entry count across subsections exceeds maximum budget",
+							count_tok.byte_offset);
 					}
-					if (gen_tok.kind != TokenKind::Integer ||
-						gen_tok.int_value < 0 ||
-						gen_tok.int_value > static_cast<int64_t>(std::numeric_limits<uint16_t>::max())) {
-						return make_xref_error(
-							ErrorCode::DamagedFormat,
-							DiagnosticId::DamagedXRef,
-							"Invalid generation number in classic xref entry",
-							gen_tok.byte_offset);
-					}
-					if (flag_tok.kind != TokenKind::Keyword ||
-						(flag_tok.text != "n" && flag_tok.text != "f")) {
-						return make_xref_error(
-							ErrorCode::DamagedFormat,
-							DiagnosticId::DamagedXRef,
-							"Expected 'n' or 'f' status flag in classic xref entry",
-							flag_tok.byte_offset);
-					}
+					total_rows_parsed += count;
 
-					const uint32_t obj_num = static_cast<uint32_t>(first_id + i);
-					const uint16_t gen_num = static_cast<uint16_t>(gen_tok.int_value);
-					const uint64_t raw_off = static_cast<uint64_t>(off_tok.int_value);
-
-					if (flag_tok.text == "n") {
-						if (obj_num == 0) {
-							// Object 0 is always free per ISO 32000-1 section 7.5.4;
-							// tolerate writers that mark object 0 'n' by treating it as free.
-							table.entries_.try_emplace(
-								0u,
-								XrefEntry{XrefEntryKind::Free, raw_off, 0, 0, gen_num});
-							continue;
+					for (uint64_t i = 0; i < count; ++i) {
+						Token off_tok;
+						Token gen_tok;
+						Token flag_tok;
+						if (!next_non_comment_token(lexer, off_tok, err) ||
+							!next_non_comment_token(lexer, gen_tok, err) ||
+							!next_non_comment_token(lexer, flag_tok, err)) {
+							return try_recover(std::move(err));
 						}
-						if (raw_off > file_bytes.size() - header_off ||
-							raw_off + header_off >= file_bytes.size()) {
-							return make_xref_error(
+
+						if (off_tok.kind != TokenKind::Integer || off_tok.int_value < 0) {
+							return try_recover(make_xref_error(
 								ErrorCode::DamagedFormat,
 								DiagnosticId::DamagedXRef,
-								"In-use xref entry offset points outside file bounds",
-								off_tok.byte_offset,
-								obj_num,
-								gen_num);
+								"Invalid byte offset in classic xref entry",
+								off_tok.byte_offset));
 						}
-						table.entries_.try_emplace(
-							obj_num,
-							XrefEntry{
-								XrefEntryKind::Uncompressed,
-								raw_off + header_off,
-								0,
-								0,
-								gen_num});
-					} else {
-						table.entries_.try_emplace(
-							obj_num,
-							XrefEntry{
-								XrefEntryKind::Free,
-								raw_off,
-								0,
-								0,
-								gen_num});
+						if (gen_tok.kind != TokenKind::Integer ||
+							gen_tok.int_value < 0 ||
+							gen_tok.int_value > static_cast<int64_t>(std::numeric_limits<uint16_t>::max())) {
+							return try_recover(make_xref_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedXRef,
+								"Invalid generation number in classic xref entry",
+								gen_tok.byte_offset));
+						}
+						if (flag_tok.kind != TokenKind::Keyword ||
+							(flag_tok.text != "n" && flag_tok.text != "f")) {
+							return try_recover(make_xref_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedXRef,
+								"Expected 'n' or 'f' status flag in classic xref entry",
+								flag_tok.byte_offset));
+						}
+
+						const uint32_t obj_num = static_cast<uint32_t>(first_id + i);
+						const uint16_t gen_num = static_cast<uint16_t>(gen_tok.int_value);
+						const uint64_t raw_off = static_cast<uint64_t>(off_tok.int_value);
+
+						if (flag_tok.text == "n") {
+							if (obj_num == 0) {
+								table.entries_.try_emplace(
+									0u,
+									XrefEntry{XrefEntryKind::Free, raw_off, 0, 0, gen_num});
+								continue;
+							}
+							if (raw_off > file_bytes.size() - header_off ||
+								raw_off + header_off >= file_bytes.size()) {
+								return try_recover(make_xref_error(
+									ErrorCode::DamagedFormat,
+									DiagnosticId::DamagedXRef,
+									"In-use xref entry offset points outside file bounds",
+									off_tok.byte_offset,
+									obj_num,
+									gen_num));
+							}
+							table.entries_.try_emplace(
+								obj_num,
+								XrefEntry{
+									XrefEntryKind::Uncompressed,
+									raw_off + header_off,
+									0,
+									0,
+									gen_num});
+						} else {
+							table.entries_.try_emplace(
+								obj_num,
+								XrefEntry{
+									XrefEntryKind::Free,
+									raw_off,
+									0,
+									0,
+									gen_num});
+						}
 					}
 				}
-			}
 
-			// Parse the `trailer << ... >>` dictionary immediately following `trailer`.
-			Parser dict_parser(lexer);
-			auto trailer_res = dict_parser.parse_dictionary();
-			if (!trailer_res.has_value()) {
-				PdfError tr_err = std::move(trailer_res).error();
-				if (tr_err.code == ErrorCode::DamagedFormat) {
-					record_diagnostic(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedTrailer,
-						tr_err.byte_offset);
+				Parser dict_parser(lexer);
+				auto trailer_res = dict_parser.parse_dictionary();
+				if (!trailer_res.has_value()) {
+					PdfError tr_err = std::move(trailer_res).error();
+					if (tr_err.code == ErrorCode::DamagedFormat) {
+						record_diagnostic(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedTrailer,
+							tr_err.byte_offset);
+					}
+					return try_recover(std::move(tr_err));
 				}
-				return tr_err;
-			}
-			const PdfDict& rev_trailer = *trailer_res;
-			auto merge_res = merge_trailer_from_revision(table.trailer_, rev_trailer);
-			if (!merge_res.has_value()) {
-				return merge_res.error();
-			}
+				rev_trailer = std::move(*trailer_res);
+				auto merge_res = merge_trailer_from_revision(table.trailer_, rev_trailer);
+				if (!merge_res.has_value()) {
+					return merge_res.error();
+				}
 
-			// Guard hybrid `/XRefStm` offsets against cycles and out-of-bounds pointers,
-			// and reject hybrid XRef streams with UnsupportedFeature until §6.
-			if (const PdfValue* xref_stm_val = rev_trailer.get("XRefStm")) {
-				const auto stm_off_opt = xref_stm_val->as_int();
-				if (!stm_off_opt.has_value() || *stm_off_opt < 0) {
-					return make_xref_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedTrailer,
-						"Invalid /XRefStm offset in trailer dictionary",
-						current_xref_offset);
+				// Hybrid cross-reference stream (`/XRefStm` in a classic trailer, ISO 32000-1 7.5.8.4):
+				// unpack entries from the hybrid `/Type /XRef` stream after the main classic table
+				// of the same revision so classic entries take precedence over `/XRefStm`, while
+				// `/XRefStm` entries take precedence over older `/Prev` revisions.
+				if (const PdfValue* xref_stm_val = rev_trailer.get("XRefStm")) {
+					const auto stm_off_opt = xref_stm_val->as_int();
+					if (!stm_off_opt.has_value() || *stm_off_opt < 0) {
+						return try_recover(make_xref_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedTrailer,
+							"Invalid /XRefStm offset in trailer dictionary",
+							current_xref_offset));
+					}
+					const uint64_t raw_stm_off = static_cast<uint64_t>(*stm_off_opt);
+					if (raw_stm_off > file_bytes.size() - header_off ||
+						raw_stm_off + header_off >= file_bytes.size()) {
+						return try_recover(make_xref_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedXRef,
+							"/XRefStm offset points outside file bounds",
+							current_xref_offset));
+					}
+					const uint64_t adjusted_stm_off = raw_stm_off + header_off;
+					if (!visited_offsets.insert(adjusted_stm_off).second) {
+						return make_xref_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedXRef,
+							"Cyclic /XRefStm cross-reference offset detected",
+							adjusted_stm_off);
+					}
+
+					auto stm_obj_res = parse_xref_stream_object_at(file_bytes, adjusted_stm_off);
+					if (!stm_obj_res.has_value()) {
+						return try_recover(std::move(stm_obj_res).error());
+					}
+					const PdfStream* xstm = stm_obj_res->value.as_stream();
+					auto dec_res = decode_stream(*xstm);
+					if (!dec_res.has_value()) {
+						if (dec_res.error().code == ErrorCode::DamagedFormat) {
+							record_diagnostic(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedXRef,
+								adjusted_stm_off);
+						}
+						return try_recover(std::move(dec_res).error());
+					}
+					auto unpack_res = unpack_xref_stream(
+						xstm->dict,
+						*dec_res,
+						file_bytes.size(),
+						header_off,
+						table,
+						total_rows_parsed,
+						effective_max_entries);
+					if (!unpack_res.has_value()) {
+						return try_recover(std::move(unpack_res).error());
+					}
 				}
-				const uint64_t raw_stm_off = static_cast<uint64_t>(*stm_off_opt);
-				if (raw_stm_off > file_bytes.size() - header_off ||
-					raw_stm_off + header_off >= file_bytes.size()) {
-					return make_xref_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedXRef,
-						"/XRefStm offset points outside file bounds",
-						current_xref_offset);
+			} else if (kw_tok.kind == TokenKind::Integer && kw_tok.int_value > 0) {
+				// PDF 1.5+ `/Type /XRef` cross-reference stream object `<N> <G> obj << /Type /XRef ... >> stream`.
+				auto stm_obj_res = parse_xref_stream_object_at(file_bytes, current_xref_offset);
+				if (!stm_obj_res.has_value()) {
+					return try_recover(std::move(stm_obj_res).error());
 				}
-				const uint64_t adjusted_stm_off = raw_stm_off + header_off;
-				if (!visited_offsets.insert(adjusted_stm_off).second) {
-					return make_xref_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedXRef,
-						"Cyclic /XRefStm cross-reference offset detected",
-						adjusted_stm_off);
+				const PdfStream* xstm = stm_obj_res->value.as_stream();
+				auto dec_res = decode_stream(*xstm);
+				if (!dec_res.has_value()) {
+					if (dec_res.error().code == ErrorCode::DamagedFormat) {
+						record_diagnostic(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedXRef,
+							current_xref_offset,
+							stm_obj_res->ref.obj_num,
+							stm_obj_res->ref.gen_num);
+					}
+					return try_recover(std::move(dec_res).error());
 				}
-				return make_pdf_error(
-					ErrorCode::UnsupportedFeature,
-					"Hybrid /XRefStm cross-reference stream requires PDF 1.5+ XRef stream parser",
-					adjusted_stm_off);
+				auto unpack_res = unpack_xref_stream(
+					xstm->dict,
+					*dec_res,
+					file_bytes.size(),
+					header_off,
+					table,
+					total_rows_parsed,
+					effective_max_entries);
+				if (!unpack_res.has_value()) {
+					return try_recover(std::move(unpack_res).error());
+				}
+				RECTO_PDF_TRY(PdfValue cloned_dict_val, PdfValue(xstm->dict).deep_clone());
+				rev_trailer = std::move(*cloned_dict_val.as_dict());
+			} else {
+				return try_recover(make_xref_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedXRef,
+					"Expected 'xref' keyword or indirect /Type /XRef stream object at cross-reference offset",
+					current_xref_offset));
 			}
 
 			// Follow `/Prev` incremental update chain if present.
@@ -533,30 +1225,30 @@ PdfResult<XrefTable> XrefTable::parse(
 			}
 			const auto prev_int = prev_val->as_int();
 			if (!prev_int.has_value() || *prev_int < 0) {
-				return make_xref_error(
+				return try_recover(make_xref_error(
 					ErrorCode::DamagedFormat,
 					DiagnosticId::DamagedTrailer,
 					"Invalid /Prev offset in trailer dictionary",
-					current_xref_offset);
+					current_xref_offset));
 			}
 			const uint64_t raw_prev = static_cast<uint64_t>(*prev_int);
 			if (raw_prev > file_bytes.size() - header_off ||
 				raw_prev + header_off >= file_bytes.size()) {
-				return make_xref_error(
+				return try_recover(make_xref_error(
 					ErrorCode::DamagedFormat,
 					DiagnosticId::DamagedXRef,
 					"/Prev cross-reference offset points outside file bounds",
-					current_xref_offset);
+					current_xref_offset));
 			}
 			current_xref_offset = raw_prev + header_off;
 		}
 
 		if (!table.trailer_.contains("Root")) {
-			return make_xref_error(
+			return try_recover(make_xref_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedTrailer,
 				"Trailer dictionary is missing required /Root catalog reference",
-				raw_startxref + header_off);
+				raw_startxref + header_off));
 		}
 
 		return table;
@@ -603,6 +1295,7 @@ std::optional<IndirectRef> XrefTable::encrypt_ref() const noexcept
 void XrefTable::set_entry(uint32_t obj_num, XrefEntry entry)
 {
 	entries_[obj_num] = entry;
+	obj_stm_cache_.erase(obj_num);
 }
 
 PdfResult<IndirectObject> XrefTable::read_indirect_object(
@@ -631,6 +1324,289 @@ PdfResult<IndirectObject> XrefTable::read_indirect_object(
 	}
 }
 
+PdfResult<IndirectObject> XrefTable::read_compressed_object_with_visited(
+	std::span<const uint8_t> file_bytes,
+	IndirectRef ref,
+	const XrefEntry& entry,
+	std::vector<IndirectRef>& visited_refs) const
+{
+	// Per ISO 32000-1 section 7.5.7, compressed objects always have generation 0.
+	if (ref.gen_num != 0u) {
+		return IndirectObject{ref, PdfValue(PdfNull{})};
+	}
+
+	const uint32_t stm_obj_num = entry.obj_stm_num;
+	const uint32_t stm_index = entry.obj_stm_index;
+
+	if (stm_obj_num == 0u || stm_obj_num == ref.obj_num) {
+		return make_xref_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedObject,
+			"Invalid or self-referential /ObjStm object number",
+			std::nullopt,
+			ref.obj_num,
+			ref.gen_num);
+	}
+
+	const XrefEntry* stm_entry = find(stm_obj_num);
+	if (stm_entry == nullptr || stm_entry->is_free()) {
+		return make_xref_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedObject,
+			"Referenced /Type /ObjStm object is missing or free in xref table",
+			std::nullopt,
+			stm_obj_num,
+			0u);
+	}
+	// Refuse nested `/ObjStm -> /ObjStm` (a type-2 XRef entry pointing to an
+	// object that is itself type-2) per ISO 32000-1 section 7.5.7.
+	if (!stm_entry->is_uncompressed() || stm_entry->generation != 0u) {
+		return make_xref_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedObject,
+			"Nested /ObjStm (compressed object stream stored inside another /ObjStm) is forbidden",
+			std::nullopt,
+			stm_obj_num,
+			stm_entry->generation);
+	}
+
+	auto cache_it = obj_stm_cache_.find(stm_obj_num);
+	if (cache_it == obj_stm_cache_.end()) {
+		const IndirectRef stm_ref{stm_obj_num, 0u};
+		if (std::find(visited_refs.begin(), visited_refs.end(), stm_ref) != visited_refs.end()) {
+			return make_xref_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedObject,
+				"Cyclic reference while resolving /Type /ObjStm stream",
+				stm_entry->byte_offset,
+				stm_obj_num,
+				0u);
+		}
+		if (visited_refs.size() >= kMaxIndirectRefDepth) {
+			return make_xref_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedObject,
+				"Indirect reference depth exceeded while resolving /Type /ObjStm stream",
+				stm_entry->byte_offset,
+				stm_obj_num,
+				0u);
+		}
+		visited_refs.push_back(stm_ref);
+		auto stm_obj_res = read_indirect_object_with_visited(file_bytes, stm_ref, visited_refs);
+		visited_refs.pop_back();
+		if (!stm_obj_res.has_value()) {
+			return stm_obj_res.error();
+		}
+		if (!stm_obj_res->value.is_stream()) {
+			return make_xref_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedObject,
+				"Target of type-2 XRef entry is not a stream object",
+				stm_entry->byte_offset,
+				stm_obj_num,
+				0u);
+		}
+
+		const PdfStream& obj_stm = *stm_obj_res->value.as_stream();
+		const auto type_name = obj_stm.dict.get_name("Type");
+		if (!type_name.has_value() || *type_name != "ObjStm") {
+			return make_xref_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedObject,
+				"Compressed object container stream is missing /Type /ObjStm",
+				stm_entry->byte_offset,
+				stm_obj_num,
+				0u);
+		}
+
+		const auto n_opt = obj_stm.dict.get_int("N");
+		const auto first_opt = obj_stm.dict.get_int("First");
+		if (!n_opt.has_value() || *n_opt <= 0 ||
+			*n_opt > static_cast<int64_t>(kMaxObjStmEntries) ||
+			!first_opt.has_value() || *first_opt < 0) {
+			return make_xref_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedObject,
+				"Invalid or missing /N or /First in /Type /ObjStm dictionary",
+				stm_entry->byte_offset,
+				stm_obj_num,
+				0u);
+		}
+
+		auto decoded_res = decode_stream(obj_stm);
+		if (!decoded_res.has_value()) {
+			if (decoded_res.error().code == ErrorCode::DamagedFormat) {
+				record_diagnostic(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					stm_entry->byte_offset,
+					stm_obj_num,
+					0u);
+			}
+			return decoded_res.error();
+		}
+
+		const uint64_t first_off = static_cast<uint64_t>(*first_opt);
+		if (first_off > decoded_res->size()) {
+			return make_xref_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedObject,
+				"/Type /ObjStm /First offset exceeds decoded stream length",
+				stm_entry->byte_offset,
+				stm_obj_num,
+				0u);
+		}
+
+		const uint32_t n_count = static_cast<uint32_t>(*n_opt);
+		CachedObjStream cached;
+		cached.first_offset = first_off;
+		cached.entries.reserve(n_count);
+
+		// Parse the `/N` pairs of `<obj_num> <relative_offset>` exclusively from
+		// `[0, first_off)` so a malformed header cannot bleed into object bodies.
+		const std::span<const uint8_t> header_bytes(
+			decoded_res->data(),
+			static_cast<size_t>(first_off));
+		Lexer hdr_lexer(header_bytes);
+		for (uint32_t i = 0; i < n_count; ++i) {
+			Token num_tok;
+			Token off_tok;
+			PdfError herr;
+			if (!next_non_comment_token(hdr_lexer, num_tok, herr) ||
+				!next_non_comment_token(hdr_lexer, off_tok, herr)) {
+				return make_xref_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedObject,
+					"Truncated or malformed header table in /Type /ObjStm stream",
+					stm_entry->byte_offset,
+					stm_obj_num,
+					0u);
+			}
+			if (num_tok.kind != TokenKind::Integer ||
+				num_tok.int_value <= 0 ||
+				num_tok.int_value > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) ||
+				off_tok.kind != TokenKind::Integer ||
+				off_tok.int_value < 0) {
+				return make_xref_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedObject,
+					"Invalid object number or relative offset in /Type /ObjStm header",
+					stm_entry->byte_offset,
+					stm_obj_num,
+					0u);
+			}
+			const uint64_t rel_off = static_cast<uint64_t>(off_tok.int_value);
+			if (rel_off > decoded_res->size() - first_off ||
+				(!cached.entries.empty() && rel_off < cached.entries.back().rel_offset)) {
+				return make_xref_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedObject,
+					"/Type /ObjStm entry relative offset is out of bounds or non-monotonic",
+					stm_entry->byte_offset,
+					stm_obj_num,
+					0u);
+			}
+			cached.entries.push_back(CachedObjStream::HeaderPair{
+				static_cast<uint32_t>(num_tok.int_value),
+				rel_off});
+		}
+
+		cached.decoded_bytes = std::move(*decoded_res);
+		if (obj_stm_cache_.size() >= kMaxCachedObjStreams) {
+			obj_stm_cache_.erase(obj_stm_cache_.begin());
+		}
+		cache_it = obj_stm_cache_.emplace(stm_obj_num, std::move(cached)).first;
+	}
+
+	const CachedObjStream& cached_stm = cache_it->second;
+	if (stm_index >= cached_stm.entries.size()) {
+		return make_xref_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedObject,
+			"Compressed object index exceeds /Type /ObjStm /N entry count",
+			std::nullopt,
+			ref.obj_num,
+			ref.gen_num);
+	}
+
+	const CachedObjStream::HeaderPair& pair = cached_stm.entries[stm_index];
+	if (pair.obj_num != ref.obj_num) {
+		return make_xref_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedObject,
+			"Compressed object number in /Type /ObjStm header does not match xref entry",
+			std::nullopt,
+			ref.obj_num,
+			ref.gen_num);
+	}
+
+	const size_t obj_start = static_cast<size_t>(cached_stm.first_offset + pair.rel_offset);
+	size_t obj_end = cached_stm.decoded_bytes.size();
+	if (stm_index + 1u < cached_stm.entries.size()) {
+		obj_end = static_cast<size_t>(
+			cached_stm.first_offset + cached_stm.entries[stm_index + 1u].rel_offset);
+	}
+
+	const std::span<const uint8_t> obj_slice(
+		cached_stm.decoded_bytes.data() + obj_start,
+		obj_end - obj_start);
+	Parser inner_parser(obj_slice);
+	auto val_res = inner_parser.parse_direct_object();
+	if (!val_res.has_value()) {
+		if (val_res.error().code == ErrorCode::DamagedFormat) {
+			record_diagnostic(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedObject,
+				std::nullopt,
+				ref.obj_num,
+				ref.gen_num);
+		}
+		return val_res.error();
+	}
+
+	// Per ISO 32000-1 section 7.5.7, each slice `[obj_start, obj_end)` in an
+	// `/ObjStm` contains a single direct PDF object with no `N G obj` header,
+	// `stream` payload, `endobj` footer, or trailing tokens.
+	Token trailing_tok;
+	PdfError terr;
+	if (!next_non_comment_token(inner_parser.lexer(), trailing_tok, terr)) {
+		if (terr.code == ErrorCode::DamagedFormat) {
+			record_diagnostic(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedObject,
+				std::nullopt,
+				ref.obj_num,
+				ref.gen_num);
+		}
+		return terr;
+	}
+	if (!trailing_tok.is_eof()) {
+		return make_xref_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedObject,
+			"Indirect stream, obj header, or trailing token is forbidden inside /Type /ObjStm",
+			std::nullopt,
+			ref.obj_num,
+			ref.gen_num);
+	}
+
+	if (const PdfDict* inner_dict = val_res->as_dict()) {
+		if (const auto inner_type = inner_dict->get_name("Type")) {
+			if (*inner_type == "ObjStm" || *inner_type == "XRef") {
+				return make_xref_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedObject,
+					"/Type /ObjStm or /Type /XRef object cannot be stored inside an /ObjStm",
+					std::nullopt,
+					ref.obj_num,
+					ref.gen_num);
+			}
+		}
+	}
+
+	return IndirectObject{ref, std::move(*val_res)};
+}
+
 PdfResult<IndirectObject> XrefTable::read_indirect_object_with_visited(
 	std::span<const uint8_t> file_bytes,
 	IndirectRef ref,
@@ -650,16 +1626,11 @@ PdfResult<IndirectObject> XrefTable::read_indirect_object_with_visited(
 	if (entry == nullptr || entry->is_free()) {
 		return IndirectObject{ref, PdfValue(PdfNull{})};
 	}
+	if (entry->is_compressed()) {
+		return read_compressed_object_with_visited(file_bytes, ref, *entry, visited_refs);
+	}
 	if (entry->generation != ref.gen_num) {
 		return IndirectObject{ref, PdfValue(PdfNull{})};
-	}
-	if (!entry->is_uncompressed()) {
-		return make_pdf_error(
-			ErrorCode::UnsupportedFeature,
-			"Compressed /ObjStm entry resolution requires object stream decoder",
-			entry->byte_offset,
-			ref.obj_num,
-			ref.gen_num);
 	}
 	if (entry->byte_offset >= file_bytes.size()) {
 		return make_xref_error(
