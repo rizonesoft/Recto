@@ -189,7 +189,7 @@ Generate `tests/corpus/PROVENANCE.md` recording a Markdown table (`| Path | SHA-
 - [x] Walk `tests/corpus/` recursively in `Corpus.Provenance`, computing each file's actual SHA-256 via `recto::test::sha256_file` and asserting 1-for-1 set equality and hash equality against `PROVENANCE.md`. Done when: `Corpus.Provenance` verifies all corpus files and prints the verified file count.
 - [x] Add `Corpus.DetectsUnlistedAndCorruptedFiles` in `corpus_tests.cpp` testing the provenance validator against a `TempDir` containing an unlisted dummy file and a 1-byte mutated file. Done when: both planted faults are caught and name the offending relative path.
 - [x] Run full `.\build.cmd` across `x64` and `ARM64` (`Debug` and `Release`) to confirm `corpus_tests.cpp` compiles with 0 warnings everywhere. Done when: `.\build.cmd` exits 0.
-- [x] Commit: `test: add PROVENANCE.md and Corpus.Provenance SHA-256 verification suite`
+- [ ] Commit: `test: add PROVENANCE.md and Corpus.Provenance SHA-256 verification suite`
 
 **Test checkpoint:** `build\bin\x64\Release\recto-tests\recto-tests.exe --gtest_filter=Corpus.*` exits 0 and verifies 100% of files under `tests/corpus/`.
 
