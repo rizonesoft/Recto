@@ -12,7 +12,7 @@ track: M1
 
 > **Goal:** Build the parser, stream-filter, decryption and document-model half of `recto-pdf` (`src/pdf`, C++20): `PdfResult<T>` and the D16 diagnostic ring buffer, the `PdfValue` object graph, a binary-safe PDF 1.7 and 2.0 lexer and bounded recursive-descent indirect object parser, classic `xref` tables, compressed `/Type /XRef` and `/Type /ObjStm` streams (`PDF 1.5+`), incremental updates and damaged-file linear object recovery, the full stream filter pipeline (`FlateDecode`, `PngPredictor`, `LZWDecode`, `ASCII85Decode`, `ASCIIHexDecode`, `RunLengthDecode`, `CCITTFaxDecode`, `JBIG2Decode`, `DCTDecode` and `JPXDecode` via WIC), Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via Windows CNG `bcrypt.dll`), and the `pdf::Document` page-tree, metadata, outline and link model.
 
-> **Current state:** Measured 2026-10-14. `src/pdf/recto-pdf.vcxproj` compiles the scaffold `recto::pdf::abi_version()` entry point. No PDF parsing code exists yet; `D00 T03` provides the GoogleTest fixtures, the redistributable test corpus, and the ASan job.
+> **Current state:** Measured 2026-10-18. `src/pdf/recto-pdf.vcxproj` compiles the scaffold `recto::pdf::abi_version()` entry point (`src/pdf/pdf.cpp`, `src/pdf/recto_pdf.h`). `D00 T03` (`TODO-03-test-backbone.md`) is `done`, providing `tests/recto-tests/test_support.h`, the 39-file corpus in `tests/corpus/`, and the `-EnableASAN` build and CI job. No PDF parsing code exists yet.
 
 ## Inputs
 
@@ -63,17 +63,19 @@ Define the foundational error-handling and diagnostic primitives in `src/pdf/err
 **Surface:** no
 **Freeze check:** Verify that `PdfResult<T>` never throws C++ exceptions across module boundaries, `diagnostics_tail()` synchronizes ring-buffer access with a lightweight lock over a fixed-capacity 256-slot array, `TraceLoggingWrite` emits only error codes, offsets, and durations, and zero document byte payloads are retained in the diagnostic ring or ETW events.
 
+> **Started:** 2026-10-18
+
 **Build order:**
 
 1. Author `src/pdf/error.h` and `src/pdf/error.cpp` implementing `ErrorCode`, `PdfError`, `PdfResult<T>`, `PdfResult<void>`, `RECTO_PDF_TRY`, the 256-entry thread-safe diagnostic ring buffer, and the D16 `TraceLoggingWrite` ETW provider (`Recto.Diagnostics`) and `RECTO_ETW_SPAN` helpers. Done when: `src/pdf/recto-pdf.vcxproj` compiles `error.cpp` cleanly on `x64` and `ARM64`.
 2. Add `tests/recto-tests/pdf_error_tests.cpp` (`PdfError.ResultValueAndError`, `PdfError.DiagnosticRingWraparound`, `PdfError.ConcurrentDiagnosticRecording`, `PdfError.EtwTraceLoggingProviderAndSpans`). Done when: all 4 tests pass under ASan.
 
-- [ ] Define `ErrorCode` covering all open, parse, filter, encryption, limit, I/O and cancellation conditions in `src/pdf/error.h`. Done when: every `ErrorCode` maps to a human-readable string via `error_code_name(ErrorCode)`. Cheaper substitute: returning `bool` or raw `int` status codes that lose the failure reason.
-- [ ] Implement `PdfError` carrying `code`, `message`, optional file `byte_offset`, and indirect object `(object_num, generation_num)` context. Done when: `PdfError::format()` renders a concise diagnostic line with offset and object ID when present.
-- [ ] Implement `PdfResult<T>` and `PdfResult<void>` with `.has_value()`, `.value()`, `.error()`, and `value_or(...)` accessors. Done when: `PdfError.ResultValueAndError` tests both move-only (`std::unique_ptr`) and copyable payloads.
-- [ ] Implement the D16 256-slot thread-safe diagnostic ring buffer (`record_diagnostic`, `diagnostics_tail`, `clear_diagnostics`) and `TraceLoggingWrite` ETW provider (`TRACELOGGING_DEFINE_PROVIDER(g_recto_etw_provider, "Recto.Diagnostics", ...)` + `RECTO_ETW_SPAN`) in `src/pdf/error.cpp`. Done when: recording 1,000 diagnostics retains the newest 256 entries in exact chronological order without heap growth and emits ETW trace events without error.
-- [ ] Verify thread safety of the diagnostic ring buffer and ETW span emission with 8 threads concurrently calling `record_diagnostic`, `RECTO_ETW_SPAN`, and `diagnostics_tail`. Done when: `PdfError.ConcurrentDiagnosticRecording` and `PdfError.EtwTraceLoggingProviderAndSpans` complete 10,000 writes/reads under ASan with zero data races.
-- [ ] Automatically append a ring-buffer entry and emit a `TraceLoggingWrite` diagnostic event whenever `make_pdf_error(...)` constructs a `DamagedFormat`, `DecompressionLimitExceeded`, or `RecursionLimitExceeded` error. Done when: `diagnostics_tail(10)` reflects the error immediately after construction.
+- [x] Define `ErrorCode` covering all open, parse, filter, encryption, limit, I/O and cancellation conditions in `src/pdf/error.h`. Done when: every `ErrorCode` maps to a human-readable string via `error_code_name(ErrorCode)`. Cheaper substitute: returning `bool` or raw `int` status codes that lose the failure reason.
+- [x] Implement `PdfError` carrying `code`, `message`, optional file `byte_offset`, and indirect object `(object_num, generation_num)` context. Done when: `PdfError::format()` renders a concise diagnostic line with offset and object ID when present.
+- [x] Implement `PdfResult<T>` and `PdfResult<void>` with `.has_value()`, `.value()`, `.error()`, and `value_or(...)` accessors. Done when: `PdfError.ResultValueAndError` tests both move-only (`std::unique_ptr`) and copyable payloads.
+- [x] Implement the D16 256-slot thread-safe diagnostic ring buffer (`record_diagnostic`, `diagnostics_tail`, `clear_diagnostics`) and `TraceLoggingWrite` ETW provider (`TRACELOGGING_DEFINE_PROVIDER(g_recto_etw_provider, "Recto.Diagnostics", ...)` + `RECTO_ETW_SPAN`) in `src/pdf/error.cpp`. Done when: recording 1,000 diagnostics retains the newest 256 entries in exact chronological order without heap growth and emits ETW trace events without error.
+- [x] Verify thread safety of the diagnostic ring buffer and ETW span emission with 8 threads concurrently calling `record_diagnostic`, `RECTO_ETW_SPAN`, and `diagnostics_tail`. Done when: `PdfError.ConcurrentDiagnosticRecording` and `PdfError.EtwTraceLoggingProviderAndSpans` complete 10,000 writes/reads under ASan with zero data races.
+- [x] Automatically append a ring-buffer entry and emit a `TraceLoggingWrite` diagnostic event whenever `make_pdf_error(...)` constructs a `DamagedFormat`, `DecompressionLimitExceeded`, or `RecursionLimitExceeded` error. Done when: `diagnostics_tail(10)` reflects the error immediately after construction.
 - [ ] Commit: `pdf: add PdfResult, PdfError, D16 diagnostic ring buffer and ETW TraceLogging`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*` passes under ASan with 0 warnings.

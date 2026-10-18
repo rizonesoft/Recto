@@ -7,6 +7,8 @@
 // parser, filter pipeline and object model land in D01 T01.
 #pragma once
 
+#include "error.h"
+
 namespace recto::pdf {
 
 // PDF engine ABI version. Bumped whenever this header changes incompatibly.
