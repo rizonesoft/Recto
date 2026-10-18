@@ -65,7 +65,7 @@ Implement the file-system test support primitives in `tests/recto-tests/test_sup
 - [x] Handle read-only files and deep nested subdirectories inside `TempDir::~TempDir()` (clearing `FILE_ATTRIBUTE_READONLY` before `std::filesystem::remove_all`). Done when: creating a read-only file inside `TempDir` still deletes the directory cleanly on scope exit.
 - [x] Support Windows extended-length paths (`> 260` characters) in `TempDir::file_path()` and `read_file_bytes()` / `write_file_bytes()`. Done when: `Support.TempDirLongPathAndReadOnly` writes and reads a file at a 300-character path inside `TempDir` and cleans it up.
 - [x] Wire `--gtest_filter` and `--gtest_output=xml:...` pass-through parameters in `build/build.ps1`. Done when: `powershell -File build/build.ps1 -TestFilter "Support.*"` executes only the `Support.*` suite.
-- [ ] Commit: `test: add corpus_path resolver and TempDir RAII helper to recto-tests`
+- [x] Commit: `test: add corpus_path resolver and TempDir RAII helper to recto-tests`
 
 **Test checkpoint:** `build\bin\x64\Release\recto-tests\recto-tests.exe --gtest_filter=Support.CorpusPath*:Support.TempDir*` exits 0 with all path and cleanup assertions passing.
 

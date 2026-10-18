@@ -44,7 +44,15 @@ public:
 	~ScopedCurrentDir() noexcept
 	{
 		if (!original_.empty()) {
-			SetCurrentDirectoryW(original_.c_str());
+			BOOL restored = SetCurrentDirectoryW(original_.c_str());
+			if (restored == 0) {
+				try {
+					const auto long_original = recto::test::to_long_path(original_);
+					restored = SetCurrentDirectoryW(long_original.c_str());
+				} catch (...) {
+				}
+			}
+			EXPECT_NE(restored, 0) << "Failed to restore current directory in ~ScopedCurrentDir";
 		}
 	}
 
@@ -94,22 +102,50 @@ TEST(Support, CorpusPathResolution)
 	EXPECT_TRUE(std::filesystem::exists(root1 / "Recto.sln"));
 	EXPECT_TRUE(std::filesystem::exists(root1 / "LICENSE"));
 
-	recto::test::TempDir temp;
+	std::filesystem::path temp1_root;
+	std::filesystem::path temp2_root;
 	{
-		ScopedCurrentDir cwd_guard(temp.path());
-		const auto root2 = recto::test::repo_root();
-		EXPECT_EQ(root1, root2);
+		recto::test::TempDir temp;
+		temp1_root = temp.path();
 
-		ScopedEnvVar clear_env(L"RECTO_CORPUS_DIR", nullptr);
-		const auto default_corpus = recto::test::corpus_path("render/simple-1p.pdf");
-		EXPECT_EQ(default_corpus, (root1 / "tests" / "corpus" / "render" / "simple-1p.pdf").lexically_normal());
-	}
+		std::string long_rel_dir;
+		for (int i = 0; i < 6; ++i) {
+			long_rel_dir += "cwd_segment_abcdefghijklmnopqrstuvwxyz_012345/";
+		}
+		const auto long_cwd = temp.file_path(long_rel_dir);
+		EXPECT_GT(long_cwd.native().size(), 280u);
+		std::error_code ec;
+		std::filesystem::create_directories(recto::test::to_long_path(long_cwd), ec);
+		ASSERT_FALSE(ec);
 
-	{
-		ScopedEnvVar override_env(L"RECTO_CORPUS_DIR", temp.path().c_str());
-		const auto redirected = recto::test::corpus_path("a.pdf");
-		EXPECT_EQ(redirected, (temp.path() / "a.pdf").lexically_normal());
+		{
+			ScopedCurrentDir outer_cwd_guard(long_cwd);
+			const auto root2 = recto::test::repo_root();
+			EXPECT_EQ(root1, root2);
+
+			{
+				recto::test::TempDir inner_temp;
+				temp2_root = inner_temp.path();
+				{
+					// Exercise ScopedCurrentDir saving and restoring a >280-char original directory.
+					ScopedCurrentDir inner_cwd_guard(inner_temp.path());
+					EXPECT_EQ(recto::test::repo_root(), root1);
+				}
+			}
+			EXPECT_FALSE(std::filesystem::exists(recto::test::to_long_path(temp2_root)));
+
+			ScopedEnvVar clear_env(L"RECTO_CORPUS_DIR", nullptr);
+			const auto default_corpus = recto::test::corpus_path("render/simple-1p.pdf");
+			EXPECT_EQ(default_corpus, (root1 / "tests" / "corpus" / "render" / "simple-1p.pdf").lexically_normal());
+		}
+
+		{
+			ScopedEnvVar override_env(L"RECTO_CORPUS_DIR", temp.path().c_str());
+			const auto redirected = recto::test::corpus_path("a.pdf");
+			EXPECT_EQ(redirected, (temp.path() / "a.pdf").lexically_normal());
+		}
 	}
+	EXPECT_FALSE(std::filesystem::exists(recto::test::to_long_path(temp1_root)));
 }
 
 TEST(Support, TempDirCleanup)
@@ -127,6 +163,21 @@ TEST(Support, TempDirCleanup)
 		const std::vector<uint8_t> replacement{'a', 't', 'o', 'm', 'i', 'c'};
 		recto::test::write_file_bytes(target_file, replacement);
 		EXPECT_EQ(recto::test::read_file_bytes(target_file), replacement);
+
+		// Failure-injection regression test: when write_file_bytes fails while the
+		// temporary file handle is open, destination bytes remain unchanged and no
+		// temporary file is left behind in the destination directory.
+		recto::test::fail_next_write_for_testing();
+		const std::vector<uint8_t> aborted{'a', 'b', 'o', 'r', 't'};
+		EXPECT_THROW(recto::test::write_file_bytes(target_file, aborted), std::runtime_error);
+		EXPECT_EQ(recto::test::read_file_bytes(target_file), replacement);
+
+		size_t entry_count = 0;
+		for (const auto& entry : std::filesystem::directory_iterator(recto::test::to_long_path(target_file.parent_path()))) {
+			++entry_count;
+			EXPECT_EQ(entry.path().filename(), std::filesystem::path("sample.bin"));
+		}
+		EXPECT_EQ(entry_count, 1u);
 	}
 	EXPECT_FALSE(std::filesystem::exists(single_dir));
 
@@ -181,6 +232,13 @@ TEST(Support, TempDirLongPathAndReadOnly)
 		recto::test::write_file_bytes(long_file, expected);
 		const auto actual = recto::test::read_file_bytes(long_file);
 		EXPECT_EQ(actual, expected);
+
+		// Near-limit (250-character) single filename component regression test.
+		const std::string near_limit_name = std::string(246, 'f') + ".bin";
+		ASSERT_EQ(near_limit_name.size(), 250u);
+		const auto near_limit_file = temp.file_path("near_limit/" + near_limit_name);
+		recto::test::write_file_bytes(near_limit_file, expected);
+		EXPECT_EQ(recto::test::read_file_bytes(near_limit_file), expected);
 
 		const auto extended = recto::test::to_long_path(long_file);
 		const DWORD attrs = GetFileAttributesW(extended.c_str());

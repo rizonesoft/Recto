@@ -18,6 +18,7 @@ namespace recto::test {
 namespace {
 
 std::atomic<uint64_t> g_temp_dir_counter{1};
+std::atomic<bool> g_fail_next_write{false};
 
 std::wstring utf8_to_wide(std::string_view utf8)
 {
@@ -71,6 +72,7 @@ struct TempFileGuard {
 	std::filesystem::path path;
 	bool committed{false};
 
+	TempFileGuard() noexcept = default;
 	explicit TempFileGuard(std::filesystem::path p) noexcept : path(std::move(p)) {}
 	~TempFileGuard() noexcept
 	{
@@ -209,6 +211,11 @@ std::vector<uint8_t> read_file_bytes(const std::filesystem::path& path)
 	return buffer;
 }
 
+void fail_next_write_for_testing() noexcept
+{
+	g_fail_next_write.store(true, std::memory_order_relaxed);
+}
+
 void write_file_bytes(const std::filesystem::path& path, std::span<const uint8_t> data)
 {
 	const auto long_path = to_long_path(path);
@@ -223,15 +230,18 @@ void write_file_bytes(const std::filesystem::path& path, std::span<const uint8_t
 
 	const DWORD pid = GetCurrentProcessId();
 	std::filesystem::path temp_long;
+	// Declare temp_guard before file so stack unwinding destroys file (closing
+	// the handle) before ~TempFileGuard calls DeleteFileW.
+	TempFileGuard temp_guard;
 	UniqueHandle file(INVALID_HANDLE_VALUE);
 	for (int attempt = 0; attempt < 64; ++attempt) {
 		LARGE_INTEGER qpc{};
 		QueryPerformanceCounter(&qpc);
 		const uint64_t seq = g_temp_dir_counter.fetch_add(1, std::memory_order_relaxed);
-		const std::wstring tmp_name = long_path.filename().native() + L".tmp." +
-			std::to_wstring(pid) + L"." +
-			std::to_wstring(static_cast<uint64_t>(qpc.QuadPart)) + L"." +
-			std::to_wstring(seq);
+		const std::wstring tmp_name = L".recto-tmp-" +
+			std::to_wstring(pid) + L"-" +
+			std::to_wstring(static_cast<uint64_t>(qpc.QuadPart)) + L"-" +
+			std::to_wstring(seq) + L".tmp";
 		temp_long = parent_dir.empty() ? std::filesystem::path(tmp_name) : (parent_dir / tmp_name);
 		HANDLE h = CreateFileW(
 			temp_long.c_str(),
@@ -242,6 +252,7 @@ void write_file_bytes(const std::filesystem::path& path, std::span<const uint8_t
 			FILE_ATTRIBUTE_NORMAL,
 			nullptr);
 		if (h != INVALID_HANDLE_VALUE) {
+			temp_guard.path = temp_long;
 			file.handle = h;
 			break;
 		}
@@ -254,7 +265,6 @@ void write_file_bytes(const std::filesystem::path& path, std::span<const uint8_t
 		throw std::runtime_error("write_file_bytes: exhausted retries creating unique temp file");
 	}
 
-	TempFileGuard temp_guard(temp_long);
 	size_t offset = 0;
 	while (offset < data.size()) {
 		const DWORD chunk = static_cast<DWORD>(
@@ -264,6 +274,9 @@ void write_file_bytes(const std::filesystem::path& path, std::span<const uint8_t
 			throw std::runtime_error("write_file_bytes: WriteFile failed");
 		}
 		offset += bytes_written;
+	}
+	if (g_fail_next_write.exchange(false, std::memory_order_relaxed)) {
+		throw std::runtime_error("write_file_bytes: injected failure before handle close");
 	}
 	if (!FlushFileBuffers(file.handle)) {
 		throw std::runtime_error("write_file_bytes: FlushFileBuffers failed");

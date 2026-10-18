@@ -58,6 +58,9 @@
     <ClInclude Include="test_support.h" />
   </ItemGroup>
   <ItemGroup>
+    <Manifest Include="recto-tests.manifest" />
+  </ItemGroup>
+  <ItemGroup>
     <ClCompile Include="scaffold_smoke.cpp" />
     <ClCompile Include="support_tests.cpp" />
     <ClCompile Include="test_support.cpp" />
