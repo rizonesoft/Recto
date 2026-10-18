@@ -14,6 +14,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import stat
 import struct
 import sys
 import tempfile
@@ -2685,17 +2686,50 @@ def generate_corpus(corpus_root: Path = CORPUS_ROOT) -> dict[str, str]:
     return hashes
 
 
+def _is_reparse_or_symlink_stat(st: os.stat_result) -> bool:
+    if stat.S_ISLNK(st.st_mode):
+        return True
+    if getattr(st, "st_reparse_tag", 0) != 0:
+        return True
+    file_attrs = getattr(st, "st_file_attributes", 0)
+    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x0400)
+    return bool(file_attrs & reparse_flag)
+
+
 def check_corpus(corpus_root: Path = CORPUS_ROOT) -> tuple[bool, list[str]]:
     """Verify on-disk corpus files and PROVENANCE.md match deterministic generator output."""
     files = expected_corpus_files()
     errors: list[str] = []
     total_on_disk = 0
+
+    try:
+        root_lstat = os.lstat(corpus_root)
+    except OSError as exc:
+        errors.append(f"corpus directory stat error for {corpus_root}: {exc}")
+        return (False, errors)
+
+    if _is_reparse_or_symlink_stat(root_lstat):
+        errors.append(f"corpus root must not be a symlink or reparse point: {corpus_root}")
+        return (False, errors)
+    if not stat.S_ISDIR(root_lstat.st_mode):
+        errors.append(f"corpus root is not a directory: {corpus_root}")
+        return (False, errors)
+
     for rel_path, expected_bytes in sorted(files.items()):
         dest = corpus_root / rel_path
-        if not dest.is_file():
+        try:
+            st = os.lstat(dest)
+        except OSError:
             errors.append(f"missing corpus file: {rel_path}")
             continue
-        actual_bytes = dest.read_bytes()
+        if _is_reparse_or_symlink_stat(st) or not stat.S_ISREG(st.st_mode):
+            errors.append(f"non-regular or symlink corpus file: {rel_path}")
+            continue
+        try:
+            actual_bytes = dest.read_bytes()
+        except OSError as exc:
+            errors.append(f"read error for {rel_path}: {exc}")
+            continue
         total_on_disk += len(actual_bytes)
         try:
             validate_corpus_entry(rel_path, actual_bytes)
@@ -2710,19 +2744,44 @@ def check_corpus(corpus_root: Path = CORPUS_ROOT) -> tuple[bool, list[str]]:
 
     provenance_path = corpus_root / "PROVENANCE.md"
     expected_provenance = build_provenance_markdown(files)
-    if not provenance_path.is_file():
+    try:
+        prov_st = os.lstat(provenance_path)
+        if _is_reparse_or_symlink_stat(prov_st) or not stat.S_ISREG(prov_st.st_mode):
+            errors.append("PROVENANCE.md must be a regular non-symlink file")
+        elif provenance_path.read_bytes() != expected_provenance:
+            errors.append("PROVENANCE.md is out of date with generated corpus fixtures")
+    except OSError:
         errors.append("missing provenance file: PROVENANCE.md")
-    elif provenance_path.read_bytes() != expected_provenance:
-        errors.append("PROVENANCE.md is out of date with generated corpus fixtures")
 
-    if corpus_root.is_dir():
-        for child in sorted(corpus_root.rglob("*")):
-            if child.is_file():
-                rel = child.relative_to(corpus_root).as_posix()
-                if rel in ("README.md", "PROVENANCE.md"):
+    def _walk_corpus_dir(current_dir: Path, rel_prefix: str) -> None:
+        try:
+            with os.scandir(current_dir) as it:
+                entries = sorted(list(it), key=lambda e: e.name)
+        except OSError as exc:
+            loc = rel_prefix if rel_prefix else "."
+            errors.append(f"directory enumeration error in {loc}: {exc}")
+            return
+
+        for entry in entries:
+            rel = f"{rel_prefix}/{entry.name}" if rel_prefix else entry.name
+            try:
+                entry_lstat = entry.stat(follow_symlinks=False)
+                if entry.is_symlink() or _is_reparse_or_symlink_stat(entry_lstat):
+                    errors.append(f"symlink or reparse point not allowed in corpus: {rel}")
                     continue
-                if rel not in files:
-                    errors.append(f"unexpected corpus file: {rel}")
+                if stat.S_ISDIR(entry_lstat.st_mode):
+                    _walk_corpus_dir(Path(entry.path), rel)
+                elif stat.S_ISREG(entry_lstat.st_mode):
+                    if rel in ("README.md", "PROVENANCE.md"):
+                        continue
+                    if rel not in files:
+                        errors.append(f"unexpected corpus file: {rel}")
+                else:
+                    errors.append(f"non-regular file entry in corpus: {rel}")
+            except OSError as exc:
+                errors.append(f"filesystem stat error for {rel}: {exc}")
+
+    _walk_corpus_dir(corpus_root, "")
 
     if total_on_disk >= MAX_CORPUS_TOTAL_BYTES:
         errors.append(

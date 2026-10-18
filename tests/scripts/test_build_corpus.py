@@ -1,7 +1,10 @@
 import importlib.util
+import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPT_PATH = REPO_ROOT / "scripts" / "build-corpus.py"
@@ -60,6 +63,62 @@ class BuildCorpusTests(unittest.TestCase):
             self.assertFalse(ok)
             self.assertIn("missing corpus file: text/scanned.pdf", errors)
             self.assertIn("unexpected corpus file: render/stray.pdf", errors)
+
+    def test_rejects_enumeration_errors_and_directory_links(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as ext_tmp:
+            root = Path(tmp)
+            external = Path(ext_tmp)
+            self.mod.generate_corpus(root)
+            (external / "unlisted.bin").write_bytes(b"hidden")
+
+            # 1. Root enumeration failure must fail check_corpus.
+            with mock.patch("os.scandir", side_effect=PermissionError("denied at root")):
+                ok, errors = self.mod.check_corpus(root)
+                self.assertFalse(ok)
+                self.assertTrue(
+                    any("directory enumeration error in .:" in e for e in errors), errors
+                )
+
+            # 2. Nested directory enumeration failure must fail check_corpus.
+            real_scandir = os.scandir
+
+            def fail_on_render(path):
+                if Path(path).name == "render":
+                    raise PermissionError("denied in render")
+                return real_scandir(path)
+
+            with mock.patch("os.scandir", side_effect=fail_on_render):
+                ok, errors = self.mod.check_corpus(root)
+                self.assertFalse(ok)
+                self.assertTrue(
+                    any("directory enumeration error in render:" in e for e in errors), errors
+                )
+
+            # 3. Directory symlink or NTFS junction inside corpus must be rejected.
+            link_path = root / "render" / "linked"
+            try:
+                os.symlink(external, link_path, target_is_directory=True)
+            except OSError:
+                subprocess.run(
+                    ["cmd", "/c", "mklink", "/J", str(link_path), str(external)],
+                    check=True,
+                    capture_output=True,
+                )
+            try:
+                ok, errors = self.mod.check_corpus(root)
+                self.assertFalse(ok)
+                self.assertTrue(
+                    any(
+                        "symlink or reparse point not allowed in corpus: render/linked" in e
+                        for e in errors
+                    ),
+                    errors,
+                )
+            finally:
+                try:
+                    os.rmdir(link_path)
+                except OSError:
+                    link_path.unlink(missing_ok=True)
 
     def test_content_semantics_and_xref_gen65535(self) -> None:
         with self.assertRaisesRegex(ValueError, "unterminated"):

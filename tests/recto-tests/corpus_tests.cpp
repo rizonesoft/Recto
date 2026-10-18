@@ -1,3 +1,11 @@
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
 #include "test_support.h"
 
 #include <algorithm>
@@ -277,19 +285,137 @@ ProvenanceParseResult parse_provenance_markdown(std::string_view markdown)
 	return result;
 }
 
+struct FindHandleGuard {
+	HANDLE handle{INVALID_HANDLE_VALUE};
+
+	FindHandleGuard() noexcept = default;
+	explicit FindHandleGuard(HANDLE h) noexcept : handle(h) {}
+	~FindHandleGuard() noexcept
+	{
+		if (handle != INVALID_HANDLE_VALUE) {
+			FindClose(handle);
+		}
+	}
+
+	FindHandleGuard(const FindHandleGuard&) = delete;
+	FindHandleGuard& operator=(const FindHandleGuard&) = delete;
+};
+
+std::string wide_to_utf8(std::wstring_view wstr)
+{
+	if (wstr.empty()) {
+		return {};
+	}
+	const int needed = WideCharToMultiByte(
+		CP_UTF8,
+		WC_ERR_INVALID_CHARS,
+		wstr.data(),
+		static_cast<int>(wstr.size()),
+		nullptr,
+		0,
+		nullptr,
+		nullptr);
+	if (needed <= 0) {
+		throw std::runtime_error("WideCharToMultiByte failed in corpus_tests");
+	}
+	std::string out(static_cast<size_t>(needed), '\0');
+	WideCharToMultiByte(
+		CP_UTF8,
+		WC_ERR_INVALID_CHARS,
+		wstr.data(),
+		static_cast<int>(wstr.size()),
+		out.data(),
+		needed,
+		nullptr,
+		nullptr);
+	return out;
+}
+
+void walk_corpus_dir_win32(
+	const std::filesystem::path& dir_long,
+	const std::string& rel_prefix,
+	std::map<std::string, std::filesystem::path>* actual_files,
+	std::vector<std::string>* errors)
+{
+	const std::filesystem::path pattern = dir_long / L"*";
+	WIN32_FIND_DATAW find_data{};
+	FindHandleGuard find_guard(FindFirstFileW(pattern.c_str(), &find_data));
+	if (find_guard.handle == INVALID_HANDLE_VALUE) {
+		const DWORD err = GetLastError();
+		if (err == ERROR_FILE_NOT_FOUND) {
+			return;
+		}
+		const std::string loc = rel_prefix.empty() ? "." : rel_prefix;
+		errors->push_back(
+			"directory enumeration error in " + loc + " (Win32 error " + std::to_string(err) + ")");
+		return;
+	}
+
+	for (;;) {
+		const std::wstring_view name_w(find_data.cFileName);
+		if (name_w != L"." && name_w != L"..") {
+			const std::string name_utf8 = wide_to_utf8(name_w);
+			const std::string rel =
+				rel_prefix.empty() ? name_utf8 : (rel_prefix + "/" + name_utf8);
+			const std::filesystem::path child_long = dir_long / find_data.cFileName;
+			const DWORD attrs = find_data.dwFileAttributes;
+
+			if ((attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+				errors->push_back(
+					"symlink or reparse point not allowed in corpus directory: " + rel);
+			} else if ((attrs & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+				walk_corpus_dir_win32(child_long, rel, actual_files, errors);
+			} else if ((attrs & (FILE_ATTRIBUTE_DEVICE | FILE_ATTRIBUTE_OFFLINE)) != 0) {
+				errors->push_back("non-regular file entry in corpus directory: " + rel);
+			} else {
+				if (rel != "README.md" && rel != "PROVENANCE.md") {
+					actual_files->emplace(rel, child_long);
+				}
+			}
+		}
+
+		if (!FindNextFileW(find_guard.handle, &find_data)) {
+			const DWORD err = GetLastError();
+			if (err != ERROR_NO_MORE_FILES) {
+				const std::string loc = rel_prefix.empty() ? "." : rel_prefix;
+				errors->push_back(
+					"directory enumeration error in " + loc + " (Win32 error " +
+					std::to_string(err) + ")");
+			}
+			break;
+		}
+	}
+}
+
 CorpusValidationResult validate_corpus_directory(const std::filesystem::path& corpus_dir)
 {
 	CorpusValidationResult result;
 	const std::filesystem::path long_root = to_long_path(corpus_dir);
-	std::error_code ec;
-	if (!std::filesystem::is_directory(long_root, ec)) {
+	const DWORD root_attrs = GetFileAttributesW(long_root.c_str());
+	if (root_attrs == INVALID_FILE_ATTRIBUTES) {
 		result.errors.push_back("corpus directory does not exist: " + corpus_dir.string());
+		return result;
+	}
+	if ((root_attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+		result.errors.push_back(
+			"corpus root must not be a symlink or reparse point: " + corpus_dir.string());
+		return result;
+	}
+	if ((root_attrs & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+		result.errors.push_back("corpus path is not a directory: " + corpus_dir.string());
 		return result;
 	}
 
 	const std::filesystem::path provenance_path = corpus_dir / "PROVENANCE.md";
-	if (!std::filesystem::is_regular_file(to_long_path(provenance_path), ec)) {
-		result.errors.push_back("missing PROVENANCE.md in corpus directory: " + provenance_path.string());
+	const std::filesystem::path long_provenance = to_long_path(provenance_path);
+	const DWORD prov_attrs = GetFileAttributesW(long_provenance.c_str());
+	if (prov_attrs == INVALID_FILE_ATTRIBUTES || (prov_attrs & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+		result.errors.push_back(
+			"missing PROVENANCE.md in corpus directory: " + provenance_path.string());
+		return result;
+	}
+	if ((prov_attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+		result.errors.push_back("PROVENANCE.md must not be a symlink or reparse point");
 		return result;
 	}
 
@@ -313,26 +439,7 @@ CorpusValidationResult validate_corpus_directory(const std::filesystem::path& co
 	}
 
 	std::map<std::string, std::filesystem::path> actual_files;
-	for (std::filesystem::recursive_directory_iterator it(long_root, ec), end;
-		 !ec && it != end;
-		 it.increment(ec)) {
-		const auto& entry = *it;
-		if (entry.is_directory(ec)) {
-			continue;
-		}
-		const std::string rel = entry.path().lexically_relative(long_root).generic_string();
-		if (!entry.is_regular_file(ec)) {
-			result.errors.push_back("non-regular file entry in corpus directory: " + rel);
-			continue;
-		}
-		if (rel == "README.md" || rel == "PROVENANCE.md") {
-			continue;
-		}
-		actual_files.emplace(rel, entry.path());
-	}
-	if (ec) {
-		result.errors.push_back("error iterating corpus directory: " + ec.message());
-	}
+	walk_corpus_dir_win32(long_root, "", &actual_files, &result.errors);
 
 	for (const auto& [rel_path, row] : expected_by_path) {
 		const auto actual_it = actual_files.find(rel_path);
@@ -402,6 +509,33 @@ void copy_live_corpus_to_temp(const TempDir& temp_dir)
 		write_file_bytes(temp_dir.file_path(rel), bytes);
 	}
 	ASSERT_FALSE(ec) << "Failed to copy live corpus to TempDir: " << ec.message();
+}
+
+bool create_directory_link_for_test(
+	const std::filesystem::path& link_path,
+	const std::filesystem::path& target_dir)
+{
+	if (CreateSymbolicLinkW(
+			link_path.c_str(),
+			target_dir.c_str(),
+			SYMBOLIC_LINK_FLAG_DIRECTORY | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0) {
+		return true;
+	}
+	std::wstring cmd =
+		L"cmd.exe /d /s /c \"mklink /J \"" + link_path.wstring() + L"\" \"" +
+		target_dir.wstring() + L"\" >nul 2>&1\"";
+	STARTUPINFOW si{};
+	si.cb = sizeof(si);
+	PROCESS_INFORMATION pi{};
+	if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+		return false;
+	}
+	WaitForSingleObject(pi.hProcess, INFINITE);
+	DWORD exit_code = 1;
+	GetExitCodeProcess(pi.hProcess, &exit_code);
+	CloseHandle(pi.hThread);
+	CloseHandle(pi.hProcess);
+	return exit_code == 0;
 }
 
 TEST(Corpus, Provenance)
@@ -488,6 +622,45 @@ TEST(Corpus, RejectsUnlistedOrModifiedFile)
 		const CorpusValidationResult res = validate_corpus_directory(temp_corpus.path());
 		EXPECT_FALSE(res.ok);
 		EXPECT_TRUE(contains_ErrorSubstring(res.errors, missing_rel)) << join_errors(res.errors);
+	}
+
+	// Case 4: Directory symlink or NTFS junction inside corpus directory is rejected.
+	{
+		TempDir temp_corpus;
+		TempDir external_dir;
+		copy_live_corpus_to_temp(temp_corpus);
+		const std::array<uint8_t, 6> hidden{'h', 'i', 'd', 'd', 'e', 'n'};
+		write_file_bytes(external_dir.file_path("unlisted.bin"), hidden);
+
+		const std::filesystem::path link_path = temp_corpus.file_path("render/linked");
+		ASSERT_TRUE(create_directory_link_for_test(link_path, external_dir.path()));
+
+		const CorpusValidationResult res = validate_corpus_directory(temp_corpus.path());
+		RemoveDirectoryW(to_long_path(link_path).c_str());
+
+		EXPECT_FALSE(res.ok);
+		EXPECT_TRUE(contains_ErrorSubstring(res.errors, "render/linked"))
+			<< join_errors(res.errors);
+		EXPECT_TRUE(contains_ErrorSubstring(
+			res.errors, "symlink or reparse point not allowed in corpus directory"))
+			<< join_errors(res.errors);
+	}
+
+	// Case 5: Directory enumeration failures at root and nested directory are reported.
+	{
+		TempDir temp_corpus;
+		std::map<std::string, std::filesystem::path> files;
+		std::vector<std::string> errors;
+		walk_corpus_dir_win32(
+			to_long_path(temp_corpus.file_path("nonexistent-root")), "", &files, &errors);
+		EXPECT_TRUE(contains_ErrorSubstring(errors, "directory enumeration error in ."))
+			<< join_errors(errors);
+
+		errors.clear();
+		walk_corpus_dir_win32(
+			to_long_path(temp_corpus.file_path("nonexistent-subdir")), "render", &files, &errors);
+		EXPECT_TRUE(contains_ErrorSubstring(errors, "directory enumeration error in render"))
+			<< join_errors(errors);
 	}
 }
 

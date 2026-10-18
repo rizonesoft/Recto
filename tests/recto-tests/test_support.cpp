@@ -127,8 +127,14 @@ void clear_readonly_recursive(const std::filesystem::path& root) noexcept
 			}
 			const auto& entry_path = it->path();
 			const DWORD attrs = GetFileAttributesW(entry_path.c_str());
-			if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_READONLY) != 0) {
-				SetFileAttributesW(entry_path.c_str(), attrs & ~FILE_ATTRIBUTE_READONLY);
+			if (attrs != INVALID_FILE_ATTRIBUTES) {
+				if ((attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+					it.disable_recursion_pending();
+					continue;
+				}
+				if ((attrs & FILE_ATTRIBUTE_READONLY) != 0) {
+					SetFileAttributesW(entry_path.c_str(), attrs & ~FILE_ATTRIBUTE_READONLY);
+				}
 			}
 		}
 	} catch (...) {
