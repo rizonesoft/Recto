@@ -1279,6 +1279,28 @@ TEST(PdfXref, DamagedRecovery)
 		auto parse_rle_tight = XrefTable::parse(as_bytes(pdf_rle), 1u, /*allow_recovery=*/true);
 		RECTO_EXPECT_ERR(parse_rle_tight, ErrorCode::DecompressionLimitExceeded);
 	}
+
+	// 9. Recovery accepts indirect object headers containing PDF comments between
+	//    `<N>`, `<G>`, and `obj` (per ISO 32000-1 section 7.2.3).
+	{
+		std::string pdf_hdr_comments = "%PDF-1.7\n";
+		pdf_hdr_comments += "1 % comment after obj num\n";
+		pdf_hdr_comments += "0 % comment after gen num\n";
+		pdf_hdr_comments += "obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
+		pdf_hdr_comments += "2%no-space-comment\n0%no-space-gen-comment\nobj%after-obj\n";
+		pdf_hdr_comments += "<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+		pdf_hdr_comments += "startxref\n999999\n%%EOF\n";
+
+		auto rec_comments = XrefTable::recover_damaged_xref(as_bytes(pdf_hdr_comments));
+		RECTO_ASSERT_OK(rec_comments);
+		EXPECT_EQ(rec_comments->root_ref(), (IndirectRef{1u, 0u}));
+		auto cat_val = rec_comments->resolve_object(as_bytes(pdf_hdr_comments), IndirectRef{1u, 0u});
+		RECTO_ASSERT_OK(cat_val);
+		EXPECT_EQ(cat_val->as_dict()->get_name("Type"), "Catalog");
+		auto pages_val = rec_comments->resolve_object(as_bytes(pdf_hdr_comments), IndirectRef{2u, 0u});
+		RECTO_ASSERT_OK(pages_val);
+		EXPECT_EQ(pages_val->as_dict()->get_name("Type"), "Pages");
+	}
 }
 
 TEST(PdfXref, RejectsBrokenFiles)

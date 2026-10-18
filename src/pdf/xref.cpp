@@ -62,6 +62,26 @@ constexpr std::string_view kEofMarker = "%%EOF";
 	return false;
 }
 
+[[nodiscard]] size_t skip_pdf_whitespace_and_comments(
+	std::span<const uint8_t> bytes,
+	size_t p) noexcept
+{
+	while (p < bytes.size()) {
+		if (Lexer::is_pdf_whitespace(bytes[p])) {
+			++p;
+			continue;
+		}
+		if (bytes[p] == '%') {
+			while (p < bytes.size() && bytes[p] != '\n' && bytes[p] != '\r') {
+				++p;
+			}
+			continue;
+		}
+		break;
+	}
+	return p;
+}
+
 [[nodiscard]] bool contains_eof_marker(std::span<const uint8_t> tail) noexcept
 {
 	if (tail.size() < kEofMarker.size()) {
@@ -695,39 +715,40 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 				size_t digits_n = 0;
 				while (p < file_bytes.size() &&
 					   file_bytes[p] >= '0' &&
-					   file_bytes[p] <= '9' &&
-					   digits_n <= 10u) {
-					obj_num_u64 = obj_num_u64 * 10ULL + static_cast<uint64_t>(file_bytes[p] - '0');
+					   file_bytes[p] <= '9') {
+					if (digits_n <= 10u) {
+						obj_num_u64 = obj_num_u64 * 10ULL + static_cast<uint64_t>(file_bytes[p] - '0');
+					}
 					++p;
 					++digits_n;
 				}
+				const size_t p_after_n = p;
+				const size_t p_ws1 = skip_pdf_whitespace_and_comments(file_bytes, p_after_n);
 				if (digits_n >= 1u &&
 					digits_n <= 10u &&
 					obj_num_u64 > 0ULL &&
 					obj_num_u64 <= std::numeric_limits<uint32_t>::max() &&
-					p < file_bytes.size() &&
-					Lexer::is_pdf_whitespace(file_bytes[p])) {
-					while (p < file_bytes.size() && Lexer::is_pdf_whitespace(file_bytes[p])) {
-						++p;
-					}
+					p_ws1 > p_after_n &&
+					p_ws1 < file_bytes.size()) {
+					p = p_ws1;
 					uint64_t gen_u64 = 0;
 					size_t digits_g = 0;
 					while (p < file_bytes.size() &&
 						   file_bytes[p] >= '0' &&
-						   file_bytes[p] <= '9' &&
-						   digits_g <= 5u) {
-						gen_u64 = gen_u64 * 10ULL + static_cast<uint64_t>(file_bytes[p] - '0');
+						   file_bytes[p] <= '9') {
+						if (digits_g <= 5u) {
+							gen_u64 = gen_u64 * 10ULL + static_cast<uint64_t>(file_bytes[p] - '0');
+						}
 						++p;
 						++digits_g;
 					}
+					const size_t p_after_g = p;
+					const size_t p_ws2 = skip_pdf_whitespace_and_comments(file_bytes, p_after_g);
 					if (digits_g >= 1u &&
 						digits_g <= 5u &&
 						gen_u64 <= std::numeric_limits<uint16_t>::max() &&
-						p < file_bytes.size() &&
-						Lexer::is_pdf_whitespace(file_bytes[p])) {
-						while (p < file_bytes.size() && Lexer::is_pdf_whitespace(file_bytes[p])) {
-							++p;
-						}
+						p_ws2 > p_after_g) {
+						p = p_ws2;
 						if (matches_token_at(file_bytes, p, "obj")) {
 							if (objects_discovered >= effective_max_entries ||
 								candidate_attempts >= effective_max_entries) {
@@ -1020,6 +1041,8 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 						}
 					}
 				}
+				pos = p_ws1;
+				continue;
 			}
 
 			++pos;
