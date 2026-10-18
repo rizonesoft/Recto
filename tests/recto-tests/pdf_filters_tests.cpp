@@ -120,9 +120,36 @@ TEST(PdfFilters, FlateDecode)
 			std::string_view::npos);
 	}
 
-	// 7. Reject corpus decompression bomb tests/corpus/broken/deflate-bomb-10kb.pdf
-	// with ErrorCode::DecompressionLimitExceeded before exceeding the 256 MB cap.
+	// 7. Empty dynamic DEFLATE block (single 1-bit EOB symbol 256 in literal/length tree).
 	{
+		const std::array<uint8_t, 42> empty_dyn_block = {
+			0x05u, 0xC0u, 0x01u, 0x04u, 0x00u, 0x00u, 0x00u, 0x00u,
+			0x10u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u,
+			0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u,
+			0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u,
+			0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u,
+			0x80u, 0x00u};
+		auto dec_empty_dyn = decode_flate(empty_dyn_block);
+		RECTO_ASSERT_OK(dec_empty_dyn);
+		EXPECT_TRUE(dec_empty_dyn->empty());
+	}
+
+	// 8. Small configurable max_decoded_bytes ceiling and corpus decompression bomb
+	// tests/corpus/broken/deflate-bomb-10kb.pdf rejected with ErrorCode::DecompressionLimitExceeded
+	// while keeping filter functions pure and free of global diagnostic ring side effects.
+	{
+		const auto seed_bin = test::read_file_bytes(
+			test::corpus_path("seeds/seed-filter-00-flate.bin"));
+		const std::span<const uint8_t> zlib_payload(seed_bin.data() + 1, seed_bin.size() - 1);
+
+		// Exact ceiling == kKnownFilterPlaintext.size() (63 bytes) succeeds; 62 bytes fails.
+		auto exact_ok = decode_flate(zlib_payload, nullptr, kKnownFilterPlaintext.size());
+		RECTO_ASSERT_OK(exact_ok);
+		EXPECT_LE(exact_ok->capacity(), kKnownFilterPlaintext.size());
+		RECTO_EXPECT_ERR(
+			decode_flate(zlib_payload, nullptr, kKnownFilterPlaintext.size() - 1u),
+			ErrorCode::DecompressionLimitExceeded);
+
 		clear_diagnostics();
 		const auto bomb_pdf = test::read_file_bytes(
 			test::corpus_path("broken/deflate-bomb-10kb.pdf"));
@@ -134,12 +161,12 @@ TEST(PdfFilters, FlateDecode)
 		RECTO_ASSERT_OK(stm_obj);
 		ASSERT_TRUE(stm_obj->is_stream());
 
+		clear_diagnostics();
 		auto bomb_res = decode_stream(*stm_obj->as_stream());
 		RECTO_EXPECT_ERR(bomb_res, ErrorCode::DecompressionLimitExceeded);
-
-		const auto diags = diagnostics_tail();
-		ASSERT_FALSE(diags.empty());
-		EXPECT_EQ(diags.back().diagnostic_id, DiagnosticId::DecompressionLimitExceeded);
+		// Freeze contract: stream filters are pure stateless functions that do not
+		// mutate shared process-wide state.
+		EXPECT_TRUE(diagnostics_tail().empty());
 	}
 }
 
@@ -234,7 +261,8 @@ TEST(PdfFilters, LzwDecode)
 		EXPECT_EQ((*dec_ec0)[dec_ec0->size() - 1], 'B');
 	}
 
-	// 4. Reject corrupt out-of-range LZW code (300 when next_code is 258) and missing EOD.
+	// 4. Reject corrupt out-of-range LZW code (300 when next_code is 258) and missing EOD,
+	// and verify dictionary pool growth across >200chained KwKwK entries (>20 KB dict_pool reallocation).
 	{
 		const std::pair<uint32_t, uint32_t> bad_codes[] = {
 			{256u, 9u},
@@ -248,6 +276,21 @@ TEST(PdfFilters, LzwDecode)
 			{'A', 9u},
 		};
 		RECTO_EXPECT_ERR(decode_lzw(pack_lzw_codes(no_eod)), ErrorCode::DamagedFormat);
+
+		// Chain 200 KwKwK codes (258..457) where entry 258+k has length k+2:
+		// total dictionary pool size = sum_{k=0..199} (k+2) = 20,300 bytes (> 16,384 initial reserve).
+		std::vector<std::pair<uint32_t, uint32_t>> deep_codes;
+		deep_codes.emplace_back(256u, 9u);
+		deep_codes.emplace_back('X', 9u);
+		for (uint32_t c = 258u; c < 458u; ++c) {
+			deep_codes.emplace_back(c, 9u);
+		}
+		deep_codes.emplace_back(257u, 9u);
+		auto deep_res = decode_lzw(pack_lzw_codes(deep_codes));
+		RECTO_ASSERT_OK(deep_res);
+		// Total output length: 1 + sum_{k=0..199} (k+2) = 20,301 'X' bytes.
+		ASSERT_EQ(deep_res->size(), 20301u);
+		EXPECT_EQ(*deep_res, std::vector<uint8_t>(20301u, 'X'));
 	}
 }
 
@@ -547,6 +590,28 @@ TEST(PdfFilters, ChainedPipeline)
 		PdfDict dict_9;
 		dict_9.set("Filter", PdfValue(std::move(filters_9)));
 		RECTO_EXPECT_ERR(decode_stream(as_bytes("9-stage-fail"), dict_9), ErrorCode::DamagedFormat);
+
+		// /F + /FFilter + /FDecodeParms handling:
+		// - External stream (/F) with empty caller bytes fails with ErrorCode::UnsupportedFeature.
+		// - External stream (/F) with caller-supplied bytes uses /FFilter and /FDecodeParms.
+		// - /FFilter without /F fails with ErrorCode::DamagedFormat.
+		PdfDict ext_dict;
+		ext_dict.set("F", PdfValue(PdfString("external.bin")));
+		ext_dict.set("FFilter", PdfValue(PdfName("FlateDecode")));
+		PdfDict ext_parms;
+		ext_parms.set("Predictor", PdfValue(int64_t{12}));
+		ext_parms.set("Columns", PdfValue(int64_t{8}));
+		ext_dict.set("FDecodeParms", PdfValue(std::move(ext_parms)));
+
+		RECTO_EXPECT_ERR(decode_stream(std::span<const uint8_t>{}, ext_dict), ErrorCode::UnsupportedFeature);
+
+		auto dec_ext = decode_stream(flate_pred_payload, ext_dict);
+		RECTO_ASSERT_OK(dec_ext);
+		EXPECT_EQ(as_string_view(*dec_ext), kKnownFilterPlaintext);
+
+		PdfDict orphan_ffilter;
+		orphan_ffilter.set("FFilter", PdfValue(PdfName("ASCIIHexDecode")));
+		RECTO_EXPECT_ERR(decode_stream(as_bytes("4865>"), orphan_ffilter), ErrorCode::DamagedFormat);
 	}
 }
 

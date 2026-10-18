@@ -27,8 +27,29 @@ constexpr size_t kMaxInitialReserveBytes = 1024ULL * 1024ULL; // 1 MiB
 	std::string_view message,
 	std::optional<uint64_t> byte_offset = std::nullopt) noexcept
 {
-	record_diagnostic(code, diag_id, byte_offset);
+	static_cast<void>(diag_id);
 	return PdfError(code, message, byte_offset);
+}
+
+// Ensures `out` has capacity for `additional` more bytes without geometric
+// allocation growth ever exceeding `max_decoded_bytes`.
+void ensure_bounded_capacity(
+	std::vector<uint8_t>& out,
+	size_t additional,
+	size_t max_decoded_bytes)
+{
+	const size_t required = out.size() + additional;
+	if (required <= out.capacity()) {
+		return;
+	}
+	const size_t current_cap = out.capacity();
+	const size_t doubled = (current_cap <= max_decoded_bytes / 2u)
+		? std::max<size_t>(current_cap * 2u, 256u)
+		: max_decoded_bytes;
+	const size_t next_cap = std::min<size_t>(
+		max_decoded_bytes,
+		std::max<size_t>(required, doubled));
+	out.reserve(next_cap);
 }
 
 [[nodiscard]] constexpr bool is_pdf_whitespace(uint8_t b) noexcept
@@ -161,15 +182,17 @@ struct HuffmanTree {
 		}
 
 		// Check over-subscription and completeness of the prefix code tree.
+		uint32_t total_nonzero = 0;
 		int32_t left = 1;
 		for (uint32_t bits = 1; bits <= kMaxBits; ++bits) {
+			total_nonzero += count[bits];
 			left <<= 1;
 			left -= static_cast<int32_t>(count[bits]);
 			if (left < 0) {
 				return false;
 			}
 		}
-		if (left > 0 && !(allow_incomplete_single && max_len == 1 && count[1] == 1)) {
+		if (left > 0 && !(allow_incomplete_single && total_nonzero == 1u)) {
 			return false;
 		}
 
@@ -255,6 +278,7 @@ struct HuffmanTree {
 					"FlateDecode output exceeds maximum decoded stream byte ceiling",
 					br.aligned_byte_position());
 			}
+			ensure_bounded_capacity(out, 1u, max_decoded_bytes);
 			out.push_back(static_cast<uint8_t>(sym));
 			continue;
 		}
@@ -317,6 +341,7 @@ struct HuffmanTree {
 		}
 
 		const size_t start_pos = out.size() - distance;
+		ensure_bounded_capacity(out, match_len, max_decoded_bytes);
 		out.resize(out.size() + match_len);
 		uint8_t* dst = out.data() + start_pos + distance;
 		const uint8_t* src = out.data() + start_pos;
@@ -391,6 +416,7 @@ struct HuffmanTree {
 					"Truncated stored block payload in FlateDecode stream",
 					raw_pos);
 			}
+			ensure_bounded_capacity(out, len, max_decoded_bytes);
 			out.insert(
 				out.end(),
 				deflate_bytes.begin() + static_cast<std::ptrdiff_t>(raw_pos),
@@ -564,7 +590,7 @@ struct HuffmanTree {
 			HuffmanTree dist_tree;
 			const std::span<const uint8_t> lit_span(unpacked_lengths.data(), hlit);
 			const std::span<const uint8_t> dist_span(unpacked_lengths.data() + hlit, hdist);
-			if (!lit_tree.build(lit_span, false) ||
+			if (!lit_tree.build(lit_span, true) ||
 				!dist_tree.build(dist_span, true)) {
 				return make_filter_error(
 					ErrorCode::DamagedFormat,
@@ -937,7 +963,8 @@ PdfResult<std::vector<uint8_t>> decode_flate(
 		} else {
 			// Automatic raw-deflate fallback when the 2-byte RFC 1950 header is
 			// omitted or fails checksum; if raw deflate from byte 0 fails and
-			// input has >= 2 bytes, also try skipping the corrupt 2-byte header.
+			// byte 0 looks like a deflate CMF byte (CM == 8, CINFO <= 7) with a
+			// corrupt FLG checksum byte, also try skipping the 2-byte header.
 			auto raw_res = inflate_raw_deflate(input, effective_limit);
 			if (raw_res.has_value()) {
 				inflated = std::move(*raw_res);
@@ -945,7 +972,10 @@ PdfResult<std::vector<uint8_t>> decode_flate(
 				raw_res.error().code == ErrorCode::DecompressionLimitExceeded ||
 				raw_res.error().code == ErrorCode::OutOfMemory) {
 				return raw_res.error();
-			} else if (input.size() > 2) {
+			} else if (
+				input.size() > 2 &&
+				(input[0] & 0x0Fu) == 8u &&
+				((input[0] >> 4u) & 0x0Fu) <= 7u) {
 				auto skip2_res = inflate_raw_deflate(input.subspan(2), effective_limit);
 				if (!skip2_res.has_value()) {
 					return raw_res.error();
@@ -1090,15 +1120,28 @@ PdfResult<std::vector<uint8_t>> decode_lzw(
 					"LZWDecode output exceeds maximum decoded stream byte ceiling",
 					byte_pos);
 			}
+			ensure_bounded_capacity(out, cur_seq.size(), effective_limit);
 			out.insert(out.end(), cur_seq.begin(), cur_seq.end());
 
 			if (prev_code.has_value() && next_code < 4096u) {
-				const auto prev_span = get_code_span(*prev_code);
+				const uint32_t pcode = *prev_code;
 				const uint32_t new_off = static_cast<uint32_t>(dict_pool.size());
-				const uint32_t new_len = static_cast<uint32_t>(prev_span.size() + 1u);
-				dict_pool.insert(dict_pool.end(), prev_span.begin(), prev_span.end());
-				dict_pool.push_back(cur_seq[0]);
-				table[next_code] = LzwEntry{new_off, new_len};
+				if (pcode < 256u) {
+					dict_pool.push_back(static_cast<uint8_t>(pcode));
+					dict_pool.push_back(cur_seq[0]);
+					table[next_code] = LzwEntry{new_off, 2u};
+				} else {
+					const uint32_t src_off = table[pcode].offset;
+					const uint32_t src_len = table[pcode].length;
+					const uint32_t new_len = src_len + 1u;
+					dict_pool.resize(static_cast<size_t>(new_off) + new_len);
+					std::memcpy(
+						dict_pool.data() + new_off,
+						dict_pool.data() + src_off,
+						src_len);
+					dict_pool[new_off + src_len] = cur_seq[0];
+					table[next_code] = LzwEntry{new_off, new_len};
+				}
 				++next_code;
 
 				if (next_code == (1u << code_bits) - threshold_delta && code_bits < 12u) {
@@ -1171,6 +1214,7 @@ PdfResult<std::vector<uint8_t>> decode_ascii_hex(
 						"ASCIIHexDecode output exceeds maximum decoded stream byte ceiling",
 						i);
 				}
+				ensure_bounded_capacity(out, 1u, effective_limit);
 				out.push_back(static_cast<uint8_t>((high_nibble << 4) | nib));
 				high_nibble = -1;
 			}
@@ -1192,6 +1236,7 @@ PdfResult<std::vector<uint8_t>> decode_ascii_hex(
 					"ASCIIHexDecode output exceeds maximum decoded stream byte ceiling",
 					input.size());
 			}
+			ensure_bounded_capacity(out, 1u, effective_limit);
 			out.push_back(static_cast<uint8_t>(high_nibble << 4));
 		}
 
@@ -1226,7 +1271,6 @@ PdfResult<std::vector<uint8_t>> decode_ascii85(
 				continue;
 			}
 			if (b == '~') {
-				// Skip any optional whitespace or require immediate '>'? ISO 32000-1 7.4.3 specifies "~>".
 				if (i + 1 < input.size() && input[i + 1] == '>') {
 					saw_eod = true;
 					break;
@@ -1252,6 +1296,7 @@ PdfResult<std::vector<uint8_t>> decode_ascii85(
 						"ASCII85Decode output exceeds maximum decoded stream byte ceiling",
 						i);
 				}
+				ensure_bounded_capacity(out, 4u, effective_limit);
 				out.insert(out.end(), {0u, 0u, 0u, 0u});
 				continue;
 			}
@@ -1283,6 +1328,7 @@ PdfResult<std::vector<uint8_t>> decode_ascii85(
 						"ASCII85Decode output exceeds maximum decoded stream byte ceiling",
 						i);
 				}
+				ensure_bounded_capacity(out, 4u, effective_limit);
 				out.push_back(static_cast<uint8_t>((val >> 24u) & 0xFFu));
 				out.push_back(static_cast<uint8_t>((val >> 16u) & 0xFFu));
 				out.push_back(static_cast<uint8_t>((val >> 8u) & 0xFFu));
@@ -1330,6 +1376,7 @@ PdfResult<std::vector<uint8_t>> decode_ascii85(
 					"ASCII85Decode output exceeds maximum decoded stream byte ceiling",
 					input.size());
 			}
+			ensure_bounded_capacity(out, emit_bytes, effective_limit);
 			for (size_t b_idx = 0; b_idx < emit_bytes; ++b_idx) {
 				const uint32_t shift = static_cast<uint32_t>((3u - b_idx) * 8u);
 				out.push_back(static_cast<uint8_t>((val >> shift) & 0xFFu));
@@ -1381,6 +1428,7 @@ PdfResult<std::vector<uint8_t>> decode_run_length(
 						"RunLengthDecode output exceeds maximum decoded stream byte ceiling",
 						pos - 1u);
 				}
+				ensure_bounded_capacity(out, count, effective_limit);
 				out.insert(
 					out.end(),
 					input.begin() + static_cast<std::ptrdiff_t>(pos),
@@ -1403,6 +1451,7 @@ PdfResult<std::vector<uint8_t>> decode_run_length(
 						pos - 1u);
 				}
 				const uint8_t repeat_byte = input[pos++];
+				ensure_bounded_capacity(out, count, effective_limit);
 				out.insert(out.end(), count, repeat_byte);
 			}
 		}
@@ -1495,7 +1544,39 @@ PdfResult<std::vector<uint8_t>> decode_stream(
 	try {
 		const size_t effective_limit = std::min<size_t>(max_decoded_bytes, kMaxDecodedStreamBytes);
 
+		const PdfValue* f_spec = stream_dict.get("F");
+		const bool has_external_file = (f_spec != nullptr && !f_spec->is_null());
+
 		const PdfValue* filter_val = stream_dict.get("Filter");
+		bool using_external_filters = false;
+		if (has_external_file) {
+			if (raw_bytes.empty()) {
+				return make_pdf_error(
+					ErrorCode::UnsupportedFeature,
+					"External stream file specification (/F) requires caller-supplied stream bytes");
+			}
+			// When caller supplies external stream bytes for a stream dictionary
+			// with /F, ISO 32000-1 Table 5 specifies /FFilter and /FDecodeParms
+			// (ignoring inline /Filter and /DecodeParms).
+			using_external_filters = true;
+			filter_val = stream_dict.get("FFilter");
+		} else if (filter_val == nullptr || filter_val->is_null()) {
+			if (const PdfValue* ffilter_only = stream_dict.get("FFilter");
+				ffilter_only != nullptr && !ffilter_only->is_null()) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Stream dictionary specifies /FFilter without /F external file specification");
+			}
+			if (const PdfValue* fparms_only = stream_dict.get("FDecodeParms");
+				fparms_only != nullptr && !fparms_only->is_null()) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Stream dictionary specifies /FDecodeParms without /F external file specification");
+			}
+		}
+
 		if (filter_val == nullptr || filter_val->is_null()) {
 			if (raw_bytes.size() > effective_limit) {
 				return make_filter_error(
@@ -1506,9 +1587,14 @@ PdfResult<std::vector<uint8_t>> decode_stream(
 			return std::vector<uint8_t>(raw_bytes.begin(), raw_bytes.end());
 		}
 
-		const PdfValue* parms_val = stream_dict.get("DecodeParms");
-		if (parms_val == nullptr) {
-			parms_val = stream_dict.get("DP");
+		const PdfValue* parms_val = nullptr;
+		if (using_external_filters) {
+			parms_val = stream_dict.get("FDecodeParms");
+		} else {
+			parms_val = stream_dict.get("DecodeParms");
+			if (parms_val == nullptr) {
+				parms_val = stream_dict.get("DP");
+			}
 		}
 
 		std::array<std::string_view, kMaxFilterChainDepth> filter_names{};

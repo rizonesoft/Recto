@@ -81,7 +81,10 @@ struct PredictorParams {
 	size_t max_decoded_bytes = kMaxDecodedStreamBytes) noexcept;
 
 // Executes a single or chained `/Filter` pipeline (up to `kMaxFilterChainDepth`
-// = 8 stages) using matching `/DecodeParms` entries from `stream_dict`.
+// = 8 stages) using matching `/DecodeParms` (or `/DP`) entries from
+// `stream_dict`. When `/F` is present without inline `/Filter`, uses `/FFilter`
+// and `/FDecodeParms` if caller-supplied external bytes are provided, or
+// rejects missing external stream payloads with `ErrorCode::UnsupportedFeature`.
 [[nodiscard]] PdfResult<std::vector<uint8_t>> decode_stream(
 	std::span<const uint8_t> raw_bytes,
 	const PdfDict& stream_dict,
