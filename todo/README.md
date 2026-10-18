@@ -29,23 +29,23 @@ Naming: `TODO-NN-short-name.md`, where `NN` is the next free number within that 
 
 ## Frontmatter
 
-Every TODO file opens with YAML frontmatter, one scalar per line. Five required fields, four optional. That is the whole schema: resist adding more.
+Every TODO file opens with YAML frontmatter, one scalar per line with no inline `#` comments. Five required fields, four optional. That is the whole schema: resist adding more.
 
 ```yaml
 ---
 schema_version: 1
-id: bridge-runtime                 # stable, kebab-case, globally unique, survives renames
-domain: 01-engine                  # must match the containing directory
-status: active                     # draft | active | blocked | done | superseded
+id: bridge-runtime
+domain: 01-engine
+status: active
 title: "TODO-01 -- Native PDF Parser, Filters, Crypto and Document Model"
-depends_on: ["repo-and-build"]     # optional: TODO ids that must fully ship first
-frozen: true                       # optional: touches the frozen thread-safety contract
-track: M1                          # optional: milestone reference
-superseded_by: other-todo-id       # required with status: superseded
+depends_on: ["repo-and-build"]
+frozen: true
+track: M1
+superseded_by: other-todo-id
 ---
 ```
 
-`id` rules: lowercase `a-z0-9-`, 2 to 60 chars, starts with a letter, no trailing dash. It must not change once other files point at it. Only `active` files produce ready sections. `done` is true exactly when every section is stamped (the last stamp sets it). A `superseded` file must name where its work went.
+`id` rules: lowercase `a-z0-9-`, 2 to 60 chars, starts with a letter, no trailing dash, globally unique, and survives renames. `domain` must match the containing directory. `status` is one of `draft`, `active`, `blocked`, `done`, or `superseded`: only `active` files produce ready sections, `done` is true exactly when every section is stamped (the last stamp sets it), and a `superseded` file must set `superseded_by` to name where its work went. Optional `depends_on` lists TODO `id`s that must fully ship first, `frozen: true` marks files touching the frozen thread-safety contract, and `track` names the milestone (`M0` to `M6`).
 
 ## File anatomy
 

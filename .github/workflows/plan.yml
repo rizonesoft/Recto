@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths:
       - 'todo/**'
+      - 'docs/reviews/**'
       - 'scripts/**'
       - 'tests/scripts/**'
       - '.claude/skills/**'
@@ -17,6 +18,7 @@ on:
   pull_request:
     paths:
       - 'todo/**'
+      - 'docs/reviews/**'
       - 'scripts/**'
       - 'tests/scripts/**'
       - '.claude/skills/**'

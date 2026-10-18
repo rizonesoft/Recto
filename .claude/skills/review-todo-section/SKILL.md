@@ -89,7 +89,7 @@ One `--review` per round, one `--check` per gate actually run. `stamp` writes th
 
 ### 7. Audit stance
 
-On an already-`[x]` section: run steps 1 to 5 against the section's own candidate and receipt. Confirm the stamp's evidence still holds (re-run the checkpoint) or find the regression. The only permitted row change is `[x]` back to `[ ]`, done by removing nothing silently: record the regression in the section as a dated blocking note, file the repair with `add-todo`, and say plainly that downstream sections stamped on this one are suspect until it re-stamps. A re-confirmed row keeps its stamp; say so in one line.
+On an already-`[x]` section: run steps 1 to 5 against the section's own candidate and receipt. Confirm the stamp's evidence still holds (re-run the checkpoint) or find the regression. A stamped section's `[x]` row, checklist, `Verified:` line, and receipt are immutable (`todo/README.md` and `validate` refuse reopening a stamped row or overwriting a receipt): when a regression is found, record a dated `> **Audit YYYY-MM-DD:**` note in the section naming the failing check, file a new repair section through `add-todo` (citing the regressed section and any downstream sections whose assumptions are affected), and sync the plan. A re-confirmed row keeps its stamp untouched; say so in one line.
 
 ## Guardrails
 
