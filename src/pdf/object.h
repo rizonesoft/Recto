@@ -78,14 +78,10 @@ struct PdfName {
 
 	bool operator==(std::string_view other) const noexcept
 	{
-		if (value == other) {
-			return true;
-		}
 		if (!other.empty() && other.front() == '/') {
 			other.remove_prefix(1);
-			return value == other;
 		}
-		return false;
+		return value == other;
 	}
 };
 

@@ -198,7 +198,8 @@ TEST(PdfObject, DictHelpersAndNullValueElision)
 	EXPECT_EQ(dict.get("Zoom"), nullptr);
 
 	// A dictionary containing both decoded "/A" (from /#2FA) and "A" (from /A)
-	// preserves both distinct keys across lookup, equality, and erase.
+	// preserves both distinct keys across PdfName lookup, equality, and erase,
+	// while string_view APIs consistently normalize a leading '/' to "A".
 	PdfDict escaped_dict;
 	escaped_dict.set(PdfName::from_decoded("/A"), PdfValue(int64_t{10}));
 	escaped_dict.set(PdfName::from_decoded("A"), PdfValue(int64_t{20}));
@@ -207,6 +208,29 @@ TEST(PdfObject, DictHelpersAndNullValueElision)
 	EXPECT_EQ(escaped_dict.get(PdfName::from_decoded("/A"))->as_int(), std::optional<int64_t>(10));
 	ASSERT_NE(escaped_dict.get(PdfName::from_decoded("A")), nullptr);
 	EXPECT_EQ(escaped_dict.get(PdfName::from_decoded("A"))->as_int(), std::optional<int64_t>(20));
+
+	// string_view overloads normalize "/A" -> "A" consistently across set, get,
+	// get_mut, contains, typed helpers, null assignment, and erase.
+	EXPECT_EQ(escaped_dict.get_int("/A"), std::optional<int64_t>(20));
+	EXPECT_EQ(escaped_dict.get_int("A"), std::optional<int64_t>(20));
+	escaped_dict.set("/A", PdfValue(int64_t{30}));
+	EXPECT_EQ(escaped_dict.get_int("/A"), std::optional<int64_t>(30));
+	EXPECT_EQ(escaped_dict.get_int("A"), std::optional<int64_t>(30));
+	EXPECT_EQ(escaped_dict.get(PdfName::from_decoded("/A"))->as_int(), std::optional<int64_t>(10));
+
+	*escaped_dict.get_mut("/A") = PdfValue(int64_t{40});
+	EXPECT_EQ(escaped_dict.get_int("/A"), std::optional<int64_t>(40));
+	EXPECT_EQ(escaped_dict.get(PdfName::from_decoded("/A"))->as_int(), std::optional<int64_t>(10));
+
+	EXPECT_TRUE(escaped_dict.erase("/A"));
+	EXPECT_FALSE(escaped_dict.contains("/A"));
+	EXPECT_FALSE(escaped_dict.contains("A"));
+	EXPECT_TRUE(escaped_dict.contains(PdfName::from_decoded("/A")));
+	EXPECT_EQ(escaped_dict.get(PdfName::from_decoded("/A"))->as_int(), std::optional<int64_t>(10));
+
+	escaped_dict.set(PdfName::from_decoded("/A"), PdfValue(PdfNull{}));
+	EXPECT_FALSE(escaped_dict.contains(PdfName::from_decoded("/A")));
+	EXPECT_TRUE(escaped_dict.empty());
 }
 
 TEST(PdfObject, RectAndMatrixNormalization)

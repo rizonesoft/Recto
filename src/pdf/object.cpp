@@ -400,19 +400,13 @@ bool PdfDict::erase(const PdfName& key) noexcept
 
 bool PdfDict::erase(std::string_view key) noexcept
 {
+	if (!key.empty() && key.front() == '/') {
+		key.remove_prefix(1);
+	}
 	for (auto it = entries_.begin(); it != entries_.end(); ++it) {
 		if (it->first.view() == key) {
 			entries_.erase(it);
 			return true;
-		}
-	}
-	if (!key.empty() && key.front() == '/') {
-		const std::string_view stripped = key.substr(1);
-		for (auto it = entries_.begin(); it != entries_.end(); ++it) {
-			if (it->first.view() == stripped) {
-				entries_.erase(it);
-				return true;
-			}
 		}
 	}
 	return false;
@@ -440,17 +434,12 @@ const PdfValue* PdfDict::get(const PdfName& key) const noexcept
 
 const PdfValue* PdfDict::get(std::string_view key) const noexcept
 {
+	if (!key.empty() && key.front() == '/') {
+		key.remove_prefix(1);
+	}
 	for (const auto& [k, v] : entries_) {
 		if (k.view() == key) {
 			return &v;
-		}
-	}
-	if (!key.empty() && key.front() == '/') {
-		const std::string_view stripped = key.substr(1);
-		for (const auto& [k, v] : entries_) {
-			if (k.view() == stripped) {
-				return &v;
-			}
 		}
 	}
 	return nullptr;
@@ -468,17 +457,12 @@ PdfValue* PdfDict::get_mut(const PdfName& key) noexcept
 
 PdfValue* PdfDict::get_mut(std::string_view key) noexcept
 {
+	if (!key.empty() && key.front() == '/') {
+		key.remove_prefix(1);
+	}
 	for (auto& [k, v] : entries_) {
 		if (k.view() == key) {
 			return &v;
-		}
-	}
-	if (!key.empty() && key.front() == '/') {
-		const std::string_view stripped = key.substr(1);
-		for (auto& [k, v] : entries_) {
-			if (k.view() == stripped) {
-				return &v;
-			}
 		}
 	}
 	return nullptr;
