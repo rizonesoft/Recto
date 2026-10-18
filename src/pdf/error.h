@@ -8,6 +8,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <exception>
 #include <new>
 #include <optional>
@@ -487,34 +488,41 @@ public:
 
 	void assign(const char* ptr, size_t len) noexcept
 	{
-		reset_heap();
 		if (!ptr || len == 0) {
-			size_ = 0;
-			inline_[0] = '\0';
+			clear();
 			return;
 		}
+		char* old_heap = heap_;
 		if (len <= kInlineCapacity) {
-			for (size_t i = 0; i < len; ++i) {
-				inline_[i] = ptr[i];
-			}
+			std::memmove(inline_, ptr, len);
 			inline_[len] = '\0';
+			heap_ = nullptr;
 			size_ = len;
+			if (old_heap) {
+				::operator delete(old_heap);
+			}
 			return;
 		}
 		try {
-			char* buf = static_cast<char*>(::operator new(len + 1));
-			for (size_t i = 0; i < len; ++i) {
-				buf[i] = ptr[i];
+			if (len == static_cast<size_t>(-1)) {
+				throw std::bad_alloc();
 			}
+			char* buf = static_cast<char*>(::operator new(len + 1));
+			std::memcpy(buf, ptr, len);
 			buf[len] = '\0';
 			heap_ = buf;
 			size_ = len;
-		} catch (...) {
-			for (size_t i = 0; i < kInlineCapacity; ++i) {
-				inline_[i] = ptr[i];
+			if (old_heap) {
+				::operator delete(old_heap);
 			}
+		} catch (...) {
+			std::memmove(inline_, ptr, kInlineCapacity);
 			inline_[kInlineCapacity] = '\0';
+			heap_ = nullptr;
 			size_ = kInlineCapacity;
+			if (old_heap) {
+				::operator delete(old_heap);
+			}
 		}
 	}
 

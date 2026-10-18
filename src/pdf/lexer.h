@@ -193,6 +193,9 @@ public:
 		if (new_cap <= capacity_) {
 			return;
 		}
+		if (new_cap == static_cast<size_t>(-1)) {
+			throw std::bad_alloc();
+		}
 		char* new_buf = static_cast<char*>(detail::lexer_allocate(new_cap + 1));
 		if (size_ > 0 && data_) {
 			std::memcpy(new_buf, data_, size_);
@@ -212,6 +215,9 @@ public:
 			return;
 		}
 		if (len > capacity_) {
+			if (len == static_cast<size_t>(-1)) {
+				throw std::bad_alloc();
+			}
 			char* new_buf = static_cast<char*>(detail::lexer_allocate(len + 1));
 			std::memcpy(new_buf, ptr, len);
 			new_buf[len] = '\0';
@@ -236,7 +242,14 @@ public:
 	void push_back(char ch)
 	{
 		if (size_ == capacity_) {
-			const size_t next_cap = (capacity_ == 0) ? 16 : (capacity_ * 2);
+			if (capacity_ >= static_cast<size_t>(-1) - 1) {
+				throw std::bad_alloc();
+			}
+			const size_t next_cap = (capacity_ == 0)
+				? 16
+				: ((capacity_ > (static_cast<size_t>(-1) - 1) / 2)
+					  ? (static_cast<size_t>(-1) - 1)
+					  : (capacity_ * 2));
 			reserve(next_cap);
 		}
 		data_[size_++] = ch;
@@ -501,7 +514,14 @@ public:
 	void push_back(uint8_t b)
 	{
 		if (size_ == capacity_) {
-			const size_t next_cap = (capacity_ == 0) ? 16 : (capacity_ * 2);
+			if (capacity_ == static_cast<size_t>(-1)) {
+				throw std::bad_alloc();
+			}
+			const size_t next_cap = (capacity_ == 0)
+				? 16
+				: ((capacity_ > static_cast<size_t>(-1) / 2)
+					  ? static_cast<size_t>(-1)
+					  : (capacity_ * 2));
 			reserve(next_cap);
 		}
 		data_[size_++] = b;

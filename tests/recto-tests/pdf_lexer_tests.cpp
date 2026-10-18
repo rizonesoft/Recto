@@ -208,6 +208,22 @@ TEST(PdfLexer, WhitespaceAndComments)
 			EXPECT_EQ(bytes_to_ascii(tok3.value().bytes), "Hello");
 		}
 	}
+
+	// 7. Proxy-free buffer edge cases: PdfErrorMessage aliased self-assignment
+	// across heap/inline boundaries and TokenText SIZE_MAX capacity overflow guard.
+	{
+		PdfErrorMessage msg(std::string(200, 'A'));
+		msg = msg.view().substr(1);
+		EXPECT_EQ(msg.size(), 199u);
+		EXPECT_EQ(msg.view(), std::string(199, 'A'));
+		msg = msg.view().substr(150);
+		EXPECT_EQ(msg.size(), 49u);
+		EXPECT_EQ(msg.view(), std::string(49, 'A'));
+
+		TokenText text("abc");
+		EXPECT_THROW(text.reserve(std::numeric_limits<size_t>::max()), std::bad_alloc);
+		EXPECT_EQ(text, "abc");
+	}
 }
 
 TEST(PdfLexer, Numbers)
