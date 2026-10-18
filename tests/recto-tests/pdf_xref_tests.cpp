@@ -1157,6 +1157,30 @@ TEST(PdfXref, DamagedRecovery)
 
 		auto rec_attempts = XrefTable::recover_damaged_xref(as_bytes(hostile), /*max_total_entries=*/8u);
 		RECTO_EXPECT_ERR(rec_attempts, ErrorCode::DamagedFormat);
+
+		std::string hostile_dict = "%PDF-1.7\n";
+		for (int i = 0; i < 600; ++i) {
+			hostile_dict += "2 0 obj << (\n";
+		}
+		hostile_dict += "1 0 obj\n<< /Type /Catalog /Pages 3 0 R >>\nendobj\n";
+		auto rec_dict_budget = XrefTable::recover_damaged_xref(as_bytes(hostile_dict));
+		RECTO_EXPECT_ERR(rec_dict_budget, ErrorCode::DamagedFormat);
+
+		std::string hostile_ref_lookahead = "%PDF-1.7\n";
+		for (int i = 0; i < 600; ++i) {
+			hostile_ref_lookahead += "2 0 obj << /A 1 2 (\n";
+		}
+		hostile_ref_lookahead += "1 0 obj\n<< /Type /Catalog /Pages 3 0 R >>\nendobj\n";
+		auto rec_ref_budget = XrefTable::recover_damaged_xref(as_bytes(hostile_ref_lookahead));
+		RECTO_EXPECT_ERR(rec_ref_budget, ErrorCode::DamagedFormat);
+
+		std::string hostile_trailer = "%PDF-1.7\n";
+		for (int i = 0; i < 600; ++i) {
+			hostile_trailer += "trailer << (\n";
+		}
+		hostile_trailer += "1 0 obj\n<< /Type /Catalog /Pages 3 0 R >>\nendobj\n";
+		auto rec_trailer_budget = XrefTable::recover_damaged_xref(as_bytes(hostile_trailer));
+		RECTO_EXPECT_ERR(rec_trailer_budget, ErrorCode::DamagedFormat);
 	}
 
 	// 6. Single-pass catalog fallback without secondary reparsing, and UINT32_MAX object IDs
