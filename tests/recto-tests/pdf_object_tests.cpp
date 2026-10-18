@@ -54,7 +54,7 @@ TEST(PdfObject, AllTenVariantKindsAndAccessors)
 	ASSERT_TRUE(v_real.as_real().has_value());
 	EXPECT_DOUBLE_EQ(*v_real.as_real(), 3.1415926535);
 
-	// 5. PdfName (normalizes optional leading slash)
+	// 5. PdfName (normalizes optional leading slash; from_decoded preserves exact bytes)
 	PdfValue v_name(PdfName("/MediaBox"));
 	EXPECT_EQ(v_name.kind(), PdfValueKind::Name);
 	EXPECT_TRUE(v_name.is_name());
@@ -63,12 +63,18 @@ TEST(PdfObject, AllTenVariantKindsAndAccessors)
 	EXPECT_EQ(*v_name.as_name_obj(), "/MediaBox");
 	EXPECT_EQ(*v_name.as_name_obj(), "MediaBox");
 
+	const PdfName decoded_slash_name = PdfName::from_decoded("/A");
+	EXPECT_EQ(decoded_slash_name.view(), "/A");
+	EXPECT_NE(decoded_slash_name, PdfName("A"));
+
 	// 6. PdfString
 	PdfValue v_str(PdfString("Hello PDF", false));
 	EXPECT_EQ(v_str.kind(), PdfValueKind::String);
 	EXPECT_TRUE(v_str.is_string());
 	ASSERT_NE(v_str.as_string(), nullptr);
-	EXPECT_EQ(v_str.as_string()->to_utf8(), "Hello PDF");
+	const auto str_utf8 = v_str.as_string()->to_utf8();
+	RECTO_ASSERT_OK(str_utf8);
+	EXPECT_EQ(str_utf8.value(), "Hello PDF");
 
 	// 7. PdfArray
 	PdfArray arr;
@@ -169,7 +175,9 @@ TEST(PdfObject, DictHelpersAndNullValueElision)
 	EXPECT_EQ(dict.get_number("Zoom"), std::optional<double>(1.5));
 	EXPECT_EQ(dict.get_bool("Tagged"), std::optional<bool>(true));
 	ASSERT_NE(dict.get_string("Title"), nullptr);
-	EXPECT_EQ(dict.get_string("Title")->to_utf8(), "Recto Manual");
+	const auto title_utf8 = dict.get_string("Title")->to_utf8();
+	RECTO_ASSERT_OK(title_utf8);
+	EXPECT_EQ(title_utf8.value(), "Recto Manual");
 	ASSERT_NE(dict.get_array("MediaBox"), nullptr);
 	EXPECT_EQ(dict.get_array("MediaBox")->size(), 4u);
 	ASSERT_NE(dict.get_dict("Info"), nullptr);
@@ -188,6 +196,17 @@ TEST(PdfObject, DictHelpersAndNullValueElision)
 	dict.set("Zoom", PdfValue(PdfNull{}));
 	EXPECT_FALSE(dict.contains("Zoom"));
 	EXPECT_EQ(dict.get("Zoom"), nullptr);
+
+	// A dictionary containing both decoded "/A" (from /#2FA) and "A" (from /A)
+	// preserves both distinct keys across lookup, equality, and erase.
+	PdfDict escaped_dict;
+	escaped_dict.set(PdfName::from_decoded("/A"), PdfValue(int64_t{10}));
+	escaped_dict.set(PdfName::from_decoded("A"), PdfValue(int64_t{20}));
+	EXPECT_EQ(escaped_dict.size(), 2u);
+	ASSERT_NE(escaped_dict.get(PdfName::from_decoded("/A")), nullptr);
+	EXPECT_EQ(escaped_dict.get(PdfName::from_decoded("/A"))->as_int(), std::optional<int64_t>(10));
+	ASSERT_NE(escaped_dict.get(PdfName::from_decoded("A")), nullptr);
+	EXPECT_EQ(escaped_dict.get(PdfName::from_decoded("A"))->as_int(), std::optional<int64_t>(20));
 }
 
 TEST(PdfObject, RectAndMatrixNormalization)
@@ -244,29 +263,38 @@ TEST(PdfObject, StringEncoding)
 {
 	// 1. Plain ASCII round-trip via PDFDocEncoding
 	const std::string ascii = "Recto PDF Engine 1.7 & 2.0";
-	const PdfString encoded_ascii = utf8_to_pdf_string(ascii);
-	EXPECT_EQ(encoded_ascii.size(), ascii.size());
-	EXPECT_EQ(encoded_ascii.to_utf8(), ascii);
+	const auto encoded_ascii = utf8_to_pdf_string(ascii);
+	RECTO_ASSERT_OK(encoded_ascii);
+	EXPECT_EQ(encoded_ascii.value().size(), ascii.size());
+	const auto decoded_ascii = encoded_ascii.value().to_utf8();
+	RECTO_ASSERT_OK(decoded_ascii);
+	EXPECT_EQ(decoded_ascii.value(), ascii);
 
 	// 2. PDFDocEncoding table characters: bullet (U+2022 = 0x80), em dash (U+2014 = 0x84),
 	// left/right curly quotes (U+201C/U+201D = 0x8D/0x8E), trademark (U+2122 = 0x92),
 	// fi ligature (U+FB01 = 0x93), and euro sign (U+20AC = 0xA0).
 	const std::string pdf_doc_sample =
 		"\xE2\x80\xA2 \xE2\x80\x9C" "Caf\xC3\xA9\xE2\x80\x9D \xE2\x80\x94 \xE2\x82\xAC" "42\xE2\x84\xA2 \xEF\xAC\x81le";
-	const PdfString encoded_pdf_doc = utf8_to_pdf_string(pdf_doc_sample);
-	ASSERT_FALSE(encoded_pdf_doc.empty());
+	const auto encoded_pdf_doc = utf8_to_pdf_string(pdf_doc_sample);
+	RECTO_ASSERT_OK(encoded_pdf_doc);
+	ASSERT_FALSE(encoded_pdf_doc.value().empty());
 	// Must encode as compact 1-byte PDFDocEncoding without a UTF-16BE BOM.
-	EXPECT_NE(encoded_pdf_doc.bytes[0], 0xFEu);
-	EXPECT_EQ(encoded_pdf_doc.to_utf8(), pdf_doc_sample);
+	EXPECT_NE(encoded_pdf_doc.value().bytes[0], 0xFEu);
+	const auto decoded_pdf_doc = encoded_pdf_doc.value().to_utf8();
+	RECTO_ASSERT_OK(decoded_pdf_doc);
+	EXPECT_EQ(decoded_pdf_doc.value(), pdf_doc_sample);
 
 	// 3. CJK + emoji outside PDFDocEncoding round-trip via UTF-16BE with surrogate pairs.
 	// "日本語 📄" -> U+65E5 U+672C U+8A9E U+0020 U+1F4C4
 	const std::string cjk_emoji = "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E \xF0\x9F\x93\x84";
-	const PdfString encoded_utf16 = utf8_to_pdf_string(cjk_emoji);
-	ASSERT_GE(encoded_utf16.size(), 2u);
-	EXPECT_EQ(encoded_utf16.bytes[0], 0xFEu);
-	EXPECT_EQ(encoded_utf16.bytes[1], 0xFFu);
-	EXPECT_EQ(encoded_utf16.to_utf8(), cjk_emoji);
+	const auto encoded_utf16 = utf8_to_pdf_string(cjk_emoji);
+	RECTO_ASSERT_OK(encoded_utf16);
+	ASSERT_GE(encoded_utf16.value().size(), 2u);
+	EXPECT_EQ(encoded_utf16.value().bytes[0], 0xFEu);
+	EXPECT_EQ(encoded_utf16.value().bytes[1], 0xFFu);
+	const auto decoded_utf16 = encoded_utf16.value().to_utf8();
+	RECTO_ASSERT_OK(decoded_utf16);
+	EXPECT_EQ(decoded_utf16.value(), cjk_emoji);
 
 	// 4. UTF-16BE with embedded ISO 32000-1 section 7.9.2.2.2 language escape
 	// sequence (0x001B 'e' 'n' 0x001B) strips the escape and preserves text.
@@ -276,21 +304,30 @@ TEST(PdfObject, StringEncoding)
 		0x00, 0x1B, 0x00, 'e', 0x00, 'n', 0x00, 0x1B,
 		0x00, 'i',
 	};
-	EXPECT_EQ(pdf_string_to_utf8(utf16_with_lang_escape), "Hi");
+	const auto decoded_utf16_esc = pdf_string_to_utf8(utf16_with_lang_escape);
+	RECTO_ASSERT_OK(decoded_utf16_esc);
+	EXPECT_EQ(decoded_utf16_esc.value(), "Hi");
 
-	// 5. PDF 2.0 UTF-8 string with leading EF BB BF BOM.
+	// 5. PDF 2.0 UTF-8 string with leading EF BB BF BOM and embedded 0x1B 'e' 'n' 0x1B
+	// language escape sequence.
 	const std::vector<uint8_t> utf8_bom_bytes = {
 		0xEF, 0xBB, 0xBF,
+		0x1B, 'e', 'n', 0x1B,
 		'P', 'D', 'F', ' ', '2', '.', '0', ' ',
 		0xCE, 0xA9, // U+03A9 GREEK CAPITAL LETTER OMEGA
 	};
-	EXPECT_EQ(pdf_string_to_utf8(utf8_bom_bytes), "PDF 2.0 \xCE\xA9");
+	const auto decoded_utf8_bom = pdf_string_to_utf8(utf8_bom_bytes);
+	RECTO_ASSERT_OK(decoded_utf8_bom);
+	EXPECT_EQ(decoded_utf8_bom.value(), "PDF 2.0 \xCE\xA9");
 
 	// 6. Latin-1 string starting with U+00FE U+00FF ("þÿ") avoids colliding
 	// with the UTF-16BE BOM by upgrading to explicit UTF-16BE.
 	const std::string bom_collision_str = "\xC3\xBE\xC3\xBF";
-	const PdfString encoded_collision = utf8_to_pdf_string(bom_collision_str);
-	EXPECT_EQ(encoded_collision.to_utf8(), bom_collision_str);
+	const auto encoded_collision = utf8_to_pdf_string(bom_collision_str);
+	RECTO_ASSERT_OK(encoded_collision);
+	const auto decoded_collision = encoded_collision.value().to_utf8();
+	RECTO_ASSERT_OK(decoded_collision);
+	EXPECT_EQ(decoded_collision.value(), bom_collision_str);
 }
 
 TEST(PdfObject, DeepCloneIsolationAndDepthLimit)
@@ -298,6 +335,10 @@ TEST(PdfObject, DeepCloneIsolationAndDepthLimit)
 	PdfDict root;
 	root.set("Type", PdfValue(PdfName("Page")));
 	root.set("MediaBox", PdfValue(PdfArray{PdfValue(0), PdfValue(0), PdfValue(612), PdfValue(792)}));
+	// Include both "/A" (from /#2FA) and "A" (from /A) to verify deep_clone
+	// preserves exact decoded PdfName bytes without collapsing entries.
+	root.set(PdfName::from_decoded("/A"), PdfValue(PdfName::from_decoded("/SlashVal")));
+	root.set(PdfName::from_decoded("A"), PdfValue(PdfName::from_decoded("PlainVal")));
 
 	PdfDict resources;
 	PdfDict font_dict;
@@ -315,6 +356,15 @@ TEST(PdfObject, DeepCloneIsolationAndDepthLimit)
 	RECTO_ASSERT_OK(cloned_res);
 	PdfValue cloned = std::move(cloned_res).value();
 	EXPECT_EQ(original, cloned);
+	EXPECT_EQ(cloned.as_stream()->dict.size(), 5u);
+	ASSERT_NE(cloned.as_stream()->dict.get(PdfName::from_decoded("/A")), nullptr);
+	EXPECT_EQ(
+		cloned.as_stream()->dict.get(PdfName::from_decoded("/A"))->as_name(),
+		std::optional<std::string_view>("/SlashVal"));
+	ASSERT_NE(cloned.as_stream()->dict.get(PdfName::from_decoded("A")), nullptr);
+	EXPECT_EQ(
+		cloned.as_stream()->dict.get(PdfName::from_decoded("A"))->as_name(),
+		std::optional<std::string_view>("PlainVal"));
 
 	// Mutating the clone leaves the original completely unchanged (no shared pointers).
 	cloned.as_stream_mut()->raw_bytes.push_back('!');
@@ -335,7 +385,8 @@ TEST(PdfObject, DeepCloneIsolationAndDepthLimit)
 			->get_ref("F1"),
 		std::optional<IndirectRef>(IndirectRef{15, 0}));
 
-	// Depth-64 nested array succeeds; depth-65 nested array fails with RecursionLimitExceeded.
+	// Depth-64 nested array succeeds; depth-65 nested array fails with
+	// RecursionLimitExceeded even if caller passes max_depth > 64.
 	PdfValue nested_64(int64_t{1});
 	for (size_t d = 0; d < kMaxObjectCloneDepth; ++d) {
 		PdfArray wrapper;
@@ -348,9 +399,9 @@ TEST(PdfObject, DeepCloneIsolationAndDepthLimit)
 	wrapper_65.push_back(std::move(nested_64));
 	PdfValue nested_65(std::move(wrapper_65));
 	clear_diagnostics();
-	const auto over_depth = nested_65.deep_clone();
-	RECTO_EXPECT_ERR(over_depth, ErrorCode::RecursionLimitExceeded);
-	EXPECT_EQ(diagnostics_tail(10).size(), 1u);
+	RECTO_EXPECT_ERR(nested_65.deep_clone(), ErrorCode::RecursionLimitExceeded);
+	RECTO_EXPECT_ERR(nested_65.deep_clone(100), ErrorCode::RecursionLimitExceeded);
+	EXPECT_EQ(diagnostics_tail(10).size(), 2u);
 }
 
 } // namespace

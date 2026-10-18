@@ -2,6 +2,7 @@
 // ISO 32000-2:2020 section 7.3) for recto-pdf (D01 T01 section 2).
 #include "object.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <new>
@@ -225,14 +226,6 @@ std::optional<uint8_t> unicode_to_pdf_doc_encoding(uint32_t cp) noexcept
 	return std::nullopt;
 }
 
-std::string_view normalize_key_view(std::string_view key) noexcept
-{
-	if (!key.empty() && key.front() == '/') {
-		key.remove_prefix(1);
-	}
-	return key;
-}
-
 PdfResult<PdfValue> clone_value_recursive(
 	const PdfValue& val,
 	size_t current_depth,
@@ -249,7 +242,7 @@ PdfResult<PdfValue> clone_value_recursive(
 		case PdfValueKind::Real:
 			return PdfValue(*val.as_real());
 		case PdfValueKind::Name:
-			return PdfValue(PdfName(val.as_name_obj()->view()));
+			return PdfValue(PdfName::from_decoded(val.as_name_obj()->view()));
 		case PdfValueKind::String: {
 			const auto* s = val.as_string();
 			return PdfValue(PdfString(s->bytes, s->is_hex));
@@ -286,7 +279,7 @@ PdfResult<PdfValue> clone_value_recursive(
 				RECTO_PDF_TRY(
 					PdfValue cloned_val,
 					clone_value_recursive(v, current_depth + 1, max_depth));
-				dst_dict.set(PdfName(k.view()), std::move(cloned_val));
+				dst_dict.set(PdfName::from_decoded(k.view()), std::move(cloned_val));
 			}
 			return PdfValue(std::move(dst_dict));
 		}
@@ -303,7 +296,7 @@ PdfResult<PdfValue> clone_value_recursive(
 				RECTO_PDF_TRY(
 					PdfValue cloned_val,
 					clone_value_recursive(v, current_depth + 1, max_depth));
-				dst_dict.set(PdfName(k.view()), std::move(cloned_val));
+				dst_dict.set(PdfName::from_decoded(k.view()), std::move(cloned_val));
 			}
 			PdfStream dst_stream(std::move(dst_dict), src_stream->raw_bytes);
 			dst_stream.decoded_bytes = src_stream->decoded_bytes;
@@ -322,7 +315,7 @@ PdfResult<PdfValue> clone_value_recursive(
 
 } // namespace
 
-std::string PdfString::to_utf8() const noexcept
+PdfResult<std::string> PdfString::to_utf8() const noexcept
 {
 	return pdf_string_to_utf8(bytes);
 }
@@ -377,7 +370,7 @@ void PdfDict::set(PdfName key, PdfValue value)
 	// Per ISO 32000-1 section 7.3.7, a dictionary entry whose value is null is
 	// equivalent to an absent entry.
 	if (value.is_null()) {
-		(void)erase(key.view());
+		(void)erase(key);
 		return;
 	}
 	for (auto& [k, v] : entries_) {
@@ -394,11 +387,10 @@ void PdfDict::set(std::string_view key, PdfValue value)
 	set(PdfName(key), std::move(value));
 }
 
-bool PdfDict::erase(std::string_view key) noexcept
+bool PdfDict::erase(const PdfName& key) noexcept
 {
-	const std::string_view norm = normalize_key_view(key);
 	for (auto it = entries_.begin(); it != entries_.end(); ++it) {
-		if (it->first.view() == norm) {
+		if (it->first.view() == key.view()) {
 			entries_.erase(it);
 			return true;
 		}
@@ -406,16 +398,68 @@ bool PdfDict::erase(std::string_view key) noexcept
 	return false;
 }
 
+bool PdfDict::erase(std::string_view key) noexcept
+{
+	for (auto it = entries_.begin(); it != entries_.end(); ++it) {
+		if (it->first.view() == key) {
+			entries_.erase(it);
+			return true;
+		}
+	}
+	if (!key.empty() && key.front() == '/') {
+		const std::string_view stripped = key.substr(1);
+		for (auto it = entries_.begin(); it != entries_.end(); ++it) {
+			if (it->first.view() == stripped) {
+				entries_.erase(it);
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+bool PdfDict::contains(const PdfName& key) const noexcept
+{
+	return get(key) != nullptr;
+}
+
 bool PdfDict::contains(std::string_view key) const noexcept
 {
 	return get(key) != nullptr;
 }
 
+const PdfValue* PdfDict::get(const PdfName& key) const noexcept
+{
+	for (const auto& [k, v] : entries_) {
+		if (k.view() == key.view()) {
+			return &v;
+		}
+	}
+	return nullptr;
+}
+
 const PdfValue* PdfDict::get(std::string_view key) const noexcept
 {
-	const std::string_view norm = normalize_key_view(key);
 	for (const auto& [k, v] : entries_) {
-		if (k.view() == norm) {
+		if (k.view() == key) {
+			return &v;
+		}
+	}
+	if (!key.empty() && key.front() == '/') {
+		const std::string_view stripped = key.substr(1);
+		for (const auto& [k, v] : entries_) {
+			if (k.view() == stripped) {
+				return &v;
+			}
+		}
+	}
+	return nullptr;
+}
+
+PdfValue* PdfDict::get_mut(const PdfName& key) noexcept
+{
+	for (auto& [k, v] : entries_) {
+		if (k.view() == key.view()) {
 			return &v;
 		}
 	}
@@ -424,10 +468,17 @@ const PdfValue* PdfDict::get(std::string_view key) const noexcept
 
 PdfValue* PdfDict::get_mut(std::string_view key) noexcept
 {
-	const std::string_view norm = normalize_key_view(key);
 	for (auto& [k, v] : entries_) {
-		if (k.view() == norm) {
+		if (k.view() == key) {
 			return &v;
+		}
+	}
+	if (!key.empty() && key.front() == '/') {
+		const std::string_view stripped = key.substr(1);
+		for (auto& [k, v] : entries_) {
+			if (k.view() == stripped) {
+				return &v;
+			}
 		}
 	}
 	return nullptr;
@@ -557,7 +608,7 @@ bool PdfDict::operator==(const PdfDict& other) const noexcept
 		return false;
 	}
 	for (const auto& [k, v] : entries_) {
-		const auto* rhs_val = other.get(k.view());
+		const auto* rhs_val = other.get(k);
 		if (!rhs_val || !(*rhs_val == v)) {
 			return false;
 		}
@@ -589,14 +640,15 @@ PdfResult<PdfMatrix> PdfValue::as_matrix() const noexcept
 
 PdfResult<PdfValue> PdfValue::deep_clone(size_t max_depth) const noexcept
 {
-	return clone_value_recursive(*this, 0, max_depth);
+	const size_t effective_max_depth = std::min(max_depth, kMaxObjectCloneDepth);
+	return clone_value_recursive(*this, 0, effective_max_depth);
 }
 
-std::string pdf_string_to_utf8(std::span<const uint8_t> bytes) noexcept
+PdfResult<std::string> pdf_string_to_utf8(std::span<const uint8_t> bytes) noexcept
 {
 	try {
 		if (bytes.empty()) {
-			return {};
+			return std::string{};
 		}
 
 		// 1. UTF-16BE BOM: 0xFE 0xFF (ISO 32000-1 section 7.9.2.2)
@@ -663,6 +715,16 @@ std::string pdf_string_to_utf8(std::span<const uint8_t> bytes) noexcept
 			size_t idx = 0;
 			uint32_t cp = 0;
 			while (decode_next_utf8(utf8_body, idx, cp)) {
+				// ISO 32000-2 section 7.9.2.2.2: 0x1B language escape sequence
+				// is delimited by a matching 0x1B byte.
+				if (cp == 0x001Bu) {
+					while (decode_next_utf8(utf8_body, idx, cp)) {
+						if (cp == 0x001Bu) {
+							break;
+						}
+					}
+					continue;
+				}
 				append_utf8_codepoint(out, cp);
 			}
 			return out;
@@ -675,12 +737,14 @@ std::string pdf_string_to_utf8(std::span<const uint8_t> bytes) noexcept
 			append_utf8_codepoint(out, kPdfDocEncodingToUnicode[b]);
 		}
 		return out;
+	} catch (const std::bad_alloc&) {
+		return PdfError{ErrorCode::OutOfMemory, "Out of memory in pdf_string_to_utf8"};
 	} catch (...) {
-		return {};
+		return PdfError{ErrorCode::InternalError, "Unexpected failure in pdf_string_to_utf8"};
 	}
 }
 
-PdfString utf8_to_pdf_string(std::string_view utf8) noexcept
+PdfResult<PdfString> utf8_to_pdf_string(std::string_view utf8) noexcept
 {
 	try {
 		if (utf8.empty()) {
@@ -744,8 +808,10 @@ PdfString utf8_to_pdf_string(std::string_view utf8) noexcept
 			}
 		}
 		return PdfString(std::move(utf16_bytes), false);
+	} catch (const std::bad_alloc&) {
+		return PdfError{ErrorCode::OutOfMemory, "Out of memory in utf8_to_pdf_string"};
 	} catch (...) {
-		return PdfString{};
+		return PdfError{ErrorCode::InternalError, "Unexpected failure in utf8_to_pdf_string"};
 	}
 }
 

@@ -46,6 +46,16 @@ struct PdfName {
 	{
 	}
 
+	// Constructs a PdfName from an already-decoded name byte sequence without
+	// stripping a leading '/' (e.g. a name parsed from "/#2FA" whose decoded
+	// byte sequence begins with '/').
+	[[nodiscard]] static PdfName from_decoded(std::string_view decoded_bytes)
+	{
+		PdfName name;
+		name.value.assign(decoded_bytes.data(), decoded_bytes.size());
+		return name;
+	}
+
 	[[nodiscard]] static std::string normalize(std::string_view raw)
 	{
 		if (!raw.empty() && raw.front() == '/') {
@@ -68,10 +78,14 @@ struct PdfName {
 
 	bool operator==(std::string_view other) const noexcept
 	{
+		if (value == other) {
+			return true;
+		}
 		if (!other.empty() && other.front() == '/') {
 			other.remove_prefix(1);
+			return value == other;
 		}
-		return value == other;
+		return false;
 	}
 };
 
@@ -123,7 +137,7 @@ struct PdfString {
 		return bytes.empty();
 	}
 
-	[[nodiscard]] std::string to_utf8() const noexcept;
+	[[nodiscard]] PdfResult<std::string> to_utf8() const noexcept;
 
 	bool operator==(const PdfString& other) const noexcept
 	{
@@ -254,10 +268,14 @@ public:
 
 	void set(PdfName key, PdfValue value);
 	void set(std::string_view key, PdfValue value);
+	bool erase(const PdfName& key) noexcept;
 	bool erase(std::string_view key) noexcept;
 
+	[[nodiscard]] bool contains(const PdfName& key) const noexcept;
 	[[nodiscard]] bool contains(std::string_view key) const noexcept;
+	[[nodiscard]] const PdfValue* get(const PdfName& key) const noexcept;
 	[[nodiscard]] const PdfValue* get(std::string_view key) const noexcept;
+	[[nodiscard]] PdfValue* get_mut(const PdfName& key) noexcept;
 	[[nodiscard]] PdfValue* get_mut(std::string_view key) noexcept;
 
 	[[nodiscard]] std::optional<bool> get_bool(std::string_view key) const noexcept;
@@ -532,8 +550,8 @@ public:
 	[[nodiscard]] PdfResult<PdfRect> as_rect() const noexcept;
 	[[nodiscard]] PdfResult<PdfMatrix> as_matrix() const noexcept;
 
-	// Performs an owned deep clone bounded by max_depth (default 64).
-	// Exceeding max_depth returns ErrorCode::RecursionLimitExceeded.
+	// Performs an owned deep clone bounded by min(max_depth, 64).
+	// Exceeding the effective depth returns ErrorCode::RecursionLimitExceeded.
 	[[nodiscard]] PdfResult<PdfValue> deep_clone(
 		size_t max_depth = kMaxObjectCloneDepth) const noexcept;
 
@@ -550,15 +568,16 @@ private:
 // ISO 32000-2 section 7.9.2.2) into UTF-8:
 // - UTF-16BE when prefixed with BOM 0xFE 0xFF (handling surrogate pairs and
 //   stripping embedded language escape sequences 0x001B ... 0x001B).
-// - UTF-8 when prefixed with BOM 0xEF 0xBB 0xBF (PDF 2.0).
+// - UTF-8 when prefixed with BOM 0xEF 0xBB 0xBF (PDF 2.0, stripping embedded
+//   language escape sequences 0x1B ... 0x1B).
 // - PDFDocEncoding (ISO 32000-1 Table D.2) otherwise.
-[[nodiscard]] std::string pdf_string_to_utf8(std::span<const uint8_t> bytes) noexcept;
+[[nodiscard]] PdfResult<std::string> pdf_string_to_utf8(std::span<const uint8_t> bytes) noexcept;
 
 // Encodes a UTF-8 string into a PDF text string:
 // - Uses PDFDocEncoding when every Unicode scalar value is representable in
 //   PDFDocEncoding without colliding with the UTF-16BE / UTF-8 BOM prefixes.
 // - Uses UTF-16BE with a leading 0xFE 0xFF BOM (and surrogate pairs for
 //   U+10000..U+10FFFF) when any scalar value falls outside PDFDocEncoding.
-[[nodiscard]] PdfString utf8_to_pdf_string(std::string_view utf8) noexcept;
+[[nodiscard]] PdfResult<PdfString> utf8_to_pdf_string(std::string_view utf8) noexcept;
 
 } // namespace recto::pdf
