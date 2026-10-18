@@ -2,7 +2,7 @@
 schema_version: 1
 id: test-backbone
 domain: 00-workspace
-status: active
+status: done
 title: "TODO-03 -- Test Backbone: GoogleTest, Corpus and ASan"
 track: M0
 ---
@@ -38,7 +38,7 @@ track: M0
 | 3 | §3 | Deterministic PDF corpus generator (`scripts/build-corpus.py`) for `render/` and `text/` | §1 | [x] |
 | 4 | §4 | Encrypted (`RC4`/`AES-128`/`AES-256`), `broken/` and `seeds/` corpus fixtures | §3 | [x] |
 | 5 | §5 | `tests/corpus/PROVENANCE.md` and automated `Corpus.Provenance` SHA-256 integrity suite | §4 | [x] |
-| 6 | §6 | MSVC AddressSanitizer (`/fsanitize=address`) build configuration and CI `asan` job | §2, D00 T01 §4 | [ ] |
+| 6 | §6 | MSVC AddressSanitizer (`/fsanitize=address`) build configuration and CI `asan` job | §2, D00 T01 §4 | [x] |
 
 ## 1. `test_support` corpus path resolver and `TempDir` RAII helper
 
@@ -216,9 +216,12 @@ Wire `/fsanitize=address` through `Directory.Build.props` and `Directory.Build.t
 - [x] Verify binary instrumentation with `dumpbin /dependents build\bin\x64\Release\recto-tests\recto-tests.exe` confirming `clang_rt.asan_dynamic-x86_64.dll` is imported when built with `-EnableASAN`. Done when: `dumpbin` output quotes `clang_rt.asan_dynamic-x86_64.dll`.
 - [x] Add an `__SANITIZE_ADDRESS__` compile-time and runtime verification check in `tests/recto-tests/support_tests.cpp` (`Support.AsanActiveWhenEnabled`) so ASan builds self-report their instrumentation status in test logs. Done when: `Support.AsanActiveWhenEnabled` logs `ASan=enabled` under `-EnableASAN`.
 - [x] Add the `asan` job (or step) to `.github/workflows/build.yml` running `powershell -File build/build.ps1 -Platform x64 -Configuration Release -EnableASAN` on every push and pull request. Done when: `.github/workflows/build.yml` runs the ASan suite green on GitHub Actions.
-- [ ] Commit: `ci: enable AddressSanitizer build and test job for engine and services`
+- [x] Commit: `ci: enable AddressSanitizer build and test job for engine and services`
 
 **Test checkpoint:** `powershell -File build/build.ps1 -Platform x64 -Configuration Release -EnableASAN` exits 0, `dumpbin /dependents` on `recto-tests.exe` lists `clang_rt.asan_dynamic-x86_64.dll`, and the CI `asan` job is green.
+
+> **Verified:** 2026-10-18 | §6 | 5a59214dcfe5fc48a874cd7f912284149180ba91
+> **Review:** `docs/reviews/d00-t03-s6.json`
 
 ## Verification
 

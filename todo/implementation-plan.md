@@ -23,7 +23,7 @@ Sections: 14 | Checklist items: 67
 | [x]    | D00 T03 §3 | Deterministic PDF corpus generator (`scripts/build-corpus.py`) for `render/` and `text/` | windows-host | 7     |
 | [x]    | D00 T03 §4 | Encrypted (`RC4`/`AES-128`/`AES-256`), `broken/` and `seeds/` corpus fixtures            | windows-host | 6     |
 | [x]    | D00 T03 §5 | `tests/corpus/PROVENANCE.md` and automated `Corpus.Provenance` SHA-256 integrity suite   | windows-host | 6     |
-| [ ]    | D00 T03 §6 | MSVC AddressSanitizer (`/fsanitize=address`) build configuration and CI `asan` job       | windows-host | 6     |
+| [x]    | D00 T03 §6 | MSVC AddressSanitizer (`/fsanitize=address`) build configuration and CI `asan` job       | windows-host | 6     |
 
 ### Phase 1: M1 Engine core
 
@@ -265,6 +265,6 @@ Sections: 4 | Checklist items: 20
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
-Progress: 13/205 verified sections, 4 ready to run now.
+Progress: 14/205 verified sections, 3 ready to run now.
 
-Checklist: 66/1471 items completed (includes Commit items).
+Checklist: 67/1471 items completed (includes Commit items).

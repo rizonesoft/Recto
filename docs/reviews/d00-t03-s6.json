@@ -1,0 +1,24 @@
+{
+  "ref": "D00 T03 \u00a76",
+  "title": "MSVC AddressSanitizer (`/fsanitize=address`) build configuration and CI `asan` job",
+  "implementation_sha": "5a59214dcfe5fc48a874cd7f912284149180ba91",
+  "date": "2026-10-18",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T03-s6.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/00-workspace/D00-T03-s6.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "powershell -File build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -> 0 Warning(s), 0 Error(s); [  PASSED  ] 17 tests. (Support.AsanActiveWhenEnabled: ASan=enabled)",
+    "dumpbin /dependents build\\bin\\x64\\Release\\recto-tests\\recto-tests.exe -> clang_rt.asan_dynamic-x86_64.dll",
+    "gh run view 39136692121 -> Build x64 & ARM64 and run recto-tests (5m32s) and Build x64 Release with AddressSanitizer and run recto-tests (2m54s) completed / success",
+    ".\\build.cmd -> 0 Warning(s), 0 Error(s) across Debug|x64, Release|x64, Debug|ARM64, Release|ARM64; [  PASSED  ] 17 tests."
+  ]
+}
