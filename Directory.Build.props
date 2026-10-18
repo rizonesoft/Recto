@@ -9,6 +9,7 @@
     <WindowsTargetPlatformMinVersion>10.0.22621.0</WindowsTargetPlatformMinVersion>
     <CharacterSet>Unicode</CharacterSet>
     <EnableASAN Condition="'$(EnableASAN)' == ''">false</EnableASAN>
+    <LinkIncremental Condition="'$(EnableASAN)' == 'true'">false</LinkIncremental>
     <!-- Compile flags (warning level, language standards, runtime) are
          ClCompile item metadata in VC projects, not properties; they live
          in Directory.Build.targets next to this file. -->

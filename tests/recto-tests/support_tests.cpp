@@ -11,6 +11,11 @@
 #include <gtest/gtest-spi.h>
 #include <gtest/gtest.h>
 
+#if defined(__SANITIZE_ADDRESS__)
+#include <sanitizer/asan_interface.h>
+#endif
+
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -567,3 +572,109 @@ TEST(Support, ResultMacros)
 		RECTO_EXPECT_ERR(err_res, FakeErrorCode::DamagedXref),
 		"Mismatched error code");
 }
+
+namespace {
+
+bool check_asan_env_expectation(bool asan_compiled, std::wstring_view expect_env) noexcept
+{
+	if (expect_env == L"1") {
+		return asan_compiled;
+	}
+	if (expect_env == L"0") {
+		return !asan_compiled;
+	}
+	return true;
+}
+
+std::wstring query_env_var(const wchar_t* name)
+{
+	const DWORD needed = GetEnvironmentVariableW(name, nullptr, 0);
+	if (needed <= 1) {
+		return {};
+	}
+	std::wstring val(needed - 1, L'\0');
+	const DWORD copied = GetEnvironmentVariableW(name, val.data(), needed);
+	if (copied == 0 || copied >= needed) {
+		return {};
+	}
+	return val;
+}
+
+} // namespace
+
+TEST(Support, AsanActiveWhenEnabled)
+{
+#if defined(__SANITIZE_ADDRESS__)
+	constexpr bool kAsanCompiled = true;
+#else
+	constexpr bool kAsanCompiled = false;
+#endif
+
+	const std::wstring expect_env = query_env_var(L"RECTO_EXPECT_ASAN");
+	EXPECT_TRUE(check_asan_env_expectation(kAsanCompiled, expect_env))
+		<< "RECTO_EXPECT_ASAN mismatch against compile-time __SANITIZE_ADDRESS__";
+
+	// Verify expectation helper catches mismatches in both directions.
+	EXPECT_TRUE(check_asan_env_expectation(true, L"1"));
+	EXPECT_FALSE(check_asan_env_expectation(false, L"1"));
+	EXPECT_TRUE(check_asan_env_expectation(false, L"0"));
+	EXPECT_FALSE(check_asan_env_expectation(true, L"0"));
+	EXPECT_TRUE(check_asan_env_expectation(true, L""));
+	EXPECT_TRUE(check_asan_env_expectation(false, L""));
+
+	const HMODULE release_rt = GetModuleHandleW(L"clang_rt.asan_dynamic-x86_64.dll");
+	const HMODULE debug_rt = GetModuleHandleW(L"clang_rt.asan_dbg_dynamic-x86_64.dll");
+	const bool runtime_loaded = (release_rt != nullptr) || (debug_rt != nullptr);
+
+#if defined(__SANITIZE_ADDRESS__)
+	EXPECT_TRUE(runtime_loaded)
+		<< "Expected clang_rt.asan_dynamic-x86_64.dll or clang_rt.asan_dbg_dynamic-x86_64.dll in process";
+	alignas(8) uint8_t buffer[64]{};
+	EXPECT_EQ(__asan_address_is_poisoned(buffer + 16), 0);
+	ASAN_POISON_MEMORY_REGION(buffer + 16, 16);
+	EXPECT_NE(__asan_address_is_poisoned(buffer + 16), 0);
+	EXPECT_EQ(__asan_address_is_poisoned(buffer), 0);
+	ASAN_UNPOISON_MEMORY_REGION(buffer + 16, 16);
+	EXPECT_EQ(__asan_address_is_poisoned(buffer + 16), 0);
+	RecordProperty("ASan", "enabled");
+	std::cout << "[          ] Support.AsanActiveWhenEnabled: ASan=enabled\n";
+#else
+	EXPECT_FALSE(runtime_loaded)
+		<< "Unexpected ASan runtime DLL loaded in non-ASan build";
+	RecordProperty("ASan", "disabled");
+	std::cout << "[          ] Support.AsanActiveWhenEnabled: ASan=disabled\n";
+#endif
+}
+
+#if defined(__SANITIZE_ADDRESS__)
+__declspec(noinline) uint8_t read_byte_unoptimized(const volatile uint8_t* ptr) noexcept
+{
+	return *ptr;
+}
+
+__declspec(noinline) void trigger_asan_poisoned_read()
+{
+	alignas(8) uint8_t buf[32]{};
+	ASAN_POISON_MEMORY_REGION(buf, sizeof(buf));
+	const volatile uint8_t sink = read_byte_unoptimized(buf + 8);
+	(void)sink;
+	ASAN_UNPOISON_MEMORY_REGION(buf, sizeof(buf));
+}
+#endif
+
+TEST(Support, AsanInstrumentation)
+{
+#if defined(__SANITIZE_ADDRESS__)
+	std::vector<uint8_t> heap_buf(32, 0x5Au);
+	EXPECT_EQ(__asan_address_is_poisoned(heap_buf.data()), 0);
+	EXPECT_NE(
+		__asan_region_is_poisoned(heap_buf.data(), heap_buf.size() + 1u),
+		nullptr)
+		<< "Expected heap allocation redzone past end of std::vector buffer to be poisoned under ASan";
+	EXPECT_DEATH(trigger_asan_poisoned_read(), "AddressSanitizer");
+	RecordProperty("ASanRedzone", "verified");
+#else
+	RecordProperty("ASanRedzone", "skipped-non-asan");
+#endif
+}
+

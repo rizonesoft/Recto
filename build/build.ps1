@@ -9,8 +9,9 @@
 # Release. Exit code 0 only when the build also passed the x64 test
 # binaries.
 #
-# Options: -Platform x64|ARM64 (default both), -Configuration
-# Debug|Release (default both), -TestFilter <pattern>, -SkipTests.
+# Options: -Platform x64|ARM64 (default both, or x64 under -EnableASAN),
+# -Configuration Debug|Release (default both), -TestFilter <pattern>,
+# -SkipTests, -EnableASAN.
 # Requirements: Visual Studio 2026 with the v145 C++ toolset (its
 # bundled vcpkg is used unless VCPKG_ROOT already points at one), the
 # Windows 11 SDK 10.0.26100, and network access for the first restore.
@@ -21,11 +22,18 @@ param(
     [ValidateSet('x64', 'ARM64', 'x64,ARM64', 'ARM64,x64')][string[]]$Platform = @('x64', 'ARM64'),
     [ValidateSet('Debug', 'Release', 'Debug,Release', 'Release,Debug')][string[]]$Configuration = @('Debug', 'Release'),
     [string]$TestFilter = '',
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    [switch]$EnableASAN
 )
 $ErrorActionPreference = 'Stop'
+if ($EnableASAN -and -not $PSBoundParameters.ContainsKey('Platform')) {
+    $Platform = @('x64')
+}
 $Platform = @($Platform | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $Configuration = @($Configuration | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
+if ($EnableASAN -and ($Platform -contains 'ARM64')) {
+    throw 'AddressSanitizer (-EnableASAN) is supported on x64 only.'
+}
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
@@ -46,33 +54,103 @@ if (-not $env:VCPKG_ROOT) {
 Write-Host "MSBuild:    $msbuild"
 Write-Host "VCPKG_ROOT: $env:VCPKG_ROOT"
 
+$asanBinDir = $null
+if ($EnableASAN) {
+    $vcToolsRoot = Join-Path $vs 'VC\Tools\MSVC'
+    $asanDll = Get-ChildItem -Path $vcToolsRoot -Recurse -Filter 'clang_rt.asan_dynamic-x86_64.dll' -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -match '\\bin\\Hostx64\\x64\\clang_rt\.asan_dynamic-x86_64\.dll$' } |
+        Sort-Object FullName -Descending |
+        Select-Object -First 1
+    if (-not $asanDll) {
+        throw "clang_rt.asan_dynamic-x86_64.dll not found under $vcToolsRoot"
+    }
+    $asanBinDir = $asanDll.DirectoryName
+    Write-Host "ASan bin:   $asanBinDir"
+    $env:PATH = "$asanBinDir;$env:PATH"
+}
+
 New-Item -ItemType Directory -Path (Join-Path $root 'build') -Force | Out-Null
+$asanProjects = @('recto-pdf', 'recto-core', 'recto-services', 'recto-cli', 'recto-tests')
 
 foreach ($plat in $Platform) {
     foreach ($cfg in $Configuration) {
+        $desiredAsanState = if ($EnableASAN) { 'true' } else { 'false' }
+        $stateFile = Join-Path $root "build\asan-state-$cfg-$plat.txt"
+        $prevAsanState = if (Test-Path $stateFile) { (Get-Content $stateFile -Raw).Trim() } else { '' }
+        if ($prevAsanState -ne $desiredAsanState) {
+            foreach ($proj in $asanProjects) {
+                $objDir = Join-Path $root "build\obj\$proj\$plat\$cfg"
+                $binDir = Join-Path $root "build\bin\$plat\$cfg\$proj"
+                if (Test-Path $objDir) { Remove-Item $objDir -Recurse -Force }
+                if (Test-Path $binDir) { Remove-Item $binDir -Recurse -Force }
+            }
+        }
+
         $logFile = Join-Path $root "build\msbuild-$cfg-$plat.log"
-        Write-Host "=== Recto $cfg|$plat"
-        & $msbuild Recto.sln -restore "/p:Configuration=$cfg" "/p:Platform=$plat" "/p:TreatWarningsAsErrors=true" "/fl" "/flp:logfile=$logFile;verbosity=normal" /m /nologo
+        $msbuildArgs = @(
+            'Recto.sln',
+            '-restore',
+            "/p:Configuration=$cfg",
+            "/p:Platform=$plat",
+            "/p:TreatWarningsAsErrors=true",
+            "/p:EnableASAN=$desiredAsanState",
+            '/fl',
+            "/flp:logfile=$logFile;verbosity=normal",
+            '/m',
+            '/nologo'
+        )
+        if ($EnableASAN) {
+            $msbuildArgs += '-t:recto-pdf;recto-core;recto-services;recto-cli;recto-tests'
+            Write-Host "=== Recto $cfg|$plat (ASan)"
+        } else {
+            Write-Host "=== Recto $cfg|$plat"
+        }
+        & $msbuild @msbuildArgs
         if ($LASTEXITCODE -ne 0) { throw "build failed: $cfg|$plat (exit $LASTEXITCODE)" }
+
+        if ($EnableASAN -and $plat -eq 'x64') {
+            $rtDllName = if ($cfg -eq 'Debug') { 'clang_rt.asan_dbg_dynamic-x86_64.dll' } else { 'clang_rt.asan_dynamic-x86_64.dll' }
+            $rtDllPath = Join-Path $asanBinDir $rtDllName
+            if (-not (Test-Path $rtDllPath)) {
+                throw "ASan runtime DLL not found: $rtDllPath"
+            }
+            foreach ($exeProj in @('recto-tests', 'recto-cli')) {
+                $destDir = Join-Path $root "build\bin\x64\$cfg\$exeProj"
+                if (Test-Path $destDir) {
+                    Copy-Item -Path $rtDllPath -Destination (Join-Path $destDir $rtDllName) -Force
+                }
+            }
+        }
+        Set-Content -Path $stateFile -Value $desiredAsanState -NoNewline
     }
 }
 
 if (-not $SkipTests -and $Platform -contains 'x64') {
-    foreach ($cfg in $Configuration) {
-        $tests = Join-Path $root "build\bin\x64\$cfg\recto-tests\recto-tests.exe"
-        $xmlOut = Join-Path $root "build\test-results-x64-$cfg.xml"
-        if (Test-Path $xmlOut) { Remove-Item $xmlOut -Force }
-        $argsList = @("--gtest_output=xml:$xmlOut")
-        if ($TestFilter) {
-            $argsList += "--gtest_filter=$TestFilter"
+    $prevExpectAsan = $env:RECTO_EXPECT_ASAN
+    try {
+        $env:RECTO_EXPECT_ASAN = if ($EnableASAN) { '1' } else { '0' }
+        foreach ($cfg in $Configuration) {
+            $tests = Join-Path $root "build\bin\x64\$cfg\recto-tests\recto-tests.exe"
+            $xmlOut = Join-Path $root "build\test-results-x64-$cfg.xml"
+            if (Test-Path $xmlOut) { Remove-Item $xmlOut -Force }
+            $argsList = @("--gtest_output=xml:$xmlOut")
+            if ($TestFilter) {
+                $argsList += "--gtest_filter=$TestFilter"
+            }
+            Write-Host "=== recto-tests $cfg|x64"
+            & $tests @argsList
+            if ($LASTEXITCODE -ne 0) { throw "recto-tests failed: $cfg|x64 (exit $LASTEXITCODE)" }
+            if (-not (Test-Path $xmlOut)) { throw "recto-tests did not produce XML report: $xmlOut" }
+            [xml]$report = Get-Content $xmlOut
+            if ([int]$report.testsuites.tests -le 0) {
+                throw "recto-tests executed 0 tests (filter='$TestFilter'): $cfg|x64"
+            }
         }
-        Write-Host "=== recto-tests $cfg|x64"
-        & $tests @argsList
-        if ($LASTEXITCODE -ne 0) { throw "recto-tests failed: $cfg|x64 (exit $LASTEXITCODE)" }
-        if (-not (Test-Path $xmlOut)) { throw "recto-tests did not produce XML report: $xmlOut" }
-        [xml]$report = Get-Content $xmlOut
-        if ([int]$report.testsuites.tests -le 0) {
-            throw "recto-tests executed 0 tests (filter='$TestFilter'): $cfg|x64"
+    } finally {
+        if ($null -eq $prevExpectAsan) {
+            Remove-Item Env:\RECTO_EXPECT_ASAN -ErrorAction SilentlyContinue
+        } else {
+            $env:RECTO_EXPECT_ASAN = $prevExpectAsan
         }
     }
 }

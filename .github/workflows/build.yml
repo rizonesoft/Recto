@@ -59,3 +59,46 @@ jobs:
             build/test-results-*.xml
             build/msbuild-*.log
           if-no-files-found: ignore
+
+  asan:
+    name: Build x64 Release with AddressSanitizer and run recto-tests
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure NuGet and vcpkg cache directories
+        shell: pwsh
+        run: |
+          $nugetCache = Join-Path $env:RUNNER_TEMP "nuget-packages"
+          $vcpkgCache = Join-Path $env:RUNNER_TEMP "vcpkg-archives"
+          New-Item -ItemType Directory -Path $nugetCache -Force | Out-Null
+          New-Item -ItemType Directory -Path $vcpkgCache -Force | Out-Null
+          "NUGET_PACKAGES=$nugetCache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "VCPKG_DEFAULT_BINARY_CACHE=$vcpkgCache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Cache NuGet and vcpkg binary archives
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/nuget-packages
+            ${{ runner.temp }}/vcpkg-archives
+          key: build-deps-${{ runner.os }}-${{ hashFiles('src/app/Recto.vcxproj', 'vcpkg.json', 'Directory.Build.props', 'Directory.Build.targets') }}
+          restore-keys: |
+            build-deps-${{ runner.os }}-
+
+      - name: Build and run recto-tests with AddressSanitizer (/fsanitize=address)
+        shell: pwsh
+        run: powershell -File build/build.ps1 -Platform x64 -Configuration Release -EnableASAN
+
+      - name: Upload ASan test results and MSBuild logs on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asan-build-and-test-diagnostics
+          path: |
+            build/test-results-*.xml
+            build/msbuild-*.log
+          if-no-files-found: ignore
+
