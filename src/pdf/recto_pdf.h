@@ -9,6 +9,7 @@
 
 #include "error.h"
 #include "object.h"
+#include "lexer.h"
 
 namespace recto::pdf {
 

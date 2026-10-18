@@ -129,18 +129,20 @@ Implement the binary-safe PDF lexical analyzer in `src/pdf/lexer.h` and `src/pdf
 **Surface:** no
 **Freeze check:** Verify that `Lexer` operates purely over a read-only `std::span<const uint8_t>` cursor with bounds checks before every byte read, never reading past `span.size()` even on truncated tokens.
 
+> **Started:** 2026-10-18
+
 **Build order:**
 
 1. Implement `src/pdf/lexer.h` and `src/pdf/lexer.cpp` (`Token`, `TokenKind`, `Lexer::next_token()`, `Lexer::peek_token()`, `Lexer::seek()`, `Lexer::consume_stream_eol()`). Done when: `lexer.cpp` compiles cleanly on `x64` and `ARM64`.
 2. Add `tests/recto-tests/pdf_lexer_tests.cpp` testing every token type, escape sequence, odd-length hex string, `#XX` name escape, `stream` EOL rule (`\r\n` or `\n`, never bare `\r` followed by data consumed as 2 bytes), and byte-by-byte truncation safety. Done when: `PdfLexer.*` passes under ASan.
 
-- [ ] Tokenize PDF whitespace (including embedded `0x00` NUL bytes), delimiters (`(`, `)`, `<`, `>`, `[`, `]`, `{`, `}`, `/`, `%`), and `%...` comments up to `CR`, `LF`, or `CRLF`. Done when: `PdfLexer.WhitespaceAndComments` handles NUL-separated tokens and comments with arbitrary binary bytes. Cheaper substitute: using `std::istringstream` or `strchr` which truncates at the first `0x00` byte in binary PDFs.
-- [ ] Parse signed/unsigned integers (`int64_t`) and real numbers (`double`), handling leading `.` (`-.05`), trailing `.` (`42.`), and integer overflow gracefully without undefined behavior. Done when: `PdfLexer.Numbers` covers boundary 64-bit integers and malformed numbers (`--5`, `1.2.3`).
-- [ ] Parse literal strings `(...)` with nested balanced parentheses `(a(b(c)d)e)`, escape sequences (`\n`, `\r`, `\t`, `\b`, `\f`, `\(`, `\)`, `\\`), 1-3 digit octal `\ddd` escapes, and backslash-newline continuation. Done when: `PdfLexer.LiteralStrings` matches all ISO 32000-1 section 7.3.4.2 examples byte-for-byte.
-- [ ] Parse hexadecimal strings `<...>` ignoring embedded whitespace and padding odd-digit strings with a trailing `0` nibble (`<4142A>` -> `0x41, 0x42, 0xA0`). Done when: `PdfLexer.HexStrings` verifies even, odd, whitespace-padded, and empty `<>` hex strings, and returns `ErrorCode::DamagedFormat` on non-hex characters.
-- [ ] Parse `/Name` tokens with `#XX` two-digit hex escape decoding (`/A#42` -> `"AB"`, `/Lime#20Green` -> `"Lime Green"`). Done when: `PdfLexer.Names` verifies `#XX` decoding and rejects truncated `#X` escapes.
-- [ ] Implement `Lexer::consume_stream_eol()` enforcing the PDF `stream` keyword EOL rule (skipping optional horizontal spaces, then consuming `\r\n` or `\n` before stream byte 0). Done when: a stream starting with `\n\n` preserves the second `\n` as byte 0 of the stream payload.
-- [ ] Run a byte-by-byte truncation sweep in `PdfLexer.TruncationSweep` cutting a complex token buffer at every offset `0..N` under ASan. Done when: zero out-of-bounds reads occur at any cut point.
+- [x] Tokenize PDF whitespace (including embedded `0x00` NUL bytes), delimiters (`(`, `)`, `<`, `>`, `[`, `]`, `{`, `}`, `/`, `%`), and `%...` comments up to `CR`, `LF`, or `CRLF`. Done when: `PdfLexer.WhitespaceAndComments` handles NUL-separated tokens and comments with arbitrary binary bytes. Cheaper substitute: using `std::istringstream` or `strchr` which truncates at the first `0x00` byte in binary PDFs.
+- [x] Parse signed/unsigned integers (`int64_t`) and real numbers (`double`), handling leading `.` (`-.05`), trailing `.` (`42.`), and integer overflow gracefully without undefined behavior. Done when: `PdfLexer.Numbers` covers boundary 64-bit integers and malformed numbers (`--5`, `1.2.3`).
+- [x] Parse literal strings `(...)` with nested balanced parentheses `(a(b(c)d)e)`, escape sequences (`\n`, `\r`, `\t`, `\b`, `\f`, `\(`, `\)`, `\\`), 1-3 digit octal `\ddd` escapes, and backslash-newline continuation. Done when: `PdfLexer.LiteralStrings` matches all ISO 32000-1 section 7.3.4.2 examples byte-for-byte.
+- [x] Parse hexadecimal strings `<...>` ignoring embedded whitespace and padding odd-digit strings with a trailing `0` nibble (`<4142A>` -> `0x41, 0x42, 0xA0`). Done when: `PdfLexer.HexStrings` verifies even, odd, whitespace-padded, and empty `<>` hex strings, and returns `ErrorCode::DamagedFormat` on non-hex characters.
+- [x] Parse `/Name` tokens with `#XX` two-digit hex escape decoding (`/A#42` -> `"AB"`, `/Lime#20Green` -> `"Lime Green"`). Done when: `PdfLexer.Names` verifies `#XX` decoding and rejects truncated `#X` escapes.
+- [x] Implement `Lexer::consume_stream_eol()` enforcing the PDF `stream` keyword EOL rule (skipping optional horizontal spaces, then consuming `\r\n` or `\n` before stream byte 0). Done when: a stream starting with `\n\n` preserves the second `\n` as byte 0 of the stream payload.
+- [x] Run a byte-by-byte truncation sweep in `PdfLexer.TruncationSweep` cutting a complex token buffer at every offset `0..N` under ASan. Done when: zero out-of-bounds reads occur at any cut point.
 - [ ] Commit: `pdf: implement binary-safe PDF 1.7/2.0 lexer`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfLexer.*` passes under ASan with 0 warnings.
