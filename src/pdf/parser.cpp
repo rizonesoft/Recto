@@ -31,10 +31,13 @@ constexpr std::string_view kEndobjKeyword = "endobj";
 	return after == input.size() || !Lexer::is_pdf_regular(input[after]);
 }
 
+thread_local size_t g_last_terminator_scan_steps = 0;
+
 struct TerminatorScanner {
 	std::span<const uint8_t> input;
 	size_t cached_converge_limit{0};
 	size_t cached_tok_pos{0};
+	size_t scan_steps{0};
 	bool has_cache{false};
 
 	[[nodiscard]] size_t find_token_after_endstream(size_t endstream_pos) noexcept
@@ -44,10 +47,12 @@ struct TerminatorScanner {
 		while (p < input.size() &&
 			(input[p] == ' ' || input[p] == '\t' || input[p] == '\0' || input[p] == '\f')) {
 			++p;
+			++scan_steps;
 		}
 		if (p >= input.size()) {
 			return input.size();
 		}
+		++scan_steps;
 		// Any non-whitespace, non-comment token on the same line is immediate.
 		if (input[p] != '\r' && input[p] != '\n' && input[p] != '%') {
 			return p;
@@ -60,6 +65,7 @@ struct TerminatorScanner {
 		}
 		size_t cur = p;
 		while (cur < input.size()) {
+			++scan_steps;
 			if (Lexer::is_pdf_whitespace(input[cur])) {
 				++cur;
 				continue;
@@ -68,6 +74,7 @@ struct TerminatorScanner {
 				++cur;
 				while (cur < input.size() && input[cur] != '\n' && input[cur] != '\r') {
 					++cur;
+					++scan_steps;
 				}
 				continue;
 			}
@@ -97,7 +104,9 @@ struct TerminatorScanner {
 	bool require_endobj_terminator) noexcept
 {
 	TerminatorScanner scanner{input};
-	return scanner.is_followed_by_terminator(endstream_pos, require_endobj_terminator);
+	const bool ok = scanner.is_followed_by_terminator(endstream_pos, require_endobj_terminator);
+	g_last_terminator_scan_steps = scanner.scan_steps;
+	return ok;
 }
 
 [[nodiscard]] bool next_non_comment(
@@ -732,6 +741,7 @@ PdfResult<std::span<const uint8_t>> Parser::parse_stream_slice_impl(
 				break;
 			}
 		}
+		g_last_terminator_scan_steps = scanner.scan_steps;
 	}
 
 	if (!strict_match.has_value() && declared_kw_pos.has_value()) {
@@ -883,5 +893,14 @@ PdfResult<IndirectObject> Parser::parse_indirect_object_impl(
 		IndirectRef{obj_num, gen_num},
 		std::move(body)};
 }
+
+namespace detail {
+
+size_t last_stream_terminator_scan_steps() noexcept
+{
+	return g_last_terminator_scan_steps;
+}
+
+} // namespace detail
 
 } // namespace recto::pdf

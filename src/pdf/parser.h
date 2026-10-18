@@ -139,4 +139,10 @@ private:
 	size_t max_container_elements_{kMaxContainerElements};
 };
 
+namespace detail {
+
+[[nodiscard]] size_t last_stream_terminator_scan_steps() noexcept;
+
+} // namespace detail
+
 } // namespace recto::pdf

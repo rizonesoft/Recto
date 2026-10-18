@@ -555,6 +555,8 @@ TEST(PdfParser, Streams)
 		const auto diags = diagnostics_tail();
 		ASSERT_FALSE(diags.empty());
 		EXPECT_EQ(diags.back().diagnostic_id, DiagnosticId::DamagedStream);
+		EXPECT_GT(detail::last_stream_terminator_scan_steps(), 0u);
+		EXPECT_LE(detail::last_stream_terminator_scan_steps(), full_obj.size() * 2);
 	}
 }
 
