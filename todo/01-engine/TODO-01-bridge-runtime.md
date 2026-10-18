@@ -162,17 +162,19 @@ Implement the recursive-descent PDF object parser in `src/pdf/parser.h` and `src
 **Surface:** no
 **Freeze check:** Verify that `Parser` holds all state on its local call frame, enforces the 64-level recursion cap on every `[` and `<<` entry, and never mutates shared static state.
 
+> **Started:** 2026-10-18
+
 **Build order:**
 
 1. Implement `src/pdf/parser.h` and `src/pdf/parser.cpp` (`parse_direct_object`, `parse_indirect_object`, `parse_dictionary`, `parse_array`, `parse_stream_slice` with indirect `/Length` resolver callback and 64-level recursion guard). Done when: `parser.cpp` compiles cleanly on `x64` and `ARM64`.
 2. Add `tests/recto-tests/pdf_parser_tests.cpp` testing nested dictionaries/arrays, `N G R` lookahead inside arrays and dicts, stream `/Length` handling (exact, indirect, and damaged fallback), 65-deep recursion rejection (`tests/corpus/broken/deep-nested-array-70.pdf`), and byte-by-byte truncation safety. Done when: `PdfParser.*` passes under ASan.
 
-- [ ] Implement 3-token lookahead in `Parser` to distinguish `<int> <int> R` (`IndirectRef`) from standalone integer tokens inside arrays (`[10 0 R 20 30]`) and dictionary values (`/Length 15 0 R`). Done when: `PdfParser.IndirectRefsAndIntegers` parses mixed integer and reference arrays accurately.
-- [ ] Parse `PdfArray` (`[...]`) and `PdfDict` (`<<...>>`), skipping null-valued dictionary entries per ISO 32000-1 section 7.3.7 (`<< /Key null >>` treated as absent). Done when: `PdfParser.ArraysAndDicts` verifies nested structures and `null` value elision.
-- [ ] Enforce the 64-level recursion limit across nested arrays and dictionaries (`[[[...]]]`, `<< /A << /B ... >> >>`), returning `ErrorCode::RecursionLimitExceeded`. Done when: `PdfParser.RecursionLimit` accepts 64-deep nesting and rejects 65-deep nesting and `tests/corpus/broken/deep-nested-array-70.pdf`. Cheaper substitute: unbounded recursion that crashes with `STATUS_STACK_OVERFLOW` on crafted inputs.
-- [ ] Parse `N G obj ... endobj` definitions and validate that object number `N > 0` and generation `0 <= G <= 65535`. Done when: negative or overflowing object numbers return `ErrorCode::DamagedFormat`.
-- [ ] Parse `stream ... endstream` payloads using direct `/Length`, an optional indirect `/Length` resolver callback, and a fallback scan for `endstream` when `/Length` is out of bounds or missing `endstream` at the declared offset. Done when: streams with both accurate and wrong `/Length` values recover their payload bytes in `PdfParser.Streams`.
-- [ ] Run a byte-by-byte truncation test across sample indirect objects, nested dictionaries, and streams under ASan. Done when: every truncated slice returns `ErrorCode::DamagedFormat` with zero memory errors.
+- [x] Implement 3-token lookahead in `Parser` to distinguish `<int> <int> R` (`IndirectRef`) from standalone integer tokens inside arrays (`[10 0 R 20 30]`) and dictionary values (`/Length 15 0 R`). Done when: `PdfParser.IndirectRefsAndIntegers` parses mixed integer and reference arrays accurately.
+- [x] Parse `PdfArray` (`[...]`) and `PdfDict` (`<<...>>`), skipping null-valued dictionary entries per ISO 32000-1 section 7.3.7 (`<< /Key null >>` treated as absent). Done when: `PdfParser.ArraysAndDicts` verifies nested structures and `null` value elision.
+- [x] Enforce the 64-level recursion limit across nested arrays and dictionaries (`[[[...]]]`, `<< /A << /B ... >> >>`), returning `ErrorCode::RecursionLimitExceeded`. Done when: `PdfParser.RecursionLimit` accepts 64-deep nesting and rejects 65-deep nesting and `tests/corpus/broken/deep-nested-array-70.pdf`. Cheaper substitute: unbounded recursion that crashes with `STATUS_STACK_OVERFLOW` on crafted inputs.
+- [x] Parse `N G obj ... endobj` definitions and validate that object number `N > 0` and generation `0 <= G <= 65535`. Done when: negative or overflowing object numbers return `ErrorCode::DamagedFormat`.
+- [x] Parse `stream ... endstream` payloads using direct `/Length`, an optional indirect `/Length` resolver callback, and a fallback scan for `endstream` when `/Length` is out of bounds or missing `endstream` at the declared offset. Done when: streams with both accurate and wrong `/Length` values recover their payload bytes in `PdfParser.Streams`.
+- [x] Run a byte-by-byte truncation test across sample indirect objects, nested dictionaries, and streams under ASan. Done when: every truncated slice returns `ErrorCode::DamagedFormat` with zero memory errors.
 - [ ] Commit: `pdf: add bounded recursive-descent PDF object and stream parser`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfParser.*` passes under ASan with 0 warnings.
