@@ -7,3 +7,6 @@ LICENSE text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
 *.json text eol=lf
+*.pdf binary
+*.docx binary
+*.xlsx binary

@@ -115,6 +115,8 @@ Author a deterministic, zero-external-dependency Python generator `scripts/build
 - `text/scanned.pdf`: image-only scanned page (`0` text operators, 300 DPI raster image of crisp English text) for `Windows.Media.Ocr` testing.
 - `convert/tables-and-forms.pdf`: bordered and borderless tables (with merged header cells), AcroForm fields (`Tx`, `Btn`, `Ch`), and sample annotations.
 
+> **Started:** 2026-10-18T12:20:30Z
+
 **Phase:** 0
 **Needs:** windows-host
 **Surface:** no
@@ -124,12 +126,12 @@ Author a deterministic, zero-external-dependency Python generator `scripts/build
 1. Write `scripts/build-corpus.py` (stdlib-only Python, fixed timestamps and `/ID` bytes so re-running produces byte-for-byte identical files) generating `tests/corpus/render/*`, `tests/corpus/text/*`, and `tests/corpus/convert/*`. Done when: running `python scripts/build-corpus.py` twice in a row produces zero `git diff`.
 2. Verify every generated PDF has exact byte offsets in its `xref` table and valid stream `/Length` entries. Done when: `python scripts/build-corpus.py --check` validates every generated file's structure and exits 0.
 
-- [ ] Author `scripts/build-corpus.py` using stdlib-only Python (`zlib`, `hashlib`, `struct`) with fixed creation dates and deterministic `/ID` arrays so outputs are 100% reproducible byte-for-byte. Done when: running `python scripts/build-corpus.py` twice produces identical SHA-256 hashes for every file. Cheaper substitute: committing random PDFs scraped from the web without license provenance or deterministic generation.
-- [ ] Generate `tests/corpus/render/simple-1p.pdf`, `compressed-xref-2p.pdf` (`/Type /XRef` + `/Type /ObjStm`), `incremental-2rev.pdf` (`/Prev` update), `rotated-pages.pdf` (`0/90/180/270`), and `images-and-vectors.pdf` (`DCTDecode`, `FlateDecode` + `/SMask`, `CCITTFaxDecode`, `/Form` XObject). Done when: all 5 files exist under `tests/corpus/render/`.
-- [ ] Generate `tests/corpus/text/two-column-links-outline.pdf` (2-column reading order, ligatures, soft hyphens, `/Outlines` tree, internal & external `/Link` annotations) and `tests/corpus/text/scanned.pdf` (raster-only page with crisp bitmap text for OCR). Done when: both files exist under `tests/corpus/text/`.
-- [ ] Generate `tests/corpus/convert/tables-and-forms.pdf` (bordered orthogonal-line table, borderless whitespace-aligned table, `/AcroForm` fields, and `/Annots` markup) plus a sample minimal `.docx` and `.xlsx` fixture in `tests/corpus/convert/`. Done when: all convert fixtures exist under `tests/corpus/convert/`.
-- [ ] Keep total `tests/corpus/` size strictly below `5 MB` (target `< 500 KB`). Done when: `(Get-ChildItem tests/corpus -Recurse -File | Measure-Object Length -Sum).Sum` is `< 5,000,000`.
-- [ ] Add `--check` flag to `scripts/build-corpus.py` that verifies on-disk corpus files match the generator's deterministic byte output. Done when: `python scripts/build-corpus.py --check` exits 0.
+- [x] Author `scripts/build-corpus.py` using stdlib-only Python (`zlib`, `hashlib`, `struct`) with fixed creation dates and deterministic `/ID` arrays so outputs are 100% reproducible byte-for-byte. Done when: running `python scripts/build-corpus.py` twice produces identical SHA-256 hashes for every file. Cheaper substitute: committing random PDFs scraped from the web without license provenance or deterministic generation.
+- [x] Generate `tests/corpus/render/simple-1p.pdf`, `compressed-xref-2p.pdf` (`/Type /XRef` + `/Type /ObjStm`), `incremental-2rev.pdf` (`/Prev` update), `rotated-pages.pdf` (`0/90/180/270`), and `images-and-vectors.pdf` (`DCTDecode`, `FlateDecode` + `/SMask`, `CCITTFaxDecode`, `/Form` XObject). Done when: all 5 files exist under `tests/corpus/render/`.
+- [x] Generate `tests/corpus/text/two-column-links-outline.pdf` (2-column reading order, ligatures, soft hyphens, `/Outlines` tree, internal & external `/Link` annotations) and `tests/corpus/text/scanned.pdf` (raster-only page with crisp bitmap text for OCR). Done when: both files exist under `tests/corpus/text/`.
+- [x] Generate `tests/corpus/convert/tables-and-forms.pdf` (bordered orthogonal-line table, borderless whitespace-aligned table, `/AcroForm` fields, and `/Annots` markup) plus a sample minimal `.docx` and `.xlsx` fixture in `tests/corpus/convert/`. Done when: all convert fixtures exist under `tests/corpus/convert/`.
+- [x] Keep total `tests/corpus/` size strictly below `5 MB` (target `< 500 KB`). Done when: `(Get-ChildItem tests/corpus -Recurse -File | Measure-Object Length -Sum).Sum` is `< 5,000,000`.
+- [x] Add `--check` flag to `scripts/build-corpus.py` that verifies on-disk corpus files match the generator's deterministic byte output. Done when: `python scripts/build-corpus.py --check` exits 0.
 - [ ] Commit: `test: add deterministic build-corpus.py and render/text/convert fixtures`
 
 **Test checkpoint:** `python scripts/build-corpus.py --check` exits 0 and confirms all `render/`, `text/`, and `convert/` fixtures are present and reproducible.
