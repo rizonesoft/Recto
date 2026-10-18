@@ -1,0 +1,27 @@
+{
+  "ref": "D01 T01 \u00a73",
+  "title": "Binary-safe PDF 1.7 and 2.0 lexer (`src/pdf/lexer.cpp`)",
+  "implementation_sha": "e6f27c75cdb972ab32d912de8cc34ac8dae30e14",
+  "date": "2026-10-18",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T01-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T01-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T01-s3.md",
+      "verdict": "fixed"
+    }
+  ],
+  "checks": [
+    "powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -> 0 Warning(s), 0 Error(s); [  PASSED  ] 34 tests. (PdfLexer.WhitespaceAndComments, PdfLexer.Numbers, PdfLexer.LiteralStrings, PdfLexer.HexStrings, PdfLexer.Names, PdfLexer.StreamEolRule, PdfLexer.TruncationSweep; Support.AsanActiveWhenEnabled: ASan=enabled)",
+    ".\\build.cmd -> 0 Warning(s), 0 Error(s) across Debug|x64, Release|x64, Debug|ARM64, and Release|ARM64; [  PASSED  ] 34 tests."
+  ]
+}

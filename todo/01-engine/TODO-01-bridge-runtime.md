@@ -42,7 +42,7 @@ track: M1
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | `PdfResult<T>`, `PdfError`, `ErrorCode`, D16 diagnostic ring and ETW `TraceLogging` | D00 T01 §3, D00 T03 §2 | [x] |
 | 2 | §2 | `PdfValue` variant object model, dictionary/array helpers and deep cloning | §1 | [x] |
-| 3 | §3 | Binary-safe PDF 1.7 and 2.0 lexer (`src/pdf/lexer.cpp`) | §2 | [ ] |
+| 3 | §3 | Binary-safe PDF 1.7 and 2.0 lexer (`src/pdf/lexer.cpp`) | §2 | [x] |
 | 4 | §4 | Bounded recursive-descent indirect object parser (`src/pdf/parser.cpp`) | §3 | [ ] |
 | 5 | §5 | Classic `xref` tables, trailer merging and `/Prev` incremental update chains | §4, D00 T03 §4 | [ ] |
 | 6 | §7 | Lossless stream filters (`Flate`, `LZW`, predictors, `ASCII85`, `ASCIIHex`, `RunLength`) | §4, D00 T03 §4 | [ ] |
@@ -143,9 +143,12 @@ Implement the binary-safe PDF lexical analyzer in `src/pdf/lexer.h` and `src/pdf
 - [x] Parse `/Name` tokens with `#XX` two-digit hex escape decoding (`/A#42` -> `"AB"`, `/Lime#20Green` -> `"Lime Green"`). Done when: `PdfLexer.Names` verifies `#XX` decoding and rejects truncated `#X` escapes.
 - [x] Implement `Lexer::consume_stream_eol()` enforcing the PDF `stream` keyword EOL rule (skipping optional horizontal spaces, then consuming `\r\n` or `\n` before stream byte 0). Done when: a stream starting with `\n\n` preserves the second `\n` as byte 0 of the stream payload.
 - [x] Run a byte-by-byte truncation sweep in `PdfLexer.TruncationSweep` cutting a complex token buffer at every offset `0..N` under ASan. Done when: zero out-of-bounds reads occur at any cut point.
-- [ ] Commit: `pdf: implement binary-safe PDF 1.7/2.0 lexer`
+- [x] Commit: `pdf: implement binary-safe PDF 1.7/2.0 lexer`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfLexer.*` passes under ASan with 0 warnings.
+
+> **Verified:** 2026-10-18 | §3 | e6f27c75cdb972ab32d912de8cc34ac8dae30e14
+> **Review:** `docs/reviews/d01-t01-s3.json`
 
 ## 4. Bounded recursive-descent indirect object parser (`src/pdf/parser.cpp`)
 
