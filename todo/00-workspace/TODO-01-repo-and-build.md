@@ -124,6 +124,9 @@ Create `Recto.sln`, `Directory.Build.props`, `Directory.Build.targets`, `vcpkg.j
 
 Add `.github/workflows/build.yml` running on `windows-latest` on every push and pull request: build `x64` and `ARM64` (`Release` and `Debug`), run `recto-tests` on `x64` (and on an ARM64 runner if available on the repo's plan, otherwise record that ARM64 is compile-and-link verified in CI and runtime-verified on the §5 reference machine), and fail on any compiler warning.
 
+> **Started:** 2026-10-18T09:15:00Z
+> **Corrected:** 2026-10-18 -- Keyed the `actions/cache` step on `hashFiles('src/app/Recto.vcxproj', 'vcpkg.json', 'Directory.Build.props', 'Directory.Build.targets')` with `NUGET_PACKAGES` and `VCPKG_DEFAULT_BINARY_CACHE` because `src/app/Recto.vcxproj` uses `PackageReference` rather than `src/app/packages.config`. Also enabled `Directory.Build.props`, `src/app/Recto.vcxproj`, and `build/build.ps1` to prefer Visual Studio 2026 (`v145`) locally and fall back cleanly to Visual Studio 2022 (`v143`, with desktop `Platforms\ARM64\` fallback when the UWP ARM64 workload folder is absent) on hosted `windows-latest` runners, and recorded that `ARM64` is compile-and-link verified in CI on `windows-latest`.
+
 **Phase:** 0
 **Needs:** windows-host
 **Surface:** no
@@ -133,12 +136,12 @@ Add `.github/workflows/build.yml` running on `windows-latest` on every push and 
 1. Author `.github/workflows/build.yml` invoking `build/build.ps1`, caching NuGet and vcpkg archives keyed on `vcpkg.json` and project files, and uploading test XML results on failure. Done when: the workflow file passes local syntax inspection and invokes the exact same script a developer runs locally.
 2. Push and observe a green run on GitHub Actions; prove the gate can fail by confirming the step exits non-zero when `recto-tests` returns non-zero (tested locally via `build.ps1`, quoted in the review). Done when: `gh run list --workflow=build.yml --limit 1` shows `completed / success` on `main`.
 
-- [ ] Author `.github/workflows/build.yml` triggered on `push` to `main` and `pull_request` on `windows-latest` with `concurrency` cancellation for superseded PR runs. Done when: `.github/workflows/build.yml` parses cleanly and defines explicit job timeouts.
-- [ ] Configure `actions/cache` for NuGet (`packages/`) and vcpkg binary archives keyed on `hashFiles('src/app/packages.config', 'vcpkg.json', 'Directory.Build.props')`. Done when: repeat workflow runs restore cached packages without recompiling GoogleTest from source.
-- [ ] Invoke `powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Configuration Debug` and `-Configuration Release` across `x64` and `ARM64` with `/p:TreatWarningsAsErrors=true`. Done when: all four configuration-platform pairs (`Debug|x64`, `Release|x64`, `Debug|ARM64`, `Release|ARM64`) compile and link in CI with 0 warnings. Cheaper substitute: a workflow that only checks out the repo or builds one architecture.
-- [ ] Execute `recto-tests.exe --gtest_output=xml:build/test-results-x64.xml` on `x64` (Debug and Release) inside the workflow and fail the job immediately on any non-zero exit code. Done when: test failures fail the workflow step with the failing test named.
-- [ ] Upload `build/test-results-*.xml` and MSBuild failure logs as GitHub Actions artifacts when `failure()` occurs so CI failures are diagnosable without re-running locally. Done when: the `upload-artifact` step is wired with `if: always()` or `if: failure()`.
-- [ ] Push to `origin/main` and verify the live GitHub Actions `build.yml` run completes `success` across all steps. Done when: `gh run list --workflow=build.yml --limit 1` reports `completed / success`.
+- [x] Author `.github/workflows/build.yml` triggered on `push` to `main` and `pull_request` on `windows-latest` with `concurrency` cancellation for superseded PR runs. Done when: `.github/workflows/build.yml` parses cleanly and defines explicit job timeouts.
+- [x] Configure `actions/cache` for NuGet (`NUGET_PACKAGES`) and vcpkg binary archives (`VCPKG_DEFAULT_BINARY_CACHE`) keyed on `hashFiles('src/app/Recto.vcxproj', 'vcpkg.json', 'Directory.Build.props', 'Directory.Build.targets')`. Done when: repeat workflow runs restore cached packages without recompiling GoogleTest from source.
+- [x] Invoke `powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Configuration Debug` and `-Configuration Release` across `x64` and `ARM64` with `/p:TreatWarningsAsErrors=true`. Done when: all four configuration-platform pairs (`Debug|x64`, `Release|x64`, `Debug|ARM64`, `Release|ARM64`) compile and link in CI with 0 warnings. Cheaper substitute: a workflow that only checks out the repo or builds one architecture.
+- [x] Execute `recto-tests.exe --gtest_output=xml:build/test-results-x64-$cfg.xml` on `x64` (Debug and Release) inside the workflow and fail the job immediately on any non-zero exit code. Done when: test failures fail the workflow step with the failing test named.
+- [x] Upload `build/test-results-*.xml` and MSBuild failure logs as GitHub Actions artifacts when `failure()` occurs so CI failures are diagnosable without re-running locally. Done when: the `upload-artifact` step is wired with `if: always()` or `if: failure()`.
+- [x] Push to `origin/main` and verify the live GitHub Actions `build.yml` run completes `success` across all steps. Done when: `gh run list --workflow=build.yml --limit 1` reports `completed / success`.
 - [ ] Commit: `ci: build x64 and ARM64 and run recto-tests on every push`
 
 **Test checkpoint:** `gh run view --workflow=build.yml` for the candidate commit shows `x64` build, `ARM64` build and `recto-tests` steps all succeeding with 0 warnings.

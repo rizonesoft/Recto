@@ -19,6 +19,7 @@
 param(
     [ValidateSet('x64', 'ARM64')][string[]]$Platform = @('x64', 'ARM64'),
     [ValidateSet('Debug', 'Release')][string[]]$Configuration = @('Debug', 'Release'),
+    [string]$TestFilter = '',
     [switch]$SkipTests
 )
 $ErrorActionPreference = 'Stop'
@@ -27,16 +28,31 @@ Set-Location $root
 
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $vs = & $vswhere -version '[18.0,19.0)' -latest -property installationPath
-if (-not $vs) { throw 'Visual Studio 2026 not found (v145 toolset; VS 2022 has no Windows Store ARM64 platform, D00 T01 section 3)' }
+if (-not $vs) {
+    $vs = & $vswhere -version '[17.0,18.0)' -latest -property installationPath
+}
+if (-not $vs) { throw 'Visual Studio 2026 (v145) or Visual Studio 2022 (v143) not found' }
 $msbuild = Join-Path $vs 'MSBuild\Current\Bin\MSBuild.exe'
-if (-not $env:VCPKG_ROOT) { $env:VCPKG_ROOT = Join-Path $vs 'VC\vcpkg' }
-Write-Host "MSBuild:  $msbuild"
+if (-not $env:VCPKG_ROOT) {
+    $vsVcpkg = Join-Path $vs 'VC\vcpkg'
+    if (Test-Path (Join-Path $vsVcpkg 'scripts\buildsystems\msbuild\vcpkg.props')) {
+        $env:VCPKG_ROOT = $vsVcpkg
+    } elseif ($env:VCPKG_INSTALLATION_ROOT -and (Test-Path (Join-Path $env:VCPKG_INSTALLATION_ROOT 'scripts\buildsystems\msbuild\vcpkg.props'))) {
+        $env:VCPKG_ROOT = $env:VCPKG_INSTALLATION_ROOT
+    } else {
+        $env:VCPKG_ROOT = $vsVcpkg
+    }
+}
+Write-Host "MSBuild:    $msbuild"
 Write-Host "VCPKG_ROOT: $env:VCPKG_ROOT"
+
+New-Item -ItemType Directory -Path (Join-Path $root 'build') -Force | Out-Null
 
 foreach ($plat in $Platform) {
     foreach ($cfg in $Configuration) {
+        $logFile = Join-Path $root "build\msbuild-$cfg-$plat.log"
         Write-Host "=== Recto $cfg|$plat"
-        & $msbuild Recto.sln -restore "/p:Configuration=$cfg" "/p:Platform=$plat" /m /nologo
+        & $msbuild Recto.sln -restore "/p:Configuration=$cfg" "/p:Platform=$plat" "/p:TreatWarningsAsErrors=true" "/fl" "/flp:logfile=$logFile;verbosity=normal" /m /nologo
         if ($LASTEXITCODE -ne 0) { throw "build failed: $cfg|$plat (exit $LASTEXITCODE)" }
     }
 }
@@ -44,8 +60,13 @@ foreach ($plat in $Platform) {
 if (-not $SkipTests -and $Platform -contains 'x64') {
     foreach ($cfg in $Configuration) {
         $tests = Join-Path $root "build\bin\x64\$cfg\recto-tests\recto-tests.exe"
+        $xmlOut = Join-Path $root "build\test-results-x64-$cfg.xml"
+        $argsList = @("--gtest_output=xml:$xmlOut", "--gtest_fail_if_no_test_selected")
+        if ($TestFilter) {
+            $argsList += "--gtest_filter=$TestFilter"
+        }
         Write-Host "=== recto-tests $cfg|x64"
-        & $tests
+        & $tests @argsList
         if ($LASTEXITCODE -ne 0) { throw "recto-tests failed: $cfg|x64 (exit $LASTEXITCODE)" }
     }
 }

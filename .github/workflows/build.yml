@@ -1,0 +1,60 @@
+name: build
+
+# Product build and test gate (D00 T01 §4): builds all seven C++20 modules
+# across Debug|x64, Release|x64, Debug|ARM64, and Release|ARM64 with
+# /W4 /WX (/p:TreatWarningsAsErrors=true) and runs recto-tests on x64.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build x64 & ARM64 and run recto-tests
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      NUGET_PACKAGES: ${{ runner.temp }}\nuget-packages
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}\vcpkg-archives
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Ensure cache directories exist
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path $env:NUGET_PACKAGES -Force | Out-Null
+          New-Item -ItemType Directory -Path $env:VCPKG_DEFAULT_BINARY_CACHE -Force | Out-Null
+
+      - name: Cache NuGet and vcpkg binary archives
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.NUGET_PACKAGES }}
+            ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: build-deps-${{ runner.os }}-${{ hashFiles('src/app/Recto.vcxproj', 'vcpkg.json', 'Directory.Build.props', 'Directory.Build.targets') }}
+          restore-keys: |
+            build-deps-${{ runner.os }}-
+
+      - name: Build Debug (x64 and ARM64) and run Debug|x64 recto-tests
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Configuration Debug -Platform x64,ARM64
+
+      - name: Build Release (x64 and ARM64) and run Release|x64 recto-tests
+        shell: pwsh
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Configuration Release -Platform x64,ARM64
+
+      - name: Upload test results and MSBuild logs on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-and-test-diagnostics
+          path: |
+            build/test-results-*.xml
+            build/msbuild-*.log
+          if-no-files-found: ignore

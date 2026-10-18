@@ -35,6 +35,12 @@
     <EnableMsixTooling>true</EnableMsixTooling>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup>
+    <!-- VS 2026 (v180/v145) ships Application Type\Windows Store\10.0\Platforms\ARM64;
+         hosted GitHub Actions runners with VS 2022 (v170/v143) without the UWP ARM64
+         workload fall back to the standard desktop ARM64 platform props. -->
+    <_RelativePlatformFolder Condition="!Exists('$(VCTargetsPath)$(_RelativePlatformFolder)Platform.props')">Platforms\$(Platform)\</_RelativePlatformFolder>
+  </PropertyGroup>
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|ARM64"><Configuration>Debug</Configuration><Platform>ARM64</Platform></ProjectConfiguration>
     <ProjectConfiguration Include="Debug|x64"><Configuration>Debug</Configuration><Platform>x64</Platform></ProjectConfiguration>
@@ -43,7 +49,6 @@
   </ItemGroup>
   <PropertyGroup Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
-    <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
     <DesktopCompatible>true</DesktopCompatible>
   </PropertyGroup>
