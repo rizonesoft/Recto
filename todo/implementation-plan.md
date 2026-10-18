@@ -19,7 +19,7 @@ Sections: 14 | Checklist items: 67
 | [x]    | D00 T01 §4 | Build CI for x64 and ARM64                                                               | windows-host | 7     |
 | [x]    | D00 T02 §3 | Seeded graph and generated plan                                                          | none         | 4     |
 | [x]    | D00 T03 §1 | `test_support` corpus path resolver and `TempDir` RAII helper                            | windows-host | 7     |
-| [ ]    | D00 T03 §2 | RGBA pixel comparison (`expect_rgba_equal`, `compute_ssim`) and test assertion helpers   | windows-host | 6     |
+| [x]    | D00 T03 §2 | RGBA pixel comparison (`expect_rgba_equal`, `compute_ssim`) and test assertion helpers   | windows-host | 6     |
 | [ ]    | D00 T03 §3 | Deterministic PDF corpus generator (`scripts/build-corpus.py`) for `render/` and `text/` | windows-host | 7     |
 | [ ]    | D00 T03 §4 | Encrypted (`RC4`/`AES-128`/`AES-256`), `broken/` and `seeds/` corpus fixtures            | windows-host | 6     |
 | [ ]    | D00 T03 §5 | `tests/corpus/PROVENANCE.md` and automated `Corpus.Provenance` SHA-256 integrity suite   | windows-host | 6     |
@@ -265,6 +265,6 @@ Sections: 4 | Checklist items: 20
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
-Progress: 9/205 verified sections, 4 ready to run now.
+Progress: 10/205 verified sections, 5 ready to run now.
 
-Checklist: 41/1471 items completed (includes Commit items).
+Checklist: 42/1471 items completed (includes Commit items).

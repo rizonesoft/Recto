@@ -34,7 +34,7 @@ track: M0
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | `test_support` corpus path resolver and `TempDir` RAII helper | D00 T01 §3 | [x] |
-| 2 | §2 | RGBA pixel comparison (`expect_rgba_equal`, `compute_ssim`) and test assertion helpers | §1 | [ ] |
+| 2 | §2 | RGBA pixel comparison (`expect_rgba_equal`, `compute_ssim`) and test assertion helpers | §1 | [x] |
 | 3 | §3 | Deterministic PDF corpus generator (`scripts/build-corpus.py`) for `render/` and `text/` | §1 | [ ] |
 | 4 | §4 | Encrypted (`RC4`/`AES-128`/`AES-256`), `broken/` and `seeds/` corpus fixtures | §3 | [ ] |
 | 5 | §5 | `tests/corpus/PROVENANCE.md` and automated `Corpus.Provenance` SHA-256 integrity suite | §4 | [ ] |
@@ -96,9 +96,12 @@ Extend `tests/recto-tests/test_support.h/.cpp` with deterministic image and byte
 - [x] Implement `recto::test::compute_ssim` over luminance/RGB channels for `SSIM >= 0.99` assertions in flattening and conversion tests. Done when: identical buffers return `1.0` and inverted buffers return `< 0.1` in `Support.SsimCalculation`.
 - [x] Implement `recto::test::sha256_hex(std::span<const uint8_t>)` and `sha256_file(const std::filesystem::path&)` via Windows CNG `bcrypt.dll` (`BCRYPT_SHA256_ALGORITHM`). Done when: `Support.Sha256Hex` matches NIST SHA-256 vectors and `LICENSE`'s known SHA-256 (`0c2b2577702544e6ca2110800c25129ef79a7277e74f888ae852afb90cb363b4`).
 - [x] Add `RECTO_ASSERT_OK(expr)` and `RECTO_EXPECT_ERR(expr, code)` helper macros in `test_support.h` ready for `Result` / `PdfResult` types. Done when: `Support.ResultMacros` verifies both success unwrapping and error-code matching.
-- [ ] Commit: `test: add RGBA pixel diff, SSIM, CNG SHA-256 and assertion helpers`
+- [x] Commit: `test: add RGBA pixel diff, SSIM, CNG SHA-256 and assertion helpers`
 
 **Test checkpoint:** `build\bin\x64\Release\recto-tests\recto-tests.exe --gtest_filter=Support.*` exits 0 with all 8 support tests passing.
+
+> **Verified:** 2026-10-18 | §2 | e0edba7bc3c1e3f69efc49318c8193a2a5e72ffc
+> **Review:** `docs/reviews/d00-t03-s2.json`
 
 ## 3. Deterministic PDF corpus generator (`scripts/build-corpus.py`) for `render/` and `text/`
 
