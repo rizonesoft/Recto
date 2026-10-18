@@ -37,7 +37,7 @@ track: M0
 | 2 | §2 | RGBA pixel comparison (`expect_rgba_equal`, `compute_ssim`) and test assertion helpers | §1 | [x] |
 | 3 | §3 | Deterministic PDF corpus generator (`scripts/build-corpus.py`) for `render/` and `text/` | §1 | [x] |
 | 4 | §4 | Encrypted (`RC4`/`AES-128`/`AES-256`), `broken/` and `seeds/` corpus fixtures | §3 | [x] |
-| 5 | §5 | `tests/corpus/PROVENANCE.md` and automated `Corpus.Provenance` SHA-256 integrity suite | §4 | [ ] |
+| 5 | §5 | `tests/corpus/PROVENANCE.md` and automated `Corpus.Provenance` SHA-256 integrity suite | §4 | [x] |
 | 6 | §6 | MSVC AddressSanitizer (`/fsanitize=address`) build configuration and CI `asan` job | §2, D00 T01 §4 | [ ] |
 
 ## 1. `test_support` corpus path resolver and `TempDir` RAII helper
@@ -189,9 +189,12 @@ Generate `tests/corpus/PROVENANCE.md` recording a Markdown table (`| Path | SHA-
 - [x] Walk `tests/corpus/` recursively in `Corpus.Provenance`, computing each file's actual SHA-256 via `recto::test::sha256_file` and asserting 1-for-1 set equality and hash equality against `PROVENANCE.md`. Done when: `Corpus.Provenance` verifies all corpus files and prints the verified file count.
 - [x] Add `Corpus.DetectsUnlistedAndCorruptedFiles` in `corpus_tests.cpp` testing the provenance validator against a `TempDir` containing an unlisted dummy file and a 1-byte mutated file. Done when: both planted faults are caught and name the offending relative path.
 - [x] Run full `.\build.cmd` across `x64` and `ARM64` (`Debug` and `Release`) to confirm `corpus_tests.cpp` compiles with 0 warnings everywhere. Done when: `.\build.cmd` exits 0.
-- [ ] Commit: `test: add PROVENANCE.md and Corpus.Provenance SHA-256 verification suite`
+- [x] Commit: `test: add PROVENANCE.md and Corpus.Provenance SHA-256 verification suite`
 
 **Test checkpoint:** `build\bin\x64\Release\recto-tests\recto-tests.exe --gtest_filter=Corpus.*` exits 0 and verifies 100% of files under `tests/corpus/`.
+
+> **Verified:** 2026-10-18 | §5 | 6f7937b41a83841c444ffc1a37a9e2999b450119
+> **Review:** `docs/reviews/d00-t03-s5.json`
 
 ## 6. MSVC AddressSanitizer (`/fsanitize=address`) build configuration and CI `asan` job
 

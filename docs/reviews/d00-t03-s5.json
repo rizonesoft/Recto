@@ -1,0 +1,29 @@
+{
+  "ref": "D00 T03 \u00a75",
+  "title": "`tests/corpus/PROVENANCE.md` and automated `Corpus.Provenance` SHA-256 integrity suite",
+  "implementation_sha": "6f7937b41a83841c444ffc1a37a9e2999b450119",
+  "date": "2026-10-18",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T03-s5.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/00-workspace/D00-T03-s5.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/00-workspace/D00-T03-s5.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "build\\bin\\x64\\Release\\recto-tests\\recto-tests.exe --gtest_filter=Corpus.* -> [  PASSED  ] 4 tests. (Corpus.Provenance verified 39 corpus files)",
+    "python scripts/build-corpus.py --check -> verified: 39 corpus fixtures in R:\\GitHub\\RectoPDF\\tests\\corpus are current",
+    "python -m unittest tests.scripts.test_build_corpus -> Ran 6 tests in 98.650s / OK",
+    ".\\build.cmd -> Build succeeded: 0 Warning(s), 0 Error(s) across Debug/Release x64/ARM64; [  PASSED  ] 15 tests."
+  ]
+}
