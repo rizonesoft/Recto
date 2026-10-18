@@ -886,6 +886,9 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 											PdfError herr;
 											if (!next_non_comment_token(hdr_lex, id_tok, herr) ||
 												!next_non_comment_token(hdr_lex, off_tok, herr)) {
+												if (herr.code == ErrorCode::OutOfMemory) {
+													return herr;
+												}
 												header_ok = false;
 												break;
 											}
@@ -943,8 +946,13 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 												if (!next_non_comment_token(
 														inner_parser.lexer(),
 														trailing_tok,
-														terr) ||
-													!trailing_tok.is_eof()) {
+														terr)) {
+													if (terr.code == ErrorCode::OutOfMemory) {
+														return terr;
+													}
+													continue;
+												}
+												if (!trailing_tok.is_eof()) {
 													continue;
 												}
 												if (const PdfDict* idict_chk = inner_val->as_dict()) {
@@ -1654,6 +1662,9 @@ PdfResult<IndirectObject> XrefTable::read_compressed_object_with_visited(
 			PdfError herr;
 			if (!next_non_comment_token(hdr_lexer, num_tok, herr) ||
 				!next_non_comment_token(hdr_lexer, off_tok, herr)) {
+				if (herr.code == ErrorCode::OutOfMemory) {
+					return herr;
+				}
 				return make_xref_error(
 					ErrorCode::DamagedFormat,
 					DiagnosticId::DamagedObject,
