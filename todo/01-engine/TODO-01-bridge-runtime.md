@@ -40,7 +40,7 @@ track: M1
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | `PdfResult<T>`, `PdfError`, `ErrorCode`, D16 diagnostic ring and ETW `TraceLogging` | D00 T01 §3, D00 T03 §2 | [ ] |
+| 1 | §1 | `PdfResult<T>`, `PdfError`, `ErrorCode`, D16 diagnostic ring and ETW `TraceLogging` | D00 T01 §3, D00 T03 §2 | [x] |
 | 2 | §2 | `PdfValue` variant object model, dictionary/array helpers and deep cloning | §1 | [ ] |
 | 3 | §3 | Binary-safe PDF 1.7 and 2.0 lexer (`src/pdf/lexer.cpp`) | §2 | [ ] |
 | 4 | §4 | Bounded recursive-descent indirect object parser (`src/pdf/parser.cpp`) | §3 | [ ] |
@@ -76,9 +76,12 @@ Define the foundational error-handling and diagnostic primitives in `src/pdf/err
 - [x] Implement the D16 256-slot thread-safe diagnostic ring buffer (`record_diagnostic`, `diagnostics_tail`, `clear_diagnostics`) and `TraceLoggingWrite` ETW provider (`TRACELOGGING_DEFINE_PROVIDER(g_recto_etw_provider, "Recto.Diagnostics", ...)` + `RECTO_ETW_SPAN`) in `src/pdf/error.cpp`. Done when: recording 1,000 diagnostics retains the newest 256 entries in exact chronological order without heap growth and emits ETW trace events without error.
 - [x] Verify thread safety of the diagnostic ring buffer and ETW span emission with 8 threads concurrently calling `record_diagnostic`, `RECTO_ETW_SPAN`, and `diagnostics_tail`. Done when: `PdfError.ConcurrentDiagnosticRecording` and `PdfError.EtwTraceLoggingProviderAndSpans` complete 10,000 writes/reads under ASan with zero data races.
 - [x] Automatically append a ring-buffer entry and emit a `TraceLoggingWrite` diagnostic event whenever `make_pdf_error(...)` constructs a `DamagedFormat`, `DecompressionLimitExceeded`, or `RecursionLimitExceeded` error. Done when: `diagnostics_tail(10)` reflects the error immediately after construction.
-- [ ] Commit: `pdf: add PdfResult, PdfError, D16 diagnostic ring buffer and ETW TraceLogging`
+- [x] Commit: `pdf: add PdfResult, PdfError, D16 diagnostic ring buffer and ETW TraceLogging`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*` passes under ASan with 0 warnings.
+
+> **Verified:** 2026-10-18 | §1 | a0b2e1721fb9fb1fe3662162c86301e84d74154d
+> **Review:** `docs/reviews/d01-t01-s1.json`
 
 ## 2. `PdfValue` variant object model, dictionary/array helpers and deep cloning
 
