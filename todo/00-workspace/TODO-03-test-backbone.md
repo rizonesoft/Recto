@@ -33,7 +33,7 @@ track: M0
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | `test_support` corpus path resolver and `TempDir` RAII helper | D00 T01 §3 | [ ] |
+| 1 | §1 | `test_support` corpus path resolver and `TempDir` RAII helper | D00 T01 §3 | [x] |
 | 2 | §2 | RGBA pixel comparison (`expect_rgba_equal`, `compute_ssim`) and test assertion helpers | §1 | [ ] |
 | 3 | §3 | Deterministic PDF corpus generator (`scripts/build-corpus.py`) for `render/` and `text/` | §1 | [ ] |
 | 4 | §4 | Encrypted (`RC4`/`AES-128`/`AES-256`), `broken/` and `seeds/` corpus fixtures | §3 | [ ] |
@@ -68,6 +68,9 @@ Implement the file-system test support primitives in `tests/recto-tests/test_sup
 - [x] Commit: `test: add corpus_path resolver and TempDir RAII helper to recto-tests`
 
 **Test checkpoint:** `build\bin\x64\Release\recto-tests\recto-tests.exe --gtest_filter=Support.CorpusPath*:Support.TempDir*` exits 0 with all path and cleanup assertions passing.
+
+> **Verified:** 2026-10-18 | §1 | eef27f1b6f6b28926e22bcf556e777986fc5697e
+> **Review:** `docs/reviews/d00-t03-s1.json`
 
 ## 2. RGBA pixel comparison (`expect_rgba_equal`, `compute_ssim`) and test assertion helpers
 
