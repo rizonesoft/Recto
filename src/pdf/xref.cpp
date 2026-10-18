@@ -281,9 +281,13 @@ PdfResult<uint64_t> XrefTable::locate_startxref_offset(
 	}
 }
 
-PdfResult<XrefTable> XrefTable::parse(std::span<const uint8_t> file_bytes) noexcept
+PdfResult<XrefTable> XrefTable::parse(
+	std::span<const uint8_t> file_bytes,
+	uint64_t max_total_entries) noexcept
 {
 	try {
+		const uint64_t effective_max_entries =
+			std::min<uint64_t>(max_total_entries, kMaxXrefTotalEntries);
 		std::string version_str;
 		RECTO_PDF_TRY(const uint64_t header_off, locate_header_offset(file_bytes, &version_str));
 		RECTO_PDF_TRY(const uint64_t raw_startxref, locate_startxref_offset(file_bytes));
@@ -381,7 +385,7 @@ PdfResult<XrefTable> XrefTable::parse(std::span<const uint8_t> file_bytes) noexc
 						"xref subsection object range overflows 32-bit object numbers",
 						first_tok.byte_offset);
 				}
-				if (count > kMaxXrefTotalEntries - total_rows_parsed) {
+				if (count > effective_max_entries - total_rows_parsed) {
 					return make_xref_error(
 						ErrorCode::DamagedFormat,
 						DiagnosticId::DamagedXRef,

@@ -78,9 +78,10 @@ public:
 
 	// Parses the PDF header, `startxref`, classic `xref` subsections, `trailer`
 	// dictionaries, and `/Prev` incremental update chain (capped at 256
-	// revisions with cycle detection).
+	// revisions with cycle detection and cumulative entry budget).
 	[[nodiscard]] static PdfResult<XrefTable> parse(
-		std::span<const uint8_t> file_bytes) noexcept;
+		std::span<const uint8_t> file_bytes,
+		uint64_t max_total_entries = kMaxXrefTotalEntries) noexcept;
 
 	[[nodiscard]] uint64_t header_offset() const noexcept
 	{

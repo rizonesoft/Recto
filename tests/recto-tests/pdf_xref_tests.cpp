@@ -452,20 +452,53 @@ TEST(PdfXref, CyclicPrevAndRevisionCeiling)
 		RECTO_EXPECT_ERR(XrefTable::parse(as_bytes(pdf_valid_stm)), ErrorCode::UnsupportedFeature);
 	}
 
-	// 5. Cumulative allocation ceiling across subsections and malformed numeric boundaries.
+	// 5. Cumulative allocation ceiling across subsections and across /Prev revisions,
+	// plus malformed numeric boundaries.
 	{
-		// Two subsections of 600,000 entries each: individually <= kMaxXrefSubsectionCount (1,000,000),
-		// but cumulative 1,200,000 > kMaxXrefTotalEntries (1,000,000).
-		// Wait: to test the second subsection's cumulative check without writing 600,000 text rows,
-		// test 1 subsection of 1 row + 1 subsection of 1,000,000 rows (1 + 1,000,000 = 1,000,001 > kMaxXrefTotalEntries)!
+		// 5a. Valid multi-subsection PDF with 2 subsections of 2 entries each (4 rows total):
+		// succeeds with max_total_entries = 4, fails with max_total_entries = 3 (whereas each
+		// subsection individually has 2 <= 3 rows, so removing cumulative tracking would pass).
+		std::string pdf_valid_2sub = "%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n";
+		const size_t xref_2sub = pdf_valid_2sub.size();
+		pdf_valid_2sub += "xref\n0 2\n0000000000 65535 f \n0000000009 00000 n \n";
+		pdf_valid_2sub += "5 2\n0000000000 00001 f \n0000000000 00001 f \n";
+		pdf_valid_2sub += "trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n" +
+			std::to_string(xref_2sub) + "\n%%EOF\n";
+
+		RECTO_ASSERT_OK(XrefTable::parse(as_bytes(pdf_valid_2sub), 4));
+		auto err_2sub = XrefTable::parse(as_bytes(pdf_valid_2sub), 3);
+		RECTO_EXPECT_ERR(err_2sub, ErrorCode::DamagedFormat);
+		EXPECT_EQ(
+			err_2sub.error().message,
+			"Cumulative xref entry count across subsections exceeds maximum budget");
+
+		// 5b. Valid 2-revision /Prev PDF (render/incremental-2rev.pdf: 4 rows in rev 2 + 7 rows in rev 1 = 11 rows):
+		// succeeds with max_total_entries = 11, fails with max_total_entries = 10 (whereas each revision
+		// individually has <= 7 <= 10 rows, so resetting total_rows_parsed per revision would pass).
+		const auto inc_bytes = test::read_file_bytes(
+			test::corpus_path("render/incremental-2rev.pdf"));
+		ASSERT_FALSE(inc_bytes.empty());
+		RECTO_ASSERT_OK(XrefTable::parse(inc_bytes, 11));
+		auto err_inc_budget = XrefTable::parse(inc_bytes, 10);
+		RECTO_EXPECT_ERR(err_inc_budget, ErrorCode::DamagedFormat);
+		EXPECT_EQ(
+			err_inc_budget.error().message,
+			"Cumulative xref entry count across subsections exceeds maximum budget");
+
+		// 5c. Default kMaxXrefTotalEntries (1,000,000) ceiling check across subsections:
+		// 1 row in subsection 0 + 1,000,000 in subsection 1 = 1,000,001 > kMaxXrefTotalEntries.
 		std::string pdf_cum = "%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n";
 		const size_t xref_cum = pdf_cum.size();
 		pdf_cum += "xref\n0 1\n0000000000 65535 f \n1 1000000\n0000000009 00000 n \n";
 		pdf_cum += "trailer\n<< /Size 1000001 /Root 1 0 R >>\nstartxref\n" +
 			std::to_string(xref_cum) + "\n%%EOF\n";
-		RECTO_EXPECT_ERR(XrefTable::parse(as_bytes(pdf_cum)), ErrorCode::DamagedFormat);
+		auto err_cum = XrefTable::parse(as_bytes(pdf_cum));
+		RECTO_EXPECT_ERR(err_cum, ErrorCode::DamagedFormat);
+		EXPECT_EQ(
+			err_cum.error().message,
+			"Cumulative xref entry count across subsections exceeds maximum budget");
 
-		// Malformed numeric boundaries: 32-bit object ID overflow (4294967295 + 2) and generation > 65535.
+		// 5d. Malformed numeric boundaries: 32-bit object ID overflow (4294967295 + 2) and generation > 65535.
 		std::string pdf_id_ovf = "%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n";
 		const size_t xref_ovf = pdf_id_ovf.size();
 		pdf_id_ovf += "xref\n4294967295 2\n0000000000 65535 f \n0000000000 65535 f \n";
