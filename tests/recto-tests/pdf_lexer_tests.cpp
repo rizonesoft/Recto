@@ -63,11 +63,13 @@ TEST(PdfLexer, WhitespaceAndComments)
 	EXPECT_EQ(t1.value().kind, TokenKind::Integer);
 	EXPECT_EQ(t1.value().int_value, 12);
 
-	// Peek ahead 2 tokens (0, obj) without consuming.
+	// Peek ahead 2 tokens (0, obj) without consuming or moving logical position().
+	const size_t pos_after_12 = lex.position();
 	auto p0 = lex.peek_token(0);
 	auto p1 = lex.peek_token(1);
 	RECTO_ASSERT_OK(p0);
 	RECTO_ASSERT_OK(p1);
+	EXPECT_EQ(lex.position(), pos_after_12);
 	EXPECT_EQ(p0.value().kind, TokenKind::Integer);
 	EXPECT_EQ(p0.value().int_value, 0);
 	EXPECT_TRUE(p1.value().is_keyword("obj"));
@@ -105,6 +107,13 @@ TEST(PdfLexer, WhitespaceAndComments)
 	RECTO_ASSERT_OK(c2);
 	EXPECT_EQ(c2.value().kind, TokenKind::Comment);
 	EXPECT_EQ(c2.value().text.size(), 4u);
+
+	// 3. Peeking on a malformed token rolls back cursor_ so a subsequent
+	// next_token() observes the exact same error instead of silently returning EOF.
+	const auto bad_literal = to_bytes("(unterminated");
+	Lexer err_lex(bad_literal);
+	RECTO_EXPECT_ERR(err_lex.peek_token(0), ErrorCode::DamagedFormat);
+	RECTO_EXPECT_ERR(err_lex.next_token(), ErrorCode::DamagedFormat);
 }
 
 TEST(PdfLexer, Numbers)
@@ -214,6 +223,14 @@ TEST(PdfLexer, LiteralStrings)
 		const std::vector<uint8_t> expected_0053 = {0x05u, '3'};
 		EXPECT_EQ(lex.next_token().value().bytes, expected_0053);
 	}
+
+	// 4. Token byte ceiling enforced before growth.
+	{
+		const auto buf = to_bytes("(1234) (12345)");
+		Lexer lex(buf, false, 4);
+		RECTO_ASSERT_OK(lex.next_token());
+		RECTO_EXPECT_ERR(lex.next_token(), ErrorCode::DecompressionLimitExceeded);
+	}
 }
 
 TEST(PdfLexer, HexStrings)
@@ -254,6 +271,12 @@ TEST(PdfLexer, HexStrings)
 	const auto bad_hex = to_bytes("<41G2>");
 	Lexer bad_lex(bad_hex);
 	RECTO_EXPECT_ERR(bad_lex.next_token(), ErrorCode::DamagedFormat);
+
+	// Ceiling check applies both to full byte pairs and to final odd-nibble padding.
+	const auto ceil_hex = to_bytes("<4142> <4142A> <414243>");
+	Lexer ceil_lex(ceil_hex, false, 2);
+	RECTO_ASSERT_OK(ceil_lex.next_token());
+	RECTO_EXPECT_ERR(ceil_lex.next_token(), ErrorCode::DecompressionLimitExceeded);
 }
 
 TEST(PdfLexer, Names)
@@ -289,13 +312,17 @@ TEST(PdfLexer, Names)
 
 TEST(PdfLexer, StreamEolRule)
 {
-	// 1. stream\n\nDATA -> first \n is EOL, second \n is preserved as byte 0 of stream!
+	// 1. stream\n\nDATA -> first \n is EOL, second \n is preserved as byte 0 of stream,
+	// even when peek_token(1) was called before consuming `stream`!
 	{
 		const auto buf = to_bytes("stream\n\nDATA");
 		Lexer lex(buf);
+		RECTO_ASSERT_OK(lex.peek_token(0));
+		RECTO_ASSERT_OK(lex.peek_token(1));
 		auto kw = lex.next_token();
 		RECTO_ASSERT_OK(kw);
 		EXPECT_TRUE(kw.value().is_keyword("stream"));
+		EXPECT_EQ(lex.position(), 6u);
 		auto offset = lex.consume_stream_eol();
 		RECTO_ASSERT_OK(offset);
 		EXPECT_EQ(offset.value(), 7u);
@@ -306,6 +333,7 @@ TEST(PdfLexer, StreamEolRule)
 	{
 		const auto buf = to_bytes("stream\r\nDATA");
 		Lexer lex(buf);
+		RECTO_ASSERT_OK(lex.peek_token(1));
 		RECTO_ASSERT_OK(lex.next_token());
 		auto offset = lex.consume_stream_eol();
 		RECTO_ASSERT_OK(offset);
@@ -323,15 +351,13 @@ TEST(PdfLexer, StreamEolRule)
 		EXPECT_EQ(buf[offset.value()], '\n');
 	}
 
-	// 4. Bare \r followed by stream data 'X' (never consumes 2 bytes!)
+	// 4. Bare \r (not followed by \n) after stream keyword is rejected per
+	// ISO 32000-1 section 7.3.8.1 ("not by a single CARRIAGE RETURN alone").
 	{
 		const auto buf = to_bytes("stream\rXDATA");
 		Lexer lex(buf);
 		RECTO_ASSERT_OK(lex.next_token());
-		auto offset = lex.consume_stream_eol();
-		RECTO_ASSERT_OK(offset);
-		EXPECT_EQ(offset.value(), 7u);
-		EXPECT_EQ(buf[offset.value()], 'X');
+		RECTO_EXPECT_ERR(lex.consume_stream_eol(), ErrorCode::DamagedFormat);
 	}
 }
 
@@ -361,11 +387,37 @@ TEST(PdfLexer, TruncationSweep)
 			if (!res.has_value() || res.value().is_eof()) {
 				break;
 			}
+			EXPECT_LE(res.value().byte_offset + res.value().byte_length, slice.size());
 			if (res.value().is_keyword("stream")) {
-				(void)lex.consume_stream_eol();
+				auto eol_res = lex.consume_stream_eol();
+				if (!eol_res.has_value()) {
+					break;
+				}
+				EXPECT_LE(eol_res.value(), slice.size());
 			}
 		}
 	}
+
+	// Verify the full untruncated complex_buffer lexes end-to-end with zero errors.
+	Lexer full_lex(complex_buffer, false);
+	bool saw_stream = false;
+	while (true) {
+		RECTO_ASSERT_OK(full_lex.peek_token(0));
+		RECTO_ASSERT_OK(full_lex.peek_token(1));
+		auto tok_res = full_lex.next_token();
+		RECTO_ASSERT_OK(tok_res);
+		if (tok_res.value().is_eof()) {
+			break;
+		}
+		if (tok_res.value().is_keyword("stream")) {
+			saw_stream = true;
+			auto eol_offset = full_lex.consume_stream_eol();
+			RECTO_ASSERT_OK(eol_offset);
+			ASSERT_LT(eol_offset.value(), complex_buffer.size());
+			EXPECT_EQ(complex_buffer[eol_offset.value()], '\n');
+		}
+	}
+	EXPECT_TRUE(saw_stream);
 }
 
 } // namespace

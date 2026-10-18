@@ -68,7 +68,8 @@ class Lexer {
 public:
 	explicit Lexer(
 		std::span<const uint8_t> input,
-		bool emit_comments = false) noexcept;
+		bool emit_comments = false,
+		size_t max_token_bytes = kMaxLexerTokenBytes) noexcept;
 
 	[[nodiscard]] std::span<const uint8_t> input() const noexcept
 	{
@@ -80,6 +81,8 @@ public:
 		return input_.size();
 	}
 
+	// Returns the byte offset immediately after the last consumed token (or the
+	// seek target when no token has been consumed since construction/seek).
 	[[nodiscard]] size_t position() const noexcept;
 
 	[[nodiscard]] bool at_eof() const noexcept
@@ -91,6 +94,12 @@ public:
 	[[nodiscard]] bool emit_comments() const noexcept
 	{
 		return emit_comments_;
+	}
+
+	void set_max_token_bytes(size_t max_bytes) noexcept;
+	[[nodiscard]] size_t max_token_bytes() const noexcept
+	{
+		return max_token_bytes_;
 	}
 
 	// Seeks the lexer cursor to byte_offset (clamped to input_.size()) and
@@ -108,9 +117,7 @@ public:
 	// Enforces the ISO 32000-1 section 7.3.8.1 / ISO 32000-2 section 7.3.8.1
 	// `stream` keyword end-of-line rule:
 	// - Skips optional horizontal spaces (0x20 SP, 0x09 HT) after `stream`.
-	// - Requires a single EOL marker (`\r\n` or `\n`, or bare `\r` only as a
-	//   lenient fallback when not followed by `\n`, consuming 1 byte so the
-	//   immediately following stream byte 0 is preserved).
+	// - Requires a single EOL marker (`\r\n` or `\n`, never bare `\r`).
 	// - Leaves position() at byte 0 of the stream payload and returns that
 	//   byte offset.
 	[[nodiscard]] PdfResult<uint64_t> consume_stream_eol() noexcept;
@@ -140,17 +147,24 @@ public:
 	}
 
 private:
-	[[nodiscard]] PdfResult<Token> read_raw_token() noexcept;
-	[[nodiscard]] PdfResult<Token> read_comment(size_t start_pos) noexcept;
-	[[nodiscard]] PdfResult<Token> read_name(size_t start_pos) noexcept;
-	[[nodiscard]] PdfResult<Token> read_literal_string(size_t start_pos) noexcept;
-	[[nodiscard]] PdfResult<Token> read_hex_string(size_t start_pos) noexcept;
-	[[nodiscard]] PdfResult<Token> read_number_or_keyword(size_t start_pos) noexcept;
+	struct LookaheadEntry {
+		Token token;
+		size_t cursor_after{0};
+	};
+
+	[[nodiscard]] PdfResult<Token> read_raw_token();
+	[[nodiscard]] PdfResult<Token> read_comment(size_t start_pos);
+	[[nodiscard]] PdfResult<Token> read_name(size_t start_pos);
+	[[nodiscard]] PdfResult<Token> read_literal_string(size_t start_pos);
+	[[nodiscard]] PdfResult<Token> read_hex_string(size_t start_pos);
+	[[nodiscard]] PdfResult<Token> read_number_or_keyword(size_t start_pos);
 
 	std::span<const uint8_t> input_{};
 	size_t cursor_{0};
+	size_t logical_cursor_{0};
 	bool emit_comments_{false};
-	std::deque<Token> lookahead_{};
+	size_t max_token_bytes_{kMaxLexerTokenBytes};
+	std::deque<LookaheadEntry> lookahead_{};
 };
 
 } // namespace recto::pdf

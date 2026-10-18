@@ -2,6 +2,7 @@
 // ISO 32000-2:2020 section 7.2) for recto-pdf (D01 T01 section 3).
 #include "lexer.h"
 
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <limits>
@@ -57,9 +58,6 @@ NumericScanKind classify_numeric_token(std::string_view raw) noexcept
 		return NumericScanKind::NotNumeric;
 	}
 
-	// Single '+', '-', or '.' without digits: in PDF content streams, '\'' and
-	// '\"' are operators, whereas bare '+', '-', '.', '--5', '1.2.3' are
-	// malformed numeric tokens if all characters belong to [0-9+-.].
 	bool all_num_chars = true;
 	for (const char ch : raw) {
 		const uint8_t b = static_cast<uint8_t>(ch);
@@ -69,11 +67,6 @@ NumericScanKind classify_numeric_token(std::string_view raw) noexcept
 		}
 	}
 	if (!all_num_chars) {
-		// Starts with a digit/sign/dot followed by letters (e.g. "0g" or ".notdef"
-		// without slash): if it starts with a digit or multiple signs/dots, check
-		// whether it is a keyword/operator or malformed number. PDF operators
-		// only consist of ASCII letters, '*', '\'', '\"', '0', '1' (in d0, d1,
-		// MP, DP, BMC, BDC, EMC, etc., which start with a letter).
 		return NumericScanKind::NotNumeric;
 	}
 
@@ -110,34 +103,43 @@ NumericScanKind classify_numeric_token(std::string_view raw) noexcept
 
 } // namespace
 
-Lexer::Lexer(std::span<const uint8_t> input, bool emit_comments) noexcept
+Lexer::Lexer(
+	std::span<const uint8_t> input,
+	bool emit_comments,
+	size_t max_token_bytes) noexcept
 	: input_(input)
 	, cursor_(0)
+	, logical_cursor_(0)
 	, emit_comments_(emit_comments)
+	, max_token_bytes_(std::min(max_token_bytes, kMaxLexerTokenBytes))
 {
 }
 
 size_t Lexer::position() const noexcept
 {
-	if (!lookahead_.empty()) {
-		return static_cast<size_t>(lookahead_.front().byte_offset);
-	}
-	return cursor_;
+	return logical_cursor_;
 }
 
 void Lexer::set_emit_comments(bool enabled) noexcept
 {
 	if (emit_comments_ != enabled) {
-		const size_t logical_pos = position();
 		emit_comments_ = enabled;
-		cursor_ = logical_pos;
+		cursor_ = logical_cursor_;
 		lookahead_.clear();
 	}
+}
+
+void Lexer::set_max_token_bytes(size_t max_bytes) noexcept
+{
+	max_token_bytes_ = std::min(max_bytes, kMaxLexerTokenBytes);
+	cursor_ = logical_cursor_;
+	lookahead_.clear();
 }
 
 void Lexer::seek(size_t byte_offset) noexcept
 {
 	cursor_ = std::min(byte_offset, input_.size());
+	logical_cursor_ = cursor_;
 	lookahead_.clear();
 }
 
@@ -145,15 +147,18 @@ PdfResult<Token> Lexer::next_token() noexcept
 {
 	try {
 		if (!lookahead_.empty()) {
-			Token tok = std::move(lookahead_.front());
+			LookaheadEntry entry = std::move(lookahead_.front());
 			lookahead_.pop_front();
-			return tok;
+			logical_cursor_ = entry.cursor_after;
+			return std::move(entry.token);
 		}
-		return read_raw_token();
+		RECTO_PDF_TRY(Token tok, read_raw_token());
+		logical_cursor_ = cursor_;
+		return tok;
 	} catch (const std::bad_alloc&) {
-		return PdfError{ErrorCode::OutOfMemory, "Out of memory in Lexer::next_token", cursor_};
+		return PdfError{ErrorCode::OutOfMemory, "Out of memory in Lexer::next_token", logical_cursor_};
 	} catch (...) {
-		return PdfError{ErrorCode::InternalError, "Unexpected failure in Lexer::next_token", cursor_};
+		return PdfError{ErrorCode::InternalError, "Unexpected failure in Lexer::next_token", logical_cursor_};
 	}
 }
 
@@ -161,28 +166,37 @@ PdfResult<Token> Lexer::peek_token(size_t lookahead_index) noexcept
 {
 	try {
 		while (lookahead_.size() <= lookahead_index) {
-			RECTO_PDF_TRY(Token tok, read_raw_token());
+			const size_t saved_cursor = cursor_;
+			auto res = read_raw_token();
+			if (!res.has_value()) {
+				// Restore cursor_ so a failed speculative lookahead does not
+				// silently consume the malformed token before next_token().
+				cursor_ = saved_cursor;
+				return std::move(res).error();
+			}
+			Token tok = std::move(res).value();
 			const bool is_eof = tok.is_eof();
-			lookahead_.push_back(std::move(tok));
+			lookahead_.push_back(LookaheadEntry{std::move(tok), cursor_});
 			if (is_eof) {
 				break;
 			}
 		}
 		if (lookahead_index >= lookahead_.size()) {
-			return lookahead_.back();
+			return lookahead_.back().token;
 		}
-		return lookahead_[lookahead_index];
+		return lookahead_[lookahead_index].token;
 	} catch (const std::bad_alloc&) {
-		return PdfError{ErrorCode::OutOfMemory, "Out of memory in Lexer::peek_token", cursor_};
+		return PdfError{ErrorCode::OutOfMemory, "Out of memory in Lexer::peek_token", logical_cursor_};
 	} catch (...) {
-		return PdfError{ErrorCode::InternalError, "Unexpected failure in Lexer::peek_token", cursor_};
+		return PdfError{ErrorCode::InternalError, "Unexpected failure in Lexer::peek_token", logical_cursor_};
 	}
 }
 
 PdfResult<uint64_t> Lexer::consume_stream_eol() noexcept
 {
-	// Synchronize physical cursor with logical position if lookahead was buffered.
-	cursor_ = position();
+	// Synchronize physical cursor with the exact byte offset immediately after
+	// the last consumed token (`stream`), discarding any speculative lookahead.
+	cursor_ = logical_cursor_;
 	lookahead_.clear();
 
 	// Skip optional horizontal whitespace (SP 0x20, HT 0x09) on the same line
@@ -193,28 +207,32 @@ PdfResult<uint64_t> Lexer::consume_stream_eol() noexcept
 	}
 
 	if (cursor_ >= input_.size()) {
+		logical_cursor_ = cursor_;
 		return make_pdf_error(
 			ErrorCode::DamagedFormat,
 			"Truncated PDF stream: missing EOL after stream keyword",
 			cursor_);
 	}
 
-	// ISO 32000-1 section 7.3.8.1:
+	// ISO 32000-1 section 7.3.8.1 / ISO 32000-2 section 7.3.8.1:
 	// The keyword `stream` that follows the stream dictionary shall be followed
 	// by an end-of-line marker consisting of either a CARRIAGE RETURN and a
-	// LINE FEED or just a LINE FEED, and not by any other whitespace.
-	// Note: If a bare '\r' is present without a following '\n', consume only the
-	// single '\r' byte (never 2 bytes) so byte 0 of the stream payload is not
-	// eaten.
+	// LINE FEED (\r\n) or just a LINE FEED (\n), and not by a single CARRIAGE
+	// RETURN (\r) alone.
 	if (input_[cursor_] == '\r') {
-		++cursor_;
-		if (cursor_ < input_.size() && input_[cursor_] == '\n') {
-			++cursor_;
+		if (cursor_ + 1 < input_.size() && input_[cursor_ + 1] == '\n') {
+			cursor_ += 2;
+			logical_cursor_ = cursor_;
+			return static_cast<uint64_t>(cursor_);
 		}
-		return static_cast<uint64_t>(cursor_);
+		return make_pdf_error(
+			ErrorCode::DamagedFormat,
+			"Bare CR after stream keyword is forbidden by ISO 32000-1 section 7.3.8.1",
+			cursor_);
 	}
 	if (input_[cursor_] == '\n') {
 		++cursor_;
+		logical_cursor_ = cursor_;
 		return static_cast<uint64_t>(cursor_);
 	}
 
@@ -224,7 +242,7 @@ PdfResult<uint64_t> Lexer::consume_stream_eol() noexcept
 		cursor_);
 }
 
-PdfResult<Token> Lexer::read_raw_token() noexcept
+PdfResult<Token> Lexer::read_raw_token()
 {
 	while (true) {
 		while (cursor_ < input_.size() && is_pdf_whitespace(input_[cursor_])) {
@@ -326,7 +344,7 @@ PdfResult<Token> Lexer::read_raw_token() noexcept
 	}
 }
 
-PdfResult<Token> Lexer::read_comment(size_t start_pos) noexcept
+PdfResult<Token> Lexer::read_comment(size_t start_pos)
 {
 	// Skip leading '%'
 	++cursor_;
@@ -337,6 +355,12 @@ PdfResult<Token> Lexer::read_comment(size_t start_pos) noexcept
 			break;
 		}
 		++cursor_;
+		if (emit_comments_ && (cursor_ - body_start) > max_token_bytes_) {
+			return make_pdf_error(
+				ErrorCode::DecompressionLimitExceeded,
+				"PDF comment exceeds maximum token length",
+				start_pos);
+		}
 	}
 	const size_t body_end = cursor_;
 	if (cursor_ < input_.size()) {
@@ -356,12 +380,6 @@ PdfResult<Token> Lexer::read_comment(size_t start_pos) noexcept
 	tok.byte_length = cursor_ - start_pos;
 	if (emit_comments_) {
 		const size_t len = body_end - body_start;
-		if (len > kMaxLexerTokenBytes) {
-			return make_pdf_error(
-				ErrorCode::DecompressionLimitExceeded,
-				"PDF comment exceeds maximum token length",
-				start_pos);
-		}
 		tok.text.assign(
 			reinterpret_cast<const char*>(input_.data() + body_start),
 			len);
@@ -369,7 +387,7 @@ PdfResult<Token> Lexer::read_comment(size_t start_pos) noexcept
 	return tok;
 }
 
-PdfResult<Token> Lexer::read_name(size_t start_pos) noexcept
+PdfResult<Token> Lexer::read_name(size_t start_pos)
 {
 	// Skip leading '/'
 	++cursor_;
@@ -378,6 +396,12 @@ PdfResult<Token> Lexer::read_name(size_t start_pos) noexcept
 		const uint8_t b = input_[cursor_];
 		if (!is_pdf_regular(b)) {
 			break;
+		}
+		if (decoded.size() >= max_token_bytes_) {
+			return make_pdf_error(
+				ErrorCode::DecompressionLimitExceeded,
+				"PDF name token exceeds maximum byte ceiling",
+				start_pos);
 		}
 		if (b == '#') {
 			if (cursor_ + 2 >= input_.size()) {
@@ -410,12 +434,6 @@ PdfResult<Token> Lexer::read_name(size_t start_pos) noexcept
 			decoded.push_back(static_cast<char>(b));
 			++cursor_;
 		}
-		if (decoded.size() > kMaxLexerTokenBytes) {
-			return make_pdf_error(
-				ErrorCode::DecompressionLimitExceeded,
-				"PDF name token exceeds maximum byte ceiling",
-				start_pos);
-		}
 	}
 
 	Token tok;
@@ -426,18 +444,29 @@ PdfResult<Token> Lexer::read_name(size_t start_pos) noexcept
 	return tok;
 }
 
-PdfResult<Token> Lexer::read_literal_string(size_t start_pos) noexcept
+PdfResult<Token> Lexer::read_literal_string(size_t start_pos)
 {
 	// Skip opening '('
 	++cursor_;
 	size_t paren_depth = 1;
 	std::vector<uint8_t> out;
 
+	auto append_checked = [&](uint8_t byte) -> PdfResult<void> {
+		if (out.size() >= max_token_bytes_) {
+			return make_pdf_error(
+				ErrorCode::DecompressionLimitExceeded,
+				"PDF literal string exceeds maximum byte ceiling",
+				start_pos);
+		}
+		out.push_back(byte);
+		return PdfResult<void>::ok();
+	};
+
 	while (cursor_ < input_.size()) {
 		const uint8_t b = input_[cursor_++];
 		if (b == '(') {
 			++paren_depth;
-			out.push_back('(');
+			RECTO_PDF_RETURN_IF_ERROR(append_checked('('));
 		} else if (b == ')') {
 			--paren_depth;
 			if (paren_depth == 0) {
@@ -448,7 +477,7 @@ PdfResult<Token> Lexer::read_literal_string(size_t start_pos) noexcept
 				tok.bytes = std::move(out);
 				return tok;
 			}
-			out.push_back(')');
+			RECTO_PDF_RETURN_IF_ERROR(append_checked(')'));
 		} else if (b == '\\') {
 			if (cursor_ >= input_.size()) {
 				return make_pdf_error(
@@ -459,28 +488,28 @@ PdfResult<Token> Lexer::read_literal_string(size_t start_pos) noexcept
 			const uint8_t esc = input_[cursor_++];
 			switch (esc) {
 			case 'n':
-				out.push_back('\n');
+				RECTO_PDF_RETURN_IF_ERROR(append_checked('\n'));
 				break;
 			case 'r':
-				out.push_back('\r');
+				RECTO_PDF_RETURN_IF_ERROR(append_checked('\r'));
 				break;
 			case 't':
-				out.push_back('\t');
+				RECTO_PDF_RETURN_IF_ERROR(append_checked('\t'));
 				break;
 			case 'b':
-				out.push_back('\b');
+				RECTO_PDF_RETURN_IF_ERROR(append_checked('\b'));
 				break;
 			case 'f':
-				out.push_back('\f');
+				RECTO_PDF_RETURN_IF_ERROR(append_checked('\f'));
 				break;
 			case '(':
-				out.push_back('(');
+				RECTO_PDF_RETURN_IF_ERROR(append_checked('('));
 				break;
 			case ')':
-				out.push_back(')');
+				RECTO_PDF_RETURN_IF_ERROR(append_checked(')'));
 				break;
 			case '\\':
-				out.push_back('\\');
+				RECTO_PDF_RETURN_IF_ERROR(append_checked('\\'));
 				break;
 			case '\r':
 				// Backslash followed by CR or CRLF is a line continuation (ignored).
@@ -499,11 +528,11 @@ PdfResult<Token> Lexer::read_literal_string(size_t start_pos) noexcept
 						++cursor_;
 					}
 					// ISO 32000-1 section 7.3.4.2: high-order overflow in \ddd is ignored.
-					out.push_back(static_cast<uint8_t>(oct_val & 0xFFu));
+					RECTO_PDF_RETURN_IF_ERROR(append_checked(static_cast<uint8_t>(oct_val & 0xFFu)));
 				} else {
 					// ISO 32000-1 section 7.3.4.2: if the character following '\'
 					// is not one of the recognized escapes, the '\' is ignored.
-					out.push_back(esc);
+					RECTO_PDF_RETURN_IF_ERROR(append_checked(esc));
 				}
 				break;
 			}
@@ -514,16 +543,9 @@ PdfResult<Token> Lexer::read_literal_string(size_t start_pos) noexcept
 			if (cursor_ < input_.size() && input_[cursor_] == '\n') {
 				++cursor_;
 			}
-			out.push_back('\n');
+			RECTO_PDF_RETURN_IF_ERROR(append_checked('\n'));
 		} else {
-			out.push_back(b);
-		}
-
-		if (out.size() > kMaxLexerTokenBytes) {
-			return make_pdf_error(
-				ErrorCode::DecompressionLimitExceeded,
-				"PDF literal string exceeds maximum byte ceiling",
-				start_pos);
+			RECTO_PDF_RETURN_IF_ERROR(append_checked(b));
 		}
 	}
 
@@ -533,7 +555,7 @@ PdfResult<Token> Lexer::read_literal_string(size_t start_pos) noexcept
 		start_pos);
 }
 
-PdfResult<Token> Lexer::read_hex_string(size_t start_pos) noexcept
+PdfResult<Token> Lexer::read_hex_string(size_t start_pos)
 {
 	// Skip opening '<'
 	++cursor_;
@@ -544,6 +566,12 @@ PdfResult<Token> Lexer::read_hex_string(size_t start_pos) noexcept
 		const uint8_t b = input_[cursor_++];
 		if (b == '>') {
 			if (pending_high_nibble >= 0) {
+				if (out.size() >= max_token_bytes_) {
+					return make_pdf_error(
+						ErrorCode::DecompressionLimitExceeded,
+						"PDF hexadecimal string exceeds maximum byte ceiling",
+						start_pos);
+				}
 				// ISO 32000-1 section 7.3.4.3: if the final digit of a hexadecimal
 				// string is missing (odd number of digits), the final digit shall
 				// be assumed to be 0.
@@ -569,14 +597,14 @@ PdfResult<Token> Lexer::read_hex_string(size_t start_pos) noexcept
 		if (pending_high_nibble < 0) {
 			pending_high_nibble = nibble;
 		} else {
-			out.push_back(static_cast<uint8_t>((pending_high_nibble << 4) | nibble));
-			pending_high_nibble = -1;
-			if (out.size() > kMaxLexerTokenBytes) {
+			if (out.size() >= max_token_bytes_) {
 				return make_pdf_error(
 					ErrorCode::DecompressionLimitExceeded,
 					"PDF hexadecimal string exceeds maximum byte ceiling",
 					start_pos);
 			}
+			out.push_back(static_cast<uint8_t>((pending_high_nibble << 4) | nibble));
+			pending_high_nibble = -1;
 		}
 	}
 
@@ -586,16 +614,16 @@ PdfResult<Token> Lexer::read_hex_string(size_t start_pos) noexcept
 		start_pos);
 }
 
-PdfResult<Token> Lexer::read_number_or_keyword(size_t start_pos) noexcept
+PdfResult<Token> Lexer::read_number_or_keyword(size_t start_pos)
 {
 	while (cursor_ < input_.size() && is_pdf_regular(input_[cursor_])) {
-		++cursor_;
-		if (cursor_ - start_pos > kMaxLexerTokenBytes) {
+		if ((cursor_ - start_pos) >= max_token_bytes_) {
 			return make_pdf_error(
 				ErrorCode::DecompressionLimitExceeded,
 				"PDF token exceeds maximum byte ceiling",
 				start_pos);
 		}
+		++cursor_;
 	}
 
 	const size_t len = cursor_ - start_pos;
