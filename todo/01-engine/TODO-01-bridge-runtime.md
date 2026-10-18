@@ -256,17 +256,19 @@ Implement the lossless stream filter pipeline in `src/pdf/filters.h` and `src/pd
 **Surface:** no
 **Freeze check:** Verify that all stream filters are pure stateless functions operating on caller-supplied `std::span<const uint8_t>` inputs and returning `PdfResult<std::vector<uint8_t>>`, sharing zero mutable state across threads and enforcing the 256 MB ceiling before allocation growth.
 
+> **Started:** 2026-10-18
+
 **Build order:**
 
 1. Implement `FlateDecode` (RFC 1950/1951 + raw-deflate fallback), `LZWDecode`, TIFF/PNG predictors, `ASCIIHexDecode`, `ASCII85Decode`, `RunLengthDecode`, and the chained filter runner (`decode_stream`) with the 256 MB output cap in `src/pdf/filters.h` and `src/pdf/filters.cpp`. Done when: `filters.cpp` compiles cleanly on `x64` and `ARM64`.
 2. Add `tests/recto-tests/pdf_filters_tests.cpp` testing every filter, predictor (`None`, `Sub`, `Up`, `Average`, `Paeth`), chained `[ /ASCII85Decode /FlateDecode ]`, and `broken/deflate-bomb-10kb.pdf`. Done when: `PdfFilters.*` passes under ASan.
 
-- [ ] Implement `FlateDecode` (RFC 1950 zlib + RFC 1951 deflate with automatic raw-deflate fallback when the 2-byte header fails checksum) enforcing the 256 MB output cap during block expansion. Done when: `PdfFilters.FlateDecode` decodes standard zlib and raw-deflate streams and rejects `tests/corpus/broken/deflate-bomb-10kb.pdf` with `ErrorCode::DecompressionLimitExceeded`. Cheaper substitute: pre-allocating from an untrusted `/DL` or growing buffers without a ceiling.
-- [ ] Implement `LZWDecode` (9-12 bit codes, clear table `256`, EOD `257`, `/EarlyChange` `0` and `1`) with bounds checks against out-of-range table indices on corrupt bitstreams. Done when: `PdfFilters.LzwDecode` decodes both `/EarlyChange 1` and `/EarlyChange 0` test vectors and rejects corrupt codes safely.
-- [ ] Implement TIFF Predictor `2` and PNG Predictors `10..15` (`Sub`, `Up`, `Average`, `Paeth`) for `/Colors` `1..4` and `/BitsPerComponent` `1, 2, 4, 8, 16`. Done when: `PdfFilters.Predictors` decodes all 5 PNG row filters and TIFF Predictor `2` test vectors.
-- [ ] Implement `ASCIIHexDecode` and `ASCII85Decode` (handling whitespace, `z` four-zero-byte shorthand, partial 2-4 byte final tuples, and `~>` EOD). Done when: `PdfFilters.AsciiFilters` matches RFC/ISO test vectors and rejects invalid `u..y` characters or single-character final tuples.
-- [ ] Implement `RunLengthDecode` (`0..127` literal copy, `129..255` repeat `257 - length` times, `128` EOD). Done when: `PdfFilters.RunLengthDecode` round-trips literal and repeated byte runs and handles truncated runs without reading past the input buffer.
-- [ ] Implement chained filter execution (`/Filter [ /ASCII85Decode /FlateDecode ]`) passing `/DecodeParms` entry `i` to filter `i` and capping chained pipeline length at 8 filters. Done when: `PdfFilters.ChainedPipeline` decodes multi-stage streams and rejects 9-stage filter chains.
+- [x] Implement `FlateDecode` (RFC 1950 zlib + RFC 1951 deflate with automatic raw-deflate fallback when the 2-byte header fails checksum) enforcing the 256 MB output cap during block expansion. Done when: `PdfFilters.FlateDecode` decodes standard zlib and raw-deflate streams and rejects `tests/corpus/broken/deflate-bomb-10kb.pdf` with `ErrorCode::DecompressionLimitExceeded`. Cheaper substitute: pre-allocating from an untrusted `/DL` or growing buffers without a ceiling.
+- [x] Implement `LZWDecode` (9-12 bit codes, clear table `256`, EOD `257`, `/EarlyChange` `0` and `1`) with bounds checks against out-of-range table indices on corrupt bitstreams. Done when: `PdfFilters.LzwDecode` decodes both `/EarlyChange 1` and `/EarlyChange 0` test vectors and rejects corrupt codes safely.
+- [x] Implement TIFF Predictor `2` and PNG Predictors `10..15` (`Sub`, `Up`, `Average`, `Paeth`) for `/Colors` `1..4` and `/BitsPerComponent` `1, 2, 4, 8, 16`. Done when: `PdfFilters.Predictors` decodes all 5 PNG row filters and TIFF Predictor `2` test vectors.
+- [x] Implement `ASCIIHexDecode` and `ASCII85Decode` (handling whitespace, `z` four-zero-byte shorthand, partial 2-4 byte final tuples, and `~>` EOD). Done when: `PdfFilters.AsciiFilters` matches RFC/ISO test vectors and rejects invalid `u..y` characters or single-character final tuples.
+- [x] Implement `RunLengthDecode` (`0..127` literal copy, `129..255` repeat `257 - length` times, `128` EOD). Done when: `PdfFilters.RunLengthDecode` round-trips literal and repeated byte runs and handles truncated runs without reading past the input buffer.
+- [x] Implement chained filter execution (`/Filter [ /ASCII85Decode /FlateDecode ]`) passing `/DecodeParms` entry `i` to filter `i` and capping chained pipeline length at 8 filters. Done when: `PdfFilters.ChainedPipeline` decodes multi-stage streams and rejects 9-stage filter chains.
 - [ ] Commit: `pdf: implement Flate, LZW, TIFF/PNG predictors, ASCII85/Hex, RunLength and 256 MB cap`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan covering every lossless filter, predictor, and decompression-bomb refusal.

@@ -39,12 +39,14 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="error.cpp" />
+    <ClCompile Include="filters.cpp" />
     <ClCompile Include="lexer.cpp" />
     <ClCompile Include="object.cpp" />
     <ClCompile Include="parser.cpp" />
     <ClCompile Include="pdf.cpp" />
     <ClCompile Include="xref.cpp" />
     <ClInclude Include="error.h" />
+    <ClInclude Include="filters.h" />
     <ClInclude Include="lexer.h" />
     <ClInclude Include="object.h" />
     <ClInclude Include="parser.h" />
