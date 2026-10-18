@@ -1,0 +1,27 @@
+{
+  "ref": "D01 T01 \u00a74",
+  "title": "Bounded recursive-descent indirect object parser (`src/pdf/parser.cpp`)",
+  "implementation_sha": "92005cad5d10e594fed6e96a600e367b0a50b129",
+  "date": "2026-10-18",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T01-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T01-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T01-s4.md",
+      "verdict": "fixed"
+    }
+  ],
+  "checks": [
+    "recto-tests.exe --gtest_filter=PdfParser.* -> [  PASSED  ] 8 tests. (Release|x64 ASan, Support.AsanActiveWhenEnabled: ASan=enabled)",
+    ".\\build.cmd -> 0 Warning(s), 0 Error(s); [  PASSED  ] 42 tests."
+  ]
+}

@@ -43,7 +43,7 @@ track: M1
 | 1 | §1 | `PdfResult<T>`, `PdfError`, `ErrorCode`, D16 diagnostic ring and ETW `TraceLogging` | D00 T01 §3, D00 T03 §2 | [x] |
 | 2 | §2 | `PdfValue` variant object model, dictionary/array helpers and deep cloning | §1 | [x] |
 | 3 | §3 | Binary-safe PDF 1.7 and 2.0 lexer (`src/pdf/lexer.cpp`) | §2 | [x] |
-| 4 | §4 | Bounded recursive-descent indirect object parser (`src/pdf/parser.cpp`) | §3 | [ ] |
+| 4 | §4 | Bounded recursive-descent indirect object parser (`src/pdf/parser.cpp`) | §3 | [x] |
 | 5 | §5 | Classic `xref` tables, trailer merging and `/Prev` incremental update chains | §4, D00 T03 §4 | [ ] |
 | 6 | §7 | Lossless stream filters (`Flate`, `LZW`, predictors, `ASCII85`, `ASCIIHex`, `RunLength`) | §4, D00 T03 §4 | [ ] |
 | 7 | §6 | PDF 1.5+ `/Type /XRef` streams, `/Type /ObjStm` streams and damaged-file recovery | §5, §7 | [ ] |
@@ -175,9 +175,12 @@ Implement the recursive-descent PDF object parser in `src/pdf/parser.h` and `src
 - [x] Parse `N G obj ... endobj` definitions and validate that object number `N > 0` and generation `0 <= G <= 65535`. Done when: negative or overflowing object numbers return `ErrorCode::DamagedFormat`.
 - [x] Parse `stream ... endstream` payloads using direct `/Length`, an optional indirect `/Length` resolver callback, and a fallback scan for `endstream` when `/Length` is out of bounds or missing `endstream` at the declared offset. Done when: streams with both accurate and wrong `/Length` values recover their payload bytes in `PdfParser.Streams`.
 - [x] Run a byte-by-byte truncation test across sample indirect objects, nested dictionaries, and streams under ASan. Done when: every truncated slice returns `ErrorCode::DamagedFormat` with zero memory errors.
-- [ ] Commit: `pdf: add bounded recursive-descent PDF object and stream parser`
+- [x] Commit: `pdf: add bounded recursive-descent PDF object and stream parser`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfParser.*` passes under ASan with 0 warnings.
+
+> **Verified:** 2026-10-18 | §4 | 92005cad5d10e594fed6e96a600e367b0a50b129
+> **Review:** `docs/reviews/d01-t01-s4.json`
 
 ## 5. Classic `xref` tables, trailer merging and `/Prev` incremental update chains
 
