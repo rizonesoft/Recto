@@ -46,6 +46,10 @@ Implement the file-system test support primitives in `tests/recto-tests/test_sup
 - `recto::test::repo_root()` and `recto::test::corpus_path(std::string_view relative)` resolving reliably from `RECTO_CORPUS_DIR` environment override or by walking upward from `GetModuleFileNameW(nullptr, ...)` until `tests/corpus` is located, independent of the current working directory.
 - `recto::test::TempDir` RAII class creating a uniquely named directory under `GetTempPathW()` (`recto-test-<pid>-<tick>-<counter>`), supporting `\\?\` long paths (`> 260` characters), clearing read-only attributes on contained files before destruction, and removing the directory tree on scope exit without throwing.
 
+> **Started:** 2026-10-18T11:20:00Z
+> **Completed:** 2026-10-18T11:23:00Z
+> **Duration:** 3m
+
 **Phase:** 0
 **Needs:** windows-host
 **Surface:** no
@@ -55,12 +59,12 @@ Implement the file-system test support primitives in `tests/recto-tests/test_sup
 1. Author `tests/recto-tests/test_support.h` and `tests/recto-tests/test_support.cpp` implementing `repo_root()`, `corpus_path()`, `read_file_bytes()`, `write_file_bytes()`, and `TempDir` (non-copyable, movable, long-path and read-only safe). Done when: `recto-tests.vcxproj` compiles `test_support.cpp` with 0 warnings on `x64` and `ARM64`.
 2. Add unit tests in `tests/recto-tests/support_tests.cpp` (`Support.CorpusPathResolution`, `Support.TempDirCleanup`, `Support.TempDirLongPathAndReadOnly`). Done when: all 3 tests pass and verify zero leftover temp directories after scope exit.
 
-- [ ] Implement `recto::test::repo_root()` walking upward from `GetModuleFileNameW(nullptr, ...)` so tests run from any working directory (`R:\GitHub\RectoPDF`, `build\bin\x64\Release\`, or VS Test Explorer). Done when: `Support.CorpusPathResolution` resolves repo paths identically regardless of `SetCurrentDirectoryW`. Cheaper substitute: hard-coding relative paths like `..\..\tests\corpus` that break depending on the working directory.
-- [ ] Support `RECTO_CORPUS_DIR` environment variable override in `recto::test::corpus_path(relative)` for out-of-tree CI or isolated test runs. Done when: setting `RECTO_CORPUS_DIR` to a `TempDir` redirects `corpus_path("a.pdf")` to that directory in unit tests.
-- [ ] Implement `recto::test::TempDir` generating collision-free directory names under `GetTempPathW()` using process ID, high-resolution performance counter, and an atomic sequence counter. Done when: 32 concurrent threads creating `TempDir` instances receive 32 distinct directories.
-- [ ] Handle read-only files and deep nested subdirectories inside `TempDir::~TempDir()` (clearing `FILE_ATTRIBUTE_READONLY` before `std::filesystem::remove_all`). Done when: creating a read-only file inside `TempDir` still deletes the directory cleanly on scope exit.
-- [ ] Support Windows extended-length paths (`> 260` characters) in `TempDir::file_path()` and `read_file_bytes()` / `write_file_bytes()`. Done when: `Support.TempDirLongPathAndReadOnly` writes and reads a file at a 300-character path inside `TempDir` and cleans it up.
-- [ ] Wire `--gtest_filter` and `--gtest_output=xml:...` pass-through parameters in `build/build.ps1`. Done when: `powershell -File build/build.ps1 -TestFilter "Support.*"` executes only the `Support.*` suite.
+- [x] Implement `recto::test::repo_root()` walking upward from `GetModuleFileNameW(nullptr, ...)` so tests run from any working directory (`R:\GitHub\RectoPDF`, `build\bin\x64\Release\`, or VS Test Explorer). Done when: `Support.CorpusPathResolution` resolves repo paths identically regardless of `SetCurrentDirectoryW`. Cheaper substitute: hard-coding relative paths like `..\..\tests\corpus` that break depending on the working directory.
+- [x] Support `RECTO_CORPUS_DIR` environment variable override in `recto::test::corpus_path(relative)` for out-of-tree CI or isolated test runs. Done when: setting `RECTO_CORPUS_DIR` to a `TempDir` redirects `corpus_path("a.pdf")` to that directory in unit tests.
+- [x] Implement `recto::test::TempDir` generating collision-free directory names under `GetTempPathW()` using process ID, high-resolution performance counter, and an atomic sequence counter. Done when: 32 concurrent threads creating `TempDir` instances receive 32 distinct directories.
+- [x] Handle read-only files and deep nested subdirectories inside `TempDir::~TempDir()` (clearing `FILE_ATTRIBUTE_READONLY` before `std::filesystem::remove_all`). Done when: creating a read-only file inside `TempDir` still deletes the directory cleanly on scope exit.
+- [x] Support Windows extended-length paths (`> 260` characters) in `TempDir::file_path()` and `read_file_bytes()` / `write_file_bytes()`. Done when: `Support.TempDirLongPathAndReadOnly` writes and reads a file at a 300-character path inside `TempDir` and cleans it up.
+- [x] Wire `--gtest_filter` and `--gtest_output=xml:...` pass-through parameters in `build/build.ps1`. Done when: `powershell -File build/build.ps1 -TestFilter "Support.*"` executes only the `Support.*` suite.
 - [ ] Commit: `test: add corpus_path resolver and TempDir RAII helper to recto-tests`
 
 **Test checkpoint:** `build\bin\x64\Release\recto-tests\recto-tests.exe --gtest_filter=Support.CorpusPath*:Support.TempDir*` exits 0 with all path and cleanup assertions passing.
