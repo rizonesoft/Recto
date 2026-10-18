@@ -99,6 +99,50 @@ struct ThrowingPayload {
 	}
 };
 
+struct NonDefaultThrowingPayload {
+	static inline bool fail_alloc = false;
+	static inline bool fail_other = false;
+
+	int v{0};
+
+	NonDefaultThrowingPayload() = delete;
+	explicit NonDefaultThrowingPayload(int x) noexcept : v(x) {}
+
+	NonDefaultThrowingPayload(const NonDefaultThrowingPayload& other)
+		: v(other.v)
+	{
+		if (fail_alloc) {
+			throw std::bad_alloc{};
+		}
+		if (fail_other) {
+			throw 7;
+		}
+	}
+
+	NonDefaultThrowingPayload(NonDefaultThrowingPayload&& other)
+		: v(other.v)
+	{
+		if (fail_alloc) {
+			throw std::bad_alloc{};
+		}
+		if (fail_other) {
+			throw 7;
+		}
+	}
+};
+
+PdfResult<int> extract_non_default_lvalue(PdfResult<NonDefaultThrowingPayload>& r) noexcept
+{
+	RECTO_PDF_TRY(auto value, r);
+	return value.v;
+}
+
+PdfResult<int> extract_non_default_rvalue(PdfResult<NonDefaultThrowingPayload>&& r) noexcept
+{
+	RECTO_PDF_TRY(auto value, std::move(r));
+	return value.v;
+}
+
 TEST(PdfError, ResultValueAndError)
 {
 	clear_diagnostics();
@@ -231,18 +275,46 @@ TEST(PdfError, ResultValueAndError)
 	EXPECT_FALSE(bad_alloc_target.has_value());
 	EXPECT_EQ(bad_alloc_target.error().code, ErrorCode::OutOfMemory);
 
-	// value_or() must never let exceptions escape even if copying/moving the
-	// contained value or fallback throws.
+	// value_or(const T&) returns const T& without copying T, while try_value_or
+	// captures copy/move/conversion failures into PdfResult<T>.
 	const ThrowingPayload fallback_val{321};
-	const ThrowingPayload fallback_used = good_source.value_or(fallback_val);
-	EXPECT_EQ(fallback_used.v, 0);
+	const ThrowingPayload& fallback_ref = good_source.value_or(fallback_val);
+	EXPECT_EQ(fallback_ref.v, 99);
+	const ThrowingPayload& err_fallback_ref = bad_alloc_target.value_or(fallback_val);
+	EXPECT_EQ(err_fallback_ref.v, 321);
+
+	const auto tried_copy = good_source.try_value_or(fallback_val);
+	EXPECT_FALSE(tried_copy.has_value());
+	EXPECT_EQ(tried_copy.error().code, ErrorCode::OutOfMemory);
 
 	ThrowingPayload::throw_bad_alloc = false;
 	ThrowingPayload::throw_non_std = true;
-	const ThrowingPayload rvalue_fallback =
-		std::move(good_source).value_or(ThrowingPayload{654});
-	EXPECT_EQ(rvalue_fallback.v, 0);
+	const auto tried_move = std::move(good_source).try_value_or(ThrowingPayload{654});
+	EXPECT_FALSE(tried_move.has_value());
+	EXPECT_EQ(tried_move.error().code, ErrorCode::InternalError);
 	ThrowingPayload::throw_non_std = false;
+
+	// Non-default-constructible payload throwing std::bad_alloc during value_or
+	// reference access, try_value_or, and RECTO_PDF_TRY extraction.
+	NonDefaultThrowingPayload::fail_alloc = false;
+	NonDefaultThrowingPayload::fail_other = false;
+	PdfResult<NonDefaultThrowingPayload> nd_ok{NonDefaultThrowingPayload{11}};
+	PdfResult<NonDefaultThrowingPayload> nd_err{PdfError{ErrorCode::IoError}};
+	const NonDefaultThrowingPayload nd_fallback{22};
+
+	NonDefaultThrowingPayload::fail_alloc = true;
+	EXPECT_EQ(nd_ok.value_or(nd_fallback).v, 11);
+	EXPECT_EQ(nd_err.value_or(nd_fallback).v, 22);
+	EXPECT_EQ(std::move(nd_ok).value_or(nd_fallback).v, 11);
+	EXPECT_EQ(nd_ok.try_value_or(nd_fallback).error().code, ErrorCode::OutOfMemory);
+	EXPECT_EQ(extract_non_default_lvalue(nd_ok).error().code, ErrorCode::OutOfMemory);
+	EXPECT_EQ(extract_non_default_rvalue(std::move(nd_ok)).error().code, ErrorCode::OutOfMemory);
+
+	NonDefaultThrowingPayload::fail_alloc = false;
+	PdfResult<NonDefaultThrowingPayload> nd_ok2{NonDefaultThrowingPayload{33}};
+	NonDefaultThrowingPayload::fail_other = true;
+	EXPECT_EQ(extract_non_default_lvalue(nd_ok2).error().code, ErrorCode::InternalError);
+	NonDefaultThrowingPayload::fail_other = false;
 
 	// Automatic diagnostic recording on make_pdf_error for DamagedFormat,
 	// DecompressionLimitExceeded, and RecursionLimitExceeded.

@@ -670,46 +670,84 @@ public:
 		return std::move(*ptr);
 	}
 
+	[[nodiscard]] const T& value_or(const T& default_value) const& noexcept
+	{
+		return has_value() ? value() : default_value;
+	}
+
 	template <typename U>
 	[[nodiscard]] T value_or(U&& default_value) const& noexcept
-		requires std::is_copy_constructible_v<T> && std::is_convertible_v<U&&, T>
+		requires (!std::is_same_v<std::remove_cvref_t<U>, T> &&
+			std::is_nothrow_copy_constructible_v<T> &&
+			std::is_nothrow_convertible_v<U&&, T>)
 	{
-		if (has_value()) {
-			try {
-				return value();
-			} catch (...) {
-			}
-		}
-		try {
-			return static_cast<T>(std::forward<U>(default_value));
-		} catch (...) {
-			if constexpr (std::is_nothrow_default_constructible_v<T>) {
-				return T{};
-			} else {
-				detail::fail_fast_invalid_result_access();
-			}
-		}
+		return has_value() ? value() : static_cast<T>(std::forward<U>(default_value));
 	}
 
 	template <typename U>
 	[[nodiscard]] T value_or(U&& default_value) && noexcept
+		requires (std::is_nothrow_move_constructible_v<T> &&
+			std::is_nothrow_convertible_v<U&&, T>)
+	{
+		return has_value() ? std::move(*this).value() : static_cast<T>(std::forward<U>(default_value));
+	}
+
+	[[nodiscard]] const T& value_or(const T& default_value) && noexcept
+		requires (!std::is_nothrow_move_constructible_v<T>)
+	{
+		return has_value() ? static_cast<const T&>(value()) : default_value;
+	}
+
+	template <typename U>
+	[[nodiscard]] PdfResult<T> try_value_or(U&& default_value) const& noexcept
+		requires std::is_copy_constructible_v<T> && std::is_convertible_v<U&&, T>
+	{
+		if (has_value()) {
+			return PdfResult<T>(value());
+		}
+		try {
+			return PdfResult<T>(static_cast<T>(std::forward<U>(default_value)));
+		} catch (const std::bad_alloc&) {
+			return PdfError{ErrorCode::OutOfMemory};
+		} catch (...) {
+			return PdfError{ErrorCode::InternalError};
+		}
+	}
+
+	template <typename U>
+	[[nodiscard]] PdfResult<T> try_value_or(U&& default_value) && noexcept
 		requires std::is_move_constructible_v<T> && std::is_convertible_v<U&&, T>
 	{
 		if (has_value()) {
-			try {
-				return std::move(*this).value();
-			} catch (...) {
-			}
+			return PdfResult<T>(std::move(*this).value());
 		}
 		try {
-			return static_cast<T>(std::forward<U>(default_value));
+			return PdfResult<T>(static_cast<T>(std::forward<U>(default_value)));
+		} catch (const std::bad_alloc&) {
+			return PdfError{ErrorCode::OutOfMemory};
 		} catch (...) {
-			if constexpr (std::is_nothrow_default_constructible_v<T>) {
-				return T{};
-			} else {
-				detail::fail_fast_invalid_result_access();
+			return PdfError{ErrorCode::InternalError};
+		}
+	}
+
+	[[nodiscard]] bool prepare_extract() noexcept
+	{
+		if (!has_value()) {
+			return false;
+		}
+		if constexpr (!std::is_nothrow_move_constructible_v<T>) {
+			try {
+				T extracted(std::move(*std::get_if<1>(&storage_)));
+				storage_.template emplace<1>(std::move(extracted));
+			} catch (const std::bad_alloc&) {
+				storage_.template emplace<0>(PdfError{ErrorCode::OutOfMemory});
+				return false;
+			} catch (...) {
+				storage_.template emplace<0>(PdfError{ErrorCode::InternalError});
+				return false;
 			}
 		}
+		return true;
 	}
 
 private:
@@ -963,6 +1001,22 @@ private:
 	int64_t start_qpc_{0};
 };
 
+namespace detail {
+
+template <typename T>
+[[nodiscard]] PdfResult<T> materialize_try_result(const PdfResult<T>& res) noexcept
+{
+	return PdfResult<T>(res);
+}
+
+template <typename T>
+[[nodiscard]] PdfResult<T> materialize_try_result(PdfResult<T>&& res) noexcept
+{
+	return PdfResult<T>(std::move(res));
+}
+
+} // namespace detail
+
 } // namespace recto::pdf
 
 #define RECTO_PDF_CONCAT_INNER(a, b) a##b
@@ -977,8 +1031,8 @@ private:
 	} while (0)
 
 #define RECTO_PDF_TRY_IMPL(tmp_var, var_decl, expr)                                      \
-	auto&& tmp_var = (expr);                                                             \
-	if (!tmp_var.has_value()) {                                                          \
+	auto tmp_var = ::recto::pdf::detail::materialize_try_result((expr));                 \
+	if (!tmp_var.prepare_extract()) {                                                    \
 		return std::move(tmp_var).error();                                               \
 	}                                                                                    \
 	var_decl = std::move(tmp_var).value()
