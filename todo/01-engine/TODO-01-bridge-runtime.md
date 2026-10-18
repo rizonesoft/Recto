@@ -45,7 +45,7 @@ track: M1
 | 3 | §3 | Binary-safe PDF 1.7 and 2.0 lexer (`src/pdf/lexer.cpp`) | §2 | [x] |
 | 4 | §4 | Bounded recursive-descent indirect object parser (`src/pdf/parser.cpp`) | §3 | [x] |
 | 5 | §5 | Classic `xref` tables, trailer merging and `/Prev` incremental update chains | §4, D00 T03 §4 | [x] |
-| 6 | §7 | Lossless stream filters (`Flate`, `LZW`, predictors, `ASCII85`, `ASCIIHex`, `RunLength`) | §4, D00 T03 §4 | [ ] |
+| 6 | §7 | Lossless stream filters (`Flate`, `LZW`, predictors, `ASCII85`, `ASCIIHex`, `RunLength`) | §4, D00 T03 §4 | [x] |
 | 7 | §6 | PDF 1.5+ `/Type /XRef` streams, `/Type /ObjStm` streams and damaged-file recovery | §5, §7 | [ ] |
 | 8 | §8 | Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`) | §7 | [ ] |
 | 9 | §9 | Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG) | §6, §7 | [ ] |
@@ -269,9 +269,12 @@ Implement the lossless stream filter pipeline in `src/pdf/filters.h` and `src/pd
 - [x] Implement `ASCIIHexDecode` and `ASCII85Decode` (handling whitespace, `z` four-zero-byte shorthand, partial 2-4 byte final tuples, and `~>` EOD). Done when: `PdfFilters.AsciiFilters` matches RFC/ISO test vectors and rejects invalid `u..y` characters or single-character final tuples.
 - [x] Implement `RunLengthDecode` (`0..127` literal copy, `129..255` repeat `257 - length` times, `128` EOD). Done when: `PdfFilters.RunLengthDecode` round-trips literal and repeated byte runs and handles truncated runs without reading past the input buffer.
 - [x] Implement chained filter execution (`/Filter [ /ASCII85Decode /FlateDecode ]`) passing `/DecodeParms` entry `i` to filter `i` and capping chained pipeline length at 8 filters. Done when: `PdfFilters.ChainedPipeline` decodes multi-stage streams and rejects 9-stage filter chains.
-- [ ] Commit: `pdf: implement Flate, LZW, TIFF/PNG predictors, ASCII85/Hex, RunLength and 256 MB cap`
+- [x] Commit: `pdf: implement Flate, LZW, TIFF/PNG predictors, ASCII85/Hex, RunLength and 256 MB cap`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan covering every lossless filter, predictor, and decompression-bomb refusal.
+
+> **Verified:** 2026-10-18 | §7 | 2d527326c7727bfb3603c5182eb139eafa5e4001
+> **Review:** `docs/reviews/d01-t01-s7.json`
 
 ## 8. Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`)
 
