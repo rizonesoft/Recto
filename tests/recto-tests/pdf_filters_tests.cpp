@@ -150,6 +150,14 @@ TEST(PdfFilters, FlateDecode)
 			decode_flate(zlib_payload, nullptr, kKnownFilterPlaintext.size() - 1u),
 			ErrorCode::DecompressionLimitExceeded);
 
+		// Corrupt 2-byte header (0x78, 0x00) followed by stored 5-byte block "Hello"
+		// with a 4-byte ceiling must preserve ErrorCode::DecompressionLimitExceeded.
+		const std::array<uint8_t, 12> bad_hdr_stored = {
+			0x78u, 0x00u, 0x01u, 0x05u, 0x00u, 0xFAu, 0xFFu, 'H', 'e', 'l', 'l', 'o'};
+		RECTO_EXPECT_ERR(
+			decode_flate(bad_hdr_stored, nullptr, 4u),
+			ErrorCode::DecompressionLimitExceeded);
+
 		clear_diagnostics();
 		const auto bomb_pdf = test::read_file_bytes(
 			test::corpus_path("broken/deflate-bomb-10kb.pdf"));
@@ -592,9 +600,11 @@ TEST(PdfFilters, ChainedPipeline)
 		RECTO_EXPECT_ERR(decode_stream(as_bytes("9-stage-fail"), dict_9), ErrorCode::DamagedFormat);
 
 		// /F + /FFilter + /FDecodeParms handling:
-		// - External stream (/F) with empty caller bytes fails with ErrorCode::UnsupportedFeature.
-		// - External stream (/F) with caller-supplied bytes uses /FFilter and /FDecodeParms.
-		// - /FFilter without /F fails with ErrorCode::DamagedFormat.
+		// - Inline decode_stream on a dictionary or PdfStream with /F always returns
+		//   ErrorCode::UnsupportedFeature (even if inline raw_bytes are present).
+		// - decode_external_stream uses /FFilter and /FDecodeParms on caller-supplied bytes.
+		// - Orphan /FFilter or /FDecodeParms without /F fails with ErrorCode::DamagedFormat,
+		//   even when an ordinary inline /Filter is also present.
 		PdfDict ext_dict;
 		ext_dict.set("F", PdfValue(PdfString("external.bin")));
 		ext_dict.set("FFilter", PdfValue(PdfName("FlateDecode")));
@@ -604,14 +614,31 @@ TEST(PdfFilters, ChainedPipeline)
 		ext_dict.set("FDecodeParms", PdfValue(std::move(ext_parms)));
 
 		RECTO_EXPECT_ERR(decode_stream(std::span<const uint8_t>{}, ext_dict), ErrorCode::UnsupportedFeature);
+		RECTO_EXPECT_ERR(decode_stream(as_bytes("4865>"), ext_dict), ErrorCode::UnsupportedFeature);
 
-		auto dec_ext = decode_stream(flate_pred_payload, ext_dict);
+		PdfStream parsed_ext_stm;
+		parsed_ext_stm.dict.set("F", PdfValue(PdfString("external.bin")));
+		parsed_ext_stm.dict.set("FFilter", PdfValue(PdfName("ASCIIHexDecode")));
+		parsed_ext_stm.raw_bytes = {'4', '8', '6', '5', '>'};
+		RECTO_EXPECT_ERR(decode_stream(parsed_ext_stm), ErrorCode::UnsupportedFeature);
+
+		auto dec_ext = decode_external_stream(flate_pred_payload, ext_dict);
 		RECTO_ASSERT_OK(dec_ext);
 		EXPECT_EQ(as_string_view(*dec_ext), kKnownFilterPlaintext);
 
 		PdfDict orphan_ffilter;
 		orphan_ffilter.set("FFilter", PdfValue(PdfName("ASCIIHexDecode")));
 		RECTO_EXPECT_ERR(decode_stream(as_bytes("4865>"), orphan_ffilter), ErrorCode::DamagedFormat);
+
+		PdfDict orphan_ffilter_with_filter;
+		orphan_ffilter_with_filter.set("Filter", PdfValue(PdfName("ASCIIHexDecode")));
+		orphan_ffilter_with_filter.set("FFilter", PdfValue(PdfName("FlateDecode")));
+		RECTO_EXPECT_ERR(decode_stream(as_bytes("4865>"), orphan_ffilter_with_filter), ErrorCode::DamagedFormat);
+
+		PdfDict orphan_fparms_with_filter;
+		orphan_fparms_with_filter.set("Filter", PdfValue(PdfName("ASCIIHexDecode")));
+		orphan_fparms_with_filter.set("FDecodeParms", PdfValue(PdfDict{}));
+		RECTO_EXPECT_ERR(decode_stream(as_bytes("4865>"), orphan_fparms_with_filter), ErrorCode::DamagedFormat);
 	}
 }
 

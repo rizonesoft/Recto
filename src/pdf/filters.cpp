@@ -956,6 +956,10 @@ PdfResult<std::vector<uint8_t>> decode_flate(
 				// stream coincidentally passed the 2-byte modulo-31 check.
 				auto raw_res = inflate_raw_deflate(input, effective_limit);
 				if (!raw_res.has_value()) {
+					if (raw_res.error().code == ErrorCode::DecompressionLimitExceeded ||
+						raw_res.error().code == ErrorCode::OutOfMemory) {
+						return raw_res.error();
+					}
 					return zlib_res.error();
 				}
 				inflated = std::move(*raw_res);
@@ -978,6 +982,10 @@ PdfResult<std::vector<uint8_t>> decode_flate(
 				((input[0] >> 4u) & 0x0Fu) <= 7u) {
 				auto skip2_res = inflate_raw_deflate(input.subspan(2), effective_limit);
 				if (!skip2_res.has_value()) {
+					if (skip2_res.error().code == ErrorCode::DecompressionLimitExceeded ||
+						skip2_res.error().code == ErrorCode::OutOfMemory) {
+						return skip2_res.error();
+					}
 					return raw_res.error();
 				}
 				inflated = std::move(*skip2_res);
@@ -1536,6 +1544,141 @@ PdfResult<std::vector<uint8_t>> decode_single_filter(
 		"Unknown or unsupported PDF stream /Filter name");
 }
 
+namespace {
+
+[[nodiscard]] PdfResult<std::vector<uint8_t>> execute_filter_pipeline(
+	std::span<const uint8_t> raw_bytes,
+	const PdfValue* filter_val,
+	const PdfValue* parms_val,
+	size_t effective_limit)
+{
+	if (filter_val == nullptr || filter_val->is_null()) {
+		if (raw_bytes.size() > effective_limit) {
+			return make_filter_error(
+				ErrorCode::DecompressionLimitExceeded,
+				DiagnosticId::DecompressionLimitExceeded,
+				"Unfiltered stream exceeds maximum decoded stream byte ceiling");
+		}
+		return std::vector<uint8_t>(raw_bytes.begin(), raw_bytes.end());
+	}
+
+	std::array<std::string_view, kMaxFilterChainDepth> filter_names{};
+	std::array<const PdfDict*, kMaxFilterChainDepth> filter_parms{};
+	size_t num_filters = 0;
+
+	if (const auto single_name = filter_val->as_name()) {
+		filter_names[0] = *single_name;
+		num_filters = 1;
+		if (parms_val != nullptr && !parms_val->is_null()) {
+			if (const PdfDict* d = parms_val->as_dict()) {
+				filter_parms[0] = d;
+			} else if (const PdfArray* a = parms_val->as_array()) {
+				if (a->size() == 1) {
+					if ((*a)[0].is_dict()) {
+						filter_parms[0] = (*a)[0].as_dict();
+					} else if (!(*a)[0].is_null()) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Invalid /DecodeParms array element type for single /Filter");
+					}
+				} else if (!a->empty()) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"/DecodeParms array length does not match single /Filter");
+				}
+			} else {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Invalid /DecodeParms type for single /Filter");
+			}
+		}
+	} else if (const PdfArray* filter_arr = filter_val->as_array()) {
+		if (filter_arr->size() > kMaxFilterChainDepth) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Chained /Filter array exceeds maximum pipeline depth of 8");
+		}
+		num_filters = filter_arr->size();
+		for (size_t i = 0; i < num_filters; ++i) {
+			const auto fname = (*filter_arr)[i].as_name();
+			if (!fname.has_value()) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Non-name element in /Filter array");
+			}
+			filter_names[i] = *fname;
+		}
+
+		if (parms_val != nullptr && !parms_val->is_null()) {
+			if (const PdfArray* parms_arr = parms_val->as_array()) {
+				if (!parms_arr->empty() && parms_arr->size() != num_filters) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"/DecodeParms array length does not match /Filter array length");
+				}
+				for (size_t i = 0; i < parms_arr->size(); ++i) {
+					if ((*parms_arr)[i].is_dict()) {
+						filter_parms[i] = (*parms_arr)[i].as_dict();
+					} else if (!(*parms_arr)[i].is_null()) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Invalid /DecodeParms array element (expected dictionary or null)");
+					}
+				}
+			} else if (const PdfDict* single_dict = parms_val->as_dict()) {
+				if (num_filters == 1) {
+					filter_parms[0] = single_dict;
+				} else {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Single dictionary /DecodeParms provided for multi-stage /Filter array");
+				}
+			} else {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Invalid /DecodeParms type for /Filter array");
+			}
+		}
+	} else {
+		return make_filter_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedStream,
+			"Invalid /Filter value in stream dictionary (expected name or array)");
+	}
+
+	if (num_filters == 0) {
+		if (raw_bytes.size() > effective_limit) {
+			return make_filter_error(
+				ErrorCode::DecompressionLimitExceeded,
+				DiagnosticId::DecompressionLimitExceeded,
+				"Unfiltered stream exceeds maximum decoded stream byte ceiling");
+		}
+		return std::vector<uint8_t>(raw_bytes.begin(), raw_bytes.end());
+	}
+
+	std::vector<uint8_t> stage_buf;
+	for (size_t i = 0; i < num_filters; ++i) {
+		const std::span<const uint8_t> stage_in =
+			(i == 0) ? raw_bytes : std::span<const uint8_t>(stage_buf);
+		RECTO_PDF_TRY(
+			std::vector<uint8_t> next_buf,
+			decode_single_filter(filter_names[i], stage_in, filter_parms[i], effective_limit));
+		stage_buf = std::move(next_buf);
+	}
+	return stage_buf;
+}
+
+} // namespace
+
 PdfResult<std::vector<uint8_t>> decode_stream(
 	std::span<const uint8_t> raw_bytes,
 	const PdfDict& stream_dict,
@@ -1545,171 +1688,36 @@ PdfResult<std::vector<uint8_t>> decode_stream(
 		const size_t effective_limit = std::min<size_t>(max_decoded_bytes, kMaxDecodedStreamBytes);
 
 		const PdfValue* f_spec = stream_dict.get("F");
-		const bool has_external_file = (f_spec != nullptr && !f_spec->is_null());
-
-		const PdfValue* filter_val = stream_dict.get("Filter");
-		bool using_external_filters = false;
-		if (has_external_file) {
-			if (raw_bytes.empty()) {
-				return make_pdf_error(
-					ErrorCode::UnsupportedFeature,
-					"External stream file specification (/F) requires caller-supplied stream bytes");
-			}
-			// When caller supplies external stream bytes for a stream dictionary
-			// with /F, ISO 32000-1 Table 5 specifies /FFilter and /FDecodeParms
-			// (ignoring inline /Filter and /DecodeParms).
-			using_external_filters = true;
-			filter_val = stream_dict.get("FFilter");
-		} else if (filter_val == nullptr || filter_val->is_null()) {
-			if (const PdfValue* ffilter_only = stream_dict.get("FFilter");
-				ffilter_only != nullptr && !ffilter_only->is_null()) {
-				return make_filter_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedStream,
-					"Stream dictionary specifies /FFilter without /F external file specification");
-			}
-			if (const PdfValue* fparms_only = stream_dict.get("FDecodeParms");
-				fparms_only != nullptr && !fparms_only->is_null()) {
-				return make_filter_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedStream,
-					"Stream dictionary specifies /FDecodeParms without /F external file specification");
-			}
+		if (f_spec != nullptr && !f_spec->is_null()) {
+			return make_pdf_error(
+				ErrorCode::UnsupportedFeature,
+				"External stream file specification (/F) requires decode_external_stream with resolved external bytes");
 		}
 
-		if (filter_val == nullptr || filter_val->is_null()) {
-			if (raw_bytes.size() > effective_limit) {
-				return make_filter_error(
-					ErrorCode::DecompressionLimitExceeded,
-					DiagnosticId::DecompressionLimitExceeded,
-					"Unfiltered stream exceeds maximum decoded stream byte ceiling");
-			}
-			return std::vector<uint8_t>(raw_bytes.begin(), raw_bytes.end());
-		}
-
-		const PdfValue* parms_val = nullptr;
-		if (using_external_filters) {
-			parms_val = stream_dict.get("FDecodeParms");
-		} else {
-			parms_val = stream_dict.get("DecodeParms");
-			if (parms_val == nullptr) {
-				parms_val = stream_dict.get("DP");
-			}
-		}
-
-		std::array<std::string_view, kMaxFilterChainDepth> filter_names{};
-		std::array<const PdfDict*, kMaxFilterChainDepth> filter_parms{};
-		size_t num_filters = 0;
-
-		if (const auto single_name = filter_val->as_name()) {
-			filter_names[0] = *single_name;
-			num_filters = 1;
-			if (parms_val != nullptr && !parms_val->is_null()) {
-				if (const PdfDict* d = parms_val->as_dict()) {
-					filter_parms[0] = d;
-				} else if (const PdfArray* a = parms_val->as_array()) {
-					if (a->size() == 1) {
-						if ((*a)[0].is_dict()) {
-							filter_parms[0] = (*a)[0].as_dict();
-						} else if (!(*a)[0].is_null()) {
-							return make_filter_error(
-								ErrorCode::DamagedFormat,
-								DiagnosticId::DamagedStream,
-								"Invalid /DecodeParms array element type for single /Filter");
-						}
-					} else if (!a->empty()) {
-						return make_filter_error(
-							ErrorCode::DamagedFormat,
-							DiagnosticId::DamagedStream,
-							"/DecodeParms array length does not match single /Filter");
-					}
-				} else {
-					return make_filter_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedStream,
-						"Invalid /DecodeParms type for single /Filter");
-				}
-			}
-		} else if (const PdfArray* filter_arr = filter_val->as_array()) {
-			if (filter_arr->size() > kMaxFilterChainDepth) {
-				return make_filter_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedStream,
-					"Chained /Filter array exceeds maximum pipeline depth of 8");
-			}
-			num_filters = filter_arr->size();
-			for (size_t i = 0; i < num_filters; ++i) {
-				const auto fname = (*filter_arr)[i].as_name();
-				if (!fname.has_value()) {
-					return make_filter_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedStream,
-						"Non-name element in /Filter array");
-				}
-				filter_names[i] = *fname;
-			}
-
-			if (parms_val != nullptr && !parms_val->is_null()) {
-				if (const PdfArray* parms_arr = parms_val->as_array()) {
-					if (!parms_arr->empty() && parms_arr->size() != num_filters) {
-						return make_filter_error(
-							ErrorCode::DamagedFormat,
-							DiagnosticId::DamagedStream,
-							"/DecodeParms array length does not match /Filter array length");
-					}
-					for (size_t i = 0; i < parms_arr->size(); ++i) {
-						if ((*parms_arr)[i].is_dict()) {
-							filter_parms[i] = (*parms_arr)[i].as_dict();
-						} else if (!(*parms_arr)[i].is_null()) {
-							return make_filter_error(
-								ErrorCode::DamagedFormat,
-								DiagnosticId::DamagedStream,
-								"Invalid /DecodeParms array element (expected dictionary or null)");
-						}
-					}
-				} else if (const PdfDict* single_dict = parms_val->as_dict()) {
-					if (num_filters == 1) {
-						filter_parms[0] = single_dict;
-					} else {
-						return make_filter_error(
-							ErrorCode::DamagedFormat,
-							DiagnosticId::DamagedStream,
-							"Single dictionary /DecodeParms provided for multi-stage /Filter array");
-					}
-				} else {
-					return make_filter_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedStream,
-						"Invalid /DecodeParms type for /Filter array");
-				}
-			}
-		} else {
+		// Orphan /FFilter or /FDecodeParms without /F are malformed regardless
+		// of whether inline /Filter is also present.
+		if (const PdfValue* ffilter_only = stream_dict.get("FFilter");
+			ffilter_only != nullptr && !ffilter_only->is_null()) {
 			return make_filter_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedStream,
-				"Invalid /Filter value in stream dictionary (expected name or array)");
+				"Stream dictionary specifies /FFilter without /F external file specification");
+		}
+		if (const PdfValue* fparms_only = stream_dict.get("FDecodeParms");
+			fparms_only != nullptr && !fparms_only->is_null()) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Stream dictionary specifies /FDecodeParms without /F external file specification");
 		}
 
-		if (num_filters == 0) {
-			if (raw_bytes.size() > effective_limit) {
-				return make_filter_error(
-					ErrorCode::DecompressionLimitExceeded,
-					DiagnosticId::DecompressionLimitExceeded,
-					"Unfiltered stream exceeds maximum decoded stream byte ceiling");
-			}
-			return std::vector<uint8_t>(raw_bytes.begin(), raw_bytes.end());
+		const PdfValue* filter_val = stream_dict.get("Filter");
+		const PdfValue* parms_val = stream_dict.get("DecodeParms");
+		if (parms_val == nullptr) {
+			parms_val = stream_dict.get("DP");
 		}
 
-		std::vector<uint8_t> stage_buf;
-		for (size_t i = 0; i < num_filters; ++i) {
-			const std::span<const uint8_t> stage_in =
-				(i == 0) ? raw_bytes : std::span<const uint8_t>(stage_buf);
-			RECTO_PDF_TRY(
-				std::vector<uint8_t> next_buf,
-				decode_single_filter(filter_names[i], stage_in, filter_parms[i], effective_limit));
-			stage_buf = std::move(next_buf);
-		}
-		return stage_buf;
+		return execute_filter_pipeline(raw_bytes, filter_val, parms_val, effective_limit);
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(
 			ErrorCode::OutOfMemory,
@@ -1726,6 +1734,36 @@ PdfResult<std::vector<uint8_t>> decode_stream(
 	size_t max_decoded_bytes) noexcept
 {
 	return decode_stream(stream.raw_bytes, stream.dict, max_decoded_bytes);
+}
+
+PdfResult<std::vector<uint8_t>> decode_external_stream(
+	std::span<const uint8_t> external_bytes,
+	const PdfDict& stream_dict,
+	size_t max_decoded_bytes) noexcept
+{
+	try {
+		const size_t effective_limit = std::min<size_t>(max_decoded_bytes, kMaxDecodedStreamBytes);
+
+		const PdfValue* f_spec = stream_dict.get("F");
+		if (f_spec == nullptr || f_spec->is_null()) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"decode_external_stream requires /F external file specification in stream dictionary");
+		}
+
+		const PdfValue* filter_val = stream_dict.get("FFilter");
+		const PdfValue* parms_val = stream_dict.get("FDecodeParms");
+		return execute_filter_pipeline(external_bytes, filter_val, parms_val, effective_limit);
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(
+			ErrorCode::OutOfMemory,
+			"Out of memory while executing external stream filter pipeline");
+	} catch (...) {
+		return make_pdf_error(
+			ErrorCode::InternalError,
+			"Unexpected exception while executing external stream filter pipeline");
+	}
 }
 
 } // namespace recto::pdf

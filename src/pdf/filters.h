@@ -82,9 +82,9 @@ struct PredictorParams {
 
 // Executes a single or chained `/Filter` pipeline (up to `kMaxFilterChainDepth`
 // = 8 stages) using matching `/DecodeParms` (or `/DP`) entries from
-// `stream_dict`. When `/F` is present without inline `/Filter`, uses `/FFilter`
-// and `/FDecodeParms` if caller-supplied external bytes are provided, or
-// rejects missing external stream payloads with `ErrorCode::UnsupportedFeature`.
+// `stream_dict`. Streams specifying an external file (`/F`) are rejected on
+// inline `decode_stream` with `ErrorCode::UnsupportedFeature`; callers that
+// have resolved external bytes explicitly invoke `decode_external_stream`.
 [[nodiscard]] PdfResult<std::vector<uint8_t>> decode_stream(
 	std::span<const uint8_t> raw_bytes,
 	const PdfDict& stream_dict,
@@ -92,6 +92,14 @@ struct PredictorParams {
 
 [[nodiscard]] PdfResult<std::vector<uint8_t>> decode_stream(
 	const PdfStream& stream,
+	size_t max_decoded_bytes = kMaxDecodedStreamBytes) noexcept;
+
+// Executes a single or chained `/FFilter` pipeline (up to `kMaxFilterChainDepth`
+// = 8 stages) using matching `/FDecodeParms` entries from `stream_dict` on
+// caller-supplied external stream bytes (`stream_dict` must specify `/F`).
+[[nodiscard]] PdfResult<std::vector<uint8_t>> decode_external_stream(
+	std::span<const uint8_t> external_bytes,
+	const PdfDict& stream_dict,
 	size_t max_decoded_bytes = kMaxDecodedStreamBytes) noexcept;
 
 } // namespace recto::pdf
