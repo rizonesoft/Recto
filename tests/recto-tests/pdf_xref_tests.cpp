@@ -1031,6 +1031,71 @@ TEST(PdfXref, DamagedRecovery)
 			info->as_dict()->get_string("Title")->as_byte_view(),
 			"Updated Recovery Title");
 	}
+
+	// 3. Revision transition where an earlier uncompressed object is overridden by a later
+	//    `/Type /ObjStm` stream during recovery.
+	{
+		const std::string objstm_payload =
+			"6 0\n<< /Title (Compressed Revision Title) /Author (Recto) >>";
+		std::string pdf = "%PDF-1.7\n";
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
+		pdf += "2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+		pdf += "6 0 obj\n<< /Title (Old Uncompressed Title) /Author (Recto) >>\nendobj\n";
+		pdf += "9 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Length " +
+			std::to_string(objstm_payload.size()) + " >>\nstream\n" +
+			objstm_payload + "\nendstream\nendobj\n";
+		pdf += "startxref\n999999\n%%EOF\n";
+
+		auto rec_res = XrefTable::recover_damaged_xref(as_bytes(pdf));
+		RECTO_ASSERT_OK(rec_res);
+		const XrefEntry* e6 = rec_res->find(6u);
+		ASSERT_NE(e6, nullptr);
+		EXPECT_TRUE(e6->is_compressed());
+		EXPECT_EQ(e6->obj_stm_num, 9u);
+
+		auto info = rec_res->resolve_object(as_bytes(pdf), IndirectRef{6u, 0u});
+		RECTO_ASSERT_OK(info);
+		EXPECT_EQ(
+			info->as_dict()->get_string("Title")->as_byte_view(),
+			"Compressed Revision Title");
+	}
+
+	// 4. Surviving trailer `/Root` validation: rejects wrong generation (`/Root 5 1 R` vs `5 0 obj`)
+	//    or non-catalog target (`/Root 1 0 R` where `1 0 obj` is `/Type /Pages`), falling back to
+	//    discovered `/Type /Catalog` when present or failing with `ErrorCode::DamagedFormat` when none exists.
+	{
+		std::string pdf_wrong_gen = "%PDF-1.7\n";
+		pdf_wrong_gen += "1 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+		pdf_wrong_gen += "5 0 obj\n<< /Type /Catalog /Pages 1 0 R >>\nendobj\n";
+		pdf_wrong_gen += "trailer\n<< /Size 6 /Root 5 1 R >>\nstartxref\n999999\n%%EOF\n";
+
+		auto rec_wrong_gen = XrefTable::recover_damaged_xref(as_bytes(pdf_wrong_gen));
+		RECTO_ASSERT_OK(rec_wrong_gen);
+		EXPECT_EQ(rec_wrong_gen->root_ref(), (IndirectRef{5u, 0u}));
+
+		std::string pdf_non_catalog = "%PDF-1.7\n";
+		pdf_non_catalog += "1 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+		pdf_non_catalog += "trailer\n<< /Size 2 /Root 1 0 R >>\nstartxref\n999999\n%%EOF\n";
+
+		auto rec_non_cat = XrefTable::recover_damaged_xref(as_bytes(pdf_non_catalog));
+		RECTO_EXPECT_ERR(rec_non_cat, ErrorCode::DamagedFormat);
+	}
+
+	// 5. Hostile repeated malformed `<N> <G> obj (` candidates without closing parentheses
+	//    are bounded by both candidate-attempt and cumulative parse-byte budgets.
+	{
+		std::string hostile = "%PDF-1.7\n";
+		for (int i = 0; i < 600; ++i) {
+			hostile += "2 0 obj (\n";
+		}
+		hostile += "1 0 obj\n<< /Type /Catalog /Pages 3 0 R >>\nendobj\n";
+
+		auto rec_budget = XrefTable::recover_damaged_xref(as_bytes(hostile));
+		RECTO_EXPECT_ERR(rec_budget, ErrorCode::DamagedFormat);
+
+		auto rec_attempts = XrefTable::recover_damaged_xref(as_bytes(hostile), /*max_total_entries=*/8u);
+		RECTO_EXPECT_ERR(rec_attempts, ErrorCode::DamagedFormat);
+	}
 }
 
 TEST(PdfXref, RejectsBrokenFiles)
@@ -1073,4 +1138,3 @@ TEST(PdfXref, RejectsBrokenFiles)
 
 } // namespace
 } // namespace recto::pdf
-

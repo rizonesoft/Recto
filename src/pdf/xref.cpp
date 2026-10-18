@@ -604,9 +604,15 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			XrefEntry{XrefEntryKind::Free, 0u, 0u, 0u, 65535u});
 
 		uint64_t objects_discovered = 0;
+		uint64_t candidate_attempts = 0;
+		uint64_t cumulative_parse_bytes = 0;
+		const uint64_t max_recovery_parse_bytes = std::max<uint64_t>(
+			static_cast<uint64_t>(file_bytes.size()) * 4ULL,
+			65536ULL);
 		uint32_t max_obj_num = 0;
 		std::optional<IndirectRef> catalog_candidate;
 		std::optional<IndirectRef> info_candidate;
+		std::vector<uint32_t> discovery_order;
 
 		// Linearly scan from header_off for `<N> <G> obj` and `trailer << ... >>`.
 		size_t pos = static_cast<size_t>(header_off);
@@ -629,17 +635,28 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 				tr_lexer.seek(pos + 7u);
 				Parser tr_parser(tr_lexer);
 				auto tr_res = tr_parser.parse_dictionary();
+				const size_t tr_end = std::max(tr_lexer.position(), pos + 7u);
+				cumulative_parse_bytes += static_cast<uint64_t>(tr_end - pos);
 				if (!tr_res.has_value() && tr_res.error().code == ErrorCode::OutOfMemory) {
 					return tr_res.error();
+				}
+				if (cumulative_parse_bytes > max_recovery_parse_bytes) {
+					return make_xref_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedXRef,
+						"Damaged-file recovery exceeded cumulative parse byte budget",
+						pos);
 				}
 				if (tr_res.has_value()) {
 					auto ov_res = overwrite_trailer_from_revision(table.trailer_, *tr_res);
 					if (!ov_res.has_value()) {
 						return ov_res.error();
 					}
-					pos = tr_lexer.position();
+					pos = tr_end;
 					continue;
 				}
+				pos += 7u;
+				continue;
 			}
 
 			// Check for `<N> <G> obj` at a token boundary where `<N>` starts with an ASCII digit.
@@ -684,13 +701,15 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 							++p;
 						}
 						if (matches_token_at(file_bytes, p, "obj")) {
-							if (objects_discovered >= effective_max_entries) {
+							if (objects_discovered >= effective_max_entries ||
+								candidate_attempts >= effective_max_entries) {
 								return make_xref_error(
 									ErrorCode::DamagedFormat,
 									DiagnosticId::DamagedXRef,
 									"Damaged-file recovery exceeded maximum object entry budget",
 									pos);
 							}
+							++candidate_attempts;
 							const uint32_t obj_num = static_cast<uint32_t>(obj_num_u64);
 							const uint16_t gen_num = static_cast<uint16_t>(gen_u64);
 
@@ -718,6 +737,8 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 									}
 									return *len_int;
 								});
+							const size_t next_pos = std::max(obj_parser.lexer().position(), p + 3u);
+							cumulative_parse_bytes += static_cast<uint64_t>(next_pos - pos);
 							if (!parsed_obj.has_value()) {
 								if (parsed_obj.error().code == ErrorCode::OutOfMemory ||
 									parsed_obj.error().code == ErrorCode::DecompressionLimitExceeded ||
@@ -725,114 +746,142 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 										"Unterminated PDF stream: missing 'endstream' keyword") {
 									return parsed_obj.error();
 								}
-							} else {
-								++objects_discovered;
-								if (obj_num > max_obj_num) {
-									max_obj_num = obj_num;
+								if (cumulative_parse_bytes > max_recovery_parse_bytes) {
+									return make_xref_error(
+										ErrorCode::DamagedFormat,
+										DiagnosticId::DamagedXRef,
+										"Damaged-file recovery exceeded cumulative parse byte budget",
+										pos);
 								}
-								// Later revisions in the file override earlier definitions of the same object.
-								table.entries_[obj_num] = XrefEntry{
+								pos = p + 3u;
+								continue;
+							}
+							if (cumulative_parse_bytes > max_recovery_parse_bytes) {
+								return make_xref_error(
+									ErrorCode::DamagedFormat,
+									DiagnosticId::DamagedXRef,
+									"Damaged-file recovery exceeded cumulative parse byte budget",
+									pos);
+							}
+
+							if (!table.entries_.contains(obj_num)) {
+								++objects_discovered;
+							}
+							discovery_order.push_back(obj_num);
+							if (obj_num > max_obj_num) {
+								max_obj_num = obj_num;
+							}
+							// Later revisions in the file override earlier definitions of the same object.
+							table.set_entry(
+								obj_num,
+								XrefEntry{
 									XrefEntryKind::Uncompressed,
 									static_cast<uint64_t>(pos),
 									0u,
 									0u,
-									gen_num};
+									gen_num});
+							if (catalog_candidate.has_value() &&
+								catalog_candidate->obj_num == obj_num) {
+								catalog_candidate = std::nullopt;
+							}
 
-								const PdfDict* d = parsed_obj->value.as_dict();
-								if (d == nullptr && parsed_obj->value.is_stream()) {
-									d = &parsed_obj->value.as_stream()->dict;
-								}
-								if (d != nullptr) {
-									const auto type_opt = d->get_name("Type");
-									if (type_opt.has_value() && *type_opt == "Catalog") {
-										catalog_candidate = IndirectRef{obj_num, gen_num};
-									} else if (type_opt.has_value() && *type_opt == "XRef") {
-										auto ov_res = overwrite_trailer_from_revision(table.trailer_, *d);
-										if (!ov_res.has_value()) {
-											return ov_res.error();
-										}
-									} else if (
-										!type_opt.has_value() &&
-										(d->contains("Title") ||
-										 d->contains("Author") ||
-										 d->contains("Producer") ||
-										 d->contains("CreationDate"))) {
-										info_candidate = IndirectRef{obj_num, gen_num};
+							const PdfDict* d = parsed_obj->value.as_dict();
+							if (d == nullptr && parsed_obj->value.is_stream()) {
+								d = &parsed_obj->value.as_stream()->dict;
+							}
+							if (d != nullptr) {
+								const auto type_opt = d->get_name("Type");
+								if (type_opt.has_value() && *type_opt == "Catalog") {
+									catalog_candidate = IndirectRef{obj_num, gen_num};
+								} else if (type_opt.has_value() && *type_opt == "XRef") {
+									auto ov_res = overwrite_trailer_from_revision(table.trailer_, *d);
+									if (!ov_res.has_value()) {
+										return ov_res.error();
 									}
+								} else if (
+									!type_opt.has_value() &&
+									(d->contains("Title") ||
+									 d->contains("Author") ||
+									 d->contains("Producer") ||
+									 d->contains("CreationDate"))) {
+									info_candidate = IndirectRef{obj_num, gen_num};
+								}
 
-									// Also unpack any intact `/Type /ObjStm` stream discovered during recovery
-									// so compressed objects inside object streams remain accessible.
-									if (type_opt.has_value() &&
-										*type_opt == "ObjStm" &&
-										parsed_obj->value.is_stream()) {
-										const auto n_opt = d->get_int("N");
-										const auto first_opt = d->get_int("First");
-										auto dec_stm = decode_stream(*parsed_obj->value.as_stream());
-										if (!dec_stm.has_value() &&
-											(dec_stm.error().code == ErrorCode::OutOfMemory ||
-											 dec_stm.error().code == ErrorCode::DecompressionLimitExceeded)) {
-											return dec_stm.error();
-										}
-										if (n_opt.has_value() &&
-											*n_opt > 0 &&
-											*n_opt <= static_cast<int64_t>(kMaxObjStmEntries) &&
-											first_opt.has_value() &&
-											*first_opt >= 0 &&
-											dec_stm.has_value() &&
-											static_cast<size_t>(*first_opt) <= dec_stm->size()) {
-											const std::span<const uint8_t> hdr_span(
-												dec_stm->data(),
-												static_cast<size_t>(*first_opt));
-											Lexer hdr_lex(hdr_span);
-											for (int64_t idx = 0; idx < *n_opt; ++idx) {
-												Token id_tok;
-												Token off_tok;
-												PdfError herr;
-												if (!next_non_comment_token(hdr_lex, id_tok, herr) ||
-													!next_non_comment_token(hdr_lex, off_tok, herr)) {
-													break;
-												}
-												if (id_tok.kind == TokenKind::Integer &&
-													id_tok.int_value > 0 &&
-													id_tok.int_value <=
-														static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) &&
-													off_tok.kind == TokenKind::Integer &&
-													off_tok.int_value >= 0) {
-													const uint32_t inner_id =
-														static_cast<uint32_t>(id_tok.int_value);
-													const auto existing_it = table.entries_.find(inner_id);
-													if (existing_it == table.entries_.end() ||
-														existing_it->second.is_compressed()) {
-														if (existing_it == table.entries_.end()) {
-															if (objects_discovered >= effective_max_entries) {
-																return make_xref_error(
-																	ErrorCode::DamagedFormat,
-																	DiagnosticId::DamagedXRef,
-																	"Damaged-file recovery exceeded maximum object entry budget",
-																	pos);
-															}
-															++objects_discovered;
-														}
-														table.entries_[inner_id] = XrefEntry{
-															XrefEntryKind::Compressed,
-															0u,
-															obj_num,
-															static_cast<uint32_t>(idx),
-															0u};
-														if (inner_id > max_obj_num) {
-															max_obj_num = inner_id;
-														}
+								// Also unpack any intact `/Type /ObjStm` stream discovered during recovery
+								// so compressed objects inside object streams remain accessible and override
+								// earlier revisions regardless of storage kind.
+								if (type_opt.has_value() &&
+									*type_opt == "ObjStm" &&
+									parsed_obj->value.is_stream()) {
+									const auto n_opt = d->get_int("N");
+									const auto first_opt = d->get_int("First");
+									auto dec_stm = decode_stream(*parsed_obj->value.as_stream());
+									if (!dec_stm.has_value() &&
+										(dec_stm.error().code == ErrorCode::OutOfMemory ||
+										 dec_stm.error().code == ErrorCode::DecompressionLimitExceeded)) {
+										return dec_stm.error();
+									}
+									if (n_opt.has_value() &&
+										*n_opt > 0 &&
+										*n_opt <= static_cast<int64_t>(kMaxObjStmEntries) &&
+										first_opt.has_value() &&
+										*first_opt >= 0 &&
+										dec_stm.has_value() &&
+										static_cast<size_t>(*first_opt) <= dec_stm->size()) {
+										const std::span<const uint8_t> hdr_span(
+											dec_stm->data(),
+											static_cast<size_t>(*first_opt));
+										Lexer hdr_lex(hdr_span);
+										for (int64_t idx = 0; idx < *n_opt; ++idx) {
+											Token id_tok;
+											Token off_tok;
+											PdfError herr;
+											if (!next_non_comment_token(hdr_lex, id_tok, herr) ||
+												!next_non_comment_token(hdr_lex, off_tok, herr)) {
+												break;
+											}
+											if (id_tok.kind == TokenKind::Integer &&
+												id_tok.int_value > 0 &&
+												id_tok.int_value <=
+													static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) &&
+												off_tok.kind == TokenKind::Integer &&
+												off_tok.int_value >= 0) {
+												const uint32_t inner_id =
+													static_cast<uint32_t>(id_tok.int_value);
+												if (!table.entries_.contains(inner_id)) {
+													if (objects_discovered >= effective_max_entries) {
+														return make_xref_error(
+															ErrorCode::DamagedFormat,
+															DiagnosticId::DamagedXRef,
+															"Damaged-file recovery exceeded maximum object entry budget",
+															pos);
 													}
+													++objects_discovered;
+												}
+												discovery_order.push_back(inner_id);
+												table.set_entry(
+													inner_id,
+													XrefEntry{
+														XrefEntryKind::Compressed,
+														0u,
+														obj_num,
+														static_cast<uint32_t>(idx),
+														0u});
+												if (catalog_candidate.has_value() &&
+													catalog_candidate->obj_num == inner_id) {
+													catalog_candidate = std::nullopt;
+												}
+												if (inner_id > max_obj_num) {
+													max_obj_num = inner_id;
 												}
 											}
 										}
 									}
 								}
-
-								const size_t next_pos = obj_parser.lexer().position();
-								pos = (next_pos > pos) ? next_pos : (p + 3u);
-								continue;
 							}
+
+							pos = next_pos;
+							continue;
 						}
 					}
 				}
@@ -841,35 +890,51 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			++pos;
 		}
 
-		// If no uncompressed `/Type /Catalog` was found and no surviving trailer
-		// provided a valid `/Root`, check compressed objects inside `/Type /ObjStm`.
-		auto has_valid_root_entry = [&table]() noexcept -> bool {
-			const auto root_opt = table.trailer_.get_ref("Root");
-			if (!root_opt.has_value()) {
+		// Validate that a candidate `/Root` reference resolves with matching
+		// generation to a dictionary whose `/Type` is `/Catalog`.
+		auto is_valid_catalog_ref = [&table, file_bytes](IndirectRef ref) -> bool {
+			const XrefEntry* e = table.find(ref.obj_num);
+			if (e == nullptr || e->is_free()) {
 				return false;
 			}
-			const XrefEntry* e = table.find(root_opt->obj_num);
-			return e != nullptr && !e->is_free();
+			if (e->is_uncompressed() && e->generation != ref.gen_num) {
+				return false;
+			}
+			if (e->is_compressed() && ref.gen_num != 0u) {
+				return false;
+			}
+			auto cval = table.resolve_object(file_bytes, ref);
+			if (!cval.has_value() || !cval->is_dict()) {
+				return false;
+			}
+			const auto ctype = cval->as_dict()->get_name("Type");
+			return ctype.has_value() && *ctype == "Catalog";
 		};
 
-		if (!has_valid_root_entry() && !catalog_candidate.has_value()) {
-			for (const auto& [cid, centry] : table.entries_) {
-				if (!centry.is_compressed()) {
-					continue;
-				}
-				auto cval = table.resolve_object(file_bytes, IndirectRef{cid, 0u});
-				if (cval.has_value() && cval->is_dict()) {
-					const auto ctype = cval->as_dict()->get_name("Type");
-					if (ctype.has_value() && *ctype == "Catalog") {
-						catalog_candidate = IndirectRef{cid, 0u};
+		auto has_valid_root_entry = [&table, &is_valid_catalog_ref]() -> bool {
+			const auto root_opt = table.trailer_.get_ref("Root");
+			return root_opt.has_value() && is_valid_catalog_ref(*root_opt);
+		};
+
+		if (!has_valid_root_entry()) {
+			if (!catalog_candidate.has_value() || !is_valid_catalog_ref(*catalog_candidate)) {
+				catalog_candidate = std::nullopt;
+				for (auto it = discovery_order.rbegin(); it != discovery_order.rend(); ++it) {
+					const uint32_t cid = *it;
+					const XrefEntry* centry = table.find(cid);
+					if (centry == nullptr || centry->is_free()) {
+						continue;
+					}
+					const IndirectRef cref{cid, centry->is_compressed() ? uint16_t{0} : centry->generation};
+					if (is_valid_catalog_ref(cref)) {
+						catalog_candidate = cref;
 						break;
 					}
 				}
 			}
-		}
-
-		if (!has_valid_root_entry() && catalog_candidate.has_value()) {
-			table.trailer_.set("Root", PdfValue(*catalog_candidate));
+			if (catalog_candidate.has_value()) {
+				table.trailer_.set("Root", PdfValue(*catalog_candidate));
+			}
 		}
 		if (!table.trailer_.contains("Info") && info_candidate.has_value()) {
 			table.trailer_.set("Info", PdfValue(*info_candidate));
