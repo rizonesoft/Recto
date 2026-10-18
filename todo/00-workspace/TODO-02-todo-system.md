@@ -95,7 +95,8 @@ The engine is useless without the working agreements around it: the format spec,
 
 The seed graph translates the foundation plan and the SPEC into executable sections: nine milestone domains, one file per coherent subject, every milestone done-when, decision, screen, dialog and open item owned by exactly one section. Seeding is authoring, not transcription: each section names its paths from the foundation plan's repository layout, its governing plan and SPEC sections, and a checkpoint that can fail.
 
-> **Corrected:** 2026-10-18 -- Updated the Test checkpoint's `resolve 'D00 T01 §1'` expected exit code from `0` (ready before `D00 T01 §1` shipped on 2026-10-13) to `3` (verified `[x]`, since `D00 T01 §1` is now stamped at `25ac228f`).
+> **Started:** 2026-10-18T10:08:00Z
+> **Corrected:** 2026-10-18 -- Updated the Test checkpoint's `resolve 'D00 T01 §1'` expected exit code from `0` (ready before `D00 T01 §1` shipped on 2026-10-13) to `3` (verified `[x]`, since `D00 T01 §1` is now stamped at `25ac228f`), and expanded the `Owned by` column in `todo/TODO-00-INDEX.md` so every coverage row explicitly names its resolving section range (`§1-§N`).
 
 **Phase:** 0
 **Needs:** none

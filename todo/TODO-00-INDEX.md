@@ -30,31 +30,31 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 
 | Promise | Owned by |
 | ------- | -------- |
-| M0 repo, GPL-3.0 repo-face files, native scaffold, both-architecture CI | D00 T01 |
-| This TODO system itself | D00 T02 |
-| Test backbone, corpus provenance, ASan | D00 T03 |
-| `recto-pdf` lexer, XRef parser, stream filters, CNG crypto & document model (4.1-4.4) | D01 T01 |
-| Content interpreter, DirectWrite fonts, incremental save, `DisplayList` & `RenderPool` | D01 T02 |
-| `recto-cli`, fuzz targets, the 4.9 battery, M1 done-when | D01 T03 |
-| App shell, title-bar tabs, open/save paths, password and error dialogs (SPEC 8, 9.2, 9.9) | D02 T01 |
-| Presentation thread, tiles on screen, layouts, zoom, links, page colour (SPEC 9.2) | D02 T02 |
-| Home, Pages, Bookmark Editor, Layers (OCG), Portfolios, editable Info & `Ctrl+K` | D02 T03 |
-| Settings page (including Portable mode `<exe-dir>\data\`), layout presets, theme & keys | D02 T04 |
-| Native `PageText`, built-in `Windows.Media.Ocr`, selection, regex find, replace & compare | D03 T01 |
-| UIA text provider, keyboard order and names, announcements (SPEC 11) | D03 T02 |
-| 15 annotation/markup types, `/AP` synthesis, Markup Bar, Comments, AcroForms & Designer | D03 T03 |
-| Job runtime, Convert page, queue, completion notices (SPEC 9.5, 9.9) | D04 T01 |
-| `PdfWriter`, atomic saves, Images/TIFF/GIF/SVG/XPS, OCR PDF, Table/Image & Optimizer | D04 T02 |
-| 3-mode (`Flowing`, `Exact`, `Continuous`) native `DocxWriter`, `RtfWriter` & 20-file gate | D04 T03 |
-| Built-in C++20 OpenXML/RTF/HTML/Markdown/CSV to PDF engine plus COM & LibreOffice (D10) | D04 T04 |
-| Native `XlsxWriter`, `WebDocWriter` (`HTML5`/`MD`/`EPUB`/`LaTeX`) & `PDF/A`/`UA`/`ZUGFeRD` | D04 T05 |
-| `GraftMap` merge/split/edit, crop, watermarks, Bates, AES-256, PKCS#7/PAdES & redaction | D05 T01 |
-| Organize grid (`Combine`/`Split`/`Reorder`), authoring dialogs, Redact Bar & Sign UI | D05 T02 |
-| Goldens, text tables, round-trips, performance targets (plan 8) | D06 T01 |
-| Security rules audit, fuzz operations, broker design (plan 9, D13) | D06 T02 |
-| Printing, Inno Setup (`Full` & `Portable`) installer, Portable `.zip`, MSIX & proof | D07 T01 |
-| About, NOTICE and GPL-3.0 audit, opt-in local crash bundle & GitHub Release / Store kit | D07 T02 |
-| Trademark search, repo face, optional Partner Center, reference machines (D1, plan 11) | D99 T01 |
+| M0 repo, GPL-3.0 repo-face files, native scaffold, both-architecture CI | D00 T01 §1-§5 |
+| This TODO system itself | D00 T02 §1-§3 |
+| Test backbone, corpus provenance, ASan | D00 T03 §1-§6 |
+| `recto-pdf` lexer, XRef parser, stream filters, CNG crypto & document model (4.1-4.4) | D01 T01 §1-§10 |
+| Content interpreter, DirectWrite fonts, incremental save, `DisplayList` & `RenderPool` | D01 T02 §1-§10 |
+| `recto-cli`, fuzz targets, the 4.9 battery, M1 done-when | D01 T03 §1-§7 |
+| App shell, title-bar tabs, open/save paths, password and error dialogs (SPEC 8, 9.2, 9.9) | D02 T01 §1-§11 |
+| Presentation thread, tiles on screen, layouts, zoom, links, page colour (SPEC 9.2) | D02 T02 §1-§10 |
+| Home, Pages, Bookmark Editor, Layers (OCG), Portfolios, editable Info & `Ctrl+K` | D02 T03 §1-§12 |
+| Settings page (including Portable mode `<exe-dir>\data\`), layout presets, theme & keys | D02 T04 §1-§10 |
+| Native `PageText`, built-in `Windows.Media.Ocr`, selection, regex find, replace & compare | D03 T01 §1-§10 |
+| UIA text provider, keyboard order and names, announcements (SPEC 11) | D03 T02 §1-§6 |
+| 15 annotation/markup types, `/AP` synthesis, Markup Bar, Comments, AcroForms & Designer | D03 T03 §1-§10 |
+| Job runtime, Convert page, queue, completion notices (SPEC 9.5, 9.9) | D04 T01 §1-§7 |
+| `PdfWriter`, atomic saves, Images/TIFF/GIF/SVG/XPS, OCR PDF, Table/Image & Optimizer | D04 T02 §1-§12 |
+| 3-mode (`Flowing`, `Exact`, `Continuous`) native `DocxWriter`, `RtfWriter` & 20-file gate | D04 T03 §1-§6 |
+| Built-in C++20 OpenXML/RTF/HTML/Markdown/CSV to PDF engine plus COM & LibreOffice (D10) | D04 T04 §1-§8 |
+| Native `XlsxWriter`, `WebDocWriter` (`HTML5`/`MD`/`EPUB`/`LaTeX`) & `PDF/A`/`UA`/`ZUGFeRD` | D04 T05 §1-§9 |
+| `GraftMap` merge/split/edit, crop, watermarks, Bates, AES-256, PKCS#7/PAdES & redaction | D05 T01 §1-§10 |
+| Organize grid (`Combine`/`Split`/`Reorder`), authoring dialogs, Redact Bar & Sign UI | D05 T02 §1-§11 |
+| Goldens, text tables, round-trips, performance targets (plan 8) | D06 T01 §1-§8 |
+| Security rules audit, fuzz operations, broker design (plan 9, D13) | D06 T02 §1-§6 |
+| Printing, Inno Setup (`Full` & `Portable`) installer, Portable `.zip`, MSIX & proof | D07 T01 §1-§7 |
+| About, NOTICE and GPL-3.0 audit, opt-in local crash bundle & GitHub Release / Store kit | D07 T02 §1-§7 |
+| Trademark search, repo face, optional Partner Center, reference machines (D1, plan 11) | D99 T01 §1-§4 |
 | Sandboxed broker process | Pre-approved design in D06 T02 §6; built after v1 (D13) |
 
 ## Active TODOs
