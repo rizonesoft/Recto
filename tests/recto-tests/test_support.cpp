@@ -46,28 +46,68 @@ std::filesystem::path executable_path()
 	return std::filesystem::path(buffer);
 }
 
+struct UniqueHandle {
+	HANDLE handle{INVALID_HANDLE_VALUE};
+
+	explicit UniqueHandle(HANDLE h) noexcept : handle(h) {}
+	~UniqueHandle() noexcept
+	{
+		close();
+	}
+
+	UniqueHandle(const UniqueHandle&) = delete;
+	UniqueHandle& operator=(const UniqueHandle&) = delete;
+
+	void close() noexcept
+	{
+		if (handle != INVALID_HANDLE_VALUE) {
+			CloseHandle(handle);
+			handle = INVALID_HANDLE_VALUE;
+		}
+	}
+};
+
+struct TempFileGuard {
+	std::filesystem::path path;
+	bool committed{false};
+
+	explicit TempFileGuard(std::filesystem::path p) noexcept : path(std::move(p)) {}
+	~TempFileGuard() noexcept
+	{
+		if (!committed && !path.empty()) {
+			DeleteFileW(path.c_str());
+		}
+	}
+
+	TempFileGuard(const TempFileGuard&) = delete;
+	TempFileGuard& operator=(const TempFileGuard&) = delete;
+};
+
 void clear_readonly_recursive(const std::filesystem::path& root) noexcept
 {
-	std::error_code ec;
-	const auto long_root = to_long_path(root);
-	const DWORD root_attrs = GetFileAttributesW(long_root.c_str());
-	if (root_attrs != INVALID_FILE_ATTRIBUTES && (root_attrs & FILE_ATTRIBUTE_READONLY) != 0) {
-		SetFileAttributesW(long_root.c_str(), root_attrs & ~FILE_ATTRIBUTE_READONLY);
-	}
-	for (std::filesystem::recursive_directory_iterator it(
-			 long_root, std::filesystem::directory_options::skip_permission_denied, ec),
-		 end;
-		 it != end;
-		 it.increment(ec)) {
-		if (ec) {
-			ec.clear();
-			continue;
+	try {
+		std::error_code ec;
+		const auto long_root = to_long_path(root);
+		const DWORD root_attrs = GetFileAttributesW(long_root.c_str());
+		if (root_attrs != INVALID_FILE_ATTRIBUTES && (root_attrs & FILE_ATTRIBUTE_READONLY) != 0) {
+			SetFileAttributesW(long_root.c_str(), root_attrs & ~FILE_ATTRIBUTE_READONLY);
 		}
-		const auto& entry_path = it->path();
-		const DWORD attrs = GetFileAttributesW(entry_path.c_str());
-		if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_READONLY) != 0) {
-			SetFileAttributesW(entry_path.c_str(), attrs & ~FILE_ATTRIBUTE_READONLY);
+		for (std::filesystem::recursive_directory_iterator it(
+				 long_root, std::filesystem::directory_options::skip_permission_denied, ec),
+			 end;
+			 it != end;
+			 it.increment(ec)) {
+			if (ec) {
+				ec.clear();
+				continue;
+			}
+			const auto& entry_path = it->path();
+			const DWORD attrs = GetFileAttributesW(entry_path.c_str());
+			if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_READONLY) != 0) {
+				SetFileAttributesW(entry_path.c_str(), attrs & ~FILE_ATTRIBUTE_READONLY);
+			}
 		}
+	} catch (...) {
 	}
 }
 
@@ -136,20 +176,19 @@ std::filesystem::path corpus_path(std::string_view relative)
 std::vector<uint8_t> read_file_bytes(const std::filesystem::path& path)
 {
 	const auto long_path = to_long_path(path);
-	const HANDLE file = CreateFileW(
+	UniqueHandle file(CreateFileW(
 		long_path.c_str(),
 		GENERIC_READ,
 		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
 		nullptr,
 		OPEN_EXISTING,
 		FILE_ATTRIBUTE_NORMAL,
-		nullptr);
-	if (file == INVALID_HANDLE_VALUE) {
+		nullptr));
+	if (file.handle == INVALID_HANDLE_VALUE) {
 		throw std::runtime_error("read_file_bytes: CreateFileW failed");
 	}
 	LARGE_INTEGER file_size{};
-	if (!GetFileSizeEx(file, &file_size) || file_size.QuadPart < 0) {
-		CloseHandle(file);
+	if (!GetFileSizeEx(file.handle, &file_size) || file_size.QuadPart < 0) {
 		throw std::runtime_error("read_file_bytes: GetFileSizeEx failed");
 	}
 	std::vector<uint8_t> buffer(static_cast<size_t>(file_size.QuadPart));
@@ -158,8 +197,7 @@ std::vector<uint8_t> read_file_bytes(const std::filesystem::path& path)
 		const DWORD chunk = static_cast<DWORD>(
 			std::min<size_t>(buffer.size() - offset, 1u << 20));
 		DWORD bytes_read = 0;
-		if (!ReadFile(file, buffer.data() + offset, chunk, &bytes_read, nullptr)) {
-			CloseHandle(file);
+		if (!ReadFile(file.handle, buffer.data() + offset, chunk, &bytes_read, nullptr)) {
 			throw std::runtime_error("read_file_bytes: ReadFile failed");
 		}
 		if (bytes_read == 0) {
@@ -167,7 +205,6 @@ std::vector<uint8_t> read_file_bytes(const std::filesystem::path& path)
 		}
 		offset += bytes_read;
 	}
-	CloseHandle(file);
 	buffer.resize(offset);
 	return buffer;
 }
@@ -175,59 +212,112 @@ std::vector<uint8_t> read_file_bytes(const std::filesystem::path& path)
 void write_file_bytes(const std::filesystem::path& path, std::span<const uint8_t> data)
 {
 	const auto long_path = to_long_path(path);
-	std::error_code ec;
-	if (long_path.has_parent_path()) {
-		std::filesystem::create_directories(long_path.parent_path(), ec);
+	const auto parent_dir = long_path.parent_path();
+	if (!parent_dir.empty()) {
+		std::error_code ec;
+		std::filesystem::create_directories(parent_dir, ec);
+		if (ec) {
+			throw std::runtime_error("write_file_bytes: failed to create parent directory: " + ec.message());
+		}
 	}
-	const HANDLE file = CreateFileW(
-		long_path.c_str(),
-		GENERIC_WRITE,
-		0,
-		nullptr,
-		CREATE_ALWAYS,
-		FILE_ATTRIBUTE_NORMAL,
-		nullptr);
-	if (file == INVALID_HANDLE_VALUE) {
-		throw std::runtime_error("write_file_bytes: CreateFileW failed");
+
+	const DWORD pid = GetCurrentProcessId();
+	std::filesystem::path temp_long;
+	UniqueHandle file(INVALID_HANDLE_VALUE);
+	for (int attempt = 0; attempt < 64; ++attempt) {
+		LARGE_INTEGER qpc{};
+		QueryPerformanceCounter(&qpc);
+		const uint64_t seq = g_temp_dir_counter.fetch_add(1, std::memory_order_relaxed);
+		const std::wstring tmp_name = long_path.filename().native() + L".tmp." +
+			std::to_wstring(pid) + L"." +
+			std::to_wstring(static_cast<uint64_t>(qpc.QuadPart)) + L"." +
+			std::to_wstring(seq);
+		temp_long = parent_dir.empty() ? std::filesystem::path(tmp_name) : (parent_dir / tmp_name);
+		HANDLE h = CreateFileW(
+			temp_long.c_str(),
+			GENERIC_WRITE,
+			0,
+			nullptr,
+			CREATE_NEW,
+			FILE_ATTRIBUTE_NORMAL,
+			nullptr);
+		if (h != INVALID_HANDLE_VALUE) {
+			file.handle = h;
+			break;
+		}
+		const DWORD err = GetLastError();
+		if (err != ERROR_FILE_EXISTS && err != ERROR_ALREADY_EXISTS) {
+			throw std::runtime_error("write_file_bytes: CreateFileW failed for temp file");
+		}
 	}
+	if (file.handle == INVALID_HANDLE_VALUE) {
+		throw std::runtime_error("write_file_bytes: exhausted retries creating unique temp file");
+	}
+
+	TempFileGuard temp_guard(temp_long);
 	size_t offset = 0;
 	while (offset < data.size()) {
 		const DWORD chunk = static_cast<DWORD>(
 			std::min<size_t>(data.size() - offset, 1u << 20));
 		DWORD bytes_written = 0;
-		if (!WriteFile(file, data.data() + offset, chunk, &bytes_written, nullptr)) {
-			CloseHandle(file);
+		if (!WriteFile(file.handle, data.data() + offset, chunk, &bytes_written, nullptr)) {
 			throw std::runtime_error("write_file_bytes: WriteFile failed");
 		}
 		offset += bytes_written;
 	}
-	CloseHandle(file);
+	if (!FlushFileBuffers(file.handle)) {
+		throw std::runtime_error("write_file_bytes: FlushFileBuffers failed");
+	}
+	file.close();
+
+	if (!MoveFileExW(
+			temp_long.c_str(),
+			long_path.c_str(),
+			MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+		throw std::runtime_error("write_file_bytes: MoveFileExW atomic replace failed");
+	}
+	temp_guard.committed = true;
 }
 
 TempDir::TempDir()
 {
-	std::wstring temp_buf(MAX_PATH + 1, L'\0');
-	const DWORD len = GetTempPathW(static_cast<DWORD>(temp_buf.size()), temp_buf.data());
-	if (len == 0 || len >= temp_buf.size()) {
+	const DWORD needed = GetTempPathW(0, nullptr);
+	if (needed == 0) {
+		throw std::runtime_error("GetTempPathW sizing failed in TempDir");
+	}
+	std::wstring temp_buf(needed, L'\0');
+	const DWORD len = GetTempPathW(needed, temp_buf.data());
+	if (len == 0 || len >= needed) {
 		throw std::runtime_error("GetTempPathW failed in TempDir");
 	}
 	temp_buf.resize(len);
 	const std::filesystem::path base_temp = std::filesystem::path(temp_buf).lexically_normal();
 
-	const DWORD pid = GetCurrentProcessId();
-	LARGE_INTEGER qpc{};
-	QueryPerformanceCounter(&qpc);
-	const uint64_t seq = g_temp_dir_counter.fetch_add(1, std::memory_order_relaxed);
-
-	const std::wstring dir_name = L"recto-test-" + std::to_wstring(pid) + L"-" +
-		std::to_wstring(static_cast<uint64_t>(qpc.QuadPart)) + L"-" + std::to_wstring(seq);
-	path_ = (base_temp / dir_name).lexically_normal();
-
 	std::error_code ec;
-	std::filesystem::create_directories(to_long_path(path_), ec);
+	std::filesystem::create_directories(to_long_path(base_temp), ec);
 	if (ec) {
-		throw std::runtime_error("Failed to create TempDir: " + ec.message());
+		throw std::runtime_error("Failed to ensure base temp directory: " + ec.message());
 	}
+
+	const DWORD pid = GetCurrentProcessId();
+	for (int attempt = 0; attempt < 64; ++attempt) {
+		LARGE_INTEGER qpc{};
+		QueryPerformanceCounter(&qpc);
+		const uint64_t seq = g_temp_dir_counter.fetch_add(1, std::memory_order_relaxed);
+		const std::wstring dir_name = L"recto-test-" + std::to_wstring(pid) + L"-" +
+			std::to_wstring(static_cast<uint64_t>(qpc.QuadPart)) + L"-" + std::to_wstring(seq);
+		const std::filesystem::path candidate = (base_temp / dir_name).lexically_normal();
+		const auto candidate_long = to_long_path(candidate);
+		if (CreateDirectoryW(candidate_long.c_str(), nullptr) != 0) {
+			path_ = candidate;
+			return;
+		}
+		const DWORD err = GetLastError();
+		if (err != ERROR_ALREADY_EXISTS) {
+			throw std::runtime_error("CreateDirectoryW failed in TempDir");
+		}
+	}
+	throw std::runtime_error("Failed to create exclusive TempDir after retries");
 }
 
 TempDir::~TempDir() noexcept
@@ -263,9 +353,12 @@ void TempDir::cleanup() noexcept
 	if (path_.empty()) {
 		return;
 	}
-	clear_readonly_recursive(path_);
-	std::error_code ec;
-	std::filesystem::remove_all(to_long_path(path_), ec);
+	try {
+		clear_readonly_recursive(path_);
+		std::error_code ec;
+		std::filesystem::remove_all(to_long_path(path_), ec);
+	} catch (...) {
+	}
 	path_.clear();
 }
 

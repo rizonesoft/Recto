@@ -12,6 +12,7 @@
 
 #include <mutex>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -22,18 +23,33 @@ class ScopedCurrentDir {
 public:
 	explicit ScopedCurrentDir(const std::filesystem::path& target)
 	{
-		std::wstring buf(MAX_PATH + 1, L'\0');
-		const DWORD len = GetCurrentDirectoryW(static_cast<DWORD>(buf.size()), buf.data());
-		buf.resize(len);
-		original_ = buf;
-		SetCurrentDirectoryW(target.c_str());
+		const DWORD needed = GetCurrentDirectoryW(0, nullptr);
+		if (needed == 0) {
+			throw std::runtime_error("GetCurrentDirectoryW sizing failed");
+		}
+		std::wstring buf(needed, L'\0');
+		const DWORD copied = GetCurrentDirectoryW(needed, buf.data());
+		if (copied == 0 || copied >= needed) {
+			throw std::runtime_error("GetCurrentDirectoryW copy failed");
+		}
+		buf.resize(copied);
+		original_ = std::move(buf);
+		if (SetCurrentDirectoryW(target.c_str()) == 0) {
+			const auto long_target = recto::test::to_long_path(target);
+			if (SetCurrentDirectoryW(long_target.c_str()) == 0) {
+				throw std::runtime_error("SetCurrentDirectoryW failed");
+			}
+		}
 	}
-	~ScopedCurrentDir()
+	~ScopedCurrentDir() noexcept
 	{
 		if (!original_.empty()) {
 			SetCurrentDirectoryW(original_.c_str());
 		}
 	}
+
+	ScopedCurrentDir(const ScopedCurrentDir&) = delete;
+	ScopedCurrentDir& operator=(const ScopedCurrentDir&) = delete;
 
 private:
 	std::wstring original_;
@@ -51,7 +67,7 @@ public:
 		}
 		SetEnvironmentVariableW(name, value);
 	}
-	~ScopedEnvVar()
+	~ScopedEnvVar() noexcept
 	{
 		if (had_original_) {
 			SetEnvironmentVariableW(name_.c_str(), original_.c_str());
@@ -59,6 +75,9 @@ public:
 			SetEnvironmentVariableW(name_.c_str(), nullptr);
 		}
 	}
+
+	ScopedEnvVar(const ScopedEnvVar&) = delete;
+	ScopedEnvVar& operator=(const ScopedEnvVar&) = delete;
 
 private:
 	std::wstring name_;
@@ -101,8 +120,13 @@ TEST(Support, TempDirCleanup)
 		single_dir = temp.path();
 		ASSERT_TRUE(std::filesystem::exists(single_dir));
 		const std::vector<uint8_t> payload{'r', 'e', 'c', 't', 'o'};
-		recto::test::write_file_bytes(temp.file_path("nested/sample.bin"), payload);
-		EXPECT_EQ(recto::test::read_file_bytes(temp.file_path("nested/sample.bin")), payload);
+		const auto target_file = temp.file_path("nested/sample.bin");
+		recto::test::write_file_bytes(target_file, payload);
+		EXPECT_EQ(recto::test::read_file_bytes(target_file), payload);
+
+		const std::vector<uint8_t> replacement{'a', 't', 'o', 'm', 'i', 'c'};
+		recto::test::write_file_bytes(target_file, replacement);
+		EXPECT_EQ(recto::test::read_file_bytes(target_file), replacement);
 	}
 	EXPECT_FALSE(std::filesystem::exists(single_dir));
 
