@@ -51,7 +51,7 @@
            integration's auto-link does not pull an unreferenced main. -->
       <!-- Same file names in both configurations; vcpkg puts the Debug
            build under debug/lib and its props select the directory. -->
-      <AdditionalDependencies>gtest_main.lib;gtest.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>bcrypt.lib;gtest_main.lib;gtest.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>

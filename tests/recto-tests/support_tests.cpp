@@ -8,13 +8,16 @@
 #endif
 #include <Windows.h>
 
+#include <gtest/gtest-spi.h>
 #include <gtest/gtest.h>
 
+#include <memory>
 #include <mutex>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -262,4 +265,275 @@ TEST(Support, TempDirLongPathAndReadOnly)
 	}
 	EXPECT_FALSE(std::filesystem::exists(recto::test::to_long_path(long_file)));
 	EXPECT_FALSE(std::filesystem::exists(recto::test::to_long_path(root_path)));
+}
+
+TEST(Support, PixelComparison)
+{
+	constexpr uint32_t kWidth = 64;
+	constexpr uint32_t kHeight = 64;
+	std::vector<uint8_t> expected(kWidth * kHeight * 4u, 0);
+	for (uint32_t y = 0; y < kHeight; ++y) {
+		for (uint32_t x = 0; x < kWidth; ++x) {
+			const size_t idx = (static_cast<size_t>(y) * kWidth + x) * 4u;
+			expected[idx + 0] = static_cast<uint8_t>((x * 3u) & 0xFFu);
+			expected[idx + 1] = static_cast<uint8_t>((y * 5u) & 0xFFu);
+			expected[idx + 2] = static_cast<uint8_t>((x + y) & 0xFFu);
+			expected[idx + 3] = 255u;
+		}
+	}
+	std::vector<uint8_t> actual = expected;
+
+	const auto equal_diff = recto::test::expect_rgba_equal(actual, expected, kWidth, kHeight);
+	EXPECT_TRUE(equal_diff.matches);
+	EXPECT_EQ(equal_diff.mismatch_count, 0u);
+	EXPECT_EQ(equal_diff.max_delta_observed, 0u);
+
+	// Perturb channel G by +1 at exact coordinate (17, 42).
+	const size_t target_idx = (42u * kWidth + 17u) * 4u;
+	expected[target_idx + 0] = 10u;
+	expected[target_idx + 1] = 100u;
+	expected[target_idx + 2] = 200u;
+	expected[target_idx + 3] = 255u;
+	actual[target_idx + 0] = 10u;
+	actual[target_idx + 1] = 101u;
+	actual[target_idx + 2] = 200u;
+	actual[target_idx + 3] = 255u;
+
+	const auto diff = recto::test::compare_rgba(actual, expected, kWidth, kHeight);
+	EXPECT_FALSE(diff.matches);
+	EXPECT_EQ(diff.mismatch_count, 1u);
+	EXPECT_EQ(diff.first_x, 17u);
+	EXPECT_EQ(diff.first_y, 42u);
+	EXPECT_EQ(diff.max_delta_observed, 1u);
+	EXPECT_EQ(diff.expected_rgba, (std::array<uint8_t, 4>{10u, 100u, 200u, 255u}));
+	EXPECT_EQ(diff.actual_rgba, (std::array<uint8_t, 4>{10u, 101u, 200u, 255u}));
+
+	const std::string formatted = recto::test::format_rgba_diff(diff);
+	EXPECT_NE(formatted.find("(17, 42)"), std::string::npos);
+	EXPECT_NE(formatted.find("expected [10, 100, 200, 255]"), std::string::npos);
+	EXPECT_NE(formatted.find("actual [10, 101, 200, 255]"), std::string::npos);
+	EXPECT_NE(formatted.find("delta = 1"), std::string::npos);
+	EXPECT_NE(formatted.find("mismatch_count = 1"), std::string::npos);
+
+	EXPECT_NONFATAL_FAILURE(
+		recto::test::expect_rgba_equal(actual, expected, kWidth, kHeight),
+		"RGBA mismatch at (17, 42): expected [10, 100, 200, 255], actual [10, 101, 200, 255], delta = 1, mismatch_count = 1");
+
+	// Within max_channel_delta = 1 tolerance, the buffers match.
+	const auto tolerated = recto::test::expect_rgba_equal(actual, expected, kWidth, kHeight, 0, 0, 1);
+	EXPECT_TRUE(tolerated.matches);
+	EXPECT_EQ(tolerated.mismatch_count, 0u);
+	EXPECT_EQ(tolerated.max_delta_observed, 1u);
+
+	EXPECT_THROW(recto::test::compare_rgba(actual, expected, 0, kHeight), std::invalid_argument);
+	std::vector<uint8_t> short_buf(16, 0);
+	EXPECT_THROW(recto::test::compare_rgba(short_buf, expected, kWidth, kHeight), std::invalid_argument);
+}
+
+TEST(Support, PixelStridePadding)
+{
+	constexpr uint32_t kWidth = 37;
+	constexpr uint32_t kHeight = 19;
+	constexpr size_t kTightStride = kWidth * 4u;
+	constexpr size_t kPaddedStride = kTightStride + 64u;
+
+	std::vector<uint8_t> expected(kHeight * kTightStride, 0);
+	std::vector<uint8_t> actual(kHeight * kPaddedStride, 0xDE);
+
+	for (uint32_t y = 0; y < kHeight; ++y) {
+		for (uint32_t x = 0; x < kWidth; ++x) {
+			const uint8_t r = static_cast<uint8_t>((x * 7u + y) & 0xFFu);
+			const uint8_t g = static_cast<uint8_t>((y * 11u + x) & 0xFFu);
+			const uint8_t b = static_cast<uint8_t>((x ^ y) & 0xFFu);
+			const uint8_t a = 255u;
+
+			const size_t e_idx = static_cast<size_t>(y) * kTightStride + static_cast<size_t>(x) * 4u;
+			expected[e_idx + 0] = r;
+			expected[e_idx + 1] = g;
+			expected[e_idx + 2] = b;
+			expected[e_idx + 3] = a;
+
+			const size_t a_idx = static_cast<size_t>(y) * kPaddedStride + static_cast<size_t>(x) * 4u;
+			actual[a_idx + 0] = r;
+			actual[a_idx + 1] = g;
+			actual[a_idx + 2] = b;
+			actual[a_idx + 3] = a;
+		}
+		// Fill padding bytes in actual with varying non-zero garbage.
+		for (size_t pad = kTightStride; pad < kPaddedStride; ++pad) {
+			actual[static_cast<size_t>(y) * kPaddedStride + pad] =
+				static_cast<uint8_t>((y * 13u + pad) & 0xFFu);
+		}
+	}
+
+	const auto res = recto::test::expect_rgba_equal(
+		actual, expected, kWidth, kHeight, kPaddedStride, kTightStride);
+	EXPECT_TRUE(res.matches);
+	EXPECT_EQ(res.mismatch_count, 0u);
+	EXPECT_EQ(res.max_delta_observed, 0u);
+
+	EXPECT_THROW(
+		recto::test::compare_rgba(actual, expected, kWidth, kHeight, kTightStride - 1u, kTightStride),
+		std::invalid_argument);
+}
+
+TEST(Support, SsimCalculation)
+{
+	constexpr uint32_t kWidth = 64;
+	constexpr uint32_t kHeight = 64;
+	std::vector<uint8_t> base(kWidth * kHeight * 4u, 0);
+	std::vector<uint8_t> inverted(kWidth * kHeight * 4u, 0);
+	std::vector<uint8_t> near_copy(kWidth * kHeight * 4u, 0);
+
+	for (uint32_t y = 0; y < kHeight; ++y) {
+		for (uint32_t x = 0; x < kWidth; ++x) {
+			const size_t idx = (static_cast<size_t>(y) * kWidth + x) * 4u;
+			const uint8_t pattern = (((x / 4u) + (y / 4u)) % 2u == 0u) ? 20u : 235u;
+			base[idx + 0] = pattern;
+			base[idx + 1] = static_cast<uint8_t>((x * 4u) & 0xFFu);
+			base[idx + 2] = static_cast<uint8_t>((y * 4u) & 0xFFu);
+			base[idx + 3] = 255u;
+
+			inverted[idx + 0] = static_cast<uint8_t>(255u - base[idx + 0]);
+			inverted[idx + 1] = static_cast<uint8_t>(255u - base[idx + 1]);
+			inverted[idx + 2] = static_cast<uint8_t>(255u - base[idx + 2]);
+			inverted[idx + 3] = 0u;
+
+			near_copy[idx + 0] = static_cast<uint8_t>(base[idx + 0] + 1u);
+			near_copy[idx + 1] = base[idx + 1];
+			near_copy[idx + 2] = base[idx + 2];
+			near_copy[idx + 3] = 255u;
+		}
+	}
+
+	EXPECT_DOUBLE_EQ(recto::test::compute_ssim(base, base, kWidth, kHeight), 1.0);
+
+	const double inv_ssim = recto::test::compute_ssim(inverted, base, kWidth, kHeight);
+	EXPECT_GE(inv_ssim, 0.0);
+	EXPECT_LT(inv_ssim, 0.1);
+
+	const double near_ssim = recto::test::compute_ssim(near_copy, base, kWidth, kHeight);
+	EXPECT_GE(near_ssim, 0.99);
+	EXPECT_LT(near_ssim, 1.0);
+}
+
+TEST(Support, Sha256Hex)
+{
+	const std::span<const uint8_t> empty_span{};
+	EXPECT_EQ(
+		recto::test::sha256_hex(empty_span),
+		"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+
+	const std::array<uint8_t, 3> abc{'a', 'b', 'c'};
+	EXPECT_EQ(
+		recto::test::sha256_hex(abc),
+		"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+
+	const std::string nist_448 = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+	EXPECT_EQ(
+		recto::test::sha256_hex(std::span<const uint8_t>(
+			reinterpret_cast<const uint8_t*>(nist_448.data()), nist_448.size())),
+		"248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+
+	// 1,000,000 'a' bytes NIST vector.
+	const std::vector<uint8_t> million_a(1000000u, static_cast<uint8_t>('a'));
+	EXPECT_EQ(
+		recto::test::sha256_hex(million_a),
+		"cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+
+	const auto license_path = recto::test::repo_root() / "LICENSE";
+	EXPECT_EQ(
+		recto::test::sha256_file(license_path),
+		"0c2b2577702544e6ca2110800c25129ef79a7277e74f888ae852afb90cb363b4");
+
+	EXPECT_THROW(
+		recto::test::sha256_file(recto::test::repo_root() / "nonexistent_file_for_sha256.bin"),
+		std::runtime_error);
+}
+
+namespace {
+
+enum class FakeErrorCode {
+	Ok = 0,
+	DamagedXref = 1,
+	NeedsPassword = 2,
+};
+
+struct FakePdfError {
+	FakeErrorCode code{FakeErrorCode::Ok};
+	std::string message;
+};
+
+template <typename T, typename E = FakePdfError>
+class FakeResult {
+public:
+	static FakeResult ok(T val) { return FakeResult(std::in_place_index<0>, std::move(val)); }
+	static FakeResult err(E error) { return FakeResult(std::in_place_index<1>, std::move(error)); }
+
+	bool has_value() const noexcept { return storage_.index() == 0; }
+	T& value() { return std::get<0>(storage_); }
+	const T& value() const { return std::get<0>(storage_); }
+	const E& error() const { return std::get<1>(storage_); }
+
+private:
+	template <size_t I, typename Arg>
+	FakeResult(std::in_place_index_t<I> idx, Arg&& arg) : storage_(idx, std::forward<Arg>(arg)) {}
+
+	std::variant<T, E> storage_;
+};
+
+template <typename E>
+class FakeResult<void, E> {
+public:
+	static FakeResult ok() { return FakeResult(std::in_place_index<0>, std::monostate{}); }
+	static FakeResult err(E error) { return FakeResult(std::in_place_index<1>, std::move(error)); }
+
+	bool has_value() const noexcept { return storage_.index() == 0; }
+	void value() const {}
+	const E& error() const { return std::get<1>(storage_); }
+
+private:
+	template <size_t I, typename Arg>
+	FakeResult(std::in_place_index_t<I> idx, Arg&& arg) : storage_(idx, std::forward<Arg>(arg)) {}
+
+	std::variant<std::monostate, E> storage_;
+};
+
+void trigger_assert_ok_failure()
+{
+	auto failing = FakeResult<int>::err(
+		FakePdfError{FakeErrorCode::DamagedXref, "damaged xref table at offset 128"});
+	RECTO_ASSERT_OK(failing);
+}
+
+} // namespace
+
+TEST(Support, ResultMacros)
+{
+	auto copyable_ok = FakeResult<int>::ok(42);
+	RECTO_ASSERT_OK(copyable_ok);
+	EXPECT_EQ(copyable_ok.value(), 42);
+
+	auto move_only_ok = FakeResult<std::unique_ptr<int>>::ok(std::make_unique<int>(99));
+	RECTO_ASSERT_OK(move_only_ok);
+	ASSERT_NE(move_only_ok.value(), nullptr);
+	EXPECT_EQ(*move_only_ok.value(), 99);
+
+	auto void_ok = FakeResult<void>::ok();
+	RECTO_ASSERT_OK(void_ok);
+
+	auto err_res = FakeResult<int>::err(
+		FakePdfError{FakeErrorCode::NeedsPassword, "document is encrypted"});
+	RECTO_EXPECT_ERR(err_res, FakeErrorCode::NeedsPassword);
+
+	auto direct_code_err = FakeResult<int, FakeErrorCode>::err(FakeErrorCode::DamagedXref);
+	RECTO_EXPECT_ERR(direct_code_err, FakeErrorCode::DamagedXref);
+
+	EXPECT_FATAL_FAILURE(trigger_assert_ok_failure(), "damaged xref table at offset 128");
+	EXPECT_NONFATAL_FAILURE(
+		RECTO_EXPECT_ERR(copyable_ok, FakeErrorCode::DamagedXref),
+		"Expected error result");
+	EXPECT_NONFATAL_FAILURE(
+		RECTO_EXPECT_ERR(err_res, FakeErrorCode::DamagedXref),
+		"Mismatched error code");
 }

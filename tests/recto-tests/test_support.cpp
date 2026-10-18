@@ -7,9 +7,13 @@
 #define NOMINMAX
 #endif
 #include <Windows.h>
+#include <bcrypt.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <system_error>
 
@@ -411,6 +415,366 @@ void TempDir::cleanup() noexcept
 	} catch (...) {
 	}
 	path_.clear();
+}
+
+namespace {
+
+struct ValidatedRgbaStrides {
+	size_t row_bytes{0};
+	size_t actual_stride{0};
+	size_t expected_stride{0};
+};
+
+ValidatedRgbaStrides validate_rgba_buffers(
+	std::span<const uint8_t> actual,
+	std::span<const uint8_t> expected,
+	uint32_t width,
+	uint32_t height,
+	size_t actual_stride,
+	size_t expected_stride)
+{
+	if (width == 0 || height == 0) {
+		throw std::invalid_argument("RGBA dimensions must be non-zero");
+	}
+	if (static_cast<size_t>(width) > SIZE_MAX / 4u) {
+		throw std::invalid_argument("RGBA width overflows row byte count");
+	}
+	const size_t row_bytes = static_cast<size_t>(width) * 4u;
+	const size_t eff_actual_stride = (actual_stride == 0) ? row_bytes : actual_stride;
+	const size_t eff_expected_stride = (expected_stride == 0) ? row_bytes : expected_stride;
+	if (eff_actual_stride < row_bytes || eff_expected_stride < row_bytes) {
+		throw std::invalid_argument("RGBA row stride is smaller than width * 4");
+	}
+
+	const size_t last_row = static_cast<size_t>(height) - 1u;
+	if (last_row > 0) {
+		if (eff_actual_stride > (SIZE_MAX - row_bytes) / last_row ||
+			eff_expected_stride > (SIZE_MAX - row_bytes) / last_row) {
+			throw std::invalid_argument("RGBA buffer size overflows size_t");
+		}
+	}
+	const size_t min_actual_bytes = last_row * eff_actual_stride + row_bytes;
+	const size_t min_expected_bytes = last_row * eff_expected_stride + row_bytes;
+	if (actual.size() < min_actual_bytes || expected.size() < min_expected_bytes) {
+		throw std::invalid_argument("RGBA buffer is smaller than required for dimensions and stride");
+	}
+	return ValidatedRgbaStrides{row_bytes, eff_actual_stride, eff_expected_stride};
+}
+
+struct UniqueAlgHandle {
+	BCRYPT_ALG_HANDLE handle{nullptr};
+
+	UniqueAlgHandle() noexcept = default;
+	~UniqueAlgHandle() noexcept
+	{
+		if (handle != nullptr) {
+			BCryptCloseAlgorithmProvider(handle, 0);
+		}
+	}
+
+	UniqueAlgHandle(const UniqueAlgHandle&) = delete;
+	UniqueAlgHandle& operator=(const UniqueAlgHandle&) = delete;
+};
+
+struct UniqueHashHandle {
+	BCRYPT_HASH_HANDLE handle{nullptr};
+
+	UniqueHashHandle() noexcept = default;
+	~UniqueHashHandle() noexcept
+	{
+		if (handle != nullptr) {
+			BCryptDestroyHash(handle);
+		}
+	}
+
+	UniqueHashHandle(const UniqueHashHandle&) = delete;
+	UniqueHashHandle& operator=(const UniqueHashHandle&) = delete;
+};
+
+std::string bytes_to_hex(std::span<const uint8_t> bytes)
+{
+	static constexpr char kHexDigits[] = "0123456789abcdef";
+	std::string out;
+	out.resize(bytes.size() * 2u);
+	for (size_t i = 0; i < bytes.size(); ++i) {
+		const uint8_t b = bytes[i];
+		out[i * 2u] = kHexDigits[(b >> 4) & 0x0Fu];
+		out[i * 2u + 1u] = kHexDigits[b & 0x0Fu];
+	}
+	return out;
+}
+
+} // namespace
+
+PixelDiffResult compare_rgba(
+	std::span<const uint8_t> actual,
+	std::span<const uint8_t> expected,
+	uint32_t width,
+	uint32_t height,
+	size_t actual_stride,
+	size_t expected_stride,
+	uint8_t max_channel_delta)
+{
+	const auto strides = validate_rgba_buffers(
+		actual, expected, width, height, actual_stride, expected_stride);
+
+	PixelDiffResult result{};
+	for (uint32_t y = 0; y < height; ++y) {
+		const uint8_t* actual_row = actual.data() + static_cast<size_t>(y) * strides.actual_stride;
+		const uint8_t* expected_row = expected.data() + static_cast<size_t>(y) * strides.expected_stride;
+		for (uint32_t x = 0; x < width; ++x) {
+			const uint8_t* a = actual_row + static_cast<size_t>(x) * 4u;
+			const uint8_t* e = expected_row + static_cast<size_t>(x) * 4u;
+
+			uint8_t pixel_max_delta = 0;
+			for (size_t c = 0; c < 4u; ++c) {
+				const uint8_t delta = static_cast<uint8_t>(
+					(a[c] >= e[c]) ? (a[c] - e[c]) : (e[c] - a[c]));
+				pixel_max_delta = std::max(pixel_max_delta, delta);
+			}
+			result.max_delta_observed = std::max(result.max_delta_observed, pixel_max_delta);
+
+			if (pixel_max_delta > max_channel_delta) {
+				if (result.mismatch_count == 0) {
+					result.matches = false;
+					result.first_x = x;
+					result.first_y = y;
+					result.actual_rgba = {a[0], a[1], a[2], a[3]};
+					result.expected_rgba = {e[0], e[1], e[2], e[3]};
+				}
+				++result.mismatch_count;
+			}
+		}
+	}
+	return result;
+}
+
+std::string format_rgba_diff(const PixelDiffResult& diff)
+{
+	if (diff.matches) {
+		return "RGBA buffers match (max_delta = " +
+			std::to_string(static_cast<unsigned>(diff.max_delta_observed)) + ")";
+	}
+	std::ostringstream oss;
+	oss << "RGBA mismatch at (" << diff.first_x << ", " << diff.first_y << "): expected ["
+		<< static_cast<unsigned>(diff.expected_rgba[0]) << ", "
+		<< static_cast<unsigned>(diff.expected_rgba[1]) << ", "
+		<< static_cast<unsigned>(diff.expected_rgba[2]) << ", "
+		<< static_cast<unsigned>(diff.expected_rgba[3]) << "], actual ["
+		<< static_cast<unsigned>(diff.actual_rgba[0]) << ", "
+		<< static_cast<unsigned>(diff.actual_rgba[1]) << ", "
+		<< static_cast<unsigned>(diff.actual_rgba[2]) << ", "
+		<< static_cast<unsigned>(diff.actual_rgba[3])
+		<< "], delta = " << static_cast<unsigned>(diff.max_delta_observed)
+		<< ", mismatch_count = " << diff.mismatch_count;
+	return oss.str();
+}
+
+PixelDiffResult expect_rgba_equal(
+	std::span<const uint8_t> actual,
+	std::span<const uint8_t> expected,
+	uint32_t width,
+	uint32_t height,
+	size_t actual_stride,
+	size_t expected_stride,
+	uint8_t max_channel_delta)
+{
+	const PixelDiffResult diff = compare_rgba(
+		actual, expected, width, height, actual_stride, expected_stride, max_channel_delta);
+	if (!diff.matches) {
+		ADD_FAILURE() << format_rgba_diff(diff);
+	}
+	return diff;
+}
+
+double compute_ssim(
+	std::span<const uint8_t> actual,
+	std::span<const uint8_t> expected,
+	uint32_t width,
+	uint32_t height,
+	size_t actual_stride,
+	size_t expected_stride)
+{
+	const auto strides = validate_rgba_buffers(
+		actual, expected, width, height, actual_stride, expected_stride);
+
+	// Standard 8-bit SSIM constants: C1 = (0.01 * 255)^2, C2 = (0.03 * 255)^2.
+	constexpr double kC1 = 6.5025;
+	constexpr double kC2 = 58.5225;
+	constexpr uint32_t kBlockSize = 8;
+
+	auto channel_value = [](const uint8_t* px, int ch) noexcept -> double {
+		if (ch == 0) {
+			return 0.299 * static_cast<double>(px[0]) +
+				0.587 * static_cast<double>(px[1]) +
+				0.114 * static_cast<double>(px[2]);
+		}
+		return static_cast<double>(px[ch - 1]);
+	};
+
+	double total_ssim = 0.0;
+	size_t window_count = 0;
+
+	for (uint32_t y0 = 0; y0 < height; y0 += kBlockSize) {
+		const uint32_t y1 = std::min(height, y0 + kBlockSize);
+		for (uint32_t x0 = 0; x0 < width; x0 += kBlockSize) {
+			const uint32_t x1 = std::min(width, x0 + kBlockSize);
+			const double n = static_cast<double>((x1 - x0) * (y1 - y0));
+
+			// Compute SSIM across luminance (ch=0) and R, G, B, A (ch=1..4).
+			double block_ssim_sum = 0.0;
+			for (int ch = 0; ch < 5; ++ch) {
+				double sum_a = 0.0;
+				double sum_e = 0.0;
+				bool identical = true;
+				for (uint32_t y = y0; y < y1; ++y) {
+					const uint8_t* a_row = actual.data() + static_cast<size_t>(y) * strides.actual_stride;
+					const uint8_t* e_row = expected.data() + static_cast<size_t>(y) * strides.expected_stride;
+					for (uint32_t x = x0; x < x1; ++x) {
+						const uint8_t* a_px = a_row + static_cast<size_t>(x) * 4u;
+						const uint8_t* e_px = e_row + static_cast<size_t>(x) * 4u;
+						const double va = channel_value(a_px, ch);
+						const double ve = channel_value(e_px, ch);
+						if (va != ve) {
+							identical = false;
+						}
+						sum_a += va;
+						sum_e += ve;
+					}
+				}
+				if (identical) {
+					block_ssim_sum += 1.0;
+					continue;
+				}
+				const double mean_a = sum_a / n;
+				const double mean_e = sum_e / n;
+
+				double var_a = 0.0;
+				double var_e = 0.0;
+				double cov_ae = 0.0;
+				for (uint32_t y = y0; y < y1; ++y) {
+					const uint8_t* a_row = actual.data() + static_cast<size_t>(y) * strides.actual_stride;
+					const uint8_t* e_row = expected.data() + static_cast<size_t>(y) * strides.expected_stride;
+					for (uint32_t x = x0; x < x1; ++x) {
+						const uint8_t* a_px = a_row + static_cast<size_t>(x) * 4u;
+						const uint8_t* e_px = e_row + static_cast<size_t>(x) * 4u;
+						const double da = channel_value(a_px, ch) - mean_a;
+						const double de = channel_value(e_px, ch) - mean_e;
+						var_a += da * da;
+						var_e += de * de;
+						cov_ae += da * de;
+					}
+				}
+				var_a /= n;
+				var_e /= n;
+				cov_ae /= n;
+
+				const double num = (2.0 * mean_a * mean_e + kC1) * (2.0 * cov_ae + kC2);
+				const double den = (mean_a * mean_a + mean_e * mean_e + kC1) * (var_a + var_e + kC2);
+				const double ch_ssim = (den > 0.0) ? (num / den) : 1.0;
+				block_ssim_sum += ch_ssim;
+			}
+			total_ssim += (block_ssim_sum / 5.0);
+			++window_count;
+		}
+	}
+
+	if (window_count == 0) {
+		return 1.0;
+	}
+	return std::clamp(total_ssim / static_cast<double>(window_count), 0.0, 1.0);
+}
+
+std::string sha256_hex(std::span<const uint8_t> data)
+{
+	UniqueAlgHandle alg;
+	BCRYPT_ALG_HANDLE raw_alg = nullptr;
+	if (BCryptOpenAlgorithmProvider(&raw_alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) {
+		throw std::runtime_error("sha256_hex: BCryptOpenAlgorithmProvider failed");
+	}
+	alg.handle = raw_alg;
+
+	UniqueHashHandle hash;
+	BCRYPT_HASH_HANDLE raw_hash = nullptr;
+	if (BCryptCreateHash(alg.handle, &raw_hash, nullptr, 0, nullptr, 0, 0) < 0) {
+		throw std::runtime_error("sha256_hex: BCryptCreateHash failed");
+	}
+	hash.handle = raw_hash;
+
+	size_t offset = 0;
+	while (offset < data.size()) {
+		const ULONG chunk = static_cast<ULONG>(
+			std::min<size_t>(data.size() - offset, 1u << 20));
+		if (BCryptHashData(
+				hash.handle,
+				const_cast<PUCHAR>(data.data() + offset),
+				chunk,
+				0) < 0) {
+			throw std::runtime_error("sha256_hex: BCryptHashData failed");
+		}
+		offset += chunk;
+	}
+
+	std::array<uint8_t, 32> digest{};
+	if (BCryptFinishHash(hash.handle, digest.data(), static_cast<ULONG>(digest.size()), 0) < 0) {
+		throw std::runtime_error("sha256_hex: BCryptFinishHash failed");
+	}
+	return bytes_to_hex(digest);
+}
+
+std::string sha256_file(const std::filesystem::path& path)
+{
+	const auto long_path = to_long_path(path);
+	UniqueHandle file(CreateFileW(
+		long_path.c_str(),
+		GENERIC_READ,
+		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		nullptr,
+		OPEN_EXISTING,
+		FILE_ATTRIBUTE_NORMAL,
+		nullptr));
+	if (file.handle == INVALID_HANDLE_VALUE) {
+		throw std::runtime_error("sha256_file: CreateFileW failed");
+	}
+
+	UniqueAlgHandle alg;
+	BCRYPT_ALG_HANDLE raw_alg = nullptr;
+	if (BCryptOpenAlgorithmProvider(&raw_alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) {
+		throw std::runtime_error("sha256_file: BCryptOpenAlgorithmProvider failed");
+	}
+	alg.handle = raw_alg;
+
+	UniqueHashHandle hash;
+	BCRYPT_HASH_HANDLE raw_hash = nullptr;
+	if (BCryptCreateHash(alg.handle, &raw_hash, nullptr, 0, nullptr, 0, 0) < 0) {
+		throw std::runtime_error("sha256_file: BCryptCreateHash failed");
+	}
+	hash.handle = raw_hash;
+
+	std::array<uint8_t, 65536> buffer{};
+	for (;;) {
+		DWORD bytes_read = 0;
+		if (!ReadFile(
+				file.handle,
+				buffer.data(),
+				static_cast<DWORD>(buffer.size()),
+				&bytes_read,
+				nullptr)) {
+			throw std::runtime_error("sha256_file: ReadFile failed");
+		}
+		if (bytes_read == 0) {
+			break;
+		}
+		if (BCryptHashData(hash.handle, buffer.data(), bytes_read, 0) < 0) {
+			throw std::runtime_error("sha256_file: BCryptHashData failed");
+		}
+	}
+
+	std::array<uint8_t, 32> digest{};
+	if (BCryptFinishHash(hash.handle, digest.data(), static_cast<ULONG>(digest.size()), 0) < 0) {
+		throw std::runtime_error("sha256_file: BCryptFinishHash failed");
+	}
+	return bytes_to_hex(digest);
 }
 
 } // namespace recto::test

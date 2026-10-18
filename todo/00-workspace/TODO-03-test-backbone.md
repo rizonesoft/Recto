@@ -79,6 +79,9 @@ Extend `tests/recto-tests/test_support.h/.cpp` with deterministic image and byte
 - `recto::test::expect_rgba_equal(...)` formatting a clear GoogleTest failure message naming `(first_x, first_y)` and the expected vs actual `[R, G, B, A]` bytes.
 - `recto::test::compute_ssim(...)` computing structural similarity (`0.0..1.0`) for lossy/flattened rendering checks where specified.
 
+> **Corrected:** 2026-10-18 -- Include `Support.ResultMacros` in Build order step 2 and update the Test checkpoint count from 7 to 8 `Support.*` tests (`3` from `§1` plus `5` from `§2`).
+> **Started:** 2026-10-18T11:59:00Z
+
 **Phase:** 0
 **Needs:** windows-host
 **Surface:** no
@@ -86,16 +89,16 @@ Extend `tests/recto-tests/test_support.h/.cpp` with deterministic image and byte
 **Build order:**
 
 1. Implement `compare_rgba`, `expect_rgba_equal`, `compute_ssim`, and `sha256_hex(std::span<const uint8_t>)` (using Windows CNG `BCryptHash` `BCRYPT_SHA256_ALGORITHM`) in `tests/recto-tests/test_support.h/.cpp`. Done when: `sha256_hex` matches NIST SHA-256 test vectors (`""` -> `e3b0c442...`, `"abc"` -> `ba7816bf...`).
-2. Add `Support.PixelComparison`, `Support.PixelStridePadding`, `Support.SsimCalculation`, and `Support.Sha256Hex` in `tests/recto-tests/support_tests.cpp`. Done when: a planted single-channel difference at `(17, 42)` is reported at exact coordinate `(17, 42)` with `mismatch_count == 1`.
+2. Add `Support.PixelComparison`, `Support.PixelStridePadding`, `Support.SsimCalculation`, `Support.Sha256Hex`, and `Support.ResultMacros` in `tests/recto-tests/support_tests.cpp`. Done when: a planted single-channel difference at `(17, 42)` is reported at exact coordinate `(17, 42)` with `mismatch_count == 1`.
 
-- [ ] Implement `recto::test::compare_rgba` handling arbitrary row strides (`actual_stride >= width * 4`, `expected_stride >= width * 4`) while ignoring unaligned row-padding bytes beyond `width * 4`. Done when: `Support.PixelStridePadding` compares buffers with different row strides (`width * 4` vs `(width * 4) + 64` with garbage in padding bytes) as equal. Cheaper substitute: `std::memcmp` over `height * stride` that fails on D2D/WIC row alignment padding.
-- [ ] Report `first_x`, `first_y`, `mismatch_count`, `max_delta_observed`, and the exact `[R, G, B, A]` values in `PixelDiffResult` and `expect_rgba_equal`. Done when: perturbing channel `G` by `+1` at `(17, 42)` produces a diff naming `(17, 42)` and `delta = 1`.
-- [ ] Implement `recto::test::compute_ssim` over luminance/RGB channels for `SSIM >= 0.99` assertions in flattening and conversion tests. Done when: identical buffers return `1.0` and inverted buffers return `< 0.1` in `Support.SsimCalculation`.
-- [ ] Implement `recto::test::sha256_hex(std::span<const uint8_t>)` and `sha256_file(const std::filesystem::path&)` via Windows CNG `bcrypt.dll` (`BCRYPT_SHA256_ALGORITHM`). Done when: `Support.Sha256Hex` matches NIST SHA-256 vectors and `LICENSE`'s known SHA-256 (`0c2b2577702544e6ca2110800c25129ef79a7277e74f888ae852afb90cb363b4`).
-- [ ] Add `RECTO_ASSERT_OK(expr)` and `RECTO_EXPECT_ERR(expr, code)` helper macros in `test_support.h` ready for `Result` / `PdfResult` types. Done when: `Support.ResultMacros` verifies both success unwrapping and error-code matching.
+- [x] Implement `recto::test::compare_rgba` handling arbitrary row strides (`actual_stride >= width * 4`, `expected_stride >= width * 4`) while ignoring unaligned row-padding bytes beyond `width * 4`. Done when: `Support.PixelStridePadding` compares buffers with different row strides (`width * 4` vs `(width * 4) + 64` with garbage in padding bytes) as equal. Cheaper substitute: `std::memcmp` over `height * stride` that fails on D2D/WIC row alignment padding.
+- [x] Report `first_x`, `first_y`, `mismatch_count`, `max_delta_observed`, and the exact `[R, G, B, A]` values in `PixelDiffResult` and `expect_rgba_equal`. Done when: perturbing channel `G` by `+1` at `(17, 42)` produces a diff naming `(17, 42)` and `delta = 1`.
+- [x] Implement `recto::test::compute_ssim` over luminance/RGB channels for `SSIM >= 0.99` assertions in flattening and conversion tests. Done when: identical buffers return `1.0` and inverted buffers return `< 0.1` in `Support.SsimCalculation`.
+- [x] Implement `recto::test::sha256_hex(std::span<const uint8_t>)` and `sha256_file(const std::filesystem::path&)` via Windows CNG `bcrypt.dll` (`BCRYPT_SHA256_ALGORITHM`). Done when: `Support.Sha256Hex` matches NIST SHA-256 vectors and `LICENSE`'s known SHA-256 (`0c2b2577702544e6ca2110800c25129ef79a7277e74f888ae852afb90cb363b4`).
+- [x] Add `RECTO_ASSERT_OK(expr)` and `RECTO_EXPECT_ERR(expr, code)` helper macros in `test_support.h` ready for `Result` / `PdfResult` types. Done when: `Support.ResultMacros` verifies both success unwrapping and error-code matching.
 - [ ] Commit: `test: add RGBA pixel diff, SSIM, CNG SHA-256 and assertion helpers`
 
-**Test checkpoint:** `build\bin\x64\Release\recto-tests\recto-tests.exe --gtest_filter=Support.*` exits 0 with all 7 support tests passing.
+**Test checkpoint:** `build\bin\x64\Release\recto-tests\recto-tests.exe --gtest_filter=Support.*` exits 0 with all 8 support tests passing.
 
 ## 3. Deterministic PDF corpus generator (`scripts/build-corpus.py`) for `render/` and `text/`
 
