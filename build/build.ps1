@@ -11,10 +11,12 @@
 #
 # Options: -Platform x64|ARM64 (default both), -Configuration
 # Debug|Release (default both), -TestFilter <pattern>, -SkipTests.
-# Requirements: Visual Studio 2026 (v145, preferred) or Visual Studio
-# 2022 (v143, CI fallback) with C++ and ARM64 tools (its bundled vcpkg
-# is used unless VCPKG_ROOT already points at one), the Windows 11 SDK
-# 10.0.26100, and network access for the first restore.
+# Requirements: Visual Studio 2026 with the v145 C++ toolset (its
+# bundled vcpkg is used unless VCPKG_ROOT already points at one), the
+# Windows 11 SDK 10.0.26100, and network access for the first restore.
+# VS 2022 cannot substitute: it has no Windows Store ARM64 platform, so
+# the WinUI app does not build for ARM64 there (found in D00 T01
+# section 3).
 param(
     [ValidateSet('x64', 'ARM64', 'x64,ARM64', 'ARM64,x64')][string[]]$Platform = @('x64', 'ARM64'),
     [ValidateSet('Debug', 'Release', 'Debug,Release', 'Release,Debug')][string[]]$Configuration = @('Debug', 'Release'),
@@ -29,10 +31,7 @@ Set-Location $root
 
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $vs = & $vswhere -version '[18.0,19.0)' -latest -property installationPath
-if (-not $vs) {
-    $vs = & $vswhere -version '[17.0,18.0)' -latest -property installationPath
-}
-if (-not $vs) { throw 'Visual Studio 2026 (v145) or Visual Studio 2022 (v143) not found' }
+if (-not $vs) { throw 'Visual Studio 2026 not found (v145 toolset; VS 2022 has no Windows Store ARM64 platform, D00 T01 section 3)' }
 $msbuild = Join-Path $vs 'MSBuild\Current\Bin\MSBuild.exe'
 if (-not $env:VCPKG_ROOT) {
     $vsVcpkg = Join-Path $vs 'VC\vcpkg'

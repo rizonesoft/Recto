@@ -125,7 +125,7 @@ Create `Recto.sln`, `Directory.Build.props`, `Directory.Build.targets`, `vcpkg.j
 Add `.github/workflows/build.yml` running on `windows-latest` on every push and pull request: build `x64` and `ARM64` (`Release` and `Debug`), run `recto-tests` on `x64` (and on an ARM64 runner if available on the repo's plan, otherwise record that ARM64 is compile-and-link verified in CI and runtime-verified on the §5 reference machine), and fail on any compiler warning.
 
 > **Started:** 2026-10-18T09:15:00Z
-> **Corrected:** 2026-10-18 -- Keyed the `actions/cache` step on `hashFiles('src/app/Recto.vcxproj', 'vcpkg.json', 'Directory.Build.props', 'Directory.Build.targets')` with `NUGET_PACKAGES` and `VCPKG_DEFAULT_BINARY_CACHE` because `src/app/Recto.vcxproj` uses `PackageReference` rather than `src/app/packages.config`. Also enabled `Directory.Build.props`, `src/app/Recto.vcxproj`, and `build/build.ps1` to prefer Visual Studio 2026 (`v145`) locally and fall back cleanly to Visual Studio 2022 (`v143`, with desktop `Platforms\ARM64\` fallback when the UWP ARM64 workload folder is absent) on hosted `windows-latest` runners, and recorded that `ARM64` is compile-and-link verified in CI on `windows-latest`.
+> **Corrected:** 2026-10-18 -- Keyed the `actions/cache` step on `hashFiles('src/app/Recto.vcxproj', 'vcpkg.json', 'Directory.Build.props', 'Directory.Build.targets')` with `NUGET_PACKAGES` and `VCPKG_DEFAULT_BINARY_CACHE` because `src/app/Recto.vcxproj` uses `PackageReference` rather than `src/app/packages.config`, recorded that `ARM64` is compile-and-link verified in CI on `windows-latest` (using Visual Studio 2026 `v145`) and runtime-verified via `D99 T01 §4`, and updated `Test checkpoint` to resolve the run ID via `gh run list --workflow=build.yml --limit 1` before calling `gh run view <run-id> --log` because `gh run view` does not accept `--workflow`.
 
 **Phase:** 0
 **Needs:** windows-host
@@ -144,7 +144,7 @@ Add `.github/workflows/build.yml` running on `windows-latest` on every push and 
 - [x] Push to `origin/main` and verify the live GitHub Actions `build.yml` run completes `success` across all steps. Done when: `gh run list --workflow=build.yml --limit 1` reports `completed / success`.
 - [ ] Commit: `ci: build x64 and ARM64 and run recto-tests on every push`
 
-**Test checkpoint:** `gh run view --workflow=build.yml` for the candidate commit shows `x64` build, `ARM64` build and `recto-tests` steps all succeeding with 0 warnings.
+**Test checkpoint:** `gh run list --workflow=build.yml --limit 1` and `gh run view <run-id> --log` for the candidate commit show `x64` build, `ARM64` build and `recto-tests` steps all succeeding with 0 warnings.
 
 ## 5. Reference benchmark machines recorded
 
