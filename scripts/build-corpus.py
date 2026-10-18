@@ -261,7 +261,7 @@ def build_compressed_xref_2p() -> bytes:
     out.extend(b"9 0 obj\n" + obj_stm_obj + b"\nendobj\n")
 
     # Object 10 is the /Type /XRef stream.
-    # /W [1 2 1] -> 4 bytes per entry, /Size 11 (objects 0..10).
+    # /W [1 2 2] -> 5 bytes per entry, /Size 11 (objects 0..10) so object 0 has gen 65535.
     xref_offset = len(out)
     offsets[10] = xref_offset
 
@@ -269,20 +269,20 @@ def build_compressed_xref_2p() -> bytes:
     xref_raw = bytearray()
     for obj_id in range(11):
         if obj_id == 0:
-            xref_raw.extend(struct.pack(">BHB", 0, 0, 255))
+            xref_raw.extend(struct.pack(">BHH", 0, 0, 65535))
         elif obj_id in obj_to_stm_idx:
             # Type 2: compressed in ObjStm 9 at index
-            xref_raw.extend(struct.pack(">BHB", 2, 9, obj_to_stm_idx[obj_id]))
+            xref_raw.extend(struct.pack(">BHH", 2, 9, obj_to_stm_idx[obj_id]))
         else:
             # Type 1: uncompressed offset, gen 0
-            xref_raw.extend(struct.pack(">BHB", 1, offsets[obj_id], 0))
+            xref_raw.extend(struct.pack(">BHH", 1, offsets[obj_id], 0))
 
-    xref_comp = flate_png_up_compress(bytes(xref_raw), columns=4)
+    xref_comp = flate_png_up_compress(bytes(xref_raw), columns=5)
     id0, id1 = deterministic_id_hex(rel, rev=0)
     xref_dict = (
         f"<< /Type /XRef /Size 11 /Root 1 0 R /Info 8 0 R "
-        f"/ID [<{id0}> <{id1}>] /W [1 2 1] "
-        f"/Filter /FlateDecode /DecodeParms << /Predictor 12 /Columns 4 >> "
+        f"/ID [<{id0}> <{id1}>] /W [1 2 2] "
+        f"/Filter /FlateDecode /DecodeParms << /Predictor 12 /Columns 5 >> "
         f"/Length {len(xref_comp)} >>\nstream\n"
     ).encode("ascii")
     out.extend(b"10 0 obj\n" + xref_dict + xref_comp + b"\nendstream\nendobj\n")
@@ -598,14 +598,14 @@ def build_two_column_links_outline() -> bytes:
     p1_content = (
         b"BT\n"
         b"/F1 16 Tf 72 730 Td (1. Introduction to Two-Column Layout) Tj\n"
-        b"/F1 11 Tf\n"
-        b"0 -28 Td (Left column line 1: E\x1Dcient work\x1Dow and \x1Dre\x1Dy rendering.) Tj\n"
-        b"0 -16 Td (Left column line 2: Super\xad\n"
-        b"0 -16 Td (califragilistic soft-hyphenation across wrapped lines.) Tj\n"
-        b"0 -16 Td (Jump to Page 2 or visit https://example.com/recto-docs.) Tj\n"
-        b"260 48 Td (Right column line 1: Second column starts at x=332 pt.) Tj\n"
-        b"0 -16 Td (Right column line 2: 1.1 Architecture & reading order.) Tj\n"
-        b"0 -16 Td (Right column line 3: Clean column-first text extraction.) Tj\n"
+        b"/F1 10 Tf\n"
+        b"0 -28 Td (Left col 1: Ef\x1Dcient work\x1Eow and \x1Dre\x1Ey render.) Tj\n"
+        b"0 -16 Td (Left col 2: Super\xad) Tj\n"
+        b"0 -16 Td (califragilistic soft-hyphenation in column 1.) Tj\n"
+        b"0 -16 Td (Jump to Page 2 or https://example.com/recto-docs) Tj\n"
+        b"260 48 Td (Right col 1: Second column starts at x=332 pt.) Tj\n"
+        b"0 -16 Td (Right col 2: 1.1 Architecture & reading order.) Tj\n"
+        b"0 -16 Td (Right col 3: Clean column-first text extraction.) Tj\n"
         b"ET\n"
     )
     p2_content = (
@@ -617,11 +617,12 @@ def build_two_column_links_outline() -> bytes:
     pdf.set_obj(5, make_stream_obj("", p1_content, compress=True))
     pdf.set_obj(6, make_stream_obj("", p2_content, compress=True))
 
-    # Font 7 with /ToUnicode CMap 8 expanding 0x1D -> "fi" and 0x1E -> "fl"
+    # Font 7 with /Differences [29 /fi 30 /fl] and /ToUnicode CMap 8 expanding 0x1D -> "fi" and 0x1E -> "fl"
     pdf.set_obj(
         7,
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica "
-        "/Encoding /WinAnsiEncoding /ToUnicode 8 0 R >>",
+        "/Encoding << /Type /Encoding /BaseEncoding /WinAnsiEncoding /Differences [29 /fi 30 /fl] >> "
+        "/ToUnicode 8 0 R >>",
     )
     tounicode_cmap = (
         b"/CIDInit /ProcSet findresource begin\n"
@@ -779,13 +780,15 @@ def build_tables_and_forms() -> bytes:
     pdf.set_obj(
         1,
         "<< /Type /Catalog /Pages 2 0 R "
-        "/AcroForm << /Fields [6 0 R 7 0 R 8 0 R] /DA (/F1 11 Tf 0 g) >> >>",
+        "/AcroForm << /Fields [6 0 R 7 0 R 8 0 R] "
+        "/DR << /Font << /F1 5 0 R /ZaDb 10 0 R >> >> "
+        "/DA (/F1 11 Tf 0 g) >> >>",
     )
     pdf.set_obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
     pdf.set_obj(
         3,
         "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
-        "/Resources << /Font << /F1 5 0 R >> >> "
+        "/Resources << /Font << /F1 5 0 R /ZaDb 10 0 R >> >> "
         "/Contents 4 0 R /Annots [6 0 R 7 0 R 8 0 R 9 0 R] >>",
     )
     content = (
@@ -801,15 +804,15 @@ def build_tables_and_forms() -> bytes:
         b"Q\n"
         b"BT\n"
         b"/F1 14 Tf 72 730 Td (Tables, AcroForm Fields & Annotations) Tj\n"
-        b"/F1 12 Tf 180 680 Td (Quarterly Hardware Order Schedule) Tj\n"
+        b"/F1 12 Tf 108 -50 Td (Quarterly Hardware Order Schedule) Tj\n"
         b"/F1 11 Tf\n"
-        b"-100 -30 Td (Item) Tj 160 0 Td (Qty) Tj 130 0 Td (Price) Tj\n"
+        b"-96 -30 Td (Item) Tj 160 0 Td (Qty) Tj 130 0 Td (Price) Tj\n"
         b"-290 -30 Td (Widget A) Tj 160 0 Td (10) Tj 130 0 Td ($25.00) Tj\n"
         b"-290 -30 Td (Widget B) Tj 160 0 Td (5) Tj 130 0 Td ($40.00) Tj\n"
         # Borderless whitespace-aligned table
-        b"-290 -70 Td (Region) Tj 140 0 Td (Q1) Tj 100 0 Td (Q2) Tj\n"
-        b"-240 -22 Td (North) Tj 140 0 Td (120) Tj 100 0 Td (145) Tj\n"
-        b"-240 -22 Td (South) Tj 140 0 Td (98) Tj 100 0 Td (112) Tj\n"
+        b"-290 -70 Td (Region) Tj 160 0 Td (Q1) Tj 130 0 Td (Q2) Tj\n"
+        b"-290 -24 Td (North) Tj 160 0 Td (120) Tj 130 0 Td (145) Tj\n"
+        b"-290 -24 Td (South) Tj 160 0 Td (98) Tj 130 0 Td (112) Tj\n"
         b"ET\n"
     )
     pdf.set_obj(4, make_stream_obj("", content, compress=True))
@@ -820,17 +823,17 @@ def build_tables_and_forms() -> bytes:
     pdf.set_obj(
         6,
         "<< /Type /Annot /Subtype /Widget /FT /Tx /T (customer_name) "
-        "/V (Ada Lovelace) /Rect [72 340 280 364] /P 3 0 R >>",
+        "/DA (/F1 11 Tf 0 g) /V (Ada Lovelace) /Rect [72 340 280 364] /P 3 0 R >>",
     )
     pdf.set_obj(
         7,
         "<< /Type /Annot /Subtype /Widget /FT /Btn /Ff 0 /T (approve_terms) "
-        "/V /Yes /AS /Yes /Rect [72 300 92 320] /P 3 0 R >>",
+        "/DA (/ZaDb 10 Tf 0 g) /V /Yes /AS /Yes /Rect [72 300 92 320] /P 3 0 R >>",
     )
     pdf.set_obj(
         8,
         "<< /Type /Annot /Subtype /Widget /FT /Ch /Ff 131072 /T (delivery_tier) "
-        "/Opt [(Standard) (Express)] /V (Express) /Rect [72 260 240 284] /P 3 0 R >>",
+        "/DA (/F1 11 Tf 0 g) /Opt [(Standard) (Express)] /V (Express) /Rect [72 260 240 284] /P 3 0 R >>",
     )
     # Sample markup annotation
     pdf.set_obj(
@@ -840,10 +843,13 @@ def build_tables_and_forms() -> bytes:
         "/Contents (Highlighted heading annotation) /P 3 0 R >>",
     )
     pdf.set_obj(
-        10,
+        10, "<< /Type /Font /Subtype /Type1 /BaseFont /ZapfDingbats >>"
+    )
+    pdf.set_obj(
+        11,
         f"<< /Title (Recto Tables and Forms) /CreationDate ({FIXED_PDF_DATE}) >>",
     )
-    return pdf.build(root_obj=1, info_obj=10)
+    return pdf.build(root_obj=1, info_obj=11)
 
 
 def build_deterministic_zip(entries: list[tuple[str, bytes]]) -> bytes:
@@ -1017,20 +1023,26 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int) -> Non
     size = int(size_m.group(1))
     stream_len = int(len_m.group(1))
     w1, w2, w3 = int(w_m.group(1)), int(w_m.group(2)), int(w_m.group(3))
-    if (w1, w2, w3) != (1, 2, 1):
+    if (w1, w2, w3) != (1, 2, 2):
         raise ValueError(f"{rel_path}: unexpected /W {(w1, w2, w3)}")
 
+    row_width = w1 + w2 + w3
     stream_start = xref_offset + obj_match.end()
     stream_payload = data[stream_start : stream_start + stream_len]
-    unpacked = flate_png_up_decompress(stream_payload, columns=w1 + w2 + w3)
-    if len(unpacked) != size * 4:
-        raise ValueError(f"{rel_path}: unpacked XRef length {len(unpacked)} != {size * 4}")
+    unpacked = flate_png_up_decompress(stream_payload, columns=row_width)
+    if len(unpacked) != size * row_width:
+        raise ValueError(f"{rel_path}: unpacked XRef length {len(unpacked)} != {size * row_width}")
 
     type1_offsets: dict[int, int] = {}
     type2_refs: list[tuple[int, int, int]] = []
     for obj_id in range(size):
-        etype, f2, f3 = struct.unpack(">BHB", unpacked[obj_id * 4 : (obj_id + 1) * 4])
-        if etype == 1:
+        etype, f2, f3 = struct.unpack(">BHH", unpacked[obj_id * row_width : (obj_id + 1) * row_width])
+        if obj_id == 0:
+            if etype != 0 or f3 != 65535:
+                raise ValueError(
+                    f"{rel_path}: XRef object 0 must be free with generation 65535, got {(etype, f2, f3)}"
+                )
+        elif etype == 1:
             expected_prefix = f"{obj_id} {f3} obj\n".encode("ascii")
             if not data[f2:].startswith(expected_prefix):
                 raise ValueError(
@@ -1068,8 +1080,53 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int) -> Non
             raise ValueError(f"{rel_path}: ObjStm slot {idx} has id {tokens[idx * 2]} != {obj_id}")
 
 
+def validate_content_stream_syntax(rel_path: str, raw: bytes) -> None:
+    """Verify balanced literal strings and in-page text positioning in content streams."""
+    depth = 0
+    escaped = False
+    for b in raw:
+        if escaped:
+            escaped = False
+            continue
+        if b == 0x5C:  # backslash
+            escaped = True
+        elif b == 0x28:  # '('
+            depth += 1
+        elif b == 0x29:  # ')'
+            depth -= 1
+            if depth < 0:
+                raise ValueError(f"{rel_path}: unmatched ')' in content stream")
+    if depth != 0:
+        raise ValueError(f"{rel_path}: unterminated '(' string literal in content stream")
+
+    if b"BT" not in raw:
+        return
+
+    # Track text matrix translation (tx, ty) across BT..ET blocks
+    tx, ty = 0.0, 0.0
+    for line in raw.splitlines():
+        for m in re.finditer(
+            rb"(?:(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+Td)|"
+            rb"(?:1\s+0\s+0\s+1\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+Tm)|"
+            rb"\b(BT)\b",
+            line,
+        ):
+            if m.group(5) is not None:
+                tx, ty = 0.0, 0.0
+            elif m.group(1) is not None:
+                tx += float(m.group(1))
+                ty += float(m.group(2))
+            elif m.group(3) is not None:
+                tx = float(m.group(3))
+                ty = float(m.group(4))
+            if m.group(5) is None and not (0.0 <= tx <= 842.0 and 0.0 <= ty <= 842.0):
+                raise ValueError(
+                    f"{rel_path}: text position ({tx}, {ty}) is outside page bounds [0..842]"
+                )
+
+
 def validate_pdf_structure(rel_path: str, data: bytes) -> None:
-    """Validate PDF header, stream /Length exactness, and xref byte offsets."""
+    """Validate PDF header, stream /Length exactness, xref offsets, and content semantics."""
     if not (data.startswith(b"%PDF-1.") or data.startswith(b"%PDF-2.")):
         raise ValueError(f"{rel_path}: missing %PDF- header")
     if not data.endswith(b"%%EOF\n"):
@@ -1089,6 +1146,19 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
                 f"{rel_path}: stream at {stream_start} with /Length {declared_len} "
                 f"is not followed by '\\nendstream'"
             )
+        if (
+            b"/Filter /FlateDecode" in dict_body
+            and b"/Predictor" not in dict_body
+            and b"/Subtype /Image" not in dict_body
+            and b"/Type /ObjStm" not in dict_body
+        ):
+            dec = zlib.decompress(data[stream_start:end_pos])
+            if b"/CMapName" not in dec:
+                validate_content_stream_syntax(rel_path, dec)
+
+    if b"/AcroForm" in data and b"/DA (" in data:
+        if b"/DR << /Font" not in data:
+            raise ValueError(f"{rel_path}: /AcroForm with /DA is missing /DR /Font resources")
 
     eof_m = re.search(rb"startxref\n(\d+)\n%%EOF\n\Z", data)
     if eof_m is None:
@@ -1098,6 +1168,18 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
         validate_classic_xref_at(rel_path, data, xref_offset, set())
     else:
         validate_xref_stream_at(rel_path, data, xref_offset)
+
+    if rel_path == "text/two-column-links-outline.pdf":
+        obj5_m = re.search(rb"5 0 obj\n<<([^\n]*?)>>\nstream\n", data)
+        assert obj5_m is not None
+        len5_m = re.search(rb"/Length\s+(\d+)", obj5_m.group(1))
+        assert len5_m is not None
+        s5_start = obj5_m.end()
+        s5_raw = zlib.decompress(data[s5_start : s5_start + int(len5_m.group(1))])
+        if b"\x1d" not in s5_raw or b"\x1e" not in s5_raw or b"\xad" not in s5_raw:
+            raise ValueError(
+                "text/two-column-links-outline.pdf must exercise 0x1D (fi), 0x1E (fl), and 0xAD (soft hyphen)"
+            )
 
     if rel_path == "text/scanned.pdf":
         if b"/Font" in data:

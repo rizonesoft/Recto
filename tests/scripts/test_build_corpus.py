@@ -61,6 +61,19 @@ class BuildCorpusTests(unittest.TestCase):
             self.assertIn("missing corpus file: text/scanned.pdf", errors)
             self.assertIn("unexpected corpus file: render/stray.pdf", errors)
 
+    def test_content_semantics_and_xref_gen65535(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unterminated"):
+            self.mod.validate_content_stream_syntax("test.pdf", b"BT 72 720 Td (unclosed ET")
+
+        with self.assertRaisesRegex(ValueError, "outside page bounds"):
+            self.mod.validate_content_stream_syntax(
+                "test.pdf", b"BT 72 730 Td (A) Tj 180 680 Td (OffPage) Tj ET"
+            )
+
+        files = self.mod.expected_corpus_files()
+        self.assertIn(b"/DR << /Font << /F1 5 0 R /ZaDb 10 0 R >> >>", files["convert/tables-and-forms.pdf"])
+        self.assertIn(b"/W [1 2 2]", files["render/compressed-xref-2p.pdf"])
+
 
 if __name__ == "__main__":
     unittest.main()
