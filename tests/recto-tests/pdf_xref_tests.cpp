@@ -1198,7 +1198,8 @@ TEST(PdfXref, DamagedRecovery)
 	}
 
 	// 7. Overwriting a `/Type /ObjStm` container in a later revision invalidates the compressed
-	//    objects and catalog metadata that were stored inside that container.
+	//    objects and catalog metadata that were stored inside that container, while a rejected
+	//    inner object inside another `/ObjStm` does NOT invalidate an intact container.
 	{
 		const std::string cat_objstm = "1 0\n<< /Type /Catalog /Pages 2 0 R >>";
 		std::string pdf_overwritten_stm = "%PDF-1.7\n";
@@ -1212,6 +1213,62 @@ TEST(PdfXref, DamagedRecovery)
 
 		auto rec_invalidated = XrefTable::recover_damaged_xref(as_bytes(pdf_overwritten_stm));
 		RECTO_EXPECT_ERR(rec_invalidated, ErrorCode::DamagedFormat);
+
+		// Conversely, if ObjStm 10 attempts to define inner object 9 with an invalid direct
+		// object (`9 0 (`), the inner object is rejected and container 9's catalog object 1 survives.
+		const std::string bad_inner_stm = "9 0\n(";
+		std::string pdf_rejected_inner = "%PDF-1.7\n";
+		pdf_rejected_inner += "2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+		pdf_rejected_inner += "9 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Length " +
+			std::to_string(cat_objstm.size()) + " >>\nstream\n" +
+			cat_objstm + "\nendstream\nendobj\n";
+		pdf_rejected_inner += "10 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Length " +
+			std::to_string(bad_inner_stm.size()) + " >>\nstream\n" +
+			bad_inner_stm + "\nendstream\nendobj\n";
+		pdf_rejected_inner += "startxref\n999999\n%%EOF\n";
+
+		auto rec_preserved = XrefTable::recover_damaged_xref(as_bytes(pdf_rejected_inner));
+		RECTO_ASSERT_OK(rec_preserved);
+		EXPECT_EQ(rec_preserved->root_ref(), (IndirectRef{1u, 0u}));
+	}
+
+	// 8. Compressed `/Type /ObjStm` streams whose decoded payload exceeds `max(file_size * 4, 65536)`
+	//    (but stays within `kDefaultMaxDecodedStreamBytes` and `kDefaultMaxCompressionRatio`)
+	//    recover cleanly.
+	{
+		// Build a RunLengthDecode stream that decodes to:
+		// `1 0\n<< /Type /Catalog /Padding (` + 100,000 'a' bytes + `) >>`
+		// RunLength encoding:
+		//   - literal run for prefix `1 0\n<< /Type /Catalog /Padding (` (32 bytes -> length byte 31)
+		//   - 800 repeat runs of 125 'a' bytes (each run is [257 - 125 = 132, 'a'] -> 100,000 'a' bytes)
+		//   - literal run for suffix `) >>` (4 bytes -> length byte 3)
+		//   - EOD byte 128
+		const std::string prefix = "1 0\n<< /Type /Catalog /Padding (";
+		const std::string suffix = ") >>";
+		std::string rle_bytes;
+		rle_bytes.push_back(static_cast<char>(prefix.size() - 1u));
+		rle_bytes += prefix;
+		for (int i = 0; i < 800; ++i) {
+			rle_bytes.push_back(static_cast<char>(257 - 125));
+			rle_bytes.push_back('a');
+		}
+		rle_bytes.push_back(static_cast<char>(suffix.size() - 1u));
+		rle_bytes += suffix;
+		rle_bytes.push_back(static_cast<char>(128));
+
+		std::string pdf_rle = "%PDF-1.7\n";
+		pdf_rle += "9 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Filter /RunLengthDecode /Length " +
+			std::to_string(rle_bytes.size()) + " >>\nstream\n";
+		pdf_rle += rle_bytes;
+		pdf_rle += "\nendstream\nendobj\nstartxref\n999999\n%%EOF\n";
+
+		auto rec_rle = XrefTable::recover_damaged_xref(as_bytes(pdf_rle));
+		RECTO_ASSERT_OK(rec_rle);
+		EXPECT_EQ(rec_rle->root_ref(), (IndirectRef{1u, 0u}));
+		auto cat_val = rec_rle->resolve_object(as_bytes(pdf_rle), IndirectRef{1u, 0u});
+		RECTO_ASSERT_OK(cat_val);
+		EXPECT_EQ(cat_val->as_dict()->get_name("Type"), "Catalog");
+		EXPECT_EQ(cat_val->as_dict()->get_string("Padding")->as_byte_view().size(), 100000u);
 	}
 }
 

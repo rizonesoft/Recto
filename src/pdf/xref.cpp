@@ -606,9 +606,11 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		uint64_t objects_discovered = 0;
 		uint64_t candidate_attempts = 0;
 		uint64_t cumulative_parse_bytes = 0;
+		uint64_t cumulative_decoded_objstm_bytes = 0;
 		const uint64_t max_recovery_parse_bytes = std::max<uint64_t>(
 			static_cast<uint64_t>(file_bytes.size()) * 4ULL,
 			65536ULL);
+		const uint64_t max_recovery_decoded_objstm_bytes = kMaxDecodedStreamBytes;
 		uint32_t max_obj_num = 0;
 		std::optional<IndirectRef> info_candidate;
 		std::unordered_map<uint32_t, std::pair<uint16_t, int64_t>> recovered_integers;
@@ -848,12 +850,12 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 										return dec_stm.error();
 									}
 									if (dec_stm.has_value()) {
-										cumulative_parse_bytes += static_cast<uint64_t>(dec_stm->size());
-										if (cumulative_parse_bytes > max_recovery_parse_bytes) {
+										cumulative_decoded_objstm_bytes += static_cast<uint64_t>(dec_stm->size());
+										if (cumulative_decoded_objstm_bytes > max_recovery_decoded_objstm_bytes) {
 											return make_xref_error(
-												ErrorCode::DamagedFormat,
-												DiagnosticId::DamagedXRef,
-												"Damaged-file recovery exceeded cumulative parse byte budget",
+												ErrorCode::DecompressionLimitExceeded,
+												DiagnosticId::DamagedStream,
+												"Damaged-file recovery exceeded cumulative decoded /ObjStm byte budget",
 												pos);
 										}
 									}
@@ -918,7 +920,6 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 												}
 												++candidate_attempts;
 												const uint32_t inner_id = inner_pairs[idx].obj_num;
-												invalidate_objstm_container(inner_id);
 
 												const size_t slice_start = first_off + inner_pairs[idx].rel_off;
 												const size_t slice_end = (idx + 1u < inner_pairs.size())
@@ -952,14 +953,16 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 													}
 												}
 
+												if (!table.entries_.contains(inner_id) &&
+													objects_discovered >= effective_max_entries) {
+													return make_xref_error(
+														ErrorCode::DamagedFormat,
+														DiagnosticId::DamagedXRef,
+														"Damaged-file recovery exceeded maximum object entry budget",
+														pos);
+												}
+												invalidate_objstm_container(inner_id);
 												if (!table.entries_.contains(inner_id)) {
-													if (objects_discovered >= effective_max_entries) {
-														return make_xref_error(
-															ErrorCode::DamagedFormat,
-															DiagnosticId::DamagedXRef,
-															"Damaged-file recovery exceeded maximum object entry budget",
-															pos);
-													}
 													++objects_discovered;
 												}
 												table.set_entry(
