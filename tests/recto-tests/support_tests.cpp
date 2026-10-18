@@ -164,20 +164,26 @@ TEST(Support, TempDirCleanup)
 		recto::test::write_file_bytes(target_file, replacement);
 		EXPECT_EQ(recto::test::read_file_bytes(target_file), replacement);
 
-		// Failure-injection regression test: when write_file_bytes fails while the
-		// temporary file handle is open, destination bytes remain unchanged and no
+		// Failure-injection regression tests at both the handle-acquisition boundary
+		// and the post-write boundary: destination bytes remain unchanged and no
 		// temporary file is left behind in the destination directory.
-		recto::test::fail_next_write_for_testing();
 		const std::vector<uint8_t> aborted{'a', 'b', 'o', 'r', 't'};
-		EXPECT_THROW(recto::test::write_file_bytes(target_file, aborted), std::runtime_error);
-		EXPECT_EQ(recto::test::read_file_bytes(target_file), replacement);
+		for (const auto stage : {
+				 recto::test::WriteFailStage::AfterAcquire,
+				 recto::test::WriteFailStage::AfterWrite,
+			 }) {
+			recto::test::fail_next_write_for_testing(stage);
+			EXPECT_THROW(recto::test::write_file_bytes(target_file, aborted), std::runtime_error);
+			EXPECT_EQ(recto::test::read_file_bytes(target_file), replacement);
 
-		size_t entry_count = 0;
-		for (const auto& entry : std::filesystem::directory_iterator(recto::test::to_long_path(target_file.parent_path()))) {
-			++entry_count;
-			EXPECT_EQ(entry.path().filename(), std::filesystem::path("sample.bin"));
+			size_t entry_count = 0;
+			for (const auto& entry :
+				 std::filesystem::directory_iterator(recto::test::to_long_path(target_file.parent_path()))) {
+				++entry_count;
+				EXPECT_EQ(entry.path().filename(), std::filesystem::path("sample.bin"));
+			}
+			EXPECT_EQ(entry_count, 1u);
 		}
-		EXPECT_EQ(entry_count, 1u);
 	}
 	EXPECT_FALSE(std::filesystem::exists(single_dir));
 

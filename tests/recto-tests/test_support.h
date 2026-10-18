@@ -33,9 +33,16 @@ std::vector<uint8_t> read_file_bytes(const std::filesystem::path& path);
 // extended-length paths).
 void write_file_bytes(const std::filesystem::path& path, std::span<const uint8_t> data);
 
-// Arms a one-shot failure injection for the next write_file_bytes call after
-// the temporary file is opened and written, before its handle is closed.
-void fail_next_write_for_testing() noexcept;
+enum class WriteFailStage {
+	None,
+	AfterAcquire,
+	AfterWrite,
+};
+
+// Arms a one-shot failure injection for the next write_file_bytes call at the
+// requested stage (immediately after CreateFileW handle acquisition or after
+// writing bytes before FlushFileBuffers/CloseHandle).
+void fail_next_write_for_testing(WriteFailStage stage = WriteFailStage::AfterAcquire) noexcept;
 
 // RAII temporary directory under GetTempPathW() named
 // "recto-test-<pid>-<tick>-<counter>". Clears FILE_ATTRIBUTE_READONLY on

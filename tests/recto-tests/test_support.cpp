@@ -18,7 +18,7 @@ namespace recto::test {
 namespace {
 
 std::atomic<uint64_t> g_temp_dir_counter{1};
-std::atomic<bool> g_fail_next_write{false};
+std::atomic<WriteFailStage> g_fail_next_write{WriteFailStage::None};
 
 std::wstring utf8_to_wide(std::string_view utf8)
 {
@@ -70,13 +70,13 @@ struct UniqueHandle {
 
 struct TempFileGuard {
 	std::filesystem::path path;
+	bool armed{false};
 	bool committed{false};
 
 	TempFileGuard() noexcept = default;
-	explicit TempFileGuard(std::filesystem::path p) noexcept : path(std::move(p)) {}
 	~TempFileGuard() noexcept
 	{
-		if (!committed && !path.empty()) {
+		if (armed && !committed && !path.empty()) {
 			DeleteFileW(path.c_str());
 		}
 	}
@@ -211,9 +211,9 @@ std::vector<uint8_t> read_file_bytes(const std::filesystem::path& path)
 	return buffer;
 }
 
-void fail_next_write_for_testing() noexcept
+void fail_next_write_for_testing(WriteFailStage stage) noexcept
 {
-	g_fail_next_write.store(true, std::memory_order_relaxed);
+	g_fail_next_write.store(stage, std::memory_order_relaxed);
 }
 
 void write_file_bytes(const std::filesystem::path& path, std::span<const uint8_t> data)
@@ -229,7 +229,6 @@ void write_file_bytes(const std::filesystem::path& path, std::span<const uint8_t
 	}
 
 	const DWORD pid = GetCurrentProcessId();
-	std::filesystem::path temp_long;
 	// Declare temp_guard before file so stack unwinding destroys file (closing
 	// the handle) before ~TempFileGuard calls DeleteFileW.
 	TempFileGuard temp_guard;
@@ -242,9 +241,9 @@ void write_file_bytes(const std::filesystem::path& path, std::span<const uint8_t
 			std::to_wstring(pid) + L"-" +
 			std::to_wstring(static_cast<uint64_t>(qpc.QuadPart)) + L"-" +
 			std::to_wstring(seq) + L".tmp";
-		temp_long = parent_dir.empty() ? std::filesystem::path(tmp_name) : (parent_dir / tmp_name);
+		temp_guard.path = parent_dir.empty() ? std::filesystem::path(tmp_name) : (parent_dir / tmp_name);
 		HANDLE h = CreateFileW(
-			temp_long.c_str(),
+			temp_guard.path.c_str(),
 			GENERIC_WRITE,
 			0,
 			nullptr,
@@ -252,8 +251,8 @@ void write_file_bytes(const std::filesystem::path& path, std::span<const uint8_t
 			FILE_ATTRIBUTE_NORMAL,
 			nullptr);
 		if (h != INVALID_HANDLE_VALUE) {
-			temp_guard.path = temp_long;
 			file.handle = h;
+			temp_guard.armed = true;
 			break;
 		}
 		const DWORD err = GetLastError();
@@ -263,6 +262,11 @@ void write_file_bytes(const std::filesystem::path& path, std::span<const uint8_t
 	}
 	if (file.handle == INVALID_HANDLE_VALUE) {
 		throw std::runtime_error("write_file_bytes: exhausted retries creating unique temp file");
+	}
+	const WriteFailStage fail_stage =
+		g_fail_next_write.exchange(WriteFailStage::None, std::memory_order_relaxed);
+	if (fail_stage == WriteFailStage::AfterAcquire) {
+		throw std::runtime_error("write_file_bytes: injected failure at handle acquisition boundary");
 	}
 
 	size_t offset = 0;
@@ -275,7 +279,7 @@ void write_file_bytes(const std::filesystem::path& path, std::span<const uint8_t
 		}
 		offset += bytes_written;
 	}
-	if (g_fail_next_write.exchange(false, std::memory_order_relaxed)) {
+	if (fail_stage == WriteFailStage::AfterWrite) {
 		throw std::runtime_error("write_file_bytes: injected failure before handle close");
 	}
 	if (!FlushFileBuffers(file.handle)) {
@@ -284,7 +288,7 @@ void write_file_bytes(const std::filesystem::path& path, std::span<const uint8_t
 	file.close();
 
 	if (!MoveFileExW(
-			temp_long.c_str(),
+			temp_guard.path.c_str(),
 			long_path.c_str(),
 			MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
 		throw std::runtime_error("write_file_bytes: MoveFileExW atomic replace failed");
