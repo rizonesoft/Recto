@@ -61,13 +61,19 @@ if (-not $SkipTests -and $Platform -contains 'x64') {
     foreach ($cfg in $Configuration) {
         $tests = Join-Path $root "build\bin\x64\$cfg\recto-tests\recto-tests.exe"
         $xmlOut = Join-Path $root "build\test-results-x64-$cfg.xml"
-        $argsList = @("--gtest_output=xml:$xmlOut", "--gtest_fail_if_no_test_selected")
+        if (Test-Path $xmlOut) { Remove-Item $xmlOut -Force }
+        $argsList = @("--gtest_output=xml:$xmlOut")
         if ($TestFilter) {
             $argsList += "--gtest_filter=$TestFilter"
         }
         Write-Host "=== recto-tests $cfg|x64"
         & $tests @argsList
         if ($LASTEXITCODE -ne 0) { throw "recto-tests failed: $cfg|x64 (exit $LASTEXITCODE)" }
+        if (-not (Test-Path $xmlOut)) { throw "recto-tests did not produce XML report: $xmlOut" }
+        [xml]$report = Get-Content $xmlOut
+        if ([int]$report.testsuites.tests -le 0) {
+            throw "recto-tests executed 0 tests (filter='$TestFilter'): $cfg|x64"
+        }
     }
 }
 
