@@ -231,8 +231,14 @@ TEST(PdfParser, ArraysAndDicts)
 		EXPECT_FALSE(large_dict.contains("Key100"));
 		EXPECT_EQ(large_dict.get_int("Key199"), 199);
 
-		// Copy construction and erase across the indexed threshold.
+		// Copy construction, get_mut value update, and erase across the indexed threshold.
+		static_assert(std::is_same_v<PdfDict::iterator, PdfDict::const_iterator>);
+		static_assert(std::is_const_v<std::remove_reference_t<decltype(*std::declval<PdfDict&>().begin())>>);
 		PdfDict copied_dict = large_dict;
+		PdfValue* mut_v = copied_dict.get_mut("Key75");
+		ASSERT_NE(mut_v, nullptr);
+		*mut_v = PdfValue(75000);
+		EXPECT_EQ(copied_dict.get_int("Key75"), 75000);
 		EXPECT_TRUE(copied_dict.erase("Key0"));
 		EXPECT_FALSE(copied_dict.contains("Key0"));
 		EXPECT_EQ(copied_dict.get_int("Key199"), 199);
@@ -519,6 +525,36 @@ TEST(PdfParser, Streams)
 			reinterpret_cast<const char*>(slice_res->data()),
 			slice_res->size());
 		EXPECT_EQ(payload, "ABCDEF");
+	}
+
+	// 7. Linear-time fallback recovery when payload contains thousands of
+	// "endstream % " candidates sharing comment/whitespace chains before a non-endobj token.
+	{
+		clear_diagnostics();
+		std::string repeated_payload;
+		repeated_payload.reserve(10000 * 12 + 16);
+		for (int i = 0; i < 10000; ++i) {
+			repeated_payload += "endstream % ";
+		}
+		repeated_payload += "\nX";
+
+		std::string full_obj = "11 0 obj\n<< >>\nstream\n";
+		full_obj += repeated_payload;
+		full_obj += "\nendstream\nendobj";
+
+		Parser parser(as_bytes(full_obj));
+		auto res = parser.parse_indirect_object();
+		RECTO_ASSERT_OK(res);
+		ASSERT_TRUE(res->value.is_stream());
+		const PdfStream* stm = res->value.as_stream();
+		const std::string_view payload(
+			reinterpret_cast<const char*>(stm->raw_bytes.data()),
+			stm->raw_bytes.size());
+		EXPECT_EQ(payload, repeated_payload);
+
+		const auto diags = diagnostics_tail();
+		ASSERT_FALSE(diags.empty());
+		EXPECT_EQ(diags.back().diagnostic_id, DiagnosticId::DamagedStream);
 	}
 }
 

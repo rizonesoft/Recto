@@ -31,30 +31,73 @@ constexpr std::string_view kEndobjKeyword = "endobj";
 	return after == input.size() || !Lexer::is_pdf_regular(input[after]);
 }
 
+struct TerminatorScanner {
+	std::span<const uint8_t> input;
+	size_t cached_converge_limit{0};
+	size_t cached_tok_pos{0};
+	bool has_cache{false};
+
+	[[nodiscard]] size_t find_token_after_endstream(size_t endstream_pos) noexcept
+	{
+		size_t p = endstream_pos + kEndstreamKeyword.size();
+		// Skip horizontal whitespace on the current line.
+		while (p < input.size() &&
+			(input[p] == ' ' || input[p] == '\t' || input[p] == '\0' || input[p] == '\f')) {
+			++p;
+		}
+		if (p >= input.size()) {
+			return input.size();
+		}
+		// Any non-whitespace, non-comment token on the same line is immediate.
+		if (input[p] != '\r' && input[p] != '\n' && input[p] != '%') {
+			return p;
+		}
+		// Otherwise p is at '\r', '\n', or '%', which skips to EOL and then
+		// skips all subsequent whitespace and comment lines. Any p <= the
+		// previously scanned convergence point reaches the exact same token.
+		if (has_cache && p <= cached_converge_limit) {
+			return cached_tok_pos;
+		}
+		size_t cur = p;
+		while (cur < input.size()) {
+			if (Lexer::is_pdf_whitespace(input[cur])) {
+				++cur;
+				continue;
+			}
+			if (input[cur] == '%') {
+				++cur;
+				while (cur < input.size() && input[cur] != '\n' && input[cur] != '\r') {
+					++cur;
+				}
+				continue;
+			}
+			break;
+		}
+		cached_converge_limit = cur;
+		cached_tok_pos = cur;
+		has_cache = true;
+		return cur;
+	}
+
+	[[nodiscard]] bool is_followed_by_terminator(
+		size_t endstream_pos,
+		bool require_endobj_terminator) noexcept
+	{
+		const size_t cur = find_token_after_endstream(endstream_pos);
+		if (matches_keyword_at(input, cur, kEndobjKeyword)) {
+			return true;
+		}
+		return !require_endobj_terminator && cur == input.size();
+	}
+};
+
 [[nodiscard]] bool is_endstream_followed_by_terminator(
 	std::span<const uint8_t> input,
 	size_t endstream_pos,
 	bool require_endobj_terminator) noexcept
 {
-	size_t cur = endstream_pos + kEndstreamKeyword.size();
-	while (cur < input.size()) {
-		if (Lexer::is_pdf_whitespace(input[cur])) {
-			++cur;
-			continue;
-		}
-		if (input[cur] == '%') {
-			++cur;
-			while (cur < input.size() && input[cur] != '\n' && input[cur] != '\r') {
-				++cur;
-			}
-			continue;
-		}
-		break;
-	}
-	if (matches_keyword_at(input, cur, kEndobjKeyword)) {
-		return true;
-	}
-	return !require_endobj_terminator && cur == input.size();
+	TerminatorScanner scanner{input};
+	return scanner.is_followed_by_terminator(endstream_pos, require_endobj_terminator);
 }
 
 [[nodiscard]] bool next_non_comment(
@@ -664,6 +707,7 @@ PdfResult<std::span<const uint8_t>> Parser::parse_stream_slice_impl(
 	std::optional<size_t> boundary_match = std::nullopt;
 	std::optional<size_t> any_match = std::nullopt;
 	if (input.size() >= stream_start + kEndstreamKeyword.size()) {
+		TerminatorScanner scanner{input};
 		const size_t last_pos = input.size() - kEndstreamKeyword.size();
 		for (size_t pos = stream_start; pos <= last_pos; ++pos) {
 			if (input[pos] != 'e') {
@@ -681,8 +725,7 @@ PdfResult<std::span<const uint8_t>> Parser::parse_stream_slice_impl(
 				boundary_match = pos;
 			}
 			if (at_boundary &&
-				is_endstream_followed_by_terminator(
-					input,
+				scanner.is_followed_by_terminator(
 					pos,
 					require_endobj_terminator)) {
 				strict_match = pos;

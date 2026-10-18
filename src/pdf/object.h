@@ -240,8 +240,8 @@ class PdfDict {
 public:
 	using Entry = std::pair<PdfName, PdfValue>;
 	using Container = std::vector<Entry>;
-	using iterator = Container::iterator;
 	using const_iterator = Container::const_iterator;
+	using iterator = const_iterator;
 	static constexpr size_t kIndexThreshold = 32;
 
 	PdfDict() noexcept = default;
@@ -261,10 +261,8 @@ public:
 		index_.reset();
 	}
 
-	[[nodiscard]] iterator begin() noexcept { return entries_.begin(); }
-	[[nodiscard]] iterator end() noexcept { return entries_.end(); }
-	[[nodiscard]] const_iterator begin() const noexcept { return entries_.begin(); }
-	[[nodiscard]] const_iterator end() const noexcept { return entries_.end(); }
+	[[nodiscard]] const_iterator begin() const noexcept { return entries_.cbegin(); }
+	[[nodiscard]] const_iterator end() const noexcept { return entries_.cend(); }
 	[[nodiscard]] const_iterator cbegin() const noexcept { return entries_.cbegin(); }
 	[[nodiscard]] const_iterator cend() const noexcept { return entries_.cend(); }
 
