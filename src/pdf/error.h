@@ -1,8 +1,8 @@
 // Recto PDF engine error-handling and D16 diagnostic primitives (D01 T01 section 1).
 //
-// Defines ErrorCode, DiagnosticId, PdfError, PdfResult<T>, PdfResult<void>,
-// the 256-slot thread-safe in-memory diagnostic ring buffer, and Windows Event
-// Tracing (ETW TraceLogging) span helpers.
+// Defines ErrorCode, DiagnosticId, EtwPhaseId, PdfError, PdfResult<T>,
+// PdfResult<void>, the 256-slot thread-safe in-memory diagnostic ring buffer,
+// and Windows Event Tracing (ETW TraceLogging) span helpers.
 #pragma once
 
 #include <array>
@@ -297,6 +297,78 @@ enum class DiagnosticId : uint16_t {
 	return DiagnosticId::GenericStatus;
 }
 
+// Closed catalog of ETW span phase identifiers. Only EtwPhaseId enumerators are
+// stored in EtwSpan and emitted via TraceLoggingWrite, guaranteeing zero
+// document byte payloads and static lifetime safety.
+enum class EtwPhaseId : uint16_t {
+	UnspecifiedPhase = 0,
+	OpenDocument,
+	ParseXRef,
+	RecoverXRef,
+	DecodeFilter,
+	DecryptObject,
+	InterpretPage,
+	BuildDisplayList,
+	LoadFont,
+	RenderTile,
+	ExtractPageText,
+	RunOcr,
+	ConvertDocument,
+	OrganizeDocument,
+	SaveDocument,
+	SignDocument,
+	VerifySignature,
+	RedactDocument,
+	ValidateCompliance,
+};
+
+[[nodiscard]] constexpr std::string_view etw_phase_name(EtwPhaseId phase_id) noexcept
+{
+	switch (phase_id) {
+	case EtwPhaseId::UnspecifiedPhase:
+		return "UnspecifiedPhase";
+	case EtwPhaseId::OpenDocument:
+		return "OpenDocument";
+	case EtwPhaseId::ParseXRef:
+		return "ParseXRef";
+	case EtwPhaseId::RecoverXRef:
+		return "RecoverXRef";
+	case EtwPhaseId::DecodeFilter:
+		return "DecodeFilter";
+	case EtwPhaseId::DecryptObject:
+		return "DecryptObject";
+	case EtwPhaseId::InterpretPage:
+		return "InterpretPage";
+	case EtwPhaseId::BuildDisplayList:
+		return "BuildDisplayList";
+	case EtwPhaseId::LoadFont:
+		return "LoadFont";
+	case EtwPhaseId::RenderTile:
+		return "RenderTile";
+	case EtwPhaseId::ExtractPageText:
+		return "ExtractPageText";
+	case EtwPhaseId::RunOcr:
+		return "RunOcr";
+	case EtwPhaseId::ConvertDocument:
+		return "ConvertDocument";
+	case EtwPhaseId::OrganizeDocument:
+		return "OrganizeDocument";
+	case EtwPhaseId::SaveDocument:
+		return "SaveDocument";
+	case EtwPhaseId::SignDocument:
+		return "SignDocument";
+	case EtwPhaseId::VerifySignature:
+		return "VerifySignature";
+	case EtwPhaseId::RedactDocument:
+		return "RedactDocument";
+	case EtwPhaseId::ValidateCompliance:
+		return "ValidateCompliance";
+	}
+	return "UnspecifiedPhase";
+}
+
+[[nodiscard]] EtwPhaseId classify_etw_phase(std::string_view phase_name) noexcept;
+
 [[nodiscard]] constexpr bool should_auto_record_diagnostic(ErrorCode code) noexcept
 {
 	switch (code) {
@@ -409,7 +481,7 @@ struct PdfError {
 	PdfError(PdfError&&) noexcept = default;
 	PdfError& operator=(PdfError&&) noexcept = default;
 
-	[[nodiscard]] std::string format() const;
+	[[nodiscard]] std::string format() const noexcept;
 
 	bool operator==(const PdfError& other) const noexcept = default;
 };
@@ -599,23 +671,45 @@ public:
 	}
 
 	template <typename U>
-	[[nodiscard]] T value_or(U&& default_value) const&
+	[[nodiscard]] T value_or(U&& default_value) const& noexcept
 		requires std::is_copy_constructible_v<T> && std::is_convertible_v<U&&, T>
 	{
 		if (has_value()) {
-			return value();
+			try {
+				return value();
+			} catch (...) {
+			}
 		}
-		return static_cast<T>(std::forward<U>(default_value));
+		try {
+			return static_cast<T>(std::forward<U>(default_value));
+		} catch (...) {
+			if constexpr (std::is_nothrow_default_constructible_v<T>) {
+				return T{};
+			} else {
+				detail::fail_fast_invalid_result_access();
+			}
+		}
 	}
 
 	template <typename U>
-	[[nodiscard]] T value_or(U&& default_value) &&
+	[[nodiscard]] T value_or(U&& default_value) && noexcept
 		requires std::is_move_constructible_v<T> && std::is_convertible_v<U&&, T>
 	{
 		if (has_value()) {
-			return std::move(*this).value();
+			try {
+				return std::move(*this).value();
+			} catch (...) {
+			}
 		}
-		return static_cast<T>(std::forward<U>(default_value));
+		try {
+			return static_cast<T>(std::forward<U>(default_value));
+		} catch (...) {
+			if constexpr (std::is_nothrow_default_constructible_v<T>) {
+				return T{};
+			} else {
+				detail::fail_fast_invalid_result_access();
+			}
+		}
 	}
 
 private:
@@ -734,7 +828,6 @@ private:
 };
 
 inline constexpr size_t kDiagnosticRingCapacity = 256;
-inline constexpr size_t kMaxSpanPhaseNameBytes = 63;
 
 struct DiagnosticEntry {
 	uint64_t sequence{0};
@@ -747,7 +840,7 @@ struct DiagnosticEntry {
 	std::optional<uint32_t> object_num{std::nullopt};
 	uint16_t generation_num{0};
 
-	[[nodiscard]] std::string format() const;
+	[[nodiscard]] std::string format() const noexcept;
 };
 
 // Maps an ErrorCode and optional diagnostic hint/tag to a closed DiagnosticId
@@ -779,7 +872,7 @@ void record_diagnostic(const PdfError& err) noexcept;
 // Returns up to max_entries of the newest diagnostics in chronological order
 // (oldest to newest among the returned entries).
 [[nodiscard]] std::vector<DiagnosticEntry> diagnostics_tail(
-	size_t max_entries = kDiagnosticRingCapacity);
+	size_t max_entries = kDiagnosticRingCapacity) noexcept;
 
 // Clears the in-memory diagnostic ring buffer and resets sequence numbering.
 void clear_diagnostics() noexcept;
@@ -831,17 +924,23 @@ struct CapturedEtwEvent {
 // packets passed through TLG_EVENT_WRITE_TRANSFER for deterministic verification.
 void set_etw_capture_for_testing(bool enabled) noexcept;
 void clear_captured_etw_events_for_testing() noexcept;
-[[nodiscard]] std::vector<CapturedEtwEvent> captured_etw_events_for_testing();
+[[nodiscard]] std::vector<CapturedEtwEvent> captured_etw_events_for_testing() noexcept;
 
 // RAII scoped ETW TraceLogging span for open, render, and job phases (D16).
-// Copies and sanitizes phase_name into owned stack storage so temporary caller
-// strings never dangle before SpanEnd emission.
+// Stores only a closed EtwPhaseId enumerator so arbitrary caller strings never
+// dangle or leak into ETW events.
 class EtwSpan {
 public:
+	explicit EtwSpan(
+		EtwPhaseId phase_id,
+		uint64_t document_id = 0,
+		uint32_t page_index = 0) noexcept;
+
 	explicit EtwSpan(
 		std::string_view phase_name,
 		uint64_t document_id = 0,
 		uint32_t page_index = 0) noexcept;
+
 	~EtwSpan() noexcept;
 
 	EtwSpan(const EtwSpan&) = delete;
@@ -850,11 +949,14 @@ public:
 	EtwSpan& operator=(EtwSpan&&) = delete;
 
 	[[nodiscard]] uint64_t elapsed_us() const noexcept;
-	[[nodiscard]] std::string_view phase_name() const noexcept;
+	[[nodiscard]] EtwPhaseId phase_id() const noexcept { return phase_id_; }
+	[[nodiscard]] std::string_view phase_name() const noexcept
+	{
+		return etw_phase_name(phase_id_);
+	}
 
 private:
-	std::array<char, kMaxSpanPhaseNameBytes + 1> phase_name_{};
-	uint16_t phase_len_{0};
+	EtwPhaseId phase_id_{EtwPhaseId::UnspecifiedPhase};
 	uint64_t document_id_{0};
 	uint32_t page_index_{0};
 	uint32_t thread_id_{0};

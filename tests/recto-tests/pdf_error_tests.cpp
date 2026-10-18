@@ -230,7 +230,19 @@ TEST(PdfError, ResultValueAndError)
 	bad_alloc_target = good_source;
 	EXPECT_FALSE(bad_alloc_target.has_value());
 	EXPECT_EQ(bad_alloc_target.error().code, ErrorCode::OutOfMemory);
+
+	// value_or() must never let exceptions escape even if copying/moving the
+	// contained value or fallback throws.
+	const ThrowingPayload fallback_val{321};
+	const ThrowingPayload fallback_used = good_source.value_or(fallback_val);
+	EXPECT_EQ(fallback_used.v, 0);
+
 	ThrowingPayload::throw_bad_alloc = false;
+	ThrowingPayload::throw_non_std = true;
+	const ThrowingPayload rvalue_fallback =
+		std::move(good_source).value_or(ThrowingPayload{654});
+	EXPECT_EQ(rvalue_fallback.v, 0);
+	ThrowingPayload::throw_non_std = false;
 
 	// Automatic diagnostic recording on make_pdf_error for DamagedFormat,
 	// DecompressionLimitExceeded, and RecursionLimitExceeded.
@@ -409,16 +421,18 @@ TEST(PdfError, EtwTraceLoggingProviderAndSpans)
 
 	const uint64_t spans_before = etw_span_events_emitted();
 	{
-		// Construct with a temporary std::string to prove EtwSpan owns its
-		// phase name buffer across the scope until ~EtwSpan() emits SpanEnd.
+		// Construct with a temporary std::string to prove EtwSpan resolves to a
+		// closed EtwPhaseId across the scope until ~EtwSpan() emits SpanEnd.
 		EtwSpan span(std::string("OpenDocument").c_str(), 42, 7);
+		EXPECT_EQ(span.phase_id(), EtwPhaseId::OpenDocument);
 		EXPECT_EQ(span.phase_name(), "OpenDocument");
 		EXPECT_GE(span.elapsed_us(), 0u);
 		record_diagnostic(ErrorCode::DamagedFormat, "synthetic document text", 2048, 19, 2);
 	}
 	{
-		// Non-identifier phase strings with spaces/payloads are sanitized to UnspecifiedPhase.
-		EtwSpan unsafe_span("synthetic document text", 9, 1);
+		// Both free-form and identifier-shaped sensitive strings map to UnspecifiedPhase.
+		EtwSpan unsafe_span("ConfidentialAccount123", 9, 1);
+		EXPECT_EQ(unsafe_span.phase_id(), EtwPhaseId::UnspecifiedPhase);
 		EXPECT_EQ(unsafe_span.phase_name(), "UnspecifiedPhase");
 	}
 	set_etw_capture_for_testing(false);
@@ -477,7 +491,7 @@ TEST(PdfError, EtwTraceLoggingProviderAndSpans)
 	EXPECT_EQ(captured[2].page_index, 7u);
 	EXPECT_EQ(captured[2].thread_id, captured[0].thread_id);
 
-	// 4 & 5. Sanitized SpanStart / SpanEnd
+	// 4 & 5. Sanitized SpanStart / SpanEnd for ConfidentialAccount123
 	EXPECT_EQ(captured[3].event_name, "SpanStart");
 	EXPECT_EQ(captured[3].phase, "UnspecifiedPhase");
 	EXPECT_EQ(captured[4].event_name, "SpanEnd");

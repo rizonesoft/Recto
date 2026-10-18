@@ -18,7 +18,7 @@
 
 extern "C" ULONG WINAPI RectoTlgEventWriteTransfer(
 	REGHANDLE RegHandle,
-	 PCEVENT_DESCRIPTOR EventDescriptor,
+	PCEVENT_DESCRIPTOR EventDescriptor,
 	LPCGUID ActivityId,
 	LPCGUID RelatedActivityId,
 	ULONG UserDataCount,
@@ -45,6 +45,46 @@ namespace detail {
 } // namespace detail
 
 namespace {
+
+class ScopedSrwLockExclusive {
+public:
+	explicit ScopedSrwLockExclusive(SRWLOCK& lock) noexcept
+		: lock_(lock)
+	{
+		AcquireSRWLockExclusive(&lock_);
+	}
+
+	~ScopedSrwLockExclusive() noexcept
+	{
+		ReleaseSRWLockExclusive(&lock_);
+	}
+
+	ScopedSrwLockExclusive(const ScopedSrwLockExclusive&) = delete;
+	ScopedSrwLockExclusive& operator=(const ScopedSrwLockExclusive&) = delete;
+
+private:
+	SRWLOCK& lock_;
+};
+
+class ScopedSrwLockShared {
+public:
+	explicit ScopedSrwLockShared(SRWLOCK& lock) noexcept
+		: lock_(lock)
+	{
+		AcquireSRWLockShared(&lock_);
+	}
+
+	~ScopedSrwLockShared() noexcept
+	{
+		ReleaseSRWLockShared(&lock_);
+	}
+
+	ScopedSrwLockShared(const ScopedSrwLockShared&) = delete;
+	ScopedSrwLockShared& operator=(const ScopedSrwLockShared&) = delete;
+
+private:
+	SRWLOCK& lock_;
+};
 
 // Fixed-size slot in the 256-entry ring buffer. Contains only numeric fields
 // and closed enumerators (ErrorCode + DiagnosticId); zero caller-supplied byte
@@ -73,25 +113,45 @@ std::atomic<bool> g_etw_registered{false};
 std::atomic<uint64_t> g_etw_diagnostic_events{0};
 std::atomic<uint64_t> g_etw_span_events{0};
 
+constexpr size_t kMaxCapturedEtwEvents = 128;
+constexpr size_t kMaxCapturedFields = 12;
+constexpr size_t kMaxCapturedNameLen = 31;
+
+struct CapturedEtwSlot {
+	std::array<char, kMaxCapturedNameLen + 1> provider_name{};
+	std::array<char, kMaxCapturedNameLen + 1> event_name{};
+	uint8_t field_count{0};
+	std::array<std::array<char, kMaxCapturedNameLen + 1>, kMaxCapturedFields> field_names{};
+	uint64_t sequence{0};
+	uint32_t error_code{0};
+	std::array<char, kMaxCapturedNameLen + 1> error_code_name{};
+	uint16_t diagnostic_id{0};
+	std::array<char, kMaxCapturedNameLen + 1> diagnostic_id_name{};
+	bool has_byte_offset{false};
+	uint64_t byte_offset{0};
+	bool has_object_num{false};
+	uint32_t object_num{0};
+	uint16_t generation_num{0};
+	std::array<char, kMaxCapturedNameLen + 1> phase{};
+	uint64_t duration_us{0};
+	uint64_t document_id{0};
+	uint32_t page_index{0};
+	uint32_t thread_id{0};
+};
+
 SRWLOCK g_etw_capture_lock = SRWLOCK_INIT;
 std::atomic<bool> g_etw_capture_enabled{false};
-constexpr size_t kMaxCapturedEtwEvents = 512;
-
-std::vector<CapturedEtwEvent>& captured_etw_storage()
-{
-	static std::vector<CapturedEtwEvent> events;
-	return events;
-}
+std::array<CapturedEtwSlot, kMaxCapturedEtwEvents> g_etw_capture_slots{};
+size_t g_etw_capture_count{0};
 
 struct EtwProviderUnregistrar {
 	~EtwProviderUnregistrar() noexcept
 	{
-		AcquireSRWLockExclusive(&g_etw_lock);
+		ScopedSrwLockExclusive lock(g_etw_lock);
 		if (g_etw_registered.load(std::memory_order_relaxed)) {
 			TraceLoggingUnregister(g_recto_etw_provider);
 			g_etw_registered.store(false, std::memory_order_release);
 		}
-		ReleaseSRWLockExclusive(&g_etw_lock);
 	}
 };
 
@@ -275,6 +335,51 @@ const char* diagnostic_id_cstr(DiagnosticId id) noexcept
 	return "GenericStatus";
 }
 
+const char* etw_phase_cstr(EtwPhaseId phase_id) noexcept
+{
+	switch (phase_id) {
+	case EtwPhaseId::UnspecifiedPhase:
+		return "UnspecifiedPhase";
+	case EtwPhaseId::OpenDocument:
+		return "OpenDocument";
+	case EtwPhaseId::ParseXRef:
+		return "ParseXRef";
+	case EtwPhaseId::RecoverXRef:
+		return "RecoverXRef";
+	case EtwPhaseId::DecodeFilter:
+		return "DecodeFilter";
+	case EtwPhaseId::DecryptObject:
+		return "DecryptObject";
+	case EtwPhaseId::InterpretPage:
+		return "InterpretPage";
+	case EtwPhaseId::BuildDisplayList:
+		return "BuildDisplayList";
+	case EtwPhaseId::LoadFont:
+		return "LoadFont";
+	case EtwPhaseId::RenderTile:
+		return "RenderTile";
+	case EtwPhaseId::ExtractPageText:
+		return "ExtractPageText";
+	case EtwPhaseId::RunOcr:
+		return "RunOcr";
+	case EtwPhaseId::ConvertDocument:
+		return "ConvertDocument";
+	case EtwPhaseId::OrganizeDocument:
+		return "OrganizeDocument";
+	case EtwPhaseId::SaveDocument:
+		return "SaveDocument";
+	case EtwPhaseId::SignDocument:
+		return "SignDocument";
+	case EtwPhaseId::VerifySignature:
+		return "VerifySignature";
+	case EtwPhaseId::RedactDocument:
+		return "RedactDocument";
+	case EtwPhaseId::ValidateCompliance:
+		return "ValidateCompliance";
+	}
+	return "UnspecifiedPhase";
+}
+
 bool ascii_iequals(std::string_view a, std::string_view b) noexcept
 {
 	if (a.size() != b.size()) {
@@ -296,25 +401,6 @@ bool ascii_iequals(std::string_view a, std::string_view b) noexcept
 	return true;
 }
 
-bool is_valid_phase_identifier(std::string_view phase) noexcept
-{
-	if (phase.empty() || phase.size() > kMaxSpanPhaseNameBytes) {
-		return false;
-	}
-	for (const char ch : phase) {
-		const unsigned char u = static_cast<unsigned char>(ch);
-		const bool ok =
-			(u >= 'A' && u <= 'Z') ||
-			(u >= 'a' && u <= 'z') ||
-			(u >= '0' && u <= '9') ||
-			u == '_' || u == '.' || u == ':' || u == '-';
-		if (!ok) {
-			return false;
-		}
-	}
-	return true;
-}
-
 template <typename T>
 T read_descriptor_scalar(const EVENT_DATA_DESCRIPTOR& desc) noexcept
 {
@@ -325,46 +411,64 @@ T read_descriptor_scalar(const EVENT_DATA_DESCRIPTOR& desc) noexcept
 	return val;
 }
 
-std::string read_descriptor_cstr(const EVENT_DATA_DESCRIPTOR& desc)
+void copy_bounded_str(
+	std::array<char, kMaxCapturedNameLen + 1>& dst,
+	const char* src,
+	size_t max_src_bytes) noexcept
 {
-	if (desc.Ptr == 0 || desc.Size == 0) {
-		return {};
+	dst.fill('\0');
+	if (!src || max_src_bytes == 0) {
+		return;
 	}
-	const char* ptr = reinterpret_cast<const char*>(static_cast<uintptr_t>(desc.Ptr));
 	size_t len = 0;
-	while (len < desc.Size && ptr[len] != '\0') {
+	const size_t limit = std::min(max_src_bytes, kMaxCapturedNameLen);
+	while (len < limit && src[len] != '\0') {
+		dst[len] = src[len];
 		++len;
 	}
-	return std::string(ptr, len);
+	dst[len] = '\0';
 }
 
-std::string extract_provider_name(const EVENT_DATA_DESCRIPTOR& desc)
+void read_descriptor_cstr_into(
+	std::array<char, kMaxCapturedNameLen + 1>& dst,
+	const EVENT_DATA_DESCRIPTOR& desc) noexcept
 {
+	if (desc.Ptr == 0 || desc.Size == 0) {
+		dst.fill('\0');
+		return;
+	}
+	const char* ptr = reinterpret_cast<const char*>(static_cast<uintptr_t>(desc.Ptr));
+	copy_bounded_str(dst, ptr, desc.Size);
+}
+
+void extract_provider_name_into(
+	std::array<char, kMaxCapturedNameLen + 1>& dst,
+	const EVENT_DATA_DESCRIPTOR& desc) noexcept
+{
+	dst.fill('\0');
 	if (desc.Ptr == 0 || desc.Size <= 2) {
-		return {};
+		return;
 	}
 	const uint8_t* bytes = reinterpret_cast<const uint8_t*>(static_cast<uintptr_t>(desc.Ptr));
 	size_t pos = 2; // Skip UINT16 total size
-	size_t start = pos;
+	const size_t start = pos;
 	while (pos < desc.Size && bytes[pos] != 0) {
 		++pos;
 	}
-	return std::string(reinterpret_cast<const char*>(bytes + start), pos - start);
+	copy_bounded_str(dst, reinterpret_cast<const char*>(bytes + start), pos - start);
 }
 
-void parse_event_metadata(
-	const EVENT_DATA_DESCRIPTOR& desc,
-	std::string& out_event_name,
-	std::vector<std::string>& out_field_names)
+void parse_event_metadata_into(
+	CapturedEtwSlot& slot,
+	const EVENT_DATA_DESCRIPTOR& desc) noexcept
 {
-	out_event_name.clear();
-	out_field_names.clear();
+	slot.event_name.fill('\0');
+	slot.field_count = 0;
 	if (desc.Ptr == 0 || desc.Size <= 3) {
 		return;
 	}
 	const uint8_t* bytes = reinterpret_cast<const uint8_t*>(static_cast<uintptr_t>(desc.Ptr));
 	size_t pos = 2; // Skip UINT16 size
-	// Skip variable-length event tags (high bit set means continuation byte).
 	while (pos < desc.Size && (bytes[pos] & 0x80u) != 0) {
 		++pos;
 	}
@@ -375,12 +479,15 @@ void parse_event_metadata(
 	while (pos < desc.Size && bytes[pos] != 0) {
 		++pos;
 	}
-	out_event_name.assign(reinterpret_cast<const char*>(bytes + name_start), pos - name_start);
+	copy_bounded_str(
+		slot.event_name,
+		reinterpret_cast<const char*>(bytes + name_start),
+		pos - name_start);
 	if (pos < desc.Size) {
 		++pos; // Skip '\0'
 	}
 
-	while (pos < desc.Size) {
+	while (pos < desc.Size && slot.field_count < kMaxCapturedFields) {
 		const size_t field_start = pos;
 		while (pos < desc.Size && bytes[pos] != 0) {
 			++pos;
@@ -388,9 +495,11 @@ void parse_event_metadata(
 		if (pos == field_start) {
 			break;
 		}
-		out_field_names.emplace_back(
+		copy_bounded_str(
+			slot.field_names[slot.field_count],
 			reinterpret_cast<const char*>(bytes + field_start),
 			pos - field_start);
+		++slot.field_count;
 		if (pos < desc.Size) {
 			++pos; // Skip '\0'
 		}
@@ -400,7 +509,6 @@ void parse_event_metadata(
 		const uint8_t in_type = bytes[pos++];
 		if ((in_type & 0x80u) != 0 && pos < desc.Size) {
 			const uint8_t out_type = bytes[pos++];
-			// Skip optional field tags if continuation bit is set on out_type.
 			if ((out_type & 0x80u) != 0) {
 				while (pos < desc.Size && (bytes[pos] & 0x80u) != 0) {
 					++pos;
@@ -448,43 +556,39 @@ void process_tlg_write_transfer(
 		return;
 	}
 
-	try {
-		CapturedEtwEvent ev{};
-		ev.provider_name = extract_provider_name(user_data[0]);
-		parse_event_metadata(user_data[1], ev.event_name, ev.field_names);
+	CapturedEtwSlot slot{};
+	extract_provider_name_into(slot.provider_name, user_data[0]);
+	parse_event_metadata_into(slot, user_data[1]);
+	const std::string_view parsed_name(slot.event_name.data());
 
-		if (ev.event_name == "Diagnostic" && user_data_count >= 13) {
-			ev.sequence = read_descriptor_scalar<uint64_t>(user_data[2]);
-			ev.error_code = read_descriptor_scalar<uint32_t>(user_data[3]);
-			ev.error_code_name = read_descriptor_cstr(user_data[4]);
-			ev.diagnostic_id = read_descriptor_scalar<uint16_t>(user_data[5]);
-			ev.diagnostic_id_name = read_descriptor_cstr(user_data[6]);
-			ev.has_byte_offset = read_descriptor_scalar<uint8_t>(user_data[7]) != 0;
-			ev.byte_offset = read_descriptor_scalar<uint64_t>(user_data[8]);
-			ev.has_object_num = read_descriptor_scalar<uint8_t>(user_data[9]) != 0;
-			ev.object_num = read_descriptor_scalar<uint32_t>(user_data[10]);
-			ev.generation_num = read_descriptor_scalar<uint16_t>(user_data[11]);
-			ev.thread_id = read_descriptor_scalar<uint32_t>(user_data[12]);
-		} else if (ev.event_name == "SpanStart" && user_data_count >= 6) {
-			ev.phase = read_descriptor_cstr(user_data[2]);
-			ev.document_id = read_descriptor_scalar<uint64_t>(user_data[3]);
-			ev.page_index = read_descriptor_scalar<uint32_t>(user_data[4]);
-			ev.thread_id = read_descriptor_scalar<uint32_t>(user_data[5]);
-		} else if (ev.event_name == "SpanEnd" && user_data_count >= 7) {
-			ev.phase = read_descriptor_cstr(user_data[2]);
-			ev.duration_us = read_descriptor_scalar<uint64_t>(user_data[3]);
-			ev.document_id = read_descriptor_scalar<uint64_t>(user_data[4]);
-			ev.page_index = read_descriptor_scalar<uint32_t>(user_data[5]);
-			ev.thread_id = read_descriptor_scalar<uint32_t>(user_data[6]);
-		}
+	if (parsed_name == "Diagnostic" && user_data_count >= 13) {
+		slot.sequence = read_descriptor_scalar<uint64_t>(user_data[2]);
+		slot.error_code = read_descriptor_scalar<uint32_t>(user_data[3]);
+		read_descriptor_cstr_into(slot.error_code_name, user_data[4]);
+		slot.diagnostic_id = read_descriptor_scalar<uint16_t>(user_data[5]);
+		read_descriptor_cstr_into(slot.diagnostic_id_name, user_data[6]);
+		slot.has_byte_offset = read_descriptor_scalar<uint8_t>(user_data[7]) != 0;
+		slot.byte_offset = read_descriptor_scalar<uint64_t>(user_data[8]);
+		slot.has_object_num = read_descriptor_scalar<uint8_t>(user_data[9]) != 0;
+		slot.object_num = read_descriptor_scalar<uint32_t>(user_data[10]);
+		slot.generation_num = read_descriptor_scalar<uint16_t>(user_data[11]);
+		slot.thread_id = read_descriptor_scalar<uint32_t>(user_data[12]);
+	} else if (parsed_name == "SpanStart" && user_data_count >= 6) {
+		read_descriptor_cstr_into(slot.phase, user_data[2]);
+		slot.document_id = read_descriptor_scalar<uint64_t>(user_data[3]);
+		slot.page_index = read_descriptor_scalar<uint32_t>(user_data[4]);
+		slot.thread_id = read_descriptor_scalar<uint32_t>(user_data[5]);
+	} else if (parsed_name == "SpanEnd" && user_data_count >= 7) {
+		read_descriptor_cstr_into(slot.phase, user_data[2]);
+		slot.duration_us = read_descriptor_scalar<uint64_t>(user_data[3]);
+		slot.document_id = read_descriptor_scalar<uint64_t>(user_data[4]);
+		slot.page_index = read_descriptor_scalar<uint32_t>(user_data[5]);
+		slot.thread_id = read_descriptor_scalar<uint32_t>(user_data[6]);
+	}
 
-		AcquireSRWLockExclusive(&g_etw_capture_lock);
-		auto& vec = captured_etw_storage();
-		if (vec.size() < kMaxCapturedEtwEvents) {
-			vec.push_back(std::move(ev));
-		}
-		ReleaseSRWLockExclusive(&g_etw_capture_lock);
-	} catch (...) {
+	ScopedSrwLockExclusive lock(g_etw_capture_lock);
+	if (g_etw_capture_count < kMaxCapturedEtwEvents) {
+		g_etw_capture_slots[g_etw_capture_count++] = slot;
 	}
 }
 
@@ -512,45 +616,53 @@ extern "C" ULONG WINAPI RectoTlgEventWriteTransfer(
 
 namespace recto::pdf {
 
-std::string PdfError::format() const
+std::string PdfError::format() const noexcept
 {
-	std::string out;
-	const std::string_view code_str = error_code_name(code);
-	out.reserve(code_str.size() + message.size() + 48);
-	out += '[';
-	out += code_str;
-	out += ']';
-	if (!message.empty()) {
-		out += ' ';
-		out += message;
+	try {
+		std::string out;
+		const std::string_view code_str = error_code_name(code);
+		out.reserve(code_str.size() + message.size() + 48);
+		out += '[';
+		out += code_str;
+		out += ']';
+		if (!message.empty()) {
+			out += ' ';
+			out += message;
+		}
+		append_context_suffix(out, byte_offset, object_num, generation_num);
+		return out;
+	} catch (...) {
+		return {};
 	}
-	append_context_suffix(out, byte_offset, object_num, generation_num);
-	return out;
 }
 
-std::string DiagnosticEntry::format() const
+std::string DiagnosticEntry::format() const noexcept
 {
-	std::string out;
-	const std::string_view code_str = error_code_name(code);
-	const std::string_view diag_str = diagnostic_id_name(diagnostic_id);
-	out.reserve(code_str.size() + diag_str.size() + message.size() + 96);
-	out += '#';
-	out += std::to_string(sequence);
-	out += " [t=";
-	out += std::to_string(timestamp_utc_ms);
-	out += " tid=";
-	out += std::to_string(thread_id);
-	out += " ";
-	out += code_str;
-	out += '/';
-	out += diag_str;
-	out += ']';
-	if (!message.empty()) {
-		out += ' ';
-		out += message;
+	try {
+		std::string out;
+		const std::string_view code_str = error_code_name(code);
+		const std::string_view diag_str = diagnostic_id_name(diagnostic_id);
+		out.reserve(code_str.size() + diag_str.size() + message.size() + 96);
+		out += '#';
+		out += std::to_string(sequence);
+		out += " [t=";
+		out += std::to_string(timestamp_utc_ms);
+		out += " tid=";
+		out += std::to_string(thread_id);
+		out += " ";
+		out += code_str;
+		out += '/';
+		out += diag_str;
+		out += ']';
+		if (!message.empty()) {
+			out += ' ';
+			out += message;
+		}
+		append_context_suffix(out, byte_offset, object_num, generation_num);
+		return out;
+	} catch (...) {
+		return {};
 	}
-	append_context_suffix(out, byte_offset, object_num, generation_num);
-	return out;
 }
 
 DiagnosticId classify_diagnostic_id(ErrorCode code, std::string_view hint) noexcept
@@ -602,19 +714,75 @@ DiagnosticId classify_diagnostic_id(ErrorCode code, std::string_view hint) noexc
 	return default_diagnostic_id(code);
 }
 
+EtwPhaseId classify_etw_phase(std::string_view phase_name) noexcept
+{
+	if (ascii_iequals(phase_name, "OpenDocument") || ascii_iequals(phase_name, "Open")) {
+		return EtwPhaseId::OpenDocument;
+	}
+	if (ascii_iequals(phase_name, "ParseXRef")) {
+		return EtwPhaseId::ParseXRef;
+	}
+	if (ascii_iequals(phase_name, "RecoverXRef")) {
+		return EtwPhaseId::RecoverXRef;
+	}
+	if (ascii_iequals(phase_name, "DecodeFilter")) {
+		return EtwPhaseId::DecodeFilter;
+	}
+	if (ascii_iequals(phase_name, "DecryptObject")) {
+		return EtwPhaseId::DecryptObject;
+	}
+	if (ascii_iequals(phase_name, "InterpretPage")) {
+		return EtwPhaseId::InterpretPage;
+	}
+	if (ascii_iequals(phase_name, "BuildDisplayList")) {
+		return EtwPhaseId::BuildDisplayList;
+	}
+	if (ascii_iequals(phase_name, "LoadFont")) {
+		return EtwPhaseId::LoadFont;
+	}
+	if (ascii_iequals(phase_name, "RenderTile") || ascii_iequals(phase_name, "Render")) {
+		return EtwPhaseId::RenderTile;
+	}
+	if (ascii_iequals(phase_name, "ExtractPageText")) {
+		return EtwPhaseId::ExtractPageText;
+	}
+	if (ascii_iequals(phase_name, "RunOcr") || ascii_iequals(phase_name, "Ocr")) {
+		return EtwPhaseId::RunOcr;
+	}
+	if (ascii_iequals(phase_name, "ConvertDocument") || ascii_iequals(phase_name, "Convert")) {
+		return EtwPhaseId::ConvertDocument;
+	}
+	if (ascii_iequals(phase_name, "OrganizeDocument") || ascii_iequals(phase_name, "Organize")) {
+		return EtwPhaseId::OrganizeDocument;
+	}
+	if (ascii_iequals(phase_name, "SaveDocument") || ascii_iequals(phase_name, "Save")) {
+		return EtwPhaseId::SaveDocument;
+	}
+	if (ascii_iequals(phase_name, "SignDocument") || ascii_iequals(phase_name, "Sign")) {
+		return EtwPhaseId::SignDocument;
+	}
+	if (ascii_iequals(phase_name, "VerifySignature") || ascii_iequals(phase_name, "Verify")) {
+		return EtwPhaseId::VerifySignature;
+	}
+	if (ascii_iequals(phase_name, "RedactDocument") || ascii_iequals(phase_name, "Redact")) {
+		return EtwPhaseId::RedactDocument;
+	}
+	if (ascii_iequals(phase_name, "ValidateCompliance") || ascii_iequals(phase_name, "Compliance")) {
+		return EtwPhaseId::ValidateCompliance;
+	}
+	return EtwPhaseId::UnspecifiedPhase;
+}
+
 bool ensure_etw_provider_registered() noexcept
 {
 	if (g_etw_registered.load(std::memory_order_acquire)) {
 		return true;
 	}
-	AcquireSRWLockExclusive(&g_etw_lock);
+	ScopedSrwLockExclusive lock(g_etw_lock);
 	if (!g_etw_registered.load(std::memory_order_relaxed)) {
 		static EtwProviderUnregistrar unregistrar{};
 		const HRESULT hr = TraceLoggingRegister(g_recto_etw_provider);
 		if (SUCCEEDED(hr)) {
-			// Ensure TraceLoggingWrite always executes descriptor marshaling and
-			// invokes TLG_EVENT_WRITE_TRANSFER even when no external kernel ETW
-			// trace session has enabled the provider yet.
 			if (g_recto_etw_provider->LevelPlus1 == 0) {
 				const GUID provider_id = TraceLoggingProviderId(g_recto_etw_provider);
 				_tlgEnableCallback(
@@ -629,9 +797,7 @@ bool ensure_etw_provider_registered() noexcept
 			g_etw_registered.store(true, std::memory_order_release);
 		}
 	}
-	const bool registered = g_etw_registered.load(std::memory_order_relaxed);
-	ReleaseSRWLockExclusive(&g_etw_lock);
-	return registered;
+	return g_etw_registered.load(std::memory_order_relaxed);
 }
 
 bool is_etw_provider_registered() noexcept
@@ -657,30 +823,62 @@ uint64_t etw_span_events_emitted() noexcept
 void set_etw_capture_for_testing(bool enabled) noexcept
 {
 	ensure_etw_provider_registered();
-	AcquireSRWLockExclusive(&g_etw_capture_lock);
-	if (enabled) {
-		try {
-			captured_etw_storage().reserve(kMaxCapturedEtwEvents);
-		} catch (...) {
-		}
-	}
+	ScopedSrwLockExclusive lock(g_etw_capture_lock);
 	g_etw_capture_enabled.store(enabled, std::memory_order_release);
-	ReleaseSRWLockExclusive(&g_etw_capture_lock);
 }
 
 void clear_captured_etw_events_for_testing() noexcept
 {
-	AcquireSRWLockExclusive(&g_etw_capture_lock);
-	captured_etw_storage().clear();
-	ReleaseSRWLockExclusive(&g_etw_capture_lock);
+	ScopedSrwLockExclusive lock(g_etw_capture_lock);
+	g_etw_capture_slots.fill(CapturedEtwSlot{});
+	g_etw_capture_count = 0;
 }
 
-std::vector<CapturedEtwEvent> captured_etw_events_for_testing()
+std::vector<CapturedEtwEvent> captured_etw_events_for_testing() noexcept
 {
-	AcquireSRWLockShared(&g_etw_capture_lock);
-	std::vector<CapturedEtwEvent> copy = captured_etw_storage();
-	ReleaseSRWLockShared(&g_etw_capture_lock);
-	return copy;
+	std::array<CapturedEtwSlot, kMaxCapturedEtwEvents> snapshot{};
+	size_t count = 0;
+	{
+		ScopedSrwLockShared lock(g_etw_capture_lock);
+		count = g_etw_capture_count;
+		for (size_t i = 0; i < count; ++i) {
+			snapshot[i] = g_etw_capture_slots[i];
+		}
+	}
+
+	try {
+		std::vector<CapturedEtwEvent> out;
+		out.reserve(count);
+		for (size_t i = 0; i < count; ++i) {
+			const CapturedEtwSlot& s = snapshot[i];
+			CapturedEtwEvent ev{};
+			ev.provider_name = s.provider_name.data();
+			ev.event_name = s.event_name.data();
+			ev.field_names.reserve(s.field_count);
+			for (uint8_t f = 0; f < s.field_count; ++f) {
+				ev.field_names.emplace_back(s.field_names[f].data());
+			}
+			ev.sequence = s.sequence;
+			ev.error_code = s.error_code;
+			ev.error_code_name = s.error_code_name.data();
+			ev.diagnostic_id = s.diagnostic_id;
+			ev.diagnostic_id_name = s.diagnostic_id_name.data();
+			ev.has_byte_offset = s.has_byte_offset;
+			ev.byte_offset = s.byte_offset;
+			ev.has_object_num = s.has_object_num;
+			ev.object_num = s.object_num;
+			ev.generation_num = s.generation_num;
+			ev.phase = s.phase.data();
+			ev.duration_us = s.duration_us;
+			ev.document_id = s.document_id;
+			ev.page_index = s.page_index;
+			ev.thread_id = s.thread_id;
+			out.push_back(std::move(ev));
+		}
+		return out;
+	} catch (...) {
+		return {};
+	}
 }
 
 void record_diagnostic(
@@ -697,7 +895,7 @@ void record_diagnostic(
 
 	uint64_t assigned_seq = 0;
 	{
-		AcquireSRWLockExclusive(&g_ring_lock);
+		ScopedSrwLockExclusive lock(g_ring_lock);
 		DiagnosticSlot& slot = g_ring_slots[g_ring_write_index];
 		assigned_seq = g_ring_next_sequence++;
 		slot.sequence = assigned_seq;
@@ -715,7 +913,6 @@ void record_diagnostic(
 		if (g_ring_count < kDiagnosticRingCapacity) {
 			++g_ring_count;
 		}
-		ReleaseSRWLockExclusive(&g_ring_lock);
 	}
 
 	const char* const code_name_str = error_code_cstr(code);
@@ -768,7 +965,7 @@ void record_diagnostic(const PdfError& err) noexcept
 		err.generation_num);
 }
 
-std::vector<DiagnosticEntry> diagnostics_tail(size_t max_entries)
+std::vector<DiagnosticEntry> diagnostics_tail(size_t max_entries) noexcept
 {
 	if (max_entries == 0) {
 		return {};
@@ -777,7 +974,7 @@ std::vector<DiagnosticEntry> diagnostics_tail(size_t max_entries)
 	std::array<DiagnosticSlot, kDiagnosticRingCapacity> snapshot{};
 	size_t count = 0;
 	{
-		AcquireSRWLockShared(&g_ring_lock);
+		ScopedSrwLockShared lock(g_ring_lock);
 		count = std::min(max_entries, g_ring_count);
 		if (count > 0) {
 			const size_t start_index =
@@ -786,48 +983,48 @@ std::vector<DiagnosticEntry> diagnostics_tail(size_t max_entries)
 				snapshot[i] = g_ring_slots[(start_index + i) % kDiagnosticRingCapacity];
 			}
 		}
-		ReleaseSRWLockShared(&g_ring_lock);
 	}
 
-	std::vector<DiagnosticEntry> result;
-	result.reserve(count);
-	for (size_t i = 0; i < count; ++i) {
-		const DiagnosticSlot& slot = snapshot[i];
-		DiagnosticEntry entry{};
-		entry.sequence = slot.sequence;
-		entry.timestamp_utc_ms = slot.timestamp_utc_ms;
-		entry.thread_id = slot.thread_id;
-		entry.code = slot.code;
-		entry.diagnostic_id = slot.diagnostic_id;
-		entry.message = std::string(diagnostic_id_message(slot.diagnostic_id));
-		if (slot.has_byte_offset) {
-			entry.byte_offset = slot.byte_offset;
+	try {
+		std::vector<DiagnosticEntry> result;
+		result.reserve(count);
+		for (size_t i = 0; i < count; ++i) {
+			const DiagnosticSlot& slot = snapshot[i];
+			DiagnosticEntry entry{};
+			entry.sequence = slot.sequence;
+			entry.timestamp_utc_ms = slot.timestamp_utc_ms;
+			entry.thread_id = slot.thread_id;
+			entry.code = slot.code;
+			entry.diagnostic_id = slot.diagnostic_id;
+			entry.message = std::string(diagnostic_id_message(slot.diagnostic_id));
+			if (slot.has_byte_offset) {
+				entry.byte_offset = slot.byte_offset;
+			}
+			if (slot.has_object_num) {
+				entry.object_num = slot.object_num;
+			}
+			entry.generation_num = slot.generation_num;
+			result.push_back(std::move(entry));
 		}
-		if (slot.has_object_num) {
-			entry.object_num = slot.object_num;
-		}
-		entry.generation_num = slot.generation_num;
-		result.push_back(std::move(entry));
+		return result;
+	} catch (...) {
+		return {};
 	}
-	return result;
 }
 
 void clear_diagnostics() noexcept
 {
-	AcquireSRWLockExclusive(&g_ring_lock);
+	ScopedSrwLockExclusive lock(g_ring_lock);
 	g_ring_slots.fill(DiagnosticSlot{});
 	g_ring_write_index = 0;
 	g_ring_count = 0;
 	g_ring_next_sequence = 1;
-	ReleaseSRWLockExclusive(&g_ring_lock);
 }
 
 uint64_t diagnostics_total_recorded() noexcept
 {
-	AcquireSRWLockShared(&g_ring_lock);
-	const uint64_t total = g_ring_next_sequence - 1;
-	ReleaseSRWLockShared(&g_ring_lock);
-	return total;
+	ScopedSrwLockShared lock(g_ring_lock);
+	return g_ring_next_sequence - 1;
 }
 
 PdfError make_pdf_error(
@@ -850,29 +1047,31 @@ PdfError make_pdf_error(
 }
 
 EtwSpan::EtwSpan(
-	std::string_view phase_name,
+	EtwPhaseId phase_id,
 	uint64_t document_id,
 	uint32_t page_index) noexcept
-	: document_id_(document_id)
+	: phase_id_(phase_id)
+	, document_id_(document_id)
 	, page_index_(page_index)
 	, thread_id_(static_cast<uint32_t>(GetCurrentThreadId()))
 	, start_qpc_(qpc_now())
 {
-	const std::string_view safe_phase =
-		is_valid_phase_identifier(phase_name) ? phase_name : std::string_view("UnspecifiedPhase");
-	const size_t copy_len = std::min(safe_phase.size(), kMaxSpanPhaseNameBytes);
-	std::memcpy(phase_name_.data(), safe_phase.data(), copy_len);
-	phase_name_[copy_len] = '\0';
-	phase_len_ = static_cast<uint16_t>(copy_len);
-
 	ensure_etw_provider_registered();
 	TraceLoggingWrite(
 		g_recto_etw_provider,
 		"SpanStart",
-		TraceLoggingString(phase_name_.data(), "Phase"),
+		TraceLoggingString(etw_phase_cstr(phase_id_), "Phase"),
 		TraceLoggingUInt64(document_id_, "DocumentId"),
 		TraceLoggingUInt32(page_index_, "PageIndex"),
 		TraceLoggingUInt32(thread_id_, "ThreadId"));
+}
+
+EtwSpan::EtwSpan(
+	std::string_view phase_name,
+	uint64_t document_id,
+	uint32_t page_index) noexcept
+	: EtwSpan(classify_etw_phase(phase_name), document_id, page_index)
+{
 }
 
 EtwSpan::~EtwSpan() noexcept
@@ -881,7 +1080,7 @@ EtwSpan::~EtwSpan() noexcept
 	TraceLoggingWrite(
 		g_recto_etw_provider,
 		"SpanEnd",
-		TraceLoggingString(phase_name_.data(), "Phase"),
+		TraceLoggingString(etw_phase_cstr(phase_id_), "Phase"),
 		TraceLoggingUInt64(duration_us, "DurationUs"),
 		TraceLoggingUInt64(document_id_, "DocumentId"),
 		TraceLoggingUInt32(page_index_, "PageIndex"),
@@ -891,11 +1090,6 @@ EtwSpan::~EtwSpan() noexcept
 uint64_t EtwSpan::elapsed_us() const noexcept
 {
 	return qpc_delta_to_us(start_qpc_, qpc_now());
-}
-
-std::string_view EtwSpan::phase_name() const noexcept
-{
-	return std::string_view(phase_name_.data(), phase_len_);
 }
 
 } // namespace recto::pdf
