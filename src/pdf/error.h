@@ -1,12 +1,15 @@
 // Recto PDF engine error-handling and D16 diagnostic primitives (D01 T01 section 1).
 //
-// Defines ErrorCode, PdfError, PdfResult<T>, PdfResult<void>, the 256-slot
-// thread-safe in-memory diagnostic ring buffer, and Windows Event Tracing
-// (ETW TraceLogging) span helpers.
+// Defines ErrorCode, DiagnosticId, PdfError, PdfResult<T>, PdfResult<void>,
+// the 256-slot thread-safe in-memory diagnostic ring buffer, and Windows Event
+// Tracing (ETW TraceLogging) span helpers.
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
+#include <new>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -78,6 +81,222 @@ enum class ErrorCode : uint32_t {
 	return "UnknownError";
 }
 
+// Closed catalog of structured diagnostic identifiers stored in the D16 ring
+// buffer. Only DiagnosticId enumerators and numeric offsets/object IDs are
+// retained in the ring buffer, guaranteeing zero document byte payloads.
+enum class DiagnosticId : uint16_t {
+	GenericStatus = 0,
+	FileNotFound,
+	AccessDenied,
+	NotAPdfHeader,
+	DamagedFormat,
+	DamagedHeader,
+	DamagedToken,
+	DamagedObject,
+	DamagedDictionary,
+	DamagedXRef,
+	DamagedStream,
+	DamagedTrailer,
+	RecoveredViaLinearScan,
+	NeedsPassword,
+	WrongPassword,
+	UnsupportedEncryption,
+	UnsupportedFeature,
+	DecompressionLimitExceeded,
+	RecursionLimitExceeded,
+	SignatureInvalid,
+	ComplianceFailed,
+	OutOfMemory,
+	IoError,
+	Cancelled,
+	InternalError,
+	BlockedLaunchAction,
+	BlockedJavaScriptAction,
+	BlockedSubmitFormAction,
+	BlockedImportDataAction,
+	CorruptRecentsStore,
+	CorruptSettingsStore,
+};
+
+[[nodiscard]] constexpr std::string_view diagnostic_id_name(DiagnosticId id) noexcept
+{
+	switch (id) {
+	case DiagnosticId::GenericStatus:
+		return "GenericStatus";
+	case DiagnosticId::FileNotFound:
+		return "FileNotFound";
+	case DiagnosticId::AccessDenied:
+		return "AccessDenied";
+	case DiagnosticId::NotAPdfHeader:
+		return "NotAPdfHeader";
+	case DiagnosticId::DamagedFormat:
+		return "DamagedFormat";
+	case DiagnosticId::DamagedHeader:
+		return "DamagedHeader";
+	case DiagnosticId::DamagedToken:
+		return "DamagedToken";
+	case DiagnosticId::DamagedObject:
+		return "DamagedObject";
+	case DiagnosticId::DamagedDictionary:
+		return "DamagedDictionary";
+	case DiagnosticId::DamagedXRef:
+		return "DamagedXRef";
+	case DiagnosticId::DamagedStream:
+		return "DamagedStream";
+	case DiagnosticId::DamagedTrailer:
+		return "DamagedTrailer";
+	case DiagnosticId::RecoveredViaLinearScan:
+		return "RecoveredViaLinearScan";
+	case DiagnosticId::NeedsPassword:
+		return "NeedsPassword";
+	case DiagnosticId::WrongPassword:
+		return "WrongPassword";
+	case DiagnosticId::UnsupportedEncryption:
+		return "UnsupportedEncryption";
+	case DiagnosticId::UnsupportedFeature:
+		return "UnsupportedFeature";
+	case DiagnosticId::DecompressionLimitExceeded:
+		return "DecompressionLimitExceeded";
+	case DiagnosticId::RecursionLimitExceeded:
+		return "RecursionLimitExceeded";
+	case DiagnosticId::SignatureInvalid:
+		return "SignatureInvalid";
+	case DiagnosticId::ComplianceFailed:
+		return "ComplianceFailed";
+	case DiagnosticId::OutOfMemory:
+		return "OutOfMemory";
+	case DiagnosticId::IoError:
+		return "IoError";
+	case DiagnosticId::Cancelled:
+		return "Cancelled";
+	case DiagnosticId::InternalError:
+		return "InternalError";
+	case DiagnosticId::BlockedLaunchAction:
+		return "BlockedLaunchAction";
+	case DiagnosticId::BlockedJavaScriptAction:
+		return "BlockedJavaScriptAction";
+	case DiagnosticId::BlockedSubmitFormAction:
+		return "BlockedSubmitFormAction";
+	case DiagnosticId::BlockedImportDataAction:
+		return "BlockedImportDataAction";
+	case DiagnosticId::CorruptRecentsStore:
+		return "CorruptRecentsStore";
+	case DiagnosticId::CorruptSettingsStore:
+		return "CorruptSettingsStore";
+	}
+	return "GenericStatus";
+}
+
+[[nodiscard]] constexpr std::string_view diagnostic_id_message(DiagnosticId id) noexcept
+{
+	switch (id) {
+	case DiagnosticId::GenericStatus:
+		return "Engine diagnostic event";
+	case DiagnosticId::FileNotFound:
+		return "Requested file was not found";
+	case DiagnosticId::AccessDenied:
+		return "File access was denied";
+	case DiagnosticId::NotAPdfHeader:
+		return "Input does not start with a valid PDF header";
+	case DiagnosticId::DamagedFormat:
+		return "Damaged or malformed PDF syntax";
+	case DiagnosticId::DamagedHeader:
+		return "Damaged PDF header";
+	case DiagnosticId::DamagedToken:
+		return "Damaged lexical token";
+	case DiagnosticId::DamagedObject:
+		return "Damaged indirect object";
+	case DiagnosticId::DamagedDictionary:
+		return "Damaged PDF dictionary";
+	case DiagnosticId::DamagedXRef:
+		return "Damaged cross-reference table or stream";
+	case DiagnosticId::DamagedStream:
+		return "Damaged PDF stream object";
+	case DiagnosticId::DamagedTrailer:
+		return "Damaged PDF trailer";
+	case DiagnosticId::RecoveredViaLinearScan:
+		return "Reconstructed cross-reference table via fallback linear scan";
+	case DiagnosticId::NeedsPassword:
+		return "Document is encrypted and requires a password";
+	case DiagnosticId::WrongPassword:
+		return "Supplied password did not authenticate";
+	case DiagnosticId::UnsupportedEncryption:
+		return "Document uses an unsupported encryption handler";
+	case DiagnosticId::UnsupportedFeature:
+		return "Document uses an unsupported PDF feature";
+	case DiagnosticId::DecompressionLimitExceeded:
+		return "Stream decompression byte limit exceeded";
+	case DiagnosticId::RecursionLimitExceeded:
+		return "Parser recursion depth limit exceeded";
+	case DiagnosticId::SignatureInvalid:
+		return "Digital signature verification failed";
+	case DiagnosticId::ComplianceFailed:
+		return "Document compliance verification failed";
+	case DiagnosticId::OutOfMemory:
+		return "Memory allocation limit exceeded";
+	case DiagnosticId::IoError:
+		return "File I/O operation failed";
+	case DiagnosticId::Cancelled:
+		return "Operation was cancelled";
+	case DiagnosticId::InternalError:
+		return "Internal engine error";
+	case DiagnosticId::BlockedLaunchAction:
+		return "Refused external launch action";
+	case DiagnosticId::BlockedJavaScriptAction:
+		return "Refused PDF JavaScript action";
+	case DiagnosticId::BlockedSubmitFormAction:
+		return "Refused external form submission action";
+	case DiagnosticId::BlockedImportDataAction:
+		return "Refused external data import action";
+	case DiagnosticId::CorruptRecentsStore:
+		return "Recovered from corrupted recent files store";
+	case DiagnosticId::CorruptSettingsStore:
+		return "Recovered from corrupted settings store";
+	}
+	return "Engine diagnostic event";
+}
+
+[[nodiscard]] constexpr DiagnosticId default_diagnostic_id(ErrorCode code) noexcept
+{
+	switch (code) {
+	case ErrorCode::Ok:
+		return DiagnosticId::GenericStatus;
+	case ErrorCode::FileNotFound:
+		return DiagnosticId::FileNotFound;
+	case ErrorCode::AccessDenied:
+		return DiagnosticId::AccessDenied;
+	case ErrorCode::NotAPdf:
+		return DiagnosticId::NotAPdfHeader;
+	case ErrorCode::DamagedFormat:
+		return DiagnosticId::DamagedFormat;
+	case ErrorCode::NeedsPassword:
+		return DiagnosticId::NeedsPassword;
+	case ErrorCode::WrongPassword:
+		return DiagnosticId::WrongPassword;
+	case ErrorCode::UnsupportedEncryption:
+		return DiagnosticId::UnsupportedEncryption;
+	case ErrorCode::UnsupportedFeature:
+		return DiagnosticId::UnsupportedFeature;
+	case ErrorCode::DecompressionLimitExceeded:
+		return DiagnosticId::DecompressionLimitExceeded;
+	case ErrorCode::RecursionLimitExceeded:
+		return DiagnosticId::RecursionLimitExceeded;
+	case ErrorCode::SignatureInvalid:
+		return DiagnosticId::SignatureInvalid;
+	case ErrorCode::ComplianceFailed:
+		return DiagnosticId::ComplianceFailed;
+	case ErrorCode::OutOfMemory:
+		return DiagnosticId::OutOfMemory;
+	case ErrorCode::IoError:
+		return DiagnosticId::IoError;
+	case ErrorCode::Cancelled:
+		return DiagnosticId::Cancelled;
+	case ErrorCode::InternalError:
+		return DiagnosticId::InternalError;
+	}
+	return DiagnosticId::GenericStatus;
+}
+
 [[nodiscard]] constexpr bool should_auto_record_diagnostic(ErrorCode code) noexcept
 {
 	switch (code) {
@@ -92,10 +311,103 @@ enum class ErrorCode : uint32_t {
 
 struct PdfError {
 	ErrorCode code{ErrorCode::Ok};
-	std::string message;
+	std::string message{};
 	std::optional<uint64_t> byte_offset{std::nullopt};
 	std::optional<uint32_t> object_num{std::nullopt};
 	uint16_t generation_num{0};
+
+	PdfError() noexcept = default;
+
+	explicit PdfError(
+		ErrorCode code_in,
+		std::optional<uint64_t> byte_offset_in = std::nullopt,
+		std::optional<uint32_t> object_num_in = std::nullopt,
+		uint16_t generation_num_in = 0) noexcept
+		: code(code_in)
+		, byte_offset(byte_offset_in)
+		, object_num(object_num_in)
+		, generation_num(generation_num_in)
+	{
+	}
+
+	PdfError(
+		ErrorCode code_in,
+		std::string&& message_in,
+		std::optional<uint64_t> byte_offset_in = std::nullopt,
+		std::optional<uint32_t> object_num_in = std::nullopt,
+		uint16_t generation_num_in = 0) noexcept
+		: code(code_in)
+		, message(std::move(message_in))
+		, byte_offset(byte_offset_in)
+		, object_num(object_num_in)
+		, generation_num(generation_num_in)
+	{
+	}
+
+	PdfError(
+		ErrorCode code_in,
+		std::string_view message_in,
+		std::optional<uint64_t> byte_offset_in = std::nullopt,
+		std::optional<uint32_t> object_num_in = std::nullopt,
+		uint16_t generation_num_in = 0) noexcept
+		: code(code_in)
+		, byte_offset(byte_offset_in)
+		, object_num(object_num_in)
+		, generation_num(generation_num_in)
+	{
+		try {
+			message.assign(message_in.data(), message_in.size());
+		} catch (...) {
+			message.clear();
+		}
+	}
+
+	PdfError(
+		ErrorCode code_in,
+		const char* message_in,
+		std::optional<uint64_t> byte_offset_in = std::nullopt,
+		std::optional<uint32_t> object_num_in = std::nullopt,
+		uint16_t generation_num_in = 0) noexcept
+		: PdfError(
+			  code_in,
+			  message_in ? std::string_view(message_in) : std::string_view{},
+			  byte_offset_in,
+			  object_num_in,
+			  generation_num_in)
+	{
+	}
+
+	PdfError(const PdfError& other) noexcept
+		: code(other.code)
+		, byte_offset(other.byte_offset)
+		, object_num(other.object_num)
+		, generation_num(other.generation_num)
+	{
+		try {
+			message = other.message;
+		} catch (...) {
+			message.clear();
+		}
+	}
+
+	PdfError& operator=(const PdfError& other) noexcept
+	{
+		if (this != &other) {
+			code = other.code;
+			byte_offset = other.byte_offset;
+			object_num = other.object_num;
+			generation_num = other.generation_num;
+			try {
+				message = other.message;
+			} catch (...) {
+				message.clear();
+			}
+		}
+		return *this;
+	}
+
+	PdfError(PdfError&&) noexcept = default;
+	PdfError& operator=(PdfError&&) noexcept = default;
 
 	[[nodiscard]] std::string format() const;
 
@@ -108,6 +420,10 @@ namespace detail {
 
 } // namespace detail
 
+// Value-or-PdfError container that never throws C++ exceptions across module
+// boundaries. If constructing or assigning T throws std::bad_alloc, PdfResult
+// captures the failure as ErrorCode::OutOfMemory; any other exception thrown by
+// T is captured as ErrorCode::InternalError.
 template <typename T>
 class [[nodiscard]] PdfResult {
 	static_assert(
@@ -118,40 +434,83 @@ public:
 	using value_type = T;
 	using error_type = PdfError;
 
-	PdfResult(const T& value)
+	PdfResult(const T& value) noexcept
 		requires std::is_copy_constructible_v<T>
-		: storage_(std::in_place_index<0>, value)
+		: storage_(std::in_place_index<0>, PdfError{ErrorCode::InternalError})
 	{
+		emplace_value_from(value);
 	}
 
-	PdfResult(T&& value) noexcept(std::is_nothrow_move_constructible_v<T>)
+	PdfResult(T&& value) noexcept
 		requires std::is_move_constructible_v<T>
-		: storage_(std::in_place_index<0>, std::move(value))
+		: storage_(std::in_place_index<0>, PdfError{ErrorCode::InternalError})
 	{
+		emplace_value_from(std::move(value));
 	}
 
-	PdfResult(const PdfError& error)
-		: storage_(std::in_place_index<1>, error)
+	PdfResult(const PdfError& error) noexcept
+		: storage_(std::in_place_index<0>, error)
 	{
 	}
 
 	PdfResult(PdfError&& error) noexcept
-		: storage_(std::in_place_index<1>, std::move(error))
+		: storage_(std::in_place_index<0>, std::move(error))
 	{
 	}
 
-	PdfResult(const PdfResult&) = default;
-	PdfResult& operator=(const PdfResult&) = default;
-	PdfResult(PdfResult&&) noexcept(
-		std::is_nothrow_move_constructible_v<T> &&
-		std::is_nothrow_move_constructible_v<PdfError>) = default;
-	PdfResult& operator=(PdfResult&&) noexcept(
-		std::is_nothrow_move_assignable_v<T> &&
-		std::is_nothrow_move_assignable_v<PdfError>) = default;
+	PdfResult(const PdfResult& other) noexcept
+		requires std::is_copy_constructible_v<T>
+		: storage_(std::in_place_index<0>, PdfError{ErrorCode::InternalError})
+	{
+		if (other.has_value()) {
+			emplace_value_from(other.value());
+		} else {
+			storage_.template emplace<0>(other.error());
+		}
+	}
+
+	PdfResult(PdfResult&& other) noexcept
+		requires std::is_move_constructible_v<T>
+		: storage_(std::in_place_index<0>, PdfError{ErrorCode::InternalError})
+	{
+		if (other.has_value()) {
+			emplace_value_from(std::move(other).value());
+		} else {
+			storage_.template emplace<0>(std::move(other).error());
+		}
+	}
+
+	PdfResult& operator=(const PdfResult& other) noexcept
+		requires std::is_copy_constructible_v<T>
+	{
+		if (this == &other) {
+			return *this;
+		}
+		if (other.has_value()) {
+			assign_value_from(other.value());
+		} else {
+			storage_.template emplace<0>(other.error());
+		}
+		return *this;
+	}
+
+	PdfResult& operator=(PdfResult&& other) noexcept
+		requires std::is_move_constructible_v<T>
+	{
+		if (this == &other) {
+			return *this;
+		}
+		if (other.has_value()) {
+			assign_value_from(std::move(other).value());
+		} else {
+			storage_.template emplace<0>(std::move(other).error());
+		}
+		return *this;
+	}
 
 	[[nodiscard]] bool has_value() const noexcept
 	{
-		return storage_.index() == 0;
+		return storage_.index() == 1;
 	}
 
 	[[nodiscard]] explicit operator bool() const noexcept
@@ -161,7 +520,7 @@ public:
 
 	[[nodiscard]] T& value() & noexcept
 	{
-		auto* ptr = std::get_if<0>(&storage_);
+		auto* ptr = std::get_if<1>(&storage_);
 		if (!ptr) {
 			detail::fail_fast_invalid_result_access();
 		}
@@ -170,7 +529,7 @@ public:
 
 	[[nodiscard]] const T& value() const& noexcept
 	{
-		const auto* ptr = std::get_if<0>(&storage_);
+		const auto* ptr = std::get_if<1>(&storage_);
 		if (!ptr) {
 			detail::fail_fast_invalid_result_access();
 		}
@@ -179,7 +538,7 @@ public:
 
 	[[nodiscard]] T&& value() && noexcept
 	{
-		auto* ptr = std::get_if<0>(&storage_);
+		auto* ptr = std::get_if<1>(&storage_);
 		if (!ptr) {
 			detail::fail_fast_invalid_result_access();
 		}
@@ -188,7 +547,7 @@ public:
 
 	[[nodiscard]] const T&& value() const&& noexcept
 	{
-		const auto* ptr = std::get_if<0>(&storage_);
+		const auto* ptr = std::get_if<1>(&storage_);
 		if (!ptr) {
 			detail::fail_fast_invalid_result_access();
 		}
@@ -205,7 +564,7 @@ public:
 
 	[[nodiscard]] PdfError& error() & noexcept
 	{
-		auto* ptr = std::get_if<1>(&storage_);
+		auto* ptr = std::get_if<0>(&storage_);
 		if (!ptr) {
 			detail::fail_fast_invalid_result_access();
 		}
@@ -214,7 +573,7 @@ public:
 
 	[[nodiscard]] const PdfError& error() const& noexcept
 	{
-		const auto* ptr = std::get_if<1>(&storage_);
+		const auto* ptr = std::get_if<0>(&storage_);
 		if (!ptr) {
 			detail::fail_fast_invalid_result_access();
 		}
@@ -223,7 +582,7 @@ public:
 
 	[[nodiscard]] PdfError&& error() && noexcept
 	{
-		auto* ptr = std::get_if<1>(&storage_);
+		auto* ptr = std::get_if<0>(&storage_);
 		if (!ptr) {
 			detail::fail_fast_invalid_result_access();
 		}
@@ -232,7 +591,7 @@ public:
 
 	[[nodiscard]] const PdfError&& error() const&& noexcept
 	{
-		const auto* ptr = std::get_if<1>(&storage_);
+		const auto* ptr = std::get_if<0>(&storage_);
 		if (!ptr) {
 			detail::fail_fast_invalid_result_access();
 		}
@@ -260,7 +619,37 @@ public:
 	}
 
 private:
-	std::variant<T, PdfError> storage_;
+	template <typename Arg>
+	void emplace_value_from(Arg&& arg) noexcept
+	{
+		try {
+			storage_.template emplace<1>(std::forward<Arg>(arg));
+		} catch (const std::bad_alloc&) {
+			storage_.template emplace<0>(PdfError{ErrorCode::OutOfMemory});
+		} catch (...) {
+			storage_.template emplace<0>(PdfError{ErrorCode::InternalError});
+		}
+	}
+
+	template <typename Arg>
+	void assign_value_from(Arg&& arg) noexcept
+	{
+		try {
+			if constexpr (std::is_assignable_v<T&, Arg&&>) {
+				if (auto* existing = std::get_if<1>(&storage_)) {
+					*existing = std::forward<Arg>(arg);
+					return;
+				}
+			}
+			storage_.template emplace<1>(std::forward<Arg>(arg));
+		} catch (const std::bad_alloc&) {
+			storage_.template emplace<0>(PdfError{ErrorCode::OutOfMemory});
+		} catch (...) {
+			storage_.template emplace<0>(PdfError{ErrorCode::InternalError});
+		}
+	}
+
+	std::variant<PdfError, T> storage_;
 };
 
 template <>
@@ -271,7 +660,7 @@ public:
 
 	PdfResult() noexcept = default;
 
-	PdfResult(const PdfError& error)
+	PdfResult(const PdfError& error) noexcept
 		: error_(error)
 	{
 	}
@@ -345,13 +734,14 @@ private:
 };
 
 inline constexpr size_t kDiagnosticRingCapacity = 256;
-inline constexpr size_t kMaxDiagnosticMessageBytes = 255;
+inline constexpr size_t kMaxSpanPhaseNameBytes = 63;
 
 struct DiagnosticEntry {
 	uint64_t sequence{0};
 	uint64_t timestamp_utc_ms{0};
 	uint32_t thread_id{0};
 	ErrorCode code{ErrorCode::Ok};
+	DiagnosticId diagnostic_id{DiagnosticId::GenericStatus};
 	std::string message;
 	std::optional<uint64_t> byte_offset{std::nullopt};
 	std::optional<uint32_t> object_num{std::nullopt};
@@ -360,13 +750,26 @@ struct DiagnosticEntry {
 	[[nodiscard]] std::string format() const;
 };
 
+// Maps an ErrorCode and optional diagnostic hint/tag to a closed DiagnosticId
+// without retaining caller-supplied bytes.
+[[nodiscard]] DiagnosticId classify_diagnostic_id(
+	ErrorCode code,
+	std::string_view hint = {}) noexcept;
+
 // Records an engine warning or error in the fixed-capacity 256-slot diagnostic
-// ring buffer without heap allocation inside the ring and emits a structured
-// ETW TraceLogging event containing only error code, offsets, object ID, and
+// ring buffer without heap allocation and emits a structured ETW TraceLogging
+// event containing only error code, diagnostic ID, offsets, object ID, and
 // sequence metadata (zero document byte payloads).
 void record_diagnostic(
 	ErrorCode code,
-	std::string_view message,
+	DiagnosticId diagnostic_id,
+	std::optional<uint64_t> byte_offset = std::nullopt,
+	std::optional<uint32_t> object_num = std::nullopt,
+	uint16_t generation_num = 0) noexcept;
+
+void record_diagnostic(
+	ErrorCode code,
+	std::string_view hint = {},
 	std::optional<uint64_t> byte_offset = std::nullopt,
 	std::optional<uint32_t> object_num = std::nullopt,
 	uint16_t generation_num = 0) noexcept;
@@ -390,10 +793,10 @@ void clear_diagnostics() noexcept;
 // DecompressionLimitExceeded, or RecursionLimitExceeded.
 [[nodiscard]] PdfError make_pdf_error(
 	ErrorCode code,
-	std::string message,
+	std::string_view message = {},
 	std::optional<uint64_t> byte_offset = std::nullopt,
 	std::optional<uint32_t> object_num = std::nullopt,
-	uint16_t generation_num = 0);
+	uint16_t generation_num = 0) noexcept;
 
 // Ensures the "Recto.Diagnostics" ETW TraceLogging provider is registered.
 bool ensure_etw_provider_registered() noexcept;
@@ -403,14 +806,40 @@ bool ensure_etw_provider_registered() noexcept;
 [[nodiscard]] uint64_t etw_diagnostic_events_emitted() noexcept;
 [[nodiscard]] uint64_t etw_span_events_emitted() noexcept;
 
+struct CapturedEtwEvent {
+	std::string provider_name;
+	std::string event_name;
+	std::vector<std::string> field_names;
+	uint64_t sequence{0};
+	uint32_t error_code{0};
+	std::string error_code_name;
+	uint16_t diagnostic_id{0};
+	std::string diagnostic_id_name;
+	bool has_byte_offset{false};
+	uint64_t byte_offset{0};
+	bool has_object_num{false};
+	uint32_t object_num{0};
+	uint16_t generation_num{0};
+	std::string phase;
+	uint64_t duration_us{0};
+	uint64_t document_id{0};
+	uint32_t page_index{0};
+	uint32_t thread_id{0};
+};
+
+// Enables or disables in-process capture of raw TraceLogging EVENT_DATA_DESCRIPTOR
+// packets passed through TLG_EVENT_WRITE_TRANSFER for deterministic verification.
+void set_etw_capture_for_testing(bool enabled) noexcept;
+void clear_captured_etw_events_for_testing() noexcept;
+[[nodiscard]] std::vector<CapturedEtwEvent> captured_etw_events_for_testing();
+
 // RAII scoped ETW TraceLogging span for open, render, and job phases (D16).
-// Emits SpanStart on construction and SpanEnd with elapsed microseconds on
-// destruction (containing only phase name, duration, document/page indices,
-// and thread ID; zero document byte payloads).
+// Copies and sanitizes phase_name into owned stack storage so temporary caller
+// strings never dangle before SpanEnd emission.
 class EtwSpan {
 public:
 	explicit EtwSpan(
-		const char* phase_name,
+		std::string_view phase_name,
 		uint64_t document_id = 0,
 		uint32_t page_index = 0) noexcept;
 	~EtwSpan() noexcept;
@@ -421,9 +850,11 @@ public:
 	EtwSpan& operator=(EtwSpan&&) = delete;
 
 	[[nodiscard]] uint64_t elapsed_us() const noexcept;
+	[[nodiscard]] std::string_view phase_name() const noexcept;
 
 private:
-	const char* phase_name_{""};
+	std::array<char, kMaxSpanPhaseNameBytes + 1> phase_name_{};
+	uint16_t phase_len_{0};
 	uint64_t document_id_{0};
 	uint32_t page_index_{0};
 	uint32_t thread_id_{0};

@@ -8,6 +8,7 @@
 #include <array>
 #include <atomic>
 #include <memory>
+#include <new>
 #include <set>
 #include <string>
 #include <thread>
@@ -45,6 +46,58 @@ PdfResult<void> chain_validate(int a, int b)
 	RECTO_PDF_RETURN_IF_ERROR(validate_non_negative(b));
 	return PdfResult<void>::ok();
 }
+
+struct ThrowingPayload {
+	static inline bool throw_non_std = false;
+	static inline bool throw_bad_alloc = false;
+
+	int v{0};
+
+	ThrowingPayload() noexcept = default;
+	explicit ThrowingPayload(int x) noexcept : v(x) {}
+
+	ThrowingPayload(const ThrowingPayload& other)
+		: v(other.v)
+	{
+		if (throw_bad_alloc) {
+			throw std::bad_alloc();
+		}
+		if (throw_non_std) {
+			throw 1;
+		}
+	}
+
+	ThrowingPayload(ThrowingPayload&& other)
+		: v(other.v)
+	{
+		if (throw_bad_alloc) {
+			throw std::bad_alloc();
+		}
+		if (throw_non_std) {
+			throw 1;
+		}
+	}
+
+	ThrowingPayload& operator=(const ThrowingPayload& other)
+	{
+		if (throw_bad_alloc) {
+			throw std::bad_alloc();
+		}
+		if (throw_non_std) {
+			throw 1;
+		}
+		v = other.v;
+		return *this;
+	}
+
+	// Non-throwing move assignment paired with potentially throwing move
+	// construction, exercising variant state transitions from error -> value.
+	ThrowingPayload& operator=(ThrowingPayload&& other) noexcept
+	{
+		v = other.v;
+		return *this;
+	}
+};
 
 TEST(PdfError, ResultValueAndError)
 {
@@ -143,6 +196,42 @@ TEST(PdfError, ResultValueAndError)
 	RECTO_ASSERT_OK(chain_validate(1, 2));
 	RECTO_EXPECT_ERR(chain_validate(1, -1), ErrorCode::DamagedFormat);
 
+	// No-exceptions boundary guarantee: throwing copy/move constructors and
+	// error->value move-assignment never propagate exceptions or call terminate;
+	// std::bad_alloc maps to ErrorCode::OutOfMemory and other exceptions map to
+	// ErrorCode::InternalError.
+	ThrowingPayload::throw_non_std = false;
+	ThrowingPayload::throw_bad_alloc = false;
+	PdfResult<ThrowingPayload> source{ThrowingPayload{55}};
+	ASSERT_TRUE(source.has_value());
+	EXPECT_EQ(source->v, 55);
+
+	PdfResult<ThrowingPayload> target{PdfError{ErrorCode::IoError}};
+	ThrowingPayload::throw_non_std = true;
+	target = std::move(source);
+	EXPECT_FALSE(target.has_value());
+	EXPECT_EQ(target.error().code, ErrorCode::InternalError);
+
+	const ThrowingPayload plain_payload{88};
+	PdfResult<ThrowingPayload> copy_ctor_res{plain_payload};
+	EXPECT_FALSE(copy_ctor_res.has_value());
+	EXPECT_EQ(copy_ctor_res.error().code, ErrorCode::InternalError);
+
+	ThrowingPayload::throw_non_std = false;
+	ThrowingPayload::throw_bad_alloc = true;
+	PdfResult<ThrowingPayload> bad_alloc_ctor{plain_payload};
+	EXPECT_FALSE(bad_alloc_ctor.has_value());
+	EXPECT_EQ(bad_alloc_ctor.error().code, ErrorCode::OutOfMemory);
+
+	ThrowingPayload::throw_bad_alloc = false;
+	PdfResult<ThrowingPayload> good_source{ThrowingPayload{99}};
+	PdfResult<ThrowingPayload> bad_alloc_target{PdfError{ErrorCode::IoError}};
+	ThrowingPayload::throw_bad_alloc = true;
+	bad_alloc_target = good_source;
+	EXPECT_FALSE(bad_alloc_target.has_value());
+	EXPECT_EQ(bad_alloc_target.error().code, ErrorCode::OutOfMemory);
+	ThrowingPayload::throw_bad_alloc = false;
+
 	// Automatic diagnostic recording on make_pdf_error for DamagedFormat,
 	// DecompressionLimitExceeded, and RecursionLimitExceeded.
 	clear_diagnostics();
@@ -162,18 +251,21 @@ TEST(PdfError, ResultValueAndError)
 	const auto tail = diagnostics_tail(10);
 	ASSERT_EQ(tail.size(), 3u);
 	EXPECT_EQ(tail[0].code, auto1.code);
-	EXPECT_EQ(tail[0].message, "bad dictionary");
+	EXPECT_EQ(tail[0].diagnostic_id, DiagnosticId::DamagedDictionary);
+	EXPECT_EQ(tail[0].message, diagnostic_id_message(DiagnosticId::DamagedDictionary));
 	EXPECT_EQ(tail[0].byte_offset, std::optional<uint64_t>(128));
 	EXPECT_EQ(tail[0].object_num, std::optional<uint32_t>(4));
 	EXPECT_EQ(tail[0].generation_num, 0u);
 
 	EXPECT_EQ(tail[1].code, auto2.code);
-	EXPECT_EQ(tail[1].message, "stream exceeds 256 MB");
+	EXPECT_EQ(tail[1].diagnostic_id, DiagnosticId::DecompressionLimitExceeded);
+	EXPECT_EQ(tail[1].message, diagnostic_id_message(DiagnosticId::DecompressionLimitExceeded));
 	EXPECT_EQ(tail[1].byte_offset, std::optional<uint64_t>(512));
 	EXPECT_EQ(tail[1].object_num, std::optional<uint32_t>(9));
 
 	EXPECT_EQ(tail[2].code, auto3.code);
-	EXPECT_EQ(tail[2].message, "nesting depth > 64");
+	EXPECT_EQ(tail[2].diagnostic_id, DiagnosticId::RecursionLimitExceeded);
+	EXPECT_EQ(tail[2].message, diagnostic_id_message(DiagnosticId::RecursionLimitExceeded));
 	EXPECT_EQ(tail[2].byte_offset, std::optional<uint64_t>(768));
 	EXPECT_EQ(tail[2].object_num, std::optional<uint32_t>(11));
 	EXPECT_EQ(tail[2].generation_num, 1u);
@@ -193,7 +285,7 @@ TEST(PdfError, DiagnosticRingWraparound)
 	for (uint64_t i = 0; i < 1000; ++i) {
 		record_diagnostic(
 			ErrorCode::DamagedFormat,
-			"entry-" + std::to_string(i),
+			DiagnosticId::DamagedToken,
 			i * 16,
 			static_cast<uint32_t>(i + 1),
 			0);
@@ -207,7 +299,8 @@ TEST(PdfError, DiagnosticRingWraparound)
 	for (size_t idx = 0; idx < kDiagnosticRingCapacity; ++idx) {
 		const uint64_t expected_i = 1000 - kDiagnosticRingCapacity + idx;
 		EXPECT_EQ(full_tail[idx].sequence, expected_i + 1);
-		EXPECT_EQ(full_tail[idx].message, "entry-" + std::to_string(expected_i));
+		EXPECT_EQ(full_tail[idx].diagnostic_id, DiagnosticId::DamagedToken);
+		EXPECT_EQ(full_tail[idx].message, diagnostic_id_message(DiagnosticId::DamagedToken));
 		EXPECT_EQ(full_tail[idx].byte_offset, std::optional<uint64_t>(expected_i * 16));
 		EXPECT_EQ(
 			full_tail[idx].object_num,
@@ -225,19 +318,18 @@ TEST(PdfError, DiagnosticRingWraparound)
 	for (size_t idx = 0; idx < 10; ++idx) {
 		const uint64_t expected_i = 990 + idx;
 		EXPECT_EQ(short_tail[idx].sequence, expected_i + 1);
-		EXPECT_EQ(short_tail[idx].message, "entry-" + std::to_string(expected_i));
+		EXPECT_EQ(short_tail[idx].byte_offset, std::optional<uint64_t>(expected_i * 16));
 	}
 
-	// Verify message truncation and control-byte sanitization.
-	std::string overlong(400, 'A');
-	overlong[0] = '\x00';
-	overlong[1] = '\x1F';
-	overlong[2] = '\x7F';
-	record_diagnostic(ErrorCode::DamagedFormat, overlong, 8192, 99, 3);
+	// Freeze check: caller-supplied arbitrary strings (such as synthetic
+	// document text or binary bytes) are never retained in the diagnostic ring.
+	record_diagnostic(ErrorCode::DamagedFormat, "synthetic document text", 8192, 99, 3);
 	const auto latest = diagnostics_tail(1);
 	ASSERT_EQ(latest.size(), 1u);
-	EXPECT_EQ(latest[0].message.size(), kMaxDiagnosticMessageBytes);
-	EXPECT_EQ(latest[0].message.substr(0, 4), "???A");
+	EXPECT_EQ(latest[0].diagnostic_id, DiagnosticId::DamagedFormat);
+	EXPECT_EQ(latest[0].message, diagnostic_id_message(DiagnosticId::DamagedFormat));
+	EXPECT_EQ(latest[0].message.find("synthetic"), std::string::npos);
+	EXPECT_EQ(latest[0].format().find("synthetic"), std::string::npos);
 	EXPECT_NE(latest[0].format().find("(offset=8192, obj=99 3 R)"), std::string::npos);
 
 	clear_diagnostics();
@@ -266,7 +358,7 @@ TEST(PdfError, ConcurrentDiagnosticRecording)
 			for (size_t i = 0; i < kOpsPerThread; ++i) {
 				record_diagnostic(
 					ErrorCode::DamagedFormat,
-					"concurrent-diag",
+					DiagnosticId::DamagedObject,
 					static_cast<uint64_t>(t * kOpsPerThread + i),
 					static_cast<uint32_t>(i + 1),
 					static_cast<uint16_t>(t));
@@ -304,16 +396,93 @@ TEST(PdfError, ConcurrentDiagnosticRecording)
 
 TEST(PdfError, EtwTraceLoggingProviderAndSpans)
 {
+	clear_diagnostics();
 	EXPECT_TRUE(ensure_etw_provider_registered());
 	EXPECT_TRUE(is_etw_provider_registered());
 	EXPECT_EQ(etw_provider_name(), std::string_view("Recto.Diagnostics"));
 
+	// Capture actual EVENT_DATA_DESCRIPTOR packets emitted via TraceLoggingWrite
+	// and verify provider metadata, event names, field names, scalar values,
+	// temporary phase-name lifetime safety, and zero document byte payloads.
+	clear_captured_etw_events_for_testing();
+	set_etw_capture_for_testing(true);
+
 	const uint64_t spans_before = etw_span_events_emitted();
 	{
-		EtwSpan span("OpenDocument", 42, 0);
+		// Construct with a temporary std::string to prove EtwSpan owns its
+		// phase name buffer across the scope until ~EtwSpan() emits SpanEnd.
+		EtwSpan span(std::string("OpenDocument").c_str(), 42, 7);
+		EXPECT_EQ(span.phase_name(), "OpenDocument");
 		EXPECT_GE(span.elapsed_us(), 0u);
+		record_diagnostic(ErrorCode::DamagedFormat, "synthetic document text", 2048, 19, 2);
 	}
-	EXPECT_EQ(etw_span_events_emitted() - spans_before, 2u);
+	{
+		// Non-identifier phase strings with spaces/payloads are sanitized to UnspecifiedPhase.
+		EtwSpan unsafe_span("synthetic document text", 9, 1);
+		EXPECT_EQ(unsafe_span.phase_name(), "UnspecifiedPhase");
+	}
+	set_etw_capture_for_testing(false);
+
+	EXPECT_EQ(etw_span_events_emitted() - spans_before, 4u);
+	const auto captured = captured_etw_events_for_testing();
+	ASSERT_EQ(captured.size(), 5u);
+
+	// 1. SpanStart for OpenDocument
+	EXPECT_EQ(captured[0].provider_name, "Recto.Diagnostics");
+	EXPECT_EQ(captured[0].event_name, "SpanStart");
+	const std::vector<std::string> expected_start_fields = {
+		"Phase", "DocumentId", "PageIndex", "ThreadId"};
+	EXPECT_EQ(captured[0].field_names, expected_start_fields);
+	EXPECT_EQ(captured[0].phase, "OpenDocument");
+	EXPECT_EQ(captured[0].document_id, 42u);
+	EXPECT_EQ(captured[0].page_index, 7u);
+	EXPECT_GT(captured[0].thread_id, 0u);
+
+	// 2. Diagnostic inside the span
+	EXPECT_EQ(captured[1].provider_name, "Recto.Diagnostics");
+	EXPECT_EQ(captured[1].event_name, "Diagnostic");
+	const std::vector<std::string> expected_diag_fields = {
+		"Sequence",
+		"ErrorCode",
+		"ErrorCodeName",
+		"DiagnosticId",
+		"DiagnosticIdName",
+		"HasByteOffset",
+		"ByteOffset",
+		"HasObjectNum",
+		"ObjectNum",
+		"GenerationNum",
+		"ThreadId"};
+	EXPECT_EQ(captured[1].field_names, expected_diag_fields);
+	EXPECT_EQ(captured[1].sequence, 1u);
+	EXPECT_EQ(captured[1].error_code, static_cast<uint32_t>(ErrorCode::DamagedFormat));
+	EXPECT_EQ(captured[1].error_code_name, "DamagedFormat");
+	EXPECT_EQ(captured[1].diagnostic_id, static_cast<uint16_t>(DiagnosticId::DamagedFormat));
+	EXPECT_EQ(captured[1].diagnostic_id_name, "DamagedFormat");
+	EXPECT_TRUE(captured[1].has_byte_offset);
+	EXPECT_EQ(captured[1].byte_offset, 2048u);
+	EXPECT_TRUE(captured[1].has_object_num);
+	EXPECT_EQ(captured[1].object_num, 19u);
+	EXPECT_EQ(captured[1].generation_num, 2u);
+	EXPECT_GT(captured[1].thread_id, 0u);
+
+	// 3. SpanEnd for OpenDocument (proving non-dangling phase name at destruction)
+	EXPECT_EQ(captured[2].provider_name, "Recto.Diagnostics");
+	EXPECT_EQ(captured[2].event_name, "SpanEnd");
+	const std::vector<std::string> expected_end_fields = {
+		"Phase", "DurationUs", "DocumentId", "PageIndex", "ThreadId"};
+	EXPECT_EQ(captured[2].field_names, expected_end_fields);
+	EXPECT_EQ(captured[2].phase, "OpenDocument");
+	EXPECT_EQ(captured[2].document_id, 42u);
+	EXPECT_EQ(captured[2].page_index, 7u);
+	EXPECT_EQ(captured[2].thread_id, captured[0].thread_id);
+
+	// 4 & 5. Sanitized SpanStart / SpanEnd
+	EXPECT_EQ(captured[3].event_name, "SpanStart");
+	EXPECT_EQ(captured[3].phase, "UnspecifiedPhase");
+	EXPECT_EQ(captured[4].event_name, "SpanEnd");
+	EXPECT_EQ(captured[4].phase, "UnspecifiedPhase");
+	clear_captured_etw_events_for_testing();
 
 	constexpr size_t kThreadCount = 8;
 	constexpr size_t kOpsPerThread = 1250; // 8 * 1250 = 10,000 concurrent spans & diagnostics
@@ -336,7 +505,7 @@ TEST(PdfError, EtwTraceLoggingProviderAndSpans)
 				RECTO_ETW_SPAN("DecodeFilter");
 				record_diagnostic(
 					ErrorCode::DamagedFormat,
-					"etw-span-test",
+					DiagnosticId::DamagedStream,
 					static_cast<uint64_t>(i),
 					static_cast<uint32_t>(t + 1),
 					0);
