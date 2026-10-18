@@ -164,13 +164,66 @@ TEST(PdfXref, HeaderOffsetAdjustment)
 
 TEST(PdfXref, ClassicHeaderOffsetAdjustment)
 {
+	// 1. Standard 32-byte preamble on simple-1p.pdf.
 	constexpr std::string_view kPreamble32 = "JUNK_PREAMBLE_32_BYTES_PADDING!\n";
 	static_assert(kPreamble32.size() == 32);
 	verify_simple_1p_with_preamble(as_bytes(kPreamble32));
+
+	// 2. Preamble containing an invalid %PDF- prefix followed by a valid %PDF-1.7 header.
+	constexpr std::string_view kFalsePrefixPreamble = "JUNK %PDF-invalid\n%PDF-2.9\n";
+	verify_simple_1p_with_preamble(as_bytes(kFalsePrefixPreamble));
+
+	// 3. Valid %PDF-2.0 header succeeds, while %PDF-2.1 or %PDF-1.7x without a valid header fails.
+	{
+		std::string ver;
+		auto ok20 = XrefTable::locate_header_offset(as_bytes("PRE%PDF-2.0\n"), &ver);
+		RECTO_ASSERT_OK(ok20);
+		EXPECT_EQ(*ok20, 3u);
+		EXPECT_EQ(ver, "2.0");
+
+		RECTO_EXPECT_ERR(
+			XrefTable::locate_header_offset(as_bytes("%PDF-2.1\n")),
+			ErrorCode::DamagedFormat);
+		RECTO_EXPECT_ERR(
+			XrefTable::locate_header_offset(as_bytes("%PDF-1.70\n")),
+			ErrorCode::DamagedFormat);
+		RECTO_EXPECT_ERR(
+			XrefTable::locate_header_offset(as_bytes("NO_HEADER_HERE")),
+			ErrorCode::NotAPdf);
+	}
+
+	// 4. Preamble combined with /Prev incremental revisions (render/incremental-2rev.pdf).
+	{
+		const auto inc_bytes = test::read_file_bytes(
+			test::corpus_path("render/incremental-2rev.pdf"));
+		ASSERT_FALSE(inc_bytes.empty());
+
+		std::vector<uint8_t> buf;
+		buf.insert(buf.end(), kPreamble32.begin(), kPreamble32.end());
+		buf.insert(buf.end(), inc_bytes.begin(), inc_bytes.end());
+
+		auto xref_res = XrefTable::parse(buf);
+		RECTO_ASSERT_OK(xref_res);
+		EXPECT_EQ(xref_res->header_offset(), 32u);
+		EXPECT_EQ(xref_res->revision_count(), 2u);
+
+		auto info_val = xref_res->resolve_object(buf, IndirectRef{6u, 0u});
+		RECTO_ASSERT_OK(info_val);
+		ASSERT_TRUE(info_val->is_dict());
+		ASSERT_NE(info_val->as_dict()->get_string("Title"), nullptr);
+		EXPECT_EQ(
+			info_val->as_dict()->get_string("Title")->as_byte_view(),
+			"Incremental Revision 2");
+
+		auto cat_val = xref_res->resolve_object(buf, IndirectRef{1u, 0u});
+		RECTO_ASSERT_OK(cat_val);
+		EXPECT_EQ(cat_val->as_dict()->get_name("Type"), "Catalog");
+	}
 }
 
 TEST(PdfXref, IncrementalTwoRevisions)
 {
+	// 1. Corpus fixture render/incremental-2rev.pdf.
 	const auto bytes = test::read_file_bytes(
 		test::corpus_path("render/incremental-2rev.pdf"));
 	ASSERT_FALSE(bytes.empty());
@@ -216,6 +269,79 @@ TEST(PdfXref, IncrementalTwoRevisions)
 	auto stm7_val = xref.resolve_object(bytes, IndirectRef{7u, 0u});
 	RECTO_ASSERT_OK(stm7_val);
 	EXPECT_TRUE(stm7_val->is_stream());
+
+	// 2. Trailer merging fallback & newest-revision precedence for /Root, /Info, /Encrypt, /ID, /Size,
+	// plus incremental free ('f') entry overriding an older live ('n') entry.
+	{
+		std::string pdf_base = "%PDF-1.7\n";
+		const size_t off1 = pdf_base.size();
+		pdf_base += "1 0 obj\n<< /Type /Catalog >>\nendobj\n";
+		const size_t off2 = pdf_base.size();
+		pdf_base += "2 0 obj\n(LiveInRev1)\nendobj\n";
+		const size_t off3 = pdf_base.size();
+		pdf_base += "3 0 obj\n(UntouchedRev1)\nendobj\n";
+
+		const size_t xref1_off = pdf_base.size();
+		pdf_base += "xref\n0 4\n0000000000 65535 f \n";
+		pdf_base += std::to_string(off1) + " 0 n\n";
+		pdf_base += std::to_string(off2) + " 0 n\n";
+		pdf_base += std::to_string(off3) + " 0 n\n";
+		pdf_base += "trailer\n<< /Size 4 /Root 1 0 R /Info 10 0 R /Encrypt 11 0 R /ID [(id1a) (id1b)] >>\n";
+		pdf_base += "startxref\n" + std::to_string(xref1_off) + "\n%%EOF\n";
+
+		// Case A: Revision 2 omits /Info, /Encrypt, /ID and frees object 2 (0000000000 00001 f).
+		std::string pdf_fallback = pdf_base;
+		const size_t xref2_a = pdf_fallback.size();
+		pdf_fallback += "xref\n2 1\n0000000000 00001 f \n";
+		pdf_fallback += "trailer\n<< /Size 5 /Root 1 0 R /Prev " + std::to_string(xref1_off) + " >>\n";
+		pdf_fallback += "startxref\n" + std::to_string(xref2_a) + "\n%%EOF\n";
+
+		auto res_a = XrefTable::parse(as_bytes(pdf_fallback));
+		RECTO_ASSERT_OK(res_a);
+		EXPECT_EQ(res_a->revision_count(), 2u);
+		EXPECT_EQ(res_a->root_ref(), (IndirectRef{1u, 0u}));
+		EXPECT_EQ(res_a->info_ref(), (IndirectRef{10u, 0u}));
+		EXPECT_EQ(res_a->encrypt_ref(), (IndirectRef{11u, 0u}));
+		EXPECT_EQ(res_a->trailer().get_int("Size"), 5);
+		const PdfArray* id_arr_a = res_a->trailer().get_array("ID");
+		ASSERT_NE(id_arr_a, nullptr);
+		ASSERT_EQ(id_arr_a->size(), 2u);
+		EXPECT_EQ((*id_arr_a)[0].as_string()->as_byte_view(), "id1a");
+
+		// Object 2 was marked free in revision 2 and must resolve to PdfNull.
+		ASSERT_NE(res_a->find(2), nullptr);
+		EXPECT_TRUE(res_a->find(2)->is_free());
+		auto resolved_2 = res_a->resolve_object(as_bytes(pdf_fallback), IndirectRef{2u, 0u});
+		RECTO_ASSERT_OK(resolved_2);
+		EXPECT_TRUE(resolved_2->is_null());
+
+		// Object 3 from revision 1 remains live.
+		auto resolved_3 = res_a->resolve_object(as_bytes(pdf_fallback), IndirectRef{3u, 0u});
+		RECTO_ASSERT_OK(resolved_3);
+		EXPECT_EQ(resolved_3->as_string()->as_byte_view(), "UntouchedRev1");
+
+		// Case B: Revision 2 overrides /Root, /Info, /Encrypt, /ID, and /Size.
+		std::string pdf_override = pdf_base;
+		const size_t off4 = pdf_override.size();
+		pdf_override += "4 0 obj\n<< /Type /Catalog /Version /2.0 >>\nendobj\n";
+		const size_t xref2_b = pdf_override.size();
+		pdf_override += "xref\n4 1\n" + std::to_string(off4) + " 0 n\n";
+		pdf_override +=
+			"trailer\n<< /Size 6 /Root 4 0 R /Info 20 0 R /Encrypt 21 0 R /ID [(id2a) (id2b)] /Prev " +
+			std::to_string(xref1_off) + " >>\n";
+		pdf_override += "startxref\n" + std::to_string(xref2_b) + "\n%%EOF\n";
+
+		auto res_b = XrefTable::parse(as_bytes(pdf_override));
+		RECTO_ASSERT_OK(res_b);
+		EXPECT_EQ(res_b->root_ref(), (IndirectRef{4u, 0u}));
+		EXPECT_EQ(res_b->info_ref(), (IndirectRef{20u, 0u}));
+		EXPECT_EQ(res_b->encrypt_ref(), (IndirectRef{21u, 0u}));
+		EXPECT_EQ(res_b->trailer().get_int("Size"), 6);
+		const PdfArray* id_arr_b = res_b->trailer().get_array("ID");
+		ASSERT_NE(id_arr_b, nullptr);
+		ASSERT_EQ(id_arr_b->size(), 2u);
+		EXPECT_EQ((*id_arr_b)[0].as_string()->as_byte_view(), "id2a");
+	}
 }
 
 TEST(PdfXref, CyclicPrevAndRevisionCeiling)
@@ -288,6 +414,71 @@ TEST(PdfXref, CyclicPrevAndRevisionCeiling)
 	{
 		const std::string pdf_257 = build_n_revisions(257);
 		RECTO_EXPECT_ERR(XrefTable::parse(as_bytes(pdf_257)), ErrorCode::DamagedFormat);
+	}
+
+	// 4. Hybrid /XRefStm guards: cyclic, out-of-bounds, or non-integer fail with DamagedFormat;
+	// valid in-bounds /XRefStm returns UnsupportedFeature prior to §6.
+	{
+		std::string pdf_base = "%PDF-1.7\n";
+		const size_t obj1_off = pdf_base.size();
+		pdf_base += "1 0 obj\n<< /Type /Catalog >>\nendobj\n";
+		const size_t stm_off = pdf_base.size();
+		pdf_base += "2 0 obj\n<< /Type /XRef /Size 3 >>\nendobj\n";
+		const size_t xref_off = pdf_base.size();
+
+		// Cyclic /XRefStm pointing to current_xref_offset -> DamagedFormat.
+		std::string pdf_cyclic_stm = pdf_base +
+			"xref\n0 1\n0000000000 65535 f \ntrailer\n<< /Size 3 /Root 1 0 R /XRefStm " +
+			std::to_string(xref_off) + " >>\nstartxref\n" + std::to_string(xref_off) + "\n%%EOF\n";
+		RECTO_EXPECT_ERR(XrefTable::parse(as_bytes(pdf_cyclic_stm)), ErrorCode::DamagedFormat);
+
+		// Out-of-bounds /XRefStm -> DamagedFormat.
+		std::string pdf_oob_stm = pdf_base +
+			"xref\n0 1\n0000000000 65535 f \ntrailer\n<< /Size 3 /Root 1 0 R /XRefStm 999999 >>\nstartxref\n" +
+			std::to_string(xref_off) + "\n%%EOF\n";
+		RECTO_EXPECT_ERR(XrefTable::parse(as_bytes(pdf_oob_stm)), ErrorCode::DamagedFormat);
+
+		// Non-integer /XRefStm -> DamagedFormat.
+		std::string pdf_bad_stm = pdf_base +
+			"xref\n0 1\n0000000000 65535 f \ntrailer\n<< /Size 3 /Root 1 0 R /XRefStm (bad) >>\nstartxref\n" +
+			std::to_string(xref_off) + "\n%%EOF\n";
+		RECTO_EXPECT_ERR(XrefTable::parse(as_bytes(pdf_bad_stm)), ErrorCode::DamagedFormat);
+
+		// Valid in-bounds /XRefStm -> UnsupportedFeature prior to §6.
+		std::string pdf_valid_stm = pdf_base +
+			"xref\n0 2\n0000000000 65535 f \n" + std::to_string(obj1_off) +
+			" 0 n\ntrailer\n<< /Size 3 /Root 1 0 R /XRefStm " + std::to_string(stm_off) +
+			" >>\nstartxref\n" + std::to_string(xref_off) + "\n%%EOF\n";
+		RECTO_EXPECT_ERR(XrefTable::parse(as_bytes(pdf_valid_stm)), ErrorCode::UnsupportedFeature);
+	}
+
+	// 5. Cumulative allocation ceiling across subsections and malformed numeric boundaries.
+	{
+		// Two subsections of 600,000 entries each: individually <= kMaxXrefSubsectionCount (1,000,000),
+		// but cumulative 1,200,000 > kMaxXrefTotalEntries (1,000,000).
+		// Wait: to test the second subsection's cumulative check without writing 600,000 text rows,
+		// test 1 subsection of 1 row + 1 subsection of 1,000,000 rows (1 + 1,000,000 = 1,000,001 > kMaxXrefTotalEntries)!
+		std::string pdf_cum = "%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n";
+		const size_t xref_cum = pdf_cum.size();
+		pdf_cum += "xref\n0 1\n0000000000 65535 f \n1 1000000\n0000000009 00000 n \n";
+		pdf_cum += "trailer\n<< /Size 1000001 /Root 1 0 R >>\nstartxref\n" +
+			std::to_string(xref_cum) + "\n%%EOF\n";
+		RECTO_EXPECT_ERR(XrefTable::parse(as_bytes(pdf_cum)), ErrorCode::DamagedFormat);
+
+		// Malformed numeric boundaries: 32-bit object ID overflow (4294967295 + 2) and generation > 65535.
+		std::string pdf_id_ovf = "%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n";
+		const size_t xref_ovf = pdf_id_ovf.size();
+		pdf_id_ovf += "xref\n4294967295 2\n0000000000 65535 f \n0000000000 65535 f \n";
+		pdf_id_ovf += "trailer\n<< /Size 2 /Root 1 0 R >>\nstartxref\n" +
+			std::to_string(xref_ovf) + "\n%%EOF\n";
+		RECTO_EXPECT_ERR(XrefTable::parse(as_bytes(pdf_id_ovf)), ErrorCode::DamagedFormat);
+
+		std::string pdf_gen_ovf = "%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n";
+		const size_t xref_gen = pdf_gen_ovf.size();
+		pdf_gen_ovf += "xref\n0 1\n0000000000 65536 f \n";
+		pdf_gen_ovf += "trailer\n<< /Size 1 /Root 1 0 R >>\nstartxref\n" +
+			std::to_string(xref_gen) + "\n%%EOF\n";
+		RECTO_EXPECT_ERR(XrefTable::parse(as_bytes(pdf_gen_ovf)), ErrorCode::DamagedFormat);
 	}
 }
 

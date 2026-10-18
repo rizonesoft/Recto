@@ -140,63 +140,57 @@ PdfResult<uint64_t> XrefTable::locate_header_offset(
 		}
 
 		const size_t search_window = std::min<size_t>(file_bytes.size(), kHeaderSearchBytes);
-		std::optional<size_t> header_pos = std::nullopt;
+		std::optional<size_t> first_prefix_pos = std::nullopt;
 		if (search_window >= kPdfHeaderPrefix.size()) {
 			const size_t max_pos = search_window - kPdfHeaderPrefix.size();
 			for (size_t i = 0; i <= max_pos; ++i) {
 				if (std::memcmp(
 						file_bytes.data() + i,
 						kPdfHeaderPrefix.data(),
-						kPdfHeaderPrefix.size()) == 0) {
-					header_pos = i;
-					break;
+						kPdfHeaderPrefix.size()) != 0) {
+					continue;
 				}
+				if (!first_prefix_pos.has_value()) {
+					first_prefix_pos = i;
+				}
+				if (file_bytes.size() - i < 8) {
+					continue;
+				}
+
+				const uint8_t major = file_bytes[i + 5];
+				const uint8_t dot = file_bytes[i + 6];
+				const uint8_t minor = file_bytes[i + 7];
+				const bool valid_version = (dot == '.') &&
+					((major == '1' && minor >= '0' && minor <= '9') ||
+					 (major == '2' && minor == '0'));
+				if (!valid_version) {
+					continue;
+				}
+				if (i + 8 < file_bytes.size() && Lexer::is_pdf_regular(file_bytes[i + 8])) {
+					continue;
+				}
+
+				if (out_version != nullptr) {
+					out_version->assign(
+						{static_cast<char>(major), '.', static_cast<char>(minor)});
+				}
+				return static_cast<uint64_t>(i);
 			}
 		}
 
-		if (!header_pos.has_value()) {
-			return make_xref_error(
-				ErrorCode::NotAPdf,
-				DiagnosticId::NotAPdfHeader,
-				"Missing %PDF- header within the first 1024 bytes",
-				0);
-		}
-
-		const size_t pos = *header_pos;
-		if (file_bytes.size() - pos < 8) {
+		if (first_prefix_pos.has_value()) {
 			return make_xref_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedHeader,
-				"Truncated %PDF-x.y version header",
-				pos);
+				"Truncated or invalid %PDF-1.x / %PDF-2.0 version header",
+				*first_prefix_pos);
 		}
 
-		const uint8_t major = file_bytes[pos + 5];
-		const uint8_t dot = file_bytes[pos + 6];
-		const uint8_t minor = file_bytes[pos + 7];
-		if ((major != '1' && major != '2') ||
-			dot != '.' ||
-			minor < '0' ||
-			minor > '9') {
-			return make_xref_error(
-				ErrorCode::DamagedFormat,
-				DiagnosticId::DamagedHeader,
-				"Invalid PDF version in %PDF-x.y header",
-				pos);
-		}
-
-		if (pos + 8 < file_bytes.size() && Lexer::is_pdf_regular(file_bytes[pos + 8])) {
-			return make_xref_error(
-				ErrorCode::DamagedFormat,
-				DiagnosticId::DamagedHeader,
-				"Malformed trailing character after %PDF-x.y version",
-				pos);
-		}
-
-		if (out_version != nullptr) {
-			out_version->assign({static_cast<char>(major), '.', static_cast<char>(minor)});
-		}
-		return static_cast<uint64_t>(pos);
+		return make_xref_error(
+			ErrorCode::NotAPdf,
+			DiagnosticId::NotAPdfHeader,
+			"Missing %PDF- header within the first 1024 bytes",
+			0);
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(
 			ErrorCode::OutOfMemory,
@@ -309,6 +303,7 @@ PdfResult<XrefTable> XrefTable::parse(std::span<const uint8_t> file_bytes) noexc
 
 		std::unordered_set<uint64_t> visited_offsets;
 		uint64_t current_xref_offset = raw_startxref + header_off;
+		uint64_t total_rows_parsed = 0;
 
 		while (true) {
 			if (table.revision_count_ >= kMaxXrefRevisions) {
@@ -386,6 +381,14 @@ PdfResult<XrefTable> XrefTable::parse(std::span<const uint8_t> file_bytes) noexc
 						"xref subsection object range overflows 32-bit object numbers",
 						first_tok.byte_offset);
 				}
+				if (count > kMaxXrefTotalEntries - total_rows_parsed) {
+					return make_xref_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedXRef,
+						"Cumulative xref entry count across subsections exceeds maximum budget",
+						count_tok.byte_offset);
+				}
+				total_rows_parsed += count;
 
 				for (uint64_t i = 0; i < count; ++i) {
 					Token off_tok;
@@ -485,7 +488,8 @@ PdfResult<XrefTable> XrefTable::parse(std::span<const uint8_t> file_bytes) noexc
 				return merge_res.error();
 			}
 
-			// Guard hybrid `/XRefStm` offsets against cycles and out-of-bounds pointers.
+			// Guard hybrid `/XRefStm` offsets against cycles and out-of-bounds pointers,
+			// and reject hybrid XRef streams with UnsupportedFeature until §6.
 			if (const PdfValue* xref_stm_val = rev_trailer.get("XRefStm")) {
 				const auto stm_off_opt = xref_stm_val->as_int();
 				if (!stm_off_opt.has_value() || *stm_off_opt < 0) {
@@ -512,6 +516,10 @@ PdfResult<XrefTable> XrefTable::parse(std::span<const uint8_t> file_bytes) noexc
 						"Cyclic /XRefStm cross-reference offset detected",
 						adjusted_stm_off);
 				}
+				return make_pdf_error(
+					ErrorCode::UnsupportedFeature,
+					"Hybrid /XRefStm cross-reference stream requires PDF 1.5+ XRef stream parser",
+					adjusted_stm_off);
 			}
 
 			// Follow `/Prev` incremental update chain if present.

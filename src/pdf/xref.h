@@ -24,6 +24,7 @@ inline constexpr size_t kTailSearchBytes = 1024;
 inline constexpr size_t kMaxXrefRevisions = 256;
 inline constexpr size_t kMaxIndirectRefDepth = 32;
 inline constexpr uint32_t kMaxXrefSubsectionCount = 1'000'000;
+inline constexpr uint64_t kMaxXrefTotalEntries = 1'000'000;
 
 enum class XrefEntryKind : uint8_t {
 	Free = 0,
