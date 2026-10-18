@@ -2,6 +2,7 @@
 # Markdown strictly, and LICENSE must stay byte-identical to the FSF text:
 # keep text sources LF on every platform.
 LICENSE text eol=lf
+.gitattributes text eol=lf
 *.md text eol=lf
 *.py text eol=lf
 *.yml text eol=lf
