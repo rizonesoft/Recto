@@ -44,6 +44,11 @@ enum class WriteFailStage {
 // writing bytes before FlushFileBuffers/CloseHandle).
 void fail_next_write_for_testing(WriteFailStage stage = WriteFailStage::AfterAcquire) noexcept;
 
+// Arms a one-shot failure injection in TempDir::TempDir() immediately after
+// CreateDirectoryW succeeds, recording the created path in *out_created_path
+// before CreateDirectoryW and throwing after acquisition to test rollback.
+void fail_next_temp_dir_for_testing(std::filesystem::path* out_created_path) noexcept;
+
 // RAII temporary directory under GetTempPathW() named
 // "recto-test-<pid>-<tick>-<counter>". Clears FILE_ATTRIBUTE_READONLY on
 // any contained files and subdirectories before removing the tree on

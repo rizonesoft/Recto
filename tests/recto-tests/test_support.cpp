@@ -19,6 +19,7 @@ namespace {
 
 std::atomic<uint64_t> g_temp_dir_counter{1};
 std::atomic<WriteFailStage> g_fail_next_write{WriteFailStage::None};
+std::atomic<std::filesystem::path*> g_fail_next_temp_dir_out{nullptr};
 
 std::wstring utf8_to_wide(std::string_view utf8)
 {
@@ -83,6 +84,23 @@ struct TempFileGuard {
 
 	TempFileGuard(const TempFileGuard&) = delete;
 	TempFileGuard& operator=(const TempFileGuard&) = delete;
+};
+
+struct TempDirGuard {
+	std::filesystem::path path;
+	bool armed{false};
+	bool committed{false};
+
+	TempDirGuard() noexcept = default;
+	~TempDirGuard() noexcept
+	{
+		if (armed && !committed && !path.empty()) {
+			RemoveDirectoryW(path.c_str());
+		}
+	}
+
+	TempDirGuard(const TempDirGuard&) = delete;
+	TempDirGuard& operator=(const TempDirGuard&) = delete;
 };
 
 void clear_readonly_recursive(const std::filesystem::path& root) noexcept
@@ -216,6 +234,11 @@ void fail_next_write_for_testing(WriteFailStage stage) noexcept
 	g_fail_next_write.store(stage, std::memory_order_relaxed);
 }
 
+void fail_next_temp_dir_for_testing(std::filesystem::path* out_created_path) noexcept
+{
+	g_fail_next_temp_dir_out.store(out_created_path, std::memory_order_relaxed);
+}
+
 void write_file_bytes(const std::filesystem::path& path, std::span<const uint8_t> data)
 {
 	const auto long_path = to_long_path(path);
@@ -316,17 +339,28 @@ TempDir::TempDir()
 		throw std::runtime_error("Failed to ensure base temp directory: " + ec.message());
 	}
 
+	std::filesystem::path* const fail_out =
+		g_fail_next_temp_dir_out.exchange(nullptr, std::memory_order_relaxed);
 	const DWORD pid = GetCurrentProcessId();
+	TempDirGuard dir_guard;
 	for (int attempt = 0; attempt < 64; ++attempt) {
 		LARGE_INTEGER qpc{};
 		QueryPerformanceCounter(&qpc);
 		const uint64_t seq = g_temp_dir_counter.fetch_add(1, std::memory_order_relaxed);
 		const std::wstring dir_name = L"recto-test-" + std::to_wstring(pid) + L"-" +
 			std::to_wstring(static_cast<uint64_t>(qpc.QuadPart)) + L"-" + std::to_wstring(seq);
-		const std::filesystem::path candidate = (base_temp / dir_name).lexically_normal();
-		const auto candidate_long = to_long_path(candidate);
-		if (CreateDirectoryW(candidate_long.c_str(), nullptr) != 0) {
-			path_ = candidate;
+		std::filesystem::path candidate = (base_temp / dir_name).lexically_normal();
+		dir_guard.path = to_long_path(candidate);
+		if (fail_out != nullptr) {
+			*fail_out = dir_guard.path;
+		}
+		if (CreateDirectoryW(dir_guard.path.c_str(), nullptr) != 0) {
+			dir_guard.armed = true;
+			if (fail_out != nullptr) {
+				throw std::runtime_error("TempDir: injected failure after CreateDirectoryW");
+			}
+			path_ = std::move(candidate);
+			dir_guard.committed = true;
 			return;
 		}
 		const DWORD err = GetLastError();

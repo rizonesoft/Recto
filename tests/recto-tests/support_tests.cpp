@@ -187,6 +187,15 @@ TEST(Support, TempDirCleanup)
 	}
 	EXPECT_FALSE(std::filesystem::exists(single_dir));
 
+	// Constructor-rollback regression test: if TempDir::TempDir() fails after
+	// CreateDirectoryW succeeds, the newly created directory is removed before
+	// the exception escapes the constructor.
+	std::filesystem::path aborted_temp_dir;
+	recto::test::fail_next_temp_dir_for_testing(&aborted_temp_dir);
+	EXPECT_THROW({ recto::test::TempDir rollback_dir; }, std::runtime_error);
+	EXPECT_FALSE(aborted_temp_dir.empty());
+	EXPECT_FALSE(std::filesystem::exists(aborted_temp_dir));
+
 	constexpr size_t kThreadCount = 32;
 	std::vector<std::filesystem::path> created_paths(kThreadCount);
 	{
