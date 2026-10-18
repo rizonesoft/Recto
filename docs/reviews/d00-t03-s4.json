@@ -1,0 +1,22 @@
+{
+  "ref": "D00 T03 \u00a74",
+  "title": "Encrypted (`RC4`/`AES-128`/`AES-256`), `broken/` and `seeds/` corpus fixtures",
+  "implementation_sha": "2f576d5a8de5cb2fbdca66750d7e7ab209a3f693",
+  "date": "2026-10-18",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/00-workspace/D00-T03-s4.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "python scripts/build-corpus.py --check -> verified: 39 corpus fixtures in R:\\GitHub\\RectoPDF\\tests\\corpus are current",
+    "python -m unittest tests.scripts.test_build_corpus -> Ran 5 tests in 68.627s OK"
+  ]
+}

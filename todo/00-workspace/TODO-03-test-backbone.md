@@ -36,7 +36,7 @@ track: M0
 | 1 | §1 | `test_support` corpus path resolver and `TempDir` RAII helper | D00 T01 §3 | [x] |
 | 2 | §2 | RGBA pixel comparison (`expect_rgba_equal`, `compute_ssim`) and test assertion helpers | §1 | [x] |
 | 3 | §3 | Deterministic PDF corpus generator (`scripts/build-corpus.py`) for `render/` and `text/` | §1 | [x] |
-| 4 | §4 | Encrypted (`RC4`/`AES-128`/`AES-256`), `broken/` and `seeds/` corpus fixtures | §3 | [ ] |
+| 4 | §4 | Encrypted (`RC4`/`AES-128`/`AES-256`), `broken/` and `seeds/` corpus fixtures | §3 | [x] |
 | 5 | §5 | `tests/corpus/PROVENANCE.md` and automated `Corpus.Provenance` SHA-256 integrity suite | §4 | [ ] |
 | 6 | §6 | MSVC AddressSanitizer (`/fsanitize=address`) build configuration and CI `asan` job | §2, D00 T01 §4 | [ ] |
 
@@ -162,9 +162,12 @@ Extend `scripts/build-corpus.py` to generate the cryptographic, hostile/malforme
 - [x] Generate unrecoverable and hostile `tests/corpus/broken/` fixtures: `empty-0b.pdf`, `non-pdf-header.pdf`, `truncated-header.pdf`, `truncated-stream.pdf`, `cyclic-xref-prev.pdf`, `cyclic-pages-tree.pdf`, `deep-nested-array-70.pdf`, and `deflate-bomb-10kb.pdf`. Done when: all 9 `broken/` fixtures exist on disk.
 - [x] Populate `tests/corpus/seeds/` with compact (< 4 KB each) seed files covering classic xref, xref stream, filters, outlines, and content operators for `D01 T03 §4`'s libFuzzer targets. Done when: `tests/corpus/seeds/` contains at least 6 seed files.
 - [x] Write `tests/corpus/README.md` documenting folder structure (`render/`, `text/`, `convert/`, `broken/`, `seeds/`), test passwords, and the `PROVENANCE.md` registration rule. Done when: `tests/corpus/README.md` exists and links to `PROVENANCE.md`.
-- [ ] Commit: `test: add encrypted, broken and fuzz-seed PDF corpus fixtures`
+- [x] Commit: `test: add encrypted, broken and fuzz-seed PDF corpus fixtures`
 
 **Test checkpoint:** `python scripts/build-corpus.py --check` exits 0 with all `render/`, `text/`, `convert/`, `broken/`, and `seeds/` fixtures verified.
+
+> **Verified:** 2026-10-18 | §4 | 2f576d5a8de5cb2fbdca66750d7e7ab209a3f693
+> **Review:** `docs/reviews/d00-t03-s4.json`
 
 ## 5. `tests/corpus/PROVENANCE.md` and automated `Corpus.Provenance` SHA-256 integrity suite
 
