@@ -39,8 +39,10 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="error.cpp" />
+    <ClCompile Include="object.cpp" />
     <ClCompile Include="pdf.cpp" />
     <ClInclude Include="error.h" />
+    <ClInclude Include="object.h" />
     <ClInclude Include="recto_pdf.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -94,17 +94,19 @@ Implement the in-memory PDF object representation in `src/pdf/object.h` and `src
 **Surface:** no
 **Freeze check:** Verify that `PdfValue` instances own all their storage by value (no hidden shared mutable pointers between `Document` instances) so distinct `pdf::Document` objects on separate `DocumentActor` threads share zero mutable state.
 
+> **Started:** 2026-10-18
+
 **Build order:**
 
 1. Author `src/pdf/object.h` and `src/pdf/object.cpp` implementing `PdfValue`, `PdfArray`, `PdfDict`, `PdfStream`, `IndirectRef`, `PdfRect`, `PdfMatrix`, typed dictionary lookups, and PDF string UTF-8 conversion (`pdf_string_to_utf8` handling UTF-16BE BOM `FE FF`, UTF-8 BOM `EF BB BF`, and `PDFDocEncoding`). Done when: `object.cpp` compiles across `x64` and `ARM64` with 0 warnings.
 2. Add `tests/recto-tests/pdf_object_tests.cpp` testing all 10 `PdfValue` alternatives, `PdfDict` lookups, `PdfRect` normalization (`[llx lly urx ury]` with swapped coordinates normalized), `pdf_string_to_utf8`, and `deep_clone()`. Done when: `PdfObject.*` passes under ASan with zero leaks.
 
-- [ ] Define `PdfValue` covering all 10 ISO 32000-1 section 7.3 object kinds (`null`, `bool`, `int64_t`, `double`, `PdfName`, `PdfString`, `PdfArray`, `PdfDict`, `PdfStream`, `IndirectRef`). Done when: `sizeof(PdfValue)` is compact and move-construction is `noexcept`.
-- [ ] Implement numeric promotion in `PdfValue::as_number()` so integer PDF tokens (`72`) and real PDF tokens (`72.0`) both return `double` seamlessly for coordinate and matrix math. Done when: `PdfObject.NumericPromotion` verifies `int64_t` and `double` interoperability.
-- [ ] Implement `PdfDict` with deterministic key lookup (`get(key)`, `get_int(key)`, `get_number(key)`, `get_name(key)`, `get_string(key)`, `get_array(key)`, `get_dict(key)`, `get_ref(key)`, `contains(key)`). Done when: missing keys or wrong-typed keys return `nullptr` / `std::nullopt` without throwing.
-- [ ] Implement `PdfRect::from_array(const PdfArray&)` normalizing `[x1 y1 x2 y2]` so `x_min <= x_max`, `y_min <= y_max`, `width() >= 0`, and `height() >= 0`. Done when: inverted rectangles (`[0 792 612 0]`) normalize to `[0 0 612 792]`.
-- [ ] Implement `pdf_string_to_utf8(std::span<const uint8_t>)` and `utf8_to_pdf_string(std::string_view)` supporting UTF-16BE (`\xFE\xFF` with surrogate pairs), UTF-8 (`\xEF\xBB\xBF` PDF 2.0), and full ISO 32000-1 Table D.2 `PDFDocEncoding`. Done when: `PdfObject.StringEncoding` round-trips ASCII, smart quotes/euro in `PDFDocEncoding`, and CJK/emoji in UTF-16BE.
-- [ ] Implement `PdfValue::deep_clone()` bounded by depth 64 so cloning nested dictionaries/arrays for `GraftMap` or `PdfWriter` produces an independent copy. Done when: mutating a clone leaves the original `PdfValue` unchanged.
+- [x] Define `PdfValue` covering all 10 ISO 32000-1 section 7.3 object kinds (`null`, `bool`, `int64_t`, `double`, `PdfName`, `PdfString`, `PdfArray`, `PdfDict`, `PdfStream`, `IndirectRef`). Done when: `sizeof(PdfValue)` is compact and move-construction is `noexcept`.
+- [x] Implement numeric promotion in `PdfValue::as_number()` so integer PDF tokens (`72`) and real PDF tokens (`72.0`) both return `double` seamlessly for coordinate and matrix math. Done when: `PdfObject.NumericPromotion` verifies `int64_t` and `double` interoperability.
+- [x] Implement `PdfDict` with deterministic key lookup (`get(key)`, `get_int(key)`, `get_number(key)`, `get_name(key)`, `get_string(key)`, `get_array(key)`, `get_dict(key)`, `get_ref(key)`, `contains(key)`). Done when: missing keys or wrong-typed keys return `nullptr` / `std::nullopt` without throwing.
+- [x] Implement `PdfRect::from_array(const PdfArray&)` normalizing `[x1 y1 x2 y2]` so `x_min <= x_max`, `y_min <= y_max`, `width() >= 0`, and `height() >= 0`. Done when: inverted rectangles (`[0 792 612 0]`) normalize to `[0 0 612 792]`.
+- [x] Implement `pdf_string_to_utf8(std::span<const uint8_t>)` and `utf8_to_pdf_string(std::string_view)` supporting UTF-16BE (`\xFE\xFF` with surrogate pairs), UTF-8 (`\xEF\xBB\xBF` PDF 2.0), and full ISO 32000-1 Table D.2 `PDFDocEncoding`. Done when: `PdfObject.StringEncoding` round-trips ASCII, smart quotes/euro in `PDFDocEncoding`, and CJK/emoji in UTF-16BE.
+- [x] Implement `PdfValue::deep_clone()` bounded by depth 64 so cloning nested dictionaries/arrays for `GraftMap` or `PdfWriter` produces an independent copy. Done when: mutating a clone leaves the original `PdfValue` unchanged.
 - [ ] Commit: `pdf: implement PdfValue object model, dictionary helpers and PDF string codecs`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfObject.*` passes under ASan with 0 warnings.

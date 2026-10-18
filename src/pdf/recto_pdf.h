@@ -8,6 +8,7 @@
 #pragma once
 
 #include "error.h"
+#include "object.h"
 
 namespace recto::pdf {
 
