@@ -819,21 +819,24 @@ def build_tables_and_forms() -> bytes:
     pdf.set_obj(
         5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
     )
-    # AcroForm Widget annotations: Tx, Btn, Ch
+    # AcroForm Widget annotations: Tx, Btn, Ch with /AP Form XObject appearance streams
     pdf.set_obj(
         6,
         "<< /Type /Annot /Subtype /Widget /FT /Tx /T (customer_name) "
-        "/DA (/F1 11 Tf 0 g) /V (Ada Lovelace) /Rect [72 340 280 364] /P 3 0 R >>",
+        "/DA (/F1 11 Tf 0 g) /V (Ada Lovelace) /Rect [72 340 280 364] "
+        "/AP << /N 11 0 R >> /P 3 0 R >>",
     )
     pdf.set_obj(
         7,
         "<< /Type /Annot /Subtype /Widget /FT /Btn /Ff 0 /T (approve_terms) "
-        "/DA (/ZaDb 10 Tf 0 g) /V /Yes /AS /Yes /Rect [72 300 92 320] /P 3 0 R >>",
+        "/DA (/ZaDb 10 Tf 0 g) /V /Yes /AS /Yes /Rect [72 300 92 320] "
+        "/AP << /N << /Yes 12 0 R /Off 13 0 R >> >> /P 3 0 R >>",
     )
     pdf.set_obj(
         8,
         "<< /Type /Annot /Subtype /Widget /FT /Ch /Ff 131072 /T (delivery_tier) "
-        "/DA (/F1 11 Tf 0 g) /Opt [(Standard) (Express)] /V (Express) /Rect [72 260 240 284] /P 3 0 R >>",
+        "/DA (/F1 11 Tf 0 g) /Opt [(Standard) (Express)] /V (Express) "
+        "/Rect [72 260 240 284] /AP << /N 14 0 R >> /P 3 0 R >>",
     )
     # Sample markup annotation
     pdf.set_obj(
@@ -847,9 +850,44 @@ def build_tables_and_forms() -> bytes:
     )
     pdf.set_obj(
         11,
+        make_stream_obj(
+            "/Type /XObject /Subtype /Form /BBox [0 0 208 24] "
+            "/Resources << /Font << /F1 5 0 R >> >>",
+            b"/Tx BMC q BT /F1 11 Tf 4 6 Td (Ada Lovelace) Tj ET Q EMC\n",
+            compress=True,
+        ),
+    )
+    pdf.set_obj(
+        12,
+        make_stream_obj(
+            "/Type /XObject /Subtype /Form /BBox [0 0 20 20] "
+            "/Resources << /Font << /ZaDb 10 0 R >> >>",
+            b"q 0 0 20 20 re S BT /ZaDb 12 Tf 4 4 Td (4) Tj ET Q\n",
+            compress=True,
+        ),
+    )
+    pdf.set_obj(
+        13,
+        make_stream_obj(
+            "/Type /XObject /Subtype /Form /BBox [0 0 20 20]",
+            b"q 0 0 20 20 re S Q\n",
+            compress=True,
+        ),
+    )
+    pdf.set_obj(
+        14,
+        make_stream_obj(
+            "/Type /XObject /Subtype /Form /BBox [0 0 168 24] "
+            "/Resources << /Font << /F1 5 0 R >> >>",
+            b"/Tx BMC q BT /F1 11 Tf 4 6 Td (Express) Tj ET Q EMC\n",
+            compress=True,
+        ),
+    )
+    pdf.set_obj(
+        15,
         f"<< /Title (Recto Tables and Forms) /CreationDate ({FIXED_PDF_DATE}) >>",
     )
-    return pdf.build(root_obj=1, info_obj=11)
+    return pdf.build(root_obj=1, info_obj=15)
 
 
 def build_deterministic_zip(entries: list[tuple[str, bytes]]) -> bytes:
@@ -1159,6 +1197,28 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
     if b"/AcroForm" in data and b"/DA (" in data:
         if b"/DR << /Font" not in data:
             raise ValueError(f"{rel_path}: /AcroForm with /DA is missing /DR /Font resources")
+        for w_m in re.finditer(rb"(\d+)\s+0\s+obj\n<<([^\n]*?/Subtype\s+/Widget[^\n]*?)>>\nendobj", data):
+            w_obj_id = int(w_m.group(1))
+            w_dict = w_m.group(2)
+            if b"/AP << /N" not in w_dict:
+                raise ValueError(f"{rel_path}: Widget object {w_obj_id} missing /AP << /N appearance")
+            as_m = re.search(rb"/AS\s+/([A-Za-z0-9_]+)", w_dict)
+            if as_m is not None:
+                state_name = as_m.group(1).decode("ascii")
+                for req_state in (state_name, "Off"):
+                    ref_m = re.search(rf"/{req_state}\s+(\d+)\s+0\s+R".encode("ascii"), w_dict)
+                    if ref_m is None:
+                        raise ValueError(
+                            f"{rel_path}: Widget {w_obj_id} missing /{req_state} in /AP /N"
+                        )
+                    ap_id = int(ref_m.group(1))
+                    if not re.search(
+                        rf"\b{ap_id}\s+0\s+obj\n<<[^\n]*?/Subtype\s+/Form".encode("ascii"),
+                        data,
+                    ):
+                        raise ValueError(
+                            f"{rel_path}: Widget {w_obj_id} /{req_state} target {ap_id} is not a /Subtype /Form"
+                        )
 
     eof_m = re.search(rb"startxref\n(\d+)\n%%EOF\n\Z", data)
     if eof_m is None:

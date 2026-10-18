@@ -72,6 +72,7 @@ class BuildCorpusTests(unittest.TestCase):
 
         files = self.mod.expected_corpus_files()
         self.assertIn(b"/DR << /Font << /F1 5 0 R /ZaDb 10 0 R >> >>", files["convert/tables-and-forms.pdf"])
+        self.assertIn(b"/AP << /N << /Yes 12 0 R /Off 13 0 R >> >>", files["convert/tables-and-forms.pdf"])
         self.assertIn(b"/W [1 2 2]", files["render/compressed-xref-2p.pdf"])
 
 
