@@ -8,7 +8,6 @@ The git repository, the GPL-3.0 repo-face files, the native C++20 `recto-pdf` an
 
 | TODO | Title | Status |
 | ---- | ----- | :----: |
-| [TODO-02](./TODO-02-todo-system.md) | The TODO Graph System | active |
 | [TODO-03](./TODO-03-test-backbone.md) | Test Backbone | active |
 
 ## Completed
@@ -16,6 +15,7 @@ The git repository, the GPL-3.0 repo-face files, the native C++20 `recto-pdf` an
 | TODO | Title | Completed |
 | ---- | ----- | :-------: |
 | [TODO-01](./TODO-01-repo-and-build.md) | Repository, Native Engine Policy and Build Scaffold | 2026-10-18 |
+| [TODO-02](./TODO-02-todo-system.md) | The TODO Graph System | 2026-10-18 |
 
 ## In scope
 

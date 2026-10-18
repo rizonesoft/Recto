@@ -59,7 +59,6 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 
 ## Active TODOs
 
-- [00 Workspace] [TODO-02 The TODO Graph System](./00-workspace/TODO-02-todo-system.md): engine, CLI and tests; the eight skills, rules and plan CI gate; this seeded graph.
 - [00 Workspace] [TODO-03 Test Backbone](./00-workspace/TODO-03-test-backbone.md): GoogleTest via vcpkg, licensed corpus, ASan and warning bar.
 - [01 Engine] [TODO-01 Native PDF Parser, Filters, Crypto and Document Model](./01-engine/TODO-01-bridge-runtime.md): `recto-pdf` lexer, XRef tables/streams, damaged-file recovery, stream filters, CNG `bcrypt.dll` decryption, document open and description. Frozen.
 - [01 Engine] [TODO-02 Content Interpreter, Display Lists, Document Actor and Render Pool](./01-engine/TODO-02-actor-and-render.md): content-stream interpreter, DirectWrite font loader, incremental save, immutable `DisplayList`s, actor threads, tile rendering, scheduler with cancellation, ordered shutdown. Frozen.
@@ -87,6 +86,7 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 ## Completed TODOs
 
 - [00 Workspace] [TODO-01 Repository, Native Engine Policy and Build Scaffold](./00-workspace/TODO-01-repo-and-build.md) (2026-10-18): git, GPL-3.0 repo-face files, native `recto-pdf` policy, all-module C++20 scaffold, build CI, reference machines (`docs/reference-machines.md`).
+- [00 Workspace] [TODO-02 The TODO Graph System](./00-workspace/TODO-02-todo-system.md) (2026-10-18): engine, CLI and tests (`scripts/todo-graph.py`); the eight skills (`.claude/skills/`), rules (`AGENTS.md`, `todo/README.md`) and plan CI gate (`.github/workflows/plan.yml`); this seeded 205-section execution graph.
 
 ## Queries
 
