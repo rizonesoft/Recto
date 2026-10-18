@@ -677,4 +677,3 @@ TEST(Support, AsanInstrumentation)
 	RecordProperty("ASanRedzone", "skipped-non-asan");
 #endif
 }
-
