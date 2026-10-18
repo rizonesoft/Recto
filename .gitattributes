@@ -11,3 +11,4 @@ LICENSE text eol=lf
 *.pdf binary
 *.docx binary
 *.xlsx binary
+*.bin binary

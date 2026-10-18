@@ -100,16 +100,31 @@ class BuildCorpusTests(unittest.TestCase):
         for bname in sorted(broken_expected):
             self.mod.validate_broken_pdf_structure(bname, files[bname])
 
-        seed_files = [k for k in files if k.startswith("seeds/")]
-        self.assertGreaterEqual(len(seed_files), 6)
-        for sname in seed_files:
+        seed_pdfs = [k for k in files if k.startswith("seeds/") and k.endswith(".pdf")]
+        seed_bins = [k for k in files if k.startswith("seeds/") and k.endswith(".bin")]
+        self.assertGreaterEqual(len(seed_pdfs), 6)
+        self.assertEqual(len(seed_bins), 11)
+        seen_selectors: set[int] = set()
+        for sname in seed_pdfs:
             self.assertLess(len(files[sname]), 4096)
             self.mod.validate_seed_pdf_structure(sname, files[sname])
+        for bname in seed_bins:
+            self.assertLess(len(files[bname]), 4096)
+            self.mod.validate_seed_filter_bin_structure(bname, files[bname])
+            seen_selectors.add(files[bname][0])
+        self.assertEqual(seen_selectors, set(range(11)))
+
+        with self.assertRaisesRegex(ValueError, "selector byte"):
+            self.mod.validate_seed_filter_bin_structure(
+                "seeds/seed-filter-00-flate.bin",
+                b"\xFF" + files["seeds/seed-filter-00-flate.bin"][1:],
+            )
 
         readme = (self.mod.CORPUS_ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("recto-test", readme)
         self.assertIn("recto-owner", readme)
         self.assertIn("PROVENANCE.md", readme)
+        self.assertIn("seed-filter-00-flate.bin", readme)
 
 
 if __name__ == "__main__":

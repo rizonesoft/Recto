@@ -2144,6 +2144,91 @@ def build_seed_render_ops() -> bytes:
     return pdf.build(root_obj=1)
 
 
+KNOWN_FILTER_PLAINTEXT = (
+    b"Recto fuzz_filters deterministic plaintext vector 0123456789ABCD"
+)  # 64 bytes (divisible by 8 for PNG Up predictor columns=8)
+
+
+def make_minimal_jbig2_16x16() -> bytes:
+    """Create a deterministic ISO/IEC 14492 embedded JBIG2 stream (segments 48, 38, 49)."""
+    # Segment 0: Page Information (type 48), page 1, 19-byte body (width=16, height=16, 72x72 dpi)
+    seg0_body = struct.pack(">IIIIBBB", 16, 16, 72, 72, 0, 0, 0)
+    seg0_hdr = struct.pack(">IBBBI", 0, 48, 0, 1, len(seg0_body))
+
+    # Segment 1: Immediate Lossless Generic Region (type 38), page 1, MMR=1 (bit 0 of flags)
+    mmr_data = make_ccitt_group4_16x16()
+    region_info = struct.pack(">IIIIB", 16, 16, 0, 0, 0)  # 17 bytes
+    generic_flags = b"\x01"  # MMR = 1
+    seg1_body = region_info + generic_flags + mmr_data
+    seg1_hdr = struct.pack(">IBBBI", 1, 38, 0, 1, len(seg1_body))
+
+    # Segment 2: End of Page (type 49), page 1, 0-byte body
+    seg2_hdr = struct.pack(">IBBBI", 2, 49, 0, 1, 0)
+    return seg0_hdr + seg0_body + seg1_hdr + seg1_body + seg2_hdr
+
+
+def make_minimal_jpx_8x8_gray() -> bytes:
+    """Create a deterministic ISO/IEC 15444-1 JPEG 2000 codestream (SOC..EOC) for 8x8 8-bit gray."""
+    siz_body = (
+        struct.pack(">HIIIIIIII", 0, 8, 8, 0, 0, 8, 8, 0, 0)
+        + struct.pack(">HBBB", 1, 7, 1, 1)
+    )
+    siz = b"\xFF\x51" + struct.pack(">H", len(siz_body) + 2) + siz_body
+    cod_body = bytes([0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x04, 0x04, 0x00, 0x01])
+    cod = b"\xFF\x52" + struct.pack(">H", len(cod_body) + 2) + cod_body
+    qcd_body = bytes([0x00, 0x40])
+    qcd = b"\xFF\x5C" + struct.pack(">H", len(qcd_body) + 2) + qcd_body
+    tile_bitstream = b"\x80\x00"
+    psot = 12 + 2 + len(tile_bitstream)
+    sot = b"\xFF\x90" + struct.pack(">HHIBB", 10, 0, psot, 0, 1)
+    sod = b"\xFF\x93" + tile_bitstream
+    return b"\xFF\x4F" + siz + cod + qcd + sot + sod + b"\xFF\xD9"
+
+
+def build_seed_filter_00_flate() -> bytes:
+    return b"\x00" + flate_compress(KNOWN_FILTER_PLAINTEXT)
+
+
+def build_seed_filter_01_lzw() -> bytes:
+    return b"\x01" + lzw_encode_literals(KNOWN_FILTER_PLAINTEXT)
+
+
+def build_seed_filter_02_predictor() -> bytes:
+    return b"\x02" + flate_png_up_compress(KNOWN_FILTER_PLAINTEXT, columns=8)
+
+
+def build_seed_filter_03_ascii85() -> bytes:
+    return b"\x03" + ascii85_encode_pdf(KNOWN_FILTER_PLAINTEXT)
+
+
+def build_seed_filter_04_asciihex() -> bytes:
+    return b"\x04" + KNOWN_FILTER_PLAINTEXT.hex().upper().encode("ascii") + b">"
+
+
+def build_seed_filter_05_runlength() -> bytes:
+    return b"\x05" + rle_encode_pdf(KNOWN_FILTER_PLAINTEXT)
+
+
+def build_seed_filter_06_ccitt() -> bytes:
+    return b"\x06" + make_ccitt_group4_16x16()
+
+
+def build_seed_filter_07_jbig2() -> bytes:
+    return b"\x07" + make_minimal_jbig2_16x16()
+
+
+def build_seed_filter_08_dct() -> bytes:
+    return b"\x08" + make_minimal_jpeg_8x8_rgb()
+
+
+def build_seed_filter_09_jpx() -> bytes:
+    return b"\x09" + make_minimal_jpx_8x8_gray()
+
+
+def build_seed_filter_0a_chain_a85_flate() -> bytes:
+    return b"\x0A" + ascii85_encode_pdf(flate_compress(KNOWN_FILTER_PLAINTEXT))
+
+
 def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
     """Validate encrypted PDF structure and verify user/owner password decryption."""
     if not (data.startswith(b"%PDF-1.7\n") or data.startswith(b"%PDF-2.0\n")):
@@ -2312,8 +2397,8 @@ def validate_broken_pdf_structure(rel_path: str, data: bytes) -> None:
         inner_deflate = zlib.decompress(data[s_start : s_start + slen])
         d2 = zlib.decompressobj()
         total_expanded = 0
-        for off in range(0, len(inner_deflate), 16_384):
-            chunk = d2.decompress(inner_deflate[off : off + 16_384])
+        for off in range(0, len(inner_deflate), 262_144):
+            chunk = d2.decompress(inner_deflate[off : off + 262_144])
             total_expanded += len(chunk)
             if total_expanded > DEFLATE_BOMB_LIMIT_BYTES:
                 break
@@ -2355,11 +2440,84 @@ def validate_seed_pdf_structure(rel_path: str, data: bytes) -> None:
             validate_content_stream_syntax(rel_path, dec)
 
 
+SEED_FILTER_SELECTORS: dict[str, int] = {
+    "seeds/seed-filter-00-flate.bin": 0x00,
+    "seeds/seed-filter-01-lzw.bin": 0x01,
+    "seeds/seed-filter-02-predictor.bin": 0x02,
+    "seeds/seed-filter-03-ascii85.bin": 0x03,
+    "seeds/seed-filter-04-asciihex.bin": 0x04,
+    "seeds/seed-filter-05-runlength.bin": 0x05,
+    "seeds/seed-filter-06-ccitt.bin": 0x06,
+    "seeds/seed-filter-07-jbig2.bin": 0x07,
+    "seeds/seed-filter-08-dct.bin": 0x08,
+    "seeds/seed-filter-09-jpx.bin": 0x09,
+    "seeds/seed-filter-0a-chain-a85-flate.bin": 0x0A,
+}
+
+
+def validate_seed_filter_bin_structure(rel_path: str, data: bytes) -> None:
+    """Validate selector-prefixed raw filter seed files for fuzz_filters (D01 T03 §4)."""
+    if len(data) < 2 or len(data) >= MAX_SEED_FILE_BYTES:
+        raise ValueError(
+            f"{rel_path}: filter seed size {len(data)} must be in 2..{MAX_SEED_FILE_BYTES - 1}"
+        )
+    expected_sel = SEED_FILTER_SELECTORS.get(rel_path)
+    if expected_sel is None or data[0] != expected_sel:
+        raise ValueError(
+            f"{rel_path}: selector byte 0x{data[0]:02X} != expected {expected_sel!r}"
+        )
+    payload = data[1:]
+    if expected_sel == 0x00:
+        dec = zlib.decompress(payload)
+        if dec != KNOWN_FILTER_PLAINTEXT:
+            raise ValueError(f"{rel_path}: FlateDecode output mismatch")
+    elif expected_sel == 0x01:
+        dec = lzw_decode_literals(payload)
+        if dec != KNOWN_FILTER_PLAINTEXT:
+            raise ValueError(f"{rel_path}: LZWDecode output mismatch")
+    elif expected_sel == 0x02:
+        dec = flate_png_up_decompress(payload, columns=8)
+        if dec != KNOWN_FILTER_PLAINTEXT:
+            raise ValueError(f"{rel_path}: PNG Up Predictor output mismatch")
+    elif expected_sel == 0x03:
+        dec = ascii85_decode_pdf(payload)
+        if dec != KNOWN_FILTER_PLAINTEXT:
+            raise ValueError(f"{rel_path}: ASCII85Decode output mismatch")
+    elif expected_sel == 0x04:
+        if not payload.endswith(b">"):
+            raise ValueError(f"{rel_path}: ASCIIHexDecode missing '>' EOD")
+        dec = bytes.fromhex(payload[:-1].decode("ascii"))
+        if dec != KNOWN_FILTER_PLAINTEXT:
+            raise ValueError(f"{rel_path}: ASCIIHexDecode output mismatch")
+    elif expected_sel == 0x05:
+        dec = rle_decode_pdf(payload)
+        if dec != KNOWN_FILTER_PLAINTEXT:
+            raise ValueError(f"{rel_path}: RunLengthDecode output mismatch")
+    elif expected_sel == 0x06:
+        if payload != make_ccitt_group4_16x16():
+            raise ValueError(f"{rel_path}: CCITTFaxDecode Group 4 payload mismatch")
+    elif expected_sel == 0x07:
+        if payload != make_minimal_jbig2_16x16() or make_ccitt_group4_16x16() not in payload:
+            raise ValueError(f"{rel_path}: JBIG2Decode payload mismatch")
+    elif expected_sel == 0x08:
+        if not (payload.startswith(b"\xFF\xD8") and payload.endswith(b"\xFF\xD9")):
+            raise ValueError(f"{rel_path}: DCTDecode JPEG missing SOI/EOI markers")
+    elif expected_sel == 0x09:
+        if not (payload.startswith(b"\xFF\x4F\xFF\x51") and payload.endswith(b"\xFF\xD9")):
+            raise ValueError(f"{rel_path}: JPXDecode codestream missing SOC/SIZ/EOC markers")
+    elif expected_sel == 0x0A:
+        dec = zlib.decompress(ascii85_decode_pdf(payload))
+        if dec != KNOWN_FILTER_PLAINTEXT:
+            raise ValueError(f"{rel_path}: Chained A85+Flate output mismatch")
+
+
 def validate_corpus_entry(rel_path: str, data: bytes) -> None:
     if rel_path.startswith("broken/"):
         validate_broken_pdf_structure(rel_path, data)
     elif rel_path.startswith("render/encrypted-"):
         validate_encrypted_pdf_structure(rel_path, data)
+    elif rel_path.startswith("seeds/") and rel_path.endswith(".bin"):
+        validate_seed_filter_bin_structure(rel_path, data)
     elif rel_path.startswith("seeds/"):
         validate_seed_pdf_structure(rel_path, data)
     elif rel_path.endswith(".pdf"):
@@ -2417,6 +2575,17 @@ def expected_corpus_files() -> dict[str, bytes]:
         "seeds/seed-filters-lzw-ccitt.pdf": build_seed_filters_lzw_ccitt(),
         "seeds/seed-outlines-links.pdf": build_seed_outlines_links(),
         "seeds/seed-render-ops.pdf": build_seed_render_ops(),
+        "seeds/seed-filter-00-flate.bin": build_seed_filter_00_flate(),
+        "seeds/seed-filter-01-lzw.bin": build_seed_filter_01_lzw(),
+        "seeds/seed-filter-02-predictor.bin": build_seed_filter_02_predictor(),
+        "seeds/seed-filter-03-ascii85.bin": build_seed_filter_03_ascii85(),
+        "seeds/seed-filter-04-asciihex.bin": build_seed_filter_04_asciihex(),
+        "seeds/seed-filter-05-runlength.bin": build_seed_filter_05_runlength(),
+        "seeds/seed-filter-06-ccitt.bin": build_seed_filter_06_ccitt(),
+        "seeds/seed-filter-07-jbig2.bin": build_seed_filter_07_jbig2(),
+        "seeds/seed-filter-08-dct.bin": build_seed_filter_08_dct(),
+        "seeds/seed-filter-09-jpx.bin": build_seed_filter_09_jpx(),
+        "seeds/seed-filter-0a-chain-a85-flate.bin": build_seed_filter_0a_chain_a85_flate(),
     }
     total_bytes = 0
     for rel_path, content in files.items():
