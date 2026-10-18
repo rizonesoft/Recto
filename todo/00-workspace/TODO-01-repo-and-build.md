@@ -2,7 +2,7 @@
 schema_version: 1
 id: repo-and-build
 domain: 00-workspace
-status: active
+status: done
 title: "TODO-01 -- Repository, Native Engine Policy and Build Scaffold"
 track: M0
 ---
@@ -39,7 +39,7 @@ track: M0
 | 1 | §1 | Git repository and repo-face files | -- | [x] |
 | 2 | §2 | PDF engine dependency policy (native `recto-pdf`, MuPDF retired) | §1 | [x] |
 | 3 | §3 | Solution scaffold for all modules, x64 and ARM64 | §2 | [x] |
-| 4 | §4 | Build CI for x64 and ARM64 | §3, D00 T02 §2 | [ ] |
+| 4 | §4 | Build CI for x64 and ARM64 | §3, D00 T02 §2 | [x] |
 | 5 | §5 | Reference benchmark machines recorded | §1 | [x] |
 
 ## 1. Git repository and repo-face files
@@ -142,9 +142,12 @@ Add `.github/workflows/build.yml` running on `windows-latest` on every push and 
 - [x] Execute `recto-tests.exe --gtest_output=xml:build/test-results-x64-$cfg.xml` on `x64` (Debug and Release) inside the workflow and fail the job immediately on any non-zero exit code. Done when: test failures fail the workflow step with the failing test named.
 - [x] Upload `build/test-results-*.xml` and MSBuild failure logs as GitHub Actions artifacts when `failure()` occurs so CI failures are diagnosable without re-running locally. Done when: the `upload-artifact` step is wired with `if: always()` or `if: failure()`.
 - [x] Push to `origin/main` and verify the live GitHub Actions `build.yml` run completes `success` across all steps. Done when: `gh run list --workflow=build.yml --limit 1` reports `completed / success`.
-- [ ] Commit: `ci: build x64 and ARM64 and run recto-tests on every push`
+- [x] Commit: `ci: build x64 and ARM64 and run recto-tests on every push`
 
 **Test checkpoint:** `gh run list --workflow=build.yml --limit 1` and `gh run view <run-id> --log` for the candidate commit show `x64` build, `ARM64` build and `recto-tests` steps all succeeding with 0 warnings.
+
+> **Verified:** 2026-10-18 | §4 | 6f0c29e1e65dd6e746849079f8e7e203ae3a76cd
+> **Review:** `docs/reviews/d00-t01-s4.json`
 
 ## 5. Reference benchmark machines recorded
 

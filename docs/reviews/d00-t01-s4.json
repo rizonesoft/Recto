@@ -1,0 +1,24 @@
+{
+  "ref": "D00 T01 \u00a74",
+  "title": "Build CI for x64 and ARM64",
+  "implementation_sha": "6f0c29e1e65dd6e746849079f8e7e203ae3a76cd",
+  "date": "2026-10-18",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T01-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/00-workspace/D00-T01-s4.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "gh run list --workflow=build.yml --limit 1 -> completed success 39117091425 6m14s (exit 0)",
+    "gh run view 39117091425 --log -> Cache restored, 4x 0 Warning(s) 0 Error(s), 2x PASSED 3 tests (exit 0)",
+    "GTEST_TOTAL_SHARDS=1 GTEST_SHARD_INDEX=1 build/build.ps1 -Configuration Release -Platform x64 -> recto-tests failed: Release|x64 (exit 1)",
+    "python scripts/todo-graph.py validate -> valid: 205 sections (exit 0)"
+  ]
+}
