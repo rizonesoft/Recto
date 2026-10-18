@@ -150,16 +150,18 @@ Extend `scripts/build-corpus.py` to generate the cryptographic, hostile/malforme
 **Needs:** windows-host
 **Surface:** no
 
+> **Started:** 2026-10-18
+
 **Build order:**
 
 1. Add deterministic `RC4-128` (`R=3`), `AES-128` (`R=4`), and `AES-256` (`R=6`) encryption fixture generation, `broken/` malformed fixtures, and `seeds/` files to `scripts/build-corpus.py`. Done when: `python scripts/build-corpus.py` writes all encrypted, broken, and seed files deterministically.
 2. Document the corpus layout, password (`"recto-test"` / `"recto-owner"`), and refresh/addition rules in `tests/corpus/README.md`. Done when: `tests/corpus/README.md` explains every folder and fixture role.
 
-- [ ] Generate `tests/corpus/render/encrypted-rc4-128.pdf` (`R=3`), `encrypted-aes-128.pdf` (`R=4`), and `encrypted-aes-256.pdf` (`R=6`) locked with user password `"recto-test"` and owner password `"recto-owner"` and explicit permission flags. Done when: all three encrypted fixtures are generated deterministically.
-- [ ] Generate `tests/corpus/broken/corrupt-xref-recoverable.pdf` (corrupted `startxref` offset with intact indirect objects) so `D01 T01 §6` can test damaged-file linear object recovery. Done when: the file contains valid `1 0 obj ... endobj` streams and a deliberately wrong `startxref` offset.
-- [ ] Generate unrecoverable and hostile `tests/corpus/broken/` fixtures: `empty-0b.pdf`, `non-pdf-header.pdf`, `truncated-header.pdf`, `truncated-stream.pdf`, `cyclic-xref-prev.pdf`, `cyclic-pages-tree.pdf`, `deep-nested-array-70.pdf`, and `deflate-bomb-10kb.pdf`. Done when: all 9 `broken/` fixtures exist on disk.
-- [ ] Populate `tests/corpus/seeds/` with compact (< 4 KB each) seed files covering classic xref, xref stream, filters, outlines, and content operators for `D01 T03 §4`'s libFuzzer targets. Done when: `tests/corpus/seeds/` contains at least 6 seed files.
-- [ ] Write `tests/corpus/README.md` documenting folder structure (`render/`, `text/`, `convert/`, `broken/`, `seeds/`), test passwords, and the `PROVENANCE.md` registration rule. Done when: `tests/corpus/README.md` exists and links to `PROVENANCE.md`.
+- [x] Generate `tests/corpus/render/encrypted-rc4-128.pdf` (`R=3`), `encrypted-aes-128.pdf` (`R=4`), and `encrypted-aes-256.pdf` (`R=6`) locked with user password `"recto-test"` and owner password `"recto-owner"` and explicit permission flags. Done when: all three encrypted fixtures are generated deterministically.
+- [x] Generate `tests/corpus/broken/corrupt-xref-recoverable.pdf` (corrupted `startxref` offset with intact indirect objects) so `D01 T01 §6` can test damaged-file linear object recovery. Done when: the file contains valid `1 0 obj ... endobj` streams and a deliberately wrong `startxref` offset.
+- [x] Generate unrecoverable and hostile `tests/corpus/broken/` fixtures: `empty-0b.pdf`, `non-pdf-header.pdf`, `truncated-header.pdf`, `truncated-stream.pdf`, `cyclic-xref-prev.pdf`, `cyclic-pages-tree.pdf`, `deep-nested-array-70.pdf`, and `deflate-bomb-10kb.pdf`. Done when: all 9 `broken/` fixtures exist on disk.
+- [x] Populate `tests/corpus/seeds/` with compact (< 4 KB each) seed files covering classic xref, xref stream, filters, outlines, and content operators for `D01 T03 §4`'s libFuzzer targets. Done when: `tests/corpus/seeds/` contains at least 6 seed files.
+- [x] Write `tests/corpus/README.md` documenting folder structure (`render/`, `text/`, `convert/`, `broken/`, `seeds/`), test passwords, and the `PROVENANCE.md` registration rule. Done when: `tests/corpus/README.md` exists and links to `PROVENANCE.md`.
 - [ ] Commit: `test: add encrypted, broken and fuzz-seed PDF corpus fixtures`
 
 **Test checkpoint:** `python scripts/build-corpus.py --check` exits 0 with all `render/`, `text/`, `convert/`, `broken/`, and `seeds/` fixtures verified.

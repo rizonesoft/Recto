@@ -9,6 +9,7 @@ destination folder.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import os
 from pathlib import Path
@@ -24,6 +25,11 @@ CORPUS_ROOT = REPO_ROOT / "tests" / "corpus"
 FIXED_PDF_DATE = "D:20261013000000Z"
 FIXED_ZIP_DT = (2026, 10, 13, 0, 0, 0)
 MAX_CORPUS_TOTAL_BYTES = 5_000_000
+MAX_SEED_FILE_BYTES = 4_096
+DEFLATE_BOMB_LIMIT_BYTES = 256 * 1024 * 1024
+CORPUS_USER_PASSWORD = b"recto-test"
+CORPUS_OWNER_PASSWORD = b"recto-owner"
+CORPUS_PERMISSIONS_MASK = -1028  # 0xFFFFFBFC: print, modify, copy, annotate, fill forms, extract, assemble, print HQ
 
 
 def write_atomic(dest: Path, data: bytes) -> None:
@@ -1257,6 +1263,1113 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
             raise ValueError("text/scanned.pdf content stream must contain 0 text operators")
 
 
+# ---------------------------------------------------------------------------
+# Pure-stdlib RC4 and FIPS 197 AES-128 / AES-256 for PDF Standard Security
+# ---------------------------------------------------------------------------
+
+AES_SBOX = (
+    0x63, 0x7C, 0x77, 0x7B, 0xF2, 0x6B, 0x6F, 0xC5, 0x30, 0x01, 0x67, 0x2B, 0xFE, 0xD7, 0xAB, 0x76,
+    0xCA, 0x82, 0xC9, 0x7D, 0xFA, 0x59, 0x47, 0xF0, 0xAD, 0xD4, 0xA2, 0xAF, 0x9C, 0xA4, 0x72, 0xC0,
+    0xB7, 0xFD, 0x93, 0x26, 0x36, 0x3F, 0xF7, 0xCC, 0x34, 0xA5, 0xE5, 0xF1, 0x71, 0xD8, 0x31, 0x15,
+    0x04, 0xC7, 0x23, 0xC3, 0x18, 0x96, 0x05, 0x9A, 0x07, 0x12, 0x80, 0xE2, 0xEB, 0x27, 0xB2, 0x75,
+    0x09, 0x83, 0x2C, 0x1A, 0x1B, 0x6E, 0x5A, 0xA0, 0x52, 0x3B, 0xD6, 0xB3, 0x29, 0xE3, 0x2F, 0x84,
+    0x53, 0xD1, 0x00, 0xED, 0x20, 0xFC, 0xB1, 0x5B, 0x6A, 0xCB, 0xBE, 0x39, 0x4A, 0x4C, 0x58, 0xCF,
+    0xD0, 0xEF, 0xAA, 0xFB, 0x43, 0x4D, 0x33, 0x85, 0x45, 0xF9, 0x02, 0x7F, 0x50, 0x3C, 0x9F, 0xA8,
+    0x51, 0xA3, 0x40, 0x8F, 0x92, 0x9D, 0x38, 0xF5, 0xBC, 0xB6, 0xDA, 0x21, 0x10, 0xFF, 0xF3, 0xD2,
+    0xCD, 0x0C, 0x13, 0xEC, 0x5F, 0x97, 0x44, 0x17, 0xC4, 0xA7, 0x7E, 0x3D, 0x64, 0x5D, 0x19, 0x73,
+    0x60, 0x81, 0x4F, 0xDC, 0x22, 0x2A, 0x90, 0x88, 0x46, 0xEE, 0xB8, 0x14, 0xDE, 0x5E, 0x0B, 0xDB,
+    0xE0, 0x32, 0x3A, 0x0A, 0x49, 0x06, 0x24, 0x5C, 0xC2, 0xD3, 0xAC, 0x62, 0x91, 0x95, 0xE4, 0x79,
+    0xE7, 0xC8, 0x37, 0x6D, 0x8D, 0xD5, 0x4E, 0xA9, 0x6C, 0x56, 0xF4, 0xEA, 0x65, 0x7A, 0xAE, 0x08,
+    0xBA, 0x78, 0x25, 0x2E, 0x1C, 0xA6, 0xB4, 0xC6, 0xE8, 0xDD, 0x74, 0x1F, 0x4B, 0xBD, 0x8B, 0x8A,
+    0x70, 0x3E, 0xB5, 0x66, 0x48, 0x03, 0xF6, 0x0E, 0x61, 0x35, 0x57, 0xB9, 0x86, 0xC1, 0x1D, 0x9E,
+    0xE1, 0xF8, 0x98, 0x11, 0x69, 0xD9, 0x8E, 0x94, 0x9B, 0x1E, 0x87, 0xE9, 0xCE, 0x55, 0x28, 0xDF,
+    0x8C, 0xA1, 0x89, 0x0D, 0xBF, 0xE6, 0x42, 0x68, 0x41, 0x99, 0x2D, 0x0F, 0xB0, 0x54, 0xBB, 0x16,
+)
+AES_INV_SBOX = tuple(AES_SBOX.index(i) for i in range(256))
+AES_XTIME = tuple(((i << 1) ^ 0x11B) & 0xFF if (i & 0x80) else (i << 1) for i in range(256))
+AES_RCON = (0x00, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36)
+PDF_PAD_BYTES = bytes((
+    0x28, 0xBF, 0x4E, 0x5E, 0x4E, 0x75, 0x8A, 0x41,
+    0x64, 0x00, 0x4E, 0x56, 0xFF, 0xFA, 0x01, 0x08,
+    0x2E, 0x2E, 0x00, 0xB6, 0xD0, 0x68, 0x3E, 0x80,
+    0x2F, 0x0C, 0xA9, 0xFE, 0x64, 0x53, 0x69, 0x7A,
+))
+
+
+def _gf_mul(a: int, b: int) -> int:
+    res = 0
+    for _ in range(8):
+        if b & 1:
+            res ^= a
+        a = AES_XTIME[a]
+        b >>= 1
+    return res
+
+
+def aes_expand_key(key: bytes) -> list[list[int]]:
+    nk = len(key) // 4
+    nr = nk + 6
+    w = [list(key[4 * i : 4 * i + 4]) for i in range(nk)]
+    for i in range(nk, 4 * (nr + 1)):
+        temp = list(w[i - 1])
+        if i % nk == 0:
+            temp = [
+                AES_SBOX[temp[1]] ^ AES_RCON[i // nk],
+                AES_SBOX[temp[2]],
+                AES_SBOX[temp[3]],
+                AES_SBOX[temp[0]],
+            ]
+        elif nk > 6 and i % nk == 4:
+            temp = [AES_SBOX[b] for b in temp]
+        w.append([w[i - nk][j] ^ temp[j] for j in range(4)])
+    return [[w[4 * r + c][row] for c in range(4) for row in range(4)] for r in range(nr + 1)]
+
+
+def aes_encrypt_block(block: bytes, round_keys: list[list[int]]) -> bytes:
+    s = [block[i] ^ round_keys[0][i] for i in range(16)]
+    nr = len(round_keys) - 1
+    for r in range(1, nr):
+        u = [
+            AES_SBOX[s[0]],  AES_SBOX[s[5]],  AES_SBOX[s[10]], AES_SBOX[s[15]],
+            AES_SBOX[s[4]],  AES_SBOX[s[9]],  AES_SBOX[s[14]], AES_SBOX[s[3]],
+            AES_SBOX[s[8]],  AES_SBOX[s[13]], AES_SBOX[s[2]],  AES_SBOX[s[7]],
+            AES_SBOX[s[12]], AES_SBOX[s[1]],  AES_SBOX[s[6]],  AES_SBOX[s[11]],
+        ]
+        rk = round_keys[r]
+        for c in range(4):
+            i = 4 * c
+            a0, a1, a2, a3 = u[i], u[i + 1], u[i + 2], u[i + 3]
+            tm = a0 ^ a1 ^ a2 ^ a3
+            s[i] = a0 ^ tm ^ AES_XTIME[a0 ^ a1] ^ rk[i]
+            s[i + 1] = a1 ^ tm ^ AES_XTIME[a1 ^ a2] ^ rk[i + 1]
+            s[i + 2] = a2 ^ tm ^ AES_XTIME[a2 ^ a3] ^ rk[i + 2]
+            s[i + 3] = a3 ^ tm ^ AES_XTIME[a3 ^ a0] ^ rk[i + 3]
+    rk = round_keys[nr]
+    return bytes((
+        AES_SBOX[s[0]] ^ rk[0],   AES_SBOX[s[5]] ^ rk[1],   AES_SBOX[s[10]] ^ rk[2],  AES_SBOX[s[15]] ^ rk[3],
+        AES_SBOX[s[4]] ^ rk[4],   AES_SBOX[s[9]] ^ rk[5],   AES_SBOX[s[14]] ^ rk[6],  AES_SBOX[s[3]] ^ rk[7],
+        AES_SBOX[s[8]] ^ rk[8],   AES_SBOX[s[13]] ^ rk[9],  AES_SBOX[s[2]] ^ rk[10],  AES_SBOX[s[7]] ^ rk[11],
+        AES_SBOX[s[12]] ^ rk[12], AES_SBOX[s[1]] ^ rk[13],  AES_SBOX[s[6]] ^ rk[14],  AES_SBOX[s[11]] ^ rk[15],
+    ))
+
+
+def aes_decrypt_block(block: bytes, round_keys: list[list[int]]) -> bytes:
+    nr = len(round_keys) - 1
+    s = [block[i] ^ round_keys[nr][i] for i in range(16)]
+    for r in range(nr - 1, 0, -1):
+        u = [
+            AES_INV_SBOX[s[0]],  AES_INV_SBOX[s[13]], AES_INV_SBOX[s[10]], AES_INV_SBOX[s[7]],
+            AES_INV_SBOX[s[4]],  AES_INV_SBOX[s[1]],  AES_INV_SBOX[s[14]], AES_INV_SBOX[s[11]],
+            AES_INV_SBOX[s[8]],  AES_INV_SBOX[s[5]],  AES_INV_SBOX[s[2]],  AES_INV_SBOX[s[15]],
+            AES_INV_SBOX[s[12]], AES_INV_SBOX[s[9]],  AES_INV_SBOX[s[6]],  AES_INV_SBOX[s[3]],
+        ]
+        rk = round_keys[r]
+        for c in range(4):
+            i = 4 * c
+            a0 = u[i] ^ rk[i]
+            a1 = u[i + 1] ^ rk[i + 1]
+            a2 = u[i + 2] ^ rk[i + 2]
+            a3 = u[i + 3] ^ rk[i + 3]
+            s[i] = _gf_mul(a0, 0x0E) ^ _gf_mul(a1, 0x0B) ^ _gf_mul(a2, 0x0D) ^ _gf_mul(a3, 0x09)
+            s[i + 1] = _gf_mul(a0, 0x09) ^ _gf_mul(a1, 0x0E) ^ _gf_mul(a2, 0x0B) ^ _gf_mul(a3, 0x0D)
+            s[i + 2] = _gf_mul(a0, 0x0D) ^ _gf_mul(a1, 0x09) ^ _gf_mul(a2, 0x0E) ^ _gf_mul(a3, 0x0B)
+            s[i + 3] = _gf_mul(a0, 0x0B) ^ _gf_mul(a1, 0x0D) ^ _gf_mul(a2, 0x09) ^ _gf_mul(a3, 0x0E)
+    rk = round_keys[0]
+    return bytes((
+        AES_INV_SBOX[s[0]] ^ rk[0],   AES_INV_SBOX[s[13]] ^ rk[1],  AES_INV_SBOX[s[10]] ^ rk[2],  AES_INV_SBOX[s[7]] ^ rk[3],
+        AES_INV_SBOX[s[4]] ^ rk[4],   AES_INV_SBOX[s[1]] ^ rk[5],   AES_INV_SBOX[s[14]] ^ rk[6],  AES_INV_SBOX[s[11]] ^ rk[7],
+        AES_INV_SBOX[s[8]] ^ rk[8],   AES_INV_SBOX[s[5]] ^ rk[9],   AES_INV_SBOX[s[2]] ^ rk[10],  AES_INV_SBOX[s[15]] ^ rk[11],
+        AES_INV_SBOX[s[12]] ^ rk[12], AES_INV_SBOX[s[9]] ^ rk[13],  AES_INV_SBOX[s[6]] ^ rk[14],  AES_INV_SBOX[s[3]] ^ rk[15],
+    ))
+
+
+def aes_cbc_encrypt(key: bytes, iv: bytes, data: bytes, pad: bool = True) -> bytes:
+    if pad:
+        pad_len = 16 - (len(data) % 16)
+        data = data + bytes([pad_len] * pad_len)
+    rks = aes_expand_key(key)
+    prev = iv
+    out = bytearray()
+    for off in range(0, len(data), 16):
+        blk = bytes(data[off + i] ^ prev[i] for i in range(16))
+        enc = aes_encrypt_block(blk, rks)
+        out.extend(enc)
+        prev = enc
+    return bytes(out)
+
+
+def aes_cbc_decrypt(key: bytes, iv: bytes, ciphertext: bytes, unpad: bool = True) -> bytes:
+    if len(ciphertext) == 0 or len(ciphertext) % 16 != 0:
+        raise ValueError(f"invalid AES-CBC ciphertext length {len(ciphertext)}")
+    rks = aes_expand_key(key)
+    prev = iv
+    out = bytearray()
+    for off in range(0, len(ciphertext), 16):
+        cblk = ciphertext[off : off + 16]
+        dblk = aes_decrypt_block(cblk, rks)
+        out.extend(dblk[i] ^ prev[i] for i in range(16))
+        prev = cblk
+    raw = bytes(out)
+    if unpad:
+        pad_len = raw[-1]
+        if not (1 <= pad_len <= 16) or raw[-pad_len:] != bytes([pad_len] * pad_len):
+            raise ValueError("invalid PKCS#7 padding in AES-CBC payload")
+        return raw[:-pad_len]
+    return raw
+
+
+def rc4_crypt(key: bytes, data: bytes) -> bytes:
+    s = list(range(256))
+    j = 0
+    klen = len(key)
+    for i in range(256):
+        j = (j + s[i] + key[i % klen]) & 0xFF
+        s[i], s[j] = s[j], s[i]
+    i = 0
+    j = 0
+    out = bytearray(len(data))
+    for idx, b in enumerate(data):
+        i = (i + 1) & 0xFF
+        j = (j + s[i]) & 0xFF
+        s[i], s[j] = s[j], s[i]
+        out[idx] = b ^ s[(s[i] + s[j]) & 0xFF]
+    return bytes(out)
+
+
+def _pdf_pad_password(pw: bytes) -> bytes:
+    return (pw + PDF_PAD_BYTES)[:32]
+
+
+def pdf_r34_compute_o(user_pw: bytes, owner_pw: bytes) -> bytes:
+    digest = hashlib.md5(_pdf_pad_password(owner_pw or user_pw)).digest()
+    for _ in range(50):
+        digest = hashlib.md5(digest).digest()
+    rc4_key = digest[:16]
+    acc = rc4_crypt(rc4_key, _pdf_pad_password(user_pw))
+    for i in range(1, 20):
+        acc = rc4_crypt(bytes(b ^ i for b in rc4_key), acc)
+    return acc
+
+
+def pdf_r34_unwrap_owner(owner_pw: bytes, o_val: bytes) -> bytes:
+    """Algorithm 7 (ISO 32000-1 7.6.3.4): recover padded user password from /O."""
+    digest = hashlib.md5(_pdf_pad_password(owner_pw)).digest()
+    for _ in range(50):
+        digest = hashlib.md5(digest).digest()
+    rc4_key = digest[:16]
+    acc = o_val
+    for i in range(19, 0, -1):
+        acc = rc4_crypt(bytes(b ^ i for b in rc4_key), acc)
+    return rc4_crypt(rc4_key, acc)
+
+
+def pdf_r34_compute_file_key(
+    user_pw_or_padded: bytes, o_val: bytes, p_val: int, id0_bytes: bytes
+) -> bytes:
+    h = hashlib.md5()
+    h.update(_pdf_pad_password(user_pw_or_padded))
+    h.update(o_val)
+    h.update(struct.pack("<i", p_val))
+    h.update(id0_bytes)
+    digest = h.digest()
+    for _ in range(50):
+        digest = hashlib.md5(digest[:16]).digest()
+    return digest[:16]
+
+
+def pdf_r34_compute_u(file_key: bytes, id0_bytes: bytes) -> bytes:
+    digest = hashlib.md5(PDF_PAD_BYTES + id0_bytes).digest()
+    acc = rc4_crypt(file_key, digest)
+    for i in range(1, 20):
+        acc = rc4_crypt(bytes(b ^ i for b in file_key), acc)
+    return acc + (b"\x00" * 16)
+
+
+def pdf_r34_object_key(file_key: bytes, obj_num: int, gen_num: int, is_aes: bool) -> bytes:
+    ext = struct.pack("<I", obj_num)[:3] + struct.pack("<H", gen_num)
+    if is_aes:
+        ext += b"sAlT"
+    return hashlib.md5(file_key + ext).digest()[:16]
+
+
+def pdf_r6_hash_2b(pw: bytes, salt: bytes, user_key: bytes = b"") -> bytes:
+    """ISO 32000-2 section 7.6.4.3.4 Algorithm 2.B (64+ round iterative hash)."""
+    pw = pw[:127]
+    k = hashlib.sha256(pw + salt + user_key).digest()
+    round_idx = 0
+    while True:
+        k1 = (pw + k + user_key) * 64
+        e = aes_cbc_encrypt(k[:16], k[16:32], k1, pad=False)
+        mod = sum(e[:16]) % 3
+        if mod == 0:
+            k = hashlib.sha256(e).digest()
+        elif mod == 1:
+            k = hashlib.sha384(e).digest()
+        else:
+            k = hashlib.sha512(e).digest()
+        round_idx += 1
+        if round_idx >= 64 and e[-1] <= (round_idx - 32):
+            break
+    return k[:32]
+
+
+def _build_encrypted_pdf(mode: str) -> bytes:
+    rel = f"render/encrypted-{mode}.pdf"
+    id0_hex, id1_hex = deterministic_id_hex(rel, rev=0)
+    id0_bytes = bytes.fromhex(id0_hex)
+    user_pw = CORPUS_USER_PASSWORD
+    owner_pw = CORPUS_OWNER_PASSWORD
+    p_val = CORPUS_PERMISSIONS_MASK
+
+    raw_content = (
+        f"q 0.94 0.96 0.99 rg 36 700 523 80 re f Q\n"
+        f"BT /F1 18 Tf 54 748 Td (Recto Encrypted PDF ({mode.upper()})) Tj "
+        f"/F1 12 Tf 0 -24 Td (Unlocked with user password recto-test or owner password recto-owner.) Tj ET\n"
+    ).encode("ascii")
+    comp_stream = flate_compress(raw_content)
+
+    def encrypt_obj_payload(obj_num: int, payload: bytes, file_key: bytes) -> bytes:
+        if mode == "rc4-128":
+            okey = pdf_r34_object_key(file_key, obj_num, 0, is_aes=False)
+            return rc4_crypt(okey, payload)
+        if mode == "aes-128":
+            okey = pdf_r34_object_key(file_key, obj_num, 0, is_aes=True)
+            iv = hashlib.sha256(f"recto-iv:{rel}:{obj_num}".encode("utf-8")).digest()[:16]
+            return iv + aes_cbc_encrypt(okey, iv, payload, pad=True)
+        iv = hashlib.sha256(f"recto-iv:{rel}:{obj_num}".encode("utf-8")).digest()[:16]
+        return iv + aes_cbc_encrypt(file_key, iv, payload, pad=True)
+
+    if mode in ("rc4-128", "aes-128"):
+        o_val = pdf_r34_compute_o(user_pw, owner_pw)
+        file_key = pdf_r34_compute_file_key(user_pw, o_val, p_val, id0_bytes)
+        u_val = pdf_r34_compute_u(file_key, id0_bytes)
+        if mode == "rc4-128":
+            enc_dict = (
+                f"<< /Filter /Standard /V 2 /R 3 /Length 128 /P {p_val} "
+                f"/O <{o_val.hex().upper()}> /U <{u_val.hex().upper()}> >>"
+            )
+            ver = "1.7"
+        else:
+            enc_dict = (
+                f"<< /Filter /Standard /V 4 /R 4 /Length 128 /P {p_val} /EncryptMetadata true "
+                f"/CF << /StdCF << /Type /CryptFilter /CFM /AESV2 /AuthEvent /DocOpen /Length 16 >> >> "
+                f"/StmF /StdCF /StrF /StdCF "
+                f"/O <{o_val.hex().upper()}> /U <{u_val.hex().upper()}> >>"
+            )
+            ver = "1.7"
+    elif mode == "aes-256":
+        file_key = hashlib.sha256(f"recto-aes256-fkey:{rel}".encode("utf-8")).digest()
+        u_vsalt = hashlib.sha256(f"recto-uvs:{rel}".encode("utf-8")).digest()[:8]
+        u_ksalt = hashlib.sha256(f"recto-uks:{rel}".encode("utf-8")).digest()[:8]
+        o_vsalt = hashlib.sha256(f"recto-ovs:{rel}".encode("utf-8")).digest()[:8]
+        o_ksalt = hashlib.sha256(f"recto-oks:{rel}".encode("utf-8")).digest()[:8]
+        u_val = pdf_r6_hash_2b(user_pw, u_vsalt, b"") + u_vsalt + u_ksalt
+        u_ikey = pdf_r6_hash_2b(user_pw, u_ksalt, b"")
+        ue_val = aes_cbc_encrypt(u_ikey, b"\x00" * 16, file_key, pad=False)
+        o_val = pdf_r6_hash_2b(owner_pw, o_vsalt, u_val) + o_vsalt + o_ksalt
+        o_ikey = pdf_r6_hash_2b(owner_pw, o_ksalt, u_val)
+        oe_val = aes_cbc_encrypt(o_ikey, b"\x00" * 16, file_key, pad=False)
+        perms_pt = struct.pack("<I", p_val & 0xFFFFFFFF) + b"\xFF\xFF\xFF\xFFTadbRcto"
+        perms_val = aes_encrypt_block(perms_pt, aes_expand_key(file_key))
+        enc_dict = (
+            f"<< /Filter /Standard /V 5 /R 6 /Length 256 /P {p_val} /EncryptMetadata true "
+            f"/CF << /StdCF << /Type /CryptFilter /CFM /AESV3 /AuthEvent /DocOpen /Length 32 >> >> "
+            f"/StmF /StdCF /StrF /StdCF "
+            f"/O <{o_val.hex().upper()}> /U <{u_val.hex().upper()}> "
+            f"/OE <{oe_val.hex().upper()}> /UE <{ue_val.hex().upper()}> "
+            f"/Perms <{perms_val.hex().upper()}> >>"
+        )
+        ver = "2.0"
+    else:
+        raise ValueError(f"unknown encryption mode {mode!r}")
+
+    enc_stream = encrypt_obj_payload(4, comp_stream, file_key)
+    enc_title = encrypt_obj_payload(6, f"Recto Encrypted {mode.upper()}".encode("ascii"), file_key).hex().upper()
+    enc_author = encrypt_obj_payload(6, b"Recto Corpus Generator", file_key).hex().upper()
+    enc_date = encrypt_obj_payload(6, FIXED_PDF_DATE.encode("ascii"), file_key).hex().upper()
+
+    pdf = ClassicPdfBuilder(rel, ver)
+    pdf.set_obj(1, "<< /Type /Catalog /Pages 2 0 R >>")
+    pdf.set_obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    pdf.set_obj(
+        3,
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+        "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+    )
+    pdf.set_obj(
+        4,
+        f"<< /Filter /FlateDecode /Length {len(enc_stream)} >>\nstream\n".encode("ascii")
+        + enc_stream
+        + b"\nendstream",
+    )
+    pdf.set_obj(5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    pdf.set_obj(6, f"<< /Title <{enc_title}> /Author <{enc_author}> /CreationDate <{enc_date}> >>")
+    pdf.set_obj(7, enc_dict)
+    raw = pdf.build(root_obj=1, info_obj=6)
+    return raw.replace(b"/Info 6 0 R /ID", b"/Info 6 0 R /Encrypt 7 0 R /ID")
+
+
+def build_encrypted_rc4_128() -> bytes:
+    return _build_encrypted_pdf("rc4-128")
+
+
+def build_encrypted_aes_128() -> bytes:
+    return _build_encrypted_pdf("aes-128")
+
+
+def build_encrypted_aes_256() -> bytes:
+    return _build_encrypted_pdf("aes-256")
+
+
+# ---------------------------------------------------------------------------
+# Malformed & hostile fixtures under tests/corpus/broken/
+# ---------------------------------------------------------------------------
+
+def build_broken_empty_0b() -> bytes:
+    return b""
+
+
+def build_broken_non_pdf_header() -> bytes:
+    return (
+        b"NOT_A_PDF_DOCUMENT\r\n"
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR-hostile-non-pdf-binary-payload\n"
+    )
+
+
+def build_broken_truncated_header() -> bytes:
+    return b"%PDF-1."
+
+
+def build_broken_truncated_stream() -> bytes:
+    payload = flate_compress(b"BT /F1 14 Tf 72 720 Td (Truncated stream fixture) Tj ET")
+    out = bytearray()
+    out.extend(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
+    out.extend(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
+    out.extend(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n")
+    out.extend(
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R >>\nendobj\n"
+    )
+    out.extend(b"4 0 obj\n<< /Filter /FlateDecode /Length 512 >>\nstream\n")
+    out.extend(payload[:16])
+    return bytes(out)
+
+
+def build_broken_corrupt_xref_recoverable() -> bytes:
+    rel = "broken/corrupt-xref-recoverable.pdf"
+    content = b"BT /F1 16 Tf 54 750 Td (Recovered from damaged xref via linear scan.) Tj ET\n"
+    out = bytearray()
+    out.extend(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
+    objs = {
+        1: b"<< /Type /Catalog /Pages 2 0 R >>",
+        2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+            b"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
+        ),
+        4: make_stream_obj("", content, compress=True),
+        5: b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+        6: f"<< /Title (Recoverable Xref Fixture) /CreationDate ({FIXED_PDF_DATE}) >>".encode("ascii"),
+    }
+    for obj_num in sorted(objs.keys()):
+        out.extend(f"{obj_num} 0 obj\n".encode("ascii"))
+        out.extend(objs[obj_num])
+        out.extend(b"\nendobj\n")
+
+    id0, id1 = deterministic_id_hex(rel, rev=0)
+    out.extend(
+        (
+            "xref\n0 7\n"
+            "0000000000 65535 f \n"
+            "9999999999 00000 n \n"
+            "CORRUPT_XREF_TABLE_ROW\n"
+            f"trailer\n<< /Size 7 /Root 1 0 R /Info 6 0 R /ID [<{id0}> <{id1}>] >>\n"
+            "startxref\n999999\n%%EOF\n"
+        ).encode("ascii")
+    )
+    return bytes(out)
+
+
+def build_broken_cyclic_xref_prev() -> bytes:
+    rel = "broken/cyclic-xref-prev.pdf"
+    content = b"BT /F1 14 Tf 54 750 Td (Cyclic /Prev xref chain test.) Tj ET\n"
+    base = bytearray()
+    base.extend(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
+    objs = {
+        1: b"<< /Type /Catalog /Pages 2 0 R >>",
+        2: b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+            b"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
+        ),
+        4: make_stream_obj("", content, compress=True),
+        5: b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+    }
+    offsets: dict[int, int] = {}
+    for obj_num in sorted(objs.keys()):
+        offsets[obj_num] = len(base)
+        base.extend(f"{obj_num} 0 obj\n".encode("ascii"))
+        base.extend(objs[obj_num])
+        base.extend(b"\nendobj\n")
+
+    xref_rows = bytearray(b"xref\n0 6\n0000000000 65535 f \n")
+    for obj_num in range(1, 6):
+        xref_rows.extend(f"{offsets[obj_num]:010d} 00000 n \n".encode("ascii"))
+    xref_block = bytes(xref_rows)
+    id0, id1 = deterministic_id_hex(rel, rev=0)
+
+    xref_off_1 = len(base)
+    xref_off_2 = xref_off_1 + len(xref_block) + 120
+    for _ in range(8):
+        sec1 = (
+            xref_block
+            + f"trailer\n<< /Size 6 /Root 1 0 R /Prev {xref_off_2} /ID [<{id0}> <{id1}>] >>\n"
+            f"startxref\n{xref_off_1}\n%%EOF\n".encode("ascii")
+        )
+        xref_off_2 = xref_off_1 + len(sec1)
+    sec2 = (
+        xref_block
+        + f"trailer\n<< /Size 6 /Root 1 0 R /Prev {xref_off_1} /ID [<{id0}> <{id1}>] >>\n"
+        f"startxref\n{xref_off_2}\n%%EOF\n".encode("ascii")
+    )
+    return bytes(base) + sec1 + sec2
+
+
+def build_broken_cyclic_pages_tree() -> bytes:
+    rel = "broken/cyclic-pages-tree.pdf"
+    pdf = ClassicPdfBuilder(rel, "1.7")
+    pdf.set_obj(1, "<< /Type /Catalog /Pages 2 0 R >>")
+    pdf.set_obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 595 842] >>")
+    pdf.set_obj(3, "<< /Type /Pages /Parent 2 0 R /Kids [2 0 R] /Count 1 >>")
+    pdf.set_obj(4, f"<< /Title (Cyclic Pages Tree) /CreationDate ({FIXED_PDF_DATE}) >>")
+    return pdf.build(root_obj=1, info_obj=4)
+
+
+def build_broken_deep_nested_array_70() -> bytes:
+    rel = "broken/deep-nested-array-70.pdf"
+    nested_70 = ("[" * 70) + "42" + ("]" * 70)
+    content = b"BT /F1 14 Tf 54 750 Td (Deep nested array 70 levels.) Tj ET\n"
+    pdf = ClassicPdfBuilder(rel, "1.7")
+    pdf.set_obj(1, "<< /Type /Catalog /Pages 2 0 R >>")
+    pdf.set_obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    pdf.set_obj(
+        3,
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+        "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R /RectoDeepNested 6 0 R >>",
+    )
+    pdf.set_obj(4, make_stream_obj("", content, compress=True))
+    pdf.set_obj(5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    pdf.set_obj(6, f"<< /Depth70 {nested_70} >>")
+    return pdf.build(root_obj=1)
+
+
+def build_broken_deflate_bomb_10kb() -> bytes:
+    """Build a ~10 KB PDF whose stream expands to 272 MB (> 256 MB cap) of zeros.
+
+    RFC 1951 caps a single-pass deflate back-reference at 258 bytes per 2 bits
+    (1032:1 maximum ratio, so 256 MB requires >= 254 KB in one pass). Using a
+    standard PDF 2-stage [/FlateDecode /FlateDecode] stream compresses 272 MB
+    into a ~9.6 KB stream (total file size ~10.2 KB), where pass 1 yields the
+    277 KB single-pass deflate stream and pass 2 expands to 272 MB inside FlateDecode.
+    """
+    rel = "broken/deflate-bomb-10kb.pdf"
+    c1 = zlib.compressobj(level=9, method=zlib.DEFLATED, wbits=15)
+    chunk_16mb = b"\x00" * (16 * 1024 * 1024)
+    inner_parts = [c1.compress(chunk_16mb) for _ in range(17)]  # 17 * 16 MB = 272 MB
+    inner_parts.append(c1.flush())
+    inner_deflate = b"".join(inner_parts)
+
+    c2 = zlib.compressobj(level=9, method=zlib.DEFLATED, wbits=15)
+    step = len(inner_deflate) // 800
+    outer_parts = [
+        c2.compress(inner_deflate[i : i + step]) + c2.flush(zlib.Z_FULL_FLUSH)
+        for i in range(0, len(inner_deflate), step)
+    ]
+    outer_parts.append(c2.flush())
+    outer_deflate = b"".join(outer_parts)
+
+    pdf = ClassicPdfBuilder(rel, "1.7")
+    pdf.set_obj(1, "<< /Type /Catalog /Pages 2 0 R >>")
+    pdf.set_obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    pdf.set_obj(
+        3,
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R >>",
+    )
+    pdf.set_obj(
+        4,
+        f"<< /Filter [/FlateDecode /FlateDecode] /Length {len(outer_deflate)} >>\nstream\n".encode(
+            "ascii"
+        )
+        + outer_deflate
+        + b"\nendstream",
+    )
+    return pdf.build(root_obj=1)
+
+
+# ---------------------------------------------------------------------------
+# Compact (< 4 KB) libFuzzer seed fixtures under tests/corpus/seeds/
+# ---------------------------------------------------------------------------
+
+def ascii85_encode_pdf(raw: bytes) -> bytes:
+    return base64.a85encode(raw) + b"~>"
+
+
+def ascii85_decode_pdf(encoded: bytes) -> bytes:
+    body = encoded.strip()
+    if not body.endswith(b"~>"):
+        raise ValueError("ASCII85 stream missing '~>' EOD marker")
+    return base64.a85decode(body[:-2])
+
+
+def rle_encode_pdf(raw: bytes) -> bytes:
+    out = bytearray()
+    for i in range(0, len(raw), 64):
+        chunk = raw[i : i + 64]
+        out.append(len(chunk) - 1)
+        out.extend(chunk)
+    out.append(128)  # EOD
+    return bytes(out)
+
+
+def rle_decode_pdf(encoded: bytes) -> bytes:
+    out = bytearray()
+    pos = 0
+    while pos < len(encoded):
+        length_byte = encoded[pos]
+        pos += 1
+        if length_byte == 128:
+            return bytes(out)
+        if length_byte < 128:
+            count = length_byte + 1
+            if pos + count > len(encoded):
+                raise ValueError("truncated literal run in RunLengthDecode")
+            out.extend(encoded[pos : pos + count])
+            pos += count
+        else:
+            count = 257 - length_byte
+            if pos >= len(encoded):
+                raise ValueError("truncated repeat run in RunLengthDecode")
+            out.extend([encoded[pos]] * count)
+            pos += 1
+    raise ValueError("RunLengthDecode stream missing EOD byte 128")
+
+
+def lzw_encode_literals(raw: bytes) -> bytes:
+    codes = [256]
+    for idx, b in enumerate(raw):
+        if idx > 0 and idx % 200 == 0:
+            codes.append(256)
+        codes.append(b)
+    codes.append(257)
+    bit_buf = 0
+    bit_cnt = 0
+    out = bytearray()
+    for code in codes:
+        bit_buf = (bit_buf << 9) | (code & 0x1FF)
+        bit_cnt += 9
+        while bit_cnt >= 8:
+            bit_cnt -= 8
+            out.append((bit_buf >> bit_cnt) & 0xFF)
+    if bit_cnt > 0:
+        out.append((bit_buf << (8 - bit_cnt)) & 0xFF)
+    return bytes(out)
+
+
+def lzw_decode_literals(encoded: bytes) -> bytes:
+    codes: list[int] = []
+    bit_buf = 0
+    bit_cnt = 0
+    for b in encoded:
+        bit_buf = (bit_buf << 8) | b
+        bit_cnt += 8
+        while bit_cnt >= 9:
+            bit_cnt -= 9
+            code = (bit_buf >> bit_cnt) & 0x1FF
+            codes.append(code)
+            if code == 257:
+                break
+    if not codes or codes[0] != 256 or 257 not in codes:
+        raise ValueError("invalid 9-bit LZW stream in seed validator")
+    out = bytearray()
+    for code in codes:
+        if code == 256:
+            continue
+        if code == 257:
+            break
+        if 0 <= code <= 255:
+            out.append(code)
+        else:
+            raise ValueError(f"unexpected LZW code {code} in literal-mode seed")
+    return bytes(out)
+
+
+def build_seed_classic_xref() -> bytes:
+    rel = "seeds/seed-classic-xref.pdf"
+    content = (
+        b"q 0.2 0.4 0.7 rg 36 740 180 36 re f Q\n"
+        b"BT /F1 12 Tf 48 754 Td (Seed 1: Classic XRef & Primitives) Tj ET\n"
+    )
+    pdf = ClassicPdfBuilder(rel, "1.7")
+    pdf.set_obj(1, "<< /Type /Catalog /Pages 2 0 R /PageLayout /SinglePage >>")
+    pdf.set_obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    pdf.set_obj(
+        3,
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+        "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R "
+        "/SeedPrimitives << /BoolT true /BoolF false /NullVal null /Hex <48656C6C6F> /Arr [1 -2 3.5 (lit)] >> >>",
+    )
+    pdf.set_obj(4, make_stream_obj("", content, compress=True))
+    pdf.set_obj(5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    pdf.set_obj(6, f"<< /Title (Seed Classic XRef) /CreationDate ({FIXED_PDF_DATE}) >>")
+    return pdf.build(root_obj=1, info_obj=6)
+
+
+def build_seed_xref_objstm() -> bytes:
+    rel = "seeds/seed-xref-objstm.pdf"
+    out = bytearray()
+    out.extend(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
+    obj_stm_entries = [
+        (1, b"<< /Type /Catalog /Pages 2 0 R >>"),
+        (2, b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+        (
+            3,
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+            b"/Resources << /Font << /F1 4 0 R >> >> /Contents 6 0 R >>",
+        ),
+        (4, b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"),
+    ]
+    header_parts: list[str] = []
+    body_parts: list[bytes] = []
+    cur = 0
+    for oid, raw in obj_stm_entries:
+        header_parts.append(f"{oid} {cur}")
+        body_parts.append(raw)
+        cur += len(raw) + 1
+    header_bytes = (" ".join(header_parts) + "\n").encode("ascii")
+    obj_stm_raw = header_bytes + b"\n".join(body_parts)
+
+    type1_offsets: dict[int, int] = {}
+    type1_offsets[5] = len(out)
+    out.extend(b"5 0 obj\n")
+    out.extend(
+        make_stream_obj(
+            f"/Type /ObjStm /N {len(obj_stm_entries)} /First {len(header_bytes)}",
+            obj_stm_raw,
+            compress=True,
+        )
+    )
+    out.extend(b"\nendobj\n")
+
+    type1_offsets[6] = len(out)
+    out.extend(b"6 0 obj\n")
+    out.extend(make_stream_obj("", b"BT /F1 12 Tf 48 750 Td (Seed 2: XRef Stream & ObjStm) Tj ET\n"))
+    out.extend(b"\nendobj\n")
+
+    xref_obj_id = 7
+    xref_offset = len(out)
+    type1_offsets[xref_obj_id] = xref_offset
+    size = xref_obj_id + 1
+    xref_raw = bytearray()
+    xref_raw.extend(struct.pack(">BHH", 0, 0, 65535))
+    for idx, (oid, _) in enumerate(obj_stm_entries):
+        xref_raw.extend(struct.pack(">BHH", 2, 5, idx))
+    for oid in (5, 6, 7):
+        xref_raw.extend(struct.pack(">BHH", 1, type1_offsets[oid], 0))
+    xref_comp = flate_png_up_compress(bytes(xref_raw), columns=5)
+    id0, id1 = deterministic_id_hex(rel, rev=0)
+    out.extend(
+        f"{xref_obj_id} 0 obj\n<< /Type /XRef /Size {size} /W [1 2 2] /Root 1 0 R "
+        f"/ID [<{id0}> <{id1}>] /Filter /FlateDecode "
+        f"/DecodeParms << /Predictor 12 /Columns 5 >> /Length {len(xref_comp)} >>\nstream\n".encode(
+            "ascii"
+        )
+    )
+    out.extend(xref_comp)
+    out.extend(f"\nendstream\nendobj\nstartxref\n{xref_offset}\n%%EOF\n".encode("ascii"))
+    return bytes(out)
+
+
+def build_seed_filters_ascii_rle() -> bytes:
+    rel = "seeds/seed-filters-ascii-rle.pdf"
+    s_hex = b"BT /F1 11 Tf 48 760 Td (Seed 3A: ASCIIHexDecode) Tj ET\n".hex().upper().encode("ascii") + b">"
+    s_a85 = ascii85_encode_pdf(b"BT /F1 11 Tf 48 740 Td (Seed 3B: ASCII85Decode) Tj ET\n")
+    s_rle = rle_encode_pdf(b"BT /F1 11 Tf 48 720 Td (Seed 3C: RunLengthDecode) Tj ET\n")
+    s_chain = ascii85_encode_pdf(
+        flate_compress(b"BT /F1 11 Tf 48 700 Td (Seed 3D: Chained A85+Flate) Tj ET\n")
+    )
+    pdf = ClassicPdfBuilder(rel, "1.7")
+    pdf.set_obj(1, "<< /Type /Catalog /Pages 2 0 R >>")
+    pdf.set_obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    pdf.set_obj(
+        3,
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+        "/Resources << /Font << /F1 8 0 R >> >> /Contents [4 0 R 5 0 R 6 0 R 7 0 R] >>",
+    )
+    pdf.set_obj(
+        4,
+        f"<< /Filter /ASCIIHexDecode /Length {len(s_hex)} >>\nstream\n".encode("ascii")
+        + s_hex
+        + b"\nendstream",
+    )
+    pdf.set_obj(
+        5,
+        f"<< /Filter /ASCII85Decode /Length {len(s_a85)} >>\nstream\n".encode("ascii")
+        + s_a85
+        + b"\nendstream",
+    )
+    pdf.set_obj(
+        6,
+        f"<< /Filter /RunLengthDecode /Length {len(s_rle)} >>\nstream\n".encode("ascii")
+        + s_rle
+        + b"\nendstream",
+    )
+    pdf.set_obj(
+        7,
+        f"<< /Filter [/ASCII85Decode /FlateDecode] /Length {len(s_chain)} >>\nstream\n".encode(
+            "ascii"
+        )
+        + s_chain
+        + b"\nendstream",
+    )
+    pdf.set_obj(8, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    return pdf.build(root_obj=1)
+
+
+def build_seed_filters_lzw_ccitt() -> bytes:
+    rel = "seeds/seed-filters-lzw-ccitt.pdf"
+    s_lzw = lzw_encode_literals(
+        b"q 48 680 16 16 re W n 16 0 0 16 48 680 cm /Im1 Do Q\n"
+        b"BT /F1 11 Tf 48 750 Td (Seed 4: LZWDecode & CCITTFaxDecode) Tj ET\n"
+    )
+    ccitt_bytes = make_ccitt_group4_16x16()
+
+    pdf = ClassicPdfBuilder(rel, "1.7")
+    pdf.set_obj(1, "<< /Type /Catalog /Pages 2 0 R >>")
+    pdf.set_obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    pdf.set_obj(
+        3,
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+        "/Resources << /Font << /F1 6 0 R >> /XObject << /Im1 5 0 R >> >> /Contents 4 0 R >>",
+    )
+    pdf.set_obj(
+        4,
+        f"<< /Filter /LZWDecode /DecodeParms << /EarlyChange 1 >> /Length {len(s_lzw)} >>\nstream\n".encode(
+            "ascii"
+        )
+        + s_lzw
+        + b"\nendstream",
+    )
+    pdf.set_obj(
+        5,
+        f"<< /Type /XObject /Subtype /Image /Width 16 /Height 16 /ColorSpace /DeviceGray "
+        f"/BitsPerComponent 1 /Filter /CCITTFaxDecode "
+        f"/DecodeParms << /K -1 /Columns 16 /Rows 16 >> /Length {len(ccitt_bytes)} >>\nstream\n".encode(
+            "ascii"
+        )
+        + ccitt_bytes
+        + b"\nendstream",
+    )
+    pdf.set_obj(6, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    return pdf.build(root_obj=1)
+
+
+def build_seed_outlines_links() -> bytes:
+    rel = "seeds/seed-outlines-links.pdf"
+    content = b"BT /F1 12 Tf 48 750 Td (Seed 5: Outlines, Named Dests & Link Actions) Tj ET\n"
+    pdf = ClassicPdfBuilder(rel, "1.7")
+    pdf.set_obj(
+        1,
+        "<< /Type /Catalog /Pages 2 0 R /Outlines 6 0 R "
+        "/Names << /Dests << /Names [(sec1) [3 0 R /XYZ 48 750 0]] >> >> >>",
+    )
+    pdf.set_obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    pdf.set_obj(
+        3,
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+        "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R "
+        "/Annots [8 0 R 9 0 R 10 0 R] >>",
+    )
+    pdf.set_obj(4, make_stream_obj("", content, compress=True))
+    pdf.set_obj(5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    pdf.set_obj(6, "<< /Type /Outlines /First 7 0 R /Last 7 0 R /Count 1 >>")
+    pdf.set_obj(7, "<< /Title (Section 1) /Parent 6 0 R /Dest (sec1) >>")
+    pdf.set_obj(
+        8,
+        "<< /Type /Annot /Subtype /Link /Rect [48 720 180 740] /Border [0 0 0] "
+        "/A << /S /URI /URI (https://example.com/recto) >> >>",
+    )
+    pdf.set_obj(
+        9,
+        "<< /Type /Annot /Subtype /Link /Rect [48 695 180 715] /Border [0 0 0] "
+        "/A << /S /JavaScript /JS (app.alert('inert')) >> >>",
+    )
+    pdf.set_obj(
+        10,
+        "<< /Type /Annot /Subtype /Link /Rect [48 670 180 690] /Border [0 0 0] "
+        "/A << /S /Launch /F (cmd.exe) >> >>",
+    )
+    return pdf.build(root_obj=1)
+
+
+def build_seed_render_ops() -> bytes:
+    rel = "seeds/seed-render-ops.pdf"
+    content = (
+        b"q /GS1 gs 0.1 0.3 0.6 rg 0.8 0.2 0.1 RG 1.5 w 1 J 1 j [3 1] 0 d "
+        b"48 640 m 140 640 l 160 670 120 700 90 700 c 60 700 48 670 y h B "
+        b"180 640 90 60 re W* n 0.2 0.6 0.4 0.1 k 185 645 80 50 re f* Q\n"
+        b"q 1 0 0 1 300 640 cm /Fm1 Do Q\n"
+        b"BT /F1 12 Tf 0.5 Tc 1.0 Tw 1 0 0 1 48 760 Tm "
+        b"(Seed 6: Render Ops) Tj 0 -20 Td [(Vec) -40 (tor & Text)] TJ ET\n"
+    )
+    form_stm = b"q 0.85 0.45 0.15 rg 0 0 60 40 re f Q"
+    pdf = ClassicPdfBuilder(rel, "1.7")
+    pdf.set_obj(1, "<< /Type /Catalog /Pages 2 0 R >>")
+    pdf.set_obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    pdf.set_obj(
+        3,
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+        "/Resources << /Font << /F1 5 0 R >> /ExtGState << /GS1 6 0 R >> "
+        "/XObject << /Fm1 7 0 R >> >> /Contents 4 0 R >>",
+    )
+    pdf.set_obj(4, make_stream_obj("", content, compress=True))
+    pdf.set_obj(5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
+    pdf.set_obj(6, "<< /Type /ExtGState /CA 0.85 /ca 0.75 /BM /Normal >>")
+    pdf.set_obj(
+        7,
+        make_stream_obj(
+            "/Type /XObject /Subtype /Form /BBox [0 0 60 40] /Matrix [1 0 0 1 0 0]",
+            form_stm,
+            compress=True,
+        ),
+    )
+    return pdf.build(root_obj=1)
+
+
+def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
+    """Validate encrypted PDF structure and verify user/owner password decryption."""
+    if not (data.startswith(b"%PDF-1.7\n") or data.startswith(b"%PDF-2.0\n")):
+        raise ValueError(f"{rel_path}: missing valid %PDF- header")
+    eof_m = re.search(rb"startxref\n(\d+)\n%%EOF\n\Z", data)
+    if eof_m is None:
+        raise ValueError(f"{rel_path}: missing startxref before %%EOF")
+    validate_classic_xref_at(rel_path, data, int(eof_m.group(1)), set())
+
+    id_m = re.search(rb"/ID\s*\[<([0-9A-F]{32})>\s*<([0-9A-F]{32})>\]", data)
+    if id_m is None:
+        raise ValueError(f"{rel_path}: missing trailer /ID array")
+    id0_bytes = bytes.fromhex(id_m.group(1).decode("ascii"))
+
+    enc_m = re.search(rb"7 0 obj\n<<(.*?)>>\nendobj", data, re.DOTALL)
+    if enc_m is None or b"/Filter /Standard" not in enc_m.group(1):
+        raise ValueError(f"{rel_path}: missing 7 0 obj /Filter /Standard encryption dictionary")
+    enc_dict = enc_m.group(1)
+
+    v_val = int(re.search(rb"/V\s+(\d+)", enc_dict).group(1))
+    r_val = int(re.search(rb"/R\s+(\d+)", enc_dict).group(1))
+    p_val = int(re.search(rb"/P\s+(-?\d+)", enc_dict).group(1))
+    o_bytes = bytes.fromhex(re.search(rb"/O\s*<([0-9A-F]+)>", enc_dict).group(1).decode("ascii"))
+    u_bytes = bytes.fromhex(re.search(rb"/U\s*<([0-9A-F]+)>", enc_dict).group(1).decode("ascii"))
+
+    if r_val in (3, 4):
+        if len(o_bytes) != 32 or len(u_bytes) != 32:
+            raise ValueError(f"{rel_path}: R={r_val} /O and /U must be 32 bytes")
+        user_fkey = pdf_r34_compute_file_key(CORPUS_USER_PASSWORD, o_bytes, p_val, id0_bytes)
+        if pdf_r34_compute_u(user_fkey, id0_bytes)[:16] != u_bytes[:16]:
+            raise ValueError(f"{rel_path}: R={r_val} user password authentication failed")
+        recovered_padded_user = pdf_r34_unwrap_owner(CORPUS_OWNER_PASSWORD, o_bytes)
+        owner_fkey = pdf_r34_compute_file_key(recovered_padded_user, o_bytes, p_val, id0_bytes)
+        if owner_fkey != user_fkey:
+            raise ValueError(f"{rel_path}: R={r_val} owner password unwrapped wrong file key")
+        wrong_fkey = pdf_r34_compute_file_key(b"wrong-password", o_bytes, p_val, id0_bytes)
+        if pdf_r34_compute_u(wrong_fkey, id0_bytes)[:16] == u_bytes[:16]:
+            raise ValueError(f"{rel_path}: R={r_val} unexpectedly accepted wrong password")
+        file_key = user_fkey
+    elif r_val == 6 and v_val == 5:
+        if len(o_bytes) != 48 or len(u_bytes) != 48:
+            raise ValueError(f"{rel_path}: R=6 /O and /U must be 48 bytes")
+        oe_bytes = bytes.fromhex(re.search(rb"/OE\s*<([0-9A-F]{64})>", enc_dict).group(1).decode("ascii"))
+        ue_bytes = bytes.fromhex(re.search(rb"/UE\s*<([0-9A-F]{64})>", enc_dict).group(1).decode("ascii"))
+        perms_bytes = bytes.fromhex(
+            re.search(rb"/Perms\s*<([0-9A-F]{32})>", enc_dict).group(1).decode("ascii")
+        )
+        if pdf_r6_hash_2b(CORPUS_USER_PASSWORD, u_bytes[32:40], b"") != u_bytes[:32]:
+            raise ValueError(f"{rel_path}: R=6 user password /U verification failed")
+        if pdf_r6_hash_2b(CORPUS_OWNER_PASSWORD, o_bytes[32:40], u_bytes) != o_bytes[:32]:
+            raise ValueError(f"{rel_path}: R=6 owner password /O verification failed")
+        u_ikey = pdf_r6_hash_2b(CORPUS_USER_PASSWORD, u_bytes[40:48], b"")
+        o_ikey = pdf_r6_hash_2b(CORPUS_OWNER_PASSWORD, o_bytes[40:48], u_bytes)
+        user_fkey = aes_cbc_decrypt(u_ikey, b"\x00" * 16, ue_bytes, unpad=False)
+        owner_fkey = aes_cbc_decrypt(o_ikey, b"\x00" * 16, oe_bytes, unpad=False)
+        if user_fkey != owner_fkey:
+            raise ValueError(f"{rel_path}: R=6 /UE and /OE unwrapped different file keys")
+        perms_pt = aes_decrypt_block(perms_bytes, aes_expand_key(user_fkey))
+        if perms_pt[9:12] != b"adb" or perms_pt[8:9] != b"T":
+            raise ValueError(f"{rel_path}: R=6 /Perms signature verification failed")
+        perms_p = struct.unpack("<i", perms_pt[:4])[0]
+        if perms_p != p_val:
+            raise ValueError(f"{rel_path}: R=6 /Perms permissions {perms_p} != /P {p_val}")
+        file_key = user_fkey
+    else:
+        raise ValueError(f"{rel_path}: unsupported (/V {v_val}, /R {r_val})")
+
+    stm_m = re.search(rb"4 0 obj\n<<([^\n]*?)>>\nstream\n", data)
+    if stm_m is None:
+        raise ValueError(f"{rel_path}: missing encrypted page content stream 4 0 obj")
+    slen = int(re.search(rb"/Length\s+(\d+)", stm_m.group(1)).group(1))
+    s_start = stm_m.end()
+    if data[s_start + slen : s_start + slen + 10] != b"\nendstream":
+        raise ValueError(f"{rel_path}: stream 4 0 obj /Length mismatch")
+    enc_payload = data[s_start : s_start + slen]
+    if r_val == 3:
+        okey = pdf_r34_object_key(file_key, 4, 0, is_aes=False)
+        comp_payload = rc4_crypt(okey, enc_payload)
+    elif r_val == 4:
+        okey = pdf_r34_object_key(file_key, 4, 0, is_aes=True)
+        comp_payload = aes_cbc_decrypt(okey, enc_payload[:16], enc_payload[16:], unpad=True)
+    else:
+        comp_payload = aes_cbc_decrypt(file_key, enc_payload[:16], enc_payload[16:], unpad=True)
+
+    raw_content = zlib.decompress(comp_payload)
+    validate_content_stream_syntax(rel_path, raw_content)
+
+
+def validate_broken_pdf_structure(rel_path: str, data: bytes) -> None:
+    """Validate that each broken/ fixture contains its exact expected fault."""
+    if rel_path == "broken/empty-0b.pdf":
+        if len(data) != 0:
+            raise ValueError(f"{rel_path}: expected 0 bytes, got {len(data)}")
+        return
+    if rel_path == "broken/non-pdf-header.pdf":
+        if len(data) == 0 or b"%PDF-" in data:
+            raise ValueError(f"{rel_path}: must be non-empty and contain no %PDF- header")
+        return
+    if rel_path == "broken/truncated-header.pdf":
+        if data != b"%PDF-1.":
+            raise ValueError(f"{rel_path}: expected truncated b'%PDF-1.' header")
+        return
+    if rel_path == "broken/truncated-stream.pdf":
+        if (
+            not data.startswith(b"%PDF-1.7\n")
+            or b"/Length 512 >>\nstream\n" not in data
+            or b"endstream" in data
+            or b"%%EOF" in data
+        ):
+            raise ValueError(f"{rel_path}: invalid truncated-stream structure")
+        return
+    if rel_path == "broken/corrupt-xref-recoverable.pdf":
+        eof_m = re.search(rb"startxref\n(\d+)\n%%EOF\n\Z", data)
+        if eof_m is None or int(eof_m.group(1)) < len(data):
+            raise ValueError(f"{rel_path}: startxref must be deliberately out-of-bounds")
+        found_objs = {
+            int(m.group(1))
+            for m in re.finditer(rb"(\d+)\s+0\s+obj\n(.*?)\nendobj\n", data, re.DOTALL)
+        }
+        if found_objs != {1, 2, 3, 4, 5, 6}:
+            raise ValueError(f"{rel_path}: expected recoverable objects 1..6, got {found_objs}")
+        stm_m = re.search(rb"4 0 obj\n<<([^\n]*?)>>\nstream\n", data)
+        assert stm_m is not None
+        slen = int(re.search(rb"/Length\s+(\d+)", stm_m.group(1)).group(1))
+        s_start = stm_m.end()
+        dec = zlib.decompress(data[s_start : s_start + slen])
+        validate_content_stream_syntax(rel_path, dec)
+        return
+    if rel_path == "broken/cyclic-xref-prev.pdf":
+        eof_m = re.search(rb"startxref\n(\d+)\n%%EOF\n\Z", data)
+        if eof_m is None:
+            raise ValueError(f"{rel_path}: missing final startxref")
+        try:
+            validate_classic_xref_at(rel_path, data, int(eof_m.group(1)), set())
+        except ValueError as exc:
+            if "cyclic /Prev xref offset" in str(exc):
+                return
+            raise
+        raise ValueError(f"{rel_path}: expected cyclic /Prev xref offset error")
+    if rel_path == "broken/cyclic-pages-tree.pdf":
+        validate_pdf_structure(rel_path, data)
+        if (
+            b"2 0 obj\n<< /Type /Pages /Kids [3 0 R]" not in data
+            or b"3 0 obj\n<< /Type /Pages /Parent 2 0 R /Kids [2 0 R]" not in data
+        ):
+            raise ValueError(f"{rel_path}: missing 2 -> 3 -> 2 /Pages /Kids cycle")
+        return
+    if rel_path == "broken/deep-nested-array-70.pdf":
+        validate_pdf_structure(rel_path, data)
+        expected_nested = (b"[" * 70) + b"42" + (b"]" * 70)
+        if expected_nested not in data:
+            raise ValueError(f"{rel_path}: missing 70-level nested array")
+        return
+    if rel_path == "broken/deflate-bomb-10kb.pdf":
+        validate_pdf_structure(rel_path, data)
+        if not (8_000 <= len(data) <= 16_384):
+            raise ValueError(f"{rel_path}: expected ~10 KB file size, got {len(data)} bytes")
+        stm_m = re.search(
+            rb"4 0 obj\n<<\s*/Filter\s*\[\s*/FlateDecode\s+/FlateDecode\s*\]\s*/Length\s+(\d+)\s*>>\nstream\n",
+            data,
+        )
+        if stm_m is None:
+            raise ValueError(f"{rel_path}: missing 2-stage FlateDecode stream in 4 0 obj")
+        slen = int(stm_m.group(1))
+        s_start = stm_m.end()
+        inner_deflate = zlib.decompress(data[s_start : s_start + slen])
+        d2 = zlib.decompressobj()
+        total_expanded = 0
+        for off in range(0, len(inner_deflate), 16_384):
+            chunk = d2.decompress(inner_deflate[off : off + 16_384])
+            total_expanded += len(chunk)
+            if total_expanded > DEFLATE_BOMB_LIMIT_BYTES:
+                break
+        if total_expanded <= DEFLATE_BOMB_LIMIT_BYTES:
+            raise ValueError(
+                f"{rel_path}: expanded size {total_expanded} did not exceed 256 MB cap"
+            )
+        return
+    raise ValueError(f"unknown broken fixture {rel_path}")
+
+
+def validate_seed_pdf_structure(rel_path: str, data: bytes) -> None:
+    if len(data) >= MAX_SEED_FILE_BYTES:
+        raise ValueError(
+            f"{rel_path}: seed size {len(data)} must be < {MAX_SEED_FILE_BYTES} bytes"
+        )
+    validate_pdf_structure(rel_path, data)
+    for m in re.finditer(rb"<<([^\n]*?)>>\nstream\n", data):
+        dict_body = m.group(1)
+        slen = int(re.search(rb"/Length\s+(\d+)", dict_body).group(1))
+        s_start = m.end()
+        payload = data[s_start : s_start + slen]
+        if b"/Filter /ASCIIHexDecode" in dict_body:
+            if not payload.endswith(b">"):
+                raise ValueError(f"{rel_path}: ASCIIHexDecode stream missing '>' EOD")
+            dec = bytes.fromhex(payload[:-1].decode("ascii"))
+            validate_content_stream_syntax(rel_path, dec)
+        elif b"/Filter /ASCII85Decode" in dict_body:
+            dec = ascii85_decode_pdf(payload)
+            validate_content_stream_syntax(rel_path, dec)
+        elif b"/Filter /RunLengthDecode" in dict_body:
+            dec = rle_decode_pdf(payload)
+            validate_content_stream_syntax(rel_path, dec)
+        elif b"/Filter [/ASCII85Decode /FlateDecode]" in dict_body:
+            dec = zlib.decompress(ascii85_decode_pdf(payload))
+            validate_content_stream_syntax(rel_path, dec)
+        elif b"/Filter /LZWDecode" in dict_body:
+            dec = lzw_decode_literals(payload)
+            validate_content_stream_syntax(rel_path, dec)
+
+
+def validate_corpus_entry(rel_path: str, data: bytes) -> None:
+    if rel_path.startswith("broken/"):
+        validate_broken_pdf_structure(rel_path, data)
+    elif rel_path.startswith("render/encrypted-"):
+        validate_encrypted_pdf_structure(rel_path, data)
+    elif rel_path.startswith("seeds/"):
+        validate_seed_pdf_structure(rel_path, data)
+    elif rel_path.endswith(".pdf"):
+        validate_pdf_structure(rel_path, data)
+    elif rel_path.endswith((".docx", ".xlsx")):
+        validate_openxml_structure(rel_path, data)
+    else:
+        raise ValueError(f"unrecognized corpus entry {rel_path}")
+
+
 def validate_openxml_structure(rel_path: str, data: bytes) -> None:
     import io
 
@@ -1281,19 +2394,34 @@ def expected_corpus_files() -> dict[str, bytes]:
         "render/incremental-2rev.pdf": build_incremental_2rev(),
         "render/rotated-pages.pdf": build_rotated_pages(),
         "render/images-and-vectors.pdf": build_images_and_vectors(),
+        "render/encrypted-rc4-128.pdf": build_encrypted_rc4_128(),
+        "render/encrypted-aes-128.pdf": build_encrypted_aes_128(),
+        "render/encrypted-aes-256.pdf": build_encrypted_aes_256(),
         "text/two-column-links-outline.pdf": build_two_column_links_outline(),
         "text/scanned.pdf": build_scanned(),
         "convert/tables-and-forms.pdf": build_tables_and_forms(),
         "convert/sample.docx": build_sample_docx(),
         "convert/sample.xlsx": build_sample_xlsx(),
+        "broken/empty-0b.pdf": build_broken_empty_0b(),
+        "broken/non-pdf-header.pdf": build_broken_non_pdf_header(),
+        "broken/truncated-header.pdf": build_broken_truncated_header(),
+        "broken/truncated-stream.pdf": build_broken_truncated_stream(),
+        "broken/corrupt-xref-recoverable.pdf": build_broken_corrupt_xref_recoverable(),
+        "broken/cyclic-xref-prev.pdf": build_broken_cyclic_xref_prev(),
+        "broken/cyclic-pages-tree.pdf": build_broken_cyclic_pages_tree(),
+        "broken/deep-nested-array-70.pdf": build_broken_deep_nested_array_70(),
+        "broken/deflate-bomb-10kb.pdf": build_broken_deflate_bomb_10kb(),
+        "seeds/seed-classic-xref.pdf": build_seed_classic_xref(),
+        "seeds/seed-xref-objstm.pdf": build_seed_xref_objstm(),
+        "seeds/seed-filters-ascii-rle.pdf": build_seed_filters_ascii_rle(),
+        "seeds/seed-filters-lzw-ccitt.pdf": build_seed_filters_lzw_ccitt(),
+        "seeds/seed-outlines-links.pdf": build_seed_outlines_links(),
+        "seeds/seed-render-ops.pdf": build_seed_render_ops(),
     }
     total_bytes = 0
     for rel_path, content in files.items():
         total_bytes += len(content)
-        if rel_path.endswith(".pdf"):
-            validate_pdf_structure(rel_path, content)
-        elif rel_path.endswith((".docx", ".xlsx")):
-            validate_openxml_structure(rel_path, content)
+        validate_corpus_entry(rel_path, content)
 
     if total_bytes >= MAX_CORPUS_TOTAL_BYTES:
         raise ValueError(
@@ -1326,10 +2454,7 @@ def check_corpus(corpus_root: Path = CORPUS_ROOT) -> tuple[bool, list[str]]:
         actual_bytes = dest.read_bytes()
         total_on_disk += len(actual_bytes)
         try:
-            if rel_path.endswith(".pdf"):
-                validate_pdf_structure(rel_path, actual_bytes)
-            elif rel_path.endswith((".docx", ".xlsx")):
-                validate_openxml_structure(rel_path, actual_bytes)
+            validate_corpus_entry(rel_path, actual_bytes)
         except ValueError as exc:
             errors.append(str(exc))
         if actual_bytes != expected_bytes:
@@ -1339,7 +2464,7 @@ def check_corpus(corpus_root: Path = CORPUS_ROOT) -> tuple[bool, list[str]]:
                 f"byte mismatch for {rel_path}: expected sha256 {exp_hash}, got {act_hash}"
             )
 
-    for subdir in ("render", "text", "convert"):
+    for subdir in ("render", "text", "convert", "broken", "seeds"):
         sub_path = corpus_root / subdir
         if sub_path.is_dir():
             for child in sorted(sub_path.iterdir()):

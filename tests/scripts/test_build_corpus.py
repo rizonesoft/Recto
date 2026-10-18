@@ -75,6 +75,42 @@ class BuildCorpusTests(unittest.TestCase):
         self.assertIn(b"/AP << /N << /Yes 12 0 R /Off 13 0 R >> >>", files["convert/tables-and-forms.pdf"])
         self.assertIn(b"/W [1 2 2]", files["render/compressed-xref-2p.pdf"])
 
+    def test_encrypted_broken_seeds_and_readme(self) -> None:
+        files = self.mod.expected_corpus_files()
+        for enc_name in (
+            "render/encrypted-rc4-128.pdf",
+            "render/encrypted-aes-128.pdf",
+            "render/encrypted-aes-256.pdf",
+        ):
+            self.assertIn(enc_name, files)
+            self.mod.validate_encrypted_pdf_structure(enc_name, files[enc_name])
+
+        broken_expected = {
+            "broken/empty-0b.pdf",
+            "broken/non-pdf-header.pdf",
+            "broken/truncated-header.pdf",
+            "broken/truncated-stream.pdf",
+            "broken/corrupt-xref-recoverable.pdf",
+            "broken/cyclic-xref-prev.pdf",
+            "broken/cyclic-pages-tree.pdf",
+            "broken/deep-nested-array-70.pdf",
+            "broken/deflate-bomb-10kb.pdf",
+        }
+        self.assertTrue(broken_expected.issubset(files.keys()))
+        for bname in sorted(broken_expected):
+            self.mod.validate_broken_pdf_structure(bname, files[bname])
+
+        seed_files = [k for k in files if k.startswith("seeds/")]
+        self.assertGreaterEqual(len(seed_files), 6)
+        for sname in seed_files:
+            self.assertLess(len(files[sname]), 4096)
+            self.mod.validate_seed_pdf_structure(sname, files[sname])
+
+        readme = (self.mod.CORPUS_ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("recto-test", readme)
+        self.assertIn("recto-owner", readme)
+        self.assertIn("PROVENANCE.md", readme)
+
 
 if __name__ == "__main__":
     unittest.main()
