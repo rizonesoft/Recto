@@ -1,0 +1,24 @@
+{
+  "ref": "D00 T02 \u00a72",
+  "title": "Skills, rules and the CI gate",
+  "implementation_sha": "d40bf2be8a4039c7983c186a5ac85c7c5f43e50c",
+  "date": "2026-10-18",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T02-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/00-workspace/D00-T02-s2.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "Get-ChildItem .claude/skills -Directory | ForEach-Object { muse skills validate $_.FullName --json } -> all 8 skills valid=true diagnostics=0 (exit 0)",
+    "python scripts/todo-graph.py validate -> valid: 205 sections (exit 0)",
+    "python scripts/todo-graph.py plan --check -> plan current (exit 0)",
+    "python -m unittest tests.scripts.test_todo_graph -> Ran 52 tests in 19.899s OK (exit 0)"
+  ]
+}

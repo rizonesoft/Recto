@@ -35,7 +35,7 @@ track: M0
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | Graph engine, CLI and tests | D00 T01 §1 | [x] |
-| 2 | §2 | Skills, rules and the CI gate | §1 | [ ] |
+| 2 | §2 | Skills, rules and the CI gate | §1 | [x] |
 | 3 | §3 | Seeded graph and generated plan | §2 | [ ] |
 
 ## 1. Graph engine, CLI and tests
@@ -84,9 +84,12 @@ The engine is useless without the working agreements around it: the format spec,
 - [x] `todo/README.md` spec and `todo/templates/TODO-template.md`. Done when: the template, filled in, passes `validate` (every seeded file is the proof).
 - [x] Eight skills under `.claude/skills/`. Done when: all eight validate clean and each names only commands the CLI actually implements.
 - [x] `AGENTS.md`, `CLAUDE.md`, `.gitignore`, `.gitattributes`, `.github/workflows/plan.yml`. Done when: a fresh session is routed to `todo/README.md` before its first edit.
-- [ ] Commit: `todo: skills, rules and CI gate for the TODO graph`
+- [x] Commit: `todo: skills, rules and CI gate for the TODO graph`
 
 **Test checkpoint:** `Get-ChildItem .claude/skills -Directory | ForEach-Object { muse skills validate $_.FullName --json }` reports `valid: true` and `diagnostics: []` for all eight skills, and `python scripts/todo-graph.py validate` exits 0 on the seeded tree the skills describe.
+
+> **Verified:** 2026-10-18 | §2 | d40bf2be8a4039c7983c186a5ac85c7c5f43e50c
+> **Review:** `docs/reviews/d00-t02-s2.json`
 
 ## 3. Seeded graph and generated plan
 
