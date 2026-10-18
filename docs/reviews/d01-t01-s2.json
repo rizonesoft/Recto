@@ -1,0 +1,27 @@
+{
+  "ref": "D01 T01 \u00a72",
+  "title": "`PdfValue` variant object model, dictionary/array helpers and deep cloning",
+  "implementation_sha": "153e4cec9491ddf546724e2e43749e5d18c8f7a4",
+  "date": "2026-10-18",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T01-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T01-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T01-s2.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "powershell -File build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -> [ PASSED ] 27 tests (6 PdfObject.*, ASan=enabled)",
+    ".\\build.cmd -> 0 Warning(s), 0 Error(s), [ PASSED ] 27 tests"
+  ]
+}

@@ -41,7 +41,7 @@ track: M1
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | `PdfResult<T>`, `PdfError`, `ErrorCode`, D16 diagnostic ring and ETW `TraceLogging` | D00 T01 §3, D00 T03 §2 | [x] |
-| 2 | §2 | `PdfValue` variant object model, dictionary/array helpers and deep cloning | §1 | [ ] |
+| 2 | §2 | `PdfValue` variant object model, dictionary/array helpers and deep cloning | §1 | [x] |
 | 3 | §3 | Binary-safe PDF 1.7 and 2.0 lexer (`src/pdf/lexer.cpp`) | §2 | [ ] |
 | 4 | §4 | Bounded recursive-descent indirect object parser (`src/pdf/parser.cpp`) | §3 | [ ] |
 | 5 | §5 | Classic `xref` tables, trailer merging and `/Prev` incremental update chains | §4, D00 T03 §4 | [ ] |
@@ -107,9 +107,12 @@ Implement the in-memory PDF object representation in `src/pdf/object.h` and `src
 - [x] Implement `PdfRect::from_array(const PdfArray&)` normalizing `[x1 y1 x2 y2]` so `x_min <= x_max`, `y_min <= y_max`, `width() >= 0`, and `height() >= 0`. Done when: inverted rectangles (`[0 792 612 0]`) normalize to `[0 0 612 792]`.
 - [x] Implement `pdf_string_to_utf8(std::span<const uint8_t>)` and `utf8_to_pdf_string(std::string_view)` supporting UTF-16BE (`\xFE\xFF` with surrogate pairs), UTF-8 (`\xEF\xBB\xBF` PDF 2.0), and full ISO 32000-1 Table D.2 `PDFDocEncoding`. Done when: `PdfObject.StringEncoding` round-trips ASCII, smart quotes/euro in `PDFDocEncoding`, and CJK/emoji in UTF-16BE.
 - [x] Implement `PdfValue::deep_clone()` bounded by depth 64 so cloning nested dictionaries/arrays for `GraftMap` or `PdfWriter` produces an independent copy. Done when: mutating a clone leaves the original `PdfValue` unchanged.
-- [ ] Commit: `pdf: implement PdfValue object model, dictionary helpers and PDF string codecs`
+- [x] Commit: `pdf: implement PdfValue object model, dictionary helpers and PDF string codecs`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfObject.*` passes under ASan with 0 warnings.
+
+> **Verified:** 2026-10-18 | §2 | 153e4cec9491ddf546724e2e43749e5d18c8f7a4
+> **Review:** `docs/reviews/d01-t01-s2.json`
 
 ## 3. Binary-safe PDF 1.7 and 2.0 lexer (`src/pdf/lexer.cpp`)
 
