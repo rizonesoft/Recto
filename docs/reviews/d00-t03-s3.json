@@ -1,0 +1,27 @@
+{
+  "ref": "D00 T03 \u00a73",
+  "title": "Deterministic PDF corpus generator (`scripts/build-corpus.py`) for `render/` and `text/`",
+  "implementation_sha": "92dfce1887757365adac4101ebdb966e1a511fb7",
+  "date": "2026-10-18",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/00-workspace/D00-T03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/00-workspace/D00-T03-s3.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "python scripts/build-corpus.py --check -> verified: 10 corpus fixtures in R:\\GitHub\\RectoPDF\\tests\\corpus are current",
+    "python -m unittest discover -s tests/scripts -p test_*.py -> Ran 56 tests OK"
+  ]
+}

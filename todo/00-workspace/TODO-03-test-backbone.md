@@ -35,7 +35,7 @@ track: M0
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | `test_support` corpus path resolver and `TempDir` RAII helper | D00 T01 §3 | [x] |
 | 2 | §2 | RGBA pixel comparison (`expect_rgba_equal`, `compute_ssim`) and test assertion helpers | §1 | [x] |
-| 3 | §3 | Deterministic PDF corpus generator (`scripts/build-corpus.py`) for `render/` and `text/` | §1 | [ ] |
+| 3 | §3 | Deterministic PDF corpus generator (`scripts/build-corpus.py`) for `render/` and `text/` | §1 | [x] |
 | 4 | §4 | Encrypted (`RC4`/`AES-128`/`AES-256`), `broken/` and `seeds/` corpus fixtures | §3 | [ ] |
 | 5 | §5 | `tests/corpus/PROVENANCE.md` and automated `Corpus.Provenance` SHA-256 integrity suite | §4 | [ ] |
 | 6 | §6 | MSVC AddressSanitizer (`/fsanitize=address`) build configuration and CI `asan` job | §2, D00 T01 §4 | [ ] |
@@ -132,9 +132,12 @@ Author a deterministic, zero-external-dependency Python generator `scripts/build
 - [x] Generate `tests/corpus/convert/tables-and-forms.pdf` (bordered orthogonal-line table, borderless whitespace-aligned table, `/AcroForm` fields, and `/Annots` markup) plus a sample minimal `.docx` and `.xlsx` fixture in `tests/corpus/convert/`. Done when: all convert fixtures exist under `tests/corpus/convert/`.
 - [x] Keep total `tests/corpus/` size strictly below `5 MB` (target `< 500 KB`). Done when: `(Get-ChildItem tests/corpus -Recurse -File | Measure-Object Length -Sum).Sum` is `< 5,000,000`.
 - [x] Add `--check` flag to `scripts/build-corpus.py` that verifies on-disk corpus files match the generator's deterministic byte output. Done when: `python scripts/build-corpus.py --check` exits 0.
-- [ ] Commit: `test: add deterministic build-corpus.py and render/text/convert fixtures`
+- [x] Commit: `test: add deterministic build-corpus.py and render/text/convert fixtures`
 
 **Test checkpoint:** `python scripts/build-corpus.py --check` exits 0 and confirms all `render/`, `text/`, and `convert/` fixtures are present and reproducible.
+
+> **Verified:** 2026-10-18 | §3 | 92dfce1887757365adac4101ebdb966e1a511fb7
+> **Review:** `docs/reviews/d00-t03-s3.json`
 
 ## 4. Encrypted (`RC4`/`AES-128`/`AES-256`), `broken/` and `seeds/` corpus fixtures
 
