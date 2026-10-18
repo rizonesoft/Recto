@@ -1,0 +1,27 @@
+{
+  "ref": "D01 T01 \u00a75",
+  "title": "Classic `xref` tables, trailer merging and `/Prev` incremental update chains",
+  "implementation_sha": "ff4810a6f584beef9962d33c29f5ccb9e373f185",
+  "date": "2026-10-18",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T01-s5.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T01-s5.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T01-s5.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "recto-tests.exe --gtest_filter=PdfXref.Classic*:PdfXref.Incremental*:PdfXref.Cyclic* -> [  PASSED  ] 5 tests. (Release|x64 ASan, Support.AsanActiveWhenEnabled: ASan=enabled)",
+    ".\\build.cmd -> 0 Warning(s), 0 Error(s); [  PASSED  ] 48 tests."
+  ]
+}

@@ -35,7 +35,7 @@ Sections: 29 | Checklist items: 203
 | [x]    | D01 T01 §2  | `PdfValue` variant object model, dictionary/array helpers and deep cloning               | windows-host | 7     |
 | [x]    | D01 T01 §3  | Binary-safe PDF 1.7 and 2.0 lexer (`src/pdf/lexer.cpp`)                                  | windows-host | 8     |
 | [x]    | D01 T01 §4  | Bounded recursive-descent indirect object parser (`src/pdf/parser.cpp`)                  | windows-host | 7     |
-| [ ]    | D01 T01 §5  | Classic `xref` tables, trailer merging and `/Prev` incremental update chains             | windows-host | 7     |
+| [x]    | D01 T01 §5  | Classic `xref` tables, trailer merging and `/Prev` incremental update chains             | windows-host | 7     |
 | [ ]    | D01 T01 §7  | Lossless stream filters (`Flate`, `LZW`, predictors, `ASCII85`, `ASCIIHex`, `RunLength`) | windows-host | 7     |
 | [ ]    | D01 T01 §6  | PDF 1.5+ `/Type /XRef` streams, `/Type /ObjStm` streams and damaged-file recovery        | windows-host | 7     |
 | [ ]    | D01 T01 §8  | Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`) | windows-host | 7     |
@@ -265,6 +265,6 @@ Sections: 4 | Checklist items: 20
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
-Progress: 18/205 verified sections, 4 ready to run now.
+Progress: 19/205 verified sections, 3 ready to run now.
 
-Checklist: 102/1471 items completed (includes Commit items).
+Checklist: 103/1471 items completed (includes Commit items).

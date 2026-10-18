@@ -44,7 +44,7 @@ track: M1
 | 2 | §2 | `PdfValue` variant object model, dictionary/array helpers and deep cloning | §1 | [x] |
 | 3 | §3 | Binary-safe PDF 1.7 and 2.0 lexer (`src/pdf/lexer.cpp`) | §2 | [x] |
 | 4 | §4 | Bounded recursive-descent indirect object parser (`src/pdf/parser.cpp`) | §3 | [x] |
-| 5 | §5 | Classic `xref` tables, trailer merging and `/Prev` incremental update chains | §4, D00 T03 §4 | [ ] |
+| 5 | §5 | Classic `xref` tables, trailer merging and `/Prev` incremental update chains | §4, D00 T03 §4 | [x] |
 | 6 | §7 | Lossless stream filters (`Flate`, `LZW`, predictors, `ASCII85`, `ASCIIHex`, `RunLength`) | §4, D00 T03 §4 | [ ] |
 | 7 | §6 | PDF 1.5+ `/Type /XRef` streams, `/Type /ObjStm` streams and damaged-file recovery | §5, §7 | [ ] |
 | 8 | §8 | Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`) | §7 | [ ] |
@@ -207,9 +207,12 @@ Implement classic cross-reference table and trailer parsing in `src/pdf/xref.h` 
 - [x] Parse `trailer << ... >>` dictionaries and merge `/Root`, `/Info`, `/Encrypt`, `/ID`, and `/Size` from the newest trailer while following `/Prev` offsets for older revisions. Done when: `render/incremental-2rev.pdf` resolves the updated page object from revision 2 and untouched objects from revision 1.
 - [x] Enforce a 256-revision ceiling and a `std::unordered_set<uint64_t>` visited-offset guard on `/Prev` chains (plus hybrid `/XRefStm` pointers). Done when: `tests/corpus/broken/cyclic-xref-prev.pdf` fails immediately with `ErrorCode::DamagedFormat` instead of looping forever. Cheaper substitute: following `/Prev` recursively without cycle detection.
 - [x] Maintain a per-resolution visited object set (`std::vector<IndirectRef>`) when resolving indirect references (`A -> B -> C`) capped at depth 32 so cyclic indirect object chains (`1 0 obj 2 0 R endobj`, `2 0 obj 1 0 R endobj`) return `ErrorCode::DamagedFormat`. Done when: `PdfXref.CyclicIndirectRef` passes under ASan.
-- [ ] Commit: `pdf: implement classic xref tables, incremental /Prev chains and cycle guards`
+- [x] Commit: `pdf: implement classic xref tables, incremental /Prev chains and cycle guards`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfXref.Classic*:PdfXref.Incremental*:PdfXref.Cyclic*` passes under ASan.
+
+> **Verified:** 2026-10-18 | §5 | ff4810a6f584beef9962d33c29f5ccb9e373f185
+> **Review:** `docs/reviews/d01-t01-s5.json`
 
 ## 6. PDF 1.5+ `/Type /XRef` streams, `/Type /ObjStm` streams and damaged-file recovery
 
