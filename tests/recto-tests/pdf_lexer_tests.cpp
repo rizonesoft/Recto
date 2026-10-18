@@ -114,6 +114,31 @@ TEST(PdfLexer, WhitespaceAndComments)
 	Lexer err_lex(bad_literal);
 	RECTO_EXPECT_ERR(err_lex.peek_token(0), ErrorCode::DamagedFormat);
 	RECTO_EXPECT_ERR(err_lex.next_token(), ErrorCode::DamagedFormat);
+
+	// 4. Repeated peek_token beyond EOF reuses the single cached EOF token,
+	// and peeking past kMaxLexerLookahead on a live stream returns
+	// DecompressionLimitExceeded without consuming tokens.
+	const auto empty_bytes = to_bytes("");
+	Lexer eof_lex(empty_bytes);
+	for (int i = 0; i < 100; ++i) {
+		auto eof_peek = eof_lex.peek_token(1000);
+		RECTO_ASSERT_OK(eof_peek);
+		EXPECT_TRUE(eof_peek.value().is_eof());
+	}
+	EXPECT_TRUE(eof_lex.next_token().value().is_eof());
+
+	std::string many_ints;
+	for (size_t i = 0; i < kMaxLexerLookahead + 8; ++i) {
+		many_ints += std::to_string(i + 1) + " ";
+	}
+	const auto many_bytes = to_bytes(many_ints);
+	Lexer bound_lex(many_bytes);
+	RECTO_EXPECT_ERR(
+		bound_lex.peek_token(kMaxLexerLookahead),
+		ErrorCode::DecompressionLimitExceeded);
+	auto first_after_bound = bound_lex.next_token();
+	RECTO_ASSERT_OK(first_after_bound);
+	EXPECT_EQ(first_after_bound.value().int_value, 1);
 }
 
 TEST(PdfLexer, Numbers)

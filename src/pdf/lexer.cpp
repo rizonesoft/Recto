@@ -112,7 +112,39 @@ Lexer::Lexer(
 	, logical_cursor_(0)
 	, emit_comments_(emit_comments)
 	, max_token_bytes_(std::min(max_token_bytes, kMaxLexerTokenBytes))
+	, lookahead_buf_(nullptr)
+	, lookahead_head_(0)
+	, lookahead_count_(0)
+	, lookahead_capacity_(0)
 {
+}
+
+void Lexer::clear_lookahead() noexcept
+{
+	lookahead_head_ = 0;
+	lookahead_count_ = 0;
+}
+
+bool Lexer::ensure_lookahead_slot()
+{
+	if (lookahead_count_ < lookahead_capacity_) {
+		return true;
+	}
+	if (lookahead_capacity_ >= kMaxLexerLookahead) {
+		return false;
+	}
+	const size_t new_cap = (lookahead_capacity_ == 0)
+		? 8
+		: std::min(lookahead_capacity_ * 2, kMaxLexerLookahead);
+	auto new_buf = std::make_unique<LookaheadEntry[]>(new_cap);
+	for (size_t i = 0; i < lookahead_count_; ++i) {
+		const size_t idx = (lookahead_head_ + i) % lookahead_capacity_;
+		new_buf[i] = std::move(lookahead_buf_[idx]);
+	}
+	lookahead_buf_ = std::move(new_buf);
+	lookahead_head_ = 0;
+	lookahead_capacity_ = new_cap;
+	return true;
 }
 
 size_t Lexer::position() const noexcept
@@ -125,7 +157,7 @@ void Lexer::set_emit_comments(bool enabled) noexcept
 	if (emit_comments_ != enabled) {
 		emit_comments_ = enabled;
 		cursor_ = logical_cursor_;
-		lookahead_.clear();
+		clear_lookahead();
 	}
 }
 
@@ -133,40 +165,74 @@ void Lexer::set_max_token_bytes(size_t max_bytes) noexcept
 {
 	max_token_bytes_ = std::min(max_bytes, kMaxLexerTokenBytes);
 	cursor_ = logical_cursor_;
-	lookahead_.clear();
+	clear_lookahead();
 }
 
 void Lexer::seek(size_t byte_offset) noexcept
 {
 	cursor_ = std::min(byte_offset, input_.size());
 	logical_cursor_ = cursor_;
-	lookahead_.clear();
+	clear_lookahead();
 }
 
 PdfResult<Token> Lexer::next_token() noexcept
 {
+	const size_t saved_cursor = cursor_;
 	try {
-		if (!lookahead_.empty()) {
-			LookaheadEntry entry = std::move(lookahead_.front());
-			lookahead_.pop_front();
-			logical_cursor_ = entry.cursor_after;
-			return std::move(entry.token);
+		if (lookahead_count_ > 0) {
+			const size_t idx = lookahead_head_;
+			const size_t next_logical = lookahead_buf_[idx].cursor_after;
+			PdfResult<Token> result(Token{});
+			result.value() = std::move(lookahead_buf_[idx].token);
+			lookahead_head_ = (lookahead_head_ + 1) % lookahead_capacity_;
+			--lookahead_count_;
+			if (lookahead_count_ == 0) {
+				lookahead_head_ = 0;
+			}
+			logical_cursor_ = next_logical;
+			return result;
 		}
-		RECTO_PDF_TRY(Token tok, read_raw_token());
+		auto res = read_raw_token();
+		if (!res.has_value()) {
+			logical_cursor_ = cursor_;
+			return res;
+		}
 		logical_cursor_ = cursor_;
-		return tok;
+		return res;
 	} catch (const std::bad_alloc&) {
-		return PdfError{ErrorCode::OutOfMemory, "Out of memory in Lexer::next_token", logical_cursor_};
+		cursor_ = saved_cursor;
+		return PdfError{
+			ErrorCode::OutOfMemory,
+			"Out of memory in Lexer::next_token",
+			logical_cursor_};
 	} catch (...) {
-		return PdfError{ErrorCode::InternalError, "Unexpected failure in Lexer::next_token", logical_cursor_};
+		cursor_ = saved_cursor;
+		return PdfError{
+			ErrorCode::InternalError,
+			"Unexpected failure in Lexer::next_token",
+			logical_cursor_};
 	}
 }
 
 PdfResult<Token> Lexer::peek_token(size_t lookahead_index) noexcept
 {
+	size_t saved_cursor = cursor_;
 	try {
-		while (lookahead_.size() <= lookahead_index) {
-			const size_t saved_cursor = cursor_;
+		while (lookahead_count_ <= lookahead_index) {
+			if (lookahead_count_ > 0) {
+				const size_t back_idx =
+					(lookahead_head_ + lookahead_count_ - 1) % lookahead_capacity_;
+				if (lookahead_buf_[back_idx].token.is_eof()) {
+					break;
+				}
+			}
+			saved_cursor = cursor_;
+			if (!ensure_lookahead_slot()) {
+				return make_pdf_error(
+					ErrorCode::DecompressionLimitExceeded,
+					"Lexer lookahead limit exceeded",
+					cursor_);
+			}
 			auto res = read_raw_token();
 			if (!res.has_value()) {
 				// Restore cursor_ so a failed speculative lookahead does not
@@ -174,21 +240,30 @@ PdfResult<Token> Lexer::peek_token(size_t lookahead_index) noexcept
 				cursor_ = saved_cursor;
 				return std::move(res).error();
 			}
-			Token tok = std::move(res).value();
-			const bool is_eof = tok.is_eof();
-			lookahead_.push_back(LookaheadEntry{std::move(tok), cursor_});
-			if (is_eof) {
-				break;
-			}
+			const size_t tail_idx =
+				(lookahead_head_ + lookahead_count_) % lookahead_capacity_;
+			lookahead_buf_[tail_idx].token = std::move(res).value();
+			lookahead_buf_[tail_idx].cursor_after = cursor_;
+			++lookahead_count_;
+			saved_cursor = cursor_;
 		}
-		if (lookahead_index >= lookahead_.size()) {
-			return lookahead_.back().token;
-		}
-		return lookahead_[lookahead_index].token;
+
+		const size_t clamped_index = std::min(lookahead_index, lookahead_count_ - 1);
+		const size_t target_idx =
+			(lookahead_head_ + clamped_index) % lookahead_capacity_;
+		return lookahead_buf_[target_idx].token;
 	} catch (const std::bad_alloc&) {
-		return PdfError{ErrorCode::OutOfMemory, "Out of memory in Lexer::peek_token", logical_cursor_};
+		cursor_ = saved_cursor;
+		return PdfError{
+			ErrorCode::OutOfMemory,
+			"Out of memory in Lexer::peek_token",
+			logical_cursor_};
 	} catch (...) {
-		return PdfError{ErrorCode::InternalError, "Unexpected failure in Lexer::peek_token", logical_cursor_};
+		cursor_ = saved_cursor;
+		return PdfError{
+			ErrorCode::InternalError,
+			"Unexpected failure in Lexer::peek_token",
+			logical_cursor_};
 	}
 }
 
@@ -197,7 +272,7 @@ PdfResult<uint64_t> Lexer::consume_stream_eol() noexcept
 	// Synchronize physical cursor with the exact byte offset immediately after
 	// the last consumed token (`stream`), discarding any speculative lookahead.
 	cursor_ = logical_cursor_;
-	lookahead_.clear();
+	clear_lookahead();
 
 	// Skip optional horizontal whitespace (SP 0x20, HT 0x09) on the same line
 	// after the `stream` keyword.

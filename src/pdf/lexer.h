@@ -12,7 +12,7 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <deque>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -23,6 +23,9 @@ namespace recto::pdf {
 // Maximum byte length of a single decoded literal string, hex string, name,
 // keyword, or comment token (256 MB, matching foundation plan section 9).
 inline constexpr size_t kMaxLexerTokenBytes = 256ull * 1024ull * 1024ull;
+
+// Maximum number of speculative lookahead tokens cached by Lexer::peek_token().
+inline constexpr size_t kMaxLexerLookahead = 64;
 
 enum class TokenKind : uint8_t {
 	Eof = 0,
@@ -152,6 +155,9 @@ private:
 		size_t cursor_after{0};
 	};
 
+	void clear_lookahead() noexcept;
+	[[nodiscard]] bool ensure_lookahead_slot();
+
 	[[nodiscard]] PdfResult<Token> read_raw_token();
 	[[nodiscard]] PdfResult<Token> read_comment(size_t start_pos);
 	[[nodiscard]] PdfResult<Token> read_name(size_t start_pos);
@@ -164,7 +170,10 @@ private:
 	size_t logical_cursor_{0};
 	bool emit_comments_{false};
 	size_t max_token_bytes_{kMaxLexerTokenBytes};
-	std::deque<LookaheadEntry> lookahead_{};
+	std::unique_ptr<LookaheadEntry[]> lookahead_buf_{};
+	size_t lookahead_head_{0};
+	size_t lookahead_count_{0};
+	size_t lookahead_capacity_{0};
 };
 
 } // namespace recto::pdf
