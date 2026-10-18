@@ -46,7 +46,7 @@ track: M1
 | 4 | §4 | Bounded recursive-descent indirect object parser (`src/pdf/parser.cpp`) | §3 | [x] |
 | 5 | §5 | Classic `xref` tables, trailer merging and `/Prev` incremental update chains | §4, D00 T03 §4 | [x] |
 | 6 | §7 | Lossless stream filters (`Flate`, `LZW`, predictors, `ASCII85`, `ASCIIHex`, `RunLength`) | §4, D00 T03 §4 | [x] |
-| 7 | §6 | PDF 1.5+ `/Type /XRef` streams, `/Type /ObjStm` streams and damaged-file recovery | §5, §7 | [ ] |
+| 7 | §6 | PDF 1.5+ `/Type /XRef` streams, `/Type /ObjStm` streams and damaged-file recovery | §5, §7 | [x] |
 | 8 | §8 | Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`) | §7 | [ ] |
 | 9 | §9 | Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG) | §6, §7 | [ ] |
 | 10 | §10 | `pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links | §6, §8, §9 | [ ] |
@@ -239,9 +239,12 @@ Complete `src/pdf/xref.cpp` with PDF 1.5+ cross-reference streams, compressed ob
 - [x] Refuse nested `/ObjStm` (a type-2 XRef entry pointing to an object that is itself type-2) and refuse indirect `stream` objects inside an `/ObjStm` per ISO 32000-1 section 7.5.7. Done when: a crafted nested `/ObjStm` returns `ErrorCode::DamagedFormat`.
 - [x] Implement `recover_damaged_xref` scanning the file for `N G obj` definitions and locating `/Root` from surviving `trailer` dictionaries or by identifying the indirect object with `/Type /Catalog`. Done when: `tests/corpus/broken/corrupt-xref-recoverable.pdf` recovers all objects and opens cleanly in `PdfXref.DamagedRecovery`.
 - [x] Verify that `broken/empty-0b.pdf`, `broken/non-pdf-header.pdf`, and `broken/truncated-header.pdf` return `ErrorCode::NotAPdf` or `ErrorCode::DamagedFormat` with diagnostic ring entries recorded. Done when: `PdfXref.RejectsBrokenFiles` passes under ASan.
-- [ ] Commit: `pdf: add PDF 1.5+ XRef streams, ObjStm parser and damaged-file recovery scanner`
+- [x] Commit: `pdf: add PDF 1.5+ XRef streams, ObjStm parser and damaged-file recovery scanner`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfXref.*` passes under ASan across classic, incremental, compressed XRef, ObjStm, and damaged-xref fixtures.
+
+> **Verified:** 2026-10-19 | §6 | 46a5312ac5f294852704c1d2dfc5e4040bf85bbd
+> **Review:** `docs/reviews/d01-t01-s6.json`
 
 ## 7. Lossless stream filters (`Flate`, `LZW`, predictors, `ASCII85`, `ASCIIHex`, `RunLength`)
 
