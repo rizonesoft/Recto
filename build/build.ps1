@@ -10,19 +10,20 @@
 # binaries.
 #
 # Options: -Platform x64|ARM64 (default both), -Configuration
-# Debug|Release (default both), -SkipTests. Requirements: Visual Studio
-# 2026 with the v145 C++ toolset (its bundled vcpkg is used unless
-# VCPKG_ROOT already points at one), the Windows 11 SDK 10.0.26100, and
-# network access for the first restore. VS 2022 cannot substitute: it
-# has no Windows Store ARM64 platform, so the WinUI app does not build
-# for ARM64 there (found in D00 T01 section 3).
+# Debug|Release (default both), -TestFilter <pattern>, -SkipTests.
+# Requirements: Visual Studio 2026 (v145, preferred) or Visual Studio
+# 2022 (v143, CI fallback) with C++ and ARM64 tools (its bundled vcpkg
+# is used unless VCPKG_ROOT already points at one), the Windows 11 SDK
+# 10.0.26100, and network access for the first restore.
 param(
-    [ValidateSet('x64', 'ARM64')][string[]]$Platform = @('x64', 'ARM64'),
-    [ValidateSet('Debug', 'Release')][string[]]$Configuration = @('Debug', 'Release'),
+    [ValidateSet('x64', 'ARM64', 'x64,ARM64', 'ARM64,x64')][string[]]$Platform = @('x64', 'ARM64'),
+    [ValidateSet('Debug', 'Release', 'Debug,Release', 'Release,Debug')][string[]]$Configuration = @('Debug', 'Release'),
     [string]$TestFilter = '',
     [switch]$SkipTests
 )
 $ErrorActionPreference = 'Stop'
+$Platform = @($Platform | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
+$Configuration = @($Configuration | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
