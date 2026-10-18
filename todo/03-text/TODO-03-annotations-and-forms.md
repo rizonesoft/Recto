@@ -23,6 +23,7 @@ track: M3
 - -> XREF: D02 T04 §5 -- the `Highlight form fields` toggle in Settings (`D02 T04 §5`) governs required/fillable field highlighting in §8 here.
 - -> XREF: D03 T01 §4 -- Selection floating toolbar quick `Highlight`, `Strikeout`, and `Add Note` buttons delegate to the annotation creation actions in §3 here.
 - -> XREF: D03 T02 §2 -- UI Automation tree exposes interactive form fields and annotation comments alongside page text via §10 here.
+- -> XREF: D06 T02 §3 -- `fuzz_forms` (`D06 T02 §3`) fuzzes the `/Annots` and `/AcroForm`/`/XFA` parsers (`§1`, `§6`, `§7`) built here.
 
 ## Outcome
 

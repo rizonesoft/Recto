@@ -40,41 +40,41 @@ track: M1
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | `PdfResult<T>`, `PdfError`, `ErrorCode` and D16 thread-safe diagnostic ring buffer | D00 T01 §3, D00 T03 §2 | [ ] |
+| 1 | §1 | `PdfResult<T>`, `PdfError`, `ErrorCode`, D16 diagnostic ring and ETW `TraceLogging` | D00 T01 §3, D00 T03 §2 | [ ] |
 | 2 | §2 | `PdfValue` variant object model, dictionary/array helpers and deep cloning | §1 | [ ] |
 | 3 | §3 | Binary-safe PDF 1.7 and 2.0 lexer (`src/pdf/lexer.cpp`) | §2 | [ ] |
 | 4 | §4 | Bounded recursive-descent indirect object parser (`src/pdf/parser.cpp`) | §3 | [ ] |
 | 5 | §5 | Classic `xref` tables, trailer merging and `/Prev` incremental update chains | §4, D00 T03 §4 | [ ] |
-| 6 | §6 | PDF 1.5+ `/Type /XRef` streams, `/Type /ObjStm` streams and damaged-file recovery | §5 | [ ] |
-| 7 | §7 | Lossless stream filters (`Flate`, `LZW`, predictors, `ASCII85`, `ASCIIHex`, `RunLength`) | §6 | [ ] |
+| 6 | §7 | Lossless stream filters (`Flate`, `LZW`, predictors, `ASCII85`, `ASCIIHex`, `RunLength`) | §4, D00 T03 §4 | [ ] |
+| 7 | §6 | PDF 1.5+ `/Type /XRef` streams, `/Type /ObjStm` streams and damaged-file recovery | §5, §7 | [ ] |
 | 8 | §8 | Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`) | §7 | [ ] |
-| 9 | §9 | Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG) | §7 | [ ] |
-| 10 | §10 | `pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links | §8, §9 | [ ] |
+| 9 | §9 | Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG) | §6, §7 | [ ] |
+| 10 | §10 | `pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links | §6, §8, §9 | [ ] |
 
-## 1. `PdfResult<T>`, `PdfError`, `ErrorCode` and D16 thread-safe diagnostic ring buffer
+## 1. `PdfResult<T>`, `PdfError`, `ErrorCode`, D16 diagnostic ring and ETW `TraceLogging`
 
 Define the foundational error-handling and diagnostic primitives in `src/pdf/error.h` and `src/pdf/error.cpp`:
 - `ErrorCode` (`Ok`, `FileNotFound`, `AccessDenied`, `NotAPdf`, `DamagedFormat`, `NeedsPassword`, `WrongPassword`, `UnsupportedEncryption`, `UnsupportedFeature`, `DecompressionLimitExceeded`, `RecursionLimitExceeded`, `OutOfMemory`, `IoError`, `Cancelled`).
 - `PdfError` (`code`, `message`, `byte_offset`, `object_num`, `generation_num`) and `PdfResult<T>` (`std::expected`-shaped value-or-`PdfError` container with `PdfResult<void>` specialization).
-- The D16 thread-safe bounded diagnostic ring buffer (`recto::pdf::record_diagnostic(...)`, `recto::pdf::diagnostics_tail(max_entries)`, `recto::pdf::clear_diagnostics()`), storing the last 256 timestamped engine warnings/errors in memory without touching disk or network.
+- The D16 thread-safe bounded diagnostic ring buffer (`recto::pdf::record_diagnostic(...)`, `recto::pdf::diagnostics_tail(max_entries)`, `recto::pdf::clear_diagnostics()`), storing the last 256 timestamped engine warnings/errors in memory without touching disk or network, paired with Windows Event Tracing (`<TraceLoggingProvider.h>`, `TRACELOGGING_DEFINE_PROVIDER`, `TraceLoggingWrite`) emitting structured ETW events on `record_diagnostic` and scoped span macros (`RECTO_ETW_SPAN`) for open, render, and job phases (D16).
 
 **Phase:** 1
 **Needs:** windows-host
 **Surface:** no
-**Freeze check:** Verify that `PdfResult<T>` never throws C++ exceptions across module boundaries, `diagnostics_tail()` synchronizes ring-buffer access with a lightweight lock over a fixed-capacity 256-slot array, and zero document byte payloads are retained in the diagnostic ring.
+**Freeze check:** Verify that `PdfResult<T>` never throws C++ exceptions across module boundaries, `diagnostics_tail()` synchronizes ring-buffer access with a lightweight lock over a fixed-capacity 256-slot array, `TraceLoggingWrite` emits only error codes, offsets, and durations, and zero document byte payloads are retained in the diagnostic ring or ETW events.
 
 **Build order:**
 
-1. Author `src/pdf/error.h` and `src/pdf/error.cpp` implementing `ErrorCode`, `PdfError`, `PdfResult<T>`, `PdfResult<void>`, `RECTO_PDF_TRY`, and the 256-entry thread-safe diagnostic ring buffer. Done when: `src/pdf/recto-pdf.vcxproj` compiles `error.cpp` cleanly on `x64` and `ARM64`.
-2. Add `tests/recto-tests/pdf_error_tests.cpp` (`PdfError.ResultValueAndError`, `PdfError.DiagnosticRingWraparound`, `PdfError.ConcurrentDiagnosticRecording`). Done when: all 3 tests pass under ASan.
+1. Author `src/pdf/error.h` and `src/pdf/error.cpp` implementing `ErrorCode`, `PdfError`, `PdfResult<T>`, `PdfResult<void>`, `RECTO_PDF_TRY`, the 256-entry thread-safe diagnostic ring buffer, and the D16 `TraceLoggingWrite` ETW provider (`Recto.Diagnostics`) and `RECTO_ETW_SPAN` helpers. Done when: `src/pdf/recto-pdf.vcxproj` compiles `error.cpp` cleanly on `x64` and `ARM64`.
+2. Add `tests/recto-tests/pdf_error_tests.cpp` (`PdfError.ResultValueAndError`, `PdfError.DiagnosticRingWraparound`, `PdfError.ConcurrentDiagnosticRecording`, `PdfError.EtwTraceLoggingProviderAndSpans`). Done when: all 4 tests pass under ASan.
 
 - [ ] Define `ErrorCode` covering all open, parse, filter, encryption, limit, I/O and cancellation conditions in `src/pdf/error.h`. Done when: every `ErrorCode` maps to a human-readable string via `error_code_name(ErrorCode)`. Cheaper substitute: returning `bool` or raw `int` status codes that lose the failure reason.
 - [ ] Implement `PdfError` carrying `code`, `message`, optional file `byte_offset`, and indirect object `(object_num, generation_num)` context. Done when: `PdfError::format()` renders a concise diagnostic line with offset and object ID when present.
 - [ ] Implement `PdfResult<T>` and `PdfResult<void>` with `.has_value()`, `.value()`, `.error()`, and `value_or(...)` accessors. Done when: `PdfError.ResultValueAndError` tests both move-only (`std::unique_ptr`) and copyable payloads.
-- [ ] Implement the D16 256-slot thread-safe diagnostic ring buffer (`record_diagnostic`, `diagnostics_tail`, `clear_diagnostics`) in `src/pdf/error.cpp`. Done when: recording 1,000 diagnostics retains the newest 256 entries in exact chronological order without heap growth.
-- [ ] Verify thread safety of the diagnostic ring buffer with 8 threads concurrently calling `record_diagnostic` and `diagnostics_tail`. Done when: `PdfError.ConcurrentDiagnosticRecording` completes 10,000 writes/reads under ASan with zero data races.
-- [ ] Automatically append a ring-buffer entry whenever `make_pdf_error(...)` constructs a `DamagedFormat`, `DecompressionLimitExceeded`, or `RecursionLimitExceeded` error. Done when: `diagnostics_tail(10)` reflects the error immediately after construction.
-- [ ] Commit: `pdf: add PdfResult, PdfError and D16 thread-safe diagnostic ring buffer`
+- [ ] Implement the D16 256-slot thread-safe diagnostic ring buffer (`record_diagnostic`, `diagnostics_tail`, `clear_diagnostics`) and `TraceLoggingWrite` ETW provider (`TRACELOGGING_DEFINE_PROVIDER(g_recto_etw_provider, "Recto.Diagnostics", ...)` + `RECTO_ETW_SPAN`) in `src/pdf/error.cpp`. Done when: recording 1,000 diagnostics retains the newest 256 entries in exact chronological order without heap growth and emits ETW trace events without error.
+- [ ] Verify thread safety of the diagnostic ring buffer and ETW span emission with 8 threads concurrently calling `record_diagnostic`, `RECTO_ETW_SPAN`, and `diagnostics_tail`. Done when: `PdfError.ConcurrentDiagnosticRecording` and `PdfError.EtwTraceLoggingProviderAndSpans` complete 10,000 writes/reads under ASan with zero data races.
+- [ ] Automatically append a ring-buffer entry and emit a `TraceLoggingWrite` diagnostic event whenever `make_pdf_error(...)` constructs a `DamagedFormat`, `DecompressionLimitExceeded`, or `RecursionLimitExceeded` error. Done when: `diagnostics_tail(10)` reflects the error immediately after construction.
+- [ ] Commit: `pdf: add PdfResult, PdfError, D16 diagnostic ring buffer and ETW TraceLogging`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*` passes under ASan with 0 warnings.
 
@@ -203,7 +203,7 @@ Complete `src/pdf/xref.cpp` with PDF 1.5+ cross-reference streams, compressed ob
 
 **Build order:**
 
-1. Implement `/Type /XRef` binary entry unpacking (`/W`, `/Index`), `/Type /ObjStm` header and object extraction, and `recover_damaged_xref` linear scanner in `src/pdf/xref.cpp`. Done when: `xref.cpp` compiles cleanly on `x64` and `ARM64`.
+1. Implement `/Type /XRef` binary entry unpacking (`/W`, `/Index`), `/Type /ObjStm` header and object extraction (decoding compressed stream payloads through `§7`'s `decode_stream`), and `recover_damaged_xref` linear scanner in `src/pdf/xref.cpp`. Done when: `xref.cpp` compiles cleanly on `x64` and `ARM64` and `render/compressed-xref-2p.pdf` resolves all compressed objects.
 2. Extend `tests/recto-tests/pdf_xref_tests.cpp` testing `/Type /XRef` unpacking, `/Type /ObjStm` extraction, `tests/corpus/broken/corrupt-xref-recoverable.pdf` recovery, and unrecoverable `broken/` files (`empty-0b.pdf`, `non-pdf-header.pdf`, `truncated-header.pdf`). Done when: all `PdfXref.*` tests pass under ASan.
 
 - [ ] Unpack `/Type /XRef` binary records for any valid `/W [w1 w2 w3]` combination (`0 <= wi <= 8`, `w1 + w2 + w3 > 0`) and `/Index` subsection array. Done when: `PdfXref.XrefStreamUnpack` verifies type 0, type 1, type 2, and `w1 = 0` (implicit type 1) records. Cheaper substitute: supporting only classic ASCII `xref` tables, which fails on modern PDFs from Word, Chrome and Acrobat.
@@ -233,18 +233,18 @@ Implement the lossless stream filter pipeline in `src/pdf/filters.h` and `src/pd
 
 **Build order:**
 
-1. Implement `FlateDecode` (RFC 1950/1951 + raw-deflate fallback), `LZWDecode`, TIFF/PNG predictors, `ASCIIHexDecode`, `ASCII85Decode`, `RunLengthDecode`, and the chained filter runner with the 256 MB output cap in `src/pdf/filters.cpp`, and wire `decode_stream` into `§6`'s `/Type /XRef` and `/Type /ObjStm` loader. Done when: `render/compressed-xref-2p.pdf` opens and resolves all compressed objects.
+1. Implement `FlateDecode` (RFC 1950/1951 + raw-deflate fallback), `LZWDecode`, TIFF/PNG predictors, `ASCIIHexDecode`, `ASCII85Decode`, `RunLengthDecode`, and the chained filter runner (`decode_stream`) with the 256 MB output cap in `src/pdf/filters.h` and `src/pdf/filters.cpp`. Done when: `filters.cpp` compiles cleanly on `x64` and `ARM64`.
 2. Add `tests/recto-tests/pdf_filters_tests.cpp` testing every filter, predictor (`None`, `Sub`, `Up`, `Average`, `Paeth`), chained `[ /ASCII85Decode /FlateDecode ]`, and `broken/deflate-bomb-10kb.pdf`. Done when: `PdfFilters.*` passes under ASan.
 
 - [ ] Implement `FlateDecode` (RFC 1950 zlib + RFC 1951 deflate with automatic raw-deflate fallback when the 2-byte header fails checksum) enforcing the 256 MB output cap during block expansion. Done when: `PdfFilters.FlateDecode` decodes standard zlib and raw-deflate streams and rejects `tests/corpus/broken/deflate-bomb-10kb.pdf` with `ErrorCode::DecompressionLimitExceeded`. Cheaper substitute: pre-allocating from an untrusted `/DL` or growing buffers without a ceiling.
 - [ ] Implement `LZWDecode` (9-12 bit codes, clear table `256`, EOD `257`, `/EarlyChange` `0` and `1`) with bounds checks against out-of-range table indices on corrupt bitstreams. Done when: `PdfFilters.LzwDecode` decodes both `/EarlyChange 1` and `/EarlyChange 0` test vectors and rejects corrupt codes safely.
-- [ ] Implement TIFF Predictor `2` and PNG Predictors `10..15` (`Sub`, `Up`, `Average`, `Paeth`) for `/Colors` `1..4` and `/BitsPerComponent` `1, 2, 4, 8, 16`. Done when: `PdfFilters.Predictors` decodes all 5 PNG row filters and `render/compressed-xref-2p.pdf`'s PNG-predicted XRef stream.
+- [ ] Implement TIFF Predictor `2` and PNG Predictors `10..15` (`Sub`, `Up`, `Average`, `Paeth`) for `/Colors` `1..4` and `/BitsPerComponent` `1, 2, 4, 8, 16`. Done when: `PdfFilters.Predictors` decodes all 5 PNG row filters and TIFF Predictor `2` test vectors.
 - [ ] Implement `ASCIIHexDecode` and `ASCII85Decode` (handling whitespace, `z` four-zero-byte shorthand, partial 2-4 byte final tuples, and `~>` EOD). Done when: `PdfFilters.AsciiFilters` matches RFC/ISO test vectors and rejects invalid `u..y` characters or single-character final tuples.
 - [ ] Implement `RunLengthDecode` (`0..127` literal copy, `129..255` repeat `257 - length` times, `128` EOD). Done when: `PdfFilters.RunLengthDecode` round-trips literal and repeated byte runs and handles truncated runs without reading past the input buffer.
 - [ ] Implement chained filter execution (`/Filter [ /ASCII85Decode /FlateDecode ]`) passing `/DecodeParms` entry `i` to filter `i` and capping chained pipeline length at 8 filters. Done when: `PdfFilters.ChainedPipeline` decodes multi-stage streams and rejects 9-stage filter chains.
 - [ ] Commit: `pdf: implement Flate, LZW, TIFF/PNG predictors, ASCII85/Hex, RunLength and 256 MB cap`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan covering every lossless filter, predictor, compressed XRef stream, and decompression-bomb refusal.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan covering every lossless filter, predictor, and decompression-bomb refusal.
 
 ## 8. Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`)
 

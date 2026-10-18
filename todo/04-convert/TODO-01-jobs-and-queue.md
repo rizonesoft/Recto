@@ -5,6 +5,7 @@ domain: 04-convert
 status: active
 title: "TODO-01 -- Conversion Jobs and the Queue"
 track: M4
+frozen: true
 ---
 
 # TODO-01 -- Conversion Jobs and the Queue
@@ -73,6 +74,7 @@ Implement `src/services/conversion.h` and `src/services/conversion.cpp` (`Conver
 - [ ] Commit: `feat(convert): implement isolated 2-worker ConversionRunner and CancelToken progress marshalling`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Jobs.TwoAtOnceBound:Jobs.ViewerIsolation:Jobs.ProgressThrottling:Jobs.ShutdownJoin` passes under ASan.
+**Freeze check:** `ConversionJob` workers open their own dedicated `recto::pdf::Document` instances and never share a `DocumentActor` or `pdf::Document` with the viewer; `ConversionRunner::cancel_and_join_all()` joins both worker threads at step 2 of `Runtime::shutdown()` before `RenderPool` and `DocumentActor`s tear down.
 
 ## 2. Job result & recovery state machine (`Completed`..`NeedsConverter`) and temp cleanup
 
@@ -96,6 +98,7 @@ Implement the terminal result and recovery state machine in `src/services/conver
 - [ ] Commit: `convert: isolated ConversionJob runtime with progress and cancel`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Jobs.*` passes under ASan: isolation while viewing, two-at-once bound, cancel cleanliness, and password recovery resubmission.
+**Freeze check:** Password resubmission, converter fallback, and `JobTempScope` cleanup execute strictly within the isolated `ConversionRunner` worker pool (`<= 2` workers) without touching any viewer `DocumentActor`.
 
 ## 3. Convert Step 1 (`Files` drop zone & chips) and Step 2 (`What to make` card registry)
 
@@ -125,6 +128,7 @@ Build the first two steps of the SPEC 9.5 Convert page (`src/app/views/ConvertPa
 - [ ] Commit: `feat(convert): build ConvertPage Step 1 file chips and Step 2 ConverterRegistry card grid`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=ConvertUi.RegistryAndEnablement:ConvertUi.DisableReasons` passes, and Step 1 / Step 2 match `D-Convert.png`.
+**Freeze check:** Step 1 file chip inspection reads only file metadata and magic bytes; when pre-populated from the active viewer tab, it copies only the `std::filesystem::path` and never shares the viewer's `DocumentActor` or `pdf::Document`.
 
 ## 4. Convert Step 3 dynamic options host, capability hint line, and primary action button
 
@@ -154,6 +158,7 @@ Build Step 3 (`3. Options`) of `ConvertPage` (`src/app/views/ConvertPage.xaml/.c
 - [ ] Commit: `feat(convert): implement ConvertPage Step 3 dynamic options host and honest capability hint`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=ConvertUi.*` passes, verifying Step 3 options binding, page-range validation, numbered collision resolution, and job submission.
+**Freeze check:** Step 3 job submission passes only immutable option structs and filesystem paths to `ConversionRunner::submit`; the UI thread never parses or converts documents.
 
 ## 5. App-wide floating `QueueCard` (progress ring, job states, expanded list, per-job cancel)
 
@@ -182,6 +187,7 @@ Build the app-wide floating `QueueCard` (`src/app/controls/QueueCard.xaml/.cpp` 
 - [ ] Commit: `convert: three-step Convert page and the job queue card`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Jobs.QueueViewModel:Jobs.QueueStatesUi:Jobs.CrossPageSurvival` passes, and display-session screenshots match `D-Convert.png` and `explorations/A-Convert.png`.
+**Freeze check:** `QueueCard` and `QueueViewModel` receive progress and state updates exclusively via `DispatcherQueue::TryEnqueue` and cancel jobs through cooperative `CancelToken` signalling without blocking the UI thread.
 
 ## 6. Focus-aware completion notices (Windows toast vs in-app toast, `Open file` & folder)
 
@@ -210,6 +216,7 @@ Implement SPEC 9.9's focus-aware completion notification system (`src/app/notifi
 - [ ] Commit: `feat(convert): implement focus-aware Windows notification, in-app toast, and IAnnouncementSink`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Jobs.OutputActions:Jobs.Notices:Jobs.WindowsNotificationPayload` passes, captures of both notice forms match `explorations/A-Dialogs.png` and `B-Dialogs.png`, and `D03 T02 §6`'s announcement listener records the completion.
+**Freeze check:** Completion notifications are dispatched after the worker thread's `AtomicFileWriter` commit has completed and closed the output handle; opening a `.pdf` output spawns a new `DocumentActor` via `TabModel` without sharing the conversion worker's `pdf::Document`.
 
 ## 7. Queue error recovery (`Enter password` modal retry, missing converter, batch breakdown)
 
@@ -238,6 +245,7 @@ Wire the interactive error recovery flows in the expanded `QueueCard` (`§5`): `
 - [ ] Commit: `convert: completion notifications, toasts and queue error actions`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Jobs.PasswordQueueRecoveryUi:Jobs.ConverterRecoveryHook:Jobs.BatchErrorBreakdownUi` passes, proving in-place password recovery and batch breakdown in `QueueCard`.
+**Freeze check:** Queue recovery resubmissions (`resubmit_with_password`, `resubmit_with_builtin_engine`, and per-file batch retry) re-enter the `ConversionRunner` 2-worker FIFO pool and open fresh isolated `pdf::Document` instances on worker threads.
 
 ## Verification
 

@@ -29,6 +29,7 @@ track: M4
 - -> XREF: D04 T04 §1 -- `OfficeToPdf` (`D04 T04 §1`-`§3`) emits paginated PDFs through `PdfWriter` (`§2`) and `AtomicFileWriter` (`§1`) built here.
 - -> XREF: D04 T05 §1 -- `XlsxWriter` (`D04 T05 §1`) and `WebDocWriter` (`D04 T05 §3`) consume `TableExtractor` grids from §8 here.
 - -> XREF: D05 T01 §1 -- `D05 T01`'s graft, merge, split, reorder, crop, watermark, Bates, AES-256 encrypt, digital signature, and redaction operations build directly on `AtomicFileWriter` (§1) and `PdfWriter` (§2) created here.
+- -> XREF: D06 T01 §5 -- `RoundTrips.Formats` (`D06 T01 §5`) exercises `PDF <-> Images/SVG/XPS` (`§3`-`§5`), `PDF -> Plain Text` (`§6`), `Searchable PDF (OCR)` (`§7`), `TableExtractor`/`ImageExtractor` (`§8`-`§10`), and `PdfOptimizer`/`Linearizer` (`§11`, `§12`) built here.
 
 ## Outcome
 

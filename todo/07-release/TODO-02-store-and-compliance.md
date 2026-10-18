@@ -20,7 +20,9 @@ track: M6
 - -> XREF: D00 T01 §1 -- the root `LICENSE`, `CLA.md`, and `NOTICE.md` skeleton authored there are completed and verified against the actual linked dependency set in `§2` and `§3` here.
 - -> XREF: D02 T04 §6 -- the `About Recto` navigation link and the off-by-default `Save local crash report bundles` toggle in Settings (`D02 T04 §6`) wire into `§2` and `§4` here.
 - -> XREF: D02 T04 §10 -- the `KeyboardShortcutsDialog` (`Ctrl+/`) built there is opened by the `Keyboard shortcuts` action link on `AboutPage` (`§2`).
+- -> XREF: D03 T02 §6 -- the M3 accessibility verification pass (`D03 T02 §6`) and interactive markup/forms/UIA peers (`D03 T03 §5`, `§10`) complete before the release kit and real-app screenshots in `§6`.
 - -> XREF: D04 T03 §6 -- the honest PDF-to-Word conversion scope wording recorded there is incorporated into `docs/store-listing.md` (`§6`).
+- -> XREF: D06 T01 §8 -- the `TextTables.*` (`D06 T01 §4`), `RoundTrips.*` (`D06 T01 §6`), reference performance baseline (`D06 T01 §8`), and security/fuzz/broker gates (`D06 T02 §4`, `§6`) must all be green before assembling the v1 release kit and distribution bundle in `§6` and `§7`.
 - -> XREF: D07 T01 §7 -- the verified `RectoSetup-*.exe` and `Recto-Portable-*.zip` artifacts tested there are assembled into the signed-off v1 release bundle in `§6` and `§7`.
 - -> XREF: D99 T01 §3 -- the operator's optional Partner Center account and app reservation that `§6`'s optional Store submission kit prepares for.
 
@@ -45,7 +47,7 @@ track: M6
 | 3 | §3 | Build-derived dependency enumeration script, `NOTICE.md` and `docs/license-audit.md` | §2, D00 T01 §1 | [ ] |
 | 4 | §4 | Opt-in local crash report bundle writer (`MiniDumpNormal` + D16 ring log `.zip` prompt) | §2 | [ ] |
 | 5 | §5 | Localization readiness (`Resources.resw` `x:Uid` extraction and 40% pseudolocale check) | §2 | [ ] |
-| 6 | §6 | GitHub Release runbook (`docs/release-and-store-runbook.md`) and Store submission kit | §3, §4, §5, D04 T03 §6, D07 T01 §7 | [ ] |
+| 6 | §6 | GitHub Release runbook (`docs/release-and-store-runbook.md`) and Store submission kit | §3, §4, §5, D03 T02 §6, D03 T03 §5, D03 T03 §10, D04 T03 §6, D06 T01 §4, D06 T01 §6, D06 T01 §8, D06 T02 §4, D06 T02 §6, D07 T01 §7 | [ ] |
 | 7 | §7 | End-to-end v1 distribution bundle (`Setup.exe`, `Portable.zip`, `SHA256SUMS.txt`) & GPL | §6 | [ ] |
 
 ## 1. Build-time version and provenance generator (version, SHA, `Standard` vs `Portable`)

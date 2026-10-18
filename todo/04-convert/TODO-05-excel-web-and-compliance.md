@@ -26,6 +26,7 @@ track: M5
 - -> XREF: D04 T02 §8 -- `XlsxWriter` (§1), `.csv`/`.xml` exporters, and `WebDocWriter` (§3) consume `TableExtractor` grids from `D04 T02 §8`.
 - -> XREF: D04 T02 §10 -- `TablePreviewDialog`'s `Save as .xlsx` action (`D04 T02 §10`) delegates to §1's `XlsxWriter`.
 - -> XREF: D04 T03 §1 -- `XlsxWriter` (§1) and `WebDocWriter`'s EPUB 3 packager (§4) use `D04 T03 §1`'s `zip_archive.cpp` and `OpenXmlPackageBuilder`.
+- -> XREF: D04 T03 §2 -- the `PDF/UA-1` auto-tagger (§7) shares `D04 T03 §2`'s heading, list, and running-header/footer structure inference rules.
 - -> XREF: D05 T02 §11 -- the `Signatures` section of the `Signatures & Standards` side panel (`D05 T02 §11`) shares the panel host with §9 here.
 
 ## Outcome
@@ -48,10 +49,10 @@ track: M5
 | 3 | §3 | `WebDocWriter` HTML5 (`Fixed` & `Flowing`) and GitHub-Flavored Markdown (`.md`) export | D04 T02 §8, D03 T01 §1, D04 T03 §1 | [ ] |
 | 4 | §4 | `WebDocWriter` EPUB 3 (`.epub`), LaTeX (`.tex`) and **HTML, Markdown, EPUB & LaTeX** UI | §3, D04 T01 §4 | [ ] |
 | 5 | §5 | `PDF/A` validator (`1a/1b/2a/2b/2u/3a/3b/3u` ISO 19005 clauses in `compliance.cpp`) | D04 T02 §2, D01 T02 §2 | [ ] |
-| 6 | §6 | `PDF/A` converter (font embedding, `/OutputIntents`, `PDF/A-1` flattening, XMP `pdfaid`) | §5 | [ ] |
-| 7 | §7 | `PDF/UA-1` (`ISO 14289-1`) validator and auto-tagger (`/StructTreeRoot` & `/MCID` tags) | §6, D03 T01 §1 | [ ] |
+| 6 | §7 | `PDF/UA-1` (`ISO 14289-1`) validator and auto-tagger (`/StructTreeRoot` & `/MCID` tags) | §5, D03 T01 §1, D04 T02 §8, D04 T03 §2 | [ ] |
+| 7 | §6 | `PDF/A` converter (font embedding, `/OutputIntents`, `PDF/A-1` flattening, XMP `pdfaid`) | §5, §7 | [ ] |
 | 8 | §8 | `ZUGFeRD 2.x / Factur-X` (`EN 16931`) hybrid `PDF/A-3` e-invoice engine & `recto-cli` | §6 | [ ] |
-| 9 | §9 | Viewer `Signatures & Standards` side panel (`SPEC 8.3`) and `PDF/A & E-Invoice` card | §7, §8, D02 T03 §3, D04 T01 §4 | [ ] |
+| 9 | §9 | Viewer `Signatures & Standards` side panel (`SPEC 8.3`) and `PDF/A & E-Invoice` card | §6, §7, §8, D02 T03 §3, D04 T01 §4 | [ ] |
 
 ## 1. Native ECMA-376 `XlsxWriter` (`.xlsx`, `.csv`, `.xml`) over `TableExtractor` and CLI
 
@@ -185,7 +186,7 @@ Implement the `PDF/A` compliance validator in `src/pdf/compliance.h` and `src/pd
 
 ## 6. `PDF/A` converter (font embedding, `/OutputIntents`, `PDF/A-1` flattening, XMP `pdfaid`)
 
-Implement `ComplianceEngine::convert_to_pdfa` in `src/pdf/compliance.cpp` and `recto-cli pdfa <validate|convert> <in.pdf> [--level 1b|1a|2b|2u|2a|3b|3u|3a] [--out <out.pdf>] [--json]`: convert arbitrary PDFs into compliant `PDF/A-1a`, `1b`, `2a`, `2b`, `2u`, `3a`, `3b`, or `3u` documents by embedding and subsetting any unembedded fonts via DirectWrite system font lookup (`D01 T02 §2`), generating `/ToUnicode` CMap streams (`u` / `a` levels), attaching a compact standard sRGB (or CMYK) ICC `/OutputIntent` profile, flattening transparency groups when targeting `PDF/A-1a`/`1b`, stripping prohibited actions/LZW filters, and writing synchronized `/Info` and XMP `pdfaid:part` / `pdfaid:conformance` metadata via `PdfWriter` (`D04 T02 §2`).
+Implement `ComplianceEngine::convert_to_pdfa` in `src/pdf/compliance.cpp` and `recto-cli pdfa <validate|convert> <in.pdf> [--level 1b|1a|2b|2u|2a|3b|3u|3a|ua1] [--out <out.pdf>] [--json]`: convert arbitrary PDFs into compliant `PDF/A-1a`, `1b`, `2a`, `2b`, `2u`, `3a`, `3b`, or `3u` documents by embedding and subsetting any unembedded fonts via DirectWrite system font lookup (`D01 T02 §2`), generating `/ToUnicode` CMap streams (`u` / `a` levels), invoking `§7`'s `/StructTreeRoot` auto-tagger whenever `1a`, `2a`, or `3a` is requested on an untagged input PDF, attaching a compact standard sRGB (or CMYK) ICC `/OutputIntent` profile, flattening transparency groups when targeting `PDF/A-1a`/`1b`, stripping prohibited actions/LZW filters, and writing synchronized `/Info` and XMP `pdfaid:part` / `pdfaid:conformance` metadata via `PdfWriter` (`D04 T02 §2`).
 
 **Phase:** 5
 **Needs:** windows-host
@@ -193,19 +194,20 @@ Implement `ComplianceEngine::convert_to_pdfa` in `src/pdf/compliance.cpp` and `r
 
 **Build order:**
 
-1. Implement `ComplianceEngine::convert_to_pdfa` in `src/pdf/compliance.cpp` remediating every fixable `ComplianceFinding` from `§5` (font embedding + subsetting + `/ToUnicode` generation, `/OutputIntents` ICC injection, `LZWDecode -> FlateDecode` transcoding, `PDF/A-1` transparency flattening, `/AP /N` appearance stream completion, and XMP `pdfaid` packet synthesis). Done when: converting non-compliant corpus PDFs to each of the 8 `PDF/A` levels (`1a`, `1b`, `2a`, `2b`, `2u`, `3a`, `3b`, `3u`) and running `validate_pdfa` (§5) on the output produces `0` compliance findings under ASan.
-2. Implement `recto-cli pdfa <validate|convert>` in `src/cli/cmd_pdfa.cpp`. Done when: `Cli.PdfACommand` validates and converts PDFs with deterministic exit codes (`0` compliant, `1` non-compliant findings) under ASan.
+1. Implement `ComplianceEngine::convert_to_pdfa` in `src/pdf/compliance.cpp` remediating every fixable `ComplianceFinding` from `§5` (font embedding + subsetting + `/ToUnicode` generation, `§7` `/StructTreeRoot` auto-tagging for `1a`/`2a`/`3a`, `/OutputIntents` ICC injection, `LZWDecode -> FlateDecode` transcoding, `PDF/A-1` transparency flattening, `/AP /N` appearance stream completion, and XMP `pdfaid` packet synthesis). Done when: converting non-compliant (including untagged) corpus PDFs to each of the 8 `PDF/A` levels (`1a`, `1b`, `2a`, `2b`, `2u`, `3a`, `3b`, `3u`) and running `validate_pdfa` (§5) on the output produces `0` compliance findings under ASan.
+2. Implement `recto-cli pdfa <validate|convert>` (supporting `1b|1a|2b|2u|2a|3b|3u|3a|ua1`) in `src/cli/cmd_pdfa.cpp`. Done when: `Cli.PdfACommand` validates and converts PDFs across `PDF/A` and `PDF/UA-1` with deterministic exit codes (`0` compliant, `1` non-compliant findings) under ASan.
 
 - [ ] Embed and subset unembedded fonts (including Standard 14 `/Helvetica`, `/Times-Roman`, `/Courier`, etc.) during `convert_to_pdfa` by resolving the matching system TrueType font via DirectWrite (`D01 T02 §2`), subsetting used glyphs (`D04 T02 §11`), attaching `/FontDescriptor /FontFile2` and `/CIDToGIDMap /Identity`, and synthesizing a complete `/ToUnicode` CMap stream. Done when: `PdfCompliance.ConvertEmbedsFontsAndToUnicode` turns an unembedded Standard-14 PDF into a fully font-embedded PDF/A-2u document with `0` font findings. Cheaper substitute: writing `pdfaid:part` into XMP while leaving `/Helvetica` unembedded.
+- [ ] Invoke `§7`'s `/StructTreeRoot` and `BDC`/`EMC` `/MCID` auto-tagger during `convert_to_pdfa` whenever `PdfA_1a`, `PdfA_2a`, or `PdfA_3a` is requested on an untagged input PDF. Done when: `PdfCompliance.PdfALevelAAutoTag` converts an untagged PDF to `PDF/A-1a`, `PDF/A-2a`, and `PDF/A-3a` with `0` findings.
 - [ ] Inject a compact, standards-compliant ICC v2 sRGB (`/N 3`) or CMYK (`/N 4`) `/DestOutputProfile` stream inside `/Root /OutputIntents [<< /Type /OutputIntent /S /GTS_PDFA1 /OutputConditionIdentifier (sRGB IEC61966-2.1) /DestOutputProfile ... >>]`. Done when: `PdfCompliance.ConvertOutputIntent` satisfies all device-colour clauses.
 - [ ] Flatten transparent page objects and `/SMask` images when targeting `PDF/A-1a` or `PDF/A-1b` (compositing transparent regions at `300 DPI` or converting `/BM /Multiply` highlights and clamping `/CA`/`/ca` to `1.0` after blending, and removing `/Group << /S /Transparency >>`). Done when: converting a PDF with translucent highlights and PNG `/SMask` images to `PDF/A-1b` passes `validate_pdfa(PdfA_1b)` with `0` transparency findings and `SSIM >= 0.98`.
 - [ ] Transcode any `LZWDecode` streams to `FlateDecode`, ensure every annotation and form widget has an explicit `/AP /N` stream (`D03 T03 §2`, `§6`), and strip prohibited `/JavaScript`, `/Launch`, `/Sound`, and `/Movie` actions. Done when: `PdfCompliance.ConvertStripsProhibited` removes prohibited actions and LZW streams cleanly.
 - [ ] Synthesize an uncompressed (`PDF/A` requirement for `/Type /Metadata /Subtype /XML`) UTF-8 XMP packet containing `pdfaid:part`, `pdfaid:conformance`, Dublin Core `dc:title`/`dc:creator`, `xmp:CreateDate`/`xmp:ModifyDate`/`xmp:MetadataDate`, and `pdf:Producer` synchronized with the trailer `/Info` dictionary. Done when: `validate_pdfa` confirms `0` XMP/`/Info` synchronization errors across all 8 levels.
-- [ ] Implement `recto-cli pdfa <validate|convert> <in.pdf> [--level 1b|1a|2b|2u|2a|3b|3u|3a] [--out <out.pdf>] [--json]` in `src/cli/cmd_pdfa.cpp`. Done when: `recto-tests.exe --gtest_filter=PdfCompliance.Convert*:Cli.PdfACommand` passes under ASan.
+- [ ] Implement `recto-cli pdfa <validate|convert> <in.pdf> [--level 1b|1a|2b|2u|2a|3b|3u|3a|ua1] [--out <out.pdf>] [--json]` in `src/cli/cmd_pdfa.cpp`. Done when: `recto-tests.exe --gtest_filter=PdfCompliance.Convert*:PdfCompliance.PdfALevelAAutoTag:Cli.PdfACommand` passes under ASan.
 
 - [ ] Commit: `PDF/A` converter (DirectWrite font embedding, sRGB/CMYK `/OutputIntents`, `PDF/A-1` transparency flattening, XMP `pdfaid`, `recto-cli pdfa`)
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfCompliance.Convert*:Cli.PdfACommand` passes under ASan across all 8 PDF/A levels.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfCompliance.Convert*:PdfCompliance.PdfALevelAAutoTag:Cli.PdfACommand` passes under ASan across all 8 PDF/A levels.
 
 ## 7. `PDF/UA-1` (`ISO 14289-1`) validator and auto-tagger (`/StructTreeRoot` & `/MCID` tags)
 
@@ -219,18 +221,17 @@ Implement `PDF/UA-1` (`ISO 14289-1` Universal Accessibility) validation and auto
 
 **Build order:**
 
-1. Implement `validate_pdfua` and `convert_to_pdfua` (also invoked automatically when converting an untagged PDF to `PDF/A-1a`, `PDF/A-2a`, or `PDF/A-3a` in `§6`) in `src/pdf/compliance.cpp`. Done when: `PdfCompliance.PdfUaAutoTagAndValidate` takes an untagged corpus PDF with headings, paragraphs, lists, a table, and a figure, runs `convert_to_pdfua`, and passes `validate_pdfua` with `0` findings under ASan.
+1. Implement `validate_pdfua` and `convert_to_pdfua` in `src/pdf/compliance.cpp` (establishing the `/StructTreeRoot` and `BDC`/`EMC` `/MCID` auto-tagger also consumed by `§6` when converting untagged inputs to `PDF/A-1a`, `2a`, or `3a`). Done when: `PdfCompliance.PdfUaAutoTagAndValidate` takes an untagged corpus PDF with headings, paragraphs, lists, a table, and a figure, runs `convert_to_pdfua`, and passes `validate_pdfua` with `0` findings under ASan.
 
 - [ ] Implement `ComplianceEngine::validate_pdfua` in `src/pdf/compliance.cpp` checking ISO 14289-1 clauses: `/MarkInfo << /Marked true >>`, `/Root /Lang`, `/ViewerPreferences << /DisplayDocTitle true >>`, `pdfuaid:part = 1` and `dc:title` in XMP, `/StructTreeRoot` + `/ParentTree` integrity, heading nesting order (`H1 -> H2 -> H3` without skipped levels), `/Table` `/TH` headers, `/Figure` `/Alt` attributes, and `/Page /Tabs /S`. Done when: `PdfCompliance.ValidatePdfUa` flags untagged content, missing `/Lang`, missing `/DisplayDocTitle`, and `/Figure` nodes lacking `/Alt`.
 - [ ] Rewrite untagged page `/Contents` streams during `convert_to_pdfua`: wrap each reading-order text block, heading, list item, table cell, and image `Do` operator in `<tag> << /MCID <k> >> BDC ... EMC` and wrap running headers/footers and background ruling paths in `/Artifact BMC ... EMC`. Done when: every visible content operator on the page is either bound to an `/MCID` in `/StructTreeRoot` or marked as `/Artifact`. Cheaper substitute: wrapping an entire page in a single `<P>` tag with no heading, list, table, or artifact differentiation.
 - [ ] Build the `/StructTreeRoot` dictionary (`/Type /StructTreeRoot`, `/K` root `/Document` element, `/ParentTree` number tree mapping `(StructParents, MCID) -> StructElem` indirect reference, and `/RoleMap`) with semantic `/H1`..`/H3`, `/P`, `/L` -> `/LI` -> `/Lbl` + `/LBody`, `/Table` -> `/TR` -> `/TH`/`/TD`, and `/Figure` (populated with `/Alt` text from caption inference or `"Figure on page N"` fallback). Done when: `PdfCompliance.StructTreeHierarchy` verifies bidirectional `/P` parent and `/K` child links and `/ParentTree` lookups across a multi-page document.
 - [ ] Set `/MarkInfo << /Marked true >>`, `/Root /Lang (en-US)` (or detected OCR/document language), `/ViewerPreferences << /DisplayDocTitle true >>`, `/Tabs /S` on each `/Page`, and `pdfuaid:part` (`1`) in the XMP packet. Done when: `validate_pdfua` returns `0` findings on the auto-tagged output PDF.
-- [ ] Wire `convert_to_pdfua`'s structure-tree builder into `convert_to_pdfa` (`§6`) whenever `PdfA_1a`, `PdfA_2a`, or `PdfA_3a` is requested on an untagged input PDF. Done when: `PdfCompliance.PdfALevelAAutoTag` converts an untagged PDF to `PDF/A-2a` with `0` findings.
-- [ ] Support `recto-cli pdfa <validate|convert> <in.pdf> --level ua1 [--out <out.pdf>]` in `src/cli/cmd_pdfa.cpp`. Done when: `recto-tests.exe --gtest_filter=PdfCompliance.*PdfUa*:PdfCompliance.StructTree*` passes under ASan.
+- [ ] Expose the reusable `auto_tag_structure_tree(pdf::Document&)` helper in `src/pdf/compliance.h/.cpp` so `convert_to_pdfa` (`§6`) can tag untagged inputs before embedding fonts and XMP metadata for `PDF/A-1a`, `2a`, and `3a`. Done when: `PdfCompliance.PdfUaAutoTagAndValidate` passes under ASan.
 
 - [ ] Commit: `PDF/UA-1` (`ISO 14289-1`) validator and auto-tagger (`/StructTreeRoot` + `BDC`/`EMC` `/MCID` streams)
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfCompliance.*PdfUa*:PdfCompliance.StructTree*:PdfCompliance.PdfALevelAAutoTag` passes under ASan.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfCompliance.*PdfUa*:PdfCompliance.StructTree*` passes under ASan.
 
 ## 8. `ZUGFeRD 2.x / Factur-X` (`EN 16931`) hybrid `PDF/A-3` e-invoice engine & `recto-cli`
 

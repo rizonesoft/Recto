@@ -221,21 +221,21 @@ Implement `src/pdf/rasterizer.h` and `src/pdf/rasterizer.cpp` (`recto::pdf::Rast
 
 ## 7. Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation
 
-Implement `CancelToken` (`src/core/cancel_token.h`, shared with `src/pdf/rasterizer.h`) and wire cooperative cancellation into both `Interpreter` (`DisplayList` compilation) and `Rasterizer::render_tile`:
+Implement `CancelToken` and `CancelSource` in `src/pdf/cancel_token.h` (`recto::pdf::CancelToken`, re-exported into `recto::core` via `src/core/cancel_token.h` so `src/pdf/` never includes upward from `src/core/`) and wire cooperative cancellation into both `Interpreter` (`DisplayList` compilation) and `Rasterizer::render_tile`:
 - `CancelToken`: lightweight, lock-free `std::shared_ptr<std::atomic<bool>>` handle (`CancelSource::token()`, `CancelSource::cancel()`, `CancelToken::is_cancelled()` using `std::memory_order_relaxed`).
 - Check `cancel_token.is_cancelled()` at entry and every **64 commands** inside `Rasterizer::render_tile` (and inside `Interpreter::interpret_page`), popping any active D2D clips/layers cleanly, calling `EndDraw()` / discarding partial pixels, and returning `ErrorCode::Cancelled` in under `10 ms` with zero D2D/WIC resource leaks.
 
 **Phase:** 1
 **Needs:** windows-host
 **Surface:** no
-**Freeze check:** Confirm that `CancelToken` uses `std::atomic<bool>` with zero locks, and cancelling mid-replay unwinds the D2D clip/layer stack balanced (`PopAxisAlignedClip` / `PopLayer`) so the worker's `ID2D1RenderTarget` remains valid for the very next tile.
+**Freeze check:** Confirm that `CancelToken` is defined inside `src/pdf/cancel_token.h` with zero upward includes from `src/core`, uses `std::atomic<bool>` with zero locks, and cancelling mid-replay unwinds the D2D clip/layer stack balanced (`PopAxisAlignedClip` / `PopLayer`) so the worker's `ID2D1RenderTarget` remains valid for the very next tile.
 
 **Build order:**
 
-1. Implement `CancelToken` / `CancelSource` and wire 64-command batch cancellation checks and balanced D2D clip/layer unwinding into `Rasterizer::render_tile` and `Interpreter::interpret_page`. Done when: `src/pdf` and `src/core` compile cleanly on `x64` and `ARM64`.
+1. Implement `CancelToken` / `CancelSource` in `src/pdf/cancel_token.h` (with `src/core/cancel_token.h` re-exporting `recto::pdf::CancelToken` and `recto::pdf::CancelSource`) and wire 64-command batch cancellation checks and balanced D2D clip/layer unwinding into `Rasterizer::render_tile` and `Interpreter::interpret_page`. Done when: `src/pdf` and `src/core` compile cleanly on `x64` and `ARM64` with zero upward includes from `src/pdf`.
 2. Add `PdfRasterizer.PreCancelledTile`, `PdfRasterizer.MidReplayCancelUnder10Ms`, and `PdfRasterizer.RenderTargetReusableAfterCancel` in `tests/recto-tests/pdf_rasterizer_tests.cpp`. Done when: all 3 tests pass under ASan.
 
-- [ ] Implement `CancelToken` and `CancelSource` over `std::shared_ptr<std::atomic<bool>>` (`is_cancelled()` using `memory_order_relaxed`, `cancel()` using `memory_order_release`). Done when: `CancelToken` is copyable in `O(1)` and safe to poll from any number of worker threads.
+- [ ] Implement `CancelToken` and `CancelSource` in `src/pdf/cancel_token.h` over `std::shared_ptr<std::atomic<bool>>` (`is_cancelled()` using `memory_order_relaxed`, `cancel()` using `memory_order_release`) and re-export them in `src/core/cancel_token.h`. Done when: `CancelToken` is copyable in `O(1)` and safe to poll from any number of worker threads with zero upward header dependencies.
 - [ ] Check `cancel_token.is_cancelled()` at the start of `Rasterizer::render_tile` so already-cancelled queued requests return `ErrorCode::Cancelled` in `< 10 microseconds` without touching D2D. Done when: `PdfRasterizer.PreCancelledTile` returns `ErrorCode::Cancelled` immediately.
 - [ ] Check `cancel_token.is_cancelled()` every 64 commands inside `Rasterizer::render_tile` and inside sub-list loops (`Type3` glyphs and `/Form` XObjects). Done when: a synthetic 50,000-command vector `DisplayList` cancelled from another thread after command 256 aborts in `< 10 ms` in `PdfRasterizer.MidReplayCancelUnder10Ms`.
 - [ ] Unwind all active `PushAxisAlignedClip` and `PushLayer` calls on the worker's `ID2D1RenderTarget` before `EndDraw()` when aborting mid-replay so the render target never enters `D2DERR_PUSH_POP_UNBALANCED`. Done when: `PdfRasterizer.RenderTargetReusableAfterCancel` cancels a clipped tile mid-draw and immediately renders the next tile on the same `Rasterizer` instance with pixel-exact output.

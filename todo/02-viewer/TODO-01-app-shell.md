@@ -24,6 +24,7 @@ track: M2
 - -> XREF: D04 T02 §1 -- `PdfWriter` and `AtomicFileWriter` reuse §10's shared `RectoDialogStyles.xaml`.
 - -> XREF: D04 T04 §8 -- the `Install Office or LibreOffice` dialog reuses §10's shared `RectoDialogStyles.xaml`.
 - -> XREF: D05 T02 §3 -- `OrganizePage` Combine mode and `§5` Unsaved-Changes / Replace-Original dialogs reuse §10's `PasswordDialog` and `RectoDialogStyles.xaml`.
+- -> XREF: D06 T01 §7 -- `PerfSmoke` (`D06 T01 §7`) exercises the viewer shell open/dialog paths (`§7`, `§11`) built here.
 - -> XREF: D07 T01 §4 -- packaging completes what §1 here starts: the self-contained configuration, manifest and assets authored here are packaged into the Inno Setup installer, Portable `.zip` (`§5`) and optional MSIX (`§6`).
 
 ## Outcome

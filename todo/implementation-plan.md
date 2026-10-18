@@ -31,13 +31,13 @@ Sections: 29 | Checklist items: 203
 
 | Status | Reference   | Deliverable                                                                              | Needs        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
-| [ ]    | D01 T01 §1  | `PdfResult<T>`, `PdfError`, `ErrorCode` and D16 thread-safe diagnostic ring buffer       | windows-host | 7     |
+| [ ]    | D01 T01 §1  | `PdfResult<T>`, `PdfError`, `ErrorCode`, D16 diagnostic ring and ETW `TraceLogging`      | windows-host | 7     |
 | [ ]    | D01 T01 §2  | `PdfValue` variant object model, dictionary/array helpers and deep cloning               | windows-host | 7     |
 | [ ]    | D01 T01 §3  | Binary-safe PDF 1.7 and 2.0 lexer (`src/pdf/lexer.cpp`)                                  | windows-host | 8     |
 | [ ]    | D01 T01 §4  | Bounded recursive-descent indirect object parser (`src/pdf/parser.cpp`)                  | windows-host | 7     |
 | [ ]    | D01 T01 §5  | Classic `xref` tables, trailer merging and `/Prev` incremental update chains             | windows-host | 7     |
-| [ ]    | D01 T01 §6  | PDF 1.5+ `/Type /XRef` streams, `/Type /ObjStm` streams and damaged-file recovery        | windows-host | 7     |
 | [ ]    | D01 T01 §7  | Lossless stream filters (`Flate`, `LZW`, predictors, `ASCII85`, `ASCIIHex`, `RunLength`) | windows-host | 7     |
+| [ ]    | D01 T01 §6  | PDF 1.5+ `/Type /XRef` streams, `/Type /ObjStm` streams and damaged-file recovery        | windows-host | 7     |
 | [ ]    | D01 T01 §8  | Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`) | windows-host | 7     |
 | [ ]    | D01 T01 §9  | Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG)      | windows-host | 8     |
 | [ ]    | D01 T01 §10 | `pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links | windows-host | 9     |
@@ -205,10 +205,10 @@ Sections: 24 | Checklist items: 168
 | [ ]    | D04 T03 §1 | C++20 ZIP archive reader/writer (`zip_archive.cpp`) and ECMA-376 OpenXML scaffold        | windows-host                  | 7     |
 | [ ]    | D04 T03 §2 | `DocxWriter` **Flowing** and **Continuous** layout engines (paragraphs, lists, `w:cols`) | windows-host                  | 8     |
 | [ ]    | D04 T03 §3 | `DocxWriter` **Exact** frame mode, `w:tbl` table reconstruction, images & `pdf-to-docx`  | windows-host                  | 7     |
-| [ ]    | D04 T03 §4 | Native RTF 1.9.1 writer (`rtf_writer.cpp`: `Flowing`, `Exact` frames, `	rowd` tables)    | windows-host                  | 8     |
+| [ ]    | D04 T04 §1 | Built-in C++20 Word (`.docx`, `.docm`) and Rich Text (`.rtf`) to PDF layout engine       | windows-host                  | 8     |
+| [ ]    | D04 T03 §4 | Native RTF 1.9.1 writer (`rtf_writer.cpp`: `Flowing`, `Exact` frames, `\trowd` tables)   | windows-host                  | 8     |
 | [ ]    | D04 T03 §5 | Convert page **Word document (`.docx` & `.rtf`)** card and Step 3 UI (`B-Convert.png`)   | windows-host, display-session | 7     |
 | [ ]    | D04 T03 §6 | Foundation plan section 11 **20-document PDF -> Word quality review** and layout tuning  | windows-host                  | 7     |
-| [ ]    | D04 T04 §1 | Built-in C++20 Word (`.docx`, `.docm`) and Rich Text (`.rtf`) to PDF layout engine       | windows-host                  | 8     |
 | [ ]    | D04 T04 §2 | Built-in C++20 Excel (`.xlsx`), `.csv`, and PowerPoint (`.pptx`) to PDF layout engines   | windows-host                  | 7     |
 | [ ]    | D04 T04 §3 | Built-in C++20 `HTML/CSS` (`.html`) and `Markdown` (`.md`) to PDF engine and CLI verbs   | windows-host                  | 7     |
 | [ ]    | D04 T04 §4 | Installed converter detection (`detect_office_converters()` for Office & LibreOffice)    | windows-host                  | 7     |
@@ -221,22 +221,24 @@ Sections: 24 | Checklist items: 168
 | [ ]    | D04 T05 §3 | `WebDocWriter` HTML5 (`Fixed` & `Flowing`) and GitHub-Flavored Markdown (`.md`) export   | windows-host                  | 7     |
 | [ ]    | D04 T05 §4 | `WebDocWriter` EPUB 3 (`.epub`), LaTeX (`.tex`) and **HTML, Markdown, EPUB & LaTeX** UI  | windows-host, display-session | 6     |
 | [ ]    | D04 T05 §5 | `PDF/A` validator (`1a/1b/2a/2b/2u/3a/3b/3u` ISO 19005 clauses in `compliance.cpp`)      | windows-host                  | 8     |
-| [ ]    | D04 T05 §6 | `PDF/A` converter (font embedding, `/OutputIntents`, `PDF/A-1` flattening, XMP `pdfaid`) | windows-host                  | 7     |
-| [ ]    | D04 T05 §7 | `PDF/UA-1` (`ISO 14289-1`) validator and auto-tagger (`/StructTreeRoot` & `/MCID` tags)  | windows-host                  | 7     |
+| [ ]    | D04 T05 §7 | `PDF/UA-1` (`ISO 14289-1`) validator and auto-tagger (`/StructTreeRoot` & `/MCID` tags)  | windows-host                  | 6     |
+| [ ]    | D04 T05 §6 | `PDF/A` converter (font embedding, `/OutputIntents`, `PDF/A-1` flattening, XMP `pdfaid`) | windows-host                  | 8     |
 | [ ]    | D04 T05 §8 | `ZUGFeRD 2.x / Factur-X` (`EN 16931`) hybrid `PDF/A-3` e-invoice engine & `recto-cli`    | windows-host                  | 6     |
 | [ ]    | D04 T05 §9 | Viewer `Signatures & Standards` side panel (`SPEC 8.3`) and `PDF/A & E-Invoice` card     | windows-host, display-session | 6     |
 | [ ]    | D06 T01 §6 | Conversion round-trip matrix Part 2 (`RoundTrips.DocumentsAndSecurity`: Word, Sign)      | windows-host                  | 7     |
 
 ### Phase 6: M6 Ship
 
-Sections: 18 | Checklist items: 118
+Sections: 20 | Checklist items: 133
 
 | Status | Reference  | Deliverable                                                                              | Needs                         | Items |
 | ------ | ---------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
 | [ ]    | D06 T02 §1 | Hostile-input audit Part 1 (`docs/security-audit.md`: zero-JS, `/Launch` & bomb bounds)  | windows-host                  | 6     |
 | [ ]    | D06 T02 §2 | Hostile-input audit Part 2 (macro suppression, HTML script block, link prompt, redact)   | windows-host, display-session | 7     |
-| [ ]    | D06 T02 §3 | Scheduled continuous fuzzing workflow (`fuzz_open`..`render`) and corpus delta archiving | windows-host                  | 6     |
+| [ ]    | D06 T02 §3 | M3-M5 fuzz targets (`fuzz_text`, `fuzz_forms`, `fuzz_openxml_zip`) & scheduled workflow  | windows-host                  | 7     |
 | [ ]    | D06 T02 §4 | Crash triage runbook (`fuzz/README.md`) proven end-to-end on a planted crash input       | windows-host                  | 6     |
+| [ ]    | D06 T02 §5 | `recto-pdf` public API boundary inventory (`recto_pdf.h` ownership and mutability table) | none                          | 6     |
+| [ ]    | D06 T02 §6 | Post-v1 AppContainer broker process design (`2026-10-14-broker-process-design.md`)       | none                          | 8     |
 | [ ]    | D07 T01 §1 | WinUI 3 print API spike (`PrintManagerInterop` vs `ID2D1PrintControl`) & section 11 note | windows-host, display-session | 6     |
 | [ ]    | D07 T01 §2 | Non-blocking print pipeline (`src/app/printing/`, printer-DPI job, preview & `Ctrl+P`)   | windows-host, display-session | 7     |
 | [ ]    | D07 T01 §3 | Automated `Print-to-PDF` verification seam (`Print.*` in `recto-tests`) against corpus   | windows-host                  | 6     |
@@ -252,15 +254,6 @@ Sections: 18 | Checklist items: 118
 | [ ]    | D07 T02 §6 | GitHub Release runbook (`docs/release-and-store-runbook.md`) and Store submission kit    | windows-host, display-session | 7     |
 | [ ]    | D07 T02 §7 | End-to-end v1 distribution bundle (`Setup.exe`, `Portable.zip`, `SHA256SUMS.txt`) & GPL  | windows-host, display-session | 6     |
 
-### Phase 7: After v1
-
-Sections: 2 | Checklist items: 13
-
-| Status | Reference  | Deliverable                                                                              | Needs | Items |
-| ------ | ---------- | ---------------------------------------------------------------------------------------- | ----- | ----- |
-| [ ]    | D06 T02 §5 | `recto-pdf` public API boundary inventory (`recto_pdf.h` ownership and mutability table) | none  | 6     |
-| [ ]    | D06 T02 §6 | Post-v1 AppContainer broker process design (`2026-10-14-broker-process-design.md`)       | none  | 7     |
-
 ### Phase 99: Manual, operator only
 
 Sections: 4 | Checklist items: 20
@@ -274,4 +267,4 @@ Sections: 4 | Checklist items: 20
 
 Progress: 7/205 verified sections, 4 ready to run now.
 
-Checklist: 28/1467 items completed (includes Commit items).
+Checklist: 28/1469 items completed (includes Commit items).

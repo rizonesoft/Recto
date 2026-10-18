@@ -4,6 +4,7 @@ id: selection-and-search
 domain: 03-text
 status: active
 title: "TODO-01 -- Text Extraction, Built-in OCR, Selection and Search"
+frozen: true
 track: M3
 ---
 
@@ -27,6 +28,8 @@ track: M3
 - -> XREF: D04 T05 §7 -- `PDF/UA-1` auto-tagger consumes `PageText` blocks and reading order from §1 here.
 - -> XREF: D05 T01 §10 -- `Redactor` consumes `PageText` character quads from §1 here.
 - -> XREF: D05 T02 §9 -- `Find & Redact` in the Redaction Bar reuses the find engine from §5 and §6 here.
+- -> XREF: D06 T01 §4 -- `TextTables.*` (`D06 T01 §4`) verifies `PageText` normalization, regex search, `Replace Text` (`§9`), and `Compare PDFs` (`§10`) built here.
+- -> XREF: D06 T02 §3 -- `fuzz_text` (`D06 T02 §3`) fuzzes the `PageText` extractor and content-stream text replacer (`§1`, `§9`) built here.
 
 ## Outcome
 
@@ -62,6 +65,7 @@ Implement `src/pdf/page_text.h` and `src/pdf/page_text.cpp` in `recto-pdf`: duri
 **Phase:** 3
 **Needs:** windows-host
 **Surface:** no
+**Freeze check:** Verify that `PageText` (`Block`, `Line`, `Span`, `CharQuad`) is deeply immutable once constructed, holds zero pointers or references to `recto::pdf::Document` or mutable font objects, and crosses threads solely as `std::shared_ptr<const PageText>`.
 
 **Build order:**
 
@@ -86,6 +90,7 @@ Wire `PageText` extraction into `DocumentActor::get_page_text` (`src/core/docume
 **Phase:** 3
 **Needs:** windows-host
 **Surface:** no
+**Freeze check:** Confirm that `PageText` extraction executes exclusively on the owning `DocumentActor` thread (or swaps an immutable OCR `std::shared_ptr<const PageText>` snapshot on the actor thread), and callers receive only `std::shared_ptr<const PageText>`.
 
 **Build order:**
 
@@ -109,6 +114,7 @@ Implement `SelectionModel` in `src/services/selection_model.h/.cpp` and interact
 **Phase:** 3
 **Needs:** windows-host, display-session
 **Surface:** yes
+**Freeze check:** Confirm that `SelectionModel` reads only cached `std::shared_ptr<const PageText>` snapshots without blocking the UI thread on `DocumentActor` parsing.
 
 **Fidelity:** SPEC sections 4 (`RectoTextSelectionBrush`), 9.3 (text selection), and 10 (`Ctrl+A`, `Esc`, `Shift+Arrow`), with `design/screenshots/D-Search.png`.
 **Job:** The user can select exact character, word, line, or multi-page ranges on any page with mouse or keyboard and see crisp quad highlights that stay anchored across zoom and rotation. Consumer: the floating selection toolbar and clipboard (`§4`), the `FindCard` (`§6`), and the UIA text provider (`D03 T02 §2`).
@@ -139,6 +145,7 @@ Build the SPEC 9.3 dark floating selection toolbar (`Copy`, `Highlight`, `Strike
 **Phase:** 3
 **Needs:** windows-host, display-session
 **Surface:** yes
+**Freeze check:** Confirm that clipboard serialization (`selected_text_utf8`, `selected_text_rtf`) reads only immutable `std::shared_ptr<const PageText>` snapshots without touching `recto::pdf::Document`.
 
 **Fidelity:** SPEC sections 4 (dark floating bar tokens `#1B1A19` / `#2A2826`), 9.3 (floating selection toolbar and right-click context menu), 10 (`Ctrl+C`, `Esc`), and 11 (`36 epx` hit targets in floating toolbar), with `design/screenshots/D-Search.png`.
 **Job:** Immediately after selecting text, the user can copy plain or formatted text, search for the selected phrase, copy a `#page=N` link, or trigger highlight/strikeout/note/redaction/table-export actions from either the floating toolbar or right-click menu. Consumer: the Windows clipboard, `FindCard` (`§6`), `D03 T03 §3` annotations, `D05 T02 §9` redaction, and `D04 T02 §10` table export.
@@ -168,6 +175,7 @@ Implement the background find engine in `src/core/search.h/.cpp` and `recto-cli 
 **Phase:** 3
 **Needs:** windows-host
 **Surface:** no
+**Freeze check:** Verify that `SearchEngine` workers obtain `std::shared_ptr<const PageText>` snapshots via `DocumentActor::get_page_text`, poll `CancelToken` between pages, and never access `recto::pdf::Document` directly from worker threads.
 
 **Build order:**
 
@@ -195,6 +203,7 @@ Build the SPEC 9.3 find surfaces and wire them to §5's background `SearchEngine
 **Phase:** 3
 **Needs:** windows-host, display-session
 **Surface:** yes
+**Freeze check:** Confirm that `SearchViewModel` dispatches all multi-page search work off the UI thread with cooperative `CancelToken` cancellation and marshals progressive `SearchHit` results back via `DispatcherQueue::TryEnqueue`.
 
 **Fidelity:** SPEC sections 4 (`RectoSearchHitBrush`, `RectoSearchHitCurrentBrush`), 9.3, 10 (`Ctrl+F`, `F3`, `Shift+F3`, `Esc`), with `design/screenshots/D-Search.png` and `design/screenshots/explorations/B-Search.png`.
 **Job:** The user can find every literal or regex occurrence of a word or pattern across a large PDF immediately without stalling scrolling, see each match in context, and jump between hits. Consumer: `DocumentView` scrolls to the current match and paints hit quads; `D03 T02 §5` announces result counts.
@@ -223,6 +232,7 @@ Implement `src/core/ocr_preprocess.h/.cpp` in `recto-core`: detect **scanned pag
 **Phase:** 3
 **Needs:** windows-host
 **Surface:** no
+**Freeze check:** Verify that `classify_page_for_ocr` and `preprocess_for_ocr` operate solely on immutable `const DisplayList&`, `const PageText&`, and worker-local `RgbaBitmap` buffers on `RenderPool` threads without locking `DocumentActor`.
 
 **Build order:**
 
@@ -247,6 +257,7 @@ Implement `src/core/ocr_pipeline.h/.cpp` (`OcrPipeline`) using Windows 11's nati
 **Phase:** 3
 **Needs:** windows-host
 **Surface:** yes
+**Freeze check:** Confirm that `OcrPipeline` runs `OcrEngine::RecognizeAsync` on a background worker thread and publishes the recognized `std::shared_ptr<const PageText>` snapshot into `DocumentActor` via an actor message without mutating any existing `PageText` in place.
 
 **Fidelity:** SPEC sections 9.3 (selection and search work identically once OCR populates `PageText`), 9.5 (vector-outlined text OCR option), and 9.7 (Reading: automatic OCR on scanned pages; Converting: OCR language).
 **Job:** A user opening a scanned PDF or a PDF where text was converted to vector curves can select text, copy it, search it with `Ctrl+F`, and read it with a screen reader without installing third-party OCR software. Consumer: `DocumentActor`'s `PageText` cache, `D03 T02 §1` UIA provider, `D04 T02 §6` plain-text and `§7` searchable-PDF writers, and `D04 T03 §2` `DocxWriter`.
@@ -275,6 +286,7 @@ Implement `src/pdf/text_replace.h/.cpp` in `recto-pdf`: locate literal or regula
 **Phase:** 3
 **Needs:** windows-host, display-session
 **Surface:** yes
+**Freeze check:** Confirm that content-stream replacement runs on the owning `DocumentActor` thread (or a dedicated CLI/job `pdf::Document` instance), replaces cached `std::shared_ptr<const DisplayList>` and `std::shared_ptr<const PageText>` snapshots atomically without mutating in-flight snapshots, and writes output via temp-file-then-replace.
 
 **Fidelity:** SPEC sections 9.3 (`Ctrl+H` Find & Replace expansion in `FindCard`) and 10 (`Ctrl+H` shortcut) with `D-Search.png`.
 **Job:** The user can replace literal or regex text matches one-by-one (`Replace`) or across the entire document (`Replace All`) and save the updated PDF with real content-stream text modifications. Consumer: saved PDF copies and `DocumentActor` live preview.
@@ -304,6 +316,7 @@ Implement `src/core/pdf_compare.h/.cpp` in `recto-core` (word/line Myers diff ov
 **Phase:** 3
 **Needs:** windows-host, display-session
 **Surface:** yes
+**Freeze check:** Verify that Document A and Document B each run on their own isolated `DocumentActor` instance, and `compare_documents` consumes only immutable `std::shared_ptr<const PageText>` and `std::shared_ptr<const DisplayList>` snapshots on background workers.
 
 **Fidelity:** SPEC sections 4 (`RectoSuccessBrush`, `RectoDangerBrush`), 9.3.1 (`Ctrl+Shift+D` Compare PDFs View: Side-by-Side Synchronized View, Visual Overlay Diff View, and Changes panel), and 10 (`Ctrl+Shift+D` shortcut).
 **Job:** The user can compare two versions of a PDF document to inspect every text insertion, deletion, replacement, and graphic change side-by-side or overlaid, and jump to any change from the summary panel. Consumer: `CompareView` canvases and Changes panel, plus `recto-cli compare` JSON reports.

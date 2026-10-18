@@ -26,6 +26,7 @@ track: M5
 - -> XREF: D04 T02 §8 -- `DocxWriter` (§3) and `RtfWriter` (§4) consume `TableExtractor` grids from `D04 T02 §8`.
 - -> XREF: D04 T04 §1 -- `office_to_pdf.cpp` (`D04 T04 §1`) shares the C++20 `zip_archive.h/.cpp` reader/writer built in §1 here.
 - -> XREF: D04 T05 §1 -- `XlsxWriter` (`D04 T05 §1`) and `WebDocWriter` (`D04 T05 §4` EPUB 3) share the `zip_archive.h/.cpp` reader/writer built in §1 here.
+- -> XREF: D06 T01 §6 -- `RoundTrips.DocumentsAndSecurity` (`D06 T01 §6`) exercises `DocxWriter` (`§2`, `§3`) and `RtfWriter` (`§4`) built here.
 - -> XREF: D07 T02 §4 -- the local diagnostic crash-report `.zip` bundler (`D07 T02 §4`) reuses `zip_archive.h/.cpp` built in §1 here.
 
 ## Outcome
@@ -48,9 +49,9 @@ track: M5
 | 1 | §1 | C++20 ZIP archive reader/writer (`zip_archive.cpp`) and ECMA-376 OpenXML scaffold | D04 T02 §1, D04 T02 §2 | [ ] |
 | 2 | §2 | `DocxWriter` **Flowing** and **Continuous** layout engines (paragraphs, lists, `w:cols`) | §1, D03 T01 §1, D03 T01 §8 | [ ] |
 | 3 | §3 | `DocxWriter` **Exact** frame mode, `w:tbl` table reconstruction, images & `pdf-to-docx` | §2, D04 T02 §8 | [ ] |
-| 4 | §4 | Native RTF 1.9.1 writer (`rtf_writer.cpp`: `Flowing`, `Exact` frames, `	rowd` tables) | §3 | [ ] |
+| 4 | §4 | Native RTF 1.9.1 writer (`rtf_writer.cpp`: `Flowing`, `Exact` frames, `\trowd` tables) | §3, D04 T04 §1 | [ ] |
 | 5 | §5 | Convert page **Word document (`.docx` & `.rtf`)** card and Step 3 UI (`B-Convert.png`) | §4, D04 T01 §4, D02 T04 §5 | [ ] |
-| 6 | §6 | Foundation plan section 11 **20-document PDF -> Word quality review** and layout tuning | §5 | [ ] |
+| 6 | §6 | Foundation plan section 11 **20-document PDF -> Word quality review** and layout tuning | §5, D04 T04 §1 | [ ] |
 
 ## 1. C++20 ZIP archive reader/writer (`zip_archive.cpp`) and ECMA-376 OpenXML scaffold
 
@@ -87,7 +88,7 @@ Implement the **Flowing** and **Continuous** reconstruction modes of `DocxWriter
 **Build order:**
 
 1. Implement document-wide layout analysis in `src/core/docx_writer.cpp`: modal body font/size estimation, heading level classification (`Heading1`..`Heading3` from font size/weight ratios and vertical spacing), running header/footer identification (top/bottom margin bands repeating across `>= 3` pages), and bullet/numbered list marker recognition. Done when: `DocxWriter.FlowingStructure` classifies titles, H1-H3 headings, bulleted/numbered lists, and running headers/footers on prose and academic corpus PDFs.
-2. Implement `Flowing` (with page/column `w:sectPr` breaks, `w:pgSz`, `w:pgMar`, and `w:cols`) and `Continuous` (single continuous stream with no hard page breaks) WordprocessingML emission (`word/document.xml`, `word/styles.xml`, `word/numbering.xml`, `word/header1.xml`, `word/footer1.xml`). Done when: `DocxWriter.FlowingAndContinuous` produces valid `.docx` files that round-trip through `D04 T04 §1` under ASan.
+2. Implement `Flowing` (with page/column `w:sectPr` breaks, `w:pgSz`, `w:pgMar`, and `w:cols`) and `Continuous` (single continuous stream with no hard page breaks) WordprocessingML emission (`word/document.xml`, `word/styles.xml`, `word/numbering.xml`, `word/header1.xml`, `word/footer1.xml`). Done when: `DocxWriter.FlowingAndContinuous` produces valid ECMA-376 `.docx` packages with well-formed XML and relationship tables under ASan (full `D04 T04 §1` round-trip verified in `§4` and `§6`).
 
 - [ ] Define `WordReconstructionMode` (`Flowing`, `Exact`, `Continuous`) and `PdfToWordOptions` (`mode`, `reconstruct_tables`, `include_images`, `ocr_scanned_and_outlined`, `ocr_language_bcp47`, `page_range`) in `src/core/docx_writer.h`. Done when: `src/core/docx_writer.h` compiles cleanly across `recto-core`, `recto-services`, and `recto-cli`.
 - [ ] Detect running headers and footers by matching top/bottom margin text blocks (`top 8%` and `bottom 8%` of page height) across multiple pages (allowing varying page numbers `1`, `2`, `Page N of M`), emitting them into `word/header1.xml` and `word/footer1.xml` with `w:fldSimple w:instr="PAGE"` rather than repeating them inside body text on every page. Done when: `DocxWriter.RunningHeadersFooters` moves repeating page headers/footers out of body paragraphs into native Word headers/footers.
@@ -128,7 +129,7 @@ Complete `DocxWriter` in `src/core/docx_writer.cpp`:
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=DocxWriter.*:Cli.PdfToDocx` passes under ASan across `Flowing`, `Exact`, and `Continuous` modes.
 
-## 4. Native RTF 1.9.1 writer (`rtf_writer.cpp`: `Flowing`, `Exact` frames, `	rowd` tables)
+## 4. Native RTF 1.9.1 writer (`rtf_writer.cpp`: `Flowing`, `Exact` frames, `\trowd` tables)
 
 Implement `src/core/rtf_writer.h/.cpp` (`recto::core::RtfWriter`) and `recto-cli pdf-to-rtf <in.pdf> --out <out.rtf> [--mode flowing|exact|continuous] [--pages <range>] [--ocr]`: generate standard Rich Text Format (RTF 1.9.1) documents (`\rtf1\ansi\ansicpg1252\uc1\deff0`, `\fonttbl`, `\colortbl`, `\stylesheet`, `\paperw`, `\paperh`, `\margl`, `\margr`, `\margt`, `\margb`) supporting all three reconstruction modes (`Flowing` paragraphs/lists/columns, `Exact` `\absw`/`\posx`/`\posy`/`\pvpg`/`\phpg` positioned frames, and `Continuous`), native RTF tables (`\trowd`, `\cellx`, `\clmgf`/`\clmrg`, `\clvmgf`/`\clvmrg`, `\intbl ... \cell`, `\row`), and inline `\pict\pngblip` / `\jpegblip` images.
 
