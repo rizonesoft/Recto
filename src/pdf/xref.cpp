@@ -614,6 +614,29 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		std::unordered_map<uint32_t, std::pair<uint16_t, int64_t>> recovered_integers;
 		std::unordered_map<uint32_t, uint16_t> catalog_generations;
 		std::vector<IndirectRef> catalog_history;
+		std::unordered_map<uint32_t, std::vector<uint32_t>> objstm_members;
+
+		auto invalidate_objstm_container = [&](uint32_t container_id) {
+			auto m_it = objstm_members.find(container_id);
+			if (m_it == objstm_members.end()) {
+				return;
+			}
+			for (const uint32_t member_id : m_it->second) {
+				const XrefEntry* me = table.find(member_id);
+				if (me != nullptr && me->is_compressed() && me->obj_stm_num == container_id) {
+					table.entries_.erase(member_id);
+					if (objects_discovered > 0u) {
+						--objects_discovered;
+					}
+					recovered_integers.erase(member_id);
+					catalog_generations.erase(member_id);
+					if (info_candidate.has_value() && info_candidate->obj_num == member_id) {
+						info_candidate = std::nullopt;
+					}
+				}
+			}
+			objstm_members.erase(m_it);
+		};
 
 		// Linearly scan from header_off for `<N> <G> obj` and `trailer << ... >>`.
 		size_t pos = static_cast<size_t>(header_off);
@@ -762,6 +785,10 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 									pos);
 							}
 
+							// If `obj_num` previously acted as a `/Type /ObjStm` container, redefining
+							// `obj_num` invalidates all compressed objects that pointed into that container.
+							invalidate_objstm_container(obj_num);
+
 							if (!table.entries_.contains(obj_num)) {
 								++objects_discovered;
 							}
@@ -808,10 +835,10 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 									if (!ov_res.has_value()) {
 										return ov_res.error();
 									}
-								} else if (type_opt.has_value() && *type_opt == "ObjStm") {
-									// Also unpack any intact `/Type /ObjStm` stream discovered during recovery
-									// so compressed objects inside object streams remain accessible and override
-									// earlier revisions regardless of storage kind.
+								} else if (type_opt.has_value() && *type_opt == "ObjStm" && gen_num == 0u) {
+									// Also unpack any intact generation-0 `/Type /ObjStm` stream discovered during
+									// recovery so compressed objects inside object streams remain accessible and
+									// override earlier revisions regardless of storage kind.
 									const auto n_opt = sdict.get_int("N");
 									const auto first_opt = sdict.get_int("First");
 									auto dec_stm = decode_stream(stm);
@@ -862,6 +889,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 												id_tok.int_value <= 0 ||
 												id_tok.int_value >
 													static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) ||
+												id_tok.int_value == static_cast<int64_t>(obj_num) ||
 												off_tok.kind != TokenKind::Integer ||
 												off_tok.int_value < 0) {
 												header_ok = false;
@@ -879,6 +907,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 												static_cast<size_t>(rel_u64)});
 										}
 										if (header_ok) {
+											auto& member_vec = objstm_members[obj_num];
 											for (size_t idx = 0; idx < inner_pairs.size(); ++idx) {
 												if (candidate_attempts >= effective_max_entries) {
 													return make_xref_error(
@@ -889,33 +918,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 												}
 												++candidate_attempts;
 												const uint32_t inner_id = inner_pairs[idx].obj_num;
-												if (!table.entries_.contains(inner_id)) {
-													if (objects_discovered >= effective_max_entries) {
-														return make_xref_error(
-															ErrorCode::DamagedFormat,
-															DiagnosticId::DamagedXRef,
-															"Damaged-file recovery exceeded maximum object entry budget",
-															pos);
-													}
-													++objects_discovered;
-												}
-												table.set_entry(
-													inner_id,
-													XrefEntry{
-														XrefEntryKind::Compressed,
-														0u,
-														obj_num,
-														static_cast<uint32_t>(idx),
-														0u});
-												recovered_integers.erase(inner_id);
-												catalog_generations.erase(inner_id);
-												if (info_candidate.has_value() &&
-													info_candidate->obj_num == inner_id) {
-													info_candidate = std::nullopt;
-												}
-												if (inner_id > max_obj_num) {
-													max_obj_num = inner_id;
-												}
+												invalidate_objstm_container(inner_id);
 
 												const size_t slice_start = first_off + inner_pairs[idx].rel_off;
 												const size_t slice_end = (idx + 1u < inner_pairs.size())
@@ -940,6 +943,42 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 														terr) ||
 													!trailing_tok.is_eof()) {
 													continue;
+												}
+												if (const PdfDict* idict_chk = inner_val->as_dict()) {
+													if (const auto itype_chk = idict_chk->get_name("Type")) {
+														if (*itype_chk == "ObjStm" || *itype_chk == "XRef") {
+															continue;
+														}
+													}
+												}
+
+												if (!table.entries_.contains(inner_id)) {
+													if (objects_discovered >= effective_max_entries) {
+														return make_xref_error(
+															ErrorCode::DamagedFormat,
+															DiagnosticId::DamagedXRef,
+															"Damaged-file recovery exceeded maximum object entry budget",
+															pos);
+													}
+													++objects_discovered;
+												}
+												table.set_entry(
+													inner_id,
+													XrefEntry{
+														XrefEntryKind::Compressed,
+														0u,
+														obj_num,
+														static_cast<uint32_t>(idx),
+														0u});
+												member_vec.push_back(inner_id);
+												recovered_integers.erase(inner_id);
+												catalog_generations.erase(inner_id);
+												if (info_candidate.has_value() &&
+													info_candidate->obj_num == inner_id) {
+													info_candidate = std::nullopt;
+												}
+												if (inner_id > max_obj_num) {
+													max_obj_num = inner_id;
 												}
 												if (const auto int_v = inner_val->as_int()) {
 													recovered_integers[inner_id] = {uint16_t{0}, *int_v};
@@ -1099,6 +1138,11 @@ PdfResult<XrefTable> XrefTable::parse(
 			PdfDict rev_trailer;
 			if (kw_tok.is_keyword("xref")) {
 				// Classic ASCII `xref` table followed by `trailer << ... >>`.
+				// Buffer this revision's classic entries so any supplemental `/XRefStm`
+				// in the same revision overrides classic compatibility entries (such as
+				// free placeholders for compressed objects per ISO 32000-1 7.5.8.4)
+				// while preserving entries from newer revisions.
+				std::vector<std::pair<uint32_t, XrefEntry>> classic_rev_entries;
 				while (true) {
 					Token first_tok;
 					if (!next_non_comment_token(lexer, first_tok, err)) {
@@ -1191,7 +1235,7 @@ PdfResult<XrefTable> XrefTable::parse(
 
 						if (flag_tok.text == "n") {
 							if (obj_num == 0) {
-								table.entries_.try_emplace(
+								classic_rev_entries.emplace_back(
 									0u,
 									XrefEntry{XrefEntryKind::Free, raw_off, 0, 0, gen_num});
 								continue;
@@ -1206,7 +1250,7 @@ PdfResult<XrefTable> XrefTable::parse(
 									obj_num,
 									gen_num));
 							}
-							table.entries_.try_emplace(
+							classic_rev_entries.emplace_back(
 								obj_num,
 								XrefEntry{
 									XrefEntryKind::Uncompressed,
@@ -1215,7 +1259,7 @@ PdfResult<XrefTable> XrefTable::parse(
 									0,
 									gen_num});
 						} else {
-							table.entries_.try_emplace(
+							classic_rev_entries.emplace_back(
 								obj_num,
 								XrefEntry{
 									XrefEntryKind::Free,
@@ -1246,9 +1290,9 @@ PdfResult<XrefTable> XrefTable::parse(
 				}
 
 				// Hybrid cross-reference stream (`/XRefStm` in a classic trailer, ISO 32000-1 7.5.8.4):
-				// unpack entries from the hybrid `/Type /XRef` stream after the main classic table
-				// of the same revision so classic entries take precedence over `/XRefStm`, while
-				// `/XRefStm` entries take precedence over older `/Prev` revisions.
+				// unpack entries from the supplemental `/Type /XRef` stream before inserting the
+				// buffered classic entries of the same revision so `/XRefStm` overrides same-revision
+				// classic compatibility entries while newer revisions remain preserved.
 				if (const PdfValue* xref_stm_val = rev_trailer.get("XRefStm")) {
 					const auto stm_off_opt = xref_stm_val->as_int();
 					if (!stm_off_opt.has_value() || *stm_off_opt < 0) {
@@ -1302,6 +1346,10 @@ PdfResult<XrefTable> XrefTable::parse(
 					if (!unpack_res.has_value()) {
 						return try_recover(std::move(unpack_res).error());
 					}
+				}
+
+				for (const auto& [c_obj_num, c_entry] : classic_rev_entries) {
+					table.entries_.try_emplace(c_obj_num, c_entry);
 				}
 			} else if (kw_tok.kind == TokenKind::Integer && kw_tok.int_value > 0) {
 				// PDF 1.5+ `/Type /XRef` cross-reference stream object `<N> <G> obj << /Type /XRef ... >> stream`.

@@ -775,6 +775,68 @@ TEST(PdfXref, XrefStreamUnpack)
 				ErrorCode::DamagedFormat);
 		}
 	}
+
+	// 5. Hybrid-reference PDF (`/XRefStm`, ISO 32000-1 7.5.8.4): supplemental `/XRefStm`
+	//    entries override compatibility free entries in the same revision's classic `xref`
+	//    table, while entries from a newer incremental revision override `/XRefStm`.
+	{
+		const std::string objstm_body = "2 0 3 3\n42\n100";
+		std::string pdf = "%PDF-1.6\n";
+		const size_t off1 = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n";
+		const size_t off9 = pdf.size();
+		pdf += "9 0 obj\n<< /Type /ObjStm /N 2 /First 8 /Length " +
+			std::to_string(objstm_body.size()) + " >>\nstream\n" +
+			objstm_body + "\nendstream\nendobj\n";
+		const size_t xstm_off = pdf.size();
+		// Supplemental /XRefStm defines compressed objects 2 (index 0 in ObjStm 9) and 3 (index 1 in ObjStm 9).
+		// /W [1 2 1], /Index [2 2] -> 2 rows * 4 bytes = 8 bytes:
+		//   obj 2: type=2, field2=9 (0x0009), field3=0 (0x00)
+		//   obj 3: type=2, field2=9 (0x0009), field3=1 (0x01)
+		const std::string xstm_payload("\x02\x00\x09\x00\x02\x00\x09\x01", 8u);
+		pdf += "10 0 obj\n<< /Type /XRef /Size 11 /W [1 2 1] /Index [2 2] /Length 8 >>\nstream\n";
+		pdf += xstm_payload;
+		pdf += "\nendstream\nendobj\n";
+
+		const size_t xref1_off = pdf.size();
+		auto fmt_row = [](size_t off, uint16_t gen, char flag) {
+			char buf[32];
+			std::snprintf(buf, sizeof(buf), "%010zu %05u %c \n", off, static_cast<unsigned>(gen), flag);
+			return std::string(buf);
+		};
+		pdf += "xref\n0 4\n";
+		pdf += fmt_row(0, 65535, 'f');
+		pdf += fmt_row(off1, 0, 'n');
+		// Classic table marks compressed objects 2 and 3 free for PDF 1.4 compatibility:
+		pdf += fmt_row(0, 65535, 'f');
+		pdf += fmt_row(0, 65535, 'f');
+		pdf += "9 1\n";
+		pdf += fmt_row(off9, 0, 'n');
+		pdf += "trailer\n<< /Size 11 /Root 1 0 R /XRefStm " + std::to_string(xstm_off) + " >>\n";
+		pdf += "startxref\n" + std::to_string(xref1_off) + "\n%%EOF\n";
+
+		// Revision 2: classic incremental update overrides object 3 with uncompressed 200.
+		const size_t off3_v2 = pdf.size();
+		pdf += "3 0 obj\n200\nendobj\n";
+		const size_t xref2_off = pdf.size();
+		pdf += "xref\n3 1\n";
+		pdf += fmt_row(off3_v2, 0, 'n');
+		pdf += "trailer\n<< /Size 11 /Root 1 0 R /Prev " + std::to_string(xref1_off) + " >>\n";
+		pdf += "startxref\n" + std::to_string(xref2_off) + "\n%%EOF\n";
+
+		auto parsed = XrefTable::parse(as_bytes(pdf));
+		RECTO_ASSERT_OK(parsed);
+
+		// Object 2 must resolve via Revision 1's /XRefStm (42), NOT Revision 1's classic free entry.
+		auto v2 = parsed->resolve_object(as_bytes(pdf), IndirectRef{2u, 0u});
+		RECTO_ASSERT_OK(v2);
+		EXPECT_EQ(v2->as_int(), 42);
+
+		// Object 3 must resolve via Revision 2's classic update (200), overriding Revision 1's /XRefStm (100).
+		auto v3 = parsed->resolve_object(as_bytes(pdf), IndirectRef{3u, 0u});
+		RECTO_ASSERT_OK(v3);
+		EXPECT_EQ(v3->as_int(), 200);
+	}
 }
 
 TEST(PdfXref, ObjectStream)
@@ -1097,20 +1159,33 @@ TEST(PdfXref, DamagedRecovery)
 		RECTO_EXPECT_ERR(rec_attempts, ErrorCode::DamagedFormat);
 	}
 
-	// 6. Repeated valid revisions of a non-catalog object followed by a large payload do not
-	//    trigger quadratic fallback reparsing, and UINT32_MAX object IDs synthesize `/Size`
-	//    as 4294967296 without 32-bit unsigned wraparound.
+	// 6. Single-pass catalog fallback without secondary reparsing, and UINT32_MAX object IDs
+	//    synthesizing `/Size` as 4294967296 without 32-bit unsigned wraparound.
 	{
-		std::string repeated_valid = "%PDF-1.7\n";
-		for (int i = 0; i < 1000; ++i) {
-			repeated_valid += "2 0 obj null endobj\n";
+		const std::string objstm_non_cat = "4 0\n<< /Key (CompressedNonCatalog) >>";
+		std::string single_pass_pdf = "%PDF-1.7\n";
+		single_pass_pdf += "1 0 obj\n<< /Type /Catalog /Pages 3 0 R >>\nendobj\n";
+		single_pass_pdf += "88 0 obj\n3\nendobj\n";
+		for (int i = 0; i < 500; ++i) {
+			single_pass_pdf += "2 0 obj null endobj\n";
 		}
-		repeated_valid += "2 0 obj (";
-		repeated_valid.append(65536u, 'A');
-		repeated_valid += ") endobj\n";
+		single_pass_pdf += "2 0 obj\n<< /Length 88 0 R >>\nstream\nabc\nendstream\nendobj\n";
+		single_pass_pdf += "88 0 obj\n(overwritten_non_int)\nendobj\n";
+		single_pass_pdf += "9 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Length " +
+			std::to_string(objstm_non_cat.size()) + " >>\nstream\n" +
+			objstm_non_cat + "\nendstream\nendobj\n";
+		single_pass_pdf += "trailer\n<< /Size 100 /Root 99 0 R >>\nstartxref\n999999\n%%EOF\n";
 
-		auto rec_no_cat = XrefTable::recover_damaged_xref(as_bytes(repeated_valid));
-		RECTO_EXPECT_ERR(rec_no_cat, ErrorCode::DamagedFormat);
+		clear_diagnostics();
+		auto rec_single = XrefTable::recover_damaged_xref(as_bytes(single_pass_pdf));
+		RECTO_ASSERT_OK(rec_single);
+		EXPECT_EQ(rec_single->root_ref(), (IndirectRef{1u, 0u}));
+		// Zero secondary `resolve_object` calls occurred during fallback: ObjStm 9 was not
+		// populated into `obj_stm_cache_`, and no secondary `DamagedStream` diagnostic was emitted.
+		EXPECT_EQ(rec_single->cached_obj_stream_count(), 0u);
+		const auto diags = diagnostics_tail();
+		ASSERT_EQ(diags.size(), 1u);
+		EXPECT_EQ(diags.front().diagnostic_id, DiagnosticId::DamagedXRef);
 
 		const std::string max_id_pdf =
 			"%PDF-1.7\n4294967295 0 obj\n<< /Type /Catalog >>\nendobj\n";
@@ -1120,6 +1195,23 @@ TEST(PdfXref, DamagedRecovery)
 			rec_max_id->root_ref(),
 			(IndirectRef{std::numeric_limits<uint32_t>::max(), 0u}));
 		EXPECT_EQ(rec_max_id->trailer().get_int("Size"), 4294967296LL);
+	}
+
+	// 7. Overwriting a `/Type /ObjStm` container in a later revision invalidates the compressed
+	//    objects and catalog metadata that were stored inside that container.
+	{
+		const std::string cat_objstm = "1 0\n<< /Type /Catalog /Pages 2 0 R >>";
+		std::string pdf_overwritten_stm = "%PDF-1.7\n";
+		pdf_overwritten_stm += "2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+		pdf_overwritten_stm += "9 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Length " +
+			std::to_string(cat_objstm.size()) + " >>\nstream\n" +
+			cat_objstm + "\nendstream\nendobj\n";
+		// Later revision redefines object 9 as `null`, invalidating compressed object 1.
+		pdf_overwritten_stm += "9 0 obj\nnull\nendobj\n";
+		pdf_overwritten_stm += "startxref\n999999\n%%EOF\n";
+
+		auto rec_invalidated = XrefTable::recover_damaged_xref(as_bytes(pdf_overwritten_stm));
+		RECTO_EXPECT_ERR(rec_invalidated, ErrorCode::DamagedFormat);
 	}
 }
 
