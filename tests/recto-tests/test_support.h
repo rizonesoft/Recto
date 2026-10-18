@@ -115,6 +115,18 @@ PixelDiffResult expect_rgba_equal(
 	size_t expected_stride = 0,
 	uint8_t max_channel_delta = 0);
 
+// Computes the exclusive block endpoint [start, end) of size at most
+// block_size within [0, extent) without unsigned addition overflow.
+constexpr uint32_t next_block_end(
+	uint32_t start,
+	uint32_t extent,
+	uint32_t block_size = 8u) noexcept
+{
+	return (start >= extent)
+		? extent
+		: ((extent - start <= block_size) ? extent : (start + block_size));
+}
+
 // Computes the structural similarity index (SSIM in [0.0, 1.0]) over
 // luminance and RGB channels between two RGBA buffers of size width x height
 // with arbitrary row strides (0 defaults to width * 4), ignoring row-padding

@@ -615,15 +615,16 @@ double compute_ssim(
 	double total_ssim = 0.0;
 	size_t window_count = 0;
 
-	for (uint32_t y0 = 0; y0 < height; y0 += kBlockSize) {
-		const uint32_t y1 = std::min(height, y0 + kBlockSize);
-		for (uint32_t x0 = 0; x0 < width; x0 += kBlockSize) {
-			const uint32_t x1 = std::min(width, x0 + kBlockSize);
-			const double n = static_cast<double>((x1 - x0) * (y1 - y0));
+	for (uint32_t y0 = 0, y1 = 0; y0 < height; y0 = y1) {
+		y1 = next_block_end(y0, height, kBlockSize);
+		for (uint32_t x0 = 0, x1 = 0; x0 < width; x0 = x1) {
+			x1 = next_block_end(x0, width, kBlockSize);
+			const double n = static_cast<double>(
+				static_cast<size_t>(x1 - x0) * static_cast<size_t>(y1 - y0));
 
-			// Compute SSIM across luminance (ch=0) and R, G, B, A (ch=1..4).
+			// Compute SSIM across luminance (ch=0) and R, G, B (ch=1..3).
 			double block_ssim_sum = 0.0;
-			for (int ch = 0; ch < 5; ++ch) {
+			for (int ch = 0; ch < 4; ++ch) {
 				double sum_a = 0.0;
 				double sum_e = 0.0;
 				bool identical = true;
@@ -674,7 +675,7 @@ double compute_ssim(
 				const double ch_ssim = (den > 0.0) ? (num / den) : 1.0;
 				block_ssim_sum += ch_ssim;
 			}
-			total_ssim += (block_ssim_sum / 5.0);
+			total_ssim += (block_ssim_sum / 4.0);
 			++window_count;
 		}
 	}

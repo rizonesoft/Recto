@@ -397,7 +397,7 @@ TEST(Support, SsimCalculation)
 			inverted[idx + 0] = static_cast<uint8_t>(255u - base[idx + 0]);
 			inverted[idx + 1] = static_cast<uint8_t>(255u - base[idx + 1]);
 			inverted[idx + 2] = static_cast<uint8_t>(255u - base[idx + 2]);
-			inverted[idx + 3] = 0u;
+			inverted[idx + 3] = 255u;
 
 			near_copy[idx + 0] = static_cast<uint8_t>(base[idx + 0] + 1u);
 			near_copy[idx + 1] = base[idx + 1];
@@ -415,6 +415,36 @@ TEST(Support, SsimCalculation)
 	const double near_ssim = recto::test::compute_ssim(near_copy, base, kWidth, kHeight);
 	EXPECT_GE(near_ssim, 0.99);
 	EXPECT_LT(near_ssim, 1.0);
+
+	// Opaque black vs opaque white must score < 0.1 without alpha inflating similarity.
+	std::vector<uint8_t> opaque_black(kWidth * kHeight * 4u, 0u);
+	std::vector<uint8_t> opaque_white(kWidth * kHeight * 4u, 255u);
+	for (size_t i = 0; i < kWidth * kHeight; ++i) {
+		opaque_black[i * 4u + 3u] = 255u;
+	}
+	const double bw_ssim =
+		recto::test::compute_ssim(opaque_black, opaque_white, kWidth, kHeight);
+	EXPECT_GE(bw_ssim, 0.0);
+	EXPECT_LT(bw_ssim, 0.1);
+
+	// Non-multiple-of-8 dimensions exercise partial blocks cleanly.
+	constexpr uint32_t kOddW = 13u;
+	constexpr uint32_t kOddH = 7u;
+	std::vector<uint8_t> odd_black(kOddW * kOddH * 4u, 0u);
+	std::vector<uint8_t> odd_white(kOddW * kOddH * 4u, 255u);
+	for (size_t i = 0; i < kOddW * kOddH; ++i) {
+		odd_black[i * 4u + 3u] = 255u;
+	}
+	EXPECT_DOUBLE_EQ(recto::test::compute_ssim(odd_black, odd_black, kOddW, kOddH), 1.0);
+	EXPECT_LT(recto::test::compute_ssim(odd_black, odd_white, kOddW, kOddH), 0.1);
+
+	// Block-bound helper must never wrap uint32_t near UINT32_MAX.
+	EXPECT_EQ(recto::test::next_block_end(0u, 13u, 8u), 8u);
+	EXPECT_EQ(recto::test::next_block_end(8u, 13u, 8u), 13u);
+	EXPECT_EQ(recto::test::next_block_end(0xFFFFFFF0u, 0xFFFFFFFFu, 8u), 0xFFFFFFF8u);
+	EXPECT_EQ(recto::test::next_block_end(0xFFFFFFF8u, 0xFFFFFFFFu, 8u), 0xFFFFFFFFu);
+	EXPECT_EQ(recto::test::next_block_end(0xFFFFFFFAu, 0xFFFFFFFFu, 8u), 0xFFFFFFFFu);
+	EXPECT_EQ(recto::test::next_block_end(0xFFFFFFFFu, 0xFFFFFFFFu, 8u), 0xFFFFFFFFu);
 }
 
 TEST(Support, Sha256Hex)
