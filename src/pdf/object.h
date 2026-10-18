@@ -14,11 +14,14 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <initializer_list>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -239,6 +242,7 @@ public:
 	using Container = std::vector<Entry>;
 	using iterator = Container::iterator;
 	using const_iterator = Container::const_iterator;
+	static constexpr size_t kIndexThreshold = 32;
 
 	PdfDict() noexcept = default;
 	~PdfDict() noexcept;
@@ -250,8 +254,12 @@ public:
 
 	[[nodiscard]] size_t size() const noexcept { return entries_.size(); }
 	[[nodiscard]] bool empty() const noexcept { return entries_.empty(); }
-	void reserve(size_t count) { entries_.reserve(count); }
-	void clear() noexcept { entries_.clear(); }
+	void reserve(size_t count);
+	void clear() noexcept
+	{
+		entries_.clear();
+		index_.reset();
+	}
 
 	[[nodiscard]] iterator begin() noexcept { return entries_.begin(); }
 	[[nodiscard]] iterator end() noexcept { return entries_.end(); }
@@ -292,7 +300,26 @@ public:
 	bool operator==(const PdfDict& other) const noexcept;
 
 private:
+	struct TransparentStringHash {
+		using is_transparent = void;
+
+		[[nodiscard]] size_t operator()(std::string_view sv) const noexcept
+		{
+			return std::hash<std::string_view>{}(sv);
+		}
+	};
+
+	using IndexMap = std::unordered_map<
+		std::string,
+		size_t,
+		TransparentStringHash,
+		std::equal_to<>>;
+
+	void rebuild_index();
+	bool erase_exact_key(std::string_view exact_key) noexcept;
+
 	Container entries_;
+	std::unique_ptr<IndexMap> index_{nullptr};
 };
 
 struct PdfStream {

@@ -20,7 +20,11 @@ static_assert(std::is_nothrow_move_constructible_v<PdfValue>);
 static_assert(std::is_nothrow_move_assignable_v<PdfValue>);
 static_assert(std::is_nothrow_move_constructible_v<PdfDict>);
 static_assert(std::is_nothrow_move_constructible_v<PdfStream>);
+#if defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL > 0
+static_assert(sizeof(PdfValue) <= 144);
+#else
 static_assert(sizeof(PdfValue) <= 128);
+#endif
 
 TEST(PdfObject, AllTenVariantKindsAndAccessors)
 {

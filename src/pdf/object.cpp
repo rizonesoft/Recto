@@ -362,17 +362,72 @@ PdfResult<PdfMatrix> PdfMatrix::from_array(const PdfArray& arr) noexcept
 }
 
 PdfDict::~PdfDict() noexcept = default;
-PdfDict::PdfDict(const PdfDict& other) = default;
-PdfDict& PdfDict::operator=(const PdfDict& other) = default;
+
+PdfDict::PdfDict(const PdfDict& other)
+	: entries_(other.entries_)
+	, index_(other.index_ ? std::make_unique<IndexMap>(*other.index_) : nullptr)
+{
+}
+
+PdfDict& PdfDict::operator=(const PdfDict& other)
+{
+	if (this != &other) {
+		Container entries_copy(other.entries_);
+		std::unique_ptr<IndexMap> index_copy =
+			other.index_ ? std::make_unique<IndexMap>(*other.index_) : nullptr;
+		entries_ = std::move(entries_copy);
+		index_ = std::move(index_copy);
+	}
+	return *this;
+}
+
+void PdfDict::reserve(size_t count)
+{
+	entries_.reserve(count);
+	if (count >= kIndexThreshold) {
+		if (!index_) {
+			rebuild_index();
+		}
+		index_->reserve(count);
+	}
+}
+
+void PdfDict::rebuild_index()
+{
+	auto map = std::make_unique<IndexMap>();
+	map->reserve(std::max(entries_.size() * 2, kIndexThreshold * 2));
+	for (size_t i = 0; i < entries_.size(); ++i) {
+		(*map)[entries_[i].first.value] = i;
+	}
+	index_ = std::move(map);
+}
 
 void PdfDict::set(PdfName key, PdfValue value)
 {
 	// Per ISO 32000-1 section 7.3.7, a dictionary entry whose value is null is
 	// equivalent to an absent entry.
 	if (value.is_null()) {
-		(void)erase(key);
+		(void)erase_exact_key(key.view());
 		return;
 	}
+
+	if (index_) {
+		if (const auto it = index_->find(key.view()); it != index_->end()) {
+			entries_[it->second].second = std::move(value);
+			return;
+		}
+		const size_t new_idx = entries_.size();
+		auto [map_it, inserted] = index_->emplace(key.value, new_idx);
+		(void)inserted;
+		try {
+			entries_.emplace_back(std::move(key), std::move(value));
+		} catch (...) {
+			index_->erase(map_it);
+			throw;
+		}
+		return;
+	}
+
 	for (auto& [k, v] : entries_) {
 		if (k.view() == key.view()) {
 			v = std::move(value);
@@ -380,6 +435,9 @@ void PdfDict::set(PdfName key, PdfValue value)
 		}
 	}
 	entries_.emplace_back(std::move(key), std::move(value));
+	if (entries_.size() >= kIndexThreshold) {
+		rebuild_index();
+	}
 }
 
 void PdfDict::set(std::string_view key, PdfValue value)
@@ -387,10 +445,32 @@ void PdfDict::set(std::string_view key, PdfValue value)
 	set(PdfName(key), std::move(value));
 }
 
-bool PdfDict::erase(const PdfName& key) noexcept
+bool PdfDict::erase_exact_key(std::string_view exact_key) noexcept
 {
+	if (index_) {
+		const auto map_it = index_->find(exact_key);
+		if (map_it == index_->end()) {
+			return false;
+		}
+		const size_t idx = map_it->second;
+		const size_t last_idx = entries_.size() - 1;
+		if (idx != last_idx) {
+			entries_[idx] = std::move(entries_[last_idx]);
+			const auto moved_it = index_->find(entries_[idx].first.view());
+			if (moved_it != index_->end()) {
+				moved_it->second = idx;
+			}
+		}
+		entries_.pop_back();
+		index_->erase(map_it);
+		if (entries_.empty()) {
+			index_.reset();
+		}
+		return true;
+	}
+
 	for (auto it = entries_.begin(); it != entries_.end(); ++it) {
-		if (it->first.view() == key.view()) {
+		if (it->first.view() == exact_key) {
 			entries_.erase(it);
 			return true;
 		}
@@ -398,18 +478,17 @@ bool PdfDict::erase(const PdfName& key) noexcept
 	return false;
 }
 
+bool PdfDict::erase(const PdfName& key) noexcept
+{
+	return erase_exact_key(key.view());
+}
+
 bool PdfDict::erase(std::string_view key) noexcept
 {
 	if (!key.empty() && key.front() == '/') {
 		key.remove_prefix(1);
 	}
-	for (auto it = entries_.begin(); it != entries_.end(); ++it) {
-		if (it->first.view() == key) {
-			entries_.erase(it);
-			return true;
-		}
-	}
-	return false;
+	return erase_exact_key(key);
 }
 
 bool PdfDict::contains(const PdfName& key) const noexcept
@@ -424,6 +503,10 @@ bool PdfDict::contains(std::string_view key) const noexcept
 
 const PdfValue* PdfDict::get(const PdfName& key) const noexcept
 {
+	if (index_) {
+		const auto it = index_->find(key.view());
+		return it != index_->end() ? &entries_[it->second].second : nullptr;
+	}
 	for (const auto& [k, v] : entries_) {
 		if (k.view() == key.view()) {
 			return &v;
@@ -437,6 +520,10 @@ const PdfValue* PdfDict::get(std::string_view key) const noexcept
 	if (!key.empty() && key.front() == '/') {
 		key.remove_prefix(1);
 	}
+	if (index_) {
+		const auto it = index_->find(key);
+		return it != index_->end() ? &entries_[it->second].second : nullptr;
+	}
 	for (const auto& [k, v] : entries_) {
 		if (k.view() == key) {
 			return &v;
@@ -447,6 +534,10 @@ const PdfValue* PdfDict::get(std::string_view key) const noexcept
 
 PdfValue* PdfDict::get_mut(const PdfName& key) noexcept
 {
+	if (index_) {
+		const auto it = index_->find(key.view());
+		return it != index_->end() ? &entries_[it->second].second : nullptr;
+	}
 	for (auto& [k, v] : entries_) {
 		if (k.view() == key.view()) {
 			return &v;
@@ -459,6 +550,10 @@ PdfValue* PdfDict::get_mut(std::string_view key) noexcept
 {
 	if (!key.empty() && key.front() == '/') {
 		key.remove_prefix(1);
+	}
+	if (index_) {
+		const auto it = index_->find(key);
+		return it != index_->end() ? &entries_[it->second].second : nullptr;
 	}
 	for (auto& [k, v] : entries_) {
 		if (k.view() == key) {

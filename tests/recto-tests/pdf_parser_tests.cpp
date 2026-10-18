@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -206,6 +207,36 @@ TEST(PdfParser, ArraysAndDicts)
 
 		Parser limited_dict(as_bytes("<< /A 1 /B 2 /C 3 /D 4 >>"), kMaxParserRecursionDepth, 3);
 		RECTO_EXPECT_ERR(limited_dict.parse_dictionary(), ErrorCode::DamagedFormat);
+	}
+
+	// Large dictionary (above PdfDict::kIndexThreshold = 32) exercising O(1) hash index
+	// lookup, duplicate key overwrite, null elision, swap-and-pop erase, and copy semantics.
+	{
+		std::string large_dict_str = "<<\n";
+		for (int i = 0; i < 200; ++i) {
+			large_dict_str += "  /Key" + std::to_string(i) + " " + std::to_string(i) + "\n";
+		}
+		// Overwrite /Key50 with a new value and elide /Key100 with null.
+		large_dict_str += "  /Key50 5000\n";
+		large_dict_str += "  /Key100 null\n";
+		large_dict_str += ">>";
+
+		Parser large_parser(as_bytes(large_dict_str));
+		auto large_res = large_parser.parse_dictionary();
+		RECTO_ASSERT_OK(large_res);
+		PdfDict large_dict = std::move(*large_res);
+		EXPECT_EQ(large_dict.size(), 199u);
+		EXPECT_EQ(large_dict.get_int("Key0"), 0);
+		EXPECT_EQ(large_dict.get_int("Key50"), 5000);
+		EXPECT_FALSE(large_dict.contains("Key100"));
+		EXPECT_EQ(large_dict.get_int("Key199"), 199);
+
+		// Copy construction and erase across the indexed threshold.
+		PdfDict copied_dict = large_dict;
+		EXPECT_TRUE(copied_dict.erase("Key0"));
+		EXPECT_FALSE(copied_dict.contains("Key0"));
+		EXPECT_EQ(copied_dict.get_int("Key199"), 199);
+		EXPECT_EQ(large_dict.get_int("Key0"), 0);
 	}
 }
 
@@ -449,7 +480,33 @@ TEST(PdfParser, Streams)
 		EXPECT_EQ(payload, "line1\nendstream not_endobj\nline2");
 	}
 
-	// 5. Direct parse_stream_slice call after parse_dictionary.
+	// 5. Fallback scan when declared /Length lands directly on an embedded "endstream"
+	// inside the payload that is NOT followed by "endobj".
+	{
+		clear_diagnostics();
+		constexpr std::string_view kExactEmbeddedEndstreamObj =
+			"9 0 obj\n"
+			"<< /Length 6 >>\n"
+			"stream\n"
+			"line1\nendstream not_endobj\nline2\n"
+			"endstream\n"
+			"endobj";
+		Parser parser(as_bytes(kExactEmbeddedEndstreamObj));
+		auto res = parser.parse_indirect_object();
+		RECTO_ASSERT_OK(res);
+		ASSERT_TRUE(res->value.is_stream());
+		const PdfStream* stm = res->value.as_stream();
+		const std::string_view payload(
+			reinterpret_cast<const char*>(stm->raw_bytes.data()),
+			stm->raw_bytes.size());
+		EXPECT_EQ(payload, "line1\nendstream not_endobj\nline2");
+
+		const auto diags = diagnostics_tail();
+		ASSERT_FALSE(diags.empty());
+		EXPECT_EQ(diags.back().diagnostic_id, DiagnosticId::DamagedStream);
+	}
+
+	// 6. Direct parse_stream_slice call after parse_dictionary.
 	{
 		constexpr std::string_view kDirectSlice =
 			"<< /Length 6 >>\nstream\nABCDEF\nendstream";
@@ -462,6 +519,95 @@ TEST(PdfParser, Streams)
 			reinterpret_cast<const char*>(slice_res->data()),
 			slice_res->size());
 		EXPECT_EQ(payload, "ABCDEF");
+	}
+}
+
+TEST(PdfParser, OutOfMemoryAndResolverExceptions)
+{
+	// 1. Lexer allocation failure inside parse_direct_object / parse_array /
+	// parse_dictionary / parse_indirect_object must propagate ErrorCode::OutOfMemory
+	// and restore the cursor position.
+	{
+		constexpr std::string_view kStrInput = "   (literal string payload)";
+		Parser parser(as_bytes(kStrInput));
+		parser.seek(3);
+		{
+			detail::ScopedLexerAllocFaultInjector fault(1);
+			auto res = parser.parse_direct_object();
+			RECTO_EXPECT_ERR(res, ErrorCode::OutOfMemory);
+		}
+		EXPECT_EQ(parser.position(), 3u);
+		auto ok_res = parser.parse_direct_object();
+		RECTO_ASSERT_OK(ok_res);
+		ASSERT_NE(ok_res->as_string(), nullptr);
+		EXPECT_EQ(ok_res->as_string()->as_byte_view(), "literal string payload");
+	}
+
+	{
+		constexpr std::string_view kDictInput = "<< /Key (value) >>";
+		Parser parser(as_bytes(kDictInput));
+		{
+			detail::ScopedLexerAllocFaultInjector fault(1);
+			auto res = parser.parse_dictionary();
+			RECTO_EXPECT_ERR(res, ErrorCode::OutOfMemory);
+		}
+		EXPECT_EQ(parser.position(), 0u);
+		RECTO_ASSERT_OK(parser.parse_dictionary());
+	}
+
+	{
+		constexpr std::string_view kArrInput = "[(item1) (item2)]";
+		Parser parser(as_bytes(kArrInput));
+		{
+			detail::ScopedLexerAllocFaultInjector fault(1);
+			auto res = parser.parse_array();
+			RECTO_EXPECT_ERR(res, ErrorCode::OutOfMemory);
+		}
+		EXPECT_EQ(parser.position(), 0u);
+		RECTO_ASSERT_OK(parser.parse_array());
+	}
+
+	// 2. LengthResolver returning OutOfMemory or throwing std::bad_alloc / std::exception.
+	{
+		constexpr std::string_view kIndirectLenObj =
+			"7 0 obj\n"
+			"<< /Length 15 0 R >>\n"
+			"stream\n"
+			"PayloadBytes"
+			"\nendstream\n"
+			"endobj";
+
+		{
+			Parser parser(as_bytes(kIndirectLenObj));
+			auto res = parser.parse_indirect_object(
+				[](IndirectRef) -> PdfResult<int64_t> {
+					return make_pdf_error(
+						ErrorCode::OutOfMemory,
+						"simulated resolver OOM");
+				});
+			RECTO_EXPECT_ERR(res, ErrorCode::OutOfMemory);
+			EXPECT_EQ(parser.position(), 0u);
+		}
+
+		{
+			Parser parser(as_bytes(kIndirectLenObj));
+			auto res = parser.parse_indirect_object(
+				[](IndirectRef) -> PdfResult<int64_t> {
+					throw std::bad_alloc();
+				});
+			RECTO_EXPECT_ERR(res, ErrorCode::OutOfMemory);
+			EXPECT_EQ(parser.position(), 0u);
+		}
+
+		{
+			Parser parser(as_bytes(kIndirectLenObj));
+			auto res = parser.parse_indirect_object(
+				[](IndirectRef) -> PdfResult<int64_t> {
+					throw std::runtime_error("unexpected callback failure");
+				});
+			RECTO_EXPECT_ERR(res, ErrorCode::InternalError);
+			EXPECT_EQ(parser.position(), 0u);
+		}
 	}
 }
 

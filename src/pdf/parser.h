@@ -128,7 +128,8 @@ private:
 		PdfError& err);
 	[[nodiscard]] PdfResult<std::span<const uint8_t>> parse_stream_slice_impl(
 		const PdfDict& stream_dict,
-		const LengthResolver& length_resolver);
+		const LengthResolver& length_resolver,
+		bool require_endobj_terminator);
 	[[nodiscard]] PdfResult<IndirectObject> parse_indirect_object_impl(
 		const LengthResolver& length_resolver);
 

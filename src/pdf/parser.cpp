@@ -31,9 +31,10 @@ constexpr std::string_view kEndobjKeyword = "endobj";
 	return after == input.size() || !Lexer::is_pdf_regular(input[after]);
 }
 
-[[nodiscard]] bool is_endstream_followed_by_endobj_or_eof(
+[[nodiscard]] bool is_endstream_followed_by_terminator(
 	std::span<const uint8_t> input,
-	size_t endstream_pos) noexcept
+	size_t endstream_pos,
+	bool require_endobj_terminator) noexcept
 {
 	size_t cur = endstream_pos + kEndstreamKeyword.size();
 	while (cur < input.size()) {
@@ -50,7 +51,10 @@ constexpr std::string_view kEndobjKeyword = "endobj";
 		}
 		break;
 	}
-	return cur == input.size() || matches_keyword_at(input, cur, kEndobjKeyword);
+	if (matches_keyword_at(input, cur, kEndobjKeyword)) {
+		return true;
+	}
+	return !require_endobj_terminator && cur == input.size();
 }
 
 [[nodiscard]] bool next_non_comment(
@@ -344,7 +348,10 @@ PdfResult<std::span<const uint8_t>> Parser::parse_stream_slice(
 {
 	const size_t saved_pos = lexer_->position();
 	try {
-		auto res = parse_stream_slice_impl(stream_dict, length_resolver);
+		auto res = parse_stream_slice_impl(
+			stream_dict,
+			length_resolver,
+			/*require_endobj_terminator=*/false);
 		if (!res.has_value() && res.error().code == ErrorCode::OutOfMemory) {
 			lexer_->seek(saved_pos);
 		}
@@ -567,7 +574,8 @@ bool Parser::parse_dictionary_body(
 
 PdfResult<std::span<const uint8_t>> Parser::parse_stream_slice_impl(
 	const PdfDict& stream_dict,
-	const LengthResolver& length_resolver)
+	const LengthResolver& length_resolver,
+	bool require_endobj_terminator)
 {
 	const std::span<const uint8_t> input = lexer_->input();
 
@@ -606,6 +614,8 @@ PdfResult<std::span<const uint8_t>> Parser::parse_stream_slice_impl(
 	}
 
 	const size_t avail = input.size() - stream_start;
+	std::optional<size_t> declared_kw_pos = std::nullopt;
+	size_t declared_len_size = 0;
 	if (declared_length.has_value() && *declared_length >= 0) {
 		const uint64_t len_u64 = static_cast<uint64_t>(*declared_length);
 		if (len_u64 <= avail) {
@@ -632,14 +642,24 @@ PdfResult<std::span<const uint8_t>> Parser::parse_stream_slice_impl(
 				++kw_pos;
 			}
 			if (matches_keyword_at(input, kw_pos, kEndstreamKeyword)) {
-				lexer_->seek(kw_pos + kEndstreamKeyword.size());
-				return input.subspan(stream_start, static_cast<size_t>(len_u64));
+				if (is_endstream_followed_by_terminator(
+						input,
+						kw_pos,
+						require_endobj_terminator)) {
+					lexer_->seek(kw_pos + kEndstreamKeyword.size());
+					return input.subspan(stream_start, static_cast<size_t>(len_u64));
+				}
+				if (!require_endobj_terminator) {
+					declared_kw_pos = kw_pos;
+					declared_len_size = static_cast<size_t>(len_u64);
+				}
 			}
 		}
 	}
 
 	// Fallback scan for `endstream` when /Length is missing, negative,
-	// unresolved, out of bounds, or does not land on `endstream`.
+	// unresolved, out of bounds, or does not land on a valid `endstream`
+	// terminator.
 	std::optional<size_t> strict_match = std::nullopt;
 	std::optional<size_t> boundary_match = std::nullopt;
 	std::optional<size_t> any_match = std::nullopt;
@@ -660,11 +680,20 @@ PdfResult<std::span<const uint8_t>> Parser::parse_stream_slice_impl(
 			if (at_boundary && !boundary_match.has_value()) {
 				boundary_match = pos;
 			}
-			if (at_boundary && is_endstream_followed_by_endobj_or_eof(input, pos)) {
+			if (at_boundary &&
+				is_endstream_followed_by_terminator(
+					input,
+					pos,
+					require_endobj_terminator)) {
 				strict_match = pos;
 				break;
 			}
 		}
+	}
+
+	if (!strict_match.has_value() && declared_kw_pos.has_value()) {
+		lexer_->seek(*declared_kw_pos + kEndstreamKeyword.size());
+		return input.subspan(stream_start, declared_len_size);
 	}
 
 	const std::optional<size_t> match_pos = strict_match.has_value()
@@ -762,7 +791,10 @@ PdfResult<IndirectObject> Parser::parse_indirect_object_impl(
 				obj_num,
 				gen_num);
 		}
-		auto slice_res = parse_stream_slice_impl(*body.as_dict(), length_resolver);
+		auto slice_res = parse_stream_slice_impl(
+			*body.as_dict(),
+			length_resolver,
+			/*require_endobj_terminator=*/true);
 		if (!slice_res.has_value()) {
 			PdfError slice_err = std::move(slice_res).error();
 			if (!slice_err.object_num.has_value()) {
