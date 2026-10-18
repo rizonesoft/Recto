@@ -2,7 +2,7 @@
 schema_version: 1
 id: todo-system
 domain: 00-workspace
-status: active
+status: done
 title: "TODO-02 -- The TODO Graph System"
 track: M0
 ---
@@ -36,7 +36,7 @@ track: M0
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | Graph engine, CLI and tests | D00 T01 §1 | [x] |
 | 2 | §2 | Skills, rules and the CI gate | §1 | [x] |
-| 3 | §3 | Seeded graph and generated plan | §2 | [ ] |
+| 3 | §3 | Seeded graph and generated plan | §2 | [x] |
 
 ## 1. Graph engine, CLI and tests
 
@@ -97,6 +97,8 @@ The seed graph translates the foundation plan and the SPEC into executable secti
 
 > **Started:** 2026-10-18T10:08:00Z
 > **Corrected:** 2026-10-18 -- Updated the Test checkpoint's `resolve 'D00 T01 §1'` expected exit code from `0` (ready before `D00 T01 §1` shipped on 2026-10-13) to `3` (verified `[x]`, since `D00 T01 §1` is now stamped at `25ac228f`), and expanded the `Owned by` column in `todo/TODO-00-INDEX.md` so every coverage row explicitly names its resolving section range (`§1-§N`).
+> **Completed:** 2026-10-18T11:16:00Z
+> **Duration:** 1h 08m
 
 **Phase:** 0
 **Needs:** none
@@ -111,9 +113,12 @@ The seed graph translates the foundation plan and the SPEC into executable secti
 - [x] Seeded TODO files, domain indexes and the root index. Done when: the graph validates and `query ready` returns the true frontier.
 - [x] Generated `todo/implementation-plan.md`. Done when: it is byte-identical to a fresh `plan --sync` output.
 - [x] Coverage sweep recorded in `todo/TODO-00-INDEX.md` (every SPEC surface and milestone clause with its owner). Done when: each row names a resolving section.
-- [ ] Commit: `todo: seed the Recto execution graph from the foundation plan`
+- [x] Commit: `todo: seed the Recto execution graph from the foundation plan`
 
 **Test checkpoint:** `python scripts/todo-graph.py validate`, `plan --check` and the full unittest suite pass, and `python scripts/todo-graph.py resolve 'D00 T01 §1'` exits 3 (verified).
+
+> **Verified:** 2026-10-18 | §3 | 99a2c62fc1588025e8cb41efd4bbf80ea8fcfbcc
+> **Review:** `docs/reviews/d00-t02-s3.json`
 
 ## Verification
 

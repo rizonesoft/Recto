@@ -1,0 +1,29 @@
+{
+  "ref": "D00 T02 \u00a73",
+  "title": "Seeded graph and generated plan",
+  "implementation_sha": "99a2c62fc1588025e8cb41efd4bbf80ea8fcfbcc",
+  "date": "2026-10-18",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/00-workspace/D00-T02-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/00-workspace/D00-T02-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/00-workspace/D00-T02-s3.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "python scripts/todo-graph.py validate -> valid: 205 sections",
+    "python scripts/todo-graph.py plan --check -> plan current",
+    "python -m unittest tests.scripts.test_todo_graph -> Ran 52 tests in 19.031s / OK",
+    "python scripts/todo-graph.py resolve 'D00 T01 \u00a71' -> exit 3 (verified)"
+  ]
+}
