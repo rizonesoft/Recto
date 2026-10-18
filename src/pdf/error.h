@@ -381,9 +381,246 @@ enum class EtwPhaseId : uint16_t {
 	}
 }
 
+// Proxy-free inline-first string for PdfError::message so constructing or
+// moving PdfError / PdfResult<T> never allocates an MSVC debug container proxy
+// inside a noexcept constructor and never terminates under OOM.
+class PdfErrorMessage {
+public:
+	static constexpr size_t kInlineCapacity = 127;
+
+	constexpr PdfErrorMessage() noexcept = default;
+
+	PdfErrorMessage(std::string_view sv) noexcept
+	{
+		assign(sv.data(), sv.size());
+	}
+
+	PdfErrorMessage(const char* s) noexcept
+	{
+		if (s) {
+			assign(s, std::char_traits<char>::length(s));
+		}
+	}
+
+	PdfErrorMessage(const std::string& s) noexcept
+	{
+		assign(s.data(), s.size());
+	}
+
+	PdfErrorMessage(std::string&& s) noexcept
+	{
+		assign(s.data(), s.size());
+	}
+
+	PdfErrorMessage(const PdfErrorMessage& other) noexcept
+	{
+		assign(other.data(), other.size());
+	}
+
+	PdfErrorMessage(PdfErrorMessage&& other) noexcept
+		: size_(other.size_)
+		, heap_(other.heap_)
+	{
+		if (!heap_) {
+			for (size_t i = 0; i <= size_; ++i) {
+				inline_[i] = other.inline_[i];
+			}
+		}
+		other.heap_ = nullptr;
+		other.size_ = 0;
+		other.inline_[0] = '\0';
+	}
+
+	PdfErrorMessage& operator=(const PdfErrorMessage& other) noexcept
+	{
+		if (this != &other) {
+			assign(other.data(), other.size());
+		}
+		return *this;
+	}
+
+	PdfErrorMessage& operator=(PdfErrorMessage&& other) noexcept
+	{
+		if (this != &other) {
+			reset_heap();
+			size_ = other.size_;
+			heap_ = other.heap_;
+			if (!heap_) {
+				for (size_t i = 0; i <= size_; ++i) {
+					inline_[i] = other.inline_[i];
+				}
+			}
+			other.heap_ = nullptr;
+			other.size_ = 0;
+			other.inline_[0] = '\0';
+		}
+		return *this;
+	}
+
+	PdfErrorMessage& operator=(std::string_view sv) noexcept
+	{
+		assign(sv.data(), sv.size());
+		return *this;
+	}
+
+	PdfErrorMessage& operator=(const char* s) noexcept
+	{
+		if (s) {
+			assign(s, std::char_traits<char>::length(s));
+		} else {
+			clear();
+		}
+		return *this;
+	}
+
+	~PdfErrorMessage() noexcept
+	{
+		reset_heap();
+	}
+
+	void clear() noexcept
+	{
+		reset_heap();
+		size_ = 0;
+		inline_[0] = '\0';
+	}
+
+	void assign(const char* ptr, size_t len) noexcept
+	{
+		reset_heap();
+		if (!ptr || len == 0) {
+			size_ = 0;
+			inline_[0] = '\0';
+			return;
+		}
+		if (len <= kInlineCapacity) {
+			for (size_t i = 0; i < len; ++i) {
+				inline_[i] = ptr[i];
+			}
+			inline_[len] = '\0';
+			size_ = len;
+			return;
+		}
+		try {
+			char* buf = static_cast<char*>(::operator new(len + 1));
+			for (size_t i = 0; i < len; ++i) {
+				buf[i] = ptr[i];
+			}
+			buf[len] = '\0';
+			heap_ = buf;
+			size_ = len;
+		} catch (...) {
+			for (size_t i = 0; i < kInlineCapacity; ++i) {
+				inline_[i] = ptr[i];
+			}
+			inline_[kInlineCapacity] = '\0';
+			size_ = kInlineCapacity;
+		}
+	}
+
+	[[nodiscard]] constexpr bool empty() const noexcept
+	{
+		return size_ == 0;
+	}
+
+	[[nodiscard]] constexpr size_t size() const noexcept
+	{
+		return size_;
+	}
+
+	[[nodiscard]] constexpr size_t length() const noexcept
+	{
+		return size_;
+	}
+
+	[[nodiscard]] constexpr const char* data() const noexcept
+	{
+		return heap_ ? heap_ : inline_;
+	}
+
+	[[nodiscard]] constexpr const char* c_str() const noexcept
+	{
+		return data();
+	}
+
+	[[nodiscard]] constexpr std::string_view view() const noexcept
+	{
+		return {data(), size_};
+	}
+
+	constexpr operator std::string_view() const noexcept
+	{
+		return view();
+	}
+
+	operator std::string() const
+	{
+		return std::string(data(), size_);
+	}
+
+	[[nodiscard]] size_t find(std::string_view needle, size_t pos = 0) const noexcept
+	{
+		return view().find(needle, pos);
+	}
+
+	friend constexpr bool operator==(const PdfErrorMessage& a, const PdfErrorMessage& b) noexcept
+	{
+		return a.view() == b.view();
+	}
+
+	friend constexpr bool operator==(const PdfErrorMessage& a, std::string_view b) noexcept
+	{
+		return a.view() == b;
+	}
+
+	friend constexpr bool operator==(std::string_view a, const PdfErrorMessage& b) noexcept
+	{
+		return a == b.view();
+	}
+
+	friend constexpr bool operator==(const PdfErrorMessage& a, const char* b) noexcept
+	{
+		return a.view() == (b ? std::string_view(b) : std::string_view{});
+	}
+
+	friend constexpr bool operator==(const char* a, const PdfErrorMessage& b) noexcept
+	{
+		return (a ? std::string_view(a) : std::string_view{}) == b.view();
+	}
+
+	friend bool operator==(const PdfErrorMessage& a, const std::string& b) noexcept
+	{
+		return a.view() == std::string_view(b);
+	}
+
+	friend bool operator==(const std::string& a, const PdfErrorMessage& b) noexcept
+	{
+		return std::string_view(a) == b.view();
+	}
+
+	friend std::string& operator+=(std::string& lhs, const PdfErrorMessage& rhs)
+	{
+		lhs.append(rhs.data(), rhs.size());
+		return lhs;
+	}
+
+private:
+	void reset_heap() noexcept
+	{
+		if (heap_) {
+			::operator delete(heap_);
+			heap_ = nullptr;
+		}
+	}
+
+	size_t size_{0};
+	char* heap_{nullptr};
+	char inline_[kInlineCapacity + 1]{};
+};
+
 struct PdfError {
 	ErrorCode code{ErrorCode::Ok};
-	std::string message{};
+	PdfErrorMessage message{};
 	std::optional<uint64_t> byte_offset{std::nullopt};
 	std::optional<uint32_t> object_num{std::nullopt};
 	uint16_t generation_num{0};
@@ -409,7 +646,7 @@ struct PdfError {
 		std::optional<uint32_t> object_num_in = std::nullopt,
 		uint16_t generation_num_in = 0) noexcept
 		: code(code_in)
-		, message(std::move(message_in))
+		, message(std::string_view(message_in))
 		, byte_offset(byte_offset_in)
 		, object_num(object_num_in)
 		, generation_num(generation_num_in)
@@ -423,15 +660,11 @@ struct PdfError {
 		std::optional<uint32_t> object_num_in = std::nullopt,
 		uint16_t generation_num_in = 0) noexcept
 		: code(code_in)
+		, message(message_in)
 		, byte_offset(byte_offset_in)
 		, object_num(object_num_in)
 		, generation_num(generation_num_in)
 	{
-		try {
-			message.assign(message_in.data(), message_in.size());
-		} catch (...) {
-			message.clear();
-		}
 	}
 
 	PdfError(
@@ -449,35 +682,8 @@ struct PdfError {
 	{
 	}
 
-	PdfError(const PdfError& other) noexcept
-		: code(other.code)
-		, byte_offset(other.byte_offset)
-		, object_num(other.object_num)
-		, generation_num(other.generation_num)
-	{
-		try {
-			message = other.message;
-		} catch (...) {
-			message.clear();
-		}
-	}
-
-	PdfError& operator=(const PdfError& other) noexcept
-	{
-		if (this != &other) {
-			code = other.code;
-			byte_offset = other.byte_offset;
-			object_num = other.object_num;
-			generation_num = other.generation_num;
-			try {
-				message = other.message;
-			} catch (...) {
-				message.clear();
-			}
-		}
-		return *this;
-	}
-
+	PdfError(const PdfError&) noexcept = default;
+	PdfError& operator=(const PdfError&) noexcept = default;
 	PdfError(PdfError&&) noexcept = default;
 	PdfError& operator=(PdfError&&) noexcept = default;
 

@@ -3,12 +3,52 @@
 #include "lexer.h"
 
 #include <algorithm>
+#include <atomic>
 #include <charconv>
 #include <cmath>
 #include <limits>
 #include <new>
 
 namespace recto::pdf {
+
+namespace detail {
+namespace {
+
+std::atomic<size_t> g_lexer_live_bytes{0};
+thread_local int g_lexer_alloc_fail_countdown = -1;
+
+} // namespace
+
+void* lexer_allocate(size_t bytes)
+{
+	if (g_lexer_alloc_fail_countdown >= 0 && g_lexer_alloc_fail_countdown-- == 0) {
+		throw std::bad_alloc();
+	}
+	void* ptr = ::operator new(bytes);
+	g_lexer_live_bytes.fetch_add(bytes, std::memory_order_relaxed);
+	return ptr;
+}
+
+void lexer_deallocate(void* ptr, size_t bytes) noexcept
+{
+	if (ptr) {
+		g_lexer_live_bytes.fetch_sub(bytes, std::memory_order_relaxed);
+		::operator delete(ptr);
+	}
+}
+
+size_t lexer_live_allocated_bytes() noexcept
+{
+	return g_lexer_live_bytes.load(std::memory_order_relaxed);
+}
+
+void set_lexer_alloc_fail_countdown(int countdown) noexcept
+{
+	g_lexer_alloc_fail_countdown = countdown;
+}
+
+} // namespace detail
+
 namespace {
 
 constexpr int hex_digit_value(uint8_t b) noexcept
@@ -121,8 +161,10 @@ Lexer::Lexer(
 
 void Lexer::clear_lookahead() noexcept
 {
+	lookahead_buf_.reset();
 	lookahead_head_ = 0;
 	lookahead_count_ = 0;
+	lookahead_capacity_ = 0;
 }
 
 bool Lexer::ensure_lookahead_slot()
@@ -182,12 +224,11 @@ PdfResult<Token> Lexer::next_token() noexcept
 		if (lookahead_count_ > 0) {
 			const size_t idx = lookahead_head_;
 			const size_t next_logical = lookahead_buf_[idx].cursor_after;
-			PdfResult<Token> result(Token{});
-			result.value() = std::move(lookahead_buf_[idx].token);
+			PdfResult<Token> result(std::move(lookahead_buf_[idx].token));
 			lookahead_head_ = (lookahead_head_ + 1) % lookahead_capacity_;
 			--lookahead_count_;
 			if (lookahead_count_ == 0) {
-				lookahead_head_ = 0;
+				clear_lookahead();
 			}
 			logical_cursor_ = next_logical;
 			return result;
@@ -466,7 +507,7 @@ PdfResult<Token> Lexer::read_name(size_t start_pos)
 {
 	// Skip leading '/'
 	++cursor_;
-	std::string decoded;
+	TokenText decoded;
 	while (cursor_ < input_.size()) {
 		const uint8_t b = input_[cursor_];
 		if (!is_pdf_regular(b)) {
@@ -524,7 +565,7 @@ PdfResult<Token> Lexer::read_literal_string(size_t start_pos)
 	// Skip opening '('
 	++cursor_;
 	size_t paren_depth = 1;
-	std::vector<uint8_t> out;
+	TokenBytes out;
 
 	auto append_checked = [&](uint8_t byte) -> PdfResult<void> {
 		if (out.size() >= max_token_bytes_) {
@@ -634,7 +675,7 @@ PdfResult<Token> Lexer::read_hex_string(size_t start_pos)
 {
 	// Skip opening '<'
 	++cursor_;
-	std::vector<uint8_t> out;
+	TokenBytes out;
 	int pending_high_nibble = -1;
 
 	while (cursor_ < input_.size()) {

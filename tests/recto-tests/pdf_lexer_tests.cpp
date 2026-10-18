@@ -139,6 +139,75 @@ TEST(PdfLexer, WhitespaceAndComments)
 	auto first_after_bound = bound_lex.next_token();
 	RECTO_ASSERT_OK(first_after_bound);
 	EXPECT_EQ(first_after_bound.value().int_value, 1);
+
+	// 5. Seeking or reconfiguring after peeking a large token releases
+	// cached lookahead payloads immediately and leaves the lexer at the new offset.
+	std::string large_name_doc = "/" + std::string(64 * 1024, 'A') + " 42";
+	const auto large_name_bytes = to_bytes(large_name_doc);
+	{
+		Lexer reclaim_lex(large_name_bytes);
+		const size_t baseline_bytes = detail::lexer_live_allocated_bytes();
+		{
+			auto peeked_large = reclaim_lex.peek_token(0);
+			RECTO_ASSERT_OK(peeked_large);
+			EXPECT_EQ(peeked_large.value().text.size(), 64u * 1024u);
+		}
+		EXPECT_GE(detail::lexer_live_allocated_bytes() - baseline_bytes, 64u * 1024u);
+		reclaim_lex.seek(large_name_bytes.size() - 2);
+		EXPECT_EQ(detail::lexer_live_allocated_bytes(), baseline_bytes);
+		auto after_seek = reclaim_lex.next_token();
+		RECTO_ASSERT_OK(after_seek);
+		EXPECT_EQ(after_seek.value().kind, TokenKind::Integer);
+		EXPECT_EQ(after_seek.value().int_value, 42);
+		EXPECT_TRUE(reclaim_lex.next_token().value().is_eof());
+		EXPECT_EQ(detail::lexer_live_allocated_bytes(), baseline_bytes);
+	}
+
+	// 6. Allocation fault-injection in both peek_token() and next_token()
+	// returns ErrorCode::OutOfMemory without terminating in Debug (/MDd) or
+	// Release (/MD), rolls back the cursor, and recovers cleanly once
+	// allocations succeed again.
+	{
+		const auto oom_doc = to_bytes("/Name1 (Literal) <48656C6C6F>");
+		for (int fail_idx = 0; fail_idx < 4; ++fail_idx) {
+			Lexer oom_lex(oom_doc);
+			{
+				detail::ScopedLexerAllocFaultInjector fault(fail_idx);
+				auto peek_res = oom_lex.peek_token(0);
+				if (!peek_res.has_value()) {
+					EXPECT_EQ(peek_res.error().code, ErrorCode::OutOfMemory);
+					EXPECT_EQ(oom_lex.position(), 0u);
+				}
+			}
+			auto tok1 = oom_lex.next_token();
+			RECTO_ASSERT_OK(tok1);
+			EXPECT_EQ(tok1.value().kind, TokenKind::Name);
+			EXPECT_EQ(tok1.value().text, "Name1");
+
+			{
+				const size_t pos_before = oom_lex.position();
+				detail::ScopedLexerAllocFaultInjector fault(fail_idx);
+				auto next_res = oom_lex.next_token();
+				if (!next_res.has_value()) {
+					EXPECT_EQ(next_res.error().code, ErrorCode::OutOfMemory);
+					EXPECT_EQ(oom_lex.position(), pos_before);
+					detail::set_lexer_alloc_fail_countdown(-1);
+					auto retry_tok2 = oom_lex.next_token();
+					RECTO_ASSERT_OK(retry_tok2);
+					EXPECT_EQ(retry_tok2.value().kind, TokenKind::LiteralString);
+					EXPECT_EQ(bytes_to_ascii(retry_tok2.value().bytes), "Literal");
+				} else {
+					EXPECT_EQ(next_res.value().kind, TokenKind::LiteralString);
+					EXPECT_EQ(bytes_to_ascii(next_res.value().bytes), "Literal");
+				}
+			}
+
+			auto tok3 = oom_lex.next_token();
+			RECTO_ASSERT_OK(tok3);
+			EXPECT_EQ(tok3.value().kind, TokenKind::HexString);
+			EXPECT_EQ(bytes_to_ascii(tok3.value().bytes), "Hello");
+		}
+	}
 }
 
 TEST(PdfLexer, Numbers)
