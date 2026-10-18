@@ -94,7 +94,7 @@ Extend `tests/recto-tests/test_support.h/.cpp` with deterministic image and byte
 
 Author a deterministic, zero-external-dependency Python generator `scripts/build-corpus.py` that builds the clean, redistributable (`CC0-1.0`) test PDFs in `tests/corpus/render/`, `tests/corpus/text/`, and `tests/corpus/convert/`:
 - `render/simple-1p.pdf`: 1-page vector + text document with classic `xref` table.
-- `render/CompressedXref-2p.pdf`: PDF 1.5+ document using `/Type /XRef` and `/Type /ObjStm` compressed object streams with `FlateDecode` and PNG predictor.
+- `render/compressed-xref-2p.pdf`: PDF 1.5+ document using `/Type /XRef` and `/Type /ObjStm` compressed object streams with `FlateDecode` and PNG predictor.
 - `render/incremental-2rev.pdf`: 2-revision incrementally updated PDF (`/Prev` trailer chain).
 - `render/rotated-pages.pdf`: 4 pages with `/Rotate` `0`, `90`, `180`, and `270` and mixed `/MediaBox` / `/CropBox` dimensions.
 - `render/images-and-vectors.pdf`: page with embedded `/DCTDecode` JPEG, `FlateDecode` RGB + `/SMask`, `CCITTFaxDecode` monochrome bitmap, clipping paths, and `/Form` XObjects.

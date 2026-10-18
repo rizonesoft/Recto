@@ -17,7 +17,7 @@ Name the domain and the next free `TODO-NN` number in it (numbers are local to t
 
 Copy `.claude/skills/create-todo/todo-template.md` (same file as `todo/templates/TODO-template.md`) to `todo/<NN-domain>/TODO-NN-<short-name>.md` and fill every part:
 
-- **Frontmatter:** `schema_version: 1`, a globally unique kebab-case `id` (it survives renames and never changes once referenced), `domain` matching the directory, `status: draft` until the file is reviewed then `active`, `title`. Optional: `depends_on` (whole files that must fully ship first; prefer section edges), `frozen: true` (touches the MuPDF thread-safety contract in foundation plan section 4 or another parity-frozen behavior), `track` (the milestone, e.g. `M1`).
+- **Frontmatter:** `schema_version: 1`, a globally unique kebab-case `id` (it survives renames and never changes once referenced), `domain` matching the directory, `status: draft` until the file is reviewed then `active`, `title`. Optional: `depends_on` (whole files that must fully ship first; prefer section edges), `frozen: true` (touches the `recto-pdf` and `DocumentActor` thread-safety contract in foundation plan section 4 or another parity-frozen behavior), `track` (the milestone, e.g. `M1`).
 - **Goal:** one paragraph, plain terms, true when the file is done.
 - **Current state:** what exists right now, measured, with real paths and real gaps.
 - **Inputs:** the plan and SPEC sections, existing files with what each section consumes, and `-> XREF:` lines to related work.

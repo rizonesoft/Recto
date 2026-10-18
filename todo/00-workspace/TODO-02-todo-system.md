@@ -11,7 +11,7 @@ track: M0
 
 > **Goal:** Work on Recto is tracked the way the owner's other repositories track it: a validated TODO graph in `todo/` with a generated implementation plan, workflow skills that run it, rules that point at it, and a CI gate that refuses a malformed graph or a stale plan. Every later section in this tree is executed through this system.
 
-> **Current state:** Measured 2026-10-13. Before today the repository tracked work only as prose: the milestone table in `docs/plans/2026-10-13-recto-foundation.md` section 7 and the interface contract in `design/SPEC.md`. Today this file's three sections were built by porting the clean strict generation of the owner's TODO system (swisshotelschool-coza `scripts/lib/todo_graph.py`, itself a port of rizonetech-com `scripts/lib/workflow.py`), extended with the ScratchPad and Resolute rules that fit Recto (Adjacency, bidirectional XREFs, index coverage, frozen freeze checks, durable deferrals). The eight workflow skills were adapted from ScratchPad's `.claude/skills/` set. The repository is not yet a git repository (D00 T01 §1), so no section here can be stamped until the first commit exists; the checklist ticks below record work actually present on disk, and the stamps land against that first commit.
+> **Current state:** Measured 2026-10-13 (updated 2026-10-18). Before 2026-10-13 the repository tracked work only as prose: the milestone table in `docs/plans/2026-10-13-recto-foundation.md` section 7 and the interface contract in `design/SPEC.md`. This file's three sections were built by porting the clean strict generation of the owner's TODO system (swisshotelschool-coza `scripts/lib/todo_graph.py`, itself a port of rizonetech-com `scripts/lib/workflow.py`), extended with the ScratchPad and Resolute rules that fit Recto (Adjacency, bidirectional XREFs, index coverage, frozen freeze checks, durable deferrals). The eight workflow skills were adapted from ScratchPad's `.claude/skills/` set. `D00 T01 §1` (`25ac228f`) and `D00 T02 §1` (`77a72bd9`) are now verified and stamped, and on 2026-10-14 the seeded graph expanded to 205 sections for the native C++20 `recto-pdf` engine and full converter/authoring scope.
 
 ## Inputs
 
@@ -68,6 +68,9 @@ The engine is the strict core: parse every TODO file, refuse anything malformed 
 
 The engine is useless without the working agreements around it: the format spec, the eight skills that route, author, build, review and run work, the project rules that send every session to the graph first, and CI refusing drift. The skills are Claude Code project skills under `.claude/skills/`, as in ScratchPad and Resolute (owner decision 2026-10-13: Claude skills only, no Codex mirrors).
 
+> **Started:** 2026-10-18T09:04:00Z
+> **Corrected:** 2026-10-18 -- Specified per-skill directory paths for `muse skills validate <path> --json` (bare `muse skills validate` without a path exits 1 with usage), and replaced residual pre-2026-10-14 `MuPDF` references in `todo/README.md`, `.claude/skills/create-todo/SKILL.md`, and `.claude/skills/groom-plan/SKILL.md` with `recto-pdf` and the ISO 32000 PDF specification per revised decision D3.
+
 **Phase:** 0
 **Needs:** none
 **Surface:** no
@@ -75,7 +78,7 @@ The engine is useless without the working agreements around it: the format spec,
 **Build order:**
 
 1. Write `todo/README.md` as the format spec and `todo/templates/TODO-template.md` as the authoring template. Done when: a cold reader can author a valid TODO file from those two files alone, proven by authoring D00 T01 from them.
-2. Adapt the eight skills (`add-todo`, `create-todo` with its template, `groom-plan`, `process-todo-section`, `review-todo-section`, `process-todo-file`, `process-phase`, `process-plan`) to Recto: MSBuild and GoogleTest gates, SPEC fidelity, the frozen threading contract, stamp-through-CLI. Done when: `muse skills validate` reports `valid: true` with zero diagnostics for all eight.
+2. Adapt the eight skills (`add-todo`, `create-todo` with its template, `groom-plan`, `process-todo-section`, `review-todo-section`, `process-todo-file`, `process-phase`, `process-plan`) to Recto: MSBuild and GoogleTest gates, SPEC fidelity, the frozen threading contract, stamp-through-CLI. Done when: `Get-ChildItem .claude/skills -Directory | ForEach-Object { muse skills validate $_.FullName --json }` reports `valid: true` with zero diagnostics for all eight.
 3. Point the rules at the graph: `AGENTS.md` (TODO system summary, architecture and interface rules, validation commands), `CLAUDE.md` as its import stub, `.gitignore`, `.gitattributes` (LF for the byte-compared generated plan), and `.github/workflows/plan.yml` running the tooling tests, `validate` and `plan --check`. Done when: no rule file describes a plan anywhere but `todo/`.
 
 - [x] `todo/README.md` spec and `todo/templates/TODO-template.md`. Done when: the template, filled in, passes `validate` (every seeded file is the proof).
@@ -83,11 +86,13 @@ The engine is useless without the working agreements around it: the format spec,
 - [x] `AGENTS.md`, `CLAUDE.md`, `.gitignore`, `.gitattributes`, `.github/workflows/plan.yml`. Done when: a fresh session is routed to `todo/README.md` before its first edit.
 - [ ] Commit: `todo: skills, rules and CI gate for the TODO graph`
 
-**Test checkpoint:** `muse skills validate` clean for all eight skills, and `python scripts/todo-graph.py validate` clean on the seeded tree the skills describe.
+**Test checkpoint:** `Get-ChildItem .claude/skills -Directory | ForEach-Object { muse skills validate $_.FullName --json }` reports `valid: true` and `diagnostics: []` for all eight skills, and `python scripts/todo-graph.py validate` exits 0 on the seeded tree the skills describe.
 
 ## 3. Seeded graph and generated plan
 
 The seed graph translates the foundation plan and the SPEC into executable sections: nine milestone domains, one file per coherent subject, every milestone done-when, decision, screen, dialog and open item owned by exactly one section. Seeding is authoring, not transcription: each section names its paths from the foundation plan's repository layout, its governing plan and SPEC sections, and a checkpoint that can fail.
+
+> **Corrected:** 2026-10-18 -- Updated the Test checkpoint's `resolve 'D00 T01 §1'` expected exit code from `0` (ready before `D00 T01 §1` shipped on 2026-10-13) to `3` (verified `[x]`, since `D00 T01 §1` is now stamped at `25ac228f`).
 
 **Phase:** 0
 **Needs:** none
@@ -96,15 +101,15 @@ The seed graph translates the foundation plan and the SPEC into executable secti
 **Build order:**
 
 1. Author the domain files for `00-workspace` through `07-release` and `99-manual`, with per-domain `INDEX.md` files and `todo/TODO-00-INDEX.md`. Done when: `validate` passes with every file listed in both indexes and every XREF reciprocated.
-2. Generate `todo/implementation-plan.md` with `plan --sync`. Done when: `plan --check` exits 0 and `query stats` reports the seeded totals with D00 T01 §1 among the ready rows.
-3. Sweep the foundation plan and SPEC once against the graph (milestone rows, open items, AGPL checklist, SPEC sections 8 to 11) and file anything ownerless through the new `add-todo` skill. Done when: the sweep finds nothing unowned, and `todo/findings.md` exists for what future work notices.
+2. Generate `todo/implementation-plan.md` with `plan --sync`. Done when: `plan --check` exits 0 and `query stats` reports the seeded totals with D00 T01 §1 among the verified rows.
+3. Sweep the foundation plan and SPEC once against the graph (milestone rows, open items, GPL-3.0 checklist, SPEC sections 8 to 11) and file anything ownerless through the new `add-todo` skill. Done when: the sweep finds nothing unowned, and `todo/findings.md` exists for what future work notices.
 
-- [x] Seeded TODO files, domain indexes and the root index. Done when: the graph validates and `query ready` returns the true frontier (the repository section first).
+- [x] Seeded TODO files, domain indexes and the root index. Done when: the graph validates and `query ready` returns the true frontier.
 - [x] Generated `todo/implementation-plan.md`. Done when: it is byte-identical to a fresh `plan --sync` output.
 - [x] Coverage sweep recorded in `todo/TODO-00-INDEX.md` (every SPEC surface and milestone clause with its owner). Done when: each row names a resolving section.
 - [ ] Commit: `todo: seed the Recto execution graph from the foundation plan`
 
-**Test checkpoint:** `python scripts/todo-graph.py validate`, `plan --check` and the full unittest suite pass, and `python scripts/todo-graph.py resolve 'D00 T01 §1'` exits 0.
+**Test checkpoint:** `python scripts/todo-graph.py validate`, `plan --check` and the full unittest suite pass, and `python scripts/todo-graph.py resolve 'D00 T01 §1'` exits 3 (verified).
 
 ## Verification
 

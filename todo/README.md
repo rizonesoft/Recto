@@ -37,7 +37,7 @@ schema_version: 1
 id: bridge-runtime                 # stable, kebab-case, globally unique, survives renames
 domain: 01-engine                  # must match the containing directory
 status: active                     # draft | active | blocked | done | superseded
-title: "TODO-01 -- MuPDF Bridge Runtime"
+title: "TODO-01 -- Native PDF Parser, Filters, Crypto and Document Model"
 depends_on: ["repo-and-build"]     # optional: TODO ids that must fully ship first
 frozen: true                       # optional: touches the frozen thread-safety contract
 track: M1                          # optional: milestone reference
@@ -70,9 +70,9 @@ Never a bare number, and never a cross-TODO reference without a section. Cross-r
 - `**Phase:**` from the closed list: 0 (M0 Repository and build), 1 (M1 Engine core), 2 (M2 Viewer), 3 (M3 Text), 4 (M4 Conversions A), 5 (M5 Conversions B), 6 (M6 Ship), 7 (After v1), 99 (Manual, operator only). The phase drives plan ordering; changing one is a scope decision.
 - `**Needs:**` `none` or a comma-separated list from: `windows-host`, `arm64-host`, `display-session` (an interactive Windows session that can render WinUI), `office` (Microsoft Office installed), `libreoffice` (LibreOffice installed), `store-account`, `attended` (a human present while it runs), `owner-decision`, `third-party`, `operator` (operator-only work, domain 99). `owner-decision`, `third-party` and `operator` hold the section out of `query ready` until the answer is recorded and the Need is removed. Unattended runs never take an `attended`, `store-account` or `operator` section.
 - `**Surface:**` `yes` or `no`. A `yes` section builds or changes a user-facing surface and also carries four lines: `**Fidelity:**` (the `design/SPEC.md` section and screenshot it must match; a genuinely new surface says so explicitly), `**Job:**` (the user, the verb, and what consumes the write), `**Treatment:**` (the asked treatment and the cheaper substitute that fails the checkpoint), `**Chrome:**` (the shared controls, slots and tokens it consumes; never a second pattern).
-- `**Freeze check:**` in every section of a `frozen: true` file, and nowhere else. Recto's frozen contract is foundation plan section 4 (MuPDF thread safety): restructuring frozen code is allowed, changing what it guarantees requires a recorded operator approval in the section.
+- `**Freeze check:**` in every section of a `frozen: true` file, and nowhere else. Recto's frozen contract is foundation plan section 4 (`recto-pdf` and `DocumentActor` thread safety): restructuring frozen code is allowed, changing what it guarantees requires a recorded operator approval in the section.
 - `**Build order:**` numbered steps, each naming a path, class, command or artifact in backticks and an observable `Done when:`.
-- A checklist of 1 to 30 micro-step items, `- [ ] Commit: <message>` last. One item is one buildable step: one action, a named path in backticks, a done-when, the cheaper substitute on UI and write items, and a source cite when behaviour is copied from the SPEC, the plan or MuPDF documentation.
+- A checklist of 1 to 30 micro-step items, `- [ ] Commit: <message>` last. One item is one buildable step: one action, a named path in backticks, a done-when, the cheaper substitute on UI and write items, and a source cite when behaviour is copied from the SPEC, the plan or the ISO 32000 PDF specification.
 - `**Test checkpoint:**` a runnable command in backticks with its expected result. It must be able to fail.
 
 Do not rewrite a `[x]` section's checklist: that is the contract its stamp covers. New granularity on shipped work is a new section.

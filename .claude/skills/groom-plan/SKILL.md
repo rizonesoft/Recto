@@ -21,7 +21,7 @@ Run `python scripts/todo-graph.py validate` after every structural edit.
 
 ### 2. Drift sweep
 
-Walk every open section's concrete claims against today's repository and governing documents: files, classes, paths, counts, versions, MuPDF and Windows App SDK details, SPEC section numbers. Correct drift in place with dated notes, without building anything. Pay special attention to:
+Walk every open section's concrete claims against today's repository and governing documents: files, classes, paths, counts, versions, `recto-pdf` and Windows App SDK details, SPEC section numbers. Correct drift in place with dated notes, without building anything. Pay special attention to:
 
 - "Nothing exists yet" claims that are no longer true.
 - Counts and versions quoted confidently (these age fastest).
