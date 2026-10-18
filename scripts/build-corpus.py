@@ -2544,6 +2544,49 @@ def validate_openxml_structure(rel_path: str, data: bytes) -> None:
         raise ValueError(f"{rel_path}: bad zip archive: {exc}") from exc
 
 
+CORPUS_PURPOSES: dict[str, str] = {
+    "render/simple-1p.pdf": "Single-page PDF 1.7 with Helvetica text and stroked/filled vector rectangle",
+    "render/compressed-xref-2p.pdf": "Two-page PDF 1.7 using Type 2 ObjStm and Flate-compressed /XRef stream",
+    "render/incremental-2rev.pdf": "Two-revision incremental PDF with /Prev xref chain overriding page 1 content",
+    "render/rotated-pages.pdf": "Four-page PDF exercising /Rotate 0, 90, 180, and 270 with crop/bleed/trim/art boxes",
+    "render/images-and-vectors.pdf": "Vector Bézier paths, 8x8 RGB/Gray/1-bit XObjects, Form XObject, and /SMask alpha",
+    "render/encrypted-rc4-128.pdf": "Standard Security Handler V=2 R=3 128-bit RC4 encrypted PDF with user/owner passwords",
+    "render/encrypted-aes-128.pdf": "Standard Security Handler V=4 R=4 128-bit AES-CBC (/CF /StdCF /AESV2) encrypted PDF",
+    "render/encrypted-aes-256.pdf": "PDF 2.0 Standard Security Handler V=5 R=6 256-bit AES-CBC (Algorithm 2.B + /Perms) PDF",
+    "text/two-column-links-outline.pdf": "Two-column article layout with hyphenation, /Outlines tree, and /URI + /Dest links",
+    "text/scanned.pdf": "Image-only scanned 300 DPI page without /Font resources for OCR pipeline testing",
+    "convert/tables-and-forms.pdf": "Ruled 4x5 financial table and AcroForm /Tx, /Btn, and /Ch interactive fields",
+    "convert/sample.docx": "ECMA-376 OpenXML Word document with headings, styled runs, list, and 3x3 table",
+    "convert/sample.xlsx": "ECMA-376 OpenXML Excel workbook with shared strings, numeric cells, and SUM formula",
+    "broken/empty-0b.pdf": "Zero-byte file testing empty-input error handling",
+    "broken/non-pdf-header.pdf": "Non-PDF plain-text header testing magic-header rejection",
+    "broken/truncated-header.pdf": "Truncated 6-byte %PDF-1 header testing short-read rejection",
+    "broken/truncated-stream.pdf": "Stream truncated mid-payload before endstream testing stream bounds enforcement",
+    "broken/corrupt-xref-recoverable.pdf": "Corrupted startxref offset with intact indirect objects for linear scan recovery",
+    "broken/cyclic-xref-prev.pdf": "Two-trailer /Prev cycle (offset A <-> offset B) testing xref loop detection",
+    "broken/cyclic-pages-tree.pdf": "Pages tree /Kids cycle (2 0 R <-> 3 0 R) testing page-tree cycle rejection",
+    "broken/deep-nested-array-70.pdf": "70-level nested PDF array exceeding the 64-level recursion guard",
+    "broken/deflate-bomb-10kb.pdf": "10 KB 2-stage Flate stream expanding to 272 MB (> 256 MB decoded stream ceiling)",
+    "seeds/seed-classic-xref.pdf": "Compact (< 4 KB) libFuzzer seed for classic uncompressed xref table parsing",
+    "seeds/seed-xref-objstm.pdf": "Compact (< 4 KB) libFuzzer seed for /XRef stream and /ObjStm object streams",
+    "seeds/seed-filters-ascii-rle.pdf": "Compact (< 4 KB) libFuzzer seed for ASCIIHexDecode, ASCII85Decode, and RunLengthDecode",
+    "seeds/seed-filters-lzw-ccitt.pdf": "Compact (< 4 KB) libFuzzer seed for LZWDecode and CCITTFaxDecode Group 4 streams",
+    "seeds/seed-outlines-links.pdf": "Compact (< 4 KB) libFuzzer seed for /Outlines bookmarks and /Link annotations",
+    "seeds/seed-render-ops.pdf": "Compact (< 4 KB) libFuzzer seed for content-stream path, text, color, and state ops",
+    "seeds/seed-filter-00-flate.bin": "Selector 0x00 raw libFuzzer seed for FlateDecode decompression",
+    "seeds/seed-filter-01-lzw.bin": "Selector 0x01 raw libFuzzer seed for LZWDecode decompression",
+    "seeds/seed-filter-02-predictor.bin": "Selector 0x02 raw libFuzzer seed for FlateDecode with PNG Up Predictor=12",
+    "seeds/seed-filter-03-ascii85.bin": "Selector 0x03 raw libFuzzer seed for ASCII85Decode filter",
+    "seeds/seed-filter-04-asciihex.bin": "Selector 0x04 raw libFuzzer seed for ASCIIHexDecode filter",
+    "seeds/seed-filter-05-runlength.bin": "Selector 0x05 raw libFuzzer seed for RunLengthDecode filter",
+    "seeds/seed-filter-06-ccitt.bin": "Selector 0x06 raw libFuzzer seed for CCITTFaxDecode Group 4 (K=-1) filter",
+    "seeds/seed-filter-07-jbig2.bin": "Selector 0x07 raw libFuzzer seed for JBIG2Decode symbol-dictionary and page segments",
+    "seeds/seed-filter-08-dct.bin": "Selector 0x08 raw libFuzzer seed for DCTDecode baseline JPEG 8x8 grayscale stream",
+    "seeds/seed-filter-09-jpx.bin": "Selector 0x09 raw libFuzzer seed for JPXDecode minimal JPEG 2000 codestream",
+    "seeds/seed-filter-0a-chain-a85-flate.bin": "Selector 0x0A raw libFuzzer seed for chained ASCII85Decode + FlateDecode pipeline",
+}
+
+
 def expected_corpus_files() -> dict[str, bytes]:
     """Return mapping of relative corpus path -> deterministic file bytes."""
     files: dict[str, bytes] = {
@@ -2587,6 +2630,11 @@ def expected_corpus_files() -> dict[str, bytes]:
         "seeds/seed-filter-09-jpx.bin": build_seed_filter_09_jpx(),
         "seeds/seed-filter-0a-chain-a85-flate.bin": build_seed_filter_0a_chain_a85_flate(),
     }
+    if set(files.keys()) != set(CORPUS_PURPOSES.keys()):
+        missing = sorted(set(files.keys()) - set(CORPUS_PURPOSES.keys()))
+        extra = sorted(set(CORPUS_PURPOSES.keys()) - set(files.keys()))
+        raise ValueError(f"CORPUS_PURPOSES mismatch: missing={missing}, extra={extra}")
+
     total_bytes = 0
     for rel_path, content in files.items():
         total_bytes += len(content)
@@ -2599,19 +2647,46 @@ def expected_corpus_files() -> dict[str, bytes]:
     return files
 
 
+def build_provenance_markdown(files: dict[str, bytes] | None = None) -> bytes:
+    """Build deterministic UTF-8 bytes for tests/corpus/PROVENANCE.md."""
+    if files is None:
+        files = expected_corpus_files()
+    lines: list[str] = [
+        "# Test Corpus Provenance (`tests/corpus/PROVENANCE.md`)",
+        "",
+        "Every file under `tests/corpus/` (excluding `README.md` and `PROVENANCE.md`) is synthetically generated by `scripts/build-corpus.py` and dedicated to the public domain under `CC0-1.0`.",
+        "",
+        "`Corpus.Provenance` in `tests/recto-tests/corpus_tests.cpp` parses the table below and verifies that the set of files on disk matches 1-for-1 and that every file's Windows CNG SHA-256 digest matches.",
+        "",
+        "| Path | SHA-256 | License | Origin | Purpose |",
+        "| ---- | ------- | ------- | ------ | ------- |",
+    ]
+    for rel_path in sorted(files.keys()):
+        digest = hashlib.sha256(files[rel_path]).hexdigest()
+        purpose = CORPUS_PURPOSES.get(rel_path, "").strip()
+        if not purpose or "|" in purpose or "\n" in purpose:
+            raise ValueError(f"invalid purpose description for {rel_path}")
+        lines.append(
+            f"| {rel_path} | {digest} | CC0-1.0 | scripts/build-corpus.py | {purpose} |"
+        )
+    lines.append("")
+    return "\n".join(lines).encode("utf-8")
+
+
 def generate_corpus(corpus_root: Path = CORPUS_ROOT) -> dict[str, str]:
-    """Generate all corpus files atomically and return {rel_path: sha256_hex}."""
+    """Generate all corpus files and PROVENANCE.md atomically and return {rel_path: sha256_hex}."""
     files = expected_corpus_files()
     hashes: dict[str, str] = {}
     for rel_path, data in sorted(files.items()):
         dest = corpus_root / rel_path
         write_atomic(dest, data)
         hashes[rel_path] = hashlib.sha256(data).hexdigest()
+    write_atomic(corpus_root / "PROVENANCE.md", build_provenance_markdown(files))
     return hashes
 
 
 def check_corpus(corpus_root: Path = CORPUS_ROOT) -> tuple[bool, list[str]]:
-    """Verify on-disk corpus files match deterministic generator output and structural checks."""
+    """Verify on-disk corpus files and PROVENANCE.md match deterministic generator output."""
     files = expected_corpus_files()
     errors: list[str] = []
     total_on_disk = 0
@@ -2633,14 +2708,21 @@ def check_corpus(corpus_root: Path = CORPUS_ROOT) -> tuple[bool, list[str]]:
                 f"byte mismatch for {rel_path}: expected sha256 {exp_hash}, got {act_hash}"
             )
 
-    for subdir in ("render", "text", "convert", "broken", "seeds"):
-        sub_path = corpus_root / subdir
-        if sub_path.is_dir():
-            for child in sorted(sub_path.iterdir()):
-                if child.is_file():
-                    rel = f"{subdir}/{child.name}"
-                    if rel not in files:
-                        errors.append(f"unexpected corpus file: {rel}")
+    provenance_path = corpus_root / "PROVENANCE.md"
+    expected_provenance = build_provenance_markdown(files)
+    if not provenance_path.is_file():
+        errors.append("missing provenance file: PROVENANCE.md")
+    elif provenance_path.read_bytes() != expected_provenance:
+        errors.append("PROVENANCE.md is out of date with generated corpus fixtures")
+
+    if corpus_root.is_dir():
+        for child in sorted(corpus_root.rglob("*")):
+            if child.is_file():
+                rel = child.relative_to(corpus_root).as_posix()
+                if rel in ("README.md", "PROVENANCE.md"):
+                    continue
+                if rel not in files:
+                    errors.append(f"unexpected corpus file: {rel}")
 
     if total_on_disk >= MAX_CORPUS_TOTAL_BYTES:
         errors.append(

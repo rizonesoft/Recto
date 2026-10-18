@@ -126,6 +126,12 @@ class BuildCorpusTests(unittest.TestCase):
         self.assertIn("PROVENANCE.md", readme)
         self.assertIn("seed-filter-00-flate.bin", readme)
 
+        provenance = (self.mod.CORPUS_ROOT / "PROVENANCE.md").read_text(encoding="utf-8")
+        self.assertIn("| Path | SHA-256 | License | Origin | Purpose |", provenance)
+        for rel_path in files:
+            self.assertIn(f"| {rel_path} | ", provenance)
+            self.assertIn(" | CC0-1.0 | scripts/build-corpus.py | ", provenance)
+
 
 if __name__ == "__main__":
     unittest.main()

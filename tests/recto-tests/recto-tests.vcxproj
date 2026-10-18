@@ -61,6 +61,7 @@
     <Manifest Include="recto-tests.manifest" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="corpus_tests.cpp" />
     <ClCompile Include="scaffold_smoke.cpp" />
     <ClCompile Include="support_tests.cpp" />
     <ClCompile Include="test_support.cpp" />
