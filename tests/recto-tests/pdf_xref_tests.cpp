@@ -1269,6 +1269,15 @@ TEST(PdfXref, DamagedRecovery)
 		RECTO_ASSERT_OK(cat_val);
 		EXPECT_EQ(cat_val->as_dict()->get_name("Type"), "Catalog");
 		EXPECT_EQ(cat_val->as_dict()->get_string("Padding")->as_byte_view().size(), 100000u);
+
+		// When `max_total_entries` is tight (1 -> 64 KiB decoded ObjStm budget),
+		// `recover_damaged_xref` returns `DecompressionLimitExceeded`, and
+		// `XrefTable::parse(..., allow_recovery=true)` propagates that resource error
+		// rather than masking it with the primary `DamagedFormat` error.
+		auto rec_rle_tight = XrefTable::recover_damaged_xref(as_bytes(pdf_rle), 1u);
+		RECTO_EXPECT_ERR(rec_rle_tight, ErrorCode::DecompressionLimitExceeded);
+		auto parse_rle_tight = XrefTable::parse(as_bytes(pdf_rle), 1u, /*allow_recovery=*/true);
+		RECTO_EXPECT_ERR(parse_rle_tight, ErrorCode::DecompressionLimitExceeded);
 	}
 }
 

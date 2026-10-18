@@ -610,7 +610,9 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		const uint64_t max_recovery_parse_bytes = std::max<uint64_t>(
 			static_cast<uint64_t>(file_bytes.size()) * 4ULL,
 			65536ULL);
-		const uint64_t max_recovery_decoded_objstm_bytes = kMaxDecodedStreamBytes;
+		const uint64_t max_recovery_decoded_objstm_bytes = std::min<uint64_t>(
+			kMaxDecodedStreamBytes,
+			std::max<uint64_t>(effective_max_entries, 1ULL) * 65536ULL);
 		uint32_t max_obj_num = 0;
 		std::optional<IndirectRef> info_candidate;
 		std::unordered_map<uint32_t, std::pair<uint16_t, int64_t>> recovered_integers;
@@ -1083,7 +1085,9 @@ PdfResult<XrefTable> XrefTable::parse(
 				return primary_err;
 			}
 			auto rec = recover_damaged_xref(file_bytes, effective_max_entries);
-			if (rec.has_value()) {
+			if (rec.has_value() ||
+				rec.error().code == ErrorCode::OutOfMemory ||
+				rec.error().code == ErrorCode::DecompressionLimitExceeded) {
 				return rec;
 			}
 			return primary_err;
