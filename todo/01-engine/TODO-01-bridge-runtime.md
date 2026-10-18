@@ -194,17 +194,19 @@ Implement classic cross-reference table and trailer parsing in `src/pdf/xref.h` 
 **Surface:** no
 **Freeze check:** Confirm that `XrefTable` belongs exclusively to one `pdf::Document` instance, caps `/Prev` chains at 256 revisions, and detects cyclic `/Prev` offsets (`A -> B -> A`) immediately.
 
+> **Started:** 2026-10-18
+
 **Build order:**
 
 1. Author `src/pdf/xref.h` and the classic `xref` + `/Prev` incremental chain parser in `src/pdf/xref.cpp`. Done when: `xref.cpp` compiles cleanly on `x64` and `ARM64`.
 2. Add `tests/recto-tests/pdf_xref_tests.cpp` testing `render/simple-1p.pdf`, `render/incremental-2rev.pdf`, multi-subsection `xref` tables, leading-header offset adjustment, and `broken/cyclic-xref-prev.pdf`. Done when: `PdfXref.Classic*` and `PdfXref.Incremental*` pass under ASan.
 
-- [ ] Scan the first 1,024 bytes for `%PDF-1.x` / `%PDF-2.0` and compute the header base offset so files with a leading byte preamble adjust all `xref` offsets automatically. Done when: prepending 32 header junk bytes to `simple-1p.pdf` still resolves every object in `PdfXref.HeaderOffsetAdjustment`.
-- [ ] Scan the trailing 1,024 bytes for the last `startxref` keyword and parse the initial cross-reference byte offset. Done when: files with trailing whitespace or multiple incremental `%%EOF` markers select the final `startxref`.
-- [ ] Parse classic `xref` subsections (`first_id count` and `offset gen n/f` rows), tolerating both `\r\n` and ` \n` 20-byte line endings and single-space variations produced by non-conformant writers. Done when: multi-subsection `xref` tables populate `XrefEntry` (`Uncompressed`, `Free`) accurately.
-- [ ] Parse `trailer << ... >>` dictionaries and merge `/Root`, `/Info`, `/Encrypt`, `/ID`, and `/Size` from the newest trailer while following `/Prev` offsets for older revisions. Done when: `render/incremental-2rev.pdf` resolves the updated page object from revision 2 and untouched objects from revision 1.
-- [ ] Enforce a 256-revision ceiling and a `std::unordered_set<uint64_t>` visited-offset guard on `/Prev` chains (plus hybrid `/XRefStm` pointers). Done when: `tests/corpus/broken/cyclic-xref-prev.pdf` fails immediately with `ErrorCode::DamagedFormat` instead of looping forever. Cheaper substitute: following `/Prev` recursively without cycle detection.
-- [ ] Maintain a per-resolution visited object set (`std::vector<IndirectRef>`) when resolving indirect references (`A -> B -> C`) capped at depth 32 so cyclic indirect object chains (`1 0 obj 2 0 R endobj`, `2 0 obj 1 0 R endobj`) return `ErrorCode::DamagedFormat`. Done when: `PdfXref.CyclicIndirectRef` passes under ASan.
+- [x] Scan the first 1,024 bytes for `%PDF-1.x` / `%PDF-2.0` and compute the header base offset so files with a leading byte preamble adjust all `xref` offsets automatically. Done when: prepending 32 header junk bytes to `simple-1p.pdf` still resolves every object in `PdfXref.HeaderOffsetAdjustment`.
+- [x] Scan the trailing 1,024 bytes for the last `startxref` keyword and parse the initial cross-reference byte offset. Done when: files with trailing whitespace or multiple incremental `%%EOF` markers select the final `startxref`.
+- [x] Parse classic `xref` subsections (`first_id count` and `offset gen n/f` rows), tolerating both `\r\n` and ` \n` 20-byte line endings and single-space variations produced by non-conformant writers. Done when: multi-subsection `xref` tables populate `XrefEntry` (`Uncompressed`, `Free`) accurately.
+- [x] Parse `trailer << ... >>` dictionaries and merge `/Root`, `/Info`, `/Encrypt`, `/ID`, and `/Size` from the newest trailer while following `/Prev` offsets for older revisions. Done when: `render/incremental-2rev.pdf` resolves the updated page object from revision 2 and untouched objects from revision 1.
+- [x] Enforce a 256-revision ceiling and a `std::unordered_set<uint64_t>` visited-offset guard on `/Prev` chains (plus hybrid `/XRefStm` pointers). Done when: `tests/corpus/broken/cyclic-xref-prev.pdf` fails immediately with `ErrorCode::DamagedFormat` instead of looping forever. Cheaper substitute: following `/Prev` recursively without cycle detection.
+- [x] Maintain a per-resolution visited object set (`std::vector<IndirectRef>`) when resolving indirect references (`A -> B -> C`) capped at depth 32 so cyclic indirect object chains (`1 0 obj 2 0 R endobj`, `2 0 obj 1 0 R endobj`) return `ErrorCode::DamagedFormat`. Done when: `PdfXref.CyclicIndirectRef` passes under ASan.
 - [ ] Commit: `pdf: implement classic xref tables, incremental /Prev chains and cycle guards`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfXref.Classic*:PdfXref.Incremental*:PdfXref.Cyclic*` passes under ASan.

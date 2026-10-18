@@ -43,11 +43,13 @@
     <ClCompile Include="object.cpp" />
     <ClCompile Include="parser.cpp" />
     <ClCompile Include="pdf.cpp" />
+    <ClCompile Include="xref.cpp" />
     <ClInclude Include="error.h" />
     <ClInclude Include="lexer.h" />
     <ClInclude Include="object.h" />
     <ClInclude Include="parser.h" />
     <ClInclude Include="recto_pdf.h" />
+    <ClInclude Include="xref.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

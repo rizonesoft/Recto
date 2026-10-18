@@ -11,6 +11,7 @@
 #include "object.h"
 #include "lexer.h"
 #include "parser.h"
+#include "xref.h"
 
 namespace recto::pdf {
 
