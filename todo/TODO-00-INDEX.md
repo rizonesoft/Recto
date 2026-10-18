@@ -59,7 +59,6 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 
 ## Active TODOs
 
-- [00 Workspace] [TODO-01 Repository, Native Engine Policy and Build Scaffold](./00-workspace/TODO-01-repo-and-build.md): git, GPL-3.0 repo-face files, native `recto-pdf` policy, all-module C++20 scaffold, build CI, reference machines.
 - [00 Workspace] [TODO-02 The TODO Graph System](./00-workspace/TODO-02-todo-system.md): engine, CLI and tests; the eight skills, rules and plan CI gate; this seeded graph.
 - [00 Workspace] [TODO-03 Test Backbone](./00-workspace/TODO-03-test-backbone.md): GoogleTest via vcpkg, licensed corpus, ASan and warning bar.
 - [01 Engine] [TODO-01 Native PDF Parser, Filters, Crypto and Document Model](./01-engine/TODO-01-bridge-runtime.md): `recto-pdf` lexer, XRef tables/streams, damaged-file recovery, stream filters, CNG `bcrypt.dll` decryption, document open and description. Frozen.
@@ -87,7 +86,7 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 
 ## Completed TODOs
 
-- (none yet: the tree was seeded 2026-10-13 and the first stamps land on the first repository commit, D00 T01 §1)
+- [00 Workspace] [TODO-01 Repository, Native Engine Policy and Build Scaffold](./00-workspace/TODO-01-repo-and-build.md) (2026-10-18): git, GPL-3.0 repo-face files, native `recto-pdf` policy, all-module C++20 scaffold, build CI, reference machines (`docs/reference-machines.md`).
 
 ## Queries
 
