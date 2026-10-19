@@ -5260,6 +5260,7 @@ struct Jbig2DecoderState {
 				grat_bytes);
 
 			const Jbig2Bitmap* ref_bm_ptr = nullptr;
+			std::optional<Jbig2Bitmap> cropped_page_ref;
 			if (!ref_segments.empty()) {
 				const auto it = state.aux_regions.find(ref_segments[0]);
 				if (it == state.aux_regions.end()) {
@@ -5271,7 +5272,31 @@ struct Jbig2DecoderState {
 				}
 				ref_bm_ptr = &it->second;
 			} else if (state.page_bitmap.has_value()) {
-				ref_bm_ptr = &(*state.page_bitmap);
+				// ITU-T T.88 §7.4.7.4: When a generic refinement region refers to no other segments,
+				// GRREFERENCE is the region of the page buffer with the same width, height, and (reg_x, reg_y) location.
+				RECTO_PDF_TRY(
+					Jbig2Bitmap page_crop,
+					Jbig2Bitmap::create(
+						reg_w,
+						reg_h,
+						0u,
+						state.remaining_limit(effective_limit)));
+				for (uint32_t y = 0; y < reg_h; ++y) {
+					const int64_t py = static_cast<int64_t>(reg_y) + static_cast<int64_t>(y);
+					if (py < 0 || py >= static_cast<int64_t>(state.page_bitmap->height)) {
+						continue;
+					}
+					for (uint32_t x = 0; x < reg_w; ++x) {
+						const int64_t px = static_cast<int64_t>(reg_x) + static_cast<int64_t>(x);
+						if (px >= 0 && px < static_cast<int64_t>(state.page_bitmap->width)) {
+							if (state.page_bitmap->get_pixel(static_cast<int32_t>(px), static_cast<int32_t>(py)) != 0u) {
+								page_crop.set_pixel(x, y, 1u);
+							}
+						}
+					}
+				}
+				cropped_page_ref = std::move(page_crop);
+				ref_bm_ptr = &(*cropped_page_ref);
 			} else {
 				return make_filter_error(
 					ErrorCode::DamagedFormat,
@@ -5280,6 +5305,15 @@ struct Jbig2DecoderState {
 					seg_header_start);
 			}
 
+			const size_t ref_crop_bytes = cropped_page_ref.has_value() ? cropped_page_ref->data.size() : 0u;
+			const size_t remaining_for_rbm = state.remaining_limit(effective_limit);
+			if (ref_crop_bytes > remaining_for_rbm) {
+				return make_filter_error(
+					ErrorCode::DecompressionLimitExceeded,
+					DiagnosticId::DecompressionLimitExceeded,
+					"JBIG2 Generic Refinement Region reference crop exceeds max_decoded_bytes",
+					seg_header_start);
+			}
 			RECTO_PDF_TRY(
 				Jbig2Bitmap rbm,
 				decode_jbig2_refinement_region(
@@ -5292,7 +5326,7 @@ struct Jbig2DecoderState {
 					0,
 					grat_span,
 					seg_data.subspan(18u + grat_bytes),
-					state.remaining_limit(effective_limit)));
+					remaining_for_rbm - ref_crop_bytes));
 
 			if (seg_type == 40u) {
 				RECTO_PDF_RETURN_IF_ERROR(

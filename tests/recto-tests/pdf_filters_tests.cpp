@@ -1896,6 +1896,47 @@ TEST(PdfFilters, Jbig2Decode)
 			append_jbig2_segment(ovf_stream, 2u, 0u, ref_ct, 1u, sd_huff_payload);
 			append_jbig2_segment(ovf_stream, 3u, 6u, ref_sd, 1u, tr_ovf_payload);
 			RECTO_EXPECT_ERR(decode_jbig2(ovf_stream), ErrorCode::DamagedFormat);
+
+			// 5f. Page-backed Generic Refinement Region at nonzero origin (ITU-T T.88 §7.4.7.4):
+			// Refining an 8x2 MMR region at x=8 on a 16x2 page must extract the 8x2 sub-bitmap at (8, 0) as GRREFERENCE
+			// (with out-of-crop pixels treated as 0) and produce identical refined region bytes (`16 57`) as at x=0 on an 8x2 page.
+			auto build_page_refinement_at_x = [&](uint32_t reg_x) -> std::vector<uint8_t> {
+				const auto mmr_8x2 = pack_bitstring(
+					std::string("001") + "00110101" + "011" + "1011" + "0001" + "1" + "000000000001000000000001");
+				std::vector<uint8_t> s;
+				append_jbig2_segment(s, 0u, 48u, {}, 1u, make_jbig2_page_info_payload(8u + reg_x, 2u, 0u));
+				std::vector<uint8_t> gen_reg;
+				append_u32_be(gen_reg, 8u);
+				append_u32_be(gen_reg, 2u);
+				append_u32_be(gen_reg, reg_x);
+				append_u32_be(gen_reg, 0u);
+				gen_reg.push_back(4u); // REPLACE
+				gen_reg.push_back(1u); // MMR = 1
+				gen_reg.insert(gen_reg.end(), mmr_8x2.begin(), mmr_8x2.end());
+				append_jbig2_segment(s, 1u, 38u, {}, 1u, gen_reg);
+
+				std::vector<uint8_t> ref_reg;
+				append_u32_be(ref_reg, 8u);
+				append_u32_be(ref_reg, 2u);
+				append_u32_be(ref_reg, reg_x);
+				append_u32_be(ref_reg, 0u);
+				ref_reg.push_back(4u); // REPLACE
+				ref_reg.push_back(1u); // GRTEMPLATE = 1
+				ref_reg.insert(ref_reg.end(), {0xFFu, 0xFFu});
+				append_jbig2_segment(s, 2u, 42u, {}, 1u, ref_reg);
+				append_jbig2_segment(s, 3u, 49u, {}, 1u, {});
+				return s;
+			};
+			auto dec_gr_x0 = decode_jbig2(build_page_refinement_at_x(0u));
+			RECTO_ASSERT_OK(dec_gr_x0);
+			ASSERT_EQ(dec_gr_x0->size(), 2u);
+			auto dec_gr_x8 = decode_jbig2(build_page_refinement_at_x(8u));
+			RECTO_ASSERT_OK(dec_gr_x8);
+			ASSERT_EQ(dec_gr_x8->size(), 4u);
+			EXPECT_EQ((*dec_gr_x8)[0], 0xFFu);
+			EXPECT_EQ((*dec_gr_x8)[1], (*dec_gr_x0)[0]);
+			EXPECT_EQ((*dec_gr_x8)[2], 0xFFu);
+			EXPECT_EQ((*dec_gr_x8)[3], (*dec_gr_x0)[1]);
 		}
 	}
 }
