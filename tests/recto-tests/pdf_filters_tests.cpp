@@ -8,6 +8,7 @@
 
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cstdint>
 #include <latch>
 #include <span>
@@ -891,6 +892,30 @@ TEST(PdfFilters, CcittGroup3AndBlackIs1)
 		EXPECT_EQ((*dec_tol)[3], 0x0Fu);
 		EXPECT_EQ((*dec_tol)[4], 0xFFu);
 		EXPECT_EQ((*dec_tol)[5], 0xFFu);
+
+		// 3. ISO 32000-1 Table 11: When /EndOfBlock is true (default), EOFB overrides /Rows
+		// even when the stream encodes more rows than /Rows before the EOFB marker.
+		const std::string g4_3rows_bits =
+			std::string("001") + "1011" + "000101" + "1" + // Row 0: 4W, 8B, 4W
+			"111" +                                        // Row 1: V0, V0, V0
+			"0001" + "1" +                                 // Row 2: Pass + V0 -> 16W
+			"000000000001000000000001";                    // EOFB
+		const auto g4_3rows_bytes = pack_bitstring(g4_3rows_bits);
+
+		PdfDict parms_eob_true;
+		parms_eob_true.set("K", PdfValue(int64_t{-1}));
+		parms_eob_true.set("Columns", PdfValue(int64_t{16}));
+		parms_eob_true.set("Rows", PdfValue(int64_t{1})); // /Rows = 1, but 3 rows precede EOFB
+		parms_eob_true.set("EndOfBlock", PdfValue(true));
+		auto dec_eob_true = decode_ccitt_fax(g4_3rows_bytes, &parms_eob_true);
+		RECTO_ASSERT_OK(dec_eob_true);
+		ASSERT_EQ(dec_eob_true->size(), 6u); // All 3 rows decoded up to EOFB
+
+		PdfDict parms_eob_false = parms_eob_true;
+		parms_eob_false.set("EndOfBlock", PdfValue(false));
+		auto dec_eob_false = decode_ccitt_fax(g4_3rows_bytes, &parms_eob_false);
+		RECTO_ASSERT_OK(dec_eob_false);
+		ASSERT_EQ(dec_eob_false->size(), 2u); // Stops strictly at /Rows = 1 when /EndOfBlock is false
 	}
 }
 
@@ -908,6 +933,217 @@ void append_u32_be(std::vector<uint8_t>& buf, uint32_t v)
 	buf.push_back(static_cast<uint8_t>((v >> 16u) & 0xFFu));
 	buf.push_back(static_cast<uint8_t>((v >> 8u) & 0xFFu));
 	buf.push_back(static_cast<uint8_t>(v & 0xFFu));
+}
+
+// Deterministic QM/MQ arithmetic encoder matching ISO/IEC 14492 Annex E / ITU-T T.800 Annex C.
+struct TestMqQeEntry {
+	uint16_t qe;
+	uint8_t nmps;
+	uint8_t nlps;
+	uint8_t sw;
+};
+
+constexpr TestMqQeEntry kTestMqQeTable[47] = {
+	{0x5601,  1,  1, 1}, {0x3401,  2,  6, 0}, {0x1801,  3,  9, 0}, {0x0AC1,  4, 12, 0},
+	{0x0521,  5, 29, 0}, {0x0221, 38, 33, 0}, {0x5601,  7,  6, 1}, {0x5401,  8, 14, 0},
+	{0x4801,  9, 14, 0}, {0x3801, 10, 14, 0}, {0x3001, 11, 17, 0}, {0x2401, 12, 18, 0},
+	{0x1C01, 13, 20, 0}, {0x1601, 29, 21, 0}, {0x5601, 15, 14, 1}, {0x5401, 16, 14, 0},
+	{0x5101, 17, 15, 0}, {0x4801, 18, 16, 0}, {0x3801, 19, 17, 0}, {0x3401, 20, 18, 0},
+	{0x3001, 21, 19, 0}, {0x2801, 22, 19, 0}, {0x2401, 23, 20, 0}, {0x2201, 24, 21, 0},
+	{0x1C01, 25, 22, 0}, {0x1801, 26, 23, 0}, {0x1601, 27, 24, 0}, {0x1401, 28, 25, 0},
+	{0x1201, 29, 26, 0}, {0x1101, 30, 27, 0}, {0x0AC1, 31, 28, 0}, {0x09C1, 32, 29, 0},
+	{0x08A1, 33, 30, 0}, {0x0521, 34, 31, 0}, {0x0441, 35, 32, 0}, {0x02A1, 36, 33, 0},
+	{0x0221, 37, 34, 0}, {0x0141, 38, 35, 0}, {0x0111, 39, 36, 0}, {0x0085, 40, 37, 0},
+	{0x0049, 41, 38, 0}, {0x0025, 42, 39, 0}, {0x0015, 43, 40, 0}, {0x0009, 44, 41, 0},
+	{0x0005, 45, 42, 0}, {0x0001, 45, 43, 0}, {0x5601, 46, 46, 0},
+};
+
+struct TestMqContext {
+	uint8_t index = 0u;
+	uint8_t mps = 0u;
+};
+
+class TestMqEncoder {
+public:
+	void encode(TestMqContext& cx, uint8_t bit)
+	{
+		const TestMqQeEntry& entry = kTestMqQeTable[cx.index];
+		a_ -= entry.qe;
+		const bool lower_is_mps = (a_ >= entry.qe);
+		const uint8_t lower_bit = lower_is_mps ? cx.mps : static_cast<uint8_t>(1u - cx.mps);
+
+		if (bit == lower_bit) {
+			if ((a_ & 0x8000u) == 0u) {
+				if (a_ < entry.qe) {
+					if (entry.sw != 0u) {
+						cx.mps = static_cast<uint8_t>(1u - cx.mps);
+					}
+					cx.index = entry.nlps;
+				} else {
+					cx.index = entry.nmps;
+				}
+				renorme();
+			}
+		} else {
+			add_to_bitstream(a_, total_shifts_);
+			if (a_ < entry.qe) {
+				cx.index = entry.nmps;
+			} else {
+				if (entry.sw != 0u) {
+					cx.mps = static_cast<uint8_t>(1u - cx.mps);
+				}
+				cx.index = entry.nlps;
+			}
+			a_ = entry.qe;
+			renorme();
+		}
+	}
+
+	// ISO/IEC 14492 Annex A: Arithmetic Integer Encoding (small integers -3..3 or OOB).
+	void encode_arith_int(std::array<TestMqContext, 512>& ctxs, int32_t val, bool is_oob = false)
+	{
+		uint32_t prev = 1u;
+		auto put_bit = [&](uint8_t b) {
+			encode(ctxs[prev & 0x1FFu], b);
+			prev = (prev << 1u) | b;
+			if (prev >= 0x200u) {
+				prev = (prev & 0x1FFu) | 0x100u;
+			}
+		};
+		if (is_oob) {
+			put_bit(1u); // S = 1
+			put_bit(0u); // class 0..3
+			put_bit(0u); // v = 0
+			put_bit(0u);
+			return;
+		}
+		const uint8_t s = (val < 0) ? 1u : 0u;
+		const uint32_t v = static_cast<uint32_t>(val < 0 ? -val : val);
+		put_bit(s);
+		if (v < 4u) {
+			put_bit(0u);
+			put_bit(static_cast<uint8_t>((v >> 1u) & 1u));
+			put_bit(static_cast<uint8_t>(v & 1u));
+		} else {
+			put_bit(1u);
+			put_bit(0u);
+			const uint32_t rem = v - 4u;
+			for (int i = 3; i >= 0; --i) {
+				put_bit(static_cast<uint8_t>((rem >> i) & 1u));
+			}
+		}
+	}
+
+	void encode_iaid(std::vector<TestMqContext>& ctxs, uint32_t code_len, uint32_t sym_id)
+	{
+		uint32_t prev = 1u;
+		for (uint32_t i = 0; i < code_len; ++i) {
+			const uint8_t b = static_cast<uint8_t>((sym_id >> (code_len - 1u - i)) & 1u);
+			encode(ctxs[prev & ((1u << code_len) - 1u)], b);
+			prev = (prev << 1u) | b;
+		}
+	}
+
+	[[nodiscard]] std::vector<uint8_t> finish()
+	{
+		add_to_bitstream(a_ >> 1u, total_shifts_);
+		const size_t min_bits = total_shifts_ + 32u;
+		if (bits_.size() < min_bits) {
+			bits_.resize(min_bits, 0u);
+		}
+		std::vector<uint8_t> out;
+		size_t bit_idx = 0u;
+		bool prev_ff = false;
+		while (bit_idx < min_bits) {
+			const uint32_t nbits = prev_ff ? 7u : 8u;
+			uint8_t u_byte = 0u;
+			for (uint32_t i = 0; i < nbits; ++i) {
+				const uint8_t b = (bit_idx < bits_.size()) ? bits_[bit_idx++] : 0u;
+				u_byte = static_cast<uint8_t>((u_byte << 1u) | (b & 1u));
+			}
+			const uint8_t raw_byte = prev_ff
+				? static_cast<uint8_t>((u_byte ^ 0x7Fu) & 0x7Fu)
+				: static_cast<uint8_t>(u_byte ^ 0xFFu);
+			out.push_back(raw_byte);
+			prev_ff = (raw_byte == 0xFFu);
+		}
+		out.push_back(0xFFu);
+		out.push_back(0xFFu);
+		return out;
+	}
+
+private:
+	void renorme() noexcept
+	{
+		do {
+			a_ <<= 1u;
+			++total_shifts_;
+		} while ((a_ & 0x8000u) == 0u);
+	}
+
+	void add_to_bitstream(uint32_t val, size_t shift)
+	{
+		const size_t lsb_pos = shift + 14u;
+		if (bits_.size() <= lsb_pos) {
+			bits_.resize(lsb_pos + 1u, 0u);
+		}
+		uint32_t carry = 0u;
+		const int max_k = (shift == 0u) ? 14 : 15;
+		for (int k = 0; k <= max_k; ++k) {
+			const size_t pos = lsb_pos - static_cast<size_t>(k);
+			const uint32_t add_bit = (val >> k) & 1u;
+			const uint32_t sum = static_cast<uint32_t>(bits_[pos]) + add_bit + carry;
+			bits_[pos] = static_cast<uint8_t>(sum & 1u);
+			carry = sum >> 1u;
+		}
+		size_t pos = lsb_pos - static_cast<size_t>(max_k);
+		while (carry != 0u && pos > 0u) {
+			--pos;
+			const uint32_t sum = static_cast<uint32_t>(bits_[pos]) + carry;
+			bits_[pos] = static_cast<uint8_t>(sum & 1u);
+			carry = sum >> 1u;
+		}
+	}
+
+	uint32_t a_ = 0x8000u;
+	size_t total_shifts_ = 0u;
+	std::vector<uint8_t> bits_;
+};
+
+// Encodes a template-2 arithmetic Generic Region into `enc`.
+void encode_test_generic_region_t2(
+	TestMqEncoder& enc,
+	std::vector<TestMqContext>& gb_cx,
+	uint32_t w,
+	uint32_t h,
+	int8_t atx0,
+	int8_t aty0,
+	const std::vector<uint8_t>& pixels_row_major)
+{
+	auto get_px = [&](int32_t x, int32_t y) -> uint32_t {
+		if (x < 0 || x >= static_cast<int32_t>(w) || y < 0 || y >= static_cast<int32_t>(h)) {
+			return 0u;
+		}
+		return pixels_row_major[static_cast<size_t>(y) * w + static_cast<size_t>(x)] ? 1u : 0u;
+	};
+	for (uint32_t y = 0; y < h; ++y) {
+		const int32_t iy = static_cast<int32_t>(y);
+		for (uint32_t x = 0; x < w; ++x) {
+			const int32_t ix = static_cast<int32_t>(x);
+			uint32_t ctx = 0u;
+			ctx |= get_px(ix - 1, iy) << 0u;
+			ctx |= get_px(ix - 2, iy) << 1u;
+			ctx |= get_px(ix + atx0, iy + aty0) << 2u;
+			ctx |= get_px(ix + 1, iy - 1) << 3u;
+			ctx |= get_px(ix, iy - 1) << 4u;
+			ctx |= get_px(ix - 1, iy - 1) << 5u;
+			ctx |= get_px(ix - 2, iy - 1) << 6u;
+			ctx |= get_px(ix + 1, iy - 2) << 7u;
+			ctx |= get_px(ix, iy - 2) << 8u;
+			ctx |= get_px(ix - 1, iy - 2) << 9u;
+			enc.encode(gb_cx[ctx], static_cast<uint8_t>(get_px(ix, iy)));
+		}
+	}
 }
 
 void append_jbig2_segment(
@@ -995,10 +1231,6 @@ TEST(PdfFilters, Jbig2Decode)
 	}
 
 	// 2. Immediate Generic Region (38/39) using QM Arithmetic templates 0..3 and TPGDON.
-	// With an all-0xFF arithmetic payload (C = 0 in MqDecoder):
-	// - When TPGDON is false, row 0 triggers state-0 conditional exchange (all 8 pixels = 1 in JBIG2 -> 0x00 in PDF).
-	// - When TPGDON is true, SLTP on row 0 decodes 1 (LTP = 1 -> row 0 stays default white = 0xFF in PDF),
-	//   SLTP on row 1 decodes 1 (LTP = 0 -> row 1 decoded), and SLTP on row 2 decodes 1 (LTP = 1 -> row 2 copies row 1).
 	for (uint8_t tmpl = 0u; tmpl <= 3u; ++tmpl) {
 		for (bool tpgdon : {false, true}) {
 			std::vector<uint8_t> stream;
@@ -1043,105 +1275,210 @@ TEST(PdfFilters, Jbig2Decode)
 		}
 	}
 
-	// 3. Symbol Dictionary (segment 0) in /JBIG2Globals + Text Region (segment 6) +
-	// Pattern Dictionary (segment 16) + Halftone Region (segment 22).
+	// 3. Non-trivial Symbol Dictionary (segment 0) in /JBIG2Globals resolved via IndirectRef +
+	// Text Region (segment 6) with 2 glyph instances and non-zero SBDSOFFSET +
+	// multi-bitplane (GRAYMAX = 3, 2 bitplanes) Pattern Dictionary (segment 16) +
+	// Halftone Region (segment 22) in both MMR and arithmetic modes.
 	{
 		// Build a globals stream containing:
-		// - Segment 0: Symbol Dictionary with 0 new symbols and 0 exported symbols (valid empty dict)
-		// - Segment 1: Pattern Dictionary (seg_type = 16, MMR = 1, 8x2 patterns, GRAYMAX = 1 -> 16x2 collective)
+		// - Segment 0: Symbol Dictionary (template 2, SDNUMEXSYMS = 2, SDNUMNEWSYMS = 2)
+		//   exporting two 4x2 symbols:
+		//   * Symbol 0 (4x2): row 0 = [1, 1, 0, 0], row 1 = [1, 1, 0, 0]
+		//   * Symbol 1 (4x2): row 0 = [0, 0, 1, 1], row 1 = [0, 0, 1, 1]
+		// - Segment 1: Pattern Dictionary (seg_type = 16, MMR = 1, 4x2 patterns, GRAYMAX = 3 -> 16x2 collective):
+		//   * Pattern 0 (cols 0..3):   all 0 (white)
+		//   * Pattern 1 (cols 4..7):   all 0 (white)
+		//   * Pattern 2 (cols 8..11):  all 0 (white)
+		//   * Pattern 3 (cols 12..15): all 1 (black)
 		std::vector<uint8_t> globals_bytes;
 		{
+			TestMqEncoder sd_enc;
+			std::vector<TestMqContext> gb_cx(1024u);
+			std::array<TestMqContext, 512> iadh{};
+			std::array<TestMqContext, 512> iadw{};
+			std::array<TestMqContext, 512> iaex{};
+
+			// Height class 1: delta_h = +2 -> hc_height = 2
+			sd_enc.encode_arith_int(iadh, 2);
+			// Symbol 0: delta_w = +4 -> sym_w = 4
+			sd_enc.encode_arith_int(iadw, 4);
+			const std::vector<uint8_t> sym0_px = {
+				1u, 1u, 0u, 0u,
+				1u, 1u, 0u, 0u,
+			};
+			encode_test_generic_region_t2(sd_enc, gb_cx, 4u, 2u, 2, -1, sym0_px);
+
+			// Symbol 1: delta_w = 0 -> sym_w = 4
+			sd_enc.encode_arith_int(iadw, 0);
+			const std::vector<uint8_t> sym1_px = {
+				0u, 0u, 1u, 1u,
+				0u, 0u, 1u, 1u,
+			};
+			encode_test_generic_region_t2(sd_enc, gb_cx, 4u, 2u, 2, -1, sym1_px);
+
+			// End of height class: IADW = OOB
+			sd_enc.encode_arith_int(iadw, 0, /*is_oob=*/true);
+
+			// IAEX export flags: skip 0 (ex_flag = 0), export 2 (ex_flag = 1)
+			sd_enc.encode_arith_int(iaex, 0);
+			sd_enc.encode_arith_int(iaex, 2);
+
+			const auto sd_arith = sd_enc.finish();
 			std::vector<uint8_t> sd_payload;
-			append_u16_be(sd_payload, 0x0000u); // arithmetic, template 0
-			const int8_t sd_at[8] = {3, -1, -3, -1, 2, -2, -2, -2};
-			sd_payload.insert(
-				sd_payload.end(),
-				reinterpret_cast<const uint8_t*>(sd_at),
-				reinterpret_cast<const uint8_t*>(sd_at) + 8);
-			append_u32_be(sd_payload, 0u); // SDNUMEXSYMS = 0
-			append_u32_be(sd_payload, 0u); // SDNUMNEWSYMS = 0
-			sd_payload.insert(sd_payload.end(), 8u, 0xFFu);
+			append_u16_be(sd_payload, 0x0800u); // SDHUFF=0, SDREFAGG=0, SDTEMPLATE=2 (bits 10..11 = 2)
+			sd_payload.push_back(2u);           // SDATX1 = 2
+			sd_payload.push_back(static_cast<uint8_t>(-1)); // SDATY1 = -1
+			append_u32_be(sd_payload, 2u); // SDNUMEXSYMS = 2
+			append_u32_be(sd_payload, 2u); // SDNUMNEWSYMS = 2
+			sd_payload.insert(sd_payload.end(), sd_arith.begin(), sd_arith.end());
 			append_jbig2_segment(globals_bytes, 0u, 0u, {}, 0u, sd_payload);
 
-			// Pattern dictionary: 2 patterns of 8x2 (collective 16x2):
-			// Pattern 0 (cols 0..7): all white; Pattern 1 (cols 8..15): all black!
-			// In MMR, 8W + 8B on row 0 is H(001) + W8(10011) + B8(000101), row 1 is V0(1) + V0(1), EOFB.
+			// Pattern dictionary: 4 patterns of 4x2 (collective 16x2, GRAYMAX = 3 -> 2 bitplanes!):
+			// Patterns 0..2 (cols 0..11) are white (12W = 001000), Pattern 3 (cols 12..15) is black (4B = 011).
+			// Row 0: H(001) + W12(001000) + B4(011); Row 1: V0(1) + V0(1); EOFB.
 			const auto pat_mmr = pack_bitstring(
-				std::string("001") + "10011" + "000101" +
+				std::string("001") + "001000" + "011" +
 				"11" +
 				"000000000001000000000001");
 			std::vector<uint8_t> pd_payload;
 			pd_payload.push_back(0x01u); // HDMMR = 1
-			pd_payload.push_back(8u);    // HDPW = 8
+			pd_payload.push_back(4u);    // HDPW = 4
 			pd_payload.push_back(2u);    // HDPH = 2
-			append_u32_be(pd_payload, 1u); // GRAYMAX = 1 (2 patterns: 0 and 1)
+			append_u32_be(pd_payload, 3u); // GRAYMAX = 3 (4 patterns -> gs_bpp = 2 bitplanes)
 			pd_payload.insert(pd_payload.end(), pat_mmr.begin(), pat_mmr.end());
 			append_jbig2_segment(globals_bytes, 1u, 16u, {}, 0u, pd_payload);
 		}
 
-		// Page stream:
-		// - Segment 2: Page Information (8x2)
-		// - Segment 3: Immediate Text Region (seg_type = 6, 8x2, 0 instances, refers to segment 0)
-		// - Segment 4: Immediate Halftone Region (seg_type = 22, 8x2, refers to Pattern Dict segment 1,
-		//              1x1 grid selecting pattern 1 = all black!)
-		// - Segment 5: End of Page (49)
+		// Page stream (16x2 bitmap = 4 bytes):
+		// - Segment 2: Page Information (16x2)
+		// - Segment 3: Immediate Text Region (seg_type = 6, 8x2 at x=0, y=0, SBNUMINSTANCES = 2,
+		//              REFCORNER = 1 (TOPLEFT), SBDSOFFSET = +2):
+		//              * Instance 0: Symbol 0 (4x2, [1,1,0,0]) at x = 0 (curs becomes 0 + 4 - 1 = 3)
+		//              * Instance 1: IDS = -1 -> curs = 3 + (-1) + SBDSOFFSET(2) = 4!
+		//                Places Symbol 1 (4x2, [0,0,1,1]) at x = 4!
+		//              Resulting 8x2 text region on cols 0..7: [1, 1, 0, 0, 0, 0, 1, 1] = 0xC3 in JBIG2 -> 0x3C in PDF!
+		// - Segment 4: Immediate Halftone Region (seg_type = 22, 4x2 at x=8, y=0, MMR = 1, 2 bitplanes):
+		//              Selects pattern 3 (Gray-code: bitplane 1 = 1, bitplane 0 = 0, since binary 3 = 11_2 -> Gray = 10_2!)
+		//              Wait: Gray-to-binary is b_1 = g_1, b_0 = b_1 ^ g_0! So to get pattern 3 (b_1 = 1, b_0 = 1),
+		//              Gray code is g_1 = 1, g_0 = 0!
+		// - Segment 5: Immediate Halftone Region (seg_type = 22, 4x2 at x=12, y=0, MMR = 0 arithmetic, 2 bitplanes):
+		//              Also selects pattern 3 (g_1 = 1, g_0 = 0) at x=12..15!
 		std::vector<uint8_t> page_bytes;
-		append_jbig2_segment(page_bytes, 2u, 48u, {}, 1u, make_jbig2_page_info_payload(8u, 2u, 0u));
+		append_jbig2_segment(page_bytes, 2u, 48u, {}, 1u, make_jbig2_page_info_payload(16u, 2u, 0u));
 
+		// Segment 3: Immediate Text Region
 		{
+			TestMqEncoder tr_enc;
+			std::array<TestMqContext, 512> iadt{};
+			std::array<TestMqContext, 512> iafs{};
+			std::array<TestMqContext, 512> iads{};
+			std::vector<TestMqContext> iaid(2u);
+
+			tr_enc.encode_arith_int(iadt, 0); // initial stript = 0
+			tr_enc.encode_arith_int(iadt, 0); // strip dt = 0 -> stript = 0
+			tr_enc.encode_arith_int(iafs, 0); // dfs = 0 -> firsts = 0, curs = 0
+			tr_enc.encode_iaid(iaid, 1u, 0u); // Instance 0: Symbol 0 at x = 0 (curs becomes 3)
+			tr_enc.encode_arith_int(iads, -1); // IDS = -1 -> curs = 3 + (-1) + SBDSOFFSET(2) = 4
+			tr_enc.encode_iaid(iaid, 1u, 1u); // Instance 1: Symbol 1 at x = 4
+			const auto tr_arith = tr_enc.finish();
+
 			std::vector<uint8_t> tr_payload;
-			append_u32_be(tr_payload, 8u);
-			append_u32_be(tr_payload, 2u);
-			append_u32_be(tr_payload, 0u);
-			append_u32_be(tr_payload, 0u);
-			tr_payload.push_back(0u);
-			append_u16_be(tr_payload, 0u);
-			append_u32_be(tr_payload, 0u); // SBNUMINSTANCES = 0
-			tr_payload.insert(tr_payload.end(), 8u, 0xFFu);
+			append_u32_be(tr_payload, 8u); // width = 8
+			append_u32_be(tr_payload, 2u); // height = 2
+			append_u32_be(tr_payload, 0u); // x = 0
+			append_u32_be(tr_payload, 0u); // y = 0
+			tr_payload.push_back(0u);      // OR comb op
+			// sbr_flags: REFCORNER = 1 (bits 4..5 = 1 -> 0x0010), SBDSOFFSET = +2 (bits 10..14 = 2 -> 0x0800)
+			append_u16_be(tr_payload, 0x0810u);
+			append_u32_be(tr_payload, 2u); // SBNUMINSTANCES = 2
+			tr_payload.insert(tr_payload.end(), tr_arith.begin(), tr_arith.end());
 			const uint8_t ref0[1] = {0u};
 			append_jbig2_segment(page_bytes, 3u, 6u, ref0, 1u, tr_payload);
 		}
 
+		// Segment 4: MMR Halftone Region (2 bitplanes: plane 1 = 1 [black], plane 0 = 0 [white] -> Gray 10_2 = binary 3)
 		{
-			// 1x1 grid bitplane selecting pattern 1 (1 black pixel on a 1x1 MMR bitmap:
-			// H(001) + W0(00110101) + B1(010) + EOFB).
-			const auto grid_mmr = pack_bitstring(
-				std::string("001") + "00110101" + "010" +
-				"000000000001000000000001");
+			// Plane 1 (1x1 = 1): H(001) + W0(00110101) + B1(010) + EOFB
+			// Plane 0 (1x1 = 0): V0(1) + EOFB
+			const auto grid_mmr_2planes = pack_bitstring(
+				std::string("001") + "00110101" + "010" + "000000000001000000000001" +
+				"1" + "000000000001000000000001");
 			std::vector<uint8_t> ht_payload;
-			append_u32_be(ht_payload, 8u); // width
-			append_u32_be(ht_payload, 2u); // height
-			append_u32_be(ht_payload, 0u); // x
-			append_u32_be(ht_payload, 0u); // y
+			append_u32_be(ht_payload, 4u); // width = 4
+			append_u32_be(ht_payload, 2u); // height = 2
+			append_u32_be(ht_payload, 8u); // x = 8
+			append_u32_be(ht_payload, 0u); // y = 0
 			ht_payload.push_back(0u);      // OR comb op
 			ht_payload.push_back(0x01u);   // HTMMR = 1
 			append_u32_be(ht_payload, 1u); // HGW = 1
 			append_u32_be(ht_payload, 1u); // HGH = 1
 			append_u32_be(ht_payload, 0u); // HGX = 0
 			append_u32_be(ht_payload, 0u); // HGY = 0
-			append_u16_be(ht_payload, 0x0800u); // HRX
+			append_u16_be(ht_payload, 0x0400u); // HRX
 			append_u16_be(ht_payload, 0u);      // HRY
-			ht_payload.insert(ht_payload.end(), grid_mmr.begin(), grid_mmr.end());
+			ht_payload.insert(ht_payload.end(), grid_mmr_2planes.begin(), grid_mmr_2planes.end());
 			const uint8_t ref1[1] = {1u};
 			append_jbig2_segment(page_bytes, 4u, 22u, ref1, 1u, ht_payload);
 		}
-		append_jbig2_segment(page_bytes, 5u, 49u, {}, 1u, {});
 
-		PdfStream globals_stm;
-		globals_stm.raw_bytes = globals_bytes;
+		// Segment 5: Arithmetic Halftone Region (HTMMR = 0, HTTEMPLATE = 2 -> fixed AT {2, -1} with no AT header bytes)
+		{
+			TestMqEncoder ht_enc;
+			std::vector<TestMqContext> ht_cx(1024u);
+			// Plane 1 (1x1 = 1), Plane 0 (1x1 = 0) -> Gray 10_2 = binary 3 (Pattern 3 = all black)
+			encode_test_generic_region_t2(ht_enc, ht_cx, 1u, 1u, 2, -1, {1u});
+			encode_test_generic_region_t2(ht_enc, ht_cx, 1u, 1u, 2, -1, {0u});
+			const auto ht_arith = ht_enc.finish();
+
+			std::vector<uint8_t> ht_payload;
+			append_u32_be(ht_payload, 4u);  // width = 4
+			append_u32_be(ht_payload, 2u);  // height = 2
+			append_u32_be(ht_payload, 12u); // x = 12
+			append_u32_be(ht_payload, 0u);  // y = 0
+			ht_payload.push_back(0u);       // OR comb op
+			ht_payload.push_back(0x04u);    // HTMMR = 0, HTTEMPLATE = 2 (bits 1..2 = 2)
+			append_u32_be(ht_payload, 1u);  // HGW = 1
+			append_u32_be(ht_payload, 1u);  // HGH = 1
+			append_u32_be(ht_payload, 0u);  // HGX = 0
+			append_u32_be(ht_payload, 0u);  // HGY = 0
+			append_u16_be(ht_payload, 0x0400u); // HRX
+			append_u16_be(ht_payload, 0u);      // HRY
+			ht_payload.insert(ht_payload.end(), ht_arith.begin(), ht_arith.end());
+			const uint8_t ref1[1] = {1u};
+			append_jbig2_segment(page_bytes, 5u, 22u, ref1, 1u, ht_payload);
+		}
+
+		append_jbig2_segment(page_bytes, 6u, 49u, {}, 1u, {});
+
+		// Store /JBIG2Globals as an IndirectRef (42 0 R) and resolve it via IndirectObjectResolver!
 		PdfDict parms;
-		parms.set("JBIG2Globals", PdfValue(std::move(globals_stm)));
+		parms.set("JBIG2Globals", PdfValue(IndirectRef{42u, 0u}));
 
 		PdfDict stm_dict;
 		stm_dict.set("Filter", PdfValue(PdfName("JBIG2Decode")));
 		stm_dict.set("DecodeParms", PdfValue(std::move(parms)));
 
-		auto dec = decode_stream(page_bytes, stm_dict);
+		// Without a resolver, an unresolved IndirectRef in /JBIG2Globals must return DamagedFormat.
+		RECTO_EXPECT_ERR(decode_stream(page_bytes, stm_dict), ErrorCode::DamagedFormat);
+
+		const IndirectObjectResolver resolver = [&](IndirectRef ref) -> PdfResult<PdfValue> {
+			if (ref.obj_num == 42u && ref.gen_num == 0u) {
+				PdfStream globals_stm;
+				globals_stm.raw_bytes = globals_bytes;
+				return PdfValue(std::move(globals_stm));
+			}
+			return make_pdf_error(ErrorCode::DamagedFormat, "Unexpected object reference");
+		};
+
+		auto dec = decode_stream(page_bytes, stm_dict, kMaxDecodedStreamBytes, &resolver);
 		RECTO_ASSERT_OK(dec);
-		ASSERT_EQ(dec->size(), 2u);
-		// Pattern 1 is all-black (JBIG2 1 -> PDF DeviceGray 0x00).
-		EXPECT_EQ((*dec)[0], 0x00u);
+		ASSERT_EQ(dec->size(), 4u); // 16x2 = 2 bytes per row * 2 rows = 4 bytes
+		// Cols 0..7 (Text Region): [1, 1, 0, 0, 0, 0, 1, 1] in JBIG2 -> ~0xC3 = 0x3C in PDF DeviceGray
+		// Cols 8..11 (MMR Halftone Pattern 3) + Cols 12..15 (Arith Halftone Pattern 3): all 1s -> 0x00 in PDF DeviceGray
+		EXPECT_EQ((*dec)[0], 0x3Cu);
 		EXPECT_EQ((*dec)[1], 0x00u);
+		EXPECT_EQ((*dec)[2], 0x3Cu);
+		EXPECT_EQ((*dec)[3], 0x00u);
 	}
 
 	// 4. Reject malformed segment headers, truncated segment lengths, and indeterminate length on Page Info.
@@ -1167,6 +1504,20 @@ TEST(PdfFilters, Jbig2Decode)
 		indet_page_info.push_back(1u);
 		append_u32_be(indet_page_info, 0xFFFFFFFFu);
 		RECTO_EXPECT_ERR(decode_jbig2(indet_page_info), ErrorCode::DamagedFormat);
+
+		// Indeterminate-length Generic Region (seg_type = 38, len = 0xFFFFFFFF) shorter than 18 + AT + 6 trailer bytes -> rejected cleanly without underflow.
+		std::vector<uint8_t> short_indet_gr;
+		append_jbig2_segment(short_indet_gr, 0u, 48u, {}, 1u, make_jbig2_page_info_payload(8u, 2u, 0u));
+		append_u32_be(short_indet_gr, 1u);
+		short_indet_gr.push_back(38u);
+		short_indet_gr.push_back(0u);
+		short_indet_gr.push_back(1u);
+		append_u32_be(short_indet_gr, 0xFFFFFFFFu);
+		short_indet_gr.insert(short_indet_gr.end(), 18u, 0u); // flags=0 (MMR=0, template=0 -> needs 18+8+6=32 bytes, ends with 00 00)
+		short_indet_gr.push_back(0x00u);
+		short_indet_gr.push_back(0x00u);
+		append_u32_be(short_indet_gr, 2u);
+		RECTO_EXPECT_ERR(decode_jbig2(short_indet_gr), ErrorCode::DamagedFormat);
 	}
 }
 
@@ -1285,17 +1636,218 @@ namespace {
 	return out;
 }
 
-// Builds a minimal deterministic 2x2 3-component JP2 container + J2K codestream.
-[[nodiscard]] std::vector<uint8_t> make_minimal_jp2_2x2_rgb(
-	std::span<const uint8_t, 12> rgb_samples,
-	bool enable_mct = false)
+// Encodes a 1x1 EBCOT code-block with a single signed coefficient `val` (at bitplane 0,
+// `mb_total = 9`, `zero_bitplanes = 8 - top_bp`) using ITU-T T.800 Tier-1 MQ arithmetic coding.
+struct EncodedJ2kSubband {
+	uint32_t zero_bitplanes = 0u;
+	uint32_t num_passes = 1u;
+	std::vector<uint8_t> bytes;
+};
+
+[[nodiscard]] EncodedJ2kSubband encode_j2k_1x1_subband(int32_t val, uint32_t mb_total = 9u)
 {
-	// J2K codestream: SOC + SIZ + COD + QCD + SOT + SOD + tile_data + EOC
+	EncodedJ2kSubband res{};
+	std::array<TestMqContext, 19> ctxs{};
+	ctxs[0].index = 4u;
+	ctxs[17].index = 3u;
+	ctxs[18].index = 46u;
+	TestMqEncoder enc;
+
+	if (val == 0) {
+		res.zero_bitplanes = mb_total - 1u;
+		res.num_passes = 1u;
+		enc.encode(ctxs[0], 0u); // CUP: insignificant
+		res.bytes = enc.finish();
+		return res;
+	}
+
+	const uint8_t sgn = (val < 0) ? 1u : 0u;
+	const uint32_t mag = static_cast<uint32_t>(val < 0 ? -val : val);
+	const uint32_t top_bp = static_cast<uint32_t>(std::bit_width(mag) - 1u);
+	res.zero_bitplanes = (mb_total - 1u) - top_bp;
+	res.num_passes = 1u + 3u * top_bp;
+
+	// First pass: Cleanup pass on `top_bp` -> becomes significant (ZC ctx 0 = 1), then sign (SC ctx 9, xor 0 = sgn).
+	enc.encode(ctxs[0], 1u);
+	enc.encode(ctxs[9], sgn);
+
+	// Remaining bitplanes `bp = top_bp - 1` down to `0`: SPP (empty), MRP (ctx 14 first time, then ctx 16), CUP (empty).
+	bool first_mr = true;
+	for (int32_t bp = static_cast<int32_t>(top_bp) - 1; bp >= 0; --bp) {
+		const uint8_t bit = static_cast<uint8_t>((mag >> bp) & 1u);
+		enc.encode(ctxs[first_mr ? 14u : 16u], bit);
+		first_mr = false;
+	}
+	res.bytes = enc.finish();
+	return res;
+}
+
+class TestBitWriter {
+public:
+	void write_bit(uint32_t b)
+	{
+		cur_ = static_cast<uint8_t>((cur_ << 1u) | (b & 1u));
+		++count_;
+		const uint32_t limit = prev_ff_ ? 7u : 8u;
+		if (count_ == limit) {
+			bytes_.push_back(cur_);
+			prev_ff_ = (cur_ == 0xFFu);
+			cur_ = 0u;
+			count_ = 0u;
+		}
+	}
+
+	void write_bits(uint32_t val, uint32_t n)
+	{
+		for (int i = static_cast<int>(n) - 1; i >= 0; --i) {
+			write_bit((val >> i) & 1u);
+		}
+	}
+
+	void encode_num_passes(uint32_t n)
+	{
+		if (n == 1u) {
+			write_bit(0u);
+		} else if (n == 2u) {
+			write_bits(0b10u, 2u);
+		} else if (n <= 5u) {
+			write_bits(0b11u, 2u);
+			write_bits(n - 3u, 2u);
+		} else if (n <= 36u) {
+			write_bits(0b1111u, 4u);
+			write_bits(n - 6u, 5u);
+		} else {
+			write_bits(0b111111111u, 9u);
+			write_bits(n - 37u, 7u);
+		}
+	}
+
+	void flush_aligned()
+	{
+		if (count_ > 0u) {
+			const uint32_t limit = prev_ff_ ? 7u : 8u;
+			cur_ = static_cast<uint8_t>(cur_ << (limit - count_));
+			bytes_.push_back(cur_);
+			prev_ff_ = (cur_ == 0xFFu);
+			cur_ = 0u;
+			count_ = 0u;
+		}
+		if (prev_ff_) {
+			bytes_.push_back(0x00u);
+			prev_ff_ = false;
+		}
+	}
+
+	[[nodiscard]] const std::vector<uint8_t>& bytes() const noexcept
+	{
+		return bytes_;
+	}
+
+private:
+	std::vector<uint8_t> bytes_;
+	uint8_t cur_ = 0u;
+	uint32_t count_ = 0u;
+	bool prev_ff_ = false;
+};
+
+[[nodiscard]] std::vector<uint8_t> build_j2k_packet_for_subbands(
+	std::span<const EncodedJ2kSubband> sbs)
+{
+	TestBitWriter bw;
+	bw.write_bit(1u); // Non-empty packet
+	for (const auto& sb : sbs) {
+		bw.write_bit(1u); // Inclusion tag-tree (1x1): included in layer 0
+		for (uint32_t z = 0; z < sb.zero_bitplanes; ++z) {
+			bw.write_bit(0u);
+		}
+		bw.write_bit(1u); // Terminate zero-bitplane tag-tree
+		bw.encode_num_passes(sb.num_passes);
+		// Increase Lblock from 3 to 8 (five '1' bits + '0') so length fits comfortably.
+		for (int i = 0; i < 5; ++i) {
+			bw.write_bit(1u);
+		}
+		bw.write_bit(0u);
+		const uint32_t pass_log2 =
+			(sb.num_passes <= 1u) ? 0u : static_cast<uint32_t>(std::bit_width(sb.num_passes) - 1u);
+		const uint32_t len_bits = 8u + pass_log2;
+		bw.write_bits(static_cast<uint32_t>(sb.bytes.size()), len_bits);
+	}
+	bw.flush_aligned();
+	std::vector<uint8_t> pkt = bw.bytes();
+	for (const auto& sb : sbs) {
+		pkt.insert(pkt.end(), sb.bytes.begin(), sb.bytes.end());
+	}
+	return pkt;
+}
+
+// Forward 1D 5-3 reversible DWT for a 2-sample signal:
+// d[0] = x[1] - x[0], s[0] = x[0] + floor(d[0] / 2).
+void fdwt_53_2x2(const std::array<int32_t, 4>& img, int32_t& ll, int32_t& hl, int32_t& lh, int32_t& hh)
+{
+	// Horizontal analysis on row 0 and row 1
+	const int32_t d0 = img[1] - img[0];
+	const int32_t s0 = img[0] + (d0 >> 1);
+	const int32_t d1 = img[3] - img[2];
+	const int32_t s1 = img[2] + (d1 >> 1);
+	// Vertical analysis on col 0 (s0, s1) and col 1 (d0, d1)
+	lh = s1 - s0;
+	ll = s0 + (lh >> 1);
+	hh = d1 - d0;
+	hl = d0 + (hh >> 1);
+}
+
+// Builds a genuine ITU-T T.800 2x2 3-component JP2 container + J2K codestream
+// using 1-level 5-3 reversible DWT (`num_decomp_levels = 1`), RCT (`enable_mct`),
+// Tier-2 packet headers with tag-trees, and Tier-1 EBCOT MQ-coded code-blocks.
+[[nodiscard]] std::vector<uint8_t> make_genuine_jp2_2x2_rgb(
+	std::span<const uint8_t, 12> rgb_samples,
+	bool enable_mct = true)
+{
+	std::array<std::array<int32_t, 4>, 3> comp{};
+	for (size_t p = 0; p < 4; ++p) {
+		const int32_t r = static_cast<int32_t>(rgb_samples[p * 3 + 0]) - 128;
+		const int32_t g = static_cast<int32_t>(rgb_samples[p * 3 + 1]) - 128;
+		const int32_t b = static_cast<int32_t>(rgb_samples[p * 3 + 2]) - 128;
+		if (enable_mct) {
+			// Forward RCT (ITU-T T.800 Annex G.2)
+			comp[0][p] = (r + 2 * g + b) >> 2;
+			comp[1][p] = b - g;
+			comp[2][p] = r - g;
+		} else {
+			comp[0][p] = r;
+			comp[1][p] = g;
+			comp[2][p] = b;
+		}
+	}
+
+	std::vector<uint8_t> tile_packets;
+	// LRCP progression: 1 layer, resolutions r = 0..1, components c = 0..2
+	std::array<int32_t, 3> ll{}, hl{}, lh{}, hh{};
+	for (int c = 0; c < 3; ++c) {
+		fdwt_53_2x2(comp[c], ll[c], hl[c], lh[c], hh[c]);
+	}
+	// Resolution 0 packets (LL1 for each component)
+	for (int c = 0; c < 3; ++c) {
+		const EncodedJ2kSubband sb_ll = encode_j2k_1x1_subband(ll[c], 9u);
+		const auto pkt = build_j2k_packet_for_subbands(std::span<const EncodedJ2kSubband>(&sb_ll, 1u));
+		tile_packets.insert(tile_packets.end(), pkt.begin(), pkt.end());
+	}
+	// Resolution 1 packets (HL1, LH1, HH1 for each component)
+	for (int c = 0; c < 3; ++c) {
+		const std::array<EncodedJ2kSubband, 3> sbs = {
+			encode_j2k_1x1_subband(hl[c], 9u),
+			encode_j2k_1x1_subband(lh[c], 9u),
+			encode_j2k_1x1_subband(hh[c], 9u),
+		};
+		const auto pkt = build_j2k_packet_for_subbands(sbs);
+		tile_packets.insert(tile_packets.end(), pkt.begin(), pkt.end());
+	}
+
 	std::vector<uint8_t> cs;
 	cs.push_back(0xFFu);
 	cs.push_back(0x4Fu); // SOC
 
-	// SIZ (0xFF51): Lsiz = 38 + 3*3 = 47
+	// SIZ (0xFF51): Lsiz = 47
 	cs.push_back(0xFFu);
 	cs.push_back(0x51u);
 	append_u16_be(cs, 47u);
@@ -1315,7 +1867,7 @@ namespace {
 		cs.push_back(1u); // YRsiz = 1
 	}
 
-	// COD (0xFF52): Lcod = 12
+	// COD (0xFF52): Lcod = 12, 1 decomposition level, 5-3 reversible DWT
 	cs.push_back(0xFFu);
 	cs.push_back(0x52u);
 	append_u16_be(cs, 12u);
@@ -1323,32 +1875,33 @@ namespace {
 	cs.push_back(0u); // SGcod progression = LRCP
 	append_u16_be(cs, 1u); // 1 layer
 	cs.push_back(enable_mct ? 1u : 0u); // MCT flag
-	cs.push_back(0u); // 0 decomposition levels
-	cs.push_back(4u); // code-block width exp
-	cs.push_back(4u); // code-block height exp
+	cs.push_back(1u); // 1 DWT decomposition level
+	cs.push_back(4u); // code-block width exp (64)
+	cs.push_back(4u); // code-block height exp (64)
 	cs.push_back(0u); // code-block style
 	cs.push_back(1u); // 5-3 reversible wavelet
 
-	// QCD (0xFF5C): Lqcd = 4
+	// QCD (0xFF5C): Lqcd = 3 + 4 = 7 (guard_bits = 2, eps = 8 -> mb_total = 8 + 2 - 1 = 9 for all 4 subbands)
 	cs.push_back(0xFFu);
 	cs.push_back(0x5Cu);
-	append_u16_be(cs, 4u);
-	cs.push_back(0u);
-	cs.push_back(0x40u);
+	append_u16_be(cs, 7u);
+	cs.push_back(0x40u); // Sqcd: guard_bits = 2, qstyle = 0
+	for (int sb = 0; sb < 4; ++sb) {
+		cs.push_back(static_cast<uint8_t>(8u << 3u)); // eps = 8
+	}
 
-	// SOT (0xFF90): Lsot = 10, Isot = 0, Psot = 14 + 12 = 26, TPsot = 0, TNsot = 1
+	// SOT (0xFF90) + SOD (0xFF93) + tile_packets + EOC (0xFFD9)
 	cs.push_back(0xFFu);
 	cs.push_back(0x90u);
 	append_u16_be(cs, 10u);
 	append_u16_be(cs, 0u);
-	append_u32_be(cs, 14u + static_cast<uint32_t>(rgb_samples.size()));
+	append_u32_be(cs, 14u + static_cast<uint32_t>(tile_packets.size()));
 	cs.push_back(0u);
 	cs.push_back(1u);
 
-	// SOD (0xFF93) + 12 sample bytes + EOC (0xFFD9)
 	cs.push_back(0xFFu);
 	cs.push_back(0x93u);
-	cs.insert(cs.end(), rgb_samples.begin(), rgb_samples.end());
+	cs.insert(cs.end(), tile_packets.begin(), tile_packets.end());
 	cs.push_back(0xFFu);
 	cs.push_back(0xD9u);
 
@@ -1358,8 +1911,6 @@ namespace {
 		0x6Au, 0x50u, 0x20u, 0x20u,
 		0x0Du, 0x0Au, 0x87u, 0x0Au,
 	};
-
-	// 'jp2h' superbox (8 + 22 = 30 bytes) containing 'ihdr' (22 bytes)
 	append_u32_be(jp2, 30u);
 	append_u32_be(jp2, 0x6A703268u); // 'jp2h'
 	append_u32_be(jp2, 22u);
@@ -1372,7 +1923,6 @@ namespace {
 	jp2.push_back(0u);               // UnkC
 	jp2.push_back(0u);               // IPR
 
-	// 'jp2c' codestream box
 	append_u32_be(jp2, static_cast<uint32_t>(8u + cs.size()));
 	append_u32_be(jp2, 0x6A703263u); // 'jp2c'
 	jp2.insert(jp2.end(), cs.begin(), cs.end());
@@ -1465,7 +2015,8 @@ TEST(PdfFilters, DctRgbAndCmyk)
 		EXPECT_EQ((*magenta_rgba)[3], 255u); // A
 	}
 
-	// 3. Decode JPXDecode (JP2 box container and raw J2K codestream).
+	// 3. Decode genuine ITU-T T.800 JPXDecode (JP2 box container and raw J2K codestream
+	// with 1-level 5-3 reversible DWT, RCT, Tier-2 tag-tree packet headers, and Tier-1 EBCOT MQ coding).
 	{
 		const std::array<uint8_t, 12> expected_rgb = {
 			10, 20, 30,
@@ -1473,17 +2024,26 @@ TEST(PdfFilters, DctRgbAndCmyk)
 			70, 80, 90,
 			100, 150, 200,
 		};
-		const auto jp2_bytes = make_minimal_jp2_2x2_rgb(expected_rgb, /*enable_mct=*/false);
-		auto dec_jp2 = decode_jpx(jp2_bytes);
-		RECTO_ASSERT_OK(dec_jp2);
-		EXPECT_EQ(*dec_jp2, std::vector<uint8_t>(expected_rgb.begin(), expected_rgb.end()));
+		for (bool mct : {false, true}) {
+			const auto jp2_bytes = make_genuine_jp2_2x2_rgb(expected_rgb, mct);
+			auto dec_img = decode_jpx_image(jp2_bytes);
+			RECTO_ASSERT_OK(dec_img);
+			EXPECT_EQ(dec_img->width, 2u);
+			EXPECT_EQ(dec_img->height, 2u);
+			EXPECT_EQ(dec_img->components, 3u);
+			EXPECT_EQ(dec_img->pixels, std::vector<uint8_t>(expected_rgb.begin(), expected_rgb.end()));
 
-		// Also test through decode_stream(/Filter /JPXDecode).
-		PdfDict jpx_dict;
-		jpx_dict.set("Filter", PdfValue(PdfName("JPXDecode")));
-		auto dec_stm = decode_stream(jp2_bytes, jpx_dict);
-		RECTO_ASSERT_OK(dec_stm);
-		EXPECT_EQ(*dec_stm, std::vector<uint8_t>(expected_rgb.begin(), expected_rgb.end()));
+			auto dec_jp2 = decode_jpx(jp2_bytes);
+			RECTO_ASSERT_OK(dec_jp2);
+			EXPECT_EQ(*dec_jp2, std::vector<uint8_t>(expected_rgb.begin(), expected_rgb.end()));
+
+			// Also test through decode_stream(/Filter /JPXDecode).
+			PdfDict jpx_dict;
+			jpx_dict.set("Filter", PdfValue(PdfName("JPXDecode")));
+			auto dec_stm = decode_stream(jp2_bytes, jpx_dict);
+			RECTO_ASSERT_OK(dec_stm);
+			EXPECT_EQ(*dec_stm, std::vector<uint8_t>(expected_rgb.begin(), expected_rgb.end()));
+		}
 	}
 
 	// 4. Oversized image header rejection (width * height * 4 > 256 MB):

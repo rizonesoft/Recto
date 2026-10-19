@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -19,6 +20,11 @@ namespace recto::pdf {
 
 inline constexpr size_t kMaxDecodedStreamBytes = 256ULL * 1024ULL * 1024ULL;
 inline constexpr size_t kMaxFilterChainDepth = 8;
+
+// Optional callback used by stream filters (such as `JBIG2Decode` when
+// `/JBIG2Globals` is an indirect reference `N G R`) to resolve an indirect
+// object from the owning `XrefTable` / `Document`.
+using IndirectObjectResolver = std::function<PdfResult<PdfValue>(IndirectRef)>;
 
 struct PredictorParams {
 	int32_t predictor{1};
@@ -98,12 +104,14 @@ struct CcittFaxParams {
 
 // Decodes a `JBIG2Decode` monochrome bi-level stream (ISO/IEC 14492, ISO
 // 32000-1 section 7.4.7) with optional `/JBIG2Globals` stream in `decode_parms`
-// or explicit `globals_bytes`, returning packed 1-bit-per-pixel rows (`0` =
+// (either a direct `PdfStream` or an `IndirectRef` resolved via `resolver`) or
+// explicit `globals_bytes`, returning packed 1-bit-per-pixel rows (`0` =
 // black, `1` = white per PDF DeviceGray convention).
 [[nodiscard]] PdfResult<std::vector<uint8_t>> decode_jbig2(
 	std::span<const uint8_t> input,
 	const PdfDict* decode_parms = nullptr,
-	size_t max_decoded_bytes = kMaxDecodedStreamBytes) noexcept;
+	size_t max_decoded_bytes = kMaxDecodedStreamBytes,
+	const IndirectObjectResolver* resolver = nullptr) noexcept;
 
 [[nodiscard]] PdfResult<std::vector<uint8_t>> decode_jbig2(
 	std::span<const uint8_t> input,
@@ -119,6 +127,8 @@ struct WicDecodedImage {
 	std::vector<uint8_t> rgba_pixels;
 	std::vector<uint8_t> bgra_pixels;
 };
+
+using DecodedImage = WicDecodedImage;
 
 // Returns the address of the calling thread's thread-local `IWICImagingFactory`
 // COM instance (initializing MTA COM + WIC on first call per thread).
@@ -138,8 +148,13 @@ struct WicDecodedImage {
 	size_t max_decoded_bytes = kMaxDecodedStreamBytes) noexcept;
 
 // Decodes a `JPXDecode` (JPEG 2000) stream via the calling thread's
-// thread-local `IWICImagingFactory` (with native ISO/IEC 15444-1 JP2/J2K
-// codestream fallback when no WIC JP2 codec is registered on the host).
+// thread-local `IWICImagingFactory` or the native ISO/IEC 15444-1 (ITU-T T.800)
+// Tier-1/Tier-2 EBCOT + 5/3 & 9/7 DWT JPEG 2000 codestream decoder.
+[[nodiscard]] PdfResult<WicDecodedImage> decode_jpx_image(
+	std::span<const uint8_t> input,
+	const PdfDict* decode_parms = nullptr,
+	size_t max_decoded_bytes = kMaxDecodedStreamBytes) noexcept;
+
 [[nodiscard]] PdfResult<std::vector<uint8_t>> decode_jpx(
 	std::span<const uint8_t> input,
 	const PdfDict* decode_parms = nullptr,
@@ -151,7 +166,8 @@ struct WicDecodedImage {
 	std::string_view filter_name,
 	std::span<const uint8_t> input,
 	const PdfDict* decode_parms = nullptr,
-	size_t max_decoded_bytes = kMaxDecodedStreamBytes) noexcept;
+	size_t max_decoded_bytes = kMaxDecodedStreamBytes,
+	const IndirectObjectResolver* resolver = nullptr) noexcept;
 
 // Executes a single or chained `/Filter` pipeline (up to `kMaxFilterChainDepth`
 // = 8 stages) using matching `/DecodeParms` (or `/DP`) entries from
@@ -161,11 +177,13 @@ struct WicDecodedImage {
 [[nodiscard]] PdfResult<std::vector<uint8_t>> decode_stream(
 	std::span<const uint8_t> raw_bytes,
 	const PdfDict& stream_dict,
-	size_t max_decoded_bytes = kMaxDecodedStreamBytes) noexcept;
+	size_t max_decoded_bytes = kMaxDecodedStreamBytes,
+	const IndirectObjectResolver* resolver = nullptr) noexcept;
 
 [[nodiscard]] PdfResult<std::vector<uint8_t>> decode_stream(
 	const PdfStream& stream,
-	size_t max_decoded_bytes = kMaxDecodedStreamBytes) noexcept;
+	size_t max_decoded_bytes = kMaxDecodedStreamBytes,
+	const IndirectObjectResolver* resolver = nullptr) noexcept;
 
 // Executes a single or chained `/FFilter` pipeline (up to `kMaxFilterChainDepth`
 // = 8 stages) using matching `/FDecodeParms` entries from `stream_dict` on
@@ -173,6 +191,7 @@ struct WicDecodedImage {
 [[nodiscard]] PdfResult<std::vector<uint8_t>> decode_external_stream(
 	std::span<const uint8_t> external_bytes,
 	const PdfDict& stream_dict,
-	size_t max_decoded_bytes = kMaxDecodedStreamBytes) noexcept;
+	size_t max_decoded_bytes = kMaxDecodedStreamBytes,
+	const IndirectObjectResolver* resolver = nullptr) noexcept;
 
 } // namespace recto::pdf
