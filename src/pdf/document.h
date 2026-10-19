@@ -365,7 +365,7 @@ private:
 	struct ResolvedPageRecord {
 		PageDescription description{};
 		PdfDict page_dict{};
-		PdfDict resources{};
+		std::shared_ptr<const PdfDict> resources{nullptr};
 		std::vector<PageLink> links{};
 		std::optional<std::vector<uint8_t>> cached_contents{std::nullopt};
 	};

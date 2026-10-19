@@ -348,6 +348,85 @@ TEST(PdfDocument, PageTreeAndRotatedPages)
 		ASSERT_FALSE(deep_res.has_value());
 		EXPECT_EQ(deep_res.error().code, ErrorCode::RecursionLimitExceeded);
 	}
+
+	// 5. Repeated `/Kids` references (`4,096` repeated `3 0 R` entries and
+	//    `4,096` indirect aliases `20 0 R .. 4115 0 R` -> `3 0 R`) with a 64 KiB
+	//    inherited `/Resources` payload reject on the second child without
+	//    duplicating `current_attrs.resources` across queued siblings:
+	{
+		auto get_working_set_bytes = []() -> size_t {
+			PROCESS_MEMORY_COUNTERS pmc{};
+			pmc.cb = sizeof(pmc);
+			if (::GetProcessMemoryInfo(::GetCurrentProcess(), &pmc, sizeof(pmc)) != FALSE) {
+				return static_cast<size_t>(pmc.WorkingSetSize);
+			}
+			return 0u;
+		};
+
+		const std::string payload_64k(65536u, 'R');
+		std::string repeated_kids = "[";
+		for (uint32_t i = 0; i < 4096u; ++i) {
+			repeated_kids += "3 0 R ";
+		}
+		repeated_kids += "]";
+
+		const auto repeated_bytes = build_synthetic_pdf_from_objects(
+			"1.7",
+			{
+				{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+				{2,
+				 "<< /Type /Pages /Count 4096 /MediaBox [0 0 612 792] "
+				 "/Resources << /Payload (" + payload_64k + ") >> "
+				 "/Kids " + repeated_kids + " >>"},
+				{3, "<< /Type /Page /Parent 2 0 R >>"},
+			});
+
+		const size_t ws_before = get_working_set_bytes();
+		auto repeated_res = Document::open_memory(repeated_bytes);
+		const size_t ws_after = get_working_set_bytes();
+		const size_t ws_delta = (ws_after > ws_before) ? (ws_after - ws_before) : 0u;
+
+		ASSERT_FALSE(repeated_res.has_value());
+		EXPECT_EQ(repeated_res.error().code, ErrorCode::DamagedFormat);
+		EXPECT_EQ(repeated_res.error().object_num, std::optional<uint32_t>(3u));
+		EXPECT_LT(ws_delta, 32u * 1024u * 1024u)
+			<< "Page-tree sibling expansion caused excessive working-set growth: "
+			<< ws_delta << " bytes";
+
+		// Also verify indirect aliases (`20 0 R -> 3 0 R`, `21 0 R -> 3 0 R`, ...)
+		// reject on the second alias (`21 0 R -> 3 0 R`) without expanding the
+		// remaining 4,094 siblings:
+		std::string aliased_kids = "[";
+		for (uint32_t id = 20u; id < 20u + 4096u; ++id) {
+			aliased_kids += std::to_string(id) + " 0 R ";
+		}
+		aliased_kids += "]";
+
+		std::vector<std::pair<uint32_t, std::string>> alias_objs = {
+			{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+			{2,
+			 "<< /Type /Pages /Count 4096 /MediaBox [0 0 612 792] "
+			 "/Resources << /Payload (" + payload_64k + ") >> "
+			 "/Kids " + aliased_kids + " >>"},
+			{3, "<< /Type /Page /Parent 2 0 R >>"},
+		};
+		for (uint32_t id = 20u; id < 20u + 4096u; ++id) {
+			alias_objs.emplace_back(id, "3 0 R");
+		}
+		const auto alias_bytes = build_synthetic_pdf_from_objects("1.7", alias_objs);
+		const size_t ws_alias_before = get_working_set_bytes();
+		auto alias_res = Document::open_memory(alias_bytes);
+		const size_t ws_alias_after = get_working_set_bytes();
+		const size_t ws_alias_delta =
+			(ws_alias_after > ws_alias_before) ? (ws_alias_after - ws_alias_before) : 0u;
+
+		ASSERT_FALSE(alias_res.has_value());
+		EXPECT_EQ(alias_res.error().code, ErrorCode::DamagedFormat);
+		EXPECT_EQ(alias_res.error().object_num, std::optional<uint32_t>(3u));
+		EXPECT_LT(ws_alias_delta, 32u * 1024u * 1024u)
+			<< "Aliased page-tree sibling expansion caused excessive working-set growth: "
+			<< ws_alias_delta << " bytes";
+	}
 }
 
 TEST(PdfDocument, PageContents)
