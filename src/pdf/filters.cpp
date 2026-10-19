@@ -7382,16 +7382,21 @@ void idwt_97_2d_float(
 			DiagnosticId::DamagedStream,
 			"Invalid tile grid geometry in J2K SIZ marker segment");
 	}
-	const uint32_t num_tiles_x = (xsiz - xtosiz + xtsiz - 1u) / xtsiz;
-	const uint32_t num_tiles_y = (ysiz - ytosiz + ytsiz - 1u) / ytsiz;
-	if (num_tiles_x == 0u || num_tiles_y == 0u ||
-		static_cast<uint64_t>(num_tiles_x) * num_tiles_y > 4096ULL) {
+	const uint64_t num_tiles_x64 =
+		(static_cast<uint64_t>(xsiz - xtosiz) + static_cast<uint64_t>(xtsiz) - 1ULL) / static_cast<uint64_t>(xtsiz);
+	const uint64_t num_tiles_y64 =
+		(static_cast<uint64_t>(ysiz - ytosiz) + static_cast<uint64_t>(ytsiz) - 1ULL) / static_cast<uint64_t>(ytsiz);
+	if (num_tiles_x64 == 0ULL || num_tiles_y64 == 0ULL ||
+		num_tiles_x64 > 4096ULL || num_tiles_y64 > 4096ULL ||
+		num_tiles_x64 * num_tiles_y64 > 4096ULL) {
 		return make_filter_error(
 			ErrorCode::DecompressionLimitExceeded,
 			DiagnosticId::DecompressionLimitExceeded,
 			"JPXDecode tile grid count exceeds ceiling");
 	}
-	const uint32_t total_tiles = num_tiles_x * num_tiles_y;
+	const uint32_t num_tiles_x = static_cast<uint32_t>(num_tiles_x64);
+	const uint32_t num_tiles_y = static_cast<uint32_t>(num_tiles_y64);
+	const uint32_t total_tiles = static_cast<uint32_t>(num_tiles_x64 * num_tiles_y64);
 	const uint32_t img_w = hdr.width;
 	const uint32_t img_h = hdr.height;
 	const uint32_t num_comps = hdr.components;
@@ -7886,22 +7891,6 @@ void idwt_97_2d_float(
 		for (uint32_t tx = 0; tx < num_tiles_x; ++tx) {
 			const uint32_t tile_idx = ty * num_tiles_x + tx;
 			const auto& parts = tile_part_spans[tile_idx];
-			const uint32_t tx0 = std::max(xtosiz + tx * xtsiz, xosiz);
-			const uint32_t ty0 = std::max(ytosiz + ty * ytsiz, yosiz);
-			const uint32_t tx1 = std::min(xtosiz + (tx + 1u) * xtsiz, xsiz);
-			const uint32_t ty1 = std::min(ytosiz + (ty + 1u) * ytsiz, ysiz);
-			if (tx1 <= tx0 || ty1 <= ty0) {
-				continue;
-			}
-			if (parts.empty()) {
-				return make_filter_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedStream,
-					"Missing tile-part data for non-empty tile in JPXDecode codestream");
-			}
-			const uint32_t tile_w = tx1 - tx0;
-			const uint32_t tile_h = ty1 - ty0;
-
 			const J2kCodParams* active_cod = &main_cod;
 			const J2kQcdParams* active_qcd = &main_qcd;
 			J2kQcdParams derived_qcd{};
@@ -7947,6 +7936,26 @@ void idwt_97_2d_float(
 			}
 			const uint32_t nom_cb_w = 1u << cb_exp_w;
 			const uint32_t nom_cb_h = 1u << cb_exp_h;
+
+			const uint64_t raw_tx0 = static_cast<uint64_t>(xtosiz) + static_cast<uint64_t>(tx) * static_cast<uint64_t>(xtsiz);
+			const uint64_t raw_ty0 = static_cast<uint64_t>(ytosiz) + static_cast<uint64_t>(ty) * static_cast<uint64_t>(ytsiz);
+			const uint64_t raw_tx1 = static_cast<uint64_t>(xtosiz) + static_cast<uint64_t>(tx + 1u) * static_cast<uint64_t>(xtsiz);
+			const uint64_t raw_ty1 = static_cast<uint64_t>(ytosiz) + static_cast<uint64_t>(ty + 1u) * static_cast<uint64_t>(ytsiz);
+			const uint32_t tx0 = static_cast<uint32_t>(std::max<uint64_t>(raw_tx0, xosiz));
+			const uint32_t ty0 = static_cast<uint32_t>(std::max<uint64_t>(raw_ty0, yosiz));
+			const uint32_t tx1 = static_cast<uint32_t>(std::min<uint64_t>(raw_tx1, xsiz));
+			const uint32_t ty1 = static_cast<uint32_t>(std::min<uint64_t>(raw_ty1, ysiz));
+			if (tx1 <= tx0 || ty1 <= ty0) {
+				continue;
+			}
+			if (parts.empty()) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Missing tile-part data for non-empty tile in JPXDecode codestream");
+			}
+			const uint32_t tile_w = tx1 - tx0;
+			const uint32_t tile_h = ty1 - ty0;
 
 			std::vector<uint8_t> concat_tile_stream;
 			std::span<const uint8_t> tile_bitstream{};
@@ -8116,11 +8125,15 @@ void idwt_97_2d_float(
 						if (sb.num_cb_x > 0u && sb.num_cb_y > 0u) {
 							sb.cbs.resize(static_cast<size_t>(num_cbs));
 							for (uint32_t cy = 0; cy < sb.num_cb_y; ++cy) {
-								const uint32_t gy0 = std::max((cb_gy0 + cy) * eff_cb_h, tby0);
-								const uint32_t gy1 = std::min((cb_gy0 + cy + 1u) * eff_cb_h, tby1);
+								const uint32_t gy0 = static_cast<uint32_t>(std::max<uint64_t>(
+									static_cast<uint64_t>(cb_gy0 + cy) * eff_cb_h, tby0));
+								const uint32_t gy1 = static_cast<uint32_t>(std::min<uint64_t>(
+									static_cast<uint64_t>(cb_gy0 + cy + 1u) * eff_cb_h, tby1));
 								for (uint32_t cx = 0; cx < sb.num_cb_x; ++cx) {
-									const uint32_t gx0 = std::max((cb_gx0 + cx) * eff_cb_w, tbx0);
-									const uint32_t gx1 = std::min((cb_gx0 + cx + 1u) * eff_cb_w, tbx1);
+									const uint32_t gx0 = static_cast<uint32_t>(std::max<uint64_t>(
+										static_cast<uint64_t>(cb_gx0 + cx) * eff_cb_w, tbx0));
+									const uint32_t gx1 = static_cast<uint32_t>(std::min<uint64_t>(
+										static_cast<uint64_t>(cb_gx0 + cx + 1u) * eff_cb_w, tbx1));
 									auto& cb = sb.cbs[static_cast<size_t>(cy) * sb.num_cb_x + cx];
 									cb.x0 = gx0 - tbx0;
 									cb.y0 = gy0 - tby0;
@@ -8129,16 +8142,16 @@ void idwt_97_2d_float(
 								}
 							}
 							for (uint32_t py = 0; py < rb.num_prec_y; ++py) {
-								const uint32_t pgy0 = (rb.prec_y0 + py) * cbs_per_prec_y;
-								const uint32_t pgy1 = (rb.prec_y0 + py + 1u) * cbs_per_prec_y;
+								const uint64_t pgy0 = static_cast<uint64_t>(rb.prec_y0 + py) * cbs_per_prec_y;
+								const uint64_t pgy1 = static_cast<uint64_t>(rb.prec_y0 + py + 1u) * cbs_per_prec_y;
 								for (uint32_t px = 0; px < rb.num_prec_x; ++px) {
-									const uint32_t pgx0 = (rb.prec_x0 + px) * cbs_per_prec_x;
-									const uint32_t pgx1 = (rb.prec_x0 + px + 1u) * cbs_per_prec_x;
+									const uint64_t pgx0 = static_cast<uint64_t>(rb.prec_x0 + px) * cbs_per_prec_x;
+									const uint64_t pgx1 = static_cast<uint64_t>(rb.prec_x0 + px + 1u) * cbs_per_prec_x;
 									auto& ps = sb.precincts[static_cast<size_t>(py) * rb.num_prec_x + px];
-									ps.cb_x0 = (pgx0 > cb_gx0) ? std::min(pgx0 - cb_gx0, sb.num_cb_x) : 0u;
-									ps.cb_x1 = (pgx1 > cb_gx0) ? std::min(pgx1 - cb_gx0, sb.num_cb_x) : 0u;
-									ps.cb_y0 = (pgy0 > cb_gy0) ? std::min(pgy0 - cb_gy0, sb.num_cb_y) : 0u;
-									ps.cb_y1 = (pgy1 > cb_gy0) ? std::min(pgy1 - cb_gy0, sb.num_cb_y) : 0u;
+									ps.cb_x0 = (pgx0 > cb_gx0) ? static_cast<uint32_t>(std::min<uint64_t>(pgx0 - cb_gx0, sb.num_cb_x)) : 0u;
+									ps.cb_x1 = (pgx1 > cb_gx0) ? static_cast<uint32_t>(std::min<uint64_t>(pgx1 - cb_gx0, sb.num_cb_x)) : 0u;
+									ps.cb_y0 = (pgy0 > cb_gy0) ? static_cast<uint32_t>(std::min<uint64_t>(pgy0 - cb_gy0, sb.num_cb_y)) : 0u;
+									ps.cb_y1 = (pgy1 > cb_gy0) ? static_cast<uint32_t>(std::min<uint64_t>(pgy1 - cb_gy0, sb.num_cb_y)) : 0u;
 									if (ps.cb_x1 > ps.cb_x0 && ps.cb_y1 > ps.cb_y0) {
 										ps.incl_tree.init(ps.cb_x1 - ps.cb_x0, ps.cb_y1 - ps.cb_y0);
 										ps.zbp_tree.init(ps.cb_x1 - ps.cb_x0, ps.cb_y1 - ps.cb_y0);
@@ -8396,12 +8409,12 @@ void idwt_97_2d_float(
 				const uint32_t shift = num_decomp_levels - r;
 				const uint32_t step_x_exp = rb.ppx + shift;
 				const uint32_t step_y_exp = rb.ppy + shift;
-				const uint32_t step_x = (step_x_exp >= 31u) ? 0x80000000u : (1u << step_x_exp);
-				const uint32_t step_y = (step_y_exp >= 31u) ? 0x80000000u : (1u << step_y_exp);
+				const uint64_t step_x = uint64_t{1u} << step_x_exp;
+				const uint64_t step_y = uint64_t{1u} << step_y_exp;
 				const uint32_t p_w = 1u << rb.ppx;
 				const uint32_t p_h = 1u << rb.ppy;
-				const bool hit_x = ((x % step_x) == 0u) || (x == tx0 && ((rb.x0 % p_w) != 0u));
-				const bool hit_y = ((y % step_y) == 0u) || (y == ty0 && ((rb.y0 % p_h) != 0u));
+				const bool hit_x = ((static_cast<uint64_t>(x) % step_x) == 0ULL) || (x == tx0 && ((rb.x0 % p_w) != 0u));
+				const bool hit_y = ((static_cast<uint64_t>(y) % step_y) == 0ULL) || (y == ty0 && ((rb.y0 % p_h) != 0u));
 				if (!hit_x || !hit_y) {
 					return false;
 				}
@@ -8416,17 +8429,17 @@ void idwt_97_2d_float(
 				return true;
 			};
 
-			uint32_t min_step_x = 0x80000000u;
-			uint32_t min_step_y = 0x80000000u;
+			uint64_t min_step_x = uint64_t{1u} << 32u;
+			uint64_t min_step_y = uint64_t{1u} << 32u;
 			for (uint8_t r = 0u; r <= num_decomp_levels; ++r) {
 				const uint32_t shift = num_decomp_levels - r;
 				const uint32_t sx_exp = res_bounds[r].ppx + shift;
 				const uint32_t sy_exp = res_bounds[r].ppy + shift;
-				min_step_x = std::min(min_step_x, (sx_exp >= 31u) ? 0x80000000u : (1u << sx_exp));
-				min_step_y = std::min(min_step_y, (sy_exp >= 31u) ? 0x80000000u : (1u << sy_exp));
+				min_step_x = std::min(min_step_x, uint64_t{1u} << sx_exp);
+				min_step_y = std::min(min_step_y, uint64_t{1u} << sy_exp);
 			}
-			auto next_grid_coord = [](uint32_t cur, uint32_t step, uint32_t end) noexcept -> uint32_t {
-				const uint64_t next = (static_cast<uint64_t>(cur / step) + 1ULL) * step;
+			auto next_grid_coord = [](uint32_t cur, uint64_t step, uint32_t end) noexcept -> uint32_t {
+				const uint64_t next = ((static_cast<uint64_t>(cur) / step) + 1ULL) * step;
 				return (next >= end) ? end : static_cast<uint32_t>(next);
 			};
 

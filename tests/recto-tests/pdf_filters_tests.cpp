@@ -2870,6 +2870,41 @@ TEST(PdfFilters, DctRgbAndCmyk)
 				RECTO_EXPECT_ERR(
 					decode_jpx_image(build_custom_cod_qcd_1x1(valid_cod0, valid_qcd0, {}, odd_qcd2, pkt_1)),
 					ErrorCode::DamagedFormat);
+
+				// 64-bit tile/grid coordinate arithmetic with 0x80000000 origin (Xsiz=Ysiz=0x80000001, XOsiz=YOsiz=XTOsiz=YTOsiz=XTsiz=YTsiz=0x80000000):
+				auto build_high_origin_1x1 = [](uint8_t prog_order, std::span<const uint8_t> qcd_body) -> std::vector<uint8_t> {
+					std::vector<uint8_t> b = {0xFFu, 0x4Fu, 0xFFu, 0x51u};
+					append_u16_be(b, 41u);
+					append_u16_be(b, 0u);
+					for (uint32_t v : {
+						0x80000001u, 0x80000001u,
+						0x80000000u, 0x80000000u,
+						0x80000000u, 0x80000000u,
+						0x80000000u, 0x80000000u
+					}) {
+						append_u32_be(b, v);
+					}
+					append_u16_be(b, 1u);
+					b.insert(b.end(), {7u, 1u, 1u});
+					b.insert(b.end(), {0xFFu, 0x52u, 0x00u, 12u, 0u, prog_order, 0u, 1u, 0u, 0u, 4u, 4u, 0u, 1u});
+					b.insert(b.end(), {0xFFu, 0x5Cu});
+					append_u16_be(b, static_cast<uint16_t>(2u + qcd_body.size()));
+					b.insert(b.end(), qcd_body.begin(), qcd_body.end());
+					b.insert(b.end(), {0xFFu, 0x90u, 0x00u, 10u, 0x00u, 0x00u});
+					append_u32_be(b, 15u);
+					b.insert(b.end(), {0u, 1u, 0xFFu, 0x93u, 0x00u, 0xFFu, 0xD9u});
+					return b;
+				};
+				for (uint8_t prog : {uint8_t{0u}, uint8_t{3u}}) {
+					auto dec_hi = decode_jpx_image(build_high_origin_1x1(prog, valid_qcd0));
+					RECTO_ASSERT_OK(dec_hi);
+					ASSERT_EQ(dec_hi->pixels.size(), 1u);
+					EXPECT_EQ(dec_hi->pixels[0], 128u);
+				}
+				// Mismatched QCD subband count at 0x80000000 origin must fail with DamagedFormat (not be skipped by 32-bit wrap):
+				RECTO_EXPECT_ERR(
+					decode_jpx_image(build_high_origin_1x1(0u, valid_qcd1)),
+					ErrorCode::DamagedFormat);
 			}
 		}
 
