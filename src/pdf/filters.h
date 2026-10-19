@@ -72,8 +72,81 @@ struct PredictorParams {
 	std::span<const uint8_t> input,
 	size_t max_decoded_bytes = kMaxDecodedStreamBytes) noexcept;
 
+struct CcittFaxParams {
+	int32_t k{0};
+	bool end_of_line{false};
+	bool encoded_byte_align{false};
+	int32_t columns{1728};
+	int32_t rows{0};
+	bool end_of_block{true};
+	bool black_is_1{false};
+	int32_t damaged_rows_before_error{0};
+};
+
+// Extracts and validates `/K`, `/EndOfLine`, `/EncodedByteAlign`, `/Columns`,
+// `/Rows`, `/EndOfBlock`, `/BlackIs1`, and `/DamagedRowsBeforeError` from an
+// optional `/DecodeParms` dictionary (ISO 32000-1 section 7.4.6, Table 11).
+[[nodiscard]] PdfResult<CcittFaxParams> parse_ccitt_fax_params(
+	const PdfDict* decode_parms) noexcept;
+
+// Decodes a `CCITTFaxDecode` monochrome bi-level stream (ITU-T T.4 Group 3 1D
+// and 2D, ITU-T T.6 Group 4 2D MMR) into packed 1-bit-per-pixel rows.
+[[nodiscard]] PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
+	std::span<const uint8_t> input,
+	const PdfDict* decode_parms = nullptr,
+	size_t max_decoded_bytes = kMaxDecodedStreamBytes) noexcept;
+
+// Decodes a `JBIG2Decode` monochrome bi-level stream (ISO/IEC 14492, ISO
+// 32000-1 section 7.4.7) with optional `/JBIG2Globals` stream in `decode_parms`
+// or explicit `globals_bytes`, returning packed 1-bit-per-pixel rows (`0` =
+// black, `1` = white per PDF DeviceGray convention).
+[[nodiscard]] PdfResult<std::vector<uint8_t>> decode_jbig2(
+	std::span<const uint8_t> input,
+	const PdfDict* decode_parms = nullptr,
+	size_t max_decoded_bytes = kMaxDecodedStreamBytes) noexcept;
+
+[[nodiscard]] PdfResult<std::vector<uint8_t>> decode_jbig2(
+	std::span<const uint8_t> input,
+	std::span<const uint8_t> globals_bytes,
+	size_t max_decoded_bytes = kMaxDecodedStreamBytes) noexcept;
+
+struct WicDecodedImage {
+	uint32_t width{0};
+	uint32_t height{0};
+	uint32_t components{0};
+	bool is_cmyk{false};
+	std::vector<uint8_t> pixels;
+	std::vector<uint8_t> rgba_pixels;
+	std::vector<uint8_t> bgra_pixels;
+};
+
+// Returns the address of the calling thread's thread-local `IWICImagingFactory`
+// COM instance (initializing MTA COM + WIC on first call per thread).
+[[nodiscard]] uintptr_t current_thread_wic_factory_id() noexcept;
+
+// Decodes a `DCTDecode` (JPEG) stream via the calling thread's thread-local
+// `IWICImagingFactory`, handling Grayscale, RGB/YCbCr, and CMYK/YCCK (with
+// `/Decode` array inversion `[1 0 1 0 1 0 1 0]` for Adobe inverted CMYK JPEGs).
+[[nodiscard]] PdfResult<WicDecodedImage> decode_dct_image(
+	std::span<const uint8_t> input,
+	const PdfDict* decode_parms = nullptr,
+	size_t max_decoded_bytes = kMaxDecodedStreamBytes) noexcept;
+
+[[nodiscard]] PdfResult<std::vector<uint8_t>> decode_dct(
+	std::span<const uint8_t> input,
+	const PdfDict* decode_parms = nullptr,
+	size_t max_decoded_bytes = kMaxDecodedStreamBytes) noexcept;
+
+// Decodes a `JPXDecode` (JPEG 2000) stream via the calling thread's
+// thread-local `IWICImagingFactory` (with native ISO/IEC 15444-1 JP2/J2K
+// codestream fallback when no WIC JP2 codec is registered on the host).
+[[nodiscard]] PdfResult<std::vector<uint8_t>> decode_jpx(
+	std::span<const uint8_t> input,
+	const PdfDict* decode_parms = nullptr,
+	size_t max_decoded_bytes = kMaxDecodedStreamBytes) noexcept;
+
 // Dispatches a single PDF stream filter by name (including standard PDF
-// abbreviations `Fl`, `LZW`, `AHx`, `A85`, `RL`).
+// abbreviations `Fl`, `LZW`, `AHx`, `A85`, `RL`, `CCF`, `DCT`).
 [[nodiscard]] PdfResult<std::vector<uint8_t>> decode_single_filter(
 	std::string_view filter_name,
 	std::span<const uint8_t> input,

@@ -1,15 +1,19 @@
-// Unit tests for lossless PDF stream filters: FlateDecode, LZWDecode,
-// TIFF Predictor 2 and PNG Predictors 10..15, ASCIIHexDecode, ASCII85Decode,
-// RunLengthDecode, chained filter execution, and the 256 MB decompression cap
-// (D01 T01 section 7).
+// Unit tests for PDF stream filters: FlateDecode, LZWDecode, TIFF Predictor 2
+// and PNG Predictors 10..15, ASCIIHexDecode, ASCII85Decode, RunLengthDecode,
+// CCITTFaxDecode (Group 3 1D/2D and Group 4 2D), JBIG2Decode, WIC DCTDecode and
+// JPXDecode, chained filter execution, and the 256 MB decompression cap
+// (D01 T01 sections 7 and 8).
 #include "recto_pdf.h"
 #include "test_support.h"
 
 #include <array>
+#include <atomic>
 #include <cstdint>
+#include <latch>
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace recto::pdf {
@@ -639,6 +643,930 @@ TEST(PdfFilters, ChainedPipeline)
 		orphan_fparms_with_filter.set("Filter", PdfValue(PdfName("ASCIIHexDecode")));
 		orphan_fparms_with_filter.set("FDecodeParms", PdfValue(PdfDict{}));
 		RECTO_EXPECT_ERR(decode_stream(as_bytes("4865>"), orphan_fparms_with_filter), ErrorCode::DamagedFormat);
+	}
+}
+
+[[nodiscard]] std::vector<uint8_t> pack_bitstring(std::string_view bits)
+{
+	std::vector<uint8_t> out;
+	uint8_t cur = 0u;
+	uint32_t bit_count = 0u;
+	for (char ch : bits) {
+		if (ch != '0' && ch != '1') {
+			continue;
+		}
+		cur = static_cast<uint8_t>((cur << 1u) | (ch == '1' ? 1u : 0u));
+		if (++bit_count == 8u) {
+			out.push_back(cur);
+			cur = 0u;
+			bit_count = 0u;
+		}
+	}
+	if (bit_count > 0u) {
+		out.push_back(static_cast<uint8_t>(cur << (8u - bit_count)));
+	}
+	return out;
+}
+
+TEST(PdfFilters, CcittGroup4)
+{
+	// 1. Decode the 16x16 Group 4 monochrome image (object 10 0 R) in render/images-and-vectors.pdf.
+	const auto pdf_bytes = test::read_file_bytes(
+		test::corpus_path("render/images-and-vectors.pdf"));
+	auto xref_res = XrefTable::parse(pdf_bytes);
+	RECTO_ASSERT_OK(xref_res);
+	auto stm_obj = xref_res->resolve_object(pdf_bytes, IndirectRef{10u, 0u});
+	RECTO_ASSERT_OK(stm_obj);
+	ASSERT_TRUE(stm_obj->is_stream());
+
+	auto decoded = decode_stream(*stm_obj->as_stream());
+	RECTO_ASSERT_OK(decoded);
+	ASSERT_EQ(decoded->size(), 32u); // 16 rows * 2 bytes per row
+
+	// Expected rows (BlackIs1 = false -> 1 = White, 0 = Black):
+	// Row 0 (4W, 8B, 4W): 11110000 00001111 = 0xF0, 0x0F
+	// Row 1 (4W, 8B, 4W): 0xF0, 0x0F
+	// Row 2 (5W, 8B, 3W): 11111000 00000111 = 0xF8, 0x07
+	// Row 3 (4W, 8B, 4W): 0xF0, 0x0F
+	// Rows 4..15 (16W):   0xFF, 0xFF
+	EXPECT_EQ((*decoded)[0], 0xF0u);
+	EXPECT_EQ((*decoded)[1], 0x0Fu);
+	EXPECT_EQ((*decoded)[2], 0xF0u);
+	EXPECT_EQ((*decoded)[3], 0x0Fu);
+	EXPECT_EQ((*decoded)[4], 0xF8u);
+	EXPECT_EQ((*decoded)[5], 0x07u);
+	EXPECT_EQ((*decoded)[6], 0xF0u);
+	EXPECT_EQ((*decoded)[7], 0x0Fu);
+	for (size_t row = 4; row < 16; ++row) {
+		EXPECT_EQ((*decoded)[row * 2u + 0u], 0xFFu) << "row " << row;
+		EXPECT_EQ((*decoded)[row * 2u + 1u], 0xFFu) << "row " << row;
+	}
+
+	// 2. Exercise VR(2), VR(3), VL(2), VL(3), Pass, and Horizontal make-up codes (>= 64) on a 96-column image.
+	// Row 0 (72W, 16B, 8W):
+	//   H(001) + [W64(11011) + W8(10011)] + [B16(0000010111)] + V0(1)
+	// Row 1 (74W, 13B, 9W):
+	//   VR2(000011) -> a1 = 72 + 2 = 74; VL1(010) -> a1 = 88 - 1 = 87; V0(1)
+	// Row 2 (77W, 7B, 12W):
+	//   VR3(0000011) -> a1 = 74 + 3 = 77; VL3(0000010) -> a1 = 87 - 3 = 84; V0(1)
+	// Row 3 (75W, 9B, 12W):
+	//   VL2(000010) -> a1 = 77 - 2 = 75; V0(1) -> a1 = 84; V0(1)
+	// EOFB: 000000000001000000000001
+	{
+		const std::string g4_bits =
+			std::string("001") + "11011" + "10011" + "0000010111" + "1" +
+			"000011" + "010" + "1" +
+			"0000011" + "0000010" + "1" +
+			"000010" + "1" + "1" +
+			"000000000001000000000001";
+		const auto g4_bytes = pack_bitstring(g4_bits);
+		PdfDict parms;
+		parms.set("K", PdfValue(int64_t{-1}));
+		parms.set("Columns", PdfValue(int64_t{96}));
+		parms.set("Rows", PdfValue(int64_t{4}));
+		parms.set("BlackIs1", PdfValue(true));
+
+		auto res = decode_ccitt_fax(g4_bytes, &parms);
+		RECTO_ASSERT_OK(res);
+		ASSERT_EQ(res->size(), 48u); // 4 rows * 12 bytes per row
+
+		auto count_black_bits = [&](size_t row, int32_t& first_black, int32_t& last_black_exclusive) {
+			first_black = -1;
+			last_black_exclusive = -1;
+			for (int32_t x = 0; x < 96; ++x) {
+				const uint8_t b = (*res)[row * 12u + (static_cast<size_t>(x) >> 3u)];
+				const bool is_black = ((b >> (7u - (static_cast<uint32_t>(x) & 7u))) & 1u) != 0u;
+				if (is_black) {
+					if (first_black < 0) {
+						first_black = x;
+					}
+					last_black_exclusive = x + 1;
+				}
+			}
+		};
+
+		int32_t x0 = 0;
+		int32_t x1 = 0;
+		count_black_bits(0, x0, x1);
+		EXPECT_EQ(x0, 72);
+		EXPECT_EQ(x1, 88);
+
+		count_black_bits(1, x0, x1);
+		EXPECT_EQ(x0, 74);
+		EXPECT_EQ(x1, 87);
+
+		count_black_bits(2, x0, x1);
+		EXPECT_EQ(x0, 77);
+		EXPECT_EQ(x1, 84);
+
+		count_black_bits(3, x0, x1);
+		EXPECT_EQ(x0, 75);
+		EXPECT_EQ(x1, 84);
+	}
+
+	// 3. Reject incomplete single-EOL EOFB and zero-progress H(0, 0) in Group 4.
+	{
+		PdfDict parms;
+		parms.set("K", PdfValue(int64_t{-1}));
+		parms.set("Columns", PdfValue(int64_t{16}));
+		// Row 0 = 16W (V0 = "1"), followed by a single EOL "000000000001" + non-EOL "11111111".
+		const auto bad_eofb = pack_bitstring("100000000000111111111");
+		RECTO_EXPECT_ERR(decode_ccitt_fax(bad_eofb, &parms), ErrorCode::DamagedFormat);
+
+		// H(001) + W0(00110101) + B0(0000110111) at start of row -> zero progress -> DamagedFormat.
+		const auto h00 = pack_bitstring("001001101010000110111");
+		RECTO_EXPECT_ERR(decode_ccitt_fax(h00, &parms), ErrorCode::DamagedFormat);
+	}
+}
+
+TEST(PdfFilters, CcittGroup3AndBlackIs1)
+{
+	// 1. Group 3 1D (K == 0) with /Columns 12 (non-multiple of 8) across /BlackIs1 false and true,
+	// and /EncodedByteAlign false and true.
+	// Row 0: 4W (1011) + 4B (011) + 4W (1011) -> 11 bits
+	// Row 1: 8W (10011) + 4B (011) + W0 (00110101) -> 16 bits
+	{
+		const std::string row0_bits = "1011" "011" "1011";
+		const std::string row1_bits = "10011" "011" "00110101";
+
+		// Unaligned bitstream
+		const auto unaligned_bytes = pack_bitstring(row0_bits + row1_bits);
+
+		PdfDict parms_bi0;
+		parms_bi0.set("K", PdfValue(int64_t{0}));
+		parms_bi0.set("Columns", PdfValue(int64_t{12}));
+		parms_bi0.set("Rows", PdfValue(int64_t{2}));
+		parms_bi0.set("BlackIs1", PdfValue(false));
+		parms_bi0.set("EncodedByteAlign", PdfValue(false));
+
+		auto dec_bi0 = decode_ccitt_fax(unaligned_bytes, &parms_bi0);
+		RECTO_ASSERT_OK(dec_bi0);
+		ASSERT_EQ(dec_bi0->size(), 4u); // 2 rows * 2 bytes/row
+		// Row 0 (4W, 4B, 4W), BlackIs1=false (1=W, 0=B, low 4 bits of byte 1 masked to 0):
+		// byte 0: 11110000 = 0xF0, byte 1: 11110000 = 0xF0
+		// Row 1 (8W, 4B), BlackIs1=false:
+		// byte 2: 11111111 = 0xFF, byte 3: 00000000 = 0x00
+		EXPECT_EQ((*dec_bi0)[0], 0xF0u);
+		EXPECT_EQ((*dec_bi0)[1], 0xF0u);
+		EXPECT_EQ((*dec_bi0)[2], 0xFFu);
+		EXPECT_EQ((*dec_bi0)[3], 0x00u);
+
+		// Same stream with /BlackIs1 true (1=B, 0=W):
+		// Row 0: byte 0 = 00001111 = 0x0F, byte 1 = 00000000 = 0x00
+		// Row 1: byte 2 = 00000000 = 0x00, byte 3 = 11110000 = 0xF0
+		PdfDict parms_bi1 = parms_bi0;
+		parms_bi1.set("BlackIs1", PdfValue(true));
+		auto dec_bi1 = decode_ccitt_fax(unaligned_bytes, &parms_bi1);
+		RECTO_ASSERT_OK(dec_bi1);
+		ASSERT_EQ(dec_bi1->size(), 4u);
+		EXPECT_EQ((*dec_bi1)[0], 0x0Fu);
+		EXPECT_EQ((*dec_bi1)[1], 0x00u);
+		EXPECT_EQ((*dec_bi1)[2], 0x00u);
+		EXPECT_EQ((*dec_bi1)[3], 0xF0u);
+
+		// Byte-aligned bitstream (/EncodedByteAlign true): pad row0_bits (11 bits) with 5 zero bits to 16 bits.
+		const auto aligned_bytes = pack_bitstring(row0_bits + "00000" + row1_bits);
+		PdfDict parms_aligned = parms_bi1;
+		parms_aligned.set("EncodedByteAlign", PdfValue(true));
+		auto dec_aligned = decode_ccitt_fax(aligned_bytes, &parms_aligned);
+		RECTO_ASSERT_OK(dec_aligned);
+		EXPECT_EQ(*dec_aligned, *dec_bi1);
+	}
+
+	// 2. Group 3 2D (K = 2) with /EndOfLine true and mixed 1D (tag=1) and 2D (tag=0) rows,
+	// plus /DamagedRowsBeforeError recovery on Group 3 1D.
+	{
+		// 16 columns, 2 rows:
+		// Row 0 (1D): EOL(000000000001) + tag(1) + 4W(1011) + 8B(000101) + 4W(1011)
+		// Row 1 (2D): EOL(000000000001) + tag(0) + VR1(011) + VR1(011) + V0(1) -> 5W, 8B, 3W
+		// RTC:        EOL(000000000001) + tag(1) + EOL(000000000001) + tag(1)
+		const std::string g3_2d_bits =
+			std::string("000000000001") + "1" + "1011" + "000101" + "1011" +
+			"000000000001" + "0" + "011" + "011" + "1" +
+			"000000000001" + "1" + "000000000001" + "1";
+		const auto g3_2d_bytes = pack_bitstring(g3_2d_bits);
+
+		PdfDict parms_g3_2d;
+		parms_g3_2d.set("K", PdfValue(int64_t{2}));
+		parms_g3_2d.set("Columns", PdfValue(int64_t{16}));
+		parms_g3_2d.set("Rows", PdfValue(int64_t{2}));
+		parms_g3_2d.set("EndOfLine", PdfValue(true));
+		parms_g3_2d.set("BlackIs1", PdfValue(false));
+
+		auto dec_2d = decode_ccitt_fax(g3_2d_bytes, &parms_g3_2d);
+		RECTO_ASSERT_OK(dec_2d);
+		ASSERT_EQ(dec_2d->size(), 4u);
+		EXPECT_EQ((*dec_2d)[0], 0xF0u);
+		EXPECT_EQ((*dec_2d)[1], 0x0Fu);
+		EXPECT_EQ((*dec_2d)[2], 0xF8u);
+		EXPECT_EQ((*dec_2d)[3], 0x07u);
+
+		// Group 3 1D damaged row tolerance (/DamagedRowsBeforeError 1 vs 0):
+		// Row 0: EOL + 4W(1011) + 8B(000101) + 4W(1011)
+		// Row 1 (damaged: invalid prefix "00000001" before next EOL)
+		// Row 2: EOL + 16W(101010)
+		const std::string damaged_bits =
+			std::string("000000000001") + "1011" + "000101" + "1011" +
+			"000000000001" + "00000001" +
+			"000000000001" + "101010";
+		const auto damaged_bytes = pack_bitstring(damaged_bits);
+
+		PdfDict parms_strict;
+		parms_strict.set("K", PdfValue(int64_t{0}));
+		parms_strict.set("Columns", PdfValue(int64_t{16}));
+		parms_strict.set("Rows", PdfValue(int64_t{3}));
+		parms_strict.set("EndOfLine", PdfValue(true));
+		parms_strict.set("DamagedRowsBeforeError", PdfValue(int64_t{0}));
+		RECTO_EXPECT_ERR(decode_ccitt_fax(damaged_bytes, &parms_strict), ErrorCode::DamagedFormat);
+
+		PdfDict parms_tolerant = parms_strict;
+		parms_tolerant.set("DamagedRowsBeforeError", PdfValue(int64_t{1}));
+		auto dec_tol = decode_ccitt_fax(damaged_bytes, &parms_tolerant);
+		RECTO_ASSERT_OK(dec_tol);
+		ASSERT_EQ(dec_tol->size(), 6u);
+		// Row 0 and substituted Row 1 are 0xF0, 0x0F; Row 2 is 0xFF, 0xFF.
+		EXPECT_EQ((*dec_tol)[0], 0xF0u);
+		EXPECT_EQ((*dec_tol)[1], 0x0Fu);
+		EXPECT_EQ((*dec_tol)[2], 0xF0u);
+		EXPECT_EQ((*dec_tol)[3], 0x0Fu);
+		EXPECT_EQ((*dec_tol)[4], 0xFFu);
+		EXPECT_EQ((*dec_tol)[5], 0xFFu);
+	}
+}
+
+namespace {
+
+void append_u16_be(std::vector<uint8_t>& buf, uint16_t v)
+{
+	buf.push_back(static_cast<uint8_t>((v >> 8u) & 0xFFu));
+	buf.push_back(static_cast<uint8_t>(v & 0xFFu));
+}
+
+void append_u32_be(std::vector<uint8_t>& buf, uint32_t v)
+{
+	buf.push_back(static_cast<uint8_t>((v >> 24u) & 0xFFu));
+	buf.push_back(static_cast<uint8_t>((v >> 16u) & 0xFFu));
+	buf.push_back(static_cast<uint8_t>((v >> 8u) & 0xFFu));
+	buf.push_back(static_cast<uint8_t>(v & 0xFFu));
+}
+
+void append_jbig2_segment(
+	std::vector<uint8_t>& buf,
+	uint32_t seg_num,
+	uint8_t seg_type,
+	std::span<const uint8_t> referred_to,
+	uint8_t page_assoc,
+	std::span<const uint8_t> payload)
+{
+	append_u32_be(buf, seg_num);
+	buf.push_back(static_cast<uint8_t>(seg_type & 0x3Fu));
+	buf.push_back(static_cast<uint8_t>((referred_to.size() & 0x07u) << 5u));
+	for (uint8_t r : referred_to) {
+		buf.push_back(r);
+	}
+	buf.push_back(page_assoc);
+	append_u32_be(buf, static_cast<uint32_t>(payload.size()));
+	buf.insert(buf.end(), payload.begin(), payload.end());
+}
+
+[[nodiscard]] std::vector<uint8_t> make_jbig2_page_info_payload(
+	uint32_t width,
+	uint32_t height,
+	uint8_t flags = 0u)
+{
+	std::vector<uint8_t> p;
+	append_u32_be(p, width);
+	append_u32_be(p, height);
+	append_u32_be(p, 72u);
+	append_u32_be(p, 72u);
+	p.push_back(flags);
+	append_u16_be(p, 0u);
+	return p;
+}
+
+} // namespace
+
+TEST(PdfFilters, Jbig2Decode)
+{
+	// 1. Standalone JBIG2 file header + Page Information (48, 16x16) + Immediate Generic Region (38, MMR)
+	// + End of Page (49) + End of File (51), matching the 16x16 Group 4 bitmap.
+	{
+		const std::string g4_16x16_bits =
+			std::string("001") + "1011" + "000101" + "1" +
+			"111" +
+			"011" + "011" + "1" +
+			"010" + "010" + "1" +
+			"0001" + "1" +
+			"11111111111" +
+			"000000000001000000000001";
+		const auto mmr_payload = pack_bitstring(g4_16x16_bits);
+
+		std::vector<uint8_t> stream = {
+			0x97u, 0x4Au, 0x42u, 0x32u, 0x0Du, 0x0Au, 0x1Au, 0x0Au,
+			0x01u, // sequential organization, known page count
+			0x00u, 0x00u, 0x00u, 0x01u, // 1 page
+		};
+
+		const auto page_info = make_jbig2_page_info_payload(16u, 16u, 0u);
+		append_jbig2_segment(stream, 0u, 48u, {}, 1u, page_info);
+
+		std::vector<uint8_t> gr_payload;
+		append_u32_be(gr_payload, 16u); // width
+		append_u32_be(gr_payload, 16u); // height
+		append_u32_be(gr_payload, 0u);  // x
+		append_u32_be(gr_payload, 0u);  // y
+		gr_payload.push_back(0u);       // OR comb op
+		gr_payload.push_back(0x01u);    // MMR = 1
+		gr_payload.insert(gr_payload.end(), mmr_payload.begin(), mmr_payload.end());
+		append_jbig2_segment(stream, 1u, 38u, {}, 1u, gr_payload);
+
+		append_jbig2_segment(stream, 2u, 49u, {}, 1u, {}); // End of Page
+		append_jbig2_segment(stream, 3u, 51u, {}, 0u, {}); // End of File
+
+		auto dec = decode_jbig2(stream);
+		RECTO_ASSERT_OK(dec);
+		ASSERT_EQ(dec->size(), 32u);
+		EXPECT_EQ((*dec)[0], 0xF0u);
+		EXPECT_EQ((*dec)[1], 0x0Fu);
+		EXPECT_EQ((*dec)[4], 0xF8u);
+		EXPECT_EQ((*dec)[5], 0x07u);
+		EXPECT_EQ((*dec)[8], 0xFFu);
+		EXPECT_EQ((*dec)[9], 0xFFu);
+	}
+
+	// 2. Immediate Generic Region (38/39) using QM Arithmetic templates 0..3 and TPGDON.
+	// With an all-0xFF arithmetic payload (C = 0 in MqDecoder):
+	// - When TPGDON is false, row 0 triggers state-0 conditional exchange (all 8 pixels = 1 in JBIG2 -> 0x00 in PDF).
+	// - When TPGDON is true, SLTP on row 0 decodes 1 (LTP = 1 -> row 0 stays default white = 0xFF in PDF),
+	//   SLTP on row 1 decodes 1 (LTP = 0 -> row 1 decoded), and SLTP on row 2 decodes 1 (LTP = 1 -> row 2 copies row 1).
+	for (uint8_t tmpl = 0u; tmpl <= 3u; ++tmpl) {
+		for (bool tpgdon : {false, true}) {
+			std::vector<uint8_t> stream;
+			const auto page_info = make_jbig2_page_info_payload(8u, 4u, 0u);
+			append_jbig2_segment(stream, 0u, 48u, {}, 1u, page_info);
+
+			std::vector<uint8_t> gr;
+			append_u32_be(gr, 8u);
+			append_u32_be(gr, 4u);
+			append_u32_be(gr, 0u);
+			append_u32_be(gr, 0u);
+			gr.push_back(0u);
+			const uint8_t gr_flags = static_cast<uint8_t>(
+				((tmpl & 0x03u) << 1u) | (tpgdon ? 0x08u : 0x00u));
+			gr.push_back(gr_flags);
+			if (tmpl == 0u) {
+				const int8_t at0[8] = {3, -1, -3, -1, 2, -2, -2, -2};
+				gr.insert(
+					gr.end(),
+					reinterpret_cast<const uint8_t*>(at0),
+					reinterpret_cast<const uint8_t*>(at0) + 8);
+			} else {
+				const int8_t at1[2] = {3, -1};
+				gr.insert(
+					gr.end(),
+					reinterpret_cast<const uint8_t*>(at1),
+					reinterpret_cast<const uint8_t*>(at1) + 2);
+			}
+			gr.insert(gr.end(), 16u, 0xFFu);
+			append_jbig2_segment(stream, 1u, 39u, {}, 1u, gr);
+			append_jbig2_segment(stream, 2u, 49u, {}, 1u, {});
+
+			auto dec = decode_jbig2(stream);
+			RECTO_ASSERT_OK(dec);
+			ASSERT_EQ(dec->size(), 4u);
+			if (tpgdon) {
+				EXPECT_EQ((*dec)[0], 0xFFu);
+				EXPECT_EQ((*dec)[2], (*dec)[1]);
+			} else {
+				EXPECT_EQ((*dec)[0], 0x00u);
+			}
+		}
+	}
+
+	// 3. Symbol Dictionary (segment 0) in /JBIG2Globals + Text Region (segment 6) +
+	// Pattern Dictionary (segment 16) + Halftone Region (segment 22).
+	{
+		// Build a globals stream containing:
+		// - Segment 0: Symbol Dictionary with 0 new symbols and 0 exported symbols (valid empty dict)
+		// - Segment 1: Pattern Dictionary (seg_type = 16, MMR = 1, 8x2 patterns, GRAYMAX = 1 -> 16x2 collective)
+		std::vector<uint8_t> globals_bytes;
+		{
+			std::vector<uint8_t> sd_payload;
+			append_u16_be(sd_payload, 0x0000u); // arithmetic, template 0
+			const int8_t sd_at[8] = {3, -1, -3, -1, 2, -2, -2, -2};
+			sd_payload.insert(
+				sd_payload.end(),
+				reinterpret_cast<const uint8_t*>(sd_at),
+				reinterpret_cast<const uint8_t*>(sd_at) + 8);
+			append_u32_be(sd_payload, 0u); // SDNUMEXSYMS = 0
+			append_u32_be(sd_payload, 0u); // SDNUMNEWSYMS = 0
+			sd_payload.insert(sd_payload.end(), 8u, 0xFFu);
+			append_jbig2_segment(globals_bytes, 0u, 0u, {}, 0u, sd_payload);
+
+			// Pattern dictionary: 2 patterns of 8x2 (collective 16x2):
+			// Pattern 0 (cols 0..7): all white; Pattern 1 (cols 8..15): all black!
+			// In MMR, 8W + 8B on row 0 is H(001) + W8(10011) + B8(000101), row 1 is V0(1) + V0(1), EOFB.
+			const auto pat_mmr = pack_bitstring(
+				std::string("001") + "10011" + "000101" +
+				"11" +
+				"000000000001000000000001");
+			std::vector<uint8_t> pd_payload;
+			pd_payload.push_back(0x01u); // HDMMR = 1
+			pd_payload.push_back(8u);    // HDPW = 8
+			pd_payload.push_back(2u);    // HDPH = 2
+			append_u32_be(pd_payload, 1u); // GRAYMAX = 1 (2 patterns: 0 and 1)
+			pd_payload.insert(pd_payload.end(), pat_mmr.begin(), pat_mmr.end());
+			append_jbig2_segment(globals_bytes, 1u, 16u, {}, 0u, pd_payload);
+		}
+
+		// Page stream:
+		// - Segment 2: Page Information (8x2)
+		// - Segment 3: Immediate Text Region (seg_type = 6, 8x2, 0 instances, refers to segment 0)
+		// - Segment 4: Immediate Halftone Region (seg_type = 22, 8x2, refers to Pattern Dict segment 1,
+		//              1x1 grid selecting pattern 1 = all black!)
+		// - Segment 5: End of Page (49)
+		std::vector<uint8_t> page_bytes;
+		append_jbig2_segment(page_bytes, 2u, 48u, {}, 1u, make_jbig2_page_info_payload(8u, 2u, 0u));
+
+		{
+			std::vector<uint8_t> tr_payload;
+			append_u32_be(tr_payload, 8u);
+			append_u32_be(tr_payload, 2u);
+			append_u32_be(tr_payload, 0u);
+			append_u32_be(tr_payload, 0u);
+			tr_payload.push_back(0u);
+			append_u16_be(tr_payload, 0u);
+			append_u32_be(tr_payload, 0u); // SBNUMINSTANCES = 0
+			tr_payload.insert(tr_payload.end(), 8u, 0xFFu);
+			const uint8_t ref0[1] = {0u};
+			append_jbig2_segment(page_bytes, 3u, 6u, ref0, 1u, tr_payload);
+		}
+
+		{
+			// 1x1 grid bitplane selecting pattern 1 (1 black pixel on a 1x1 MMR bitmap:
+			// H(001) + W0(00110101) + B1(010) + EOFB).
+			const auto grid_mmr = pack_bitstring(
+				std::string("001") + "00110101" + "010" +
+				"000000000001000000000001");
+			std::vector<uint8_t> ht_payload;
+			append_u32_be(ht_payload, 8u); // width
+			append_u32_be(ht_payload, 2u); // height
+			append_u32_be(ht_payload, 0u); // x
+			append_u32_be(ht_payload, 0u); // y
+			ht_payload.push_back(0u);      // OR comb op
+			ht_payload.push_back(0x01u);   // HTMMR = 1
+			append_u32_be(ht_payload, 1u); // HGW = 1
+			append_u32_be(ht_payload, 1u); // HGH = 1
+			append_u32_be(ht_payload, 0u); // HGX = 0
+			append_u32_be(ht_payload, 0u); // HGY = 0
+			append_u16_be(ht_payload, 0x0800u); // HRX
+			append_u16_be(ht_payload, 0u);      // HRY
+			ht_payload.insert(ht_payload.end(), grid_mmr.begin(), grid_mmr.end());
+			const uint8_t ref1[1] = {1u};
+			append_jbig2_segment(page_bytes, 4u, 22u, ref1, 1u, ht_payload);
+		}
+		append_jbig2_segment(page_bytes, 5u, 49u, {}, 1u, {});
+
+		PdfStream globals_stm;
+		globals_stm.raw_bytes = globals_bytes;
+		PdfDict parms;
+		parms.set("JBIG2Globals", PdfValue(std::move(globals_stm)));
+
+		PdfDict stm_dict;
+		stm_dict.set("Filter", PdfValue(PdfName("JBIG2Decode")));
+		stm_dict.set("DecodeParms", PdfValue(std::move(parms)));
+
+		auto dec = decode_stream(page_bytes, stm_dict);
+		RECTO_ASSERT_OK(dec);
+		ASSERT_EQ(dec->size(), 2u);
+		// Pattern 1 is all-black (JBIG2 1 -> PDF DeviceGray 0x00).
+		EXPECT_EQ((*dec)[0], 0x00u);
+		EXPECT_EQ((*dec)[1], 0x00u);
+	}
+
+	// 4. Reject malformed segment headers, truncated segment lengths, and indeterminate length on Page Info.
+	{
+		const std::array<uint8_t, 5> too_short = {0x00, 0x00, 0x00, 0x01, 0x30};
+		RECTO_EXPECT_ERR(decode_jbig2(too_short), ErrorCode::DamagedFormat);
+
+		// Segment claiming 1024 bytes when only 4 bytes follow.
+		std::vector<uint8_t> trunc_seg;
+		append_u32_be(trunc_seg, 0u);
+		trunc_seg.push_back(48u);
+		trunc_seg.push_back(0u);
+		trunc_seg.push_back(1u);
+		append_u32_be(trunc_seg, 1024u);
+		trunc_seg.insert(trunc_seg.end(), 4u, 0u);
+		RECTO_EXPECT_ERR(decode_jbig2(trunc_seg), ErrorCode::DamagedFormat);
+
+		// Segment type 48 with indeterminate length 0xFFFFFFFF -> rejected.
+		std::vector<uint8_t> indet_page_info;
+		append_u32_be(indet_page_info, 0u);
+		indet_page_info.push_back(48u);
+		indet_page_info.push_back(0u);
+		indet_page_info.push_back(1u);
+		append_u32_be(indet_page_info, 0xFFFFFFFFu);
+		RECTO_EXPECT_ERR(decode_jbig2(indet_page_info), ErrorCode::DamagedFormat);
+	}
+}
+
+TEST(PdfFilters, ConcurrentWicDecode)
+{
+	// Extract the 8x8 RGB JPEG stream (object 7 0 R) from render/images-and-vectors.pdf.
+	const auto pdf_bytes = test::read_file_bytes(
+		test::corpus_path("render/images-and-vectors.pdf"));
+	auto xref_res = XrefTable::parse(pdf_bytes);
+	RECTO_ASSERT_OK(xref_res);
+	auto stm_obj = xref_res->resolve_object(pdf_bytes, IndirectRef{7u, 0u});
+	RECTO_ASSERT_OK(stm_obj);
+	ASSERT_TRUE(stm_obj->is_stream());
+	const PdfStream& jpeg_stm = *stm_obj->as_stream();
+
+	auto baseline = decode_stream(jpeg_stm);
+	RECTO_ASSERT_OK(baseline);
+	ASSERT_EQ(baseline->size(), 8u * 8u * 3u);
+
+	constexpr size_t kNumThreads = 8;
+	constexpr size_t kItersPerThread = 16;
+	std::latch start_latch(kNumThreads);
+	std::latch factory_latch(kNumThreads);
+	std::array<uintptr_t, kNumThreads> factory_ids{};
+	std::array<bool, kNumThreads> thread_ok{};
+	std::vector<std::thread> workers;
+	workers.reserve(kNumThreads);
+
+	for (size_t t = 0; t < kNumThreads; ++t) {
+		workers.emplace_back([&, t]() {
+			start_latch.arrive_and_wait();
+			factory_ids[t] = current_thread_wic_factory_id();
+			// Keep all threads alive until every thread has sampled its thread-local
+			// IWICImagingFactory pointer so COM addresses cannot be recycled after thread exit.
+			factory_latch.arrive_and_wait();
+
+			bool ok = (factory_ids[t] != 0u);
+			for (size_t iter = 0; iter < kItersPerThread && ok; ++iter) {
+				auto res = decode_stream(jpeg_stm);
+				if (!res.has_value() || *res != *baseline) {
+					ok = false;
+				}
+			}
+			thread_ok[t] = ok;
+		});
+	}
+
+	for (auto& w : workers) {
+		w.join();
+	}
+
+	for (size_t t = 0; t < kNumThreads; ++t) {
+		EXPECT_TRUE(thread_ok[t]) << "worker thread " << t << " failed concurrent WIC decode";
+		EXPECT_NE(factory_ids[t], 0u);
+		for (size_t u = t + 1; u < kNumThreads; ++u) {
+			EXPECT_NE(factory_ids[t], factory_ids[u])
+				<< "threads " << t << " and " << u << " unexpectedly shared an IWICImagingFactory";
+		}
+	}
+}
+
+namespace {
+
+// Builds a minimal deterministic 8x8 4-component CMYK baseline JPEG decodable by WIC.
+[[nodiscard]] std::vector<uint8_t> make_minimal_jpeg_8x8_cmyk()
+{
+	std::vector<uint8_t> out = {0xFFu, 0xD8u};
+	auto append_seg = [&](uint8_t marker, std::span<const uint8_t> payload) {
+		out.push_back(0xFFu);
+		out.push_back(marker);
+		append_u16_be(out, static_cast<uint16_t>(payload.size() + 2u));
+		out.insert(out.end(), payload.begin(), payload.end());
+	};
+
+	// DQT: table 0 = all 16s
+	std::vector<uint8_t> dqt(65u, 16u);
+	dqt[0] = 0u;
+	append_seg(0xDBu, dqt);
+
+	// SOF0: 8-bit, 8x8, 4 components (C=1, M=2, Y=3, K=4), 1x1 sampling, quant table 0
+	const std::array<uint8_t, 18> sof0 = {
+		8u, 0u, 8u, 0u, 8u, 4u,
+		1u, 0x11u, 0u,
+		2u, 0x11u, 0u,
+		3u, 0x11u, 0u,
+		4u, 0x11u, 0u,
+	};
+	append_seg(0xC0u, sof0);
+
+	// DHT: DC table 0 and AC table 0, each mapping 1-bit code '0' -> symbol 0x00
+	std::vector<uint8_t> dht;
+	for (uint8_t tc_id : {uint8_t{0x00u}, uint8_t{0x10u}}) {
+		dht.push_back(tc_id);
+		dht.push_back(1u);
+		dht.insert(dht.end(), 15u, 0u);
+		dht.push_back(0x00u);
+	}
+	append_seg(0xC4u, dht);
+
+	// SOS: 4 components (all using DC0/AC0), Ss=0, Se=63, Ah/Al=0
+	const std::array<uint8_t, 12> sos = {
+		4u,
+		1u, 0x00u,
+		2u, 0x00u,
+		3u, 0x00u,
+		4u, 0x00u,
+		0u, 63u, 0u,
+	};
+	append_seg(0xDAu, sos);
+
+	// 1 MCU of 4 blocks * 2 zero bits (DC=0, AC=EOB) = 8 zero bits -> 0x00, 0x7F.
+	out.push_back(0x00u);
+	out.push_back(0x7Fu);
+	out.push_back(0xFFu);
+	out.push_back(0xD9u);
+	return out;
+}
+
+// Builds a minimal deterministic 2x2 3-component JP2 container + J2K codestream.
+[[nodiscard]] std::vector<uint8_t> make_minimal_jp2_2x2_rgb(
+	std::span<const uint8_t, 12> rgb_samples,
+	bool enable_mct = false)
+{
+	// J2K codestream: SOC + SIZ + COD + QCD + SOT + SOD + tile_data + EOC
+	std::vector<uint8_t> cs;
+	cs.push_back(0xFFu);
+	cs.push_back(0x4Fu); // SOC
+
+	// SIZ (0xFF51): Lsiz = 38 + 3*3 = 47
+	cs.push_back(0xFFu);
+	cs.push_back(0x51u);
+	append_u16_be(cs, 47u);
+	append_u16_be(cs, 0u);  // Rsiz
+	append_u32_be(cs, 2u);  // Xsiz = 2
+	append_u32_be(cs, 2u);  // Ysiz = 2
+	append_u32_be(cs, 0u);  // XOsiz = 0
+	append_u32_be(cs, 0u);  // YOsiz = 0
+	append_u32_be(cs, 2u);  // XTsiz = 2
+	append_u32_be(cs, 2u);  // YTsiz = 2
+	append_u32_be(cs, 0u);  // XTOsiz = 0
+	append_u32_be(cs, 0u);  // YTOsiz = 0
+	append_u16_be(cs, 3u);  // Csiz = 3
+	for (int c = 0; c < 3; ++c) {
+		cs.push_back(7u); // Ssiz = 8-bit unsigned (7)
+		cs.push_back(1u); // XRsiz = 1
+		cs.push_back(1u); // YRsiz = 1
+	}
+
+	// COD (0xFF52): Lcod = 12
+	cs.push_back(0xFFu);
+	cs.push_back(0x52u);
+	append_u16_be(cs, 12u);
+	cs.push_back(0u); // Scod
+	cs.push_back(0u); // SGcod progression = LRCP
+	append_u16_be(cs, 1u); // 1 layer
+	cs.push_back(enable_mct ? 1u : 0u); // MCT flag
+	cs.push_back(0u); // 0 decomposition levels
+	cs.push_back(4u); // code-block width exp
+	cs.push_back(4u); // code-block height exp
+	cs.push_back(0u); // code-block style
+	cs.push_back(1u); // 5-3 reversible wavelet
+
+	// QCD (0xFF5C): Lqcd = 4
+	cs.push_back(0xFFu);
+	cs.push_back(0x5Cu);
+	append_u16_be(cs, 4u);
+	cs.push_back(0u);
+	cs.push_back(0x40u);
+
+	// SOT (0xFF90): Lsot = 10, Isot = 0, Psot = 14 + 12 = 26, TPsot = 0, TNsot = 1
+	cs.push_back(0xFFu);
+	cs.push_back(0x90u);
+	append_u16_be(cs, 10u);
+	append_u16_be(cs, 0u);
+	append_u32_be(cs, 14u + static_cast<uint32_t>(rgb_samples.size()));
+	cs.push_back(0u);
+	cs.push_back(1u);
+
+	// SOD (0xFF93) + 12 sample bytes + EOC (0xFFD9)
+	cs.push_back(0xFFu);
+	cs.push_back(0x93u);
+	cs.insert(cs.end(), rgb_samples.begin(), rgb_samples.end());
+	cs.push_back(0xFFu);
+	cs.push_back(0xD9u);
+
+	// Wrap in JP2 container: signature box + ihdr inside jp2h + jp2c
+	std::vector<uint8_t> jp2 = {
+		0x00u, 0x00u, 0x00u, 0x0Cu,
+		0x6Au, 0x50u, 0x20u, 0x20u,
+		0x0Du, 0x0Au, 0x87u, 0x0Au,
+	};
+
+	// 'jp2h' superbox (8 + 22 = 30 bytes) containing 'ihdr' (22 bytes)
+	append_u32_be(jp2, 30u);
+	append_u32_be(jp2, 0x6A703268u); // 'jp2h'
+	append_u32_be(jp2, 22u);
+	append_u32_be(jp2, 0x69686472u); // 'ihdr'
+	append_u32_be(jp2, 2u);          // height = 2
+	append_u32_be(jp2, 2u);          // width = 2
+	append_u16_be(jp2, 3u);          // 3 components
+	jp2.push_back(7u);               // 8 bpc
+	jp2.push_back(7u);               // compression type = 7
+	jp2.push_back(0u);               // UnkC
+	jp2.push_back(0u);               // IPR
+
+	// 'jp2c' codestream box
+	append_u32_be(jp2, static_cast<uint32_t>(8u + cs.size()));
+	append_u32_be(jp2, 0x6A703263u); // 'jp2c'
+	jp2.insert(jp2.end(), cs.begin(), cs.end());
+	return jp2;
+}
+
+} // namespace
+
+TEST(PdfFilters, DctRgbAndCmyk)
+{
+	// 1. Decode the 8x8 RGB JPEG in render/images-and-vectors.pdf (object 7 0 R).
+	{
+		const auto pdf_bytes = test::read_file_bytes(
+			test::corpus_path("render/images-and-vectors.pdf"));
+		auto xref_res = XrefTable::parse(pdf_bytes);
+		RECTO_ASSERT_OK(xref_res);
+		auto stm_obj = xref_res->resolve_object(pdf_bytes, IndirectRef{7u, 0u});
+		RECTO_ASSERT_OK(stm_obj);
+		ASSERT_TRUE(stm_obj->is_stream());
+
+		auto img = decode_dct_image(stm_obj->as_stream()->raw_bytes);
+		RECTO_ASSERT_OK(img);
+		EXPECT_EQ(img->width, 8u);
+		EXPECT_EQ(img->height, 8u);
+		EXPECT_EQ(img->components, 3u);
+		EXPECT_FALSE(img->is_cmyk);
+		ASSERT_EQ(img->pixels.size(), 8u * 8u * 3u);
+		ASSERT_EQ(img->rgba_pixels.size(), 8u * 8u * 4u);
+		ASSERT_EQ(img->bgra_pixels.size(), 8u * 8u * 4u);
+		// Every pixel in the all-zero DC/AC JPEG is neutral grey (128, 128, 128).
+		EXPECT_NEAR(img->pixels[0], 128, 2);
+		EXPECT_NEAR(img->pixels[1], 128, 2);
+		EXPECT_NEAR(img->pixels[2], 128, 2);
+		EXPECT_EQ(img->rgba_pixels[3], 255u);
+		EXPECT_EQ(img->bgra_pixels[3], 255u);
+	}
+
+	// 2. Decode 4-component CMYK JPEG with and without /Decode array inversion
+	// ([1 0 1 0 1 0 1 0] for Adobe inverted CMYK vs custom /Decode [0.8 0.2 0.0 1.0 1.0 0.0 0.0 0.0]).
+	{
+		const auto cmyk_jpeg = make_minimal_jpeg_8x8_cmyk();
+		auto base_cmyk = decode_dct_image(cmyk_jpeg);
+		RECTO_ASSERT_OK(base_cmyk);
+		EXPECT_EQ(base_cmyk->width, 8u);
+		EXPECT_EQ(base_cmyk->height, 8u);
+		EXPECT_EQ(base_cmyk->components, 4u);
+		EXPECT_TRUE(base_cmyk->is_cmyk);
+		ASSERT_EQ(base_cmyk->pixels.size(), 256u);
+		ASSERT_EQ(base_cmyk->rgba_pixels.size(), 256u);
+		ASSERT_EQ(base_cmyk->bgra_pixels.size(), 256u);
+
+		// Raw CMYK samples from all-zero DC/AC blocks are ~128 per channel.
+		// Apply /Decode [1 0 1 0 1 0 1 0] (Adobe inverted CMYK) and verify inversion,
+		// and apply /Decode [0 0 1 1 0 0 0 0] (forcing C=0%, M=100%, Y=0%, K=0% -> pure Magenta RGB(255, 0, 255)).
+		PdfArray adobe_decode;
+		for (int c = 0; c < 4; ++c) {
+			adobe_decode.push_back(PdfValue(int64_t{1}));
+			adobe_decode.push_back(PdfValue(int64_t{0}));
+		}
+		PdfDict adobe_parms;
+		adobe_parms.set("Decode", PdfValue(std::move(adobe_decode)));
+		auto inv_cmyk = decode_dct_image(cmyk_jpeg, &adobe_parms);
+		RECTO_ASSERT_OK(inv_cmyk);
+		EXPECT_EQ(inv_cmyk->pixels[0], static_cast<uint8_t>(255u - base_cmyk->pixels[0]));
+
+		PdfArray magenta_decode;
+		// C: [0, 0], M: [1, 1], Y: [0, 0], K: [0, 0] -> C=0, M=255, Y=0, K=0 -> sRGB = (255, 0, 255)
+		magenta_decode.push_back(PdfValue(int64_t{0}));
+		magenta_decode.push_back(PdfValue(int64_t{0}));
+		magenta_decode.push_back(PdfValue(int64_t{1}));
+		magenta_decode.push_back(PdfValue(int64_t{1}));
+		magenta_decode.push_back(PdfValue(int64_t{0}));
+		magenta_decode.push_back(PdfValue(int64_t{0}));
+		magenta_decode.push_back(PdfValue(int64_t{0}));
+		magenta_decode.push_back(PdfValue(int64_t{0}));
+
+		PdfDict image_stm_dict;
+		image_stm_dict.set("Filter", PdfValue(PdfName("DCTDecode")));
+		image_stm_dict.set("Decode", PdfValue(std::move(magenta_decode)));
+		PdfDict dp_dict;
+		dp_dict.set("ColorTransform", PdfValue(int64_t{0}));
+		image_stm_dict.set("DecodeParms", PdfValue(std::move(dp_dict)));
+
+		auto magenta_rgba = decode_stream(cmyk_jpeg, image_stm_dict);
+		RECTO_ASSERT_OK(magenta_rgba);
+		ASSERT_EQ(magenta_rgba->size(), 256u);
+		EXPECT_EQ((*magenta_rgba)[0], 255u); // R
+		EXPECT_EQ((*magenta_rgba)[1], 0u);   // G
+		EXPECT_EQ((*magenta_rgba)[2], 255u); // B
+		EXPECT_EQ((*magenta_rgba)[3], 255u); // A
+	}
+
+	// 3. Decode JPXDecode (JP2 box container and raw J2K codestream).
+	{
+		const std::array<uint8_t, 12> expected_rgb = {
+			10, 20, 30,
+			40, 50, 60,
+			70, 80, 90,
+			100, 150, 200,
+		};
+		const auto jp2_bytes = make_minimal_jp2_2x2_rgb(expected_rgb, /*enable_mct=*/false);
+		auto dec_jp2 = decode_jpx(jp2_bytes);
+		RECTO_ASSERT_OK(dec_jp2);
+		EXPECT_EQ(*dec_jp2, std::vector<uint8_t>(expected_rgb.begin(), expected_rgb.end()));
+
+		// Also test through decode_stream(/Filter /JPXDecode).
+		PdfDict jpx_dict;
+		jpx_dict.set("Filter", PdfValue(PdfName("JPXDecode")));
+		auto dec_stm = decode_stream(jp2_bytes, jpx_dict);
+		RECTO_ASSERT_OK(dec_stm);
+		EXPECT_EQ(*dec_stm, std::vector<uint8_t>(expected_rgb.begin(), expected_rgb.end()));
+	}
+
+	// 4. Oversized image header rejection (width * height * 4 > 256 MB):
+	// Verify that 65535 x 65535 and 100000 x 100000 headers in CCITTFaxDecode, JBIG2Decode,
+	// DCTDecode, and JPXDecode are rejected with ErrorCode::DecompressionLimitExceeded before
+	// allocating pixel buffers, and leave diagnostics_tail() empty (pure stateless filter contract).
+	{
+		clear_diagnostics();
+
+		// (a) CCITTFaxDecode: 65535 x 65535 and 100000 x 100000
+		for (int64_t dim : {int64_t{65535}, int64_t{100000}}) {
+			PdfDict ccitt_huge;
+			ccitt_huge.set("K", PdfValue(int64_t{-1}));
+			ccitt_huge.set("Columns", PdfValue(dim));
+			ccitt_huge.set("Rows", PdfValue(dim));
+			const std::array<uint8_t, 4> dummy = {0xFFu, 0xFFu, 0xFFu, 0xFFu};
+			RECTO_EXPECT_ERR(
+				decode_ccitt_fax(dummy, &ccitt_huge),
+				ErrorCode::DecompressionLimitExceeded);
+		}
+
+		// (b) JBIG2Decode: Page Information segment claiming 65535 x 65535 and 100000 x 100000
+		for (uint32_t dim : {65535u, 100000u}) {
+			std::vector<uint8_t> jbig2_huge;
+			append_jbig2_segment(
+				jbig2_huge,
+				0u,
+				48u,
+				{},
+				1u,
+				make_jbig2_page_info_payload(dim, dim, 0u));
+			RECTO_EXPECT_ERR(
+				decode_jbig2(jbig2_huge),
+				ErrorCode::DecompressionLimitExceeded);
+		}
+
+		// (c) DCTDecode: SOF0 header claiming 65535 x 65535 pixels
+		{
+			std::vector<uint8_t> jpeg_huge = {
+				0xFFu, 0xD8u,
+				0xFFu, 0xC0u, 0x00u, 0x11u, // SOF0, length 17
+				0x08u,                      // 8-bit
+				0xFFu, 0xFFu,               // height = 65535
+				0xFFu, 0xFFu,               // width = 65535
+				0x03u,                      // 3 components
+				1u, 0x11u, 0u,
+				2u, 0x11u, 0u,
+				3u, 0x11u, 0u,
+				0xFFu, 0xD9u,
+			};
+			RECTO_EXPECT_ERR(
+				decode_dct(jpeg_huge),
+				ErrorCode::DecompressionLimitExceeded);
+		}
+
+		// (d) JPXDecode: J2K SIZ header claiming 100000 x 100000 pixels
+		{
+			std::vector<uint8_t> j2k_huge = {
+				0xFFu, 0x4Fu, // SOC
+				0xFFu, 0x51u, // SIZ
+			};
+			append_u16_be(j2k_huge, 47u);
+			append_u16_be(j2k_huge, 0u);
+			append_u32_be(j2k_huge, 100000u); // Xsiz
+			append_u32_be(j2k_huge, 100000u); // Ysiz
+			append_u32_be(j2k_huge, 0u);
+			append_u32_be(j2k_huge, 0u);
+			append_u32_be(j2k_huge, 100000u);
+			append_u32_be(j2k_huge, 100000u);
+			append_u32_be(j2k_huge, 0u);
+			append_u32_be(j2k_huge, 0u);
+			append_u16_be(j2k_huge, 3u);
+			for (int c = 0; c < 3; ++c) {
+				j2k_huge.push_back(7u);
+				j2k_huge.push_back(1u);
+				j2k_huge.push_back(1u);
+			}
+			RECTO_EXPECT_ERR(
+				decode_jpx(j2k_huge),
+				ErrorCode::DecompressionLimitExceeded);
+		}
+
+		EXPECT_TRUE(diagnostics_tail().empty());
 	}
 }
 

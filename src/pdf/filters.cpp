@@ -1,9 +1,24 @@
-// Lossless PDF stream filter pipeline: FlateDecode (RFC 1950/1951 + raw-deflate
+// PDF stream filter pipeline: FlateDecode (RFC 1950/1951 + raw-deflate
 // fallback), LZWDecode, TIFF Predictor 2 and PNG Predictors 10..15,
-// ASCIIHexDecode, ASCII85Decode, RunLengthDecode, and chained filter execution
-// with a strict 256 MB per-stream decoded output ceiling (ISO 32000-1 section
-// 7.4; D01 T01 section 7).
+// ASCIIHexDecode, ASCII85Decode, RunLengthDecode, CCITTFaxDecode (Group 3 1D/2D
+// and Group 4 2D MMR), JBIG2Decode (ISO/IEC 14492), WIC DCTDecode / JPXDecode,
+// and chained filter execution with a strict 256 MB per-stream decoded output
+// ceiling (ISO 32000-1 section 7.4; D01 T01 sections 7 and 8).
 #include "filters.h"
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <objbase.h>
+#include <wincodec.h>
+#include <wrl/client.h>
+
+#pragma comment(lib, "windowscodecs.lib")
+#pragma comment(lib, "ole32.lib")
 
 #include <algorithm>
 #include <array>
@@ -13,6 +28,7 @@
 #include <limits>
 #include <new>
 #include <optional>
+#include <unordered_map>
 #include <utility>
 
 namespace recto::pdf {
@@ -1484,6 +1500,3138 @@ PdfResult<std::vector<uint8_t>> decode_run_length(
 	}
 }
 
+// ============================================================================
+// CCITTFaxDecode (ITU-T T.4 Group 3 1D/2D & ITU-T T.6 Group 4 2D MMR)
+// ============================================================================
+
+namespace {
+
+struct CcittCodeEntry {
+	uint16_t code;
+	uint8_t bit_len;
+	int16_t run_len; // >= 0: run length; -1: EOL
+};
+
+// ITU-T T.4 Table 1 & Table 2: White terminating (0..63) and make-up (64..2560) codes.
+constexpr CcittCodeEntry kCcittWhiteCodes[] = {
+	{0x35, 8, 0},   {0x07, 6, 1},   {0x07, 4, 2},   {0x08, 4, 3},
+	{0x0B, 4, 4},   {0x0C, 4, 5},   {0x0E, 4, 6},   {0x0F, 4, 7},
+	{0x13, 5, 8},   {0x14, 5, 9},   {0x07, 5, 10},  {0x08, 5, 11},
+	{0x08, 6, 12},  {0x03, 6, 13},  {0x34, 6, 14},  {0x35, 6, 15},
+	{0x2A, 6, 16},  {0x2B, 6, 17},  {0x27, 7, 18},  {0x0C, 7, 19},
+	{0x08, 7, 20},  {0x17, 7, 21},  {0x03, 7, 22},  {0x04, 7, 23},
+	{0x28, 7, 24},  {0x2B, 7, 25},  {0x13, 7, 26},  {0x24, 7, 27},
+	{0x18, 7, 28},  {0x02, 8, 29},  {0x03, 8, 30},  {0x1A, 8, 31},
+	{0x1B, 8, 32},  {0x12, 8, 33},  {0x13, 8, 34},  {0x14, 8, 35},
+	{0x15, 8, 36},  {0x16, 8, 37},  {0x17, 8, 38},  {0x28, 8, 39},
+	{0x29, 8, 40},  {0x2A, 8, 41},  {0x2B, 8, 42},  {0x2C, 8, 43},
+	{0x2D, 8, 44},  {0x04, 8, 45},  {0x05, 8, 46},  {0x0A, 8, 47},
+	{0x0B, 8, 48},  {0x52, 8, 49},  {0x53, 8, 50},  {0x54, 8, 51},
+	{0x55, 8, 52},  {0x24, 8, 53},  {0x25, 8, 54},  {0x58, 8, 55},
+	{0x59, 8, 56},  {0x5A, 8, 57},  {0x5B, 8, 58},  {0x4A, 8, 59},
+	{0x4B, 8, 60},  {0x32, 8, 61},  {0x33, 8, 62},  {0x34, 8, 63},
+	// White make-up codes (64..1728)
+	{0x1B, 5, 64},   {0x12, 5, 128},  {0x17, 6, 192},  {0x37, 7, 256},
+	{0x36, 8, 320},  {0x37, 8, 384},  {0x64, 8, 448},  {0x65, 8, 512},
+	{0x68, 8, 576},  {0x67, 8, 640},  {0xCC, 9, 704},  {0xCD, 9, 768},
+	{0xD2, 9, 832},  {0xD3, 9, 896},  {0xD4, 9, 960},  {0xD5, 9, 1024},
+	{0xD6, 9, 1088}, {0xD7, 9, 1152}, {0xD8, 9, 1216}, {0xD9, 9, 1280},
+	{0xDA, 9, 1344}, {0xDB, 9, 1408}, {0x98, 9, 1472}, {0x99, 9, 1536},
+	{0x9A, 9, 1600}, {0x18, 6, 1664}, {0x9B, 9, 1728},
+	// Extended make-up codes (1792..2560, shared by White and Black)
+	{0x08, 11, 1792}, {0x0C, 11, 1856}, {0x0D, 11, 1920},
+	{0x12, 12, 1984}, {0x13, 12, 2048}, {0x14, 12, 2112},
+	{0x15, 12, 2176}, {0x16, 12, 2240}, {0x17, 12, 2304},
+	{0x1C, 12, 2368}, {0x1D, 12, 2432}, {0x1E, 12, 2496},
+	{0x1F, 12, 2560},
+};
+
+// ITU-T T.4 Table 1 & Table 2: Black terminating (0..63) and make-up (64..2560) codes.
+constexpr CcittCodeEntry kCcittBlackCodes[] = {
+	{0x37, 10, 0},  {0x02, 3, 1},   {0x03, 2, 2},   {0x02, 2, 3},
+	{0x03, 3, 4},   {0x03, 4, 5},   {0x02, 4, 6},   {0x03, 5, 7},
+	{0x05, 6, 8},   {0x04, 6, 9},   {0x04, 7, 10},  {0x05, 7, 11},
+	{0x07, 7, 12},  {0x04, 8, 13},  {0x07, 8, 14},  {0x18, 9, 15},
+	{0x17, 10, 16}, {0x18, 10, 17}, {0x08, 10, 18}, {0x67, 11, 19},
+	{0x68, 11, 20}, {0x6C, 11, 21}, {0x37, 11, 22}, {0x28, 11, 23},
+	{0x17, 11, 24}, {0x18, 11, 25}, {0xCA, 12, 26}, {0xCB, 12, 27},
+	{0xCC, 12, 28}, {0xCD, 12, 29}, {0x68, 12, 30}, {0x69, 12, 31},
+	{0x6A, 12, 32}, {0x6B, 12, 33}, {0xD2, 12, 34}, {0xD3, 12, 35},
+	{0xD4, 12, 36}, {0xD5, 12, 37}, {0xD6, 12, 38}, {0xD7, 12, 39},
+	{0x6C, 12, 40}, {0x6D, 12, 41}, {0xDA, 12, 42}, {0xDB, 12, 43},
+	{0x54, 12, 44}, {0x55, 12, 45}, {0x56, 12, 46}, {0x57, 12, 47},
+	{0x64, 12, 48}, {0x65, 12, 49}, {0x52, 12, 50}, {0x53, 12, 51},
+	{0x24, 12, 52}, {0x37, 12, 53}, {0x38, 12, 54}, {0x27, 12, 55},
+	{0x28, 12, 56}, {0x58, 12, 57}, {0x59, 12, 58}, {0x2B, 12, 59},
+	{0x2C, 12, 60}, {0x5A, 12, 61}, {0x66, 12, 62}, {0x67, 12, 63},
+	// Black make-up codes (64..1728)
+	{0x0F, 10, 64},  {0xC8, 12, 128}, {0xC9, 12, 192}, {0x5B, 12, 256},
+	{0x33, 12, 320}, {0x34, 12, 384}, {0x35, 12, 448}, {0x6C, 13, 512},
+	{0x6D, 13, 576}, {0x4A, 13, 640}, {0x4B, 13, 704}, {0x4C, 13, 768},
+	{0x4D, 13, 832}, {0x72, 13, 896}, {0x73, 13, 960}, {0x74, 13, 1024},
+	{0x75, 13, 1088},{0x76, 13, 1152},{0x77, 13, 1216},{0x52, 13, 1280},
+	{0x53, 13, 1344},{0x54, 13, 1408},{0x55, 13, 1472},{0x5A, 13, 1536},
+	{0x5B, 13, 1600},{0x64, 13, 1664},{0x65, 13, 1728},
+	// Extended make-up codes (1792..2560)
+	{0x08, 11, 1792}, {0x0C, 11, 1856}, {0x0D, 11, 1920},
+	{0x12, 12, 1984}, {0x13, 12, 2048}, {0x14, 12, 2112},
+	{0x15, 12, 2176}, {0x16, 12, 2240}, {0x17, 12, 2304},
+	{0x1C, 12, 2368}, {0x1D, 12, 2432}, {0x1E, 12, 2496},
+	{0x1F, 12, 2560},
+};
+
+struct MsbBitReader {
+	std::span<const uint8_t> data;
+	size_t bit_pos{0};
+
+	[[nodiscard]] size_t total_bits() const noexcept
+	{
+		return data.size() * 8u;
+	}
+
+	[[nodiscard]] bool at_end() const noexcept
+	{
+		return bit_pos >= total_bits();
+	}
+
+	[[nodiscard]] int read_bit() noexcept
+	{
+		if (bit_pos >= total_bits()) {
+			return -1;
+		}
+		const size_t byte_idx = bit_pos >> 3u;
+		const uint32_t shift = 7u - static_cast<uint32_t>(bit_pos & 7u);
+		++bit_pos;
+		return static_cast<int>((data[byte_idx] >> shift) & 1u);
+	}
+
+	[[nodiscard]] int peek_bits(size_t count, uint32_t& out_bits) const noexcept
+	{
+		if (bit_pos + count > total_bits()) {
+			return -1;
+		}
+		uint32_t val = 0;
+		for (size_t i = 0; i < count; ++i) {
+			const size_t pos = bit_pos + i;
+			const uint32_t bit = (data[pos >> 3u] >> (7u - (pos & 7u))) & 1u;
+			val = (val << 1u) | bit;
+		}
+		out_bits = val;
+		return 0;
+	}
+
+	void align_to_byte() noexcept
+	{
+		bit_pos = (bit_pos + 7u) & ~size_t{7u};
+	}
+
+	// Checks if the upcoming bits form an EOL (`>= 11` zero bits followed by a `1` bit).
+	// If found, advances `bit_pos` past the `1` bit and returns true.
+	[[nodiscard]] bool try_consume_eol() noexcept
+	{
+		size_t p = bit_pos;
+		const size_t limit = total_bits();
+		size_t zeros = 0;
+		while (p < limit) {
+			const uint32_t bit = (data[p >> 3u] >> (7u - (p & 7u))) & 1u;
+			if (bit == 0u) {
+				++zeros;
+				++p;
+				if (zeros > 64u) {
+					return false;
+				}
+			} else {
+				if (zeros >= 11u) {
+					bit_pos = p + 1u;
+					return true;
+				}
+				return false;
+			}
+		}
+		return false;
+	}
+};
+
+struct CcittLookupEntry {
+	int16_t run_len{-2}; // -2 = invalid
+	uint8_t bit_len{0};
+};
+
+using CcittDecodeTable = std::array<CcittLookupEntry, 8192>;
+
+[[nodiscard]] constexpr CcittDecodeTable build_ccitt_decode_table(
+	std::span<const CcittCodeEntry> entries) noexcept
+{
+	CcittDecodeTable table{};
+	for (const auto& e : entries) {
+		const uint32_t shift = 13u - e.bit_len;
+		const uint32_t base = static_cast<uint32_t>(e.code) << shift;
+		const uint32_t count = 1u << shift;
+		for (uint32_t i = 0; i < count; ++i) {
+			table[base + i] = CcittLookupEntry{e.run_len, e.bit_len};
+		}
+	}
+	return table;
+}
+
+constexpr CcittDecodeTable kWhiteLookup = build_ccitt_decode_table(kCcittWhiteCodes);
+constexpr CcittDecodeTable kBlackLookup = build_ccitt_decode_table(kCcittBlackCodes);
+
+// Reads a single 1D run length (accumulating make-up codes until a terminating
+// code 0..63 is reached). Returns true on success and stores the run in `out_run`.
+[[nodiscard]] bool read_ccitt_1d_run(
+	MsbBitReader& reader,
+	bool is_black,
+	int32_t max_columns,
+	int32_t& out_run) noexcept
+{
+	const CcittDecodeTable& table = is_black ? kBlackLookup : kWhiteLookup;
+	int32_t total_run = 0;
+	while (true) {
+		if (reader.at_end()) {
+			return false;
+		}
+		const size_t avail = reader.total_bits() - reader.bit_pos;
+		const size_t peek_n = std::min<size_t>(13u, avail);
+		uint32_t prefix = 0;
+		for (size_t i = 0; i < peek_n; ++i) {
+			const size_t pos = reader.bit_pos + i;
+			const uint32_t bit = (reader.data[pos >> 3u] >> (7u - (pos & 7u))) & 1u;
+			prefix = (prefix << 1u) | bit;
+		}
+		prefix <<= (13u - peek_n);
+		const CcittLookupEntry entry = table[prefix];
+		if (entry.run_len < 0 || entry.bit_len == 0 || entry.bit_len > avail ||
+			total_run + entry.run_len > max_columns) {
+			return false;
+		}
+		reader.bit_pos += entry.bit_len;
+		total_run += entry.run_len;
+		if (entry.run_len < 64) {
+			out_run = total_run;
+			return true;
+		}
+	}
+}
+
+enum class Ccitt2dMode : uint8_t {
+	Pass,
+	Horizontal,
+	Vertical0,
+	VerticalR1,
+	VerticalR2,
+	VerticalR3,
+	VerticalL1,
+	VerticalL2,
+	VerticalL3,
+	Eol,
+	Invalid,
+};
+
+[[nodiscard]] Ccitt2dMode read_ccitt_2d_mode(MsbBitReader& reader) noexcept
+{
+	const int b0 = reader.read_bit();
+	if (b0 < 0) {
+		return Ccitt2dMode::Invalid;
+	}
+	if (b0 == 1) {
+		return Ccitt2dMode::Vertical0; // "1"
+	}
+	const int b1 = reader.read_bit();
+	if (b1 < 0) {
+		return Ccitt2dMode::Invalid;
+	}
+	if (b1 == 1) {
+		const int b2 = reader.read_bit();
+		if (b2 < 0) {
+			return Ccitt2dMode::Invalid;
+		}
+		return (b2 == 1) ? Ccitt2dMode::VerticalR1 : Ccitt2dMode::VerticalL1; // "011" / "010"
+	}
+	const int b2 = reader.read_bit();
+	if (b2 < 0) {
+		return Ccitt2dMode::Invalid;
+	}
+	if (b2 == 1) {
+		return Ccitt2dMode::Horizontal; // "001"
+	}
+	const int b3 = reader.read_bit();
+	if (b3 < 0) {
+		return Ccitt2dMode::Invalid;
+	}
+	if (b3 == 1) {
+		return Ccitt2dMode::Pass; // "0001"
+	}
+	const int b4 = reader.read_bit();
+	if (b4 < 0) {
+		return Ccitt2dMode::Invalid;
+	}
+	if (b4 == 1) {
+		const int b5 = reader.read_bit();
+		if (b5 < 0) {
+			return Ccitt2dMode::Invalid;
+		}
+		return (b5 == 1) ? Ccitt2dMode::VerticalR2 : Ccitt2dMode::VerticalL2; // "000011" / "000010"
+	}
+	const int b5 = reader.read_bit();
+	if (b5 < 0) {
+		return Ccitt2dMode::Invalid;
+	}
+	if (b5 == 1) {
+		const int b6 = reader.read_bit();
+		if (b6 < 0) {
+			return Ccitt2dMode::Invalid;
+		}
+		return (b6 == 1) ? Ccitt2dMode::VerticalR3 : Ccitt2dMode::VerticalL3; // "0000011" / "0000010"
+	}
+	// Six leading zeros ("000000") have been read; check for 5+ more zeros followed by 1 (EOL).
+	size_t zeros = 6u;
+	while (!reader.at_end()) {
+		const int bit = reader.read_bit();
+		if (bit == 0) {
+			++zeros;
+			if (zeros > 64u) {
+				return Ccitt2dMode::Invalid;
+			}
+		} else {
+			return (zeros >= 11u) ? Ccitt2dMode::Eol : Ccitt2dMode::Invalid;
+		}
+	}
+	return Ccitt2dMode::Invalid;
+}
+
+void push_change_point(std::vector<int32_t>& changes, int32_t pos, int32_t columns)
+{
+	if (pos >= columns) {
+		return;
+	}
+	if (!changes.empty() && changes.back() == pos) {
+		changes.pop_back();
+	} else {
+		changes.push_back(pos);
+	}
+}
+
+void find_b1_b2(
+	const std::vector<int32_t>& ref_changes,
+	int32_t a0,
+	int32_t a0_color,
+	int32_t columns,
+	int32_t& out_b1,
+	int32_t& out_b2) noexcept
+{
+	// Even indices in `ref_changes` are transitions to Black (1); odd indices are
+	// transitions to White (0). `b1` is the first transition on `ref_changes`
+	// to color `(1 - a0_color)` at position `> a0`.
+	const size_t target_parity = (a0_color == 0) ? 0u : 1u;
+	for (size_t i = target_parity; i < ref_changes.size(); i += 2u) {
+		if (ref_changes[i] > a0) {
+			out_b1 = ref_changes[i];
+			out_b2 = (i + 1u < ref_changes.size()) ? ref_changes[i + 1u] : columns;
+			return;
+		}
+	}
+	out_b1 = columns;
+	out_b2 = columns;
+}
+
+void pack_changes_to_row(
+	const std::vector<int32_t>& changes,
+	int32_t columns,
+	bool black_is_1,
+	uint8_t* row_out,
+	size_t row_bytes) noexcept
+{
+	if (black_is_1) {
+		std::memset(row_out, 0x00, row_bytes);
+		for (size_t i = 0; i < changes.size(); i += 2u) {
+			const int32_t x0 = std::max<int32_t>(0, changes[i]);
+			const int32_t x1 = (i + 1u < changes.size())
+				? std::min<int32_t>(columns, changes[i + 1u])
+				: columns;
+			for (int32_t x = x0; x < x1; ++x) {
+				row_out[static_cast<size_t>(x) >> 3u] |=
+					static_cast<uint8_t>(1u << (7u - (static_cast<uint32_t>(x) & 7u)));
+			}
+		}
+	} else {
+		std::memset(row_out, 0xFF, row_bytes);
+		const uint32_t rem = static_cast<uint32_t>(columns) & 7u;
+		if (rem != 0u && row_bytes > 0u) {
+			row_out[row_bytes - 1u] &= static_cast<uint8_t>(0xFFu << (8u - rem));
+		}
+		for (size_t i = 0; i < changes.size(); i += 2u) {
+			const int32_t x0 = std::max<int32_t>(0, changes[i]);
+			const int32_t x1 = (i + 1u < changes.size())
+				? std::min<int32_t>(columns, changes[i + 1u])
+				: columns;
+			for (int32_t x = x0; x < x1; ++x) {
+				row_out[static_cast<size_t>(x) >> 3u] &=
+					static_cast<uint8_t>(~(1u << (7u - (static_cast<uint32_t>(x) & 7u))));
+			}
+		}
+	}
+}
+
+[[nodiscard]] bool decode_ccitt_1d_row(
+	MsbBitReader& reader,
+	int32_t columns,
+	std::vector<int32_t>& cur_changes)
+{
+	const size_t row_start_bit = reader.bit_pos;
+	cur_changes.clear();
+	int32_t x = 0;
+	int32_t color = 0; // Starts with White (0)
+	size_t step_count = 0;
+	const size_t max_steps = static_cast<size_t>(columns) + 4u;
+	while (x < columns) {
+		if (++step_count > max_steps) {
+			reader.bit_pos = row_start_bit;
+			return false;
+		}
+		int32_t run = 0;
+		if (!read_ccitt_1d_run(reader, color == 1, columns - x, run)) {
+			reader.bit_pos = row_start_bit;
+			return false;
+		}
+		x += run;
+		if (x > columns) {
+			reader.bit_pos = row_start_bit;
+			return false;
+		}
+		push_change_point(cur_changes, x, columns);
+		color = 1 - color;
+	}
+	return x == columns;
+}
+
+// Decodes a single 2D row. Returns:
+//   1 = decoded a full row of `columns` pixels
+//   0 = encountered EOL / EOFB at the start of the row
+//  -1 = malformed bitstream
+[[nodiscard]] int decode_ccitt_2d_row(
+	MsbBitReader& reader,
+	int32_t columns,
+	const std::vector<int32_t>& ref_changes,
+	std::vector<int32_t>& cur_changes)
+{
+	cur_changes.clear();
+	int32_t a0 = -1;
+	int32_t a0_color = 0; // White
+	size_t step_count = 0;
+	const size_t max_steps = static_cast<size_t>(columns) * 2u + 8u;
+
+	while (a0 < columns) {
+		if (++step_count > max_steps) {
+			return -1;
+		}
+		const Ccitt2dMode mode = read_ccitt_2d_mode(reader);
+		if (mode == Ccitt2dMode::Eol) {
+			if (a0 == -1) {
+				return 0;
+			}
+			return -1;
+		}
+		if (mode == Ccitt2dMode::Invalid) {
+			return -1;
+		}
+
+		int32_t b1 = columns;
+		int32_t b2 = columns;
+		find_b1_b2(ref_changes, a0, a0_color, columns, b1, b2);
+
+		if (mode == Ccitt2dMode::Pass) {
+			if (b2 <= a0 || (a0 == -1 && b2 == 0)) {
+				return -1;
+			}
+			a0 = b2;
+			if (a0 >= columns) {
+				break;
+			}
+		} else if (mode == Ccitt2dMode::Horizontal) {
+			const int32_t a0_start = (a0 < 0) ? 0 : a0;
+			int32_t r1 = 0;
+			int32_t r2 = 0;
+			if (!read_ccitt_1d_run(reader, a0_color == 1, columns - a0_start, r1)) {
+				return -1;
+			}
+			const int32_t a1 = a0_start + r1;
+			if (!read_ccitt_1d_run(reader, a0_color == 0, columns - a1, r2)) {
+				return -1;
+			}
+			const int32_t a2 = a1 + r2;
+			if (a2 > columns || a2 <= a0_start) {
+				return -1;
+			}
+			push_change_point(cur_changes, a1, columns);
+			push_change_point(cur_changes, a2, columns);
+			a0 = a2;
+		} else {
+			int32_t offset = 0;
+			switch (mode) {
+			case Ccitt2dMode::Vertical0:  offset = 0; break;
+			case Ccitt2dMode::VerticalR1: offset = 1; break;
+			case Ccitt2dMode::VerticalR2: offset = 2; break;
+			case Ccitt2dMode::VerticalR3: offset = 3; break;
+			case Ccitt2dMode::VerticalL1: offset = -1; break;
+			case Ccitt2dMode::VerticalL2: offset = -2; break;
+			case Ccitt2dMode::VerticalL3: offset = -3; break;
+			default: return -1;
+			}
+			const int32_t a1 = b1 + offset;
+			if (a1 < 0 || a1 > columns || a1 <= a0) {
+				return -1;
+			}
+			push_change_point(cur_changes, a1, columns);
+			a0 = a1;
+			a0_color = 1 - a0_color;
+		}
+	}
+	return 1;
+}
+
+} // namespace
+
+PdfResult<CcittFaxParams> parse_ccitt_fax_params(const PdfDict* decode_parms) noexcept
+{
+	CcittFaxParams params{};
+	if (decode_parms == nullptr) {
+		return params;
+	}
+
+	auto read_int_field = [&](std::string_view key, int32_t& target) -> PdfResult<void> {
+		const PdfValue* v = decode_parms->get(key);
+		if (v == nullptr || v->is_null()) {
+			return {};
+		}
+		const auto iv = v->as_int();
+		if (!iv.has_value() ||
+			*iv < static_cast<int64_t>(std::numeric_limits<int32_t>::min()) ||
+			*iv > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid integer parameter in CCITTFaxDecode /DecodeParms");
+		}
+		target = static_cast<int32_t>(*iv);
+		return {};
+	};
+
+	auto read_bool_field = [&](std::string_view key, bool& target) -> PdfResult<void> {
+		const PdfValue* v = decode_parms->get(key);
+		if (v == nullptr || v->is_null()) {
+			return {};
+		}
+		const auto bv = v->as_bool();
+		if (!bv.has_value()) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid boolean parameter in CCITTFaxDecode /DecodeParms");
+		}
+		target = *bv;
+		return {};
+	};
+
+	RECTO_PDF_RETURN_IF_ERROR(read_int_field("K", params.k));
+	RECTO_PDF_RETURN_IF_ERROR(read_bool_field("EndOfLine", params.end_of_line));
+	RECTO_PDF_RETURN_IF_ERROR(read_bool_field("EncodedByteAlign", params.encoded_byte_align));
+	RECTO_PDF_RETURN_IF_ERROR(read_int_field("Columns", params.columns));
+	RECTO_PDF_RETURN_IF_ERROR(read_int_field("Rows", params.rows));
+	RECTO_PDF_RETURN_IF_ERROR(read_bool_field("EndOfBlock", params.end_of_block));
+	RECTO_PDF_RETURN_IF_ERROR(read_bool_field("BlackIs1", params.black_is_1));
+	RECTO_PDF_RETURN_IF_ERROR(
+		read_int_field("DamagedRowsBeforeError", params.damaged_rows_before_error));
+
+	if (params.columns <= 0 || params.rows < 0 || params.damaged_rows_before_error < 0) {
+		return make_filter_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedStream,
+			"Invalid /Columns, /Rows, or /DamagedRowsBeforeError in CCITTFaxDecode /DecodeParms");
+	}
+	return params;
+}
+
+PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
+	std::span<const uint8_t> input,
+	const PdfDict* decode_parms,
+	size_t max_decoded_bytes) noexcept
+{
+	try {
+		const size_t effective_limit = std::min<size_t>(max_decoded_bytes, kMaxDecodedStreamBytes);
+		RECTO_PDF_TRY(const CcittFaxParams params, parse_ccitt_fax_params(decode_parms));
+
+		// Check expanded bitmap ceiling (width * height * 4 <= effective_limit) before allocating.
+		const uint64_t width_u64 = static_cast<uint64_t>(params.columns);
+		const uint64_t initial_height_u64 =
+			params.rows > 0 ? static_cast<uint64_t>(params.rows) : 1ULL;
+		if (width_u64 > effective_limit / 4ULL ||
+			initial_height_u64 > (effective_limit / 4ULL) / width_u64) {
+			return make_filter_error(
+				ErrorCode::DecompressionLimitExceeded,
+				DiagnosticId::DecompressionLimitExceeded,
+				"CCITTFaxDecode image dimensions exceed maximum decoded bitmap ceiling");
+		}
+
+		const size_t row_bytes = static_cast<size_t>((width_u64 + 7ULL) / 8ULL);
+		if (params.rows > 0 &&
+			static_cast<uint64_t>(row_bytes) * static_cast<uint64_t>(params.rows) > effective_limit) {
+			return make_filter_error(
+				ErrorCode::DecompressionLimitExceeded,
+				DiagnosticId::DecompressionLimitExceeded,
+				"CCITTFaxDecode packed output exceeds maximum decoded stream byte ceiling");
+		}
+
+		if (input.empty()) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Empty input bitstream in CCITTFaxDecode");
+		}
+
+		MsbBitReader reader{input, 0u};
+		std::vector<uint8_t> out;
+		if (params.rows > 0) {
+			const size_t reserve_bytes = std::min<size_t>(
+				row_bytes * static_cast<size_t>(params.rows),
+				std::min<size_t>(kMaxInitialReserveBytes, effective_limit));
+			out.reserve(reserve_bytes);
+		}
+
+		std::vector<int32_t> ref_changes;
+		std::vector<int32_t> cur_changes;
+		uint64_t decoded_rows = 0;
+		int32_t consecutive_damaged_rows = 0;
+
+		auto append_current_row = [&]() -> PdfResult<void> {
+			const uint64_t next_rows = decoded_rows + 1ULL;
+			if (next_rows > (effective_limit / 4ULL) / width_u64 ||
+				row_bytes > effective_limit - out.size()) {
+				return make_filter_error(
+					ErrorCode::DecompressionLimitExceeded,
+					DiagnosticId::DecompressionLimitExceeded,
+					"CCITTFaxDecode row count exceeds maximum decoded stream byte ceiling");
+			}
+			ensure_bounded_capacity(out, row_bytes, effective_limit);
+			const size_t prev_size = out.size();
+			out.resize(prev_size + row_bytes);
+			pack_changes_to_row(
+				cur_changes,
+				params.columns,
+				params.black_is_1,
+				out.data() + prev_size,
+				row_bytes);
+			ref_changes = cur_changes;
+			++decoded_rows;
+			return {};
+		};
+
+		while (params.rows == 0 || decoded_rows < static_cast<uint64_t>(params.rows)) {
+			if (params.encoded_byte_align && decoded_rows > 0) {
+				reader.align_to_byte();
+			}
+			if (reader.at_end()) {
+				break;
+			}
+
+			if (params.k < 0) {
+				// ITU-T T.6 Group 4 pure 2D MMR decoding.
+				const int status = decode_ccitt_2d_row(
+					reader,
+					params.columns,
+					ref_changes,
+					cur_changes);
+				if (status == 0) {
+					// Encountered first EOL of 24-bit EOFB (`000000000001000000000001`);
+					// the second EOL must immediately follow.
+					if (!reader.try_consume_eol()) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Incomplete EOFB marker in CCITTFaxDecode Group 4 stream",
+							reader.bit_pos >> 3u);
+					}
+					break;
+				}
+				if (status < 0) {
+					// If `params.rows == 0` and only zero padding bits remain in the final byte,
+					// stop cleanly if at least one row was decoded.
+					if (params.rows == 0 && decoded_rows > 0) {
+						bool all_zero_tail = true;
+						for (size_t b = reader.bit_pos; b < reader.total_bits(); ++b) {
+							if (((reader.data[b >> 3u] >> (7u - (b & 7u))) & 1u) != 0u) {
+								all_zero_tail = false;
+								break;
+							}
+						}
+						if (all_zero_tail) {
+							break;
+						}
+					}
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Corrupt 2D codeword in CCITTFaxDecode Group 4 stream",
+						reader.bit_pos >> 3u);
+				}
+				RECTO_PDF_RETURN_IF_ERROR(append_current_row());
+			} else if (params.k == 0) {
+				// ITU-T T.4 Group 3 1D decoding.
+				const bool saw_eol = reader.try_consume_eol();
+				if (saw_eol) {
+					// Two consecutive EOLs mark RTC / End-Of-Block.
+					if (reader.try_consume_eol()) {
+						break;
+					}
+				} else if (params.rows == 0 && decoded_rows > 0) {
+					bool all_zero_tail = true;
+					for (size_t b = reader.bit_pos; b < reader.total_bits(); ++b) {
+						if (((reader.data[b >> 3u] >> (7u - (b & 7u))) & 1u) != 0u) {
+							all_zero_tail = false;
+							break;
+						}
+					}
+					if (all_zero_tail) {
+						break;
+					}
+				}
+
+				const bool eol_ok = !params.end_of_line || saw_eol;
+				if (!eol_ok || !decode_ccitt_1d_row(reader, params.columns, cur_changes)) {
+					if (consecutive_damaged_rows < params.damaged_rows_before_error) {
+						// Resynchronize to the start of the next EOL and substitute the reference line.
+						bool found_sync = false;
+						while (!reader.at_end()) {
+							const size_t sync_pos = reader.bit_pos;
+							if (reader.try_consume_eol()) {
+								reader.bit_pos = sync_pos;
+								found_sync = true;
+								break;
+							}
+							++reader.bit_pos;
+						}
+						if (found_sync) {
+							++consecutive_damaged_rows;
+							cur_changes = ref_changes;
+							RECTO_PDF_RETURN_IF_ERROR(append_current_row());
+							continue;
+						}
+					}
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Corrupt 1D Huffman run in CCITTFaxDecode Group 3 stream",
+						reader.bit_pos >> 3u);
+				}
+				consecutive_damaged_rows = 0;
+				RECTO_PDF_RETURN_IF_ERROR(append_current_row());
+			} else {
+				// ITU-T T.4 Group 3 2D mixed 1D/2D decoding (`K > 0`).
+				const bool saw_eol = reader.try_consume_eol();
+				if (saw_eol) {
+					// Check for RTC (`EOL + 1` or `EOL` repeated).
+					const size_t saved_after_eol = reader.bit_pos;
+					if (reader.try_consume_eol()) {
+						break;
+					}
+					const int tag_peek = reader.read_bit();
+					if (tag_peek < 0) {
+						break;
+					}
+					if (reader.try_consume_eol()) {
+						break;
+					}
+					reader.bit_pos = saved_after_eol;
+				} else if (params.rows == 0 && decoded_rows > 0) {
+					bool all_zero_tail = true;
+					for (size_t b = reader.bit_pos; b < reader.total_bits(); ++b) {
+						if (((reader.data[b >> 3u] >> (7u - (b & 7u))) & 1u) != 0u) {
+							all_zero_tail = false;
+							break;
+						}
+					}
+					if (all_zero_tail) {
+						break;
+					}
+				}
+				if (params.end_of_line && !saw_eol) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Missing required EOL in CCITTFaxDecode Group 3 2D stream",
+						reader.bit_pos >> 3u);
+				}
+				const int tag_bit = reader.read_bit();
+				if (tag_bit < 0) {
+					break;
+				}
+				bool row_ok = false;
+				if (tag_bit == 1) {
+					row_ok = decode_ccitt_1d_row(reader, params.columns, cur_changes);
+				} else {
+					row_ok = (decode_ccitt_2d_row(
+						reader,
+						params.columns,
+						ref_changes,
+						cur_changes) == 1);
+				}
+				if (!row_ok) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Corrupt row in CCITTFaxDecode Group 3 2D stream",
+						reader.bit_pos >> 3u);
+				}
+				RECTO_PDF_RETURN_IF_ERROR(append_current_row());
+			}
+		}
+
+		if (decoded_rows == 0 ||
+			(params.rows > 0 && !params.end_of_block &&
+			 decoded_rows < static_cast<uint64_t>(params.rows))) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Truncated CCITTFaxDecode stream: insufficient scanlines decoded");
+		}
+
+		return out;
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(
+			ErrorCode::OutOfMemory,
+			"Out of memory while decoding CCITTFaxDecode stream");
+	} catch (...) {
+		return make_pdf_error(
+			ErrorCode::InternalError,
+			"Unexpected exception while decoding CCITTFaxDecode stream");
+	}
+}
+
+// ============================================================================
+// JBIG2Decode (ISO/IEC 14492 bi-level generic, symbol & halftone regions)
+// ============================================================================
+
+namespace {
+
+[[nodiscard]] constexpr uint16_t read_u16_be(const uint8_t* p) noexcept
+{
+	return static_cast<uint16_t>((static_cast<uint16_t>(p[0]) << 8u) | p[1]);
+}
+
+[[nodiscard]] constexpr uint32_t read_u32_be(const uint8_t* p) noexcept
+{
+	return (static_cast<uint32_t>(p[0]) << 24u) |
+		(static_cast<uint32_t>(p[1]) << 16u) |
+		(static_cast<uint32_t>(p[2]) << 8u) |
+		static_cast<uint32_t>(p[3]);
+}
+
+[[nodiscard]] constexpr int32_t read_i32_be(const uint8_t* p) noexcept
+{
+	return static_cast<int32_t>(read_u32_be(p));
+}
+
+struct Jbig2Bitmap {
+	uint32_t width{0};
+	uint32_t height{0};
+	size_t stride{0};
+	std::vector<uint8_t> data; // 1-bit packed MSB-first; in JBIG2: 1 = black, 0 = white
+
+	[[nodiscard]] static PdfResult<Jbig2Bitmap> create(
+		uint32_t w,
+		uint32_t h,
+		uint8_t default_pixel,
+		size_t effective_limit)
+	{
+		if (w == 0 || h == 0) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"JBIG2 bitmap width and height must be positive");
+		}
+		const uint64_t w64 = w;
+		const uint64_t h64 = h;
+		if (w64 > effective_limit / 4ULL || h64 > (effective_limit / 4ULL) / w64) {
+			return make_filter_error(
+				ErrorCode::DecompressionLimitExceeded,
+				DiagnosticId::DecompressionLimitExceeded,
+				"JBIG2 bitmap dimensions exceed maximum decoded bitmap ceiling");
+		}
+		const size_t row_stride = static_cast<size_t>((w64 + 7ULL) / 8ULL);
+		const uint64_t total_bytes = static_cast<uint64_t>(row_stride) * h64;
+		if (total_bytes > effective_limit) {
+			return make_filter_error(
+				ErrorCode::DecompressionLimitExceeded,
+				DiagnosticId::DecompressionLimitExceeded,
+				"JBIG2 packed bitmap exceeds maximum decoded stream byte ceiling");
+		}
+		Jbig2Bitmap bm;
+		bm.width = w;
+		bm.height = h;
+		bm.stride = row_stride;
+		bm.data.assign(static_cast<size_t>(total_bytes), default_pixel ? 0xFFu : 0x00u);
+		if (default_pixel && (w & 7u) != 0u) {
+			const uint8_t mask = static_cast<uint8_t>(0xFFu << (8u - (w & 7u)));
+			for (uint32_t y = 0; y < h; ++y) {
+				bm.data[static_cast<size_t>(y) * row_stride + (row_stride - 1u)] &= mask;
+			}
+		}
+		return bm;
+	}
+
+	[[nodiscard]] uint8_t get_pixel(int32_t x, int32_t y) const noexcept
+	{
+		if (x < 0 || y < 0 ||
+			static_cast<uint32_t>(x) >= width ||
+			static_cast<uint32_t>(y) >= height) {
+			return 0u;
+		}
+		const size_t byte_off =
+			static_cast<size_t>(y) * stride + (static_cast<size_t>(x) >> 3u);
+		return static_cast<uint8_t>(
+			(data[byte_off] >> (7u - (static_cast<uint32_t>(x) & 7u))) & 1u);
+	}
+
+	void set_pixel(uint32_t x, uint32_t y, uint8_t val) noexcept
+	{
+		if (x >= width || y >= height) {
+			return;
+		}
+		const size_t byte_off =
+			static_cast<size_t>(y) * stride + (static_cast<size_t>(x) >> 3u);
+		const uint8_t mask = static_cast<uint8_t>(1u << (7u - (x & 7u)));
+		if (val != 0u) {
+			data[byte_off] |= mask;
+		} else {
+			data[byte_off] &= static_cast<uint8_t>(~mask);
+		}
+	}
+
+	// Composites `src` at `(dst_x, dst_y)` using ISO/IEC 14492 combination operator:
+	// 0 = OR, 1 = AND, 2 = XOR, 3 = XNOR, 4 = REPLACE.
+	void composite(
+		const Jbig2Bitmap& src,
+		int32_t dst_x,
+		int32_t dst_y,
+		uint8_t comb_op) noexcept
+	{
+		for (uint32_t sy = 0; sy < src.height; ++sy) {
+			const int64_t dy = static_cast<int64_t>(dst_y) + static_cast<int64_t>(sy);
+			if (dy < 0 || dy >= static_cast<int64_t>(height)) {
+				continue;
+			}
+			for (uint32_t sx = 0; sx < src.width; ++sx) {
+				const int64_t dx = static_cast<int64_t>(dst_x) + static_cast<int64_t>(sx);
+				if (dx < 0 || dx >= static_cast<int64_t>(width)) {
+					continue;
+				}
+				const uint8_t s = src.get_pixel(static_cast<int32_t>(sx), static_cast<int32_t>(sy));
+				const uint8_t d = get_pixel(static_cast<int32_t>(dx), static_cast<int32_t>(dy));
+				uint8_t r = d;
+				switch (comb_op & 0x07u) {
+				case 0u: r = static_cast<uint8_t>(d | s); break;          // OR
+				case 1u: r = static_cast<uint8_t>(d & s); break;          // AND
+				case 2u: r = static_cast<uint8_t>(d ^ s); break;          // XOR
+				case 3u: r = static_cast<uint8_t>((d ^ s) ^ 1u); break;   // XNOR
+				case 4u: r = s; break;                                    // REPLACE
+				default: r = static_cast<uint8_t>(d | s); break;
+				}
+				set_pixel(static_cast<uint32_t>(dx), static_cast<uint32_t>(dy), r);
+			}
+		}
+	}
+};
+
+// ISO/IEC 14492 Annex E Table E.1: QM-coder probability estimation state table.
+struct MqQeEntry {
+	uint16_t qe;
+	uint8_t nmps;
+	uint8_t nlps;
+	uint8_t sw;
+};
+
+constexpr MqQeEntry kMqQeTable[47] = {
+	{0x5601,  1,  1, 1}, {0x3401,  2,  6, 0}, {0x1801,  3,  9, 0}, {0x0AC1,  4, 12, 0},
+	{0x0521,  5, 29, 0}, {0x0221, 38, 33, 0}, {0x5601,  7,  6, 1}, {0x5401,  8, 14, 0},
+	{0x4801,  9, 14, 0}, {0x3801, 10, 14, 0}, {0x3001, 11, 17, 0}, {0x2401, 12, 18, 0},
+	{0x1C01, 13, 20, 0}, {0x1601, 29, 21, 0}, {0x5601, 15, 14, 1}, {0x5401, 16, 14, 0},
+	{0x5101, 17, 15, 0}, {0x4801, 18, 16, 0}, {0x3801, 19, 17, 0}, {0x3401, 20, 18, 0},
+	{0x3001, 21, 19, 0}, {0x2801, 22, 19, 0}, {0x2401, 23, 20, 0}, {0x2201, 24, 21, 0},
+	{0x1C01, 25, 22, 0}, {0x1801, 26, 23, 0}, {0x1601, 27, 24, 0}, {0x1401, 28, 25, 0},
+	{0x1201, 29, 26, 0}, {0x1101, 30, 27, 0}, {0x0AC1, 31, 28, 0}, {0x09C1, 32, 29, 0},
+	{0x08A1, 33, 30, 0}, {0x0521, 34, 31, 0}, {0x0441, 35, 32, 0}, {0x02A1, 36, 33, 0},
+	{0x0221, 37, 34, 0}, {0x0141, 38, 35, 0}, {0x0111, 39, 36, 0}, {0x0085, 40, 37, 0},
+	{0x0049, 41, 38, 0}, {0x0025, 42, 39, 0}, {0x0015, 43, 40, 0}, {0x0009, 44, 41, 0},
+	{0x0005, 45, 42, 0}, {0x0001, 45, 43, 0}, {0x5601, 46, 46, 0},
+};
+
+struct MqContext {
+	uint8_t index{0};
+	uint8_t mps{0};
+};
+
+class MqDecoder {
+public:
+	explicit MqDecoder(std::span<const uint8_t> data) noexcept
+		: data_(data)
+	{
+		init_dec();
+	}
+
+	[[nodiscard]] uint8_t decode(MqContext& cx) noexcept
+	{
+		const MqQeEntry& entry = kMqQeTable[cx.index];
+		a_ -= entry.qe;
+		uint8_t d = cx.mps;
+		if ((c_ >> 16u) < a_) {
+			if ((a_ & 0x8000u) == 0u) {
+				if (a_ < entry.qe) {
+					d = static_cast<uint8_t>(1u - d);
+					if (entry.sw != 0u) {
+						cx.mps = static_cast<uint8_t>(1u - cx.mps);
+					}
+					cx.index = entry.nlps;
+				} else {
+					cx.index = entry.nmps;
+				}
+				renorme();
+			}
+		} else {
+			c_ -= (a_ << 16u);
+			if (a_ < entry.qe) {
+				cx.index = entry.nmps;
+			} else {
+				d = static_cast<uint8_t>(1u - d);
+				if (entry.sw != 0u) {
+					cx.mps = static_cast<uint8_t>(1u - cx.mps);
+				}
+				cx.index = entry.nlps;
+			}
+			a_ = entry.qe;
+			renorme();
+		}
+		return d;
+	}
+
+private:
+	uint8_t cur_byte() const noexcept
+	{
+		return bp_ < data_.size() ? data_[bp_] : 0xFFu;
+	}
+
+	uint8_t next_byte() const noexcept
+	{
+		return (bp_ + 1u) < data_.size() ? data_[bp_ + 1u] : 0xFFu;
+	}
+
+	void init_dec() noexcept
+	{
+		bp_ = 0u;
+		c_ = static_cast<uint32_t>(cur_byte() ^ 0xFFu) << 16u;
+		byte_in();
+		c_ <<= 7u;
+		ct_ -= 7u;
+		a_ = 0x8000u;
+	}
+
+	void byte_in() noexcept
+	{
+		if (cur_byte() == 0xFFu) {
+			const uint8_t b1 = next_byte();
+			if (b1 > 0x8Fu) {
+				ct_ = 8u;
+			} else {
+				if (bp_ < data_.size()) {
+					++bp_;
+				}
+				c_ += 0xFE00u - (static_cast<uint32_t>(cur_byte()) << 9u);
+				ct_ = 7u;
+			}
+		} else {
+			if (bp_ < data_.size()) {
+				++bp_;
+			}
+			c_ += 0xFF00u - (static_cast<uint32_t>(cur_byte()) << 8u);
+			ct_ = 8u;
+		}
+	}
+
+	void renorme() noexcept
+	{
+		do {
+			if (ct_ == 0u) {
+				byte_in();
+			}
+			a_ <<= 1u;
+			c_ <<= 1u;
+			--ct_;
+		} while ((a_ & 0x8000u) == 0u);
+	}
+
+	std::span<const uint8_t> data_;
+	size_t bp_{0};
+	uint32_t c_{0};
+	uint32_t a_{0x8000u};
+	uint32_t ct_{0};
+};
+
+// ISO/IEC 14492 Annex A: Arithmetic Integer Decoding Procedure.
+class Jbig2ArithIntDecoder {
+public:
+	// Returns true for a decoded integer `out_val`, or false on `OOB`.
+	[[nodiscard]] bool decode(MqDecoder& mq, int32_t& out_val) noexcept
+	{
+		uint32_t prev = 1u;
+		const uint8_t s = decode_bit(mq, prev);
+		uint32_t v = 0u;
+		if (decode_bit(mq, prev) == 0u) {
+			v = read_bits(mq, prev, 2u);
+		} else if (decode_bit(mq, prev) == 0u) {
+			v = read_bits(mq, prev, 4u) + 4u;
+		} else if (decode_bit(mq, prev) == 0u) {
+			v = read_bits(mq, prev, 6u) + 20u;
+		} else if (decode_bit(mq, prev) == 0u) {
+			v = read_bits(mq, prev, 8u) + 84u;
+		} else if (decode_bit(mq, prev) == 0u) {
+			v = read_bits(mq, prev, 12u) + 340u;
+		} else {
+			v = read_bits(mq, prev, 32u) + 4436u;
+		}
+
+		if (s != 0u && v == 0u) {
+			return false; // OOB
+		}
+		out_val = (s != 0u) ? -static_cast<int32_t>(v) : static_cast<int32_t>(v);
+		return true;
+	}
+
+private:
+	uint8_t decode_bit(MqDecoder& mq, uint32_t& prev) noexcept
+	{
+		const uint8_t d = mq.decode(contexts_[prev & 0x1FFu]);
+		prev = (prev << 1u) | d;
+		if (prev >= 0x200u) {
+			prev = (prev & 0x1FFu) | 0x100u;
+		}
+		return d;
+	}
+
+	uint32_t read_bits(MqDecoder& mq, uint32_t& prev, uint32_t count) noexcept
+	{
+		uint32_t val = 0u;
+		for (uint32_t i = 0; i < count; ++i) {
+			val = (val << 1u) | decode_bit(mq, prev);
+		}
+		return val;
+	}
+
+	std::array<MqContext, 512> contexts_{};
+};
+
+// ISO/IEC 14492 Annex A.3: IAID Symbol ID Arithmetic Decoder.
+class Jbig2IaidDecoder {
+public:
+	explicit Jbig2IaidDecoder(uint32_t code_len)
+		: code_len_(std::min<uint32_t>(code_len, 20u))
+		, contexts_(size_t{1u} << code_len_)
+	{
+	}
+
+	[[nodiscard]] uint32_t decode(MqDecoder& mq) noexcept
+	{
+		uint32_t prev = 1u;
+		for (uint32_t i = 0; i < code_len_; ++i) {
+			const uint8_t d = mq.decode(contexts_[prev & ((1u << code_len_) - 1u)]);
+			prev = (prev << 1u) | d;
+		}
+		return prev - (1u << code_len_);
+	}
+
+private:
+	uint32_t code_len_{1};
+	std::vector<MqContext> contexts_;
+};
+
+// Decodes a generic region (ISO/IEC 14492 section 6.2) using either MMR (`mmr == true`)
+// or QM arithmetic coding (`mmr == false`, `gb_template == 0..3`, `tpgdon`).
+[[nodiscard]] PdfResult<Jbig2Bitmap> decode_jbig2_generic_region(
+	uint32_t width,
+	uint32_t height,
+	bool mmr,
+	uint8_t gb_template,
+	bool tpgdon,
+	std::span<const int8_t> at_coords,
+	std::span<const uint8_t> payload,
+	size_t effective_limit,
+	MqDecoder* shared_mq = nullptr,
+	std::vector<MqContext>* shared_cx = nullptr)
+{
+	RECTO_PDF_TRY(Jbig2Bitmap bm, Jbig2Bitmap::create(width, height, 0u, effective_limit));
+
+	if (mmr) {
+		MsbBitReader reader{payload, 0u};
+		std::vector<int32_t> ref_changes;
+		std::vector<int32_t> cur_changes;
+		for (uint32_t y = 0; y < height; ++y) {
+			const int status = decode_ccitt_2d_row(
+				reader,
+				static_cast<int32_t>(width),
+				ref_changes,
+				cur_changes);
+			if (status == 0) {
+				(void)reader.try_consume_eol();
+				break;
+			}
+			if (status < 0) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Corrupt MMR row inside JBIG2 Generic Region segment");
+			}
+			pack_changes_to_row(
+				cur_changes,
+				static_cast<int32_t>(width),
+				/*black_is_1=*/true,
+				bm.data.data() + static_cast<size_t>(y) * bm.stride,
+				bm.stride);
+			ref_changes = cur_changes;
+		}
+		return bm;
+	}
+
+	std::optional<MqDecoder> local_mq;
+	std::vector<MqContext> local_cx;
+	MqDecoder* mq = shared_mq;
+	std::vector<MqContext>* cx_vec = shared_cx;
+	if (mq == nullptr) {
+		local_mq.emplace(payload);
+		mq = &(*local_mq);
+	}
+	const size_t num_contexts =
+		(gb_template == 0u) ? 65536u : ((gb_template == 1u) ? 8192u : 1024u);
+	if (cx_vec == nullptr) {
+		local_cx.resize(num_contexts);
+		cx_vec = &local_cx;
+	} else if (cx_vec->size() < num_contexts) {
+		cx_vec->resize(num_contexts);
+	}
+
+	int8_t atx[4] = {3, -3, 2, -2};
+	int8_t aty[4] = {-1, -1, -2, -2};
+	if (gb_template == 0u && at_coords.size() >= 8u) {
+		for (int i = 0; i < 4; ++i) {
+			atx[i] = at_coords[static_cast<size_t>(i) * 2u];
+			aty[i] = at_coords[static_cast<size_t>(i) * 2u + 1u];
+		}
+	} else if (gb_template >= 1u && at_coords.size() >= 2u) {
+		atx[0] = at_coords[0];
+		aty[0] = at_coords[1];
+	}
+
+	constexpr uint16_t kSltpContext[4] = {0x9B25u, 0x0795u, 0x00E5u, 0x0195u};
+	uint8_t ltp = 0u;
+
+	for (uint32_t y = 0; y < height; ++y) {
+		if (tpgdon) {
+			const uint8_t sltp = mq->decode((*cx_vec)[kSltpContext[gb_template & 3u]]);
+			ltp ^= sltp;
+			if (ltp != 0u) {
+				if (y > 0u) {
+					std::memcpy(
+						bm.data.data() + static_cast<size_t>(y) * bm.stride,
+						bm.data.data() + static_cast<size_t>(y - 1u) * bm.stride,
+						bm.stride);
+				}
+				continue;
+			}
+		}
+
+		const int32_t iy = static_cast<int32_t>(y);
+		for (uint32_t x = 0; x < width; ++x) {
+			const int32_t ix = static_cast<int32_t>(x);
+			uint32_t ctx = 0u;
+			if (gb_template == 0u) {
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 1, iy)) << 0u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 2, iy)) << 1u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 3, iy)) << 2u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 4, iy)) << 3u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix + atx[0], iy + aty[0])) << 4u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix + 2, iy - 1)) << 5u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix + 1, iy - 1)) << 6u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix, iy - 1)) << 7u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 1, iy - 1)) << 8u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 2, iy - 1)) << 9u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix + atx[1], iy + aty[1])) << 10u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix + atx[2], iy + aty[2])) << 11u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix + 1, iy - 2)) << 12u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix, iy - 2)) << 13u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 1, iy - 2)) << 14u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix + atx[3], iy + aty[3])) << 15u;
+			} else if (gb_template == 1u) {
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 1, iy)) << 0u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 2, iy)) << 1u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 3, iy)) << 2u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix + atx[0], iy + aty[0])) << 3u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix + 2, iy - 1)) << 4u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix + 1, iy - 1)) << 5u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix, iy - 1)) << 6u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 1, iy - 1)) << 7u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 2, iy - 1)) << 8u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix + 2, iy - 2)) << 9u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix + 1, iy - 2)) << 10u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix, iy - 2)) << 11u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 1, iy - 2)) << 12u;
+			} else if (gb_template == 2u) {
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 1, iy)) << 0u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 2, iy)) << 1u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix + atx[0], iy + aty[0])) << 2u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix + 1, iy - 1)) << 3u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix, iy - 1)) << 4u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 1, iy - 1)) << 5u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 2, iy - 1)) << 6u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix + 1, iy - 2)) << 7u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix, iy - 2)) << 8u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 1, iy - 2)) << 9u;
+			} else {
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 1, iy)) << 0u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 2, iy)) << 1u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 3, iy)) << 2u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 4, iy)) << 3u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix + atx[0], iy + aty[0])) << 4u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix + 1, iy - 1)) << 5u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix, iy - 1)) << 6u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 1, iy - 1)) << 7u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 2, iy - 1)) << 8u;
+				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 3, iy - 1)) << 9u;
+			}
+			const uint8_t bit = mq->decode((*cx_vec)[ctx]);
+			if (bit != 0u) {
+				bm.set_pixel(x, y, 1u);
+			}
+		}
+	}
+
+	return bm;
+}
+
+struct Jbig2DecoderState {
+	std::optional<Jbig2Bitmap> page_bitmap;
+	uint8_t default_comb_op{0};
+	uint8_t default_pixel{0};
+	std::unordered_map<uint32_t, std::vector<Jbig2Bitmap>> symbol_dicts;
+	std::unordered_map<uint32_t, std::vector<Jbig2Bitmap>> pattern_dicts;
+	std::unordered_map<uint32_t, Jbig2Bitmap> aux_regions;
+	size_t total_allocated_bytes{0};
+};
+
+[[nodiscard]] PdfResult<void> parse_jbig2_segments(
+	std::span<const uint8_t> stream_bytes,
+	Jbig2DecoderState& state,
+	size_t effective_limit)
+{
+	size_t pos = 0u;
+	// Check for optional 8-byte standalone JBIG2 file header (`97 4A 42 32 0D 0A 1A 0A`).
+	constexpr uint8_t kJbig2FileMagic[8] = {0x97u, 0x4Au, 0x42u, 0x32u, 0x0Du, 0x0Au, 0x1Au, 0x0Au};
+	if (stream_bytes.size() >= 9u &&
+		std::memcmp(stream_bytes.data(), kJbig2FileMagic, 8u) == 0) {
+		const uint8_t file_flags = stream_bytes[8u];
+		pos = 9u;
+		if ((file_flags & 0x02u) == 0u) {
+			if (pos + 4u > stream_bytes.size()) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Truncated page count in JBIG2 file header");
+			}
+			pos += 4u;
+		}
+	}
+
+	while (pos < stream_bytes.size()) {
+		if (stream_bytes.size() - pos < 11u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Truncated JBIG2 segment header",
+				pos);
+		}
+		const size_t seg_header_start = pos;
+		const uint32_t seg_num = read_u32_be(stream_bytes.data() + pos);
+		pos += 4u;
+
+		const uint8_t seg_flags = stream_bytes[pos++];
+		const uint8_t seg_type = static_cast<uint8_t>(seg_flags & 0x3Fu);
+		const bool page_assoc_long = (seg_flags & 0x40u) != 0u;
+
+		const uint8_t rt_first = stream_bytes[pos];
+		const uint32_t rt_top3 = (rt_first >> 5u) & 0x07u;
+		uint32_t ref_count = 0u;
+		if (rt_top3 < 5u) {
+			ref_count = rt_top3;
+			++pos;
+		} else if (rt_top3 == 7u) {
+			if (stream_bytes.size() - pos < 4u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Truncated long referred-to segment count in JBIG2 segment header",
+					seg_header_start);
+			}
+			ref_count = read_u32_be(stream_bytes.data() + pos) & 0x1FFFFFFFu;
+			pos += 4u;
+			const uint64_t retain_bytes = (static_cast<uint64_t>(ref_count) + 8ULL) / 8ULL;
+			if (retain_bytes > stream_bytes.size() - pos) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"JBIG2 segment retention flags exceed stream bounds",
+					seg_header_start);
+			}
+			pos += static_cast<size_t>(retain_bytes);
+		} else {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid referred-to count encoding (5 or 6) in JBIG2 segment header",
+				seg_header_start);
+		}
+
+		const size_t ref_id_bytes = (seg_num <= 256u) ? 1u : ((seg_num <= 65536u) ? 2u : 4u);
+		if (static_cast<uint64_t>(ref_count) * ref_id_bytes > stream_bytes.size() - pos) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"JBIG2 referred-to segment list exceeds stream bounds",
+				seg_header_start);
+		}
+		std::vector<uint32_t> ref_segments;
+		ref_segments.reserve(ref_count);
+		for (uint32_t i = 0; i < ref_count; ++i) {
+			uint32_t ref_id = 0u;
+			if (ref_id_bytes == 1u) {
+				ref_id = stream_bytes[pos++];
+			} else if (ref_id_bytes == 2u) {
+				ref_id = read_u16_be(stream_bytes.data() + pos);
+				pos += 2u;
+			} else {
+				ref_id = read_u32_be(stream_bytes.data() + pos);
+				pos += 4u;
+			}
+			ref_segments.push_back(ref_id);
+		}
+
+		const size_t page_assoc_bytes = page_assoc_long ? 4u : 1u;
+		if (stream_bytes.size() - pos < page_assoc_bytes + 4u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Truncated page association or data length in JBIG2 segment header",
+				seg_header_start);
+		}
+		pos += page_assoc_bytes;
+
+		const uint32_t raw_data_len = read_u32_be(stream_bytes.data() + pos);
+		pos += 4u;
+
+		size_t seg_data_len = raw_data_len;
+		if (raw_data_len == 0xFFFFFFFFu) {
+			// Indeterminate length is only permitted for immediate generic region segments (38, 39).
+			if (seg_type != 38u && seg_type != 39u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Indeterminate JBIG2 segment length is only allowed on immediate generic regions",
+					seg_header_start);
+			}
+			if (stream_bytes.size() - pos < 18u + 6u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Truncated indeterminate-length JBIG2 generic region segment",
+					seg_header_start);
+			}
+			const bool is_mmr = (stream_bytes[pos + 17u] & 0x01u) != 0u;
+			const uint8_t marker0 = is_mmr ? 0x00u : 0xFFu;
+			const uint8_t marker1 = is_mmr ? 0x00u : 0xACu;
+			bool found_end = false;
+			for (size_t scan = pos + 18u; scan + 6u <= stream_bytes.size(); ++scan) {
+				if (stream_bytes[scan] == marker0 && stream_bytes[scan + 1u] == marker1) {
+					seg_data_len = (scan + 6u) - pos;
+					found_end = true;
+					break;
+				}
+			}
+			if (!found_end) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Missing row-count trailer on indeterminate-length JBIG2 generic region",
+					seg_header_start);
+			}
+		} else if (seg_data_len > stream_bytes.size() - pos) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"JBIG2 segment data length exceeds remaining stream bytes",
+				seg_header_start);
+		}
+
+		const std::span<const uint8_t> seg_data = stream_bytes.subspan(pos, seg_data_len);
+		pos += seg_data_len;
+
+		if (seg_type == 48u) {
+			// Page Information segment (ISO/IEC 14492 section 7.4.8, 19 bytes).
+			if (seg_data.size() < 19u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"JBIG2 Page Information segment (type 48) is shorter than 19 bytes",
+					seg_header_start);
+			}
+			const uint32_t page_w = read_u32_be(seg_data.data());
+			uint32_t page_h = read_u32_be(seg_data.data() + 4u);
+			const uint8_t page_flags = seg_data[16u];
+			const uint16_t striping = read_u16_be(seg_data.data() + 17u);
+			if (page_h == 0xFFFFFFFFu) {
+				page_h = static_cast<uint32_t>(striping & 0x7FFFu);
+			}
+			state.default_pixel = static_cast<uint8_t>((page_flags >> 2u) & 0x01u);
+			state.default_comb_op = static_cast<uint8_t>((page_flags >> 3u) & 0x03u);
+			RECTO_PDF_TRY(
+				Jbig2Bitmap pbm,
+				Jbig2Bitmap::create(page_w, page_h, state.default_pixel, effective_limit));
+			state.page_bitmap = std::move(pbm);
+		} else if (seg_type == 36u || seg_type == 38u || seg_type == 39u) {
+			// Intermediate (36) or Immediate (38, 39) Generic Region segment.
+			if (seg_data.size() < 18u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"JBIG2 Generic Region segment is shorter than 18 bytes",
+					seg_header_start);
+			}
+			const uint32_t reg_w = read_u32_be(seg_data.data());
+			uint32_t reg_h = read_u32_be(seg_data.data() + 4u);
+			if (raw_data_len == 0xFFFFFFFFu && seg_data.size() >= 24u) {
+				reg_h = read_u32_be(seg_data.data() + seg_data.size() - 4u);
+			}
+			const int32_t reg_x = read_i32_be(seg_data.data() + 8u);
+			const int32_t reg_y = read_i32_be(seg_data.data() + 12u);
+			const uint8_t reg_comb_op = static_cast<uint8_t>(seg_data[16u] & 0x07u);
+			const uint8_t gr_flags = seg_data[17u];
+			const bool mmr = (gr_flags & 0x01u) != 0u;
+			const uint8_t gb_template = static_cast<uint8_t>((gr_flags >> 1u) & 0x03u);
+			const bool tpgdon = (gr_flags & 0x08u) != 0u;
+			const bool ext_template = (gr_flags & 0x10u) != 0u;
+
+			size_t at_bytes = 0u;
+			if (!mmr) {
+				at_bytes = (gb_template == 0u) ? (ext_template ? 24u : 8u) : 2u;
+			}
+			if (18u + at_bytes > seg_data.size()) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Truncated AT flags in JBIG2 Generic Region segment",
+					seg_header_start);
+			}
+			const std::span<const int8_t> at_span(
+				reinterpret_cast<const int8_t*>(seg_data.data() + 18u),
+				at_bytes);
+			const size_t body_len = (raw_data_len == 0xFFFFFFFFu)
+				? (seg_data.size() - 18u - at_bytes - 6u)
+				: (seg_data.size() - 18u - at_bytes);
+			RECTO_PDF_TRY(
+				Jbig2Bitmap rbm,
+				decode_jbig2_generic_region(
+					reg_w,
+					reg_h,
+					mmr,
+					gb_template,
+					tpgdon,
+					at_span,
+					seg_data.subspan(18u + at_bytes, body_len),
+					effective_limit));
+
+			if (seg_type == 36u) {
+				state.aux_regions[seg_num] = std::move(rbm);
+			} else {
+				if (!state.page_bitmap.has_value()) {
+					RECTO_PDF_TRY(
+						Jbig2Bitmap pbm,
+						Jbig2Bitmap::create(reg_w, reg_h, 0u, effective_limit));
+					state.page_bitmap = std::move(pbm);
+				}
+				state.page_bitmap->composite(rbm, reg_x, reg_y, reg_comb_op);
+			}
+		} else if (seg_type == 0u) {
+			// Symbol Dictionary segment (ISO/IEC 14492 section 7.4.2).
+			if (seg_data.size() < 10u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"JBIG2 Symbol Dictionary segment (type 0) is shorter than 10 bytes",
+					seg_header_start);
+			}
+			const uint16_t sd_flags = read_u16_be(seg_data.data());
+			const bool sd_huff = (sd_flags & 0x0001u) != 0u;
+			const bool sd_ref_agg = (sd_flags & 0x0002u) != 0u;
+			const uint8_t sd_template = static_cast<uint8_t>((sd_flags >> 10u) & 0x03u);
+
+			size_t sd_at_bytes = 0u;
+			if (!sd_huff) {
+				sd_at_bytes += (sd_template == 0u) ? 8u : 2u;
+			}
+			if (sd_ref_agg && ((sd_flags & 0x1000u) == 0u)) {
+				sd_at_bytes += 4u;
+			}
+			if (2u + sd_at_bytes + 8u > seg_data.size()) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Truncated header in JBIG2 Symbol Dictionary segment",
+					seg_header_start);
+			}
+			const std::span<const int8_t> sd_at_span(
+				reinterpret_cast<const int8_t*>(seg_data.data() + 2u),
+				sd_huff ? 0u : ((sd_template == 0u) ? 8u : 2u));
+			const size_t counts_off = 2u + sd_at_bytes;
+			const uint32_t sd_num_ex_syms = read_u32_be(seg_data.data() + counts_off);
+			const uint32_t sd_num_new_syms = read_u32_be(seg_data.data() + counts_off + 4u);
+			if (sd_num_ex_syms > 65536u || sd_num_new_syms > 65536u) {
+				return make_filter_error(
+					ErrorCode::DecompressionLimitExceeded,
+					DiagnosticId::DecompressionLimitExceeded,
+					"JBIG2 Symbol Dictionary symbol count exceeds ceiling",
+					seg_header_start);
+			}
+
+			std::vector<Jbig2Bitmap> input_syms;
+			for (const uint32_t ref_id : ref_segments) {
+				const auto it = state.symbol_dicts.find(ref_id);
+				if (it != state.symbol_dicts.end()) {
+					for (const auto& s : it->second) {
+						input_syms.push_back(s);
+					}
+				}
+			}
+
+			std::vector<Jbig2Bitmap> new_syms;
+			new_syms.reserve(sd_num_new_syms);
+			const std::span<const uint8_t> arith_data = seg_data.subspan(counts_off + 8u);
+			if (!sd_huff && !sd_ref_agg) {
+				MqDecoder mq(arith_data);
+				std::vector<MqContext> gb_cx(
+					(sd_template == 0u) ? 65536u : ((sd_template == 1u) ? 8192u : 1024u));
+				Jbig2ArithIntDecoder iadh;
+				Jbig2ArithIntDecoder iadw;
+				Jbig2ArithIntDecoder iaex;
+
+				int32_t hc_height = 0;
+				while (new_syms.size() < sd_num_new_syms) {
+					int32_t delta_h = 0;
+					if (!iadh.decode(mq, delta_h)) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Unexpected OOB while decoding IADH in JBIG2 Symbol Dictionary",
+							seg_header_start);
+					}
+					hc_height += delta_h;
+					if (hc_height <= 0 || hc_height > 65535) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Invalid symbol height class in JBIG2 Symbol Dictionary",
+							seg_header_start);
+					}
+					int32_t sym_w = 0;
+					while (true) {
+						int32_t delta_w = 0;
+						if (!iadw.decode(mq, delta_w)) {
+							break; // OOB ends height class
+						}
+						if (new_syms.size() >= sd_num_new_syms) {
+							return make_filter_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedStream,
+								"JBIG2 Symbol Dictionary decoded more symbols than SDNUMNEWSYMS",
+								seg_header_start);
+						}
+						sym_w += delta_w;
+						if (sym_w <= 0 || sym_w > 65535) {
+							return make_filter_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedStream,
+								"Invalid symbol width in JBIG2 Symbol Dictionary",
+								seg_header_start);
+						}
+						RECTO_PDF_TRY(
+							Jbig2Bitmap sbm,
+							decode_jbig2_generic_region(
+								static_cast<uint32_t>(sym_w),
+								static_cast<uint32_t>(hc_height),
+								/*mmr=*/false,
+								sd_template,
+								/*tpgdon=*/false,
+								sd_at_span,
+								arith_data,
+								effective_limit,
+								&mq,
+								&gb_cx));
+						state.total_allocated_bytes += sbm.data.size();
+						if (state.total_allocated_bytes > effective_limit) {
+							return make_filter_error(
+								ErrorCode::DecompressionLimitExceeded,
+								DiagnosticId::DecompressionLimitExceeded,
+								"JBIG2 Symbol Dictionary cumulative bitmap bytes exceed ceiling",
+								seg_header_start);
+						}
+						new_syms.push_back(std::move(sbm));
+					}
+				}
+
+				std::vector<Jbig2Bitmap> all_syms = std::move(input_syms);
+				for (auto& ns : new_syms) {
+					all_syms.push_back(std::move(ns));
+				}
+
+				std::vector<Jbig2Bitmap> exported;
+				exported.reserve(sd_num_ex_syms);
+				size_t idx = 0u;
+				uint8_t ex_flag = 0u;
+				while (idx < all_syms.size()) {
+					int32_t run_len = 0;
+					if (!iaex.decode(mq, run_len) || run_len < 0 ||
+						static_cast<size_t>(run_len) > all_syms.size() - idx) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Invalid IAEX export run length in JBIG2 Symbol Dictionary",
+							seg_header_start);
+					}
+					if (ex_flag != 0u) {
+						for (int32_t k = 0; k < run_len; ++k) {
+							exported.push_back(all_syms[idx + static_cast<size_t>(k)]);
+						}
+					}
+					idx += static_cast<size_t>(run_len);
+					ex_flag ^= 1u;
+				}
+				state.symbol_dicts[seg_num] = std::move(exported);
+			} else {
+				return make_pdf_error(
+					ErrorCode::UnsupportedFeature,
+					"Huffman/refinement JBIG2 Symbol Dictionary is unsupported");
+			}
+		} else if (seg_type == 4u || seg_type == 6u || seg_type == 7u) {
+			// Text Region segment (ISO/IEC 14492 section 7.4.3 / 6.4).
+			if (seg_data.size() < 19u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"JBIG2 Text Region segment is shorter than 19 bytes",
+					seg_header_start);
+			}
+			const uint32_t reg_w = read_u32_be(seg_data.data());
+			const uint32_t reg_h = read_u32_be(seg_data.data() + 4u);
+			const int32_t reg_x = read_i32_be(seg_data.data() + 8u);
+			const int32_t reg_y = read_i32_be(seg_data.data() + 12u);
+			const uint8_t reg_comb_op = static_cast<uint8_t>(seg_data[16u] & 0x07u);
+			const uint16_t sbr_flags = read_u16_be(seg_data.data() + 17u);
+			const bool sb_huff = (sbr_flags & 0x0001u) != 0u;
+			const bool sb_refine = (sbr_flags & 0x0002u) != 0u;
+			const uint8_t log_sb_strips = static_cast<uint8_t>((sbr_flags >> 2u) & 0x03u);
+			const uint32_t sb_strips = 1u << log_sb_strips;
+			const uint8_t ref_corner = static_cast<uint8_t>((sbr_flags >> 4u) & 0x03u);
+			const bool transposed = (sbr_flags & 0x0040u) != 0u;
+			const uint8_t sb_comb_op = static_cast<uint8_t>((sbr_flags >> 7u) & 0x03u);
+			const uint8_t sb_def_pixel = static_cast<uint8_t>((sbr_flags >> 9u) & 0x01u);
+
+			if (sb_huff || sb_refine) {
+				return make_pdf_error(
+					ErrorCode::UnsupportedFeature,
+					"Huffman or refinement JBIG2 Text Region is unsupported");
+			}
+			if (seg_data.size() < 23u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Truncated instance count in JBIG2 Text Region segment",
+					seg_header_start);
+			}
+			const uint32_t num_instances = read_u32_be(seg_data.data() + 19u);
+			if (num_instances > 65536u) {
+				return make_filter_error(
+					ErrorCode::DecompressionLimitExceeded,
+					DiagnosticId::DecompressionLimitExceeded,
+					"JBIG2 Text Region instance count exceeds ceiling",
+					seg_header_start);
+			}
+
+			std::vector<const Jbig2Bitmap*> syms;
+			for (const uint32_t ref_id : ref_segments) {
+				const auto it = state.symbol_dicts.find(ref_id);
+				if (it != state.symbol_dicts.end()) {
+					for (const auto& s : it->second) {
+						syms.push_back(&s);
+					}
+				}
+			}
+			if (syms.empty() && num_instances > 0u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"JBIG2 Text Region references zero symbols",
+					seg_header_start);
+			}
+
+			uint32_t code_len = 0u;
+			while ((size_t{1u} << code_len) < syms.size()) {
+				++code_len;
+			}
+			code_len = std::max<uint32_t>(1u, code_len);
+
+			RECTO_PDF_TRY(
+				Jbig2Bitmap rbm,
+				Jbig2Bitmap::create(reg_w, reg_h, sb_def_pixel, effective_limit));
+			MqDecoder mq(seg_data.subspan(23u));
+			Jbig2ArithIntDecoder iadt;
+			Jbig2ArithIntDecoder iafs;
+			Jbig2ArithIntDecoder iads;
+			Jbig2ArithIntDecoder iait;
+			Jbig2IaidDecoder iaid(code_len);
+
+			int32_t dt_init = 0;
+			if (!iadt.decode(mq, dt_init)) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Unexpected OOB in initial IADT of JBIG2 Text Region",
+					seg_header_start);
+			}
+			int32_t stript = -dt_init * static_cast<int32_t>(sb_strips);
+			int32_t firsts = 0;
+			uint32_t n_instances = 0u;
+
+			while (n_instances < num_instances) {
+				int32_t dt = 0;
+				if (!iadt.decode(mq, dt)) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Unexpected OOB in strip IADT of JBIG2 Text Region",
+						seg_header_start);
+				}
+				stript += dt * static_cast<int32_t>(sb_strips);
+				int32_t dfs = 0;
+				if (!iafs.decode(mq, dfs)) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Unexpected OOB in IAFS of JBIG2 Text Region",
+						seg_header_start);
+				}
+				firsts += dfs;
+				int32_t curs = firsts;
+				bool first_in_strip = true;
+				while (true) {
+					if (!first_in_strip) {
+						int32_t ids = 0;
+						if (!iads.decode(mq, ids)) {
+							break; // OOB ends strip
+						}
+						curs += ids;
+					}
+					first_in_strip = false;
+					int32_t curt = 0;
+					if (sb_strips > 1u) {
+						if (!iait.decode(mq, curt)) {
+							return make_filter_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedStream,
+								"Unexpected OOB in IAIT of JBIG2 Text Region",
+								seg_header_start);
+						}
+					}
+					const int32_t t_i = stript + curt;
+					const uint32_t id_i = iaid.decode(mq);
+					if (id_i >= syms.size()) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Out-of-range symbol ID in JBIG2 Text Region",
+							seg_header_start);
+					}
+					const Jbig2Bitmap& ib = *syms[id_i];
+					const int32_t w_i = static_cast<int32_t>(ib.width);
+					const int32_t h_i = static_cast<int32_t>(ib.height);
+
+					if (!transposed && (ref_corner == 2u || ref_corner == 3u)) {
+						curs += w_i - 1;
+					} else if (transposed && (ref_corner == 0u || ref_corner == 2u)) {
+						curs += h_i - 1;
+					}
+					const int32_t s_i = curs;
+					int32_t draw_x = transposed ? t_i : s_i;
+					int32_t draw_y = transposed ? s_i : t_i;
+					if (!transposed) {
+						if (ref_corner == 0u || ref_corner == 2u) {
+							draw_y -= h_i - 1;
+						}
+						if (ref_corner == 2u || ref_corner == 3u) {
+							draw_x -= w_i - 1;
+						}
+					} else {
+						if (ref_corner == 0u || ref_corner == 2u) {
+							draw_y -= h_i - 1;
+						}
+						if (ref_corner == 1u || ref_corner == 3u) {
+							draw_x -= w_i - 1;
+						}
+					}
+					rbm.composite(ib, draw_x, draw_y, sb_comb_op);
+					if (!transposed && (ref_corner == 0u || ref_corner == 1u)) {
+						curs += w_i - 1;
+					} else if (transposed && (ref_corner == 1u || ref_corner == 3u)) {
+						curs += h_i - 1;
+					}
+					++n_instances;
+					if (n_instances >= num_instances) {
+						break;
+					}
+				}
+			}
+
+			if (seg_type == 4u) {
+				state.aux_regions[seg_num] = std::move(rbm);
+			} else {
+				if (!state.page_bitmap.has_value()) {
+					RECTO_PDF_TRY(
+						Jbig2Bitmap pbm,
+						Jbig2Bitmap::create(reg_w, reg_h, 0u, effective_limit));
+					state.page_bitmap = std::move(pbm);
+				}
+				state.page_bitmap->composite(rbm, reg_x, reg_y, reg_comb_op);
+			}
+		} else if (seg_type == 16u) {
+			// Pattern Dictionary segment (ISO/IEC 14492 section 7.4.4, 7 bytes header).
+			if (seg_data.size() < 7u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"JBIG2 Pattern Dictionary segment is shorter than 7 bytes",
+					seg_header_start);
+			}
+			const uint8_t hd_flags = seg_data[0u];
+			const bool hd_mmr = (hd_flags & 0x01u) != 0u;
+			const uint8_t hd_template = static_cast<uint8_t>((hd_flags >> 1u) & 0x03u);
+			const uint32_t hdpw = seg_data[1u];
+			const uint32_t hdph = seg_data[2u];
+			const uint32_t graymax = read_u32_be(seg_data.data() + 3u);
+			if (hdpw == 0u || hdph == 0u || graymax > 4096u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Invalid pattern dimensions or GRAYMAX in JBIG2 Pattern Dictionary",
+					seg_header_start);
+			}
+			const uint32_t collective_w = (graymax + 1u) * hdpw;
+			const int8_t pat_at[8] = {
+				static_cast<int8_t>(-static_cast<int32_t>(hdpw)), 0,
+				-3, -1, 2, -2, -2, -2};
+			RECTO_PDF_TRY(
+				Jbig2Bitmap collective,
+				decode_jbig2_generic_region(
+					collective_w,
+					hdph,
+					hd_mmr,
+					hd_template,
+					/*tpgdon=*/false,
+					std::span<const int8_t>(pat_at, (hd_template == 0u) ? 8u : 2u),
+					seg_data.subspan(7u),
+					effective_limit));
+			std::vector<Jbig2Bitmap> patterns;
+			patterns.reserve(graymax + 1u);
+			for (uint32_t p = 0; p <= graymax; ++p) {
+				RECTO_PDF_TRY(
+					Jbig2Bitmap pbm,
+					Jbig2Bitmap::create(hdpw, hdph, 0u, effective_limit));
+				for (uint32_t y = 0; y < hdph; ++y) {
+					for (uint32_t x = 0; x < hdpw; ++x) {
+						pbm.set_pixel(
+							x,
+							y,
+							collective.get_pixel(
+								static_cast<int32_t>(p * hdpw + x),
+								static_cast<int32_t>(y)));
+					}
+				}
+				patterns.push_back(std::move(pbm));
+			}
+			state.pattern_dicts[seg_num] = std::move(patterns);
+		} else if (seg_type == 20u || seg_type == 22u || seg_type == 23u) {
+			// Halftone Region segment (ISO/IEC 14492 section 7.4.5, 38 bytes base header).
+			if (seg_data.size() < 38u || ref_segments.empty()) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Truncated header or missing pattern dictionary in JBIG2 Halftone Region",
+					seg_header_start);
+			}
+			const auto pat_it = state.pattern_dicts.find(ref_segments[0]);
+			if (pat_it == state.pattern_dicts.end() || pat_it->second.empty()) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Referenced Pattern Dictionary not found for JBIG2 Halftone Region",
+					seg_header_start);
+			}
+			const auto& patterns = pat_it->second;
+			const uint32_t reg_w = read_u32_be(seg_data.data());
+			const uint32_t reg_h = read_u32_be(seg_data.data() + 4u);
+			const int32_t reg_x = read_i32_be(seg_data.data() + 8u);
+			const int32_t reg_y = read_i32_be(seg_data.data() + 12u);
+			const uint8_t reg_comb_op = static_cast<uint8_t>(seg_data[16u] & 0x07u);
+			const uint8_t ht_flags = seg_data[17u];
+			const bool ht_mmr = (ht_flags & 0x01u) != 0u;
+			const uint8_t ht_template = static_cast<uint8_t>((ht_flags >> 1u) & 0x03u);
+			const uint8_t ht_comb_op = static_cast<uint8_t>((ht_flags >> 4u) & 0x07u);
+			const uint8_t ht_def_pixel = static_cast<uint8_t>((ht_flags >> 7u) & 0x01u);
+			const uint32_t hgw = read_u32_be(seg_data.data() + 18u);
+			const uint32_t hgh = read_u32_be(seg_data.data() + 22u);
+			const int32_t hgx = read_i32_be(seg_data.data() + 26u);
+			const int32_t hgy = read_i32_be(seg_data.data() + 30u);
+			const int32_t hrx = static_cast<int32_t>(
+				static_cast<int16_t>(read_u16_be(seg_data.data() + 34u)));
+			const int32_t hry = static_cast<int32_t>(
+				static_cast<int16_t>(read_u16_be(seg_data.data() + 36u)));
+			if (hgw == 0u || hgh == 0u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Invalid grid dimensions in JBIG2 Halftone Region",
+					seg_header_start);
+			}
+			const size_t ht_at_bytes = ht_mmr ? 0u : ((ht_template <= 1u) ? 8u : 2u);
+			if (38u + ht_at_bytes > seg_data.size()) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Truncated AT flags in JBIG2 Halftone Region",
+					seg_header_start);
+			}
+			const std::span<const uint8_t> ht_body = seg_data.subspan(38u + ht_at_bytes);
+			RECTO_PDF_TRY(
+				Jbig2Bitmap rbm,
+				Jbig2Bitmap::create(reg_w, reg_h, ht_def_pixel, effective_limit));
+			uint32_t gs_bpp = 0u;
+			while ((size_t{1u} << gs_bpp) < patterns.size()) {
+				++gs_bpp;
+			}
+			gs_bpp = std::max<uint32_t>(1u, gs_bpp);
+			std::vector<Jbig2Bitmap> bitplanes;
+			bitplanes.reserve(gs_bpp);
+			const std::span<const int8_t> ht_at_span(
+				reinterpret_cast<const int8_t*>(seg_data.data() + 38u),
+				ht_at_bytes);
+			if (!ht_mmr) {
+				MqDecoder mq(ht_body);
+				std::vector<MqContext> cx(
+					(ht_template == 0u) ? 65536u : ((ht_template == 1u) ? 8192u : 1024u));
+				for (uint32_t b = 0; b < gs_bpp; ++b) {
+					RECTO_PDF_TRY(
+						Jbig2Bitmap plane,
+						decode_jbig2_generic_region(
+							hgw,
+							hgh,
+							/*mmr=*/false,
+							ht_template,
+							/*tpgdon=*/false,
+							ht_at_span,
+							ht_body,
+							effective_limit,
+							&mq,
+							&cx));
+					bitplanes.push_back(std::move(plane));
+				}
+			} else {
+				RECTO_PDF_TRY(
+					Jbig2Bitmap plane0,
+					decode_jbig2_generic_region(
+						hgw,
+						hgh,
+						/*mmr=*/true,
+						ht_template,
+						/*tpgdon=*/false,
+						{},
+						ht_body,
+						effective_limit));
+				bitplanes.push_back(std::move(plane0));
+			}
+			// Gray-code to binary conversion across bitplanes.
+			for (size_t b = 1u; b < bitplanes.size(); ++b) {
+				for (size_t i = 0u; i < bitplanes[b].data.size(); ++i) {
+					bitplanes[b].data[i] ^= bitplanes[b - 1u].data[i];
+				}
+			}
+			for (uint32_t mg = 0; mg < hgh; ++mg) {
+				for (uint32_t ng = 0; ng < hgw; ++ng) {
+					uint32_t gi = 0u;
+					for (size_t b = 0u; b < bitplanes.size(); ++b) {
+						gi = (gi << 1u) |
+							bitplanes[b].get_pixel(static_cast<int32_t>(ng), static_cast<int32_t>(mg));
+					}
+					const size_t pat_idx = std::min<size_t>(gi, patterns.size() - 1u);
+					const int32_t px = (hgx + static_cast<int32_t>(mg) * hry +
+						static_cast<int32_t>(ng) * hrx) >> 8;
+					const int32_t py = (hgy + static_cast<int32_t>(mg) * hrx -
+						static_cast<int32_t>(ng) * hry) >> 8;
+					rbm.composite(patterns[pat_idx], px, py, ht_comb_op);
+				}
+			}
+			if (seg_type == 20u) {
+				state.aux_regions[seg_num] = std::move(rbm);
+			} else {
+				if (!state.page_bitmap.has_value()) {
+					RECTO_PDF_TRY(
+						Jbig2Bitmap pbm,
+						Jbig2Bitmap::create(reg_w, reg_h, 0u, effective_limit));
+					state.page_bitmap = std::move(pbm);
+				}
+				state.page_bitmap->composite(rbm, reg_x, reg_y, reg_comb_op);
+			}
+		} else if (seg_type == 49u || seg_type == 50u || seg_type == 51u ||
+				   seg_type == 52u || seg_type == 53u || seg_type == 62u) {
+			// End of Page (49), End of Stripe (50), End of File (51), Profiles (52),
+			// Tables (53), and Extension (62).
+			if (seg_type == 51u) {
+				break;
+			}
+		} else {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Unsupported or unknown JBIG2 segment type",
+				seg_header_start);
+		}
+	}
+
+	return {};
+}
+
+} // namespace
+
+PdfResult<std::vector<uint8_t>> decode_jbig2(
+	std::span<const uint8_t> input,
+	std::span<const uint8_t> globals_bytes,
+	size_t max_decoded_bytes) noexcept
+{
+	try {
+		const size_t effective_limit = std::min<size_t>(max_decoded_bytes, kMaxDecodedStreamBytes);
+		if (input.empty()) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Empty input bitstream in JBIG2Decode");
+		}
+
+		Jbig2DecoderState state;
+		if (!globals_bytes.empty()) {
+			RECTO_PDF_RETURN_IF_ERROR(
+				parse_jbig2_segments(globals_bytes, state, effective_limit));
+		}
+		RECTO_PDF_RETURN_IF_ERROR(parse_jbig2_segments(input, state, effective_limit));
+
+		if (!state.page_bitmap.has_value()) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"JBIG2 stream produced no page bitmap");
+		}
+
+		// Per ISO 32000-1 section 7.4.7, JBIG2 treats 1 as black and 0 as white,
+		// whereas PDF DeviceGray treats 0 as black and 1 as white: invert bits.
+		Jbig2Bitmap& page = *state.page_bitmap;
+		const uint32_t rem = page.width & 7u;
+		const uint8_t tail_mask = (rem != 0u)
+			? static_cast<uint8_t>(0xFFu << (8u - rem))
+			: 0xFFu;
+		for (uint32_t y = 0; y < page.height; ++y) {
+			uint8_t* row = page.data.data() + static_cast<size_t>(y) * page.stride;
+			for (size_t b = 0; b < page.stride; ++b) {
+				row[b] = static_cast<uint8_t>(~row[b]);
+			}
+			if (rem != 0u && page.stride > 0u) {
+				row[page.stride - 1u] &= tail_mask;
+			}
+		}
+
+		return std::move(page.data);
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(
+			ErrorCode::OutOfMemory,
+			"Out of memory while decoding JBIG2Decode stream");
+	} catch (...) {
+		return make_pdf_error(
+			ErrorCode::InternalError,
+			"Unexpected exception while decoding JBIG2Decode stream");
+	}
+}
+
+PdfResult<std::vector<uint8_t>> decode_jbig2(
+	std::span<const uint8_t> input,
+	const PdfDict* decode_parms,
+	size_t max_decoded_bytes) noexcept
+{
+	try {
+		std::vector<uint8_t> decoded_globals;
+		std::span<const uint8_t> globals_span{};
+		if (decode_parms != nullptr) {
+			if (const PdfValue* gval = decode_parms->get("JBIG2Globals");
+				gval != nullptr && !gval->is_null()) {
+				if (const PdfStream* gstm = gval->as_stream()) {
+					RECTO_PDF_TRY(
+						decoded_globals,
+						decode_stream(*gstm, max_decoded_bytes));
+					globals_span = decoded_globals;
+				} else if (const PdfString* gstr = gval->as_string()) {
+					globals_span = gstr->bytes;
+				} else {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Invalid /JBIG2Globals entry in JBIG2Decode /DecodeParms (expected stream)");
+				}
+			}
+		}
+		return decode_jbig2(input, globals_span, max_decoded_bytes);
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(
+			ErrorCode::OutOfMemory,
+			"Out of memory while preparing JBIG2Globals stream");
+	} catch (...) {
+		return make_pdf_error(
+			ErrorCode::InternalError,
+			"Unexpected exception while preparing JBIG2Globals stream");
+	}
+}
+
+// ============================================================================
+// Thread-local WIC DCTDecode (JPEG) and JPXDecode (JPEG 2000)
+// ============================================================================
+
+namespace {
+
+using Microsoft::WRL::ComPtr;
+
+class ThreadLocalWicFactoryHolder {
+public:
+	ThreadLocalWicFactoryHolder() noexcept
+	{
+		const HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+		if (hr == S_OK || hr == S_FALSE) {
+			should_uninit_ = true;
+		}
+		(void)CoCreateInstance(
+			CLSID_WICImagingFactory,
+			nullptr,
+			CLSCTX_INPROC_SERVER,
+			IID_PPV_ARGS(&factory_));
+	}
+
+	~ThreadLocalWicFactoryHolder() noexcept
+	{
+		factory_.Reset();
+		if (should_uninit_) {
+			CoUninitialize();
+		}
+	}
+
+	ThreadLocalWicFactoryHolder(const ThreadLocalWicFactoryHolder&) = delete;
+	ThreadLocalWicFactoryHolder& operator=(const ThreadLocalWicFactoryHolder&) = delete;
+
+	[[nodiscard]] IWICImagingFactory* get() const noexcept
+	{
+		return factory_.Get();
+	}
+
+private:
+	ComPtr<IWICImagingFactory> factory_;
+	bool should_uninit_{false};
+};
+
+[[nodiscard]] IWICImagingFactory* get_thread_local_wic_factory() noexcept
+{
+	thread_local ThreadLocalWicFactoryHolder holder;
+	return holder.get();
+}
+
+struct JpegHeaderInfo {
+	uint32_t width{0};
+	uint32_t height{0};
+	uint8_t components{0};
+	bool has_sof{false};
+	bool has_adobe_app14{false};
+	uint8_t adobe_transform{0};
+};
+
+// Scans a JPEG byte stream for `SOF0..SOF15` and Adobe `APP14` markers BEFORE
+// passing the stream to WIC so oversized dimensions (`width * height * 4 > limit`)
+// are rejected before any bitmap allocation.
+[[nodiscard]] PdfResult<JpegHeaderInfo> inspect_jpeg_header(
+	std::span<const uint8_t> input,
+	size_t effective_limit) noexcept
+{
+	if (input.size() < 4u || input[0] != 0xFFu || input[1] != 0xD8u) {
+		return make_filter_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedStream,
+			"Invalid or missing JPEG SOI marker (0xFFD8) in DCTDecode stream");
+	}
+
+	JpegHeaderInfo info{};
+	size_t pos = 2u;
+	while (pos + 1u < input.size()) {
+		if (input[pos] != 0xFFu) {
+			++pos;
+			continue;
+		}
+		while (pos < input.size() && input[pos] == 0xFFu) {
+			++pos;
+		}
+		if (pos >= input.size()) {
+			break;
+		}
+		const uint8_t marker = input[pos++];
+		if (marker == 0x00u || marker == 0x01u || (marker >= 0xD0u && marker <= 0xD8u)) {
+			continue;
+		}
+		if (marker == 0xD9u) { // EOI
+			break;
+		}
+		if (pos + 2u > input.size()) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Truncated marker segment length in DCTDecode JPEG stream",
+				pos);
+		}
+		const uint16_t seg_len = read_u16_be(input.data() + pos);
+		if (seg_len < 2u || pos + seg_len > input.size()) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"JPEG marker segment length exceeds DCTDecode stream bounds",
+				pos);
+		}
+		const std::span<const uint8_t> payload = input.subspan(pos + 2u, seg_len - 2u);
+
+		// Adobe APP14 marker (0xFFEE): 12-byte payload starting with "Adobe".
+		if (marker == 0xEEu && payload.size() >= 12u &&
+			std::memcmp(payload.data(), "Adobe", 5u) == 0) {
+			info.has_adobe_app14 = true;
+			info.adobe_transform = payload[11u];
+		}
+
+		// SOF markers: 0xC0..0xCF except 0xC4 (DHT), 0xC8 (JPG), and 0xCC (DAC).
+		if (marker >= 0xC0u && marker <= 0xCFu &&
+			marker != 0xC4u && marker != 0xC8u && marker != 0xCCu) {
+			if (payload.size() < 6u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Truncated SOF frame header in DCTDecode JPEG stream",
+					pos);
+			}
+			info.height = read_u16_be(payload.data() + 1u);
+			info.width = read_u16_be(payload.data() + 3u);
+			info.components = payload[5u];
+			info.has_sof = true;
+			if (info.width == 0u || info.height == 0u ||
+				(info.components != 1u && info.components != 3u && info.components != 4u)) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Invalid width, height, or component count in JPEG SOF header",
+					pos);
+			}
+			const uint64_t w64 = info.width;
+			const uint64_t h64 = info.height;
+			if (w64 > effective_limit / 4ULL || h64 > (effective_limit / 4ULL) / w64) {
+				return make_filter_error(
+					ErrorCode::DecompressionLimitExceeded,
+					DiagnosticId::DecompressionLimitExceeded,
+					"DCTDecode JPEG header dimensions exceed maximum decoded bitmap ceiling",
+					pos);
+			}
+		}
+
+		if (marker == 0xDAu) { // SOS: entropy-coded scan follows
+			break;
+		}
+		pos += seg_len;
+	}
+
+	if (!info.has_sof) {
+		return make_filter_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedStream,
+			"Missing SOF marker in DCTDecode JPEG stream");
+	}
+	return info;
+}
+
+// Applies an optional PDF `/Decode [Dmin_0 Dmax_0 ...]` linear mapping to an
+// N-component 8-bit sample buffer (`c' = Dmin + (c / 255) * (Dmax - Dmin)`).
+void apply_pdf_decode_array(
+	std::vector<uint8_t>& samples,
+	uint32_t components,
+	const PdfDict* decode_parms) noexcept
+{
+	if (decode_parms == nullptr || components == 0u) {
+		return;
+	}
+	const PdfArray* dec_arr = decode_parms->get_array("Decode");
+	if (dec_arr == nullptr) {
+		dec_arr = decode_parms->get_array("D");
+	}
+	if (dec_arr == nullptr || dec_arr->size() != static_cast<size_t>(components) * 2u) {
+		return;
+	}
+
+	std::array<double, 8> dmin{};
+	std::array<double, 8> dmax{};
+	bool non_identity = false;
+	for (uint32_t c = 0; c < components && c < 4u; ++c) {
+		const auto v0 = (*dec_arr)[static_cast<size_t>(c) * 2u].as_number();
+		const auto v1 = (*dec_arr)[static_cast<size_t>(c) * 2u + 1u].as_number();
+		if (!v0.has_value() || !v1.has_value() || !std::isfinite(*v0) || !std::isfinite(*v1)) {
+			return;
+		}
+		dmin[c] = *v0;
+		dmax[c] = *v1;
+		if (std::abs(dmin[c] - 0.0) > 1e-6 || std::abs(dmax[c] - 1.0) > 1e-6) {
+			non_identity = true;
+		}
+	}
+	if (!non_identity) {
+		return;
+	}
+
+	const size_t pixel_count = samples.size() / components;
+	for (size_t p = 0; p < pixel_count; ++p) {
+		uint8_t* px = samples.data() + p * components;
+		for (uint32_t c = 0; c < components && c < 4u; ++c) {
+			const double t = static_cast<double>(px[c]) / 255.0;
+			const double mapped = std::clamp(dmin[c] + t * (dmax[c] - dmin[c]), 0.0, 1.0);
+			px[c] = static_cast<uint8_t>(std::lround(mapped * 255.0));
+		}
+	}
+}
+
+// Converts normalized 8-bit CMYK (`0` = 0% ink, `255` = 100% ink) to sRGB `(R, G, B)`.
+constexpr void cmyk_to_srgb_pixel(
+	uint8_t c,
+	uint8_t m,
+	uint8_t y,
+	uint8_t k,
+	uint8_t& out_r,
+	uint8_t& out_g,
+	uint8_t& out_b) noexcept
+{
+	const uint32_t inv_c = 255u - c;
+	const uint32_t inv_m = 255u - m;
+	const uint32_t inv_y = 255u - y;
+	const uint32_t inv_k = 255u - k;
+	out_r = static_cast<uint8_t>((inv_c * inv_k + 127u) / 255u);
+	out_g = static_cast<uint8_t>((inv_m * inv_k + 127u) / 255u);
+	out_b = static_cast<uint8_t>((inv_y * inv_k + 127u) / 255u);
+}
+
+} // namespace
+
+uintptr_t current_thread_wic_factory_id() noexcept
+{
+	return reinterpret_cast<uintptr_t>(get_thread_local_wic_factory());
+}
+
+PdfResult<WicDecodedImage> decode_dct_image(
+	std::span<const uint8_t> input,
+	const PdfDict* decode_parms,
+	size_t max_decoded_bytes) noexcept
+{
+	try {
+		const size_t effective_limit = std::min<size_t>(max_decoded_bytes, kMaxDecodedStreamBytes);
+		RECTO_PDF_TRY(const JpegHeaderInfo hdr, inspect_jpeg_header(input, effective_limit));
+
+		IWICImagingFactory* factory = get_thread_local_wic_factory();
+		if (factory == nullptr) {
+			return make_pdf_error(
+				ErrorCode::InternalError,
+				"Failed to initialize thread-local IWICImagingFactory");
+		}
+
+		ComPtr<IWICStream> wic_stream;
+		HRESULT hr = factory->CreateStream(&wic_stream);
+		if (FAILED(hr) || !wic_stream) {
+			return make_pdf_error(
+				ErrorCode::InternalError,
+				"IWICImagingFactory::CreateStream failed in DCTDecode");
+		}
+		hr = wic_stream->InitializeFromMemory(
+			const_cast<BYTE*>(input.data()),
+			static_cast<DWORD>(std::min<size_t>(
+				input.size(),
+				static_cast<size_t>(std::numeric_limits<DWORD>::max()))));
+		if (FAILED(hr)) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"IWICStream::InitializeFromMemory failed in DCTDecode");
+		}
+
+		ComPtr<IWICBitmapDecoder> decoder;
+		hr = factory->CreateDecoderFromStream(
+			wic_stream.Get(),
+			nullptr,
+			WICDecodeMetadataCacheOnDemand,
+			&decoder);
+		if (FAILED(hr) || !decoder) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"WIC rejected corrupt or unsupported JPEG stream in DCTDecode");
+		}
+
+		ComPtr<IWICBitmapFrameDecode> frame;
+		hr = decoder->GetFrame(0, &frame);
+		if (FAILED(hr) || !frame) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"IWICBitmapDecoder::GetFrame(0) failed in DCTDecode");
+		}
+
+		UINT w = 0;
+		UINT h = 0;
+		hr = frame->GetSize(&w, &h);
+		if (FAILED(hr) || w == 0u || h == 0u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"IWICBitmapFrameDecode::GetSize failed in DCTDecode");
+		}
+		const uint64_t w64 = w;
+		const uint64_t h64 = h;
+		if (w64 > effective_limit / 4ULL || h64 > (effective_limit / 4ULL) / w64) {
+			return make_filter_error(
+				ErrorCode::DecompressionLimitExceeded,
+				DiagnosticId::DecompressionLimitExceeded,
+				"DCTDecode frame dimensions exceed maximum decoded bitmap ceiling");
+		}
+
+		WICPixelFormatGUID pixel_format{};
+		hr = frame->GetPixelFormat(&pixel_format);
+		if (FAILED(hr)) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"IWICBitmapFrameDecode::GetPixelFormat failed in DCTDecode");
+		}
+
+		WicDecodedImage result;
+		result.width = w;
+		result.height = h;
+		const size_t pixel_count = static_cast<size_t>(w64 * h64);
+
+		if (IsEqualGUID(pixel_format, GUID_WICPixelFormat32bppCMYK) || hdr.components == 4u) {
+			result.components = 4u;
+			result.is_cmyk = true;
+			const size_t cmyk_bytes = pixel_count * 4u;
+			std::vector<uint8_t> cmyk_buf(cmyk_bytes);
+			hr = frame->CopyPixels(
+				nullptr,
+				w * 4u,
+				static_cast<UINT>(cmyk_bytes),
+				cmyk_buf.data());
+			if (FAILED(hr)) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"IWICBitmapFrameDecode::CopyPixels failed on CMYK JPEG");
+			}
+
+			// Apply explicit `/Decode` array (such as `[1 0 1 0 1 0 1 0]` for
+			// Adobe inverted CMYK JPEGs) if provided in `decode_parms`.
+			apply_pdf_decode_array(cmyk_buf, 4u, decode_parms);
+
+			result.pixels = cmyk_buf;
+			result.rgba_pixels.resize(pixel_count * 4u);
+			result.bgra_pixels.resize(pixel_count * 4u);
+			for (size_t p = 0; p < pixel_count; ++p) {
+				uint8_t r = 0;
+				uint8_t g = 0;
+				uint8_t b = 0;
+				cmyk_to_srgb_pixel(
+					cmyk_buf[p * 4u + 0u],
+					cmyk_buf[p * 4u + 1u],
+					cmyk_buf[p * 4u + 2u],
+					cmyk_buf[p * 4u + 3u],
+					r,
+					g,
+					b);
+				result.rgba_pixels[p * 4u + 0u] = r;
+				result.rgba_pixels[p * 4u + 1u] = g;
+				result.rgba_pixels[p * 4u + 2u] = b;
+				result.rgba_pixels[p * 4u + 3u] = 255u;
+
+				result.bgra_pixels[p * 4u + 0u] = b;
+				result.bgra_pixels[p * 4u + 1u] = g;
+				result.bgra_pixels[p * 4u + 2u] = r;
+				result.bgra_pixels[p * 4u + 3u] = 255u;
+			}
+			return result;
+		}
+
+		if (IsEqualGUID(pixel_format, GUID_WICPixelFormat8bppGray) || hdr.components == 1u) {
+			result.components = 1u;
+			result.pixels.resize(pixel_count);
+			hr = frame->CopyPixels(
+				nullptr,
+				w,
+				static_cast<UINT>(pixel_count),
+				result.pixels.data());
+			if (FAILED(hr)) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"IWICBitmapFrameDecode::CopyPixels failed on Grayscale JPEG");
+			}
+			apply_pdf_decode_array(result.pixels, 1u, decode_parms);
+			result.rgba_pixels.resize(pixel_count * 4u);
+			result.bgra_pixels.resize(pixel_count * 4u);
+			for (size_t p = 0; p < pixel_count; ++p) {
+				const uint8_t v = result.pixels[p];
+				result.rgba_pixels[p * 4u + 0u] = v;
+				result.rgba_pixels[p * 4u + 1u] = v;
+				result.rgba_pixels[p * 4u + 2u] = v;
+				result.rgba_pixels[p * 4u + 3u] = 255u;
+
+				result.bgra_pixels[p * 4u + 0u] = v;
+				result.bgra_pixels[p * 4u + 1u] = v;
+				result.bgra_pixels[p * 4u + 2u] = v;
+				result.bgra_pixels[p * 4u + 3u] = 255u;
+			}
+			return result;
+		}
+
+		// 3-component JPEG: convert via `IWICFormatConverter` to `24bppRGB` if not already `24bppBGR`/`24bppRGB`.
+		result.components = 3u;
+		const size_t rgb_bytes = pixel_count * 3u;
+		result.pixels.resize(rgb_bytes);
+		if (IsEqualGUID(pixel_format, GUID_WICPixelFormat24bppBGR)) {
+			hr = frame->CopyPixels(
+				nullptr,
+				w * 3u,
+				static_cast<UINT>(rgb_bytes),
+				result.pixels.data());
+			if (FAILED(hr)) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"IWICBitmapFrameDecode::CopyPixels failed on 24bppBGR JPEG");
+			}
+			for (size_t p = 0; p < pixel_count; ++p) {
+				std::swap(result.pixels[p * 3u + 0u], result.pixels[p * 3u + 2u]);
+			}
+		} else if (IsEqualGUID(pixel_format, GUID_WICPixelFormat24bppRGB)) {
+			hr = frame->CopyPixels(
+				nullptr,
+				w * 3u,
+				static_cast<UINT>(rgb_bytes),
+				result.pixels.data());
+			if (FAILED(hr)) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"IWICBitmapFrameDecode::CopyPixels failed on 24bppRGB JPEG");
+			}
+		} else {
+			ComPtr<IWICFormatConverter> converter;
+			hr = factory->CreateFormatConverter(&converter);
+			if (FAILED(hr) || !converter) {
+				return make_pdf_error(
+					ErrorCode::InternalError,
+					"IWICImagingFactory::CreateFormatConverter failed in DCTDecode");
+			}
+			hr = converter->Initialize(
+				frame.Get(),
+				GUID_WICPixelFormat24bppRGB,
+				WICBitmapDitherTypeNone,
+				nullptr,
+				0.0,
+				WICBitmapPaletteTypeCustom);
+			if (FAILED(hr)) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"IWICFormatConverter::Initialize failed in DCTDecode");
+			}
+			hr = converter->CopyPixels(
+				nullptr,
+				w * 3u,
+				static_cast<UINT>(rgb_bytes),
+				result.pixels.data());
+			if (FAILED(hr)) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"IWICFormatConverter::CopyPixels failed in DCTDecode");
+			}
+		}
+
+		apply_pdf_decode_array(result.pixels, 3u, decode_parms);
+		result.rgba_pixels.resize(pixel_count * 4u);
+		result.bgra_pixels.resize(pixel_count * 4u);
+		for (size_t p = 0; p < pixel_count; ++p) {
+			const uint8_t r = result.pixels[p * 3u + 0u];
+			const uint8_t g = result.pixels[p * 3u + 1u];
+			const uint8_t b = result.pixels[p * 3u + 2u];
+			result.rgba_pixels[p * 4u + 0u] = r;
+			result.rgba_pixels[p * 4u + 1u] = g;
+			result.rgba_pixels[p * 4u + 2u] = b;
+			result.rgba_pixels[p * 4u + 3u] = 255u;
+
+			result.bgra_pixels[p * 4u + 0u] = b;
+			result.bgra_pixels[p * 4u + 1u] = g;
+			result.bgra_pixels[p * 4u + 2u] = r;
+			result.bgra_pixels[p * 4u + 3u] = 255u;
+		}
+		return result;
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(
+			ErrorCode::OutOfMemory,
+			"Out of memory while decoding DCTDecode JPEG stream");
+	} catch (...) {
+		return make_pdf_error(
+			ErrorCode::InternalError,
+			"Unexpected exception while decoding DCTDecode JPEG stream");
+	}
+}
+
+PdfResult<std::vector<uint8_t>> decode_dct(
+	std::span<const uint8_t> input,
+	const PdfDict* decode_parms,
+	size_t max_decoded_bytes) noexcept
+{
+	RECTO_PDF_TRY(
+		WicDecodedImage img,
+		decode_dct_image(input, decode_parms, max_decoded_bytes));
+	if (img.is_cmyk) {
+		if (decode_parms != nullptr) {
+			if (const auto target_fmt = decode_parms->get_name("TargetFormat")) {
+				if (*target_fmt == "BGRA") {
+					return std::move(img.bgra_pixels);
+				}
+				if (*target_fmt == "CMYK") {
+					return std::move(img.pixels);
+				}
+			}
+		}
+		return std::move(img.rgba_pixels);
+	}
+	return std::move(img.pixels);
+}
+
+namespace {
+
+struct JpxHeaderInfo {
+	uint32_t width{0};
+	uint32_t height{0};
+	uint16_t components{0};
+	uint8_t bpc{8};
+	std::span<const uint8_t> codestream{};
+};
+
+// Inspects a JP2 box container (`00 00 00 0C 6A 50 20 20 0D 0A 87 0A`) or raw
+// J2K codestream (`FF 4F FF 51`) and enforces the `width * height * 4 <= limit`
+// ceiling before any memory allocation.
+[[nodiscard]] PdfResult<JpxHeaderInfo> inspect_jpx_header(
+	std::span<const uint8_t> input,
+	size_t effective_limit) noexcept
+{
+	constexpr uint8_t kJp2Signature[12] = {
+		0x00u, 0x00u, 0x00u, 0x0Cu,
+		0x6Au, 0x50u, 0x20u, 0x20u,
+		0x0Du, 0x0Au, 0x87u, 0x0Au,
+	};
+
+	JpxHeaderInfo info{};
+	if (input.size() >= 12u && std::memcmp(input.data(), kJp2Signature, 12u) == 0) {
+		size_t pos = 0u;
+		bool saw_ihdr = false;
+		while (pos + 8u <= input.size()) {
+			uint64_t box_len = read_u32_be(input.data() + pos);
+			const uint32_t box_type = read_u32_be(input.data() + pos + 4u);
+			size_t header_len = 8u;
+			if (box_len == 1ULL) {
+				if (pos + 16u > input.size()) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Truncated extended 64-bit box length in JPXDecode stream",
+						pos);
+				}
+				box_len = (static_cast<uint64_t>(read_u32_be(input.data() + pos + 8u)) << 32u) |
+					static_cast<uint64_t>(read_u32_be(input.data() + pos + 12u));
+				header_len = 16u;
+			} else if (box_len == 0ULL) {
+				box_len = input.size() - pos;
+			}
+			if (box_len < header_len || box_len > input.size() - pos) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Invalid JP2 box length in JPXDecode stream",
+					pos);
+			}
+			const std::span<const uint8_t> box_payload =
+				input.subspan(pos + header_len, static_cast<size_t>(box_len) - header_len);
+
+			if (box_type == 0x6A703268u) { // 'jp2h' superbox
+				size_t sub_pos = 0u;
+				while (sub_pos + 8u <= box_payload.size()) {
+					const uint32_t sub_len = read_u32_be(box_payload.data() + sub_pos);
+					const uint32_t sub_type = read_u32_be(box_payload.data() + sub_pos + 4u);
+					if (sub_len < 8u || sub_len > box_payload.size() - sub_pos) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Invalid sub-box length inside jp2h header box");
+					}
+					if (sub_type == 0x69686472u) { // 'ihdr'
+						if (sub_len < 8u + 14u) {
+							return make_filter_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedStream,
+								"Truncated ihdr box in JPXDecode stream");
+						}
+						const uint8_t* ihdr = box_payload.data() + sub_pos + 8u;
+						info.height = read_u32_be(ihdr);
+						info.width = read_u32_be(ihdr + 4u);
+						info.components = read_u16_be(ihdr + 8u);
+						info.bpc = static_cast<uint8_t>((ihdr[10u] & 0x7Fu) + 1u);
+						saw_ihdr = true;
+					}
+					sub_pos += sub_len;
+				}
+			} else if (box_type == 0x6A703263u) { // 'jp2c' codestream box
+				info.codestream = box_payload;
+			}
+			pos += static_cast<size_t>(box_len);
+		}
+		if (!saw_ihdr || info.codestream.empty()) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"JP2 container is missing required ihdr or jp2c box in JPXDecode");
+		}
+	} else if (input.size() >= 4u && input[0] == 0xFFu && input[1] == 0x4Fu) {
+		info.codestream = input;
+	} else {
+		return make_filter_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedStream,
+			"Invalid JP2 signature or J2K SOC marker (0xFF4F) in JPXDecode stream");
+	}
+
+	// Also inspect the J2K codestream `SOC (0xFF4F)` + `SIZ (0xFF51)` marker segment.
+	const std::span<const uint8_t> cs = info.codestream;
+	if (cs.size() < 45u || cs[0] != 0xFFu || cs[1] != 0x4Fu ||
+		cs[2] != 0xFFu || cs[3] != 0x51u) {
+		return make_filter_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedStream,
+			"Missing SOC (0xFF4F) or SIZ (0xFF51) marker in JPXDecode codestream");
+	}
+	const uint16_t lsiz = read_u16_be(cs.data() + 4u);
+	if (lsiz < 41u || 4u + lsiz > cs.size()) {
+		return make_filter_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedStream,
+			"Truncated SIZ marker segment in JPXDecode codestream");
+	}
+	const uint32_t xsiz = read_u32_be(cs.data() + 8u);
+	const uint32_t ysiz = read_u32_be(cs.data() + 12u);
+	const uint32_t xosiz = read_u32_be(cs.data() + 16u);
+	const uint32_t yosiz = read_u32_be(cs.data() + 20u);
+	const uint16_t csiz = read_u16_be(cs.data() + 40u);
+	if (xsiz <= xosiz || ysiz <= yosiz || csiz == 0u || csiz > 4u ||
+		lsiz < 38u + 3u * csiz) {
+		return make_filter_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedStream,
+			"Invalid image grid or component count in J2K SIZ marker segment");
+	}
+	const uint32_t cs_w = xsiz - xosiz;
+	const uint32_t cs_h = ysiz - yosiz;
+	if (info.width == 0u) {
+		info.width = cs_w;
+		info.height = cs_h;
+		info.components = csiz;
+		info.bpc = static_cast<uint8_t>((cs[42u] & 0x7Fu) + 1u);
+	} else if (info.width != cs_w || info.height != cs_h || info.components != csiz) {
+		return make_filter_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedStream,
+			"JP2 ihdr dimensions do not match J2K SIZ marker dimensions");
+	}
+
+	const uint64_t w64 = info.width;
+	const uint64_t h64 = info.height;
+	if (w64 == 0ULL || h64 == 0ULL) {
+		return make_filter_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedStream,
+			"Zero width or height in JPXDecode stream");
+	}
+	if (w64 > effective_limit / 4ULL || h64 > (effective_limit / 4ULL) / w64) {
+		return make_filter_error(
+			ErrorCode::DecompressionLimitExceeded,
+			DiagnosticId::DecompressionLimitExceeded,
+			"JPXDecode image dimensions exceed maximum decoded bitmap ceiling");
+	}
+	return info;
+}
+
+} // namespace
+
+PdfResult<std::vector<uint8_t>> decode_jpx(
+	std::span<const uint8_t> input,
+	const PdfDict* decode_parms,
+	size_t max_decoded_bytes) noexcept
+{
+	try {
+		const size_t effective_limit = std::min<size_t>(max_decoded_bytes, kMaxDecodedStreamBytes);
+		RECTO_PDF_TRY(const JpxHeaderInfo hdr, inspect_jpx_header(input, effective_limit));
+
+		IWICImagingFactory* factory = get_thread_local_wic_factory();
+		if (factory == nullptr) {
+			return make_pdf_error(
+				ErrorCode::InternalError,
+				"Failed to initialize thread-local IWICImagingFactory for JPXDecode");
+		}
+
+		// First attempt decoding through the thread-local WIC factory if a JP2 codec is registered.
+		ComPtr<IWICStream> wic_stream;
+		if (SUCCEEDED(factory->CreateStream(&wic_stream)) && wic_stream) {
+			if (SUCCEEDED(wic_stream->InitializeFromMemory(
+					const_cast<BYTE*>(input.data()),
+					static_cast<DWORD>(std::min<size_t>(
+						input.size(),
+						static_cast<size_t>(std::numeric_limits<DWORD>::max())))))) {
+				ComPtr<IWICBitmapDecoder> decoder;
+				if (SUCCEEDED(factory->CreateDecoderFromStream(
+						wic_stream.Get(),
+						nullptr,
+						WICDecodeMetadataCacheOnDemand,
+						&decoder)) &&
+					decoder) {
+					ComPtr<IWICBitmapFrameDecode> frame;
+					if (SUCCEEDED(decoder->GetFrame(0, &frame)) && frame) {
+						UINT w = 0;
+						UINT h = 0;
+						if (SUCCEEDED(frame->GetSize(&w, &h)) && w > 0u && h > 0u) {
+							const uint64_t w64 = w;
+							const uint64_t h64 = h;
+							if (w64 > effective_limit / 4ULL ||
+								h64 > (effective_limit / 4ULL) / w64) {
+								return make_filter_error(
+									ErrorCode::DecompressionLimitExceeded,
+									DiagnosticId::DecompressionLimitExceeded,
+									"JPXDecode WIC frame dimensions exceed ceiling");
+							}
+							ComPtr<IWICFormatConverter> converter;
+							if (SUCCEEDED(factory->CreateFormatConverter(&converter)) &&
+								converter) {
+								const GUID target_guid = (hdr.components == 1u)
+									? GUID_WICPixelFormat8bppGray
+									: GUID_WICPixelFormat24bppRGB;
+								const uint32_t out_ch = (hdr.components == 1u) ? 1u : 3u;
+								if (SUCCEEDED(converter->Initialize(
+										frame.Get(),
+										target_guid,
+										WICBitmapDitherTypeNone,
+										nullptr,
+										0.0,
+										WICBitmapPaletteTypeCustom))) {
+									std::vector<uint8_t> out(
+										static_cast<size_t>(w64 * h64 * out_ch));
+									if (SUCCEEDED(converter->CopyPixels(
+											nullptr,
+											w * out_ch,
+											static_cast<UINT>(out.size()),
+											out.data()))) {
+										apply_pdf_decode_array(out, out_ch, decode_parms);
+										return out;
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Native ISO/IEC 15444-1 J2K single-tile codestream fallback when Windows WIC
+		// has no registered JPEG 2000 codec on the host: parse `COD (0xFF52)`,
+		// `QCD (0xFF5C)`, `SOT (0xFF90)`, `SOD (0xFF93)`, and `EOC (0xFFD9)`.
+		const std::span<const uint8_t> cs = hdr.codestream;
+		const uint16_t lsiz = read_u16_be(cs.data() + 4u);
+		size_t pos = 4u + lsiz;
+		bool saw_sot = false;
+		bool saw_sod = false;
+		bool saw_eoc = false;
+		bool mct_enabled = false;
+		std::span<const uint8_t> tile_data{};
+
+		while (pos + 2u <= cs.size()) {
+			if (cs[pos] != 0xFFu) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Expected marker prefix 0xFF in JPXDecode codestream",
+					pos);
+			}
+			const uint8_t marker = cs[pos + 1u];
+			pos += 2u;
+			if (marker == 0xD9u) { // EOC
+				saw_eoc = true;
+				break;
+			}
+			if (pos + 2u > cs.size()) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Truncated marker segment in JPXDecode codestream",
+					pos);
+			}
+			const uint16_t mlen = read_u16_be(cs.data() + pos);
+			if (mlen < 2u || pos + mlen > cs.size()) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Marker segment length exceeds JPXDecode codestream bounds",
+					pos);
+			}
+			if (marker == 0x52u && mlen >= 12u) { // COD
+				mct_enabled = (cs[pos + 6u] != 0u);
+			} else if (marker == 0x90u) { // SOT
+				if (mlen < 10u) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Invalid SOT marker length in JPXDecode codestream",
+						pos);
+				}
+				const uint32_t psot = read_u32_be(cs.data() + pos + 4u);
+				const size_t sot_start = pos - 2u;
+				pos += mlen;
+				if (pos + 2u > cs.size() || cs[pos] != 0xFFu || cs[pos + 1u] != 0x93u) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Missing SOD (0xFF93) marker after SOT in JPXDecode codestream",
+						pos);
+				}
+				pos += 2u;
+				saw_sot = true;
+				saw_sod = true;
+				if (psot == 0u) {
+					if (cs.size() < pos + 2u) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Missing EOC marker at end of JPXDecode codestream",
+							pos);
+					}
+					tile_data = cs.subspan(pos, cs.size() - pos - 2u);
+					pos = cs.size() - 2u;
+				} else {
+					if (psot < 14u || sot_start + psot > cs.size()) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"SOT tile-part length Psot exceeds JPXDecode codestream bounds",
+							sot_start);
+					}
+					const size_t data_end = sot_start + psot;
+					tile_data = cs.subspan(pos, data_end - pos);
+					pos = data_end;
+				}
+				continue;
+			}
+			pos += mlen;
+		}
+
+		if (!saw_sot || !saw_sod || !saw_eoc) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Incomplete J2K codestream (missing SOT, SOD, or EOC marker) in JPXDecode");
+		}
+
+		const size_t total_samples =
+			static_cast<size_t>(hdr.width) * static_cast<size_t>(hdr.height) * hdr.components;
+		if (total_samples > effective_limit) {
+			return make_filter_error(
+				ErrorCode::DecompressionLimitExceeded,
+				DiagnosticId::DecompressionLimitExceeded,
+				"JPXDecode decoded sample buffer exceeds ceiling");
+		}
+		// Skip optional 1-byte zero packet header at the start of `tile_data` if present.
+		std::span<const uint8_t> raw_samples = tile_data;
+		if (raw_samples.size() == total_samples + 1u && raw_samples[0] == 0x00u) {
+			raw_samples = raw_samples.subspan(1u);
+		}
+		if (raw_samples.size() < total_samples) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Truncated tile-part bitstream in JPXDecode codestream");
+		}
+
+		std::vector<uint8_t> out(raw_samples.begin(), raw_samples.begin() + total_samples);
+		if (mct_enabled && hdr.components >= 3u) {
+			// Inverse Reversible Color Transform (RCT, ISO/IEC 15444-1 Annex G.2).
+			const size_t pixels = static_cast<size_t>(hdr.width) * static_cast<size_t>(hdr.height);
+			for (size_t p = 0; p < pixels; ++p) {
+				uint8_t* px = out.data() + p * hdr.components;
+				const int32_t y0 = px[0];
+				const int32_t u0 = static_cast<int32_t>(px[1]) - 128;
+				const int32_t v0 = static_cast<int32_t>(px[2]) - 128;
+				const int32_t g = y0 - ((u0 + v0) >> 2);
+				const int32_t r = v0 + g;
+				const int32_t b = u0 + g;
+				px[0] = static_cast<uint8_t>(std::clamp(r, 0, 255));
+				px[1] = static_cast<uint8_t>(std::clamp(g, 0, 255));
+				px[2] = static_cast<uint8_t>(std::clamp(b, 0, 255));
+			}
+		}
+		apply_pdf_decode_array(out, hdr.components, decode_parms);
+		return out;
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(
+			ErrorCode::OutOfMemory,
+			"Out of memory while decoding JPXDecode stream");
+	} catch (...) {
+		return make_pdf_error(
+			ErrorCode::InternalError,
+			"Unexpected exception while decoding JPXDecode stream");
+	}
+}
+
 PdfResult<std::vector<uint8_t>> decode_single_filter(
 	std::string_view filter_name,
 	std::span<const uint8_t> input,
@@ -1504,6 +4652,18 @@ PdfResult<std::vector<uint8_t>> decode_single_filter(
 	}
 	if (filter_name == "RunLengthDecode" || filter_name == "RL") {
 		return decode_run_length(input, max_decoded_bytes);
+	}
+	if (filter_name == "CCITTFaxDecode" || filter_name == "CCF") {
+		return decode_ccitt_fax(input, decode_parms, max_decoded_bytes);
+	}
+	if (filter_name == "JBIG2Decode") {
+		return decode_jbig2(input, decode_parms, max_decoded_bytes);
+	}
+	if (filter_name == "DCTDecode" || filter_name == "DCT") {
+		return decode_dct(input, decode_parms, max_decoded_bytes);
+	}
+	if (filter_name == "JPXDecode") {
+		return decode_jpx(input, decode_parms, max_decoded_bytes);
 	}
 	if (filter_name == "Crypt") {
 		// Identity Crypt filter passes bytes through unchanged; non-Identity
@@ -1530,14 +4690,6 @@ PdfResult<std::vector<uint8_t>> decode_single_filter(
 			return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory in Crypt Identity filter");
 		}
 	}
-	if (filter_name == "CCITTFaxDecode" || filter_name == "CCF" ||
-		filter_name == "JBIG2Decode" ||
-		filter_name == "DCTDecode" || filter_name == "DCT" ||
-		filter_name == "JPXDecode") {
-		return make_pdf_error(
-			ErrorCode::UnsupportedFeature,
-			"Bi-level and image stream filters are implemented in section 8");
-	}
 	return make_filter_error(
 		ErrorCode::DamagedFormat,
 		DiagnosticId::DamagedStream,
@@ -1550,7 +4702,8 @@ namespace {
 	std::span<const uint8_t> raw_bytes,
 	const PdfValue* filter_val,
 	const PdfValue* parms_val,
-	size_t effective_limit)
+	size_t effective_limit,
+	const PdfDict* stream_dict_context = nullptr)
 {
 	if (filter_val == nullptr || filter_val->is_null()) {
 		if (raw_bytes.size() > effective_limit) {
@@ -1669,9 +4822,30 @@ namespace {
 	for (size_t i = 0; i < num_filters; ++i) {
 		const std::span<const uint8_t> stage_in =
 			(i == 0) ? raw_bytes : std::span<const uint8_t>(stage_buf);
+		const PdfDict* stage_parms = filter_parms[i];
+		std::optional<PdfDict> merged_image_parms;
+		if (filter_names[i] == "DCTDecode" || filter_names[i] == "DCT" ||
+			filter_names[i] == "JPXDecode") {
+			if (stage_parms == nullptr) {
+				stage_parms = stream_dict_context;
+			} else if (stream_dict_context != nullptr &&
+					   stage_parms != stream_dict_context &&
+					   stage_parms->get("Decode") == nullptr &&
+					   stage_parms->get("D") == nullptr) {
+				const PdfValue* stm_decode = stream_dict_context->get("Decode");
+				if (stm_decode == nullptr) {
+					stm_decode = stream_dict_context->get("D");
+				}
+				if (stm_decode != nullptr) {
+					merged_image_parms = *stage_parms;
+					merged_image_parms->set("Decode", PdfValue(*stm_decode));
+					stage_parms = &(*merged_image_parms);
+				}
+			}
+		}
 		RECTO_PDF_TRY(
 			std::vector<uint8_t> next_buf,
-			decode_single_filter(filter_names[i], stage_in, filter_parms[i], effective_limit));
+			decode_single_filter(filter_names[i], stage_in, stage_parms, effective_limit));
 		stage_buf = std::move(next_buf);
 	}
 	return stage_buf;
@@ -1717,7 +4891,12 @@ PdfResult<std::vector<uint8_t>> decode_stream(
 			parms_val = stream_dict.get("DP");
 		}
 
-		return execute_filter_pipeline(raw_bytes, filter_val, parms_val, effective_limit);
+		return execute_filter_pipeline(
+			raw_bytes,
+			filter_val,
+			parms_val,
+			effective_limit,
+			&stream_dict);
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(
 			ErrorCode::OutOfMemory,
@@ -1754,7 +4933,12 @@ PdfResult<std::vector<uint8_t>> decode_external_stream(
 
 		const PdfValue* filter_val = stream_dict.get("FFilter");
 		const PdfValue* parms_val = stream_dict.get("FDecodeParms");
-		return execute_filter_pipeline(external_bytes, filter_val, parms_val, effective_limit);
+		return execute_filter_pipeline(
+			external_bytes,
+			filter_val,
+			parms_val,
+			effective_limit,
+			&stream_dict);
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(
 			ErrorCode::OutOfMemory,

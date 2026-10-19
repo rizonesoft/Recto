@@ -293,6 +293,8 @@ Complete `src/pdf/filters.cpp` with monochrome bi-level fax/document decompressi
 **Surface:** no
 **Freeze check:** Verify that WIC `IWICImagingFactory` instances are thread-local (never shared across threads), `CCITTFaxDecode` and `JBIG2Decode` are pure stateless decoders, and image dimensions (`width * height * bytes_per_pixel`) are checked against the 256 MB ceiling before bitmap allocation.
 
+> **Started:** 2026-10-19
+
 **Build order:**
 
 1. Implement `CCITTFaxDecode` (Group 3 1D/2D and Group 4 2D Huffman/mode tables), `JBIG2Decode` (with `/JBIG2Globals`), and thread-local WIC `DCTDecode` / `JPXDecode` image decoding in `src/pdf/filters.cpp`. Done when: `filters.cpp` compiles cleanly on `x64` and `ARM64`.
