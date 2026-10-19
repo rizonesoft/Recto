@@ -407,7 +407,7 @@ private:
 	DocumentDescription description_{};
 	std::vector<ResolvedPageRecord> page_records_{};
 	std::unordered_map<uint32_t, uint32_t> page_obj_to_index_{};
-	std::unordered_map<std::string, PdfValue> named_dests_{};
+	std::unordered_map<std::string, ParsedDest> named_dests_{};
 };
 
 } // namespace recto::pdf

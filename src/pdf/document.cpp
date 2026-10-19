@@ -120,7 +120,7 @@ namespace {
 
 [[nodiscard]] std::optional<PdfDate> parse_iso8601_date(
 	std::string_view sv,
-	std::string_view original_raw) noexcept
+	std::string_view original_raw)
 {
 	// Expect at least `YYYY-MM-DD` (10 characters).
 	if (sv.size() < 10u || sv[4] != '-' || sv[7] != '-') {
@@ -205,7 +205,9 @@ namespace {
 		return std::nullopt;
 	}
 
+	detail::check_crypto_alloc();
 	dt.raw.assign(original_raw.data(), original_raw.size());
+	detail::check_crypto_alloc();
 	dt.iso8601 = dt.to_iso8601();
 	return dt;
 }
@@ -671,7 +673,9 @@ std::optional<PdfDate> parse_pdf_date(std::string_view raw) noexcept
 			return std::nullopt;
 		}
 
+		detail::check_crypto_alloc();
 		dt.raw.assign(trimmed.data(), trimmed.size());
+		detail::check_crypto_alloc();
 		dt.iso8601 = dt.to_iso8601();
 		return dt;
 	} catch (...) {
@@ -1894,126 +1898,6 @@ PdfResult<void> Document::load_document_structure()
 	}
 
 	// 4. Collect named destinations from `/Catalog /Dests` and `/Catalog /Names /Dests`:
-	if (const PdfValue* dests_dict_val = catalog_.get("Dests");
-		dests_dict_val != nullptr && !dests_dict_val->is_null()) {
-		auto dests_res = resolve_value(*dests_dict_val);
-		if (dests_res.has_value()) {
-			if (const PdfDict* dests_dict = dests_res->as_dict()) {
-				for (const auto& [k, v] : *dests_dict) {
-					if (named_dests_.size() >= kMaxNameTreeEntries) {
-						break;
-					}
-					auto resolved_v = resolve_value(v);
-					if (resolved_v.has_value()) {
-						named_dests_[std::string(k.view())] = std::move(*resolved_v);
-					}
-				}
-			}
-		}
-	}
-
-	if (const PdfValue* names_val = catalog_.get("Names");
-		names_val != nullptr && !names_val->is_null()) {
-		auto names_res = resolve_value(*names_val);
-		if (names_res.has_value()) {
-			if (const PdfDict* names_dict = names_res->as_dict()) {
-				if (const PdfValue* dests_tree_val = names_dict->get("Dests");
-					dests_tree_val != nullptr && !dests_tree_val->is_null()) {
-					std::unordered_set<uint32_t> visited_name_nodes;
-					size_t total_name_nodes = 0u;
-					constexpr size_t kMaxNameTreeNodes = 4096u;
-					auto walk_name_tree = [&](auto& self,
-											  const PdfValue& node_v,
-											  size_t depth) -> PdfResult<void> {
-						if (depth > kMaxNameTreeDepth ||
-							named_dests_.size() >= kMaxNameTreeEntries ||
-							++total_name_nodes > kMaxNameTreeNodes) {
-							return {};
-						}
-						PdfValue resolved_node_val;
-						if (const auto ref = node_v.as_ref()) {
-							if (!visited_name_nodes.insert(ref->obj_num).second) {
-								return {};
-							}
-							std::vector<IndirectRef> hop_refs;
-							hop_refs.reserve(kMaxIndirectRefDepth);
-							auto resolved_res = resolve_object_with_visited(*ref, hop_refs);
-							if (!resolved_res.has_value()) {
-								return {};
-							}
-							for (size_t h = 1u; h < hop_refs.size(); ++h) {
-								if (!visited_name_nodes.insert(hop_refs[h].obj_num).second) {
-									return {};
-								}
-							}
-							resolved_node_val = std::move(*resolved_res);
-						} else {
-							auto resolved_res = resolve_value(node_v);
-							if (!resolved_res.has_value()) {
-								return {};
-							}
-							resolved_node_val = std::move(*resolved_res);
-						}
-						const PdfDict* tree_dict = resolved_node_val.as_dict();
-						if (tree_dict == nullptr) {
-							return {};
-						}
-
-						if (const PdfValue* n_arr_v = tree_dict->get("Names")) {
-							auto n_arr_res = resolve_value(*n_arr_v);
-							if (n_arr_res.has_value()) {
-								if (const PdfArray* n_arr = n_arr_res->as_array()) {
-									for (size_t i = 0; i + 1u < n_arr->size(); i += 2u) {
-										if (named_dests_.size() >= kMaxNameTreeEntries) {
-											break;
-										}
-										auto k_res = resolve_value((*n_arr)[i]);
-										auto v_res = resolve_value((*n_arr)[i + 1u]);
-										if (!k_res.has_value() || !v_res.has_value()) {
-											continue;
-										}
-										std::string dest_name;
-										if (const PdfString* ks = k_res->as_string()) {
-											auto utf8_res = pdf_string_to_utf8(ks->span());
-											dest_name = utf8_res.has_value()
-												? std::move(*utf8_res)
-												: std::string(ks->as_byte_view());
-										} else if (const auto kn = k_res->as_name()) {
-											dest_name = std::string(*kn);
-										}
-										if (!dest_name.empty()) {
-											named_dests_[ std::move(dest_name) ] = std::move(*v_res);
-										}
-									}
-								}
-							}
-						}
-
-						if (const PdfValue* kids_v = tree_dict->get("Kids")) {
-							auto kids_res = resolve_value(*kids_v);
-							if (kids_res.has_value()) {
-								if (const PdfArray* kids_arr = kids_res->as_array()) {
-									for (const PdfValue& kid : *kids_arr) {
-										if (total_name_nodes >= kMaxNameTreeNodes ||
-											named_dests_.size() >= kMaxNameTreeEntries) {
-											break;
-										}
-										RECTO_PDF_RETURN_IF_ERROR(self(self, kid, depth + 1u));
-									}
-								}
-							}
-						}
-						return {};
-					};
-
-					RECTO_PDF_RETURN_IF_ERROR(
-						walk_name_tree(walk_name_tree, *dests_tree_val, 0u));
-				}
-			}
-		}
-	}
-
-	// Helper to resolve an explicit destination array or named destination:
 	auto parse_dest_array = [this](const PdfArray& arr) -> ParsedDest {
 		ParsedDest out{};
 		if (arr.empty()) {
@@ -2099,17 +1983,32 @@ PdfResult<void> Document::load_document_structure()
 		return out;
 	};
 
-	auto resolve_dest_value = [&](const PdfValue& raw_dest) -> ParsedDest {
-		auto resolved_res = resolve_value(raw_dest);
-		if (!resolved_res.has_value()) {
-			return ParsedDest{};
-		}
-		const PdfValue& dval = *resolved_res;
+	std::unordered_map<uint32_t, ParsedDest> parsed_dest_obj_cache;
+	auto parse_direct_dest_target = [&](const PdfValue& dval) -> ParsedDest {
 		if (const PdfArray* arr = dval.as_array()) {
 			return parse_dest_array(*arr);
 		}
 		if (const PdfDict* ddict = dval.as_dict()) {
 			if (const PdfValue* inner_d = ddict->get("D")) {
+				if (const auto inner_ref = inner_d->as_ref()) {
+					const auto cache_it = parsed_dest_obj_cache.find(inner_ref->obj_num);
+					if (cache_it != parsed_dest_obj_cache.end()) {
+						return cache_it->second;
+					}
+					std::vector<IndirectRef> hop_refs;
+					hop_refs.reserve(kMaxIndirectRefDepth);
+					auto inner_res = resolve_object_with_visited(*inner_ref, hop_refs);
+					ParsedDest pd{};
+					if (inner_res.has_value()) {
+						if (const PdfArray* arr = inner_res->as_array()) {
+							pd = parse_dest_array(*arr);
+						}
+					}
+					for (const IndirectRef& hr : hop_refs) {
+						parsed_dest_obj_cache.emplace(hr.obj_num, pd);
+					}
+					return pd;
+				}
 				auto inner_res = resolve_value(*inner_d);
 				if (inner_res.has_value()) {
 					if (const PdfArray* arr = inner_res->as_array()) {
@@ -2117,7 +2016,194 @@ PdfResult<void> Document::load_document_structure()
 					}
 				}
 			}
+		}
+		return ParsedDest{};
+	};
+
+	auto parse_dest_target_value = [&](const PdfValue& raw_v) -> ParsedDest {
+		if (const auto ref = raw_v.as_ref()) {
+			const auto cache_it = parsed_dest_obj_cache.find(ref->obj_num);
+			if (cache_it != parsed_dest_obj_cache.end()) {
+				return cache_it->second;
+			}
+			std::vector<IndirectRef> hop_refs;
+			hop_refs.reserve(kMaxIndirectRefDepth);
+			auto resolved_res = resolve_object_with_visited(*ref, hop_refs);
+			ParsedDest pd{};
+			if (resolved_res.has_value()) {
+				pd = parse_direct_dest_target(*resolved_res);
+			}
+			for (const IndirectRef& hr : hop_refs) {
+				parsed_dest_obj_cache.emplace(hr.obj_num, pd);
+			}
+			return pd;
+		}
+		auto resolved_res = resolve_value(raw_v);
+		if (!resolved_res.has_value()) {
 			return ParsedDest{};
+		}
+		return parse_direct_dest_target(*resolved_res);
+	};
+
+	constexpr size_t kMaxDestNameBytes = 4096u;
+	constexpr size_t kMaxTotalNamedDestBytes = 16u * 1024u * 1024u;
+	size_t total_named_dest_bytes = 0u;
+	auto record_named_dest = [&](std::string&& name, const PdfValue& target_val) -> PdfResult<void> {
+		if (name.empty()) {
+			return {};
+		}
+		if (name.size() > kMaxDestNameBytes) {
+			return make_doc_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedDictionary,
+				"Named destination key exceeds maximum length");
+		}
+		const size_t entry_bytes = name.size() + sizeof(ParsedDest);
+		if (named_dests_.size() >= kMaxNameTreeEntries ||
+			total_named_dest_bytes + entry_bytes > kMaxTotalNamedDestBytes) {
+			return make_doc_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedDictionary,
+				"Named destinations exceed maximum entry or memory budget");
+		}
+		ParsedDest pd = parse_dest_target_value(target_val);
+		if (!pd.valid) {
+			return {};
+		}
+		const auto [it, inserted] = named_dests_.insert_or_assign(std::move(name), std::move(pd));
+		if (inserted) {
+			total_named_dest_bytes += entry_bytes;
+		}
+		return {};
+	};
+
+	if (const PdfValue* dests_dict_val = catalog_.get("Dests");
+		dests_dict_val != nullptr && !dests_dict_val->is_null()) {
+		auto dests_res = resolve_value(*dests_dict_val);
+		if (dests_res.has_value()) {
+			if (const PdfDict* dests_dict = dests_res->as_dict()) {
+				for (const auto& [k, v] : *dests_dict) {
+					RECTO_PDF_RETURN_IF_ERROR(record_named_dest(std::string(k.view()), v));
+				}
+			}
+		}
+	}
+
+	if (const PdfValue* names_val = catalog_.get("Names");
+		names_val != nullptr && !names_val->is_null()) {
+		auto names_res = resolve_value(*names_val);
+		if (names_res.has_value()) {
+			if (const PdfDict* names_dict = names_res->as_dict()) {
+				if (const PdfValue* dests_tree_val = names_dict->get("Dests");
+					dests_tree_val != nullptr && !dests_tree_val->is_null()) {
+					std::unordered_set<uint32_t> visited_name_nodes;
+					size_t total_name_nodes = 0u;
+					constexpr size_t kMaxNameTreeNodes = 4096u;
+					auto walk_name_tree = [&](auto& self,
+											  const PdfValue& node_v,
+											  size_t depth) -> PdfResult<void> {
+						if (depth > kMaxNameTreeDepth) {
+							return make_doc_error(
+								ErrorCode::RecursionLimitExceeded,
+								DiagnosticId::RecursionLimitExceeded,
+								"/Names /Dests tree exceeds maximum depth");
+						}
+						if (++total_name_nodes > kMaxNameTreeNodes) {
+							return make_doc_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedDictionary,
+								"/Names /Dests tree exceeds maximum node budget");
+						}
+						PdfValue resolved_node_val;
+						if (const auto ref = node_v.as_ref()) {
+							if (!visited_name_nodes.insert(ref->obj_num).second) {
+								return {};
+							}
+							std::vector<IndirectRef> hop_refs;
+							hop_refs.reserve(kMaxIndirectRefDepth);
+							auto resolved_res = resolve_object_with_visited(*ref, hop_refs);
+							if (!resolved_res.has_value()) {
+								return {};
+							}
+							for (size_t h = 1u; h < hop_refs.size(); ++h) {
+								if (!visited_name_nodes.insert(hop_refs[h].obj_num).second) {
+									return {};
+								}
+							}
+							resolved_node_val = std::move(*resolved_res);
+						} else {
+							auto resolved_res = resolve_value(node_v);
+							if (!resolved_res.has_value()) {
+								return {};
+							}
+							resolved_node_val = std::move(*resolved_res);
+						}
+						const PdfDict* tree_dict = resolved_node_val.as_dict();
+						if (tree_dict == nullptr) {
+							return {};
+						}
+
+						if (const PdfValue* n_arr_v = tree_dict->get("Names")) {
+							auto n_arr_res = resolve_value(*n_arr_v);
+							if (n_arr_res.has_value()) {
+								if (const PdfArray* n_arr = n_arr_res->as_array()) {
+									for (size_t i = 0; i + 1u < n_arr->size(); i += 2u) {
+										auto k_res = resolve_value((*n_arr)[i]);
+										if (!k_res.has_value()) {
+											continue;
+										}
+										std::string dest_name;
+										if (const PdfString* ks = k_res->as_string()) {
+											auto utf8_res = pdf_string_to_utf8(ks->span());
+											dest_name = utf8_res.has_value()
+												? std::move(*utf8_res)
+												: std::string(ks->as_byte_view());
+										} else if (const auto kn = k_res->as_name()) {
+											dest_name = std::string(*kn);
+										}
+										if (!dest_name.empty()) {
+											RECTO_PDF_RETURN_IF_ERROR(
+												record_named_dest(std::move(dest_name), (*n_arr)[i + 1u]));
+										}
+									}
+								}
+							}
+						}
+
+						if (const PdfValue* kids_v = tree_dict->get("Kids")) {
+							auto kids_res = resolve_value(*kids_v);
+							if (kids_res.has_value()) {
+								if (const PdfArray* kids_arr = kids_res->as_array()) {
+									for (const PdfValue& kid : *kids_arr) {
+										RECTO_PDF_RETURN_IF_ERROR(self(self, kid, depth + 1u));
+									}
+								}
+							}
+						}
+						return {};
+					};
+
+					RECTO_PDF_RETURN_IF_ERROR(
+						walk_name_tree(walk_name_tree, *dests_tree_val, 0u));
+				}
+			}
+		}
+	}
+
+	auto resolve_dest_value = [&](const PdfValue& raw_dest) -> ParsedDest {
+		if (const auto ref = raw_dest.as_ref()) {
+			const auto cache_it = parsed_dest_obj_cache.find(ref->obj_num);
+			if (cache_it != parsed_dest_obj_cache.end()) {
+				return cache_it->second;
+			}
+		}
+		auto resolved_res = resolve_value(raw_dest);
+		if (!resolved_res.has_value()) {
+			return ParsedDest{};
+		}
+		const PdfValue& dval = *resolved_res;
+		if (dval.is_array() || dval.is_dict()) {
+			return parse_direct_dest_target(dval);
 		}
 
 		std::string name_key;
@@ -2132,19 +2218,7 @@ PdfResult<void> Document::load_document_structure()
 		if (!name_key.empty()) {
 			const auto it = named_dests_.find(name_key);
 			if (it != named_dests_.end()) {
-				if (const PdfArray* arr = it->second.as_array()) {
-					return parse_dest_array(*arr);
-				}
-				if (const PdfDict* ddict = it->second.as_dict()) {
-					if (const PdfValue* inner_d = ddict->get("D")) {
-						auto inner_res = resolve_value(*inner_d);
-						if (inner_res.has_value()) {
-							if (const PdfArray* arr = inner_res->as_array()) {
-								return parse_dest_array(*arr);
-							}
-						}
-					}
-				}
+				return it->second;
 			}
 		}
 		return ParsedDest{};
@@ -2531,7 +2605,7 @@ PdfResult<void> Document::load_document_structure()
 		return false;
 	};
 
-	constexpr size_t kMaxAnnotsPerPage = 1024u;
+	constexpr size_t kMaxAnnotsPerPage = 65'536u;
 	for (ResolvedPageRecord& page_rec : page_records_) {
 		const PdfValue* annots_val = page_rec.page_dict.get("Annots");
 		if (annots_val == nullptr || annots_val->is_null()) {
@@ -2545,15 +2619,17 @@ PdfResult<void> Document::load_document_structure()
 		if (annots_arr == nullptr) {
 			continue;
 		}
+		if (annots_arr->size() > kMaxAnnotsPerPage) {
+			return make_doc_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedDictionary,
+				"/Page /Annots array exceeds maximum annotation count");
+		}
 
 		std::unordered_set<uint32_t> visited_page_annots;
-		size_t inspected_page_annots = 0u;
 		for (const PdfValue& annot_elem : *annots_arr) {
 			if (annot_elem.is_null()) {
 				continue;
-			}
-			if (++inspected_page_annots > kMaxAnnotsPerPage) {
-				break;
 			}
 			PdfValue annot_val;
 			if (const auto annot_ref = annot_elem.as_ref()) {
@@ -2885,12 +2961,15 @@ PdfResult<void> Document::load_document_structure()
 		}
 	};
 
-	constexpr size_t kMaxResourceEntriesPerDict = 1024u;
+	constexpr size_t kMaxResourceEntriesPerDict = 16'384u;
 	auto scan_resources_for_fonts = [&](auto& self,
 										const PdfDict& resources,
-										size_t depth) -> void {
+										size_t depth) -> PdfResult<void> {
 		if (depth > kMaxFormResourceDepth) {
-			return;
+			return make_doc_error(
+				ErrorCode::RecursionLimitExceeded,
+				DiagnosticId::RecursionLimitExceeded,
+				"Form XObject /Resources nesting exceeds maximum depth");
 		}
 
 		if (const PdfValue* font_map_val = resources.get("Font");
@@ -2898,11 +2977,13 @@ PdfResult<void> Document::load_document_structure()
 			auto font_map_res = resolve_value(*font_map_val);
 			if (font_map_res.has_value()) {
 				if (const PdfDict* font_map = font_map_res->as_dict()) {
-					size_t font_entries_scanned = 0u;
+					if (font_map->size() > kMaxResourceEntriesPerDict) {
+						return make_doc_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedDictionary,
+							"/Resources /Font dictionary exceeds maximum entry count");
+					}
 					for (const auto& [res_key, font_v] : *font_map) {
-						if (++font_entries_scanned > kMaxResourceEntriesPerDict) {
-							break;
-						}
 						PdfValue f_val;
 						if (const auto f_ref = font_v.as_ref()) {
 							if (!visited_font_objs.insert(f_ref->obj_num).second) {
@@ -2945,11 +3026,13 @@ PdfResult<void> Document::load_document_structure()
 			auto xobj_map_res = resolve_value(*xobj_map_val);
 			if (xobj_map_res.has_value()) {
 				if (const PdfDict* xobj_map = xobj_map_res->as_dict()) {
-					size_t xobj_entries_scanned = 0u;
+					if (xobj_map->size() > kMaxResourceEntriesPerDict) {
+						return make_doc_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedDictionary,
+							"/Resources /XObject dictionary exceeds maximum entry count");
+					}
 					for (const auto& [x_key, x_val] : *xobj_map) {
-						if (++xobj_entries_scanned > kMaxResourceEntriesPerDict) {
-							break;
-						}
 						PdfValue resolved_x;
 						if (const auto x_ref = x_val.as_ref()) {
 							if (!visited_xobj_objs.insert(x_ref->obj_num).second) {
@@ -2985,7 +3068,8 @@ PdfResult<void> Document::load_document_structure()
 									auto form_res = resolve_value(*form_res_v);
 									if (form_res.has_value()) {
 										if (const PdfDict* form_res_dict = form_res->as_dict()) {
-											self(self, *form_res_dict, depth + 1u);
+											RECTO_PDF_RETURN_IF_ERROR(
+												self(self, *form_res_dict, depth + 1u));
 										}
 									}
 								}
@@ -2995,13 +3079,15 @@ PdfResult<void> Document::load_document_structure()
 				}
 			}
 		}
+		return {};
 	};
 
 	std::unordered_set<const PdfDict*> scanned_resource_dicts;
 	for (const ResolvedPageRecord& page_rec : page_records_) {
 		if (page_rec.resources != nullptr &&
 			scanned_resource_dicts.insert(page_rec.resources.get()).second) {
-			scan_resources_for_fonts(scan_resources_for_fonts, *page_rec.resources, 0u);
+			RECTO_PDF_RETURN_IF_ERROR(
+				scan_resources_for_fonts(scan_resources_for_fonts, *page_rec.resources, 0u));
 		}
 	}
 
@@ -3014,7 +3100,8 @@ PdfResult<void> Document::load_document_structure()
 					auto dr_res = resolve_value(*dr_val);
 					if (dr_res.has_value()) {
 						if (const PdfDict* dr_dict = dr_res->as_dict()) {
-							scan_resources_for_fonts(scan_resources_for_fonts, *dr_dict, 0u);
+							RECTO_PDF_RETURN_IF_ERROR(
+								scan_resources_for_fonts(scan_resources_for_fonts, *dr_dict, 0u));
 						}
 					}
 				}

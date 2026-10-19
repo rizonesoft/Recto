@@ -587,6 +587,26 @@ TEST(PdfDocument, Metadata)
 		ASSERT_TRUE(doc.metadata().parsed_creation_date.has_value());
 		EXPECT_EQ(doc.metadata().parsed_creation_date->iso8601, "2026-10-19T14:30:00+02:00");
 	}
+
+	// 4. `parse_pdf_date` handles `std::bad_alloc` cleanly without terminating
+	//    on both `D:YYYY...` and ISO-8601 XMP date strings:
+	{
+		const std::string padded_iso = std::string(64u, ' ') + "2026-10-19T14:30:00+02:00";
+		const std::string padded_pdf = std::string(64u, ' ') + "D:20261019143000+02'00'";
+		for (int fail_after = 0; fail_after < 2; ++fail_after) {
+			{
+				detail::ScopedCryptoAllocFaultInjector guard(fail_after);
+				EXPECT_FALSE(parse_pdf_date(padded_iso).has_value());
+			}
+			{
+				detail::ScopedCryptoAllocFaultInjector guard(fail_after);
+				EXPECT_FALSE(parse_pdf_date(padded_pdf).has_value());
+			}
+		}
+		const auto ok_iso = parse_pdf_date(padded_iso);
+		ASSERT_TRUE(ok_iso.has_value());
+		EXPECT_EQ(ok_iso->iso8601, "2026-10-19T14:30:00+02:00");
+	}
 }
 
 TEST(PdfDocument, OutlinesAndNamedDests)
@@ -661,6 +681,57 @@ TEST(PdfDocument, OutlinesAndNamedDests)
 		EXPECT_EQ((*doc_res)->outline()[0].page_index, 0);
 		EXPECT_DOUBLE_EQ((*doc_res)->outline()[0].dest_y_pt, 710.0);
 		EXPECT_EQ((*doc_res)->outline()[1].title, "Node B");
+	}
+
+	// 4. Bounded allocation on `/Names /Dests` when 2,048 destination names
+	//    reference a shared 64 KiB destination dictionary (`<< /D [3 0 R /XYZ
+	//    90 650 1.5] /Payload (...) >>`): resolved destination objects are
+	//    cached and stored as lightweight `ParsedDest` records without cloning
+	//    the 64 KiB dictionary per name (< 32 MiB working-set delta):
+	{
+		auto get_working_set_bytes = []() -> size_t {
+			PROCESS_MEMORY_COUNTERS pmc{};
+			pmc.cb = sizeof(pmc);
+			if (::GetProcessMemoryInfo(::GetCurrentProcess(), &pmc, sizeof(pmc)) != FALSE) {
+				return static_cast<size_t>(pmc.WorkingSetSize);
+			}
+			return 0u;
+		};
+
+		const std::string payload_64k(65536u, 'D');
+		std::string names_arr = "[";
+		for (uint32_t i = 0u; i < 2048u; ++i) {
+			names_arr += "(dest_" + std::to_string(i) + ") 10 0 R ";
+		}
+		names_arr += "]";
+
+		const auto bytes = build_synthetic_pdf_from_objects(
+			"1.7",
+			{
+				{1,
+				 "<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R "
+				 "/Names << /Dests << /Names " + names_arr + " >> >> >>"},
+				{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 612 792] /Kids [3 0 R] >>"},
+				{3, "<< /Type /Page /Parent 2 0 R >>"},
+				{4, "<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 1 >>"},
+				{5, "<< /Title (Jump 2047) /Parent 4 0 R /Dest (dest_2047) >>"},
+				{10, "<< /D [3 0 R /XYZ 90 650 1.5] /Payload (" + payload_64k + ") >>"},
+			});
+
+		const size_t ws_before = get_working_set_bytes();
+		auto doc_res = Document::open_memory(bytes);
+		ASSERT_TRUE(doc_res.has_value()) << doc_res.error().message.view();
+		const size_t ws_after = get_working_set_bytes();
+		const size_t ws_delta = (ws_after > ws_before) ? (ws_after - ws_before) : 0u;
+		EXPECT_LT(ws_delta, 32u * 1024u * 1024u)
+			<< "Named destinations amplified memory on shared destination dictionary: "
+			<< ws_delta << " bytes";
+
+		ASSERT_EQ((*doc_res)->outline().size(), 1u);
+		EXPECT_EQ((*doc_res)->outline()[0].page_index, 0);
+		EXPECT_DOUBLE_EQ((*doc_res)->outline()[0].dest_x_pt, 90.0);
+		EXPECT_DOUBLE_EQ((*doc_res)->outline()[0].dest_y_pt, 650.0);
+		EXPECT_DOUBLE_EQ((*doc_res)->outline()[0].zoom, 1.5);
 	}
 }
 
@@ -895,6 +966,34 @@ TEST(PdfDocument, LinksAndRefusedActions)
 				EXPECT_NE(d.diagnostic_id, DiagnosticId::BlockedLaunchAction)
 					<< "Node past the 256-node budget should not have been resolved";
 			}
+		}
+
+		// 4c. 1,025 distinct `/Subtype /Link` annotations on a single page are
+		//     extracted completely without silent truncation at 1,024:
+		{
+			std::string annots_arr = "[";
+			std::vector<std::pair<uint32_t, std::string>> objs_1025 = {
+				{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+				{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 612 792] /Kids [3 0 R] >>"},
+			};
+			for (uint32_t i = 0u; i < 1025u; ++i) {
+				const uint32_t obj_id = 10u + i;
+				annots_arr += std::to_string(obj_id) + " 0 R ";
+				objs_1025.emplace_back(
+					obj_id,
+					"<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] "
+					"/A << /S /URI /URI (https://example.com/" + std::to_string(i) + ") >> >>");
+			}
+			annots_arr += "]";
+			objs_1025.emplace_back(3u, "<< /Type /Page /Parent 2 0 R /Annots " + annots_arr + " >>");
+
+			const auto bytes_1025 = build_synthetic_pdf_from_objects("1.7", objs_1025);
+			auto doc_1025 = Document::open_memory(bytes_1025);
+			ASSERT_TRUE(doc_1025.has_value()) << doc_1025.error().message.view();
+			auto links_1025 = (*doc_1025)->page_links(0);
+			ASSERT_TRUE(links_1025.has_value()) << links_1025.error().message.view();
+			ASSERT_EQ(links_1025->size(), 1025u);
+			EXPECT_EQ(links_1025->back().uri, "https://example.com/1024");
 		}
 	}
 }
