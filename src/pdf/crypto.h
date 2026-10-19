@@ -95,9 +95,39 @@ struct EncryptDictParams {
 	std::unordered_map<std::string, CryptFilterMethod> crypt_filters{};
 };
 
+namespace detail {
+
+void set_crypto_alloc_fail_countdown(int countdown) noexcept;
+
+class ScopedCryptoAllocFaultInjector {
+public:
+	explicit ScopedCryptoAllocFaultInjector(int fail_after_n_allocations) noexcept
+	{
+		set_crypto_alloc_fail_countdown(fail_after_n_allocations);
+	}
+
+	ScopedCryptoAllocFaultInjector(const ScopedCryptoAllocFaultInjector&) = delete;
+	ScopedCryptoAllocFaultInjector& operator=(const ScopedCryptoAllocFaultInjector&) = delete;
+
+	~ScopedCryptoAllocFaultInjector() noexcept
+	{
+		set_crypto_alloc_fail_countdown(-1);
+	}
+};
+
+} // namespace detail
+
 class SecurityHandler {
 public:
-	SecurityHandler() noexcept = default;
+	SecurityHandler() = default;
+
+	// Prepares and validates a UTF-8 password for `R=5..6` according to RFC 4013
+	// (SASLprep) and RFC 3454 (Stringprep) Tables B.1, C.1.2..C.9, D.1, D.2, and
+	// ISO 32000-2 section 7.6.4.3.4 (NFKC normalization + 127-byte truncation).
+	// Returns `ErrorCode::WrongPassword` when the password contains invalid UTF-8,
+	// prohibited output characters, or bidirectional violations.
+	[[nodiscard]] static PdfResult<std::vector<uint8_t>> prepare_saslprep_password(
+		std::string_view password) noexcept;
 
 	// Parses a `/Filter /Standard` `/Encrypt` dictionary (`encrypt_dict`) paired
 	// with the first element of the trailer `/ID` array (`file_id_0`, required

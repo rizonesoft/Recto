@@ -348,6 +348,120 @@ TEST(PdfCrypto, EmptyUserPasswordAutoUnlock)
 
 TEST(PdfCrypto, SaslprepAndTruncatedAesCiphertext)
 {
+	// 1. Direct RFC 4013 SASLprep preparation tests (`SecurityHandler::prepare_saslprep_password`):
+	// Positive cases:
+	{
+		auto empty_res = SecurityHandler::prepare_saslprep_password("");
+		RECTO_ASSERT_OK(empty_res);
+		EXPECT_TRUE(empty_res->empty());
+
+		// U+00AD SOFT HYPHEN (Table B.1) maps to nothing -> empty password:
+		auto shy_res = SecurityHandler::prepare_saslprep_password("\xC2\xAD");
+		RECTO_ASSERT_OK(shy_res);
+		EXPECT_TRUE(shy_res->empty());
+
+		// Embedded Table B.1 characters (U+00AD, U+200B) map to nothing:
+		auto mapped_res = SecurityHandler::prepare_saslprep_password("recto\xC2\xAD\xE2\x80\x8B-test");
+		RECTO_ASSERT_OK(mapped_res);
+		const std::string mapped_str(mapped_res->begin(), mapped_res->end());
+		EXPECT_EQ(mapped_str, "recto-test");
+
+		// Table C.1.2 non-ASCII space (U+00A0 NO-BREAK SPACE) maps to ASCII space (U+0020):
+		auto nbsp_res = SecurityHandler::prepare_saslprep_password("a\xC2\xA0" "b");
+		RECTO_ASSERT_OK(nbsp_res);
+		const std::string nbsp_str(nbsp_res->begin(), nbsp_res->end());
+		EXPECT_EQ(nbsp_str, "a b");
+
+		// Supplementary-plane nonspacing mark U+1D167 (MUSICAL SYMBOL COMBINING TREMOLO-1,
+		// not in RFC 3454 Table D.1 or D.2) between two RandALCat characters (U+05D0 HEBREW
+		// LETTER ALEF) is valid under RFC 3454 Section 6 / RFC 4013 Section 2.4:
+		const std::string valid_supp_bidi = "\xD7\x90\xF0\x9D\x85\xA7\xD7\x90";
+		auto supp_res = SecurityHandler::prepare_saslprep_password(valid_supp_bidi);
+		RECTO_ASSERT_OK(supp_res);
+		const std::string supp_str(supp_res->begin(), supp_res->end());
+		EXPECT_EQ(supp_str, valid_supp_bidi);
+	}
+
+	// Negative cases (direct preparation must reject with ErrorCode::WrongPassword):
+	// - ASCII control character (U+0007, Table C.2.1):
+	RECTO_EXPECT_ERR(
+		SecurityHandler::prepare_saslprep_password(std::string("recto\x07-test", 11)),
+		ErrorCode::WrongPassword);
+	// - Private Use character (U+E000 -> \xEE\x80\x80, Table C.3):
+	RECTO_EXPECT_ERR(
+		SecurityHandler::prepare_saslprep_password("recto\xEE\x80\x80-test"),
+		ErrorCode::WrongPassword);
+	// - Replacement character (U+FFFD -> \xEF\xBF\xBD, Table C.6):
+	RECTO_EXPECT_ERR(
+		SecurityHandler::prepare_saslprep_password("recto\xEF\xBF\xBD-test"),
+		ErrorCode::WrongPassword);
+	// - Bidi control character (U+202E RIGHT-TO-LEFT OVERRIDE -> \xE2\x80\xAE, Table C.8):
+	RECTO_EXPECT_ERR(
+		SecurityHandler::prepare_saslprep_password("recto\xE2\x80\xAE-test"),
+		ErrorCode::WrongPassword);
+	// - Invalid UTF-8 byte sequence (\xFF\xFE):
+	RECTO_EXPECT_ERR(
+		SecurityHandler::prepare_saslprep_password("\xFF\xFE"),
+		ErrorCode::WrongPassword);
+	// - Bidirectional Rule 2 violation (mixing RandALCat U+05D0 \xD7\x90 with LCat 'a'):
+	RECTO_EXPECT_ERR(
+		SecurityHandler::prepare_saslprep_password("\xD7\x90" "a" "\xD7\x90"),
+		ErrorCode::WrongPassword);
+	// - Bidirectional Rule 2 violation with supplementary LCat (U+1D100 MUSICAL SYMBOL SINGLE BARLINE):
+	RECTO_EXPECT_ERR(
+		SecurityHandler::prepare_saslprep_password("\xD7\x90\xF0\x9D\x84\x80\xD7\x90"),
+		ErrorCode::WrongPassword);
+	// - Bidirectional Rule 3 violation (RandALCat present, but first char is digit '1'):
+	RECTO_EXPECT_ERR(
+		SecurityHandler::prepare_saslprep_password("1\xD7\x90"),
+		ErrorCode::WrongPassword);
+
+	// 2. End-to-end R=5 authentication against an /Encrypt dictionary whose /U, /UE, and /Perms
+	// were derived from the raw unvalidated string "1\xD7\x90" (bidi Rule 3 violation).
+	// If SASLprep validation were bypassed, authenticate("1\xD7\x90") would match /U and return Ok.
+	{
+		auto d_bidi_r3 = parse_dict_literal(
+			"<< /Filter /Standard /V 5 /R 5 /Length 256 /P -1028 /EncryptMetadata true "
+			"/CF << /StdCF << /Type /CryptFilter /CFM /AESV3 /Length 32 >> >> "
+			"/StmF /StdCF /StrF /StdCF "
+			"/O <000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000> "
+			"/U <BCB65C24B48B71EB66CEBB0522FBD3266461367CA4CB172A219EF6835C82D1C701010101010101010202020202020202> "
+			"/OE <0000000000000000000000000000000000000000000000000000000000000000> "
+			"/UE <7F15841308F74C2397B0A30791B3D59CF6D36A362F319EE7E8DE913FFC67B379> "
+			"/Perms <F5F99B4811A7CFAB72B2B9C7381ED13F> >>");
+		RECTO_ASSERT_OK(d_bidi_r3);
+		auto sh_bidi = SecurityHandler::create(*d_bidi_r3, {}, IndirectRef{7u, 0u});
+		RECTO_ASSERT_OK(sh_bidi);
+		EXPECT_FALSE(sh_bidi->is_authenticated());
+		RECTO_EXPECT_ERR(sh_bidi->authenticate("1\xD7\x90"), ErrorCode::WrongPassword);
+	}
+
+	// Conversely, an R=5 /Encrypt dictionary whose /U, /UE, and /Perms were derived from the
+	// valid supplementary-plane bidi string "\xD7\x90\xF0\x9D\x85\xA7\xD7\x90" (U+05D0 U+1D167 U+05D0)
+	// must authenticate and unwrap the 32-byte key {0x00..0x1F}:
+	{
+		auto d_supp_mn = parse_dict_literal(
+			"<< /Filter /Standard /V 5 /R 5 /Length 256 /P -1028 /EncryptMetadata true "
+			"/CF << /StdCF << /Type /CryptFilter /CFM /AESV3 /Length 32 >> >> "
+			"/StmF /StdCF /StrF /StdCF "
+			"/O <000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000> "
+			"/U <B5DC17B1912F2EB6FC0EBC629FF2118C8FE3EDB878FF806BC8F3C33391A4982201010101010101010202020202020202> "
+			"/OE <0000000000000000000000000000000000000000000000000000000000000000> "
+			"/UE <167B9B1DE03DD2F3185189D23209963F367FB9CBA5BDAE8B278FD12E927053C5> "
+			"/Perms <F5F99B4811A7CFAB72B2B9C7381ED13F> >>");
+		RECTO_ASSERT_OK(d_supp_mn);
+		auto sh_supp = SecurityHandler::create(*d_supp_mn, {}, IndirectRef{7u, 0u});
+		RECTO_ASSERT_OK(sh_supp);
+		RECTO_ASSERT_OK(sh_supp->authenticate("\xD7\x90\xF0\x9D\x85\xA7\xD7\x90"));
+		EXPECT_TRUE(sh_supp->is_authenticated());
+		EXPECT_TRUE(sh_supp->perms_verified());
+		ASSERT_EQ(sh_supp->file_encryption_key().size(), 32u);
+		for (size_t i = 0; i < 32u; ++i) {
+			EXPECT_EQ(sh_supp->file_encryption_key()[i], static_cast<uint8_t>(i));
+		}
+	}
+
+	// 3. Truncated 16-byte IV-only and non-multiple-of-16 AES-256 ciphertexts must be rejected:
 	const std::vector<uint8_t> file_bytes = read_corpus_bytes("render/encrypted-aes-256.pdf");
 	auto xref_res = XrefTable::parse(file_bytes);
 	RECTO_ASSERT_OK(xref_res);
@@ -355,39 +469,94 @@ TEST(PdfCrypto, SaslprepAndTruncatedAesCiphertext)
 	RECTO_ASSERT_OK(sh_opt);
 	ASSERT_TRUE(sh_opt->has_value());
 	SecurityHandler sh = std::move(**sh_opt);
-
-	// 1. RFC 4013 SASLprep prohibited characters and bidirectional violations must be rejected:
-	// - ASCII control character (U+0007):
-	RECTO_EXPECT_ERR(sh.authenticate(std::string("recto\x07-test", 11)), ErrorCode::WrongPassword);
-	// - Private Use character (U+E000 -> \xEE\x80\x80):
-	RECTO_EXPECT_ERR(sh.authenticate("recto\xEE\x80\x80-test"), ErrorCode::WrongPassword);
-	// - Replacement character (U+FFFD -> \xEF\xBF\xBD):
-	RECTO_EXPECT_ERR(sh.authenticate("recto\xEF\xBF\xBD-test"), ErrorCode::WrongPassword);
-	// - Bidi control character (U+202E RIGHT-TO-LEFT OVERRIDE -> \xE2\x80\xAE):
-	RECTO_EXPECT_ERR(sh.authenticate("recto\xE2\x80\xAE-test"), ErrorCode::WrongPassword);
-	// - Invalid UTF-8 byte sequence (\xFF\xFE):
-	RECTO_EXPECT_ERR(sh.authenticate("\xFF\xFE"), ErrorCode::WrongPassword);
-	// - Bidirectional Rule 2 violation (mixing RandALCat U+05D0 \xD7\x90 with LCat 'a'):
-	RECTO_EXPECT_ERR(sh.authenticate("\xD7\x90" "a" "\xD7\x90"), ErrorCode::WrongPassword);
-	// - Bidirectional Rule 3 violation (RandALCat present, but first char is digit '1'):
-	RECTO_EXPECT_ERR(sh.authenticate("1\xD7\x90"), ErrorCode::WrongPassword);
-
-	// 2. RFC 4013 Table B.1 characters (U+00AD SOFT HYPHEN, U+200B ZERO WIDTH SPACE)
-	// embedded inside "recto-test" map to nothing and unlock the R=6 fixture:
 	RECTO_ASSERT_OK(sh.authenticate("recto\xC2\xAD\xE2\x80\x8B-test"));
 	EXPECT_TRUE(sh.is_authenticated());
 
-	// 3. Truncated 16-byte IV-only AES-256 ciphertext must be rejected with DamagedFormat:
 	const std::vector<uint8_t> iv_only_16(16u, 0x42u);
 	RECTO_EXPECT_ERR(
 		sh.decrypt_bytes(iv_only_16, IndirectRef{4u, 0u}, CryptFilterMethod::AESV3),
 		ErrorCode::DamagedFormat);
 
-	// Non-multiple-of-16 AES-256 ciphertext must also be rejected with DamagedFormat:
 	const std::vector<uint8_t> odd_len_33(33u, 0x42u);
 	RECTO_EXPECT_ERR(
 		sh.decrypt_bytes(odd_len_33, IndirectRef{4u, 0u}, CryptFilterMethod::AESV3),
 		ErrorCode::DamagedFormat);
+}
+
+TEST(PdfCrypto, OutOfMemoryFaultInjection)
+{
+	const std::vector<uint8_t> file_bytes = read_corpus_bytes("render/encrypted-aes-256.pdf");
+	auto xref_res = XrefTable::parse(file_bytes);
+	RECTO_ASSERT_OK(xref_res);
+
+	auto valid_sh_opt = SecurityHandler::from_xref(*xref_res, file_bytes);
+	RECTO_ASSERT_OK(valid_sh_opt);
+	ASSERT_TRUE(valid_sh_opt->has_value());
+	SecurityHandler valid_sh = std::move(**valid_sh_opt);
+	RECTO_ASSERT_OK(valid_sh.authenticate("recto-test"));
+
+	auto enc_obj = xref_res->read_indirect_object(file_bytes, IndirectRef{7u, 0u});
+	RECTO_ASSERT_OK(enc_obj);
+	const PdfDict* enc_dict = enc_obj->value.as_dict();
+	ASSERT_NE(enc_dict, nullptr);
+
+	{
+		detail::ScopedCryptoAllocFaultInjector fault(0);
+		RECTO_EXPECT_ERR(
+			SecurityHandler::prepare_saslprep_password("recto-test"),
+			ErrorCode::OutOfMemory);
+	}
+	{
+		detail::ScopedCryptoAllocFaultInjector fault(0);
+		RECTO_EXPECT_ERR(
+			SecurityHandler::parse_encrypt_dict(*enc_dict),
+			ErrorCode::OutOfMemory);
+	}
+	{
+		detail::ScopedCryptoAllocFaultInjector fault(0);
+		RECTO_EXPECT_ERR(
+			SecurityHandler::create(*enc_dict, {}, IndirectRef{7u, 0u}),
+			ErrorCode::OutOfMemory);
+	}
+	{
+		// Fail on second allocation inside create() (during parse_encrypt_dict):
+		detail::ScopedCryptoAllocFaultInjector fault(1);
+		RECTO_EXPECT_ERR(
+			SecurityHandler::create(*enc_dict, {}, IndirectRef{7u, 0u}),
+			ErrorCode::OutOfMemory);
+	}
+	{
+		detail::ScopedCryptoAllocFaultInjector fault(0);
+		RECTO_EXPECT_ERR(
+			SecurityHandler::from_xref(*xref_res, file_bytes),
+			ErrorCode::OutOfMemory);
+	}
+	{
+		detail::ScopedCryptoAllocFaultInjector fault(0);
+		RECTO_EXPECT_ERR(
+			valid_sh.authenticate("recto-test"),
+			ErrorCode::OutOfMemory);
+	}
+	{
+		const std::vector<uint8_t> dummy_ct(32u, 0u);
+		detail::ScopedCryptoAllocFaultInjector fault(0);
+		RECTO_EXPECT_ERR(
+			valid_sh.decrypt_bytes(dummy_ct, IndirectRef{4u, 0u}, CryptFilterMethod::AESV3),
+			ErrorCode::OutOfMemory);
+	}
+	{
+		PdfValue str_val(PdfString("ciphertext"));
+		detail::ScopedCryptoAllocFaultInjector fault(0);
+		RECTO_EXPECT_ERR(
+			valid_sh.decrypt_object_values(str_val, IndirectRef{4u, 0u}, false),
+			ErrorCode::OutOfMemory);
+	}
+	{
+		detail::ScopedCryptoAllocFaultInjector fault(0);
+		RECTO_EXPECT_ERR(
+			valid_sh.resolve_and_decrypt_object(*xref_res, file_bytes, IndirectRef{4u, 0u}),
+			ErrorCode::OutOfMemory);
+	}
 }
 
 TEST(PdfCrypto, Exemptions)
@@ -471,16 +640,6 @@ TEST(PdfCrypto, PermissionsBitmask)
 	EXPECT_TRUE(PdfPermissions::from_bitmask(1 << 11, 3).can_print_high_quality);        // bit 12
 
 	// Corpus `/P -1028` (`0xFFFFFBFC` = bits 3, 4, 5, 6, 9, 10 set; bit 11 (0x400) clear; bit 12 (0x800) set):
-	// Wait: -1028 in 32-bit two's complement is `0xFFFFFBFC`:
-	// `0xFBFC` = `1111 1011 1111 1100`:
-	// - bit 3 (`0x004`): 1 (`can_print = true`)
-	// - bit 4 (`0x008`): 1 (`can_modify = true`)
-	// - bit 5 (`0x010`): 1 (`can_copy_text = true`)
-	// - bit 6 (`0x020`): 1 (`can_annotate = true`)
-	// - bit 9 (`0x100`): 1 (`can_fill_forms = true`)
-	// - bit 10 (`0x200`): 1 (`can_extract_for_accessibility = true`)
-	// - bit 11 (`0x400`): 0 (`can_assemble = false`)
-	// - bit 12 (`0x800`): 1 (`can_print_high_quality = true`)
 	{
 		const auto pm = PdfPermissions::from_bitmask(-1028, 3);
 		EXPECT_TRUE(pm.can_print);
