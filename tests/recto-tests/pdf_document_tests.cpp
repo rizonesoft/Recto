@@ -426,6 +426,42 @@ TEST(PdfDocument, PageTreeAndRotatedPages)
 		EXPECT_LT(ws_alias_delta, 32u * 1024u * 1024u)
 			<< "Aliased page-tree sibling expansion caused excessive working-set growth: "
 			<< ws_alias_delta << " bytes";
+
+		// 3c. 1,024 distinct `/Type /Page` leaves explicitly referencing the
+		//     same indirect `/Resources 10 0 R` dictionary (with a 64 KiB
+		//     payload) share one resolved `std::shared_ptr<const PdfDict>`
+		//     without duplicating the 64 KiB dictionary per page (< 32 MiB
+		//     working-set delta):
+		std::string kids_explicit = "[";
+		std::vector<std::pair<uint32_t, std::string>> objs_explicit = {
+			{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+			{10, "<< /Font << /F1 11 0 R /Payload (" + payload_64k + ") >> >>"},
+			{11, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"},
+		};
+		for (uint32_t i = 0u; i < 1024u; ++i) {
+			const uint32_t page_id = 20u + i;
+			kids_explicit += std::to_string(page_id) + " 0 R ";
+			objs_explicit.emplace_back(
+				page_id,
+				"<< /Type /Page /Parent 2 0 R /Resources 10 0 R >>");
+		}
+		kids_explicit += "]";
+		objs_explicit.emplace_back(
+			2u,
+			"<< /Type /Pages /Count 1024 /MediaBox [0 0 612 792] /Kids " + kids_explicit + " >>");
+
+		const auto bytes_explicit = build_synthetic_pdf_from_objects("1.7", objs_explicit);
+		const size_t ws_exp_before = get_working_set_bytes();
+		auto exp_res = Document::open_memory(bytes_explicit);
+		ASSERT_TRUE(exp_res.has_value()) << exp_res.error().message.view();
+		const size_t ws_exp_after = get_working_set_bytes();
+		const size_t ws_exp_delta =
+			(ws_exp_after > ws_exp_before) ? (ws_exp_after - ws_exp_before) : 0u;
+		EXPECT_EQ((*exp_res)->page_count(), 1024u);
+		EXPECT_EQ((*exp_res)->fonts().size(), 1u);
+		EXPECT_LT(ws_exp_delta, 32u * 1024u * 1024u)
+			<< "Explicit shared /Resources references across 1,024 pages duplicated memory: "
+			<< ws_exp_delta << " bytes";
 	}
 }
 
@@ -607,6 +643,42 @@ TEST(PdfDocument, Metadata)
 		ASSERT_TRUE(ok_iso.has_value());
 		EXPECT_EQ(ok_iso->iso8601, "2026-10-19T14:30:00+02:00");
 	}
+
+	// 5. Oversized `/Info` field (> 64 KiB) and oversized `/Catalog /Metadata`
+	//    XMP stream (> 4 MiB) fail with typed `PdfError`:
+	{
+		const std::string title_65k(65537u, 'T');
+		const auto bytes_info = build_synthetic_pdf_from_objects(
+			"1.7",
+			{
+				{1, "<< /Type /Catalog /Pages 2 0 R /Metadata 4 0 R >>"},
+				{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 612 792] /Kids [3 0 R] >>"},
+				{3, "<< /Type /Page /Parent 2 0 R >>"},
+				{4,
+				 "<< /Type /Metadata /Subtype /XML /Length " +
+				 std::to_string(title_65k.size() + 25u) +
+				 " >>\nstream\n<dc:title>" + title_65k + "</dc:title>\nendstream"},
+			});
+		auto res_info = Document::open_memory(bytes_info);
+		ASSERT_FALSE(res_info.has_value());
+		EXPECT_EQ(res_info.error().code, ErrorCode::DamagedFormat);
+
+		const std::string xmp_over_4m(4u * 1024u * 1024u + 64u, 'X');
+		const auto bytes_xmp = build_synthetic_pdf_from_objects(
+			"1.7",
+			{
+				{1, "<< /Type /Catalog /Pages 2 0 R /Metadata 4 0 R >>"},
+				{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 612 792] /Kids [3 0 R] >>"},
+				{3, "<< /Type /Page /Parent 2 0 R >>"},
+				{4,
+				 "<< /Type /Metadata /Subtype /XML /Length " +
+				 std::to_string(xmp_over_4m.size()) +
+				 " >>\nstream\n" + xmp_over_4m + "\nendstream"},
+			});
+		auto res_xmp = Document::open_memory(bytes_xmp);
+		ASSERT_FALSE(res_xmp.has_value());
+		EXPECT_EQ(res_xmp.error().code, ErrorCode::DecompressionLimitExceeded);
+	}
 }
 
 TEST(PdfDocument, OutlinesAndNamedDests)
@@ -763,6 +835,21 @@ TEST(PdfDocument, OutlinesAndNamedDests)
 		ASSERT_EQ((*doc_fit_res)->outline().size(), 1u);
 		EXPECT_FALSE((*doc_fit_res)->outline()[0].has_destination);
 		EXPECT_EQ((*doc_fit_res)->outline()[0].page_index, -1);
+
+		// Oversized `/Outlines` item `/Title` (> 4 KiB) fails with `ErrorCode::DamagedFormat`:
+		const std::string title_8k(8192u, 'O');
+		const auto bytes_bad_outline = build_synthetic_pdf_from_objects(
+			"1.7",
+			{
+				{1, "<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R >>"},
+				{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 612 792] /Kids [3 0 R] >>"},
+				{3, "<< /Type /Page /Parent 2 0 R >>"},
+				{4, "<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 1 >>"},
+				{5, "<< /Title (" + title_8k + ") /Parent 4 0 R /Dest [3 0 R /Fit] >>"},
+			});
+		auto bad_outline_res = Document::open_memory(bytes_bad_outline);
+		ASSERT_FALSE(bad_outline_res.has_value());
+		EXPECT_EQ(bad_outline_res.error().code, ErrorCode::DamagedFormat);
 	}
 }
 
@@ -1091,6 +1178,55 @@ TEST(PdfDocument, LinksAndRefusedActions)
 				<< "Aggregate link URI budget exceeded working-set limit: "
 				<< ws_agg_delta << " bytes";
 		}
+
+		// 4e. 300 links, each with a 31-hop indirect alias chain converging
+		//     on a single shared 6 KiB `/URI` action (`10 0 R`), share one
+		//     `std::shared_ptr<const CachedActionSummary>` in the alias cache
+		//     without duplicating the 6 KiB string per alias hop (< 32 MiB
+		//     working-set delta):
+		{
+			const std::string uri_6k = "https://example.com/" + std::string(6144u, 'q');
+			std::string annots_alias = "[";
+			std::vector<std::pair<uint32_t, std::string>> objs_alias = {
+				{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+				{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 612 792] /Kids [3 0 R] >>"},
+				{10, "<< /S /URI /URI (" + uri_6k + ") >>"},
+			};
+			uint32_t next_free_id = 20u;
+			for (uint32_t link_idx = 0u; link_idx < 300u; ++link_idx) {
+				const uint32_t annot_id = next_free_id++;
+				annots_alias += std::to_string(annot_id) + " 0 R ";
+				const uint32_t first_alias_id = next_free_id;
+				objs_alias.emplace_back(
+					annot_id,
+					"<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A " +
+						std::to_string(first_alias_id) + " 0 R >>");
+				for (uint32_t hop = 0u; hop < 30u; ++hop) {
+					const uint32_t cur_alias = next_free_id++;
+					const uint32_t target_id = (hop == 29u) ? 10u : next_free_id;
+					objs_alias.emplace_back(cur_alias, std::to_string(target_id) + " 0 R");
+				}
+			}
+			annots_alias += "]";
+			objs_alias.emplace_back(
+				3u,
+				"<< /Type /Page /Parent 2 0 R /Annots " + annots_alias + " >>");
+
+			const auto bytes_alias = build_synthetic_pdf_from_objects("1.7", objs_alias);
+			const size_t ws_alias_before = get_working_set_bytes();
+			auto doc_alias = Document::open_memory(bytes_alias);
+			const size_t ws_alias_after = get_working_set_bytes();
+			const size_t ws_alias_delta = (ws_alias_after > ws_alias_before)
+				? (ws_alias_after - ws_alias_before)
+				: 0u;
+			ASSERT_TRUE(doc_alias.has_value()) << doc_alias.error().message.view();
+			auto links_alias = (*doc_alias)->page_links(0);
+			ASSERT_TRUE(links_alias.has_value()) << links_alias.error().message.view();
+			EXPECT_EQ(links_alias->size(), 300u);
+			EXPECT_LT(ws_alias_delta, 32u * 1024u * 1024u)
+				<< "Action alias cache duplicated 6 KiB URI payload per alias hop: "
+				<< ws_alias_delta << " bytes";
+		}
 	}
 }
 
@@ -1176,6 +1312,20 @@ TEST(PdfDocument, FontInventory)
 		EXPECT_FALSE(fonts[1].is_embedded);
 		EXPECT_FALSE(fonts[1].is_subset);
 		EXPECT_TRUE(fonts[1].has_differences);
+
+		// Oversized `/Font /BaseFont` (> 1 KiB) fails with `ErrorCode::DamagedFormat`:
+		const std::string bad_bf(2048u, 'F');
+		const auto bytes_bad_font = build_synthetic_pdf_from_objects(
+			"1.7",
+			{
+				{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+				{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 612 792] /Kids [3 0 R] >>"},
+				{3, "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> >>"},
+				{4, "<< /Type /Font /Subtype /Type1 /BaseFont /" + bad_bf + " >>"},
+			});
+		auto bad_font_res = Document::open_memory(bytes_bad_font);
+		ASSERT_FALSE(bad_font_res.has_value());
+		EXPECT_EQ(bad_font_res.error().code, ErrorCode::DamagedFormat);
 	}
 }
 

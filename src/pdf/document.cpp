@@ -975,6 +975,90 @@ PdfResult<void> Document::authenticate(std::string_view password) noexcept
 	}
 }
 
+namespace {
+
+// Fast-path scanner for uncompressed indirect alias objects (`N G obj M K R endobj`).
+// Avoids allocating a full `Parser` and `Lexer` lookahead vector when stepping
+// through uncompressed indirect reference alias chains.
+[[nodiscard]] std::optional<IndirectRef> try_read_uncompressed_ref_alias(
+	std::span<const uint8_t> file_bytes,
+	uint64_t byte_offset,
+	IndirectRef expected_header) noexcept
+{
+	if (byte_offset >= file_bytes.size()) {
+		return std::nullopt;
+	}
+	size_t p = static_cast<size_t>(byte_offset);
+	const size_t n = file_bytes.size();
+
+	auto skip_ws = [&]() noexcept {
+		while (p < n && Lexer::is_pdf_whitespace(file_bytes[p])) {
+			++p;
+		}
+	};
+
+	auto read_u64 = [&](uint64_t& out) noexcept -> bool {
+		skip_ws();
+		if (p >= n || file_bytes[p] < '0' || file_bytes[p] > '9') {
+			return false;
+		}
+		uint64_t v = 0;
+		size_t digits = 0;
+		while (p < n && file_bytes[p] >= '0' && file_bytes[p] <= '9') {
+			v = v * 10u + static_cast<uint64_t>(file_bytes[p] - '0');
+			++p;
+			if (++digits > 12u) {
+				return false;
+			}
+		}
+		if (p < n && Lexer::is_pdf_regular(file_bytes[p])) {
+			return false;
+		}
+		out = v;
+		return true;
+	};
+
+	auto match_kw = [&](std::string_view kw) noexcept -> bool {
+		skip_ws();
+		if (p + kw.size() > n) {
+			return false;
+		}
+		if (std::memcmp(file_bytes.data() + p, kw.data(), kw.size()) != 0) {
+			return false;
+		}
+		if (p + kw.size() < n && Lexer::is_pdf_regular(file_bytes[p + kw.size()])) {
+			return false;
+		}
+		p += kw.size();
+		return true;
+	};
+
+	uint64_t hdr_obj = 0;
+	uint64_t hdr_gen = 0;
+	if (!read_u64(hdr_obj) || !read_u64(hdr_gen) || !match_kw("obj")) {
+		return std::nullopt;
+	}
+	if (hdr_obj != expected_header.obj_num || hdr_gen != expected_header.gen_num) {
+		return std::nullopt;
+	}
+
+	uint64_t target_obj = 0;
+	uint64_t target_gen = 0;
+	if (!read_u64(target_obj) || !read_u64(target_gen) || !match_kw("R") || !match_kw("endobj")) {
+		return std::nullopt;
+	}
+	if (target_obj == 0u ||
+		target_obj > static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) ||
+		target_gen > static_cast<uint64_t>(std::numeric_limits<uint16_t>::max())) {
+		return std::nullopt;
+	}
+	return IndirectRef{
+		static_cast<uint32_t>(target_obj),
+		static_cast<uint16_t>(target_gen)};
+}
+
+} // namespace
+
 PdfResult<PdfValue> Document::resolve_object_with_visited(
 	IndirectRef ref,
 	std::vector<IndirectRef>& visited_refs) const
@@ -1004,6 +1088,15 @@ PdfResult<PdfValue> Document::resolve_object_with_visited(
 		const XrefEntry* entry = xref_.find(current.obj_num);
 		if (entry == nullptr || entry->is_free()) {
 			return PdfValue(PdfNull{});
+		}
+		if (entry->is_uncompressed() && entry->generation == current.gen_num) {
+			if (const auto fast_alias = try_read_uncompressed_ref_alias(
+					file_bytes_,
+					entry->byte_offset,
+					current)) {
+				current = *fast_alias;
+				continue;
+			}
 		}
 
 		if (security_handler_.has_value()) {
@@ -1486,13 +1579,189 @@ PdfResult<void> Document::load_document_structure()
 		return {};
 	};
 
-	auto merge_resources_attr = [this](
+	constexpr size_t kMaxResourceDictBytes = 1u * 1024u * 1024u;
+	constexpr size_t kMaxTotalResourcesBytes = 16u * 1024u * 1024u;
+	size_t total_retained_resources_bytes = 0u;
+
+	auto estimate_pdf_value_bytes = [](auto& self, const PdfValue& val, size_t depth) noexcept -> size_t {
+		if (depth > kMaxPagesTreeDepth) {
+			return sizeof(PdfValue);
+		}
+		size_t bytes = sizeof(PdfValue);
+		if (const PdfString* s = val.as_string()) {
+			bytes += s->span().size();
+		} else if (const auto nm = val.as_name()) {
+			bytes += nm->size();
+		} else if (const PdfArray* arr = val.as_array()) {
+			for (const PdfValue& elem : *arr) {
+				bytes += self(self, elem, depth + 1u);
+			}
+		} else if (const PdfDict* dict = val.as_dict()) {
+			for (const auto& [k, v] : *dict) {
+				bytes += sizeof(PdfName) + k.view().size() + self(self, v, depth + 1u);
+			}
+		} else if (const PdfStream* stm = val.as_stream()) {
+			bytes += stm->raw_bytes.size();
+			for (const auto& [k, v] : stm->dict) {
+				bytes += sizeof(PdfName) + k.view().size() + self(self, v, depth + 1u);
+			}
+		}
+		return bytes;
+	};
+
+	std::unordered_map<uint32_t, std::shared_ptr<const PdfDict>> parsed_resources_obj_cache;
+	std::unordered_map<uint32_t, PdfValue> parsed_resource_cat_obj_cache;
+
+	auto build_resolved_resources_dict = [&](const PdfDict& res_dict) -> PdfResult<std::shared_ptr<const PdfDict>> {
+		// Per ISO 32000-1 section 7.7.3.4 ("Inheritance of Page Attributes"),
+		// `/Resources` is inherited as a whole dictionary only when omitted on a
+		// descendant node; an explicit `/Resources` dictionary on a child node
+		// replaces the ancestor's `/Resources` dictionary rather than merging
+		// individual categories. Resolve any indirect category sub-dictionaries
+		// (`/Font`, `/XObject`, `/ExtGState`, etc.) so `page_resources` holds
+		// direct category dictionaries while keeping individual resource entries
+		// (`/F1 -> 5 0 R`) intact.
+		constexpr size_t kMaxResourceCategories = 64u;
+		if (res_dict.size() > kMaxResourceCategories) {
+			return make_doc_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedDictionary,
+				"/Resources dictionary exceeds maximum category count");
+		}
+		PdfDict replaced_resources{};
+		size_t dict_bytes = sizeof(PdfDict);
+		for (const auto& [cat_key, cat_val] : res_dict) {
+			PdfValue resolved_cat;
+			if (const auto cat_ref = cat_val.as_ref()) {
+				const auto cat_it = parsed_resource_cat_obj_cache.find(cat_ref->obj_num);
+				if (cat_it != parsed_resource_cat_obj_cache.end()) {
+					RECTO_PDF_TRY(PdfValue cloned_cat, cat_it->second.deep_clone());
+					resolved_cat = std::move(cloned_cat);
+				} else {
+					std::vector<IndirectRef> hop_refs;
+					hop_refs.reserve(kMaxIndirectRefDepth);
+					RECTO_PDF_TRY(PdfValue r_cat, resolve_object_with_visited(*cat_ref, hop_refs));
+					const size_t cat_est =
+						estimate_pdf_value_bytes(estimate_pdf_value_bytes, r_cat, 0u);
+					if (cat_est > kMaxResourceDictBytes) {
+						return make_doc_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedDictionary,
+							"/Resources category dictionary exceeds maximum byte budget");
+					}
+					if (!hop_refs.empty()) {
+						RECTO_PDF_TRY(PdfValue cache_copy, r_cat.deep_clone());
+						parsed_resource_cat_obj_cache.emplace(
+							hop_refs.back().obj_num,
+							std::move(cache_copy));
+						for (size_t h = 0u; h + 1u < hop_refs.size(); ++h) {
+							RECTO_PDF_TRY(PdfValue alias_copy, r_cat.deep_clone());
+							parsed_resource_cat_obj_cache.emplace(
+								hop_refs[h].obj_num,
+								std::move(alias_copy));
+						}
+					}
+					resolved_cat = std::move(r_cat);
+				}
+			} else {
+				RECTO_PDF_TRY(PdfValue r_cat, resolve_value(cat_val));
+				resolved_cat = std::move(r_cat);
+			}
+			const size_t cat_bytes =
+				sizeof(PdfName) + cat_key.view().size() +
+				estimate_pdf_value_bytes(estimate_pdf_value_bytes, resolved_cat, 0u);
+			if (dict_bytes + cat_bytes > kMaxResourceDictBytes ||
+				total_retained_resources_bytes + dict_bytes + cat_bytes > kMaxTotalResourcesBytes) {
+				return make_doc_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedDictionary,
+					"Document /Resources dictionaries exceed maximum memory budget");
+			}
+			dict_bytes += cat_bytes;
+			replaced_resources.set(cat_key, std::move(resolved_cat));
+		}
+		total_retained_resources_bytes += dict_bytes;
+		return std::make_shared<const PdfDict>(std::move(replaced_resources));
+	};
+
+	auto merge_resources_attr = [&](
 									const PdfDict& node_dict,
 									std::shared_ptr<const PdfDict>& inout_resources) -> PdfResult<void> {
 		const PdfValue* res_val = node_dict.get("Resources");
 		if (res_val == nullptr || res_val->is_null()) {
 			return {};
 		}
+		if (const auto res_ref = res_val->as_ref()) {
+			const auto cache_it = parsed_resources_obj_cache.find(res_ref->obj_num);
+			if (cache_it != parsed_resources_obj_cache.end()) {
+				if (cache_it->second != nullptr) {
+					inout_resources = cache_it->second;
+				}
+				return {};
+			}
+			std::vector<IndirectRef> hop_refs;
+			hop_refs.reserve(kMaxIndirectRefDepth);
+			IndirectRef cur_ref = *res_ref;
+			std::shared_ptr<const PdfDict> built_res;
+			bool hit_cached_target = false;
+			PdfValue resolved_res;
+			while (true) {
+				if (const auto hit_it = parsed_resources_obj_cache.find(cur_ref.obj_num);
+					hit_it != parsed_resources_obj_cache.end()) {
+					built_res = hit_it->second;
+					hit_cached_target = true;
+					break;
+				}
+				if (std::find(hop_refs.begin(), hop_refs.end(), cur_ref) != hop_refs.end() ||
+					hop_refs.size() >= kMaxIndirectRefDepth) {
+					return make_doc_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedObject,
+						"Cyclic or over-deep /Resources indirect reference chain");
+				}
+				const XrefEntry* entry = xref_.find(cur_ref.obj_num);
+				if (entry != nullptr && entry->is_uncompressed() && entry->generation == cur_ref.gen_num) {
+					if (const auto fast_alias = try_read_uncompressed_ref_alias(
+							file_bytes_,
+							entry->byte_offset,
+							cur_ref)) {
+						hop_refs.push_back(cur_ref);
+						cur_ref = *fast_alias;
+						continue;
+					}
+				}
+				RECTO_PDF_TRY(PdfValue fallback_val, resolve_object_with_visited(cur_ref, hop_refs));
+				resolved_res = std::move(fallback_val);
+				break;
+			}
+			if (!hit_cached_target) {
+				if (resolved_res.is_null()) {
+					for (const IndirectRef& hr : hop_refs) {
+						parsed_resources_obj_cache.emplace(hr.obj_num, nullptr);
+					}
+					return {};
+				}
+				const PdfDict* res_dict = resolved_res.as_dict();
+				if (res_dict == nullptr) {
+					return make_doc_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedDictionary,
+						"/Resources entry is not a PDF dictionary");
+				}
+				RECTO_PDF_TRY(
+					std::shared_ptr<const PdfDict> fresh_res,
+					build_resolved_resources_dict(*res_dict));
+				built_res = std::move(fresh_res);
+			}
+			for (const IndirectRef& hr : hop_refs) {
+				parsed_resources_obj_cache.emplace(hr.obj_num, built_res);
+			}
+			if (built_res != nullptr) {
+				inout_resources = std::move(built_res);
+			}
+			return {};
+		}
+
 		RECTO_PDF_TRY(PdfValue resolved_res, resolve_value(*res_val));
 		if (resolved_res.is_null()) {
 			return {};
@@ -1504,21 +1773,10 @@ PdfResult<void> Document::load_document_structure()
 				DiagnosticId::DamagedDictionary,
 				"/Resources entry is not a PDF dictionary");
 		}
-
-		// Per ISO 32000-1 section 7.7.3.4 ("Inheritance of Page Attributes"),
-		// `/Resources` is inherited as a whole dictionary only when omitted on a
-		// descendant node; an explicit `/Resources` dictionary on a child node
-		// replaces the ancestor's `/Resources` dictionary rather than merging
-		// individual categories. Resolve any indirect category sub-dictionaries
-		// (`/Font`, `/XObject`, `/ExtGState`, etc.) so `page_resources` holds
-		// direct category dictionaries while keeping individual resource entries
-		// (`/F1 -> 5 0 R`) intact.
-		PdfDict replaced_resources{};
-		for (const auto& [cat_key, cat_val] : *res_dict) {
-			RECTO_PDF_TRY(PdfValue resolved_cat, resolve_value(cat_val));
-			replaced_resources.set(cat_key, std::move(resolved_cat));
-		}
-		inout_resources = std::make_shared<const PdfDict>(std::move(replaced_resources));
+		RECTO_PDF_TRY(
+			std::shared_ptr<const PdfDict> built_res,
+			build_resolved_resources_dict(*res_dict));
+		inout_resources = std::move(built_res);
 		return {};
 	};
 
@@ -1865,7 +2123,12 @@ PdfResult<void> Document::load_document_structure()
 		if (meta_obj_res.has_value()) {
 			if (const PdfStream* meta_stm = meta_obj_res->as_stream()) {
 				auto meta_bytes_res = decode_stream(*meta_stm, kMaxMetadataStreamBytes);
-				if (meta_bytes_res.has_value()) {
+				if (!meta_bytes_res.has_value()) {
+					if (meta_bytes_res.error().code == ErrorCode::DecompressionLimitExceeded ||
+						meta_bytes_res.error().code == ErrorCode::OutOfMemory) {
+						return meta_bytes_res.error();
+					}
+				} else {
 					const std::string_view xmp_xml(
 						reinterpret_cast<const char*>(meta_bytes_res->data()),
 						meta_bytes_res->size());
@@ -2686,7 +2949,8 @@ PdfResult<void> Document::load_document_structure()
 		std::string action_type{};
 		bool is_inert{true};
 	};
-	std::unordered_map<uint32_t, CachedActionSummary> parsed_action_obj_cache;
+	std::unordered_map<uint32_t, std::shared_ptr<const CachedActionSummary>> parsed_action_obj_cache;
+	constexpr size_t kMaxCachedActionObjs = 65'536u;
 
 	auto parse_action_dict_summary = [&](
 										 const PdfDict& act_dict,
@@ -2959,7 +3223,8 @@ PdfResult<void> Document::load_document_structure()
 
 			if (const PdfValue* act_val = annot_dict->get("A");
 				act_val != nullptr && !act_val->is_null()) {
-				std::optional<CachedActionSummary> act_summary;
+				std::shared_ptr<const CachedActionSummary> act_summary;
+				std::optional<CachedActionSummary> inline_summary;
 				if (const auto act_ref = act_val->as_ref()) {
 					const auto cache_it = parsed_action_obj_cache.find(act_ref->obj_num);
 					if (cache_it != parsed_action_obj_cache.end()) {
@@ -2967,19 +3232,74 @@ PdfResult<void> Document::load_document_structure()
 					} else {
 						std::vector<IndirectRef> hop_refs;
 						hop_refs.reserve(kMaxIndirectRefDepth);
-						auto act_res = resolve_object_with_visited(*act_ref, hop_refs);
-						if (act_res.has_value()) {
-							if (const PdfDict* act_dict = act_res->as_dict()) {
+						IndirectRef cur_act_ref = *act_ref;
+						bool hit_cached_act = false;
+						std::optional<PdfValue> resolved_act_val;
+						while (true) {
+							if (const auto hit_it = parsed_action_obj_cache.find(cur_act_ref.obj_num);
+								hit_it != parsed_action_obj_cache.end()) {
+								act_summary = hit_it->second;
+								hit_cached_act = true;
+								break;
+							}
+							if (std::find(hop_refs.begin(), hop_refs.end(), cur_act_ref) != hop_refs.end() ||
+								hop_refs.size() >= kMaxIndirectRefDepth) {
+								break;
+							}
+							const XrefEntry* entry = xref_.find(cur_act_ref.obj_num);
+							if (entry != nullptr && entry->is_uncompressed() && entry->generation == cur_act_ref.gen_num) {
+								if (const auto fast_alias = try_read_uncompressed_ref_alias(
+										file_bytes_,
+										entry->byte_offset,
+										cur_act_ref)) {
+									hop_refs.push_back(cur_act_ref);
+									cur_act_ref = *fast_alias;
+									continue;
+								}
+							}
+							auto act_res = resolve_object_with_visited(cur_act_ref, hop_refs);
+							if (act_res.has_value()) {
+								resolved_act_val = std::move(*act_res);
+							}
+							break;
+						}
+						if (!hit_cached_act && resolved_act_val.has_value()) {
+							if (const PdfDict* act_dict = resolved_act_val->as_dict()) {
 								const uint32_t target_obj_num = hop_refs.empty()
 									? act_ref->obj_num
 									: hop_refs.back().obj_num;
 								RECTO_PDF_TRY(
 									CachedActionSummary parsed_sum,
 									parse_action_dict_summary(*act_dict, target_obj_num));
-								for (const IndirectRef& hr : hop_refs) {
-									parsed_action_obj_cache.emplace(hr.obj_num, parsed_sum);
+								const size_t summary_bytes = sizeof(CachedActionSummary) +
+									parsed_sum.uri.size() + parsed_sum.action_type.size();
+								if (total_link_bytes + summary_bytes > kMaxTotalLinkBytes) {
+									return make_doc_error(
+										ErrorCode::DamagedFormat,
+										DiagnosticId::DamagedDictionary,
+										"Document /Annots /Link action cache exceeds memory budget");
 								}
-								act_summary = std::move(parsed_sum);
+								total_link_bytes += summary_bytes;
+								act_summary = std::make_shared<const CachedActionSummary>(
+									std::move(parsed_sum));
+							}
+						}
+						if (act_summary != nullptr) {
+							for (const IndirectRef& hr : hop_refs) {
+								if (parsed_action_obj_cache.size() >= kMaxCachedActionObjs ||
+									total_link_bytes + sizeof(uint32_t) + sizeof(std::shared_ptr<const CachedActionSummary>) >
+										kMaxTotalLinkBytes) {
+									return make_doc_error(
+										ErrorCode::DamagedFormat,
+										DiagnosticId::DamagedDictionary,
+										"Document /Annots /Link action alias cache exceeds budget");
+								}
+								const auto [it_ins, inserted] =
+									parsed_action_obj_cache.emplace(hr.obj_num, act_summary);
+								if (inserted) {
+									total_link_bytes +=
+										sizeof(uint32_t) + sizeof(std::shared_ptr<const CachedActionSummary>);
+								}
 							}
 						}
 					}
@@ -2990,21 +3310,24 @@ PdfResult<void> Document::load_document_structure()
 							RECTO_PDF_TRY(
 								CachedActionSummary parsed_sum,
 								parse_action_dict_summary(*act_dict, std::nullopt));
-							act_summary = std::move(parsed_sum);
+							inline_summary = std::move(parsed_sum);
 						}
 					}
 				}
 
-				if (act_summary.has_value()) {
-					link.kind = act_summary->kind;
-					link.is_inert = act_summary->is_inert;
-					link.page_index = act_summary->page_index;
-					link.x_pt = act_summary->x_pt;
-					link.y_pt = act_summary->y_pt;
-					link.dest_y_pt = act_summary->y_pt;
-					link.zoom = act_summary->zoom;
-					link.uri = std::move(act_summary->uri);
-					link.action_type = std::move(act_summary->action_type);
+				const CachedActionSummary* summary_ptr = act_summary != nullptr
+					? act_summary.get()
+					: (inline_summary.has_value() ? &(*inline_summary) : nullptr);
+				if (summary_ptr != nullptr) {
+					link.kind = summary_ptr->kind;
+					link.is_inert = summary_ptr->is_inert;
+					link.page_index = summary_ptr->page_index;
+					link.x_pt = summary_ptr->x_pt;
+					link.y_pt = summary_ptr->y_pt;
+					link.dest_y_pt = summary_ptr->y_pt;
+					link.zoom = summary_ptr->zoom;
+					link.uri = summary_ptr->uri;
+					link.action_type = summary_ptr->action_type;
 				}
 			} else if (const PdfValue* dest_val = annot_dict->get("Dest");
 					   dest_val != nullptr && !dest_val->is_null()) {
