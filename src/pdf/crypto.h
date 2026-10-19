@@ -209,6 +209,7 @@ public:
 	void clear_decrypted_cache() noexcept
 	{
 		decrypted_cache_.clear();
+		decrypted_obj_stm_cache_.clear();
 	}
 
 	// Decrypts a raw byte buffer (e.g. a `PdfString` or `PdfStream` payload)

@@ -2153,12 +2153,17 @@ PdfResult<PdfValue> SecurityHandler::resolve_and_decrypt_with_visited(
 						stm_obj_num,
 						0u);
 				}
-				RECTO_PDF_TRY(
-					IndirectObject raw_stm_obj,
-					xref.read_indirect_object(file_bytes, stm_ref));
-				RECTO_PDF_RETURN_IF_ERROR(
-					decrypt_object_values(raw_stm_obj.value, stm_ref, /*is_inside_obj_stm=*/false));
-				const PdfStream* obj_stm = raw_stm_obj.value.as_stream();
+				const uint64_t stm_cache_key = pack_obj_key(stm_ref);
+				auto stm_obj_cache_it = decrypted_cache_.find(stm_cache_key);
+				if (stm_obj_cache_it == decrypted_cache_.end()) {
+					RECTO_PDF_TRY(
+						IndirectObject raw_stm_obj,
+						xref.read_indirect_object(file_bytes, stm_ref));
+					RECTO_PDF_RETURN_IF_ERROR(
+						decrypt_object_values(raw_stm_obj.value, stm_ref, /*is_inside_obj_stm=*/false));
+					stm_obj_cache_it = decrypted_cache_.emplace(stm_cache_key, std::move(raw_stm_obj.value)).first;
+				}
+				const PdfStream* obj_stm = stm_obj_cache_it->second.as_stream();
 				if (obj_stm == nullptr ||
 					obj_stm->dict.get_name("Type").value_or("") != "ObjStm") {
 					return make_crypto_error(

@@ -621,6 +621,73 @@ TEST(PdfCrypto, Exemptions)
 	PdfValue xref_stm_val(PdfStream(std::move(*xref_stm_dict), raw_xref_bytes));
 	RECTO_ASSERT_OK(sh.decrypt_object_values(xref_stm_val, IndirectRef{11u, 0u}, false));
 	EXPECT_EQ(xref_stm_val.as_stream()->raw_bytes, raw_xref_bytes);
+
+	// 5. `/Type /ObjStm` container and its compressed child share `decrypted_cache_` in both
+	// resolution orders so the container is decrypted once per object:
+	const std::string_view obj_stm_plain = "2 0 << /Title (Compressed Child) >>";
+	const std::span<const uint8_t> obj_stm_plain_span(
+		reinterpret_cast<const uint8_t*>(obj_stm_plain.data()),
+		obj_stm_plain.size());
+	// Since RC4 (`CryptFilterMethod::V2`) is symmetric, `decrypt_bytes` encrypts `obj_stm_plain` for `1 0 R`:
+	auto obj_stm_cipher = sh.decrypt_bytes(obj_stm_plain_span, IndirectRef{1u, 0u}, CryptFilterMethod::V2);
+	RECTO_ASSERT_OK(obj_stm_cipher);
+
+	std::vector<uint8_t> synth_pdf;
+	auto append_ascii = [&](std::string_view sv) {
+		synth_pdf.insert(
+			synth_pdf.end(),
+			reinterpret_cast<const uint8_t*>(sv.data()),
+			reinterpret_cast<const uint8_t*>(sv.data()) + sv.size());
+	};
+	append_ascii("%PDF-1.5\n");
+	const uint16_t off_obj1 = static_cast<uint16_t>(synth_pdf.size());
+	append_ascii("1 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Length 35 >>\nstream\n");
+	synth_pdf.insert(synth_pdf.end(), obj_stm_cipher->begin(), obj_stm_cipher->end());
+	append_ascii("\nendstream\nendobj\n");
+	const uint16_t off_obj3 = static_cast<uint16_t>(synth_pdf.size());
+	append_ascii("3 0 obj\n<< /Type /XRef /Size 4 /Root 2 0 R /W [1 2 1] /Index [0 4] /Length 16 >>\nstream\n");
+	const std::array<uint8_t, 16> xref_entries = {
+		0x00u, 0x00u, 0x00u, 0xFFu, // obj 0: free
+		0x01u, static_cast<uint8_t>(off_obj1 >> 8u), static_cast<uint8_t>(off_obj1 & 0xFFu), 0x00u, // obj 1: uncompressed ObjStm
+		0x02u, 0x00u, 0x01u, 0x00u, // obj 2: compressed in ObjStm 1, index 0
+		0x01u, static_cast<uint8_t>(off_obj3 >> 8u), static_cast<uint8_t>(off_obj3 & 0xFFu), 0x00u, // obj 3: XRef stream
+	};
+	synth_pdf.insert(synth_pdf.end(), xref_entries.begin(), xref_entries.end());
+	append_ascii("\nendstream\nendobj\nstartxref\n");
+	append_ascii(std::to_string(off_obj3));
+	append_ascii("\n%%EOF\n");
+
+	auto synth_xref = XrefTable::parse(synth_pdf);
+	RECTO_ASSERT_OK(synth_xref);
+
+	// Order A: resolve compressed child `2 0 R` first, then `/ObjStm` container `1 0 R` with empty `file_bytes`:
+	sh.clear_decrypted_cache();
+	EXPECT_EQ(sh.cached_object_count(), 0u);
+	auto child_a = sh.resolve_and_decrypt_object(*synth_xref, synth_pdf, IndirectRef{2u, 0u});
+	RECTO_ASSERT_OK(child_a);
+	ASSERT_NE(child_a->as_dict(), nullptr);
+	ASSERT_NE(child_a->as_dict()->get_string("Title"), nullptr);
+	EXPECT_EQ(*child_a->as_dict()->get_string("Title")->to_utf8(), "Compressed Child");
+	EXPECT_EQ(sh.cached_object_count(), 2u);
+
+	auto stm_a = sh.resolve_and_decrypt_object(*synth_xref, {}, IndirectRef{1u, 0u});
+	RECTO_ASSERT_OK(stm_a);
+	ASSERT_NE(stm_a->as_stream(), nullptr);
+	EXPECT_EQ(stm_a->as_stream()->raw_bytes, std::vector<uint8_t>(obj_stm_plain_span.begin(), obj_stm_plain_span.end()));
+
+	// Order B: resolve `/ObjStm` container `1 0 R` first, then compressed child `2 0 R` with empty `file_bytes`:
+	sh.clear_decrypted_cache();
+	EXPECT_EQ(sh.cached_object_count(), 0u);
+	auto stm_b = sh.resolve_and_decrypt_object(*synth_xref, synth_pdf, IndirectRef{1u, 0u});
+	RECTO_ASSERT_OK(stm_b);
+	EXPECT_EQ(sh.cached_object_count(), 1u);
+
+	auto child_b = sh.resolve_and_decrypt_object(*synth_xref, {}, IndirectRef{2u, 0u});
+	RECTO_ASSERT_OK(child_b);
+	ASSERT_NE(child_b->as_dict(), nullptr);
+	ASSERT_NE(child_b->as_dict()->get_string("Title"), nullptr);
+	EXPECT_EQ(*child_b->as_dict()->get_string("Title")->to_utf8(), "Compressed Child");
+	EXPECT_EQ(sh.cached_object_count(), 2u);
 }
 
 TEST(PdfCrypto, PermissionsBitmask)
