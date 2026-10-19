@@ -86,7 +86,7 @@ struct BcryptKeyCloser {
 [[nodiscard]] bool cng_hash(
 	LPCWSTR alg_id,
 	std::span<const std::span<const uint8_t>> chunks,
-	std::span<uint8_t> out_digest) noexcept
+	std::span<uint8_t> out_digest)
 {
 	BcryptAlgCloser alg{};
 	if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&alg.h, alg_id, nullptr, 0))) {
@@ -107,12 +107,8 @@ struct BcryptKeyCloser {
 	std::vector<uint8_t> heap_obj;
 	PUCHAR obj_ptr = stack_obj.data();
 	if (obj_len > stack_obj.size()) {
-		try {
-			heap_obj.resize(obj_len);
-			obj_ptr = heap_obj.data();
-		} catch (...) {
-			return false;
-		}
+		heap_obj.resize(obj_len);
+		obj_ptr = heap_obj.data();
 	}
 	BcryptHashCloser hash{};
 	if (!BCRYPT_SUCCESS(BCryptCreateHash(
@@ -145,7 +141,7 @@ struct BcryptKeyCloser {
 
 [[nodiscard]] bool cng_md5(
 	std::initializer_list<std::span<const uint8_t>> chunks,
-	std::array<uint8_t, 16>& out) noexcept
+	std::array<uint8_t, 16>& out)
 {
 	return cng_hash(
 		BCRYPT_MD5_ALGORITHM,
@@ -155,7 +151,7 @@ struct BcryptKeyCloser {
 
 [[nodiscard]] bool cng_sha256(
 	std::initializer_list<std::span<const uint8_t>> chunks,
-	std::array<uint8_t, 32>& out) noexcept
+	std::array<uint8_t, 32>& out)
 {
 	return cng_hash(
 		BCRYPT_SHA256_ALGORITHM,
@@ -165,7 +161,7 @@ struct BcryptKeyCloser {
 
 [[nodiscard]] bool cng_sha384(
 	std::initializer_list<std::span<const uint8_t>> chunks,
-	std::array<uint8_t, 48>& out) noexcept
+	std::array<uint8_t, 48>& out)
 {
 	return cng_hash(
 		BCRYPT_SHA384_ALGORITHM,
@@ -175,7 +171,7 @@ struct BcryptKeyCloser {
 
 [[nodiscard]] bool cng_sha512(
 	std::initializer_list<std::span<const uint8_t>> chunks,
-	std::array<uint8_t, 64>& out) noexcept
+	std::array<uint8_t, 64>& out)
 {
 	return cng_hash(
 		BCRYPT_SHA512_ALGORITHM,
@@ -186,7 +182,7 @@ struct BcryptKeyCloser {
 // Encrypts/decrypts `data` in place with RC4 (`BCRYPT_RC4_ALGORITHM`) using `key`.
 [[nodiscard]] bool cng_rc4(
 	std::span<const uint8_t> key,
-	std::span<uint8_t> data) noexcept
+	std::span<uint8_t> data)
 {
 	if (key.empty()) {
 		return false;
@@ -213,12 +209,8 @@ struct BcryptKeyCloser {
 	std::vector<uint8_t> heap_obj;
 	PUCHAR obj_ptr = stack_obj.data();
 	if (obj_len > stack_obj.size()) {
-		try {
-			heap_obj.resize(obj_len);
-			obj_ptr = heap_obj.data();
-		} catch (...) {
-			return false;
-		}
+		heap_obj.resize(obj_len);
+		obj_ptr = heap_obj.data();
 	}
 	BcryptKeyCloser hkey{};
 	if (!BCRYPT_SUCCESS(BCryptGenerateSymmetricKey(
@@ -253,7 +245,7 @@ struct BcryptKeyCloser {
 	std::span<const uint8_t> key,
 	std::span<const uint8_t, 16> iv_in,
 	std::span<const uint8_t> input,
-	std::span<uint8_t> output) noexcept
+	std::span<uint8_t> output)
 {
 	if ((key.size() != 16u && key.size() != 32u) ||
 		input.size() != output.size() ||
@@ -290,12 +282,8 @@ struct BcryptKeyCloser {
 	std::vector<uint8_t> heap_obj;
 	PUCHAR obj_ptr = stack_obj.data();
 	if (obj_len > stack_obj.size()) {
-		try {
-			heap_obj.resize(obj_len);
-			obj_ptr = heap_obj.data();
-		} catch (...) {
-			return false;
-		}
+		heap_obj.resize(obj_len);
+		obj_ptr = heap_obj.data();
 	}
 	BcryptKeyCloser hkey{};
 	if (!BCRYPT_SUCCESS(BCryptGenerateSymmetricKey(
@@ -342,7 +330,7 @@ struct BcryptKeyCloser {
 [[nodiscard]] bool cng_aes256_ecb_decrypt(
 	std::span<const uint8_t, 32> key,
 	std::span<const uint8_t, 16> input,
-	std::span<uint8_t, 16> output) noexcept
+	std::span<uint8_t, 16> output)
 {
 	BcryptAlgCloser alg{};
 	if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&alg.h, BCRYPT_AES_ALGORITHM, nullptr, 0))) {
@@ -371,12 +359,8 @@ struct BcryptKeyCloser {
 	std::vector<uint8_t> heap_obj;
 	PUCHAR obj_ptr = stack_obj.data();
 	if (obj_len > stack_obj.size()) {
-		try {
-			heap_obj.resize(obj_len);
-			obj_ptr = heap_obj.data();
-		} catch (...) {
-			return false;
-		}
+		heap_obj.resize(obj_len);
+		obj_ptr = heap_obj.data();
 	}
 	BcryptKeyCloser hkey{};
 	if (!BCRYPT_SUCCESS(BCryptGenerateSymmetricKey(
@@ -418,119 +402,368 @@ struct BcryptKeyCloser {
 	return out;
 }
 
-// Prepares a UTF-8 password for `R=5..6`: normalizes non-ASCII sequences via
-// NFKC (`NormalizeString(NormalizationKC)`), strips RFC 3454 Table C.1.2
-// non-ASCII space characters mapped to nothing (`U+00AD`, `U+1806`,
-// `U+200B..U+200D`, `U+2060`, `U+FEFF`), maps non-ASCII spaces to `0x20`, and
-// truncates to at most 127 bytes (ISO 32000-2 section 7.6.4.3.4).
-[[nodiscard]] std::vector<uint8_t> prepare_password_r5_r6(std::string_view password)
+// RFC 3454 Table B.1: Commonly mapped to nothing.
+[[nodiscard]] constexpr bool is_saslprep_mapped_to_nothing(uint32_t cp) noexcept
+{
+	return cp == 0x00ADu || cp == 0x034Fu || cp == 0x1806u ||
+		(cp >= 0x180Bu && cp <= 0x180Du) ||
+		(cp >= 0x200Bu && cp <= 0x200Du) ||
+		cp == 0x2060u ||
+		(cp >= 0xFE00u && cp <= 0xFE0Fu) ||
+		cp == 0xFEFFu;
+}
+
+// RFC 3454 Table C.1.2: Non-ASCII space characters.
+[[nodiscard]] constexpr bool is_saslprep_non_ascii_space(uint32_t cp) noexcept
+{
+	return cp == 0x00A0u || cp == 0x1680u ||
+		(cp >= 0x2000u && cp <= 0x200Bu) ||
+		cp == 0x202Fu || cp == 0x205Fu || cp == 0x3000u;
+}
+
+// RFC 4013 Section 2.3 Prohibited Output (RFC 3454 Tables C.1.2, C.2.1, C.2.2,
+// C.3, C.4, C.5, C.6, C.7, C.8, and C.9).
+[[nodiscard]] constexpr bool is_saslprep_prohibited(uint32_t cp) noexcept
+{
+	// Table C.1.2: Non-ASCII space characters
+	if (is_saslprep_non_ascii_space(cp)) {
+		return true;
+	}
+	// Table C.2.1: ASCII control characters
+	if (cp <= 0x001Fu || cp == 0x007Fu) {
+		return true;
+	}
+	// Table C.2.2: Non-ASCII control characters
+	if ((cp >= 0x0080u && cp <= 0x009Fu) ||
+		cp == 0x06DDu || cp == 0x070Fu || cp == 0x180Eu ||
+		(cp >= 0x200Cu && cp <= 0x200Du) ||
+		(cp >= 0x2028u && cp <= 0x2029u) ||
+		(cp >= 0x2060u && cp <= 0x2063u) ||
+		(cp >= 0x206Au && cp <= 0x206Fu) ||
+		cp == 0xFEFFu ||
+		(cp >= 0xFFF9u && cp <= 0xFFFCu) ||
+		(cp >= 0x1D173u && cp <= 0x1D17Au)) {
+		return true;
+	}
+	// Table C.3: Private Use characters
+	if ((cp >= 0xE000u && cp <= 0xF8FFu) ||
+		(cp >= 0xF0000u && cp <= 0xFFFFDu) ||
+		(cp >= 0x100000u && cp <= 0x10FFFDu)) {
+		return true;
+	}
+	// Table C.4: Non-character code points
+	if ((cp >= 0xFDD0u && cp <= 0xFDEFu) ||
+		((cp & 0xFFFFu) >= 0xFFFEu && cp <= 0x10FFFFu)) {
+		return true;
+	}
+	// Table C.5: Surrogate code points
+	if (cp >= 0xD800u && cp <= 0xDFFFu) {
+		return true;
+	}
+	// Table C.6: Inappropriate for plain text
+	if (cp >= 0xFFF9u && cp <= 0xFFFDu) {
+		return true;
+	}
+	// Table C.7: Inappropriate for canonical representation
+	if (cp >= 0x2FF0u && cp <= 0x2FFBu) {
+		return true;
+	}
+	// Table C.8: Change display properties or are deprecated
+	if (cp == 0x0340u || cp == 0x0341u ||
+		cp == 0x200Eu || cp == 0x200Fu ||
+		(cp >= 0x202Au && cp <= 0x202Eu) ||
+		(cp >= 0x206Au && cp <= 0x206Fu)) {
+		return true;
+	}
+	// Table C.9: Tagging characters
+	if (cp == 0xE0001u || (cp >= 0xE0020u && cp <= 0xE007Fu)) {
+		return true;
+	}
+	return cp > 0x10FFFFu;
+}
+
+// RFC 3454 Table D.1: Characters with bidirectional property "R" or "AL" (RandALCat).
+[[nodiscard]] bool is_saslprep_randalcat(uint32_t cp) noexcept
+{
+	if (cp == 0x05BEu || cp == 0x05C0u || cp == 0x05C3u ||
+		(cp >= 0x05D0u && cp <= 0x05EAu) ||
+		(cp >= 0x05F0u && cp <= 0x05F4u) ||
+		cp == 0x061Bu || cp == 0x061Fu ||
+		(cp >= 0x0621u && cp <= 0x063Au) ||
+		(cp >= 0x0640u && cp <= 0x064Au) ||
+		(cp >= 0x066Du && cp <= 0x066Fu) ||
+		(cp >= 0x0671u && cp <= 0x06D5u) ||
+		cp == 0x06DDu ||
+		(cp >= 0x06E5u && cp <= 0x06E6u) ||
+		(cp >= 0x06FAu && cp <= 0x06FEu) ||
+		(cp >= 0x0700u && cp <= 0x070Du) ||
+		(cp >= 0x070Fu && cp <= 0x0710u) ||
+		(cp >= 0x0712u && cp <= 0x072Cu) ||
+		(cp >= 0x0780u && cp <= 0x07A5u) ||
+		cp == 0x07B1u || cp == 0x200Fu || cp == 0xFB1Du ||
+		(cp >= 0xFB1Fu && cp <= 0xFB28u) ||
+		(cp >= 0xFB2Au && cp <= 0xFB36u) ||
+		(cp >= 0xFB38u && cp <= 0xFB3Cu) ||
+		cp == 0xFB3Eu ||
+		(cp >= 0xFB40u && cp <= 0xFB41u) ||
+		(cp >= 0xFB43u && cp <= 0xFB44u) ||
+		(cp >= 0xFB46u && cp <= 0xFBB1u) ||
+		(cp >= 0xFBD3u && cp <= 0xFD3Du) ||
+		(cp >= 0xFD50u && cp <= 0xFD8Fu) ||
+		(cp >= 0xFD92u && cp <= 0xFDC7u) ||
+		(cp >= 0xFDF0u && cp <= 0xFDFCu) ||
+		(cp >= 0xFE70u && cp <= 0xFE74u) ||
+		(cp >= 0xFE76u && cp <= 0xFEFCu) ||
+		(cp >= 0x10800u && cp <= 0x10FFFu) ||
+		(cp >= 0x1E800u && cp <= 0x1EEFFu)) {
+		return true;
+	}
+	if (cp <= 0xFFFFu) {
+		const wchar_t wc = static_cast<wchar_t>(cp);
+		WORD ctype2 = 0;
+		if (GetStringTypeW(CT_CTYPE2, &wc, 1, &ctype2) && ctype2 == C2_RIGHTTOLEFT) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// RFC 3454 Table D.2: Characters with bidirectional property "L" (LCat).
+[[nodiscard]] bool is_saslprep_lcat(uint32_t cp) noexcept
+{
+	if (is_saslprep_randalcat(cp)) {
+		return false;
+	}
+	if ((cp >= 0x0041u && cp <= 0x005Au) ||
+		(cp >= 0x0061u && cp <= 0x007Au) ||
+		cp == 0x200Eu) {
+		return true;
+	}
+	if (cp <= 0xFFFFu) {
+		const wchar_t wc = static_cast<wchar_t>(cp);
+		WORD ctype2 = 0;
+		if (GetStringTypeW(CT_CTYPE2, &wc, 1, &ctype2) && ctype2 == C2_LEFTTORIGHT) {
+			return true;
+		}
+		return false;
+	}
+	wchar_t pair[2] = {
+		static_cast<wchar_t>(0xD800u + ((cp - 0x10000u) >> 10u)),
+		static_cast<wchar_t>(0xDC00u + ((cp - 0x10000u) & 0x3FFu)),
+	};
+	WORD ctype2[2] = {0, 0};
+	if (GetStringTypeW(CT_CTYPE2, pair, 2, ctype2) && ctype2[0] == C2_LEFTTORIGHT) {
+		return true;
+	}
+	return (cp >= 0x10000u && cp <= 0x107FFu) ||
+		(cp >= 0x11000u && cp <= 0x1D7FFu) ||
+		(cp >= 0x20000u && cp <= 0x2FA1Du);
+}
+
+// Strict UTF-8 decoder into Unicode scalar values (`U+0000..U+10FFFF` excluding surrogates).
+[[nodiscard]] bool decode_utf8_codepoints(
+	std::string_view utf8,
+	std::vector<uint32_t>& out_cps)
+{
+	out_cps.clear();
+	out_cps.reserve(utf8.size());
+	size_t i = 0;
+	while (i < utf8.size()) {
+		const uint8_t b0 = static_cast<uint8_t>(utf8[i]);
+		if (b0 < 0x80u) {
+			out_cps.push_back(b0);
+			++i;
+			continue;
+		}
+		uint32_t cp = 0;
+		size_t extra = 0;
+		uint32_t min_cp = 0;
+		if ((b0 & 0xE0u) == 0xC0u) {
+			cp = b0 & 0x1Fu;
+			extra = 1u;
+			min_cp = 0x80u;
+		} else if ((b0 & 0xF0u) == 0xE0u) {
+			cp = b0 & 0x0Fu;
+			extra = 2u;
+			min_cp = 0x800u;
+		} else if ((b0 & 0xF8u) == 0xF0u) {
+			cp = b0 & 0x07u;
+			extra = 3u;
+			min_cp = 0x10000u;
+		} else {
+			return false;
+		}
+		if (i + extra >= utf8.size()) {
+			return false;
+		}
+		for (size_t k = 1u; k <= extra; ++k) {
+			const uint8_t bx = static_cast<uint8_t>(utf8[i + k]);
+			if ((bx & 0xC0u) != 0x80u) {
+				return false;
+			}
+			cp = (cp << 6u) | (bx & 0x3Fu);
+		}
+		if (cp < min_cp || cp > 0x10FFFFu || (cp >= 0xD800u && cp <= 0xDFFFu)) {
+			return false;
+		}
+		out_cps.push_back(cp);
+		i += 1u + extra;
+	}
+	return true;
+}
+
+[[nodiscard]] bool decode_utf16_codepoints(
+	std::wstring_view utf16,
+	std::vector<uint32_t>& out_cps)
+{
+	out_cps.clear();
+	out_cps.reserve(utf16.size());
+	size_t i = 0;
+	while (i < utf16.size()) {
+		const uint32_t w0 = static_cast<uint16_t>(utf16[i]);
+		if (w0 >= 0xD800u && w0 <= 0xDBFFu) {
+			if (i + 1u >= utf16.size()) {
+				return false;
+			}
+			const uint32_t w1 = static_cast<uint16_t>(utf16[i + 1u]);
+			if (w1 < 0xDC00u || w1 > 0xDFFFu) {
+				return false;
+			}
+			const uint32_t cp = 0x10000u + (((w0 - 0xD800u) << 10u) | (w1 - 0xDC00u));
+			out_cps.push_back(cp);
+			i += 2u;
+		} else if (w0 >= 0xDC00u && w0 <= 0xDFFFu) {
+			return false;
+		} else {
+			out_cps.push_back(w0);
+			++i;
+		}
+	}
+	return true;
+}
+
+// Prepares a UTF-8 password for `R=5..6` according to RFC 4013 (SASLprep) and
+// ISO 32000-2 section 7.6.4.3.4:
+// 1. Maps RFC 3454 Table B.1 characters to nothing and Table C.1.2 non-ASCII
+//    spaces to `U+0020` SPACE (preserving empty results when all characters map
+//    to nothing, e.g. `U+00AD`).
+// 2. Normalizes via Unicode Normalization Form KC (`NormalizationKC`).
+// 3. Rejects RFC 4013 Section 2.3 prohibited output characters (Tables C.1.2,
+//    C.2.1, C.2.2, C.3, C.4, C.5, C.6, C.7, C.8, C.9).
+// 4. Enforces RFC 4013 Section 2.4 / RFC 3454 Section 6 bidirectional rules
+//    (Tables D.1 RandALCat and D.2 LCat).
+// 5. Encodes to UTF-8 and truncates to at most 127 bytes.
+[[nodiscard]] std::optional<std::vector<uint8_t>> prepare_password_r5_r6(std::string_view password)
 {
 	if (password.empty()) {
-		return {};
+		return std::vector<uint8_t>{};
 	}
-	bool all_ascii = true;
-	for (unsigned char c : password) {
-		if (c >= 0x80u) {
-			all_ascii = false;
-			break;
+
+	std::vector<uint32_t> input_cps;
+	if (!decode_utf8_codepoints(password, input_cps)) {
+		return std::nullopt;
+	}
+
+	std::wstring mapped_utf16;
+	mapped_utf16.reserve(input_cps.size());
+	for (uint32_t cp : input_cps) {
+		if (is_saslprep_mapped_to_nothing(cp)) {
+			continue;
 		}
-	}
-	std::string normalized;
-	if (all_ascii) {
-		normalized.assign(password.data(), std::min<size_t>(password.size(), 127u));
-	} else {
-		const int wlen = MultiByteToWideChar(
-			CP_UTF8,
-			MB_ERR_INVALID_CHARS,
-			password.data(),
-			static_cast<int>(password.size()),
-			nullptr,
-			0);
-		if (wlen > 0) {
-			std::wstring wstr(static_cast<size_t>(wlen), L'\0');
-			MultiByteToWideChar(
-				CP_UTF8,
-				0,
-				password.data(),
-				static_cast<int>(password.size()),
-				wstr.data(),
-				wlen);
-			// Strip RFC 3454 Table B.1 Commonly Mapped to Nothing before NFKC.
-			std::wstring filtered;
-			filtered.reserve(wstr.size());
-			for (wchar_t ch : wstr) {
-				if (ch == 0x00ADu || ch == 0x034Fu || ch == 0x1806u ||
-					(ch >= 0x180Bu && ch <= 0x180Du) ||
-					(ch >= 0x200Bu && ch <= 0x200Du) ||
-					ch == 0x2060u ||
-					(ch >= 0xFE00u && ch <= 0xFE0Fu) ||
-					ch == 0xFEFFu) {
-					continue;
-				}
-				// RFC 3454 Table C.1.2 non-ASCII spaces -> U+0020 SPACE.
-				if (ch == 0x00A0u || ch == 0x1680u ||
-					(ch >= 0x2000u && ch <= 0x200Au) ||
-					ch == 0x202Fu || ch == 0x205Fu || ch == 0x3000u) {
-					filtered.push_back(L' ');
-				} else {
-					filtered.push_back(ch);
-				}
-			}
-			std::wstring nfkc_str = filtered;
-			if (!filtered.empty()) {
-				const int est = NormalizeString(
-					NormalizationKC,
-					filtered.data(),
-					static_cast<int>(filtered.size()),
-					nullptr,
-					0);
-				if (est > 0) {
-					std::wstring tmp(static_cast<size_t>(est), L'\0');
-					const int actual = NormalizeString(
-						NormalizationKC,
-						filtered.data(),
-						static_cast<int>(filtered.size()),
-						tmp.data(),
-						est);
-					if (actual > 0) {
-						tmp.resize(static_cast<size_t>(actual));
-						nfkc_str = std::move(tmp);
-					}
-				}
-			}
-			const int u8len = WideCharToMultiByte(
-				CP_UTF8,
-				0,
-				nfkc_str.data(),
-				static_cast<int>(nfkc_str.size()),
-				nullptr,
-				0,
-				nullptr,
-				nullptr);
-			if (u8len > 0) {
-				normalized.resize(static_cast<size_t>(u8len));
-				WideCharToMultiByte(
-					CP_UTF8,
-					0,
-					nfkc_str.data(),
-					static_cast<int>(nfkc_str.size()),
-					normalized.data(),
-					u8len,
-					nullptr,
-					nullptr);
-			} else {
-				normalized.assign(password.data(), password.size());
-			}
+		if (is_saslprep_non_ascii_space(cp)) {
+			cp = 0x0020u;
+		}
+		if (cp <= 0xFFFFu) {
+			mapped_utf16.push_back(static_cast<wchar_t>(cp));
 		} else {
-			normalized.assign(password.data(), password.size());
-		}
-		if (normalized.size() > 127u) {
-			normalized.resize(127u);
+			const uint32_t v = cp - 0x10000u;
+			mapped_utf16.push_back(static_cast<wchar_t>(0xD800u + (v >> 10u)));
+			mapped_utf16.push_back(static_cast<wchar_t>(0xDC00u + (v & 0x3FFu)));
 		}
 	}
-	return std::vector<uint8_t>(
-		reinterpret_cast<const uint8_t*>(normalized.data()),
-		reinterpret_cast<const uint8_t*>(normalized.data()) + normalized.size());
+
+	// Preserve valid empty normalization results (e.g. password consisting only of U+00AD).
+	if (mapped_utf16.empty()) {
+		return std::vector<uint8_t>{};
+	}
+
+	const int est = NormalizeString(
+		NormalizationKC,
+		mapped_utf16.data(),
+		static_cast<int>(mapped_utf16.size()),
+		nullptr,
+		0);
+	if (est <= 0) {
+		return std::nullopt;
+	}
+	std::wstring nfkc_utf16(static_cast<size_t>(est), L'\0');
+	const int actual = NormalizeString(
+		NormalizationKC,
+		mapped_utf16.data(),
+		static_cast<int>(mapped_utf16.size()),
+		nfkc_utf16.data(),
+		est);
+	if (actual < 0) {
+		return std::nullopt;
+	}
+	nfkc_utf16.resize(static_cast<size_t>(actual));
+	if (nfkc_utf16.empty()) {
+		return std::vector<uint8_t>{};
+	}
+
+	std::vector<uint32_t> norm_cps;
+	if (!decode_utf16_codepoints(nfkc_utf16, norm_cps)) {
+		return std::nullopt;
+	}
+
+	bool has_randal = false;
+	bool has_l = false;
+	for (uint32_t cp : norm_cps) {
+		if (is_saslprep_prohibited(cp)) {
+			return std::nullopt;
+		}
+		if (is_saslprep_randalcat(cp)) {
+			has_randal = true;
+		} else if (is_saslprep_lcat(cp)) {
+			has_l = true;
+		}
+	}
+
+	// RFC 3454 Section 6 Bidirectional rules:
+	// Rule 2: If a string contains any RandALCat character, it MUST NOT contain any LCat character.
+	// Rule 3: If a string contains any RandALCat character, a RandALCat character MUST be the
+	//         first character of the string, and a RandALCat character MUST be the last character.
+	if (has_randal) {
+		if (has_l ||
+			!is_saslprep_randalcat(norm_cps.front()) ||
+			!is_saslprep_randalcat(norm_cps.back())) {
+			return std::nullopt;
+		}
+	}
+
+	std::vector<uint8_t> utf8_out;
+	utf8_out.reserve(norm_cps.size() * 4u);
+	for (uint32_t cp : norm_cps) {
+		if (cp <= 0x7Fu) {
+			utf8_out.push_back(static_cast<uint8_t>(cp));
+		} else if (cp <= 0x7FFu) {
+			utf8_out.push_back(static_cast<uint8_t>(0xC0u | (cp >> 6u)));
+			utf8_out.push_back(static_cast<uint8_t>(0x80u | (cp & 0x3Fu)));
+		} else if (cp <= 0xFFFFu) {
+			utf8_out.push_back(static_cast<uint8_t>(0xE0u | (cp >> 12u)));
+			utf8_out.push_back(static_cast<uint8_t>(0x80u | ((cp >> 6u) & 0x3Fu)));
+			utf8_out.push_back(static_cast<uint8_t>(0x80u | (cp & 0x3Fu)));
+		} else {
+			utf8_out.push_back(static_cast<uint8_t>(0xF0u | (cp >> 18u)));
+			utf8_out.push_back(static_cast<uint8_t>(0x80u | ((cp >> 12u) & 0x3Fu)));
+			utf8_out.push_back(static_cast<uint8_t>(0x80u | ((cp >> 6u) & 0x3Fu)));
+			utf8_out.push_back(static_cast<uint8_t>(0x80u | (cp & 0x3Fu)));
+		}
+	}
+	if (utf8_out.size() > 127u) {
+		utf8_out.resize(127u);
+	}
+	return utf8_out;
 }
 
 // ISO 32000-1 section 7.6.3.3 Algorithm 2: Computing an encryption key (`R=2..4`).
@@ -538,7 +771,7 @@ struct BcryptKeyCloser {
 	std::span<const uint8_t, 32> padded_pwd,
 	const EncryptDictParams& params,
 	std::span<const uint8_t> file_id_0,
-	std::vector<uint8_t>& out_key) noexcept
+	std::vector<uint8_t>& out_key)
 {
 	if (params.o_bytes.size() < 32u) {
 		return false;
@@ -589,8 +822,11 @@ struct BcryptKeyCloser {
 	int32_t revision,
 	std::span<const uint8_t> file_key,
 	std::span<const uint8_t> file_id_0,
-	std::array<uint8_t, 32>& out_u) noexcept
+	std::array<uint8_t, 32>& out_u)
 {
+	if (file_key.empty() || file_key.size() > 16u) {
+		return false;
+	}
 	if (revision == 2) {
 		std::memcpy(out_u.data(), kPdfPasswordPadding.data(), 32u);
 		return cng_rc4(file_key, out_u);
@@ -602,7 +838,8 @@ struct BcryptKeyCloser {
 	if (!cng_rc4(file_key, digest)) {
 		return false;
 	}
-	std::vector<uint8_t> iter_key(file_key.size());
+	std::array<uint8_t, 16> iter_key_buf{};
+	const std::span<uint8_t> iter_key(iter_key_buf.data(), file_key.size());
 	for (uint8_t i = 1u; i <= 19u; ++i) {
 		for (size_t k = 0; k < file_key.size(); ++k) {
 			iter_key[k] = static_cast<uint8_t>(file_key[k] ^ i);
@@ -621,7 +858,7 @@ struct BcryptKeyCloser {
 [[nodiscard]] bool unwrap_owner_password_r2_r4(
 	std::string_view owner_password,
 	const EncryptDictParams& params,
-	std::array<uint8_t, 32>& out_user_padded) noexcept
+	std::array<uint8_t, 32>& out_user_padded)
 {
 	if (params.o_bytes.size() < 32u) {
 		return false;
@@ -651,7 +888,8 @@ struct BcryptKeyCloser {
 	if (params.r == 2) {
 		return cng_rc4(rc4_key, out_user_padded);
 	}
-	std::vector<uint8_t> iter_key(key_bytes);
+	std::array<uint8_t, 16> iter_key_buf{};
+	const std::span<uint8_t> iter_key(iter_key_buf.data(), key_bytes);
 	for (int i = 19; i >= 0; --i) {
 		for (size_t k = 0; k < key_bytes; ++k) {
 			iter_key[k] = static_cast<uint8_t>(rc4_key[k] ^ static_cast<uint8_t>(i));
@@ -761,7 +999,7 @@ struct BcryptKeyCloser {
 	return true;
 }
 
-[[nodiscard]] PdfResult<CryptFilterMethod> parse_cfm_name(std::string_view cfm) noexcept
+[[nodiscard]] PdfResult<CryptFilterMethod> parse_cfm_name(std::string_view cfm)
 {
 	if (cfm == "None") {
 		return CryptFilterMethod::None;
@@ -1024,7 +1262,12 @@ PdfResult<SecurityHandler> SecurityHandler::create(
 
 		// Automatically try empty user password ("") on creation so owner-only
 		// restricted documents open without requiring a password prompt.
-		(void)handler.authenticate("");
+		// Suppress only WrongPassword; propagate DamagedFormat (/Perms mismatch),
+		// OutOfMemory, or InternalError.
+		const auto auth_res = handler.authenticate("");
+		if (!auth_res.has_value() && auth_res.error().code != ErrorCode::WrongPassword) {
+			return auth_res.error();
+		}
 		return handler;
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(
@@ -1169,7 +1412,14 @@ PdfResult<void> SecurityHandler::authenticate(std::string_view password) noexcep
 		}
 
 		// Revisions 5 and 6 (`AES-256`, ISO 32000-2 section 7.6.4.4.7 Algorithm 11 & 12):
-		const std::vector<uint8_t> pwd_bytes = prepare_password_r5_r6(password);
+		const auto prepared_pwd_opt = prepare_password_r5_r6(password);
+		if (!prepared_pwd_opt.has_value()) {
+			return make_crypto_error(
+				ErrorCode::WrongPassword,
+				DiagnosticId::WrongPassword,
+				"Supplied password failed RFC 4013 SASLprep validation");
+		}
+		const std::vector<uint8_t>& pwd_bytes = *prepared_pwd_opt;
 		const std::array<uint8_t, 16> zero_iv{};
 		std::array<uint8_t, 32> unwrapped_key{};
 		bool matched_user = false;
@@ -1414,6 +1664,7 @@ PdfResult<std::vector<uint8_t>> SecurityHandler::decrypt_bytes(
 		}
 
 		// AES-256-CBC (`/AESV3`, `R=5..6`): uses the 32-byte `file_key_` directly.
+		// Requires 16-byte IV prefix + >=1 block of PKCS#7 padded ciphertext (>= 32 bytes).
 		if (file_key_.size() != 32u) {
 			return make_crypto_error(
 				ErrorCode::InternalError,
@@ -1421,10 +1672,6 @@ PdfResult<std::vector<uint8_t>> SecurityHandler::decrypt_bytes(
 				"AES-256 file encryption key is not 32 bytes",
 				ref.obj_num,
 				ref.gen_num);
-		}
-		if (ciphertext.size() == 16u) {
-			// An IV-only 16-byte AES stream represents an empty plaintext payload in some producers.
-			return std::vector<uint8_t>{};
 		}
 		if (ciphertext.size() < 32u || (ciphertext.size() % 16u) != 0u) {
 			return make_crypto_error(

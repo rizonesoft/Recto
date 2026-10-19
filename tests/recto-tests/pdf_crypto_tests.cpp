@@ -152,24 +152,34 @@ TEST(PdfCrypto, ParseEncryptDict)
 	}
 }
 
-TEST(PdfCrypto,CorpusRc4AndAes128AndAes256UnlockAndDecrypt)
+TEST(PdfCrypto, CorpusRc4AndAes128AndAes256UnlockAndDecrypt)
 {
 	struct EncryptedFixture {
 		const char* path;
+		const char* mode_upper;
 		int32_t expected_v;
 		int32_t expected_r;
 		int32_t expected_bits;
 	};
 	constexpr std::array<EncryptedFixture, 3> kFixtures = {{
-		{"render/encrypted-rc4-128.pdf", 2, 3, 128},
-		{"render/encrypted-aes-128.pdf", 4, 4, 128},
-		{"render/encrypted-aes-256.pdf", 5, 6, 256},
+		{"render/encrypted-rc4-128.pdf", "RC4-128", 2, 3, 128},
+		{"render/encrypted-aes-128.pdf", "AES-128", 4, 4, 128},
+		{"render/encrypted-aes-256.pdf", "AES-256", 5, 6, 256},
 	}};
 
 	for (const auto& fx : kFixtures) {
 		SCOPED_TRACE(fx.path);
 		const std::vector<uint8_t> file_bytes = read_corpus_bytes(fx.path);
 		ASSERT_FALSE(file_bytes.empty());
+
+		const std::string expected_title = std::string("Recto Encrypted ") + fx.mode_upper;
+		const std::string expected_author = "Recto Corpus Generator";
+		const std::string expected_date = "D:20261013000000Z";
+		const std::string expected_stream_plaintext =
+			std::string("q 0.94 0.96 0.99 rg 36 700 523 80 re f Q\n"
+						"BT /F1 18 Tf 54 748 Td (Recto Encrypted PDF (") +
+			fx.mode_upper +
+			")) Tj /F1 12 Tf 0 -24 Td (Unlocked with user password recto-test or owner password recto-owner.) Tj ET\n";
 
 		auto xref_res = XrefTable::parse(file_bytes);
 		RECTO_ASSERT_OK(xref_res);
@@ -199,23 +209,29 @@ TEST(PdfCrypto,CorpusRc4AndAes128AndAes256UnlockAndDecrypt)
 		EXPECT_FALSE(sh.unlocked_as_owner());
 		EXPECT_TRUE(sh.perms_verified());
 
-		// Resolve and decrypt /Info dictionary (object 6 0 R):
+		// Resolve and decrypt /Info dictionary (object 6 0 R) and assert exact plaintext strings:
 		auto info_val = sh.resolve_and_decrypt_object(*xref_res, file_bytes, IndirectRef{6u, 0u});
 		RECTO_ASSERT_OK(info_val);
 		const PdfDict* info_dict = info_val->as_dict();
 		ASSERT_NE(info_dict, nullptr);
 		const PdfString* title_str = info_dict->get_string("Title");
 		const PdfString* author_str = info_dict->get_string("Author");
+		const PdfString* date_str = info_dict->get_string("CreationDate");
 		ASSERT_NE(title_str, nullptr);
 		ASSERT_NE(author_str, nullptr);
+		ASSERT_NE(date_str, nullptr);
 		auto title_u8 = title_str->to_utf8();
 		auto author_u8 = author_str->to_utf8();
+		auto date_u8 = date_str->to_utf8();
 		RECTO_ASSERT_OK(title_u8);
 		RECTO_ASSERT_OK(author_u8);
-		EXPECT_FALSE(title_u8->empty());
-		EXPECT_FALSE(author_u8->empty());
+		RECTO_ASSERT_OK(date_u8);
+		EXPECT_EQ(*title_u8, expected_title);
+		EXPECT_EQ(*author_u8, expected_author);
+		EXPECT_EQ(*date_u8, expected_date);
 
-		// Resolve and decrypt page content stream (object 4 0 R) and decompress via FlateDecode:
+		// Resolve and decrypt page content stream (object 4 0 R), decompress via FlateDecode,
+		// and assert exact byte-for-byte plaintext equality:
 		auto stm_val = sh.resolve_and_decrypt_object(*xref_res, file_bytes, IndirectRef{4u, 0u});
 		RECTO_ASSERT_OK(stm_val);
 		const PdfStream* page_stm = stm_val->as_stream();
@@ -225,8 +241,7 @@ TEST(PdfCrypto,CorpusRc4AndAes128AndAes256UnlockAndDecrypt)
 		const std::string content_text(
 			reinterpret_cast<const char*>(decoded_stream->data()),
 			decoded_stream->size());
-		EXPECT_NE(content_text.find("BT"), std::string::npos);
-		EXPECT_NE(content_text.find("ET"), std::string::npos);
+		EXPECT_EQ(content_text, expected_stream_plaintext);
 
 		// Verify object caching inside SecurityHandler (Freeze check):
 		EXPECT_EQ(sh.cached_object_count(), 2u);
@@ -234,7 +249,8 @@ TEST(PdfCrypto,CorpusRc4AndAes128AndAes256UnlockAndDecrypt)
 		RECTO_ASSERT_OK(cached_stm);
 		EXPECT_EQ(sh.cached_object_count(), 2u);
 
-		// Authenticate with owner password "recto-owner" on a fresh SecurityHandler:
+		// Authenticate with owner password "recto-owner" on a fresh SecurityHandler
+		// and assert exact plaintext equality against the independent expected strings:
 		auto sh_owner_opt = SecurityHandler::from_xref(*xref_res, file_bytes);
 		RECTO_ASSERT_OK(sh_owner_opt);
 		SecurityHandler sh_owner = std::move(**sh_owner_opt);
@@ -244,17 +260,28 @@ TEST(PdfCrypto,CorpusRc4AndAes128AndAes256UnlockAndDecrypt)
 		EXPECT_TRUE(sh_owner.perms_verified());
 		EXPECT_TRUE(std::ranges::equal(sh_owner.file_encryption_key(), sh.file_encryption_key()));
 
+		auto owner_info_val = sh_owner.resolve_and_decrypt_object(*xref_res, file_bytes, IndirectRef{6u, 0u});
+		RECTO_ASSERT_OK(owner_info_val);
+		const PdfDict* owner_info_dict = owner_info_val->as_dict();
+		ASSERT_NE(owner_info_dict, nullptr);
+		EXPECT_EQ(*owner_info_dict->get_string("Title")->to_utf8(), expected_title);
+		EXPECT_EQ(*owner_info_dict->get_string("Author")->to_utf8(), expected_author);
+		EXPECT_EQ(*owner_info_dict->get_string("CreationDate")->to_utf8(), expected_date);
+
 		auto owner_stm_val = sh_owner.resolve_and_decrypt_object(*xref_res, file_bytes, IndirectRef{4u, 0u});
 		RECTO_ASSERT_OK(owner_stm_val);
 		auto owner_decoded = decode_stream(*owner_stm_val->as_stream());
 		RECTO_ASSERT_OK(owner_decoded);
-		EXPECT_EQ(*owner_decoded, *decoded_stream);
+		const std::string owner_content_text(
+			reinterpret_cast<const char*>(owner_decoded->data()),
+			owner_decoded->size());
+		EXPECT_EQ(owner_content_text, expected_stream_plaintext);
 	}
 }
 
 TEST(PdfCrypto, EmptyUserPasswordAutoUnlock)
 {
-	// Construct an owner-restricted R=3 (128-bit RC4) /Encrypt dictionary whose
+	// 1. Construct an owner-restricted R=3 (128-bit RC4) /Encrypt dictionary whose
 	// user password is "" (empty) with /P -3904 (0xFFFFF0C0: all user permissions false).
 	// SecurityHandler::create must auto-unlock on creation without returning NeedsPassword,
 	// while reporting is_authenticated() == true and the active permission flags.
@@ -277,6 +304,90 @@ TEST(PdfCrypto, EmptyUserPasswordAutoUnlock)
 	EXPECT_FALSE(sh_res->permissions().can_extract_for_accessibility);
 	EXPECT_FALSE(sh_res->permissions().can_assemble);
 	EXPECT_FALSE(sh_res->permissions().can_print_high_quality);
+
+	// 2. Construct an R=6 (256-bit AES) /Encrypt dictionary whose user password is "" (empty).
+	// Verify auto-unlock on creation, verify that a password consisting solely of U+00AD
+	// ("\xC2\xAD") normalizes to empty "" and authenticates, and verify that corrupting
+	// /Perms causes SecurityHandler::create to propagate ErrorCode::DamagedFormat instead
+	// of swallowing it.
+	auto d_r6_empty = parse_dict_literal(
+		"<< /Filter /Standard /V 5 /R 6 /Length 256 /P -1028 /EncryptMetadata true "
+		"/CF << /StdCF << /Type /CryptFilter /CFM /AESV3 /Length 32 >> >> "
+		"/StmF /StdCF /StrF /StdCF "
+		"/O <000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000> "
+		"/U <439FEBA099A63D0D035A1E5FB67FF307329189584956425AFF2D3BD3D15EDC6000000000000000000000000000000000> "
+		"/OE <0000000000000000000000000000000000000000000000000000000000000000> "
+		"/UE <BD530CC64DDCBCA19739E303D4135C3DBA43882D0FB08A15D3157DC344419531> "
+		"/Perms <ECB382C363ACAB9013C3269B4146DEFE> >>");
+	RECTO_ASSERT_OK(d_r6_empty);
+	auto sh_r6 = SecurityHandler::create(*d_r6_empty, zero_id, IndirectRef{7u, 0u});
+	RECTO_ASSERT_OK(sh_r6);
+	EXPECT_TRUE(sh_r6->is_authenticated());
+	EXPECT_TRUE(sh_r6->perms_verified());
+
+	// Password consisting solely of U+00AD SOFT HYPHEN ("\xC2\xAD") normalizes to empty "":
+	RECTO_ASSERT_OK(sh_r6->authenticate("\xC2\xAD"));
+	EXPECT_TRUE(sh_r6->is_authenticated());
+
+	// Corrupt /Perms on an empty-password R=6 /Encrypt dictionary: SecurityHandler::create
+	// must propagate ErrorCode::DamagedFormat rather than swallowing it.
+	auto d_r6_bad_perms = parse_dict_literal(
+		"<< /Filter /Standard /V 5 /R 6 /Length 256 /P -1028 /EncryptMetadata true "
+		"/CF << /StdCF << /Type /CryptFilter /CFM /AESV3 /Length 32 >> >> "
+		"/StmF /StdCF /StrF /StdCF "
+		"/O <000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000> "
+		"/U <439FEBA099A63D0D035A1E5FB67FF307329189584956425AFF2D3BD3D15EDC6000000000000000000000000000000000> "
+		"/OE <0000000000000000000000000000000000000000000000000000000000000000> "
+		"/UE <BD530CC64DDCBCA19739E303D4135C3DBA43882D0FB08A15D3157DC344419531> "
+		"/Perms <00000000000000000000000000000000> >>");
+	RECTO_ASSERT_OK(d_r6_bad_perms);
+	RECTO_EXPECT_ERR(
+		SecurityHandler::create(*d_r6_bad_perms, zero_id, IndirectRef{7u, 0u}),
+		ErrorCode::DamagedFormat);
+}
+
+TEST(PdfCrypto, SaslprepAndTruncatedAesCiphertext)
+{
+	const std::vector<uint8_t> file_bytes = read_corpus_bytes("render/encrypted-aes-256.pdf");
+	auto xref_res = XrefTable::parse(file_bytes);
+	RECTO_ASSERT_OK(xref_res);
+	auto sh_opt = SecurityHandler::from_xref(*xref_res, file_bytes);
+	RECTO_ASSERT_OK(sh_opt);
+	ASSERT_TRUE(sh_opt->has_value());
+	SecurityHandler sh = std::move(**sh_opt);
+
+	// 1. RFC 4013 SASLprep prohibited characters and bidirectional violations must be rejected:
+	// - ASCII control character (U+0007):
+	RECTO_EXPECT_ERR(sh.authenticate(std::string("recto\x07-test", 11)), ErrorCode::WrongPassword);
+	// - Private Use character (U+E000 -> \xEE\x80\x80):
+	RECTO_EXPECT_ERR(sh.authenticate("recto\xEE\x80\x80-test"), ErrorCode::WrongPassword);
+	// - Replacement character (U+FFFD -> \xEF\xBF\xBD):
+	RECTO_EXPECT_ERR(sh.authenticate("recto\xEF\xBF\xBD-test"), ErrorCode::WrongPassword);
+	// - Bidi control character (U+202E RIGHT-TO-LEFT OVERRIDE -> \xE2\x80\xAE):
+	RECTO_EXPECT_ERR(sh.authenticate("recto\xE2\x80\xAE-test"), ErrorCode::WrongPassword);
+	// - Invalid UTF-8 byte sequence (\xFF\xFE):
+	RECTO_EXPECT_ERR(sh.authenticate("\xFF\xFE"), ErrorCode::WrongPassword);
+	// - Bidirectional Rule 2 violation (mixing RandALCat U+05D0 \xD7\x90 with LCat 'a'):
+	RECTO_EXPECT_ERR(sh.authenticate("\xD7\x90" "a" "\xD7\x90"), ErrorCode::WrongPassword);
+	// - Bidirectional Rule 3 violation (RandALCat present, but first char is digit '1'):
+	RECTO_EXPECT_ERR(sh.authenticate("1\xD7\x90"), ErrorCode::WrongPassword);
+
+	// 2. RFC 4013 Table B.1 characters (U+00AD SOFT HYPHEN, U+200B ZERO WIDTH SPACE)
+	// embedded inside "recto-test" map to nothing and unlock the R=6 fixture:
+	RECTO_ASSERT_OK(sh.authenticate("recto\xC2\xAD\xE2\x80\x8B-test"));
+	EXPECT_TRUE(sh.is_authenticated());
+
+	// 3. Truncated 16-byte IV-only AES-256 ciphertext must be rejected with DamagedFormat:
+	const std::vector<uint8_t> iv_only_16(16u, 0x42u);
+	RECTO_EXPECT_ERR(
+		sh.decrypt_bytes(iv_only_16, IndirectRef{4u, 0u}, CryptFilterMethod::AESV3),
+		ErrorCode::DamagedFormat);
+
+	// Non-multiple-of-16 AES-256 ciphertext must also be rejected with DamagedFormat:
+	const std::vector<uint8_t> odd_len_33(33u, 0x42u);
+	RECTO_EXPECT_ERR(
+		sh.decrypt_bytes(odd_len_33, IndirectRef{4u, 0u}, CryptFilterMethod::AESV3),
+		ErrorCode::DamagedFormat);
 }
 
 TEST(PdfCrypto, Exemptions)
