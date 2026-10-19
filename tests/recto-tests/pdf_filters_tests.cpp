@@ -2180,7 +2180,9 @@ void fdwt_53_2x2(const std::array<int32_t, 4>& img, int32_t& ll, int32_t& hl, in
 // Tier-2 packet headers with tag-trees, and Tier-1 EBCOT MQ-coded code-blocks.
 [[nodiscard]] std::vector<uint8_t> make_genuine_jp2_2x2_rgb(
 	std::span<const uint8_t, 12> rgb_samples,
-	bool enable_mct = true)
+	bool enable_mct = true,
+	uint8_t prog_order = 0u,
+	uint16_t num_layers = 1u)
 {
 	std::array<std::array<int32_t, 4>, 3> comp{};
 	for (size_t p = 0; p < 4; ++p) {
@@ -2199,27 +2201,65 @@ void fdwt_53_2x2(const std::array<int32_t, 4>& img, int32_t& ll, int32_t& hl, in
 		}
 	}
 
-	std::vector<uint8_t> tile_packets;
-	// LRCP progression: 1 layer, resolutions r = 0..1, components c = 0..2
 	std::array<int32_t, 3> ll{}, hl{}, lh{}, hh{};
 	for (int c = 0; c < 3; ++c) {
 		fdwt_53_2x2(comp[c], ll[c], hl[c], lh[c], hh[c]);
 	}
-	// Resolution 0 packets (LL1 for each component)
-	for (int c = 0; c < 3; ++c) {
-		const EncodedJ2kSubband sb_ll = encode_j2k_1x1_subband(ll[c], 9u);
-		const auto pkt = build_j2k_packet_for_subbands(std::span<const EncodedJ2kSubband>(&sb_ll, 1u));
-		tile_packets.insert(tile_packets.end(), pkt.begin(), pkt.end());
-	}
-	// Resolution 1 packets (HL1, LH1, HH1 for each component)
-	for (int c = 0; c < 3; ++c) {
+
+	// Build packets per (layer, resolution, component): layer 0 carries the subband data, higher layers carry empty packet (0x00).
+	auto make_rc_packet = [&](uint16_t l, int r, int c) -> std::vector<uint8_t> {
+		if (l > 0u) {
+			return {0x00u}; // Zero-length packet bit = 0
+		}
+		if (r == 0) {
+			const EncodedJ2kSubband sb_ll = encode_j2k_1x1_subband(ll[c], 9u);
+			return build_j2k_packet_for_subbands(std::span<const EncodedJ2kSubband>(&sb_ll, 1u));
+		}
 		const std::array<EncodedJ2kSubband, 3> sbs = {
 			encode_j2k_1x1_subband(hl[c], 9u),
 			encode_j2k_1x1_subband(lh[c], 9u),
 			encode_j2k_1x1_subband(hh[c], 9u),
 		};
-		const auto pkt = build_j2k_packet_for_subbands(sbs);
+		return build_j2k_packet_for_subbands(sbs);
+	};
+
+	std::vector<uint8_t> tile_packets;
+	auto append_pkt = [&](uint16_t l, int r, int c) {
+		const auto pkt = make_rc_packet(l, r, c);
 		tile_packets.insert(tile_packets.end(), pkt.begin(), pkt.end());
+	};
+	if (prog_order == 0u) { // LRCP
+		for (uint16_t l = 0; l < num_layers; ++l) {
+			for (int r = 0; r <= 1; ++r) {
+				for (int c = 0; c < 3; ++c) {
+					append_pkt(l, r, c);
+				}
+			}
+		}
+	} else if (prog_order == 1u) { // RLCP
+		for (int r = 0; r <= 1; ++r) {
+			for (uint16_t l = 0; l < num_layers; ++l) {
+				for (int c = 0; c < 3; ++c) {
+					append_pkt(l, r, c);
+				}
+			}
+		}
+	} else if (prog_order == 2u) { // RPCL
+		for (int r = 0; r <= 1; ++r) {
+			for (int c = 0; c < 3; ++c) {
+				for (uint16_t l = 0; l < num_layers; ++l) {
+					append_pkt(l, r, c);
+				}
+			}
+		}
+	} else { // PCRL (3) and CPRL (4)
+		for (int c = 0; c < 3; ++c) {
+			for (int r = 0; r <= 1; ++r) {
+				for (uint16_t l = 0; l < num_layers; ++l) {
+					append_pkt(l, r, c);
+				}
+			}
+		}
 	}
 
 	std::vector<uint8_t> cs;
@@ -2251,8 +2291,8 @@ void fdwt_53_2x2(const std::array<int32_t, 4>& img, int32_t& ll, int32_t& hl, in
 	cs.push_back(0x52u);
 	append_u16_be(cs, 12u);
 	cs.push_back(0u); // Scod
-	cs.push_back(0u); // SGcod progression = LRCP
-	append_u16_be(cs, 1u); // 1 layer
+	cs.push_back(prog_order); // SGcod progression order (0..4)
+	append_u16_be(cs, num_layers); // number of layers
 	cs.push_back(enable_mct ? 1u : 0u); // MCT flag
 	cs.push_back(1u); // 1 DWT decomposition level
 	cs.push_back(4u); // code-block width exp (64)
@@ -2395,7 +2435,9 @@ TEST(PdfFilters, DctRgbAndCmyk)
 	}
 
 	// 3. Decode genuine ITU-T T.800 JPXDecode (JP2 box container and raw J2K codestream
-	// with 1-level 5-3 reversible DWT, RCT, Tier-2 tag-tree packet headers, and Tier-1 EBCOT MQ coding).
+	// with 1-level 5-3 reversible DWT, RCT, Tier-2 tag-tree packet headers, and Tier-1 EBCOT MQ coding)
+	// across all 5 ITU-T T.800 §B.12.1 progression orders (0=LRCP, 1=RLCP, 2=RPCL, 3=PCRL, 4=CPRL)
+	// with multiple quality layers (`num_layers = 2`), multiple resolutions (`num_decomp_levels = 1`), and 3 components.
 	{
 		const std::array<uint8_t, 12> expected_rgb = {
 			10, 20, 30,
@@ -2404,25 +2446,31 @@ TEST(PdfFilters, DctRgbAndCmyk)
 			100, 150, 200,
 		};
 		for (bool mct : {false, true}) {
-			const auto jp2_bytes = make_genuine_jp2_2x2_rgb(expected_rgb, mct);
-			auto dec_img = decode_jpx_image(jp2_bytes);
-			RECTO_ASSERT_OK(dec_img);
-			EXPECT_EQ(dec_img->width, 2u);
-			EXPECT_EQ(dec_img->height, 2u);
-			EXPECT_EQ(dec_img->components, 3u);
-			EXPECT_EQ(dec_img->pixels, std::vector<uint8_t>(expected_rgb.begin(), expected_rgb.end()));
+			for (uint8_t prog_order = 0u; prog_order <= 4u; ++prog_order) {
+				const uint16_t layers = (prog_order == 0u && !mct) ? 1u : 2u;
+				const auto jp2_bytes = make_genuine_jp2_2x2_rgb(expected_rgb, mct, prog_order, layers);
+				auto dec_img = decode_jpx_image(jp2_bytes);
+				RECTO_ASSERT_OK(dec_img);
+				EXPECT_EQ(dec_img->width, 2u);
+				EXPECT_EQ(dec_img->height, 2u);
+				EXPECT_EQ(dec_img->components, 3u);
+				EXPECT_EQ(dec_img->pixels, std::vector<uint8_t>(expected_rgb.begin(), expected_rgb.end()));
 
-			auto dec_jp2 = decode_jpx(jp2_bytes);
-			RECTO_ASSERT_OK(dec_jp2);
-			EXPECT_EQ(*dec_jp2, std::vector<uint8_t>(expected_rgb.begin(), expected_rgb.end()));
+				auto dec_jp2 = decode_jpx(jp2_bytes);
+				RECTO_ASSERT_OK(dec_jp2);
+				EXPECT_EQ(*dec_jp2, std::vector<uint8_t>(expected_rgb.begin(), expected_rgb.end()));
 
-			// Also test through decode_stream(/Filter /JPXDecode).
-			PdfDict jpx_dict;
-			jpx_dict.set("Filter", PdfValue(PdfName("JPXDecode")));
-			auto dec_stm = decode_stream(jp2_bytes, jpx_dict);
-			RECTO_ASSERT_OK(dec_stm);
-			EXPECT_EQ(*dec_stm, std::vector<uint8_t>(expected_rgb.begin(), expected_rgb.end()));
+				// Also test through decode_stream(/Filter /JPXDecode).
+				PdfDict jpx_dict;
+				jpx_dict.set("Filter", PdfValue(PdfName("JPXDecode")));
+				auto dec_stm = decode_stream(jp2_bytes, jpx_dict);
+				RECTO_ASSERT_OK(dec_stm);
+				EXPECT_EQ(*dec_stm, std::vector<uint8_t>(expected_rgb.begin(), expected_rgb.end()));
+			}
 		}
+		// Invalid progression order (> 4) in COD marker must be rejected with DamagedFormat.
+		const auto bad_prog_jp2 = make_genuine_jp2_2x2_rgb(expected_rgb, true, 5u, 1u);
+		RECTO_EXPECT_ERR(decode_jpx_image(bad_prog_jp2), ErrorCode::DamagedFormat);
 
 		// 3b. Decode synthetic JP2 streams covering:
 		// - Multi-sample code-block exercising ITU-T T.800 Table D.1 ZC contexts (`v_sum == 1` -> ctx 3, `v_sum == 0 && d_sum >= 2` -> ctx 2)

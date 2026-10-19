@@ -7477,6 +7477,13 @@ void idwt_97_2d_float(
 					pos);
 			}
 			prog_order = cs[pos + 3u];
+			if (prog_order > 4u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Invalid progression order in JPXDecode COD marker",
+					pos);
+			}
 			const uint16_t raw_layers = read_u16_be(cs.data() + pos + 4u);
 			if (raw_layers == 0u || raw_layers > 256u) {
 				return make_filter_error(
@@ -8043,7 +8050,7 @@ void idwt_97_2d_float(
 				return {};
 			};
 
-			if (prog_order == 0u) { // LRCP
+			if (prog_order == 0u) { // LRCP (ITU-T T.800 §B.12.1.1: Layer -> Resolution -> Component -> Position)
 				for (uint16_t l = 0; l < num_layers; ++l) {
 					for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
 						for (uint32_t c = 0; c < num_comps; ++c) {
@@ -8051,10 +8058,26 @@ void idwt_97_2d_float(
 						}
 					}
 				}
-			} else { // RLCP / RPCL / PCRL / CPRL single-precinct order
+			} else if (prog_order == 1u) { // RLCP (ITU-T T.800 §B.12.1.2: Resolution -> Layer -> Component -> Position)
 				for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
 					for (uint16_t l = 0; l < num_layers; ++l) {
 						for (uint32_t c = 0; c < num_comps; ++c) {
+							RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c));
+						}
+					}
+				}
+			} else if (prog_order == 2u) { // RPCL (ITU-T T.800 §B.12.1.3: Resolution -> Position -> Component -> Layer)
+				for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
+					for (uint32_t c = 0; c < num_comps; ++c) {
+						for (uint16_t l = 0; l < num_layers; ++l) {
+							RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c));
+						}
+					}
+				}
+			} else { // PCRL (3, §B.12.1.4) and CPRL (4, §B.12.1.5): Component -> Position -> Resolution -> Layer
+				for (uint32_t c = 0; c < num_comps; ++c) {
+					for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
+						for (uint16_t l = 0; l < num_layers; ++l) {
 							RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c));
 						}
 					}
