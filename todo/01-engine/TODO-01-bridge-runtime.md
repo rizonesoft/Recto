@@ -48,7 +48,7 @@ track: M1
 | 6 | §7 | Lossless stream filters (`Flate`, `LZW`, predictors, `ASCII85`, `ASCIIHex`, `RunLength`) | §4, D00 T03 §4 | [x] |
 | 7 | §6 | PDF 1.5+ `/Type /XRef` streams, `/Type /ObjStm` streams and damaged-file recovery | §5, §7 | [x] |
 | 8 | §8 | Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`) | §7 | [x] |
-| 9 | §9 | Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG) | §6, §7 | [ ] |
+| 9 | §9 | Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG) | §6, §7 | [x] |
 | 10 | §10 | `pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links | §6, §8, §9 | [ ] |
 
 ## 1. `PdfResult<T>`, `PdfError`, `ErrorCode`, D16 diagnostic ring and ETW `TraceLogging`
@@ -344,6 +344,9 @@ Implement `src/pdf/crypto.h` and `src/pdf/crypto.cpp` using Windows Next Generat
 - [x] Commit: `pdf: implement Windows CNG Standard Security Handler decryption (R2-R6)`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfCrypto.*` passes under ASan across `RC4-128`, `AES-128`, and `AES-256` (`R=6`) fixtures.
+
+> **Verified:** 2026-10-19 | §9 | f760ebe825f4653190df027b3651f74fca302a0a
+> **Review:** `docs/reviews/d01-t01-s9.json`
 
 ## 10. `pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links
 
