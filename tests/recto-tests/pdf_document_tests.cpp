@@ -15,6 +15,15 @@
 #include <string_view>
 #include <vector>
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <psapi.h>
+
 namespace recto::pdf {
 namespace {
 
@@ -677,6 +686,136 @@ TEST(PdfDocument, LinksAndRefusedActions)
 			SCOPED_TRACE(i);
 			EXPECT_EQ((*links_res)[i].kind, LinkKind::RefusedAction);
 			EXPECT_TRUE((*links_res)[i].is_inert);
+		}
+	}
+
+	// 4. Bounded allocation and node-budget enforcement on wide `/Next` arrays
+	//    (`128` indirect aliases within budget vs `2,048` aliases and two-level
+	//    `16 x 20` fan-out exceeding the 256-node budget):
+	{
+		auto get_working_set_bytes = []() -> size_t {
+			PROCESS_MEMORY_COUNTERS pmc{};
+			pmc.cb = sizeof(pmc);
+			if (::GetProcessMemoryInfo(::GetCurrentProcess(), &pmc, sizeof(pmc)) != FALSE) {
+				return static_cast<size_t>(pmc.WorkingSetSize);
+			}
+			return 0u;
+		};
+
+		const std::string payload_64k(65536u, 'A');
+
+		// 4a. 128 indirect aliases to a 64 KiB `/GoTo` dictionary are within the
+		//     256-node budget, deduplicate the target dictionary, and remain an
+		//     active `LinkKind::Internal` link:
+		{
+			std::string next_arr_128 = "[";
+			for (uint32_t id = 20u; id < 20u + 128u; ++id) {
+				next_arr_128 += std::to_string(id) + " 0 R ";
+			}
+			next_arr_128 += "]";
+
+			std::vector<std::pair<uint32_t, std::string>> objs_128 = {
+				{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+				{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 612 792] /Kids [3 0 R] >>"},
+				{3, "<< /Type /Page /Parent 2 0 R /Annots [4 0 R] >>"},
+				{4,
+				 "<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] "
+				 "/A << /S /GoTo /D [3 0 R /Fit] /Next " + next_arr_128 + " >> >>"},
+				{10, "<< /S /GoTo /D [3 0 R /Fit] /Payload (" + payload_64k + ") >>"},
+			};
+			for (uint32_t id = 20u; id < 20u + 128u; ++id) {
+				objs_128.emplace_back(id, "10 0 R");
+			}
+
+			const auto bytes_128 = build_synthetic_pdf_from_objects("1.7", objs_128);
+			auto doc_128 = Document::open_memory(bytes_128);
+			ASSERT_TRUE(doc_128.has_value()) << doc_128.error().message.view();
+			auto links_128 = (*doc_128)->page_links(0);
+			ASSERT_TRUE(links_128.has_value()) << links_128.error().message.view();
+			ASSERT_EQ(links_128->size(), 1u);
+			EXPECT_EQ((*links_128)[0].kind, LinkKind::Internal);
+			EXPECT_FALSE((*links_128)[0].is_inert);
+		}
+
+		// 4b. 2,048 indirect aliases to a 64 KiB dictionary (plus a trailing
+		//     `/Launch` sentinel past the 256-node budget) and a two-level
+		//     `16 x 20` fan-out (`337` total nodes) must fail closed before
+		//     resolving children beyond the 256-node budget, keeping working-set
+		//     growth bounded (< 32 MiB) and never reaching the trailing `/Launch`
+		//     sentinel:
+		{
+			std::string next_arr_2048 = "[";
+			for (uint32_t id = 20u; id < 20u + 2048u; ++id) {
+				next_arr_2048 += std::to_string(id) + " 0 R ";
+			}
+			next_arr_2048 += "]";
+
+			std::vector<std::pair<uint32_t, std::string>> objs_2048 = {
+				{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+				{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 612 792] /Kids [3 0 R] >>"},
+				{3, "<< /Type /Page /Parent 2 0 R /Annots [4 0 R 5 0 R] >>"},
+				{4,
+				 "<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] "
+				 "/A << /S /GoTo /D [3 0 R /Fit] /Next " + next_arr_2048 + " >> >>"},
+				{10, "<< /S /GoTo /D [3 0 R /Fit] /Payload (" + payload_64k + ") >>"},
+				{11, "<< /S /Launch /F (cmd.exe) >>"},
+			};
+			for (uint32_t id = 20u; id < 20u + 2047u; ++id) {
+				objs_2048.emplace_back(id, "10 0 R");
+			}
+			objs_2048.emplace_back(20u + 2047u, "11 0 R");
+
+			// Second link (5 0 R): two-level fan-out with 16 child actions
+			// (3000..3015), each having a 20-element `/Next` array (total 337
+			// nodes), with the final branch pointing to `/Launch` (`11 0 R`):
+			std::string level1_arr = "[";
+			for (uint32_t g = 0u; g < 16u; ++g) {
+				const uint32_t parent_id = 3000u + g;
+				level1_arr += std::to_string(parent_id) + " 0 R ";
+				std::string level2_arr = "[";
+				for (uint32_t k = 0u; k < 20u; ++k) {
+					const uint32_t leaf_alias = (g == 15u && k == 19u) ? 11u : 10u;
+					level2_arr += std::to_string(leaf_alias) + " 0 R ";
+				}
+				level2_arr += "]";
+				objs_2048.emplace_back(
+					parent_id,
+					"<< /S /GoTo /D [3 0 R /Fit] /Next " + level2_arr + " >>");
+			}
+			level1_arr += "]";
+			objs_2048.emplace_back(
+				5u,
+				"<< /Type /Annot /Subtype /Link /Rect [20 20 30 30] "
+				"/A << /S /GoTo /D [3 0 R /Fit] /Next " + level1_arr + " >> >>");
+
+			const auto bytes_2048 = build_synthetic_pdf_from_objects("1.7", objs_2048);
+			clear_diagnostics();
+			const size_t ws_before = get_working_set_bytes();
+
+			auto doc_2048 = Document::open_memory(bytes_2048);
+			ASSERT_TRUE(doc_2048.has_value()) << doc_2048.error().message.view();
+
+			const size_t ws_after = get_working_set_bytes();
+			const size_t ws_delta = (ws_after > ws_before) ? (ws_after - ws_before) : 0u;
+			EXPECT_LT(ws_delta, 32u * 1024u * 1024u)
+				<< "Unbounded /Next array expansion caused excessive working-set growth: "
+				<< ws_delta << " bytes";
+
+			auto links_2048 = (*doc_2048)->page_links(0);
+			ASSERT_TRUE(links_2048.has_value()) << links_2048.error().message.view();
+			ASSERT_EQ(links_2048->size(), 2u);
+			EXPECT_EQ((*links_2048)[0].kind, LinkKind::RefusedAction);
+			EXPECT_TRUE((*links_2048)[0].is_inert);
+			EXPECT_EQ((*links_2048)[1].kind, LinkKind::RefusedAction);
+			EXPECT_TRUE((*links_2048)[1].is_inert);
+
+			// Verify that the trailing `/Launch` sentinel (`11 0 R`, placed past
+			// the 256-node budget in both links) was never resolved or inspected:
+			const auto diags = diagnostics_tail();
+			for (const auto& d : diags) {
+				EXPECT_NE(d.diagnostic_id, DiagnosticId::BlockedLaunchAction)
+					<< "Node past the 256-node budget should not have been resolved";
+			}
 		}
 	}
 }

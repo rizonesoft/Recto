@@ -2238,18 +2238,23 @@ PdfResult<void> Document::load_document_structure()
 	};
 
 	auto action_chain_contains_refused = [this, &record_refused_action_diagnostic](
-											 const PdfDict& root_action) -> bool {
+											 const PdfDict& root_action,
+											 std::optional<uint32_t> root_obj_num = std::nullopt) -> bool {
 		constexpr size_t kMaxActionChainDepth = 64u;
 		constexpr size_t kMaxActionChainNodes = 256u;
 
 		struct ActionFrame {
-			PdfDict dict{};
+			PdfValue value{};
 			size_t depth{0};
+			bool from_array{false};
 		};
 
 		std::unordered_set<uint32_t> visited_actions;
+		if (root_obj_num.has_value()) {
+			visited_actions.insert(*root_obj_num);
+		}
 		std::vector<ActionFrame> stack;
-		stack.push_back(ActionFrame{root_action, 0u});
+		size_t budget_used = 1u;
 		size_t inspected_nodes = 0u;
 
 		auto is_single_action_unsafe = [&](const PdfDict& act_dict) -> bool {
@@ -2287,7 +2292,33 @@ PdfResult<void> Document::load_document_structure()
 			return true;
 		};
 
-		auto push_next_value = [&](const PdfValue& next_item, size_t child_depth) -> bool {
+		auto enqueue_next_array = [&](const PdfArray& arr, size_t elem_depth) -> bool {
+			if (elem_depth > kMaxActionChainDepth) {
+				return false;
+			}
+			if (arr.size() > kMaxActionChainNodes ||
+				budget_used + arr.size() > kMaxActionChainNodes) {
+				return false;
+			}
+			for (size_t i = arr.size(); i > 0u; --i) {
+				const PdfValue& elem = arr[i - 1u];
+				if (elem.is_null()) {
+					continue;
+				}
+				if (budget_used >= kMaxActionChainNodes) {
+					return false;
+				}
+				auto cloned_elem = elem.deep_clone();
+				if (!cloned_elem.has_value()) {
+					return false;
+				}
+				++budget_used;
+				stack.push_back(ActionFrame{std::move(*cloned_elem), elem_depth, /*from_array=*/true});
+			}
+			return true;
+		};
+
+		auto enqueue_next_value = [&](const PdfValue& next_item, size_t child_depth) -> bool {
 			if (next_item.is_null()) {
 				return true;
 			}
@@ -2295,44 +2326,32 @@ PdfResult<void> Document::load_document_structure()
 				// Fail closed when action chain exceeds maximum depth.
 				return false;
 			}
-			if (const auto next_ref = next_item.as_ref()) {
-				if (!visited_actions.insert(next_ref->obj_num).second) {
-					return true;
-				}
+			if (const PdfArray* next_arr = next_item.as_array()) {
+				return enqueue_next_array(*next_arr, child_depth);
 			}
-			auto resolved_res = resolve_value(next_item);
-			if (!resolved_res.has_value()) {
+			if (budget_used >= kMaxActionChainNodes) {
 				return false;
 			}
-			if (const PdfDict* next_dict = resolved_res->as_dict()) {
-				stack.push_back(ActionFrame{*next_dict, child_depth});
-				return true;
+			auto cloned_next = next_item.deep_clone();
+			if (!cloned_next.has_value()) {
+				return false;
 			}
-			if (const PdfArray* next_arr = resolved_res->as_array()) {
-				for (size_t i = next_arr->size(); i > 0u; --i) {
-					const PdfValue& elem = (*next_arr)[i - 1u];
-					if (elem.is_null()) {
-						continue;
-					}
-					if (const auto elem_ref = elem.as_ref()) {
-						if (!visited_actions.insert(elem_ref->obj_num).second) {
-							continue;
-						}
-					}
-					auto elem_res = resolve_value(elem);
-					if (!elem_res.has_value()) {
-						return false;
-					}
-					const PdfDict* elem_dict = elem_res->as_dict();
-					if (elem_dict == nullptr) {
-						return false;
-					}
-					stack.push_back(ActionFrame{*elem_dict, child_depth});
-				}
-				return true;
-			}
-			return false;
+			++budget_used;
+			stack.push_back(ActionFrame{std::move(*cloned_next), child_depth, /*from_array=*/false});
+			return true;
 		};
+
+		// Inspect root_action directly before resolving any /Next children:
+		++inspected_nodes;
+		if (is_single_action_unsafe(root_action)) {
+			return true;
+		}
+		if (const PdfValue* root_next = root_action.get("Next");
+			root_next != nullptr && !root_next->is_null()) {
+			if (!enqueue_next_value(*root_next, 1u)) {
+				return true;
+			}
+		}
 
 		while (!stack.empty()) {
 			ActionFrame frame = std::move(stack.back());
@@ -2344,13 +2363,73 @@ PdfResult<void> Document::load_document_structure()
 				return true;
 			}
 
-			if (is_single_action_unsafe(frame.dict)) {
+			PdfValue cur_val = std::move(frame.value);
+			bool already_visited = false;
+			size_t ref_hops = 0u;
+			while (const auto ref = cur_val.as_ref()) {
+				if (!visited_actions.insert(ref->obj_num).second) {
+					already_visited = true;
+					break;
+				}
+				if (++ref_hops > kMaxIndirectRefDepth) {
+					return true;
+				}
+				const XrefEntry* entry = xref_.find(ref->obj_num);
+				if (entry == nullptr || entry->is_free()) {
+					return true;
+				}
+				if (entry->is_uncompressed()) {
+					auto raw_res = xref_.read_indirect_object(file_bytes_, *ref);
+					if (!raw_res.has_value()) {
+						return true;
+					}
+					if (raw_res->value.is_ref()) {
+						cur_val = std::move(raw_res->value);
+						continue;
+					}
+					if (security_handler_.has_value()) {
+						if (!security_handler_->is_authenticated() ||
+							!security_handler_->decrypt_object_values(
+								raw_res->value,
+								*ref,
+								/*is_inside_obj_stm=*/false).has_value()) {
+							return true;
+						}
+					}
+					cur_val = std::move(raw_res->value);
+					break;
+				}
+				auto res = resolve_object(*ref);
+				if (!res.has_value()) {
+					return true;
+				}
+				cur_val = std::move(*res);
+				break;
+			}
+			if (already_visited) {
+				continue;
+			}
+
+			if (const PdfArray* arr = cur_val.as_array()) {
+				const size_t elem_depth = frame.from_array ? (frame.depth + 1u) : frame.depth;
+				if (!enqueue_next_array(*arr, elem_depth)) {
+					return true;
+				}
+				continue;
+			}
+
+			const PdfDict* act_dict = cur_val.as_dict();
+			if (act_dict == nullptr) {
 				return true;
 			}
 
-			if (const PdfValue* next_v = frame.dict.get("Next");
+			if (is_single_action_unsafe(*act_dict)) {
+				return true;
+			}
+
+			if (const PdfValue* next_v = act_dict->get("Next");
 				next_v != nullptr && !next_v->is_null()) {
-				if (!push_next_value(*next_v, frame.depth + 1u)) {
+				if (!enqueue_next_value(*next_v, frame.depth + 1u)) {
 					return true;
 				}
 			}
@@ -2408,16 +2487,24 @@ PdfResult<void> Document::load_document_structure()
 				if (aa_res.has_value()) {
 					if (const PdfDict* aa_dict = aa_res->as_dict()) {
 						for (const auto& [aa_k, aa_v] : *aa_dict) {
+							if (aa_v.is_null()) {
+								continue;
+							}
+							const auto sub_ref = aa_v.as_ref();
 							auto sub_res = resolve_value(aa_v);
-							if (sub_res.has_value()) {
-								if (const PdfDict* sub_dict = sub_res->as_dict()) {
-									if (action_chain_contains_refused(*sub_dict)) {
-										aa_has_refused = true;
-										link.action_type = std::string(
-											sub_dict->get_name("S").value_or("AdditionalAction"));
-										break;
-									}
-								}
+							if (!sub_res.has_value() || sub_res->as_dict() == nullptr) {
+								aa_has_refused = true;
+								link.action_type = "AdditionalAction";
+								break;
+							}
+							const PdfDict* sub_dict = sub_res->as_dict();
+							if (action_chain_contains_refused(
+									*sub_dict,
+									sub_ref ? std::optional<uint32_t>(sub_ref->obj_num) : std::nullopt)) {
+								aa_has_refused = true;
+								link.action_type = std::string(
+									sub_dict->get_name("S").value_or("AdditionalAction"));
+								break;
 							}
 						}
 					}
@@ -2433,6 +2520,7 @@ PdfResult<void> Document::load_document_structure()
 
 			if (const PdfValue* act_val = annot_dict->get("A");
 				act_val != nullptr && !act_val->is_null()) {
+				const auto act_ref = act_val->as_ref();
 				auto act_res = resolve_value(*act_val);
 				if (act_res.has_value()) {
 					if (const PdfDict* act_dict = act_res->as_dict()) {
@@ -2442,7 +2530,9 @@ PdfResult<void> Document::load_document_structure()
 						}
 						link.action_type = s_type;
 
-						if (action_chain_contains_refused(*act_dict)) {
+						if (action_chain_contains_refused(
+								*act_dict,
+								act_ref ? std::optional<uint32_t>(act_ref->obj_num) : std::nullopt)) {
 							link.kind = LinkKind::RefusedAction;
 							link.is_inert = true;
 						} else if (s_type == "GoTo") {
