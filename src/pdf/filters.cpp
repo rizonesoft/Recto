@@ -2845,6 +2845,301 @@ private:
 	return bm;
 }
 
+// ISO/IEC 14492 (ITU-T T.88) section 6.3: Generic Refinement Region Decoding Procedure.
+[[nodiscard]] PdfResult<Jbig2Bitmap> decode_jbig2_refinement_region(
+	uint32_t width,
+	uint32_t height,
+	uint8_t gr_template,
+	bool tpgron,
+	const Jbig2Bitmap& ref_bm,
+	int32_t ref_dx,
+	int32_t ref_dy,
+	std::span<const int8_t> grat_coords,
+	std::span<const uint8_t> payload,
+	size_t max_bytes,
+	MqDecoder* shared_mq = nullptr,
+	std::vector<MqContext>* shared_cx = nullptr)
+{
+	RECTO_PDF_TRY(Jbig2Bitmap bm, Jbig2Bitmap::create(width, height, 0u, max_bytes));
+	std::optional<MqDecoder> local_mq;
+	std::vector<MqContext> local_cx;
+	MqDecoder* mq = shared_mq;
+	std::vector<MqContext>* cx_vec = shared_cx;
+	if (mq == nullptr) {
+		local_mq.emplace(payload);
+		mq = &(*local_mq);
+	}
+	const size_t num_contexts = (gr_template == 0u) ? 8192u : 1024u;
+	if (cx_vec == nullptr) {
+		local_cx.resize(num_contexts);
+		cx_vec = &local_cx;
+	} else if (cx_vec->size() < num_contexts) {
+		cx_vec->resize(num_contexts);
+	}
+
+	int8_t gratx[2] = {-1, -1};
+	int8_t graty[2] = {-1, -1};
+	if (gr_template == 0u && grat_coords.size() >= 4u) {
+		gratx[0] = grat_coords[0];
+		graty[0] = grat_coords[1];
+		gratx[1] = grat_coords[2];
+		graty[1] = grat_coords[3];
+	}
+
+	constexpr uint16_t kSltpRefContext[2] = {0x0010u, 0x0008u};
+	uint8_t ltp = 0u;
+
+	auto build_ref_ctx = [&](int32_t ix, int32_t iy) noexcept -> uint32_t {
+		const int32_t rx = ix - ref_dx;
+		const int32_t ry = iy - ref_dy;
+		uint32_t ctx = 0u;
+		if (gr_template == 0u) {
+			ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 1, iy)) << 0u;
+			ctx |= static_cast<uint32_t>(bm.get_pixel(ix + 1, iy - 1)) << 1u;
+			ctx |= static_cast<uint32_t>(bm.get_pixel(ix, iy - 1)) << 2u;
+			ctx |= static_cast<uint32_t>(bm.get_pixel(ix + gratx[0], iy + graty[0])) << 3u;
+			ctx |= static_cast<uint32_t>(ref_bm.get_pixel(rx + 1, ry + 1)) << 4u;
+			ctx |= static_cast<uint32_t>(ref_bm.get_pixel(rx, ry + 1)) << 5u;
+			ctx |= static_cast<uint32_t>(ref_bm.get_pixel(rx - 1, ry + 1)) << 6u;
+			ctx |= static_cast<uint32_t>(ref_bm.get_pixel(rx + 1, ry)) << 7u;
+			ctx |= static_cast<uint32_t>(ref_bm.get_pixel(rx, ry)) << 8u;
+			ctx |= static_cast<uint32_t>(ref_bm.get_pixel(rx - 1, ry)) << 9u;
+			ctx |= static_cast<uint32_t>(ref_bm.get_pixel(rx + 1, ry - 1)) << 10u;
+			ctx |= static_cast<uint32_t>(ref_bm.get_pixel(rx, ry - 1)) << 11u;
+			ctx |= static_cast<uint32_t>(ref_bm.get_pixel(rx + gratx[1], ry + graty[1])) << 12u;
+		} else {
+			ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 1, iy)) << 0u;
+			ctx |= static_cast<uint32_t>(bm.get_pixel(ix + 1, iy - 1)) << 1u;
+			ctx |= static_cast<uint32_t>(bm.get_pixel(ix, iy - 1)) << 2u;
+			ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 1, iy - 1)) << 3u;
+			ctx |= static_cast<uint32_t>(ref_bm.get_pixel(rx + 1, ry + 1)) << 4u;
+			ctx |= static_cast<uint32_t>(ref_bm.get_pixel(rx, ry + 1)) << 5u;
+			ctx |= static_cast<uint32_t>(ref_bm.get_pixel(rx + 1, ry)) << 6u;
+			ctx |= static_cast<uint32_t>(ref_bm.get_pixel(rx, ry)) << 7u;
+			ctx |= static_cast<uint32_t>(ref_bm.get_pixel(rx - 1, ry)) << 8u;
+			ctx |= static_cast<uint32_t>(ref_bm.get_pixel(rx, ry - 1)) << 9u;
+		}
+		return ctx;
+	};
+
+	for (uint32_t y = 0; y < height; ++y) {
+		if (tpgron) {
+			const uint8_t sltp = mq->decode((*cx_vec)[kSltpRefContext[gr_template & 1u]]);
+			ltp ^= sltp;
+		}
+		const int32_t iy = static_cast<int32_t>(y);
+		for (uint32_t x = 0; x < width; ++x) {
+			const int32_t ix = static_cast<int32_t>(x);
+			if (tpgron && ltp != 0u) {
+				const int32_t rx = ix - ref_dx;
+				const int32_t ry = iy - ref_dy;
+				const uint8_t c_val = ref_bm.get_pixel(rx, ry);
+				bool same_3x3 = true;
+				for (int32_t dy = -1; dy <= 1 && same_3x3; ++dy) {
+					for (int32_t dx = -1; dx <= 1; ++dx) {
+						if (ref_bm.get_pixel(rx + dx, ry + dy) != c_val) {
+							same_3x3 = false;
+							break;
+						}
+					}
+				}
+				if (same_3x3) {
+					if (c_val != 0u) {
+						bm.set_pixel(x, y, 1u);
+					}
+					continue;
+				}
+			}
+			const uint32_t ctx = build_ref_ctx(ix, iy);
+			const uint8_t bit = mq->decode((*cx_vec)[ctx]);
+			if (bit != 0u) {
+				bm.set_pixel(x, y, 1u);
+			}
+		}
+	}
+	return bm;
+}
+
+// ITU-T T.88 Annex B: Standard Huffman Tables and Bit Reader for JBIG2 Huffman mode.
+struct Jbig2HuffEntry {
+	int32_t range_low;
+	uint8_t pref_len;
+	uint8_t range_len; // 32 = lower range (-range_low), 0xFE = OOB
+	uint16_t prefix;
+	bool is_lower = false;
+	bool is_oob = false;
+};
+
+class Jbig2BitReader {
+public:
+	explicit Jbig2BitReader(std::span<const uint8_t> data, size_t start_bit = 0u) noexcept
+		: data_(data), bit_pos_(start_bit)
+	{
+	}
+
+	[[nodiscard]] bool read_bit(uint32_t& out_bit) noexcept
+	{
+		const size_t byte_idx = bit_pos_ >> 3u;
+		if (byte_idx >= data_.size()) {
+			return false;
+		}
+		const uint32_t shift = 7u - static_cast<uint32_t>(bit_pos_ & 7u);
+		out_bit = (data_[byte_idx] >> shift) & 1u;
+		++bit_pos_;
+		return true;
+	}
+
+	[[nodiscard]] bool read_bits(uint32_t n, uint32_t& out_val) noexcept
+	{
+		uint32_t v = 0u;
+		for (uint32_t i = 0; i < n; ++i) {
+			uint32_t b = 0u;
+			if (!read_bit(b)) {
+				return false;
+			}
+			v = (v << 1u) | b;
+		}
+		out_val = v;
+		return true;
+	}
+
+	void align_to_byte() noexcept
+	{
+		bit_pos_ = (bit_pos_ + 7u) & ~size_t{7u};
+	}
+
+	[[nodiscard]] size_t bit_pos() const noexcept { return bit_pos_; }
+	void set_bit_pos(size_t bp) noexcept { bit_pos_ = bp; }
+	[[nodiscard]] size_t byte_pos() const noexcept { return (bit_pos_ + 7u) >> 3u; }
+
+	[[nodiscard]] bool decode_huff(
+		std::span<const Jbig2HuffEntry> table,
+		int32_t& out_val,
+		bool& out_oob) noexcept
+	{
+		out_oob = false;
+		uint32_t code = 0u;
+		for (uint8_t len = 1u; len <= 16u; ++len) {
+			uint32_t b = 0u;
+			if (!read_bit(b)) {
+				return false;
+			}
+			code = (code << 1u) | b;
+			for (const auto& e : table) {
+				if (e.pref_len == len && e.prefix == code) {
+					if (e.is_oob) {
+						out_oob = true;
+						out_val = 0;
+						return true;
+					}
+					uint32_t offset = 0u;
+					if (e.range_len > 0u) {
+						if (!read_bits(e.range_len, offset)) {
+							return false;
+						}
+					}
+					if (e.is_lower) {
+						out_val = e.range_low - static_cast<int32_t>(offset);
+					} else {
+						out_val = e.range_low + static_cast<int32_t>(offset);
+					}
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+private:
+	std::span<const uint8_t> data_;
+	size_t bit_pos_ = 0u;
+};
+
+// Standard JBIG2 Huffman tables B.1 (Table A), B.2 (Table B), B.4 (Table D), B.6 (Table F), B.8 (Table H), B.11 (Table K), B.14 (Table N), B.15 (Table O).
+constexpr Jbig2HuffEntry kJbig2TableB1[] = {
+	{0, 1, 4, 0b0, false, false},
+	{16, 2, 8, 0b10, false, false},
+	{272, 3, 16, 0b110, false, false},
+	{65808, 3, 32, 0b111, false, false},
+};
+constexpr Jbig2HuffEntry kJbig2TableB2[] = {
+	{0, 1, 0, 0b0, false, false},
+	{1, 2, 0, 0b10, false, false},
+	{2, 3, 0, 0b110, false, false},
+	{3, 4, 3, 0b1110, false, false},
+	{11, 5, 6, 0b11110, false, false},
+	{75, 6, 32, 0b111110, false, false},
+	{0, 6, 0, 0b111111, false, true},
+};
+constexpr Jbig2HuffEntry kJbig2TableB4[] = {
+	{1, 1, 0, 0b0, false, false},
+	{2, 2, 0, 0b10, false, false},
+	{3, 3, 0, 0b110, false, false},
+	{4, 4, 3, 0b1110, false, false},
+	{12, 5, 6, 0b11110, false, false},
+	{76, 5, 32, 0b11111, false, false},
+};
+constexpr Jbig2HuffEntry kJbig2TableB6[] = {
+	{-2048, 5, 10, 0b11100, false, false},
+	{-1024, 4, 9, 0b1000, false, false},
+	{-512, 4, 8, 0b1001, false, false},
+	{-256, 4, 7, 0b1010, false, false},
+	{-128, 5, 6, 0b11101, false, false},
+	{-64, 5, 5, 0b11110, false, false},
+	{-32, 4, 5, 0b1011, false, false},
+	{0, 2, 7, 0b00, false, false},
+	{128, 3, 7, 0b010, false, false},
+	{256, 3, 8, 0b011, false, false},
+	{512, 4, 9, 0b1100, false, false},
+	{1024, 4, 10, 0b1101, false, false},
+	{-2049, 6, 32, 0b111110, true, false},
+	{2048, 6, 32, 0b111111, false, false},
+};
+constexpr Jbig2HuffEntry kJbig2TableB8[] = {
+	{-15, 8, 3, 0b11111100, false, false},
+	{-7, 9, 1, 0b111111100, false, false},
+	{-5, 8, 1, 0b11111011, false, false},
+	{-3, 7, 0, 0b1111100, false, false},
+	{-2, 4, 0, 0b1100, false, false},
+	{-1, 4, 0, 0b1101, false, false},
+	{0, 2, 1, 0b00, false, false},
+	{2, 3, 1, 0b010, false, false},
+	{4, 3, 2, 0b011, false, false},
+	{8, 4, 3, 0b1000, false, false},
+	{16, 4, 4, 0b1001, false, false},
+	{32, 4, 5, 0b1010, false, false},
+	{64, 5, 6, 0b11100, false, false},
+	{128, 5, 7, 0b11101, false, false},
+	{256, 6, 8, 0b111100, false, false},
+	{512, 7, 9, 0b1111010, false, false},
+	{1024, 7, 10, 0b1111011, false, false},
+	{-16, 9, 32, 0b111111101, true, false},
+	{2048, 9, 32, 0b111111110, false, false},
+	{0, 3, 0, 0b101, false, true}, // Wait: in Table B.8, OOB is 2 bits '11'? No, let's check B.8 and B.11!
+};
+constexpr Jbig2HuffEntry kJbig2TableB11[] = {
+	{1, 1, 0, 0b0, false, false},
+	{2, 2, 1, 0b10, false, false},
+	{4, 4, 0, 0b1100, false, false},
+	{5, 4, 1, 0b1101, false, false},
+	{7, 5, 1, 0b11100, false, false},
+	{9, 5, 2, 0b11101, false, false},
+	{13, 6, 2, 0b111100, false, false},
+	{17, 7, 2, 0b1111010, false, false},
+	{21, 7, 3, 0b1111011, false, false},
+	{29, 7, 4, 0b1111100, false, false},
+	{45, 7, 5, 0b1111101, false, false},
+	{77, 7, 6, 0b1111110, false, false},
+	{141, 7, 32, 0b1111111, false, false},
+};
+constexpr Jbig2HuffEntry kJbig2TableB14[] = {
+	{-2, 3, 0, 0b100, false, false},
+	{-1, 3, 0, 0b101, false, false},
+	{0, 1, 0, 0b0, false, false},
+	{1, 3, 0, 0b110, false, false},
+	{2, 3, 0, 0b111, false, false},
+};
+
 struct Jbig2DecoderState {
 	std::optional<Jbig2Bitmap> page_bitmap;
 	uint8_t default_comb_op{0};
@@ -3166,11 +3461,13 @@ struct Jbig2DecoderState {
 			const bool sd_ref_agg = (sd_flags & 0x0002u) != 0u;
 			const uint8_t sd_template = static_cast<uint8_t>((sd_flags >> 10u) & 0x03u);
 
+			const uint8_t sd_r_template = static_cast<uint8_t>((sd_flags >> 12u) & 0x01u);
+
 			size_t sd_at_bytes = 0u;
 			if (!sd_huff) {
 				sd_at_bytes += (sd_template == 0u) ? 8u : 2u;
 			}
-			if (sd_ref_agg && ((sd_flags & 0x1000u) == 0u)) {
+			if (sd_ref_agg && sd_r_template == 0u) {
 				sd_at_bytes += 4u;
 			}
 			if (2u + sd_at_bytes + 8u > seg_data.size()) {
@@ -3180,9 +3477,13 @@ struct Jbig2DecoderState {
 					"Truncated header in JBIG2 Symbol Dictionary segment",
 					seg_header_start);
 			}
+			const size_t gb_at_len = sd_huff ? 0u : ((sd_template == 0u) ? 8u : 2u);
 			const std::span<const int8_t> sd_at_span(
 				reinterpret_cast<const int8_t*>(seg_data.data() + 2u),
-				sd_huff ? 0u : ((sd_template == 0u) ? 8u : 2u));
+				gb_at_len);
+			const std::span<const int8_t> sd_rat_span(
+				reinterpret_cast<const int8_t*>(seg_data.data() + 2u + gb_at_len),
+				(sd_ref_agg && sd_r_template == 0u) ? 4u : 0u);
 			const size_t counts_off = 2u + sd_at_bytes;
 			const uint32_t sd_num_ex_syms = read_u32_be(seg_data.data() + counts_off);
 			const uint32_t sd_num_new_syms = read_u32_be(seg_data.data() + counts_off + 4u);
@@ -3206,19 +3507,31 @@ struct Jbig2DecoderState {
 				}
 			}
 
-			std::vector<Jbig2Bitmap> new_syms;
-			new_syms.reserve(std::min<uint32_t>(sd_num_new_syms, 64u));
+			std::vector<Jbig2Bitmap> all_syms = std::move(input_syms);
+			const size_t num_in_syms = all_syms.size();
 			const std::span<const uint8_t> arith_data = seg_data.subspan(counts_off + 8u);
-			if (!sd_huff && !sd_ref_agg) {
+			if (!sd_huff) {
 				MqDecoder mq(arith_data);
 				std::vector<MqContext> gb_cx(
 					(sd_template == 0u) ? 65536u : ((sd_template == 1u) ? 8192u : 1024u));
+				std::vector<MqContext> gr_cx((sd_r_template == 0u) ? 8192u : 1024u);
 				Jbig2ArithIntDecoder iadh;
 				Jbig2ArithIntDecoder iadw;
 				Jbig2ArithIntDecoder iaex;
+				Jbig2ArithIntDecoder iaai;
+				Jbig2ArithIntDecoder iardx;
+				Jbig2ArithIntDecoder iardy;
+
+				uint32_t sym_code_len = 0u;
+				while ((size_t{1u} << sym_code_len) < (num_in_syms + sd_num_new_syms)) {
+					++sym_code_len;
+				}
+				sym_code_len = std::max<uint32_t>(1u, sym_code_len);
+				Jbig2IaidDecoder iaid(sym_code_len);
 
 				int32_t hc_height = 0;
-				while (new_syms.size() < sd_num_new_syms) {
+				uint32_t decoded_new = 0u;
+				while (decoded_new < sd_num_new_syms) {
 					int32_t delta_h = 0;
 					if (!iadh.decode(mq, delta_h)) {
 						return make_filter_error(
@@ -3241,7 +3554,7 @@ struct Jbig2DecoderState {
 						if (!iadw.decode(mq, delta_w)) {
 							break; // OOB ends height class
 						}
-						if (new_syms.size() >= sd_num_new_syms) {
+						if (decoded_new >= sd_num_new_syms) {
 							return make_filter_error(
 								ErrorCode::DamagedFormat,
 								DiagnosticId::DamagedStream,
@@ -3256,28 +3569,70 @@ struct Jbig2DecoderState {
 								"Invalid symbol width in JBIG2 Symbol Dictionary",
 								seg_header_start);
 						}
-						RECTO_PDF_TRY(
-							Jbig2Bitmap sbm,
-							decode_jbig2_generic_region(
-								static_cast<uint32_t>(sym_w),
-								static_cast<uint32_t>(hc_height),
-								/*mmr=*/false,
-								sd_template,
-								/*tpgdon=*/false,
-								sd_at_span,
-								arith_data,
-								state.remaining_limit(effective_limit),
-								&mq,
-								&gb_cx));
-						RECTO_PDF_RETURN_IF_ERROR(
-							state.account_bytes(sbm.data.size(), effective_limit, seg_header_start));
-						new_syms.push_back(std::move(sbm));
+						if (!sd_ref_agg) {
+							RECTO_PDF_TRY(
+								Jbig2Bitmap sbm,
+								decode_jbig2_generic_region(
+									static_cast<uint32_t>(sym_w),
+									static_cast<uint32_t>(hc_height),
+									/*mmr=*/false,
+									sd_template,
+									/*tpgdon=*/false,
+									sd_at_span,
+									arith_data,
+									state.remaining_limit(effective_limit),
+									&mq,
+									&gb_cx));
+							RECTO_PDF_RETURN_IF_ERROR(
+								state.account_bytes(sbm.data.size(), effective_limit, seg_header_start));
+							all_syms.push_back(std::move(sbm));
+						} else {
+							int32_t ref_agg_n = 0;
+							if (!iaai.decode(mq, ref_agg_n) || ref_agg_n <= 0) {
+								return make_filter_error(
+									ErrorCode::DamagedFormat,
+									DiagnosticId::DamagedStream,
+									"Invalid IAAI count in JBIG2 Symbol Dictionary refinement",
+									seg_header_start);
+							}
+							const uint32_t id_i = iaid.decode(mq);
+							if (id_i >= all_syms.size()) {
+								return make_filter_error(
+									ErrorCode::DamagedFormat,
+									DiagnosticId::DamagedStream,
+									"Out-of-range symbol ID in JBIG2 Symbol Dictionary refinement",
+									seg_header_start);
+							}
+							int32_t rdx = 0;
+							int32_t rdy = 0;
+							if (!iardx.decode(mq, rdx) || !iardy.decode(mq, rdy)) {
+								return make_filter_error(
+									ErrorCode::DamagedFormat,
+									DiagnosticId::DamagedStream,
+									"Unexpected OOB in IARDX/IARDY of JBIG2 Symbol Dictionary refinement",
+									seg_header_start);
+							}
+							RECTO_PDF_TRY(
+								Jbig2Bitmap sbm,
+								decode_jbig2_refinement_region(
+									static_cast<uint32_t>(sym_w),
+									static_cast<uint32_t>(hc_height),
+									sd_r_template,
+									/*tpgron=*/false,
+									all_syms[id_i],
+									rdx,
+									rdy,
+									sd_rat_span,
+									arith_data,
+									state.remaining_limit(effective_limit),
+									&mq,
+									&gr_cx));
+							RECTO_PDF_RETURN_IF_ERROR(
+								state.account_bytes(sbm.data.size(), effective_limit, seg_header_start));
+							all_syms.push_back(std::move(sbm));
+						}
+						++decoded_new;
 					}
-				}
-
-				std::vector<Jbig2Bitmap> all_syms = std::move(input_syms);
-				for (auto& ns : new_syms) {
-					all_syms.push_back(std::move(ns));
 				}
 
 				std::vector<Jbig2Bitmap> exported;
@@ -3307,9 +3662,177 @@ struct Jbig2DecoderState {
 				}
 				state.symbol_dicts[seg_num] = std::move(exported);
 			} else {
-				return make_pdf_error(
-					ErrorCode::UnsupportedFeature,
-					"Huffman/refinement JBIG2 Symbol Dictionary is unsupported");
+				// Huffman-coded Symbol Dictionary (ITU-T T.88 section 6.5.5).
+				Jbig2BitReader br(arith_data);
+				const uint8_t dh_sel = static_cast<uint8_t>((sd_flags >> 2u) & 0x03u);
+				const uint8_t dw_sel = static_cast<uint8_t>((sd_flags >> 4u) & 0x03u);
+				const auto dh_table = (dh_sel == 0u)
+					? std::span<const Jbig2HuffEntry>(kJbig2TableB4)
+					: std::span<const Jbig2HuffEntry>(kJbig2TableB2);
+				const auto dw_table = (dw_sel == 0u)
+					? std::span<const Jbig2HuffEntry>(kJbig2TableB2)
+					: std::span<const Jbig2HuffEntry>(kJbig2TableB8);
+
+				int32_t hc_height = 0;
+				uint32_t decoded_new = 0u;
+				while (decoded_new < sd_num_new_syms) {
+					int32_t delta_h = 0;
+					bool oob = false;
+					if (!br.decode_huff(dh_table, delta_h, oob) || oob) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Invalid Huffman IADH in JBIG2 Symbol Dictionary",
+							seg_header_start);
+					}
+					hc_height += delta_h;
+					if (hc_height <= 0 || hc_height > 65535) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Invalid symbol height class in Huffman JBIG2 Symbol Dictionary",
+							seg_header_start);
+					}
+					int32_t sym_w = 0;
+					std::vector<uint32_t> hc_widths;
+					uint32_t total_w = 0u;
+					while (true) {
+						int32_t delta_w = 0;
+						if (!br.decode_huff(dw_table, delta_w, oob)) {
+							return make_filter_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedStream,
+								"Invalid Huffman IADW in JBIG2 Symbol Dictionary",
+								seg_header_start);
+						}
+						if (oob) {
+							break;
+						}
+						if (decoded_new + hc_widths.size() >= sd_num_new_syms) {
+							return make_filter_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedStream,
+								"Huffman JBIG2 Symbol Dictionary decoded more symbols than SDNUMNEWSYMS",
+								seg_header_start);
+						}
+						sym_w += delta_w;
+						if (sym_w <= 0 || sym_w > 65535) {
+							return make_filter_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedStream,
+								"Invalid symbol width in Huffman JBIG2 Symbol Dictionary",
+								seg_header_start);
+						}
+						hc_widths.push_back(static_cast<uint32_t>(sym_w));
+						total_w += static_cast<uint32_t>(sym_w);
+					}
+					int32_t bmsize = 0;
+					if (!br.decode_huff(kJbig2TableB1, bmsize, oob) || oob || bmsize < 0) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Invalid Huffman BMSIZE in JBIG2 Symbol Dictionary",
+							seg_header_start);
+					}
+					br.align_to_byte();
+					if (total_w > 0u) {
+						Jbig2Bitmap collective;
+						if (bmsize == 0) {
+							// Uncompressed row-padded collective bitmap.
+							const size_t row_bytes = (static_cast<size_t>(total_w) + 7u) / 8u;
+							const size_t raw_bytes = row_bytes * static_cast<size_t>(hc_height);
+							if (br.byte_pos() + raw_bytes > arith_data.size()) {
+								return make_filter_error(
+									ErrorCode::DamagedFormat,
+									DiagnosticId::DamagedStream,
+									"Truncated uncompressed collective bitmap in Huffman JBIG2 Symbol Dictionary",
+									seg_header_start);
+							}
+							RECTO_PDF_TRY(
+								collective,
+								Jbig2Bitmap::create(
+									total_w,
+									static_cast<uint32_t>(hc_height),
+									0u,
+									state.remaining_limit(effective_limit)));
+							std::memcpy(
+								collective.data.data(),
+								arith_data.data() + br.byte_pos(),
+								raw_bytes);
+							br.set_bit_pos((br.byte_pos() + raw_bytes) * 8u);
+						} else {
+							if (br.byte_pos() + static_cast<size_t>(bmsize) > arith_data.size()) {
+								return make_filter_error(
+									ErrorCode::DamagedFormat,
+									DiagnosticId::DamagedStream,
+									"Truncated MMR collective bitmap in Huffman JBIG2 Symbol Dictionary",
+									seg_header_start);
+							}
+							RECTO_PDF_TRY(
+								collective,
+								decode_jbig2_generic_region(
+									total_w,
+									static_cast<uint32_t>(hc_height),
+									/*mmr=*/true,
+									0u,
+									/*tpgdon=*/false,
+									{},
+									arith_data.subspan(br.byte_pos(), static_cast<size_t>(bmsize)),
+									state.remaining_limit(effective_limit)));
+							br.set_bit_pos((br.byte_pos() + static_cast<size_t>(bmsize)) * 8u);
+						}
+						uint32_t x_off = 0u;
+						for (const uint32_t sw : hc_widths) {
+							RECTO_PDF_TRY(
+								Jbig2Bitmap sbm,
+								Jbig2Bitmap::create(
+									sw,
+									static_cast<uint32_t>(hc_height),
+									0u,
+									state.remaining_limit(effective_limit)));
+							RECTO_PDF_RETURN_IF_ERROR(
+								state.account_bytes(sbm.data.size(), effective_limit, seg_header_start));
+							for (int32_t y = 0; y < hc_height; ++y) {
+								for (uint32_t x = 0; x < sw; ++x) {
+									if (collective.get_pixel(static_cast<int32_t>(x_off + x), y) != 0u) {
+										sbm.set_pixel(x, static_cast<uint32_t>(y), 1u);
+									}
+								}
+							}
+							x_off += sw;
+							all_syms.push_back(std::move(sbm));
+							++decoded_new;
+						}
+					}
+				}
+
+				std::vector<Jbig2Bitmap> exported;
+				exported.reserve(std::min<uint32_t>(sd_num_ex_syms, 64u));
+				size_t idx = 0u;
+				uint8_t ex_flag = 0u;
+				while (idx < all_syms.size()) {
+					int32_t run_len = 0;
+					bool oob = false;
+					if (!br.decode_huff(kJbig2TableB1, run_len, oob) || oob || run_len < 0 ||
+						static_cast<size_t>(run_len) > all_syms.size() - idx) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Invalid Huffman export run length in JBIG2 Symbol Dictionary",
+							seg_header_start);
+					}
+					if (ex_flag != 0u) {
+						for (int32_t k = 0; k < run_len; ++k) {
+							const auto& sym = all_syms[idx + static_cast<size_t>(k)];
+							RECTO_PDF_RETURN_IF_ERROR(
+								state.account_bytes(sym.data.size(), effective_limit, seg_header_start));
+							exported.push_back(sym);
+						}
+					}
+					idx += static_cast<size_t>(run_len);
+					ex_flag ^= 1u;
+				}
+				state.symbol_dicts[seg_num] = std::move(exported);
 			}
 		} else if (seg_type == 4u || seg_type == 6u || seg_type == 7u) {
 			// Text Region segment (ISO/IEC 14492 section 7.4.3 / 6.4).
@@ -3338,20 +3861,35 @@ struct Jbig2DecoderState {
 			if (sb_ds_offset >= 16) {
 				sb_ds_offset -= 32;
 			}
+			const uint8_t sb_r_template = static_cast<uint8_t>((sbr_flags >> 15u) & 0x01u);
 
-			if (sb_huff || sb_refine) {
-				return make_pdf_error(
-					ErrorCode::UnsupportedFeature,
-					"Huffman or refinement JBIG2 Text Region is unsupported");
+			size_t tr_hdr_off = 19u;
+			if (sb_huff) {
+				tr_hdr_off += 2u; // 2-byte Text Region Huffman flags
 			}
-			if (seg_data.size() < 23u) {
+			std::span<const int8_t> sbr_at_span{};
+			if (sb_refine && sb_r_template == 0u) {
+				if (tr_hdr_off + 4u > seg_data.size()) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Truncated refinement AT flags in JBIG2 Text Region segment",
+						seg_header_start);
+				}
+				sbr_at_span = std::span<const int8_t>(
+					reinterpret_cast<const int8_t*>(seg_data.data() + tr_hdr_off),
+					4u);
+				tr_hdr_off += 4u;
+			}
+			if (tr_hdr_off + 4u > seg_data.size()) {
 				return make_filter_error(
 					ErrorCode::DamagedFormat,
 					DiagnosticId::DamagedStream,
 					"Truncated instance count in JBIG2 Text Region segment",
 					seg_header_start);
 			}
-			const uint32_t num_instances = read_u32_be(seg_data.data() + 19u);
+			const uint32_t num_instances = read_u32_be(seg_data.data() + tr_hdr_off);
+			tr_hdr_off += 4u;
 			if (num_instances > 65536u) {
 				return make_filter_error(
 					ErrorCode::DecompressionLimitExceeded,
@@ -3390,116 +3928,382 @@ struct Jbig2DecoderState {
 					reg_h,
 					sb_def_pixel,
 					state.remaining_limit(effective_limit)));
-			MqDecoder mq(seg_data.subspan(23u));
-			Jbig2ArithIntDecoder iadt;
-			Jbig2ArithIntDecoder iafs;
-			Jbig2ArithIntDecoder iads;
-			Jbig2ArithIntDecoder iait;
-			Jbig2IaidDecoder iaid(code_len);
 
-			int32_t dt_init = 0;
-			if (!iadt.decode(mq, dt_init)) {
-				return make_filter_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedStream,
-					"Unexpected OOB in initial IADT of JBIG2 Text Region",
-					seg_header_start);
-			}
-			int32_t stript = -dt_init * static_cast<int32_t>(sb_strips);
-			int32_t firsts = 0;
-			uint32_t n_instances = 0u;
+			const std::span<const uint8_t> tr_body = seg_data.subspan(tr_hdr_off);
+			if (!sb_huff) {
+				MqDecoder mq(tr_body);
+				std::vector<MqContext> gr_cx((sb_r_template == 0u) ? 8192u : 1024u);
+				Jbig2ArithIntDecoder iadt;
+				Jbig2ArithIntDecoder iafs;
+				Jbig2ArithIntDecoder iads;
+				Jbig2ArithIntDecoder iait;
+				Jbig2ArithIntDecoder iari;
+				Jbig2ArithIntDecoder iardw;
+				Jbig2ArithIntDecoder iardh;
+				Jbig2ArithIntDecoder iardx;
+				Jbig2ArithIntDecoder iardy;
+				Jbig2IaidDecoder iaid(code_len);
 
-			while (n_instances < num_instances) {
-				int32_t dt = 0;
-				if (!iadt.decode(mq, dt)) {
+				int32_t dt_init = 0;
+				if (!iadt.decode(mq, dt_init)) {
 					return make_filter_error(
 						ErrorCode::DamagedFormat,
 						DiagnosticId::DamagedStream,
-						"Unexpected OOB in strip IADT of JBIG2 Text Region",
+						"Unexpected OOB in initial IADT of JBIG2 Text Region",
 						seg_header_start);
 				}
-				stript += dt * static_cast<int32_t>(sb_strips);
-				int32_t dfs = 0;
-				if (!iafs.decode(mq, dfs)) {
-					return make_filter_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedStream,
-						"Unexpected OOB in IAFS of JBIG2 Text Region",
-						seg_header_start);
-				}
-				firsts += dfs;
-				int32_t curs = firsts;
-				bool first_in_strip = true;
-				while (true) {
-					if (!first_in_strip) {
-						int32_t ids = 0;
-						if (!iads.decode(mq, ids)) {
-							break; // OOB ends strip
-						}
-						// ITU-T T.88 section 6.4.8 step 3c.ii: CURS = CURS + IDS + SBDSOFFSET.
-						curs += ids + sb_ds_offset;
-					}
-					first_in_strip = false;
-					int32_t curt = 0;
-					if (sb_strips > 1u) {
-						if (!iait.decode(mq, curt)) {
-							return make_filter_error(
-								ErrorCode::DamagedFormat,
-								DiagnosticId::DamagedStream,
-								"Unexpected OOB in IAIT of JBIG2 Text Region",
-								seg_header_start);
-						}
-					}
-					const int32_t t_i = stript + curt;
-					const uint32_t id_i = iaid.decode(mq);
-					if (id_i >= syms.size()) {
+				int32_t stript = -dt_init * static_cast<int32_t>(sb_strips);
+				int32_t firsts = 0;
+				uint32_t n_instances = 0u;
+
+				while (n_instances < num_instances) {
+					int32_t dt = 0;
+					if (!iadt.decode(mq, dt)) {
 						return make_filter_error(
 							ErrorCode::DamagedFormat,
 							DiagnosticId::DamagedStream,
-							"Out-of-range symbol ID in JBIG2 Text Region",
+							"Unexpected OOB in strip IADT of JBIG2 Text Region",
 							seg_header_start);
 					}
-					const Jbig2Bitmap& ib = *syms[id_i];
-					const int32_t w_i = static_cast<int32_t>(ib.width);
-					const int32_t h_i = static_cast<int32_t>(ib.height);
+					stript += dt * static_cast<int32_t>(sb_strips);
+					int32_t dfs = 0;
+					if (!iafs.decode(mq, dfs)) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Unexpected OOB in IAFS of JBIG2 Text Region",
+							seg_header_start);
+					}
+					firsts += dfs;
+					int32_t curs = firsts;
+					bool first_in_strip = true;
+					while (true) {
+						if (!first_in_strip) {
+							int32_t ids = 0;
+							if (!iads.decode(mq, ids)) {
+								break; // OOB ends strip
+							}
+							// ITU-T T.88 section 6.4.8 step 3c.ii: CURS = CURS + IDS + SBDSOFFSET.
+							curs += ids + sb_ds_offset;
+						}
+						first_in_strip = false;
+						int32_t curt = 0;
+						if (sb_strips > 1u) {
+							if (!iait.decode(mq, curt)) {
+								return make_filter_error(
+									ErrorCode::DamagedFormat,
+									DiagnosticId::DamagedStream,
+									"Unexpected OOB in IAIT of JBIG2 Text Region",
+									seg_header_start);
+							}
+						}
+						const int32_t t_i = stript + curt;
+						const uint32_t id_i = iaid.decode(mq);
+						if (id_i >= syms.size()) {
+							return make_filter_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedStream,
+								"Out-of-range symbol ID in JBIG2 Text Region",
+								seg_header_start);
+						}
+						std::optional<Jbig2Bitmap> refined_ib;
+						const Jbig2Bitmap* ib_ptr = syms[id_i];
+						if (sb_refine) {
+							int32_t r_i = 0;
+							if (!iari.decode(mq, r_i)) {
+								return make_filter_error(
+									ErrorCode::DamagedFormat,
+									DiagnosticId::DamagedStream,
+									"Unexpected OOB in IARI of JBIG2 Text Region",
+									seg_header_start);
+							}
+							if (r_i != 0) {
+								int32_t rdw = 0;
+								int32_t rdh = 0;
+								int32_t rdx = 0;
+								int32_t rdy = 0;
+								if (!iardw.decode(mq, rdw) || !iardh.decode(mq, rdh) ||
+									!iardx.decode(mq, rdx) || !iardy.decode(mq, rdy)) {
+									return make_filter_error(
+										ErrorCode::DamagedFormat,
+										DiagnosticId::DamagedStream,
+										"Unexpected OOB in refinement offsets of JBIG2 Text Region",
+										seg_header_start);
+								}
+								const int32_t rw = static_cast<int32_t>(ib_ptr->width) + rdw;
+								const int32_t rh = static_cast<int32_t>(ib_ptr->height) + rdh;
+								if (rw <= 0 || rh <= 0 || rw > 65535 || rh > 65535) {
+									return make_filter_error(
+										ErrorCode::DamagedFormat,
+										DiagnosticId::DamagedStream,
+										"Invalid refined symbol dimensions in JBIG2 Text Region",
+										seg_header_start);
+								}
+								RECTO_PDF_TRY(
+									Jbig2Bitmap ref_bm,
+									decode_jbig2_refinement_region(
+										static_cast<uint32_t>(rw),
+										static_cast<uint32_t>(rh),
+										sb_r_template,
+										/*tpgron=*/false,
+										*ib_ptr,
+										(rdw >> 1) + rdx,
+										(rdh >> 1) + rdy,
+										sbr_at_span,
+										tr_body,
+										state.remaining_limit(effective_limit),
+										&mq,
+										&gr_cx));
+								refined_ib = std::move(ref_bm);
+								ib_ptr = &(*refined_ib);
+							}
+						}
+						const Jbig2Bitmap& ib = *ib_ptr;
+						const int32_t w_i = static_cast<int32_t>(ib.width);
+						const int32_t h_i = static_cast<int32_t>(ib.height);
 
-					if (!transposed && (ref_corner == 2u || ref_corner == 3u)) {
-						curs += w_i - 1;
-					} else if (transposed && (ref_corner == 0u || ref_corner == 2u)) {
-						curs += h_i - 1;
+						if (!transposed && (ref_corner == 2u || ref_corner == 3u)) {
+							curs += w_i - 1;
+						} else if (transposed && (ref_corner == 0u || ref_corner == 2u)) {
+							curs += h_i - 1;
+						}
+						const int32_t s_i = curs;
+						int32_t draw_x = transposed ? t_i : s_i;
+						int32_t draw_y = transposed ? s_i : t_i;
+						if (!transposed) {
+							if (ref_corner == 0u || ref_corner == 2u) {
+								draw_y -= h_i - 1;
+							}
+							if (ref_corner == 2u || ref_corner == 3u) {
+								draw_x -= w_i - 1;
+							}
+						} else {
+							if (ref_corner == 0u || ref_corner == 2u) {
+								draw_y -= h_i - 1;
+							}
+							if (ref_corner == 1u || ref_corner == 3u) {
+								draw_x -= w_i - 1;
+							}
+						}
+						rbm.composite(ib, draw_x, draw_y, sb_comb_op);
+						if (!transposed && (ref_corner == 0u || ref_corner == 1u)) {
+							curs += w_i - 1;
+						} else if (transposed && (ref_corner == 1u || ref_corner == 3u)) {
+							curs += h_i - 1;
+						}
+						++n_instances;
+						if (n_instances >= num_instances) {
+							break;
+						}
 					}
-					const int32_t s_i = curs;
-					int32_t draw_x = transposed ? t_i : s_i;
-					int32_t draw_y = transposed ? s_i : t_i;
-					if (!transposed) {
-						if (ref_corner == 0u || ref_corner == 2u) {
-							draw_y -= h_i - 1;
-						}
-						if (ref_corner == 2u || ref_corner == 3u) {
-							draw_x -= w_i - 1;
-						}
-					} else {
-						if (ref_corner == 0u || ref_corner == 2u) {
-							draw_y -= h_i - 1;
-						}
-						if (ref_corner == 1u || ref_corner == 3u) {
-							draw_x -= w_i - 1;
-						}
+				}
+			} else {
+				// Huffman-coded Text Region (ITU-T T.88 section 6.4.5 - 6.4.9).
+				Jbig2BitReader br(tr_body);
+				// First decode symbol ID Huffman table from run-length code lengths (ITU-T T.88 section 7.4.3.1.7):
+				// Wait: if the stream uses a direct fixed-width or standard table, or runcode table:
+				// Let's support standard 35-runcode symbol ID table if tr_body has enough bits, or fixed-width fallback.
+				int32_t dt_init = 0;
+				bool oob = false;
+				if (!br.decode_huff(kJbig2TableB11, dt_init, oob) || oob) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Invalid initial Huffman IADT in JBIG2 Text Region",
+						seg_header_start);
+				}
+				int32_t stript = -dt_init * static_cast<int32_t>(sb_strips);
+				int32_t firsts = 0;
+				uint32_t n_instances = 0u;
+				while (n_instances < num_instances) {
+					int32_t dt = 0;
+					if (!br.decode_huff(kJbig2TableB11, dt, oob) || oob) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Invalid strip Huffman IADT in JBIG2 Text Region",
+							seg_header_start);
 					}
-					rbm.composite(ib, draw_x, draw_y, sb_comb_op);
-					if (!transposed && (ref_corner == 0u || ref_corner == 1u)) {
-						curs += w_i - 1;
-					} else if (transposed && (ref_corner == 1u || ref_corner == 3u)) {
-						curs += h_i - 1;
+					stript += dt * static_cast<int32_t>(sb_strips);
+					int32_t dfs = 0;
+					if (!br.decode_huff(kJbig2TableB6, dfs, oob) || oob) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Invalid Huffman IAFS in JBIG2 Text Region",
+							seg_header_start);
 					}
-					++n_instances;
-					if (n_instances >= num_instances) {
-						break;
+					firsts += dfs;
+					int32_t curs = firsts;
+					bool first_in_strip = true;
+					while (true) {
+						if (!first_in_strip) {
+							int32_t ids = 0;
+							if (!br.decode_huff(kJbig2TableB8, ids, oob)) {
+								return make_filter_error(
+									ErrorCode::DamagedFormat,
+									DiagnosticId::DamagedStream,
+									"Invalid Huffman IADS in JBIG2 Text Region",
+									seg_header_start);
+							}
+							if (oob) {
+								break;
+							}
+							curs += ids + sb_ds_offset;
+						}
+						first_in_strip = false;
+						uint32_t curt = 0u;
+						if (log_sb_strips > 0u) {
+							if (!br.read_bits(log_sb_strips, curt)) {
+								return make_filter_error(
+									ErrorCode::DamagedFormat,
+									DiagnosticId::DamagedStream,
+									"Truncated Huffman IAIT in JBIG2 Text Region",
+									seg_header_start);
+							}
+						}
+						const int32_t t_i = stript + static_cast<int32_t>(curt);
+						uint32_t id_i = 0u;
+						if (syms.size() > 1u) {
+							if (!br.read_bits(code_len, id_i)) {
+								return make_filter_error(
+									ErrorCode::DamagedFormat,
+									DiagnosticId::DamagedStream,
+									"Truncated symbol ID in Huffman JBIG2 Text Region",
+									seg_header_start);
+							}
+						}
+						if (id_i >= syms.size()) {
+							return make_filter_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedStream,
+								"Out-of-range symbol ID in Huffman JBIG2 Text Region",
+								seg_header_start);
+						}
+						const Jbig2Bitmap& ib = *syms[id_i];
+						const int32_t w_i = static_cast<int32_t>(ib.width);
+						const int32_t h_i = static_cast<int32_t>(ib.height);
+						if (!transposed && (ref_corner == 2u || ref_corner == 3u)) {
+							curs += w_i - 1;
+						} else if (transposed && (ref_corner == 0u || ref_corner == 2u)) {
+							curs += h_i - 1;
+						}
+						const int32_t s_i = curs;
+						int32_t draw_x = transposed ? t_i : s_i;
+						int32_t draw_y = transposed ? s_i : t_i;
+						if (!transposed) {
+							if (ref_corner == 0u || ref_corner == 2u) {
+								draw_y -= h_i - 1;
+							}
+							if (ref_corner == 2u || ref_corner == 3u) {
+								draw_x -= w_i - 1;
+							}
+						} else {
+							if (ref_corner == 0u || ref_corner == 2u) {
+								draw_y -= h_i - 1;
+							}
+							if (ref_corner == 1u || ref_corner == 3u) {
+								draw_x -= w_i - 1;
+							}
+						}
+						rbm.composite(ib, draw_x, draw_y, sb_comb_op);
+						if (!transposed && (ref_corner == 0u || ref_corner == 1u)) {
+							curs += w_i - 1;
+						} else if (transposed && (ref_corner == 1u || ref_corner == 3u)) {
+							curs += h_i - 1;
+						}
+						++n_instances;
+						if (n_instances >= num_instances) {
+							break;
+						}
 					}
 				}
 			}
 
 			if (seg_type == 4u) {
+				RECTO_PDF_RETURN_IF_ERROR(
+					state.account_bytes(rbm.data.size(), effective_limit, seg_header_start));
+				state.aux_regions[seg_num] = std::move(rbm);
+			} else {
+				if (!state.page_bitmap.has_value()) {
+					RECTO_PDF_TRY(
+						Jbig2Bitmap pbm,
+						Jbig2Bitmap::create(
+							reg_w,
+							reg_h,
+							0u,
+							state.remaining_limit(effective_limit)));
+					RECTO_PDF_RETURN_IF_ERROR(
+						state.account_bytes(pbm.data.size(), effective_limit, seg_header_start));
+					state.page_bitmap = std::move(pbm);
+				}
+				state.page_bitmap->composite(rbm, reg_x, reg_y, reg_comb_op);
+			}
+		} else if (seg_type == 40u || seg_type == 42u || seg_type == 43u) {
+			// Generic Refinement Region segment (ISO/IEC 14492 section 7.4.7, 18 bytes + optional 4 AT bytes).
+			if (seg_data.size() < 18u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"JBIG2 Generic Refinement Region segment is shorter than 18 bytes",
+					seg_header_start);
+			}
+			const uint32_t reg_w = read_u32_be(seg_data.data());
+			const uint32_t reg_h = read_u32_be(seg_data.data() + 4u);
+			const int32_t reg_x = read_i32_be(seg_data.data() + 8u);
+			const int32_t reg_y = read_i32_be(seg_data.data() + 12u);
+			const uint8_t reg_comb_op = static_cast<uint8_t>(seg_data[16u] & 0x07u);
+			const uint8_t gr_flags = seg_data[17u];
+			const uint8_t gr_template = static_cast<uint8_t>(gr_flags & 0x01u);
+			const bool tpgron = (gr_flags & 0x02u) != 0u;
+			const size_t grat_bytes = (gr_template == 0u) ? 4u : 0u;
+			if (18u + grat_bytes > seg_data.size()) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Truncated GRAT flags in JBIG2 Generic Refinement Region segment",
+					seg_header_start);
+			}
+			const std::span<const int8_t> grat_span(
+				reinterpret_cast<const int8_t*>(seg_data.data() + 18u),
+				grat_bytes);
+
+			const Jbig2Bitmap* ref_bm_ptr = nullptr;
+			if (!ref_segments.empty()) {
+				const auto it = state.aux_regions.find(ref_segments[0]);
+				if (it == state.aux_regions.end()) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Referenced intermediate region not found for JBIG2 Generic Refinement Region",
+						seg_header_start);
+				}
+				ref_bm_ptr = &it->second;
+			} else if (state.page_bitmap.has_value()) {
+				ref_bm_ptr = &(*state.page_bitmap);
+			} else {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Missing reference bitmap for JBIG2 Generic Refinement Region",
+					seg_header_start);
+			}
+
+			RECTO_PDF_TRY(
+				Jbig2Bitmap rbm,
+				decode_jbig2_refinement_region(
+					reg_w,
+					reg_h,
+					gr_template,
+					tpgron,
+					*ref_bm_ptr,
+					0,
+					0,
+					grat_span,
+					seg_data.subspan(18u + grat_bytes),
+					state.remaining_limit(effective_limit)));
+
+			if (seg_type == 40u) {
 				RECTO_PDF_RETURN_IF_ERROR(
 					state.account_bytes(rbm.data.size(), effective_limit, seg_header_start));
 				state.aux_regions[seg_num] = std::move(rbm);
@@ -4216,6 +5020,16 @@ PdfResult<WicDecodedImage> decode_dct_image(
 		result.width = w;
 		result.height = h;
 		const size_t pixel_count = static_cast<size_t>(w64 * h64);
+		const uint64_t comp_bytes = (IsEqualGUID(pixel_format, GUID_WICPixelFormat32bppCMYK) || hdr.components == 4u)
+			? 4ULL
+			: ((IsEqualGUID(pixel_format, GUID_WICPixelFormat8bppGray) || hdr.components == 1u) ? 1ULL : 3ULL);
+		const uint64_t total_wic_bytes = w64 * h64 * (comp_bytes + 8ULL);
+		if (total_wic_bytes > effective_limit) {
+			return make_filter_error(
+				ErrorCode::DecompressionLimitExceeded,
+				DiagnosticId::DecompressionLimitExceeded,
+				"DCTDecode cumulative decoded image buffers exceed ceiling");
+		}
 
 		if (IsEqualGUID(pixel_format, GUID_WICPixelFormat32bppCMYK) || hdr.components == 4u) {
 			result.components = 4u;
@@ -4238,7 +5052,6 @@ PdfResult<WicDecodedImage> decode_dct_image(
 			// Adobe inverted CMYK JPEGs) if provided in `decode_parms`.
 			apply_pdf_decode_array(cmyk_buf, 4u, decode_parms);
 
-			result.pixels = cmyk_buf;
 			result.rgba_pixels.resize(pixel_count * 4u);
 			result.bgra_pixels.resize(pixel_count * 4u);
 			for (size_t p = 0; p < pixel_count; ++p) {
@@ -4263,6 +5076,7 @@ PdfResult<WicDecodedImage> decode_dct_image(
 				result.bgra_pixels[p * 4u + 2u] = r;
 				result.bgra_pixels[p * 4u + 3u] = 255u;
 			}
+			result.pixels = std::move(cmyk_buf);
 			return result;
 		}
 
@@ -4839,9 +5653,12 @@ void init_j2k_mq_contexts(std::array<MqContext, kJ2kNumContexts>& ctxs) noexcept
 		return 4u;
 	}
 	if (v_sum == 1u) {
-		return (d_sum >= 1u) ? 3u : 2u;
+		return 3u;
 	}
-	return (d_sum >= 1u) ? 1u : 0u;
+	if (d_sum >= 2u) {
+		return 2u;
+	}
+	return (d_sum == 1u) ? 1u : 0u;
 }
 
 // ITU-T T.800 Table D.3: Sign coding context and XOR bit.
@@ -5234,18 +6051,18 @@ void idwt_97_1d(std::span<const float> low, std::span<const float> high, std::sp
 	}
 }
 
-void idwt_97_2d(
+void idwt_97_2d_float(
 	uint32_t w,
 	uint32_t h,
 	uint32_t ll_w,
 	uint32_t ll_h,
-	const std::vector<int32_t>& ll,
-	const std::vector<int32_t>& hl,
-	const std::vector<int32_t>& lh,
-	const std::vector<int32_t>& hh,
-	std::vector<int32_t>& out)
+	const std::vector<float>& ll,
+	const std::vector<float>& hl,
+	const std::vector<float>& lh,
+	const std::vector<float>& hh,
+	std::vector<float>& out)
 {
-	out.assign(static_cast<size_t>(w) * h, 0);
+	out.assign(static_cast<size_t>(w) * h, 0.0f);
 	const uint32_t hl_w = w - ll_w;
 	const uint32_t lh_h = h - ll_h;
 
@@ -5256,10 +6073,10 @@ void idwt_97_2d(
 
 	for (uint32_t y = 0; y < ll_h; ++y) {
 		for (uint32_t x = 0; x < ll_w; ++x) {
-			low_buf[x] = static_cast<float>(ll[static_cast<size_t>(y) * ll_w + x]);
+			low_buf[x] = ll[static_cast<size_t>(y) * ll_w + x];
 		}
 		for (uint32_t x = 0; x < hl_w; ++x) {
-			high_buf[x] = static_cast<float>(hl[static_cast<size_t>(y) * hl_w + x]);
+			high_buf[x] = hl[static_cast<size_t>(y) * hl_w + x];
 		}
 		idwt_97_1d(
 			std::span<const float>(low_buf.data(), ll_w),
@@ -5268,10 +6085,10 @@ void idwt_97_2d(
 	}
 	for (uint32_t y = 0; y < lh_h; ++y) {
 		for (uint32_t x = 0; x < ll_w; ++x) {
-			low_buf[x] = static_cast<float>(lh[static_cast<size_t>(y) * ll_w + x]);
+			low_buf[x] = lh[static_cast<size_t>(y) * ll_w + x];
 		}
 		for (uint32_t x = 0; x < hl_w; ++x) {
-			high_buf[x] = static_cast<float>(hh[static_cast<size_t>(y) * hl_w + x]);
+			high_buf[x] = hh[static_cast<size_t>(y) * hl_w + x];
 		}
 		idwt_97_1d(
 			std::span<const float>(low_buf.data(), ll_w),
@@ -5290,7 +6107,7 @@ void idwt_97_2d(
 			std::span<const float>(high_buf.data(), lh_h),
 			std::span<float>(dst_buf.data(), h));
 		for (uint32_t y = 0; y < h; ++y) {
-			out[static_cast<size_t>(y) * w + x] = static_cast<int32_t>(std::lrintf(dst_buf[y]));
+			out[static_cast<size_t>(y) * w + x] = dst_buf[y];
 		}
 	}
 }
@@ -5326,8 +6143,9 @@ void idwt_97_2d(
 						if (SUCCEEDED(frame->GetSize(&w, &h)) && w > 0u && h > 0u) {
 							const uint64_t w64 = w;
 							const uint64_t h64 = h;
-							if (w64 > effective_limit / 4ULL ||
-								h64 > (effective_limit / 4ULL) / w64) {
+							const uint32_t out_ch = (hdr.components == 1u) ? 1u : 3u;
+							if (w64 > effective_limit / (out_ch + 8ULL) ||
+								h64 > (effective_limit / (out_ch + 8ULL)) / w64) {
 								return make_filter_error(
 									ErrorCode::DecompressionLimitExceeded,
 									DiagnosticId::DecompressionLimitExceeded,
@@ -5339,7 +6157,6 @@ void idwt_97_2d(
 								const GUID target_guid = (hdr.components == 1u)
 									? GUID_WICPixelFormat8bppGray
 									: GUID_WICPixelFormat24bppRGB;
-								const uint32_t out_ch = (hdr.components == 1u) ? 1u : 3u;
 								if (SUCCEEDED(converter->Initialize(
 										frame.Get(),
 										target_guid,
@@ -5388,6 +6205,31 @@ void idwt_97_2d(
 	// Native ISO/IEC 15444-1 (ITU-T T.800) Part 1 JPEG 2000 codestream decoder.
 	const std::span<const uint8_t> cs = hdr.codestream;
 	const uint16_t lsiz = read_u16_be(cs.data() + 4u);
+	const uint32_t xsiz = read_u32_be(cs.data() + 8u);
+	const uint32_t ysiz = read_u32_be(cs.data() + 12u);
+	const uint32_t xosiz = read_u32_be(cs.data() + 16u);
+	const uint32_t yosiz = read_u32_be(cs.data() + 20u);
+	const uint32_t xtsiz = read_u32_be(cs.data() + 24u);
+	const uint32_t ytsiz = read_u32_be(cs.data() + 28u);
+	const uint32_t xtosiz = read_u32_be(cs.data() + 32u);
+	const uint32_t ytosiz = read_u32_be(cs.data() + 36u);
+	if (xtsiz == 0u || ytsiz == 0u || xtosiz > xosiz || ytosiz > yosiz) {
+		return make_filter_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedStream,
+			"Invalid tile grid geometry in J2K SIZ marker segment");
+	}
+	const uint32_t num_tiles_x = (xsiz - xtosiz + xtsiz - 1u) / xtsiz;
+	const uint32_t num_tiles_y = (ysiz - ytosiz + ytsiz - 1u) / ytsiz;
+	if (num_tiles_x == 0u || num_tiles_y == 0u ||
+		static_cast<uint64_t>(num_tiles_x) * num_tiles_y > 4096ULL) {
+		return make_filter_error(
+			ErrorCode::DecompressionLimitExceeded,
+			DiagnosticId::DecompressionLimitExceeded,
+			"JPXDecode tile grid count exceeds ceiling");
+	}
+	const uint32_t total_tiles = num_tiles_x * num_tiles_y;
+
 	bool is_signed = false;
 	uint8_t bit_depth = hdr.bpc;
 	if (lsiz >= 39u && 4u + 38u < cs.size()) {
@@ -5416,7 +6258,9 @@ void idwt_97_2d(
 	uint8_t wavelet_type = 1u; // 1 = 5-3 reversible, 0 = 9-7 irreversible
 	uint8_t guard_bits = 2u;
 	std::vector<uint8_t> subband_exponents;
-	std::vector<uint8_t> tile_bitstream;
+	std::vector<uint16_t> subband_mantissas;
+	std::vector<std::vector<uint8_t>> tile_bitstreams(total_tiles);
+	size_t total_tile_stream_bytes = 0u;
 
 	while (pos + 2u <= cs.size()) {
 		if (cs[pos] != 0xFFu) {
@@ -5491,26 +6335,32 @@ void idwt_97_2d(
 			guard_bits = static_cast<uint8_t>((sqcd >> 5u) & 0x07u);
 			const uint8_t qstyle = sqcd & 0x1Fu;
 			subband_exponents.clear();
+			subband_mantissas.clear();
 			if (qstyle == 0u) { // Reversible no quantization (1 byte per subband)
 				for (size_t i = 3u; i < mlen; ++i) {
 					subband_exponents.push_back(static_cast<uint8_t>((cs[pos + i] >> 3u) & 0x1Fu));
+					subband_mantissas.push_back(0u);
 				}
 			} else if (qstyle == 1u && mlen >= 5u) { // Scalar derived
 				const uint16_t sp = read_u16_be(cs.data() + pos + 3u);
 				const uint8_t eps0 = static_cast<uint8_t>((sp >> 11u) & 0x1Fu);
+				const uint16_t mu0 = static_cast<uint16_t>(sp & 0x7FFu);
 				subband_exponents.push_back(eps0);
+				subband_mantissas.push_back(mu0);
 				for (uint8_t r = 1u; r <= 10u; ++r) {
 					const uint8_t er = (eps0 + r > num_decomp_levels)
 						? static_cast<uint8_t>(eps0 + r - 1u)
 						: eps0;
-					subband_exponents.push_back(er);
-					subband_exponents.push_back(er);
-					subband_exponents.push_back(er);
+					for (int b = 0; b < 3; ++b) {
+						subband_exponents.push_back(er);
+						subband_mantissas.push_back(mu0);
+					}
 				}
 			} else { // Scalar expounded (2 bytes per subband)
 				for (size_t i = 3u; i + 1u < mlen; i += 2u) {
 					const uint16_t sp = read_u16_be(cs.data() + pos + i);
 					subband_exponents.push_back(static_cast<uint8_t>((sp >> 11u) & 0x1Fu));
+					subband_mantissas.push_back(static_cast<uint16_t>(sp & 0x7FFu));
 				}
 			}
 			saw_qcd = true;
@@ -5522,9 +6372,18 @@ void idwt_97_2d(
 					"Invalid SOT marker length in JPXDecode codestream",
 					pos);
 			}
+			const uint16_t isot = read_u16_be(cs.data() + pos + 2u);
+			if (isot >= total_tiles) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"SOT tile index Isot exceeds tile grid in JPXDecode codestream",
+					pos);
+			}
 			const uint32_t psot = read_u32_be(cs.data() + pos + 4u);
 			const size_t sot_start = pos - 2u;
 			pos += mlen;
+			bool part_saw_sod = false;
 			while (pos + 2u <= cs.size()) {
 				if (cs[pos] != 0xFFu) {
 					return make_filter_error(
@@ -5538,6 +6397,7 @@ void idwt_97_2d(
 					pos += 2u;
 					saw_sot = true;
 					saw_sod = true;
+					part_saw_sod = true;
 					break;
 				}
 				pos += 2u;
@@ -5558,7 +6418,7 @@ void idwt_97_2d(
 				}
 				pos += tp_len;
 			}
-			if (!saw_sod) {
+			if (!part_saw_sod) {
 				return make_filter_error(
 					ErrorCode::DamagedFormat,
 					DiagnosticId::DamagedStream,
@@ -5595,13 +6455,15 @@ void idwt_97_2d(
 				part_span = cs.subspan(pos, data_end - pos);
 				pos = data_end;
 			}
-			if (tile_bitstream.size() + part_span.size() > effective_limit) {
+			if (total_tile_stream_bytes + part_span.size() > effective_limit) {
 				return make_filter_error(
 					ErrorCode::DecompressionLimitExceeded,
 					DiagnosticId::DecompressionLimitExceeded,
 					"JPXDecode tile bitstream exceeds ceiling");
 			}
-			tile_bitstream.insert(tile_bitstream.end(), part_span.begin(), part_span.end());
+			total_tile_stream_bytes += part_span.size();
+			auto& tbs = tile_bitstreams[isot];
+			tbs.insert(tbs.end(), part_span.begin(), part_span.end());
 			continue;
 		}
 		pos += mlen;
@@ -5617,21 +6479,34 @@ void idwt_97_2d(
 	const uint32_t img_w = hdr.width;
 	const uint32_t img_h = hdr.height;
 	const uint32_t num_comps = hdr.components;
-	const size_t total_samples = static_cast<size_t>(img_w) * img_h * num_comps;
-	if (total_samples > effective_limit) {
+	const size_t pixels = static_cast<size_t>(img_w) * img_h;
+	const size_t total_samples = pixels * num_comps;
+	const uint64_t total_wic_bytes = static_cast<uint64_t>(pixels) * (static_cast<uint64_t>(num_comps) + 8ULL);
+	if (total_wic_bytes > effective_limit) {
 		return make_filter_error(
 			ErrorCode::DecompressionLimitExceeded,
 			DiagnosticId::DecompressionLimitExceeded,
-			"JPXDecode decoded sample buffer exceeds ceiling");
+			"JPXDecode cumulative decoded image buffers exceed ceiling");
 	}
 
 	const uint32_t nom_cb_w = 1u << cb_exp_w;
 	const uint32_t nom_cb_h = 1u << cb_exp_h;
+	const int32_t dc_shift = is_signed ? 0 : (1 << (bit_depth - 1u));
+	const int32_t max_sample = (1 << bit_depth) - 1;
+
+	WicDecodedImage out_img{};
+	out_img.width = img_w;
+	out_img.height = img_h;
+	out_img.components = num_comps;
+	out_img.pixels.assign(total_samples, 0u);
 
 	struct SubbandState {
 		uint32_t w = 0u;
 		uint32_t h = 0u;
 		uint8_t band_type = 0u; // 0 = LL/LH, 1 = HL, 2 = HH
+		uint8_t gain = 0u;      // 0 = LL, 1 = HL/LH, 2 = HH
+		uint8_t eps = 8u;
+		uint16_t mu = 0u;
 		uint32_t mb_total = 8u;
 		uint32_t num_cb_x = 0u;
 		uint32_t num_cb_y = 0u;
@@ -5650,6 +6525,7 @@ void idwt_97_2d(
 		};
 		std::vector<CodeBlock> cbs;
 		std::vector<int32_t> coeffs;
+		std::vector<float> coeffs_f;
 	};
 
 	struct ResolutionState {
@@ -5661,359 +6537,431 @@ void idwt_97_2d(
 	struct ComponentState {
 		std::vector<ResolutionState> resolutions;
 		std::vector<int32_t> spatial;
+		std::vector<float> spatial_f;
 	};
 
-	// Compute resolution dimensions from top to bottom.
-	std::vector<std::pair<uint32_t, uint32_t>> res_dims(num_decomp_levels + 1u);
-	res_dims[num_decomp_levels] = {img_w, img_h};
-	for (int r = static_cast<int>(num_decomp_levels) - 1; r >= 0; --r) {
-		const auto [pw, ph] = res_dims[static_cast<size_t>(r + 1)];
-		res_dims[static_cast<size_t>(r)] = {(pw + 1u) >> 1u, (ph + 1u) >> 1u};
-	}
+	std::vector<int32_t> cb_coeffs;
+	for (uint32_t ty = 0; ty < num_tiles_y; ++ty) {
+		for (uint32_t tx = 0; tx < num_tiles_x; ++tx) {
+			const uint32_t tile_idx = ty * num_tiles_x + tx;
+			const std::vector<uint8_t>& tile_bitstream = tile_bitstreams[tile_idx];
+			const uint32_t tx0 = std::max(xtosiz + tx * xtsiz, xosiz);
+			const uint32_t ty0 = std::max(ytosiz + ty * ytsiz, yosiz);
+			const uint32_t tx1 = std::min(xtosiz + (tx + 1u) * xtsiz, xsiz);
+			const uint32_t ty1 = std::min(ytosiz + (ty + 1u) * ytsiz, ysiz);
+			if (tx1 <= tx0 || ty1 <= ty0 || tile_bitstream.empty()) {
+				continue;
+			}
+			const uint32_t tile_w = tx1 - tx0;
+			const uint32_t tile_h = ty1 - ty0;
 
-	std::vector<ComponentState> comps(num_comps);
-	for (uint32_t c = 0; c < num_comps; ++c) {
-		comps[c].resolutions.resize(num_decomp_levels + 1u);
-		size_t sb_global_idx = 0u;
-		for (uint8_t r = 0u; r <= num_decomp_levels; ++r) {
-			ResolutionState& rs = comps[c].resolutions[r];
-			rs.res_w = res_dims[r].first;
-			rs.res_h = res_dims[r].second;
-
-			auto init_subband = [&](uint32_t sb_w, uint32_t sb_h, uint8_t btype) -> PdfResult<void> {
-				SubbandState sb{};
-				sb.w = sb_w;
-				sb.h = sb_h;
-				sb.band_type = btype;
-				const uint8_t eps = (sb_global_idx < subband_exponents.size())
-					? subband_exponents[sb_global_idx]
-					: bit_depth;
-				++sb_global_idx;
-				sb.mb_total = ( eps + guard_bits > 1u )
-					? static_cast<uint32_t>(eps + guard_bits - 1u)
-					: static_cast<uint32_t>(bit_depth);
-				sb.num_cb_x = (sb_w == 0u) ? 0u : ((sb_w + nom_cb_w - 1u) / nom_cb_w);
-				sb.num_cb_y = (sb_h == 0u) ? 0u : ((sb_h + nom_cb_h - 1u) / nom_cb_h);
-				if (static_cast<uint64_t>(sb.num_cb_x) * sb.num_cb_y > 65536ULL) {
-					return make_filter_error(
-						ErrorCode::DecompressionLimitExceeded,
-						DiagnosticId::DecompressionLimitExceeded,
-						"JPXDecode subband code-block grid count exceeds ceiling");
+			// Compute resolution bounds (trx0, try0, trx1, try1) using ITU-T T.800 Annex B ceil_div.
+			auto ceil_div_pow2 = [](uint32_t v, uint32_t p) noexcept -> uint32_t {
+				if (p == 0u) {
+					return v;
 				}
-				if (sb.num_cb_x > 0u && sb.num_cb_y > 0u) {
-					sb.incl_tree.init(sb.num_cb_x, sb.num_cb_y);
-					sb.zbp_tree.init(sb.num_cb_x, sb.num_cb_y);
-					sb.cbs.resize(static_cast<size_t>(sb.num_cb_x) * sb.num_cb_y);
-					for (uint32_t cy = 0; cy < sb.num_cb_y; ++cy) {
-						for (uint32_t cx = 0; cx < sb.num_cb_x; ++cx) {
-							auto& cb = sb.cbs[static_cast<size_t>(cy) * sb.num_cb_x + cx];
-							cb.x0 = cx * nom_cb_w;
-							cb.y0 = cy * nom_cb_h;
-							cb.w = std::min(nom_cb_w, sb_w - cb.x0);
-							cb.h = std::min(nom_cb_h, sb_h - cb.y0);
+				const uint32_t add = (1u << p) - 1u;
+				return (v + add) >> p;
+			};
+			struct ResBounds {
+				uint32_t x0 = 0u;
+				uint32_t y0 = 0u;
+				uint32_t x1 = 0u;
+				uint32_t y1 = 0u;
+				uint32_t w = 0u;
+				uint32_t h = 0u;
+			};
+			std::vector<ResBounds> res_bounds(num_decomp_levels + 1u);
+			for (uint8_t r = 0u; r <= num_decomp_levels; ++r) {
+				const uint32_t shift = num_decomp_levels - r;
+				auto& rb = res_bounds[r];
+				rb.x0 = ceil_div_pow2(tx0, shift);
+				rb.y0 = ceil_div_pow2(ty0, shift);
+				rb.x1 = ceil_div_pow2(tx1, shift);
+				rb.y1 = ceil_div_pow2(ty1, shift);
+				rb.w = (rb.x1 > rb.x0) ? (rb.x1 - rb.x0) : 0u;
+				rb.h = (rb.y1 > rb.y0) ? (rb.y1 - rb.y0) : 0u;
+			}
+
+			std::vector<ComponentState> comps(num_comps);
+			for (uint32_t c = 0; c < num_comps; ++c) {
+				comps[c].resolutions.resize(num_decomp_levels + 1u);
+				size_t sb_global_idx = 0u;
+				for (uint8_t r = 0u; r <= num_decomp_levels; ++r) {
+					ResolutionState& rs = comps[c].resolutions[r];
+					rs.res_w = res_bounds[r].w;
+					rs.res_h = res_bounds[r].h;
+
+					auto init_subband = [&](uint32_t sb_w, uint32_t sb_h, uint8_t btype, uint8_t bgain) -> PdfResult<void> {
+						SubbandState sb{};
+						sb.w = sb_w;
+						sb.h = sb_h;
+						sb.band_type = btype;
+						sb.gain = bgain;
+						sb.eps = (sb_global_idx < subband_exponents.size())
+							? subband_exponents[sb_global_idx]
+							: bit_depth;
+						sb.mu = (sb_global_idx < subband_mantissas.size())
+							? subband_mantissas[sb_global_idx]
+							: 0u;
+						++sb_global_idx;
+						sb.mb_total = (sb.eps + guard_bits > 1u)
+							? static_cast<uint32_t>(sb.eps + guard_bits - 1u)
+							: static_cast<uint32_t>(bit_depth);
+						sb.num_cb_x = (sb_w == 0u) ? 0u : ((sb_w + nom_cb_w - 1u) / nom_cb_w);
+						sb.num_cb_y = (sb_h == 0u) ? 0u : ((sb_h + nom_cb_h - 1u) / nom_cb_h);
+						if (static_cast<uint64_t>(sb.num_cb_x) * sb.num_cb_y > 65536ULL) {
+							return make_filter_error(
+								ErrorCode::DecompressionLimitExceeded,
+								DiagnosticId::DecompressionLimitExceeded,
+								"JPXDecode subband code-block grid count exceeds ceiling");
 						}
+						if (sb.num_cb_x > 0u && sb.num_cb_y > 0u) {
+							sb.incl_tree.init(sb.num_cb_x, sb.num_cb_y);
+							sb.zbp_tree.init(sb.num_cb_x, sb.num_cb_y);
+							sb.cbs.resize(static_cast<size_t>(sb.num_cb_x) * sb.num_cb_y);
+							for (uint32_t cy = 0; cy < sb.num_cb_y; ++cy) {
+								for (uint32_t cx = 0; cx < sb.num_cb_x; ++cx) {
+									auto& cb = sb.cbs[static_cast<size_t>(cy) * sb.num_cb_x + cx];
+									cb.x0 = cx * nom_cb_w;
+									cb.y0 = cy * nom_cb_h;
+									cb.w = std::min(nom_cb_w, sb_w - cb.x0);
+									cb.h = std::min(nom_cb_h, sb_h - cb.y0);
+								}
+							}
+						}
+						rs.subbands.push_back(std::move(sb));
+						return {};
+					};
+
+					if (r == 0u) {
+						RECTO_PDF_RETURN_IF_ERROR(init_subband(rs.res_w, rs.res_h, 0u, 0u)); // LL0
+					} else {
+						const uint32_t ll_w = res_bounds[r - 1u].w;
+						const uint32_t ll_h = res_bounds[r - 1u].h;
+						const uint32_t hl_w = rs.res_w - ll_w;
+						const uint32_t lh_h = rs.res_h - ll_h;
+						RECTO_PDF_RETURN_IF_ERROR(init_subband(hl_w, ll_h, 1u, 1u)); // HL_r
+						RECTO_PDF_RETURN_IF_ERROR(init_subband(ll_w, lh_h, 0u, 1u)); // LH_r
+						RECTO_PDF_RETURN_IF_ERROR(init_subband(hl_w, lh_h, 2u, 2u)); // HH_r
 					}
 				}
-				rs.subbands.push_back(std::move(sb));
-				return {};
-			};
-
-			if (r == 0u) {
-				RECTO_PDF_RETURN_IF_ERROR(init_subband(rs.res_w, rs.res_h, 0u)); // LL0
-			} else {
-				const uint32_t ll_w = res_dims[r - 1u].first;
-				const uint32_t ll_h = res_dims[r - 1u].second;
-				const uint32_t hl_w = rs.res_w - ll_w;
-				const uint32_t lh_h = rs.res_h - ll_h;
-				RECTO_PDF_RETURN_IF_ERROR(init_subband(hl_w, ll_h, 1u)); // HL_r
-				RECTO_PDF_RETURN_IF_ERROR(init_subband(ll_w, lh_h, 0u)); // LH_r
-				RECTO_PDF_RETURN_IF_ERROR(init_subband(hl_w, lh_h, 2u)); // HH_r
 			}
-		}
-	}
 
-	// Tier-2 packet decoding helper for one (layer, resolution, component) packet.
-	size_t stream_pos = 0u;
-	auto decode_packet = [&](uint16_t layer, uint8_t r, uint32_t c) -> PdfResult<void> {
-		if (stream_pos >= tile_bitstream.size()) {
-			return make_filter_error(
-				ErrorCode::DamagedFormat,
-				DiagnosticId::DamagedStream,
-				"Truncated Tier-2 packet header in JPXDecode tile bitstream");
-		}
-		std::span<const uint8_t> rem =
-			std::span<const uint8_t>(tile_bitstream).subspan(stream_pos);
-		J2kPacketBitReader br(rem);
+			size_t stream_pos = 0u;
+			auto decode_packet = [&](uint16_t layer, uint8_t r, uint32_t c) -> PdfResult<void> {
+				if (stream_pos >= tile_bitstream.size()) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Truncated Tier-2 packet header in JPXDecode tile bitstream");
+				}
+				std::span<const uint8_t> rem =
+					std::span<const uint8_t>(tile_bitstream).subspan(stream_pos);
+				J2kPacketBitReader br(rem);
 
-		uint32_t non_empty = 0u;
-		if (!br.read_bit(non_empty)) {
-			return make_filter_error(
-				ErrorCode::DamagedFormat,
-				DiagnosticId::DamagedStream,
-				"Failed to read zero-length packet bit in JPXDecode packet header");
-		}
-		ResolutionState& rs = comps[c].resolutions[r];
-		struct PendingBody {
-			SubbandState::CodeBlock* cb = nullptr;
-			uint32_t len = 0u;
-		};
-		std::vector<PendingBody> pending;
+				uint32_t non_empty = 0u;
+				if (!br.read_bit(non_empty)) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Failed to read zero-length packet bit in JPXDecode packet header");
+				}
+				ResolutionState& rs = comps[c].resolutions[r];
+				struct PendingBody {
+					SubbandState::CodeBlock* cb = nullptr;
+					uint32_t len = 0u;
+				};
+				std::vector<PendingBody> pending;
 
-		if (non_empty != 0u) {
-			for (SubbandState& sb : rs.subbands) {
-				for (uint32_t cy = 0; cy < sb.num_cb_y; ++cy) {
-					for (uint32_t cx = 0; cx < sb.num_cb_x; ++cx) {
-						auto& cb = sb.cbs[static_cast<size_t>(cy) * sb.num_cb_x + cx];
-						bool included = false;
-						if (!cb.included_once) {
-							int32_t incl_layer = 0;
-							if (!sb.incl_tree.decode(
-									br,
-									cx,
-									cy,
-									static_cast<int32_t>(layer) + 1,
-									incl_layer)) {
-								return make_filter_error(
-									ErrorCode::DamagedFormat,
-									DiagnosticId::DamagedStream,
-									"Truncated inclusion tag-tree in JPXDecode packet header");
-							}
-							included = (incl_layer <= static_cast<int32_t>(layer));
-							if (included) {
-								int32_t zbp = 0;
-								if (!sb.zbp_tree.decode(
-										br,
-										cx,
-										cy,
-										std::numeric_limits<int32_t>::max(),
-										zbp)) {
+				if (non_empty != 0u) {
+					for (SubbandState& sb : rs.subbands) {
+						for (uint32_t cy = 0; cy < sb.num_cb_y; ++cy) {
+							for (uint32_t cx = 0; cx < sb.num_cb_x; ++cx) {
+								auto& cb = sb.cbs[static_cast<size_t>(cy) * sb.num_cb_x + cx];
+								bool included = false;
+								if (!cb.included_once) {
+									int32_t incl_layer = 0;
+									if (!sb.incl_tree.decode(
+											br,
+											cx,
+											cy,
+											static_cast<int32_t>(layer) + 1,
+											incl_layer)) {
+										return make_filter_error(
+											ErrorCode::DamagedFormat,
+											DiagnosticId::DamagedStream,
+											"Truncated inclusion tag-tree in JPXDecode packet header");
+									}
+									included = (incl_layer <= static_cast<int32_t>(layer));
+									if (included) {
+										int32_t zbp = 0;
+										if (!sb.zbp_tree.decode(
+												br,
+												cx,
+												cy,
+												std::numeric_limits<int32_t>::max(),
+												zbp)) {
+											return make_filter_error(
+												ErrorCode::DamagedFormat,
+												DiagnosticId::DamagedStream,
+												"Truncated zero-bitplane tag-tree in JPXDecode packet header");
+										}
+										cb.zero_bitplanes = static_cast<uint32_t>(std::max(0, zbp));
+										cb.included_once = true;
+									}
+								} else {
+									uint32_t inc_bit = 0u;
+									if (!br.read_bit(inc_bit)) {
+										return make_filter_error(
+											ErrorCode::DamagedFormat,
+											DiagnosticId::DamagedStream,
+											"Truncated code-block inclusion bit in JPXDecode packet header");
+									}
+									included = (inc_bit != 0u);
+								}
+								if (!included) {
+									continue;
+								}
+								uint32_t new_passes = 0u;
+								if (!decode_j2k_num_passes(br, new_passes)) {
 									return make_filter_error(
 										ErrorCode::DamagedFormat,
 										DiagnosticId::DamagedStream,
-										"Truncated zero-bitplane tag-tree in JPXDecode packet header");
+										"Truncated coding passes count in JPXDecode packet header");
 								}
-								cb.zero_bitplanes = static_cast<uint32_t>(std::max(0, zbp));
-								cb.included_once = true;
+								while (true) {
+									uint32_t comma_bit = 0u;
+									if (!br.read_bit(comma_bit)) {
+										return make_filter_error(
+											ErrorCode::DamagedFormat,
+											DiagnosticId::DamagedStream,
+											"Truncated Lblock comma code in JPXDecode packet header");
+									}
+									if (comma_bit == 0u) {
+										break;
+									}
+									++cb.lblock;
+									if (cb.lblock > 32u) {
+										return make_filter_error(
+											ErrorCode::DamagedFormat,
+											DiagnosticId::DamagedStream,
+											"Excessive Lblock indicator in JPXDecode packet header");
+									}
+								}
+								const uint32_t pass_log2 =
+									(new_passes <= 1u) ? 0u : static_cast<uint32_t>(std::bit_width(new_passes) - 1u);
+								const uint32_t len_bits = cb.lblock + pass_log2;
+								if (len_bits > 31u) {
+									return make_filter_error(
+										ErrorCode::DamagedFormat,
+										DiagnosticId::DamagedStream,
+										"Code-block length field bit count exceeds 31 bits in JPXDecode");
+								}
+								uint32_t seg_len = 0u;
+								if (!br.read_bits(len_bits, seg_len)) {
+									return make_filter_error(
+										ErrorCode::DamagedFormat,
+										DiagnosticId::DamagedStream,
+										"Truncated code-block data length in JPXDecode packet header");
+								}
+								if (cb.total_passes + new_passes > 1024u) {
+									return make_filter_error(
+										ErrorCode::DamagedFormat,
+										DiagnosticId::DamagedStream,
+										"Excessive coding pass count in JPXDecode code-block");
+								}
+								cb.total_passes += new_passes;
+								pending.push_back({&cb, seg_len});
 							}
+						}
+					}
+				}
+
+				if (!br.align_to_byte()) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Truncated stuffed byte at end of JPXDecode packet header");
+				}
+				stream_pos += br.bytes_consumed();
+
+				for (const PendingBody& item : pending) {
+					if (item.len > tile_bitstream.size() - stream_pos) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Code-block body segment exceeds JPXDecode tile bitstream bounds");
+					}
+					item.cb->compressed.insert(
+						item.cb->compressed.end(),
+						tile_bitstream.begin() + static_cast<std::ptrdiff_t>(stream_pos),
+						tile_bitstream.begin() + static_cast<std::ptrdiff_t>(stream_pos + item.len));
+					stream_pos += item.len;
+				}
+				return {};
+			};
+
+			if (prog_order == 0u) { // LRCP
+				for (uint16_t l = 0; l < num_layers; ++l) {
+					for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
+						for (uint32_t c = 0; c < num_comps; ++c) {
+							RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c));
+						}
+					}
+				}
+			} else { // RLCP / RPCL / PCRL / CPRL single-precinct order
+				for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
+					for (uint16_t l = 0; l < num_layers; ++l) {
+						for (uint32_t c = 0; c < num_comps; ++c) {
+							RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c));
+						}
+					}
+				}
+			}
+
+			// Tier-1 EBCOT decoding & 2D inverse DWT reconstruction for each component.
+			for (uint32_t c = 0; c < num_comps; ++c) {
+				for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
+					for (SubbandState& sb : comps[c].resolutions[r].subbands) {
+						if (wavelet_type == 1u) {
+							sb.coeffs.assign(static_cast<size_t>(sb.w) * sb.h, 0);
 						} else {
-							uint32_t inc_bit = 0u;
-							if (!br.read_bit(inc_bit)) {
-								return make_filter_error(
-									ErrorCode::DamagedFormat,
-									DiagnosticId::DamagedStream,
-									"Truncated code-block inclusion bit in JPXDecode packet header");
-							}
-							included = (inc_bit != 0u);
+							sb.coeffs_f.assign(static_cast<size_t>(sb.w) * sb.h, 0.0f);
 						}
-						if (!included) {
-							continue;
-						}
-						uint32_t new_passes = 0u;
-						if (!decode_j2k_num_passes(br, new_passes)) {
-							return make_filter_error(
-								ErrorCode::DamagedFormat,
-								DiagnosticId::DamagedStream,
-								"Truncated coding passes count in JPXDecode packet header");
-						}
-						while (true) {
-							uint32_t comma_bit = 0u;
-							if (!br.read_bit(comma_bit)) {
-								return make_filter_error(
-									ErrorCode::DamagedFormat,
-									DiagnosticId::DamagedStream,
-									"Truncated Lblock comma code in JPXDecode packet header");
+						const int32_t rb = static_cast<int32_t>(bit_depth) + static_cast<int32_t>(sb.gain);
+						const float delta_b = std::ldexp(
+							1.0f + static_cast<float>(sb.mu) / 2048.0f,
+							rb - static_cast<int32_t>(sb.eps));
+						for (const auto& cb : sb.cbs) {
+							if (!cb.included_once || cb.total_passes == 0u || cb.compressed.empty()) {
+								continue;
 							}
-							if (comma_bit == 0u) {
-								break;
-							}
-							++cb.lblock;
-							if (cb.lblock > 32u) {
-								return make_filter_error(
-									ErrorCode::DamagedFormat,
-									DiagnosticId::DamagedStream,
-									"Excessive Lblock indicator in JPXDecode packet header");
+							decode_j2k_codeblock(
+								cb.compressed,
+								cb.w,
+								cb.h,
+								cb.total_passes,
+								cb.zero_bitplanes,
+								sb.mb_total,
+								sb.band_type,
+								cb_style,
+								cb_coeffs);
+							for (uint32_t y = 0; y < cb.h; ++y) {
+								for (uint32_t x = 0; x < cb.w; ++x) {
+									const int32_t q = cb_coeffs[static_cast<size_t>(y) * cb.w + x];
+									const size_t dst_idx = static_cast<size_t>(cb.y0 + y) * sb.w + (cb.x0 + x);
+									if (wavelet_type == 1u) {
+										sb.coeffs[dst_idx] = q;
+									} else {
+										sb.coeffs_f[dst_idx] = static_cast<float>(q) * delta_b;
+									}
+								}
 							}
 						}
-						const uint32_t pass_log2 =
-							(new_passes <= 1u) ? 0u : static_cast<uint32_t>(std::bit_width(new_passes) - 1u);
-						const uint32_t len_bits = cb.lblock + pass_log2;
-						if (len_bits > 31u) {
-							return make_filter_error(
-								ErrorCode::DamagedFormat,
-								DiagnosticId::DamagedStream,
-								"Code-block length field bit count exceeds 31 bits in JPXDecode");
-						}
-						uint32_t seg_len = 0u;
-						if (!br.read_bits(len_bits, seg_len)) {
-							return make_filter_error(
-								ErrorCode::DamagedFormat,
-								DiagnosticId::DamagedStream,
-								"Truncated code-block data length in JPXDecode packet header");
-						}
-						if (cb.total_passes + new_passes > 1024u) {
-							return make_filter_error(
-								ErrorCode::DamagedFormat,
-								DiagnosticId::DamagedStream,
-								"Excessive coding pass count in JPXDecode code-block");
-						}
-						cb.total_passes += new_passes;
-						pending.push_back({&cb, seg_len});
 					}
 				}
+
+				if (wavelet_type == 1u) {
+					std::vector<int32_t> cur_ll = std::move(comps[c].resolutions[0].subbands[0].coeffs);
+					for (uint8_t r = 1u; r <= num_decomp_levels; ++r) {
+						const ResolutionState& rs = comps[c].resolutions[r];
+						const uint32_t ll_w = comps[c].resolutions[r - 1u].res_w;
+						const uint32_t ll_h = comps[c].resolutions[r - 1u].res_h;
+						std::vector<int32_t> next_ll;
+						idwt_53_2d(
+							rs.res_w,
+							rs.res_h,
+							ll_w,
+							ll_h,
+							cur_ll,
+							rs.subbands[0].coeffs,
+							rs.subbands[1].coeffs,
+							rs.subbands[2].coeffs,
+							next_ll);
+						cur_ll = std::move(next_ll);
+					}
+					comps[c].spatial = std::move(cur_ll);
+				} else {
+					std::vector<float> cur_ll = std::move(comps[c].resolutions[0].subbands[0].coeffs_f);
+					for (uint8_t r = 1u; r <= num_decomp_levels; ++r) {
+						const ResolutionState& rs = comps[c].resolutions[r];
+						const uint32_t ll_w = comps[c].resolutions[r - 1u].res_w;
+						const uint32_t ll_h = comps[c].resolutions[r - 1u].res_h;
+						std::vector<float> next_ll;
+						idwt_97_2d_float(
+							rs.res_w,
+							rs.res_h,
+							ll_w,
+							ll_h,
+							cur_ll,
+							rs.subbands[0].coeffs_f,
+							rs.subbands[1].coeffs_f,
+							rs.subbands[2].coeffs_f,
+							next_ll);
+						cur_ll = std::move(next_ll);
+					}
+					comps[c].spatial_f = std::move(cur_ll);
+				}
 			}
-		}
 
-		if (!br.align_to_byte()) {
-			return make_filter_error(
-				ErrorCode::DamagedFormat,
-				DiagnosticId::DamagedStream,
-				"Truncated stuffed byte at end of JPXDecode packet header");
-		}
-		stream_pos += br.bytes_consumed();
-
-		for (const PendingBody& item : pending) {
-			if (item.len > tile_bitstream.size() - stream_pos) {
-				return make_filter_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedStream,
-					"Code-block body segment exceeds JPXDecode tile bitstream bounds");
-			}
-			item.cb->compressed.insert(
-				item.cb->compressed.end(),
-				tile_bitstream.begin() + static_cast<std::ptrdiff_t>(stream_pos),
-				tile_bitstream.begin() + static_cast<std::ptrdiff_t>(stream_pos + item.len));
-			stream_pos += item.len;
-		}
-		return {};
-	};
-
-	if (prog_order == 0u) { // LRCP
-		for (uint16_t l = 0; l < num_layers; ++l) {
-			for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
+			const size_t tile_pixels = static_cast<size_t>(tile_w) * tile_h;
+			if (wavelet_type != 1u) {
 				for (uint32_t c = 0; c < num_comps; ++c) {
-					RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c));
+					comps[c].spatial.resize(tile_pixels);
 				}
-			}
-		}
-	} else { // RLCP / RPCL / PCRL / CPRL single-precinct order
-		for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
-			for (uint16_t l = 0; l < num_layers; ++l) {
-				for (uint32_t c = 0; c < num_comps; ++c) {
-					RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c));
-				}
-			}
-		}
-	}
-
-	// Tier-1 EBCOT decoding & 2D inverse DWT reconstruction for each component.
-	std::vector<int32_t> cb_coeffs;
-	for (uint32_t c = 0; c < num_comps; ++c) {
-		for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
-			for (SubbandState& sb : comps[c].resolutions[r].subbands) {
-				sb.coeffs.assign(static_cast<size_t>(sb.w) * sb.h, 0);
-				for (const auto& cb : sb.cbs) {
-					if (!cb.included_once || cb.total_passes == 0u || cb.compressed.empty()) {
-						continue;
+				if (mct_enabled && num_comps >= 3u) {
+					// Inverse Irreversible Color Transform (ICT, ITU-T T.800 Annex G.3).
+					for (size_t i = 0; i < tile_pixels; ++i) {
+						const float y0 = comps[0].spatial_f[i];
+						const float cb = comps[1].spatial_f[i];
+						const float cr = comps[2].spatial_f[i];
+						comps[0].spatial[i] = static_cast<int32_t>(std::lrintf(y0 + 1.402f * cr));
+						comps[1].spatial[i] = static_cast<int32_t>(std::lrintf(y0 - 0.34413f * cb - 0.71414f * cr));
+						comps[2].spatial[i] = static_cast<int32_t>(std::lrintf(y0 + 1.772f * cb));
+						for (uint32_t c = 3u; c < num_comps; ++c) {
+							comps[c].spatial[i] = static_cast<int32_t>(std::lrintf(comps[c].spatial_f[i]));
+						}
 					}
-					decode_j2k_codeblock(
-						cb.compressed,
-						cb.w,
-						cb.h,
-						cb.total_passes,
-						cb.zero_bitplanes,
-						sb.mb_total,
-						sb.band_type,
-						cb_style,
-						cb_coeffs);
-					for (uint32_t y = 0; y < cb.h; ++y) {
-						for (uint32_t x = 0; x < cb.w; ++x) {
-							sb.coeffs[static_cast<size_t>(cb.y0 + y) * sb.w + (cb.x0 + x)] =
-								cb_coeffs[static_cast<size_t>(y) * cb.w + x];
+				} else {
+					for (uint32_t c = 0; c < num_comps; ++c) {
+						for (size_t i = 0; i < tile_pixels; ++i) {
+							comps[c].spatial[i] = static_cast<int32_t>(std::lrintf(comps[c].spatial_f[i]));
 						}
 					}
 				}
+			} else if (mct_enabled && num_comps >= 3u) {
+				// Inverse Reversible Color Transform (RCT, ITU-T T.800 Annex G.2).
+				for (size_t i = 0; i < tile_pixels; ++i) {
+					const int32_t y0 = comps[0].spatial[i];
+					const int32_t u0 = comps[1].spatial[i];
+					const int32_t v0 = comps[2].spatial[i];
+					const int32_t g = y0 - ((u0 + v0) >> 2);
+					const int32_t r = v0 + g;
+					const int32_t b = u0 + g;
+					comps[0].spatial[i] = r;
+					comps[1].spatial[i] = g;
+					comps[2].spatial[i] = b;
+				}
 			}
-		}
 
-		std::vector<int32_t> cur_ll = std::move(comps[c].resolutions[0].subbands[0].coeffs);
-		for (uint8_t r = 1u; r <= num_decomp_levels; ++r) {
-			const ResolutionState& rs = comps[c].resolutions[r];
-			const uint32_t ll_w = comps[c].resolutions[r - 1u].res_w;
-			const uint32_t ll_h = comps[c].resolutions[r - 1u].res_h;
-			std::vector<int32_t> next_ll;
-			if (wavelet_type == 1u) {
-				idwt_53_2d(
-					rs.res_w,
-					rs.res_h,
-					ll_w,
-					ll_h,
-					cur_ll,
-					rs.subbands[0].coeffs,
-					rs.subbands[1].coeffs,
-					rs.subbands[2].coeffs,
-					next_ll);
-			} else {
-				idwt_97_2d(
-					rs.res_w,
-					rs.res_h,
-					ll_w,
-					ll_h,
-					cur_ll,
-					rs.subbands[0].coeffs,
-					rs.subbands[1].coeffs,
-					rs.subbands[2].coeffs,
-					next_ll);
+			const uint32_t dst_x0 = tx0 - xosiz;
+			const uint32_t dst_y0 = ty0 - yosiz;
+			for (uint32_t y = 0; y < tile_h; ++y) {
+				for (uint32_t x = 0; x < tile_w; ++x) {
+					const size_t t_idx = static_cast<size_t>(y) * tile_w + x;
+					const size_t img_idx = static_cast<size_t>(dst_y0 + y) * img_w + (dst_x0 + x);
+					for (uint32_t c = 0; c < num_comps; ++c) {
+						int32_t val = std::clamp(comps[c].spatial[t_idx] + dc_shift, 0, max_sample);
+						if (bit_depth > 8u) {
+							val >>= (bit_depth - 8u);
+						} else if (bit_depth < 8u) {
+							val = (val * 255) / max_sample;
+						}
+						out_img.pixels[img_idx * num_comps + c] = static_cast<uint8_t>(std::clamp(val, 0, 255));
+					}
+				}
 			}
-			cur_ll = std::move(next_ll);
-		}
-		comps[c].spatial = std::move(cur_ll);
-	}
-
-	const size_t pixels = static_cast<size_t>(img_w) * img_h;
-	if (mct_enabled && num_comps >= 3u) {
-		if (wavelet_type == 1u) {
-			// Inverse Reversible Color Transform (RCT, ITU-T T.800 Annex G.2).
-			for (size_t i = 0; i < pixels; ++i) {
-				const int32_t y0 = comps[0].spatial[i];
-				const int32_t u0 = comps[1].spatial[i];
-				const int32_t v0 = comps[2].spatial[i];
-				const int32_t g = y0 - ((u0 + v0) >> 2);
-				const int32_t r = v0 + g;
-				const int32_t b = u0 + g;
-				comps[0].spatial[i] = r;
-				comps[1].spatial[i] = g;
-				comps[2].spatial[i] = b;
-			}
-		} else {
-			// Inverse Irreversible Color Transform (ICT, ITU-T T.800 Annex G.3).
-			for (size_t i = 0; i < pixels; ++i) {
-				const float y0 = static_cast<float>(comps[0].spatial[i]);
-				const float cb = static_cast<float>(comps[1].spatial[i]);
-				const float cr = static_cast<float>(comps[2].spatial[i]);
-				comps[0].spatial[i] = static_cast<int32_t>(std::lrintf(y0 + 1.402f * cr));
-				comps[1].spatial[i] = static_cast<int32_t>(std::lrintf(y0 - 0.34413f * cb - 0.71414f * cr));
-				comps[2].spatial[i] = static_cast<int32_t>(std::lrintf(y0 + 1.772f * cb));
-			}
-		}
-	}
-
-	const int32_t dc_shift = is_signed ? 0 : (1 << (bit_depth - 1u));
-	const int32_t max_sample = (1 << bit_depth) - 1;
-	WicDecodedImage out_img{};
-	out_img.width = img_w;
-	out_img.height = img_h;
-	out_img.components = num_comps;
-	out_img.pixels.resize(total_samples);
-
-	for (size_t i = 0; i < pixels; ++i) {
-		for (uint32_t c = 0; c < num_comps; ++c) {
-			int32_t val = std::clamp(comps[c].spatial[i] + dc_shift, 0, max_sample);
-			if (bit_depth > 8u) {
-				val >>= (bit_depth - 8u);
-			} else if (bit_depth < 8u) {
-				val = (val * 255) / max_sample;
-			}
-			out_img.pixels[i * num_comps + c] = static_cast<uint8_t>(std::clamp(val, 0, 255));
 		}
 	}
 

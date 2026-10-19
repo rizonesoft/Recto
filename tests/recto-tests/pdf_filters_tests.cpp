@@ -1044,7 +1044,7 @@ public:
 		}
 	}
 
-	[[nodiscard]] std::vector<uint8_t> finish()
+	[[nodiscard]] std::vector<uint8_t> finish(bool invert_bytes = true)
 	{
 		add_to_bitstream(a_ >> 1u, total_shifts_);
 		const size_t min_bits = total_shifts_ + 32u;
@@ -1061,9 +1061,12 @@ public:
 				const uint8_t b = (bit_idx < bits_.size()) ? bits_[bit_idx++] : 0u;
 				u_byte = static_cast<uint8_t>((u_byte << 1u) | (b & 1u));
 			}
-			const uint8_t raw_byte = prev_ff
-				? static_cast<uint8_t>((u_byte ^ 0x7Fu) & 0x7Fu)
-				: static_cast<uint8_t>(u_byte ^ 0xFFu);
+			uint8_t raw_byte = u_byte;
+			if (invert_bytes) {
+				raw_byte = prev_ff
+					? static_cast<uint8_t>((u_byte ^ 0x7Fu) & 0x7Fu)
+					: static_cast<uint8_t>(u_byte ^ 0xFFu);
+			}
 			out.push_back(raw_byte);
 			prev_ff = (raw_byte == 0xFFu);
 		}
@@ -1532,6 +1535,106 @@ TEST(PdfFilters, Jbig2Decode)
 		short_indet_gr.push_back(0x00u);
 		append_u32_be(short_indet_gr, 2u);
 		RECTO_EXPECT_ERR(decode_jbig2(short_indet_gr), ErrorCode::DamagedFormat);
+	}
+
+	// 5. Immediate Generic Refinement Region (seg_type = 42, template 1 + TPGRON) and
+	// Huffman-coded Symbol Dictionary (sd_huff = 1) + Huffman-coded Text Region (sb_huff = 1).
+	{
+		// (a) Immediate Generic Refinement Region (seg_type = 42, template 1, TPGRON = 0)
+		// refining an 8x2 page bitmap (initially row 0 = 0x0F in PDF, row 1 = 0xFF in PDF):
+		// With an all-0xFF arithmetic stream (MPS = 0), every refined pixel is 0 (white -> 0xFF in PDF),
+		// proving that segment 42 decodes via decode_jbig2_refinement_region and replaces the page region.
+		std::vector<uint8_t> grr_stream;
+		append_jbig2_segment(grr_stream, 0u, 48u, {}, 1u, make_jbig2_page_info_payload(8u, 2u, 0u));
+
+		// Segment 1: Immediate Generic Region (MMR) setting row 0 = 4 black, 4 white in JBIG2 (0x0F in PDF), row 1 = 8 white (0xFF in PDF).
+		const auto mmr_8x2 = pack_bitstring(
+			std::string("001") + "00110101" + "011" + "1011" + // Row 0: 0W, 4B, 4W
+			"0001" + "1" +                                     // Row 1: Pass + V0 -> 8W
+			"000000000001000000000001");
+		std::vector<uint8_t> gr_payload;
+		append_u32_be(gr_payload, 8u);
+		append_u32_be(gr_payload, 2u);
+		append_u32_be(gr_payload, 0u);
+		append_u32_be(gr_payload, 0u);
+		gr_payload.push_back(4u); // REPLACE
+		gr_payload.push_back(0x01u); // MMR = 1
+		gr_payload.insert(gr_payload.end(), mmr_8x2.begin(), mmr_8x2.end());
+		append_jbig2_segment(grr_stream, 1u, 38u, {}, 1u, gr_payload);
+
+		// Segment 2: Immediate Generic Refinement Region (seg_type = 42, referring to page bitmap, template 1, TPGRON = 0)
+		// Refine the 8x2 page bitmap (initially {0x0F, 0xFF} in PDF) with {0xFF, 0xFF} MQ termination marker:
+		// Under ISO/IEC 14492 Table E.1, state 0 has Qe = 0x5601 so the 2nd decode in the same context triggers
+		// a conditional MPS/LPS exchange when C = 0, deterministically refining {0x0F, 0xFF} -> {0x16, 0x57}.
+		std::vector<uint8_t> grr_payload;
+		append_u32_be(grr_payload, 8u);
+		append_u32_be(grr_payload, 2u);
+		append_u32_be(grr_payload, 0u);
+		append_u32_be(grr_payload, 0u);
+		grr_payload.push_back(4u); // REPLACE
+		grr_payload.push_back(0x01u); // GRTEMPLATE = 1 (bit 0 = 1), TPGRON = 0 (bit 1 = 0)
+		grr_payload.push_back(0xFFu);
+		grr_payload.push_back(0xFFu);
+		append_jbig2_segment(grr_stream, 2u, 42u, {}, 1u, grr_payload);
+		append_jbig2_segment(grr_stream, 3u, 49u, {}, 1u, {});
+
+		auto dec_grr = decode_jbig2(grr_stream);
+		RECTO_ASSERT_OK(dec_grr);
+		ASSERT_EQ(dec_grr->size(), 2u);
+		EXPECT_EQ((*dec_grr)[0], 0x16u);
+		EXPECT_EQ((*dec_grr)[1], 0x57u);
+
+		// (b) Huffman Symbol Dictionary (SDHUFF = 1, SDHUFFDH = 0 [B.4], SDHUFFDW = 0 [B.2], SDHUFFBMSIZE = 0 [B.1])
+		// + Huffman Text Region (SBHUFF = 1, SBHUFFFS = 0 [B.6], SBHUFFDS = 0 [B.8], SBHUFFDT = 0 [B.11]).
+		std::vector<uint8_t> huff_stream;
+		append_jbig2_segment(huff_stream, 0u, 48u, {}, 1u, make_jbig2_page_info_payload(8u, 2u, 0u));
+
+		// Segment 1: Huffman Symbol Dictionary exporting 1 symbol of size 8x2:
+		// - DH = +2 (Table B.4: prefix "10" + 0 bits = 2 bits) -> hc_height = 2
+		// - DW = +8 (Table B.2: prefix "1110" [range 3..10] + 3-bit offset 5 = "101" -> 7 bits) -> sym_w = 8
+		// - DW = OOB (Table B.2: prefix "111111" -> 6 bits) -> end of height class
+		// - Collective BMSIZE = 0 (uncompressed 8x2 = 2 bytes: Table B.1 prefix "0" + 4-bit 0000 = 5 bits)
+		// - Total header bits = 2 + 7 + 6 + 5 = 20 bits; pad to byte boundary with 4 bits ("0000") -> 24 bits (3 bytes)
+		// - Uncompressed 8x2 collective bitmap: row 0 = 0xAA, row 1 = 0x55 (16 bits)
+		// - Export flags (Table B.1): skip 0 ("0" + "0000"), export 1 ("0" + "0001") + pad "000000"
+		const auto sd_huff_bits = pack_bitstring(
+			std::string("10") + "1110101" + "111111" + "00000" + "0000" +
+			"10101010" + "01010101" +
+			"00000" + "00001" + "000000");
+		std::vector<uint8_t> sd_huff_payload;
+		append_u16_be(sd_huff_payload, 0x0001u); // SDHUFF = 1
+		append_u32_be(sd_huff_payload, 1u);      // SDNUMEXSYMS = 1
+		append_u32_be(sd_huff_payload, 1u);      // SDNUMNEWSYMS = 1
+		sd_huff_payload.insert(sd_huff_payload.end(), sd_huff_bits.begin(), sd_huff_bits.end());
+		append_jbig2_segment(huff_stream, 1u, 0u, {}, 1u, sd_huff_payload);
+
+		// Segment 2: Huffman Text Region (1 instance of Symbol 0 at x=0, y=0):
+		// - Initial STRIPT = 1 (Table B.11: prefix "0") -> stript = -1
+		// - Strip DT = 1 (Table B.11: prefix "0") -> stript = -1 + 1 = 0
+		// - First S (DFS = 0, Table B.6: prefix "00" + 7-bit 0000000 = "000000000") -> firsts = 0, curs = 0
+		// - Symbol ID (1 symbol -> 0 bits)
+		const auto tr_huff_bits = pack_bitstring(
+			std::string("0") + "0" + "000000000" + "00000");
+		std::vector<uint8_t> tr_huff_payload;
+		append_u32_be(tr_huff_payload, 8u);
+		append_u32_be(tr_huff_payload, 2u);
+		append_u32_be(tr_huff_payload, 0u);
+		append_u32_be(tr_huff_payload, 0u);
+		tr_huff_payload.push_back(0u); // OR
+		append_u16_be(tr_huff_payload, 0x0011u); // SBHUFF = 1 (bit 0), REFCORNER = 1 TOPLEFT (bits 4..5 = 1)
+		append_u16_be(tr_huff_payload, 0x0000u); // Huffman table selection flags = 0
+		append_u32_be(tr_huff_payload, 1u);      // SBNUMINSTANCES = 1
+		tr_huff_payload.insert(tr_huff_payload.end(), tr_huff_bits.begin(), tr_huff_bits.end());
+		const uint8_t ref1[1] = {1u};
+		append_jbig2_segment(huff_stream, 2u, 6u, ref1, 1u, tr_huff_payload);
+		append_jbig2_segment(huff_stream, 3u, 49u, {}, 1u, {});
+
+		auto dec_huff = decode_jbig2(huff_stream);
+		RECTO_ASSERT_OK(dec_huff);
+		ASSERT_EQ(dec_huff->size(), 2u);
+		// JBIG2 row 0 = 0xAA, row 1 = 0x55 -> PDF DeviceGray (0=black, 1=white): ~0xAA = 0x55, ~0x55 = 0xAA
+		EXPECT_EQ((*dec_huff)[0], 0x55u);
+		EXPECT_EQ((*dec_huff)[1], 0xAAu);
 	}
 }
 
@@ -2058,9 +2161,269 @@ TEST(PdfFilters, DctRgbAndCmyk)
 			RECTO_ASSERT_OK(dec_stm);
 			EXPECT_EQ(*dec_stm, std::vector<uint8_t>(expected_rgb.begin(), expected_rgb.end()));
 		}
+
+		// 3b. Decode synthetic JP2 streams covering:
+		// - Multi-sample code-block exercising ITU-T T.800 Table D.1 ZC contexts (`v_sum == 1` -> ctx 3, `v_sum == 0 && d_sum >= 2` -> ctx 2)
+		// - 2x2 multi-tile (4x4 image split into four 2x2 tiles) JP2 codestream
+		// - 9-7 irreversible lossy DWT with non-zero 11-bit mantissa step sizes (`mu_b != 0`) and ICT
+		{
+			// (i) 2x2 single-level (0 DWT levels, 2x2 LL0 code-block) where samples (0,0), (1,0), (0,1), (1,1)
+			// become significant in column-stripe order:
+			// - (0,0) = 64: h=0, v=0, d=0 -> ctx 0
+			// - (0,1) = 64: top neighbor (0,0) is significant -> h=0, v=1, d=0 -> ctx 3 (`v_sum == 1`)
+			// - (1,0) = 64: left (0,0) and bottom-left (0,1) are significant -> h=1, v=0, d=1 -> ctx 6
+			// - (1,1) = 64: left (0,1), top (1,0), top-left (0,0) are significant -> h=1, v=1, d=1 -> ctx 7
+			auto encode_2x2_all64_ll0 = []() -> EncodedJ2kSubband {
+				EncodedJ2kSubband res{};
+				res.zero_bitplanes = 2u; // mb_total = 9, top_bp = 6 (val = 64 = 1 << 6) -> zbp = 8 - 6 = 2
+				res.num_passes = 1u + 3u * 6u; // 19 passes (CUP on bp=6, then 6*(SPP, MRP, CUP) on bp=5..0)
+				std::array<TestMqContext, 19> ctxs{};
+				ctxs[0].index = 4u;
+				ctxs[17].index = 3u;
+				ctxs[18].index = 46u;
+				TestMqEncoder enc;
+				// Pass 0 (CUP on bp=6, stripe_h=2 so no RLC):
+				// x=0, y=0: ZC ctx 0 -> 1, SC (h=0, v=0 -> ctx 9, xor 0) -> 0
+				enc.encode(ctxs[0], 1u);
+				enc.encode(ctxs[9], 0u);
+				// x=0, y=1: top (0,0) sig -> v_sum=1 -> ZC ctx 3 -> 1, SC (h=0, v=1 -> ctx 10, xor 0) -> 0
+				enc.encode(ctxs[3], 1u);
+				enc.encode(ctxs[10], 0u);
+				// x=1, y=0: left (0,0) & bottom-left (0,1) sig -> h=1, v=0, d=1 -> ZC ctx 6 -> 1, SC (h=1, v=0 -> ctx 12, xor 0) -> 0
+				enc.encode(ctxs[6], 1u);
+				enc.encode(ctxs[12], 0u);
+				// x=1, y=1: left (0,1), top (1,0), top-left (0,0) sig -> h=1, v=1, d=1 -> ZC ctx 7 -> 1, SC (h=1, v=1 -> ctx 13, xor 0) -> 0
+				enc.encode(ctxs[7], 1u);
+				enc.encode(ctxs[13], 0u);
+				// Remaining 6 bitplanes (bp=5..0): all 4 samples are already significant, so SPP and CUP do nothing,
+				// and MRP decodes 4 zero bits (ctx 15 first time since each has significant neighbors, then ctx 16).
+				for (int bp = 5; bp >= 0; --bp) {
+					const uint8_t mr_ctx = (bp == 5) ? 15u : 16u;
+					for (int k = 0; k < 4; ++k) {
+						enc.encode(ctxs[mr_ctx], 0u);
+					}
+				}
+				res.bytes = enc.finish();
+				return res;
+			};
+
+			const EncodedJ2kSubband sb_2x2 = encode_2x2_all64_ll0();
+			std::vector<uint8_t> pkt_0lvl;
+			for (int c = 0; c < 3; ++c) {
+				const auto p = build_j2k_packet_for_subbands(std::span<const EncodedJ2kSubband>(&sb_2x2, 1u));
+				pkt_0lvl.insert(pkt_0lvl.end(), p.begin(), p.end());
+			}
+			std::vector<uint8_t> cs_0lvl = {0xFFu, 0x4Fu, 0xFFu, 0x51u};
+			append_u16_be(cs_0lvl, 47u);
+			append_u16_be(cs_0lvl, 0u);
+			append_u32_be(cs_0lvl, 2u);
+			append_u32_be(cs_0lvl, 2u);
+			append_u32_be(cs_0lvl, 0u);
+			append_u32_be(cs_0lvl, 0u);
+			append_u32_be(cs_0lvl, 2u);
+			append_u32_be(cs_0lvl, 2u);
+			append_u32_be(cs_0lvl, 0u);
+			append_u32_be(cs_0lvl, 0u);
+			append_u16_be(cs_0lvl, 3u);
+			for (int c = 0; c < 3; ++c) {
+				cs_0lvl.push_back(7u);
+				cs_0lvl.push_back(1u);
+				cs_0lvl.push_back(1u);
+			}
+			cs_0lvl.push_back(0xFFu);
+			cs_0lvl.push_back(0x52u);
+			append_u16_be(cs_0lvl, 12u);
+			cs_0lvl.push_back(0u);
+			cs_0lvl.push_back(0u);
+			append_u16_be(cs_0lvl, 1u);
+			cs_0lvl.push_back(0u); // no MCT
+			cs_0lvl.push_back(0u); // 0 DWT levels -> 2x2 LL0 code-block!
+			cs_0lvl.push_back(4u);
+			cs_0lvl.push_back(4u);
+			cs_0lvl.push_back(0u);
+			cs_0lvl.push_back(1u); // 5-3 reversible
+			cs_0lvl.push_back(0xFFu);
+			cs_0lvl.push_back(0x5Cu);
+			append_u16_be(cs_0lvl, 4u);
+			cs_0lvl.push_back(0x40u); // guard=2, qstyle=0
+			cs_0lvl.push_back(static_cast<uint8_t>(8u << 3u)); // eps=8 -> mb_total=9
+			cs_0lvl.push_back(0xFFu);
+			cs_0lvl.push_back(0x90u);
+			append_u16_be(cs_0lvl, 10u);
+			append_u16_be(cs_0lvl, 0u);
+			append_u32_be(cs_0lvl, 14u + static_cast<uint32_t>(pkt_0lvl.size()));
+			cs_0lvl.push_back(0u);
+			cs_0lvl.push_back(1u);
+			cs_0lvl.push_back(0xFFu);
+			cs_0lvl.push_back(0x93u);
+			cs_0lvl.insert(cs_0lvl.end(), pkt_0lvl.begin(), pkt_0lvl.end());
+			cs_0lvl.push_back(0xFFu);
+			cs_0lvl.push_back(0xD9u);
+
+			auto dec_2x2_cb = decode_jpx_image(cs_0lvl);
+			RECTO_ASSERT_OK(dec_2x2_cb);
+			ASSERT_EQ(dec_2x2_cb->pixels.size(), 12u);
+			for (uint8_t px : dec_2x2_cb->pixels) {
+				EXPECT_EQ(px, 192u); // 64 + 128 DC shift = 192
+			}
+
+			// (ii) 2x2 multi-tile codestream (4x4 image split into four 2x2 tiles, each tile constant colour):
+			std::vector<uint8_t> cs_tiled = {0xFFu, 0x4Fu, 0xFFu, 0x51u};
+			append_u16_be(cs_tiled, 47u);
+			append_u16_be(cs_tiled, 0u);
+			append_u32_be(cs_tiled, 4u); // Xsiz = 4
+			append_u32_be(cs_tiled, 4u); // Ysiz = 4
+			append_u32_be(cs_tiled, 0u);
+			append_u32_be(cs_tiled, 0u);
+			append_u32_be(cs_tiled, 2u); // XTsiz = 2
+			append_u32_be(cs_tiled, 2u); // YTsiz = 2
+			append_u32_be(cs_tiled, 0u);
+			append_u32_be(cs_tiled, 0u);
+			append_u16_be(cs_tiled, 3u);
+			for (int c = 0; c < 3; ++c) {
+				cs_tiled.push_back(7u);
+				cs_tiled.push_back(1u);
+				cs_tiled.push_back(1u);
+			}
+			cs_tiled.push_back(0xFFu);
+			cs_tiled.push_back(0x52u);
+			append_u16_be(cs_tiled, 12u);
+			cs_tiled.push_back(0u);
+			cs_tiled.push_back(0u);
+			append_u16_be(cs_tiled, 1u);
+			cs_tiled.push_back(0u); // no MCT
+			cs_tiled.push_back(1u); // 1 DWT level per 2x2 tile
+			cs_tiled.push_back(4u);
+			cs_tiled.push_back(4u);
+			cs_tiled.push_back(0u);
+			cs_tiled.push_back(1u);
+			cs_tiled.push_back(0xFFu);
+			cs_tiled.push_back(0x5Cu);
+			append_u16_be(cs_tiled, 7u);
+			cs_tiled.push_back(0x40u);
+			for (int sb = 0; sb < 4; ++sb) {
+				cs_tiled.push_back(static_cast<uint8_t>(8u << 3u));
+			}
+			const std::array<int32_t, 4> tile_vals = {-100, -50, 25, 100};
+			for (uint16_t t = 0; t < 4u; ++t) {
+				std::vector<uint8_t> t_pkts;
+				const EncodedJ2kSubband sb_dc = encode_j2k_1x1_subband(tile_vals[t], 9u);
+				const EncodedJ2kSubband sb_zero = encode_j2k_1x1_subband(0, 9u);
+				for (int c = 0; c < 3; ++c) {
+					const auto p0 = build_j2k_packet_for_subbands(std::span<const EncodedJ2kSubband>(&sb_dc, 1u));
+					t_pkts.insert(t_pkts.end(), p0.begin(), p0.end());
+				}
+				const std::array<EncodedJ2kSubband, 3> zero_sbs = {sb_zero, sb_zero, sb_zero};
+				for (int c = 0; c < 3; ++c) {
+					const auto p1 = build_j2k_packet_for_subbands(zero_sbs);
+					t_pkts.insert(t_pkts.end(), p1.begin(), p1.end());
+				}
+				cs_tiled.push_back(0xFFu);
+				cs_tiled.push_back(0x90u);
+				append_u16_be(cs_tiled, 10u);
+				append_u16_be(cs_tiled, t); // Isot = t
+				append_u32_be(cs_tiled, 14u + static_cast<uint32_t>(t_pkts.size()));
+				cs_tiled.push_back(0u);
+				cs_tiled.push_back(1u);
+				cs_tiled.push_back(0xFFu);
+				cs_tiled.push_back(0x93u);
+				cs_tiled.insert(cs_tiled.end(), t_pkts.begin(), t_pkts.end());
+			}
+			cs_tiled.push_back(0xFFu);
+			cs_tiled.push_back(0xD9u);
+
+			auto dec_tiled = decode_jpx_image(cs_tiled);
+			RECTO_ASSERT_OK(dec_tiled);
+			ASSERT_EQ(dec_tiled->width, 4u);
+			ASSERT_EQ(dec_tiled->height, 4u);
+			for (uint32_t y = 0; y < 4u; ++y) {
+				for (uint32_t x = 0; x < 4u; ++x) {
+					const uint32_t tid = (y / 2u) * 2u + (x / 2u);
+					const uint8_t exp_v = static_cast<uint8_t>(tile_vals[tid] + 128);
+					const size_t idx = (static_cast<size_t>(y) * 4u + x) * 3u;
+					EXPECT_EQ(dec_tiled->pixels[idx + 0u], exp_v);
+					EXPECT_EQ(dec_tiled->pixels[idx + 1u], exp_v);
+					EXPECT_EQ(dec_tiled->pixels[idx + 2u], exp_v);
+				}
+			}
+
+			// (iii) 9-7 irreversible lossy DWT (`wavelet_type = 0`) with scalar expounded QCD (`qstyle = 2`,
+			// `eps = 8`, `mu = 1024` -> step size `Delta_b = 1.5 * 2^G_b`) and ICT (`enable_mct = 1`):
+			// Encode Y = 40 (so Y_dequant = 40 * 1.5 = 60 -> +128 = 188), Cb = 0, Cr = 20 (Cr_dequant = 30 -> R = 188 + 1.402*30 = 230).
+			std::vector<uint8_t> cs_97 = {0xFFu, 0x4Fu, 0xFFu, 0x51u};
+			append_u16_be(cs_97, 47u);
+			append_u16_be(cs_97, 0u);
+			append_u32_be(cs_97, 2u);
+			append_u32_be(cs_97, 2u);
+			append_u32_be(cs_97, 0u);
+			append_u32_be(cs_97, 0u);
+			append_u32_be(cs_97, 2u);
+			append_u32_be(cs_97, 2u);
+			append_u32_be(cs_97, 0u);
+			append_u32_be(cs_97, 0u);
+			append_u16_be(cs_97, 3u);
+			for (int c = 0; c < 3; ++c) {
+				cs_97.push_back(7u);
+				cs_97.push_back(1u);
+				cs_97.push_back(1u);
+			}
+			cs_97.push_back(0xFFu);
+			cs_97.push_back(0x52u);
+			append_u16_be(cs_97, 12u);
+			cs_97.push_back(0u);
+			cs_97.push_back(0u);
+			append_u16_be(cs_97, 1u);
+			cs_97.push_back(1u); // MCT = 1 (ICT)
+			cs_97.push_back(1u); // 1 DWT level
+			cs_97.push_back(4u);
+			cs_97.push_back(4u);
+			cs_97.push_back(0u);
+			cs_97.push_back(0u); // 9-7 irreversible wavelet!
+			cs_97.push_back(0xFFu);
+			cs_97.push_back(0x5Cu);
+			append_u16_be(cs_97, 11u); // 3 + 4 * 2 bytes
+			cs_97.push_back(0x42u);     // guard_bits = 2, qstyle = 2 (scalar expounded)
+			for (int sb = 0; sb < 4; ++sb) {
+				append_u16_be(cs_97, static_cast<uint16_t>((8u << 11u) | 1024u)); // eps = 8, mu = 1024 (1 + 1024/2048 = 1.5)
+			}
+			std::vector<uint8_t> pkts_97;
+			const std::array<int32_t, 3> ycbcr_ll = {40, 0, 20};
+			const EncodedJ2kSubband sb_z = encode_j2k_1x1_subband(0, 9u);
+			for (int c = 0; c < 3; ++c) {
+				const EncodedJ2kSubband sb_c = encode_j2k_1x1_subband(ycbcr_ll[c], 9u);
+				const auto p0 = build_j2k_packet_for_subbands(std::span<const EncodedJ2kSubband>(&sb_c, 1u));
+				pkts_97.insert(pkts_97.end(), p0.begin(), p0.end());
+			}
+			const std::array<EncodedJ2kSubband, 3> z3 = {sb_z, sb_z, sb_z};
+			for (int c = 0; c < 3; ++c) {
+				const auto p1 = build_j2k_packet_for_subbands(z3);
+				pkts_97.insert(pkts_97.end(), p1.begin(), p1.end());
+			}
+			cs_97.push_back(0xFFu);
+			cs_97.push_back(0x90u);
+			append_u16_be(cs_97, 10u);
+			append_u16_be(cs_97, 0u);
+			append_u32_be(cs_97, 14u + static_cast<uint32_t>(pkts_97.size()));
+			cs_97.push_back(0u);
+			cs_97.push_back(1u);
+			cs_97.push_back(0xFFu);
+			cs_97.push_back(0x93u);
+			cs_97.insert(cs_97.end(), pkts_97.begin(), pkts_97.end());
+			cs_97.push_back(0xFFu);
+			cs_97.push_back(0xD9u);
+
+			auto dec_97 = decode_jpx_image(cs_97);
+			RECTO_ASSERT_OK(dec_97);
+			ASSERT_EQ(dec_97->pixels.size(), 12u);
+			// With eps=8, mu=1024 (Delta_0 = 1.5), Y_dequant = 40 * 1.5 = 60, Cb_dequant = 0, Cr_dequant = 20 * 1.5 = 30.
+			// After 2D 9-7 inverse DWT and ICT: R = round(60 + 1.402 * 30) + 128 = 230, G = round(60 - 0.71414 * 30) + 128 = 167, B = 60 + 128 = 188.
+			EXPECT_EQ(dec_97->pixels[0], 230u);
+			EXPECT_EQ(dec_97->pixels[1], 167u);
+			EXPECT_EQ(dec_97->pixels[2], 188u);
+		}
 	}
 
-	// 4. Oversized image header rejection (width * height * 4 > 256 MB):
+	// 4. Oversized image header rejection (width * height * 4 > 256 MB) and cumulative buffer budget:
 	// Verify that 65535 x 65535 and 100000 x 100000 headers in CCITTFaxDecode, JBIG2Decode,
 	// DCTDecode, and JPXDecode are rejected with ErrorCode::DecompressionLimitExceeded before
 	// allocating pixel buffers, and leave diagnostics_tail() empty (pure stateless filter contract).
@@ -2094,7 +2457,8 @@ TEST(PdfFilters, DctRgbAndCmyk)
 				ErrorCode::DecompressionLimitExceeded);
 		}
 
-		// (c) DCTDecode: SOF0 header claiming 65535 x 65535 pixels
+		// (c) DCTDecode: SOF0 header claiming 65535 x 65535 pixels, plus cumulative buffer budget check
+		// on an 8x8 RGB JPEG (pixels=192 + rgba=256 + bgra=256 = 704 bytes > max_decoded_bytes=256).
 		{
 			std::vector<uint8_t> jpeg_huge = {
 				0xFFu, 0xD8u,
@@ -2111,9 +2475,20 @@ TEST(PdfFilters, DctRgbAndCmyk)
 			RECTO_EXPECT_ERR(
 				decode_dct(jpeg_huge),
 				ErrorCode::DecompressionLimitExceeded);
+
+			const auto pdf_bytes = test::read_file_bytes(
+				test::corpus_path("render/images-and-vectors.pdf"));
+			auto xref_res = XrefTable::parse(pdf_bytes);
+			RECTO_ASSERT_OK(xref_res);
+			auto stm_obj = xref_res->resolve_object(pdf_bytes, IndirectRef{7u, 0u});
+			RECTO_ASSERT_OK(stm_obj);
+			RECTO_EXPECT_ERR(
+				decode_dct_image(stm_obj->as_stream()->raw_bytes, nullptr, 256u),
+				ErrorCode::DecompressionLimitExceeded);
 		}
 
-		// (d) JPXDecode: J2K SIZ header claiming 100000 x 100000 pixels
+		// (d) JPXDecode: J2K SIZ header claiming 100000 x 100000 pixels, plus cumulative buffer budget check
+		// on a 2x2 RGB JP2 (pixels=12 + rgba=16 + bgra=16 = 44 bytes > max_decoded_bytes=32).
 		{
 			std::vector<uint8_t> j2k_huge = {
 				0xFFu, 0x4Fu, // SOC
@@ -2137,6 +2512,12 @@ TEST(PdfFilters, DctRgbAndCmyk)
 			}
 			RECTO_EXPECT_ERR(
 				decode_jpx(j2k_huge),
+				ErrorCode::DecompressionLimitExceeded);
+
+			const std::array<uint8_t, 12> rgb_2x2 = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200};
+			const auto jp2_2x2 = make_genuine_jp2_2x2_rgb(rgb_2x2, true);
+			RECTO_EXPECT_ERR(
+				decode_jpx_image(jp2_2x2, nullptr, 32u),
 				ErrorCode::DecompressionLimitExceeded);
 		}
 
