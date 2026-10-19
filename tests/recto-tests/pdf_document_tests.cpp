@@ -247,31 +247,36 @@ TEST(PdfDocument, PageTreeAndRotatedPages)
 	}
 
 	// 2. Inherited `/MediaBox`, `/CropBox`, `/Rotate` (including negative and
-	//    >360 multiples of 90), and `/Resources` from intermediate `/Pages` nodes:
+	//    >360 multiples of 90), and `/Resources` from intermediate `/Pages` nodes
+	//    per ISO 32000-1 section 7.7.3.4 (explicit `/Resources` on a child replaces
+	//    the ancestor's `/Resources` dictionary rather than merging it, while an
+	//    omitted `/Resources` inherits the ancestor's dictionary):
 	{
 		const auto bytes = build_synthetic_pdf_from_objects(
 			"1.7",
 			{
 				{1, "<< /Type /Catalog /Pages 2 0 R >>"},
 				{2,
-				 "<< /Type /Pages /Count 2 /MediaBox [0 0 500 700] /Rotate -90 "
-				 "/Resources << /Font << /F1 10 0 R >> >> /Kids [3 0 R 4 0 R] >>"},
+				 "<< /Type /Pages /Count 3 /MediaBox [0 0 500 700] /Rotate -90 "
+				 "/Resources << /Font << /F1 10 0 R >> >> /Kids [3 0 R 4 0 R 6 0 R] >>"},
 				{3,
 				 "<< /Type /Pages /Parent 2 0 R /Count 1 /CropBox [10 20 490 680] "
 				 "/Resources << /Font << /F2 11 0 R >> >> /Kids [5 0 R] >>"},
 				{4,
 				 "<< /Type /Page /Parent 2 0 R /Rotate 450 /MediaBox [0 0 300 400] >>"},
 				{5, "<< /Type /Page /Parent 3 0 R >>"},
+				{6, "<< /Type /Page /Parent 2 0 R /Resources << >> >>"},
 				{10, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"},
 				{11, "<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>"},
 			});
 		auto doc_res = Document::open_memory(bytes);
 		ASSERT_TRUE(doc_res.has_value()) << doc_res.error().message.view();
 		const Document& doc = **doc_res;
-		ASSERT_EQ(doc.page_count(), 2u);
+		ASSERT_EQ(doc.page_count(), 3u);
 
 		// Page 0 (obj 5) inherits MediaBox [0 0 500 700] and Rotate -90 -> 270
-		// from obj 2, CropBox [10 20 490 680] from obj 3, and both /F1 and /F2:
+		// from obj 2, and inherits CropBox [10 20 490 680] and `/Resources`
+		// (`/F2` replacing `/F1`) from intermediate `/Pages` node obj 3:
 		EXPECT_DOUBLE_EQ(doc.pages()[0].media_box.width(), 500.0);
 		EXPECT_DOUBLE_EQ(doc.pages()[0].media_box.height(), 700.0);
 		EXPECT_DOUBLE_EQ(doc.pages()[0].crop_box.width(), 480.0);
@@ -282,13 +287,26 @@ TEST(PdfDocument, PageTreeAndRotatedPages)
 		ASSERT_TRUE(res0.has_value()) << res0.error().message.view();
 		const PdfDict* font_dict0 = res0->get_dict("Font");
 		ASSERT_NE(font_dict0, nullptr);
-		EXPECT_TRUE(font_dict0->contains("F1"));
+		EXPECT_FALSE(font_dict0->contains("F1"));
 		EXPECT_TRUE(font_dict0->contains("F2"));
 
-		// Page 1 (obj 4) overrides MediaBox [0 0 300 400] and Rotate 450 -> 90:
+		// Page 1 (obj 4) omits `/Resources` so it inherits `/F1` from obj 2, and
+		// overrides MediaBox [0 0 300 400] and Rotate 450 -> 90:
 		EXPECT_DOUBLE_EQ(doc.pages()[1].media_box.width(), 300.0);
 		EXPECT_DOUBLE_EQ(doc.pages()[1].media_box.height(), 400.0);
 		EXPECT_EQ(doc.pages()[1].rotation, 90);
+		auto res1 = doc.page_resources(1);
+		ASSERT_TRUE(res1.has_value()) << res1.error().message.view();
+		const PdfDict* font_dict1 = res1->get_dict("Font");
+		ASSERT_NE(font_dict1, nullptr);
+		EXPECT_TRUE(font_dict1->contains("F1"));
+		EXPECT_FALSE(font_dict1->contains("F2"));
+
+		// Page 2 (obj 6) supplies an explicit empty `/Resources << >>`, replacing
+		// obj 2's `/Resources` with an empty dictionary:
+		auto res2 = doc.page_resources(2);
+		ASSERT_TRUE(res2.has_value()) << res2.error().message.view();
+		EXPECT_EQ(res2->get_dict("Font"), nullptr);
 	}
 
 	// 3. `broken/cyclic-pages-tree.pdf` fails cleanly with `ErrorCode::DamagedFormat`:
@@ -615,31 +633,51 @@ TEST(PdfDocument, LinksAndRefusedActions)
 		EXPECT_EQ(links[2].action_type, "Launch");
 	}
 
-	// 3. Chained `/Next` action smuggling `/Launch` under `/GoTo` and unsafe
-	//    `javascript:` URI schemes are also refused as `LinkKind::RefusedAction`:
+	// 3. Chained `/Next` action smuggling `/Launch` (directly, inside a `/Next`
+	//    array's child `/Next`, or after 17+ `/GoTo` hops) and unsafe
+	//    `javascript:` URI schemes (both top-level and chained under `/GoTo`) are
+	//    all refused as `LinkKind::RefusedAction` (`is_inert == true`):
 	{
-		const auto bytes = build_synthetic_pdf_from_objects(
-			"1.7",
-			{
-				{1, "<< /Type /Catalog /Pages 2 0 R >>"},
-				{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 612 792] /Kids [3 0 R] >>"},
-				{3, "<< /Type /Page /Parent 2 0 R /Annots [4 0 R 5 0 R] >>"},
-				{4,
-				 "<< /Type /Annot /Subtype /Link /Rect [10 10 100 30] "
-				 "/A << /S /GoTo /D [3 0 R /Fit] /Next << /S /Launch /F (cmd.exe) >> >> >>"},
-				{5,
-				 "<< /Type /Annot /Subtype /Link /Rect [10 40 100 60] "
-				 "/A << /S /URI /URI (javascript:alert(1)) >> >>"},
-			});
+		std::vector<std::pair<uint32_t, std::string>> objs = {
+			{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+			{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 612 792] /Kids [3 0 R] >>"},
+			{3, "<< /Type /Page /Parent 2 0 R /Annots [4 0 R 5 0 R 6 0 R 7 0 R 8 0 R] >>"},
+			{4,
+			 "<< /Type /Annot /Subtype /Link /Rect [10 10 100 30] "
+			 "/A << /S /GoTo /D [3 0 R /Fit] /Next << /S /Launch /F (cmd.exe) >> >> >>"},
+			{5,
+			 "<< /Type /Annot /Subtype /Link /Rect [10 40 100 60] "
+			 "/A << /S /URI /URI (javascript:alert(1)) >> >>"},
+			{6,
+			 "<< /Type /Annot /Subtype /Link /Rect [10 70 100 90] "
+			 "/A << /S /GoTo /D [3 0 R /Fit] /Next [<< /S /GoTo /D [3 0 R /Fit] /Next << /S /Launch /F (powershell.exe) >> >>] >> >>"},
+			{7,
+			 "<< /Type /Annot /Subtype /Link /Rect [10 100 100 120] "
+			 "/A << /S /GoTo /D [3 0 R /Fit] /Next << /S /URI /URI (javascript:alert(2)) >> >> >>"},
+			{8,
+			 "<< /Type /Annot /Subtype /Link /Rect [10 130 100 150] "
+			 "/A 20 0 R >>"},
+		};
+		// Build a 17-step `/GoTo` chain (`20 0 R` -> `21 0 R` -> ... -> `36 0 R`)
+		// followed by `/Launch` at `37 0 R`:
+		for (uint32_t id = 20u; id < 37u; ++id) {
+			objs.emplace_back(
+				id,
+				"<< /S /GoTo /D [3 0 R /Fit] /Next " + std::to_string(id + 1u) + " 0 R >>");
+		}
+		objs.emplace_back(37u, "<< /S /Launch /F (calc.exe) >>");
+
+		const auto bytes = build_synthetic_pdf_from_objects("1.7", objs);
 		auto doc_res = Document::open_memory(bytes);
 		ASSERT_TRUE(doc_res.has_value()) << doc_res.error().message.view();
 		auto links_res = (*doc_res)->page_links(0);
 		ASSERT_TRUE(links_res.has_value()) << links_res.error().message.view();
-		ASSERT_EQ(links_res->size(), 2u);
-		EXPECT_EQ((*links_res)[0].kind, LinkKind::RefusedAction);
-		EXPECT_TRUE((*links_res)[0].is_inert);
-		EXPECT_EQ((*links_res)[1].kind, LinkKind::RefusedAction);
-		EXPECT_TRUE((*links_res)[1].is_inert);
+		ASSERT_EQ(links_res->size(), 5u);
+		for (size_t i = 0; i < links_res->size(); ++i) {
+			SCOPED_TRACE(i);
+			EXPECT_EQ((*links_res)[i].kind, LinkKind::RefusedAction);
+			EXPECT_TRUE((*links_res)[i].is_inert);
+		}
 	}
 }
 

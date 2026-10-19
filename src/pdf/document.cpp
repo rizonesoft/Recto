@@ -1503,24 +1503,20 @@ PdfResult<void> Document::load_document_structure()
 				"/Resources entry is not a PDF dictionary");
 		}
 
-		// Merge resource categories (`/Font`, `/XObject`, `/ExtGState`,
-		// `/ColorSpace`, `/Pattern`, `/Shading`, `/Properties`), resolving any
-		// indirect category sub-dictionaries so `page_resources` always holds
+		// Per ISO 32000-1 section 7.7.3.4 ("Inheritance of Page Attributes"),
+		// `/Resources` is inherited as a whole dictionary only when omitted on a
+		// descendant node; an explicit `/Resources` dictionary on a child node
+		// replaces the ancestor's `/Resources` dictionary rather than merging
+		// individual categories. Resolve any indirect category sub-dictionaries
+		// (`/Font`, `/XObject`, `/ExtGState`, etc.) so `page_resources` holds
 		// direct category dictionaries while keeping individual resource entries
 		// (`/F1 -> 5 0 R`) intact.
+		PdfDict replaced_resources{};
 		for (const auto& [cat_key, cat_val] : *res_dict) {
 			RECTO_PDF_TRY(PdfValue resolved_cat, resolve_value(cat_val));
-			if (const PdfDict* child_cat_dict = resolved_cat.as_dict()) {
-				if (PdfDict* existing_cat = inout_resources.get_dict_mut(cat_key.view())) {
-					for (const auto& [entry_k, entry_v] : *child_cat_dict) {
-						RECTO_PDF_TRY(PdfValue cloned_v, entry_v.deep_clone());
-						existing_cat->set(entry_k, std::move(cloned_v));
-					}
-					continue;
-				}
-			}
-			inout_resources.set(cat_key, std::move(resolved_cat));
+			replaced_resources.set(cat_key, std::move(resolved_cat));
 		}
+		inout_resources = std::move(replaced_resources);
 		return {};
 	};
 
@@ -2243,45 +2239,121 @@ PdfResult<void> Document::load_document_structure()
 
 	auto action_chain_contains_refused = [this, &record_refused_action_diagnostic](
 											 const PdfDict& root_action) -> bool {
+		constexpr size_t kMaxActionChainDepth = 64u;
+		constexpr size_t kMaxActionChainNodes = 256u;
+
+		struct ActionFrame {
+			PdfDict dict{};
+			size_t depth{0};
+		};
+
 		std::unordered_set<uint32_t> visited_actions;
-		const PdfDict* cur = &root_action;
-		PdfValue owned_next;
-		for (size_t depth = 0; depth < 16u && cur != nullptr; ++depth) {
-			const auto s_name = cur->get_name("S").value_or("");
+		std::vector<ActionFrame> stack;
+		stack.push_back(ActionFrame{root_action, 0u});
+		size_t inspected_nodes = 0u;
+
+		auto is_single_action_unsafe = [&](const PdfDict& act_dict) -> bool {
+			const auto s_name = act_dict.get_name("S").value_or("");
+			if (s_name.empty()) {
+				return true;
+			}
 			if (is_refused_action_name(s_name)) {
 				record_refused_action_diagnostic(s_name);
 				return true;
 			}
-			const PdfValue* next_v = cur->get("Next");
-			if (next_v == nullptr || next_v->is_null()) {
-				break;
+			if (s_name == "URI") {
+				const PdfValue* uri_v = act_dict.get("URI");
+				if (uri_v == nullptr || uri_v->is_null()) {
+					return true;
+				}
+				auto uri_res = resolve_value(*uri_v);
+				if (!uri_res.has_value()) {
+					return true;
+				}
+				const PdfString* us = uri_res->as_string();
+				if (us == nullptr) {
+					return true;
+				}
+				auto u_utf8 = pdf_string_to_utf8(us->span());
+				if (!u_utf8.has_value() || !is_safe_external_uri(*u_utf8)) {
+					return true;
+				}
+				return false;
 			}
-			if (const auto next_ref = next_v->as_ref()) {
+			if (s_name == "GoTo" || s_name == "GoToR" || s_name == "GoToE" || s_name == "Named") {
+				return false;
+			}
+			// Any unrecognized action type in a chain is treated as refused/inert.
+			return true;
+		};
+
+		auto push_next_value = [&](const PdfValue& next_item, size_t child_depth) -> bool {
+			if (next_item.is_null()) {
+				return true;
+			}
+			if (child_depth > kMaxActionChainDepth) {
+				// Fail closed when action chain exceeds maximum depth.
+				return false;
+			}
+			if (const auto next_ref = next_item.as_ref()) {
 				if (!visited_actions.insert(next_ref->obj_num).second) {
-					break;
+					return true;
 				}
 			}
-			auto next_res = resolve_value(*next_v);
-			if (!next_res.has_value()) {
-				break;
+			auto resolved_res = resolve_value(next_item);
+			if (!resolved_res.has_value()) {
+				return false;
 			}
-			owned_next = std::move(*next_res);
-			if (const PdfArray* next_arr = owned_next.as_array()) {
-				for (const PdfValue& elem : *next_arr) {
-					auto elem_res = resolve_value(elem);
-					if (elem_res.has_value()) {
-						if (const PdfDict* ed = elem_res->as_dict()) {
-							const auto ed_s = ed->get_name("S").value_or("");
-							if (is_refused_action_name(ed_s)) {
-								record_refused_action_diagnostic(ed_s);
-								return true;
-							}
+			if (const PdfDict* next_dict = resolved_res->as_dict()) {
+				stack.push_back(ActionFrame{*next_dict, child_depth});
+				return true;
+			}
+			if (const PdfArray* next_arr = resolved_res->as_array()) {
+				for (size_t i = next_arr->size(); i > 0u; --i) {
+					const PdfValue& elem = (*next_arr)[i - 1u];
+					if (elem.is_null()) {
+						continue;
+					}
+					if (const auto elem_ref = elem.as_ref()) {
+						if (!visited_actions.insert(elem_ref->obj_num).second) {
+							continue;
 						}
 					}
+					auto elem_res = resolve_value(elem);
+					if (!elem_res.has_value()) {
+						return false;
+					}
+					const PdfDict* elem_dict = elem_res->as_dict();
+					if (elem_dict == nullptr) {
+						return false;
+					}
+					stack.push_back(ActionFrame{*elem_dict, child_depth});
 				}
-				break;
+				return true;
 			}
-			cur = owned_next.as_dict();
+			return false;
+		};
+
+		while (!stack.empty()) {
+			ActionFrame frame = std::move(stack.back());
+			stack.pop_back();
+
+			if (frame.depth > kMaxActionChainDepth ||
+				++inspected_nodes > kMaxActionChainNodes) {
+				// Fail closed if the action graph exceeds depth or node budget.
+				return true;
+			}
+
+			if (is_single_action_unsafe(frame.dict)) {
+				return true;
+			}
+
+			if (const PdfValue* next_v = frame.dict.get("Next");
+				next_v != nullptr && !next_v->is_null()) {
+				if (!push_next_value(*next_v, frame.depth + 1u)) {
+					return true;
+				}
+			}
 		}
 		return false;
 	};
