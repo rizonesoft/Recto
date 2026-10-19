@@ -13,6 +13,8 @@
 #include "parser.h"
 #include "xref.h"
 #include "filters.h"
+#include "crypto.h"
+#include "document.h"
 
 namespace recto::pdf {
 

@@ -39,6 +39,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="crypto.cpp" />
+    <ClCompile Include="document.cpp" />
     <ClCompile Include="error.cpp" />
     <ClCompile Include="filters.cpp" />
     <ClCompile Include="lexer.cpp" />
@@ -47,6 +48,7 @@
     <ClCompile Include="pdf.cpp" />
     <ClCompile Include="xref.cpp" />
     <ClInclude Include="crypto.h" />
+    <ClInclude Include="document.h" />
     <ClInclude Include="error.h" />
     <ClInclude Include="filters.h" />
     <ClInclude Include="lexer.h" />
