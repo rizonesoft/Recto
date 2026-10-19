@@ -1584,37 +1584,63 @@ TEST(PdfFilters, Jbig2Decode)
 		EXPECT_EQ((*dec_grr)[0], 0x16u);
 		EXPECT_EQ((*dec_grr)[1], 0x57u);
 
-		// (b) Huffman Symbol Dictionary (SDHUFF = 1, SDHUFFDH = 0 [B.4], SDHUFFDW = 0 [B.2], SDHUFFBMSIZE = 0 [B.1])
-		// + Huffman Text Region (SBHUFF = 1, SBHUFFFS = 0 [B.6], SBHUFFDS = 0 [B.8], SBHUFFDT = 0 [B.11]).
+		// (b) Huffman Symbol Dictionary (SDHUFF = 1, SDHUFFDH = 3 [custom seg 53], SDHUFFDW = 1 [B.3], SDHUFFBMSIZE = 0 [B.1])
+		// + Huffman Text Region (SBHUFF = 1, SBHUFFFS = 1 [B.7], SBHUFFDS = 1 [B.9], SBHUFFDT = 1 [B.12])
+		// with mandatory 35-runcode SBSYMCODES symbol ID Huffman table (ITU-T T.88 section 7.4.3.1.7).
 		std::vector<uint8_t> huff_stream;
 		append_jbig2_segment(huff_stream, 0u, 48u, {}, 1u, make_jbig2_page_info_payload(8u, 2u, 0u));
 
-		// Segment 1: Huffman Symbol Dictionary exporting 1 symbol of size 8x2:
-		// - DH = +2 (Table B.4: prefix "10" + 0 bits = 2 bits) -> hc_height = 2
-		// - DW = +8 (Table B.2: prefix "1110" [range 3..10] + 3-bit offset 5 = "101" -> 7 bits) -> sym_w = 8
-		// - DW = OOB (Table B.2: prefix "111111" -> 6 bits) -> end of height class
-		// - Collective BMSIZE = 0 (uncompressed 8x2 = 2 bytes: Table B.1 prefix "0" + 4-bit 0000 = 5 bits)
-		// - Total header bits = 2 + 7 + 6 + 5 = 20 bits; pad to byte boundary with 4 bits ("0000") -> 24 bits (3 bytes)
-		// - Uncompressed 8x2 collective bitmap: row 0 = 0xAA, row 1 = 0x55 (16 bits)
-		// - Export flags (Table B.1): skip 0 ("0" + "0000"), export 1 ("0" + "0001") + pad "000000"
-		const auto sd_huff_bits = pack_bitstring(
-			std::string("10") + "1110101" + "111111" + "00000" + "0000" +
-			"10101010" + "01010101" +
-			"00000" + "00001" + "000000");
-		std::vector<uint8_t> sd_huff_payload;
-		append_u16_be(sd_huff_payload, 0x0001u); // SDHUFF = 1
-		append_u32_be(sd_huff_payload, 1u);      // SDNUMEXSYMS = 1
-		append_u32_be(sd_huff_payload, 1u);      // SDNUMNEWSYMS = 1
-		sd_huff_payload.insert(sd_huff_payload.end(), sd_huff_bits.begin(), sd_huff_bits.end());
-		append_jbig2_segment(huff_stream, 1u, 0u, {}, 1u, sd_huff_payload);
+		// Segment 1: Custom Huffman Table (seg_type = 53, ITU-T T.88 section 7.4.2):
+		// HTOOB = 0, HTPS = 2, HTRS = 2 (ct_flags = 0x12), HTLOW = 1, HTHIGH = 3:
+		// - Line 0 [1..2]: pref_len = 1 ("01"), range_len = 1 ("01") -> prefix "0" + 1-bit offset
+		// - Lower line (<= 0): pref_len = 2 ("10")
+		// - Upper line (>= 3): pref_len = 2 ("10")
+		std::vector<uint8_t> ct_payload = {0x12u};
+		append_u32_be(ct_payload, 1u); // HTLOW = 1
+		append_u32_be(ct_payload, 3u); // HTHIGH = 3
+		ct_payload.push_back(0x5Au);   // "01" + "01" + "10" + "10"
+		append_jbig2_segment(huff_stream, 1u, 53u, {}, 1u, ct_payload);
 
-		// Segment 2: Huffman Text Region (1 instance of Symbol 0 at x=0, y=0):
-		// - Initial STRIPT = 1 (Table B.11: prefix "0") -> stript = -1
-		// - Strip DT = 1 (Table B.11: prefix "0") -> stript = -1 + 1 = 0
-		// - First S (DFS = 0, Table B.6: prefix "00" + 7-bit 0000000 = "000000000") -> firsts = 0, curs = 0
-		// - Symbol ID (1 symbol -> 0 bits)
+		// Segment 2: Huffman Symbol Dictionary referencing custom table Segment 1 for SDHUFFDH (= 3)
+		// and using Table B.3 for SDHUFFDW (= 1), exporting 2 symbols of width 4 and height 2:
+		// - DH = +2 (custom table line 0: prefix "0" + 1-bit offset "1" = 2 bits) -> hc_height = 2
+		// - Sym 0 DW = +4 (Table B.3: {3, 4, 3} prefix "1110" + 3-bit offset "001" = 7 bits) -> sym_w = 4
+		// - Sym 1 DW = +0 (Table B.3: {0, 1, 0} prefix "0" = 1 bit) -> sym_w = 4
+		// - DW = OOB (Table B.3: {0, 6, 0, oob} prefix "111110" = 6 bits) -> end of height class
+		// - Collective BMSIZE = 0 (uncompressed 8x2 = 2 bytes: Table B.1 prefix "0" + 4-bit "0000" = 5 bits)
+		// - Total header bits = 2 + 7 + 1 + 6 + 5 = 21 bits; pad with "000" -> 24 bits (3 bytes)
+		// - Uncompressed 8x2 collective bitmap: row 0 = 0xAA, row 1 = 0x55 (16 bits)
+		// - Export flags (Table B.1): skip 0 ("00000"), export 2 ("00010") + pad "000000"
+		const auto sd_huff_bits = pack_bitstring(
+			std::string("01") + "1110001" + "0" + "111110" + "00000" + "000" +
+			"10101010" + "01010101" +
+			"00000" + "00010" + "000000");
+		std::vector<uint8_t> sd_huff_payload;
+		// SDHUFF = 1 (bit 0), SDHUFFDH = 3 custom (bits 2..3 = 3), SDHUFFDW = 1 B.3 (bits 4..5 = 1) -> 0x001Du
+		append_u16_be(sd_huff_payload, 0x001Du);
+		append_u32_be(sd_huff_payload, 2u); // SDNUMEXSYMS = 2
+		append_u32_be(sd_huff_payload, 2u); // SDNUMNEWSYMS = 2
+		sd_huff_payload.insert(sd_huff_payload.end(), sd_huff_bits.begin(), sd_huff_bits.end());
+		const uint8_t ref_ct[1] = {1u};
+		append_jbig2_segment(huff_stream, 2u, 0u, ref_ct, 1u, sd_huff_payload);
+
+		// Segment 3: Huffman Text Region (2 instances: Symbol 0 at x=0, Symbol 1 at x=4):
+		// - Mandatory 35-runcode table (35 * 4 = 140 bits): runcode 1 has pref_len=1 ("0001"), all other 34 have pref_len=0 ("0000")
+		// - 2 symbol code lengths using runcode 1 (prefix "0"): "0" (sym 0 len = 1) + "0" (sym 1 len = 1) = 2 bits
+		// - Align to byte boundary: 140 + 2 = 142 bits -> pad with "00" (144 bits = 18 bytes)
+		// - Initial STRIPT = 1 (Table B.12: prefix "0") -> stript = -1
+		// - Strip DT = 1 (Table B.12: prefix "0") -> stript = -1 + 1 = 0
+		// - First S (DFS = 0, Table B.7: {0, 4, 5} prefix "1011" + 5-bit "00000") -> firsts = 0, curs = 0
+		// - Instance 0: Symbol ID 0 (prefix "0") -> draws at x=0..3, curs becomes 0 + (4 - 1) = 3
+		// - Instance 1: IDS = 1 (Table B.9: {1, 3, 1} prefix "011" + 1-bit "0") -> curs becomes 3 + 1 = 4; Symbol ID 1 (prefix "1") -> draws at x=4..7
+		std::string runcode_hdr = "0000" "0001";
+		for (int i = 2; i < 35; ++i) {
+			runcode_hdr += "0000";
+		}
+		runcode_hdr += "00" "00"; // two '0' bits for sym 0/1 lengths + two '0' bits byte-alignment padding
 		const auto tr_huff_bits = pack_bitstring(
-			std::string("0") + "0" + "000000000" + "00000");
+			runcode_hdr +
+			"0" + "0" + "101100000" + "0" + "0110" + "1" + "000000");
 		std::vector<uint8_t> tr_huff_payload;
 		append_u32_be(tr_huff_payload, 8u);
 		append_u32_be(tr_huff_payload, 2u);
@@ -1622,12 +1648,13 @@ TEST(PdfFilters, Jbig2Decode)
 		append_u32_be(tr_huff_payload, 0u);
 		tr_huff_payload.push_back(0u); // OR
 		append_u16_be(tr_huff_payload, 0x0011u); // SBHUFF = 1 (bit 0), REFCORNER = 1 TOPLEFT (bits 4..5 = 1)
-		append_u16_be(tr_huff_payload, 0x0000u); // Huffman table selection flags = 0
-		append_u32_be(tr_huff_payload, 1u);      // SBNUMINSTANCES = 1
+		// SBHUFFFS = 1 [B.7] (bits 0..1 = 1), SBHUFFDS = 1 [B.9] (bits 2..3 = 1), SBHUFFDT = 1 [B.12] (bits 4..5 = 1) -> 0x0015u
+		append_u16_be(tr_huff_payload, 0x0015u);
+		append_u32_be(tr_huff_payload, 2u);      // SBNUMINSTANCES = 2
 		tr_huff_payload.insert(tr_huff_payload.end(), tr_huff_bits.begin(), tr_huff_bits.end());
-		const uint8_t ref1[1] = {1u};
-		append_jbig2_segment(huff_stream, 2u, 6u, ref1, 1u, tr_huff_payload);
-		append_jbig2_segment(huff_stream, 3u, 49u, {}, 1u, {});
+		const uint8_t ref_sd[1] = {2u};
+		append_jbig2_segment(huff_stream, 3u, 6u, ref_sd, 1u, tr_huff_payload);
+		append_jbig2_segment(huff_stream, 4u, 49u, {}, 1u, {});
 
 		auto dec_huff = decode_jbig2(huff_stream);
 		RECTO_ASSERT_OK(dec_huff);
@@ -2420,6 +2447,136 @@ TEST(PdfFilters, DctRgbAndCmyk)
 			EXPECT_EQ(dec_97->pixels[0], 230u);
 			EXPECT_EQ(dec_97->pixels[1], 167u);
 			EXPECT_EQ(dec_97->pixels[2], 188u);
+
+			// (iv) Odd-origin JPX tiles (`(x0 & 1) != 0` and `(y0 & 1) != 0`) with 1-level 5-3 and 9-7 DWT:
+			// Test both `n == 1` (`[1, 2) x [1, 2)`, 1x1 high-pass `HH1` subband) and `n == 3` (`[1, 4) x [1, 4)`,
+			// `LL1` = 1x1, `HL1` = 2x1, `LH1` = 1x2, `HH1` = 2x2) under ASan.
+			for (uint8_t wv_type : {uint8_t{1u}, uint8_t{0u}}) {
+				// 3x3 odd-origin tile `[1, 4) x [1, 4)` (`XOsiz = 1, YOsiz = 1, Xsiz = 4, Ysiz = 4`):
+				// Resolution 0 (`LL1` is 1x1) = 30; Resolution 1 (`HL1`, `LH1`, `HH1`) uses an empty packet (`0x00`).
+				const EncodedJ2kSubband sb_ll30 = encode_j2k_1x1_subband(30, 9u);
+				std::vector<uint8_t> odd_pkts =
+					build_j2k_packet_for_subbands(std::span<const EncodedJ2kSubband>(&sb_ll30, 1u));
+				odd_pkts.push_back(0x00u); // Empty packet for Resolution 1 (all detail subbands zero)
+
+				std::vector<uint8_t> cs_odd3 = {0xFFu, 0x4Fu, 0xFFu, 0x51u};
+				append_u16_be(cs_odd3, 41u); // Lsiz = 38 + 3*1 = 41 (1 component)
+				append_u16_be(cs_odd3, 0u);
+				append_u32_be(cs_odd3, 4u);  // Xsiz = 4
+				append_u32_be(cs_odd3, 4u);  // Ysiz = 4
+				append_u32_be(cs_odd3, 1u);  // XOsiz = 1 (odd origin!)
+				append_u32_be(cs_odd3, 1u);  // YOsiz = 1 (odd origin!)
+				append_u32_be(cs_odd3, 4u);  // XTsiz = 4
+				append_u32_be(cs_odd3, 4u);  // YTsiz = 4
+				append_u32_be(cs_odd3, 0u);  // XTOsiz = 0
+				append_u32_be(cs_odd3, 0u);  // YTOsiz = 0
+				append_u16_be(cs_odd3, 1u);  // Csiz = 1
+				cs_odd3.push_back(7u);       // 8-bit unsigned
+				cs_odd3.push_back(1u);
+				cs_odd3.push_back(1u);
+				cs_odd3.push_back(0xFFu);
+				cs_odd3.push_back(0x52u);
+				append_u16_be(cs_odd3, 12u);
+				cs_odd3.push_back(0u);
+				cs_odd3.push_back(0u);
+				append_u16_be(cs_odd3, 1u);
+				cs_odd3.push_back(0u);
+				cs_odd3.push_back(1u); // 1 DWT decomposition level
+				cs_odd3.push_back(4u);
+				cs_odd3.push_back(4u);
+				cs_odd3.push_back(0u);
+				cs_odd3.push_back(wv_type);
+				cs_odd3.push_back(0xFFu);
+				cs_odd3.push_back(0x5Cu);
+				append_u16_be(cs_odd3, 7u);
+				cs_odd3.push_back(0x40u);
+				for (int sb = 0; sb < 4; ++sb) {
+					cs_odd3.push_back(static_cast<uint8_t>(8u << 3u));
+				}
+				cs_odd3.push_back(0xFFu);
+				cs_odd3.push_back(0x90u);
+				append_u16_be(cs_odd3, 10u);
+				append_u16_be(cs_odd3, 0u);
+				append_u32_be(cs_odd3, 14u + static_cast<uint32_t>(odd_pkts.size()));
+				cs_odd3.push_back(0u);
+				cs_odd3.push_back(1u);
+				cs_odd3.push_back(0xFFu);
+				cs_odd3.push_back(0x93u);
+				cs_odd3.insert(cs_odd3.end(), odd_pkts.begin(), odd_pkts.end());
+				cs_odd3.push_back(0xFFu);
+				cs_odd3.push_back(0xD9u);
+
+				auto dec_odd3 = decode_jpx_image(cs_odd3);
+				RECTO_ASSERT_OK(dec_odd3);
+				EXPECT_EQ(dec_odd3->width, 3u);
+				EXPECT_EQ(dec_odd3->height, 3u);
+				ASSERT_EQ(dec_odd3->pixels.size(), 9u);
+				for (uint8_t px : dec_odd3->pixels) {
+					EXPECT_EQ(px, 158u); // 30 + 128 = 158 across all 9 samples
+				}
+			}
+
+			// 1x1 odd-origin tile `[1, 2) x [1, 2)` (`XOsiz = 1, YOsiz = 1, Xsiz = 2, Ysiz = 2`):
+			// Resolution 0 (`LL1`) is 0x0 (empty packet `0x00`), Resolution 1 has only `HH1` (1x1) = 40:
+			// Per ITU-T T.800 Annex F.3.6 (`n == 1`, odd origin), 1D 5-3 synthesis halves `d[0]`, so 2D halves twice: `40 / 4 + 128 = 138`.
+			{
+				const EncodedJ2kSubband sb_hh40 = encode_j2k_1x1_subband(40, 9u);
+				std::vector<uint8_t> odd1_pkts = {0x00u}; // Empty packet for Resolution 0 (0x0 LL1)
+				const auto p1 = build_j2k_packet_for_subbands(std::span<const EncodedJ2kSubband>(&sb_hh40, 1u));
+				odd1_pkts.insert(odd1_pkts.end(), p1.begin(), p1.end());
+
+				std::vector<uint8_t> cs_odd1 = {0xFFu, 0x4Fu, 0xFFu, 0x51u};
+				append_u16_be(cs_odd1, 41u);
+				append_u16_be(cs_odd1, 0u);
+				append_u32_be(cs_odd1, 2u); // Xsiz = 2
+				append_u32_be(cs_odd1, 2u); // Ysiz = 2
+				append_u32_be(cs_odd1, 1u); // XOsiz = 1
+				append_u32_be(cs_odd1, 1u); // YOsiz = 1
+				append_u32_be(cs_odd1, 2u); // XTsiz = 2
+				append_u32_be(cs_odd1, 2u); // YTsiz = 2
+				append_u32_be(cs_odd1, 0u);
+				append_u32_be(cs_odd1, 0u);
+				append_u16_be(cs_odd1, 1u); // Csiz = 1
+				cs_odd1.push_back(7u);
+				cs_odd1.push_back(1u);
+				cs_odd1.push_back(1u);
+				cs_odd1.push_back(0xFFu);
+				cs_odd1.push_back(0x52u);
+				append_u16_be(cs_odd1, 12u);
+				cs_odd1.push_back(0u);
+				cs_odd1.push_back(0u);
+				append_u16_be(cs_odd1, 1u);
+				cs_odd1.push_back(0u);
+				cs_odd1.push_back(1u);
+				cs_odd1.push_back(4u);
+				cs_odd1.push_back(4u);
+				cs_odd1.push_back(0u);
+				cs_odd1.push_back(1u); // 5-3 reversible
+				cs_odd1.push_back(0xFFu);
+				cs_odd1.push_back(0x5Cu);
+				append_u16_be(cs_odd1, 7u);
+				cs_odd1.push_back(0x40u);
+				for (int sb = 0; sb < 4; ++sb) {
+					cs_odd1.push_back(static_cast<uint8_t>(8u << 3u));
+				}
+				cs_odd1.push_back(0xFFu);
+				cs_odd1.push_back(0x90u);
+				append_u16_be(cs_odd1, 10u);
+				append_u16_be(cs_odd1, 0u);
+				append_u32_be(cs_odd1, 14u + static_cast<uint32_t>(odd1_pkts.size()));
+				cs_odd1.push_back(0u);
+				cs_odd1.push_back(1u);
+				cs_odd1.push_back(0xFFu);
+				cs_odd1.push_back(0x93u);
+				cs_odd1.insert(cs_odd1.end(), odd1_pkts.begin(), odd1_pkts.end());
+				cs_odd1.push_back(0xFFu);
+				cs_odd1.push_back(0xD9u);
+
+				auto dec_odd1 = decode_jpx_image(cs_odd1);
+				RECTO_ASSERT_OK(dec_odd1);
+				ASSERT_EQ(dec_odd1->pixels.size(), 1u);
+				EXPECT_EQ(dec_odd1->pixels[0], 138u);
+			}
 		}
 	}
 
@@ -2488,7 +2645,8 @@ TEST(PdfFilters, DctRgbAndCmyk)
 		}
 
 		// (d) JPXDecode: J2K SIZ header claiming 100000 x 100000 pixels, plus cumulative buffer budget check
-		// on a 2x2 RGB JP2 (pixels=12 + rgba=16 + bgra=16 = 44 bytes > max_decoded_bytes=32).
+		// on a 2x2 RGB JP2 (pixels=12 + rgba=16 + bgra=16 = 44 bytes > max_decoded_bytes=32, and
+		// max_decoded_bytes=64 where total_wic_bytes=44 fits but tile working-set buffers exceed 64).
 		{
 			std::vector<uint8_t> j2k_huge = {
 				0xFFu, 0x4Fu, // SOC
@@ -2518,6 +2676,9 @@ TEST(PdfFilters, DctRgbAndCmyk)
 			const auto jp2_2x2 = make_genuine_jp2_2x2_rgb(rgb_2x2, true);
 			RECTO_EXPECT_ERR(
 				decode_jpx_image(jp2_2x2, nullptr, 32u),
+				ErrorCode::DecompressionLimitExceeded);
+			RECTO_EXPECT_ERR(
+				decode_jpx_image(jp2_2x2, nullptr, 64u),
 				ErrorCode::DecompressionLimitExceeded);
 		}
 
