@@ -1662,6 +1662,69 @@ TEST(PdfFilters, Jbig2Decode)
 		// JBIG2 row 0 = 0xAA, row 1 = 0x55 -> PDF DeviceGray (0=black, 1=white): ~0xAA = 0x55, ~0x55 = 0xAA
 		EXPECT_EQ((*dec_huff)[0], 0x55u);
 		EXPECT_EQ((*dec_huff)[1], 0xAAu);
+
+		// 5c. Multi-symbol refinement/aggregate coding (`SDREFAGG = 1`, `REFAGGNINST = 2`, ITU-T T.88 §6.5.8.2):
+		// Verify that a Symbol Dictionary with `SDHUFF = 1` and `SDREFAGG = 1` aggregates 2 symbols from an imported
+		// dictionary (`Segment 2` above: Symbol 0 = 4x2, Symbol 1 = 4x2) into a single 8x2 symbol via `decode_text_region`.
+		std::vector<uint8_t> agg_stream;
+		append_jbig2_segment(agg_stream, 0u, 48u, {}, 1u, make_jbig2_page_info_payload(8u, 2u, 0u));
+		append_jbig2_segment(agg_stream, 1u, 53u, {}, 1u, ct_payload);
+		append_jbig2_segment(agg_stream, 2u, 0u, ref_ct, 1u, sd_huff_payload);
+
+		// Segment 3: Symbol Dictionary referencing Segment 2 (2 imported symbols), producing 1 new symbol (8x2) with `REFAGGNINST = 2`:
+		// - `SDHUFF = 1` (bit 0), `SDREFAGG = 1` (bit 1), `SDHUFFDH = 0` [B.4] (bits 2..3 = 0), `SDHUFFDW = 1` [B.3] (bits 4..5 = 1), `SDHUFFAGGINST = 0` [B.1] (bits 8..9 = 0) -> `0x0013u`
+		// - DH = +2 (Table B.4: {2, 2, 0} prefix "10" = 2 bits) -> hc_height = 2
+		// - Sym 0 DW = +8 (Table B.3: {3, 4, 3} prefix "1110" + 3-bit offset "101" = 7 bits) -> sym_w = 8
+		// - REFAGGNINST = 2 (Table B.1: {0, 1, 4} prefix "0" + 4-bit offset "0010" = 5 bits)
+		// - Because `REFAGGNINST > 1` (`2 > 1`) and `SDHUFF = 1` (ITU-T T.88 §6.5.8.2.1 & §6.5.8.2.3):
+		//   - Fixed tables B.6 (FS), B.8 (DS), B.11 (DT), `REFCORNER = 0` (`BOTTOMLEFT`), and fixed-length `sym_code_len = 2`-bit symbol IDs:
+		//     - Initial STRIPT = 1 (Table B.11: `{1, 1, 0}` prefix `"0"`) -> stript = -1
+		//     - Strip DT = 2 (Table B.11: `{2, 2, 1}` prefix `"10"` + 1-bit `"0"`) -> stript = -1 + 2 = 1 (bottom row of 8x2 symbol!)
+		//     - First S (DFS = 0, Table B.6: `{0, 2, 7}` prefix `"00"` + 7-bit `"0000000"`) -> firsts = 0, curs = 0
+		//     - Instance 0: Symbol ID 0 (`"00"`, 2 bits), R_I = 0 (`"0"`) -> draws at x=0..3, y=0..1, curs becomes 0 + (4 - 1) = 3
+		//     - Instance 1: IDS = 1 (Table B.8: `{0, 2, 1}` prefix `"00"` + 1-bit `"1"`) -> curs becomes 4; Symbol ID 1 (`"01"`, 2 bits), R_I = 0 (`"0"`) -> draws at x=4..7, y=0..1 (`n_inst == 2 == REFAGGNINST`)
+		// - End of height class DW = OOB (Table B.3: prefix "111110" = 6 bits)
+		// - Export flags (Table B.1): skip 2 imported ("00010", 5 bits), export 1 new ("00001", 5 bits) + pad `"0000"`
+		const auto sd_agg_bits = pack_bitstring(
+			std::string("10") + "1110101" + "00010" +
+			"0" + "100" + "000000000" + "000" + "001" + "010" +
+			"111110" + "00010" + "00001" + "0000");
+		std::vector<uint8_t> sd_agg_payload;
+		append_u16_be(sd_agg_payload, 0x0013u); // SDHUFF = 1, SDREFAGG = 1, SDHUFFDH = 0 (B.4), SDHUFFDW = 1 (B.3)
+		sd_agg_payload.insert(sd_agg_payload.end(), {0u, 0u, 0u, 0u}); // 4 SDRAT bytes (SBRTEMPLATE = 0)
+		append_u32_be(sd_agg_payload, 1u); // SDNUMEXSYMS = 1
+		append_u32_be(sd_agg_payload, 1u); // SDNUMNEWSYMS = 1
+		sd_agg_payload.insert(sd_agg_payload.end(), sd_agg_bits.begin(), sd_agg_bits.end());
+		append_jbig2_segment(agg_stream, 3u, 0u, ref_sd, 1u, sd_agg_payload);
+
+		// Segment 4: Text Region placing the single aggregated 8x2 symbol (ID 0, 1-bit symbol ID `"0"`) at (0, 0):
+		std::string tr1_runcode = "0000" "0001";
+		for (int i = 2; i < 35; ++i) {
+			tr1_runcode += "0000";
+		}
+		tr1_runcode += "0" "000"; // 1 symbol length ('0' -> len 1) + 3 padding bits to align 141 -> 144 bits
+		const auto tr1_bits = pack_bitstring(
+			tr1_runcode +
+			"0" + "0" + "101100000" + "0" + "0000");
+		std::vector<uint8_t> tr1_payload;
+		append_u32_be(tr1_payload, 8u);
+		append_u32_be(tr1_payload, 2u);
+		append_u32_be(tr1_payload, 0u);
+		append_u32_be(tr1_payload, 0u);
+		tr1_payload.push_back(0u);
+		append_u16_be(tr1_payload, 0x0011u);
+		append_u16_be(tr1_payload, 0x0015u);
+		append_u32_be(tr1_payload, 1u); // SBNUMINSTANCES = 1
+		tr1_payload.insert(tr1_payload.end(), tr1_bits.begin(), tr1_bits.end());
+		const uint8_t ref_sd3[1] = {3u};
+		append_jbig2_segment(agg_stream, 4u, 6u, ref_sd3, 1u, tr1_payload);
+		append_jbig2_segment(agg_stream, 5u, 49u, {}, 1u, {});
+
+		auto dec_agg = decode_jbig2(agg_stream);
+		RECTO_ASSERT_OK(dec_agg);
+		ASSERT_EQ(dec_agg->size(), 2u);
+		EXPECT_EQ((*dec_agg)[0], 0x55u);
+		EXPECT_EQ((*dec_agg)[1], 0xAAu);
 	}
 }
 
@@ -2516,66 +2579,83 @@ TEST(PdfFilters, DctRgbAndCmyk)
 				}
 			}
 
-			// 1x1 odd-origin tile `[1, 2) x [1, 2)` (`XOsiz = 1, YOsiz = 1, Xsiz = 2, Ysiz = 2`):
-			// Resolution 0 (`LL1`) is 0x0 (empty packet `0x00`), Resolution 1 has only `HH1` (1x1) = 40:
-			// Per ITU-T T.800 Annex F.3.6 (`n == 1`, odd origin), 1D 5-3 synthesis halves `d[0]`, so 2D halves twice: `40 / 4 + 128 = 138`.
-			{
-				const EncodedJ2kSubband sb_hh40 = encode_j2k_1x1_subband(40, 9u);
-				std::vector<uint8_t> odd1_pkts = {0x00u}; // Empty packet for Resolution 0 (0x0 LL1)
-				const auto p1 = build_j2k_packet_for_subbands(std::span<const EncodedJ2kSubband>(&sb_hh40, 1u));
-				odd1_pkts.insert(odd1_pkts.end(), p1.begin(), p1.end());
+			// 1x1 singleton tiles `[1, 2) x [1, 2)` (`XOsiz = 1, YOsiz = 1, Xsiz = 2, Ysiz = 2`) and `[0, 1) x [0, 1)`:
+			// Per ITU-T T.800 Annex F.3.6 (`1D_SR` when `n == 1`), both 5-3 reversible and 9-7 irreversible synthesis
+			// halve odd-origin `HH1` (`40 / 4 + 128 = 138` in 2D) and leave even-origin `LL1` unscaled (`40 + 128 = 168`).
+			for (uint8_t wv_type : {uint8_t{1u}, uint8_t{0u}}) {
+				for (bool odd_origin : {true, false}) {
+					const EncodedJ2kSubband sb_40 = encode_j2k_1x1_subband(40, 9u);
+					std::vector<uint8_t> s1_pkts;
+					if (odd_origin) {
+						s1_pkts.push_back(0x00u); // Empty packet for Resolution 0 (0x0 LL1)
+						const auto p1 = build_j2k_packet_for_subbands(std::span<const EncodedJ2kSubband>(&sb_40, 1u));
+						s1_pkts.insert(s1_pkts.end(), p1.begin(), p1.end());
+					} else {
+						const auto p0 = build_j2k_packet_for_subbands(std::span<const EncodedJ2kSubband>(&sb_40, 1u));
+						s1_pkts.insert(s1_pkts.end(), p0.begin(), p0.end());
+						s1_pkts.push_back(0x00u); // Empty packet for Resolution 1 (0x0 HL1/LH1/HH1)
+					}
 
-				std::vector<uint8_t> cs_odd1 = {0xFFu, 0x4Fu, 0xFFu, 0x51u};
-				append_u16_be(cs_odd1, 41u);
-				append_u16_be(cs_odd1, 0u);
-				append_u32_be(cs_odd1, 2u); // Xsiz = 2
-				append_u32_be(cs_odd1, 2u); // Ysiz = 2
-				append_u32_be(cs_odd1, 1u); // XOsiz = 1
-				append_u32_be(cs_odd1, 1u); // YOsiz = 1
-				append_u32_be(cs_odd1, 2u); // XTsiz = 2
-				append_u32_be(cs_odd1, 2u); // YTsiz = 2
-				append_u32_be(cs_odd1, 0u);
-				append_u32_be(cs_odd1, 0u);
-				append_u16_be(cs_odd1, 1u); // Csiz = 1
-				cs_odd1.push_back(7u);
-				cs_odd1.push_back(1u);
-				cs_odd1.push_back(1u);
-				cs_odd1.push_back(0xFFu);
-				cs_odd1.push_back(0x52u);
-				append_u16_be(cs_odd1, 12u);
-				cs_odd1.push_back(0u);
-				cs_odd1.push_back(0u);
-				append_u16_be(cs_odd1, 1u);
-				cs_odd1.push_back(0u);
-				cs_odd1.push_back(1u);
-				cs_odd1.push_back(4u);
-				cs_odd1.push_back(4u);
-				cs_odd1.push_back(0u);
-				cs_odd1.push_back(1u); // 5-3 reversible
-				cs_odd1.push_back(0xFFu);
-				cs_odd1.push_back(0x5Cu);
-				append_u16_be(cs_odd1, 7u);
-				cs_odd1.push_back(0x40u);
-				for (int sb = 0; sb < 4; ++sb) {
-					cs_odd1.push_back(static_cast<uint8_t>(8u << 3u));
+					std::vector<uint8_t> cs_s1 = {0xFFu, 0x4Fu, 0xFFu, 0x51u};
+					append_u16_be(cs_s1, 41u);
+					append_u16_be(cs_s1, 0u);
+					append_u32_be(cs_s1, odd_origin ? 2u : 1u); // Xsiz
+					append_u32_be(cs_s1, odd_origin ? 2u : 1u); // Ysiz
+					append_u32_be(cs_s1, odd_origin ? 1u : 0u); // XOsiz
+					append_u32_be(cs_s1, odd_origin ? 1u : 0u); // YOsiz
+					append_u32_be(cs_s1, odd_origin ? 2u : 1u); // XTsiz
+					append_u32_be(cs_s1, odd_origin ? 2u : 1u); // YTsiz
+					append_u32_be(cs_s1, 0u);
+					append_u32_be(cs_s1, 0u);
+					append_u16_be(cs_s1, 1u); // Csiz = 1
+					cs_s1.push_back(7u);
+					cs_s1.push_back(1u);
+					cs_s1.push_back(1u);
+					cs_s1.push_back(0xFFu);
+					cs_s1.push_back(0x52u);
+					append_u16_be(cs_s1, 12u);
+					cs_s1.push_back(0u);
+					cs_s1.push_back(0u);
+					append_u16_be(cs_s1, 1u);
+					cs_s1.push_back(0u);
+					cs_s1.push_back(1u);
+					cs_s1.push_back(4u);
+					cs_s1.push_back(4u);
+					cs_s1.push_back(0u);
+					cs_s1.push_back(wv_type);
+					cs_s1.push_back(0xFFu);
+					cs_s1.push_back(0x5Cu);
+					append_u16_be(cs_s1, 7u);
+					cs_s1.push_back(0x40u);
+					for (int sb = 0; sb < 4; ++sb) {
+						// For 9-7 irreversible (`wv_type == 0`), subband `gain` is `{0, 1, 1, 2}` so setting `eps = 8 + gain`
+						// gives `rb - eps = 0` (`delta_b = 1.0f`) and keeps `mb_total = 9` when `guard_bits` adjusts or we use `eps = 8`
+						// and verify `40 * 4 / 4 + 128 = 168` vs `40 / 4 + 128 = 138`.
+						cs_s1.push_back(static_cast<uint8_t>(8u << 3u));
+					}
+					cs_s1.push_back(0xFFu);
+					cs_s1.push_back(0x90u);
+					append_u16_be(cs_s1, 10u);
+					append_u16_be(cs_s1, 0u);
+					append_u32_be(cs_s1, 14u + static_cast<uint32_t>(s1_pkts.size()));
+					cs_s1.push_back(0u);
+					cs_s1.push_back(1u);
+					cs_s1.push_back(0xFFu);
+					cs_s1.push_back(0x93u);
+					cs_s1.insert(cs_s1.end(), s1_pkts.begin(), s1_pkts.end());
+					cs_s1.push_back(0xFFu);
+					cs_s1.push_back(0xD9u);
+
+					auto dec_s1 = decode_jpx_image(cs_s1);
+					RECTO_ASSERT_OK(dec_s1);
+					ASSERT_EQ(dec_s1->pixels.size(), 1u);
+					// For 5-3 (`wv_type == 1`): odd-origin `HH1` = `40 / 4 + 128 = 138`; even-origin `LL1` = `40 + 128 = 168`.
+					// For 9-7 (`wv_type == 0`, `eps = 8` for all bands): `HH1` has `gain = 2` (`delta_b = 4.0f`), so
+					// `q = 40 -> 160.0f`, halved twice by odd-origin 2D `1D_SR` (`* 0.5f * 0.5f`) to `40.0f + 128 = 168`
+					// (without the ITU-T T.800 §F.3.6 `n == 1` fix, `160.0f / (kK^2) = 105.6f + 128 = 234`!).
+					const uint8_t expected_px = (wv_type == 1u && odd_origin) ? 138u : 168u;
+					EXPECT_EQ(dec_s1->pixels[0], expected_px);
 				}
-				cs_odd1.push_back(0xFFu);
-				cs_odd1.push_back(0x90u);
-				append_u16_be(cs_odd1, 10u);
-				append_u16_be(cs_odd1, 0u);
-				append_u32_be(cs_odd1, 14u + static_cast<uint32_t>(odd1_pkts.size()));
-				cs_odd1.push_back(0u);
-				cs_odd1.push_back(1u);
-				cs_odd1.push_back(0xFFu);
-				cs_odd1.push_back(0x93u);
-				cs_odd1.insert(cs_odd1.end(), odd1_pkts.begin(), odd1_pkts.end());
-				cs_odd1.push_back(0xFFu);
-				cs_odd1.push_back(0xD9u);
-
-				auto dec_odd1 = decode_jpx_image(cs_odd1);
-				RECTO_ASSERT_OK(dec_odd1);
-				ASSERT_EQ(dec_odd1->pixels.size(), 1u);
-				EXPECT_EQ(dec_odd1->pixels[0], 138u);
 			}
 		}
 	}
