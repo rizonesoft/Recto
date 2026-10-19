@@ -952,23 +952,35 @@ PdfResult<void> Document::authenticate(std::string_view password) noexcept
 {
 	try {
 		if (!security_handler_.has_value()) {
+			if (!structure_loaded_) {
+				RECTO_PDF_RETURN_IF_ERROR(load_document_structure());
+			}
 			return {};
 		}
-		const bool was_authenticated = description_.is_authenticated;
 		RECTO_PDF_RETURN_IF_ERROR(security_handler_->authenticate(password));
 		description_.is_authenticated = security_handler_->is_authenticated();
 		description_.unlocked_as_owner = security_handler_->unlocked_as_owner();
 		description_.permissions = security_handler_->permissions();
 
-		if (!was_authenticated && description_.is_authenticated) {
+		if (!structure_loaded_ && description_.is_authenticated) {
 			RECTO_PDF_RETURN_IF_ERROR(load_document_structure());
 		}
 		return {};
 	} catch (const std::bad_alloc&) {
+		if (!structure_loaded_) {
+			description_.is_authenticated = false;
+			description_.unlocked_as_owner = false;
+			description_.permissions = PdfPermissions{};
+		}
 		return make_pdf_error(
 			ErrorCode::OutOfMemory,
 			"Out of memory while authenticating PDF document");
 	} catch (...) {
+		if (!structure_loaded_) {
+			description_.is_authenticated = false;
+			description_.unlocked_as_owner = false;
+			description_.permissions = PdfPermissions{};
+		}
 		return make_pdf_error(
 			ErrorCode::InternalError,
 			"Unexpected exception while authenticating PDF document");
@@ -977,9 +989,16 @@ PdfResult<void> Document::authenticate(std::string_view password) noexcept
 
 namespace {
 
-// Fast-path scanner for uncompressed indirect alias objects (`N G obj M K R endobj`).
-// Avoids allocating a full `Parser` and `Lexer` lookahead vector when stepping
-// through uncompressed indirect reference alias chains.
+[[nodiscard]] constexpr uint64_t make_ref_cache_key(IndirectRef ref) noexcept
+{
+	return (static_cast<uint64_t>(ref.obj_num) << 16u) |
+		static_cast<uint64_t>(ref.gen_num);
+}
+
+// Fast-path scanner for uncompressed indirect alias objects (`N G obj M K R endobj`),
+// including optional PDF `%` comments between tokens. Avoids allocating a full
+// `Parser` and `Lexer` lookahead vector when stepping through uncompressed
+// indirect reference alias chains.
 [[nodiscard]] std::optional<IndirectRef> try_read_uncompressed_ref_alias(
 	std::span<const uint8_t> file_bytes,
 	uint64_t byte_offset,
@@ -991,14 +1010,23 @@ namespace {
 	size_t p = static_cast<size_t>(byte_offset);
 	const size_t n = file_bytes.size();
 
-	auto skip_ws = [&]() noexcept {
-		while (p < n && Lexer::is_pdf_whitespace(file_bytes[p])) {
-			++p;
+	auto skip_ws_and_comments = [&]() noexcept {
+		while (p < n) {
+			if (Lexer::is_pdf_whitespace(file_bytes[p])) {
+				++p;
+			} else if (file_bytes[p] == '%') {
+				++p;
+				while (p < n && file_bytes[p] != '\r' && file_bytes[p] != '\n') {
+					++p;
+				}
+			} else {
+				break;
+			}
 		}
 	};
 
 	auto read_u64 = [&](uint64_t& out) noexcept -> bool {
-		skip_ws();
+		skip_ws_and_comments();
 		if (p >= n || file_bytes[p] < '0' || file_bytes[p] > '9') {
 			return false;
 		}
@@ -1019,7 +1047,7 @@ namespace {
 	};
 
 	auto match_kw = [&](std::string_view kw) noexcept -> bool {
-		skip_ws();
+		skip_ws_and_comments();
 		if (p + kw.size() > n) {
 			return false;
 		}
@@ -1059,6 +1087,197 @@ namespace {
 
 } // namespace
 
+PdfResult<Document::SingleHopResult> Document::resolve_single_indirect_hop(
+	IndirectRef current,
+	const std::vector<IndirectRef>& visited_refs) const
+{
+	const XrefEntry* entry = xref_.find(current.obj_num);
+	if (entry == nullptr || entry->is_free()) {
+		return SingleHopResult{std::nullopt, PdfValue(PdfNull{})};
+	}
+	if (entry->is_uncompressed()) {
+		if (entry->generation != current.gen_num) {
+			return SingleHopResult{std::nullopt, PdfValue(PdfNull{})};
+		}
+		if (const auto fast_alias = try_read_uncompressed_ref_alias(
+				file_bytes_,
+				entry->byte_offset,
+				current)) {
+			return SingleHopResult{*fast_alias, PdfValue(PdfNull{})};
+		}
+	}
+
+	if (security_handler_.has_value()) {
+		if (!security_handler_->is_authenticated()) {
+			return make_doc_error(
+				ErrorCode::NeedsPassword,
+				DiagnosticId::NeedsPassword,
+				"Cannot resolve encrypted PDF object before authentication",
+				std::nullopt,
+				current.obj_num,
+				current.gen_num);
+		}
+
+		if (entry->is_compressed()) {
+			if (current.gen_num != 0u) {
+				return SingleHopResult{std::nullopt, PdfValue(PdfNull{})};
+			}
+			const uint32_t stm_obj_num = entry->obj_stm_num;
+			const uint32_t stm_index = entry->obj_stm_index;
+			const IndirectRef stm_ref{stm_obj_num, 0u};
+			if (std::find(visited_refs.begin(), visited_refs.end(), stm_ref) != visited_refs.end()) {
+				return make_doc_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedObject,
+					"Cyclic /Type /ObjStm reference detected",
+					std::nullopt,
+					current.obj_num,
+					current.gen_num);
+			}
+			const XrefEntry* stm_entry = xref_.find(stm_obj_num);
+			if (stm_entry == nullptr || !stm_entry->is_uncompressed() || stm_entry->generation != 0u) {
+				return make_doc_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedObject,
+					"Target /Type /ObjStm object is missing, free, or nested",
+					std::nullopt,
+					stm_obj_num,
+					0u);
+			}
+			RECTO_PDF_TRY(
+				IndirectObject raw_stm_obj,
+				xref_.read_indirect_object(file_bytes_, stm_ref));
+			RECTO_PDF_RETURN_IF_ERROR(
+				security_handler_->decrypt_object_values(
+					raw_stm_obj.value,
+					stm_ref,
+					/*is_inside_obj_stm=*/false));
+			const PdfStream* obj_stm = raw_stm_obj.value.as_stream();
+			if (obj_stm == nullptr ||
+				obj_stm->dict.get_name("Type").value_or("") != "ObjStm") {
+				return make_doc_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedObject,
+					"Compressed object target is not a /Type /ObjStm stream",
+					std::nullopt,
+					stm_obj_num,
+					0u);
+			}
+			const auto n_opt = obj_stm->dict.get_int("N");
+			const auto first_opt = obj_stm->dict.get_int("First");
+			if (!n_opt.has_value() || *n_opt <= 0 || *n_opt > kMaxObjStmEntries ||
+				!first_opt.has_value() || *first_opt < 0) {
+				return make_doc_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedObject,
+					"Invalid /N or /First in decrypted /Type /ObjStm stream",
+					std::nullopt,
+					stm_obj_num,
+					0u);
+			}
+			RECTO_PDF_TRY(
+				std::vector<uint8_t> decoded_stm,
+				recto::pdf::decode_stream(*obj_stm));
+			const uint64_t first_off = static_cast<uint64_t>(*first_opt);
+			if (first_off > decoded_stm.size()) {
+				return make_doc_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedObject,
+					"/Type /ObjStm /First offset exceeds decoded stream length",
+					std::nullopt,
+					stm_obj_num,
+					0u);
+			}
+			const uint32_t n_count = static_cast<uint32_t>(*n_opt);
+			if (stm_index >= n_count) {
+				return make_doc_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedObject,
+					"Compressed object index exceeds /Type /ObjStm /N entry count",
+					std::nullopt,
+					current.obj_num,
+					current.gen_num);
+			}
+			std::vector<CachedObjStream::HeaderPair> pairs;
+			pairs.reserve(n_count);
+			Lexer hdr_lexer(std::span<const uint8_t>(
+				decoded_stm.data(),
+				static_cast<size_t>(first_off)));
+			for (uint32_t i = 0; i < n_count; ++i) {
+				RECTO_PDF_TRY(const Token num_tok, hdr_lexer.next_token());
+				RECTO_PDF_TRY(const Token off_tok, hdr_lexer.next_token());
+				if (num_tok.kind != TokenKind::Integer || num_tok.int_value <= 0 ||
+					off_tok.kind != TokenKind::Integer || off_tok.int_value < 0) {
+					return make_doc_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedObject,
+						"Malformed header pair in decrypted /Type /ObjStm stream",
+						std::nullopt,
+						stm_obj_num,
+						0u);
+				}
+				const uint64_t rel_off = static_cast<uint64_t>(off_tok.int_value);
+				if (rel_off > decoded_stm.size() - first_off ||
+					(!pairs.empty() && rel_off < pairs.back().rel_offset)) {
+					return make_doc_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedObject,
+						"Out-of-bounds relative offset in decrypted /Type /ObjStm stream",
+						std::nullopt,
+						stm_obj_num,
+						0u);
+				}
+				pairs.push_back(CachedObjStream::HeaderPair{
+					static_cast<uint32_t>(num_tok.int_value),
+					rel_off});
+			}
+			if (pairs[stm_index].obj_num != current.obj_num) {
+				return make_doc_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedObject,
+					"Compressed object number in /Type /ObjStm does not match xref entry",
+					std::nullopt,
+					current.obj_num,
+					current.gen_num);
+			}
+			const size_t obj_start = static_cast<size_t>(first_off + pairs[stm_index].rel_offset);
+			const size_t obj_end = (stm_index + 1u < pairs.size())
+				? static_cast<size_t>(first_off + pairs[stm_index + 1u].rel_offset)
+				: decoded_stm.size();
+			Parser inner_parser(std::span<const uint8_t>(
+				decoded_stm.data() + obj_start,
+				obj_end - obj_start));
+			RECTO_PDF_TRY(PdfValue inner_val, inner_parser.parse_direct_object());
+			if (const auto next_ref = inner_val.as_ref()) {
+				return SingleHopResult{*next_ref, PdfValue(PdfNull{})};
+			}
+			return SingleHopResult{std::nullopt, std::move(inner_val)};
+		}
+
+		RECTO_PDF_TRY(
+			IndirectObject raw_obj,
+			xref_.read_indirect_object(file_bytes_, current));
+		if (const auto next_ref = raw_obj.value.as_ref()) {
+			return SingleHopResult{*next_ref, PdfValue(PdfNull{})};
+		}
+		RECTO_PDF_RETURN_IF_ERROR(
+			security_handler_->decrypt_object_values(
+				raw_obj.value,
+				current,
+				/*is_inside_obj_stm=*/false));
+		return SingleHopResult{std::nullopt, std::move(raw_obj.value)};
+	}
+
+	// Unencrypted document:
+	RECTO_PDF_TRY(
+		IndirectObject raw_obj,
+		xref_.read_indirect_object(file_bytes_, current));
+	if (const auto next_ref = raw_obj.value.as_ref()) {
+		return SingleHopResult{*next_ref, PdfValue(PdfNull{})};
+	}
+	return SingleHopResult{std::nullopt, std::move(raw_obj.value)};
+}
+
 PdfResult<PdfValue> Document::resolve_object_with_visited(
 	IndirectRef ref,
 	std::vector<IndirectRef>& visited_refs) const
@@ -1084,193 +1303,14 @@ PdfResult<PdfValue> Document::resolve_object_with_visited(
 				current.gen_num);
 		}
 		visited_refs.push_back(current);
-
-		const XrefEntry* entry = xref_.find(current.obj_num);
-		if (entry == nullptr || entry->is_free()) {
-			return PdfValue(PdfNull{});
-		}
-		if (entry->is_uncompressed() && entry->generation == current.gen_num) {
-			if (const auto fast_alias = try_read_uncompressed_ref_alias(
-					file_bytes_,
-					entry->byte_offset,
-					current)) {
-				current = *fast_alias;
-				continue;
-			}
-		}
-
-		if (security_handler_.has_value()) {
-			if (!security_handler_->is_authenticated()) {
-				return make_doc_error(
-					ErrorCode::NeedsPassword,
-					DiagnosticId::NeedsPassword,
-					"Cannot resolve encrypted PDF object before authentication",
-					std::nullopt,
-					current.obj_num,
-					current.gen_num);
-			}
-
-			if (entry->is_compressed()) {
-				if (current.gen_num != 0u) {
-					return PdfValue(PdfNull{});
-				}
-				const uint32_t stm_obj_num = entry->obj_stm_num;
-				const uint32_t stm_index = entry->obj_stm_index;
-				const IndirectRef stm_ref{stm_obj_num, 0u};
-				if (std::find(visited_refs.begin(), visited_refs.end(), stm_ref) != visited_refs.end()) {
-					return make_doc_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedObject,
-						"Cyclic /Type /ObjStm reference detected",
-						std::nullopt,
-						current.obj_num,
-						current.gen_num);
-				}
-				const XrefEntry* stm_entry = xref_.find(stm_obj_num);
-				if (stm_entry == nullptr || !stm_entry->is_uncompressed() || stm_entry->generation != 0u) {
-					return make_doc_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedObject,
-						"Target /Type /ObjStm object is missing, free, or nested",
-						std::nullopt,
-						stm_obj_num,
-						0u);
-				}
-				RECTO_PDF_TRY(
-					IndirectObject raw_stm_obj,
-					xref_.read_indirect_object(file_bytes_, stm_ref));
-				RECTO_PDF_RETURN_IF_ERROR(
-					security_handler_->decrypt_object_values(
-						raw_stm_obj.value,
-						stm_ref,
-						/*is_inside_obj_stm=*/false));
-				const PdfStream* obj_stm = raw_stm_obj.value.as_stream();
-				if (obj_stm == nullptr ||
-					obj_stm->dict.get_name("Type").value_or("") != "ObjStm") {
-					return make_doc_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedObject,
-						"Compressed object target is not a /Type /ObjStm stream",
-						std::nullopt,
-						stm_obj_num,
-						0u);
-				}
-				const auto n_opt = obj_stm->dict.get_int("N");
-				const auto first_opt = obj_stm->dict.get_int("First");
-				if (!n_opt.has_value() || *n_opt <= 0 || *n_opt > kMaxObjStmEntries ||
-					!first_opt.has_value() || *first_opt < 0) {
-					return make_doc_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedObject,
-						"Invalid /N or /First in decrypted /Type /ObjStm stream",
-						std::nullopt,
-						stm_obj_num,
-						0u);
-				}
-				RECTO_PDF_TRY(
-					std::vector<uint8_t> decoded_stm,
-					recto::pdf::decode_stream(*obj_stm));
-				const uint64_t first_off = static_cast<uint64_t>(*first_opt);
-				if (first_off > decoded_stm.size()) {
-					return make_doc_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedObject,
-						"/Type /ObjStm /First offset exceeds decoded stream length",
-						std::nullopt,
-						stm_obj_num,
-						0u);
-				}
-				const uint32_t n_count = static_cast<uint32_t>(*n_opt);
-				if (stm_index >= n_count) {
-					return make_doc_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedObject,
-						"Compressed object index exceeds /Type /ObjStm /N entry count",
-						std::nullopt,
-						current.obj_num,
-						current.gen_num);
-				}
-				std::vector<CachedObjStream::HeaderPair> pairs;
-				pairs.reserve(n_count);
-				Lexer hdr_lexer(std::span<const uint8_t>(
-					decoded_stm.data(),
-					static_cast<size_t>(first_off)));
-				for (uint32_t i = 0; i < n_count; ++i) {
-					RECTO_PDF_TRY(const Token num_tok, hdr_lexer.next_token());
-					RECTO_PDF_TRY(const Token off_tok, hdr_lexer.next_token());
-					if (num_tok.kind != TokenKind::Integer || num_tok.int_value <= 0 ||
-						off_tok.kind != TokenKind::Integer || off_tok.int_value < 0) {
-						return make_doc_error(
-							ErrorCode::DamagedFormat,
-							DiagnosticId::DamagedObject,
-							"Malformed header pair in decrypted /Type /ObjStm stream",
-							std::nullopt,
-							stm_obj_num,
-							0u);
-					}
-					const uint64_t rel_off = static_cast<uint64_t>(off_tok.int_value);
-					if (rel_off > decoded_stm.size() - first_off ||
-						(!pairs.empty() && rel_off < pairs.back().rel_offset)) {
-						return make_doc_error(
-							ErrorCode::DamagedFormat,
-							DiagnosticId::DamagedObject,
-							"Out-of-bounds relative offset in decrypted /Type /ObjStm stream",
-							std::nullopt,
-							stm_obj_num,
-							0u);
-					}
-					pairs.push_back(CachedObjStream::HeaderPair{
-						static_cast<uint32_t>(num_tok.int_value),
-						rel_off});
-				}
-				if (pairs[stm_index].obj_num != current.obj_num) {
-					return make_doc_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedObject,
-						"Compressed object number in /Type /ObjStm does not match xref entry",
-						std::nullopt,
-						current.obj_num,
-						current.gen_num);
-				}
-				const size_t obj_start = static_cast<size_t>(first_off + pairs[stm_index].rel_offset);
-				const size_t obj_end = (stm_index + 1u < pairs.size())
-					? static_cast<size_t>(first_off + pairs[stm_index + 1u].rel_offset)
-					: decoded_stm.size();
-				Parser inner_parser(std::span<const uint8_t>(
-					decoded_stm.data() + obj_start,
-					obj_end - obj_start));
-				RECTO_PDF_TRY(PdfValue inner_val, inner_parser.parse_direct_object());
-				if (const auto next_ref = inner_val.as_ref()) {
-					current = *next_ref;
-					continue;
-				}
-				return inner_val;
-			}
-
-			RECTO_PDF_TRY(
-				IndirectObject raw_obj,
-				xref_.read_indirect_object(file_bytes_, current));
-			if (const auto next_ref = raw_obj.value.as_ref()) {
-				current = *next_ref;
-				continue;
-			}
-			RECTO_PDF_RETURN_IF_ERROR(
-				security_handler_->decrypt_object_values(
-					raw_obj.value,
-					current,
-					/*is_inside_obj_stm=*/false));
-			return std::move(raw_obj.value);
-		}
-
-		// Unencrypted document:
 		RECTO_PDF_TRY(
-			IndirectObject raw_obj,
-			xref_.read_indirect_object(file_bytes_, current));
-		if (const auto next_ref = raw_obj.value.as_ref()) {
-			current = *next_ref;
+			SingleHopResult step,
+			resolve_single_indirect_hop(current, visited_refs));
+		if (step.next_ref.has_value()) {
+			current = *step.next_ref;
 			continue;
 		}
-		return std::move(raw_obj.value);
+		return std::move(step.terminal_value);
 	}
 }
 
@@ -1441,6 +1481,8 @@ PdfResult<std::vector<uint8_t>> Document::decode_page_contents_from_dict(
 
 PdfResult<void> Document::load_document_structure()
 {
+	structure_loaded_ = false;
+	catalog_ = PdfDict{};
 	page_records_.clear();
 	page_obj_to_index_.clear();
 	named_dests_.clear();
@@ -1448,6 +1490,75 @@ PdfResult<void> Document::load_document_structure()
 	description_.outline.clear();
 	description_.fonts.clear();
 	description_.metadata = DocumentMetadata{};
+
+	bool structure_committed = false;
+	struct StructureRollbackGuard {
+		Document& doc;
+		bool& committed;
+		~StructureRollbackGuard() noexcept
+		{
+			if (!committed) {
+				doc.structure_loaded_ = false;
+				doc.catalog_ = PdfDict{};
+				doc.page_records_.clear();
+				doc.page_obj_to_index_.clear();
+				doc.named_dests_.clear();
+				doc.description_.pages.clear();
+				doc.description_.outline.clear();
+				doc.description_.fonts.clear();
+				doc.description_.metadata = DocumentMetadata{};
+				doc.description_.page_count = 0u;
+				if (doc.security_handler_.has_value()) {
+					doc.description_.is_authenticated = false;
+					doc.description_.unlocked_as_owner = false;
+					doc.description_.permissions = PdfPermissions{};
+				}
+			}
+		}
+	} rollback_guard{*this, structure_committed};
+
+	auto resolve_indirect_chain_with_cache =
+		[this](
+			IndirectRef start_ref,
+			const auto& cache_map,
+			std::vector<IndirectRef>& out_hop_refs,
+			auto& out_cached_val) -> PdfResult<std::pair<bool, PdfValue>> {
+		IndirectRef current = start_ref;
+		while (true) {
+			if (const auto hit_it = cache_map.find(make_ref_cache_key(current));
+				hit_it != cache_map.end()) {
+				out_cached_val = hit_it->second;
+				return std::pair<bool, PdfValue>{true, PdfValue(PdfNull{})};
+			}
+			if (std::find(out_hop_refs.begin(), out_hop_refs.end(), current) != out_hop_refs.end()) {
+				return make_doc_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedObject,
+					"Cyclic indirect object reference chain detected",
+					std::nullopt,
+					current.obj_num,
+					current.gen_num);
+			}
+			if (out_hop_refs.size() >= kMaxIndirectRefDepth) {
+				return make_doc_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedObject,
+					"Indirect object reference chain exceeds maximum depth of 32",
+					std::nullopt,
+					current.obj_num,
+					current.gen_num);
+			}
+			out_hop_refs.push_back(current);
+			RECTO_PDF_TRY(
+				SingleHopResult step,
+				resolve_single_indirect_hop(current, out_hop_refs));
+			if (step.next_ref.has_value()) {
+				current = *step.next_ref;
+				continue;
+			}
+			return std::pair<bool, PdfValue>{false, std::move(step.terminal_value)};
+		}
+	};
 
 	// 1. Resolve `/Root` (`/Type /Catalog`):
 	const auto root_ref_opt = xref_.root_ref();
@@ -1609,8 +1720,8 @@ PdfResult<void> Document::load_document_structure()
 		return bytes;
 	};
 
-	std::unordered_map<uint32_t, std::shared_ptr<const PdfDict>> parsed_resources_obj_cache;
-	std::unordered_map<uint32_t, PdfValue> parsed_resource_cat_obj_cache;
+	std::unordered_map<uint64_t, std::shared_ptr<const PdfDict>> parsed_resources_obj_cache;
+	std::unordered_map<uint64_t, std::shared_ptr<const PdfValue>> parsed_resource_cat_obj_cache;
 
 	auto build_resolved_resources_dict = [&](const PdfDict& res_dict) -> PdfResult<std::shared_ptr<const PdfDict>> {
 		// Per ISO 32000-1 section 7.7.3.4 ("Inheritance of Page Attributes"),
@@ -1633,36 +1744,46 @@ PdfResult<void> Document::load_document_structure()
 		for (const auto& [cat_key, cat_val] : res_dict) {
 			PdfValue resolved_cat;
 			if (const auto cat_ref = cat_val.as_ref()) {
-				const auto cat_it = parsed_resource_cat_obj_cache.find(cat_ref->obj_num);
-				if (cat_it != parsed_resource_cat_obj_cache.end()) {
-					RECTO_PDF_TRY(PdfValue cloned_cat, cat_it->second.deep_clone());
-					resolved_cat = std::move(cloned_cat);
-				} else {
-					std::vector<IndirectRef> hop_refs;
-					hop_refs.reserve(kMaxIndirectRefDepth);
-					RECTO_PDF_TRY(PdfValue r_cat, resolve_object_with_visited(*cat_ref, hop_refs));
+				std::vector<IndirectRef> hop_refs;
+				hop_refs.reserve(kMaxIndirectRefDepth);
+				std::shared_ptr<const PdfValue> cached_cat;
+				RECTO_PDF_TRY(
+					auto cat_chain_res,
+					resolve_indirect_chain_with_cache(
+						*cat_ref,
+						parsed_resource_cat_obj_cache,
+						hop_refs,
+						cached_cat));
+				if (!cat_chain_res.first) {
 					const size_t cat_est =
-						estimate_pdf_value_bytes(estimate_pdf_value_bytes, r_cat, 0u);
-					if (cat_est > kMaxResourceDictBytes) {
+						estimate_pdf_value_bytes(estimate_pdf_value_bytes, cat_chain_res.second, 0u);
+					if (cat_est > kMaxResourceDictBytes ||
+						total_retained_resources_bytes + cat_est > kMaxTotalResourcesBytes) {
 						return make_doc_error(
 							ErrorCode::DamagedFormat,
 							DiagnosticId::DamagedDictionary,
 							"/Resources category dictionary exceeds maximum byte budget");
 					}
-					if (!hop_refs.empty()) {
-						RECTO_PDF_TRY(PdfValue cache_copy, r_cat.deep_clone());
-						parsed_resource_cat_obj_cache.emplace(
-							hop_refs.back().obj_num,
-							std::move(cache_copy));
-						for (size_t h = 0u; h + 1u < hop_refs.size(); ++h) {
-							RECTO_PDF_TRY(PdfValue alias_copy, r_cat.deep_clone());
-							parsed_resource_cat_obj_cache.emplace(
-								hop_refs[h].obj_num,
-								std::move(alias_copy));
-						}
-					}
-					resolved_cat = std::move(r_cat);
+					total_retained_resources_bytes += cat_est;
+					cached_cat = std::make_shared<const PdfValue>(std::move(cat_chain_res.second));
 				}
+				constexpr size_t kCatCacheEntryBytes =
+					sizeof(uint64_t) + sizeof(std::shared_ptr<const PdfValue>);
+				for (const IndirectRef& hr : hop_refs) {
+					const uint64_t hkey = make_ref_cache_key(hr);
+					if (parsed_resource_cat_obj_cache.find(hkey) == parsed_resource_cat_obj_cache.end()) {
+						if (total_retained_resources_bytes + kCatCacheEntryBytes > kMaxTotalResourcesBytes) {
+							return make_doc_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedDictionary,
+								"/Resources category alias cache exceeds maximum byte budget");
+						}
+						total_retained_resources_bytes += kCatCacheEntryBytes;
+						parsed_resource_cat_obj_cache.emplace(hkey, cached_cat);
+					}
+				}
+				RECTO_PDF_TRY(PdfValue cloned_cat, cached_cat->deep_clone());
+				resolved_cat = std::move(cloned_cat);
 			} else {
 				RECTO_PDF_TRY(PdfValue r_cat, resolve_value(cat_val));
 				resolved_cat = std::move(r_cat);
@@ -1692,69 +1813,45 @@ PdfResult<void> Document::load_document_structure()
 			return {};
 		}
 		if (const auto res_ref = res_val->as_ref()) {
-			const auto cache_it = parsed_resources_obj_cache.find(res_ref->obj_num);
-			if (cache_it != parsed_resources_obj_cache.end()) {
-				if (cache_it->second != nullptr) {
-					inout_resources = cache_it->second;
-				}
-				return {};
-			}
 			std::vector<IndirectRef> hop_refs;
 			hop_refs.reserve(kMaxIndirectRefDepth);
-			IndirectRef cur_ref = *res_ref;
 			std::shared_ptr<const PdfDict> built_res;
-			bool hit_cached_target = false;
-			PdfValue resolved_res;
-			while (true) {
-				if (const auto hit_it = parsed_resources_obj_cache.find(cur_ref.obj_num);
-					hit_it != parsed_resources_obj_cache.end()) {
-					built_res = hit_it->second;
-					hit_cached_target = true;
-					break;
-				}
-				if (std::find(hop_refs.begin(), hop_refs.end(), cur_ref) != hop_refs.end() ||
-					hop_refs.size() >= kMaxIndirectRefDepth) {
-					return make_doc_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedObject,
-						"Cyclic or over-deep /Resources indirect reference chain");
-				}
-				const XrefEntry* entry = xref_.find(cur_ref.obj_num);
-				if (entry != nullptr && entry->is_uncompressed() && entry->generation == cur_ref.gen_num) {
-					if (const auto fast_alias = try_read_uncompressed_ref_alias(
-							file_bytes_,
-							entry->byte_offset,
-							cur_ref)) {
-						hop_refs.push_back(cur_ref);
-						cur_ref = *fast_alias;
-						continue;
+			RECTO_PDF_TRY(
+				auto res_chain,
+				resolve_indirect_chain_with_cache(
+					*res_ref,
+					parsed_resources_obj_cache,
+					hop_refs,
+					built_res));
+			if (!res_chain.first) {
+				if (!res_chain.second.is_null()) {
+					const PdfDict* res_dict = res_chain.second.as_dict();
+					if (res_dict == nullptr) {
+						return make_doc_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedDictionary,
+							"/Resources entry is not a PDF dictionary");
 					}
+					RECTO_PDF_TRY(
+						std::shared_ptr<const PdfDict> fresh_res,
+						build_resolved_resources_dict(*res_dict));
+					built_res = std::move(fresh_res);
 				}
-				RECTO_PDF_TRY(PdfValue fallback_val, resolve_object_with_visited(cur_ref, hop_refs));
-				resolved_res = std::move(fallback_val);
-				break;
 			}
-			if (!hit_cached_target) {
-				if (resolved_res.is_null()) {
-					for (const IndirectRef& hr : hop_refs) {
-						parsed_resources_obj_cache.emplace(hr.obj_num, nullptr);
-					}
-					return {};
-				}
-				const PdfDict* res_dict = resolved_res.as_dict();
-				if (res_dict == nullptr) {
-					return make_doc_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedDictionary,
-						"/Resources entry is not a PDF dictionary");
-				}
-				RECTO_PDF_TRY(
-					std::shared_ptr<const PdfDict> fresh_res,
-					build_resolved_resources_dict(*res_dict));
-				built_res = std::move(fresh_res);
-			}
+			constexpr size_t kResCacheEntryBytes =
+				sizeof(uint64_t) + sizeof(std::shared_ptr<const PdfDict>);
 			for (const IndirectRef& hr : hop_refs) {
-				parsed_resources_obj_cache.emplace(hr.obj_num, built_res);
+				const uint64_t hkey = make_ref_cache_key(hr);
+				if (parsed_resources_obj_cache.find(hkey) == parsed_resources_obj_cache.end()) {
+					if (total_retained_resources_bytes + kResCacheEntryBytes > kMaxTotalResourcesBytes) {
+						return make_doc_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedDictionary,
+							"/Resources alias cache exceeds maximum memory budget");
+					}
+					total_retained_resources_bytes += kResCacheEntryBytes;
+					parsed_resources_obj_cache.emplace(hkey, built_res);
+				}
 			}
 			if (built_res != nullptr) {
 				inout_resources = std::move(built_res);
@@ -1808,6 +1905,7 @@ PdfResult<void> Document::load_document_structure()
 		}
 
 		IndirectRef current_ref{};
+		std::vector<IndirectRef> node_hop_refs;
 		PdfValue resolved_node;
 		if (const auto ref = node_val.as_ref()) {
 			current_ref = *ref;
@@ -1820,22 +1918,21 @@ PdfResult<void> Document::load_document_structure()
 					ref->obj_num,
 					ref->gen_num);
 			}
-			std::vector<IndirectRef> hop_refs;
-			hop_refs.reserve(kMaxIndirectRefDepth);
-			RECTO_PDF_TRY(PdfValue val, resolve_object_with_visited(*ref, hop_refs));
-			for (size_t h = 1u; h < hop_refs.size(); ++h) {
-				if (!visited_page_nodes.insert(static_cast<int>(hop_refs[h].obj_num)).second) {
+			node_hop_refs.reserve(kMaxIndirectRefDepth);
+			RECTO_PDF_TRY(PdfValue val, resolve_object_with_visited(*ref, node_hop_refs));
+			for (size_t h = 1u; h < node_hop_refs.size(); ++h) {
+				if (!visited_page_nodes.insert(static_cast<int>(node_hop_refs[h].obj_num)).second) {
 					return make_doc_error(
 						ErrorCode::DamagedFormat,
 						DiagnosticId::DamagedObject,
 						"Cyclic /Pages /Kids tree detected",
 						std::nullopt,
-						hop_refs[h].obj_num,
-						hop_refs[h].gen_num);
+						node_hop_refs[h].obj_num,
+						node_hop_refs[h].gen_num);
 				}
 			}
-			if (!hop_refs.empty()) {
-				current_ref = hop_refs.back();
+			if (!node_hop_refs.empty()) {
+				current_ref = node_hop_refs.back();
 			}
 			resolved_node = std::move(val);
 		} else {
@@ -1978,8 +2075,10 @@ PdfResult<void> Document::load_document_structure()
 				}
 			}
 
-			if (current_ref.obj_num != 0u) {
-				page_obj_to_index_.emplace(current_ref.obj_num, page_idx);
+			for (const IndirectRef& hr : node_hop_refs) {
+				if (hr.obj_num != 0u) {
+					page_obj_to_index_.emplace(make_ref_cache_key(hr), page_idx);
+				}
 			}
 			description_.pages.push_back(page_desc);
 			page_records_.push_back(std::move(rec));
@@ -2177,7 +2276,7 @@ PdfResult<void> Document::load_document_structure()
 			return out;
 		}
 		if (const auto page_ref = arr[0].as_ref()) {
-			const auto it = page_obj_to_index_.find(page_ref->obj_num);
+			const auto it = page_obj_to_index_.find(make_ref_cache_key(*page_ref));
 			if (it == page_obj_to_index_.end()) {
 				return out;
 			}
@@ -2268,7 +2367,7 @@ PdfResult<void> Document::load_document_structure()
 		return out;
 	};
 
-	std::unordered_map<uint32_t, ParsedDest> parsed_dest_obj_cache;
+	std::unordered_map<uint64_t, ParsedDest> parsed_dest_obj_cache;
 	auto parse_direct_dest_target = [&](const PdfValue& dval) -> ParsedDest {
 		if (const PdfArray* arr = dval.as_array()) {
 			return parse_dest_array(*arr);
@@ -2276,21 +2375,23 @@ PdfResult<void> Document::load_document_structure()
 		if (const PdfDict* ddict = dval.as_dict()) {
 			if (const PdfValue* inner_d = ddict->get("D")) {
 				if (const auto inner_ref = inner_d->as_ref()) {
-					const auto cache_it = parsed_dest_obj_cache.find(inner_ref->obj_num);
-					if (cache_it != parsed_dest_obj_cache.end()) {
-						return cache_it->second;
-					}
 					std::vector<IndirectRef> hop_refs;
 					hop_refs.reserve(kMaxIndirectRefDepth);
-					auto inner_res = resolve_object_with_visited(*inner_ref, hop_refs);
 					ParsedDest pd{};
-					if (inner_res.has_value()) {
-						if (const PdfArray* arr = inner_res->as_array()) {
-							pd = parse_dest_array(*arr);
+					auto inner_chain = resolve_indirect_chain_with_cache(
+						*inner_ref,
+						parsed_dest_obj_cache,
+						hop_refs,
+						pd);
+					if (inner_chain.has_value()) {
+						if (!inner_chain->first) {
+							if (const PdfArray* arr = inner_chain->second.as_array()) {
+								pd = parse_dest_array(*arr);
+							}
 						}
-					}
-					for (const IndirectRef& hr : hop_refs) {
-						parsed_dest_obj_cache.emplace(hr.obj_num, pd);
+						for (const IndirectRef& hr : hop_refs) {
+							parsed_dest_obj_cache.emplace(make_ref_cache_key(hr), pd);
+						}
 					}
 					return pd;
 				}
@@ -2307,19 +2408,21 @@ PdfResult<void> Document::load_document_structure()
 
 	auto parse_dest_target_value = [&](const PdfValue& raw_v) -> ParsedDest {
 		if (const auto ref = raw_v.as_ref()) {
-			const auto cache_it = parsed_dest_obj_cache.find(ref->obj_num);
-			if (cache_it != parsed_dest_obj_cache.end()) {
-				return cache_it->second;
-			}
 			std::vector<IndirectRef> hop_refs;
 			hop_refs.reserve(kMaxIndirectRefDepth);
-			auto resolved_res = resolve_object_with_visited(*ref, hop_refs);
 			ParsedDest pd{};
-			if (resolved_res.has_value()) {
-				pd = parse_direct_dest_target(*resolved_res);
-			}
-			for (const IndirectRef& hr : hop_refs) {
-				parsed_dest_obj_cache.emplace(hr.obj_num, pd);
+			auto dest_chain = resolve_indirect_chain_with_cache(
+				*ref,
+				parsed_dest_obj_cache,
+				hop_refs,
+				pd);
+			if (dest_chain.has_value()) {
+				if (!dest_chain->first) {
+					pd = parse_direct_dest_target(dest_chain->second);
+				}
+				for (const IndirectRef& hr : hop_refs) {
+					parsed_dest_obj_cache.emplace(make_ref_cache_key(hr), pd);
+				}
 			}
 			return pd;
 		}
@@ -2381,7 +2484,7 @@ PdfResult<void> Document::load_document_structure()
 			if (const PdfDict* names_dict = names_res->as_dict()) {
 				if (const PdfValue* dests_tree_val = names_dict->get("Dests");
 					dests_tree_val != nullptr && !dests_tree_val->is_null()) {
-					std::unordered_set<uint32_t> visited_name_nodes;
+					std::unordered_set<uint64_t> visited_name_nodes;
 					size_t total_name_nodes = 0u;
 					constexpr size_t kMaxNameTreeNodes = 4096u;
 					auto walk_name_tree = [&](auto& self,
@@ -2401,7 +2504,7 @@ PdfResult<void> Document::load_document_structure()
 						}
 						PdfValue resolved_node_val;
 						if (const auto ref = node_v.as_ref()) {
-							if (!visited_name_nodes.insert(ref->obj_num).second) {
+							if (!visited_name_nodes.insert(make_ref_cache_key(*ref)).second) {
 								return {};
 							}
 							std::vector<IndirectRef> hop_refs;
@@ -2411,7 +2514,7 @@ PdfResult<void> Document::load_document_structure()
 								return {};
 							}
 							for (size_t h = 1u; h < hop_refs.size(); ++h) {
-								if (!visited_name_nodes.insert(hop_refs[h].obj_num).second) {
+								if (!visited_name_nodes.insert(make_ref_cache_key(hop_refs[h])).second) {
 									return {};
 								}
 							}
@@ -2476,37 +2579,53 @@ PdfResult<void> Document::load_document_structure()
 	}
 
 	auto resolve_dest_value = [&](const PdfValue& raw_dest) -> ParsedDest {
-		if (const auto ref = raw_dest.as_ref()) {
-			const auto cache_it = parsed_dest_obj_cache.find(ref->obj_num);
-			if (cache_it != parsed_dest_obj_cache.end()) {
-				return cache_it->second;
+		auto parse_resolved_dest_val = [&](const PdfValue& dval) -> ParsedDest {
+			if (dval.is_array() || dval.is_dict()) {
+				return parse_direct_dest_target(dval);
 			}
+			std::string name_key;
+			if (const auto nm = dval.as_name()) {
+				name_key = std::string(*nm);
+			} else if (const PdfString* s = dval.as_string()) {
+				auto utf8_res = pdf_string_to_utf8(s->span());
+				name_key = utf8_res.has_value()
+					? std::move(*utf8_res)
+					: std::string(s->as_byte_view());
+			}
+			if (!name_key.empty()) {
+				const auto it = named_dests_.find(name_key);
+				if (it != named_dests_.end()) {
+					return it->second;
+				}
+			}
+			return ParsedDest{};
+		};
+
+		if (const auto ref = raw_dest.as_ref()) {
+			std::vector<IndirectRef> hop_refs;
+			hop_refs.reserve(kMaxIndirectRefDepth);
+			ParsedDest pd{};
+			auto dest_chain = resolve_indirect_chain_with_cache(
+				*ref,
+				parsed_dest_obj_cache,
+				hop_refs,
+				pd);
+			if (!dest_chain.has_value()) {
+				return ParsedDest{};
+			}
+			if (!dest_chain->first) {
+				pd = parse_resolved_dest_val(dest_chain->second);
+			}
+			for (const IndirectRef& hr : hop_refs) {
+				parsed_dest_obj_cache.emplace(make_ref_cache_key(hr), pd);
+			}
+			return pd;
 		}
 		auto resolved_res = resolve_value(raw_dest);
 		if (!resolved_res.has_value()) {
 			return ParsedDest{};
 		}
-		const PdfValue& dval = *resolved_res;
-		if (dval.is_array() || dval.is_dict()) {
-			return parse_direct_dest_target(dval);
-		}
-
-		std::string name_key;
-		if (const auto nm = dval.as_name()) {
-			name_key = std::string(*nm);
-		} else if (const PdfString* s = dval.as_string()) {
-			auto utf8_res = pdf_string_to_utf8(s->span());
-			name_key = utf8_res.has_value()
-				? std::move(*utf8_res)
-				: std::string(s->as_byte_view());
-		}
-		if (!name_key.empty()) {
-			const auto it = named_dests_.find(name_key);
-			if (it != named_dests_.end()) {
-				return it->second;
-			}
-		}
-		return ParsedDest{};
+		return parse_resolved_dest_val(*resolved_res);
 	};
 
 	// 5. Resolve `/Catalog /Outlines` tree with cycle guard on `/First`/`/Next`:
@@ -2515,9 +2634,9 @@ PdfResult<void> Document::load_document_structure()
 		auto outlines_res = resolve_value(*outlines_val);
 		if (outlines_res.has_value()) {
 			if (const PdfDict* outlines_root = outlines_res->as_dict()) {
-				std::unordered_set<uint32_t> visited_outline_objs;
+				std::unordered_set<uint64_t> visited_outline_objs;
 				if (const auto root_out_ref = outlines_val->as_ref()) {
-					visited_outline_objs.insert(root_out_ref->obj_num);
+					visited_outline_objs.insert(make_ref_cache_key(*root_out_ref));
 				}
 				size_t total_outline_nodes = 0;
 				size_t total_outline_bytes = 0;
@@ -2551,7 +2670,7 @@ PdfResult<void> Document::load_document_structure()
 						}
 						PdfValue item_val;
 						if (const auto item_ref = current_ptr.as_ref()) {
-							if (!visited_outline_objs.insert(item_ref->obj_num).second) {
+							if (!visited_outline_objs.insert(make_ref_cache_key(*item_ref)).second) {
 								record_diagnostic(
 									ErrorCode::DamagedFormat,
 									DiagnosticId::DamagedDictionary,
@@ -2568,7 +2687,7 @@ PdfResult<void> Document::load_document_structure()
 							}
 							bool cycle_in_hops = false;
 							for (size_t h = 1u; h < hop_refs.size(); ++h) {
-								if (!visited_outline_objs.insert(hop_refs[h].obj_num).second) {
+								if (!visited_outline_objs.insert(make_ref_cache_key(hop_refs[h])).second) {
 									record_diagnostic(
 										ErrorCode::DamagedFormat,
 										DiagnosticId::DamagedDictionary,
@@ -2733,7 +2852,7 @@ PdfResult<void> Document::load_document_structure()
 
 	auto action_chain_contains_refused = [this, &record_refused_action_diagnostic](
 											 const PdfDict& root_action,
-											 std::optional<uint32_t> root_obj_num = std::nullopt) -> bool {
+											 std::optional<uint64_t> root_ref_key = std::nullopt) -> bool {
 		constexpr size_t kMaxActionChainDepth = 64u;
 		constexpr size_t kMaxActionChainNodes = 256u;
 
@@ -2743,9 +2862,9 @@ PdfResult<void> Document::load_document_structure()
 			bool from_array{false};
 		};
 
-		std::unordered_set<uint32_t> visited_actions;
-		if (root_obj_num.has_value()) {
-			visited_actions.insert(*root_obj_num);
+		std::unordered_set<uint64_t> visited_actions;
+		if (root_ref_key.has_value()) {
+			visited_actions.insert(*root_ref_key);
 		}
 		std::vector<ActionFrame> stack;
 		size_t budget_used = 1u;
@@ -2859,45 +2978,26 @@ PdfResult<void> Document::load_document_structure()
 
 			PdfValue cur_val = std::move(frame.value);
 			bool already_visited = false;
-			size_t ref_hops = 0u;
+			std::vector<IndirectRef> ref_hop_list;
+			ref_hop_list.reserve(kMaxIndirectRefDepth);
 			while (const auto ref = cur_val.as_ref()) {
-				if (!visited_actions.insert(ref->obj_num).second) {
+				if (!visited_actions.insert(make_ref_cache_key(*ref)).second) {
 					already_visited = true;
 					break;
 				}
-				if (++ref_hops > kMaxIndirectRefDepth) {
+				if (ref_hop_list.size() >= kMaxIndirectRefDepth) {
 					return true;
 				}
-				const XrefEntry* entry = xref_.find(ref->obj_num);
-				if (entry == nullptr || entry->is_free()) {
+				ref_hop_list.push_back(*ref);
+				auto step_res = resolve_single_indirect_hop(*ref, ref_hop_list);
+				if (!step_res.has_value()) {
 					return true;
 				}
-				if (entry->is_uncompressed()) {
-					auto raw_res = xref_.read_indirect_object(file_bytes_, *ref);
-					if (!raw_res.has_value()) {
-						return true;
-					}
-					if (raw_res->value.is_ref()) {
-						cur_val = std::move(raw_res->value);
-						continue;
-					}
-					if (security_handler_.has_value()) {
-						if (!security_handler_->is_authenticated() ||
-							!security_handler_->decrypt_object_values(
-								raw_res->value,
-								*ref,
-								/*is_inside_obj_stm=*/false).has_value()) {
-							return true;
-						}
-					}
-					cur_val = std::move(raw_res->value);
-					break;
+				if (step_res->next_ref.has_value()) {
+					cur_val = PdfValue(*step_res->next_ref);
+					continue;
 				}
-				auto res = resolve_object(*ref);
-				if (!res.has_value()) {
-					return true;
-				}
-				cur_val = std::move(*res);
+				cur_val = std::move(step_res->terminal_value);
 				break;
 			}
 			if (already_visited) {
@@ -2938,6 +3038,7 @@ PdfResult<void> Document::load_document_structure()
 	constexpr size_t kMaxTotalLinkBytes = 2u * 1024u * 1024u;
 	size_t total_document_links = 0u;
 	size_t total_link_bytes = 0u;
+	size_t total_action_cache_bytes = 0u;
 
 	struct CachedActionSummary {
 		LinkKind kind{LinkKind::RefusedAction};
@@ -2949,12 +3050,12 @@ PdfResult<void> Document::load_document_structure()
 		std::string action_type{};
 		bool is_inert{true};
 	};
-	std::unordered_map<uint32_t, std::shared_ptr<const CachedActionSummary>> parsed_action_obj_cache;
+	std::unordered_map<uint64_t, std::shared_ptr<const CachedActionSummary>> parsed_action_obj_cache;
 	constexpr size_t kMaxCachedActionObjs = 65'536u;
 
 	auto parse_action_dict_summary = [&](
 										 const PdfDict& act_dict,
-										 std::optional<uint32_t> act_obj_num) -> PdfResult<CachedActionSummary> {
+										 std::optional<uint64_t> act_ref_key) -> PdfResult<CachedActionSummary> {
 		CachedActionSummary out{};
 		std::string s_type;
 		if (const auto s_name = act_dict.get_name("S")) {
@@ -2994,7 +3095,7 @@ PdfResult<void> Document::load_document_structure()
 			}
 		}
 
-		if (action_chain_contains_refused(act_dict, act_obj_num)) {
+		if (action_chain_contains_refused(act_dict, act_ref_key)) {
 			out.kind = LinkKind::RefusedAction;
 			out.is_inert = true;
 			out.uri.clear();
@@ -3123,14 +3224,14 @@ PdfResult<void> Document::load_document_structure()
 				"/Page /Annots array exceeds maximum annotation count");
 		}
 
-		std::unordered_set<uint32_t> visited_page_annots;
+		std::unordered_set<uint64_t> visited_page_annots;
 		for (const PdfValue& annot_elem : *annots_arr) {
 			if (annot_elem.is_null()) {
 				continue;
 			}
 			PdfValue annot_val;
 			if (const auto annot_ref = annot_elem.as_ref()) {
-				if (!visited_page_annots.insert(annot_ref->obj_num).second) {
+				if (!visited_page_annots.insert(make_ref_cache_key(*annot_ref)).second) {
 					continue;
 				}
 				std::vector<IndirectRef> hop_refs;
@@ -3141,7 +3242,7 @@ PdfResult<void> Document::load_document_structure()
 				}
 				bool duplicate_alias = false;
 				for (size_t h = 1u; h < hop_refs.size(); ++h) {
-					if (!visited_page_annots.insert(hop_refs[h].obj_num).second) {
+					if (!visited_page_annots.insert(make_ref_cache_key(hop_refs[h])).second) {
 						duplicate_alias = true;
 						break;
 					}
@@ -3155,7 +3256,7 @@ PdfResult<void> Document::load_document_structure()
 				if (!annot_res.has_value()) {
 					continue;
 				}
-				annot_val = std::move(*annot_res);
+				annot_val = std::move(annot_res.value());
 			}
 			const PdfDict* annot_dict = annot_val.as_dict();
 			if (annot_dict == nullptr) {
@@ -3201,7 +3302,7 @@ PdfResult<void> Document::load_document_structure()
 							const PdfDict* sub_dict = sub_res->as_dict();
 							if (action_chain_contains_refused(
 									*sub_dict,
-									sub_ref ? std::optional<uint32_t>(sub_ref->obj_num) : std::nullopt)) {
+									sub_ref ? std::optional<uint64_t>(make_ref_cache_key(*sub_ref)) : std::nullopt)) {
 								aa_has_refused = true;
 								const std::string_view sub_s =
 									sub_dict->get_name("S").value_or("AdditionalAction");
@@ -3226,80 +3327,54 @@ PdfResult<void> Document::load_document_structure()
 				std::shared_ptr<const CachedActionSummary> act_summary;
 				std::optional<CachedActionSummary> inline_summary;
 				if (const auto act_ref = act_val->as_ref()) {
-					const auto cache_it = parsed_action_obj_cache.find(act_ref->obj_num);
-					if (cache_it != parsed_action_obj_cache.end()) {
-						act_summary = cache_it->second;
-					} else {
-						std::vector<IndirectRef> hop_refs;
-						hop_refs.reserve(kMaxIndirectRefDepth);
-						IndirectRef cur_act_ref = *act_ref;
-						bool hit_cached_act = false;
-						std::optional<PdfValue> resolved_act_val;
-						while (true) {
-							if (const auto hit_it = parsed_action_obj_cache.find(cur_act_ref.obj_num);
-								hit_it != parsed_action_obj_cache.end()) {
-								act_summary = hit_it->second;
-								hit_cached_act = true;
-								break;
-							}
-							if (std::find(hop_refs.begin(), hop_refs.end(), cur_act_ref) != hop_refs.end() ||
-								hop_refs.size() >= kMaxIndirectRefDepth) {
-								break;
-							}
-							const XrefEntry* entry = xref_.find(cur_act_ref.obj_num);
-							if (entry != nullptr && entry->is_uncompressed() && entry->generation == cur_act_ref.gen_num) {
-								if (const auto fast_alias = try_read_uncompressed_ref_alias(
-										file_bytes_,
-										entry->byte_offset,
-										cur_act_ref)) {
-									hop_refs.push_back(cur_act_ref);
-									cur_act_ref = *fast_alias;
-									continue;
-								}
-							}
-							auto act_res = resolve_object_with_visited(cur_act_ref, hop_refs);
-							if (act_res.has_value()) {
-								resolved_act_val = std::move(*act_res);
-							}
-							break;
+					std::vector<IndirectRef> hop_refs;
+					hop_refs.reserve(kMaxIndirectRefDepth);
+					auto act_chain_res = resolve_indirect_chain_with_cache(
+						*act_ref,
+						parsed_action_obj_cache,
+						hop_refs,
+						act_summary);
+					if (!act_chain_res.has_value()) {
+						if (act_chain_res.error().code == ErrorCode::OutOfMemory ||
+							act_chain_res.error().code == ErrorCode::DecompressionLimitExceeded) {
+							return act_chain_res.error();
 						}
-						if (!hit_cached_act && resolved_act_val.has_value()) {
-							if (const PdfDict* act_dict = resolved_act_val->as_dict()) {
-								const uint32_t target_obj_num = hop_refs.empty()
-									? act_ref->obj_num
-									: hop_refs.back().obj_num;
+					} else {
+						if (!act_chain_res->first) {
+							if (const PdfDict* act_dict = act_chain_res->second.as_dict()) {
+								const IndirectRef target_ref = hop_refs.empty()
+									? *act_ref
+									: hop_refs.back();
 								RECTO_PDF_TRY(
 									CachedActionSummary parsed_sum,
-									parse_action_dict_summary(*act_dict, target_obj_num));
+									parse_action_dict_summary(*act_dict, make_ref_cache_key(target_ref)));
 								const size_t summary_bytes = sizeof(CachedActionSummary) +
 									parsed_sum.uri.size() + parsed_sum.action_type.size();
-								if (total_link_bytes + summary_bytes > kMaxTotalLinkBytes) {
+								if (total_action_cache_bytes + summary_bytes > kMaxTotalLinkBytes) {
 									return make_doc_error(
 										ErrorCode::DamagedFormat,
 										DiagnosticId::DamagedDictionary,
 										"Document /Annots /Link action cache exceeds memory budget");
 								}
-								total_link_bytes += summary_bytes;
+								total_action_cache_bytes += summary_bytes;
 								act_summary = std::make_shared<const CachedActionSummary>(
 									std::move(parsed_sum));
 							}
 						}
-						if (act_summary != nullptr) {
-							for (const IndirectRef& hr : hop_refs) {
+						constexpr size_t kActionCacheEntryBytes =
+							sizeof(uint64_t) + sizeof(std::shared_ptr<const CachedActionSummary>);
+						for (const IndirectRef& hr : hop_refs) {
+							const uint64_t hkey = make_ref_cache_key(hr);
+							if (parsed_action_obj_cache.find(hkey) == parsed_action_obj_cache.end()) {
 								if (parsed_action_obj_cache.size() >= kMaxCachedActionObjs ||
-									total_link_bytes + sizeof(uint32_t) + sizeof(std::shared_ptr<const CachedActionSummary>) >
-										kMaxTotalLinkBytes) {
+									total_action_cache_bytes + kActionCacheEntryBytes > kMaxTotalLinkBytes) {
 									return make_doc_error(
 										ErrorCode::DamagedFormat,
 										DiagnosticId::DamagedDictionary,
 										"Document /Annots /Link action alias cache exceeds budget");
 								}
-								const auto [it_ins, inserted] =
-									parsed_action_obj_cache.emplace(hr.obj_num, act_summary);
-								if (inserted) {
-									total_link_bytes +=
-										sizeof(uint32_t) + sizeof(std::shared_ptr<const CachedActionSummary>);
-								}
+								parsed_action_obj_cache.emplace(hkey, act_summary);
+								total_action_cache_bytes += kActionCacheEntryBytes;
 							}
 						}
 					}
@@ -3350,8 +3425,8 @@ PdfResult<void> Document::load_document_structure()
 
 	// 7. Enumerate and deduplicate `/Font` descriptors across pages, Form
 	//    XObjects, and `/Catalog /AcroForm /DR`:
-	std::unordered_set<uint32_t> visited_font_objs;
-	std::unordered_set<uint32_t> visited_xobj_objs;
+	std::unordered_set<uint64_t> visited_font_objs;
+	std::unordered_set<uint64_t> visited_xobj_objs;
 	constexpr size_t kMaxFontStringBytes = 1024u;
 	constexpr size_t kMaxTotalFonts = 4096u;
 	constexpr size_t kMaxTotalFontBytes = 2u * 1024u * 1024u;
@@ -3560,7 +3635,7 @@ PdfResult<void> Document::load_document_structure()
 					for (const auto& [res_key, font_v] : *font_map) {
 						PdfValue f_val;
 						if (const auto f_ref = font_v.as_ref()) {
-							if (!visited_font_objs.insert(f_ref->obj_num).second) {
+							if (!visited_font_objs.insert(make_ref_cache_key(*f_ref)).second) {
 								continue;
 							}
 							std::vector<IndirectRef> hop_refs;
@@ -3571,7 +3646,7 @@ PdfResult<void> Document::load_document_structure()
 							}
 							bool duplicate_alias = false;
 							for (size_t h = 1u; h < hop_refs.size(); ++h) {
-								if (!visited_font_objs.insert(hop_refs[h].obj_num).second) {
+								if (!visited_font_objs.insert(make_ref_cache_key(hop_refs[h])).second) {
 									duplicate_alias = true;
 									break;
 								}
@@ -3609,7 +3684,7 @@ PdfResult<void> Document::load_document_structure()
 					for (const auto& [x_key, x_val] : *xobj_map) {
 						PdfValue resolved_x;
 						if (const auto x_ref = x_val.as_ref()) {
-							if (!visited_xobj_objs.insert(x_ref->obj_num).second) {
+							if (!visited_xobj_objs.insert(make_ref_cache_key(*x_ref)).second) {
 								continue;
 							}
 							std::vector<IndirectRef> hop_refs;
@@ -3620,7 +3695,7 @@ PdfResult<void> Document::load_document_structure()
 							}
 							bool duplicate_alias = false;
 							for (size_t h = 1u; h < hop_refs.size(); ++h) {
-								if (!visited_xobj_objs.insert(hop_refs[h].obj_num).second) {
+								if (!visited_xobj_objs.insert(make_ref_cache_key(hop_refs[h])).second) {
 									duplicate_alias = true;
 									break;
 								}
@@ -3683,6 +3758,8 @@ PdfResult<void> Document::load_document_structure()
 		}
 	}
 
+	structure_loaded_ = true;
+	structure_committed = true;
 	return {};
 }
 

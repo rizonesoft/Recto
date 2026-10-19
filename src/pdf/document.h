@@ -393,6 +393,15 @@ private:
 
 	[[nodiscard]] PdfResult<void> load_document_structure();
 
+	struct SingleHopResult {
+		std::optional<IndirectRef> next_ref{std::nullopt};
+		PdfValue terminal_value{PdfNull{}};
+	};
+
+	[[nodiscard]] PdfResult<SingleHopResult> resolve_single_indirect_hop(
+		IndirectRef current,
+		const std::vector<IndirectRef>& visited_refs) const;
+
 	[[nodiscard]] PdfResult<PdfValue> resolve_object_with_visited(
 		IndirectRef ref,
 		std::vector<IndirectRef>& visited_refs) const;
@@ -406,8 +415,9 @@ private:
 	PdfDict catalog_{};
 	DocumentDescription description_{};
 	std::vector<ResolvedPageRecord> page_records_{};
-	std::unordered_map<uint32_t, uint32_t> page_obj_to_index_{};
+	std::unordered_map<uint64_t, uint32_t> page_obj_to_index_{};
 	std::unordered_map<std::string, ParsedDest> named_dests_{};
+	bool structure_loaded_{false};
 };
 
 } // namespace recto::pdf
