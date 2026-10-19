@@ -8115,23 +8115,27 @@ void idwt_97_2d_float(
 			}
 			const size_t expected_max_sb = 1u + 3u * static_cast<size_t>(max_decomp_levels);
 			const size_t expected_main_sb = 1u + 3u * static_cast<size_t>(main_max_decomp_levels);
+			auto is_valid_subband_entry_count = [](size_t count, size_t min_required) noexcept -> bool {
+				return count >= min_required && count <= 1u + 3u * 32u && ((count - 1u) % 3u) == 0u;
+			};
 			if (tile_ov != nullptr && tile_ov->has_qcd && tile_ov->qcd.qstyle != 1u) {
-				if (tile_ov->qcd.subband_exponents.size() != expected_max_sb ||
-					tile_ov->qcd.subband_mantissas.size() != expected_max_sb) {
+				const size_t tile_sb = tile_ov->qcd.subband_exponents.size();
+				if (tile_ov->qcd.subband_mantissas.size() != tile_sb ||
+					!is_valid_subband_entry_count(tile_sb, expected_max_sb)) {
 					return make_filter_error(
 						ErrorCode::DamagedFormat,
 						DiagnosticId::DamagedStream,
-						"Tile QCD subband quantization entry count does not match maximum component decomposition levels in JPXDecode");
+						"Tile QCD subband quantization entry count is insufficient or invalid for component decomposition levels in JPXDecode");
 				}
 			}
 			if (main_qcd.qstyle != 1u) {
 				const size_t main_sb = main_qcd.subband_exponents.size();
 				if (main_qcd.subband_mantissas.size() != main_sb ||
-					(main_sb != expected_main_sb && main_sb != expected_max_sb)) {
+					!is_valid_subband_entry_count(main_sb, expected_main_sb)) {
 					return make_filter_error(
 						ErrorCode::DamagedFormat,
 						DiagnosticId::DamagedStream,
-						"Main QCD subband quantization entry count does not match maximum component decomposition levels in JPXDecode");
+						"Main QCD subband quantization entry count is insufficient or invalid for component decomposition levels in JPXDecode");
 				}
 			}
 			for (uint32_t c = 0; c < num_comps; ++c) {
@@ -8158,22 +8162,29 @@ void idwt_97_2d_float(
 				}
 				const size_t required_subbands = 1u + 3u * static_cast<size_t>(comp_cod[c].num_decomp_levels);
 				if (is_qcc) {
-					if (comp_qcd[c].subband_exponents.size() != required_subbands ||
-						comp_qcd[c].subband_mantissas.size() != required_subbands) {
-						return make_filter_error(
-							ErrorCode::DamagedFormat,
-							DiagnosticId::DamagedStream,
-							"QCC subband quantization entry count does not match component decomposition levels in JPXDecode");
+					if (base_qcd->qstyle != 1u) {
+						const size_t actual_sb = comp_qcd[c].subband_exponents.size();
+						if (comp_qcd[c].subband_mantissas.size() != actual_sb ||
+							!is_valid_subband_entry_count(actual_sb, required_subbands)) {
+							return make_filter_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedStream,
+								"QCC subband quantization entry count is insufficient or invalid for component decomposition levels in JPXDecode");
+						}
+						comp_qcd[c].subband_exponents.resize(required_subbands);
+						comp_qcd[c].subband_mantissas.resize(required_subbands);
 					}
 				} else if (base_qcd->qstyle != 1u) {
-					// ITU-T T.800 §A.6.4 Table A.27: QCD carries 1 + 3 * max(N_L) subband entries across the tile/image;
-					// components with fewer decomposition levels use the first 1 + 3 * N_L(c) entries.
+					// ITU-T T.800 §A.6.4 Table A.27: QCD carries at least 1 + 3 * max(N_L) subband entries across the tile/image
+					// (and may retain higher-resolution subband entries when resolution levels are truncated);
+					// components use the first 1 + 3 * N_L(c) entries.
 					const size_t actual_sb = comp_qcd[c].subband_exponents.size();
-					if (comp_qcd[c].subband_mantissas.size() != actual_sb || actual_sb != expected_max_sb) {
+					if (comp_qcd[c].subband_mantissas.size() != actual_sb ||
+						!is_valid_subband_entry_count(actual_sb, expected_max_sb)) {
 						return make_filter_error(
 							ErrorCode::DamagedFormat,
 							DiagnosticId::DamagedStream,
-							"QCD subband quantization entry count does not match maximum component decomposition levels in JPXDecode");
+							"QCD subband quantization entry count is insufficient or invalid for maximum component decomposition levels in JPXDecode");
 					}
 					comp_qcd[c].subband_exponents.resize(required_subbands);
 					comp_qcd[c].subband_mantissas.resize(required_subbands);

@@ -2901,10 +2901,25 @@ TEST(PdfFilters, DctRgbAndCmyk)
 					ASSERT_EQ(dec_hi->pixels.size(), 1u);
 					EXPECT_EQ(dec_hi->pixels[0], 128u);
 				}
-				// Mismatched QCD subband count at 0x80000000 origin must fail with DamagedFormat (not be skipped by 32-bit wrap):
+				// Malformed non-(1 + 3*k) QCD subband count (2 entries) at 0x80000000 origin must fail with DamagedFormat (not be skipped by 32-bit wrap):
+				const std::array<uint8_t, 3> malformed_qcd_2sb = {0x40u, 0x40u, 0x40u};
 				RECTO_EXPECT_ERR(
-					decode_jpx_image(build_high_origin_1x1(0u, valid_qcd1)),
+					decode_jpx_image(build_high_origin_1x1(0u, malformed_qcd_2sb)),
 					ErrorCode::DamagedFormat);
+
+				// ITU-T T.800 §A.6.4: Retained higher-resolution QCD subband entries (4 entries = 1 + 3*1) are permitted when
+				// main COD decomposition depth is truncated to 0, or when a tile overrides COD depth from 1 down to 0 while inheriting main QCD:
+				auto dec_retained_main_qcd = decode_jpx_image(
+					build_custom_cod_qcd_1x1(valid_cod0, valid_qcd1, {}, {}, pkt_1));
+				RECTO_ASSERT_OK(dec_retained_main_qcd);
+				ASSERT_EQ(dec_retained_main_qcd->pixels.size(), 1u);
+				EXPECT_EQ(dec_retained_main_qcd->pixels[0], 128u);
+
+				auto dec_tile_down_cod = decode_jpx_image(
+					build_custom_cod_qcd_1x1(cod_decomp1, valid_qcd1, valid_cod0, {}, pkt_1));
+				RECTO_ASSERT_OK(dec_tile_down_cod);
+				ASSERT_EQ(dec_tile_down_cod->pixels.size(), 1u);
+				EXPECT_EQ(dec_tile_down_cod->pixels[0], 128u);
 
 				// Per-component COC (0xFF53) and QCC (0xFF5D) overrides in main header and tile-part header:
 				auto build_coc_qcc_1x1 = [](
@@ -3034,15 +3049,19 @@ TEST(PdfFilters, DctRgbAndCmyk)
 				EXPECT_EQ(dec_mixed_inh->pixels[1], 128u);
 				EXPECT_EQ(dec_mixed_inh->pixels[2], 128u);
 
-				// Explicit 1-entry QCC[0] for level-0 component 0 also succeeds:
+				// Explicit 1-entry or retained 4-entry QCC[0] for level-0 component 0 succeeds:
 				const std::array<uint8_t, 3> qcc0_1sb = {0u, 0x40u, 0x40u};
 				auto dec_mixed_qcc = decode_jpx_image(build_mixed_depth_3comp(qcc0_1sb));
 				RECTO_ASSERT_OK(dec_mixed_qcc);
 				ASSERT_EQ(dec_mixed_qcc->pixels.size(), 3u);
+				auto dec_mixed_retained_qcc = decode_jpx_image(build_mixed_depth_3comp(qcc0_decomp1));
+				RECTO_ASSERT_OK(dec_mixed_retained_qcc);
+				ASSERT_EQ(dec_mixed_retained_qcc->pixels.size(), 3u);
 
-				// Mismatched 4-entry QCC[0] for level-0 component 0 fails with DamagedFormat:
+				// Malformed 2-entry QCC[0] (non-3k+1 count) for level-0 component 0 fails with DamagedFormat:
+				const std::array<uint8_t, 4> qcc0_bad_2sb = {0u, 0x40u, 0x40u, 0x40u};
 				RECTO_EXPECT_ERR(
-					decode_jpx_image(build_mixed_depth_3comp(qcc0_decomp1)),
+					decode_jpx_image(build_mixed_depth_3comp(qcc0_bad_2sb)),
 					ErrorCode::DamagedFormat);
 
 				// Component depths [1, 0, 0] (COD decomp=0, COC[0] decomp=1) with 4-entry QCC[0]:
