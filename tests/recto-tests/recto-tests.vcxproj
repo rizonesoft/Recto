@@ -62,6 +62,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="corpus_tests.cpp" />
+    <ClCompile Include="pdf_crypto_tests.cpp" />
     <ClCompile Include="pdf_error_tests.cpp" />
     <ClCompile Include="pdf_filters_tests.cpp" />
     <ClCompile Include="pdf_lexer_tests.cpp" />
