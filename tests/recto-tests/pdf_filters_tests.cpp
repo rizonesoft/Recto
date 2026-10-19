@@ -1479,6 +1479,20 @@ TEST(PdfFilters, Jbig2Decode)
 		EXPECT_EQ((*dec)[1], 0x00u);
 		EXPECT_EQ((*dec)[2], 0x3Cu);
 		EXPECT_EQ((*dec)[3], 0x00u);
+
+		// A /JBIG2Globals stream with recursive /Filter /JBIG2Decode must be rejected with DamagedFormat.
+		const IndirectObjectResolver recursive_resolver = [&](IndirectRef ref) -> PdfResult<PdfValue> {
+			if (ref.obj_num == 42u && ref.gen_num == 0u) {
+				PdfStream globals_stm;
+				globals_stm.dict.set("Filter", PdfValue(PdfName("JBIG2Decode")));
+				globals_stm.raw_bytes = globals_bytes;
+				return PdfValue(std::move(globals_stm));
+			}
+			return make_pdf_error(ErrorCode::DamagedFormat, "Unexpected object reference");
+		};
+		RECTO_EXPECT_ERR(
+			decode_stream(page_bytes, stm_dict, kMaxDecodedStreamBytes, &recursive_resolver),
+			ErrorCode::DamagedFormat);
 	}
 
 	// 4. Reject malformed segment headers, truncated segment lengths, and indeterminate length on Page Info.

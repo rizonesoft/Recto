@@ -2854,6 +2854,13 @@ struct Jbig2DecoderState {
 	std::unordered_map<uint32_t, Jbig2Bitmap> aux_regions;
 	size_t total_allocated_bytes{0};
 
+	[[nodiscard]] size_t remaining_limit(size_t effective_limit) const noexcept
+	{
+		return (effective_limit > total_allocated_bytes)
+			? (effective_limit - total_allocated_bytes)
+			: 0u;
+	}
+
 	[[nodiscard]] PdfResult<void> account_bytes(
 		size_t bytes,
 		size_t effective_limit,
@@ -2953,7 +2960,7 @@ struct Jbig2DecoderState {
 				seg_header_start);
 		}
 		std::vector<uint32_t> ref_segments;
-		ref_segments.reserve(ref_count);
+		ref_segments.reserve(std::min<uint32_t>(ref_count, 64u));
 		for (uint32_t i = 0; i < ref_count; ++i) {
 			uint32_t ref_id = 0u;
 			if (ref_id_bytes == 1u) {
@@ -3060,9 +3067,18 @@ struct Jbig2DecoderState {
 			}
 			state.default_pixel = static_cast<uint8_t>((page_flags >> 2u) & 0x01u);
 			state.default_comb_op = static_cast<uint8_t>((page_flags >> 3u) & 0x03u);
+			if (state.page_bitmap.has_value()) {
+				state.total_allocated_bytes -=
+					std::min(state.total_allocated_bytes, state.page_bitmap->data.size());
+				state.page_bitmap.reset();
+			}
 			RECTO_PDF_TRY(
 				Jbig2Bitmap pbm,
-				Jbig2Bitmap::create(page_w, page_h, state.default_pixel, effective_limit));
+				Jbig2Bitmap::create(
+					page_w,
+					page_h,
+					state.default_pixel,
+					state.remaining_limit(effective_limit)));
 			RECTO_PDF_RETURN_IF_ERROR(
 				state.account_bytes(pbm.data.size(), effective_limit, seg_header_start));
 			state.page_bitmap = std::move(pbm);
@@ -3115,7 +3131,7 @@ struct Jbig2DecoderState {
 					tpgdon,
 					at_span,
 					seg_data.subspan(18u + at_bytes, body_len),
-					effective_limit));
+					state.remaining_limit(effective_limit)));
 
 			if (seg_type == 36u) {
 				RECTO_PDF_RETURN_IF_ERROR(
@@ -3125,7 +3141,11 @@ struct Jbig2DecoderState {
 				if (!state.page_bitmap.has_value()) {
 					RECTO_PDF_TRY(
 						Jbig2Bitmap pbm,
-						Jbig2Bitmap::create(reg_w, reg_h, 0u, effective_limit));
+						Jbig2Bitmap::create(
+							reg_w,
+							reg_h,
+							0u,
+							state.remaining_limit(effective_limit)));
 					RECTO_PDF_RETURN_IF_ERROR(
 						state.account_bytes(pbm.data.size(), effective_limit, seg_header_start));
 					state.page_bitmap = std::move(pbm);
@@ -3187,7 +3207,7 @@ struct Jbig2DecoderState {
 			}
 
 			std::vector<Jbig2Bitmap> new_syms;
-			new_syms.reserve(sd_num_new_syms);
+			new_syms.reserve(std::min<uint32_t>(sd_num_new_syms, 64u));
 			const std::span<const uint8_t> arith_data = seg_data.subspan(counts_off + 8u);
 			if (!sd_huff && !sd_ref_agg) {
 				MqDecoder mq(arith_data);
@@ -3246,7 +3266,7 @@ struct Jbig2DecoderState {
 								/*tpgdon=*/false,
 								sd_at_span,
 								arith_data,
-								effective_limit,
+								state.remaining_limit(effective_limit),
 								&mq,
 								&gb_cx));
 						RECTO_PDF_RETURN_IF_ERROR(
@@ -3261,7 +3281,7 @@ struct Jbig2DecoderState {
 				}
 
 				std::vector<Jbig2Bitmap> exported;
-				exported.reserve(sd_num_ex_syms);
+				exported.reserve(std::min<uint32_t>(sd_num_ex_syms, 64u));
 				size_t idx = 0u;
 				uint8_t ex_flag = 0u;
 				while (idx < all_syms.size()) {
@@ -3365,7 +3385,11 @@ struct Jbig2DecoderState {
 
 			RECTO_PDF_TRY(
 				Jbig2Bitmap rbm,
-				Jbig2Bitmap::create(reg_w, reg_h, sb_def_pixel, effective_limit));
+				Jbig2Bitmap::create(
+					reg_w,
+					reg_h,
+					sb_def_pixel,
+					state.remaining_limit(effective_limit)));
 			MqDecoder mq(seg_data.subspan(23u));
 			Jbig2ArithIntDecoder iadt;
 			Jbig2ArithIntDecoder iafs;
@@ -3483,7 +3507,11 @@ struct Jbig2DecoderState {
 				if (!state.page_bitmap.has_value()) {
 					RECTO_PDF_TRY(
 						Jbig2Bitmap pbm,
-						Jbig2Bitmap::create(reg_w, reg_h, 0u, effective_limit));
+						Jbig2Bitmap::create(
+							reg_w,
+							reg_h,
+							0u,
+							state.remaining_limit(effective_limit)));
 					RECTO_PDF_RETURN_IF_ERROR(
 						state.account_bytes(pbm.data.size(), effective_limit, seg_header_start));
 					state.page_bitmap = std::move(pbm);
@@ -3526,13 +3554,17 @@ struct Jbig2DecoderState {
 					/*tpgdon=*/false,
 					std::span<const int8_t>(pat_at, (hd_template == 0u) ? 8u : 2u),
 					seg_data.subspan(7u),
-					effective_limit));
+					state.remaining_limit(effective_limit)));
 			std::vector<Jbig2Bitmap> patterns;
-			patterns.reserve(graymax + 1u);
+			patterns.reserve(std::min<uint32_t>(graymax + 1u, 64u));
 			for (uint32_t p = 0; p <= graymax; ++p) {
 				RECTO_PDF_TRY(
 					Jbig2Bitmap pbm,
-					Jbig2Bitmap::create(hdpw, hdph, 0u, effective_limit));
+					Jbig2Bitmap::create(
+						hdpw,
+						hdph,
+						0u,
+						state.remaining_limit(effective_limit)));
 				RECTO_PDF_RETURN_IF_ERROR(
 					state.account_bytes(pbm.data.size(), effective_limit, seg_header_start));
 				for (uint32_t y = 0; y < hdph; ++y) {
@@ -3596,7 +3628,11 @@ struct Jbig2DecoderState {
 			const std::span<const uint8_t> ht_body = seg_data.subspan(38u);
 			RECTO_PDF_TRY(
 				Jbig2Bitmap rbm,
-				Jbig2Bitmap::create(reg_w, reg_h, ht_def_pixel, effective_limit));
+				Jbig2Bitmap::create(
+					reg_w,
+					reg_h,
+					ht_def_pixel,
+					state.remaining_limit(effective_limit)));
 			uint32_t gs_bpp = 0u;
 			while ((size_t{1u} << gs_bpp) < patterns.size()) {
 				++gs_bpp;
@@ -3604,6 +3640,7 @@ struct Jbig2DecoderState {
 			gs_bpp = std::max<uint32_t>(1u, gs_bpp);
 			std::vector<Jbig2Bitmap> bitplanes;
 			bitplanes.reserve(gs_bpp);
+			size_t temp_plane_bytes = rbm.data.size();
 			const int8_t ht_at_coords[8] = {
 				static_cast<int8_t>((ht_template <= 1u) ? 3 : 2), -1,
 				-3, -1,
@@ -3618,6 +3655,9 @@ struct Jbig2DecoderState {
 				std::vector<MqContext> cx(
 					(ht_template == 0u) ? 65536u : ((ht_template == 1u) ? 8192u : 1024u));
 				for (uint32_t b = 0; b < gs_bpp; ++b) {
+					const size_t rem_limit = state.remaining_limit(effective_limit);
+					const size_t plane_limit =
+						(rem_limit > temp_plane_bytes) ? (rem_limit - temp_plane_bytes) : 0u;
 					RECTO_PDF_TRY(
 						Jbig2Bitmap plane,
 						decode_jbig2_generic_region(
@@ -3628,14 +3668,18 @@ struct Jbig2DecoderState {
 							/*tpgdon=*/false,
 							ht_at_span,
 							ht_body,
-							effective_limit,
+							plane_limit,
 							&mq,
 							&cx));
+					temp_plane_bytes += plane.data.size();
 					bitplanes.push_back(std::move(plane));
 				}
 			} else {
 				size_t mmr_bit_offset = 0u;
 				for (uint32_t b = 0; b < gs_bpp; ++b) {
+					const size_t rem_limit = state.remaining_limit(effective_limit);
+					const size_t plane_limit =
+						(rem_limit > temp_plane_bytes) ? (rem_limit - temp_plane_bytes) : 0u;
 					RECTO_PDF_TRY(
 						Jbig2Bitmap plane,
 						decode_jbig2_generic_region(
@@ -3646,10 +3690,11 @@ struct Jbig2DecoderState {
 							/*tpgdon=*/false,
 							{},
 							ht_body,
-							effective_limit,
+							plane_limit,
 							nullptr,
 							nullptr,
 							&mmr_bit_offset));
+					temp_plane_bytes += plane.data.size();
 					bitplanes.push_back(std::move(plane));
 				}
 			}
@@ -3688,7 +3733,11 @@ struct Jbig2DecoderState {
 				if (!state.page_bitmap.has_value()) {
 					RECTO_PDF_TRY(
 						Jbig2Bitmap pbm,
-						Jbig2Bitmap::create(reg_w, reg_h, 0u, effective_limit));
+						Jbig2Bitmap::create(
+							reg_w,
+							reg_h,
+							0u,
+							state.remaining_limit(effective_limit)));
 					RECTO_PDF_RETURN_IF_ERROR(
 						state.account_bytes(pbm.data.size(), effective_limit, seg_header_start));
 					state.page_bitmap = std::move(pbm);
@@ -3713,6 +3762,10 @@ struct Jbig2DecoderState {
 
 	return {};
 }
+
+[[nodiscard]] PdfResult<std::vector<uint8_t>> decode_jbig2_globals_stream(
+	const PdfStream& gstm,
+	size_t effective_limit);
 
 } // namespace
 
@@ -3780,6 +3833,7 @@ PdfResult<std::vector<uint8_t>> decode_jbig2(
 	const IndirectObjectResolver* resolver) noexcept
 {
 	try {
+		const size_t effective_limit = std::min<size_t>(max_decoded_bytes, kMaxDecodedStreamBytes);
 		std::vector<uint8_t> decoded_globals;
 		std::span<const uint8_t> globals_span{};
 		if (decode_parms != nullptr) {
@@ -3788,7 +3842,7 @@ PdfResult<std::vector<uint8_t>> decode_jbig2(
 				if (const PdfStream* gstm = gval->as_stream()) {
 					RECTO_PDF_TRY(
 						decoded_globals,
-						decode_stream(*gstm, max_decoded_bytes, resolver));
+						decode_jbig2_globals_stream(*gstm, effective_limit));
 					globals_span = decoded_globals;
 				} else if (const PdfString* gstr = gval->as_string()) {
 					globals_span = gstr->bytes;
@@ -3809,7 +3863,7 @@ PdfResult<std::vector<uint8_t>> decode_jbig2(
 					}
 					RECTO_PDF_TRY(
 						decoded_globals,
-						decode_stream(*resolved_stm, max_decoded_bytes, resolver));
+						decode_jbig2_globals_stream(*resolved_stm, effective_limit));
 					globals_span = decoded_globals;
 				} else {
 					return make_filter_error(
@@ -3819,7 +3873,11 @@ PdfResult<std::vector<uint8_t>> decode_jbig2(
 				}
 			}
 		}
-		return decode_jbig2(input, globals_span, max_decoded_bytes);
+		const size_t remaining_for_page =
+			(effective_limit > decoded_globals.size())
+			? (effective_limit - decoded_globals.size())
+			: 0u;
+		return decode_jbig2(input, globals_span, remaining_for_page);
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(
 			ErrorCode::OutOfMemory,
@@ -4887,9 +4945,13 @@ void decode_j2k_codeblock(
 
 	// Optional raw byte-aligned arithmetic-bypass mode if bit 7 (0x80, custom test/raw) is not set:
 	// Standard ITU-T T.800 uses MQ arithmetic coding starting with Cleanup pass on the highest non-zero bitplane.
-	int32_t bitplane = static_cast<int32_t>(mb_total) - 1 - static_cast<int32_t>(zero_bitplanes);
+	const uint32_t clamped_mb = std::min<uint32_t>(mb_total, 30u);
+	int32_t bitplane = static_cast<int32_t>(clamped_mb) - 1 - static_cast<int32_t>(std::min<uint32_t>(zero_bitplanes, 30u));
 	if (bitplane < 0) {
 		bitplane = 0;
+	}
+	if (bitplane > 29) {
+		bitplane = 29;
 	}
 
 	auto decode_sign = [&](int32_t x, int32_t y, size_t idx) noexcept {
@@ -4905,7 +4967,7 @@ void decode_j2k_codeblock(
 		if ((cb_style & 0x02u) != 0u) {
 			init_j2k_mq_contexts(ctxs);
 		}
-		const int32_t bp_mask = 1 << bitplane;
+		const int32_t bp_mask = static_cast<int32_t>(uint32_t{1u} << static_cast<uint32_t>(bitplane));
 
 		if (pass_type == 0u) {
 			// Significance Propagation Pass (SPP, ITU-T T.800 §D.3.1)
@@ -5394,7 +5456,15 @@ void idwt_97_2d(
 					pos);
 			}
 			prog_order = cs[pos + 3u];
-			num_layers = std::max<uint16_t>(1u, read_u16_be(cs.data() + pos + 4u));
+			const uint16_t raw_layers = read_u16_be(cs.data() + pos + 4u);
+			if (raw_layers == 0u || raw_layers > 256u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Invalid or excessive quality layer count in JPXDecode COD marker",
+					pos);
+			}
+			num_layers = raw_layers;
 			mct_enabled = (cs[pos + 6u] != 0u);
 			num_decomp_levels = cs[pos + 7u];
 			if (num_decomp_levels > 10u) {
@@ -5610,7 +5680,7 @@ void idwt_97_2d(
 			rs.res_w = res_dims[r].first;
 			rs.res_h = res_dims[r].second;
 
-			auto init_subband = [&](uint32_t sb_w, uint32_t sb_h, uint8_t btype) {
+			auto init_subband = [&](uint32_t sb_w, uint32_t sb_h, uint8_t btype) -> PdfResult<void> {
 				SubbandState sb{};
 				sb.w = sb_w;
 				sb.h = sb_h;
@@ -5624,6 +5694,12 @@ void idwt_97_2d(
 					: static_cast<uint32_t>(bit_depth);
 				sb.num_cb_x = (sb_w == 0u) ? 0u : ((sb_w + nom_cb_w - 1u) / nom_cb_w);
 				sb.num_cb_y = (sb_h == 0u) ? 0u : ((sb_h + nom_cb_h - 1u) / nom_cb_h);
+				if (static_cast<uint64_t>(sb.num_cb_x) * sb.num_cb_y > 65536ULL) {
+					return make_filter_error(
+						ErrorCode::DecompressionLimitExceeded,
+						DiagnosticId::DecompressionLimitExceeded,
+						"JPXDecode subband code-block grid count exceeds ceiling");
+				}
 				if (sb.num_cb_x > 0u && sb.num_cb_y > 0u) {
 					sb.incl_tree.init(sb.num_cb_x, sb.num_cb_y);
 					sb.zbp_tree.init(sb.num_cb_x, sb.num_cb_y);
@@ -5639,18 +5715,19 @@ void idwt_97_2d(
 					}
 				}
 				rs.subbands.push_back(std::move(sb));
+				return {};
 			};
 
 			if (r == 0u) {
-				init_subband(rs.res_w, rs.res_h, 0u); // LL0
+				RECTO_PDF_RETURN_IF_ERROR(init_subband(rs.res_w, rs.res_h, 0u)); // LL0
 			} else {
 				const uint32_t ll_w = res_dims[r - 1u].first;
 				const uint32_t ll_h = res_dims[r - 1u].second;
 				const uint32_t hl_w = rs.res_w - ll_w;
 				const uint32_t lh_h = rs.res_h - ll_h;
-				init_subband(hl_w, ll_h, 1u); // HL_r
-				init_subband(ll_w, lh_h, 0u); // LH_r
-				init_subband(hl_w, lh_h, 2u); // HH_r
+				RECTO_PDF_RETURN_IF_ERROR(init_subband(hl_w, ll_h, 1u)); // HL_r
+				RECTO_PDF_RETURN_IF_ERROR(init_subband(ll_w, lh_h, 0u)); // LH_r
+				RECTO_PDF_RETURN_IF_ERROR(init_subband(hl_w, lh_h, 2u)); // HH_r
 			}
 		}
 	}
@@ -5772,6 +5849,12 @@ void idwt_97_2d(
 								ErrorCode::DamagedFormat,
 								DiagnosticId::DamagedStream,
 								"Truncated code-block data length in JPXDecode packet header");
+						}
+						if (cb.total_passes + new_passes > 1024u) {
+							return make_filter_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedStream,
+								"Excessive coding pass count in JPXDecode code-block");
 						}
 						cb.total_passes += new_passes;
 						pending.push_back({&cb, seg_len});
@@ -6058,7 +6141,8 @@ namespace {
 	const PdfValue* parms_val,
 	size_t effective_limit,
 	const PdfDict* stream_dict_context = nullptr,
-	const IndirectObjectResolver* resolver = nullptr)
+	const IndirectObjectResolver* resolver = nullptr,
+	bool allow_jbig2 = true)
 {
 	if (filter_val == nullptr || filter_val->is_null()) {
 		if (raw_bytes.size() > effective_limit) {
@@ -6175,6 +6259,12 @@ namespace {
 
 	std::vector<uint8_t> stage_buf;
 	for (size_t i = 0; i < num_filters; ++i) {
+		if (!allow_jbig2 && filter_names[i] == "JBIG2Decode") {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Recursive /JBIG2Decode filter inside /JBIG2Globals stream is forbidden");
+		}
 		const std::span<const uint8_t> stage_in =
 			(i == 0) ? raw_bytes : std::span<const uint8_t>(stage_buf);
 		const PdfDict* stage_parms = filter_parms[i];
@@ -6204,6 +6294,41 @@ namespace {
 		stage_buf = std::move(next_buf);
 	}
 	return stage_buf;
+}
+
+[[nodiscard]] PdfResult<std::vector<uint8_t>> decode_jbig2_globals_stream(
+	const PdfStream& gstm,
+	size_t effective_limit)
+{
+	if (const PdfValue* f_spec = gstm.dict.get("F"); f_spec != nullptr && !f_spec->is_null()) {
+		return make_pdf_error(
+			ErrorCode::UnsupportedFeature,
+			"External /JBIG2Globals stream file specification (/F) is unsupported");
+	}
+	if (const PdfValue* ffilter = gstm.dict.get("FFilter"); ffilter != nullptr && !ffilter->is_null()) {
+		return make_filter_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedStream,
+			"/JBIG2Globals stream specifies /FFilter without /F");
+	}
+	if (const PdfValue* fparms = gstm.dict.get("FDecodeParms"); fparms != nullptr && !fparms->is_null()) {
+		return make_filter_error(
+			ErrorCode::DamagedFormat,
+			DiagnosticId::DamagedStream,
+			"/JBIG2Globals stream specifies /FDecodeParms without /F");
+	}
+	const PdfValue* parms_val = gstm.dict.get("DecodeParms");
+	if (parms_val == nullptr) {
+		parms_val = gstm.dict.get("DP");
+	}
+	return execute_filter_pipeline(
+		gstm.raw_bytes,
+		gstm.dict.get("Filter"),
+		parms_val,
+		effective_limit,
+		&gstm.dict,
+		/*resolver=*/nullptr,
+		/*allow_jbig2=*/false);
 }
 
 } // namespace
