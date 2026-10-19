@@ -7434,6 +7434,10 @@ void idwt_97_2d_float(
 	uint8_t cb_style = 0u;
 	uint8_t wavelet_type = 1u; // 1 = 5-3 reversible, 0 = 9-7 irreversible
 	uint8_t guard_bits = 2u;
+	std::array<uint8_t, 11> ppx_exp{};
+	std::array<uint8_t, 11> ppy_exp{};
+	ppx_exp.fill(15u);
+	ppy_exp.fill(15u);
 	std::vector<uint8_t> subband_exponents;
 	std::vector<uint16_t> subband_mantissas;
 	std::vector<std::vector<std::span<const uint8_t>>> tile_part_spans(total_tiles);
@@ -7476,6 +7480,7 @@ void idwt_97_2d_float(
 					"Invalid COD marker segment length in JPXDecode codestream",
 					pos);
 			}
+			const uint8_t scod = cs[pos + 2u];
 			prog_order = cs[pos + 3u];
 			if (prog_order > 4u) {
 				return make_filter_error(
@@ -7506,6 +7511,29 @@ void idwt_97_2d_float(
 			cb_exp_h = std::clamp<uint32_t>(static_cast<uint32_t>(cs[pos + 9u] & 0x0Fu) + 2u, 2u, 10u);
 			cb_style = cs[pos + 10u];
 			wavelet_type = cs[pos + 11u];
+			ppx_exp.fill(15u);
+			ppy_exp.fill(15u);
+			if ((scod & 0x01u) != 0u) {
+				if (mlen < 12u + static_cast<uint16_t>(num_decomp_levels) + 1u) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Truncated explicit precinct sizes in JPXDecode COD marker",
+						pos);
+				}
+				for (uint8_t r = 0u; r <= num_decomp_levels; ++r) {
+					const uint8_t pp = cs[pos + 12u + r];
+					ppx_exp[r] = static_cast<uint8_t>(pp & 0x0Fu);
+					ppy_exp[r] = static_cast<uint8_t>((pp >> 4u) & 0x0Fu);
+					if (r > 0u && (ppx_exp[r] == 0u || ppy_exp[r] == 0u)) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Invalid zero precinct exponent at resolution r > 0 in JPXDecode COD marker",
+							pos);
+					}
+				}
+			}
 			saw_cod = true;
 		} else if (marker == 0x5Cu) { // QCD (ITU-T T.800 §A.6.4)
 			if (mlen < 4u) {
@@ -7681,8 +7709,15 @@ void idwt_97_2d_float(
 		uint32_t mb_total = 8u;
 		uint32_t num_cb_x = 0u;
 		uint32_t num_cb_y = 0u;
-		J2kTagTree incl_tree;
-		J2kTagTree zbp_tree;
+		struct PrecinctSubband {
+			uint32_t cb_x0 = 0u;
+			uint32_t cb_x1 = 0u;
+			uint32_t cb_y0 = 0u;
+			uint32_t cb_y1 = 0u;
+			J2kTagTree incl_tree;
+			J2kTagTree zbp_tree;
+		};
+		std::vector<PrecinctSubband> precincts;
 		struct CodeBlock {
 			uint32_t x0 = 0u;
 			uint32_t y0 = 0u;
@@ -7752,13 +7787,13 @@ void idwt_97_2d_float(
 				continue;
 			}
 
-			// Compute resolution bounds (trx0, try0, trx1, try1) using ITU-T T.800 Annex B ceil_div.
+			// Compute resolution bounds (trx0, try0, trx1, try1) and precinct grids using ITU-T T.800 Annex B ceil_div.
 			auto ceil_div_pow2 = [](uint32_t v, uint32_t p) noexcept -> uint32_t {
 				if (p == 0u) {
 					return v;
 				}
-				const uint32_t add = (1u << p) - 1u;
-				return (v + add) >> p;
+				const uint64_t add = (uint64_t{1u} << p) - 1ULL;
+				return static_cast<uint32_t>((static_cast<uint64_t>(v) + add) >> p);
 			};
 			struct ResBounds {
 				uint32_t x0 = 0u;
@@ -7767,6 +7802,13 @@ void idwt_97_2d_float(
 				uint32_t y1 = 0u;
 				uint32_t w = 0u;
 				uint32_t h = 0u;
+				uint8_t ppx = 15u;
+				uint8_t ppy = 15u;
+				uint32_t prec_x0 = 0u;
+				uint32_t prec_y0 = 0u;
+				uint32_t num_prec_x = 0u;
+				uint32_t num_prec_y = 0u;
+				uint32_t num_precincts = 0u;
 			};
 			std::vector<ResBounds> res_bounds(num_decomp_levels + 1u);
 			for (uint8_t r = 0u; r <= num_decomp_levels; ++r) {
@@ -7778,6 +7820,24 @@ void idwt_97_2d_float(
 				rb.y1 = ceil_div_pow2(ty1, shift);
 				rb.w = (rb.x1 > rb.x0) ? (rb.x1 - rb.x0) : 0u;
 				rb.h = (rb.y1 > rb.y0) ? (rb.y1 - rb.y0) : 0u;
+				rb.ppx = ppx_exp[r];
+				rb.ppy = ppy_exp[r];
+				if (rb.w > 0u && rb.h > 0u) {
+					rb.prec_x0 = rb.x0 >> rb.ppx;
+					rb.prec_y0 = rb.y0 >> rb.ppy;
+					const uint32_t prec_x1 = ceil_div_pow2(rb.x1, rb.ppx);
+					const uint32_t prec_y1 = ceil_div_pow2(rb.y1, rb.ppy);
+					rb.num_prec_x = prec_x1 - rb.prec_x0;
+					rb.num_prec_y = prec_y1 - rb.prec_y0;
+					const uint64_t p_total = static_cast<uint64_t>(rb.num_prec_x) * rb.num_prec_y;
+					if (p_total > 65536ULL) {
+						return make_filter_error(
+							ErrorCode::DecompressionLimitExceeded,
+							DiagnosticId::DecompressionLimitExceeded,
+							"JPXDecode precinct grid count exceeds ceiling");
+					}
+					rb.num_precincts = static_cast<uint32_t>(p_total);
+				}
 			}
 
 			// Enforce cumulative live working-set budget (output buffers + per-tile subband, EBCOT/DWT scratch, and spatial buffers).
@@ -7807,14 +7867,24 @@ void idwt_97_2d_float(
 				comps[c].resolutions.resize(num_decomp_levels + 1u);
 				size_t sb_global_idx = 0u;
 				for (uint8_t r = 0u; r <= num_decomp_levels; ++r) {
+					const ResBounds& rb = res_bounds[r];
 					ResolutionState& rs = comps[c].resolutions[r];
-					rs.res_w = res_bounds[r].w;
-					rs.res_h = res_bounds[r].h;
+					rs.res_w = rb.w;
+					rs.res_h = rb.h;
 
-					auto init_subband = [&](uint32_t sb_w, uint32_t sb_h, uint8_t btype, uint8_t bgain) -> PdfResult<void> {
+					const uint32_t sub_ppx = (r == 0u) ? rb.ppx : (rb.ppx - 1u);
+					const uint32_t sub_ppy = (r == 0u) ? rb.ppy : (rb.ppy - 1u);
+					const uint32_t eff_cb_exp_w = std::min<uint32_t>(cb_exp_w, sub_ppx);
+					const uint32_t eff_cb_exp_h = std::min<uint32_t>(cb_exp_h, sub_ppy);
+					const uint32_t eff_cb_w = 1u << eff_cb_exp_w;
+					const uint32_t eff_cb_h = 1u << eff_cb_exp_h;
+					const uint32_t cbs_per_prec_x = 1u << (sub_ppx - eff_cb_exp_w);
+					const uint32_t cbs_per_prec_y = 1u << (sub_ppy - eff_cb_exp_h);
+
+					auto init_subband = [&](uint32_t tbx0, uint32_t tby0, uint32_t tbx1, uint32_t tby1, uint8_t btype, uint8_t bgain) -> PdfResult<void> {
 						SubbandState sb{};
-						sb.w = sb_w;
-						sb.h = sb_h;
+						sb.w = (tbx1 > tbx0) ? (tbx1 - tbx0) : 0u;
+						sb.h = (tby1 > tby0) ? (tby1 - tby0) : 0u;
 						sb.band_type = btype;
 						sb.gain = bgain;
 						sb.eps = (sb_global_idx < subband_exponents.size())
@@ -7827,8 +7897,19 @@ void idwt_97_2d_float(
 						sb.mb_total = (sb.eps + guard_bits > 1u)
 							? static_cast<uint32_t>(sb.eps + guard_bits - 1u)
 							: static_cast<uint32_t>(bit_depth);
-						sb.num_cb_x = (sb_w == 0u) ? 0u : ((sb_w + nom_cb_w - 1u) / nom_cb_w);
-						sb.num_cb_y = (sb_h == 0u) ? 0u : ((sb_h + nom_cb_h - 1u) / nom_cb_h);
+
+						uint32_t cb_gx0 = 0u;
+						uint32_t cb_gx1 = 0u;
+						uint32_t cb_gy0 = 0u;
+						uint32_t cb_gy1 = 0u;
+						if (sb.w > 0u && sb.h > 0u) {
+							cb_gx0 = tbx0 >> eff_cb_exp_w;
+							cb_gx1 = ceil_div_pow2(tbx1, eff_cb_exp_w);
+							cb_gy0 = tby0 >> eff_cb_exp_h;
+							cb_gy1 = ceil_div_pow2(tby1, eff_cb_exp_h);
+							sb.num_cb_x = cb_gx1 - cb_gx0;
+							sb.num_cb_y = cb_gy1 - cb_gy0;
+						}
 						const uint64_t num_cbs = static_cast<uint64_t>(sb.num_cb_x) * sb.num_cb_y;
 						if (num_cbs > 65536ULL) {
 							return make_filter_error(
@@ -7836,27 +7917,47 @@ void idwt_97_2d_float(
 								DiagnosticId::DecompressionLimitExceeded,
 								"JPXDecode subband code-block grid count exceeds ceiling");
 						}
+						const uint64_t cb_meta_bytes =
+							num_cbs * (sizeof(SubbandState::CodeBlock) + 48ULL) +
+							static_cast<uint64_t>(rb.num_precincts) * sizeof(SubbandState::PrecinctSubband) + 256ULL;
+						if (tile_live_bytes + cb_meta_bytes > effective_limit) {
+							return make_filter_error(
+								ErrorCode::DecompressionLimitExceeded,
+								DiagnosticId::DecompressionLimitExceeded,
+								"JPXDecode code-block and precinct metadata allocation exceeds ceiling");
+						}
+						tile_live_bytes += cb_meta_bytes;
+						sb.precincts.resize(rb.num_precincts);
 						if (sb.num_cb_x > 0u && sb.num_cb_y > 0u) {
-							// Account for CodeBlock entries plus all levels of both inclusion and zero-bitplane tag-trees.
-							const uint64_t cb_meta_bytes =
-								num_cbs * (sizeof(SubbandState::CodeBlock) + 48ULL) + 256ULL;
-							if (tile_live_bytes + cb_meta_bytes > effective_limit) {
-								return make_filter_error(
-									ErrorCode::DecompressionLimitExceeded,
-									DiagnosticId::DecompressionLimitExceeded,
-									"JPXDecode code-block metadata allocation exceeds ceiling");
-							}
-							tile_live_bytes += cb_meta_bytes;
-							sb.incl_tree.init(sb.num_cb_x, sb.num_cb_y);
-							sb.zbp_tree.init(sb.num_cb_x, sb.num_cb_y);
 							sb.cbs.resize(static_cast<size_t>(num_cbs));
 							for (uint32_t cy = 0; cy < sb.num_cb_y; ++cy) {
+								const uint32_t gy0 = std::max((cb_gy0 + cy) * eff_cb_h, tby0);
+								const uint32_t gy1 = std::min((cb_gy0 + cy + 1u) * eff_cb_h, tby1);
 								for (uint32_t cx = 0; cx < sb.num_cb_x; ++cx) {
+									const uint32_t gx0 = std::max((cb_gx0 + cx) * eff_cb_w, tbx0);
+									const uint32_t gx1 = std::min((cb_gx0 + cx + 1u) * eff_cb_w, tbx1);
 									auto& cb = sb.cbs[static_cast<size_t>(cy) * sb.num_cb_x + cx];
-									cb.x0 = cx * nom_cb_w;
-									cb.y0 = cy * nom_cb_h;
-									cb.w = std::min(nom_cb_w, sb_w - cb.x0);
-									cb.h = std::min(nom_cb_h, sb_h - cb.y0);
+									cb.x0 = gx0 - tbx0;
+									cb.y0 = gy0 - tby0;
+									cb.w = gx1 - gx0;
+									cb.h = gy1 - gy0;
+								}
+							}
+							for (uint32_t py = 0; py < rb.num_prec_y; ++py) {
+								const uint32_t pgy0 = (rb.prec_y0 + py) * cbs_per_prec_y;
+								const uint32_t pgy1 = (rb.prec_y0 + py + 1u) * cbs_per_prec_y;
+								for (uint32_t px = 0; px < rb.num_prec_x; ++px) {
+									const uint32_t pgx0 = (rb.prec_x0 + px) * cbs_per_prec_x;
+									const uint32_t pgx1 = (rb.prec_x0 + px + 1u) * cbs_per_prec_x;
+									auto& ps = sb.precincts[static_cast<size_t>(py) * rb.num_prec_x + px];
+									ps.cb_x0 = (pgx0 > cb_gx0) ? std::min(pgx0 - cb_gx0, sb.num_cb_x) : 0u;
+									ps.cb_x1 = (pgx1 > cb_gx0) ? std::min(pgx1 - cb_gx0, sb.num_cb_x) : 0u;
+									ps.cb_y0 = (pgy0 > cb_gy0) ? std::min(pgy0 - cb_gy0, sb.num_cb_y) : 0u;
+									ps.cb_y1 = (pgy1 > cb_gy0) ? std::min(pgy1 - cb_gy0, sb.num_cb_y) : 0u;
+									if (ps.cb_x1 > ps.cb_x0 && ps.cb_y1 > ps.cb_y0) {
+										ps.incl_tree.init(ps.cb_x1 - ps.cb_x0, ps.cb_y1 - ps.cb_y0);
+										ps.zbp_tree.init(ps.cb_x1 - ps.cb_x0, ps.cb_y1 - ps.cb_y0);
+									}
 								}
 							}
 						}
@@ -7865,21 +7966,22 @@ void idwt_97_2d_float(
 					};
 
 					if (r == 0u) {
-						RECTO_PDF_RETURN_IF_ERROR(init_subband(rs.res_w, rs.res_h, 0u, 0u)); // LL0
+						RECTO_PDF_RETURN_IF_ERROR(init_subband(rb.x0, rb.y0, rb.x1, rb.y1, 0u, 0u)); // LL0
 					} else {
-						const uint32_t ll_w = res_bounds[r - 1u].w;
-						const uint32_t ll_h = res_bounds[r - 1u].h;
-						const uint32_t hl_w = rs.res_w - ll_w;
-						const uint32_t lh_h = rs.res_h - ll_h;
-						RECTO_PDF_RETURN_IF_ERROR(init_subband(hl_w, ll_h, 1u, 1u)); // HL_r
-						RECTO_PDF_RETURN_IF_ERROR(init_subband(ll_w, lh_h, 0u, 1u)); // LH_r
-						RECTO_PDF_RETURN_IF_ERROR(init_subband(hl_w, lh_h, 2u, 2u)); // HH_r
+						const ResBounds& prev_rb = res_bounds[r - 1u];
+						const uint32_t hx0 = rb.x0 >> 1u;
+						const uint32_t hx1 = rb.x1 >> 1u;
+						const uint32_t hy0 = rb.y0 >> 1u;
+						const uint32_t hy1 = rb.y1 >> 1u;
+						RECTO_PDF_RETURN_IF_ERROR(init_subband(hx0, prev_rb.y0, hx1, prev_rb.y1, 1u, 1u)); // HL_r
+						RECTO_PDF_RETURN_IF_ERROR(init_subband(prev_rb.x0, hy0, prev_rb.x1, hy1, 0u, 1u)); // LH_r
+						RECTO_PDF_RETURN_IF_ERROR(init_subband(hx0, hy0, hx1, hy1, 2u, 2u));             // HH_r
 					}
 				}
 			}
 
 			size_t stream_pos = 0u;
-			auto decode_packet = [&](uint16_t layer, uint8_t r, uint32_t c) -> PdfResult<void> {
+			auto decode_packet = [&](uint16_t layer, uint8_t r, uint32_t c, uint32_t k) -> PdfResult<void> {
 				if (stream_pos >= tile_bitstream.size()) {
 					return make_filter_error(
 						ErrorCode::DamagedFormat,
@@ -7905,16 +8007,22 @@ void idwt_97_2d_float(
 
 				if (non_empty != 0u) {
 					for (SubbandState& sb : rs.subbands) {
-						for (uint32_t cy = 0; cy < sb.num_cb_y; ++cy) {
-							for (uint32_t cx = 0; cx < sb.num_cb_x; ++cx) {
+						if (k >= sb.precincts.size()) {
+							continue;
+						}
+						auto& ps = sb.precincts[k];
+						for (uint32_t cy = ps.cb_y0; cy < ps.cb_y1; ++cy) {
+							for (uint32_t cx = ps.cb_x0; cx < ps.cb_x1; ++cx) {
 								auto& cb = sb.cbs[static_cast<size_t>(cy) * sb.num_cb_x + cx];
+								const uint32_t local_cx = cx - ps.cb_x0;
+								const uint32_t local_cy = cy - ps.cb_y0;
 								bool included = false;
 								if (!cb.included_once) {
 									int32_t incl_layer = 0;
-									if (!sb.incl_tree.decode(
+									if (!ps.incl_tree.decode(
 											br,
-											cx,
-											cy,
+											local_cx,
+											local_cy,
 											static_cast<int32_t>(layer) + 1,
 											incl_layer)) {
 										return make_filter_error(
@@ -7925,10 +8033,10 @@ void idwt_97_2d_float(
 									included = (incl_layer <= static_cast<int32_t>(layer));
 									if (included) {
 										int32_t zbp = 0;
-										if (!sb.zbp_tree.decode(
+										if (!ps.zbp_tree.decode(
 												br,
-												cx,
-												cy,
+												local_cx,
+												local_cy,
 												std::numeric_limits<int32_t>::max(),
 												zbp)) {
 											return make_filter_error(
@@ -8050,11 +8158,55 @@ void idwt_97_2d_float(
 				return {};
 			};
 
+			auto try_precinct_at_grid_pos = [&](uint32_t x, uint32_t y, uint8_t r, uint32_t& out_k) noexcept -> bool {
+				const ResBounds& rb = res_bounds[r];
+				if (rb.num_precincts == 0u) {
+					return false;
+				}
+				const uint32_t shift = num_decomp_levels - r;
+				const uint32_t step_x_exp = rb.ppx + shift;
+				const uint32_t step_y_exp = rb.ppy + shift;
+				const uint32_t step_x = (step_x_exp >= 31u) ? 0x80000000u : (1u << step_x_exp);
+				const uint32_t step_y = (step_y_exp >= 31u) ? 0x80000000u : (1u << step_y_exp);
+				const uint32_t p_w = 1u << rb.ppx;
+				const uint32_t p_h = 1u << rb.ppy;
+				const bool hit_x = ((x % step_x) == 0u) || (x == tx0 && ((rb.x0 % p_w) != 0u));
+				const bool hit_y = ((y % step_y) == 0u) || (y == ty0 && ((rb.y0 % p_h) != 0u));
+				if (!hit_x || !hit_y) {
+					return false;
+				}
+				const uint32_t trx = ceil_div_pow2(x, shift);
+				const uint32_t try_c = ceil_div_pow2(y, shift);
+				const uint32_t px = (trx >> rb.ppx) - rb.prec_x0;
+				const uint32_t py = (try_c >> rb.ppy) - rb.prec_y0;
+				if (px >= rb.num_prec_x || py >= rb.num_prec_y) {
+					return false;
+				}
+				out_k = py * rb.num_prec_x + px;
+				return true;
+			};
+
+			uint32_t min_step_x = 0x80000000u;
+			uint32_t min_step_y = 0x80000000u;
+			for (uint8_t r = 0u; r <= num_decomp_levels; ++r) {
+				const uint32_t shift = num_decomp_levels - r;
+				const uint32_t sx_exp = res_bounds[r].ppx + shift;
+				const uint32_t sy_exp = res_bounds[r].ppy + shift;
+				min_step_x = std::min(min_step_x, (sx_exp >= 31u) ? 0x80000000u : (1u << sx_exp));
+				min_step_y = std::min(min_step_y, (sy_exp >= 31u) ? 0x80000000u : (1u << sy_exp));
+			}
+			auto next_grid_coord = [](uint32_t cur, uint32_t step, uint32_t end) noexcept -> uint32_t {
+				const uint64_t next = (static_cast<uint64_t>(cur / step) + 1ULL) * step;
+				return (next >= end) ? end : static_cast<uint32_t>(next);
+			};
+
 			if (prog_order == 0u) { // LRCP (ITU-T T.800 §B.12.1.1: Layer -> Resolution -> Component -> Position)
 				for (uint16_t l = 0; l < num_layers; ++l) {
 					for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
 						for (uint32_t c = 0; c < num_comps; ++c) {
-							RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c));
+							for (uint32_t k = 0; k < res_bounds[r].num_precincts; ++k) {
+								RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c, k));
+							}
 						}
 					}
 				}
@@ -8062,23 +8214,49 @@ void idwt_97_2d_float(
 				for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
 					for (uint16_t l = 0; l < num_layers; ++l) {
 						for (uint32_t c = 0; c < num_comps; ++c) {
-							RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c));
+							for (uint32_t k = 0; k < res_bounds[r].num_precincts; ++k) {
+								RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c, k));
+							}
 						}
 					}
 				}
 			} else if (prog_order == 2u) { // RPCL (ITU-T T.800 §B.12.1.3: Resolution -> Position -> Component -> Layer)
 				for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
-					for (uint32_t c = 0; c < num_comps; ++c) {
-						for (uint16_t l = 0; l < num_layers; ++l) {
-							RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c));
+					for (uint32_t k = 0; k < res_bounds[r].num_precincts; ++k) {
+						for (uint32_t c = 0; c < num_comps; ++c) {
+							for (uint16_t l = 0; l < num_layers; ++l) {
+								RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c, k));
+							}
 						}
 					}
 				}
-			} else { // PCRL (3, §B.12.1.4) and CPRL (4, §B.12.1.5): Component -> Position -> Resolution -> Layer
+			} else if (prog_order == 3u) { // PCRL (ITU-T T.800 §B.12.1.4: Position -> Component -> Resolution -> Layer)
+				for (uint32_t y = ty0; y < ty1; y = next_grid_coord(y, min_step_y, ty1)) {
+					for (uint32_t x = tx0; x < tx1; x = next_grid_coord(x, min_step_x, tx1)) {
+						for (uint32_t c = 0; c < num_comps; ++c) {
+							for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
+								uint32_t k = 0u;
+								if (try_precinct_at_grid_pos(x, y, r, k)) {
+									for (uint16_t l = 0; l < num_layers; ++l) {
+										RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c, k));
+									}
+								}
+							}
+						}
+					}
+				}
+			} else { // CPRL (ITU-T T.800 §B.12.1.5: Component -> Position -> Resolution -> Layer)
 				for (uint32_t c = 0; c < num_comps; ++c) {
-					for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
-						for (uint16_t l = 0; l < num_layers; ++l) {
-							RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c));
+					for (uint32_t y = ty0; y < ty1; y = next_grid_coord(y, min_step_y, ty1)) {
+						for (uint32_t x = tx0; x < tx1; x = next_grid_coord(x, min_step_x, tx1)) {
+							for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
+								uint32_t k = 0u;
+								if (try_precinct_at_grid_pos(x, y, r, k)) {
+									for (uint16_t l = 0; l < num_layers; ++l) {
+										RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c, k));
+									}
+								}
+							}
 						}
 					}
 				}
@@ -8125,10 +8303,9 @@ void idwt_97_2d_float(
 								}
 							}
 						}
-						// Genuinely deallocate code-block and tag-tree heap capacity before DWT synthesis.
+						// Genuinely deallocate code-block and precinct tag-tree heap capacity before DWT synthesis.
 						std::vector<SubbandState::CodeBlock>().swap(sb.cbs);
-						sb.incl_tree.release();
-						sb.zbp_tree.release();
+						std::vector<SubbandState::PrecinctSubband>().swap(sb.precincts);
 					}
 				}
 			}

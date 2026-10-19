@@ -2472,6 +2472,179 @@ TEST(PdfFilters, DctRgbAndCmyk)
 		const auto bad_prog_jp2 = make_genuine_jp2_2x2_rgb(expected_rgb, true, 5u, 1u);
 		RECTO_EXPECT_ERR(decode_jpx_image(bad_prog_jp2), ErrorCode::DamagedFormat);
 
+		// 3a. Multi-precinct (`Scod = 0x01` with explicit `PPx`/`PPy` precinct size exponents) across all 5
+		// progression orders (`0=LRCP`, `1=RLCP`, `2=RPCL`, `3=PCRL`, `4=CPRL`) with `num_layers = 2`,
+		// `num_decomp_levels = 1`, `3` components, and `2` precincts (`k = 0, 1`) at both `r = 0` and `r = 1`
+		// on a `4x2` tile so `PCRL` (`k -> c -> r -> l`) and `CPRL` (`c -> k -> r -> l`) have distinct packet orders.
+		{
+			constexpr std::array<std::array<int32_t, 2>, 3> kLlPrec = {{
+				{-80, -40},
+				{-20, 20},
+				{40, 80},
+			}};
+			constexpr std::array<std::array<int32_t, 2>, 3> kLhPrec = {{
+				{8, 16},
+				{-8, 12},
+				{16, -16},
+			}};
+			std::vector<uint8_t> expected_4x2_rgb(4u * 2u * 3u, 0u);
+			for (int c = 0; c < 3; ++c) {
+				const std::array<int32_t, 4> row_low = {
+					kLlPrec[c][0],
+					(kLlPrec[c][0] + kLlPrec[c][1]) / 2,
+					kLlPrec[c][1],
+					kLlPrec[c][1],
+				};
+				const std::array<int32_t, 4> row_high = {
+					kLhPrec[c][0],
+					(kLhPrec[c][0] + kLhPrec[c][1]) / 2,
+					kLhPrec[c][1],
+					kLhPrec[c][1],
+				};
+				for (uint32_t x = 0; x < 4u; ++x) {
+					const int32_t e0 = row_low[x] - (row_high[x] / 2);
+					const int32_t o0 = row_high[x] + e0;
+					expected_4x2_rgb[(0u * 4u + x) * 3u + c] = static_cast<uint8_t>(e0 + 128);
+					expected_4x2_rgb[(1u * 4u + x) * 3u + c] = static_cast<uint8_t>(o0 + 128);
+				}
+			}
+
+			auto make_mp_packet = [&](uint16_t l, int r, int c, int k) -> std::vector<uint8_t> {
+				if (l > 0u) {
+					return {0x00u};
+				}
+				if (r == 0) {
+					const EncodedJ2kSubband sb_ll = encode_j2k_1x1_subband(kLlPrec[c][k], 9u);
+					return build_j2k_packet_for_subbands(std::span<const EncodedJ2kSubband>(&sb_ll, 1u));
+				}
+				const std::array<EncodedJ2kSubband, 3> sbs = {
+					encode_j2k_1x1_subband(0, 9u),
+					encode_j2k_1x1_subband(kLhPrec[c][k], 9u),
+					encode_j2k_1x1_subband(0, 9u),
+				};
+				return build_j2k_packet_for_subbands(sbs);
+			};
+
+			for (uint8_t prog_order = 0u; prog_order <= 4u; ++prog_order) {
+				std::vector<uint8_t> mp_packets;
+				auto append_mp = [&](uint16_t l, int r, int c, int k) {
+					const auto pkt = make_mp_packet(l, r, c, k);
+					mp_packets.insert(mp_packets.end(), pkt.begin(), pkt.end());
+				};
+				if (prog_order == 0u) { // LRCP: l -> r -> c -> k
+					for (uint16_t l = 0; l < 2u; ++l) {
+						for (int r = 0; r <= 1; ++r) {
+							for (int c = 0; c < 3; ++c) {
+								for (int k = 0; k < 2; ++k) {
+									append_mp(l, r, c, k);
+								}
+							}
+						}
+					}
+				} else if (prog_order == 1u) { // RLCP: r -> l -> c -> k
+					for (int r = 0; r <= 1; ++r) {
+						for (uint16_t l = 0; l < 2u; ++l) {
+							for (int c = 0; c < 3; ++c) {
+								for (int k = 0; k < 2; ++k) {
+									append_mp(l, r, c, k);
+								}
+							}
+						}
+					}
+				} else if (prog_order == 2u) { // RPCL: r -> k -> c -> l
+					for (int r = 0; r <= 1; ++r) {
+						for (int k = 0; k < 2; ++k) {
+							for (int c = 0; c < 3; ++c) {
+								for (uint16_t l = 0; l < 2u; ++l) {
+									append_mp(l, r, c, k);
+								}
+							}
+						}
+					}
+				} else if (prog_order == 3u) { // PCRL: k -> c -> r -> l
+					for (int k = 0; k < 2; ++k) {
+						for (int c = 0; c < 3; ++c) {
+							for (int r = 0; r <= 1; ++r) {
+								for (uint16_t l = 0; l < 2u; ++l) {
+									append_mp(l, r, c, k);
+								}
+							}
+						}
+					}
+				} else { // CPRL: c -> k -> r -> l
+					for (int c = 0; c < 3; ++c) {
+						for (int k = 0; k < 2; ++k) {
+							for (int r = 0; r <= 1; ++r) {
+								for (uint16_t l = 0; l < 2u; ++l) {
+									append_mp(l, r, c, k);
+								}
+							}
+						}
+					}
+				}
+
+				std::vector<uint8_t> cs_mp = {0xFFu, 0x4Fu, 0xFFu, 0x51u};
+				append_u16_be(cs_mp, 47u);
+				append_u16_be(cs_mp, 0u);
+				append_u32_be(cs_mp, 4u); // Xsiz = 4
+				append_u32_be(cs_mp, 2u); // Ysiz = 2
+				append_u32_be(cs_mp, 0u);
+				append_u32_be(cs_mp, 0u);
+				append_u32_be(cs_mp, 4u); // XTsiz = 4
+				append_u32_be(cs_mp, 2u); // YTsiz = 2
+				append_u32_be(cs_mp, 0u);
+				append_u32_be(cs_mp, 0u);
+				append_u16_be(cs_mp, 3u); // Csiz = 3
+				for (int c = 0; c < 3; ++c) {
+					cs_mp.push_back(7u);
+					cs_mp.push_back(1u);
+					cs_mp.push_back(1u);
+				}
+				// COD (0xFF52): Lcod = 12 + 2 = 14 (Scod = 0x01 -> 2 precinct size bytes for r = 0, 1)
+				cs_mp.push_back(0xFFu);
+				cs_mp.push_back(0x52u);
+				append_u16_be(cs_mp, 14u);
+				cs_mp.push_back(0x01u);     // Scod = 0x01 (explicit precinct sizes)
+				cs_mp.push_back(prog_order); // SGcod progression order (0..4)
+				append_u16_be(cs_mp, 2u);   // 2 layers
+				cs_mp.push_back(0u);        // no MCT
+				cs_mp.push_back(1u);        // 1 DWT decomposition level
+				cs_mp.push_back(4u);        // code-block width exp
+				cs_mp.push_back(4u);        // code-block height exp
+				cs_mp.push_back(0u);        // code-block style
+				cs_mp.push_back(1u);        // 5-3 reversible wavelet
+				cs_mp.push_back(0x00u);     // r = 0: PPx = 0, PPy = 0 (1x1 precinct -> 2 precincts across 2x1 LL1)
+				cs_mp.push_back(0x11u);     // r = 1: PPx = 1, PPy = 1 (2x2 precinct -> 2 precincts across 4x2 r=1)
+
+				cs_mp.push_back(0xFFu);
+				cs_mp.push_back(0x5Cu);
+				append_u16_be(cs_mp, 7u);
+				cs_mp.push_back(0x40u);
+				for (int sb = 0; sb < 4; ++sb) {
+					cs_mp.push_back(static_cast<uint8_t>(8u << 3u));
+				}
+				cs_mp.push_back(0xFFu);
+				cs_mp.push_back(0x90u);
+				append_u16_be(cs_mp, 10u);
+				append_u16_be(cs_mp, 0u);
+				append_u32_be(cs_mp, 14u + static_cast<uint32_t>(mp_packets.size()));
+				cs_mp.push_back(0u);
+				cs_mp.push_back(1u);
+				cs_mp.push_back(0xFFu);
+				cs_mp.push_back(0x93u);
+				cs_mp.insert(cs_mp.end(), mp_packets.begin(), mp_packets.end());
+				cs_mp.push_back(0xFFu);
+				cs_mp.push_back(0xD9u);
+
+				auto dec_mp = decode_jpx_image(cs_mp);
+				RECTO_ASSERT_OK(dec_mp);
+				EXPECT_EQ(dec_mp->width, 4u);
+				EXPECT_EQ(dec_mp->height, 2u);
+				EXPECT_EQ(dec_mp->components, 3u);
+				EXPECT_EQ(dec_mp->pixels, expected_4x2_rgb) << "prog_order=" << static_cast<int>(prog_order);
+			}
+		}
+
 		// 3b. Decode synthetic JP2 streams covering:
 		// - Multi-sample code-block exercising ITU-T T.800 Table D.1 ZC contexts (`v_sum == 1` -> ctx 3, `v_sum == 0 && d_sum >= 2` -> ctx 2)
 		// - 2x2 multi-tile (4x4 image split into four 2x2 tiles) JP2 codestream
@@ -2807,7 +2980,7 @@ TEST(PdfFilters, DctRgbAndCmyk)
 					const EncodedJ2kSubband sb_40 = encode_j2k_1x1_subband(40, 9u);
 					std::vector<uint8_t> s1_pkts;
 					if (odd_origin) {
-						s1_pkts.push_back(0x00u); // Empty packet for Resolution 0 (0x0 LL1)
+						// Per ITU-T T.800 §B.6 Eq. (B-16), at r = 0 trx0 == trx1 == 1 so num_precincts == 0 (no packet at r = 0).
 						const auto p1 = build_j2k_packet_for_subbands(std::span<const EncodedJ2kSubband>(&sb_40, 1u));
 						s1_pkts.insert(s1_pkts.end(), p1.begin(), p1.end());
 					} else {
