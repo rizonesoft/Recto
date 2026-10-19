@@ -2130,7 +2130,8 @@ private:
 };
 
 [[nodiscard]] std::vector<uint8_t> build_j2k_packet_for_subbands(
-	std::span<const EncodedJ2kSubband> sbs)
+	std::span<const EncodedJ2kSubband> sbs,
+	bool with_eph = false)
 {
 	TestBitWriter bw;
 	bw.write_bit(1u); // Non-empty packet
@@ -2153,6 +2154,10 @@ private:
 	}
 	bw.flush_aligned();
 	std::vector<uint8_t> pkt = bw.bytes();
+	if (with_eph) {
+		pkt.push_back(0xFFu);
+		pkt.push_back(0x92u);
+	}
 	for (const auto& sb : sbs) {
 		pkt.insert(pkt.end(), sb.bytes.begin(), sb.bytes.end());
 	}
@@ -2509,27 +2514,38 @@ TEST(PdfFilters, DctRgbAndCmyk)
 				}
 			}
 
-			auto make_mp_packet = [&](uint16_t l, int r, int c, int k) -> std::vector<uint8_t> {
+			auto make_mp_packet = [&](uint16_t l, int r, int c, int k, bool with_eph) -> std::vector<uint8_t> {
 				if (l > 0u) {
+					if (with_eph) {
+						return {0x00u, 0xFFu, 0x92u};
+					}
 					return {0x00u};
 				}
 				if (r == 0) {
 					const EncodedJ2kSubband sb_ll = encode_j2k_1x1_subband(kLlPrec[c][k], 9u);
-					return build_j2k_packet_for_subbands(std::span<const EncodedJ2kSubband>(&sb_ll, 1u));
+					return build_j2k_packet_for_subbands(std::span<const EncodedJ2kSubband>(&sb_ll, 1u), with_eph);
 				}
 				const std::array<EncodedJ2kSubband, 3> sbs = {
 					encode_j2k_1x1_subband(0, 9u),
 					encode_j2k_1x1_subband(kLhPrec[c][k], 9u),
 					encode_j2k_1x1_subband(0, 9u),
 				};
-				return build_j2k_packet_for_subbands(sbs);
+				return build_j2k_packet_for_subbands(sbs, with_eph);
 			};
 
-			for (uint8_t prog_order = 0u; prog_order <= 4u; ++prog_order) {
+			auto build_mp_codestream = [&](uint8_t prog_order, uint8_t scod, bool emit_sop, bool emit_eph) -> std::vector<uint8_t> {
 				std::vector<uint8_t> mp_packets;
+				uint16_t pkt_seq = 0u;
 				auto append_mp = [&](uint16_t l, int r, int c, int k) {
-					const auto pkt = make_mp_packet(l, r, c, k);
+					if (emit_sop) {
+						mp_packets.push_back(0xFFu);
+						mp_packets.push_back(0x91u);
+						append_u16_be(mp_packets, 4u);
+						append_u16_be(mp_packets, pkt_seq);
+					}
+					const auto pkt = make_mp_packet(l, r, c, k, emit_eph);
 					mp_packets.insert(mp_packets.end(), pkt.begin(), pkt.end());
+					++pkt_seq;
 				};
 				if (prog_order == 0u) { // LRCP: l -> r -> c -> k
 					for (uint16_t l = 0; l < 2u; ++l) {
@@ -2600,11 +2616,10 @@ TEST(PdfFilters, DctRgbAndCmyk)
 					cs_mp.push_back(1u);
 					cs_mp.push_back(1u);
 				}
-				// COD (0xFF52): Lcod = 12 + 2 = 14 (Scod = 0x01 -> 2 precinct size bytes for r = 0, 1)
 				cs_mp.push_back(0xFFu);
 				cs_mp.push_back(0x52u);
 				append_u16_be(cs_mp, 14u);
-				cs_mp.push_back(0x01u);     // Scod = 0x01 (explicit precinct sizes)
+				cs_mp.push_back(scod);
 				cs_mp.push_back(prog_order); // SGcod progression order (0..4)
 				append_u16_be(cs_mp, 2u);   // 2 layers
 				cs_mp.push_back(0u);        // no MCT
@@ -2635,13 +2650,53 @@ TEST(PdfFilters, DctRgbAndCmyk)
 				cs_mp.insert(cs_mp.end(), mp_packets.begin(), mp_packets.end());
 				cs_mp.push_back(0xFFu);
 				cs_mp.push_back(0xD9u);
+				return cs_mp;
+			};
 
-				auto dec_mp = decode_jpx_image(cs_mp);
-				RECTO_ASSERT_OK(dec_mp);
-				EXPECT_EQ(dec_mp->width, 4u);
-				EXPECT_EQ(dec_mp->height, 2u);
-				EXPECT_EQ(dec_mp->components, 3u);
-				EXPECT_EQ(dec_mp->pixels, expected_4x2_rgb) << "prog_order=" << static_cast<int>(prog_order);
+			for (uint8_t prog_order = 0u; prog_order <= 4u; ++prog_order) {
+				for (uint8_t marker_bits : {uint8_t{0x00u}, uint8_t{0x02u}, uint8_t{0x04u}, uint8_t{0x06u}}) {
+					const uint8_t scod = static_cast<uint8_t>(0x01u | marker_bits);
+					const bool has_sop = (marker_bits & 0x02u) != 0u;
+					const bool has_eph = (marker_bits & 0x04u) != 0u;
+					const auto cs_mp = build_mp_codestream(prog_order, scod, has_sop, has_eph);
+					auto dec_mp = decode_jpx_image(cs_mp);
+					RECTO_ASSERT_OK(dec_mp);
+					EXPECT_EQ(dec_mp->width, 4u);
+					EXPECT_EQ(dec_mp->height, 2u);
+					EXPECT_EQ(dec_mp->components, 3u);
+					EXPECT_EQ(dec_mp->pixels, expected_4x2_rgb)
+						<< "prog_order=" << static_cast<int>(prog_order)
+						<< " scod=0x" << std::hex << static_cast<int>(scod);
+				}
+			}
+
+			// Negative SOP/EPH/Scod framing tests:
+			// (1) Unexpected SOP marker when Scod & 0x02 == 0 must be rejected with DamagedFormat.
+			RECTO_EXPECT_ERR(decode_jpx_image(build_mp_codestream(0u, 0x01u, true, false)), ErrorCode::DamagedFormat);
+			// (2) Missing required EPH marker when Scod & 0x04 != 0 must be rejected with DamagedFormat.
+			RECTO_EXPECT_ERR(decode_jpx_image(build_mp_codestream(0u, 0x05u, false, false)), ErrorCode::DamagedFormat);
+			// (3) Unexpected EPH marker when Scod & 0x04 == 0 must be rejected with DamagedFormat.
+			RECTO_EXPECT_ERR(decode_jpx_image(build_mp_codestream(0u, 0x01u, false, true)), ErrorCode::DamagedFormat);
+			// (4) Reserved Scod bits (0xF8) must be rejected with DamagedFormat.
+			RECTO_EXPECT_ERR(decode_jpx_image(build_mp_codestream(0u, 0x09u, false, false)), ErrorCode::DamagedFormat);
+			// (5) Out-of-sequence SOP Nsop (corrupting the first SOP's Nsop from 0 to 1) and invalid Lsop != 4 must fail.
+			{
+				auto bad_nsop = build_mp_codestream(3u, 0x07u, true, true);
+				auto bad_lsop = bad_nsop;
+				// Locate SOD (0xFF, 0x93) followed immediately by the first SOP (0xFF, 0x91, 0x00, 0x04, 0x00, 0x00).
+				bool found_sop = false;
+				for (size_t i = 0; i + 8u <= bad_nsop.size(); ++i) {
+					if (bad_nsop[i] == 0xFFu && bad_nsop[i + 1u] == 0x93u &&
+						bad_nsop[i + 2u] == 0xFFu && bad_nsop[i + 3u] == 0x91u) {
+						bad_nsop[i + 7u] = 0x01u; // Nsop = 1 instead of 0
+						bad_lsop[i + 5u] = 0x05u; // Lsop = 5 instead of 4
+						found_sop = true;
+						break;
+					}
+				}
+				ASSERT_TRUE(found_sop);
+				RECTO_EXPECT_ERR(decode_jpx_image(bad_nsop), ErrorCode::DamagedFormat);
+				RECTO_EXPECT_ERR(decode_jpx_image(bad_lsop), ErrorCode::DamagedFormat);
 			}
 		}
 

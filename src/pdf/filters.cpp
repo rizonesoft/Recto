@@ -7428,6 +7428,8 @@ void idwt_97_2d_float(
 	uint8_t prog_order = 0u;
 	uint16_t num_layers = 1u;
 	bool mct_enabled = false;
+	bool sop_enabled = false;
+	bool eph_enabled = false;
 	uint8_t num_decomp_levels = 0u;
 	uint32_t cb_exp_w = 6u;
 	uint32_t cb_exp_h = 6u;
@@ -7481,6 +7483,15 @@ void idwt_97_2d_float(
 					pos);
 			}
 			const uint8_t scod = cs[pos + 2u];
+			if ((scod & 0xF8u) != 0u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Invalid reserved bits in JPXDecode COD Scod parameter",
+					pos);
+			}
+			sop_enabled = (scod & 0x02u) != 0u;
+			eph_enabled = (scod & 0x04u) != 0u;
 			prog_order = cs[pos + 3u];
 			if (prog_order > 4u) {
 				return make_filter_error(
@@ -7981,12 +7992,42 @@ void idwt_97_2d_float(
 			}
 
 			size_t stream_pos = 0u;
+			uint32_t packet_seq = 0u;
 			auto decode_packet = [&](uint16_t layer, uint8_t r, uint32_t c, uint32_t k) -> PdfResult<void> {
 				if (stream_pos >= tile_bitstream.size()) {
 					return make_filter_error(
 						ErrorCode::DamagedFormat,
 						DiagnosticId::DamagedStream,
 						"Truncated Tier-2 packet header in JPXDecode tile bitstream");
+				}
+				// ITU-T T.800 §A.8.1: When SOP is enabled (`Scod & 0x02`), an optional 6-byte SOP marker segment
+				// (`0xFF, 0x91, Lsop = 0x0004, Nsop = packet_seq mod 65536`) may precede each packet header.
+				// Because packet header bit-stuffing (§B.10.1) forces any byte following `0xFF` in a packet header
+				// to have MSB `0` (`<= 0x7F`), a leading `0xFF` followed by a byte with MSB `1` (or EOF) is always a marker.
+				if (tile_bitstream[stream_pos] == 0xFFu &&
+					(stream_pos + 1u >= tile_bitstream.size() || (tile_bitstream[stream_pos + 1u] & 0x80u) != 0u)) {
+					if (!sop_enabled) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Unexpected marker before JPXDecode packet header when SOP is disabled");
+					}
+					if (stream_pos + 6u > tile_bitstream.size() ||
+						tile_bitstream[stream_pos + 1u] != 0x91u ||
+						read_u16_be(tile_bitstream.data() + stream_pos + 2u) != 4u ||
+						read_u16_be(tile_bitstream.data() + stream_pos + 4u) != static_cast<uint16_t>(packet_seq & 0xFFFFu)) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Invalid or out-of-sequence SOP marker segment in JPXDecode packet");
+					}
+					stream_pos += 6u;
+					if (stream_pos >= tile_bitstream.size()) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Truncated packet header after SOP marker in JPXDecode tile bitstream");
+					}
 				}
 				std::span<const uint8_t> rem = tile_bitstream.subspan(stream_pos);
 				J2kPacketBitReader br(rem);
@@ -8123,6 +8164,20 @@ void idwt_97_2d_float(
 				}
 				stream_pos += br.bytes_consumed();
 
+				// ITU-T T.800 §A.8.2: When EPH is enabled (`Scod & 0x04`), a 2-byte EPH marker (`0xFF, 0x92`)
+				// shall immediately follow every byte-aligned packet header (including empty packet headers).
+				if (eph_enabled) {
+					if (stream_pos + 2u > tile_bitstream.size() ||
+						tile_bitstream[stream_pos] != 0xFFu ||
+						tile_bitstream[stream_pos + 1u] != 0x92u) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"Missing or invalid EPH marker at end of JPXDecode packet header");
+					}
+					stream_pos += 2u;
+				}
+
 				for (const PendingBody& item : pending) {
 					if (item.len > tile_bitstream.size() - stream_pos) {
 						return make_filter_error(
@@ -8155,6 +8210,7 @@ void idwt_97_2d_float(
 					}
 					stream_pos += item.len;
 				}
+				++packet_seq;
 				return {};
 			};
 
@@ -8260,6 +8316,12 @@ void idwt_97_2d_float(
 						}
 					}
 				}
+			}
+			if (stream_pos != tile_bitstream.size()) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Trailing unconsumed bytes in JPXDecode tile bitstream");
 			}
 
 			// Tier-1 EBCOT decoding across all components first, releasing all code-block, tag-tree, and EBCOT scratch memory before DWT synthesis.
