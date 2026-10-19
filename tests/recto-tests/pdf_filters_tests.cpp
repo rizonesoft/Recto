@@ -1018,17 +1018,53 @@ public:
 			return;
 		}
 		const uint8_t s = (val < 0) ? 1u : 0u;
-		const uint32_t v = static_cast<uint32_t>(val < 0 ? -val : val);
+		const uint32_t v = static_cast<uint32_t>(
+			val < 0 ? -static_cast<int64_t>(val) : static_cast<int64_t>(val));
 		put_bit(s);
 		if (v < 4u) {
 			put_bit(0u);
 			put_bit(static_cast<uint8_t>((v >> 1u) & 1u));
 			put_bit(static_cast<uint8_t>(v & 1u));
-		} else {
+		} else if (v < 20u) {
 			put_bit(1u);
 			put_bit(0u);
 			const uint32_t rem = v - 4u;
 			for (int i = 3; i >= 0; --i) {
+				put_bit(static_cast<uint8_t>((rem >> i) & 1u));
+			}
+		} else if (v < 84u) {
+			put_bit(1u);
+			put_bit(1u);
+			put_bit(0u);
+			const uint32_t rem = v - 20u;
+			for (int i = 5; i >= 0; --i) {
+				put_bit(static_cast<uint8_t>((rem >> i) & 1u));
+			}
+		} else if (v < 340u) {
+			put_bit(1u);
+			put_bit(1u);
+			put_bit(1u);
+			put_bit(0u);
+			const uint32_t rem = v - 84u;
+			for (int i = 7; i >= 0; --i) {
+				put_bit(static_cast<uint8_t>((rem >> i) & 1u));
+			}
+		} else if (v < 4436u) {
+			put_bit(1u);
+			put_bit(1u);
+			put_bit(1u);
+			put_bit(1u);
+			put_bit(0u);
+			const uint32_t rem = v - 340u;
+			for (int i = 11; i >= 0; --i) {
+				put_bit(static_cast<uint8_t>((rem >> i) & 1u));
+			}
+		} else {
+			for (int k = 0; k < 5; ++k) {
+				put_bit(1u);
+			}
+			const uint32_t rem = v - 4436u;
+			for (int i = 31; i >= 0; --i) {
 				put_bit(static_cast<uint8_t>((rem >> i) & 1u));
 			}
 		}
@@ -1676,18 +1712,19 @@ TEST(PdfFilters, Jbig2Decode)
 		// - DH = +2 (Table B.4: {2, 2, 0} prefix "10" = 2 bits) -> hc_height = 2
 		// - Sym 0 DW = +8 (Table B.3: {3, 4, 3} prefix "1110" + 3-bit offset "101" = 7 bits) -> sym_w = 8
 		// - REFAGGNINST = 2 (Table B.1: {0, 1, 4} prefix "0" + 4-bit offset "0010" = 5 bits)
-		// - Because `REFAGGNINST > 1` (`2 > 1`) and `SDHUFF = 1` (ITU-T T.88 §6.5.8.2.1 & §6.5.8.2.3):
-		//   - Fixed tables B.6 (FS), B.8 (DS), B.11 (DT), `REFCORNER = 0` (`BOTTOMLEFT`), and fixed-length `sym_code_len = 2`-bit symbol IDs:
+		// - Because `REFAGGNINST > 1` (`2 > 1`) and `SDHUFF = 1` (ITU-T T.88 §6.5.8.2.1, Table 17 `REFCORNER = TOPLEFT`, & §6.5.8.2.3):
+		//   - Fixed tables B.6 (FS), B.8 (DS), B.11 (DT), `REFCORNER = 1` (`TOPLEFT`), and fixed-length `sym_code_len = 2`-bit symbol IDs:
 		//     - Initial STRIPT = 1 (Table B.11: `{1, 1, 0}` prefix `"0"`) -> stript = -1
-		//     - Strip DT = 2 (Table B.11: `{2, 2, 1}` prefix `"10"` + 1-bit `"0"`) -> stript = -1 + 2 = 1 (bottom row of 8x2 symbol!)
+		//     - Strip DT = 1 (Table B.11: `{1, 1, 0}` prefix `"0"`) -> stript = -1 + 1 = 0 (`TOPLEFT` top row of 8x2 symbol)
 		//     - First S (DFS = 0, Table B.6: `{0, 2, 7}` prefix `"00"` + 7-bit `"0000000"`) -> firsts = 0, curs = 0
 		//     - Instance 0: Symbol ID 0 (`"00"`, 2 bits), R_I = 0 (`"0"`) -> draws at x=0..3, y=0..1, curs becomes 0 + (4 - 1) = 3
-		//     - Instance 1: IDS = 1 (Table B.8: `{0, 2, 1}` prefix `"00"` + 1-bit `"1"`) -> curs becomes 4; Symbol ID 1 (`"01"`, 2 bits), R_I = 0 (`"0"`) -> draws at x=4..7, y=0..1 (`n_inst == 2 == REFAGGNINST`)
+		//     - Instance 1: IDS = 1 (Table B.8: `{0, 2, 1}` prefix `"00"` + 1-bit `"1"`) -> curs becomes 4; Symbol ID 1 (`"01"`, 2 bits), R_I = 0 (`"0"`) -> draws at x=4..7, y=0..1
+		//     - Strip-ending IADS = OOB (Table B.8: `{0, 2, 0, 0, false, true}` prefix `"01"` = 2 bits)
 		// - End of height class DW = OOB (Table B.3: prefix "111110" = 6 bits)
 		// - Export flags (Table B.1): skip 2 imported ("00010", 5 bits), export 1 new ("00001", 5 bits) + pad `"0000"`
 		const auto sd_agg_bits = pack_bitstring(
 			std::string("10") + "1110101" + "00010" +
-			"0" + "100" + "000000000" + "000" + "001" + "010" +
+			"0" + "0" + "000000000" + "000" + "001" + "010" + "01" +
 			"111110" + "00010" + "00001" + "0000");
 		std::vector<uint8_t> sd_agg_payload;
 		append_u16_be(sd_agg_payload, 0x0013u); // SDHUFF = 1, SDREFAGG = 1, SDHUFFDH = 0 (B.4), SDHUFFDW = 1 (B.3)
@@ -1725,6 +1762,141 @@ TEST(PdfFilters, Jbig2Decode)
 		ASSERT_EQ(dec_agg->size(), 2u);
 		EXPECT_EQ((*dec_agg)[0], 0x55u);
 		EXPECT_EQ((*dec_agg)[1], 0xAAu);
+
+		// 5d. Arithmetic multi-symbol aggregation (`SDHUFF = 0`, `SDREFAGG = 1`, `REFAGGNINST = 2`, ITU-T T.88 Table 17):
+		// Verify that `REFCORNER = TOPLEFT` (`stript = 0` draws at `y = 0`) and strip-ending `IADS` OOB is consumed before `IADW = OOB` and `IAEX`.
+		{
+			TestMqEncoder arith_agg_enc;
+			std::array<TestMqContext, 512> iadh{};
+			std::array<TestMqContext, 512> iadw{};
+			std::array<TestMqContext, 512> iaex{};
+			std::array<TestMqContext, 512> iaai{};
+			std::array<TestMqContext, 512> iadt{};
+			std::array<TestMqContext, 512> iafs{};
+			std::array<TestMqContext, 512> iads{};
+			std::array<TestMqContext, 512> iari{};
+			std::vector<TestMqContext> iaid(4u); // sym_code_len = 2 for 2 imported + 1 new = 3 total symbols
+
+			arith_agg_enc.encode_arith_int(iadh, 2); // DH = +2 -> hc_height = 2
+			arith_agg_enc.encode_arith_int(iadw, 8); // DW = +8 -> sym_w = 8
+			arith_agg_enc.encode_arith_int(iaai, 2); // REFAGGNINST = 2
+			arith_agg_enc.encode_arith_int(iadt, 0); // initial stript = 0
+			arith_agg_enc.encode_arith_int(iadt, 0); // strip dt = 0 -> stript = 0 (TOPLEFT)
+			arith_agg_enc.encode_arith_int(iafs, 0); // dfs = 0 -> firsts = 0, curs = 0
+			arith_agg_enc.encode_iaid(iaid, 2u, 0u); // Instance 0: Symbol 0 (4x2)
+			arith_agg_enc.encode_arith_int(iari, 0); // R_I = 0
+			arith_agg_enc.encode_arith_int(iads, 1); // IDS = 1 -> curs = 3 + 1 = 4
+			arith_agg_enc.encode_iaid(iaid, 2u, 1u); // Instance 1: Symbol 1 (4x2)
+			arith_agg_enc.encode_arith_int(iari, 0); // R_I = 0
+			arith_agg_enc.encode_arith_int(iads, 0, /*is_oob=*/true); // Strip-ending IADS OOB
+			arith_agg_enc.encode_arith_int(iadw, 0, /*is_oob=*/true); // End of height class IADW OOB
+			arith_agg_enc.encode_arith_int(iaex, 2); // skip 2 imported
+			arith_agg_enc.encode_arith_int(iaex, 1); // export 1 new
+			const auto arith_agg_bytes = arith_agg_enc.finish();
+
+			std::vector<uint8_t> sd_arith_agg_payload;
+			append_u16_be(sd_arith_agg_payload, 0x1802u); // SDHUFF = 0, SDREFAGG = 1, SDTEMPLATE = 2 (bits 10..11), SDRTEMPLATE = 1 (bit 12 -> 0 SDRAT bytes)
+			sd_arith_agg_payload.push_back(2u);
+			sd_arith_agg_payload.push_back(static_cast<uint8_t>(-1));
+			append_u32_be(sd_arith_agg_payload, 1u); // SDNUMEXSYMS = 1
+			append_u32_be(sd_arith_agg_payload, 1u); // SDNUMNEWSYMS = 1
+			sd_arith_agg_payload.insert(sd_arith_agg_payload.end(), arith_agg_bytes.begin(), arith_agg_bytes.end());
+
+			std::vector<uint8_t> arith_agg_stream;
+			append_jbig2_segment(arith_agg_stream, 0u, 48u, {}, 1u, make_jbig2_page_info_payload(8u, 2u, 0u));
+			append_jbig2_segment(arith_agg_stream, 1u, 53u, {}, 1u, ct_payload);
+			append_jbig2_segment(arith_agg_stream, 2u, 0u, ref_ct, 1u, sd_huff_payload);
+			append_jbig2_segment(arith_agg_stream, 3u, 0u, ref_sd, 1u, sd_arith_agg_payload);
+			append_jbig2_segment(arith_agg_stream, 4u, 6u, ref_sd3, 1u, tr1_payload);
+			append_jbig2_segment(arith_agg_stream, 5u, 49u, {}, 1u, {});
+
+			auto dec_arith_agg = decode_jbig2(arith_agg_stream);
+			RECTO_ASSERT_OK(dec_arith_agg);
+			ASSERT_EQ(dec_arith_agg->size(), 2u);
+			EXPECT_EQ((*dec_arith_agg)[0], 0x55u);
+			EXPECT_EQ((*dec_arith_agg)[1], 0xAAu);
+		}
+
+		// 5e. Huffman Text Region refinement (`SBHUFF = 1`, `SBREFINE = 1`, ITU-T T.88 §7.4.3.2) preserving `huff_gr_cx` across refined instances
+		// + signed integer overflow regression check in JBIG2 refinement (`rdw = INT32_MAX` rejected cleanly with DamagedFormat):
+		{
+			// Build a Huffman Text Region with 2 refined instances of Symbol 0 (4x2) at x=0 and x=4:
+			// Each instance has:
+			// - R_I = 1 ("1")
+			// - rdw = 0, rdh = 0, rdx = 0, rdy = 0 (Table B.14: {0, 1, 0} -> "0" each = "0000")
+			// - rsize = 2 (Table B.1: "00010", 5 bits) + byte alignment + 2 bytes {0xFF, 0xFF} (16 bits of 1s)
+			// Because `huff_gr_cx` is shared across both refined instances in the segment, the 2nd instance starts with the evolved
+			// MqContext states from the 1st instance, so its 4-bit row output (low nibble of byte) differs from the 1st instance's (high nibble)!
+			const auto tr_huff_ref_bits = pack_bitstring(
+				runcode_hdr +
+				"0" + "0" + "101100000" + // dt_init=1, dt=1 -> stript=0, dfs=0 -> firsts=0
+				"0" + "1" + "0000" + "00010" + "00000" + // sym 0 ("0"), R_I=1 ("1"), rdw/rdh/rdx/rdy=0 ("0000"), rsize=2 ("00010") + 5 pad bits to byte-align (22 bits -> 24 bits)
+				"1111111111111111" +                     // 2-byte refinement stream {0xFF, 0xFF}
+				"0110" + "0" + "1" + "0000" + "00010" +  // IDS=1 (Table B.9: "0110"), sym 0 ("0"), R_I=1 ("1"), rdw/rdh/rdx/rdy=0 ("0000"), rsize=2 ("00010") -> 15 bits + 1 pad bit -> 16 bits
+				"0" +
+				"1111111111111111");                     // 2-byte refinement stream {0xFF, 0xFF}
+			std::vector<uint8_t> tr_huff_ref_payload;
+			append_u32_be(tr_huff_ref_payload, 8u);
+			append_u32_be(tr_huff_ref_payload, 2u);
+			append_u32_be(tr_huff_ref_payload, 0u);
+			append_u32_be(tr_huff_ref_payload, 0u);
+			tr_huff_ref_payload.push_back(0u);
+			append_u16_be(tr_huff_ref_payload, 0x8013u); // SBHUFF = 1, SBREFINE = 1, REFCORNER = 1 (TOPLEFT), SBRTEMPLATE = 1 (0 AT bytes)
+			append_u16_be(tr_huff_ref_payload, 0x0015u); // FS=B.7 (1), DS=B.9 (1), DT=B.12 (1), RDW/RDH/RDX/RDY=B.14 (0), RSIZE=B.1 (0)
+			append_u32_be(tr_huff_ref_payload, 2u); // SBNUMINSTANCES = 2
+			tr_huff_ref_payload.insert(tr_huff_ref_payload.end(), tr_huff_ref_bits.begin(), tr_huff_ref_bits.end());
+
+			std::vector<uint8_t> huff_ref_stream;
+			append_jbig2_segment(huff_ref_stream, 0u, 48u, {}, 1u, make_jbig2_page_info_payload(8u, 2u, 0u));
+			append_jbig2_segment(huff_ref_stream, 1u, 53u, {}, 1u, ct_payload);
+			append_jbig2_segment(huff_ref_stream, 2u, 0u, ref_ct, 1u, sd_huff_payload);
+			append_jbig2_segment(huff_ref_stream, 3u, 6u, ref_sd, 1u, tr_huff_ref_payload);
+			append_jbig2_segment(huff_ref_stream, 4u, 49u, {}, 1u, {});
+
+			auto dec_huff_ref = decode_jbig2(huff_ref_stream);
+			RECTO_ASSERT_OK(dec_huff_ref);
+			ASSERT_EQ(dec_huff_ref->size(), 2u);
+			// Verify the 2nd instance (low nibble) evolved differently from the 1st instance (high nibble) due to shared huff_gr_cx!
+			EXPECT_NE(((*dec_huff_ref)[0] >> 4u) & 0x0Fu, (*dec_huff_ref)[0] & 0x0Fu);
+
+			TestMqEncoder ovf_enc;
+			std::array<TestMqContext, 512> iadt{};
+			std::array<TestMqContext, 512> iafs{};
+			std::array<TestMqContext, 512> iari{};
+			std::array<TestMqContext, 512> iardw{};
+			std::array<TestMqContext, 512> iardh{};
+			std::array<TestMqContext, 512> iardx{};
+			std::array<TestMqContext, 512> iardy{};
+			std::vector<TestMqContext> iaid(2u);
+
+			ovf_enc.encode_arith_int(iadt, 0);
+			ovf_enc.encode_arith_int(iadt, 0);
+			ovf_enc.encode_arith_int(iafs, 0);
+			ovf_enc.encode_iaid(iaid, 1u, 0u);
+			ovf_enc.encode_arith_int(iari, 1); // R_I = 1
+			ovf_enc.encode_arith_int(iardw, std::numeric_limits<int32_t>::max()); // rdw = INT32_MAX
+			ovf_enc.encode_arith_int(iardh, 0);
+			ovf_enc.encode_arith_int(iardx, 0);
+			ovf_enc.encode_arith_int(iardy, 0);
+			const auto ovf_bytes = ovf_enc.finish();
+
+			std::vector<uint8_t> tr_ovf_payload;
+			append_u32_be(tr_ovf_payload, 8u);
+			append_u32_be(tr_ovf_payload, 2u);
+			append_u32_be(tr_ovf_payload, 0u);
+			append_u32_be(tr_ovf_payload, 0u);
+			tr_ovf_payload.push_back(0u);
+			append_u16_be(tr_ovf_payload, 0x8012u); // SBHUFF = 0, SBREFINE = 1 (bit 1), REFCORNER = 1, SBRTEMPLATE = 1 (bit 15)
+			append_u32_be(tr_ovf_payload, 1u);
+			tr_ovf_payload.insert(tr_ovf_payload.end(), ovf_bytes.begin(), ovf_bytes.end());
+
+			std::vector<uint8_t> ovf_stream;
+			append_jbig2_segment(ovf_stream, 0u, 48u, {}, 1u, make_jbig2_page_info_payload(8u, 2u, 0u));
+			append_jbig2_segment(ovf_stream, 1u, 53u, {}, 1u, ct_payload);
+			append_jbig2_segment(ovf_stream, 2u, 0u, ref_ct, 1u, sd_huff_payload);
+			append_jbig2_segment(ovf_stream, 3u, 6u, ref_sd, 1u, tr_ovf_payload);
+			RECTO_EXPECT_ERR(decode_jbig2(ovf_stream), ErrorCode::DamagedFormat);
+		}
 	}
 }
 
@@ -2759,6 +2931,27 @@ TEST(PdfFilters, DctRgbAndCmyk)
 				ErrorCode::DecompressionLimitExceeded);
 			RECTO_EXPECT_ERR(
 				decode_jpx_image(jp2_2x2, nullptr, 64u),
+				ErrorCode::DecompressionLimitExceeded);
+
+			// 1x1 image with 4096 tiles (XOsiz = 4095, Xsiz = 4096, XTsiz = 1) under max_decoded_bytes = 2048:
+			// Must be rejected with DecompressionLimitExceeded before allocating tile_part_spans(4096).
+			std::vector<uint8_t> j2k_4096_tiles = {0xFFu, 0x4Fu, 0xFFu, 0x51u};
+			append_u16_be(j2k_4096_tiles, 41u);
+			append_u16_be(j2k_4096_tiles, 0u);
+			append_u32_be(j2k_4096_tiles, 4096u); // Xsiz = 4096
+			append_u32_be(j2k_4096_tiles, 1u);    // Ysiz = 1
+			append_u32_be(j2k_4096_tiles, 4095u); // XOsiz = 4095 -> 1x1 image
+			append_u32_be(j2k_4096_tiles, 0u);    // YOsiz = 0
+			append_u32_be(j2k_4096_tiles, 1u);    // XTsiz = 1 -> 4096 tiles
+			append_u32_be(j2k_4096_tiles, 1u);    // YTsiz = 1
+			append_u32_be(j2k_4096_tiles, 0u);
+			append_u32_be(j2k_4096_tiles, 0u);
+			append_u16_be(j2k_4096_tiles, 1u);    // Csiz = 1
+			j2k_4096_tiles.push_back(7u);
+			j2k_4096_tiles.push_back(1u);
+			j2k_4096_tiles.push_back(1u);
+			RECTO_EXPECT_ERR(
+				decode_jpx_image(j2k_4096_tiles, nullptr, 2048u),
 				ErrorCode::DecompressionLimitExceeded);
 		}
 
