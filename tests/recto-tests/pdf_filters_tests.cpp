@@ -2698,6 +2698,65 @@ TEST(PdfFilters, DctRgbAndCmyk)
 				RECTO_EXPECT_ERR(decode_jpx_image(bad_nsop), ErrorCode::DamagedFormat);
 				RECTO_EXPECT_ERR(decode_jpx_image(bad_lsop), ErrorCode::DamagedFormat);
 			}
+			// (6) Tile-part header COD override (ITU-T T.800 §A.6.1) and missing packet / missing tile checks:
+			{
+				auto build_tile_cod_1x1 = [](int tile_scod, bool emit_eph, bool empty_payload) -> std::vector<uint8_t> {
+					std::vector<uint8_t> b = {0xFFu, 0x4Fu, 0xFFu, 0x51u};
+					append_u16_be(b, 41u);
+					append_u16_be(b, 0u);
+					for (uint32_t v : {1u, 1u, 0u, 0u, 1u, 1u, 0u, 0u}) {
+						append_u32_be(b, v);
+					}
+					append_u16_be(b, 1u);
+					b.insert(b.end(), {7u, 1u, 1u});
+					// Main header COD with Scod = 0
+					b.insert(b.end(), {0xFFu, 0x52u, 0x00u, 12u, 0u, 0u, 0u, 1u, 0u, 0u, 4u, 4u, 0u, 1u});
+					// Main header QCD
+					b.insert(b.end(), {0xFFu, 0x5Cu, 0x00u, 4u, 0x40u, 0x40u});
+					// SOT
+					b.insert(b.end(), {0xFFu, 0x90u, 0x00u, 10u, 0x00u, 0x00u});
+					const uint32_t psot =
+						14u + (tile_scod >= 0 ? 14u : 0u) + (empty_payload ? 0u : 1u) + (emit_eph ? 2u : 0u);
+					append_u32_be(b, psot);
+					b.insert(b.end(), {0u, 1u});
+					if (tile_scod >= 0) {
+						b.insert(b.end(), {
+							0xFFu, 0x52u, 0x00u, 12u,
+							static_cast<uint8_t>(tile_scod), 0u, 0u, 1u, 0u, 0u, 4u, 4u, 0u, 1u,
+						});
+					}
+					b.insert(b.end(), {0xFFu, 0x93u}); // SOD
+					if (!empty_payload) {
+						b.push_back(0x00u); // Valid empty packet header (zero-length bit = 0)
+					}
+					if (emit_eph) {
+						b.insert(b.end(), {0xFFu, 0x92u}); // EPH
+					}
+					b.insert(b.end(), {0xFFu, 0xD9u}); // EOC
+					return b;
+				};
+
+				// Baseline valid empty packet header (0x00) -> 1x1 sample 128
+				auto dec_base = decode_jpx_image(build_tile_cod_1x1(-1, false, false));
+				RECTO_ASSERT_OK(dec_base);
+				ASSERT_EQ(dec_base->pixels.size(), 1u);
+				EXPECT_EQ(dec_base->pixels[0], 128u);
+
+				// Tile-header COD enabling EPH (Scod = 0x04) with EPH present succeeds
+				auto dec_tile_eph = decode_jpx_image(build_tile_cod_1x1(0x04, true, false));
+				RECTO_ASSERT_OK(dec_tile_eph);
+				ASSERT_EQ(dec_tile_eph->pixels.size(), 1u);
+				EXPECT_EQ(dec_tile_eph->pixels[0], 128u);
+
+				// Tile-header COD enabling EPH (Scod = 0x04) with EPH missing fails with DamagedFormat
+				RECTO_EXPECT_ERR(decode_jpx_image(build_tile_cod_1x1(0x04, false, false)), ErrorCode::DamagedFormat);
+
+				// Tile-header COD with reserved Scod bit (Scod = 0x08) fails with DamagedFormat
+				RECTO_EXPECT_ERR(decode_jpx_image(build_tile_cod_1x1(0x08, false, false)), ErrorCode::DamagedFormat);
+
+				// Missing required packet header (empty tile payload between SOD and EOC) fails with DamagedFormat
+				RECTO_EXPECT_ERR(decode_jpx_image(build_tile_cod_1x1(-1, false, true)), ErrorCode::DamagedFormat);
+			}
 		}
 
 		// 3b. Decode synthetic JP2 streams covering:

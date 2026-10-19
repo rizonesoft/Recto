@@ -7425,23 +7425,180 @@ void idwt_97_2d_float(
 	bool saw_cod = false;
 	bool saw_qcd = false;
 
-	uint8_t prog_order = 0u;
-	uint16_t num_layers = 1u;
-	bool mct_enabled = false;
-	bool sop_enabled = false;
-	bool eph_enabled = false;
-	uint8_t num_decomp_levels = 0u;
-	uint32_t cb_exp_w = 6u;
-	uint32_t cb_exp_h = 6u;
-	uint8_t cb_style = 0u;
-	uint8_t wavelet_type = 1u; // 1 = 5-3 reversible, 0 = 9-7 irreversible
-	uint8_t guard_bits = 2u;
-	std::array<uint8_t, 11> ppx_exp{};
-	std::array<uint8_t, 11> ppy_exp{};
-	ppx_exp.fill(15u);
-	ppy_exp.fill(15u);
-	std::vector<uint8_t> subband_exponents;
-	std::vector<uint16_t> subband_mantissas;
+	struct J2kCodParams {
+		uint8_t prog_order = 0u;
+		uint16_t num_layers = 1u;
+		bool mct_enabled = false;
+		bool sop_enabled = false;
+		bool eph_enabled = false;
+		uint8_t num_decomp_levels = 0u;
+		uint32_t cb_exp_w = 6u;
+		uint32_t cb_exp_h = 6u;
+		uint8_t cb_style = 0u;
+		uint8_t wavelet_type = 1u; // 1 = 5-3 reversible, 0 = 9-7 irreversible
+		std::array<uint8_t, 11> ppx_exp{};
+		std::array<uint8_t, 11> ppy_exp{};
+		J2kCodParams() noexcept
+		{
+			ppx_exp.fill(15u);
+			ppy_exp.fill(15u);
+		}
+	};
+
+	struct J2kQcdParams {
+		uint8_t guard_bits = 2u;
+		uint8_t qstyle = 0u;
+		size_t raw_pos = 0u;
+		uint16_t raw_len = 0u;
+		std::vector<uint8_t> subband_exponents;
+		std::vector<uint16_t> subband_mantissas;
+	};
+
+	auto parse_cod_segment = [&](size_t seg_pos, uint16_t seg_len, J2kCodParams& out_cod) -> PdfResult<void> {
+		if (seg_len < 12u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid COD marker segment length in JPXDecode codestream",
+				seg_pos);
+		}
+		const uint8_t scod = cs[seg_pos + 2u];
+		if ((scod & 0xF8u) != 0u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid reserved bits in JPXDecode COD Scod parameter",
+				seg_pos);
+		}
+		out_cod.sop_enabled = (scod & 0x02u) != 0u;
+		out_cod.eph_enabled = (scod & 0x04u) != 0u;
+		out_cod.prog_order = cs[seg_pos + 3u];
+		if (out_cod.prog_order > 4u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid progression order in JPXDecode COD marker",
+				seg_pos);
+		}
+		const uint16_t raw_layers = read_u16_be(cs.data() + seg_pos + 4u);
+		if (raw_layers == 0u || raw_layers > 256u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid or excessive quality layer count in JPXDecode COD marker",
+				seg_pos);
+		}
+		out_cod.num_layers = raw_layers;
+		out_cod.mct_enabled = (cs[seg_pos + 6u] != 0u);
+		out_cod.num_decomp_levels = cs[seg_pos + 7u];
+		if (out_cod.num_decomp_levels > 10u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Excessive DWT decomposition levels in JPXDecode COD marker",
+				seg_pos);
+		}
+		out_cod.cb_exp_w = std::clamp<uint32_t>(static_cast<uint32_t>(cs[seg_pos + 8u] & 0x0Fu) + 2u, 2u, 10u);
+		out_cod.cb_exp_h = std::clamp<uint32_t>(static_cast<uint32_t>(cs[seg_pos + 9u] & 0x0Fu) + 2u, 2u, 10u);
+		out_cod.cb_style = cs[seg_pos + 10u];
+		out_cod.wavelet_type = cs[seg_pos + 11u];
+		out_cod.ppx_exp.fill(15u);
+		out_cod.ppy_exp.fill(15u);
+		if ((scod & 0x01u) != 0u) {
+			if (seg_len < 12u + static_cast<uint16_t>(out_cod.num_decomp_levels) + 1u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Truncated explicit precinct sizes in JPXDecode COD marker",
+					seg_pos);
+			}
+			for (uint8_t r = 0u; r <= out_cod.num_decomp_levels; ++r) {
+				const uint8_t pp = cs[seg_pos + 12u + r];
+				out_cod.ppx_exp[r] = static_cast<uint8_t>(pp & 0x0Fu);
+				out_cod.ppy_exp[r] = static_cast<uint8_t>((pp >> 4u) & 0x0Fu);
+				if (r > 0u && (out_cod.ppx_exp[r] == 0u || out_cod.ppy_exp[r] == 0u)) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Invalid zero precinct exponent at resolution r > 0 in JPXDecode COD marker",
+						seg_pos);
+				}
+			}
+		}
+		return {};
+	};
+
+	auto parse_qcd_segment = [&](size_t seg_pos, uint16_t seg_len, uint8_t decomp_levels, J2kQcdParams& out_qcd) -> PdfResult<void> {
+		if (seg_len < 4u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid QCD marker segment length in JPXDecode codestream",
+				seg_pos);
+		}
+		const uint8_t sqcd = cs[seg_pos + 2u];
+		out_qcd.guard_bits = static_cast<uint8_t>((sqcd >> 5u) & 0x07u);
+		out_qcd.qstyle = static_cast<uint8_t>(sqcd & 0x1Fu);
+		out_qcd.raw_pos = seg_pos;
+		out_qcd.raw_len = seg_len;
+		out_qcd.subband_exponents.clear();
+		out_qcd.subband_mantissas.clear();
+		if (out_qcd.qstyle == 0u) { // Reversible no quantization (1 byte per subband)
+			for (size_t i = 3u; i < seg_len; ++i) {
+				out_qcd.subband_exponents.push_back(static_cast<uint8_t>((cs[seg_pos + i] >> 3u) & 0x1Fu));
+				out_qcd.subband_mantissas.push_back(0u);
+			}
+		} else if (out_qcd.qstyle == 1u && seg_len >= 5u) { // Scalar derived
+			const uint16_t sp = read_u16_be(cs.data() + seg_pos + 3u);
+			const uint8_t eps0 = static_cast<uint8_t>((sp >> 11u) & 0x1Fu);
+			const uint16_t mu0 = static_cast<uint16_t>(sp & 0x7FFu);
+			out_qcd.subband_exponents.push_back(eps0);
+			out_qcd.subband_mantissas.push_back(mu0);
+			for (uint8_t r = 1u; r <= 10u; ++r) {
+				const uint8_t er = (eps0 + r > decomp_levels)
+					? static_cast<uint8_t>(eps0 + r - 1u)
+					: eps0;
+				for (int b = 0; b < 3; ++b) {
+					out_qcd.subband_exponents.push_back(er);
+					out_qcd.subband_mantissas.push_back(mu0);
+				}
+			}
+		} else if (out_qcd.qstyle == 2u && seg_len >= 5u) { // Scalar expounded (2 bytes per subband)
+			for (size_t i = 3u; i + 1u < seg_len; i += 2u) {
+				const uint16_t sp = read_u16_be(cs.data() + seg_pos + i);
+				out_qcd.subband_exponents.push_back(static_cast<uint8_t>((sp >> 11u) & 0x1Fu));
+				out_qcd.subband_mantissas.push_back(static_cast<uint16_t>(sp & 0x7FFu));
+			}
+		} else {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid quantization style in JPXDecode QCD marker",
+				seg_pos);
+		}
+		return {};
+	};
+
+	J2kCodParams main_cod{};
+	J2kQcdParams main_qcd{};
+	struct TileCodingOverride {
+		uint16_t isot = 0u;
+		bool has_cod = false;
+		bool has_qcd = false;
+		J2kCodParams cod{};
+		J2kQcdParams qcd{};
+	};
+	std::vector<TileCodingOverride> tile_overrides;
+	auto get_or_create_tile_override = [&](uint16_t isot) -> TileCodingOverride& {
+		for (auto& ov : tile_overrides) {
+			if (ov.isot == isot) {
+				return ov;
+			}
+		}
+		tile_overrides.push_back(TileCodingOverride{isot, false, false, main_cod, main_qcd});
+		return tile_overrides.back();
+	};
+
 	std::vector<std::vector<std::span<const uint8_t>>> tile_part_spans(total_tiles);
 	uint64_t total_tile_stream_bytes = 0u;
 
@@ -7475,117 +7632,13 @@ void idwt_97_2d_float(
 				pos);
 		}
 		if (marker == 0x52u) { // COD (ITU-T T.800 §A.6.1)
-			if (mlen < 12u) {
-				return make_filter_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedStream,
-					"Invalid COD marker segment length in JPXDecode codestream",
-					pos);
-			}
-			const uint8_t scod = cs[pos + 2u];
-			if ((scod & 0xF8u) != 0u) {
-				return make_filter_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedStream,
-					"Invalid reserved bits in JPXDecode COD Scod parameter",
-					pos);
-			}
-			sop_enabled = (scod & 0x02u) != 0u;
-			eph_enabled = (scod & 0x04u) != 0u;
-			prog_order = cs[pos + 3u];
-			if (prog_order > 4u) {
-				return make_filter_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedStream,
-					"Invalid progression order in JPXDecode COD marker",
-					pos);
-			}
-			const uint16_t raw_layers = read_u16_be(cs.data() + pos + 4u);
-			if (raw_layers == 0u || raw_layers > 256u) {
-				return make_filter_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedStream,
-					"Invalid or excessive quality layer count in JPXDecode COD marker",
-					pos);
-			}
-			num_layers = raw_layers;
-			mct_enabled = (cs[pos + 6u] != 0u);
-			num_decomp_levels = cs[pos + 7u];
-			if (num_decomp_levels > 10u) {
-				return make_filter_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedStream,
-					"Excessive DWT decomposition levels in JPXDecode COD marker",
-					pos);
-			}
-			cb_exp_w = std::clamp<uint32_t>(static_cast<uint32_t>(cs[pos + 8u] & 0x0Fu) + 2u, 2u, 10u);
-			cb_exp_h = std::clamp<uint32_t>(static_cast<uint32_t>(cs[pos + 9u] & 0x0Fu) + 2u, 2u, 10u);
-			cb_style = cs[pos + 10u];
-			wavelet_type = cs[pos + 11u];
-			ppx_exp.fill(15u);
-			ppy_exp.fill(15u);
-			if ((scod & 0x01u) != 0u) {
-				if (mlen < 12u + static_cast<uint16_t>(num_decomp_levels) + 1u) {
-					return make_filter_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedStream,
-						"Truncated explicit precinct sizes in JPXDecode COD marker",
-						pos);
-				}
-				for (uint8_t r = 0u; r <= num_decomp_levels; ++r) {
-					const uint8_t pp = cs[pos + 12u + r];
-					ppx_exp[r] = static_cast<uint8_t>(pp & 0x0Fu);
-					ppy_exp[r] = static_cast<uint8_t>((pp >> 4u) & 0x0Fu);
-					if (r > 0u && (ppx_exp[r] == 0u || ppy_exp[r] == 0u)) {
-						return make_filter_error(
-							ErrorCode::DamagedFormat,
-							DiagnosticId::DamagedStream,
-							"Invalid zero precinct exponent at resolution r > 0 in JPXDecode COD marker",
-							pos);
-					}
-				}
+			RECTO_PDF_RETURN_IF_ERROR(parse_cod_segment(pos, mlen, main_cod));
+			if (saw_qcd && main_qcd.qstyle == 1u) {
+				RECTO_PDF_RETURN_IF_ERROR(parse_qcd_segment(main_qcd.raw_pos, main_qcd.raw_len, main_cod.num_decomp_levels, main_qcd));
 			}
 			saw_cod = true;
 		} else if (marker == 0x5Cu) { // QCD (ITU-T T.800 §A.6.4)
-			if (mlen < 4u) {
-				return make_filter_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedStream,
-					"Invalid QCD marker segment length in JPXDecode codestream",
-					pos);
-			}
-			const uint8_t sqcd = cs[pos + 2u];
-			guard_bits = static_cast<uint8_t>((sqcd >> 5u) & 0x07u);
-			const uint8_t qstyle = sqcd & 0x1Fu;
-			subband_exponents.clear();
-			subband_mantissas.clear();
-			if (qstyle == 0u) { // Reversible no quantization (1 byte per subband)
-				for (size_t i = 3u; i < mlen; ++i) {
-					subband_exponents.push_back(static_cast<uint8_t>((cs[pos + i] >> 3u) & 0x1Fu));
-					subband_mantissas.push_back(0u);
-				}
-			} else if (qstyle == 1u && mlen >= 5u) { // Scalar derived
-				const uint16_t sp = read_u16_be(cs.data() + pos + 3u);
-				const uint8_t eps0 = static_cast<uint8_t>((sp >> 11u) & 0x1Fu);
-				const uint16_t mu0 = static_cast<uint16_t>(sp & 0x7FFu);
-				subband_exponents.push_back(eps0);
-				subband_mantissas.push_back(mu0);
-				for (uint8_t r = 1u; r <= 10u; ++r) {
-					const uint8_t er = (eps0 + r > num_decomp_levels)
-						? static_cast<uint8_t>(eps0 + r - 1u)
-						: eps0;
-					for (int b = 0; b < 3; ++b) {
-						subband_exponents.push_back(er);
-						subband_mantissas.push_back(mu0);
-					}
-				}
-			} else { // Scalar expounded (2 bytes per subband)
-				for (size_t i = 3u; i + 1u < mlen; i += 2u) {
-					const uint16_t sp = read_u16_be(cs.data() + pos + i);
-					subband_exponents.push_back(static_cast<uint8_t>((sp >> 11u) & 0x1Fu));
-					subband_mantissas.push_back(static_cast<uint16_t>(sp & 0x7FFu));
-				}
-			}
+			RECTO_PDF_RETURN_IF_ERROR(parse_qcd_segment(pos, mlen, main_cod.num_decomp_levels, main_qcd));
 			saw_qcd = true;
 		} else if (marker == 0x90u) { // SOT
 			if (mlen < 10u) {
@@ -7638,6 +7691,19 @@ void idwt_97_2d_float(
 						DiagnosticId::DamagedStream,
 						"Tile-part header marker exceeds codestream bounds",
 						pos);
+				}
+				if (tp_marker == 0x52u) { // Tile-part header COD override (ITU-T T.800 §A.6.1)
+					auto& ov = get_or_create_tile_override(isot);
+					RECTO_PDF_RETURN_IF_ERROR(parse_cod_segment(pos, tp_len, ov.cod));
+					ov.has_cod = true;
+					if (ov.has_qcd && ov.qcd.qstyle == 1u) {
+						RECTO_PDF_RETURN_IF_ERROR(parse_qcd_segment(ov.qcd.raw_pos, ov.qcd.raw_len, ov.cod.num_decomp_levels, ov.qcd));
+					}
+				} else if (tp_marker == 0x5Cu) { // Tile-part header QCD override (ITU-T T.800 §A.6.4)
+					auto& ov = get_or_create_tile_override(isot);
+					const uint8_t eff_levels = ov.has_cod ? ov.cod.num_decomp_levels : main_cod.num_decomp_levels;
+					RECTO_PDF_RETURN_IF_ERROR(parse_qcd_segment(pos, tp_len, eff_levels, ov.qcd));
+					ov.has_qcd = true;
 				}
 				pos += tp_len;
 			}
@@ -7699,8 +7765,6 @@ void idwt_97_2d_float(
 			"Incomplete J2K codestream (missing COD, QCD, SOT, SOD, or EOC marker) in JPXDecode");
 	}
 
-	const uint32_t nom_cb_w = 1u << cb_exp_w;
-	const uint32_t nom_cb_h = 1u << cb_exp_h;
 	const int32_t dc_shift = is_signed ? 0 : (1 << (bit_depth - 1u));
 	const int32_t max_sample = (1 << bit_depth) - 1;
 
@@ -7767,11 +7831,56 @@ void idwt_97_2d_float(
 			const uint32_t ty0 = std::max(ytosiz + ty * ytsiz, yosiz);
 			const uint32_t tx1 = std::min(xtosiz + (tx + 1u) * xtsiz, xsiz);
 			const uint32_t ty1 = std::min(ytosiz + (ty + 1u) * ytsiz, ysiz);
-			if (tx1 <= tx0 || ty1 <= ty0 || parts.empty()) {
+			if (tx1 <= tx0 || ty1 <= ty0) {
 				continue;
+			}
+			if (parts.empty()) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Missing tile-part data for non-empty tile in JPXDecode codestream");
 			}
 			const uint32_t tile_w = tx1 - tx0;
 			const uint32_t tile_h = ty1 - ty0;
+
+			const J2kCodParams* active_cod = &main_cod;
+			const J2kQcdParams* active_qcd = &main_qcd;
+			J2kQcdParams derived_qcd{};
+			for (const auto& ov : tile_overrides) {
+				if (ov.isot == tile_idx) {
+					if (ov.has_cod) {
+						active_cod = &ov.cod;
+					}
+					if (ov.has_qcd) {
+						active_qcd = &ov.qcd;
+					} else if (ov.has_cod && main_qcd.qstyle == 1u) {
+						RECTO_PDF_RETURN_IF_ERROR(parse_qcd_segment(
+							main_qcd.raw_pos,
+							main_qcd.raw_len,
+							active_cod->num_decomp_levels,
+							derived_qcd));
+						active_qcd = &derived_qcd;
+					}
+					break;
+				}
+			}
+			const uint8_t prog_order = active_cod->prog_order;
+			const uint16_t num_layers = active_cod->num_layers;
+			const bool mct_enabled = active_cod->mct_enabled;
+			const bool sop_enabled = active_cod->sop_enabled;
+			const bool eph_enabled = active_cod->eph_enabled;
+			const uint8_t num_decomp_levels = active_cod->num_decomp_levels;
+			const uint32_t cb_exp_w = active_cod->cb_exp_w;
+			const uint32_t cb_exp_h = active_cod->cb_exp_h;
+			const uint8_t cb_style = active_cod->cb_style;
+			const uint8_t wavelet_type = active_cod->wavelet_type;
+			const auto& ppx_exp = active_cod->ppx_exp;
+			const auto& ppy_exp = active_cod->ppy_exp;
+			const uint8_t guard_bits = active_qcd->guard_bits;
+			const auto& subband_exponents = active_qcd->subband_exponents;
+			const auto& subband_mantissas = active_qcd->subband_mantissas;
+			const uint32_t nom_cb_w = 1u << cb_exp_w;
+			const uint32_t nom_cb_h = 1u << cb_exp_h;
 
 			std::vector<uint8_t> concat_tile_stream;
 			std::span<const uint8_t> tile_bitstream{};
@@ -7793,9 +7902,6 @@ void idwt_97_2d_float(
 					concat_tile_stream.insert(concat_tile_stream.end(), sp.begin(), sp.end());
 				}
 				tile_bitstream = concat_tile_stream;
-			}
-			if (tile_bitstream.empty()) {
-				continue;
 			}
 
 			// Compute resolution bounds (trx0, try0, trx1, try1) and precinct grids using ITU-T T.800 Annex B ceil_div.
