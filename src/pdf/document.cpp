@@ -1779,6 +1779,8 @@ PdfResult<void> Document::load_document_structure()
 	description_.page_count = static_cast<uint32_t>(page_records_.size());
 
 	// 3. Extract `/Info` metadata and `/Catalog /Metadata` XMP stream fallback:
+	constexpr size_t kMaxMetadataFieldBytes = 64u * 1024u;
+	constexpr size_t kMaxMetadataStreamBytes = 4u * 1024u * 1024u;
 	auto extract_info_string = [this](
 								   const PdfDict& info_dict,
 								   std::string_view key,
@@ -1789,9 +1791,27 @@ PdfResult<void> Document::load_document_structure()
 		}
 		RECTO_PDF_TRY(PdfValue resolved, resolve_value(*v));
 		if (const PdfString* s = resolved.as_string()) {
+			if (s->span().size() > kMaxMetadataFieldBytes) {
+				return make_doc_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedDictionary,
+					"/Info metadata string exceeds maximum field length");
+			}
 			RECTO_PDF_TRY(std::string utf8, pdf_string_to_utf8(s->span()));
+			if (utf8.size() > kMaxMetadataFieldBytes) {
+				return make_doc_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedDictionary,
+					"/Info metadata UTF-8 string exceeds maximum field length");
+			}
 			out_utf8 = std::move(utf8);
 		} else if (const auto name_v = resolved.as_name()) {
+			if (name_v->size() > kMaxMetadataFieldBytes) {
+				return make_doc_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedDictionary,
+					"/Info metadata name exceeds maximum field length");
+			}
 			out_utf8 = std::string(*name_v);
 		}
 		return {};
@@ -1844,45 +1864,34 @@ PdfResult<void> Document::load_document_structure()
 		auto meta_obj_res = resolve_value(*meta_val);
 		if (meta_obj_res.has_value()) {
 			if (const PdfStream* meta_stm = meta_obj_res->as_stream()) {
-				auto meta_bytes_res = decode_stream(*meta_stm, 16ULL * 1024ULL * 1024ULL);
+				auto meta_bytes_res = decode_stream(*meta_stm, kMaxMetadataStreamBytes);
 				if (meta_bytes_res.has_value()) {
 					const std::string_view xmp_xml(
 						reinterpret_cast<const char*>(meta_bytes_res->data()),
 						meta_bytes_res->size());
-					if (description_.metadata.title.empty()) {
-						description_.metadata.title = extract_xmp_tag_value(xmp_xml, "dc:title");
-					}
-					if (description_.metadata.author.empty()) {
-						description_.metadata.author = extract_xmp_tag_value(xmp_xml, "dc:creator");
-					}
-					if (description_.metadata.subject.empty()) {
-						description_.metadata.subject =
-							extract_xmp_tag_value(xmp_xml, "dc:description");
-					}
-					if (description_.metadata.keywords.empty()) {
-						description_.metadata.keywords =
-							extract_xmp_tag_value(xmp_xml, "pdf:Keywords");
-						if (description_.metadata.keywords.empty()) {
-							description_.metadata.keywords =
-								extract_xmp_tag_value(xmp_xml, "dc:subject");
+					auto assign_xmp_fallback = [&](std::string& field, std::string_view tag) -> PdfResult<void> {
+						if (!field.empty()) {
+							return {};
 						}
-					}
-					if (description_.metadata.creator.empty()) {
-						description_.metadata.creator =
-							extract_xmp_tag_value(xmp_xml, "xmp:CreatorTool");
-					}
-					if (description_.metadata.producer.empty()) {
-						description_.metadata.producer =
-							extract_xmp_tag_value(xmp_xml, "pdf:Producer");
-					}
-					if (description_.metadata.creation_date.empty()) {
-						description_.metadata.creation_date =
-							extract_xmp_tag_value(xmp_xml, "xmp:CreateDate");
-					}
-					if (description_.metadata.mod_date.empty()) {
-						description_.metadata.mod_date =
-							extract_xmp_tag_value(xmp_xml, "xmp:ModifyDate");
-					}
+						std::string extracted = extract_xmp_tag_value(xmp_xml, tag);
+						if (extracted.size() > kMaxMetadataFieldBytes) {
+							return make_doc_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedDictionary,
+								"XMP metadata field exceeds maximum field length");
+						}
+						field = std::move(extracted);
+						return {};
+					};
+					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.title, "dc:title"));
+					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.author, "dc:creator"));
+					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.subject, "dc:description"));
+					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.keywords, "pdf:Keywords"));
+					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.keywords, "dc:subject"));
+					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.creator, "xmp:CreatorTool"));
+					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.producer, "pdf:Producer"));
+					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.creation_date, "xmp:CreateDate"));
+					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.mod_date, "xmp:ModifyDate"));
 				}
 			}
 		}
@@ -2248,22 +2257,35 @@ PdfResult<void> Document::load_document_structure()
 					visited_outline_objs.insert(root_out_ref->obj_num);
 				}
 				size_t total_outline_nodes = 0;
+				size_t total_outline_bytes = 0;
+				constexpr size_t kMaxOutlineStringBytes = 4096u;
+				constexpr size_t kMaxTotalOutlineBytes = 8u * 1024u * 1024u;
 
 				auto build_outline_siblings = [&](auto& self,
 												  const PdfValue* first_val,
 												  std::vector<OutlineNode>& out_siblings,
 												  size_t depth) -> PdfResult<void> {
-					if (first_val == nullptr || first_val->is_null() ||
-						depth > kMaxOutlineDepth ||
-						total_outline_nodes >= kMaxOutlineNodes) {
+					if (first_val == nullptr || first_val->is_null()) {
 						return {};
+					}
+					if (depth > kMaxOutlineDepth) {
+						return make_doc_error(
+							ErrorCode::RecursionLimitExceeded,
+							DiagnosticId::RecursionLimitExceeded,
+							"/Outlines tree exceeds maximum depth");
 					}
 
 					PdfValue current_ptr;
 					RECTO_PDF_TRY(PdfValue cloned_first, first_val->deep_clone());
 					current_ptr = std::move(cloned_first);
 
-					while (!current_ptr.is_null() && total_outline_nodes < kMaxOutlineNodes) {
+					while (!current_ptr.is_null()) {
+						if (total_outline_nodes >= kMaxOutlineNodes) {
+							return make_doc_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedDictionary,
+								"/Outlines tree exceeds maximum node budget");
+						}
 						PdfValue item_val;
 						if (const auto item_ref = current_ptr.as_ref()) {
 							if (!visited_outline_objs.insert(item_ref->obj_num).second) {
@@ -2316,8 +2338,20 @@ PdfResult<void> Document::load_document_structure()
 							auto title_res = resolve_value(*title_v);
 							if (title_res.has_value()) {
 								if (const PdfString* ts = title_res->as_string()) {
+									if (ts->span().size() > kMaxOutlineStringBytes) {
+										return make_doc_error(
+											ErrorCode::DamagedFormat,
+											DiagnosticId::DamagedDictionary,
+											"/Outlines item /Title exceeds maximum length");
+									}
 									auto utf8_res = pdf_string_to_utf8(ts->span());
 									if (utf8_res.has_value()) {
+										if (utf8_res->size() > kMaxOutlineStringBytes) {
+											return make_doc_error(
+												ErrorCode::DamagedFormat,
+												DiagnosticId::DamagedDictionary,
+												"/Outlines item UTF-8 /Title exceeds maximum length");
+										}
 										node.title = std::move(*utf8_res);
 									}
 								}
@@ -2365,6 +2399,12 @@ PdfResult<void> Document::load_document_structure()
 											auto uri_res = resolve_value(*uri_v);
 											if (uri_res.has_value()) {
 												if (const PdfString* us = uri_res->as_string()) {
+													if (us->span().size() > kMaxOutlineStringBytes) {
+														return make_doc_error(
+															ErrorCode::DamagedFormat,
+															DiagnosticId::DamagedDictionary,
+															"/Outlines item /URI exceeds maximum length");
+													}
 													auto u_utf8 = pdf_string_to_utf8(us->span());
 													if (u_utf8.has_value() &&
 														is_safe_external_uri(*u_utf8)) {
@@ -2377,6 +2417,16 @@ PdfResult<void> Document::load_document_structure()
 								}
 							}
 						}
+
+						const size_t node_bytes =
+							sizeof(OutlineNode) + node.title.size() + node.uri.size() + node.fit_mode.size();
+						if (total_outline_bytes + node_bytes > kMaxTotalOutlineBytes) {
+							return make_doc_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedDictionary,
+								"/Outlines tree exceeds aggregate memory budget");
+						}
+						total_outline_bytes += node_bytes;
 
 						if (const PdfValue* child_first = item_dict->get("First")) {
 							RECTO_PDF_RETURN_IF_ERROR(
@@ -2457,11 +2507,11 @@ PdfResult<void> Document::load_document_structure()
 					return true;
 				}
 				const PdfString* us = uri_res->as_string();
-				if (us == nullptr) {
+				if (us == nullptr || us->span().size() > 8192u) {
 					return true;
 				}
 				auto u_utf8 = pdf_string_to_utf8(us->span());
-				if (!u_utf8.has_value() || !is_safe_external_uri(*u_utf8)) {
+				if (!u_utf8.has_value() || u_utf8->size() > 8192u || !is_safe_external_uri(*u_utf8)) {
 					return true;
 				}
 				return false;
@@ -2619,6 +2669,176 @@ PdfResult<void> Document::load_document_structure()
 	};
 
 	constexpr size_t kMaxAnnotsPerPage = 65'536u;
+	constexpr size_t kMaxTotalDocumentLinks = 65'536u;
+	constexpr size_t kMaxLinkUriBytes = 8192u;
+	constexpr size_t kMaxLinkActionTypeBytes = 256u;
+	constexpr size_t kMaxTotalLinkBytes = 2u * 1024u * 1024u;
+	size_t total_document_links = 0u;
+	size_t total_link_bytes = 0u;
+
+	struct CachedActionSummary {
+		LinkKind kind{LinkKind::RefusedAction};
+		int32_t page_index{-1};
+		double x_pt{0.0};
+		double y_pt{0.0};
+		double zoom{0.0};
+		std::string uri{};
+		std::string action_type{};
+		bool is_inert{true};
+	};
+	std::unordered_map<uint32_t, CachedActionSummary> parsed_action_obj_cache;
+
+	auto parse_action_dict_summary = [&](
+										 const PdfDict& act_dict,
+										 std::optional<uint32_t> act_obj_num) -> PdfResult<CachedActionSummary> {
+		CachedActionSummary out{};
+		std::string s_type;
+		if (const auto s_name = act_dict.get_name("S")) {
+			if (s_name->size() > kMaxLinkActionTypeBytes) {
+				return make_doc_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedDictionary,
+					"/Link action /S name exceeds maximum length");
+			}
+			s_type = std::string(*s_name);
+		}
+		out.action_type = s_type;
+
+		if (s_type == "URI") {
+			if (const PdfValue* uri_val = act_dict.get("URI")) {
+				auto uri_res = resolve_value(*uri_val);
+				if (uri_res.has_value()) {
+					if (const PdfString* us = uri_res->as_string()) {
+						if (us->span().size() > kMaxLinkUriBytes) {
+							return make_doc_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedDictionary,
+								"/Link /URI string exceeds maximum length");
+						}
+						auto u_utf8 = pdf_string_to_utf8(us->span());
+						if (u_utf8.has_value()) {
+							if (u_utf8->size() > kMaxLinkUriBytes) {
+								return make_doc_error(
+									ErrorCode::DamagedFormat,
+									DiagnosticId::DamagedDictionary,
+									"/Link /URI UTF-8 string exceeds maximum length");
+							}
+							out.uri = std::string(trim_ascii_whitespace(*u_utf8));
+						}
+					}
+				}
+			}
+		}
+
+		if (action_chain_contains_refused(act_dict, act_obj_num)) {
+			out.kind = LinkKind::RefusedAction;
+			out.is_inert = true;
+			out.uri.clear();
+			return out;
+		}
+		if (s_type == "GoTo") {
+			if (const PdfValue* d_val = act_dict.get("D")) {
+				const ParsedDest pd = resolve_dest_value(*d_val);
+				if (pd.valid) {
+					out.kind = LinkKind::Internal;
+					out.is_inert = false;
+					out.page_index = pd.page_index;
+					out.x_pt = pd.x_pt;
+					out.y_pt = pd.y_pt;
+					out.zoom = pd.zoom;
+				}
+			}
+		} else if (s_type == "URI") {
+			if (!out.uri.empty() && is_safe_external_uri(out.uri)) {
+				out.kind = LinkKind::ExternalUri;
+				out.is_inert = false;
+			} else {
+				out.kind = LinkKind::RefusedAction;
+				out.is_inert = true;
+			}
+		} else if (s_type == "GoToR" || s_type == "GoToE") {
+			out.kind = LinkKind::RemoteGoTo;
+			out.is_inert = false;
+			if (const PdfValue* f_val = act_dict.get("F")) {
+				auto f_res = resolve_value(*f_val);
+				if (f_res.has_value()) {
+					const PdfString* target_fs = f_res->as_string();
+					if (target_fs == nullptr) {
+						if (const PdfDict* fdict = f_res->as_dict()) {
+							target_fs = fdict->get_string("UF");
+							if (target_fs == nullptr) {
+								target_fs = fdict->get_string("F");
+							}
+						}
+					}
+					if (target_fs != nullptr) {
+						if (target_fs->span().size() > kMaxLinkUriBytes) {
+							return make_doc_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedDictionary,
+								"/Link remote file specification exceeds maximum length");
+						}
+						auto f_utf8 = pdf_string_to_utf8(target_fs->span());
+						if (f_utf8.has_value()) {
+							if (f_utf8->size() > kMaxLinkUriBytes) {
+								return make_doc_error(
+									ErrorCode::DamagedFormat,
+									DiagnosticId::DamagedDictionary,
+									"/Link remote UTF-8 file specification exceeds maximum length");
+							}
+							out.uri = std::move(*f_utf8);
+						}
+					}
+				}
+			}
+			if (const PdfValue* d_val = act_dict.get("D")) {
+				auto d_res = resolve_value(*d_val);
+				if (d_res.has_value()) {
+					if (const PdfArray* d_arr = d_res->as_array();
+						d_arr != nullptr && !d_arr->empty()) {
+						if (const auto p_int = (*d_arr)[0].as_int();
+							p_int.has_value() && *p_int >= 0) {
+							out.page_index = static_cast<int32_t>(*p_int);
+						}
+					}
+				}
+			}
+		} else if (s_type == "Named") {
+			if (const auto n_name = act_dict.get_name("N")) {
+				if (n_name->size() > kMaxLinkUriBytes) {
+					return make_doc_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedDictionary,
+						"/Link /Named action name exceeds maximum length");
+				}
+				out.kind = LinkKind::NamedAction;
+				out.is_inert = false;
+				out.uri = std::string(*n_name);
+			}
+		} else {
+			// `/Launch`, `/JavaScript`, or any other unknown action is inert.
+			out.kind = LinkKind::RefusedAction;
+			out.is_inert = true;
+		}
+		return out;
+	};
+
+	auto record_page_link = [&](ResolvedPageRecord& page_rec, PageLink&& link) -> PdfResult<void> {
+		const size_t link_bytes =
+			sizeof(PageLink) + link.uri.size() + link.action_type.size();
+		if (total_document_links >= kMaxTotalDocumentLinks ||
+			total_link_bytes + link_bytes > kMaxTotalLinkBytes) {
+			return make_doc_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedDictionary,
+				"Document /Annots /Link entries exceed maximum count or memory budget");
+		}
+		++total_document_links;
+		total_link_bytes += link_bytes;
+		page_rec.links.push_back(std::move(link));
+		return {};
+	};
+
 	for (ResolvedPageRecord& page_rec : page_records_) {
 		const PdfValue* annots_val = page_rec.page_dict.get("Annots");
 		if (annots_val == nullptr || annots_val->is_null()) {
@@ -2719,8 +2939,10 @@ PdfResult<void> Document::load_document_structure()
 									*sub_dict,
 									sub_ref ? std::optional<uint32_t>(sub_ref->obj_num) : std::nullopt)) {
 								aa_has_refused = true;
+								const std::string_view sub_s =
+									sub_dict->get_name("S").value_or("AdditionalAction");
 								link.action_type = std::string(
-									sub_dict->get_name("S").value_or("AdditionalAction"));
+									sub_s.substr(0u, std::min(sub_s.size(), kMaxLinkActionTypeBytes)));
 								break;
 							}
 						}
@@ -2731,108 +2953,58 @@ PdfResult<void> Document::load_document_structure()
 			if (aa_has_refused) {
 				link.kind = LinkKind::RefusedAction;
 				link.is_inert = true;
-				page_rec.links.push_back(std::move(link));
+				RECTO_PDF_RETURN_IF_ERROR(record_page_link(page_rec, std::move(link)));
 				continue;
 			}
 
 			if (const PdfValue* act_val = annot_dict->get("A");
 				act_val != nullptr && !act_val->is_null()) {
-				const auto act_ref = act_val->as_ref();
-				auto act_res = resolve_value(*act_val);
-				if (act_res.has_value()) {
-					if (const PdfDict* act_dict = act_res->as_dict()) {
-						std::string s_type;
-						if (const auto s_name = act_dict->get_name("S")) {
-							s_type = std::string(*s_name);
-						}
-						link.action_type = s_type;
-
-						if (action_chain_contains_refused(
-								*act_dict,
-								act_ref ? std::optional<uint32_t>(act_ref->obj_num) : std::nullopt)) {
-							link.kind = LinkKind::RefusedAction;
-							link.is_inert = true;
-						} else if (s_type == "GoTo") {
-							if (const PdfValue* d_val = act_dict->get("D")) {
-								const ParsedDest pd = resolve_dest_value(*d_val);
-								if (pd.valid) {
-									link.kind = LinkKind::Internal;
-									link.is_inert = false;
-									link.page_index = pd.page_index;
-									link.x_pt = pd.x_pt;
-									link.y_pt = pd.y_pt;
-									link.dest_y_pt = pd.y_pt;
-									link.zoom = pd.zoom;
+				std::optional<CachedActionSummary> act_summary;
+				if (const auto act_ref = act_val->as_ref()) {
+					const auto cache_it = parsed_action_obj_cache.find(act_ref->obj_num);
+					if (cache_it != parsed_action_obj_cache.end()) {
+						act_summary = cache_it->second;
+					} else {
+						std::vector<IndirectRef> hop_refs;
+						hop_refs.reserve(kMaxIndirectRefDepth);
+						auto act_res = resolve_object_with_visited(*act_ref, hop_refs);
+						if (act_res.has_value()) {
+							if (const PdfDict* act_dict = act_res->as_dict()) {
+								const uint32_t target_obj_num = hop_refs.empty()
+									? act_ref->obj_num
+									: hop_refs.back().obj_num;
+								RECTO_PDF_TRY(
+									CachedActionSummary parsed_sum,
+									parse_action_dict_summary(*act_dict, target_obj_num));
+								for (const IndirectRef& hr : hop_refs) {
+									parsed_action_obj_cache.emplace(hr.obj_num, parsed_sum);
 								}
+								act_summary = std::move(parsed_sum);
 							}
-						} else if (s_type == "URI") {
-							if (const PdfValue* uri_val = act_dict->get("URI")) {
-								auto uri_res = resolve_value(*uri_val);
-								if (uri_res.has_value()) {
-									if (const PdfString* us = uri_res->as_string()) {
-										auto u_utf8 = pdf_string_to_utf8(us->span());
-										if (u_utf8.has_value()) {
-											link.uri = std::string(trim_ascii_whitespace(*u_utf8));
-											if (is_safe_external_uri(link.uri)) {
-												link.kind = LinkKind::ExternalUri;
-												link.is_inert = false;
-											} else {
-												link.kind = LinkKind::RefusedAction;
-												link.is_inert = true;
-											}
-										}
-									}
-								}
-							}
-						} else if (s_type == "GoToR" || s_type == "GoToE") {
-							link.kind = LinkKind::RemoteGoTo;
-							link.is_inert = false;
-							if (const PdfValue* f_val = act_dict->get("F")) {
-								auto f_res = resolve_value(*f_val);
-								if (f_res.has_value()) {
-									if (const PdfString* fs = f_res->as_string()) {
-										auto f_utf8 = pdf_string_to_utf8(fs->span());
-										if (f_utf8.has_value()) {
-											link.uri = std::move(*f_utf8);
-										}
-									} else if (const PdfDict* fdict = f_res->as_dict()) {
-										const PdfString* uf = fdict->get_string("UF");
-										if (uf == nullptr) {
-											uf = fdict->get_string("F");
-										}
-										if (uf != nullptr) {
-											auto f_utf8 = pdf_string_to_utf8(uf->span());
-											if (f_utf8.has_value()) {
-												link.uri = std::move(*f_utf8);
-											}
-										}
-									}
-								}
-							}
-							if (const PdfValue* d_val = act_dict->get("D")) {
-								auto d_res = resolve_value(*d_val);
-								if (d_res.has_value()) {
-									if (const PdfArray* d_arr = d_res->as_array();
-										d_arr != nullptr && !d_arr->empty()) {
-										if (const auto p_int = (*d_arr)[0].as_int();
-											p_int.has_value() && *p_int >= 0) {
-											link.page_index = static_cast<int32_t>(*p_int);
-										}
-									}
-								}
-							}
-						} else if (s_type == "Named") {
-							if (const auto n_name = act_dict->get_name("N")) {
-								link.kind = LinkKind::NamedAction;
-								link.is_inert = false;
-								link.uri = std::string(*n_name);
-							}
-						} else {
-							// `/Launch`, `/JavaScript`, or any other unknown action is inert.
-							link.kind = LinkKind::RefusedAction;
-							link.is_inert = true;
 						}
 					}
+				} else {
+					auto act_res = resolve_value(*act_val);
+					if (act_res.has_value()) {
+						if (const PdfDict* act_dict = act_res->as_dict()) {
+							RECTO_PDF_TRY(
+								CachedActionSummary parsed_sum,
+								parse_action_dict_summary(*act_dict, std::nullopt));
+							act_summary = std::move(parsed_sum);
+						}
+					}
+				}
+
+				if (act_summary.has_value()) {
+					link.kind = act_summary->kind;
+					link.is_inert = act_summary->is_inert;
+					link.page_index = act_summary->page_index;
+					link.x_pt = act_summary->x_pt;
+					link.y_pt = act_summary->y_pt;
+					link.dest_y_pt = act_summary->y_pt;
+					link.zoom = act_summary->zoom;
+					link.uri = std::move(act_summary->uri);
+					link.action_type = std::move(act_summary->action_type);
 				}
 			} else if (const PdfValue* dest_val = annot_dict->get("Dest");
 					   dest_val != nullptr && !dest_val->is_null()) {
@@ -2849,7 +3021,7 @@ PdfResult<void> Document::load_document_structure()
 				}
 			}
 
-			page_rec.links.push_back(std::move(link));
+			RECTO_PDF_RETURN_IF_ERROR(record_page_link(page_rec, std::move(link)));
 		}
 	}
 
@@ -2857,6 +3029,10 @@ PdfResult<void> Document::load_document_structure()
 	//    XObjects, and `/Catalog /AcroForm /DR`:
 	std::unordered_set<uint32_t> visited_font_objs;
 	std::unordered_set<uint32_t> visited_xobj_objs;
+	constexpr size_t kMaxFontStringBytes = 1024u;
+	constexpr size_t kMaxTotalFonts = 4096u;
+	constexpr size_t kMaxTotalFontBytes = 2u * 1024u * 1024u;
+	size_t total_font_bytes = 0u;
 
 	auto has_embedded_font_file = [this](const PdfDict& font_or_cid_dict) -> bool {
 		if (font_or_cid_dict.contains("FontFile") ||
@@ -2884,20 +3060,51 @@ PdfResult<void> Document::load_document_structure()
 		return false;
 	};
 
-	auto inspect_font_dict = [&](const PdfDict& font_dict, std::string_view fallback_key) {
+	auto inspect_font_dict = [&](const PdfDict& font_dict, std::string_view fallback_key) -> PdfResult<void> {
 		FontSummary summary{};
-		summary.subtype = std::string(font_dict.get_name("Subtype").value_or(""));
+		const std::string_view subtype_sv = font_dict.get_name("Subtype").value_or("");
+		if (subtype_sv.size() > kMaxFontStringBytes) {
+			return make_doc_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedDictionary,
+				"/Font /Subtype name exceeds maximum length");
+		}
+		summary.subtype = std::string(subtype_sv);
 
 		if (const auto bf_name = font_dict.get_name("BaseFont")) {
+			if (bf_name->size() > kMaxFontStringBytes) {
+				return make_doc_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedDictionary,
+					"/Font /BaseFont name exceeds maximum length");
+			}
 			summary.name = std::string(*bf_name);
 		} else if (const PdfString* bf_str = font_dict.get_string("BaseFont")) {
+			if (bf_str->span().size() > kMaxFontStringBytes) {
+				return make_doc_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedDictionary,
+					"/Font /BaseFont string exceeds maximum length");
+			}
 			auto utf8_res = pdf_string_to_utf8(bf_str->span());
 			summary.name = utf8_res.has_value()
 				? std::move(*utf8_res)
 				: std::string(bf_str->as_byte_view());
 		} else if (const auto nm = font_dict.get_name("Name")) {
+			if (nm->size() > kMaxFontStringBytes) {
+				return make_doc_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedDictionary,
+					"/Font /Name exceeds maximum length");
+			}
 			summary.name = std::string(*nm);
 		} else if (!fallback_key.empty()) {
+			if (fallback_key.size() > kMaxFontStringBytes) {
+				return make_doc_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedDictionary,
+					"/Font resource key exceeds maximum length");
+			}
 			summary.name = std::string(fallback_key);
 		}
 
@@ -2907,10 +3114,22 @@ PdfResult<void> Document::load_document_structure()
 			auto enc_res = resolve_value(*enc_val);
 			if (enc_res.has_value()) {
 				if (const auto enc_name = enc_res->as_name()) {
+					if (enc_name->size() > kMaxFontStringBytes) {
+						return make_doc_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedDictionary,
+							"/Font /Encoding name exceeds maximum length");
+					}
 					summary.encoding = std::string(*enc_name);
 				} else if (const PdfDict* enc_dict = enc_res->as_dict()) {
 					summary.has_differences = enc_dict->contains("Differences");
 					if (const auto base_enc = enc_dict->get_name("BaseEncoding")) {
+						if (base_enc->size() > kMaxFontStringBytes) {
+							return make_doc_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedDictionary,
+								"/Font /BaseEncoding name exceeds maximum length");
+						}
 						summary.encoding = std::string(*base_enc);
 					} else {
 						summary.encoding = "Custom";
@@ -2944,6 +3163,12 @@ PdfResult<void> Document::load_document_structure()
 							}
 							if (summary.name.empty()) {
 								if (const auto cid_bf = cid_dict->get_name("BaseFont")) {
+									if (cid_bf->size() > kMaxFontStringBytes) {
+										return make_doc_error(
+											ErrorCode::DamagedFormat,
+											DiagnosticId::DamagedDictionary,
+											"/CIDFont /BaseFont name exceeds maximum length");
+									}
 									summary.name = std::string(*cid_bf);
 								}
 							}
@@ -2968,10 +3193,23 @@ PdfResult<void> Document::load_document_structure()
 					existing.is_subset == summary.is_subset;
 			});
 		if (dup_it == description_.fonts.end()) {
+			const size_t entry_bytes = sizeof(FontSummary) +
+				summary.name.size() + summary.base_font.size() +
+				summary.clean_name.size() + summary.subtype.size() +
+				summary.encoding.size();
+			if (description_.fonts.size() >= kMaxTotalFonts ||
+				total_font_bytes + entry_bytes > kMaxTotalFontBytes) {
+				return make_doc_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedDictionary,
+					"Document font inventory exceeds maximum count or memory budget");
+			}
+			total_font_bytes += entry_bytes;
 			description_.fonts.push_back(std::move(summary));
 		} else if (summary.has_to_unicode) {
 			dup_it->has_to_unicode = true;
 		}
+		return {};
 	};
 
 	constexpr size_t kMaxResourceEntriesPerDict = 16'384u;
@@ -3027,7 +3265,7 @@ PdfResult<void> Document::load_document_structure()
 							f_val = std::move(*f_res);
 						}
 						if (const PdfDict* f_dict = f_val.as_dict()) {
-							inspect_font_dict(*f_dict, res_key.view());
+							RECTO_PDF_RETURN_IF_ERROR(inspect_font_dict(*f_dict, res_key.view()));
 						}
 					}
 				}

@@ -1026,6 +1026,71 @@ TEST(PdfDocument, LinksAndRefusedActions)
 			ASSERT_EQ(links_1025->size(), 1025u);
 			EXPECT_EQ(links_1025->back().uri, "https://example.com/1024");
 		}
+
+		// 4d. 2,048 distinct `/Subtype /Link` annotations referencing a shared
+		//     64 KiB `/URI` action or carrying 6 KiB URIs exceeding the 2 MiB
+		//     aggregate link budget fail with `ErrorCode::DamagedFormat` and
+		//     bounded working-set growth (< 32 MiB):
+		{
+			const std::string uri_64k = "https://example.com/" + std::string(65536u, 'u');
+			std::string annots_shared = "[";
+			std::vector<std::pair<uint32_t, std::string>> objs_shared = {
+				{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+				{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 612 792] /Kids [3 0 R] >>"},
+				{10, "<< /S /URI /URI (" + uri_64k + ") >>"},
+			};
+			for (uint32_t i = 0u; i < 2048u; ++i) {
+				const uint32_t obj_id = 20u + i;
+				annots_shared += std::to_string(obj_id) + " 0 R ";
+				objs_shared.emplace_back(
+					obj_id,
+					"<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A 10 0 R >>");
+			}
+			annots_shared += "]";
+			objs_shared.emplace_back(3u, "<< /Type /Page /Parent 2 0 R /Annots " + annots_shared + " >>");
+
+			const auto bytes_shared = build_synthetic_pdf_from_objects("1.7", objs_shared);
+			const size_t ws_shared_before = get_working_set_bytes();
+			auto doc_shared = Document::open_memory(bytes_shared);
+			const size_t ws_shared_after = get_working_set_bytes();
+			const size_t ws_shared_delta = (ws_shared_after > ws_shared_before)
+				? (ws_shared_after - ws_shared_before)
+				: 0u;
+			ASSERT_FALSE(doc_shared.has_value());
+			EXPECT_EQ(doc_shared.error().code, ErrorCode::DamagedFormat);
+			EXPECT_LT(ws_shared_delta, 32u * 1024u * 1024u)
+				<< "Shared 64 KiB /URI action caused excessive working-set growth: "
+				<< ws_shared_delta << " bytes";
+
+			// Also verify 2,048 distinct links with 6 KiB URIs (12 MiB total > 2 MiB cap)
+			// fail cleanly with `ErrorCode::DamagedFormat` and < 32 MiB growth:
+			const std::string uri_6k = "https://example.com/" + std::string(6144u, 'q');
+			std::vector<std::pair<uint32_t, std::string>> objs_agg = {
+				{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+				{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 612 792] /Kids [3 0 R] >>"},
+				{10, "<< /S /URI /URI (" + uri_6k + ") >>"},
+			};
+			for (uint32_t i = 0u; i < 2048u; ++i) {
+				const uint32_t obj_id = 20u + i;
+				objs_agg.emplace_back(
+					obj_id,
+					"<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A 10 0 R >>");
+			}
+			objs_agg.emplace_back(3u, "<< /Type /Page /Parent 2 0 R /Annots " + annots_shared + " >>");
+
+			const auto bytes_agg = build_synthetic_pdf_from_objects("1.7", objs_agg);
+			const size_t ws_agg_before = get_working_set_bytes();
+			auto doc_agg = Document::open_memory(bytes_agg);
+			const size_t ws_agg_after = get_working_set_bytes();
+			const size_t ws_agg_delta = (ws_agg_after > ws_agg_before)
+				? (ws_agg_after - ws_agg_before)
+				: 0u;
+			ASSERT_FALSE(doc_agg.has_value());
+			EXPECT_EQ(doc_agg.error().code, ErrorCode::DamagedFormat);
+			EXPECT_LT(ws_agg_delta, 32u * 1024u * 1024u)
+				<< "Aggregate link URI budget exceeded working-set limit: "
+				<< ws_agg_delta << " bytes";
+		}
 	}
 }
 
