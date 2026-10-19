@@ -375,7 +375,7 @@ private:
 		double x_pt{0.0};
 		double y_pt{0.0};
 		double zoom{0.0};
-		std::string fit_mode{};
+		std::string_view fit_mode{};
 		bool valid{false};
 	};
 

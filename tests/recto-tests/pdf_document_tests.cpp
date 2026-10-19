@@ -732,6 +732,37 @@ TEST(PdfDocument, OutlinesAndNamedDests)
 		EXPECT_DOUBLE_EQ((*doc_res)->outline()[0].dest_x_pt, 90.0);
 		EXPECT_DOUBLE_EQ((*doc_res)->outline()[0].dest_y_pt, 650.0);
 		EXPECT_DOUBLE_EQ((*doc_res)->outline()[0].zoom, 1.5);
+		EXPECT_EQ((*doc_res)->outline()[0].fit_mode, "XYZ");
+
+		// Also verify that 2,048 destination names sharing a destination array
+		// with a 64 KiB invalid fit-mode name (`[3 0 R /DDDD...]`) do not copy
+		// or retain the 64 KiB fit-mode string (< 32 MiB working-set delta):
+		const auto bytes_bad_fit = build_synthetic_pdf_from_objects(
+			"1.7",
+			{
+				{1,
+				 "<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R "
+				 "/Names << /Dests << /Names " + names_arr + " >> >> >>"},
+				{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 612 792] /Kids [3 0 R] >>"},
+				{3, "<< /Type /Page /Parent 2 0 R >>"},
+				{4, "<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 1 >>"},
+				{5, "<< /Title (Jump Invalid Fit) /Parent 4 0 R /Dest (dest_2047) >>"},
+				{10, "[3 0 R /" + payload_64k + "]"},
+			});
+
+		const size_t ws_fit_before = get_working_set_bytes();
+		auto doc_fit_res = Document::open_memory(bytes_bad_fit);
+		ASSERT_TRUE(doc_fit_res.has_value()) << doc_fit_res.error().message.view();
+		const size_t ws_fit_after = get_working_set_bytes();
+		const size_t ws_fit_delta = (ws_fit_after > ws_fit_before)
+			? (ws_fit_after - ws_fit_before)
+			: 0u;
+		EXPECT_LT(ws_fit_delta, 32u * 1024u * 1024u)
+			<< "Named destinations amplified memory on 64 KiB fit-mode name: "
+			<< ws_fit_delta << " bytes";
+		ASSERT_EQ((*doc_fit_res)->outline().size(), 1u);
+		EXPECT_FALSE((*doc_fit_res)->outline()[0].has_destination);
+		EXPECT_EQ((*doc_fit_res)->outline()[0].page_index, -1);
 	}
 }
 

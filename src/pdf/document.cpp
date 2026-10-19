@@ -1898,6 +1898,7 @@ PdfResult<void> Document::load_document_structure()
 	}
 
 	// 4. Collect named destinations from `/Catalog /Dests` and `/Catalog /Names /Dests`:
+	static_assert(std::is_trivially_copyable_v<ParsedDest>);
 	auto parse_dest_array = [this](const PdfArray& arr) -> ParsedDest {
 		ParsedDest out{};
 		if (arr.empty()) {
@@ -1928,9 +1929,10 @@ PdfResult<void> Document::load_document_structure()
 
 		const PdfRect& page_box = page_records_[static_cast<size_t>(out.page_index)].description.crop_box;
 		out.y_pt = page_box.y_max;
-		out.valid = true;
 
 		if (arr.size() < 2u) {
+			out.fit_mode = "Fit";
+			out.valid = true;
 			return out;
 		}
 		auto fit_res = resolve_value(arr[1]);
@@ -1941,7 +1943,6 @@ PdfResult<void> Document::load_document_structure()
 		if (!fit_name.has_value()) {
 			return out;
 		}
-		out.fit_mode = std::string(*fit_name);
 
 		auto get_num_arg = [&](size_t idx) -> std::optional<double> {
 			if (idx >= arr.size()) {
@@ -1955,6 +1956,7 @@ PdfResult<void> Document::load_document_structure()
 		};
 
 		if (*fit_name == "XYZ") {
+			out.fit_mode = "XYZ";
 			if (const auto left = get_num_arg(2u)) {
 				out.x_pt = *left;
 			}
@@ -1964,22 +1966,33 @@ PdfResult<void> Document::load_document_structure()
 			if (const auto zm = get_num_arg(4u)) {
 				out.zoom = *zm;
 			}
+		} else if (*fit_name == "Fit") {
+			out.fit_mode = "Fit";
+		} else if (*fit_name == "FitB") {
+			out.fit_mode = "FitB";
 		} else if (*fit_name == "FitH" || *fit_name == "FitBH") {
+			out.fit_mode = (*fit_name == "FitH") ? "FitH" : "FitBH";
 			if (const auto top = get_num_arg(2u)) {
 				out.y_pt = *top;
 			}
 		} else if (*fit_name == "FitV" || *fit_name == "FitBV") {
+			out.fit_mode = (*fit_name == "FitV") ? "FitV" : "FitBV";
 			if (const auto left = get_num_arg(2u)) {
 				out.x_pt = *left;
 			}
 		} else if (*fit_name == "FitR") {
+			out.fit_mode = "FitR";
 			if (const auto left = get_num_arg(2u)) {
 				out.x_pt = *left;
 			}
 			if (const auto top = get_num_arg(5u)) {
 				out.y_pt = *top;
 			}
+		} else {
+			return out;
 		}
+
+		out.valid = true;
 		return out;
 	};
 
@@ -2327,7 +2340,7 @@ PdfResult<void> Document::load_document_structure()
 								node.dest_x_pt = pd.x_pt;
 								node.dest_y_pt = pd.y_pt;
 								node.zoom = pd.zoom;
-								node.fit_mode = pd.fit_mode;
+								node.fit_mode = std::string(pd.fit_mode);
 								node.has_destination = true;
 							}
 						} else if (const PdfValue* act_v = item_dict->get("A")) {
@@ -2343,7 +2356,7 @@ PdfResult<void> Document::load_document_structure()
 												node.dest_x_pt = pd.x_pt;
 												node.dest_y_pt = pd.y_pt;
 												node.zoom = pd.zoom;
-												node.fit_mode = pd.fit_mode;
+												node.fit_mode = std::string(pd.fit_mode);
 												node.has_destination = true;
 											}
 										}
