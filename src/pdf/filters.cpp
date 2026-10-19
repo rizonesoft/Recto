@@ -8093,10 +8093,12 @@ void idwt_97_2d_float(
 			std::vector<J2kCodParams> comp_cod(num_comps);
 			std::vector<J2kQcdParams> comp_qcd(num_comps);
 			uint8_t max_decomp_levels = 0u;
-			uint8_t max_inherited_qcd_levels = 0u;
+			uint8_t main_max_decomp_levels = 0u;
 			uint32_t max_nom_cb_w = 1u;
 			uint32_t max_nom_cb_h = 1u;
 			for (uint32_t c = 0; c < num_comps; ++c) {
+				const uint8_t main_c_levels = main_has_coc[c] ? main_coc[c].num_decomp_levels : main_cod.num_decomp_levels;
+				main_max_decomp_levels = std::max(main_max_decomp_levels, main_c_levels);
 				// ITU-T T.800 §A.6.1 / §A.6.2 precedence: Tile-part COC > Tile-part COD > Main COC > Main COD.
 				if (tile_ov != nullptr && tile_ov->has_coc[c]) {
 					comp_cod[c] = tile_ov->coc[c];
@@ -8108,14 +8110,29 @@ void idwt_97_2d_float(
 					comp_cod[c] = main_cod;
 				}
 				max_decomp_levels = std::max(max_decomp_levels, comp_cod[c].num_decomp_levels);
-				const bool has_qcc =
-					(tile_ov != nullptr && tile_ov->has_qcc[c]) ||
-					(!(tile_ov != nullptr && tile_ov->has_qcd) && main_has_qcc[c]);
-				if (!has_qcc) {
-					max_inherited_qcd_levels = std::max(max_inherited_qcd_levels, comp_cod[c].num_decomp_levels);
-				}
 				max_nom_cb_w = std::max(max_nom_cb_w, 1u << comp_cod[c].cb_exp_w);
 				max_nom_cb_h = std::max(max_nom_cb_h, 1u << comp_cod[c].cb_exp_h);
+			}
+			const size_t expected_max_sb = 1u + 3u * static_cast<size_t>(max_decomp_levels);
+			const size_t expected_main_sb = 1u + 3u * static_cast<size_t>(main_max_decomp_levels);
+			if (tile_ov != nullptr && tile_ov->has_qcd && tile_ov->qcd.qstyle != 1u) {
+				if (tile_ov->qcd.subband_exponents.size() != expected_max_sb ||
+					tile_ov->qcd.subband_mantissas.size() != expected_max_sb) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Tile QCD subband quantization entry count does not match maximum component decomposition levels in JPXDecode");
+				}
+			}
+			if (main_qcd.qstyle != 1u) {
+				const size_t main_sb = main_qcd.subband_exponents.size();
+				if (main_qcd.subband_mantissas.size() != main_sb ||
+					(main_sb != expected_main_sb && main_sb != expected_max_sb)) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Main QCD subband quantization entry count does not match maximum component decomposition levels in JPXDecode");
+				}
 			}
 			for (uint32_t c = 0; c < num_comps; ++c) {
 				// ITU-T T.800 §A.6.4 / §A.6.5 precedence: Tile-part QCC > Tile-part QCD > Main QCC > Main QCD.
@@ -8151,12 +8168,8 @@ void idwt_97_2d_float(
 				} else if (base_qcd->qstyle != 1u) {
 					// ITU-T T.800 §A.6.4 Table A.27: QCD carries 1 + 3 * max(N_L) subband entries across the tile/image;
 					// components with fewer decomposition levels use the first 1 + 3 * N_L(c) entries.
-					const size_t expected_max_sb = 1u + 3u * static_cast<size_t>(max_decomp_levels);
-					const size_t expected_inh_sb = 1u + 3u * static_cast<size_t>(max_inherited_qcd_levels);
 					const size_t actual_sb = comp_qcd[c].subband_exponents.size();
-					if (comp_qcd[c].subband_mantissas.size() != actual_sb ||
-						actual_sb < required_subbands ||
-						(actual_sb != expected_max_sb && actual_sb != expected_inh_sb)) {
+					if (comp_qcd[c].subband_mantissas.size() != actual_sb || actual_sb != expected_max_sb) {
 						return make_filter_error(
 							ErrorCode::DamagedFormat,
 							DiagnosticId::DamagedStream,

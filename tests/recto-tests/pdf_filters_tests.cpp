@@ -2968,13 +2968,17 @@ TEST(PdfFilters, DctRgbAndCmyk)
 				ASSERT_EQ(dec_coc->pixels.size(), 1u);
 				EXPECT_EQ(dec_coc->pixels[0], 128u);
 
-				// Main COD has decomp=0, main COC[0] overrides to decomp=1, main QCD has 1 subband, main QCC[0] overrides to 4 subbands -> succeeds!
+				// Main COD has decomp=0, main COC[0] overrides to decomp=1, main QCD has 4 subbands, main QCC[0] overrides to 4 subbands -> succeeds,
+				// whereas undersized 1-subband main QCD with decomp=1 COC[0] fails with DamagedFormat even when QCC[0] is present:
 				const std::array<uint8_t, 6> qcc0_decomp1 = {0u, 0x40u, 0x40u, 0x40u, 0x40u, 0x40u};
 				auto dec_qcc = decode_jpx_image(
-					build_coc_qcc_1x1(valid_cod0, coc0_decomp1, valid_qcd0, qcc0_decomp1, {}, {}, pkt_2));
+					build_coc_qcc_1x1(valid_cod0, coc0_decomp1, valid_qcd1, qcc0_decomp1, {}, {}, pkt_2));
 				RECTO_ASSERT_OK(dec_qcc);
 				ASSERT_EQ(dec_qcc->pixels.size(), 1u);
 				EXPECT_EQ(dec_qcc->pixels[0], 128u);
+				RECTO_EXPECT_ERR(
+					decode_jpx_image(build_coc_qcc_1x1(valid_cod0, coc0_decomp1, valid_qcd0, qcc0_decomp1, {}, {}, pkt_2)),
+					ErrorCode::DamagedFormat);
 
 				// Tile-part COC[0] and QCC[0] overriding main COD/QCD -> succeeds!
 				auto dec_tp_coc_qcc = decode_jpx_image(
@@ -3040,6 +3044,38 @@ TEST(PdfFilters, DctRgbAndCmyk)
 				RECTO_EXPECT_ERR(
 					decode_jpx_image(build_mixed_depth_3comp(qcc0_decomp1)),
 					ErrorCode::DamagedFormat);
+
+				// Component depths [1, 0, 0] (COD decomp=0, COC[0] decomp=1) with 4-entry QCC[0]:
+				// 4-entry QCD succeeds, whereas 1-entry (undersized) QCD is rejected with DamagedFormat:
+				auto build_depths_100 = [](bool short_qcd) -> std::vector<uint8_t> {
+					std::vector<uint8_t> b = {0xFFu, 0x4Fu, 0xFFu, 0x51u};
+					append_u16_be(b, 47u);
+					append_u16_be(b, 0u);
+					for (uint32_t v : {1u, 1u, 0u, 0u, 1u, 1u, 0u, 0u}) {
+						append_u32_be(b, v);
+					}
+					append_u16_be(b, 3u);
+					for (int c = 0; c < 3; ++c) {
+						b.insert(b.end(), {7u, 1u, 1u});
+					}
+					b.insert(b.end(), {0xFFu, 0x52u, 0x00u, 12u, 0u, 0u, 0u, 1u, 0u, 0u, 4u, 4u, 0u, 1u}); // COD decomp=0
+					b.insert(b.end(), {0xFFu, 0x53u, 0x00u, 9u, 0u, 0u, 1u, 4u, 4u, 0u, 1u});             // COC[0] decomp=1
+					b.insert(b.end(), {0xFFu, 0x5Cu});
+					append_u16_be(b, short_qcd ? 4u : 7u);
+					b.push_back(0x40u);
+					for (int n = 0; n < (short_qcd ? 1 : 4); ++n) {
+						b.push_back(0x40u);
+					}
+					b.insert(b.end(), {0xFFu, 0x5Du, 0x00u, 8u, 0u, 0x40u, 0x40u, 0x40u, 0x40u, 0x40u}); // QCC[0] 4 entries
+					b.insert(b.end(), {0xFFu, 0x90u, 0x00u, 10u, 0x00u, 0x00u});
+					append_u32_be(b, 18u);
+					b.insert(b.end(), {0u, 1u, 0xFFu, 0x93u, 0u, 0u, 0u, 0u, 0xFFu, 0xD9u});
+					return b;
+				};
+				auto dec_100_ok = decode_jpx_image(build_depths_100(false));
+				RECTO_ASSERT_OK(dec_100_ok);
+				ASSERT_EQ(dec_100_ok->pixels.size(), 3u);
+				RECTO_EXPECT_ERR(decode_jpx_image(build_depths_100(true)), ErrorCode::DamagedFormat);
 			}
 		}
 
