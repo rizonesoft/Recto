@@ -26,9 +26,16 @@
 
 namespace recto::pdf {
 
-namespace {
+namespace detail {
 
+namespace {
 thread_local int g_crypto_alloc_fail_countdown = -1;
+} // namespace
+
+void set_crypto_alloc_fail_countdown(int countdown) noexcept
+{
+	g_crypto_alloc_fail_countdown = countdown;
+}
 
 void check_crypto_alloc()
 {
@@ -41,6 +48,12 @@ void check_crypto_alloc()
 	}
 	--g_crypto_alloc_fail_countdown;
 }
+
+} // namespace detail
+
+namespace {
+
+using detail::check_crypto_alloc;
 
 // ISO 32000-1 section 7.6.3.3 Algorithm 2: 32-byte standard password padding string.
 inline constexpr std::array<uint8_t, 32> kPdfPasswordPadding = {
@@ -1098,15 +1111,6 @@ inline constexpr std::array<CodepointRange, 360> kRfc3454TableD2 = {{
 }
 
 } // namespace
-
-namespace detail {
-
-void set_crypto_alloc_fail_countdown(int countdown) noexcept
-{
-	g_crypto_alloc_fail_countdown = countdown;
-}
-
-} // namespace detail
 
 PdfResult<std::vector<uint8_t>> SecurityHandler::prepare_saslprep_password(
 	std::string_view password) noexcept

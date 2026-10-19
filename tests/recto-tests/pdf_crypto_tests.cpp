@@ -485,6 +485,20 @@ TEST(PdfCrypto, SaslprepAndTruncatedAesCiphertext)
 
 TEST(PdfCrypto, OutOfMemoryFaultInjection)
 {
+	// Verify SecurityHandler default constructor is NOT marked noexcept (since its
+	// std::unordered_map members allocate sentinel nodes during default construction):
+	static_assert(!std::is_nothrow_default_constructible_v<SecurityHandler>);
+	static_assert(!noexcept(SecurityHandler()));
+	EXPECT_FALSE(std::is_nothrow_default_constructible_v<SecurityHandler>);
+	EXPECT_FALSE(noexcept(SecurityHandler()));
+
+	// Direct SecurityHandler default construction must propagate std::bad_alloc
+	// rather than calling std::terminate:
+	{
+		detail::ScopedCryptoAllocFaultInjector fault(0);
+		EXPECT_THROW((void)SecurityHandler{}, std::bad_alloc);
+	}
+
 	const std::vector<uint8_t> file_bytes = read_corpus_bytes("render/encrypted-aes-256.pdf");
 	auto xref_res = XrefTable::parse(file_bytes);
 	RECTO_ASSERT_OK(xref_res);
@@ -512,27 +526,23 @@ TEST(PdfCrypto, OutOfMemoryFaultInjection)
 			SecurityHandler::parse_encrypt_dict(*enc_dict),
 			ErrorCode::OutOfMemory);
 	}
-	{
-		detail::ScopedCryptoAllocFaultInjector fault(0);
+	// Sweep all allocation checkpoints inside SecurityHandler::create()
+	// (0: create entry, 1: parse_encrypt_dict, 2: SecurityHandler() default constructor,
+	//  3: auto-unlock authenticate(""), 4: prepare_saslprep_password("")):
+	for (int step = 0; step <= 4; ++step) {
+		detail::ScopedCryptoAllocFaultInjector fault(step);
 		RECTO_EXPECT_ERR(
 			SecurityHandler::create(*enc_dict, {}, IndirectRef{7u, 0u}),
 			ErrorCode::OutOfMemory);
 	}
-	{
-		// Fail on second allocation inside create() (during parse_encrypt_dict):
-		detail::ScopedCryptoAllocFaultInjector fault(1);
-		RECTO_EXPECT_ERR(
-			SecurityHandler::create(*enc_dict, {}, IndirectRef{7u, 0u}),
-			ErrorCode::OutOfMemory);
-	}
-	{
-		detail::ScopedCryptoAllocFaultInjector fault(0);
+	for (int step = 0; step <= 5; ++step) {
+		detail::ScopedCryptoAllocFaultInjector fault(step);
 		RECTO_EXPECT_ERR(
 			SecurityHandler::from_xref(*xref_res, file_bytes),
 			ErrorCode::OutOfMemory);
 	}
-	{
-		detail::ScopedCryptoAllocFaultInjector fault(0);
+	for (int step = 0; step <= 1; ++step) {
+		detail::ScopedCryptoAllocFaultInjector fault(step);
 		RECTO_EXPECT_ERR(
 			valid_sh.authenticate("recto-test"),
 			ErrorCode::OutOfMemory);

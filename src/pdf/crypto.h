@@ -98,6 +98,14 @@ struct EncryptDictParams {
 namespace detail {
 
 void set_crypto_alloc_fail_countdown(int countdown) noexcept;
+void check_crypto_alloc();
+
+struct CryptoConstructAllocGuard {
+	CryptoConstructAllocGuard()
+	{
+		check_crypto_alloc();
+	}
+};
 
 class ScopedCryptoAllocFaultInjector {
 public:
@@ -248,6 +256,7 @@ private:
 		IndirectRef ref,
 		std::vector<IndirectRef>& visited_refs);
 
+	detail::CryptoConstructAllocGuard alloc_guard_{};
 	EncryptDictParams params_{};
 	PdfPermissions permissions_{};
 	std::vector<uint8_t> file_id_0_{};
