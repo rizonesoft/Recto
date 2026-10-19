@@ -2905,6 +2905,93 @@ TEST(PdfFilters, DctRgbAndCmyk)
 				RECTO_EXPECT_ERR(
 					decode_jpx_image(build_high_origin_1x1(0u, valid_qcd1)),
 					ErrorCode::DamagedFormat);
+
+				// Per-component COC (0xFF53) and QCC (0xFF5D) overrides in main header and tile-part header:
+				auto build_coc_qcc_1x1 = [](
+					std::span<const uint8_t> main_cod_body,
+					std::span<const uint8_t> main_coc_body,
+					std::span<const uint8_t> main_qcd_body,
+					std::span<const uint8_t> main_qcc_body,
+					std::span<const uint8_t> tile_coc_body,
+					std::span<const uint8_t> tile_qcc_body,
+					std::span<const uint8_t> pkt_bytes) -> std::vector<uint8_t> {
+					std::vector<uint8_t> b = {0xFFu, 0x4Fu, 0xFFu, 0x51u};
+					append_u16_be(b, 41u);
+					append_u16_be(b, 0u);
+					for (uint32_t v : {1u, 1u, 0u, 0u, 1u, 1u, 0u, 0u}) {
+						append_u32_be(b, v);
+					}
+					append_u16_be(b, 1u);
+					b.insert(b.end(), {7u, 1u, 1u});
+					b.insert(b.end(), {0xFFu, 0x52u});
+					append_u16_be(b, static_cast<uint16_t>(2u + main_cod_body.size()));
+					b.insert(b.end(), main_cod_body.begin(), main_cod_body.end());
+					if (!main_coc_body.empty()) {
+						b.insert(b.end(), {0xFFu, 0x53u});
+						append_u16_be(b, static_cast<uint16_t>(2u + main_coc_body.size()));
+						b.insert(b.end(), main_coc_body.begin(), main_coc_body.end());
+					}
+					b.insert(b.end(), {0xFFu, 0x5Cu});
+					append_u16_be(b, static_cast<uint16_t>(2u + main_qcd_body.size()));
+					b.insert(b.end(), main_qcd_body.begin(), main_qcd_body.end());
+					if (!main_qcc_body.empty()) {
+						b.insert(b.end(), {0xFFu, 0x5Du});
+						append_u16_be(b, static_cast<uint16_t>(2u + main_qcc_body.size()));
+						b.insert(b.end(), main_qcc_body.begin(), main_qcc_body.end());
+					}
+					b.insert(b.end(), {0xFFu, 0x90u, 0x00u, 10u, 0x00u, 0x00u});
+					const uint32_t tile_extra =
+						(tile_coc_body.empty() ? 0u : static_cast<uint32_t>(4u + tile_coc_body.size())) +
+						(tile_qcc_body.empty() ? 0u : static_cast<uint32_t>(4u + tile_qcc_body.size()));
+					append_u32_be(b, 14u + tile_extra + static_cast<uint32_t>(pkt_bytes.size()));
+					b.insert(b.end(), {0u, 1u});
+					if (!tile_coc_body.empty()) {
+						b.insert(b.end(), {0xFFu, 0x53u});
+						append_u16_be(b, static_cast<uint16_t>(2u + tile_coc_body.size()));
+						b.insert(b.end(), tile_coc_body.begin(), tile_coc_body.end());
+					}
+					if (!tile_qcc_body.empty()) {
+						b.insert(b.end(), {0xFFu, 0x5Du});
+						append_u16_be(b, static_cast<uint16_t>(2u + tile_qcc_body.size()));
+						b.insert(b.end(), tile_qcc_body.begin(), tile_qcc_body.end());
+					}
+					b.insert(b.end(), {0xFFu, 0x93u});
+					b.insert(b.end(), pkt_bytes.begin(), pkt_bytes.end());
+					b.insert(b.end(), {0xFFu, 0xD9u});
+					return b;
+				};
+				// Main COD has decomp=0, main COC[0] overrides to decomp=1, main QCD has 4 subbands -> succeeds!
+				const std::array<uint8_t, 7> coc0_decomp1 = {0u, 0u, 1u, 4u, 4u, 0u, 1u};
+				auto dec_coc = decode_jpx_image(
+					build_coc_qcc_1x1(valid_cod0, coc0_decomp1, valid_qcd1, {}, {}, {}, pkt_2));
+				RECTO_ASSERT_OK(dec_coc);
+				ASSERT_EQ(dec_coc->pixels.size(), 1u);
+				EXPECT_EQ(dec_coc->pixels[0], 128u);
+
+				// Main COD has decomp=0, main COC[0] overrides to decomp=1, main QCD has 1 subband, main QCC[0] overrides to 4 subbands -> succeeds!
+				const std::array<uint8_t, 6> qcc0_decomp1 = {0u, 0x40u, 0x40u, 0x40u, 0x40u, 0x40u};
+				auto dec_qcc = decode_jpx_image(
+					build_coc_qcc_1x1(valid_cod0, coc0_decomp1, valid_qcd0, qcc0_decomp1, {}, {}, pkt_2));
+				RECTO_ASSERT_OK(dec_qcc);
+				ASSERT_EQ(dec_qcc->pixels.size(), 1u);
+				EXPECT_EQ(dec_qcc->pixels[0], 128u);
+
+				// Tile-part COC[0] and QCC[0] overriding main COD/QCD -> succeeds!
+				auto dec_tp_coc_qcc = decode_jpx_image(
+					build_coc_qcc_1x1(valid_cod0, {}, valid_qcd0, {}, coc0_decomp1, qcc0_decomp1, pkt_2));
+				RECTO_ASSERT_OK(dec_tp_coc_qcc);
+				ASSERT_EQ(dec_tp_coc_qcc->pixels.size(), 1u);
+				EXPECT_EQ(dec_tp_coc_qcc->pixels[0], 128u);
+
+				// Invalid COC component index (Ccoc = 1 on 1-component image) and reserved Scoc bit (Scoc = 0x02) -> DamagedFormat:
+				const std::array<uint8_t, 7> bad_ccoc = {1u, 0u, 1u, 4u, 4u, 0u, 1u};
+				const std::array<uint8_t, 7> bad_scoc = {0u, 2u, 1u, 4u, 4u, 0u, 1u};
+				RECTO_EXPECT_ERR(
+					decode_jpx_image(build_coc_qcc_1x1(valid_cod0, bad_ccoc, valid_qcd1, {}, {}, {}, pkt_2)),
+					ErrorCode::DamagedFormat);
+				RECTO_EXPECT_ERR(
+					decode_jpx_image(build_coc_qcc_1x1(valid_cod0, bad_scoc, valid_qcd1, {}, {}, {}, pkt_2)),
+					ErrorCode::DamagedFormat);
 			}
 		}
 

@@ -7571,42 +7571,140 @@ void idwt_97_2d_float(
 		return {};
 	};
 
-	auto parse_qcd_segment = [&](size_t seg_pos, uint16_t seg_len, uint8_t decomp_levels, J2kQcdParams& out_qcd) -> PdfResult<void> {
-		if (seg_len < 4u) {
+	auto parse_coc_segment = [&](size_t seg_pos, uint16_t seg_len, uint32_t& out_comp, J2kCodParams& out_coc) -> PdfResult<void> {
+		const size_t c_bytes = (num_comps < 257u) ? 1u : 2u;
+		const uint16_t base_len = static_cast<uint16_t>(2u + c_bytes + 6u);
+		if (seg_len < base_len) {
 			return make_filter_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedStream,
-				"Invalid QCD marker segment length in JPXDecode codestream",
+				"Invalid COC marker segment length in JPXDecode codestream",
 				seg_pos);
 		}
-		const uint8_t sqcd = cs[seg_pos + 2u];
-		out_qcd.guard_bits = static_cast<uint8_t>((sqcd >> 5u) & 0x07u);
-		out_qcd.qstyle = static_cast<uint8_t>(sqcd & 0x1Fu);
-		out_qcd.raw_pos = seg_pos;
-		out_qcd.raw_len = seg_len;
-		out_qcd.subband_exponents.clear();
-		out_qcd.subband_mantissas.clear();
-		if (out_qcd.qstyle == 0u) { // Reversible no quantization (1 byte per subband)
-			for (size_t i = 3u; i < seg_len; ++i) {
-				if ((cs[seg_pos + i] & 0x07u) != 0u) {
-					return make_filter_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedStream,
-						"Non-zero reserved bits in reversible JPXDecode QCD entry",
-						seg_pos + i);
-				}
-				out_qcd.subband_exponents.push_back(static_cast<uint8_t>((cs[seg_pos + i] >> 3u) & 0x1Fu));
-				out_qcd.subband_mantissas.push_back(0u);
-			}
-		} else if (out_qcd.qstyle == 1u) { // Scalar derived (1 16-bit entry for LL0)
-			if (seg_len != 5u) {
+		out_comp = (c_bytes == 1u)
+			? static_cast<uint32_t>(cs[seg_pos + 2u])
+			: static_cast<uint32_t>(read_u16_be(cs.data() + seg_pos + 2u));
+		if (out_comp >= num_comps) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid component index Ccoc in JPXDecode COC marker",
+				seg_pos);
+		}
+		const size_t scoc_off = seg_pos + 2u + c_bytes;
+		const uint8_t scoc = cs[scoc_off];
+		if ((scoc & 0xFEu) != 0u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid reserved bits in JPXDecode COC Scoc parameter",
+				seg_pos);
+		}
+		const size_t sp_off = scoc_off + 1u;
+		out_coc.num_decomp_levels = cs[sp_off + 0u];
+		if (out_coc.num_decomp_levels > 10u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Excessive DWT decomposition levels in JPXDecode COC marker",
+				seg_pos);
+		}
+		const uint8_t raw_xcb = cs[sp_off + 1u];
+		const uint8_t raw_ycb = cs[sp_off + 2u];
+		if (raw_xcb > 8u || raw_ycb > 8u || (raw_xcb + 2u) + (raw_ycb + 2u) > 12u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid code-block width/height exponents in JPXDecode COC marker",
+				seg_pos);
+		}
+		out_coc.cb_exp_w = static_cast<uint32_t>(raw_xcb) + 2u;
+		out_coc.cb_exp_h = static_cast<uint32_t>(raw_ycb) + 2u;
+		out_coc.cb_style = cs[sp_off + 3u];
+		if (out_coc.cb_style != 0u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid or unsupported code-block style in JPXDecode COC marker",
+				seg_pos);
+		}
+		out_coc.wavelet_type = cs[sp_off + 4u];
+		if (out_coc.wavelet_type > 1u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid wavelet transformation type in JPXDecode COC marker",
+				seg_pos);
+		}
+		out_coc.ppx_exp.fill(15u);
+		out_coc.ppy_exp.fill(15u);
+		if ((scoc & 0x01u) != 0u) {
+			const uint16_t expected_len = base_len + static_cast<uint16_t>(out_coc.num_decomp_levels) + 1u;
+			if (seg_len != expected_len) {
 				return make_filter_error(
 					ErrorCode::DamagedFormat,
 					DiagnosticId::DamagedStream,
-					"Invalid scalar-derived QCD marker length in JPXDecode codestream",
+					"Invalid explicit precinct sizes length in JPXDecode COC marker",
 					seg_pos);
 			}
-			const uint16_t sp = read_u16_be(cs.data() + seg_pos + 3u);
+			for (uint8_t r = 0u; r <= out_coc.num_decomp_levels; ++r) {
+				const uint8_t pp = cs[seg_pos + base_len + r];
+				out_coc.ppx_exp[r] = static_cast<uint8_t>(pp & 0x0Fu);
+				out_coc.ppy_exp[r] = static_cast<uint8_t>((pp >> 4u) & 0x0Fu);
+				if (r > 0u && (out_coc.ppx_exp[r] == 0u || out_coc.ppy_exp[r] == 0u)) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Invalid zero precinct exponent at resolution r > 0 in JPXDecode COC marker",
+						seg_pos);
+				}
+			}
+		} else if (seg_len != base_len) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Unexpected extra bytes in default-precinct JPXDecode COC marker",
+				seg_pos);
+		}
+		return {};
+	};
+
+	auto parse_qcd_body = [&](size_t sqcd_pos, size_t body_len, uint8_t decomp_levels, J2kQcdParams& out_qcd) -> PdfResult<void> {
+		if (body_len < 2u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid QCD/QCC marker segment length in JPXDecode codestream",
+				sqcd_pos);
+		}
+		const uint8_t sqcd = cs[sqcd_pos];
+		out_qcd.guard_bits = static_cast<uint8_t>((sqcd >> 5u) & 0x07u);
+		out_qcd.qstyle = static_cast<uint8_t>(sqcd & 0x1Fu);
+		out_qcd.raw_pos = sqcd_pos;
+		out_qcd.raw_len = static_cast<uint16_t>(body_len);
+		out_qcd.subband_exponents.clear();
+		out_qcd.subband_mantissas.clear();
+		if (out_qcd.qstyle == 0u) { // Reversible no quantization (1 byte per subband)
+			for (size_t i = 1u; i < body_len; ++i) {
+				if ((cs[sqcd_pos + i] & 0x07u) != 0u) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Non-zero reserved bits in reversible JPXDecode QCD/QCC entry",
+						sqcd_pos + i);
+				}
+				out_qcd.subband_exponents.push_back(static_cast<uint8_t>((cs[sqcd_pos + i] >> 3u) & 0x1Fu));
+				out_qcd.subband_mantissas.push_back(0u);
+			}
+		} else if (out_qcd.qstyle == 1u) { // Scalar derived (1 16-bit entry for LL0)
+			if (body_len != 3u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Invalid scalar-derived QCD/QCC marker length in JPXDecode codestream",
+					sqcd_pos);
+			}
+			const uint16_t sp = read_u16_be(cs.data() + sqcd_pos + 1u);
 			const uint8_t eps0 = static_cast<uint8_t>((sp >> 11u) & 0x1Fu);
 			const uint16_t mu0 = static_cast<uint16_t>(sp & 0x7FFu);
 			out_qcd.subband_exponents.push_back(eps0);
@@ -7621,15 +7719,15 @@ void idwt_97_2d_float(
 				}
 			}
 		} else if (out_qcd.qstyle == 2u) { // Scalar expounded (2 bytes per subband)
-			if (seg_len < 5u || ((seg_len - 3u) & 1u) != 0u) {
+			if (body_len < 3u || ((body_len - 1u) & 1u) != 0u) {
 				return make_filter_error(
 					ErrorCode::DamagedFormat,
 					DiagnosticId::DamagedStream,
-					"Invalid or odd-byte scalar-expounded QCD marker length in JPXDecode codestream",
-					seg_pos);
+					"Invalid or odd-byte scalar-expounded QCD/QCC marker length in JPXDecode codestream",
+					sqcd_pos);
 			}
-			for (size_t i = 3u; i + 1u < seg_len; i += 2u) {
-				const uint16_t sp = read_u16_be(cs.data() + seg_pos + i);
+			for (size_t i = 1u; i + 1u < body_len; i += 2u) {
+				const uint16_t sp = read_u16_be(cs.data() + sqcd_pos + i);
 				out_qcd.subband_exponents.push_back(static_cast<uint8_t>((sp >> 11u) & 0x1Fu));
 				out_qcd.subband_mantissas.push_back(static_cast<uint16_t>(sp & 0x7FFu));
 			}
@@ -7637,20 +7735,61 @@ void idwt_97_2d_float(
 			return make_filter_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedStream,
-				"Invalid quantization style in JPXDecode QCD marker",
-				seg_pos);
+				"Invalid quantization style in JPXDecode QCD/QCC marker",
+				sqcd_pos);
 		}
 		return {};
 	};
 
+	auto parse_qcd_segment = [&](size_t seg_pos, uint16_t seg_len, uint8_t decomp_levels, J2kQcdParams& out_qcd) -> PdfResult<void> {
+		if (seg_len < 4u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid QCD marker segment length in JPXDecode codestream",
+				seg_pos);
+		}
+		return parse_qcd_body(seg_pos + 2u, seg_len - 2u, decomp_levels, out_qcd);
+	};
+
+	auto parse_qcc_segment = [&](size_t seg_pos, uint16_t seg_len, uint8_t decomp_levels, uint32_t& out_comp, J2kQcdParams& out_qcc) -> PdfResult<void> {
+		const size_t c_bytes = (num_comps < 257u) ? 1u : 2u;
+		if (seg_len < 2u + c_bytes + 2u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid QCC marker segment length in JPXDecode codestream",
+				seg_pos);
+		}
+		out_comp = (c_bytes == 1u)
+			? static_cast<uint32_t>(cs[seg_pos + 2u])
+			: static_cast<uint32_t>(read_u16_be(cs.data() + seg_pos + 2u));
+		if (out_comp >= num_comps) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid component index Cqcc in JPXDecode QCC marker",
+				seg_pos);
+		}
+		return parse_qcd_body(seg_pos + 2u + c_bytes, seg_len - (2u + c_bytes), decomp_levels, out_qcc);
+	};
+
 	J2kCodParams main_cod{};
 	J2kQcdParams main_qcd{};
+	std::vector<bool> main_has_coc(num_comps, false);
+	std::vector<J2kCodParams> main_coc(num_comps);
+	std::vector<bool> main_has_qcc(num_comps, false);
+	std::vector<J2kQcdParams> main_qcc(num_comps);
 	struct TileCodingOverride {
 		uint16_t isot = 0u;
 		bool has_cod = false;
 		bool has_qcd = false;
 		J2kCodParams cod{};
 		J2kQcdParams qcd{};
+		std::vector<bool> has_coc;
+		std::vector<J2kCodParams> coc;
+		std::vector<bool> has_qcc;
+		std::vector<J2kQcdParams> qcc;
 	};
 	std::vector<TileCodingOverride> tile_overrides;
 	auto get_or_create_tile_override = [&](uint16_t isot) -> TileCodingOverride& {
@@ -7659,7 +7798,15 @@ void idwt_97_2d_float(
 				return ov;
 			}
 		}
-		tile_overrides.push_back(TileCodingOverride{isot, false, false, main_cod, main_qcd});
+		TileCodingOverride fresh{};
+		fresh.isot = isot;
+		fresh.cod = main_cod;
+		fresh.qcd = main_qcd;
+		fresh.has_coc.assign(num_comps, false);
+		fresh.coc.resize(num_comps);
+		fresh.has_qcc.assign(num_comps, false);
+		fresh.qcc.resize(num_comps);
+		tile_overrides.push_back(std::move(fresh));
 		return tile_overrides.back();
 	};
 
@@ -7697,13 +7844,22 @@ void idwt_97_2d_float(
 		}
 		if (marker == 0x52u) { // COD (ITU-T T.800 §A.6.1)
 			RECTO_PDF_RETURN_IF_ERROR(parse_cod_segment(pos, mlen, main_cod));
-			if (saw_qcd && main_qcd.qstyle == 1u) {
-				RECTO_PDF_RETURN_IF_ERROR(parse_qcd_segment(main_qcd.raw_pos, main_qcd.raw_len, main_cod.num_decomp_levels, main_qcd));
-			}
 			saw_cod = true;
+		} else if (marker == 0x53u) { // COC (ITU-T T.800 §A.6.2)
+			uint32_t comp_idx = 0u;
+			J2kCodParams coc_params{};
+			RECTO_PDF_RETURN_IF_ERROR(parse_coc_segment(pos, mlen, comp_idx, coc_params));
+			main_coc[comp_idx] = coc_params;
+			main_has_coc[comp_idx] = true;
 		} else if (marker == 0x5Cu) { // QCD (ITU-T T.800 §A.6.4)
 			RECTO_PDF_RETURN_IF_ERROR(parse_qcd_segment(pos, mlen, main_cod.num_decomp_levels, main_qcd));
 			saw_qcd = true;
+		} else if (marker == 0x5Du) { // QCC (ITU-T T.800 §A.6.5)
+			uint32_t comp_idx = 0u;
+			J2kQcdParams qcc_params{};
+			RECTO_PDF_RETURN_IF_ERROR(parse_qcc_segment(pos, mlen, main_cod.num_decomp_levels, comp_idx, qcc_params));
+			main_qcc[comp_idx] = std::move(qcc_params);
+			main_has_qcc[comp_idx] = true;
 		} else if (marker == 0x90u) { // SOT
 			if (mlen < 10u) {
 				return make_filter_error(
@@ -7760,14 +7916,26 @@ void idwt_97_2d_float(
 					auto& ov = get_or_create_tile_override(isot);
 					RECTO_PDF_RETURN_IF_ERROR(parse_cod_segment(pos, tp_len, ov.cod));
 					ov.has_cod = true;
-					if (ov.has_qcd && ov.qcd.qstyle == 1u) {
-						RECTO_PDF_RETURN_IF_ERROR(parse_qcd_segment(ov.qcd.raw_pos, ov.qcd.raw_len, ov.cod.num_decomp_levels, ov.qcd));
-					}
+				} else if (tp_marker == 0x53u) { // Tile-part header COC override (ITU-T T.800 §A.6.2)
+					auto& ov = get_or_create_tile_override(isot);
+					uint32_t comp_idx = 0u;
+					J2kCodParams coc_params{};
+					RECTO_PDF_RETURN_IF_ERROR(parse_coc_segment(pos, tp_len, comp_idx, coc_params));
+					ov.coc[comp_idx] = coc_params;
+					ov.has_coc[comp_idx] = true;
 				} else if (tp_marker == 0x5Cu) { // Tile-part header QCD override (ITU-T T.800 §A.6.4)
 					auto& ov = get_or_create_tile_override(isot);
 					const uint8_t eff_levels = ov.has_cod ? ov.cod.num_decomp_levels : main_cod.num_decomp_levels;
 					RECTO_PDF_RETURN_IF_ERROR(parse_qcd_segment(pos, tp_len, eff_levels, ov.qcd));
 					ov.has_qcd = true;
+				} else if (tp_marker == 0x5Du) { // Tile-part header QCC override (ITU-T T.800 §A.6.5)
+					auto& ov = get_or_create_tile_override(isot);
+					uint32_t comp_idx = 0u;
+					J2kQcdParams qcc_params{};
+					const uint8_t eff_levels = ov.has_cod ? ov.cod.num_decomp_levels : main_cod.num_decomp_levels;
+					RECTO_PDF_RETURN_IF_ERROR(parse_qcc_segment(pos, tp_len, eff_levels, comp_idx, qcc_params));
+					ov.qcc[comp_idx] = std::move(qcc_params);
+					ov.has_qcc[comp_idx] = true;
 				}
 				pos += tp_len;
 			}
@@ -7838,6 +8006,22 @@ void idwt_97_2d_float(
 	out_img.components = num_comps;
 	out_img.pixels.assign(total_samples, 0u);
 
+	struct ResBounds {
+		uint32_t x0 = 0u;
+		uint32_t y0 = 0u;
+		uint32_t x1 = 0u;
+		uint32_t y1 = 0u;
+		uint32_t w = 0u;
+		uint32_t h = 0u;
+		uint8_t ppx = 15u;
+		uint8_t ppy = 15u;
+		uint32_t prec_x0 = 0u;
+		uint32_t prec_y0 = 0u;
+		uint32_t num_prec_x = 0u;
+		uint32_t num_prec_y = 0u;
+		uint32_t num_precincts = 0u;
+	};
+
 	struct SubbandState {
 		uint32_t w = 0u;
 		uint32_t h = 0u;
@@ -7881,6 +8065,7 @@ void idwt_97_2d_float(
 	};
 
 	struct ComponentState {
+		std::vector<ResBounds> res_bounds;
 		std::vector<ResolutionState> resolutions;
 		std::vector<int32_t> spatial;
 		std::vector<float> spatial_f;
@@ -7891,51 +8076,66 @@ void idwt_97_2d_float(
 		for (uint32_t tx = 0; tx < num_tiles_x; ++tx) {
 			const uint32_t tile_idx = ty * num_tiles_x + tx;
 			const auto& parts = tile_part_spans[tile_idx];
-			const J2kCodParams* active_cod = &main_cod;
-			const J2kQcdParams* active_qcd = &main_qcd;
-			J2kQcdParams derived_qcd{};
+			const TileCodingOverride* tile_ov = nullptr;
 			for (const auto& ov : tile_overrides) {
 				if (ov.isot == tile_idx) {
-					if (ov.has_cod) {
-						active_cod = &ov.cod;
-					}
-					if (ov.has_qcd) {
-						active_qcd = &ov.qcd;
-					} else if (ov.has_cod && main_qcd.qstyle == 1u) {
-						RECTO_PDF_RETURN_IF_ERROR(parse_qcd_segment(
-							main_qcd.raw_pos,
-							main_qcd.raw_len,
-							active_cod->num_decomp_levels,
-							derived_qcd));
-						active_qcd = &derived_qcd;
-					}
+					tile_ov = &ov;
 					break;
 				}
 			}
-			const uint8_t prog_order = active_cod->prog_order;
-			const uint16_t num_layers = active_cod->num_layers;
-			const bool mct_enabled = active_cod->mct_enabled;
-			const bool sop_enabled = active_cod->sop_enabled;
-			const bool eph_enabled = active_cod->eph_enabled;
-			const uint8_t num_decomp_levels = active_cod->num_decomp_levels;
-			const uint32_t cb_exp_w = active_cod->cb_exp_w;
-			const uint32_t cb_exp_h = active_cod->cb_exp_h;
-			const uint8_t cb_style = active_cod->cb_style;
-			const uint8_t wavelet_type = active_cod->wavelet_type;
-			const auto& ppx_exp = active_cod->ppx_exp;
-			const auto& ppy_exp = active_cod->ppy_exp;
-			const uint8_t guard_bits = active_qcd->guard_bits;
-			const auto& subband_exponents = active_qcd->subband_exponents;
-			const auto& subband_mantissas = active_qcd->subband_mantissas;
-			const size_t required_subbands = 1u + 3u * static_cast<size_t>(num_decomp_levels);
-			if (subband_exponents.size() != required_subbands || subband_mantissas.size() != required_subbands) {
-				return make_filter_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedStream,
-					"QCD subband quantization entry count does not match COD decomposition levels in JPXDecode");
+			const J2kCodParams& tile_cod = (tile_ov != nullptr && tile_ov->has_cod) ? tile_ov->cod : main_cod;
+			const uint8_t prog_order = tile_cod.prog_order;
+			const uint16_t num_layers = tile_cod.num_layers;
+			const bool mct_enabled = tile_cod.mct_enabled;
+			const bool sop_enabled = tile_cod.sop_enabled;
+			const bool eph_enabled = tile_cod.eph_enabled;
+
+			std::vector<J2kCodParams> comp_cod(num_comps);
+			std::vector<J2kQcdParams> comp_qcd(num_comps);
+			uint8_t max_decomp_levels = 0u;
+			uint32_t max_nom_cb_w = 1u;
+			uint32_t max_nom_cb_h = 1u;
+			for (uint32_t c = 0; c < num_comps; ++c) {
+				// ITU-T T.800 §A.6.1 / §A.6.2 precedence: Tile-part COC > Tile-part COD > Main COC > Main COD.
+				if (tile_ov != nullptr && tile_ov->has_coc[c]) {
+					comp_cod[c] = tile_ov->coc[c];
+				} else if (tile_ov != nullptr && tile_ov->has_cod) {
+					comp_cod[c] = tile_ov->cod;
+				} else if (main_has_coc[c]) {
+					comp_cod[c] = main_coc[c];
+				} else {
+					comp_cod[c] = main_cod;
+				}
+				// ITU-T T.800 §A.6.4 / §A.6.5 precedence: Tile-part QCC > Tile-part QCD > Main QCC > Main QCD.
+				const J2kQcdParams* base_qcd = &main_qcd;
+				if (tile_ov != nullptr && tile_ov->has_qcc[c]) {
+					base_qcd = &tile_ov->qcc[c];
+				} else if (tile_ov != nullptr && tile_ov->has_qcd) {
+					base_qcd = &tile_ov->qcd;
+				} else if (main_has_qcc[c]) {
+					base_qcd = &main_qcc[c];
+				}
+				if (base_qcd->qstyle == 1u) {
+					RECTO_PDF_RETURN_IF_ERROR(parse_qcd_body(
+						base_qcd->raw_pos,
+						base_qcd->raw_len,
+						comp_cod[c].num_decomp_levels,
+						comp_qcd[c]));
+				} else {
+					comp_qcd[c] = *base_qcd;
+				}
+				const size_t required_subbands = 1u + 3u * static_cast<size_t>(comp_cod[c].num_decomp_levels);
+				if (comp_qcd[c].subband_exponents.size() != required_subbands ||
+					comp_qcd[c].subband_mantissas.size() != required_subbands) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"QCD/QCC subband quantization entry count does not match component decomposition levels in JPXDecode");
+				}
+				max_decomp_levels = std::max(max_decomp_levels, comp_cod[c].num_decomp_levels);
+				max_nom_cb_w = std::max(max_nom_cb_w, 1u << comp_cod[c].cb_exp_w);
+				max_nom_cb_h = std::max(max_nom_cb_h, 1u << comp_cod[c].cb_exp_h);
 			}
-			const uint32_t nom_cb_w = 1u << cb_exp_w;
-			const uint32_t nom_cb_h = 1u << cb_exp_h;
 
 			const uint64_t raw_tx0 = static_cast<uint64_t>(xtosiz) + static_cast<uint64_t>(tx) * static_cast<uint64_t>(xtsiz);
 			const uint64_t raw_ty0 = static_cast<uint64_t>(ytosiz) + static_cast<uint64_t>(ty) * static_cast<uint64_t>(ytsiz);
@@ -7979,7 +8179,7 @@ void idwt_97_2d_float(
 				tile_bitstream = concat_tile_stream;
 			}
 
-			// Compute resolution bounds (trx0, try0, trx1, try1) and precinct grids using ITU-T T.800 Annex B ceil_div.
+			// Compute per-component resolution bounds (trx0, try0, trx1, try1) and precinct grids using ITU-T T.800 Annex B ceil_div.
 			auto ceil_div_pow2 = [](uint32_t v, uint32_t p) noexcept -> uint32_t {
 				if (p == 0u) {
 					return v;
@@ -7987,63 +8187,53 @@ void idwt_97_2d_float(
 				const uint64_t add = (uint64_t{1u} << p) - 1ULL;
 				return static_cast<uint32_t>((static_cast<uint64_t>(v) + add) >> p);
 			};
-			struct ResBounds {
-				uint32_t x0 = 0u;
-				uint32_t y0 = 0u;
-				uint32_t x1 = 0u;
-				uint32_t y1 = 0u;
-				uint32_t w = 0u;
-				uint32_t h = 0u;
-				uint8_t ppx = 15u;
-				uint8_t ppy = 15u;
-				uint32_t prec_x0 = 0u;
-				uint32_t prec_y0 = 0u;
-				uint32_t num_prec_x = 0u;
-				uint32_t num_prec_y = 0u;
-				uint32_t num_precincts = 0u;
-			};
-			std::vector<ResBounds> res_bounds(num_decomp_levels + 1u);
-			for (uint8_t r = 0u; r <= num_decomp_levels; ++r) {
-				const uint32_t shift = num_decomp_levels - r;
-				auto& rb = res_bounds[r];
-				rb.x0 = ceil_div_pow2(tx0, shift);
-				rb.y0 = ceil_div_pow2(ty0, shift);
-				rb.x1 = ceil_div_pow2(tx1, shift);
-				rb.y1 = ceil_div_pow2(ty1, shift);
-				rb.w = (rb.x1 > rb.x0) ? (rb.x1 - rb.x0) : 0u;
-				rb.h = (rb.y1 > rb.y0) ? (rb.y1 - rb.y0) : 0u;
-				rb.ppx = ppx_exp[r];
-				rb.ppy = ppy_exp[r];
-				if (rb.w > 0u && rb.h > 0u) {
-					rb.prec_x0 = rb.x0 >> rb.ppx;
-					rb.prec_y0 = rb.y0 >> rb.ppy;
-					const uint32_t prec_x1 = ceil_div_pow2(rb.x1, rb.ppx);
-					const uint32_t prec_y1 = ceil_div_pow2(rb.y1, rb.ppy);
-					rb.num_prec_x = prec_x1 - rb.prec_x0;
-					rb.num_prec_y = prec_y1 - rb.prec_y0;
-					const uint64_t p_total = static_cast<uint64_t>(rb.num_prec_x) * rb.num_prec_y;
-					if (p_total > 65536ULL) {
-						return make_filter_error(
-							ErrorCode::DecompressionLimitExceeded,
-							DiagnosticId::DecompressionLimitExceeded,
-							"JPXDecode precinct grid count exceeds ceiling");
+
+			std::vector<ComponentState> comps(num_comps);
+			uint64_t comp_working_bytes = 0ULL;
+			for (uint32_t c = 0; c < num_comps; ++c) {
+				const uint8_t c_levels = comp_cod[c].num_decomp_levels;
+				comps[c].res_bounds.resize(c_levels + 1u);
+				for (uint8_t r = 0u; r <= c_levels; ++r) {
+					const uint32_t shift = c_levels - r;
+					auto& rb = comps[c].res_bounds[r];
+					rb.x0 = ceil_div_pow2(tx0, shift);
+					rb.y0 = ceil_div_pow2(ty0, shift);
+					rb.x1 = ceil_div_pow2(tx1, shift);
+					rb.y1 = ceil_div_pow2(ty1, shift);
+					rb.w = (rb.x1 > rb.x0) ? (rb.x1 - rb.x0) : 0u;
+					rb.h = (rb.y1 > rb.y0) ? (rb.y1 - rb.y0) : 0u;
+					rb.ppx = comp_cod[c].ppx_exp[r];
+					rb.ppy = comp_cod[c].ppy_exp[r];
+					if (rb.w > 0u && rb.h > 0u) {
+						rb.prec_x0 = rb.x0 >> rb.ppx;
+						rb.prec_y0 = rb.y0 >> rb.ppy;
+						const uint32_t prec_x1 = ceil_div_pow2(rb.x1, rb.ppx);
+						const uint32_t prec_y1 = ceil_div_pow2(rb.y1, rb.ppy);
+						rb.num_prec_x = prec_x1 - rb.prec_x0;
+						rb.num_prec_y = prec_y1 - rb.prec_y0;
+						const uint64_t p_total = static_cast<uint64_t>(rb.num_prec_x) * rb.num_prec_y;
+						if (p_total > 65536ULL) {
+							return make_filter_error(
+								ErrorCode::DecompressionLimitExceeded,
+								DiagnosticId::DecompressionLimitExceeded,
+								"JPXDecode precinct grid count exceeds ceiling");
+						}
+						rb.num_precincts = static_cast<uint32_t>(p_total);
 					}
-					rb.num_precincts = static_cast<uint32_t>(p_total);
 				}
+				comp_working_bytes += static_cast<uint64_t>(tile_w) * tile_h *
+					((comp_cod[c].wavelet_type == 1u) ? sizeof(int32_t) : (sizeof(float) + sizeof(int32_t)));
 			}
 
 			// Enforce cumulative live working-set budget (output buffers + per-tile subband, EBCOT/DWT scratch, and spatial buffers).
 			const uint64_t tile_px64 = static_cast<uint64_t>(tile_w) * tile_h;
 			const uint64_t tile_grid_overhead =
 				tile_spans_table_bytes + total_tile_stream_bytes +
-				static_cast<uint64_t>(num_comps) * (static_cast<uint64_t>(num_decomp_levels) + 1ULL) * 128ULL;
+				static_cast<uint64_t>(num_comps) * (static_cast<uint64_t>(max_decomp_levels) + 1ULL) * 128ULL;
 			const uint64_t dwt_scratch_bytes =
-				(num_decomp_levels > 0u) ? ((tile_px64 + 2ULL * tile_h + 16ULL) * sizeof(int32_t)) : 0ULL;
+				(max_decomp_levels > 0u) ? ((tile_px64 + 2ULL * tile_h + 16ULL) * sizeof(int32_t)) : 0ULL;
 			const uint64_t ebcot_scratch_bytes =
-				static_cast<uint64_t>(std::min(tile_w, nom_cb_w)) * std::min(tile_h, nom_cb_h) * 16ULL + 1024ULL;
-			const uint64_t comp_working_bytes =
-				static_cast<uint64_t>(num_comps) * tile_px64 *
-				((wavelet_type == 1u) ? sizeof(int32_t) : (sizeof(float) + sizeof(int32_t)));
+				static_cast<uint64_t>(std::min(tile_w, max_nom_cb_w)) * std::min(tile_h, max_nom_cb_h) * 16ULL + 1024ULL;
 			uint64_t tile_live_bytes =
 				total_wic_bytes + tile_grid_overhead + concat_tile_stream.size() +
 				std::max(dwt_scratch_bytes, ebcot_scratch_bytes) + comp_working_bytes;
@@ -8054,12 +8244,17 @@ void idwt_97_2d_float(
 					"JPXDecode cumulative tile working-set memory exceeds ceiling");
 			}
 
-			std::vector<ComponentState> comps(num_comps);
 			for (uint32_t c = 0; c < num_comps; ++c) {
-				comps[c].resolutions.resize(num_decomp_levels + 1u);
+				const uint8_t c_levels = comp_cod[c].num_decomp_levels;
+				const uint32_t cb_exp_w = comp_cod[c].cb_exp_w;
+				const uint32_t cb_exp_h = comp_cod[c].cb_exp_h;
+				const uint8_t guard_bits = comp_qcd[c].guard_bits;
+				const auto& subband_exponents = comp_qcd[c].subband_exponents;
+				const auto& subband_mantissas = comp_qcd[c].subband_mantissas;
+				comps[c].resolutions.resize(c_levels + 1u);
 				size_t sb_global_idx = 0u;
-				for (uint8_t r = 0u; r <= num_decomp_levels; ++r) {
-					const ResBounds& rb = res_bounds[r];
+				for (uint8_t r = 0u; r <= c_levels; ++r) {
+					const ResBounds& rb = comps[c].res_bounds[r];
 					ResolutionState& rs = comps[c].resolutions[r];
 					rs.res_w = rb.w;
 					rs.res_h = rb.h;
@@ -8078,7 +8273,7 @@ void idwt_97_2d_float(
 							return make_filter_error(
 								ErrorCode::DamagedFormat,
 								DiagnosticId::DamagedStream,
-								"Missing QCD subband quantization entry in JPXDecode");
+								"Missing QCD/QCC subband quantization entry in JPXDecode");
 						}
 						SubbandState sb{};
 						sb.w = (tbx1 > tbx0) ? (tbx1 - tbx0) : 0u;
@@ -8166,7 +8361,7 @@ void idwt_97_2d_float(
 					if (r == 0u) {
 						RECTO_PDF_RETURN_IF_ERROR(init_subband(rb.x0, rb.y0, rb.x1, rb.y1, 0u, 0u)); // LL0
 					} else {
-						const ResBounds& prev_rb = res_bounds[r - 1u];
+						const ResBounds& prev_rb = comps[c].res_bounds[r - 1u];
 						const uint32_t hx0 = rb.x0 >> 1u;
 						const uint32_t hx1 = rb.x1 >> 1u;
 						const uint32_t hy0 = rb.y0 >> 1u;
@@ -8401,12 +8596,15 @@ void idwt_97_2d_float(
 				return {};
 			};
 
-			auto try_precinct_at_grid_pos = [&](uint32_t x, uint32_t y, uint8_t r, uint32_t& out_k) noexcept -> bool {
-				const ResBounds& rb = res_bounds[r];
+			auto try_precinct_at_grid_pos = [&](uint32_t c, uint32_t x, uint32_t y, uint8_t r, uint32_t& out_k) noexcept -> bool {
+				if (r > comp_cod[c].num_decomp_levels) {
+					return false;
+				}
+				const ResBounds& rb = comps[c].res_bounds[r];
 				if (rb.num_precincts == 0u) {
 					return false;
 				}
-				const uint32_t shift = num_decomp_levels - r;
+				const uint32_t shift = comp_cod[c].num_decomp_levels - r;
 				const uint32_t step_x_exp = rb.ppx + shift;
 				const uint32_t step_y_exp = rb.ppy + shift;
 				const uint64_t step_x = uint64_t{1u} << step_x_exp;
@@ -8431,12 +8629,15 @@ void idwt_97_2d_float(
 
 			uint64_t min_step_x = uint64_t{1u} << 32u;
 			uint64_t min_step_y = uint64_t{1u} << 32u;
-			for (uint8_t r = 0u; r <= num_decomp_levels; ++r) {
-				const uint32_t shift = num_decomp_levels - r;
-				const uint32_t sx_exp = res_bounds[r].ppx + shift;
-				const uint32_t sy_exp = res_bounds[r].ppy + shift;
-				min_step_x = std::min(min_step_x, uint64_t{1u} << sx_exp);
-				min_step_y = std::min(min_step_y, uint64_t{1u} << sy_exp);
+			for (uint32_t c = 0; c < num_comps; ++c) {
+				const uint8_t c_levels = comp_cod[c].num_decomp_levels;
+				for (uint8_t r = 0u; r <= c_levels; ++r) {
+					const uint32_t shift = c_levels - r;
+					const uint32_t sx_exp = comps[c].res_bounds[r].ppx + shift;
+					const uint32_t sy_exp = comps[c].res_bounds[r].ppy + shift;
+					min_step_x = std::min(min_step_x, uint64_t{1u} << sx_exp);
+					min_step_y = std::min(min_step_y, uint64_t{1u} << sy_exp);
+				}
 			}
 			auto next_grid_coord = [](uint32_t cur, uint64_t step, uint32_t end) noexcept -> uint32_t {
 				const uint64_t next = ((static_cast<uint64_t>(cur) / step) + 1ULL) * step;
@@ -8445,30 +8646,41 @@ void idwt_97_2d_float(
 
 			if (prog_order == 0u) { // LRCP (ITU-T T.800 §B.12.1.1: Layer -> Resolution -> Component -> Position)
 				for (uint16_t l = 0; l < num_layers; ++l) {
-					for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
+					for (uint8_t r = 0; r <= max_decomp_levels; ++r) {
 						for (uint32_t c = 0; c < num_comps; ++c) {
-							for (uint32_t k = 0; k < res_bounds[r].num_precincts; ++k) {
+							if (r > comp_cod[c].num_decomp_levels) {
+								continue;
+							}
+							for (uint32_t k = 0; k < comps[c].res_bounds[r].num_precincts; ++k) {
 								RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c, k));
 							}
 						}
 					}
 				}
 			} else if (prog_order == 1u) { // RLCP (ITU-T T.800 §B.12.1.2: Resolution -> Layer -> Component -> Position)
-				for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
+				for (uint8_t r = 0; r <= max_decomp_levels; ++r) {
 					for (uint16_t l = 0; l < num_layers; ++l) {
 						for (uint32_t c = 0; c < num_comps; ++c) {
-							for (uint32_t k = 0; k < res_bounds[r].num_precincts; ++k) {
+							if (r > comp_cod[c].num_decomp_levels) {
+								continue;
+							}
+							for (uint32_t k = 0; k < comps[c].res_bounds[r].num_precincts; ++k) {
 								RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c, k));
 							}
 						}
 					}
 				}
 			} else if (prog_order == 2u) { // RPCL (ITU-T T.800 §B.12.1.3: Resolution -> Position -> Component -> Layer)
-				for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
-					for (uint32_t k = 0; k < res_bounds[r].num_precincts; ++k) {
-						for (uint32_t c = 0; c < num_comps; ++c) {
-							for (uint16_t l = 0; l < num_layers; ++l) {
-								RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c, k));
+				for (uint8_t r = 0; r <= max_decomp_levels; ++r) {
+					for (uint32_t y = ty0; y < ty1; y = next_grid_coord(y, min_step_y, ty1)) {
+						for (uint32_t x = tx0; x < tx1; x = next_grid_coord(x, min_step_x, tx1)) {
+							for (uint32_t c = 0; c < num_comps; ++c) {
+								uint32_t k = 0u;
+								if (try_precinct_at_grid_pos(c, x, y, r, k)) {
+									for (uint16_t l = 0; l < num_layers; ++l) {
+										RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c, k));
+									}
+								}
 							}
 						}
 					}
@@ -8477,9 +8689,9 @@ void idwt_97_2d_float(
 				for (uint32_t y = ty0; y < ty1; y = next_grid_coord(y, min_step_y, ty1)) {
 					for (uint32_t x = tx0; x < tx1; x = next_grid_coord(x, min_step_x, tx1)) {
 						for (uint32_t c = 0; c < num_comps; ++c) {
-							for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
+							for (uint8_t r = 0; r <= comp_cod[c].num_decomp_levels; ++r) {
 								uint32_t k = 0u;
-								if (try_precinct_at_grid_pos(x, y, r, k)) {
+								if (try_precinct_at_grid_pos(c, x, y, r, k)) {
 									for (uint16_t l = 0; l < num_layers; ++l) {
 										RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c, k));
 									}
@@ -8492,9 +8704,9 @@ void idwt_97_2d_float(
 				for (uint32_t c = 0; c < num_comps; ++c) {
 					for (uint32_t y = ty0; y < ty1; y = next_grid_coord(y, min_step_y, ty1)) {
 						for (uint32_t x = tx0; x < tx1; x = next_grid_coord(x, min_step_x, tx1)) {
-							for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
+							for (uint8_t r = 0; r <= comp_cod[c].num_decomp_levels; ++r) {
 								uint32_t k = 0u;
-								if (try_precinct_at_grid_pos(x, y, r, k)) {
+								if (try_precinct_at_grid_pos(c, x, y, r, k)) {
 									for (uint16_t l = 0; l < num_layers; ++l) {
 										RECTO_PDF_RETURN_IF_ERROR(decode_packet(l, r, c, k));
 									}
@@ -8513,9 +8725,12 @@ void idwt_97_2d_float(
 
 			// Tier-1 EBCOT decoding across all components first, releasing all code-block, tag-tree, and EBCOT scratch memory before DWT synthesis.
 			for (uint32_t c = 0; c < num_comps; ++c) {
-				for (uint8_t r = 0; r <= num_decomp_levels; ++r) {
+				const uint8_t c_levels = comp_cod[c].num_decomp_levels;
+				const uint8_t c_wavelet = comp_cod[c].wavelet_type;
+				const uint8_t c_cb_style = comp_cod[c].cb_style;
+				for (uint8_t r = 0; r <= c_levels; ++r) {
 					for (SubbandState& sb : comps[c].resolutions[r].subbands) {
-						if (wavelet_type == 1u) {
+						if (c_wavelet == 1u) {
 							sb.coeffs.assign(static_cast<size_t>(sb.w) * sb.h, 0);
 						} else {
 							sb.coeffs_f.assign(static_cast<size_t>(sb.w) * sb.h, 0.0f);
@@ -8538,13 +8753,13 @@ void idwt_97_2d_float(
 								cb.zero_bitplanes,
 								sb.mb_total,
 								sb.band_type,
-								cb_style,
+								c_cb_style,
 								cb_coeffs);
 							for (uint32_t y = 0; y < cb.h; ++y) {
 								for (uint32_t x = 0; x < cb.w; ++x) {
 									const int32_t q = cb_coeffs[static_cast<size_t>(y) * cb.w + x];
 									const size_t dst_idx = static_cast<size_t>(cb.y0 + y) * sb.w + (cb.x0 + x);
-									if (wavelet_type == 1u) {
+									if (c_wavelet == 1u) {
 										sb.coeffs[dst_idx] = q;
 									} else {
 										sb.coeffs_f[dst_idx] = static_cast<float>(q) * delta_b;
@@ -8563,15 +8778,17 @@ void idwt_97_2d_float(
 
 			// 2D inverse DWT reconstruction for each component.
 			for (uint32_t c = 0; c < num_comps; ++c) {
-				if (wavelet_type == 1u) {
+				const uint8_t c_levels = comp_cod[c].num_decomp_levels;
+				const uint8_t c_wavelet = comp_cod[c].wavelet_type;
+				if (c_wavelet == 1u) {
 					std::vector<int32_t> cur_ll = std::move(comps[c].resolutions[0].subbands[0].coeffs);
 					std::vector<SubbandState>().swap(comps[c].resolutions[0].subbands);
-					for (uint8_t r = 1u; r <= num_decomp_levels; ++r) {
+					for (uint8_t r = 1u; r <= c_levels; ++r) {
 						ResolutionState& rs = comps[c].resolutions[r];
 						const uint32_t ll_w = comps[c].resolutions[r - 1u].res_w;
 						const uint32_t ll_h = comps[c].resolutions[r - 1u].res_h;
-						const bool odd_x = (res_bounds[r].x0 & 1u) != 0u;
-						const bool odd_y = (res_bounds[r].y0 & 1u) != 0u;
+						const bool odd_x = (comps[c].res_bounds[r].x0 & 1u) != 0u;
+						const bool odd_y = (comps[c].res_bounds[r].y0 & 1u) != 0u;
 						std::vector<int32_t> next_ll;
 						idwt_53_2d(
 							rs.res_w,
@@ -8592,12 +8809,12 @@ void idwt_97_2d_float(
 				} else {
 					std::vector<float> cur_ll = std::move(comps[c].resolutions[0].subbands[0].coeffs_f);
 					std::vector<SubbandState>().swap(comps[c].resolutions[0].subbands);
-					for (uint8_t r = 1u; r <= num_decomp_levels; ++r) {
+					for (uint8_t r = 1u; r <= c_levels; ++r) {
 						ResolutionState& rs = comps[c].resolutions[r];
 						const uint32_t ll_w = comps[c].resolutions[r - 1u].res_w;
 						const uint32_t ll_h = comps[c].resolutions[r - 1u].res_h;
-						const bool odd_x = (res_bounds[r].x0 & 1u) != 0u;
-						const bool odd_y = (res_bounds[r].y0 & 1u) != 0u;
+						const bool odd_x = (comps[c].res_bounds[r].x0 & 1u) != 0u;
+						const bool odd_y = (comps[c].res_bounds[r].y0 & 1u) != 0u;
 						std::vector<float> next_ll;
 						idwt_97_2d_float(
 							rs.res_w,
@@ -8619,14 +8836,37 @@ void idwt_97_2d_float(
 				std::vector<ResolutionState>().swap(comps[c].resolutions);
 			}
 
-
 			const size_t tile_pixels = static_cast<size_t>(tile_w) * tile_h;
-			if (wavelet_type != 1u) {
-				for (uint32_t c = 0; c < num_comps; ++c) {
-					comps[c].spatial.resize(tile_pixels);
-				}
-				if (mct_enabled && num_comps >= 3u) {
+			const bool mct_reversible =
+				(num_comps >= 3u) &&
+				(comp_cod[0].wavelet_type == 1u) &&
+				(comp_cod[1].wavelet_type == 1u) &&
+				(comp_cod[2].wavelet_type == 1u);
+			if (mct_enabled && num_comps >= 3u) {
+				if (mct_reversible) {
+					// Inverse Reversible Color Transform (RCT, ITU-T T.800 Annex G.2).
+					for (size_t i = 0; i < tile_pixels; ++i) {
+						const int32_t y0 = comps[0].spatial[i];
+						const int32_t u0 = comps[1].spatial[i];
+						const int32_t v0 = comps[2].spatial[i];
+						const int32_t g = y0 - ((u0 + v0) >> 2);
+						const int32_t r = v0 + g;
+						const int32_t b = u0 + g;
+						comps[0].spatial[i] = r;
+						comps[1].spatial[i] = g;
+						comps[2].spatial[i] = b;
+					}
+				} else {
 					// Inverse Irreversible Color Transform (ICT, ITU-T T.800 Annex G.3).
+					for (uint32_t c = 0; c < 3u; ++c) {
+						if (comp_cod[c].wavelet_type == 1u) {
+							comps[c].spatial_f.resize(tile_pixels);
+							for (size_t i = 0; i < tile_pixels; ++i) {
+								comps[c].spatial_f[i] = static_cast<float>(comps[c].spatial[i]);
+							}
+						}
+						comps[c].spatial.resize(tile_pixels);
+					}
 					for (size_t i = 0; i < tile_pixels; ++i) {
 						const float y0 = comps[0].spatial_f[i];
 						const float cb = comps[1].spatial_f[i];
@@ -8634,29 +8874,24 @@ void idwt_97_2d_float(
 						comps[0].spatial[i] = static_cast<int32_t>(std::lrintf(y0 + 1.402f * cr));
 						comps[1].spatial[i] = static_cast<int32_t>(std::lrintf(y0 - 0.34413f * cb - 0.71414f * cr));
 						comps[2].spatial[i] = static_cast<int32_t>(std::lrintf(y0 + 1.772f * cb));
-						for (uint32_t c = 3u; c < num_comps; ++c) {
-							comps[c].spatial[i] = static_cast<int32_t>(std::lrintf(comps[c].spatial_f[i]));
-						}
 					}
-				} else {
-					for (uint32_t c = 0; c < num_comps; ++c) {
+				}
+				for (uint32_t c = 3u; c < num_comps; ++c) {
+					if (comp_cod[c].wavelet_type != 1u) {
+						comps[c].spatial.resize(tile_pixels);
 						for (size_t i = 0; i < tile_pixels; ++i) {
 							comps[c].spatial[i] = static_cast<int32_t>(std::lrintf(comps[c].spatial_f[i]));
 						}
 					}
 				}
-			} else if (mct_enabled && num_comps >= 3u) {
-				// Inverse Reversible Color Transform (RCT, ITU-T T.800 Annex G.2).
-				for (size_t i = 0; i < tile_pixels; ++i) {
-					const int32_t y0 = comps[0].spatial[i];
-					const int32_t u0 = comps[1].spatial[i];
-					const int32_t v0 = comps[2].spatial[i];
-					const int32_t g = y0 - ((u0 + v0) >> 2);
-					const int32_t r = v0 + g;
-					const int32_t b = u0 + g;
-					comps[0].spatial[i] = r;
-					comps[1].spatial[i] = g;
-					comps[2].spatial[i] = b;
+			} else {
+				for (uint32_t c = 0; c < num_comps; ++c) {
+					if (comp_cod[c].wavelet_type != 1u) {
+						comps[c].spatial.resize(tile_pixels);
+						for (size_t i = 0; i < tile_pixels; ++i) {
+							comps[c].spatial[i] = static_cast<int32_t>(std::lrintf(comps[c].spatial_f[i]));
+						}
+					}
 				}
 			}
 
