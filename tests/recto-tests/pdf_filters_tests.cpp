@@ -2992,6 +2992,54 @@ TEST(PdfFilters, DctRgbAndCmyk)
 				RECTO_EXPECT_ERR(
 					decode_jpx_image(build_coc_qcc_1x1(valid_cod0, bad_scoc, valid_qcd1, {}, {}, {}, pkt_2)),
 					ErrorCode::DamagedFormat);
+
+				// Mixed-component decomposition depths (3 components, COD decomp=1, COC[0] decomp=0, inherited 4-subband QCD):
+				auto build_mixed_depth_3comp = [](std::span<const uint8_t> qcc_body) -> std::vector<uint8_t> {
+					std::vector<uint8_t> b = {0xFFu, 0x4Fu, 0xFFu, 0x51u};
+					append_u16_be(b, 47u);
+					append_u16_be(b, 0u);
+					for (uint32_t v : {1u, 1u, 0u, 0u, 1u, 1u, 0u, 0u}) {
+						append_u32_be(b, v);
+					}
+					append_u16_be(b, 3u);
+					for (int c = 0; c < 3; ++c) {
+						b.insert(b.end(), {7u, 1u, 1u});
+					}
+					// COD: decomp=1
+					b.insert(b.end(), {0xFFu, 0x52u, 0x00u, 12u, 0u, 0u, 0u, 1u, 0u, 1u, 4u, 4u, 0u, 1u});
+					// COC[0]: decomp=0
+					b.insert(b.end(), {0xFFu, 0x53u, 0x00u, 9u, 0u, 0u, 0u, 4u, 4u, 0u, 1u});
+					// QCD: 4 subband entries (1 + 3 * max_decomp_levels)
+					b.insert(b.end(), {0xFFu, 0x5Cu, 0x00u, 7u, 0x40u, 0x40u, 0x40u, 0x40u, 0x40u});
+					if (!qcc_body.empty()) {
+						b.insert(b.end(), {0xFFu, 0x5Du});
+						append_u16_be(b, static_cast<uint16_t>(2u + qcc_body.size()));
+						b.insert(b.end(), qcc_body.begin(), qcc_body.end());
+					}
+					// SOT + SOD + 5 empty packets (3 at r=0 for c=0,1,2; 2 at r=1 for c=1,2) + EOC
+					b.insert(b.end(), {0xFFu, 0x90u, 0x00u, 10u, 0x00u, 0x00u});
+					append_u32_be(b, 19u);
+					b.insert(b.end(), {0u, 1u, 0xFFu, 0x93u, 0u, 0u, 0u, 0u, 0u, 0xFFu, 0xD9u});
+					return b;
+				};
+				// Inherited 4-entry QCD with mixed component depths (c=0 at level 0, c=1,2 at level 1) succeeds:
+				auto dec_mixed_inh = decode_jpx_image(build_mixed_depth_3comp({}));
+				RECTO_ASSERT_OK(dec_mixed_inh);
+				ASSERT_EQ(dec_mixed_inh->pixels.size(), 3u);
+				EXPECT_EQ(dec_mixed_inh->pixels[0], 128u);
+				EXPECT_EQ(dec_mixed_inh->pixels[1], 128u);
+				EXPECT_EQ(dec_mixed_inh->pixels[2], 128u);
+
+				// Explicit 1-entry QCC[0] for level-0 component 0 also succeeds:
+				const std::array<uint8_t, 3> qcc0_1sb = {0u, 0x40u, 0x40u};
+				auto dec_mixed_qcc = decode_jpx_image(build_mixed_depth_3comp(qcc0_1sb));
+				RECTO_ASSERT_OK(dec_mixed_qcc);
+				ASSERT_EQ(dec_mixed_qcc->pixels.size(), 3u);
+
+				// Mismatched 4-entry QCC[0] for level-0 component 0 fails with DamagedFormat:
+				RECTO_EXPECT_ERR(
+					decode_jpx_image(build_mixed_depth_3comp(qcc0_decomp1)),
+					ErrorCode::DamagedFormat);
 			}
 		}
 
