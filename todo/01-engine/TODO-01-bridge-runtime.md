@@ -47,7 +47,7 @@ track: M1
 | 5 | §5 | Classic `xref` tables, trailer merging and `/Prev` incremental update chains | §4, D00 T03 §4 | [x] |
 | 6 | §7 | Lossless stream filters (`Flate`, `LZW`, predictors, `ASCII85`, `ASCIIHex`, `RunLength`) | §4, D00 T03 §4 | [x] |
 | 7 | §6 | PDF 1.5+ `/Type /XRef` streams, `/Type /ObjStm` streams and damaged-file recovery | §5, §7 | [x] |
-| 8 | §8 | Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`) | §7 | [ ] |
+| 8 | §8 | Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`) | §7 | [x] |
 | 9 | §9 | Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG) | §6, §7 | [ ] |
 | 10 | §10 | `pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links | §6, §8, §9 | [ ] |
 
@@ -306,9 +306,12 @@ Complete `src/pdf/filters.cpp` with monochrome bi-level fax/document decompressi
 - [x] Implement thread-local `IWICImagingFactory` (`CoInitializeEx(nullptr, COINIT_MULTITHREADED)` per thread) for `DCTDecode` (JPEG) and `JPXDecode` (JPEG 2000) stream decoding. Done when: 8 concurrent threads decoding JPEG streams in `PdfFilters.ConcurrentWicDecode` succeed with zero COM/WIC errors under ASan. Cheaper substitute: a single global `IWICImagingFactory` shared unsafely across threads.
 - [x] Handle CMYK / YCCK JPEG colour conversion (`GUID_WICPixelFormat32bppCMYK` -> RGBA/BGRA via `IWICFormatConverter` or ISO CMYK-to-sRGB formula) and `/Decode` array inversion (`[1 0 1 0 1 0 1 0]` for Adobe inverted CMYK JPEGs). Done when: `PdfFilters.DctRgbAndCmyk` decodes both RGB and Adobe CMYK JPEGs to expected pixel values.
 - [x] Check image header dimensions (`uint64_t(width) * uint64_t(height) * 4 <= 256 MB`) before allocating pixel buffers in `CCITTFaxDecode`, `JBIG2Decode`, `DCTDecode`, and `JPXDecode`. Done when: a crafted JPEG/CCITT header claiming `65535 x 65535` pixels is rejected with `ErrorCode::DecompressionLimitExceeded` before allocating memory.
-- [ ] Commit: `pdf: add CCITTFax Group 3/4, JBIG2 and thread-safe WIC DCT/JPX decoders`
+- [x] Commit: `pdf: add CCITTFax Group 3/4, JBIG2 and thread-safe WIC DCT/JPX decoders`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan across all lossless, CCITT, JBIG2, and WIC image tests.
+
+> **Verified:** 2026-10-19 | §8 | 56de060e40d733fa1bcc0edd8890cbcc8799a0fc
+> **Review:** `docs/reviews/d01-t01-s8.json`
 
 ## 9. Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG)
 
