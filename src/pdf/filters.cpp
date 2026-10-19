@@ -7489,7 +7489,15 @@ void idwt_97_2d_float(
 				seg_pos);
 		}
 		out_cod.num_layers = raw_layers;
-		out_cod.mct_enabled = (cs[seg_pos + 6u] != 0u);
+		const uint8_t raw_mct = cs[seg_pos + 6u];
+		if (raw_mct > 1u || (raw_mct == 1u && num_comps < 3u)) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid multiple component transformation flag in JPXDecode COD marker",
+				seg_pos);
+		}
+		out_cod.mct_enabled = (raw_mct == 1u);
 		out_cod.num_decomp_levels = cs[seg_pos + 7u];
 		if (out_cod.num_decomp_levels > 10u) {
 			return make_filter_error(
@@ -7498,18 +7506,42 @@ void idwt_97_2d_float(
 				"Excessive DWT decomposition levels in JPXDecode COD marker",
 				seg_pos);
 		}
-		out_cod.cb_exp_w = std::clamp<uint32_t>(static_cast<uint32_t>(cs[seg_pos + 8u] & 0x0Fu) + 2u, 2u, 10u);
-		out_cod.cb_exp_h = std::clamp<uint32_t>(static_cast<uint32_t>(cs[seg_pos + 9u] & 0x0Fu) + 2u, 2u, 10u);
+		const uint8_t raw_xcb = cs[seg_pos + 8u];
+		const uint8_t raw_ycb = cs[seg_pos + 9u];
+		if (raw_xcb > 8u || raw_ycb > 8u || (raw_xcb + 2u) + (raw_ycb + 2u) > 12u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid code-block width/height exponents in JPXDecode COD marker",
+				seg_pos);
+		}
+		out_cod.cb_exp_w = static_cast<uint32_t>(raw_xcb) + 2u;
+		out_cod.cb_exp_h = static_cast<uint32_t>(raw_ycb) + 2u;
 		out_cod.cb_style = cs[seg_pos + 10u];
+		if (out_cod.cb_style != 0u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid or unsupported code-block style in JPXDecode COD marker",
+				seg_pos);
+		}
 		out_cod.wavelet_type = cs[seg_pos + 11u];
+		if (out_cod.wavelet_type > 1u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Invalid wavelet transformation type in JPXDecode COD marker",
+				seg_pos);
+		}
 		out_cod.ppx_exp.fill(15u);
 		out_cod.ppy_exp.fill(15u);
 		if ((scod & 0x01u) != 0u) {
-			if (seg_len < 12u + static_cast<uint16_t>(out_cod.num_decomp_levels) + 1u) {
+			const uint16_t expected_len = 12u + static_cast<uint16_t>(out_cod.num_decomp_levels) + 1u;
+			if (seg_len != expected_len) {
 				return make_filter_error(
 					ErrorCode::DamagedFormat,
 					DiagnosticId::DamagedStream,
-					"Truncated explicit precinct sizes in JPXDecode COD marker",
+					"Invalid explicit precinct sizes length in JPXDecode COD marker",
 					seg_pos);
 			}
 			for (uint8_t r = 0u; r <= out_cod.num_decomp_levels; ++r) {
@@ -7524,6 +7556,12 @@ void idwt_97_2d_float(
 						seg_pos);
 				}
 			}
+		} else if (seg_len != 12u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Unexpected extra bytes in default-precinct JPXDecode COD marker",
+				seg_pos);
 		}
 		return {};
 	};
@@ -7545,25 +7583,46 @@ void idwt_97_2d_float(
 		out_qcd.subband_mantissas.clear();
 		if (out_qcd.qstyle == 0u) { // Reversible no quantization (1 byte per subband)
 			for (size_t i = 3u; i < seg_len; ++i) {
+				if ((cs[seg_pos + i] & 0x07u) != 0u) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Non-zero reserved bits in reversible JPXDecode QCD entry",
+						seg_pos + i);
+				}
 				out_qcd.subband_exponents.push_back(static_cast<uint8_t>((cs[seg_pos + i] >> 3u) & 0x1Fu));
 				out_qcd.subband_mantissas.push_back(0u);
 			}
-		} else if (out_qcd.qstyle == 1u && seg_len >= 5u) { // Scalar derived
+		} else if (out_qcd.qstyle == 1u) { // Scalar derived (1 16-bit entry for LL0)
+			if (seg_len != 5u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Invalid scalar-derived QCD marker length in JPXDecode codestream",
+					seg_pos);
+			}
 			const uint16_t sp = read_u16_be(cs.data() + seg_pos + 3u);
 			const uint8_t eps0 = static_cast<uint8_t>((sp >> 11u) & 0x1Fu);
 			const uint16_t mu0 = static_cast<uint16_t>(sp & 0x7FFu);
 			out_qcd.subband_exponents.push_back(eps0);
 			out_qcd.subband_mantissas.push_back(mu0);
-			for (uint8_t r = 1u; r <= 10u; ++r) {
-				const uint8_t er = (eps0 + r > decomp_levels)
-					? static_cast<uint8_t>(eps0 + r - 1u)
-					: eps0;
+			for (uint8_t r = 1u; r <= decomp_levels; ++r) {
+				const uint8_t er = (eps0 >= (r - 1u))
+					? static_cast<uint8_t>(eps0 - (r - 1u))
+					: 0u;
 				for (int b = 0; b < 3; ++b) {
 					out_qcd.subband_exponents.push_back(er);
 					out_qcd.subband_mantissas.push_back(mu0);
 				}
 			}
-		} else if (out_qcd.qstyle == 2u && seg_len >= 5u) { // Scalar expounded (2 bytes per subband)
+		} else if (out_qcd.qstyle == 2u) { // Scalar expounded (2 bytes per subband)
+			if (seg_len < 5u || ((seg_len - 3u) & 1u) != 0u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"Invalid or odd-byte scalar-expounded QCD marker length in JPXDecode codestream",
+					seg_pos);
+			}
 			for (size_t i = 3u; i + 1u < seg_len; i += 2u) {
 				const uint16_t sp = read_u16_be(cs.data() + seg_pos + i);
 				out_qcd.subband_exponents.push_back(static_cast<uint8_t>((sp >> 11u) & 0x1Fu));
@@ -7879,6 +7938,13 @@ void idwt_97_2d_float(
 			const uint8_t guard_bits = active_qcd->guard_bits;
 			const auto& subband_exponents = active_qcd->subband_exponents;
 			const auto& subband_mantissas = active_qcd->subband_mantissas;
+			const size_t required_subbands = 1u + 3u * static_cast<size_t>(num_decomp_levels);
+			if (subband_exponents.size() != required_subbands || subband_mantissas.size() != required_subbands) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"QCD subband quantization entry count does not match COD decomposition levels in JPXDecode");
+			}
 			const uint32_t nom_cb_w = 1u << cb_exp_w;
 			const uint32_t nom_cb_h = 1u << cb_exp_h;
 
@@ -7999,17 +8065,19 @@ void idwt_97_2d_float(
 					const uint32_t cbs_per_prec_y = 1u << (sub_ppy - eff_cb_exp_h);
 
 					auto init_subband = [&](uint32_t tbx0, uint32_t tby0, uint32_t tbx1, uint32_t tby1, uint8_t btype, uint8_t bgain) -> PdfResult<void> {
+						if (sb_global_idx >= subband_exponents.size() || sb_global_idx >= subband_mantissas.size()) {
+							return make_filter_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedStream,
+								"Missing QCD subband quantization entry in JPXDecode");
+						}
 						SubbandState sb{};
 						sb.w = (tbx1 > tbx0) ? (tbx1 - tbx0) : 0u;
 						sb.h = (tby1 > tby0) ? (tby1 - tby0) : 0u;
 						sb.band_type = btype;
 						sb.gain = bgain;
-						sb.eps = (sb_global_idx < subband_exponents.size())
-							? subband_exponents[sb_global_idx]
-							: bit_depth;
-						sb.mu = (sb_global_idx < subband_mantissas.size())
-							? subband_mantissas[sb_global_idx]
-							: 0u;
+						sb.eps = subband_exponents[sb_global_idx];
+						sb.mu = subband_mantissas[sb_global_idx];
 						++sb_global_idx;
 						sb.mb_total = (sb.eps + guard_bits > 1u)
 							? static_cast<uint32_t>(sb.eps + guard_bits - 1u)

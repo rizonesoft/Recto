@@ -2756,6 +2756,120 @@ TEST(PdfFilters, DctRgbAndCmyk)
 
 				// Missing required packet header (empty tile payload between SOD and EOC) fails with DamagedFormat
 				RECTO_EXPECT_ERR(decode_jpx_image(build_tile_cod_1x1(-1, false, true)), ErrorCode::DamagedFormat);
+
+				// Main-header and tile-header COD raw field validation (wavelet_type=2, xcb_offset=255, cb_style=0x40, mct=1 on 1-comp):
+				auto build_custom_cod_qcd_1x1 = [](
+					std::span<const uint8_t> main_cod_body,
+					std::span<const uint8_t> main_qcd_body,
+					std::span<const uint8_t> tile_cod_body,
+					std::span<const uint8_t> tile_qcd_body,
+					std::span<const uint8_t> pkt_bytes) -> std::vector<uint8_t> {
+					std::vector<uint8_t> b = {0xFFu, 0x4Fu, 0xFFu, 0x51u};
+					append_u16_be(b, 41u);
+					append_u16_be(b, 0u);
+					for (uint32_t v : {1u, 1u, 0u, 0u, 1u, 1u, 0u, 0u}) {
+						append_u32_be(b, v);
+					}
+					append_u16_be(b, 1u);
+					b.insert(b.end(), {7u, 1u, 1u});
+					b.insert(b.end(), {0xFFu, 0x52u});
+					append_u16_be(b, static_cast<uint16_t>(2u + main_cod_body.size()));
+					b.insert(b.end(), main_cod_body.begin(), main_cod_body.end());
+					b.insert(b.end(), {0xFFu, 0x5Cu});
+					append_u16_be(b, static_cast<uint16_t>(2u + main_qcd_body.size()));
+					b.insert(b.end(), main_qcd_body.begin(), main_qcd_body.end());
+					b.insert(b.end(), {0xFFu, 0x90u, 0x00u, 10u, 0x00u, 0x00u});
+					const uint32_t tile_hdr_extra =
+						(tile_cod_body.empty() ? 0u : static_cast<uint32_t>(4u + tile_cod_body.size())) +
+						(tile_qcd_body.empty() ? 0u : static_cast<uint32_t>(4u + tile_qcd_body.size()));
+					append_u32_be(b, 14u + tile_hdr_extra + static_cast<uint32_t>(pkt_bytes.size()));
+					b.insert(b.end(), {0u, 1u});
+					if (!tile_cod_body.empty()) {
+						b.insert(b.end(), {0xFFu, 0x52u});
+						append_u16_be(b, static_cast<uint16_t>(2u + tile_cod_body.size()));
+						b.insert(b.end(), tile_cod_body.begin(), tile_cod_body.end());
+					}
+					if (!tile_qcd_body.empty()) {
+						b.insert(b.end(), {0xFFu, 0x5Cu});
+						append_u16_be(b, static_cast<uint16_t>(2u + tile_qcd_body.size()));
+						b.insert(b.end(), tile_qcd_body.begin(), tile_qcd_body.end());
+					}
+					b.insert(b.end(), {0xFFu, 0x93u});
+					b.insert(b.end(), pkt_bytes.begin(), pkt_bytes.end());
+					b.insert(b.end(), {0xFFu, 0xD9u});
+					return b;
+				};
+
+				const std::array<uint8_t, 10> valid_cod0 = {0u, 0u, 0u, 1u, 0u, 0u, 4u, 4u, 0u, 1u};
+				const std::array<uint8_t, 2> valid_qcd0 = {0x40u, 0x40u};
+				const std::array<uint8_t, 1> pkt_1 = {0x00u};
+				for (bool in_tile : {false, true}) {
+					// wavelet_type = 2
+					auto bad_wv = valid_cod0;
+					bad_wv[9] = 2u;
+					RECTO_EXPECT_ERR(
+						decode_jpx_image(build_custom_cod_qcd_1x1(
+							in_tile ? std::span<const uint8_t>(valid_cod0) : std::span<const uint8_t>(bad_wv),
+							valid_qcd0,
+							in_tile ? std::span<const uint8_t>(bad_wv) : std::span<const uint8_t>{},
+							{},
+							pkt_1)),
+						ErrorCode::DamagedFormat);
+
+					// width offset = 255
+					auto bad_xcb = valid_cod0;
+					bad_xcb[6] = 255u;
+					RECTO_EXPECT_ERR(
+						decode_jpx_image(build_custom_cod_qcd_1x1(
+							in_tile ? std::span<const uint8_t>(valid_cod0) : std::span<const uint8_t>(bad_xcb),
+							valid_qcd0,
+							in_tile ? std::span<const uint8_t>(bad_xcb) : std::span<const uint8_t>{},
+							{},
+							pkt_1)),
+						ErrorCode::DamagedFormat);
+
+					// cb_style = 0x40
+					auto bad_style = valid_cod0;
+					bad_style[8] = 0x40u;
+					RECTO_EXPECT_ERR(
+						decode_jpx_image(build_custom_cod_qcd_1x1(
+							in_tile ? std::span<const uint8_t>(valid_cod0) : std::span<const uint8_t>(bad_style),
+							valid_qcd0,
+							in_tile ? std::span<const uint8_t>(bad_style) : std::span<const uint8_t>{},
+							{},
+							pkt_1)),
+						ErrorCode::DamagedFormat);
+				}
+
+				// Positive & negative QCD override tests:
+				// Tile COD with decomposition=1 and inherited 1-subband QCD (style=0) must be rejected with DamagedFormat.
+				const std::array<uint8_t, 10> cod_decomp1 = {0u, 0u, 0u, 1u, 0u, 1u, 4u, 4u, 0u, 1u};
+				const std::array<uint8_t, 2> pkt_2 = {0x00u, 0x00u};
+				RECTO_EXPECT_ERR(
+					decode_jpx_image(build_custom_cod_qcd_1x1(valid_cod0, valid_qcd0, cod_decomp1, {}, pkt_2)),
+					ErrorCode::DamagedFormat);
+
+				// Main COD with decomposition=1 and 1-subband main QCD (style=0) must be rejected with DamagedFormat.
+				RECTO_EXPECT_ERR(
+					decode_jpx_image(build_custom_cod_qcd_1x1(cod_decomp1, valid_qcd0, {}, {}, pkt_2)),
+					ErrorCode::DamagedFormat);
+
+				// Positive tile QCD override: tile COD with decomposition=1 + tile QCD with 4 subband entries succeeds!
+				const std::array<uint8_t, 5> valid_qcd1 = {0x40u, 0x40u, 0x40u, 0x40u, 0x40u};
+				auto dec_tile_qcd = decode_jpx_image(
+					build_custom_cod_qcd_1x1(valid_cod0, valid_qcd0, cod_decomp1, valid_qcd1, pkt_2));
+				RECTO_ASSERT_OK(dec_tile_qcd);
+				ASSERT_EQ(dec_tile_qcd->pixels.size(), 1u);
+				EXPECT_EQ(dec_tile_qcd->pixels[0], 128u);
+
+				// Incomplete 16-bit entry in scalar-expounded QCD (qstyle = 2, 3 bytes of SPqcd) must be rejected.
+				const std::array<uint8_t, 4> odd_qcd2 = {0x42u, 0x40u, 0x00u, 0x40u};
+				RECTO_EXPECT_ERR(
+					decode_jpx_image(build_custom_cod_qcd_1x1(valid_cod0, odd_qcd2, {}, {}, pkt_1)),
+					ErrorCode::DamagedFormat);
+				RECTO_EXPECT_ERR(
+					decode_jpx_image(build_custom_cod_qcd_1x1(valid_cod0, valid_qcd0, {}, odd_qcd2, pkt_1)),
+					ErrorCode::DamagedFormat);
 			}
 		}
 
