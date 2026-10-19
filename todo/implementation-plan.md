@@ -115,7 +115,7 @@ Sections: 45 | Checklist items: 373
 
 ### Phase 3: M3 Text
 
-Sections: 28 | Checklist items: 214
+Sections: 28 | Checklist items: 216
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -125,8 +125,8 @@ Sections: 28 | Checklist items: 214
 | [ ]    | D03 T01 §4  | Dark floating selection toolbar, right-click context menu and clipboard copy             | windows-host, display-session | 8     |
 | [ ]    | D03 T01 §5  | Background find engine (`Match case`, `Whole word`, `Regex`) and `recto-cli find`        | windows-host                  | 8     |
 | [ ]    | D03 T01 §6  | `Ctrl+F` floating `FindCard`, Reading room `Search` inspector tab and hit highlights     | windows-host, display-session | 7     |
-| [ ]    | D03 T01 §7  | Scanned-page and vector-curve-outlined text detector plus C++20 OCR image preprocessor   | windows-host                  | 8     |
-| [ ]    | D03 T01 §8  | `Windows.Media.Ocr` (`OcrPipeline`), `PageText` quad mapping and `recto-cli ocr --text`  | windows-host                  | 7     |
+| [ ]    | D03 T01 §7  | Scanned/outlined detector, C++20 OCR preprocessor, line removal & XY-cut layout          | windows-host                  | 10    |
+| [ ]    | D03 T01 §8  | Hybrid Neural OCR + `Windows.Media.Ocr` pipeline, CTC quad alignment & CLI               | windows-host                  | 7     |
 | [ ]    | D03 T01 §9  | Content-stream Find & Replace (`text_replace.cpp`), `recto-cli replace` and `Ctrl+H`     | windows-host, display-session | 8     |
 | [ ]    | D03 T01 §10 | Two-document comparison (`pdf_compare.cpp`), `recto-cli compare` and `Ctrl+Shift+D`      | windows-host, display-session | 8     |
 | [ ]    | D03 T02 §1  | `DocumentViewAutomationPeer` implementing `ITextProvider` and `ITextRangeProvider`       | windows-host, display-session | 8     |
@@ -155,12 +155,12 @@ Sections: 41 | Checklist items: 292
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
 | [ ]    | D04 T01 §1  | Isolated `ConversionJob` 2-worker runtime, dedicated `pdf::Document` and `CancelToken`   | windows-host                  | 8     |
-| [ ]    | D04 T01 §2  | Job result & recovery state machine (`Completed`..`NeedsConverter`) and temp cleanup     | windows-host                  | 7     |
+| [ ]    | D04 T01 §2  | Job result & recovery state machine (`Completed`..`NeedsPassword`) and temp cleanup      | windows-host                  | 7     |
 | [ ]    | D04 T01 §3  | Convert Step 1 (`Files` drop zone & chips) and Step 2 (`What to make` card registry)     | windows-host, display-session | 8     |
 | [ ]    | D04 T01 §4  | Convert Step 3 dynamic options host, capability hint line, and primary action button     | windows-host, display-session | 8     |
 | [ ]    | D04 T01 §5  | App-wide floating `QueueCard` (progress ring, job states, expanded list, per-job cancel) | windows-host, display-session | 7     |
 | [ ]    | D04 T01 §6  | Focus-aware completion notices (Windows toast vs in-app toast, `Open file` & folder)     | windows-host, display-session | 7     |
-| [ ]    | D04 T01 §7  | Queue error recovery (`Enter password` modal retry, missing converter, batch breakdown)  | windows-host, display-session | 7     |
+| [ ]    | D04 T01 §7  | Queue error recovery (`Enter password` modal retry, transient retry, batch breakdown)    | windows-host, display-session | 7     |
 | [ ]    | D04 T02 §1  | `AtomicFileWriter` (`src/core/atomic_file.cpp`) sibling temp-then-replace and rollback   | windows-host                  | 8     |
 | [ ]    | D04 T02 §2  | Native `PdfWriter` (`writer.cpp`: object allocation, `FlateDecode`, `/Pages`, `xref`)    | windows-host                  | 7     |
 | [ ]    | D04 T02 §3  | Streamed `PDF -> Images` (`PNG`, `JPEG`, `BMP`, Multipage `TIFF`, `GIF`) and CLI command | windows-host                  | 8     |
@@ -198,7 +198,7 @@ Sections: 41 | Checklist items: 292
 
 ### Phase 5: M5 Conversions B
 
-Sections: 24 | Checklist items: 168
+Sections: 23 | Checklist items: 159
 
 | Status | Reference  | Deliverable                                                                              | Needs                         | Items |
 | ------ | ---------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -211,11 +211,10 @@ Sections: 24 | Checklist items: 168
 | [ ]    | D04 T03 §6 | Foundation plan section 11 **20-document PDF -> Word quality review** and layout tuning  | windows-host                  | 7     |
 | [ ]    | D04 T04 §2 | Built-in C++20 Excel (`.xlsx`), `.csv`, and PowerPoint (`.pptx`) to PDF layout engines   | windows-host                  | 7     |
 | [ ]    | D04 T04 §3 | Built-in C++20 `HTML/CSS` (`.html`) and `Markdown` (`.md`) to PDF engine and CLI verbs   | windows-host                  | 7     |
-| [ ]    | D04 T04 §4 | Installed converter detection (`detect_office_converters()` for Office & LibreOffice)    | windows-host                  | 7     |
-| [ ]    | D04 T04 §5 | STA Office COM adapter (`office_com.cpp`) with `msoAutomationSecurityForceDisable`       | windows-host, office          | 7     |
-| [ ]    | D04 T04 §6 | LibreOffice headless adapter (`office_libreoffice.cpp`) with profile & Win32 Job Object  | windows-host                  | 7     |
+| [ ]    | D04 T04 §4 | Native C++20 OLE2 Compound File (`[MS-CFB]`) reader and VBA macro stream stripper        | windows-host                  | 6     |
+| [ ]    | D04 T04 §5 | Native C++20 legacy Word 97-2003 (`.doc`) binary parser to `FlowDocumentModel` & PDF     | windows-host                  | 6     |
+| [ ]    | D04 T04 §6 | Native C++20 legacy Excel (`.xls` BIFF8) and PowerPoint (`.ppt`) binary parsers to PDF   | windows-host                  | 6     |
 | [ ]    | D04 T04 §7 | Convert **PDF from Office, HTML, Markdown & Images** card and Step 3 UI (`SPEC 9.5`)     | windows-host, display-session | 7     |
-| [ ]    | D04 T04 §8 | Settings converter selector (`D02 T04 §5`) and `Install Office or LibreOffice` dialog    | windows-host, display-session | 6     |
 | [ ]    | D04 T05 §1 | Native ECMA-376 `XlsxWriter` (`.xlsx`, `.csv`, `.xml`) over `TableExtractor` and CLI     | windows-host                  | 8     |
 | [ ]    | D04 T05 §2 | Convert page **Excel & Data (`.xlsx`, `.csv`, `.xml`)** card and Step 3 UI (`SPEC 9.5`)  | windows-host, display-session | 6     |
 | [ ]    | D04 T05 §3 | `WebDocWriter` HTML5 (`Fixed` & `Flowing`) and GitHub-Flavored Markdown (`.md`) export   | windows-host                  | 7     |
@@ -265,6 +264,6 @@ Sections: 4 | Checklist items: 20
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
-Progress: 21/205 verified sections, 4 ready to run now.
+Progress: 21/204 verified sections, 4 ready to run now.
 
-Checklist: 117/1471 items completed (includes Commit items).
+Checklist: 117/1464 items completed (includes Commit items).
