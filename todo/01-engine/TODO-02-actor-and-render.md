@@ -12,7 +12,7 @@ track: M1
 
 > **Goal:** Complete the rendering and incremental-save engine in `src/pdf` and the multi-threaded actor and tile-rendering runtime in `src/core`: the immutable `DisplayList` command buffer, DirectWrite in-memory font loader (embedded TrueType/OpenType/CFF, Type 1 charstrings, Type 3 procedural glyphs, Standard 14 fonts, `/ToUnicode` and encoding maps), the PDF content-stream interpreter (graphics state, paths, clipping, colour spaces, text positioning, images, Form XObjects), the incremental PDF revision writer (`src/pdf/incremental_writer.cpp`), Direct2D tile rasterization with sub-10 ms cooperative `CancelToken` abort, `DocumentActor` threads, `RenderPool` workers, 4-tier `TileScheduler`, and foundation plan section 4.8 ordered `Runtime` shutdown.
 
-> **Current state:** Measured 2026-10-14. `src/core/recto-core.vcxproj` compiles the scaffold `recto::core::abi_version()` entry point. `D01 T01` provides `recto::pdf::Document`, decoded streams, resources, and page geometry.
+> **Current state:** **Corrected 2026-10-19:** (was: Measured 2026-10-14 claiming `D01 T01` already provided `recto::pdf::Document`) `src/core/recto-core.vcxproj` compiles the scaffold `recto::core::abi_version()` entry point. `D01 T01 §1-§7` are verified (`PdfResult<T>`, `PdfValue`, `Lexer`, `Parser`, `XrefTable`, `ObjStm` & damaged-file recovery, and lossless stream filters); `D01 T01 §8-§10` complete bi-level/image filters, CNG decryption, and `recto::pdf::Document` before `§1` and `§5` begin.
 
 ## Inputs
 
