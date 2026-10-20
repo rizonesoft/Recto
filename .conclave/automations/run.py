@@ -1,15 +1,17 @@
-"""Run one Recto automation, keep its log, and email the operator when it fails.
+"""Run one scheduled automation, keep its log, and email the operator when it fails.
 
     python .conclave/automations/run.py NAME
+    python .conclave/automations/run.py --check       (installers) print the folder, or refuse tasks.json
+    python .conclave/automations/run.py --units DIR   (install.sh) write a systemd user unit pair per task
 
-Task Scheduler starts this through `pythonw.exe` (install.ps1 registers every task in tasks.json with it). It
-runs the task's command from the repository root with the task's timeout, writes the combined output to
-`build/automations/<name>/<UTC>.log` (the newest 20 kept) and the outcome to `build/automations/<name>/last.json`,
-and on a non-zero exit, a timeout, or a command that cannot start (126) sends the failure email through
-alert.py. Every process it starts, and every nested launch in the tasks, carries CREATE_NO_WINDOW, so a
-scheduled run never opens a console on the desktop. Windows has no systemd
-`OnFailure=`, so this wrapper is the one place a failure is reported. Its own exit is the command's (124 on a
-timeout, or 3 when the alert could not be sent), so Task Scheduler's Last Run Result shows the failure too.
+Windows Task Scheduler starts this through `pythonw.exe` (install.ps1 registers every task in tasks.json with it),
+and on Linux and WSL a systemd user timer starts it (install.sh). It runs the task's command from the repository
+root with the task's timeout, writes the combined output to `build/automations/<name>/<UTC>.log` (the newest 20
+kept) and the outcome to `build/automations/<name>/last.json`, and on a non-zero exit, a timeout, or a command that
+cannot start (126) sends the failure email through alert.py. Every process it starts, and every nested launch in
+the tasks, carries CREATE_NO_WINDOW on Windows, so a scheduled run never opens a console on the desktop. This
+wrapper is the one place a failure is reported on both schedulers. Its own exit is the command's (124 on a timeout,
+or 3 when the alert could not be sent), so Task Scheduler's Last Run Result and a failed systemd unit show it too.
 """
 
 from __future__ import annotations
@@ -19,68 +21,84 @@ import importlib.util
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
-import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
-NAME = re.compile(r"^recto-[a-z0-9-]+$")
+FOLDER = re.compile(r"^\\([A-Za-z0-9][A-Za-z0-9._-]*)\\$")
 DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 KEEP_LOGS = 20
 NO_WINDOW = 0x08000000
+MARKER = "# conclave-automations: "
 
 
 class TaskError(ValueError):
     pass
 
 
-def load_tasks(path: str) -> dict[str, dict]:
-    """The tasks in tasks.json by name, refused unless every entry is well formed (types checked before use)."""
+def _whole(value) -> bool:
+    """A positive whole number; JSON `true` is a Python int, and is refused."""
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def load_manifest(path: str) -> dict:
+    """tasks.json as {"folder", "prefix", "tasks" by name}, refused unless every entry is well formed.
+
+    `folder` is the project's Task Scheduler folder (`\\Isotone\\`), and every task name starts with the folder's
+    name in lower case and a hyphen (`isotone-`), so two projects never share a folder or a unit name. A freshly
+    installed kit has `folder: null` and no tasks until the project names its folder.
+    """
     with open(path, encoding="utf-8") as fh:
         doc = json.load(fh)
-    if (not isinstance(doc, dict) or type(doc.get("schema_version")) is not int or doc["schema_version"] != 1
-            or doc.get("folder") != "\\Recto\\" or not isinstance(doc.get("tasks"), list)):
-        raise TaskError("tasks.json needs schema_version 1, folder \\Recto\\, and a tasks list")
+    if not isinstance(doc, dict) or doc.get("schema_version") != 1 or not isinstance(doc.get("tasks"), list):
+        raise TaskError("tasks.json needs schema_version 1 and a tasks list")
+    folder = doc.get("folder")
+    if folder is None:
+        if doc["tasks"]:
+            raise TaskError("tasks.json lists tasks but no folder: set folder to \\<Project>\\ first")
+        return {"folder": None, "prefix": None, "tasks": {}}
+    match = FOLDER.fullmatch(folder) if isinstance(folder, str) else None
+    if not match:
+        raise TaskError("tasks.json folder must be one Task Scheduler folder, like \\Isotone\\")
+    prefix = match.group(1).lower() + "-"
+    name_rule = re.compile(re.escape(prefix) + r"[a-z0-9][a-z0-9-]*")
     out: dict[str, dict] = {}
     for task in doc["tasks"]:
         if not isinstance(task, dict):
             raise TaskError(f"every task must be an object, not {task!r}")
-        name = task.get("name")
-        if not isinstance(name, str) or not NAME.fullmatch(name) or name in out:
-            raise TaskError(f"task name {name!r} must be a unique recto-* name")
+        name = task.get("name", "")
+        if not isinstance(name, str) or not name_rule.fullmatch(name) or name in out:
+            raise TaskError(f"task name {name!r} must be a unique {prefix}* name")
         if set(task) != {"name", "description", "command", "trigger", "timeout_minutes"}:
             raise TaskError(f"{name}: needs exactly name, description, command, trigger, timeout_minutes")
-        if not isinstance(task["description"], str) or not task["description"].strip():
-            raise TaskError(f"{name}: description must be non-empty text")
+        description = task["description"]
+        if not isinstance(description, str) or not description.strip() or "\n" in description or "\r" in description:
+            raise TaskError(f"{name}: description must be one non-empty line")
         command = task["command"]
-        if (not isinstance(command, list) or not command
-                or not all(isinstance(c, str) and c and chr(0) not in c for c in command)):
-            raise TaskError(f"{name}: command must be a non-empty list of strings without NUL")
+        if not isinstance(command, list) or not command or not all(isinstance(c, str) and c for c in command):
+            raise TaskError(f"{name}: command must be a non-empty list of strings")
         if not _whole(task["timeout_minutes"]):
             raise TaskError(f"{name}: timeout_minutes must be a positive whole number")
         trigger = task["trigger"]
         if not isinstance(trigger, dict):
-            raise TaskError(f"{name}: trigger must be an object")
+            raise TaskError(f"{name}: trigger must be at-logon-and-every or weekly-at")
         if set(trigger) == {"at_logon_delay_minutes", "every_minutes"}:
             if not all(_whole(trigger[k]) for k in trigger):
                 raise TaskError(f"{name}: a logon trigger needs positive whole minutes")
-        elif set(trigger) == {"daily_at"}:
-            if not isinstance(trigger["daily_at"], str) or not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", trigger["daily_at"]):
-                raise TaskError(f"{name}: a daily trigger needs an HH:MM time")
         elif set(trigger) == {"weekly", "at"}:
-            if (trigger["weekly"] not in DAYS or not isinstance(trigger["at"], str)
-                    or not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", trigger["at"])):
+            if trigger["weekly"] not in DAYS or not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", str(trigger["at"])):
                 raise TaskError(f"{name}: a weekly trigger needs a day name and an HH:MM time")
         else:
-            raise TaskError(f"{name}: trigger must be at-logon-and-every, daily-at or weekly-at")
+            raise TaskError(f"{name}: trigger must be at-logon-and-every or weekly-at")
         out[name] = task
-    return out
+    return {"folder": folder, "prefix": prefix, "tasks": out}
 
 
-def _whole(value) -> bool:
-    """A positive whole number; JSON true is not one, though Python counts bool as int."""
-    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+def load_tasks(path: str) -> dict[str, dict]:
+    """The tasks in tasks.json by name, refused unless every entry is well formed."""
+    return load_manifest(path)["tasks"]
 
 
 def resolve(command: list[str]) -> list[str]:
@@ -94,18 +112,25 @@ def resolve(command: list[str]) -> list[str]:
 
 def _utc(stamp: bool = False) -> str:
     now = datetime.datetime.now(datetime.timezone.utc)
-    # The file stamp carries microseconds and the process id, so two runs in one second never share a log.
-    return now.strftime("%Y%m%dT%H%M%S.%fZ") + f"-{os.getpid()}" if stamp else now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return now.strftime("%Y%m%dT%H%M%SZ" if stamp else "%Y-%m-%dT%H:%M:%SZ")
+
+
+def _spawn_options() -> dict:
+    """How every task starts: with no console on Windows, and in a process group of its own elsewhere, so a timeout
+    stops what the task started too."""
+    return {"creationflags": NO_WINDOW} if os.name == "nt" else {"start_new_session": True}
 
 
 def _kill_tree(proc) -> None:
+    """Stop the task and everything it started: taskkill's tree on Windows, the task's process group elsewhere."""
     if os.name == "nt":
-        done = subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, timeout=60,
-                              creationflags=NO_WINDOW)
-        if done.returncode != 0 and proc.poll() is None:
-            raise OSError(f"taskkill exited {done.returncode}: {done.stderr.decode(errors='replace').strip()}")
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, timeout=60,
+                       creationflags=NO_WINDOW)
     else:
-        proc.kill()
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:  # the group already exited between the timeout and this kill
+            pass
     proc.wait(timeout=60)
 
 
@@ -120,8 +145,8 @@ def execute(name: str, task: dict, root: str, popen=subprocess.Popen, killer=_ki
     with open(log, "wb") as out:
         try:
             proc = popen(resolve(task["command"]), cwd=root, stdout=out, stderr=subprocess.STDOUT,
-                         stdin=subprocess.DEVNULL, env=env, creationflags=NO_WINDOW if os.name == "nt" else 0)
-        except (OSError, ValueError) as error:  # never started: a failed run like any other, so it is alerted
+                         stdin=subprocess.DEVNULL, env=env, **_spawn_options())
+        except OSError as error:  # the command never started: a failed run like any other, so it is alerted
             out.write(f"run.py: could not start {task['command'][0]}: {error}\n".encode("utf-8"))
             proc = None
             outcome["exit"] = 126
@@ -129,121 +154,102 @@ def execute(name: str, task: dict, root: str, popen=subprocess.Popen, killer=_ki
             try:
                 outcome["exit"] = proc.wait(timeout=task["timeout_minutes"] * 60)
             except subprocess.TimeoutExpired:
+                killer(proc)
                 outcome.update(exit=124, timed_out=True)
-                try:
-                    killer(proc)
-                except (OSError, subprocess.SubprocessError) as error:  # still a timeout: recorded and alerted
-                    out.write(f"run.py: could not stop the timed-out process: {error}\n".encode("utf-8"))
-                    outcome["cleanup_failed"] = True
     outcome["finished"] = _utc()
-    with TaskLock(folder):
-        _write_outcome(folder, outcome)
-    _prune(folder)  # after the outcome is safe, and never fatal: a locked old log must not cost the alert
+    logs = sorted(f for f in os.listdir(folder) if f.endswith(".log"))
+    for old in logs[:-KEEP_LOGS]:
+        os.unlink(os.path.join(folder, old))
+    tmp = os.path.join(folder, "last.json.tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(outcome, fh, indent=2)
+    os.replace(tmp, os.path.join(folder, "last.json"))
     return outcome
 
 
-class TaskLock:
-    """An interprocess lock per task folder (msvcrt on Windows, flock elsewhere), held around every last.json read
-    and write so a run's outcome and a late alert's update can never interleave. The OS releases it if the holder
-    dies; waiting is bounded, and a lock that cannot be had is an error, never a silent unlocked write."""
-
-    def __init__(self, folder: str, wait: float = 60.0):
-        self.path = os.path.join(folder, ".last.lock")
-        self.wait = wait
-        self.fd = None
-
-    def __enter__(self):
-        import time
-        self.fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
-        deadline = time.monotonic() + self.wait
-        while True:
-            try:
-                if os.name == "nt":
-                    import msvcrt
-                    os.lseek(self.fd, 0, os.SEEK_SET)
-                    msvcrt.locking(self.fd, msvcrt.LK_NBLCK, 1)
-                else:
-                    import fcntl
-                    fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return self
-            except OSError:
-                if time.monotonic() >= deadline:
-                    os.close(self.fd)
-                    self.fd = None
-                    raise TimeoutError(f"could not lock {self.path} within {self.wait:.0f}s")
-                time.sleep(0.05)
-
-    def __exit__(self, *exc):
-        if self.fd is not None:
-            try:
-                if os.name == "nt":
-                    import msvcrt
-                    os.lseek(self.fd, 0, os.SEEK_SET)
-                    msvcrt.locking(self.fd, msvcrt.LK_UNLCK, 1)
-                else:
-                    import fcntl
-                    fcntl.flock(self.fd, fcntl.LOCK_UN)
-            finally:
-                os.close(self.fd)
-                self.fd = None
-        return False
+def _quote(arg: str) -> str:
+    """One systemd ExecStart argument: quoted, with `%` specifiers, backslashes and quotes escaped."""
+    return '"' + arg.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%") + '"'
 
 
-def _write_outcome(folder: str, outcome: dict) -> None:
-    """last.json, replaced atomically through a temporary file unique to this run."""
-    fd, tmp = tempfile.mkstemp(dir=folder, prefix="last.json.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(outcome, fh, indent=2)
-        os.replace(tmp, os.path.join(folder, "last.json"))
-    finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
+def systemd_units(manifest: dict, root: str, python: str) -> dict[str, str]:
+    """A `<name>.service` and `<name>.timer` per task, each carrying the marker that names this tasks.json.
+
+    The service is a oneshot that runs this file with the task's name (so the failure email comes from here, as on
+    Windows) and is stopped five minutes past the task's timeout. A weekly timer is `Persistent=true` with a
+    five-minute random delay, as Task Scheduler's start-when-available and random delay are; a logon timer fires
+    the delay after the user manager starts and then on the interval.
+    """
+    marker = MARKER + os.path.join(root, ".conclave", "automations", "tasks.json")
+    units: dict[str, str] = {}
+    for name, task in manifest["tasks"].items():
+        units[f"{name}.service"] = "\n".join([
+            marker,
+            "[Unit]",
+            f"Description={task['description'].replace('%', '%%')}",
+            "",
+            "[Service]",
+            "Type=oneshot",
+            f"WorkingDirectory={root.replace('%', '%%')}",
+            "ExecStart=" + " ".join(_quote(a) for a in (python, os.path.join(root, ".conclave", "automations", "run.py"),
+                                                         name)),
+            f"TimeoutStartSec={task['timeout_minutes'] + 5}min",
+            "",
+        ])
+        trigger = task["trigger"]
+        if "weekly" in trigger:
+            when = [f"OnCalendar={trigger['weekly'][:3]} *-*-* {trigger['at']}:00", "Persistent=true",
+                    "RandomizedDelaySec=300"]
+        else:
+            when = [f"OnStartupSec={trigger['at_logon_delay_minutes']}min",
+                    f"OnUnitActiveSec={trigger['every_minutes']}min"]
+        units[f"{name}.timer"] = "\n".join([
+            marker, "[Unit]", f"Description={task['description'].replace('%', '%%')}", "", "[Timer]", *when, "",
+            "[Install]", "WantedBy=timers.target", "",
+        ])
+    return units
 
 
-def _prune(folder: str) -> None:
-    """Keep the newest logs. Optional housekeeping: any failure here is left for the next run."""
-    try:
-        logs = sorted(f for f in os.listdir(folder) if f.endswith(".log"))
-    except OSError:
-        return
-    for old in logs[:-KEEP_LOGS]:
-        try:
-            os.unlink(os.path.join(folder, old))
-        except OSError:
-            pass  # in use or already gone; the next run tries again
-    try:  # alert records are swept on their own: any whose log is gone, however it went
-        for name in os.listdir(folder):
-            if name.endswith(".log.alert.json") and not os.path.exists(os.path.join(folder, name[:-len(".alert.json")])):
-                try:
-                    os.unlink(os.path.join(folder, name))
-                except OSError:
-                    pass
-    except OSError:
-        return
+def write_units(out_dir: str, root: str = REPO, python: str | None = None) -> str:
+    """Write every task's units into out_dir (refused without a folder); returns the marker line."""
+    installable_folder(root)
+    manifest = load_manifest(os.path.join(root, ".conclave", "automations", "tasks.json"))
+    for filename, text in systemd_units(manifest, root, python or sys.executable).items():
+        tmp = os.path.join(out_dir, filename + ".tmp")
+        with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        os.replace(tmp, os.path.join(out_dir, filename))
+    return MARKER + os.path.join(root, ".conclave", "automations", "tasks.json")
 
 
 def _alert_module():
-    spec = importlib.util.spec_from_file_location("recto_alert", os.path.join(HERE, "alert.py"))
+    spec = importlib.util.spec_from_file_location("conclave_automations_alert", os.path.join(HERE, "alert.py"))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
+def installable_folder(root: str = REPO) -> str:
+    """The folder an installer registers into, refused when tasks.json is malformed or names no folder yet."""
+    manifest = load_manifest(os.path.join(root, ".conclave", "automations", "tasks.json"))
+    if manifest["folder"] is None:
+        raise TaskError("tasks.json has no folder yet: set it to \\<Project>\\ before installing")
+    return manifest["folder"]
+
+
 def main(argv: list[str], root: str = REPO, popen=subprocess.Popen, alerter=None, killer=_kill_tree) -> int:
-    if len(argv) != 1:
+    if argv == ["--check"] or (len(argv) == 2 and argv[0] == "--units"):
+        try:
+            print(installable_folder(root) if argv[0] == "--check" else write_units(argv[1], root))
+        except (TaskError, OSError, ValueError) as error:
+            print(f"run: {error}", file=sys.stderr)
+            return 2
+        return 0
+    if len(argv) != 1 or argv[0].startswith("-"):
         print(__doc__.split("\n\n")[0], file=sys.stderr)
         return 2
-    manifest = os.path.join(root, ".conclave", "automations", "tasks.json")
-    if argv[0] == "--validate":  # the installer's gate: every rule in load_tasks, nothing run
-        try:
-            print(f"tasks.json valid: {len(load_tasks(manifest))} task(s)")
-        except (TaskError, OSError, ValueError) as error:
-            print(f"run: tasks.json is not valid: {error}", file=sys.stderr)
-            return 1
-        return 0
-    tasks = load_tasks(manifest)
-    task = tasks.get(argv[0])
+    manifest = load_manifest(os.path.join(root, ".conclave", "automations", "tasks.json"))
+    task = manifest["tasks"].get(argv[0])
     if task is None:
         print(f"run: no task named {argv[0]} in tasks.json", file=sys.stderr)
         return 2
@@ -251,44 +257,14 @@ def main(argv: list[str], root: str = REPO, popen=subprocess.Popen, alerter=None
     if outcome["exit"] == 0:
         return 0
     alert = _alert_module()
-    folder = os.path.join(root, "build", "automations", argv[0])
     try:
-        sent = (alerter or alert.send_failure)(argv[0], task, outcome, alert.tail_of(os.path.join(root, outcome["log"])))
+        (alerter or alert.send_failure)(argv[0], task, outcome, alert.tail_of(os.path.join(root, outcome["log"])),
+                                        manifest["folder"])
     except Exception as error:  # the run already failed; an unsent alert must still show, as exit 3
         with open(os.path.join(root, outcome["log"]), "a", encoding="utf-8") as fh:
             fh.write(f"\nrun.py: alert not sent: {type(error).__name__}: {error}\n")
-        _record_alert(root, folder, outcome, {"error": f"{type(error).__name__}: {error}", "at": _utc()})
         return 3
-    if isinstance(sent, str) and sent:
-        result = {"sent_at": _utc(), "email_id": sent}
-    else:  # accepted, but SMTP2GO named no message: say so rather than invent an id
-        result = {"sent_at": _utc(), "email_id": None, "note": "the send was accepted without an email id"}
-    _record_alert(root, folder, outcome, result)
     return outcome["exit"]
-
-
-def _record_alert(root: str, folder: str, outcome: dict, result: dict) -> None:
-    """Record the alert beside this run's log, and in last.json only while last.json still describes this run:
-    a slow alert must never overwrite a newer run's outcome."""
-    log = os.path.join(root, outcome["log"])
-    record = {"log": outcome["log"], "alert": result}
-    with TaskLock(folder):  # the read, the comparison and the replacement are one step for every writer
-        if os.path.exists(log):  # a log already pruned keeps no sidecar, so none can be orphaned
-            fd, tmp = tempfile.mkstemp(dir=folder, prefix="alert.", suffix=".tmp")
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                    json.dump(record, fh, indent=2)
-                os.replace(tmp, log + ".alert.json")
-            finally:
-                if os.path.exists(tmp):
-                    os.unlink(tmp)
-        try:
-            with open(os.path.join(folder, "last.json"), encoding="utf-8") as fh:
-                current = json.load(fh)
-        except (OSError, ValueError):
-            return
-        if current.get("log") == outcome["log"]:
-            _write_outcome(folder, {**current, "alert": result})
 
 
 if __name__ == "__main__":

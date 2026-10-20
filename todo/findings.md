@@ -4,5 +4,4 @@ Defects noticed while doing something else, each filed with `path:line`, a date 
 
 | Date | Where | Finding | Scheduled |
 | ---- | ----- | ------- | --------- |
-
-(none filed yet: the tree was seeded 2026-10-13 from `docs/plans/2026-10-13-recto-foundation.md` and `design/SPEC.md`, before any code existed to find defects in.)
+| 2026-10-20 | `scripts/lib/todo_graph.py:550` | The Conclave SDK's 100-character plan row refusal fails `plan --check` on 194 of 204 Recto rows (titles follow AGENTS.md's 88-character rule); the refusal is held here as a marked workaround and the next `forge.py sync --include-scripts` restores it. Owner fix: the SDK reads the limit per project from `todo/plan.json`, filed for the SDK's own `todo/findings.md` once its tree is free. | SDK, not a Recto section |
