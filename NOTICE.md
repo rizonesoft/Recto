@@ -16,5 +16,6 @@ The full build-derived audit and compatibility record is owned by [`todo/07-rele
 | Component | Enters at | Expected license | Shipped in app? |
 | --------- | --------- | ---------------- | --------------- |
 | Recto PDF Engine (`recto-pdf`) | `D00 T01 §3` (scaffold), `D01` (engine) | `GPL-3.0-or-later` | Yes (authored in-tree in C++20; zero MuPDF dependency; uses Windows 11 platform APIs: Direct2D, DirectWrite, WIC, Windows CNG `bcrypt.dll`, `Windows.Media.Ocr`) |
-| Windows App SDK 2.4.0 and `Microsoft.Windows.CppWinRT` | `D00 T01 §3` (NuGet) | MIT | Yes |
+| Windows App SDK 2.5.1 and `Microsoft.Windows.CppWinRT` | `D00 T01 §3` (NuGet) | MIT | Yes |
+| WebView2 SDK (`Microsoft.Web.WebView2` 1.0.3719.77) | `D00 T01 §3` (Windows App SDK dependency) | BSD-3-Clause | Yes (`Microsoft.Web.WebView2.Core.dll` beside `Recto.exe`; the WebView2 runtime is part of Windows 11) |
 | GoogleTest | `D00 T01 §3` (manifest), `D00 T03 §1` (wiring) | BSD-3-Clause | No (test runner only, per decision D14) |

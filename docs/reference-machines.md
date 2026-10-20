@@ -19,7 +19,7 @@ Milestone M2 and M6 performance claims (`D06 T01 §4`) are bound to `Release` bu
 | **OS Drive (`C:\`)** | Corsair MP600 PRO XT NVMe SSD (`1000.2 GB` decimal / `1,000,202,273,280` B physical, `930.4 GiB` NTFS partition) | PCIe Gen4 NVMe SSD |
 | **Workspace Drive (`R:\`)** | Micron `MTFDKCD512QFM-1BD1AABLA` NVMe SSD (`512.1 GB` decimal / `512,105,932,800` B physical, `474.7 GiB` NTFS partition) | Local PCIe Gen4 NVMe SSD |
 | **Operating System** | Microsoft Windows 11 Business 64-bit, Version `10.0.26300` (Build `26300`) | Microsoft Windows 11 64-bit (`ARM64`), Version `24H2` or later (`Build >= 26100`) |
-| **Compiler & SDK** | Visual Studio 2026 `18.10.3` (`18.10.12224.181`, MSBuild `18.10.1.42706`, toolset `v145`, MSVC `14.51.36231`), Windows 11 SDK `10.0.26100.0` (min `10.0.22621.0`), Windows App SDK `2.4.0` | Visual Studio 2026 `18.10.3` (`18.10.12224.181`, toolset `v145`, MSVC `14.51.36231` `Hostx64\arm64`), Windows 11 SDK `10.0.26100.0` (min `10.0.22621.0`), Windows App SDK `2.4.0` |
+| **Compiler & SDK** | Visual Studio 2026 `18.10.3` (`18.10.12224.181`, MSBuild `18.10.1.42706`, toolset `v145`, MSVC `14.51.36231`), Windows 11 SDK `10.0.26100.0` (min `10.0.22621.0`), Windows App SDK `2.5.1` | Visual Studio 2026 `18.10.3` (`18.10.12224.181`, toolset `v145`, MSVC `14.51.36231` `Hostx64\arm64`), Windows 11 SDK `10.0.26100.0` (min `10.0.22621.0`), Windows App SDK `2.5.1` |
 
 ## 2. Section 8 Performance Targets Bound to This Baseline
 

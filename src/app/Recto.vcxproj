@@ -118,7 +118,7 @@
     <Midl Include="MainWindow.idl"><DependentUpon>MainWindow.xaml</DependentUpon></Midl>
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
     <PackageReference Include="Microsoft.Windows.CppWinRT" Version="3.0.260818.1" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.9169" />
   </ItemGroup>
