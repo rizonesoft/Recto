@@ -59,7 +59,6 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 
 ## Active TODOs
 
-- [01 Engine] [TODO-01 Native PDF Parser, Filters, Crypto and Document Model](./01-engine/TODO-01-bridge-runtime.md): `recto-pdf` lexer, XRef tables/streams, damaged-file recovery, stream filters, CNG `bcrypt.dll` decryption, document open and description. Frozen.
 - [01 Engine] [TODO-02 Content Interpreter, Display Lists, Document Actor and Render Pool](./01-engine/TODO-02-actor-and-render.md): content-stream interpreter, DirectWrite font loader, incremental save, immutable `DisplayList`s, actor threads, tile rendering, scheduler with cancellation, ordered shutdown. Frozen.
 - [01 Engine] [TODO-03 recto-cli, Fuzz Targets and the Thread-Safety Battery](./01-engine/TODO-03-cli-and-fuzz.md): CLI verbs, libFuzzer targets, the 4.9 suite as M1's evidence. Frozen.
 - [02 Viewer] [TODO-01 App Shell, Tabs, Menus, File Open/Save and Shell Dialogs](./02-viewer/TODO-01-app-shell.md): self-contained unpackaged and MSIX-ready app, tokens, custom title bar, tabs, named slots, Classic menu bar, four open paths, Save/Save As/Unsaved changes, Password and Could-not-open dialogs.
@@ -87,6 +86,7 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 - [00 Workspace] [TODO-01 Repository, Native Engine Policy and Build Scaffold](./00-workspace/TODO-01-repo-and-build.md) (2026-10-18): git, GPL-3.0 repo-face files, native `recto-pdf` policy, all-module C++20 scaffold, build CI, reference machines (`docs/reference-machines.md`).
 - [00 Workspace] [TODO-02 The TODO Graph System](./00-workspace/TODO-02-todo-system.md) (2026-10-18): engine, CLI and tests (`scripts/todo-graph.py`); the eight skills (`.claude/skills/`), rules (`AGENTS.md`, `todo/README.md`) and plan CI gate (`.github/workflows/plan.yml`); this seeded 205-section execution graph.
 - [00 Workspace] [TODO-03 Test Backbone](./00-workspace/TODO-03-test-backbone.md) (2026-10-18): `test_support` fixtures and RGBA/SSIM helpers (`tests/recto-tests/test_support.h`), 39-file deterministic CC0-1.0 PDF corpus (`scripts/build-corpus.py`, `tests/corpus/PROVENANCE.md`), and MSVC AddressSanitizer (`/fsanitize=address`) build and CI job.
+- [01 Engine] [TODO-01 Native PDF Parser, Filters, Crypto and Document Model](./01-engine/TODO-01-bridge-runtime.md) (2026-10-20): `recto-pdf` error model (`src/pdf/error.h`), `PdfValue` AST (`src/pdf/object.h`), PDF 1.7/2.0 lexer and recursive-descent parser (`src/pdf/lexer.cpp`, `src/pdf/parser.cpp`), classic and compressed XRef/ObjStm resolver with damaged-file recovery (`src/pdf/xref.cpp`), stream filters (`src/pdf/filters.cpp`), Windows CNG `bcrypt.dll` `RC4`/`AES-128`/`AES-256` `R=2..6` security handler (`src/pdf/crypto.cpp`), and `recto::pdf::Document` model (`src/pdf/document.cpp`). Frozen.
 
 ## Queries
 
