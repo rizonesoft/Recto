@@ -249,7 +249,7 @@ private:
 
 // Computes the tight axis-aligned bounding box of a raw `(verbs, points)` slice
 // after applying `transform`. Returns `std::nullopt` if the path contains no
-// drawable geometry or is malformed.
+// drawable geometry, is malformed, or overflows to non-finite coordinates.
 [[nodiscard]] std::optional<PdfRect> compute_recorded_path_bounds(
 	std::span<const PathVerb> verbs,
 	std::span<const PdfPoint> points,
@@ -645,8 +645,9 @@ private:
 	const std::vector<float> dash_values_;
 };
 
-// Configurable resource budgets for `DisplayListBuilder` to bound memory and
-// nesting depth against hostile content streams.
+// Configurable resource budgets for `DisplayListBuilder` to bound memory,
+// clip/save nesting depth, and computational geometry work against hostile
+// content streams.
 struct DisplayListLimits {
 	size_t max_commands{1'000'000u};
 	size_t max_paths{250'000u};
@@ -655,7 +656,13 @@ struct DisplayListLimits {
 	size_t max_glyphs{4'000'000u};
 	size_t max_dash_values{250'000u};
 	size_t max_save_depth{64u};
+	size_t max_clip_depth{64u};
+	size_t max_geometry_work_ops{100'000'000u};
 	size_t max_total_bytes{256ull * 1024ull * 1024ull};
+	// Optional deterministic fault-injection counter (`0` = disabled): when
+	// non-zero, the N-th internal builder allocation step fails with
+	// `ErrorCode::OutOfMemory`.
+	size_t fail_allocation_after_ops{0u};
 };
 
 // Single-threaded builder used on the `DocumentActor` thread to record a page's
@@ -748,29 +755,44 @@ private:
 		bool has_bbox{false};
 	};
 
+	struct BoundsAccumulator {
+		PdfRect bounds{};
+		bool has_bounds{false};
+
+		void include(const PdfRect& r) noexcept;
+	};
+
 	struct TrackingState {
 		PdfMatrix ctm{PdfMatrix::identity()};
 		float line_width{1.0f};
 		LineCap line_cap{LineCap::Butt};
 		LineJoin line_join{LineJoin::Miter};
 		float miter_limit{10.0f};
+		std::vector<float> dash_array;
+		float dash_phase{0.0f};
 		float stroke_alpha{1.0f};
 		float fill_alpha{1.0f};
-		std::vector<ClipRegion> clips;
+		std::vector<std::shared_ptr<const ClipRegion>> clips;
 	};
 
 	[[nodiscard]] size_t current_pool_bytes() const noexcept;
 	[[nodiscard]] PdfResult<void> check_can_mutate() const noexcept;
 	[[nodiscard]] PdfResult<void> check_additional_bytes(size_t extra_bytes) const noexcept;
+	[[nodiscard]] PdfResult<void> charge_allocation_op() noexcept;
+	[[nodiscard]] PdfResult<void> charge_geometry_work(size_t ops) noexcept;
 
-	void include_raw_bounds(const PdfRect& bounds) noexcept;
-	void accumulate_clipped_region(
+	[[nodiscard]] PdfResult<void> accumulate_clipped_region(
 		std::span<const ClipEdge> shape_edges,
-		FillRule shape_rule) noexcept;
-	void accumulate_clipped_segment(PdfPoint p0, PdfPoint p1) noexcept;
-	void accumulate_clipped_rect(
+		FillRule shape_rule,
+		BoundsAccumulator& accum) noexcept;
+	[[nodiscard]] PdfResult<void> accumulate_clipped_segment(
+		PdfPoint p0,
+		PdfPoint p1,
+		BoundsAccumulator& accum) noexcept;
+	[[nodiscard]] PdfResult<void> accumulate_clipped_rect(
 		const PdfRect& local_rect,
-		const PdfMatrix& to_page) noexcept;
+		const PdfMatrix& to_page,
+		BoundsAccumulator& accum) noexcept;
 
 	PdfRect page_box_pt_{0.0, 0.0, 612.0, 792.0};
 	DisplayListLimits limits_{};
@@ -778,6 +800,8 @@ private:
 	bool has_content_bounds_{false};
 	bool finished_{false};
 	std::optional<PdfError> sticky_error_;
+	size_t allocation_ops_{0u};
+	size_t geometry_work_ops_{0u};
 
 	TrackingState current_state_{};
 	std::vector<TrackingState> state_stack_;

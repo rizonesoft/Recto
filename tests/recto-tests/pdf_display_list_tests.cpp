@@ -851,7 +851,7 @@ TEST(PdfDisplayList, ConcurrentRead)
 		PositionedGlyph{10u, U'R', PdfPoint{72.0, 700.0}, 8.0, PdfRect{0.0, 0.0, 8.0, 12.0}},
 		PositionedGlyph{11u, U'e', PdfPoint{80.0, 700.0}, 6.0, PdfRect{0.0, 0.0, 6.0, 9.0}},
 	};
-	const float dashes[] = {3.0f, 1.0f};
+	const float dashes[] = {30.0f, 10.0f};
 
 	// Record 10,000 commands (2,000 groups of 5 commands):
 	for (size_t i = 0u; i < kTotalCommands / 5u; ++i) {
@@ -917,6 +917,352 @@ TEST(PdfDisplayList, ConcurrentRead)
 	EXPECT_GT(checksums[0], 0u);
 	for (size_t t = 1u; t < kThreadCount; ++t) {
 		EXPECT_EQ(checksums[t], checksums[0]);
+	}
+}
+
+TEST(PdfDisplayList, CurvedClipAndRoundCapExactBoundsBetweenSamplePoints)
+{
+	// 1. Cubic Bezier `(0, 0), (0, 100), (100, 100), (100, 0)` clipped to a
+	//    narrow vertical strip `[10.5, 11.2] x [0, 100]` strictly between the
+	//    coarse 32-step sample points (`t = 6/32 = 0.1875 -> x = 9.2285` and
+	//    `t = 7/32 = 0.21875 -> x = 12.2375`).
+	//    At `x(t) = 300 t^2 - 200 t^3`:
+	//    - `x(t0) = 10.5` -> `t0 ~= 0.2016359676`, `y(t0) = 300 t0 (1 - t0) ~= 48.2943125`
+	//    - `x(t1) = 11.2` -> `t1 ~= 0.2089268455`, `y(t1) = 300 t1 (1 - t1) ~= 49.4572565`
+	{
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 200.0, 200.0});
+		PathBuilder clip_pb;
+		clip_pb.rect(10.5, 0.0, 0.7, 100.0);
+		const uint32_t clip_id = *builder.add_path(clip_pb);
+		ASSERT_TRUE(builder.push_clip_path(clip_id).has_value());
+
+		PathBuilder curve_pb;
+		curve_pb.move_to(0.0, 0.0);
+		curve_pb.cubic_bezier_to(
+			PdfPoint{0.0, 100.0},
+			PdfPoint{100.0, 100.0},
+			PdfPoint{100.0, 0.0});
+		curve_pb.close_subpath();
+		const uint32_t curve_id = *builder.add_path(curve_pb);
+		ASSERT_TRUE(builder.draw_path(
+			curve_id,
+			ColorRgba::black(),
+			ColorRgba::black(),
+			false,
+			true).has_value());
+
+		const auto dl = *builder.finish();
+		ASSERT_TRUE(dl->has_content_bounds());
+		EXPECT_NEAR(dl->content_bounds_pt().x_min, 10.5, 1e-6);
+		EXPECT_NEAR(dl->content_bounds_pt().x_max, 11.2, 1e-6);
+		EXPECT_NEAR(dl->content_bounds_pt().y_min, 0.0, 1e-6);
+		EXPECT_NEAR(dl->content_bounds_pt().y_max, 49.4572565, 1e-4);
+	}
+
+	// 2. Round cap on a horizontal stroke `(100, 100) -> (200, 100)` with width
+	//    `200.0` (`r = 100.0`) clipped to a thin strip `[299.98, 299.995] x [0, 200]`
+	//    near the rightmost tip `(300, 100)` where fixed 48-step arc chords would
+	//    miss the true circular boundary `y = 100 +- sqrt(100^2 - (299.98 - 200)^2)`.
+	//    Exact `dy = sqrt(10000 - 99.98^2) = sqrt(3.9996) ~= 1.9999000`.
+	{
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 400.0, 400.0});
+		PathBuilder clip_pb;
+		clip_pb.rect(299.98, 0.0, 0.015, 200.0);
+		const uint32_t clip_id = *builder.add_path(clip_pb);
+		ASSERT_TRUE(builder.push_clip_path(clip_id).has_value());
+
+		PathBuilder line_pb;
+		line_pb.move_to(100.0, 100.0);
+		line_pb.line_to(200.0, 100.0);
+		const uint32_t line_id = *builder.add_path(line_pb);
+		ASSERT_TRUE(builder.set_stroke_style(
+			200.0f,
+			LineCap::Round,
+			LineJoin::Round,
+			10.0f).has_value());
+		ASSERT_TRUE(builder.draw_path(
+			line_id,
+			ColorRgba::black(),
+			ColorRgba::black(),
+			true,
+			false).has_value());
+
+		const auto dl = *builder.finish();
+		ASSERT_TRUE(dl->has_content_bounds());
+		const double exact_dy = std::sqrt(100.0 * 100.0 - 99.98 * 99.98);
+		EXPECT_NEAR(dl->content_bounds_pt().x_min, 299.98, 1e-6);
+		EXPECT_NEAR(dl->content_bounds_pt().x_max, 299.995, 1e-6);
+		EXPECT_NEAR(dl->content_bounds_pt().y_min, 100.0 - exact_dy, 1e-4);
+		EXPECT_NEAR(dl->content_bounds_pt().y_max, 100.0 + exact_dy, 1e-4);
+	}
+}
+
+TEST(PdfDisplayList, DashPatternPhaseOddLengthAndGapClipping)
+{
+	// 1. Dash pattern `[20, 30]` with phase `0` along `(0, 100) -> (100, 100)`:
+	//    Painted dashes are `[0, 20]` and `[50, 70]`; `[20, 50]` and `[70, 100]`
+	//    are unpainted gaps. A clip restricted to `[25, 45] x [80, 120]` inside
+	//    the gap must report `has_content_bounds() == false`.
+	{
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 200.0, 200.0});
+		PathBuilder clip_pb;
+		clip_pb.rect(25.0, 80.0, 20.0, 40.0);
+		const uint32_t clip_id = *builder.add_path(clip_pb);
+		ASSERT_TRUE(builder.push_clip_path(clip_id).has_value());
+
+		PathBuilder line_pb;
+		line_pb.move_to(0.0, 100.0);
+		line_pb.line_to(100.0, 100.0);
+		const uint32_t line_id = *builder.add_path(line_pb);
+		const float dashes[] = {20.0f, 30.0f};
+		ASSERT_TRUE(builder.set_stroke_style(
+			4.0f,
+			LineCap::Butt,
+			LineJoin::Miter,
+			10.0f,
+			dashes,
+			0.0f).has_value());
+		ASSERT_TRUE(builder.draw_path(
+			line_id,
+			ColorRgba::black(),
+			ColorRgba::black(),
+			true,
+			false).has_value());
+
+		const auto dl = *builder.finish();
+		EXPECT_FALSE(dl->has_content_bounds());
+	}
+
+	// 2. Odd-length dash pattern `[10]` (doubled to `[10, 10]` per ISO 32000-1
+	//    §8.4.3.6) with `dash_phase = 5` along `(0, 50) -> (25, 50)`:
+	//    - `[0, 5]` is on (remaining 5 of first 10-on)
+	//    - `[5, 15]` is off (10-off)
+	//    - `[15, 25]` is on (second 10-on)
+	//    Clipping to `[6, 99] x [0, 100]` excludes `[0, 5]` so X bounds are `[15, 25]`.
+	{
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 200.0, 200.0});
+		PathBuilder clip_pb;
+		clip_pb.rect(6.0, 0.0, 94.0, 100.0);
+		const uint32_t clip_id = *builder.add_path(clip_pb);
+		ASSERT_TRUE(builder.push_clip_path(clip_id).has_value());
+
+		PathBuilder line_pb;
+		line_pb.move_to(0.0, 50.0);
+		line_pb.line_to(25.0, 50.0);
+		const uint32_t line_id = *builder.add_path(line_pb);
+		const float odd_dash[] = {10.0f};
+		ASSERT_TRUE(builder.set_stroke_style(
+			2.0f,
+			LineCap::Butt,
+			LineJoin::Miter,
+			10.0f,
+			odd_dash,
+			5.0f).has_value());
+		ASSERT_TRUE(builder.draw_path(
+			line_id,
+			ColorRgba::black(),
+			ColorRgba::black(),
+			true,
+			false).has_value());
+
+		const auto dl = *builder.finish();
+		ASSERT_TRUE(dl->has_content_bounds());
+		EXPECT_NEAR(dl->content_bounds_pt().x_min, 15.0, 1e-6);
+		EXPECT_NEAR(dl->content_bounds_pt().x_max, 25.0, 1e-6);
+		EXPECT_NEAR(dl->content_bounds_pt().y_min, 49.0, 1e-6);
+		EXPECT_NEAR(dl->content_bounds_pt().y_max, 51.0, 1e-6);
+	}
+}
+
+TEST(PdfDisplayList, GlyphRunInterGlyphClipAndImageMaskCoverage)
+{
+	// 1. Two-glyph run with glyph 0 at `[10, 20]` and glyph 1 at `[80, 90]`,
+	//    clipped to the inter-glyph gap `[35, 65] x [0, 100]` produces no ink:
+	{
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 200.0, 200.0});
+		PathBuilder clip_pb;
+		clip_pb.rect(35.0, 0.0, 30.0, 100.0);
+		const uint32_t clip_id = *builder.add_path(clip_pb);
+		ASSERT_TRUE(builder.push_clip_path(clip_id).has_value());
+
+		const PositionedGlyph glyphs[] = {
+			PositionedGlyph{1u, U'A', PdfPoint{10.0, 50.0}, 10.0, PdfRect{0.0, 0.0, 10.0, 12.0}},
+			PositionedGlyph{2u, U'B', PdfPoint{80.0, 50.0}, 10.0, PdfRect{0.0, 0.0, 10.0, 12.0}},
+		};
+		ASSERT_TRUE(builder.draw_glyph_run(
+			glyphs,
+			12.0,
+			TextRenderMode::Fill,
+			ColorRgba::black(),
+			ColorRgba::black()).has_value());
+
+		const auto dl = *builder.finish();
+		EXPECT_FALSE(dl->has_content_bounds());
+	}
+
+	// 2. Image with disjoint non-transparent alpha against soft_mask:
+	//    2x1 bitmap has alpha `[255, 0]`, 2x1 soft_mask has alpha `[0, 255]`.
+	//    Combined effective alpha is `[0, 0]`, so `has_content_bounds()` is false:
+	{
+		std::vector<uint8_t> bmp_px = {
+			0xFFu, 0xFFu, 0xFFu, 0xFFu, // pixel 0: alpha 255
+			0x00u, 0x00u, 0x00u, 0x00u, // pixel 1: alpha 0
+		};
+		std::vector<uint8_t> mask_px = {
+			0x00u, 0x00u, 0x00u, 0x00u, // pixel 0: alpha 0
+			0xFFu, 0xFFu, 0xFFu, 0xFFu, // pixel 1: alpha 255
+		};
+		auto bmp = *DecodedBitmap::create(2u, 1u, 8u, std::move(bmp_px));
+		auto mask = *DecodedBitmap::create(2u, 1u, 8u, std::move(mask_px));
+
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 200.0, 200.0});
+		ASSERT_TRUE(builder.draw_image(
+			bmp,
+			PdfMatrix{100.0, 0.0, 0.0, 50.0, 10.0, 20.0},
+			true,
+			mask).has_value());
+		const auto dl = *builder.finish();
+		EXPECT_FALSE(dl->has_content_bounds());
+	}
+
+	// 3. Image with transparent outer border (4x4 bitmap where only the central
+	//    2x2 pixels `[1..3, 1..3]` are opaque) mapped to `[0, 0, 100, 100]`
+	//    reports tight bounds `[25, 25, 75, 75]`:
+	{
+		std::vector<uint8_t> px(4u * 4u * 4u, 0u);
+		for (uint32_t y = 1u; y < 3u; ++y) {
+			for (uint32_t x = 1u; x < 3u; ++x) {
+				const size_t off = (static_cast<size_t>(y) * 4u + x) * 4u;
+				px[off + 0u] = 0xFFu;
+				px[off + 1u] = 0xFFu;
+				px[off + 2u] = 0xFFu;
+				px[off + 3u] = 0xFFu;
+			}
+		}
+		auto bmp = *DecodedBitmap::create(4u, 4u, 16u, std::move(px));
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 200.0, 200.0});
+		ASSERT_TRUE(builder.draw_image(
+			bmp,
+			PdfMatrix{100.0, 0.0, 0.0, 100.0, 0.0, 0.0}).has_value());
+		const auto dl = *builder.finish();
+		ASSERT_TRUE(dl->has_content_bounds());
+		EXPECT_DOUBLE_EQ(dl->content_bounds_pt().x_min, 25.0);
+		EXPECT_DOUBLE_EQ(dl->content_bounds_pt().y_min, 25.0);
+		EXPECT_DOUBLE_EQ(dl->content_bounds_pt().x_max, 75.0);
+		EXPECT_DOUBLE_EQ(dl->content_bounds_pt().y_max, 75.0);
+	}
+}
+
+TEST(PdfDisplayList, FiniteInputTransformationOverflowRejected)
+{
+	DisplayListBuilder builder(PdfRect{0.0, 0.0, 612.0, 792.0});
+
+	PathBuilder pb;
+	pb.rect(10.0, 10.0, 100.0, 100.0);
+	const uint32_t pid = *builder.add_path(pb);
+
+	// Push a large finite scale matrix (1e308) inside a saved state:
+	ASSERT_TRUE(builder.save_state().has_value());
+	ASSERT_TRUE(builder.concat_matrix(PdfMatrix{1e308, 0.0, 0.0, 1e308, 0.0, 0.0}).has_value());
+
+	// Transformed coordinates `10.0 * 1e308` overflow `double` to `+Inf`, so
+	// `push_clip_path`, `draw_path`, `draw_glyph_run`, and `draw_image` must
+	// reject them with `ErrorCode::DamagedFormat` without recording commands:
+	const size_t cmds_before = builder.command_count();
+
+	const auto clip_res = builder.push_clip_path(pid);
+	ASSERT_FALSE(clip_res.has_value());
+	EXPECT_EQ(clip_res.error().code, ErrorCode::DamagedFormat);
+
+	const auto path_res = builder.draw_path(pid, ColorRgba::black(), ColorRgba::black(), true, true);
+	ASSERT_FALSE(path_res.has_value());
+	EXPECT_EQ(path_res.error().code, ErrorCode::DamagedFormat);
+
+	const PositionedGlyph glyphs[] = {
+		PositionedGlyph{1u, U'A', PdfPoint{10.0, 10.0}, 8.0, PdfRect{0.0, 0.0, 8.0, 12.0}},
+	};
+	const auto glyph_res = builder.draw_glyph_run(
+		glyphs,
+		12.0,
+		TextRenderMode::Fill,
+		ColorRgba::black(),
+		ColorRgba::black());
+	ASSERT_FALSE(glyph_res.has_value());
+	EXPECT_EQ(glyph_res.error().code, ErrorCode::DamagedFormat);
+
+	std::vector<uint8_t> px(4u, 0xFFu);
+	auto bmp = *DecodedBitmap::create(1u, 1u, 4u, std::move(px));
+	const auto img_res = builder.draw_image(
+		bmp,
+		PdfMatrix{10.0, 0.0, 0.0, 10.0, 0.0, 0.0});
+	ASSERT_FALSE(img_res.has_value());
+	EXPECT_EQ(img_res.error().code, ErrorCode::DamagedFormat);
+
+	EXPECT_EQ(builder.command_count(), cmds_before);
+}
+
+TEST(PdfDisplayList, ClipDepthGeometryWorkAndFaultInjection)
+{
+	// 1. `max_clip_depth` bounds repeated `push_clip_path()` calls:
+	{
+		DisplayListLimits limits{};
+		limits.max_clip_depth = 2u;
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 200.0, 200.0}, limits);
+
+		PathBuilder pb;
+		pb.rect(10.0, 10.0, 100.0, 100.0);
+		const uint32_t pid = *builder.add_path(pb);
+		ASSERT_TRUE(builder.push_clip_path(pid).has_value());
+		ASSERT_TRUE(builder.push_clip_path(pid).has_value());
+		const auto third = builder.push_clip_path(pid);
+		ASSERT_FALSE(third.has_value());
+		EXPECT_EQ(third.error().code, ErrorCode::DamagedFormat);
+	}
+
+	// 2. `max_geometry_work_ops` bounds scanbeam / intersection work:
+	{
+		DisplayListLimits limits{};
+		limits.max_geometry_work_ops = 10u;
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 200.0, 200.0}, limits);
+
+		PathBuilder pb;
+		pb.rect(10.0, 10.0, 100.0, 100.0);
+		const uint32_t pid = *builder.add_path(pb);
+		const auto res = builder.draw_path(pid, ColorRgba::black(), ColorRgba::black(), false, true);
+		ASSERT_FALSE(res.has_value());
+		EXPECT_EQ(res.error().code, ErrorCode::DamagedFormat);
+		EXPECT_EQ(builder.command_count(), 0u);
+	}
+
+	// 3. Deterministic allocation failure during `draw_path()` leaves command count
+	//    and content bounds unchanged, and failure during `finish()` latches the
+	//    builder so a retry cannot publish an empty DisplayList with stale bounds:
+	{
+		DisplayListLimits draw_fail_limits{};
+		draw_fail_limits.fail_allocation_after_ops = 2u; // op 1 = add_path, op 2 = draw_path region clip
+		DisplayListBuilder b1(PdfRect{0.0, 0.0, 200.0, 200.0}, draw_fail_limits);
+		PathBuilder pb;
+		pb.rect(10.0, 10.0, 50.0, 50.0);
+		const uint32_t pid = *b1.add_path(pb);
+		const auto draw_res = b1.draw_path(pid, ColorRgba::black(), ColorRgba::black(), false, true);
+		ASSERT_FALSE(draw_res.has_value());
+		EXPECT_EQ(draw_res.error().code, ErrorCode::OutOfMemory);
+		EXPECT_EQ(b1.command_count(), 0u);
+
+		DisplayListLimits finish_fail_limits{};
+		finish_fail_limits.fail_allocation_after_ops = 4u; // 1=add_path, 2=clip_region, 3=draw_path cmd, 4=finish
+		DisplayListBuilder b2(PdfRect{0.0, 0.0, 200.0, 200.0}, finish_fail_limits);
+		const uint32_t pid2 = *b2.add_path(pb);
+		ASSERT_TRUE(b2.draw_path(pid2, ColorRgba::black(), ColorRgba::black(), false, true).has_value());
+		const auto fin1 = b2.finish();
+		ASSERT_FALSE(fin1.has_value());
+		EXPECT_EQ(fin1.error().code, ErrorCode::OutOfMemory);
+		EXPECT_TRUE(b2.is_finished());
+
+		const auto fin2 = b2.finish();
+		ASSERT_FALSE(fin2.has_value());
+		EXPECT_EQ(fin2.error().code, ErrorCode::InternalError);
+		EXPECT_EQ(debug_live_display_lists(), 0);
 	}
 }
 

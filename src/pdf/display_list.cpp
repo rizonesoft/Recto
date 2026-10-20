@@ -34,6 +34,24 @@ constexpr double kGeomEps = 1e-9;
 		r.x_min <= r.x_max && r.y_min <= r.y_max;
 }
 
+[[nodiscard]] bool checked_add_size(size_t a, size_t b, size_t& out) noexcept
+{
+	if (b > std::numeric_limits<size_t>::max() - a) {
+		return false;
+	}
+	out = a + b;
+	return true;
+}
+
+[[nodiscard]] bool checked_mul_size(size_t a, size_t b, size_t& out) noexcept
+{
+	if (a != 0u && b > std::numeric_limits<size_t>::max() / a) {
+		return false;
+	}
+	out = a * b;
+	return true;
+}
+
 [[nodiscard]] constexpr bool is_valid_line_cap(LineCap cap) noexcept
 {
 	switch (cap) {
@@ -168,6 +186,80 @@ constexpr double kGeomEps = 1e-9;
 	return pt_idx == points.size();
 }
 
+// Validates that transforming every vertex in `(verbs, points)` by `ctm`
+// produces strictly finite coordinates.
+[[nodiscard]] bool validate_transformed_path_finite(
+	std::span<const PathVerb> verbs,
+	std::span<const PdfPoint> points,
+	const PdfMatrix& ctm) noexcept
+{
+	if (!is_finite_matrix(ctm)) {
+		return false;
+	}
+	size_t pt_idx = 0u;
+	for (const PathVerb verb : verbs) {
+		switch (verb) {
+		case PathVerb::MoveTo:
+		case PathVerb::LineTo: {
+			const PdfPoint p = points[pt_idx++];
+			if (!is_finite_point(transform_point(ctm, p))) {
+				return false;
+			}
+			break;
+		}
+		case PathVerb::CubicBezierTo: {
+			for (size_t k = 0u; k < 3u; ++k) {
+				const PdfPoint p = points[pt_idx++];
+				if (!is_finite_point(transform_point(ctm, p))) {
+					return false;
+				}
+			}
+			break;
+		}
+		case PathVerb::Rect: {
+			const PdfPoint origin = points[pt_idx++];
+			const PdfPoint size = points[pt_idx++];
+			const std::array<PdfPoint, 4> corners = {
+				PdfPoint{origin.x, origin.y},
+				PdfPoint{origin.x + size.x, origin.y},
+				PdfPoint{origin.x + size.x, origin.y + size.y},
+				PdfPoint{origin.x, origin.y + size.y},
+			};
+			for (const PdfPoint& c : corners) {
+				if (!is_finite_point(c) || !is_finite_point(transform_point(ctm, c))) {
+					return false;
+				}
+			}
+			break;
+		}
+		case PathVerb::CloseSubpath:
+			break;
+		}
+	}
+	return true;
+}
+
+[[nodiscard]] bool validate_transformed_rect_finite(
+	const PdfRect& rect,
+	const PdfMatrix& m) noexcept
+{
+	if (!is_valid_rect(rect) || !is_finite_matrix(m)) {
+		return false;
+	}
+	const std::array<PdfPoint, 4> corners = {
+		transform_point(m, PdfPoint{rect.x_min, rect.y_min}),
+		transform_point(m, PdfPoint{rect.x_max, rect.y_min}),
+		transform_point(m, PdfPoint{rect.x_max, rect.y_max}),
+		transform_point(m, PdfPoint{rect.x_min, rect.y_max}),
+	};
+	for (const PdfPoint& c : corners) {
+		if (!is_finite_point(c)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 [[nodiscard]] constexpr double eval_cubic_1d(
 	double p0,
 	double p1,
@@ -209,7 +301,7 @@ void collect_cubic_1d_extrema_t(
 	if (std::abs(a) <= kEps) {
 		if (std::abs(b) > kEps) {
 			const double t = -c / (2.0 * b);
-			if (t > 0.0 && t < 1.0) {
+			if (t > 0.0 && t < 1.0 && std::isfinite(t)) {
 				out_t.push_back(t);
 			}
 		}
@@ -217,17 +309,201 @@ void collect_cubic_1d_extrema_t(
 	}
 
 	const double disc = b * b - a * c;
-	if (disc < 0.0) {
+	if (disc < 0.0 || !std::isfinite(disc)) {
 		return;
 	}
 	const double sqrt_disc = std::sqrt(disc);
 	const double t1 = (-b - sqrt_disc) / a;
 	const double t2 = (-b + sqrt_disc) / a;
 	for (double t : {t1, t2}) {
-		if (t > 0.0 && t < 1.0) {
+		if (t > 0.0 && t < 1.0 && std::isfinite(t)) {
 			out_t.push_back(t);
 		}
 	}
+}
+
+// Solves all roots `t in (0, 1)` of the 1D cubic Bernstein polynomial
+// `B(t) = (1-t)^3 d0 + 3(1-t)^2 t d1 + 3(1-t) t^2 d2 + t^3 d3 == 0`
+// by splitting at derivative extrema and bisecting monotone intervals to `1e-13`.
+void collect_cubic_1d_roots_t(
+	double d0,
+	double d1,
+	double d2,
+	double d3,
+	std::vector<double>& out_t)
+{
+	if (!std::isfinite(d0) || !std::isfinite(d1) ||
+		!std::isfinite(d2) || !std::isfinite(d3)) {
+		return;
+	}
+	std::array<double, 4> breaks = {0.0, 1.0, 0.0, 0.0};
+	size_t count = 2u;
+
+	const double a = -d0 + 3.0 * d1 - 3.0 * d2 + d3;
+	const double b = d0 - 2.0 * d1 + d2;
+	const double c = d1 - d0;
+	constexpr double kEps = 1e-12;
+	if (std::abs(a) <= kEps) {
+		if (std::abs(b) > kEps) {
+			const double t = -c / (2.0 * b);
+			if (t > 0.0 && t < 1.0 && std::isfinite(t)) {
+				breaks[count++] = t;
+			}
+		}
+	} else {
+		const double disc = b * b - a * c;
+		if (disc >= 0.0 && std::isfinite(disc)) {
+			const double s = std::sqrt(disc);
+			for (double t : {(-b - s) / a, (-b + s) / a}) {
+				if (t > 0.0 && t < 1.0 && std::isfinite(t)) {
+					breaks[count++] = t;
+				}
+			}
+		}
+	}
+	std::sort(breaks.begin(), breaks.begin() + static_cast<std::ptrdiff_t>(count));
+
+	for (size_t i = 0u; i + 1u < count; ++i) {
+		double lo = breaks[i];
+		double hi = breaks[i + 1u];
+		if (hi - lo <= 1e-13) {
+			continue;
+		}
+		double flo = eval_cubic_1d(d0, d1, d2, d3, lo);
+		double fhi = eval_cubic_1d(d0, d1, d2, d3, hi);
+		if (std::abs(flo) <= 1e-12) {
+			if (lo > 0.0 && lo < 1.0) {
+				out_t.push_back(lo);
+			}
+		}
+		if (std::abs(fhi) <= 1e-12) {
+			if (hi > 0.0 && hi < 1.0) {
+				out_t.push_back(hi);
+			}
+		}
+		if ((flo < 0.0 && fhi > 0.0) || (flo > 0.0 && fhi < 0.0)) {
+			for (int iter = 0; iter < 52; ++iter) {
+				const double mid = 0.5 * (lo + hi);
+				const double fmid = eval_cubic_1d(d0, d1, d2, d3, mid);
+				if (fmid == 0.0) {
+					lo = hi = mid;
+					break;
+				}
+				if ((flo < 0.0 && fmid < 0.0) || (flo > 0.0 && fmid > 0.0)) {
+					lo = mid;
+					flo = fmid;
+				} else {
+					hi = mid;
+					fhi = fmid;
+				}
+			}
+			const double root = 0.5 * (lo + hi);
+			if (root > 0.0 && root < 1.0 && std::isfinite(root)) {
+				out_t.push_back(root);
+			}
+		}
+	}
+}
+
+// Collects all parameters `t in (0, 1)` where the page-space cubic Bezier
+// `(q0, q1, q2, q3)` intersects the line segment `e0 -> e1` or crosses its
+// endpoint scanlines `y = e0.y`, `y = e1.y`.
+void collect_cubic_segment_intersections_t(
+	PdfPoint q0,
+	PdfPoint q1,
+	PdfPoint q2,
+	PdfPoint q3,
+	PdfPoint e0,
+	PdfPoint e1,
+	std::vector<double>& out_t)
+{
+	const double nx = -(e1.y - e0.y);
+	const double ny = e1.x - e0.x;
+	const double len = std::hypot(nx, ny);
+	if (len > 1e-12 && std::isfinite(len)) {
+		const double d0 = (q0.x - e0.x) * nx + (q0.y - e0.y) * ny;
+		const double d1 = (q1.x - e0.x) * nx + (q1.y - e0.y) * ny;
+		const double d2 = (q2.x - e0.x) * nx + (q2.y - e0.y) * ny;
+		const double d3 = (q3.x - e0.x) * nx + (q3.y - e0.y) * ny;
+		std::vector<double> line_roots;
+		collect_cubic_1d_roots_t(d0, d1, d2, d3, line_roots);
+		const double ex = e1.x - e0.x;
+		const double ey = e1.y - e0.y;
+		const double elen2 = ex * ex + ey * ey;
+		for (double t : line_roots) {
+			const PdfPoint pt = eval_cubic_2d(q0, q1, q2, q3, t);
+			const double u = ((pt.x - e0.x) * ex + (pt.y - e0.y) * ey) / elen2;
+			if (u >= -1e-7 && u <= 1.0 + 1e-7) {
+				out_t.push_back(t);
+			}
+		}
+	}
+	collect_cubic_1d_roots_t(q0.y - e0.y, q1.y - e0.y, q2.y - e0.y, q3.y - e0.y, out_t);
+	collect_cubic_1d_roots_t(q0.y - e1.y, q1.y - e1.y, q2.y - e1.y, q3.y - e1.y, out_t);
+}
+
+// Collects all angles `theta in [-pi, pi]` where the transformed circle
+// `ctm(center + r * (cos theta, sin theta))` intersects segment `e0 -> e1`
+// or crosses its endpoint scanlines `y = e0.y`, `y = e1.y`.
+void collect_circle_segment_intersection_angles(
+	PdfPoint center,
+	double r,
+	const PdfMatrix& ctm,
+	PdfPoint e0,
+	PdfPoint e1,
+	std::vector<double>& out_angles)
+{
+	const PdfPoint pc = transform_point(ctm, center);
+	const PdfPoint vx{ctm.a * r, ctm.b * r};
+	const PdfPoint vy{ctm.c * r, ctm.d * r};
+	if (!is_finite_point(pc) || !is_finite_point(vx) || !is_finite_point(vy)) {
+		return;
+	}
+
+	auto solve_linear_trig = [&](double kc, double ks, double k0, bool check_seg) {
+		const double amp = std::hypot(kc, ks);
+		if (amp <= 1e-12 || !std::isfinite(amp)) {
+			return;
+		}
+		const double rhs = -k0 / amp;
+		if (rhs < -1.0 - 1e-9 || rhs > 1.0 + 1e-9) {
+			return;
+		}
+		const double clamped = std::clamp(rhs, -1.0, 1.0);
+		const double phi = std::atan2(ks, kc);
+		const double alpha = std::acos(clamped);
+		for (double raw : {phi + alpha, phi - alpha}) {
+			const double theta = std::atan2(std::sin(raw), std::cos(raw));
+			if (check_seg) {
+				const double c = std::cos(theta);
+				const double s = std::sin(theta);
+				const PdfPoint pt{
+					pc.x + vx.x * c + vy.x * s,
+					pc.y + vx.y * c + vy.y * s};
+				const double ex = e1.x - e0.x;
+				const double ey = e1.y - e0.y;
+				const double elen2 = ex * ex + ey * ey;
+				if (elen2 > 1e-18) {
+					const double u = ((pt.x - e0.x) * ex + (pt.y - e0.y) * ey) / elen2;
+					if (u < -1e-7 || u > 1.0 + 1e-7) {
+						continue;
+					}
+				}
+			}
+			out_angles.push_back(theta);
+		}
+	};
+
+	const double nx = -(e1.y - e0.y);
+	const double ny = e1.x - e0.x;
+	if (std::hypot(nx, ny) > 1e-12) {
+		const double k0 = (pc.x - e0.x) * nx + (pc.y - e0.y) * ny;
+		const double kc = vx.x * nx + vx.y * ny;
+		const double ks = vy.x * nx + vy.y * ny;
+		solve_linear_trig(kc, ks, k0, true);
+	}
+	solve_linear_trig(vx.y, vy.y, pc.y - e0.y, false);
+	solve_linear_trig(vx.y, vy.y, pc.y - e1.y, false);
 }
 
 void expand_cubic_1d_bounds(
@@ -303,12 +579,43 @@ struct UserSubpath {
 	bool has_draw_verb{false};
 };
 
-// Extracts subpaths in user space, flattening cubic Beziers into piecewise
-// linear segments that include the exact analytic extrema of `ctm(B(t))`.
+// Recursively refines a cubic Bezier interval `[t0, t1]` until its page-space
+// midpoint deviation from the chord is `<= 1e-4` pt (capped at depth 6).
+void append_adaptive_cubic_points(
+	PdfPoint p0,
+	PdfPoint cp1,
+	PdfPoint cp2,
+	PdfPoint p3,
+	const PdfMatrix& ctm,
+	double t0,
+	double t1,
+	int depth,
+	std::vector<PdfPoint>& out_pts)
+{
+	const double tm = 0.5 * (t0 + t1);
+	const PdfPoint pm = eval_cubic_2d(p0, cp1, cp2, p3, tm);
+	const PdfPoint a = transform_point(ctm, eval_cubic_2d(p0, cp1, cp2, p3, t0));
+	const PdfPoint b = transform_point(ctm, eval_cubic_2d(p0, cp1, cp2, p3, t1));
+	const PdfPoint m = transform_point(ctm, pm);
+	const double dev = std::hypot(m.x - 0.5 * (a.x + b.x), m.y - 0.5 * (a.y + b.y));
+	if (depth < 6 && dev > 1e-4) {
+		append_adaptive_cubic_points(p0, cp1, cp2, p3, ctm, t0, tm, depth + 1, out_pts);
+		append_adaptive_cubic_points(p0, cp1, cp2, p3, ctm, tm, t1, depth + 1, out_pts);
+	} else {
+		out_pts.push_back(eval_cubic_2d(p0, cp1, cp2, p3, t1));
+	}
+}
+
+// Extracts subpaths in user space, splitting cubic Beziers at their exact
+// page-space extrema, their exact intersections with all `reference_clip_edges`
+// (and offset edges by `+-stroke_half_width`), and adaptive flatness refinement.
+template <typename EdgeT>
 std::vector<UserSubpath> extract_user_subpaths(
 	std::span<const PathVerb> verbs,
 	std::span<const PdfPoint> points,
-	const PdfMatrix& ctm)
+	const PdfMatrix& ctm,
+	std::span<const EdgeT> reference_clip_edges = {},
+	double stroke_half_width = 0.0)
 {
 	std::vector<UserSubpath> subpaths;
 	UserSubpath cur_sub;
@@ -343,7 +650,8 @@ std::vector<UserSubpath> extract_user_subpaths(
 
 			std::vector<double> ts;
 			constexpr size_t kSteps = 32u;
-			ts.reserve(kSteps + 4u);
+			ts.reserve(kSteps + 16u + reference_clip_edges.size() * 6u);
+			ts.push_back(0.0);
 			for (size_t s = 1u; s <= kSteps; ++s) {
 				ts.push_back(static_cast<double>(s) / static_cast<double>(kSteps));
 			}
@@ -353,14 +661,79 @@ std::vector<UserSubpath> extract_user_subpaths(
 			const PdfPoint q3 = transform_point(ctm, p3);
 			collect_cubic_1d_extrema_t(q0.x, q1.x, q2.x, q3.x, ts);
 			collect_cubic_1d_extrema_t(q0.y, q1.y, q2.y, q3.y, ts);
+
+			// Also include user-space X/Y extrema so stroke normal vectors
+			// capture axis-aligned tangents before CTM transformation:
+			collect_cubic_1d_extrema_t(p0.x, cp1.x, cp2.x, p3.x, ts);
+			collect_cubic_1d_extrema_t(p0.y, cp1.y, cp2.y, p3.y, ts);
+
+			for (const EdgeT& ce : reference_clip_edges) {
+				collect_cubic_segment_intersections_t(q0, q1, q2, q3, ce.p0, ce.p1, ts);
+				if (stroke_half_width > 0.0) {
+					// Also split where the curve approaches within stroke_half_width
+					// of the clip edge in user space (approximated via CTM-transformed
+					// cardinal and chord normal offsets):
+					const PdfPoint chord_u{p3.x - p0.x, p3.y - p0.y};
+					const double clen = std::hypot(chord_u.x, chord_u.y);
+					if (clen > kGeomEps) {
+						const PdfPoint nu{
+							-chord_u.y / clen * stroke_half_width,
+							chord_u.x / clen * stroke_half_width};
+						const PdfPoint dp{
+							ctm.a * nu.x + ctm.c * nu.y,
+							ctm.b * nu.x + ctm.d * nu.y};
+						if (is_finite_point(dp)) {
+							collect_cubic_segment_intersections_t(
+								PdfPoint{q0.x + dp.x, q0.y + dp.y},
+								PdfPoint{q1.x + dp.x, q1.y + dp.y},
+								PdfPoint{q2.x + dp.x, q2.y + dp.y},
+								PdfPoint{q3.x + dp.x, q3.y + dp.y},
+								ce.p0,
+								ce.p1,
+								ts);
+							collect_cubic_segment_intersections_t(
+								PdfPoint{q0.x - dp.x, q0.y - dp.y},
+								PdfPoint{q1.x - dp.x, q1.y - dp.y},
+								PdfPoint{q2.x - dp.x, q2.y - dp.y},
+								PdfPoint{q3.x - dp.x, q3.y - dp.y},
+								ce.p0,
+								ce.p1,
+								ts);
+						}
+					}
+				}
+			}
+
 			std::sort(ts.begin(), ts.end());
 
 			double prev_t = 0.0;
 			for (double t : ts) {
-				if (t - prev_t > 1e-9) {
-					cur_sub.points.push_back(eval_cubic_2d(p0, cp1, cp2, p3, t));
-					prev_t = t;
+				const double clamped_t = std::clamp(t, 0.0, 1.0);
+				if (clamped_t - prev_t > 1e-11) {
+					append_adaptive_cubic_points(
+						p0,
+						cp1,
+						cp2,
+						p3,
+						ctm,
+						prev_t,
+						clamped_t,
+						0,
+						cur_sub.points);
+					prev_t = clamped_t;
 				}
+			}
+			if (1.0 - prev_t > 1e-11) {
+				append_adaptive_cubic_points(
+					p0,
+					cp1,
+					cp2,
+					p3,
+					ctm,
+					prev_t,
+					1.0,
+					0,
+					cur_sub.points);
 			}
 			cur_sub.points.back() = p3;
 			cur_sub.has_draw_verb = true;
@@ -398,6 +771,157 @@ std::vector<UserSubpath> extract_user_subpaths(
 	}
 	flush_subpath();
 	return subpaths;
+}
+
+// Decomposes a single `UserSubpath` according to PDF dash semantics
+// (ISO 32000-1 §8.4.3.6: odd-length pattern arrays are doubled to form an
+// even on/off cycle, `dash_phase` advances into the cycle before the subpath
+// begins, and each painted "on" interval becomes an open `UserSubpath`).
+std::vector<UserSubpath> apply_dash_pattern(
+	const UserSubpath& sp,
+	std::span<const float> dash_array,
+	float dash_phase)
+{
+	if (dash_array.empty()) {
+		std::vector<UserSubpath> out;
+		out.push_back(sp);
+		return out;
+	}
+	if (!sp.has_draw_verb || sp.points.empty()) {
+		return {};
+	}
+
+	std::vector<double> pattern;
+	const size_t n = dash_array.size();
+	pattern.reserve((n % 2u == 1u) ? (2u * n) : n);
+	for (float d : dash_array) {
+		pattern.push_back(static_cast<double>(d));
+	}
+	if (n % 2u == 1u) {
+		for (float d : dash_array) {
+			pattern.push_back(static_cast<double>(d));
+		}
+	}
+
+	double cycle_len = 0.0;
+	for (double d : pattern) {
+		cycle_len += d;
+	}
+	if (!(cycle_len > 0.0) || !std::isfinite(cycle_len)) {
+		return {};
+	}
+
+	double phase = std::fmod(static_cast<double>(dash_phase), cycle_len);
+	if (phase < 0.0) {
+		phase += cycle_len;
+	}
+
+	size_t pat_idx = 0u;
+	double pat_rem = pattern[0];
+	while (phase > 0.0 && pat_idx < pattern.size()) {
+		const double d = pattern[pat_idx];
+		if (phase < d - 1e-12) {
+			pat_rem = d - phase;
+			phase = 0.0;
+			break;
+		}
+		phase -= d;
+		pat_idx = (pat_idx + 1u) % pattern.size();
+		pat_rem = pattern[pat_idx];
+	}
+	// Advance past any zero-length initial entries if we are in an off-phase:
+	while (pat_rem <= 1e-12) {
+		pat_idx = (pat_idx + 1u) % pattern.size();
+		pat_rem = pattern[pat_idx];
+	}
+
+	std::vector<UserSubpath> pieces;
+	UserSubpath cur_piece;
+
+	auto flush_piece = [&]() {
+		if (cur_piece.points.size() >= 2u ||
+			(cur_piece.points.size() == 1u && cur_piece.has_draw_verb)) {
+			cur_piece.closed = false;
+			pieces.push_back(std::move(cur_piece));
+		}
+		cur_piece = UserSubpath{};
+	};
+
+	const size_t seg_count =
+		sp.closed ? sp.points.size() : (sp.points.size() - 1u);
+	bool any_non_zero_seg = false;
+
+	for (size_t i = 0u; i < seg_count; ++i) {
+		const PdfPoint a = sp.points[i];
+		const PdfPoint b = sp.points[(i + 1u) % sp.points.size()];
+		const double seg_len = std::hypot(b.x - a.x, b.y - a.y);
+		if (seg_len <= kGeomEps) {
+			continue;
+		}
+		any_non_zero_seg = true;
+
+		double pos = 0.0;
+		while (pos < seg_len - 1e-12) {
+			const bool is_on = (pat_idx % 2u) == 0u;
+			if (pat_rem <= 1e-12) {
+				if (is_on) {
+					// Zero-length "on" dash produces a point (visible under Round/Square cap):
+					const double t = pos / seg_len;
+					const PdfPoint pt{a.x + t * (b.x - a.x), a.y + t * (b.y - a.y)};
+					UserSubpath dot_piece;
+					dot_piece.points.push_back(pt);
+					dot_piece.points.push_back(pt);
+					dot_piece.closed = false;
+					dot_piece.has_draw_verb = true;
+					pieces.push_back(std::move(dot_piece));
+				}
+				pat_idx = (pat_idx + 1u) % pattern.size();
+				pat_rem = pattern[pat_idx];
+				continue;
+			}
+
+			const double step = std::min(seg_len - pos, pat_rem);
+			const double t0 = pos / seg_len;
+			const double t1 = (pos + step) / seg_len;
+			const PdfPoint p0{a.x + t0 * (b.x - a.x), a.y + t0 * (b.y - a.y)};
+			const PdfPoint p1{a.x + t1 * (b.x - a.x), a.y + t1 * (b.y - a.y)};
+
+			if (is_on) {
+				if (cur_piece.points.empty()) {
+					cur_piece.points.push_back(p0);
+				}
+				cur_piece.points.push_back(p1);
+				cur_piece.has_draw_verb = true;
+			} else {
+				flush_piece();
+			}
+
+			pos += step;
+			pat_rem -= step;
+			if (pat_rem <= 1e-12) {
+				if (is_on) {
+					flush_piece();
+				}
+				pat_idx = (pat_idx + 1u) % pattern.size();
+				pat_rem = pattern[pat_idx];
+			}
+		}
+	}
+
+	if (!any_non_zero_seg) {
+		if ((pat_idx % 2u) == 0u) {
+			UserSubpath dot_piece;
+			dot_piece.points.push_back(sp.points.front());
+			dot_piece.points.push_back(sp.points.front());
+			dot_piece.closed = false;
+			dot_piece.has_draw_verb = true;
+			pieces.push_back(std::move(dot_piece));
+		}
+		return pieces;
+	}
+
+	flush_piece();
+	return pieces;
 }
 
 } // namespace
@@ -461,7 +985,9 @@ std::optional<PdfRect> compute_recorded_path_bounds(
 	std::span<const PdfPoint> points,
 	const PdfMatrix& transform) noexcept
 {
-	if (!is_finite_matrix(transform) || !validate_path_slice(verbs, points)) {
+	if (!is_finite_matrix(transform) ||
+		!validate_path_slice(verbs, points) ||
+		!validate_transformed_path_finite(verbs, points, transform)) {
 		return std::nullopt;
 	}
 
@@ -709,6 +1235,19 @@ DisplayList::~DisplayList() noexcept
 	g_live_display_lists.fetch_sub(1, std::memory_order_relaxed);
 }
 
+void DisplayListBuilder::BoundsAccumulator::include(const PdfRect& r) noexcept
+{
+	if (!is_valid_rect(r)) {
+		return;
+	}
+	if (!has_bounds) {
+		bounds = r;
+		has_bounds = true;
+	} else {
+		bounds = union_rect(bounds, r);
+	}
+}
+
 DisplayListBuilder::DisplayListBuilder(
 	PdfRect page_box_pt,
 	DisplayListLimits limits) noexcept
@@ -721,20 +1260,24 @@ DisplayListBuilder::DisplayListBuilder(
 			"DisplayListBuilder page_box_pt must be finite and non-inverted"};
 		return;
 	}
+	if (has_content_bounds_) {
+		content_bounds_pt_ = PdfRect{};
+		has_content_bounds_ = false;
+	}
 	if (!page_box_pt_.is_empty()) {
 		try {
-			ClipRegion page_clip;
-			page_clip.fill_rule = FillRule::NonZero;
-			page_clip.bbox = page_box_pt_;
-			page_clip.has_bbox = true;
+			auto page_clip = std::make_shared<ClipRegion>();
+			page_clip->fill_rule = FillRule::NonZero;
+			page_clip->bbox = page_box_pt_;
+			page_clip->has_bbox = true;
 			const PdfPoint p0{page_box_pt_.x_min, page_box_pt_.y_min};
 			const PdfPoint p1{page_box_pt_.x_max, page_box_pt_.y_min};
 			const PdfPoint p2{page_box_pt_.x_max, page_box_pt_.y_max};
 			const PdfPoint p3{page_box_pt_.x_min, page_box_pt_.y_max};
-			page_clip.edges.push_back(ClipEdge{p0, p1});
-			page_clip.edges.push_back(ClipEdge{p1, p2});
-			page_clip.edges.push_back(ClipEdge{p2, p3});
-			page_clip.edges.push_back(ClipEdge{p3, p0});
+			page_clip->edges.push_back(ClipEdge{p0, p1});
+			page_clip->edges.push_back(ClipEdge{p1, p2});
+			page_clip->edges.push_back(ClipEdge{p2, p3});
+			page_clip->edges.push_back(ClipEdge{p3, p0});
 			current_state_.clips.push_back(std::move(page_clip));
 		} catch (const std::bad_alloc&) {
 			sticky_error_ = PdfError{
@@ -746,12 +1289,44 @@ DisplayListBuilder::DisplayListBuilder(
 
 size_t DisplayListBuilder::current_pool_bytes() const noexcept
 {
-	return commands_.size() * sizeof(DisplayCommand) +
+	size_t total =
+		commands_.size() * sizeof(DisplayCommand) +
 		paths_.size() * sizeof(RecordedPath) +
 		path_verbs_.size() * sizeof(PathVerb) +
 		path_points_.size() * sizeof(PdfPoint) +
 		glyphs_.size() * sizeof(PositionedGlyph) +
 		dash_values_.size() * sizeof(float);
+
+	// Account for retained tracking state (active state + saved state stack):
+	total += current_state_.dash_array.size() * sizeof(float);
+	total += current_state_.clips.size() * sizeof(std::shared_ptr<const ClipRegion>);
+	for (const auto& clip : current_state_.clips) {
+		if (clip) {
+			total += sizeof(ClipRegion) + clip->edges.size() * sizeof(ClipEdge);
+		}
+	}
+
+	total += state_stack_.size() * sizeof(TrackingState);
+	for (const TrackingState& st : state_stack_) {
+		total += st.dash_array.size() * sizeof(float);
+		total += st.clips.size() * sizeof(std::shared_ptr<const ClipRegion>);
+		for (const auto& clip : st.clips) {
+			if (clip) {
+				// Avoid double-counting ClipRegion objects already present in `current_state_`:
+				bool shared_with_current = false;
+				for (const auto& cur_clip : current_state_.clips) {
+					if (cur_clip.get() == clip.get()) {
+						shared_with_current = true;
+						break;
+					}
+				}
+				if (!shared_with_current) {
+					total += sizeof(ClipRegion) + clip->edges.size() * sizeof(ClipEdge);
+				}
+			}
+		}
+	}
+	return total;
 }
 
 PdfResult<void> DisplayListBuilder::check_can_mutate() const noexcept
@@ -779,6 +1354,31 @@ PdfResult<void> DisplayListBuilder::check_additional_bytes(size_t extra_bytes) c
 	return {};
 }
 
+PdfResult<void> DisplayListBuilder::charge_allocation_op() noexcept
+{
+	if (limits_.fail_allocation_after_ops != 0u) {
+		++allocation_ops_;
+		if (allocation_ops_ >= limits_.fail_allocation_after_ops) {
+			return make_pdf_error(
+				ErrorCode::OutOfMemory,
+				"Simulated out-of-memory in DisplayListBuilder");
+		}
+	}
+	return {};
+}
+
+PdfResult<void> DisplayListBuilder::charge_geometry_work(size_t ops) noexcept
+{
+	if (ops > limits_.max_geometry_work_ops ||
+		geometry_work_ops_ > limits_.max_geometry_work_ops - ops) {
+		return make_pdf_error(
+			ErrorCode::DamagedFormat,
+			"DisplayListBuilder geometry work budget exceeded");
+	}
+	geometry_work_ops_ += ops;
+	return {};
+}
+
 PdfResult<void> DisplayListBuilder::reserve_commands(size_t count) noexcept
 {
 	if (auto ok = check_can_mutate(); !ok.has_value()) {
@@ -789,6 +1389,9 @@ PdfResult<void> DisplayListBuilder::reserve_commands(size_t count) noexcept
 		return make_pdf_error(
 			ErrorCode::DamagedFormat,
 			"DisplayListBuilder::reserve_commands exceeds command or byte budget");
+	}
+	if (auto ok = charge_allocation_op(); !ok.has_value()) {
+		return ok;
 	}
 	try {
 		commands_.reserve(count);
@@ -831,22 +1434,21 @@ PdfResult<uint32_t> DisplayListBuilder::add_path(
 			"DisplayListBuilder::add_path exceeds path, verb, or point limits");
 	}
 
-	if (verbs.size() > std::numeric_limits<size_t>::max() / sizeof(PathVerb) ||
-		points.size() > std::numeric_limits<size_t>::max() / sizeof(PdfPoint)) {
+	size_t verb_bytes = 0u;
+	size_t point_bytes = 0u;
+	size_t total_add = 0u;
+	if (!checked_mul_size(verbs.size(), sizeof(PathVerb), verb_bytes) ||
+		!checked_mul_size(points.size(), sizeof(PdfPoint), point_bytes) ||
+		!checked_add_size(verb_bytes, point_bytes, total_add) ||
+		!checked_add_size(total_add, sizeof(RecordedPath), total_add)) {
 		return make_pdf_error(
 			ErrorCode::DamagedFormat,
 			"DisplayListBuilder::add_path byte size overflow");
 	}
-	const size_t verb_bytes = verbs.size() * sizeof(PathVerb);
-	const size_t point_bytes = points.size() * sizeof(PdfPoint);
-	if (verb_bytes > std::numeric_limits<size_t>::max() - point_bytes ||
-		verb_bytes + point_bytes > std::numeric_limits<size_t>::max() - sizeof(RecordedPath)) {
-		return make_pdf_error(
-			ErrorCode::DamagedFormat,
-			"DisplayListBuilder::add_path byte size overflow");
+	if (auto ok = check_additional_bytes(total_add); !ok.has_value()) {
+		return ok.error();
 	}
-	if (auto ok = check_additional_bytes(verb_bytes + point_bytes + sizeof(RecordedPath));
-		!ok.has_value()) {
+	if (auto ok = charge_allocation_op(); !ok.has_value()) {
 		return ok.error();
 	}
 
@@ -900,12 +1502,21 @@ PdfResult<void> DisplayListBuilder::save_state() noexcept
 			ErrorCode::DamagedFormat,
 			"DisplayListBuilder command count limit exceeded");
 	}
-	if (auto ok = check_additional_bytes(sizeof(DisplayCommand)); !ok.has_value()) {
+	const size_t state_copy_bytes =
+		sizeof(TrackingState) +
+		current_state_.dash_array.size() * sizeof(float) +
+		current_state_.clips.size() * sizeof(std::shared_ptr<const ClipRegion>) +
+		sizeof(DisplayCommand);
+	if (auto ok = check_additional_bytes(state_copy_bytes); !ok.has_value()) {
+		return ok;
+	}
+	if (auto ok = charge_allocation_op(); !ok.has_value()) {
 		return ok;
 	}
 
 	try {
 		commands_.reserve(commands_.size() + 1u);
+		state_stack_.reserve(state_stack_.size() + 1u);
 		state_stack_.push_back(current_state_);
 		commands_.emplace_back(SaveStateCommand{});
 		return {};
@@ -933,6 +1544,9 @@ PdfResult<void> DisplayListBuilder::restore_state() noexcept
 			"DisplayListBuilder command count limit exceeded");
 	}
 	if (auto ok = check_additional_bytes(sizeof(DisplayCommand)); !ok.has_value()) {
+		return ok;
+	}
+	if (auto ok = charge_allocation_op(); !ok.has_value()) {
 		return ok;
 	}
 
@@ -973,8 +1587,12 @@ PdfResult<void> DisplayListBuilder::concat_matrix(const PdfMatrix& matrix) noexc
 	if (auto ok = check_additional_bytes(sizeof(DisplayCommand)); !ok.has_value()) {
 		return ok;
 	}
+	if (auto ok = charge_allocation_op(); !ok.has_value()) {
+		return ok;
+	}
 
 	try {
+		commands_.reserve(commands_.size() + 1u);
 		commands_.emplace_back(ConcatMatrixCommand{matrix});
 		current_state_.ctm = combined;
 		return {};
@@ -1033,8 +1651,11 @@ PdfResult<void> DisplayListBuilder::set_stroke_style(
 	}
 
 	const size_t dash_bytes = dash_array.size() * sizeof(float);
-	if (auto ok = check_additional_bytes(dash_bytes + sizeof(DisplayCommand));
+	if (auto ok = check_additional_bytes(2u * dash_bytes + sizeof(DisplayCommand));
 		!ok.has_value()) {
+		return ok;
+	}
+	if (auto ok = charge_allocation_op(); !ok.has_value()) {
 		return ok;
 	}
 
@@ -1051,6 +1672,7 @@ PdfResult<void> DisplayListBuilder::set_stroke_style(
 	cmd.dash_phase = dash_phase;
 
 	try {
+		std::vector<float> new_state_dashes(dash_array.begin(), dash_array.end());
 		dash_values_.reserve(dash_values_.size() + dash_array.size());
 		commands_.reserve(commands_.size() + 1u);
 		dash_values_.insert(dash_values_.end(), dash_array.begin(), dash_array.end());
@@ -1059,6 +1681,8 @@ PdfResult<void> DisplayListBuilder::set_stroke_style(
 		current_state_.line_cap = line_cap;
 		current_state_.line_join = line_join;
 		current_state_.miter_limit = miter_limit;
+		current_state_.dash_array = std::move(new_state_dashes);
+		current_state_.dash_phase = dash_phase;
 		return {};
 	} catch (const std::bad_alloc&) {
 		dash_values_.resize(dash_offset);
@@ -1091,6 +1715,9 @@ PdfResult<void> DisplayListBuilder::set_alpha_and_blend(
 	if (auto ok = check_additional_bytes(sizeof(DisplayCommand)); !ok.has_value()) {
 		return ok;
 	}
+	if (auto ok = charge_allocation_op(); !ok.has_value()) {
+		return ok;
+	}
 
 	SetAlphaAndBlendCommand cmd{};
 	cmd.stroke_alpha = stroke_alpha;
@@ -1098,6 +1725,7 @@ PdfResult<void> DisplayListBuilder::set_alpha_and_blend(
 	cmd.blend_mode = blend_mode;
 
 	try {
+		commands_.reserve(commands_.size() + 1u);
 		commands_.emplace_back(cmd);
 		current_state_.stroke_alpha = stroke_alpha;
 		current_state_.fill_alpha = fill_alpha;
@@ -1106,19 +1734,6 @@ PdfResult<void> DisplayListBuilder::set_alpha_and_blend(
 		return make_pdf_error(
 			ErrorCode::OutOfMemory,
 			"Out of memory in DisplayListBuilder::set_alpha_and_blend");
-	}
-}
-
-void DisplayListBuilder::include_raw_bounds(const PdfRect& bounds) noexcept
-{
-	if (!is_valid_rect(bounds)) {
-		return;
-	}
-	if (!has_content_bounds_) {
-		content_bounds_pt_ = bounds;
-		has_content_bounds_ = true;
-	} else {
-		content_bounds_pt_ = union_rect(content_bounds_pt_, bounds);
 	}
 }
 
@@ -1152,7 +1767,6 @@ template <typename EdgeT>
 	for (const EdgeT& e : edges) {
 		const PdfPoint a = e.p0;
 		const PdfPoint b = e.p1;
-		// Check if `pt` lies directly on the segment `a -> b`:
 		const double min_x = std::min(a.x, b.x) - kGeomEps;
 		const double max_x = std::max(a.x, b.x) + kGeomEps;
 		const double min_y = std::min(a.y, b.y) - kGeomEps;
@@ -1236,48 +1850,197 @@ void add_segment_intersection_t(
 	const double dy = b0.y - a0.y;
 	const double t = (dx * dby - dy * dbx) / denom;
 	const double u = (dx * day - dy * dax) / denom;
-	if (t >= 0.0 && t <= 1.0 && u >= -1e-9 && u <= 1.0 + 1e-9) {
+	if (t >= 0.0 && t <= 1.0 && u >= -1e-9 && u <= 1.0 + 1e-9 && std::isfinite(t)) {
 		ts.push_back(t);
 	}
 }
 
+// Computes coalesced non-transparent coverage rectangles in unit image space
+// `[0, 1] x [0, 1]` for `bitmap` combined with optional `soft_mask`.
+std::vector<PdfRect> compute_image_coverage_rects(
+	const DecodedBitmap& bitmap,
+	const DecodedBitmap* soft_mask)
+{
+	const uint32_t w = bitmap.width;
+	const uint32_t h = bitmap.height;
+	const double inv_w = 1.0 / static_cast<double>(w);
+	const double inv_h = 1.0 / static_cast<double>(h);
+
+	auto mask_overlaps_non_transparent = [&](uint32_t bx, uint32_t by) noexcept -> bool {
+		if (!soft_mask) {
+			return true;
+		}
+		if (!soft_mask->has_non_transparent_pixels) {
+			return false;
+		}
+		const uint32_t mw = soft_mask->width;
+		const uint32_t mh = soft_mask->height;
+		if (mw == w && mh == h) {
+			const uint8_t* mrow =
+				soft_mask->pixels.data() + static_cast<size_t>(by) * soft_mask->stride;
+			return mrow[static_cast<size_t>(bx) * 4u + 3u] != 0u;
+		}
+		const uint32_t mx0 = static_cast<uint32_t>(
+			(static_cast<uint64_t>(bx) * mw) / w);
+		uint32_t mx1 = static_cast<uint32_t>(
+			(static_cast<uint64_t>(bx + 1u) * mw + w - 1u) / w);
+		if (mx1 <= mx0) {
+			mx1 = std::min(mw, mx0 + 1u);
+		}
+		const uint32_t my0 = static_cast<uint32_t>(
+			(static_cast<uint64_t>(by) * mh) / h);
+		uint32_t my1 = static_cast<uint32_t>(
+			(static_cast<uint64_t>(by + 1u) * mh + h - 1u) / h);
+		if (my1 <= my0) {
+			my1 = std::min(mh, my0 + 1u);
+		}
+		for (uint32_t my = my0; my < my1; ++my) {
+			const uint8_t* mrow =
+				soft_mask->pixels.data() + static_cast<size_t>(my) * soft_mask->stride;
+			for (uint32_t mx = mx0; mx < mx1; ++mx) {
+				if (mrow[static_cast<size_t>(mx) * 4u + 3u] != 0u) {
+					return true;
+				}
+			}
+		}
+		return false;
+	};
+
+	struct ActiveSpan {
+		uint32_t x0{0};
+		uint32_t x1{0};
+		uint32_t y0{0};
+		uint32_t y1{0};
+	};
+
+	std::vector<ActiveSpan> active;
+	std::vector<ActiveSpan> next_active;
+	std::vector<PdfRect> rects;
+
+	auto emit_span = [&](const ActiveSpan& s) {
+		// In PDF image space `[0,1]x[0,1]`, row 0 of a top-down bitmap is at the
+		// top (`y in [1 - (y1)/h, 1 - (y0)/h]`), except when `h == 1`:
+		const double x_min = static_cast<double>(s.x0) * inv_w;
+		const double x_max = static_cast<double>(s.x1) * inv_w;
+		const double y_min = static_cast<double>(s.y0) * inv_h;
+		const double y_max = static_cast<double>(s.y1) * inv_h;
+		rects.push_back(PdfRect{x_min, y_min, x_max, y_max});
+	};
+
+	for (uint32_t y = 0u; y < h; ++y) {
+		const uint8_t* row = bitmap.pixels.data() + static_cast<size_t>(y) * bitmap.stride;
+		next_active.clear();
+		uint32_t x = 0u;
+		while (x < w) {
+			while (x < w &&
+				(row[static_cast<size_t>(x) * 4u + 3u] == 0u ||
+				 !mask_overlaps_non_transparent(x, y))) {
+				++x;
+			}
+			if (x >= w) {
+				break;
+			}
+			const uint32_t x_start = x;
+			while (x < w &&
+				row[static_cast<size_t>(x) * 4u + 3u] != 0u &&
+				mask_overlaps_non_transparent(x, y)) {
+				++x;
+			}
+			const uint32_t x_end = x;
+
+			bool merged = false;
+			for (ActiveSpan& act : active) {
+				if (act.x0 == x_start && act.x1 == x_end && act.y1 == y) {
+					next_active.push_back(ActiveSpan{x_start, x_end, act.y0, y + 1u});
+					act.y1 = 0u; // mark consumed
+					merged = true;
+					break;
+				}
+			}
+			if (!merged) {
+				next_active.push_back(ActiveSpan{x_start, x_end, y, y + 1u});
+			}
+		}
+		for (const ActiveSpan& act : active) {
+			if (act.y1 != 0u) {
+				emit_span(act);
+			}
+		}
+		active.swap(next_active);
+	}
+	for (const ActiveSpan& act : active) {
+		if (act.y1 != 0u) {
+			emit_span(act);
+		}
+	}
+	return rects;
+}
+
 } // namespace
 
-void DisplayListBuilder::accumulate_clipped_region(
+PdfResult<void> DisplayListBuilder::accumulate_clipped_region(
 	std::span<const ClipEdge> shape_edges,
-	FillRule shape_rule) noexcept
+	FillRule shape_rule,
+	BoundsAccumulator& accum) noexcept
 {
 	const auto shape_bbox = compute_edges_bbox(shape_edges);
 	if (!shape_bbox.has_value()) {
-		return;
+		return {};
 	}
 
 	PdfRect window = *shape_bbox;
-	for (const ClipRegion& clip : current_state_.clips) {
-		if (!clip.has_bbox) {
-			return;
+	for (const auto& clip_ptr : current_state_.clips) {
+		if (!clip_ptr || !clip_ptr->has_bbox) {
+			return {};
 		}
-		const auto inter = intersect_rect(window, clip.bbox);
+		const auto inter = intersect_rect(window, clip_ptr->bbox);
 		if (!inter.has_value()) {
-			return;
+			return {};
 		}
 		window = *inter;
 	}
 
+	size_t total_edge_count = shape_edges.size();
+	for (const auto& clip_ptr : current_state_.clips) {
+		if (!checked_add_size(total_edge_count, clip_ptr->edges.size(), total_edge_count)) {
+			return make_pdf_error(
+				ErrorCode::DamagedFormat,
+				"DisplayListBuilder clip edge count overflow");
+		}
+	}
+
+	size_t pair_ops = 0u;
+	if (!checked_mul_size(total_edge_count, total_edge_count, pair_ops)) {
+		return make_pdf_error(
+			ErrorCode::DamagedFormat,
+			"DisplayListBuilder geometry work overflow");
+	}
+	if (auto ok = charge_geometry_work(pair_ops); !ok.has_value()) {
+		return ok;
+	}
+
+	const size_t max_breaks = total_edge_count * 2u + pair_ops / 2u + 4u;
+	const size_t scratch_bytes =
+		total_edge_count * sizeof(ClipEdge) +
+		max_breaks * sizeof(double) +
+		total_edge_count * sizeof(double) * 3u;
+	if (auto ok = check_additional_bytes(scratch_bytes); !ok.has_value()) {
+		return ok;
+	}
+	if (auto ok = charge_allocation_op(); !ok.has_value()) {
+		return ok;
+	}
+
 	try {
 		std::vector<ClipEdge> all_edges;
-		size_t total_edge_count = shape_edges.size();
-		for (const ClipRegion& clip : current_state_.clips) {
-			total_edge_count += clip.edges.size();
-		}
 		all_edges.reserve(total_edge_count);
 		all_edges.insert(all_edges.end(), shape_edges.begin(), shape_edges.end());
-		for (const ClipRegion& clip : current_state_.clips) {
-			all_edges.insert(all_edges.end(), clip.edges.begin(), clip.edges.end());
+		for (const auto& clip_ptr : current_state_.clips) {
+			all_edges.insert(all_edges.end(), clip_ptr->edges.begin(), clip_ptr->edges.end());
 		}
 
 		std::vector<double> y_breaks;
-		y_breaks.reserve(all_edges.size() * 2u + 16u);
+		y_breaks.reserve(total_edge_count * 2u + 16u);
 		y_breaks.push_back(window.y_min);
 		y_breaks.push_back(window.y_max);
 		for (const ClipEdge& e : all_edges) {
@@ -1318,6 +2081,9 @@ void DisplayListBuilder::accumulate_clipped_region(
 			if (y1 < window.y_min - kGeomEps || y0 > window.y_max + kGeomEps) {
 				continue;
 			}
+			if (auto ok = charge_geometry_work(all_edges.size()); !ok.has_value()) {
+				return ok;
+			}
 			const double ym = 0.5 * (y0 + y1);
 
 			crossings.clear();
@@ -1325,7 +2091,7 @@ void DisplayListBuilder::accumulate_clipped_region(
 				const double ey_min = std::min(e.p0.y, e.p1.y);
 				const double ey_max = std::max(e.p0.y, e.p1.y);
 				const double dy = e.p1.y - e.p0.y;
-				if ( std::abs(dy) <= kGeomEps || ey_min > ym || ey_max < ym) {
+				if (std::abs(dy) <= kGeomEps || ey_min > ym || ey_max < ym) {
 					continue;
 				}
 				const double dx = e.p1.x - e.p0.x;
@@ -1356,8 +2122,11 @@ void DisplayListBuilder::accumulate_clipped_region(
 					continue;
 				}
 				bool inside_all_clips = true;
-				for (const ClipRegion& clip : current_state_.clips) {
-					if (!point_in_edges<ClipEdge>(test_pt, clip.edges, clip.fill_rule)) {
+				for (const auto& clip_ptr : current_state_.clips) {
+					if (!point_in_edges<ClipEdge>(
+							test_pt,
+							clip_ptr->edges,
+							clip_ptr->fill_rule)) {
 						inside_all_clips = false;
 						break;
 					}
@@ -1365,31 +2134,54 @@ void DisplayListBuilder::accumulate_clipped_region(
 				if (inside_all_clips) {
 					const double tx_min = std::min({left.x0, left.x1, right.x0, right.x1});
 					const double tx_max = std::max({left.x0, left.x1, right.x0, right.x1});
-					include_raw_bounds(PdfRect{tx_min, y0, tx_max, y1});
+					accum.include(PdfRect{tx_min, y0, tx_max, y1});
 				}
 			}
 		}
+		return {};
 	} catch (const std::bad_alloc&) {
-		// Fallback to bbox intersection only if scratch vector allocation fails.
-		include_raw_bounds(window);
+		return make_pdf_error(
+			ErrorCode::OutOfMemory,
+			"Out of memory in DisplayListBuilder::accumulate_clipped_region");
 	}
 }
 
-void DisplayListBuilder::accumulate_clipped_segment(PdfPoint p0, PdfPoint p1) noexcept
+PdfResult<void> DisplayListBuilder::accumulate_clipped_segment(
+	PdfPoint p0,
+	PdfPoint p1,
+	BoundsAccumulator& accum) noexcept
 {
 	if (!is_finite_point(p0) || !is_finite_point(p1)) {
-		return;
+		return make_pdf_error(
+			ErrorCode::DamagedFormat,
+			"DisplayListBuilder::accumulate_clipped_segment encountered non-finite segment");
 	}
-	for (const ClipRegion& clip : current_state_.clips) {
-		if (!clip.has_bbox) {
-			return;
+	size_t clip_edge_count = 0u;
+	for (const auto& clip_ptr : current_state_.clips) {
+		if (!clip_ptr || !clip_ptr->has_bbox) {
+			return {};
 		}
+		clip_edge_count += clip_ptr->edges.size();
+	}
+
+	if (auto ok = charge_geometry_work(clip_edge_count + 2u); !ok.has_value()) {
+		return ok;
+	}
+	if (auto ok = check_additional_bytes((clip_edge_count + 2u) * sizeof(double));
+		!ok.has_value()) {
+		return ok;
+	}
+	if (auto ok = charge_allocation_op(); !ok.has_value()) {
+		return ok;
 	}
 
 	try {
-		std::vector<double> ts{0.0, 1.0};
-		for (const ClipRegion& clip : current_state_.clips) {
-			for (const ClipEdge& e : clip.edges) {
+		std::vector<double> ts;
+		ts.reserve(clip_edge_count + 2u);
+		ts.push_back(0.0);
+		ts.push_back(1.0);
+		for (const auto& clip_ptr : current_state_.clips) {
+			for (const ClipEdge& e : clip_ptr->edges) {
 				add_segment_intersection_t(p0, p1, e.p0, e.p1, ts);
 			}
 		}
@@ -1406,8 +2198,8 @@ void DisplayListBuilder::accumulate_clipped_segment(PdfPoint p0, PdfPoint p1) no
 				p0.x + tm * (p1.x - p0.x),
 				p0.y + tm * (p1.y - p0.y)};
 			bool inside_all = true;
-			for (const ClipRegion& clip : current_state_.clips) {
-				if (!point_in_edges<ClipEdge>(mid, clip.edges, clip.fill_rule)) {
+			for (const auto& clip_ptr : current_state_.clips) {
+				if (!point_in_edges<ClipEdge>(mid, clip_ptr->edges, clip_ptr->fill_rule)) {
 					inside_all = false;
 					break;
 				}
@@ -1419,23 +2211,30 @@ void DisplayListBuilder::accumulate_clipped_segment(PdfPoint p0, PdfPoint p1) no
 				const PdfPoint q1{
 					p0.x + t1 * (p1.x - p0.x),
 					p0.y + t1 * (p1.y - p0.y)};
-				include_raw_bounds(PdfRect{
+				accum.include(PdfRect{
 					std::min(q0.x, q1.x),
 					std::min(q0.y, q1.y),
 					std::max(q0.x, q1.x),
 					std::max(q0.y, q1.y)});
 			}
 		}
+		return {};
 	} catch (const std::bad_alloc&) {
+		return make_pdf_error(
+			ErrorCode::OutOfMemory,
+			"Out of memory in DisplayListBuilder::accumulate_clipped_segment");
 	}
 }
 
-void DisplayListBuilder::accumulate_clipped_rect(
+PdfResult<void> DisplayListBuilder::accumulate_clipped_rect(
 	const PdfRect& local_rect,
-	const PdfMatrix& to_page) noexcept
+	const PdfMatrix& to_page,
+	BoundsAccumulator& accum) noexcept
 {
-	if (!is_valid_rect(local_rect)) {
-		return;
+	if (!validate_transformed_rect_finite(local_rect, to_page)) {
+		return make_pdf_error(
+			ErrorCode::DamagedFormat,
+			"DisplayListBuilder::accumulate_clipped_rect transformed coordinates overflowed");
 	}
 	const std::array<PdfPoint, 4> corners = {
 		transform_point(to_page, PdfPoint{local_rect.x_min, local_rect.y_min}),
@@ -1449,7 +2248,7 @@ void DisplayListBuilder::accumulate_clipped_rect(
 		ClipEdge{corners[2], corners[3]},
 		ClipEdge{corners[3], corners[0]},
 	};
-	accumulate_clipped_region(edges, FillRule::NonZero);
+	return accumulate_clipped_region(edges, FillRule::NonZero, accum);
 }
 
 PdfResult<void> DisplayListBuilder::push_clip_path(
@@ -1464,25 +2263,57 @@ PdfResult<void> DisplayListBuilder::push_clip_path(
 			ErrorCode::DamagedFormat,
 			"DisplayListBuilder::push_clip_path received invalid path_index or fill_rule");
 	}
+	// Subtract the implicit initial page_box clip when comparing against `max_clip_depth`:
+	const size_t user_clip_depth =
+		(!page_box_pt_.is_empty() && !current_state_.clips.empty())
+			? (current_state_.clips.size() - 1u)
+			: current_state_.clips.size();
+	if (user_clip_depth >= limits_.max_clip_depth) {
+		return make_pdf_error(
+			ErrorCode::DamagedFormat,
+			"DisplayListBuilder::push_clip_path exceeded max_clip_depth");
+	}
 	if (commands_.size() >= limits_.max_commands) {
 		return make_pdf_error(
 			ErrorCode::DamagedFormat,
 			"DisplayListBuilder command count limit exceeded");
-	}
-	if (auto ok = check_additional_bytes(sizeof(DisplayCommand)); !ok.has_value()) {
-		return ok;
 	}
 
 	const RecordedPath& p = paths_[path_index];
 	const auto verbs = std::span<const PathVerb>(path_verbs_).subspan(p.verb_offset, p.verb_count);
 	const auto points = std::span<const PdfPoint>(path_points_).subspan(p.point_offset, p.point_count);
 
-	try {
-		commands_.reserve(commands_.size() + 1u);
+	if (!validate_transformed_path_finite(verbs, points, current_state_.ctm)) {
+		return make_pdf_error(
+			ErrorCode::DamagedFormat,
+			"DisplayListBuilder::push_clip_path transformed coordinates overflowed");
+	}
+	if (auto ok = charge_geometry_work(verbs.size() + points.size() + 1u); !ok.has_value()) {
+		return ok;
+	}
+	if (auto ok = charge_allocation_op(); !ok.has_value()) {
+		return ok;
+	}
 
-		ClipRegion region;
-		region.fill_rule = fill_rule;
-		const auto subpaths = extract_user_subpaths(verbs, points, current_state_.ctm);
+	try {
+		std::vector<ClipEdge> ref_edges;
+		for (const auto& clip_ptr : current_state_.clips) {
+			if (clip_ptr) {
+				ref_edges.insert(
+					ref_edges.end(),
+					clip_ptr->edges.begin(),
+					clip_ptr->edges.end());
+			}
+		}
+
+		auto region = std::make_shared<ClipRegion>();
+		region->fill_rule = fill_rule;
+		const auto subpaths = extract_user_subpaths<ClipEdge>(
+			verbs,
+			points,
+			current_state_.ctm,
+			ref_edges,
+			0.0);
 		for (const UserSubpath& sp : subpaths) {
 			if (sp.points.size() < 2u || !sp.has_draw_verb) {
 				continue;
@@ -1492,16 +2323,32 @@ PdfResult<void> DisplayListBuilder::push_clip_path(
 				const PdfPoint b = transform_point(
 					current_state_.ctm,
 					sp.points[(i + 1u) % sp.points.size()]);
+				if (!is_finite_point(a) || !is_finite_point(b)) {
+					return make_pdf_error(
+						ErrorCode::DamagedFormat,
+						"DisplayListBuilder::push_clip_path transformed clip edge is non-finite");
+				}
 				if (std::hypot(b.x - a.x, b.y - a.y) > kGeomEps) {
-					region.edges.push_back(ClipEdge{a, b});
+					region->edges.push_back(ClipEdge{a, b});
 				}
 			}
 		}
-		if (const auto bbox = compute_edges_bbox<ClipEdge>(region.edges)) {
-			region.bbox = *bbox;
-			region.has_bbox = true;
+		if (const auto bbox = compute_edges_bbox<ClipEdge>(region->edges)) {
+			region->bbox = *bbox;
+			region->has_bbox = true;
 		}
 
+		const size_t new_bytes =
+			sizeof(DisplayCommand) +
+			sizeof(std::shared_ptr<const ClipRegion>) +
+			sizeof(ClipRegion) +
+			region->edges.size() * sizeof(ClipEdge);
+		if (auto ok = check_additional_bytes(new_bytes); !ok.has_value()) {
+			return ok;
+		}
+
+		commands_.reserve(commands_.size() + 1u);
+		current_state_.clips.reserve(current_state_.clips.size() + 1u);
 		current_state_.clips.push_back(std::move(region));
 		commands_.emplace_back(PushClipPathCommand{path_index, fill_rule});
 		return {};
@@ -1540,6 +2387,418 @@ PdfResult<void> DisplayListBuilder::draw_path(
 		return ok;
 	}
 
+	const RecordedPath& p = paths_[path_index];
+	const auto verbs = std::span<const PathVerb>(path_verbs_).subspan(p.verb_offset, p.verb_count);
+	const auto points = std::span<const PdfPoint>(path_points_).subspan(p.point_offset, p.point_count);
+
+	if (!validate_transformed_path_finite(verbs, points, current_state_.ctm)) {
+		return make_pdf_error(
+			ErrorCode::DamagedFormat,
+			"DisplayListBuilder::draw_path transformed path coordinates overflowed");
+	}
+
+	const bool visible_fill =
+		fill && (current_state_.fill_alpha > 0.0f) && (fill_color.a > 0.0f);
+	const bool visible_stroke =
+		stroke && (current_state_.stroke_alpha > 0.0f) && (stroke_color.a > 0.0f);
+
+	BoundsAccumulator local_accum{};
+
+	if (visible_fill || visible_stroke) {
+		try {
+			std::vector<ClipEdge> ref_clip_edges;
+			for (const auto& clip_ptr : current_state_.clips) {
+				if (clip_ptr) {
+					ref_clip_edges.insert(
+						ref_clip_edges.end(),
+						clip_ptr->edges.begin(),
+						clip_ptr->edges.end());
+				}
+			}
+
+			const double stroke_r = visible_stroke
+				? (0.5 * static_cast<double>(current_state_.line_width))
+				: 0.0;
+			const auto subpaths = extract_user_subpaths<ClipEdge>(
+				verbs,
+				points,
+				current_state_.ctm,
+				ref_clip_edges,
+				stroke_r);
+
+			if (visible_fill) {
+				std::vector<ClipEdge> fill_edges;
+				for (const UserSubpath& sp : subpaths) {
+					if (sp.points.size() < 2u || !sp.has_draw_verb) {
+						continue;
+					}
+					for (size_t i = 0u; i < sp.points.size(); ++i) {
+						const PdfPoint a = transform_point(current_state_.ctm, sp.points[i]);
+						const PdfPoint b = transform_point(
+							current_state_.ctm,
+							sp.points[(i + 1u) % sp.points.size()]);
+						if (!is_finite_point(a) || !is_finite_point(b)) {
+							return make_pdf_error(
+								ErrorCode::DamagedFormat,
+								"DisplayListBuilder::draw_path fill edge overflowed");
+						}
+						if (std::hypot(b.x - a.x, b.y - a.y) > kGeomEps) {
+							fill_edges.push_back(ClipEdge{a, b});
+						}
+					}
+				}
+				if (!fill_edges.empty()) {
+					if (auto ok = accumulate_clipped_region(fill_edges, fill_rule, local_accum);
+						!ok.has_value()) {
+						return ok;
+					}
+				}
+			}
+
+			if (visible_stroke) {
+				std::vector<UserSubpath> stroke_subpaths;
+				if (current_state_.dash_array.empty()) {
+					stroke_subpaths = subpaths;
+				} else {
+					for (const UserSubpath& sp : subpaths) {
+						auto pieces = apply_dash_pattern(
+							sp,
+							current_state_.dash_array,
+							current_state_.dash_phase);
+						for (UserSubpath& piece : pieces) {
+							stroke_subpaths.push_back(std::move(piece));
+						}
+					}
+				}
+
+				const double w = static_cast<double>(current_state_.line_width);
+				if (w <= 0.0) {
+					for (const UserSubpath& sp : stroke_subpaths) {
+						if (!sp.has_draw_verb || sp.points.empty()) {
+							continue;
+						}
+						const size_t seg_count =
+							sp.closed ? sp.points.size() : (sp.points.size() - 1u);
+						for (size_t i = 0u; i < seg_count; ++i) {
+							const PdfPoint a = transform_point(current_state_.ctm, sp.points[i]);
+							const PdfPoint b = transform_point(
+								current_state_.ctm,
+								sp.points[(i + 1u) % sp.points.size()]);
+							if (auto ok = accumulate_clipped_segment(a, b, local_accum);
+								!ok.has_value()) {
+								return ok;
+							}
+						}
+					}
+				} else {
+					const double r = 0.5 * w;
+					const PdfMatrix& ctm = current_state_.ctm;
+
+					auto emit_user_poly = [&](std::span<const PdfPoint> user_pts) -> PdfResult<void> {
+						if (user_pts.size() < 3u) {
+							return {};
+						}
+						for (const PdfPoint& up : user_pts) {
+							if (!is_finite_point(up) || !is_finite_point(transform_point(ctm, up))) {
+								return make_pdf_error(
+									ErrorCode::DamagedFormat,
+									"DisplayListBuilder::draw_path stroke polygon overflowed");
+							}
+						}
+						std::vector<ClipEdge> edges;
+						edges.reserve(user_pts.size());
+						for (size_t i = 0u; i < user_pts.size(); ++i) {
+							const PdfPoint a = transform_point(ctm, user_pts[i]);
+							const PdfPoint b = transform_point(
+								ctm,
+								user_pts[(i + 1u) % user_pts.size()]);
+							if (std::hypot(b.x - a.x, b.y - a.y) > kGeomEps) {
+								edges.push_back(ClipEdge{a, b});
+							}
+						}
+						if (!edges.empty()) {
+							return accumulate_clipped_region(edges, FillRule::NonZero, local_accum);
+						}
+						return {};
+					};
+
+					const double tx = std::atan2(ctm.c, ctm.a);
+					const double ty = std::atan2(ctm.d, ctm.b);
+					constexpr double kPi = std::numbers::pi;
+					const std::array<double, 4> crit_angles = {
+						tx,
+						tx + kPi,
+						ty,
+						ty + kPi,
+					};
+
+					auto emit_user_disk = [&](PdfPoint center) -> PdfResult<void> {
+						std::vector<double> angles;
+						constexpr size_t kCircleSteps = 32u;
+						angles.reserve(kCircleSteps + 8u + ref_clip_edges.size() * 6u);
+						for (size_t s = 0u; s < kCircleSteps; ++s) {
+							angles.push_back(
+								-kPi + (2.0 * kPi * static_cast<double>(s)) /
+								static_cast<double>(kCircleSteps));
+						}
+						for (double ca : crit_angles) {
+							angles.push_back(std::atan2(std::sin(ca), std::cos(ca)));
+						}
+						for (const ClipEdge& ce : ref_clip_edges) {
+							collect_circle_segment_intersection_angles(
+								center,
+								r,
+								ctm,
+								ce.p0,
+								ce.p1,
+								angles);
+						}
+						std::sort(angles.begin(), angles.end());
+
+						std::vector<PdfPoint> poly;
+						poly.reserve(angles.size());
+						for (size_t i = 0u; i < angles.size(); ++i) {
+							if (i > 0u && angles[i] - angles[i - 1u] <= 1e-11) {
+								continue;
+							}
+							poly.emplace_back(
+								center.x + r * std::cos(angles[i]),
+								center.y + r * std::sin(angles[i]));
+						}
+						return emit_user_poly(poly);
+					};
+
+					auto emit_user_arc_fan = [&](
+						PdfPoint center,
+						PdfPoint start_unit,
+						PdfPoint end_unit,
+						PdfPoint halfspace_dir,
+						bool has_second_halfspace = false,
+						PdfPoint second_dir = PdfPoint{}) -> PdfResult<void> {
+						std::vector<double> angles;
+						constexpr size_t kArcSteps = 32u;
+						angles.reserve(kArcSteps + 8u + ref_clip_edges.size() * 6u);
+						angles.push_back(std::atan2(start_unit.y, start_unit.x));
+						angles.push_back(std::atan2(end_unit.y, end_unit.x));
+						for (size_t s = 0u; s < kArcSteps; ++s) {
+							const double a =
+								-kPi + (2.0 * kPi * static_cast<double>(s)) /
+								static_cast<double>(kArcSteps);
+							angles.push_back(a);
+						}
+						for (double ca : crit_angles) {
+							angles.push_back(std::atan2(std::sin(ca), std::cos(ca)));
+						}
+						for (const ClipEdge& ce : ref_clip_edges) {
+							collect_circle_segment_intersection_angles(
+								center,
+								r,
+								ctm,
+								ce.p0,
+								ce.p1,
+								angles);
+						}
+						std::sort(angles.begin(), angles.end());
+
+						std::vector<PdfPoint> poly;
+						poly.reserve(angles.size() + 1u);
+						poly.push_back(center);
+						for (size_t i = 0u; i < angles.size(); ++i) {
+							if (i > 0u && angles[i] - angles[i - 1u] <= 1e-11) {
+								continue;
+							}
+							const double ux = std::cos(angles[i]);
+							const double uy = std::sin(angles[i]);
+							if (ux * halfspace_dir.x + uy * halfspace_dir.y < -1e-7) {
+								continue;
+							}
+							if (has_second_halfspace &&
+								(ux * second_dir.x + uy * second_dir.y < -1e-7)) {
+								continue;
+							}
+							poly.emplace_back(center.x + r * ux, center.y + r * uy);
+						}
+						if (poly.size() >= 3u) {
+							return emit_user_poly(poly);
+						}
+						return {};
+					};
+
+					struct StrokeSeg {
+						PdfPoint a{};
+						PdfPoint b{};
+						PdfPoint t{};
+						PdfPoint n{};
+					};
+
+					for (const UserSubpath& sp : stroke_subpaths) {
+						if (!sp.has_draw_verb || sp.points.empty()) {
+							continue;
+						}
+						std::vector<StrokeSeg> segs;
+						const size_t raw_seg_count =
+							sp.closed ? sp.points.size() : (sp.points.size() - 1u);
+						for (size_t i = 0u; i < raw_seg_count; ++i) {
+							const PdfPoint a = sp.points[i];
+							const PdfPoint b = sp.points[(i + 1u) % sp.points.size()];
+							const double len = std::hypot(b.x - a.x, b.y - a.y);
+							if (len <= kGeomEps) {
+								continue;
+							}
+							const PdfPoint t{(b.x - a.x) / len, (b.y - a.y) / len};
+							const PdfPoint n{-t.y, t.x};
+							segs.push_back(StrokeSeg{a, b, t, n});
+						}
+
+						if (segs.empty()) {
+							if (current_state_.line_cap == LineCap::Round) {
+								if (auto ok = emit_user_disk(sp.points.front()); !ok.has_value()) {
+									return ok;
+								}
+							} else if (current_state_.line_cap == LineCap::ProjectingSquare) {
+								const PdfPoint c = sp.points.front();
+								const std::array<PdfPoint, 4> sq = {
+									PdfPoint{c.x - r, c.y - r},
+									PdfPoint{c.x + r, c.y - r},
+									PdfPoint{c.x + r, c.y + r},
+									PdfPoint{c.x - r, c.y + r},
+								};
+								if (auto ok = emit_user_poly(sq); !ok.has_value()) {
+									return ok;
+								}
+							}
+							continue;
+						}
+
+						// 1. Segment shafts:
+						for (const StrokeSeg& s : segs) {
+							const std::array<PdfPoint, 4> quad = {
+								PdfPoint{s.a.x + r * s.n.x, s.a.y + r * s.n.y},
+								PdfPoint{s.b.x + r * s.n.x, s.b.y + r * s.n.y},
+								PdfPoint{s.b.x - r * s.n.x, s.b.y - r * s.n.y},
+								PdfPoint{s.a.x - r * s.n.x, s.a.y - r * s.n.y},
+							};
+							if (auto ok = emit_user_poly(quad); !ok.has_value()) {
+								return ok;
+							}
+						}
+
+						// 2. Open-endpoint caps:
+						if (!sp.closed) {
+							const auto emit_cap = [&](PdfPoint p, PdfPoint t_out, PdfPoint n)
+								-> PdfResult<void> {
+								if (current_state_.line_cap == LineCap::ProjectingSquare) {
+									const std::array<PdfPoint, 4> cap_quad = {
+										PdfPoint{p.x - r * n.x, p.y - r * n.y},
+										PdfPoint{p.x + r * n.x, p.y + r * n.y},
+										PdfPoint{
+											p.x + r * n.x + r * t_out.x,
+											p.y + r * n.y + r * t_out.y},
+										PdfPoint{
+											p.x - r * n.x + r * t_out.x,
+											p.y - r * n.y + r * t_out.y},
+									};
+									return emit_user_poly(cap_quad);
+								}
+								if (current_state_.line_cap == LineCap::Round) {
+									return emit_user_arc_fan(
+										p,
+										PdfPoint{-n.x, -n.y},
+										n,
+										t_out);
+								}
+								return {};
+							};
+
+							const StrokeSeg& first = segs.front();
+							if (auto ok = emit_cap(
+									first.a,
+									PdfPoint{-first.t.x, -first.t.y},
+									PdfPoint{-first.n.x, -first.n.y});
+								!ok.has_value()) {
+								return ok;
+							}
+
+							const StrokeSeg& last = segs.back();
+							if (auto ok = emit_cap(last.b, last.t, last.n); !ok.has_value()) {
+								return ok;
+							}
+						}
+
+						// 3. Segment joins:
+						const size_t join_count =
+							sp.closed ? segs.size() : (segs.size() - 1u);
+						for (size_t i = 0u; i < join_count; ++i) {
+							const StrokeSeg& s_in = segs[i];
+							const StrokeSeg& s_out = segs[(i + 1u) % segs.size()];
+							if (std::hypot(s_in.b.x - s_out.a.x, s_in.b.y - s_out.a.y) > 1e-6) {
+								continue;
+							}
+							const PdfPoint v = s_in.b;
+							const double cross = s_in.t.x * s_out.t.y - s_in.t.y * s_out.t.x;
+							const double dot = s_in.t.x * s_out.t.x + s_in.t.y * s_out.t.y;
+
+							const PdfPoint u1 =
+								(cross <= 0.0) ? s_in.n : PdfPoint{-s_in.n.x, -s_in.n.y};
+							const PdfPoint u2 =
+								(cross <= 0.0) ? s_out.n : PdfPoint{-s_out.n.x, -s_out.n.y};
+
+							const std::array<PdfPoint, 3> bevel_tri = {
+								v,
+								PdfPoint{v.x + r * u1.x, v.y + r * u1.y},
+								PdfPoint{v.x + r * u2.x, v.y + r * u2.y},
+							};
+							if (auto ok = emit_user_poly(bevel_tri); !ok.has_value()) {
+								return ok;
+							}
+
+							if (current_state_.line_join == LineJoin::Round) {
+								if (auto ok = emit_user_arc_fan(
+										v,
+										u1,
+										u2,
+										s_in.t,
+										true,
+										PdfPoint{-s_out.t.x, -s_out.t.y});
+									!ok.has_value()) {
+									return ok;
+								}
+							} else if (current_state_.line_join == LineJoin::Miter) {
+								const double sin_half_alpha =
+									std::sqrt(std::max(0.0, 0.5 * (1.0 + dot)));
+								if (sin_half_alpha > 1e-9 &&
+									(1.0 / sin_half_alpha) <=
+										static_cast<double>(current_state_.miter_limit)) {
+									const double denom = 1.0 + dot;
+									const PdfPoint apex{
+										v.x + r * (u1.x + u2.x) / denom,
+										v.y + r * (u1.y + u2.y) / denom};
+									const std::array<PdfPoint, 4> miter_quad = {
+										v,
+										PdfPoint{v.x + r * u1.x, v.y + r * u1.y},
+										apex,
+										PdfPoint{v.x + r * u2.x, v.y + r * u2.y},
+									};
+									if (auto ok = emit_user_poly(miter_quad); !ok.has_value()) {
+										return ok;
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		} catch (const std::bad_alloc&) {
+			return make_pdf_error(
+				ErrorCode::OutOfMemory,
+				"Out of memory computing path bounds in DisplayListBuilder::draw_path");
+		}
+	}
+
+	if (auto ok = charge_allocation_op(); !ok.has_value()) {
+		return ok;
+	}
+
 	DrawPathCommand cmd{};
 	cmd.path_index = path_index;
 	cmd.stroke_color = stroke_color;
@@ -1549,6 +2808,7 @@ PdfResult<void> DisplayListBuilder::draw_path(
 	cmd.fill_rule = fill_rule;
 
 	try {
+		commands_.reserve(commands_.size() + 1u);
 		commands_.emplace_back(cmd);
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(
@@ -1556,316 +2816,13 @@ PdfResult<void> DisplayListBuilder::draw_path(
 			"Out of memory in DisplayListBuilder::draw_path");
 	}
 
-	const bool visible_fill =
-		fill && (current_state_.fill_alpha > 0.0f) && (fill_color.a > 0.0f);
-	const bool visible_stroke =
-		stroke && (current_state_.stroke_alpha > 0.0f) && (stroke_color.a > 0.0f);
-	if (!visible_fill && !visible_stroke) {
-		return {};
-	}
-
-	const RecordedPath& p = paths_[path_index];
-	const auto verbs = std::span<const PathVerb>(path_verbs_).subspan(p.verb_offset, p.verb_count);
-	const auto points = std::span<const PdfPoint>(path_points_).subspan(p.point_offset, p.point_count);
-
-	try {
-		const auto subpaths = extract_user_subpaths(verbs, points, current_state_.ctm);
-
-		if (visible_fill) {
-			std::vector<ClipEdge> fill_edges;
-			for (const UserSubpath& sp : subpaths) {
-				if (sp.points.size() < 2u || !sp.has_draw_verb) {
-					continue;
-				}
-				for (size_t i = 0u; i < sp.points.size(); ++i) {
-					const PdfPoint a = transform_point(current_state_.ctm, sp.points[i]);
-					const PdfPoint b = transform_point(
-						current_state_.ctm,
-						sp.points[(i + 1u) % sp.points.size()]);
-					if (std::hypot(b.x - a.x, b.y - a.y) > kGeomEps) {
-						fill_edges.push_back(ClipEdge{a, b});
-					}
-				}
-			}
-			if (!fill_edges.empty()) {
-				accumulate_clipped_region(fill_edges, fill_rule);
-			}
+	if (local_accum.has_bounds) {
+		if (!has_content_bounds_) {
+			content_bounds_pt_ = local_accum.bounds;
+			has_content_bounds_ = true;
+		} else {
+			content_bounds_pt_ = union_rect(content_bounds_pt_, local_accum.bounds);
 		}
-
-		if (visible_stroke) {
-			const double w = static_cast<double>(current_state_.line_width);
-			if (w <= 0.0) {
-				// Hairline stroke (0 width in user space): clip 1D segments directly.
-				for (const UserSubpath& sp : subpaths) {
-					if (!sp.has_draw_verb || sp.points.empty()) {
-						continue;
-					}
-					const size_t seg_count =
-						sp.closed ? sp.points.size() : (sp.points.size() - 1u);
-					for (size_t i = 0u; i < seg_count; ++i) {
-						const PdfPoint a = transform_point(current_state_.ctm, sp.points[i]);
-						const PdfPoint b = transform_point(
-							current_state_.ctm,
-							sp.points[(i + 1u) % sp.points.size()]);
-						accumulate_clipped_segment(a, b);
-					}
-				}
-			} else {
-				const double r = 0.5 * w;
-				const PdfMatrix& ctm = current_state_.ctm;
-
-				auto emit_user_poly = [&](std::span<const PdfPoint> user_pts) {
-					if (user_pts.size() < 3u) {
-						return;
-					}
-					std::vector<ClipEdge> edges;
-					edges.reserve(user_pts.size());
-					for (size_t i = 0u; i < user_pts.size(); ++i) {
-						const PdfPoint a = transform_point(ctm, user_pts[i]);
-						const PdfPoint b = transform_point(
-							ctm,
-							user_pts[(i + 1u) % user_pts.size()]);
-						if (std::hypot(b.x - a.x, b.y - a.y) > kGeomEps) {
-							edges.push_back(ClipEdge{a, b});
-						}
-					}
-					if (!edges.empty()) {
-						accumulate_clipped_region(edges, FillRule::NonZero);
-					}
-				};
-
-				// Critical user-space angles where `(a cos t + c sin t)` and
-				// `(b cos t + d sin t)` attain their exact extrema under `ctm`.
-				const double tx = std::atan2(ctm.c, ctm.a);
-				const double ty = std::atan2(ctm.d, ctm.b);
-				constexpr double kPi = std::numbers::pi;
-				const std::array<double, 4> crit_angles = {
-					tx,
-					tx + kPi,
-					ty,
-					ty + kPi,
-				};
-
-				auto emit_user_disk = [&](PdfPoint center) {
-					std::vector<double> angles;
-					constexpr size_t kCircleSteps = 32u;
-					angles.reserve(kCircleSteps + 4u);
-					for (size_t s = 0u; s < kCircleSteps; ++s) {
-						angles.push_back(
-							(2.0 * kPi * static_cast<double>(s)) /
-							static_cast<double>(kCircleSteps));
-					}
-					for (double ca : crit_angles) {
-						double norm = std::fmod(ca, 2.0 * kPi);
-						if (norm < 0.0) {
-							norm += 2.0 * kPi;
-						}
-						angles.push_back(norm);
-					}
-					std::sort(angles.begin(), angles.end());
-
-					std::vector<PdfPoint> poly;
-					poly.reserve(angles.size());
-					for (size_t i = 0u; i < angles.size(); ++i) {
-						if (i > 0u && angles[i] - angles[i - 1u] <= 1e-9) {
-							continue;
-						}
-						poly.emplace_back(
-							center.x + r * std::cos(angles[i]),
-							center.y + r * std::sin(angles[i]));
-					}
-					emit_user_poly(poly);
-				};
-
-				// Emits a circular fan centered at `center` covering all unit
-				// vectors `u` that satisfy `u dot halfspace_dir >= -1e-9` and,
-				// when `has_second_halfspace` is true, `u dot second_dir >= -1e-9`.
-				auto emit_user_arc_fan = [&](
-					PdfPoint center,
-					PdfPoint start_unit,
-					PdfPoint end_unit,
-					PdfPoint halfspace_dir,
-					bool has_second_halfspace = false,
-					PdfPoint second_dir = PdfPoint{}) {
-					std::vector<double> angles;
-					constexpr size_t kArcSteps = 48u;
-					angles.reserve(kArcSteps + 6u);
-					angles.push_back(std::atan2(start_unit.y, start_unit.x));
-					angles.push_back(std::atan2(end_unit.y, end_unit.x));
-					for (size_t s = 0u; s < kArcSteps; ++s) {
-						const double a =
-							-kPi + (2.0 * kPi * static_cast<double>(s)) /
-							static_cast<double>(kArcSteps);
-						angles.push_back(a);
-					}
-					for (double ca : crit_angles) {
-						angles.push_back( std::atan2(std::sin(ca), std::cos(ca)));
-					}
-					std::sort(angles.begin(), angles.end());
-
-					std::vector<PdfPoint> poly;
-					poly.reserve(angles.size() + 1u);
-					poly.push_back(center);
-					for (size_t i = 0u; i < angles.size(); ++i) {
-						if (i > 0u && angles[i] - angles[i - 1u] <= 1e-9) {
-							continue;
-						}
-						const double ux = std::cos(angles[i]);
-						const double uy = std::sin(angles[i]);
-						if (ux * halfspace_dir.x + uy * halfspace_dir.y < -1e-7) {
-							continue;
-						}
-						if (has_second_halfspace &&
-							(ux * second_dir.x + uy * second_dir.y < -1e-7)) {
-							continue;
-						}
-						poly.emplace_back(center.x + r * ux, center.y + r * uy);
-					}
-					if (poly.size() >= 3u) {
-						emit_user_poly(poly);
-					}
-				};
-
-				struct StrokeSeg {
-					PdfPoint a{};
-					PdfPoint b{};
-					PdfPoint t{};
-					PdfPoint n{};
-				};
-
-				for (const UserSubpath& sp : subpaths) {
-					if (!sp.has_draw_verb || sp.points.empty()) {
-						continue;
-					}
-					std::vector<StrokeSeg> segs;
-					const size_t raw_seg_count =
-						sp.closed ? sp.points.size() : (sp.points.size() - 1u);
-					for (size_t i = 0u; i < raw_seg_count; ++i) {
-						const PdfPoint a = sp.points[i];
-						const PdfPoint b = sp.points[(i + 1u) % sp.points.size()];
-						const double len = std::hypot(b.x - a.x, b.y - a.y);
-						if (len <= kGeomEps) {
-							continue;
-						}
-						const PdfPoint t{(b.x - a.x) / len, (b.y - a.y) / len};
-						const PdfPoint n{-t.y, t.x};
-						segs.push_back(StrokeSeg{a, b, t, n});
-					}
-
-					if (segs.empty()) {
-						if (current_state_.line_cap == LineCap::Round) {
-							emit_user_disk(sp.points.front());
-						}
-						continue;
-					}
-
-					// 1. Segment shafts:
-					for (const StrokeSeg& s : segs) {
-						const std::array<PdfPoint, 4> quad = {
-							PdfPoint{s.a.x + r * s.n.x, s.a.y + r * s.n.y},
-							PdfPoint{s.b.x + r * s.n.x, s.b.y + r * s.n.y},
-							PdfPoint{s.b.x - r * s.n.x, s.b.y - r * s.n.y},
-							PdfPoint{s.a.x - r * s.n.x, s.a.y - r * s.n.y},
-						};
-						emit_user_poly(quad);
-					}
-
-					// 2. Open-endpoint caps:
-					if (!sp.closed) {
-						const auto emit_cap = [&](PdfPoint p, PdfPoint t_out, PdfPoint n) {
-							if (current_state_.line_cap == LineCap::ProjectingSquare) {
-								const std::array<PdfPoint, 4> cap_quad = {
-									PdfPoint{p.x - r * n.x, p.y - r * n.y},
-									PdfPoint{p.x + r * n.x, p.y + r * n.y},
-									PdfPoint{
-										p.x + r * n.x + r * t_out.x,
-										p.y + r * n.y + r * t_out.y},
-									PdfPoint{
-										p.x - r * n.x + r * t_out.x,
-										p.y - r * n.y + r * t_out.y},
-								};
-								emit_user_poly(cap_quad);
-							} else if (current_state_.line_cap == LineCap::Round) {
-								emit_user_arc_fan(
-									p,
-									PdfPoint{-n.x, -n.y},
-									n,
-									t_out);
-							}
-						};
-
-						const StrokeSeg& first = segs.front();
-						emit_cap(
-							first.a,
-							PdfPoint{-first.t.x, -first.t.y},
-							PdfPoint{-first.n.x, -first.n.y});
-
-						const StrokeSeg& last = segs.back();
-						emit_cap(last.b, last.t, last.n);
-					}
-
-					// 3. Segment joins:
-					const size_t join_count =
-						sp.closed ? segs.size() : (segs.size() - 1u);
-					for (size_t i = 0u; i < join_count; ++i) {
-						const StrokeSeg& s_in = segs[i];
-						const StrokeSeg& s_out = segs[(i + 1u) % segs.size()];
-						if (std::hypot(s_in.b.x - s_out.a.x, s_in.b.y - s_out.a.y) > 1e-6) {
-							continue;
-						}
-						const PdfPoint v = s_in.b;
-						const double cross = s_in.t.x * s_out.t.y - s_in.t.y * s_out.t.x;
-						const double dot = s_in.t.x * s_out.t.x + s_in.t.y * s_out.t.y;
-
-						const PdfPoint u1 =
-							(cross <= 0.0) ? s_in.n : PdfPoint{-s_in.n.x, -s_in.n.y};
-						const PdfPoint u2 =
-							(cross <= 0.0) ? s_out.n : PdfPoint{-s_out.n.x, -s_out.n.y};
-
-						const std::array<PdfPoint, 3> bevel_tri = {
-							v,
-							PdfPoint{v.x + r * u1.x, v.y + r * u1.y},
-							PdfPoint{v.x + r * u2.x, v.y + r * u2.y},
-						};
-						emit_user_poly(bevel_tri);
-
-						if (current_state_.line_join == LineJoin::Round) {
-							// Outer wedge between `u1` and `u2` has `u dot s_in.t >= 0`
-							// and `u dot (-s_out.t) >= 0`:
-							emit_user_arc_fan(
-								v,
-								u1,
-								u2,
-								s_in.t,
-								true,
-								PdfPoint{-s_out.t.x, -s_out.t.y});
-						} else if (current_state_.line_join == LineJoin::Miter) {
-							const double sin_half_alpha =
-								std::sqrt(std::max(0.0, 0.5 * (1.0 + dot)));
-							if (sin_half_alpha > 1e-9 &&
-								(1.0 / sin_half_alpha) <=
-									static_cast<double>(current_state_.miter_limit)) {
-								const double denom = 1.0 + dot;
-								const PdfPoint apex{
-									v.x + r * (u1.x + u2.x) / denom,
-									v.y + r * (u1.y + u2.y) / denom};
-								const std::array<PdfPoint, 4> miter_quad = {
-									v,
-									PdfPoint{v.x + r * u1.x, v.y + r * u1.y},
-									apex,
-									PdfPoint{v.x + r * u2.x, v.y + r * u2.y},
-								};
-								emit_user_poly(miter_quad);
-							}
-						}
-					}
-				}
-			}
-		}
-	} catch (const std::bad_alloc&) {
-		return make_pdf_error(
-			ErrorCode::OutOfMemory,
-			"Out of memory computing path bounds in DisplayListBuilder::draw_path");
 	}
 
 	return {};
@@ -1900,30 +2857,38 @@ PdfResult<void> DisplayListBuilder::draw_glyph_run(
 			"DisplayListBuilder::draw_glyph_run local_bounds_pt must be finite and non-inverted");
 	}
 
-	for (const PositionedGlyph& g : glyphs) {
-		if (!is_finite_point(g.origin_pt) || !std::isfinite(g.advance_pt)) {
-			return make_pdf_error(
-				ErrorCode::DamagedFormat,
-				"DisplayListBuilder::draw_glyph_run glyph origin and advance must be finite");
-		}
-		if (g.ink_bounds_pt.has_value()) {
-			if (!is_valid_rect(*g.ink_bounds_pt) ||
-				!std::isfinite(g.origin_pt.x + g.ink_bounds_pt->x_min) ||
-				!std::isfinite(g.origin_pt.y + g.ink_bounds_pt->y_min) ||
-				!std::isfinite(g.origin_pt.x + g.ink_bounds_pt->x_max) ||
-				!std::isfinite(g.origin_pt.y + g.ink_bounds_pt->y_max)) {
-				return make_pdf_error(
-					ErrorCode::DamagedFormat,
-					"DisplayListBuilder::draw_glyph_run glyph ink_bounds_pt must be finite and non-inverted");
-			}
-		}
-	}
-
 	const PdfMatrix combined = recto::pdf::concat_matrix(text_matrix, current_state_.ctm);
 	if (!is_finite_matrix(combined)) {
 		return make_pdf_error(
 			ErrorCode::DamagedFormat,
 			"DisplayListBuilder::draw_glyph_run produced non-finite text-to-page matrix");
+	}
+
+	for (const PositionedGlyph& g : glyphs) {
+		if (!is_finite_point(g.origin_pt) ||
+			!std::isfinite(g.advance_pt) ||
+			!is_finite_point(transform_point(combined, g.origin_pt))) {
+			return make_pdf_error(
+				ErrorCode::DamagedFormat,
+				"DisplayListBuilder::draw_glyph_run glyph origin and advance must be finite in text and page space");
+		}
+		if (g.ink_bounds_pt.has_value()) {
+			if (!is_valid_rect(*g.ink_bounds_pt)) {
+				return make_pdf_error(
+					ErrorCode::DamagedFormat,
+					"DisplayListBuilder::draw_glyph_run glyph ink_bounds_pt must be finite and non-inverted");
+			}
+			const PdfRect placed{
+				g.origin_pt.x + g.ink_bounds_pt->x_min,
+				g.origin_pt.y + g.ink_bounds_pt->y_min,
+				g.origin_pt.x + g.ink_bounds_pt->x_max,
+				g.origin_pt.y + g.ink_bounds_pt->y_max};
+			if (!validate_transformed_rect_finite(placed, combined)) {
+				return make_pdf_error(
+					ErrorCode::DamagedFormat,
+					"DisplayListBuilder::draw_glyph_run placed glyph ink_bounds_pt overflowed");
+			}
+		}
 	}
 
 	const bool mode_fills =
@@ -1937,55 +2902,84 @@ PdfResult<void> DisplayListBuilder::draw_glyph_run(
 		render_mode == TextRenderMode::StrokeAndClip ||
 		render_mode == TextRenderMode::FillStrokeAndClip;
 
-	// Compute glyph run ink bounds from explicit `local_bounds_pt`,
-	// `type3_sub_list->content_bounds_pt()`, or per-glyph `ink_bounds_pt`:
 	std::optional<PdfRect> computed_local_bounds;
-	if (local_bounds_pt.has_value()) {
-		computed_local_bounds = *local_bounds_pt;
-	} else if (type3_sub_list != nullptr) {
-		if (type3_sub_list->has_content_bounds()) {
-			const PdfRect& sub_box = type3_sub_list->content_bounds_pt();
+	std::vector<PdfRect> per_glyph_local_rects;
+
+	try {
+		if (type3_sub_list != nullptr) {
+			if (type3_sub_list->has_content_bounds()) {
+				const PdfRect& sub_box = type3_sub_list->content_bounds_pt();
+				per_glyph_local_rects.reserve(glyphs.size());
+				for (const PositionedGlyph& g : glyphs) {
+					if (g.is_blank) {
+						continue;
+					}
+					const PdfRect placed{
+						g.origin_pt.x + sub_box.x_min,
+						g.origin_pt.y + sub_box.y_min,
+						g.origin_pt.x + sub_box.x_max,
+						g.origin_pt.y + sub_box.y_max};
+					if (!validate_transformed_rect_finite(placed, combined)) {
+						return make_pdf_error(
+							ErrorCode::DamagedFormat,
+							"DisplayListBuilder::draw_glyph_run Type 3 glyph bounds overflowed");
+					}
+					per_glyph_local_rects.push_back(placed);
+					computed_local_bounds = computed_local_bounds.has_value()
+						? union_rect(*computed_local_bounds, placed)
+						: placed;
+				}
+			}
+		} else {
+			bool all_have_glyph_bounds = true;
+			per_glyph_local_rects.reserve(glyphs.size());
 			for (const PositionedGlyph& g : glyphs) {
 				if (g.is_blank) {
 					continue;
 				}
-				const PdfRect placed{
-					g.origin_pt.x + sub_box.x_min,
-					g.origin_pt.y + sub_box.y_min,
-					g.origin_pt.x + sub_box.x_max,
-					g.origin_pt.y + sub_box.y_max};
-				if (!is_valid_rect(placed)) {
-					return make_pdf_error(
-						ErrorCode::DamagedFormat,
-						"DisplayListBuilder::draw_glyph_run Type 3 glyph bounds overflowed");
+				if (!g.ink_bounds_pt.has_value()) {
+					all_have_glyph_bounds = false;
+					break;
 				}
+				const PdfRect placed{
+					g.origin_pt.x + g.ink_bounds_pt->x_min,
+					g.origin_pt.y + g.ink_bounds_pt->y_min,
+					g.origin_pt.x + g.ink_bounds_pt->x_max,
+					g.origin_pt.y + g.ink_bounds_pt->y_max};
+				per_glyph_local_rects.push_back(placed);
 				computed_local_bounds = computed_local_bounds.has_value()
 					? union_rect(*computed_local_bounds, placed)
 					: placed;
 			}
-		}
-	} else {
-		for (const PositionedGlyph& g : glyphs) {
-			if (g.is_blank) {
-				continue;
-			}
-			if (!g.ink_bounds_pt.has_value()) {
-				if (mode_fills || mode_strokes) {
+
+			if (!all_have_glyph_bounds) {
+				per_glyph_local_rects.clear();
+				if (local_bounds_pt.has_value()) {
+					if (!validate_transformed_rect_finite(*local_bounds_pt, combined)) {
+						return make_pdf_error(
+							ErrorCode::DamagedFormat,
+							"DisplayListBuilder::draw_glyph_run local_bounds_pt overflowed under CTM");
+					}
+					computed_local_bounds = *local_bounds_pt;
+					per_glyph_local_rects.push_back(*local_bounds_pt);
+				} else if (mode_fills || mode_strokes) {
 					return make_pdf_error(
 						ErrorCode::DamagedFormat,
 						"DisplayListBuilder::draw_glyph_run visible glyph requires ink_bounds_pt, is_blank, local_bounds_pt, or type3_sub_list");
 				}
-				continue;
+			} else if (local_bounds_pt.has_value()) {
+				if (!validate_transformed_rect_finite(*local_bounds_pt, combined)) {
+					return make_pdf_error(
+						ErrorCode::DamagedFormat,
+						"DisplayListBuilder::draw_glyph_run local_bounds_pt overflowed under CTM");
+				}
+				computed_local_bounds = *local_bounds_pt;
 			}
-			const PdfRect placed{
-				g.origin_pt.x + g.ink_bounds_pt->x_min,
-				g.origin_pt.y + g.ink_bounds_pt->y_min,
-				g.origin_pt.x + g.ink_bounds_pt->x_max,
-				g.origin_pt.y + g.ink_bounds_pt->y_max};
-			computed_local_bounds = computed_local_bounds.has_value()
-				? union_rect(*computed_local_bounds, placed)
-				: placed;
 		}
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(
+			ErrorCode::OutOfMemory,
+			"Out of memory in DisplayListBuilder::draw_glyph_run");
 	}
 
 	constexpr size_t kMaxU32 = std::numeric_limits<uint32_t>::max();
@@ -1999,14 +2993,43 @@ PdfResult<void> DisplayListBuilder::draw_glyph_run(
 			"DisplayListBuilder::draw_glyph_run exceeds command or glyph limits");
 	}
 
-	if (glyphs.size() > std::numeric_limits<size_t>::max() / sizeof(PositionedGlyph)) {
+	size_t glyph_bytes = 0u;
+	size_t total_add = 0u;
+	if (!checked_mul_size(glyphs.size(), sizeof(PositionedGlyph), glyph_bytes) ||
+		!checked_add_size(glyph_bytes, sizeof(DisplayCommand), total_add)) {
 		return make_pdf_error(
 			ErrorCode::DamagedFormat,
 			"DisplayListBuilder::draw_glyph_run byte size overflow");
 	}
-	const size_t glyph_bytes = glyphs.size() * sizeof(PositionedGlyph);
-	if (auto ok = check_additional_bytes(glyph_bytes + sizeof(DisplayCommand));
-		!ok.has_value()) {
+	if (auto ok = check_additional_bytes(total_add); !ok.has_value()) {
+		return ok;
+	}
+
+	const bool visible_fill =
+		mode_fills && (current_state_.fill_alpha > 0.0f) && (fill_color.a > 0.0f);
+	const bool visible_stroke =
+		mode_strokes && (current_state_.stroke_alpha > 0.0f) && (stroke_color.a > 0.0f);
+
+	BoundsAccumulator local_accum{};
+	if ((visible_fill || visible_stroke) && !per_glyph_local_rects.empty()) {
+		const double pad = (visible_stroke && current_state_.line_width > 0.0f)
+			? (0.5 * static_cast<double>(current_state_.line_width))
+			: 0.0;
+		for (PdfRect effective_local : per_glyph_local_rects) {
+			if (pad > 0.0) {
+				effective_local.x_min -= pad;
+				effective_local.y_min -= pad;
+				effective_local.x_max += pad;
+				effective_local.y_max += pad;
+			}
+			if (auto ok = accumulate_clipped_rect(effective_local, combined, local_accum);
+				!ok.has_value()) {
+				return ok;
+			}
+		}
+	}
+
+	if (auto ok = charge_allocation_op(); !ok.has_value()) {
 		return ok;
 	}
 
@@ -2041,20 +3064,13 @@ PdfResult<void> DisplayListBuilder::draw_glyph_run(
 			"Out of memory in DisplayListBuilder::draw_glyph_run");
 	}
 
-	const bool visible_fill =
-		mode_fills && (current_state_.fill_alpha > 0.0f) && (fill_color.a > 0.0f);
-	const bool visible_stroke =
-		mode_strokes && (current_state_.stroke_alpha > 0.0f) && (stroke_color.a > 0.0f);
-	if ((visible_fill || visible_stroke) && computed_local_bounds.has_value()) {
-		PdfRect effective_local = *computed_local_bounds;
-		if (visible_stroke && current_state_.line_width > 0.0f) {
-			const double pad = 0.5 * static_cast<double>(current_state_.line_width);
-			effective_local.x_min -= pad;
-			effective_local.y_min -= pad;
-			effective_local.x_max += pad;
-			effective_local.y_max += pad;
+	if (local_accum.has_bounds) {
+		if (!has_content_bounds_) {
+			content_bounds_pt_ = local_accum.bounds;
+			has_content_bounds_ = true;
+		} else {
+			content_bounds_pt_ = union_rect(content_bounds_pt_, local_accum.bounds);
 		}
-		accumulate_clipped_rect(effective_local, combined);
 	}
 
 	return {};
@@ -2076,10 +3092,11 @@ PdfResult<void> DisplayListBuilder::draw_image(
 			"DisplayListBuilder::draw_image requires non-null bitmap, finite transform, and valid tint colour");
 	}
 	const PdfMatrix image_to_page = recto::pdf::concat_matrix(dest_transform, current_state_.ctm);
-	if (!is_finite_matrix(image_to_page)) {
+	if (!is_finite_matrix(image_to_page) ||
+		!validate_transformed_rect_finite(PdfRect{0.0, 0.0, 1.0, 1.0}, image_to_page)) {
 		return make_pdf_error(
 			ErrorCode::DamagedFormat,
-			"DisplayListBuilder::draw_image produced non-finite image-to-page matrix");
+			"DisplayListBuilder::draw_image produced non-finite image-to-page coordinates");
 	}
 	if (commands_.size() >= limits_.max_commands) {
 		return make_pdf_error(
@@ -2090,11 +3107,38 @@ PdfResult<void> DisplayListBuilder::draw_image(
 		return ok;
 	}
 
-	const bool visible_image =
+	const bool potentially_visible =
 		(current_state_.fill_alpha > 0.0f) &&
 		bitmap->has_non_transparent_pixels &&
 		(!bitmap->is_monochrome_mask || mask_tint_color.a > 0.0f) &&
 		(!soft_mask || soft_mask->has_non_transparent_pixels);
+
+	BoundsAccumulator local_accum{};
+	if (potentially_visible) {
+		const size_t pixel_work =
+			static_cast<size_t>(bitmap->width) * static_cast<size_t>(bitmap->height);
+		if (auto ok = charge_geometry_work(pixel_work); !ok.has_value()) {
+			return ok;
+		}
+		try {
+			const auto coverage_rects =
+				compute_image_coverage_rects(*bitmap, soft_mask.get());
+			for (const PdfRect& cov : coverage_rects) {
+				if (auto ok = accumulate_clipped_rect(cov, image_to_page, local_accum);
+					!ok.has_value()) {
+					return ok;
+				}
+			}
+		} catch (const std::bad_alloc&) {
+			return make_pdf_error(
+				ErrorCode::OutOfMemory,
+				"Out of memory computing image coverage in DisplayListBuilder::draw_image");
+		}
+	}
+
+	if (auto ok = charge_allocation_op(); !ok.has_value()) {
+		return ok;
+	}
 
 	DrawImageCommand cmd{};
 	cmd.bitmap = std::move(bitmap);
@@ -2104,6 +3148,7 @@ PdfResult<void> DisplayListBuilder::draw_image(
 	cmd.mask_tint_color = mask_tint_color;
 
 	try {
+		commands_.reserve(commands_.size() + 1u);
 		commands_.emplace_back(std::move(cmd));
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(
@@ -2111,9 +3156,15 @@ PdfResult<void> DisplayListBuilder::draw_image(
 			"Out of memory in DisplayListBuilder::draw_image");
 	}
 
-	if (visible_image) {
-		accumulate_clipped_rect(PdfRect{0.0, 0.0, 1.0, 1.0}, image_to_page);
+	if (local_accum.has_bounds) {
+		if (!has_content_bounds_) {
+			content_bounds_pt_ = local_accum.bounds;
+			has_content_bounds_ = true;
+		} else {
+			content_bounds_pt_ = union_rect(content_bounds_pt_, local_accum.bounds);
+		}
 	}
+
 	return {};
 }
 
@@ -2127,9 +3178,14 @@ PdfResult<std::shared_ptr<const DisplayList>> DisplayListBuilder::finish() noexc
 	if (sticky_error_.has_value()) {
 		return *sticky_error_;
 	}
+	if (auto ok = charge_allocation_op(); !ok.has_value()) {
+		sticky_error_ = ok.error();
+		finished_ = true;
+		return ok.error();
+	}
 
 	try {
-		auto result = std::shared_ptr<const DisplayList>(new DisplayList(
+		std::unique_ptr<DisplayList> raw(new DisplayList(
 			page_box_pt_,
 			content_bounds_pt_,
 			has_content_bounds_,
@@ -2139,12 +3195,15 @@ PdfResult<std::shared_ptr<const DisplayList>> DisplayListBuilder::finish() noexc
 			std::move(path_points_),
 			std::move(glyphs_),
 			std::move(dash_values_)));
+		std::shared_ptr<const DisplayList> result(std::move(raw));
 		finished_ = true;
 		return result;
 	} catch (const std::bad_alloc&) {
-		return make_pdf_error(
+		sticky_error_ = PdfError{
 			ErrorCode::OutOfMemory,
-			"Out of memory in DisplayListBuilder::finish");
+			"Out of memory in DisplayListBuilder::finish"};
+		finished_ = true;
+		return *sticky_error_;
 	}
 }
 
