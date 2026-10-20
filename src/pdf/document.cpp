@@ -307,48 +307,134 @@ constexpr std::string_view kXmpNsDc = "http://purl.org/dc/elements/1.1/";
 constexpr std::string_view kXmpNsPdf = "http://ns.adobe.com/pdf/1.3/";
 constexpr std::string_view kXmpNsXmp = "http://ns.adobe.com/xap/1.0/";
 constexpr std::string_view kXmpNsRdf = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
+constexpr std::string_view kXmpNsXml = "http://www.w3.org/XML/1998/namespace";
 
-// Extracts an XMP property value by canonical XML namespace URI and local name
-// (`target_ns_uri`, `target_local_name`) from an XMP metadata XML packet.
-// Resolves `xmlns` default namespace and `xmlns:<prefix>` declarations across
-// nested element scopes, handles `<rdf:Alt>` / `<rdf:Seq>` / `<rdf:Bag>` /
-// `<rdf:li>` containers via the RDF namespace URI, and supports shorthand
-// attributes (`prefix:Prop="value"`).
-[[nodiscard]] std::string extract_xmp_property_value(
-	std::string_view xml,
-	std::string_view target_ns_uri,
-	std::string_view target_local_name)
+enum class XmpNsKind : uint8_t {
+	Other = 0,
+	Dc,
+	Pdf,
+	Xmp,
+	Rdf,
+	Xml,
+};
+
+[[nodiscard]] constexpr XmpNsKind classify_xmp_ns_uri(std::string_view uri) noexcept
+{
+	if (uri == kXmpNsDc) {
+		return XmpNsKind::Dc;
+	}
+	if (uri == kXmpNsPdf) {
+		return XmpNsKind::Pdf;
+	}
+	if (uri == kXmpNsXmp) {
+		return XmpNsKind::Xmp;
+	}
+	if (uri == kXmpNsRdf) {
+		return XmpNsKind::Rdf;
+	}
+	if (uri == kXmpNsXml) {
+		return XmpNsKind::Xml;
+	}
+	return XmpNsKind::Other;
+}
+
+struct ExtractedXmpPacket {
+	std::string title{};
+	std::string author{};
+	std::string subject{};
+	std::string pdf_keywords{};
+	std::string dc_subject{};
+	std::string creator_tool{};
+	std::string producer{};
+	std::string create_date{};
+	std::string modify_date{};
+};
+
+// Single-pass XMP metadata extractor using O(1) scoped namespace bindings
+// (`std::unordered_map<std::string_view, XmpNsKind>` with an undo trail per
+// scope). Resolves `xmlns` default namespace and `xmlns:<prefix>` declarations
+// across nested element scopes, enforces W3C reserved `xml:lang="x-default"`
+// semantics on `<rdf:Alt>` items, and supports shorthand attributes.
+[[nodiscard]] ExtractedXmpPacket extract_xmp_metadata_packet(std::string_view xml)
 {
 	struct XmlAttr {
 		std::string_view name{};
 		std::string value{};
 	};
 
+	struct PrefixUndo {
+		std::string_view prefix{};
+		std::optional<XmpNsKind> prev_kind{};
+	};
+
 	struct XmlScope {
 		std::string_view qname{};
-		std::string default_ns{};
-		std::vector<std::pair<std::string, std::string>> prefix_ns{};
+		XmpNsKind default_ns{XmpNsKind::Other};
+		size_t undo_start{0u};
+	};
 
-		void set_prefix(std::string_view prefix, std::string_view uri)
-		{
-			for (auto& [k, v] : prefix_ns) {
-				if (k == prefix) {
-					v.assign(uri.data(), uri.size());
-					return;
-				}
-			}
-			prefix_ns.emplace_back(std::string(prefix), std::string(uri));
-		}
+	constexpr size_t kMaxXmlDepth = 64u;
+	constexpr size_t kMaxActivePrefixBindings = 4096u;
 
-		[[nodiscard]] std::string_view lookup_prefix(std::string_view prefix) const noexcept
-		{
-			for (auto it = prefix_ns.rbegin(); it != prefix_ns.rend(); ++it) {
-				if (it->first == prefix) {
-					return it->second;
-				}
-			}
-			return {};
+	std::unordered_map<std::string_view, XmpNsKind> active_prefixes;
+	active_prefixes.reserve(16u);
+	active_prefixes.emplace("dc", XmpNsKind::Dc);
+	active_prefixes.emplace("pdf", XmpNsKind::Pdf);
+	active_prefixes.emplace("xmp", XmpNsKind::Xmp);
+	active_prefixes.emplace("xap", XmpNsKind::Xmp);
+	active_prefixes.emplace("rdf", XmpNsKind::Rdf);
+
+	std::vector<PrefixUndo> undo_stack;
+	std::vector<XmlScope> scopes;
+	scopes.reserve(kMaxXmlDepth + 1u);
+	scopes.push_back(XmlScope{{}, XmpNsKind::Other, 0u});
+
+	auto bind_prefix = [&](std::string_view prefix, XmpNsKind kind) {
+		// Per W3C XML Namespaces section 3 ("Declaring Namespaces"), `xml` is
+		// permanently bound to `http://www.w3.org/XML/1998/namespace` and no
+		// other prefix may bind to that namespace URI.
+		if (prefix.empty() || prefix == "xml" || prefix == "xmlns") {
+			return;
 		}
+		if (kind == XmpNsKind::Xml) {
+			kind = XmpNsKind::Other;
+		}
+		const auto it = active_prefixes.find(prefix);
+		if (it == active_prefixes.end()) {
+			// Unrelated namespace bindings that do not shadow an active XMP/RDF
+			// prefix need not be stored at all because missing keys already map
+			// to `XmpNsKind::Other`.
+			if (kind == XmpNsKind::Other || active_prefixes.size() >= kMaxActivePrefixBindings) {
+				return;
+			}
+			undo_stack.push_back(PrefixUndo{prefix, std::nullopt});
+			active_prefixes.emplace(prefix, kind);
+		} else if (it->second != kind) {
+			undo_stack.push_back(PrefixUndo{prefix, it->second});
+			it->second = kind;
+		}
+	};
+
+	auto lookup_prefix = [&](std::string_view prefix) noexcept -> XmpNsKind {
+		if (prefix == "xml") {
+			return XmpNsKind::Xml;
+		}
+		const auto it = active_prefixes.find(prefix);
+		return (it != active_prefixes.end()) ? it->second : XmpNsKind::Other;
+	};
+
+	auto pop_scope = [&]() {
+		const size_t target_undo = scopes.back().undo_start;
+		while (undo_stack.size() > target_undo) {
+			const PrefixUndo u = undo_stack.back();
+			undo_stack.pop_back();
+			if (u.prev_kind.has_value()) {
+				active_prefixes[u.prefix] = *u.prev_kind;
+			} else {
+				active_prefixes.erase(u.prefix);
+			}
+		}
+		scopes.pop_back();
 	};
 
 	auto is_xml_space = [](char ch) noexcept -> bool {
@@ -368,17 +454,46 @@ constexpr std::string_view kXmpNsRdf = "http://www.w3.org/1999/02/22-rdf-syntax-
 		return {qn.substr(0u, colon), qn.substr(colon + 1u)};
 	};
 
-	constexpr size_t kMaxXmlDepth = 64u;
-	std::vector<XmlScope> scopes;
-	scopes.reserve(kMaxXmlDepth + 1u);
+	ExtractedXmpPacket elem_out{};
+	ExtractedXmpPacket attr_out{};
 
-	XmlScope root_scope{};
-	root_scope.set_prefix("dc", kXmpNsDc);
-	root_scope.set_prefix("pdf", kXmpNsPdf);
-	root_scope.set_prefix("xmp", kXmpNsXmp);
-	root_scope.set_prefix("xap", kXmpNsXmp);
-	root_scope.set_prefix("rdf", kXmpNsRdf);
-	scopes.push_back(std::move(root_scope));
+	auto match_slot = [](
+						  ExtractedXmpPacket& pkt,
+						  XmpNsKind ns,
+						  std::string_view local) noexcept -> std::string* {
+		if (ns == XmpNsKind::Dc) {
+			if (local == "title") {
+				return &pkt.title;
+			}
+			if (local == "creator") {
+				return &pkt.author;
+			}
+			if (local == "description") {
+				return &pkt.subject;
+			}
+			if (local == "subject") {
+				return &pkt.dc_subject;
+			}
+		} else if (ns == XmpNsKind::Pdf) {
+			if (local == "Keywords") {
+				return &pkt.pdf_keywords;
+			}
+			if (local == "Producer") {
+				return &pkt.producer;
+			}
+		} else if (ns == XmpNsKind::Xmp) {
+			if (local == "CreatorTool") {
+				return &pkt.creator_tool;
+			}
+			if (local == "CreateDate") {
+				return &pkt.create_date;
+			}
+			if (local == "ModifyDate") {
+				return &pkt.modify_date;
+			}
+		}
+		return nullptr;
+	};
 
 	struct LiItem {
 		std::string text{};
@@ -386,13 +501,13 @@ constexpr std::string_view kXmpNsRdf = "http://www.w3.org/1999/02/22-rdf-syntax-
 	};
 
 	std::optional<size_t> target_depth;
+	std::string* active_target_slot = nullptr;
 	std::optional<size_t> active_li_depth;
 	bool active_li_x_default = false;
 	bool in_rdf_alt = false;
 	std::string current_li_text;
 	std::string direct_target_text;
 	std::vector<LiItem> li_items;
-	std::string attr_fallback;
 
 	size_t pos = 0u;
 	const size_t n = xml.size();
@@ -486,33 +601,39 @@ constexpr std::string_view kXmpNsRdf = "http://www.w3.org/1999/02/22-rdf-syntax-
 						active_li_x_default = false;
 					}
 					if (target_depth.has_value() && closing_depth == *target_depth) {
+						std::string resolved_val;
 						if (!li_items.empty()) {
 							if (in_rdf_alt) {
+								const std::string* chosen = &li_items.front().text;
 								for (const LiItem& item : li_items) {
 									if (item.is_x_default) {
-										return item.text;
+										chosen = &item.text;
+										break;
 									}
 								}
-								return li_items.front().text;
+								resolved_val = *chosen;
+							} else {
+								resolved_val = li_items.front().text;
+								for (size_t i = 1u; i < li_items.size(); ++i) {
+									resolved_val += ", ";
+									resolved_val += li_items[i].text;
+								}
 							}
-							std::string joined = li_items.front().text;
-							for (size_t i = 1u; i < li_items.size(); ++i) {
-								joined += ", ";
-								joined += li_items[i].text;
-							}
-							return joined;
+						} else {
+							resolved_val = std::string(trim_ascii_whitespace(direct_target_text));
 						}
-						std::string trimmed_direct(trim_ascii_whitespace(direct_target_text));
-						if (!trimmed_direct.empty()) {
-							return trimmed_direct;
+						if (!resolved_val.empty() && active_target_slot != nullptr &&
+							active_target_slot->empty()) {
+							*active_target_slot = std::move(resolved_val);
 						}
 						target_depth.reset();
+						active_target_slot = nullptr;
 						active_li_depth.reset();
 						in_rdf_alt = false;
 						direct_target_text.clear();
 						li_items.clear();
 					}
-					scopes.pop_back();
+					pop_scope();
 				}
 			}
 			continue;
@@ -533,7 +654,12 @@ constexpr std::string_view kXmpNsRdf = "http://www.w3.org/1999/02/22-rdf-syntax-
 			continue;
 		}
 
-		std::vector<XmlAttr> attrs;
+		XmlScope child_scope{};
+		child_scope.qname = tag_qname;
+		child_scope.default_ns = scopes.back().default_ns;
+		child_scope.undo_start = undo_stack.size();
+
+		std::vector<XmlAttr> non_ns_attrs;
 		bool self_closing = false;
 		bool malformed_tag = false;
 		while (true) {
@@ -591,59 +717,54 @@ constexpr std::string_view kXmpNsRdf = "http://www.w3.org/1999/02/22-rdf-syntax-
 						trim_ascii_whitespace(xml.substr(val_start, cur - val_start)));
 				}
 			}
-			attrs.push_back(XmlAttr{attr_name, std::move(attr_val)});
+			if (attr_name == "xmlns") {
+				child_scope.default_ns = classify_xmp_ns_uri(attr_val);
+			} else if (attr_name.starts_with("xmlns:")) {
+				bind_prefix(attr_name.substr(6u), classify_xmp_ns_uri(attr_val));
+			} else {
+				non_ns_attrs.push_back(XmlAttr{attr_name, std::move(attr_val)});
+			}
 		}
 		if (malformed_tag) {
+			scopes.push_back(child_scope);
+			pop_scope();
 			break;
 		}
 		pos = cur;
 
 		if (scopes.size() >= kMaxXmlDepth) {
+			scopes.push_back(child_scope);
+			pop_scope();
 			continue;
 		}
 
-		XmlScope child_scope = scopes.back();
-		child_scope.qname = tag_qname;
-		for (const XmlAttr& a : attrs) {
-			if (a.name == "xmlns") {
-				child_scope.default_ns = a.value;
-			} else if (a.name.starts_with("xmlns:")) {
-				child_scope.set_prefix(a.name.substr(6u), a.value);
-			}
-		}
+		scopes.push_back(child_scope);
+		const size_t new_depth = scopes.size() - 1u;
 
 		const auto [elem_prefix, elem_local] = split_qname(tag_qname);
-		const std::string_view elem_ns = elem_prefix.empty()
-			? std::string_view(child_scope.default_ns)
-			: child_scope.lookup_prefix(elem_prefix);
+		const XmpNsKind elem_ns = elem_prefix.empty()
+			? child_scope.default_ns
+			: lookup_prefix(elem_prefix);
 
 		// Check shorthand attributes on any element (e.g. `rdf:Description dc:title="..."`):
-		if (attr_fallback.empty()) {
-			for (const XmlAttr& a : attrs) {
-				if (a.name == "xmlns" || a.name.starts_with("xmlns:")) {
-					continue;
-				}
-				const auto [attr_prefix, attr_local] = split_qname(a.name);
-				if (attr_local != target_local_name || attr_prefix.empty()) {
-					continue;
-				}
-				const std::string_view attr_ns = child_scope.lookup_prefix(attr_prefix);
-				if (attr_ns == target_ns_uri && !a.value.empty()) {
-					attr_fallback = a.value;
-					break;
-				}
+		for (const XmlAttr& a : non_ns_attrs) {
+			const auto [attr_prefix, attr_local] = split_qname(a.name);
+			if (attr_prefix.empty() || a.value.empty()) {
+				continue;
 			}
-		}
-
-		const size_t new_depth = scopes.size();
-		if (!self_closing) {
-			scopes.push_back(std::move(child_scope));
+			const XmpNsKind attr_ns = lookup_prefix(attr_prefix);
+			if (std::string* slot = match_slot(attr_out, attr_ns, attr_local);
+				slot != nullptr && slot->empty()) {
+				*slot = a.value;
+			}
 		}
 
 		if (!target_depth.has_value()) {
-			if (elem_ns == target_ns_uri && elem_local == target_local_name) {
-				if (!self_closing) {
+			if (!self_closing) {
+				if (std::string* slot = match_slot(elem_out, elem_ns, elem_local);
+					slot != nullptr && slot->empty()) {
 					target_depth = new_depth;
+					active_target_slot = slot;
 					active_li_depth.reset();
 					in_rdf_alt = false;
 					current_li_text.clear();
@@ -652,25 +773,44 @@ constexpr std::string_view kXmpNsRdf = "http://www.w3.org/1999/02/22-rdf-syntax-
 				}
 			}
 		} else {
-			if (elem_ns == kXmpNsRdf && elem_local == "Alt") {
+			if (elem_ns == XmpNsKind::Rdf && elem_local == "Alt") {
 				in_rdf_alt = true;
-			} else if (elem_ns == kXmpNsRdf && elem_local == "li" && !self_closing &&
+			} else if (elem_ns == XmpNsKind::Rdf && elem_local == "li" && !self_closing &&
 					   !active_li_depth.has_value()) {
 				active_li_depth = new_depth;
 				current_li_text.clear();
 				active_li_x_default = false;
-				for (const XmlAttr& a : attrs) {
+				for (const XmlAttr& a : non_ns_attrs) {
 					const auto [ap, al] = split_qname(a.name);
-					if ((a.name == "xml:lang" || al == "lang") && a.value == "x-default") {
+					if (al == "lang" && lookup_prefix(ap) == XmpNsKind::Xml &&
+						a.value == "x-default") {
 						active_li_x_default = true;
 						break;
 					}
 				}
 			}
 		}
+
+		if (self_closing) {
+			pop_scope();
+		}
 	}
 
-	return attr_fallback;
+	auto merge_fallback = [](std::string& primary, std::string& fallback) {
+		if (primary.empty() && !fallback.empty()) {
+			primary = std::move(fallback);
+		}
+	};
+	merge_fallback(elem_out.title, attr_out.title);
+	merge_fallback(elem_out.author, attr_out.author);
+	merge_fallback(elem_out.subject, attr_out.subject);
+	merge_fallback(elem_out.pdf_keywords, attr_out.pdf_keywords);
+	merge_fallback(elem_out.dc_subject, attr_out.dc_subject);
+	merge_fallback(elem_out.creator_tool, attr_out.creator_tool);
+	merge_fallback(elem_out.producer, attr_out.producer);
+	merge_fallback(elem_out.create_date, attr_out.create_date);
+	merge_fallback(elem_out.modify_date, attr_out.modify_date);
+	return elem_out;
 }
 
 [[nodiscard]] bool has_subset_font_prefix(std::string_view font_name) noexcept
@@ -2528,14 +2668,13 @@ PdfResult<void> Document::load_document_structure()
 					const std::string_view xmp_xml(
 						reinterpret_cast<const char*>(meta_bytes_res->data()),
 						meta_bytes_res->size());
+					ExtractedXmpPacket xmp_pkt = extract_xmp_metadata_packet(xmp_xml);
 					auto assign_xmp_fallback = [&](
 												   std::string& field,
-												   std::string_view ns_uri,
-												   std::string_view local_name) -> PdfResult<void> {
-						if (!field.empty()) {
+												   std::string&& extracted) -> PdfResult<void> {
+						if (!field.empty() || extracted.empty()) {
 							return {};
 						}
-						std::string extracted = extract_xmp_property_value(xmp_xml, ns_uri, local_name);
 						if (extracted.size() > kMaxMetadataFieldBytes) {
 							return make_doc_error(
 								ErrorCode::DamagedFormat,
@@ -2545,15 +2684,15 @@ PdfResult<void> Document::load_document_structure()
 						field = std::move(extracted);
 						return {};
 					};
-					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.title, kXmpNsDc, "title"));
-					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.author, kXmpNsDc, "creator"));
-					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.subject, kXmpNsDc, "description"));
-					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.keywords, kXmpNsPdf, "Keywords"));
-					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.keywords, kXmpNsDc, "subject"));
-					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.creator, kXmpNsXmp, "CreatorTool"));
-					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.producer, kXmpNsPdf, "Producer"));
-					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.creation_date, kXmpNsXmp, "CreateDate"));
-					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.mod_date, kXmpNsXmp, "ModifyDate"));
+					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.title, std::move(xmp_pkt.title)));
+					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.author, std::move(xmp_pkt.author)));
+					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.subject, std::move(xmp_pkt.subject)));
+					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.keywords, std::move(xmp_pkt.pdf_keywords)));
+					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.keywords, std::move(xmp_pkt.dc_subject)));
+					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.creator, std::move(xmp_pkt.creator_tool)));
+					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.producer, std::move(xmp_pkt.producer)));
+					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.creation_date, std::move(xmp_pkt.create_date)));
+					RECTO_PDF_RETURN_IF_ERROR(assign_xmp_fallback(description_.metadata.mod_date, std::move(xmp_pkt.modify_date)));
 				}
 			}
 		}

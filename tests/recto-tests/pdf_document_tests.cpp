@@ -1083,6 +1083,47 @@ TEST(PdfDocument, Metadata)
 			ASSERT_TRUE(ns_doc.metadata().parsed_mod_date.has_value());
 			EXPECT_EQ(ns_doc.metadata().parsed_mod_date->iso8601, "2026-10-20T02:00:00Z");
 		}
+
+		// 3d. Foreign `lang` attributes (`evil:lang='x-default'` or non-`xml`
+		//     prefixes attempting to bind `http://www.w3.org/XML/1998/namespace`)
+		//     never override `xml:lang`, and 16,000 namespace declarations on a
+		//     single wide element are handled in O(N) time:
+		{
+			std::string wide_ns_decls;
+			wide_ns_decls.reserve(16000u * 24u);
+			for (uint32_t i = 0u; i < 16000u; ++i) {
+				wide_ns_decls += " xmlns:u" + std::to_string(i) + "='urn:x:" + std::to_string(i) + "'";
+			}
+			const std::string lang_and_wide_xmp =
+				"<r:RDF xmlns:r='http://www.w3.org/1999/02/22-rdf-syntax-ns#'\n"
+				"       xmlns:evil='urn:unrelated'\n"
+				"       xmlns:fake='http://www.w3.org/XML/1998/namespace'" +
+				wide_ns_decls + ">\n"
+				" <r:Description xmlns:dc='http://purl.org/dc/elements/1.1/'>\n"
+				"  <dc:title>\n"
+				"   <r:Alt>\n"
+				"    <r:li xml:lang='de' evil:lang='x-default' fake:lang='x-default'>WRONG</r:li>\n"
+				"    <r:li xml:lang='x-default'>RIGHT</r:li>\n"
+				"   </r:Alt>\n"
+				"  </dc:title>\n"
+				" </r:Description>\n"
+				"</r:RDF>\n";
+			const std::string wide_meta_stm =
+				"<< /Type /Metadata /Subtype /XML /Length " +
+				std::to_string(lang_and_wide_xmp.size()) + " >>\nstream\n" +
+				lang_and_wide_xmp + "\nendstream";
+			const auto wide_bytes = build_synthetic_pdf_from_objects(
+				"1.7",
+				{
+					{1, "<< /Type /Catalog /Pages 2 0 R /Metadata 4 0 R >>"},
+					{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 612 792] /Kids [3 0 R] >>"},
+					{3, "<< /Type /Page /Parent 2 0 R >>"},
+					{4, wide_meta_stm},
+				});
+			auto wide_doc_res = Document::open_memory(wide_bytes);
+			ASSERT_TRUE(wide_doc_res.has_value()) << wide_doc_res.error().message.view();
+			EXPECT_EQ((*wide_doc_res)->metadata().title, "RIGHT");
+		}
 	}
 
 	// 4. `parse_pdf_date` handles `std::bad_alloc` cleanly without terminating
