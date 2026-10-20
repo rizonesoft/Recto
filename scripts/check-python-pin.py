@@ -107,8 +107,10 @@ def main(argv=None, fetch=fetch_json, root=ROOT, local=tuple(sys.version_info[:3
                                        run_gh=run_gh)
     key = "python-" + hashlib.sha256("\n".join(found).encode()).hexdigest()[:12]
     return pin_proposal.notice(root=root, key=key, subject="Recto: a newer Python is available",
-                               body="\n".join(found + ["", "Update the workflow python-version, or install the newer "
-                                                          "Python on this machine, then run the tooling tests."]),
+                               body="\n".join(found + ["", "Install the newer Python on this machine, then run the tooling tests."
+                                                       if args.scope == "local" else
+                                                       "Update the workflow python-version, or install the newer "
+                                                       "Python on this machine, then run the tooling tests."]),
                                mail=mail)
 
 

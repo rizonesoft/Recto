@@ -64,6 +64,8 @@ python -m unittest tests.scripts.test_pin_automations
 
 The installer reads `tasks.json` and registers every task it lists; a task under `\Recto\` that the file no longer lists is removed.
 
+Installed 2026-10-21 on this PC: `recto-python-pin`, `recto-visual-studio` and `recto-conclave-kits`, next run Monday 2026-10-26. A first run of `recto-visual-studio` exited 0 (Visual Studio 2026 already at 18.11.1, nothing sent). A first run of `recto-python-pin` exited 0 and sent the notice "Recto: a newer Python is available" from "Recto automations <website@rizonetech.com>" to `rizonetech@gmail.com`, received 2026-10-20 23:10:08 UTC (Message-Id `<E1xJIy8-FnQW0hPwWQi-OrwO@message-id.smtpcorp.com>`, SPF, DKIM and DMARC pass).
+
 ## Adding an automation
 
 A check of a repository pin belongs in `.github/workflows/pins.yml` (a `pr` or `issue` mode through `scripts/lib/pin_proposal.py`). Only a check that needs this machine belongs here:
