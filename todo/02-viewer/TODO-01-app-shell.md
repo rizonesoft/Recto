@@ -25,6 +25,7 @@ track: M2
 - -> XREF: D05 T02 §3 -- `OrganizePage` Combine mode and `§5` Unsaved-Changes / Replace-Original dialogs reuse §10's `PasswordDialog` and `RectoDialogStyles.xaml`.
 - -> XREF: D06 T01 §7 -- `PerfSmoke` (`D06 T01 §7`) exercises the viewer shell open/dialog paths (`§7`, `§11`) built here.
 - -> XREF: D07 T01 §4 -- packaging completes what §1 here starts: the self-contained configuration, manifest and assets authored here are packaged into the Inno Setup installer, Portable `.zip` (`§5`) and optional MSIX (`§6`).
+- -> XREF: D06 T03 §5 -- the save integrity fault-injection suite gating §8's Save, Save As and Replace-Original paths and §12's recovery snapshots.
 
 ## Outcome
 
@@ -32,6 +33,7 @@ track: M2
 - `ShellPage` hosts the custom title bar (icon, wordmark, Home tab, document `TabView` with dirty indicator and actor teardown, command box trigger, settings button, caption buttons with Snap Layouts), the eight named layout slots, and the Classic menu bar (`File`, `Edit`, `View`, `Tools`, `Window`, `Help`).
 - PDFs open through the `Ctrl+O` picker, full-window drag-and-drop, command-line arguments, and Explorer file activation (redirecting to the primary running instance) into tabs over one shared `OpenDocumentPipeline`, and modified documents save through `Ctrl+S` (incremental or atomic replace) and `Ctrl+Shift+S` (`Save a copy`) with `Replace the original?` and `Save your changes first?` prompts.
 - Password-protected and damaged PDFs trigger the SPEC 9.9 `PasswordDialog` and `CouldNotOpenDialog` (with diagnostic ring-buffer `Copy error details`) built on the shared `RectoDialogStyle`.
+- After the owner's decision, unsaved documents keep timer-driven recovery snapshots and are offered for restore after an abnormal exit, never overwriting the originals (`§12`).
 
 **Adjacency:** list=applicable @ D02 T03 §1; document=applicable @ D02 T01 §8; settings=applicable @ D02 T04 §4; reporting=not-applicable (no reports in the application shell; diagnostic error text is copied via §11); notifications=applicable @ D04 T01 §6; permissions=not-applicable (single-user desktop app; document-level link and action refusals live in D02 T02 §9); audit=not-applicable (no persistent audit log over shell window state); exchange=not-applicable (clipboard and share paths belong to D03 T01 §2); reverse=applicable @ D02 T01 §3
 
@@ -52,6 +54,7 @@ track: M2
 | 9 | §9 | Classic menu bar (`File`, `Edit`, `View`, `Tools`, `Window`, `Help`) and docked top bar | §4, §5, §8 | [ ] |
 | 10 | §10 | Shared SPEC 9.9 `ContentDialog` chrome and Password dialog | §5 | [ ] |
 | 11 | §11 | Could-not-open error dialog and diagnostic clipboard copy | §5, §10 | [ ] |
+| 12 | §12 | Crash recovery snapshots for unsaved edits | §3, §8, §10, D04 T02 §1, D02 T04 §6 | [ ] |
 
 ## 1. App project, unpackaged/MSIX manifest, assets, tokens and minimum window size
 
@@ -256,6 +259,10 @@ Complete the remaining two Windows file-opening entry points in `src/app/App.xam
 - [ ] Marshal redirected `AppInstance::Activated` background-thread callbacks onto `MainWindow`'s `DispatcherQueue` (`TryEnqueue`) and bring `MainWindow` to the foreground (`ShowWindow(SW_RESTORE)` + `SetForegroundWindow`). Done when: activating a file while Recto is minimized restores the window and focuses the newly opened tab.
 - [ ] Honor `--page=N` on command-line launch by passing `initial_page` into `OpenDocumentPipeline::open_file_async` so the tab opens directly at page `N`. Done when: `Recto.exe sample.pdf --page=3` opens `sample.pdf` positioned on page 3.
 - [ ] Add `Shell.LaunchArgsAndActivation` test in `tests/recto-tests/` covering `LaunchArgs` parsing (quotes, Unicode, relative paths, `--page=N`), cold CLI launch, and secondary-instance tab forwarding. Done when: `recto-tests.exe --gtest_filter=Shell.LaunchArgsAndActivation` passes.
+- [ ] Rejoin unquoted, space-split arguments into the longest existing file path before treating them as separate files (`C:\My Files\a b.pdf` passed unquoted by host software) (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`, pdfcraft #1455). Done when: `Shell.LaunchArgsAndActivation` opens the spaced fixture from the unquoted argument list.
+- [ ] Accept Adobe-style open parameters after `#` in a file argument (`page=N`, `nameddest=Name`, `zoom=P`, `search=word`) and strip them from the path, so a help link such as `manual.pdf#nameddest=intro` opens the document at that destination (pdfcraft #3425). Done when: `Shell.LaunchArgsAndActivation` opens `manual.pdf#nameddest=intro` at the named destination and reports no file error.
+- [ ] Give single-instance forwarding a liveness handshake: if the primary instance does not acknowledge a redirected activation within 3 s, the new process opens its own window and logs why, never exiting silently (pdfcraft #3414). Done when: `Shell.LaunchArgsAndActivation` with a primary instance frozen in the test harness still shows the requested file within 5 s.
+- [ ] Parse `/p <file>` and `/pt <file> <printer> <driver> <port>` into a print-only `LaunchRequest` consumed by `D07 T01 §9`. Done when: `Shell.LaunchArgsAndActivation` parses both forms into print requests with the printer name preserved.
 - [ ] Commit: `app: support CLI arguments, Explorer .pdf activation and single-instance tab forwarding`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.LaunchArgsAndActivation` passes on the display-session host, proving cold CLI opens, Unicode/spaced paths, `--page=N` navigation, and single-instance redirection into tabs.
@@ -378,6 +385,36 @@ Implement the SPEC section 9.9 `"Couldn't open this file"` alert `ContentDialog`
 - [ ] Commit: `app: implement CouldNotOpenDialog with path-scrubbed diagnostic clipboard copy`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.CouldNotOpenAndDiagnostics` passes on the display-session host against `tests/corpus/broken/`, clipboard contents match the scrubbed diagnostic format, and screenshot matches `D-Dialogs.png`.
+
+## 12. Crash recovery snapshots for unsaved edits
+
+pdfcraft users lost edits when the app crashed or the machine restarted; its autosave ran only when the window repainted, skipped new documents, marked failed snapshots as written, and a second instance listed the first instance's live snapshots as crash leftovers (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`; pdfcraft #815, #1803, #2150, #2663). Recto keeps a recovery snapshot for each dirty document on a timer, independent of input and repaint, and offers to restore after an abnormal exit. A snapshot holds document content on disk, so the owner decides whether it ships on by default and how encrypted documents are handled before code is written.
+
+**Phase:** 4
+**Needs:** windows-host, display-session, owner-decision
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` section 9.9 dialog chrome; the restore prompt is a genuinely new dialog with no screenshot. The setting lives in SPEC 9.7's `Security, Performance & Privacy` group (`D02 T04 §6`).
+**Job:** A user whose Recto session ended abnormally reopens Recto and restores each unsaved document, or discards it. Consumer: `DocumentTabSession` dirty state (§3), `AtomicFileWriter` (`D04 T02 §1`) and the `SettingsStore` interval setting.
+**Treatment:** One restore dialog listing recoverable documents with their original names and snapshot times, `Restore` and `Discard` per row. Cheaper substitute that fails the checkpoint: silently reopening snapshots as if they were the originals.
+**Chrome:** Shared `RectoDialogStyles.xaml` (§10), stock `ContentDialog` and `ListView`, `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Record the owner decision (default on or off, interval, handling of encrypted documents) in foundation plan D16 with its date and cost of reversing, then remove `owner-decision` from this section's Needs. Done when: the decision line exists in the plan.
+2. Implement `src/services/recovery_store.h/.cpp` writing a full PDF snapshot of each dirty document through `AtomicFileWriter` into `AppPaths::recovery_dir()` on a timer, with a per-instance lock file. Done when: `Shell.RecoverySnapshots` finds a snapshot after the interval with no input events.
+
+- [ ] Record the decision in `docs/plans/2026-10-13-recto-foundation.md` and `docs/user-demand.md`. Done when: both files name the decision and its date.
+- [ ] Write snapshots from a thread-pool timer at the configured interval while any document is dirty, never from the render or input loop (pdfcraft #2663). Done when: the test sees a snapshot after one interval with the window idle and unfocused.
+- [ ] Mark a snapshot written only after `AtomicFileWriter` reports a verified replace, and retry a failed snapshot on the next tick without a new edit (pdfcraft #1803). Done when: an injected write failure is retried and the second tick succeeds.
+- [ ] Cover new, never-saved documents and documents opened from read-only or temporary locations (pdfcraft #815). Done when: a new document's edits are recoverable.
+- [ ] Hold a lock file per running instance and offer restore only for snapshots whose owning instance is gone (pdfcraft #2150). Done when: a second instance lists none of the first instance's live snapshots.
+- [ ] Keep snapshots of encrypted documents encrypted with the document's own security handler, or skip them, as the owner decided. Done when: a snapshot of an AES-256 fixture cannot be opened without its password.
+- [ ] Delete a document's snapshot on save, on close with `Don't save` and after `Discard`, and keep Portable mode snapshots under the portable data folder. Done when: the recovery folder is empty after each path and Portable mode writes nothing to `%LOCALAPPDATA%`.
+- [ ] Build `RecoveryDialog` shown at startup after an abnormal exit, restoring into new dirty tabs named after the originals, never overwriting the original files. Done when: restore opens a dirty tab and the original file's hash is unchanged. Cheaper substitute: restoring by replacing the original file.
+- [ ] Commit: `app: keep crash recovery snapshots of unsaved documents and offer restore`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.RecoverySnapshots:Shell.RecoveryDialog` passes on the display-session host, including the idle-timer, retry, second-instance and Portable mode cases.
 
 ## Verification
 

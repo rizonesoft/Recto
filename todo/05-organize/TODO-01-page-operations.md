@@ -27,6 +27,7 @@ track: M4
 - -> XREF: D05 T02 §1 -- the Organize grid, dialogs, and viewer security bars in `D05 T02` compile down to this file's operation list.
 - -> XREF: D06 T02 §2 -- the security audit in `D06 T02 §2` verifies physical glyph/pixel removal after redaction and metadata/hidden-data eradication after sanitization.
 - -> XREF: D07 T01 §2 -- the print pipeline (`D07 T01 §2`) reuses the shared `parse_page_ranges` parser built in §1 here.
+- -> XREF: D06 T03 §6 -- the raw-byte redaction completeness and audit suite gating §10's redactor, and the Unicode authoring suite (§7 there) over §5, §6 and §8.
 
 ## Outcome
 

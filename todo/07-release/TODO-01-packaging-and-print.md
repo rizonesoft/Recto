@@ -22,12 +22,14 @@ track: M6
 - -> XREF: D02 T04 §1 -- the Inno Setup Portable installer (`§4`) and `Recto-Portable-*.zip` archives (`§5`) pre-create `data\portable.mode` consumed by `AppPaths` (`D02 T04 §1`).
 - -> XREF: D05 T01 §1 -- the shared page-range parser (`parse_page_ranges("1-3, 5, 8-10", page_count)`) is reused by `§2` for custom print page ranges.
 - -> XREF: D07 T02 §3 -- the Authenticode release signing and `SHA256SUMS.txt` pipeline (`D07 T02 §3`) signs and hashes the installer, Portable `.zip`, and MSIX artifacts built in `§4`-`§7` here.
+- -> XREF: D06 T03 §9 -- the printer driver compatibility and failure isolation suite gating §2's print pipeline, and the clean-machine smoke (§12 there) over §4 to §7.
 
 ## Outcome
 
 - Pressing `Ctrl+P` or clicking the Print button opens the system print dialog with live page preview, page-range and copy-count selection, and background printer-DPI rendering via an isolated `recto::pdf::Document` job (`§1`, `§2`), verified automatically by `Print.*` round-tripping through Microsoft Print to PDF / XPS (`§3`).
 - `installer/recto.iss` (`§4`) and `build/build-installer.ps1` (`§5`) build `RectoSetup-x64.exe`, `RectoSetup-ARM64.exe`, `Recto-Portable-x64.zip`, and `Recto-Portable-ARM64.zip` (plus optional MSIX when `-EnableMsix` is passed), with every icon and manifest capability verified by an automated audit script.
 - `tests/scripts/verify_installer.ps1` proves silent **Full Install**, `.pdf` `ProgId` and icon registration, `v1.0.0 -> v1.0.1` upgrade continuity of `settings.json` and `recents.json`, clean silent uninstall (`§6`), and zero-registry, zero-`%LOCALAPPDATA%` **Self-Contained Portable Install** isolation (`§7`).
+- Explorer shows PDF thumbnails and a preview pane from a process-isolated `RectoShell.dll` (`§8`), and `print`, `printto`, `Combine in Recto` and `Convert to PDF with Recto` work on Explorer selections without ever changing the user's default PDF handler (`§9`).
 
 **Adjacency:** list=not-applicable (installed apps are listed by Windows, not Recto); document=applicable @ D07 T01 §2; settings=not-applicable (print choices live in the Windows print dialog; Portable mode and Default PDF app rows live in D02 T04 §6); reporting=not-applicable (crash reporting is D07 T02 §4); notifications=not-applicable (none originate here); permissions=not-applicable (manifest capabilities are declared in D02 T01 §1 and audited in §5); audit=not-applicable (release provenance is D07 T02 §1 and §3); exchange=not-applicable (no data import); reverse=applicable @ D07 T01 §6
 
@@ -44,6 +46,8 @@ track: M6
 | 5 | §5 | Release packaging pipeline (`build-installer.ps1`: Setup `.exe`, Portable `.zip` & MSIX) | §3, §4 | [ ] |
 | 6 | §6 | Automated Full Install, `.pdf` association, upgrade and uninstall proof (`installer`) | §5 | [ ] |
 | 7 | §7 | Automated Self-Contained Portable Install zero-registry and zero-`%LOCALAPPDATA%` proof | §6 | [ ] |
+| 8 | §8 | Explorer thumbnail and preview handlers (`IThumbnailProvider`, `IPreviewHandler`) | §4, D01 T02 §6 | [ ] |
+| 9 | §9 | Explorer verbs: print, printto, Combine and Convert to PDF (`IExplorerCommand`) | §2, §4, D02 T01 §7, D05 T02 §3, D04 T01 §3 | [ ] |
 
 ## 1. WinUI 3 print API spike (`PrintManagerInterop` vs `ID2D1PrintControl`) & section 11 note
 
@@ -91,9 +95,13 @@ Implement the production print pipeline in `src/app/printing/PrintService.h` and
 - [ ] Render print pages from `DisplayList` into `ID2D1CommandList` / printer-DPI (`300+ DPI`) targets rather than screen-resolution `96 DPI` viewport tiles, including visible `/Annots` and filled `/AcroForm` appearance streams (`/AP /N`) that Do Not Carry the `NoView` or `Print`-disabled annotation flag (`F` bit 3 `Print` per ISO 32000-1 Table 165). Done when: `Print.RespectsAnnotationPrintFlag` verifies annotations with the `Print` bit set appear on printed output while annotations without the `Print` bit are omitted.
 - [ ] Wire `CancelToken` into both preview generation and final spooling so dismissing the print dialog or clicking Cancel mid-job aborts the background print worker within `< 20 ms` and deletes any incomplete spool file. Done when: `Print.CancelMidSpoolCleansUp` cancels a 50-page print job on page 3 and verifies `< 20 ms` abort and zero leftover temp files.
 - [ ] Wire `file.print` (`Ctrl+P`), the Floating Page Toolbar Print button (`D02 T02 §8`), the Classic File menu `Print...` item (`D02 T01 §10`), and the `Ctrl+K` Command Palette (`D02 T01 §9`) to `PrintService::show_print_dialog`, keeping the action disabled when no document tab is active (on Home, Convert, or Settings). Done when: all 4 entry points invoke `PrintService` when a PDF is open and are disabled on Home.
+- [ ] Read paper sizes, custom forms and roll sizes from the selected printer's capabilities, default to the document page at 100% when the driver has no match, and persist paper, duplex, colour and scale per printer (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`, pdfcraft #1103, #2001, #2826, #3096). Done when: `Print.DriverPaperSizesAndPersistence` lists a stub driver's 62 by 100 mm form and preselects the previous session's choices.
+- [ ] Send in the PrintTicket only the options the user changed, so driver defaults for colour, duplex and paper apply untouched (pdfcraft #2422). Done when: `Print.TicketSendsOnlyChangedSettings` finds no colour or duplex override in an untouched job's ticket.
+- [ ] Run spooling in a worker with a watchdog so a driver crash or hang ends the job with the full error chain while the viewer stays responsive, and query printer capabilities off the UI thread with a per-printer timeout (pdfcraft #2192, #2684, #2922, #3472). Done when: `Print.WorkerFailureIsolated` survives a stub driver that crashes the worker and shows the error dialog with the driver's HRESULT.
+- [ ] Disable Print with a stated reason when the document forbids printing, and map `Current page` to the viewed physical page when page labels restart (pdfcraft #1308, #2669). Done when: `Print.PageRangeSelection` prints the viewed page of a labelled fixture and the restricted fixture shows the reason without opening the dialog.
 - [ ] Commit: `feat(print): implement non-blocking print pipeline with page ranges, printer-DPI rendering, and Ctrl+P`
 
-**Test checkpoint:** `recto-tests --gtest_filter=Print.UsesIsolatedDocumentInstanceOffUiThread:Print.PageRangeSelection:Print.MixedOrientationAndScale:Print.RespectsAnnotationPrintFlag:Print.CancelMidSpoolCleansUp` passes under ASan.
+**Test checkpoint:** `recto-tests --gtest_filter=Print.UsesIsolatedDocumentInstanceOffUiThread:Print.PageRangeSelection:Print.MixedOrientationAndScale:Print.RespectsAnnotationPrintFlag:Print.CancelMidSpoolCleansUp:Print.DriverPaperSizesAndPersistence:Print.TicketSendsOnlyChangedSettings:Print.WorkerFailureIsolated` passes under ASan.
 
 ## 3. Automated `Print-to-PDF` verification seam (`Print.*` in `recto-tests`) against corpus
 
@@ -227,6 +235,57 @@ Complete `tests/scripts/verify_installer.ps1` by proving both **Self-Contained P
 - [ ] Commit: `test(release): add automated Self-Contained Portable Install and .zip isolation proof`
 
 **Test checkpoint:** `pwsh -NoProfile -File tests/scripts/verify_installer.ps1` (running both `Full` and `Portable` verification suites) exits `0` with its complete `[PASS]` summary quoted.
+
+## 8. Explorer thumbnail and preview handlers (`IThumbnailProvider`, `IPreviewHandler`)
+
+pdfcraft users asked for PDF thumbnails in Explorer and a preview pane in Explorer and Outlook, and complained that every PDF showed the app icon instead of a document icon (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`; pdfcraft #308, #2194, #2206, #3207). Recto ships a COM server `RectoShell.dll` with a thumbnail provider and a preview handler that render page 1 through `recto-pdf`. Explorer must never load the parser into its own process: both handlers run process-isolated in the system surrogate, with a hard time and memory budget, no JavaScript, no links and no network, and they fail to the stock document icon on any error.
+
+**Phase:** 6
+**Needs:** windows-host, display-session
+**Surface:** no
+
+**Build order:**
+
+1. Add `src/shell/RectoShell.vcxproj` building `RectoShell.dll` with `IThumbnailProvider` and `IPreviewHandler` implementations over `IInitializeWithStream`, rendering page 1 with `recto-pdf` into a `HBITMAP`. Done when: `Shell.ThumbnailProvider` renders the corpus `hello-world.pdf` to a non-blank 256 px thumbnail.
+2. Register both handlers in `installer/recto.iss` (Full mode only) under the `Recto.PDF` ProgID with process isolation left on, and remove them on uninstall. Done when: `tests/scripts/verify_installer.ps1` sees the thumbnail in `IShellItemImageFactory` output and no registration after uninstall.
+
+- [ ] Author `src/shell/ThumbnailProvider.h/.cpp` implementing `IInitializeWithStream` and `IThumbnailProvider::GetThumbnail` that reads the stream into memory (capped at 512 MiB), opens it with `recto-pdf`, renders page 1 at the requested size and returns `WTSAT_ARGB`. Done when: the corpus thumbnails match the viewer's page 1 within the golden tolerance.
+- [ ] Author `src/shell/PreviewHandler.h/.cpp` implementing `IPreviewHandler`, `IInitializeWithStream` and `IObjectWithSite`, showing page 1 with next and previous page buttons and nothing interactive in the document. Done when: Outlook's attachment preview and Explorer's preview pane show page 1.
+- [ ] Enforce a 2 s render deadline and a 256 MiB working-set cap with `CancelToken`, returning `E_FAIL` so Explorer falls back to the stock icon on timeout, error or encrypted input. Done when: every `tests/corpus/broken/` file returns within the deadline without a crash.
+- [ ] Register with process isolation (no `DisableProcessIsolation` value) so the handlers run in the surrogate, never inside `explorer.exe`. Done when: a test lists `explorer.exe` modules during preview and finds no `RectoShell.dll` or `recto-pdf` code.
+- [ ] Register the handlers and a dedicated PDF document icon (separate from the app icon) in `installer/recto.iss` for Full installs only, and skip them in Portable mode. Done when: `verify_installer.ps1` finds the registration in Full mode and none in Portable mode (pdfcraft #308).
+- [ ] Add `Shell.ThumbnailProvider` and `Shell.PreviewHandlerHostile` tests in `tests/recto-tests/` driving the COM objects in-process for the test only. Done when: both pass under ASan.
+- [ ] Commit: `shell: add process-isolated Explorer thumbnail and preview handlers for PDFs`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.ThumbnailProvider:Shell.PreviewHandlerHostile` passes under ASan, and `pwsh tests/scripts/verify_installer.ps1` reports the handlers registered after install and gone after uninstall.
+
+## 9. Explorer verbs: print, printto, Combine and Convert to PDF (`IExplorerCommand`)
+
+pdfcraft users asked repeatedly for "Combine" and "Convert to PDF" on a multi-file Explorer selection, for Outlook's Quick Print to print silently instead of opening the viewer, and objected when the app made itself the default PDF handler on first run (research record; pdfcraft #585, #1674, #1695, #2082, #2363, #3417, #3724). Recto registers `print` and `printto` verbs that print without a window, and a Windows 11 `IExplorerCommand` menu (with classic verbs for "Show more options") that hands the whole selection to one running instance in selection order. It never changes the user's default PDF handler.
+
+**Phase:** 6
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new surface: the Windows Explorer context menu, not a SPEC screen. Labels follow `design/SPEC.md` section 2 voice ("Combine in Recto", "Convert to PDF with Recto").
+**Job:** A user selects several files in Explorer and combines or converts them in one Recto window, or prints PDFs from Explorer or Outlook without opening Recto. Consumer: `D05 T02 §3` Combine mode, `D04 T01 §3` Convert page, and `D07 T01 §2` print pipeline.
+**Treatment:** `IExplorerCommand` entries with a `Recto` submenu on Windows 11 and classic `shell` verbs on Windows 10 and in "Show more options". Cheaper substitute that fails the checkpoint: one process launched per selected file, or a print verb that opens the viewer.
+**Chrome:** `resources/ico/recto.ico` for menu icons; no app chrome is shown for `print` and `printto`.
+
+**Build order:**
+
+1. Add `print` (`Recto.exe /p "%1"`) and `printto` (`Recto.exe /pt "%1" "%2" "%3" "%4"`) verbs to `installer/recto.iss`, executed by `LaunchArgs` (`D02 T01 §7`) through the `D07 T01 §2` print worker without creating a window. Done when: `ShellExecuteW(..., L"print", ...)` on a corpus PDF prints to Microsoft Print to PDF and no top-level window is created.
+2. Add `src/shell/ExplorerCommands.h/.cpp` in `RectoShell.dll` implementing `IExplorerCommand` for "Combine in Recto" (two or more PDF or image files) and "Convert to PDF with Recto" (Office, HTML, Markdown and image files), registered for Windows 11 and as classic verbs. Done when: invoking the command on five files opens one Recto window with five staged files in Explorer selection order.
+
+- [ ] Parse `/p <file>` and `/pt <file> <printer> <driver> <port>` in `LaunchArgs` into a print-only request and run it headless through the print worker, exiting with 0 on success and a non-zero code with a logged reason on failure. Done when: `Shell.PrintVerbHeadless` asserts no window and the expected exit code.
+- [ ] Fall back to the print dialog only when the document needs a password or forbids printing, naming the reason (pdfcraft #2082). Done when: an encrypted fixture opens the password dialog instead of failing silently.
+- [ ] Implement `ExplorerCommands` returning `ECS_HIDDEN` for selections the command cannot handle and passing the full `IShellItemArray` to the running instance through the single-instance channel. Done when: a mixed selection shows only the applicable commands.
+- [ ] Preserve Explorer selection order and stage the files in Organize Combine or the Convert page without starting the job until the user confirms. Done when: the staged list matches the selection order in `Shell.ExplorerCombineOrder`.
+- [ ] Register the Windows 11 command through the sparse package identity of the MSIX build and the classic verbs in `installer/recto.iss`, both removed on uninstall. Done when: both menus show the entries after install and none after uninstall.
+- [ ] Assert install and first run never change the user's default PDF handler; only `Settings -> Default & About -> Make Recto the default` opens the Windows Default Apps page (pdfcraft #2363). Done when: `verify_installer.ps1` reads `UserChoice` before and after install and finds it unchanged.
+- [ ] Commit: `shell: add print verbs and Explorer Combine and Convert commands for multi-file selections`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.PrintVerbHeadless:Shell.ExplorerCombineOrder` passes on the display-session host, and `pwsh tests/scripts/verify_installer.ps1` shows the verbs registered, the `UserChoice` default unchanged, and the verbs removed after uninstall.
 
 ## Verification
 

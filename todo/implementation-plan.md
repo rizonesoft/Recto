@@ -8,7 +8,7 @@ Format and rules: `todo/README.md`. Run sections with the `process-plan`, `proce
 
 ### Phase 0: M0 Repository and build
 
-Sections: 14 | Checklist items: 67
+Sections: 17 | Checklist items: 89
 
 | Status | Reference  | Deliverable                                                                              | Needs        | Items |
 | ------ | ---------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -26,10 +26,13 @@ Sections: 14 | Checklist items: 67
 | [x]    | D00 T03 §4 | Encrypted (`RC4`/`AES-128`/`AES-256`), `broken/` and `seeds/` corpus fixtures            | windows-host | 6     |
 | [x]    | D00 T03 §5 | `tests/corpus/PROVENANCE.md` and automated `Corpus.Provenance` SHA-256 integrity suite   | windows-host | 6     |
 | [x]    | D00 T03 §6 | MSVC AddressSanitizer (`/fsanitize=address`) build configuration and CI `asan` job       | windows-host | 6     |
+| [ ]    | D07 T03 §1 | Issue forms, triage policy and `SECURITY.md`                                             | none         | 8     |
+| [ ]    | D07 T03 §4 | User-bug regression rule, closing on release and changelog mapping                       | none         | 7     |
+| [ ]    | D07 T03 §6 | Public scope page and user demand ledger                                                 | none         | 7     |
 
 ### Phase 1: M1 Engine core
 
-Sections: 29 | Checklist items: 203
+Sections: 32 | Checklist items: 228
 
 | Status | Reference   | Deliverable                                                                              | Needs        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -62,10 +65,13 @@ Sections: 29 | Checklist items: 203
 | [ ]    | D01 T03 §7  | Section 4.9 Battery Part 2: `CancellationStorm` (30 s) and `MultiDocumentStress`         | windows-host | 7     |
 | [ ]    | D06 T01 §1  | Pixel-exact golden render comparison harness (`Goldens.*` in `recto-tests`)              | windows-host | 7     |
 | [ ]    | D06 T01 §2  | Disciplined golden refresh tool (`--refresh-goldens`) and `x64` vs `ARM64` pixel gate    | windows-host | 7     |
+| [ ]    | D06 T03 §1  | Hostile-input fixture pack from user-reported failure classes                            | windows-host | 10    |
+| [ ]    | D06 T03 §2  | Recovered-error and truncation contract in `recto-pdf` results                           | windows-host | 7     |
+| [ ]    | D06 T03 §10 | Render fidelity fixtures from user-reported failure classes                              | windows-host | 8     |
 
 ### Phase 2: M2 Viewer
 
-Sections: 45 | Checklist items: 373
+Sections: 47 | Checklist items: 395
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -75,7 +81,7 @@ Sections: 45 | Checklist items: 373
 | [ ]    | D02 T01 §4  | Named shell layout slots, Reading room mode switcher and Classic navigation rail         | windows-host, display-session | 9     |
 | [ ]    | D02 T01 §5  | File Open Picker (`Ctrl+O`) and shared `OpenDocumentPipeline`                            | windows-host, display-session | 9     |
 | [ ]    | D02 T01 §6  | Drag-and-drop file opening and full-window drop overlay                                  | windows-host, display-session | 8     |
-| [ ]    | D02 T01 §7  | Command-line arguments, Explorer `.pdf` activation and single-instance forwarding        | windows-host, display-session | 8     |
+| [ ]    | D02 T01 §7  | Command-line arguments, Explorer `.pdf` activation and single-instance forwarding        | windows-host, display-session | 12    |
 | [ ]    | D02 T01 §8  | Save (`Ctrl+S`), Save As (`Ctrl+Shift+S`), Replace-Original and Unsaved-Changes dialogs  | windows-host, display-session | 9     |
 | [ ]    | D02 T01 §9  | Classic menu bar (`File`, `Edit`, `View`, `Tools`, `Window`, `Help`) and docked top bar  | windows-host, display-session | 9     |
 | [ ]    | D02 T01 §10 | Shared SPEC 9.9 `ContentDialog` chrome and Password dialog                               | windows-host, display-session | 8     |
@@ -89,7 +95,7 @@ Sections: 45 | Checklist items: 373
 | [ ]    | D02 T02 §7  | Zoom engine with in-frame stretched tile preview and anchor preservation                 | windows-host, display-session | 8     |
 | [ ]    | D02 T02 §8  | Floating Page Toolbar (`Focus`) and reading auto-fade behavior                           | windows-host, display-session | 10    |
 | [ ]    | D02 T02 §9  | Link hit-testing, internal navigation, `"Open this link?"` prompt and launch refusal     | windows-host, display-session | 8     |
-| [ ]    | D02 T02 §10 | Dark-theme page colour modes (`Original`, `Dimmed`, `Inverted`) and `F11` Full Screen    | windows-host, display-session | 8     |
+| [ ]    | D02 T02 §10 | Dark-theme page colour modes (`Original`, `Dimmed`, `Inverted`) and `F11` Full Screen    | windows-host, display-session | 10    |
 | [ ]    | D02 T03 §1  | Recent files and remembered reading-position store (`RecentFilesStore`)                  | windows-host                  | 9     |
 | [ ]    | D02 T03 §2  | Home screen (`D-Home.png`), recent covers, inline command box host and empty state       | windows-host, display-session | 9     |
 | [ ]    | D02 T03 §3  | Side-panel card container (`SidePanelHost`), switcher header and narrow auto-close       | windows-host, display-session | 8     |
@@ -101,7 +107,7 @@ Sections: 45 | Checklist items: 373
 | [ ]    | D02 T03 §9  | Document Info panel: metadata, security permissions and embedded font inventory          | windows-host, display-session | 8     |
 | [ ]    | D02 T03 §10 | Editable Document Info, XMP metadata synchronization and `/ViewerPreferences` editor     | windows-host, display-session | 8     |
 | [ ]    | D02 T03 §11 | Unified `CommandRegistry` across toolbars, menus, panels and keyboard accelerators       | windows-host, display-session | 7     |
-| [ ]    | D02 T03 §12 | Command Box (`Ctrl+K`) overlay and Home inline search experience                         | windows-host, display-session | 9     |
+| [ ]    | D02 T03 §12 | Command Box (`Ctrl+K`) overlay and Home inline search experience                         | windows-host, display-session | 10    |
 | [ ]    | D02 T04 §1  | `AppPaths` Portable mode path resolver and live atomic data migration                    | windows-host                  | 8     |
 | [ ]    | D02 T04 §2  | Typed `SettingsStore` service with atomic persistence and change notifications           | windows-host                  | 7     |
 | [ ]    | D02 T04 §3  | Layout preset engine (`Focus`, `Classic`, `Reading room`, `Custom`) over shell slots     | windows-host, display-session | 9     |
@@ -110,14 +116,16 @@ Sections: 45 | Checklist items: 373
 | [ ]    | D02 T04 §6  | Settings page: Security, Performance & Privacy (Portable mode & Cache), Default & About  | windows-host, display-session | 8     |
 | [ ]    | D02 T04 §7  | Live theme switching (`Light`, `Dark`, `Follow Windows`), Mica Alt and HighContrast      | windows-host, display-session | 8     |
 | [ ]    | D02 T04 §8  | Motion system (`167 ms` Fluent transitions) and Windows reduced-motion compliance        | windows-host, display-session | 7     |
-| [ ]    | D02 T04 §9  | Complete SPEC section 10 keyboard accelerator bindings and `Escape` layer stack          | windows-host, display-session | 8     |
+| [ ]    | D02 T04 §9  | Complete SPEC section 10 keyboard accelerator bindings and `Escape` layer stack          | windows-host, display-session | 10    |
 | [ ]    | D02 T04 §10 | End-to-end keyboard audit harness (`Keyboard.Audit`) and `docs/keyboard-shortcuts.md`    | windows-host, display-session | 7     |
 | [ ]    | D06 T01 §7  | Automated performance targets harness (`tests/perf/` and `recto-cli bench`)              | windows-host, display-session | 7     |
 | [ ]    | D06 T01 §8  | Primary reference-machine M2/M6 performance baseline record (`docs/perf/`)               | windows-host, display-session | 6     |
+| [ ]    | D06 T03 §3  | Page notice for recovered or truncated content                                           | windows-host, display-session | 6     |
+| [ ]    | D06 T03 §8  | UI glyph coverage, non-Latin file names and input conventions suite                      | windows-host, display-session | 7     |
 
 ### Phase 3: M3 Text
 
-Sections: 28 | Checklist items: 216
+Sections: 29 | Checklist items: 226
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -125,7 +133,7 @@ Sections: 28 | Checklist items: 216
 | [ ]    | D03 T01 §2  | `DocumentActor::get_page_text` LRU cache and `recto-cli text` command                    | windows-host                  | 7     |
 | [ ]    | D03 T01 §3  | Quad-precise pointer and keyboard text selection (`SelectionModel`)                      | windows-host, display-session | 9     |
 | [ ]    | D03 T01 §4  | Dark floating selection toolbar, right-click context menu and clipboard copy             | windows-host, display-session | 8     |
-| [ ]    | D03 T01 §5  | Background find engine (`Match case`, `Whole word`, `Regex`) and `recto-cli find`        | windows-host                  | 8     |
+| [ ]    | D03 T01 §5  | Background find engine (`Match case`, `Whole word`, `Regex`) and `recto-cli find`        | windows-host                  | 10    |
 | [ ]    | D03 T01 §6  | `Ctrl+F` floating `FindCard`, Reading room `Search` inspector tab and hit highlights     | windows-host, display-session | 7     |
 | [ ]    | D03 T01 §7  | Scanned/outlined detector, C++20 OCR preprocessor, line removal & XY-cut layout          | windows-host                  | 10    |
 | [ ]    | D03 T01 §8  | Hybrid Neural OCR + `Windows.Media.Ocr` pipeline, CTC quad alignment & CLI               | windows-host                  | 7     |
@@ -149,54 +157,61 @@ Sections: 28 | Checklist items: 216
 | [ ]    | D03 T03 §10 | `Field Properties` inspector flyout (`Name`, `/TU`, masks, `Calculation`) and UIA peers  | windows-host, display-session | 7     |
 | [ ]    | D06 T01 §3  | Per-file text extraction and find expectation tables (`expectations/` & `TextTables.*`)  | windows-host                  | 7     |
 | [ ]    | D06 T01 §4  | Normalization and regex adversarial verification rows (ligatures, soft hyphens, bidi)    | windows-host                  | 8     |
+| [ ]    | D06 T03 §11 | Text extraction, reading order and selection fidelity fixtures                           | windows-host                  | 8     |
 
 ### Phase 4: M4 Conversions A
 
-Sections: 41 | Checklist items: 292
+Sections: 47 | Checklist items: 344
 
-| Status | Reference   | Deliverable                                                                              | Needs                         | Items |
-| ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
-| [ ]    | D04 T01 §1  | Isolated `ConversionJob` 2-worker runtime, dedicated `pdf::Document` and `CancelToken`   | windows-host                  | 8     |
-| [ ]    | D04 T01 §2  | Job result & recovery state machine (`Completed`..`NeedsPassword`) and temp cleanup      | windows-host                  | 7     |
-| [ ]    | D04 T01 §3  | Convert Step 1 (`Files` drop zone & chips) and Step 2 (`What to make` card registry)     | windows-host, display-session | 8     |
-| [ ]    | D04 T01 §4  | Convert Step 3 dynamic options host, capability hint line, and primary action button     | windows-host, display-session | 8     |
-| [ ]    | D04 T01 §5  | App-wide floating `QueueCard` (progress ring, job states, expanded list, per-job cancel) | windows-host, display-session | 7     |
-| [ ]    | D04 T01 §6  | Focus-aware completion notices (Windows toast vs in-app toast, `Open file` & folder)     | windows-host, display-session | 7     |
-| [ ]    | D04 T01 §7  | Queue error recovery (`Enter password` modal retry, transient retry, batch breakdown)    | windows-host, display-session | 7     |
-| [ ]    | D04 T02 §1  | `AtomicFileWriter` (`src/core/atomic_file.cpp`) sibling temp-then-replace and rollback   | windows-host                  | 8     |
-| [ ]    | D04 T02 §2  | Native `PdfWriter` (`writer.cpp`: object allocation, `FlateDecode`, `/Pages`, `xref`)    | windows-host                  | 7     |
-| [ ]    | D04 T02 §3  | Streamed `PDF -> Images` (`PNG`, `JPEG`, `BMP`, Multipage `TIFF`, `GIF`) and CLI command | windows-host                  | 8     |
-| [ ]    | D04 T02 §4  | Vector `PDF -> SVG (.svg)` and `PDF -> OpenXPS (.xps)` exporters and Convert Step 3 UI   | windows-host, display-session | 7     |
-| [ ]    | D04 T02 §5  | `Images, SVG & XPS -> PDF` converter (`DCTDecode` pass-through, TIFF, EXIF) & Convert UI | windows-host, display-session | 7     |
-| [ ]    | D04 T02 §6  | `PDF -> Plain Text (.txt)` exporter with automatic OCR fallback, CLI and Convert UI      | windows-host, display-session | 7     |
-| [ ]    | D04 T02 §7  | `Searchable PDF (OCR)` sandwich writer (`3 Tr` invisible text), `recto-cli ocr` & UI     | windows-host, display-session | 7     |
-| [ ]    | D04 T02 §8  | Native `TableExtractor` (ruled-grid & borderless clustering, `.csv`/`.tsv`/`.json`, CLI) | windows-host                  | 8     |
-| [ ]    | D04 T02 §9  | Native lossless `ImageExtractor` (`DCTDecode` `.jpg`, `/SMask` `.png`/`.tiff`, CLI)      | windows-host                  | 8     |
-| [ ]    | D04 T02 §10 | Viewer `Table & Image Extractor Bar` (`SPEC 8.2`), `Preview Table` modal & Convert card  | windows-host, display-session | 7     |
-| [ ]    | D04 T02 §11 | `PdfOptimizer` (audit, downsampling, font subsetting) and Fast Web View `Linearizer`     | windows-host                  | 8     |
-| [ ]    | D04 T02 §12 | `Optimize & Compress PDF` Convert card (`SPEC 9.5`) and `Audit Dialog` (`SPEC 9.9`)      | windows-host, display-session | 6     |
-| [ ]    | D05 T01 §1  | `GraftMap` object-graph cloner, resource deduplicator (`graft.cpp`) & page-range parser  | windows-host                  | 7     |
-| [ ]    | D05 T01 §2  | Multi-document graft `merge` and multi-method `split` (`recto-cli merge` & `split`)      | windows-host                  | 7     |
-| [ ]    | D05 T01 §3  | Copy-based page-tree edit list (`reorder`, `/Rotate` delta, `delete`, `extract`)         | windows-host                  | 8     |
-| [ ]    | D05 T01 §4  | `Insert Blank Page`, box cropping (`/MediaBox`..`/ArtBox`), margin detection & rescaling | windows-host                  | 7     |
-| [ ]    | D05 T01 §5  | Vector and image `Watermark & Stamp` engine (`stamp_watermark.cpp`, `cli watermark`)     | windows-host                  | 8     |
-| [ ]    | D05 T01 §6  | 3-zone `Headers & Footers` and legal **Bates Numbering** (`stamp_watermark.cpp` & CLI)   | windows-host                  | 7     |
-| [ ]    | D05 T01 §7  | Windows CNG (`bcrypt.dll`) `AES-256` (`V=5, R=6`) encrypt/decrypt writer and CLI verbs   | windows-host                  | 7     |
-| [ ]    | D05 T01 §8  | X.509 / PKCS#12 and Windows Certificate Store `PKCS#7` & `PAdES` signer (`cli sign`)     | windows-host                  | 7     |
-| [ ]    | D05 T01 §9  | Cryptographic signature verifier (`/ByteRange`, CMS/CAdES, chain trust & tamper check)   | windows-host                  | 8     |
-| [ ]    | D05 T01 §10 | True physical content-stream redactor (glyph/path/image scrubbing) & `sanitize_document` | windows-host                  | 7     |
-| [ ]    | D05 T02 §1  | Virtualized Organize `PageGrid`, `OrganizeEditModel`, multi-select & `Undo`/`Redo` stack | windows-host, display-session | 8     |
-| [ ]    | D05 T02 §2  | Drag-and-drop and keyboard page reordering, floating action bar & `90°` rotation badges  | windows-host, display-session | 7     |
-| [ ]    | D05 T02 §3  | Organize **Combine** mode (`A-Organize.png`: per-source chips, `Add files` & edge tint)  | windows-host, display-session | 6     |
-| [ ]    | D05 T02 §4  | Organize **Split** mode (`B-Organize.png`: click-between-pages dividers & part names)    | windows-host, display-session | 7     |
-| [ ]    | D05 T02 §5  | Organize `Save` (replace-original) and `Save as copy` jobs plus `Unsaved-Changes` guard  | windows-host, display-session | 6     |
-| [ ]    | D05 T02 §6  | `Insert Blank Page` dialog (`E8A5`) and interactive `Crop & Resize Pages` (`E7A8`)       | windows-host, display-session | 6     |
-| [ ]    | D05 T02 §7  | Two-column `640 epx` `Watermark & Stamp` dialog (`SPEC 9.6` & `9.9` with live preview)   | windows-host, display-session | 6     |
-| [ ]    | D05 T02 §8  | Two-column `640 epx` `Header, Footer & Bates Numbering` dialog with live page preview    | windows-host, display-session | 6     |
-| [ ]    | D05 T02 §9  | Viewer `Redaction & Sanitize Bar` (`Ctrl+Shift+X`), `Find & Redact` & `Sanitize` dialog  | windows-host, display-session | 7     |
-| [ ]    | D05 T02 §10 | Viewer `Signature Status Banner`, `Draw Signature Box` (`Ctrl+Shift+G`) & `Sign Dialog`  | windows-host, display-session | 7     |
-| [ ]    | D05 T02 §11 | Viewer `Signatures` side panel (`SPEC 8.3`) and `Protected & Signed` / `Unlocked` cards  | windows-host, display-session | 6     |
-| [ ]    | D06 T01 §5  | Conversion round-trip matrix Part 1 (`RoundTrips.Formats`: Images/SVG/XPS, OCR, Tables)  | windows-host                  | 7     |
+| Status | Reference   | Deliverable                                                                              | Needs                                         | Items |
+| ------ | ----------- | ---------------------------------------------------------------------------------------- | --------------------------------------------- | ----- |
+| [ ]    | D04 T01 §1  | Isolated `ConversionJob` 2-worker runtime, dedicated `pdf::Document` and `CancelToken`   | windows-host                                  | 8     |
+| [ ]    | D04 T01 §2  | Job result & recovery state machine (`Completed`..`NeedsPassword`) and temp cleanup      | windows-host                                  | 7     |
+| [ ]    | D04 T01 §3  | Convert Step 1 (`Files` drop zone & chips) and Step 2 (`What to make` card registry)     | windows-host, display-session                 | 8     |
+| [ ]    | D04 T01 §4  | Convert Step 3 dynamic options host, capability hint line, and primary action button     | windows-host, display-session                 | 8     |
+| [ ]    | D04 T01 §5  | App-wide floating `QueueCard` (progress ring, job states, expanded list, per-job cancel) | windows-host, display-session                 | 7     |
+| [ ]    | D04 T01 §6  | Focus-aware completion notices (Windows toast vs in-app toast, `Open file` & folder)     | windows-host, display-session                 | 7     |
+| [ ]    | D04 T01 §7  | Queue error recovery (`Enter password` modal retry, transient retry, batch breakdown)    | windows-host, display-session                 | 7     |
+| [ ]    | D04 T02 §1  | `AtomicFileWriter` (`src/core/atomic_file.cpp`) sibling temp-then-replace and rollback   | windows-host                                  | 8     |
+| [ ]    | D02 T01 §12 | Crash recovery snapshots for unsaved edits                                               | windows-host, display-session, owner-decision | 9     |
+| [ ]    | D04 T02 §2  | Native `PdfWriter` (`writer.cpp`: object allocation, `FlateDecode`, `/Pages`, `xref`)    | windows-host                                  | 7     |
+| [ ]    | D04 T02 §3  | Streamed `PDF -> Images` (`PNG`, `JPEG`, `BMP`, Multipage `TIFF`, `GIF`) and CLI command | windows-host                                  | 8     |
+| [ ]    | D04 T02 §4  | Vector `PDF -> SVG (.svg)` and `PDF -> OpenXPS (.xps)` exporters and Convert Step 3 UI   | windows-host, display-session                 | 7     |
+| [ ]    | D04 T02 §5  | `Images, SVG & XPS -> PDF` converter (`DCTDecode` pass-through, TIFF, EXIF) & Convert UI | windows-host, display-session                 | 7     |
+| [ ]    | D04 T02 §6  | `PDF -> Plain Text (.txt)` exporter with automatic OCR fallback, CLI and Convert UI      | windows-host, display-session                 | 7     |
+| [ ]    | D04 T02 §7  | `Searchable PDF (OCR)` sandwich writer (`3 Tr` invisible text), `recto-cli ocr` & UI     | windows-host, display-session                 | 7     |
+| [ ]    | D04 T02 §8  | Native `TableExtractor` (ruled-grid & borderless clustering, `.csv`/`.tsv`/`.json`, CLI) | windows-host                                  | 8     |
+| [ ]    | D04 T02 §9  | Native lossless `ImageExtractor` (`DCTDecode` `.jpg`, `/SMask` `.png`/`.tiff`, CLI)      | windows-host                                  | 8     |
+| [ ]    | D04 T02 §10 | Viewer `Table & Image Extractor Bar` (`SPEC 8.2`), `Preview Table` modal & Convert card  | windows-host, display-session                 | 7     |
+| [ ]    | D04 T02 §11 | `PdfOptimizer` (audit, downsampling, font subsetting) and Fast Web View `Linearizer`     | windows-host                                  | 8     |
+| [ ]    | D04 T02 §12 | `Optimize & Compress PDF` Convert card (`SPEC 9.5`) and `Audit Dialog` (`SPEC 9.9`)      | windows-host, display-session                 | 6     |
+| [ ]    | D05 T01 §1  | `GraftMap` object-graph cloner, resource deduplicator (`graft.cpp`) & page-range parser  | windows-host                                  | 7     |
+| [ ]    | D05 T01 §2  | Multi-document graft `merge` and multi-method `split` (`recto-cli merge` & `split`)      | windows-host                                  | 7     |
+| [ ]    | D05 T01 §3  | Copy-based page-tree edit list (`reorder`, `/Rotate` delta, `delete`, `extract`)         | windows-host                                  | 8     |
+| [ ]    | D05 T01 §4  | `Insert Blank Page`, box cropping (`/MediaBox`..`/ArtBox`), margin detection & rescaling | windows-host                                  | 7     |
+| [ ]    | D05 T01 §5  | Vector and image `Watermark & Stamp` engine (`stamp_watermark.cpp`, `cli watermark`)     | windows-host                                  | 8     |
+| [ ]    | D05 T01 §6  | 3-zone `Headers & Footers` and legal **Bates Numbering** (`stamp_watermark.cpp` & CLI)   | windows-host                                  | 7     |
+| [ ]    | D05 T01 §7  | Windows CNG (`bcrypt.dll`) `AES-256` (`V=5, R=6`) encrypt/decrypt writer and CLI verbs   | windows-host                                  | 7     |
+| [ ]    | D05 T01 §8  | X.509 / PKCS#12 and Windows Certificate Store `PKCS#7` & `PAdES` signer (`cli sign`)     | windows-host                                  | 7     |
+| [ ]    | D05 T01 §9  | Cryptographic signature verifier (`/ByteRange`, CMS/CAdES, chain trust & tamper check)   | windows-host                                  | 8     |
+| [ ]    | D05 T01 §10 | True physical content-stream redactor (glyph/path/image scrubbing) & `sanitize_document` | windows-host                                  | 7     |
+| [ ]    | D05 T02 §1  | Virtualized Organize `PageGrid`, `OrganizeEditModel`, multi-select & `Undo`/`Redo` stack | windows-host, display-session                 | 8     |
+| [ ]    | D05 T02 §2  | Drag-and-drop and keyboard page reordering, floating action bar & `90°` rotation badges  | windows-host, display-session                 | 7     |
+| [ ]    | D05 T02 §3  | Organize **Combine** mode (`A-Organize.png`: per-source chips, `Add files` & edge tint)  | windows-host, display-session                 | 6     |
+| [ ]    | D05 T02 §4  | Organize **Split** mode (`B-Organize.png`: click-between-pages dividers & part names)    | windows-host, display-session                 | 7     |
+| [ ]    | D05 T02 §5  | Organize `Save` (replace-original) and `Save as copy` jobs plus `Unsaved-Changes` guard  | windows-host, display-session                 | 6     |
+| [ ]    | D05 T02 §6  | `Insert Blank Page` dialog (`E8A5`) and interactive `Crop & Resize Pages` (`E7A8`)       | windows-host, display-session                 | 6     |
+| [ ]    | D05 T02 §7  | Two-column `640 epx` `Watermark & Stamp` dialog (`SPEC 9.6` & `9.9` with live preview)   | windows-host, display-session                 | 6     |
+| [ ]    | D05 T02 §8  | Two-column `640 epx` `Header, Footer & Bates Numbering` dialog with live page preview    | windows-host, display-session                 | 6     |
+| [ ]    | D05 T02 §9  | Viewer `Redaction & Sanitize Bar` (`Ctrl+Shift+X`), `Find & Redact` & `Sanitize` dialog  | windows-host, display-session                 | 7     |
+| [ ]    | D05 T02 §10 | Viewer `Signature Status Banner`, `Draw Signature Box` (`Ctrl+Shift+G`) & `Sign Dialog`  | windows-host, display-session                 | 10    |
+| [ ]    | D05 T02 §11 | Viewer `Signatures` side panel (`SPEC 8.3`) and `Protected & Signed` / `Unlocked` cards  | windows-host, display-session                 | 6     |
+| [ ]    | D06 T01 §5  | Conversion round-trip matrix Part 1 (`RoundTrips.Formats`: Images/SVG/XPS, OCR, Tables)  | windows-host                                  | 7     |
+| [ ]    | D06 T03 §4  | Single-interpreter differential suite across every content consumer                      | windows-host                                  | 7     |
+| [ ]    | D06 T03 §5  | Save integrity fault-injection suite                                                     | windows-host                                  | 11    |
+| [ ]    | D06 T03 §6  | Redaction completeness and audit suite on raw bytes                                      | windows-host                                  | 8     |
+| [ ]    | D06 T03 §7  | Unicode authoring round-trip suite for every text-writing path                           | windows-host                                  | 7     |
+| [ ]    | D07 T03 §3  | Structure-preserving reproducer scrubber (`recto-cli scrub`)                             | windows-host                                  | 7     |
 
 ### Phase 5: M5 Conversions B
 
@@ -230,42 +245,57 @@ Sections: 23 | Checklist items: 159
 
 ### Phase 6: M6 Ship
 
-Sections: 20 | Checklist items: 134
+Sections: 27 | Checklist items: 194
 
-| Status | Reference  | Deliverable                                                                              | Needs                         | Items |
-| ------ | ---------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
-| [ ]    | D06 T02 §1 | Hostile-input audit Part 1 (`docs/security-audit.md`: zero-JS, `/Launch` & bomb bounds)  | windows-host                  | 6     |
-| [ ]    | D06 T02 §2 | Hostile-input audit Part 2 (macro suppression, HTML script block, link prompt, redact)   | windows-host, display-session | 7     |
-| [ ]    | D06 T02 §3 | M3-M5 fuzz targets (`fuzz_text`, `fuzz_forms`, `fuzz_openxml_zip`) & scheduled workflow  | windows-host                  | 7     |
-| [ ]    | D06 T02 §4 | Crash triage runbook (`fuzz/README.md`) proven end-to-end on a planted crash input       | windows-host                  | 6     |
-| [ ]    | D06 T02 §5 | `recto-pdf` public API boundary inventory (`recto_pdf.h` ownership and mutability table) | none                          | 6     |
-| [ ]    | D06 T02 §6 | Post-v1 AppContainer broker process design (`2026-10-14-broker-process-design.md`)       | none                          | 8     |
-| [ ]    | D07 T01 §1 | WinUI 3 print API spike (`PrintManagerInterop` vs `ID2D1PrintControl`) & section 11 note | windows-host, display-session | 6     |
-| [ ]    | D07 T01 §2 | Non-blocking print pipeline (`src/app/printing/`, printer-DPI job, preview & `Ctrl+P`)   | windows-host, display-session | 7     |
-| [ ]    | D07 T01 §3 | Automated `Print-to-PDF` verification seam (`Print.*` in `recto-tests`) against corpus   | windows-host                  | 6     |
-| [ ]    | D07 T01 §4 | Inno Setup installer (`installer/recto.iss`) for Full and Self-Contained Portable modes  | windows-host                  | 7     |
-| [ ]    | D07 T01 §5 | Release packaging pipeline (`build-installer.ps1`: Setup `.exe`, Portable `.zip` & MSIX) | windows-host                  | 7     |
-| [ ]    | D07 T01 §6 | Automated Full Install, `.pdf` association, upgrade and uninstall proof (`installer`)    | windows-host, display-session | 7     |
-| [ ]    | D07 T01 §7 | Automated Self-Contained Portable Install zero-registry and zero-`%LOCALAPPDATA%` proof  | windows-host, display-session | 6     |
-| [ ]    | D07 T02 §1 | Build-time version and provenance generator (version, SHA, `Standard` vs `Portable`)     | windows-host                  | 7     |
-| [ ]    | D07 T02 §2 | `AboutPage` (`SPEC 9.8`, `D-About.png`: version truth, `LICENSE` modal and `Built-with`) | windows-host, display-session | 7     |
-| [ ]    | D07 T02 §3 | Build-derived dependency enumeration script, `NOTICE.md` and `docs/license-audit.md`     | windows-host                  | 7     |
-| [ ]    | D07 T02 §4 | Opt-in local crash report bundle writer (`MiniDumpNormal` + D16 ring log `.zip` prompt)  | windows-host, display-session | 7     |
-| [ ]    | D07 T02 §5 | Localization readiness (`Resources.resw` `x:Uid` extraction and 40% pseudolocale check)  | windows-host, display-session | 6     |
-| [ ]    | D07 T02 §6 | GitHub Release runbook (`docs/release-and-store-runbook.md`) and Store submission kit    | windows-host, display-session | 7     |
-| [ ]    | D07 T02 §7 | End-to-end v1 distribution bundle (`Setup.exe`, `Portable.zip`, `SHA256SUMS.txt`) & GPL  | windows-host, display-session | 7     |
+| Status | Reference   | Deliverable                                                                              | Needs                                         | Items |
+| ------ | ----------- | ---------------------------------------------------------------------------------------- | --------------------------------------------- | ----- |
+| [ ]    | D06 T02 §1  | Hostile-input audit Part 1 (`docs/security-audit.md`: zero-JS, `/Launch` & bomb bounds)  | windows-host                                  | 6     |
+| [ ]    | D06 T02 §2  | Hostile-input audit Part 2 (macro suppression, HTML script block, link prompt, redact)   | windows-host, display-session                 | 7     |
+| [ ]    | D06 T02 §3  | M3-M5 fuzz targets (`fuzz_text`, `fuzz_forms`, `fuzz_openxml_zip`) & scheduled workflow  | windows-host                                  | 7     |
+| [ ]    | D06 T02 §4  | Crash triage runbook (`fuzz/README.md`) proven end-to-end on a planted crash input       | windows-host                                  | 6     |
+| [ ]    | D06 T02 §5  | `recto-pdf` public API boundary inventory (`recto_pdf.h` ownership and mutability table) | none                                          | 6     |
+| [ ]    | D06 T02 §6  | Post-v1 AppContainer broker process design (`2026-10-14-broker-process-design.md`)       | none                                          | 8     |
+| [ ]    | D07 T01 §1  | WinUI 3 print API spike (`PrintManagerInterop` vs `ID2D1PrintControl`) & section 11 note | windows-host, display-session                 | 6     |
+| [ ]    | D07 T01 §2  | Non-blocking print pipeline (`src/app/printing/`, printer-DPI job, preview & `Ctrl+P`)   | windows-host, display-session                 | 11    |
+| [ ]    | D07 T01 §3  | Automated `Print-to-PDF` verification seam (`Print.*` in `recto-tests`) against corpus   | windows-host                                  | 6     |
+| [ ]    | D06 T03 §9  | Printer driver compatibility and print failure isolation suite                           | windows-host, display-session                 | 11    |
+| [ ]    | D07 T01 §4  | Inno Setup installer (`installer/recto.iss`) for Full and Self-Contained Portable modes  | windows-host                                  | 7     |
+| [ ]    | D07 T01 §5  | Release packaging pipeline (`build-installer.ps1`: Setup `.exe`, Portable `.zip` & MSIX) | windows-host                                  | 7     |
+| [ ]    | D07 T01 §6  | Automated Full Install, `.pdf` association, upgrade and uninstall proof (`installer`)    | windows-host, display-session                 | 7     |
+| [ ]    | D07 T01 §7  | Automated Self-Contained Portable Install zero-registry and zero-`%LOCALAPPDATA%` proof  | windows-host, display-session                 | 6     |
+| [ ]    | D06 T03 §12 | Clean-machine release smoke and upgrade persistence proof                                | windows-host, display-session, attended       | 10    |
+| [ ]    | D07 T01 §8  | Explorer thumbnail and preview handlers (`IThumbnailProvider`, `IPreviewHandler`)        | windows-host, display-session                 | 7     |
+| [ ]    | D07 T01 §9  | Explorer verbs: print, printto, Combine and Convert to PDF (`IExplorerCommand`)          | windows-host, display-session                 | 7     |
+| [ ]    | D07 T02 §1  | Build-time version and provenance generator (version, SHA, `Standard` vs `Portable`)     | windows-host                                  | 7     |
+| [ ]    | D07 T02 §2  | `AboutPage` (`SPEC 9.8`, `D-About.png`: version truth, `LICENSE` modal and `Built-with`) | windows-host, display-session                 | 7     |
+| [ ]    | D07 T02 §3  | Build-derived dependency enumeration script, `NOTICE.md` and `docs/license-audit.md`     | windows-host                                  | 7     |
+| [ ]    | D07 T02 §4  | Opt-in local crash report bundle writer (`MiniDumpNormal` + D16 ring log `.zip` prompt)  | windows-host, display-session                 | 7     |
+| [ ]    | D07 T02 §5  | Localization readiness (`Resources.resw` `x:Uid` extraction and 40% pseudolocale check)  | windows-host, display-session                 | 6     |
+| [ ]    | D07 T02 §6  | GitHub Release runbook (`docs/release-and-store-runbook.md`) and Store submission kit    | windows-host, display-session                 | 7     |
+| [ ]    | D07 T02 §7  | End-to-end v1 distribution bundle (`Setup.exe`, `Portable.zip`, `SHA256SUMS.txt`) & GPL  | windows-host, display-session                 | 7     |
+| [ ]    | D07 T03 §2  | In-app `Report a problem` with privacy-safe diagnostics                                  | windows-host, display-session                 | 7     |
+| [ ]    | D07 T03 §5  | Release gate for unreleased fixes, security advisories and CI integrity                  | windows-host                                  | 7     |
+| [ ]    | D07 T03 §7  | What's new after update and opt-in update notice                                         | windows-host, display-session, owner-decision | 7     |
+
+### Phase 7: After v1
+
+Sections: 1 | Checklist items: 7
+
+| Status | Reference   | Deliverable                                           | Needs                                         | Items |
+| ------ | ----------- | ----------------------------------------------------- | --------------------------------------------- | ----- |
+| [ ]    | D04 T02 §13 | Create PDF from a scanner (Windows Image Acquisition) | windows-host, display-session, owner-decision | 7     |
 
 ### Phase 99: Manual, operator only
 
-Sections: 4 | Checklist items: 20
+Sections: 4 | Checklist items: 21
 
 | Status | Reference  | Deliverable                                                          | Needs                   | Items |
 | ------ | ---------- | -------------------------------------------------------------------- | ----------------------- | ----- |
 | [ ]    | D99 T01 §1 | Trademark search and Store name reservation                          | operator                | 5     |
-| [ ]    | D99 T01 §2 | GitHub repository face and branch protection                         | operator                | 5     |
+| [ ]    | D99 T01 §2 | GitHub repository face and branch protection                         | operator                | 6     |
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
-Progress: 24/204 verified sections, 4 ready to run now.
+Progress: 24/227 verified sections, 5 ready to run now.
 
-Checklist: 147/1464 items completed (includes Commit items).
+Checklist: 147/1663 items completed (includes Commit items).

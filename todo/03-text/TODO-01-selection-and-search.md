@@ -31,6 +31,7 @@ track: M3
 - -> XREF: D05 T02 §9 -- `Find & Redact` in the Redaction Bar reuses the find engine from §5 and §6 here.
 - -> XREF: D06 T01 §4 -- `TextTables.*` (`D06 T01 §4`) verifies `PageText` normalization, regex search, `Replace Text` (`§9`), and `Compare PDFs` (`§10`) built here.
 - -> XREF: D06 T02 §3 -- `fuzz_text` (`D06 T02 §3`) fuzzes the `PageText` extractor, `SearchEngine`, and content-stream text replacer (`§1`, `§5`, `§9`) built here.
+- -> XREF: D06 T03 §11 -- user-reported extraction, reading-order and cross-page selection fixtures, and the single-interpreter differential suite (§4 there) over `PageText`, find and replace.
 
 ## Outcome
 
@@ -191,6 +192,8 @@ Implement the background find engine in `src/core/search.h/.cpp` and `recto-cli 
 - [ ] Extract context snippets (`prefix`, `match_text`, `suffix` trimmed at word boundaries within `~80` characters) for each `SearchHit` to populate the SPEC 9.3 results list. Done when: `Search.ContextSnippets` produces clean single-line snippets with newline characters normalized to spaces.
 - [ ] Schedule multi-page search outward from `start_page` (`start_page, start_page+1, ..., N-1, 0, ..., start_page-1`), invoking a progressive per-page callback and aborting within `< 5 ms` when `CancelToken::is_cancelled()` flips. Done when: `Search.ProgressiveAndCancel` cancels a 200-page search mid-flight cleanly.
 - [ ] Implement `recto-cli find <file.pdf> <query> [--case] [--whole-word] [--regex] [--json]` in `src/cli/cmd_find.cpp`. Done when: `recto-tests.exe --gtest_filter=Search.*:Cli.FindCommand` passes under ASan.
+- [ ] Add `SearchOptions::match_diacritics` (default `false`) folding the search buffer and query through Unicode NFD with combining marks removed, so `resume` finds `résumé` unless the user turns on exact accents (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`, pdfcraft #3460). Done when: `Search.DiacriticInsensitive` finds `résumé`, `Résumé` and `resume` with the default and only `résumé` with `match_diacritics`.
+- [ ] Keep hit offsets mapped to the original characters when folding changes string length (`İ`, `ß`, decomposed accents), so highlights never slice out of range (pdfcraft #816). Done when: `Search.FoldingKeepsOffsets` highlights the exact original glyph quads for each folded match.
 - [ ] Commit: `feat(text): implement background SearchEngine with regex and recto-cli find`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Search.*:Cli.FindCommand` passes under ASan across multi-page, ligature, hyphenated, and regex fixtures.

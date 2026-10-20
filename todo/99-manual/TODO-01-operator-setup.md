@@ -20,6 +20,7 @@ track: M0
 - -> XREF: D00 T01 §1 -- the repository whose public GitHub face `§2` completes after the initial push.
 - -> XREF: D00 T01 §5 -- records the primary `x64` benchmark host machine resolved on 2026-10-14 and defers naming a specific physical `ARM64` device to `§4` here.
 - -> XREF: D07 T02 §6 -- the optional Microsoft Store Partner Center submission kit in `D07 T02 §6` consumes the Partner Center app reservation and identity values created in `§3` here.
+- -> XREF: D07 T03 §1 -- `SECURITY.md` and the issue forms there rely on §2 here enabling private vulnerability reporting and syncing the labels.
 
 ## Outcome
 
@@ -82,6 +83,7 @@ Configure the public GitHub repository settings and branch protection after `D00
 - [ ] Upload `design/brand/github-social-preview.png` under GitHub `Settings -> General -> Social preview` and verify the README header banner (`design/brand/github-banner.png`) renders on the repository home page. Done when: the repository home page and social preview card render cleanly.
 - [ ] Set the GitHub repository About description and topics (`pdf`, `pdf-viewer`, `ocr`, `document-converter`, `winui3`, `windows`, `cpp20`). Done when: `gh repo view --json description,repositoryTopics` returns the configured description and topics.
 - [ ] Configure branch protection rules on `main` requiring status checks (`plan-gates` and `build` from `.github/workflows/ci.yml`) to pass before merge and disabling force pushes. Done when: branch protection is active on `main` and recorded in this section.
+- [ ] Enable GitHub private vulnerability reporting (`Settings -> Code security -> Private vulnerability reporting`) and create the labels in `.github/labels.yml` from `D07 T03 §1`. Done when: `gh api repos/rizonesoft/RectoPDF/private-vulnerability-reporting` returns `{"enabled":true}` and `gh label list` shows every label in the file.
 - [ ] Commit: `manual: configure GitHub repository face, social preview, and main branch protection`
 
 **Test checkpoint:** `gh repo view --json description,repositoryTopics` output and the `main` branch protection verification record are quoted in this section.

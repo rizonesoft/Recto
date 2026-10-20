@@ -28,6 +28,7 @@ track: M6
 - -> XREF: D04 T04 §4 -- the native OLE2 Compound File (`[MS-CFB]`) reader and macro storage stripper (`§4`) targeted by `fuzz_openxml_zip.cpp` in `§3` and audited in `§2`.
 - -> XREF: D04 T04 §5 -- the macro-stream inertness proof on `macro-canary.docm` and `macro-canary.doc` (`§5`) re-verified in `§2`.
 - -> XREF: D05 T01 §10 -- the physical content-stream redaction (`Redactor`) and `sanitize_document` proofs re-verified in `§2`.
+- -> XREF: D06 T03 §1 -- the user-reported hostile-input fixture pack whose files seed the fuzz corpora scheduled here.
 
 ## Outcome
 

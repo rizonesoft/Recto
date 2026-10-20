@@ -28,6 +28,7 @@ track: M1
 - -> XREF: D04 T03 §4 -- `RoundTrips.DocumentsAndSecurity` (`§6`) exercises the queue frame (`D04 T01 §7`), `DocxWriter`/`RtfWriter` (`D04 T03 §4`), `XlsxWriter`/`WebDocWriter`/`ComplianceEngine` (`D04 T05 §2`, `§4`, `§8`, `§9`), and all Organize & Security engines (`D05 T01 §10`, `D05 T02 §6`, `§8`, `§9`, `§11`).
 - -> XREF: D04 T04 §6 -- `RoundTrips.DocumentsAndSecurity` (`§6`) exercises the 100% native `Office/Legacy Binary Office/HTML/MD -> PDF` engines (`D04 T04 §1` through `§7`).
 - -> XREF: D07 T02 §6 -- the M6 Store & Release Compliance verification (`D07 T02 §6`) gates on `RoundTrips.*` (`§5`, `§6`) and the reference-machine performance baseline (`§8`) built here.
+- -> XREF: D06 T03 §10 -- user-reported render classes (area-filtered minification, blend modes, soft masks, open paths) added to the golden harness built here, and the release-over-release diff in §12 there.
 
 ## Outcome
 

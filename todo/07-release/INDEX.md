@@ -10,6 +10,7 @@ From a working app to a shippable desktop and portable product: printing on the 
 | ---- | ----- | :----: |
 | [TODO-01](./TODO-01-packaging-and-print.md) | Printing, Inno Setup (Full & Portable) Installer, Optional MSIX and Install Proof | active |
 | [TODO-02](./TODO-02-store-and-compliance.md) | About, GPL-3.0-or-later Compliance, Local Crash Bundle and Release Distribution | active |
+| [TODO-03](./TODO-03-listening-to-users.md) | Listening to Users: Intake, Triage, Diagnostics, Releases and Demand | active |
 
 ## Completed
 
@@ -22,6 +23,7 @@ From a working app to a shippable desktop and portable product: printing on the 
 
 - Print path decision and implementation, Inno Setup installer (`Full` + `Self-Contained Portable`) and Portable `.zip` for x64 and ARM64, optional MSIX packaging, automated install, portable and upgrade proof
 - About, NOTICE and license audit, opt-in local minidump-plus-log crash bundle, localization readiness, GitHub Release bundle and optional Store submission runbook
+- Listening to users: issue forms, `SECURITY.md`, triage policy, in-app `Report a problem`, reproducer scrubber, closing on release, release gate, scope page and demand ledger
 
 ## Out of scope
 

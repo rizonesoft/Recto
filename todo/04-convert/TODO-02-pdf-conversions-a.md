@@ -30,6 +30,7 @@ track: M4
 - -> XREF: D04 T05 §1 -- `XlsxWriter` (`D04 T05 §1`) and `WebDocWriter` (`D04 T05 §3`) consume `TableExtractor` grids from §8 here.
 - -> XREF: D05 T01 §1 -- `D05 T01`'s graft, merge, split, reorder, crop, watermark, Bates, AES-256 encrypt, digital signature, and redaction operations build directly on `AtomicFileWriter` (§1) and `PdfWriter` (§2) created here.
 - -> XREF: D06 T01 §5 -- `RoundTrips.Formats` (`D06 T01 §5`) exercises `PDF <-> Images/SVG/XPS` (`§3`-`§5`), `PDF -> Plain Text` (`§6`), `Searchable PDF (OCR)` (`§7`), `TableExtractor`/`ImageExtractor` (`§8`-`§10`), and `PdfOptimizer`/`Linearizer` (`§11`, `§12`) built here.
+- -> XREF: D06 T03 §5 -- the save integrity fault-injection suite that fails every step of `AtomicFileWriter` (§1 here) and checks originals survive.
 
 ## Outcome
 
@@ -39,6 +40,7 @@ track: M4
 - PDF to Text (`§6`) and Searchable PDF (OCR) (`§7`) export UTF-8 `.txt` and sandwich-layer searchable PDFs (`3 Tr` invisible text aligned to `OcrPipeline` word boxes), exposed both in the Convert UI and in `recto-cli`.
 - `TableExtractor` (`§8`) and `ImageExtractor` (`§9`) detect bordered and borderless tables and extract embedded XObject images without re-compression, powering the Viewer `Table & Image Extractor Bar` and the `Extract Tables & Images` Convert card (`§10`).
 - `PdfOptimizer` and `Linearizer` (`§11`, `§12`) downsample images, recompress colour/grayscale/monochrome streams, subset fonts, strip unused objects, linearize for Fast Web View, and present a per-category byte-savings audit dialog.
+- After the owner's decision, a `From scanner` source acquires pages through WIA 2.0 into the Images to PDF and searchable OCR paths (`§13`).
 
 **Adjacency:** all=not-applicable (converter engines and option bindings inside `D04 T01`'s Convert frame plus the viewer's contextual extractor bar; queue, notifications and save-location settings are owned by `D04 T01` and `D02 T04 §5`)
 
@@ -60,6 +62,7 @@ track: M4
 | 10 | §10 | Viewer `Table & Image Extractor Bar` (`SPEC 8.2`), `Preview Table` modal & Convert card | §8, §9, D02 T02 §8, D03 T01 §4, D04 T01 §4 | [ ] |
 | 11 | §11 | `PdfOptimizer` (audit, downsampling, font subsetting) and Fast Web View `Linearizer` | §2 | [ ] |
 | 12 | §12 | `Optimize & Compress PDF` Convert card (`SPEC 9.5`) and `Audit Dialog` (`SPEC 9.9`) | §11, D04 T01 §4, D02 T01 §10 | [ ] |
+| 13 | §13 | Create PDF from a scanner (Windows Image Acquisition) | §5, §7, D04 T01 §3 | [ ] |
 
 ## 1. `AtomicFileWriter` (`src/core/atomic_file.cpp`) sibling temp-then-replace and rollback
 
@@ -381,6 +384,34 @@ Wire the **Optimize & Compress PDF** card and Step 3 options in `ConvertPage` (`
 - [ ] Commit: `convert: add PdfOptimizer, font subsetter, Fast Web View linearizer and audit UI`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfOptimizer.*:Linearizer.*:AppTests.Optimizer*` passes under ASan.
+
+## 13. Create PDF from a scanner (Windows Image Acquisition)
+
+"Create PDF from scanner" was one of pdfcraft's most repeated requests, filed at least eight times (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`; pdfcraft #312, #1774, #2010, #3256, #3384). Recto can acquire pages through Windows Image Acquisition 2.0 (`IWiaDevMgr2`), feed them to the `Images -> PDF` converter (§5 here) and optionally to the searchable-PDF OCR writer (§7 here), all locally. This is new v1-plus scope, so the owner decides whether and when it ships before any code is written.
+
+**Phase:** 7
+**Needs:** windows-host, display-session, owner-decision
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` section 9.5 (Convert page cards and Step 3 options); a `Scanner` source card is a genuinely new surface on that page with no screenshot.
+**Job:** A user with a scanner creates a PDF (optionally searchable) from one or more scanned pages without another app. Consumer: the `Images -> PDF` converter (§5) and `OcrPipeline` (§7).
+**Treatment:** A `From scanner` source card on the Convert page with device, source (flatbed or feeder), colour mode, resolution and duplex options, a running page list, and `Make PDF`. Cheaper substitute that fails the checkpoint: shelling out to the Windows Scan app or a vendor tool.
+**Chrome:** Convert page card registry and Step 3 options host (`D04 T01 §3`, `§4`), queue card for the job (`D04 T01 §5`), `RectoColors.xaml` tokens and Segoe Fluent Icons `E8FE` (scan).
+
+**Build order:**
+
+1. Record the owner decision (ship in which release, supported device classes) in the foundation plan with its date and cost of reversing, then remove `owner-decision` from this section's Needs. Done when: the decision line exists in the plan.
+2. Implement `src/services/scanner/WiaScanner.h/.cpp` enumerating WIA 2.0 devices and acquiring pages on a job worker with `CancelToken`, then convert through §5 and optionally §7. Done when: `Convert.ScannerToPdf` passes against the WIA test driver.
+
+- [ ] Record the owner decision in `docs/plans/2026-10-13-recto-foundation.md` and in `docs/user-demand.md`. Done when: both files name the decision and its date.
+- [ ] Implement `WiaScanner::list_devices()` through `IWiaDevMgr2::EnumDeviceInfo` off the UI thread with a 3 s timeout per device. Done when: an unresponsive device shows as unavailable instead of blocking the card.
+- [ ] Implement page acquisition for flatbed and feeder sources with colour mode, resolution and duplex, streaming each page to a temp file through `AtomicFileWriter`. Done when: a five-page feeder job yields five page images.
+- [ ] Map WIA errors (paper empty, paper jam, device busy, cover open) to plain messages with next steps. Done when: each mapped `WIA_ERROR_*` code shows its message in `Convert.ScannerErrors`.
+- [ ] Add the `From scanner` card and options to the Convert page and the `convert.fromScanner` command to `CommandRegistry`. Done when: `Ctrl+K` "scan" finds the command. Cheaper substitute: a hidden menu entry with no command-box reach.
+- [ ] Feed acquired pages to §5's converter with EXIF orientation honoured and, when chosen, to §7's searchable OCR writer. Done when: the produced PDF has one page per scan and searchable text when OCR was selected.
+- [ ] Commit: `convert: create PDFs from WIA scanners with optional OCR`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Convert.ScannerToPdf:Convert.ScannerErrors` passes against the WIA sample test driver on the display-session host.
 
 ## Verification
 

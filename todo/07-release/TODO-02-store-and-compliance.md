@@ -25,6 +25,7 @@ track: M6
 - -> XREF: D06 T01 §8 -- the `TextTables.*` (`D06 T01 §4`), `RoundTrips.*` (`D06 T01 §6`), reference performance baseline (`D06 T01 §8`), and security/fuzz/broker gates (`D06 T02 §4`, `§6`) must all be green before assembling the v1 release kit and distribution bundle in `§6` and `§7`.
 - -> XREF: D07 T01 §7 -- the verified `RectoSetup-*.exe` and `Recto-Portable-*.zip` artifacts tested there are assembled into the signed-off v1 release bundle in `§6` and `§7`.
 - -> XREF: D99 T01 §3 -- the operator's optional Partner Center account and app reservation that `§6`'s optional Store submission kit prepares for.
+- -> XREF: D07 T03 §2 -- `Report a problem` reuses §4's diagnostics text, and §4 and §5 there extend §6's release runbook with closing on release and the release gate.
 
 ## Outcome
 

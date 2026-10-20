@@ -25,6 +25,7 @@ track: M2
 - -> XREF: D05 T01 §3 -- page-tree operations (`D05 T01 §3`, `§4`, `§7`) back the thumbnail context menu (`§4`) and security permission flags (`§9`) here.
 - -> XREF: D05 T02 §1 -- the Organize page grid reuses the thumbnail tile pipeline and page operation commands wired in §4 here.
 - -> XREF: D05 T02 §9 -- the Viewer Signatures side panel tab (`D05 T02 §9`) plugs into `SidePanelHost` (§3).
+- -> XREF: D07 T03 §2 -- `help.reportProblem` and `What's new` (§7 there) are registered in §11's `CommandRegistry` and found through §12's command box.
 
 ## Outcome
 
@@ -398,6 +399,7 @@ Build `CommandBoxControl` (`src/app/controls/CommandBoxControl.xaml/.h/.cpp`) pe
 - [ ] Mount `CommandBoxControl` in `ShellPage` as the `Ctrl+K` top-centred overlay (`CornerRadius=20`, `ThemeShadow` Z=64) and on `HomePage` (§2) in `InlineHomeMode` (`720 epx` wide with footer key hints and `"Browse files"` button). Done when: pressing `Ctrl+K` on `HomePage` focuses the inline box rather than opening a duplicate popup over it, and pressing `Ctrl+K` on any other page opens the top-centred overlay card.
 - [ ] Announce result counts politely to screen readers as the user types (`"5 results, Rotate view right selected"`). Done when: UIA live-region / automation peer notifications fire on filter updates.
 - [ ] Add `Panels.CommandBoxFilterAndKeyboardFlow` test in `tests/recto-tests/` driving `Ctrl+K` queries for commands (`"rotate"`), outline titles, page numbers (`"page 3"`), and recent filenames, verifying bold span indices and end-to-end execution. Done when: `recto-tests.exe --gtest_filter=Panels.CommandBoxFilterAndKeyboardFlow` passes.
+- [ ] Keep IME composition intact in the command box: never re-request focus or rewrite the query while `TextCompositionStarted` is active, and filter only on committed text (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`, pdfcraft #1252). Done when: `Panels.CommandBoxFilterAndKeyboardFlow` composes a Microsoft Pinyin, Japanese and Korean query and executes the selected result.
 - [ ] Commit: `viewer: build Ctrl+K CommandBoxControl in overlay and Home inline modes`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Panels.CommandBoxFilterAndKeyboardFlow` passes on the display-session host, and screenshots of `CommandBoxControl` in overlay (`D-Dialogs.png`) and Home inline (`D-Home.png`) modes match the SPEC boards.

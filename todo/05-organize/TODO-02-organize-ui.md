@@ -368,9 +368,12 @@ Build the Viewer's digital signature banner and interactive signing workflow spe
 - [ ] Build the **Cryptographic Standards** section: `Format` (`PAdES / ETSI.CAdES.detached` vs `PKCS#7 / adbe.pkcs7.detached`), `Hash algorithm` (`SHA-256`, `SHA-384`, `SHA-512`), `Timestamp server URL` (pre-filled from `D02 T04 §6`'s `Default timestamp server URL` setting), and `Lock document after signing (/DocMDP)` dropdown (`Do not lock`, `No changes allowed (P=1)`, `Allow form filling and counter-signing (P=2)`, `Allow annotations, form filling, and counter-signing (P=3)`). Done when: all options bind cleanly to `PdfSignOptions` (`D05 T01 §8`).
 - [ ] Execute `SignatureEngine::sign_document` (`D05 T01 §8`) via `ConversionRunner` / `AtomicFileWriter` on dialog confirmation and reload the signed PDF tab so `SignatureStatusBanner` updates immediately. Done when: `AppTests.SignDocumentDialogUi` signs and counter-signs a document end-to-end.
 
+- [ ] Keep a signature appearance library in `AppPaths::data_dir()`: add, rename, delete, set default and preview several typed, drawn and image appearances, and initials, persisted atomically and kept across upgrades (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`, pdfcraft #163, #1288, #1684, #3272, #3606). Done when: `SignatureUi.AppearanceLibrary` stores three appearances, restarts, and finds all three and the default.
+- [ ] Import a signature photo by resampling first and limiting size after, then removing the paper background with an adjustable threshold and live preview (pdfcraft #127, #220, #1110, #1195). Done when: `SignatureUi.ImageBackgroundRemoval` turns a 12 MP phone photo fixture into a transparent appearance under the stored size limit.
+- [ ] Place appearances upright as displayed on pages rotated 0, 90, 180 and 270 degrees, and keep the aspect ratio while resizing (pdfcraft #299, #331, #434, #2392). Done when: `SignatureUi.UprightOnRotatedPages` renders the appearance upright on all four rotations after save and reopen.
 - [ ] Commit: viewer `Signature Status Banner`, on-canvas `Draw Signature Box` mode (`Ctrl+Shift+G`), and `Sign Document Dialog` (`SPEC 9.9`)
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=SignatureUi.*:AppTests.SignDocumentDialogUi` passes.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=SignatureUi.*:AppTests.SignDocumentDialogUi:SignatureUi.AppearanceLibrary:SignatureUi.ImageBackgroundRemoval:SignatureUi.UprightOnRotatedPages` passes.
 
 ## 11. Viewer `Signatures` side panel (`SPEC 8.3`) and `Protected & Signed` / `Unlocked` cards
 

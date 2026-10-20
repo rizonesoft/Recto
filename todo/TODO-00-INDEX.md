@@ -36,7 +36,7 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 | `recto-pdf` lexer, XRef parser, stream filters, CNG crypto & document model (4.1-4.4) | D01 T01 §1-§10 |
 | Content interpreter, DirectWrite fonts, incremental save, `DisplayList` & `RenderPool` | D01 T02 §1-§10 |
 | `recto-cli`, fuzz targets, the 4.9 battery, M1 done-when | D01 T03 §1-§7 |
-| App shell, title-bar tabs, open/save paths, password and error dialogs (SPEC 8, 9.2, 9.9) | D02 T01 §1-§11 |
+| App shell, title-bar tabs, open/save paths, password and error dialogs (SPEC 8, 9.2, 9.9) | D02 T01 §1-§12 |
 | Presentation thread, tiles on screen, layouts, zoom, links, page colour (SPEC 9.2) | D02 T02 §1-§10 |
 | Home, Pages, Bookmark Editor, Layers (OCG), Portfolios, editable Info & `Ctrl+K` | D02 T03 §1-§12 |
 | Settings page (including Portable mode `<exe-dir>\data\`), layout presets, theme & keys | D02 T04 §1-§10 |
@@ -44,7 +44,7 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 | UIA text provider, keyboard order and names, announcements (SPEC 11) | D03 T02 §1-§6 |
 | 15 annotation/markup types, `/AP` synthesis, Markup Bar, Comments, AcroForms & Designer | D03 T03 §1-§10 |
 | Job runtime, Convert page, queue, completion notices (SPEC 9.5, 9.9) | D04 T01 §1-§7 |
-| `PdfWriter`, atomic saves, Images/TIFF/GIF/SVG/XPS, OCR PDF, Table/Image & Optimizer | D04 T02 §1-§12 |
+| `PdfWriter`, atomic saves, Images/TIFF/GIF/SVG/XPS, OCR PDF, Table/Image & Optimizer | D04 T02 §1-§13 |
 | 3-mode (`Flowing`, `Exact`, `Continuous`) native `DocxWriter`, `RtfWriter` & 20-file gate | D04 T03 §1-§6 |
 | 100% native C++20 OpenXML, legacy OLE2 (`.doc`/`.xls`/`.ppt`), RTF, HTML & MD to PDF (D7, D10) | D04 T04 §1-§7 |
 | Native `XlsxWriter`, `WebDocWriter` (`HTML5`/`MD`/`EPUB`/`LaTeX`) & `PDF/A`/`UA`/`ZUGFeRD` | D04 T05 §1-§9 |
@@ -52,8 +52,10 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 | Organize grid (`Combine`/`Split`/`Reorder`), authoring dialogs, Redact Bar & Sign UI | D05 T02 §1-§11 |
 | Goldens, text tables, round-trips, performance targets (plan 8) | D06 T01 §1-§8 |
 | Security rules audit, fuzz operations, broker design (plan 9, D13) | D06 T02 §1-§6 |
-| Printing, Inno Setup (`Full` & `Portable`) installer, Portable `.zip`, MSIX & proof | D07 T01 §1-§7 |
+| Gates for pdfcraft's user-reported failure classes (`docs/research/`) | D06 T03 §1-§12 |
+| Printing, Inno Setup (`Full` & `Portable`) installer, Portable `.zip`, MSIX & proof | D07 T01 §1-§9 |
 | About, NOTICE and GPL-3.0 audit, opt-in local crash bundle & GitHub Release / Store kit | D07 T02 §1-§7 |
+| Listening to users: intake, triage, diagnostics, reproducers, releases, demand | D07 T03 §1-§7 |
 | Trademark search, repo face, optional Partner Center, reference machines (D1, plan 11) | D99 T01 §1-§4 |
 | Sandboxed broker process | Pre-approved design in D06 T02 §6; built after v1 (D13) |
 
@@ -79,6 +81,8 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 - [06 Quality] [TODO-02 Hostile-Input Rules, Fuzz Operations and the Broker Design](./06-quality/TODO-02-security-and-fuzzing.md): plan section 9 audit, scheduled fuzzing with triage, pre-approved D13 shared-memory broker design record.
 - [07 Release] [TODO-01 Printing, Inno Setup (Full & Portable) Installer, Optional MSIX and Install Proof](./07-release/TODO-01-packaging-and-print.md): print API decision, Inno Setup Full & Portable installer, Portable `.zip`, optional MSIX, automated install/portable/upgrade proof.
 - [07 Release] [TODO-02 About, GPL-3.0-or-later Compliance, Local Crash Bundle and Release Distribution](./07-release/TODO-02-store-and-compliance.md): About with generated truth, NOTICE audit, opt-in local minidump-plus-log crash bundle, GitHub Release bundle and optional Store submission kit.
+- [06 Quality] [TODO-03 User-Reported Failure Class Gates (Lessons from pdfcraft)](./06-quality/TODO-03-user-failure-gates.md): hostile-input and recovered-error fixtures, a recovered-content page notice, the single-interpreter differential suite, save fault injection, raw-byte redaction proof, Unicode authoring round trips, UI glyph coverage, printer driver matrix, render and text fidelity fixtures, and the clean-machine release smoke.
+- [07 Release] [TODO-03 Listening to Users: Intake, Triage, Diagnostics, Releases and Demand](./07-release/TODO-03-listening-to-users.md): issue forms and `SECURITY.md`, triage rules, in-app `Report a problem`, `recto-cli scrub` reproducers, a regression test per user bug, closing on release, the release gate, the scope page and demand ledger, and What's new with an opt-in update notice.
 - [99 Manual] [TODO-01 Operator Setup (Manual)](./99-manual/TODO-01-operator-setup.md): trademark search, repository face, optional Partner Center reservation, reference machines. Operator only.
 
 ## Completed TODOs

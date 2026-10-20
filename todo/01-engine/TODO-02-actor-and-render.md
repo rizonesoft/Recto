@@ -25,6 +25,7 @@ track: M1
 - -> XREF: D02 T03 §7 -- Optional Content Groups (`D02 T03 §7`) filter `BDC`/`EMC` layer blocks during `DisplayList` compilation (`§3`, `§4`), and `FontInventory` (`D02 T03 §9`) inspects `§2`'s font descriptors.
 - -> XREF: D04 T05 §5 -- the `PDF/A` font-subsetting compliance engine (`D04 T05 §5`) inspects `§2`'s font loader and embedded font streams.
 - -> XREF: D05 T01 §8 -- `SignatureEngine` (`D05 T01 §8`) uses `§5`'s `IncrementalWriter` when counter-signing documents.
+- -> XREF: D06 T03 §1 -- user-reported hostile-input fixtures (inline `EI`, short operators, overflowing operands) and the recovered-error contract (§2 there) gate this interpreter and `DisplayList` builder.
 
 ## Outcome
 
