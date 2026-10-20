@@ -322,7 +322,8 @@ struct PositionedGlyph {
 	// (`[left_bearing, descender, right_bearing, ascender]`). May have negative
 	// `x_min` (negative left side bearing), negative `y_min` (descender below
 	// baseline), or `x_max > advance_pt` (right overhang). Omit when `is_blank`
-	// is true or when run-level `local_bounds_pt` / `type3_sub_list` is supplied.
+	// is true or when `type3_sub_list` is supplied (or for single-glyph runs
+	// using run-level `local_bounds_pt`).
 	std::optional<PdfRect> ink_bounds_pt{};
 	bool is_blank{false};
 
@@ -663,6 +664,10 @@ struct DisplayListLimits {
 	// non-zero, the N-th internal builder allocation step fails with
 	// `ErrorCode::OutOfMemory`.
 	size_t fail_allocation_after_ops{0u};
+	// Optional deterministic fault injection specifically targeting the
+	// `std::shared_ptr<const DisplayList>` control-block allocation in `finish()`
+	// after the `DisplayList` object itself has been constructed.
+	bool fail_finish_control_block_allocation{false};
 };
 
 // Single-threaded builder used on the `DocumentActor` thread to record a page's
@@ -748,8 +753,17 @@ private:
 		PdfPoint p1{};
 	};
 
+	struct ClipCubic {
+		PdfPoint p0{};
+		PdfPoint p1{};
+		PdfPoint p2{};
+		PdfPoint p3{};
+	};
+
 	struct ClipRegion {
 		std::vector<ClipEdge> edges;
+		std::vector<ClipEdge> linear_edges;
+		std::vector<ClipCubic> cubics;
 		FillRule fill_rule{FillRule::NonZero};
 		PdfRect bbox{};
 		bool has_bbox{false};
