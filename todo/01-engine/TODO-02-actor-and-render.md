@@ -12,7 +12,7 @@ track: M1
 
 > **Goal:** Complete the rendering and incremental-save engine in `src/pdf` and the multi-threaded actor and tile-rendering runtime in `src/core`: the immutable `DisplayList` command buffer, DirectWrite in-memory font loader (embedded TrueType/OpenType/CFF, Type 1 charstrings, Type 3 procedural glyphs, Standard 14 fonts, `/ToUnicode` and encoding maps), the PDF content-stream interpreter (graphics state, paths, clipping, colour spaces, text positioning, images, Form XObjects), the incremental PDF revision writer (`src/pdf/incremental_writer.cpp`), Direct2D tile rasterization with sub-10 ms cooperative `CancelToken` abort, `DocumentActor` threads, `RenderPool` workers, 4-tier `TileScheduler`, and foundation plan section 4.8 ordered `Runtime` shutdown.
 
-> **Current state:** **Corrected 2026-10-19:** (was: Measured 2026-10-14 claiming `D01 T01` already provided `recto::pdf::Document`) `src/core/recto-core.vcxproj` compiles the scaffold `recto::core::abi_version()` entry point. `D01 T01 §1-§7` are verified (`PdfResult<T>`, `PdfValue`, `Lexer`, `Parser`, `XrefTable`, `ObjStm` & damaged-file recovery, and lossless stream filters); `D01 T01 §8-§10` complete bi-level/image filters, CNG decryption, and `recto::pdf::Document` before `§1` and `§5` begin.
+> **Current state:** **Corrected 2026-10-20:** (was: Corrected 2026-10-19 noting `D01 T01 §8-§10` pending) `src/core/recto-core.vcxproj` compiles the scaffold `recto::core::abi_version()` entry point, and `D01 T01 §1-§10` (`todo/01-engine/TODO-01-bridge-runtime.md`, `status: done`) are all verified (`PdfResult<T>`, `PdfValue`, `Lexer`, `Parser`, `XrefTable`, `ObjStm` & damaged-file recovery, stream filters, Windows CNG `bcrypt.dll` decryption, and `recto::pdf::Document`).
 
 ## Inputs
 
@@ -63,17 +63,19 @@ Implement the thread-safe, immutable display-list representation in `src/pdf/dis
 **Surface:** no
 **Freeze check:** Verify that once `DisplayListBuilder::finish()` returns `std::shared_ptr<const DisplayList>`, the `DisplayList` exposes `const`-only accessors over contiguous immutable vectors and `std::shared_ptr<const DecodedBitmap>` buffers, with zero mutable members or lazy caches.
 
+> **Started:** 2026-10-20
+
 **Build order:**
 
 1. Author `src/pdf/display_list.h` and `src/pdf/display_list.cpp` implementing `DisplayCommand`, `RecordedPath`, `RecordedGlyphRun`, `DecodedBitmap`, `DisplayList`, and `DisplayListBuilder` (with Debug atomic `live_display_lists` counter). Done when: `display_list.cpp` compiles cleanly on `x64` and `ARM64`.
 2. Add `tests/recto-tests/pdf_display_list_tests.cpp` verifying command recording, path/glyph contiguous storage, bounding-box computation, `live_display_lists` counter increment/decrement, and concurrent read access from 8 threads. Done when: `PdfDisplayList.*` passes under ASan.
 
-- [ ] Define `DisplayCommand` and contiguous command/path/glyph storage in `DisplayList` so replaying a page walks flat arrays with minimal pointer chasing. Done when: `DisplayList` contains zero non-`const` methods or `mutable` fields.
-- [ ] Implement `RecordedPath` storing `MoveTo`, `LineTo`, `CubicBezierTo`, `Rect`, and `CloseSubpath` verbs in a shared coordinate pool on `DisplayList`. Done when: `PdfDisplayList.PathRecording` records multi-subpath geometries and computes exact bounding boxes.
-- [ ] Implement `DecodedBitmap` (`width`, `height`, `stride`, immutable `std::vector<uint8_t>` premultiplied BGRA pixels, `is_monochrome_mask`) wrapped in `std::shared_ptr<const DecodedBitmap>`. Done when: image bitmaps are shared zero-copy across commands and worker threads.
-- [ ] Implement `DisplayListBuilder::finish()` sealing the builder and computing `page_box_pt` and `content_bounds_pt` (the union of all painted paths, glyph runs, and images clipped to the active clip stack). Done when: `PdfDisplayList.ContentBounds` returns the exact ink bounding box of a recorded page.
-- [ ] Track active `DisplayList` instances via an atomic counter `recto::pdf::debug_live_display_lists()` so `§8` and `§10` can assert zero leaked display lists on shutdown. Done when: constructing and destroying `DisplayList` increments and decrements the counter to `0`.
-- [ ] Verify concurrent lock-free reading of one `std::shared_ptr<const DisplayList>` across 8 threads in `PdfDisplayList.ConcurrentRead`. Done when: 8 threads iterating 10,000 commands simultaneously pass under ASan.
+- [x] Define `DisplayCommand` and contiguous command/path/glyph storage in `DisplayList` so replaying a page walks flat arrays with minimal pointer chasing. Done when: `DisplayList` contains zero non-`const` methods or `mutable` fields.
+- [x] Implement `RecordedPath` storing `MoveTo`, `LineTo`, `CubicBezierTo`, `Rect`, and `CloseSubpath` verbs in a shared coordinate pool on `DisplayList`. Done when: `PdfDisplayList.PathRecording` records multi-subpath geometries and computes exact bounding boxes.
+- [x] Implement `DecodedBitmap` (`width`, `height`, `stride`, immutable `std::vector<uint8_t>` premultiplied BGRA pixels, `is_monochrome_mask`) wrapped in `std::shared_ptr<const DecodedBitmap>`. Done when: image bitmaps are shared zero-copy across commands and worker threads.
+- [x] Implement `DisplayListBuilder::finish()` sealing the builder and computing `page_box_pt` and `content_bounds_pt` (the union of all painted paths, glyph runs, and images clipped to the active clip stack). Done when: `PdfDisplayList.ContentBounds` returns the exact ink bounding box of a recorded page.
+- [x] Track active `DisplayList` instances via an atomic counter `recto::pdf::debug_live_display_lists()` so `§8` and `§10` can assert zero leaked display lists on shutdown. Done when: constructing and destroying `DisplayList` increments and decrements the counter to `0`.
+- [x] Verify concurrent lock-free reading of one `std::shared_ptr<const DisplayList>` across 8 threads in `PdfDisplayList.ConcurrentRead`. Done when: 8 threads iterating 10,000 commands simultaneously pass under ASan.
 - [ ] Commit: `pdf: add immutable DisplayList command buffer and DisplayListBuilder`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfDisplayList.*` passes under ASan with 0 warnings.

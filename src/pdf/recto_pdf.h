@@ -15,6 +15,7 @@
 #include "filters.h"
 #include "crypto.h"
 #include "document.h"
+#include "display_list.h"
 
 namespace recto::pdf {
 
