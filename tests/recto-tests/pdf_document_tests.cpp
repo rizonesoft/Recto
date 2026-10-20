@@ -601,13 +601,16 @@ TEST(PdfDocument, PageTreeAndRotatedPages)
 
 		// 3e. Commented (`% comment`) and `/ObjStm`-compressed `/Resources` and
 		//     category alias chains still hit the cache and share a single
-		//     retained dictionary:
+		//     retained dictionary (proven by staying within the 16 MiB resource
+		//     budget across 300 `/Resources`-alias pages and 10 category-alias
+		//     pages):
 		{
 			std::string res_commented =
-				"<< /Font 11 0 R /Pad (" + std::string(32768u, 'm') + ") >>";
+				"<< /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Courier >> >> "
+				"/Pad (" + std::string(65536u, 'm') + ") >>";
 			std::string cat_commented =
 				"<< /F1 << /Type /Font /Subtype /Type1 /BaseFont /Courier "
-				"/Pad (" + std::string(32768u, 'n') + ") >> >>";
+				"/Pad (" + std::string(900u * 1024u, 'n') + ") >> >>";
 			// Object stream 5 holds compressed alias object 12 -> 10 0 R and
 			// compressed category alias 13 -> 11 0 R:
 			const std::string objstm_header = "12 0 13 6 ";
@@ -619,35 +622,55 @@ TEST(PdfDocument, PageTreeAndRotatedPages)
 				" /Length " + std::to_string(objstm_data.size()) +
 				" >>\nstream\n" + objstm_data + "\nendstream";
 
-			// Build hybrid PDF with `/ObjStm` entries via an `/XRef` stream:
+			// Build hybrid PDF with:
+			// - 300 pages referencing commented -> compressed `/Resources` aliases
+			//   (`6 0 R -> 12 0 R -> 10 0 R` and `8 0 R -> 6 0 R -> 12 0 R -> 10 0 R`,
+			//   64 KiB each; uncached = 18.75 MiB > 16 MiB budget)
+			// - 10 pages referencing commented -> compressed category aliases
+			//   (`7 0 R -> 13 0 R -> 11 0 R` and `9 0 R -> 7 0 R -> 13 0 R -> 11 0 R`,
+			//   900 KiB each; uncached category cache + page dict = 18 MiB > 16 MiB budget)
 			std::string pdf_sc = "%PDF-1.7\n%\xE2\xE3\xCF\xD3\n";
-			auto append_obj = [&](uint32_t num, std::string_view body) -> uint64_t {
-				const uint64_t off = static_cast<uint64_t>(pdf_sc.size());
+			std::vector<uint64_t> offsets(340u, 0u);
+			auto append_obj = [&](uint32_t num, std::string_view body) {
+				offsets[num] = static_cast<uint64_t>(pdf_sc.size());
 				pdf_sc += std::to_string(num) + " 0 obj\n";
 				pdf_sc.append(body);
 				pdf_sc += "\nendobj\n";
-				return off;
 			};
-			const uint64_t off1 = append_obj(1, "<< /Type /Catalog /Pages 2 0 R >>");
-			const uint64_t off2 = append_obj(
+			append_obj(1, "<< /Type /Catalog /Pages 2 0 R >>");
+			std::string kids_sc = "[";
+			for (uint32_t p = 0u; p < 300u; ++p) {
+				const uint32_t pid = 20u + p;
+				kids_sc += std::to_string(pid) + " 0 R ";
+				const uint32_t res_ref = (p % 2u == 0u) ? 6u : 8u;
+				append_obj(
+					pid,
+					"<< /Type /Page /Parent 2 0 R /Resources " +
+						std::to_string(res_ref) + " 0 R >>");
+			}
+			for (uint32_t c = 0u; c < 10u; ++c) {
+				const uint32_t pid = 320u + c;
+				kids_sc += std::to_string(pid) + " 0 R ";
+				const uint32_t cat_ref = (c % 2u == 0u) ? 7u : 9u;
+				append_obj(
+					pid,
+					"<< /Type /Page /Parent 2 0 R /Resources << /Font " +
+						std::to_string(cat_ref) + " 0 R >> >>");
+			}
+			kids_sc += "]";
+			append_obj(
 				2,
-				"<< /Type /Pages /Count 2 /MediaBox [0 0 612 792] /Kids [3 0 R 4 0 R] >>");
-			const uint64_t off3 = append_obj(
-				3,
-				"<< /Type /Page /Parent 2 0 R /Resources 6 0 R >>");
-			const uint64_t off4 = append_obj(
-				4,
-				"<< /Type /Page /Parent 2 0 R /Resources << /Font 7 0 R >> >>");
-			const uint64_t off5 = append_obj(5, objstm_obj);
-			// Object 6 and 7 are commented uncompressed aliases pointing to
-			// compressed aliases 12 and 13 inside `/ObjStm` 5:
-			const uint64_t off6 = append_obj(6, "% comment before alias\n12 0 R % trailing");
-			const uint64_t off7 = append_obj(7, "% comment before cat alias\n13 0 R");
-			const uint64_t off10 = append_obj(10, res_commented);
-			const uint64_t off11 = append_obj(11, cat_commented);
-			const uint64_t off14 = static_cast<uint64_t>(pdf_sc.size());
+				"<< /Type /Pages /Count 310 /MediaBox [0 0 612 792] /Kids " +
+					kids_sc + " >>");
+			append_obj(5, objstm_obj);
+			append_obj(6, "% comment before alias\n12 0 R % trailing");
+			append_obj(7, "% comment before cat alias\n13 0 R");
+			append_obj(8, "% second commented alias\n6 0 R");
+			append_obj(9, "% second commented cat alias\n7 0 R");
+			append_obj(10, res_commented);
+			append_obj(11, cat_commented);
+			const uint64_t off_xref = static_cast<uint64_t>(pdf_sc.size());
 
-			// XRef stream covering objects 0..14 (W [1 4 2], 7 bytes per entry):
 			std::string xref_bin;
 			auto push_xref = [&](uint8_t type, uint32_t f2, uint16_t f3) {
 				xref_bin.push_back(static_cast<char>(type));
@@ -659,38 +682,47 @@ TEST(PdfDocument, PageTreeAndRotatedPages)
 				xref_bin.push_back(static_cast<char>(f3 & 0xFFu));
 			};
 			push_xref(0, 0, 65535);
-			push_xref(1, static_cast<uint32_t>(off1), 0);
-			push_xref(1, static_cast<uint32_t>(off2), 0);
-			push_xref(1, static_cast<uint32_t>(off3), 0);
-			push_xref(1, static_cast<uint32_t>(off4), 0);
-			push_xref(1, static_cast<uint32_t>(off5), 0);
-			push_xref(1, static_cast<uint32_t>(off6), 0);
-			push_xref(1, static_cast<uint32_t>(off7), 0);
-			push_xref(0, 0, 65535);
-			push_xref(0, 0, 65535);
-			push_xref(1, static_cast<uint32_t>(off10), 0);
-			push_xref(1, static_cast<uint32_t>(off11), 0);
-			push_xref(2, 5, 0); // obj 12 in ObjStm 5, index 0
-			push_xref(2, 5, 1); // obj 13 in ObjStm 5, index 1
-			push_xref(1, static_cast<uint32_t>(off14), 0);
+			for (uint32_t id = 1u; id <= 329u; ++id) {
+				if (id == 12u) {
+					push_xref(2, 5, 0);
+				} else if (id == 13u) {
+					push_xref(2, 5, 1);
+				} else if (offsets[id] != 0u) {
+					push_xref(1, static_cast<uint32_t>(offsets[id]), 0);
+				} else {
+					push_xref(0, 0, 65535);
+				}
+			}
+			push_xref(1, static_cast<uint32_t>(off_xref), 0); // obj 330
 
-			pdf_sc += "14 0 obj\n<< /Type /XRef /Size 15 /Root 1 0 R /W [1 4 2] /Length " +
+			pdf_sc += "330 0 obj\n<< /Type /XRef /Size 331 /Root 1 0 R /W [1 4 2] /Length " +
 				std::to_string(xref_bin.size()) + " >>\nstream\n" +
 				xref_bin + "\nendstream\nendobj\nstartxref\n" +
-				std::to_string(off14) + "\n%%EOF\n";
+				std::to_string(off_xref) + "\n%%EOF\n";
 
 			const std::vector<uint8_t> bytes_sc(pdf_sc.begin(), pdf_sc.end());
 			auto sc_res = Document::open_memory(bytes_sc);
 			ASSERT_TRUE(sc_res.has_value()) << sc_res.error().message.view();
-			EXPECT_EQ((*sc_res)->page_count(), 2u);
+			EXPECT_EQ((*sc_res)->page_count(), 310u);
 			ASSERT_EQ((*sc_res)->fonts().size(), 1u);
 			EXPECT_EQ((*sc_res)->fonts()[0].name, "Courier");
+			auto r0 = (*sc_res)->page_resources(0);
+			auto r1 = (*sc_res)->page_resources(1);
+			auto r300 = (*sc_res)->page_resources(300);
+			auto r301 = (*sc_res)->page_resources(301);
+			ASSERT_TRUE(r0.has_value());
+			ASSERT_TRUE(r1.has_value());
+			ASSERT_TRUE(r300.has_value());
+			ASSERT_TRUE(r301.has_value());
+			EXPECT_EQ(*r0, *r1);
+			EXPECT_EQ(*r300, *r301);
 		}
 
 		// 3f. Generation-number preservation in `/Resources` and category caches:
 		//     stale generation references (`10 1 R` / `12 1 R`) must resolve to
 		//     `null` and must neither poison a subsequent live `10 0 R` / `12 0 R`
-		//     lookup nor alias a previously cached `10 0 R` / `12 0 R` entry:
+		//     lookup nor alias a previously cached `10 0 R` / `12 0 R` entry on
+		//     each individual page's `page_resources(i)`:
 		for (bool stale_first : {true, false}) {
 			const std::string p_stale =
 				"<< /Type /Page /Parent 2 0 R /Resources 10 1 R >>";
@@ -714,9 +746,102 @@ TEST(PdfDocument, PageTreeAndRotatedPages)
 			auto gen_res = Document::open_memory(bytes_gen);
 			ASSERT_TRUE(gen_res.has_value()) << gen_res.error().message.view();
 			EXPECT_EQ((*gen_res)->page_count(), 4u);
-			// Exactly the two live references (`10 0 R` and `12 0 R`) should contribute
-			// fonts; the stale `10 1 R` and `12 1 R` pages must resolve to null:
 			EXPECT_EQ((*gen_res)->fonts().size(), 2u);
+
+			const uint32_t idx_res_stale = stale_first ? 0u : 1u;
+			const uint32_t idx_res_live = stale_first ? 1u : 0u;
+			const uint32_t idx_cat_stale = stale_first ? 2u : 3u;
+			const uint32_t idx_cat_live = stale_first ? 3u : 2u;
+
+			auto r_stale = (*gen_res)->page_resources(idx_res_stale);
+			auto r_live = (*gen_res)->page_resources(idx_res_live);
+			auto r_cat_stale = (*gen_res)->page_resources(idx_cat_stale);
+			auto r_cat_live = (*gen_res)->page_resources(idx_cat_live);
+			ASSERT_TRUE(r_stale.has_value());
+			ASSERT_TRUE(r_live.has_value());
+			ASSERT_TRUE(r_cat_stale.has_value());
+			ASSERT_TRUE(r_cat_live.has_value());
+			EXPECT_TRUE(r_stale->empty());
+			EXPECT_NE(r_live->get_dict("Font"), nullptr);
+			EXPECT_EQ(r_cat_stale->get_dict("Font"), nullptr);
+			EXPECT_NE(r_cat_live->get_dict("Font"), nullptr);
+		}
+
+		// 3g. Cached indirect-reference depth enforcement is order-independent:
+		//     a 32-alias chain followed by a terminal `/Resources` dictionary
+		//     (33 total hops > `kMaxIndirectRefDepth == 32`) must fail with
+		//     `ErrorCode::DamagedFormat` whether an earlier page warmed the
+		//     terminal dictionary (`132 0 R`), warmed every intermediate hop
+		//     one by one (`132 0 R`, `131 0 R`, ..., `100 0 R`), or hit the
+		//     full chain cold, while a 31-alias + 1-terminal chain (32 total
+		//     hops) succeeds in both orders:
+		for (bool warm_first : {true, false}) {
+			std::vector<std::pair<uint32_t, std::string>> objs_depth = {
+				{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+				{2, "<< /Type /Pages /Count 2 /MediaBox [0 0 612 792] /Kids [3 0 R 4 0 R] >>"},
+				{3,
+				 std::string("<< /Type /Page /Parent 2 0 R /Resources ") +
+					 (warm_first ? "132 0 R" : "100 0 R") + " >>"},
+				{4,
+				 std::string("<< /Type /Page /Parent 2 0 R /Resources ") +
+					 (warm_first ? "100 0 R" : "132 0 R") + " >>"},
+				{132, "<< /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >>"},
+			};
+			for (uint32_t id = 100u; id < 132u; ++id) {
+				objs_depth.emplace_back(id, std::to_string(id + 1u) + " 0 R");
+			}
+			const auto bytes_depth = build_synthetic_pdf_from_objects("1.7", objs_depth);
+			auto depth_res = Document::open_memory(bytes_depth);
+			ASSERT_FALSE(depth_res.has_value());
+			EXPECT_EQ(depth_res.error().code, ErrorCode::DamagedFormat);
+
+			// 31 aliases + 1 terminal (101..132 = 32 hops) is within limit:
+			std::vector<std::pair<uint32_t, std::string>> objs_ok = {
+				{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+				{2, "<< /Type /Pages /Count 2 /MediaBox [0 0 612 792] /Kids [3 0 R 4 0 R] >>"},
+				{3,
+				 std::string("<< /Type /Page /Parent 2 0 R /Resources ") +
+					 (warm_first ? "132 0 R" : "101 0 R") + " >>"},
+				{4,
+				 std::string("<< /Type /Page /Parent 2 0 R /Resources ") +
+					 (warm_first ? "101 0 R" : "132 0 R") + " >>"},
+				{132, "<< /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >>"},
+			};
+			for (uint32_t id = 101u; id < 132u; ++id) {
+				objs_ok.emplace_back(id, std::to_string(id + 1u) + " 0 R");
+			}
+			const auto bytes_ok = build_synthetic_pdf_from_objects("1.7", objs_ok);
+			auto ok_res = Document::open_memory(bytes_ok);
+			ASSERT_TRUE(ok_res.has_value()) << ok_res.error().message.view();
+		}
+		{
+			// Incremental hop-by-hop cache warming (`132 0 R`, `131 0 R`, ..., `100 0 R`):
+			std::vector<std::pair<uint32_t, std::string>> objs_inc = {
+				{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+				{132, "<< /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >>"},
+			};
+			std::string kids_inc = "[";
+			for (uint32_t step = 0u; step <= 32u; ++step) {
+				const uint32_t pid = 10u + step;
+				const uint32_t res_id = 132u - step;
+				kids_inc += std::to_string(pid) + " 0 R ";
+				objs_inc.emplace_back(
+					pid,
+					"<< /Type /Page /Parent 2 0 R /Resources " +
+						std::to_string(res_id) + " 0 R >>");
+			}
+			kids_inc += "]";
+			objs_inc.emplace_back(
+				2u,
+				"<< /Type /Pages /Count 33 /MediaBox [0 0 612 792] /Kids " +
+					kids_inc + " >>");
+			for (uint32_t id = 100u; id < 132u; ++id) {
+				objs_inc.emplace_back(id, std::to_string(id + 1u) + " 0 R");
+			}
+			const auto bytes_inc = build_synthetic_pdf_from_objects("1.7", objs_inc);
+			auto inc_res = Document::open_memory(bytes_inc);
+			ASSERT_FALSE(inc_res.has_value());
+			EXPECT_EQ(inc_res.error().code, ErrorCode::DamagedFormat);
 		}
 	}
 }
@@ -1106,6 +1231,37 @@ TEST(PdfDocument, OutlinesAndNamedDests)
 		auto bad_outline_res = Document::open_memory(bytes_bad_outline);
 		ASSERT_FALSE(bad_outline_res.has_value());
 		EXPECT_EQ(bad_outline_res.error().code, ErrorCode::DamagedFormat);
+
+		// Destination alias-cache budget enforcement: 2,500 named destinations
+		// each with a 30-hop distinct indirect alias chain converging on `10 0 R`
+		// exceed `kMaxCachedDestObjs` (65,536 entries) and fail deterministically
+		// with `ErrorCode::DamagedFormat`:
+		{
+			std::vector<std::pair<uint32_t, std::string>> objs_dest_budget = {
+				{1, "<< /Type /Catalog /Pages 2 0 R /Names << /Dests 5 0 R >> >>"},
+				{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 612 792] /Kids [3 0 R] >>"},
+				{3, "<< /Type /Page /Parent 2 0 R >>"},
+				{10, "[3 0 R /Fit]"},
+			};
+			std::string dest_names_arr = "[";
+			for (uint32_t i = 0u; i < 2500u; ++i) {
+				const uint32_t start_id = 20u + i * 30u;
+				dest_names_arr += "(d" + std::to_string(i) + ") " + std::to_string(start_id) + " 0 R ";
+				for (uint32_t hop = 0u; hop < 30u; ++hop) {
+					const uint32_t next_id = (hop == 29u) ? 10u : (start_id + hop + 1u);
+					objs_dest_budget.emplace_back(
+						start_id + hop,
+						std::to_string(next_id) + " 0 R");
+				}
+			}
+			dest_names_arr += "]";
+			objs_dest_budget.emplace_back(5u, "<< /Names " + dest_names_arr + " >>");
+			const auto bytes_dest_budget =
+				build_synthetic_pdf_from_objects("1.7", objs_dest_budget);
+			auto dest_budget_res = Document::open_memory(bytes_dest_budget);
+			ASSERT_FALSE(dest_budget_res.has_value());
+			EXPECT_EQ(dest_budget_res.error().code, ErrorCode::DamagedFormat);
+		}
 	}
 }
 
@@ -1677,6 +1833,33 @@ TEST(PdfDocument, FontInventory)
 		auto bad_font_res = Document::open_memory(bytes_bad_font);
 		ASSERT_FALSE(bad_font_res.has_value());
 		EXPECT_EQ(bad_font_res.error().code, ErrorCode::DamagedFormat);
+
+		// Equivalent font dictionaries across pages merge `has_to_unicode` and
+		// `has_differences` regardless of page/font encounter order:
+		for (bool diff_first : {true, false}) {
+			const std::string f_plain =
+				"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica "
+				"/Encoding /WinAnsiEncoding /ToUnicode 12 0 R >>";
+			const std::string f_diff =
+				"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica "
+				"/Encoding << /BaseEncoding /WinAnsiEncoding /Differences [65 /Euro] >> >>";
+			const auto bytes_merge = build_synthetic_pdf_from_objects(
+				"1.7",
+				{
+					{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+					{2, "<< /Type /Pages /Count 2 /MediaBox [0 0 612 792] /Kids [3 0 R 4 0 R] >>"},
+					{3, "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 10 0 R >> >> >>"},
+					{4, "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 11 0 R >> >> >>"},
+					{10, diff_first ? f_diff : f_plain},
+					{11, diff_first ? f_plain : f_diff},
+					{12, "<< /Length 4 >>\nstream\nCMAP\nendstream"},
+				});
+			auto merge_res = Document::open_memory(bytes_merge);
+			ASSERT_TRUE(merge_res.has_value()) << merge_res.error().message.view();
+			ASSERT_EQ((*merge_res)->fonts().size(), 1u);
+			EXPECT_TRUE((*merge_res)->fonts()[0].has_to_unicode);
+			EXPECT_TRUE((*merge_res)->fonts()[0].has_differences);
+		}
 	}
 }
 
