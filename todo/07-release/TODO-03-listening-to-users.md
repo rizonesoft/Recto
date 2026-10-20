@@ -8,7 +8,7 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 
 # TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and Demand
 
-> **Goal:** Recto hears its users and answers them in the open. A report arrives through one GitHub form with the version, install type, OS and steps it needs, prefilled from the app's own diagnostics; a user with a private file can share a structure-preserving reproducer; every user-reported bug gets a regression test before it closes; an issue closes when the release containing its fix ships; security reports have a private channel and an advisory; and what users ask for is recorded in a public demand ledger that is reviewed before every release. These are the process failures pdfcraft's users met most (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`, "How pdfcraft treated its users").
+> **Goal:** Recto hears its users and answers them in the open. A report arrives through one GitHub form with the version, install type, OS and steps it needs, prefilled from the app's own diagnostics; a user with a private file can share a structure-preserving reproducer after inspecting it; every user-reported bug gets a regression test before it closes; an issue closes when the release containing its fix ships; security reports have a private channel and an advisory; and what users ask for is recorded in a public demand ledger that is reviewed before every release. These are the process failures pdfcraft's users met most (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`, "How pdfcraft treated its users").
 
 > **Current state:** Measured 2026-10-21. `.github/` holds `pull_request_template.md` and CI workflows only: there are no issue forms, no `SECURITY.md`, no triage or release-closing policy, no reproducer tooling, no demand ledger and no in-app path from a problem to a report. `D07 T02 §4` plans a local crash bundle and `D07 T02 §6` a release runbook; neither covers non-crash reports or closing issues on release.
 
@@ -25,7 +25,7 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 ## Outcome
 
 - A new GitHub issue is either a bug form (version, install type, Windows build, GPU, steps, expected and actual, file or reproducer) or a feature form that starts with a duplicate search; `SECURITY.md` routes vulnerabilities to private reporting.
-- `Help -> Report a problem` (and `Ctrl+K`) copies diagnostics with no document content and opens the bug form prefilled; `recto-cli scrub` turns a private PDF into a shareable reproducer that keeps its structure.
+- `Help -> Report a problem` (and `Ctrl+K`) copies diagnostics with no document content and opens the bug form prefilled; `recto-cli scrub` turns a private PDF into a structure-preserving reproducer, reports what it kept, and renders preview pages the user inspects before sharing.
 - A user-reported bug closes only with a regression test that fails before the fix, and only when the release containing the fix is published, with "Fixed in vX.Y.Z".
 - No release is tagged while a closed-on-main data-loss, crash or security fix is unreleased past seven days, and each security fix ships with an advisory.
 - `docs/scope.md` says what Recto does and does not do, and `docs/user-demand.md` maps every recurring request to a TODO section or a recorded decision, reviewed before each release.
@@ -43,7 +43,7 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 | 3 | §6 | Public scope page and user demand ledger | §1 | [ ] |
 | 4 | §3 | Structure-preserving reproducer scrubber (`recto-cli scrub`) | D04 T02 §2 | [ ] |
 | 5 | §2 | In-app `Report a problem` with privacy-safe diagnostics | §1, D07 T02 §1, D07 T02 §4, D02 T03 §11 | [ ] |
-| 6 | §5 | Release gate for unreleased fixes, security advisories and CI integrity | §4, D07 T02 §6, D06 T03 §12 | [ ] |
+| 6 | §5 | Release gate for unreleased fixes, security advisories and CI integrity | §4, D07 T02 §6, D07 T02 §7, D06 T03 §12 | [ ] |
 | 7 | §7 | What's new after update and opt-in update notice | §2, D02 T04 §6 | [ ] |
 
 ## 1. Issue forms, triage policy and `SECURITY.md`
@@ -100,7 +100,7 @@ pdfcraft's reporters could not say which version, install type or GPU they had, 
 
 ## 3. Structure-preserving reproducer scrubber (`recto-cli scrub`)
 
-pdfcraft's maintainers asked for files that users could not share (identity documents, legal and company files), and reports died in `needs info` (research record; pdfcraft #1628, #2159, #2423, #2722). `recto-cli scrub` writes a copy that keeps the object graph, filters, fonts, content-stream operators and page geometry that trigger a bug, while replacing text bytes, image samples, metadata and attachments with neutral placeholders of the same shape. It always writes a new file; the original is never touched.
+pdfcraft's maintainers asked for files that users could not share (identity documents, legal and company files), and reports died in `needs info` (research record; pdfcraft #1628, #2159, #2423, #2722). `recto-cli scrub` writes a copy that keeps the object graph, filters, content-stream operator structure and page geometry that trigger a bug, while replacing text bytes, image samples, metadata and attachments with neutral placeholders of the same shape. Scrubbing cannot neutralise everything (a name drawn as vector outlines, a signature drawn as paths, retained font programs, unknown private objects), so the tool never promises a safe file: it reports every channel it kept, renders the scrubbed pages for the user to inspect, and the user decides what to share. It always writes a new file; the original is never touched.
 
 **Phase:** 4
 **Needs:** windows-host
@@ -109,21 +109,23 @@ pdfcraft's maintainers asked for files that users could not share (identity docu
 **Build order:**
 
 1. Implement `src/core/scrub.h/.cpp` walking every object through `GraftMap`-style copying into a new `PdfWriter` document, replacing string bytes with same-length placeholder bytes, image samples with a flat mid-grey of the same dimensions, bit depth and filter, and `/Info`, XMP, attachments and annotation contents with placeholders. Done when: `Scrub.KeepsStructure` passes on the corpus.
-2. Add `recto-cli scrub <in.pdf> <out.pdf> [--keep-fonts] [--json]` printing what was replaced. Done when: the command writes the copy through `AtomicFileWriter` and refuses when the output path equals the input.
+2. Add `recto-cli scrub <in.pdf> <out.pdf> [--strip-fonts] [--blank-paths] [--json]` printing what was replaced and what was kept, and writing `<out>.preview/page-N.png` for every page. Done when: the command writes the copy through `AtomicFileWriter`, refuses when the output path equals the input, and the preview pages exist.
 
-- [ ] Author `src/core/scrub.h/.cpp` copying every indirect object, keeping object numbers, stream filters, dictionary keys, array lengths and content-stream operator sequences. Done when: the scrubbed copy has the same object count and the same operator trace (`D06 T03 §4`) per page.
+- [ ] Author `src/core/scrub.h/.cpp` copying every indirect object, keeping object numbers, stream filters, dictionary keys and array lengths. Done when: `Scrub.KeepsStructure` compares a structural trace per page (operator names, operand counts and operand types, plus every non-string operand) and finds it identical, while string operands are excluded because the scrubber replaces them by design.
 - [ ] Replace text-showing string operands with same-length bytes that map through the same font to visible placeholder glyphs where the font has them. Done when: extraction of the scrubbed copy contains none of the original words.
 - [ ] Replace image samples with a constant mid-grey of identical width, height, bit depth, colour space and filter chain, re-encoded with the original filter. Done when: decoded samples are constant and dimensions match.
 - [ ] Replace `/Info`, XMP, attachments, annotation `/Contents`, form values, outline titles and named-destination names with placeholders of the same length class. Done when: a raw object scan finds none of the original strings.
-- [ ] Keep embedded font programs unless `--strip-fonts` is given, and report fonts kept in the JSON output so the user decides. Done when: the JSON lists every kept font name.
+- [ ] Keep embedded font programs unless `--strip-fonts` is given, and report every kept channel in the JSON and console output: font names, path-drawing operator counts per page, Form XObjects, unknown or private dictionaries and streams. Done when: the JSON lists every kept font and each page's path count, and the console ends with "Inspect the preview pages before sharing: scrubbing does not remove content drawn as paths."
+- [ ] Offer `--blank-paths`, which replaces path coordinates inside each content stream with a degenerate rectangle at the path's bounding box while keeping operator counts, for files whose private content is drawn as outlines (a signature or an outlined name). Done when: a fixture name drawn as outlines is unreadable in the preview with `--blank-paths` and its operator counts are unchanged.
+- [ ] Render every scrubbed page to `<out>.preview/page-N.png` with Recto's renderer so the user inspects exactly what will be shared. Done when: the preview folder holds one image per page.
 - [ ] Refuse an encrypted input without its password, and write the copy unencrypted with a notice. Done when: an encrypted fixture without a password returns `NeedsPassword`.
 - [ ] Commit: `cli: add recto-cli scrub to share structure-preserving reproducers safely`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Scrub.*:Cli.ScrubCommand` passes under ASan: the scrubbed corpus keeps object counts and operator traces and a raw scan finds no original text, metadata or image samples.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Scrub.*:Cli.ScrubCommand` passes under ASan: the scrubbed corpus keeps object counts and structural traces, a raw scan finds no original text, metadata or image samples, and the outlined-name fixture is reported as kept path content without `--blank-paths`.
 
 ## 4. User-bug regression rule, closing on release and changelog mapping
 
-pdfcraft closed issues when a fix merged, users on the release kept hitting them, and duplicates piled up; several fixes shipped without tests (research record; pdfcraft #160, #638, #826, #2470, #3535). Recto's rule: a user-reported bug closes with a regression test that fails before the fix, the fix commit carries a `Fixes-User: #N` trailer, the issue is labelled `fixed-on-main`, and it closes only when the release that contains the commit is published, with a "Fixed in vX.Y.Z" comment.
+pdfcraft closed issues when a fix merged, users on the release kept hitting them, and duplicates piled up; several fixes shipped without tests (research record; pdfcraft #160, #638, #826, #2470, #3535). Recto's rule: a user-reported bug closes with a regression test that fails before the fix, the fix commit carries `Fixes-User: #N` and `Regression-Test: <test id>` trailers, the pull request quotes the test failing on the parent commit and passing on the fix, the issue is labelled `fixed-on-main`, and it closes only when the release that contains the commit is published, with a "Fixed in vX.Y.Z" comment.
 
 **Phase:** 0
 **Needs:** none
@@ -136,13 +138,13 @@ pdfcraft closed issues when a fix merged, users on the release kept hitting them
 
 - [ ] Author `scripts/release-notes.py <from-tag> <to-tag> [--json]` reading commit trailers with `git log --format=%(trailers:key=Fixes-User)`. Done when: a fixture repository with three trailers yields three entries.
 - [ ] Print, per issue, the closing comment "Fixed in vX.Y.Z (commit, release link)". Done when: the output matches the fixture's expected text.
-- [ ] Refuse a `Fixes-User:` commit whose diff adds no test file under `tests/`, with `--allow-no-test <reason>` recorded in the output for documentation-only fixes. Done when: the fixture commit without a test is reported as a violation.
+- [ ] Refuse a `Fixes-User:` commit without a `Regression-Test:` trailer, or whose named test (a gtest `Suite.Case` or a Python `module.Class.test_name`) does not exist at that commit, with `--allow-no-test <reason>` recorded in the output for documentation-only fixes; whether the file is new or existing does not matter. Done when: a fixture adding a real case to an existing test file passes and a fixture naming a missing test is reported as a violation.
 - [ ] Author `docs/support/user-bugs.md`: reproduce first (scrubbed or synthetic file into `tests/corpus/user-reports/` with a provenance row), test fails before the fix, trailer on the fix, label `fixed-on-main`, close on release. Done when: the file states each step.
-- [ ] Add the trailer and regression-test line to `.github/pull_request_template.md` and a pointer from `AGENTS.md` "Working rules". Done when: both files reference `docs/support/user-bugs.md`.
+- [ ] Add both trailers and a "Regression test: failing on parent, passing on fix" evidence block to `.github/pull_request_template.md`, and a pointer from `AGENTS.md` "Working rules". Done when: both files reference `docs/support/user-bugs.md`.
 - [ ] Add `tests/scripts/test_release_notes.py` building a temporary git repository with tagged commits. Done when: the test passes and removing the trailer parsing makes it fail.
 - [ ] Commit: `repo: map user-reported fixes to releases and require a regression test per fix`
 
-**Test checkpoint:** `python -m unittest tests.scripts.test_release_notes` passes, and a fixture `Fixes-User:` commit with no test is reported as a violation.
+**Test checkpoint:** `python -m unittest tests.scripts.test_release_notes` passes, and a fixture `Fixes-User:` commit whose `Regression-Test:` names a test that does not exist is reported as a violation.
 
 ## 5. Release gate for unreleased fixes, security advisories and CI integrity
 
@@ -157,11 +159,11 @@ pdfcraft's security and data-loss fixes sat on main while the current release st
 1. Author `scripts/release-gate.py` reading issues through `gh issue list --json` and runs through `gh run list --json`, plus the smoke report path. Done when: `python -m unittest tests.scripts.test_release_gate` passes on recorded JSON fixtures.
 2. Add the gate as a required step in `docs/release-and-store-runbook.md` (`D07 T02 §6`) and as a manual workflow `.github/workflows/release-gate.yml`. Done when: the runbook names the command and the workflow runs it.
 
-- [ ] Fail when an issue labelled `fixed-on-main` and `crash`, `data-loss` or `security` has been fixed for more than seven days without a release containing the fix. Done when: the recorded fixture with an eight-day-old fix fails the gate.
+- [ ] Fail when an issue labelled `fixed-on-main` and `crash`, `data-loss` or `security` has been fixed for more than seven days and its fix commit is not an ancestor of the candidate commit (`git merge-base --is-ancestor`), so the patch release that ships an overdue fix always passes. Done when: an eight-day-old fix outside the candidate fails the gate and the same fix inside the candidate passes.
 - [ ] Fail when a release includes a `security` fix and no draft GitHub security advisory names the affected versions. Done when: the fixture without an advisory fails.
-- [ ] Fail when the latest `main` CI run is `cancelled`, `failure` or `skipped`, so a cancelled run never counts as green (pdfcraft #671, #2415). Done when: a cancelled-run fixture fails.
+- [ ] Require, for the candidate commit SHA itself, a successful run of every workflow named in `.github/release-required-workflows.txt` (build for x64 and ARM64, tests, the standard-user leg, plan gates), treating `cancelled`, `failure`, `skipped` or a run for another SHA as missing (pdfcraft #671, #2415). Done when: a green run for a different SHA and a cancelled run for the candidate each fail the gate.
 - [ ] Add a standard-user (non-administrator) test leg to `.github/workflows/build.yml` so privilege-dependent tests cannot pass only as admin (pdfcraft #948). Done when: the workflow defines the leg and the gate requires its result.
-- [ ] Fail when `build/release-smoke/<version>.json` from `D06 T03 §12` is missing or not green. Done when: the missing-report fixture fails.
+- [ ] Fail when `build/release-smoke/<version>.json` from `D06 T03 §12` is missing, not green, names a commit other than the candidate, or lists an artifact digest that differs from the bundle's `SHA256SUMS.txt` (`D07 T02 §7`). Done when: the missing-report, wrong-commit and rebuilt-artifact fixtures each fail.
 - [ ] Add `tests/scripts/test_release_gate.py` with JSON fixtures for each rule. Done when: each rule has a passing and a failing fixture.
 - [ ] Commit: `release: gate tags on unreleased critical fixes, advisories, green CI and the smoke report`
 
@@ -221,6 +223,6 @@ pdfcraft users stayed on old builds and reported bugs already fixed, and could n
 ## Verification
 
 - A new GitHub issue can only be a bug form, a feature form or a security report, and `python -m unittest tests.scripts.test_issue_forms tests.scripts.test_release_notes tests.scripts.test_release_gate tests.scripts.test_user_demand` passes.
-- `Help -> Report a problem` copies diagnostics with no document content, and `recto-cli scrub` produces a shareable reproducer with the same operator trace.
+- `Help -> Report a problem` copies diagnostics with no document content, and `recto-cli scrub` produces a reproducer with the same structural trace, a kept-channel report and preview pages.
 - The release runbook runs `scripts/release-gate.py`, publishes "Fixed in vX.Y.Z" comments from `scripts/release-notes.py`, and reviews `docs/user-demand.md`.
 - `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` pass.

@@ -32,7 +32,7 @@ Sections: 17 | Checklist items: 89
 
 ### Phase 1: M1 Engine core
 
-Sections: 32 | Checklist items: 228
+Sections: 32 | Checklist items: 227
 
 | Status | Reference   | Deliverable                                                                              | Needs        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -66,7 +66,7 @@ Sections: 32 | Checklist items: 228
 | [ ]    | D06 T01 §1  | Pixel-exact golden render comparison harness (`Goldens.*` in `recto-tests`)              | windows-host | 7     |
 | [ ]    | D06 T01 §2  | Disciplined golden refresh tool (`--refresh-goldens`) and `x64` vs `ARM64` pixel gate    | windows-host | 7     |
 | [ ]    | D06 T03 §1  | Hostile-input fixture pack from user-reported failure classes                            | windows-host | 10    |
-| [ ]    | D06 T03 §2  | Recovered-error and truncation contract in `recto-pdf` results                           | windows-host | 7     |
+| [ ]    | D06 T03 §2  | Recovered-error and truncation contract in `recto-pdf` results                           | windows-host | 6     |
 | [ ]    | D06 T03 §10 | Render fidelity fixtures from user-reported failure classes                              | windows-host | 8     |
 
 ### Phase 2: M2 Viewer
@@ -125,7 +125,7 @@ Sections: 47 | Checklist items: 395
 
 ### Phase 3: M3 Text
 
-Sections: 29 | Checklist items: 226
+Sections: 29 | Checklist items: 227
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -157,11 +157,11 @@ Sections: 29 | Checklist items: 226
 | [ ]    | D03 T03 §10 | `Field Properties` inspector flyout (`Name`, `/TU`, masks, `Calculation`) and UIA peers  | windows-host, display-session | 7     |
 | [ ]    | D06 T01 §3  | Per-file text extraction and find expectation tables (`expectations/` & `TextTables.*`)  | windows-host                  | 7     |
 | [ ]    | D06 T01 §4  | Normalization and regex adversarial verification rows (ligatures, soft hyphens, bidi)    | windows-host                  | 8     |
-| [ ]    | D06 T03 §11 | Text extraction, reading order and selection fidelity fixtures                           | windows-host                  | 8     |
+| [ ]    | D06 T03 §11 | Text extraction, reading order and selection fidelity fixtures                           | windows-host                  | 9     |
 
 ### Phase 4: M4 Conversions A
 
-Sections: 47 | Checklist items: 344
+Sections: 47 | Checklist items: 350
 
 | Status | Reference   | Deliverable                                                                              | Needs                                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | --------------------------------------------- | ----- |
@@ -172,7 +172,7 @@ Sections: 47 | Checklist items: 344
 | [ ]    | D04 T01 §5  | App-wide floating `QueueCard` (progress ring, job states, expanded list, per-job cancel) | windows-host, display-session                 | 7     |
 | [ ]    | D04 T01 §6  | Focus-aware completion notices (Windows toast vs in-app toast, `Open file` & folder)     | windows-host, display-session                 | 7     |
 | [ ]    | D04 T01 §7  | Queue error recovery (`Enter password` modal retry, transient retry, batch breakdown)    | windows-host, display-session                 | 7     |
-| [ ]    | D04 T02 §1  | `AtomicFileWriter` (`src/core/atomic_file.cpp`) sibling temp-then-replace and rollback   | windows-host                                  | 8     |
+| [ ]    | D04 T02 §1  | `AtomicFileWriter` (`src/core/atomic_file.cpp`) sibling temp-then-replace and rollback   | windows-host                                  | 10    |
 | [ ]    | D02 T01 §12 | Crash recovery snapshots for unsaved edits                                               | windows-host, display-session, owner-decision | 9     |
 | [ ]    | D04 T02 §2  | Native `PdfWriter` (`writer.cpp`: object allocation, `FlateDecode`, `/Pages`, `xref`)    | windows-host                                  | 7     |
 | [ ]    | D04 T02 §3  | Streamed `PDF -> Images` (`PNG`, `JPEG`, `BMP`, Multipage `TIFF`, `GIF`) and CLI command | windows-host                                  | 8     |
@@ -208,10 +208,10 @@ Sections: 47 | Checklist items: 344
 | [ ]    | D05 T02 §11 | Viewer `Signatures` side panel (`SPEC 8.3`) and `Protected & Signed` / `Unlocked` cards  | windows-host, display-session                 | 6     |
 | [ ]    | D06 T01 §5  | Conversion round-trip matrix Part 1 (`RoundTrips.Formats`: Images/SVG/XPS, OCR, Tables)  | windows-host                                  | 7     |
 | [ ]    | D06 T03 §4  | Single-interpreter differential suite across every content consumer                      | windows-host                                  | 7     |
-| [ ]    | D06 T03 §5  | Save integrity fault-injection suite                                                     | windows-host                                  | 11    |
-| [ ]    | D06 T03 §6  | Redaction completeness and audit suite on raw bytes                                      | windows-host                                  | 8     |
+| [ ]    | D06 T03 §5  | Save integrity fault-injection suite                                                     | windows-host                                  | 12    |
+| [ ]    | D06 T03 §6  | Redaction completeness and audit suite on raw bytes                                      | windows-host                                  | 9     |
 | [ ]    | D06 T03 §7  | Unicode authoring round-trip suite for every text-writing path                           | windows-host                                  | 7     |
-| [ ]    | D07 T03 §3  | Structure-preserving reproducer scrubber (`recto-cli scrub`)                             | windows-host                                  | 7     |
+| [ ]    | D07 T03 §3  | Structure-preserving reproducer scrubber (`recto-cli scrub`)                             | windows-host                                  | 9     |
 
 ### Phase 5: M5 Conversions B
 
@@ -245,7 +245,7 @@ Sections: 23 | Checklist items: 159
 
 ### Phase 6: M6 Ship
 
-Sections: 27 | Checklist items: 194
+Sections: 27 | Checklist items: 196
 
 | Status | Reference   | Deliverable                                                                              | Needs                                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | --------------------------------------------- | ----- |
@@ -263,9 +263,8 @@ Sections: 27 | Checklist items: 194
 | [ ]    | D07 T01 §5  | Release packaging pipeline (`build-installer.ps1`: Setup `.exe`, Portable `.zip` & MSIX) | windows-host                                  | 7     |
 | [ ]    | D07 T01 §6  | Automated Full Install, `.pdf` association, upgrade and uninstall proof (`installer`)    | windows-host, display-session                 | 7     |
 | [ ]    | D07 T01 §7  | Automated Self-Contained Portable Install zero-registry and zero-`%LOCALAPPDATA%` proof  | windows-host, display-session                 | 6     |
-| [ ]    | D06 T03 §12 | Clean-machine release smoke and upgrade persistence proof                                | windows-host, display-session, attended       | 10    |
 | [ ]    | D07 T01 §8  | Explorer thumbnail and preview handlers (`IThumbnailProvider`, `IPreviewHandler`)        | windows-host, display-session                 | 7     |
-| [ ]    | D07 T01 §9  | Explorer verbs: print, printto, Combine and Convert to PDF (`IExplorerCommand`)          | windows-host, display-session                 | 7     |
+| [ ]    | D07 T01 §9  | Explorer verbs: print, printto, Combine and Convert to PDF (`IExplorerCommand`)          | windows-host, display-session                 | 8     |
 | [ ]    | D07 T02 §1  | Build-time version and provenance generator (version, SHA, `Standard` vs `Portable`)     | windows-host                                  | 7     |
 | [ ]    | D07 T02 §2  | `AboutPage` (`SPEC 9.8`, `D-About.png`: version truth, `LICENSE` modal and `Built-with`) | windows-host, display-session                 | 7     |
 | [ ]    | D07 T02 §3  | Build-derived dependency enumeration script, `NOTICE.md` and `docs/license-audit.md`     | windows-host                                  | 7     |
@@ -273,6 +272,7 @@ Sections: 27 | Checklist items: 194
 | [ ]    | D07 T02 §5  | Localization readiness (`Resources.resw` `x:Uid` extraction and 40% pseudolocale check)  | windows-host, display-session                 | 6     |
 | [ ]    | D07 T02 §6  | GitHub Release runbook (`docs/release-and-store-runbook.md`) and Store submission kit    | windows-host, display-session                 | 7     |
 | [ ]    | D07 T02 §7  | End-to-end v1 distribution bundle (`Setup.exe`, `Portable.zip`, `SHA256SUMS.txt`) & GPL  | windows-host, display-session                 | 7     |
+| [ ]    | D06 T03 §12 | Clean-machine release smoke and upgrade persistence proof                                | windows-host, display-session, attended       | 11    |
 | [ ]    | D07 T03 §2  | In-app `Report a problem` with privacy-safe diagnostics                                  | windows-host, display-session                 | 7     |
 | [ ]    | D07 T03 §5  | Release gate for unreleased fixes, security advisories and CI integrity                  | windows-host                                  | 7     |
 | [ ]    | D07 T03 §7  | What's new after update and opt-in update notice                                         | windows-host, display-session, owner-decision | 7     |
@@ -298,4 +298,4 @@ Sections: 4 | Checklist items: 21
 
 Progress: 24/227 verified sections, 5 ready to run now.
 
-Checklist: 147/1663 items completed (includes Commit items).
+Checklist: 147/1671 items completed (includes Commit items).

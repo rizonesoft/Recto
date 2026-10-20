@@ -46,13 +46,13 @@ title: "TODO-03 -- User-Reported Failure Class Gates (Lessons from pdfcraft)"
 | 3 | §10 | Render fidelity fixtures from user-reported failure classes | D06 T01 §1, §1 | [ ] |
 | 4 | §3 | Page notice for recovered or truncated content | §2, D02 T02 §4 | [ ] |
 | 5 | §8 | UI glyph coverage, non-Latin file names and input conventions suite | D02 T01 §3, D02 T03 §1, D02 T03 §5, D02 T02 §6 | [ ] |
-| 6 | §11 | Text extraction, reading order and selection fidelity fixtures | D06 T01 §3, D03 T01 §3, §2 | [ ] |
+| 6 | §11 | Text extraction, reading order and selection fidelity fixtures | D06 T01 §3, D03 T01 §3, D03 T01 §5, §2 | [ ] |
 | 7 | §4 | Single-interpreter differential suite across every content consumer | §1, D03 T01 §9, D05 T01 §10 | [ ] |
 | 8 | §5 | Save integrity fault-injection suite | D04 T02 §1, D02 T01 §8 | [ ] |
 | 9 | §6 | Redaction completeness and audit suite on raw bytes | §4, D05 T01 §10 | [ ] |
 | 10 | §7 | Unicode authoring round-trip suite for every text-writing path | D03 T01 §9, D03 T03 §2, D03 T03 §6, D05 T01 §6, D05 T01 §8 | [ ] |
 | 11 | §9 | Printer driver compatibility and print failure isolation suite | D07 T01 §2, D07 T01 §3 | [ ] |
-| 12 | §12 | Clean-machine release smoke and upgrade persistence proof | D07 T01 §6, D07 T01 §7, §10 | [ ] |
+| 12 | §12 | Clean-machine release smoke and upgrade persistence proof | D07 T01 §6, D07 T01 §7, D07 T01 §8, D07 T01 §9, D05 T02 §10, D07 T02 §7, §8, §10 | [ ] |
 
 ## 1. Hostile-input fixture pack from user-reported failure classes
 
@@ -82,7 +82,7 @@ pdfcraft crashed, hung or silently dropped content on inputs its users met in th
 
 ## 2. Recovered-error and truncation contract in `recto-pdf` results
 
-pdfcraft's users saw blank pages with no message, and its search said `complete: true` after a cap cut it short (research record, "Silent truncation and success on failure"; pdfcraft #623, #971, #3052, #3119, #3751). Recto's engine results carry the evidence instead: a page's `DisplayList` and `PageText` each hold a bounded list of `RecoveryNote` records (skipped operator, capped stream, skipped page-tree entry, unmapped glyph), and any capped walk returns a typed `Truncated` outcome that every consumer must propagate. The owning code lives in `D01 T02` and `D03 T01`; this section adds the contract tests and the shared type.
+pdfcraft's users saw blank pages with no message, and its search said `complete: true` after a cap cut it short (research record, "Silent truncation and success on failure"; pdfcraft #623, #971, #3052, #3119, #3751). Recto's engine results carry the evidence instead: a page's `DisplayList` holds a bounded list of `RecoveryNote` records (skipped operator, capped stream, skipped page-tree entry, unmapped glyph), and any capped walk returns a typed `Truncated` outcome that every consumer must propagate. The owning code lives in `D01 T02`; this section adds the contract tests and the shared type at the engine level. Propagation into `PageText` and search results is proven in §11, once those exist (`D03 T01`).
 
 **Phase:** 1
 **Needs:** windows-host
@@ -96,8 +96,7 @@ pdfcraft's users saw blank pages with no message, and its search said `complete:
 - [ ] Author `src/pdf/recovery.h` with `RecoveryKind` (`SkippedOperator`, `CappedStream`, `CappedDepth`, `SkippedPageTreeEntry`, `UnmappedGlyph`, `DecoderFallback`), page index, object number and a short reason. Done when: the type is used by `DisplayListBuilder` and documented in `recto_pdf.h`.
 - [ ] Record a note whenever the interpreter skips a malformed operator instead of ending the stream (pdfcraft #3568, #3565). Done when: the three-operand `re` fixture renders the rest of the page and carries one `SkippedOperator` note.
 - [ ] Return `Truncated` from every capped walk (form nesting, pattern recursion, stream size, glyph count) with the cap that fired. Done when: a fixture one item over each cap yields `Truncated` and one item under yields success.
-- [ ] Propagate `Truncated` to search results as `SearchSummary::complete = false` (pdfcraft #971, #3119). Done when: `UserClasses.RecoveryContract` sees `complete == false` on the capped-forms fixture.
-- [ ] Forbid an empty `DisplayList` without a note for a page whose content stream is non-empty (pdfcraft #3751, #3656). Done when: the test asserts that every blank render of a non-empty stream carries a note.
+- [ ] Forbid an empty `DisplayList` without a note for a page whose content stream contains painting operators (fill, stroke, text show, `Do` of an image or form, `sh`, inline image), while a stream of only `q`, `Q`, comments or state changes stays clean (pdfcraft #3751, #3656). Done when: the test asserts that every blank render of a stream with painting operators carries a note and the state-only fixture carries none.
 - [ ] Expose the notes in `recto-cli render --json` and `recto-cli info --json` as `recovered` arrays. Done when: the CLI JSON for the bad-`/Kids` fixture lists the skipped entry.
 - [ ] Commit: `pdf: carry RecoveryNotes and Truncated outcomes so no content is dropped silently`
 
@@ -140,18 +139,18 @@ pdfcraft had at least three content parsers (renderer, editor, redactor, exporte
 
 **Build order:**
 
-1. Add `src/pdf/testing/operator_trace.h` exposing a canonical operator trace from the shared interpreter, and assert in a unit test that no other tokenizer exists (a source scan of `src/` for content-stream lexing entry points). Done when: the scan finds exactly one lexer entry point.
+1. Add `src/pdf/testing/operator_trace.h` exposing a canonical operator trace from the shared interpreter, and make the lexer an architectural boundary: `src/pdf/recto_pdf.h` (which today includes `lexer.h`) stops exporting `lexer.h` and `parser.h`, coordinated with `D06 T02 §5`'s public API inventory, so code outside `recto-pdf` can reach content only through the interpreter API. Done when: `scripts/check-lexer-boundary.py` passes on the tree and fails when a file outside `src/pdf/` includes any `src/pdf/` header other than `recto_pdf.h`.
 2. Add `UserClasses.Differential` comparing the trace and glyph boxes seen by each consumer on the §1 content fixtures plus split-`/Contents` variants. Done when: all consumers agree on every fixture and a planted newline join in one consumer makes the test fail.
 
 - [ ] Generate split-stream variants in `scripts/build-corpus.py`: every operator of a 20-operator page split between each pair of tokens across two `/Contents` streams, a stream ending inside a `%` comment and inside a string (pdfcraft #3080, #3081, #3113, #3217). Done when: the variants exist with provenance rows.
 - [ ] Author `src/pdf/testing/operator_trace.h/.cpp` producing a canonical trace (operator, operands, CTM, text state, marked-content stack) from the shared interpreter. Done when: two calls on the same page yield identical traces.
-- [ ] Add a source scan test `UserClasses.OneLexer` failing if any file under `src/` other than `src/pdf/lexer.cpp` tokenizes content streams. Done when: adding a second tokenizer to a scratch file makes it fail.
+- [ ] Author `scripts/check-lexer-boundary.py` (run in CI) failing when any file outside `src/pdf/` includes a `src/pdf/` header other than `recto_pdf.h`, when `recto_pdf.h` includes `lexer.h` or `parser.h`, or when a project outside `recto-pdf.vcxproj` compiles a `src/pdf/` source; semantic agreement is the differential suite's job, not a name scan. Done when: `python -m unittest tests.scripts.test_lexer_boundary` passes and a fixture include of `pdf/lexer.h` from `src/services/` makes the script fail.
 - [ ] Compare render, `PageText`, `SearchEngine`, `text_replace`, object listing and redaction target selection on every fixture. Done when: all six consumers report identical glyph boxes within 0.01 pt.
-- [ ] Assert that clip-mode text (`7 Tr`), vertical `Identity-V` text and text in OFF optional content are classified identically by every consumer (pdfcraft #3109, #3216, #3646). Done when: each consumer marks the same glyphs invisible.
+- [ ] Assert that clip-mode text (`7 Tr`) and text in OFF optional content are classified as not visible by every consumer, and that visible vertical `Identity-V` text gets identical vertical glyph boxes and order in every consumer (pdfcraft #3109, #3216, #3646). Done when: each consumer marks the same glyphs invisible and reports the same vertical layout.
 - [ ] Assert identical behaviour at every nesting and size cap, so no consumer has a private limit (pdfcraft #3120, #3504, #3645). Done when: the cap fixtures yield the same `Truncated` outcome in all consumers.
 - [ ] Commit: `test(quality): prove one content interpreter with a differential suite across consumers`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=UserClasses.Differential:UserClasses.OneLexer` passes under ASan, and a planted newline join in `text_replace` makes `UserClasses.Differential` fail.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=UserClasses.Differential` passes under ASan and `python scripts/check-lexer-boundary.py` exits 0, and a planted newline join in `text_replace` makes `UserClasses.Differential` fail.
 
 ## 5. Save integrity fault-injection suite
 
@@ -166,7 +165,8 @@ pdfcraft replaced files before checking them, skipped fsync, ignored close error
 1. Add a fault-injection seam to `AtomicFileWriter` (`write`, `flush`, `close`, `verify`, `replace` failure points) compiled only into `recto-tests`. Done when: each point can be failed from a test without touching production code paths.
 2. Add `UserClasses.SaveIntegrity` covering each failure point, metadata preservation and the save-state machine. Done when: every case passes and removing the verify step makes the test fail.
 
-- [ ] Fail `write`, `FlushFileBuffers`, `CloseHandle`, verification reopen and `ReplaceFileW` in turn and assert the destination SHA-256 is unchanged and the tab stays dirty (pdfcraft #1698, #1804, #3409). Done when: all five cases pass.
+- [ ] Fail `write`, `FlushFileBuffers`, `CloseHandle` and verification reopen in turn and assert the destination SHA-256 is unchanged and the tab stays dirty (pdfcraft #1698, #1804, #3409). Done when: all four cases pass.
+- [ ] Simulate the documented `ReplaceFileW` partial-failure states, not only an early return: `ERROR_UNABLE_TO_REMOVE_REPLACED` (1175), `ERROR_UNABLE_TO_MOVE_REPLACEMENT` (1176) and `ERROR_UNABLE_TO_MOVE_REPLACEMENT_2` (1177), with `AtomicFileWriter` always passing a backup file name and reconciling from it; assert the original content is back under its own name, a failed rollback is reported with the backup's path, and no file is left without a recoverable copy. Done when: each state's fixture ends with the destination hash equal to the original or a reported backup path that holds it.
 - [ ] Assert verification reopens the temp file with Recto's parser and compares page count, `/Outlines`, `/PageLabels`, `/Info`, `/AcroForm` field count and page-tree acyclicity before replacing (pdfcraft #2366, #2367, #2365). Done when: a planted writer that drops `/PageLabels` aborts the save.
 - [ ] Assert replace preserves the destination ACL, attributes and creation time, and that a destination with more than one hard link gets a prompt (replace cannot keep other links pointing at the new data) (pdfcraft #2658). Done when: the test compares `GetFileSecurityW` and `GetFileInformationByHandle` before and after, and a two-link fixture shows the prompt.
 - [ ] Assert a read-only destination produces a Save As prompt and an access-denied replace falls back to Save As with the cause shown (pdfcraft #2658, #2921, #2751). Done when: both cases leave the original untouched.
@@ -197,6 +197,7 @@ pdfcraft's redaction left text in `/ActualText`, `/Alt`, the structure tree, ann
 - [ ] Assert that apply removes every channel and the raw scan of the saved bytes finds nothing. Done when: all channel fixtures pass.
 - [ ] Assert a partly covered DCT, JPX, JBIG2, CCITT, Flate and inline image keeps every pixel outside the mark unchanged and no original stream, `/SMask` or EXIF thumbnail survives (pdfcraft #283, #1771, #3124, #3359). Done when: a pixel diff outside the mark is zero and the raw scan finds no original image stream.
 - [ ] Assert any cap or unreadable object met during redaction refuses the whole apply and leaves the document unchanged (pdfcraft #3645). Done when: the capped-forms fixture yields an error and the file hash is unchanged.
+- [ ] Prove removal with oracles that do not depend on literal bytes: a fixture shows the secret through a custom CID encoding whose `/ToUnicode` rebuilds it, and after apply Recto's extractor, an independent extractor (Poppler `pdftotext` pinned in `tests/tools/`), the operator trace (no glyph-showing operator left inside the mark) and a render of the marked region (only the cover colour) all agree the secret is gone (review finding: literal-byte absence cannot prove removal). Done when: leaving the CID-encoded text in place makes at least two of the four oracles fail.
 - [ ] Assert pattern search finds E.164 and national phone formats, IBAN (mod-97), card numbers (Luhn) and national IDs with word boundaries, so no fragment of a match survives (pdfcraft #525, #1884, #3205). Done when: a page with phone, IBAN, SIRET and NIR yields full matches only.
 - [ ] Assert the audit detects covers drawn as `re f`, `re h f`, `m l l l h f`, `b`, `b*`, thick strokes, black highlights, white rectangles, opaque square annotations and pending `/Redact` marks, and reports zero findings on Recto's own applied output (pdfcraft #1817, #1885, #2385, #2786, #3117, #3118). Done when: the positive and negative control tables pass.
 - [ ] Assert a pending mark renders unmistakably as pending and closing with unapplied marks asks first (pdfcraft #2864, #2934). Done when: the close path returns the unapplied-marks prompt.
@@ -314,6 +315,7 @@ pdfcraft dropped glyph names outside the Adobe Glyph List, lost text with no `/T
 1. Generate the fixtures into `tests/corpus/text/user-classes/` with expected text recorded beside each, cross-checked once against Poppler `pdftotext`. Done when: provenance rows name the cross-check.
 2. Add `UserClasses.TextFidelity` and `UserClasses.SelectionFidelity`. Done when: both pass and disabling the AGL suffix rules makes `UserClasses.TextFidelity` fail.
 
+- [ ] Assert §2's `Truncated` outcome reaches `PageText` and search results as `SearchSummary::complete = false` (pdfcraft #971, #3119). Done when: a search over the capped-forms fixture reports `complete == false` and the page's `PageText` carries the note.
 - [ ] Add glyph names `uniXXXX`, `uXXXX`, `f_i`, `hyphen.case`, `c251` and `C<number>`, a Type 0 font with no `/ToUnicode`, and `/ToUnicode /Identity-H` given as a name (pdfcraft #1699, #3169, #3170). Done when: extraction matches the expected text.
 - [ ] Add condensed text at `Tz 20` and `Tz 80` with genuine double letters, and a glyph drawn twice on a clip edge (pdfcraft #1467, #2457, #3173). Done when: "Alle" and "WORLD" extract intact.
 - [ ] Add a two-column article, a footnote-reference line and a float beside an abstract (pdfcraft #2387, #2586, #2929, #3682). Done when: reading order keeps each column contiguous.
@@ -323,7 +325,7 @@ pdfcraft dropped glyph names outside the Adobe Glyph List, lost text with no `/T
 - [ ] Assert search on `İ` and `ß` case folding never slices out of range (pdfcraft #816). Done when: the fuzzed case-fold set finds matches without a fault.
 - [ ] Commit: `test(quality): add user-reported extraction and selection classes to text expectations`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=UserClasses.TextFidelity:UserClasses.SelectionFidelity` passes under ASan.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=UserClasses.TextFidelity:UserClasses.SelectionFidelity` passes under ASan, and dropping the `Truncated` propagation in `SearchEngine` makes the capped-forms case fail.
 
 ## 12. Clean-machine release smoke and upgrade persistence proof
 
@@ -335,8 +337,8 @@ pdfcraft shipped releases without their OCR models or a fallback font the code r
 
 **Build order:**
 
-1. Author `tests/scripts/release_smoke.ps1` taking a release candidate folder and running the checks below in a clean Windows 10 and Windows 11 virtual machine, plus a machine with no DirectX 12 adapter (WARP only). Done when: the script exits 0 on the candidate and writes `build/release-smoke/<version>.json`.
-2. Gate `D07 T02 §6`'s release runbook on that report. Done when: the runbook refuses to tag when the report is missing or red.
+1. Author `tests/scripts/release_smoke.ps1` taking a release candidate folder and running the checks below in a clean Windows 10 and Windows 11 virtual machine, plus a machine with no DirectX 12 adapter (WARP only). Done when: the script exits 0 on the candidate and writes `build/release-smoke/<version>.json` naming the candidate commit SHA and the SHA-256 of every artifact it tested, taken from the bundle's `SHA256SUMS.txt` (`D07 T02 §7`).
+2. Gate `D07 T02 §6`'s release runbook on that report before tagging, and run the script's `-PostPublish` mode after the release is published. Done when: the runbook refuses to tag when the report is missing, red, or names a different commit or artifact digest, and the post-publish mode checks the public links.
 
 - [ ] Launch the installed and portable builds and assert a first frame, then close 100 times and assert exit code 0 and no crash dump each time (pdfcraft #1136, #2284, #2493). Done when: all launches and closes pass on both machines.
 - [ ] Assert a failure before the first frame shows a dialog with the log path and a safe-mode (WARP) relaunch (pdfcraft #2284, #3286, #3688). Done when: a planted startup failure produces the dialog, not a silent exit.
@@ -346,10 +348,11 @@ pdfcraft shipped releases without their OCR models or a fallback font the code r
 - [ ] Print to Microsoft Print to PDF from the installed build. Done when: the output page count matches the source.
 - [ ] Install version N, pin to Start, set preferences, save a signature appearance, then upgrade to N+1 and assert the pin, preferences, signature and file association survive (pdfcraft #1058, #2185, #3606). Done when: all four are present after the upgrade.
 - [ ] Diff the golden corpus rendered by version N against N+1 and fail on any unexplained change (pdfcraft #2393, #2970). Done when: the diff report lists no unexplained page.
-- [ ] Assert the release download page and README link resolve to this release's assets (pdfcraft #320, #2034). Done when: every link returns the new version's file.
+- [ ] Add `-PostPublish` mode, run by the runbook after the GitHub release is public, asserting the README download links and the releases page resolve to this release's assets and their digests match the report (pdfcraft #320, #2034). Done when: post-publish mode passes on the published release and fails when a README link still names the previous version.
+- [ ] Exercise the features users asked for on the installed build: Explorer thumbnails and preview (`D07 T01 §8`), the print verb and multi-file Combine (`D07 T01 §9`), and a saved signature appearance (`D05 T02 §10`). Done when: each produces its expected result from the installed layout.
 - [ ] Commit: `test(release): smoke the installed artifacts on clean machines and prove upgrades keep user state`
 
-**Test checkpoint:** `pwsh tests/scripts/release_smoke.ps1 -Candidate build/release/<version>` exits 0 on the clean virtual machines and writes a green `build/release-smoke/<version>.json`.
+**Test checkpoint:** `pwsh tests/scripts/release_smoke.ps1 -Candidate build/release/<version>` exits 0 on the clean virtual machines and writes a green `build/release-smoke/<version>.json` whose commit SHA and artifact digests match the candidate bundle, and swapping one artifact after the run makes the runbook gate refuse the tag.
 
 ## Verification
 
