@@ -2,55 +2,74 @@
 // (foundation plan sections 3.3, 4.1 item 4, 4.2, 4.4, 4.5, 4.8; D01 T02
 // section 1).
 //
-// Freeze contract (foundation plan section 4.2):
+// Thread-ownership and freeze contract (`frozen: true`):
 // Once `DisplayListBuilder::finish()` returns `std::shared_ptr<const DisplayList>`,
-// the `DisplayList` is deeply immutable (`const` data members, `const`-only
-// accessors over contiguous flat vectors and `std::shared_ptr<const DecodedBitmap>`
-// buffers, zero `mutable` fields, and zero lazy caches). Any number of
-// `RenderPool` worker threads may read a `DisplayList` concurrently without
-// locks.
+// the `DisplayList` exposes `const`-only accessors over contiguous immutable
+// vectors and `std::shared_ptr<const DecodedBitmap>` buffers, with zero mutable
+// members or lazy caches. Any number of `RenderPool` worker threads may read
+// the same `DisplayList` concurrently without locks.
 #pragma once
 
 #include "error.h"
 #include "object.h"
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
-#include <string>
-#include <string_view>
 #include <variant>
 #include <vector>
 
 namespace recto::pdf {
 
 class DisplayList;
-class DisplayListBuilder;
 
 // Returns the number of currently live `DisplayList` instances across the
-// process (foundation plan section 4.8 step 6).
+// process. Used by `DocumentActor` (D01 T02 section 8) and `Runtime::~Runtime()`
+// (D01 T02 section 10; foundation plan section 4.8 step 6) to assert zero leaked
+// display lists on shutdown.
 [[nodiscard]] int64_t debug_live_display_lists() noexcept;
 
+// 2D point in PDF user/page/text space (1/72 inch points).
 struct PdfPoint {
 	double x{0.0};
 	double y{0.0};
 
 	constexpr PdfPoint() noexcept = default;
 	constexpr PdfPoint(double px, double py) noexcept
-		: x(px)
-		, y(py)
+		: x(px), y(py)
 	{
 	}
 
 	constexpr bool operator==(const PdfPoint&) const noexcept = default;
 };
 
-// Transforms a point `(p.x, p.y)` by affine matrix `m` per ISO 32000-1
-// section 8.3.3:
-//   x' = a * x + c * y + e
-//   y' = b * x + d * y + f
+// Returns true if all six coefficients of `m` are finite numbers.
+[[nodiscard]] inline bool is_finite_matrix(const PdfMatrix& m) noexcept
+{
+	return std::isfinite(m.a) && std::isfinite(m.b) &&
+		std::isfinite(m.c) && std::isfinite(m.d) &&
+		std::isfinite(m.e) && std::isfinite(m.f);
+}
+
+// Concatenates `pre * post` per PDF `cm` operator semantics (`M' = M_new * CTM`).
+[[nodiscard]] constexpr PdfMatrix concat_matrix(
+	const PdfMatrix& pre,
+	const PdfMatrix& post) noexcept
+{
+	return PdfMatrix{
+		pre.a * post.a + pre.b * post.c,
+		pre.a * post.b + pre.b * post.d,
+		pre.c * post.a + pre.d * post.c,
+		pre.c * post.b + pre.d * post.d,
+		pre.e * post.a + pre.f * post.c + post.e,
+		pre.e * post.b + pre.f * post.d + post.f};
+}
+
+// Transforms a 2D point by an affine `PdfMatrix`.
 [[nodiscard]] constexpr PdfPoint transform_point(
 	const PdfMatrix& m,
 	PdfPoint p) noexcept
@@ -60,38 +79,24 @@ struct PdfPoint {
 		m.b * p.x + m.d * p.y + m.f};
 }
 
-// Pre-concatenates matrix `lhs` before `rhs` (`lhs * rhs` in PDF row-vector
-// convention per ISO 32000-1 section 8.3.4): a point transformed by
-// `concat_matrix(lhs, rhs)` is transformed first by `lhs`, then by `rhs`.
-[[nodiscard]] constexpr PdfMatrix concat_matrix(
-	const PdfMatrix& lhs,
-	const PdfMatrix& rhs) noexcept
-{
-	return PdfMatrix{
-		lhs.a * rhs.a + lhs.b * rhs.c,
-		lhs.a * rhs.b + lhs.b * rhs.d,
-		lhs.c * rhs.a + lhs.d * rhs.c,
-		lhs.c * rhs.b + lhs.d * rhs.d,
-		lhs.e * rhs.a + lhs.f * rhs.c + rhs.e,
-		lhs.e * rhs.b + lhs.f * rhs.d + rhs.f};
-}
-
-// Transforms the four corners of `rect` by `m` and returns their axis-aligned
-// bounding box.
+// Transforms an axis-aligned `PdfRect` by an affine `PdfMatrix` and returns the
+// axis-aligned bounding box of its four transformed corners.
 [[nodiscard]] PdfRect transform_rect(
 	const PdfMatrix& m,
 	const PdfRect& rect) noexcept;
 
-// Returns the union of two non-empty bounding boxes.
+// Computes the smallest axis-aligned rectangle containing both `a` and `b`.
 [[nodiscard]] PdfRect union_rect(
 	const PdfRect& a,
 	const PdfRect& b) noexcept;
 
-// Intersects two bounding boxes (`std::nullopt` when disjoint).
+// Computes the intersection of two axis-aligned rectangles, or `std::nullopt`
+// if they are disjoint.
 [[nodiscard]] std::optional<PdfRect> intersect_rect(
 	const PdfRect& a,
 	const PdfRect& b) noexcept;
 
+// Normalized sRGB colour with unpremultiplied alpha in `[0.0f, 1.0f]`.
 struct ColorRgba {
 	float r{0.0f};
 	float g{0.0f};
@@ -99,44 +104,54 @@ struct ColorRgba {
 	float a{1.0f};
 
 	constexpr ColorRgba() noexcept = default;
-	constexpr ColorRgba(float red, float green, float blue, float alpha = 1.0f) noexcept
-		: r(red)
-		, g(green)
-		, b(blue)
-		, a(alpha)
+	constexpr ColorRgba(float cr, float cg, float cb, float ca = 1.0f) noexcept
+		: r(cr), g(cg), b(cb), a(ca)
 	{
 	}
 
-	[[nodiscard]] static constexpr ColorRgba black(float alpha = 1.0f) noexcept
+	[[nodiscard]] static constexpr ColorRgba black() noexcept
 	{
-		return ColorRgba{0.0f, 0.0f, 0.0f, alpha};
+		return ColorRgba{0.0f, 0.0f, 0.0f, 1.0f};
 	}
 
-	[[nodiscard]] static constexpr ColorRgba white(float alpha = 1.0f) noexcept
+	[[nodiscard]] static constexpr ColorRgba white() noexcept
 	{
-		return ColorRgba{1.0f, 1.0f, 1.0f, alpha};
+		return ColorRgba{1.0f, 1.0f, 1.0f, 1.0f};
+	}
+
+	[[nodiscard]] bool is_valid() const noexcept
+	{
+		return std::isfinite(r) && r >= 0.0f && r <= 1.0f &&
+			std::isfinite(g) && g >= 0.0f && g <= 1.0f &&
+			std::isfinite(b) && b >= 0.0f && b <= 1.0f &&
+			std::isfinite(a) && a >= 0.0f && a <= 1.0f;
 	}
 
 	constexpr bool operator==(const ColorRgba&) const noexcept = default;
 };
 
+// PDF line cap styles (`J` operator, ISO 32000-1 Table 54).
 enum class LineCap : uint8_t {
 	Butt = 0,
 	Round = 1,
 	ProjectingSquare = 2,
 };
 
+// PDF line join styles (`j` operator, ISO 32000-1 Table 55).
 enum class LineJoin : uint8_t {
 	Miter = 0,
 	Round = 1,
 	Bevel = 2,
 };
 
+// PDF path fill/clip winding rules (`f`/`W` vs `f*`/`W*`).
 enum class FillRule : uint8_t {
 	NonZero = 0,
 	EvenOdd = 1,
 };
 
+// PDF separable and non-separable blend modes (`/BM` in `/ExtGState`,
+// ISO 32000-1 Tables 136-137).
 enum class BlendMode : uint8_t {
 	Normal = 0,
 	Multiply,
@@ -150,13 +165,17 @@ enum class BlendMode : uint8_t {
 	SoftLight,
 	Difference,
 	Exclusion,
+	Hue,
+	Saturation,
+	Color,
+	Luminosity,
 };
 
-// PDF text rendering mode `Tr` (ISO 32000-1 section 9.3.6 Table 106).
+// PDF text rendering modes (`Tr` operator, ISO 32000-1 Table 106).
 enum class TextRenderMode : uint8_t {
 	Fill = 0,
 	Stroke = 1,
-	FillThenStroke = 2,
+	FillAndStroke = 2,
 	Invisible = 3,
 	FillAndClip = 4,
 	StrokeAndClip = 5,
@@ -164,15 +183,23 @@ enum class TextRenderMode : uint8_t {
 	Clip = 7,
 };
 
+// Path geometry segment verbs stored in `DisplayList`'s shared verb pool.
+// Point counts per verb in the shared `PdfPoint` coordinate pool:
+// - `MoveTo`:        1 point  `(x, y)`
+// - `LineTo`:        1 point  `(x, y)`
+// - `CubicBezierTo`: 3 points `(cp1, cp2, end)`
+// - `Rect`:          2 points `(origin (x, y), size (w, h))`
+// - `CloseSubpath`:  0 points (closes current figure to most recent `MoveTo`)
 enum class PathVerb : uint8_t {
-	MoveTo = 0,        // 1 PdfPoint: (x, y)
-	LineTo = 1,        // 1 PdfPoint: (x, y)
-	CubicBezierTo = 2, // 3 PdfPoints: cp1, cp2, end
-	Rect = 3,          // 2 PdfPoints: (x, y), (width, height)
-	CloseSubpath = 4,  // 0 PdfPoints
+	MoveTo = 0,
+	LineTo = 1,
+	CubicBezierTo = 2,
+	Rect = 3,
+	CloseSubpath = 4,
 };
 
-// Contiguous slice into `DisplayList::path_verbs()` and `DisplayList::path_points()`.
+// Slice descriptor into a `DisplayList`'s contiguous `path_verbs()` and
+// `path_points()` pools, along with the path's tight local-space bounding box.
 struct RecordedPath {
 	uint32_t verb_offset{0};
 	uint32_t verb_count{0};
@@ -184,10 +211,11 @@ struct RecordedPath {
 	constexpr bool operator==(const RecordedPath&) const noexcept = default;
 };
 
-// Helper for building a single path before interning it into `DisplayListBuilder`.
+// Helper for assembling a multi-subpath geometry before interning it into a
+// `DisplayListBuilder` via `add_path()`.
 class PathBuilder {
 public:
-	PathBuilder() noexcept = default;
+	PathBuilder() = default;
 
 	void move_to(double x, double y);
 	void move_to(PdfPoint pt) { move_to(pt.x, pt.y); }
@@ -209,42 +237,46 @@ public:
 	[[nodiscard]] std::span<const PathVerb> verbs() const noexcept { return verbs_; }
 	[[nodiscard]] std::span<const PdfPoint> points() const noexcept { return points_; }
 
+	// Computes the tight axis-aligned bounding box of all recorded segments
+	// (including analytic cubic Bezier extrema) after transforming by `transform`.
 	[[nodiscard]] std::optional<PdfRect> compute_bounds(
 		const PdfMatrix& transform = PdfMatrix::identity()) const noexcept;
 
 private:
-	std::vector<PathVerb> verbs_{};
-	std::vector<PdfPoint> points_{};
+	std::vector<PathVerb> verbs_;
+	std::vector<PdfPoint> points_;
 };
 
-// Immutable decoded image buffer shared zero-copy across `DrawImageCommand`s
-// and `RenderPool` worker threads.
-struct DecodedBitmap {
+// Computes the tight axis-aligned bounding box of a raw `(verbs, points)` slice
+// after applying `transform`. Returns `std::nullopt` if the path contains no
+// drawable geometry or is malformed.
+[[nodiscard]] std::optional<PdfRect> compute_recorded_path_bounds(
+	std::span<const PathVerb> verbs,
+	std::span<const PdfPoint> points,
+	const PdfMatrix& transform = PdfMatrix::identity()) noexcept;
+
+// Immutable decoded image bitmap shared zero-copy across `DisplayList` commands
+// and `RenderPool` worker threads via `std::shared_ptr<const DecodedBitmap>`.
+// Construction is restricted to the validated `DecodedBitmap::create()` factory.
+class DecodedBitmap {
+public:
 	const uint32_t width{0};
 	const uint32_t height{0};
 	const uint32_t stride{0};
-	const std::vector<uint8_t> pixels{};
+	const std::vector<uint8_t> pixels; // Premultiplied BGRA8888 (4 bytes/pixel)
 	const bool is_monochrome_mask{false};
+	const bool has_non_transparent_pixels{false};
 
-	DecodedBitmap(
-		uint32_t w,
-		uint32_t h,
-		uint32_t row_stride,
-		std::vector<uint8_t> bgra_pixels,
-		bool monochrome_mask = false) noexcept
-		: width(w)
-		, height(h)
-		, stride(row_stride)
-		, pixels(std::move(bgra_pixels))
-		, is_monochrome_mask(monochrome_mask)
-	{
-	}
-
+	DecodedBitmap() = delete;
 	DecodedBitmap(const DecodedBitmap&) = delete;
 	DecodedBitmap& operator=(const DecodedBitmap&) = delete;
 	DecodedBitmap(DecodedBitmap&&) = delete;
 	DecodedBitmap& operator=(DecodedBitmap&&) = delete;
 
+	// Validates dimensions, stride (`stride >= width * 4`), and pixel buffer
+	// size (`pixels.size() == stride * (height - 1) + width * 4` or
+	// `stride * height` within `kMaxDecodedStreamBytes`) before constructing
+	// an immutable shared `DecodedBitmap`.
 	[[nodiscard]] static PdfResult<std::shared_ptr<const DecodedBitmap>> create(
 		uint32_t width,
 		uint32_t height,
@@ -261,16 +293,70 @@ struct DecodedBitmap {
 	{
 		return pixels.size();
 	}
+
+private:
+	DecodedBitmap(
+		uint32_t w,
+		uint32_t h,
+		uint32_t row_stride,
+		std::vector<uint8_t>&& bgra_pixels,
+		bool monochrome_mask,
+		bool non_transparent) noexcept
+		: width(w)
+		, height(h)
+		, stride(row_stride)
+		, pixels(std::move(bgra_pixels))
+		, is_monochrome_mask(monochrome_mask)
+		, has_non_transparent_pixels(non_transparent)
+	{
+	}
 };
 
+// Positioned glyph entry stored in `DisplayList`'s contiguous glyph pool.
 struct PositionedGlyph {
 	uint16_t glyph_index{0};
 	uint32_t unicode_codepoint{0};
-	PdfPoint origin_pt{0.0, 0.0};
+	PdfPoint origin_pt{}; // Glyph origin in text/user space
 	double advance_pt{0.0};
+	// Glyph outline ink bounding box relative to `origin_pt` in text space
+	// (`[left_bearing, descender, right_bearing, ascender]`). May have negative
+	// `x_min` (negative left side bearing), negative `y_min` (descender below
+	// baseline), or `x_max > advance_pt` (right overhang). Omit when `is_blank`
+	// is true or when run-level `local_bounds_pt` / `type3_sub_list` is supplied.
+	std::optional<PdfRect> ink_bounds_pt{};
+	bool is_blank{false};
+
+	constexpr PositionedGlyph() noexcept = default;
+
+	constexpr PositionedGlyph(
+		uint16_t index,
+		uint32_t codepoint,
+		PdfPoint origin,
+		double advance,
+		std::optional<PdfRect> ink_bounds = std::nullopt,
+		bool blank = false) noexcept
+		: glyph_index(index)
+		, unicode_codepoint(codepoint)
+		, origin_pt(origin)
+		, advance_pt(advance)
+		, ink_bounds_pt(ink_bounds)
+		, is_blank(blank)
+	{
+	}
+
+	[[nodiscard]] static constexpr PositionedGlyph blank(
+		uint16_t index,
+		uint32_t codepoint,
+		PdfPoint origin,
+		double advance) noexcept
+	{
+		return PositionedGlyph{index, codepoint, origin, advance, std::nullopt, true};
+	}
 
 	constexpr bool operator==(const PositionedGlyph&) const noexcept = default;
 };
+
+// Command payload value types:
 
 struct SaveStateCommand {
 	constexpr bool operator==(const SaveStateCommand&) const noexcept = default;
@@ -281,7 +367,7 @@ struct RestoreStateCommand {
 };
 
 struct ConcatMatrixCommand {
-	PdfMatrix matrix{PdfMatrix::identity()};
+	PdfMatrix matrix{};
 
 	constexpr bool operator==(const ConcatMatrixCommand&) const noexcept = default;
 };
@@ -291,7 +377,7 @@ struct SetStrokeStyleCommand {
 	LineCap line_cap{LineCap::Butt};
 	LineJoin line_join{LineJoin::Miter};
 	float miter_limit{10.0f};
-	uint32_t dash_offset{0};
+	uint32_t dash_offset{0}; // Offset into `DisplayList::dash_values()`
 	uint32_t dash_count{0};
 	float dash_phase{0.0f};
 
@@ -315,8 +401,8 @@ struct PushClipPathCommand {
 
 struct DrawPathCommand {
 	uint32_t path_index{0};
-	ColorRgba stroke_color{ColorRgba::black()};
-	ColorRgba fill_color{ColorRgba::black()};
+	ColorRgba stroke_color{};
+	ColorRgba fill_color{};
 	bool stroke{false};
 	bool fill{false};
 	FillRule fill_rule{FillRule::NonZero};
@@ -325,42 +411,46 @@ struct DrawPathCommand {
 };
 
 struct RecordedGlyphRun {
-	uint32_t glyph_offset{0};
+	uint32_t glyph_offset{0}; // Offset into `DisplayList::glyphs()`
 	uint32_t glyph_count{0};
 	double font_size{12.0};
 	TextRenderMode render_mode{TextRenderMode::Fill};
-	ColorRgba fill_color{ColorRgba::black()};
-	ColorRgba stroke_color{ColorRgba::black()};
-	PdfMatrix text_matrix{PdfMatrix::identity()};
-	PdfMatrix ctm{PdfMatrix::identity()};
-	PdfRect bounds_pt{};
+	ColorRgba fill_color{};
+	ColorRgba stroke_color{};
+	PdfMatrix text_matrix{}; // Text/glyph-to-user matrix
+	PdfMatrix ctm{};         // Active CTM when the glyph run was recorded
+	PdfRect bounds_pt{};     // Glyph run ink bounds in text/local space
 	bool has_bounds{false};
-	std::shared_ptr<const void> font_handle{nullptr};
-	std::shared_ptr<const DisplayList> type3_sub_list{nullptr};
+	// Opaque immutable font handle (`std::shared_ptr<const LoadedFont>` in §2)
+	// and optional Type 3 procedural glyph sub-display-list.
+	std::shared_ptr<const void> font_handle;
+	std::shared_ptr<const DisplayList> type3_sub_list;
 };
 
 using DrawGlyphRunCommand = RecordedGlyphRun;
 
 struct DrawImageCommand {
-	std::shared_ptr<const DecodedBitmap> bitmap{nullptr};
-	PdfMatrix dest_transform{PdfMatrix::identity()};
+	std::shared_ptr<const DecodedBitmap> bitmap;
+	PdfMatrix dest_transform{}; // Maps unit square `[0,1]x[0,1]` to user space
 	bool interpolate{true};
-	std::shared_ptr<const DecodedBitmap> soft_mask{nullptr};
+	std::shared_ptr<const DecodedBitmap> soft_mask;
 	ColorRgba mask_tint_color{ColorRgba::black()};
 };
 
+// Tag enum matching `DisplayCommand::Payload` alternative indices.
 enum class DisplayCommandKind : uint8_t {
 	SaveState = 0,
-	RestoreState,
-	ConcatMatrix,
-	SetStrokeStyle,
-	SetAlphaAndBlend,
-	PushClipPath,
-	DrawPath,
-	DrawGlyphRun,
-	DrawImage,
+	RestoreState = 1,
+	ConcatMatrix = 2,
+	SetStrokeStyle = 3,
+	SetAlphaAndBlend = 4,
+	PushClipPath = 5,
+	DrawPath = 6,
+	DrawGlyphRun = 7,
+	DrawImage = 8,
 };
 
+// Discriminated value type for a single recorded display-list command.
 struct DisplayCommand {
 	using Payload = std::variant<
 		SaveStateCommand,
@@ -373,14 +463,14 @@ struct DisplayCommand {
 		DrawGlyphRunCommand,
 		DrawImageCommand>;
 
-	Payload payload{SaveStateCommand{}};
+	Payload payload;
 
-	DisplayCommand() noexcept = default;
+	DisplayCommand() = default;
 
-	template <typename T>
-		requires (!std::is_same_v<std::remove_cvref_t<T>, DisplayCommand>)
-	explicit DisplayCommand(T&& cmd) noexcept(std::is_nothrow_constructible_v<Payload, T&&>)
-		: payload(std::forward<T>(cmd))
+	template <typename CmdT>
+		requires (!std::is_same_v<std::remove_cvref_t<CmdT>, DisplayCommand>)
+	explicit DisplayCommand(CmdT&& cmd)
+		: payload(std::forward<CmdT>(cmd))
 	{
 	}
 
@@ -389,15 +479,22 @@ struct DisplayCommand {
 		return static_cast<DisplayCommandKind>(payload.index());
 	}
 
-	template <typename T>
-	[[nodiscard]] const T* as() const noexcept
+	template <typename CmdT>
+	[[nodiscard]] const CmdT* as() const noexcept
 	{
-		return std::get_if<T>(&payload);
+		return std::get_if<CmdT>(&payload);
 	}
 };
 
-// Immutable, reference-counted display list for one PDF page (or Type 3 / Form
-// sub-stream). Exposes `const`-only accessors over flat contiguous arrays.
+// Immutable, reference-counted display list for a single PDF page (or Type 3
+// glyph / Form XObject sub-list).
+//
+// Invariant (`frozen: true` check):
+// - Constructed exclusively by `DisplayListBuilder::finish()`.
+// - Exposes `const`-only accessors over contiguous vectors and
+//   `std::shared_ptr<const DecodedBitmap>` handles.
+// - Contains zero non-`const` methods, zero `mutable` members, and zero lazy
+//   caches.
 class DisplayList {
 public:
 	~DisplayList() noexcept;
@@ -407,24 +504,27 @@ public:
 	DisplayList(DisplayList&&) = delete;
 	DisplayList& operator=(DisplayList&&) = delete;
 
+	// The page box (`/CropBox` or `/MediaBox` in points) for which this display
+	// list was recorded.
 	[[nodiscard]] const PdfRect& page_box_pt() const noexcept
 	{
 		return page_box_pt_;
 	}
 
-	[[nodiscard]] const PdfRect& content_bounds_pt() const noexcept
-	{
-		return content_bounds_pt_;
-	}
-
+	// True if at least one visible path, glyph run, or image contributed ink
+	// inside the active clip bounds.
 	[[nodiscard]] bool has_content_bounds() const noexcept
 	{
 		return has_content_bounds_;
 	}
 
-	[[nodiscard]] std::span<const DisplayCommand> commands() const noexcept
+	// Tight bounding box of all painted ink in page space (clipped to the
+	// active clip stack and `page_box_pt`). Used by `Auto-Detect White Margins`
+	// in `D05 T01 §4`. Returns an empty `PdfRect{}` when `has_content_bounds()`
+	// is false.
+	[[nodiscard]] const PdfRect& content_bounds_pt() const noexcept
 	{
-		return commands_;
+		return content_bounds_pt_;
 	}
 
 	[[nodiscard]] size_t command_count() const noexcept
@@ -432,9 +532,9 @@ public:
 		return commands_.size();
 	}
 
-	[[nodiscard]] bool empty() const noexcept
+	[[nodiscard]] std::span<const DisplayCommand> commands() const noexcept
 	{
-		return commands_.empty();
+		return commands_;
 	}
 
 	[[nodiscard]] std::span<const RecordedPath> paths() const noexcept
@@ -442,8 +542,13 @@ public:
 		return paths_;
 	}
 
-	[[nodiscard]] const RecordedPath& path(uint32_t path_index) const noexcept
+	[[nodiscard]] PdfResult<RecordedPath> path(uint32_t path_index) const noexcept
 	{
+		if (path_index >= paths_.size()) {
+			return make_pdf_error(
+				ErrorCode::DamagedFormat,
+				"DisplayList::path index out of range");
+		}
 		return paths_[path_index];
 	}
 
@@ -452,8 +557,15 @@ public:
 		return path_verbs_;
 	}
 
-	[[nodiscard]] std::span<const PathVerb> path_verbs(const RecordedPath& p) const noexcept
+	[[nodiscard]] PdfResult<std::span<const PathVerb>> path_verbs(
+		const RecordedPath& p) const noexcept
 	{
+		if (p.verb_offset > path_verbs_.size() ||
+			p.verb_count > path_verbs_.size() - p.verb_offset) {
+			return make_pdf_error(
+				ErrorCode::DamagedFormat,
+				"DisplayList::path_verbs slice out of range");
+		}
 		return std::span<const PathVerb>(path_verbs_).subspan(p.verb_offset, p.verb_count);
 	}
 
@@ -462,8 +574,15 @@ public:
 		return path_points_;
 	}
 
-	[[nodiscard]] std::span<const PdfPoint> path_points(const RecordedPath& p) const noexcept
+	[[nodiscard]] PdfResult<std::span<const PdfPoint>> path_points(
+		const RecordedPath& p) const noexcept
 	{
+		if (p.point_offset > path_points_.size() ||
+			p.point_count > path_points_.size() - p.point_offset) {
+			return make_pdf_error(
+				ErrorCode::DamagedFormat,
+				"DisplayList::path_points slice out of range");
+		}
 		return std::span<const PdfPoint>(path_points_).subspan(p.point_offset, p.point_count);
 	}
 
@@ -472,8 +591,15 @@ public:
 		return glyphs_;
 	}
 
-	[[nodiscard]] std::span<const PositionedGlyph> glyphs(const RecordedGlyphRun& run) const noexcept
+	[[nodiscard]] PdfResult<std::span<const PositionedGlyph>> glyphs(
+		const RecordedGlyphRun& run) const noexcept
 	{
+		if (run.glyph_offset > glyphs_.size() ||
+			run.glyph_count > glyphs_.size() - run.glyph_offset) {
+			return make_pdf_error(
+				ErrorCode::DamagedFormat,
+				"DisplayList::glyphs slice out of range");
+		}
 		return std::span<const PositionedGlyph>(glyphs_).subspan(run.glyph_offset, run.glyph_count);
 	}
 
@@ -482,8 +608,15 @@ public:
 		return dash_values_;
 	}
 
-	[[nodiscard]] std::span<const float> dash_values(const SetStrokeStyleCommand& style) const noexcept
+	[[nodiscard]] PdfResult<std::span<const float>> dash_values(
+		const SetStrokeStyleCommand& style) const noexcept
 	{
+		if (style.dash_offset > dash_values_.size() ||
+			style.dash_count > dash_values_.size() - style.dash_offset) {
+			return make_pdf_error(
+				ErrorCode::DamagedFormat,
+				"DisplayList::dash_values slice out of range");
+		}
 		return std::span<const float>(dash_values_).subspan(style.dash_offset, style.dash_count);
 	}
 
@@ -503,7 +636,7 @@ private:
 
 	const PdfRect page_box_pt_;
 	const PdfRect content_bounds_pt_;
-	const bool has_content_bounds_;
+	const bool has_content_bounds_{false};
 	const std::vector<DisplayCommand> commands_;
 	const std::vector<RecordedPath> paths_;
 	const std::vector<PathVerb> path_verbs_;
@@ -512,51 +645,70 @@ private:
 	const std::vector<float> dash_values_;
 };
 
-// Builder for recording commands, interning paths/glyphs/dashes into contiguous
-// buffers, tracking CTM and clip bounds for `content_bounds_pt`, and sealing
-// into an immutable `std::shared_ptr<const DisplayList>`.
+// Configurable resource budgets for `DisplayListBuilder` to bound memory and
+// nesting depth against hostile content streams.
+struct DisplayListLimits {
+	size_t max_commands{1'000'000u};
+	size_t max_paths{250'000u};
+	size_t max_path_verbs{4'000'000u};
+	size_t max_path_points{8'000'000u};
+	size_t max_glyphs{4'000'000u};
+	size_t max_dash_values{250'000u};
+	size_t max_save_depth{64u};
+	size_t max_total_bytes{256ull * 1024ull * 1024ull};
+};
+
+// Single-threaded builder used on the `DocumentActor` thread to record a page's
+// display list and seal it into an immutable `std::shared_ptr<const DisplayList>`.
 class DisplayListBuilder {
 public:
-	explicit DisplayListBuilder(PdfRect page_box_pt = PdfRect{0.0, 0.0, 612.0, 792.0});
+	explicit DisplayListBuilder(
+		PdfRect page_box_pt = PdfRect{0.0, 0.0, 612.0, 792.0},
+		DisplayListLimits limits = {}) noexcept;
 
-	void reserve_commands(size_t count);
+	DisplayListBuilder(const DisplayListBuilder&) = delete;
+	DisplayListBuilder& operator=(const DisplayListBuilder&) = delete;
 
-	// Interns a path into the shared verb/point pools and returns its `path_index`.
-	[[nodiscard]] uint32_t add_path(const PathBuilder& path);
-	[[nodiscard]] uint32_t add_path(
+	[[nodiscard]] PdfResult<void> reserve_commands(size_t count) noexcept;
+
+	// Interns a path geometry into the builder's contiguous verb/point pools
+	// and returns its `path_index` for `push_clip_path()` and `draw_path()`.
+	[[nodiscard]] PdfResult<uint32_t> add_path(const PathBuilder& path) noexcept;
+	[[nodiscard]] PdfResult<uint32_t> add_path(
 		std::span<const PathVerb> verbs,
-		std::span<const PdfPoint> points);
+		std::span<const PdfPoint> points) noexcept;
 
-	void save_state();
-	void restore_state();
-	void concat_matrix(const PdfMatrix& matrix);
+	[[nodiscard]] PdfResult<void> save_state() noexcept;
+	[[nodiscard]] PdfResult<void> restore_state() noexcept;
+	[[nodiscard]] PdfResult<void> concat_matrix(const PdfMatrix& matrix) noexcept;
 
-	void set_stroke_style(
+	[[nodiscard]] PdfResult<void> set_stroke_style(
 		float line_width,
 		LineCap line_cap = LineCap::Butt,
 		LineJoin line_join = LineJoin::Miter,
 		float miter_limit = 10.0f,
 		std::span<const float> dash_array = {},
-		float dash_phase = 0.0f);
+		float dash_phase = 0.0f) noexcept;
 
-	void set_alpha_and_blend(
+	[[nodiscard]] PdfResult<void> set_alpha_and_blend(
 		float stroke_alpha,
 		float fill_alpha,
-		BlendMode blend_mode = BlendMode::Normal);
+		BlendMode blend_mode = BlendMode::Normal) noexcept;
 
-	void push_clip_path(
+	[[nodiscard]] PdfResult<void> push_clip_path(
 		uint32_t path_index,
-		FillRule fill_rule = FillRule::NonZero);
+		FillRule fill_rule = FillRule::NonZero) noexcept;
 
-	void draw_path(
+	[[nodiscard]] PdfResult<void> draw_path(
 		uint32_t path_index,
 		ColorRgba stroke_color,
 		ColorRgba fill_color,
 		bool stroke,
 		bool fill,
-		FillRule fill_rule = FillRule::NonZero);
+		FillRule fill_rule = FillRule::NonZero) noexcept;
 
-	void draw_glyph_run(
+	// Records a positioned glyph run.
+	[[nodiscard]] PdfResult<void> draw_glyph_run(
 		std::span<const PositionedGlyph> glyphs,
 		double font_size,
 		TextRenderMode render_mode,
@@ -565,58 +717,77 @@ public:
 		const PdfMatrix& text_matrix = PdfMatrix::identity(),
 		std::optional<PdfRect> local_bounds_pt = std::nullopt,
 		std::shared_ptr<const void> font_handle = nullptr,
-		std::shared_ptr<const DisplayList> type3_sub_list = nullptr);
+		std::shared_ptr<const DisplayList> type3_sub_list = nullptr) noexcept;
 
-	void draw_image(
+	[[nodiscard]] PdfResult<void> draw_image(
 		std::shared_ptr<const DecodedBitmap> bitmap,
-		const PdfMatrix& dest_transform = PdfMatrix::identity(),
+		const PdfMatrix& dest_transform,
 		bool interpolate = true,
 		std::shared_ptr<const DecodedBitmap> soft_mask = nullptr,
-		ColorRgba mask_tint_color = ColorRgba::black());
+		ColorRgba mask_tint_color = ColorRgba::black()) noexcept;
 
-	[[nodiscard]] bool is_finished() const noexcept
-	{
-		return finished_;
-	}
+	[[nodiscard]] bool is_finished() const noexcept { return finished_; }
+	[[nodiscard]] size_t command_count() const noexcept { return commands_.size(); }
+	[[nodiscard]] size_t path_count() const noexcept { return paths_.size(); }
 
-	// Seals this builder and returns the immutable `DisplayList`.
-	[[nodiscard]] std::shared_ptr<const DisplayList> finish();
+	// Seals the builder (one-shot) and returns the immutable `DisplayList`.
+	// Subsequent calls to `finish()` or any mutation method after `finish()`
+	// return `ErrorCode::InternalError`.
+	[[nodiscard]] PdfResult<std::shared_ptr<const DisplayList>> finish() noexcept;
 
 private:
-	struct TrackingState {
-		PdfMatrix ctm{PdfMatrix::identity()};
-		std::optional<PdfRect> clip_bounds{};
-		float line_width{1.0f};
+	struct ClipEdge {
+		PdfPoint p0{};
+		PdfPoint p1{};
 	};
 
-	void accumulate_content_bounds(const PdfRect& page_space_bounds) noexcept;
-	[[nodiscard]] std::optional<PdfRect> compute_path_page_bounds(
-		uint32_t path_index,
-		const PdfMatrix& transform) const noexcept;
+	struct ClipRegion {
+		std::vector<ClipEdge> edges;
+		FillRule fill_rule{FillRule::NonZero};
+		PdfRect bbox{};
+		bool has_bbox{false};
+	};
 
-	PdfRect page_box_pt_{};
+	struct TrackingState {
+		PdfMatrix ctm{PdfMatrix::identity()};
+		float line_width{1.0f};
+		LineCap line_cap{LineCap::Butt};
+		LineJoin line_join{LineJoin::Miter};
+		float miter_limit{10.0f};
+		float stroke_alpha{1.0f};
+		float fill_alpha{1.0f};
+		std::vector<ClipRegion> clips;
+	};
+
+	[[nodiscard]] size_t current_pool_bytes() const noexcept;
+	[[nodiscard]] PdfResult<void> check_can_mutate() const noexcept;
+	[[nodiscard]] PdfResult<void> check_additional_bytes(size_t extra_bytes) const noexcept;
+
+	void include_raw_bounds(const PdfRect& bounds) noexcept;
+	void accumulate_clipped_region(
+		std::span<const ClipEdge> shape_edges,
+		FillRule shape_rule) noexcept;
+	void accumulate_clipped_segment(PdfPoint p0, PdfPoint p1) noexcept;
+	void accumulate_clipped_rect(
+		const PdfRect& local_rect,
+		const PdfMatrix& to_page) noexcept;
+
+	PdfRect page_box_pt_{0.0, 0.0, 612.0, 792.0};
+	DisplayListLimits limits_{};
 	PdfRect content_bounds_pt_{};
 	bool has_content_bounds_{false};
 	bool finished_{false};
+	std::optional<PdfError> sticky_error_;
 
 	TrackingState current_state_{};
-	std::vector<TrackingState> state_stack_{};
-	size_t overflow_save_count_{0u};
-	std::weak_ptr<const DisplayList> sealed_result_{};
+	std::vector<TrackingState> state_stack_;
 
-	std::vector<DisplayCommand> commands_{};
-	std::vector<RecordedPath> paths_{};
-	std::vector<PathVerb> path_verbs_{};
-	std::vector<PdfPoint> path_points_{};
-	std::vector<PositionedGlyph> glyphs_{};
-	std::vector<float> dash_values_{};
+	std::vector<DisplayCommand> commands_;
+	std::vector<RecordedPath> paths_;
+	std::vector<PathVerb> path_verbs_;
+	std::vector<PdfPoint> path_points_;
+	std::vector<PositionedGlyph> glyphs_;
+	std::vector<float> dash_values_;
 };
-
-// Evaluates exact axis-aligned bounding box of a recorded path under `transform`
-// (including analytic extrema of cubic Bezier segments).
-[[nodiscard]] std::optional<PdfRect> compute_recorded_path_bounds(
-	std::span<const PathVerb> verbs,
-	std::span<const PdfPoint> points,
-	const PdfMatrix& transform = PdfMatrix::identity()) noexcept;
 
 } // namespace recto::pdf

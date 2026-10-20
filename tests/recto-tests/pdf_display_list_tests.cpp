@@ -5,8 +5,10 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <latch>
+#include <limits>
 #include <memory>
 #include <thread>
 #include <type_traits>
@@ -19,73 +21,92 @@ static_assert(!std::is_copy_constructible_v<DisplayList>);
 static_assert(!std::is_move_constructible_v<DisplayList>);
 static_assert(!std::is_copy_assignable_v<DisplayList>);
 static_assert(!std::is_move_assignable_v<DisplayList>);
+static_assert(!std::is_default_constructible_v<DecodedBitmap>);
 static_assert(!std::is_copy_constructible_v<DecodedBitmap>);
 static_assert(!std::is_move_constructible_v<DecodedBitmap>);
+static_assert(!std::is_constructible_v<
+	DecodedBitmap,
+	uint32_t,
+	uint32_t,
+	uint32_t,
+	std::vector<uint8_t>,
+	bool>);
 
 TEST(PdfDisplayList, CommandRecordingAndContiguousStorage)
 {
 	EXPECT_EQ(debug_live_display_lists(), 0);
 
 	DisplayListBuilder builder(PdfRect{0.0, 0.0, 612.0, 792.0});
-	builder.reserve_commands(16u);
+	ASSERT_TRUE(builder.reserve_commands(16u).has_value());
 
 	PathBuilder pb1;
 	pb1.rect(50.0, 60.0, 100.0, 80.0);
-	const uint32_t path0 = builder.add_path(pb1);
-	EXPECT_EQ(path0, 0u);
+	const auto path0 = builder.add_path(pb1);
+	ASSERT_TRUE(path0.has_value());
+	EXPECT_EQ(*path0, 0u);
 
 	PathBuilder pb2;
 	pb2.move_to(10.0, 20.0);
 	pb2.line_to(40.0, 60.0);
 	pb2.close_subpath();
-	const uint32_t path1 = builder.add_path(pb2);
-	EXPECT_EQ(path1, 1u);
+	const auto path1 = builder.add_path(pb2);
+	ASSERT_TRUE(path1.has_value());
+	EXPECT_EQ(*path1, 1u);
 
-	builder.save_state();
-	builder.concat_matrix(PdfMatrix{1.0, 0.0, 0.0, 1.0, 10.0, 20.0});
+	ASSERT_TRUE(builder.save_state().has_value());
+	ASSERT_TRUE(builder.concat_matrix(PdfMatrix{1.0, 0.0, 0.0, 1.0, 10.0, 20.0}).has_value());
 	const float dashes[] = {4.0f, 2.0f};
-	builder.set_stroke_style(2.5f, LineCap::Round, LineJoin::Bevel, 8.0f, dashes, 1.0f);
-	builder.set_alpha_and_blend(0.8f, 0.5f, BlendMode::Multiply);
-	builder.push_clip_path(path0, FillRule::EvenOdd);
-	builder.draw_path(
-		path1,
+	ASSERT_TRUE(builder.set_stroke_style(
+		2.5f,
+		LineCap::Round,
+		LineJoin::Bevel,
+		8.0f,
+		dashes,
+		1.0f).has_value());
+	ASSERT_TRUE(builder.set_alpha_and_blend(0.8f, 0.5f, BlendMode::Multiply).has_value());
+	ASSERT_TRUE(builder.push_clip_path(*path0, FillRule::EvenOdd).has_value());
+	ASSERT_TRUE(builder.draw_path(
+		*path1,
 		ColorRgba{0.1f, 0.2f, 0.3f, 1.0f},
 		ColorRgba{0.4f, 0.5f, 0.6f, 1.0f},
 		true,
 		true,
-		FillRule::NonZero);
+		FillRule::NonZero).has_value());
 
 	const PositionedGlyph run_glyphs[] = {
-		PositionedGlyph{42u, U'A', PdfPoint{100.0, 200.0}, 7.5},
-		PositionedGlyph{43u, U'B', PdfPoint{107.5, 200.0}, 8.0},
+		PositionedGlyph{42u, U'A', PdfPoint{100.0, 200.0}, 7.5, PdfRect{0.0, 0.0, 7.5, 14.0}},
+		PositionedGlyph{43u, U'B', PdfPoint{107.5, 200.0}, 8.0, PdfRect{0.0, 0.0, 8.0, 14.0}},
 	};
-	builder.draw_glyph_run(
+	ASSERT_TRUE(builder.draw_glyph_run(
 		run_glyphs,
 		14.0,
 		TextRenderMode::Fill,
 		ColorRgba::black(),
-		ColorRgba::white());
+		ColorRgba::white()).has_value());
 
 	std::vector<uint8_t> pixels(16u, 0xFFu);
 	auto bmp_res = DecodedBitmap::create(2u, 2u, 8u, std::move(pixels), false);
 	ASSERT_TRUE(bmp_res.has_value()) << bmp_res.error().message.view();
-	builder.draw_image(
+	ASSERT_TRUE(builder.draw_image(
 		*bmp_res,
 		PdfMatrix{32.0, 0.0, 0.0, 24.0, 70.0, 80.0},
-		true);
-	builder.restore_state();
+		true).has_value());
+	ASSERT_TRUE(builder.restore_state().has_value());
 
-	auto dl = builder.finish();
+	auto dl_res = builder.finish();
+	ASSERT_TRUE(dl_res.has_value()) << dl_res.error().message.view();
+	const auto& dl = *dl_res;
 	ASSERT_NE(dl, nullptr);
 	EXPECT_TRUE(builder.is_finished());
 	EXPECT_EQ(debug_live_display_lists(), 1);
 
-	// Subsequent calls after `finish()` do not mutate `dl`, and calling
-	// `finish()` again while `dl` is alive returns the same shared instance:
-	builder.save_state();
-	builder.restore_state();
-	auto dl_again = builder.finish();
-	EXPECT_EQ(dl.get(), dl_again.get());
+	// Subsequent mutations or repeated `finish()` calls after sealing fail with
+	// `ErrorCode::InternalError` and do not mutate `dl`:
+	EXPECT_FALSE(builder.save_state().has_value());
+	EXPECT_FALSE(builder.restore_state().has_value());
+	const auto dl_again = builder.finish();
+	ASSERT_FALSE(dl_again.has_value());
+	EXPECT_EQ(dl_again.error().code, ErrorCode::InternalError);
 	EXPECT_EQ(debug_live_display_lists(), 1);
 
 	ASSERT_EQ(dl->command_count(), 9u);
@@ -105,18 +126,20 @@ TEST(PdfDisplayList, CommandRecordingAndContiguousStorage)
 	EXPECT_EQ(stroke_cmd->line_cap, LineCap::Round);
 	EXPECT_EQ(stroke_cmd->line_join, LineJoin::Bevel);
 	const auto dash_span = dl->dash_values(*stroke_cmd);
-	ASSERT_EQ(dash_span.size(), 2u);
-	EXPECT_FLOAT_EQ(dash_span[0], 4.0f);
-	EXPECT_FLOAT_EQ(dash_span[1], 2.0f);
+	ASSERT_TRUE(dash_span.has_value());
+	ASSERT_EQ(dash_span->size(), 2u);
+	EXPECT_FLOAT_EQ((*dash_span)[0], 4.0f);
+	EXPECT_FLOAT_EQ((*dash_span)[1], 2.0f);
 
 	const auto* glyph_cmd = dl->commands()[6].as<DrawGlyphRunCommand>();
 	ASSERT_NE(glyph_cmd, nullptr);
 	const auto glyph_span = dl->glyphs(*glyph_cmd);
-	ASSERT_EQ(glyph_span.size(), 2u);
-	EXPECT_EQ(glyph_span[0].glyph_index, 42u);
-	EXPECT_EQ(glyph_span[0].unicode_codepoint, static_cast<uint32_t>(U'A'));
-	EXPECT_EQ(glyph_span[1].glyph_index, 43u);
-	EXPECT_EQ(glyph_span[1].unicode_codepoint, static_cast<uint32_t>(U'B'));
+	ASSERT_TRUE(glyph_span.has_value());
+	ASSERT_EQ(glyph_span->size(), 2u);
+	EXPECT_EQ((*glyph_span)[0].glyph_index, 42u);
+	EXPECT_EQ((*glyph_span)[0].unicode_codepoint, static_cast<uint32_t>(U'A'));
+	EXPECT_EQ((*glyph_span)[1].glyph_index, 43u);
+	EXPECT_EQ((*glyph_span)[1].unicode_codepoint, static_cast<uint32_t>(U'B'));
 }
 
 TEST(PdfDisplayList, PathRecording)
@@ -130,7 +153,8 @@ TEST(PdfDisplayList, PathRecording)
 	pb0.line_to(30.0, 45.0);
 	pb0.close_subpath();
 	pb0.rect(100.0, 200.0, -20.0, 30.0); // negative width normalizes to [80, 100]
-	const uint32_t idx0 = builder.add_path(pb0);
+	const auto idx0 = builder.add_path(pb0);
+	ASSERT_TRUE(idx0.has_value());
 
 	// Path 1: cubic Bezier arch from (0, 0) to (100, 0) with control points
 	// (0, 100) and (100, 100). Analytic peak at t = 0.5 is y = 75.0 (strictly
@@ -138,28 +162,43 @@ TEST(PdfDisplayList, PathRecording)
 	PathBuilder pb1;
 	pb1.move_to(0.0, 0.0);
 	pb1.cubic_bezier_to(PdfPoint{0.0, 100.0}, PdfPoint{100.0, 100.0}, PdfPoint{100.0, 0.0});
-	const uint32_t idx1 = builder.add_path(pb1);
+	const auto idx1 = builder.add_path(pb1);
+	ASSERT_TRUE(idx1.has_value());
 
-	auto dl = builder.finish();
+	const auto dl_res = builder.finish();
+	ASSERT_TRUE(dl_res.has_value());
+	const auto& dl = *dl_res;
 	ASSERT_EQ(dl->paths().size(), 2u);
 
-	const RecordedPath& p0 = dl->path(idx0);
+	const auto p0_res = dl->path(*idx0);
+	ASSERT_TRUE(p0_res.has_value());
+	const RecordedPath& p0 = *p0_res;
 	EXPECT_TRUE(p0.has_bounds);
 	EXPECT_DOUBLE_EQ(p0.bounds_pt.x_min, 10.0);
 	EXPECT_DOUBLE_EQ(p0.bounds_pt.y_min, 15.0);
 	EXPECT_DOUBLE_EQ(p0.bounds_pt.x_max, 100.0);
 	EXPECT_DOUBLE_EQ(p0.bounds_pt.y_max, 230.0);
-	EXPECT_EQ(dl->path_verbs(p0).size(), 5u);
-	EXPECT_EQ(dl->path_points(p0).size(), 5u);
+	const auto p0_verbs = dl->path_verbs(p0);
+	const auto p0_points = dl->path_points(p0);
+	ASSERT_TRUE(p0_verbs.has_value());
+	ASSERT_TRUE(p0_points.has_value());
+	EXPECT_EQ(p0_verbs->size(), 5u);
+	EXPECT_EQ(p0_points->size(), 5u);
 
-	const RecordedPath& p1 = dl->path(idx1);
+	const auto p1_res = dl->path(*idx1);
+	ASSERT_TRUE(p1_res.has_value());
+	const RecordedPath& p1 = *p1_res;
 	EXPECT_TRUE(p1.has_bounds);
 	EXPECT_DOUBLE_EQ(p1.bounds_pt.x_min, 0.0);
 	EXPECT_DOUBLE_EQ(p1.bounds_pt.y_min, 0.0);
 	EXPECT_DOUBLE_EQ(p1.bounds_pt.x_max, 100.0);
 	EXPECT_NEAR(p1.bounds_pt.y_max, 75.0, 1e-9);
-	EXPECT_EQ(dl->path_verbs(p1).size(), 2u);
-	EXPECT_EQ(dl->path_points(p1).size(), 4u);
+	const auto p1_verbs = dl->path_verbs(p1);
+	const auto p1_points = dl->path_points(p1);
+	ASSERT_TRUE(p1_verbs.has_value());
+	ASSERT_TRUE(p1_points.has_value());
+	EXPECT_EQ(p1_verbs->size(), 2u);
+	EXPECT_EQ(p1_points->size(), 4u);
 
 	// Shared pools hold the concatenated verbs and points of both paths:
 	EXPECT_EQ(dl->path_verbs().size(), 7u);
@@ -168,8 +207,11 @@ TEST(PdfDisplayList, PathRecording)
 
 TEST(PdfDisplayList, DecodedBitmapZeroCopySharing)
 {
-	// Invalid dimensions or strides are rejected with `ErrorCode::DamagedFormat`:
+	// Invalid dimensions, strides, or buffer sizes are rejected with `ErrorCode::DamagedFormat`:
 	EXPECT_FALSE(DecodedBitmap::create(0u, 10u, 40u, std::vector<uint8_t>(400u)).has_value());
+	EXPECT_FALSE(DecodedBitmap::create(10u, 0u, 40u, std::vector<uint8_t>(400u)).has_value());
+	EXPECT_FALSE(DecodedBitmap::create(65537u, 1u, 65537u * 4u, std::vector<uint8_t>(65537u * 4u)).has_value());
+	EXPECT_FALSE(DecodedBitmap::create(1u, 65537u, 4u, std::vector<uint8_t>(65537u * 4u)).has_value());
 	EXPECT_FALSE(DecodedBitmap::create(10u, 10u, 36u, std::vector<uint8_t>(360u)).has_value());
 	EXPECT_FALSE(DecodedBitmap::create(10u, 10u, 40u, std::vector<uint8_t>(399u)).has_value());
 
@@ -180,11 +222,14 @@ TEST(PdfDisplayList, DecodedBitmapZeroCopySharing)
 	const auto& bmp = *bmp_res;
 	EXPECT_EQ(bmp->span().data(), original_ptr);
 	EXPECT_TRUE(bmp->is_monochrome_mask);
+	EXPECT_TRUE(bmp->has_non_transparent_pixels);
 
 	DisplayListBuilder builder;
-	builder.draw_image(bmp, PdfMatrix{100.0, 0.0, 0.0, 100.0, 10.0, 20.0});
-	builder.draw_image(bmp, PdfMatrix{50.0, 0.0, 0.0, 50.0, 200.0, 300.0});
-	auto dl = builder.finish();
+	ASSERT_TRUE(builder.draw_image(bmp, PdfMatrix{100.0, 0.0, 0.0, 100.0, 10.0, 20.0}).has_value());
+	ASSERT_TRUE(builder.draw_image(bmp, PdfMatrix{50.0, 0.0, 0.0, 50.0, 200.0, 300.0}).has_value());
+	auto dl_res = builder.finish();
+	ASSERT_TRUE(dl_res.has_value());
+	const auto& dl = *dl_res;
 
 	ASSERT_EQ(dl->command_count(), 2u);
 	const auto* img0 = dl->commands()[0].as<DrawImageCommand>();
@@ -204,58 +249,571 @@ TEST(PdfDisplayList, ContentBounds)
 	// 1. Non-stroked, non-filled path (`n` operator) does not contribute to content bounds:
 	PathBuilder ignored_pb;
 	ignored_pb.rect(5.0, 5.0, 500.0, 700.0);
-	const uint32_t ignored_path = builder.add_path(ignored_pb);
-	builder.draw_path(ignored_path, ColorRgba::black(), ColorRgba::black(), false, false);
+	const auto ignored_path = builder.add_path(ignored_pb);
+	ASSERT_TRUE(ignored_path.has_value());
+	ASSERT_TRUE(builder.draw_path(
+		*ignored_path,
+		ColorRgba::black(),
+		ColorRgba::black(),
+		false,
+		false).has_value());
 
 	// 2. Clipped path inside a saved state:
-	builder.save_state();
+	ASSERT_TRUE(builder.save_state().has_value());
 	PathBuilder clip_pb;
 	clip_pb.rect(50.0, 60.0, 200.0, 200.0); // clip window [50, 60, 250, 260]
-	const uint32_t clip_path = builder.add_path(clip_pb);
-	builder.push_clip_path(clip_path);
+	const auto clip_path = builder.add_path(clip_pb);
+	ASSERT_TRUE(clip_path.has_value());
+	ASSERT_TRUE(builder.push_clip_path(*clip_path).has_value());
 
 	PathBuilder wide_pb;
 	wide_pb.rect(20.0, 40.0, 300.0, 100.0); // unclipped [20, 40, 320, 140] -> clipped [50, 60, 250, 140]
-	const uint32_t wide_path = builder.add_path(wide_pb);
-	builder.draw_path(wide_path, ColorRgba::black(), ColorRgba::black(), false, true);
-	builder.restore_state();
+	const auto wide_path = builder.add_path(wide_pb);
+	ASSERT_TRUE(wide_path.has_value());
+	ASSERT_TRUE(builder.draw_path(
+		*wide_path,
+		ColorRgba::black(),
+		ColorRgba::black(),
+		false,
+		true).has_value());
+	ASSERT_TRUE(builder.restore_state().has_value());
 
 	// 3. Transformed image outside the restored clip:
 	std::vector<uint8_t> px(16u, 0xFFu);
 	auto bmp = *DecodedBitmap::create(2u, 2u, 8u, std::move(px));
-	builder.save_state();
-	builder.concat_matrix(PdfMatrix{1.0, 0.0, 0.0, 1.0, 300.0, 400.0});
-	builder.draw_image(bmp, PdfMatrix{80.0, 0.0, 0.0, 50.0, 0.0, 0.0}); // [300, 400, 380, 450]
-	builder.restore_state();
+	ASSERT_TRUE(builder.save_state().has_value());
+	ASSERT_TRUE(builder.concat_matrix(PdfMatrix{1.0, 0.0, 0.0, 1.0, 300.0, 400.0}).has_value());
+	ASSERT_TRUE(builder.draw_image(bmp, PdfMatrix{80.0, 0.0, 0.0, 50.0, 0.0, 0.0}).has_value()); // [300, 400, 380, 450]
+	ASSERT_TRUE(builder.restore_state().has_value());
 
 	// 4. Invisible (`Tr=3`) glyph run does not expand content bounds, while
-	//    visible (`Tr=0`) glyph run does:
+	//    visible (`Tr=0`) glyph run with explicit glyph ink bounds does:
 	const PositionedGlyph inv_glyphs[] = {
-		PositionedGlyph{1u, U'X', PdfPoint{10.0, 10.0}, 20.0},
+		PositionedGlyph{1u, U'X', PdfPoint{10.0, 10.0}, 20.0, PdfRect{0.0, 0.0, 20.0, 24.0}},
 	};
-	builder.draw_glyph_run(
+	ASSERT_TRUE(builder.draw_glyph_run(
 		inv_glyphs,
 		24.0,
 		TextRenderMode::Invisible,
 		ColorRgba::black(),
-		ColorRgba::black());
+		ColorRgba::black()).has_value());
 
 	const PositionedGlyph vis_glyphs[] = {
-		PositionedGlyph{2u, U'H', PdfPoint{100.0, 500.0}, 15.0},
+		PositionedGlyph{2u, U'H', PdfPoint{100.0, 500.0}, 15.0, PdfRect{0.0, 0.0, 15.0, 20.0}},
 	};
-	builder.draw_glyph_run(
+	ASSERT_TRUE(builder.draw_glyph_run(
 		vis_glyphs,
 		20.0,
 		TextRenderMode::Fill,
 		ColorRgba::black(),
-		ColorRgba::black()); // [100, 500, 115, 520]
+		ColorRgba::black()).has_value()); // [100, 500, 115, 520]
 
-	auto dl = builder.finish();
+	auto dl_res = builder.finish();
+	ASSERT_TRUE(dl_res.has_value());
+	const auto& dl = *dl_res;
 	ASSERT_TRUE(dl->has_content_bounds());
 	EXPECT_DOUBLE_EQ(dl->content_bounds_pt().x_min, 50.0);
 	EXPECT_DOUBLE_EQ(dl->content_bounds_pt().y_min, 60.0);
 	EXPECT_DOUBLE_EQ(dl->content_bounds_pt().x_max, 380.0);
 	EXPECT_DOUBLE_EQ(dl->content_bounds_pt().y_max, 520.0);
+}
+
+TEST(PdfDisplayList, StrokeBoundsAndCapsMitersTransforms)
+{
+	// 1. Horizontal stroke with width 20 and Butt cap from (100, 100) to (200, 100)
+	//    expands Y to [90, 110] and keeps X at [100, 200]:
+	{
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 500.0, 500.0});
+		PathBuilder pb;
+		pb.move_to(100.0, 100.0);
+		pb.line_to(200.0, 100.0);
+		const uint32_t pid = *builder.add_path(pb);
+		ASSERT_TRUE(builder.set_stroke_style(20.0f, LineCap::Butt, LineJoin::Bevel, 10.0f).has_value());
+		ASSERT_TRUE(builder.draw_path(pid, ColorRgba::black(), ColorRgba::black(), true, false).has_value());
+		const auto dl = *builder.finish();
+		ASSERT_TRUE(dl->has_content_bounds());
+		EXPECT_NEAR(dl->content_bounds_pt().x_min, 100.0, 1e-6);
+		EXPECT_NEAR(dl->content_bounds_pt().y_min, 90.0, 1e-6);
+		EXPECT_NEAR(dl->content_bounds_pt().x_max, 200.0, 1e-6);
+		EXPECT_NEAR(dl->content_bounds_pt().y_max, 110.0, 1e-6);
+	}
+
+	// 2. ProjectingSquare cap extends endpoints by half stroke width (10 pt):
+	{
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 500.0, 500.0});
+		PathBuilder pb;
+		pb.move_to(100.0, 100.0);
+		pb.line_to(200.0, 100.0);
+		const uint32_t pid = *builder.add_path(pb);
+		ASSERT_TRUE(builder.set_stroke_style(20.0f, LineCap::ProjectingSquare, LineJoin::Bevel, 10.0f).has_value());
+		ASSERT_TRUE(builder.draw_path(pid, ColorRgba::black(), ColorRgba::black(), true, false).has_value());
+		const auto dl = *builder.finish();
+		ASSERT_TRUE(dl->has_content_bounds());
+		EXPECT_NEAR(dl->content_bounds_pt().x_min, 90.0, 1e-6);
+		EXPECT_NEAR(dl->content_bounds_pt().y_min, 90.0, 1e-6);
+		EXPECT_NEAR(dl->content_bounds_pt().x_max, 210.0, 1e-6);
+		EXPECT_NEAR(dl->content_bounds_pt().y_max, 110.0, 1e-6);
+	}
+
+	// 3. Round cap under nonuniform scaling `scale(3, 5)` expands X by 3*r and Y by 5*r:
+	{
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 1000.0, 1000.0});
+		PathBuilder pb;
+		pb.move_to(50.0, 40.0);
+		pb.line_to(100.0, 40.0);
+		const uint32_t pid = *builder.add_path(pb);
+		ASSERT_TRUE(builder.concat_matrix(PdfMatrix{3.0, 0.0, 0.0, 5.0, 0.0, 0.0}).has_value());
+		ASSERT_TRUE(builder.set_stroke_style(10.0f, LineCap::Round, LineJoin::Round, 10.0f).has_value());
+		ASSERT_TRUE(builder.draw_path(pid, ColorRgba::black(), ColorRgba::black(), true, false).has_value());
+		const auto dl = *builder.finish();
+		ASSERT_TRUE(dl->has_content_bounds());
+		// User-space X in [50 - 5, 100 + 5] = [45, 105] -> scaled by 3 = [135, 315]
+		// User-space Y in [40 - 5, 40 + 5] = [35, 45]   -> scaled by 5 = [175, 225]
+		EXPECT_NEAR(dl->content_bounds_pt().x_min, 135.0, 1e-6);
+		EXPECT_NEAR(dl->content_bounds_pt().y_min, 175.0, 1e-6);
+		EXPECT_NEAR(dl->content_bounds_pt().x_max, 315.0, 1e-6);
+		EXPECT_NEAR(dl->content_bounds_pt().y_max, 225.0, 1e-6);
+	}
+
+	// 4. Miter join spike vs Bevel fallback when miter_limit is exceeded:
+	//    Symmetric V-shape `(100, 90) -> (200, 100) -> (100, 110)` has a sharp turn at (200, 100).
+	{
+		PathBuilder pb;
+		pb.move_to(100.0, 90.0);
+		pb.line_to(200.0, 100.0);
+		pb.line_to(100.0, 110.0);
+
+		DisplayListBuilder miter_builder(PdfRect{0.0, 0.0, 500.0, 500.0});
+		const uint32_t p_miter = *miter_builder.add_path(pb);
+		ASSERT_TRUE(miter_builder.set_stroke_style(20.0f, LineCap::Butt, LineJoin::Miter, 25.0f).has_value());
+		ASSERT_TRUE(miter_builder.draw_path(p_miter, ColorRgba::black(), ColorRgba::black(), true, false).has_value());
+		const auto dl_miter = *miter_builder.finish();
+
+		DisplayListBuilder bevel_builder(PdfRect{0.0, 0.0, 500.0, 500.0});
+		const uint32_t p_bevel = *bevel_builder.add_path(pb);
+		ASSERT_TRUE(bevel_builder.set_stroke_style(20.0f, LineCap::Butt, LineJoin::Miter, 2.0f).has_value());
+		ASSERT_TRUE(bevel_builder.draw_path(p_bevel, ColorRgba::black(), ColorRgba::black(), true, false).has_value());
+		const auto dl_bevel = *bevel_builder.finish();
+
+		// With miter_limit=25, the miter apex projects ~100.5 pt past x=200 (~300.5).
+		// With miter_limit=2, it falls back to bevel (~201.0).
+		EXPECT_GT(dl_miter->content_bounds_pt().x_max, 290.0);
+		EXPECT_LT(dl_bevel->content_bounds_pt().x_max, 205.0);
+	}
+}
+
+TEST(PdfDisplayList, PolygonAndEvenOddClippingBounds)
+{
+	// 1. Triangle clip `(0,0) -> (100,0) -> (0,100)` (`x + y <= 100`):
+	//    A rectangle drawn at `(80, 80) -> (100, 100)` lies inside the triangle's
+	//    bounding box `[0, 0, 100, 100]` but strictly outside the triangle itself.
+	{
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 200.0, 200.0});
+		PathBuilder tri_pb;
+		tri_pb.move_to(0.0, 0.0);
+		tri_pb.line_to(100.0, 0.0);
+		tri_pb.line_to(0.0, 100.0);
+		tri_pb.close_subpath();
+		const uint32_t tri_clip = *builder.add_path(tri_pb);
+		ASSERT_TRUE(builder.push_clip_path(tri_clip, FillRule::NonZero).has_value());
+
+		PathBuilder outside_pb;
+		outside_pb.rect(80.0, 80.0, 20.0, 20.0);
+		const uint32_t outside_rect = *builder.add_path(outside_pb);
+		ASSERT_TRUE(builder.draw_path(
+			outside_rect,
+			ColorRgba::black(),
+			ColorRgba::black(),
+			false,
+			true).has_value());
+
+		const auto dl = *builder.finish();
+		EXPECT_FALSE(dl->has_content_bounds());
+	}
+
+	// 2. EvenOdd clip with a central hole vs NonZero clip without hole:
+	//    Outer rect `[0, 0, 100, 100]` + inner rect `[20, 20, 80, 80]` with same winding.
+	//    Drawing a square at `[30, 30, 70, 70]` inside the hole produces NO ink
+	//    under `FillRule::EvenOdd`, and `[30, 30, 70, 70]` under `FillRule::NonZero`.
+	{
+		PathBuilder ring_pb;
+		ring_pb.rect(0.0, 0.0, 100.0, 100.0);
+		ring_pb.rect(20.0, 20.0, 60.0, 60.0);
+
+		PathBuilder inner_pb;
+		inner_pb.rect(30.0, 30.0, 40.0, 40.0);
+
+		DisplayListBuilder eo_builder(PdfRect{0.0, 0.0, 200.0, 200.0});
+		const uint32_t eo_clip = *eo_builder.add_path(ring_pb);
+		const uint32_t eo_draw = *eo_builder.add_path(inner_pb);
+		ASSERT_TRUE(eo_builder.push_clip_path(eo_clip, FillRule::EvenOdd).has_value());
+		ASSERT_TRUE(eo_builder.draw_path(eo_draw, ColorRgba::black(), ColorRgba::black(), false, true).has_value());
+		const auto eo_dl = *eo_builder.finish();
+		EXPECT_FALSE(eo_dl->has_content_bounds());
+
+		DisplayListBuilder nz_builder(PdfRect{0.0, 0.0, 200.0, 200.0});
+		const uint32_t nz_clip = *nz_builder.add_path(ring_pb);
+		const uint32_t nz_draw = *nz_builder.add_path(inner_pb);
+		ASSERT_TRUE(nz_builder.push_clip_path(nz_clip, FillRule::NonZero).has_value());
+		ASSERT_TRUE(nz_builder.draw_path(nz_draw, ColorRgba::black(), ColorRgba::black(), false, true).has_value());
+		const auto nz_dl = *nz_builder.finish();
+		ASSERT_TRUE(nz_dl->has_content_bounds());
+		EXPECT_DOUBLE_EQ(nz_dl->content_bounds_pt().x_min, 30.0);
+		EXPECT_DOUBLE_EQ(nz_dl->content_bounds_pt().y_min, 30.0);
+		EXPECT_DOUBLE_EQ(nz_dl->content_bounds_pt().x_max, 70.0);
+		EXPECT_DOUBLE_EQ(nz_dl->content_bounds_pt().y_max, 70.0);
+	}
+
+	// 3. Nested nonrectangular clips:
+	//    Clip 1: triangle `(0,0) -> (100,0) -> (0,100)` (`x + y <= 100`)
+	//    Clip 2: horizontal band `[0, 60, 100, 100]` (`y >= 60`)
+	//    Intersection is the smaller triangle `(0,60) -> (40,60) -> (0,100)`.
+	{
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 200.0, 200.0});
+		PathBuilder tri_pb;
+		tri_pb.move_to(0.0, 0.0);
+		tri_pb.line_to(100.0, 0.0);
+		tri_pb.line_to(0.0, 100.0);
+		tri_pb.close_subpath();
+		const uint32_t c1 = *builder.add_path(tri_pb);
+
+		PathBuilder band_pb;
+		band_pb.rect(0.0, 60.0, 100.0, 40.0);
+		const uint32_t c2 = *builder.add_path(band_pb);
+
+		PathBuilder full_pb;
+		full_pb.rect(0.0, 0.0, 100.0, 100.0);
+		const uint32_t draw_id = *builder.add_path(full_pb);
+
+		ASSERT_TRUE(builder.push_clip_path(c1, FillRule::NonZero).has_value());
+		ASSERT_TRUE(builder.push_clip_path(c2, FillRule::NonZero).has_value());
+		ASSERT_TRUE(builder.draw_path(draw_id, ColorRgba::black(), ColorRgba::black(), false, true).has_value());
+
+		const auto dl = *builder.finish();
+		ASSERT_TRUE(dl->has_content_bounds());
+		EXPECT_NEAR(dl->content_bounds_pt().x_min, 0.0, 1e-6);
+		EXPECT_NEAR(dl->content_bounds_pt().y_min, 60.0, 1e-6);
+		EXPECT_NEAR(dl->content_bounds_pt().x_max, 40.0, 1e-6);
+		EXPECT_NEAR(dl->content_bounds_pt().y_max, 100.0, 1e-6);
+	}
+}
+
+TEST(PdfDisplayList, GlyphInkBoundsDescendersOverhangsAndSpaces)
+{
+	// 1. Space-only glyph run paints no ink (`has_content_bounds() == false`):
+	{
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 612.0, 792.0});
+		const PositionedGlyph spaces[] = {
+			PositionedGlyph::blank(3u, U' ', PdfPoint{72.0, 700.0}, 4.5),
+			PositionedGlyph::blank(3u, U' ', PdfPoint{76.5, 700.0}, 4.5),
+		};
+		ASSERT_TRUE(builder.draw_glyph_run(
+			spaces,
+			12.0,
+			TextRenderMode::Fill,
+			ColorRgba::black(),
+			ColorRgba::black()).has_value());
+		const auto dl = *builder.finish();
+		EXPECT_FALSE(dl->has_content_bounds());
+	}
+
+	// 2. Glyph with negative left bearing (-2.5), descender (-4.0), and right overhang (+11.0 > advance 8.0):
+	{
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 612.0, 792.0});
+		const PositionedGlyph glyphs[] = {
+			PositionedGlyph{10u, U'j', PdfPoint{100.0, 200.0}, 8.0, PdfRect{-2.5, -4.0, 11.0, 9.5}},
+			PositionedGlyph::blank(3u, U' ', PdfPoint{108.0, 200.0}, 5.0),
+		};
+		ASSERT_TRUE(builder.draw_glyph_run(
+			glyphs,
+			12.0,
+			TextRenderMode::Fill,
+			ColorRgba::black(),
+			ColorRgba::black()).has_value());
+		const auto dl = *builder.finish();
+		ASSERT_TRUE(dl->has_content_bounds());
+		EXPECT_DOUBLE_EQ(dl->content_bounds_pt().x_min, 97.5);
+		EXPECT_DOUBLE_EQ(dl->content_bounds_pt().y_min, 196.0);
+		EXPECT_DOUBLE_EQ(dl->content_bounds_pt().x_max, 111.0);
+		EXPECT_DOUBLE_EQ(dl->content_bounds_pt().y_max, 209.5);
+	}
+
+	// 3. Visible glyph run without per-glyph ink bounds, local_bounds_pt, or Type 3 sub-list is rejected:
+	{
+		DisplayListBuilder builder(PdfRect{0.0, 0.0, 612.0, 792.0});
+		const PositionedGlyph missing_bounds[] = {
+			PositionedGlyph{10u, U'A', PdfPoint{100.0, 200.0}, 8.0, std::nullopt, false},
+		};
+		const auto res = builder.draw_glyph_run(
+			missing_bounds,
+			12.0,
+			TextRenderMode::Fill,
+			ColorRgba::black(),
+			ColorRgba::black());
+		ASSERT_FALSE(res.has_value());
+		EXPECT_EQ(res.error().code, ErrorCode::DamagedFormat);
+		EXPECT_EQ(builder.command_count(), 0u);
+	}
+}
+
+TEST(PdfDisplayList, TransparentOperationsExcludedFromContentBounds)
+{
+	DisplayListBuilder builder(PdfRect{0.0, 0.0, 612.0, 792.0});
+
+	PathBuilder pb;
+	pb.rect(10.0, 10.0, 100.0, 100.0);
+	const uint32_t pid = *builder.add_path(pb);
+
+	// 1. State alpha set to (0, 0) inside saved state:
+	ASSERT_TRUE(builder.save_state().has_value());
+	ASSERT_TRUE(builder.set_alpha_and_blend(0.0f, 0.0f, BlendMode::Normal).has_value());
+	ASSERT_TRUE(builder.draw_path(pid, ColorRgba::black(), ColorRgba::black(), true, true).has_value());
+
+	const PositionedGlyph glyphs[] = {
+		PositionedGlyph{1u, U'A', PdfPoint{50.0, 50.0}, 10.0, PdfRect{0.0, 0.0, 10.0, 12.0}},
+	};
+	ASSERT_TRUE(builder.draw_glyph_run(
+		glyphs,
+		12.0,
+		TextRenderMode::FillAndStroke,
+		ColorRgba::black(),
+		ColorRgba::black()).has_value());
+
+	std::vector<uint8_t> opaque_px(16u, 0xFFu);
+	auto opaque_bmp = *DecodedBitmap::create(2u, 2u, 8u, std::move(opaque_px));
+	ASSERT_TRUE(builder.draw_image(opaque_bmp, PdfMatrix{50.0, 0.0, 0.0, 50.0, 20.0, 20.0}).has_value());
+	ASSERT_TRUE(builder.restore_state().has_value());
+
+	// 2. Restored state has alpha 1.0, but command colours or bitmap pixels have alpha 0:
+	ASSERT_TRUE(builder.draw_path(
+		pid,
+		ColorRgba{0.0f, 0.0f, 0.0f, 0.0f},
+		ColorRgba{1.0f, 0.0f, 0.0f, 0.0f},
+		true,
+		true).has_value());
+	ASSERT_TRUE(builder.draw_glyph_run(
+		glyphs,
+		12.0,
+		TextRenderMode::Fill,
+		ColorRgba{0.0f, 0.0f, 0.0f, 0.0f},
+		ColorRgba::black()).has_value());
+
+	std::vector<uint8_t> transparent_px(16u, 0x00u);
+	auto trans_bmp = *DecodedBitmap::create(2u, 2u, 8u, std::move(transparent_px));
+	EXPECT_FALSE(trans_bmp->has_non_transparent_pixels);
+	ASSERT_TRUE(builder.draw_image(trans_bmp, PdfMatrix{50.0, 0.0, 0.0, 50.0, 200.0, 200.0}).has_value());
+
+	const auto dl = *builder.finish();
+	EXPECT_FALSE(dl->has_content_bounds());
+}
+
+TEST(PdfDisplayList, ConfigurableBudgetsAndStatePreservation)
+{
+	DisplayListLimits limits{};
+	limits.max_commands = 3u;
+	limits.max_paths = 2u;
+	limits.max_path_verbs = 4u;
+	limits.max_path_points = 5u;
+	limits.max_glyphs = 2u;
+	limits.max_dash_values = 2u;
+	limits.max_total_bytes = 4096u;
+
+	DisplayListBuilder builder(PdfRect{0.0, 0.0, 200.0, 200.0}, limits);
+
+	// Exceeding reserve_commands budget fails without mutating builder:
+	EXPECT_FALSE(builder.reserve_commands(4u).has_value());
+
+	PathBuilder pb1;
+	pb1.rect(10.0, 20.0, 30.0, 40.0); // 1 verb, 2 points
+	const auto p0 = builder.add_path(pb1);
+	ASSERT_TRUE(p0.has_value());
+	EXPECT_EQ(*p0, 0u);
+
+	// Path exceeding verb/point limits is rejected while preserving path 0:
+	PathBuilder huge_pb;
+	huge_pb.move_to(0.0, 0.0);
+	huge_pb.line_to(1.0, 1.0);
+	huge_pb.line_to(2.0, 2.0);
+	huge_pb.line_to(3.0, 3.0); // 4 verbs -> total 5 > max_path_verbs (4)
+	EXPECT_FALSE(builder.add_path(huge_pb).has_value());
+	EXPECT_EQ(builder.path_count(), 1u);
+
+	// Dash array exceeding max_dash_values (2) is rejected without adding a command:
+	const float too_many_dashes[] = {1.0f, 2.0f, 3.0f};
+	EXPECT_FALSE(builder.set_stroke_style(1.0f, LineCap::Butt, LineJoin::Miter, 10.0f, too_many_dashes).has_value());
+	EXPECT_EQ(builder.command_count(), 0u);
+
+	// Glyph run exceeding max_glyphs (2) is rejected without adding a command:
+	const PositionedGlyph three_glyphs[] = {
+		PositionedGlyph::blank(1u, U' ', PdfPoint{0.0, 0.0}, 4.0),
+		PositionedGlyph::blank(1u, U' ', PdfPoint{4.0, 0.0}, 4.0),
+		PositionedGlyph::blank(1u, U' ', PdfPoint{8.0, 0.0}, 4.0),
+	};
+	EXPECT_FALSE(builder.draw_glyph_run(
+		three_glyphs,
+		12.0,
+		TextRenderMode::Fill,
+		ColorRgba::black(),
+		ColorRgba::black()).has_value());
+	EXPECT_EQ(builder.command_count(), 0u);
+
+	// Record 3 valid commands up to `max_commands`:
+	ASSERT_TRUE(builder.save_state().has_value());
+	ASSERT_TRUE(builder.draw_path(*p0, ColorRgba::black(), ColorRgba::black(), false, true).has_value());
+	ASSERT_TRUE(builder.restore_state().has_value());
+	EXPECT_EQ(builder.command_count(), 3u);
+
+	// 4th command exceeds `max_commands`:
+	EXPECT_FALSE(builder.draw_path(*p0, ColorRgba::black(), ColorRgba::black(), false, true).has_value());
+	EXPECT_EQ(builder.command_count(), 3u);
+
+	// Builder still seals cleanly with the 3 valid commands and exact bounds:
+	const auto dl_res = builder.finish();
+	ASSERT_TRUE(dl_res.has_value());
+	EXPECT_EQ((*dl_res)->command_count(), 3u);
+	ASSERT_TRUE((*dl_res)->has_content_bounds());
+	EXPECT_DOUBLE_EQ((*dl_res)->content_bounds_pt().x_min, 10.0);
+	EXPECT_DOUBLE_EQ((*dl_res)->content_bounds_pt().y_min, 20.0);
+	EXPECT_DOUBLE_EQ((*dl_res)->content_bounds_pt().x_max, 40.0);
+	EXPECT_DOUBLE_EQ((*dl_res)->content_bounds_pt().y_max, 60.0);
+}
+
+TEST(PdfDisplayList, RejectsMalformedAndNonFiniteInputs)
+{
+	DisplayListBuilder builder(PdfRect{0.0, 0.0, 200.0, 200.0});
+	const double nan = std::numeric_limits<double>::quiet_NaN();
+	const double inf = std::numeric_limits<double>::infinity();
+
+	// 1. Truncated CubicBezierTo with 0 points:
+	const PathVerb trunc_verbs[] = {PathVerb::MoveTo, PathVerb::CubicBezierTo};
+	const PdfPoint trunc_pts[] = {PdfPoint{10.0, 10.0}};
+	EXPECT_FALSE(builder.add_path(trunc_verbs, trunc_pts).has_value());
+
+	// 2. LineTo without preceding MoveTo:
+	const PathVerb no_move_verbs[] = {PathVerb::LineTo};
+	const PdfPoint no_move_pts[] = {PdfPoint{10.0, 10.0}};
+	EXPECT_FALSE(builder.add_path(no_move_verbs, no_move_pts).has_value());
+
+	// 3. Invalid PathVerb enum value:
+	const PathVerb bad_verb[] = {static_cast<PathVerb>(99u)};
+	EXPECT_FALSE(builder.add_path(bad_verb, {}).has_value());
+
+	// 4. NaN / Infinity in path points:
+	PathBuilder nan_pb;
+	nan_pb.move_to(nan, 0.0);
+	EXPECT_FALSE(builder.add_path(nan_pb).has_value());
+
+	PathBuilder inf_pb;
+	inf_pb.rect(0.0, 0.0, inf, 10.0);
+	EXPECT_FALSE(builder.add_path(inf_pb).has_value());
+	EXPECT_EQ(builder.path_count(), 0u);
+
+	// 5. NaN / Infinity in matrices, stroke style, and alpha:
+	EXPECT_FALSE(builder.concat_matrix(PdfMatrix{nan, 0.0, 0.0, 1.0, 0.0, 0.0}).has_value());
+	EXPECT_FALSE(builder.set_stroke_style(-1.0f).has_value());
+	EXPECT_FALSE(builder.set_stroke_style(1.0f, LineCap::Butt, LineJoin::Miter, 0.5f).has_value());
+	const float zero_dashes[] = {0.0f, 0.0f};
+	EXPECT_FALSE(builder.set_stroke_style(1.0f, LineCap::Butt, LineJoin::Miter, 10.0f, zero_dashes).has_value());
+	EXPECT_FALSE(builder.set_alpha_and_blend(1.5f, 1.0f).has_value());
+	EXPECT_FALSE(builder.set_alpha_and_blend(-0.1f, 1.0f).has_value());
+	EXPECT_EQ(builder.command_count(), 0u);
+}
+
+TEST(PdfDisplayList, AccessorBoundaryValidation)
+{
+	DisplayListBuilder builder;
+	PathBuilder pb;
+	pb.rect(0.0, 0.0, 10.0, 10.0);
+	const uint32_t pid = *builder.add_path(pb);
+	const float dashes[] = {2.0f, 2.0f};
+	ASSERT_TRUE(builder.set_stroke_style(1.0f, LineCap::Butt, LineJoin::Miter, 10.0f, dashes).has_value());
+	const PositionedGlyph glyphs[] = {
+		PositionedGlyph::blank(1u, U' ', PdfPoint{0.0, 0.0}, 5.0),
+	};
+	ASSERT_TRUE(builder.draw_glyph_run(
+		glyphs,
+		12.0,
+		TextRenderMode::Fill,
+		ColorRgba::black(),
+		ColorRgba::black()).has_value());
+
+	const auto dl = *builder.finish();
+	EXPECT_TRUE(dl->path(pid).has_value());
+	EXPECT_FALSE(dl->path(pid + 1u).has_value());
+	EXPECT_FALSE(dl->path(std::numeric_limits<uint32_t>::max()).has_value());
+
+	RecordedPath bad_path{};
+	bad_path.verb_offset = 10u;
+	bad_path.verb_count = 1u;
+	EXPECT_FALSE(dl->path_verbs(bad_path).has_value());
+
+	bad_path.verb_offset = 0u;
+	bad_path.verb_count = std::numeric_limits<uint32_t>::max();
+	EXPECT_FALSE(dl->path_verbs(bad_path).has_value());
+
+	bad_path.point_offset = std::numeric_limits<uint32_t>::max();
+	bad_path.point_count = 2u;
+	EXPECT_FALSE(dl->path_points(bad_path).has_value());
+
+	RecordedGlyphRun bad_run{};
+	bad_run.glyph_offset = 1u;
+	bad_run.glyph_count = 1u;
+	EXPECT_FALSE(dl->glyphs(bad_run).has_value());
+
+	SetStrokeStyleCommand bad_style{};
+	bad_style.dash_offset = 1u;
+	bad_style.dash_count = 2u;
+	EXPECT_FALSE(dl->dash_values(bad_style).has_value());
+}
+
+TEST(PdfDisplayList, SaveDepthOverflowPreventsPublication)
+{
+	DisplayListLimits limits{};
+	limits.max_save_depth = 2u;
+	DisplayListBuilder builder(PdfRect{0.0, 0.0, 200.0, 200.0}, limits);
+
+	PathBuilder pb;
+	pb.rect(10.0, 10.0, 20.0, 20.0);
+	const uint32_t pid = *builder.add_path(pb);
+
+	ASSERT_TRUE(builder.save_state().has_value());
+	ASSERT_TRUE(builder.save_state().has_value());
+
+	// 3rd `save_state()` exceeds `max_save_depth == 2`:
+	const auto overflow_res = builder.save_state();
+	ASSERT_FALSE(overflow_res.has_value());
+	EXPECT_EQ(overflow_res.error().code, ErrorCode::DamagedFormat);
+
+	// Subsequent state changes inside the overflowing frame and `finish()` are rejected:
+	EXPECT_FALSE(builder.concat_matrix(PdfMatrix{1.0, 0.0, 0.0, 1.0, 50.0, 50.0}).has_value());
+	EXPECT_FALSE(builder.draw_path(pid, ColorRgba::black(), ColorRgba::black(), false, true).has_value());
+	EXPECT_FALSE(builder.restore_state().has_value());
+	const auto finish_res = builder.finish();
+	ASSERT_FALSE(finish_res.has_value());
+	EXPECT_EQ(finish_res.error().code, ErrorCode::DamagedFormat);
+}
+
+TEST(PdfDisplayList, OneShotFinishSemantics)
+{
+	DisplayListBuilder builder(PdfRect{0.0, 0.0, 200.0, 200.0});
+	PathBuilder pb;
+	pb.rect(10.0, 10.0, 50.0, 50.0);
+	const uint32_t pid = *builder.add_path(pb);
+	ASSERT_TRUE(builder.draw_path(pid, ColorRgba::black(), ColorRgba::black(), false, true).has_value());
+
+	{
+		auto first_dl = builder.finish();
+		ASSERT_TRUE(first_dl.has_value());
+		EXPECT_EQ((*first_dl)->command_count(), 1u);
+		EXPECT_EQ(debug_live_display_lists(), 1);
+	}
+	// First result has been released; calling `finish()` again must fail rather
+	// than returning an empty DisplayList with stale bounds:
+	EXPECT_EQ(debug_live_display_lists(), 0);
+	const auto second_dl = builder.finish();
+	ASSERT_FALSE(second_dl.has_value());
+	EXPECT_EQ(second_dl.error().code, ErrorCode::InternalError);
+	EXPECT_EQ(debug_live_display_lists(), 0);
 }
 
 TEST(PdfDisplayList, LiveDisplayListsCounter)
@@ -264,10 +822,10 @@ TEST(PdfDisplayList, LiveDisplayListsCounter)
 	{
 		DisplayListBuilder b1;
 		DisplayListBuilder b2;
-		auto dl1 = b1.finish();
+		auto dl1 = *b1.finish();
 		EXPECT_EQ(debug_live_display_lists(), 1);
 		{
-			auto dl2 = b2.finish();
+			auto dl2 = *b2.finish();
 			EXPECT_EQ(debug_live_display_lists(), 2);
 		}
 		// `dl2` dropped while `b2` is still on the stack:
@@ -280,31 +838,47 @@ TEST(PdfDisplayList, ConcurrentRead)
 {
 	DisplayListBuilder builder(PdfRect{0.0, 0.0, 612.0, 792.0});
 	constexpr size_t kTotalCommands = 10000u;
-	builder.reserve_commands(kTotalCommands);
+	ASSERT_TRUE(builder.reserve_commands(kTotalCommands).has_value());
 
 	PathBuilder pb;
 	pb.move_to(10.0, 10.0);
 	pb.line_to(100.0, 10.0);
 	pb.line_to(100.0, 80.0);
 	pb.close_subpath();
-	const uint32_t path_id = builder.add_path(pb);
+	const uint32_t path_id = *builder.add_path(pb);
 
 	const PositionedGlyph glyphs[] = {
-		PositionedGlyph{10u, U'R', PdfPoint{72.0, 700.0}, 8.0},
-		PositionedGlyph{11u, U'e', PdfPoint{80.0, 700.0}, 6.0},
+		PositionedGlyph{10u, U'R', PdfPoint{72.0, 700.0}, 8.0, PdfRect{0.0, 0.0, 8.0, 12.0}},
+		PositionedGlyph{11u, U'e', PdfPoint{80.0, 700.0}, 6.0, PdfRect{0.0, 0.0, 6.0, 9.0}},
 	};
 	const float dashes[] = {3.0f, 1.0f};
 
 	// Record 10,000 commands (2,000 groups of 5 commands):
 	for (size_t i = 0u; i < kTotalCommands / 5u; ++i) {
-		builder.save_state();
-		builder.set_stroke_style(1.5f, LineCap::Butt, LineJoin::Miter, 10.0f, dashes, 0.0f);
-		builder.draw_path(path_id, ColorRgba::black(), ColorRgba::white(), true, true);
-		builder.draw_glyph_run(glyphs, 12.0, TextRenderMode::Fill, ColorRgba::black(), ColorRgba::black());
-		builder.restore_state();
+		ASSERT_TRUE(builder.save_state().has_value());
+		ASSERT_TRUE(builder.set_stroke_style(
+			1.5f,
+			LineCap::Butt,
+			LineJoin::Miter,
+			10.0f,
+			dashes,
+			0.0f).has_value());
+		ASSERT_TRUE(builder.draw_path(
+			path_id,
+			ColorRgba::black(),
+			ColorRgba::white(),
+			true,
+			true).has_value());
+		ASSERT_TRUE(builder.draw_glyph_run(
+			glyphs,
+			12.0,
+			TextRenderMode::Fill,
+			ColorRgba::black(),
+			ColorRgba::black()).has_value());
+		ASSERT_TRUE(builder.restore_state().has_value());
 	}
 
-	auto dl = builder.finish();
+	auto dl = *builder.finish();
 	ASSERT_EQ(dl->command_count(), kTotalCommands);
 
 	constexpr size_t kThreadCount = 8u;
@@ -320,14 +894,16 @@ TEST(PdfDisplayList, ConcurrentRead)
 			for (const DisplayCommand& cmd : shared_dl->commands()) {
 				acc = acc * 131u + static_cast<uint64_t>(cmd.kind()) + 1u;
 				if (const auto* dp = cmd.as<DrawPathCommand>()) {
-					const RecordedPath& p = shared_dl->path(dp->path_index);
-					acc += shared_dl->path_verbs(p).size() + shared_dl->path_points(p).size();
+					const RecordedPath p = *shared_dl->path(dp->path_index);
+					acc += shared_dl->path_verbs(p)->size() +
+						shared_dl->path_points(p)->size();
 				} else if (const auto* gr = cmd.as<DrawGlyphRunCommand>()) {
-					for (const PositionedGlyph& g : shared_dl->glyphs(*gr)) {
+					const auto glyph_span = *shared_dl->glyphs(*gr);
+					for (const PositionedGlyph& g : glyph_span) {
 						acc += g.glyph_index + g.unicode_codepoint;
 					}
 				} else if (const auto* ss = cmd.as<SetStrokeStyleCommand>()) {
-					acc += shared_dl->dash_values(*ss).size();
+					acc += shared_dl->dash_values(*ss)->size();
 				}
 			}
 			checksums[t] = acc;
