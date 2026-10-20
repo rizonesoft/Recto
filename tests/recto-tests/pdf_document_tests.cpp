@@ -1124,6 +1124,53 @@ TEST(PdfDocument, Metadata)
 			ASSERT_TRUE(wide_doc_res.has_value()) << wide_doc_res.error().message.view();
 			EXPECT_EQ((*wide_doc_res)->metadata().title, "RIGHT");
 		}
+
+		// 3e. Unmatched closing tags at root scope (`</bad>` before/after root
+		//     or standalone) do not read `scopes[1]` out of bounds, and 60,000
+		//     `&` characters without semicolons in `decode_xml_entities` decode
+		//     in O(N) time:
+		{
+			const std::string stray_close_only = "</bad></orphan>";
+			const std::string stray_only_stm =
+				"<< /Type /Metadata /Subtype /XML /Length " +
+				std::to_string(stray_close_only.size()) + " >>\nstream\n" +
+				stray_close_only + "\nendstream";
+			const auto stray_only_bytes = build_synthetic_pdf_from_objects(
+				"1.7",
+				{
+					{1, "<< /Type /Catalog /Pages 2 0 R /Metadata 4 0 R >>"},
+					{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 612 792] /Kids [3 0 R] >>"},
+					{3, "<< /Type /Page /Parent 2 0 R >>"},
+					{4, stray_only_stm},
+				});
+			auto stray_only_doc = Document::open_memory(stray_only_bytes);
+			ASSERT_TRUE(stray_only_doc.has_value()) << stray_only_doc.error().message.view();
+			EXPECT_TRUE((*stray_only_doc)->metadata().title.empty());
+
+			const std::string many_amps(60000u, '&');
+			const std::string stray_and_amps_xmp =
+				"</bad><r:RDF xmlns:r='http://www.w3.org/1999/02/22-rdf-syntax-ns#'\n"
+				"            xmlns:dc='http://purl.org/dc/elements/1.1/'>\n"
+				" <r:Description dc:author='" + many_amps + "'>\n"
+				"  <dc:title>" + many_amps + "</dc:title>\n"
+				" </r:Description>\n"
+				"</r:RDF></extra>";
+			const std::string stray_amps_stm =
+				"<< /Type /Metadata /Subtype /XML /Length " +
+				std::to_string(stray_and_amps_xmp.size()) + " >>\nstream\n" +
+				stray_and_amps_xmp + "\nendstream";
+			const auto stray_amps_bytes = build_synthetic_pdf_from_objects(
+				"1.7",
+				{
+					{1, "<< /Type /Catalog /Pages 2 0 R /Metadata 4 0 R >>"},
+					{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 612 792] /Kids [3 0 R] >>"},
+					{3, "<< /Type /Page /Parent 2 0 R >>"},
+					{4, stray_amps_stm},
+				});
+			auto stray_amps_doc = Document::open_memory(stray_amps_bytes);
+			ASSERT_TRUE(stray_amps_doc.has_value()) << stray_amps_doc.error().message.view();
+			EXPECT_EQ((*stray_amps_doc)->metadata().title, many_amps);
+		}
 	}
 
 	// 4. `parse_pdf_date` handles `std::bad_alloc` cleanly without terminating

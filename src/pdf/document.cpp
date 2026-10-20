@@ -227,9 +227,13 @@ namespace {
 	size_t i = 0;
 	while (i < text.size()) {
 		if (text[i] == '&') {
-			const size_t semi = text.find(';', i + 1u);
-			if (semi != std::string_view::npos && semi - i <= 10u) {
-				const std::string_view ent = text.substr(i + 1u, semi - i - 1u);
+			const std::string_view window = text.substr(
+				i + 1u,
+				std::min<size_t>(10u, text.size() - (i + 1u)));
+			const size_t rel_semi = window.find(';');
+			if (rel_semi != std::string_view::npos) {
+				const size_t semi = i + 1u + rel_semi;
+				const std::string_view ent = window.substr(0u, rel_semi);
 				if (ent == "amp") {
 					out.push_back('&');
 					i = semi + 1u;
@@ -582,13 +586,15 @@ struct ExtractedXmpPacket {
 			pos = gt + 1u;
 
 			size_t match_idx = scopes.size();
+			bool found_match = false;
 			while (match_idx > 1u) {
 				--match_idx;
 				if (scopes[match_idx].qname == close_qname) {
+					found_match = true;
 					break;
 				}
 			}
-			if (match_idx >= 1u && scopes[match_idx].qname == close_qname) {
+			if (found_match) {
 				while (scopes.size() > match_idx) {
 					const size_t closing_depth = scopes.size() - 1u;
 					if (active_li_depth.has_value() && closing_depth == *active_li_depth) {
