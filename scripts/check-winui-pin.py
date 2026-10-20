@@ -4,6 +4,7 @@
     python scripts/check-winui-pin.py check              # exit 1 when a newer stable release exists
     python scripts/check-winui-pin.py update             # propose it: branch winui/<version>, then email
     python scripts/check-winui-pin.py update --dry-run   # say what update would do; change and send nothing
+    python scripts/check-winui-pin.py pr                 # (GitHub pins workflow) open a PR on winui/<version>, run CI
 
 The pin is the `Microsoft.WindowsAppSDK` PackageReference version in `src/app/Recto.vcxproj` (foundation plan D4). A stable release is a GitHub release
 of the microsoft-ui-xaml repository tagged `winui3/release/<major>.<minor>.<patch>`, not marked a prerelease and
@@ -19,6 +20,9 @@ when the ref refs/winui-pin/<version> exists, written after the checks passed, t
 a winui/<version> branch without it is an unfinished attempt that the next run discards and redoes, and a branch that
 cannot be discarded fails the run. The pin on main must also be published on NuGet. A pin that is not an exact stable version, or is ahead of the newest stable
 release, fails the check.
+`pr` is what the daily `.github/workflows/pins.yml` runs: the same decision, but the bump becomes a pull request on
+`winui/<version>` whose CI (`build.yml`, `plan.yml`) is dispatched on the branch, through `scripts/lib/pin_proposal.py`.
+A version that already has a pull request, open, merged or closed, is never proposed again.
 Exit 0 current or proposed, 1 newer release pending or a check failed, 2 the releases or NuGet could not be read.
 """
 import argparse
@@ -202,7 +206,7 @@ def update(version, release, nuget_versions, root=ROOT, dry_run=False, build=sub
                     git("add", PIN_FILE, cwd=tree)
                     git("commit", "-q", "-m", f"deps: pin WinUI 3 (Windows App SDK) {version}",
                         "-m", f"Newest stable release {release.get('tag_name')} published "
-                              f"{str(release.get('published_at', ''))[:10]}; was {old}. Proposed by the recto-winui-pin task.",
+                              f"{str(release.get('published_at', ''))[:10]}; was {old}. Proposed by scripts/check-winui-pin.py update.",
                         cwd=tree)
                     commit = git("rev-parse", "HEAD", cwd=tree).stdout.strip()
         finally:
@@ -241,7 +245,7 @@ def update(version, release, nuget_versions, root=ROOT, dry_run=False, build=sub
 
 def main(argv=None, fetch=fetch_json, root=ROOT, build=subprocess.run, mail=notify):
     parser = argparse.ArgumentParser(description="Keep the WinUI 3 pin on the latest stable release.")
-    parser.add_argument("mode", choices=("check", "update"))
+    parser.add_argument("mode", choices=("check", "update", "pr"))
     parser.add_argument("--dry-run", action="store_true", help="say what update would do; change and send nothing")
     args = parser.parse_args(argv)
     try:
@@ -276,7 +280,35 @@ def main(argv=None, fetch=fetch_json, root=ROOT, build=subprocess.run, mail=noti
     except (ET.ParseError, ValueError) as exc:
         print(f"check-winui-pin: {exc}", file=sys.stderr)
         return 1
+    if args.mode == "pr":
+        return open_pr(version, release, current, set(nuget), Path(root))
     return update(version, release, set(nuget), Path(root), args.dry_run, build, mail)
+
+
+def open_pr(version, release, current, nuget_versions, root, run_gh=None):
+    """Propose the bump as a pull request from the GitHub pins workflow; CI on the branch is the build check."""
+    sys.path.insert(0, str(ROOT / "scripts" / "lib"))
+    import pin_proposal
+
+    def rewrite(tree):
+        project = Path(tree) / PIN_FILE
+        old = pinned(project)
+        if not newer(version, old):
+            return []
+        project.write_text(repinned(project.read_text(encoding="utf-8"), old, version), encoding="utf-8", newline="")
+        return [PIN_FILE]
+
+    def checks(tree):
+        problems = [] if pinned(Path(tree) / PIN_FILE) == version else ["the rewritten file does not pin the new version"]
+        return problems + ([] if version in nuget_versions else [f"NuGet has no {PACKAGE} {version}"])
+
+    body = "\n".join([f"Newest stable WinUI 3 release: {release.get('tag_name')} "
+                      f"(published {str(release.get('published_at', ''))[:10]}); the pin was {current}.",
+                      "", f"Release notes: {release.get('html_url', '')}", "",
+                      "Opened by the pins workflow (foundation plan D4). CI builds x64 and ARM64 on this branch."])
+    extra = {} if run_gh is None else {"run_gh": run_gh}
+    return pin_proposal.propose_pr(root=root, branch=BRANCH.format(version=version), rewrite=rewrite, checks=checks,
+                                   title=f"deps: pin WinUI 3 (Windows App SDK) {version}", body=body, **extra)
 
 
 if __name__ == "__main__":

@@ -117,7 +117,7 @@ def main(argv=None, fetch=fetch_json, root=ROOT, mail=pin_proposal.notify):
     return pin_proposal.propose(
         root=root, key=key, branch=f"pins/{key}", rewrite=rewrite, checks=checks, dry_run=args.dry_run, mail=mail,
         message=[f"ci: move GitHub Actions to their latest majors ({summary})",
-                 "Proposed by the recto-actions-pins task; CI proves the workflows when the branch is pushed."],
+                 "Proposed by scripts/check-actions-pins.py update; CI proves the workflows when the branch is pushed."],
         subject="Recto: GitHub Actions updates are ready to merge",
         body=lambda commit: "\n".join([f"Newer stable majors: {summary}.", "",
                                        f"Branch pins/{key} (commit {commit[:12]}) moves the workflows to them.", "",

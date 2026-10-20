@@ -3,6 +3,10 @@
 
     python scripts/check-python-pin.py check     # exit 0 current, 1 behind, 2 cannot check
     python scripts/check-python-pin.py notify    # as check, but being behind is emailed once per finding, exit 0
+    python scripts/check-python-pin.py issue --scope ci   # (GitHub pins workflow) one issue per CI finding
+
+`--scope ci` checks only the workflow pins (what GitHub can see), `--scope local` only this machine's interpreter (the
+recto-python-pin task), and the default `all` both.
 
 Two pins are compared with the newest stable CPython on python.org (published, not a pre-release):
 - every `python-version:` in `.github/workflows/*.yml` must name the newest stable minor (for example `3.15`);
@@ -56,9 +60,11 @@ def text(key):
 
 def findings(newest, by_minor, pins, local):
     out = []
-    for path, line, value in pins:
+    for path, line, value in pins or []:
         if version_key(value)[:2] < newest[:2]:
             out.append(f"{path}:{line} python-version {value} is behind the newest stable minor {text(newest[:2])}")
+    if local is None:
+        return out
     if local[:2] < newest[:2]:
         out.append(f"this machine's Python {text(local)} is behind the newest stable minor {text(newest[:2])} "
                    f"(latest {text(newest)})")
@@ -67,9 +73,11 @@ def findings(newest, by_minor, pins, local):
     return out
 
 
-def main(argv=None, fetch=fetch_json, root=ROOT, local=tuple(sys.version_info[:3]), mail=pin_proposal.notify):
+def main(argv=None, fetch=fetch_json, root=ROOT, local=tuple(sys.version_info[:3]), mail=pin_proposal.notify,
+         run_gh=pin_proposal.gh):
     parser = argparse.ArgumentParser(description="Alert when CI or local Python falls behind the latest stable.")
-    parser.add_argument("mode", choices=("check", "notify"))
+    parser.add_argument("mode", choices=("check", "notify", "issue"))
+    parser.add_argument("--scope", choices=("all", "ci", "local"), default="all")
     args = parser.parse_args(argv)
     try:
         releases = fetch(RELEASES)
@@ -78,16 +86,25 @@ def main(argv=None, fetch=fetch_json, root=ROOT, local=tuple(sys.version_info[:3
     except Unreadable as exc:
         print(f"check-python-pin: could not read {exc}", file=sys.stderr)
         return 2
-    if not pins:
+    if not pins and args.scope != "local":
         print("check-python-pin: no python-version pin found in .github/workflows", file=sys.stderr)
         return 2
-    found = findings(newest, by_minor, pins, tuple(local))
+    found = findings(newest, by_minor, pins if args.scope != "local" else [],
+                     tuple(local) if args.scope != "ci" else None)
     if not found:
-        print(f"CI and this machine use the newest stable Python ({'.'.join(map(str, newest))})")
+        print(f"the checked Python pins ({args.scope}) are the newest stable Python ({text(newest)})")
+        if args.mode == "issue":
+            return pin_proposal.resolve_issues(root=root, check="python", run_gh=run_gh,
+                                               message=f"CI uses the newest stable Python {text(newest[:2])}.")
         return 0
     print("\n".join(found))
     if args.mode == "check":
         return 1
+    if args.mode == "issue":
+        return pin_proposal.file_issue(root=root, check="python", title=f"CI Python {text(newest[:2])} is available",
+                                       body="\n".join(found + ["", "Update python-version in the workflows (Dependabot "
+                                                                   "does not track it), then let CI prove it."]),
+                                       run_gh=run_gh)
     key = "python-" + hashlib.sha256("\n".join(found).encode()).hexdigest()[:12]
     return pin_proposal.notice(root=root, key=key, subject="Recto: a newer Python is available",
                                body="\n".join(found + ["", "Update the workflow python-version, or install the newer "

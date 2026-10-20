@@ -4,6 +4,7 @@
     python scripts/check-vcpkg-baseline.py check              # exit 1 when a newer vcpkg release exists
     python scripts/check-vcpkg-baseline.py update             # propose it on branch pins/vcpkg-<tag>, then email
     python scripts/check-vcpkg-baseline.py update --dry-run   # say what update would do; change and send nothing
+    python scripts/check-vcpkg-baseline.py pr                 # (GitHub pins workflow) open a PR; CI builds it
 
 The pin is `default-registry.baseline` in `vcpkg-configuration.json`, a microsoft/vcpkg commit. The target is the
 commit of the latest microsoft/vcpkg GitHub release (`/releases/latest`, never a prerelease), not the moving master
@@ -71,9 +72,9 @@ def rewrite_text(text, old, new):
     return text.replace(old, new)
 
 
-def main(argv=None, fetch=fetch_json, root=ROOT, build=None, mail=pin_proposal.notify):
+def main(argv=None, fetch=fetch_json, root=ROOT, build=None, mail=pin_proposal.notify, run_gh=None):
     parser = argparse.ArgumentParser(description="Keep the vcpkg baseline on the latest vcpkg release.")
-    parser.add_argument("mode", choices=("check", "update"))
+    parser.add_argument("mode", choices=("check", "update", "pr"))
     parser.add_argument("--dry-run", action="store_true", help="say what update would do; change and send nothing")
     args = parser.parse_args(argv)
     root = Path(root)
@@ -103,14 +104,26 @@ def main(argv=None, fetch=fetch_json, root=ROOT, build=None, mail=pin_proposal.n
         path.write_bytes(rewrite_text(path.read_bytes().decode("utf-8"), current, sha).encode("utf-8"))
         return [CONFIG]
 
+    def named(tree):
+        return [] if baseline((tree / CONFIG).read_text(encoding="utf-8")) == sha else [f"{CONFIG} does not name {sha}"]
+
     def checks(tree):
-        problems = [] if baseline((tree / CONFIG).read_text(encoding="utf-8")) == sha else [f"{CONFIG} does not name {sha}"]
-        return problems + (pin_proposal.build_passes(tree) if build is None else pin_proposal.build_passes(tree, build))
+        return named(tree) + (pin_proposal.build_passes(tree) if build is None else pin_proposal.build_passes(tree, build))
+
+    if args.mode == "pr":
+        # On GitHub the dispatched build.yml on the branch rebuilds the vcpkg test dependencies, so no local build.
+        extra = {} if run_gh is None else {"run_gh": run_gh}
+        return pin_proposal.propose_pr(
+            root=root, branch=f"pins/{key}", rewrite=rewrite, checks=named,
+            title=f"deps: move the vcpkg baseline to release {tag}",
+            body="\n".join([f"vcpkg release {tag} ({sha}); the baseline was {pinned}.", "",
+                            "Opened by the pins workflow (foundation plan D4). CI rebuilds the test dependencies and "
+                            "runs the tests on this branch."]), **extra)
 
     return pin_proposal.propose(
         root=root, key=key, branch=f"pins/{key}", rewrite=rewrite, checks=checks, dry_run=args.dry_run, mail=mail,
         message=[f"deps: move the vcpkg baseline to release {tag}",
-                 f"Baseline {sha}; was {pinned}. build.cmd passed. Proposed by the recto-vcpkg-baseline task."],
+                 f"Baseline {sha}; was {pinned}. build.cmd passed. Proposed by scripts/check-vcpkg-baseline.py update."],
         subject=f"Recto: vcpkg {tag} is ready to merge",
         body=lambda commit: "\n".join([f"vcpkg release {tag} is out ({sha[:12]}).", "",
                                        f"Branch pins/{key} (commit {commit[:12]}) moves the baseline from "

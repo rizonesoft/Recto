@@ -24,6 +24,7 @@ on:
       - '.claude/skills/**'
       - '.gitattributes'
       - '.github/workflows/plan.yml'
+  workflow_dispatch:
 
 jobs:
   plan-gates:

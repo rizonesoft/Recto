@@ -3,14 +3,16 @@
 
     python scripts/check-windows-sdk-line.py check     # exit 0 current, 1 a newer line exists or pins disagree, 2 cannot check
     python scripts/check-windows-sdk-line.py notify    # as check, but a newer line is emailed once and exits 0
+    python scripts/check-windows-sdk-line.py issue     # (GitHub pins workflow) one issue per new line, closed when resolved
 
 Recto targets one Windows SDK, named by `WindowsTargetPlatformVersion` (10.0.<build>.0) in `Directory.Build.props` and
 in every project that sets it. `scripts/check-sdk-pins.py` keeps the `Microsoft.Windows.SDK.BuildTools` pin current
 within that line; this check looks one level up and reports when nuget.org publishes stable build tools for a newer
 10.0.<build> line. Moving lines changes the target platform, so it is never automatic: the alert names the new line
 and the owner decides (a bump updates `WindowsTargetPlatformVersion` everywhere and the build tools pin together).
-`notify` (the recto-windows-sdk-line task) emails "Windows SDK <line> is available" once per new line through
-`scripts/lib/pin_proposal.py` and succeeds, so the failure alert stays reserved for a check that could not run.
+`issue` (the daily `.github/workflows/pins.yml`) files one issue per new line and closes it once Recto targets the
+newest line; `notify` emails "Windows SDK <line> is available" once per line for local use. Both go through
+`scripts/lib/pin_proposal.py` and succeed, so a failure is reserved for a check that could not run.
 """
 import argparse
 from pathlib import Path
@@ -43,9 +45,9 @@ def newest_line(versions):
     return max(stable)[:3]
 
 
-def main(argv=None, fetch=fetch_json, root=ROOT, mail=pin_proposal.notify):
+def main(argv=None, fetch=fetch_json, root=ROOT, mail=pin_proposal.notify, run_gh=pin_proposal.gh):
     parser = argparse.ArgumentParser(description="Alert when a newer Windows SDK line ships.")
-    parser.add_argument("mode", choices=("check", "notify"))
+    parser.add_argument("mode", choices=("check", "notify", "issue"))
     args = parser.parse_args(argv)
     try:
         values = targets(root)
@@ -73,9 +75,15 @@ def main(argv=None, fetch=fetch_json, root=ROOT, mail=pin_proposal.notify):
         print(advice)
         if args.mode == "check":
             return 1
+        if args.mode == "issue":
+            return pin_proposal.file_issue(root=root, check="windows-sdk-line", title=f"Windows SDK {line} is available",
+                                           body=advice, run_gh=run_gh)
         return pin_proposal.notice(root=root, key=f"windows-sdk-{line}", subject=f"Recto: Windows SDK {line} is available",
                                    body=advice, mail=mail)
     print(f"Recto targets the newest Windows SDK line {'.'.join(map(str, current))}")
+    if args.mode == "issue":
+        return pin_proposal.resolve_issues(root=root, check="windows-sdk-line", run_gh=run_gh,
+                                           message=f"Recto targets the newest Windows SDK line {'.'.join(map(str, current))}.")
     return 0
 
 

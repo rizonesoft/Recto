@@ -3,16 +3,17 @@
 
     python scripts/check-sdk-pins.py          # exit 0 current, 1 a pin is behind or not stable, 2 cannot check
     python scripts/check-sdk-pins.py notify   # as above, but a newer release is emailed once per version, exit 0
+    python scripts/check-sdk-pins.py pr       # (GitHub pins workflow) open one PR bumping every newer release
 
 Policy (foundation plan D4): every pin is an exact version, set to the latest stable release on
 nuget.org, never a floating range and never a preview or experimental build. The Windows App SDK pin
 follows the newest stable WinUI 3 GitHub release through scripts/check-winui-pin.py, so it is not
 checked here. The Windows SDK build tools track the Windows SDK named by WindowsTargetPlatformVersion,
 so that pin is compared only against releases in its own 10.0.<build> line; moving to a new Windows
-SDK is its own decision (`scripts/check-windows-sdk-line.py` announces a new line). The recto-toolchain-pins
-automation runs `notify` weekly: a newer stable release is emailed once per version through
-`scripts/lib/pin_proposal.py`, and only a pin that is not an exact stable version, or a source that cannot be read,
-fails the task and sends the failure alert.
+SDK is its own decision (`scripts/check-windows-sdk-line.py` files an issue for a new line). The daily
+`.github/workflows/pins.yml` runs `pr`: the newer releases become one pull request with CI dispatched on its branch,
+through `scripts/lib/pin_proposal.py`; `notify` emails once per version for local use. A pin that is not an exact
+stable version, or a source that cannot be read, fails the run.
 
 Stdlib only.
 """
@@ -118,10 +119,56 @@ def check(pins, sdk_line, fetch=fetch_versions):
     return faults
 
 
+def set_version(text, package, old, new):
+    """The project text with only one live PackageReference's Version changed, so formatting and comments survive."""
+    comments = [m.span() for m in re.finditer(r"<!--.*?-->", text, re.S)]
+    include = re.compile(r"\bInclude\s*=\s*([\"'])" + re.escape(package) + r"\1")
+    tags = [m for m in re.finditer(r"<PackageReference\b[^>]*>", text)
+            if include.search(m.group(0)) and not any(a <= m.start() < b for a, b in comments)]
+    if len(tags) != 1:
+        raise CannotCheck(f"needs exactly one live PackageReference for {package}, found {len(tags)}")
+    version = re.compile(r"(\bVersion\s*=\s*([\"']))" + re.escape(old) + r"\2")
+    changed, count = version.subn(lambda m: m.group(1) + new + m.group(2), tags[0].group(0))
+    if count != 1:
+        raise CannotCheck(f"the {package} pin {old} was not found on its PackageReference")
+    return text[:tags[0].start()] + changed + text[tags[0].end():]
+
+
+def open_pr(newer, run_gh=None):
+    """Propose every newer release as one pull request from the GitHub pins workflow; CI on the branch builds it."""
+    relative = PROJECT.relative_to(ROOT).as_posix()
+
+    def rewrite(tree):
+        path = Path(tree) / relative
+        text = path.read_text(encoding="utf-8")
+        current, _ = read_project(text)
+        for package, _, latest in newer:
+            if current[package] != latest:
+                text = set_version(text, package, current[package], latest)
+        if text == path.read_text(encoding="utf-8"):
+            return []
+        path.write_text(text, encoding="utf-8", newline="")
+        return [relative]
+
+    def checks(tree):
+        current, _ = read_project((Path(tree) / relative).read_text(encoding="utf-8"))
+        return [f"{package} is {current[package]}, not {latest}" for package, _, latest in newer
+                if current[package] != latest]
+
+    summary = ", ".join(f"{package} {latest}" for package, _, latest in newer)
+    extra = {} if run_gh is None else {"run_gh": run_gh}
+    return pin_proposal.propose_pr(
+        root=ROOT, branch="pins/toolchain-" + "-".join(f"{p.split('.')[-1].lower()}-{v}" for p, _, v in newer),
+        rewrite=rewrite, checks=checks, title=f"deps: update {summary}",
+        body="\n".join([f"{package}: {pinned} -> {latest}" for package, pinned, latest in newer]
+                       + ["", "Opened by the pins workflow (foundation plan D4). CI builds x64 and ARM64 on this branch."]),
+        **extra)
+
+
 def main(argv=None, mail=pin_proposal.notify):
     argv = sys.argv[1:] if argv is None else argv
-    if argv not in ([], ["notify"]):
-        print("usage: check-sdk-pins.py [notify]", file=sys.stderr)
+    if argv not in ([], ["notify"], ["pr"]):
+        print("usage: check-sdk-pins.py [notify | pr]", file=sys.stderr)
         return 2
     try:
         faults = check(*read_project(PROJECT.read_text(encoding="utf-8")))
@@ -134,8 +181,10 @@ def main(argv=None, mail=pin_proposal.notify):
         print(f"all {len(TRACKED)} pins in {PROJECT.relative_to(ROOT).as_posix()} are the latest stable releases")
         return 0
     newer = [(package, pinned, latest) for package, pinned, latest, _ in faults if latest is not None]
-    if argv != ["notify"] or len(newer) != len(faults):
+    if argv == [] or len(newer) != len(faults):
         return 1
+    if argv == ["pr"]:
+        return open_pr(newer)
     lines = [f"{package} {pinned} -> {latest}" for package, pinned, latest in newer]
     key = "toolchain-" + "-".join(f"{package}-{latest}" for package, _, latest in newer)
     return pin_proposal.notice(root=ROOT, key=key, subject="Recto: newer C++/WinRT or build tools releases",

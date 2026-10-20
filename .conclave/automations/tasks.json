@@ -3,86 +3,18 @@
   "folder": "\\Recto\\",
   "tasks": [
     {
-      "name": "recto-winui-pin",
-      "description": "Propose the latest stable WinUI 3 release on a winui/<version> branch and email the operator",
+      "name": "recto-python-pin",
+      "description": "Email once when this machine's Python is behind the newest stable CPython",
       "command": [
         "python",
-        "scripts/check-winui-pin.py",
-        "update"
-      ],
-      "trigger": {
-        "at_logon_delay_minutes": 10,
-        "every_minutes": 1440
-      },
-      "timeout_minutes": 60
-    },
-    {
-      "name": "recto-toolchain-pins",
-      "description": "Email once per new C++/WinRT or Windows SDK build tools release; fail on a non-stable pin",
-      "command": [
-        "python",
-        "scripts/check-sdk-pins.py",
-        "notify"
+        "scripts/check-python-pin.py",
+        "notify",
+        "--scope",
+        "local"
       ],
       "trigger": {
         "weekly": "Monday",
         "at": "07:00"
-      },
-      "timeout_minutes": 5
-    },
-    {
-      "name": "recto-windows-sdk-line",
-      "description": "Email once when a newer Windows SDK line than WindowsTargetPlatformVersion ships",
-      "command": [
-        "python",
-        "scripts/check-windows-sdk-line.py",
-        "notify"
-      ],
-      "trigger": {
-        "weekly": "Monday",
-        "at": "07:05"
-      },
-      "timeout_minutes": 5
-    },
-    {
-      "name": "recto-actions-pins",
-      "description": "Propose GitHub Actions at their latest stable majors on a pins/actions-<key> branch and email the operator",
-      "command": [
-        "python",
-        "scripts/check-actions-pins.py",
-        "update"
-      ],
-      "trigger": {
-        "weekly": "Monday",
-        "at": "07:10"
-      },
-      "timeout_minutes": 10
-    },
-    {
-      "name": "recto-vcpkg-baseline",
-      "description": "Propose the latest vcpkg release baseline on a pins/vcpkg-<tag> branch after build.cmd passes",
-      "command": [
-        "python",
-        "scripts/check-vcpkg-baseline.py",
-        "update"
-      ],
-      "trigger": {
-        "weekly": "Monday",
-        "at": "07:15"
-      },
-      "timeout_minutes": 90
-    },
-    {
-      "name": "recto-python-pin",
-      "description": "Email once when CI or this machine's Python is behind the newest stable CPython",
-      "command": [
-        "python",
-        "scripts/check-python-pin.py",
-        "notify"
-      ],
-      "trigger": {
-        "weekly": "Monday",
-        "at": "07:20"
       },
       "timeout_minutes": 5
     },
@@ -96,7 +28,7 @@
       ],
       "trigger": {
         "weekly": "Monday",
-        "at": "07:25"
+        "at": "07:05"
       },
       "timeout_minutes": 5
     },
@@ -110,7 +42,7 @@
       ],
       "trigger": {
         "weekly": "Monday",
-        "at": "07:30"
+        "at": "07:10"
       },
       "timeout_minutes": 10
     }

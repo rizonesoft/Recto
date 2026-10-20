@@ -1,10 +1,14 @@
-"""Propose a dependency pin bump on its own branch, never touching the operator's checkout or main.
+"""How the pin checks act and tell the operator, shared by every `scripts/check-*.py` pin script.
 
-Shared by the pin automations that change repository files (`check-actions-pins.py`, `check-vcpkg-baseline.py`).
-`propose` adds a temporary git worktree on a new branch from main, applies the rewrite there, runs the caller's checks,
-commits, removes the worktree and emails the operator which branch to merge. A proposal is finished only when the ref
-`refs/recto-pin/<key>` exists, written after the checks passed, the commit landed and the email went; a branch without
-it is an unfinished attempt that the next run discards and redoes. This mirrors `check-winui-pin.py`'s `update`.
+On GitHub (the daily `.github/workflows/pins.yml`): `propose_pr` opens a pull request for a repository pin bump and
+dispatches CI on its branch; `file_issue` opens one deduplicated issue for an owner decision, and `resolve_issues`
+closes it once the finding is gone. GitHub's own notifications tell the operator.
+
+On this machine (`.conclave/automations`, for checks only this PC can see): `notice` emails an "available" notice once
+per new version, and `notify` sends through the automations' alert sender. `propose` is the local equivalent of a PR:
+it adds a temporary git worktree on a new branch from main, applies the rewrite there, runs the caller's checks,
+commits, removes the worktree and emails the operator which branch to merge; a proposal is finished only when the ref
+`refs/recto-pin/<key>` exists. It serves the manual `update` modes.
 
 Stdlib only.
 """
@@ -61,6 +65,94 @@ def notice(*, root, key, subject, body, dry_run=False, mail=notify):
         print(f"emailed {key}, but could not record {done}: {(marked.stderr or marked.stdout).strip()}", file=sys.stderr)
         return 1
     print(f"announced {key} to the operator")
+    return 0
+
+
+BOT = ("github-actions[bot]", "41898282+github-actions[bot]@users.noreply.github.com")
+LABELS = {"dependencies": "0366d6", "pins": "5319e7"}
+CI_WORKFLOWS = ("build.yml", "plan.yml")
+
+
+def gh(*args, cwd):
+    """Run the GitHub CLI (authenticated by GH_TOKEN in the workflow); raise with its message on failure."""
+    result = subprocess.run(["gh", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
+                            errors="replace", creationflags=NO_WINDOW)
+    if result.returncode != 0:
+        raise RuntimeError(f"gh {' '.join(args[:3])}: {(result.stderr or result.stdout).strip()}")
+    return result.stdout
+
+
+def ensure_labels(names, root, run_gh=gh):
+    for name in names:
+        run_gh("label", "create", name, "--color", LABELS.get(name, "bfd4f2"), "--force", cwd=root)
+
+
+def propose_pr(*, root, branch, rewrite, checks, title, body, run_gh=gh):
+    """Open a pull request for a pin bump from the GitHub pins workflow; return the exit code.
+
+    The checkout is main. A branch that already has a pull request (open, merged or closed) is never proposed again,
+    so closing a PR declines that version. The bump is committed as github-actions[bot] on `branch`, pushed, opened as
+    a PR, and the CI workflows are dispatched on the branch, because a PR opened with the workflow token does not start
+    other workflows by itself (workflow_dispatch is the documented exception)."""
+    root = Path(root)
+    existing = json.loads(run_gh("pr", "list", "--head", branch, "--state", "all", "--json", "number,state", cwd=root) or "[]")
+    if existing:
+        print(f"{branch} was proposed before as PR #{existing[0]['number']} ({existing[0]['state'].lower()})")
+        return 0
+    if git("ls-remote", "--exit-code", "--heads", "origin", branch, cwd=root, check=False).returncode == 0:
+        git("push", "origin", "--delete", branch, cwd=root)
+        print(f"discarded the unfinished remote {branch} from an earlier run")
+    git("switch", "-c", branch, cwd=root)
+    try:
+        changed = rewrite(root)
+        if not changed:
+            print(f"main already holds the target for {branch}; nothing to propose")
+            return 0
+        problems = checks(root)
+        if problems:
+            print("checks failed, nothing proposed:\n- " + "\n- ".join(problems), file=sys.stderr)
+            return 1
+        git("add", *changed, cwd=root)
+        git("-c", f"user.name={BOT[0]}", "-c", f"user.email={BOT[1]}", "commit", "-q", "-m", title, "-m", body, cwd=root)
+        git("push", "-u", "origin", branch, cwd=root)
+        ensure_labels(("dependencies", "pins"), root, run_gh)
+        url = run_gh("pr", "create", "--base", "main", "--head", branch, "--title", title, "--body", body,
+                     "--label", "dependencies", "--label", "pins", cwd=root).strip()
+        for workflow in CI_WORKFLOWS:
+            run_gh("workflow", "run", workflow, "--ref", branch, cwd=root)
+        print(f"opened {url} and started {', '.join(CI_WORKFLOWS)} on {branch}")
+        return 0
+    finally:
+        git("switch", "main", cwd=root, check=False)
+        git("branch", "-D", branch, cwd=root, check=False)
+
+
+def file_issue(*, root, check, title, body, run_gh=gh):
+    """Open one issue per finding for an owner decision; return 0. Deduplicated by title within the check's label:
+    an open issue with this title is left alone, a closed one means the owner dismissed it, and older open issues of the
+    same check are closed as superseded."""
+    label = f"pins:{check}"
+    ensure_labels(("pins", label), root, run_gh)
+    issues = json.loads(run_gh("issue", "list", "--label", label, "--state", "all", "--limit", "100",
+                               "--json", "number,title,state", cwd=root) or "[]")
+    if any(i["title"] == title for i in issues):
+        print(f"issue already filed: {title}")
+        return 0
+    for issue in issues:
+        if issue["state"] == "OPEN":
+            run_gh("issue", "close", str(issue["number"]), "--comment", f"Superseded by a newer finding: {title}", cwd=root)
+    url = run_gh("issue", "create", "--title", title, "--body", body, "--label", "pins", "--label", label, cwd=root).strip()
+    print(f"filed {url}")
+    return 0
+
+
+def resolve_issues(*, root, check, message, run_gh=gh):
+    """Close every open issue of the check once its finding is gone; return 0."""
+    label = f"pins:{check}"
+    issues = json.loads(run_gh("issue", "list", "--label", label, "--state", "open", "--json", "number", cwd=root) or "[]")
+    for issue in issues:
+        run_gh("issue", "close", str(issue["number"]), "--comment", f"Resolved: {message}", cwd=root)
+        print(f"closed #{issue['number']}: {message}")
     return 0
 
 

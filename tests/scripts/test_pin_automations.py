@@ -272,6 +272,96 @@ class ConclaveKitTests(GitRepo):
         self.assertEqual(self.mod.drift(self.sdk, self.repo), [])
 
 
+class FakeGh:
+    """Records gh calls and answers the list queries the pin modes make."""
+
+    def __init__(self, prs="[]", issues="[]"):
+        self.calls, self.prs, self.issues = [], prs, issues
+
+    def __call__(self, *args, cwd):
+        self.calls.append(args)
+        if args[:2] == ("pr", "list"):
+            return self.prs
+        if args[:2] == ("issue", "list"):
+            return self.issues
+        if args[:2] in (("pr", "create"), ("issue", "create")):
+            return "https://github.com/example/repo/1\n"
+        return ""
+
+    def made(self, *prefix):
+        return [c for c in self.calls if c[:len(prefix)] == prefix]
+
+
+class GitHubModeTests(GitRepo):
+    """The pins workflow's modes: a PR with CI dispatched on its branch, and deduplicated issues."""
+
+    OLD, NEW = "a" * 40, "b" * 40
+
+    def setUp(self):
+        super().setUp()
+        self.write("vcpkg-configuration.json", json.dumps({"default-registry": {"kind": "git", "baseline": self.OLD}}))
+        self.commit()
+        origin = Path(self._tmp.name) / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+        self.git("remote", "add", "origin", str(origin))
+        self.git("push", "-q", "origin", "main")
+        self.origin = origin
+        self.vcpkg = load("check-vcpkg-baseline")
+
+    def fetch(self, url):
+        if url.endswith("/releases/latest"):
+            return {"tag_name": "2026.10.16"}
+        if "/commits/" in url:
+            return {"sha": self.NEW}
+        return {"status": "ahead"}
+
+    def test_pr_mode_pushes_the_branch_opens_a_pr_and_dispatches_ci(self):
+        gh = FakeGh()
+        self.assertEqual(self.vcpkg.main(["pr"], fetch=self.fetch, root=self.root, run_gh=gh), 0)
+        remote = subprocess.run(["git", "show", "pins/vcpkg-2026.10.16:vcpkg-configuration.json"], cwd=self.origin,
+                                capture_output=True, text=True, check=True).stdout
+        self.assertIn(self.NEW, remote)
+        self.assertEqual(len(gh.made("pr", "create")), 1)
+        self.assertEqual([c[2] for c in gh.made("workflow", "run")], ["build.yml", "plan.yml"])
+        self.assertEqual(self.git("rev-parse", "--abbrev-ref", "HEAD"), "main")
+        self.assertIn(self.OLD, (self.root / "vcpkg-configuration.json").read_text(encoding="utf-8"))
+
+    def test_a_version_with_any_existing_pr_is_never_proposed_again(self):
+        gh = FakeGh(prs='[{"number": 7, "state": "CLOSED"}]')
+        self.assertEqual(self.vcpkg.main(["pr"], fetch=self.fetch, root=self.root, run_gh=gh), 0)
+        self.assertEqual(gh.made("pr", "create"), [])
+        listed = subprocess.run(["git", "branch", "--list", "pins/*"], cwd=self.origin, capture_output=True, text=True)
+        self.assertEqual(listed.stdout.strip(), "")
+
+    def test_issue_mode_files_once_supersedes_older_and_resolves(self):
+        props = "<Project><PropertyGroup><WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion></PropertyGroup></Project>"
+        self.write("Directory.Build.props", props)
+        self.write("src/app/Recto.vcxproj", props)
+        sdk = load("check-windows-sdk-line")
+        feed = returning({"versions": ["10.0.26100.9169", "10.0.28000.2705"]})
+        older = '[{"number": 3, "title": "Windows SDK 10.0.27000 is available", "state": "OPEN"}]'
+        gh = FakeGh(issues=older)
+        self.assertEqual(sdk.main(["issue"], fetch=feed, root=self.root, run_gh=gh), 0)
+        self.assertEqual([c[2] for c in gh.made("issue", "close")], ["3"])
+        self.assertEqual(len(gh.made("issue", "create")), 1)
+        same = '[{"number": 4, "title": "Windows SDK 10.0.28000 is available", "state": "OPEN"}]'
+        gh = FakeGh(issues=same)
+        self.assertEqual(sdk.main(["issue"], fetch=feed, root=self.root, run_gh=gh), 0)
+        self.assertEqual(gh.made("issue", "create"), [])
+        gh = FakeGh(issues='[{"number": 4}]')
+        current = returning({"versions": ["10.0.26100.9169"]})
+        self.assertEqual(sdk.main(["issue"], fetch=current, root=self.root, run_gh=gh), 0)
+        self.assertEqual([c[2] for c in gh.made("issue", "close")], ["4"])
+
+    def test_python_issue_scope_ci_ignores_the_local_interpreter(self):
+        py = load("check-python-pin")
+        self.write(".github/workflows/plan.yml", "          python-version: '3.15'\n")
+        releases = returning([{"name": "Python 3.15.0"}])
+        gh = FakeGh()
+        self.assertEqual(py.main(["issue", "--scope", "ci"], fetch=releases, root=self.root, local=(3, 9, 0), run_gh=gh), 0)
+        self.assertEqual(gh.made("issue", "create"), [])
+
+
 class SdkPinsNotifyTests(GitRepo):
     def test_newer_release_is_announced_and_the_task_succeeds(self):
         mod = load("check-sdk-pins")

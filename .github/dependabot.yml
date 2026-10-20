@@ -1,0 +1,11 @@
+version: 2
+updates:
+  # GitHub Actions stay on their latest stable majors (foundation plan D4). The pins workflow's token cannot edit
+  # workflow files, so Dependabot owns these bumps; scripts/check-actions-pins.py remains the local check.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: daily
+    labels:
+      - dependencies
+      - pins

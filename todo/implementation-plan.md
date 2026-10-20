@@ -287,15 +287,15 @@ Sections: 1 | Checklist items: 7
 
 ### Phase 99: Manual, operator only
 
-Sections: 4 | Checklist items: 21
+Sections: 4 | Checklist items: 22
 
 | Status | Reference  | Deliverable                                                          | Needs                   | Items |
 | ------ | ---------- | -------------------------------------------------------------------- | ----------------------- | ----- |
 | [ ]    | D99 T01 §1 | Trademark search and Store name reservation                          | operator                | 5     |
-| [ ]    | D99 T01 §2 | GitHub repository face and branch protection                         | operator                | 6     |
+| [ ]    | D99 T01 §2 | GitHub repository face and branch protection                         | operator                | 7     |
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
 Progress: 24/227 verified sections, 5 ready to run now.
 
-Checklist: 147/1673 items completed (includes Commit items).
+Checklist: 148/1674 items completed (includes Commit items).

@@ -1,0 +1,65 @@
+name: pins
+
+# Keeps every repository pin on its latest stable release (foundation plan D4). Daily, each check runs the same script
+# the developer runs locally. A newer release becomes a pull request whose build.yml and plan.yml runs are dispatched
+# on its branch (a PR opened with the workflow token does not start them by itself); an owner decision, such as a new
+# Windows SDK line, becomes one issue that the next clean run closes. GitHub's notifications tell the owner, and a
+# failed job here (a source could not be read, a pin is malformed) emails whoever last edited this schedule.
+# GitHub Actions themselves are updated by Dependabot (.github/dependabot.yml): this workflow's token cannot change
+# workflow files. Checks only one machine can see (Visual Studio, local Python, Conclave kits) stay in
+# .conclave/automations.
+
+on:
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pins
+  cancel-in-progress: false
+
+jobs:
+  pin:
+    name: ${{ matrix.check }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: write
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - check: winui
+            run: python scripts/check-winui-pin.py pr
+          - check: toolchain
+            run: python scripts/check-sdk-pins.py pr
+          - check: vcpkg
+            run: python scripts/check-vcpkg-baseline.py pr
+          - check: windows-sdk-line
+            run: python scripts/check-windows-sdk-line.py issue
+          - check: python
+            run: python scripts/check-python-pin.py issue --scope ci
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+
+      - name: Run the check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ${{ matrix.run }}
