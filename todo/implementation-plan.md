@@ -40,7 +40,7 @@ Sections: 29 | Checklist items: 203
 | [x]    | D01 T01 §6  | PDF 1.5+ `/Type /XRef` streams, `/Type /ObjStm` streams and damaged-file recovery        | windows-host | 7     |
 | [x]    | D01 T01 §8  | Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`) | windows-host | 7     |
 | [x]    | D01 T01 §9  | Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG)      | windows-host | 8     |
-| [ ]    | D01 T01 §10 | `pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links | windows-host | 9     |
+| [x]    | D01 T01 §10 | `pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links | windows-host | 9     |
 | [ ]    | D01 T02 §1  | Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)     | windows-host | 7     |
 | [ ]    | D01 T02 §2  | DirectWrite in-memory font loader, Standard 14 metrics, Type 1/3 and `/ToUnicode` CMap   | windows-host | 7     |
 | [ ]    | D01 T02 §3  | Content-stream graphics state machine, path construction/clipping and colour spaces      | windows-host | 8     |
@@ -264,6 +264,6 @@ Sections: 4 | Checklist items: 20
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
-Progress: 23/204 verified sections, 3 ready to run now.
+Progress: 24/204 verified sections, 4 ready to run now.
 
 Checklist: 141/1464 items completed (includes Commit items).

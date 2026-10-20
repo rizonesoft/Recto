@@ -2,7 +2,7 @@
 schema_version: 1
 id: bridge-runtime
 domain: 01-engine
-status: active
+status: done
 title: "TODO-01 -- Native PDF Parser, Filters, Crypto and Document Model"
 frozen: true
 track: M1
@@ -49,7 +49,7 @@ track: M1
 | 7 | §6 | PDF 1.5+ `/Type /XRef` streams, `/Type /ObjStm` streams and damaged-file recovery | §5, §7 | [x] |
 | 8 | §8 | Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`) | §7 | [x] |
 | 9 | §9 | Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG) | §6, §7 | [x] |
-| 10 | §10 | `pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links | §6, §8, §9 | [ ] |
+| 10 | §10 | `pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links | §6, §8, §9 | [x] |
 
 ## 1. `PdfResult<T>`, `PdfError`, `ErrorCode`, D16 diagnostic ring and ETW `TraceLogging`
 
@@ -380,6 +380,9 @@ Implement `src/pdf/document.h` and `src/pdf/document.cpp` (`recto::pdf::Document
 - [x] Commit: `pdf: implement pdf::Document page-tree, metadata, outlines, fonts and links`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*:PdfObject.*:PdfLexer.*:PdfParser.*:PdfXref.*:PdfFilters.*:PdfCrypto.*:PdfDocument.*` passes under ASan with 0 warnings.
+
+> **Verified:** 2026-10-20 | §10 | 5e4c50a30b60093a325cd51ee7a6faf73231b352
+> **Review:** `docs/reviews/d01-t01-s10.json`
 
 ## Verification
 
