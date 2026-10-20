@@ -83,3 +83,61 @@ Every finding was checked against the commit; all 16 were accepted (11 in part) 
 14. D07 T03 §5 binds CI runs and the smoke report to the candidate SHA and the bundle's `SHA256SUMS.txt`, with required workflows listed in a file.
 15. D07 T03 §4 checks a `Regression-Test:` trailer naming a test that exists at the fix commit, with failing-before evidence in the pull request, not whether a file was added.
 16. D06 T03 §4 replaces the name scan with an include boundary: `recto_pdf.h` stops exporting `lexer.h` and `parser.h`, and `scripts/check-lexer-boundary.py` fails on any outside include.
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-20T22:20:50Z
+- Effort: medium
+- Lines: 31
+- Digest: a9e6282128fb7713
+
+Reviewed the supplied diff and primary API documentation. Local reads failed with `helper_unknown_error`, so I could not cross-check `todo/README.md`, the foundation plan, generated plan or omitted CSV. References below use candidate-side diff lines. No files were modified.
+
+## record: needs-attention
+
+1. **Finding 7 remains partly unresolved: valid painting operators can produce nothing visible.** `todo/06-quality/TODO-03-user-failure-gates.md:99` still requires a recovery note for every blank render containing painting operators. **Reproduce:** render `0 0 0 0 re f`, invoke an empty Form XObject with `Do`, or paint entirely outside the clip. All are valid blank results. Require evidence of dropped content, not merely the presence of a painting operator.
+
+2. **Finding 10 remains partly unresolved: the blocking read stays outside the killable boundary.** `todo/07-release/TODO-01-packaging-and-print.md:254` puts `IStream::Read` on a thread in the shared surrogate. Timing out the wait does not stop that thread. **Reproduce:** repeatedly supply streams whose `Read` never returns. Joining violates the deadline; abandoning them accumulates threads, buffers and retained objects. The render job cannot terminate these reads. Specify bounded lifetime and cleanup for the read operation, and test repeated timeouts and unloading. [`ISequentialStream::Read`](https://learn.microsoft.com/en-us/windows/win32/api/objidl/nf-objidl-isequentialstream-read) provides no general timeout parameter.
+
+3. **Finding 11 is only partly evidenced.** `docs/research/2026-10-20-pdfcraft-issue-lessons.md:9` acknowledges truncation but retains categorical maintainer attributions and approximate cluster totals without cluster membership or comment-level anchors. The described CSV schema supplies neither. **Reproduce:** reconstruct a “60+” category or identify the specific comment supporting a causal attribution from the committed record. A list of issues does not establish either. Retain the classification mapping and precise attribution anchors, or narrow the claims.
+
+4. **Finding 12 remains unresolved for nonvisual disclosure.** `todo/07-release/TODO-03-listening-to-users.md:118` permits retained font programs and unknown private streams, while inspection covers rendered pages. **Reproduce:** place confidential data in an unreferenced private stream. The preview looks harmless and the kept-channel warning appears, but sharing still discloses the data. The previous request for a supported-input policy and refusal of unsupported content was replaced by a warning. Visual inspection cannot validate these retained channels.
+
+5. **Finding 14 remains partly unresolved: workflow success does not prove the required matrix ran.** `todo/07-release/TODO-03-listening-to-users.md:164` checks successful workflow runs, but names no required job/matrix identities. **Reproduce:** skip the ARM64 or standard-user job conditionally while the remaining jobs succeed. The workflow-level requirement can pass without that coverage. Require successful conclusions for every mandatory job and matrix combination. GitHub explicitly documents that [skipped jobs can report success](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-jobs-with-conditions).
+
+## source-defect: needs-attention
+
+6. **The replacement prescription uses an unsupported flag and assumes a backup in every failure state.** `todo/04-convert/TODO-02-pdf-conversions-a.md:86` specifies `REPLACEFILE_WRITE_THROUGH` and reconciliation “from the backup.” Microsoft marks that flag unsupported. For 1175, both files retain their names; for 1176 with a backup name supplied, both also retain their original names. Only 1177 explicitly places the original under the backup name. **Reproduce:** inject the documented 1175 state with the original still at the destination and no backup. Mandatory restoration from the backup cannot work. Define state-specific reconciliation and remove reliance on the unsupported flag. [ReplaceFileW documentation](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew).
+
+7. **Sparse-package registration omits COM activation registration and user scope.** `todo/07-release/TODO-01-packaging-and-print.md:284` specifies the context-menu declaration but not the corresponding `windows.comServer` registration. It also leaves the account running registration/removal undefined. **Reproduce:** implement only the specified menu declaration, or install under another administrator’s credentials and inspect the initiating user’s Explorer menu. The former lacks the specified COM server mapping; the latter can register identity for the wrong account. Require the COM declaration and an explicit per-user installation/removal lifecycle. Microsoft documents [both manifest extensions](https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/integrate-packaged-app-with-file-explorer), and [`Add-AppxPackage` installs to a user account](https://learn.microsoft.com/en-us/powershell/module/appx/add-appxpackage).
+
+8. **The response misstates the memory guarantee.** `docs/reviews/2026-10-21-pdfcraft-lessons-todo.md:79` calls this “256 MiB job memory,” but the prescribed flag at `todo/07-release/TODO-01-packaging-and-print.md:254` is `JOB_OBJECT_LIMIT_PROCESS_MEMORY`. That limits committed memory per process, not aggregate job memory or the surrogate’s copy buffer. **Reproduce:** run two processes in the job, each committing 200 MiB. Neither breaches the prescribed limit. Correct the claim or require `JOB_OBJECT_LIMIT_JOB_MEMORY` and test aggregate usage. [Job memory limit definitions](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_extended_limit_information).
+
+## consistency: needs-attention
+
+9. **`--blank-paths` violates the new structural-trace invariant.** `todo/07-release/TODO-03-listening-to-users.md:114` requires every non-string operand to remain identical; line 119 explicitly changes path coordinates. **Reproduce:** scrub an outlined-name fixture with `--blank-paths` and compare structural traces. Coordinate operands necessarily differ. Define flag-specific invariants and checkpoints.
+
+10. **The lexer boundary rejects the testing API introduced beside it.** `todo/06-quality/TODO-03-user-failure-gates.md:142` introduces `src/pdf/testing/operator_trace.h`, while line 148 forbids every external include except `recto_pdf.h`. **Reproduce:** include the trace header from `tests/recto-tests/` to implement the prescribed differential suite. The boundary script must reject it. Specify an explicit test-only interface exception or another permitted access mechanism.
+
+11. **The atomic writer retains incompatible replacement instructions.** `todo/04-convert/TODO-02-pdf-conversions-a.md:83` requires `MoveFileExW(...MOVEFILE_REPLACE_EXISTING...)` for overwriting existing files; line 86 requires `ReplaceFileW` for those files and reserves `MoveFileExW` for new files. **Reproduce:** implement the earlier checkbox literally. Its overwrite test passes while violating the added metadata-preservation contract. Replace the earlier instruction with one coherent branching contract.
+
+OVERALL: needs-attention
+
+## Response to round 3
+
+All 11 findings were checked against the commit and accepted; fixed in the next commit:
+
+1. D06 T03 §2 now proves drops by an instrumented branch-hit count equal to the note count; valid blank pages (zero-area fill, empty form, fully clipped paint, state-only stream) record none.
+2. D07 T01 §8 reads the stream synchronously on the calling thread in 1 MiB chunks with a 64 MiB cap and a 1 s total deadline, creating no thread that can outlive the call; the platform limit (no timeout inside one `IStream::Read`) is recorded for `docs/security-audit.md`, with a 200-call leak test.
+3. The research record narrows its claims: "Mistake" is the cited thread's own diagnosis, and the "Reports" column is a rough rank estimate that cannot be recounted because no per-issue classification was kept.
+4. D07 T03 §3 removes non-visual channels by default (unreachable objects dropped, fonts stripped, unknown streams, JavaScript, XFA and attachment data zeroed), with explicit `--keep-fonts` and `--keep-unknown` opt-ins that the report names.
+5. D07 T03 §5 requires `success` for every job and matrix combination in `.github/release-required-jobs.txt` for the candidate SHA, so a skipped job fails the gate.
+6. D04 T02 §1 drops the unsupported `REPLACEFILE_WRITE_THROUGH` and reconciles each state on its own terms (1175 and 1176 leave the original in place, 1177 moves it back from the backup); D06 T03 §5 tests the same.
+7. D07 T01 §9 declares the `windows.comServer` surrogate server beside the context-menu extension and registers the sparse package per user (first launch, `runasoriginaluser` at install, `-AllUsers` removal at uninstall).
+8. D07 T01 §8 uses `JOB_OBJECT_LIMIT_JOB_MEMORY` (aggregate) with one active process; the round 2 response's "256 MiB job memory" was wrong for the flag it named.
+9. D07 T03 §3 defines the trace invariant per flag: with `--blank-paths`, only path-construction operands are excluded.
+10. D06 T03 §4 lets `src/pdf/testing/` headers be included from `tests/` and `fuzz/` only, and the boundary script checks that exception.
+11. D04 T02 §1's earlier checkbox now branches: `MoveFileExW` for new files only, existing files only through `ReplaceFileW`.
+
+Round 3 was the last round the independent-review skill allows; these fixes have not had a fourth independent round.
