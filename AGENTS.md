@@ -85,6 +85,12 @@ python scripts/todo-graph.py query deferred  # open and resolved deferrals
 python -m unittest tests.scripts.test_todo_graph   # tooling tests, including the live tree
 python scripts/check-winui-pin.py check       # the WinUI 3 pin is the latest stable release (D4)
 python scripts/check-sdk-pins.py             # C++/WinRT and build tools pins are the latest stable (D4)
+python scripts/check-windows-sdk-line.py check   # Recto targets the newest Windows SDK line (D4)
+python scripts/check-actions-pins.py check     # GitHub Actions are on their latest stable majors (D4)
+python scripts/check-vcpkg-baseline.py check   # the vcpkg baseline is the latest vcpkg release (D4)
+python scripts/check-python-pin.py check       # CI and local Python are the newest stable CPython (D4)
+python scripts/check-visual-studio.py check    # this machine's Visual Studio is at its latest servicing release
+python scripts/check-conclave-kits.py check    # Conclave kit files match the SDK (deliberate differences: .conclave/kit-drift-allow.txt)
 python -m unittest discover -s tests/scripts  # Recto tooling tests (graph, pins, corpus, run guard)
 python -m unittest discover -s scripts/tests  # SDK kit tests (review-dispatch.py, automations)
 .\build.cmd                                  # one-command x64 + ARM64 Debug/Release build and x64 tests

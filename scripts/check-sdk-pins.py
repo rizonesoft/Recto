@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """Check that the C++/WinRT and Windows SDK build tools pins in src/app/Recto.vcxproj are the latest stable releases.
 
-    python scripts/check-sdk-pins.py     # exit 0 current, 1 a pin is behind or not stable, 2 cannot check
+    python scripts/check-sdk-pins.py          # exit 0 current, 1 a pin is behind or not stable, 2 cannot check
+    python scripts/check-sdk-pins.py notify   # as above, but a newer release is emailed once per version, exit 0
 
 Policy (foundation plan D4): every pin is an exact version, set to the latest stable release on
 nuget.org, never a floating range and never a preview or experimental build. The Windows App SDK pin
 follows the newest stable WinUI 3 GitHub release through scripts/check-winui-pin.py, so it is not
 checked here. The Windows SDK build tools track the Windows SDK named by WindowsTargetPlatformVersion,
 so that pin is compared only against releases in its own 10.0.<build> line; moving to a new Windows
-SDK is its own decision. The recto-toolchain-pins automation runs this weekly and alerts on exit 1.
+SDK is its own decision (`scripts/check-windows-sdk-line.py` announces a new line). The recto-toolchain-pins
+automation runs `notify` weekly: a newer stable release is emailed once per version through
+`scripts/lib/pin_proposal.py`, and only a pin that is not an exact stable version, or a source that cannot be read,
+fails the task and sends the failure alert.
 
 Stdlib only.
 """
@@ -20,6 +24,8 @@ import urllib.request
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "scripts" / "lib"))
+import pin_proposal  # noqa: E402
 PROJECT = ROOT / "src" / "app" / "Recto.vcxproj"
 FEED = "https://api.nuget.org/v3-flatcontainer/{id}/index.json"
 
@@ -112,7 +118,11 @@ def check(pins, sdk_line, fetch=fetch_versions):
     return faults
 
 
-def main():
+def main(argv=None, mail=pin_proposal.notify):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv not in ([], ["notify"]):
+        print("usage: check-sdk-pins.py [notify]", file=sys.stderr)
+        return 2
     try:
         faults = check(*read_project(PROJECT.read_text(encoding="utf-8")))
     except CannotCheck as exc:
@@ -122,7 +132,16 @@ def main():
         print(f"{package} {pinned}: {problem}")
     if not faults:
         print(f"all {len(TRACKED)} pins in {PROJECT.relative_to(ROOT).as_posix()} are the latest stable releases")
-    return 1 if faults else 0
+        return 0
+    newer = [(package, pinned, latest) for package, pinned, latest, _ in faults if latest is not None]
+    if argv != ["notify"] or len(newer) != len(faults):
+        return 1
+    lines = [f"{package} {pinned} -> {latest}" for package, pinned, latest in newer]
+    key = "toolchain-" + "-".join(f"{package}-{latest}" for package, _, latest in newer)
+    return pin_proposal.notice(root=ROOT, key=key, subject="Recto: newer C++/WinRT or build tools releases",
+                               body="\n".join(["Newer stable releases for the pins in src/app/Recto.vcxproj:"] + lines + [
+                                   "", "Bump each in its own commit after a full build.cmd (foundation plan D4)."]),
+                               mail=mail)
 
 
 if __name__ == "__main__":

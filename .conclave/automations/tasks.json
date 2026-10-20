@@ -18,16 +18,101 @@
     },
     {
       "name": "recto-toolchain-pins",
-      "description": "Check the C++/WinRT and Windows SDK build tools pins are the latest stable releases",
+      "description": "Email once per new C++/WinRT or Windows SDK build tools release; fail on a non-stable pin",
       "command": [
         "python",
-        "scripts/check-sdk-pins.py"
+        "scripts/check-sdk-pins.py",
+        "notify"
       ],
       "trigger": {
         "weekly": "Monday",
         "at": "07:00"
       },
       "timeout_minutes": 5
+    },
+    {
+      "name": "recto-windows-sdk-line",
+      "description": "Email once when a newer Windows SDK line than WindowsTargetPlatformVersion ships",
+      "command": [
+        "python",
+        "scripts/check-windows-sdk-line.py",
+        "notify"
+      ],
+      "trigger": {
+        "weekly": "Monday",
+        "at": "07:05"
+      },
+      "timeout_minutes": 5
+    },
+    {
+      "name": "recto-actions-pins",
+      "description": "Propose GitHub Actions at their latest stable majors on a pins/actions-<key> branch and email the operator",
+      "command": [
+        "python",
+        "scripts/check-actions-pins.py",
+        "update"
+      ],
+      "trigger": {
+        "weekly": "Monday",
+        "at": "07:10"
+      },
+      "timeout_minutes": 10
+    },
+    {
+      "name": "recto-vcpkg-baseline",
+      "description": "Propose the latest vcpkg release baseline on a pins/vcpkg-<tag> branch after build.cmd passes",
+      "command": [
+        "python",
+        "scripts/check-vcpkg-baseline.py",
+        "update"
+      ],
+      "trigger": {
+        "weekly": "Monday",
+        "at": "07:15"
+      },
+      "timeout_minutes": 90
+    },
+    {
+      "name": "recto-python-pin",
+      "description": "Email once when CI or this machine's Python is behind the newest stable CPython",
+      "command": [
+        "python",
+        "scripts/check-python-pin.py",
+        "notify"
+      ],
+      "trigger": {
+        "weekly": "Monday",
+        "at": "07:20"
+      },
+      "timeout_minutes": 5
+    },
+    {
+      "name": "recto-visual-studio",
+      "description": "Email once when this machine's Visual Studio is behind its latest servicing release",
+      "command": [
+        "python",
+        "scripts/check-visual-studio.py",
+        "notify"
+      ],
+      "trigger": {
+        "weekly": "Monday",
+        "at": "07:25"
+      },
+      "timeout_minutes": 5
+    },
+    {
+      "name": "recto-conclave-kits",
+      "description": "Email once when Conclave SDK kit files drift from the SDK or its doctor reports a gap",
+      "command": [
+        "python",
+        "scripts/check-conclave-kits.py",
+        "notify"
+      ],
+      "trigger": {
+        "weekly": "Monday",
+        "at": "07:30"
+      },
+      "timeout_minutes": 10
     }
   ]
 }

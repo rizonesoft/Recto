@@ -151,13 +151,10 @@ def checks(tree, version, nuget_versions, build=subprocess.run):
 
 
 def notify(subject, body, dry_run=False):
-    """Email the operator through the automations' sender (the same vault key and SMTP2GO path as the alerts)."""
-    if dry_run:
-        print(f"would email: {subject}\n{body}")
-        return
-    sys.path.insert(0, str(ROOT / ".conclave" / "automations"))
-    import alert
-    alert.send(alert.key(), subject, body)
+    """Email the operator through the shared pin notifier, which passes the automations' From line."""
+    sys.path.insert(0, str(ROOT / "scripts" / "lib"))
+    import pin_proposal
+    pin_proposal.notify(ROOT, subject, body, dry_run)
 
 
 def drop(branch, root):
