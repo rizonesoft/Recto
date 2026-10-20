@@ -1003,6 +1003,86 @@ TEST(PdfDocument, Metadata)
 		EXPECT_EQ(doc.metadata().producer, "Recto Native Producer");
 		ASSERT_TRUE(doc.metadata().parsed_creation_date.has_value());
 		EXPECT_EQ(doc.metadata().parsed_creation_date->iso8601, "2026-10-19T14:30:00+02:00");
+
+		// 3b. `/Catalog /Version` never downgrades a later header version
+		//     (ISO 32000-1 section 7.5.2 / 7.7.2: lower `/1.4` on `%PDF-1.7`
+		//     retains `"1.7"`, equal `/1.7` retains `"1.7"`, higher `/2.0`
+		//     upgrades to `"2.0"`):
+		for (const auto& [hdr_ver, cat_ver, expected_ver] :
+			 std::vector<std::tuple<std::string_view, std::string_view, std::string_view>>{
+				 {"1.7", "/1.4", "1.7"},
+				 {"1.7", "/1.7", "1.7"},
+				 {"1.4", "/1.7", "1.7"},
+				 {"1.7", "/2.0", "2.0"},
+			 }) {
+			const auto ver_bytes = build_synthetic_pdf_from_objects(
+				hdr_ver,
+				{
+					{1,
+					 std::string("<< /Type /Catalog /Version ") +
+						 std::string(cat_ver) + " /Pages 2 0 R >>"},
+					{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 612 792] /Kids [3 0 R] >>"},
+					{3, "<< /Type /Page /Parent 2 0 R >>"},
+				});
+			auto ver_doc = Document::open_memory(ver_bytes);
+			ASSERT_TRUE(ver_doc.has_value()) << ver_doc.error().message.view();
+			EXPECT_EQ((*ver_doc)->pdf_version(), expected_ver);
+		}
+
+		// 3c. XMP extraction resolves XML namespace bindings (`xmlns:dublin`,
+		//     `xmlns:adobe`, `xmlns:basic`, `xmlns:r`, default `xmlns`,
+		//     shorthand attributes, non-first `xml:lang='x-default'`, and
+		//     ignores rebound `xmlns:dc` pointing to a non-Dublin-Core URI):
+		{
+			const std::string custom_ns_xmp =
+				"<r:RDF xmlns:r='http://www.w3.org/1999/02/22-rdf-syntax-ns#'>\n"
+				" <r:Description xmlns:dc='http://example.com/not-dublin-core'>\n"
+				"  <dc:title>Wrong Title From Rebound Prefix</dc:title>\n"
+				" </r:Description>\n"
+				" <r:Description xmlns:dublin='http://purl.org/dc/elements/1.1/'\n"
+				"                xmlns:basic='http://ns.adobe.com/xap/1.0/'\n"
+				"                xmlns:adobe='http://ns.adobe.com/pdf/1.3/'\n"
+				"                basic:CreatorTool='Custom Prefix Tool'\n"
+				"                adobe:Producer='Custom Prefix Producer'>\n"
+				"  <dublin:title>\n"
+				"   <r:Alt>\n"
+				"    <r:li xml:lang='de'>Deutscher Titel</r:li>\n"
+				"    <r:li xml:lang='x-default'>Namespace Resolved Title</r:li>\n"
+				"   </r:Alt>\n"
+				"  </dublin:title>\n"
+				"  <dublin:creator><r:Seq><r:li>Custom Prefix Author</r:li></r:Seq></dublin:creator>\n"
+				"  <description xmlns='http://purl.org/dc/elements/1.1/'>Default Namespace Subject</description>\n"
+				"  <adobe:Keywords>ns-kw1, ns-kw2</adobe:Keywords>\n"
+				"  <basic:CreateDate>2026-10-20T01:00:00Z</basic:CreateDate>\n"
+				"  <basic:ModifyDate>2026-10-20T02:00:00Z</basic:ModifyDate>\n"
+				" </r:Description>\n"
+				"</r:RDF>\n";
+			const std::string custom_meta_stm =
+				"<< /Type /Metadata /Subtype /XML /Length " +
+				std::to_string(custom_ns_xmp.size()) + " >>\nstream\n" +
+				custom_ns_xmp + "\nendstream";
+			const auto ns_bytes = build_synthetic_pdf_from_objects(
+				"1.7",
+				{
+					{1, "<< /Type /Catalog /Pages 2 0 R /Metadata 4 0 R >>"},
+					{2, "<< /Type /Pages /Count 1 /MediaBox [0 0 612 792] /Kids [3 0 R] >>"},
+					{3, "<< /Type /Page /Parent 2 0 R >>"},
+					{4, custom_meta_stm},
+				});
+			auto ns_doc_res = Document::open_memory(ns_bytes);
+			ASSERT_TRUE(ns_doc_res.has_value()) << ns_doc_res.error().message.view();
+			const Document& ns_doc = **ns_doc_res;
+			EXPECT_EQ(ns_doc.metadata().title, "Namespace Resolved Title");
+			EXPECT_EQ(ns_doc.metadata().author, "Custom Prefix Author");
+			EXPECT_EQ(ns_doc.metadata().subject, "Default Namespace Subject");
+			EXPECT_EQ(ns_doc.metadata().keywords, "ns-kw1, ns-kw2");
+			EXPECT_EQ(ns_doc.metadata().creator, "Custom Prefix Tool");
+			EXPECT_EQ(ns_doc.metadata().producer, "Custom Prefix Producer");
+			ASSERT_TRUE(ns_doc.metadata().parsed_creation_date.has_value());
+			EXPECT_EQ(ns_doc.metadata().parsed_creation_date->iso8601, "2026-10-20T01:00:00Z");
+			ASSERT_TRUE(ns_doc.metadata().parsed_mod_date.has_value());
+			EXPECT_EQ(ns_doc.metadata().parsed_mod_date->iso8601, "2026-10-20T02:00:00Z");
+		}
 	}
 
 	// 4. `parse_pdf_date` handles `std::bad_alloc` cleanly without terminating
