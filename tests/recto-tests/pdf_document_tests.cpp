@@ -1170,6 +1170,8 @@ TEST(PdfDocument, Metadata)
 			auto stray_amps_doc = Document::open_memory(stray_amps_bytes);
 			ASSERT_TRUE(stray_amps_doc.has_value()) << stray_amps_doc.error().message.view();
 			EXPECT_EQ((*stray_amps_doc)->metadata().title, many_amps);
+			EXPECT_GE((*stray_amps_doc)->xmp_entity_scan_steps(), many_amps.size());
+			EXPECT_LE((*stray_amps_doc)->xmp_entity_scan_steps(), many_amps.size() * 20u);
 		}
 	}
 

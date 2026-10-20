@@ -361,6 +361,11 @@ public:
 		return catalog_;
 	}
 
+	[[nodiscard]] size_t xmp_entity_scan_steps() const noexcept
+	{
+		return xmp_entity_scan_steps_;
+	}
+
 private:
 	struct ResolvedPageRecord {
 		PageDescription description{};
@@ -417,6 +422,7 @@ private:
 	std::vector<ResolvedPageRecord> page_records_{};
 	std::unordered_map<uint64_t, uint32_t> page_obj_to_index_{};
 	std::unordered_map<std::string, ParsedDest> named_dests_{};
+	size_t xmp_entity_scan_steps_{0u};
 	bool structure_loaded_{false};
 };
 

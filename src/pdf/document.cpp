@@ -220,20 +220,27 @@ namespace {
 		 (ver[0] == '2' && ver[2] == '0'));
 }
 
-[[nodiscard]] std::string decode_xml_entities(std::string_view text)
+[[nodiscard]] std::string decode_xml_entities(
+	std::string_view text,
+	size_t* inout_scan_steps = nullptr)
 {
 	std::string out;
 	out.reserve(text.size());
+	size_t local_steps = 0u;
 	size_t i = 0;
 	while (i < text.size()) {
 		if (text[i] == '&') {
-			const std::string_view window = text.substr(
-				i + 1u,
-				std::min<size_t>(10u, text.size() - (i + 1u)));
-			const size_t rel_semi = window.find(';');
-			if (rel_semi != std::string_view::npos) {
-				const size_t semi = i + 1u + rel_semi;
-				const std::string_view ent = window.substr(0u, rel_semi);
+			const size_t search_limit = std::min<size_t>(text.size(), i + 11u);
+			size_t semi = std::string_view::npos;
+			for (size_t j = i + 1u; j < search_limit; ++j) {
+				++local_steps;
+				if (text[j] == ';') {
+					semi = j;
+					break;
+				}
+			}
+			if (semi != std::string_view::npos && semi - i <= 10u) {
+				const std::string_view ent = text.substr(i + 1u, semi - i - 1u);
 				if (ent == "amp") {
 					out.push_back('&');
 					i = semi + 1u;
@@ -304,6 +311,9 @@ namespace {
 		out.push_back(text[i]);
 		++i;
 	}
+	if (inout_scan_steps != nullptr) {
+		*inout_scan_steps += local_steps;
+	}
 	return out;
 }
 
@@ -359,7 +369,9 @@ struct ExtractedXmpPacket {
 // scope). Resolves `xmlns` default namespace and `xmlns:<prefix>` declarations
 // across nested element scopes, enforces W3C reserved `xml:lang="x-default"`
 // semantics on `<rdf:Alt>` items, and supports shorthand attributes.
-[[nodiscard]] ExtractedXmpPacket extract_xmp_metadata_packet(std::string_view xml)
+[[nodiscard]] ExtractedXmpPacket extract_xmp_metadata_packet(
+	std::string_view xml,
+	size_t* inout_entity_scan_steps = nullptr)
 {
 	struct XmlAttr {
 		std::string_view name{};
@@ -519,8 +531,9 @@ struct ExtractedXmpPacket {
 		const size_t lt = xml.find('<', pos);
 		const size_t text_end = (lt == std::string_view::npos) ? n : lt;
 		if (text_end > pos && target_depth.has_value()) {
-			const std::string decoded_chunk =
-				decode_xml_entities(xml.substr(pos, text_end - pos));
+			const std::string decoded_chunk = decode_xml_entities(
+				xml.substr(pos, text_end - pos),
+				inout_entity_scan_steps);
 			if (active_li_depth.has_value()) {
 				current_li_text += decoded_chunk;
 			} else {
@@ -712,7 +725,8 @@ struct ExtractedXmpPacket {
 						break;
 					}
 					attr_val = decode_xml_entities(
-						trim_ascii_whitespace(xml.substr(val_start, val_end - val_start)));
+						trim_ascii_whitespace(xml.substr(val_start, val_end - val_start)),
+						inout_entity_scan_steps);
 					cur = val_end + 1u;
 				} else {
 					const size_t val_start = cur;
@@ -720,7 +734,8 @@ struct ExtractedXmpPacket {
 						++cur;
 					}
 					attr_val = decode_xml_entities(
-						trim_ascii_whitespace(xml.substr(val_start, cur - val_start)));
+						trim_ascii_whitespace(xml.substr(val_start, cur - val_start)),
+						inout_entity_scan_steps);
 				}
 			}
 			if (attr_name == "xmlns") {
@@ -1866,6 +1881,7 @@ PdfResult<void> Document::load_document_structure()
 	page_records_.clear();
 	page_obj_to_index_.clear();
 	named_dests_.clear();
+	xmp_entity_scan_steps_ = 0u;
 	description_.pages.clear();
 	description_.outline.clear();
 	description_.fonts.clear();
@@ -1884,6 +1900,7 @@ PdfResult<void> Document::load_document_structure()
 				doc.page_records_.clear();
 				doc.page_obj_to_index_.clear();
 				doc.named_dests_.clear();
+				doc.xmp_entity_scan_steps_ = 0u;
 				doc.description_.pages.clear();
 				doc.description_.outline.clear();
 				doc.description_.fonts.clear();
@@ -2674,7 +2691,9 @@ PdfResult<void> Document::load_document_structure()
 					const std::string_view xmp_xml(
 						reinterpret_cast<const char*>(meta_bytes_res->data()),
 						meta_bytes_res->size());
-					ExtractedXmpPacket xmp_pkt = extract_xmp_metadata_packet(xmp_xml);
+					ExtractedXmpPacket xmp_pkt = extract_xmp_metadata_packet(
+						xmp_xml,
+						&xmp_entity_scan_steps_);
 					auto assign_xmp_fallback = [&](
 												   std::string& field,
 												   std::string&& extracted) -> PdfResult<void> {
