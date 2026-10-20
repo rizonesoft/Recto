@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "folder": "\\Recto\\",
+  "tasks": [
+    {
+      "name": "recto-winui-pin",
+      "description": "Propose the latest stable WinUI 3 release on a winui/<version> branch and email the operator",
+      "command": [
+        "python",
+        "scripts/check-winui-pin.py",
+        "update"
+      ],
+      "trigger": {
+        "daily_at": "06:23"
+      },
+      "timeout_minutes": 60
+    },
+    {
+      "name": "recto-toolchain-pins",
+      "description": "Check the C++/WinRT and Windows SDK build tools pins are the latest stable releases",
+      "command": [
+        "python",
+        "scripts/check-sdk-pins.py"
+      ],
+      "trigger": {
+        "weekly": "Monday",
+        "at": "07:00"
+      },
+      "timeout_minutes": 5
+    }
+  ]
+}

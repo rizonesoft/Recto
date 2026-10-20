@@ -7,7 +7,7 @@ description: Quality-gate a just-implemented TODO section with self-review, inde
 
 The gate between "code exists" and "the row says `[x]`". Nothing else may flip that row, and the flip happens only through `python scripts/todo-graph.py stamp`, which refuses a section with unticked items, an open prerequisite, a waiting Need, or no review evidence.
 
-Review is mandatory and independent: the implementing session self-reviews, and at least one review round comes from an independent reviewer running `GPT-6 Astra` (`gpt-6-astra`) via the Codex CLI (`Get-Content "<scratch-review-prompt.md>" -Raw | codex exec -m gpt-6-astra --ephemeral -`). Every round is recorded in a findings file; the stamp's receipt names the rounds. A verdict with no record is an opinion.
+Review is mandatory and independent: the implementing session self-reviews, and at least one review round comes from a reviewer of a different model, the one pinned in `.conclave/reviewers.toml` (the `reviewer` kit: GPT-6 Astra by default, failing over to Gemini 4 then Sonnet 5.5; Codex-written work goes to Gemini 4 first), run through `scripts/review-dispatch.py`. Every round is recorded in a findings file; the stamp's receipt names the rounds. A verdict with no record is an opinion.
 
 ## Use this skill when
 
@@ -31,51 +31,50 @@ Every review answers these with code and behavior evidence, never assertion:
 
 ### 1. Fix the candidate
 
-Name the candidate: the implementation commit, or the commit range when fix-loop commits append (commits are never amended once review starts). Record the full SHA(s) in the findings file at `docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md`. For an audit, the candidate is the section's own stamped commit, not today's tree. Read the actual diff (`git show`), not memory of writing it. Map each ticked checklist item to the code that satisfies it; an item with no corresponding change is not done (untick it) or was already true (note where).
+Name the candidate: the implementation commit, or the commit range (`<BASE_SHA>..<TIP_SHA>`) when the section landed across multiple logical step commits or when fix-loop commits append (commits are never amended once review starts). Record the full SHA(s) in the findings file at `docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md`. For an audit, the candidate is the section's own stamped commit, not today's tree. Read the actual diff (`git show` or `git diff <BASE_SHA>..<TIP_SHA>`), not memory of writing it. Map each ticked micro-step checklist item (its `Done when:` and `Cheaper substitute:`) to the code and test that satisfy it; an item with no corresponding change or a partially met `Done when:` (`partial-flip-shipped`) is not done (untick it) or was already true (note where).
 
 ### 2. Self-review
 
 Work the three questions across the diff and its blast radius. Fix what you find, then re-ask them. Look specifically for the failure modes this codebase invites:
 
-- A `recto::pdf::Document` call on the wrong thread, a document instance shared across threads instead of owned by a single `DocumentActor`, or unbounded recursion/allocation on hostile PDF inputs (foundation plan sections 3 and 4).
-- An engine or parser function that throws or aborts instead of returning `PdfResult<T>` / `PdfError`.
-- A tile cached after abort, a bitmap stride assumed to be `width * 4`, or a `CancelToken` polled without cooperative abort semantics.
-- A file write that is not temp-then-replace, or originals modified in place by Organize operations.
-- Office automation without `AutomationSecurity` forced off, or a document link opened without asking.
-- A hex colour, font size or glyph set directly on a control instead of SPEC tokens and Segoe Fluent Icons.
-- A setting nothing reads, a command unreachable from the command box, a control with no `AutomationProperties.Name`.
+- The failure modes the project's `AGENTS.md`, foundation plan and SPEC call out for the area you touched: list them in the findings file and check each one.
+- An error path that throws, aborts or swallows instead of returning the project's typed error, or a failure reported as success.
+- Work on the wrong thread, mutable state shared across threads, or unbounded recursion or allocation on hostile input.
+- A file write that is not temp-then-replace, or an original modified in place.
+- A hard-coded colour, size or string where design tokens or settings own it, or a control without an accessible name.
+- A setting nothing reads, a command nothing reaches, or a link or automation that acts without asking.
 - A test that passes without exercising the behavior.
 
-### 3. Independent review rounds (`GPT-6 Astra` via `codex`)
+### 3. Independent review rounds (the pinned reviewer)
 
-Run the lenses as separate passes over the candidate, at least one round by the independent `GPT-6 Astra` (`gpt-6-astra`) reviewer invoked via:
+Run the lenses as separate passes over the candidate, at least one round by the pinned independent reviewer. Write the prompt to a scratch file from `docs/review-round-prompt.md` (candidate SHA, section contract, governing documents, lenses), then run it, naming your own agent as the writer (`claude`, `codex` or `gemini`):
 
-```powershell
-Get-Content "<scratch-review-prompt.md>" -Raw | codex exec -m gpt-6-astra --ephemeral -
+```bash
+python3 scripts/review-dispatch.py --writer <claude|codex|gemini> --prompt <scratch-review-prompt.md> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md
 ```
 
-Record every round in the findings file: round number, reviewer (`GPT-6 Astra` via `codex exec -m gpt-6-astra`), candidate SHA, per-lens verdicts (`approve`, `needs-attention` with numbered findings naming `file:line`, or `advisory`), and the quoted gate outputs (the Live proof).
+The dispatcher fails over by itself and appends a `## Round N` section naming the reviewer, its model and any reviewer it skipped. Complete that round with the candidate SHA, per-lens verdicts (`approve`, `needs-attention` with numbered findings naming `file:line`, or `advisory`), and the quoted gate outputs (the Live proof). On Windows run `python` instead of `python3`. A repository without `scripts/review-dispatch.py` gets it with `forge.py kit . reviewer`.
 
 | Lens | Asks |
 | ---- | ---- |
-| `adversarial` | How does it fail on malformed PDFs, races, aborts, macros, or links? |
-| `consistency` | Does it match module rules, naming, shared controls, settings, errors? |
-| `integration` | Do actor contract, tile hand-off, job queue, and shell slots hold? |
-| `source-defect` | Are PDF 1.7/2.0, OpenXML, WinUI, and SPEC rules read and followed? |
-| `design` | Does the rendered surface match the SPEC screenshot and tokens? |
+| `adversarial` | How does this fail on hostile input, races, aborts, automation or links? |
+| `consistency` | Does it match the module rules, naming, shared components and settings? |
+| `integration` | Do callers and consumers still hold, with every contract kept? |
+| `source-defect` | Is the upstream spec or SPEC read accurately with deviations noted? |
+| `design` | Does the rendered UI match the design source and its tokens? |
 | `record` | Does evidence match what ran, with owned deferrals and earned flip? |
 
-The loop is bounded: at most 3 rounds. Findings are fixed in new commits appended to the candidate, gates re-run, and the affected lenses re-run against the new tip. A unit patched three rounds running is stopped and re-thought instead of patched again. Round verdicts for the receipt: `clean` (no findings), `fixed` (findings found and fixed in a later round), `stopped-at-3` (cap reached; every leftover is filed through `add-todo` with an owner, or the run stops with no stamp when a leftover is safety, data-integrity or stamp-invalidating). When the independent reviewer is unreachable (no CLI, auth failure, timeout), record the outage in the findings file with an owner and a due date and stop without a stamp: a session-only pass is not a substitute.
+The loop is bounded: at most 3 rounds. Findings are fixed in new commits appended to the candidate, gates re-run, and the affected lenses re-run against the new tip. A unit patched three rounds running is stopped and re-thought instead of patched again. Round verdicts for the receipt: `clean` (no findings), `fixed` (findings found and fixed in a later round), `stopped-at-3` (cap reached; every leftover is filed through `add-todo` with an owner, or the run stops with no stamp when a leftover is safety, data-integrity or stamp-invalidating). When the dispatcher exits 1 (no pinned reviewer could run), record the outage in the findings file with an owner and a due date and stop without a stamp: a session-only pass is not a substitute.
 
-Architecture check: on sections touching the bridge boundary, the threading contract, document lifetime, the tile hand-off, conversion isolation or the shell slot model, one findings-file paragraph answers whether the change keeps foundation plan sections 3 and 4 intact, naming any decision it effectively revises. A revision is recorded as a plan correction, never smuggled in as code.
+Architecture check: on sections touching an architectural boundary the foundation plan names (process or thread contracts, data ownership, module seams), one findings-file paragraph answers whether the change keeps the foundation plan architecture intact, naming any decision it effectively revises. A revision is recorded as a plan correction, never smuggled in as code.
 
 ### 4. Re-run the gates
 
-After the last fix, re-run the section's Test checkpoint and its owed gates (affected GoogleTest suites, build warnings clean, `validate`, the Freeze check in frozen files, ASan where the section names it). Quote the outputs in the findings file. A fix verified by reasoning is not verified. A red gate reopens the candidate: fix, re-run to green, and re-run the affected lens, because earlier verdicts rested on the broken candidate.
+After the last fix, re-run the section's Test checkpoint and its owed gates (affected test suites, build warnings clean, `validate`, the Freeze check in frozen files, ASan where the section names it). Quote the outputs in the findings file. A fix verified by reasoning is not verified. A red gate reopens the candidate: fix, re-run to green, and re-run the affected lens, because earlier verdicts rested on the broken candidate.
 
-### 5. Surface and frozen checks
+### 5. Surface, feature, and frozen checks
 
-Surface sections: every control, menu item, dialog and state on the Fidelity counterpart is working (proven on the rendered surface in this review) or deferred to a named, resolving section. Refuse the stamp for an unaccounted control. Frozen files: every `**Freeze check:**` ran and passed with the result quoted; a frozen behavior that moved without a recorded operator approval means no stamp and a question for the operator.
+Surface and feature completeness: 100% of every control, menu item, dialog and state on the Fidelity counterpart is working (proven on the rendered surface with real data and read-back in this review) or deferred to a named, resolving section, and every required refusal/error/undo path is exercised. Refuse the stamp for an unaccounted control or a `Cheaper substitute` shortcut. Frozen files: every `**Freeze check:**` ran and passed with the result quoted; a frozen behavior that moved without a recorded operator approval means no stamp and a question for the operator.
 
 ### 6. Stamp
 
@@ -89,7 +88,7 @@ One `--review` per round, one `--check` per gate actually run. `stamp` writes th
 
 ### 7. Audit stance
 
-On an already-`[x]` section: run steps 1 to 5 against the section's own candidate and receipt. Confirm the stamp's evidence still holds (re-run the checkpoint) or find the regression. A stamped section's `[x]` row, checklist, `Verified:` line, and receipt are immutable (`todo/README.md` and `validate` refuse reopening a stamped row or overwriting a receipt): when a regression is found, record a dated `> **Audit YYYY-MM-DD:**` note in the section naming the failing check, file a new repair section through `add-todo` (citing the regressed section and any downstream sections whose assumptions are affected), and sync the plan. A re-confirmed row keeps its stamp untouched; say so in one line.
+On an already-`[x]` section: run steps 1 to 5 against the section's own candidate and receipt. Confirm the stamp's evidence still holds (re-run the checkpoint) or find the regression. The only permitted row change is `[x]` back to `[ ]`, done by removing nothing silently: record the regression in the section as a dated blocking note, file the repair with `add-todo`, and say plainly that downstream sections stamped on this one are suspect until it re-stamps. A re-confirmed row keeps its stamp; say so in one line.
 
 ## Guardrails
 

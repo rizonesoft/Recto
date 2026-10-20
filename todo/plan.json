@@ -1,0 +1,15 @@
+{
+  "title": "Recto implementation plan",
+  "acceptance": "`docs/plans/2026-10-13-recto-foundation.md` (architecture, milestones M0 to M6, performance targets) plus `design/SPEC.md` (the interface).",
+  "phases": {
+    "0": "M0 Repository and build",
+    "1": "M1 Engine core",
+    "2": "M2 Viewer",
+    "3": "M3 Text",
+    "4": "M4 Conversions A",
+    "5": "M5 Conversions B",
+    "6": "M6 Ship",
+    "7": "After v1",
+    "99": "Manual, operator only"
+  }
+}

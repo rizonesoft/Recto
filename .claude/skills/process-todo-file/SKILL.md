@@ -22,7 +22,7 @@ Every row `[x]`, every `[x]` covered by a `Verified:` stamp with a matching rece
 
 ### 2. Run the file-level Verification block
 
-The `## Verification` section is not decoration. Run every item in it and record the real output. This is the only place the file is checked as a whole, and it is where integration gaps surface. For a code TODO that means the full suite, not the filtered runs individual sections used: the complete `recto-tests` run, the `recto-cli` corpus pass where the file names one, and a full x64 and ARM64 build where the file's sections are build-facing. Each item executed, none trimmed.
+The `## Verification` section is not decoration. Run every item in it and record the real output. This is the only place the file is checked as a whole, and it is where integration gaps surface. For a code TODO that means the full suite, not the filtered runs individual sections used: the complete test run, the CLI corpus pass where the file names one, and a full build where the file's sections are build-facing. Each item executed, none trimmed.
 
 ### 3. Loose-end sweep
 
@@ -31,7 +31,7 @@ Read the whole file with fresh eyes and check:
 - **Stubs and TODOs in the code.** Search the touched paths for `TODO`, `FIXME` and not-implemented markers introduced during the work. Each is finished now or gets an owning section through `add-todo`.
 - **Partial items.** Any checklist item ticked when only part shipped. The remainder becomes a new section; a stamped checklist is never rewritten.
 - **Orphaned deferrals.** `python scripts/todo-graph.py query deferred`: every `Deferred:` line names a live, still-open owner (a shipped owner already refuses validation, so what remains is confirming the description is still true).
-- **Integration reality.** The feature is reachable from where its user looks for it: shell slot, command box entry, keyboard shortcut, CLI verb. A control whose Job is a write and that only displays is not done. A setting nothing reads is not done.
+- **Integration reality.** The feature is reachable from where its user looks for it: its menu, page or panel, command entry, keyboard shortcut, CLI verb. A control whose Job is a write and that only displays is not done. A setting nothing reads is not done.
 - **Adjacency honesty.** `python scripts/todo-graph.py query adjacency`: every `applicable` key has its owning section shipped or still tracked, and every `not-applicable` reason still holds.
 
 ### 4. Reconcile the frozen contract
