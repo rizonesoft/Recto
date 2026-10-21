@@ -269,7 +269,10 @@ class HostileFixtureTest(unittest.TestCase):
                        # A byte-order mark before `#if 0`, and lone-CR line endings.
                        "tests/recto-tests/bom_tests.cpp":
                            "\ufeff#if 0\nTEST(BomDisabled, Case) {}\n#endif\nTEST(BomEnabled, Case) {}\n",
-                       "tests/recto-tests/cr_tests.cpp": "// header comment\rTEST(CrOnly, Case) {}\r"},
+                       "tests/recto-tests/cr_tests.cpp": "// header comment\rTEST(CrOnly, Case) {}\r",
+                       # The digraph spelling of #if 0 disables its block too.
+                       "tests/recto-tests/digraph_tests.cpp":
+                           "%:if 0\nTEST(DigraphHidden, Case) {}\n%:endif\nTEST(DigraphShown, Case) {}\n"},
                 "initial")
         _git(repo, "tag", "v2.0.0")
         cls.fake = {
@@ -278,7 +281,7 @@ class HostileFixtureTest(unittest.TestCase):
             "Continued": "Continued.Case", "Quoted": "Quoted.Case", "Raw": "Raw.Case",
             "InRaw": "InRaw.Case", "InComment": "InComment.Case", "InSplitBlock": "InSplitBlock.Case",
             "SplitRawPrefix": "SplitRawPrefix.Case", "SplitEscape": "SplitEscape.Case",
-            "BomDisabled": "BomDisabled.Case",
+            "BomDisabled": "BomDisabled.Case", "DigraphHidden": "DigraphHidden.Case",
             "Pretend": "tests.scripts.test_sample.Pretend.test_fake",
             "Ordinary": "tests.scripts.test_sample.Ordinary.test_missing",
             "Save": "tests.scripts.test_sample.Ordinary.save",
@@ -302,6 +305,7 @@ class HostileFixtureTest(unittest.TestCase):
             "Prefixed": "Prefixed.Char", "Separated": "Separated.Num", "Fraction": "Fraction.Case",
             "AfterRaw": "AfterRaw.Case", "SplicedNumber": "SplicedNumber.Case",
             "AfterSplitClose": "AfterSplitClose.Case", "BomEnabled": "BomEnabled.Case", "CrOnly": "CrOnly.Case",
+            "DigraphShown": "DigraphShown.Case",
         }
         cls.shas = {}
         for name, test_id in {**cls.fake, **cls.real}.items():
@@ -323,7 +327,7 @@ class HostileFixtureTest(unittest.TestCase):
                         "Separated.Num", "Fraction.Case", "AfterRaw.Case", "SplicedNumber.Case",
                         "InRaw.Case", "InComment.Case", "InSplitBlock.Case", "AfterSplitClose.Case",
                         "SplitRawPrefix.Case", "SplitEscape.Case", "BomDisabled.Case", "BomEnabled.Case",
-                        "CrOnly.Case"}
+                        "CrOnly.Case", "DigraphHidden.Case", "DigraphShown.Case"}
         # A module that never finishes importing must time out into a violation, not abort the report; the short
         # timeout holds for every report this class builds and is restored in tearDownClass.
         cls._timeout, release_notes.PROBE_TIMEOUT = release_notes.PROBE_TIMEOUT, 3

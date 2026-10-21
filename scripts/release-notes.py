@@ -49,7 +49,8 @@ PYTHON_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){2,}
 TRAILER = re.compile(r"^([A-Za-z0-9-]+):\s*(.*)$", re.DOTALL)
 CPP_FILES = ("*.cpp", "*.cc", "*.cxx", "*.h", "*.hpp")
 RAW_STRING = re.compile(r'R"([^ ()\\\t\v\f\n]{0,16})\(')
-DIRECTIVE = re.compile(r"^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)$")
+# `%:` is the standard alternative spelling of `#` (C++ [lex.digraph]).
+DIRECTIVE = re.compile(r"^\s*(?:#|%:)\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)$")
 GTEST_MAIN_BANNER = re.compile(r"^Running main\(\) from .+$")
 PROBE_TIMEOUT = 120  # seconds for one Python test module to import in its worktree
 # Run in a worktree of the fix commit: resolve module.Class.method the way unittest does, without running it. The
