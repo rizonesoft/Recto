@@ -62,8 +62,13 @@ class EngineDependencyPolicyTest(unittest.TestCase):
             if name == "tests/scripts/test_engine_dependency_policy.py":
                 continue
             with self.subTest(file=name):
-                text = (REPO / name).read_bytes().decode("utf-8", errors="replace")
-                self.assertIsNone(MUPDF.search(text))
+                data = (REPO / name).read_bytes()
+                # MSBuild and Windows tools accept UTF-16 files too: search every decoding a tool might apply, at both
+                # byte alignments, so an encoding cannot hide the name.
+                for text in (data.decode("utf-8", errors="replace"), data.decode("utf-16-le", errors="ignore"),
+                             data[1:].decode("utf-16-le", errors="ignore"), data.decode("utf-16-be", errors="ignore"),
+                             data[1:].decode("utf-16-be", errors="ignore")):
+                    self.assertIsNone(MUPDF.search(text))
 
     @unittest.skipUnless(sys.platform == "win32", "the C++ build and MSBuild are Windows-only (foundation plan D15)")
     def test_every_module_compiles_as_cpp20_with_warnings_as_errors(self):

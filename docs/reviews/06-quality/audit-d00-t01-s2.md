@@ -451,3 +451,45 @@ OVERALL: needs-attention
 ## Fixes after round 10
 
 - Finding 1 (P1): the MuPDF scan reads every tracked file in the code and build trees (`src`, `fuzz`, `tests`, `scripts`, `.github`, `build`, the root `.props`, `.targets`, `.sln`, `vcpkg.json` and `.cmd`) whatever its extension, so a `#pragma comment(lib, ...)` in a `.cxx`, `.cc` or `.hpp` file is read; only the test's own file is excepted. Mutation: `#pragma comment(lib, "libmupdf.lib")` added to `src/pdf/filters.h` -> the test fails. Tests: `Ran 3 tests ... OK`.
+
+## Round 11: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T14:48:05Z
+- Effort: medium
+- Lines: 29
+- Digest: dc62b8df28a93176
+
+## adversarial: needs-attention
+
+1. **P1** `tests/scripts/test_engine_dependency_policy.py:65`: The MuPDF guard silently misreads UTF-16 build files as UTF-8. Interleaved NUL characters prevent its regex from detecting `libmupdf.lib`, so a tracked project can declare the prohibited dependency and pass.
+
+   Reproduced without writes: intercepted `Path.read_bytes` for `src/pdf/recto-pdf.vcxproj`, supplied XML containing `<Lib><AdditionalDependencies>libmupdf.lib;%(AdditionalDependencies)</AdditionalDependencies></Lib>`, and ran the unchanged guard. The UTF-8 version failed; the equivalent BOM-bearing UTF-16 version passed. Both parsed successfully as XML. This demonstrates false acceptance, not an existing MuPDF dependency.
+
+## consistency: approve
+
+No additional findings.
+
+## integration: advisory
+
+Current clean-clone compilation was not independently rerun because it writes files. Passing policy tests does not establish successful compilation.
+
+## source-defect: needs-attention
+
+Finding **1 (P1)** applies: hard-coded UTF-8 decoding does not respect XML encoding. UTF-16 is represented in Microsoft’s own [MSBuild project XML documentation](https://learn.microsoft.com/en-us/dotnet/api/microsoft.build.buildengine.project.xml?view=msbuild-18-netcore). Reading every extension does not close this encoding gap.
+
+## design: advisory
+
+Not applicable: this section owns no user surface.
+
+## record: advisory
+
+At `96370ab`, the checkpoint independently returned `False`, `False`, and `valid: 677 sections`; all three policy tests passed. The opening record’s 676-section count concerns its explicitly named earlier revision. These results do not resolve finding 1.
+
+No files were modified; the working tree remains clean.
+
+OVERALL: needs-attention
+
+## Fixes after round 11
+
+- Finding 1 (P1): each scanned file's bytes are searched as UTF-8 and as UTF-16 little- and big-endian at both byte alignments, so a UTF-16 project or source cannot hide MuPDF. Mutation: `src/pdf/recto-pdf.vcxproj` re-encoded as UTF-16 with a `libmupdf.lib` mention -> the scan fails. Tests: `Ran 3 tests ... OK`.
