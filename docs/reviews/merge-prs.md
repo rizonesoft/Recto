@@ -224,3 +224,45 @@ OVERALL: needs-attention
 - Finding 1 (P1): a refused `origin` is reported as "origin is not a github.com repository", never with its URL (`test_an_origin_url_never_reaches_the_output`).
 - Finding 2 (P1): provenance is author, branch and files together (`PRODUCERS`): the pins workflow on `winui/<version>` or `pins/toolchain-*` / `pins/vcpkg-*` changing only `src/app/Recto.vcxproj` or `vcpkg-configuration.json`; Dependabot on `dependabot/*` changing only files under `.github/`. A github-actions pull request on another branch, or touching other files, is left for the operator (`test_provenance_is_branch_and_files_not_just_the_author`).
 - Finding 3 (P2): after `gh pr merge` succeeds, the pull request is read back; only `MERGED` with a merge commit counts, and that commit must be in the checkout after `git pull --ff-only` (`git merge-base --is-ancestor`). A queued or refused merge stops the run (`test_a_queued_merge_stops_the_run`).
+
+## Round 6: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:31:56Z
+- Effort: medium
+- Lines: 26
+- Digest: 8b442a5ecc9e7364
+
+## adversarial: needs-attention
+
+1. **P1, `scripts/merge_prs.py:261`: Failed validation does not prevent the next scheduled run from merging more PRs.** After a merge lands and `todo-graph validate` fails, the script returns without recording a stop condition. The checkout can remain clean and equal to `origin/main`, so the next invocation passes `ensure_safe()` and merges another PR before validating again. Reproduced in memory using two eligible PRs and persistent validation failure: two successive invocations both returned 1, but merge calls were `['1', '2']`. Require recovery validation before another merge and preserve the promised operator handoff across invocations.
+
+## consistency: needs-attention
+
+2. **P2, `scripts/merge_prs.py:63`: Scheduled subprocesses omit Windows console suppression.** The automation runner launches this script without a console, but `run_cmd()` starts Git, GitHub CLI and Python without `CREATE_NO_WINDOW`. These nested launches can create visible console windows, contrary to the automation runner’s explicit contract. Reproduce by launching through the scheduled runner on Windows; an in-memory subprocess probe confirmed `creationflags` is absent. Apply the Windows flag at this subprocess boundary. [Microsoft process creation flags](https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags)
+
+## integration: needs-attention
+
+Finding 1 affects the recurring `recto-pr-merge` task: its next execution resumes merging despite unresolved validation failure. Finding 2 affects its Windows launcher.
+
+## source-defect: needs-attention
+
+Finding 1 contradicts `.conclave/automations/README.md`’s promise that later PRs are left for the operator after failure. The implementation stops only the current process.
+
+## design: advisory
+
+No rendered interface changes to assess.
+
+## record: advisory
+
+Inspected the candidate and follow-up commits. Ran read-only, in-memory probes with bytecode generation disabled. Historical test counts and live GitHub claims were not independently reproduced. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 6
+
+`python -m unittest tests.scripts.test_merge_prs` -> `Ran 22 tests`, `OK`.
+
+- Finding 1 (P1): every stop after a merge request (a failed or queued merge, an unreadable state, a failed pull, ancestry check or validate) writes `build/merge-prs-stopped.json`; every later run, scheduled or the campaign's, refuses with exit 1 until the operator checks `main` and deletes it (`test_a_stop_holds_until_the_operator_clears_it`). The README says so.
+- Finding 2 (P2): `run_cmd` passes `CREATE_NO_WINDOW` on Windows, so the scheduled task's git, gh and Python launches open no console (`test_launches_open_no_console_window`).

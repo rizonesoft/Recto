@@ -212,6 +212,7 @@ class MergePrs(unittest.TestCase):
         self.assertIn("state is now OPEN", self.lines[-1])
         for failing in ("pull", "validate"):
             self.lines.clear()
+            (self.root / merge_prs.STOPPED).unlink()  # each case starts after the operator cleared the last stop
             fake = FakeRun([pr(1), pr(2)], fail=(failing,))
             with self.subTest(failing=failing):
                 self.assertEqual(self.main(fake), 1)
@@ -274,6 +275,24 @@ class MergePrs(unittest.TestCase):
 
         self.assertEqual(self.main(Secret([pr(1)])), 1)
         self.assertNotIn("s3cret", " ".join(self.lines))
+
+    def test_a_stop_holds_until_the_operator_clears_it(self):
+        fake = FakeRun([pr(1), pr(2)], fail=("validate",))
+        self.assertEqual(self.main(fake), 1)
+        self.assertEqual(fake.merges(), ["1"])
+        self.assertTrue((self.root / merge_prs.STOPPED).exists())
+        fake.fail = ()
+        self.assertEqual(self.main(fake), 1)  # the next run, scheduled or not, refuses and says why
+        self.assertEqual(fake.merges(), ["1"])
+        self.assertIn("delete it to resume", self.lines[-1])
+        (self.root / merge_prs.STOPPED).unlink()
+        self.assertEqual(self.main(fake), 0)
+        self.assertEqual(fake.merges(), ["1", "2"])
+
+    def test_launches_open_no_console_window(self):
+        with mock.patch.object(merge_prs.subprocess, "run") as run:
+            merge_prs.run_cmd(["git", "status"], self.root)
+        self.assertEqual(run.call_args.kwargs["creationflags"], getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
     def test_a_dry_run_merges_nothing(self):
         fake = FakeRun([pr(1)])

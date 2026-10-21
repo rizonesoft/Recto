@@ -53,6 +53,9 @@ GREEN = {"success", "neutral", "skipped"}
 REQUIRED_CHECKS = {"plan-gates", "Build x64 & ARM64 and run recto-tests",
                    "Build x64 Release with AddressSanitizer and run recto-tests"}
 GUARD = Path("build") / "claude-campaign-guard.json"
+# Written when a run stops after asking GitHub to merge (the merge failed, or its pull or validate did): every later run
+# refuses until the operator has looked and deletes it, so no further pull request merges onto a state nobody checked.
+STOPPED = Path("build") / "merge-prs-stopped.json"
 
 
 class Unsafe(Exception):
@@ -60,8 +63,9 @@ class Unsafe(Exception):
 
 
 def run_cmd(args, root):
+    # No console window per launch: the scheduled task runs without one (.conclave/automations/run.py).
     return subprocess.run(args, cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                          timeout=600)
+                          timeout=600, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
 def check(run, root, args, what):
@@ -189,7 +193,22 @@ def open_prs(run, root):
     return sorted(pr["number"] for pr in json.loads(out))
 
 
+def stop(root, out, message):
+    """Report message, and record it so later runs refuse until the operator clears it."""
+    out(message)
+    path = Path(root) / STOPPED
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps({"stopped": message}, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    return 1
+
+
 def merge_all(run, root, args, out):
+    stopped = Path(root) / STOPPED
+    if stopped.exists():
+        out(f"merge-prs: an earlier run stopped and left {STOPPED.as_posix()}; check main, then delete it to resume")
+        return 1
     try:
         ensure_safe(run, root, args.scheduled)
         REPO[0] = origin_repo(run, root)
@@ -236,20 +255,17 @@ def merge_all(run, root, args, out):
                 state = current(run, root, number).get("state", "UNKNOWN")
             except RuntimeError:
                 state = "unknown (GitHub could not be read)"
-            out(f"merge-prs: stopped at #{number}, whose state is now {state}: {e}; it and any later pull request "
+            return stop(root, out, f"merge-prs: stopped at #{number}, whose state is now {state}: {e}; it and any later pull request "
                 f"are left for you")
-            return 1
         # A successful exit can mean queued rather than merged: only GitHub's MERGED state, and its merge commit in the
         # pulled checkout, count.
         try:
             landed = current(run, root, number)
         except RuntimeError as e:
-            out(f"merge-prs: #{number}'s state after merging could not be read: {e}; stopped")
-            return 1
+            return stop(root, out, f"merge-prs: #{number}'s state after merging could not be read: {e}; stopped")
         if landed.get("state") != "MERGED" or not (landed.get("mergeCommit") or {}).get("oid"):
-            out(f"merge-prs: #{number} is {landed.get('state')} after the merge request (queued or refused); stopped, "
+            return stop(root, out, f"merge-prs: #{number} is {landed.get('state')} after the merge request (queued or refused); stopped, "
                 f"any later pull request waits")
-            return 1
         merged += 1
         out(f"merge-prs: merged #{number} ({pr['title']})")
         try:
@@ -259,9 +275,8 @@ def merge_all(run, root, args, out):
             check(run, root, [sys.executable, str(Path(root) / "scripts" / "todo-graph.py"), "validate"],
                   "todo-graph validate")
         except RuntimeError as e:
-            out(f"merge-prs: #{number} merged on GitHub, but the local follow-up failed: {e}; stopped, any later pull "
+            return stop(root, out, f"merge-prs: #{number} merged on GitHub, but the local follow-up failed: {e}; stopped, any later pull "
                 f"request is left for you")
-            return 1
     out(f"merge-prs: {merged} merged")
     return 0
 
