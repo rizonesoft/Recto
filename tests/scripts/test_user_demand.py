@@ -94,6 +94,17 @@ class LedgerRulesTest(unittest.TestCase):
                 self.assertIn("parity row 'New request' has no owning TODO section and no ledger row",
                               problems(*VALID.values(), parity=parity))
 
+    def test_table_structure_is_strict(self):
+        # A row without its leading pipe is refused, not skipped.
+        text = ledger(*VALID.values()) + "Bad request | #1 | invalid | D99 T99 §999 | null | 9999-12-31 |\n"
+        found = demand.problems(text, PARITY, PLAN, SECTIONS, today=TODAY)
+        self.assertTrue(any("is not a `| ... |` row" in line for line in found), found)
+        # An escaped pipe stays inside its cell.
+        self.assertEqual(problems(VALID["web"].replace("A web version", "A web version \\| Linux"), VALID["split"]), [])
+        # A short parity row has an empty owner, so it needs a ledger row.
+        self.assertIn("parity row 'New request' has no owning TODO section and no ledger row",
+                      problems(*VALID.values(), parity=PARITY + "| New request | Planned |\n"))
+
     def test_rows_older_than_the_last_release_are_refused(self):
         found = problems(*VALID.values(), release=("v1.0.0", date(2026, 11, 1), True))
         self.assertTrue(any("is before the v1.0.0 release" in line for line in found), found)
@@ -112,7 +123,7 @@ class LedgerRulesTest(unittest.TestCase):
     def test_wrong_columns_are_refused(self):
         text = "| Request | Status | Owner |\n| --- | --- | --- |\n| A | planned | D02 T02 §23 |\n"
         self.assertEqual(demand.problems(text, PARITY, PLAN, SECTIONS),
-                         [f"the ledger table must have the columns {' | '.join(demand.COLUMNS)}"])
+                         [f"the ledger must hold exactly one table with the columns {' | '.join(demand.COLUMNS)}"])
 
     def test_section_ranges_and_lists_expand(self):
         self.assertEqual(demand.section_refs("D02 T01 §3, §13-§15, D04 T04 §8"),

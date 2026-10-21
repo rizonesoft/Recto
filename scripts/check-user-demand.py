@@ -39,18 +39,37 @@ DECISION = re.compile(r"\bD([1-9]\d*)\b(?!\s*T\d)")
 PARITY_REF = re.compile(r"parity: ([^;|]+)")
 
 
-def table_rows(text, columns=None):
-    """The rows of every Markdown table in the text, as lists of cells, header and divider rows excluded."""
-    rows = []
-    for line in text.splitlines():
-        line = line.strip()  # Markdown allows indented table rows
-        if not line.startswith("|") or re.fullmatch(r"\|(\s*-+\s*\|)+", line):
-            continue
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        if columns and cells == columns:
-            continue
-        rows.append(cells)
-    return rows
+DIVIDER = re.compile(r"\|?(\s*:?-+:?\s*\|)+\s*:?-*:?\s*")
+UNESCAPED_PIPE = re.compile(r"(?<!\\)\|")
+
+
+def split_cells(line):
+    """The cells of one `| a | b |` row: one leading and one trailing pipe dropped, `\\|` kept as a literal pipe."""
+    inner = line.strip()[1:]
+    inner = inner[:-1] if inner.endswith("|") and not inner.endswith("\\|") else inner
+    return [cell.strip().replace("\\|", "|") for cell in UNESCAPED_PIPE.split(inner)]
+
+
+def tables(text):
+    """Every Markdown table as (header cells, rows, faults). A table is a header row and a divider, then every line up
+    to the next blank line. Each of those lines must be written as a full `| ... |` row; any other line (a row without
+    its leading pipe, stray text) is a fault rather than a row the checks never see."""
+    lines = [line.strip() for line in text.splitlines()]
+    found, i = [], 0
+    while i < len(lines) - 1:
+        if lines[i].startswith("|") and DIVIDER.fullmatch(lines[i + 1]):
+            header, rows, faults = split_cells(lines[i]), [], []
+            i += 2
+            while i < len(lines) and lines[i]:
+                if lines[i].startswith("|") and lines[i].endswith("|"):
+                    rows.append(split_cells(lines[i]))
+                else:
+                    faults.append(f"{lines[i][:40]!r} is inside a table but is not a `| ... |` row")
+                i += 1
+            found.append((header, rows, faults))
+        else:
+            i += 1
+    return found
 
 
 def section_refs(text):
@@ -74,29 +93,25 @@ def section_refs(text):
 
 def parity_names(text, sections):
     """Every tool name in the parity ledger, and the ones that must have a ledger row: no resolving TODO section in the
-    table's `Recto sections` column (a missing, unknown or malformed reference counts as none), Excluded or Partial,
-    or naming this ledger."""
-    names, needed, sections_at = set(), set(), None
-    for line in text.splitlines():
-        line = line.strip()
-        if not line.startswith("|") or re.fullmatch(r"\|(\s*-+\s*\|)+", line):
+    table's `Recto sections` column (a missing, unknown or malformed reference counts as none; a short row's missing
+    cells are empty, as Markdown renders them), Excluded or Partial, or naming this ledger."""
+    names, needed = set(), set()
+    for header, rows, _ in tables(text):
+        if "Recto sections" not in header:
             continue
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        if cells[0] in ("Acrobat Pro tool", "Competitor feature"):
-            sections_at = cells.index("Recto sections") if "Recto sections" in cells else None
-            continue
-        if sections_at is None or len(cells) <= sections_at:
-            continue
-        name = cells[0]
-        names.add(name)
-        refs, faults = section_refs(cells[sections_at])
-        # A parity owner may name a whole TODO file (`D04 T08`), which counts when the file has sections.
-        files = [m.group(0) for m in FILE_ONLY.finditer(cells[sections_at])]
-        faults = [fault for fault in faults if not fault.endswith("names a TODO file without a section")]
-        owned = (bool(refs) or bool(files)) and not faults and all(ref in sections for ref in refs) and all(
-            any(section.startswith(f"{name} §") for section in sections) for name in files)
-        if not owned or "Excluded" in cells or "Partial" in cells or "user-demand.md" in line:
-            needed.add(name)
+        sections_at = header.index("Recto sections")
+        for cells in rows:
+            cells = cells + [""] * (len(header) - len(cells))
+            name, owner = cells[0], cells[sections_at]
+            names.add(name)
+            refs, faults = section_refs(owner)
+            # A parity owner may name a whole TODO file (`D04 T08`), which counts when the file has sections.
+            files = [m.group(0) for m in FILE_ONLY.finditer(owner)]
+            faults = [fault for fault in faults if not fault.endswith("names a TODO file without a section")]
+            owned = (bool(refs) or bool(files)) and not faults and all(ref in sections for ref in refs) and all(
+                any(section.startswith(f"{file} §") for section in sections) for file in files)
+            if not owned or "Excluded" in cells or "Partial" in cells or "user-demand.md" in " | ".join(cells):
+                needed.add(name)
     return names, needed
 
 
@@ -117,11 +132,11 @@ def problems(ledger_text, parity_text, plan_text, sections, release=(None, None,
     been reviewed within that many days of `today`."""
     today = today or date.today()
     found = []
-    lines = ledger_text.splitlines()
-    header = next((line.strip() for line in lines if line.strip().startswith("| Request |")), None)
-    if header is None or [c.strip() for c in header.strip().strip("|").split("|")] != COLUMNS:
-        return [f"the ledger table must have the columns {' | '.join(COLUMNS)}"]
-    rows = table_rows(ledger_text, COLUMNS)
+    ledger = [table for table in tables(ledger_text) if table[0] == COLUMNS]
+    if len(ledger) != 1:
+        return [f"the ledger must hold exactly one table with the columns {' | '.join(COLUMNS)}"]
+    _, rows, found = ledger[0]
+    found = list(found)
     if not rows:
         return ["the ledger has no rows"]
     decisions = {int(n) for n in re.findall(r"^\| D(\d+) \|", plan_text, re.M)}
