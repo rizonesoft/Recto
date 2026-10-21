@@ -51,6 +51,7 @@ CPP_FILES = ("*.cpp", "*.cc", "*.cxx", "*.h", "*.hpp")
 RAW_STRING = re.compile(r'R"([^ ()\\\t\v\f\n]{0,16})\(')
 # `%:` is the standard alternative spelling of `#` (C++ [lex.digraph]).
 DIRECTIVE = re.compile(r"^\s*(?:#|%:)\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)$")
+ANY_DIRECTIVE = re.compile(r"^\s*(?:#|%:)")
 GTEST_MAIN_BANNER = re.compile(r"^Running main\(\) from .+$")
 PROBE_TIMEOUT = 120  # seconds for one Python test module to import in its worktree
 # Run in a worktree of the fix commit: resolve module.Class.method the way unittest does, without running it. The
@@ -191,7 +192,9 @@ def cpp_code(text):
     for line in "".join(out).split("\n"):
         directive = DIRECTIVE.match(line)
         if not directive:
-            if all(frame["active"] for frame in frames):
+            # Any other directive (#define, #pragma, #error ...) is never a declaration: a TEST in an unexpanded
+            # macro body is not a test until some later code expands it.
+            if not ANY_DIRECTIVE.match(line) and all(frame["active"] for frame in frames):
                 kept.append(line)
             continue
         word, condition = directive.group(1), re.sub(r"[\s()]", "", directive.group(2))

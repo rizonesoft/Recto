@@ -335,7 +335,9 @@ class HostileFixtureTest(unittest.TestCase):
                         "InRaw.Case", "InComment.Case", "InSplitBlock.Case", "AfterSplitClose.Case",
                         "SplitRawPrefix.Case", "SplitEscape.Case", "BomDisabled.Case", "BomEnabled.Case",
                         "CrOnly.Case", "DigraphHidden.Case", "DigraphShown.Case", "ElifDead.Case",
-                        "ElseDead.Case", "ElseMaybe.Case"}
+                        "ElseDead.Case", "ElseMaybe.Case",
+                        # Listed as if a later commit expanded the macro: the source check alone must refuse it.
+                        "Macro.Case"}
         # A module that never finishes importing must time out into a violation, not abort the report; the short
         # timeout holds for every report this class builds and is restored in tearDownClass.
         cls._timeout, release_notes.PROBE_TIMEOUT = release_notes.PROBE_TIMEOUT, 3
