@@ -323,3 +323,47 @@ OVERALL: needs-attention
 
 - Finding 1 (P1): `AdditionalOptions` is checked against an allow-list of the switches the repository uses (`/utf-8`, `/bigobj`, `/await:strict`), with quotes stripped, instead of a pattern of known overrides; any other switch, quoted or not, fails. Mutation: `"/WX-"` added to `AdditionalOptions` -> `FAILED (failures=28)`.
 - Finding 2 (P3): this file's round 6 wording is superseded by the allow-list above. Tests: `Ran 3 tests ... OK`.
+
+## Round 8: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T14:40:58Z
+- Effort: medium
+- Lines: 31
+- Digest: bf0c754092f17d0f
+
+## adversarial: needs-attention
+
+1. **P1** `tests/scripts/test_engine_dependency_policy.py:75`: The compiler-policy guard accepts `CompileAs=CompileAsC`, despite promising C++20 compilation for every source. It checks `LanguageStandard`, warning settings and `AdditionalOptions`, but ignores the separate metadata that selects C compilation.
+
+   Reproduced without file changes: wrapped the real MSBuild subprocess responses, set `item["CompileAs"] = "CompileAsC"` on each returned `ClCompile` item, and invoked the unchanged `test_every_module_compiles_as_cpp20_with_warnings_as_errors()`. It accepted all **124 modified items**. The required fields and allowed options remained unchanged.
+
+   This demonstrates false acceptance by the guard, not that current projects compile as C. The AdditionalOptions allow-list does not cover compiler switches produced by other metadata.
+
+## consistency: approve
+
+No additional findings.
+
+## integration: advisory
+
+Current clean-clone compilation was not independently verified because building writes files. Passing the policy test does not establish that promise.
+
+## source-defect: needs-attention
+
+Finding **1 (P1)** applies here. Microsoft documents `CompileAsC` as generating `/TC`, which selects C compilation independently of `LanguageStandard`. Checking `stdcpp20` alone therefore cannot establish the source language. [Microsoft CL task documentation](https://learn.microsoft.com/en-us/visualstudio/msbuild/cl-task?view=vs-2019)
+
+## design: advisory
+
+Not applicable: this section owns no user surface.
+
+## record: advisory
+
+At `4fc252a`, the checkpoint independently returned `False`, `False`, and `valid: 677 sections`; all three policy tests passed. The opening record’s 676-section count refers to its explicitly identified earlier revision. These passing results do not resolve finding 1.
+
+No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 8
+
+- Finding 1 (P1): the metadata that could undermine C++20 with `/W4 /WX` besides the three required fields is held to the values in use: `CompileAs` (`Default` or `CompileAsCpp`; `CompileAsC` is `/TC`), `DisableSpecificWarnings` and `WarningVersion` (absent), and `ExternalWarningLevel` (`InheritWarningLevel`). Mutation: `CompileAs` `CompileAsC` -> `FAILED (failures=28)`. Tests: `Ran 3 tests ... OK`.

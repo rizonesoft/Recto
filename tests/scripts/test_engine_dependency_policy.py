@@ -15,6 +15,11 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 MUPDF = re.compile(r"mupdf|artifex|\bjbig2dec\b", re.IGNORECASE)
 CONFIGURATIONS = [(configuration, platform) for configuration in ("Debug", "Release") for platform in ("x64", "ARM64")]
 REQUIRED = {"LanguageStandard": "stdcpp20", "WarningLevel": "Level4", "TreatWarningAsError": "true"}
+# The other metadata that could undermine C++20 with /W4 /WX, held to the values in use: CompileAs picks the language
+# (CompileAsC is /TC), DisableSpecificWarnings silences warnings (/wd), WarningVersion caps them (/Wv), and the external
+# warning level could lower warnings for headers. Absent is allowed only where it means the default.
+ALLOWED_METADATA = {"CompileAs": {"Default", "CompileAsCpp"}, "DisableSpecificWarnings": {None, ""},
+                    "WarningVersion": {None, ""}, "ExternalWarningLevel": {"InheritWarningLevel"}}
 # The only switches AdditionalOptions may carry. An allow-list, not a pattern of bad switches: quoting, prefixes and
 # spellings cannot sneak an override (/std:c++17, /W0, "/WX-") past it. A new switch is added here deliberately.
 ALLOWED_OPTIONS = {"/utf-8", "/bigobj", "/await:strict"}
@@ -74,6 +79,8 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                     for item in items:
                         for name, value in REQUIRED.items():
                             self.assertEqual(item.get(name), value, f"{item.get('Identity')}: {name}")
+                        for name, allowed in ALLOWED_METADATA.items():
+                            self.assertIn(item.get(name), allowed, f"{item.get('Identity')}: {name}")
                         options = {token.strip('"').lower() for token in item.get("AdditionalOptions", "").split()}
                         self.assertLessEqual(options, ALLOWED_OPTIONS,
                                              f"{item.get('Identity')}: AdditionalOptions has unlisted switches")
