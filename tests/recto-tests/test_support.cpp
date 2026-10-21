@@ -629,8 +629,9 @@ double compute_ssim(
 		return static_cast<double>(px[ch - 1]);
 	};
 
-	// Each block counts by its pixel area, so a 1-pixel edge block weighs 1/64 of a full one and a single changed
-	// pixel scores the same wherever it sits.
+	// Each block counts by its pixel area, so a 1-pixel edge block weighs 1/64 of a full one instead of as much as a
+	// full block. Scores still depend on each block's statistics, so the same change can score slightly differently
+	// in different blocks.
 	double total_ssim = 0.0;
 	double total_weight = 0.0;
 

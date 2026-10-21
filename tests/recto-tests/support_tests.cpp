@@ -483,7 +483,8 @@ TEST(Support, SsimCalculation)
 
 TEST(Support, SsimWeighsEdgeBlocksByArea)
 {
-	// A 9x9 image has one full 8x8 block and 1-pixel edge blocks; one changed pixel must score alike anywhere.
+	// A 9x9 image has one full 8x8 block and 1-pixel edge blocks. A one-level change in the 1-pixel corner block
+	// must not outweigh the same change inside the full block (unweighted, the corner scored 0.9667).
 	constexpr uint32_t kSide = 9;
 	const std::vector<uint8_t> black(static_cast<size_t>(kSide) * kSide * 4u, 0);
 	auto with_pixel = [&](uint32_t x, uint32_t y) {
@@ -517,9 +518,20 @@ TEST(Support, RgbaDiffReportsFirstAndMaxDelta)
 TEST(Support, RgbaSizeOverflowRefused)
 {
 	const std::vector<uint8_t> none;
-	// width * 4 fits, but (height - 1) * stride + width * 4 cannot be represented in size_t.
-	EXPECT_THROW((void)recto::test::compare_rgba(none, none, 1, 3, SIZE_MAX - 1, 0, 0), std::invalid_argument);
-	EXPECT_THROW((void)recto::test::compute_ssim(none, none, 1, 3, 0, SIZE_MAX - 1), std::invalid_argument);
+	// width * 4 fits, but (height - 1) * stride + width * 4 cannot be represented in size_t. The message must be the
+	// overflow refusal: without the guard the size would wrap and the short-buffer check would throw instead.
+	auto refusal = [](auto&& call) -> std::string {
+		try {
+			call();
+		} catch (const std::invalid_argument& e) {
+			return e.what();
+		}
+		return "no exception";
+	};
+	EXPECT_EQ(refusal([&] { (void)recto::test::compare_rgba(none, none, 1, 3, SIZE_MAX - 1, 0, 0); }),
+		"RGBA buffer size overflows size_t");
+	EXPECT_EQ(refusal([&] { (void)recto::test::compute_ssim(none, none, 1, 3, 0, SIZE_MAX - 1); }),
+		"RGBA buffer size overflows size_t");
 }
 
 TEST(Support, Sha256FileStreamsAcrossChunks)

@@ -57,3 +57,47 @@ Gates: `.\build.cmd` -> 4 x `0 Warning(s)`, 4 x `0 Error(s)`, 2 x `[  PASSED  ] 
 - Finding 2 (P3): `PixelDiffResult` gains `first_delta`, and the message reads `delta = <first pixel's>, max_delta = <global>` (`Support.RgbaDiffReportsFirstAndMaxDelta`; `Support.PixelComparison`'s exact message updated).
 - Finding 3 (P3): a dated audit note in `D00 T03 §2` records that its LICENSE digest is stale since `97d8485`; the stamped text keeps its wording.
 - Finding 4 (P3): the paths the earlier review claimed as tested now are: `Support.RgbaSizeOverflowRefused` (a stride whose buffer size cannot be represented throws, in both `compare_rgba` and `compute_ssim`) and `Support.Sha256FileStreamsAcrossChunks` (two full 64 KiB chunks plus a partial one hash as the whole buffer). Both already behaved correctly, so they pass on the old code as well.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T18:31:58Z
+- Effort: medium
+- Lines: 28
+- Digest: 7ec95ba729af5199
+
+### adversarial: needs-attention
+
+1. **P3** `tests/recto-tests/test_support.cpp:633`: The new comment incorrectly promises that a changed pixel scores the same wherever it sits. Reproduce with black 9×9 images, changing one pixel’s RGB to `(6,6,6)`: the current equations yield approximately `0.989543` at `(8,8)` and `0.991538` at `(0,0)`, straddling the `0.99` threshold. Area weighting does not remove dependence on block statistics. Correct the comment and the equivalent claim at `support_tests.cpp:486`. These values were verified by evaluating the equations, not an added C++ test.
+
+### consistency: approve
+
+No additional findings.
+
+### integration: approve
+
+No additional findings.
+
+### source-defect: approve
+
+No additional findings.
+
+### design: advisory
+
+Not applicable: no user surface.
+
+### record: needs-attention
+
+2. **P3** `tests/recto-tests/support_tests.cpp:521`: The new overflow regression test does not distinguish overflow rejection from ordinary short-buffer rejection. Removing the overflow guard at `test_support.cpp:465` leaves both assertions passing: unsigned arithmetic wraps the overflowing buffer’s required size to zero, but the other buffer still requires 12 bytes and is empty, causing the same `std::invalid_argument`. Consequently, `docs/reviews/06-quality/audit-d00-t03-s2.md:59` overstates the regression protection. Assert the overflow-specific diagnostic or otherwise distinguish the rejection paths. This conclusion follows from static inspection and verified unsigned arithmetic; no files were mutated.
+
+Checkpoint limitation: the existing Release x64 binary ran 14 `Support.*` tests, with 10 passes and four `CreateDirectoryW failed in TempDir` failures under the read-only sandbox, including the new streaming-hash test. The recorded clean checkpoint and four-configuration build were therefore not independently reproduced. These environmental failures are not product findings. `PdfError.ResultValueAndError` passed. No files were modified.
+
+HIGHEST: P3
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+Gates: `.\build.cmd` -> 4 x `0 Warning(s)`, 4 x `0 Error(s)`, 2 x `[  PASSED  ] 102 tests.`.
+
+- Finding 1 (P3): the `compute_ssim` comment and the test comment no longer claim location independence: area weighting stops an edge block from outweighing its area, while scores still depend on each block's statistics.
+- Finding 2 (P3): `Support.RgbaSizeOverflowRefused` now asserts the overflow refusal's own message. With the guard replaced by a no-op it fails ("Which is: "RGBA buffer is smaller than required for dimensions and stride""), so it can no longer pass on the short-buffer path.
