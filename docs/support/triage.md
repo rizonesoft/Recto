@@ -66,4 +66,4 @@ When a pull request replaces another, close the older one with a comment linking
 
 ## Closing a fixed bug
 
-A user-reported bug closes only when the release containing its fix is published. Until then it carries `fixed-on-main`. When the release ships, label it `released`, comment "Fixed in vX.Y.Z" with the release link, and close it.
+A user-reported bug closes only when the release containing its fix is published, and its fix carries a regression test (the full rule is `docs/support/user-bugs.md`). Until then it carries `fixed-on-main`. When the release ships, label it `released`, comment "Fixed in vX.Y.Z" with the release link, and close it.

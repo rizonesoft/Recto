@@ -134,6 +134,8 @@ Maintainers often ask for files that users cannot share (identity documents, leg
 
 ## 4. User-bug regression rule, closing on release and changelog mapping
 
+> **Started:** 2026-10-21T10:05:00Z
+
 A common failure is closing issues when a fix merges while users on the release keep hitting them, duplicates piling up, and fixes shipping without tests. Recto's rule: a user-reported bug closes with a regression test that fails before the fix, the fix commit carries `Fixes-User: #N` and `Regression-Test: <test id>` trailers, the pull request quotes the test failing on the parent commit and passing on the fix, the issue is labelled `fixed-on-main`, and it closes only when the release that contains the commit is published, with a "Fixed in vX.Y.Z" comment.
 
 **Phase:** 0
@@ -145,12 +147,12 @@ A common failure is closing issues when a fix merges while users on the release 
 1. Author `scripts/release-notes.py` listing every `Fixes-User:` trailer between two tags, grouped by label, and printing the closing comments. Done when: `python -m unittest tests.scripts.test_release_notes` passes on a fixture repository.
 2. Document the rule in `docs/support/user-bugs.md`, link it from `AGENTS.md` and the pull request template. Done when: the template asks for the trailer and the regression test name.
 
-- [ ] Author `scripts/release-notes.py <from-tag> <to-tag> [--json]` reading commit trailers with `git log --format=%(trailers:key=Fixes-User)`. Done when: a fixture repository with three trailers yields three entries.
-- [ ] Print, per issue, the closing comment "Fixed in vX.Y.Z (commit, release link)". Done when: the output matches the fixture's expected text.
-- [ ] Refuse a `Fixes-User:` commit without a `Regression-Test:` trailer, or whose named test (a gtest `Suite.Case` or a Python `module.Class.test_name`) does not exist at that commit, with `--allow-no-test <reason>` recorded in the output for documentation-only fixes; whether the file is new or existing does not matter. Done when: a fixture adding a real case to an existing test file passes and a fixture naming a missing test is reported as a violation.
-- [ ] Author `docs/support/user-bugs.md`: reproduce first (scrubbed or synthetic file into `tests/corpus/user-reports/` with a provenance row), test fails before the fix, trailer on the fix, label `fixed-on-main`, close on release. Done when: the file states each step.
-- [ ] Add both trailers and a "Regression test: failing on parent, passing on fix" evidence block to `.github/pull_request_template.md`, and a pointer from `AGENTS.md` "Working rules". Done when: both files reference `docs/support/user-bugs.md`.
-- [ ] Add `tests/scripts/test_release_notes.py` building a temporary git repository with tagged commits. Done when: the test passes and removing the trailer parsing makes it fail.
+- [x] Author `scripts/release-notes.py <from-tag> <to-tag> [--json] [--issues <file>]` reading commit trailers with `git log --format=%(trailers)`, and grouping issues by their kind label from `--issues` (the JSON of `gh issue list --state all --json number,title,labels`), `unlabelled` without it. Done when: a fixture repository with three trailers yields three entries. **Corrected 2026-10-21:** named no source for the labels it groups by; labels live on GitHub issues, not in commits, so they are read from a `gh` export and the script stays offline and testable.
+- [x] Print, per issue, the closing comment "Fixed in vX.Y.Z (commit, release link)". Done when: the output matches the fixture's expected text.
+- [x] Refuse a `Fixes-User:` commit without a `Regression-Test:` trailer, or whose named test (a gtest `Suite.Case` or a Python `module.Class.test_name`) does not exist at that commit, with `--allow-no-test <sha>=<reason>` (one per excused commit) recorded in the output for documentation-only fixes; whether the file is new or existing does not matter. Done when: a fixture adding a real case to an existing test file passes and a fixture naming a missing test is reported as a violation. **Corrected 2026-10-21:** said `--allow-no-test <reason>`, a single flag that would excuse every commit in the range at once.
+- [x] Author `docs/support/user-bugs.md`: reproduce first (scrubbed or synthetic file into `tests/corpus/user-reports/` with a provenance row), test fails before the fix, trailer on the fix, label `fixed-on-main`, close on release. Done when: the file states each step.
+- [x] Add both trailers and a "Regression test: failing on parent, passing on fix" evidence block to `.github/pull_request_template.md`, and a pointer from `AGENTS.md` "Working rules". Done when: both files reference `docs/support/user-bugs.md`.
+- [x] Add `tests/scripts/test_release_notes.py` building a temporary git repository with tagged commits. Done when: the test passes and removing the trailer parsing makes it fail.
 - [ ] Commit: `repo: map user-reported fixes to releases and require a regression test per fix`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_release_notes` passes, and a fixture `Fixes-User:` commit whose `Regression-Test:` names a test that does not exist is reported as a violation.
