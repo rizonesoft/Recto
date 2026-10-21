@@ -49,3 +49,39 @@ OVERALL: needs-attention
 - Finding 1 (P3): the fingerprint procedure in `docs/reference-machines.md` now prints disk byte sizes (`Get-Disk` `Size`), the MSBuild version, the installed Windows SDK and the Windows App SDK package version. Running it on 2026-10-21 showed the record had drifted (Visual Studio updated to 18.11.1, and the disk sizes had come from another source); section 1 now holds exactly what the procedure prints: Visual Studio `18.11.1` (`18.11.12315.225`), MSBuild `18.11.1.51303`, MSVC `14.51.36231`, Windows SDK `10.0.26100.0`, Windows App SDK `2.5.1`, disks `1,000,204,886,016` and `512,110,190,592` bytes.
 - Finding 2 (P3): the benchmark owners are corrected: `recto-cli bench` is `D01 T03 §3`, the performance harness `D06 T01 §7` and the baseline record `D06 T01 §8`.
 - Findings 3 and 4 (P3): the earlier receipt's "every value" claim is superseded by finding 1; a dated audit note in `D00 T01 §5` records that `bench` has not landed (`D01 T03 §3` is open) and names the corrected owners. The stamped checklist and the historical receipt keep their wording.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T15:11:13Z
+- Effort: medium
+- Lines: 23
+- Digest: fffdc2dbd5d97398
+
+## adversarial: approve
+
+## consistency: approve
+
+## integration: needs-attention
+
+1. **P3** `docs/reference-machines.md:47`, `:50-56`: The benchmark examples still disagree with their implementation contract. They require `bench --workers 1/8`, and line 56 attributes per-page `DisplayList` timings to `D01 T03 §3`. That section specifies `--iterations`, `--dpi`, and `--json`, with first-page compilation and comparison against the default worker pool. It specifies `--workers` for `stress`, not `bench`.
+
+   Reproduce by comparing these examples with `todo/01-engine/TODO-03-cli-and-fuzz.md:115-132`. An implementation satisfying that contract need not accept the documented benchmark commands or produce per-page timings. Reconcile the examples and owning contract before implementation.
+
+## source-defect: advisory
+
+The live fingerprint remains only partially verifiable in this audit. All four CIM queries returned `Access denied`; the disk query produced no rows. Consequently, the hardware, OS and updated disk capacities could not be independently confirmed. This is a verification limitation, not evidence that the recorded values are wrong.
+
+## design: advisory
+
+Not applicable. This section owns no user surface.
+
+## record: approve
+
+The checkpoint claim was independently reproduced at `ec25a0b`: validation reports 677 sections and exits 0, `plan --check` exits 0, and the reference document contains zero `TODO` or `TBD` tokens. The dated correction explicitly qualifies the historical claim that `bench` had landed.
+
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+- Finding 1 (P3): the benchmark examples and description in `docs/reference-machines.md` now follow the owning contract `D01 T03 §3`: `bench <file.pdf> [--iterations <n>] [--dpi <n>] [--json]` reporting median and p95 for cold open, first-page `DisplayList` compilation and 1-worker against default-pool tile rasterization, with its `--json` fields named; `--workers` belongs to `stress`.

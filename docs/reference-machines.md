@@ -43,17 +43,16 @@ Once `D01 T03 §3` implements the `bench` verb in `src/cli/main.cpp` and `D06 T0
 # Build Release binaries for x64 and ARM64
 .\build.cmd
 
-# Run single-worker vs multi-worker engine benchmark on a corpus PDF (x64 Release)
-.\build\bin\x64\Release\recto-cli\recto-cli.exe bench <100-page-text-corpus.pdf> --dpi 144 --workers 8 --json
+# Cold open, first-page DisplayList and 1-worker vs default-pool tile rasterization, median and p95 (x64 Release)
+.\build\bin\x64\Release\recto-cli\recto-cli.exe bench <100-page-text-corpus.pdf> --iterations 20 --dpi 144 --json
 
-# Compare 1-worker vs 8-worker tile rasterization throughput on a 500-page mixed benchmark PDF
-.\build\bin\x64\Release\recto-cli\recto-cli.exe bench <500-page-mixed-corpus.pdf> --dpi 144 --workers 1 --json
-.\build\bin\x64\Release\recto-cli\recto-cli.exe bench <500-page-mixed-corpus.pdf> --dpi 144 --workers 8 --json
+# The same on the 500-page mixed benchmark PDF, which also reports the working set
+.\build\bin\x64\Release\recto-cli\recto-cli.exe bench <500-page-mixed-corpus.pdf> --iterations 20 --dpi 144 --json
 ```
 
 When a physical `ARM64` Windows 11 machine is recorded under `D99 T01 §4`, run the same commands using `.\build\bin\ARM64\Release\recto-cli\recto-cli.exe`.
 
-As specified in `D01 T03 §3`, `recto-cli bench <file.pdf>` measures cold document open time, per-page `DisplayList` record time, and `1`-worker versus `N`-worker (`--workers`) tile rasterization throughput; the exact corpus filenames and `--json` field names are finalized by `D01 T03 §3` and `D06 T01 §7`.
+As `D01 T03 §3` specifies, `recto-cli bench <file.pdf> [--iterations <n>] [--dpi <n>] [--json]` reports median and p95 timings for cold document open, first-page `DisplayList` compilation, and full-page tile rasterization with `1` worker against the default worker pool, plus the working set; its `--json` fields are `open_ms`, `display_list_ms`, `render_1w_ms`, `render_nw_ms` and `working_set_mb`. Worker counts are set on `recto-cli stress` (`--workers`), not on `bench`. The benchmark corpus filenames are finalized by `D06 T01 §7`.
 
 ## 4. Reproducing the Hardware Fingerprint
 
