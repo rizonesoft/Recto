@@ -638,15 +638,16 @@ class BuildCorpusTests(unittest.TestCase):
             self.assertIn(stated, readme)
 
     def test_a_changed_generator_password_is_caught(self) -> None:
+        # The regression as it would happen: the generator's constants changed, and the fixtures regenerated and
+        # validated with them still changed. A validator that read those constants would follow along and pass.
+        builds = (("render/encrypted-rc4-128.pdf", self.mod.build_encrypted_rc4_128),
+                  ("render/encrypted-aes-128.pdf", self.mod.build_encrypted_aes_128),
+                  ("render/encrypted-aes-256.pdf", self.mod.build_encrypted_aes_256))
         with mock.patch.object(self.mod, "CORPUS_USER_PASSWORD", b"changed-user"), \
                 mock.patch.object(self.mod, "CORPUS_OWNER_PASSWORD", b"changed-owner"):
-            regenerated = {name: build() for name, build in (
-                ("render/encrypted-rc4-128.pdf", self.mod.build_encrypted_rc4_128),
-                ("render/encrypted-aes-128.pdf", self.mod.build_encrypted_aes_128),
-                ("render/encrypted-aes-256.pdf", self.mod.build_encrypted_aes_256))}
-        for name, data in regenerated.items():
-            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "password"):
-                self.mod.validate_encrypted_pdf_structure(name, data)
+            for name, build in builds:
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, "password"):
+                    self.mod.validate_encrypted_pdf_structure(name, build())
 
     def test_inflation_stops_just_past_its_limit(self) -> None:
         bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))
