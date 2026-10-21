@@ -31,6 +31,7 @@ import argparse
 import json
 from pathlib import Path
 import re
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -47,15 +48,27 @@ TRAILER = re.compile(r"^([A-Za-z0-9-]+):\s*(.*)$", re.DOTALL)
 CPP_FILES = ("*.cpp", "*.cc", "*.cxx", "*.h", "*.hpp")
 RAW_STRING = re.compile(r'R"([^ ()\\\t\v\f\n]{0,16})\(')
 DIRECTIVE = re.compile(r"^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)$")
-# Run in a worktree of the fix commit: resolve module.Class.method the way unittest does, without running it.
+GTEST_MAIN_BANNER = re.compile(r"^Running main\(\) from \S+$")
+# Run in a worktree of the fix commit: resolve module.Class.method the way unittest does, without running it. The
+# verdict is a nonce read from stdin before the module is imported and printed only after every check passed, so a
+# module that exits during import (even with status 0) is never read as a verified test.
 PYTHON_PROBE = """
 import importlib, sys, unittest
+nonce = sys.stdin.readline().strip()
+sys.stdin.close()
 sys.path.insert(0, ".")
-*module, cls_name, method = sys.argv[1].split(".")
+name = sys.argv[1]
+*module, cls_name, method = name.split(".")
 cls = getattr(importlib.import_module(".".join(module)), cls_name, None)
-ok = isinstance(cls, type) and issubclass(cls, unittest.TestCase) and \\
-    method in unittest.defaultTestLoader.getTestCaseNames(cls)
-sys.exit(0 if ok else 3)
+if not (isinstance(cls, type) and issubclass(cls, unittest.TestCase)
+        and method in unittest.defaultTestLoader.getTestCaseNames(cls)):
+    sys.exit(3)
+# Only now is loadTestsFromName safe: on a TestCase method it builds the case (refusing, for example, an abstract
+# class) and never calls the method.
+tests = list(unittest.defaultTestLoader.loadTestsFromName(name))
+if len(tests) != 1 or not isinstance(tests[0], cls) or tests[0]._testMethodName != method:
+    sys.exit(3)
+print(nonce)
 """
 
 
@@ -164,6 +177,8 @@ def read_gtest_list(path):
         entry = line.split("#", 1)[0].rstrip()
         if not entry:
             continue
+        if suite is None and GTEST_MAIN_BANNER.match(entry):
+            continue  # gtest_main.cc prints this before the list
         if not entry[0].isspace():
             if not entry.endswith("."):
                 raise Unreadable(f"--gtest-list {path}: {line!r} is not --gtest_list_tests output")
@@ -200,9 +215,11 @@ class PythonTests:
             tree = Path(self.tmp.name) / sha[:12]
             if not tree.exists():
                 git(self.repo, "worktree", "add", "--detach", "--quiet", str(tree), sha)
-            probe = subprocess.run([sys.executable, "-I", "-c", PYTHON_PROBE, test_id], cwd=tree,
+            nonce = secrets.token_hex(16)
+            probe = subprocess.run([sys.executable, "-I", "-c", PYTHON_PROBE, test_id], cwd=tree, input=nonce + "\n",
                                    capture_output=True, text=True, timeout=120)
-            self.answers[(sha, test_id)] = probe.returncode == 0
+            lines = probe.stdout.strip().splitlines()
+            self.answers[(sha, test_id)] = probe.returncode == 0 and bool(lines) and lines[-1] == nonce
         return self.answers[(sha, test_id)]
 
 

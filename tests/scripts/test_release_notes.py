@@ -163,7 +163,7 @@ class ReleaseNotesTest(unittest.TestCase):
 
     def test_unreadable_input_exits_2(self):
         bad_list = pathlib.Path(self._tmp.name) / "not-a-list.txt"
-        bad_list.write_text("Running main() from gtest_main.cc\n", encoding="utf-8")
+        bad_list.write_text("Note: Google Test filter = *\n", encoding="utf-8")
         self.assertEqual(self.run_main("v0.9.0", "v1.1.0")[0], 2)
         self.assertEqual(self.run_main("v1.0.0", "v1.1.0", "--allow-no-test", "nosha")[0], 2)
         self.assertEqual(self.run_main("v1.0.0", "v1.1.0", "--issues", str(self.repo / "missing.json"))[0], 2)
@@ -184,7 +184,7 @@ class GtestListTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         path = pathlib.Path(tmp.name) / "list.txt"
-        path.write_text("PdfXref.\n  ParsesTable\n  EmptyTable\nInstance/PdfRender.  # TypeParam = int\n"
+        path.write_text("Running main() from gtest_main.cc\nPdfXref.\n  ParsesTable\n  EmptyTable\nInstance/PdfRender.  # TypeParam = int\n"
                         "  Draws/0  # GetParam() = 1\n  Draws/1  # GetParam() = 2\n", encoding="utf-8")
         self.assertEqual(release_notes.read_gtest_list(path),
                          {"PdfXref.ParsesTable", "PdfXref.EmptyTable", "PdfRender.Draws"})
@@ -210,8 +210,9 @@ class HostileFixtureTest(unittest.TestCase):
             "TEST (Multi,\n      Line)\n{\n}\n"
         )
         py = (
-            "import unittest\n"
+            "import abc\nimport unittest\n"
             "from unittest import TestCase as Aliased\n\n\n"
+            "class Abstract(abc.ABC, unittest.TestCase):\n    @abc.abstractmethod\n    def test_abstract(self):\n        pass\n\n\n"
             "class PretendTestCase:\n    pass\n\n\n"
             "class Pretend(PretendTestCase):\n    def test_fake(self):\n        pass\n\n\n"
             "class Ordinary:\n    def test_missing(self):\n        pass\n\n    def save(self):\n        pass\n\n\n"
@@ -220,7 +221,8 @@ class HostileFixtureTest(unittest.TestCase):
             "class Child(Derived):\n    pass\n\n\n"
             "class ViaAlias(Aliased):\n    def test_alias(self):\n        pass\n"
         )
-        _commit(repo, {"tests/recto-tests/hostile_tests.cpp": cpp, "tests/scripts/test_sample.py": py}, "initial")
+        _commit(repo, {"tests/recto-tests/hostile_tests.cpp": cpp, "tests/scripts/test_sample.py": py,
+                       "tests/scripts/test_exits.py": "raise SystemExit(0)\n"}, "initial")
         _git(repo, "tag", "v2.0.0")
         cls.fake = {
             "Commented": "Commented.Case", "Block": "Block.Case", "Disabled": "Disabled.Case",
@@ -230,6 +232,8 @@ class HostileFixtureTest(unittest.TestCase):
             "Ordinary": "tests.scripts.test_sample.Ordinary.test_missing",
             "Save": "tests.scripts.test_sample.Ordinary.save",
             "Helper": "tests.scripts.test_sample.Derived.helper",
+            "Abstract": "tests.scripts.test_sample.Abstract.test_abstract",
+            "ExitsOnImport": "tests.scripts.test_exits.Missing.test_missing",
         }
         cls.real = {
             "Enabled": "Enabled.Case", "Taken": "Taken.Case", "Multi": "Multi.Line",
