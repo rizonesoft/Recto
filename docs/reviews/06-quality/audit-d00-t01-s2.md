@@ -493,3 +493,48 @@ OVERALL: needs-attention
 ## Fixes after round 11
 
 - Finding 1 (P1): each scanned file's bytes are searched as UTF-8 and as UTF-16 little- and big-endian at both byte alignments, so a UTF-16 project or source cannot hide MuPDF. Mutation: `src/pdf/recto-pdf.vcxproj` re-encoded as UTF-16 with a `libmupdf.lib` mention -> the scan fails. Tests: `Ran 3 tests ... OK`.
+
+## Round 12: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T14:50:10Z
+- Effort: medium
+- Lines: 31
+- Digest: be6e25d060d3db66
+
+## adversarial: needs-attention
+
+1. **P1** `tests/scripts/test_engine_dependency_policy.py:68`: XML character references bypass the MuPDF dependency guard. Searching decoded bytes does not inspect the dependency name that XML parsing produces.
+
+   Reproduced without writes: intercepted `Path.read_bytes` for `src/pdf/recto-pdf.vcxproj`, appended an `ItemDefinitionGroup` containing `<Lib><AdditionalDependencies>libmu&#112;df.lib;%(AdditionalDependencies)</AdditionalDependencies></Lib>`, and ran the unchanged scan. It passed with zero failures. The literal `libmupdf.lib` control failed. Both XML values parsed to `libmupdf.lib;%(AdditionalDependencies)`.
+
+   This is false acceptance by the guard, not evidence of an existing MuPDF dependency.
+
+## consistency: approve
+
+No additional findings.
+
+## integration: advisory
+
+Current clean-clone compilation was not rerun because it writes files. Passing the policy tests does not establish successful compilation.
+
+## source-defect: needs-attention
+
+Finding **1 (P1)** applies here. XML numeric character references are expanded into character data during parsing. UTF-8 and UTF-16 decoding alone does not reproduce that interpretation. [XML specification, character references](https://www.w3.org/TR/xml/#sec-references)
+
+## design: advisory
+
+Not applicable: this section owns no user surface.
+
+## record: advisory
+
+At `8bb1623`, the checkpoint independently returned `False`, `False`, and `valid: 677 sections`; all three policy tests passed. The opening record’s 676-section count identifies an earlier revision. These passing results do not resolve finding 1.
+
+No files were modified; the working tree remains clean.
+
+OVERALL: needs-attention
+
+## Fixes after round 12
+
+- Finding 1 (P1): MSBuild and XML files are also parsed, and the text the parser produces (character references expanded, attributes included) is searched, so `libmu&#112;df.lib` fails. Mutation: that reference added to `src/pdf/recto-pdf.vcxproj` -> the scan fails. Tests: `Ran 3 tests ... OK`.
+- Threat model, recorded in the test: the scan catches a dependency written down plainly or added by mistake, in any encoding and through XML character references. A committer deliberately obfuscating one (string-literal concatenation, macros, files generated during the build) is a code review matter that no static scan can rule out, the same boundary `D07 T03 §4` records for regression tests.

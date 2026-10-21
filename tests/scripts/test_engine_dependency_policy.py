@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import unittest
+import xml.etree.ElementTree as ElementTree
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 # mupdf and artifex anywhere (libmupdf.lib, mupdf.h); jbig2dec as a whole word only, because the PDF filter name
@@ -54,7 +55,10 @@ class EngineDependencyPolicyTest(unittest.TestCase):
     def test_code_and_build_trees_name_no_mupdf(self):
         # Every tracked file in the code and build trees, whatever its extension: a #pragma comment(lib, ...) in any
         # source, a library name in any project or script, or a workflow step can bring MuPDF in. This test's own
-        # file names MuPDF to look for it, so it is the one exception.
+        # file names MuPDF to look for it, so it is the one exception. The scan catches a dependency written down
+        # plainly or added by mistake, in any encoding and through XML character references; a committer who
+        # deliberately obfuscates one (string concatenation, macros, files generated during the build) is a code
+        # review matter, which no static scan can rule out.
         files = tracked("src", "fuzz", "tests", "scripts", ".github", "build", "*.props", "*.targets", "*.sln",
                         "vcpkg.json", "*.cmd")
         self.assertTrue(files)
@@ -65,9 +69,15 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                 data = (REPO / name).read_bytes()
                 # MSBuild and Windows tools accept UTF-16 files too: search every decoding a tool might apply, at both
                 # byte alignments, so an encoding cannot hide the name.
-                for text in (data.decode("utf-8", errors="replace"), data.decode("utf-16-le", errors="ignore"),
-                             data[1:].decode("utf-16-le", errors="ignore"), data.decode("utf-16-be", errors="ignore"),
-                             data[1:].decode("utf-16-be", errors="ignore")):
+                texts = [data.decode("utf-8", errors="replace"), data.decode("utf-16-le", errors="ignore"),
+                         data[1:].decode("utf-16-le", errors="ignore"), data.decode("utf-16-be", errors="ignore"),
+                         data[1:].decode("utf-16-be", errors="ignore")]
+                if name.endswith((".vcxproj", ".props", ".targets", ".filters", ".xml", ".manifest", ".appxmanifest")):
+                    # The text an XML parser produces, with character references expanded (libmu&#112;df.lib).
+                    root = ElementTree.fromstring(data)
+                    texts += [value for node in root.iter() for value in (node.text, node.tail, *node.attrib.values())
+                              if value]
+                for text in texts:
                     self.assertIsNone(MUPDF.search(text))
 
     @unittest.skipUnless(sys.platform == "win32", "the C++ build and MSBuild are Windows-only (foundation plan D15)")
