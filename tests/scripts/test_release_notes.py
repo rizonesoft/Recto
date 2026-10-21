@@ -184,10 +184,13 @@ class GtestListTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         path = pathlib.Path(tmp.name) / "list.txt"
-        path.write_text("Running main() from gtest_main.cc\nPdfXref.\n  ParsesTable\n  EmptyTable\nInstance/PdfRender.  # TypeParam = int\n"
-                        "  Draws/0  # GetParam() = 1\n  Draws/1  # GetParam() = 2\n", encoding="utf-8")
+        path.write_text("Running main() from C:/Program Files/gtest/src/gtest_main.cc\nPdfXref.\n  ParsesTable\n"
+                        "  EmptyTable\nInstance/PdfRender.\n  Draws/0  # GetParam() = 1\n  Draws/1  # GetParam() = 2\n"
+                        "PdfTyped/0.  # TypeParam = int\n  Holds\nPdfTyped/1.  # TypeParam = long\n  Holds\n"
+                        "Ints/PdfTypedP/0.  # TypeParam = int\n  Grows\n", encoding="utf-8")
         self.assertEqual(release_notes.read_gtest_list(path),
-                         {"PdfXref.ParsesTable", "PdfXref.EmptyTable", "PdfRender.Draws"})
+                         {"PdfXref.ParsesTable", "PdfXref.EmptyTable", "PdfRender.Draws", "PdfTyped.Holds",
+                          "PdfTypedP.Grows"})
 
 
 class HostileFixtureTest(unittest.TestCase):
@@ -208,6 +211,7 @@ class HostileFixtureTest(unittest.TestCase):
             "const char* s = \"TEST(Quoted, Case)\";\n"
             "const char* r = R\"x(TEST(Raw, Case))x\";\n"
             "TEST (Multi,\n      Line)\n{\n}\n"
+            "TYPED_TEST(Typed, Case)\n{\n}\n"
         )
         py = (
             "import abc\nimport unittest\n"
@@ -236,7 +240,7 @@ class HostileFixtureTest(unittest.TestCase):
             "ExitsOnImport": "tests.scripts.test_exits.Missing.test_missing",
         }
         cls.real = {
-            "Enabled": "Enabled.Case", "Taken": "Taken.Case", "Multi": "Multi.Line",
+            "Enabled": "Enabled.Case", "Taken": "Taken.Case", "Multi": "Multi.Line", "Typed": "Typed.Case",
             "Derived": "tests.scripts.test_sample.Derived.test_real",
             "Inherited": "tests.scripts.test_sample.Child.test_real",
             "Alias": "tests.scripts.test_sample.ViaAlias.test_alias",
@@ -254,7 +258,7 @@ class HostileFixtureTest(unittest.TestCase):
             repo, {"src/ex.txt": "ex"}, "fix ex\n\nFixes-User: #3\nRegression-Test: Enabled.Case\n")
         _git(repo, "tag", "v2.1.0")
         # What the compiler builds: the macro, the continued comment and the #if (0) block are not tests.
-        cls.compiled = {"Enabled.Case", "Taken.Case", "Multi.Line"}
+        cls.compiled = {"Enabled.Case", "Taken.Case", "Multi.Line", "Typed.Case"}
         cls.result = release_notes.report(repo, "v2.0.0", "v2.1.0", gtest_list=cls.compiled)
 
     @classmethod

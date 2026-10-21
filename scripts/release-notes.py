@@ -48,7 +48,7 @@ TRAILER = re.compile(r"^([A-Za-z0-9-]+):\s*(.*)$", re.DOTALL)
 CPP_FILES = ("*.cpp", "*.cc", "*.cxx", "*.h", "*.hpp")
 RAW_STRING = re.compile(r'R"([^ ()\\\t\v\f\n]{0,16})\(')
 DIRECTIVE = re.compile(r"^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)$")
-GTEST_MAIN_BANNER = re.compile(r"^Running main\(\) from \S+$")
+GTEST_MAIN_BANNER = re.compile(r"^Running main\(\) from .+$")
 # Run in a worktree of the fix commit: resolve module.Class.method the way unittest does, without running it. The
 # verdict is a nonce read from stdin before the module is imported and printed only after every check passed, so a
 # module that exits during import (even with status 0) is never read as a verified test.
@@ -154,10 +154,10 @@ def cpp_code(text):
 
 
 def gtest_declared(repo, sha, test_id):
-    """True when TEST, TEST_F or TEST_P declares Suite.Case in C++ source at the commit (comments, literals and
+    """True when TEST, TEST_F, TEST_P, TYPED_TEST or TYPED_TEST_P declares Suite.Case in C++ source at the commit (comments, literals and
     `#if 0` branches excluded). Whether it compiles into a test is `--gtest-list`'s job."""
     suite, case = GTEST_ID.match(test_id).groups()
-    declaration = re.compile(rf"\bTEST(?:_F|_P)?\s*\(\s*{suite}\s*,\s*{case}\s*\)")
+    declaration = re.compile(rf"\b(?:TEST(?:_F|_P)?|TYPED_TEST(?:_P)?)\s*\(\s*{suite}\s*,\s*{case}\s*\)")
     listed = git(repo, "grep", "-l", "-w", "-e", case, sha, "--", *CPP_FILES, check=False).stdout
     for line in listed.splitlines():
         shown = git(repo, "show", f"{sha}:{line.split(':', 1)[1]}", check=False)
@@ -167,7 +167,9 @@ def gtest_declared(repo, sha, test_id):
 
 
 def read_gtest_list(path):
-    """`Suite.Case` names from `--gtest_list_tests` output; parameterised `Prefix/Suite.` and `Case/N` keep their base."""
+    """`Suite.Case` names from `--gtest_list_tests` output. Instantiation prefixes and type indexes are dropped:
+    `Prefix/Suite.` (TEST_P), `Suite/0.` (TYPED_TEST) and `Prefix/Suite/0.` (TYPED_TEST_P) are all `Suite`, and a
+    `Case/0` (TEST_P) is `Case`."""
     try:
         text = Path(path).read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError) as exc:
@@ -182,7 +184,9 @@ def read_gtest_list(path):
         if not entry[0].isspace():
             if not entry.endswith("."):
                 raise Unreadable(f"--gtest-list {path}: {line!r} is not --gtest_list_tests output")
-            suite = entry[:-1].split("/")[-1]
+            suite = next((part for part in reversed(entry[:-1].split("/")) if not part.isdigit()), None)
+            if suite is None:
+                raise Unreadable(f"--gtest-list {path}: {line!r} names no suite")
         elif suite is None:
             raise Unreadable(f"--gtest-list {path}: a test case comes before any suite")
         else:
