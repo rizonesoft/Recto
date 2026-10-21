@@ -159,7 +159,8 @@ def cpp_code(text):
     """C++ source with lines spliced, comments and literals blanked, and `#if 0` branches removed. As the compiler
     does, every splice is removed before tokens are read, and only a raw string literal's content is taken from the
     original characters (C++ reverts splices between its delimiters)."""
-    original = text.replace("\r\n", "\n")
+    # Translation phase 1: a leading byte-order mark is not source, and CRLF or a lone CR ends a line as LF does.
+    original = text.removeprefix("﻿").replace("\r\n", "\n").replace("\r", "\n")
     text, origin = _spliced(original)
     out, i, n = [], 0, len(text)
     while i < n:
