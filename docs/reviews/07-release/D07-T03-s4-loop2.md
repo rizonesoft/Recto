@@ -403,3 +403,46 @@ OVERALL: needs-attention
 ## Fixes after round 8
 
 - Finding 1 (P1): a test unittest would skip, or run as an expected failure, is refused: `__unittest_skip__` or `__unittest_expecting_failure__` on the class (inherited included) or on the method (outer layer or its unwrapped function). Fixtures `SkippedClass`, `SkippedMethod`, `InheritsSkip` and `ExpectedFailure` are refused. Mutation: the flag check removed -> `HostileFixtureTest` fails. Tests: `Ran 24 tests ... OK`.
+
+## Round 9: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T13:42:35Z
+- Effort: medium
+- Lines: 30
+- Digest: dbe5615a4cfa7861
+
+## adversarial: needs-attention
+
+1. **P1, `scripts/release-notes.py:191`: Disabled gtests count as verified regression tests.** The parser retains `DISABLED_` cases and suites, and line 305 accepts their membership without checking whether they run. Reproduce with a fix carrying `Regression-Test: PdfXref.DISABLED_EmptyTable` and this CI note:
+
+   ```text
+   PdfXref.
+     DISABLED_EmptyTable
+   ```
+
+   In-memory verification returned `test_problem(...) == None`. The same happened for `DISABLED_PdfXref.EmptyTable`. A disabled parameterized instantiation, `DISABLED_Instance/PdfXref.EmptyTable/0`, is additionally normalized to the apparently enabled `PdfXref.EmptyTable`. These fixes produce no regression-test violation although their tests do not execute by default. Reject disabled entries before discarding instantiation prefixes.
+
+## consistency: approve
+
+## integration: needs-attention
+
+Finding 1 (**P1**, `scripts/release-notes.py:305`) affects genuine §9 notes: CI records `--gtest_list_tests`, which includes disabled tests. Invalid evidence consequently reaches closing comments and §7’s JSON input without a violation.
+
+## source-defect: needs-attention
+
+Finding 1 (**P1**, `scripts/release-notes.py:191`) conflates registration with execution eligibility. GoogleTest’s `ListTestsMatchingFilter()` checks `matches_filter_`, while execution separately excludes disabled tests through `is_runnable`. [GoogleTest source](https://github.com/google/googletest/blob/main/googletest/src/gtest.cc)
+
+## design: advisory
+
+Not applicable.
+
+## record: advisory
+
+The claimed 24-test result was not independently reproduced: that suite creates files and repositories. Four read-only parser/documentation tests passed; the disabled-test reproductions ran entirely in memory. No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 9
+
+- Finding 1 (P1): `parse_gtest_list` leaves out disabled tests, which gtest does not run: a `DISABLED_` case, a `DISABLED_` suite, or a `DISABLED_` instantiation prefix (checked before the prefix is dropped), so `PdfXref.DISABLED_EmptyTable`, `DISABLED_PdfOld.Case` and `DISABLED_Instance/PdfParam.Draws/0` are never evidence. Mutation: disabled entries kept -> `GtestListTest` fails. Tests: `Ran 25 tests ... OK`.

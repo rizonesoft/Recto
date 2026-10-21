@@ -169,8 +169,9 @@ def parse_gtest_list(text, where):
     """`Suite.Case` names from `--gtest_list_tests` output. A typed suite (gtest marks it `# TypeParam = ...`) ends in
     its type name or index, which is dropped: `Suite/0.` or `Suite/int.` (TYPED_TEST) and `Prefix/Suite/0.`
     (TYPED_TEST_P) are `Suite`. Otherwise the suite is the last part: `Prefix/Suite.` (TEST_P) is `Suite`. A
-    parameterised case `Case/0` is `Case`. `where` names the source in a refusal."""
-    names, suite = set(), None
+    parameterised case `Case/0` is `Case`. Disabled tests (a `DISABLED_` case, suite or instantiation prefix) are
+    left out, since gtest does not run them. `where` names the source in a refusal."""
+    names, suite, disabled = set(), None, False
     for line in text.splitlines():
         entry, _, comment = line.partition("#")
         entry = entry.rstrip()
@@ -182,13 +183,18 @@ def parse_gtest_list(text, where):
             if not entry.endswith("."):
                 raise Unreadable(f"{where}: {line!r} is not --gtest_list_tests output")
             parts = entry[:-1].split("/")
+            # gtest never runs a suite whose name or instantiation prefix starts with DISABLED_ (without
+            # --gtest_also_run_disabled_tests), so its cases are not evidence; checked before the prefix is dropped.
+            disabled = any(part.startswith("DISABLED_") for part in parts)
             if comment.strip().startswith("TypeParam") and len(parts) > 1:
                 parts = parts[:-1]
             suite = parts[-1]
         elif suite is None:
             raise Unreadable(f"{where}: a test case comes before any suite")
         else:
-            names.add(f"{suite}.{entry.strip().split('/')[0]}")
+            case = entry.strip().split("/")[0]
+            if not disabled and not case.startswith("DISABLED_"):
+                names.add(f"{suite}.{case}")
     if not names:
         raise Unreadable(f"{where}: no tests listed")
     return names

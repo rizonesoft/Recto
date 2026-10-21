@@ -233,6 +233,11 @@ class GtestListTest(unittest.TestCase):
                          {"PdfXref.ParsesTable", "PdfXref.EmptyTable", "PdfRender.Draws", "PdfTyped.Holds",
                           "PdfTypedP.Grows", "Named.Works", "NamedP.Grows"})
 
+    def test_disabled_tests_are_not_listed(self):
+        text = ("PdfXref.\n  EmptyTable\n  DISABLED_Skipped\nDISABLED_PdfOld.\n  Case\n"
+                "DISABLED_Instance/PdfParam.\n  Draws/0  # GetParam() = 1\n")
+        self.assertEqual(release_notes.parse_gtest_list(text, "fixture"), {"PdfXref.EmptyTable"})
+
     def test_refuses_what_is_not_a_test_list(self):
         for text in ("Note: Google Test filter = *\n", "  Orphan\n", ""):
             with self.subTest(text=text), self.assertRaises(release_notes.Unreadable):
