@@ -233,3 +233,45 @@ Every dictionary the validator reads now comes from one parsed object walk; no r
 - Finding 1 (P1): object streams are read with `stream_object_at` and `dict_entries`, limited to the keys the corpus writes (`/Type /N /First /Filter /Length`), so `/Note (/First 32)` refuses and `/First` is the real entry.
 - Finding 2 (P1): classic trailers are parsed (keys limited to `/Size /Root /Info /ID /Prev /Encrypt`) and `/Prev` comes from the trailer's own entry; an xref stream's `/Prev` must locate a previous xref section, which is validated in turn (cycle-guarded).
 - Finding 3 (P1): an object stream must declare `/Filter /FlateDecode`, the decoding the validator applies.
+
+## Round 6: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T19:26:13Z
+- Effort: medium
+- Lines: 26
+- Digest: 600842b80e6a58ab
+
+## adversarial: needs-attention
+
+1. **P1: Xref offsets can point inside stream payloads and bypass `/Length` validation.** `scripts/build-corpus.py:1040` checks only whether the offset starts with the expected object-header bytes, without tying it to the parsed object walk. Reproduced with `ClassicPdfBuilder`: create normal objects 1–4, then an uncompressed object 5 whose payload is `b'4 0 obj\n<< /Length 999 >>\nstream\nq Q\nendstream\nendobj\n'`. Redirect object 4’s fixed-width xref entry to that embedded header. `validate_pdf_structure` accepts it. The xref-selected content has an invalid length, while the validator checks the different, physically top-level object 4.
+
+## consistency: approve
+
+No independent findings.
+
+## integration: advisory
+
+These structural-gate gaps can admit malformed future fixtures into downstream engine tests. Deterministic byte comparison cannot detect a defect shared by the generator and committed output. The reproductions do not establish corruption in the current committed fixtures.
+
+## source-defect: needs-attention
+
+2. **P1: Compressed-object validation accepts mismatched delimiters.** `scripts/build-corpus.py:1172` uses a shared depth counter for arrays and dictionaries, allowing `>>` to close `[`. Reproduced by wrapping `flate_compress` during `build_compressed_xref_2p()` to replace `b'<< /Type /Catalog'` with equal-length `b'[  /Type /Catalog'` before compression. The builder recalculates outer offsets and lengths; `validate_pdf_structure` accepts the malformed catalog. Array and dictionary delimiters are distinct under [Adobe PDF Reference, sections 3.2.5–3.2.6](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.6.pdf). This separate scanner does not establish that each compressed slot contains one valid object.
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: advisory
+
+At `225b143`, independently reran `python -B scripts/build-corpus.py --check`: exit 0, 39 current fixtures. Eight targeted regression tests passed; corpus size was 60,176 bytes. The recorded checkpoint result holds, but does not substantiate complete structural validation given findings 1 and 2. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 6
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 17 tests`, `OK` (both new tests fail against `225b143`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): an xref offset (classic entry or xref-stream type-1 entry) must be one of the object-header offsets the forward walk parsed (`object_header_offsets`), so a header written inside a stream payload or a string can never be selected (`test_xref_offsets_name_only_objects_the_walk_parsed`).
+- Finding 2 (P1): an object-stream slot is checked with the same string-aware parser as every other object, which keeps `>>` and `]` apart; the separate depth counter is gone (`test_an_object_stream_slot_keeps_dictionary_and_array_delimiters_apart`).

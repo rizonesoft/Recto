@@ -224,6 +224,34 @@ class BuildCorpusTests(unittest.TestCase):
             with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, re.escape(reason)):
                 self.mod.validate_pdf_structure("render/test.pdf", data)
 
+    def test_xref_offsets_name_only_objects_the_walk_parsed(self) -> None:
+        fake = b"4 0 obj\n<< /Length 999 >>\nstream\nq Q\nendstream\nendobj\n"
+        pdf = self.mod.ClassicPdfBuilder("test.pdf")
+        pdf.set_obj(1, "<< /Type /Catalog /Pages 2 0 R >>")
+        pdf.set_obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+        pdf.set_obj(3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>")
+        pdf.set_obj(4, b"<< /Length 3 >>\nstream\nq Q\nendstream")
+        pdf.set_obj(5, b"<< /Length " + str(len(fake)).encode() + b" >>\nstream\n" + fake + b"\nendstream")
+        data = pdf.build(1)
+        self.mod.validate_pdf_structure("test.pdf", data)
+        xref = data.index(b"\nxref\n") + 1
+        self.assertTrue(data.startswith(b"xref\n0 6\n", xref))
+        entry_4 = xref + len(b"xref\n0 6\n") + 20 * 4  # 20-byte entries for objects 0 to 5
+        redirected = data[:entry_4] + f"{data.index(fake):010d}".encode() + data[entry_4 + 10:]
+        with self.assertRaisesRegex(ValueError, "xref entry for 4 0"):
+            self.mod.validate_pdf_structure("test.pdf", redirected)
+
+    def test_an_object_stream_slot_keeps_dictionary_and_array_delimiters_apart(self) -> None:
+        real = self.mod.flate_compress
+
+        def bracketed(raw: bytes) -> bytes:  # equal length, so every offset in the stream header still lines up
+            return real(raw.replace(b"<< /Type /Catalog", b"[  /Type /Catalog", 1))
+
+        with mock.patch.object(self.mod, "flate_compress", side_effect=bracketed):
+            data = self.mod.build_compressed_xref_2p()
+        with self.assertRaisesRegex(ValueError, "is not one complete object"):
+            self.mod.validate_pdf_structure("render/compressed-xref-2p.pdf", data)
+
     def test_a_classic_xref_entry_has_one_form(self) -> None:
         data = self.mod.build_simple_1p()
         self.mod.validate_pdf_structure("render/simple-1p.pdf", data)

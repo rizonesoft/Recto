@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import functools
 import hashlib
 import os
 from pathlib import Path
@@ -1038,7 +1039,7 @@ def validate_classic_xref_at(rel_path: str, data: bytes, xref_offset: int, visit
             obj_num = first_obj + idx
             if kind == "n":
                 expected_prefix = f"{obj_num} {gen} obj\n".encode("ascii")
-                if not data[off:].startswith(expected_prefix):
+                if off not in object_header_offsets(rel_path, data) or not data[off:].startswith(expected_prefix):
                     raise ValueError(
                         f"{rel_path}: xref entry for {obj_num} {gen} at offset {off} "
                         f"does not start with {expected_prefix!r}"
@@ -1130,7 +1131,7 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int, visite
                 )
         elif etype == 1:
             expected_prefix = f"{obj_id} {f3} obj\n".encode("ascii")
-            if not data[f2:].startswith(expected_prefix):
+            if f2 not in object_header_offsets(rel_path, data) or not data[f2:].startswith(expected_prefix):
                 raise ValueError(
                     f"{rel_path}: XRef type-1 entry for {obj_id} at {f2} does not match object header"
                 )
@@ -1170,25 +1171,12 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int, visite
 
 
 def _complete_pdf_object(chunk: bytes) -> bool:
-    """Whether chunk is exactly one PDF value: a balanced dictionary or array, or a single token."""
-    if chunk.startswith(b"<<") or chunk.startswith(b"["):
-        depth = 0
-        i = 0
-        while i < len(chunk):
-            two = chunk[i : i + 2]
-            if two == b"<<" or chunk[i : i + 1] == b"[":
-                depth += 1
-                i += 2 if two == b"<<" else 1
-                continue
-            if two == b">>" or chunk[i : i + 1] == b"]":
-                depth -= 1
-                i += 2 if two == b">>" else 1
-                if depth == 0:
-                    return i == len(chunk)
-                continue
-            i += 1
+    """Whether chunk is exactly one PDF value, read by the same parser as every other object (dictionary and array
+    delimiters are distinct, strings are data)."""
+    try:
+        return bool(chunk) and _skip_object(chunk, 0) == len(chunk)
+    except ValueError:
         return False
-    return re.fullmatch(rb"[^\s<>\[\]()%]+", chunk) is not None
 
 
 def validate_objstm_offsets(rel_path: str, stm_obj_id: int, dec: bytes, first: int, offsets: list[int]) -> None:
@@ -1378,8 +1366,15 @@ def iter_objects(rel_path: str, data: bytes):
         # Every object ends with endobj right after its value (or its stream), so nothing is left unparsed in between.
         if not data.startswith(b"\nendobj\n", after):
             raise ValueError(f"{rel_path}: object at {m.start()} does not end with endobj after its value")
-        yield num, start, end, stream_start, stream_end
+        yield num, start, end, stream_start, stream_end, m.start()
         pos = after + len(b"\nendobj\n")
+
+
+@functools.lru_cache(maxsize=8)
+def object_header_offsets(rel_path: str, data: bytes) -> frozenset[int]:
+    """Where the forward object walk finds each object's header: the only offsets an xref entry may name, so an
+    object header written inside a string or a stream payload can never be selected."""
+    return frozenset(header for *_, header in iter_objects(rel_path, data))
 
 
 def stream_object_at(rel_path: str, data: bytes, offset: int) -> tuple[dict[bytes, bytes], int, int]:
@@ -1411,7 +1406,7 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
     # dictionary was matched to refuses.
     # Every object, parsed once; a later revision's object replaces the earlier one (incremental updates).
     objects: dict[int, tuple[int, int, int | None, int | None]] = {}
-    for num, start, end, stream_start, end_pos in iter_objects(rel_path, data):
+    for num, start, end, stream_start, end_pos, _header in iter_objects(rel_path, data):
         objects[num] = (start, end, stream_start, end_pos)
         if stream_start is None:
             continue
