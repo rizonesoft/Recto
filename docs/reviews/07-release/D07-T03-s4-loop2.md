@@ -296,3 +296,61 @@ OVERALL: needs-attention
 ## Fixes after round 6
 
 - Finding 1 (P1): a test body unittest would not run is refused: a coroutine on a plain `TestCase` (never awaited), and a generator or async generator on any case. A coroutine on `unittest.IsolatedAsyncioTestCase`, which awaits it, is accepted (`AsyncOnPlain` and `Generator` refused, `AsyncOnIsolated` accepted). Mutation: the coroutine rule removed -> `HostileFixtureTest` fails. Tests: `Ran 24 tests ... OK`.
+
+## Round 7: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T13:34:30Z
+- Effort: medium
+- Lines: 45
+- Digest: 2cf43b6be4d2b723
+
+## adversarial: needs-attention
+
+1. **P1, `scripts/release-notes.py:105`: A synchronous decorator lets an async regression body pass verification without executing.** The probe permits coroutine layers whenever the class inherits `IsolatedAsyncioTestCase`. However, unittest only awaits the outer callable, which can be synchronous.
+
+   Reproduce with this repository-local module and trailer `Regression-Test: test_example.Case.test_regression`:
+
+   ```python
+   import unittest
+   from functools import wraps
+
+   def wrapper(fn):
+       @wraps(fn)
+       def call(self):
+           return fn(self)
+       return call
+
+   class Case(unittest.IsolatedAsyncioTestCase):
+       @wrapper
+       async def test_regression(self):
+           raise AssertionError("regression still broken")
+   ```
+
+   Exercised the candidate’s actual probe with an in-memory fixture: it printed the success nonce. Unittest reported `1 run, 0 failures, 0 errors`; the body never executed, and the coroutine was never awaited. Validate awaitability of the callable unittest actually invokes, not merely the class and individual wrapper layers.
+
+## consistency: approve
+
+## integration: needs-attention
+
+Finding 1 (**P1**, `scripts/release-notes.py:105`) admits invalid regression evidence without a violation into release reporting and §7’s JSON input.
+
+## source-defect: needs-attention
+
+Finding 1 (**P1**, `scripts/release-notes.py:105`) misrepresents `IsolatedAsyncioTestCase` semantics. Its `_callMaybeAsync` checks `inspect.iscoroutinefunction` on the outer callable; it does not automatically await a coroutine returned by a synchronous wrapper.
+
+## design: advisory
+
+Not applicable.
+
+## record: needs-attention
+
+Finding 1 contradicts the checked regression-verification requirement at `todo/07-release/TODO-03-listening-to-users.md:153`.
+
+The claimed 24-test pass remains independently unverified: `python -B -m unittest tests.scripts.test_release_notes` completed four tests, with two fixture-setup errors because the read-only sandbox cannot create temporary directories. No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 7
+
+- Finding 1 (P1): a coroutine anywhere in the layer chain is accepted only when the outermost callable, the one unittest calls, is itself a coroutine function on an `IsolatedAsyncioTestCase` (which awaits it); a synchronous wrapper around an `async` body is refused (`SyncWrappedAsync`), as is any coroutine on a plain `TestCase`. Mutation: the outermost check removed -> `HostileFixtureTest` fails. Tests: `Ran 24 tests ... OK`.

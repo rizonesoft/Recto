@@ -88,7 +88,7 @@ if not isinstance(vars(owner)[method], types.FunctionType):
 # Trust is decided by where the wrapper's code lives: functools.wraps copies __module__ from the wrapped test.
 import unittest.mock
 TRUSTED_WRAPPER_FILES = {pathlib.Path(unittest.mock.__file__).resolve()}
-layer, seen = vars(owner)[method], set()
+layer, seen, has_coroutine = vars(owner)[method], set(), False
 while layer is not None and id(layer) not in seen:
     seen.add(id(layer))
     inner = getattr(layer, "__wrapped__", None)
@@ -99,12 +99,18 @@ while layer is not None and id(layer) not in seen:
                and pathlib.Path(code.co_filename).resolve() in TRUSTED_WRAPPER_FILES)
     if not (from_tree or trusted):
         sys.exit(3)
-    # A body that unittest would not run: a generator (never iterated), or a coroutine on a plain TestCase (never
-    # awaited; IsolatedAsyncioTestCase awaits it).
-    if inspect.isgeneratorfunction(layer) or inspect.isasyncgenfunction(layer) or (
-            inspect.iscoroutinefunction(layer) and not issubclass(cls, unittest.IsolatedAsyncioTestCase)):
+    # A generator body is never iterated by unittest, so the test would never run.
+    if inspect.isgeneratorfunction(layer) or inspect.isasyncgenfunction(layer):
         sys.exit(3)
+    has_coroutine = has_coroutine or inspect.iscoroutinefunction(layer)
     layer = inner
+# A coroutine anywhere in the chain is awaited only if unittest awaits the callable it runs: IsolatedAsyncioTestCase
+# awaits the outermost callable when that is a coroutine function; a plain TestCase, or a synchronous outer wrapper,
+# returns the coroutine unawaited and the body never runs.
+outermost = vars(owner)[method]
+if has_coroutine and not (inspect.iscoroutinefunction(outermost)
+                          and issubclass(cls, unittest.IsolatedAsyncioTestCase)):
+    sys.exit(3)
 # Build the case the way unittest's loader does for a plain TestCase method, without calling anything: cls(method)
 # checks the method exists and refuses, for example, an abstract class.
 try:

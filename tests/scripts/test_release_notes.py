@@ -270,7 +270,11 @@ class HostileFixtureTest(unittest.TestCase):
                "        raise AssertionError('never awaited')\n\n\n"
                "class GeneratorTest(unittest.TestCase):\n    def test_regression(self):\n        yield\n\n\n"
                "class AsyncOnIsolated(unittest.IsolatedAsyncioTestCase):\n    async def test_regression(self):\n"
-               "        pass\n")
+               "        pass\n\n\n"
+               "import functools\n\n\ndef sync_wrapper(fn):\n    @functools.wraps(fn)\n    def call(self):\n"
+               "        return fn(self)\n    return call\n\n\n"
+               "class SyncWrappedAsync(unittest.IsolatedAsyncioTestCase):\n    @sync_wrapper\n"
+               "    async def test_regression(self):\n        raise AssertionError('never awaited')\n")
         py += ("\n\nclass ShadowedByBuiltin(unittest.TestCase):\n    def __init__(self, methodName='runTest'):\n"
                "        super().__init__(methodName)\n        self.test_case = [].clear\n\n"
                "    def test_case(self):\n        raise AssertionError('the regression body must run')\n")
@@ -326,6 +330,7 @@ class HostileFixtureTest(unittest.TestCase):
             # Bodies unittest would not run: a coroutine on a plain TestCase, a generator.
             "AsyncOnPlain": "tests.scripts.test_sample.AsyncOnPlain.test_regression",
             "Generator": "tests.scripts.test_sample.GeneratorTest.test_regression",
+            "SyncWrappedAsync": "tests.scripts.test_sample.SyncWrappedAsync.test_regression",
             "Stdlib": "unittest.case.TestCase.test_missing",
         }
         cls.real = {
