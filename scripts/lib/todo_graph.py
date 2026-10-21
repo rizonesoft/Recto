@@ -261,9 +261,14 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
                             f"round {r['round']} is not a review returned by another model family with a verdict "
                             f"matching {r['verdict']} (clean needs OVERALL: approve, any other needs-attention) in "
                             f"{report}: {ref}")
-                    # A severity stop is for a round whose findings are all P3 or advisory.
-                    require(r["verdict"] != "stopped-low-severity" or re.search(r"\bP[12]\b", e["review"]) is None,
-                            f"round {r['round']} has a P1 or P2 finding, so it cannot stop on severity: {ref}")
+                    # A severity stop is for a round whose findings are all P3 or advisory: every numbered finding
+                    # must carry a P3 tag (an untagged finding counts as P1), and no P1 or P2 may appear.
+                    findings = re.findall(r"^[ \t>]*\d+[.)][ \t]+(.*)$", e["review"], re.M)
+                    require(r["verdict"] != "stopped-low-severity"
+                            or (re.search(r"\bP[12]\b", e["review"]) is None
+                                and all(re.search(r"\bP3\b", f) for f in findings)),
+                            f"round {r['round']} has a finding that is not tagged P3, so it cannot stop on severity: "
+                            f"{ref}")
                 # Each findings file is one review loop, and the loop's end is its last reviewed round: the receipt
                 # must name it, and it must be clean or a stop, so no later failing review can be left out.
                 require(claimed[-1]["round"] == max(reviewed)

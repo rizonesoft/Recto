@@ -419,3 +419,57 @@ In `scripts/lib/todo_graph.py`, tested in `tests/scripts/test_todo_graph.py` (`R
 
 - Finding 1 (P1): each findings file is one review loop, and the receipt must name that loop's last reviewed round, which must be clean or a stop; an earlier approval can no longer stand in for a later failing review, and a receipt cannot omit the last round (`test_a_loop_ends_at_its_last_reviewed_round`). This replaces the receipt-wide "any clean round" rule.
 - Finding 2 (P1): a `stopped-low-severity` round must carry no `P1` or `P2` tag in its review (`test_a_severity_stop_with_a_p1_or_p2_finding_refuses`). The check is deliberately strict: a review that mentions P1 or P2 at all cannot be a severity stop.
+
+## Round 9: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T15:54:09Z
+- Effort: medium
+- Lines: 41
+- Digest: 31c7b8c6b3e311e5
+
+## adversarial: needs-attention
+
+1. **P1: Untagged findings bypass the severity-stop gate.** `scripts/lib/todo_graph.py:265` only rejects explicit `P1` or `P2` text. An untagged finding, which the audit contract counts as P1, passes.
+
+   Reproduced in memory at `b90550c`: create nine valid cross-family review envelopes using the test suite’s `envelope()` helper, each containing:
+
+   ```markdown
+   ## adversarial: needs-attention
+
+   1. `scripts/lib/todo_graph.py:265`: unresolved unsafe stamp accepts rejected work.
+
+   OVERALL: needs-attention
+   ```
+
+   Call `receipt_data_ok()` with round 9, `verdict="stopped-low-severity"`, `rounds_spent=9`, `round_cap=22`, and `cap_outcome="filed"`. It accepts. The same probe with an explicit P1 tag refuses. The gate therefore permits closing a loop with unresolved findings whose severity defaults to P1.
+
+## consistency: needs-attention
+
+Finding 1 violates the explicit untagged-finding rule and the requirement that a severity stop contain only P3 or advisory findings. No separate finding.
+
+## integration: needs-attention
+
+Finding 1 affects the shared receipt gate used by `stamp()` and subsequent graph validation. An invalid severity stop can satisfy downstream prerequisites. No separate finding.
+
+## source-defect: approve
+
+No additional finding.
+
+## design: advisory
+
+Not applicable to this section’s declared surface.
+
+## record: advisory
+
+The checkpoint claim at `docs/reviews/06-quality/audit-d00-t02-s1.md:9` remains independently unconfirmed. Running the current suite through `unittest` produced 76 tests with 75 temporary-fixture setup errors because the sandbox is read-only; the Repository test passed. This is an environment limitation, not a candidate defect.
+
+`plan --check` returned `plan current`; validation reported 677 sections. These checks do not establish the historical full-suite pass or the claimed regression failures against `68cb8f2`.
+
+No files were modified; the working tree remains clean at `b90550c`.
+
+OVERALL: needs-attention
+
+## Fixes after round 9
+
+- Finding 1 (P1): a severity stop now works from an allow-list: every numbered finding in the stopping round must carry a `P3` tag (an untagged finding counts as P1), and no `P1` or `P2` may appear. `test_a_severity_stop_with_a_p1_or_p2_finding_refuses` adds an untagged finding and a P3 list with one untagged item, and fails against `b90550c`; `test_a_severity_stop_with_only_p3_findings_stamps` keeps the allowed case. `Ran 77 tests`, `OK`; `valid: 677 sections`.
