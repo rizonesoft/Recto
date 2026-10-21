@@ -8,33 +8,47 @@ Format and rules: `todo/README.md`. Run sections with the `process-plan`, `proce
 
 ### Phase 0: M0 Repository and build
 
-Sections: 19 | Checklist items: 103
+Sections: 33 | Checklist items: 173
 
-| Status | Reference  | Deliverable                                                                              | Needs        | Items |
-| ------ | ---------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
-| [x]    | D00 T01 §1 | Git repository and repo-face files                                                       | none         | 3     |
-| [x]    | D00 T01 §2 | PDF engine dependency policy (native `recto-pdf`, MuPDF retired)                         | windows-host | 3     |
-| [x]    | D00 T01 §3 | Solution scaffold for all modules, x64 and ARM64                                         | windows-host | 3     |
-| [x]    | D00 T01 §5 | Reference benchmark machines recorded                                                    | windows-host | 2     |
-| [x]    | D00 T02 §1 | Graph engine, CLI and tests                                                              | none         | 3     |
-| [x]    | D00 T02 §2 | Skills, rules and the CI gate                                                            | none         | 4     |
-| [x]    | D00 T01 §4 | Build CI for x64 and ARM64                                                               | windows-host | 7     |
-| [x]    | D00 T02 §3 | Seeded graph and generated plan                                                          | none         | 4     |
-| [x]    | D00 T03 §1 | `test_support` corpus path resolver and `TempDir` RAII helper                            | windows-host | 7     |
-| [x]    | D00 T03 §2 | RGBA pixel comparison (`expect_rgba_equal`, `compute_ssim`) and test assertion helpers   | windows-host | 6     |
-| [x]    | D00 T03 §3 | Deterministic PDF corpus generator (`scripts/build-corpus.py`) for `render/` and `text/` | windows-host | 7     |
-| [x]    | D00 T03 §4 | Encrypted (`RC4`/`AES-128`/`AES-256`), `broken/` and `seeds/` corpus fixtures            | windows-host | 6     |
-| [x]    | D00 T03 §5 | `tests/corpus/PROVENANCE.md` and automated `Corpus.Provenance` SHA-256 integrity suite   | windows-host | 6     |
-| [x]    | D00 T03 §6 | MSVC AddressSanitizer (`/fsanitize=address`) build configuration and CI `asan` job       | windows-host | 6     |
-| [x]    | D07 T03 §1 | Issue forms, triage policy and `SECURITY.md`                                             | none         | 8     |
-| [x]    | D07 T03 §9 | Gtest regression evidence from the fix commit's own CI test list                         | none         | 7     |
-| [x]    | D07 T03 §4 | User-bug regression rule, closing on release and changelog mapping                       | none         | 7     |
-| [x]    | D07 T03 §6 | Public scope page and user demand ledger                                                 | none         | 7     |
-| [x]    | D07 T03 §8 | Strict issue-form YAML reader and top-level schema types                                 | none         | 7     |
+| Status | Reference   | Deliverable                                                                              | Needs        | Items |
+| ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
+| [x]    | D00 T01 §1  | Git repository and repo-face files                                                       | none         | 3     |
+| [x]    | D00 T01 §2  | PDF engine dependency policy (native `recto-pdf`, MuPDF retired)                         | windows-host | 3     |
+| [x]    | D00 T01 §3  | Solution scaffold for all modules, x64 and ARM64                                         | windows-host | 3     |
+| [x]    | D00 T01 §5  | Reference benchmark machines recorded                                                    | windows-host | 2     |
+| [x]    | D00 T02 §1  | Graph engine, CLI and tests                                                              | none         | 3     |
+| [x]    | D00 T02 §2  | Skills, rules and the CI gate                                                            | none         | 4     |
+| [x]    | D00 T01 §4  | Build CI for x64 and ARM64                                                               | windows-host | 7     |
+| [x]    | D00 T02 §3  | Seeded graph and generated plan                                                          | none         | 4     |
+| [x]    | D00 T03 §1  | `test_support` corpus path resolver and `TempDir` RAII helper                            | windows-host | 7     |
+| [x]    | D00 T03 §2  | RGBA pixel comparison (`expect_rgba_equal`, `compute_ssim`) and test assertion helpers   | windows-host | 6     |
+| [x]    | D00 T03 §3  | Deterministic PDF corpus generator (`scripts/build-corpus.py`) for `render/` and `text/` | windows-host | 7     |
+| [x]    | D00 T03 §4  | Encrypted (`RC4`/`AES-128`/`AES-256`), `broken/` and `seeds/` corpus fixtures            | windows-host | 6     |
+| [x]    | D00 T03 §5  | `tests/corpus/PROVENANCE.md` and automated `Corpus.Provenance` SHA-256 integrity suite   | windows-host | 6     |
+| [x]    | D00 T03 §6  | MSVC AddressSanitizer (`/fsanitize=address`) build configuration and CI `asan` job       | windows-host | 6     |
+| [ ]    | D06 T05 §1  | Audit D00 T01 §1: Git repository and repo-face files                                     | none         | 5     |
+| [ ]    | D06 T05 §2  | Audit D00 T01 §2: PDF engine dependency policy (native recto-pdf, MuPDF retired)         | windows-host | 5     |
+| [ ]    | D06 T05 §3  | Audit D00 T01 §3: Solution scaffold for all modules, x64 and ARM64                       | windows-host | 5     |
+| [ ]    | D06 T05 §4  | Audit D00 T01 §5: Reference benchmark machines recorded                                  | windows-host | 5     |
+| [ ]    | D06 T05 §5  | Audit D00 T02 §1: Graph engine, CLI and tests                                            | none         | 5     |
+| [ ]    | D06 T05 §6  | Audit D00 T02 §2: Skills, rules and the CI gate                                          | none         | 5     |
+| [ ]    | D06 T05 §7  | Audit D00 T01 §4: Build CI for x64 and ARM64                                             | windows-host | 5     |
+| [ ]    | D06 T05 §8  | Audit D00 T02 §3: Seeded graph and generated plan                                        | none         | 5     |
+| [ ]    | D06 T05 §9  | Audit D00 T03 §1: test_support corpus path resolver and TempDir RAII helper              | windows-host | 5     |
+| [ ]    | D06 T05 §10 | Audit D00 T03 §2: RGBA pixel comparison (expect_rgba_equal, compute_ssim) and test       | windows-host | 5     |
+| [ ]    | D06 T05 §11 | Audit D00 T03 §3: Deterministic PDF corpus generator (scripts/build-corpus.py) for       | windows-host | 5     |
+| [ ]    | D06 T05 §12 | Audit D00 T03 §4: Encrypted (RC4/AES-128/AES-256), broken/ and seeds/ corpus fixtures    | windows-host | 5     |
+| [ ]    | D06 T05 §13 | Audit D00 T03 §5: tests/corpus/PROVENANCE.md and automated Corpus.Provenance SHA-256     | windows-host | 5     |
+| [ ]    | D06 T05 §14 | Audit D00 T03 §6: MSVC AddressSanitizer (/fsanitize=address) build configuration and CI  | windows-host | 5     |
+| [x]    | D07 T03 §1  | Issue forms, triage policy and `SECURITY.md`                                             | none         | 8     |
+| [x]    | D07 T03 §9  | Gtest regression evidence from the fix commit's own CI test list                         | none         | 7     |
+| [x]    | D07 T03 §4  | User-bug regression rule, closing on release and changelog mapping                       | none         | 7     |
+| [x]    | D07 T03 §6  | Public scope page and user demand ledger                                                 | none         | 7     |
+| [x]    | D07 T03 §8  | Strict issue-form YAML reader and top-level schema types                                 | none         | 7     |
 
 ### Phase 1: M1 Engine core
 
-Sections: 37 | Checklist items: 264
+Sections: 47 | Checklist items: 314
 
 | Status | Reference   | Deliverable                                                                              | Needs        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -48,6 +62,16 @@ Sections: 37 | Checklist items: 264
 | [x]    | D01 T01 §8  | Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`) | windows-host | 7     |
 | [x]    | D01 T01 §9  | Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG)      | windows-host | 8     |
 | [x]    | D01 T01 §10 | `pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links | windows-host | 9     |
+| [ ]    | D06 T05 §15 | Audit D01 T01 §1: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW         | windows-host | 5     |
+| [ ]    | D06 T05 §16 | Audit D01 T01 §2: PdfValue variant object model, dictionary/array helpers and deep       | windows-host | 5     |
+| [ ]    | D06 T05 §17 | Audit D01 T01 §3: Binary-safe PDF 1.7 and 2.0 lexer (src/pdf/lexer.cpp)                  | windows-host | 5     |
+| [ ]    | D06 T05 §18 | Audit D01 T01 §4: Bounded recursive-descent indirect object parser (src/pdf/parser.cpp)  | windows-host | 5     |
+| [ ]    | D06 T05 §19 | Audit D01 T01 §5: Classic xref tables, trailer merging and /Prev incremental update      | windows-host | 5     |
+| [ ]    | D06 T05 §20 | Audit D01 T01 §7: Lossless stream filters (Flate, LZW, predictors, ASCII85, ASCIIHex     | windows-host | 5     |
+| [ ]    | D06 T05 §21 | Audit D01 T01 §6: PDF 1.5+ /Type /XRef streams, /Type /ObjStm streams and damaged-file   | windows-host | 5     |
+| [ ]    | D06 T05 §22 | Audit D01 T01 §8: Bi-level and image stream filters (CCITTFaxDecode, JBIG2Decode, WIC    | windows-host | 5     |
+| [ ]    | D06 T05 §23 | Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6     | windows-host | 5     |
+| [ ]    | D06 T05 §24 | Audit D01 T01 §10: pdf::Document page-tree resolver, metadata, /Outlines, font list and  | windows-host | 5     |
 | [ ]    | D01 T02 §1  | Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)     | windows-host | 7     |
 | [ ]    | D01 T02 §2  | DirectWrite in-memory font loader, Standard 14 metrics, Type 1/3 and `/ToUnicode` CMap   | windows-host | 7     |
 | [ ]    | D01 T02 §3  | Content-stream graphics state machine, path construction/clipping and colour spaces      | windows-host | 8     |
@@ -721,6 +745,6 @@ Sections: 4 | Checklist items: 22
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
-Progress: 29/652 verified sections, 13 ready to run now.
+Progress: 29/676 verified sections, 12 ready to run now.
 
-Checklist: 184/4737 items completed (includes Commit items).
+Checklist: 184/4857 items completed (includes Commit items).

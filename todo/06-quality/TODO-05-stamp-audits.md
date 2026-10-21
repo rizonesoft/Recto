@@ -1,0 +1,567 @@
+---
+schema_version: 1
+id: stamp-audits
+domain: 06-quality
+status: active
+title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
+---
+
+# TODO-05 -- Audits of Sections Stamped Before the Current Review Process
+
+> **Goal:** Every section stamped before 2026-10-21 is re-verified under the current review process before later work builds further on it: its own Test checkpoint re-run at the current tip, and fresh independent audit rounds by the pinned reviewer with a 22-round cap and the severity cutoff. A confirmed stamp stays; a regression flips its row back with a dated blocking note, a filed repair and a list of suspect downstream stamps.
+
+> **Current state:** Measured 2026-10-21. 24 sections carry stamps from the earlier process (`python scripts/todo-graph.py query rounds` lists them with `round_cap` null): 14 in `00-workspace` and 10 in `01-engine`. They were reviewed under a three-round cap by a different reviewer; the operator asked on 2026-10-21 for them to be brought up to the current standard.
+
+## Inputs
+
+- `.claude/skills/review-todo-section/SKILL.md` (audit stance, the 22-round cap and the severity cutoff) and `docs/review-round-prompt.md` (severity tags).
+- Each audited section's own contract and receipt (`python scripts/todo-graph.py resolve "<ref>"`, `docs/reviews/<ref>.json`).
+- The run file `docs/phase-runs/2026-10-21-phase-0.md` (the operator's request).
+
+## Outcome
+
+- Every section stamped before 2026-10-21 is either re-confirmed with an audit findings file under `docs/reviews/06-quality/`, or flipped back with a dated blocking note, a filed repair and its suspect downstream stamps listed.
+- `D01 T02 §1` and `D01 T02 §5`, the next engine work, wait for the engine audits.
+
+**Adjacency:** all=not-applicable (review records over shipped sections: no product data, settings, exchange or undo of their own)
+
+**Adjacency rationale:** An audit produces findings files and, on a regression, a blocking note and a repair section in the audited TODO file; none of the adjacency kinds applies to the audit itself.
+
+## Implementation Order
+
+| Order | Section | Deliverable | Depends On | Status |
+| ----- | ------- | ----------- | ---------- | ------ |
+| 1 | §1 | Audit D00 T01 §1: Git repository and repo-face files | D00 T01 §1 | [ ] |
+| 2 | §2 | Audit D00 T01 §2: PDF engine dependency policy (native recto-pdf, MuPDF retired) | D00 T01 §2, §1 | [ ] |
+| 3 | §3 | Audit D00 T01 §3: Solution scaffold for all modules, x64 and ARM64 | D00 T01 §3, §2 | [ ] |
+| 4 | §4 | Audit D00 T01 §5: Reference benchmark machines recorded | D00 T01 §5, §3 | [ ] |
+| 5 | §5 | Audit D00 T02 §1: Graph engine, CLI and tests | D00 T02 §1, §4 | [ ] |
+| 6 | §6 | Audit D00 T02 §2: Skills, rules and the CI gate | D00 T02 §2, §5 | [ ] |
+| 7 | §7 | Audit D00 T01 §4: Build CI for x64 and ARM64 | D00 T01 §4, §6 | [ ] |
+| 8 | §8 | Audit D00 T02 §3: Seeded graph and generated plan | D00 T02 §3, §7 | [ ] |
+| 9 | §9 | Audit D00 T03 §1: test_support corpus path resolver and TempDir RAII helper | D00 T03 §1, §8 | [ ] |
+| 10 | §10 | Audit D00 T03 §2: RGBA pixel comparison (expect_rgba_equal, compute_ssim) and test | D00 T03 §2, §9 | [ ] |
+| 11 | §11 | Audit D00 T03 §3: Deterministic PDF corpus generator (scripts/build-corpus.py) for | D00 T03 §3, §10 | [ ] |
+| 12 | §12 | Audit D00 T03 §4: Encrypted (RC4/AES-128/AES-256), broken/ and seeds/ corpus fixtures | D00 T03 §4, §11 | [ ] |
+| 13 | §13 | Audit D00 T03 §5: tests/corpus/PROVENANCE.md and automated Corpus.Provenance SHA-256 | D00 T03 §5, §12 | [ ] |
+| 14 | §14 | Audit D00 T03 §6: MSVC AddressSanitizer (/fsanitize=address) build configuration and CI | D00 T03 §6, §13 | [ ] |
+| 15 | §15 | Audit D01 T01 §1: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW | D01 T01 §1, §14 | [ ] |
+| 16 | §16 | Audit D01 T01 §2: PdfValue variant object model, dictionary/array helpers and deep | D01 T01 §2, §15 | [ ] |
+| 17 | §17 | Audit D01 T01 §3: Binary-safe PDF 1.7 and 2.0 lexer (src/pdf/lexer.cpp) | D01 T01 §3, §16 | [ ] |
+| 18 | §18 | Audit D01 T01 §4: Bounded recursive-descent indirect object parser (src/pdf/parser.cpp) | D01 T01 §4, §17 | [ ] |
+| 19 | §19 | Audit D01 T01 §5: Classic xref tables, trailer merging and /Prev incremental update | D01 T01 §5, §18 | [ ] |
+| 20 | §20 | Audit D01 T01 §7: Lossless stream filters (Flate, LZW, predictors, ASCII85, ASCIIHex | D01 T01 §7, §19 | [ ] |
+| 21 | §21 | Audit D01 T01 §6: PDF 1.5+ /Type /XRef streams, /Type /ObjStm streams and damaged-file | D01 T01 §6, §20 | [ ] |
+| 22 | §22 | Audit D01 T01 §8: Bi-level and image stream filters (CCITTFaxDecode, JBIG2Decode, WIC | D01 T01 §8, §21 | [ ] |
+| 23 | §23 | Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6 | D01 T01 §9, §22 | [ ] |
+| 24 | §24 | Audit D01 T01 §10: pdf::Document page-tree resolver, metadata, /Outlines, font list and | D01 T01 §10, §23 | [ ] |
+
+## 1. Audit D00 T01 §1: Git repository and repo-face files
+
+`D00 T01 §1` (Git repository and repo-face files) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d00-t01-s1.json` records 2 rounds (fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 0
+**Needs:** none
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D00 T01 §1`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d00-t01-s1.md`.
+2. Audit `D00 T01 §1` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d00-t01-s1.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D00 T01 §1"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d00-t01-s1.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D00 T01 §1`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t01-s1.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t01-s1.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D00 T01 §1`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t01-s1.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D00 T01 §1 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D00 T01 §1"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d00-t01-s1.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 2. Audit D00 T01 §2: PDF engine dependency policy (native recto-pdf, MuPDF retired)
+
+`D00 T01 §2` (PDF engine dependency policy (native `recto-pdf`, MuPDF retired)) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d00-t01-s2.json` records 2 rounds (fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D00 T01 §2`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d00-t01-s2.md`.
+2. Audit `D00 T01 §2` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d00-t01-s2.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D00 T01 §2"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d00-t01-s2.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D00 T01 §2`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t01-s2.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t01-s2.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D00 T01 §2`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t01-s2.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D00 T01 §2 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D00 T01 §2"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d00-t01-s2.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 3. Audit D00 T01 §3: Solution scaffold for all modules, x64 and ARM64
+
+`D00 T01 §3` (Solution scaffold for all modules, x64 and ARM64) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d00-t01-s3.json` records 1 rounds (clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D00 T01 §3`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d00-t01-s3.md`.
+2. Audit `D00 T01 §3` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d00-t01-s3.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D00 T01 §3"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d00-t01-s3.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D00 T01 §3`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t01-s3.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t01-s3.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D00 T01 §3`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t01-s3.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D00 T01 §3 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D00 T01 §3"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d00-t01-s3.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 4. Audit D00 T01 §5: Reference benchmark machines recorded
+
+`D00 T01 §5` (Reference benchmark machines recorded) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d00-t01-s5.json` records 3 rounds (fixed, fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D00 T01 §5`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d00-t01-s5.md`.
+2. Audit `D00 T01 §5` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d00-t01-s5.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D00 T01 §5"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d00-t01-s5.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D00 T01 §5`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t01-s5.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t01-s5.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D00 T01 §5`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t01-s5.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D00 T01 §5 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D00 T01 §5"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d00-t01-s5.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 5. Audit D00 T02 §1: Graph engine, CLI and tests
+
+`D00 T02 §1` (Graph engine, CLI and tests) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d00-t02-s1.json` records 3 rounds (fixed, fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 0
+**Needs:** none
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D00 T02 §1`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d00-t02-s1.md`.
+2. Audit `D00 T02 §1` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d00-t02-s1.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D00 T02 §1"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d00-t02-s1.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D00 T02 §1`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t02-s1.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t02-s1.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D00 T02 §1`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t02-s1.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D00 T02 §1 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D00 T02 §1"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d00-t02-s1.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 6. Audit D00 T02 §2: Skills, rules and the CI gate
+
+`D00 T02 §2` (Skills, rules and the CI gate) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d00-t02-s2.json` records 2 rounds (fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 0
+**Needs:** none
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D00 T02 §2`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d00-t02-s2.md`.
+2. Audit `D00 T02 §2` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d00-t02-s2.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D00 T02 §2"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d00-t02-s2.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D00 T02 §2`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t02-s2.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t02-s2.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D00 T02 §2`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t02-s2.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D00 T02 §2 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D00 T02 §2"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d00-t02-s2.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 7. Audit D00 T01 §4: Build CI for x64 and ARM64
+
+`D00 T01 §4` (Build CI for x64 and ARM64) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d00-t01-s4.json` records 2 rounds (fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D00 T01 §4`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d00-t01-s4.md`.
+2. Audit `D00 T01 §4` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d00-t01-s4.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D00 T01 §4"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d00-t01-s4.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D00 T01 §4`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t01-s4.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t01-s4.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D00 T01 §4`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t01-s4.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D00 T01 §4 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D00 T01 §4"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d00-t01-s4.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 8. Audit D00 T02 §3: Seeded graph and generated plan
+
+`D00 T02 §3` (Seeded graph and generated plan) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d00-t02-s3.json` records 3 rounds (fixed, fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 0
+**Needs:** none
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D00 T02 §3`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d00-t02-s3.md`.
+2. Audit `D00 T02 §3` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d00-t02-s3.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D00 T02 §3"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d00-t02-s3.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D00 T02 §3`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t02-s3.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t02-s3.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D00 T02 §3`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t02-s3.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D00 T02 §3 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D00 T02 §3"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d00-t02-s3.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 9. Audit D00 T03 §1: test_support corpus path resolver and TempDir RAII helper
+
+`D00 T03 §1` (`test_support` corpus path resolver and `TempDir` RAII helper) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d00-t03-s1.json` records 5 rounds (fixed, fixed, fixed, fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D00 T03 §1`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d00-t03-s1.md`.
+2. Audit `D00 T03 §1` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d00-t03-s1.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D00 T03 §1"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d00-t03-s1.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D00 T03 §1`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t03-s1.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t03-s1.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D00 T03 §1`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t03-s1.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D00 T03 §1 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D00 T03 §1"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d00-t03-s1.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 10. Audit D00 T03 §2: RGBA pixel comparison (expect_rgba_equal, compute_ssim) and test
+
+`D00 T03 §2` (RGBA pixel comparison (`expect_rgba_equal`, `compute_ssim`) and test assertion helpers) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d00-t03-s2.json` records 2 rounds (fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D00 T03 §2`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d00-t03-s2.md`.
+2. Audit `D00 T03 §2` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d00-t03-s2.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D00 T03 §2"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d00-t03-s2.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D00 T03 §2`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t03-s2.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t03-s2.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D00 T03 §2`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t03-s2.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D00 T03 §2 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D00 T03 §2"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d00-t03-s2.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 11. Audit D00 T03 §3: Deterministic PDF corpus generator (scripts/build-corpus.py) for
+
+`D00 T03 §3` (Deterministic PDF corpus generator (`scripts/build-corpus.py`) for `render/` and `text/`) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d00-t03-s3.json` records 3 rounds (fixed, fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D00 T03 §3`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d00-t03-s3.md`.
+2. Audit `D00 T03 §3` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d00-t03-s3.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D00 T03 §3"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d00-t03-s3.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D00 T03 §3`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t03-s3.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t03-s3.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D00 T03 §3`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t03-s3.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D00 T03 §3 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D00 T03 §3"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d00-t03-s3.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 12. Audit D00 T03 §4: Encrypted (RC4/AES-128/AES-256), broken/ and seeds/ corpus fixtures
+
+`D00 T03 §4` (Encrypted (`RC4`/`AES-128`/`AES-256`), `broken/` and `seeds/` corpus fixtures) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d00-t03-s4.json` records 2 rounds (fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D00 T03 §4`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d00-t03-s4.md`.
+2. Audit `D00 T03 §4` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d00-t03-s4.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D00 T03 §4"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d00-t03-s4.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D00 T03 §4`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t03-s4.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t03-s4.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D00 T03 §4`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t03-s4.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D00 T03 §4 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D00 T03 §4"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d00-t03-s4.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 13. Audit D00 T03 §5: tests/corpus/PROVENANCE.md and automated Corpus.Provenance SHA-256
+
+`D00 T03 §5` (`tests/corpus/PROVENANCE.md` and automated `Corpus.Provenance` SHA-256 integrity suite) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d00-t03-s5.json` records 3 rounds (fixed, fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D00 T03 §5`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d00-t03-s5.md`.
+2. Audit `D00 T03 §5` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d00-t03-s5.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D00 T03 §5"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d00-t03-s5.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D00 T03 §5`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t03-s5.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t03-s5.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D00 T03 §5`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t03-s5.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D00 T03 §5 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D00 T03 §5"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d00-t03-s5.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 14. Audit D00 T03 §6: MSVC AddressSanitizer (/fsanitize=address) build configuration and CI
+
+`D00 T03 §6` (MSVC AddressSanitizer (`/fsanitize=address`) build configuration and CI `asan` job) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d00-t03-s6.json` records 2 rounds (fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D00 T03 §6`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d00-t03-s6.md`.
+2. Audit `D00 T03 §6` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d00-t03-s6.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D00 T03 §6"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d00-t03-s6.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D00 T03 §6`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t03-s6.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t03-s6.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D00 T03 §6`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t03-s6.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D00 T03 §6 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D00 T03 §6"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d00-t03-s6.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 15. Audit D01 T01 §1: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW
+
+`D01 T01 §1` (`PdfResult<T>`, `PdfError`, `ErrorCode`, D16 diagnostic ring and ETW `TraceLogging`) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d01-t01-s1.json` records 3 rounds (fixed, fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D01 T01 §1`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d01-t01-s1.md`.
+2. Audit `D01 T01 §1` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d01-t01-s1.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D01 T01 §1"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d01-t01-s1.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D01 T01 §1`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d01-t01-s1.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d01-t01-s1.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D01 T01 §1`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s1.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D01 T01 §1 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §1"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s1.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 16. Audit D01 T01 §2: PdfValue variant object model, dictionary/array helpers and deep
+
+`D01 T01 §2` (`PdfValue` variant object model, dictionary/array helpers and deep cloning) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d01-t01-s2.json` records 3 rounds (fixed, fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D01 T01 §2`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d01-t01-s2.md`.
+2. Audit `D01 T01 §2` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d01-t01-s2.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D01 T01 §2"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d01-t01-s2.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D01 T01 §2`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d01-t01-s2.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d01-t01-s2.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D01 T01 §2`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s2.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D01 T01 §2 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §2"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s2.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 17. Audit D01 T01 §3: Binary-safe PDF 1.7 and 2.0 lexer (src/pdf/lexer.cpp)
+
+`D01 T01 §3` (Binary-safe PDF 1.7 and 2.0 lexer (`src/pdf/lexer.cpp`)) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d01-t01-s3.json` records 3 rounds (fixed, fixed, fixed). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D01 T01 §3`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d01-t01-s3.md`.
+2. Audit `D01 T01 §3` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d01-t01-s3.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D01 T01 §3"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d01-t01-s3.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D01 T01 §3`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d01-t01-s3.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d01-t01-s3.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D01 T01 §3`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s3.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D01 T01 §3 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §3"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s3.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 18. Audit D01 T01 §4: Bounded recursive-descent indirect object parser (src/pdf/parser.cpp)
+
+`D01 T01 §4` (Bounded recursive-descent indirect object parser (`src/pdf/parser.cpp`)) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d01-t01-s4.json` records 3 rounds (fixed, fixed, fixed). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D01 T01 §4`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d01-t01-s4.md`.
+2. Audit `D01 T01 §4` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d01-t01-s4.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D01 T01 §4"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d01-t01-s4.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D01 T01 §4`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d01-t01-s4.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d01-t01-s4.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D01 T01 §4`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s4.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D01 T01 §4 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §4"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s4.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 19. Audit D01 T01 §5: Classic xref tables, trailer merging and /Prev incremental update
+
+`D01 T01 §5` (Classic `xref` tables, trailer merging and `/Prev` incremental update chains) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d01-t01-s5.json` records 3 rounds (fixed, fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D01 T01 §5`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d01-t01-s5.md`.
+2. Audit `D01 T01 §5` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d01-t01-s5.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D01 T01 §5"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d01-t01-s5.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D01 T01 §5`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d01-t01-s5.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d01-t01-s5.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D01 T01 §5`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s5.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D01 T01 §5 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §5"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s5.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 20. Audit D01 T01 §7: Lossless stream filters (Flate, LZW, predictors, ASCII85, ASCIIHex
+
+`D01 T01 §7` (Lossless stream filters (`Flate`, `LZW`, predictors, `ASCII85`, `ASCIIHex`, `RunLength`)) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d01-t01-s7.json` records 3 rounds (fixed, fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D01 T01 §7`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d01-t01-s7.md`.
+2. Audit `D01 T01 §7` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d01-t01-s7.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D01 T01 §7"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d01-t01-s7.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D01 T01 §7`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d01-t01-s7.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d01-t01-s7.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D01 T01 §7`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s7.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D01 T01 §7 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §7"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s7.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 21. Audit D01 T01 §6: PDF 1.5+ /Type /XRef streams, /Type /ObjStm streams and damaged-file
+
+`D01 T01 §6` (PDF 1.5+ `/Type /XRef` streams, `/Type /ObjStm` streams and damaged-file recovery) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d01-t01-s6.json` records 10 rounds (fixed, fixed, fixed, fixed, fixed, fixed, fixed, fixed, fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D01 T01 §6`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d01-t01-s6.md`.
+2. Audit `D01 T01 §6` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d01-t01-s6.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D01 T01 §6"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d01-t01-s6.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D01 T01 §6`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d01-t01-s6.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d01-t01-s6.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D01 T01 §6`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s6.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D01 T01 §6 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §6"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s6.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 22. Audit D01 T01 §8: Bi-level and image stream filters (CCITTFaxDecode, JBIG2Decode, WIC
+
+`D01 T01 §8` (Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`)) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d01-t01-s8.json` records 16 rounds (fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D01 T01 §8`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d01-t01-s8.md`.
+2. Audit `D01 T01 §8` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d01-t01-s8.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D01 T01 §8"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d01-t01-s8.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D01 T01 §8`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d01-t01-s8.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d01-t01-s8.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D01 T01 §8`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s8.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D01 T01 §8 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §8"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s8.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 23. Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6
+
+`D01 T01 §9` (Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG)) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d01-t01-s9.json` records 5 rounds (fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D01 T01 §9`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d01-t01-s9.md`.
+2. Audit `D01 T01 §9` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d01-t01-s9.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D01 T01 §9"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d01-t01-s9.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D01 T01 §9`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d01-t01-s9.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d01-t01-s9.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D01 T01 §9`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s9.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D01 T01 §9 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §9"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s9.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 24. Audit D01 T01 §10: pdf::Document page-tree resolver, metadata, /Outlines, font list and
+
+`D01 T01 §10` (`pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d01-t01-s10.json` records 14 rounds (fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Re-run `D01 T01 §10`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d01-t01-s10.md`.
+2. Audit `D01 T01 §10` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d01-t01-s10.md` ends in an approving round or a recorded stop with every finding owned.
+
+- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D01 T01 §10"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d01-t01-s10.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [ ] Run audit rounds on `D01 T01 §10`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d01-t01-s10.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d01-t01-s10.md` is open without a fix commit or a filed section.
+- [ ] On a confirmed regression, add a dated blocking note to `D01 T01 §10`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s10.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Commit: `review: audit D01 T01 §10 under the current review process`
+
+**Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §10"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s10.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## Verification
+
+- Every row above is `[x]`, each with an audit findings file under `docs/reviews/06-quality/`.
+- `python scripts/todo-graph.py query rounds` shows no stamped section whose only reviews predate this file without an audit row here.
+- `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` pass.
