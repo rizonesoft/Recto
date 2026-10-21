@@ -612,3 +612,42 @@ OVERALL: needs-attention
 - Finding 1 (P1): judging is one bracketed read, `judge()`: the pull request, its head commit's checks and statuses, its test merge's, then the pull request again and its head commit's checks and statuses again; the second half decides, so a check that failed while the first half was read is seen.
 - Finding 2 (P1): the checkout is checked again after all network reads, locally only (`ensure_safe(..., fetch=False)`: guard, origin, clean tree, HEAD equal to the fetched `origin/main`, no section in progress), in the last instant before the merge request; an edit made during judging stops the run.
 - What remains is the instant between that local check and GitHub acting on the request: GitHub offers no snapshot across its API calls and its merge call can pin only the head commit (`--match-head-commit`), so no read order can close it; a retarget there fails the post-merge ancestry check and stops the run with the marker set.
+
+## Round 15: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T21:37:40Z
+- Effort: medium
+- Lines: 26
+- Digest: 177305f79c5e6650
+
+## adversarial: approve
+
+No additional actionable findings.
+
+## consistency: approve
+
+No findings.
+
+## integration: needs-attention
+
+1. **P3, `.github/workflows/plan.yml:61`: The new automation tests never run in CI.** The workflow invokes only three named tooling test modules; neither it nor `build.yml` invokes `tests.scripts.test_merge_prs` or discovers that suite. Consequently, regressions in merge eligibility, serialization and stop-marker handling can pass the required checks. Reproduce by inspecting the workflows’ test commands: none executes the 31 new tests. Add the module to `plan-gates`.
+
+## source-defect: approve
+
+No additional findings.
+
+## design: advisory
+
+No rendered interface changes.
+
+## record: advisory
+
+Ran eight in-memory eligibility checks with bytecode disabled. Did not rerun the full suite or independently verify historical test results. No files modified or live merges attempted.
+
+HIGHEST: P3
+OVERALL: needs-attention
+
+## Stop after round 15
+
+Round 15 declared `HIGHEST: P3`, so the loop stops (`stopped-low-severity`, 15 rounds spent of the 22 cap). Its one finding was cheap and is fixed rather than filed: `plan-gates` now runs `python -m unittest tests.scripts.test_merge_prs` (`.github/workflows/plan.yml`; the module is OS-neutral, and `scripts/**` and `tests/scripts/**` already trigger the workflow). `python -m unittest discover -s tests/scripts` -> `Ran 322 tests`, `OK`.

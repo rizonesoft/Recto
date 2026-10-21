@@ -67,5 +67,7 @@ jobs:
         run: python scripts/todo-graph.py plan --check
       - name: Test the demand ledger checker
         run: python -m unittest tests.scripts.test_user_demand
+      - name: Dependency merge automation tests
+        run: python -m unittest tests.scripts.test_merge_prs
       - name: Check the user demand ledger (D07 T03 §6)
         run: python scripts/check-user-demand.py
