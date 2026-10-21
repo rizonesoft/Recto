@@ -131,7 +131,8 @@ def _in_number(text, i):
     start = i
     while start > 0 and (text[start - 1].isalnum() or text[start - 1] in "_'."):
         start -= 1
-    return start < i and text[start].isdigit()
+    # A number starts with a digit, or with a dot and a digit (.1'0).
+    return start < i and (text[start].isdigit() or (text[start] == "." and text[start + 1].isdigit()))
 
 
 def cpp_code(text):

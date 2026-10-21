@@ -220,6 +220,7 @@ class HostileFixtureTest(unittest.TestCase):
             "TEST(Spliced, Ca\\\nse)\n{\n}\n"
             "constexpr wchar_t c = L'\"'; TEST(Prefixed, Char) {}\n"
             "constexpr int n = 1'000; TEST(Separated, Num) {}\n"
+            "constexpr double d = .1'0; TEST(Fraction, Case) {}\n"
         )
         py = (
             "import abc\nimport unittest\n"
@@ -281,7 +282,7 @@ class HostileFixtureTest(unittest.TestCase):
             "Alias": "tests.scripts.test_sample.ViaAlias.test_alias",
             "Noisy": "tests.scripts.test_noisy.NoisyTest.test_noisy",
             "Classmethod": "tests.scripts.test_sample.WithClassmethod.test_case", "Spliced": "Spliced.Case",
-            "Prefixed": "Prefixed.Char", "Separated": "Separated.Num",
+            "Prefixed": "Prefixed.Char", "Separated": "Separated.Num", "Fraction": "Fraction.Case",
         }
         cls.shas = {}
         for name, test_id in {**cls.fake, **cls.real}.items():
@@ -300,7 +301,7 @@ class HostileFixtureTest(unittest.TestCase):
         _git(repo, "tag", "v2.1.0")
         # What the compiler builds: the macro, the continued comment and the #if (0) block are not tests.
         cls.compiled = {"Enabled.Case", "Taken.Case", "Multi.Line", "Typed.Case", "Spliced.Case", "Prefixed.Char",
-                        "Separated.Num"}
+                        "Separated.Num", "Fraction.Case"}
         # A module that never finishes importing must time out into a violation, not abort the report; the short
         # timeout holds for every report this class builds and is restored in tearDownClass.
         cls._timeout, release_notes.PROBE_TIMEOUT = release_notes.PROBE_TIMEOUT, 3
