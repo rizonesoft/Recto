@@ -516,3 +516,48 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `OK` (the four new subtests fail against `45aba13`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P1): the text font is tracked as graphics state (set by `Tf`, saved by `q`, restored by `Q`, with no default), and `Tj` or `TJ` before a font is selected refuses, including after a `Q` that restored a state with none. The same validator now also enforces what a text object may contain (ISO 32000-1 Figure 9): `q`, `Q`, `Do` and path operators between `BT` and `ET` refuse.
+
+## Round 12: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T22:33:56Z
+- Effort: medium
+- Lines: 30
+- Digest: 36649fceaf65b754
+
+### adversarial: needs-attention
+
+1. **P1: Seed validation accepts unmatched marked-content operators.** `scripts/build-corpus.py:3301` tracks graphics saves, text objects and paths, but no marked-content nesting. `EMC` is accepted at `:3203`, and the final balance check at `:3360` never checks it.
+
+   Reproduced entirely in memory: intercept `flate_compress()` during `build_seed_classic_xref()` and append `b"\nEMC\n"` to its plaintext. `validate_seed_pdf_structure("seeds/seed-classic-xref.pdf", mutated)` accepts the resulting 1,023-byte PDF. Supplying those bytes through mocked generator output and file reads, with matching regenerated provenance, makes **`check_corpus()` return `(True, [])`**.
+
+   A generator regression can therefore introduce invalid content while passing the complete checkpoint. This does not establish corruption in the committed seed.
+
+### consistency: approve
+
+No separate finding.
+
+### integration: advisory
+
+Finding 1 weakens the seed-validation gate supporting downstream fuzz targets. No downstream engine defect was established.
+
+### source-defect: needs-attention
+
+Finding **1 (P1)** violates the marked-content contract: `EMC` ends a sequence begun by `BMC` or `BDC`; matching pairs must be properly nested. The validator accepts an end operator without any beginning. See [ISO 32000-1, section 14.6](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf).
+
+### design: advisory
+
+Not applicable; this section owns no user surface.
+
+### record: approve
+
+At `77e9207`, independently reran `python -B scripts/build-corpus.py --check`: exit **0**, **39 fixtures verified**. The focused `test_seed_content_must_be_executable_as_written` test also passed. Neither detects finding 1. No files were modified; the working tree remains clean.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 12
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 44 tests`, `OK` (the two new subtests fail against `77e9207`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): no seed uses marked content, yet the operand table admitted `BMC`, `BDC` and `EMC` (and a dozen other operators no seed uses) without tracking them. The table now holds exactly the 33 operators the seeds' content uses, so any other operator, an unmatched `EMC` included, refuses as one the corpus content does not use; the path, text and value sets were narrowed to match.

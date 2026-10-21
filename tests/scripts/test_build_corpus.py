@@ -586,7 +586,9 @@ class BuildCorpusTests(unittest.TestCase):
                               (b"BT (a) Tj /F1 12 Tf ET", "before any Tf"),
                               (b"q BT /F1 12 Tf ET Q BT (a) Tj ET", "before any Tf"),  # Q restored no font
                               (b"BT /F1 12 Tf q (a) Tj Q ET", "inside BT"),
-                              (b"BT /Fm1 Do ET", "inside BT")):
+                              (b"BT /Fm1 Do ET", "inside BT"),
+                              (b"q Q EMC", "not one the corpus content uses"),
+                              (b"/Tag BMC q Q EMC", "not one the corpus content uses")):
             with self.subTest(content=content), self.assertRaisesRegex(ValueError, says):
                 check("x", content, res)
         # The same regression through the generator: the render seed's page content reduced to bare operator names.
