@@ -269,3 +269,43 @@ OVERALL: needs-attention
 
 - Finding 1 (P2): `process-phase` and `process-plan` (all three kits) now say that `resolve` and `query ready` do not know which hosts are reachable, so a row whose Needs name an unreachable host is a leftover even at exit 0: phase step 3 skips it, and the plan loop and the after-park step pick only phases with a ready row this session can run. Teaching the graph which hosts a session reaches would need a host registry; the industry-standard default here is the runner's own environment check (step 0 of `process-todo-section`), now named in each place that selects work.
 - Finding 2 (P2): `process-plan` (Claude kit, the only one with the run guard) and `process-phase` state that the session id is `$env:CLAUDE_CODE_SESSION_ID` in PowerShell; the bare bash spelling is an empty PowerShell variable and the guard refuses its arguments.
+
+## Round 7: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T16:45:53Z
+- Effort: medium
+- Lines: 24
+- Digest: 4f177dda6c60875a
+
+## adversarial: needs-attention
+
+1. **P2: Closing the last runnable phase can leave the run guard active.** `.claude/skills/process-plan/SKILL.md:103` prescribes `end` with `plan-done` or `park` when no remaining phase can run locally. Reproduce by completing a phase while another phase has only unreachable-host rows: `process-phase/SKILL.md:56` writes only a closeout heading. `plan-done` refuses because `query ready` still lists the host-bound rows; `park` refuses because no `PARKED` marker exists. Verified with mocked reads against `_end_locked`: both paths raise `GuardError`. The instructions omit writing the plan-level park marker before ending the guard.
+
+## consistency: approve
+
+## integration: needs-attention
+
+Finding **1 (P2)** also affects heartbeat recovery at `.claude/skills/process-plan/SKILL.md:94`: host-bound rows keep the heartbeat on its resume path, which returns to the same incomplete shutdown instructions.
+
+## source-defect: approve
+
+## design: advisory
+
+Not applicable: the section declares `Surface: no`.
+
+## record: needs-attention
+
+2. **P3: The promised first-edit routing is not enforced by the instructions.** `todo/00-workspace/TODO-02-todo-system.md:86` claims a fresh session reads `todo/README.md` before its first edit. `AGENTS.md:25` merely identifies that file, while `.claude/skills/process-todo-section/SKILL.md:42` explicitly directs writing `Started:` without first requiring it. Reproduce by following that skill from a fresh session: resolution, environment and writer checks lead directly to an edit before reading the format specification.
+
+Checkpoint independently reproduced at `f829ffa`: all 12 skills valid with zero diagnostics, `valid: 677 sections`, and `plan current`. No files modified.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 7
+
+`muse skills validate` -> `valid=True` for the changed skills in all three kits.
+
+- Finding 1 (P2): `process-plan` (Claude kit, the one with the run guard) now says that when no remaining phase has a row this session can run but `query ready` still lists rows, the run writes the column-0 `PARKED ... run=<id>` line and park record, commits, then ends with `--reason park` (which refuses without that marker); `plan-done` is only for an empty `query ready`. The canonical heartbeat prompt's step 5 does the same when only unreachable-host rows remain.
+- Finding 2 (P3): `process-todo-section` (all three kits) reads `todo/README.md` before a session's first edit, as `D00 T02 §2` promised.
