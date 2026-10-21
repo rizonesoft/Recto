@@ -1,0 +1,29 @@
+{
+  "ref": "D06 T05 \u00a71",
+  "title": "Audit D00 T01 \u00a71: Git repository and repo-face files",
+  "implementation_sha": "e68e94d0832c099403f90d549d3b5a34a5e406ef",
+  "date": "2026-10-21",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/audit-d00-t01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/audit-d00-t01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/audit-d00-t01-s1.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "fresh clone at 26c72ae -> validate valid: 676 sections; plan current; test_todo_graph OK; LICENSE 35149 bytes",
+    "LICENSE vs https://www.gnu.org/licenses/gpl-3.0.txt -> sha256 3972dc97... identical, 35149 bytes"
+  ],
+  "rounds_spent": 3,
+  "round_cap": 22
+}
