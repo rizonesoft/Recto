@@ -99,3 +99,44 @@ OVERALL: needs-attention
 ## Fixes after round 2
 
 - Finding 1 (P2): the DCO and CLA apply to contributions made to the project owner; the owner does not certify or grant to himself, and an agent must not add a legal sign-off on the owner's behalf. `CLA.md` and `CONTRIBUTING.md` now say the sign-off is for every commit a contributor other than the project owner submits. Default taken 2026-10-21 (unattended run); reversing it means the owner signs off his own commits with `git commit -s` from then on.
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T14:16:58Z
+- Effort: medium
+- Lines: 27
+- Digest: 206e49c68777b123
+
+## adversarial: approve
+
+No additional confirmed defect in the round 3 state at `5cf9285`.
+
+## consistency: approve
+
+No additional confirmed finding. The explicit owner exemption resolves round 2’s sign-off finding.
+
+## integration: approve
+
+No additional confirmed finding.
+
+## source-defect: advisory
+
+Independent byte comparison against the FSF original remains unverified: the upstream fetch timed out. The local license test passes, but its embedded checksum is not independent upstream evidence.
+
+## design: advisory
+
+Not applicable.
+
+## record: advisory
+
+The fresh-clone checkpoint remains independently unverified. Current-tree validation and plan checking pass; `LICENSE` is 35,149 bytes with the recorded checksum. However, the graph suite encounters 57 temporary-directory setup errors across 58 tests under the read-only sandbox. Fresh cloning is unavailable, and `git ls-remote` fails through the configured proxy. These are verification limitations, not confirmed repository defects.
+
+No files were modified.
+
+OVERALL: approve
+
+## Outcome
+
+- Independent upstream check: `https://www.gnu.org/licenses/gpl-3.0.txt` fetched 2026-10-21 hashes to `3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986`, 35,149 bytes, identical to `LICENSE`.
+- The stamp of `D00 T01 §1` is confirmed: its checkpoint holds, and the gaps the audit found (crash-dump ignores, attributes, DCO, the verbatim CLA statement, paragraph wrapping, stale facts) are fixed at their owning files in `15a21a7` and `5cf9285`. No downstream stamp is suspect.
