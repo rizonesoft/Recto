@@ -1044,6 +1044,11 @@ def validate_classic_xref_at(rel_path: str, data: bytes, xref_offset: int, visit
             off = int(off_str)
             gen = int(gen_str)
             obj_num = first_obj + idx
+            # Object 0 heads the free list (ISO 32000-1 7.5.4); the corpus frees nothing, so every free entry, object 0's
+            # included, is exactly offset 0 and generation 65535.
+            if (obj_num == 0 or kind == "f") and (kind, off, gen) != ("f", 0, 65535):
+                raise ValueError(f"{rel_path}: xref entry for {obj_num} must be free with offset 0 and generation 65535, "
+                                 f"got {entry!r}")
             if kind == "n" and gen != 0:
                 raise ValueError(f"{rel_path}: xref entry for {obj_num} has generation {gen}; the corpus writes 0 only")
             if kind == "n":

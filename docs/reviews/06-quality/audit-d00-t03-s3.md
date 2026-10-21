@@ -544,3 +544,49 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `Ran 23 tests`, `OK` (the new test fails against `2d8e79b` with "newest /Size 7 is not 8"); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P2): an xref stream records its own entries, `/Size` and `/Root` before it follows `/Prev`, so the newest revision takes precedence over the section it points back to (`test_an_xref_stream_update_takes_precedence_over_the_section_it_points_back_to`, an xref-stream update over a classic section).
+
+## Round 12: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:06:43Z
+- Effort: medium
+- Lines: 31
+- Digest: 3ade0c586ba3c574
+
+## adversarial: needs-attention
+
+1. **P1: Classic xref validation accepts invalid object-zero entries.** `scripts/build-corpus.py:1045` checks generations only for in-use entries; line 1057 skips object zero entirely when free. Reproduced in memory:
+   - Generate `data = build_simple_1p()`.
+   - Replace `b"0000000000 65535 f \n"` with `b"0000000000 00000 f \n"`.
+   - Call `validate_pdf_structure("render/simple-1p.pdf", data)` on the modified bytes.
+
+   **Actual:** validation succeeds. **Expected:** reject the invalid generation. Independently, replacing that entry with `b"9999999999 65535 f \n"` also passes despite pointing to a nonexistent free object. Both mutations preserve byte offsets and stream lengths. Malformed generator output can therefore pass the promised structural check.
+
+## consistency: approve
+
+No independent findings.
+
+## integration: advisory
+
+Finding 1 allows malformed future fixtures to pass structural validation when generated and committed bytes agree. It does not establish corruption in the current fixtures.
+
+## source-defect: needs-attention
+
+Finding 1 violates the classic cross-reference requirements: object zero must be free with generation 65535 and head the free-object linked list. The xref-stream validator already checks its generation at `scripts/build-corpus.py:1143`; the classic validator omits this constraint. See [ISO 32000-1, §7.5.4](https://raw.githubusercontent.com/adobe/dc-acrobat-sdk-docs/master/docs/standards/pdfstandards/pdf/PDF32000_2008.pdf).
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: advisory
+
+At `d600a67`, independently reran `python -B scripts/build-corpus.py --check`: exit 0, 39 current fixtures. Twenty read-only tests passed, including the round-11 regression. Two in-memory generations matched; corpus size was 60,176 bytes. The checkpoint holds but misses finding 1. Audited files match the requested revision. No files were modified by this audit.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 12
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 24 tests`, `OK` (`test_classic_free_entries_are_object_zeros_form` fails against `facb4fa`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): in a classic table, object 0 must be free, and since the corpus frees nothing, every free entry (object 0's included) must be exactly offset 0, generation 65535; `00000` or `9999999999` refuses. The round 8 precedence test now frees object 1 in that same form.

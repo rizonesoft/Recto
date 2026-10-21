@@ -283,7 +283,7 @@ class BuildCorpusTests(unittest.TestCase):
         d = self.mod.build_incremental_2rev()
         t = d.rfind(b"trailer\n")
         with self.assertRaisesRegex(ValueError, "is not what the cross-reference chain locates"):
-            self.mod.validate_pdf_structure("render/incremental-2rev.pdf", d[:t] + b"1 1\n0000000000 00001 f \n" + d[t:])
+            self.mod.validate_pdf_structure("render/incremental-2rev.pdf", d[:t] + b"1 1\n0000000000 65535 f \n" + d[t:])
         real = self.mod.flate_compress
 
         def repeated(raw: bytes) -> bytes:  # equal length: every offset in the stream header lines up
@@ -339,6 +339,13 @@ class BuildCorpusTests(unittest.TestCase):
                   "stream\n").encode() + payload + f"\nendstream\nendobj\nstartxref\n{new_at}\n%%EOF\n".encode()
         # The newest section says /Size 8; the classic section it points back to says 7.
         self.mod.validate_pdf_structure("test.pdf", base + update)
+
+    def test_classic_free_entries_are_object_zeros_form(self) -> None:
+        d = self.mod.build_simple_1p()
+        self.assertIn(b"0000000000 65535 f \n", d)
+        for bad in (b"0000000000 00000 f \n", b"9999999999 65535 f \n"):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, "must be free with offset 0"):
+                self.mod.validate_pdf_structure("render/simple-1p.pdf", d.replace(b"0000000000 65535 f \n", bad, 1))
 
     def test_a_classic_xref_entry_has_one_form(self) -> None:
         data = self.mod.build_simple_1p()
