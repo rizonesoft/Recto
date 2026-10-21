@@ -166,6 +166,8 @@ Extend `scripts/build-corpus.py` to generate the cryptographic, hostile/malforme
 - [x] Write `tests/corpus/README.md` documenting folder structure (`render/`, `text/`, `convert/`, `broken/`, `seeds/`), test passwords, and the `PROVENANCE.md` registration rule. Done when: `tests/corpus/README.md` exists and links to `PROVENANCE.md`.
 - [x] Commit: `test: add encrypted, broken and fuzz-seed PDF corpus fixtures`
 
+> **Audit 2026-10-22 (D06 T05 §12):** the earlier review (`docs/reviews/00-workspace/D00-T03-s4.md`) overstated its evidence: CCITT and JBIG2 seeds are compared with the generator's own output and DCT and JPX seeds only receive marker checks, so no independent decoder round trip was proved. The encryption validator now reads the trailer's `/Encrypt`, `/ID` and `/Root` from parsed objects and requires the crypt filters each revision implies, and the deflate-bomb check inflates in bounded steps.
+
 **Test checkpoint:** `python scripts/build-corpus.py --check` exits 0 with all `render/`, `text/`, `convert/`, `broken/`, and `seeds/` fixtures verified.
 
 > **Verified:** 2026-10-18 | §4 | 2f576d5a8de5cb2fbdca66750d7e7ab209a3f693

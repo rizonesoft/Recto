@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import zlib
 from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -429,6 +430,23 @@ class BuildCorpusTests(unittest.TestCase):
         with mock.patch.dict(real.__globals__, {"validate_pdf_structure": counted}):
             real("render/incremental-2rev.pdf", data)
         self.assertEqual(calls, [False])  # one earlier revision, validated once, without recursing again
+
+    def test_encryption_is_read_from_what_the_trailer_names(self) -> None:
+        files = self.mod.expected_corpus_files()
+        aes = files["render/encrypted-aes-128.pdf"]
+        self.mod.validate_encrypted_pdf_structure("render/encrypted-aes-128.pdf", aes)
+        for old, new in ((b"/Encrypt 7 0 R", b"/Encrypt 6 0 R"), (b"/CFM /AESV2", b"/CFM /V2   ")):
+            self.assertIn(old, aes)
+            with self.subTest(old=old), self.assertRaises(ValueError):
+                self.mod.validate_encrypted_pdf_structure("render/encrypted-aes-128.pdf", aes.replace(old, new, 1))
+
+    def test_inflation_stops_just_past_its_limit(self) -> None:
+        bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))
+        total, kept = self.mod.inflate_bounded(bomb, 1024, keep=False)
+        self.assertGreater(total, 1024)
+        self.assertLessEqual(total, 1024 + (1 << 20))  # one bounded step past the limit, not the whole 8 MiB
+        self.assertEqual(kept, b"")
+        self.assertEqual(self.mod.inflate_bounded(zlib.compress(b"abc"), 100), (3, b"abc"))
 
     def test_a_classic_xref_entry_has_one_form(self) -> None:
         data = self.mod.build_simple_1p()

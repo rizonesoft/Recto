@@ -31,7 +31,7 @@ MAX_SEED_FILE_BYTES = 4_096
 DEFLATE_BOMB_LIMIT_BYTES = 256 * 1024 * 1024
 CORPUS_USER_PASSWORD = b"recto-test"
 CORPUS_OWNER_PASSWORD = b"recto-owner"
-CORPUS_PERMISSIONS_MASK = -1028  # 0xFFFFFBFC: print, modify, copy, annotate, fill forms, extract, assemble, print HQ
+CORPUS_PERMISSIONS_MASK = -1028  # 0xFFFFFBFC: every permission but bit 11, document assembly (ISO 32000-1 Table 22)
 
 
 def write_atomic(dest: Path, data: bytes) -> None:
@@ -2672,21 +2672,67 @@ def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
         raise ValueError(f"{rel_path}: missing startxref before %%EOF")
     validate_classic_xref_at(rel_path, data, int(eof_m.group(1)), set())
 
-    id_m = re.search(rb"/ID\s*\[<([0-9A-F]{32})>\s*<([0-9A-F]{32})>\]", data)
+    validate_layout(rel_path, data)
+    # Everything below is read from parsed objects: the trailer's own /Encrypt and /ID, the dictionary that /Encrypt
+    # names, and the page content /Root reaches, never a text search for an object number.
+    objects = {num: (start, end, s0, s1) for num, start, end, s0, s1, _ in iter_objects(rel_path, data)}
+
+    def entries(num: int) -> dict[bytes, bytes]:
+        if num not in objects or not data.startswith(b"<<", objects[num][0]):
+            raise ValueError(f"{rel_path}: object {num} is not a dictionary")
+        start, end = objects[num][:2]
+        return dict_entries(data[start + 2 : end - 2])
+
+    def ref(value: bytes, what: str) -> int:
+        m = re.fullmatch(rb"(\d+) 0 R", value or b"")
+        if m is None:
+            raise ValueError(f"{rel_path}: {what} is not an indirect reference")
+        return int(m.group(1))
+
+    def whole(value: bytes, what: str, signed: bool = False) -> int:
+        if re.fullmatch(rb"-?\d+" if signed else rb"\d+", value or b"") is None:
+            raise ValueError(f"{rel_path}: {what} is not an integer")
+        return int(value)
+
+    def hex_string(value: bytes, what: str) -> bytes:
+        m = re.fullmatch(rb"<([0-9A-F]+)>", value or b"")
+        if m is None or len(m.group(1)) % 2:
+            raise ValueError(f"{rel_path}: {what} is not a hex string")
+        return bytes.fromhex(m.group(1).decode("ascii"))
+
+    trailer_at = data.rindex(b"trailer\n<<")
+    trailer = dict_entries(data[trailer_at + 10 : _skip_object(data, trailer_at + 8) - 2])
+    id_m = re.fullmatch(rb"\[\s*<([0-9A-F]{32})>\s*<([0-9A-F]{32})>\s*\]", trailer.get(b"/ID", b""))
     if id_m is None:
         raise ValueError(f"{rel_path}: missing trailer /ID array")
     id0_bytes = bytes.fromhex(id_m.group(1).decode("ascii"))
 
-    enc_m = re.search(rb"7 0 obj\n<<(.*?)>>\nendobj", data, re.DOTALL)
-    if enc_m is None or b"/Filter /Standard" not in enc_m.group(1):
-        raise ValueError(f"{rel_path}: missing 7 0 obj /Filter /Standard encryption dictionary")
-    enc_dict = enc_m.group(1)
-
-    v_val = int(re.search(rb"/V\s+(\d+)", enc_dict).group(1))
-    r_val = int(re.search(rb"/R\s+(\d+)", enc_dict).group(1))
-    p_val = int(re.search(rb"/P\s+(-?\d+)", enc_dict).group(1))
-    o_bytes = bytes.fromhex(re.search(rb"/O\s*<([0-9A-F]+)>", enc_dict).group(1).decode("ascii"))
-    u_bytes = bytes.fromhex(re.search(rb"/U\s*<([0-9A-F]+)>", enc_dict).group(1).decode("ascii"))
+    enc = entries(ref(trailer.get(b"/Encrypt", b""), "trailer /Encrypt"))
+    if enc.get(b"/Filter") != b"/Standard":
+        raise ValueError(f"{rel_path}: the /Encrypt dictionary is not /Filter /Standard")
+    v_val = whole(enc.get(b"/V"), "/V")
+    r_val = whole(enc.get(b"/R"), "/R")
+    p_val = whole(enc.get(b"/P"), "/P", signed=True)
+    o_bytes = hex_string(enc.get(b"/O"), "/O")
+    u_bytes = hex_string(enc.get(b"/U"), "/U")
+    # The crypt filters declared must be the ones this revision's decryption below applies (ISO 32000-1 7.6.5): none
+    # for RC4 (V 2, R 3), and StdCF as both stream and string filter with AESV2 (V 4, R 4) or AESV3 (V 5, R 6).
+    expected_cfm = {(2, 3): None, (4, 4): b"/AESV2", (5, 6): b"/AESV3"}.get((v_val, r_val), b"?")
+    if expected_cfm == b"?":
+        raise ValueError(f"{rel_path}: unsupported (/V {v_val}, /R {r_val})")
+    if expected_cfm is None:
+        if any(k in enc for k in (b"/CF", b"/StmF", b"/StrF")):
+            raise ValueError(f"{rel_path}: an RC4 (/V 2) dictionary declares crypt filters it does not use")
+    else:
+        cf = enc.get(b"/CF", b"")
+        if not cf.startswith(b"<<"):
+            raise ValueError(f"{rel_path}: /V {v_val} needs a /CF dictionary")
+        std = dict_entries(cf[2:-2]).get(b"/StdCF", b"")
+        std_entries = dict_entries(std[2:-2]) if std.startswith(b"<<") else {}
+        if (std_entries.get(b"/CFM") != expected_cfm or enc.get(b"/StmF") != b"/StdCF"
+                or enc.get(b"/StrF") != b"/StdCF"):
+            raise ValueError(f"{rel_path}: /V {v_val} must declare /StdCF with /CFM {expected_cfm.decode()} as both "
+                             f"/StmF and /StrF")
 
     if r_val in (3, 4):
         if len(o_bytes) != 32 or len(u_bytes) != 32:
@@ -2705,11 +2751,11 @@ def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
     elif r_val == 6 and v_val == 5:
         if len(o_bytes) != 48 or len(u_bytes) != 48:
             raise ValueError(f"{rel_path}: R=6 /O and /U must be 48 bytes")
-        oe_bytes = bytes.fromhex(re.search(rb"/OE\s*<([0-9A-F]{64})>", enc_dict).group(1).decode("ascii"))
-        ue_bytes = bytes.fromhex(re.search(rb"/UE\s*<([0-9A-F]{64})>", enc_dict).group(1).decode("ascii"))
-        perms_bytes = bytes.fromhex(
-            re.search(rb"/Perms\s*<([0-9A-F]{32})>", enc_dict).group(1).decode("ascii")
-        )
+        oe_bytes = hex_string(enc.get(b"/OE"), "/OE")
+        ue_bytes = hex_string(enc.get(b"/UE"), "/UE")
+        perms_bytes = hex_string(enc.get(b"/Perms"), "/Perms")
+        if (len(oe_bytes), len(ue_bytes), len(perms_bytes)) != (32, 32, 16):
+            raise ValueError(f"{rel_path}: R=6 /OE, /UE and /Perms must be 32, 32 and 16 bytes")
         if pdf_r6_hash_2b(CORPUS_USER_PASSWORD, u_bytes[32:40], b"") != u_bytes[:32]:
             raise ValueError(f"{rel_path}: R=6 user password /U verification failed")
         if pdf_r6_hash_2b(CORPUS_OWNER_PASSWORD, o_bytes[32:40], u_bytes) != o_bytes[:32]:
@@ -2730,14 +2776,15 @@ def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
     else:
         raise ValueError(f"{rel_path}: unsupported (/V {v_val}, /R {r_val})")
 
-    stm_m = re.search(rb"4 0 obj\n<<([^\n]*?)>>\nstream\n", data)
-    if stm_m is None:
-        raise ValueError(f"{rel_path}: missing encrypted page content stream 4 0 obj")
-    slen = int(re.search(rb"/Length\s+(\d+)", stm_m.group(1)).group(1))
-    s_start = stm_m.end()
-    if data[s_start + slen : s_start + slen + 10] != b"\nendstream":
-        raise ValueError(f"{rel_path}: stream 4 0 obj /Length mismatch")
-    enc_payload = data[s_start : s_start + slen]
+    # The first page's content stream, reached from /Root through /Pages and /Kids.
+    pages = entries(ref(entries(ref(trailer.get(b"/Root", b""), "trailer /Root")).get(b"/Pages", b""), "/Pages"))
+    kids = re.fullmatch(rb"\[\s*(\d+ 0 R)(?:\s+\d+ 0 R)*\s*\]", pages.get(b"/Kids", b""))
+    if kids is None:
+        raise ValueError(f"{rel_path}: /Pages /Kids is not an array of references")
+    content_num = ref(entries(ref(kids.group(1), "/Kids")).get(b"/Contents", b""), "page /Contents")
+    if content_num != 4 or objects[4][2] is None:
+        raise ValueError(f"{rel_path}: the page content stream is object {content_num}, not stream object 4")
+    enc_payload = data[objects[4][2] : objects[4][3]]
     if r_val == 3:
         okey = pdf_r34_object_key(file_key, 4, 0, is_aes=False)
         comp_payload = rc4_crypt(okey, enc_payload)
@@ -2749,6 +2796,22 @@ def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
 
     raw_content = zlib.decompress(comp_payload)
     validate_content_stream_syntax(rel_path, raw_content)
+
+
+def inflate_bounded(data: bytes, limit: int, keep: bool = True) -> tuple[int, bytes]:
+    """(bytes produced, the bytes when keep) inflating data, stopping as soon as more than limit bytes have come out;
+    output is produced 1 MiB at a time, so memory stays bounded whatever the input claims."""
+    d = zlib.decompressobj()
+    total, out, pending = 0, [], data
+    while total <= limit:
+        chunk = d.decompress(pending, 1 << 20)
+        total += len(chunk)
+        if keep and total <= limit:
+            out.append(chunk)
+        pending = d.unconsumed_tail
+        if not chunk and not pending:
+            break
+    return total, b"".join(out)
 
 
 def validate_broken_pdf_structure(rel_path: str, data: bytes) -> None:
@@ -2828,14 +2891,12 @@ def validate_broken_pdf_structure(rel_path: str, data: bytes) -> None:
             raise ValueError(f"{rel_path}: missing 2-stage FlateDecode stream in 4 0 obj")
         slen = int(stm_m.group(1))
         s_start = stm_m.end()
-        inner_deflate = zlib.decompress(data[s_start : s_start + slen])
-        d2 = zlib.decompressobj()
-        total_expanded = 0
-        for off in range(0, len(inner_deflate), 262_144):
-            chunk = d2.decompress(inner_deflate[off : off + 262_144])
-            total_expanded += len(chunk)
-            if total_expanded > DEFLATE_BOMB_LIMIT_BYTES:
-                break
+        # Each stage inflates in bounded steps (1 MiB of output at a time) and stops once past its limit, so checking the
+        # bomb never allocates what it is checking for.
+        inner_total, inner_deflate = inflate_bounded(data[s_start : s_start + slen], 16 * 1024 * 1024)
+        if inner_total > 16 * 1024 * 1024:
+            raise ValueError(f"{rel_path}: the outer FlateDecode stage expands past 16 MiB")
+        total_expanded, _ = inflate_bounded(inner_deflate, DEFLATE_BOMB_LIMIT_BYTES, keep=False)
         if total_expanded <= DEFLATE_BOMB_LIMIT_BYTES:
             raise ValueError(
                 f"{rel_path}: expanded size {total_expanded} did not exceed 256 MB cap"
