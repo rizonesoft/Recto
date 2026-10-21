@@ -61,12 +61,18 @@ DISALLOWED = ((re.compile(r"<!--|-->"), "an HTML comment"), (re.compile(r"^\s*(`
 
 
 def format_faults(text, name):
-    """Lines that break the plain-Markdown rule for the ledger files."""
-    return [f"{name} line {number}: {what} is not allowed in this file" for number, line in enumerate(text.splitlines(), 1)
-            for pattern, what in DISALLOWED if pattern.search(line)]
+    """Lines that break the plain-Markdown rule for the ledger files, and table rows outside any table (after a blank
+    line, a row without a header and divider would be skipped by every check)."""
+    found = [f"{name} line {number}: {what} is not allowed in this file"
+             for number, line in enumerate(text.splitlines(), 1) for pattern, what in DISALLOWED if pattern.search(line)]
+    in_tables = set().union(*(lines for _, _, _, lines in tables(text, with_lines=True))) if text else set()
+    found += [f"{name} line {number}: a table row outside any table (a blank line ends a table)"
+              for number, line in enumerate(text.splitlines(), 1)
+              if line.lstrip().startswith("|") and number not in in_tables]
+    return found
 
 
-def tables(text):
+def tables(text, with_lines=False):
     """Every Markdown table as (header cells, rows, faults). A table is a header row and a divider, then every line up
     to the next blank line. Each of those lines must be written as a full `| ... |` row; any other line (a row without
     its leading pipe, stray text) is a fault rather than a row the checks never see."""
@@ -76,18 +82,19 @@ def tables(text):
         if "|" in lines[i] and "-" in lines[i + 1] and DIVIDER.fullmatch(lines[i + 1]):
             faults = [] if lines[i].startswith("|") and lines[i].endswith("|") else [
                 f"table header {lines[i][:40]!r} is not a `| ... |` row"]
-            header, rows = split_cells(lines[i] if lines[i].startswith("|") else "|" + lines[i]), []
+            header, rows, numbers = split_cells(lines[i] if lines[i].startswith("|") else "|" + lines[i]), [], {i + 1, i + 2}
             divider = split_cells(lines[i + 1] if lines[i + 1].startswith("|") else "|" + lines[i + 1])
             if len(divider) != len(header):
                 faults.append(f"table divider has {len(divider)} cells for a {len(header)}-cell header")
             i += 2
             while i < len(lines) and lines[i]:
+                numbers.add(i + 1)
                 if lines[i].startswith("|") and lines[i].endswith("|"):
                     rows.append(split_cells(lines[i]))
                 else:
                     faults.append(f"{lines[i][:40]!r} is inside a table but is not a `| ... |` row")
                 i += 1
-            found.append((header, rows, faults))
+            found.append((header, rows, faults, numbers) if with_lines else (header, rows, faults))
         else:
             i += 1
     return found

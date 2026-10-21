@@ -133,7 +133,13 @@ class LedgerRulesTest(unittest.TestCase):
                                    ("parity comment", ledger(*VALID.values()), PARITY + "\n<!--\n```\n-->\n")):
             with self.subTest(case=name):
                 found = demand.problems(text, parity, PLAN, SECTIONS, today=TODAY)
-                self.assertTrue(found and all("is not allowed in this file" in line for line in found), found)
+                self.assertTrue(any("is not allowed in this file" in line for line in found), found)
+        # A row after a blank line belongs to no table, so it is refused rather than skipped.
+        orphan = "\n| Invalid request | #1 | planned | D99 T99 §999 | cost | 2026-10-21 |\n"
+        found = demand.problems(ledger(*VALID.values()) + orphan, PARITY, PLAN, SECTIONS, today=TODAY)
+        self.assertTrue(any("a table row outside any table" in line for line in found), found)
+        found = problems(*VALID.values(), parity=PARITY + "\n| New unowned request | Excluded | | No answer |\n")
+        self.assertTrue(any("a table row outside any table" in line for line in found), found)
         # A short parity row has an empty owner, so it needs a ledger row.
         self.assertIn("parity row 'New request' has no owning TODO section and no ledger row",
                       problems(*VALID.values(), parity=PARITY + "| New request | Planned |\n"))
