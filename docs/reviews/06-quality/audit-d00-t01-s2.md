@@ -278,3 +278,48 @@ OVERALL: needs-attention
 
 - Finding 1 (P1): a switch in an item's `AdditionalOptions` that would override the policy (`/std:`, `/W0` to `/W3`, `/WX-`, `/w`, `/wd`) fails the check. Mutation: `/WX-` added to `AdditionalOptions` in `Directory.Build.targets` -> the test fails.
 - The claim is narrowed to what MSBuild evaluation shows: the project configuration, per source file, at evaluation time. Targets that rewrite flags during a build are outside it; the build enforces the result, since `/WX` fails it on any warning, and the CI build logs show `/W4 /WX /std:c++20`. Tests: `Ran 3 tests ... OK`.
+
+## Round 7: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T14:38:25Z
+- Effort: medium
+- Lines: 31
+- Digest: 94ac1cbe7006780b
+
+## adversarial: needs-attention
+
+1. **P1** `tests/scripts/test_engine_dependency_policy.py:19`: Quoted compiler switches bypass `OVERRIDES`. `AdditionalOptions` containing `"/WX-"` passes the guard while disabling warnings as errors. The regex requires whitespace or start-of-string immediately before `/`, so it misses the opening quote.
+
+   Reproduced without file changes: wrapped the real MSBuild subprocess responses, appended `"/WX-"` to each evaluated source item's `AdditionalOptions`, and invoked the unchanged test. It accepted all **124 modified items**. Separately, running the installed compiler with `/Zs /W4 /WX "/WX-" __recto_audit_nonexistent__.cpp` emitted `D9025: overriding '/WX' with '/WX-'`, confirming that MSVC recognizes the quoted override. The missing source deliberately prevented compilation.
+
+   This is false acceptance by the policy guard, not evidence that current projects disable `/WX`.
+
+## consistency: approve
+
+No additional findings.
+
+## integration: advisory
+
+Current clean-clone compilation was not independently verified because building writes files. The policy test cannot substitute for that evidence.
+
+## source-defect: needs-attention
+
+Finding 1 applies here: the regex does not model compiler argument quoting. Microsoft documents `/WX-` as the counterpart to `/WX`; the installed compiler confirmed its quoted form overrides `/WX`. [MSVC warning options](https://learn.microsoft.com/en-us/cpp/build/reference/compiler-option-warning-level?view=msvc-170)
+
+## design: advisory
+
+Not applicable. This section owns no user surface.
+
+## record: needs-attention
+
+2. **P3** `docs/reviews/06-quality/audit-d00-t01-s2.md:279`: The round-6 statement that overriding switches fail the check remains too broad. Finding 1 reproduces an accepted `/WX-` override within evaluated `AdditionalOptions`, without any build-time target rewriting.
+
+   At `79ecbe5`, the checkpoint returned `False`, `False`, and `valid: 677 sections`; all three policy tests passed. The opening 676-section result belongs to its explicitly named earlier revision. No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 7
+
+- Finding 1 (P1): `AdditionalOptions` is checked against an allow-list of the switches the repository uses (`/utf-8`, `/bigobj`, `/await:strict`), with quotes stripped, instead of a pattern of known overrides; any other switch, quoted or not, fails. Mutation: `"/WX-"` added to `AdditionalOptions` -> `FAILED (failures=28)`.
+- Finding 2 (P3): this file's round 6 wording is superseded by the allow-list above. Tests: `Ran 3 tests ... OK`.

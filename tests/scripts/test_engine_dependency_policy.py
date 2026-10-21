@@ -15,8 +15,9 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 MUPDF = re.compile(r"mupdf|artifex|\bjbig2dec\b", re.IGNORECASE)
 CONFIGURATIONS = [(configuration, platform) for configuration in ("Debug", "Release") for platform in ("x64", "ARM64")]
 REQUIRED = {"LanguageStandard": "stdcpp20", "WarningLevel": "Level4", "TreatWarningAsError": "true"}
-# Switches in AdditionalOptions that would override the required metadata on the compiler command line.
-OVERRIDES = re.compile(r"(?:^|\s)[/-](?:std:|W[0-3](?:\s|$)|WX-|w(?:\s|$)|wd)", re.IGNORECASE)
+# The only switches AdditionalOptions may carry. An allow-list, not a pattern of bad switches: quoting, prefixes and
+# spellings cannot sneak an override (/std:c++17, /W0, "/WX-") past it. A new switch is added here deliberately.
+ALLOWED_OPTIONS = {"/utf-8", "/bigobj", "/await:strict"}
 
 
 def msbuild():
@@ -73,8 +74,9 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                     for item in items:
                         for name, value in REQUIRED.items():
                             self.assertEqual(item.get(name), value, f"{item.get('Identity')}: {name}")
-                        self.assertIsNone(OVERRIDES.search(item.get("AdditionalOptions", "")),
-                                          f"{item.get('Identity')}: AdditionalOptions overrides the policy")
+                        options = {token.strip('"').lower() for token in item.get("AdditionalOptions", "").split()}
+                        self.assertLessEqual(options, ALLOWED_OPTIONS,
+                                             f"{item.get('Identity')}: AdditionalOptions has unlisted switches")
 
 if __name__ == "__main__":
     unittest.main()
