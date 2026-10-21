@@ -92,13 +92,16 @@ def section_refs(text):
 
 
 def parity_names(text, sections):
-    """Every tool name in the parity ledger, and the ones that must have a ledger row: no resolving TODO section in the
+    """Every tool name in the parity ledger, the ones that must have a ledger row, and the parity tables' own faults
+    (a line inside a table that is not a full row hides a request, so it is reported). A row needs a ledger row when
+    it has no resolving TODO section in the
     table's `Recto sections` column (a missing, unknown or malformed reference counts as none; a short row's missing
     cells are empty, as Markdown renders them), Excluded or Partial, or naming this ledger."""
-    names, needed = set(), set()
-    for header, rows, _ in tables(text):
+    names, needed, faults_found = set(), set(), []
+    for header, rows, table_faults in tables(text):
         if "Recto sections" not in header:
             continue
+        faults_found += [f"{PARITY}: {fault}" for fault in table_faults]
         sections_at = header.index("Recto sections")
         for cells in rows:
             cells = cells + [""] * (len(header) - len(cells))
@@ -112,7 +115,7 @@ def parity_names(text, sections):
                 any(section.startswith(f"{file} §") for section in sections) for file in files)
             if not owned or "Excluded" in cells or "Partial" in cells or "user-demand.md" in " | ".join(cells):
                 needed.add(name)
-    return names, needed
+    return names, needed, faults_found
 
 
 def last_release(root):
@@ -140,7 +143,8 @@ def problems(ledger_text, parity_text, plan_text, sections, release=(None, None,
     if not rows:
         return ["the ledger has no rows"]
     decisions = {int(n) for n in re.findall(r"^\| D(\d+) \|", plan_text, re.M)}
-    parity, needed = parity_names(parity_text, sections)
+    parity, needed, parity_faults = parity_names(parity_text, sections)
+    found += parity_faults
     covered = set()
     tag, released, annotated = release
     if tag and not annotated:

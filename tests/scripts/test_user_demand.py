@@ -101,6 +101,11 @@ class LedgerRulesTest(unittest.TestCase):
         self.assertTrue(any("is not a `| ... |` row" in line for line in found), found)
         # An escaped pipe stays inside its cell.
         self.assertEqual(problems(VALID["web"].replace("A web version", "A web version \\| Linux"), VALID["split"]), [])
+        # A malformed parity row is reported, not dropped from coverage.
+        for row in ("New request | Planned | | No owner yet |\n", "| New request | Planned | | No owner yet\n"):
+            with self.subTest(row=row):
+                found = problems(*VALID.values(), parity=PARITY + row)
+                self.assertTrue(any(line.startswith("docs/acrobat-parity.md:") for line in found), found)
         # A short parity row has an empty owner, so it needs a ledger row.
         self.assertIn("parity row 'New request' has no owning TODO section and no ledger row",
                       problems(*VALID.values(), parity=PARITY + "| New request | Planned |\n"))
