@@ -388,3 +388,44 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_merge_prs` -> `OK` (the extended test fails against `70991a4`). Live: `origin_repo` -> `github.com/rizonesoft/Recto`; PR #1 eligible.
 
 - Finding 1 (P1): the host is pinned in every call: `gh pr` commands take `--repo github.com/<owner>/<name>` and `gh api` calls `--hostname github.com`, so neither `GH_REPO` nor `GH_HOST` can point a read or a merge at another repository or server (`test_every_github_call_names_the_repository_behind_origin`, run with both set).
+
+## Round 10: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:56:23Z
+- Effort: medium
+- Lines: 26
+- Digest: 28e020dcee4fe764
+
+## adversarial: needs-attention
+
+1. **P1, `scripts/merge_prs.py:254`: Failing test-merge checks are invisible to eligibility.** Both check queries use only `headRefOid`; `FIELDS` also omits the PR’s check rollup. A green branch head can therefore authorize merging despite failing checks on its combination with current `main`, unless branch protection independently refuses it.
+
+   Reproduce with an eligible bot PR whose head has successful required jobs, but whose test merge commit has a failing status. The script queries only the head and requests the merge. An in-memory probe with successful head checks and a failing PR rollup returned exit 0 and attempted merge `#1`. Read the test-merge evidence alongside the dispatched head checks and reject failures or pending checks.
+
+## consistency: approve
+
+## integration: needs-attention
+
+Finding 1 disconnects merge eligibility from integration failures against the target branch. Post-merge `todo-graph validate` cannot detect build or runtime failures and runs after the remote mutation.
+
+## source-defect: needs-attention
+
+Finding 1 overlooks GitHub’s distinction between head checks and test-merge checks. GitHub documents that when the test merge commit has statuses, those determine the required-check outcome. Head-only evidence is insufficient. [GitHub documentation](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#conflicts-between-head-commit-and-test-merge-commit)
+
+## design: advisory
+
+No rendered interface changes.
+
+## record: advisory
+
+Inspected the candidate and final fix. Ran mocked, in-memory probes with bytecode generation disabled; no live merges or file modifications. Historical test results were not independently rerun.
+
+HIGHEST: P1  
+OVERALL: needs-attention
+
+## Fixes after round 10
+
+`python -m unittest tests.scripts.test_merge_prs` -> `OK` (`test_a_failing_or_pending_check_on_the_pull_request_blocks` fails against `3543c40`).
+
+- Finding 1 (P1): the pull request's own check rollup (`statusCheckRollup`, which includes checks on GitHub's test merge with current `main`) is read too; any entry that is not a completed success, neutral or skipped check, or a successful status, blocks. An empty rollup stays allowed, because the pins workflow's dispatched runs never appear there and the head commit's required jobs already prove those changes build.

@@ -332,6 +332,17 @@ class MergePrs(unittest.TestCase):
         self.assertEqual(fake.merges(), ["2"])
         self.assertFalse((self.root / merge_prs.STOPPED).exists())
 
+    def test_a_failing_or_pending_check_on_the_pull_request_blocks(self):
+        failing = pr(1)
+        failing["statusCheckRollup"] = [{"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "FAILURE"}]
+        pending = pr(2)
+        pending["statusCheckRollup"] = [{"__typename": "StatusContext", "state": "PENDING"}]
+        passing = pr(3)
+        passing["statusCheckRollup"] = [{"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SUCCESS"}]
+        fake = FakeRun([failing, pending, passing, pr(4)])  # pr(4): no rollup, as the pins workflow's pull requests
+        self.assertEqual(self.main(fake), 0)
+        self.assertEqual(fake.merges(), ["3", "4"])
+
     def test_launches_open_no_console_window(self):
         with mock.patch.object(merge_prs.subprocess, "run") as run:
             merge_prs.run_cmd(["git", "status"], self.root)

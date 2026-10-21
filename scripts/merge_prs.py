@@ -172,10 +172,20 @@ def why_not(pr, runs, statuses=()):
         return "its head commit's checks are not all green, or a required job did not run"
     if any(state != "success" for _, state in statuses):
         return "a commit status on its head commit is not success"
+    # The pull request's own checks, including those on GitHub's test merge with current main: any that has run must
+    # have passed. (The pins workflow's dispatched runs do not appear here, so an empty rollup is allowed; the head
+    # commit's required jobs above are what prove those changes build.)
+    for item in pr.get("statusCheckRollup") or []:
+        if item.get("__typename") == "StatusContext":
+            if item.get("state") != "SUCCESS":
+                return "a check on the pull request (or its test merge) is not success"
+        elif item.get("status") != "COMPLETED" or item.get("conclusion") not in {"SUCCESS", "NEUTRAL", "SKIPPED"}:
+            return "a check on the pull request (or its test merge) is not success"
     return None
 
 
-FIELDS = "number,title,author,labels,baseRefName,headRefName,headRefOid,mergeable,state,isDraft,files,mergeCommit"
+FIELDS = ("number,title,author,labels,baseRefName,headRefName,headRefOid,mergeable,state,isDraft,files,mergeCommit,"
+          "statusCheckRollup")
 REPO: list[str] = [""]  # github.com/owner/name, set from origin by merge_all before any gh call
 
 
