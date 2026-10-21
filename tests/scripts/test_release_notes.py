@@ -187,10 +187,11 @@ class GtestListTest(unittest.TestCase):
         path.write_text("Running main() from C:/Program Files/gtest/src/gtest_main.cc\nPdfXref.\n  ParsesTable\n"
                         "  EmptyTable\nInstance/PdfRender.\n  Draws/0  # GetParam() = 1\n  Draws/1  # GetParam() = 2\n"
                         "PdfTyped/0.  # TypeParam = int\n  Holds\nPdfTyped/1.  # TypeParam = long\n  Holds\n"
-                        "Ints/PdfTypedP/0.  # TypeParam = int\n  Grows\n", encoding="utf-8")
+                        "Ints/PdfTypedP/0.  # TypeParam = int\n  Grows\nNamed/int.  # TypeParam = int\n  Works\n"
+                        "Ints/NamedP/int.  # TypeParam = int\n  Grows\n", encoding="utf-8")
         self.assertEqual(release_notes.read_gtest_list(path),
                          {"PdfXref.ParsesTable", "PdfXref.EmptyTable", "PdfRender.Draws", "PdfTyped.Holds",
-                          "PdfTypedP.Grows"})
+                          "PdfTypedP.Grows", "Named.Works", "NamedP.Grows"})
 
 
 class HostileFixtureTest(unittest.TestCase):
@@ -226,7 +227,8 @@ class HostileFixtureTest(unittest.TestCase):
             "class ViaAlias(Aliased):\n    def test_alias(self):\n        pass\n"
         )
         _commit(repo, {"tests/recto-tests/hostile_tests.cpp": cpp, "tests/scripts/test_sample.py": py,
-                       "tests/scripts/test_exits.py": "raise SystemExit(0)\n"}, "initial")
+                       "tests/scripts/test_exits.py": "raise SystemExit(0)\n",
+                       "tests/scripts/test_sleeps.py": "import time\ntime.sleep(60)\n"}, "initial")
         _git(repo, "tag", "v2.0.0")
         cls.fake = {
             "Commented": "Commented.Case", "Block": "Block.Case", "Disabled": "Disabled.Case",
@@ -238,6 +240,7 @@ class HostileFixtureTest(unittest.TestCase):
             "Helper": "tests.scripts.test_sample.Derived.helper",
             "Abstract": "tests.scripts.test_sample.Abstract.test_abstract",
             "ExitsOnImport": "tests.scripts.test_exits.Missing.test_missing",
+            "SleepsOnImport": "tests.scripts.test_sleeps.Slow.test_slow",
         }
         cls.real = {
             "Enabled": "Enabled.Case", "Taken": "Taken.Case", "Multi": "Multi.Line", "Typed": "Typed.Case",
@@ -259,10 +262,14 @@ class HostileFixtureTest(unittest.TestCase):
         _git(repo, "tag", "v2.1.0")
         # What the compiler builds: the macro, the continued comment and the #if (0) block are not tests.
         cls.compiled = {"Enabled.Case", "Taken.Case", "Multi.Line", "Typed.Case"}
+        # A module that never finishes importing must time out into a violation, not abort the report; the short
+        # timeout holds for every report this class builds and is restored in tearDownClass.
+        cls._timeout, release_notes.PROBE_TIMEOUT = release_notes.PROBE_TIMEOUT, 3
         cls.result = release_notes.report(repo, "v2.0.0", "v2.1.0", gtest_list=cls.compiled)
 
     @classmethod
     def tearDownClass(cls):
+        release_notes.PROBE_TIMEOUT = cls._timeout
         cls._tmp.cleanup()
 
     def violations_for(self, name, result=None):

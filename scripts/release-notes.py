@@ -49,6 +49,7 @@ CPP_FILES = ("*.cpp", "*.cc", "*.cxx", "*.h", "*.hpp")
 RAW_STRING = re.compile(r'R"([^ ()\\\t\v\f\n]{0,16})\(')
 DIRECTIVE = re.compile(r"^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)$")
 GTEST_MAIN_BANNER = re.compile(r"^Running main\(\) from .+$")
+PROBE_TIMEOUT = 120  # seconds for one Python test module to import in its worktree
 # Run in a worktree of the fix commit: resolve module.Class.method the way unittest does, without running it. The
 # verdict is a nonce read from stdin before the module is imported and printed only after every check passed, so a
 # module that exits during import (even with status 0) is never read as a verified test.
@@ -167,16 +168,18 @@ def gtest_declared(repo, sha, test_id):
 
 
 def read_gtest_list(path):
-    """`Suite.Case` names from `--gtest_list_tests` output. Instantiation prefixes and type indexes are dropped:
-    `Prefix/Suite.` (TEST_P), `Suite/0.` (TYPED_TEST) and `Prefix/Suite/0.` (TYPED_TEST_P) are all `Suite`, and a
-    `Case/0` (TEST_P) is `Case`."""
+    """`Suite.Case` names from `--gtest_list_tests` output. A typed suite (gtest marks it `# TypeParam = ...`) ends in
+    its type name or index, which is dropped: `Suite/0.` or `Suite/int.` (TYPED_TEST) and `Prefix/Suite/0.`
+    (TYPED_TEST_P) are `Suite`. Otherwise the suite is the last part: `Prefix/Suite.` (TEST_P) is `Suite`. A
+    parameterised case `Case/0` is `Case`."""
     try:
         text = Path(path).read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError) as exc:
         raise Unreadable(f"--gtest-list {path}: {exc}") from None
     names, suite = set(), None
     for line in text.splitlines():
-        entry = line.split("#", 1)[0].rstrip()
+        entry, _, comment = line.partition("#")
+        entry = entry.rstrip()
         if not entry:
             continue
         if suite is None and GTEST_MAIN_BANNER.match(entry):
@@ -184,9 +187,10 @@ def read_gtest_list(path):
         if not entry[0].isspace():
             if not entry.endswith("."):
                 raise Unreadable(f"--gtest-list {path}: {line!r} is not --gtest_list_tests output")
-            suite = next((part for part in reversed(entry[:-1].split("/")) if not part.isdigit()), None)
-            if suite is None:
-                raise Unreadable(f"--gtest-list {path}: {line!r} names no suite")
+            parts = entry[:-1].split("/")
+            if comment.strip().startswith("TypeParam") and len(parts) > 1:
+                parts = parts[:-1]
+            suite = parts[-1]
         elif suite is None:
             raise Unreadable(f"--gtest-list {path}: a test case comes before any suite")
         else:
@@ -220,8 +224,13 @@ class PythonTests:
             if not tree.exists():
                 git(self.repo, "worktree", "add", "--detach", "--quiet", str(tree), sha)
             nonce = secrets.token_hex(16)
-            probe = subprocess.run([sys.executable, "-I", "-c", PYTHON_PROBE, test_id], cwd=tree, input=nonce + "\n",
-                                   capture_output=True, text=True, timeout=120)
+            try:
+                probe = subprocess.run([sys.executable, "-I", "-c", PYTHON_PROBE, test_id], cwd=tree,
+                                       input=nonce + "\n", capture_output=True, text=True, timeout=PROBE_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                # An import that never finishes proves nothing: the test is unverified, and the report still prints.
+                self.answers[(sha, test_id)] = False
+                return False
             lines = probe.stdout.strip().splitlines()
             self.answers[(sha, test_id)] = probe.returncode == 0 and bool(lines) and lines[-1] == nonce
         return self.answers[(sha, test_id)]
