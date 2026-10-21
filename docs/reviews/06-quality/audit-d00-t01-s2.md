@@ -409,3 +409,45 @@ OVERALL: needs-attention
 ## Fixes after round 9
 
 - Finding 1 (P1): with `CompileAs` `Default`, which compiles by extension, every source must have a C++ extension (`.cpp`, `.cxx` or `.cc`); a `.c` source fails. Tests: `Ran 3 tests ... OK` (all 124 current sources are `.cpp`).
+
+## Round 10: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T14:45:51Z
+- Effort: medium
+- Lines: 29
+- Digest: ab4425f4f7983d4f
+
+## adversarial: needs-attention
+
+1. **P1** `tests/scripts/test_engine_dependency_policy.py:55`: The MuPDF guard scans only `.cpp` and `.h` source files, while line 87 explicitly permits `.cxx` and `.cc`. A permitted source file can therefore introduce `#pragma comment(lib, "libmupdf.lib")` without the dependency guard inspecting it. `.hpp` headers are also omitted.
+
+   Reproduced without writes: simulated a tracked `src/pdf/audit_dependency.cxx` containing that pragma, preserving the guard’s pathspec filtering. The test passed without reading the file. The identical `.cpp` control was read and failed. An `.hpp` variant also passed unread. This demonstrates false acceptance by the guard, not an existing MuPDF dependency.
+
+## consistency: approve
+
+No additional findings.
+
+## integration: advisory
+
+Current clean-clone compilation was not independently rerun because building writes files. Passing the policy tests does not establish that promise.
+
+## source-defect: needs-attention
+
+Finding **1 (P1)** applies here: the omitted source can introduce a linker dependency without changing project metadata. Microsoft documents that `#pragma comment(lib, ...)` places a library-search record into the object file. [Microsoft pragma documentation](https://learn.microsoft.com/en-us/cpp/preprocessor/comment-c-cpp)
+
+## design: advisory
+
+Not applicable: this section owns no user surface.
+
+## record: advisory
+
+At `a094e32`, the checkpoint independently returned `False`, `False`, and `valid: 677 sections`; all three policy tests passed. The opening record’s 676-section count identifies an earlier revision. The round-9 `.c` mutation now fails in all 28 project/configuration combinations.
+
+No files were modified; the working tree remains clean.
+
+OVERALL: needs-attention
+
+## Fixes after round 10
+
+- Finding 1 (P1): the MuPDF scan reads every tracked file in the code and build trees (`src`, `fuzz`, `tests`, `scripts`, `.github`, `build`, the root `.props`, `.targets`, `.sln`, `vcpkg.json` and `.cmd`) whatever its extension, so a `#pragma comment(lib, ...)` in a `.cxx`, `.cc` or `.hpp` file is read; only the test's own file is excepted. Mutation: `#pragma comment(lib, "libmupdf.lib")` added to `src/pdf/filters.h` -> the test fails. Tests: `Ran 3 tests ... OK`.

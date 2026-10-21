@@ -51,11 +51,19 @@ class EngineDependencyPolicyTest(unittest.TestCase):
         self.assertFalse((REPO / ".gitmodules").exists())
         self.assertEqual(tracked("third_party"), [])
 
-    def test_build_files_name_no_mupdf(self):
-        for name in tracked("*.vcxproj", "*.props", "*.targets", "*.sln", "vcpkg.json", "*.cpp", "*.h", "*.cmd",
-                            "*.ps1", ".github/workflows/*.yml"):
+    def test_code_and_build_trees_name_no_mupdf(self):
+        # Every tracked file in the code and build trees, whatever its extension: a #pragma comment(lib, ...) in any
+        # source, a library name in any project or script, or a workflow step can bring MuPDF in. This test's own
+        # file names MuPDF to look for it, so it is the one exception.
+        files = tracked("src", "fuzz", "tests", "scripts", ".github", "build", "*.props", "*.targets", "*.sln",
+                        "vcpkg.json", "*.cmd")
+        self.assertTrue(files)
+        for name in files:
+            if name == "tests/scripts/test_engine_dependency_policy.py":
+                continue
             with self.subTest(file=name):
-                self.assertIsNone(MUPDF.search((REPO / name).read_text(encoding="utf-8", errors="replace")))
+                text = (REPO / name).read_bytes().decode("utf-8", errors="replace")
+                self.assertIsNone(MUPDF.search(text))
 
     @unittest.skipUnless(sys.platform == "win32", "the C++ build and MSBuild are Windows-only (foundation plan D15)")
     def test_every_module_compiles_as_cpp20_with_warnings_as_errors(self):
