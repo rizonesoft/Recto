@@ -70,6 +70,10 @@ jobs:
           if ($sha -ne $env:REQUESTED_SHA) { throw "checked out $sha, expected $env:REQUESTED_SHA" }
           "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
+      - name: Check the PDF engine dependency policy (D00 T01 §2)
+        shell: pwsh
+        run: python -m unittest tests.scripts.test_engine_dependency_policy
+
       - name: Configure NuGet and vcpkg cache directories
         shell: pwsh
         run: |

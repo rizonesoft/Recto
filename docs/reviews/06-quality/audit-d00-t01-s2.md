@@ -133,3 +133,45 @@ OVERALL: needs-attention
 - Findings 1 and 2 (P3): the stamped checklist keeps its wording, and the repeatable check now exists at the test layer: `tests/scripts/test_engine_dependency_policy.py` checks the index for gitlinks (mode `160000`), `.gitmodules` and `third_party`, MuPDF in build files, C++ sources and workflows (whole words, so the `JBIG2Decode` filter recto-pdf implements does not match), and C++20 with `/W4 /WX` in `Directory.Build.targets`. `Ran 3 tests ... OK`. The audit note in `D00 T01 §2` names it.
 - Finding 3 (P3): the note and this file now say the workflow builds every push to `main` that changes code; TODO, docs and Markdown-only pushes are skipped since `a647729`.
 - Found during this round: about twenty older A, B and C mockup boards still show MuPDF and AGPL-3.0; filed as `D06 T05 §25` with its own checklist, rather than masked by a skipped test.
+
+## Round 4: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T14:30:47Z
+- Effort: medium
+- Lines: 27
+- Digest: fa1d148189fc352b
+
+## adversarial: needs-attention
+
+1. **P1** `tests/scripts/test_engine_dependency_policy.py:38`: The compiler-policy check accepts settings that are entirely commented out. It checks text presence, not active configuration. Reproduced without writes by mocking `Path.read_text` to return valid XML:
+   ```xml
+   <Project><!-- <LanguageStandard>stdcpp20</LanguageStandard><WarningLevel>Level4</WarningLevel><TreatWarningAsError>true</TreatWarningAsError> --></Project>
+   ```
+   Calling `test_every_module_compiles_as_cpp20_with_warnings_as_errors()` passes despite zero active compiler settings.
+
+2. **P1** `tests/scripts/test_engine_dependency_policy.py:11`: The whole-word expression misses `libmupdf.lib`, allowing an explicit MuPDF linker dependency through the corrective check. Reproduced without writes by mocking `tracked()` to return `src/pdf/recto-pdf.vcxproj` and its content to contain `<AdditionalDependencies>libmupdf.lib</AdditionalDependencies>`. `test_build_files_name_no_mupdf()` passes. These findings demonstrate false acceptance by the tests, not an existing MuPDF dependency or broken compiler configuration.
+
+## consistency: approve
+
+## integration: needs-attention
+
+3. **P3** `.github/workflows/plan.yml:53`: The new policy tests are not run by CI. This workflow explicitly runs only `test_todo_graph` and `test_user_demand`; the build workflow runs C++ builds/tests. Reproduce with `rg -n "test_engine_dependency_policy|unittest" .github/workflows`. Consequently, adding the corrective test does not make policy regressions fail an automated gate.
+
+## source-defect: approve
+
+## design: advisory
+
+Not applicable: this section owns no user surface.
+
+## record: advisory
+
+The checkpoint independently returns `False`, `False`, and `valid: 677 sections` at `1c80a95`; all three policy tests pass. The note’s 676-section result identifies an earlier revision. Current clean-clone compilation was not independently verified because building would write files. No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 4
+
+- Finding 1 (P1): the compiler check parses `Directory.Build.targets` as XML and reads only active `ClCompile` metadata, so a commented-out setting fails it; it also refuses conflicting values. Mutation: `LanguageStandard` commented out -> `FAILED (failures=1)`.
+- Finding 2 (P1): `mupdf` and `artifex` match anywhere (`libmupdf.lib`, `mupdf.h`); only `jbig2dec` keeps word boundaries, so recto-pdf's own `JBIG2Decode` filter does not match. Mutation: `libmupdf.lib` added to `Directory.Build.props` -> `FAILED (failures=1)`.
+- Finding 3 (P3): the `build` workflow runs `python -m unittest tests.scripts.test_engine_dependency_policy` before building, so every code change gates on the policy. Tests: `Ran 3 tests ... OK`. The checkpoint re-run now reads `valid: 677 sections` at this tip (the 676 at the top of this file was an earlier revision).

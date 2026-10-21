@@ -5,10 +5,13 @@ import pathlib
 import re
 import subprocess
 import unittest
+import xml.etree.ElementTree as ElementTree
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
-# Whole words: the PDF filter name JBIG2Decode, which recto-pdf implements itself, is not the jbig2dec library.
-MUPDF = re.compile(r"\b(mupdf|artifex|jbig2dec)\b", re.IGNORECASE)
+# mupdf and artifex anywhere (libmupdf.lib, mupdf.h); jbig2dec as a whole word only, because the PDF filter name
+# JBIG2Decode, which recto-pdf implements itself, contains it.
+MUPDF = re.compile(r"mupdf|artifex|\bjbig2dec\b", re.IGNORECASE)
+MSBUILD = "{http://schemas.microsoft.com/developer/msbuild/2003}"
 
 
 def tracked(*pathspecs):
@@ -33,12 +36,21 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                 self.assertIsNone(MUPDF.search((REPO / name).read_text(encoding="utf-8", errors="replace")))
 
     def test_every_module_compiles_as_cpp20_with_warnings_as_errors(self):
-        # The flags are ClCompile item metadata, so they live in Directory.Build.targets (see Directory.Build.props).
-        targets = (REPO / "Directory.Build.targets").read_text(encoding="utf-8")
-        self.assertRegex(targets, r"<LanguageStandard>stdcpp20</LanguageStandard>")
-        self.assertRegex(targets, r"<WarningLevel>Level4</WarningLevel>")
-        self.assertRegex(targets, r"<TreatWarningAsError>true</TreatWarningAsError>")
-
+        # The flags are ClCompile item metadata in Directory.Build.targets (see Directory.Build.props). The XML is
+        # parsed, so a commented-out setting does not count; the plain-language check catches settings put elsewhere.
+        root = ElementTree.parse(REPO / "Directory.Build.targets").getroot()
+        settings = {}
+        for compile_item in root.iter():
+            if compile_item.tag.replace(MSBUILD, "") != "ClCompile":
+                continue
+            for child in compile_item:
+                settings.setdefault(child.tag.replace(MSBUILD, ""), []).append((child.text or "").strip())
+        self.assertIn("stdcpp20", settings.get("LanguageStandard", []))
+        self.assertIn("Level4", settings.get("WarningLevel", []))
+        self.assertIn("true", settings.get("TreatWarningAsError", []))
+        for name, values in settings.items():
+            if name in ("LanguageStandard", "WarningLevel", "TreatWarningAsError"):
+                self.assertEqual(len(set(values)), 1, f"{name} is set to more than one value: {values}")
 
 if __name__ == "__main__":
     unittest.main()
