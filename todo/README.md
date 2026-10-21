@@ -100,6 +100,8 @@ Optional stamp companions, written by hand before stamping: `> **Started:** <UTC
 
 A passing validator proves structure, not that the work was done. The receipt is the evidence: review rounds with their findings files, and checks with quoted results.
 
+An audit that finds a stamped section regressed reopens it only through `python scripts/todo-graph.py unstamp '<ref>' --reason '<what regressed; repair -> XREF: <ref>>'`: it removes the two stamp lines, unticks the `Commit:` item and the row, reopens the file, keeps the receipt as `docs/reviews/<ref>.revoked-<date>.json`, adds `> **Unstamped:** <date>: <reason>` to the section and syncs the plan, all or nothing. The section then re-stamps with a fresh receipt.
+
 ## Commands
 
 ```powershell

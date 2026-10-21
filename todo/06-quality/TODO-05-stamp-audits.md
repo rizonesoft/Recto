@@ -189,6 +189,8 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 ## 6. Audit D00 T02 §2: Skills, rules and the CI gate
 
+> **Started:** 2026-10-21T19:10:00Z
+
 `D00 T02 §2` (Skills, rules and the CI gate) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d00-t02-s2.json` records 2 rounds (fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
 
 **Phase:** 0

@@ -13,6 +13,7 @@
     python scripts/todo-graph.py stamp 'D02 T01 §1' --sha <40-char commit> \
         --review '<round>:<report path>:<clean|fixed|stopped-at-22|stopped-low-severity>' --check '<command> -> <result>' \
         [--cap-outcome '<what was done when the review cap was reached>']   # required with a stopped verdict
+    python scripts/todo-graph.py unstamp 'D02 T01 §1' --reason '<what regressed, and the repair section>'
 
 Format and rules: todo/README.md. Stdlib only.
 """
@@ -25,7 +26,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from todo_graph import (ROOT, Refused, adjacency_report, atomic, deferrals, disposition,  # noqa: E402
-                        extract_ref, graph, ordered, plan_config, projections, require, review_rounds, stamp)
+                        extract_ref, graph, ordered, plan_config, projections, require, review_rounds, stamp,
+                        unstamp)
 
 
 def review_round(value):
@@ -66,7 +68,15 @@ def main():
     s.add_argument("--check", dest="checks", action="append", default=[])
     s.add_argument("--date", default=date.today().isoformat())
     s.add_argument("--cap-outcome", help="with a stopped-at verdict: what was done when the review cap was reached")
+    u = sub.add_parser("unstamp", help="an audit found a stamped section regressed: reopen it, keeping the receipt")
+    u.add_argument("ref")
+    u.add_argument("--reason", required=True)
+    u.add_argument("--date", default=date.today().isoformat())
     args = p.parse_args()
+    if args.command == "unstamp":
+        revoked = unstamp(ROOT, args.ref, args.reason, args.date)
+        print(f"unstamped {args.ref}; receipt kept as {revoked}; plan synchronized")
+        return 0
     if args.command == "stamp":
         receipt = stamp(ROOT, args.ref, args.sha, args.review, args.checks, args.date, sync_plan=True,
                         cap_outcome=args.cap_outcome)

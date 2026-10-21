@@ -24,7 +24,7 @@ Run `python scripts/todo-graph.py validate` after every structural edit.
 Walk every open section's concrete claims against today's repository and governing documents: files, classes, paths, counts, versions, engine and SDK details, and `design/SPEC.md` section numbers. Correct drift in place with dated notes, without building anything. Pay special attention to:
 
 - "Nothing exists yet" claims that are no longer true: update `> **Current state:**` with measured paths and behavior.
-- Micro-steps already 100% implemented in the codebase: verify their `Done when:` and `Cheaper substitute:` against `file:line` and tests, then tick them with the commit SHA or `file:line` that shipped them.
+- Micro-steps already 100% implemented in the codebase: verify their `Done when:` and `Cheaper substitute:` against `file:line` and tests, then append `Already shipped: <commit SHA or file:line>` to the item, leaving it `[ ]`; `process-todo-section` re-verifies and ticks it when it runs the section.
 - Half-implemented items in the codebase (for example, UI exists with hardcoded hex colors, or write path exists without atomic replace or refusal tests): keep `[ ]` and rewrite the micro-steps to target the exact remaining gaps rather than re-planning what already works.
 - Counts and versions quoted confidently (these age fastest).
 - Deferrals whose descriptions drifted while their owners stayed open (`python scripts/todo-graph.py query deferred`).

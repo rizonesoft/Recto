@@ -794,6 +794,51 @@ class Stamp(Tree):
         self.assertEqual(self.snapshot(), before)
         tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13", sync_plan=True)
 
+    def test_unstamp_reopens_a_regressed_section_and_allows_a_restamp(self):
+        self.tick_work()
+        tg.projections(self.root, sync=True)
+        receipt = tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13", sync_plan=True)
+        before = self.snapshot()
+        for bad in (("D00 T01 §2", "x"), ("D00 T01 §1", ""), ("D00 T01 §1", "two\nlines")):
+            with self.assertRaises(tg.Refused):
+                tg.unstamp(self.root, bad[0], bad[1], "2026-10-21")
+        self.assertEqual(self.snapshot(), before)
+        revoked = tg.unstamp(self.root, "D00 T01 §1", "checkpoint fails at abc1234; repair -> XREF: §2", "2026-10-21")
+        rows = tg.graph(self.root)
+        self.assertFalse(rows["D00 T01 §1"].done)
+        self.assertEqual(tg.disposition(rows["D00 T01 §1"], rows), 0)
+        self.assertFalse((self.root / receipt).exists())
+        self.assertEqual((self.root / revoked).read_bytes(), before[str(pathlib.Path(receipt))])
+        text = (self.root / "todo/00-workspace/TODO-01-a.md").read_text(encoding="utf-8")
+        self.assertIn("> **Unstamped:** 2026-10-21: checkpoint fails", text)
+        self.assertIn("- [ ] Commit:", text)
+        tg.projections(self.root)  # the plan was synced
+        tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-22", sync_plan=True)
+        self.assertTrue(tg.graph(self.root)["D00 T01 §1"].done)
+
+    def test_an_interrupted_unstamp_rolls_back(self):
+        self.tick_work()
+        tg.projections(self.root, sync=True)
+        tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13", sync_plan=True)
+        before = self.snapshot()
+        real_atomic = tg.atomic
+        calls = []
+
+        def interrupt_on_second_write(path, data):
+            calls.append(path)
+            if len(calls) == 2:
+                raise KeyboardInterrupt
+            return real_atomic(path, data)
+
+        tg.atomic = interrupt_on_second_write
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                tg.unstamp(self.root, "D00 T01 §1", "regressed", "2026-10-21")
+        finally:
+            tg.atomic = real_atomic
+        self.assertEqual(self.snapshot(), before)
+        tg.graph(self.root)
+
     def test_stamping_the_last_section_marks_the_file_done(self):
         path = self.root / "todo/00-workspace/TODO-02-b.md"
         path.write_text(todo_file([(1, "Only", 0, "none", "--")], ident="bravo")
@@ -823,6 +868,12 @@ class Stamp(Tree):
 
 
 class Repository(unittest.TestCase):
+    def test_the_authoring_template_copies_are_identical(self):
+        # todo/README.md and create-todo name todo/templates/TODO-template.md and the skill copies as the same file.
+        canonical = (tg.ROOT / "todo/templates/TODO-template.md").read_bytes()
+        for kit in (".claude", ".codex", ".agents"):
+            self.assertEqual((tg.ROOT / kit / "skills/create-todo/todo-template.md").read_bytes(), canonical, kit)
+
     def test_the_repository_graph_validates_and_its_plan_is_current(self):
         r = subprocess.run([sys.executable, str(REPO / "scripts/todo-graph.py"), "plan", "--check"],
                            capture_output=True, text=True)

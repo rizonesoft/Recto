@@ -31,7 +31,7 @@ Every review answers these with code and behavior evidence, never assertion:
 
 ### 1. Fix the candidate
 
-Name the candidate: the implementation commit, or the commit range (`<BASE_SHA>..<TIP_SHA>`) when the section landed across multiple logical step commits or when fix-loop commits append (commits are never amended once review starts). Record the full SHA(s) in the findings file at `docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md`. For an audit, the candidate is the section's own stamped commit, not today's tree. Read the actual diff (`git show` or `git diff <BASE_SHA>..<TIP_SHA>`), not memory of writing it. Map each ticked micro-step checklist item (its `Done when:` and `Cheaper substitute:`) to the code and test that satisfy it; an item with no corresponding change or a partially met `Done when:` (`partial-flip-shipped`) is not done (untick it) or was already true (note where).
+Name the candidate: the implementation commit, or the commit range (`<BASE_SHA>..<TIP_SHA>`) when the section landed across multiple logical step commits or when fix-loop commits append (commits are never amended once review starts). Record the full SHA(s) in the findings file at `docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md`. For an audit, the candidate is the section's own stamped commit plus every later change to the files it owns, up to today's tip (`<STAMPED_SHA>..HEAD -- <owned paths>`): a regression lives in those later changes. Read the actual diff (`git show` or `git diff <BASE_SHA>..<TIP_SHA>`), not memory of writing it. Map each ticked micro-step checklist item (its `Done when:` and `Cheaper substitute:`) to the code and test that satisfy it; an item with no corresponding change or a partially met `Done when:` (`partial-flip-shipped`) is not done (untick it) or was already true (note where).
 
 ### 2. Self-review
 
@@ -88,12 +88,12 @@ One `--review` per round, one `--check` per gate actually run. With a `stopped-a
 
 ### 7. Audit stance
 
-On an already-`[x]` section: run steps 1 to 5 against the section's own candidate and receipt. Confirm the stamp's evidence still holds (re-run the checkpoint) or find the regression. The only permitted row change is `[x]` back to `[ ]`, done by removing nothing silently: record the regression in the section as a dated blocking note, file the repair with `add-todo`, and say plainly that downstream sections stamped on this one are suspect until it re-stamps. A re-confirmed row keeps its stamp; say so in one line.
+On an already-`[x]` section: run steps 1 to 5 against the section's own candidate and receipt. Confirm the stamp's evidence still holds (re-run the checkpoint) or find the regression. The only permitted row change is `[x]` back to `[ ]`, and only through `python scripts/todo-graph.py unstamp '<ref>' --reason '<what regressed; repair -> XREF: <ref>>'`, which removes the stamp lines, unticks the `Commit:` item and the row, reopens the file, keeps the receipt as `docs/reviews/<ref>.revoked-<date>.json` and adds a dated `Unstamped:` note (a hand edit leaves the graph refusing a checkbox/stamp mismatch). File the repair with `add-todo` first so the reason can name it, and say plainly that downstream sections stamped on this one are suspect until it re-stamps. A re-confirmed row keeps its stamp; say so in one line.
 
 ## Guardrails
 
 - Do not stamp without a findings file and at least one independent round.
 - Do not stamp an unaccounted control on a surface section, or a moved frozen behavior.
 - Do not hand-write `Verified:` lines, hand-flip rows, or edit a receipt. `stamp` owns the record.
-- Do not review the working tree when the candidate is a commit. Name the hashes.
+- Do not review the working tree when the candidate is a commit or range. Name the hashes.
 - Do not transfer evidence across changed candidates: a new tip re-runs its gates.

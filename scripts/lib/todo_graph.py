@@ -819,4 +819,61 @@ def stamp(root, ref, sha, reviews, checks, date, sync_plan=False, cap_outcome=No
         raise
     return receipt
 
+
+def unstamp(root, ref, reason, date):
+    """Flip a stamped section back to open when an audit finds it regressed: remove its Verified and Review lines,
+    untick its Commit item and row, reopen its file, and keep the receipt as evidence under a revoked name, with a dated
+    Unstamped note in the section saying why. Re-stamping later writes a fresh receipt."""
+    root = Path(root)
+    rows = graph(root)
+    require(ref in rows, "unresolved section: " + ref)
+    row = rows[ref]
+    require(row.done, f"not stamped: {ref}")
+    require(bool(reason.strip()) and "\n" not in reason, "--reason must be one line saying what regressed")
+    require(re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) is not None, f"invalid date: {date}")
+    stamp_lines = re.compile(r"\n\n> \*\*Verified:\*\* [^\n]*\n> \*\*Review:\*\* `[^`\n]*`")
+    require(len(stamp_lines.findall(row.body)) == 1, f"stamp lines not found: {ref}")
+    receipt_path = root / row.receipt
+    revoked_path = receipt_path.with_name(f"{receipt_path.stem}.revoked-{date}.json")
+    n = 2
+    while revoked_path.exists():
+        revoked_path = receipt_path.with_name(f"{receipt_path.stem}.revoked-{date}-{n}.json")
+        n += 1
+    revoked = revoked_path.relative_to(root).as_posix()
+    body = stamp_lines.sub("", row.body)
+    body = re.sub(r"^- \[x\] (Commit:.+)$", r"- [ ] \1", body, flags=re.M)
+    body += f"\n\n> **Unstamped:** {date}: {reason.strip()} (revoked receipt `{revoked}`)"
+    path = root / row.path
+    original_bytes = path.read_bytes()
+    text = read_text(path)
+    require(text.count(row.body) == 1, f"section body is not unique in {row.path}")
+    text = text.replace(row.body, body)
+    line = re.compile(r"^(\|\s*\d+\s*\|\s*§" + str(row.number) + r"\s*\|[^\n]*\|\s*)\[x\](\s*\|)$", re.M)
+    require(len(line.findall(text)) == 1, f"implementation row not found: {ref}")
+    text = line.sub(r"\1[ ]\2", text)
+    text = re.sub(r"\A(---\n(?:.*\n)*?)status: done\n", r"\1status: active\n", text, count=1)
+    receipt_bytes = receipt_path.read_bytes()
+    plan_path = root / PLAN
+    original_plan_bytes = plan_path.read_bytes() if plan_path.is_file() else None
+    try:
+        atomic(revoked_path, receipt_bytes)
+        atomic(path, text)
+        receipt_path.unlink()
+        graph(root)
+        if original_plan_bytes is not None:
+            projections(root, sync=True)
+    except BaseException:  # an interrupt between writes must roll back as an error does
+        try:
+            if not receipt_path.is_file():
+                atomic(receipt_path, receipt_bytes)
+            revoked_path.unlink(missing_ok=True)
+            if not path.is_file() or path.read_bytes() != original_bytes:
+                atomic(path, original_bytes)
+        finally:
+            if original_plan_bytes is not None and (not plan_path.is_file()
+                                                    or plan_path.read_bytes() != original_plan_bytes):
+                atomic(plan_path, original_plan_bytes)
+        raise
+    return revoked
+
 M_FLAG = re.M
