@@ -116,6 +116,14 @@ class LedgerRulesTest(unittest.TestCase):
         # A parity name with an escaped pipe round-trips through the evidence cell.
         piped = "| Choice | parity: A \\| B | not planned | D15: desktop | New UI | 2026-10-21 |"
         self.assertEqual(problems(*VALID.values(), piped, parity=PARITY + "| A \\| B | Excluded | | |\n"), [])
+        # A second ledger table, and a divider narrower than its header, are refused.
+        extra = ("\n| Request | Evidence | Status | Owner | Cost | Last reviewed |\n| --- | --- | --- | --- | --- | --- |\n"
+                 "| Hidden | #1 | invalid | D99 T99 §999 | null | 9999-12-31 |\n")
+        self.assertEqual(demand.problems(ledger(*VALID.values()) + extra, PARITY, PLAN, SECTIONS, today=TODAY),
+                         [f"the ledger must hold exactly one table, with the columns {' | '.join(demand.COLUMNS)}"])
+        narrow = ledger(*VALID.values()).replace("| --- | --- | --- | --- | --- | --- |", "| --- |")
+        found = demand.problems(narrow, PARITY, PLAN, SECTIONS, today=TODAY)
+        self.assertTrue(any("table divider has 1 cells for a 6-cell header" in line for line in found), found)
         # A short parity row has an empty owner, so it needs a ledger row.
         self.assertIn("parity row 'New request' has no owning TODO section and no ledger row",
                       problems(*VALID.values(), parity=PARITY + "| New request | Planned |\n"))
@@ -138,7 +146,7 @@ class LedgerRulesTest(unittest.TestCase):
     def test_wrong_columns_are_refused(self):
         text = "| Request | Status | Owner |\n| --- | --- | --- |\n| A | planned | D02 T02 §23 |\n"
         self.assertEqual(demand.problems(text, PARITY, PLAN, SECTIONS),
-                         [f"the ledger must hold exactly one table with the columns {' | '.join(demand.COLUMNS)}"])
+                         [f"the ledger must hold exactly one table, with the columns {' | '.join(demand.COLUMNS)}"])
 
     def test_section_ranges_and_lists_expand(self):
         self.assertEqual(demand.section_refs("D02 T01 §3, §13-§15, D04 T04 §8"),

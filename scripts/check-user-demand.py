@@ -65,6 +65,9 @@ def tables(text):
             faults = [] if lines[i].startswith("|") and lines[i].endswith("|") else [
                 f"table header {lines[i][:40]!r} is not a `| ... |` row"]
             header, rows = split_cells(lines[i] if lines[i].startswith("|") else "|" + lines[i]), []
+            divider = split_cells(lines[i + 1] if lines[i + 1].startswith("|") else "|" + lines[i + 1])
+            if len(divider) != len(header):
+                faults.append(f"table divider has {len(divider)} cells for a {len(header)}-cell header")
             i += 2
             while i < len(lines) and lines[i]:
                 if lines[i].startswith("|") and lines[i].endswith("|"):
@@ -142,9 +145,9 @@ def problems(ledger_text, parity_text, plan_text, sections, release=(None, None,
     been reviewed within that many days of `today`."""
     today = today or date.today()
     found = []
-    ledger = [table for table in tables(ledger_text) if table[0] == COLUMNS]
-    if len(ledger) != 1:
-        return [f"the ledger must hold exactly one table with the columns {' | '.join(COLUMNS)}"]
+    ledger = tables(ledger_text)
+    if len(ledger) != 1 or ledger[0][0] != COLUMNS:
+        return [f"the ledger must hold exactly one table, with the columns {' | '.join(COLUMNS)}"]
     _, rows, found = ledger[0]
     found = list(found)
     if not rows:
