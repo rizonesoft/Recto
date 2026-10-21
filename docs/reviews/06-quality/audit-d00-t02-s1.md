@@ -103,3 +103,47 @@ In `scripts/lib/todo_graph.py`, tested in `tests/scripts/test_todo_graph.py` (`R
 - Finding 1 (P1): a TODO file may hold only the level-two headings the format defines (`## Inputs`, `## Outcome`, `## Implementation Order`, `## Verification`, `## N. <Title>`); any other refuses, so no heading can cut a section short (`test_unknown_level_two_heading_refuses`).
 - Finding 2 (P1): on a receipt with `round_cap`, a `stopped-at-N` verdict must be `stopped-at-<round_cap>` on round `round_cap`; earlier cap verdicts stay valid only on receipts older than that field (`test_a_cap_stop_must_be_the_current_cap_reached`).
 - Finding 3 (P1): a claimed round is checked with the dispatcher's own reader, `read_rounds` in `scripts/review-dispatch.py`, loaded by `review_dispatch()`: the report must read back whole and hold that round with a reviewer. A bare heading, a `none` round, or a round with no metadata block refuses. The test fixtures now write real dispatcher envelopes (`envelope()`).
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T15:27:11Z
+- Effort: medium
+- Lines: 27
+- Digest: f8522268159a0a0d
+
+## adversarial: needs-attention
+
+1. **P1: Allowed headings still hide unfinished work.** `scripts/lib/todo_graph.py:363` allows repeated structural headings, while line 369 ends the section at any `## ` heading. Reproduce by inserting `## Inputs`, followed by `- [ ] Unfinished required work.`, immediately before section 2 in `TODO-02-todo-system.md`. An in-memory overlay passed validation with 677 sections; section 1 excluded the unchecked task and retained disposition `3` (verified). The round-2 fix rejects unknown headings but leaves this equivalent bypass.
+
+## consistency: approve
+
+No additional finding.
+
+## integration: needs-attention
+
+2. **P1: A malformed deferral disappears from validation and reporting.** `scripts/lib/todo_graph.py:465` and `scripts/lib/todo_graph.py:629` recognize only blockquoted deferral markers and never reject other forms. Insert `**Deferred:** Unimplemented required work.` before section 2 in `TODO-02-todo-system.md`. The text remains inside section 1, but validation accepts its ownerless deferral, the section remains verified, and `deferrals()` omits it. A missing `>` therefore bypasses the promised durable-deferral checks and hides outstanding work from consumers.
+
+## source-defect: needs-attention
+
+3. **P2: Round accounting interprets reviewer content as dispatcher metadata.** `scripts/lib/todo_graph.py:655` scans raw headings instead of using the dispatcher's parsed rounds. Reproduce with a valid round-1 envelope containing `- Lines: 1` and the single review-body line `## Round 999: example quoted by the reviewer`. The dispatcher's `read_rounds()` returns only round 1, but `rounds_recorded()` returns `999`. `receipt_data_ok()` accepts the resulting receipt with `rounds_spent=999` and `round_cap=22`. Stamping can consequently persist false review expenditure and corrupt `query rounds` statistics.
+
+## design: advisory
+
+Not applicable to this section’s declared surface.
+
+## record: advisory
+
+The full-suite checkpoint remains independently unconfirmed. At `32e1d51`, running the suite through `unittest` produced 66 tests with 65 fixture-setup errors because the read-only environment cannot create temporary directories. The Repository test passed. `plan --check` returned `plan current`; validation returned `valid: 677 sections`. This does not establish the historical full-suite result recorded at the findings file’s top.
+
+All reproductions used in-memory overlays. No files were modified; the working tree remains clean.
+
+OVERALL: needs-attention
+
+## Fixes after round 3
+
+In `scripts/lib/todo_graph.py`, tested in `tests/scripts/test_todo_graph.py` (`Ran 68 tests`, `OK`; against `32e1d51` the three new or changed tests report `FAILED (failures=3)`). The live tree validates (`valid: 677 sections`), so all 39 TODO files already follow the stricter heading order and deferral form.
+
+- Finding 1 (P1): the level-two headings must be exactly `## Inputs`, `## Outcome`, `## Implementation Order`, the numbered sections and `## Verification`, once each and in that order, so a repeated structural heading can no longer cut a section short (`test_unknown_level_two_heading_refuses` now also inserts `## Inputs`, `## Outcome` and `## Verification`).
+- Finding 2 (P1): a `**Deferred:**` or `**Resolved:**` marker anywhere in a section must open a `> ` blockquote line, the only form the deferral checks and `deferrals()` read (`test_deferral_marker_outside_a_blockquote_refuses`).
+- Finding 3 (P2): `rounds_recorded` counts rounds with the dispatcher's `read_rounds`, so a round heading quoted inside a review is not counted; only a report the reader cannot read (older than its format) falls back to the headings (`test_a_round_heading_quoted_inside_a_review_is_not_counted`).

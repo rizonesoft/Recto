@@ -359,11 +359,13 @@ def graph(root=ROOT):
                 f"row/body mismatch: {relative}")
         require(body.rfind("## Verification\n") > headings[-1].start(),
                 f"Verification must follow numbered sections: {relative}")
-        # Any other level-two heading would end the section above it early and hide what follows from the graph.
-        for line in re.findall(r"^##(?:[ \t].*)?$", body, re.M):
-            require(line in ("## Inputs", "## Outcome", "## Implementation Order", "## Verification")
-                    or re.fullmatch(r"## \d+\. \S.*", line) is not None,
-                    f"unknown level-two heading ({line.strip()}): {relative}")
+        # The level-two headings are exactly the format's, once each and in order: any other, or a repeat, would end
+        # the section above it early and hide what follows from the graph.
+        level_two = re.findall(r"^##(?:[ \t].*)?$", body, re.M)
+        numbered = [line for line in level_two if re.fullmatch(r"## \d+\. \S.*", line)]
+        require(level_two == ["## Inputs", "## Outcome", "## Implementation Order", *numbered, "## Verification"],
+                f"level-two headings must be Inputs, Outcome, Implementation Order, the sections and Verification, "
+                f"once each and in that order: {relative}")
         for h in headings:
             n = int(h[1])
             section_body = body[h.end():].split("\n## ", 1)[0].strip()
@@ -461,6 +463,11 @@ def graph(root=ROOT):
                     f"one-sided XREF {target} has no pointer back: {relative}")
     # Deferrals carry an owner or they are abandonments; a shipped owner makes a live deferral stale.
     for row in sections.values():
+        # Only a blockquoted marker is read below; any other spelling would drop the deferral from every check.
+        for line in row.body.splitlines():
+            if re.search(r"\*\*(?:Deferred|Resolved):\*\*", line):
+                require(re.match(r"> \*\*(?:Deferred|Resolved):\*\*", line) is not None,
+                        f"a Deferred or Resolved marker must open a blockquote line: {row.ref}")
         for marker in ("Deferred", "Resolved"):
             for line in re.findall(r"^> \*\*" + marker + r":\*\*\s*(.+)$", row.body, re.M):
                 owner = find_ref(line.split("-> XREF:", 1)[1], row.ref[1:3], row.ref[5:7]) \
@@ -652,7 +659,11 @@ def rounds_recorded(root, reviews):
     for report in dict.fromkeys(r["report"] for r in reviews):
         named = max(r["round"] for r in reviews if r["report"] == report)
         path = Path(root) / report
-        recorded = [int(n) for n in ROUND_RECORD.findall(read_text(path))] if path.is_file() else []
+        text = read_text(path) if path.is_file() else ""
+        # The dispatcher's reader, so a round heading quoted inside a review is not counted; a report it cannot read
+        # (one older than its format) falls back to the headings, and a new receipt refuses such a report anyway.
+        parsed = review_dispatch().read_rounds(text)
+        recorded = [e["number"] for e in parsed] if parsed is not None else [int(n) for n in ROUND_RECORD.findall(text)]
         spent += max([named, *recorded])
     return spent
 

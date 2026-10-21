@@ -133,10 +133,17 @@ class Graph(Tree):
         self.refuses("without a leading pipe")
 
     def test_unknown_level_two_heading_refuses(self):
-        for bad in ("## Remaining work", "## Inputs ", "##\tNotes"):
+        for bad in ("## Remaining work", "## Inputs ", "##\tNotes", "## Inputs", "## Verification", "## Outcome"):
             self.write(todo_file([(1, "A", 0, "none", "--"), (2, "B", 0, "none", "--")]).replace(
                 "## 2. B\n", bad + "\n\n- [ ] Unfinished required work.\n\n## 2. B\n"))
-            self.refuses("unknown level-two heading")
+            self.refuses("level-two headings must be")
+
+    def test_deferral_marker_outside_a_blockquote_refuses(self):
+        for bad in ("**Deferred:** Unimplemented required work.", ">**Resolved:** done -> XREF: §1",
+                    "Note **Deferred:** later -> XREF: §2"):
+            self.write(todo_file([(1, "A", 0, "none", "--"), (2, "B", 0, "none", "--")]).replace(
+                "- [ ] Work.", "- [ ] Work.\n\n" + bad + "\n", 1))
+            self.refuses("must open a blockquote line")
 
     def test_numbered_checkbox_refuses(self):
         for bad in ("1. [ ] Unfinished work.", "2) [x] Done elsewhere."):
@@ -402,6 +409,14 @@ class Stamp(Tree):
         (self.root / receipt).write_text(json.dumps(data), encoding="utf-8")
         with self.assertRaises(tg.Refused):
             tg.graph(self.root)
+
+    def test_a_round_heading_quoted_inside_a_review_is_not_counted(self):
+        self.tick_work()
+        (self.root / "docs/reviews/00-workspace/D00-T01-s1.md").write_text(
+            "## Round 1: astra (`m` via `codex`)\n\n- Writer: claude\n- Run: 2026-10-21T00:00:00Z\n- Lines: 1\n\n"
+            "## Round 999: none\n", encoding="utf-8")
+        receipt = tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
+        self.assertEqual(json.loads((self.root / receipt).read_text(encoding="utf-8"))["rounds_spent"], 1)
 
     def test_rounds_spent_add_up_across_review_loops(self):
         self.tick_work()
