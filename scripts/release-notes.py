@@ -54,7 +54,7 @@ PROBE_TIMEOUT = 120  # seconds for one Python test module to import in its workt
 # verdict is a nonce read from stdin before the module is imported and printed only after every check passed, so a
 # module that exits during import (even with status 0) is never read as a verified test.
 PYTHON_PROBE = """
-import importlib, inspect, pathlib, sys, unittest
+import importlib, inspect, pathlib, sys, types, unittest
 nonce = sys.stdin.readline().strip()
 sys.stdin.close()
 here = pathlib.Path.cwd().resolve()
@@ -76,14 +76,19 @@ def inside(obj):
 owner = next((klass for klass in cls.__mro__ if method in vars(klass)), None)
 if not (inside(mod) and inside(cls) and owner is not None and inside(owner)):
     sys.exit(3)
+# A regression test is a plain instance method: for one, unittest's loader builds cls(method), which is what this
+# probe does below. A classmethod, staticmethod or other descriptor takes the loader's callable path instead, which
+# calls it, so it is refused here without being run.
+if not isinstance(vars(owner)[method], types.FunctionType):
+    sys.exit(3)
 # The method body too: a repository class can assign a function defined elsewhere (test_x = Other.test_y).
 func = vars(owner)[method]
 func = inspect.unwrap(getattr(func, "__func__", func))
 code = getattr(func, "__code__", None)
 if code is None or not inside(func) or not pathlib.Path(code.co_filename).resolve().is_relative_to(here):
     sys.exit(3)
-# Build the case the way unittest's loader does for a TestCase method, without calling anything: cls(method) checks
-# the method exists and refuses, for example, an abstract class. (loadTestsFromName would call a classmethod.)
+# Build the case the way unittest's loader does for a plain TestCase method, without calling anything: cls(method)
+# checks the method exists and refuses, for example, an abstract class.
 try:
     case = cls(method)
 except Exception:

@@ -295,6 +295,8 @@ class HostileFixtureTest(unittest.TestCase):
             "InheritedFromOutside": "tests.scripts.test_reexport.Local.test_outside",
             "AssignedFromOutside": "tests.scripts.test_reexport.Assigned.test_assigned",
             "FakeNew": "tests.scripts.test_sample.FakeNew.test_case",
+            # A classmethod takes unittest's callable path, so it is refused (and never run).
+            "Classmethod": "tests.scripts.test_sample.WithClassmethod.test_case",
             "Stdlib": "unittest.case.TestCase.test_missing",
         }
         cls.real = {
@@ -302,7 +304,6 @@ class HostileFixtureTest(unittest.TestCase):
             "Inherited": "tests.scripts.test_sample.Child.test_real",
             "Alias": "tests.scripts.test_sample.ViaAlias.test_alias",
             "Noisy": "tests.scripts.test_noisy.NoisyTest.test_noisy",
-            "Classmethod": "tests.scripts.test_sample.WithClassmethod.test_case",
         }
         cls.shas = {}
         for name, test_id in {**cls.fake, **cls.real}.items():
