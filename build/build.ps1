@@ -15,9 +15,10 @@
 # Requirements: Visual Studio 2026 with the v145 C++ toolset (its
 # bundled vcpkg is used unless VCPKG_ROOT already points at one), the
 # Windows 11 SDK 10.0.26100, and network access for the first restore.
-# VS 2022 cannot substitute: it has no Windows Store ARM64 platform, so
-# the WinUI app does not build for ARM64 there (found in D00 T01
-# section 3).
+# VS 2022 cannot substitute: the projects use the v145 toolset, which
+# only VS 2026 ships. The installation must have the C++ x64 and ARM64
+# tools, the Windows 11 SDK 10.0.26100 and WinUI (Windows App SDK) C++
+# support; vswhere picks the newest one that does.
 param(
     [ValidateSet('x64', 'ARM64', 'x64,ARM64', 'ARM64,x64')][string[]]$Platform = @('x64', 'ARM64'),
     [ValidateSet('Debug', 'Release', 'Debug,Release', 'Release,Debug')][string[]]$Configuration = @('Debug', 'Release'),
@@ -38,8 +39,14 @@ $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-$vs = & $vswhere -version '[18.0,19.0)' -latest -property installationPath
-if (-not $vs) { throw 'Visual Studio 2026 not found (v145 toolset; VS 2022 has no Windows Store ARM64 platform, D00 T01 section 3)' }
+$required = @(
+    'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+    'Microsoft.VisualStudio.Component.VC.Tools.ARM64',
+    'Microsoft.VisualStudio.Component.Windows11SDK.26100',
+    'Microsoft.VisualStudio.Component.WindowsAppSdkSupport.Cpp'
+)
+$vs = & $vswhere -version '[18.0,19.0)' -latest -requires $required -property installationPath
+if (-not $vs) { throw "No Visual Studio 2026 with the components Recto needs: $($required -join ', ') (the v145 toolset is VS 2026 only)" }
 $msbuild = Join-Path $vs 'MSBuild\Current\Bin\MSBuild.exe'
 if (-not $env:VCPKG_ROOT) {
     $vsVcpkg = Join-Path $vs 'VC\vcpkg'

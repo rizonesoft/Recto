@@ -119,6 +119,8 @@ Create `Recto.sln`, `Directory.Build.props`, `Directory.Build.targets`, `vcpkg.j
 - [x] One-command build script (`build.cmd` / `build/build.ps1`) documented and working from a clean clone. Done when: `.\build.cmd` exits 0 and runs the initial `recto-tests` binary (1 passing smoke test per library).
 - [x] Commit: `build: solution scaffold for all Recto modules, x64 and ARM64`
 
+> **Audit 2026-10-21 (D06 T05 §3):** the Windows App SDK is now 2.5.1 (decision D4 and `src/app/Recto.vcxproj`), superseding the 2.4.0 this section names. VS 2022 cannot substitute because the projects use the v145 toolset, which only VS 2026 ships; the missing ARM64 Store platform seen here came from an incomplete installation. `build/build.ps1` now asks `vswhere` for an installation with the C++ x64 and ARM64 tools, the Windows 11 SDK 10.0.26100 and WinUI C++ support. The test suite has grown from the 3 scaffold tests to 98.
+
 **Test checkpoint:** `.\build.cmd` exits 0 with 0 warnings on both `x64` and `ARM64`, and `build\bin\x64\Release\recto-tests\recto-tests.exe` reports 3 passing tests (`PdfEngineReportsAbiVersionOne`, `CoreReportsThePdfEngineAbi`, `ServicesReportTheCoreAbi`).
 
 > **Verified:** 2026-10-14 | §3 | 5e3d9a687e2e23cb900032a929f1c280757ac6f0
