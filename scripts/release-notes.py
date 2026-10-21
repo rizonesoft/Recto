@@ -157,12 +157,13 @@ def _spliced(text):
     return "".join(chars), origin
 
 
-def cpp_code(text):
-    """C++ source with lines spliced, comments and literals blanked, and `#if 0` branches removed. As the compiler
-    does, every splice is removed before tokens are read, and only a raw string literal's content is taken from the
-    original characters (C++ reverts splices between its delimiters)."""
+def cpp_lines(text):
+    """C++ source as the lines that may be compiled, each with its starting parenthesis depth: lines spliced,
+    comments and literals blanked, directives and `#if 0` branches removed. As the compiler does, every splice is
+    removed before tokens are read, and only a raw string literal's content is taken from the original characters
+    (C++ reverts splices between its delimiters)."""
     # Translation phase 1: a leading byte-order mark is not source, and CRLF or a lone CR ends a line as LF does.
-    original = text.removeprefix("﻿").replace("\r\n", "\n").replace("\r", "\n")
+    original = text.removeprefix("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
     text, origin = _spliced(original)
     out, i, n = [], 0, len(text)
     while i < n:
@@ -189,39 +190,54 @@ def cpp_code(text):
         else:
             out.append(text[i])
             i += 1
-    kept, frames = [], []
-    for line in "".join(out).split("\n"):
+    return _conditional_lines("".join(out))
+
+
+def _conditional_lines(code):
+    """The lines of comment- and literal-free code that may be compiled, each with the parenthesis depth at its
+    start. `#elif` and `#else` alternatives are mutually exclusive, so each one starts from the depth at its `#if`."""
+    kept, frames, depth = [], [], 0
+    for line in code.split("\n"):
         directive = DIRECTIVE.match(line)
         if not directive:
             # Any other directive (#define, #pragma, #error ...) is never a declaration: a TEST in an unexpanded
             # macro body is not a test until some later code expands it.
             if not ANY_DIRECTIVE.match(line) and all(frame["active"] for frame in frames):
-                kept.append(line)
+                kept.append((line, depth))
+                depth += line.count("(") - line.count(")")
             continue
         word, condition = directive.group(1), re.sub(r"[\s()]", "", directive.group(2))
         # A branch is kept unless it is certainly not compiled. `taken` means an earlier branch of this group is
         # certainly compiled (a literal 1), which makes every later branch dead whatever its condition.
         known = word in ("if", "elif") and condition in ("0", "1")
         if word in ("if", "ifdef", "ifndef"):
-            frames.append({"active": not known or condition == "1", "taken": known and condition == "1"})
+            frames.append({"active": not known or condition == "1", "taken": known and condition == "1",
+                           "depth": depth})
         elif word == "elif" and frames:
             frame = frames[-1]
             frame["active"] = not frame["taken"] and (not known or condition == "1")
             frame["taken"] = frame["taken"] or (known and condition == "1")
+            depth = frame["depth"]
         elif word == "else" and frames:
             frame = frames[-1]
             frame["active"] = not frame["taken"]
             frame["taken"] = True
+            depth = frame["depth"]
         elif word == "endif" and frames:
             frames.pop()
-    return "\n".join(kept)
+    return kept
+
+
+def cpp_code(text):
+    """The compiled code `cpp_lines` keeps, as one string."""
+    return "\n".join(line for line, _ in cpp_lines(text))
 
 
 _CPP_SOURCES = {}
 
 
 def cpp_sources(repo, sha):
-    """Every C++ file at the commit as compiled code (`cpp_code`), read in one `git cat-file --batch` and cached.
+    """Every C++ file at the commit as compiled lines (`cpp_lines`), read in one `git cat-file --batch` and cached.
     Every file is read, never a text-search shortlist: a line splice can break any identifier across lines."""
     key = (str(repo), sha)
     if key not in _CPP_SOURCES:
@@ -237,7 +253,7 @@ def cpp_sources(repo, sha):
             at = header_end + 1
             if len(header) == 3 and header[1] == b"blob":
                 size = int(header[2])
-                sources.append(cpp_code(out[at:at + size].decode("utf-8", errors="replace")))
+                sources.append(cpp_lines(out[at:at + size].decode("utf-8", errors="replace")))
                 at += size + 1
         _CPP_SOURCES[key] = sources
     return _CPP_SOURCES[key]
@@ -245,16 +261,24 @@ def cpp_sources(repo, sha):
 
 def gtest_declared(repo, sha, test_id):
     """True when a plain TEST, TEST_F, TEST_P, TYPED_TEST or TYPED_TEST_P declares Suite.Case in compiled C++ code at
-    the commit, starting a declaration: the code before it ends at the start of the file, `;`, `{` or `}`. A
+    the commit, starting a declaration outside any parentheses: the code before it ends at the start of the file,
+    `;`, `{` or `}`, and its parenthesis depth (tracked per `#if` alternative) is zero. A
     regression test is declared plainly (docs/support/user-bugs.md): a TEST passed as a macro argument, or generated
     by a wrapper macro, is not evidence, because only a preprocessor could say whether it becomes a test. Whether it
     compiles into a test is `--gtest-list`'s job."""
     suite, case = GTEST_ID.match(test_id).groups()
     declaration = re.compile(rf"\b(?:TEST(?:_F|_P)?|TYPED_TEST(?:_P)?)\s*\(\s*{suite}\s*,\s*{case}\s*\)")
-    for source in cpp_sources(repo, sha):
+    for lines in cpp_sources(repo, sha):
+        source = "\n".join(line for line, _ in lines)
+        starts = [0]
+        for line, _ in lines[:-1]:
+            starts.append(starts[-1] + len(line) + 1)
         for match in declaration.finditer(source):
+            row = bisect.bisect_right(starts, match.start()) - 1
+            prefix = source[starts[row]:match.start()]
+            depth = lines[row][1] + prefix.count("(") - prefix.count(")")
             before = source[:match.start()].rstrip()
-            if not before or before[-1] in ";{}":
+            if depth == 0 and (not before or before[-1] in ";{}"):
                 return True
     return False
 

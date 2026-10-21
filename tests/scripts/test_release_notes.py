@@ -290,7 +290,10 @@ class HostileFixtureTest(unittest.TestCase):
                        "tests/recto-tests/layout_tests.cpp":
                            "int sentinel; /* comment\n*/ #if 0\n;\nTEST(AfterBlockComment, Case) {}\n#endif\n"
                            "void use(int, int);\nvoid f() {\n#if defined(_WIN32)\n    use(1,\n#else\n"
-                           "    use(2,\n#endif\n    3);\n}\nTEST(AfterAlternatives, Case) {}\n"},
+                           "    use(2,\n#endif\n    3);\n}\nTEST(AfterAlternatives, Case) {}\n"
+                           # Braces inside a discarded macro argument do not make it a declaration.
+                           "#define IGNORE_ALL(...)\n"
+                           "IGNORE_ALL(namespace hidden { TEST(BracedArgument, Case) {} })\n"},
                 "initial")
         _git(repo, "tag", "v2.0.0")
         cls.fake = {
@@ -302,7 +305,7 @@ class HostileFixtureTest(unittest.TestCase):
             "BomDisabled": "BomDisabled.Case", "DigraphHidden": "DigraphHidden.Case",
             "ElifDead": "ElifDead.Case", "ElseDead": "ElseDead.Case",
             "AsArgument": "AsArgument.Case", "ByWrapper": "ByWrapper.Case",
-            "AfterBlockComment": "AfterBlockComment.Case",
+            "AfterBlockComment": "AfterBlockComment.Case", "BracedArgument": "BracedArgument.Case",
             "Pretend": "tests.scripts.test_sample.Pretend.test_fake",
             "Ordinary": "tests.scripts.test_sample.Ordinary.test_missing",
             "Save": "tests.scripts.test_sample.Ordinary.save",
@@ -353,7 +356,7 @@ class HostileFixtureTest(unittest.TestCase):
                         "ElseDead.Case", "ElseMaybe.Case",
                         # Listed as if a later commit expanded the macro: the source check alone must refuse it.
                         "Macro.Case", "AsArgument.Case", "ByWrapper.Case", "InNamespace.Case",
-                        "AfterBlockComment.Case", "AfterAlternatives.Case"}
+                        "AfterBlockComment.Case", "AfterAlternatives.Case", "BracedArgument.Case"}
         # A module that never finishes importing must time out into a violation, not abort the report; the short
         # timeout holds for every report this class builds and is restored in tearDownClass.
         cls._timeout, release_notes.PROBE_TIMEOUT = release_notes.PROBE_TIMEOUT, 3
