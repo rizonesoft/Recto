@@ -1,4 +1,0 @@
-interface:
-  display_name: "Adopt Conclave"
-  short_description: "Import, update and check Conclave-SDK kits in a project through forge.py, previewing every write."
-  default_prompt: "Adopt Conclave: find the SDK, run forge.py check and doctor, preview each kit with --dry-run, write with init, kit or sync, check the protected files with git, and report."

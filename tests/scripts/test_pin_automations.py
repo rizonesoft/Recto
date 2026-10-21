@@ -232,46 +232,6 @@ class NoticeTests(GitRepo):
             self.assertEqual(vs.main(["check"], fetch=current, root=self.root, run=run), 0)
 
 
-class ConclaveKitTests(GitRepo):
-    def setUp(self):
-        super().setUp()
-        self.mod = load("check-conclave-kits")
-        self.sdk = self.root / "sdk"
-        self.sdk.mkdir()
-        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.sdk, check=True)
-        skill = self.sdk / "kits" / "todo" / "templates" / ".claude" / "skills" / "x" / "SKILL.md"
-        skill.parent.mkdir(parents=True)
-        skill.write_text("kit text\n", encoding="utf-8")
-        (self.sdk / "kits" / "todo" / "templates" / "AGENTS.md").write_text("project file\n", encoding="utf-8")
-        subprocess.run(["git", "add", "-A"], cwd=self.sdk, check=True)
-        subprocess.run(["git", "commit", "-q", "-m", "kit"], cwd=self.sdk, check=True)
-        self.repo = Path(self._tmp.name) / "consumer"
-        (self.repo / ".claude" / "skills" / "x").mkdir(parents=True)
-
-    def test_identical_kit_file_is_in_step_and_project_files_are_ignored(self):
-        (self.repo / ".claude" / "skills" / "x" / "SKILL.md").write_bytes(b"kit text\r\n")
-        self.assertEqual(self.mod.drift(self.sdk, self.repo), [])
-
-    def test_changed_kit_file_is_drift_unless_allowed_with_a_reason(self):
-        (self.repo / ".claude" / "skills" / "x" / "SKILL.md").write_text("local edit\n", encoding="utf-8")
-        self.assertEqual(self.mod.drift(self.sdk, self.repo), [".claude/skills/x/SKILL.md differs from the SDK (kit todo)"])
-        (self.repo / ".conclave").mkdir()
-        (self.repo / ".conclave" / "kit-drift-allow.txt").write_text(".claude/skills/x/SKILL.md | kept on purpose\n",
-                                                                       encoding="utf-8")
-        self.assertEqual(self.mod.drift(self.sdk, self.repo), [])
-
-    def test_allow_entry_without_a_reason_is_refused(self):
-        (self.repo / ".conclave").mkdir()
-        (self.repo / ".conclave" / "kit-drift-allow.txt").write_text(".claude/skills/x/SKILL.md\n", encoding="utf-8")
-        with self.assertRaises(ValueError):
-            self.mod.allowed(self.repo)
-
-    def test_uncommitted_sdk_change_is_not_drift(self):
-        (self.repo / ".claude" / "skills" / "x" / "SKILL.md").write_text("kit text\n", encoding="utf-8")
-        (self.sdk / "kits" / "todo" / "templates" / ".claude" / "skills" / "x" / "SKILL.md").write_text("wip\n")
-        self.assertEqual(self.mod.drift(self.sdk, self.repo), [])
-
-
 class FakeGh:
     """Records gh calls and answers the list queries the pin modes make."""
 

@@ -31,20 +31,6 @@
         "at": "07:05"
       },
       "timeout_minutes": 5
-    },
-    {
-      "name": "recto-conclave-kits",
-      "description": "Email once when Conclave SDK kit files drift from the SDK or its doctor reports a gap",
-      "command": [
-        "python",
-        "scripts/check-conclave-kits.py",
-        "notify"
-      ],
-      "trigger": {
-        "weekly": "Monday",
-        "at": "07:10"
-      },
-      "timeout_minutes": 10
     }
   ]
 }

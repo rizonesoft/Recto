@@ -38,8 +38,6 @@ PLAN_DEFAULTS = {"title": "Implementation plan", "acceptance": None, "phases": {
 MAX_SECTIONS_PER_FILE = 55
 MAX_ITEMS_PER_SECTION = 30
 MAX_DELIVERABLE_LEN = 88
-# Every Markdown table row at or under this many characters, so rows never wrap in raw view (AGENTS.md).
-MAX_TABLE_ROW = 100
 
 
 class Refused(ValueError):
@@ -548,9 +546,6 @@ def projection(root=ROOT):
             [[f"[{'x' if row.done else ' '}]", row.ref, row.title,
               ", ".join(row.needs) or "none", str(len(checks[row.ref]))] for row in phase_rows],
         )
-        # WORKAROUND: Recto's titles follow AGENTS.md's 88-character heading rule, so 194 of its 204 plan rows exceed
-        # the SDK's MAX_TABLE_ROW refusal; it is held here until the SDK reads the limit per project from
-        # todo/plan.json (operator decision 2026-10-20, todo/findings.md). A forge sync restores the refusal.
         lines += table
         lines.append("")
     total_items = sum(len(items) for items in checks.values())

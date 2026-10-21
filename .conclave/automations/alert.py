@@ -8,7 +8,7 @@ wrapper that saw it fail, whatever the command printed. The email carries the ta
 finish, the tail of that run's log, and how to run it again on this machine's scheduler.
 
 It goes through SMTP2GO's `/v3/email/send` from the Rizonetech website sender, the verified sender and key every
-Conclave project's automations use (Rizonesoft is a brand of Rizonetech). The key is read at send time from the
+Rizonetech project's automations use (Rizonesoft is a brand of Rizonetech). The key is read at send time from the
 Conclave vault item "Rizonetech SMTP2GO (website mail)" through `conclave-op` (in WSL when this runs on Windows),
 for this run only: never written to disk, an argument, or the output. SMTP2GO answers a refused send with HTTP 200
 and `succeeded: 0`, so anything but one success and no failures is a refusal.

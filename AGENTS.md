@@ -14,7 +14,7 @@ Recto is an open-source (`GPL-3.0-or-later`) PDF viewer, OCR tool and document c
 | `todo/` | Live execution plan (`README.md`, generated plan). |
 | `scripts/` | TODO graph, review dispatch, run guard, pin checks; stdlib Python. |
 | `tests/scripts/` | Tooling tests; app suites land under `tests/`. |
-| `.claude/`, `.agents/`, `.codex/` | Conclave SDK kits per agent: skills, rules, subagents. |
+| `.claude/`, `.agents/`, `.codex/` | Agent kits per agent: skills, rules, subagents. |
 | `.conclave/` | Reviewer pin and scheduled `automations/` (pin checks). |
 | `build/` | Ignored derived output (plus `build/build.ps1`). |
 
@@ -92,9 +92,8 @@ python scripts/check-actions-pins.py check     # GitHub Actions are on their lat
 python scripts/check-vcpkg-baseline.py check   # the vcpkg baseline is the latest vcpkg release (D4)
 python scripts/check-python-pin.py check       # CI and local Python are the newest stable CPython (D4)
 python scripts/check-visual-studio.py check    # this machine's Visual Studio is at its latest servicing release
-python scripts/check-conclave-kits.py check    # Conclave kit files match the SDK (deliberate differences: .conclave/kit-drift-allow.txt)
 python -m unittest discover -s tests/scripts  # Recto tooling tests (graph, pins, corpus, run guard)
-python -m unittest discover -s scripts/tests  # SDK kit tests (review-dispatch.py, automations)
+python -m unittest discover -s scripts/tests  # agent tooling tests (review-dispatch.py, automations)
 .\build.cmd                                  # one-command x64 + ARM64 Debug/Release build and x64 tests
 ```
 

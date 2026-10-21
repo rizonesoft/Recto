@@ -28,4 +28,4 @@ To remove a task, delete its entry and its README row, then re-run the installer
 - `tasks.json` is the only list. Never register a task by hand or name a task in an installer.
 - A scheduled command never needs a person: no prompts, no browser, nothing that writes to a live system without the operator's approval.
 - Never put a secret in `tasks.json`, a command line or a log. The alert reads its key from the vault at send time.
-- Never change `run.py`, `alert.py` or the installers in a project: they come from the Conclave-SDK `automations` kit and `forge.py sync --include-scripts` replaces them.
+- Change `run.py`, `alert.py` or the installers only to fix the runner itself, never to add a task: a task is an entry in `tasks.json`, and `scripts/tests/test_automations.py` covers the runner.

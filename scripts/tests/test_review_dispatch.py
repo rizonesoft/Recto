@@ -16,7 +16,7 @@ import unittest.mock
 SCRIPTS = Path(__file__).resolve().parents[1]
 REPO_PIN = SCRIPTS.parent / ".conclave" / "reviewers.toml"
 
-# The kit's shipped reviewers and routes. The suite exercises the dispatcher against this fixture, never against the
+# A fixed set of reviewers and routes. The suite exercises the dispatcher against this fixture, never against the
 # repository's own pin, which a project may narrow (one reviewer, no failover) without changing what is tested here.
 FIXTURE_PIN = textwrap.dedent('''    schema_version = 1
 

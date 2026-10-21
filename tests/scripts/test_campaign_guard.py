@@ -1,8 +1,7 @@
 """scripts/campaign_guard.py, the process-plan run guard: the Stop hook against a throwaway workspace, and the
 lifecycle commands.
 
-Ported from the Conclave SDK's tests/test_campaign_guard.py with the guard and the Stop hook wiring read from
-this repository instead of the todo kit's templates.
+The guard and the Stop hook wiring are read from this repository.
 """
 import importlib.util
 import json

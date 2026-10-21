@@ -80,10 +80,10 @@ class Manifest(unittest.TestCase):
             return run.load_manifest(str(path))
 
     def test_the_folder_sets_the_name_prefix(self):
-        manifest = self.check({"schema_version": 1, "folder": "\\Conclave-SDK\\",
-                               "tasks": [fixture_task("conclave-sdk-reviewers")]})
-        self.assertEqual(manifest["prefix"], "conclave-sdk-")
-        self.assertEqual(list(manifest["tasks"]), ["conclave-sdk-reviewers"])
+        manifest = self.check({"schema_version": 1, "folder": "\\Example\\",
+                               "tasks": [fixture_task("example-reviewers")]})
+        self.assertEqual(manifest["prefix"], "example-")
+        self.assertEqual(list(manifest["tasks"]), ["example-reviewers"])
 
     def test_a_fresh_kit_has_no_folder_and_no_tasks(self):
         self.assertEqual(self.check({"schema_version": 1, "folder": None, "tasks": []}),

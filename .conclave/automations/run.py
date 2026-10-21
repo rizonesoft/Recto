@@ -46,9 +46,9 @@ def _whole(value) -> bool:
 def load_manifest(path: str) -> dict:
     """tasks.json as {"folder", "prefix", "tasks" by name}, refused unless every entry is well formed.
 
-    `folder` is the project's Task Scheduler folder (`\\Isotone\\`), and every task name starts with the folder's
-    name in lower case and a hyphen (`isotone-`), so two projects never share a folder or a unit name. A freshly
-    installed kit has `folder: null` and no tasks until the project names its folder.
+    `folder` is the project's Task Scheduler folder (`\\Recto\\`), and every task name starts with the folder's
+    name in lower case and a hyphen (`recto-`), so two projects never share a folder or a unit name. A fresh
+    manifest has `folder: null` and no tasks until the project names its folder.
     """
     with open(path, encoding="utf-8") as fh:
         doc = json.load(fh)
@@ -61,7 +61,7 @@ def load_manifest(path: str) -> dict:
         return {"folder": None, "prefix": None, "tasks": {}}
     match = FOLDER.fullmatch(folder) if isinstance(folder, str) else None
     if not match:
-        raise TaskError("tasks.json folder must be one Task Scheduler folder, like \\Isotone\\")
+        raise TaskError("tasks.json folder must be one Task Scheduler folder, like \\Recto\\")
     prefix = match.group(1).lower() + "-"
     name_rule = re.compile(re.escape(prefix) + r"[a-z0-9][a-z0-9-]*")
     out: dict[str, dict] = {}

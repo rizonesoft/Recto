@@ -46,7 +46,7 @@ python -m unittest discover -s scripts/tests
 python -m unittest discover -s tests/scripts
 ```
 
-The two test runs are the kits' own tests, which kits install under `scripts/tests`, and the project's own script tests under `tests/scripts`; run both, skip only a folder the repository does not have, and add any further suite the project's `AGENTS.md` names. A project's tests are never dropped for the kits' or the other way round.
+The two test runs are the agent tooling tests under `scripts/tests` (review dispatch, automations) and the project's script tests under `tests/scripts`; run both, skip only a folder the repository does not have, and add any further suite the project's `AGENTS.md` names. Neither is dropped in favour of the other.
 
 Fix every validator refusal before talking about shipping. If `plan --check` is stale, run `plan --sync` and re-check. The deep phase repair belongs to `process-phase` step 1; this audit is the commands above plus five recorded lines in the first phase's run file (`docs/phase-runs/<date>-phase-<N>.md`), not as the turn's last words:
 

@@ -1,8 +1,8 @@
 # Recto automations
 
-Every scheduled job that must run on this machine lives here: the task list in `tasks.json`, the runner, the failure alert, and the installers for Windows Task Scheduler (`install.ps1`) and systemd user timers (`install.sh`). The Conclave-SDK `automations` kit installed this folder; `tasks.json` and this README are Recto's own, and the runner, alert and installers are refreshed from the kit (`forge.py sync --include-scripts`). Recto runs on Windows, so the tasks are Task Scheduler tasks under `\Recto\`.
+Every scheduled job that must run on this machine lives here: the task list in `tasks.json`, the runner, the failure alert, and the installers for Windows Task Scheduler (`install.ps1`) and systemd user timers (`install.sh`). Everything in this folder is Recto's own. Recto runs on Windows, so the tasks are Task Scheduler tasks under `\Recto\`.
 
-Repository pins are not kept here. The daily GitHub workflow `.github/workflows/pins.yml` keeps them on their latest stable releases, and Dependabot keeps the GitHub Actions current (foundation plan D4, revised 2026-10-21). Only the checks that need this PC (its Visual Studio, its Python, its Conclave SDK checkout) run from this folder.
+Repository pins are not kept here. The daily GitHub workflow `.github/workflows/pins.yml` keeps them on their latest stable releases, and Dependabot keeps the GitHub Actions current (foundation plan D4, revised 2026-10-21). Only the checks that need this PC (its Visual Studio and its Python) run from this folder.
 
 ## What runs here
 
@@ -10,7 +10,6 @@ Repository pins are not kept here. The daily GitHub workflow `.github/workflows/
 | --- | --- | --- | --- | --- |
 | `recto-python-pin` | Monday 07:00 | `scripts/check-python-pin.py notify --scope local` | this machine's Python is behind the newest stable CPython (once per finding) | python.org cannot be read |
 | `recto-visual-studio` | Monday 07:05 | `scripts/check-visual-studio.py notify` | this machine's Visual Studio is behind its latest servicing release (once per release) | the toolset's Visual Studio is not installed, or vswhere or the release channel cannot be read |
-| `recto-conclave-kits` | Monday 07:10 | `scripts/check-conclave-kits.py notify` | Recto's kit files drift from the Conclave SDK's committed kits, or its doctor reports a gap (once per state) | the SDK checkout is missing (set `CONCLAVE_SDK_ROOT`), or an allow-list entry has no reason |
 
 A weekly task starts when available: a run missed while this PC was off fires at the next chance, with a five-minute random delay. A start while the task still runs is ignored, and a run is stopped five minutes past its timeout. Tasks run only while the operator is logged on, so no password is stored.
 
@@ -64,7 +63,7 @@ python -m unittest tests.scripts.test_pin_automations
 
 The installer reads `tasks.json` and registers every task it lists; a task under `\Recto\` that the file no longer lists is removed.
 
-Installed 2026-10-21 on this PC: `recto-python-pin`, `recto-visual-studio` and `recto-conclave-kits`, next run Monday 2026-10-26. A first run of `recto-visual-studio` exited 0 (Visual Studio 2026 already at 18.11.1, nothing sent). A first run of `recto-python-pin` exited 0 and sent the notice "Recto: a newer Python is available" from "Recto automations <website@rizonetech.com>" to `rizonetech@gmail.com`, received 2026-10-20 23:10:08 UTC (Message-Id `<E1xJIy8-FnQW0hPwWQi-OrwO@message-id.smtpcorp.com>`, SPF, DKIM and DMARC pass).
+Installed 2026-10-21 on this PC: `recto-python-pin` and `recto-visual-studio`, next run Monday 2026-10-26. A first run of `recto-visual-studio` exited 0 (Visual Studio 2026 already at 18.11.1, nothing sent). A first run of `recto-python-pin` exited 0 and sent the notice "Recto: a newer Python is available" from "Recto automations <website@rizonetech.com>" to `rizonetech@gmail.com`, received 2026-10-20 23:10:08 UTC (Message-Id `<E1xJIy8-FnQW0hPwWQi-OrwO@message-id.smtpcorp.com>`, SPF, DKIM and DMARC pass).
 
 ## Adding an automation
 

@@ -6,7 +6,7 @@ name: pins
 # Windows SDK line, becomes one issue that the next clean run closes. GitHub's notifications tell the owner, and a
 # failed job here (a source could not be read, a pin is malformed) emails whoever last edited this schedule.
 # GitHub Actions themselves are updated by Dependabot (.github/dependabot.yml): this workflow's token cannot change
-# workflow files. Checks only one machine can see (Visual Studio, local Python, Conclave kits) stay in
+# workflow files. Checks only one machine can see (Visual Studio, local Python) stay in
 # .conclave/automations.
 
 on:

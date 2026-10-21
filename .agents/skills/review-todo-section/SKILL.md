@@ -7,7 +7,7 @@ description: Quality-gate a just-implemented TODO section in Antigravity with se
 
 The gate between "code exists" and "the row says `[x]`". Nothing else may flip that row, and the flip happens only through `python scripts/todo-graph.py stamp`, which refuses a section with unticked items, an open prerequisite, a waiting Need, or no review evidence.
 
-Review is mandatory and independent: the implementing session self-reviews, and at least one review round comes from a reviewer of a different model, the one pinned in `.conclave/reviewers.toml` (the `reviewer` kit: a reviewer of a different model family from the writer, with one fallback of the third family), run through `scripts/review-dispatch.py`. Every round is recorded in a findings file; the stamp's receipt names the rounds. A verdict with no record is an opinion.
+Review is mandatory and independent: the implementing session self-reviews, and at least one review round comes from a reviewer of a different model, the one pinned in `.conclave/reviewers.toml` (a reviewer of a different model family from the writer, with one fallback of the third family), run through `scripts/review-dispatch.py`. Every round is recorded in a findings file; the stamp's receipt names the rounds. A verdict with no record is an opinion.
 
 ## Use this skill when
 
@@ -53,7 +53,7 @@ Run the lenses as separate passes over the candidate, at least one round by the 
 python3 scripts/review-dispatch.py --writer <claude|codex|gemini> --prompt <scratch-review-prompt.md> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md
 ```
 
-The dispatcher fails over by itself and appends a `## Round N` section naming the reviewer, its model and any reviewer it skipped. Complete that round with the candidate SHA, per-lens verdicts (`approve`, `needs-attention` with numbered findings naming `file:line`, or `advisory`), and the quoted gate outputs (the Live proof). On Windows run `python` instead of `python3`. A repository without `scripts/review-dispatch.py` gets it with `forge.py kit . reviewer`.
+The dispatcher fails over by itself and appends a `## Round N` section naming the reviewer, its model and any reviewer it skipped. Complete that round with the candidate SHA, per-lens verdicts (`approve`, `needs-attention` with numbered findings naming `file:line`, or `advisory`), and the quoted gate outputs (the Live proof). On Windows run `python` instead of `python3`.
 
 | Lens | Asks |
 | ---- | ---- |
