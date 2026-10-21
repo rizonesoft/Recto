@@ -554,6 +554,7 @@ PixelDiffResult compare_rgba(
 					result.matches = false;
 					result.first_x = x;
 					result.first_y = y;
+					result.first_delta = pixel_max_delta;
 					result.actual_rgba = {a[0], a[1], a[2], a[3]};
 					result.expected_rgba = {e[0], e[1], e[2], e[3]};
 				}
@@ -580,7 +581,8 @@ std::string format_rgba_diff(const PixelDiffResult& diff)
 		<< static_cast<unsigned>(diff.actual_rgba[1]) << ", "
 		<< static_cast<unsigned>(diff.actual_rgba[2]) << ", "
 		<< static_cast<unsigned>(diff.actual_rgba[3])
-		<< "], delta = " << static_cast<unsigned>(diff.max_delta_observed)
+		<< "], delta = " << static_cast<unsigned>(diff.first_delta)
+		<< ", max_delta = " << static_cast<unsigned>(diff.max_delta_observed)
 		<< ", mismatch_count = " << diff.mismatch_count;
 	return oss.str();
 }
@@ -627,8 +629,10 @@ double compute_ssim(
 		return static_cast<double>(px[ch - 1]);
 	};
 
+	// Each block counts by its pixel area, so a 1-pixel edge block weighs 1/64 of a full one and a single changed
+	// pixel scores the same wherever it sits.
 	double total_ssim = 0.0;
-	size_t window_count = 0;
+	double total_weight = 0.0;
 
 	for (uint32_t y0 = 0, y1 = 0; y0 < height; y0 = y1) {
 		y1 = next_block_end(y0, height, kBlockSize);
@@ -690,15 +694,15 @@ double compute_ssim(
 				const double ch_ssim = (den > 0.0) ? (num / den) : 1.0;
 				block_ssim_sum += ch_ssim;
 			}
-			total_ssim += (block_ssim_sum / 4.0);
-			++window_count;
+			total_ssim += (block_ssim_sum / 4.0) * n;
+			total_weight += n;
 		}
 	}
 
-	if (window_count == 0) {
+	if (total_weight == 0.0) {
 		return 1.0;
 	}
-	return std::clamp(total_ssim / static_cast<double>(window_count), 0.0, 1.0);
+	return std::clamp(total_ssim / total_weight, 0.0, 1.0);
 }
 
 std::string sha256_hex(std::span<const uint8_t> data)

@@ -1,0 +1,59 @@
+# Audit - D00 T03 §2: RGBA pixel comparison and SSIM helpers
+
+- **Audit section:** `D06 T05 §10` (`todo/06-quality/TODO-05-stamp-audits.md`)
+- **Audited section:** `D00 T03 §2` (`docs/reviews/d00-t03-s2.json`, earlier process)
+- **Date:** 2026-10-21
+
+## Checkpoint re-run
+
+At `5db9242`, Release x64 `recto-tests.exe` built from this tip's sources (`.\build.cmd` during the D06 T05 §9 audit, 0 warnings in all four configurations): `recto-tests.exe --gtest_filter=Support.*` -> `[  PASSED  ] 10 tests.` (Support.CorpusPathResolution, Support.TempDirCleanup, Support.TempDirLongPathAndReadOnly, Support.PixelComparison, Support.PixelStridePadding, Support.SsimCalculation, Support.Sha256Hex, Support.ResultMacros, Support.AsanActiveWhenEnabled, Support.AsanInstrumentation). The checkpoint's "all 8 support tests" is now 10: later sections added tests to the suite; every one passes.
+
+## Round 1: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T18:21:09Z
+- Effort: medium
+- Lines: 32
+- Digest: 15a0765af5dafb91
+
+### adversarial: needs-attention
+
+1. **P2** `tests/recto-tests/test_support.cpp:693`: Partial SSIM blocks receive the same weight as full 64-pixel blocks, making the `0.99` gate disproportionately sensitive to image edges. Reproduce with two opaque-black 9×9 buffers: change one actual pixel’s RGB to `(1,1,1)`. At `(8,8)`, the calculated score is `0.966677774075`; at `(0,0)`, it is `0.999924928772`. The identical one-level error fails or passes solely because the corner block contains one pixel. These values were verified by evaluating the implementation’s equations, not by running an added C++ test.
+
+2. **P3** `tests/recto-tests/test_support.cpp:583`: The diagnostic attaches the image-wide maximum delta to the first mismatching pixel. Reproduce with two black pixels, changing their actual red channels to `1` and `255`. The message names `(0,0)` and its one-level difference but reports `delta = 255`. Label this value as the global maximum or report the first pixel’s delta separately.
+
+### consistency: approve
+
+No additional findings.
+
+### integration: advisory
+
+Finding 1 affects the promised flattening and conversion threshold checks. No current rendering-helper consumer was found beyond the support tests; this audit does not establish a shipped rendering regression.
+
+### source-defect: approve
+
+No additional findings.
+
+### design: advisory
+
+Not applicable: this section owns no user surface.
+
+### record: needs-attention
+
+3. **P3** `todo/00-workspace/TODO-03-test-backbone.md:97`: The ticked `Done when:` still names LICENSE digest `0c2b2577…`, while the current file and assertion use `3972dc97…`. Reproduce with `Get-FileHash LICENSE -Algorithm SHA256` and compare `support_tests.cpp:510`. Commit `97d8485` legitimately updated the assertion after the LICENSE restoration, but the contract lacks the corresponding correction.
+
+4. **P3** `docs/reviews/00-workspace/D00-T03-s2.md:27`: The evidence overstates coverage: it says byte-count overflow checks and streaming file chunking are tested. `Support.PixelComparison` tests zero width and a short buffer; `Support.PixelStridePadding` tests an undersized stride. Neither exercises multiplication overflow. `Support.Sha256Hex` hashes LICENSE and a nonexistent file, without a multi-chunk file case. Inspect those tests to reproduce the evidence mismatch.
+
+Checkpoint verification limitation: `Support.*` exited **1**, with seven passes and three `CreateDirectoryW failed in TempDir` failures under this read-only sandbox. All five section-owned tests passed. Consequently, the audit header’s ten-pass result was not independently reproduced here; these sandbox failures are not evidence of a product regression. `PdfError.ResultValueAndError` also passed. No files were modified.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 1
+
+Gates: `.\build.cmd` -> 4 x `0 Warning(s)`, 4 x `0 Error(s)`, 2 x `[  PASSED  ] 102 tests.`. Against the old `test_support.cpp` the changed tests fail (`Support.PixelComparison`, `Support.SsimWeighsEdgeBlocksByArea`, `Support.RgbaDiffReportsFirstAndMaxDelta`); Release x64 with the fix passes 102.
+
+- Finding 1 (P2): `compute_ssim` weighs every block by its pixel area; one changed pixel in a 9x9 image now scores within 0.002 at the corner and at the origin, both at least 0.99 (`Support.SsimWeighsEdgeBlocksByArea`; the old corner score was 0.9667).
+- Finding 2 (P3): `PixelDiffResult` gains `first_delta`, and the message reads `delta = <first pixel's>, max_delta = <global>` (`Support.RgbaDiffReportsFirstAndMaxDelta`; `Support.PixelComparison`'s exact message updated).
+- Finding 3 (P3): a dated audit note in `D00 T03 §2` records that its LICENSE digest is stale since `97d8485`; the stamped text keeps its wording.
+- Finding 4 (P3): the paths the earlier review claimed as tested now are: `Support.RgbaSizeOverflowRefused` (a stride whose buffer size cannot be represented throws, in both `compare_rgba` and `compute_ssim`) and `Support.Sha256FileStreamsAcrossChunks` (two full 64 KiB chunks plus a partial one hash as the whole buffer). Both already behaved correctly, so they pass on the old code as well.

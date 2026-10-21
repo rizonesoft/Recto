@@ -350,7 +350,8 @@ TEST(Support, PixelComparison)
 
 	EXPECT_NONFATAL_FAILURE(
 		recto::test::expect_rgba_equal(actual, expected, kWidth, kHeight),
-		"RGBA mismatch at (17, 42): expected [10, 100, 200, 255], actual [10, 101, 200, 255], delta = 1, mismatch_count = 1");
+		"RGBA mismatch at (17, 42): expected [10, 100, 200, 255], actual [10, 101, 200, 255], delta = 1, max_delta = 1, "
+		"mismatch_count = 1");
 
 	// Within max_channel_delta = 1 tolerance, the buffers match.
 	const auto tolerated = recto::test::expect_rgba_equal(actual, expected, kWidth, kHeight, 0, 0, 1);
@@ -478,6 +479,60 @@ TEST(Support, SsimCalculation)
 	EXPECT_EQ(recto::test::next_block_end(0xFFFFFFF8u, 0xFFFFFFFFu, 8u), 0xFFFFFFFFu);
 	EXPECT_EQ(recto::test::next_block_end(0xFFFFFFFAu, 0xFFFFFFFFu, 8u), 0xFFFFFFFFu);
 	EXPECT_EQ(recto::test::next_block_end(0xFFFFFFFFu, 0xFFFFFFFFu, 8u), 0xFFFFFFFFu);
+}
+
+TEST(Support, SsimWeighsEdgeBlocksByArea)
+{
+	// A 9x9 image has one full 8x8 block and 1-pixel edge blocks; one changed pixel must score alike anywhere.
+	constexpr uint32_t kSide = 9;
+	const std::vector<uint8_t> black(static_cast<size_t>(kSide) * kSide * 4u, 0);
+	auto with_pixel = [&](uint32_t x, uint32_t y) {
+		std::vector<uint8_t> image = black;
+		uint8_t* px = image.data() + (static_cast<size_t>(y) * kSide + x) * 4u;
+		px[0] = px[1] = px[2] = 1;
+		return image;
+	};
+	const auto corner = with_pixel(8, 8);
+	const auto origin = with_pixel(0, 0);
+	const double corner_ssim = recto::test::compute_ssim(corner, black, kSide, kSide);
+	const double origin_ssim = recto::test::compute_ssim(origin, black, kSide, kSide);
+	EXPECT_GE(corner_ssim, 0.99);
+	EXPECT_GE(origin_ssim, 0.99);
+	EXPECT_NEAR(corner_ssim, origin_ssim, 0.002);
+}
+
+TEST(Support, RgbaDiffReportsFirstAndMaxDelta)
+{
+	const std::vector<uint8_t> expected{0, 0, 0, 255, 0, 0, 0, 255};
+	const std::vector<uint8_t> actual{1, 0, 0, 255, 255, 0, 0, 255};
+	const auto diff = recto::test::compare_rgba(actual, expected, 2, 1, 0, 0, 0);
+	EXPECT_EQ(diff.first_x, 0u);
+	EXPECT_EQ(diff.first_delta, 1u);
+	EXPECT_EQ(diff.max_delta_observed, 255u);
+	const auto text = recto::test::format_rgba_diff(diff);
+	EXPECT_NE(text.find("at (0, 0)"), std::string::npos) << text;
+	EXPECT_NE(text.find("delta = 1, max_delta = 255"), std::string::npos) << text;
+}
+
+TEST(Support, RgbaSizeOverflowRefused)
+{
+	const std::vector<uint8_t> none;
+	// width * 4 fits, but (height - 1) * stride + width * 4 cannot be represented in size_t.
+	EXPECT_THROW((void)recto::test::compare_rgba(none, none, 1, 3, SIZE_MAX - 1, 0, 0), std::invalid_argument);
+	EXPECT_THROW((void)recto::test::compute_ssim(none, none, 1, 3, 0, SIZE_MAX - 1), std::invalid_argument);
+}
+
+TEST(Support, Sha256FileStreamsAcrossChunks)
+{
+	recto::test::TempDir temp;
+	// Two full 64 KiB read chunks and a partial third, with a position-dependent pattern.
+	std::vector<uint8_t> data(65536u * 2u + 7u);
+	for (size_t i = 0; i < data.size(); ++i) {
+		data[i] = static_cast<uint8_t>((i * 31u + (i >> 16)) & 0xFFu);
+	}
+	const auto file = temp.file_path("chunks.bin");
+	recto::test::write_file_bytes(file, data);
+	EXPECT_EQ(recto::test::sha256_file(file), recto::test::sha256_hex(data));
 }
 
 TEST(Support, Sha256Hex)

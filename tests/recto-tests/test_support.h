@@ -84,6 +84,7 @@ struct PixelDiffResult {
 	uint32_t first_x{0};
 	uint32_t first_y{0};
 	uint8_t max_delta_observed{0};
+	uint8_t first_delta{0}; // the largest channel delta of the first mismatching pixel
 	std::array<uint8_t, 4> actual_rgba{0, 0, 0, 0};
 	std::array<uint8_t, 4> expected_rgba{0, 0, 0, 0};
 };

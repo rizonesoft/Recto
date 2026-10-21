@@ -98,6 +98,8 @@ Extend `tests/recto-tests/test_support.h/.cpp` with deterministic image and byte
 - [x] Add `RECTO_ASSERT_OK(expr)` and `RECTO_EXPECT_ERR(expr, code)` helper macros in `test_support.h` ready for `Result` / `PdfResult` types. Done when: `Support.ResultMacros` verifies both success unwrapping and error-code matching.
 - [x] Commit: `test: add RGBA pixel diff, SSIM, CNG SHA-256 and assertion helpers`
 
+> **Audit 2026-10-21 (D06 T05 §10):** the LICENSE digest this section names (`0c2b2577...`) is stale: `97d8485` restored the verbatim GPL text and moved `Support.Sha256Hex` to `3972dc97...`. `compute_ssim` now weighs each block by its pixel area (a 1-pixel edge block no longer counts as much as a full 8x8 one), the mismatch message reports the first pixel's delta and the global maximum separately, and the size-overflow refusal and multi-chunk `sha256_file` paths the earlier review described as tested now have tests (`Support.SsimWeighsEdgeBlocksByArea`, `Support.RgbaDiffReportsFirstAndMaxDelta`, `Support.RgbaSizeOverflowRefused`, `Support.Sha256FileStreamsAcrossChunks`).
+
 **Test checkpoint:** `build\bin\x64\Release\recto-tests\recto-tests.exe --gtest_filter=Support.*` exits 0 with all 8 support tests passing.
 
 > **Verified:** 2026-10-18 | §2 | e0edba7bc3c1e3f69efc49318c8193a2a5e72ffc
