@@ -2885,7 +2885,7 @@ def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
     comp_payload = decrypt(4, enc_payload)
 
     raw_content = inflate(comp_payload, rel_path)
-    validate_content_stream_syntax(rel_path, raw_content)
+    validate_page_content(rel_path, raw_content, ONE_PAGE_FORMS[3][b"/Resources"])
 
 
 def inflate_bounded(data: bytes, limit: int, keep: bool = True) -> tuple[int, bytes]:
@@ -2977,7 +2977,7 @@ def validate_broken_pdf_structure(rel_path: str, data: bytes) -> None:
                         rb"startxref\n999999\n%%EOF\n", tail) is None:
             raise ValueError(f"{rel_path}: the tail must be exactly the deliberately broken xref and its trailer")
         dec = inflate(data[objects[4][2] : objects[4][3]], rel_path)
-        validate_content_stream_syntax(rel_path, dec)
+        validate_page_content(rel_path, dec, ONE_PAGE_FORMS[3][b"/Resources"])
         return
     if rel_path == "broken/cyclic-xref-prev.pdf":
         eof_m = re.search(rb"startxref\n(\d+)\n%%EOF\n\Z", data)
@@ -3007,6 +3007,9 @@ def validate_broken_pdf_structure(rel_path: str, data: bytes) -> None:
             4: {b"/Filter": b"/FlateDecode", b"/Length": b"*"},
             6: {b"/Depth70": (b"[" * 70) + b"42" + (b"]" * 70)},  # parsed as a value: an array 70 deep, never a string
         }, streams={4})
+        objects = {num: (s0, s1) for num, _, _, s0, s1, _ in iter_objects(rel_path, data)}
+        validate_page_content(rel_path, inflate(data[objects[4][0] : objects[4][1]], rel_path),
+                              ONE_PAGE_FORMS[3][b"/Resources"])
         return
     if rel_path == "broken/deflate-bomb-10kb.pdf":
         validate_pdf_structure(rel_path, data)
@@ -3189,7 +3192,7 @@ SEED_RENDER_OPERATORS = {
 }
 CONTENT_DELIMITERS = b"()<>[]{}/%"
 CONTENT_WHITESPACE = b" \t\r\n\f\x00"
-# Exactly the operators the seeds' content uses, each with the kinds of its operands in order (ISO 32000-1 Tables 51,
+# Exactly the operators the content of the seed, encrypted and broken fixtures uses, each with the kinds of its operands in order (ISO 32000-1 Tables 51,
 # 57, 59, 74, 105 and 107): n number, i integer, N name, s string, a an array of numbers (a dash pattern), A an array
 # of strings and numbers (TJ). Any other operator refuses, so an operator the seeds never exercise (marked content,
 # for one) cannot slip in unchecked.
@@ -3383,6 +3386,13 @@ def _check_operand_values(rel_path: str, op: bytes, operands: list[tuple[str, by
         dashes = [float(x) for x in operands[0][1][1:-1].split()]
         if any(x < 0 for x in dashes) or (dashes and not any(dashes)):
             raise ValueError(f"{rel_path}: d dash lengths must be non-negative and not all zero")
+
+
+def validate_page_content(rel_path: str, content: bytes, resources: bytes) -> list[bytes]:
+    """Decoded page content checked as executable with the page's /Resources value (see
+    validate_content_instructions), after the literal-string and text-position checks."""
+    validate_content_stream_syntax(rel_path, content)
+    return validate_content_instructions(rel_path, content, resource_names(resources))
 
 
 def resource_names(resources: bytes) -> dict[bytes, set[bytes]]:

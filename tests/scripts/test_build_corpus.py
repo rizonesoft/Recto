@@ -603,6 +603,23 @@ class BuildCorpusTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.mod.validate_seed_pdf_structure("seeds/seed-render-ops.pdf", seed)
 
+    def test_encrypted_and_broken_content_must_be_executable_too(self) -> None:
+        real = self.mod.flate_compress
+        stray = mock.patch.object(self.mod, "flate_compress", side_effect=lambda b: real(
+            b + b"\nEMC\n" if b"Tj" in b else b))
+        cases = (("render/encrypted-rc4-128.pdf", self.mod.build_encrypted_rc4_128,
+                  self.mod.validate_encrypted_pdf_structure),
+                 ("broken/corrupt-xref-recoverable.pdf", self.mod.build_broken_corrupt_xref_recoverable,
+                  self.mod.validate_broken_pdf_structure),
+                 ("broken/deep-nested-array-70.pdf", self.mod.build_broken_deep_nested_array_70,
+                  self.mod.validate_broken_pdf_structure))
+        for name, build, validate in cases:
+            validate(name, build())
+            with stray:
+                mutated = build()
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "not one the corpus content uses"):
+                validate(name, mutated)
+
     def test_inflation_stops_just_past_its_limit(self) -> None:
         bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))
         total, kept = self.mod.inflate_bounded(bomb, 1024, keep=False)

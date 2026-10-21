@@ -606,3 +606,48 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `Ran 44 tests`, `OK` (the three new subtests fail against `7b81ff1`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P1): the path is a three-state machine (none, building, clipped). `W` or `W*` needs a path under construction and moves it to clipped, where only a painting operator may follow (ISO 32000-1 8.5.4): construction after clipping, a second clip, and a clip with no path each refuse.
+
+## Round 14: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T22:43:56Z
+- Effort: medium
+- Lines: 30
+- Digest: a76ae2c2d4870f9c
+
+### adversarial: needs-attention
+
+1. **P1: Encrypted fixtures bypass executable-content validation.** `scripts/build-corpus.py:2888` checks decrypted content using only `validate_content_stream_syntax()`, which checks parentheses and text coordinates, not operator validity or nesting.
+
+   Reproduced entirely in memory: intercept `flate_compress()` during `build_encrypted_rc4_128()` and append `b"\nEMC\n"` to the plaintext before compression and encryption. `validate_encrypted_pdf_structure()` accepts the resulting **1,292-byte PDF**. Supply those bytes through mocked generator output and file reads, with matching regenerated provenance: **`check_corpus()` returns `(True, [])`**.
+
+   A generator regression can therefore produce malformed encrypted page content while passing the complete checkpoint. This does not establish corruption in the committed fixtures.
+
+### consistency: approve
+
+No separate finding.
+
+### integration: advisory
+
+Finding 1 weakens validation of encrypted rendering fixtures consumed by the downstream rendering fuzz target (`todo/01-engine/TODO-03-cli-and-fuzz.md:156`). No downstream engine defect was established.
+
+### source-defect: needs-attention
+
+Finding **1 (P1)**: `EMC` must end a marked-content sequence begun by `BMC` or `BDC`. The accepted content contains neither opening operator. See [ISO 32000-1, section 14.6, Table 320](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf).
+
+### design: advisory
+
+Not applicable; this section owns no user surface.
+
+### record: approve
+
+At `1c526d7`, independently reran `python scripts/build-corpus.py --check`: exit **0**, **39 fixtures verified**. The focused `test_seed_content_must_be_executable_as_written` test also passed. Neither detects finding 1. No files were modified; the working tree remains clean.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 14
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 45 tests`, `OK` (`test_encrypted_and_broken_content_must_be_executable_too` fails against `1c526d7` for all three fixtures); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): every decodable content stream this section's fixtures carry now goes through the same instruction validator as the seeds (`validate_page_content`, with the page's own `/Resources`): the decrypted page content of the encrypted fixtures, and the content of the recoverable and nested-array fixtures. The operator table's description now names the fixtures it governs. A stray `EMC` regenerated into any of the three refuses. (The deflate bomb's content is deliberately never inflated in full, and the truncated stream cannot be, so neither carries content to check.)
