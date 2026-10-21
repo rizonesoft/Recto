@@ -1,0 +1,80 @@
+{
+  "ref": "D06 T05 \u00a72",
+  "title": "Audit D00 T01 \u00a72: PDF engine dependency policy (native recto-pdf, MuPDF retired)",
+  "implementation_sha": "d08190ad584a566b3d9c043f868d5c267feac32a",
+  "date": "2026-10-21",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/audit-d00-t01-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/audit-d00-t01-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/audit-d00-t01-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/06-quality/audit-d00-t01-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/06-quality/audit-d00-t01-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 6,
+      "report": "docs/reviews/06-quality/audit-d00-t01-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 7,
+      "report": "docs/reviews/06-quality/audit-d00-t01-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 8,
+      "report": "docs/reviews/06-quality/audit-d00-t01-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 9,
+      "report": "docs/reviews/06-quality/audit-d00-t01-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 10,
+      "report": "docs/reviews/06-quality/audit-d00-t01-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 11,
+      "report": "docs/reviews/06-quality/audit-d00-t01-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 12,
+      "report": "docs/reviews/06-quality/audit-d00-t01-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 13,
+      "report": "docs/reviews/06-quality/audit-d00-t01-s2.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "Test-Path .gitmodules -> False; Test-Path third_party -> False; validate -> valid: 677 sections",
+    "python -m unittest tests.scripts.test_engine_dependency_policy -> Ran 3 tests OK",
+    "local build.cmd at e49114f -> x64 and ARM64 Debug/Release 0 warnings, 98 tests passed; CI run 39615055510 on 15a21a7 -> build and asan success"
+  ],
+  "rounds_spent": 13,
+  "round_cap": 22
+}
