@@ -54,12 +54,26 @@ def split_cells(line):
     return [cell.strip().replace("\\|", "|") for cell in UNESCAPED_PIPE.split(inner)]
 
 
-HIDDEN = re.compile(r"<!--.*?(?:-->|\Z)|^[ \t]*(```|~~~).*?(?:^[ \t]*\1[ \t]*$|\Z)", re.S | re.M)
+COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.S)
+FENCE = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})")
 
 
 def visible(text):
-    """The text a reader sees: HTML comments and fenced code blocks blanked (their newlines kept)."""
-    return HIDDEN.sub(lambda match: "\n" * match.group(0).count("\n"), text)
+    """The text a reader sees: fenced code blocks and HTML comments blanked (their newlines kept). A fence closes
+    only on a line of the same character at least as long as its opener, as CommonMark requires."""
+    lines, fence = text.split("\n"), None
+    for number, line in enumerate(lines):
+        if fence is None:
+            opener = FENCE.match(line)
+            if opener:
+                fence = opener.group(1)
+                lines[number] = ""
+        else:
+            closer = re.fullmatch(rf"[ ]{{0,3}}({re.escape(fence[0])}{{{len(fence)},}})[ \t]*", line)
+            lines[number] = ""
+            if closer:
+                fence = None
+    return COMMENT.sub(lambda match: "\n" * match.group(0).count("\n"), "\n".join(lines))
 
 
 def tables(text):
