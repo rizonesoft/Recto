@@ -269,11 +269,14 @@ TEST(Support, TempDirLongPathAndReadOnly)
 		EXPECT_GT(long_file.native().size(), 280u);
 		// file_path() hands back the extended-length form itself, so Win32 accepts it without LongPathsEnabled.
 		EXPECT_EQ(long_file.native().rfind(L"\\\\?\\", 0), 0u);
-		// A path below the limit stays plain (unless TEMP itself is deep enough to push it over), and so does the root.
+		// A path below the limit keeps the spelling TempDir was given: plain, unless TEMP is deep enough to push it over
+		// or is itself set in the \\?\ form. The same holds for the root.
+		const bool temp_extended = temp.path().native().rfind(L"\\\\?\\", 0) == 0;
 		const auto plain_short = (temp.path() / "short.bin").lexically_normal();
 		EXPECT_EQ(temp.file_path("short.bin").native().rfind(L"\\\\?\\", 0) == 0,
-			plain_short.native().size() >= MAX_PATH - 12);
-		EXPECT_EQ(temp.file_path("").native().rfind(L"\\\\?\\", 0) == 0, temp.path().native().size() >= MAX_PATH - 12);
+			temp_extended || plain_short.native().size() >= MAX_PATH - 12);
+		EXPECT_EQ(temp.file_path("").native().rfind(L"\\\\?\\", 0) == 0,
+			temp_extended || temp.path().native().size() >= MAX_PATH - 12);
 
 		const std::vector<uint8_t> expected{0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x37};
 		recto::test::write_file_bytes(long_file, expected);

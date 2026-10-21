@@ -99,3 +99,44 @@ Gates: `.\build.cmd` -> x64 and ARM64, Debug and Release, 4 x `0 Warning(s)`, 4 
 - Finding 1 (P2): after anchoring, `corpus_path()` requires an absolute base and throws for a drive-relative override on another drive (`C:corpus` with the repository on `R:`), which no join can anchor; `Support.CorpusPathResolution` sets such a value on a drive other than the repository's and expects the throw.
 - Finding 2 (P3): `TempDir::file_path("")` follows the same long-path rule as a non-empty path.
 - Finding 3 (P2): the test's plain-path assertions are conditioned on the unprefixed length, so a deep `TEMP` no longer fails a correct helper; the root path gets the same check.
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T18:15:49Z
+- Effort: medium
+- Lines: 28
+- Digest: b39293820f277ff5
+
+## adversarial: approve
+
+No additional findings.
+
+## consistency: approve
+
+No findings.
+
+## integration: needs-attention
+
+1. **P3:** `tests/recto-tests/support_tests.cpp:274` and `:276` incorrectly equate an extended-length prefix with a path exceeding 248 characters. A short temporary directory already specified with `\\?\` retains that prefix through `TempDir`, so both assertions fail despite correct helper behavior. **Reproduce:** set both `TMP` and `TEMP` to the extended-length spelling of an existing writable short directory, then run `--gtest_filter=Support.TempDirLongPathAndReadOnly`. I verified directly that `GetTempPathW` preserves `\\?\C:\Windows\Temp\`; the assertion failure is source-derived because this sandbox prevents directory creation.
+
+## source-defect: needs-attention
+
+Finding 1 applies: an existing extended-length prefix is valid independently of path length. The test must account for prefixes inherited from the temporary-directory setting. Set both variables when reproducing because Windows checks `TMP` before `TEMP`. [Microsoft documentation](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw)
+
+## design: advisory
+
+Not applicable; this section owns no user surface.
+
+## record: advisory
+
+At `26859ab`, the exact checkpoint exited **1**, with all three tests throwing `CreateDirectoryW failed in TempDir` under the read-only sandbox. This prevents independent confirmation of the recorded pass; it does not establish a code regression.
+
+The claimed absence of source changes between `59902fc` and `2ee5ad7` checks out. Fresh warning-clean x64/ARM64 builds and the recorded regression runs were not independently verified. No files were modified.
+
+HIGHEST: P3
+OVERALL: needs-attention
+
+## Fixes after round 3
+
+- Finding 1 (P3): the plain-path assertions now also accept a `TempDir` created under a `TEMP` given in the `\\?\` form, whose spelling it keeps. With `TMP` and `TEMP` set to `\\?\<scratch>\shorttmp\`, the old test fails (`[  FAILED  ] Support.TempDirLongPathAndReadOnly`) and the new one passes (`[  PASSED  ] 10 tests.` for `Support.*`); `.\build.cmd -SkipTests` -> 4 x `0 Warning(s)`; Release x64 with default `TEMP` -> `[  PASSED  ] 98 tests.`.
