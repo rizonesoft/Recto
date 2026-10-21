@@ -244,3 +244,51 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `OK` (`test_encrypted_fixtures_get_the_full_cross_reference_checks` fails against `fae3dd7` for both mutations); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P1): the encrypted validator now runs the same `validate_pdf_structure` as every other fixture, in an `encrypted` mode that leaves stream content (ciphertext) to the decryption that follows. Object walk, xref coverage and liveness, `/Size` equal to the highest object plus one, the catalog and the layout all apply: a freed catalog entry and `/Size 1` each refuse.
+
+## Round 6: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T21:56:30Z
+- Effort: medium
+- Lines: 32
+- Digest: d1d3bebf004b71c2
+
+### adversarial: needs-attention
+
+1. **P1: Encrypted-stream validation still permits unbounded decompression.** `scripts/build-corpus.py:2866` calls `zlib.decompress()` without an output ceiling. Validation runs before the byte comparison at `:3304`, so corrupted on-disk input reaches this allocation even without matching provenance. The bounded helper added after round 1 protects only the dedicated bomb path.
+
+   Reproduced in memory: patch `flate_compress()` to return `zlib.compress(b" " * 1048576)`, generate the RC4 fixture, then validate it. The **2,177-byte PDF passes**, allocating **1,048,576 bytes** through a single unrestricted decompression call. Larger expansions have no enforced limit. This probe demonstrated the unrestricted path without attempting an OOM.
+
+2. **P1: The recoverable-fixture validator accepts a file without a PDF header.** `scripts/build-corpus.py:2909` checks the tail and scanned objects but never validates the header. Reproduce by replacing `b"%PDF-1.7"` with `b"NOTAPDF!"` in `broken/corrupt-xref-recoverable.pdf`. `validate_broken_pdf_structure()` accepts it.
+
+   Supplying those bytes through mocked generator output and file reads, with matching regenerated provenance, makes **`check_corpus()` return `(True, [])`**. Thus a generator regression can silently replace the promised recoverable PDF with a non-PDF.
+
+### consistency: approve
+
+No separate finding.
+
+### integration: needs-attention
+
+Finding **2 (P1)** breaks the prerequisite for downstream recovery tests: `src/pdf/xref.cpp:1113` requires `locate_header_offset()` before recovery, and `:278` returns `NotAPdf` when no valid header exists. The accepted mutation cannot exercise the intended damaged-xref recovery path. This establishes a fixture-gate defect, not an engine defect.
+
+### source-defect: needs-attention
+
+Finding **1 (P1)** relies on an unbounded API: Python documents that `zlib.decompress()` grows its output buffer as necessary; bounded output requires `Decompress.decompress(..., max_length=...)`. [Python zlib documentation](https://docs.python.org/3/library/zlib.html)
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: approve
+
+At `3aa15a9`, independently reran the checkpoint: **exit 0, 39 fixtures verified**. Three focused regression tests covering encrypted xrefs, recoverable-document structure and bounded inflation passed. They do not detect findings 1 and 2. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 6
+
+`python -m unittest tests.scripts.test_build_corpus` -> `OK` (the two new tests fail against `3aa15a9`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): every validator inflate now goes through `inflate()`: one complete Flate stream, refused past `VALIDATOR_INFLATE_LIMIT` (4 MiB; the largest corpus stream is under 1 KiB) with at most limit + 1 bytes ever produced, and refused when truncated, malformed or followed by stray bytes. No `zlib.decompress` call remains in the file (the PNG-predictor helper included); an encrypted fixture whose content inflates past the ceiling refuses (`test_validator_inflation_is_bounded_and_exact`).
+- Finding 2 (P1): the recoverable fixture must start with the exact `%PDF-1.7` header and binary comment, object 1 right after, every object directly after the previous `endobj` line, and the tail directly after the last (`test_the_recoverable_fixture_starts_with_its_exact_header`).

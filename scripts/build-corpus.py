@@ -83,8 +83,29 @@ def flate_png_up_compress(raw: bytes, columns: int) -> bytes:
     return flate_compress(bytes(out))
 
 
+VALIDATOR_INFLATE_LIMIT = 4 * 1024 * 1024  # far above any corpus stream (the largest is under 1 KiB)
+
+
+def inflate(data: bytes, what: str, limit: int = VALIDATOR_INFLATE_LIMIT) -> bytes:
+    """data inflated as exactly one complete Flate stream, refusing as a ValueError naming what: a malformed or
+    truncated stream, bytes after its end, or output past limit. One call with max_length produces at most limit + 1
+    bytes, so validating never allocates more than that whatever the input claims."""
+    d = zlib.decompressobj()
+    try:
+        out = d.decompress(data, limit + 1)
+    except zlib.error as exc:
+        raise ValueError(f"{what}: bad Flate data: {exc}") from exc
+    if len(out) > limit or d.unconsumed_tail:
+        raise ValueError(f"{what}: inflates past {limit} bytes")
+    if not d.eof:
+        raise ValueError(f"{what}: incomplete Flate stream")
+    if d.unused_data:
+        raise ValueError(f"{what}: bytes after the end of the Flate stream")
+    return out
+
+
 def flate_png_up_decompress(compressed: bytes, columns: int) -> bytes:
-    raw = zlib.decompress(compressed)
+    raw = inflate(compressed, "a PNG-predicted Flate stream")
     stride = columns + 1
     if len(raw) % stride != 0:
         raise ValueError("invalid PNG predicted stream length")
@@ -1194,7 +1215,7 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int, visite
         n_val = int(n_m.group(1))
         if not (0 <= idx < n_val):
             raise ValueError(f"{rel_path}: ObjStm index {idx} out of range 0..{n_val - 1}")
-        dec = zlib.decompress(data[s_start:s_end])
+        dec = inflate(data[s_start:s_end], rel_path)
         first_val = int(first_m.group(1))
         tokens = dec[:first_val].decode("ascii").split()
         if len(tokens) != n_val * 2:
@@ -1475,7 +1496,7 @@ def compressed_dict(rel_path: str, data: bytes, located: dict, where: tuple) -> 
     if not isinstance(stm_header, int):
         raise ValueError(f"{rel_path}: object stream {stm_num} is not located by the cross-reference chain")
     entries, start, end = stream_object_at(rel_path, data, stm_header)
-    dec = zlib.decompress(data[start:end])
+    dec = inflate(data[start:end], rel_path)
     first = int(entries[b"/First"])
     offsets = [int(v) for v in dec[:first].split()[1::2]]
     slot_end = first + offsets[idx + 1] if idx + 1 < len(offsets) else len(dec)
@@ -1583,7 +1604,7 @@ def validate_pdf_structure(rel_path: str, data: bytes, earlier_revisions: bool =
             and stream_entries.get(b"/Subtype") != b"/Image"
             and stream_entries.get(b"/Type") not in (b"/ObjStm", b"/XRef")
         ):
-            dec = zlib.decompress(data[stream_start:end_pos])
+            dec = inflate(data[stream_start:end_pos], rel_path)
             if b"/CMapName" not in dec:
                 validate_content_stream_syntax(rel_path, dec)
 
@@ -1673,7 +1694,7 @@ def validate_pdf_structure(rel_path: str, data: bytes, earlier_revisions: bool =
 
 
     if rel_path == "text/two-column-links-outline.pdf":
-        s5_raw = zlib.decompress(payload_of(5))
+        s5_raw = inflate(payload_of(5), rel_path)
         if b"\x1d" not in s5_raw or b"\x1e" not in s5_raw or b"\xad" not in s5_raw:
             raise ValueError(
                 "text/two-column-links-outline.pdf must exercise 0x1D (fi), 0x1E (fl), and 0xAD (soft hyphen)"
@@ -1684,7 +1705,7 @@ def validate_pdf_structure(rel_path: str, data: bytes, earlier_revisions: bool =
             raise ValueError("text/scanned.pdf must not declare any /Font resources")
         if 4 not in objects:
             raise ValueError("text/scanned.pdf missing page content stream 4 0 obj")
-        s4_raw = zlib.decompress(payload_of(4))
+        s4_raw = inflate(payload_of(4), rel_path)
         if re.search(rb"\b(?:BT|ET|Tj|TJ|Tf)\b", s4_raw):
             raise ValueError("text/scanned.pdf content stream must contain 0 text operators")
 
@@ -2863,7 +2884,7 @@ def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
             raise ValueError(f"{rel_path}: /Info {key.decode()} does not decrypt to the generator's value")
     comp_payload = decrypt(4, enc_payload)
 
-    raw_content = zlib.decompress(comp_payload)
+    raw_content = inflate(comp_payload, rel_path)
     validate_content_stream_syntax(rel_path, raw_content)
 
 
@@ -2916,17 +2937,25 @@ def validate_broken_pdf_structure(rel_path: str, data: bytes) -> None:
         objects = {num: (start, end, s0, s1) for num, start, end, s0, s1, _ in walked}
         if [w[0] for w in walked] != [1, 2, 3, 4, 5, 6]:
             raise ValueError(f"{rel_path}: expected recoverable objects 1..6, got {[w[0] for w in walked]}")
+        header = b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n"
+        if not data.startswith(header) or walked[0][5] != len(header):
+            raise ValueError(f"{rel_path}: must start with the exact %PDF-1.7 header and binary comment, then object 1")
+        # Each object ends with its own endobj line, and the next begins right after it: no byte between them.
+        ends = [data.index(b"endobj\n", s1 if s1 is not None else end) + len(b"endobj\n")
+                for _, _, end, _, s1, _ in walked]
+        if [w[5] for w in walked[1:]] != ends[:-1]:
+            raise ValueError(f"{rel_path}: the recoverable objects must sit back to back")
         one_page_objects(rel_path, data, objects)
         info_start, info_end = objects[6][:2]
         if dict_entries(data[info_start + 2 : info_end - 2]) != {b"/Title": b"(Recoverable Xref Fixture)",
                                                                 b"/CreationDate": f"({FIXED_PDF_DATE})".encode()}:
             raise ValueError(f"{rel_path}: object 6 is not the generator's /Info dictionary")
-        tail = data[info_end + len(b"\nendobj\n") :]
+        tail = data[ends[-1] :]
         if re.fullmatch(rb"xref\n0 7\n0000000000 65535 f \n9999999999 00000 n \nCORRUPT_XREF_TABLE_ROW\ntrailer\n"
                         rb"<< /Size 7 /Root 1 0 R /Info 6 0 R /ID \[<([0-9A-F]{32})> <\1>\] >>\n"
                         rb"startxref\n999999\n%%EOF\n", tail) is None:
             raise ValueError(f"{rel_path}: the tail must be exactly the deliberately broken xref and its trailer")
-        dec = zlib.decompress(data[objects[4][2] : objects[4][3]])
+        dec = inflate(data[objects[4][2] : objects[4][3]], rel_path)
         validate_content_stream_syntax(rel_path, dec)
         return
     if rel_path == "broken/cyclic-xref-prev.pdf":
@@ -3003,7 +3032,7 @@ def validate_seed_pdf_structure(rel_path: str, data: bytes) -> None:
             dec = rle_decode_pdf(payload)
             validate_content_stream_syntax(rel_path, dec)
         elif b"/Filter [/ASCII85Decode /FlateDecode]" in dict_body:
-            dec = zlib.decompress(ascii85_decode_pdf(payload))
+            dec = inflate(ascii85_decode_pdf(payload), rel_path)
             validate_content_stream_syntax(rel_path, dec)
         elif b"/Filter /LZWDecode" in dict_body:
             dec = lzw_decode_literals(payload)
@@ -3038,7 +3067,7 @@ def validate_seed_filter_bin_structure(rel_path: str, data: bytes) -> None:
         )
     payload = data[1:]
     if expected_sel == 0x00:
-        dec = zlib.decompress(payload)
+        dec = inflate(payload, rel_path)
         if dec != KNOWN_FILTER_PLAINTEXT:
             raise ValueError(f"{rel_path}: FlateDecode output mismatch")
     elif expected_sel == 0x01:
@@ -3076,7 +3105,7 @@ def validate_seed_filter_bin_structure(rel_path: str, data: bytes) -> None:
         if not (payload.startswith(b"\xFF\x4F\xFF\x51") and payload.endswith(b"\xFF\xD9")):
             raise ValueError(f"{rel_path}: JPXDecode codestream missing SOC/SIZ/EOC markers")
     elif expected_sel == 0x0A:
-        dec = zlib.decompress(ascii85_decode_pdf(payload))
+        dec = inflate(ascii85_decode_pdf(payload), rel_path)
         if dec != KNOWN_FILTER_PLAINTEXT:
             raise ValueError(f"{rel_path}: Chained A85+Flate output mismatch")
 

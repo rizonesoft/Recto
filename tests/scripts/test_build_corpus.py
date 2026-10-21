@@ -496,6 +496,32 @@ class BuildCorpusTests(unittest.TestCase):
             with self.subTest(says=says), self.assertRaisesRegex(ValueError, re.escape(says)):
                 self.mod.validate_encrypted_pdf_structure(name, mutated)
 
+    def test_validator_inflation_is_bounded_and_exact(self) -> None:
+        inflate = self.mod.inflate
+        self.assertEqual(inflate(zlib.compress(b"abc"), "x"), b"abc")
+        for data, says in ((zlib.compress(b" " * (self.mod.VALIDATOR_INFLATE_LIMIT + 1)), "inflates past"),
+                           (zlib.compress(b"abc")[:-3], "incomplete"),
+                           (zlib.compress(b"abc") + b"junk", "after the end"),
+                           (b"not flate", "bad Flate data")):
+            with self.subTest(says=says), self.assertRaisesRegex(ValueError, says):
+                inflate(data, "x")
+        # An encrypted fixture whose content inflates past the ceiling refuses instead of being inflated whole.
+        real = self.mod.flate_compress
+        with mock.patch.object(self.mod, "flate_compress",
+                               side_effect=lambda b: real(b" " * (self.mod.VALIDATOR_INFLATE_LIMIT + 1))):
+            big = self.mod.build_encrypted_rc4_128()
+        with self.assertRaisesRegex(ValueError, "inflates past"):
+            self.mod.validate_encrypted_pdf_structure("render/encrypted-rc4-128.pdf", big)
+
+    def test_the_recoverable_fixture_starts_with_its_exact_header(self) -> None:
+        name = "broken/corrupt-xref-recoverable.pdf"
+        data = self.mod.expected_corpus_files()[name]
+        for old, new, says in ((b"%PDF-1.7", b"NOTAPDF!", "exact %PDF-1.7 header"),
+                               (b"endobj\n2 0 obj", b"endobj\n\n2 0 obj", "")):
+            self.assertIn(old, data)
+            with self.subTest(old=old), self.assertRaisesRegex(ValueError, re.escape(says)):
+                self.mod.validate_broken_pdf_structure(name, data.replace(old, new, 1))
+
     def test_inflation_stops_just_past_its_limit(self) -> None:
         bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))
         total, kept = self.mod.inflate_bounded(bomb, 1024, keep=False)
