@@ -157,13 +157,23 @@ class GtestNotes:
     """The test list CI recorded for a commit, from `refs/notes/gtest-list` (fetched from origin once when asked)."""
 
     def __init__(self, repo, fetch):
-        self.repo, self.lists = repo, {}
+        """With `fetch`, only CI's notes count: the ref is fetched from origin and replaces any local one; when origin
+        has no notes ref yet, no commit has a list; when origin cannot be read, the check stops (Unreadable). Without
+        `fetch` (tests), the local ref is read as is."""
+        self.repo, self.lists, self.none = repo, {}, False
         if fetch:
-            # A missing remote or notes ref leaves the local notes, and every gtest id then reports what it lacks.
-            git(repo, "fetch", "--quiet", "origin", f"+{NOTES_REF}:{NOTES_REF}", check=False)
+            present = git(repo, "ls-remote", "--exit-code", "origin", NOTES_REF, check=False).returncode
+            if present == 0:
+                git(repo, "fetch", "--quiet", "origin", f"+{NOTES_REF}:{NOTES_REF}")
+            elif present == 2:
+                self.none = True
+            else:
+                raise Unreadable(f"cannot read {NOTES_REF} from origin (git ls-remote exit {present})")
 
     def tests_at(self, sha):
         """The `Suite.Case` names in the commit's note, None when the commit has no note."""
+        if self.none:
+            return None
         if sha not in self.lists:
             note = git(self.repo, "notes", f"--ref={NOTES_REF}", "show", sha, check=False)
             if note.returncode != 0:
@@ -249,7 +259,8 @@ def test_problem(python_tests, gtest_notes, commit, test_id):
     if GTEST_ID.match(test_id):
         listed = gtest_notes.tests_at(commit["sha"])
         if listed is None:
-            return f"Regression-Test {test_id} is unverified: {commit['short']} has no CI test list ({NOTES_REF})"
+            return (f"Regression-Test {test_id} is unverified: {commit['short']} has no CI test list ({NOTES_REF}); "
+                    f"record one with `gh workflow run build.yml --ref main -f sha={commit['sha']}`")
         if test_id not in listed:
             return f"Regression-Test {test_id} is not in {commit['short']}'s CI test list"
         return None

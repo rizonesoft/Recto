@@ -94,6 +94,11 @@ class ReleaseNotesTest(unittest.TestCase):
         xref = {"PdfXref": ["ParsesTable", "EmptyTable"]}
         for sha in (cls.gtest_fix, cls.python_fix, cls.late_fix, cls.second_fix):
             _note(repo, sha, xref)
+        # GitHub's copy: main() trusts only the notes it fetches from origin.
+        origin = pathlib.Path(cls._tmp.name) / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True, capture_output=True)
+        _git(repo, "remote", "add", "origin", str(origin))
+        _git(repo, "push", "-q", "origin", "main", "--tags", "refs/notes/gtest-list")
 
     @classmethod
     def tearDownClass(cls):
@@ -135,6 +140,39 @@ class ReleaseNotesTest(unittest.TestCase):
         self.assertTrue(any(self.gtest_fix[:7] in v and "has no CI test list" in v for v in violations), violations)
         # The note on the next commit does not stand in for the fix commit's own.
         self.assertFalse(any(self.second_fix[:7] in v for v in violations), violations)
+
+    def test_only_notes_fetched_from_origin_count(self):
+        # A local note claiming PdfLate.Case for the late fix is replaced by origin's when main() fetches.
+        _note(self.repo, self.late_fix, {"PdfLate": ["Case"], "PdfXref": ["ParsesTable", "EmptyTable"]})
+        try:
+            self.assertEqual(len(self.report()["violations"]), 1)  # the local forgery fools a read that does not fetch
+            code, text = self.run_main("v1.0.0", "v1.1.0", "--json")
+            self.assertEqual(code, 1)
+            self.assertTrue(any(self.late_fix[:7] in v and "PdfLate.Case is not in" in v
+                                for v in json.loads(text)["violations"]))
+        finally:
+            _note(self.repo, self.late_fix, {"PdfXref": ["ParsesTable", "EmptyTable"]})
+
+    def test_origin_without_notes_verifies_no_gtest_id(self):
+        empty = pathlib.Path(self._tmp.name) / "empty.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(empty)], check=True, capture_output=True)
+        _git(self.repo, "remote", "set-url", "origin", str(empty))
+        try:
+            code, text = self.run_main("v1.0.0", "v1.1.0", "--json")
+        finally:
+            _git(self.repo, "remote", "set-url", "origin", str(pathlib.Path(self._tmp.name) / "origin.git"))
+            _git(self.repo, "fetch", "-q", "origin", "+refs/notes/gtest-list:refs/notes/gtest-list")
+        self.assertEqual(code, 1)
+        unverified = [v for v in json.loads(text)["violations"] if "has no CI test list" in v]
+        self.assertEqual(len(unverified), 3, unverified)  # gtest_fix, late_fix and second_fix
+        self.assertIn("gh workflow run build.yml --ref main -f sha=", unverified[0])
+
+    def test_unreadable_origin_exits_2(self):
+        _git(self.repo, "remote", "set-url", "origin", str(pathlib.Path(self._tmp.name) / "no-such-origin.git"))
+        try:
+            self.assertEqual(self.run_main("v1.0.0", "v1.1.0")[0], 2)
+        finally:
+            _git(self.repo, "remote", "set-url", "origin", str(pathlib.Path(self._tmp.name) / "origin.git"))
 
     def test_allow_no_test_excuses_one_commit_and_is_reported(self):
         result = self.report(allowances={self.docs_fix[:10]: "documentation only"})

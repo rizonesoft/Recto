@@ -9,9 +9,20 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      sha:
+        description: A commit on main to build and record a test list for (D07 T03 §9); empty builds the branch tip.
+        required: false
+        default: ""
 
+# Every job reads only; test-list-note alone is granted contents: write.
+permissions:
+  contents: read
+
+# A pull request's newer push cancels its older run. Every build of a main commit gets its own group, so a queued
+# build is never replaced by a later one and every commit can record its test list.
 concurrency:
-  group: build-${{ github.workflow }}-${{ github.ref }}
+  group: build-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || inputs.sha || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -22,6 +33,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
 
       - name: Configure NuGet and vcpkg cache directories
         shell: pwsh
@@ -81,16 +95,21 @@ jobs:
 
   test-list-note:
     name: Record the test list on the commit
-    # Only builds of main record a note; pull requests and forks never write to refs/notes/gtest-list.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Only builds of main record a note: a push to main, or a manual run on main naming a main commit (to record one a
+    # multi-commit push skipped). Pull requests and forks never write to refs/notes/gtest-list.
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
+    env:
+      TARGET_SHA: ${{ inputs.sha || github.sha }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Download the test list
         uses: actions/download-artifact@v4
@@ -102,6 +121,9 @@ jobs:
         shell: bash
         run: |
           set -eu
+          # A manual run may name any commit; only a commit on main gets a note.
+          sha=$(git rev-parse --verify "$TARGET_SHA^{commit}")
+          git merge-base --is-ancestor "$sha" origin/main || { echo "$sha is not on main" >&2; exit 1; }
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           list="$RUNNER_TEMP/gtest-list/gtest-list.txt"
@@ -119,9 +141,9 @@ jobs:
               echo "git ls-remote failed with exit $present" >&2
               exit 1
             fi
-            git notes --ref=gtest-list add -f -F "$list" "$GITHUB_SHA"
+            git notes --ref=gtest-list add -f -F "$list" "$sha"
             if git push --quiet origin refs/notes/gtest-list; then
-              git notes --ref=gtest-list show "$GITHUB_SHA" | head -n 3
+              git notes --ref=gtest-list show "$sha" | head -n 3
               exit 0
             fi
             sleep $((try * 5))
