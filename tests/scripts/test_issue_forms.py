@@ -69,8 +69,19 @@ class YamlSubsetError(ValueError):
 
 
 _KEY = re.compile(r"^([A-Za-z0-9_-]+):(?:[ ]+(.*))?$")
-_INT = re.compile(r"^-?[0-9]+$")
+_INT = re.compile(r"^-?(?:0|[1-9][0-9]*)$")
 _FLOW_ITEM = re.compile(r"[A-Za-z0-9_.-]+(?: [A-Za-z0-9_.-]+)*")
+# Characters that start YAML syntax rather than a plain string.
+_INDICATORS = set("-?:,[]{}#&*!|>'\"%@`")
+# YAML 1.1 implicit types (the ones PyYAML resolves), so a plain scalar that YAML reads as anything other than a
+# string is refused instead of silently loaded as text. true, false, null, ~ and plain integers are handled first.
+_IMPLICIT = re.compile(
+    r"^(?:yes|Yes|YES|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF|y|Y|n|N"
+    r"|[-+]?(?:[0-9][0-9_]*)\.[0-9_]*(?:[eE][-+]?[0-9]+)?|\.[0-9][0-9_]*(?:[eE][-+]?[0-9]+)?"
+    r"|[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\.[0-9_]*|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN)"
+    r"|[-+]?0b[0-1_]+|[-+]?0[0-7_]+|[-+]?(?:0|[1-9][0-9_]*)|[-+]?0x[0-9a-fA-F_]+|[-+]?[1-9][0-9_]*(?::[0-5]?[0-9])+"
+    r"|<<|~|null|Null|NULL|=|[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}(?:(?:[Tt]|[ ]+)[0-9]{1,2}:[0-9]{2}:[0-9]{2}.*)?)$"
+)
 
 
 class _Loader:
@@ -120,6 +131,8 @@ class _Loader:
             if not match:
                 self._fail(f"expected 'key: value', got {head[1]!r}")
             key = match.group(1)
+            if _IMPLICIT.match(key):
+                self._fail(f"key {key!r} is not a string in YAML")
             if key in result:
                 self._fail(f"duplicate key {key!r}")
             self.i += 1
@@ -178,12 +191,15 @@ class _Loader:
             raw.pop()
         if not raw:
             return ""
-        # The first content line fixes the block's indentation; a later line indented less is malformed YAML.
-        block = next(len(line) - len(line.lstrip(" ")) for line in raw if line.strip())
+        # The first content line fixes the block's indentation. A later content line indented less, or a blank line
+        # before the first content line indented more, is malformed YAML; a blank line holding spaces past the
+        # block's indentation is refused anywhere, since its kept spaces are easy to miss.
+        first = next(offset for offset, line in enumerate(raw) if line.strip())
+        block = len(raw[first]) - len(raw[first].lstrip(" "))
         for offset, line in enumerate(raw):
-            if line.strip() and len(line) - len(line.lstrip(" ")) < block:
+            if (line.strip() and len(line) - len(line.lstrip(" ")) < block) or (not line.strip() and len(line) > block):
                 self.i -= len(raw) - offset
-                self._fail("block scalar line indented less than its first line")
+                self._fail("block scalar line indented inconsistently with its first line")
         lines = [line[block:] if line.strip() else "" for line in raw]
         if style == "|":
             return "\n".join(lines) + "\n"
@@ -222,14 +238,16 @@ class _Loader:
                 self._fail(f"flow list outside the supported subset: {text!r}")
             return [self._scalar(part) for part in parts]
         text = re.sub(r"\s+#.*$", "", text)
-        if text[:1] in set("{&*!%@`|>") or ": " in text or text.endswith(":"):
-            self._fail(f"plain scalar outside the supported subset: {text!r}")
         if text in ("true", "false"):
             return text == "true"
         if text in ("null", "~"):
             return None
         if _INT.match(text):
             return int(text)
+        if not text or text[0] in _INDICATORS or ": " in text or text.endswith(":"):
+            self._fail(f"plain scalar outside the supported subset: {text!r}")
+        if _IMPLICIT.match(text):
+            self._fail(f"plain scalar {text!r} is not a string in YAML; quote it")
         return text
 
 
@@ -405,6 +423,14 @@ class YamlSubsetLoaderTest(unittest.TestCase):
             "a: [bug, \"x, y\"]\n",
             "a: |\n    first line\n  second line\n",
             "a:\n  b: |\n      Thanks.\n\n    Next.\n",
+            "a: |\n          \n    text\n",
+            "a: - invalid\n",
+            "a: ]invalid\n",
+            "a: 1.5\n",
+            "a: yes\n",
+            "a: 2026-10-21\n",
+            "a: 0x1f\n",
+            "on: push\n",
         ):
             with self.subTest(text=text), self.assertRaises(YamlSubsetError):
                 load_yaml(text)

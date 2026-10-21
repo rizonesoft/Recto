@@ -4,7 +4,7 @@ How Recto's maintainers handle a new issue, from the first reply to closing it. 
 
 ## Labels
 
-Every open issue carries one kind label, one area label once the area is known, and a state label when one applies. The labels live in `.github/labels.yml`.
+Every open issue carries one primary kind label (`bug`, `feature` or `security`), plus `regression`, `data-loss` or `crash` on a bug when they apply, one area label once the area is known, and a state label when one applies. The labels live in `.github/labels.yml`.
 
 | Label | Group | Use it when |
 | ----- | ----- | ----------- |
