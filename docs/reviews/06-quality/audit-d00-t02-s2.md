@@ -182,3 +182,41 @@ OVERALL: needs-attention
 ## Fixes after round 4
 
 - Finding 1 (P2): `review-todo-section` (all three kits) now says that on a stamped section the audit edits nothing in the section by hand: an unmet item is recorded in the findings file, a regression goes through `unstamp` first, and only the reopened section's items are unticked afterwards. This matches its own rule that a stamped checklist is never rewritten. `muse skills validate` -> `valid=True` in all three kits.
+
+## Round 5: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T16:40:20Z
+- Effort: medium
+- Lines: 24
+- Digest: 0de8617aeac0ffd3
+
+## adversarial: needs-attention
+
+1. **P2: Template drift can skip its CI gate.** `.github/workflows/plan.yml:21` and `:36` include only `.claude/skills/**`, although `tests/scripts/test_todo_graph.py:897` now checks templates in `.codex` and `.agents` too. Reproduce with a change confined to `.codex/skills/create-todo/todo-template.md`: neither event filter matches, so `plan-gates` does not run. An in-memory alteration reproduced one template-equality test failure, with zero matching workflow paths. GitHub documents this [path-filter behaviour](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onpushpull_requestpull_request_targetpathspaths-ignore).
+
+## consistency: needs-attention
+
+2. **P2: File closeout preserves stamps it discovers were unearned.** `.claude/skills/process-todo-file/SKILL.md:32` directs an executor finding a partially shipped, ticked item to create a new section while retaining the stamped checklist. Unlike `.claude/skills/review-todo-section/SKILL.md:34` and `:91`, it never routes that discovery through audit and `unstamp`. Reproduce by following file closeout after discovering an existing ticked `Done when:` is unmet: the prescribed action leaves the original section verified and its consumers eligible, despite the known incomplete prerequisite. This concerns unmet existing scope, not newly requested granularity.
+
+## integration: needs-attention
+
+Findings **1 (P2)** and **2 (P2)** affect downstream workflows: the added template regression test is skipped for two of its inputs, and file closeout bypasses the reopening mechanism that makes dependent stamps suspect.
+
+## source-defect: approve
+
+## design: advisory
+
+Not applicable: the section declares `Surface: no`.
+
+## record: approve
+
+Independently reproduced the checkpoint at `f5e972c`: all 12 skills valid with zero diagnostics; `valid: 677 sections`; `plan current`. Both read-only `Repository` tests passed. These checks do not detect the workflow defects above. No files were modified.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 5
+
+- Finding 1 (P2): `.github/workflows/plan.yml` runs on changes under `.codex/skills/**` and `.agents/skills/**` as well as `.claude/skills/**`, in both the push and pull-request filters, so the template-equality test runs for every copy it checks.
+- Finding 2 (P2): `process-todo-file` (all three kits) sends a partly shipped ticked item in a stamped section through `review-todo-section`'s audit stance, which files the repair and reopens the section with `unstamp`; only work beyond the item's own `Done when:` becomes a new section. `muse skills validate` -> `valid=True` in all three kits.
