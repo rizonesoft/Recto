@@ -1123,6 +1123,41 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int) -> Non
             raise ValueError(f"{rel_path}: ObjStm header token count mismatch")
         if int(tokens[idx * 2]) != obj_id:
             raise ValueError(f"{rel_path}: ObjStm slot {idx} has id {tokens[idx * 2]} != {obj_id}")
+        validate_objstm_offsets(rel_path, stm_obj_id, dec, first_val, [int(t) for t in tokens[1::2]])
+
+
+def _complete_pdf_object(chunk: bytes) -> bool:
+    """Whether chunk is exactly one PDF value: a balanced dictionary or array, or a single token."""
+    if chunk.startswith(b"<<") or chunk.startswith(b"["):
+        depth = 0
+        i = 0
+        while i < len(chunk):
+            two = chunk[i : i + 2]
+            if two == b"<<" or chunk[i : i + 1] == b"[":
+                depth += 1
+                i += 2 if two == b"<<" else 1
+                continue
+            if two == b">>" or chunk[i : i + 1] == b"]":
+                depth -= 1
+                i += 2 if two == b">>" else 1
+                if depth == 0:
+                    return i == len(chunk)
+                continue
+            i += 1
+        return False
+    return re.fullmatch(rb"[^\s<>\[\]()%]+", chunk) is not None
+
+
+def validate_objstm_offsets(rel_path: str, stm_obj_id: int, dec: bytes, first: int, offsets: list[int]) -> None:
+    """Each offset in an object stream's header must locate its object: offsets start at 0, rise strictly, stay
+    inside the stream, and each slot up to the next offset holds exactly one complete object (ISO 32000-1 7.5.7)."""
+    body = dec[first:]
+    if not offsets or offsets[0] != 0 or any(b <= a for a, b in zip(offsets, offsets[1:])) or offsets[-1] >= len(body):
+        raise ValueError(f"{rel_path}: ObjStm {stm_obj_id} offsets {offsets} do not locate its objects")
+    for k, start in enumerate(offsets):
+        end = offsets[k + 1] if k + 1 < len(offsets) else len(body)
+        if not _complete_pdf_object(body[start:end].strip()):
+            raise ValueError(f"{rel_path}: ObjStm {stm_obj_id} slot {k} at offset {start} is not one complete object")
 
 
 def validate_content_stream_syntax(rel_path: str, raw: bytes) -> None:
@@ -1170,6 +1205,24 @@ def validate_content_stream_syntax(rel_path: str, raw: bytes) -> None:
                 )
 
 
+def _dict_open(data: bytes, close: int) -> int | None:
+    """The index of the << that the >> at close balances, scanning back, or None."""
+    depth = 0
+    i = close
+    while i >= 0:
+        two = data[i : i + 2]
+        if two == b">>":
+            depth += 1
+            i -= 1
+        elif two == b"<<":
+            depth -= 1
+            if depth == 0:
+                return i
+            i -= 1
+        i -= 1
+    return None
+
+
 def validate_pdf_structure(rel_path: str, data: bytes) -> None:
     """Validate PDF header, stream /Length exactness, xref offsets, and content semantics."""
     if not (data.startswith(b"%PDF-1.") or data.startswith(b"%PDF-2.")):
@@ -1177,9 +1230,16 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
     if not data.endswith(b"%%EOF\n"):
         raise ValueError(f"{rel_path}: missing trailing %%EOF")
 
-    # Verify every stream's /Length matches the exact distance to \nendstream
-    for m in re.finditer(rb"<<([^\n]*?)>>\nstream\n", data):
-        dict_body = m.group(1)
+    # Verify every stream's /Length matches the exact distance to \nendstream. Every stream keyword is found, whatever
+    # its dictionary's layout (single-line or spread over lines), and each must be accounted for: an endstream no
+    # dictionary was matched to refuses.
+    checked = 0
+    for m in re.finditer(rb">>[ \t\r\n]*stream\n", data):
+        open_at = _dict_open(data, m.start())
+        if open_at is None:
+            raise ValueError(f"{rel_path}: stream at {m.end()} has no balanced << >> dictionary")
+        dict_body = data[open_at + 2 : m.start()]
+        checked += 1
         len_m = re.search(rb"/Length\s+(\d+)", dict_body)
         if len_m is None:
             raise ValueError(f"{rel_path}: stream dictionary missing direct /Length")
@@ -1200,6 +1260,10 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
             dec = zlib.decompress(data[stream_start:end_pos])
             if b"/CMapName" not in dec:
                 validate_content_stream_syntax(rel_path, dec)
+
+    ends = data.count(b"\nendstream")
+    if checked != ends:
+        raise ValueError(f"{rel_path}: {ends - checked} stream(s) were not length-checked")
 
     if b"/AcroForm" in data and b"/DA (" in data:
         if b"/DR << /Font" not in data:
@@ -2549,7 +2613,7 @@ CORPUS_PURPOSES: dict[str, str] = {
     "render/simple-1p.pdf": "Single-page PDF 1.7 with Helvetica text and stroked/filled vector rectangle",
     "render/compressed-xref-2p.pdf": "Two-page PDF 1.7 using Type 2 ObjStm and Flate-compressed /XRef stream",
     "render/incremental-2rev.pdf": "Two-revision incremental PDF with /Prev xref chain overriding page 1 content",
-    "render/rotated-pages.pdf": "Four-page PDF exercising /Rotate 0, 90, 180, and 270 with crop/bleed/trim/art boxes",
+    "render/rotated-pages.pdf": "Four-page PDF exercising /Rotate 0, 90, 180, and 270 with mixed /MediaBox and /CropBox",
     "render/images-and-vectors.pdf": "Vector Bézier paths, 8x8 RGB/Gray/1-bit XObjects, Form XObject, and /SMask alpha",
     "render/encrypted-rc4-128.pdf": "Standard Security Handler V=2 R=3 128-bit RC4 encrypted PDF with user/owner passwords",
     "render/encrypted-aes-128.pdf": "Standard Security Handler V=4 R=4 128-bit AES-CBC (/CF /StdCF /AESV2) encrypted PDF",
@@ -2557,8 +2621,8 @@ CORPUS_PURPOSES: dict[str, str] = {
     "text/two-column-links-outline.pdf": "Two-column article layout with hyphenation, /Outlines tree, and /URI + /Dest links",
     "text/scanned.pdf": "Image-only scanned 300 DPI page without /Font resources for OCR pipeline testing",
     "convert/tables-and-forms.pdf": "Ruled 4x5 financial table and AcroForm /Tx, /Btn, and /Ch interactive fields",
-    "convert/sample.docx": "ECMA-376 OpenXML Word document with headings, styled runs, list, and 3x3 table",
-    "convert/sample.xlsx": "ECMA-376 OpenXML Excel workbook with shared strings, numeric cells, and SUM formula",
+    "convert/sample.docx": "Minimal ECMA-376 WordprocessingML document with two plain paragraphs",
+    "convert/sample.xlsx": "Minimal ECMA-376 SpreadsheetML workbook with inline-string and numeric cells",
     "broken/empty-0b.pdf": "Zero-byte file testing empty-input error handling",
     "broken/non-pdf-header.pdf": "Non-PDF plain-text header testing magic-header rejection",
     "broken/truncated-header.pdf": "Truncated 6-byte %PDF-1 header testing short-read rejection",

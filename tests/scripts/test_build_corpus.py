@@ -134,6 +134,51 @@ class BuildCorpusTests(unittest.TestCase):
         self.assertIn(b"/AP << /N << /Yes 12 0 R /Off 13 0 R >> >>", files["convert/tables-and-forms.pdf"])
         self.assertIn(b"/W [1 2 2]", files["render/compressed-xref-2p.pdf"])
 
+    def _one_page_pdf(self, content_obj: bytes) -> bytes:
+        pdf = self.mod.ClassicPdfBuilder("test.pdf")
+        pdf.set_obj(1, "<< /Type /Catalog /Pages 2 0 R >>")
+        pdf.set_obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+        pdf.set_obj(3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>")
+        pdf.set_obj(4, content_obj)
+        return pdf.build(1)
+
+    def test_a_stream_length_is_checked_whatever_the_dictionary_layout(self) -> None:
+        self.mod.validate_pdf_structure("test.pdf", self._one_page_pdf(b"<<\n/Length 3\n>>\nstream\nq Q\nendstream"))
+        for bad in (b"<<\n/Length 999\n>>\nstream\nq Q\nendstream", b"<< /Length 999 >>\nstream\nq Q\nendstream"):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, "is not followed by"):
+                self.mod.validate_pdf_structure("test.pdf", self._one_page_pdf(bad))
+
+    def test_object_stream_offsets_must_locate_their_objects(self) -> None:
+        self.mod.validate_pdf_structure("render/compressed-xref-2p.pdf", self.mod.build_compressed_xref_2p())
+        real = self.mod.flate_compress
+
+        def shifted(raw: bytes) -> bytes:  # the first object's offset now points inside its dictionary
+            return real(b"1 9 2 " + raw[6:] if raw.startswith(b"1 0 2 ") else raw)
+
+        with mock.patch.object(self.mod, "flate_compress", side_effect=shifted):
+            data = self.mod.build_compressed_xref_2p()
+        with self.assertRaisesRegex(ValueError, "do not locate its objects|is not one complete object"):
+            self.mod.validate_pdf_structure("render/compressed-xref-2p.pdf", data)
+
+    def test_fixture_descriptions_claim_only_what_the_fixtures_hold(self) -> None:
+        import io
+        import zipfile
+        files = self.mod.expected_corpus_files()
+        purposes = {k: v.lower() for k, v in self.mod.CORPUS_PURPOSES.items()}
+        rotated = files["render/rotated-pages.pdf"]
+        for box in ("bleed", "trim", "art"):
+            if f"/{box.capitalize()}Box".encode() not in rotated:
+                self.assertNotIn(box, purposes["render/rotated-pages.pdf"])
+        docx = zipfile.ZipFile(io.BytesIO(files["convert/sample.docx"])).read("word/document.xml")
+        for marker, word in ((b"<w:tbl", "table"), (b"<w:numPr", "list"), (b"w:pStyle", "heading")):
+            if marker not in docx:
+                self.assertNotIn(word, purposes["convert/sample.docx"])
+        xlsx = zipfile.ZipFile(io.BytesIO(files["convert/sample.xlsx"]))
+        if "xl/sharedStrings.xml" not in xlsx.namelist():
+            self.assertNotIn("shared strings", purposes["convert/sample.xlsx"])
+        if b"<f>" not in xlsx.read("xl/worksheets/sheet1.xml"):
+            self.assertNotIn("formula", purposes["convert/sample.xlsx"])
+
     def test_encrypted_broken_seeds_and_readme(self) -> None:
         files = self.mod.expected_corpus_files()
         for enc_name in (
