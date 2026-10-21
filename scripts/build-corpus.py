@@ -1049,6 +1049,9 @@ def validate_classic_xref_at(rel_path: str, data: bytes, xref_offset: int, visit
                         f"does not start with {expected_prefix!r}"
                     )
                 located.setdefault(obj_num, off)
+            elif obj_num != 0:
+                # A newer section's free entry wins over an older live one: the object is gone from that revision on.
+                located.setdefault(obj_num, "free")
             pos += 20
 
     trailer_end = data.find(b"startxref\n", pos)
@@ -1153,6 +1156,8 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int, visite
         elif etype == 2:
             type2_refs.append((obj_id, f2, f3))
             located.setdefault(obj_id, ("compressed", f2, f3))
+        else:
+            located.setdefault(obj_id, "free")
 
     for obj_id, stm_obj_id, idx in type2_refs:
         if stm_obj_id not in type1_offsets:
@@ -1272,6 +1277,7 @@ def _skip_object(body: bytes, i: int) -> int:
     (N G R), true, false or null. Anything else refuses, so a malformed object is never skipped over."""
     if body.startswith(b"<<", i):
         i = _skip_ws(body, i + 2)
+        keys: set[bytes] = set()
         while not body.startswith(b">>", i):
             if i >= len(body):
                 raise ValueError("unterminated dictionary")
@@ -1281,6 +1287,9 @@ def _skip_object(body: bytes, i: int) -> int:
             after = key.end()
             if after < len(body) and not body[after : after + 1].isspace() and body[after] not in _DELIMITERS:
                 raise ValueError(f"dictionary key at {i} is not a plain name")
+            if key.group(0) in keys:
+                raise ValueError(f"dictionary key {key.group(0)!r} appears twice")
+            keys.add(key.group(0))
             i = _skip_ws(body, key.end())
             if body.startswith(b">>", i):
                 raise ValueError(f"dictionary key {key.group(0)!r} has no value")

@@ -278,6 +278,23 @@ class BuildCorpusTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 self.mod._skip_object(value, 0)
 
+    def test_a_newer_free_entry_and_a_repeated_key_refuse(self) -> None:
+        d = self.mod.build_incremental_2rev()
+        t = d.rfind(b"trailer\n")
+        with self.assertRaisesRegex(ValueError, "is not what the cross-reference chain locates"):
+            self.mod.validate_pdf_structure("render/incremental-2rev.pdf", d[:t] + b"1 1\n0000000000 00001 f \n" + d[t:])
+        real = self.mod.flate_compress
+
+        def repeated(raw: bytes) -> bytes:  # equal length: every offset in the stream header lines up
+            return real(raw.replace(b"/Type /Catalog /Pages", b"/Type /Catalog /Type ", 1))
+
+        with mock.patch.object(self.mod, "flate_compress", side_effect=repeated):
+            data = self.mod.build_compressed_xref_2p()
+        with self.assertRaisesRegex(ValueError, "is not one complete object"):
+            self.mod.validate_pdf_structure("render/compressed-xref-2p.pdf", data)
+        with self.assertRaisesRegex(ValueError, "appears twice"):
+            self.mod._skip_object(b"<< /A 1 /A 2 >>", 0)
+
     def test_a_classic_xref_entry_has_one_form(self) -> None:
         data = self.mod.build_simple_1p()
         self.mod.validate_pdf_structure("render/simple-1p.pdf", data)

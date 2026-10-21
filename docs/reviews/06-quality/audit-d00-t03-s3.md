@@ -319,3 +319,65 @@ OVERALL: needs-attention
 - Finding 2 (P1): `_skip_object` is now a grammar for the values the corpus writes: dictionaries of plain-name keys each with a value, arrays, literal and hex strings (hex digits only), plain names, numbers, `N G R` references, `true`, `false`, `null`; anything else refuses, so `<< 12345 /Catalog` and `<< /Type XXXXXXXX` no longer pass (`test_every_object_follows_the_pdf_value_grammar`).
 
 The encryption validators (`validate_encrypted_*`) still read some dictionaries by text search; they validate the encrypted fixtures that `D00 T03 §4` owns, and are taken up in that section's audit (`D06 T05 §12`).
+
+## Round 8: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T19:41:09Z
+- Effort: medium
+- Lines: 46
+- Digest: d3118f5661c433ee
+
+## adversarial: needs-attention
+
+1. **P1: A newer free entry incorrectly falls back to an older live object.** `scripts/build-corpus.py:1041` records only `n` entries, so `/Prev` traversal resurrects objects explicitly freed by the newest revision. Reproduced in memory:
+
+   ```python
+   d = m.build_incremental_2rev()
+   t = d.rfind(b"trailer\n")
+   d = d[:t] + b"1 1\n0000000000 00001 f \n" + d[t:]
+   m.validate_pdf_structure("probe.pdf", d)
+   ```
+
+   Validation succeeds although the latest index frees catalog object 1 while `/Root 1 0 R` still references it. Existing object offsets and `startxref` remain unchanged. This defeats round 7’s requirement that validation reflect the newest cross-reference state.
+
+## consistency: approve
+
+No independent findings.
+
+## integration: advisory
+
+Both findings let malformed generated fixtures pass the structural gate relied upon by downstream engine tests. Deterministic byte comparison cannot detect defects shared by the generator and committed output. These reproductions do not establish corruption in the current committed fixtures.
+
+## source-defect: needs-attention
+
+2. **P1: Compressed dictionaries still accept duplicate keys with conflicting values.** `scripts/build-corpus.py:1275` parses dictionary pairs without checking key uniqueness. Compressed objects reach this parser through `_complete_pdf_object` at `scripts/build-corpus.py:1192`, bypassing `dict_entries`’ duplicate rejection. Reproduce by wrapping `flate_compress` during `build_compressed_xref_2p()`:
+
+   ```python
+   original = m.flate_compress
+   m.flate_compress = lambda raw: original(
+       raw.replace(b"/Type /Catalog /Pages", b"/Type /Catalog /Type ")
+   )
+   d = m.build_compressed_xref_2p()
+   m.validate_pdf_structure("probe.pdf", d)
+   ```
+
+   Validation succeeds with two `/Type` entries and no `/Pages` in the compressed catalog. The equal-length replacement preserves compressed-object offsets; the builder recalculates stream lengths and outer offsets. Duplicate dictionary keys have undefined values under [Adobe PDF Reference §3.2.6](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.6.pdf). The claimed strict grammar still certifies this malformed fixture.
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: advisory
+
+At `00ec641`, independently reran `python -B scripts/build-corpus.py --check`: exit 0, 39 current fixtures. Four targeted structural regression tests passed. Corpus size was 60,176 bytes. The recorded checkpoint result holds, but does not establish the structural guarantees contradicted above. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 8
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 20 tests`, `OK` (`test_a_newer_free_entry_and_a_repeated_key_refuse` fails against `00ec641`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): free entries are recorded in the chain too (classic `f`, xref-stream type 0), newest first, so an object a newer revision frees cannot fall back to an older live entry; the coverage check then refuses the walked object the chain no longer locates.
+- Finding 2 (P1): the grammar refuses a dictionary key that appears twice, wherever the dictionary sits (compressed objects included).
