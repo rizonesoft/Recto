@@ -704,7 +704,7 @@ No files were modified; the working tree remains clean.
 HIGHEST: P3
 OVERALL: needs-attention
 
-## Round 14 and the stop
+## Stop after round 14
 
 Round 14 returned one finding, tagged P3, and declared `HIGHEST: P3`. From round 9 on that ends the loop (`stopped-low-severity`).
 
