@@ -607,13 +607,15 @@ def adjacency_report(root=ROOT):
 
 
 def rounds_recorded(root, reviews):
-    """Review rounds spent on a section: the highest round the dispatcher recorded in its findings files (an outage
-    round that returned no review counts), or the highest round named on the command line if that is higher."""
-    spent = max((r["round"] for r in reviews), default=0)
-    for report in {r["report"] for r in reviews}:
+    """Review rounds spent on a section, summed over its findings files (one per review loop): in each, the highest
+    round the dispatcher recorded (an outage round that returned no review counts) or the highest round named for
+    that file on the command line, whichever is higher."""
+    spent = 0
+    for report in dict.fromkeys(r["report"] for r in reviews):
+        named = max(r["round"] for r in reviews if r["report"] == report)
         path = Path(root) / report
-        if path.is_file():
-            spent = max([spent, *(int(n) for n in ROUND_RECORD.findall(read_text(path)))])
+        recorded = [int(n) for n in ROUND_RECORD.findall(read_text(path))] if path.is_file() else []
+        spent += max([named, *recorded])
     return spent
 
 

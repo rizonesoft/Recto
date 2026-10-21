@@ -378,6 +378,19 @@ class Stamp(Tree):
         with self.assertRaises(tg.Refused):
             tg.graph(self.root)
 
+    def test_rounds_spent_add_up_across_review_loops(self):
+        self.tick_work()
+        first = self.root / "docs/reviews/00-workspace/D00-T01-s1.md"
+        first.write_text("".join(f"## Round {n}: astra (`m` via `codex`)\n\n" for n in range(1, 23)), encoding="utf-8")
+        second = self.root / "docs/reviews/00-workspace/D00-T01-s1-loop2.md"
+        second.write_text("## Round 1: astra (`m` via `codex`)\n\n## Round 2: astra (`m` via `codex`)\n\n",
+                          encoding="utf-8")
+        reviews = [{"round": 22, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": "stopped-at-22"},
+                   {"round": 2, "report": "docs/reviews/00-workspace/D00-T01-s1-loop2.md", "verdict": "clean"}]
+        receipt = tg.stamp(self.root, "D00 T01 §1", self.sha, reviews, ["true -> ok"], "2026-10-13",
+                           cap_outcome="loop 1 hit the cap; the repair was filed and a second loop ran clean")
+        self.assertEqual(json.loads((self.root / receipt).read_text(encoding="utf-8"))["rounds_spent"], 24)
+
     def test_a_severity_stop_records_its_outcome(self):
         self.tick_work()
         low = [{"round": tg.SEVERITY_CUTOFF_ROUND + 1, "report": "docs/reviews/00-workspace/D00-T01-s1.md",
