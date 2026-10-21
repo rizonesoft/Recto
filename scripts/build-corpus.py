@@ -3190,7 +3190,8 @@ SEED_RENDER_OPERATORS = {
 CONTENT_DELIMITERS = b"()<>[]{}/%"
 CONTENT_WHITESPACE = b" \t\r\n\f\x00"
 # Each operator the seeds use, with the kinds of its operands in order (ISO 32000-1 Tables 51, 57, 59, 74, 105, 107
-# and 320): n number, i integer, N name, s string, a array, d dictionary.
+# and 320): n number, i integer, N name, s string, d dictionary, a an array of numbers (a dash pattern), A an array of
+# strings and numbers (TJ).
 CONTENT_OPERANDS: dict[bytes, str] = {
     b"q": "", b"Q": "", b"cm": "nnnnnn", b"w": "n", b"J": "i", b"j": "i", b"M": "n", b"d": "an", b"gs": "N",
     b"m": "nn", b"l": "nn", b"c": "nnnnnn", b"v": "nnnn", b"y": "nnnn", b"h": "", b"re": "nnnn",
@@ -3198,7 +3199,7 @@ CONTENT_OPERANDS: dict[bytes, str] = {
     b"W": "", b"W*": "",
     b"g": "n", b"G": "n", b"rg": "nnn", b"RG": "nnn", b"k": "nnnn", b"K": "nnnn",
     b"BT": "", b"ET": "", b"Tc": "n", b"Tw": "n", b"Tz": "n", b"TL": "n", b"Tf": "Nn", b"Tr": "i", b"Ts": "n",
-    b"Td": "nn", b"TD": "nn", b"Tm": "nnnnnn", b"T*": "", b"Tj": "s", b"TJ": "a",
+    b"Td": "nn", b"TD": "nn", b"Tm": "nnnnnn", b"T*": "", b"Tj": "s", b"TJ": "A",
     b"Do": "N", b"BMC": "N", b"BDC": "N?", b"EMC": "",
 }
 PATH_CONSTRUCTION = {b"m", b"l", b"c", b"v", b"y", b"h", b"re"}
@@ -3222,16 +3223,19 @@ def _content_operand(rel_path: str, raw: bytes, i: int) -> tuple[str, int]:
         return "s", i
     if raw.startswith(b"<<", i) or b == 0x5B:  # dictionary or array: its operands, to the matching close
         close, i = (b">>", i + 2) if b == 0x3C else (b"]", i + 1)
+        elements = ""
         while True:
             while i < len(raw) and raw[i] in CONTENT_WHITESPACE:
                 i += 1
             if i >= len(raw):
                 raise ValueError(f"{rel_path}: unterminated {'dictionary' if close == b'>>' else 'array'}")
             if raw.startswith(close, i):
-                return ("d" if close == b">>" else "a"), i + len(close)
+                # An array's kind lists its elements' kinds ("a:sns"), so an operator can require what they are.
+                return ("d" if close == b">>" else "a:" + elements), i + len(close)
             kind, i = _content_operand(rel_path, raw, i)
             if kind == "k":
                 raise ValueError(f"{rel_path}: an operator inside an array or dictionary operand")
+            elements += kind[0]
     if b == 0x3C:  # hex string
         close = raw.find(b">", i)
         if close < 0 or re.fullmatch(rb"[0-9A-Fa-f\s]*", raw[i + 1 : close]) is None:
@@ -3296,14 +3300,20 @@ def validate_content_instructions(rel_path: str, raw: bytes, resources: dict[byt
         shape = CONTENT_OPERANDS.get(op)
         if shape is None:
             raise ValueError(f"{rel_path}: operator {op.decode()} is not one the corpus content uses")
-        kinds = "".join(k for k, _ in operands)
-        want = shape.replace("?", "")
+        kinds = "".join(k[0] for k, _ in operands)
+        want = shape.replace("?", "").replace("A", "a")
         fits = len(kinds) == len(want) and all(
             k == w or (w == "n" and k == "i") for k, w in zip(kinds, want))
+        for (kind, _), w in zip(operands, shape):
+            elements = kind[2:] if kind.startswith("a:") else ""
+            if (w == "a" and set(elements) - set("ni")) or (w == "A" and (not elements or set(elements) - set("nis"))):
+                fits = False
         if shape.endswith("?"):  # BDC: a tag, then a property list (dictionary or name)
             fits = len(kinds) == 2 and kinds[0] == "N" and kinds[1] in "dN"
         if not fits:
-            raise ValueError(f"{rel_path}: {op.decode()} takes operands {shape!r}, got {kinds!r}")
+            raise ValueError(f"{rel_path}: {op.decode()} takes operands {shape!r}, got "
+                             f"{[k for k, _ in operands]!r}")
+        _check_operand_values(rel_path, op, operands)
         if in_path and op not in PATH_CONSTRUCTION | PATH_PAINTING | {b"W", b"W*"}:
             raise ValueError(f"{rel_path}: {op.decode()} inside a path before its painting operator")
         if op in PATH_CONSTRUCTION:
@@ -3337,6 +3347,27 @@ def validate_content_instructions(rel_path: str, raw: bytes, resources: dict[byt
     if saves or in_text or in_path:
         raise ValueError(f"{rel_path}: content ends inside q, BT or a path")
     return ops
+
+
+def _check_operand_values(rel_path: str, op: bytes, operands: list[tuple[str, bytes]]) -> None:
+    """Refuse operand values outside what the operator accepts (ISO 32000-1 8.4.3, 8.6.4, 9.3.6): colour components
+    from 0 to 1, a line cap or join style from 0 to 2, a text rendering mode from 0 to 7, a non-negative line width,
+    and dash lengths that are non-negative and not all zero."""
+    def numbers(values):
+        return [float(v) for _, v in values]
+
+    if op in (b"g", b"G", b"rg", b"RG", b"k", b"K") and not all(0 <= x <= 1 for x in numbers(operands)):
+        raise ValueError(f"{rel_path}: {op.decode()} colour components must lie from 0 to 1")
+    if op in (b"J", b"j") and int(operands[0][1]) not in (0, 1, 2):
+        raise ValueError(f"{rel_path}: {op.decode()} style must be 0, 1 or 2")
+    if op == b"Tr" and not 0 <= int(operands[0][1]) <= 7:
+        raise ValueError(f"{rel_path}: Tr rendering mode must be 0 to 7")
+    if op == b"w" and float(operands[0][1]) < 0:
+        raise ValueError(f"{rel_path}: w line width must not be negative")
+    if op == b"d":
+        dashes = [float(x) for x in operands[0][1][1:-1].split()]
+        if any(x < 0 for x in dashes) or (dashes and not any(dashes)):
+            raise ValueError(f"{rel_path}: d dash lengths must be non-negative and not all zero")
 
 
 def resource_names(resources: bytes) -> dict[bytes, set[bytes]]:

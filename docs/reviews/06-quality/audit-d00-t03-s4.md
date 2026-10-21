@@ -430,3 +430,44 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `OK` (`test_seed_content_must_be_executable_as_written` fails against `663a5c6`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P1): operator presence is no longer the test. Every seed content stream goes through `validate_content_instructions()`: each instruction's operands are read whole by `content_instructions()` (strings, arrays and dictionaries included) and must match the operator's count and kinds (`CONTENT_OPERANDS`, from ISO 32000-1 Tables 51, 57, 59, 74, 105, 107 and 320); `q`/`Q` and `BT`/`ET` must balance, text-showing operators sit inside `BT ... ET`, a path runs from `m` or `re` to a painting operator with only construction and clipping between, and every `Tf`, `Do` and `gs` name must exist in that stream's own resources (the page's for its `/Contents`, a form's own for the form). The render seed regenerated with bare operator names, and each of five smaller malformations, refuse.
+
+## Round 10: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T22:23:34Z
+- Effort: medium
+- Lines: 26
+- Digest: 4babb306c9073f36
+
+### adversarial: needs-attention
+
+1. **P1: Invalid array operands still pass seed verification.** `scripts/build-corpus.py:3233` discards array element types, and `:3302` checks only the outer operand kind. Reproduced entirely in memory by intercepting `make_stream_obj()` during `build_seed_render_ops()` and replacing `[(Vec) -40 (tor & Text)] TJ` with `[/Invalid] TJ`. The builder recalculates compression, lengths and offsets; `validate_seed_pdf_structure()` accepts the result. Supplying those bytes through mocked generator output and file reads, with matching regenerated provenance, makes **`check_corpus()` return `(True, [])`**. A generator regression can therefore replace valid rendering coverage with malformed instructions while passing the checkpoint. The committed seed itself is not shown to be malformed.
+
+### consistency: approve
+
+No separate finding.
+
+### integration: advisory
+
+Finding 1 weakens the rendering seeds consumed by `todo/01-engine/TODO-03-cli-and-fuzz.md:156`: accepted content can fail before exercising the intended rendering operation. No downstream engine defect is established.
+
+### source-defect: needs-attention
+
+Finding **1 (P1)**: accepting any array for `TJ` does not enforce its operand contract. Its elements must be strings or numbers; `/Invalid` is a name. See the [PDF Association operator reference](https://pdfa.org/wp-content/uploads/2023/08/PDF-Operators-CheatSheet.pdf).
+
+### design: advisory
+
+Not applicable; this section owns no user surface.
+
+### record: approve
+
+At `9956476`, independently reran `python -B scripts/build-corpus.py --check`: exit **0**, **39 fixtures verified**. The section fixture test and round 9 instruction-validator regression test also passed: **2 tests, OK**. Neither detects finding 1. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 10
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 44 tests`, `OK` (the five new subtests fail against `9956476`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): an array operand now carries its elements' kinds, and the operand table says what they must be: `TJ` takes a non-empty array of strings and numbers, `d` an array of numbers. `[/Invalid] TJ` refuses. The same layer now also checks operand values (`_check_operand_values`, ISO 32000-1 8.4.3, 8.6.4 and 9.3.6): colour components from 0 to 1, line cap and join 0 to 2, text rendering mode 0 to 7, a non-negative line width, and dash lengths non-negative and not all zero.

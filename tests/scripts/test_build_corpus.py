@@ -577,7 +577,12 @@ class BuildCorpusTests(unittest.TestCase):
                               (b"/Fm2 Do", "resources lack"),
                               (b"(x) Tj", "outside BT"),
                               (b"10 10 m 1 0 0 rg 20 20 l S", "inside a path"),
-                              (b"q BT ET", "ends inside")):
+                              (b"q BT ET", "ends inside"),
+                              (b"BT /F1 12 Tf [/Invalid] TJ ET", "TJ takes operands"),
+                              (b"[3 /x] 0 d", "d takes operands"),
+                              (b"1.5 0 0 rg", "from 0 to 1"),
+                              (b"3 J", "0, 1 or 2"),
+                              (b"[0 0] 0 d", "not all zero")):
             with self.subTest(content=content), self.assertRaisesRegex(ValueError, says):
                 check("x", content, res)
         # The same regression through the generator: the render seed's page content reduced to bare operator names.
