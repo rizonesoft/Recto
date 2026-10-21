@@ -179,3 +179,48 @@ OVERALL: needs-attention
 
 - Finding 1 (P1): the GitHub repository is read from `origin` (`origin_repo`, refusing a non-GitHub origin), and every `gh` call names it (`--repo`, or the explicit `repos/<owner>/<name>/` API path), so an inherited `GH_REPO` cannot redirect a merge (`test_every_github_call_names_the_repository_behind_origin`).
 - Finding 2 (P2): a timeout or a failure to start a command becomes a reported failure, and a failed or timed-out merge reports the pull request's state read back from GitHub (or that it is unknown) instead of assuming it is still open (`test_a_timed_out_merge_reports_what_github_says`).
+
+## Round 5: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:25:30Z
+- Effort: medium
+- Lines: 28
+- Digest: 058dfd1686b945d9
+
+## adversarial: needs-attention
+
+1. **P1, `scripts/merge_prs.py:102`: Rejected origin URLs can disclose credentials.** The exception includes the complete URL, including any embedded username/password or token. The scheduled runner saves this diagnostic and emails its log tail. Reproduce by mocking `git remote get-url origin` to return a credential-bearing HTTPS URL. An in-memory probe confirmed the synthetic credential appears in the exception. Reject unsupported origins without including their raw URL.
+
+2. **P1, `scripts/merge_prs.py:133`: GitHub Actions identity does not establish pins-workflow provenance.** Any PR authored by `github-actions[bot]` with either accepted label passes this gate, regardless of its originating workflow, branch or changed files. This exceeds the authorization to merge Dependabot and pins-workflow PRs. Reproduce with an Actions-authored feature PR on `unrelated-feature`, labelled `dependencies`, with successful required checks: `why_not()` returns `None`, confirmed in memory. Verify the approved producer and permitted change scope.
+
+## consistency: needs-attention
+
+Finding 1 violates the repository’s prohibition on credentials entering logs. Finding 2 violates the rule reserving other PRs for operator merging.
+
+## integration: needs-attention
+
+3. **P2, `scripts/merge_prs.py:225`: Successful CLI exit is treated as a completed merge without verification.** With a merge queue required, `gh pr merge` can successfully enqueue a PR instead of merging it. The script immediately reports it merged, pulls and validates unchanged `main`, then processes another PR. This defeats the promised merge, synchronize, validate sequence. Reproduce with two eligible PRs targeting a queue-protected branch. The equivalent mocked probe left both PRs `OPEN` while returning `merge-prs: 2 merged`. Read back successful requests and verify the resulting merge reached the local checkout before continuing. [GitHub CLI merge contract](https://cli.github.com/manual/gh_pr_merge)
+
+## source-defect: needs-attention
+
+Finding 2 substitutes a shared bot identity for the governing document’s specific workflow authorization. Finding 3 overlooks GitHub CLI’s documented queue behavior.
+
+## design: advisory
+
+No rendered interface changes require review.
+
+## record: advisory
+
+Inspected the candidate, follow-up fixes, governing documents and recorded review evidence. Ran read-only, in-memory probes with bytecode generation disabled. Historical test counts and live-GitHub claims were not independently reproduced. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 5
+
+`python -m unittest tests.scripts.test_merge_prs` -> `Ran 20 tests`, `OK`. Live PR #1 (`pins/vcpkg-2026.10.16`, changing only `vcpkg-configuration.json`) is eligible.
+
+- Finding 1 (P1): a refused `origin` is reported as "origin is not a github.com repository", never with its URL (`test_an_origin_url_never_reaches_the_output`).
+- Finding 2 (P1): provenance is author, branch and files together (`PRODUCERS`): the pins workflow on `winui/<version>` or `pins/toolchain-*` / `pins/vcpkg-*` changing only `src/app/Recto.vcxproj` or `vcpkg-configuration.json`; Dependabot on `dependabot/*` changing only files under `.github/`. A github-actions pull request on another branch, or touching other files, is left for the operator (`test_provenance_is_branch_and_files_not_just_the_author`).
+- Finding 3 (P2): after `gh pr merge` succeeds, the pull request is read back; only `MERGED` with a merge commit counts, and that commit must be in the checkout after `git pull --ff-only` (`git merge-base --is-ancestor`). A queued or refused merge stops the run (`test_a_queued_merge_stops_the_run`).

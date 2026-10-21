@@ -17,11 +17,13 @@ GREEN_RUNS = [(name, "completed", "success") for name in sorted(merge_prs.REQUIR
 
 
 def pr(number, *, author="app/github-actions", labels=("dependencies", "pins"), mergeable="MERGEABLE",
-       checks=None, branch="pins/vcpkg-2026.10.16", base="main"):
+       checks=None, branch=None, base="main"):
+    branch = branch or ("dependabot/github_actions/x" if "dependabot" in author else "pins/vcpkg-2026.10.16")
     """A pull request as gh pr view shows it, with its head commit's check runs under "_runs" (for the fake)."""
     return {"number": number, "title": f"pin {number}", "author": {"login": author}, "state": "OPEN",
             "labels": [{"name": n} for n in labels], "baseRefName": base, "headRefName": branch,
-            "headRefOid": f"{number:040d}", "mergeable": mergeable,
+            "headRefOid": f"{number:040d}", "mergeable": mergeable, "mergeCommit": None,
+            "files": [{"path": ".github/workflows/build.yml" if "dependabot" in author else "vcpkg-configuration.json"}],
             "_runs": GREEN_RUNS if checks is None else list(checks), "_statuses": []}
 
 
@@ -31,6 +33,7 @@ class FakeRun:
 
     def __init__(self, prs, *, dirty="", head=SHA, upstream=SHA, fail=(), after_merge=None, raise_on=None):
         self.raise_on = raise_on
+        self.lands = True  # a merge request merges; False models a merge queue that only enqueues
         self.prs = {p["number"]: p for p in prs}
         self.dirty, self.head, self.upstream, self.fail, self.after_merge = dirty, head, upstream, fail, after_merge
         self.calls = []
@@ -63,8 +66,11 @@ class FakeRun:
             p = next(p for p in self.prs.values() if p["headRefOid"] == sha)
             rows = p["_statuses"] if path.split("?")[0].endswith("/status") else p["_runs"]
             out = "".join(json.dumps(list(r)) + "\n" for r in rows)
-        elif args[:3] == ["gh", "pr", "merge"] and self.after_merge:
-            self.after_merge(int(args[3]), self.prs)
+        elif args[:3] == ["gh", "pr", "merge"]:
+            if self.lands:
+                self.prs[int(args[3])].update(state="MERGED", mergeCommit={"oid": "c" * 40})
+            if self.after_merge:
+                self.after_merge(int(args[3]), self.prs)
         return subprocess.CompletedProcess(args, 0, out, "")
 
     def merges(self):
@@ -96,8 +102,10 @@ class MergePrs(unittest.TestCase):
         merge = next(c for c in fake.calls if c[:3] == ["gh", "pr", "merge"])
         self.assertEqual(merge[4:], ["--repo", "rizonesoft/Recto", "--rebase", "--match-head-commit", f"{1:040d}"])
         after = fake.calls[fake.calls.index(merge) + 1 :]
-        self.assertEqual(after[0][:3], ["git", "pull", "--ff-only"])
-        self.assertEqual(after[1][-1], "validate")
+        self.assertEqual(after[0][:3], ["gh", "pr", "view"])  # read back: merged, not merely queued
+        self.assertEqual(after[1][:3], ["git", "pull", "--ff-only"])
+        self.assertEqual(after[2][:3], ["git", "merge-base", "--is-ancestor"])
+        self.assertEqual(after[3][-1], "validate")
 
     def test_ineligible_pull_requests_are_skipped(self):
         failing = GREEN_RUNS[:-1] + [(GREEN_RUNS[-1][0], "completed", "failure")]
@@ -155,8 +163,8 @@ class MergePrs(unittest.TestCase):
         self.assertEqual(fake.merges(), ["1"])
 
     def test_excluded_branches_are_left_for_their_section(self):
-        fake = FakeRun([pr(1, branch="pins/section-work-1")])
-        with mock.patch.object(merge_prs, "EXCLUDED_BRANCHES", ("pins/section-work",)):
+        fake = FakeRun([pr(1, branch="pins/vcpkg-section-work-1")])
+        with mock.patch.object(merge_prs, "EXCLUDED_BRANCHES", ("pins/vcpkg-section-work",)):
             self.assertEqual(self.main(fake), 0)
         self.assertEqual(fake.merges(), [])
         self.assertIn("section work", self.lines[0])
@@ -237,6 +245,35 @@ class MergePrs(unittest.TestCase):
         fake = Elsewhere([pr(1)])
         self.assertEqual(self.main(fake), 1)
         self.assertEqual(fake.merges(), [])
+
+    def test_provenance_is_branch_and_files_not_just_the_author(self):
+        feature = pr(1, branch="unrelated-feature")
+        foreign = pr(2)
+        foreign["files"] = [{"path": "src/pdf/parser.cpp"}]
+        dependabot_code = pr(3, author="app/dependabot")
+        dependabot_code["files"] = [{"path": "scripts/merge_prs.py"}]
+        fake = FakeRun([feature, foreign, dependabot_code, pr(4, author="app/dependabot")])
+        self.assertEqual(self.main(fake), 0)
+        self.assertEqual(fake.merges(), ["4"])
+
+    def test_a_queued_merge_stops_the_run(self):
+        fake = FakeRun([pr(1), pr(2)])
+        fake.lands = False
+        self.assertEqual(self.main(fake), 1)
+        self.assertEqual(fake.merges(), ["1"])
+        self.assertIn("queued or refused", self.lines[-1])
+        self.assertNotIn("merged #1", " ".join(self.lines))
+
+    def test_an_origin_url_never_reaches_the_output(self):
+        class Secret(FakeRun):
+            def __call__(self, args, root):
+                if args[:4] == ["git", "remote", "get-url", "origin"]:
+                    self.calls.append(args)
+                    return subprocess.CompletedProcess(args, 0, "https://user:s3cret@example.com/x.git\n", "")
+                return super().__call__(args, root)
+
+        self.assertEqual(self.main(Secret([pr(1)])), 1)
+        self.assertNotIn("s3cret", " ".join(self.lines))
 
     def test_a_dry_run_merges_nothing(self):
         fake = FakeRun([pr(1)])

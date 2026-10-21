@@ -34,7 +34,14 @@ import todo_graph  # noqa: E402
 sys.path.insert(0, str(ROOT / "scripts"))
 import campaign_guard  # noqa: E402
 
-AUTHORS = {"app/dependabot", "dependabot[bot]", "app/github-actions", "github-actions[bot]"}
+# Who may open a pull request this merges, the branch that producer uses, and the files it may change. An author
+# alone proves nothing (any workflow can open a pull request as github-actions), so branch and files must also be the
+# producer's own: the pins workflow edits only the WinUI, build-tools and vcpkg pins, Dependabot only GitHub Actions.
+PRODUCERS = (
+    ({"app/github-actions", "github-actions[bot]"}, re.compile(r"winui/[\w.-]+|pins/(?:toolchain|vcpkg)-[\w.-]+"),
+     {"src/app/Recto.vcxproj", "vcpkg-configuration.json"}),
+    ({"app/dependabot", "dependabot[bot]"}, re.compile(r"dependabot/[\w./-]+"), None),
+)
 LABELS = {"dependencies", "pins"}
 # Branch prefixes of pin pull requests that belong to TODO section work and are merged there, never here. Recto has
 # none today: the Windows SDK line moves through an issue and the operator's decision, not a pull request.
@@ -99,7 +106,8 @@ def origin_repo(run, root):
     url = check(run, root, ["git", "remote", "get-url", "origin"], "git remote get-url origin").strip()
     m = re.fullmatch(r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)([\w.-]+/[\w.-]+?)(?:\.git)?/?", url)
     if m is None:
-        raise RuntimeError(f"origin {url!r} is not a GitHub repository")
+        # The URL itself is never repeated: it can carry a token, and this message reaches logs and email.
+        raise RuntimeError("origin is not a github.com repository")
     return m.group(1)
 
 
@@ -130,8 +138,17 @@ def checks_green(runs):
 def why_not(pr, runs, statuses=()):
     """Why a pull request is not eligible, or None when it is. runs and statuses: the check runs and the legacy commit
     statuses on its head commit."""
-    if (pr.get("author") or {}).get("login") not in AUTHORS:
+    author = (pr.get("author") or {}).get("login")
+    producer = next((p for p in PRODUCERS if author in p[0]), None)
+    if producer is None:
         return "not from Dependabot or the pins workflow"
+    _, branch, files = producer
+    if not branch.fullmatch(pr.get("headRefName", "")):
+        return "not on its producer's branch"
+    paths = [f.get("path", "") for f in pr.get("files") or []]
+    if not paths or len(paths) >= 100 or not all(path in files if files else path.startswith(".github/")
+                                                    for path in paths):
+        return "changes files its producer never changes"
     if not LABELS & {label["name"] for label in pr.get("labels") or []}:
         return "not labelled dependencies or pins"
     if pr.get("state") != "OPEN" or pr.get("baseRefName") != "main":
@@ -147,7 +164,7 @@ def why_not(pr, runs, statuses=()):
     return None
 
 
-FIELDS = "number,title,author,labels,baseRefName,headRefName,headRefOid,mergeable,state"
+FIELDS = "number,title,author,labels,baseRefName,headRefName,headRefOid,mergeable,state,files,mergeCommit"
 REPO: list[str] = [""]  # owner/name, set from origin by merge_all before any gh call
 
 
@@ -222,10 +239,23 @@ def merge_all(run, root, args, out):
             out(f"merge-prs: stopped at #{number}, whose state is now {state}: {e}; it and any later pull request "
                 f"are left for you")
             return 1
+        # A successful exit can mean queued rather than merged: only GitHub's MERGED state, and its merge commit in the
+        # pulled checkout, count.
+        try:
+            landed = current(run, root, number)
+        except RuntimeError as e:
+            out(f"merge-prs: #{number}'s state after merging could not be read: {e}; stopped")
+            return 1
+        if landed.get("state") != "MERGED" or not (landed.get("mergeCommit") or {}).get("oid"):
+            out(f"merge-prs: #{number} is {landed.get('state')} after the merge request (queued or refused); stopped, "
+                f"any later pull request waits")
+            return 1
         merged += 1
         out(f"merge-prs: merged #{number} ({pr['title']})")
         try:
             check(run, root, ["git", "pull", "--ff-only", "--quiet", "origin", "main"], "git pull --ff-only")
+            check(run, root, ["git", "merge-base", "--is-ancestor", landed["mergeCommit"]["oid"], "HEAD"],
+                  f"#{number}'s merge commit in the local checkout")
             check(run, root, [sys.executable, str(Path(root) / "scripts" / "todo-graph.py"), "validate"],
                   "todo-graph validate")
         except RuntimeError as e:
