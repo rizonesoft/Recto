@@ -1059,8 +1059,9 @@ def validate_classic_xref_at(rel_path: str, data: bytes, xref_offset: int, visit
                         f"does not start with {expected_prefix!r}"
                     )
                 located.setdefault(obj_num, off)
-            elif obj_num != 0:
+            else:
                 # A newer section's free entry wins over an older live one: the object is gone from that revision on.
+                # Object 0's entry is recorded too, so a chain that never lists it refuses below.
                 located.setdefault(obj_num, "free")
             pos += 20
 
@@ -1145,11 +1146,13 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int, visite
     type2_refs: list[tuple[int, int, int]] = []
     for obj_id in range(size):
         etype, f2, f3 = struct.unpack(">BHH", unpacked[obj_id * row_width : (obj_id + 1) * row_width])
+        if (obj_id == 0 or etype == 0) and (etype, f2, f3) != (0, 0, 65535):
+            # Object 0 heads the free list, and the corpus frees nothing: every free entry, object 0's included, is
+            # next-free 0, generation 65535.
+            raise ValueError(f"{rel_path}: XRef entry for {obj_id} must be free with next 0 and generation 65535, "
+                             f"got {(etype, f2, f3)}")
         if obj_id == 0:
-            if etype != 0 or f3 != 65535:
-                raise ValueError(
-                    f"{rel_path}: XRef object 0 must be free with generation 65535, got {(etype, f2, f3)}"
-                )
+            located.setdefault(0, "free")
         elif etype == 1 and f3 != 0:
             raise ValueError(f"{rel_path}: XRef type-1 entry for {obj_id} has generation {f3}; the corpus writes 0 only")
         elif etype == 1:
@@ -1560,6 +1563,8 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
         validate_xref_stream_at(rel_path, data, xref_offset, None, located, sizes, roots)
     # The chain must locate every object at its newest definition, and the newest /Size must be one past the highest
     # object number (ISO 32000-1 7.5.4, 7.5.5): an empty or partial index refuses.
+    if located.get(0) != "free":
+        raise ValueError(f"{rel_path}: the cross-reference chain has no free entry for object 0")
     for num, header in headers.items():
         if located.get(num) != header:
             raise ValueError(f"{rel_path}: object {num} at {header} is not what the cross-reference chain locates "

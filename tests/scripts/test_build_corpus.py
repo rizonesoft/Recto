@@ -258,7 +258,8 @@ class BuildCorpusTests(unittest.TestCase):
         x = d.index(b"\nxref\n") + 1
         t = d.index(b"trailer\n", x)
         size = re.search(rb"/Size \d+", d[t:]).group(0)
-        for mutated, reason in ((d[:x] + b"xref\n0 0\n" + d[t:], "is not what the cross-reference chain locates"),
+        for mutated, reason in ((d[:x] + b"xref\n0 1\n0000000000 65535 f \n" + d[t:],
+                                 "is not what the cross-reference chain locates"),
                                 (d[:t] + d[t:].replace(size, b"/Size 0", 1), "newest /Size 0")):
             with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, re.escape(reason)):
                 self.mod.validate_pdf_structure("render/simple-1p.pdf", mutated)
@@ -306,7 +307,7 @@ class BuildCorpusTests(unittest.TestCase):
 
         def freed_catalog(raw, columns):  # the xref stream's entry for object 1 becomes free
             rows = bytearray(raw)
-            rows[5:10] = struct.pack(">BHH", 0, 0, 1)
+            rows[5:10] = struct.pack(">BHH", 0, 0, 65535)
             return real(bytes(rows), columns)
 
         with mock.patch.object(self.mod, "flate_png_up_compress", side_effect=freed_catalog):
@@ -346,6 +347,23 @@ class BuildCorpusTests(unittest.TestCase):
         for bad in (b"0000000000 00000 f \n", b"9999999999 65535 f \n"):
             with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, "must be free with offset 0"):
                 self.mod.validate_pdf_structure("render/simple-1p.pdf", d.replace(b"0000000000 65535 f \n", bad, 1))
+
+    def test_object_zero_is_listed_and_points_nowhere(self) -> None:
+        d = self.mod.build_simple_1p()
+        size = int(re.search(rb"/Size (\d+)", d).group(1))
+        without_zero = d.replace(f"xref\n0 {size}\n0000000000 65535 f \n".encode(), f"xref\n1 {size - 1}\n".encode(), 1)
+        self.assertNotEqual(without_zero, d)
+        with self.assertRaisesRegex(ValueError, "no free entry for object 0"):
+            self.mod.validate_pdf_structure("render/simple-1p.pdf", without_zero)
+        real = self.mod.flate_png_up_compress
+
+        def next_free(raw, columns):
+            return real(struct.pack(">BHH", 0, 65535, 65535) + raw[5:], columns)
+
+        with mock.patch.object(self.mod, "flate_png_up_compress", side_effect=next_free):
+            data = self.mod.build_compressed_xref_2p()
+        with self.assertRaisesRegex(ValueError, "must be free with next 0"):
+            self.mod.validate_pdf_structure("render/compressed-xref-2p.pdf", data)
 
     def test_a_classic_xref_entry_has_one_form(self) -> None:
         data = self.mod.build_simple_1p()

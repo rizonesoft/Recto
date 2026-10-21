@@ -590,3 +590,56 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `Ran 24 tests`, `OK` (`test_classic_free_entries_are_object_zeros_form` fails against `facb4fa`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P1): in a classic table, object 0 must be free, and since the corpus frees nothing, every free entry (object 0's included) must be exactly offset 0, generation 65535; `00000` or `9999999999` refuses. The round 8 precedence test now frees object 1 in that same form.
+
+## Round 13: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:17:19Z
+- Effort: medium
+- Lines: 37
+- Digest: a88554012890f4d6
+
+## adversarial: needs-attention
+
+1. **P1: Xref-stream object zero still accepts an invalid free-list pointer.** `scripts/build-corpus.py:1149` checks its type and generation but ignores `f2`. Reproduced in memory by wrapping `flate_png_up_compress` during `build_compressed_xref_2p()` and replacing the first decoded entry with `struct.pack(">BHH", 0, 65535, 65535)`. `validate_pdf_structure("render/compressed-xref-2p.pdf", data)` accepts it, although object 65535 does not exist. The builder recomputes compression and `/Length`, isolating the unchecked field. This violates the required zero-offset free-entry constraint.
+
+2. **P1: Classic validation accepts a table with no object-zero entry.** `scripts/build-corpus.py:1034` accepts subsections starting at object 1; `scripts/build-corpus.py:1563` checks coverage only for actual object bodies. Reproduce:
+   ```python
+   data = build_simple_1p().replace(
+       b"xref\n0 7\n0000000000 65535 f \n",
+       b"xref\n1 6\n",
+       1,
+   )
+   validate_pdf_structure("render/simple-1p.pdf", data)
+   ```
+   Validation succeeds. All object offsets and `startxref` remain correct, but the sole cross-reference section lacks the required free object-zero entry. Round 12 checks its contents only when present.
+
+## consistency: approve
+
+No independent findings.
+
+## integration: advisory
+
+Findings 1 and 2 allow malformed future generator output through structural validation when generated and committed bytes agree. They do not establish corruption in the current fixtures or defects in the native engine.
+
+## source-defect: needs-attention
+
+Findings 1 and 2 violate free-list structure: object zero heads the list, and an xref-stream type-0 entry’s second field identifies the next free object. A nonexistent target is invalid. See [Adobe PDF Reference, §3.4.3 and Table 3.16](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.6.pdf).
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: advisory
+
+At `5d25e5f`, independently reran `python -B scripts/build-corpus.py --check`: exit 0, 39 fixtures current. Twenty-one selected read-only tests passed; two in-memory generations matched; corpus size was 60,176 bytes. The checkpoint holds but misses both findings. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 13
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 25 tests`, `OK` (`test_object_zero_is_listed_and_points_nowhere` fails against `d8fdc0b`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): an xref stream's free entries, object 0's included, must be exactly next-free 0, generation 65535 (`struct (0, 65535, 65535)` refuses).
+- Finding 2 (P1): object 0's free entry is recorded in the chain like any other, and the chain must hold one: a classic table starting at object 1 refuses ("no free entry for object 0"). Two earlier tests now mutate within the dialect (a free entry of generation 65535; a table holding only object 0) so they still reach the checks they were written for.
