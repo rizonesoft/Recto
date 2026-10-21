@@ -370,6 +370,22 @@ class MergePrs(unittest.TestCase):
         self.assertEqual(self.main(fake), 1)
         self.assertEqual(merge_prs.redact("unable to access https://u:t0k@github.com/x.git/"), "unable to access <url>")
 
+    def test_a_base_retargeted_before_the_merge_is_skipped(self):
+        fake = FakeRun([pr(1), pr(2)])
+        real = fake.__class__.__call__
+        views = []
+
+        def retarget_on_second_view(args, root):
+            if args[:3] == ["gh", "pr", "view"] and args[3] == "1":
+                views.append(1)
+                if len(views) == 2:  # the read immediately before the merge request
+                    fake.prs[1]["baseRefName"] = "release"
+            return real(fake, args, root)
+
+        self.assertEqual(merge_prs.main([], run=retarget_on_second_view, root=self.root, out=self.lines.append), 0)
+        self.assertEqual(fake.merges(), ["2"])
+        self.assertIn("no longer targets main", " ".join(self.lines))
+
     def test_launches_open_no_console_window(self):
         with mock.patch.object(merge_prs.subprocess, "run") as run:
             merge_prs.run_cmd(["git", "status"], self.root)

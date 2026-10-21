@@ -479,3 +479,46 @@ OVERALL: needs-attention
 
 - Finding 1 (P1), and finding 3 (P2) on the record: round 10's claim was wrong. `gh pr view --json statusCheckRollup` reads the head commit, so the rollup never covered the test merge, and its test only injected a rollup. Now `test_merge_sha` asks GitHub for the pull request's `potentialMergeCommit` (GraphQL, host pinned), and when there is one, every check run and status on it must have finished green (`test_a_failing_or_unfinished_test_merge_blocks`); with none, no check ran there and the head commit's required jobs stand. The rollup comment now says it reads the head.
 - Finding 2 (P1): `origin` is resolved (a local read) before any fetch, so a non-github.com remote is refused before a network error could quote it, and every failure message passes through `redact`, which replaces URLs and scp-style remotes (`test_a_fetch_error_never_shows_the_remote`).
+
+## Round 12: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T21:13:51Z
+- Effort: medium
+- Lines: 28
+- Digest: e305f88efefdcf05
+
+## adversarial: needs-attention
+
+1. **P1** · `scripts/merge_prs.py:293` and `scripts/merge_prs.py:311`: The merge target can change after eligibility is checked. Retarget an eligible PR from `main` to another mergeable branch while the subsequent check queries run, without changing its head SHA. The script still invokes the merge. `--match-head-commit` protects only the head SHA, not the base branch, as confirmed by [GitHub CLI’s implementation](https://github.com/cli/cli/blob/trunk/pkg/cmd/pr/merge/merge.go). The later pull and ancestry check cannot undo a merge into an unauthorized branch.
+
+   Reproduced in memory using the candidate’s `FakeRun`: change `baseRefName` to `release` during the GraphQL query after eligibility checking. The merge command is still issued for that PR. Preventing this requires target-branch enforcement at the mutation boundary; another preliminary read alone leaves a race.
+
+## consistency: approve
+
+No additional findings.
+
+## integration: approve
+
+No additional findings.
+
+## source-defect: needs-attention
+
+Finding 1 violates the governing requirement that automated merges target `main`.
+
+## design: approve
+
+No user-facing surface changed.
+
+## record: advisory
+
+Inspected the candidate and final corrective commit. Ran the in-memory reproduction with filesystem mutations mocked. Did not run the full test suite or perform a live merge; GitHub CLI network access was blocked by the sandbox proxy. No files modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 12
+
+`python -m unittest tests.scripts.test_merge_prs` -> `Ran 29 tests`, `OK` (`test_a_base_retargeted_before_the_merge_is_skipped` fails against `7ecb540`).
+
+- Finding 1 (P1): GitHub's merge call can pin the head commit (`--match-head-commit`) but offers no precondition on the base branch, so the window cannot be closed at the mutation itself (no API expresses it). The base is now read again immediately before the request, and a pull request no longer targeting `main` is skipped; a retarget in the last instant still lands somewhere other than `main`, which the follow-up then catches (its merge commit is not in `main`), stopping the run with the marker set. Only Dependabot and pins-workflow pull requests are eligible, and retargeting one needs write access to the repository.

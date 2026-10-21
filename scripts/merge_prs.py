@@ -304,6 +304,16 @@ def merge_all(run, root, args, out):
         if args.dry_run:
             out(f"merge-prs: #{number} would merge at {pr['headRefOid'][:7]} ({pr['title']})")
             continue
+        # The base is read again immediately before the request. GitHub's merge call can pin the head commit
+        # (--match-head-commit) but has no precondition on the base branch, so a retarget in the last instant is caught
+        # afterwards instead: the merge commit then is not in main, the follow-up fails and the run stops.
+        try:
+            if current(run, root, number).get("baseRefName") != "main":
+                out(f"merge-prs: #{number} no longer targets main; skipped")
+                continue
+        except RuntimeError as e:
+            out(f"merge-prs: {e}")
+            return 1
         # Recorded before GitHub is asked, cleared only once the merge is verified locally: a run killed in between
         # (the task's timeout, a crash) leaves the marker, and the next run refuses until the operator has looked.
         record_stop(root, f"merge-prs: merging #{number} was interrupted before its pull and validate finished")
