@@ -486,6 +486,16 @@ class BuildCorpusTests(unittest.TestCase):
             with self.subTest(old=old), self.assertRaisesRegex(ValueError, re.escape(says)):
                 self.mod.validate_broken_pdf_structure(name, data.replace(old, new, 1))
 
+    def test_encrypted_fixtures_get_the_full_cross_reference_checks(self) -> None:
+        name = "render/encrypted-rc4-128.pdf"
+        data = self.mod.expected_corpus_files()[name]
+        xref = data.rindex(b"xref\n0 8\n") + len(b"xref\n0 8\n")
+        entry_1 = xref + 20  # the second 20-byte entry: object 1, the catalog
+        freed = data[:entry_1] + b"0000000000 65535 f \n" + data[entry_1 + 20 :]
+        for mutated, says in ((freed, "object 1"), (data.replace(b"/Size 8", b"/Size 1", 1), "/Size")):
+            with self.subTest(says=says), self.assertRaisesRegex(ValueError, re.escape(says)):
+                self.mod.validate_encrypted_pdf_structure(name, mutated)
+
     def test_inflation_stops_just_past_its_limit(self) -> None:
         bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))
         total, kept = self.mod.inflate_bounded(bomb, 1024, keep=False)

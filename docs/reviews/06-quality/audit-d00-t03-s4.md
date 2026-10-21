@@ -197,3 +197,50 @@ OVERALL: needs-attention
 - Finding 1 (P1): every `/Info` string is decrypted with the same per-object rule as the stream (AES padding checked, an AES payload must be an IV and whole blocks) and must equal what the generator wrote: `Recto Encrypted <mode>`, `Recto Corpus Generator` and the fixed creation date.
 - Finding 2 (P1): `ENCRYPTED_REVISIONS` binds each encrypted fixture's path to the `(/V, /R)` it promises (and the mode its title names); the RC4 file passed as `encrypted-aes-256.pdf` refuses.
 - Finding 3 (P1): the recoverable fixture is checked as the one-page document it is: objects 1 to 6 back to back from the header, the shared exact forms (`one_page_objects`, also used by the encrypted fixtures), the exact `/Info`, and a tail that is exactly the deliberately broken xref and a trailer naming `/Root 1 0 R` and `/Info 6 0 R`. A `null` catalog refuses (`test_the_recoverable_fixture_is_the_one_page_document_exactly`).
+
+## Round 5: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T21:50:19Z
+- Effort: medium
+- Lines: 32
+- Digest: adc3862a7bd1f051
+
+### adversarial: needs-attention
+
+1. **P1: Encrypted-fixture validation ignores cross-reference liveness and size.** `scripts/build-corpus.py:2703` discards the cross-reference map and sizes collected by `validate_classic_xref_at()`. At `:2709`, it instead locates objects by scanning their bodies. The coverage checks used for ordinary PDFs at `:1624` are absent here.
+
+   Reproduced without writing files using `render/encrypted-rc4-128.pdf`:
+   - Replace object 1’s 20-byte xref entry with `b"0000000000 65535 f \n"`, marking the catalog free. `validate_encrypted_pdf_structure()` accepts it.
+   - Independently replace `/Size 8` with `/Size 1`. Validation also accepts it.
+
+   With the first mutation supplied through mocked generator output and file reads, plus matching regenerated provenance, **`check_corpus()` returns `(True, [])`**. Thus a generator regression can pass the complete gate with an unusable catalog reference. Ordinary on-disk corruption remains caught by byte comparison.
+
+### consistency: approve
+
+No separate finding.
+
+### integration: advisory
+
+Finding 1 weakens the fixture gate supporting `D01 T01 §7` authentication tests and downstream encrypted-document CLI tests. This establishes a validator defect, not a defect in the committed encrypted PDFs or engine.
+
+### source-defect: needs-attention
+
+Finding 1 bypasses the cross-reference interpretation of indirect objects. `/Size` must also equal one greater than the highest object number; accepting `/Size 1` for objects 1 through 7 contradicts that requirement. See [ISO 32000-2 clauses 7.5.4 and 7.5.5 corrections](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html).
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: approve
+
+Independently reran the checkpoint at `fae3dd7`: exit **0**, **39 fixtures verified**. Three focused tests covering section fixtures and the round 4 fixes passed. These checks do not detect finding 1. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 5
+
+`python -m unittest tests.scripts.test_build_corpus` -> `OK` (`test_encrypted_fixtures_get_the_full_cross_reference_checks` fails against `fae3dd7` for both mutations); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): the encrypted validator now runs the same `validate_pdf_structure` as every other fixture, in an `encrypted` mode that leaves stream content (ciphertext) to the decryption that follows. Object walk, xref coverage and liveness, `/Size` equal to the highest object plus one, the catalog and the layout all apply: a freed catalog entry and `/Size 1` each refuse.

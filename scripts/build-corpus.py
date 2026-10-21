@@ -1554,8 +1554,10 @@ def validate_layout(rel_path: str, data: bytes) -> list[int]:
     return ends
 
 
-def validate_pdf_structure(rel_path: str, data: bytes, earlier_revisions: bool = True) -> None:
-    """Validate PDF header, stream /Length exactness, xref offsets, and content semantics."""
+def validate_pdf_structure(rel_path: str, data: bytes, earlier_revisions: bool = True, encrypted: bool = False) -> None:
+    """Validate PDF header, stream /Length exactness, xref offsets, and content semantics. With encrypted, stream
+    bodies are ciphertext, so their content is left to validate_encrypted_pdf_structure, which decrypts it; every
+    other check (objects, xref coverage, /Size, the catalog, layout) is the same."""
     if not (data.startswith(b"%PDF-1.") or data.startswith(b"%PDF-2.")):
         raise ValueError(f"{rel_path}: missing %PDF- header")
     if not data.endswith(b"%%EOF\n"):
@@ -1570,7 +1572,7 @@ def validate_pdf_structure(rel_path: str, data: bytes, earlier_revisions: bool =
     for num, start, end, stream_start, end_pos, header in iter_objects(rel_path, data):
         objects[num] = (start, end, stream_start, end_pos)
         headers[num] = header
-        if stream_start is None:
+        if stream_start is None or encrypted:
             continue
         stream_entries = dict_entries(data[start + 2 : end - 2])
         # A plain Flate content stream (no predictor parameters, not an image, object or xref stream) is checked as
@@ -2702,7 +2704,9 @@ def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
         raise ValueError(f"{rel_path}: missing startxref before %%EOF")
     validate_classic_xref_at(rel_path, data, int(eof_m.group(1)), set())
 
-    validate_layout(rel_path, data)
+    # The same structure checks as every other fixture (objects, xref coverage and liveness, /Size, the catalog,
+    # layout), with the stream content left to the decryption below.
+    validate_pdf_structure(rel_path, data, encrypted=True)
     # Everything below is read from parsed objects: the trailer's own /Encrypt and /ID, the dictionary that /Encrypt
     # names, and the page content /Root reaches, never a text search for an object number.
     objects = {num: (start, end, s0, s1) for num, start, end, s0, s1, _ in iter_objects(rel_path, data)}
