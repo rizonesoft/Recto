@@ -34,11 +34,29 @@ def _commit(repo, files, message):
                           text=True).stdout.strip()
 
 
-def _init(repo):
+def _init(tmp):
+    repo = pathlib.Path(tmp.name) / "repo"
+    repo.mkdir()
     _git(repo, "init", "-q", "-b", "main")
     _git(repo, "config", "user.name", "Fixture")
     _git(repo, "config", "user.email", "fixture@example.invalid")
     _git(repo, "config", "commit.gpgsign", "false")
+    return repo
+
+
+def _gtest_list(tmp, suites):
+    """A `--gtest_list_tests` file listing {suite: [cases]}."""
+    path = pathlib.Path(tmp.name) / "gtest-list.txt"
+    path.write_text("".join(f"{suite}.\n" + "".join(f"  {case}\n" for case in cases)
+                            for suite, cases in suites.items()), encoding="utf-8")
+    return path
+
+
+def _run_main(repo, *args):
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+        code = release_notes.main(list(args), repo=repo)
+    return code, out.getvalue()
 
 
 class ReleaseNotesTest(unittest.TestCase):
@@ -47,9 +65,7 @@ class ReleaseNotesTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._tmp = tempfile.TemporaryDirectory()
-        repo = cls.repo = pathlib.Path(cls._tmp.name) / "repo"
-        repo.mkdir()
-        _init(repo)
+        repo = cls.repo = _init(cls._tmp)
         cpp = "#include <gtest/gtest.h>\n\nTEST(PdfXref, ParsesTable)\n{\n}\n"
         py = "import unittest\n\n\nclass ModTest(unittest.TestCase):\n    def test_a(self):\n        pass\n"
         _commit(repo, {"tests/recto-tests/xref_tests.cpp": cpp, "tests/scripts/test_mod.py": py}, "initial")
@@ -74,18 +90,18 @@ class ReleaseNotesTest(unittest.TestCase):
         _commit(repo, {"README.md": "unrelated\n"}, "repo: unrelated change")
         _git(repo, "tag", "v1.1.0")
         _commit(repo, {"tests/recto-tests/late_tests.cpp": "TEST(PdfLate, Case)\n{\n}\n"}, "tests: late test")
+        cls.listed = {"PdfXref.ParsesTable", "PdfXref.EmptyTable", "PdfLate.Case"}
+        cls.list_file = _gtest_list(cls._tmp, {"PdfXref": ["ParsesTable", "EmptyTable"], "PdfLate": ["Case"]})
 
     @classmethod
     def tearDownClass(cls):
         cls._tmp.cleanup()
 
     def run_main(self, *args):
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
-            code = release_notes.main(list(args), repo=self.repo)
-        return code, out.getvalue()
+        return _run_main(self.repo, *args)
 
     def report(self, **kwargs):
+        kwargs.setdefault("gtest_list", self.listed)
         return release_notes.report(self.repo, "v1.0.0", "v1.1.0", **kwargs)
 
     def test_every_fixes_user_commit_is_an_entry(self):
@@ -104,16 +120,24 @@ class ReleaseNotesTest(unittest.TestCase):
         violations = self.report()["violations"]
         self.assertEqual(len(violations), 2, violations)
         self.assertTrue(any(self.docs_fix[:7] in v and "without a Regression-Test" in v for v in violations))
-        self.assertTrue(any(self.late_fix[:7] in v and "PdfLate.Case does not exist" in v for v in violations))
+        self.assertTrue(any(self.late_fix[:7] in v and "PdfLate.Case is not declared" in v for v in violations))
         for sha in (self.gtest_fix, self.python_fix, self.second_fix):
             self.assertFalse(any(sha[:7] in v for v in violations), sha)
+
+    def test_gtest_ids_need_the_release_build_list(self):
+        unverified = self.report(gtest_list=None)["violations"]
+        for sha in (self.gtest_fix, self.second_fix):
+            self.assertTrue(any(sha[:7] in v and "unverified" in v for v in unverified), unverified)
+        missing = self.report(gtest_list={"PdfXref.ParsesTable"})["violations"]
+        self.assertTrue(any(self.gtest_fix[:7] in v and "not in the release build's test list" in v for v in missing))
 
     def test_allow_no_test_excuses_one_commit_and_is_reported(self):
         result = self.report(allowances={self.docs_fix[:10]: "documentation only"})
         self.assertEqual(len(result["violations"]), 1, result["violations"])
         docs = next(fix for fix in result["fixes"] if fix["sha"] == self.docs_fix)
         self.assertEqual(docs["allowed_no_test"], "documentation only")
-        code, text = self.run_main("v1.0.0", "v1.1.0", "--allow-no-test", f"{self.docs_fix[:10]}=documentation only")
+        code, text = self.run_main("v1.0.0", "v1.1.0", "--gtest-list", str(self.list_file),
+                                   "--allow-no-test", f"{self.docs_fix[:10]}=documentation only")
         self.assertIn("no test; excused: documentation only", text)
         self.assertEqual(code, 1)  # the late test is still a violation
 
@@ -127,24 +151,43 @@ class ReleaseNotesTest(unittest.TestCase):
         self.assertEqual(groups, {12: "crash", 14: "bug", 15: "unlabelled", 16: "data-loss", 20: "unlabelled"})
 
     def test_text_and_json_output_and_exit_codes(self):
-        code, text = self.run_main("v1.0.0", "v1.1.0")
+        code, text = self.run_main("v1.0.0", "v1.1.0", "--gtest-list", str(self.list_file))
         self.assertEqual(code, 1)
         self.assertIn(f"  #12: Fixed in v1.1.0 ({self.gtest_fix[:7]}, {self.second_fix[:7]}, ", text)
         self.assertIn("Violations:", text)
-        code, text = self.run_main("v1.0.0", "v1.1.0", "--json")
+        code, text = self.run_main("v1.0.0", "v1.1.0", "--gtest-list", str(self.list_file), "--json")
         self.assertEqual(json.loads(text)["to"], "v1.1.0")
         code, text = self.run_main("v1.1.0", "HEAD")
         self.assertEqual(code, 0)
         self.assertIn("none", text)
 
     def test_unreadable_input_exits_2(self):
+        bad_list = pathlib.Path(self._tmp.name) / "not-a-list.txt"
+        bad_list.write_text("Running main() from gtest_main.cc\n", encoding="utf-8")
         self.assertEqual(self.run_main("v0.9.0", "v1.1.0")[0], 2)
         self.assertEqual(self.run_main("v1.0.0", "v1.1.0", "--allow-no-test", "nosha")[0], 2)
         self.assertEqual(self.run_main("v1.0.0", "v1.1.0", "--issues", str(self.repo / "missing.json"))[0], 2)
+        self.assertEqual(self.run_main("v1.0.0", "v1.1.0", "--gtest-list", str(bad_list))[0], 2)
 
     def test_root_covers_the_first_release(self):
         result = release_notes.report(self.repo, "root", "v1.0.0")
         self.assertEqual(result["fixes"], [])
+
+    def test_worktrees_are_cleaned_up(self):
+        self.report()
+        listed = subprocess.run(["git", "-C", str(self.repo), "worktree", "list"], capture_output=True, text=True)
+        self.assertEqual(len(listed.stdout.strip().splitlines()), 1, listed.stdout)
+
+
+class GtestListTest(unittest.TestCase):
+    def test_reads_plain_typed_and_parameterised_entries(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = pathlib.Path(tmp.name) / "list.txt"
+        path.write_text("PdfXref.\n  ParsesTable\n  EmptyTable\nInstance/PdfRender.  # TypeParam = int\n"
+                        "  Draws/0  # GetParam() = 1\n  Draws/1  # GetParam() = 2\n", encoding="utf-8")
+        self.assertEqual(release_notes.read_gtest_list(path),
+                         {"PdfXref.ParsesTable", "PdfXref.EmptyTable", "PdfRender.Draws"})
 
 
 class HostileFixtureTest(unittest.TestCase):
@@ -153,81 +196,95 @@ class HostileFixtureTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._tmp = tempfile.TemporaryDirectory()
-        repo = cls.repo = pathlib.Path(cls._tmp.name) / "repo"
-        repo.mkdir()
-        _init(repo)
+        repo = cls.repo = _init(cls._tmp)
         cpp = (
             "// TEST(Commented, Case)\n"
             "/* TEST(Block, Case) */\n"
             "#if 0\nTEST(Disabled, Case)\n{\n}\n#else\nTEST(Enabled, Case)\n{\n}\n#endif\n"
             "#if 1\nTEST(Taken, Case)\n{\n}\n#else\nTEST(NotTaken, Case)\n{\n}\n#endif\n"
+            "#if (0)\nTEST(Parenthesised, Case)\n{\n}\n#endif\n"
+            "#define UNUSED TEST(Macro, Case) {}\n"
+            "// a comment that continues \\\nTEST(Continued, Case)\n{\n}\n"
             "const char* s = \"TEST(Quoted, Case)\";\n"
             "const char* r = R\"x(TEST(Raw, Case))x\";\n"
             "TEST (Multi,\n      Line)\n{\n}\n"
         )
         py = (
-            "import unittest\n\n\n"
+            "import unittest\n"
+            "from unittest import TestCase as Aliased\n\n\n"
+            "class PretendTestCase:\n    pass\n\n\n"
+            "class Pretend(PretendTestCase):\n    def test_fake(self):\n        pass\n\n\n"
             "class Ordinary:\n    def test_missing(self):\n        pass\n\n    def save(self):\n        pass\n\n\n"
             "class Base(unittest.TestCase):\n    pass\n\n\n"
-            "class Derived(Base):\n    def test_real(self):\n        pass\n\n    def helper(self):\n        pass\n"
+            "class Derived(Base):\n    def test_real(self):\n        pass\n\n    def helper(self):\n        pass\n\n\n"
+            "class Child(Derived):\n    pass\n\n\n"
+            "class ViaAlias(Aliased):\n    def test_alias(self):\n        pass\n"
         )
         _commit(repo, {"tests/recto-tests/hostile_tests.cpp": cpp, "tests/scripts/test_sample.py": py}, "initial")
         _git(repo, "tag", "v2.0.0")
+        cls.fake = {
+            "Commented": "Commented.Case", "Block": "Block.Case", "Disabled": "Disabled.Case",
+            "NotTaken": "NotTaken.Case", "Parenthesised": "Parenthesised.Case", "Macro": "Macro.Case",
+            "Continued": "Continued.Case", "Quoted": "Quoted.Case", "Raw": "Raw.Case",
+            "Pretend": "tests.scripts.test_sample.Pretend.test_fake",
+            "Ordinary": "tests.scripts.test_sample.Ordinary.test_missing",
+            "Save": "tests.scripts.test_sample.Ordinary.save",
+            "Helper": "tests.scripts.test_sample.Derived.helper",
+        }
+        cls.real = {
+            "Enabled": "Enabled.Case", "Taken": "Taken.Case", "Multi": "Multi.Line",
+            "Derived": "tests.scripts.test_sample.Derived.test_real",
+            "Inherited": "tests.scripts.test_sample.Child.test_real",
+            "Alias": "tests.scripts.test_sample.ViaAlias.test_alias",
+        }
         cls.shas = {}
-        for name, test_id in [
-            ("Commented", "Commented.Case"), ("Block", "Block.Case"), ("Disabled", "Disabled.Case"),
-            ("NotTaken", "NotTaken.Case"), ("Quoted", "Quoted.Case"), ("Raw", "Raw.Case"),
-            ("Ordinary", "tests.scripts.test_sample.Ordinary.test_missing"),
-            ("Save", "tests.scripts.test_sample.Ordinary.save"),
-            ("Helper", "tests.scripts.test_sample.Derived.helper"),
-            ("Enabled", "Enabled.Case"), ("Taken", "Taken.Case"), ("Multi", "Multi.Line"),
-            ("Real", "tests.scripts.test_sample.Derived.test_real"),
-        ]:
+        for name, test_id in {**cls.fake, **cls.real}.items():
             cls.shas[name] = _commit(repo, {f"src/{name}.txt": name}, f"fix {name}\n\nFixes-User: #1\n"
                                                                      f"Regression-Test: {test_id}\n")
         # One physical trailer line holding a vertical tab: git reads it as one Fixes-User value.
         cls.shas["VerticalTab"] = _commit(
-            repo, {"src/vt.txt": "vt"},
-            "fix vt\n\nFixes-User: #2\x0bRegression-Test: Enabled.Case\n")
+            repo, {"src/vt.txt": "vt"}, "fix vt\n\nFixes-User: #2\x0bRegression-Test: Enabled.Case\n")
         # Separator characters in a subject must not break the report.
         cls.shas["Separators"] = _commit(repo, {"src/sep.txt": "sep"}, "odd \x1e subject \x1f here\n")
         cls.shas["ExcusedWithTest"] = _commit(
             repo, {"src/ex.txt": "ex"}, "fix ex\n\nFixes-User: #3\nRegression-Test: Enabled.Case\n")
         _git(repo, "tag", "v2.1.0")
+        # What the compiler builds: the macro, the continued comment and the #if (0) block are not tests.
+        cls.compiled = {"Enabled.Case", "Taken.Case", "Multi.Line"}
+        cls.result = release_notes.report(repo, "v2.0.0", "v2.1.0", gtest_list=cls.compiled)
 
     @classmethod
     def tearDownClass(cls):
         cls._tmp.cleanup()
 
-    def violations_for(self, result, name):
-        return [v for v in result["violations"] if v.startswith(self.shas[name][:7])]
+    def violations_for(self, name, result=None):
+        return [v for v in (result or self.result)["violations"] if v.startswith(self.shas[name][:7])]
 
-    def test_only_compiled_test_declarations_count(self):
-        result = release_notes.report(self.repo, "v2.0.0", "v2.1.0")
-        for name in ("Commented", "Block", "Disabled", "NotTaken", "Quoted", "Raw", "Ordinary", "Save", "Helper"):
+    def test_only_real_tests_count(self):
+        for name in self.fake:
             with self.subTest(fake=name):
-                self.assertTrue(any("does not exist" in v for v in self.violations_for(result, name)),
-                                result["violations"])
-        for name in ("Enabled", "Taken", "Multi", "Real"):
+                self.assertNotEqual(self.violations_for(name), [], self.result["violations"])
+        for name in self.real:
             with self.subTest(real=name):
-                self.assertEqual(self.violations_for(result, name), [])
+                self.assertEqual(self.violations_for(name), [])
+
+    def test_source_check_alone_refuses_what_the_list_would_also_refuse(self):
+        # Without the compiler's list, the source scan must still reject comments, literals and #if 0 forms.
+        for name in ("Commented", "Block", "Disabled", "NotTaken", "Parenthesised", "Continued", "Quoted", "Raw"):
+            with self.subTest(fake=name):
+                self.assertFalse(release_notes.gtest_declared(self.repo, self.shas[name], self.fake[name]))
 
     def test_a_vertical_tab_does_not_split_a_trailer(self):
-        result = release_notes.report(self.repo, "v2.0.0", "v2.1.0")
-        self.assertTrue(any("without a Regression-Test" in v for v in self.violations_for(result, "VerticalTab")),
-                        result["violations"])
+        self.assertTrue(any("without a Regression-Test" in v for v in self.violations_for("VerticalTab")),
+                        self.result["violations"])
 
     def test_separator_characters_in_a_subject_are_kept(self):
-        code, out = 0, io.StringIO()
-        with contextlib.redirect_stdout(out):
-            code = release_notes.main(["v2.0.0", "v2.1.0", "--json"], repo=self.repo)
-        self.assertEqual(code, 1)
-        self.assertEqual(len(json.loads(out.getvalue())["fixes"]), 15)
+        self.assertEqual(len(self.result["fixes"]), len(self.fake) + len(self.real) + 2)
 
     def test_an_allowance_never_hides_a_named_test(self):
         excuse = {self.shas["ExcusedWithTest"][:10]: "documentation only"}
-        result = release_notes.report(self.repo, "v2.0.0", "v2.1.0", allowances=excuse)
-        self.assertTrue(any("drop one" in v for v in self.violations_for(result, "ExcusedWithTest")))
+        result = release_notes.report(self.repo, "v2.0.0", "v2.1.0", allowances=excuse, gtest_list=self.compiled)
+        self.assertTrue(any("drop one" in v for v in self.violations_for("ExcusedWithTest", result)))
         self.assertIn("Enabled.Case; excused: documentation only", release_notes.render(result))
 
 
@@ -239,7 +296,7 @@ class UserBugRuleDocsTest(unittest.TestCase):
                         "## 5. Close it when the release ships"):
             self.assertIn(f"\n{heading}\n", text)
         for needle in ("tests/corpus/user-reports/", "tests/corpus/PROVENANCE.md", "Fixes-User: #",
-                       "Regression-Test: ", "scripts/release-notes.py"):
+                       "Regression-Test: ", "scripts/release-notes.py", "--gtest-list"):
             self.assertIn(needle, text)
 
     def test_template_and_agents_point_at_the_rule(self):

@@ -32,7 +32,7 @@ When the fix merges, label the issue `fixed-on-main` and comment with the commit
 When the release containing the fix is published, run:
 
 ```powershell
-python scripts/release-notes.py <previous tag> <new tag> --issues issues.json
+python scripts/release-notes.py <previous tag> <new tag> --issues issues.json --gtest-list tests.txt
 ```
 
-with `issues.json` from `gh issue list --state all --limit 1000 --json number,title,labels`. It lists the release's user fixes by kind label, prints a "Fixed in vX.Y.Z" comment for each issue, and exits 1 if any fix lacks an existing regression test. Post each comment, change the label from `fixed-on-main` to `released`, and close the issue.
+with `issues.json` from `gh issue list --state all --limit 1000 --json number,title,labels` and `tests.txt` from `recto-tests.exe --gtest_list_tests` in the release build. A gtest id must be declared at its fix commit and appear in that list; a Python id must be a unittest test at its fix commit. It lists the release's user fixes by kind label, prints a "Fixed in vX.Y.Z" comment for each issue, and exits 1 if any fix lacks an existing regression test. Post each comment, change the label from `fixed-on-main` to `released`, and close the issue.
