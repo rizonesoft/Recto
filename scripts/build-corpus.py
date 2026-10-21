@@ -1023,6 +1023,7 @@ def validate_classic_xref_at(rel_path: str, data: bytes, xref_offset: int, visit
         raise ValueError(f"{rel_path}: startxref {xref_offset} does not point to 'xref\\n'")
 
     pos = xref_offset + len(b"xref\n")
+    in_section: set[int] = set()  # one entry per object in a section (7.5.4); newer sections still override older ones
     while pos < len(data) and not data[pos:].startswith(b"trailer"):
         line_end = data.find(b"\n", pos)
         if line_end < 0:
@@ -1044,6 +1045,9 @@ def validate_classic_xref_at(rel_path: str, data: bytes, xref_offset: int, visit
             off = int(off_str)
             gen = int(gen_str)
             obj_num = first_obj + idx
+            if obj_num in in_section:
+                raise ValueError(f"{rel_path}: object {obj_num} appears twice in the xref section at {xref_offset}")
+            in_section.add(obj_num)
             # Object 0 heads the free list (ISO 32000-1 7.5.4); the corpus frees nothing, so every free entry, object 0's
             # included, is exactly offset 0 and generation 65535.
             if (obj_num == 0 or kind == "f") and (kind, off, gen) != ("f", 0, 65535):

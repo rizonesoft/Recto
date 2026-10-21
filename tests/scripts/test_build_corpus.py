@@ -365,6 +365,13 @@ class BuildCorpusTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must be free with next 0"):
             self.mod.validate_pdf_structure("render/compressed-xref-2p.pdf", data)
 
+    def test_an_object_appears_once_in_a_section(self) -> None:
+        d = self.mod.build_simple_1p()
+        t = d.index(b"trailer\n")
+        with self.assertRaisesRegex(ValueError, "appears twice in the xref section"):
+            self.mod.validate_pdf_structure("render/simple-1p.pdf", d[:t] + b"1 1\n0000000000 65535 f \n" + d[t:])
+        self.mod.validate_pdf_structure("render/incremental-2rev.pdf", self.mod.build_incremental_2rev())
+
     def test_a_classic_xref_entry_has_one_form(self) -> None:
         data = self.mod.build_simple_1p()
         self.mod.validate_pdf_structure("render/simple-1p.pdf", data)

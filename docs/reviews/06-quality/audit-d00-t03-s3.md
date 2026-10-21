@@ -643,3 +643,57 @@ OVERALL: needs-attention
 
 - Finding 1 (P1): an xref stream's free entries, object 0's included, must be exactly next-free 0, generation 65535 (`struct (0, 65535, 65535)` refuses).
 - Finding 2 (P1): object 0's free entry is recorded in the chain like any other, and the chain must hold one: a classic table starting at object 1 refuses ("no free entry for object 0"). Two earlier tests now mutate within the dialect (a free entry of generation 65535; a table holding only object 0) so they still reach the checks they were written for.
+
+## Round 14: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:26:01Z
+- Effort: medium
+- Lines: 39
+- Digest: 8ea2cbd4066ac174
+
+## adversarial: needs-attention
+
+1. **P1: Conflicting entries within one classic xref section are accepted.** At `scripts/build-corpus.py:1061` and `:1066`, `located.setdefault()` silently discards duplicate object numbers. This correctly preserves precedence between revisions but also hides conflicting subsections within the same revision.
+
+   Reproduce in memory after importing `scripts/build-corpus.py` as `m`:
+
+   ```python
+   data = m.build_simple_1p()
+   t = data.index(b"trailer\n")
+   bad = data[:t] + b"1 1\n0000000000 65535 f \n" + data[t:]
+   m.validate_pdf_structure("render/simple-1p.pdf", bad)
+   ```
+
+   **Actual:** validation succeeds although object 1 has both an in-use entry and a free entry in the same section. **Expected:** reject overlapping subsections. Existing object offsets, stream lengths and `startxref` remain unchanged. Malformed generator output can therefore pass the promised structural check.
+
+## consistency: approve
+
+No independent findings.
+
+## integration: advisory
+
+Finding 1 permits malformed future fixtures to pass structural validation when generated and committed bytes agree. It does not establish corruption in the current fixtures.
+
+## source-defect: needs-attention
+
+Finding 1 violates ISO 32000-1 §7.5.4, which prohibits an object number appearing in multiple subsections within one section. Duplicate detection must distinguish same-section conflicts from legitimate updates across `/Prev` revisions. [ISO 32000-1:2008](https://levien.com/pdf/PDF32000_2008.pdf)
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: advisory
+
+At `916f9bd`, independently reran `python -B scripts/build-corpus.py --check`: exit 0, 39 fixtures current. Twenty-two selected read-only tests passed, including the round-13 regression. Two in-memory generations matched; corpus size was 60,176 bytes. The checkpoint holds but misses finding 1.
+
+I modified no files. Two unrelated review documents became dirty during the audit; the audited files remained unchanged.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 14
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 26 tests`, `OK`; `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): an object number may appear only once within one classic xref section (ISO 32000-1 7.5.4); a duplicate refuses, while a newer section still overrides an older one (`test_an_object_appears_once_in_a_section`, which also validates the two-revision fixture).
