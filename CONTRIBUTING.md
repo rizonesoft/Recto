@@ -20,6 +20,16 @@ python -m unittest tests.scripts.test_todo_graph
 
 Never edit `todo/implementation-plan.md` by hand; regenerate it with `python scripts/todo-graph.py plan --sync`.
 
+## Commit hook
+
+Once per clone, turn on the repository's hooks:
+
+```powershell
+git config core.hooksPath scripts/hooks
+```
+
+`scripts/hooks/pre-commit` refuses a commit that stages `todo/` changes while `todo/implementation-plan.md` is stale or the TODO graph is invalid (ticking a checklist item changes the generated plan), the same check CI's `plan-gates` runs. Fix with `python scripts/todo-graph.py plan --sync`, stage the plan, and commit again.
+
 ## Building the solution
 
 From a clean clone, one command restores NuGet packages, installs the vcpkg manifest (`gtest`, test-only), builds every project in `Recto.sln` (`recto-pdf`, `recto-core`, `recto-services`, `Recto`, `recto-cli`, `recto-tests`, `recto-fuzz`) for x64 and ARM64 in Debug and Release, and runs the x64 test binaries:

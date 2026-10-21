@@ -52,9 +52,11 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
+          python-version: '3.15'
       - name: Test the TODO graph tooling
         run: python -m unittest tests.scripts.test_todo_graph
+      - name: Test the pre-commit hook that keeps the plan current
+        run: python -m unittest tests.scripts.test_pre_commit_hook
       - name: Validate the TODO tree
         run: python scripts/todo-graph.py validate
       - name: Check the generated plan is current

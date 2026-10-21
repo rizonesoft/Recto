@@ -22,3 +22,4 @@ LICENSE text eol=lf
 *.docx binary
 *.xlsx binary
 *.bin binary
+scripts/hooks/* text eol=lf

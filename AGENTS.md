@@ -68,7 +68,7 @@ Review lenses read against Recto's sources: `adversarial` covers malformed PDFs,
 - **Tests prove claims:** a section's Test checkpoint must be able to fail, and is quoted, not paraphrased, in its stamp. Engine and threading claims run under AddressSanitizer where the plan names it.
 - **User-reported bugs:** a fix carries `Fixes-User:` and `Regression-Test:` trailers and a test that fails before it, and the issue closes only on release; the rule is `docs/support/user-bugs.md`.
 - **No em dashes** in authored prose. One line per paragraph and list item in Markdown. Keep every section title (the `<Title>` in `## N. <Title>`, which is also its `Deliverable` cell) and index scope cell `<= 88` characters so Markdown tables never wrap.
-- **Commits:** trunk-based `main`, concise imperative messages, the section ref in the body. Never amend a candidate under review, never bypass hooks, never force-push.
+- **Commits:** trunk-based `main`, concise imperative messages, the section ref in the body. Never amend a candidate under review, never bypass hooks, never force-push. Every clone runs `git config core.hooksPath scripts/hooks`: its pre-commit hook refuses a TODO change committed without `plan --sync`.
 - **Credentials** never enter tracked files, arguments or logs. Store and signing material lives outside the repository.
 
 ## Unknowns and questions
