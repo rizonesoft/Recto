@@ -111,6 +111,12 @@ outermost = vars(owner)[method]
 if has_coroutine and not (inspect.iscoroutinefunction(outermost)
                           and issubclass(cls, unittest.IsolatedAsyncioTestCase)):
     sys.exit(3)
+# A skipped test never runs its body, and an expected failure turns a failing body into a pass: neither proves a fix.
+# unittest reads these flags from the class (inherited included) and the method (any decorator layer).
+flags = ("__unittest_skip__", "__unittest_expecting_failure__")
+if any(getattr(cls, flag, False) for flag in flags) or any(
+        getattr(layer_seen, flag, False) for layer_seen in (outermost, inspect.unwrap(outermost)) for flag in flags):
+    sys.exit(3)
 # Build the case the way unittest's loader does for a plain TestCase method, without calling anything: cls(method)
 # checks the method exists and refuses, for example, an abstract class.
 try:

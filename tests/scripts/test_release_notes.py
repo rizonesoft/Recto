@@ -275,6 +275,13 @@ class HostileFixtureTest(unittest.TestCase):
                "        return fn(self)\n    return call\n\n\n"
                "class SyncWrappedAsync(unittest.IsolatedAsyncioTestCase):\n    @sync_wrapper\n"
                "    async def test_regression(self):\n        raise AssertionError('never awaited')\n")
+        py += ("\n\n@unittest.skip('disabled')\nclass SkippedClass(unittest.TestCase):\n"
+               "    def test_regression(self):\n        raise AssertionError('bug still present')\n\n\n"
+               "class SkippedMethod(unittest.TestCase):\n    @unittest.skip('disabled')\n"
+               "    def test_regression(self):\n        raise AssertionError('bug still present')\n\n\n"
+               "class InheritsSkip(SkippedClass):\n    pass\n\n\n"
+               "class ExpectedFailure(unittest.TestCase):\n    @unittest.expectedFailure\n"
+               "    def test_regression(self):\n        raise AssertionError('bug still present')\n")
         py += ("\n\nclass ShadowedByBuiltin(unittest.TestCase):\n    def __init__(self, methodName='runTest'):\n"
                "        super().__init__(methodName)\n        self.test_case = [].clear\n\n"
                "    def test_case(self):\n        raise AssertionError('the regression body must run')\n")
@@ -331,6 +338,11 @@ class HostileFixtureTest(unittest.TestCase):
             "AsyncOnPlain": "tests.scripts.test_sample.AsyncOnPlain.test_regression",
             "Generator": "tests.scripts.test_sample.GeneratorTest.test_regression",
             "SyncWrappedAsync": "tests.scripts.test_sample.SyncWrappedAsync.test_regression",
+            # Skipped or expected-to-fail tests never prove a fix.
+            "SkippedClass": "tests.scripts.test_sample.SkippedClass.test_regression",
+            "SkippedMethod": "tests.scripts.test_sample.SkippedMethod.test_regression",
+            "InheritsSkip": "tests.scripts.test_sample.InheritsSkip.test_regression",
+            "ExpectedFailure": "tests.scripts.test_sample.ExpectedFailure.test_regression",
             "Stdlib": "unittest.case.TestCase.test_missing",
         }
         cls.real = {

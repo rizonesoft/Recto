@@ -354,3 +354,52 @@ OVERALL: needs-attention
 ## Fixes after round 7
 
 - Finding 1 (P1): a coroutine anywhere in the layer chain is accepted only when the outermost callable, the one unittest calls, is itself a coroutine function on an `IsolatedAsyncioTestCase` (which awaits it); a synchronous wrapper around an `async` body is refused (`SyncWrappedAsync`), as is any coroutine on a plain `TestCase`. Mutation: the outermost check removed -> `HostileFixtureTest` fails. Tests: `Ran 24 tests ... OK`.
+
+## Round 8: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T13:38:27Z
+- Effort: medium
+- Lines: 36
+- Digest: ee7200a96efc157d
+
+## adversarial: needs-attention
+
+1. **P1, `scripts/release-notes.py:135`: Skipped test classes count as verified regression evidence.** The probe prints its success nonce without checking `__unittest_skip__`. Reproduce with this module at the fix commit and trailer `Regression-Test: test_example.Case.test_regression`:
+
+   ```python
+   import unittest
+
+   @unittest.skip("temporarily disabled")
+   class Case(unittest.TestCase):
+       def test_regression(self):
+           raise AssertionError("bug still present")
+   ```
+
+   The candidate’s actual probe accepted an in-memory reproduction and printed its success nonce. Unittest reported one skipped test, zero failures and success. The regression body never executes, but this fix produces no regression-test violation. Reject class-level and method-level skip flags, including inherited flags.
+
+## consistency: approve
+
+## integration: needs-attention
+
+Finding 1 (**P1**, `scripts/release-notes.py:135`) allows skipped regression evidence into release reporting and §7’s JSON input without a violation.
+
+## source-defect: needs-attention
+
+Finding 1 (**P1**, `scripts/release-notes.py:135`) misses unittest’s execution semantics: `TestCase.run()` checks the class and method skip flags and returns before executing the body. Constructing a valid case and verifying its bound method does not detect this.
+
+## design: advisory
+
+Not applicable.
+
+## record: needs-attention
+
+Finding 1 contradicts the checked regression-verification requirement at `todo/07-release/TODO-03-listening-to-users.md:153`.
+
+Four read-only parser/documentation tests passed. The full 24-test claim remains independently unverified because its fixtures create files and worktrees. No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 8
+
+- Finding 1 (P1): a test unittest would skip, or run as an expected failure, is refused: `__unittest_skip__` or `__unittest_expecting_failure__` on the class (inherited included) or on the method (outer layer or its unwrapped function). Fixtures `SkippedClass`, `SkippedMethod`, `InheritsSkip` and `ExpectedFailure` are refused. Mutation: the flag check removed -> `HostileFixtureTest` fails. Tests: `Ran 24 tests ... OK`.
