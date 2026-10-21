@@ -28,7 +28,7 @@ Sections: 34 | Checklist items: 177
 | [x]    | D00 T03 §6  | MSVC AddressSanitizer (`/fsanitize=address`) build configuration and CI `asan` job       | windows-host | 6     |
 | [x]    | D06 T05 §1  | Audit D00 T01 §1: Git repository and repo-face files                                     | none         | 5     |
 | [x]    | D06 T05 §2  | Audit D00 T01 §2: PDF engine dependency policy (native recto-pdf, MuPDF retired)         | windows-host | 5     |
-| [ ]    | D06 T05 §3  | Audit D00 T01 §3: Solution scaffold for all modules, x64 and ARM64                       | windows-host | 5     |
+| [x]    | D06 T05 §3  | Audit D00 T01 §3: Solution scaffold for all modules, x64 and ARM64                       | windows-host | 5     |
 | [ ]    | D06 T05 §4  | Audit D00 T01 §5: Reference benchmark machines recorded                                  | windows-host | 5     |
 | [ ]    | D06 T05 §5  | Audit D00 T02 §1: Graph engine, CLI and tests                                            | none         | 5     |
 | [ ]    | D06 T05 §6  | Audit D00 T02 §2: Skills, rules and the CI gate                                          | none         | 5     |
@@ -746,6 +746,6 @@ Sections: 4 | Checklist items: 22
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
-Progress: 31/677 verified sections, 13 ready to run now.
+Progress: 32/677 verified sections, 13 ready to run now.
 
-Checklist: 194/4861 items completed (includes Commit items).
+Checklist: 199/4861 items completed (includes Commit items).

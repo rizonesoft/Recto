@@ -33,7 +33,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | Audit D00 T01 §1: Git repository and repo-face files | D00 T01 §1 | [x] |
 | 2 | §2 | Audit D00 T01 §2: PDF engine dependency policy (native recto-pdf, MuPDF retired) | D00 T01 §2, §1 | [x] |
-| 3 | §3 | Audit D00 T01 §3: Solution scaffold for all modules, x64 and ARM64 | D00 T01 §3, §2 | [ ] |
+| 3 | §3 | Audit D00 T01 §3: Solution scaffold for all modules, x64 and ARM64 | D00 T01 §3, §2 | [x] |
 | 4 | §4 | Audit D00 T01 §5: Reference benchmark machines recorded | D00 T01 §5, §3 | [ ] |
 | 5 | §5 | Audit D00 T02 §1: Graph engine, CLI and tests | D00 T02 §1, §4 | [ ] |
 | 6 | §6 | Audit D00 T02 §2: Skills, rules and the CI gate | D00 T02 §2, §5 | [ ] |
@@ -128,9 +128,12 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 - [x] Run audit rounds on `D00 T01 §3`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t01-s3.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
 - [x] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t01-s3.md` is open without a fix commit or a filed section.
 - [x] On a confirmed regression, add a dated blocking note to `D00 T01 §3`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t01-s3.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
-- [ ] Commit: `review: audit D00 T01 §3 under the current review process`
+- [x] Commit: `review: audit D00 T01 §3 under the current review process`
 
 **Test checkpoint:** `python scripts/todo-graph.py resolve "D00 T01 §3"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d00-t01-s3.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+> **Verified:** 2026-10-21 | §3 | bf66a966e36f036d20461da54fe15d59f65847dd
+> **Review:** `docs/reviews/d06-t05-s3.json`
 
 ## 4. Audit D00 T01 §5: Reference benchmark machines recorded
 
