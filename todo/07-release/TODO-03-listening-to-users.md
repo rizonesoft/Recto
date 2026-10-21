@@ -44,7 +44,7 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 | 1 | §1 | Issue forms, triage policy and `SECURITY.md` | -- | [x] |
 | 2 | §9 | Gtest regression evidence from the fix commit's own CI test list | §1 | [x] |
 | 3 | §4 | User-bug regression rule, closing on release and changelog mapping | §1, §9 | [ ] |
-| 4 | §6 | Public scope page and user demand ledger | §1 | [ ] |
+| 4 | §6 | Public scope page and user demand ledger | §1 | [x] |
 | 5 | §3 | Structure-preserving reproducer scrubber (`recto-cli scrub`) | D04 T02 §2 | [ ] |
 | 6 | §2 | In-app `Report a problem` with privacy-safe diagnostics | §1, D07 T02 §1, D07 T02 §4, D02 T03 §11, D06 T04 §25 | [ ] |
 | 7 | §5 | Release gate for unreleased fixes, security advisories and CI integrity | §4, D07 T02 §6, D07 T02 §7, D06 T03 §12 | [ ] |
@@ -202,9 +202,12 @@ Users file bugs for features that exist but are hidden, ask scope questions nobo
 - [x] Author `scripts/check-user-demand.py` resolving every TODO reference and failing on an unknown one or a row older than the last release's review date. Done when: the script exits 0 on the seeded ledger.
 - [x] Add `tests/scripts/test_user_demand.py` with a valid and an invalid ledger fixture. Done when: the invalid fixture fails.
 - [x] Add the ledger review to the release runbook checklist in `docs/release-and-store-runbook.md` once `D07 T02 §6` creates it, and to `docs/support/triage.md` now. Done when: `docs/support/triage.md` names the review.
-- [ ] Commit: `docs: publish Recto's scope and a user demand ledger seeded from Recto issues and parity rows`
+- [x] Commit: `docs: publish Recto's scope and a user demand ledger seeded from Recto issues and parity rows`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_user_demand` passes and `python scripts/check-user-demand.py` exits 0 on the committed ledger.
+
+> **Verified:** 2026-10-21 | §6 | 30f5cb144c0a3bf65e6fcc83402d7e419cff65fc
+> **Review:** `docs/reviews/d07-t03-s6.json`
 
 ## 7. What's new after update and opt-in update notice
 
