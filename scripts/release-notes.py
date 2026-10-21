@@ -41,7 +41,8 @@ REPO_URL = "https://github.com/rizonesoft/Recto"
 # The kind label an issue is grouped under: the most severe one it carries (docs/support/triage.md).
 GROUPS = ("security", "data-loss", "crash", "regression", "bug")
 UNLABELLED = "unlabelled"
-ISSUE = re.compile(r"#([0-9]+)\b")
+# GitHub issue numbers fit in ten digits; a longer run of digits is not an issue number (and never reaches int()).
+ISSUE = re.compile(r"#([0-9]{1,10})\b")
 GTEST_ID = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$")
 PYTHON_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){2,}$")
 TRAILER = re.compile(r"^([A-Za-z0-9-]+):\s*(.*)$", re.DOTALL)
@@ -75,6 +76,12 @@ def inside(obj):
 # the standard library or an installed package.
 owner = next((klass for klass in cls.__mro__ if method in vars(klass)), None)
 if not (inside(mod) and inside(cls) and owner is not None and inside(owner)):
+    sys.exit(3)
+# The method body too: a repository class can assign a function defined elsewhere (test_x = Other.test_y).
+func = vars(owner)[method]
+func = inspect.unwrap(getattr(func, "__func__", func))
+code = getattr(func, "__code__", None)
+if code is None or not inside(func) or not pathlib.Path(code.co_filename).resolve().is_relative_to(here):
     sys.exit(3)
 # Only now is loadTestsFromName safe: on a TestCase method it builds the case (refusing, for example, an abstract
 # class) and never calls the method.
@@ -263,7 +270,7 @@ def read_issues(path):
     for issue in data:
         if not isinstance(issue, dict) or not isinstance(issue.get("number"), int):
             raise Unreadable(f"--issues {path}: an entry has no integer number")
-        if not isinstance(issue.get("labels") or [], list):
+        if issue.get("labels") is not None and not isinstance(issue["labels"], list):
             raise Unreadable(f"--issues {path}: issue #{issue['number']} has labels that are not a list")
         labels[issue["number"]] = [label.get("name") for label in issue.get("labels") or []
                                    if isinstance(label, dict) and isinstance(label.get("name"), str)]

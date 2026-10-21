@@ -169,8 +169,9 @@ class ReleaseNotesTest(unittest.TestCase):
         self.assertEqual(self.run_main("v1.0.0", "v1.1.0", "--issues", str(self.repo / "missing.json"))[0], 2)
         self.assertEqual(self.run_main("v1.0.0", "v1.1.0", "--gtest-list", str(bad_list))[0], 2)
         bad_issues = pathlib.Path(self._tmp.name) / "bad-issues.json"
-        bad_issues.write_text('[{"number": 12, "labels": 1}]', encoding="utf-8")
-        self.assertEqual(self.run_main("v1.0.0", "v1.1.0", "--issues", str(bad_issues))[0], 2)
+        for labels in ("1", "{}", "0", "false", '""'):
+            bad_issues.write_text(f'[{{"number": 12, "labels": {labels}}}]', encoding="utf-8")
+            self.assertEqual(self.run_main("v1.0.0", "v1.1.0", "--issues", str(bad_issues))[0], 2, labels)
 
     def test_root_covers_the_first_release(self):
         result = release_notes.report(self.repo, "root", "v1.0.0")
@@ -237,7 +238,8 @@ class HostileFixtureTest(unittest.TestCase):
             encoding="utf-8")
         reexport = (f"import sys\nimport unittest\nsys.path.append({str(outside)!r})\n"
                     "from outside_mod import OutsideTest as ReExported\n\n\n"
-                    "class Local(ReExported):\n    pass\n")
+                    "class Local(ReExported):\n    pass\n\n\n"
+                    "class Assigned(unittest.TestCase):\n    test_assigned = ReExported.test_outside\n")
         noisy = ("import os\nimport unittest\nos.write(1, bytes([255, 129]) + b'\\n')\n\n\n"
                  "class NoisyTest(unittest.TestCase):\n    def test_noisy(self):\n        pass\n")
         _commit(repo, {"tests/recto-tests/hostile_tests.cpp": cpp, "tests/scripts/test_sample.py": py,
@@ -258,6 +260,7 @@ class HostileFixtureTest(unittest.TestCase):
             "SleepsOnImport": "tests.scripts.test_sleeps.Slow.test_slow",
             "ReExported": "tests.scripts.test_reexport.ReExported.test_outside",
             "InheritedFromOutside": "tests.scripts.test_reexport.Local.test_outside",
+            "AssignedFromOutside": "tests.scripts.test_reexport.Assigned.test_assigned",
             "Stdlib": "unittest.case.TestCase.test_missing",
         }
         cls.real = {
@@ -274,6 +277,9 @@ class HostileFixtureTest(unittest.TestCase):
         # One physical trailer line holding a vertical tab: git reads it as one Fixes-User value.
         cls.shas["VerticalTab"] = _commit(
             repo, {"src/vt.txt": "vt"}, "fix vt\n\nFixes-User: #2\x0bRegression-Test: Enabled.Case\n")
+        # An issue "number" too long to be one is reported, not converted.
+        cls.shas["HugeIssue"] = _commit(repo, {"src/huge.txt": "huge"},
+                                        "fix huge\n\nFixes-User: #" + "1" * 5000 + "\nRegression-Test: Enabled.Case\n")
         # Separator characters in a subject must not break the report.
         cls.shas["Separators"] = _commit(repo, {"src/sep.txt": "sep"}, "odd \x1e subject \x1f here\n")
         cls.shas["ExcusedWithTest"] = _commit(
@@ -312,8 +318,12 @@ class HostileFixtureTest(unittest.TestCase):
         self.assertTrue(any("without a Regression-Test" in v for v in self.violations_for("VerticalTab")),
                         self.result["violations"])
 
+    def test_an_overlong_issue_number_is_a_violation(self):
+        self.assertTrue(any("names no issue number" in v for v in self.violations_for("HugeIssue")),
+                        self.result["violations"])
+
     def test_separator_characters_in_a_subject_are_kept(self):
-        self.assertEqual(len(self.result["fixes"]), len(self.fake) + len(self.real) + 2)
+        self.assertEqual(len(self.result["fixes"]), len(self.fake) + len(self.real) + 3)
 
     def test_an_allowance_never_hides_a_named_test(self):
         excuse = {self.shas["ExcusedWithTest"][:10]: "documentation only"}
