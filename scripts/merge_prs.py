@@ -291,7 +291,9 @@ def merge_all(run, root, args, out):
             # Judged on its state right now, after any earlier merge: labels, base, mergeability and the checks of the
             # exact commit that will merge.
             pr = current(run, root, number)
-            reason = why_not(pr, check_runs(run, root, pr["headRefOid"]), commit_statuses(run, root, pr["headRefOid"]))
+            runs = check_runs(run, root, pr["headRefOid"])
+            statuses = commit_statuses(run, root, pr["headRefOid"])
+            reason = why_not(pr, runs, statuses)
             merge_sha = "" if reason else test_merge_sha(run, root, number)
             if merge_sha and not test_merge_green(check_runs(run, root, merge_sha), commit_statuses(run, root, merge_sha)):
                 reason = "a check on its test merge with main is failing or unfinished"
@@ -307,13 +309,20 @@ def merge_all(run, root, args, out):
         # The base is read again immediately before the request. GitHub's merge call can pin the head commit
         # (--match-head-commit) but has no precondition on the base branch, so a retarget in the last instant is caught
         # afterwards instead: the merge commit then is not in main, the follow-up fails and the run stops.
+        # The whole final snapshot is judged again, against the same head commit whose checks were read: a label removed,
+        # a switch to draft or a retarget during the check queries skips the pull request.
         try:
-            if current(run, root, number).get("baseRefName") != "main":
-                out(f"merge-prs: #{number} no longer targets main; skipped")
-                continue
+            final = current(run, root, number)
         except RuntimeError as e:
             out(f"merge-prs: {e}")
             return 1
+        if final.get("headRefOid") != pr["headRefOid"]:
+            out(f"merge-prs: #{number}'s head moved while it was judged; skipped")
+            continue
+        late = why_not(final, runs, statuses)
+        if late:
+            out(f"merge-prs: #{number} skipped just before merging: {late}")
+            continue
         # Recorded before GitHub is asked, cleared only once the merge is verified locally: a run killed in between
         # (the task's timeout, a crash) leaves the marker, and the next run refuses until the operator has looked.
         record_stop(root, f"merge-prs: merging #{number} was interrupted before its pull and validate finished")

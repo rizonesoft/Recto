@@ -522,3 +522,48 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_merge_prs` -> `Ran 29 tests`, `OK` (`test_a_base_retargeted_before_the_merge_is_skipped` fails against `7ecb540`).
 
 - Finding 1 (P1): GitHub's merge call can pin the head commit (`--match-head-commit`) but offers no precondition on the base branch, so the window cannot be closed at the mutation itself (no API expresses it). The base is now read again immediately before the request, and a pull request no longer targeting `main` is skipped; a retarget in the last instant still lands somewhere other than `main`, which the follow-up then catches (its merge commit is not in `main`), stopping the run with the marker set. Only Dependabot and pins-workflow pull requests are eligible, and retargeting one needs write access to the repository.
+
+## Round 13: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T21:21:47Z
+- Effort: medium
+- Lines: 30
+- Digest: 6ceef64298b485c8
+
+## adversarial: needs-attention
+
+1. **P1, `scripts/merge_prs.py:311`: The final read discards updated eligibility information.** `current()` retrieves the full PR state, but only `baseRefName` is checked. Removing both accepted labels during the preceding check queries still allows the merge, even though the final response explicitly reports that the PR no longer qualifies. The subsequent ancestry check and validation cannot detect this policy violation.
+
+   Reproduction: start with an eligible PR; have `FakeRun` return `labels=[]` on its second `gh pr view`, keeping the head SHA and base unchanged. The in-memory probe issued merge request `#1` and returned exit 0, while `why_not()` rejected that same updated state as `not labelled dependencies or pins`.
+
+   Revalidate the final snapshot against the eligibility rules and bind it to the checked head. This defect occurs **before the final read completes**, independently of the acknowledged residual race after that read.
+
+## consistency: approve
+
+No additional findings.
+
+## integration: needs-attention
+
+Finding 1 also discards a newly reported draft state. The corresponding probe still issued a merge request. A real refusal then takes the persistent-stop path, blocking later scheduled and campaign invocations instead of skipping the draft.
+
+## source-defect: needs-attention
+
+Finding 1 violates `.conclave/automations/README.md`’s requirement that automatically merged PRs carry an accepted label.
+
+## design: advisory
+
+No rendered interface changes to assess.
+
+## record: advisory
+
+Inspected the candidate and recorded fixes. Ran in-memory reproductions with filesystem mutations mocked and bytecode disabled. No files changed or live merges attempted. Historical test results were not independently rerun.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 13
+
+`python -m unittest tests.scripts.test_merge_prs` -> `OK` (`test_a_late_change_to_eligibility_skips_the_merge` fails against `283a841` for each change).
+
+- Finding 1 (P1): the final read just before the merge request is judged in full by `why_not`, against the check runs and statuses already read for the same head commit, and a head that moved since is skipped too: a removed label, a switch to draft, a retarget or a new head commit each skip the pull request with the reason logged.
