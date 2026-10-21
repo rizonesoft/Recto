@@ -24,7 +24,6 @@ title: "TODO-01 -- Opt-in AI Assistant with User-Supplied Provider Keys"
 - -> XREF: D07 T03 §2 -- provider keys never appear in diagnostics, and a scan proves it.
 - -> XREF: D02 T04 §6 -- the `ASSISTANT` settings group joins the settings page and its search.
 - -> XREF: D02 T03 §3 -- the Assistant panel is a `SidePanelHost` card.
-- -> XREF: D09 T05 §1 -- Recto Cloud's desktop transport (D09 T05 §1) follows these rules.
 - -> XREF: D08 T02 §2 -- local provider id.
 - -> XREF: D08 T02 §2 -- loopback exception in TransportPolicy.
 - -> XREF: D08 T02 §2 -- NoEndpoint state.

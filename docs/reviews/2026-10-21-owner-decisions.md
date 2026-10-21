@@ -39,3 +39,7 @@ The decisions themselves are the owner's (2026-10-21) and stand; these fixes cha
 3. Fixed: the desktop asks `POST /v1/envelopes/admissions` (`D09 T04 §30`) before any upload byte, and `D09 T05 §9` states the exact guarantee for a switch change after admission with `Cloud.SendForSignatureSwitchRaceAfterAdmission`.
 4. Fixed: `D09 T04 §30` enforces `SIGNATURES_ENABLED` at send, the signing ceremony, invitations, reminders, completion, bulk rows and form confirmations, holding queued effects until re-enabled, with tests on existing drafts and queued jobs; the switch moved out of `D09 T04 §20`, which waits on counsel.
 5. Fixed: the foundation plan's owner-decision line and `D02 T01 §12` now say a snapshot keeps the original's security handler, passwords, permissions and `/EncryptMetadata`, so it is exactly as protected as the original (an empty user password or unencrypted metadata is not strengthened or weakened), and the writer encrypts in memory before the first byte reaches the temporary file; `Shell.RecoveryEncryptedSnapshots` covers a non-empty and an empty user password, `/EncryptMetadata false`, and a plaintext canary absent even from an interrupted write's temporary file.
+
+## Superseded 2026-10-21
+
+The owner withdrew Recto Cloud (D20) the same day: Recto runs no hosted service, so the cloud decisions reviewed here (domain, region, seal certificate, limits, launch staging) and findings 1 to 4 no longer apply, and `todo/09-cloud` is removed. Finding 5 (encrypted crash recovery snapshots, `D02 T01 §12`) stands.

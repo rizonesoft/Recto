@@ -676,122 +676,6 @@ Sections: 88 | Checklist items: 476
 | [ ]    | D08 T02 §34 | Ctrl+K commands, UIA names and announcements for the workspace tools                     | windows-host, display-session | 4     |
 | [ ]    | D08 T02 §35 | Workspace privacy suite: loopback only, previews, no auto-apply, zero network            | windows-host, display-session | 7     |
 
-### Phase 98: Recto Cloud (web)
-
-Sections: 109 | Checklist items: 606
-
-| Status | Reference   | Deliverable                                                                  | Needs                         | Items |
-| ------ | ----------- | ---------------------------------------------------------------------------- | ----------------------------- | ----- |
-| [ ]    | D09 T01 §1  | Workspace scaffold, AGPL licence, NOTICE and licence allowlist check         | none                          | 6     |
-| [ ]    | D09 T01 §2  | Wrangler configuration for dev, staging and production with typed bindings   | none                          | 6     |
-| [ ]    | D09 T01 §3  | D1 schema, forward-only migrations and the SQLite database interface         | none                          | 7     |
-| [ ]    | D09 T01 §4  | Storage interface with R2 and S3-compatible adapters                         | none                          | 6     |
-| [ ]    | D09 T01 §5  | API foundation: router, error model, request ids and content-free logging    | none                          | 6     |
-| [ ]    | D09 T01 §6  | Security headers and strict Content Security Policy                          | none                          | 5     |
-| [ ]    | D09 T01 §7  | Sessions, HttpOnly cookies, principals and CSRF protection                   | none                          | 6     |
-| [ ]    | D09 T01 §8  | Rate limits with a Durable Object counter                                    | none                          | 5     |
-| [ ]    | D09 T01 §9  | Email Queue consumer, SMTP2GO transport and dev outbox                       | none                          | 6     |
-| [ ]    | D09 T01 §10 | Sign-up and sign-in with one-time email links                                | none                          | 6     |
-| [ ]    | D09 T01 §11 | Passkey registration and sign-in (WebAuthn)                                  | none                          | 5     |
-| [ ]    | D09 T01 §12 | Account recovery and email change                                            | none                          | 5     |
-| [ ]    | D09 T01 §13 | Account settings API: profile, sessions and passkeys                         | none                          | 4     |
-| [ ]    | D09 T01 §14 | OAuth 2.0 authorization code with PKCE endpoints for the desktop app         | none                          | 7     |
-| [ ]    | D09 T01 §15 | Data export and account deletion with a grace period                         | none                          | 7     |
-| [ ]    | D09 T01 §16 | Admin API, abuse reports and takedown by content hash                        | none                          | 6     |
-| [ ]    | D09 T01 §17 | Backups and restore                                                          | none                          | 5     |
-| [ ]    | D09 T01 §18 | Self-host adapters: Durable Object SQLite, job queue and scheduler           | none                          | 5     |
-| [ ]    | D09 T01 §19 | Self-host build on plain workerd with a smoke test                           | none                          | 5     |
-| [ ]    | D09 T01 §20 | GitHub Actions CI: lint, typecheck, Vitest, Playwright and self-host smoke   | none                          | 5     |
-| [ ]    | D09 T01 §21 | Staging and production deploy job gated on operator secrets                  | operator, third-party         | 6     |
-| [ ]    | D09 T02 §1  | Document, folder, version and sharing schema with repositories               | none                          | 6     |
-| [ ]    | D09 T02 §2  | Access resolver: roles, inheritance and one decision point                   | none                          | 5     |
-| [ ]    | D09 T02 §3  | Upload sessions: size cap, part uploads and magic-byte checks                | none                          | 7     |
-| [ ]    | D09 T02 §4  | Version commit: hash check and immutable content-addressed blobs             | none                          | 5     |
-| [ ]    | D09 T02 §5  | Folders: create, rename, move and list                                       | none                          | 5     |
-| [ ]    | D09 T02 §6  | Trash, restore and purge with blob garbage collection                        | none                          | 5     |
-| [ ]    | D09 T02 §7  | Quotas and usage accounting                                                  | none                          | 5     |
-| [ ]    | D09 T02 §8  | Account grants: invite, change role and revoke                               | none                          | 5     |
-| [ ]    | D09 T02 §9  | Share links: expiry, password, redeem and revoke                             | none                          | 5     |
-| [ ]    | D09 T02 §10 | Audit of grants and access with an owner-visible log                         | none                          | 5     |
-| [ ]    | D09 T02 §11 | Read API: metadata, ranged content and download                              | none                          | 5     |
-| [ ]    | D09 T02 §12 | Design tokens from RectoColors.xaml and the web app scaffold                 | none                          | 6     |
-| [ ]    | D09 T02 §13 | Web shell with sign-in, account and consent screens                          | none                          | 7     |
-| [ ]    | D09 T02 §14 | Library page: folders, upload, rename, move, trash and quota                 | none                          | 6     |
-| [ ]    | D09 T02 §15 | Sharing dialog and shared-with-me list                                       | none                          | 5     |
-| [ ]    | D09 T02 §16 | Document page and scriptless pdf.js viewer                                   | none                          | 7     |
-| [ ]    | D09 T02 §17 | Viewer navigation: page controls, zoom and thumbnails                        | none                          | 6     |
-| [ ]    | D09 T02 §18 | Viewer search and download                                                   | none                          | 5     |
-| [ ]    | D09 T02 §19 | Accessibility: WCAG 2.2 AA checks, keyboard paths and statement              | none                          | 7     |
-| [ ]    | D09 T02 §20 | Playwright end-to-end suite for sign-in, upload, share and read              | none                          | 5     |
-| [ ]    | D09 T02 §21 | Quota, retention and terms values recorded from the owner                    | third-party                   | 4     |
-| [ ]    | D09 T02 §22 | QR code for a share link, rendered locally as SVG                            | none                          | 5     |
-| [ ]    | D09 T03 §1  | Annotation JSON schema package for comments and markup                       | none                          | 6     |
-| [ ]    | D09 T03 §2  | Desktop exchange fixtures from recto-cli annot                               | windows-host                  | 4     |
-| [ ]    | D09 T03 §3  | Review, invitee and comment tables in D1                                     | none                          | 6     |
-| [ ]    | D09 T03 §4  | Review lifecycle API: start, invite, accept, close                           | none                          | 6     |
-| [ ]    | D09 T03 §5  | ReviewRoom Durable Object: sockets, ordering, presence                       | none                          | 5     |
-| [ ]    | D09 T03 §6  | Comment operations: add, edit, reply, mention, resolve, delete               | none                          | 7     |
-| [ ]    | D09 T03 §7  | Reconnection, resync and concurrent edit convergence                         | none                          | 6     |
-| [ ]    | D09 T03 §8  | Review email notifications and deadline reminders                            | none                          | 4     |
-| [ ]    | D09 T03 §9  | Review access control, rate limits and size caps                             | none                          | 5     |
-| [ ]    | D09 T03 §10 | Annotation exchange API: JSON and XFDF import and export                     | none                          | 4     |
-| [ ]    | D09 T03 §13 | Web review room: viewer overlay, comment panel, presence                     | none                          | 5     |
-| [ ]    | D09 T03 §14 | Start-a-review dialog and reviews list in the web app                        | none                          | 4     |
-| [ ]    | D09 T04 §1  | Bounded PDF reader and incremental update writer package                     | none                          | 6     |
-| [ ]    | D09 T03 §11 | Markup appearance streams for exported annotations                           | none                          | 4     |
-| [ ]    | D09 T03 §12 | Reviewed PDF export job with comments                                        | none                          | 5     |
-| [ ]    | D09 T03 §15 | End-to-end review tests in two browsers                                      | none                          | 4     |
-| [ ]    | D09 T04 §2  | Envelope, recipient and field model with D1 tables                           | none                          | 6     |
-| [ ]    | D09 T04 §3  | Hash-chained audit trail package and verifier                                | none                          | 5     |
-| [ ]    | D09 T04 §4  | Envelope Durable Object state machine                                        | none                          | 5     |
-| [ ]    | D09 T04 §5  | Envelope API: draft, recipients, fields, send, void                          | none                          | 5     |
-| [ ]    | D09 T04 §6  | Field placement UI for signature, initials, date, text and checkbox          | none                          | 5     |
-| [ ]    | D09 T04 §7  | Single-use signing links, routing order and invitation email                 | none                          | 6     |
-| [ ]    | D09 T04 §8  | Signer ceremony API: consent, access code, adopt, fill, sign, decline        | none                          | 7     |
-| [ ]    | D09 T04 §9  | Signer ceremony UI: consent, adopt, fill and sign                            | none                          | 5     |
-| [ ]    | D09 T04 §10 | Reminders and expiry by Cron                                                 | none                          | 4     |
-| [ ]    | D09 T04 §11 | Render text, date and checkbox values with an embedded subset font           | none                          | 4     |
-| [ ]    | D09 T04 §12 | Signature and initials images: validate, store and embed                     | none                          | 4     |
-| [ ]    | D09 T04 §13 | Certificate of completion with audit chain head                              | none                          | 4     |
-| [ ]    | D09 T04 §14 | PAdES-B-T seal engine with RFC 3161 timestamp and test certificate           | none                          | 6     |
-| [ ]    | D09 T04 §15 | Production seal signer through an HSM or signing service                     | third-party, operator         | 4     |
-| [ ]    | D09 T04 §16 | Completion Queue job: render, certify, seal, version and notify              | none                          | 7     |
-| [ ]    | D09 T04 §17 | Golden PDFs, independent validator and tamper tests                          | none                          | 4     |
-| [ ]    | D09 T04 §18 | Retention, legal hold, data export and deletion for envelopes                | none                          | 4     |
-| [ ]    | D09 T04 §19 | Set retention, quota and expiry defaults                                     | none                          | 2     |
-| [ ]    | D09 T04 §20 | Approve ESIGN consent disclosure and signer legal texts                      | third-party                   | 3     |
-| [ ]    | D09 T04 §21 | Sender dashboard: envelopes, status, audit view and downloads                | none                          | 4     |
-| [ ]    | D09 T04 §22 | End-to-end signature ceremony tests in the browser                           | none                          | 4     |
-| [ ]    | D09 T04 §23 | Envelope templates: reusable recipients, roles and fields                    | none                          | 5     |
-| [ ]    | D09 T04 §24 | Bulk send: one template to a CSV, one envelope per row                       | none                          | 5     |
-| [ ]    | D09 T04 §25 | Web form link engine: one envelope per submitter with abuse limits           | none                          | 4     |
-| [ ]    | D09 T04 §26 | Web form link page and owner management                                      | none                          | 3     |
-| [ ]    | D09 T04 §27 | In-person signing: hand a device to a signer, attested in the audit          | none                          | 4     |
-| [ ]    | D09 T04 §28 | In-person hand-over screens and templates, bulk and form pages               | none                          | 3     |
-| [ ]    | D09 T04 §29 | End-to-end tests for templates, bulk send, web forms and in-person           | none                          | 2     |
-| [ ]    | D09 T04 §30 | Launch-stage switch and canary enforced at every signature boundary          | none                          | 7     |
-| [ ]    | D09 T05 §1  | HTTPS-only WinHTTP cloud transport with no redirect credential leakage       | windows-host                  | 9     |
-| [ ]    | D09 T05 §2  | Windows Credential Manager `TokenStore` for Recto Cloud sessions             | windows-host                  | 7     |
-| [ ]    | D09 T05 §3  | OAuth 2.0 PKCE sign-in through the system browser and a loopback redirect    | windows-host                  | 7     |
-| [ ]    | D09 T05 §4  | `CloudClient` with typed errors, token refresh, retry and offline detection  | windows-host                  | 8     |
-| [ ]    | D09 T05 §5  | Upload consent gate and exact-send preview dialog                            | windows-host, display-session | 7     |
-| [ ]    | D09 T05 §6  | Settings `RECTO CLOUD` group, sign-in and sign-out commands                  | windows-host, display-session | 8     |
-| [ ]    | D09 T05 §7  | `Open from Recto Cloud` picker and verified download                         | windows-host, display-session | 8     |
-| [ ]    | D09 T05 §8  | `Save to Recto Cloud` with version conflict handling                         | windows-host, display-session | 8     |
-| [ ]    | D09 T05 §9  | `Send for signature`: upload preview and hand-off to web field placement     | windows-host, display-session | 9     |
-| [ ]    | D09 T05 §10 | `Start a shared review` from the open document                               | windows-host, display-session | 8     |
-| [ ]    | D09 T05 §11 | Live review comments in the Comments panel                                   | windows-host, display-session | 10    |
-| [ ]    | D09 T05 §12 | Zero network before sign-in, token privacy and redirect safety suite         | windows-host, display-session | 8     |
-| [ ]    | D09 T05 §13 | Record domain, sender domain and data region decisions                       | operator                      | 6     |
-| [ ]    | D09 T05 §14 | Obtain the seal certificate from an AATL CA for an HSM or signing service    | third-party, operator         | 5     |
-| [ ]    | D09 T05 §15 | Terms, privacy policy and DPA reviewed by counsel for launch stage 1         | third-party                   | 6     |
-| [ ]    | D09 T05 §16 | Production verification, content-free monitoring and stage 1 acceptance run  | third-party, operator         | 6     |
-| [ ]    | D09 T05 §17 | Status page, abuse contact and security disclosure                           | third-party, operator         | 6     |
-| [ ]    | D09 T05 §18 | Stage 1 go-live gate: desktop default server, parity ledger and release note | third-party, operator         | 6     |
-| [ ]    | D09 T05 §19 | Account assets API: encrypted signature appearance and stamp storage         | none                          | 7     |
-| [ ]    | D09 T05 §20 | Signature and stamp sync across devices, opt-in                              | windows-host, display-session | 9     |
-| [ ]    | D09 T05 §21 | Stage 2 launch: signature canary, acceptance run and public activation       | third-party, operator         | 6     |
-
 ### Phase 99: Manual, operator only
 
 Sections: 4 | Checklist items: 22
@@ -803,6 +687,6 @@ Sections: 4 | Checklist items: 22
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
-Progress: 24/727 verified sections, 15 ready to run now.
+Progress: 24/618 verified sections, 14 ready to run now.
 
-Checklist: 148/5084 items completed (includes Commit items).
+Checklist: 148/4478 items completed (includes Commit items).

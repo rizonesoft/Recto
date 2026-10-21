@@ -29,7 +29,6 @@ track: M4
 - -> XREF: D05 T01 §1 -- the engine operation vocabulary (`D05 T01 §1`-`§10`) every mode, dialog, and security bar compiles to.
 - -> XREF: D08 T01 §11 -- the assistant's ContextBuilder reads pending marks so redacted content is never sent.
 - -> XREF: D04 T07 §5 -- the Action Wizard's redact step (D04 T07 §5) uses these presets.
-- -> XREF: D09 T05 §20 -- signature appearance library sync.
 - -> XREF: D08 T02 §23 -- organize grid.
 - -> XREF: D08 T02 §31 -- Suggested redaction mark state.
 - -> XREF: D03 T01 §15 -- zone OCR to redaction.

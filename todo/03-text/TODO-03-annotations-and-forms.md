@@ -27,9 +27,6 @@ track: M3
 - -> XREF: D03 T04 §13 -- Edit PDF reuses these handles for page objects (§13 there).
 - -> XREF: D05 T01 §3 -- page edits remap or remove named destinations through `remap_page_references`.
 - -> XREF: D02 T02 §9 -- authored links activate through the existing link prompt.
-- -> XREF: D09 T03 §1 -- Recto Cloud reviews use this annotation JSON model (D09 T03 §1).
-- -> XREF: D09 T05 §11 -- shows live Recto Cloud review comments (D09 T05 §11).
-- -> XREF: D09 T05 §20 -- stamp library sync.
 - -> XREF: D08 T02 §27 -- comments.
 - -> XREF: D03 T01 §14 -- spell service in comment editors.
 - -> XREF: D03 T01 §14 -- spell service in form fields.

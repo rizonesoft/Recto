@@ -164,12 +164,10 @@ class Graph(Tree):
         rows = tg.graph(self.root)
         self.assertEqual(tg.disposition(rows["D00 T01 §1"], rows), 4)
 
-    def test_cloud_phase_98_is_valid_and_sorts_before_operator_phase(self):
-        # Phase 98 is Recto Cloud (foundation plan D20); 99 stays the operator phase.
-        self.write(todo_file([(1, "Cloud", 98, "none", "--"), (2, "Op", 99, "operator", "--")]))
-        rows = tg.graph(self.root)
-        self.assertEqual(rows["D00 T01 §1"].phase, 98)
-        self.assertLess(rows["D00 T01 §1"].phase, rows["D00 T01 §2"].phase)
+    def test_withdrawn_cloud_phase_98_refuses(self):
+        # Phase 98 (Recto Cloud, foundation plan D20) was withdrawn on 2026-10-21; the closed list is the SDK's again.
+        self.write(todo_file([(1, "Cloud", 98, "none", "--")]))
+        self.refuses("invalid Phase")
 
     def test_phase_outside_the_closed_list_refuses(self):
         self.write(todo_file([(1, "A", 50, "none", "--")]))

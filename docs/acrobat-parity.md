@@ -57,8 +57,8 @@ Last reviewed: 2026-10-21, against the Acrobat Pro "All tools" list, the Foxit P
 | Prepare form, fill forms, automatic field detection | Planned | D03 T03 §6-§10, §32-§39 | XFA to AcroForm conversion; barcode fields filled by Recto's own code, never PDF JavaScript |
 | Combine form data into a spreadsheet | Planned | D03 T03 §40-§41, D04 T07 §21 | |
 | Digital signatures: sign, certify, validate, timestamp, LTV | Planned | D05 T01 §8-§9, §28-§29, D05 T02 §10-§11, §30-§32 | Windows certificate store; verdicts never "valid" when unknown |
-| Request e-signatures (Acrobat Sign) | Planned, phase 98 | D09 T04, D09 T05 | Recto Cloud (D20): simple electronic signatures with a hash-chained audit trail and a PAdES seal; the desktop stays offline until the user signs in (D16) |
-| Shared review, Send for comments | Planned, phase 98 | D09 T03, D09 T05 | Recto Cloud (D20) live reviews in Recto's annotation model; XFDF and JSON file exchange remains (D03 T03 §2, §5) |
+| Request e-signatures (Acrobat Sign) | Excluded | | Needs a hosted service, and Recto runs none (D20 withdrawn 2026-10-21); signers sign locally with certificates (`D05 T01 §8`) or fill and sign forms (`D03 T03`) |
+| Shared review, Send for comments | Excluded | | Needs a hosted service (D20 withdrawn 2026-10-21); reviews travel as files through XFDF and JSON comment export and import (`D03 T03 §2`, `§5`) and the cloud storage connectors (`D02 T06`) |
 
 ## Protect and standards
 
@@ -136,10 +136,10 @@ Last reviewed: 2026-10-21, against the Acrobat Pro "All tools" list, the Foxit P
 | Acrobat Pro tool | Status | Recto sections | Recto keeps |
 | --- | --- | --- | --- |
 | AI Assistant (summarize, ask, generative features) | Planned, opt-in | D08 T01 §1-§19, D08 T02 §1-§35 | Off by default; the user's own Anthropic, OpenAI, OpenRouter or Gemini key, or a local model; preview before every request (D19) |
-| Document Cloud storage, sharing links | Planned, phase 98 | D09 T01, D09 T02, D09 T05 | Recto Cloud (D20), AGPL and self-hostable on `workerd`; opt-in from the desktop |
+| Document Cloud storage, sharing links | Excluded | | Recto runs no storage service (D20 withdrawn 2026-10-21); the opt-in connectors open and save in the user's own OneDrive, SharePoint, Google Drive, Dropbox or Box (`D02 T06`) |
 | Third-party cloud storage (OneDrive, SharePoint, Google Drive, Dropbox, Box) | Planned, opt-in | D02 T06 §1-§15 (provider registrations are third-party) | Off by default; lockable by Group Policy (D21) |
-| Web app | Planned, phase 98 | D09 T02 | Scriptless `pdf.js` viewer (D9) |
-| Mobile apps | Excluded | | Recto is a Windows desktop app (D15); the Recto Cloud web app works in mobile browsers |
+| Web app | Excluded | | Recto is a Windows desktop app (D15) and runs no hosted service (D20 withdrawn 2026-10-21) |
+| Mobile apps | Excluded | | Recto is a Windows desktop app (D15) |
 | Admin deployment and managed settings | Planned | D07 T02 §8-§12 | Group Policy templates; no usage reporting (D16) |
 
 ## Beyond Acrobat: Foxit PDF Editor, PDFelement and UPDF
@@ -184,9 +184,9 @@ F = Foxit PDF Editor, W = Wondershare PDFelement, U = UPDF.
 | Shipped interface translations | U, W, F | Planned | D07 T02 §13-§17 (first set of ten languages; reviewers are third-party) |
 | AI: local models, whole-document translation, rewrite and proofread as edits, multi-document chat, semantic search, natural-language commands | U, W, F | Planned, opt-in | D08 T02 §1-§23 |
 | AI: mind maps, flashcards and quizzes, contract review, AI-content estimate, image generation, audio summaries, PII suggestions | U, W, F | Planned, opt-in | D08 T02 §24-§35 |
-| Signature and stamp sync across devices | U, W | Planned, phase 98 | D09 T05 §19-§20 |
-| QR code for share links | U, W | Planned, phase 98 | D09 T02 §22 |
-| E-sign templates, bulk send, web form links, in-person signing | U, W, F | Planned, phase 98 | D09 T04 §23-§29 |
+| Signature and stamp sync across devices | U, W | Excluded | Needs a hosted account service (D20 withdrawn 2026-10-21); the signature appearance and stamp libraries stay local (`D05 T02 §10`, `D03 T03 §20`) |
+| QR code for share links | U, W | Excluded | Recto creates no hosted share links (D20 withdrawn 2026-10-21) |
+| E-sign templates, bulk send, web form links, in-person signing | U, W, F | Excluded | Needs a hosted signing service (D20 withdrawn 2026-10-21) |
 | MCP or agent control of the app | W, F | Planned | D04 T08 §1-§12 |
 | Page-flip 3D book view | W | Excluded | Presentation only; Recto's two-page and presentation views cover reading |
 | Screen recording | W | Excluded | Not a PDF task; Windows ships a screen recorder |
@@ -197,5 +197,5 @@ F = Foxit PDF Editor, W = Wondershare PDFelement, U = UPDF.
 | Vendor-cloud AI, smart redact uploads, AI workspaces, support chatbots that run commands | U, W, F | Excluded | Recto sends nothing without the user's own key or a local model and a preview per request (D16, D19) |
 | Cloud teams, SSO, licence consoles, usage analytics | U, W, F | Excluded | No telemetry (D16); Group Policy covers managed deployment (D21) |
 | Microsoft Purview and AIP sensitivity labels | F | Excluded | Needs Microsoft cloud sign-in; not planned (D21) |
-| Payments, notary and CRM connectors for e-sign | F | Excluded | Outside Recto Cloud's scope (D20) |
+| Payments, notary and CRM connectors for e-sign | F | Excluded | Needs a hosted signing service (D20 withdrawn 2026-10-21) |
 | Mobile-only and macOS-only features | U, W, F | Excluded | Recto is a Windows desktop app (D15) |

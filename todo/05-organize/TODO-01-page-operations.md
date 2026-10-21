@@ -32,7 +32,6 @@ track: M4
 - -> XREF: D01 T02 §8 -- certificate decryption supplies the private key through the document actor.
 - -> XREF: D04 T05 §7 -- backgrounds are written as artifacts in tagged documents.
 - -> XREF: D04 T06 §10 -- page operations keep PDF/X output intents (D04 T06 §10).
-- -> XREF: D09 T04 §14 -- Recto Cloud's PAdES seal (D09 T04 §14) follows this signer's conventions.
 - -> XREF: D08 T02 §9 -- GraftMap.
 - -> XREF: D08 T02 §9 -- merge.
 - -> XREF: D08 T02 §22 -- page operations.

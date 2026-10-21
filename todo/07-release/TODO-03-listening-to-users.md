@@ -22,7 +22,6 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 - -> XREF: D99 T01 §2 -- the operator enables GitHub private vulnerability reporting that §1's `SECURITY.md` points to.
 - -> XREF: D08 T01 §9 -- diagnostics must never carry an assistant key (D08 T01 §9 scans for it).
 - -> XREF: D04 T07 §2 -- records the Action Wizard's watched-folder request (D04 T07 §2).
-- -> XREF: D09 T05 §12 -- diagnostics must never carry a Recto Cloud token (D09 T05 §12).
 - -> XREF: D07 T02 §10 -- update notice policy.
 
 ## Outcome

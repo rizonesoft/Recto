@@ -30,7 +30,6 @@ track: M6
 - -> XREF: D07 T01 §19 -- runbook.
 - -> XREF: D07 T01 §20 -- release kit.
 - -> XREF: D08 T01 §15 -- AssistantDisabled policy.
-- -> XREF: D09 T05 §6 -- CloudDisabled policy.
 - -> XREF: D07 T03 §7 -- update notice policy.
 - -> XREF: D02 T04 §2 -- SettingSource and locks.
 - -> XREF: D02 T04 §4 -- lock note rows.
@@ -287,7 +286,7 @@ Foxit PDF Editor ships Group Policy templates so administrators can lock setting
 1. Write `docs/group-policy.md` with the catalogue below and author `policy/Recto.admx` and `policy/en-US/Recto.adml` to match it. Done when: `python scripts/check-admx.py` exits `0`.
 2. Add `tests/scripts/test_check_admx.py` proving the checker catches drift. Done when: `python -m unittest tests.scripts.test_check_admx` passes.
 
-- [ ] Write `docs/group-policy.md` with one row per policy: `AssistantDisabled` (DWORD, `1` turns the AI assistant off and locks its settings), `CloudDisabled` (DWORD, `1` turns Recto Cloud off), `CloudConnectorsDisabled` (DWORD, `1` turns the cloud storage connectors off), `UpdateNoticeDisabled` (DWORD, `1` turns the opt-in update notice off), `DefaultLayoutPreset` (string, `Focus`, `Classic` or `ReadingRoom`) and `DefaultSaveFolder` (expandable string, an absolute folder), each with scope (machine and user), effect, the setting it locks, and the behaviour for a malformed value. Done when: every policy name used in `src/` appears in the table and the table has no policy missing from the templates.
+- [ ] Write `docs/group-policy.md` with one row per policy: `AssistantDisabled` (DWORD, `1` turns the AI assistant off and locks its settings), `CloudConnectorsDisabled` (DWORD, `1` turns the cloud storage connectors off), `UpdateNoticeDisabled` (DWORD, `1` turns the opt-in update notice off), `DefaultLayoutPreset` (string, `Focus`, `Classic` or `ReadingRoom`) and `DefaultSaveFolder` (expandable string, an absolute folder), each with scope (machine and user), effect, the setting it locks, and the behaviour for a malformed value. Done when: every policy name used in `src/` appears in the table and the table has no policy missing from the templates.
 - [ ] Author `policy/Recto.admx` with the category `Recto`, the six policies under `Software\Policies\Recto` for the machine and user classes, enumerated items for the layout preset and an expandable text element for the folder. Done when: `python scripts/check-admx.py` finds each policy's key, value name and class.
 - [ ] Author `policy/en-US/Recto.adml` with a display name, explanatory text and presentation for every policy, written plainly and stating what each policy locks. Done when: `check-admx.py` finds every `stringTable` reference resolved and no unused string.
 - [ ] Write `scripts/check-admx.py`, which parses both files as XML, checks namespaces and ids, that every policy in `docs/group-policy.md` exists with the same value name and type, and that no template names a value the table lacks. Done when: it exits `0` on the repository and exits `2` for a synthetic template with a missing string and one with an undocumented policy.
@@ -321,7 +320,7 @@ Recto needs one place that answers "is this policy set, and to what" (owner deci
 
 ## 10. `SettingsStore` policy precedence: locked settings and policy gates
 
-A policy only helps if every consumer sees it the same way. This section makes `SettingsStore` (`D02 T04 §2`) report whether a setting is locked by policy and return the policy value at read time, and gives features without a stored setting (the assistant, Recto Cloud, the connectors, the update notice) one gate to ask. A policy never writes `settings.json`, so removing a policy restores the user's own choice.
+A policy only helps if every consumer sees it the same way. This section makes `SettingsStore` (`D02 T04 §2`) report whether a setting is locked by policy and return the policy value at read time, and gives features without a stored setting (the assistant, the connectors, the update notice) one gate to ask. A policy never writes `settings.json`, so removing a policy restores the user's own choice.
 
 **Phase:** 6
 **Needs:** windows-host
@@ -334,7 +333,7 @@ A policy only helps if every consumer sees it the same way. This section makes `
 
 - [ ] Add `SettingSource` (`Default`, `User`, `Policy`) and `SettingsStore::source(key)`, `is_locked(key)` and `effective_value(key)` in `src/services/settings.h/.cpp`; reads return the policy value while a policy is set, and `set` on a locked key returns `SettingError::LockedByPolicy` without touching disk. Done when: `Policy.SettingsPrecedence` shows a user value of `Classic` with policy `Focus` reads `Focus`, `set` fails, and removing the policy returns `Classic`.
 - [ ] Register the two built-in locks: `DefaultLayoutPreset` locks `LayoutPreset`, and `DefaultSaveFolder` sets `SaveConvertedLocation` to `CustomFolder` and locks it and `CustomSaveConvertedFolder`. Done when: `Policy.BuiltInLocks` checks both mappings and that an invalid policy value leaves the setting unlocked.
-- [ ] Expose `register_policy_lock(setting_key, PolicyId, mapper)` and `PolicyGate::is_disabled(PolicyId)` so the assistant (`D08 T01`), Recto Cloud (`D09 T05`), the cloud connectors (`D02 T06`) and the update notice (`D07 T03 §7`) register their own locks or query the gate without reading the registry. Done when: `Policy.GateContract` registers a stub setting and a stub feature and sees both lock when the policy is set.
+- [ ] Expose `register_policy_lock(setting_key, PolicyId, mapper)` and `PolicyGate::is_disabled(PolicyId)` so the assistant (`D08 T01`), the cloud connectors (`D02 T06`) and the update notice (`D07 T03 §7`) register their own locks or query the gate without reading the registry. Done when: `Policy.GateContract` registers a stub setting and a stub feature and sees both lock when the policy is set.
 - [ ] Raise the existing change notification when a policy appears, changes or goes away while the app runs. Done when: `Policy.LiveChange` shows a subscribed view model receives one notification per change.
 - [ ] Keep every persisted file unchanged by policy: assert `settings.json` bytes are identical before and after a policy is applied and removed. Done when: `Policy.SettingsFileUntouched` passes. Cheaper substitute: writing the policy value into the user's settings file, which survives after the policy is removed.
 - [ ] Commit: `feat(policy): apply policy precedence and locks in SettingsStore`

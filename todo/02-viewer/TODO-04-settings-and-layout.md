@@ -32,7 +32,6 @@ track: M2
 - -> XREF: D08 T01 §15 -- hosts the assistant's settings group (D08 T01 §15).
 - -> XREF: D03 T05 §4 -- the multi-file search index (D03 T05 §4) is stored under these paths.
 - -> XREF: D03 T02 §9 -- binds the Read Out Loud accelerators (D03 T02 §9).
-- -> XREF: D09 T05 §6 -- hosts the Recto Cloud settings group (D09 T05 §6).
 - -> XREF: D03 T01 §14 -- settings rows.
 - -> XREF: D03 T02 §12 -- Ctrl+4 shortcut table.
 - -> XREF: D07 T01 §18 -- printer settings keys.
