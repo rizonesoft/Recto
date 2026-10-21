@@ -226,6 +226,10 @@ class HostileFixtureTest(unittest.TestCase):
             "// spliced comment \\\nTEST(InComment, Case) {}\n"
             "/\\\n* opener split by a splice\nTEST(InSplitBlock, Case) {}\n*/\n"
             "/* closer split by a splice *\\\n/\nTEST(AfterSplitClose, Case) {}\n"
+            # A splice before a raw string's quote, and a splice after an escaped backslash in a string: both
+            # keep the TEST inside the literal.
+            "const char* p = R\\\n\"(a\" TEST(SplitRawPrefix, Case) {} \")\";\n"
+            "const char* e = \"abc\\\\\\\nn TEST(SplitEscape, Case) {}\";\n"
         )
         py = (
             "import abc\nimport unittest\n"
@@ -268,6 +272,7 @@ class HostileFixtureTest(unittest.TestCase):
             "NotTaken": "NotTaken.Case", "Parenthesised": "Parenthesised.Case", "Macro": "Macro.Case",
             "Continued": "Continued.Case", "Quoted": "Quoted.Case", "Raw": "Raw.Case",
             "InRaw": "InRaw.Case", "InComment": "InComment.Case", "InSplitBlock": "InSplitBlock.Case",
+            "SplitRawPrefix": "SplitRawPrefix.Case", "SplitEscape": "SplitEscape.Case",
             "Pretend": "tests.scripts.test_sample.Pretend.test_fake",
             "Ordinary": "tests.scripts.test_sample.Ordinary.test_missing",
             "Save": "tests.scripts.test_sample.Ordinary.save",
@@ -310,7 +315,8 @@ class HostileFixtureTest(unittest.TestCase):
         # What the compiler builds: the macro, the continued comment and the #if (0) block are not tests.
         cls.compiled = {"Enabled.Case", "Taken.Case", "Multi.Line", "Typed.Case", "Spliced.Case", "Prefixed.Char",
                         "Separated.Num", "Fraction.Case", "AfterRaw.Case", "SplicedNumber.Case",
-                        "InRaw.Case", "InComment.Case", "InSplitBlock.Case", "AfterSplitClose.Case"}
+                        "InRaw.Case", "InComment.Case", "InSplitBlock.Case", "AfterSplitClose.Case",
+                        "SplitRawPrefix.Case", "SplitEscape.Case"}
         # A module that never finishes importing must time out into a violation, not abort the report; the short
         # timeout holds for every report this class builds and is restored in tearDownClass.
         cls._timeout, release_notes.PROBE_TIMEOUT = release_notes.PROBE_TIMEOUT, 3

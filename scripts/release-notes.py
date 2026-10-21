@@ -28,6 +28,7 @@ Exit 0 when every fix carries a verified regression test, 1 when any does not (t
 range or an argument cannot be read.
 """
 import argparse
+import bisect
 import json
 from pathlib import Path
 import re
@@ -140,39 +141,40 @@ def _separator_follows(spliced_tail):
     return _in_number(spliced_tail + "'", len(spliced_tail))
 
 
-def cpp_code(text):
-    """C++ source with lines spliced, comments and literals blanked, and `#if 0` branches removed. Splices are
-    removed as the scan meets them, never inside a raw string literal, whose content C++ keeps byte for byte."""
-    text = text.replace("\r\n", "\n")
-    out, i, n = [], 0, len(text)
-
-    def after_splices(j):
-        """The index of the next character at or after j once spliced newlines are skipped."""
-        while text.startswith("\\\n", j):
-            j += 2
-        return j
-
+def _spliced(text):
+    """The text with every backslash-newline removed (translation phase 2), and for each kept character its index in
+    the original text, so a raw string literal can be read back from the unspliced characters."""
+    chars, origin, i, n = [], [], 0, len(text)
     while i < n:
-        second = after_splices(i + 1) if text[i] == "/" else i
         if text.startswith("\\\n", i):
             i += 2
-        elif text[i] == "/" and second < n and text[second] == "/":
-            # A line comment ends at the first newline that is not spliced onto the next line.
-            end = text.find("\n", second)
-            while end > 0 and text[end - 1] == "\\":
-                end = text.find("\n", end + 1)
+            continue
+        chars.append(text[i])
+        origin.append(i)
+        i += 1
+    return "".join(chars), origin
+
+
+def cpp_code(text):
+    """C++ source with lines spliced, comments and literals blanked, and `#if 0` branches removed. As the compiler
+    does, every splice is removed before tokens are read, and only a raw string literal's content is taken from the
+    original characters (C++ reverts splices between its delimiters)."""
+    original = text.replace("\r\n", "\n")
+    text, origin = _spliced(original)
+    out, i, n = [], 0, len(text)
+    while i < n:
+        if text.startswith("//", i):
+            end = text.find("\n", i)
             i = n if end < 0 else end
-        elif text[i] == "/" and second < n and text[second] == "*":
-            # A block comment ends at `*/`, which a splice may split (`*\` newline `/`).
-            j = second + 1
-            while j < n and not (text[j] == "*" and after_splices(j + 1) < n and text[after_splices(j + 1)] == "/"):
-                j += 1
-            i = n if j >= n else after_splices(j + 1) + 1
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 2
             out.append(" ")
         elif (raw := RAW_STRING.match(text, i)) and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_")
                                                      or text[i - 1] in "8uUL"):
-            end = text.find(f'){raw.group(1)}"', raw.end())
-            i = n if end < 0 else end + len(raw.group(1)) + 2
+            # The closing `)delim"` is found in the original text, after the opening parenthesis.
+            close = original.find(f'){raw.group(1)}"', origin[raw.end() - 1] + 1)
+            i = n if close < 0 else bisect.bisect_left(origin, close + len(raw.group(1)) + 2)
             out.append('""')
         elif text[i] in "\"'" and not (text[i] == "'" and _separator_follows("".join(out[-64:]))):
             quote, i = text[i], i + 1
