@@ -816,6 +816,21 @@ class Stamp(Tree):
         tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-22", sync_plan=True)
         self.assertTrue(tg.graph(self.root)["D00 T01 §1"].done)
 
+    def test_unstamping_a_prerequisite_leaves_its_consumers_stamped_and_suspect(self):
+        path = self.root / "todo/00-workspace/TODO-02-b.md"
+        path.write_text(todo_file([(1, "Base", 0, "none", "--"), (2, "Mid", 0, "none", "§1"), (3, "Top", 0, "none", "§2")],
+                                  ident="bravo").replace("- [ ] Work.", "- [x] Work."), encoding="utf-8")
+        self.index("TODO-02-b.md")
+        for n in (1, 2, 3):
+            tg.stamp(self.root, f"D00 T02 §{n}", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
+        tg.unstamp(self.root, "D00 T02 §1", "checkpoint fails", "2026-10-21")
+        rows = tg.graph(self.root)
+        self.assertEqual([rows[f"D00 T02 §{n}"].done for n in (1, 2, 3)], [False, True, True])
+        self.assertEqual(tg.suspects(self.root, "D00 T02 §1"), ["D00 T02 §2", "D00 T02 §3"])
+        # Without the Unstamped note, a stamped consumer of an open section still refuses.
+        path.write_text(path.read_text(encoding="utf-8").replace("> **Unstamped:** ", "> **Note:** "), encoding="utf-8")
+        self.refuses("stamped section has open dependency")
+
     def test_an_interrupted_unstamp_rolls_back(self):
         self.tick_work()
         tg.projections(self.root, sync=True)

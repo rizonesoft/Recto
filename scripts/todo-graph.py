@@ -27,7 +27,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from todo_graph import (ROOT, Refused, adjacency_report, atomic, deferrals, disposition,  # noqa: E402
                         extract_ref, graph, ordered, plan_config, projections, require, review_rounds, stamp,
-                        unstamp)
+                        suspects, unstamp)
 
 
 def review_round(value):
@@ -76,6 +76,8 @@ def main():
     if args.command == "unstamp":
         revoked = unstamp(ROOT, args.ref, args.reason, args.date)
         print(f"unstamped {args.ref}; receipt kept as {revoked}; plan synchronized")
+        for ref in suspects(ROOT, args.ref):
+            print(f"suspect until {args.ref} re-stamps: {ref}")
         return 0
     if args.command == "stamp":
         receipt = stamp(ROOT, args.ref, args.sha, args.review, args.checks, args.date, sync_plan=True,

@@ -551,7 +551,10 @@ def graph(root=ROOT):
                 require(dep not in visiting, f"dependency cycle: {dep}")
                 require(sections[dep].phase <= sections[ref].phase,
                         f"prerequisite in later phase: {ref} -> {dep}")
-                require(not sections[ref].done or sections[dep].done,
+                # A stamped section may sit on an open prerequisite only when an audit reopened that prerequisite
+                # (its Unstamped note): the consumer is then suspect until the prerequisite re-stamps, not unstamped.
+                require(not sections[ref].done or sections[dep].done
+                        or re.search(r"^> \*\*Unstamped:\*\* ", sections[dep].body, re.M) is not None,
                         f"stamped section has open dependency: {ref}")
                 if dep not in visited:
                     visiting.add(dep)
@@ -875,5 +878,18 @@ def unstamp(root, ref, reason, date):
                 atomic(plan_path, original_plan_bytes)
         raise
     return revoked
+
+
+def suspects(root, ref):
+    """Stamped sections that depend on ref, directly or through other sections: suspect while ref is open."""
+    rows = graph(root)
+    found, frontier = [], [ref]
+    while frontier:
+        current = frontier.pop()
+        for row in ordered(rows):
+            if current in row.depends and row.ref not in found:
+                found.append(row.ref)
+                frontier.append(row.ref)
+    return [r for r in found if rows[r].done]
 
 M_FLAG = re.M
