@@ -29,8 +29,11 @@ def ledger(*rows):
     return "# Ledger\n\n" + HEADER + "\n".join(rows) + "\n"
 
 
-def problems(*rows, release=(None, None), parity=PARITY):
-    return demand.problems(ledger(*rows), parity, PLAN, SECTIONS, release)
+TODAY = date(2026, 10, 21)
+
+
+def problems(*rows, release=(None, None, True), parity=PARITY, **kwargs):
+    return demand.problems(ledger(*rows), parity, PLAN, SECTIONS, release, today=TODAY, **kwargs)
 
 
 class LedgerRulesTest(unittest.TestCase):
@@ -49,6 +52,10 @@ class LedgerRulesTest(unittest.TestCase):
             "evidence": (web.replace("parity: Web app", "asked often"), "evidence names no issue and no parity row"),
             "date": (web.replace("2026-10-21", "21 Oct"), "is not a YYYY-MM-DD date"),
             "cells": (web.replace(" | 2026-10-21 |", " |"), "has 5 cells"),
+            "request ref": (web.replace("A web version", "A web version (D99 T99 §999)"), "D99 T99 §999 does not resolve"),
+            "backwards": (split.replace("§23-§24", "§24-§23"), "runs backwards"),
+            "file only": (web.replace("D15: desktop only", "D15: desktop only, see D02 T02"), "without a section"),
+            "future": (web.replace("2026-10-21", "9999-12-31"), "is in the future"),
         }
         for name, (row, message) in cases.items():
             with self.subTest(rule=name):
@@ -63,9 +70,19 @@ class LedgerRulesTest(unittest.TestCase):
         self.assertIn("parity row 'Split view' has no owning TODO section and no ledger row", found)
 
     def test_rows_older_than_the_last_release_are_refused(self):
-        found = problems(*VALID.values(), release=("v1.0.0", date(2026, 11, 1)))
+        found = problems(*VALID.values(), release=("v1.0.0", date(2026, 11, 1), True))
         self.assertTrue(any("is before the v1.0.0 release" in line for line in found), found)
-        self.assertEqual(problems(*VALID.values(), release=("v1.0.0", date(2026, 10, 21))), [])
+        self.assertEqual(problems(*VALID.values(), release=("v1.0.0", date(2026, 10, 21), True)), [])
+
+    def test_a_lightweight_release_tag_is_refused(self):
+        found = problems(*VALID.values(), release=("v1.0.0", date(2026, 10, 1), False))
+        self.assertTrue(any("is lightweight" in line for line in found), found)
+
+    def test_release_mode_needs_a_recent_review(self):
+        stale = [row.replace("2026-10-21", "2026-09-30") for row in VALID.values()]
+        self.assertEqual(problems(*stale), [])
+        found = problems(*stale, release_window=demand.RELEASE_WINDOW)
+        self.assertEqual(len([line for line in found if "more than 14 days ago" in line]), 2, found)
 
     def test_wrong_columns_are_refused(self):
         text = "| Request | Status | Owner |\n| --- | --- | --- |\n| A | planned | D02 T02 §23 |\n"
@@ -74,7 +91,7 @@ class LedgerRulesTest(unittest.TestCase):
 
     def test_section_ranges_and_lists_expand(self):
         self.assertEqual(demand.section_refs("D02 T01 §3, §13-§15, D04 T04 §8"),
-                         ["D02 T01 §3", "D02 T01 §13", "D02 T01 §14", "D02 T01 §15", "D04 T04 §8"])
+                         (["D02 T01 §3", "D02 T01 §13", "D02 T01 §14", "D02 T01 §15", "D04 T04 §8"], []))
 
 
 class CommittedLedgerTest(unittest.TestCase):

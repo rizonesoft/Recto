@@ -66,7 +66,7 @@ When a pull request replaces another, close the older one with a comment linking
 
 ## Reviewing the demand ledger before each release
 
-Before every release, review `docs/user-demand.md`: add a row for every request asked more than once since the last release, revisit every `decided` and `not planned` row against what users have said, and set each row's Last reviewed date. `python scripts/check-user-demand.py` fails while any row is older than the newest release tag, so a release cannot ship on an unreviewed ledger. Once the release runbook exists (D07 T02 §6), this review is one of its checklist steps.
+Before every release, review `docs/user-demand.md`: add a row for every request asked more than once since the last release, revisit every `decided` and `not planned` row against what users have said, and set each row's Last reviewed date. CI runs `python scripts/check-user-demand.py` on every ledger change, failing on an unresolved owner, a missing parity answer, or a row dated in the future or before the newest release. Before a release, `python scripts/check-user-demand.py --release` also fails while any row was reviewed more than 14 days ago; once the release runbook exists (D07 T02 §6), running it is one of the runbook's checklist steps.
 
 ## Closing a fixed bug
 

@@ -8,6 +8,9 @@ on:
   push:
     branches: [main]
     paths:
+      - 'docs/user-demand.md'
+      - 'docs/acrobat-parity.md'
+      - 'docs/plans/**'
       - 'todo/**'
       - 'docs/reviews/**'
       - 'scripts/**'
@@ -17,6 +20,9 @@ on:
       - '.github/workflows/plan.yml'
   pull_request:
     paths:
+      - 'docs/user-demand.md'
+      - 'docs/acrobat-parity.md'
+      - 'docs/plans/**'
       - 'todo/**'
       - 'docs/reviews/**'
       - 'scripts/**'
@@ -43,3 +49,7 @@ jobs:
         run: python scripts/todo-graph.py validate
       - name: Check the generated plan is current
         run: python scripts/todo-graph.py plan --check
+      - name: Test the demand ledger checker
+        run: python -m unittest tests.scripts.test_user_demand
+      - name: Check the user demand ledger (D07 T03 §6)
+        run: python scripts/check-user-demand.py

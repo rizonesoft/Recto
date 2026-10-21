@@ -11,7 +11,7 @@ Windows 11 version 22H2 or later (build 22621 or newer), on x64 and ARM64 PCs (f
 ## What does Recto never do?
 
 - **Run PDF JavaScript.** Recto's PDF engine has no JavaScript interpreter by construction (D9). Launch actions and scripts in a PDF never run; links and attachments ask before they open.
-- **Contact the network without your consent.** Nothing is sent by default. Network features are opt-in, each one names what it sends: the update check (off by default), the AI assistant with your own key (D19) and the cloud storage connectors for your own OneDrive, SharePoint, Google Drive, Dropbox or Box.
+- **Contact the network without your consent.** Nothing is sent by default. Network features are opt-in, each one names what it sends: the update check (off by default) and the cloud storage connectors for your own OneDrive, SharePoint, Google Drive, Dropbox or Box. The AI assistant, planned for after version 1 (D19), works the same way: off until you add your own key, with a preview of every request.
 - **Collect telemetry.** Recto has no usage analytics and no crash upload (D16). Diagnostics stay on your PC; you choose whether to share them in a bug report.
 - **Run a hosted service.** Recto has no accounts, no Recto cloud, no share links and no hosted e-signature service (D20, withdrawn 2026-10-21).
 - **Need Microsoft Office, LibreOffice or another converter.** Office, HTML, Markdown and image conversions are built into Recto (D7, D10).

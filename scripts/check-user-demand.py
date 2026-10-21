@@ -7,11 +7,14 @@ Every row must have a known status (planned, decided, not planned), an owner nam
 foundation-plan decision, and a cost of reversing unless it is planned. Every TODO reference must resolve in the
 TODO graph (the same graph `scripts/todo-graph.py resolve` reads), every decision `D<n>` must exist in the foundation
 plan's decision table, and every `parity: <tool>` must name a row of docs/acrobat-parity.md. Every parity row that
-is Excluded or Partial, or that points at this ledger, must have a ledger row. No row may be older than the newest
-release tag (`v*`), so the ledger is reviewed before each release.
+is Excluded or Partial, or that points at this ledger, must have a ledger row. TODO references are checked in every
+cell, and a backwards range or a file named without a section is a fault. No row may be dated in the future or
+before the newest release, whose date is its annotated `v*` tag's own date (a lightweight release tag is a fault).
+
+    python scripts/check-user-demand.py --release  # also: every row reviewed in the last 14 days (release runbook)
 """
 import argparse
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 import re
 import subprocess
@@ -29,6 +32,8 @@ STATUSES = {"planned", "decided", "not planned"}
 # `D02 T06 §1-§15`, `D02 T01 §3, §13-§16`: a file reference, then its sections and ranges up to the next file.
 SECTION_RUN = re.compile(r"\b(D\d\d T\d\d)((?:\s*,?\s*§\d+(?:\s*-\s*§?\d+)?)+)")
 SECTION = re.compile(r"§(\d+)(?:\s*-\s*§?(\d+))?")
+FILE_ONLY = re.compile(r"\bD\d\d T\d\d\b(?!\s*,?\s*§)")
+RELEASE_WINDOW = timedelta(days=14)
 # A decision is D1 to D99 without a leading zero and not followed by a TODO file number.
 DECISION = re.compile(r"\bD([1-9]\d?)\b(?!\s*T\d)")
 PARITY_REF = re.compile(r"parity: ([^;|]+)")
@@ -47,13 +52,17 @@ def table_rows(text, columns=None):
     return rows
 
 
-def section_refs(owner):
-    refs = []
-    for match in SECTION_RUN.finditer(owner):
+def section_refs(text):
+    """The TODO sections a cell names, with ranges and lists expanded, and the faults in how it names them."""
+    refs, faults = [], [f"{m.group(0)} names a TODO file without a section" for m in FILE_ONLY.finditer(text)]
+    for match in SECTION_RUN.finditer(text):
         prefix = match.group(1)
         for first, last in SECTION.findall(match.group(2)):
+            if last and int(last) < int(first):
+                faults.append(f"{prefix} §{first}-§{last} runs backwards")
+                continue
             refs += [f"{prefix} §{n}" for n in range(int(first), int(last or first) + 1)]
-    return refs
+    return refs, faults
 
 
 def parity_names(text):
@@ -70,18 +79,22 @@ def parity_names(text):
     return names, needed
 
 
-def last_release_date(root):
-    tag = subprocess.run(["git", "-C", str(root), "describe", "--tags", "--abbrev=0", "--match", "v*"],
-                         capture_output=True, text=True)
-    if tag.returncode != 0:
-        return None, None
-    when = subprocess.run(["git", "-C", str(root), "log", "-1", "--format=%cs", tag.stdout.strip()],
-                          capture_output=True, text=True, check=True).stdout.strip()
-    return tag.stdout.strip(), date.fromisoformat(when)
+def last_release(root):
+    """The newest `v*` release tag, its date and whether it is annotated. An annotated tag's date is when the release
+    was tagged; a lightweight tag only has its commit's date, which can be far older, so it is reported as a fault."""
+    out = subprocess.run(["git", "-C", str(root), "for-each-ref", "refs/tags/v*", "--sort=-creatordate",
+                          "--format=%(objecttype) %(refname:short) %(creatordate:short)"],
+                         capture_output=True, text=True, check=True).stdout.split("\n")[0].split()
+    if len(out) != 3:
+        return None, None, True
+    return out[1], date.fromisoformat(out[2]), out[0] == "tag"
 
 
-def problems(ledger_text, parity_text, plan_text, sections, release=(None, None)):
-    """Every fault in the ledger, as readable lines."""
+def problems(ledger_text, parity_text, plan_text, sections, release=(None, None, True), today=None,
+             release_window=None):
+    """Every fault in the ledger, as readable lines. `release_window` (the --release mode) requires every row to have
+    been reviewed within that many days of `today`."""
+    today = today or date.today()
     found = []
     lines = ledger_text.splitlines()
     header = next((line for line in lines if line.startswith("| Request |")), None)
@@ -93,7 +106,9 @@ def problems(ledger_text, parity_text, plan_text, sections, release=(None, None)
     decisions = {int(n) for n in re.findall(r"^\| D(\d+) \|", plan_text, re.M)}
     parity, needed = parity_names(parity_text)
     covered = set()
-    tag, released = release
+    tag, released, annotated = release
+    if tag and not annotated:
+        found.append(f"release tag {tag} is lightweight; tag releases with `git tag -a` so their date is the release's")
     for number, cells in enumerate(rows, 1):
         where = f"row {number}"
         if len(cells) != len(COLUMNS):
@@ -105,10 +120,15 @@ def problems(ledger_text, parity_text, plan_text, sections, release=(None, None)
             found.append(f"{where}: no request")
         if status not in STATUSES:
             found.append(f"{where}: status {status!r} is not planned, decided or not planned")
-        refs, owned_decisions = section_refs(owner), [int(n) for n in DECISION.findall(owner)]
+        refs, faults = section_refs(owner)
+        owned_decisions = [int(n) for n in DECISION.findall(owner)]
         if not refs and not owned_decisions:
             found.append(f"{where}: the owner names no TODO section and no decision")
-        for ref in refs:
+        for cell in (request, evidence, cost):
+            more, more_faults = section_refs(cell)
+            refs, faults = refs + more, faults + more_faults
+        found += [f"{where}: {fault}" for fault in faults]
+        for ref in dict.fromkeys(refs):
             if ref not in sections:
                 found.append(f"{where}: {ref} does not resolve")
         for decision in owned_decisions:
@@ -128,22 +148,29 @@ def problems(ledger_text, parity_text, plan_text, sections, release=(None, None)
         except ValueError:
             found.append(f"{where}: last reviewed {reviewed!r} is not a YYYY-MM-DD date")
             continue
+        if when > today:
+            found.append(f"{where}: last reviewed {reviewed} is in the future")
         if released and when < released:
             found.append(f"{where}: last reviewed {reviewed} is before the {tag} release ({released}); review it")
+        if release_window and when < today - release_window:
+            found.append(f"{where}: last reviewed {reviewed} is more than {release_window.days} days ago; review it "
+                         f"before the release")
     for name in sorted(needed - covered):
         found.append(f"parity row {name!r} has no owning TODO section and no ledger row")
     return found
 
 
 def main(argv=None, root=ROOT):
-    argparse.ArgumentParser(description=__doc__.splitlines()[0]).parse_args(argv)
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--release", action="store_true", help="also require every row reviewed in the last 14 days")
+    args = parser.parse_args(argv)
     try:
         texts = [(Path(root) / name).read_text(encoding="utf-8") for name in (LEDGER, PARITY, PLAN)]
         sections = set(graph(root))
     except (OSError, UnicodeDecodeError, Refused) as exc:
         print(f"check-user-demand: cannot read the ledger or the TODO graph: {exc}", file=sys.stderr)
         return 2
-    found = problems(*texts, sections, last_release_date(root))
+    found = problems(*texts, sections, last_release(root), release_window=RELEASE_WINDOW if args.release else None)
     if found:
         print("\n".join(found))
         return 1
