@@ -3188,50 +3188,166 @@ SEED_RENDER_OPERATORS = {
     7: {b"q", b"Q", b"rg", b"re", b"f"},
 }
 CONTENT_DELIMITERS = b"()<>[]{}/%"
+CONTENT_WHITESPACE = b" \t\r\n\f\x00"
+# Each operator the seeds use, with the kinds of its operands in order (ISO 32000-1 Tables 51, 57, 59, 74, 105, 107
+# and 320): n number, i integer, N name, s string, a array, d dictionary.
+CONTENT_OPERANDS: dict[bytes, str] = {
+    b"q": "", b"Q": "", b"cm": "nnnnnn", b"w": "n", b"J": "i", b"j": "i", b"M": "n", b"d": "an", b"gs": "N",
+    b"m": "nn", b"l": "nn", b"c": "nnnnnn", b"v": "nnnn", b"y": "nnnn", b"h": "", b"re": "nnnn",
+    b"S": "", b"s": "", b"f": "", b"F": "", b"f*": "", b"B": "", b"B*": "", b"b": "", b"b*": "", b"n": "",
+    b"W": "", b"W*": "",
+    b"g": "n", b"G": "n", b"rg": "nnn", b"RG": "nnn", b"k": "nnnn", b"K": "nnnn",
+    b"BT": "", b"ET": "", b"Tc": "n", b"Tw": "n", b"Tz": "n", b"TL": "n", b"Tf": "Nn", b"Tr": "i", b"Ts": "n",
+    b"Td": "nn", b"TD": "nn", b"Tm": "nnnnnn", b"T*": "", b"Tj": "s", b"TJ": "a",
+    b"Do": "N", b"BMC": "N", b"BDC": "N?", b"EMC": "",
+}
+PATH_CONSTRUCTION = {b"m", b"l", b"c", b"v", b"y", b"h", b"re"}
+PATH_PAINTING = {b"S", b"s", b"f", b"F", b"f*", b"B", b"B*", b"b", b"b*", b"n"}
+TEXT_SHOWING = {b"Td", b"TD", b"Tm", b"T*", b"Tj", b"TJ"}  # only inside BT ... ET
+
+
+def _content_operand(rel_path: str, raw: bytes, i: int) -> tuple[str, int]:
+    """(kind, end) of the operand starting at raw[i]: s, a, d, N, n, i, or "k" for a bare keyword (an operator)."""
+    b = raw[i]
+    if b == 0x28:  # literal string, balanced, with escapes
+        depth, i = 1, i + 1
+        while i < len(raw) and depth:
+            if raw[i] == 0x5C:
+                i += 2
+                continue
+            depth += {0x28: 1, 0x29: -1}.get(raw[i], 0)
+            i += 1
+        if depth:
+            raise ValueError(f"{rel_path}: unterminated string in content stream")
+        return "s", i
+    if raw.startswith(b"<<", i) or b == 0x5B:  # dictionary or array: its operands, to the matching close
+        close, i = (b">>", i + 2) if b == 0x3C else (b"]", i + 1)
+        while True:
+            while i < len(raw) and raw[i] in CONTENT_WHITESPACE:
+                i += 1
+            if i >= len(raw):
+                raise ValueError(f"{rel_path}: unterminated {'dictionary' if close == b'>>' else 'array'}")
+            if raw.startswith(close, i):
+                return ("d" if close == b">>" else "a"), i + len(close)
+            kind, i = _content_operand(rel_path, raw, i)
+            if kind == "k":
+                raise ValueError(f"{rel_path}: an operator inside an array or dictionary operand")
+    if b == 0x3C:  # hex string
+        close = raw.find(b">", i)
+        if close < 0 or re.fullmatch(rb"[0-9A-Fa-f\s]*", raw[i + 1 : close]) is None:
+            raise ValueError(f"{rel_path}: bad hex string in content stream")
+        return "s", close + 1
+    j = i + 1 if b == 0x2F else i
+    while j < len(raw) and raw[j] not in CONTENT_WHITESPACE and raw[j] not in CONTENT_DELIMITERS:
+        j += 1
+    if j == i:
+        raise ValueError(f"{rel_path}: unexpected byte {b:#04x} in content stream")
+    token = raw[i:j]
+    if b == 0x2F:
+        return "N", j
+    if re.fullmatch(rb"[+-]?\d+", token):
+        return "i", j
+    if re.fullmatch(rb"[+-]?(?:\d+\.\d*|\.\d+)", token):
+        return "n", j
+    if token in (b"true", b"false", b"null"):
+        return "o", j
+    return "k", j
+
+
+def content_instructions(rel_path: str, raw: bytes) -> list[tuple[bytes, list[tuple[str, bytes]]]]:
+    """The instructions of a content stream, in order: each operator with its operands as (kind, bytes). Strings,
+    arrays and dictionaries are read whole, so nothing inside an operand is ever taken for an operator."""
+    out: list[tuple[bytes, list[tuple[str, bytes]]]] = []
+    operands: list[tuple[str, bytes]] = []
+    i = 0
+    while i < len(raw):
+        if raw[i] in CONTENT_WHITESPACE:
+            i += 1
+            continue
+        if raw[i] == 0x25:  # % comment to end of line
+            while i < len(raw) and raw[i] not in b"\r\n":
+                i += 1
+            continue
+        kind, j = _content_operand(rel_path, raw, i)
+        if kind == "k":
+            out.append((raw[i:j], operands))
+            operands = []
+        else:
+            operands.append((kind, raw[i:j]))
+        i = j
+    if operands:
+        raise ValueError(f"{rel_path}: operands with no operator at the end of the content stream")
+    return out
 
 
 def content_operators(rel_path: str, raw: bytes) -> list[bytes]:
-    """The operators of a content stream, in order, from a tokenizer that skips what operands contain: literal and hex
-    strings, names, numbers, arrays, dictionaries and comments (ISO 32000-1 7.2 and 7.8.2). Text inside a string is
-    never taken for an operator."""
-    ops: list[bytes] = []
-    i, n = 0, len(raw)
-    while i < n:
-        b = raw[i]
-        if b in b" \t\r\n\f\x00" or b in b"[]{}":
-            i += 1
-        elif b == 0x25:  # % comment to end of line
-            while i < n and raw[i] not in b"\r\n":
-                i += 1
-        elif b == 0x28:  # literal string, balanced, with escapes
-            depth, i = 1, i + 1
-            while i < n and depth:
-                if raw[i] == 0x5C:
-                    i += 2
-                    continue
-                depth += {0x28: 1, 0x29: -1}.get(raw[i], 0)
-                i += 1
-            if depth:
-                raise ValueError(f"{rel_path}: unterminated string in content stream")
-        elif raw.startswith(b"<<", i) or raw.startswith(b">>", i):
-            i += 2
-        elif b == 0x3C:  # hex string
-            close = raw.find(b">", i)
-            if close < 0:
-                raise ValueError(f"{rel_path}: unterminated hex string in content stream")
-            i = close + 1
-        else:
-            j = i + 1 if b == 0x2F else i  # a name's slash, then its regular characters
-            while j < n and raw[j] not in b" \t\r\n\f\x00" and raw[j] not in CONTENT_DELIMITERS:
-                j += 1
-            if j == i:
-                raise ValueError(f"{rel_path}: unexpected byte {raw[i]:#04x} in content stream")
-            token = raw[i:j]
-            if b != 0x2F and not re.fullmatch(rb"[+-]?(?:\d+\.?\d*|\.\d+)", token) and token not in (
-                    b"true", b"false", b"null"):
-                ops.append(token)
-            i = j
+    """The operators of a content stream, in order (see content_instructions)."""
+    return [op for op, _ in content_instructions(rel_path, raw)]
+
+
+def validate_content_instructions(rel_path: str, raw: bytes, resources: dict[bytes, set[bytes]]) -> list[bytes]:
+    """Refuse content that is not executable as written: an unknown operator, wrong operand count or kinds, q/Q or
+    BT/ET out of balance, a text-showing operator outside BT ... ET, a path not ended by a painting operator (with
+    nothing else between), or a font, XObject or graphics-state name that the stream's resources do not define
+    (resources maps /Font, /XObject and /ExtGState to their names). Returns the operators."""
+    saves, in_text, in_path = 0, False, False
+    ops = []
+    for op, operands in content_instructions(rel_path, raw):
+        shape = CONTENT_OPERANDS.get(op)
+        if shape is None:
+            raise ValueError(f"{rel_path}: operator {op.decode()} is not one the corpus content uses")
+        kinds = "".join(k for k, _ in operands)
+        want = shape.replace("?", "")
+        fits = len(kinds) == len(want) and all(
+            k == w or (w == "n" and k == "i") for k, w in zip(kinds, want))
+        if shape.endswith("?"):  # BDC: a tag, then a property list (dictionary or name)
+            fits = len(kinds) == 2 and kinds[0] == "N" and kinds[1] in "dN"
+        if not fits:
+            raise ValueError(f"{rel_path}: {op.decode()} takes operands {shape!r}, got {kinds!r}")
+        if in_path and op not in PATH_CONSTRUCTION | PATH_PAINTING | {b"W", b"W*"}:
+            raise ValueError(f"{rel_path}: {op.decode()} inside a path before its painting operator")
+        if op in PATH_CONSTRUCTION:
+            if op not in (b"m", b"re") and not in_path:
+                raise ValueError(f"{rel_path}: {op.decode()} with no current path")
+            in_path = True
+        elif op in PATH_PAINTING or op in (b"W", b"W*"):
+            if not in_path:
+                raise ValueError(f"{rel_path}: {op.decode()} with no path to paint")
+            in_path = op in (b"W", b"W*")
+        elif op == b"q":
+            saves += 1
+        elif op == b"Q":
+            saves -= 1
+            if saves < 0:
+                raise ValueError(f"{rel_path}: Q with no matching q")
+        elif op == b"BT":
+            if in_text:
+                raise ValueError(f"{rel_path}: BT inside a text object")
+            in_text = True
+        elif op == b"ET":
+            if not in_text:
+                raise ValueError(f"{rel_path}: ET with no text object")
+            in_text = False
+        elif op in TEXT_SHOWING and not in_text:
+            raise ValueError(f"{rel_path}: {op.decode()} outside BT ... ET")
+        category = {b"Tf": b"/Font", b"Do": b"/XObject", b"gs": b"/ExtGState"}.get(op)
+        if category is not None and operands[0][1] not in resources.get(category, set()):
+            raise ValueError(f"{rel_path}: {op.decode()} names {operands[0][1].decode()}, which its resources lack")
+        ops.append(op)
+    if saves or in_text or in_path:
+        raise ValueError(f"{rel_path}: content ends inside q, BT or a path")
     return ops
+
+
+def resource_names(resources: bytes) -> dict[bytes, set[bytes]]:
+    """{/Font: names, /XObject: names, /ExtGState: names} from a /Resources dictionary value."""
+    if not resources.startswith(b"<<"):
+        return {}
+    out = {}
+    for category, value in dict_entries(resources[2:-2]).items():
+        if value.startswith(b"<<"):
+            out[category] = set(dict_entries(value[2:-2]))
+    return out
 
 
 def decode_seed_stream(rel_path: str, entries: dict[bytes, bytes], payload: bytes) -> bytes | None:
@@ -3272,6 +3388,17 @@ def validate_seed_pdf_structure(rel_path: str, data: bytes) -> None:
     if data.startswith(b"xref\n", xref_at) == (rel_path in SEED_XREF_STREAM):
         kind = "an /XRef stream" if rel_path in SEED_XREF_STREAM else "a classic xref table"
         raise ValueError(f"{rel_path}: the seed must use {kind}")
+    # Which resources each content stream runs with: the page's for the streams its /Contents names, a form
+    # XObject's own (none, when it has no /Resources) for the form.
+    stream_resources: dict[int, dict[bytes, set[bytes]]] = {}
+    for num, form in forms.items():
+        if form.get(b"/Type") == b"/Page":
+            for ref_m in re.finditer(rb"(\d+) 0 R", form[b"/Contents"]):
+                stream_resources[int(ref_m.group(1))] = resource_names(form.get(b"/Resources", b""))
+        elif form.get(b"/Subtype") == b"/Form":
+            stream_resources[num] = resource_names(form.get(b"/Resources", b""))
+    if rel_path == "seeds/seed-xref-objstm.pdf":
+        stream_resources[6] = {b"/Font": {b"/F1"}}  # the page lives in the object stream (SEED_OBJSTM_FORMS[3])
     for num in sorted(streams):
         start, _, s0, s1 = objects[num]
         entries = {**forms[num], b"/Length": str(s1 - s0).encode()}
@@ -3279,7 +3406,9 @@ def validate_seed_pdf_structure(rel_path: str, data: bytes) -> None:
         if content is None:
             continue
         validate_content_stream_syntax(rel_path, content)
-        ops = content_operators(rel_path, content)
+        if num not in stream_resources:
+            raise ValueError(f"{rel_path}: content stream {num} is neither page content nor a form XObject")
+        ops = validate_content_instructions(rel_path, content, stream_resources[num])
         expected = SEED_RENDER_OPERATORS.get(num) if rel_path == "seeds/seed-render-ops.pdf" else None
         if expected is not None and set(ops) != expected:
             raise ValueError(f"{rel_path}: object {num} uses operators {sorted(set(ops))}, not {sorted(expected)}")

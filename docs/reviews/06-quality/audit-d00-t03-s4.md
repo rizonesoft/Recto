@@ -385,3 +385,48 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `Ran 43 tests`, `OK` (`test_each_seed_proves_its_own_construct` fails against `c23dccb`: any seed stood in for another); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P1): each seed now proves what it exists to exercise, from parsed objects. `SEED_FORMS` pins every object's dictionary (the filters, the CCITT image parameters, the outline tree, the three link actions, the primitive types), `SEED_XREF_STREAM` the cross-reference form (classic table, or an `/XRef` stream for the object-stream seed), `SEED_OBJSTM_FORMS` the four objects inside the `/ObjStm`, and every content stream is decoded by its parsed `/Filter` (the regex scan of single-line dictionaries is gone) and must hold a text block; the render-ops seed's page and form streams must use exactly their operator sets, read by `content_operators()`, a tokenizer that skips strings, names, numbers, arrays, dictionaries and comments so text inside a string is never an operator.
+
+## Round 9: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T22:17:11Z
+- Effort: medium
+- Lines: 30
+- Digest: 9e7808fcf99d43a8
+
+### adversarial: needs-attention
+
+1. **P1: Render-seed validation accepts operator names without their required operands.** `scripts/build-corpus.py:3284` compares only operator sets. The syntax check at `:1259` does not validate operand counts, types or execution order.
+
+   Reproduced entirely in memory: intercept `make_stream_obj()` during `build_seed_render_ops()` and replace the page content containing `Seed 6: Render Ops` with `b" ".join(sorted(SEED_RENDER_OPERATORS[4]))`. Let the builder regenerate compression, lengths and offsets. `validate_seed_pdf_structure()` accepts it, although instructions such as `Do`, `Tf`, `cm` and `re` have no operands.
+
+   Supply these bytes through mocked `expected_corpus_files()` and `Path.read_bytes()`, with matching regenerated provenance: **`check_corpus()` returns `(True, [])`**. A generator regression can therefore remove usable rendering coverage while passing the checkpoint. This is a validator defect, not evidence that the committed seed is malformed.
+
+### consistency: approve
+
+No separate finding.
+
+### integration: advisory
+
+Finding 1 weakens the rendering seed prerequisite consumed by `todo/01-engine/TODO-03-cli-and-fuzz.md:152` and `:156`. The accepted replacement cannot exercise the intended successful rendering operations. No downstream engine defect is established.
+
+### source-defect: needs-attention
+
+Finding **1 (P1)** treats lexical operator presence as executable content. PDF operators have operand requirements and graphics-state constraints; set equality cannot establish those semantics. See [ISO 32000-2 graphics provisions](https://pdf-issues.pdfa.org/32000-2-2020/clause08.html).
+
+### design: advisory
+
+Not applicable; this section owns no user surface.
+
+### record: approve
+
+At `663a5c6`, independently reran `python -B scripts/build-corpus.py --check`: exit **0**, **39 fixtures verified**. The two focused round 8 tests also passed: **2 tests, OK**. Neither detects finding 1. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 9
+
+`python -m unittest tests.scripts.test_build_corpus` -> `OK` (`test_seed_content_must_be_executable_as_written` fails against `663a5c6`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): operator presence is no longer the test. Every seed content stream goes through `validate_content_instructions()`: each instruction's operands are read whole by `content_instructions()` (strings, arrays and dictionaries included) and must match the operator's count and kinds (`CONTENT_OPERANDS`, from ISO 32000-1 Tables 51, 57, 59, 74, 105, 107 and 320); `q`/`Q` and `BT`/`ET` must balance, text-showing operators sit inside `BT ... ET`, a path runs from `m` or `re` to a painting operator with only construction and clipping between, and every `Tf`, `Do` and `gs` name must exist in that stream's own resources (the page's for its `/Contents`, a form's own for the form). The render seed regenerated with bare operator names, and each of five smaller malformations, refuse.

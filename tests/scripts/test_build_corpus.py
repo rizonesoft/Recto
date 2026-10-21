@@ -567,6 +567,28 @@ class BuildCorpusTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unterminated string"):
             self.mod.content_operators("x", b"BT (open Tj ET")
 
+    def test_seed_content_must_be_executable_as_written(self) -> None:
+        check = self.mod.validate_content_instructions
+        res = {b"/Font": {b"/F1"}, b"/XObject": {b"/Fm1"}, b"/ExtGState": {b"/GS1"}}
+        self.assertEqual(check("x", b"q /GS1 gs 1 0 0 rg 0 0 10 10 re W* n BT /F1 12 Tf [(a) -4 (b)] TJ ET /Fm1 Do Q",
+                               res)[:3], [b"q", b"gs", b"rg"])
+        for content, says in ((b" ".join(sorted(self.mod.SEED_RENDER_OPERATORS[4])), ""),
+                              (b"1 0 0 1 0 0 cm 12 Tf", "Tf takes operands"),
+                              (b"/Fm2 Do", "resources lack"),
+                              (b"(x) Tj", "outside BT"),
+                              (b"10 10 m 1 0 0 rg 20 20 l S", "inside a path"),
+                              (b"q BT ET", "ends inside")):
+            with self.subTest(content=content), self.assertRaisesRegex(ValueError, says):
+                check("x", content, res)
+        # The same regression through the generator: the render seed's page content reduced to bare operator names.
+        real = self.mod.flate_compress
+        bare = b" ".join(sorted(self.mod.SEED_RENDER_OPERATORS[4]))
+        with mock.patch.object(self.mod, "flate_compress",
+                               side_effect=lambda b: real(bare if b"Seed 6: Render Ops" in b else b)):
+            seed = self.mod.build_seed_render_ops()
+        with self.assertRaises(ValueError):
+            self.mod.validate_seed_pdf_structure("seeds/seed-render-ops.pdf", seed)
+
     def test_inflation_stops_just_past_its_limit(self) -> None:
         bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))
         total, kept = self.mod.inflate_bounded(bomb, 1024, keep=False)
