@@ -347,3 +347,44 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_merge_prs` -> `OK` (`test_a_draft_is_skipped_and_later_pull_requests_still_merge` fails against `38715aa`).
 
 - Finding 1 (P2): `isDraft` is read, and a draft (or a pull request whose draft state is not reported) is skipped, never attempted, so it cannot trip the stop marker; a later eligible pull request still merges.
+
+## Round 9: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:48:44Z
+- Effort: medium
+- Lines: 26
+- Digest: 611e8bee193a5bb5
+
+## adversarial: needs-attention
+
+1. **P1, `scripts/merge_prs.py:115`: Repository selection drops the hostname, allowing merges against another GitHub server.** `origin_repo()` returns only `owner/name`; subsequent `gh pr` calls omit the host, and `gh api` calls omit `--hostname`. An inherited `GH_HOST` therefore redirects both checks and merges away from the verified `github.com` origin. With an authenticated Enterprise server containing the same repository name and an eligible PR, the script can merge there before local follow-up detects the mismatch.
+
+   Reproduced without external requests: set `GH_HOST=review-host.invalid`, use a synthetic credential and a refused localhost proxy, then execute the generated read commands. Both `gh pr list --repo rizonesoft/Recto` and `gh api repos/rizonesoft/Recto/...` attempted `review-host.invalid`. This follows [GitHub CLI’s documented host selection](https://cli.github.com/manual/gh_help_environment). Preserve `github.com` in every `--repo` argument and explicitly set `--hostname github.com` for API calls.
+
+## consistency: approve
+
+## integration: needs-attention
+
+Finding 1 breaks the contract between the repository checked by Git and the repository mutated by GitHub CLI.
+
+## source-defect: needs-attention
+
+Finding 1 contradicts `origin_repo()`’s explicit guarantee that inherited defaults cannot redirect merges. Supplying `owner/name` does not pin the hostname.
+
+## design: advisory
+
+No rendered interface changes to assess.
+
+## record: advisory
+
+Inspected the candidate and round 8 fix. Ran the isolated CLI routing reproduction; no files were modified or live merges attempted. Historical test results were not independently reproduced.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 9
+
+`python -m unittest tests.scripts.test_merge_prs` -> `OK` (the extended test fails against `70991a4`). Live: `origin_repo` -> `github.com/rizonesoft/Recto`; PR #1 eligible.
+
+- Finding 1 (P1): the host is pinned in every call: `gh pr` commands take `--repo github.com/<owner>/<name>` and `gh api` calls `--hostname github.com`, so neither `GH_REPO` nor `GH_HOST` can point a read or a merge at another repository or server (`test_every_github_call_names_the_repository_behind_origin`, run with both set).

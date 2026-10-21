@@ -105,19 +105,24 @@ def ensure_safe(run, root, scheduled):
 
 
 def origin_repo(run, root):
-    """owner/name of the GitHub repository behind origin: every gh call names it, so an inherited GH_REPO or another
-    default can never point the merges at a repository other than the one this clone checked."""
+    """github.com/owner/name of the repository behind origin: every gh call names it with its host, so an inherited
+    GH_REPO or GH_HOST can never point the merges at another repository or server than the one this clone checked."""
     url = check(run, root, ["git", "remote", "get-url", "origin"], "git remote get-url origin").strip()
     m = re.fullmatch(r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)([\w.-]+/[\w.-]+?)(?:\.git)?/?", url)
     if m is None:
         # The URL itself is never repeated: it can carry a token, and this message reaches logs and email.
         raise RuntimeError("origin is not a github.com repository")
-    return m.group(1)
+    return "github.com/" + m.group(1)
+
+
+def api(path):
+    """gh api arguments for a REST path on github.com, the host origin names (GH_HOST is never followed)."""
+    return ["gh", "api", "--hostname", "github.com", path]
 
 
 def check_runs(run, root, sha):
     """Every check run on a commit: (name, status, conclusion)."""
-    out = check(run, root, ["gh", "api", "--paginate", f"repos/{REPO[0]}/commits/{sha}/check-runs?per_page=100",
+    out = check(run, root, [*api(f"repos/{owner_name()}/commits/{sha}/check-runs?per_page=100"), "--paginate",
                             "--jq", ".check_runs[] | [.name, .status, .conclusion]"], f"reading checks of {sha[:7]}")
     return [tuple(json.loads(line)) for line in out.splitlines() if line.strip()]
 
@@ -125,7 +130,7 @@ def check_runs(run, root, sha):
 def commit_statuses(run, root, sha):
     """Every legacy commit status on a commit: (context, state). CI can report through these as well as check runs."""
     # Every page: the endpoint returns 30 statuses a page by default, and a failing one may sit past the first.
-    out = check(run, root, ["gh", "api", "--paginate", f"repos/{REPO[0]}/commits/{sha}/status?per_page=100",
+    out = check(run, root, [*api(f"repos/{owner_name()}/commits/{sha}/status?per_page=100"), "--paginate",
                             "--jq", ".statuses[] | [.context, .state]"], f"reading statuses of {sha[:7]}")
     return [tuple(json.loads(line)) for line in out.splitlines() if line.strip()]
 
@@ -171,7 +176,11 @@ def why_not(pr, runs, statuses=()):
 
 
 FIELDS = "number,title,author,labels,baseRefName,headRefName,headRefOid,mergeable,state,isDraft,files,mergeCommit"
-REPO: list[str] = [""]  # owner/name, set from origin by merge_all before any gh call
+REPO: list[str] = [""]  # github.com/owner/name, set from origin by merge_all before any gh call
+
+
+def owner_name():
+    return REPO[0].split("/", 1)[1]
 
 
 SETTLE_TRIES, SETTLE_WAIT = 5, 3.0

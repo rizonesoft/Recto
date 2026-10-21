@@ -100,7 +100,8 @@ class MergePrs(unittest.TestCase):
         self.assertEqual(self.main(fake), 0)
         self.assertEqual(fake.merges(), ["1", "2"])
         merge = next(c for c in fake.calls if c[:3] == ["gh", "pr", "merge"])
-        self.assertEqual(merge[4:], ["--repo", "rizonesoft/Recto", "--rebase", "--match-head-commit", f"{1:040d}"])
+        self.assertEqual(merge[4:], ["--repo", "github.com/rizonesoft/Recto", "--rebase", "--match-head-commit",
+                                     f"{1:040d}"])
         after = fake.calls[fake.calls.index(merge) + 1 :]
         self.assertEqual(after[0][:3], ["gh", "pr", "view"])  # read back: merged, not merely queued
         self.assertEqual(after[1][:3], ["git", "pull", "--ff-only"])
@@ -221,13 +222,15 @@ class MergePrs(unittest.TestCase):
 
     def test_every_github_call_names_the_repository_behind_origin(self):
         fake = FakeRun([pr(1)])
-        with mock.patch.dict("os.environ", {"GH_REPO": "someone/else"}):
+        with mock.patch.dict("os.environ", {"GH_REPO": "someone/else", "GH_HOST": "enterprise.example"}):
             self.assertEqual(self.main(fake), 0)
         gh_calls = [c for c in fake.calls if c[0] == "gh"]
         self.assertTrue(gh_calls)
         for call in gh_calls:
             joined = " ".join(call)
-            self.assertTrue("--repo rizonesoft/Recto" in joined or "repos/rizonesoft/Recto/" in joined, joined)
+            # The host is named in every call, so neither GH_REPO nor GH_HOST is followed.
+            self.assertTrue("--repo github.com/rizonesoft/Recto" in joined
+                            or ("--hostname github.com" in joined and "repos/rizonesoft/Recto/" in joined), joined)
 
     def test_a_timed_out_merge_reports_what_github_says(self):
         fake = FakeRun([pr(1)], raise_on="pr merge")
