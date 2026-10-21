@@ -447,3 +447,51 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `Ran 21 tests`, `OK` (`test_the_root_resolves_to_a_live_catalog` fails against `0c9bae9`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P1): the newest trailer's (or xref stream's) `/Root` is resolved through the cross-reference chain, to a walked object or a live object-stream slot (`compressed_dict`), and must be a `/Type /Catalog` dictionary; a `/Root` naming a missing object, a non-catalog, or a catalog the newest xref stream frees refuses. The AcroForm and Widget checks now read that resolved catalog instead of scanning for one.
+
+## Round 10: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T19:51:34Z
+- Effort: medium
+- Lines: 33
+- Digest: b602ceb5189d5c98
+
+## adversarial: needs-attention
+
+1. **P1: `/Root` resolution ignores the catalog’s generation number.** `scripts/build-corpus.py:1054` discards the generation when recording xref entries; `scripts/build-corpus.py:1565` resolves `/Root` by object number alone. Reproduced entirely in memory:
+   - Generate `build_simple_1p()`.
+   - Replace catalog header `1 0 obj\n` with `1 1 obj\n`.
+   - Change its matching xref entry’s generation from `00000` to `00001`, preserving offsets.
+   - Leave `/Root 1 0 R` unchanged.
+   - Call `validate_pdf_structure("render/simple-1p.pdf", mutated)`.
+
+   **Actual:** returns successfully. **Expected:** reject the unresolved catalog reference. The round 9 fix therefore still accepts a PDF without a resolvable `/Root`.
+
+## consistency: approve
+
+No independent findings.
+
+## integration: advisory
+
+Finding 1 permits malformed future generator output to pass structural validation. Deterministic byte comparison cannot detect that defect when generated and committed bytes agree. This reproduction does not establish corruption of the current fixtures.
+
+## source-defect: needs-attention
+
+Finding 1 violates indirect-object identity: both object number and generation number identify the target. `1 0 R` cannot resolve to `1 1 obj`. See [Adobe PDF Reference, §3.2.9](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.6.pdf).
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: advisory
+
+At `b53e03d`, independently reran `python -B scripts/build-corpus.py --check`: exit 0, all 39 fixtures current. Sixteen selected in-memory regression tests also passed, including the existing root-resolution test, which misses finding 1. The checkpoint result does not prove complete structural validation. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 10
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 22 tests`, `OK` (`test_every_object_is_generation_zero` fails against `b53e03d`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current` (every fixture already uses generation 0).
+
+- Finding 1 (P1): the corpus dialect is generation 0 throughout: an object header, a classic in-use xref entry or an xref-stream type-1 entry with another generation refuses, so every `N 0 R` (the `/Root` included) names exactly the one object it resolves to.

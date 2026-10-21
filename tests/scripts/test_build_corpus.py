@@ -314,6 +314,16 @@ class BuildCorpusTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "does not locate"):
             self.mod.validate_pdf_structure("render/compressed-xref-2p.pdf", data)
 
+    def test_every_object_is_generation_zero(self) -> None:
+        d = self.mod.build_simple_1p()
+        x = d.index(b"\nxref\n") + 1
+        entry_1 = x + len(b"xref\n0 ") + len(re.match(rb"\d+\n", d[x + len(b"xref\n0 "):]).group(0)) + 20
+        self.assertEqual(d[entry_1 + 11 : entry_1 + 16], b"00000")
+        mutated = d.replace(b"\n1 0 obj\n", b"\n1 1 obj\n", 1)
+        mutated = mutated[:entry_1 + 11] + b"00001" + mutated[entry_1 + 16:]
+        with self.assertRaisesRegex(ValueError, "generation 1; the corpus writes 0 only"):
+            self.mod.validate_pdf_structure("render/simple-1p.pdf", mutated)
+
     def test_a_classic_xref_entry_has_one_form(self) -> None:
         data = self.mod.build_simple_1p()
         self.mod.validate_pdf_structure("render/simple-1p.pdf", data)

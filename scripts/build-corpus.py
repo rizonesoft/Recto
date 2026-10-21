@@ -1044,6 +1044,8 @@ def validate_classic_xref_at(rel_path: str, data: bytes, xref_offset: int, visit
             off = int(off_str)
             gen = int(gen_str)
             obj_num = first_obj + idx
+            if kind == "n" and gen != 0:
+                raise ValueError(f"{rel_path}: xref entry for {obj_num} has generation {gen}; the corpus writes 0 only")
             if kind == "n":
                 expected_prefix = f"{obj_num} {gen} obj\n".encode("ascii")
                 if off not in object_header_offsets(rel_path, data) or not data[off:].startswith(expected_prefix):
@@ -1152,6 +1154,8 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int, visite
                 raise ValueError(
                     f"{rel_path}: XRef object 0 must be free with generation 65535, got {(etype, f2, f3)}"
                 )
+        elif etype == 1 and f3 != 0:
+            raise ValueError(f"{rel_path}: XRef type-1 entry for {obj_id} has generation {f3}; the corpus writes 0 only")
         elif etype == 1:
             expected_prefix = f"{obj_id} {f3} obj\n".encode("ascii")
             if f2 not in object_header_offsets(rel_path, data) or not data[f2:].startswith(expected_prefix):
@@ -1413,7 +1417,10 @@ def iter_objects(rel_path: str, data: bytes):
         m = _OBJ_HEADER.search(data, pos)
         if m is None:
             return
-        num = int(m.group(0).split()[0])
+        num, gen = (int(v) for v in m.group(0).split()[:2])
+        # The corpus writes generation 0 only, so every reference ("N 0 R") names exactly one object.
+        if gen != 0:
+            raise ValueError(f"{rel_path}: object {num} at {m.start()} has generation {gen}; the corpus writes 0 only")
         start = m.end()
         try:
             end = _skip_object(data, start)
