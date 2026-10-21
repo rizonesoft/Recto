@@ -1,6 +1,3 @@
 # Deliberate differences from the Conclave SDK kit templates, read by scripts/check-conclave-kits.py.
 # One per line: <repository-relative path> | <reason and where it is recorded>.
 scripts/lib/todo_graph.py | WORKAROUND: the SDK's 100-character plan row refusal is held for Recto's 88-character titles, and phase 98 (Recto Cloud) is added to the closed phase list, until the SDK reads both from todo/plan.json (todo/findings.md, 2026-10-20 and 2026-10-21)
-.agents/skills/process-plan/SKILL.md | the audit runs both tests/scripts (Recto's own tooling tests) and scripts/tests (kit tests); SDK 933baf9 runs only scripts/tests (todo/findings.md, 2026-10-21)
-.claude/skills/process-plan/SKILL.md | as .agents/skills/process-plan/SKILL.md
-.codex/skills/process-plan/SKILL.md | as .agents/skills/process-plan/SKILL.md
