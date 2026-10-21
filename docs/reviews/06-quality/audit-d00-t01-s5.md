@@ -85,3 +85,36 @@ OVERALL: needs-attention
 ## Fixes after round 2
 
 - Finding 1 (P3): the benchmark examples and description in `docs/reference-machines.md` now follow the owning contract `D01 T03 §3`: `bench <file.pdf> [--iterations <n>] [--dpi <n>] [--json]` reporting median and p95 for cold open, first-page `DisplayList` compilation and 1-worker against default-pool tile rasterization, with its `--json` fields named; `--workers` belongs to `stress`.
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T15:12:56Z
+- Effort: medium
+- Lines: 19
+- Digest: 21d8eb0fe3ff5841
+
+## adversarial: approve
+
+## consistency: approve
+
+## integration: approve
+
+## source-defect: advisory
+
+Live hardware verification remains incomplete: all four documented CIM queries returned `Access denied`, and the partition query returned no rows. CPU, RAM, GPU, OS and disk specifications could not be independently confirmed. This is a verification limitation, not evidence of incorrect values.
+
+## design: advisory
+
+Not applicable. The section owns no user surface.
+
+## record: approve
+
+Independently reran the checkpoint at `117f0e0`: validation reported `valid: 677 sections`, both validation and `plan --check` exited 0, and the reference document contained zero `TODO` or `TBD` tokens.
+
+OVERALL: approve
+
+## Outcome
+
+- Live fingerprint on 2026-10-21 (the reviewer's sandbox could not run CIM queries): `11th Gen Intel(R) Core(TM) i5-11600K @ 3.90GHz`, 6 cores, 12 logical processors, `MaxClockSpeed` 3912; ASUS `System Product Name`, `TotalPhysicalMemory` 34185392128; NVIDIA GeForce RTX 2060, driver `32.0.16.1088`, 3840 x 2160 at 59 Hz; Windows 11 Business `10.0.26300`. Every value matches section 1.
+- The stamp of `D00 T01 §5` is confirmed with corrections: the record and its fingerprint now agree on every value, the owners are current, and the stamped text's claim that `bench` landed is corrected by a dated audit note. No downstream stamp is suspect.
