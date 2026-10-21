@@ -195,18 +195,18 @@ def cpp_code(text):
                 kept.append(line)
             continue
         word, condition = directive.group(1), re.sub(r"[\s()]", "", directive.group(2))
+        # A branch is kept unless it is certainly not compiled. `taken` means an earlier branch of this group is
+        # certainly compiled (a literal 1), which makes every later branch dead whatever its condition.
         known = word in ("if", "elif") and condition in ("0", "1")
         if word in ("if", "ifdef", "ifndef"):
-            frames.append({"known": known, "active": not known or condition == "1",
-                           "taken": known and condition == "1"})
+            frames.append({"active": not known or condition == "1", "taken": known and condition == "1"})
         elif word == "elif" and frames:
             frame = frames[-1]
             frame["active"] = not frame["taken"] and (not known or condition == "1")
             frame["taken"] = frame["taken"] or (known and condition == "1")
-            frame["known"] = frame["known"] and known
         elif word == "else" and frames:
             frame = frames[-1]
-            frame["active"] = not frame["taken"] or not frame["known"]
+            frame["active"] = not frame["taken"]
             frame["taken"] = True
         elif word == "endif" and frames:
             frames.pop()
