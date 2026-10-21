@@ -54,33 +54,23 @@ def split_cells(line):
     return [cell.strip().replace("\\|", "|") for cell in UNESCAPED_PIPE.split(inner)]
 
 
-COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.S)
-FENCE = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})")
+# The ledger and the parity ledger are plain Markdown by rule: no HTML comments, no code blocks (fenced or indented)
+# and no indented lines, so what the checker reads is exactly what a reader sees, without emulating a renderer.
+DISALLOWED = ((re.compile(r"<!--|-->"), "an HTML comment"), (re.compile(r"^\s*(```|~~~)"), "a code fence"),
+              (re.compile(r"^(\t| )\s*\S"), "an indented line"))
 
 
-def visible(text):
-    """The text a reader sees: fenced code blocks and HTML comments blanked (their newlines kept). A fence closes
-    only on a line of the same character at least as long as its opener, as CommonMark requires."""
-    lines, fence = text.split("\n"), None
-    for number, line in enumerate(lines):
-        if fence is None:
-            opener = FENCE.match(line)
-            if opener:
-                fence = opener.group(1)
-                lines[number] = ""
-        else:
-            closer = re.fullmatch(rf"[ ]{{0,3}}({re.escape(fence[0])}{{{len(fence)},}})[ \t]*", line)
-            lines[number] = ""
-            if closer:
-                fence = None
-    return COMMENT.sub(lambda match: "\n" * match.group(0).count("\n"), "\n".join(lines))
+def format_faults(text, name):
+    """Lines that break the plain-Markdown rule for the ledger files."""
+    return [f"{name} line {number}: {what} is not allowed in this file" for number, line in enumerate(text.splitlines(), 1)
+            for pattern, what in DISALLOWED if pattern.search(line)]
 
 
 def tables(text):
     """Every Markdown table as (header cells, rows, faults). A table is a header row and a divider, then every line up
     to the next blank line. Each of those lines must be written as a full `| ... |` row; any other line (a row without
     its leading pipe, stray text) is a fault rather than a row the checks never see."""
-    lines = [line.strip() for line in visible(text).splitlines()]
+    lines = [line.rstrip() for line in text.splitlines()]
     found, i = [], 0
     while i < len(lines) - 1:
         if "|" in lines[i] and "-" in lines[i + 1] and DIVIDER.fullmatch(lines[i + 1]):
@@ -166,7 +156,9 @@ def problems(ledger_text, parity_text, plan_text, sections, release=(None, None,
     """Every fault in the ledger, as readable lines. `release_window` (the --release mode) requires every row to have
     been reviewed within that many days of `today`."""
     today = today or date.today()
-    found = []
+    found = format_faults(ledger_text, LEDGER) + format_faults(parity_text, PARITY)
+    if found:
+        return found
     ledger = tables(ledger_text)
     if len(ledger) != 1 or ledger[0][0] != COLUMNS:
         return [f"the ledger must hold exactly one table, with the columns {' | '.join(COLUMNS)}"]

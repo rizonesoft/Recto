@@ -81,8 +81,7 @@ class LedgerRulesTest(unittest.TestCase):
     def test_indented_rows_and_long_decisions_are_checked(self):
         text = ledger(*VALID.values()) + "  | Bad request | #1 | invalid | D99 T99 §999 | null | 9999-12-31 |\n"
         found = demand.problems(text, PARITY, PLAN, SECTIONS, today=TODAY)
-        for message in ("is not planned, decided or not planned", "D99 T99 §999 does not resolve", "is in the future"):
-            self.assertTrue(any(message in line for line in found), (message, found))
+        self.assertEqual(found, ["docs/user-demand.md line 7: an indented line is not allowed in this file"])
         found = problems(VALID["web"].replace("A web version", "A web version (D100)"), VALID["split"])
         self.assertTrue(any("decision D100 is not in" in line for line in found), found)
 
@@ -125,15 +124,16 @@ class LedgerRulesTest(unittest.TestCase):
         narrow = ledger(*VALID.values()).replace("| --- | --- | --- | --- | --- | --- |", "| --- |")
         found = demand.problems(narrow, PARITY, PLAN, SECTIONS, today=TODAY)
         self.assertTrue(any("table divider has 1 cells for a 6-cell header" in line for line in found), found)
-        # A ledger only a comment or a code fence holds is no ledger.
-        for wrap in (("<!--\n\n", "\n-->\n"), ("```\n", "```\n"), ("````text\n```\n\n", "\n````\n")):
-            text = wrap[0] + ledger(*VALID.values()) + wrap[1]
-            with self.subTest(wrap=wrap[0]):
-                self.assertEqual(demand.problems(text, PARITY, PLAN, SECTIONS, today=TODAY),
-                                 [f"the ledger must hold exactly one table, with the columns {' | '.join(demand.COLUMNS)}"])
-        # A ledger after a properly closed longer fence is read.
-        self.assertEqual(demand.problems("````text\nexample\n````\n\n" + ledger(*VALID.values()), PARITY, PLAN,
-                                         SECTIONS, today=TODAY), [])
+        # Comments, code fences and indented lines are not allowed in either file, so nothing is hidden or rendered
+        # differently from what the checker reads.
+        indented = "\n".join("    " + line if line else "" for line in ledger(*VALID.values()).split("\n"))
+        for name, text, parity in (("comment", "<!--\n\n" + ledger(*VALID.values()) + "\n-->\n", PARITY),
+                                   ("fence", "````text\n```\n\n" + ledger(*VALID.values()) + "\n````\n", PARITY),
+                                   ("indented", indented, PARITY),
+                                   ("parity comment", ledger(*VALID.values()), PARITY + "\n<!--\n```\n-->\n")):
+            with self.subTest(case=name):
+                found = demand.problems(text, parity, PLAN, SECTIONS, today=TODAY)
+                self.assertTrue(found and all("is not allowed in this file" in line for line in found), found)
         # A short parity row has an empty owner, so it needs a ledger row.
         self.assertIn("parity row 'New request' has no owning TODO section and no ledger row",
                       problems(*VALID.values(), parity=PARITY + "| New request | Planned |\n"))
