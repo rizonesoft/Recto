@@ -6,7 +6,7 @@
 
 ## Checkpoint re-run
 
-`.\build.cmd` at `e49114f` (the build files are unchanged since; later commits touch tests and records only) exited 0: x64 and ARM64, Debug and Release, each `0 Warning(s)` and `0 Error(s)`; `recto-tests.exe` ran 98 tests in Debug and Release, all passed. The three tests the section names pass: `Scaffold.PdfEngineReportsAbiVersionOne`, `Scaffold.CoreReportsThePdfEngineAbi`, `Scaffold.ServicesReportTheCoreAbi` (`[  PASSED  ] 3 tests`). The checkpoint holds; the suite has grown from 3 to 98 tests as later sections added theirs.
+`.\build.cmd` at `e49114f` exited 0: x64 and ARM64, Debug and Release, each `0 Warning(s)` and `0 Error(s)`; `recto-tests.exe` ran 98 tests in Debug and Release, all passed. The three tests the section names pass: `Scaffold.PdfEngineReportsAbiVersionOne`, `Scaffold.CoreReportsThePdfEngineAbi`, `Scaffold.ServicesReportTheCoreAbi` (`[  PASSED  ] 3 tests`). The checkpoint holds; the suite has grown from 3 to 98 tests as later sections added theirs.
 
 ## Round 1: astra (`gpt-6-astra` via `codex`)
 
@@ -50,3 +50,43 @@ OVERALL: needs-attention
 - Finding 2 (P3): a dated audit note in `D00 T01 §3` records Windows App SDK 2.5.1 (D4); the stamped checklist keeps its wording.
 - Finding 3 (P3): `build/build.ps1` and `CONTRIBUTING.md` now give the real reason VS 2022 cannot substitute (the v145 toolset ships only with VS 2026); the audit note says the missing ARM64 platform came from an incomplete installation.
 - Record: the checkpoint evidence is the full `build.cmd` at `e49114f` (log in the session scratchpad); `build/msbuild-Release-x64.log` was later overwritten by the ASan build, as the reviewer saw.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T15:01:59Z
+- Effort: medium
+- Lines: 27
+- Digest: 98c399f4c2a200ff
+
+## adversarial: approve
+
+No actionable defect identified within this section’s scope.
+
+## consistency: approve
+
+No additional finding.
+
+## integration: approve
+
+No additional finding.
+
+## source-defect: approve
+
+No additional finding after checking [Microsoft’s toolchain discovery documentation](https://github.com/microsoft/vswhere/wiki/Find-VC).
+
+## design: advisory
+
+Not applicable: this section declares no user surface.
+
+## record: needs-attention
+
+1. **P3: The checkpoint’s claim that build files remain unchanged is false.** `docs/reviews/06-quality/audit-d00-t01-s3.md:9` says build files are unchanged since `e49114f`, but `build/build.ps1:42` now contains the component requirements added after round 1. Reproduce with `git diff e49114f 59902fc -- build/build.ps1`. Update the checkpoint’s applicability statement to distinguish the earlier full build from the subsequent discovery change and its narrower verification.
+
+Verification limitation: existing logs record four successful configurations with zero warnings; existing XML reports record 98 passing tests per x64 configuration. I independently ran the three scaffold tests in both existing x64 binaries, successfully. These do not establish a fresh build from `59902fc`; the read-only restriction prevented rerunning the full build and deliberate compiler-failure probes. No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+- Finding 1 (P3): the round 1 change to `build/build.ps1` is covered by a full re-run at `59902fc`: `.\build.cmd` exited 0, x64 and ARM64 in Debug and Release each `0 Warning(s)` and `0 Error(s)`, `[  PASSED  ] 98 tests` in Debug and Release, and `Scaffold.*` passes in the fresh Release binary. The opening record no longer claims the build files were unchanged.
