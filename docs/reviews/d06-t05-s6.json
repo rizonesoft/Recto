@@ -1,0 +1,61 @@
+{
+  "ref": "D06 T05 \u00a76",
+  "title": "Audit D00 T02 \u00a72: Skills, rules and the CI gate",
+  "implementation_sha": "7fb3a2ab75ab386713db3146fc9b5b3df5969e43",
+  "date": "2026-10-21",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 6,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 7,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 8,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 9,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s2.md",
+      "verdict": "stopped-low-severity"
+    }
+  ],
+  "checks": [
+    "muse skills validate (12 .claude skills) -> valid: true, diagnostics: [] for every one",
+    "validate -> valid: 677 sections; plan --check -> plan current",
+    "python -m unittest tests.scripts.test_todo_graph tests.scripts.test_campaign_guard -> OK"
+  ],
+  "rounds_spent": 9,
+  "round_cap": 22,
+  "cap_outcome": "Round 9 returned one P3 (groom-plan and process-plan edited before reading todo/README.md) and declared HIGHEST: P3, so the loop stopped on severity; the finding was fixed in the audit commit, so nothing was left to file."
+}
