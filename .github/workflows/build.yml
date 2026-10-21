@@ -62,7 +62,7 @@ jobs:
           $list | Set-Content -Encoding utf8NoBOM build\gtest-list.txt
 
       - name: Upload the test list
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gtest-list
           path: build/gtest-list.txt
@@ -71,7 +71,7 @@ jobs:
 
       - name: Upload test results and MSBuild logs on failure
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-and-test-diagnostics
           path: |
@@ -163,7 +163,7 @@ jobs:
 
       - name: Upload ASan test results and MSBuild logs on failure
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: asan-build-and-test-diagnostics
           path: |
