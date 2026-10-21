@@ -174,6 +174,8 @@ Foundation plan section 8 binds performance targets to the primary reference Win
 - [x] `docs/reference-machines.md` committed and linked from `docs/plans/2026-10-13-recto-foundation.md` section 8 and 11. Done when: the primary x64 host machine is specified strongly enough that another person can tell whether a measurement came from it, and the secondary `ARM64` profile is explicitly marked non-binding until `D99 T01 §4` names a physical `ARM64` device.
 - [x] Commit: `docs: record x64 and ARM64 reference benchmark machines`
 
+> **Audit 2026-10-21 (D06 T05 §4):** `recto-cli bench` has not landed: it is owned by `D01 T03 §3`, which is still open (`src/cli/main.cpp` prints only the ABI today); the performance harness and baseline are `D06 T01 §7` and `§8`, not `§4`. `docs/reference-machines.md` now cites those owners, its fingerprint commands also print disk sizes, MSBuild, the Windows SDK and the Windows App SDK version, and section 1 records what they print on 2026-10-21 (Visual Studio 18.11.1 after an update).
+
 **Test checkpoint:** `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` exit 0, and `docs/reference-machines.md` contains zero `TODO` or `TBD` tokens.
 
 > **Verified:** 2026-10-14 | §5 | c0f764763e8017306f8df19741625f5839b8dc9b
