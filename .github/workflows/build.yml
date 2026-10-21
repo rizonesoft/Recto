@@ -84,6 +84,20 @@ jobs:
           "NUGET_PACKAGES=$nugetCache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "VCPKG_DEFAULT_BINARY_CACHE=$vcpkgCache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Identify the C++ toolchain for the cache key
+        id: toolchain
+        shell: pwsh
+        run: |
+          # vcpkg's binary archives are keyed on the compiler; a cache key without it would exact-hit forever after a
+          # runner image update and never save the rebuilt archives. Same selection as build/build.ps1.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $requires = @('Microsoft.VisualStudio.Component.VC.Tools.x86.x64', 'Microsoft.VisualStudio.Component.VC.Tools.ARM64')
+          $vs = & $vswhere -version '[18.0,19.0)' -latest -requires $requires -property installationPath
+          $vsVersion = & $vswhere -version '[18.0,19.0)' -latest -requires $requires -property installationVersion
+          $msvc = (Get-ChildItem (Join-Path $vs 'VC\Tools\MSVC') -Directory | Sort-Object Name | Select-Object -Last 1).Name
+          if (-not $vsVersion -or -not $msvc) { throw 'could not identify the Visual Studio 2026 C++ toolchain' }
+          "id=vs$vsVersion-msvc$msvc" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
       - name: Cache NuGet and vcpkg binary archives
         uses: actions/cache@v6
         with:
@@ -92,8 +106,9 @@ jobs:
             ${{ runner.temp }}/vcpkg-archives
           # One cache per job: a cache is never updated once saved, so the x64-only ASan job must not save the key the
           # four-configuration build restores (it would lack the ARM64 and app packages for good).
-          key: build-deps-full-${{ runner.os }}-${{ hashFiles('src/app/Recto.vcxproj', 'vcpkg.json', 'vcpkg-configuration.json', 'Directory.Build.props', 'Directory.Build.targets') }}
+          key: build-deps-full-${{ runner.os }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('src/app/Recto.vcxproj', 'vcpkg.json', 'vcpkg-configuration.json', 'Directory.Build.props', 'Directory.Build.targets') }}
           restore-keys: |
+            build-deps-full-${{ runner.os }}-${{ steps.toolchain.outputs.id }}-
             build-deps-full-${{ runner.os }}-
 
       - name: Build Debug (x64 and ARM64) and run Debug|x64 recto-tests
@@ -214,14 +229,29 @@ jobs:
           "NUGET_PACKAGES=$nugetCache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "VCPKG_DEFAULT_BINARY_CACHE=$vcpkgCache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
+      - name: Identify the C++ toolchain for the cache key
+        id: toolchain
+        shell: pwsh
+        run: |
+          # vcpkg's binary archives are keyed on the compiler; a cache key without it would exact-hit forever after a
+          # runner image update and never save the rebuilt archives. Same selection as build/build.ps1.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $requires = @('Microsoft.VisualStudio.Component.VC.Tools.x86.x64', 'Microsoft.VisualStudio.Component.VC.Tools.ARM64')
+          $vs = & $vswhere -version '[18.0,19.0)' -latest -requires $requires -property installationPath
+          $vsVersion = & $vswhere -version '[18.0,19.0)' -latest -requires $requires -property installationVersion
+          $msvc = (Get-ChildItem (Join-Path $vs 'VC\Tools\MSVC') -Directory | Sort-Object Name | Select-Object -Last 1).Name
+          if (-not $vsVersion -or -not $msvc) { throw 'could not identify the Visual Studio 2026 C++ toolchain' }
+          "id=vs$vsVersion-msvc$msvc" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
       - name: Cache NuGet and vcpkg binary archives
         uses: actions/cache@v6
         with:
           path: |
             ${{ runner.temp }}/nuget-packages
             ${{ runner.temp }}/vcpkg-archives
-          key: build-deps-asan-${{ runner.os }}-${{ hashFiles('src/app/Recto.vcxproj', 'vcpkg.json', 'vcpkg-configuration.json', 'Directory.Build.props', 'Directory.Build.targets') }}
+          key: build-deps-asan-${{ runner.os }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles('src/app/Recto.vcxproj', 'vcpkg.json', 'vcpkg-configuration.json', 'Directory.Build.props', 'Directory.Build.targets') }}
           restore-keys: |
+            build-deps-asan-${{ runner.os }}-${{ steps.toolchain.outputs.id }}-
             build-deps-asan-${{ runner.os }}-
 
       - name: Build and run recto-tests with AddressSanitizer (/fsanitize=address)

@@ -51,3 +51,44 @@ OVERALL: needs-attention
 - Finding 2 (P3): the foundation plan's architecture row carries a dated correction (CI builds every push that changes code; `todo/`, `docs/` and Markdown-only pushes skip it, with the cost of reversing), and `D00 T01 §4` carries a dated audit note; its stamped checklist keeps its wording.
 - Finding 3 (P3): the checkpoint is re-run on the fix commit itself (below), which is the candidate's tip.
 Checkpoint on the fix commit: `build` run `39639400776` for `dce42ea` (`gh run watch` exit 0): all three jobs succeeded ("Build x64 & ARM64 and run recto-tests", the ASan job, the test-list note); the log holds 5 x `0 Warning(s)`, 5 x `0 Error(s)`, 3 x `[  PASSED  ] 98 tests.`; and the caches are separate: `Cache saved with key: build-deps-full-Windows-<hash>` and `Cache saved with key: build-deps-asan-Windows-<hash>`, each first missed under the new names.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T17:13:06Z
+- Effort: medium
+- Lines: 28
+- Digest: 096955a01a9a00ba
+
+### adversarial: needs-attention
+
+1. **P2: Compiler updates leave both dependency caches permanently stale.** `.github/workflows/build.yml:95` and `.github/workflows/build.yml:223` key caches on repository files and `runner.os`, but omit the compiler/toolchain identity. Both jobs use `windows-latest`. When its compiler changes without those files changing, vcpkg rejects the old binaries and rebuilds GoogleTest, but the exact-hit Actions cache cannot save the replacement archives. Subsequent runs repeat the rebuild, violating `todo/00-workspace/TODO-01-repo-and-build.md:146`.
+
+   **Reproduction:** Populate either cache, then run the unchanged checkout twice on a runner with a newer compiler. Both runs restore the same Actions key but rebuild the affected vcpkg packages. This is a static finding supported by [vcpkg’s compiler-dependent ABI hashing](https://learn.microsoft.com/en-us/vcpkg/reference/binarycaching) and [GitHub’s immutable cache behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching), not a live reproduction. Include the selected toolchain identity in the cache keys.
+
+### consistency: approve
+
+### integration: needs-attention
+
+Finding **1 (P2)** affects both the four-configuration build and the later ASan job. Separating their keys resolves cross-job contamination but leaves both vulnerable to runner toolchain updates.
+
+### source-defect: needs-attention
+
+Finding **1 (P2)**: the cache identity does not account for inputs that vcpkg uses to determine binary compatibility.
+
+### design: advisory
+
+Not applicable; this section owns no user surface.
+
+### record: advisory
+
+I could not independently verify the checkpoint at `docs/reviews/06-quality/audit-d00-t01-s4.md:53`. The run-list, job-details and log requests failed because the configured proxy at `127.0.0.1:9` refused connection. The reported success, warning counts and cache saves therefore remain unverified in this audit.
+
+The difference between `dce42ea` and candidate `a892da8` contains only review and phase-run documentation, so it does not itself invalidate the earlier build evidence. However, the recorded cold-cache saves do not demonstrate repeat-run restoration after the cache changes.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+- Finding 1 (P2): both jobs gain an "Identify the C++ toolchain for the cache key" step (the same `vswhere` selection as `build/build.ps1`, then the newest MSVC tools folder) whose `id` (`vs<installationVersion>-msvc<version>`, locally `vs18.11.12315.225-msvc14.51.36231`) is part of each cache key, so a runner image with a new compiler misses the old key, restores the nearest older cache through `restore-keys`, and saves the rebuilt archives under the new key. The `D00 T01 §4` audit note names it.
