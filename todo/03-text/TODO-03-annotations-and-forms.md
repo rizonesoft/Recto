@@ -42,6 +42,10 @@ track: M3
 - -> XREF: D02 T02 §21 -- ViewSnapProvider.
 - -> XREF: D04 T07 §21 -- combine form data step.
 - -> XREF: D01 T03 §10 -- annot verb follows the registration rule.
+- -> XREF: D06 T04 §3 -- the `D-Comments.png` board and `design/SPEC.md` section 8.3.2 that §5, §24, §27 here build against.
+- -> XREF: D06 T04 §10 -- the `D-Markup.png` board and `design/SPEC.md` section 8.2.1 that §3, §4, §13, §16 (the `Article` button), §21, §22, §31, §33, §43, §44, §49, §50, §53, §55 here build against.
+- -> XREF: D06 T04 §11 -- the `D-Forms.png` board and `design/SPEC.md` section 8.2.2 that §8, §9, §10, §35, §37, §39, §41 here build against.
+- -> XREF: D06 T04 §12 -- the `D-Measure.png` board and `design/SPEC.md` section 8.2.3 that §14, §16, §19, §51 here build against.
 
 ## Outcome
 
@@ -65,59 +69,59 @@ track: M3
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | PDF `/Annots` parser and serializer for all 15 annotation subtypes (`annotations.cpp`) | D01 T02 §5, D01 T02 §8 | [ ] |
 | 2 | §2 | Deterministic `/AP /N` appearance synthesis, flattening, `XFDF`/`JSON` & `cli annot` | §1, D01 T03 §1 | [ ] |
-| 3 | §3 | Contextual `40 epx` `Markup & Annotation Bar` (`Ctrl+Shift+A`), style & stamp pickers | §2, D02 T02 §8, D03 T01 §4 | [ ] |
-| 4 | §4 | On-canvas annotation creation, 8-handle selection/resize, style popover & `Undo`/`Redo` | §3 | [ ] |
-| 5 | §5 | Virtualized `Comments / Annotations` side panel (`SPEC 8.3`), replies & `XFDF`/`JSON` UI | §4, D02 T03 §3 | [ ] |
+| 3 | §3 | Contextual `48 epx` `Markup & Annotation Bar` (`Ctrl+Shift+A`), style & stamp pickers | §2, D02 T02 §8, D03 T01 §4, D06 T04 §10 | [ ] |
+| 4 | §4 | On-canvas annotation creation, 8-handle selection/resize, style popover & `Undo`/`Redo` | §3, D06 T04 §10 | [ ] |
+| 5 | §5 | Virtualized `Comments / Annotations` side panel (`SPEC 8.3`), replies & `XFDF`/`JSON` UI | §4, D02 T03 §3, D06 T04 §3 | [ ] |
 | 6 | §6 | `/AcroForm` field tree parser/writer (`Tx`, `Btn`, `Ch`, `Sig`), `/AP` & `flatten_forms` | §2 | [ ] |
 | 7 | §7 | XFA-to-AcroForm converter, safe `/CO` evaluator, `JSON`/`FDF`/`XFDF` & `recto-cli forms` | §6 | [ ] |
-| 8 | §8 | On-canvas interactive `Fill Form` mode (`SPEC 8.2`), `Tab` order, `/CO` & form data I/O | §4, §7, D02 T04 §5 | [ ] |
-| 9 | §9 | Visual `Design Form` mode (`SPEC 8.2`), 7 widget tools, alignment guides & tab badges | §8 | [ ] |
-| 10 | §10 | `Field Properties` inspector flyout (`Name`, `/TU`, masks, `Calculation`) and UIA peers | §9, D03 T02 §2 | [ ] |
+| 8 | §8 | On-canvas interactive `Fill Form` mode (`SPEC 8.2`), `Tab` order, `/CO` & form data I/O | §4, §7, D02 T04 §5, D06 T04 §11 | [ ] |
+| 9 | §9 | Visual `Design Form` mode (`SPEC 8.2`), 7 widget tools, alignment guides & tab badges | §8, D06 T04 §11 | [ ] |
+| 10 | §10 | `Field Properties` inspector flyout (`Name`, `/TU`, masks, `Calculation`) and UIA peers | §9, D03 T02 §2, D06 T04 §11 | [ ] |
 | 11 | §11 | `/Link` authoring engine: page, named-destination, file and URI targets, never Launch | §1 | [ ] |
 | 12 | §12 | Named destinations engine (`/Names /Dests`): list, create, rename, delete, remap | §1, D01 T01 §10, D01 T02 §5 | [ ] |
-| 13 | §13 | `Link` tool, Link Properties flyout, and link edit and delete on the canvas | §3, §4, §11, §12, D02 T02 §9 | [ ] |
-| 14 | §14 | `Destinations` side panel: list, create, rename, delete and jump | §12, §4, D02 T03 §3, D02 T03 §11, D03 T02 §5 | [ ] |
+| 13 | §13 | `Link` tool, Link Properties flyout, and link edit and delete on the canvas | §3, §4, §11, §12, D02 T02 §9, D06 T04 §10 | [ ] |
+| 14 | §14 | `Destinations` side panel: list, create, rename, delete and jump | §12, §4, D02 T03 §3, D02 T03 §11, D03 T02 §5, D06 T04 §12 | [ ] |
 | 15 | §15 | Article thread engine (`/Threads` beads): read flow and thread authoring | §1 | [ ] |
-| 16 | §16 | `Articles` panel, follow-the-article reading flow and `Article` authoring tool | §15, §3, §4, D02 T03 §3, D03 T02 §5 | [ ] |
+| 16 | §16 | `Articles` panel, follow-the-article reading flow and `Article` authoring tool | §15, §3, §4, D02 T03 §3, D03 T02 §5, D06 T04 §12, D06 T04 §10 | [ ] |
 | 17 | §17 | `/Measure` engine: scale, distance, perimeter and area, units and `Measure` export | §2 | [ ] |
 | 18 | §18 | Snap point index from page vector content: endpoints, midpoints and intersections | D01 T02 §1, D01 T02 §7, D01 T02 §8 | [ ] |
-| 19 | §19 | `Measure` tool bar, scale dialog, snapping, live readout and `Measurements` panel | §17, §18, §4, D02 T01 §10, D02 T03 §3 | [ ] |
+| 19 | §19 | `Measure` tool bar, scale dialog, snapping, live readout and `Measurements` panel | §17, §18, §4, D02 T01 §10, D02 T03 §3, D06 T04 §12 | [ ] |
 | 20 | §20 | Stamp library store and dynamic stamp token resolution (no JavaScript) | §2, D02 T04 §2 | [ ] |
-| 21 | §21 | Stamp Manager, custom image stamps, dynamic stamp editor and sticky Stamp tool | §20, §3, D02 T04 §5, D02 T01 §10 | [ ] |
-| 22 | §22 | Fill and Sign: typed text, symbols and signatures on flat forms | §1, §2, §3, §4, §8, D05 T02 §10, D06 T03 §7 | [ ] |
+| 21 | §21 | Stamp Manager, custom image stamps, dynamic stamp editor and sticky Stamp tool | §20, §3, D02 T04 §5, D02 T01 §10, D06 T04 §10 | [ ] |
+| 22 | §22 | Fill and Sign: typed text, symbols and signatures on flat forms | §1, §2, §3, §4, §8, D05 T02 §10, D06 T03 §7, D06 T04 §10 | [ ] |
 | 23 | §23 | Review status state model engine (`/StateModel`, `/State`) in `annotations.cpp` | §1, §2 | [ ] |
-| 24 | §24 | Review status in the Comments panel: show, set and filter | §23, §4, §5 | [ ] |
+| 24 | §24 | Review status in the Comments panel: show, set and filter | §23, §4, §5, D06 T04 §3 | [ ] |
 | 25 | §25 | Comment summary model, list exports and `recto-cli annot summarize` | §2, §23, D01 T03 §1, D03 T01 §1 | [ ] |
 | 26 | §26 | Comment summary PDF: comments beside pages and a comments-only list | §25, D06 T03 §7 | [ ] |
-| 27 | §27 | `Summarize Comments` dialog in the Comments panel | §5, §25, §26, D02 T01 §10 | [ ] |
+| 27 | §27 | `Summarize Comments` dialog in the Comments panel | §5, §25, §26, D02 T01 §10, D06 T04 §3 | [ ] |
 | 28 | §28 | Export comments to Word `.docx` through the shared `DocxWriter` | §25, §27, D04 T03 §2 | [ ] |
 | 29 | §29 | Save only the pages with comments as a new PDF | §25, §27, D05 T01 §2 | [ ] |
 | 30 | §30 | Create web links from URLs in page text and remove all links | §11, D01 T03 §1, D03 T01 §1 | [ ] |
-| 31 | §31 | `Create Links from URLs` and `Remove All Links` commands with a review list | §13, §30 | [ ] |
+| 31 | §31 | `Create Links from URLs` and `Remove All Links` commands with a review list | §13, §30, D06 T04 §10 | [ ] |
 | 32 | §32 | QR Code, Data Matrix and PDF417 encoders with vector output | -- | [ ] |
-| 33 | §33 | `Add Barcode` tool: place a QR Code, Data Matrix or PDF417 on a page | §2, §3, §4, §32, D02 T01 §10 | [ ] |
+| 33 | §33 | `Add Barcode` tool: place a QR Code, Data Matrix or PDF417 on a page | §2, §3, §4, §32, D02 T01 §10, D06 T04 §10 | [ ] |
 | 34 | §34 | Barcode form field engine: a text field whose barcode is built from other fields | §6, §7, §32 | [ ] |
-| 35 | §35 | `Add Barcode Field` designer tool, field properties and live fill refresh | §9, §10, §34 | [ ] |
+| 35 | §35 | `Add Barcode Field` designer tool, field properties and live fill refresh | §9, §10, §34, D06 T04 §11 | [ ] |
 | 36 | §36 | Flat-form field detection engine and `recto-cli forms detect` | §6, D01 T02 §1, D01 T03 §1, D03 T01 §1, D03 T01 §7 | [ ] |
-| 37 | §37 | `Detect Fields` in `Design Form` mode: review proposals and accept | §4, §9, §36 | [ ] |
+| 37 | §37 | `Detect Fields` in `Design Form` mode: review proposals and accept | §4, §9, §36, D06 T04 §11 | [ ] |
 | 38 | §38 | Image field engine: a button field whose appearance is a user-chosen image | §6, §20 | [ ] |
-| 39 | §39 | Image field and date picker in `Design Form` and `Fill Form` modes | §8, §9, §10, §38 | [ ] |
+| 39 | §39 | Image field and date picker in `Design Form` and `Fill Form` modes | §8, §9, §10, §38, D06 T04 §11 | [ ] |
 | 40 | §40 | Combine form data from many filled PDFs: engine, CSV and `recto-cli forms combine` | §6, §7, D01 T03 §1 | [ ] |
-| 41 | §41 | `Combine Form Data` dialog and `.xlsx` output | §8, §40, D02 T01 §10, D04 T05 §1 | [ ] |
+| 41 | §41 | `Combine Form Data` dialog and `.xlsx` output | §8, §40, D02 T01 §10, D04 T05 §1, D06 T04 §11 | [ ] |
 | 42 | §42 | Pressure-sensitive ink appearance engine | §2 | [ ] |
-| 43 | §43 | Pen input in the Ink tool: pressure, pen eraser and touch rejection | §4, §42, D02 T04 §5 | [ ] |
-| 44 | §44 | Touch mode: larger targets for the annotation bar, handles and popovers | §3, §4, §5, D02 T04 §5 | [ ] |
+| 43 | §43 | Pen input in the Ink tool: pressure, pen eraser and touch rejection | §4, §42, D02 T04 §5, D06 T04 §10 | [ ] |
+| 44 | §44 | Touch mode: larger targets for the annotation bar, handles and popovers | §3, §4, §5, D02 T04 §5, D06 T04 §10 | [ ] |
 | 45 | §45 | Cloud border effect (`/BE`) for Square, Circle, Polygon and FreeText | §2 | [ ] |
 | 46 | §46 | Arc annotation engine | §2 | [ ] |
 | 47 | §47 | Group and ungroup markups engine (`/RT /Group`) | §1, §46 | [ ] |
 | 48 | §48 | Circle measurement engine: radius, diameter, circumference and area | §17 | [ ] |
-| 49 | §49 | Multi-select and `Group` and `Ungroup` commands for markups | §4, §5, §47 | [ ] |
-| 50 | §50 | `Cloud` and `Arc` tools on the Markup & Annotation Bar | §3, §4, §45, §46 | [ ] |
-| 51 | §51 | `Circle` tool in the `Measure` bar | §19, §48 | [ ] |
+| 49 | §49 | Multi-select and `Group` and `Ungroup` commands for markups | §4, §5, §47, D06 T04 §10 | [ ] |
+| 50 | §50 | `Cloud` and `Arc` tools on the Markup & Annotation Bar | §3, §4, §45, §46, D06 T04 §10 | [ ] |
+| 51 | §51 | `Circle` tool in the `Measure` bar | §19, §48, D06 T04 §12 | [ ] |
 | 52 | §52 | Sticker packs: shipped sticker sets and import of user sticker folders | §20 | [ ] |
-| 53 | §53 | `Stickers` tab in the Stamp Picker, import and export of packs | §21, §52 | [ ] |
+| 53 | §53 | `Stickers` tab in the Stamp Picker, import and export of packs | §21, §52, D06 T04 §10 | [ ] |
 | 54 | §54 | Accounting tickmark stamp set and calculator stamp tokens | §20 | [ ] |
-| 55 | §55 | Accounting set in the Stamp Picker and the `Sum of selection` stamp | §21, §54 | [ ] |
+| 55 | §55 | Accounting set in the Stamp Picker and the `Sum of selection` stamp | §21, §54, D06 T04 §10 | [ ] |
 
 ## 1. PDF `/Annots` parser and serializer for all 15 annotation subtypes (`annotations.cpp`)
 
@@ -166,34 +170,34 @@ Implement deterministic `/AP /N` normal appearance-stream synthesis for every cr
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfAnnotations.*:Cli.AnnotCommand` passes under ASan covering all 15 subtypes, `/AP` appearance streams, flattening (`SSIM >= 0.99`), and `XFDF`/`JSON` round-tripping.
 
-## 3. Contextual `40 epx` `Markup & Annotation Bar` (`Ctrl+Shift+A`), style & stamp pickers
+## 3. Contextual `48 epx` `Markup & Annotation Bar` (`Ctrl+Shift+A`), style & stamp pickers
 
-Build the contextual `40 epx` `Markup & Annotation Bar` (`src/app/controls/MarkupAnnotationBar.xaml/.cpp`, toggled via the main toolbar `Annotate` button, floating page toolbar `Annotate / Tools` button in `D02 T02 §8`, or `Ctrl+Shift+A`, `SPEC 8.2`), including tool buttons for all markup/drawing/stamp tools, the `Colour, Opacity & Stroke Picker` flyout (`5` theme-aware swatches + custom colour + stroke thickness `1-12 pt` + opacity `25-100%`), the `Stamp Picker` flyout, and quick-action wiring from `D03 T01 §4`'s floating selection toolbar (`Highlight`, `Underline`, `Strikeout`, `Add Note`).
+Build the contextual `48 epx` `Markup & Annotation Bar` (`src/app/controls/MarkupAnnotationBar.xaml/.cpp`, toggled via the main toolbar `Annotate` button, floating page toolbar `Annotate / Tools` button in `D02 T02 §8`, or `Ctrl+Shift+A`, `SPEC 8.2`), including tool buttons for all markup/drawing/stamp tools, the `Colour, Opacity & Stroke Picker` flyout (`5` theme-aware swatches + custom colour + stroke thickness `1-12 pt` + opacity `25-100%`), the `Stamp Picker` flyout, and quick-action wiring from `D03 T01 §4`'s floating selection toolbar (`Highlight`, `Underline`, `Strikeout`, `Add Note`).
 
 **Phase:** 3
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (`Markup & Annotation Bar`), 9.3 (`SelectionFloatingToolbar` quick markup actions), 10 (`Ctrl+Shift+A`, `Ctrl+Z`, `Ctrl+Y`), and 11 (`32 epx` hit targets, automation names and tooltips).
+**Fidelity:** `design/SPEC.md` sections 8.2 (`Markup & Annotation Bar`), 9.3 (`SelectionFloatingToolbar` quick markup actions), 10 (`Ctrl+Shift+A`, `Ctrl+Z`, `Ctrl+Y`), and 11 (`32 epx` hit targets, automation names and tooltips). Design board: `design/SPEC.md` section 8.2.1 with `design/screenshots/D-Markup.png` (drawn by `D06 T04 §10`).
 **Job:** The user can toggle the annotation strip with `Ctrl+Shift+A`, pick any markup, drawing, shape, or stamp tool, choose colour/opacity/stroke width, or immediately highlight/strikeout/note selected text from the floating selection toolbar. Consumer: `DocumentView` annotation canvas (`§4`), `SelectionFloatingToolbar` (`D03 T01 §4`), and `CommandRegistry` (`Ctrl+K`).
-**Treatment:** `40 epx` contextual bar below the main toolbar (or top of the canvas in `Focus` preset) bound to `AnnotationToolViewModel`, with theme-aware swatch tokens from `RectoColors.xaml`. Cheaper substitute that fails the checkpoint: burying annotation tools inside nested submenus with no contextual bar or missing stroke/opacity controls.
+**Treatment:** `48 epx` contextual mode bar docked directly above the floating page toolbar in `Focus` and below the docked top command bar in `Classic` and `Reading room` (SPEC 8.2), bound to `AnnotationToolViewModel`, with theme-aware swatch tokens from `RectoColors.xaml`. Cheaper substitute that fails the checkpoint: burying annotation tools inside nested submenus with no contextual bar or missing stroke/opacity controls.
 **Chrome:** consume `RectoColors.xaml` surface/border/swatch tokens, `D02 T02 §8`'s `Annotate / Tools` button, and `D03 T01 §4`'s selection toolbar hooks.
 
 **Build order:**
 
 1. Implement `AnnotationToolViewModel` (`src/services/annotation_tool_view_model.cpp`) managing active tool selection (`Select`, `Highlight`, `Underline`, `Squiggly`, `StrikeOut`, `StickyNote`, `FreeText`, `Callout`, `Ink`, `Eraser`, `Rectangle`, `Ellipse`, `Line`, `Arrow`, `Polygon`, `Stamp`), active colour swatch, opacity (`25%..100%`), stroke width (`1..12 pt`), stamp preset, and quick-selection markup commands. Done when: `AnnotationUi.ToolViewModel` verifies tool state transitions and quick-highlight creation from `SelectionModel` quads.
-2. Build `MarkupAnnotationBar` (`src/app/controls/MarkupAnnotationBar.xaml/.cpp`) with `Ctrl+Shift+A` toggle, colour/stroke/opacity flyout, stamp flyout (`Approved`, `Confidential`, `Draft`, `Final`, `Sign Here`, custom text/date), `Flatten Annotations`, and `Undo`/`Redo` buttons. Done when: `Ctrl+Shift+A` opens the `40 epx` bar and every button carries an automation name and tooltip.
+2. Build `MarkupAnnotationBar` (`src/app/controls/MarkupAnnotationBar.xaml/.cpp`) with `Ctrl+Shift+A` toggle, colour/stroke/opacity flyout, stamp flyout (`Approved`, `Confidential`, `Draft`, `Final`, `Sign Here`, custom text/date), `Flatten Annotations`, and `Undo`/`Redo` buttons. Done when: `Ctrl+Shift+A` opens the `48 epx` bar and every button carries an automation name and tooltip.
 
 - [ ] Implement `AnnotationToolViewModel` in `src/services/annotation_tool_view_model.h/.cpp` holding active `AnnotationToolMode`, active colour (`5` presets: Yellow, Green, Blue, Pink, Red + custom RGB), opacity (`0.25f..1.0f`), stroke thickness (`1.0f..12.0f pt`), and stamp template. Done when: changing swatch, opacity, or stroke updates the default for new annotations or applies immediately to the currently selected annotation (`§4`).
-- [ ] Build `MarkupAnnotationBar` (`40 epx` height, `RectoSurfaceBrush` background, `1 epx` `RectoBorderSubtleBrush` bottom border) with grouped tool toggle buttons: Text Markup (`Highlight`, `Underline`, `Squiggly`, `StrikeOut`), Notes & Text (`Sticky Note`, `FreeText`, `Callout`), Freehand (`Ink Draw`, `Eraser`), Shapes (`Rectangle`, `Ellipse`, `Line`, `Arrow`, `Polygon`), `Stamp`, `Colour & Stroke Picker`, `Flatten Annotations`, and `Undo` / `Redo`. Done when: `MarkupAnnotationBar` renders at `40 epx` height and all buttons pass `D03 T02 §3` hit-target and automation-name checks.
+- [ ] Build `MarkupAnnotationBar` (SPEC 8.2 contextual mode bar: `48 epx` height, `RectoRaisedBrush`, stock `OverlayCornerRadius` of 8 epx, `6 epx` padding) with grouped tool toggle buttons: Text Markup (`Highlight`, `Underline`, `Squiggly`, `StrikeOut`), Notes & Text (`Sticky Note`, `FreeText`, `Callout`), Freehand (`Ink Draw`, `Eraser`), Shapes (`Rectangle`, `Ellipse`, `Line`, `Arrow`, `Polygon`), `Stamp`, `Colour & Stroke Picker`, `Flatten Annotations`, and `Undo` / `Redo`. Done when: `MarkupAnnotationBar` renders at `48 epx` height and all buttons pass `D03 T02 §3` hit-target and automation-name checks.
 - [ ] Build the `Colour, Opacity & Stroke Picker` flyout with `5` theme-aware colour swatches, custom colour picker, stroke thickness slider/chips (`1, 2, 4, 8, 12 pt`), and opacity slider (`25% - 100%`). Done when: selecting a swatch and opacity updates the toolbar swatch indicator and active tool state.
 - [ ] Build the `Stamp Picker` flyout listing standard stamps (`Approved`, `Confidential`, `Draft`, `Final`, `Sign Here`, `Void`) plus a `Custom Stamp...` inline input (custom label + optional current date/author toggle). Done when: picking a standard or custom stamp arms `AnnotationToolMode::Stamp` with a live stamp preview. Cheaper substitute that fails the checkpoint: fixed hard-coded stamps with no custom text/date stamp option.
 - [ ] Wire `SelectionFloatingToolbar` (`D03 T01 §4`) `Highlight`, `Strikeout`, and context-menu `Highlight` / `Underline` / `Strikeout` / `Add Note` directly to `AnnotationToolViewModel::apply_selection_markup(subtype)` creating a quad-precise `PdfAnnotation` over `SelectionModel`'s current `CharQuad`s. Done when: selecting text and clicking `Highlight` on the floating selection toolbar immediately creates a `/QuadPoints` highlight annotation and clears the selection.
-- [ ] Wire `Ctrl+Shift+A`, the floating page toolbar's `Annotate / Tools` button (`D02 T02 §8`), and `Ctrl+K` (`Toggle Markup & Annotation Bar`, `Flatten Annotations`) to `MarkupAnnotationBar`. Done when: `Ctrl+Shift+A` toggles the bar open and `Esc` returns to the `Select` tool or closes the bar.
+- [ ] Wire `Ctrl+Shift+A`, the floating page toolbar's `Annotate / Tools` button (`D02 T02 §8`), and `Ctrl+K` (`Toggle Markup & Annotation Bar`, `Flatten Annotations`) to `MarkupAnnotationBar`. Done when: `Ctrl+Shift+A` toggles the bar open and `Esc` returns to the `Select` tool or closes the bar, and `AnnotationUi.MarkupBarAndQuickSelection` finds the bar's bottom edge directly above the floating page toolbar's top edge in `Focus` and its top edge directly below the docked command bar in `Classic` and `Reading room`, failing for a bar at the top of the canvas in `Focus`.
 - [ ] Add `AnnotationUi.MarkupBarAndQuickSelection` tests in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=AnnotationUi.MarkupBarAndQuickSelection` passes.
 - [ ] Commit: `feat(app): add contextual Markup & Annotation Bar (Ctrl+Shift+A), colour/stroke picker, and stamp picker`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=AnnotationUi.MarkupBarAndQuickSelection` passes, verifying `Ctrl+Shift+A` bar toggle, swatch/stroke/stamp pickers, and floating-selection quick highlight creation.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=AnnotationUi.MarkupBarAndQuickSelection` passes, verifying `Ctrl+Shift+A` bar toggle, the SPEC 8.2 bar position in each preset, swatch/stroke/stamp pickers, and floating-selection quick highlight creation.
 
 ## 4. On-canvas annotation creation, 8-handle selection/resize, style popover & `Undo`/`Redo`
 
@@ -203,7 +207,7 @@ Implement interactive on-canvas annotation creation, hit-testing, 8-handle selec
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (on-canvas 8-handle selection box in `--accent`, floating style/delete popover, live creation preview) and 10 (`Ctrl+Z`, `Ctrl+Y`, `Delete`, `Esc`).
+**Fidelity:** `design/SPEC.md` sections 8.2 (on-canvas 8-handle selection box in `RectoAccentBrush`, floating style/delete popover, live creation preview) and 10 (`Ctrl+Z`, `Ctrl+Y`, `Delete`, `Esc`). Design board: `design/SPEC.md` section 8.2.1 with `design/screenshots/D-Markup.png` (drawn by `D06 T04 §10`).
 **Job:** The user can draw ink strokes, shapes, arrows, callouts, sticky notes, or text markups directly on the page canvas, click any existing annotation to move or resize it via 8 handles, change its colour/thickness or delete it from a floating popover, and undo/redo any annotation change with `Ctrl+Z` / `Ctrl+Y`. Consumer: `DocumentActor` annotation store (`§1`-`§2`) and the `Comments / Annotations` side panel (`§5`).
 **Treatment:** Live vector preview overlay on `DocumentView` during pointer drag, committing to `DocumentActor` on pointer release so `/AP /N` synthesizes and re-renders tiles cleanly, backed by a reversible `AnnotationUndoStack` (`Add`, `Modify`, `Delete`, `BatchErase`). Cheaper substitute that fails the checkpoint: toolbar buttons that drop fixed-size shapes without interactive drag/resize handles, or missing `Ctrl+Z`/`Ctrl+Y` undo/redo.
 **Chrome:** consume `RectoAccentBrush` for the selection bounding box and `8` (`8 x 8 epx`) resize/endpoint handles, and `RectoFloatingBarBackgroundBrush` for the floating style/delete popover.
@@ -216,7 +220,7 @@ Implement interactive on-canvas annotation creation, hit-testing, 8-handle selec
 - [ ] Implement on-canvas text-markup drag (`Highlight`, `Underline`, `Squiggly`, `StrikeOut`) snapping pointer drag endpoints to `PageText` character quads (`D03 T01 §3`) and committing a `/QuadPoints` annotation on pointer release. Done when: dragging with the `Highlight` tool highlights exact character quads across wrapped lines.
 - [ ] Implement on-canvas `Ink` freehand drawing (capturing pointer samples in page points, smoothing via Catmull-Rom / Ramer-Douglas-Peucker, and grouping strokes painted within `800 ms` into a single `/InkList` annotation) and `Eraser` (removing intersected ink strokes or whole ink annotations). Done when: drawing and erasing freehand ink updates the page smoothly at 60 fps.
 - [ ] Implement on-canvas drag creation for `Rectangle`, `Ellipse` (`Shift` constrains to square/circle), `Line` / `Arrow` (`Shift` snaps to `45°` increments), `Polygon` / `PolyLine` (click vertices, double-click or click start vertex to close), `Sticky Note` (click to place + open inline comment flyout), `FreeText` / `Callout` (drag knee + text box with inline text editing), and `Stamp`. Done when: all shape, note, callout, and stamp tools author valid annotations on canvas.
-- [ ] Implement annotation hit-testing and the active selection frame: `8` square (`8 x 8 epx`) `--accent` resize handles around rectangular annotations (`Rect`, `Ellipse`, `FreeText`, `Stamp`, `Ink` bounds) or vertex/endpoint handles on `Line`/`Arrow`/`Polygon`/`Callout`. Done when: dragging any handle or the annotation body moves or resizes the annotation in page space and regenerates its `/AP /N` stream on release. Cheaper substitute that fails the checkpoint: static annotations that cannot be moved or resized after placement.
+- [ ] Implement annotation hit-testing and the active selection frame: `8` square (`8 x 8 epx`) `RectoAccentBrush` resize handles around rectangular annotations (`Rect`, `Ellipse`, `FreeText`, `Stamp`, `Ink` bounds) or vertex/endpoint handles on `Line`/`Arrow`/`Polygon`/`Callout`. Done when: dragging any handle or the annotation body moves or resizes the annotation in page space and regenerates its `/AP /N` stream on release. Cheaper substitute that fails the checkpoint: static annotations that cannot be moved or resized after placement.
 - [ ] Build the floating annotation popover anchored above the selected annotation with quick colour swatches, opacity/thickness sliders, `Reply / Edit Note`, and `Delete` (`Delete` / `Backspace` key). Done when: clicking an existing annotation shows the selection handles and floating style/delete popover.
 - [ ] Implement `AnnotationUndoStack` (`src/services/annotation_undo.h/.cpp`, integrated with `D02 T03 §6`'s per-document history stack) recording reversible `CreateAnnotation`, `ModifyAnnotation`, and `DeleteAnnotation` commands wired to `Ctrl+Z` and `Ctrl+Y`. Done when: `Ctrl+Z` and `Ctrl+Y` undo and redo creation, move/resize, style change, and deletion across multiple steps.
 - [ ] Turn on offline spell checking in the sticky note, comment reply and `FreeText` inline editors by binding `IsSpellCheckEnabled` to `CheckSpellingWhileTyping` and `Language` to `SpellingLanguage` (`SpellService`, `D03 T01 §14`), re-applied when either setting changes. Done when: `AppTests.AnnotationsCanvasAndUndo` asserts the three editors report `IsSpellCheckEnabled` true with the configured `Language`, and false after the setting is turned off.
@@ -233,10 +237,10 @@ Build the `Comments / Annotations` side panel (`src/app/views/panels/CommentsPan
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.3 (`Comments / Annotations` side panel) and 11 (accessible card labels, keyboard navigation).
+**Fidelity:** `design/SPEC.md` sections 8.3 (`Comments / Annotations` side panel) and 11 (accessible card labels, keyboard navigation). Design board: `design/SPEC.md` section 8.3.2 with `design/screenshots/D-Comments.png` (drawn by `D06 T04 §3`).
 **Job:** A reviewer can browse all annotations and comments across the document grouped by page, filter by annotation type or author, search comment text, post inline replies, jump to any annotation on canvas, or import/export comments as `XFDF` or `JSON`. Consumer: `SidePanelHost` (`D02 T03 §3`), `DocumentView` (`§4`), and `XFDF`/`JSON` serializer (`§2`).
 **Treatment:** Virtualized `ItemsRepeater` / `ListView` grouped by page number, synchronized two-way with `AnnotationToolViewModel` and `DocumentActor`, with inline reply boxes and `FileOpenPicker` / `FileSavePicker` for `XFDF` and `JSON`. Cheaper substitute that fails the checkpoint: a flat ungrouped list with no replies, no type/author filtering, or no `XFDF` import/export.
-**Chrome:** consume `SidePanelHost` (`D02 T03 §3`), `RectoColors.xaml` card/border tokens, and Segoe Fluent Icons per annotation subtype.
+**Chrome:** consume `SidePanelHost` (`D02 T03 §3`), `RectoColors.xaml` card/border tokens, and Fluent UI System Icons (`RectoIcons`) per annotation subtype.
 
 **Build order:**
 
@@ -305,26 +309,26 @@ Extend `src/pdf/forms.cpp` with:
 
 ## 8. On-canvas interactive `Fill Form` mode (`SPEC 8.2`), `Tab` order, `/CO` & form data I/O
 
-Build the interactive `Fill Form` experience specified in `design/SPEC.md` section 8.2 (`Form Fill & Form Designer Bar`): when a PDF containing `/AcroForm` or `/XFA` opens (or when `Forms` is invoked from the toolbar or `Ctrl+K`), display the `40 epx` contextual `Form Fill & Form Designer Bar` and render live WinUI 3 interactive field overlays aligned to each field's page quad (`TextBox` for single/multiline/password/comb text, `CheckBox`, `RadioButton`, `ComboBox`, `ListBox`, and clickable `Signature Field` banner), with `Highlight Required Fields` (`--accent-subtle` fill and `--danger` border on required empty fields), `Tab` / `Shift+Tab` field navigation in `/Tabs` (`/R`, `/C`, `/S`) order, live `/CO` calculated field updates, `Clear / Reset Form`, `Import Data` (`JSON`, `FDF`, `XFDF`, `XML`), `Export Data`, and `Flatten Form`.
+Build the interactive `Fill Form` experience specified in `design/SPEC.md` section 8.2 (`Form Fill & Form Designer Bar`): when a PDF containing `/AcroForm` or `/XFA` opens (or when `Forms` is invoked from the toolbar or `Ctrl+K`), display the `48 epx` contextual `Form Fill & Form Designer Bar` and render live WinUI 3 interactive field overlays aligned to each field's page quad (`TextBox` for single/multiline/password/comb text, `CheckBox`, `RadioButton`, `ComboBox`, `ListBox`, and clickable `Signature Field` banner), with `Highlight Required Fields` (`RectoAccentTintBrush` fill and `RectoDangerBrush` border on required empty fields), `Tab` / `Shift+Tab` field navigation in `/Tabs` (`/R`, `/C`, `/S`) order, live `/CO` calculated field updates, `Clear / Reset Form`, `Import Data` (`JSON`, `FDF`, `XFDF`, `XML`), `Export Data`, and `Flatten Form`.
 
 **Phase:** 3
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (`Form Fill & Form Designer Bar` -- Fill Mode), 9.7 (`Highlight form fields` setting), 10 (`Tab` / `Shift+Tab` field traversal), and 11 (accessibility labels from `/TU` tooltips).
+**Fidelity:** `design/SPEC.md` sections 8.2 (`Form Fill & Form Designer Bar` -- Fill Mode), 9.7 (`Highlight form fields` setting), 10 (`Tab` / `Shift+Tab` field traversal), and 11 (accessibility labels from `/TU` tooltips). Design board: `design/SPEC.md` section 8.2.2 with `design/screenshots/D-Forms.png` (drawn by `D06 T04 §11`).
 **Job:** Users can fill out interactive AcroForm and XFA-converted PDF forms directly on the page canvas with keyboard and mouse, watch calculated totals update live, reset or flatten the form, and import or export form data in `JSON`, `FDF`, `XFDF`, or `XML`. Consumer: `DocumentView` (`D02 T02`), `DocumentActor` (`§6`-`§7`), and `Settings` (`D02 T04 §5`).
 **Treatment:** Live on-canvas field overlay layer scaled and positioned via `D02 T02 §5`'s `page_to_viewport` transform, synchronized with `FormViewModel` and `DocumentActor`. Cheaper substitute that fails the checkpoint: static rendering that requires opening a modal dialog per field, or ignoring `/Tabs` navigation order and `/CO` calculations.
-**Chrome:** consume `RectoAccentSubtleBrush` (fillable field tint), `RectoDangerBrush` (required empty field border), and `D02 T04 §5`'s `Highlight form fields` setting.
+**Chrome:** consume `RectoAccentTintBrush` (fillable field tint), `RectoDangerBrush` (required empty field border), and `D02 T04 §5`'s `Highlight form fields` setting.
 
 **Build order:**
 
 1. Implement `FormViewModel` (`src/services/form_view_model.cpp`) managing `FillMode` vs `DesignMode`, visible page field overlays, `/Tabs` (`Row`, `Column`, `Structure`) focus traversal order, live `/CO` recalculation on field edit, `Highlight Required Fields` state (seeded from `D02 T04 §5`), `Reset Form`, `Import Data`, `Export Data`, and `Flatten Form`. Done when: `FormUi.FillViewModel` verifies field edits, live `/CO` updates, and `/Tabs` traversal order.
-2. Build `FormBar` (`src/app/controls/FormBar.xaml/.cpp`, `40 epx` strip) and `FormCanvasOverlay` (`src/app/controls/FormCanvasOverlay.xaml/.cpp`) rendering interactive `TextBox`, `CheckBox`, `RadioButton`, `ComboBox`, `ListBox`, and `Signature` overlays over `DocumentView`. Done when: `AppTests.FormFillUi` tabs through a multi-field form fixture, types text, toggles checkboxes, selects a combo option, verifies calculated total update, and exports `JSON`.
+2. Build `FormBar` (`src/app/controls/FormBar.xaml/.cpp`, `48 epx` strip) and `FormCanvasOverlay` (`src/app/controls/FormCanvasOverlay.xaml/.cpp`) rendering interactive `TextBox`, `CheckBox`, `RadioButton`, `ComboBox`, `ListBox`, and `Signature` overlays over `DocumentView`. Done when: `AppTests.FormFillUi` tabs through a multi-field form fixture, types text, toggles checkboxes, selects a combo option, verifies calculated total update, and exports `JSON`.
 
 - [ ] Implement `FormViewModel` in `src/services/form_view_model.h/.cpp` detecting when an opened document has `/AcroForm` or `/XFA` fields (automatically running §7's XFA-to-AcroForm converter when `/XFA` is present and displaying a polite `"Converted XFA form for interactive filling"` banner). Done when: opening an AcroForm or XFA PDF activates `FormViewModel` automatically.
-- [ ] Build the `40 epx` contextual `FormBar` (`SPEC 8.2`) with mode switch (`Fill Form` | `Design Form`), `Highlight Fields` toggle (initialized from Settings `Highlight form fields` in `D02 T04 §5`), `Clear / Reset Form`, `Import Data...` (`JSON`/`FDF`/`XFDF`/`XML`), `Export Data...`, and `Flatten Form`. Done when: `FormBar` renders at `40 epx` height and all controls pass `D03 T02 §3` accessibility checks.
+- [ ] Build the `48 epx` contextual `FormBar` (`SPEC 8.2`) with mode switch (`Fill Form` | `Design Form`), `Highlight Fields` toggle (initialized from Settings `Highlight form fields` in `D02 T04 §5`), `Clear / Reset Form`, `Import Data...` (`JSON`/`FDF`/`XFDF`/`XML`), `Export Data...`, and `Flatten Form`. Done when: `FormBar` renders at `48 epx` height and all controls pass `D03 T02 §3` accessibility checks.
 - [ ] Build `FormCanvasOverlay` positioning interactive WinUI 3 controls over each visible page's widget `/Rect` using `D02 T02 §5`'s `page_to_viewport` transform (`TextBox` for `Tx` single-line/multiline/password/comb, `CheckBox` and `RadioButton` for `Btn`, `ComboBox` and `ListBox` for `Ch`, and a clickable `Sign Here` badge for `Sig` linked to `D05 T02 §10`). Done when: zooming or scrolling keeps all active form controls anchored to their exact page coordinates. Cheaper substitute that fails the checkpoint: modal popup editing per field instead of on-canvas controls.
-- [ ] Paint `--accent-subtle` (`RectoAccentSubtleBrush`) background tint on fillable fields when `Highlight Fields` is active, and a `1.5 epx` `--danger` (`RectoDangerBrush`) border + required badge on empty `/Ff Required` fields. Done when: toggling `Highlight Fields` toggles field tints and required indicators immediately.
+- [ ] Paint a `RectoAccentTintBrush` background tint on fillable fields when `Highlight Fields` is active, and a `1.5 epx` `RectoDangerBrush` border + required badge on empty `/Ff Required` fields. Done when: toggling `Highlight Fields` toggles field tints and required indicators immediately.
 - [ ] Implement `Tab` and `Shift+Tab` keyboard navigation across fields on the current page and across page boundaries following the page's `/Tabs` (`/R` row order, `/C` column order, `/S` structure/annotation order, or designer tab-order index). Done when: pressing `Tab` steps through every non-read-only field in exact `/Tabs` order.
 - [ ] Re-evaluate `/CO` calculated fields (`§7`) live as the user types or changes checkboxes/combos, updating dependent read-only total fields on canvas and recording each field edit in the document `Undo`/`Redo` stack (`Ctrl+Z`/`Ctrl+Y`). Done when: typing a quantity and unit price updates the total field immediately without pressing Save.
 - [ ] Turn on offline spell checking in the `FormCanvasOverlay` `TextBox` editors for `Tx` fields (not password or read-only fields) by binding `IsSpellCheckEnabled` to `CheckSpellingWhileTyping` and `Language` to `SpellingLanguage` (`D03 T01 §14`). Done when: `AppTests.FormFillUi` asserts a multiline text field has spell checking on with the configured `Language`, a password field has it off, and a setting change updates both.
@@ -341,7 +345,7 @@ Implement the visual **Form Designer** (`Design Form` mode in `FormBar`, `SPEC 8
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (`Form Fill & Form Designer Bar` -- Designer Mode) and 11 (accessible designer tool buttons and keyboard field nudging).
+**Fidelity:** `design/SPEC.md` sections 8.2 (`Form Fill & Form Designer Bar` -- Designer Mode) and 11 (accessible designer tool buttons and keyboard field nudging). Design board: `design/SPEC.md` section 8.2.2 with `design/screenshots/D-Forms.png` (drawn by `D06 T04 §11`).
 **Job:** A user can turn any static PDF into a fillable interactive form (or edit an existing form's layout) by placing text fields, checkboxes, radio groups, dropdowns, list boxes, buttons, and signature fields on the page, aligning them with smart snap guides, and setting their keyboard tab order visually. Consumer: `DocumentActor` `/AcroForm` writer (`§6`) and the `Field Properties` inspector (`§10`).
 **Treatment:** Visual canvas authoring overlay with 7 widget placement tools, `4 pt` snap-to-edge/center alignment guides against sibling fields and `PageText` baselines, 8-handle resize frames, arrow-key `1 pt` (`Shift+Arrow` `10 pt`) nudging, and numbered tab-order badges. Cheaper substitute that fails the checkpoint: read-only form inspection with no visual widget placement, alignment guides, or tab-order reordering.
 **Chrome:** consume `FormBar` (`§8`), `RectoAccentBrush` for alignment snap lines and tab-order badges, and `D02 T02 §8`'s `Form designer` toggle.
@@ -354,7 +358,7 @@ Implement the visual **Form Designer** (`Design Form` mode in `FormBar`, `SPEC 8
 - [ ] Add the 7 widget creation tool buttons (`Add Text Field`, `Add Checkbox`, `Add Radio Group`, `Add Combo Box`, `Add List Box`, `Add Button`, `Add Signature Field`) and `Show Tab Order` toggle to `FormBar` when switched to `Design Form` mode (`SPEC 8.2`). Done when: switching `FormBar` to `Design Form` reveals all 7 placement tools with automation names and tooltips.
 - [ ] Implement click-or-drag placement on `FormCanvasOverlay` for all 7 widget types, auto-sizing single-click placements to sensible defaults (`140 x 22 pt` for text/combo, `14 x 14 pt` for checkbox/radio, `180 x 44 pt` for signature) and assigning sequential unique `/T` field names. Done when: all 7 widget types can be placed on any page and immediately persisted to `DocumentActor`.
 - [ ] Implement 8-handle resize, pointer drag-move, `Arrow` (`1 pt`) / `Shift+Arrow` (`10 pt`) keyboard nudging, `Ctrl+D` / `Ctrl+C` + `Ctrl+V` field duplication, and `Delete` removal with full `Ctrl+Z` / `Ctrl+Y` undo/redo support. Done when: moving, resizing, duplicating, or deleting a form field is fully reversible via `Ctrl+Z`.
-- [ ] Compute and render live `--accent` smart alignment guides when dragging or resizing a field within `4 pt` of another field's left/center/right/top/middle/bottom edge or a `PageText` line baseline. Done when: `FormUi.SmartAlignmentGuides` snaps a dragged field's top edge to an adjacent label baseline or sibling field edge. Cheaper substitute that fails the checkpoint: unassisted freehand placement with no alignment guides or snap behavior.
+- [ ] Compute and render live `RectoAccentBrush` smart alignment guides when dragging or resizing a field within `4 pt` of another field's left/center/right/top/middle/bottom edge or a `PageText` line baseline. Done when: `FormUi.SmartAlignmentGuides` snaps a dragged field's top edge to an adjacent label baseline or sibling field edge. Cheaper substitute that fails the checkpoint: unassisted freehand placement with no alignment guides or snap behavior.
 - [ ] Render numbered tab-order badges (`1, 2, 3...` in `RectoAccentBrush` pills at the top-left of each widget) when `Show Tab Order` is active, and support clicking or dragging badges to reorder the page's `/Annots` widget sequence and `/Tabs` entry. Done when: reordering tab-order badges in `Design Form` mode changes the exact `Tab` key sequence in `Fill Form` mode (`§8`).
 - [ ] Wire the floating page toolbar's `Form designer` button (`D02 T02 §8`) and `Ctrl+K` (`Design Form`) to open `FormBar` directly in `Design Form` mode. Done when: clicking `Form designer` on a blank PDF opens the designer bar ready to place fields.
 - [ ] Add `FormUi.DesignerPlacementAndTabOrder` and `FormUi.SmartAlignmentGuides` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=FormUi.Designer*:FormUi.Smart*` passes.
@@ -370,7 +374,7 @@ Build the right-hand `Field Properties` inspector (`src/app/controls/FieldProper
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (`Field Properties` inspector in Designer Mode) and 11 (form field UIA peers exposing `/TU` tooltip as `AutomationProperties.Name`, required/read-only states, and value pattern).
+**Fidelity:** `design/SPEC.md` sections 8.2 (`Field Properties` inspector in Designer Mode) and 11 (form field UIA peers exposing `/TU` tooltip as `AutomationProperties.Name`, required/read-only states, and value pattern). Design board: `design/SPEC.md` section 8.2.2 with `design/screenshots/D-Forms.png` (drawn by `D06 T04 §11`).
 **Job:** A form author can configure every property of a selected form field (name, accessibility tooltip, required flag, comb boxes, dropdown options, number/date formatting, and live calculation formulas), and a screen-reader user in `Fill Form` mode hears each field's `/TU` label, type, value, and required status. Consumer: `DocumentActor` `/AcroForm` and `/CO` writer (`§6`-`§7`) and `DocumentViewAutomationPeer` (`D03 T02 §2`).
 **Treatment:** Structured `FieldPropertiesPane` bound to the currently selected field in `FormViewModel`, plus WinUI 3 `AutomationPeer` wiring on every `FormCanvasOverlay` control (`IValueProvider` / `IToggleProvider` / `ISelectionProvider`) registered with `DocumentViewAutomationPeer` (`D03 T02 §2`). Cheaper substitute that fails the checkpoint: a designer mode that cannot edit field names, dropdown options, or calculation formulas, or form fields whose `/TU` tooltips are ignored by screen readers.
 **Chrome:** consume `SidePanelHost` / right flyout slot (`D02 T03 §3`), `RectoColors.xaml` tokens, and `D03 T02 §2`'s child peer registration API.
@@ -448,17 +452,17 @@ Add the `Link` region tool to the `Markup & Annotation Bar` (`SPEC 8.2` already 
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (`Markup & Annotation Bar`, `Link` region tool), 9.9 (`"Open this link?"` dialog chrome) and 11 (`32 epx` targets, automation names); there is no board for the Link flyout, so it follows the `Colour, Opacity & Stroke Picker` flyout chrome from `§3`.
+**Fidelity:** `design/SPEC.md` sections 8.2 (`Markup & Annotation Bar`, `Link` region tool), 9.9 (`"Open this link?"` dialog chrome) and 11 (`32 epx` targets, automation names); there is no board for the Link flyout, so it follows the `Colour, Opacity & Stroke Picker` flyout chrome from `§3`. Design board: `design/SPEC.md` section 8.2.1 with `design/screenshots/D-Markup.png` (drawn by `D06 T04 §10`).
 **Job:** The user draws a link rectangle over a word, an image or an empty area, picks `Go to a page view`, `Go to a named destination`, `Open another PDF` or `Open a web page or file`, and sees the link work. They can reselect any link, change its target or appearance, or delete it. Consumer: `DocumentView` annotation canvas (`§4`), `CommandRegistry` (`Ctrl+K`), and `D02 T02 §9` link activation.
 **Treatment:** A `LinkTool` mode on `AnnotationToolViewModel` (`§3`) drawing a rubber-band rectangle, then a `LinkPropertiesFlyout` anchored to it with a target-type selector, a page picker with `Set to current view`, a named-destination combo box fed by `§12`, a file picker for PDFs, a single-line URL box, and a border and highlight section. Cheaper substitute that fails the checkpoint: a dialog that accepts only a URL, or a tool that creates links with no way to select, edit or delete them afterwards.
-**Chrome:** consume `RectoColors.xaml` surface, border and swatch tokens, `§3`'s bar and `§4`'s 8-handle selection frame, `D02 T01 §10` dialog styles, and Segoe Fluent Icons `E71B` (Link).
+**Chrome:** consume `RectoColors.xaml` surface, border and swatch tokens, `§3`'s bar and `§4`'s 8-handle selection frame, `D02 T01 §10` dialog styles, and Fluent UI System Icons (`RectoIcons`: `link`).
 
 **Build order:**
 
 1. Add `AnnotationToolMode::Link` to `AnnotationToolViewModel`, draw the rubber-band rectangle on `DocumentView`, and create the annotation through `DocumentActor::add_link` (`§11`) with the chosen target. Done when: `LinkUi.DrawAndCreate` drags a rectangle on page 2 and finds one `Link` annotation with the expected `/Rect` after `Save`.
 2. Build `LinkPropertiesFlyout` (`src/app/controls/LinkPropertiesFlyout.xaml/.h/.cpp`) and the select, edit and delete behaviour, and route activation of authored links through the `OpenLinkDialog` path. Done when: `LinkUi.EditDeleteAndAskFirst` changes a target, deletes a link and proves an authored web link and file link both raise `OpenLinkDialog` before any launch.
 
-- [ ] Add a `Link` button (glyph `E71B`, automation name `Link tool`, tooltip `Link`) to `MarkupAnnotationBar` after the `Stamp` button, with `Ctrl+K` entries `Add Link` and `Link Properties`. Done when: the button is `>= 32 epx`, passes the `D03 T02 §3` inventory and the command box lists `Add Link`.
+- [ ] Add a `Link` button (glyph `link`, automation name `Link tool`, tooltip `Link`) to `MarkupAnnotationBar` after the `Stamp` button, with `Ctrl+K` entries `Add Link` and `Link Properties`. Done when: the button is `>= 32 epx`, passes the `D03 T02 §3` inventory and the command box lists `Add Link`.
 - [ ] Draw the rubber-band rectangle with a `1 epx` `RectoAccentBrush` outline and `RectoAccentTintBrush` fill, clamp it to the page bounds, and require a minimum size of `8 x 8 pt` before it commits. Done when: `LinkUi.DrawAndCreate` rejects a `3 x 3 pt` drag and commits a `120 x 24 pt` drag.
 - [ ] Build `LinkPropertiesFlyout` with a target-type `ComboBox`, the page picker (`Page N` number box and `Set to current view`), the named-destination combo box listing `§12` names, a PDF file picker, a URL `TextBox` showing the normalised URL from `§11`, and `Border width`, `Colour` and `Highlight` controls. Done when: choosing each of the four target types in `LinkUi.TargetTypes` writes the matching `LinkTarget` kind. Cheaper substitute: one free-text box for every target type.
 - [ ] Select an authored or existing link with a click while an annotation tool or `Select` is the active tool (never in the plain reading view), showing the `§4` 8-handle frame, open the flyout on `Enter` or double-click (`Enter` only ever opens the flyout), and delete on `Delete`. Done when: `LinkUi.EditDeleteAndAskFirst` selects a link by click, changes its URL, deletes a second link, `Ctrl+Z` restores it, and no `OpenLinkDialog` appeared during any of those steps.
@@ -477,10 +481,10 @@ Add a `Destinations` panel to the side-panel family so the user can see every na
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.3 (floating side panel and docked panels share one control instance) and 11; genuinely new surface, following the `Outline (with Bookmark Editor)` panel chrome (`D02 T03 §6`): `TreeView`-style rows, header actions, `RectoAccentTintBrush` current row.
+**Fidelity:** `design/SPEC.md` sections 8.3 (floating side panel and docked panels share one control instance) and 11; genuinely new surface, following the `Outline (with Bookmark Editor)` panel chrome (`D02 T03 §6`): `TreeView`-style rows, header actions, `RectoAccentTintBrush` current row. Design board: `design/SPEC.md` section 8.2.3 with `design/screenshots/D-Measure.png` (drawn by `D06 T04 §12`).
 **Job:** The user opens `Destinations`, sees names sorted alphabetically with their page numbers, clicks one to jump, uses `Add destination` to name the current view, double-clicks or presses `F2` to rename, and presses `Delete` to remove one. Consumer: `SidePanelHost`, the `LinkPropertiesFlyout` name picker (`§13`) and `CommandRegistry`.
 **Treatment:** A virtualized `ItemsRepeater` list bound to `DestinationsViewModel` (`src/services/destinations_view_model.h/.cpp`) over the `DocumentActor` calls from `§12`, with inline rename and a confirm-free delete backed by `Ctrl+Z`. Cheaper substitute that fails the checkpoint: a read-only list, or a rename that does not update the links that use the name.
-**Chrome:** consume `SidePanelHost` (`D02 T03 §3`), `RectoColors.xaml` tokens, Segoe Fluent Icons, and the shared undo stack (`§4`).
+**Chrome:** consume `SidePanelHost` (`D02 T03 §3`), `RectoColors.xaml` tokens, Fluent UI System Icons (`RectoIcons`), and the shared undo stack (`§4`).
 
 **Build order:**
 
@@ -488,7 +492,7 @@ Add a `Destinations` panel to the side-panel family so the user can see every na
 2. Build `DestinationsPanel` (`src/app/panels/DestinationsPanel.xaml/.h/.cpp`), register it in `SidePanelHost`'s switcher, and bind commands. Done when: `DestinationUi.PanelAccessibility` finds every control with an automation name and tooltip and the panel opens from the switcher and from `Ctrl+K`.
 
 - [ ] Add `src/services/destinations_view_model.h/.cpp` with a case-insensitive `Find destination` filter, ordinal sort, and a `broken` flag for any entry whose page could not be resolved. Done when: `DestinationUi.ViewModel` filters `intro` to the names containing it and flags a crafted unresolved entry.
-- [ ] Build `DestinationsPanel` with a header (title `Destinations`, `Add destination` button glyph `E710`, close), the filter box, and rows showing the name and `Page N`. Done when: the panel renders at the same width as the `Outline` panel in `Focus`, `Classic` and `Reading room`. Cheaper substitute: a modal dialog instead of a panel.
+- [ ] Build `DestinationsPanel` with a header (title `Destinations`, `Add destination` button glyph `add`, close), the filter box, and rows showing the name and `Page N`. Done when: the panel renders at the same width as the `Outline` panel in `Focus`, `Classic` and `Reading room`. Cheaper substitute: a modal dialog instead of a panel.
 - [ ] Implement `Add destination` using the current page and top-left of the viewport (`PageLayoutGeometry`, `D02 T02 §5`), proposing the first free `Destination N` name in an inline edit box. Done when: `DestinationUi.AddAtView` creates one entry at the visible page and view and `Ctrl+Z` removes it.
 - [ ] Implement inline rename (`F2`, double-click) and delete (`Delete`, context menu; when the name is still used, a confirmation reads `N links, M bookmarks and K opening actions use this destination` with `Delete and remove those references` and `Cancel`) with validation messages for an empty or duplicate name shown beside the box. Done when: `DestinationUi.RenameDelete` renames a name used by a link, sees the link still jump to it, then deletes it and sees the row disappear.
 - [ ] Jump on single click and `Enter`, push the previous viewport onto the `Alt+Left` history (`D02 T02 §6`), and announce `Jumped to <name>, page N` through `AnnouncementService` (`D03 T02 §5`). Done when: `DestinationUi.Jump` scrolls to the destination and `Alt+Left` returns.
@@ -529,10 +533,10 @@ Add the viewer side of article threads: an `Articles` panel listing threads, a `
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (contextual mode bars), 8.3 (side panels) and 11; genuinely new surface, following the `Markup & Annotation Bar` for the authoring tool and the `Outline` panel for the list.
+**Fidelity:** `design/SPEC.md` sections 8.2 (contextual mode bars), 8.3 (side panels) and 11; genuinely new surface, following the `Markup & Annotation Bar` for the authoring tool and the `Outline` panel for the list. Design board: `design/SPEC.md` section 8.2.3 with `design/screenshots/D-Measure.png` (drawn by `D06 T04 §12`) for the `Articles` panel, `Follow article` and the bead boxes, and `design/SPEC.md` section 8.2.1 with `design/screenshots/D-Markup.png` (drawn by `D06 T04 §10`) for the `Article` button on the `Markup & Annotation Bar`.
 **Job:** The user opens `Articles`, picks a thread, presses `Follow article` and steps through it with `Space` or `Enter` (next bead) and `Shift+Space` (previous bead), with the view zooming to fit the bead box. To author, they choose `Article`, drag a box on each part of the story in order, and press `Enter` to end the thread, naming it. Consumer: `DocumentView`, `SidePanelHost`, `AnnouncementService`, `CommandRegistry`.
 **Treatment:** `ArticlesViewModel` (`src/services/articles_view_model.h/.cpp`) over `§15`, an `ArticlesPanel` list, a `FollowArticle` mode in `DocumentView` that sets the viewport to the bead rectangle through `PageLayoutGeometry`, and an `ArticleTool` mode drawing numbered bead boxes. Cheaper substitute that fails the checkpoint: a list that only jumps to the first bead, or an authoring tool that cannot end or reorder a thread.
-**Chrome:** consume `SidePanelHost`, `RectoColors.xaml` tokens (bead boxes `RectoAccentBrush` with a numbered badge), the `§4` selection frame, and Segoe Fluent Icons.
+**Chrome:** consume `SidePanelHost`, `RectoColors.xaml` tokens (bead boxes `RectoAccentBrush` with a numbered badge), the `§4` selection frame, and Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -606,17 +610,17 @@ Add the viewer surface for measuring: a `Measure` contextual mode bar with `Dist
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (contextual mode bars) and 11; genuinely new surface, following the `Markup & Annotation Bar` chrome (`40 epx`, `RectoSurfaceBrush`, `1 epx` `RectoBorderSubtleBrush`) and the `Comments` panel list chrome.
+**Fidelity:** `design/SPEC.md` sections 8.2 (contextual mode bars) and 11; genuinely new surface, following the `Markup & Annotation Bar` chrome (`48 epx`, `RectoRaisedBrush`, `OverlayCornerRadius` 8 epx, `6 epx` padding, SPEC 8.2) and the `Comments` panel list chrome. Design board: `design/SPEC.md` section 8.2.3 with `design/screenshots/D-Measure.png` (drawn by `D06 T04 §12`).
 **Job:** The user opens `Measure`, sets the scale once for the page (`1 in = 10 ft`), clicks two points to measure a distance, several for a perimeter, or closes a polygon for an area, watching the value update live and snapping to corners. They can see all measurements in a list, edit the scale, and export the list. Consumer: `DocumentView` annotation canvas, `SidePanelHost`, `CommandRegistry`.
 **Treatment:** A `MeasureBar` bound to `MeasureViewModel` (`src/services/measure_view_model.h/.cpp`) using `§17` for values and `§18` for snapping, a `ScaleDialog` on the shared dialog chrome, a snap marker (square for endpoint, triangle for midpoint, cross for intersection, each with a text label in the readout so colour is never the only signal) and a `MeasurementsPanel`. Cheaper substitute that fails the checkpoint: a fixed unit with no scale dialog, snapping that only snaps to the grid, or a readout that is not stored as an annotation.
-**Chrome:** consume `RectoColors.xaml` tokens, `D02 T01 §10` dialog styles, `SidePanelHost`, the `§4` selection frame, and Segoe Fluent Icons.
+**Chrome:** consume `RectoColors.xaml` tokens, `D02 T01 §10` dialog styles, `SidePanelHost`, the `§4` selection frame, and Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
 1. Implement `MeasureViewModel` and `MeasureBar` with the three tools, live readout, and `Esc` to cancel the current measurement. Done when: `MeasureUi.DistancePerimeterArea` draws all three measurements on `text/measure-plan.pdf` and reads the expected values from the stored annotations.
 2. Implement `ScaleDialog`, snap markers with a `Hold Alt to snap off` override, and the `MeasurementsPanel` with `Export CSV` and `Export JSON`. Done when: `MeasureUi.ScaleSnapExport` sets a new scale, snaps to a known corner within `1 pt`, and exports files equal to the `§17` golden files.
 
-- [ ] Build `MeasureBar` (`src/app/controls/MeasureBar.xaml/.h/.cpp`, `40 epx`) with `Distance`, `Perimeter`, `Area`, `Scale...`, `Snap` toggle and `Measurements` buttons, each with an automation name and tooltip, opened by the floating toolbar `Annotate / Tools` menu and `Ctrl+K` (`Measure`). Done when: the bar opens, and every button passes the `D03 T02 §3` inventory.
+- [ ] Build `MeasureBar` (`src/app/controls/MeasureBar.xaml/.h/.cpp`, `48 epx`) with `Distance`, `Perimeter`, `Area`, `Scale...`, `Snap` toggle and `Measurements` buttons, each with an automation name and tooltip, opened by the floating toolbar `Annotate / Tools` menu and `Ctrl+K` (`Measure`). Done when: the bar opens, and every button passes the `D03 T02 §3` inventory.
 - [ ] Build `ScaleDialog` with `Page length` and `Real length` number boxes and unit combo boxes (`1 [in] = 10 [ft]`), a `Use two points` helper that measures a known page length and asks for its real length, and a live preview of the resulting scale text. Done when: `MeasureUi.ScaleSnapExport` sets `1 in = 10 ft` by typing and `1 cm = 2.5 m` through `Use two points`. Cheaper substitute: a preset list of scales with no typed values.
 - [ ] Draw the live segment, the running value in a pill near the pointer (`12.5 ft`), and, for area, the closing edge preview and the area in the pill. Done when: `MeasureUi.DistancePerimeterArea` reads the pill text while a polygon is open.
 - [ ] Snap to the `§18` candidates within `8 epx`, show the snap marker and a text label (`Endpoint`, `Midpoint`, `Intersection`) in the pill, and fall back to no snap when the index is still building without blocking the pointer. Done when: `MeasureUi.ScaleSnapExport` snaps to an endpoint, a midpoint and an intersection and the pointer stays responsive while the index builds.
@@ -659,10 +663,10 @@ Add the stamp surfaces: extend the `Stamp Picker` flyout (`§3`) with the user's
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (`Stamp` picker with custom text and image stamps), 9.9 (dialog chrome) and 11; the picker follows `§3`'s `Stamp Picker` flyout and the manager follows the `D02 T01 §10` dialog chrome (no board exists for the manager).
+**Fidelity:** `design/SPEC.md` sections 8.2 (`Stamp` picker with custom text and image stamps), 9.9 (dialog chrome) and 11; the picker follows `§3`'s `Stamp Picker` flyout and the manager follows the `D02 T01 §10` dialog chrome (no board exists for the manager). Design board: `design/SPEC.md` section 8.2.1 with `design/screenshots/D-Markup.png` (drawn by `D06 T04 §10`).
 **Job:** The user picks a stamp (standard, image, or dynamic), clicks the page to place it, and with `Keep stamp tool selected` on keeps placing it until `Esc`. In the manager they import a PNG or PDF as a stamp, write `Reviewed by {user} on {date} at {time}`, see the live preview, name it and save it. Consumer: `MarkupAnnotationBar`, `AnnotationToolViewModel` (`§3`), `StampLibrary` (`§20`).
 **Treatment:** `StampManagerDialog` (`src/app/dialogs/StampManagerDialog.xaml/.h/.cpp`) over `StampLibrary` with a token chip row (`{user}`, `{date}`, `{time}`, `{file}`) inserting at the caret, a live preview, and a sticky flag on `AnnotationToolViewModel`. Cheaper substitute that fails the checkpoint: a stamp that can only show fixed text, a preview that differs from the applied result, or a tool that deselects after every placement.
-**Chrome:** consume `RectoDialogStyles.xaml`, `RectoColors.xaml` tokens, the `§3` flyout, and Segoe Fluent Icons.
+**Chrome:** consume `RectoDialogStyles.xaml`, `RectoColors.xaml` tokens, the `§3` flyout, and Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -688,10 +692,10 @@ Acrobat Pro's Fill and Sign lets a user complete a form that has no fields: type
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new contextual bar following the `Markup & Annotation Bar` chrome of §3 (`design/SPEC.md` section 8.2).
+**Fidelity:** Genuinely new contextual bar following the `Markup & Annotation Bar` chrome of §3 (`design/SPEC.md` section 8.2). Design board: `design/SPEC.md` section 8.2.1 with `design/screenshots/D-Markup.png` (drawn by `D06 T04 §10`).
 **Job:** A user fills a scanned or flat form, places check marks and signs it, then saves a copy that others see identically in any viewer. Consumer: the annotation engine (§1, §2), the form engine (§6) when fields exist, and the save paths.
 **Treatment:** A `Fill & Sign` bar with `Text`, `Check`, `Cross`, `Dot`, `Line`, `Box`, `Sign` and `Initials` tools, size and colour, a visible `Lock on save` toggle, and click-to-place with a live preview at the pointer. Cheaper substitute that fails the checkpoint: a separate free-text annotation tool with no symbols and no field awareness.
-**Chrome:** The §3 bar container, the §4 handles and undo stack, the `D05 T02 §10` signature library picker, Segoe Fluent Icons, `RectoColors.xaml` tokens.
+**Chrome:** The §3 bar container, the §4 handles and undo stack, the `D05 T02 §10` signature library picker, Fluent UI System Icons (`RectoIcons`), `RectoColors.xaml` tokens.
 
 **Build order:**
 
@@ -741,10 +745,10 @@ Show the review status on each comment card of the `Comments / Annotations` pane
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.3 (`Comments / Annotations` side panel) and 11 (accessible card labels); the status chip and menu are a genuinely new control that follows the type and author filter chip chrome of `§5`.
+**Fidelity:** `design/SPEC.md` sections 8.3 (`Comments / Annotations` side panel) and 11 (accessible card labels); the status chip and menu are a genuinely new control that follows the type and author filter chip chrome of `§5`. Design board: `design/SPEC.md` section 8.3.2 with `design/screenshots/D-Comments.png` (drawn by `D06 T04 §3`).
 **Job:** A reviewer marks a comment `Accepted`, `Rejected`, `Cancelled` or `Completed`, ticks `Marked` to flag it, and filters the panel to only the comments that are still open, so a long review can be worked through in order. Consumer: `CommentsPanelViewModel` (`§5`), the annotation popover (`§4`), `CommandRegistry`.
 **Treatment:** A status chip (icon plus text) on every card opening a menu with the five Review states and a `Marked` toggle, a `Status` multi-select filter beside the type and author filters, a status count in the panel header, and the same menu in the `§4` popover. Cheaper substitute that fails the checkpoint: a colour-only dot with no text, a status that can be set but not filtered, or a setter that overwrites instead of calling `set_review_state` (`§23`).
-**Chrome:** consume `SidePanelHost` (`D02 T03 §3`), the `§5` card and chip styles, `RectoColors.xaml` tokens, and Segoe Fluent Icons for each state.
+**Chrome:** consume `SidePanelHost` (`D02 T03 §3`), the `§5` card and chip styles, `RectoColors.xaml` tokens, and Fluent UI System Icons (`RectoIcons`) for each state.
 
 **Build order:**
 
@@ -817,7 +821,7 @@ Add the dialog that drives the comment summary: choose a format, filters, sort a
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 9.9 (shared `ContentDialog` chrome) and 11; genuinely new surface that follows `D02 T01 §10` dialog styles and the filter controls of `§5`.
+**Fidelity:** `design/SPEC.md` sections 9.9 (shared `ContentDialog` chrome) and 11; genuinely new surface that follows `D02 T01 §10` dialog styles and the filter controls of `§5`. Design board: `design/SPEC.md` section 8.3.2 with `design/screenshots/D-Comments.png` (drawn by `D06 T04 §3`).
 **Job:** A reviewer or project lead exports the review as a report to send on, choosing only open comments from one author, for example, and sees the count before saving. Consumer: `CommentsPanel` header menu (`§5`), `CommandRegistry`, and the `§25` exporter registry.
 **Treatment:** A `SummarizeCommentsDialog` listing the formats the registry offers, a layout choice for PDF, the filters of `§25` including status, a live count line, and a `Save` button that starts a job with progress and `Cancel`. Cheaper substitute that fails the checkpoint: a fixed single format with no filters, or an export that blocks the UI thread.
 **Chrome:** consume `RectoDialogStyles.xaml` (`D02 T01 §10`), `RectoColors.xaml` tokens, the `§5` header menu, and `FileSavePicker`.
@@ -911,10 +915,10 @@ Add the viewer commands for the bulk link operations: a review dialog listing th
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 9.9 (dialog chrome), 8.2 (`Link` region tool) and 11; genuinely new dialog following `D02 T01 §10` dialog styles and the `§13` flyout chrome.
+**Fidelity:** `design/SPEC.md` sections 9.9 (dialog chrome), 8.2 (`Link` region tool) and 11; genuinely new dialog following `D02 T01 §10` dialog styles and the `§13` flyout chrome. Design board: `design/SPEC.md` section 8.2.1 with `design/screenshots/D-Markup.png` (drawn by `D06 T04 §10`), which draws the `Create Links from URLs` review dialog and the `Remove All Links` confirmation.
 **Job:** A user opens a document whose web addresses are plain text, runs `Create Links from URLs`, unticks the ones they do not want and applies, or removes every link from a range of pages in one step. Consumer: `DocumentActor` link calls (`§30`), the `§4` undo stack, `CommandRegistry`.
 **Treatment:** A `CreateLinksDialog` with a page scope, a list of candidates (URL in monospace, page, a `Wrapped` note), `Select all`, a count line and `Create`, plus a `Remove Links` confirmation naming the scope and count. Cheaper substitute that fails the checkpoint: creating every link silently, or a removal with no count and no undo.
-**Chrome:** consume `RectoDialogStyles.xaml` (`D02 T01 §10`), `RectoColors.xaml` tokens, the `§13` `Link` button, and Segoe Fluent Icons.
+**Chrome:** consume `RectoDialogStyles.xaml` (`D02 T01 §10`), `RectoColors.xaml` tokens, the `§13` `Link` button, and Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -961,10 +965,10 @@ Add the viewer tool that places a barcode image on a page from text the user typ
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (`Markup & Annotation Bar`, `Stamp` picker) and 9.9 (dialog chrome); genuinely new dialog following `D02 T01 §10` dialog styles and the `Stamp Manager` of `§21`.
+**Fidelity:** `design/SPEC.md` sections 8.2 (`Markup & Annotation Bar`, `Stamp` picker) and 9.9 (dialog chrome); genuinely new dialog following `D02 T01 §10` dialog styles and the `Stamp Manager` of `§21`. Design board: `design/SPEC.md` section 8.2.1 with `design/screenshots/D-Markup.png` (drawn by `D06 T04 §10`).
 **Job:** A user adds a QR code for a web address, a Wi-Fi sign-in or a short note, sees it update as they type, places it, and later moves, resizes or edits it. Consumer: `MarkupAnnotationBar` (`§3`), the `§4` selection frame, the `§20` stamp builder pattern.
 **Treatment:** A `Barcode` button on the bar opening a `BarcodeDialog` with type, content, error correction, size and colours, a live preview, a size-in-modules readout, and a `Place` button that arms click-to-place. Cheaper substitute that fails the checkpoint: a fixed QR type with no editing after placement, or a preview that differs from the placed result.
-**Chrome:** consume `RectoDialogStyles.xaml`, `RectoColors.xaml` tokens, the `§3` bar and `§4` frame, and Segoe Fluent Icons (the `QRCode` glyph of the Segoe Fluent Icons table).
+**Chrome:** consume `RectoDialogStyles.xaml`, `RectoColors.xaml` tokens, the `§3` bar and `§4` frame, and Fluent UI System Icons (`RectoIcons`: `qr_code`).
 
 **Build order:**
 
@@ -1011,10 +1015,10 @@ Add the designer and fill surface for barcode fields: an `Add Barcode Field` too
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (`Form Fill & Form Designer Bar`) and 11; genuinely new control following the `Field Properties` sections of `§10` and the placement tools of `§9`.
+**Fidelity:** `design/SPEC.md` sections 8.2 (`Form Fill & Form Designer Bar`) and 11; genuinely new control following the `Field Properties` sections of `§10` and the placement tools of `§9`. Design board: `design/SPEC.md` section 8.2.2 with `design/screenshots/D-Forms.png` (drawn by `D06 T04 §11`).
 **Job:** A form author drops a barcode field, ticks the fields it encodes and the symbol type, sees a preview, and a person filling the form watches the code change as they type. Consumer: `FormBar` (`§9`), `FieldPropertiesPane` (`§10`), `FormCanvasOverlay` (`§8`), `§34`.
 **Treatment:** An `Add Barcode Field` button in the designer tool group, a `Barcode` section in the inspector with type, error correction, a source-field checklist with a template box and a live preview, and a refreshed appearance on the canvas on each committed edit. Cheaper substitute that fails the checkpoint: a barcode field that needs hand-written JSON, or one that updates only after save.
-**Chrome:** consume `FormBar`, `FieldPropertiesPane`, `FormCanvasOverlay`, `RectoColors.xaml` tokens and Segoe Fluent Icons.
+**Chrome:** consume `FormBar`, `FieldPropertiesPane`, `FormCanvasOverlay`, `RectoColors.xaml` tokens and Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -1064,10 +1068,10 @@ Add the designer command that runs `§36` on a flat page and shows the proposals
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (`Form Fill & Form Designer Bar`, Designer Mode) and 11; genuinely new overlay that follows the alignment-guide and tab-badge chrome of `§9`.
+**Fidelity:** `design/SPEC.md` sections 8.2 (`Form Fill & Form Designer Bar`, Designer Mode) and 11; genuinely new overlay that follows the alignment-guide and tab-badge chrome of `§9`. Design board: `design/SPEC.md` section 8.2.2 with `design/screenshots/D-Forms.png` (drawn by `D06 T04 §11`).
 **Job:** A user opens a scanned or typed form with no fields, runs `Detect Fields`, unticks wrong proposals, renames a few, and accepts to get a working fillable form. Consumer: `FormBar` (`§9`), `DocumentActor` form calls (`§6`), the `§4` undo stack.
 **Treatment:** A `Detect Fields` button in the designer bar, dashed ghost boxes in `RectoAccentBrush` with a checkbox and kind icon each, a side list with inline name editing, a `Confidence` slider and counts, and `Accept 18 fields` and `Cancel` buttons. Cheaper substitute that fails the checkpoint: creating every field immediately with no review, or a result list with no on-canvas preview.
-**Chrome:** consume `FormBar`, `FormCanvasOverlay`, `RectoColors.xaml` tokens, `AnnouncementService` (`D03 T02 §5`) and Segoe Fluent Icons.
+**Chrome:** consume `FormBar`, `FormCanvasOverlay`, `RectoColors.xaml` tokens, `AnnouncementService` (`D03 T02 §5`) and Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -1115,10 +1119,10 @@ Add the two missing field conveniences to the form surfaces: an `Add Image Field
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (`Form Fill & Form Designer Bar`) and 11; genuinely new controls that follow the `FormCanvasOverlay` controls of `§8` and the placement tools of `§9`.
+**Fidelity:** `design/SPEC.md` sections 8.2 (`Form Fill & Form Designer Bar`) and 11; genuinely new controls that follow the `FormCanvasOverlay` controls of `§8` and the placement tools of `§9`. Design board: `design/SPEC.md` section 8.2.2 with `design/screenshots/D-Forms.png` (drawn by `D06 T04 §11`).
 **Job:** A form author adds a photo box, and a person filling the form clicks it to choose a picture, or opens a calendar on a date field and picks a day. Consumer: `FormCanvasOverlay` (`§8`), `FormBar` (`§9`), `FieldPropertiesPane` (`§10`), `§38` and the date formatter of `§7`.
 **Treatment:** An `Add Image Field` designer tool with fit options in the inspector, a click or `Enter` on the field in fill mode opening `FileOpenPicker` for `.png`, `.jpg`, `.jpeg`, and a `CalendarDatePicker` flyout on date-formatted text fields that writes the value through the `§7` formatter. Cheaper substitute that fails the checkpoint: a date field that only validates typed text, or an image field that needs a script or a separate editor.
-**Chrome:** consume `FormCanvasOverlay`, `FormBar`, `FieldPropertiesPane`, `RectoColors.xaml` tokens and Segoe Fluent Icons.
+**Chrome:** consume `FormCanvasOverlay`, `FormBar`, `FieldPropertiesPane`, `RectoColors.xaml` tokens and Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -1168,10 +1172,10 @@ Add the viewer dialog for combining form data and the Excel output, reusing `Xls
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 9.9 (dialog chrome) and 11; genuinely new dialog that follows `D02 T01 §10` dialog styles.
+**Fidelity:** `design/SPEC.md` sections 9.9 (dialog chrome) and 11; genuinely new dialog that follows `D02 T01 §10` dialog styles. Design board: `design/SPEC.md` section 8.2.2 with `design/screenshots/D-Forms.png` (drawn by `D06 T04 §11`).
 **Job:** A person collects 200 filled response forms into one spreadsheet, sees the first rows before saving, and learns which files were skipped and why. Consumer: `FormBar` (`§8`), `CommandRegistry`, `§40`, `XlsxWriter`.
 **Treatment:** A `CombineFormDataDialog` with an add files and add folder control (drag and drop too), an ordered file list, match mode, output format `CSV`, `Excel (.xlsx)` or `JSON`, a preview of the first `20` rows, a progress bar with `Cancel`, and a result summary listing skipped files. Cheaper substitute that fails the checkpoint: CSV only, or a run with no preview and no list of skipped files.
-**Chrome:** consume `RectoDialogStyles.xaml`, `RectoColors.xaml` tokens, `FileOpenPicker`, `FolderPicker`, `FileSavePicker` and Segoe Fluent Icons.
+**Chrome:** consume `RectoDialogStyles.xaml`, `RectoColors.xaml` tokens, `FileOpenPicker`, `FolderPicker`, `FileSavePicker` and Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -1218,7 +1222,7 @@ Wire pen hardware into the `Ink` tool: read pressure from `PointerPointPropertie
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (`Ink` freehand pen and eraser), 9.7 (settings) and 11; genuinely new behaviour with no new chrome beyond one setting row and one toggle on the existing `Colour, Opacity & Stroke Picker` flyout.
+**Fidelity:** `design/SPEC.md` sections 8.2 (`Ink` freehand pen and eraser), 9.7 (settings) and 11; genuinely new behaviour with no new chrome beyond one setting row and one toggle on the existing `Colour, Opacity & Stroke Picker` flyout. Design board: `design/SPEC.md` section 8.2.1 with `design/screenshots/D-Markup.png` (drawn by `D06 T04 §10`).
 **Job:** A pen user writes notes with natural pressure variation, flips the pen to erase, and rests a palm on the screen without leaving marks. Consumer: `AnnotationInteraction` (`§4`), `§42`, `SettingsStore` (`D02 T04 §2`).
 **Treatment:** A pointer sample type carrying device, pressure and eraser flags into `AnnotationInteraction`, a `Pressure` toggle on the stroke flyout (on by default for pens), a `Pen pressure sensitivity` setting (`Soft`, `Medium` default, `Firm`, mapped to `gamma 0.7`, `1.0`, `1.5`), and a `Reject touch while using a pen` setting (on by default). Cheaper substitute that fails the checkpoint: treating a pen as a mouse, or a setting that nothing reads.
 **Chrome:** consume the `§3` stroke flyout, the Settings Reading group (`D02 T04 §5`) and `RectoColors.xaml` tokens.
@@ -1246,7 +1250,7 @@ Add a touch mode that enlarges the markup surfaces for finger use: bar buttons, 
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2, 8.3 and 11 (`32 epx` hit targets); genuinely new mode with no new chrome, only a second metrics set applied to existing controls.
+**Fidelity:** `design/SPEC.md` sections 8.2, 8.3 and 11 (`32 epx` hit targets); genuinely new mode with no new chrome, only a second metrics set applied to existing controls. Design board: `design/SPEC.md` section 8.2.1 with `design/screenshots/D-Markup.png` (drawn by `D06 T04 §10`).
 **Job:** A tablet user taps the annotation bar, drags a handle and edits a comment without mis-taps. Consumer: `MarkupAnnotationBar` (`§3`), the `§4` handles and popover, the `§5` cards, `SettingsStore`.
 **Treatment:** A `TouchMode` setting (`Auto` default, `On`, `Off`) where `Auto` switches on after a touch pointer event and off after a mouse or pen event, and a `RectoTouchMetrics` resource dictionary supplying `44 epx` button and row sizes, `16 epx` handle visuals with `44 epx` hit areas, and wider popover spacing. Cheaper substitute that fails the checkpoint: scaling the whole window, or a setting that only changes one bar.
 **Chrome:** consume `src/app/controls/RectoTouchMetrics.xaml` (new), `RectoColors.xaml` tokens and the Settings Reading group (`D02 T04 §5`).
@@ -1362,10 +1366,10 @@ Add multi-selection to the annotation canvas and the group commands built on `§
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (8-point selection handles), 8.3 and 11; genuinely new interaction that follows the `§4` selection frame chrome.
+**Fidelity:** `design/SPEC.md` sections 8.2 (8-point selection handles), 8.3 and 11; genuinely new interaction that follows the `§4` selection frame chrome. Design board: `design/SPEC.md` section 8.2.1 with `design/screenshots/D-Markup.png` (drawn by `D06 T04 §10`).
 **Job:** A reviewer selects several markups with `Ctrl+click` or a drag rectangle, groups them, moves them as one and ungroups them later. Consumer: `AnnotationInteraction` (`§4`), `CommentsPanel` (`§5`), `CommandRegistry`.
 **Treatment:** `Ctrl+click`, `Shift+click` and marquee selection in `Select` mode, a shared bounding frame with the `§4` handles, `Group` (`Ctrl+Shift+G`) and `Ungroup` (`Ctrl+Alt+G`) commands, and a Comments card showing the group as one entry with its member count. Cheaper substitute that fails the checkpoint: grouping that exists only in the file with no way to select several, or a group that moves only its primary.
-**Chrome:** consume the `§4` frame and popover, the `§5` card styles, `RectoColors.xaml` tokens and Segoe Fluent Icons.
+**Chrome:** consume the `§4` frame and popover, the `§5` card styles, `RectoColors.xaml` tokens and Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -1389,10 +1393,10 @@ Add the two shape tools built on `§45` and `§46` to the `Shapes` group of the 
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (`Markup & Annotation Bar`, `Shapes`) and 11; genuinely new tools that follow the `Rectangle` and `Ellipse` tools of `§3` and `§4`.
+**Fidelity:** `design/SPEC.md` sections 8.2 (`Markup & Annotation Bar`, `Shapes`) and 11; genuinely new tools that follow the `Rectangle` and `Ellipse` tools of `§3` and `§4`. Design board: `design/SPEC.md` section 8.2.1 with `design/screenshots/D-Markup.png` (drawn by `D06 T04 §10`).
 **Job:** A reviewer clouds a region of a drawing by dragging a rectangle or clicking polygon corners, or draws an arc by choosing centre, start and end, and can change the cloud intensity afterwards. Consumer: `AnnotationToolViewModel` (`§3`), the `§4` canvas, `CommandRegistry`.
 **Treatment:** `Cloud` (rectangle drag; `Shift` for polygon mode), `Cloud intensity` (`Light`, `Normal`, `Heavy` mapping to `/I` `0`, `1`, `2`) in the style flyout, and `Arc` (drag the chord, then a third click for the bulge, with live preview), with `8` handles plus a sweep handle. Cheaper substitute that fails the checkpoint: a cloud that is a fixed image, or an arc that cannot be edited after placement.
-**Chrome:** consume the `§3` bar and style flyout, the `§4` frame and `RectoColors.xaml` tokens, and Segoe Fluent Icons.
+**Chrome:** consume the `§3` bar and style flyout, the `§4` frame and `RectoColors.xaml` tokens, and Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -1417,7 +1421,7 @@ Add the circle measuring tool to the `Measure` bar (`§19`) using `§48`. It mat
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 and 11; genuinely new tool that follows the `MeasureBar` of `§19`.
+**Fidelity:** `design/SPEC.md` sections 8.2 and 11; genuinely new tool that follows the `MeasureBar` of `§19`. Design board: `design/SPEC.md` section 8.2.3 with `design/screenshots/D-Measure.png` (drawn by `D06 T04 §12`).
 **Job:** A user clicks a centre (snapping to a corner or intersection), drags to a radius and reads radius, diameter, circumference and area in real units, then finds the circle in the `Measurements` list. Consumer: `MeasureBar` and `MeasurementsPanel` (`§19`), `§48`.
 **Treatment:** A `Circle` button in the bar, a live pill reading `r 2.5 m, A 19.63 m2` while dragging, a radius line, and a row in the panel with all four values. Cheaper substitute that fails the checkpoint: drawing a plain circle annotation with no measurement.
 **Chrome:** consume the `§19` bar, snap markers and pill, the `§4` frame and `RectoColors.xaml` tokens.
@@ -1467,10 +1471,10 @@ Add the stickers surface to the stamp picker: a `Stickers` tab with a pack selec
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (`Stamp` picker) and 11; genuinely new tab that follows the `Stamp Picker` flyout of `§3` and `§21`.
+**Fidelity:** `design/SPEC.md` sections 8.2 (`Stamp` picker) and 11; genuinely new tab that follows the `Stamp Picker` flyout of `§3` and `§21`. Design board: `design/SPEC.md` section 8.2.1 with `design/screenshots/D-Markup.png` (drawn by `D06 T04 §10`).
 **Job:** A user opens `Stickers`, searches `arrow`, clicks a sticker and places it several times, or imports a folder of their own pictures as a pack. Consumer: `MarkupAnnotationBar` (`§3`), `AnnotationToolViewModel`, `StickerLibrary` (`§52`).
 **Treatment:** A virtualized grid of previews with the name as tooltip, a pack combo, a search box, a `Recent` row of the last `12` placed (kept in `SettingsStore` as `RecentStickers` and read by the picker), `Import sticker folder...` and `Export pack...`. Cheaper substitute that fails the checkpoint: a flat unsearchable list, or stickers that must be imported before any exist.
-**Chrome:** consume the `§3` flyout, `RectoDialogStyles.xaml`, `RectoColors.xaml` tokens and Segoe Fluent Icons.
+**Chrome:** consume the `§3` flyout, `RectoDialogStyles.xaml`, `RectoColors.xaml` tokens and Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -1517,10 +1521,10 @@ Add the accounting surface to the picker: an `Accounting` section with the tickm
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (`Stamp` picker) and 11; genuinely new section that follows the `Stamp Picker` flyout of `§3` and the dynamic stamp preview of `§21`.
+**Fidelity:** `design/SPEC.md` sections 8.2 (`Stamp` picker) and 11; genuinely new section that follows the `Stamp Picker` flyout of `§3` and the dynamic stamp preview of `§21`. Design board: `design/SPEC.md` section 8.2.1 with `design/screenshots/D-Markup.png` (drawn by `D06 T04 §10`).
 **Job:** An auditor selects a column of figures, picks `Sum`, sees `Sum 1,234.50 (12 numbers, 1 skipped)` in the preview, clicks to place it, then places tickmarks beside the rows. Consumer: `AnnotationToolViewModel` (`§3`), `SelectionModel` (`D03 T01 §3`), `StampLibrary` (`§20`).
 **Treatment:** An `Accounting` section in the picker, calculator entries enabled only with a text selection, a live preview with count and skipped count, and sticky placement for tickmarks through `keep_tool_selected` (`§21`). Cheaper substitute that fails the checkpoint: a total typed by hand, or a preview that differs from the placed value.
-**Chrome:** consume the `§3` flyout, `RectoColors.xaml` tokens, `AnnouncementService` (`D03 T02 §5`) and Segoe Fluent Icons.
+**Chrome:** consume the `§3` flyout, `RectoColors.xaml` tokens, `AnnouncementService` (`D03 T02 §5`) and Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 

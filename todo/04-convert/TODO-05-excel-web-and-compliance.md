@@ -24,7 +24,7 @@ track: M5
 - -> XREF: D04 T01 §4 -- registers the `Excel & Data` (§2), `HTML, Markdown, EPUB & LaTeX` (§4), and `PDF/A & E-Invoice` (§9) cards and Step 3 options into the Convert page and `ConversionRunner`.
 - -> XREF: D04 T02 §2 -- `ComplianceEngine` (§6, §7, §8) writes compliant PDFs via `D04 T02 §2`'s `PdfWriter` and `D04 T02 §1`'s `AtomicFileWriter`.
 - -> XREF: D04 T02 §8 -- `XlsxWriter` (§1), `.csv`/`.xml` exporters, and `WebDocWriter` (§3) consume `TableExtractor` grids from `D04 T02 §8`.
-- -> XREF: D04 T02 §10 -- `TablePreviewDialog`'s `Save as .xlsx` action (`D04 T02 §10`) delegates to §1's `XlsxWriter`.
+- -> XREF: D04 T02 §10 -- `TablePreviewDrawer`'s `Save as .xlsx` action (`D04 T02 §10`) delegates to §1's `XlsxWriter`.
 - -> XREF: D04 T03 §1 -- `XlsxWriter` (§1) and `WebDocWriter`'s EPUB 3 packager (§4) use `D04 T03 §1`'s `zip_archive.cpp` and `OpenXmlPackageBuilder`.
 - -> XREF: D04 T03 §2 -- the `PDF/UA-1` auto-tagger (§7) shares `D04 T03 §2`'s heading, list, and running-header/footer structure inference rules.
 - -> XREF: D05 T02 §11 -- the `Signatures` section of the `Signatures & Standards` side panel (`D05 T02 §11`) shares the panel host with §9 here.
@@ -40,6 +40,7 @@ track: M5
 - -> XREF: D04 T06 §15 -- shared exit codes.
 - -> XREF: D04 T07 §15 -- pdfua step.
 - -> XREF: D01 T03 §10 -- a11y verb follows the registration rule.
+- -> XREF: D06 T04 §4 -- the `D-Signatures.png` board and `design/SPEC.md` section 8.3.3 that §9, §16, §17, §27 here build against.
 
 ## Outcome
 
@@ -69,15 +70,15 @@ track: M5
 | 6 | §7 | `PDF/UA-1` (`ISO 14289-1`) validator and auto-tagger (`/StructTreeRoot` & `/MCID` tags) | §5, D03 T01 §1, D04 T02 §8, D04 T03 §2 | [ ] |
 | 7 | §6 | `PDF/A` converter (font embedding, `/OutputIntents`, `PDF/A-1` flattening, XMP `pdfaid`) | §5, §7 | [ ] |
 | 8 | §8 | `ZUGFeRD 2.x / Factur-X` (`EN 16931`) hybrid `PDF/A-3` e-invoice engine & `recto-cli` | §6 | [ ] |
-| 9 | §9 | Viewer `Signatures & Standards` side panel (`SPEC 8.3`) and `PDF/A & E-Invoice` card | §6, §7, §8, D02 T03 §3, D04 T01 §4 | [ ] |
+| 9 | §9 | Viewer `Signatures & Standards` side panel (`SPEC 8.3`) and `PDF/A & E-Invoice` card | §6, §7, §8, D02 T03 §3, D04 T01 §4, D06 T04 §4 | [ ] |
 | 10 | §10 | `PptxWriter` PresentationML package: one slide per page, text boxes, reading order | D04 T02 §8, D04 T03 §1, D04 T03 §2, D03 T01 §1 | [ ] |
 | 11 | §11 | `PptxWriter` pictures, vector shapes and `a:tbl` tables with raster fallback | §10, D04 T02 §9, D01 T02 §1, D01 T02 §6, D03 T01 §7, D03 T01 §8 | [ ] |
 | 12 | §12 | `PptxWriter` reopen validation, empty-result refusal and `recto-cli pdf-to-pptx` | §11, D04 T04 §2, D01 T03 §1 | [ ] |
 | 13 | §13 | Convert page **PowerPoint presentation (`.pptx`)** card and Step 3 UI (`SPEC 9.5`) | §12, D04 T01 §4, D02 T03 §11, D03 T02 §3 | [ ] |
 | 14 | §14 | `StructTreeEditor` engine: add, retag, move, delete tags, edit `/Alt` and `/ActualText` | §7, D04 T02 §1, D04 T02 §2, D03 T01 §1, D01 T03 §4 | [ ] |
 | 15 | §15 | `ReadingOrderEditor` engine: content regions, roles, artifacts and reorder | §14, D06 T03 §4, D01 T02 §4, D04 T02 §8 | [ ] |
-| 16 | §16 | Viewer **Tags** tree editor panel in `Signatures & Standards` (`SPEC 8.3`) | §9, §14, §15, D02 T03 §3, D02 T03 §11, D02 T01 §8 | [ ] |
-| 17 | §17 | Viewer **Reading Order** tool: draw regions, assign roles, reorder, mark artifacts | §15, §16, D05 T02 §9, D03 T01 §3, D02 T03 §11 | [ ] |
+| 16 | §16 | Viewer **Tags** tree editor panel in `Signatures & Standards` (`SPEC 8.3`) | §9, §14, §15, D02 T03 §3, D02 T03 §11, D02 T01 §8, D06 T04 §4 | [ ] |
+| 17 | §17 | Viewer **Reading Order** tool: draw regions, assign roles, reorder, mark artifacts | §15, §16, D05 T02 §9, D03 T01 §3, D02 T03 §11, D06 T04 §4 | [ ] |
 | 18 | §18 | `MathRegionDetector` engine: math zones, symbols and expression trees | D03 T01 §1, D01 T02 §1, §14 | [ ] |
 | 19 | §19 | `MathExporter`: MathML 3 and LaTeX serializers, web equations, `recto-cli math` | §18, §3, §4 | [ ] |
 | 20 | §20 | Tag detected formulas as `Formula` elements with MathML associated files | §18, §19, §14, §15 | [ ] |
@@ -87,7 +88,7 @@ track: M5
 | 24 | §24 | PDF/UA-2 output: the auto-tagger writes PDF 2.0 structure | §7, §23 | [ ] |
 | 25 | §25 | WCAG 2.2 report model: criteria mapping, statuses and exporters | §7, §22, §23, D04 T06 §2 | [ ] |
 | 26 | §26 | `recto-cli a11y` check and report commands | §25, D01 T03 §1 | [ ] |
-| 27 | §27 | Accessibility checks and WCAG report in the Standards & Accessibility panel | §9, §16, §22, §24, §25, D02 T03 §11 | [ ] |
+| 27 | §27 | Accessibility checks and WCAG report in the Standards & Accessibility panel | §9, §16, §22, §24, §25, D02 T03 §11, D06 T04 §4 | [ ] |
 
 ## 1. Native ECMA-376 `XlsxWriter` (`.xlsx`, `.csv`, `.xml`) over `TableExtractor` and CLI
 
@@ -134,7 +135,7 @@ Register the **Excel & Data (`.xlsx`, `.csv`, `.xml`)** card in `ConverterRegist
 - [ ] Implement `ExcelConvertOptionsViewModel` in `src/services/excel_convert_options_view_model.h/.cpp` exposing `OutputFormat` (`Xlsx`, `Csv`, `Xml`), `SheetMode` (`OneSheetPerTable`, `OneSheetPerPage`, `SingleCombinedSheet`), `ParseNumericAndDateValues` (`true`), `IncludeNonTableText` (`false`), and `AutoOcrScannedPages` (`true`). Done when: selecting `Csv` or `Xml` disables the Excel-only `SheetMode` dropdown cleanly.
 - [ ] Build `ExcelConvertOptionsControl` (`src/app/views/convert/ExcelConvertOptionsControl.xaml/.cpp`) with accessible labels, tooltips, and the SPEC Principle 4 honest capability hint line (`"Reconstructs bordered and borderless tables into native Excel cells; numeric and currency columns are formatted for formulas."`). Done when: all controls pass `D03 T02 §3` accessibility checks. Cheaper substitute that fails the checkpoint: omitting sheet organization options or the capability hint line.
 - [ ] Register the **Excel & Data (`.xlsx`, `.csv`, `.xml`)** card in `ConverterRegistry` (`D04 T01 §3`) with dynamic primary button labels (`"Convert to Excel (.xlsx)"`, `"Export CSV (.csv)"`, `"Export XML (.xml)"`). Done when: selecting a PDF in Step 1 enables the card and updates the primary action button.
-- [ ] Connect `TablePreviewDialog`'s `Save as .xlsx` button (`D04 T02 §10`) directly to `XlsxWriter::write_single_table` via `AtomicFileWriter`. Done when: clicking `Save as .xlsx` in the viewer's table preview writes a valid `.xlsx` workbook for the lassoed/detected table.
+- [ ] Connect `TablePreviewDrawer`'s `Save as .xlsx` button (`D04 T02 §10`) directly to `XlsxWriter::write_single_table` via `AtomicFileWriter`. Done when: clicking `Save as .xlsx` in the viewer's table preview writes a valid `.xlsx` workbook for the lassoed/detected table.
 - [ ] Add `AppTests.ConvertExcelUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=AppTests.ConvertExcelUi` passes.
 - [ ] Commit: `convert: implement native C++20 XlsxWriter (.xlsx, .csv, .xml) and Convert UI`
 
@@ -305,7 +306,7 @@ Build the visual compliance and e-invoicing surfaces specified in `design/SPEC.m
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.3 (`Signatures & Standards` side panel) and 9.5 (`PDF/A & E-Invoice` Convert card and Step 3 options).
+**Fidelity:** `design/SPEC.md` sections 8.3 (`Signatures & Standards` side panel) and 9.5 (`PDF/A & E-Invoice` Convert card and Step 3 options). Design board: `design/SPEC.md` section 8.3.3 with `design/screenshots/D-Signatures.png` (drawn by `D06 T04 §4`).
 **Job:** Users can verify whether a PDF meets archival (`PDF/A`), accessibility (`PDF/UA`), or European e-invoicing (`ZUGFeRD / Factur-X`) standards, inspect structured invoice line items, or convert documents to compliant `PDF/A` / `PDF/UA` / `ZUGFeRD` files. Consumer: the viewer `SidePanelHost` (`D02 T03 §3`) and `ConvertPage` (`D04 T01 §3`-`§4`).
 **Treatment:** Live compliance audit checklist and structured e-invoice viewer in the `Signatures & Standards` side panel paired with the `PDF/A & E-Invoice` Convert card. Cheaper substitute that fails the checkpoint: showing only a static XMP string without running clause validation or dumping raw XML instead of rendering structured ZUGFeRD invoice fields.
 **Chrome:** consume `SidePanelHost` (`D02 T03 §3`), `ConvertPage` (`D04 T01 §4`), and `RectoColors.xaml` status badges (`RectoSuccessBrush`, `RectoWarningBrush`, `RectoDangerBrush` paired with check/warning icons per `SPEC 11`).
@@ -493,10 +494,10 @@ Build the Tags panel that Acrobat Pro users know, as the structure tag inspector
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` section 8.3, `Signatures & Standards` panel, *Standards & Accessibility tab* (the `Structure Tag Tree (/StructTreeRoot)` inspector); no screenshot exists, so it follows the panel chrome and the checklist rows built in `§9`.
+**Fidelity:** `design/SPEC.md` section 8.3, `Signatures & Standards` panel, *Standards & Accessibility tab* (the `Structure Tag Tree (/StructTreeRoot)` inspector); no screenshot exists, so it follows the panel chrome and the checklist rows built in `§9`. Design board: `design/SPEC.md` section 8.3.3 with `design/screenshots/D-Signatures.png` (drawn by `D06 T04 §4`).
 **Job:** An accessibility remediator can see the tag tree, select a tag to see its content highlighted on the page, add, retag, reorder and delete tags, edit Alt text and actual text, undo, and save a corrected copy, using only the keyboard if needed. Consumer: `SidePanelHost` (`D02 T03 §3`), `StructTreeEditor` (`§14`), `ReadingOrderEditor` bounds (`§15`) and the save pipeline (`D02 T01 §8`).
 **Treatment:** A `TreeView` of tags (lazy children loaded off the UI thread) beside a details pane with `Role`, `Alt text`, `Actual text` and `Language`, a `Show content` highlight, `Add tag`, `Delete tag` (asking for the `DeletePolicy`), `Move up`, `Move down`, `Indent` and `Outdent` buttons mirrored by `Alt+Up`, `Alt+Down`, `Alt+Right` and `Alt+Left`, and a findings strip from `validate_pdfua`. Cheaper substitute that fails the checkpoint: a read-only tree, an Alt-text-only editor, or reorder by drag-and-drop with no keyboard route.
-**Chrome:** consume `SignaturesAndStandardsPanel` (`§9`), `SidePanelHost` (`D02 T03 §3`), the `ContentDialog` host (`D02 T01 §10`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens with Segoe Fluent Icons; no second panel host.
+**Chrome:** consume `SignaturesAndStandardsPanel` (`§9`), `SidePanelHost` (`D02 T03 §3`), the `ContentDialog` host (`D02 T01 §10`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens with Fluent UI System Icons (`RectoIcons`); no second panel host.
 
 **Build order:**
 
@@ -524,17 +525,17 @@ Build the Reading Order tool that matches Acrobat Pro: a contextual mode bar tha
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows the contextual mode bar of `design/SPEC.md` section 8.2 (same `RectoRaisedBrush` strip, radius 16, docked above the floating toolbar in Focus or below the top command bar in Classic and Reading room, `Esc` closes) and draws its overlay the way the Redaction bar does (`RedactionCanvasOverlay`, `D05 T02 §9`).
+**Fidelity:** Genuinely new surface; it follows the contextual mode bar of `design/SPEC.md` section 8.2 (same `RectoRaisedBrush` strip, stock `OverlayCornerRadius` of 8 epx, docked above the floating toolbar in Focus or below the top command bar in Classic and Reading room, `Esc` closes) and draws its overlay the way the Redaction bar does (`RedactionCanvasOverlay`, `D05 T02 §9`). Design board: `design/SPEC.md` section 8.3.3 with `design/screenshots/D-Signatures.png` (drawn by `D06 T04 §4`).
 **Job:** An accessibility remediator can see the reading order of the page, draw or select a region, set its role, move it earlier or later, mark headers, footers and backgrounds as artifacts, undo, and save a corrected copy, by pointer or by keyboard. Consumer: `ReadingOrderEditor` (`§15`), `TagEditSession` (`§16`) and the save pipeline (`D02 T01 §8`).
 **Treatment:** A `Reading Order` bar with a role picker, `Draw region`, `Tag selected text`, `Next untagged block`, `Auto-detect regions`, `Move earlier`, `Move later`, `Mark as artifact` and `Undo` / `Redo`, plus numbered region badges on the canvas that show the number as text and a role glyph. Cheaper substitute that fails the checkpoint: draw-only with no keyboard route, regions coloured without numbers, or tagging that wraps the whole page in one element.
-**Chrome:** consume the contextual mode bar pattern and canvas overlay of `D05 T02 §9`, `SidePanelHost` and the Tags section (`§16`), the text `SelectionModel` (`D03 T01 §3`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens with Segoe Fluent Icons.
+**Chrome:** consume the contextual mode bar pattern and canvas overlay of `D05 T02 §9`, `SidePanelHost` and the Tags section (`§16`), the text `SelectionModel` (`D03 T01 §3`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens with Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
 1. Implement `ReadingOrderViewModel` in `src/services/reading_order_view_model.h/.cpp` over the shared `TagEditSession`, with regions per page, the draw, select and keyboard flows, and undo. Done when: `ReadingOrderUi.ViewModel` draws a region, tags it, reorders it and undoes each step.
 2. Build `ReadingOrderBar.xaml/.cpp` and `ReadingOrderCanvasOverlay` and register the commands. Done when: `AppTests.ReadingOrderUi` completes the task by pointer and by keyboard only, then saves a copy that passes `validate_pdfua` for the page.
 
-- [ ] Build `ReadingOrderBar` (`src/app/controls/ReadingOrderBar.xaml/.cpp`, `40 epx` strip) with the role picker, `Draw region`, `Tag selected text`, `Next untagged block`, `Auto-detect regions`, `Move earlier`, `Move later`, `Mark as artifact`, `Undo` and `Redo`, every icon-only button with an automation name and tooltip. Done when: the bar passes the accessibility inventory (`D03 T02 §3`).
+- [ ] Build `ReadingOrderBar` (`src/app/controls/ReadingOrderBar.xaml/.cpp`, `48 epx` strip) with the role picker, `Draw region`, `Tag selected text`, `Next untagged block`, `Auto-detect regions`, `Move earlier`, `Move later`, `Mark as artifact`, `Undo` and `Redo`, every icon-only button with an automation name and tooltip. Done when: the bar passes the accessibility inventory (`D03 T02 §3`).
 - [ ] Build `ReadingOrderCanvasOverlay` drawing region boxes with the order number as text and a role glyph, selected-region handles for resize, and a distinct artifact style, mapped through the page-to-viewport transform. Done when: the overlay stays aligned at zoom `25%` to `400%` and on rotated pages.
 - [ ] Implement `Draw region`: a rubber band creates a `ContentRegion`, shows the true extent returned by `tag_region` (including `expanded_beyond_region`) before applying, and asks the role. Done when: drawing over a heading and choosing `Heading 1` tags it and shows the expanded extent when it differs.
 - [ ] Implement the keyboard route: `Tag selected text` tags the current `SelectionModel` selection (`D03 T01 §3`), `Next untagged block` and `Previous untagged block` cycle detected regions, and `Alt+Up` / `Alt+Down` reorder the selected region. Done when: `AppTests.ReadingOrderUi` tags and reorders using only the keyboard.
@@ -636,7 +637,7 @@ Make the equation features of `§18` to `§20` reachable by a person. The **HTML
 **Fidelity:** `design/SPEC.md` section 9.5 (the `HTML, Markdown, EPUB & LaTeX` Step 3 options, `D-Convert.png`) for the option row, and the Reading Order bar of `§17` (SPEC section 8.2 contextual bar) for the button; no screenshot shows either addition, so both follow the existing controls beside them.
 **Job:** A person converting a paper to Markdown or EPUB chooses how equations are written and reads how many were kept as text, and an accessibility remediator tags a page's equations in one action and reviews them before saving.
 **Treatment:** An `Equations` combo (`Detect and convert`, `Keep as text`, `MathML`, `LaTeX`) in `WebConvertOptionsControl` with a result line `"12 equations converted, 2 kept as text"` in the completion toast, and a `Detect equations` button in `ReadingOrderBar` that shows the detected regions as numbered boxes (with confidence as text) before applying. Cheaper substitute that fails the checkpoint: a hidden default with no choice or count, or applying detected tags without a review step.
-**Chrome:** consume `WebConvertOptionsControl` (`§4`), the completion notice of `D04 T01 §6`, `ReadingOrderBar` and `ReadingOrderCanvasOverlay` (`§17`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens with Segoe Fluent Icons.
+**Chrome:** consume `WebConvertOptionsControl` (`§4`), the completion notice of `D04 T01 §6`, `ReadingOrderBar` and `ReadingOrderCanvasOverlay` (`§17`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens with Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -779,10 +780,10 @@ Surface the checks of `§22` to `§26` in the Standards & Accessibility tab of t
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` section 8.3, `Signatures & Standards` panel, *Standards & Accessibility tab*; no screenshot exists, so it follows the panel chrome and the checklist rows built in `§9` and `§16`.
+**Fidelity:** `design/SPEC.md` section 8.3, `Signatures & Standards` panel, *Standards & Accessibility tab*; no screenshot exists, so it follows the panel chrome and the checklist rows built in `§9` and `§16`. Design board: `design/SPEC.md` section 8.3.3 with `design/screenshots/D-Signatures.png` (drawn by `D06 T04 §4`).
 **Job:** An accessibility reviewer runs the checks on the open document, reads which WCAG criteria failed, which need manual review and which were not tested, jumps from a contrast finding to the text on the page, and saves a report to file.
 **Treatment:** Expandable sections `PDF/UA`, `Colour contrast` and `WCAG 2.2`, each row with an icon and a text status (`Pass`, `Fail`, `Manual review`, `Not tested`), the ratio and required ratio as numbers on contrast rows, a verdict banner that reads `Incomplete` when it is, and `Save WCAG report...`. Cheaper substitute that fails the checkpoint: a colour-only status dot, a green banner on `Incomplete`, or a single pass or fail line with no criteria.
-**Chrome:** consume `SignaturesAndStandardsPanel` and `StandardsPanelViewModel` (`§9`), `SidePanelHost` (`D02 T03 §3`), `CommandRegistry` (`D02 T03 §11`), `AnnouncementService` (`D03 T02 §5`) and `RectoColors.xaml` status brushes with Segoe Fluent Icons.
+**Chrome:** consume `SignaturesAndStandardsPanel` and `StandardsPanelViewModel` (`§9`), `SidePanelHost` (`D02 T03 §3`), `CommandRegistry` (`D02 T03 §11`), `AnnouncementService` (`D03 T02 §5`) and `RectoColors.xaml` status brushes with Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 

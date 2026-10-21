@@ -15,7 +15,7 @@ track: M2
 
 ## Inputs
 
-- `design/SPEC.md` sections 3.4 (in-app SVG graphics), 5 (typography), 6 (icons), 7 (radius 16 panels, radius 20 command box, narrow-window `< 1100 epx` auto-close), 8.3 (Pages, Outline with Bookmark Editor, Comments, Layers, Attachments & Portfolio, Signatures & Standards), 9.1 (Home), 9.2 (Info, XMP & Viewer Preferences list and editor), 9.4 (Command box), 10 (`Ctrl+K`, `Ctrl+B`, `Ctrl+G`), 11; `resources/svg/drop-files-*.svg`, `resources/svg/ribbon-marker*.svg`, `resources/svg/filetype-pdf*.svg`.
+- `design/SPEC.md` sections 3.4 (in-app SVG graphics), 5 (typography), 6 (icons), 7 (`OverlayCornerRadius` 8 epx for panels and the command box, narrow-window `< 1100 epx` auto-close), 8.3 (Pages, Outline with Bookmark Editor, Comments, Layers, Attachments & Portfolio, Signatures & Standards), 9.1 (Home), 9.2 (Info, XMP & Viewer Preferences list and editor), 9.4 (Command box), 10 (`Ctrl+K`, `Ctrl+B`, `Ctrl+G`), 11; `resources/svg/drop-files-*.svg`, `resources/svg/ribbon-marker*.svg`, `resources/svg/filetype-pdf*.svg`.
 - -> XREF: D01 T01 §10 -- `DocumentDescription` (outlines, metadata, permissions, embedded fonts) consumed by `OutlinePanel` (`§5`) and `DocumentInfoPanel` (`§9`) here.
 - -> XREF: D01 T02 §5 -- `DocumentActor` incremental save (`§5`), `DisplayList` OCG layer evaluation, and `TileScheduler` (`§8`) consumed by `ThumbnailList` (`§4`), `BookmarkEditor` (`§6`), `LayersPanel` (`§7`), and `DocumentInfoEditor` (`§10`) here.
 - -> XREF: D02 T04 §3 -- the layout preset engine relocates `SidePanelHost` (§3) and `ThumbnailList` (§4) between slots and switches `ThumbnailList` between vertical and horizontal `ItemsRepeater` orientation.
@@ -46,6 +46,8 @@ track: M2
 - -> XREF: D01 T02 §14 -- import as layer uses the same builder contract.
 - -> XREF: D01 T02 §14 -- Layers panel drives stage, undo, redo and discard.
 - -> XREF: D01 T03 §10 -- bookmarks verb follows the registration rule.
+- -> XREF: D06 T04 §2 -- the `D-Panels.png` board and `design/SPEC.md` section 8.3.1 that §6, §7, §8, §10, §13, §17, §19, §20, §22, §25 here build against.
+- -> XREF: D02 T01 §19 -- `RectoChipStyle` for the switcher count badges of §3 and the command box keycaps of §12.
 
 ## Outcome
 
@@ -66,29 +68,29 @@ track: M2
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | Recent files and remembered reading-position store (`RecentFilesStore`) | D02 T01 §5 | [ ] |
 | 2 | §2 | Home screen (`D-Home.png`), recent covers, inline command box host and empty state | §1, D02 T01 §6, D02 T02 §3 | [ ] |
-| 3 | §3 | Side-panel card container (`SidePanelHost`), switcher header and narrow auto-close | D02 T01 §4, D02 T02 §8 | [ ] |
+| 3 | §3 | Side-panel card container (`SidePanelHost`), switcher header and narrow auto-close | D02 T01 §4, D02 T02 §8, D02 T01 §19 | [ ] |
 | 4 | §4 | Pages thumbnail panel (`ThumbnailList`), filmstrip orientation and page context menu | §3, D02 T02 §4, D02 T02 §6 | [ ] |
 | 5 | §5 | Outline tree panel (`OutlinePanel`) and bidirectional section tracking | §3, D02 T02 §6, D01 T01 §10 | [ ] |
-| 6 | §6 | Interactive Bookmark Editor and heading-based outline auto-generation | §5, D02 T01 §8, D01 T02 §5 | [ ] |
-| 7 | §7 | Optional Content Groups (`OCG` / Layers) engine and live Layers panel | §3, D02 T02 §4, D01 T02 §5 | [ ] |
-| 8 | §8 | Embedded Files and PDF Portfolios (`/EmbeddedFiles` and `/Collection`) engine and panel | §3, D02 T01 §8, D02 T01 §10 | [ ] |
+| 6 | §6 | Interactive Bookmark Editor and heading-based outline auto-generation | §5, D02 T01 §8, D01 T02 §5, D06 T04 §2 | [ ] |
+| 7 | §7 | Optional Content Groups (`OCG` / Layers) engine and live Layers panel | §3, D02 T02 §4, D01 T02 §5, D06 T04 §2 | [ ] |
+| 8 | §8 | Embedded Files and PDF Portfolios (`/EmbeddedFiles` and `/Collection`) engine and panel | §3, D02 T01 §8, D02 T01 §10, D06 T04 §2 | [ ] |
 | 9 | §9 | Document Info panel: metadata, security permissions and embedded font inventory | §3, D01 T01 §10 | [ ] |
-| 10 | §10 | Editable Document Info, XMP metadata synchronization and `/ViewerPreferences` editor | §9, D02 T01 §8, D01 T02 §5 | [ ] |
+| 10 | §10 | Editable Document Info, XMP metadata synchronization and `/ViewerPreferences` editor | §9, D02 T01 §8, D01 T02 §5, D06 T04 §2 | [ ] |
 | 11 | §11 | Unified `CommandRegistry` across toolbars, menus, panels and keyboard accelerators | D02 T01 §9, D02 T02 §8 | [ ] |
-| 12 | §12 | Command Box (`Ctrl+K`) overlay and Home inline search experience | §2, §5, §11 | [ ] |
-| 13 | §13 | Word, character, line and page counts for the document and the selection | §9, D03 T01 §2, D03 T01 §3, D02 T03 §11 | [ ] |
+| 12 | §12 | Command Box (`Ctrl+K`) overlay and Home inline search experience | §2, §5, §11, D02 T01 §19 | [ ] |
+| 13 | §13 | Word, character, line and page counts for the document and the selection | §9, D03 T01 §2, D03 T01 §3, D02 T03 §11, D06 T04 §2 | [ ] |
 | 14 | §14 | Bookmark proposals from text styles (font, size, weight) | §6, D03 T01 §1 | [ ] |
 | 15 | §15 | Bookmark proposals from search strings and patterns | §6, D03 T01 §5 | [ ] |
 | 16 | §16 | Bookmark proposals from structure tags (`H1` to `H6`, `Title`, `Sect`) | §6, D03 T01 §2 | [ ] |
-| 17 | §17 | `Create bookmarks` dialog: choose a source, preview, apply with undo | §5, §6, §14, §15, §16, D02 T01 §10, D02 T01 §9 | [ ] |
+| 17 | §17 | `Create bookmarks` dialog: choose a source, preview, apply with undo | §5, §6, §14, §15, §16, D02 T01 §10, D02 T01 §9, D06 T04 §2 | [ ] |
 | 18 | §18 | Bookmark import and export: JSON and plain-text outline, plus `recto-cli bookmarks` | §6, D01 T03 §1 | [ ] |
-| 19 | §19 | Import and export bookmarks from the Outline panel | §5, §18, D02 T01 §10, D02 T01 §9 | [ ] |
-| 20 | §20 | Per-bookmark style: colour, bold and italic (`/C` and `/F`) | §5, §6, §18 | [ ] |
+| 19 | §19 | Import and export bookmarks from the Outline panel | §5, §18, D02 T01 §10, D02 T01 §9, D06 T04 §2 | [ ] |
+| 20 | §20 | Per-bookmark style: colour, bold and italic (`/C` and `/F`) | §5, §6, §18, D06 T04 §2 | [ ] |
 | 21 | §21 | `recto-pdf` contents page generated from bookmarks | §6, D03 T04 §4, D05 T01 §3, D05 T01 §4 | [ ] |
-| 22 | §22 | Insert contents page dialog and `recto-cli toc` | §21, D02 T01 §8, D02 T01 §10, D02 T01 §9 | [ ] |
+| 22 | §22 | Insert contents page dialog and `recto-cli toc` | §21, D02 T01 §8, D02 T01 §10, D02 T01 §9, D06 T04 §2 | [ ] |
 | 23 | §23 | `recto-pdf` layer authoring: create, rename, delete, properties and merge | §7, D01 T02 §14 | [ ] |
 | 24 | §24 | `recto-pdf` import a page or an image as a layer | §7, §23, D05 T01 §1 | [ ] |
-| 25 | §25 | Layers panel editing: new, rename, delete, merge and import as layer | §7, §23, §24, D02 T01 §10 | [ ] |
+| 25 | §25 | Layers panel editing: new, rename, delete, merge and import as layer | §7, §23, §24, D02 T01 §10, D06 T04 §2 | [ ] |
 
 ## 1. Recent files and remembered reading-position store (`RecentFilesStore`)
 
@@ -147,28 +149,28 @@ Build `HomePage` (`src/app/HomePage.xaml/.h/.cpp`) matching `design/SPEC.md` sec
 
 ## 3. Side-panel card container (`SidePanelHost`), switcher header and narrow auto-close
 
-Build the shared `SidePanelHost` container (`src/app/controls/SidePanelHost.xaml/.h/.cpp`) per SPEC section 8.3: hosts the header row (`Panel name`, `Panel switcher menu` switching between `Pages`, `Outline`, `Comments`, `Layers`, `Attachments & Portfolio`, `Signatures & Standards`, and `Info`, panel-specific action button slot, and `Close` button `Ctrl+B`), renders as a floating card (`16 epx` from canvas edges, `CornerRadius=16`, `RectoRaisedBrush` at `90%` opacity with Acrylic where available, `ThemeShadow` Z=32) when in `LeftOverlaySlot` / `RightOverlaySlot` (`Focus`), or as a docked pane (`RectoSurfaceBrush`, `1 epx` `RectoBorderBrush`, zero shadow) when reparented to `LeftDockSlot` (`Classic`) or `RightDockSlot` (`Reading room`), and automatically closes floating panels on page click when the window width is below `1100 epx` (SPEC section 7).
+Build the shared `SidePanelHost` container (`src/app/controls/SidePanelHost.xaml/.h/.cpp`) per SPEC section 8.3: hosts the header row (`Panel name`, `Panel switcher menu` switching between `Pages`, `Outline`, `Comments`, `Layers`, `Attachments & Portfolio`, `Signatures & Standards`, and `Info`, panel-specific action button slot, and `Close` button `Ctrl+B`), renders as a floating card (`16 epx` from canvas edges, `OverlayCornerRadius` (8 epx), `RectoRaisedBrush` at `90%` opacity with Acrylic where available, `ThemeShadow` Z=32) when in `LeftOverlaySlot` / `RightOverlaySlot` (`Focus`), or as a docked pane (`RectoSurfaceBrush`, `1 epx` `RectoBorderBrush`, zero shadow) when reparented to `LeftDockSlot` (`Classic`) or `RightDockSlot` (`Reading room`), and automatically closes floating panels on page click when the window width is below `1100 epx` (SPEC section 7).
 
 **Phase:** 2
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 7 (`CornerRadius=16`, `ThemeShadow` Z=32 on floating panels, docked borders, `< 1100 epx` narrow-window auto-close), 8.3 (Floating side panel and docked panels), 10 (`Ctrl+B`, `Esc`), and 12 (`167 ms` fade + `8 epx` translate transition) with `design/screenshots/D-Focus-Light.png`, `D-Classic.png`, and `D-ReadingRoom.png`.
+**Fidelity:** `design/SPEC.md` sections 7 (`OverlayCornerRadius` (8 epx), `ThemeShadow` Z=32 on floating panels, docked borders, `< 1100 epx` narrow-window auto-close), 8.3 (Floating side panel and docked panels), 10 (`Ctrl+B`, `Esc`), and 12 (`167 ms` fade + `8 epx` translate transition) with `design/screenshots/D-Focus-Light.png`, `D-Classic.png`, and `D-ReadingRoom.png`.
 **Job:** The user can toggle the side panel with `Ctrl+B` or the toolbar button, switch between any of Recto's document panels from one consistent header, and have floating panels get out of the way automatically when clicking the page in a narrow window. Consumer: `ThumbnailList` (§4), `OutlinePanel` (§5), `LayersPanel` (§7), `AttachmentsPanel` (§8), `DocumentInfoPanel` (§9), `CommentsPanel` (`D03 T03 §2`), `StandardsPanel` (`D04 T05 §4`), and `SignaturesPanel` (`D05 T02 §6`).
 **Treatment:** Single `SidePanelHost` control that adapts its border/shadow/background styling based on whether `ShellSlotManager` (`D02 T01 §4`) placed it in an overlay slot or a dock slot, preserving the active child panel instance across slot moves. Cheaper substitute that fails the checkpoint: separate panel chrome per preset or failing to auto-close floating panels when clicking the page at `< 1100 epx` window width.
 **Chrome:** consume `LeftOverlaySlot`, `RightOverlaySlot`, `LeftDockSlot`, and `RightDockSlot` (`D02 T01 §4`), `RectoRaisedBrush`, `RectoSurfaceBrush`, and `RectoBorderBrush`.
 
 **Build order:**
 
-1. Author `src/app/controls/SidePanelHost.xaml/.h/.cpp` with the SPEC 8.3 header bar: active panel title (`BodyStrongTextBlockStyle`), switcher `DropDownButton` / `MenuFlyout` (`Pages`, `Outline`, `Comments`, `Layers`, `Attachments & Portfolio`, `Signatures & Standards`, `Info` with `16 epx` Segoe Fluent icons), a dynamic `HeaderActionContent` presenter for panel-specific action buttons (e.g. `Add Bookmark` in Outline, `Reset Layers` in Layers), and the `Close` button (`Ctrl+B`, `AutomationProperties.Name="Close side panel"`, tooltip `"Close side panel (Ctrl+B)"`). Done when: switching panels in the header swaps the body view and header action buttons cleanly while keeping `SidePanelHost` open.
-2. Implement `Ctrl+B` toggle, `PageToolbar` side-panel button sync (`RectoAccentTintBrush` when open), floating vs. docked visual state switching (`FloatingCardState` with `CornerRadius=16`, `90%` opacity `RectoRaisedBrush` + `ThemeShadow` Z=32 vs. `DockedPaneState` with `CornerRadius=0`, `RectoSurfaceBrush` + `1 epx` border), and the SPEC 7 narrow-window rule (when `ShellPage.ActualWidth < 1100` epx and `SidePanelHost` is in an overlay slot, clicking `DocumentView` closes the panel). Done when: `Ctrl+B` toggles the panel, reparenting between `LeftOverlaySlot` and `LeftDockSlot` switches visual states automatically, and clicking the page at `1000 epx` window width closes the floating panel while clicking the page at `1200 epx` leaves it open.
+1. Author `src/app/controls/SidePanelHost.xaml/.h/.cpp` with the SPEC 8.3 header bar: active panel title (`BodyStrongTextBlockStyle`), switcher `DropDownButton` / `MenuFlyout` (`Pages`, `Outline`, `Comments`, `Layers`, `Attachments & Portfolio`, `Signatures & Standards`, `Info` with `16 epx` `RectoIcons` glyphs `image_multiple`, `text_bullet_list_tree`, `comment_multiple`, `layer`, `attach`, `signature` and `info`), a dynamic `HeaderActionContent` presenter for panel-specific action buttons (e.g. `Add Bookmark` in Outline, `Reset Layers` in Layers), and the `Close` button (`Ctrl+B`, `AutomationProperties.Name="Close side panel"`, tooltip `"Close side panel (Ctrl+B)"`). Done when: switching panels in the header swaps the body view and header action buttons cleanly while keeping `SidePanelHost` open.
+2. Implement `Ctrl+B` toggle, `PageToolbar` side-panel button sync (`RectoAccentTintBrush` when open), floating vs. docked visual state switching (`FloatingCardState` with `OverlayCornerRadius` (8 epx), `90%` opacity `RectoRaisedBrush` + `ThemeShadow` Z=32 vs. `DockedPaneState` with `CornerRadius=0`, `RectoSurfaceBrush` + `1 epx` border), and the SPEC 7 narrow-window rule (when `ShellPage.ActualWidth < 1100` epx and `SidePanelHost` is in an overlay slot, clicking `DocumentView` closes the panel). Done when: `Ctrl+B` toggles the panel, reparenting between `LeftOverlaySlot` and `LeftDockSlot` switches visual states automatically, and clicking the page at `1000 epx` window width closes the floating panel while clicking the page at `1200 epx` leaves it open.
 
 - [ ] Author `src/app/controls/SidePanelHost.xaml/.h/.cpp` with the header row (panel title, panel switcher menu, `HeaderActionContent` slot, and `Close` button) and body `ContentPresenter`. Done when: `SidePanelHost` mounts in `ShellPage` and switches between registered panel views.
-- [ ] Apply `FloatingCardState` (`16 epx` margin from canvas edge, `CornerRadius=16`, `RectoRaisedBrush` at `90%` opacity with Acrylic fallback, `ThemeShadow` Z=32) when hosted in `LeftOverlaySlot` or `RightOverlaySlot`, and `DockedPaneState` (`RectoSurfaceBrush`, `1 epx` `RectoBorderBrush` divider, no shadow) when hosted in `LeftDockSlot` or `RightDockSlot`. Done when: floating and docked appearances match `D-Focus-Light.png`, `D-Classic.png`, and `D-ReadingRoom.png`.
+- [ ] Apply `FloatingCardState` (`16 epx` margin from canvas edge, `OverlayCornerRadius` (8 epx), `RectoRaisedBrush` at `90%` opacity with Acrylic fallback, `ThemeShadow` Z=32) when hosted in `LeftOverlaySlot` or `RightOverlaySlot`, and `DockedPaneState` (`RectoSurfaceBrush`, `1 epx` `RectoBorderBrush` divider, no shadow) when hosted in `LeftDockSlot` or `RightDockSlot`. Done when: floating and docked appearances match `D-Focus-Light.png`, `D-Classic.png`, and `D-ReadingRoom.png`.
 - [ ] Wire `Ctrl+B` and the `PageToolbar` side-panel toggle button (`D02 T02 §8`) to show/hide `SidePanelHost` per `DocumentTabSession`, highlighting the toolbar button with `RectoAccentTintBrush` whenever the panel is visible. Done when: pressing `Ctrl+B` toggles the panel and updates the toolbar button state in lockstep.
 - [ ] Implement the SPEC section 7 narrow-window auto-close rule: when `ShellPage` width is `< 1100 epx` and `SidePanelHost` is floating in an overlay slot, pointer-pressing on `DocumentView` closes `SidePanelHost` (whereas docked panes in `Classic`/`Reading room` or floating panels at `>= 1100 epx` stay open). Done when: clicking the page at `1024 epx` width closes the floating panel and clicking at `1280 epx` keeps it open. Cheaper substitute that fails the checkpoint: ignoring the `1100 epx` breakpoint so floating panels permanently cover the page on small laptops.
 - [ ] Animate panel open/close with the SPEC section 12 transition (`167 ms` fade + `8 epx` horizontal translation with Fluent cubic-bezier easing, or `0 ms` instant show/hide when OS animations are disabled). Done when: panel transitions respect `UISettings::AnimationsEnabled`.
-- [ ] Populate the panel switcher menu with all SPEC 8.3 and 9.2 panels (`Pages`, `Outline`, `Comments`, `Layers`, `Attachments & Portfolio`, `Signatures & Standards`, `Info`) with `16 epx` Segoe Fluent icons and badge counts where applicable. Done when: every panel entry is selectable by mouse and keyboard.
+- [ ] Populate the panel switcher menu with all SPEC 8.3 and 9.2 panels (`Pages`, `Outline`, `Comments`, `Layers`, `Attachments & Portfolio`, `Signatures & Standards`, `Info`) with their `16 epx` `RectoIcons` glyphs and count badges (`RectoChipStyle`) where applicable. Done when: every panel entry is selectable by mouse and keyboard.
 - [ ] Add `Panels.SidePanelHostAndNarrowWindow` test in `tests/recto-tests/` verifying `Ctrl+B` toggling, switcher menu navigation, floating vs. docked state adaptation on slot reparenting, and `< 1100 epx` page-click auto-close. Done when: `recto-tests.exe --gtest_filter=Panels.SidePanelHostAndNarrowWindow` passes.
 - [ ] Commit: `viewer: build SidePanelHost container, panel switcher and <1100 epx auto-close`
 
@@ -187,7 +189,7 @@ Build the `Pages` thumbnail panel (`src/app/panels/ThumbnailList.xaml/.h/.cpp`) 
 **Fidelity:** `design/SPEC.md` sections 3.4 (`ribbon-marker*.svg`), 8 (thumbnail placement: left panel, left pane, bottom filmstrip), and 8.3 (`Pages` bullet: thumbnails with page numbers, 2 epx accent ring, vermilion ribbon marker, right-click context menu) with `design/screenshots/D-Focus-Light.png`, `D-Classic.png` and `D-ReadingRoom.png`.
 **Job:** The user can visually scan pages in a 500-page PDF without lag, see at a glance which page they are on via the vermilion ribbon marker, jump to any page with one click, and right-click any thumbnail to rotate or organize that page. Consumer: `SidePanelHost` (§3), `BottomDockSlot` (`D02 T01 §4`), and `LayoutPresetEngine` (`D02 T04 §3`).
 **Treatment:** Virtualized `ItemsRepeater` (`StackLayout` switching `Orientation` between `Vertical` and `Horizontal`) driving `TileScheduler` requests only for realized items in the visible viewport plus a small buffer, with `CancelToken` abort when scrolling past thumbnails. Cheaper substitute that fails the checkpoint: rendering all 500 thumbnails eagerly on document open, or using a separate non-virtualized `ListView` that freezes on large PDFs.
-**Chrome:** consume `resources/svg/ribbon-marker.svg` (`-on-dark.svg`), `RectoAccentBrush`, `RectoAccentTintBrush`, and the shared `TileScheduler` (`D01 T02 §8`).
+**Chrome:** consume `resources/svg/ribbon-marker.svg` (`ribbon-marker-dark.svg` in dark theme), `RectoAccentBrush`, `RectoAccentTintBrush`, and the shared `TileScheduler` (`D01 T02 §8`).
 
 **Build order:**
 
@@ -196,7 +198,7 @@ Build the `Pages` thumbnail panel (`src/app/panels/ThumbnailList.xaml/.h/.cpp`) 
 
 - [ ] Build `src/app/panels/ThumbnailList.xaml/.h/.cpp` using a virtualized `ItemsRepeater` with `ElementPrepared` and `ElementClearing` lifecycle hooks. Done when: opening a 500-page PDF instantiates XAML elements only for the ~8-12 visible thumbnails. Cheaper substitute that fails the checkpoint: eagerly creating 500 thumbnail controls or rasterizing all pages on open.
 - [ ] Request thumbnail renders through `TileScheduler` (`D01 T02 §8`) at the thumbnail zoom bucket and cancel scrolled-past requests via `CancelToken` in `ElementClearing`. Done when: rapid scrolling from thumbnail 1 to 500 aborts intermediate thumbnail renders and renders pages 490-500 immediately.
-- [ ] Render the current-page indicator per SPEC 8.3: `2 epx` `RectoAccentBrush` ring around the thumbnail, `RectoAccentTintBrush` card background, and `resources/svg/ribbon-marker.svg` (`ribbon-marker-on-dark.svg` in dark theme) anchored to the top-right edge of the active thumbnail. Done when: the active thumbnail matches `D-Focus-Light.png`, `D-Classic.png`, and `D-ReadingRoom.png`.
+- [ ] Render the current-page indicator per SPEC 8.3: `2 epx` `RectoAccentBrush` ring around the thumbnail, `RectoAccentTintBrush` card background, and `resources/svg/ribbon-marker.svg` (`ribbon-marker-dark.svg` in dark theme) anchored to the top-right edge of the active thumbnail. Done when: the active thumbnail matches `D-Focus-Light.png`, `D-Classic.png`, and `D-ReadingRoom.png`.
 - [ ] Synchronize `ThumbnailList` bidirectionally with `DocumentView` (`D02 T02 §6`): clicking or pressing `Enter`/`Space` on a thumbnail calls `DocumentView::go_to_page`, and scrolling `DocumentView` updates the selected thumbnail and scrolls it into view (`StartBringIntoView`). Done when: both directions stay in sync across continuous scrolling and page jumps.
 - [ ] Refresh thumbnail bitmaps automatically when a page's rotation changes (`Ctrl+R` / `Ctrl+Shift+R` or thumbnail context-menu rotate) since `TileKey` encodes rotation. Done when: rotating the view updates visible thumbnails without stale unrotated images.
 - [ ] Implement `set_orientation(Orientation)` switching `StackLayout::Orientation` between `Vertical` (for `LeftOverlaySlot` and `LeftDockSlot`) and `Horizontal` (for `BottomDockSlot` filmstrip in `Reading room`) without recreating `ThumbnailList` or losing scroll state. Done when: switching to `Horizontal` in `BottomDockSlot` matches `D-ReadingRoom.png`.
@@ -244,10 +246,10 @@ Implement interactive bookmark authoring and heading-based outline auto-generati
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 6 (`bookmark add`, `undo`, `redo`, `delete` glyphs), 8.3 (`Outline (with Bookmark Editor)`), and 10 (`Ctrl+Z`, `Ctrl+Y`, `Ctrl+S`) with `design/screenshots/D-Focus-Light.png`.
+**Fidelity:** `design/SPEC.md` sections 6 (`RectoIcons` `bookmark_add`, `arrow_undo`, `arrow_redo` and `delete` glyphs, drawn directly on the header and menu with no tile, tinted box or circle behind them), 8.3 (`Outline (with Bookmark Editor)`), and 10 (`Ctrl+Z`, `Ctrl+Y`, `Ctrl+S`) with `design/screenshots/D-Focus-Light.png`. Design board: `design/SPEC.md` section 8.3.1 with `design/screenshots/D-Panels.png` (drawn by `D06 T04 §2`).
 **Job:** When a PDF has missing, broken, or incomplete bookmarks, the user can add, rename, organize, or auto-generate a complete table of contents and save it into the PDF. Consumer: `OutlinePanel` (§5), `DocumentActor`, `SavePipeline` (`D02 T01 §8`), and `CommandRegistry` (§11).
 **Treatment:** Native `recto-pdf` `/Outlines` doubly-linked tree serializer (`src/pdf/outlines_edit.cpp` writing `/Outlines`, `/First`, `/Last`, `/Parent`, `/Prev`, `/Next`, `/Count`, `/Title` UTF-16BE/PDFDocEncoding, and `/Dest` arrays) backed by a per-document reversible command stack (`Undo`/`Redo`) and mark-dirty integration with `DocumentTabSession` (`D02 T01 §3`). Cheaper substitute that fails the checkpoint: storing bookmarks in an external app-local JSON file instead of writing standard PDF `/Outlines` objects that Adobe Acrobat, Edge, and `recto-cli` read natively.
-**Chrome:** extend `OutlinePanel` (§5) inside `SidePanelHost` (§3) using stock `TreeView` drag-and-drop and inline `TextBox` rename.
+**Chrome:** extend `OutlinePanel` (§5) inside `SidePanelHost` (§3) using stock `TreeView` drag-and-drop and inline `TextBox` rename, and the `RectoIcons` `bookmark_add`, `arrow_undo`, `arrow_redo` and `delete` glyphs (16 epx, SPEC section 6).
 
 **Build order:**
 
@@ -274,10 +276,10 @@ Implement PDF Optional Content Groups (`OCG` / Layers, ISO 32000-1 section 8.11)
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 6 (`layers` glyph) and 8.3 (`Layers (OCG)`: displays `/OCProperties` with eye visibility toggles that re-composite the page immediately, `Reset to Default Visibility`, and `Flatten Visible Layers`) with `design/screenshots/D-Focus-Light.png`.
+**Fidelity:** `design/SPEC.md` sections 6 (`RectoIcons` `layer`, `eye` and `eye_off` glyphs, no tile behind them) and 8.3 (`Layers (OCG)`: displays `/OCProperties` with eye visibility toggles that re-composite the page immediately, `Reset to Default Visibility`, and `Flatten Visible Layers`) with `design/screenshots/D-Focus-Light.png`. Design board: `design/SPEC.md` section 8.3.1 with `design/screenshots/D-Panels.png` (drawn by `D06 T04 §2`).
 **Job:** Users viewing CAD drawings, architectural plans, multi-language documents, or layered illustrations can toggle individual layers on and off in real time, reset to the document's default layer state, or flatten visible layers into a clean copy. Consumer: `SidePanelHost` (§3), `DocumentActor` (`D01 T02 §2`), `TileTextureCache` (`D02 T02 §3`), and `SavePipeline` (`D02 T01 §8`).
 **Treatment:** Native `/OCProperties` and `BDC /OC ... EMC` conditional visibility evaluation in `recto-pdf` with `ocg_generation` versioning in `TileKey` so toggling a layer invalidates and re-renders visible tiles immediately without race conditions. Cheaper substitute that fails the checkpoint: ignoring `BDC /OC` operators so all layers always render on top of each other, or failing to re-render the canvas when an eye toggle is clicked.
-**Chrome:** consume `SidePanelHost` (§3), `RectoColors.xaml` tokens, and Segoe Fluent eye/layers glyphs.
+**Chrome:** consume `SidePanelHost` (§3), `RectoColors.xaml` tokens, and the `RectoIcons` `eye`, `eye_off` and `layer` glyphs.
 
 **Build order:**
 
@@ -298,25 +300,25 @@ Implement PDF Optional Content Groups (`OCG` / Layers, ISO 32000-1 section 8.11)
 
 ## 8. Embedded Files and PDF Portfolios (`/EmbeddedFiles` and `/Collection`) engine and panel
 
-Implement embedded file attachments and PDF Portfolios (`/Names /EmbeddedFiles`, `FileAttachment` annotations, and `/Collection` portfolios per ISO 32000-1 sections 7.11 and 12.3.5) in `src/pdf/portfolio.cpp`, `recto-core`, and `AttachmentsPanel` (`src/app/panels/AttachmentsPanel.xaml/.h/.cpp`) per `design/SPEC.md` section 8.3: list every embedded file and portfolio item with file icon, name, formatted byte size, modified date, and description; support `Open` (opening embedded `.pdf` items in a new Recto tab, and prompting with a security confirmation dialog before launching any external file type per SPEC 9.9), `Save / Extract` to disk, `Add File`, `Remove`, and `Save as PDF Portfolio`.
+Implement embedded file attachments and PDF Portfolios (`/Names /EmbeddedFiles`, `FileAttachment` annotations, and `/Collection` portfolios per ISO 32000-1 sections 7.11 and 12.3.5) in `src/pdf/portfolio.cpp`, `recto-core`, and `AttachmentsPanel` (`src/app/panels/AttachmentsPanel.xaml/.h/.cpp`) per `design/SPEC.md` section 8.3: list every embedded file and portfolio item with its `RectoIcons` type glyph, name, formatted byte size, modified date, and description; support `Open` (opening embedded `.pdf` items in a new Recto tab, and prompting with a security confirmation dialog before launching any external file type per SPEC 9.9), `Save / Extract` to disk, `Add File`, `Remove`, and `Save as PDF Portfolio`.
 
 **Phase:** 2
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 6 (`paperclip attachment`, `portfolio folder` glyphs), 8.3 (`Attachments & Portfolio`: file icon, name, size, modified date, description; `Open` prompting before external types, `Save / Extract`, `Add File`, `Remove`, `Save as PDF Portfolio`), and 9.9 (security confirmation before opening external files) with `design/screenshots/D-Focus-Light.png`.
+**Fidelity:** `design/SPEC.md` sections 6 (`RectoIcons` `attach` for the panel and `folder_zip` for a portfolio; each row's type glyph drawn directly on the row with no tile, tinted box or circle behind it), 8.3 (`Attachments & Portfolio`: type glyph, name, size, modified date, description; `Open` prompting before external types, `Save / Extract`, `Add File`, `Remove`, `Save as PDF Portfolio`), and 9.9 (security confirmation before opening external files) with `design/screenshots/D-Focus-Light.png`. Design board: `design/SPEC.md` section 8.3.1 with `design/screenshots/D-Panels.png` (drawn by `D06 T04 §2`).
 **Job:** Users working with legal bundles, ZUGFeRD invoices, scientific data attachments, or PDF Portfolios (`/Collection`) can inspect, extract, open, add, or remove embedded files and save multi-file PDF Portfolios directly inside Recto. Consumer: `SidePanelHost` (§3), `OpenDocumentPipeline` (`D02 T01 §5`), `SavePipeline` (`D02 T01 §8`), and `CommandRegistry` (§11).
 **Treatment:** Native `recto-pdf` `/Names /EmbeddedFiles` name-tree and `/Collection` portfolio parser/writer (`src/pdf/portfolio.cpp`) with enforced decompression byte ceilings on `/EF` streams, atomic disk extraction (`ReplaceFileW`), and mandatory security prompt before launching non-PDF attachments. Cheaper substitute that fails the checkpoint: shell-executing extracted attachments without warning, or ignoring `/Collection` portfolio dictionaries.
-**Chrome:** consume `SidePanelHost` (§3), `RectoDialogStyles.xaml` (`D02 T01 §10`), `FileOpenPicker` / `FileSavePicker`, and `RectoColors.xaml`.
+**Chrome:** consume `SidePanelHost` (§3), `RectoDialogStyles.xaml` (`D02 T01 §10`), `FileOpenPicker` / `FileSavePicker`, `RectoColors.xaml`, and the `RectoIcons` glyphs `attach`, `folder_zip`, `document`, `document_text`, `table_simple`, `slide_text`, `image`, `code` and `markdown` (SPEC section 6).
 
 **Build order:**
 
 1. Implement `src/pdf/portfolio.cpp` in `recto-pdf`: parse the catalog `/Names /EmbeddedFiles` name tree and page `/FileAttachment` annotations into `EmbeddedFileEntry` structs (`name`, `unicode_filename` `/UF` or `/F`, `description` `/Desc`, `mime_subtype` `/Subtype`, `uncompressed_size` `/Params /Size`, `creation_date`, `mod_date`, `checksum` `/CheckSum`, `collection_item` `/CI` portfolio metadata fields) plus `/Collection` portfolio schema (`/Schema`, `/D` initial document, `/View`, folder hierarchy); extract `/EF /F` stream bytes within decompression caps; and implement `add_embedded_file`, `remove_embedded_file`, and `create_pdf_portfolio`. Done when: `PdfPortfolio.*` unit tests round-trip embedded files and a multi-file `/Collection` portfolio, verifying byte-identical extraction and MD5 `/CheckSum` validation under ASan.
-2. Build `src/app/panels/AttachmentsPanel.xaml/.h/.cpp` hosted in `SidePanelHost` (§3): displays each attachment/portfolio item with file-type glyph, name, formatted size, modified date, and description; wires `Save / Extract` (`FileSavePicker` for one item, `FolderPicker` for `Extract All` with path-traversal sanitization stripping `..`, `/`, `\`, and drive prefixes from embedded filenames), `Open` (opening embedded `.pdf` files directly into a new Recto tab via a read-only temp copy, refusing dangerous executable extensions `.exe`/`.bat`/`.cmd`/`.ps1`/`.vbs`/`.js`/`.msi`/`.scr`, and showing a SPEC 9.9 confirmation dialog before opening other external file types), `Add File` (`FileOpenPicker`), `Remove`, and `Save as PDF Portfolio`. Done when: driven tests verify extraction, path-traversal neutralization on malicious `/UF` names (`..\..\evil.txt`), `.exe` launch refusal, external-file confirmation dialog, and adding/removing attachments with `Undo`/`Redo`.
+2. Build `src/app/panels/AttachmentsPanel.xaml/.h/.cpp` hosted in `SidePanelHost` (§3): displays each attachment/portfolio item with its `RectoIcons` type glyph, name, formatted size, modified date, and description; wires `Save / Extract` (`FileSavePicker` for one item, `FolderPicker` for `Extract All` with path-traversal sanitization stripping `..`, `/`, `\`, and drive prefixes from embedded filenames), `Open` (opening embedded `.pdf` files directly into a new Recto tab via a read-only temp copy, refusing dangerous executable extensions `.exe`/`.bat`/`.cmd`/`.ps1`/`.vbs`/`.js`/`.msi`/`.scr`, and showing a SPEC 9.9 confirmation dialog before opening other external file types), `Add File` (`FileOpenPicker`), `Remove`, and `Save as PDF Portfolio`. Done when: driven tests verify extraction, path-traversal neutralization on malicious `/UF` names (`..\..\evil.txt`), `.exe` launch refusal, external-file confirmation dialog, and adding/removing attachments with `Undo`/`Redo`.
 
 - [ ] Author `src/pdf/portfolio.cpp` parsing and writing `/Names /EmbeddedFiles` name trees, `/Filespec` dictionaries (`/F`, `/UF`, `/EF`, `/Desc`, `/CI`), page `/FileAttachment` annotations, and `/Collection` PDF Portfolio dictionaries. Done when: `PdfPortfolio.ReadWriteAndCollection` round-trips attachments and portfolios with byte-for-byte payload equality under ASan.
 - [ ] Sanitize embedded filenames (`/UF` and `/F`) in `src/pdf/portfolio.cpp` and `AttachmentsPanel` by stripping directory separators (`/`, `\`), `..` segments, Windows reserved device names (`CON`, `NUL`, `COM1`), and trailing dots/spaces before writing any extracted file to disk. Done when: a crafted attachment named `..\..\AppData\Roaming\evil.dll` extracts strictly as `evil.dll` inside the user-chosen folder. Cheaper substitute that fails the checkpoint: joining the raw `/UF` string directly to the output directory path (arbitrary file overwrite vulnerability).
-- [ ] Build `src/app/panels/AttachmentsPanel.xaml/.h/.cpp` displaying file icon, name, formatted size (`KB`/`MB`), modified date, and description, plus a portfolio banner when the open PDF is a `/Collection` portfolio. Done when: visual layout and item metadata match SPEC 8.3.
+- [ ] Build `src/app/panels/AttachmentsPanel.xaml/.h/.cpp` displaying a 16 epx `RectoIcons` type glyph per row (`document_text` for Word, `table_simple` for Excel, `slide_text` for PowerPoint, `image` for images, `code` for HTML, `markdown` for Markdown, `folder_zip` for a portfolio folder, `document` for PDF and every other type) drawn directly on the row in `RectoTextSecondaryBrush` with no tile, tinted box or circle behind it, then name, formatted size (`KB`/`MB`), modified date, and description, plus a portfolio banner when the open PDF is a `/Collection` portfolio. Done when: visual layout and item metadata match SPEC 8.3 and `D-Panels.png`, and `Panels.AttachmentsAndPortfolio` maps a `.docx`, `.xlsx`, `.png`, `.pdf` and `.bin` attachment to `document_text`, `table_simple`, `image`, `document` and `document` and its visual-tree walk finds no filled `Border`, `Rectangle` or `Ellipse` behind any row glyph. Cheaper substitute that fails the checkpoint: the SPEC 3.2 file-type picture or a per-type PNG on each row, or a glyph on a tinted tile.
 - [ ] Wire `Open` on attachment rows: if the attachment is a `.pdf`, open it safely inside a new Recto tab; if it carries an executable/script extension (`.exe`, `.dll`, `.bat`, `.cmd`, `.ps1`, `.vbs`, `.js`, `.wsf`, `.msi`, `.scr`, `.hta`, `.lnk`), refuse execution outright with a warning dialog; for other external documents (`.docx`, `.xlsx`, `.xml`, `.png`, `.txt`), prompt via a SPEC 9.9 confirmation `ContentDialog` naming the filename and file type before calling `Launcher::LaunchFileAsync`. Done when: embedded PDFs open in Recto, executables are refused, and external files never open without confirmation.
 - [ ] Wire `Save / Extract` (single file via `FileSavePicker` and `Extract All` via `FolderPicker`) using atomic temp-file-then-replace writes. Done when: extracted files match the embedded stream bytes 1:1.
 - [ ] Wire `Add File` (`FileOpenPicker`), `Remove` (`Delete`), and `Save as PDF Portfolio` (packaging multiple selected files into a `/Collection` PDF) with `Undo`/`Redo` (`Ctrl+Z`/`Ctrl+Y`) and `DocumentTabSession::set_dirty(true)`. Done when: adding and removing attachments marks the tab dirty and persists through `SavePipeline` (`D02 T01 §8`).
@@ -363,10 +365,10 @@ Implement `src/pdf/metadata_edit.cpp` in `recto-pdf` and the `"Edit Info & Prefe
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.3 and 9.2 ("Clicking **Edit Info & Preferences** lets the user edit `/Info` fields, custom XMP metadata properties, and `/ViewerPreferences` (`DisplayDocTitle`, `FitWindow`, `CenterWindow`, `HideToolbar`, `HideMenubar`, initial `PageMode` and `PageLayout`, initial open page) and save to a copy") with `design/screenshots/D-ReadingRoom.png`.
+**Fidelity:** `design/SPEC.md` sections 8.3 and 9.2 ("Clicking **Edit Info & Preferences** lets the user edit `/Info` fields, custom XMP metadata properties, and `/ViewerPreferences` (`DisplayDocTitle`, `FitWindow`, `CenterWindow`, `HideToolbar`, `HideMenubar`, initial `PageMode` and `PageLayout`, initial open page) and save to a copy") with `design/screenshots/D-ReadingRoom.png`. Design board: `design/SPEC.md` section 8.3.1 with `design/screenshots/D-Panels.png` (drawn by `D06 T04 §2`).
 **Job:** The user can update a document's title, author, keywords, custom XMP tags, and initial viewer behavior (such as showing the document title in the window bar or opening directly in two-page layout on page 3) without needing external metadata tools. Consumer: `DocumentInfoPanel` (§9), `DocumentTabSession` (`D02 T01 §3` updating the tab title live when `DisplayDocTitle` or `Title` changes), and `SavePipeline` (`D02 T01 §8`).
 **Treatment:** Synchronized `/Info` dictionary + `/Metadata` XMP RDF/XML packet writer (`src/pdf/metadata_edit.cpp`) plus `/ViewerPreferences` and `/OpenAction` catalog dictionary serialization in `recto-pdf`, with `Undo`/`Redo` support and live application of `DisplayDocTitle`, `PageLayout`, and `PageMode` in the open tab. Cheaper substitute that fails the checkpoint: updating `/Info` while leaving a stale contradicting `/Metadata` XMP stream in the catalog, or ignoring `/ViewerPreferences` when opening a PDF.
-**Chrome:** inline edit mode inside `DocumentInfoPanel` (§9) consuming `RectoColors.xaml` input styles (`CornerRadius=8`, `RectoBorderStrongBrush`).
+**Chrome:** inline edit mode inside `DocumentInfoPanel` (§9) consuming `RectoColors.xaml` input styles (stock `ControlCornerRadius`, 4 epx, `RectoBorderStrongBrush`).
 
 **Build order:**
 
@@ -395,7 +397,7 @@ Build the central `CommandRegistry` (`src/app/commands/CommandRegistry.h/.cpp`) 
 **Build order:**
 
 1. Implement `CommandRegistry` (`src/app/commands/CommandRegistry.h/.cpp`) storing strongly typed `CommandDescriptor` entries grouped by SPEC 9.4 category (`ThisDocument`, `GoTo`, `Files`, `Actions`), with dynamic `can_execute(AppCommandContext)` evaluation (e.g., requires an active open `DocumentTabSession`, requires multi-page document, requires dirty document) and `execute(AppCommandContext)` dispatch. Done when: registering all shell, file, view, panel, annotation, form, redaction, signature, conversion, organize, and settings commands populates a single queryable registry with zero duplicate command IDs or conflicting shortcuts.
-2. Bind every button and menu item in `ShellPage` (`D02 T01 §2`), `ShellMenuBar` (`D02 T01 §9`), `PageToolbar` (`D02 T02 §8`), and `SidePanelHost` (§3) to its `CommandRegistry` entry so labels, Segoe Fluent glyphs, shortcut tooltips, `AutomationProperties.Name`, and `IsEnabled` states derive automatically from the registry, and write an automated completeness test verifying that 100% of toolbar and menu commands exist in `CommandRegistry`. Done when: `Panels.CommandRegistryCompleteness` scrapes every toolbar and menu element in `src/app` and confirms 1:1 registration, non-empty `AutomationProperties.Name`, and non-empty tooltips.
+2. Bind every button and menu item in `ShellPage` (`D02 T01 §2`), `ShellMenuBar` (`D02 T01 §9`), `PageToolbar` (`D02 T02 §8`), and `SidePanelHost` (§3) to its `CommandRegistry` entry so labels, `RectoIcons` glyphs (SPEC section 6 names), shortcut tooltips, `AutomationProperties.Name`, and `IsEnabled` states derive automatically from the registry, and write an automated completeness test verifying that 100% of toolbar and menu commands exist in `CommandRegistry`. Done when: `Panels.CommandRegistryCompleteness` scrapes every toolbar and menu element in `src/app` and confirms 1:1 registration, non-empty `AutomationProperties.Name`, and non-empty tooltips.
 
 - [ ] Author `src/app/commands/CommandRegistry.h/.cpp` defining `CommandId`, `CommandCategory` (`ThisDocument`, `GoTo`, `Files`, `Actions`), `CommandDescriptor`, and `AppCommandContext`. Done when: `CommandRegistry` compiles and supports O(1) lookup by `CommandId` and ordered enumeration by category.
 - [ ] Register every M2 command (file open/save/close, tab navigation, zoom/fit/rotate/layout/page-colour/full-screen, side-panel toggles, bookmark/layer/attachment/info actions, settings, presets, theme) plus named entries for every M3-M6 surface command (`Find`, `Find & Replace`, `Annotate`, `Form Designer`, `Redact & Sanitize`, `Sign Document`, `Compare PDFs`, `Extract Tables & Images`, `Convert` targets, `Organize` tools, `Print`, `About`). Done when: every command in `design/SPEC.md` sections 8.2, 8.3, 9.4, 9.5, 9.6, and 10 has a registered `CommandDescriptor`.
@@ -409,13 +411,13 @@ Build the central `CommandRegistry` (`src/app/commands/CommandRegistry.h/.cpp`) 
 
 ## 12. Command Box (`Ctrl+K`) overlay and Home inline search experience
 
-Build `CommandBoxControl` (`src/app/controls/CommandBoxControl.xaml/.h/.cpp`) per `design/SPEC.md` sections 9.1 and 9.4 and `design/screenshots/D-Dialogs.png` and `D-Home.png`: one shared control hosted both as the `Ctrl+K` top-centred overlay card (`560 to 720 epx` wide, `CornerRadius=20`, `RectoRaisedBrush`, `ThemeShadow` Z=64) and expanded inline (`720 epx` wide) on `HomePage` (§2). Typing filters across four grouped sections (`"This document"`, `"Go to"`, `"Files"`, and `"Actions"`) in real time, bolding matched character spans in row labels, right-aligning keyboard shortcut badges, supporting full keyboard navigation (`Up`, `Down`, `Enter`, `Esc`), and executing the chosen item through `CommandRegistry` (§11), `OpenDocumentPipeline` (`D02 T01 §5`), or `DocumentView` (`D02 T02 §6`).
+Build `CommandBoxControl` (`src/app/controls/CommandBoxControl.xaml/.h/.cpp`) per `design/SPEC.md` sections 9.1 and 9.4 and `design/screenshots/D-Dialogs.png` and `D-Home.png`: one shared control hosted both as the `Ctrl+K` top-centred overlay card (`560 to 720 epx` wide, `OverlayCornerRadius` (8 epx), `RectoRaisedBrush`, `ThemeShadow` Z=64) and expanded inline (`720 epx` wide) on `HomePage` (§2). Typing filters across four grouped sections (`"This document"`, `"Go to"`, `"Files"`, and `"Actions"`) in real time, bolding matched character spans in row labels, right-aligning keyboard shortcut keycaps (`RectoChipStyle`), supporting full keyboard navigation (`Up`, `Down`, `Enter`, `Esc`), and executing the chosen item through `CommandRegistry` (§11), `OpenDocumentPipeline` (`D02 T01 §5`), or `DocumentView` (`D02 T02 §6`).
 
 **Phase:** 2
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 7 (`CornerRadius=20`, `ThemeShadow` Z=64), 9.1 (inline `720 epx` command box on Home with key hints and `"Browse files"` footer), 9.4 (`Command box (Ctrl+K)` overlay card: `"This document"`, `"Go to"`, `"Files"`, `"Actions"`, bolded matched characters, right-aligned shortcuts), and 10 (`Ctrl+K`, `Esc`) with `design/screenshots/D-Dialogs.png` and `D-Home.png`.
+**Fidelity:** `design/SPEC.md` sections 7 (`OverlayCornerRadius` (8 epx), `ThemeShadow` Z=64), 9.1 (inline `720 epx` command box on Home with key hints and `"Browse files"` footer), 9.4 (`Command box (Ctrl+K)` overlay card: `"This document"`, `"Go to"`, `"Files"`, `"Actions"`, bolded matched characters, right-aligned shortcuts), and 10 (`Ctrl+K`, `Esc`) with `design/screenshots/D-Dialogs.png` and `D-Home.png`.
 **Job:** The user can press `Ctrl+K` from anywhere in Recto, type a few letters of a command, page number, chapter title, or recent filename, and press `Enter` to run or jump to it without touching the mouse. Consumer: `ShellPage` overlay host (`D02 T01 §2`) and `HomePage` inline host (§2).
 **Treatment:** Single `CommandBoxControl` reading live from `CommandRegistry` (§11), `RecentFilesStore` (§1), and the active tab's page count and `OutlinePanel` tree (§5), with `RichTextBlock` / `Run` span highlighting for matched characters. Cheaper substitute that fails the checkpoint: a command box that only searches static menu names (omitting recent files, `"Page N"` jumps, or outline headings) or omits bolding of matched query characters.
 **Chrome:** consume `RectoRaisedBrush`, `RectoBorderBrush`, `RectoAccentTintBrush` for the selected result row, `RectoTextSecondaryBrush` for section headers and right-aligned shortcuts, and `ThemeShadow` Z=64 in overlay mode.
@@ -423,14 +425,14 @@ Build `CommandBoxControl` (`src/app/controls/CommandBoxControl.xaml/.h/.cpp`) pe
 **Build order:**
 
 1. Implement the multi-source query engine `CommandBoxFilter` (`src/app/controls/CommandBoxFilter.h/.cpp`): given a query string and `AppCommandContext`, rank and group matches into the four SPEC 9.4 sections (`"This document"` with enabled document-scoped commands from `CommandRegistry`, omitted when on `Home` with no open document; `"Go to"` with numeric page jumps where typing `"14"` or `"page 14"` offers `"Go to page 14"` plus matching outline/bookmark titles from the open document's `OutlineItem` tree §5; `"Files"` with matching recent files from `RecentFilesStore::list_entries()` §1; and `"Actions"` with app-wide commands and conversion workflows from `CommandRegistry`), computing exact character match ranges (`std::vector<TextRange>`) for bold rendering. Done when: unit tests verify section grouping, prefix/substring ranking, `"page N"` recognition, outline matching, recent-file matching, and character highlight span indices in `< 1 ms`.
-2. Build `src/app/controls/CommandBoxControl.xaml/.h/.cpp` in both `OverlayMode` (toggled by `Ctrl+K` or the title bar Command Box button, `560 to 720 epx` wide at top-centre with light-dismiss backdrop and `Esc` close) and `InlineHomeMode` (`720 epx` wide on `HomePage` with footer key hints `"↑↓ to navigate · Enter to select · Esc to clear"` and `"Browse files"` accent button), rendering each result row with its `16 epx` Segoe Fluent icon, label with bolded matched character `Run`s (`BodyStrongTextBlockStyle` on matched spans, `BodyTextBlockStyle` on unmatched spans), and right-aligned shortcut caption. Done when: a keyboard-only session opens a recent file, jumps to an outline heading, jumps to a page number, rotates the view, and opens Settings entirely through `Ctrl+K`.
+2. Build `src/app/controls/CommandBoxControl.xaml/.h/.cpp` in both `OverlayMode` (toggled by `Ctrl+K` or the title bar Command Box button, `560 to 720 epx` wide at top-centre with light-dismiss backdrop and `Esc` close) and `InlineHomeMode` (`720 epx` wide on `HomePage` with footer key hints `"↑↓ to navigate · Enter to select · Esc to clear"` and `"Browse files"` accent button), rendering each result row with its `16 epx` `RectoIcons` glyph drawn directly on the row (no tile or tinted box), label with bolded matched character `Run`s (`BodyStrongTextBlockStyle` on matched spans, `BodyTextBlockStyle` on unmatched spans), and right-aligned shortcut caption. Done when: a keyboard-only session opens a recent file, jumps to an outline heading, jumps to a page number, rotates the view, and opens Settings entirely through `Ctrl+K`.
 
 - [ ] Author `src/app/controls/CommandBoxFilter.h/.cpp` querying `CommandRegistry` (§11), active document pages and outline entries (§5), and `RecentFilesStore` (§1) into the four SPEC 9.4 sections (`"This document"`, `"Go to"`, `"Files"`, `"Actions"`). Done when: empty query shows top contextual defaults per section and non-empty query filters and ranks across all four sources in `< 2 ms`.
 - [ ] Support natural page-number queries in `"Go to"`: typing a number `N` (e.g., `"12"`) or `"page 12"` / `"p12"` when a document with `>= 12` pages is open surfaces `"Go to page 12"` as the top `"Go to"` result. Done when: typing `"7"` and pressing `Enter` jumps `DocumentView` to page 7.
 - [ ] Render matched character substrings in bold (`FontWeights::SemiBold`) inside each result row's label while keeping non-matched characters in `FontWeights::Normal` per SPEC 9.4. Done when: typing `"rot"` highlights `"**Rot**ate view right"` and `"**Rot**ate view left"` in bold. Cheaper substitute that fails the checkpoint: plain un-highlighted result labels.
-- [ ] Display the `16 epx` Segoe Fluent glyph on the left and the keyboard shortcut badge (`CaptionTextBlockStyle`, `RectoTextSecondaryBrush`) on the right of every result row, highlighting the active row with `RectoAccentTintBrush`. Done when: row visuals match the `Ctrl+K` board in `D-Dialogs.png` and `D-Home.png`.
+- [ ] Display the `16 epx` `RectoIcons` glyph on the left of every result row, file rows included, drawn directly on the row with no tile, tinted box or circle behind it (`RectoTextSecondaryBrush`, turning `RectoAccentBrush` on the selected row), and the shortcut on the right as keycaps (`RectoChipStyle`), highlighting the selected row with a `RectoAccentTintBrush` background (SPEC 6 and 9.4). Done when: a visual-tree walk of `CommandBoxControl` finds no element with a background behind any row glyph, and the selected row's glyph resolves to `RectoAccentBrush`.
 - [ ] Implement full keyboard navigation (`Down` / `Up` cycling across results and skipping section headers, `Home` / `End` inside the query box, `Enter` executing the highlighted item and closing the overlay, `Esc` clearing the query in `InlineHomeMode` or closing the card in `OverlayMode`). Done when: the entire `Ctrl+K` flow works mouse-free.
-- [ ] Mount `CommandBoxControl` in `ShellPage` as the `Ctrl+K` top-centred overlay (`CornerRadius=20`, `ThemeShadow` Z=64) and on `HomePage` (§2) in `InlineHomeMode` (`720 epx` wide with footer key hints and `"Browse files"` button). Done when: pressing `Ctrl+K` on `HomePage` focuses the inline box rather than opening a duplicate popup over it, and pressing `Ctrl+K` on any other page opens the top-centred overlay card.
+- [ ] Mount `CommandBoxControl` in `ShellPage` as the `Ctrl+K` top-centred overlay (`OverlayCornerRadius` (8 epx), `ThemeShadow` Z=64) and on `HomePage` (§2) in `InlineHomeMode` (`720 epx` wide with footer key hints and `"Browse files"` button). Done when: pressing `Ctrl+K` on `HomePage` focuses the inline box rather than opening a duplicate popup over it, and pressing `Ctrl+K` on any other page opens the top-centred overlay card.
 - [ ] Announce result counts politely to screen readers as the user types (`"5 results, Rotate view right selected"`). Done when: UIA live-region / automation peer notifications fire on filter updates.
 - [ ] Add `Panels.CommandBoxFilterAndKeyboardFlow` test in `tests/recto-tests/` driving `Ctrl+K` queries for commands (`"rotate"`), outline titles, page numbers (`"page 3"`), and recent filenames, verifying bold span indices and end-to-end execution. Done when: `recto-tests.exe --gtest_filter=Panels.CommandBoxFilterAndKeyboardFlow` passes.
 - [ ] Keep IME composition intact in the command box: never re-request focus or rewrite the query while `TextCompositionStarted` is active, and filter only on committed text. Done when: `Panels.CommandBoxFilterAndKeyboardFlow` composes a Microsoft Pinyin, Japanese and Korean query and executes the selected result.
@@ -446,7 +448,7 @@ Foxit PDF Editor and PDFelement show word and character counts; Acrobat Pro does
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` section 9.2 (Info panel) and section 5 type styles, with `design/screenshots/D-ReadingRoom.png`.
+**Fidelity:** `design/SPEC.md` section 9.2 (Info panel) and section 5 type styles, with `design/screenshots/D-ReadingRoom.png`. Design board: `design/SPEC.md` section 8.3.1 with `design/screenshots/D-Panels.png` (drawn by `D06 T04 §2`).
 **Job:** A writer or translator learns how long a document is and how long their selection is. Consumer: `DocumentInfoPanel` (§9), `SelectionModel` (`D03 T01 §3`).
 **Treatment:** Background job over cached `PageText`. Cheaper substitute that fails the checkpoint: counting on the UI thread or treating a text-free page as zero words without saying so.
 **Chrome:** `CaptionTextBlockStyle`, `BodyTextBlockStyle`, tokens.
@@ -531,7 +533,7 @@ One place to use §14, §15 and §16: the user picks `Text styles`, `Search` or 
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 9.9 form layout and section 8.3 `Outline`.
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 9.9 form layout and section 8.3 `Outline`. Design board: `design/SPEC.md` section 8.3.1 with `design/screenshots/D-Panels.png` (drawn by `D06 T04 §2`).
 **Job:** A user turns a long untagged report into a navigable outline in a minute, and can back out in one keystroke. Consumer: `OutlinePanel` (§5), bookmark undo stack (§6).
 **Treatment:** Preview then one undoable composite command. Cheaper substitute that fails the checkpoint: writing bookmarks immediately, or replacing the existing outline without a count.
 **Chrome:** `RectoDialogStyles.xaml` (`D02 T01 §10`), `RectoAccentTintBrush`, stock `TreeView`.
@@ -578,10 +580,10 @@ The UI half of §18: `Export bookmarks...` and `Import bookmarks...` in the `Out
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.3 (`Outline` header actions) and 9.9 form dialog layout.
+**Fidelity:** `design/SPEC.md` sections 8.3 (`Outline` header actions) and 9.9 form dialog layout. Design board: `design/SPEC.md` section 8.3.1 with `design/screenshots/D-Panels.png` (drawn by `D06 T04 §2`).
 **Job:** A user moves an outline between files or edits it in a text editor. Consumer: `OutlinePanel` (§5), `bookmark_io` (§18).
 **Treatment:** Stock pickers and the existing undo stack. Cheaper substitute that fails the checkpoint: a hidden developer-only command.
-**Chrome:** `RectoDialogStyles.xaml`, Segoe Fluent Icons.
+**Chrome:** `RectoDialogStyles.xaml`, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -603,7 +605,7 @@ Foxit and UPDF let each bookmark have its own colour and bold or italic text. PD
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` section 8.3 `Outline (with Bookmark Editor)` and section 11 (colour is never the only cue).
+**Fidelity:** `design/SPEC.md` section 8.3 `Outline (with Bookmark Editor)` and section 11 (colour is never the only cue). Design board: `design/SPEC.md` section 8.3.1 with `design/screenshots/D-Panels.png` (drawn by `D06 T04 §2`).
 **Job:** A user highlights important bookmarks in a way every PDF reader shows. Consumer: `OutlinePanel` (§5, §6).
 **Treatment:** Standard `/C` and `/F` keys. Cheaper substitute that fails the checkpoint: styles kept outside the PDF.
 **Chrome:** `RectoTextBrush`, `RectoSurfaceBrush`, stock `ColorPicker`.
@@ -648,7 +650,7 @@ The user-facing half of §21: a dialog with a live preview, reachable from the `
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 9.9 form layout.
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 9.9 form layout. Design board: `design/SPEC.md` section 8.3.1 with `design/screenshots/D-Panels.png` (drawn by `D06 T04 §2`).
 **Job:** A user adds a clickable contents page to a long document and saves it as a copy. Consumer: `toc_page` (§21), `SavePipeline` (`D02 T01 §8`).
 **Treatment:** Dialog over the engine with a scratch-copy preview. Cheaper substitute that fails the checkpoint: previewing by modifying the open document.
 **Chrome:** `RectoDialogStyles.xaml`.
@@ -712,10 +714,10 @@ The UI half of §23 and §24 inside `LayersPanel` (§7): `New layer`, `Rename` (
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` section 8.3 `Layers (OCG)` with `design/screenshots/D-Focus-Light.png`; the dialogs follow section 9.9 form layout.
+**Fidelity:** `design/SPEC.md` section 8.3 `Layers (OCG)` with `design/screenshots/D-Focus-Light.png`; the dialogs follow section 9.9 form layout. Design board: `design/SPEC.md` section 8.3.1 with `design/screenshots/D-Panels.png` (drawn by `D06 T04 §2`).
 **Job:** A user builds and tidies layers, including adding an overlay, without leaving the panel. Consumer: `LayersPanel` (§7), `ocg_edit` (§23, §24).
 **Treatment:** Panel commands over the staged-edit engine. Cheaper substitute that fails the checkpoint: edit support only through the command box.
-**Chrome:** `RectoDialogStyles.xaml`, `SidePanelHost` (§3), Segoe Fluent Icons.
+**Chrome:** `RectoDialogStyles.xaml`, `SidePanelHost` (§3), Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 

@@ -25,6 +25,7 @@ title: "TODO-05 -- Search Across Files and Local Index"
 - -> XREF: D08 T02 §15 -- freshness rule.
 - -> XREF: D08 T02 §16 -- open at location.
 - -> XREF: D08 T02 §17 -- Meaning mode in Search panel.
+- -> XREF: D06 T04 §9 -- the `D-SearchPanels.png` board and `design/SPEC.md` section 9.3.2 that §7, §8 here build against.
 
 ## Outcome
 
@@ -48,8 +49,8 @@ title: "TODO-05 -- Search Across Files and Local Index"
 | 4 | §4 | Local index store (`SearchIndex`), incremental update and corrupt-index rebuild | §3, D02 T04 §1 | [ ] |
 | 5 | §5 | Background index build jobs and indexed query path | §4, D01 T02 §9 | [ ] |
 | 6 | §6 | `recto-cli find --folder` and `--index` | §3, §5, D01 T03 §1 | [ ] |
-| 7 | §7 | Search panel scope picker and grouped results list | §3, D03 T01 §6, D02 T03 §12 | [ ] |
-| 8 | §8 | Open a result at its location from the grouped results list | §7, D02 T01 §5 | [ ] |
+| 7 | §7 | Search panel scope picker and grouped results list | §3, D03 T01 §6, D02 T03 §12, D06 T04 §9 | [ ] |
+| 8 | §8 | Open a result at its location from the grouped results list | §7, D02 T01 §5, D06 T04 §9 | [ ] |
 | 9 | §9 | Settings index manager (folders, size, rebuild, delete) | §5, §7, D02 T04 §4 | [ ] |
 
 ## 1. Multi-file search corpus folder in `tests/corpus/search-folder/`
@@ -199,10 +200,10 @@ The user searches more than one file from the same Search surface they already k
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 9.3 (find card rows, `Match case`, `Whole word`, `Regex` toggles, bold match in context rows, `RectoSearchHitBrush`) and section 9.9 (`ContentDialog` chrome for the folder confirmation), hosted in the Reading room `Search` inspector tab and, in Focus and Classic, in the `SidePanelHost` of `D02 T03 §3`.
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 9.3 (find card rows, `Match case`, `Whole word`, `Regex` toggles, bold match in context rows, `RectoSearchHitBrush`) and section 9.9 (`ContentDialog` chrome for the folder confirmation), hosted in the Reading room `Search` inspector tab and, in Focus and Classic, in the `SidePanelHost` of `D02 T03 §3`. Design board: `design/SPEC.md` section 9.3.2 with `design/screenshots/D-SearchPanels.png` (drawn by `D06 T04 §9`).
 **Job:** A user with a folder of contracts or papers types a query once, picks `Folder...` or `Open tabs`, and sees every file that matches with its pages and context, plus an honest list of files that could not be searched and why. Consumer: `MultiSearch` (§3), `SearchIndex` (§4), `CommandRegistry` (`D02 T03 §11`), `AnnouncementService` (`D03 T02 §5`).
 **Treatment:** One `FilesSearchViewModel` over `MultiSearch` and a virtualized `ListView` with file group headers (name, folder, hit count), up to 5 context rows per file with `Show all N in this file`, and a `Skipped (N)` expander listing each skipped file with its note. Scope picker is a `ComboBox` (`Current document`, `Open tabs`, `Folder...`) plus a `Choose folder` button using `FolderPicker`; `Include subfolders` and `Use index` are toggles; the three find toggles and `Exact accents` mirror `D03 T01 §6`. Cheaper substitute that fails the checkpoint: a flat list of hits without file grouping, a modal that blocks until the search ends, or hiding skipped files instead of listing them.
-**Chrome:** consume `SidePanelHost` (`D02 T03 §3`), `RectoColors.xaml` tokens including `RectoSearchHitBrush`, Segoe Fluent Icons, `RectoDialogStyles.xaml` (`D02 T01 §10`), `CommandRegistry` (`D02 T03 §11`).
+**Chrome:** consume `SidePanelHost` (`D02 T03 §3`), `RectoColors.xaml` tokens including `RectoSearchHitBrush`, Fluent UI System Icons (`RectoIcons`), `RectoDialogStyles.xaml` (`D02 T01 §10`), `CommandRegistry` (`D02 T03 §11`).
 
 **Build order:**
 
@@ -213,7 +214,7 @@ The user searches more than one file from the same Search surface they already k
 - [ ] Remember the last scope, `Include subfolders` and `Use index` in the `SettingsStore` and never store the query or results. Done when: restarting restores the toggles and the query box is empty.
 - [ ] Show the chosen folder path, a determinate or indeterminate progress bar, `N of M files`, and a `Cancel` button while searching. Done when: cancelling leaves the partial grouped results visible, marked `Search cancelled`.
 - [ ] Give the scope picker, folder button, toggles, `Cancel` and every icon-only button an `AutomationProperties.Name` and tooltip, and announce `N files, M results` through `AnnouncementService`. Done when: `A11y.FilesSearchInventory` finds no unnamed control. Cheaper substitute: visible labels only.
-- [ ] Use only `RectoColors.xaml` tokens and Segoe Fluent Icons in the XAML. Done when: `rg "#[0-9A-Fa-f]{6}" src/app/panels/FilesSearchPanel.xaml` prints nothing.
+- [ ] Use only `RectoColors.xaml` tokens and Fluent UI System Icons (`RectoIcons`) in the XAML. Done when: `rg "#[0-9A-Fa-f]{6}" src/app/panels/FilesSearchPanel.xaml` prints nothing.
 - [ ] Add `Panels.FilesSearch*` tests in `tests/recto-tests/files_search_panel_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=Panels.FilesSearch*:Commands.Reachability` passes.
 - [ ] Commit: `viewer: add Search in files panel with scope picker and grouped results`
 
@@ -227,7 +228,7 @@ A result is only useful if it lands on the match. Activating a hit opens the fil
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it reuses the hit highlight of `design/SPEC.md` section 9.3 and the password dialog of section 9.9 (`D02 T01 §10`), with no new chrome.
+**Fidelity:** Genuinely new surface; it reuses the hit highlight of `design/SPEC.md` section 9.3 and the password dialog of section 9.9 (`D02 T01 §10`), with no new chrome. Design board: `design/SPEC.md` section 9.3.2 with `design/screenshots/D-SearchPanels.png` (drawn by `D06 T04 §9`).
 **Job:** The user clicks `invoice` on page 3 of `a-invoices.pdf` and is looking at that match, not at page 1. Consumer: `OpenDocumentPipeline` (`D02 T01 §5`), `DocumentView` scroll (`D02 T02 §6`), `SearchViewModel` (`D03 T01 §6`).
 **Treatment:** The panel calls `OpenDocumentPipeline::open(path, OpenTarget{page, quad, query, options})`; an already-open tab is focused instead of duplicated; the match quad comes from the stored `SearchHit`, re-found by the single-document engine if the file changed since the search. Cheaper substitute that fails the checkpoint: opening the file at page 1 and leaving the user to search again.
 **Chrome:** consume `OpenDocumentPipeline`, `DocumentTabSession`, `RectoColors.xaml` highlight tokens.
@@ -257,7 +258,7 @@ The index is optional and visible. A `Search index` card in Settings (Performanc
 **Fidelity:** `design/SPEC.md` section 9.7 (Settings groups, `Find a setting`) with `design/screenshots/D-Settings.png`; the card follows the grouped-card pattern of `D02 T04 §5` and `§6`, and the confirm dialogs follow section 9.9.
 **Job:** The user can see how much disk the index uses and where (including the Portable data folder), index a folder for fast repeat search, rebuild a doubtful index, or delete it entirely. Consumer: `SettingsStore` (`D02 T04 §2`), `IndexJob` (§5), `AppPaths` (`D02 T04 §1`).
 **Treatment:** A `SearchIndexSettings` card bound to `SearchIndexManager` (list, add, rebuild, remove, delete) with the resolved index path shown read-only; deleting asks first and shows the freed size afterwards. Cheaper substitute that fails the checkpoint: a toggle with no size or location, or a delete that leaves files behind.
-**Chrome:** consume `SettingsPage` frame and `Find a setting` registry (`D02 T04 §4`), `RectoDialogStyles.xaml`, `RectoColors.xaml`, Segoe Fluent Icons.
+**Chrome:** consume `SettingsPage` frame and `Find a setting` registry (`D02 T04 §4`), `RectoDialogStyles.xaml`, `RectoColors.xaml`, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 

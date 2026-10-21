@@ -10,24 +10,25 @@ title: "TODO-06 -- Cloud Storage Connectors: OneDrive, SharePoint, Google Drive,
 
 > **Goal:** Opt-in, off-by-default connectors (D21) that let a user browse, open, save and save a copy of PDFs in OneDrive, SharePoint, Google Drive, Dropbox and Box. Sign-in is OAuth 2.0 authorization code with PKCE through the system browser and a loopback redirect; refresh tokens live in Windows Credential Manager; a downloaded file opens as a temporary local copy like any other; an upload is conditional on the provider's version token so a newer remote file is never overwritten. When the user never signs in, or Group Policy disables connectors, no request is ever made.
 
-> **Current state:** Measured 2026-10-21. Nothing exists. `D02 T01 §5` and `§8` provide `OpenDocumentPipeline` and `SavePipeline`, `D02 T01 §10` the dialog chrome, `D02 T03 §2` and `§12` Home and the command box, `D02 T04 §2` and `§6` the settings store and the privacy group. The assistant's HTTPS transport (`D08 T01 §2`) refuses every redirect and cannot be reused for downloads that redirect, so this file has its own client. The Group Policy templates and the `SettingsStore` policy layer are owned by `todo/07-release/TODO-02-store-and-compliance.md`; this file reads the policy name `CloudConnectorsDisabled` through an interface.
+> **Current state:** Measured 2026-10-21. Nothing exists. `D02 T01 §5` and `§8` provide `OpenDocumentPipeline` and `SavePipeline`, `D02 T01 §10` the dialog chrome, `D02 T03 §2` and `§12` Home and the command box, `D02 T04 §2` and `§6` the settings store and the `Performance and privacy` group. The assistant's HTTPS transport (`D08 T01 §2`) refuses every redirect and cannot be reused for downloads that redirect, so this file has its own client. The Group Policy templates and the `SettingsStore` policy layer are owned by `todo/07-release/TODO-02-store-and-compliance.md`; this file reads the policy name `CloudConnectorsDisabled` through an interface.
 
 ## Inputs
 
-- `AGENTS.md` architecture rules (UI thread never blocks, atomic writes, links ask first, tokens and Segoe Fluent Icons, `Ctrl+K` reachability), foundation plan D16 (offline by default, no telemetry), D18 and D21.
+- `AGENTS.md` architecture rules (UI thread never blocks, atomic writes, links ask first, tokens and Fluent UI System Icons (`RectoIcons`), `Ctrl+K` reachability), foundation plan D16 (offline by default, no telemetry), D18 and D21.
 - RFC 7636 (PKCE) and RFC 8252 (OAuth 2.0 for native apps: system browser, loopback redirect); each provider's current developer documentation for endpoints, scopes and conflict handling, checked while building each provider section.
 - `design/SPEC.md` sections 4, 5, 6, 7, 9.1, 9.7, 9.9, 10 and 11; `design/tokens/RectoColors.xaml`.
 - Builds on D02 T01 §5: `OpenDocumentPipeline` opens the downloaded temporary copy (§12 here).
 - Builds on D02 T01 §8: `SavePipeline` writes the local save before the upload (§13 here).
 - Builds on D02 T01 §13: `SessionStore` excludes cloud temporary copies.
 - Builds on D02 T01 §17: sharing a cloud-origin document shares a fresh copy.
-- Builds on D02 T04 §6: the Cloud storage card (§5 here) sits in the Security, Performance & Privacy group.
+- Builds on D02 T04 §6: the Cloud storage card (§5 here) sits in the `Performance and privacy` group.
 - Builds on D08 T01 §2: the assistant transport is deliberately not reused (redirect rule).
 - -> XREF: D07 T02 §10 -- CloudConnectorsDisabled policy.
 - -> XREF: D02 T04 §6 -- cloud storage card.
 - -> XREF: D07 T02 §4 -- crash bundle scan.
 - -> XREF: D08 T01 §2 -- separate transport.
 - -> XREF: D02 T01 §13 -- session exclusion of cloud copies.
+- -> XREF: D06 T04 §22 -- the `D-Cloud.png` board and `design/SPEC.md` section 9.17 that §3, §5, §11, §12, §13, §14 here build against.
 
 ## Outcome
 
@@ -45,18 +46,18 @@ title: "TODO-06 -- Cloud Storage Connectors: OneDrive, SharePoint, Google Drive,
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | Provider-neutral connector interface, errors and the network gate | D02 T04 §2 | [ ] |
 | 2 | §2 | HTTPS client for connectors with same-provider redirects only | §1 | [ ] |
-| 3 | §3 | OAuth 2.0 authorization code with PKCE through a loopback redirect | §2, D02 T01 §10, D02 T02 §9 | [ ] |
+| 3 | §3 | OAuth 2.0 authorization code with PKCE through a loopback redirect | §2, D02 T01 §10, D02 T02 §9, D06 T04 §22 | [ ] |
 | 4 | §4 | Token store in Windows Credential Manager, refresh and sign-out | §3 | [ ] |
-| 5 | §5 | Cloud storage settings group: off by default, per-provider sign-out, policy lock | §1, §4, D02 T04 §6 | [ ] |
+| 5 | §5 | Cloud storage settings group: off by default, per-provider sign-out, policy lock | §1, §4, D02 T04 §6, D06 T04 §22 | [ ] |
 | 6 | §6 | OneDrive provider over Microsoft Graph | §2, §3, §4, §5 | [ ] |
 | 7 | §7 | SharePoint document libraries over Microsoft Graph | §6 | [ ] |
 | 8 | §8 | Google Drive provider over Drive API v3 | §2, §3, §4, §5 | [ ] |
 | 9 | §9 | Dropbox provider over API v2 | §2, §3, §4, §5 | [ ] |
 | 10 | §10 | Box provider over API 2.0 | §2, §3, §4, §5 | [ ] |
-| 11 | §11 | Open from cloud: provider and folder browser | §1, §3, D02 T01 §9, D02 T01 §10, D02 T03 §2, D02 T03 §11 | [ ] |
-| 12 | §12 | Open a cloud file as a temporary local copy | §11, D02 T01 §5, D02 T01 §11, D02 T01 §13, D02 T03 §8 | [ ] |
-| 13 | §13 | Save and Save a copy to the cloud with conflict detection | §12, D02 T01 §8 | [ ] |
-| 14 | §14 | Recent cloud files on Home and in the command box | §4, §12, D02 T03 §2, D02 T03 §12 | [ ] |
+| 11 | §11 | Open from cloud: provider and folder browser | §1, §3, D02 T01 §9, D02 T01 §10, D02 T03 §2, D02 T03 §11, D06 T04 §22 | [ ] |
+| 12 | §12 | Open a cloud file as a temporary local copy | §11, D02 T01 §5, D02 T01 §11, D02 T01 §13, D02 T03 §8, D06 T04 §22 | [ ] |
+| 13 | §13 | Save and Save a copy to the cloud with conflict detection | §12, D02 T01 §8, D06 T04 §22 | [ ] |
+| 14 | §14 | Recent cloud files on Home and in the command box | §4, §12, D02 T03 §2, D02 T03 §12, D06 T04 §22 | [ ] |
 | 15 | §15 | Privacy and security tests: zero requests until sign-in, no secrets on disk | §6, §7, §8, §9, §10, §13, §14, D07 T02 §4 | [ ] |
 
 ## 1. Provider-neutral connector interface, errors and the network gate
@@ -110,7 +111,7 @@ Sign-in follows RFC 7636 (PKCE, S256) and RFC 8252 (native apps use the system b
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` section 9.9 form dialog layout.
+**Fidelity:** `design/SPEC.md` section 9.9 form dialog layout. Design board: `design/SPEC.md` section 9.17 with `design/screenshots/D-Cloud.png` (drawn by `D06 T04 §22`).
 **Job:** A user signs in to a provider in their own browser and returns to Recto. Consumer: provider sections §6 to §10.
 **Treatment:** System browser plus loopback listener. Cheaper substitute that fails the checkpoint: an embedded browser control, or a listener bound to all interfaces.
 **Chrome:** `RectoDialogStyles.xaml`, tokens.
@@ -157,14 +158,14 @@ The settings half of the opt-in. `CloudConnectorsEnabled` is off by default; wit
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` section 9.7 (Security, Performance & Privacy group) with `design/screenshots/D-Settings.png`.
+**Fidelity:** `design/SPEC.md` section 9.7 (`Performance and privacy` group, Cloud storage card) with `design/screenshots/D-Settings.png`. Design board: `design/SPEC.md` section 9.17 with `design/screenshots/D-Cloud.png` (drawn by `D06 T04 §22`).
 **Job:** A user decides whether cloud connectors exist at all, sees what is signed in and signs out. Consumer: `CloudGate` (§1), `TokenStore` (§4), `SettingsPage` (`D02 T04 §6`).
 **Treatment:** Stock `ToggleSwitch` and list rows. Cheaper substitute that fails the checkpoint: a setting nothing reads, or a toggle that does not stop requests.
-**Chrome:** `RectoColors.xaml` tokens, Segoe Fluent Icons.
+**Chrome:** `RectoColors.xaml` tokens, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
-1. Add `CloudConnectorsEnabled` (default false) to `RectoSettings` and a `Cloud storage` card in the Security, Performance & Privacy group of the Settings page (`D02 T04 §6`): the master toggle, a list of the five providers each with state (`Not signed in`, `Signed in as <account>`), `Sign in` and `Sign out`, a `Sign out of all` button, and the sentence `Recto contacts a provider only after you sign in, and only to open or save files you choose.` Done when: the card renders with the toggle off, the provider buttons disabled and no request issued.
+1. Add `CloudConnectorsEnabled` (default false) to `RectoSettings` and a `Cloud storage` card in the `Performance and privacy` group of the Settings page (`D02 T04 §6`): the master toggle, a list of the five providers each with state (`Not signed in`, `Signed in as <account>`), `Sign in` and `Sign out`, a `Sign out of all` button, and the sentence `Recto contacts a provider only after you sign in, and only to open or save files you choose.` Done when: the card renders with the toggle off, the provider buttons disabled and no request issued.
 2. Implement `PolicyAwareCloudGate` wiring `IPolicySource` to `SettingsStore`'s policy precedence once that exists; when `CloudConnectorsDisabled` is set, force the toggle off and disabled, sign out nothing automatically, and show `Managed by your organization`. Done when: a fake policy source makes the toggle locked and `CloudGate::allowed` false even with the setting on.
 
 - [ ] Hide `Open from cloud`, `Save to cloud` and the cloud recents section while the master toggle is off. Done when: with the toggle off no cloud entry appears in menus, `Home` or `Ctrl+K`.
@@ -285,10 +286,10 @@ One browser for all providers, as in Foxit's and UPDF's cloud dialogs: pick a si
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 9.9 form layout, section 5 type styles and the Home list styling of `D-Home.png`.
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 9.9 form layout, section 5 type styles and the Home list styling of `D-Home.png`. Design board: `design/SPEC.md` section 9.17 with `design/screenshots/D-Cloud.png` (drawn by `D06 T04 §22`).
 **Job:** A user finds a PDF in their cloud storage and opens it. Consumer: `ICloudProvider` (§1), `OpenDocumentPipeline` (`D02 T01 §5`) through §12.
 **Treatment:** Virtualized list over paged provider calls. Cheaper substitute that fails the checkpoint: loading entire folders before showing anything, or one dialog per provider.
-**Chrome:** `RectoDialogStyles.xaml`, tokens, Segoe Fluent Icons.
+**Chrome:** `RectoDialogStyles.xaml`, tokens, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -310,10 +311,10 @@ Opening downloads the file to a per-session temp folder and then opens that copy
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new behaviour; the progress card follows `design/SPEC.md` section 9 toast and card chrome and the tab badge follows section 8.1.
+**Fidelity:** Genuinely new behaviour; the progress card follows `design/SPEC.md` section 9 toast and card chrome and the tab badge follows section 8.1. Design board: `design/SPEC.md` section 9.17 with `design/screenshots/D-Cloud.png` (drawn by `D06 T04 §22`).
 **Job:** A user opens a cloud PDF and works on it as if local. Consumer: `OpenDocumentPipeline` (`D02 T01 §5`), `DocumentTabSession` (`D02 T01 §3`).
 **Treatment:** Download to a managed temp copy then the normal open path. Cheaper substitute that fails the checkpoint: a second open pipeline, or leaving copies on disk.
-**Chrome:** `RectoColors.xaml` tokens, Segoe Fluent Icons.
+**Chrome:** `RectoColors.xaml` tokens, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -336,7 +337,7 @@ For a cloud-origin tab, `Save` writes to the temp copy through `SavePipeline` (`
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` section 9.9 (`Replace original` dialog layout reused for the conflict dialog).
+**Fidelity:** `design/SPEC.md` section 9.9 (`Replace original` dialog layout reused for the conflict dialog). Design board: `design/SPEC.md` section 9.17 with `design/screenshots/D-Cloud.png` (drawn by `D06 T04 §22`).
 **Job:** A user saves edits back to the cloud file without silently overwriting someone else's changes. Consumer: `SavePipeline` (`D02 T01 §8`), `ICloudProvider::upload_replace` (§1).
 **Treatment:** Local atomic save first, then conditional upload. Cheaper substitute that fails the checkpoint: uploading without the version token, or treating a local save as uploaded.
 **Chrome:** `RectoDialogStyles.xaml` (`D02 T01 §10`).
@@ -362,7 +363,7 @@ A short list of the cloud files the user opened lately, so they do not browse ag
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` section 9.1 Home list with `design/screenshots/D-Home.png`.
+**Fidelity:** `design/SPEC.md` section 9.1 Home list with `design/screenshots/D-Home.png`. Design board: `design/SPEC.md` section 9.17 with `design/screenshots/D-Cloud.png` (drawn by `D06 T04 §22`).
 **Job:** A user reopens a cloud file in two clicks. Consumer: `HomePage` (`D02 T03 §2`), `CommandBoxControl` (`D02 T03 §12`).
 **Treatment:** A local metadata list with no network use. Cheaper substitute that fails the checkpoint: a list that contacts providers on startup.
 **Chrome:** `RectoColors.xaml` tokens, the Home recents card styling.

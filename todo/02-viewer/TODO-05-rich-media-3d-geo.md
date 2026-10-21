@@ -23,6 +23,7 @@ title: "TODO-05 -- Rich Media, 3D Models and Geospatial PDFs"
 - -> XREF: D02 T02 §1 -- the 3D renderer builds on the Direct3D 11 device and presentation thread.
 - -> XREF: D06 T02 §3 -- media, U3D, PRC and geospatial fuzz targets join the scheduled campaign.
 - -> XREF: D03 T04 §3 -- staged edit session.
+- -> XREF: D06 T04 §7 -- the `D-RichMedia.png` board and `design/SPEC.md` section 9.12 that §4, §9, §10, §13, §14, §17 here build against.
 
 ## Outcome
 
@@ -43,20 +44,20 @@ title: "TODO-05 -- Rich Media, 3D Models and Geospatial PDFs"
 | 1 | §1 | Rich media, 3D and geospatial corpus fixtures in `tests/corpus/rich/` | D00 T03 §3 | [ ] |
 | 2 | §2 | `recto-pdf` media model: `/RichMedia`, `/Screen`, `/Sound`, `/Movie`, bounded extract | §1, D01 T01 §10 | [ ] |
 | 3 | §3 | Embedded media playback service on Windows media APIs with no network access | §2, D01 T02 §8 | [ ] |
-| 4 | §4 | Media annotation surface: ask before play, Flash placeholder, `Save media as...` | §3, D02 T02 §9, D02 T03 §8 | [ ] |
+| 4 | §4 | Media annotation surface: ask before play, Flash placeholder, `Save media as...` | §3, D02 T02 §9, D02 T03 §8, D06 T04 §7 | [ ] |
 | 5 | §5 | `recto-pdf` 3D model: `/3D` annotations, `/3DV` views, `/VA`, lighting, cross sections | §1, §2, D01 T01 §10 | [ ] |
 | 6 | §6 | Bounded U3D (ECMA-363) parser into `Scene3D` and `fuzz_u3d` | §5 | [ ] |
 | 7 | §7 | Bounded PRC (ISO 14739-1) tessellation parser into `Scene3D` and `fuzz_prc` | §5 | [ ] |
 | 8 | §8 | Direct3D 11 `Scene3DRenderer`: camera, lighting presets, visibility, cross section | §6, §7, D02 T02 §1 | [ ] |
-| 9 | §9 | 3D view surface: poster fallback, activation, orbit, pan, zoom | §8, D02 T02 §9 | [ ] |
-| 10 | §10 | 3D panel: named views, model tree, show/hide parts, lighting, cross section | §9, D02 T03 §3, D02 T03 §11 | [ ] |
+| 9 | §9 | 3D view surface: poster fallback, activation, orbit, pan, zoom | §8, D02 T02 §9, D06 T04 §7 | [ ] |
+| 10 | §10 | 3D panel: named views, model tree, show/hide parts, lighting, cross section | §9, D02 T03 §3, D02 T03 §11, D06 T04 §7 | [ ] |
 | 11 | §11 | `recto-pdf` geospatial model: `/VP`, `/Measure` `/GEO` and page-to-coordinate transform | §1, D01 T01 §10 | [ ] |
 | 12 | §12 | Geodesic distance and area on the ellipsoid (`geodesy.cpp`) | -- | [ ] |
-| 13 | §13 | Geo surface: coordinates under the pointer and `Find location` | §11, D02 T02 §5, D02 T03 §11 | [ ] |
-| 14 | §14 | Geo measure tools and coordinate export (CSV, GeoJSON) | §12, §13 | [ ] |
+| 13 | §13 | Geo surface: coordinates under the pointer and `Find location` | §11, D02 T02 §5, D02 T03 §11, D06 T04 §7 | [ ] |
+| 14 | §14 | Geo measure tools and coordinate export (CSV, GeoJSON) | §12, §13, D06 T04 §7 | [ ] |
 | 15 | §15 | Register `fuzz_media`, `fuzz_u3d`, `fuzz_prc`, `fuzz_geo` in the fuzz campaign and audit | §2, §6, §7, §11, D06 T02 §3 | [ ] |
 | 16 | §16 | `recto-pdf` media authoring: embed audio or video as a `/Screen` annotation | §2, D03 T04 §3, D01 T02 §5 | [ ] |
-| 17 | §17 | Add audio or video tool: pick a file, place it, choose a poster, preview | §3, §4, §16, D03 T03 §4, D02 T01 §10 | [ ] |
+| 17 | §17 | Add audio or video tool: pick a file, place it, choose a poster, preview | §3, §4, §16, D03 T03 §4, D02 T01 §10, D06 T04 §7 | [ ] |
 | 18 | §18 | `recto-cli media`: add and list embedded audio and video | §2, §16, D01 T03 §1 | [ ] |
 
 ## 1. Rich media, 3D and geospatial corpus fixtures in `tests/corpus/rich/`
@@ -140,10 +141,10 @@ The user sees what an audio or video annotation is, decides whether to play it, 
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 9.9 (the confirmation `ContentDialog` and its glyph row), section 5 type styles and section 4 tokens, drawn over the page canvas of `D02 T02`.
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 9.9 (the confirmation `ContentDialog` and its glyph row), section 5 type styles and section 4 tokens, drawn over the page canvas of `D02 T02`. Design board: `design/SPEC.md` section 9.12 with `design/screenshots/D-RichMedia.png` (drawn by `D06 T04 §7`).
 **Job:** The user opens a PDF with an embedded recording or clip, sees a poster with a play button, is asked once per item whether to play it, then watches or listens in place with pause, seek and volume. For a Flash item they read why nothing plays and can still extract the file. Consumer: `MediaPlaybackService` (§3), `MediaItem` (§2), `OpenDocumentPipeline` link prompt contract (`D02 T02 §9`), `AnnouncementService` (`D03 T02 §5`).
-**Treatment:** An overlay per `MediaItem` on the page canvas: poster (the annotation `/AP /N` when present, otherwise a token-coloured tile with a Segoe Fluent Icons play or speaker glyph), a `Play` button that opens a `ContentDialog` `Play this media?` stating `Audio` or `Video`, the file extension and size, and `Play` / `Cancel`; after consent a `MediaPlayerElement` with transport controls and a `More` flyout holding `Save media as...`. Flash and unsupported items show a bordered placeholder `Adobe Flash content is not supported. Recto never runs Flash.` with `Save as file`. Cheaper substitute that fails the checkpoint: autoplay, a play button that skips the dialog, or leaving Flash as an empty rectangle.
-**Chrome:** consume `RectoDialogStyles.xaml` (`D02 T01 §10`), `RectoColors.xaml` tokens, Segoe Fluent Icons, `FileSavePicker`, the filename sanitiser of `D02 T03 §8`.
+**Treatment:** An overlay per `MediaItem` on the page canvas: poster (the annotation `/AP /N` when present, otherwise the media rectangle outlined in `RectoBorderBrush` with a `24 epx` `RectoIcons` `video` or `speaker_2` glyph drawn directly on the overlay, no filled tile behind it), a `Play` button that opens a `ContentDialog` `Play this media?` stating `Audio` or `Video`, the file extension and size, and `Play` / `Cancel`; after consent a `MediaPlayerElement` with transport controls and a `More` flyout holding `Save media as...`. Flash and unsupported items show a bordered placeholder `Adobe Flash content is not supported. Recto never runs Flash.` with `Save as file`. Cheaper substitute that fails the checkpoint: autoplay, a play button that skips the dialog, or leaving Flash as an empty rectangle.
+**Chrome:** consume `RectoDialogStyles.xaml` (`D02 T01 §10`), `RectoColors.xaml` tokens, Fluent UI System Icons (`RectoIcons`), `FileSavePicker`, the filename sanitiser of `D02 T03 §8`.
 
 **Build order:**
 
@@ -156,7 +157,7 @@ The user sees what an audio or video annotation is, decides whether to play it, 
 - [ ] Show `This PDF stores the media outside the file. Recto does not open it automatically.` for `ExternalRef` items, with an `Open link...` button routed through the `D02 T02 §9` `"Open this link?"` prompt. Done when: `Overlays.ExternalRefUsesLinkPrompt` shows the link prompt and nothing opens before it is accepted.
 - [ ] Register `Play media`, `Pause media` and `Save media as...` in the `CommandRegistry` so each is reachable from `Ctrl+K` while a media annotation is focused. Done when: `Commands.Reachability` finds the three commands. Cheaper substitute: overlay buttons only.
 - [ ] Give the play, pause, seek, volume, `More` and `Save` controls an `AutomationProperties.Name` and tooltip, make the overlay keyboard-focusable with `Enter` to activate, and announce `Playing audio` and `Stopped` through `AnnouncementService`. Done when: `A11y.MediaOverlayInventory` finds no unnamed control.
-- [ ] Use only `RectoColors.xaml` tokens and Segoe Fluent Icons. Done when: `rg "#[0-9A-Fa-f]{6}" src/app/overlays/MediaAnnotationOverlay.xaml` prints nothing.
+- [ ] Use only `RectoColors.xaml` tokens and Fluent UI System Icons (`RectoIcons`). Done when: `rg "#[0-9A-Fa-f]{6}" src/app/overlays/MediaAnnotationOverlay.xaml` prints nothing.
 - [ ] Add `Overlays.Media*` and `Overlays.FlashPlaceholder` tests in `tests/recto-tests/media_overlay_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=Overlays.Media*:Overlays.FlashPlaceholder:Overlays.SaveMediaAs:Overlays.ExternalRefUsesLinkPrompt:Commands.Reachability` passes.
 - [ ] Commit: `viewer: add media annotation overlay with ask-first play and Flash placeholder`
 
@@ -265,10 +266,10 @@ The user sees a 3D annotation as its poster, clicks to activate it, and moves ar
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` sections 4 (tokens), 6 (glyphs), 8.2 (the floating tool bar pattern) and 9.9 (dialog chrome), drawn over the page canvas of `D02 T02` in all three layout presets (D17).
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` sections 4 (tokens), 6 (glyphs), 8.2 (the floating tool bar pattern) and 9.9 (dialog chrome), drawn over the page canvas of `D02 T02` in all three layout presets (D17). Design board: `design/SPEC.md` section 9.12 with `design/screenshots/D-RichMedia.png` (drawn by `D06 T04 §7`).
 **Job:** The user opens an engineering drawing or product sheet with a 3D model, clicks the poster, rotates and zooms the model with mouse, touch or keyboard, and returns to the page with one action. Models that cannot be drawn say why and keep the poster. Consumer: `Scene3DRenderer` (§8), `Annot3D` (§5), `CommandRegistry` (`D02 T03 §11`).
 **Treatment:** A `Model3DView` control (`SwapChainPanel`) that replaces the poster in place on activation, with mouse drag to orbit, middle or `Shift` drag to pan, wheel and pinch to zoom, double-click to fit, arrow keys to orbit, `+`/`-` to zoom, `Esc` or the `Close 3D` button to return to the poster, and a `Reset view` button. Poster shown when the model fails to parse, exceeds a limit or the device is lost, with a one-line reason (`Compressed PRC tessellation is not supported`). Cheaper substitute that fails the checkpoint: auto-activating on page load, no poster fallback, or mouse-only navigation.
-**Chrome:** consume `SwapChainPanel` hosting from `D02 T02 §1`, `RectoColors.xaml`, Segoe Fluent Icons, `RectoDialogStyles.xaml`.
+**Chrome:** consume `SwapChainPanel` hosting from `D02 T02 §1`, `RectoColors.xaml`, Fluent UI System Icons (`RectoIcons`), `RectoDialogStyles.xaml`.
 
 **Build order:**
 
@@ -281,7 +282,7 @@ The user sees a 3D annotation as its poster, clicks to activate it, and moves ar
 - [ ] Apply the default view from `/3DV` on activation (camera, projection, background, render mode) and `Reset view` returns to it. Done when: `Overlays.Model3DDefaultView` shows the camera matches `/3DV` after activation and after reset.
 - [ ] Register `Activate 3D`, `Close 3D`, `Reset 3D view` and `Fit 3D model` in the `CommandRegistry` so each is reachable from `Ctrl+K` while a 3D annotation is focused. Done when: `Commands.Reachability` finds all four.
 - [ ] Give every control an automation name and tooltip and announce `3D view opened` and `3D view closed` through `AnnouncementService`. Done when: `A11y.Model3DInventory` finds no unnamed control.
-- [ ] Use only `RectoColors.xaml` tokens and Segoe Fluent Icons. Done when: `rg "#[0-9A-Fa-f]{6}" src/app/overlays/Model3DView.xaml` prints nothing.
+- [ ] Use only `RectoColors.xaml` tokens and Fluent UI System Icons (`RectoIcons`). Done when: `rg "#[0-9A-Fa-f]{6}" src/app/overlays/Model3DView.xaml` prints nothing.
 - [ ] Add `Overlays.Model3D*` tests in `tests/recto-tests/model3d_view_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=Overlays.Model3D*:Commands.Reachability:A11y.Model3DInventory` passes.
 - [ ] Commit: `viewer: add 3D model view with poster fallback and navigation`
 
@@ -295,10 +296,10 @@ The user drives the model without leaving the keyboard: pick a named view from t
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 8.3 (side panel list, `SidePanelHost`) and section 4 tokens, with the Segoe Fluent Icons `View`, `Lightbulb`, `Cut` families, in the right inspector in Reading room and as a `SidePanelHost` card in Focus and Classic.
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 8.3 (side panel list, `SidePanelHost`) and section 4 tokens, with the Fluent UI System Icons (`RectoIcons`) `cube_rotate`, `lightbulb` and `cut` glyphs, in the right inspector in Reading room and as a `SidePanelHost` card in Focus and Classic. Design board: `design/SPEC.md` section 9.12 with `design/screenshots/D-RichMedia.png` (drawn by `D06 T04 §7`).
 **Job:** The user switches between `Front`, `Top` and custom views, hides a bracket to see what is behind it, dims or isolates a part, lights the model for inspection, and slices it to see inside. Consumer: `Model3DView` (§9), `Scene3DRenderer` (§8), `SidePanelHost` (`D02 T03 §3`), `CommandRegistry` (`D02 T03 §11`).
 **Treatment:** A `Model3DPanel` with four sections (`Views`, `Model tree`, `Lighting and render`, `Cross section`). `Views` lists `/VA` views by `/XN` name and applies one with a short camera animation (instant under reduced motion). `Model tree` is a virtualized `TreeView` of the PRC or U3D node hierarchy with a visibility checkbox per node (parents toggle children), `Isolate` and `Show all`, and the note column for `No preview geometry`. `Lighting and render` has a preset `ComboBox` of the eleven presets plus `File lights`, and a render mode `ComboBox`. `Cross section` has an axis choice, a position slider, `Flip` and `Show cap`. Cheaper substitute that fails the checkpoint: a flat part list with no hierarchy, a view picker that does not move the camera, or a panel that works only with the mouse.
-**Chrome:** consume `SidePanelHost` (`D02 T03 §3`), `RectoColors.xaml`, Segoe Fluent Icons, `CommandRegistry`.
+**Chrome:** consume `SidePanelHost` (`D02 T03 §3`), `RectoColors.xaml`, Fluent UI System Icons (`RectoIcons`), `CommandRegistry`.
 
 **Build order:**
 
@@ -311,7 +312,7 @@ The user drives the model without leaving the keyboard: pick a named view from t
 - [ ] Wire the lighting preset, render mode and cross-section controls to `Scene3DRenderer` and keep them in the tab session only. Done when: `Panels.Model3DLightingAndModes` changes the renderer state for every option and a new tab starts at the file defaults.
 - [ ] Register `Next 3D view`, `Previous 3D view`, `Show all 3D parts` and `Toggle 3D cross section` in the `CommandRegistry` for `Ctrl+K`. Done when: `Commands.Reachability` finds all four.
 - [ ] Give every control an automation name and tooltip, with tree items exposing name, visibility state and level to UIA. Done when: `A11y.Model3DPanelInventory` finds no unnamed control and the tree exposes `ExpandCollapse` and `Toggle` patterns.
-- [ ] Use only `RectoColors.xaml` tokens and Segoe Fluent Icons. Done when: `rg "#[0-9A-Fa-f]{6}" src/app/panels/Model3DPanel.xaml` prints nothing.
+- [ ] Use only `RectoColors.xaml` tokens and Fluent UI System Icons (`RectoIcons`). Done when: `rg "#[0-9A-Fa-f]{6}" src/app/panels/Model3DPanel.xaml` prints nothing.
 - [ ] Add `Panels.Model3D*` tests in `tests/recto-tests/model3d_panel_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=Panels.Model3D*:Commands.Reachability:A11y.Model3DPanelInventory` passes.
 - [ ] Commit: `viewer: add 3D panel with views, model tree, lighting and cross section`
 
@@ -370,10 +371,10 @@ On a geospatial page the user reads the real-world position of the pointer and j
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 8.2 (floating tool bar), section 4 tokens and section 5 type styles, with a coordinate readout chip over the page canvas and a `Find location` flyout in the Floating Page Toolbar of `D02 T02 §8`.
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 8.2 (floating tool bar), section 4 tokens and section 5 type styles, with a coordinate readout chip over the page canvas and a `Find location` flyout in the Floating Page Toolbar of `D02 T02 §8`. Design board: `design/SPEC.md` section 9.12 with `design/screenshots/D-RichMedia.png` (drawn by `D06 T04 §7`).
 **Job:** A user reading a survey, utility or hiking map moves the pointer and sees `Lat, Lon` in their preferred format, copies a position, types or pastes `-33.9249, 18.4241` and lands on that spot with a marker, and is told clearly when the page or the location is outside the map. Consumer: `GeoTransform` (§11), `PageLayoutGeometry::viewport_to_page_point` (`D02 T02 §5`), `CommandRegistry` (`D02 T03 §11`).
 **Treatment:** A `GeoReadout` chip near the bottom left of the canvas, visible only over a geospatial viewport, showing `Latitude, Longitude` (decimal degrees by default, degrees-minutes-seconds on a toggle) that updates from the pointer or, for keyboard users, from the focused crosshair; `Ctrl+C` copies it while focused. `Find location` accepts decimal degrees, degrees-minutes-seconds and `lat, lon` pastes, validates them, scrolls the page, centres the point, draws a marker and announces the result; a location outside the viewport shows `That location is outside this map.` Cheaper substitute that fails the checkpoint: showing page points instead of coordinates, accepting only one format, or a silent no-op for an outside location.
-**Chrome:** consume `PageLayoutGeometry` (`D02 T02 §5`), the Floating Page Toolbar (`D02 T02 §8`), `RectoColors.xaml`, Segoe Fluent Icons, `AnnouncementService`.
+**Chrome:** consume `PageLayoutGeometry` (`D02 T02 §5`), the Floating Page Toolbar (`D02 T02 §8`), `RectoColors.xaml`, Fluent UI System Icons (`RectoIcons`), `AnnouncementService`.
 
 **Build order:**
 
@@ -385,7 +386,7 @@ On a geospatial page the user reads the real-world position of the pointer and j
 - [ ] Copy the readout with `Ctrl+C` in the current format, and add a keyboard crosshair moved by arrow keys (1 point) and `Shift`+arrow (10 points) for users without a pointer. Done when: `Overlays.GeoReadoutKeyboard` moves the crosshair and copies `-33.924900, 18.424100` style text.
 - [ ] Register `Find location...`, `Toggle coordinate format` and `Copy coordinates` in the `CommandRegistry` for `Ctrl+K`, enabled only on a geospatial page. Done when: `Commands.Reachability` finds all three and `Commands.GeoDisabledOnPlainPage` shows them disabled elsewhere.
 - [ ] Give the chip, flyout fields and buttons an automation name and tooltip and announce the found location and the outside message through `AnnouncementService`. Done when: `A11y.GeoInventory` finds no unnamed control.
-- [ ] Use only `RectoColors.xaml` tokens and Segoe Fluent Icons. Done when: `rg "#[0-9A-Fa-f]{6}" src/app/overlays/GeoReadout.xaml` prints nothing.
+- [ ] Use only `RectoColors.xaml` tokens and Fluent UI System Icons (`RectoIcons`). Done when: `rg "#[0-9A-Fa-f]{6}" src/app/overlays/GeoReadout.xaml` prints nothing.
 - [ ] Add `Overlays.Geo*` and `CoordinateParse.*` tests in `tests/recto-tests/geo_surface_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=Overlays.Geo*:CoordinateParse.*:Commands.Reachability:A11y.GeoInventory` passes.
 - [ ] Commit: `viewer: show coordinates under the pointer and add Find location`
 
@@ -399,10 +400,10 @@ The user measures a real-world distance or area by clicking on the map, sees the
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 8.2 (tool bar tool pattern), section 4 tokens and section 9.9 (the Save dialog is a `FileSavePicker`), reusing the `GeoReadout` chip of §13.
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 8.2 (tool bar tool pattern), section 4 tokens and section 9.9 (the Save dialog is a `FileSavePicker`), reusing the `GeoReadout` chip of §13. Design board: `design/SPEC.md` section 9.12 with `design/screenshots/D-RichMedia.png` (drawn by `D06 T04 §7`).
 **Job:** A planner clicks along a path and reads its true length, clicks around a field and reads its area and perimeter, switches units, and exports the clicked points as a file for GIS software. Consumer: `geodesic_path_length`, `geodesic_polygon_area` (§12), `GeoTransform` (§11), `GeoReadout` (§13).
 **Treatment:** A `Measure` tool group (`Distance`, `Area`) in the geo toolbar: click adds a vertex, `Backspace` removes the last, double-click or `Enter` finishes, `Esc` cancels; a live label shows distance or area plus perimeter in the `/PDU` units with a units `ComboBox`; finished measurements stay on screen until cleared. `Export...` writes the points with `FileSavePicker` as CSV (UTF-8, header `index,latitude,longitude`, decimal point) or GeoJSON (RFC 7946: `[longitude, latitude]` order, a `LineString` or `Polygon` with closed ring, WGS84) through temp-file-then-replace. Cheaper substitute that fails the checkpoint: measuring in page points, writing coordinates in latitude-longitude order into GeoJSON, or writing the export in place without the temp-file replace.
-**Chrome:** consume `PageLayoutGeometry`, `GeoReadout` (§13), the Floating Page Toolbar, `FileSavePicker`, `RectoColors.xaml`, Segoe Fluent Icons.
+**Chrome:** consume `PageLayoutGeometry`, `GeoReadout` (§13), the Floating Page Toolbar, `FileSavePicker`, `RectoColors.xaml`, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -415,7 +416,7 @@ The user measures a real-world distance or area by clicking on the map, sees the
 - [ ] Transform to WGS84 on export when the file's datum differs and mark `datum_assumed` in a GeoJSON `properties` member. Done when: `GeoExport.DatumNote` shows the property for an assumed datum.
 - [ ] Register `Measure distance`, `Measure area`, `Clear measurements` and `Export coordinates...` in the `CommandRegistry` for `Ctrl+K`, enabled only on a geospatial page. Done when: `Commands.Reachability` finds all four.
 - [ ] Give each tool button, label and the units box an automation name and tooltip, make the tools usable by keyboard (crosshair of §13 plus `Enter`) and announce each finished measurement. Done when: `A11y.GeoMeasureInventory` finds no unnamed control.
-- [ ] Use only `RectoColors.xaml` tokens and Segoe Fluent Icons, and never write measurements into the PDF. Done when: `rg "#[0-9A-Fa-f]{6}" src/app/tools/` prints nothing and `Tools.GeoMeasureDoesNotDirty` shows the tab dirty flag stays false after measuring.
+- [ ] Use only `RectoColors.xaml` tokens and Fluent UI System Icons (`RectoIcons`), and never write measurements into the PDF. Done when: `rg "#[0-9A-Fa-f]{6}" src/app/tools/` prints nothing and `Tools.GeoMeasureDoesNotDirty` shows the tab dirty flag stays false after measuring.
 - [ ] Add `Tools.GeoMeasure*`, `GeoExport.*` tests in `tests/recto-tests/geo_measure_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=Tools.GeoMeasure*:Tools.GeoUnits:GeoExport.*:Commands.Reachability` passes.
 - [ ] Commit: `viewer: add geodesic measure tools and CSV/GeoJSON coordinate export`
 
@@ -465,21 +466,21 @@ Foxit PDF Editor and PDFelement add audio and video to a page, and Acrobat Pro d
 
 ## 17. Add audio or video tool: pick a file, place it, choose a poster, preview
 
-The user-facing half of §16, matching Foxit's and PDFelement's `Add video` and `Add audio` tools and Acrobat Pro's media tools. The user picks a local file (no network sources), draws or accepts a rectangle on the page, chooses a poster (a frame from the video through the Windows thumbnail service, a chosen image, or a generic speaker tile for audio), previews it, and adds it as an undoable staged edit. Playback of the result still asks first (§4).
+The user-facing half of §16, matching Foxit's and PDFelement's `Add video` and `Add audio` tools and Acrobat Pro's media tools. The user picks a local file (no network sources), draws or accepts a rectangle on the page, chooses a poster (a frame from the video through the Windows thumbnail service, a chosen image, or, for audio, the outlined rectangle with the `speaker_2` glyph and no filled tile, matching §4), previews it, and adds it as an undoable staged edit. Playback of the result still asks first (§4).
 
 **Phase:** 7
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 9.9 form layout, section 8.2 contextual bars and `D03 T03 §4` creation handles.
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 9.9 form layout, section 8.2 contextual bars and `D03 T03 §4` creation handles. Design board: `design/SPEC.md` section 9.12 with `design/screenshots/D-RichMedia.png` (drawn by `D06 T04 §7`).
 **Job:** A user embeds a recording or clip in a page and sees what readers will see. Consumer: `media_author` (§16), `MediaPlaybackService` (§3), annotation handles (`D03 T03 §4`).
 **Treatment:** A picker, a placement mode and a dialog over the engine. Cheaper substitute that fails the checkpoint: adding the media with no alt text, or from a URL.
-**Chrome:** `RectoDialogStyles.xaml` (`D02 T01 §10`), `RectoColors.xaml` tokens, Segoe Fluent Icons.
+**Chrome:** `RectoDialogStyles.xaml` (`D02 T01 §10`), `RectoColors.xaml` tokens, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
 1. Add the `Add audio or video...` command (Tools menu, `PageToolbar` `More` menu, `Ctrl+K`): `FileOpenPicker` for the allowed extensions, then a placement mode on the canvas using the annotation creation handles (`D03 T03 §4`) with a default rectangle sized from the video's aspect ratio (at most 320 epx wide), then `AddMediaDialog` with alt text, poster choice and a preview that plays the local file once through the §3 playback service muted by default. Done when: choosing an mp4 draws the placeholder, the dialog shows a frame poster, and `Add` creates the annotation on the page.
-2. Generate the poster with `StorageFile.GetThumbnailAsync` for video, accept `PNG` or `JPEG` for a custom poster, and use a token-coloured speaker tile for audio; keep the poster at most 1024 px on the long side. Done when: a video poster, a custom poster and an audio tile each render in the page appearance.
+2. Generate the poster with `StorageFile.GetThumbnailAsync` for video, accept `PNG` or `JPEG` for a custom poster, and for audio write the §4 default poster into the appearance: a transparent rectangle outlined at 1 pt in the `RectoBorderBrush` colour with the Fluent `speaker_2` 20 px Regular glyph (from the vendored `resources/fonts/fluent-svg/` SVG, converted to PDF path operators) filled in the `RectoTextSecondaryBrush` colour at its centre, with no filled box, tile or circle behind the glyph (SPEC section 6); token colours are resolved to RGB from the Light dictionary at write time; keep the poster at most 1024 px on the long side. Done when: a video poster, a custom poster and the audio poster each render in the page appearance, and `Overlays.AddMediaTool` finds that the audio appearance stream's only fill operators (`f`, `f*`, `B`, `B*`) paint the glyph's own subpaths, so no other filled path intersects the glyph's bounding box.
 
 - [ ] Apply through the staged edit session as one undoable step, mark the tab dirty, and select the new annotation so it can be moved and resized with the standard handles. Done when: `Ctrl+Z` removes the annotation and its embedded stream.
 - [ ] Show the file size and warn above 50 MB that the PDF will grow by that amount. Done when: a 60 MB file shows the warning with the size.

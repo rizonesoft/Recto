@@ -31,6 +31,7 @@ track: M5
 - -> XREF: D04 T05 §26 -- shared exit codes.
 - -> XREF: D07 T01 §12 -- print greyscale engine.
 - -> XREF: D04 T07 §16 -- greyscale step.
+- -> XREF: D06 T04 §19 -- the `D-Preflight.png` board and `design/SPEC.md` section 9.14 that §13, §14, §19 here build against.
 
 ## Outcome
 
@@ -59,13 +60,13 @@ track: M5
 | 10 | §10 | PDF/X conversion for X-1a, X-3 and X-4 with output intents | §8, §9 | [ ] |
 | 11 | §11 | Output Preview session, ink inventory and ink aliases | §3, §5, D01 T02 §10 | [ ] |
 | 12 | §12 | Plate renderer: separations, overprint simulation and total area coverage | §7, §11, D01 T02 §6 | [ ] |
-| 13 | §13 | Preflight dialog, report view and profile management | §6, §10, D04 T01 §5, D02 T01 §10, D02 T03 §11 | [ ] |
-| 14 | §14 | Output Preview panel with plate toggles and pointer ink readout | §9, §12, D02 T03 §3, D02 T02 §4, D03 T02 §5 | [ ] |
+| 13 | §13 | Preflight dialog, report view and profile management | §6, §10, D04 T01 §5, D02 T01 §10, D02 T03 §11, D06 T04 §19 | [ ] |
+| 14 | §14 | Output Preview panel with plate toggles and pointer ink readout | §9, §12, D02 T03 §3, D02 T02 §4, D03 T02 §5, D06 T04 §19 | [ ] |
 | 15 | §15 | `recto-cli preflight` command family | §6, §10, §12, D01 T03 §1 | [ ] |
 | 16 | §16 | Print production honesty gates and fuzz targets | §10, §12, §15, D01 T03 §4 | [ ] |
 | 17 | §17 | PDF/E and PDF/VT identification and preflight profiles | §2, §4, §5, §6, §13, §15 | [ ] |
 | 18 | §18 | Whole-document greyscale conversion fixup and the `colour.only_gray` check | §3, §5, §7, §8, §9, D03 T03 §2, D03 T03 §6 | [ ] |
-| 19 | §19 | Greyscale commands: Preflight dialog, `Ctrl+K` and `recto-cli preflight greyscale` | §13, §15, §18, D02 T03 §11 | [ ] |
+| 19 | §19 | Greyscale commands: Preflight dialog, `Ctrl+K` and `recto-cli preflight greyscale` | §13, §15, §18, D02 T03 §11, D06 T04 §19 | [ ] |
 
 ## 1. Print production fixtures, synthetic ICC profiles and provenance rows
 
@@ -375,10 +376,10 @@ The Preflight dialog lets a user pick a profile, analyse the file, read the resu
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface: no SPEC screenshot shows it. It follows `design/SPEC.md` section 9.9 dialog chrome (the two-column form of the Watermark dialog: settings left, results right), section 9.5 queue behaviour and section 4 tokens.
+**Fidelity:** Genuinely new surface: no SPEC screenshot shows it. It follows `design/SPEC.md` section 9.9 dialog chrome (the two-column form of the Watermark dialog: settings left, results right), section 9.5 queue behaviour and section 4 tokens. Design board: `design/SPEC.md` section 9.14 with `design/screenshots/D-Preflight.png` (drawn by `D06 T04 §19`).
 **Job:** A print buyer or designer picks a profile, runs the check on the open file or a chosen file, sees pass, fail or incomplete with the findings grouped by category, jumps to a finding on the page, saves a fixed copy or a `PDF/X` copy, and exports the report. Consumers: the user filing the report, `DocumentView` (jump), `ConversionRunner` (jobs).
 **Treatment:** A `ContentDialog` on the shared 9.9 chrome with a profile `ComboBox`, an `Analyze` button, a verdict banner (`RectoSuccessBrush`, `RectoWarningBrush`, `RectoDangerBrush` with icon and text, never colour alone), a grouped `TreeView` of findings with counts and an `omitted` note, a coverage summary, and buttons `Fix to new copy`, `Convert to PDF/X...`, `Save report...`. Cheaper substitute that fails the checkpoint: a text box dump of findings with no jump, or a green banner on `Incomplete`.
-**Chrome:** Consume the single-active-dialog host and `ContentDialog` chrome of `D02 T01 §10`, `QueueCard` and the job runner (`D04 T01 §5`), `CommandRegistry` (`D02 T03 §11`), `DocumentView` navigation, and `RectoColors.xaml` status brushes with Segoe Fluent Icons.
+**Chrome:** Consume the single-active-dialog host and `ContentDialog` chrome of `D02 T01 §10`, `QueueCard` and the job runner (`D04 T01 §5`), `CommandRegistry` (`D02 T03 §11`), `DocumentView` navigation, and `RectoColors.xaml` status brushes with Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -405,10 +406,10 @@ The Output Preview panel shows separations on the page: a list of plates with sh
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface: no SPEC screenshot shows it. It is a new panel in the `design/SPEC.md` section 8.3 `SidePanelHost` (floating card in Focus, left dock in Classic, right inspector in Reading room) using section 4 tokens, with the Ink Manager as a section 9.9 `ContentDialog`.
+**Fidelity:** Genuinely new surface: no SPEC screenshot shows it. It is a new panel in the `design/SPEC.md` section 8.3 `SidePanelHost` (floating card in Focus, left dock in Classic, right inspector in Reading room) using section 4 tokens, with the Ink Manager as a section 9.9 `ContentDialog`. Design board: `design/SPEC.md` section 9.14 with `design/screenshots/D-Preflight.png` (drawn by `D06 T04 §19`).
 **Job:** A prepress operator turns on Output Preview, sees which plates a page uses, hides a plate to inspect another, reads the ink percentages and TAC at any point (by pointer or by keyboard), sees where TAC exceeds a limit and where overprint is set, and aliases or converts spot inks.
 **Treatment:** A `SidePanelHost` panel with a mode switch (`Separations`, `Warnings`), a plate list (colour swatch from the plate's ink, name, eye toggle, page-use badge), an `Overprint preview` toggle, a TAC limit number box, a `Readout` text block, an `Ink Manager...` button, a visible `Approximate` expander listing `PreviewLimits`, and a `Showing saved version` banner with `Refresh`. On the page a `OutputPreviewOverlay` paints the composite over the tile layer, and a readout chip follows the pointer. Cheaper substitute that fails the checkpoint: a static composite image with no per-plate toggles, or a readout reachable only by pointer.
-**Chrome:** Consume `SidePanelHost` (`D02 T03 §3`), the page overlay slot and pointer events of `DocumentView` (`D02 T02 §4`), `CommandRegistry` (`D02 T03 §11`), `AnnouncementService` (`D03 T02 §5`), the 9.9 dialog chrome for Ink Manager, and `RectoColors.xaml` tokens with Segoe Fluent Icons for the eye toggle.
+**Chrome:** Consume `SidePanelHost` (`D02 T03 §3`), the page overlay slot and pointer events of `DocumentView` (`D02 T02 §4`), `CommandRegistry` (`D02 T03 §11`), `AnnouncementService` (`D03 T02 §5`), the 9.9 dialog chrome for Ink Manager, and `RectoColors.xaml` tokens with Fluent UI System Icons (`RectoIcons`: `eye`, `eye_off`) for the eye toggle.
 
 **Build order:**
 
@@ -536,10 +537,10 @@ Make the greyscale conversion of `§18` reachable. The Preflight dialog (`§13`)
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface: no SPEC screenshot shows it. It follows the Preflight dialog of `§13` (SPEC section 9.9 dialog chrome) for the button and a `ContentDialog` of the same chrome for the options.
+**Fidelity:** Genuinely new surface: no SPEC screenshot shows it. It follows the Preflight dialog of `§13` (SPEC section 9.9 dialog chrome) for the button and a `ContentDialog` of the same chrome for the options. Design board: `design/SPEC.md` section 9.14 with `design/screenshots/D-Preflight.png` (drawn by `D06 T04 §19`).
 **Job:** A person with a colour document that will be photocopied or printed in black and white converts it to a greyscale copy, sees how many images and objects were converted and whether anything stayed coloured, and opens the result.
 **Treatment:** A `Convert to greyscale...` button beside `Convert to PDF/X...`, a `ContentDialog` with a `Method` combo (`Standard (PDF formulas)`, `Perceptual (Rec. 709)`, `ICC grey profile...`), a `Keep black text pure black` check, an output name preview, and a result view that lists unconverted objects when the result is partial. Cheaper substitute that fails the checkpoint: a one-click button with no method choice, or a success message when objects stayed coloured.
-**Chrome:** consume the Preflight dialog and `PreflightViewModel` (`§13`), the single-active-dialog host (`D02 T01 §10`), `QueueCard` and the job runner (`D04 T01 §5`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens with Segoe Fluent Icons.
+**Chrome:** consume the Preflight dialog and `PreflightViewModel` (`§13`), the single-active-dialog host (`D02 T01 §10`), `QueueCard` and the job runner (`D04 T01 §5`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens with Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 

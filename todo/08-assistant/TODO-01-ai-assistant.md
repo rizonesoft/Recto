@@ -10,7 +10,7 @@ title: "TODO-01 -- Opt-in AI Assistant with User-Supplied Provider Keys"
 
 > **Goal:** A user who adds their own key for Anthropic, OpenAI, OpenRouter or Google Gemini can summarize the open document, ask questions whose answers cite clickable page numbers, explain or translate a selection, and draft alternate text for figures, while a user who never adds a key sees no network traffic and no change to Recto. Every request shows exactly which text, pages, images, provider and model will leave the machine before it is sent, keys live only in Windows Credential Manager, redacted or unselected or password-protected content is never sent without explicit consent, and nothing the assistant writes changes the document except through an explicit, undoable Apply (foundation plan D19).
 
-> **Current state:** Measured 2026-10-21. `src/services/` holds no assistant code and the repository has no WinHTTP use. The inputs exist only as plans: `PageText` snapshots (`D03 T01 §1`, `§2`), `SidePanelHost` (`D02 T03 §3`), `SettingsStore` and the Portable mode `AppPaths` (`D02 T04 §1`, `§2`), `CommandRegistry` and the `Ctrl+K` box (`D02 T03 §11`, `§12`), the `CancelToken` (`D01 T02 §7`), the pending redaction marks of the Redaction Bar (`D05 T02 §9`), and the `PDF/UA` auto-tagger (`D04 T05 §7`). The domain index `todo/08-assistant/INDEX.md` lists this file and nothing else. Every section here is Phase 7 (After v1) unless the owner moves it earlier.
+> **Current state:** Measured 2026-10-21. `src/services/` holds no assistant code and the repository has no WinHTTP use. The inputs exist only as plans: `PageText` snapshots (`D03 T01 §1`, `§2`), `SidePanelHost` (`D02 T03 §3`), `SettingsStore` and the Portable mode `AppPaths` (`D02 T04 §1`, `§2`), `CommandRegistry` and the `Ctrl+K` box (`D02 T03 §11`, `§12`), the `CancelToken` (`D01 T02 §7`), the pending redaction marks of the Redaction Bar (`D05 T02 §9`), and the `PDF/UA` auto-tagger (`D04 T05 §7`). The domain index `todo/08-assistant/INDEX.md` lists this file and `TODO-02-assistant-workspace.md` (`D08 T02`), which builds on the provider, consent and panel sections here. Every section here is Phase 7 (After v1) unless the owner moves it earlier.
 
 ## Inputs
 
@@ -22,7 +22,7 @@ title: "TODO-01 -- Opt-in AI Assistant with User-Supplied Provider Keys"
 - -> XREF: D04 T05 §7 -- approved figure alt text reaches the tagger through `FigureAltOverrides`.
 - -> XREF: D05 T02 §9 -- pending redaction marks are excluded from every assistant request.
 - -> XREF: D07 T03 §2 -- provider keys never appear in diagnostics, and a scan proves it.
-- -> XREF: D02 T04 §6 -- the `ASSISTANT` settings group joins the settings page and its search.
+- -> XREF: D02 T04 §6 -- the `Assistant` settings group joins the settings page and its search.
 - -> XREF: D02 T03 §3 -- the Assistant panel is a `SidePanelHost` card.
 - -> XREF: D08 T02 §2 -- local provider id.
 - -> XREF: D08 T02 §2 -- loopback exception in TransportPolicy.
@@ -30,6 +30,7 @@ title: "TODO-01 -- Opt-in AI Assistant with User-Supplied Provider Keys"
 - -> XREF: D08 T02 §3 -- batch grants.
 - -> XREF: D07 T02 §10 -- AssistantDisabled policy.
 - -> XREF: D02 T06 §2 -- separate transport.
+- -> XREF: D06 T04 §26 -- the `D-Assistant.png` board and `design/SPEC.md` section 9.20 that §15, §16, §17 here build against.
 
 ## Outcome
 
@@ -61,9 +62,9 @@ title: "TODO-01 -- Opt-in AI Assistant with User-Supplied Provider Keys"
 | 12 | §12 | Consent gate: no key no network, per-request authorization and ledger | §10, §11 | [ ] |
 | 13 | §13 | `AssistantService`: summarize, cited answers, explain and translate | §3, §12 | [ ] |
 | 14 | §14 | Figure alt-text drafting and undoable Apply | §13, D04 T05 §7, D03 T03 §4 | [ ] |
-| 15 | §15 | Settings page `ASSISTANT` group with key entry and Test connection | §10, D02 T04 §6 | [ ] |
-| 16 | §16 | Request preview `ContentDialog` with exact send set and opt-ins | §12, D02 T01 §10 | [ ] |
-| 17 | §17 | Assistant side panel, clickable citations and Markdown export | §13, §16, D02 T03 §3 | [ ] |
+| 15 | §15 | Settings page `Assistant` group with key entry and Test connection | §10, D02 T04 §6, D06 T04 §26 | [ ] |
+| 16 | §16 | Request preview `ContentDialog` with exact send set and opt-ins | §12, D02 T01 §10, D06 T04 §26 | [ ] |
+| 17 | §17 | Assistant side panel, clickable citations and Markdown export | §13, §16, D02 T03 §3, D06 T04 §26 | [ ] |
 | 18 | §18 | `Ctrl+K` commands, UIA names and polite announcements | §17, D02 T03 §11, D03 T02 §5 | [ ] |
 | 19 | §19 | Privacy and security suite: zero network, key scan, consent gates, cancel | §14, §18 | [ ] |
 
@@ -397,7 +398,7 @@ The `PDF/UA` auto-tagger (`D04 T05 §7`) needs `/Alt` text on every `/Figure`, a
 
 **Test checkpoint:** `build\bin\x64\Release\recto-tests\recto-tests.exe --gtest_filter=Assistant.Figure*:Assistant.Alt*:PdfCompliance.PdfUaAutoTagAndValidate` exits 0, and calling `apply` from inside `draft_alt_text` fails `Assistant.AltDraftIsSuggestionOnly`.
 
-## 15. Settings page `ASSISTANT` group with key entry and Test connection
+## 15. Settings page `Assistant` group with key entry and Test connection
 
 The Settings page gets one new group so the assistant is configured where every other setting is. It must keep the feature off until the user turns it on, never show a saved key, and state plainly what leaves the machine. It must not add a second settings surface or a hex colour.
 
@@ -405,25 +406,25 @@ The Settings page gets one new group so the assistant is configured where every 
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface following `design/SPEC.md` section 9.7 (a settings group with `ToggleSwitch`, `ComboBox`, `TextBox` and `Button` rows) and the existing Privacy group chrome; no screenshot exists.
+**Fidelity:** Genuinely new surface following `design/SPEC.md` section 9.7 (a settings group with `ToggleSwitch`, `ComboBox`, `TextBox` and `Button` rows) and the `Performance and privacy` group chrome (`D02 T04 §6`); no screenshot exists. Design board: `design/SPEC.md` section 9.20 with `design/screenshots/D-Assistant.png` (drawn by `D06 T04 §26`).
 **Job:** A user can turn the assistant on, choose a provider, paste a key, pick or type a model, test the connection and read where the key is kept, in one place. Consumer: the Assistant panel setup prompt (§17) and `Ctrl+K` settings search.
-**Treatment:** One `ASSISTANT` group inside `SettingsPage` with a master toggle, provider `ComboBox`, a `PasswordBox` plus Save and Remove, a model `ComboBox` (editable for non-Anthropic providers), an OpenRouter-only base URL row, `Test connection` with an `InfoBar` result, the context character limit. Cheaper substitute that fails the checkpoint: a `TextBox` that shows the saved key, or a key stored in a settings value.
-**Chrome:** Shared Settings group styles (`D02 T04 §4`, `§6`), stock WinUI 3 controls, `RectoColors.xaml` tokens, Segoe Fluent Icons for any glyph, `InfoBar` severities from tokens.
+**Treatment:** One `Assistant` group inside `SettingsPage` with rows in SPEC 9.7 order: the master toggle, `Provider` (`ComboBox`), `API key` (a `PasswordBox` plus Save and Remove), `Model` (a `ComboBox`, editable for non-Anthropic providers), `Base URL` (OpenRouter only), `Test connection` with an `InfoBar` result, and `Context character limit`. Cheaper substitute that fails the checkpoint: a `TextBox` that shows the saved key, or a key stored in a settings value.
+**Chrome:** Shared Settings group styles (`D02 T04 §4`, `§6`), stock WinUI 3 controls, `RectoColors.xaml` tokens, Fluent UI System Icons (`RectoIcons`) for any glyph, `InfoBar` severities from tokens.
 
 **Build order:**
 
-1. Add the `ASSISTANT` group to `src/app/SettingsPage.xaml/.h/.cpp` after `PERFORMANCE AND PRIVACY`, indexed by the `Find a setting` filter with the terms "AI", "assistant", "API key", "Claude", "OpenAI", "Gemini", "OpenRouter". Done when: typing "api key" in `Find a setting` reveals the group.
+1. Add the `Assistant` group to `src/app/SettingsPage.xaml/.h/.cpp` after `Performance and privacy` and before `Recto PDF virtual printer` (SPEC 9.7 order, placed by `kSettingsGroupOrder` of `D02 T04 §6`), indexed by the `Find a setting` filter with the terms "AI", "assistant", "API key", "Claude", "OpenAI", "Gemini", "OpenRouter". Done when: typing "api key" in `Find a setting` reveals the group.
 2. Build the key row: a `PasswordBox` that is cleared after Save, shows "Key saved in Windows Credential Manager" when `has_key` is true, never the key or any part of it, plus Remove with a confirmation. Done when: `Settings.AssistantKeyNeverDisplayed` asserts no control property contains the sentinel key after Save.
 3. Build the model row (Anthropic: `ComboBox` with `claude-opus-5-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`; others: editable `ComboBox` with the default as a suggestion), the OpenRouter base URL `TextBox` with inline validation (§7), and `Test connection` calling §10 and showing the `describe` title, cause and next step in an `InfoBar`. Done when: `Settings.AssistantTestConnectionShowsTypedError` shows an unknown-model error with its next step.
 4. Add the Portable mode note ("Keys stay in this Windows account's Credential Manager and are not copied to the portable folder") shown when Portable mode is on. Done when: `Settings.AssistantPortableNote` passes.
 
-- [ ] Add the group XAML with `AutomationProperties.Name` and tooltips on every icon-only control and `x:Uid` for each string. Done when: the `D03 T02 §3` accessibility inventory test lists the group with zero missing names. Cheaper substitute: unnamed `PasswordBox` and icon buttons.
+- [ ] Add the group XAML with the row labels `Provider`, `API key`, `Model`, `Base URL`, `Test connection` and `Context character limit`, `AutomationProperties.Name` and tooltips on every icon-only control and `x:Uid` for each string. Done when: the `D03 T02 §3` accessibility inventory test lists the group with zero missing names and `Settings.AssistantRowLabels` finds each of the six labels in that order. Cheaper substitute: unnamed `PasswordBox` and icon buttons.
 - [ ] Bind the master toggle to `assistant.enabled` and enable the other rows only when it is on. Done when: `Settings.AssistantRowsDisabledWhenOff` passes.
 - [ ] Implement Save, Remove and the saved-state label through `CredentialStore`. Done when: `Settings.AssistantKeyNeverDisplayed` passes.
 - [ ] Implement the model and base URL rows with validation. Done when: `Settings.AssistantModelAndBaseUrlValidation` passes.
 - [ ] Implement Test connection on a worker thread with a spinner and cancel. Done when: `Settings.AssistantTestConnectionShowsTypedError` passes and the UI thread is never blocked.
 - [ ] Render the group in Light, Dark and HighContrast with token brushes only. Done when: `Settings.AssistantGroupThemes` finds no literal colour in the group's XAML. Cheaper substitute: a hex value on a control.
-- [ ] Commit: `app: add Settings ASSISTANT group with key entry and Test connection`
+- [ ] Commit: `app: add Settings Assistant group with key entry and Test connection`
 
 **Test checkpoint:** `build\bin\x64\Release\recto-tests\recto-tests.exe --gtest_filter=Settings.Assistant*` passes on the display-session host, and echoing the saved key into the `PasswordBox` fails `Settings.AssistantKeyNeverDisplayed`.
 
@@ -435,10 +436,10 @@ Before every request the user sees what will leave the machine: provider, model,
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface on the shared `design/SPEC.md` section 9.9 dialog chrome (`D02 T01 §10`); no screenshot exists.
+**Fidelity:** Genuinely new surface on the shared `design/SPEC.md` section 9.9 dialog chrome (`D02 T01 §10`); no screenshot exists. Design board: `design/SPEC.md` section 9.20 with `design/screenshots/D-Assistant.png` (drawn by `D06 T04 §26`).
 **Job:** A user can read exactly what will be sent, remove pages, choose to include protected content or leave it out, and press Send or Cancel. Consumer: `AssistantGate::authorize` (§12) and the Assistant panel (§17).
 **Treatment:** A `ContentDialog` with a header line naming provider, model and destination host, a list of earlier conversation turns that will be sent again, a scrollable read-only view of `render_text_preview` grouped by page with per-page include checkboxes, an exclusions list with reasons, an images strip showing each exact image, a budget line, the unticked opt-in `Include text from this password-protected document`, and `Send` and `Cancel`; there is no "don't ask again" control. Cheaper substitute that fails the checkpoint: a one-line "this will send your document" confirmation.
-**Chrome:** `RectoDialogStyles.xaml` (`D02 T01 §10`), stock `ContentDialog`, `RectoColors.xaml` tokens, Segoe Fluent Icons for warning glyphs.
+**Chrome:** `RectoDialogStyles.xaml` (`D02 T01 §10`), stock `ContentDialog`, `RectoColors.xaml` tokens, Fluent UI System Icons (`RectoIcons`) for warning glyphs.
 
 **Build order:**
 
@@ -463,22 +464,22 @@ The Assistant panel is where the user works with the feature: a setup prompt whi
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface following `design/SPEC.md` section 8.3 (side-panel card, header action slot, `SidePanelHost` states `D02 T03 §3`); no screenshot exists.
+**Fidelity:** Genuinely new surface following `design/SPEC.md` section 8.3 (side-panel card, header action slot, `SidePanelHost` states `D02 T03 §3`); no screenshot exists. Design board: `design/SPEC.md` section 9.20 with `design/screenshots/D-Assistant.png` (drawn by `D06 T04 §26`).
 **Job:** A user can summarize the document or a page range, ask a question and click `p. 12` to jump there, explain or translate a selection, see which pages each answer used, stop a running request, and export the conversation. Consumer: the person reading the document, and `NavigationService` for citation jumps.
 **Treatment:** An `AssistantPanel` registered in the `SidePanelHost` switcher with a setup state (button to Settings, no network), an action row, a message list with streamed text and `ResultNotice` lines, an input box, `Stop`, and a header action `Export as Markdown`. Citations render as link buttons only for pages that were sent. Cheaper substitute that fails the checkpoint: a modal dialog with the answer and unlinked page numbers.
-**Chrome:** `SidePanelHost` header and body (`D02 T03 §3`), `RectoColors.xaml` tokens, Segoe Fluent Icons, shared dialog chrome for the file picker prompts.
+**Chrome:** `SidePanelHost` header and body (`D02 T03 §3`), `RectoColors.xaml` tokens, Fluent UI System Icons (`RectoIcons`), shared dialog chrome for the file picker prompts.
 
 **Build order:**
 
 1. Author `src/app/panels/AssistantPanel.xaml/.h/.cpp` and register it in the `SidePanelHost` panel switcher menu. Done when: `Panels.AssistantPanelRegistered` finds the entry in the switcher and mounts the panel in all three layout presets.
-2. Implement the setup state (assistant off, or no key): an explanation, a button that opens Settings at the `ASSISTANT` group, and no action buttons. Done when: `Panels.AssistantSetupStateMakesNoNetworkCall` asserts the transport factory counter is unchanged after opening the panel.
+2. Implement the setup state (assistant off, or no key): an explanation, a button that opens Settings at the `Assistant` group, and no action buttons. Done when: `Panels.AssistantSetupStateMakesNoNetworkCall` asserts the transport factory counter is unchanged after opening the panel.
 3. Implement actions (`Summarize document`, `Summarize pages`, `Ask`, selection `Explain` and `Translate`), each building a `ContextPackage`, asking the gate for authorization (showing §16 when needed), then streaming into the message list with coalesced UI updates and a `Stop` button. Done when: `Panels.AssistantStreamsAndStops` streams a fake answer, stops it, and keeps the partial text marked stopped.
 4. Implement clickable citations that navigate to the cited page through the viewer's go-to-page path (`D02 T02 §6`) and select no text. Done when: `Panels.AssistantCitationJumpsToPage` clicks `p. 12` and the viewport lands on page 12, and a citation to an unsent page is not a link.
 5. Implement `Export as Markdown`: provider and model line, date, the messages in order, citations as plain `(p. N)` text, the `ResultNotice` lines, and a warning line that the file may contain document text; written temp-file-then-replace. Done when: `Panels.AssistantMarkdownExport` writes a file whose contents match a golden file and which contains no key.
 
 - [ ] Build the message list with plain-text rendering (§13 sanitizer), a per-message copy button and per-message `AutomationProperties.Name`. Done when: `Panels.AssistantMessagesRenderInertText` passes.
 - [ ] Add the action row with disabled states while a request is running and when the gate is not `Ready`. Done when: `Panels.AssistantActionStates` passes.
-- [ ] Show the `ResultNotice` (truncation, exclusions) under each answer and the request ledger entry (provider, model, pages, characters) in a collapsible "What was sent" row. Done when: `Panels.AssistantShowsNoticeAndLedger` passes.
+- [ ] Show the `ResultNotice` (truncation, exclusions) under each answer as a line starting `Based on pages` that names the pages sent, and the request ledger entry (provider, model, pages, characters) in a collapsible "What was sent" row. Done when: `Panels.AssistantShowsNoticeAndLedger` passes and finds, for a truncated fixture, the `Based on pages` line naming exactly the pages in the `ContextPackage`.
 - [ ] Keep the conversation in the `DocumentTabSession` only, cleared when the tab closes or when the user chooses `Clear conversation`, never written to disk except by export. Done when: `Panels.AssistantConversationNotPersisted` finds no conversation text on disk after closing the tab.
 - [ ] Write the export through the shared temp-file-then-replace helper with a file picker. Done when: `Panels.AssistantExportIsAtomic` interrupts the write and finds the original untouched. Cheaper substitute: writing the file in place.
 - [ ] Render in Light, Dark and HighContrast, floating and docked, with token brushes only. Done when: `Panels.AssistantThemesAndSlots` finds no literal colour and the panel fits both slots.
@@ -498,7 +499,7 @@ Every assistant action must be reachable from the command box and usable with a 
 **Build order:**
 
 1. Register in `CommandRegistry` (`D02 T03 §11`): `assistant.openPanel`, `assistant.summarizeDocument`, `assistant.summarizePages`, `assistant.ask`, `assistant.explainSelection`, `assistant.translateSelection`, `assistant.draftAltText`, `assistant.stop`, `assistant.exportMarkdown`, `assistant.clear`, `assistant.openSettings`, each with synonyms ("AI", "summary", "explain", "translate", "alt text", "ChatGPT", "Claude", "Gemini"). Done when: `Commands.AssistantAllReachableFromCtrlK` finds each command and each synonym in the `Ctrl+K` results.
-2. When the assistant is off or has no key, each action command opens the Settings `ASSISTANT` group instead of doing nothing and without any network call. Done when: `Commands.AssistantOffRoutesToSettingsWithoutNetwork` passes with the transport factory counter unchanged.
+2. When the assistant is off or has no key, each action command opens the Settings `Assistant` group instead of doing nothing and without any network call. Done when: `Commands.AssistantOffRoutesToSettingsWithoutNetwork` passes with the transport factory counter unchanged.
 3. Announce through `AnnouncementService` (`D03 T02 §5`): "Assistant is answering" once at start, "Assistant answer ready, N words" at completion, "Assistant stopped", and the `describe` title and next step on failure, never streamed word by word. Done when: `A11y.AssistantAnnouncementsAreCoalesced` counts exactly one start and one finish announcement for a streamed answer.
 4. Add every assistant control to the automated accessibility inventory (`D03 T02 §3`). Done when: the inventory test finds zero missing `AutomationProperties.Name` or tooltip across the Settings group, the dialog and the panel.
 

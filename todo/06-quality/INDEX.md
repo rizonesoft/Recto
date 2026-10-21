@@ -11,6 +11,7 @@ The evidence programs the milestones close on: golden renders, text and find tab
 | [TODO-01](./TODO-01-corpus-and-suites.md) | Golden, Text, Round-Trip and Performance Suites | active |
 | [TODO-02](./TODO-02-security-and-fuzzing.md) | Hostile-Input Rules, Fuzz Operations and the Broker Design | active |
 | [TODO-03](./TODO-03-user-failure-gates.md) | User-Reported Failure Class Gates | active |
+| [TODO-04](./TODO-04-design-boards.md) | Design Boards and SPEC Text for Undesigned Screens | draft |
 
 ## Completed
 
@@ -24,6 +25,7 @@ The evidence programs the milestones close on: golden renders, text and find tab
 - Suite-level oracles over the corpus, golden refresh discipline, performance measurement
 - Plan section 9 audit, fuzz scheduling and triage, the D13 broker design record
 - Gates for the failure classes users of PDF tools hit hardest
+- SPEC subsections and generated design boards for every screen the plan builds, checked before their consumers run
 
 ## Out of scope
 

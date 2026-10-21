@@ -1,6 +1,6 @@
 # Recto -- TODO Index
 
-The live execution plan for building Recto to version 1. Format spec: [README.md](./README.md). The governing documents this tree executes are [`docs/plans/2026-10-13-recto-foundation.md`](../docs/plans/2026-10-13-recto-foundation.md) (decisions D1 to D17, architecture, milestones M0 to M6) and [`design/SPEC.md`](../design/SPEC.md) (the interface).
+The live execution plan for building Recto to version 1. Format spec: [README.md](./README.md). The governing documents this tree executes are [`docs/plans/2026-10-13-recto-foundation.md`](../docs/plans/2026-10-13-recto-foundation.md) (decisions D1 to D21, D20 withdrawn; architecture, milestones M0 to M6) and [`design/SPEC.md`](../design/SPEC.md) (the interface).
 
 ## How to use this tree
 
@@ -54,9 +54,13 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 | Goldens, text tables, round-trips, performance targets (plan 8) | D06 T01 §1-§8 |
 | Security rules audit, fuzz operations, broker design (plan 9, D13) | D06 T02 §1-§6 |
 | Gates for user-reported failure classes common in PDF tools | D06 T03 §1-§12 |
+| SPEC subsections and `D-*.png` boards for every undesigned screen, with the board check | D06 T04 §1-§29 |
+| `RectoIcons` font, `RectoChipStyle` and the Classic status bar (SPEC 6, 7, 8.4) | D02 T01 §18-§20 |
 | Printing, Inno Setup (`Full` & `Portable`) installer, Portable `.zip`, MSIX & proof | D07 T01 §1-§9 |
 | About, NOTICE and GPL-3.0 audit, opt-in local crash bundle & GitHub Release / Store kit | D07 T02 §1-§7 |
+| Group Policy templates and locks (D21), ten interface languages and right-to-left readiness | D07 T02 §8-§17 |
 | Listening to users: intake, triage, diagnostics, reproducers, releases, demand | D07 T03 §1-§7 |
+| Opt-in AI assistant with the user's own key or a loopback local model, and its tools (D19) | D08 T01 §1-§19, D08 T02 §1-§35 |
 | Trademark search, repo face, optional Partner Center, reference machines (D1, plan 11) | D99 T01 §1-§4 |
 | Sandboxed broker process | Pre-approved design in D06 T02 §6; built after v1 (D13) |
 
@@ -82,6 +86,7 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 - [06 Quality] [TODO-02 Hostile-Input Rules, Fuzz Operations and the Broker Design](./06-quality/TODO-02-security-and-fuzzing.md): plan section 9 audit, scheduled fuzzing with triage, pre-approved D13 shared-memory broker design record.
 - [07 Release] [TODO-01 Printing, Inno Setup (Full & Portable) Installer, Optional MSIX and Install Proof](./07-release/TODO-01-packaging-and-print.md): print API decision, Inno Setup Full & Portable installer, Portable `.zip`, optional MSIX, automated install/portable/upgrade proof.
 - [07 Release] [TODO-02 About, GPL-3.0-or-later Compliance, Local Crash Bundle and Release Distribution](./07-release/TODO-02-store-and-compliance.md): About with generated truth, NOTICE audit, opt-in local minidump-plus-log crash bundle, GitHub Release bundle and optional Store submission kit.
+- [06 Quality] [TODO-04 Design Boards and SPEC Text for Undesigned Screens](./06-quality/TODO-04-design-boards.md): a board check script and single-board rendering, then 26 new SPEC subsections, the completed section 9.3.1 and 27 `D-*.png` boards for the panels, bars, dialogs and modes no board drew, each before its first consumer. Draft until reviewed.
 - [06 Quality] [TODO-03 User-Reported Failure Class Gates](./06-quality/TODO-03-user-failure-gates.md): hostile-input and recovered-error fixtures, a recovered-content page notice, the single-interpreter differential suite, save fault injection, raw-byte redaction proof, Unicode authoring round trips, UI glyph coverage, printer driver matrix, render and text fidelity fixtures, and the clean-machine release smoke.
 - [07 Release] [TODO-03 Listening to Users: Intake, Triage, Diagnostics, Releases and Demand](./07-release/TODO-03-listening-to-users.md): issue forms and `SECURITY.md`, triage rules, in-app `Report a problem`, `recto-cli scrub` reproducers, a regression test per user bug, closing on release, the release gate, the scope page and demand ledger, and What's new with an opt-in update notice.
 - [02 Viewer] [TODO-05 Rich Media, 3D Models and Geospatial PDFs](./02-viewer/TODO-05-rich-media-3d-geo.md): safe media playback, 3D model viewing and geospatial coordinates and measurement.

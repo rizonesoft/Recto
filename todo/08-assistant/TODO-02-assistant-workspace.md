@@ -47,6 +47,8 @@ title: "TODO-02 -- Assistant Workspace: Translate, Rewrite, Chat, Search, Comman
 - -> XREF: D05 T02 §9 -- Suggested redaction mark state.
 - -> XREF: D07 T02 §10 -- AssistantDisabled policy.
 - -> XREF: D05 T02 §28 -- suggested marks.
+- -> XREF: D06 T04 §26 -- the `D-Assistant.png` board and `design/SPEC.md` section 9.20 that §7, §12, §33 here build against.
+- -> XREF: D06 T04 §27 -- the `D-AssistantReview.png` board and `design/SPEC.md` section 9.21 that §10, §17, §19, §21, §23, §27, §32 here build against.
 
 ## Outcome
 
@@ -70,33 +72,33 @@ title: "TODO-02 -- Assistant Workspace: Translate, Rewrite, Chat, Search, Comman
 | 4 | §4 | Structured output runner: bounded JSON, schema checks and verified quotes | D08 T01 §13 | [ ] |
 | 5 | §5 | Rewrite, proofread, tone, expand and condense suggestion engine | §4, D03 T04 §2 | [ ] |
 | 6 | §6 | Apply AI text suggestions through the undoable Edit PDF path | §5, D03 T04 §3, D03 T04 §5, D03 T04 §14 | [ ] |
-| 7 | §7 | Rewrite and proofread review in the Assistant panel | §6, D08 T01 §17 | [ ] |
+| 7 | §7 | Rewrite and proofread review in the Assistant panel | §6, D08 T01 §17, D06 T04 §26 | [ ] |
 | 8 | §8 | Whole-document translation on a copy keeping layout | §3, §4, D03 T04 §2, D03 T04 §5, D03 T04 §9 | [ ] |
 | 9 | §9 | Bilingual output: side-by-side wide pages and interleaved pages | §8, D05 T01 §1, D05 T01 §2 | [ ] |
-| 10 | §10 | Translation dialog: language, glossary, job preview, progress and report | §8, §9, D04 T01 §1, D04 T01 §5 | [ ] |
+| 10 | §10 | Translation dialog: language, glossary, job preview, progress and report | §8, §9, D04 T01 §1, D04 T01 §5, D06 T04 §27 | [ ] |
 | 11 | §11 | Multi-document context builder with per-file citations | D08 T01 §11, D08 T01 §13 | [ ] |
-| 12 | §12 | Multi-document chat across chosen open files | §11, D08 T01 §17 | [ ] |
+| 12 | §12 | Multi-document chat across chosen open files | §11, D08 T01 §17, D06 T04 §26 | [ ] |
 | 13 | §13 | Embeddings requests for providers and local models | §1, §3, D08 T01 §3 | [ ] |
 | 14 | §14 | Semantic index store beside the text index | §13, D03 T05 §4 | [ ] |
 | 15 | §15 | Semantic index build job with one preview and never-upload-twice reuse | §14, §3, D03 T05 §5 | [ ] |
 | 16 | §16 | Semantic query: previewed query embedding, ranking and verified hits | §15 | [ ] |
-| 17 | §17 | Search by meaning mode, results and index controls | §16, D03 T05 §7, D03 T05 §8 | [ ] |
+| 17 | §17 | Search by meaning mode, results and index controls | §16, D03 T05 §7, D03 T05 §8, D06 T04 §27 | [ ] |
 | 18 | §18 | Natural-language command planner over the command registry | §4, D02 T03 §11 | [ ] |
-| 19 | §19 | Command box: ask for a command, review the plan, run what you choose | §18, D02 T03 §12 | [ ] |
+| 19 | §19 | Command box: ask for a command, review the plan, run what you choose | §18, D02 T03 §12, D06 T04 §27 | [ ] |
 | 20 | §20 | AI bookmark proposals and per-bookmark summaries | §4, D02 T03 §6 | [ ] |
-| 21 | §21 | Bookmark proposals review in the Outline panel | §20, D02 T03 §5 | [ ] |
+| 21 | §21 | Bookmark proposals review in the Outline panel | §20, D02 T03 §5, D06 T04 §27 | [ ] |
 | 22 | §22 | AI page proposals: blank, misoriented and duplicate pages | §4, D05 T01 §3 | [ ] |
-| 23 | §23 | Page proposals review in the Organize grid | §22, D05 T02 §1 | [ ] |
+| 23 | §23 | Page proposals review in the Organize grid | §22, D05 T02 §1, D06 T04 §27 | [ ] |
 | 24 | §24 | Mind map: outline, layout, Markdown, OPML and image exports | §4 | [ ] |
 | 25 | §25 | Flashcards and quizzes with Markdown and CSV exports | §4 | [ ] |
 | 26 | §26 | Contract risk review with verified quotes and the not-legal-advice notice | §4, D08 T01 §11 | [ ] |
-| 27 | §27 | Contract review list, page jumps and optional Apply as comments | §26, D03 T03 §4 | [ ] |
+| 27 | §27 | Contract review list, page jumps and optional Apply as comments | §26, D03 T03 §4, D06 T04 §27 | [ ] |
 | 28 | §28 | AI-content estimate with fixed limits text | §4 | [ ] |
 | 29 | §29 | Image generation inserted through the undoable Edit PDF path | §1, §3, D03 T04 §8, D03 T04 §14 | [ ] |
 | 30 | §30 | Audio summaries: Windows voices or provider speech, WAV and MP3 | §1, §4 | [ ] |
 | 31 | §31 | AI-assisted PII suggestions as unapplied redaction marks | §4, D05 T02 §9 | [ ] |
-| 32 | §32 | Redaction Bar: review, accept and reject AI suggestions | §31 | [ ] |
-| 33 | §33 | Study and creation tools in the Assistant panel | §24, §25, §28, §29, §30, D08 T01 §17 | [ ] |
+| 32 | §32 | Redaction Bar: review, accept and reject AI suggestions | §31, D06 T04 §27 | [ ] |
+| 33 | §33 | Study and creation tools in the Assistant panel | §24, §25, §28, §29, §30, D08 T01 §17, D06 T04 §26 | [ ] |
 | 34 | §34 | Ctrl+K commands, UIA names and announcements for the workspace tools | §7, §10, §12, §17, §19, §21, §23, §27, §32, §33, D02 T03 §11, D03 T02 §5 | [ ] |
 | 35 | §35 | Workspace privacy suite: loopback only, previews, no auto-apply, zero network | §2, §34 | [ ] |
 
@@ -143,7 +145,7 @@ Users who will not send documents to a cloud can point Recto at a local model se
 - [ ] Prove the keyless path end to end: the readiness function (`D08 T01 §12`) reports the local provider ready with a valid endpoint and no credential, and a request goes through the transport with `SecretSource::None`. Done when: `AssistantWs.LocalKeylessRequestSucceeds` completes a streamed answer against the loopback test server with no `with_key` call.
 - [ ] Make `Test connection` and model discovery obey the gate: they run only on an explicit click, are disabled when the assistant is off or `AssistantDisabled` is set, and use the same transport and loopback policy. Done when: `AssistantWs.TestConnectionAndModelListObeyDisabledState` asserts zero requests when disabled and one request per click when enabled.
 - [ ] Implement `Test connection` for the local endpoint, listing models from the endpoint's model list when it offers one and otherwise leaving the model field free text. Done when: `AssistantWs.LocalTestConnectionTypedErrors` covers server not running, wrong port and unknown model with plain-language messages.
-- [ ] Add the local provider to the Settings `ASSISTANT` group: provider choice, endpoint field with inline validation, model field, no key row. Done when: `Settings.AssistantLocalProviderRows` finds the rows and no key control for `Local`.
+- [ ] Add the local provider to the Settings `Assistant` group: provider choice, endpoint field with inline validation, model field, no key row. Done when: `Settings.AssistantLocalProviderRows` finds the rows and no key control for `Local`.
 - [ ] Commit: `assistant: add local loopback provider with no key, no proxy and a narrow HTTP exception`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=AssistantWs.Local*:AssistantWs.LoopbackPolicyRules:AssistantWs.NonLocalHttpStillRefused:AssistantWs.GateNoEndpointState:AssistantWs.PreviewShowsLoopbackNotice` passes, and allowing `127.0.0.2` in `loopback_policy` fails `AssistantWs.LoopbackPolicyRules`.
@@ -250,10 +252,10 @@ The user needs to see the original and the suggestion side by side, pick what to
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface following `design/SPEC.md` section 8.3 (side-panel card and header action slot, `D02 T03 §3`) and section 9.3 (selection toolbar actions); no screenshot exists.
+**Fidelity:** Genuinely new surface following `design/SPEC.md` section 8.3 (side-panel card and header action slot, `D02 T03 §3`) and section 9.3 (selection toolbar actions); no screenshot exists. Design board: `design/SPEC.md` section 9.20 with `design/screenshots/D-Assistant.png` (drawn by `D06 T04 §26`).
 **Job:** A user selects text, chooses Rewrite, Proofread, Tone, Expand or Condense, reviews the request preview, sees each paragraph's original and suggestion with changes marked, accepts or discards each, and applies the accepted ones as one undo step. Consumer: the person editing a document; `apply_text` (§6).
-**Treatment:** A `Rewrite` view in `AssistantPanel` (`D08 T01 §17`) with a mode selector, a tone `ComboBox`, an instruction `TextBox`, a virtualized list of paragraph cards (original, suggestion, diff toggle, Accept and Discard), a skipped-with-reason list, and `Apply accepted (N)`. Cheaper substitute that fails the checkpoint: replacing the selection with the model's text on arrival.
-**Chrome:** `SidePanelHost` body (`D02 T03 §3`), the preview dialog of `D08 T01 §16`, `RectoColors.xaml` tokens for diff add and remove, Segoe Fluent Icons.
+**Treatment:** A `Rewrite` view in `AssistantPanel` (`D08 T01 §17`) with a mode selector (`Rewrite`, `Proofread`, `Tone`, `Expand`, `Condense`), a tone `ComboBox`, an instruction `TextBox`, a virtualized list of paragraph cards (original, suggestion, diff toggle, Accept and Discard), a skipped-with-reason list, and `Apply accepted (N)`. Cheaper substitute that fails the checkpoint: replacing the selection with the model's text on arrival.
+**Chrome:** `SidePanelHost` body (`D02 T03 §3`), the preview dialog of `D08 T01 §16`, `RectoColors.xaml` tokens for diff add and remove, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -323,10 +325,10 @@ The user starts a translation from one dialog: pick the target language, the pag
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface on the `design/SPEC.md` section 9.9 dialog chrome (`D02 T01 §10`) with the `QueueCard` of `D04 T01 §5` for progress; no screenshot exists.
+**Fidelity:** Genuinely new surface on the `design/SPEC.md` section 9.9 dialog chrome (`D02 T01 §10`) with the `QueueCard` of `D04 T01 §5` for progress; no screenshot exists. Design board: `design/SPEC.md` section 9.21 with `design/screenshots/D-AssistantReview.png` (drawn by `D06 T04 §27`).
 **Job:** A user translates a PDF into another language, sees exactly what will be sent for every batch before starting, watches progress, and opens the result and a report of paragraphs that stayed in the original language. Consumer: the person reading a foreign-language document.
-**Treatment:** A `ContentDialog` with options, a glossary editor, a virtualized job-preview list (every batch's exact text, totals of requests and characters), `Start` and `Cancel`; progress in the `QueueCard`; a completion notice with `Open file` and `View report`. Cheaper substitute that fails the checkpoint: a one-line "this will send your document" confirmation or a silent background start.
-**Chrome:** `RectoDialogStyles.xaml`, `QueueCard`, `RectoColors.xaml` tokens, Segoe Fluent Icons.
+**Treatment:** A `Translate document` `ContentDialog` with the options `Target language`, pages, `Glossary` (the glossary editor) and `Output` (translated only, side by side or interleaved) and the fit policy, a virtualized job-preview list (every batch's exact text, totals of requests and characters), `Start` and `Cancel`; progress in the `QueueCard`; a completion notice with `Open file` and `View report`. Cheaper substitute that fails the checkpoint: a one-line "this will send your document" confirmation or a silent background start.
+**Chrome:** `RectoDialogStyles.xaml`, `QueueCard`, `RectoColors.xaml` tokens, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -371,10 +373,10 @@ The user picks which open documents the assistant may read and asks questions ac
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface following `design/SPEC.md` section 8.3 (side-panel card) and the `D08 T01 §16` preview dialog; no screenshot exists.
+**Fidelity:** Genuinely new surface following `design/SPEC.md` section 8.3 (side-panel card) and the `D08 T01 §16` preview dialog; no screenshot exists. Design board: `design/SPEC.md` section 9.20 with `design/screenshots/D-Assistant.png` (drawn by `D06 T04 §26`).
 **Job:** A user ticks two to ten open documents, asks a question, reviews the per-file send set, reads a streamed answer and clicks `File 2, p. 5` to land on that page of that tab. Consumer: a researcher comparing documents.
 **Treatment:** An `Across files` mode in `AssistantPanel` with a checklist of open tabs (name, page count, security note), per-file scope, the shared question box, the standard preview dialog grouped by file, and citation buttons that activate the tab and navigate. Cheaper substitute that fails the checkpoint: reading all open tabs by default, or citations that show only a page number.
-**Chrome:** `SidePanelHost`, `D08 T01 §16` dialog, token brushes, Segoe Fluent Icons.
+**Chrome:** `SidePanelHost`, `D08 T01 §16` dialog, token brushes, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -486,10 +488,10 @@ The Search panel gains a `Meaning` mode next to words: the user builds an index 
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface following `design/SPEC.md` section 9.3 (find card rows, match context rows) and the `D03 T05 §7` panel; no screenshot exists.
+**Fidelity:** Genuinely new surface following `design/SPEC.md` section 9.3 (find card rows, match context rows) and the `D03 T05 §7` panel; no screenshot exists. Design board: `design/SPEC.md` section 9.21 with `design/screenshots/D-AssistantReview.png` (drawn by `D06 T04 §27`).
 **Job:** A user with a folder of papers asks "where do they discuss refunds?", reviews the one-line request preview, and clicks a result to land on the page. Consumer: the person searching a folder or their open tabs.
 **Treatment:** A `Words | Meaning` toggle in the Search panel; the Meaning view has the scope picker, a `Build index` button opening the job preview, an inline request-preview row (provider, model, exact query text) with `Search by meaning`, score bars in the grouped results, a stale-files note, and index size with `Delete meaning index`. Cheaper substitute that fails the checkpoint: sending the query as the user types.
-**Chrome:** `D03 T05 §7` panel and list, token brushes, Segoe Fluent Icons.
+**Chrome:** `D03 T05 §7` panel and list, token brushes, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -533,10 +535,10 @@ In the `Ctrl+K` box, when no command matches what the user typed, a row offers t
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface inside the command box of `D02 T03 §12` (`design/SPEC.md` section 9.2 command box rows); no screenshot exists.
+**Fidelity:** Genuinely new surface inside the command box of `D02 T03 §12` (`design/SPEC.md` section 9.4 command box rows); no screenshot exists. Design board: `design/SPEC.md` section 9.21 with `design/screenshots/D-AssistantReview.png` (drawn by `D06 T04 §27`).
 **Job:** A user types "make this page landscape and save a copy", gets no direct match, asks the assistant, sees the request, then a list of commands to run or skip. Consumer: someone who does not know the command names.
 **Treatment:** An `Ask AI to find a command` row appears only when the assistant is enabled and ready; selecting it expands an inline preview (provider, model, exact text, catalog size with an expander) with `Send`; results are a checkbox list with a destructive badge and the explanation; `Run selected` executes them. Enter on the query never sends. Cheaper substitute that fails the checkpoint: running the first proposed command on Enter.
-**Chrome:** command box overlay (`D02 T03 §12`), token brushes, Segoe Fluent Icons.
+**Chrome:** command box overlay (`D02 T03 §12`), token brushes, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -582,10 +584,10 @@ The Outline panel gets a `Suggest bookmarks with AI` action. The user reviews th
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface extending `design/SPEC.md` section 8.3 (Outline with Bookmark Editor); no screenshot exists.
+**Fidelity:** Genuinely new surface extending `design/SPEC.md` section 8.3 (Outline with Bookmark Editor); no screenshot exists. Design board: `design/SPEC.md` section 9.21 with `design/screenshots/D-AssistantReview.png` (drawn by `D06 T04 §27`).
 **Job:** A user with an unstructured PDF gets a proposed table of contents, fixes a title, unticks two entries and applies the rest. Consumer: the person navigating a long document.
 **Treatment:** A header action in `OutlinePanel` opens a proposals `TreeView` with checkboxes, inline title edit, `Heading` or `Generated` badges, a summary expander per node, and `Apply (N)` with an `Add` or `Replace` choice; the standard preview dialog runs before sending. Cheaper substitute that fails the checkpoint: replacing the existing outline on arrival.
-**Chrome:** `OutlinePanel` (`D02 T03 §5`), the preview dialog, token brushes, Segoe Fluent Icons.
+**Chrome:** `OutlinePanel` (`D02 T03 §5`), the preview dialog, token brushes, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -628,10 +630,10 @@ The user sees proposals as badges on the thumbnails they already work with and a
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface extending `design/SPEC.md` section 9.6 (Organize modes) and the `D05 T02 §1` page grid; no screenshot exists.
+**Fidelity:** Genuinely new surface extending `design/SPEC.md` section 9.6 (Organize modes) and the `D05 T02 §1` page grid; no screenshot exists. Design board: `design/SPEC.md` section 9.21 with `design/screenshots/D-AssistantReview.png` (drawn by `D06 T04 §27`).
 **Job:** A user opens a scanned batch, chooses Suggest fixes, sees badges for blank, sideways and duplicate pages, accepts some and saves a copy. Consumer: the person cleaning scans.
-**Treatment:** An `AI suggestions` button in the Organize toolbar opens a side list and thumbnail badges (`Blank`, `Rotate 90`, `Duplicate of 4`); Accept per item or `Accept all of a kind`; accepted items become normal `OrganizeEditModel` operations with `Undo`. The local detectors run immediately; the model step needs the preview dialog. Cheaper substitute that fails the checkpoint: deleting flagged pages on arrival.
-**Chrome:** `PageGrid`, `OrganizeEditModel` (`D05 T02 §1`), token brushes, Segoe Fluent Icons.
+**Treatment:** A `Suggest fixes` button in the Organize toolbar (the name the Job uses) opens a side list and thumbnail badges (`Blank`, `Rotate 90`, `Duplicate of 4`); Accept per item or `Accept all of a kind`; accepted items become normal `OrganizeEditModel` operations with `Undo`. The local detectors run immediately; the model step needs the preview dialog. Cheaper substitute that fails the checkpoint: deleting flagged pages on arrival.
+**Chrome:** `PageGrid`, `OrganizeEditModel` (`D05 T02 §1`), token brushes, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -718,10 +720,10 @@ The review result is a list the user can filter by severity and category, with e
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface following `design/SPEC.md` section 8.3 (side-panel card) and the comment styling of the Comments panel; no screenshot exists.
+**Fidelity:** Genuinely new surface following `design/SPEC.md` section 8.3 (side-panel card) and the comment styling of the Comments panel; no screenshot exists. Design board: `design/SPEC.md` section 9.21 with `design/screenshots/D-AssistantReview.png` (drawn by `D06 T04 §27`).
 **Job:** A user runs a review, sees flagged clauses with the notice at the top, clicks a clause to jump to its page, ticks some and applies them as comments they can edit or delete. Consumer: someone reading a contract before signing.
-**Treatment:** A `Contract review` view in `AssistantPanel` with the fixed notice pinned, a category picker, filters, a list of clause cards (severity, quote, why), citation-style page buttons, and `Add as comments (N)`. Comments are highlight plus sticky-note annotations with author `Recto Assistant (AI)` created as one undoable group. Cheaper substitute that fails the checkpoint: adding comments for every clause automatically.
-**Chrome:** `SidePanelHost`, the annotation undo stack of `D03 T03 §4`, token brushes, Segoe Fluent Icons.
+**Treatment:** A `Contract review` view in `AssistantPanel` with the fixed notice pinned, a category picker, a `Review contract` button that opens the request preview, `Severity` and category filters, a list of clause cards (severity, quote, why), citation-style page buttons, and `Add as comments (N)`. Comments are highlight plus sticky-note annotations with author `Recto Assistant (AI)` created as one undoable group. Cheaper substitute that fails the checkpoint: adding comments for every clause automatically.
+**Chrome:** `SidePanelHost`, the annotation undo stack of `D03 T03 §4`, token brushes, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -831,10 +833,10 @@ The user reviews AI suggestions inside the Redaction & Sanitize Bar they already
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface extending `design/SPEC.md` section 8.2 (`Redaction & Sanitize Bar`); no screenshot exists.
+**Fidelity:** Genuinely new surface extending `design/SPEC.md` section 8.2 (`Redaction & Sanitize Bar`); no screenshot exists. Design board: `design/SPEC.md` section 9.21 with `design/screenshots/D-AssistantReview.png` (drawn by `D06 T04 §27`).
 **Job:** A user runs Suggest redactions, sees dashed suggested boxes, filters by category, accepts the right ones into pending marks and applies redaction through the usual confirmation. Consumer: someone preparing a document for release.
-**Treatment:** A `Suggest with AI` button in the bar opens the request preview, then draws suggestions with a dashed `RectoDangerBrush` outline and light fill distinct from pending marks, with a `Suggestions (N)` list (category chips, Accept, Reject, `Accept all in category`). Cheaper substitute that fails the checkpoint: turning suggestions straight into pending marks or applying them.
-**Chrome:** `Redaction & Sanitize Bar` (`D05 T02 §9`), `RectoDangerBrush`, Segoe Fluent Icons.
+**Treatment:** A `Suggest redactions` button in the bar (the name the Job uses) opens the request preview, then draws suggestions with a dashed `RectoDangerBrush` outline and light fill distinct from pending marks, with a `Suggestions (N)` list (category chips, Accept, Reject, `Accept all in category`). Cheaper substitute that fails the checkpoint: turning suggestions straight into pending marks or applying them.
+**Chrome:** `Redaction & Sanitize Bar` (`D05 T02 §9`), `RectoDangerBrush`, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -855,10 +857,10 @@ Mind maps, flashcards, quizzes, the AI-content estimate, image generation and au
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface following `design/SPEC.md` section 8.3 (side-panel card and header action slot); no screenshot exists.
+**Fidelity:** Genuinely new surface following `design/SPEC.md` section 8.3 (side-panel card and header action slot); no screenshot exists. Design board: `design/SPEC.md` section 9.20 with `design/screenshots/D-Assistant.png` (drawn by `D06 T04 §26`).
 **Job:** A user picks a tool, chooses pages, previews the request, gets a result they can read, edit where applicable, export or insert, and sees why a tool is unavailable for their provider. Consumer: students, researchers and editors.
 **Treatment:** The `Tools` menu from `D08 T01 §17` lists each tool; each view has a scope control, options, `Preview and send`, the result, and export buttons (`Markdown`, `OPML`, `CSV`, `PNG`, `WAV`, `MP3`, `Insert into document`). Unavailable tools are shown disabled with the §1 reason. Cheaper substitute that fails the checkpoint: separate floating windows per tool or tools that send without the preview dialog.
-**Chrome:** `SidePanelHost`, preview dialog, file save pickers, token brushes, Segoe Fluent Icons.
+**Chrome:** `SidePanelHost`, preview dialog, file save pickers, token brushes, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -884,7 +886,7 @@ Every workspace feature must be reachable from the command box and usable with a
 **Build order:**
 
 1. Register in `CommandRegistry` (`D02 T03 §11`): `assistant.translateDocument`, `assistant.rewriteSelection`, `assistant.proofreadSelection`, `assistant.chatAcrossFiles`, `assistant.searchByMeaning`, `assistant.buildMeaningIndex`, `assistant.suggestBookmarks`, `assistant.suggestPageFixes`, `assistant.mindMap`, `assistant.flashcards`, `assistant.quiz`, `assistant.contractReview`, `assistant.aiContentCheck`, `assistant.generateImage`, `assistant.audioSummary`, `assistant.suggestRedactions`, with synonyms ("translate", "rewrite", "proofread", "tone", "shorten", "expand", "semantic", "study", "flashcard", "risk", "bilingual", "AI"). Done when: `Commands.AssistantWorkspaceReachableFromCtrlK` finds each command and synonym.
-2. When the assistant is off, has no key or endpoint, or lacks a capability, the command opens the Settings `ASSISTANT` group or shows the §1 reason, without any network call. Done when: `Commands.AssistantWorkspaceOffRoutesWithoutNetwork` passes with the transport factory counter unchanged.
+2. When the assistant is off, has no key or endpoint, or lacks a capability, the command opens the Settings `Assistant` group or shows the §1 reason, without any network call. Done when: `Commands.AssistantWorkspaceOffRoutesWithoutNetwork` passes with the transport factory counter unchanged.
 3. Announce through `AnnouncementService` (`D03 T02 §5`): job start, one progress milestone per 25 percent, completion with counts, failure with next step, never streamed text. Done when: `A11y.AssistantWorkspaceAnnouncementsCoalesced` counts the expected announcements for a translation job.
 4. Add every new control to the accessibility inventory. Done when: the inventory test reports zero missing names across §7, §10, §12, §17, §19, §21, §23, §27, §32 and §33.
 

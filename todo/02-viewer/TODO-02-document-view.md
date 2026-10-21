@@ -35,6 +35,8 @@ track: M2
 - -> XREF: D01 T02 §11 -- TileTextureCache keys by the full TileKey.
 - -> XREF: D01 T02 §12 -- page transition parser and duration accessor.
 - -> XREF: D01 T02 §12 -- transitions read through the actor query.
+- -> XREF: D06 T04 §5 -- the `D-Presentation.png` board and `design/SPEC.md` section 9.10 that §13, §14, §15, §16, §17 here build against.
+- -> XREF: D06 T04 §6 -- the `D-ViewTools.png` board and `design/SPEC.md` section 9.11 that §18, §20, §21, §22, §23, §24 here build against.
 
 ## Outcome
 
@@ -64,18 +66,18 @@ track: M2
 | 10 | §10 | Dark-theme page colour modes (`Original`, `Dimmed`, `Inverted`) and `F11` Full Screen | §4, §8 | [ ] |
 | 11 | §11 | Reading tints: sepia, eye-care green and a custom page colour | §10, D02 T04 §5, D02 T03 §11 | [ ] |
 | 12 | §12 | `recto-pdf` page transitions and timings: `/Trans` and `/Dur` | D01 T01 §10, D00 T03 §3 | [ ] |
-| 13 | §13 | Presentation mode: full-screen slideshow, navigation and blank screen | §6, §9, §10, §12, D02 T03 §11 | [ ] |
-| 14 | §14 | Render page transitions and honour automatic page timing | §12, §13, D02 T04 §5, D01 T02 §12 | [ ] |
-| 15 | §15 | Presentation pen and laser pointer | §13 | [ ] |
-| 16 | §16 | Presenter view on a second display with page preview and timer | §3, §13, D02 T04 §5 | [ ] |
-| 17 | §17 | Slide navigator: jump to any page during a presentation | §3, §13, §16 | [ ] |
-| 18 | §18 | Hands-free auto-scroll with speed control | §2, §6, D02 T03 §11, D02 T04 §5 | [ ] |
+| 13 | §13 | Presentation mode: full-screen slideshow, navigation and blank screen | §6, §9, §10, §12, D02 T03 §11, D06 T04 §5 | [ ] |
+| 14 | §14 | Render page transitions and honour automatic page timing | §12, §13, D02 T04 §5, D01 T02 §12, D06 T04 §5 | [ ] |
+| 15 | §15 | Presentation pen and laser pointer | §13, D06 T04 §5 | [ ] |
+| 16 | §16 | Presenter view on a second display with page preview and timer | §3, §13, D02 T04 §5, D06 T04 §5 | [ ] |
+| 17 | §17 | Slide navigator: jump to any page during a presentation | §3, §13, §16, D06 T04 §5 | [ ] |
+| 18 | §18 | Hands-free auto-scroll with speed control | §2, §6, D02 T03 §11, D02 T04 §5, D06 T04 §6 | [ ] |
 | 19 | §19 | Reverse page order view and right-to-left spreads | §5, §6, D02 T03 §1 | [ ] |
-| 20 | §20 | Rulers and cursor coordinates in chosen units | §5, §7, D02 T01 §4, D02 T03 §11 | [ ] |
-| 21 | §21 | Grid, guides and the view snap provider | §20, D02 T03 §1 | [ ] |
-| 22 | §22 | Line weights view toggle: true widths or uniform thin lines | §3, D02 T03 §7, D01 T02 §6, D01 T02 §11 | [ ] |
-| 23 | §23 | Split view: two panes of one document with independent scroll and zoom | §6, §7, D02 T04 §6, D02 T01 §13 | [ ] |
-| 24 | §24 | Side-by-side view of two documents with synchronized scrolling | §6, D02 T01 §3, D02 T01 §13 | [ ] |
+| 20 | §20 | Rulers and cursor coordinates in chosen units | §5, §7, D02 T01 §4, D02 T03 §11, D06 T04 §6 | [ ] |
+| 21 | §21 | Grid, guides and the view snap provider | §20, D02 T03 §1, D06 T04 §6 | [ ] |
+| 22 | §22 | Line weights view toggle: true widths or uniform thin lines | §3, D02 T03 §7, D01 T02 §6, D01 T02 §11, D06 T04 §6 | [ ] |
+| 23 | §23 | Split view: two panes of one document with independent scroll and zoom | §6, §7, D02 T04 §6, D02 T01 §13, D06 T04 §6 | [ ] |
+| 24 | §24 | Side-by-side view of two documents with synchronized scrolling | §6, D02 T01 §3, D02 T01 §13, D06 T04 §6 | [ ] |
 
 ## 1. `SwapChainPanel`, Direct3D 11 / Direct2D 1.3 device creation and presentation thread
 
@@ -85,7 +87,7 @@ Implement foundation plan section 4.8's presentation foundation in `src/app/Docu
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 4 (`RectoCanvasBrush`: `#E6E7EA` light / `#141312` dark) and 7 (page canvas corner radius 12) with `design/screenshots/D-Focus-Light.png` and `D-Focus-Dark.png`.
+**Fidelity:** `design/SPEC.md` sections 4 (`RectoCanvasBrush`: `#E6E7EA` light / `#141312` dark) and 7 (page canvas on the stock `OverlayCornerRadius`, 8 epx; pages themselves stay square) with `design/screenshots/D-Focus-Light.png` and `D-Focus-Dark.png`.
 **Job:** The user gets a tear-free, hardware-accelerated document canvas that never blocks the UI thread and recovers automatically if the graphics driver resets. Consumer: §2's viewport channel and §4's tile compositor draw onto this presentation surface.
 **Treatment:** Dedicated presentation thread per `DocumentView` with hardware `D3D11CreateDevice` (`D3D11_CREATE_DEVICE_BGRA_SUPPORT`), WARP fallback only when no hardware adapter exists, multithreaded `ID2D1Factory1`, and `ISwapChainPanelNative` binding. Cheaper substitute that fails the checkpoint: drawing PDF pages into XAML `Image` / `WriteableBitmap` controls on the UI thread.
 **Chrome:** mount `DocumentView` inside `ShellPage`'s `CenterCanvasSlot` (`D02 T01 §4`) and clear the swap chain to `RectoCanvasBrush` sampled from the active theme dictionary. Do not hard-code hex clear colours.
@@ -93,7 +95,7 @@ Implement foundation plan section 4.8's presentation foundation in `src/app/Docu
 **Build order:**
 
 1. Author `src/services/presentation.h/.cpp` (`PresentationRenderer`): create the hardware `ID3D11Device` (`D3D11_CREATE_DEVICE_BGRA_SUPPORT`), `IDXGIDevice`, `IDXGIAdapter`, `IDXGIFactory2`, flip-model `IDXGISwapChain1`, and `ID2D1DeviceContext` (`D2D1_FACTORY_TYPE_MULTI_THREADED`), and run the dedicated presentation loop thread waking on a condition variable / frame event and joining cleanly on stop. Done when: starting and stopping `PresentationRenderer` 50 times in a unit test leaks zero COM interfaces (`ID3D11Debug` live object report clean) and joins before `Runtime` shutdown completes.
-2. Create `src/app/DocumentView.xaml/.h/.cpp` hosting a `SwapChainPanel` (`CornerRadius=12`), bind the swap chain on the UI thread via `ISwapChainPanelNative::SetSwapChain`, clear to the theme-resolved `RectoCanvasBrush` colour, and implement `handle_device_lost()` so `DXGI_ERROR_DEVICE_REMOVED` or `DXGI_ERROR_DEVICE_RESET` recreates the D3D11/D2D devices and swap chain automatically. Done when: `DocumentView` renders the `RectoCanvasBrush` background in Light and Dark themes and recovers cleanly from a simulated device-lost signal in `recto-tests`.
+2. Create `src/app/DocumentView.xaml/.h/.cpp` hosting a `SwapChainPanel` (inside a `Border` on the stock `OverlayCornerRadius`, 8 epx), bind the swap chain on the UI thread via `ISwapChainPanelNative::SetSwapChain`, clear to the theme-resolved `RectoCanvasBrush` colour, and implement `handle_device_lost()` so `DXGI_ERROR_DEVICE_REMOVED` or `DXGI_ERROR_DEVICE_RESET` recreates the D3D11/D2D devices and swap chain automatically. Done when: `DocumentView` renders the `RectoCanvasBrush` background in Light and Dark themes and recovers cleanly from a simulated device-lost signal in `recto-tests`.
 
 - [ ] Author `src/services/presentation.h/.cpp` with hardware `D3D11CreateDevice` (`D3D11_CREATE_DEVICE_BGRA_SUPPORT`), automatic WARP fallback if hardware creation fails, and `ID2D1Factory1` / `ID2D1Device` / `ID2D1DeviceContext` initialization. Done when: device creation succeeds on both discrete/integrated GPUs and headless CI adapters.
 - [ ] Create the `IDXGISwapChain1` with `DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL`, `DXGI_FORMAT_B8G8R8A8_UNORM`, `DXGI_ALPHA_MODE_IGNORE`, and 2 buffers for low-latency presentation. Done when: `Present(1, 0)` runs on the presentation thread with zero DXGI debug layer warnings.
@@ -274,7 +276,7 @@ Implement foundation plan section 4.7's two-phase zoom engine in `DocumentView` 
 
 ## 8. Floating Page Toolbar (`Focus`) and reading auto-fade behavior
 
-Build the SPEC section 8.2 `PageToolbar` control (`src/app/controls/PageToolbar.xaml/.h/.cpp`) hosted in `BottomOverlaySlot` (`Focus` default, centred `22 epx` above the bottom of the canvas) and reparentable into `TopBarSlot` (`Classic` and `Reading room`): `RectoRaisedBrush`, `CornerRadius=16`, `Padding=6 epx`, `ThemeShadow` Z=32, `36 x 36 epx` minimum button hit targets, exact SPEC 8.2 control order and `More` menu items, `RectoAccentTintBrush` toggled states, and the 3-second pointer-idle fade to `40%` opacity while reading (respecting the OS `"Show animations in Windows"` accessibility setting).
+Build the SPEC section 8.2 `PageToolbar` control (`src/app/controls/PageToolbar.xaml/.h/.cpp`) hosted in `BottomOverlaySlot` (`Focus` default, centred `22 epx` above the bottom of the canvas) and reparentable into `TopBarSlot` (`Classic` and `Reading room`): `RectoRaisedBrush`, the stock `OverlayCornerRadius` (8 epx), `Padding=6 epx`, `ThemeShadow` Z=32, `36 x 36 epx` minimum button hit targets, exact SPEC 8.2 control order and `More` menu items, `RectoAccentTintBrush` toggled states, and the 3-second pointer-idle fade to `40%` opacity while reading (respecting the OS `"Show animations in Windows"` accessibility setting).
 
 > **Deferred:** `Find` button activation -> XREF: D03 T01 §6
 > **Deferred:** `Annotate / Tools` contextual mode bars (`Markup`, `Form Designer`, `Redact & Sanitize`, `Table/Image Extractor`, `Sign Document`, `Compare PDFs`, `Crop & Resize`, `Watermark & Header/Footer`, `Optimize PDF`) -> XREF: D03 T03 §3
@@ -285,8 +287,8 @@ Build the SPEC section 8.2 `PageToolbar` control (`src/app/controls/PageToolbar.
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 6 (`16 epx` toolbar icons), 7 (`CornerRadius=16`, `10 epx` inner button radius, `ThemeShadow` Z=32), 8.2 (Floating page toolbar order, `More` menu items, 3 s fade to 40% opacity), and 11 (`36 x 36 epx` hit targets, `AutomationProperties.Name` and shortcut tooltips on every icon-only button, reduced-motion compliance) with `design/screenshots/D-Focus-Light.png`, `D-Focus-Dark.png` and `D-Classic.png`.
-**Job:** The user has every primary reading action (`Side panel`, `Page X / Y`, `Zoom`, `Fit width`, `Find`, `Rotate`, `Annotate`, `Print`, `Convert`, and `More`) in one quiet pill that fades out of the way while reading and works identically when docked in `Classic` or `Reading room`. Consumer: `ShellPage` slots (`D02 T01 §4`), `CommandRegistry` (`D02 T03 §11`), and `LayoutPresetEngine` (`D02 T04 §3`).
+**Fidelity:** `design/SPEC.md` sections 6 (`16 epx` toolbar icons), 7 (`OverlayCornerRadius` 8 epx for the bar, `ControlCornerRadius` 4 epx for its buttons including the accent Convert button, `ThemeShadow` Z=32), 8.2 (Floating page toolbar order, `More` menu items, 3 s fade to 40% opacity), and 11 (`36 x 36 epx` hit targets, `AutomationProperties.Name` and shortcut tooltips on every icon-only button, reduced-motion compliance) with `design/screenshots/D-Focus-Light.png`, `D-Focus-Dark.png` and `D-Classic.png`.
+**Job:** The user has every primary reading action (`Side panel`, `Page X / Y`, `Zoom`, `Fit width`, `Find`, `Rotate`, `Annotate`, `Print`, `Convert`, and `More`) in one quiet bar that fades out of the way while reading and works identically when docked in `Classic` or `Reading room`. Consumer: `ShellPage` slots (`D02 T01 §4`), `CommandRegistry` (`D02 T03 §11`), and `LayoutPresetEngine` (`D02 T04 §3`).
 **Treatment:** Single `PageToolbar` control instance shared across all three layout presets with `36 x 36 epx` hit targets, inline editable `"3 / 9"` page-number box (`Ctrl+G`), zoom preset flyout, `More` menu flyout, and idle timer gating opacity between `1.0` and `0.4`. Cheaper substitute that fails the checkpoint: building separate toolbar controls for `Focus` and `Classic`, hiding the toolbar completely (`Opacity = 0`), or omitting `AutomationProperties.Name` and shortcut tooltips.
 **Chrome:** consume `RectoRaisedBrush`, `RectoBorderBrush`, `RectoAccentBrush`, `RectoAccentTintBrush`, and `BottomOverlaySlot` / `TopBarSlot` (`D02 T01 §4`).
 
@@ -295,14 +297,14 @@ Build the SPEC section 8.2 `PageToolbar` control (`src/app/controls/PageToolbar.
 1. Author `src/app/controls/PageToolbar.xaml/.h/.cpp` in the exact SPEC 8.2 left-to-right group order separated by `1 epx` vertical `RectoBorderBrush` dividers: Group 1 (`Side panel toggle` `Ctrl+B`, toggled state in `RectoAccentTintBrush`); Group 2 (`Previous page`, inline editable `"3 / 9"` page box where `Ctrl+G` focuses and selects the page number, `Enter` calls `DocumentView::go_to_page`, and `Esc` restores the current page label, `Next page`); Group 3 (`Zoom out` `Ctrl+Minus`, `Zoom %` button opening the preset flyout with `Fit width`, `Fit page`, `50%`, `75%`, `100%`, `125%`, `150%`, `200%`, `300%`, `400%`, `Zoom in` `Ctrl+Plus`, `Fit width` `Ctrl+0` toggled state in `RectoAccentTintBrush`); Group 4 (`Find` `Ctrl+F`, `Rotate` `Ctrl+R`, `Annotate / Tools` toggle `Ctrl+Shift+A`, `Print` `Ctrl+P`); Group 5 (`Convert` primary accent button with `RectoAccentBrush` background and `RectoOnAccentBrush` text); and Group 6 (`More` `...` button opening a `MenuFlyout` with `Save a copy (Ctrl+Shift+S)`, `Page layout` (`Continuous`, `Single page`, `Two-page view`), `Page colour` (`Original`, `Dimmed`, `Inverted`), `Form designer`, `Redact & sanitize (Ctrl+Shift+X)`, `Sign document (Ctrl+Shift+G)`, `Compare PDFs (Ctrl+Shift+D)`, `Extract tables/images`, `Crop & page setup`, `Watermark & header/footer`, `Optimize PDF`, and `Properties`). Done when: every button and `More` menu item exists with `36 x 36 epx` minimum hit target, `AutomationProperties.Name`, and shortcut tooltip.
 2. Implement the 3-second reading auto-fade timer on `PageToolbar` when hosted in `BottomOverlaySlot`: after `3000 ms` without pointer movement over `DocumentView` and with no flyout or text box focused inside the toolbar, animate `Opacity` to `0.4` over `167 ms`; restore `Opacity = 1.0` immediately on pointer movement, pointer hover, or keyboard focus inside the toolbar; and keep `Opacity = 1.0` permanently when docked in `TopBarSlot` or when `UISettings().AnimationsEnabled()` is false. Done when: driven tests verify the 3-second fade to `0.4`, hover/focus restoration to `1.0`, never hiding below `0.4`, and `1.0` opacity when animations are disabled.
 
-- [ ] Build `src/app/controls/PageToolbar.xaml/.h/.cpp` with `RectoRaisedBrush`, `CornerRadius=16`, `Padding=6 epx`, inner button `CornerRadius=10`, and `36 x 36 epx` minimum hit targets per SPEC 7, 8.2, and 11. Done when: visual metrics match `D-Focus-Light.png` and `D-Focus-Dark.png`.
+- [ ] Build `src/app/controls/PageToolbar.xaml/.h/.cpp` with `RectoRaisedBrush`, the stock `OverlayCornerRadius` (8 epx), `Padding=6 epx`, buttons on the stock `ControlCornerRadius` (4 epx) with no `CornerRadius` literal, and `36 x 36 epx` minimum hit targets per SPEC 7, 8.2, and 11. Done when: visual metrics match `D-Focus-Light.png` and `D-Focus-Dark.png`.
 - [ ] Wire the `"3 / 9"` click-to-type page box (`Ctrl+G`): clicking the label or pressing `Ctrl+G` switches to a compact `TextBox` with the current page number selected; pressing `Enter` navigates via `DocumentView::go_to_page` (§6) and returns focus to the canvas; pressing `Esc` cancels edit mode. Done when: typing `7` and pressing `Enter` jumps to page 7.
 - [ ] Wire the zoom buttons and `Zoom %` flyout (`Fit width`, `Fit page`, `50%` to `400%`) to `DocumentView`'s zoom engine (§7), updating the displayed percentage (`"100%"`, `"125%"`) and `Fit width` toggle highlight (`RectoAccentTintBrush`) live. Done when: zooming by wheel or menu updates the toolbar percentage and toggle state immediately.
 - [ ] Populate the `More` (`...`) `MenuFlyout` with every SPEC 8.2 command (`Save a copy`, `Page layout`, `Two-page view`, `Page colour`, `Form designer`, `Redact & sanitize`, `Sign document`, `Compare PDFs`, `Extract tables/images`, `Crop & page setup`, `Watermark & header/footer`, `Optimize PDF`, `Properties`). Done when: all 13 `More` items are present and bound to their live handlers or named deferred owners. Cheaper substitute that fails the checkpoint: omitting items from the SPEC 8.2 `More` list.
 - [ ] Set `AutomationProperties.Name` and a tooltip (including keyboard shortcut where applicable) on every icon-only button in `PageToolbar`. Done when: automated UI tree inspection finds zero unnamed buttons in `PageToolbar`.
 - [ ] Implement the 3-second pointer-idle fade to `40%` opacity (`0.4`, never `0.0`) when floating in `BottomOverlaySlot`, restoring `100%` opacity on pointer hover or keyboard focus, and suppressing the fade while any toolbar flyout or the page-number input is active. Done when: idle timer transitions `Opacity` to `0.4` at `3000 ms` and restores `1.0` on hover or focus.
 - [ ] Honor Windows `"Show animations in Windows"` (`UISettings::AnimationsEnabled`): when false, disable the 3-second toolbar fade so `PageToolbar` remains at `100%` opacity at all times per SPEC 11. Done when: toggling the animation flag in tests disables the fade completely.
-- [ ] Support seamless reparenting of `PageToolbar` between `BottomOverlaySlot` (`Focus` floating pill with `ThemeShadow` Z=32) and `TopBarSlot` (`Classic` and `Reading room` docked strip without shadow). Done when: moving `PageToolbar` to `TopBarSlot` matches `D-Classic.png` and `D-ReadingRoom.png`.
+- [ ] Support seamless reparenting of `PageToolbar` between `BottomOverlaySlot` (`Focus` floating bar with `ThemeShadow` Z=32) and `TopBarSlot` (`Classic` and `Reading room` docked strip without shadow). Done when: moving `PageToolbar` to `TopBarSlot` matches `D-Classic.png` and `D-ReadingRoom.png`.
 - [ ] Add `View.PageToolbarAndAutoFade` test in `tests/recto-tests/` verifying control order, `36 x 36 epx` hit targets, automation names, `"3 / 9"` inline page entry, `More` menu completeness, 3-second fade to `0.4`, and reduced-motion override. Done when: `recto-tests.exe --gtest_filter=View.PageToolbarAndAutoFade` passes.
 - [ ] Commit: `viewer: build SPEC 8.2 Floating Page Toolbar with inline page box, More menu and 3s auto-fade`
 
@@ -424,7 +426,7 @@ UPDF's Presentation mode and Foxit's slide show view show one page at a time, ed
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 4 tokens, section 10 keys and the F11 behaviour of §10 here.
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 4 tokens, section 10 keys and the F11 behaviour of §10 here. Design board: `design/SPEC.md` section 9.10 with `design/screenshots/D-Presentation.png` (drawn by `D06 T04 §5`).
 **Job:** A user presents a PDF edge to edge and drives it from the keyboard. Consumer: `DocumentView` (§6, §10), `CommandRegistry` (`D02 T03 §11`), `PresentationRenderer` (§1).
 **Treatment:** One controller over the existing `SinglePage` layout and `AppWindow` full-screen presenter. Cheaper substitute that fails the checkpoint: a second renderer or window class for slideshows, or auto-entering full screen from the document.
 **Chrome:** `RectoPresentationBackdropBrush`, `RectoDialogStyles.xaml` (`D02 T01 §10`).
@@ -451,7 +453,7 @@ PDFelement and UPDF play the transition a PDF page declares; Acrobat Pro does to
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 12 (motion, reduced-motion rule) and §13 here.
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 12 (motion, reduced-motion rule) and §13 here. Design board: `design/SPEC.md` section 9.10 with `design/screenshots/D-Presentation.png` (drawn by `D06 T04 §5`).
 **Job:** A user who opens a slide-style PDF sees its transitions, unless Windows animations are off, and can let its timings drive the show. Consumer: `PresentationController` (§13), `PageTransition` (§12).
 **Treatment:** Direct2D effects on the presentation thread between two textures already in `TileTextureCache`. Cheaper substitute that fails the checkpoint: ignoring `/Trans`, or animating when Windows reduced motion is on.
 **Chrome:** `RectoPresentationBackdropBrush`; no new chrome.
@@ -477,10 +479,10 @@ UPDF and Foxit let a presenter draw on the page and point with a laser; Acrobat 
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 4 tokens and section 11 (a text hint accompanies every colour cue).
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 4 tokens and section 11 (a text hint accompanies every colour cue). Design board: `design/SPEC.md` section 9.10 with `design/screenshots/D-Presentation.png` (drawn by `D06 T04 §5`).
 **Job:** A presenter marks the page they are talking about and points without touching the file. Consumer: `PresentationController` (§13).
 **Treatment:** Stock `InkCanvas` on an overlay with session-only storage. Cheaper substitute that fails the checkpoint: ink that is written to the document, or colour-only tool state.
-**Chrome:** `RectoColors.xaml` tokens, Segoe Fluent Icons.
+**Chrome:** `RectoColors.xaml` tokens, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -504,10 +506,10 @@ PowerPoint-style presenter views are in UPDF and Foxit's presentation features: 
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 7 spacing, section 4 tokens and section 11.
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 7 spacing, section 4 tokens and section 11. Design board: `design/SPEC.md` section 9.10 with `design/screenshots/D-Presentation.png` (drawn by `D06 T04 §5`).
 **Job:** A presenter sees what is next and how long they have, while the audience sees only the page. Consumer: `PresentationController` (§13), `TileTextureCache` (§3).
 **Treatment:** A second `AppWindow` bound to the same viewport state. Cheaper substitute that fails the checkpoint: duplicating the document in a second actor, or requiring two displays.
-**Chrome:** `RectoColors.xaml` tokens, Segoe Fluent Icons, `RectoDialogStyles.xaml`.
+**Chrome:** `RectoColors.xaml` tokens, Fluent UI System Icons (`RectoIcons`), `RectoDialogStyles.xaml`.
 
 **Build order:**
 
@@ -531,7 +533,7 @@ PowerPoint-style `See all slides` is in UPDF's presentation tools. A presenter w
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 8.3 `Pages` thumbnail styling and section 11.
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 8.3 `Pages` thumbnail styling and section 11. Design board: `design/SPEC.md` section 9.10 with `design/screenshots/D-Presentation.png` (drawn by `D06 T04 §5`).
 **Job:** A presenter jumps to any page by its picture. Consumer: `PresentationController` (§13), `PresenterWindow` (§16).
 **Treatment:** Virtualized stock `GridView` over cached thumbnails. Cheaper substitute that fails the checkpoint: a text list of page numbers.
 **Chrome:** `RectoColors.xaml` tokens.
@@ -556,10 +558,10 @@ UPDF and Foxit scroll a document by themselves for reading aloud or telepromptin
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 7 (floating card), section 10 and section 11.
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 7 (floating card), section 10 and section 11. Design board: `design/SPEC.md` section 9.11 with `design/screenshots/D-ViewTools.png` (drawn by `D06 T04 §6`).
 **Job:** A user reads, rehearses or follows along without touching the mouse. Consumer: `DocumentView` (§6), `ViewportChannel` (§2).
 **Treatment:** Clock-driven viewport updates. Cheaper substitute that fails the checkpoint: a timer that nudges the scrollbar a fixed amount per tick.
-**Chrome:** `RectoRaisedBrush`, `ThemeShadow` Z=32 floating card, Segoe Fluent Icons.
+**Chrome:** `RectoRaisedBrush`, `ThemeShadow` Z=32 floating card, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -608,7 +610,7 @@ Foxit and PDFelement show rulers and live cursor coordinates, and Acrobat Pro ha
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 5 caption type, section 7 spacing and section 4 tokens.
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 5 caption type, section 7 spacing and section 4 tokens. Design board: `design/SPEC.md` section 9.11 with `design/screenshots/D-ViewTools.png` (drawn by `D06 T04 §6`).
 **Job:** A user measures and aligns by eye in real units. Consumer: `PageLayoutGeometry` (§5), `GuideStore` (§21).
 **Treatment:** Overlay drawn from page-space transforms. Cheaper substitute that fails the checkpoint: screen-pixel rulers that ignore zoom.
 **Chrome:** `RectoSurfaceBrush`, `RectoBorderBrush`, `RectoTextSecondaryBrush`.
@@ -635,7 +637,7 @@ Foxit and PDFelement give a grid and drag-out guides, and Acrobat Pro has a grid
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 4 tokens and section 7.
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 4 tokens and section 7. Design board: `design/SPEC.md` section 9.11 with `design/screenshots/D-ViewTools.png` (drawn by `D06 T04 §6`).
 **Job:** A user aligns marks and form fields to a grid and guides that stay out of the file. Consumer: `RulerOverlay` (§20), annotation, form and edit tools through `ViewSnapProvider`.
 **Treatment:** Overlay drawing and a pure snap function. Cheaper substitute that fails the checkpoint: guides stored in the PDF.
 **Chrome:** `RectoBorderBrush`, `RectoAccentBrush`.
@@ -661,7 +663,7 @@ Acrobat Pro and Foxit have a Line Weights view option; CAD and map PDFs are ofte
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` section 8.2 `More` menu; a stock toggle item.
+**Fidelity:** `design/SPEC.md` section 8.2 `More` menu; a stock toggle item. Design board: `design/SPEC.md` section 9.11 with `design/screenshots/D-ViewTools.png` (drawn by `D06 T04 §6`).
 **Job:** A user inspects dense line art with uniform thin lines and switches back. Consumer: `Rasterizer`, `TileTextureCache` (§3).
 **Treatment:** A render option in the tile identity. Cheaper substitute that fails the checkpoint: a screen-space blur or filter over finished tiles.
 **Chrome:** Stock `ToggleMenuFlyoutItem`.
@@ -687,7 +689,7 @@ Foxit, PDFelement and UPDF split the window so two places in one document stay v
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 7 (borders, no shadows on docked panes) and section 8 (named slots).
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 7 (borders, no shadows on docked panes) and section 8 (named slots). Design board: `design/SPEC.md` section 9.11 with `design/screenshots/D-ViewTools.png` (drawn by `D06 T04 §6`).
 **Job:** A user reads two places in one document together. Consumer: `ShellPage` `CenterCanvasSlot` (`D02 T01 §4`), `DocumentView` (§6).
 **Treatment:** Two views over one actor and one cache. Cheaper substitute that fails the checkpoint: duplicating the document in a second tab.
 **Chrome:** `RectoBorderBrush`, `RectoAccentBrush`, stock splitter.
@@ -714,7 +716,7 @@ PDFelement, Foxit and UPDF show two PDFs side by side to compare versions; Recto
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 8.1 (tabs), section 7 and `D-Classic.png` pane borders.
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 8.1 (tabs), section 7 and `D-Classic.png` pane borders. Design board: `design/SPEC.md` section 9.11 with `design/screenshots/D-ViewTools.png` (drawn by `D06 T04 §6`).
 **Job:** A user reads two documents next to each other and scrolls them together when they choose. Consumer: `ShellPage` (`D02 T01 §4`), `DocumentTabSession` (`D02 T01 §3`).
 **Treatment:** Two existing tabs arranged in one slot. Cheaper substitute that fails the checkpoint: a second shell window.
 **Chrome:** `RectoBorderBrush`, `RectoAccentBrush`, stock splitter.

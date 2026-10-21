@@ -53,6 +53,9 @@ track: M3
 - -> XREF: D02 T03 §13 -- PageText counts.
 - -> XREF: D02 T03 §14 -- find engine for bookmark proposals.
 - -> XREF: D04 T05 §18 -- page text for math detection.
+- -> XREF: D06 T04 §8 -- the `D-ReadAloud.png` board and `design/SPEC.md` section 9.13 that §12, §13 here build against.
+- -> XREF: D06 T04 §9 -- the `D-SearchPanels.png` board and `design/SPEC.md` section 9.3.2 that §9, §17, §18, §19 here build against.
+- -> XREF: D06 T04 §28 -- the `D-Compare.png` board and `design/SPEC.md` section 9.3.1 that §10 here builds against.
 
 ## Outcome
 
@@ -78,17 +81,17 @@ track: M3
 | 6 | §6 | `Ctrl+F` floating `FindCard`, Reading room `Search` inspector tab and hit highlights | §4, §5, D02 T03 §3 | [ ] |
 | 7 | §7 | Scanned/outlined detector, C++20 OCR preprocessor, line removal & XY-cut layout | §2, D01 T02 §9 | [ ] |
 | 8 | §8 | Hybrid Neural OCR + `Windows.Media.Ocr` pipeline, CTC quad alignment & CLI | §6, §7, D02 T04 §5 | [ ] |
-| 9 | §9 | Content-stream Find & Replace (`text_replace.cpp`), `recto-cli replace` and `Ctrl+H` | §6, D01 T02 §5 | [ ] |
-| 10 | §10 | Two-document comparison (`pdf_compare.cpp`), `recto-cli compare` and `Ctrl+Shift+D` | §6, §8 | [ ] |
+| 9 | §9 | Content-stream Find & Replace (`text_replace.cpp`), `recto-cli replace` and `Ctrl+H` | §6, D01 T02 §5, D06 T04 §9 | [ ] |
+| 10 | §10 | Two-document comparison (`pdf_compare.cpp`), `recto-cli compare` and `Ctrl+Shift+D` | §6, §8, D06 T04 §28 | [ ] |
 | 11 | §11 | Page-area render with chosen DPI, clipboard image and `recto-cli snapshot` | §2, D01 T02 §6, D01 T03 §1 | [ ] |
-| 12 | §12 | Snapshot tool: drag an area, choose DPI, copy the image to the clipboard | §4, §11, D02 T02 §5, D02 T03 §11, D02 T04 §5, D03 T02 §5 | [ ] |
-| 13 | §13 | Scrolling capture: stitch an area spanning pages into one tall image | §11, §12 | [ ] |
+| 12 | §12 | Snapshot tool: drag an area, choose DPI, copy the image to the clipboard | §4, §11, D02 T02 §5, D02 T03 §11, D02 T04 §5, D03 T02 §5, D06 T04 §8 | [ ] |
+| 13 | §13 | Scrolling capture: stitch an area spanning pages into one tall image | §11, §12, D06 T04 §8 | [ ] |
 | 14 | §14 | Offline spell check service over `ISpellChecker` and platform text boxes | D02 T04 §5 | [ ] |
 | 15 | §15 | Zone OCR engine: recognize a drawn area and `recto-cli ocr --zone` | §8, §11 | [ ] |
 | 16 | §16 | OCR word confidence, suspect list and undoable in-memory corrections | §8, §14 | [ ] |
-| 17 | §17 | Zone OCR tool: draw an area, review the text, copy or add it to the text layer | §12, §15, §16, D02 T03 §11 | [ ] |
-| 18 | §18 | OCR review panel: word crop beside recognized text, accept or correct | §11, §16, D02 T03 §3, D02 T03 §11, D03 T02 §5 | [ ] |
-| 19 | §19 | Save OCR corrections and zone text into the text layer of a copy | §16, §18, §17, D04 T02 §7, D06 T03 §5, D02 T01 §8 | [ ] |
+| 17 | §17 | Zone OCR tool: draw an area, review the text, copy or add it to the text layer | §12, §15, §16, D02 T03 §11, D06 T04 §9 | [ ] |
+| 18 | §18 | OCR review panel: word crop beside recognized text, accept or correct | §11, §16, D02 T03 §3, D02 T03 §11, D03 T02 §5, D06 T04 §9 | [ ] |
+| 19 | §19 | Save OCR corrections and zone text into the text layer of a copy | §16, §18, §17, D04 T02 §7, D06 T03 §5, D02 T01 §8, D06 T04 §9 | [ ] |
 
 ## 1. Native `PageText` glyph-to-Unicode extraction and column reading-order clustering
 
@@ -182,8 +185,8 @@ Build the SPEC 9.3 dark floating selection toolbar (`Copy`, `Highlight`, `Strike
 
 **Fidelity:** SPEC sections 4 (dark floating bar tokens `#1B1A19` / `#2A2826`), 9.3 (floating selection toolbar and right-click context menu), 10 (`Ctrl+C`, `Esc`), and 11 (`36 epx` hit targets in floating toolbar), with `design/screenshots/D-Search.png`.
 **Job:** Immediately after selecting text, the user can copy plain or formatted text, search for the selected phrase, copy a `#page=N` link, or trigger highlight/strikeout/note/redaction/table-export actions from either the floating toolbar or right-click menu. Consumer: the Windows clipboard, `FindCard` (`§6`), `D03 T03 §3` annotations, `D05 T02 §9` redaction, and `D04 T02 §10` table export.
-**Treatment:** Dark floating pill toolbar anchored `8 epx` above the selection bounding box (flipping below when near the top viewport edge) with `36 x 36 epx` icon buttons and full right-click `MenuFlyout`. Cheaper substitute that fails the checkpoint: only supporting `Ctrl+C` with no floating selection toolbar or right-click menu, or buttons smaller than `36 epx`.
-**Chrome:** consume the dark floating bar tokens (`RectoFloatingBarBackgroundBrush` `#1B1A19`, `RectoFloatingBarBorderBrush` `#2A2826`) from `design/tokens/RectoColors.xaml` and Segoe Fluent Icons.
+**Treatment:** Dark floating toolbar (stock `OverlayCornerRadius`, 8 epx) anchored `8 epx` above the selection bounding box (flipping below when near the top viewport edge) with `36 x 36 epx` icon buttons and full right-click `MenuFlyout`. Cheaper substitute that fails the checkpoint: only supporting `Ctrl+C` with no floating selection toolbar or right-click menu, or buttons smaller than `36 epx`.
+**Chrome:** consume the dark floating bar tokens (`RectoFloatingBarBackgroundBrush` `#1B1A19`, `RectoFloatingBarBorderBrush` `#2A2826`) from `design/tokens/RectoColors.xaml` and Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -192,7 +195,7 @@ Build the SPEC 9.3 dark floating selection toolbar (`Copy`, `Highlight`, `Strike
 
 - [ ] Implement `SelectionModel::selected_text_utf8()` and `selected_text_rtf()` in `src/services/selection_clipboard.cpp`, preserving paragraph breaks, font names, point sizes, bold/italic flags, and RGB colours in RTF. Done when: `TextSelection.ClipboardPlainAndRtf` verifies both UTF-8 and RTF payloads from a multi-span selection.
 - [ ] Wire `Ctrl+C`, toolbar `Copy`, and context-menu `Copy` / `Copy with Formatting` to `Windows::ApplicationModel::DataTransfer::Clipboard`. Done when: selecting across two lines and pressing `Ctrl+C` places the exact text on the Windows clipboard.
-- [ ] Build `SelectionFloatingToolbar` (`src/app/controls/SelectionFloatingToolbar.xaml/.cpp`) using `#1B1A19` fill, `#2A2826` border, `8 epx` corner radius, and 6 buttons (`Copy`, `Highlight`, `Strikeout`, `Redact`, `Find`, `Link`) each >= `36 x 36 epx` with `AutomationProperties.Name` and tooltip. Done when: `TextSelection.FloatingToolbarBounds` confirms all 6 buttons have >= `36 epx` hit targets and names. Cheaper substitute that fails the checkpoint: `28 epx` buttons or missing `Find`/`Link`/`Redact` actions.
+- [ ] Build `SelectionFloatingToolbar` (`src/app/controls/SelectionFloatingToolbar.xaml/.cpp`) using `RectoFloatingBarBackgroundBrush` fill, `RectoFloatingBarBorderBrush` border, the stock `OverlayCornerRadius` (8 epx) with no hex or `CornerRadius` literal, and 6 buttons (`Copy`, `Highlight`, `Strikeout`, `Redact`, `Find`, `Link`) each >= `36 x 36 epx` with `AutomationProperties.Name` and tooltip. Done when: `TextSelection.FloatingToolbarBounds` confirms all 6 buttons have >= `36 epx` hit targets and names. Cheaper substitute that fails the checkpoint: `28 epx` buttons or missing `Find`/`Link`/`Redact` actions.
 - [ ] Position `SelectionFloatingToolbar` centered `8 epx` above the top-most selected quad onpointer release, automatically flipping `8 epx` below the bottom-most quad when the selection is within `48 epx` of the top of the viewport. Done when: selections at the very top of a page never clip the floating toolbar under the app toolbar.
 - [ ] Build the right-click `MenuFlyout` context menu (`SPEC 9.3`) with `Copy`, `Copy with Formatting`, `Highlight`, `Underline`, `Strikeout`, `Add Note`, `Mark for Redaction`, `Find "<selection>"`, `Select all on page`, `Copy page link`, and `Export Selection as Table`. Done when: right-clicking an active selection opens the complete 11-item context menu.
 - [ ] Wire `Link` / `Copy page link` to copy `<filename>#page=<1-based-page>` to the clipboard and `Find` to open `FindCard` (`§6`) seeded with the selected string; record explicit command hooks for `Highlight`/`Underline`/`Strikeout`/`Add Note` (`-> XREF: D03 T03 §3`), `Redact` (`-> XREF: D05 T02 §9`), and `Export Selection as Table` (`-> XREF: D04 T02 §10`). Done when: clicking `Find` on the floating toolbar seeds the search query and clicking `Link` copies the page reference.
@@ -251,7 +254,7 @@ Build the SPEC 9.3 find surfaces and wire them to §5's background `SearchEngine
 2. Build `FindCard` (`src/app/controls/FindCard.xaml/.cpp` for Focus/Classic) and the Reading room `Search` inspector tab + filmstrip hit-marker badges (`D02 T03 §3` / `D02 T03 §6`), and paint `RectoSearchHitBrush` / `RectoSearchHitCurrentBrush` quads on `DocumentView`. Done when: both Focus (`D-Search.png`) and Reading room (`explorations/B-Search.png`) surfaces match their boards and scrolling stays at 60 fps during search.
 
 - [ ] Implement `SearchViewModel` in `src/services/search_view_model.h/.cpp` with debounced progressive query execution, `CancelToken` replacement on keystroke, `"k of N"` and `"M pages"` counters, and `next_hit` / `prev_hit` wrap-around navigation. Done when: `SearchUi.ViewModel` verifies progressive hit updates, wrap-around `F3`/`Shift+F3`, and cancellation.
-- [ ] Build the floating `FindCard` (`src/app/controls/FindCard.xaml/.cpp`) anchored top-right (`16 epx` inset) in Focus and Classic presets (`D-Search.png`), containing the query `TextBox`, `"2 of 14"` status text, previous/next/close icon buttons, `Match case` / `Whole word` / `Regex` toggle pills, `"N pages"` header, and the context results list (6 rows by default, expandable via `"Show all N results"`). Done when: `FindCard` matches `D-Search.png`.
+- [ ] Build the floating `FindCard` (`src/app/controls/FindCard.xaml/.cpp`) anchored top-right (`16 epx` inset) in Focus and Classic presets (`D-Search.png`), containing the query `TextBox`, `"2 of 14"` status text, previous/next/close icon buttons, `Match case` / `Whole word` / `Regex` toggle buttons (stock `ControlCornerRadius`), `"N pages"` header, and the context results list (6 rows by default, expandable via `"Show all N results"`). Done when: `FindCard` matches `D-Search.png`.
 - [ ] Render each result row with prefix text, bolded match span, suffix text, and right-aligned page number badge; clicking any row selects that hit and scrolls `DocumentView` so the hit quad is centered in the viewport. Done when: clicking a result row jumps to the target page and highlights that match as current.
 - [ ] Host the same `SearchViewModel` inside the Reading room right inspector's `Search` tab (`D02 T03 §3`) and render accent hit-indicator dots/badges on matching page thumbnails in the bottom filmstrip (`D02 T03 §6`) when in the `Reading room` preset (`explorations/B-Search.png`). Done when: switching between `Focus` and `Reading room` preserves the active search query, results list, and current hit. Cheaper substitute that fails the checkpoint: showing the floating `FindCard` on top of the Reading room inspector instead of using the inspector `Search` tab and filmstrip markers.
 - [ ] Paint all page hits in `RectoSearchHitBrush` and the active hit in `RectoSearchHitCurrentBrush` over `PageText` character quads on `DocumentView`. Done when: `SearchUi.HitQuads` confirms distinct brush tokens for passive vs active hits.
@@ -325,7 +328,7 @@ Implement `src/pdf/text_replace.h/.cpp` in `recto-pdf`: locate literal or regula
 **Surface:** yes
 **Freeze check:** Confirm that content-stream replacement always opens its own isolated `recto::pdf::Document` copy on a background job thread, never shares or mutates the open viewer `DocumentActor`'s `pdf::Document` in place, leaves the open viewer `DocumentActor` and its cached `std::shared_ptr<const DisplayList>` / `std::shared_ptr<const PageText>` snapshots untouched on cancellation or failure, writes output via temp-file-then-replace, and reloads/swaps the viewer tab onto a fresh `DocumentActor` only after the replacement copy succeeds.
 
-**Fidelity:** SPEC sections 9.3 (`Ctrl+H` Find & Replace expansion in `FindCard`) and 10 (`Ctrl+H` shortcut) with `D-Search.png`.
+**Fidelity:** SPEC sections 9.3 (`Ctrl+H` Find & Replace expansion in `FindCard`) and 10 (`Ctrl+H` shortcut) with `D-Search.png`. Design board: `design/SPEC.md` section 9.3.2 with `design/screenshots/D-SearchPanels.png` (drawn by `D06 T04 §9`).
 **Job:** The user can replace literal or regex text matches one-by-one (`Replace`) or across the entire document (`Replace All`) and save the updated PDF copy with real content-stream text modifications without risking in-place corruption of the open viewer document. Consumer: saved PDF copies and reloaded `DocumentActor` viewer tab.
 **Treatment:** Isolated-copy content-stream glyph-run replacement with font width reflow in `src/pdf/text_replace.cpp` and `Ctrl+H` expansion in `FindCard`. Cheaper substitute that fails the checkpoint: mutating the live viewer `DocumentActor` in place, painting a white rectangle with an annotation overlay instead of updating the content stream, or corrupting glyph spacing after replacement.
 **Chrome:** consume §6's `FindCard` and Reading room `Search` inspector tab, expanding the `Replace with` row when `Ctrl+H` or the chevron toggle is invoked.
@@ -355,7 +358,7 @@ Implement `src/core/pdf_compare.h/.cpp` in `recto-core` (word/line Myers diff ov
 **Surface:** yes
 **Freeze check:** Verify that Document A and Document B each run on their own isolated `DocumentActor` instance, and `compare_documents` consumes only immutable `std::shared_ptr<const PageText>` and `std::shared_ptr<const DisplayList>` snapshots on background workers.
 
-**Fidelity:** SPEC sections 4 (`RectoSuccessBrush`, `RectoDangerBrush`), 9.3.1 (`Ctrl+Shift+D` Compare PDFs View: Side-by-Side Synchronized View, Visual Overlay Diff View, and Changes panel), and 10 (`Ctrl+Shift+D` shortcut).
+**Fidelity:** SPEC sections 4 (`RectoSuccessBrush`, `RectoDangerBrush`), 9.3.1 (`Ctrl+Shift+D` Compare PDFs View: Side-by-Side Synchronized View, Visual Overlay Diff View, and Changes panel), and 10 (`Ctrl+Shift+D` shortcut). Design board: `design/SPEC.md` section 9.3.1 with `design/screenshots/D-Compare.png` (drawn by `D06 T04 §28`).
 **Job:** The user can compare two versions of a PDF document to inspect every text insertion, deletion, replacement, and graphic change side-by-side or overlaid, and jump to any change from the summary panel. Consumer: `CompareView` canvases and Changes panel, plus `recto-cli compare` JSON reports.
 **Treatment:** Dual text-quad Myers diff + visual raster diff on background workers, rendered in a dedicated `CompareView` with synchronized two-canvas scrolling/zooming or alpha-blended visual overlay. Cheaper substitute that fails the checkpoint: plain-text diff without page quad coordinates, or unsynchronized side-by-side panes with no visual overlay mode.
 **Chrome:** consume `RectoSuccessBrush` (insertions), `RectoDangerBrush` (deletions), `RectoWarningBrush` (replacements/graphic diffs) from `design/tokens/RectoColors.xaml`, and reuse `DocumentView` tile presentation for both panes.
@@ -411,10 +414,10 @@ Build the `Snapshot` tool on top of §11: the user chooses `Snapshot` from the c
 **Surface:** yes
 **Freeze check:** Confirm that the tool reads page geometry from the cached transform of `D02 T02 §5`, hands the render to §11 on a worker, and shows progress without blocking the UI thread.
 
-**Fidelity:** Genuinely new surface. It follows `design/SPEC.md` section 8.2 (contextual popover chrome) and section 9.3 (the dark floating selection toolbar, `D03 T01 §4`), with `design/screenshots/D-Search.png` for the toolbar treatment.
+**Fidelity:** Genuinely new surface. It follows `design/SPEC.md` section 8.2 (contextual popover chrome) and section 9.3 (the dark floating selection toolbar, `D03 T01 §4`), with `design/screenshots/D-Search.png` for the toolbar treatment. Design board: `design/SPEC.md` section 9.13 with `design/screenshots/D-ReadAloud.png` (drawn by `D06 T04 §8`).
 **Job:** The user drags a rectangle over a figure, a table or a paragraph, sees its pixel size, chooses `150` or `300` DPI, presses `Copy` and pastes a sharp image into another app. Consumer: the Windows clipboard, §13, and `Save as...`.
 **Treatment:** A transparent `AreaPickerLayer` over `DocumentView` with a dashed `RectoAccentBrush` outline, eight `8 x 8 epx` handles and a text label (`1240 x 880 px at 150 DPI`), then a dark floating popover with `36 x 36 epx` buttons (`Copy`, `Save as...`, `Cancel`) and a DPI combo. Cheaper substitute that fails the checkpoint: capturing the window pixels at the current zoom, or a tool with no keyboard path.
-**Chrome:** consume `RectoAccentBrush`, the dark floating-bar tokens used by `D03 T01 §4`, `RectoTextBrush` for the size label and Segoe Fluent Icons (`E722` Camera); no hex values.
+**Chrome:** consume `RectoAccentBrush`, the dark floating-bar tokens used by `D03 T01 §4`, `RectoTextBrush` for the size label and Fluent UI System Icons (`RectoIcons`: `camera`); no hex values.
 
 **Build order:**
 
@@ -441,7 +444,7 @@ Extend the Snapshot tool so a rectangle dragged across a page boundary, or a pag
 **Surface:** yes
 **Freeze check:** Confirm that `stitch_page_areas` renders each page strip through §11 on `RenderPool`, joins strips on the worker, and never reads `recto::pdf::Document` from the UI thread.
 
-**Fidelity:** Genuinely new surface. It adds a `Spans pages <a> to <b>` row and a `Gap between pages` control to the §12 popover, following `design/SPEC.md` section 9.3 popover chrome.
+**Fidelity:** Genuinely new surface. It adds a `Spans pages <a> to <b>` row and a `Gap between pages` control to the §12 popover, following `design/SPEC.md` section 9.3 popover chrome. Design board: `design/SPEC.md` section 9.13 with `design/screenshots/D-ReadAloud.png` (drawn by `D06 T04 §8`), which draws the span row and the gap control in the snapshot popover.
 **Job:** The user drags from the middle of page 3 into page 5, sees `Spans pages 3 to 5`, chooses to remove or keep the gaps, and copies one continuous image. Consumer: the clipboard and file sinks of §11, and `recto-cli snapshot --stitch`.
 **Treatment:** Per-page strips rendered at one common DPI and joined vertically, narrower strips centred on the widest with page-white padding, with a `Gap between pages` choice of `None` (default), `Page gap` (`8 pt` in the `RectoCanvasBrush` colour) or `Page break line`. Cheaper substitute that fails the checkpoint: scrolling the viewport and grabbing window pixels, or scaling strips to different DPIs so text sizes differ.
 **Chrome:** consume the §12 popover, `RectoCanvasBrush` for the gap colour and `RectoTextBrush` for labels.
@@ -548,10 +551,10 @@ Build the `Recognize Text in Area` tool on §15 and the shared `AreaPickerLayer`
 **Surface:** yes
 **Freeze check:** Confirm that the tool starts `recognize_zone` on a worker, marshals the result back with `DispatcherQueue::TryEnqueue`, and adds words only through `OcrTextEdits` (§16).
 
-**Fidelity:** Genuinely new surface. It follows `design/SPEC.md` section 8.2 (contextual cards) and section 9.7 (OCR engine and language rows), and reuses the §12 area outline and popover chrome.
+**Fidelity:** Genuinely new surface. It follows `design/SPEC.md` section 8.2 (contextual cards) and section 9.7 (OCR engine and language rows), and reuses the §12 area outline and popover chrome. Design board: `design/SPEC.md` section 9.3.2 with `design/screenshots/D-SearchPanels.png` (drawn by `D06 T04 §9`), which draws the zone outline and the result card.
 **Job:** The user drags over a scanned table on a mixed page, chooses `Table`, reads the recognized grid, presses `Copy as table`, and pastes it into a spreadsheet; or presses `Add to text layer` so the zone's words can be selected and found with `Ctrl+F`. Consumer: the clipboard, `OcrTextEdits` (§16) and the save path (§19).
 **Treatment:** The `AreaPickerLayer` of §12 followed by a result card with a kind selector (`Auto`, `Text`, `Table`, `Single line`), a language combo, an editable multi-line text box with the recognized text, the mean confidence as text, and `Copy text`, `Copy as table`, `Add to text layer` and `Cancel` buttons. Cheaper substitute that fails the checkpoint: running OCR on the whole page and cropping the text, or a card that cannot be edited before copying.
-**Chrome:** consume `RectoSurfaceBrush`, `RectoBorderBrush`, `RectoAccentBrush` for the zone outline, `RectoWarningBrush` for low-confidence words (paired with a `!` glyph and the confidence text), Segoe Fluent Icons (`E8D2` Scan); no hex values.
+**Chrome:** consume `RectoSurfaceBrush`, `RectoBorderBrush`, `RectoAccentBrush` for the zone outline, `RectoWarningBrush` for low-confidence words (paired with a `!` glyph and the confidence text), Fluent UI System Icons (`RectoIcons`: `scan_text`); no hex values.
 
 **Build order:**
 
@@ -577,10 +580,10 @@ Build the review surface for §16: a side panel that lists suspect words, each w
 **Surface:** yes
 **Freeze check:** Confirm that the panel reads `Suspect` values and crops only from worker-built results, applies corrections only through `OcrTextEdits` on the actor, and never touches `recto::pdf::Document`.
 
-**Fidelity:** Genuinely new surface. It follows `design/SPEC.md` section 8.3 (side-panel cards through `SidePanelHost`, `D02 T03 §3`), with the Reading room inspector tab variant of `D-Search.png` and `explorations/B-Search.png`.
+**Fidelity:** Genuinely new surface. It follows `design/SPEC.md` section 8.3 (side-panel cards through `SidePanelHost`, `D02 T03 §3`), with the Reading room inspector tab variant of `D-Search.png` and `explorations/B-Search.png`. Design board: `design/SPEC.md` section 9.3.2 with `design/screenshots/D-SearchPanels.png` (drawn by `D06 T04 §9`).
 **Job:** After OCR the user opens `OCR review`, sees `12 of 48 reviewed`, steps through suspects with the crop and the recognized text side by side, presses `Enter` to correct or `Accept` to keep, and watches the page highlight move. Consumer: `OcrTextEdits` (§16) and `DocumentView`.
 **Treatment:** A virtualized list in `SidePanelHost` (Focus and Classic) or an inspector tab (Reading room); each row holds a `160 x 48 epx` crop rendered at `300` DPI with `8 px` padding, an editable text box with the recognized word, reason chips with text (`Low confidence 62%`, `Not in dictionary`), and `Accept`, `Skip` and `Correct` actions; the canvas marks the active word with a `RectoWarningBrush` box and a marker glyph. Cheaper substitute that fails the checkpoint: a text-only list with no image crop, or highlighting the word on the canvas only.
-**Chrome:** consume `SidePanelHost` (`D02 T03 §3`), `RectoSurfaceBrush`, `RectoWarningBrush`, `RectoAccentBrush`, `RectoTextBrush`, Segoe Fluent Icons (`E73E` CheckMark, `E70D` ChevronDown); no hex values.
+**Chrome:** consume `SidePanelHost` (`D02 T03 §3`), `RectoSurfaceBrush`, `RectoWarningBrush`, `RectoAccentBrush`, `RectoTextBrush`, Fluent UI System Icons (`RectoIcons`: `checkmark`, `chevron_down`); no hex values.
 
 **Build order:**
 
@@ -607,7 +610,7 @@ Make the corrections of §16 and the zone text of §17 permanent: write them int
 **Surface:** yes
 **Freeze check:** Confirm that the writer opens its own `recto::pdf::Document` on a job thread from the immutable `std::shared_ptr<const std::vector<uint8_t>>` byte snapshot the viewer's document was opened from (never by reopening the path), takes only that snapshot and the immutable `OcrTextEdits`, `OcrPageResult` and `OcrLayerMap` values, and leaves the viewer's `DocumentActor` and snapshots untouched on success, failure or cancellation.
 
-**Fidelity:** Genuinely new surface. It adds a `Save corrected copy` button to the §18 panel footer and the §17 card, using the `Save a copy` dialog of `D02 T01 §8` and the SPEC 9.9 dialog style.
+**Fidelity:** Genuinely new surface. It adds a `Save corrected copy` button to the §18 panel footer and the §17 card, using the `Save a copy` dialog of `D02 T01 §8` and the SPEC 9.9 dialog style. Design board: `design/SPEC.md` section 9.3.2 with `design/screenshots/D-SearchPanels.png` (drawn by `D06 T04 §9`), which draws the button in both places and the changed-on-disk notice.
 **Job:** The user finishes reviewing, presses `Save corrected copy`, chooses a file, and opens the result in any reader to find the corrected words selectable and searchable while the page looks the same. Consumer: any PDF reader and `recto-cli ocr correct`.
 **Treatment:** An isolated writer that, for each edited page, replaces only the invisible-text runs (`3 Tr`) the `OcrLayerMap` recorded for the edited words when the OCR result was first published (the original word's text and quad matched exactly one run in the snapshot), writes corrected words in place of those runs and added zone words as new runs with the `searchable_pdf` word writer (`D04 T02 §7`), leaves every other invisible run untouched, and saves with the full-rewrite path. Cheaper substitute that fails the checkpoint: appending a second invisible layer over the old one, which leaves the wrong text extractable, or deleting every `3 Tr` run on the page, which destroys unrelated invisible text.
 **Chrome:** consume `RectoDialogStyle`, the §18 panel footer and `D02 T01 §8`'s save dialogs; no hex values.

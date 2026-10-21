@@ -23,6 +23,7 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 - -> XREF: D08 T01 §9 -- diagnostics must never carry an assistant key (D08 T01 §9 scans for it).
 - -> XREF: D04 T07 §2 -- records the Action Wizard's watched-folder request (D04 T07 §2).
 - -> XREF: D07 T02 §10 -- update notice policy.
+- -> XREF: D06 T04 §25 -- the `D-Lifecycle.png` board and `design/SPEC.md` section 9.19 that §2, §7 here build against.
 
 ## Outcome
 
@@ -44,9 +45,9 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 | 2 | §4 | User-bug regression rule, closing on release and changelog mapping | §1 | [ ] |
 | 3 | §6 | Public scope page and user demand ledger | §1 | [ ] |
 | 4 | §3 | Structure-preserving reproducer scrubber (`recto-cli scrub`) | D04 T02 §2 | [ ] |
-| 5 | §2 | In-app `Report a problem` with privacy-safe diagnostics | §1, D07 T02 §1, D07 T02 §4, D02 T03 §11 | [ ] |
+| 5 | §2 | In-app `Report a problem` with privacy-safe diagnostics | §1, D07 T02 §1, D07 T02 §4, D02 T03 §11, D06 T04 §25 | [ ] |
 | 6 | §5 | Release gate for unreleased fixes, security advisories and CI integrity | §4, D07 T02 §6, D07 T02 §7, D06 T03 §12 | [ ] |
-| 7 | §7 | What's new after update and opt-in update notice | §2, D02 T04 §6 | [ ] |
+| 7 | §7 | What's new after update and opt-in update notice | §2, D02 T04 §6, D06 T04 §25 | [ ] |
 
 ## 1. Issue forms, triage policy and `SECURITY.md`
 
@@ -80,10 +81,10 @@ Reporters often cannot say which version, install type or GPU they had, and main
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface: a small `ContentDialog` on the `design/SPEC.md` section 9.9 dialog chrome; no screenshot exists.
+**Fidelity:** Genuinely new surface: a small `ContentDialog` on the `design/SPEC.md` section 9.9 dialog chrome; no screenshot exists. Design board: `design/SPEC.md` section 9.19 with `design/screenshots/D-Lifecycle.png` (drawn by `D06 T04 §25`).
 **Job:** A user who hit a problem can copy accurate diagnostics and reach a prefilled GitHub form in two clicks. Consumer: the `bug_report.yml` form (§1) and the maintainer reading it.
 **Treatment:** One dialog listing exactly what will be copied, with `Copy diagnostics` and `Open bug form` buttons and a link to `recto-cli scrub` help. Cheaper substitute that fails the checkpoint: a raw log file the user must find in `%LOCALAPPDATA%`.
-**Chrome:** Shared `RectoDialogStyles.xaml` (`D02 T01 §10`), stock `ContentDialog`, `RectoColors.xaml` tokens, Segoe Fluent Icons `E897` (help).
+**Chrome:** Shared `RectoDialogStyles.xaml` (`D02 T01 §10`), stock `ContentDialog`, `RectoColors.xaml` tokens, Fluent UI System Icons (`RectoIcons`: `question_circle`).
 
 **Build order:**
 
@@ -202,10 +203,10 @@ Users stay on old builds and report bugs already fixed, and cannot find features
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` section 9.8 (About) for placement; the `What's new` page is a genuinely new surface on the same chrome, with no screenshot.
+**Fidelity:** `design/SPEC.md` section 9.8 (About) for placement; the `What's new` page is a genuinely new surface on the same chrome, with no screenshot. Design board: `design/SPEC.md` section 9.19 with `design/screenshots/D-Lifecycle.png` (drawn by `D06 T04 §25`).
 **Job:** A user who just upgraded sees what changed and which of their reported issues are fixed; a user who opted in learns a newer version exists. Consumer: the user, and the settings store that records the last seen version and the opt-in.
-**Treatment:** A `What's new` page in the About area listing release-note entries, and a dismissible `InfoBar` for an available update linking to the release page. Cheaper substitute that fails the checkpoint: silent auto-install, or a check that runs without consent.
-**Chrome:** Stock `InfoBar` and the About page layout from `D07 T02 §2`; settings toggle in the `Default & About` group of `D02 T04 §6`; `RectoColors.xaml` tokens only.
+**Treatment:** A `What's new` page in the About area listing release-note entries, and a dismissible `InfoBar` titled `Update available` (naming the new version) linking to the release page. Cheaper substitute that fails the checkpoint: silent auto-install, or a check that runs without consent.
+**Chrome:** Stock `InfoBar` and the About page layout from `D07 T02 §2`; the `Check for updates` toggle and `Check now` in the `Language and updates` group (SPEC 9.7), shared with the `Language` row of `D07 T02 §14` and placed by `kSettingsGroupOrder` (`D02 T04 §6`); `RectoColors.xaml` tokens only.
 
 **Build order:**
 
@@ -215,8 +216,8 @@ Users stay on old builds and report bugs already fixed, and cannot find features
 - [ ] Confirm the owner decision recorded 2026-10-21 in the foundation plan (v1, off by default, at most once a day) and use it as the `SettingsStore` default. Done when: the decision line exists in the plan and a fresh settings file reads `updates.check_enabled = false`.
 - [ ] Generate `build/generated/whats_new.json` from `scripts/release-notes.py` during the build and embed it as a resource. Done when: the built app contains the current version's entries.
 - [ ] Build the `What's new` page and show it once per version change, reachable later from `Help` and `Ctrl+K` ("what's new", "changelog"). Done when: the page appears once after a version change and never on a normal start. Cheaper substitute: a link to a web changelog the user must find.
-- [ ] Add the `Check for updates` setting with the decided default, reading it through `SettingsStore`, and a manual `Check now` command. Done when: the setting is read at startup and listed in the settings search.
-- [ ] Query `https://api.github.com/repos/rizonesoft/RectoPDF/releases/latest` at most once per 24 hours only while the setting is on, compare versions, and show a dismissible `InfoBar` linking to the release page; never download or install. Done when: a test with the setting off records zero network requests and with it on records one.
+- [ ] Add the `Check for updates` setting to the `Language and updates` group with the decided default, reading it through `SettingsStore`, and a manual `Check now` command. Done when: the setting is read at startup and listed in the settings search.
+- [ ] Query `https://api.github.com/repos/rizonesoft/Recto/releases/latest` at most once per 24 hours only while the setting is on, compare versions, and show a dismissible `Update available` `InfoBar` linking to the release page; never download or install. Done when: a test with the setting off records zero network requests and with it on records one, and with a newer release fixture `Shell.UpdateNoticeOptIn` finds the `Update available` `InfoBar` naming that version.
 - [ ] Show a clear message on a failed check (cause and when it will retry) instead of a bare status code. Done when: a 403 fixture shows the rate-limit message.
 - [ ] Commit: `app: show What's new per version and an opt-in update notice`
 

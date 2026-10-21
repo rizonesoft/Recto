@@ -37,6 +37,12 @@ track: M4
 - -> XREF: D08 T02 §31 -- suggested marks.
 - -> XREF: D02 T03 §4 -- thumbnail drag source.
 - -> XREF: D02 T01 §5 -- signed version tab opens normally.
+- -> XREF: D06 T04 §4 -- the `D-Signatures.png` board and `design/SPEC.md` section 8.3.3 that §11, §30, §31 here build against.
+- -> XREF: D06 T04 §14 -- the `D-DocumentDialogs.png` board and `design/SPEC.md` section 9.9.1 that §5, §6, §7, §8, §9, §10 here build against.
+- -> XREF: D06 T04 §15 -- the `D-OrganizePages.png` board and `design/SPEC.md` section 9.6.1 that §12, §17, §18, §25 here build against.
+- -> XREF: D06 T04 §16 -- the `D-OrganizeMarks.png` board and `design/SPEC.md` section 9.6.2 that §13, §20, §21, §26 here build against.
+- -> XREF: D06 T04 §17 -- the `D-OrganizeCombine.png` board and `design/SPEC.md` section 9.6.3 that §16, §23, §24 here build against.
+- -> XREF: D06 T04 §18 -- the `D-Redaction.png` board and `design/SPEC.md` section 8.2.5 that §27, §28, §29 here build against.
 
 ## Outcome
 
@@ -58,37 +64,37 @@ track: M4
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | Virtualized Organize `PageGrid`, `OrganizeEditModel`, multi-select & `Undo`/`Redo` stack | D05 T01 §3, D02 T03 §4 | [ ] |
+| 1 | §1 | Virtualized Organize `PageGrid`, `OrganizeEditModel`, multi-select & `Undo`/`Redo` stack | D05 T01 §3, D02 T03 §4, D02 T01 §19 | [ ] |
 | 2 | §2 | Drag-and-drop and keyboard page reordering, floating action bar & `90°` rotation badges | §1 | [ ] |
 | 3 | §3 | Organize **Combine** mode (`A-Organize.png`: per-source chips, `Add files` & edge tint) | §2, D05 T01 §2 | [ ] |
 | 4 | §4 | Organize **Split** mode (`B-Organize.png`: click-between-pages dividers & part names) | §2, D05 T01 §2 | [ ] |
-| 5 | §5 | Organize `Save` (replace-original) and `Save as copy` jobs plus `Unsaved-Changes` guard | §2, §3, §4, D04 T01 §5, D02 T01 §10 | [ ] |
-| 6 | §6 | `Insert Blank Page` dialog (`E8A5`) and interactive `Crop & Resize Pages` (`E7A8`) | §5, D05 T01 §4, D02 T01 §10 | [ ] |
-| 7 | §7 | Two-column `640 epx` `Watermark & Stamp` dialog (`SPEC 9.6` & `9.9` with live preview) | §5, D05 T01 §5, D02 T01 §10 | [ ] |
-| 8 | §8 | Two-column `640 epx` `Header, Footer & Bates Numbering` dialog with live page preview | §7, D05 T01 §6 | [ ] |
-| 9 | §9 | Viewer `Redaction & Sanitize Bar` (`Ctrl+Shift+X`), `Find & Redact` & `Sanitize` dialog | §5, D05 T01 §10, D03 T01 §4, D03 T01 §6 | [ ] |
-| 10 | §10 | Viewer `Signature Status Banner`, `Draw Signature Box` (`Ctrl+Shift+G`) & `Sign Dialog` | §5, D05 T01 §8, D05 T01 §9, D02 T04 §6 | [ ] |
-| 11 | §11 | Viewer `Signatures` side panel (`SPEC 8.3`) and `Protected & Signed` / `Unlocked` cards | §10, D02 T03 §3, D04 T01 §4, D05 T01 §9 | [ ] |
-| 12 | §12 | `Replace Pages` dialog: source picker, before and after preview, consequences | §5, D05 T01 §14, D02 T01 §10, D02 T03 §4, D02 T03 §11 | [ ] |
-| 13 | §13 | `Backgrounds` dialog: live preview over page content and managed marks list | §7, D05 T01 §13, D02 T03 §11 | [ ] |
+| 5 | §5 | Organize `Save` (replace-original) and `Save as copy` jobs plus `Unsaved-Changes` guard | §2, §3, §4, D04 T01 §5, D02 T01 §10, D06 T04 §14 | [ ] |
+| 6 | §6 | `Insert Blank Page` dialog and interactive `Crop & Resize Pages` dialog | §5, D05 T01 §4, D02 T01 §10, D06 T04 §14 | [ ] |
+| 7 | §7 | Two-column `640 epx` `Watermark & Stamp` dialog (`SPEC 9.6` & `9.9` with live preview) | §5, D05 T01 §5, D02 T01 §10, D06 T04 §14 | [ ] |
+| 8 | §8 | Two-column `640 epx` `Header, Footer & Bates Numbering` dialog with live page preview | §7, D05 T01 §6, D06 T04 §14 | [ ] |
+| 9 | §9 | Viewer `Redaction & Sanitize Bar` (`Ctrl+Shift+X`), `Find & Redact` & `Sanitize` dialog | §5, D05 T01 §10, D03 T01 §4, D03 T01 §6, D06 T04 §14 | [ ] |
+| 10 | §10 | Viewer `Signature Status Banner`, `Draw Signature Box` (`Ctrl+Shift+G`) & `Sign Dialog` | §5, D05 T01 §8, D05 T01 §9, D02 T04 §6, D06 T04 §14 | [ ] |
+| 11 | §11 | Viewer `Signatures` side panel (`SPEC 8.3`) and `Protected & Signed` / `Unlocked` cards | §10, D02 T03 §3, D04 T01 §4, D05 T01 §9, D06 T04 §4 | [ ] |
+| 12 | §12 | `Replace Pages` dialog: source picker, before and after preview, consequences | §5, D05 T01 §14, D02 T01 §10, D02 T03 §4, D02 T03 §11, D06 T04 §15 | [ ] |
+| 13 | §13 | `Backgrounds` dialog: live preview over page content and managed marks list | §7, D05 T01 §13, D02 T03 §11, D06 T04 §16 | [ ] |
 | 14 | §14 | Certificate encryption in the Protect flow: recipients, permissions, warnings | §11, D05 T01 §11, D04 T01 §4, D02 T03 §11 | [ ] |
 | 15 | §15 | Certificate prompt when opening a public-key encrypted PDF | D05 T01 §12, D02 T01 §5, D02 T01 §10, D04 T01 §7 | [ ] |
-| 16 | §16 | Split mode: split by file size and by top-level bookmarks | §4, D05 T01 §15 | [ ] |
-| 17 | §17 | Split Page dialog: grid or draggable cut lines with a live preview | §5, §6, D05 T01 §16 | [ ] |
-| 18 | §18 | N-up dialog: several pages on one sheet with a live sheet preview | §5, §7, D05 T01 §17 | [ ] |
+| 16 | §16 | Split mode: split by file size and by top-level bookmarks | §4, D05 T01 §15, D06 T04 §17 | [ ] |
+| 17 | §17 | Split Page dialog: grid or draggable cut lines with a live preview | §5, §6, D05 T01 §16, D06 T04 §15 | [ ] |
+| 18 | §18 | N-up dialog: several pages on one sheet with a live sheet preview | §5, §7, D05 T01 §17, D06 T04 §15 | [ ] |
 | 19 | §19 | Reverse, swap, interleave and bookmark-order commands in Organize | §3, D05 T01 §18 | [ ] |
-| 20 | §20 | Page Labels dialog: ranges, styles, prefixes and a live label preview | §5, D05 T01 §19 | [ ] |
-| 21 | §21 | Blank page review: find, check and remove blank pages from the grid | §1, D05 T01 §20 | [ ] |
+| 20 | §20 | Page Labels dialog: ranges, styles, prefixes and a live label preview | §5, D05 T01 §19, D06 T04 §16 | [ ] |
+| 21 | §21 | Blank page review: find, check and remove blank pages from the grid | §1, D05 T01 §20, D06 T04 §16 | [ ] |
 | 22 | §22 | Drag pages between open documents and out to Explorer | §3, §5, D05 T01 §3 | [ ] |
-| 23 | §23 | Copy a page as an image from the Organize grid | §2, D01 T02 §9 | [ ] |
-| 24 | §24 | Combine mode: table of contents page and a rebuildable binder project | §3, §5, D05 T01 §30 | [ ] |
-| 25 | §25 | ID Card Copy dialog: front and back images on one page | §5, §6, D05 T01 §23 | [ ] |
-| 26 | §26 | Paging Seal dialog: a seal image split across page edges | §7, §13, D05 T01 §22 | [ ] |
-| 27 | §27 | Redaction Bar: saved profiles, country packs and a match review list | §9, D05 T01 §25, D05 T01 §26 | [ ] |
-| 28 | §28 | Redaction Bar: suggested marks, whiteout and whole-page redaction | §9, D05 T01 §24 | [ ] |
-| 29 | §29 | Inspect Document panel: what the file carries, with a path to Sanitize | §9, D05 T01 §27, D02 T03 §3 | [ ] |
-| 30 | §30 | Signatures panel: view the signed version and compare it with the current document | §11, D05 T01 §28 | [ ] |
-| 31 | §31 | Trusted Lists dialog: opt-in download, manual import and per-list control | §11, D05 T01 §29 | [ ] |
+| 23 | §23 | Copy a page as an image from the Organize grid | §2, D01 T02 §9, D06 T04 §17 | [ ] |
+| 24 | §24 | Combine mode: table of contents page and a rebuildable binder project | §3, §5, D05 T01 §30, D06 T04 §17 | [ ] |
+| 25 | §25 | ID Card Copy dialog: front and back images on one page | §5, §6, D05 T01 §23, D06 T04 §15 | [ ] |
+| 26 | §26 | Paging Seal dialog: a seal image split across page edges | §7, §13, D05 T01 §22, D06 T04 §16 | [ ] |
+| 27 | §27 | Redaction Bar: saved profiles, country packs and a match review list | §9, D05 T01 §25, D05 T01 §26, D06 T04 §18 | [ ] |
+| 28 | §28 | Redaction Bar: suggested marks, whiteout and whole-page redaction | §9, D05 T01 §24, D06 T04 §18 | [ ] |
+| 29 | §29 | Inspect Document panel: what the file carries, with a path to Sanitize | §9, D05 T01 §27, D02 T03 §3, D06 T04 §18 | [ ] |
+| 30 | §30 | Signatures panel: view the signed version and compare it with the current document | §11, D05 T01 §28, D06 T04 §4 | [ ] |
+| 31 | §31 | Trusted Lists dialog: opt-in download, manual import and per-list control | §11, D05 T01 §29, D06 T04 §4 | [ ] |
 | 32 | §32 | Pressure-sensitive pen capture for handwritten signatures | §10 | [ ] |
 
 ## 1. Virtualized Organize `PageGrid`, `OrganizeEditModel`, multi-select & `Undo`/`Redo` stack
@@ -115,7 +121,7 @@ Build the foundation of `OrganizePage` (`src/app/views/OrganizePage.xaml/.cpp` a
 - [ ] Implement `Click` (single select), `Ctrl+Click` / `Space` (toggle item in selection), `Shift+Click` / `Shift+Arrow` (contiguous range select from anchor), `Ctrl+A` (select all), and `Esc` (clear selection) in `OrganizeEditModel`. Done when: `OrganizeUi.SelectionSemantics` verifies all 5 selection gestures.
 - [ ] Implement the session `Undo` / `Redo` stack (`Ctrl+Z` / `Ctrl+Y`) in `OrganizeEditModel`, recording snapshots before every reorder, rotate, delete, blank-page insert,combine, or split-break mutation. Done when: performing 5 edits followed by 5 `undo()` calls restores the exact initial page sequence and clears `is_dirty()`.
 - [ ] Build the virtualized `PageGrid` in `src/app/views/OrganizePage.xaml` using `160 x 212 epx` page cards with `20 epx` spacing, rendering each page thumbnail via `D02 T03 §4`'s `ThumbnailCache` with `CancelToken` cancellation when scrolled out of view. Done when: scrolling a 200-page document in `OrganizePage` keeps thumbnail cache memory bounded (`<= 64` grid bitmaps). Cheaper substitute that fails the checkpoint: eagerly rasterizing all 200 pages on entering Organize.
-- [ ] Render selected cards with a `2 epx` `RectoAccentBrush` border, `RectoAccentSubtleBrush` card fill, and a top-left circular `--accent` check badge (`SPEC 11`: colour is never the only selection signal). Done when: `OrganizePage` card selection matches `D-Organize.png`.
+- [ ] Render selected cards with a `2 epx` `RectoAccentBrush` border, `RectoAccentTintBrush` card fill, and a top-left check badge (`RectoChipStyle` status badge, SPEC 7) (`SPEC 11`: colour is never the only selection signal). Done when: `OrganizePage` card selection matches `D-Organize.png`.
 - [ ] Wire the mode-switcher `Organize` tab (`D02 T01 §4`), floating page toolbar `Organize` button (`D02 T02 §8`), and `Ctrl+K` (`Organize Pages`) to load the active document into `OrganizePage`. Done when: switching to `Organize` loads the current PDF's pages into `PageGrid`.
 - [ ] Add `OrganizeUi.EditModelAndUndo` and `OrganizeUi.SelectionSemantics` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=OrganizeUi.EditModel*:OrganizeUi.Selection*` passes.
 
@@ -126,8 +132,8 @@ Build the foundation of `OrganizePage` (`src/app/views/OrganizePage.xaml/.cpp` a
 ## 2. Drag-and-drop and keyboard page reordering, floating action bar & `90°` rotation badges
 
 Implement **Reorder** mode interactions on `OrganizePage` (`SPEC 9.6` and `D-Organize.png`):
-- Drag-and-drop reordering of single or multiple selected pages with an `--accent` vertical drop-insertion bar between cards, plus full keyboard reordering (`Alt+Left` / `Alt+Right` or the action bar's `Move to...` page index popover).
-- The dark floating selection action bar (`"N pages selected"`, `Rotate left`, `Rotate right`, `Move to...`, `Insert blank page`, `Extract to new PDF`, `Delete` in `--danger` colour, and `Clear selection`).
+- Drag-and-drop reordering of single or multiple selected pages with an `RectoAccentBrush` vertical drop-insertion bar between cards, plus full keyboard reordering (`Alt+Left` / `Alt+Right` or the action bar's `Move to...` page index popover).
+- The dark floating selection action bar (`"N pages selected"`, `Rotate left`, `Rotate right`, `Move to...`, `Insert blank page`, `Extract to new PDF`, `Delete` in `RectoDangerBrush`, and `Clear selection`).
 - `90°` / `180°` / `270°` rotation badges on rotated page cards and live rotated thumbnail rendering.
 - The header change summary (`"2 moved · 1 rotated · 1 deleted"`) computed live from `OrganizeEditModel` against the opened baseline.
 
@@ -204,10 +210,10 @@ Build **Split** mode in `OrganizePage` (`SPEC 9.6` and `design/screenshots/explo
 **Build order:**
 
 1. Implement split break management in `OrganizeEditModel` (`toggle_split_break(after_page_index)`, `set_split_every_n(n)`, `set_split_single_pages()`, `clear_split_breaks()`, derived `parts()` list with custom filename preservation, and `validate_split_filenames()`). Done when: `OrganizeUi.SplitModelAndValidation` verifies break toggling, `every-N` generation, custom name preservation, and duplicate/illegal filename refusal.
-2. Build the between-page interactive split gutters on `PageGrid` (`>= 24 epx` hit width with hover/focus scissors indicator and active dashed `--accent` / part-colour divider line) and the right-hand **Parts panel** matching `explorations/B-Organize.png`. Done when: `OrganizeUi.SplitModeUi` places breaks by mouse and keyboard, verifies collision refusal on duplicate filenames, saves the split parts, and matches `explorations/B-Organize.png`.
+2. Build the between-page interactive split gutters on `PageGrid` (`>= 24 epx` hit width with hover/focus scissors indicator and active dashed `RectoAccentBrush` / part-colour divider line) and the right-hand **Parts panel** matching `explorations/B-Organize.png`. Done when: `OrganizeUi.SplitModeUi` places breaks by mouse and keyboard, verifies collision refusal on duplicate filenames, saves the split parts, and matches `explorations/B-Organize.png`.
 
 - [ ] Implement `SplitModeState` in `OrganizeEditModel` (`src/services/organize_edit_model.cpp`): sorted break indices `after_page_index` (`0 .. page_count - 2`), `toggle_split_break`, `set_split_every_n(uint32_t n)`, and `set_split_single_pages()`, deriving `N_breaks + 1` `SplitPartItem`s with default names `<stem>-part-1.pdf`..`<stem>-part-K.pdf` and preserving custom user-typed names keyed by `start_page_index`. Done when: toggling a new break in Part 2 preserves Part 1's custom filename (`"Cover-and-TOC.pdf"`).
-- [ ] Build the interactive between-page split gutter control in `PageGrid` (`OrganizePage.xaml`): `>= 24 epx` wide focusable button (`AutomationProperties.Name = "Split between page K and page K+1"`) displaying a subtle hover line + scissors glyph (`E8C6`) when inactive and a solid coloured split divider when active. Done when: both mouse click and keyboard (`Tab` / `Arrow` + `Space` / `Enter`) toggle a split break at any page boundary. Cheaper substitute that fails the checkpoint: mouse-only between-page targets or a text-only range box without visual grid breaks.
+- [ ] Build the interactive between-page split gutter control in `PageGrid` (`OrganizePage.xaml`): `>= 24 epx` wide focusable button (`AutomationProperties.Name = "Split between page K and page K+1"`) displaying a subtle hover line + scissors glyph (`cut`) when inactive and a solid coloured split divider when active. Done when: both mouse click and keyboard (`Tab` / `Arrow` + `Space` / `Enter`) toggle a split break at any page boundary. Cheaper substitute that fails the checkpoint: mouse-only between-page targets or a text-only range box without visual grid breaks.
 - [ ] Tint each `PageGrid` card's bottom border and part badge (`"Part 1"`, `"Part 2"`) with its derived part colour matching `explorations/B-Organize.png`. Done when: adding or removing a split break immediately re-colours the downstream cards and updates their part badges.
 - [ ] Build the right-hand **Parts panel** (`explorations/B-Organize.png`) containing the method selector (`By placed breaks`, `Every N pages` with `NumberBox`, `One file per page`), part count summary (`"3 files will be created"`), scrollable list of part cards (colour badge, `"Pages X-Y"`, editable `TextBox` for filename), and primary button `"Save N files"`. Done when: the Parts panel matches `explorations/B-Organize.png`.
 - [ ] Validate part filenames live in `validate_split_filenames()`: refuse empty names, illegal Windows filename characters (`<>:"/\|?*`), or case-insensitive duplicate names between two parts (e.g., naming both Part 1 and Part 2 `"intro.pdf"`), showing an inline error badge on the colliding part cards and disabling `"Save N files"`. Done when: `OrganizeUi.SplitFilenameCollision` proves duplicate part names block Save with the exact fault named.
@@ -228,7 +234,7 @@ Implement the Organize save pipeline and the `Unsaved-Changes` guard (`SPEC 9.6`
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** SPEC sections 9.6 (Organize header `Save` and `Save as copy`) and 9.9 (`Unsaved changes` dialog: `"Save your changes first?"` `Save` / `Discard` / `Cancel`, and `Replace original` confirmation) with `design/screenshots/D-Organize.png` and `design/screenshots/D-Dialogs.png`.
+**Fidelity:** SPEC sections 9.6 (Organize header `Save` and `Save as copy`) and 9.9 (`Unsaved changes` dialog: `"Save your changes first?"` `Save` / `Discard` / `Cancel`, and `Replace original` confirmation) with `design/screenshots/D-Organize.png` and `design/screenshots/D-Dialogs.png`. Design board: `design/SPEC.md` section 9.9.1 with `design/screenshots/D-DocumentDialogs.png` (drawn by `D06 T04 §14`).
 **Job:** The user can save their reorganized, combined, or split PDF safely without ever corrupting the original file, and cannot accidentally lose unsaved page edits when switching tabs or closing the window. Consumer: `ConversionRunner` (`D04 T01 §1`), `QueueCard` (`D04 T01 §5`), and `AppShell` navigation/close guards (`D02 T01 §3`-`§4`).
 **Treatment:** Compile-on-save snapshot submitted as a `ConversionJob` over `AtomicFileWriter`, marking `OrganizeEditModel` clean **only** when the job finishes with `JobState::Completed` (never at submission time, so a cancelled or failed save keeps the model dirty). Cheaper substitute that fails the checkpoint: writing to disk on every drag edit, or marking the model clean before the save job completes.
 **Chrome:** consume `QueueCard` (`D04 T01 §5`), `AtomicFileWriter` (`D04 T02 §1`), and the shared `ContentDialog` host (`D02 T01 §10`).
@@ -247,9 +253,9 @@ Implement the Organize save pipeline and the `Unsaved-Changes` guard (`SPEC 9.6`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=OrganizeUi.Save*:OrganizeUi.UnsavedChangesGuard` passes, dialog screenshots match `D-Dialogs.png`, and the `Discard` byte-identity SHA-256 hash is verified.
 
-## 6. `Insert Blank Page` dialog (`E8A5`) and interactive `Crop & Resize Pages` (`E7A8`)
+## 6. `Insert Blank Page` dialog and interactive `Crop & Resize Pages` dialog
 
-Build the `Insert Blank Page` dialog (`E8A5`) and the interactive `Crop & Resize Pages` dialog (`E7A8`, `SPEC 9.6` & `9.9`), accessible from the Organize header/selection bar (`§2`), the viewer's left page-thumbnail context menu (`D02 T03 §4`), the `Tools` menu, and `Ctrl+K`, and wired to `D05 T01 §4`:
+Build the `Insert Blank Page` dialog (`document_add`) and the interactive `Crop & Resize Pages` dialog (`crop`, `SPEC 9.6` & `9.9`), accessible from the Organize header/selection bar (`§2`), the viewer's left page-thumbnail context menu (`D02 T03 §4`), the `Tools` menu, and `Ctrl+K`, and wired to `D05 T01 §4`:
 - **`Insert Blank Page` Dialog:** Position (`Before selected page` / `After selected page` / `At beginning` / `At end`), Page count (`1..100`), Paper size (`Match current page`, `A4`, `Letter`, `Legal`, `Custom pt/mm/in`), and Orientation (`Portrait` / `Landscape`), inserting directly into `OrganizeEditModel` (`§1`) with full `Ctrl+Z` undo.
 - **`Crop & Resize Pages` Dialog (`640 epx` two-column modal):** Interactive crop handles overlaid on a live miniature page preview on the right, numeric margin inputs (`Top`, `Bottom`, `Left`, `Right` in `pt`, `mm`, `in`) on the left, target box selector (`CropBox`, `MediaBox`, `TrimBox`, `BleedBox`, `ArtBox`), one-click `Auto-Detect White Margins` (`D05 T01 §4`), paper-size rescaling (`Scale page content to fit A4 / Letter / Legal / Custom`), and page scope (`Selected pages`, `All pages`, `Even/Odd pages`).
 
@@ -257,9 +263,9 @@ Build the `Insert Blank Page` dialog (`E8A5`) and the interactive `Crop & Resize
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 9.6 (`Organize` tools: `Insert Blank Page` `E8A5`, `Crop & Resize` `E7A8`) and 9.9 (`Crop & Resize Pages Dialog` two-column `640 epx` layout with interactive crop handles on live preview).
+**Fidelity:** `design/SPEC.md` sections 9.6 (`Organize` tools: `Insert Blank Page` `document_add`, `Crop & Resize` `crop`) and 9.9 (`Crop & Resize Pages Dialog` two-column `640 epx` layout with interactive crop handles on live preview). Design board: `design/SPEC.md` section 9.9.1 with `design/screenshots/D-DocumentDialogs.png` (drawn by `D06 T04 §14`).
 **Job:** Users can insert blank pages of any size or visually crop margins and rescale page sizes with live preview handles and automatic white-margin detection. Consumer: `OrganizeEditModel` (`§1`), `D02 T03 §4` thumbnail context menu, and `D05 T01 §4` engine operations.
-**Treatment:** Two-column `640 epx` `ContentDialog` where dragging the `--accent` crop handles on the right preview updates the `Top`/`Bottom`/`Left`/`Right` numeric `NumberBox` values on the left in real time (and vice versa), with unit conversion (`pt`, `mm`, `in`) and `detect_white_margins` (`D05 T01 §4`). Cheaper substitute that fails the checkpoint: numeric-only margin inputs with no live page preview or draggable crop handles, or omitting `Auto-Detect White Margins`.
+**Treatment:** Two-column `640 epx` `ContentDialog` where dragging the `RectoAccentBrush` crop handles on the right preview updates the `Top`/`Bottom`/`Left`/`Right` numeric `NumberBox` values on the left in real time (and vice versa), with unit conversion (`pt`, `mm`, `in`) and `detect_white_margins` (`D05 T01 §4`). Cheaper substitute that fails the checkpoint: numeric-only margin inputs with no live page preview or draggable crop handles, or omitting `Auto-Detect White Margins`.
 **Chrome:** consume the shared `ContentDialog` host (`D02 T01 §10`), `RectoAccentBrush` crop box/handles, and `D05 T01 §4` operations.
 
 **Build order:**
@@ -269,11 +275,11 @@ Build the `Insert Blank Page` dialog (`E8A5`) and the interactive `Crop & Resize
 
 - [ ] Build `InsertBlankPageDialog` (`src/app/dialogs/InsertBlankPageDialog.xaml/.cpp`, hosted via `D02 T01 §10`) with `Position` (`After current page`, `Before current page`, `At beginning of document`, `At end of document`), `Count` (`1..100`), `Size` (`Match current page`, `A4`, `Letter`, `Legal`, `Custom`), and `Orientation` (`Portrait`, `Landscape`). Done when: confirming the dialog inserts the blank page entries into `OrganizeEditModel` with undo support.
 - [ ] Build `CropAndResizeDialog` (`src/app/dialogs/CropAndResizeDialog.xaml/.cpp`, `640 epx` width) with left-column controls (`Apply to box`: `CropBox`, `MediaBox`, `TrimBox`, `BleedBox`, `ArtBox`; `Units`: `Points (pt)`, `Millimeters (mm)`, `Inches (in)`; `Top`/`Bottom`/`Left`/`Right` `NumberBox` inputs; `Auto-Detect White Margins` button; `Page size rescaling`: `Keep original size`, `Scale to A4`, `Scale to Letter`, `Scale to Legal`, `Custom`; `Pages`: `Selected`, `All`, `Even`, `Odd`) and right-column live page preview (`1..N` page stepper). Done when: `CropAndResizeDialog` renders at `640 epx` width and passes `D03 T02 §3` accessibility checks.
-- [ ] Implement bidirectional synchronization between the 8 draggable `--accent` crop handles on the right page preview and the `Top`/`Bottom`/`Left`/`Right` `NumberBox` controls on the left (converting accurately between `pt`, `mm = pt * 25.4 / 72.0`, and `in = pt / 72.0`). Done when: dragging the top crop handle downward on the preview immediately increments the `Top` margin `NumberBox`. Cheaper substitute that fails the checkpoint: static preview with no draggable crop handles or no `Auto-Detect White Margins` button.
+- [ ] Implement bidirectional synchronization between the 8 draggable `RectoAccentBrush` crop handles on the right page preview and the `Top`/`Bottom`/`Left`/`Right` `NumberBox` controls on the left (converting accurately between `pt`, `mm = pt * 25.4 / 72.0`, and `in = pt / 72.0`). Done when: dragging the top crop handle downward on the preview immediately increments the `Top` margin `NumberBox`. Cheaper substitute that fails the checkpoint: static preview with no draggable crop handles or no `Auto-Detect White Margins` button.
 - [ ] Wire the `Auto-Detect White Margins` button to `D05 T01 §4`'s `detect_white_margins`, snapping the preview crop box and numeric margin fields to the tight content bounds + padding. Done when: clicking `Auto-Detect White Margins` on a corpus page snaps the crop margins to the non-white content box.
-- [ ] Wire `Insert Blank Page` (`E8A5`) and `Crop & Resize Pages...` (`E7A8`) from the Organize header, `OrganizeSelectionBar` (`§2`), viewer thumbnail context menu (`D02 T03 §4`), `Tools` menu, and `Ctrl+K`. Done when: `AppTests.OrganizeCropAndBlankUi` passes end-to-end.
+- [ ] Wire `Insert Blank Page` (`document_add`) and `Crop & Resize Pages...` (`crop`) from the Organize header, `OrganizeSelectionBar` (`§2`), viewer thumbnail context menu (`D02 T03 §4`), `Tools` menu, and `Ctrl+K`. Done when: `AppTests.OrganizeCropAndBlankUi` passes end-to-end.
 
-- [ ] Commit: `Insert Blank Page` dialog (`E8A5`) and interactive `Crop & Resize Pages` dialog (`E7A8`, `SPEC 9.6` & `9.9`)
+- [ ] Commit: `Insert Blank Page` dialog (`document_add`) and interactive `Crop & Resize Pages` dialog (`crop`, `SPEC 9.6` & `9.9`)
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=AppTests.OrganizeCropAndBlankUi` passes.
 
@@ -287,7 +293,7 @@ Build the two-column `640 epx` **Watermark & Stamp Dialog** (`src/app/dialogs/Wa
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 9.6 (`Organize` tools: `Watermark`) and 9.9 (`Watermark & Background Dialog`: `640 epx` two-column modal with 9-point anchor grid and live miniature page preview).
+**Fidelity:** `design/SPEC.md` sections 9.6 (`Organize` tools: `Watermark`) and 9.9 (`Watermark & Background Dialog`: `640 epx` two-column modal with 9-point anchor grid and live miniature page preview). Design board: `design/SPEC.md` section 9.9.1 with `design/screenshots/D-DocumentDialogs.png` (drawn by `D06 T04 §14`).
 **Job:** Users can apply text or logo watermarks (behind or in front of page content, angled or tiled) and see the exact visual result on a live page preview before saving. Consumer: `ConversionRunner` (`D04 T01 §1`), `D05 T01 §5` `apply_watermark`, and `OrganizePage` / `DocumentView`.
 **Treatment:** `640 epx` two-column `ContentDialog` bound to `WatermarkDialogViewModel` calling `build_watermark_preview_display_list` (`D05 T01 §5`) on background worker threads to update the right-hand preview image within `< 16 ms` of any control change. Cheaper substitute that fails the checkpoint: a form-only dialog with no live miniature page preview or missing 9-point anchor grid / tiling controls.
 **Chrome:** consume `D02 T01 §10`'s modal dialog host, `RectoColors.xaml` tokens, and `D05 T01 §5`'s preview and save APIs.
@@ -316,7 +322,7 @@ Build the two-column `640 epx` **Header, Footer, Page Numbers & Bates Numbering 
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 9.6 (`Organize` tools: `Header / Footer & Bates`) and 9.9 (`Header, Footer, Page Numbers & Bates Numbering Dialog`: `640 epx` two-column modal with 6 zone inputs, token chips, Bates settings, shrink-to-avoid-overlap toggle, and live preview).
+**Fidelity:** `design/SPEC.md` sections 9.6 (`Organize` tools: `Header / Footer & Bates`) and 9.9 (`Header, Footer, Page Numbers & Bates Numbering Dialog`: `640 epx` two-column modal with 6 zone inputs, token chips, Bates settings, shrink-to-avoid-overlap toggle, and live preview). Design board: `design/SPEC.md` section 9.9.1 with `design/screenshots/D-DocumentDialogs.png` (drawn by `D06 T04 §14`).
 **Job:** Users can add page numbers, running headers/footers, or sequential legal Bates numbers (`CASE-000001`) across one or many PDFs with one-click token chips and a live page preview. Consumer: `ConversionRunner` (`D04 T01 §1`), `D05 T01 §6` `apply_headers_footers_and_bates`, and `OrganizePage` / `DocumentView`.
 **Treatment:** `640 epx` two-column `ContentDialog` tracking the last-focused zone `TextBox` (`Top-Left`..`Bottom-Right`) so clicking any token chip (`Insert Page Number`, `Insert Bates Number`, etc.) inserts `{page}` / `{bates}` at the caret in that zone and updates the right-hand miniature page preview immediately. Cheaper substitute that fails the checkpoint: requiring users to memorize and type `{bates}` syntax manually without token insertion chips, omitting Bates numbering, or omitting the live page preview.
 **Chrome:** consume `D02 T01 §10`'s modal dialog host, `RectoColors.xaml` tokens, and `D05 T01 §6`'s engine operations.
@@ -337,19 +343,19 @@ Build the two-column `640 epx` **Header, Footer, Page Numbers & Bates Numbering 
 ## 9. Viewer `Redaction & Sanitize Bar` (`Ctrl+Shift+X`), `Find & Redact` & `Sanitize` dialog
 
 Build the visual redaction and document sanitization surfaces specified in `design/SPEC.md` sections 8.2 (`Redaction & Sanitize Bar`) and 9.9 (`Sanitize Document Dialog`), wired to `D05 T01 §10`:
-- **Contextual `40 epx` `Redaction & Sanitize Bar` (`Ctrl+Shift+X`, floating page toolbar `Redact` button `D02 T02 §8`, floating selection toolbar `Redact` button `D03 T01 §4`, or `Ctrl+K`):**
-  - `Mark Text & Area for Redaction`: crosshair/I-beam tool that marks either selected `PageText` character quads or a rubber-band rectangular region with a translucent red (`--danger` `RectoDangerBrush` border + `20%` red fill) preview overlay; hovering a mark shows the solid burn-in preview + exemption label.
+- **Contextual `48 epx` `Redaction & Sanitize Bar` (`Ctrl+Shift+X`, floating page toolbar `Redact` button `D02 T02 §8`, floating selection toolbar `Redact` button `D03 T01 §4`, or `Ctrl+K`):**
+  - `Mark Text & Area for Redaction`: crosshair/I-beam tool that marks either selected `PageText` character quads or a rubber-band rectangular region with a translucent red (`RectoDangerBrush` border + `20%` red fill) preview overlay; hovering a mark shows the solid burn-in preview + exemption label.
   - `Mark Pages for Redaction`: marks entire pages or ranges for complete page redaction.
   - `Find & Redact`: opens `D03 T01 §6`'s `FindCard` in `Mark matches for redaction` mode with one-click **Regex pattern presets** (`Email Addresses`, `Phone Numbers`, `Social Security / National ID Numbers`, `Credit Card Numbers`, `Dates`, `IPv4 Addresses`), allowing single-match or `Mark All Matches for Redaction`.
   - `Redaction Appearance`: burn-in fill colour (`Black` default, `White`, `Dark Gray`) and optional overlay exemption code (`None`, `REDACTED`, `CONFIDENTIAL`, `PRIVILEGED`, `FOIA (b)(6)`, or custom text).
   - `Sanitize Document...`: opens the SPEC 9.9 `Sanitize Document Dialog` with checkboxes for stripping `Document metadata & XMP`, `JavaScript & actions`, `Embedded attachments`, `Comments, annotations & form data`, `Hidden layers (OCGs)`, and `Deleted objects & incremental history`.
-  - `Apply Redactions (N)` (`--danger` primary button): opens a non-bypassable confirmation dialog warning that physical redaction permanently removes underlying text, vector paths, and image pixels, then executes `D05 T01 §10`'s `Redactor::apply_redactions` via `ConversionRunner` / `AtomicFileWriter`.
+  - `Apply Redactions (N)` (`RectoDangerBrush` primary button): opens a non-bypassable confirmation dialog warning that physical redaction permanently removes underlying text, vector paths, and image pixels, then executes `D05 T01 §10`'s `Redactor::apply_redactions` via `ConversionRunner` / `AtomicFileWriter`.
 
 **Phase:** 4
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (`Redaction & Sanitize Bar`), 9.3 (`SelectionFloatingToolbar` `Redact` action), 9.9 (`Sanitize Document Dialog` and `Apply Redactions` confirmation), and 10 (`Ctrl+Shift+X`).
+**Fidelity:** `design/SPEC.md` sections 8.2 (`Redaction & Sanitize Bar`), 9.3 (`SelectionFloatingToolbar` `Redact` action), 9.9 (`Sanitize Document Dialog` and `Apply Redactions` confirmation), and 10 (`Ctrl+Shift+X`). Design board: `design/SPEC.md` section 9.9.1 with `design/screenshots/D-DocumentDialogs.png` (drawn by `D06 T04 §14`).
 **Job:** Users can mark sensitive text, images, or regex patterns (`Emails`, `SSNs`, `Credit Cards`, `Phones`, `Dates`) for redaction, preview the exact redaction boxes with exemption codes, permanently scrub the underlying content stream and image pixels, or one-click sanitize all hidden metadata and scripts from a PDF. Consumer: `DocumentView` (`D02 T02`), `D05 T01 §10` `Redactor`, and `ConversionRunner`.
 **Treatment:** Two-phase `Mark -> Apply` workflow where pending `RedactionMark`s are reversible on-canvas preview overlays (undoable via `Ctrl+Z`) until the user clicks `Apply Redactions` and confirms, which runs `D05 T01 §10`'s physical content-stream redactor to write a clean scrubbed PDF. Cheaper substitute that fails the checkpoint: applying redactions as black rectangle annotations that leave selectable text underneath, or omitting `Find & Redact` regex presets and `Sanitize Document`.
 **Chrome:** consume `RectoDangerBrush` for redaction marks and the `Apply Redactions` button, `D03 T01 §6`'s `FindCard` for `Find & Redact`, and `D02 T01 §10`'s modal dialog host.
@@ -357,11 +363,11 @@ Build the visual redaction and document sanitization surfaces specified in `desi
 **Build order:**
 
 1. Implement `RedactionViewModel` (`src/services/redaction_view_model.cpp`) managing pending `RedactionMark`s (`add_text_selection_mark`, `add_area_mark`, `add_page_mark`, `add_search_hit_marks`, `remove_mark`, `clear_marks`, `Undo`/`Redo` integration), built-in regex presets (`Email`, `Phone`, `Ssn`, `CreditCard`, `IsoDate`, `Ipv4`), burn-in appearance settings, and `Apply Redactions` / `Sanitize Document` job submission. Done when: `RedactionUi.ViewModelAndRegexPresets` marks email addresses and credit-card numbers via regex presets and verifies exact `RedactionMark` quads.
-2. Build `RedactionBar` (`src/app/controls/RedactionBar.xaml/.cpp`, `40 epx` strip), the on-canvas redaction preview overlay (`RedactionCanvasOverlay`), `SanitizeDocumentDialog` (`SPEC 9.9`), and the `Apply Redactions` confirmation dialog. Done when: `AppTests.RedactionAndSanitizeUi` marks text via regex (`Email Addresses`) and area lasso, applies redactions, and verifies the saved PDF has zero extractable redacted text and zero XMP/`/Info` metadata after sanitization.
+2. Build `RedactionBar` (`src/app/controls/RedactionBar.xaml/.cpp`, `48 epx` strip), the on-canvas redaction preview overlay (`RedactionCanvasOverlay`), `SanitizeDocumentDialog` (`SPEC 9.9`), and the `Apply Redactions` confirmation dialog. Done when: `AppTests.RedactionAndSanitizeUi` marks text via regex (`Email Addresses`) and area lasso, applies redactions, and verifies the saved PDF has zero extractable redacted text and zero XMP/`/Info` metadata after sanitization.
 
 - [ ] Implement `RedactionViewModel` in `src/services/redaction_view_model.h/.cpp` storing pending `RedactionMark` items per page with `Ctrl+Z` / `Ctrl+Y` undo/redo support and exposing built-in regex preset patterns (`Email Addresses`, `Phone Numbers`, `SSN / National ID`, `Credit Card Numbers`, `Dates`, `IPv4 Addresses`). Done when: `RedactionUi.ViewModelAndRegexPresets` matches all 6 preset patterns against a test page and creates `RedactionMark`s over the matched `CharQuad`s.
-- [ ] Build the `40 epx` contextual `RedactionBar` (`SPEC 8.2`, toggled via `Ctrl+Shift+X`, floating page toolbar `Redact` in `D02 T02 §8`, or `Ctrl+K`) with `Mark Text & Area`, `Mark Pages...`, `Find & Redact` (with regex preset dropdown), `Appearance` (`Fill colour` + `Exemption code` e.g. `REDACTED`, `FOIA (b)(6)`), `Sanitize Document...`, and `Apply Redactions (N)` (`RectoDangerBrush` button enabled when `N > 0`). Done when: `RedactionBar` renders at `40 epx` height and all controls carry automation names and tooltips (`D03 T02 §3`).
-- [ ] Wire `SelectionFloatingToolbar`'s `Redact` button and right-click context menu `Mark for Redaction` (`D03 T01 §4`) to add a `RedactionMark` over the selected character quads and open `RedactionBar`. Done when: selecting a phrase and clicking `Redact` on the floating selection toolbar marks the phrase in translucent `--danger` red.
+- [ ] Build the `48 epx` contextual `RedactionBar` (`SPEC 8.2`, toggled via `Ctrl+Shift+X`, floating page toolbar `Redact` in `D02 T02 §8`, or `Ctrl+K`) with `Mark Text & Area`, `Mark Pages...`, `Find & Redact` (with regex preset dropdown), `Appearance` (`Fill colour` + `Exemption code` e.g. `REDACTED`, `FOIA (b)(6)`), `Sanitize Document...`, and `Apply Redactions (N)` (`RectoDangerBrush` button enabled when `N > 0`). Done when: `RedactionBar` renders at `48 epx` height and all controls carry automation names and tooltips (`D03 T02 §3`).
+- [ ] Wire `SelectionFloatingToolbar`'s `Redact` button and right-click context menu `Mark for Redaction` (`D03 T01 §4`) to add a `RedactionMark` over the selected character quads and open `RedactionBar`. Done when: selecting a phrase and clicking `Redact` on the floating selection toolbar marks the phrase in translucent `RectoDangerBrush` red.
 - [ ] Render pending `RedactionMark` boxes on `DocumentView` with a `1.5 epx` `RectoDangerBrush` border and `20%` red fill (transitioning on pointer hover to preview the solid burn-in fill colour and centered exemption code text, with a delete `X` handle). Done when: hovering a redaction mark shows the exact post-redaction burn-in appearance. Cheaper substitute that fails the checkpoint: drawing a black annotation rectangle without invoking `D05 T01 §10`'s physical stream redactor.
 - [ ] Build `SanitizeDocumentDialog` (`src/app/dialogs/SanitizeDocumentDialog.xaml/.cpp`, `SPEC 9.9`, hosted via `D02 T01 §10`) with 6 category checkboxes (all checked by default) and item counts detected in the active document (`Metadata & XMP`, `JavaScript & actions`, `Embedded files`, `Comments & form data`, `Hidden layers (OCGs)`, `Deleted objects & incremental history`), invoking `D05 T01 §10`'s `Redactor::sanitize_document`. Done when: `AppTests.RedactionAndSanitizeUi` sanitizes a document and confirms `0` remaining metadata/scripts/attachments.
 - [ ] Build the `Apply Redactions` confirmation modal (`SPEC 9.9`: warning that underlying text, paths, and image pixels inside the `N` marked regions will be permanently removed, with `Save as redacted copy...` default and `Replace original`) invoking `D05 T01 §10`'s `Redactor::apply_redactions`. Done when: `AppTests.RedactionAndSanitizeUi` passes end-to-end.
@@ -387,7 +393,7 @@ Build the Viewer's digital signature banner and interactive signing workflow spe
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (`Signature Status Banner & Sign Mode`), 9.7 (`Verify signatures when opening` and `Default timestamp server URL` settings), 9.9 (`Sign Document Dialog`), 10 (`Ctrl+Shift+G`), and 11 (status banner pairs colour with distinct icon and text).
+**Fidelity:** `design/SPEC.md` sections 8.2 (`Signature Status Banner & Sign Mode`), 9.7 (`Verify signatures when opening` and `Default timestamp server URL` settings), 9.9 (`Sign Document Dialog`), 10 (`Ctrl+Shift+G`), and 11 (status banner pairs colour with distinct icon and text). Design board: `design/SPEC.md` section 9.9.1 with `design/screenshots/D-DocumentDialogs.png` (drawn by `D06 T04 §14`).
 **Job:** Users opening a signed PDF immediately see whether its cryptographic signatures are valid, untrusted, or tampered with, and can draw a signature box on any page (or click a signature form field) to cryptographically sign the document with a Windows Certificate Store, `.pfx`, or self-signed certificate. Consumer: `DocumentView` (`D02 T02`), `D05 T01 §8`-`§9` `SignatureEngine`, and `SignaturesAndStandardsPanel` (`§11`).
 **Treatment:** Non-blocking background verification via `DocumentActor` driving the 3-state `SignatureStatusBanner`, paired with on-canvas signature rectangle placement and `SignDocumentDialog` executing `SignatureEngine::sign_document` via incremental save (`D05 T01 §8`). Cheaper substitute that fails the checkpoint: drawing a visual ink annotation without a cryptographic X.509 signature, or omitting the 3-state verification banner.
 **Chrome:** consume `RectoSuccessBrush`, `RectoWarningBrush`, `RectoDangerBrush` tokens, `D02 T04 §6` settings, and `D02 T01 §10`'s modal dialog host.
@@ -424,7 +430,7 @@ Complete the digital signature and encryption surfaces specified in `design/SPEC
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.3 (`Signatures & Standards` side panel -- Signatures section) and 9.5 (`Protected & Signed PDF` and `Unlocked PDF` Convert cards and Step 3 options).
+**Fidelity:** `design/SPEC.md` sections 8.3 (`Signatures & Standards` side panel -- Signatures section) and 9.5 (`Protected & Signed PDF` and `Unlocked PDF` Convert cards and Step 3 options). Design board: `design/SPEC.md` section 8.3.3 with `design/screenshots/D-Signatures.png` (drawn by `D06 T04 §4`).
 **Job:** Users can inspect every cryptographic signature and X.509 certificate chain in the side panel, jump to signature fields on canvas, or batch-protect, sign, or unlock PDFs on the Convert page. Consumer: `SidePanelHost` (`D02 T03 §3`), `ConvertPage` (`D04 T01 §3`-`§4`), and `ConversionRunner`.
 **Treatment:** Structured per-signature verification cards in `SignaturesAndStandardsPanel` plus `ProtectedPdfOptionsControl` and `UnlockedPdfOptionsControl` in `ConvertPage`. Cheaper substitute that fails the checkpoint: omitting certificate chain/thumbprint inspection, or offering encryption without granular print/copy/edit/annotate permission checkboxes.
 **Chrome:** consume `SignaturesAndStandardsPanel` (`D04 T05 §9` / `D02 T03 §3`), `ConvertPage` (`D04 T01 §4`), and `D02 T01 §10`'s modal dialog host.
@@ -451,7 +457,7 @@ Build the dialog for Acrobat Pro's Replace Pages tool (`src/app/dialogs/ReplaceP
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.6 (Organize Page & Document Tools, dialogs with a live page preview over the working copy) and the section 9.9 form-dialog chrome (`ContentDialog`, radius 20, `28 epx` padding, Cancel and primary buttons side by side), and adds `Replace Pages` to the section 9.6 tool list.
+**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.6 (Organize Page & Document Tools, dialogs with a live page preview over the working copy) and the section 9.9 form-dialog chrome (`ContentDialog`, stock `OverlayCornerRadius` of 8 epx, `28 epx` padding, Cancel and primary buttons side by side), and adds `Replace Pages` to the section 9.6 tool list. Design board: `design/SPEC.md` section 9.6.1 with `design/screenshots/D-OrganizePages.png` (drawn by `D06 T04 §15`).
 **Job:** A user can replace chosen pages of the open document with pages from another PDF, see the before and after pages and the consequences, and save a consistent copy. Consumer: `ConversionRunner` (`D04 T01 §1`), `replace_pages` (`D05 T01 §14`), the save flows of `§5`.
 **Treatment:** A `ContentDialog` bound to `ReplacePagesDialogViewModel` with a target field, source picker, source pages field, paired thumbnail strips, mode and bookmark-policy choices, and a consequence summary from `replace_pages` with `dry_run`. Cheaper substitute that fails the checkpoint: a dialog with two text boxes that replaces the whole span between the first and last page, or one with no preview and no consequence summary.
 **Chrome:** consume the single-active-dialog host (`D02 T01 §10`), the thumbnail tile pipeline (`D02 T03 §4`), `OrganizeSelectionBar` (`§2`), the Unsaved-Changes guard and Replace-original flow (`§5`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
@@ -483,7 +489,7 @@ Build the **Backgrounds** dialog (`src/app/dialogs/BackgroundDialog.xaml/.cpp`) 
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` section 9.9 (`Watermark / Header & Footer / Bates` two-column dialog with a live rendered page preview) and section 9.6 (Organize Page & Document Tools), following the `Watermark & Stamp` dialog of `§7` and adding `Background` to the section 9.6 tool list; no separate screenshot exists.
+**Fidelity:** `design/SPEC.md` section 9.9 (`Watermark / Header & Footer / Bates` two-column dialog with a live rendered page preview) and section 9.6 (Organize Page & Document Tools), following the `Watermark & Stamp` dialog of `§7` and adding `Background` to the section 9.6 tool list; no separate screenshot exists. Design board: `design/SPEC.md` section 9.6.2 with `design/screenshots/D-OrganizeMarks.png` (drawn by `D06 T04 §16`).
 **Job:** A user can add a colour, image or PDF-page background, see it under the real page content, change or remove it later, and remove an unwanted watermark. Consumer: `ConversionRunner` (`D04 T01 §1`), `PageMarks` (`D05 T01 §13`) and `OrganizePage` / `DocumentView`.
 **Treatment:** A two-column `640 epx` `ContentDialog` with a segmented `New background | Existing marks` switch, source, fit, scale, offset, rotation, opacity and page-scope controls on the left, and a live preview from `build_background_preview_display_list` with a page stepper on the right. Cheaper substitute that fails the checkpoint: a form with no live preview, a preview on a blank page, or a dialog that can add a background but never list or remove one.
 **Chrome:** consume the dialog host (`D02 T01 §10`), the layout and 9-point conventions of `WatermarkDialog` (`§7`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
@@ -546,7 +552,7 @@ Make files from `§14` (and other readers' certificate encryption) open in the U
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` section 9.9 (Password dialog, `ContentDialog` radius 20, wrong-attempt state with a red border and message); the certificate list and recipient hints are a genuinely new dialog that follows its layout and button conventions.
+**Fidelity:** `design/SPEC.md` section 9.9 (Password dialog, `ContentDialog` stock `OverlayCornerRadius` of 8 epx, wrong-attempt state with a red border and message); the certificate list and recipient hints are a genuinely new dialog that follows its layout and button conventions.
 **Job:** A recipient can open, convert or print a certificate-encrypted PDF by choosing the certificate that was used for them, and sees plainly when their certificates do not match. Consumer: `OpenDocumentPipeline` (`D02 T01 §5`), the queue error recovery (`D04 T01 §7`) and `DocumentActor::supply_certificate` (`D05 T01 §12`).
 **Treatment:** A `CertificatePromptDialog` listing matching certificates (preselected), a `Choose another certificate...` list, an `Open a .pfx file...` path with its password, a waiting state for the PIN, and inline errors. Cheaper substitute that fails the checkpoint: reusing the password box, auto-picking a certificate without asking, or importing a `.pfx` private key into the user's store.
 **Chrome:** consume the dialog host and Password dialog conventions (`D02 T01 §10`), `OpenDocumentPipeline` (`D02 T01 §5`), the `Enter password` recovery flow of `QueueCard` (`D04 T01 §7`), and `RectoColors.xaml` tokens.
@@ -575,7 +581,7 @@ UPDF, PDFelement, Foxit PDF Editor and Acrobat Pro split by file size and by top
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** SPEC section 9.6 (`Split` mode and Parts panel) with `design/screenshots/explorations/B-Organize.png`; the two added methods and the size field are new controls that follow the existing method selector and `NumberBox` styling.
+**Fidelity:** SPEC section 9.6 (`Split` mode and Parts panel) with `design/screenshots/explorations/B-Organize.png`; the two added methods and the size field are new controls that follow the existing method selector and `NumberBox` styling. Design board: `design/SPEC.md` section 9.6.3 with `design/screenshots/D-OrganizeCombine.png` (drawn by `D06 T04 §17`).
 **Job:** The user can split a PDF into files no larger than a size they type, or into one file per top-level bookmark, see the resulting parts and warnings first, and save them in one job. Consumer: `OrganizeEditModel` (`§1`, `§4`), `plan_split_by_size` and `plan_split_by_bookmarks` (`D05 T01 §15`), the save flow (`§5`).
 **Treatment:** Two more entries in the method selector that call the engine plan on a worker thread (debounced `250 ms`), convert the plan to split breaks and part names in `OrganizeEditModel`, and show plan warnings as `InfoBar` rows. Cheaper substitute that fails the checkpoint: a size box that divides pages equally without the engine plan, or bookmark splitting that shows no preview and cannot rename parts.
 **Chrome:** consume the shared `PageGrid` and Parts panel (`§1`, `§4`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
@@ -605,7 +611,7 @@ UPDF's, PDFelement's and Foxit PDF Editor's Split Page turns one page into sever
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 (two-column `640 epx` live-preview dialog as in `Crop & Resize Pages`, `§6`) and adds `Split Page` to the section 9.6 tool list.
+**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 (two-column `640 epx` live-preview dialog as in `Crop & Resize Pages`, `§6`) and adds `Split Page` to the section 9.6 tool list. Design board: `design/SPEC.md` section 9.6.1 with `design/screenshots/D-OrganizePages.png` (drawn by `D06 T04 §15`).
 **Job:** The user can split pages into a grid or along cut lines they place, see the pieces, and save a copy. Consumer: `ConversionRunner` (`D04 T01 §1`), `split_page` (`D05 T01 §16`), the save flows of `§5`.
 **Treatment:** A `640 epx` `ContentDialog` bound to `SplitPageDialogViewModel` with grid inputs on the left, a page preview with draggable and keyboard-nudgeable cut lines on the right, and a page stepper. Cheaper substitute that fails the checkpoint: numeric cut positions only with no preview, or cut lines that can only be moved with the mouse.
 **Chrome:** consume the dialog host (`D02 T01 §10`), the preview and handle conventions of `CropAndResizeDialog` (`§6`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
@@ -635,7 +641,7 @@ PDFelement's and Foxit PDF Editor's N-up create a saved PDF with several pages p
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 (two-column `640 epx` live-preview dialog as in `Watermark & Stamp`, `§7`) and adds `N-up` to the section 9.6 tool list.
+**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 (two-column `640 epx` live-preview dialog as in `Watermark & Stamp`, `§7`) and adds `N-up` to the section 9.6 tool list. Design board: `design/SPEC.md` section 9.6.1 with `design/screenshots/D-OrganizePages.png` (drawn by `D06 T04 §15`).
 **Job:** The user can lay several pages on each sheet, see the sheet, and save the result as a new PDF. Consumer: `ConversionRunner` (`D04 T01 §1`), `make_nup` (`D05 T01 §17`), `§5` save flows.
 **Treatment:** A `640 epx` `ContentDialog` bound to `NUpDialogViewModel`, with a grid picker and sheet controls on the left and a sheet preview with a sheet stepper on the right, rendered from `make_nup` on a worker thread for the first sheets. Cheaper substitute that fails the checkpoint: a form with no preview, or a preview drawn from placeholders instead of the real pages.
 **Chrome:** consume the dialog host (`D02 T01 §10`), the preview pane conventions of `WatermarkDialog` (`§7`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
@@ -694,7 +700,7 @@ Acrobat Pro, Foxit PDF Editor, PDFelement and UPDF all let a person set page lab
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 form-dialog chrome (`ContentDialog`, radius 20, `28 epx` padding) and the card grid of section 9.6, and adds `Page Labels` to the section 9.6 tool list.
+**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 form-dialog chrome (`ContentDialog`, stock `OverlayCornerRadius` of 8 epx, `28 epx` padding) and the card grid of section 9.6, and adds `Page Labels` to the section 9.6 tool list. Design board: `design/SPEC.md` section 9.6.2 with `design/screenshots/D-OrganizeMarks.png` (drawn by `D06 T04 §16`).
 **Job:** The user can define label ranges, see every page's resulting label, and save a copy with the labels. Consumer: `ConversionRunner` (`D04 T01 §1`), `set_page_labels` and `build_label_preview` (`D05 T01 §19`), the save flows of `§5`.
 **Treatment:** A `ContentDialog` bound to `PageLabelsDialogViewModel` with an editable range table and a virtualized preview list of `physical page -> label`. Cheaper substitute that fails the checkpoint: a single prefix and start field with no ranges, or a preview that is not read from the engine formatter.
 **Chrome:** consume the dialog host (`D02 T01 §10`), the thumbnail tile pipeline (`D02 T03 §4`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
@@ -724,7 +730,7 @@ PDFelement and UPDF delete blank pages automatically; Recto shows its evidence f
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 form-dialog chrome and the card grid of section 9.6, and adds `Find Blank Pages` to the section 9.6 tool list.
+**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 form-dialog chrome and the card grid of section 9.6, and adds `Find Blank Pages` to the section 9.6 tool list. Design board: `design/SPEC.md` section 9.6.2 with `design/screenshots/D-OrganizeMarks.png` (drawn by `D06 T04 §16`).
 **Job:** The user can find blank pages, judge each from its thumbnail and reason, and remove the chosen ones as an undoable edit. Consumer: `OrganizeEditModel` (`§1`), `detect_blank_pages` and `plan_blank_page_deletion` (`D05 T01 §20`).
 **Treatment:** A `ContentDialog` bound to `BlankPagesViewModel` listing findings with thumbnails and reasons, running detection on a worker thread with cancel, and two actions (`Select in grid`, `Remove from document`). Cheaper substitute that fails the checkpoint: a one-click delete with no list and no reasons.
 **Chrome:** consume the dialog host (`D02 T01 §10`), the thumbnail tile pipeline (`D02 T03 §4`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
@@ -782,7 +788,7 @@ UPDF copies a page as an image to the clipboard. Selecting one page card and cho
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** SPEC section 9.6 (`Organize` selection action bar and card context menu); a small new command that follows the existing menu items.
+**Fidelity:** SPEC section 9.6 (`Organize` selection action bar and card context menu); a small new command that follows the existing menu items. Design board: `design/SPEC.md` section 9.6.3 with `design/screenshots/D-OrganizeCombine.png` (drawn by `D06 T04 §17`).
 **Job:** The user can copy one page as an image and paste it elsewhere. Consumer: `RenderPool` (`D01 T02 §9`), the Windows clipboard `DataPackage`.
 **Treatment:** A command that renders the selected page at the setting `organize.copyImageDpi` (default `150`) with the `4096 x 4096` tile limit lifted only by stitching bounded bands, limited to `100` megapixels, and sets `DataPackage::SetBitmap`. Cheaper substitute that fails the checkpoint: copying the grid thumbnail, which is low resolution.
 **Chrome:** consume the selection bar and card menu (`§2`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
@@ -811,7 +817,7 @@ Foxit PDF Editor's PDF Binder combines files with a generated table of contents 
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** SPEC section 9.6 (`Combine` header and source chips) with `design/screenshots/explorations/A-Organize.png`; the table-of-contents options flyout and project commands are new controls that follow the Combine header styling.
+**Fidelity:** SPEC section 9.6 (`Combine` header and source chips) with `design/screenshots/explorations/A-Organize.png`; the table-of-contents options flyout and project commands are new controls that follow the Combine header styling. Design board: `design/SPEC.md` section 9.6.3 with `design/screenshots/D-OrganizeCombine.png` (drawn by `D06 T04 §17`).
 **Job:** The user can combine files with a linked table of contents, save the setup as a project, and rebuild it later when a source file changes. Consumer: `OrganizeEditModel` (`§3`), `build_binder` and `check_binder` (`D05 T01 §30`), the save flow (`§5`).
 **Treatment:** A flyout on the Combine header holding the table options, project commands in the header overflow, and a notice bar when `check_binder` reports changed or missing sources. Cheaper substitute that fails the checkpoint: a plain merge with a separate text list, or a project that stores passwords.
 **Chrome:** consume the Combine header and source chips (`§3`), `InfoBar`, `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
@@ -841,7 +847,7 @@ UPDF's ID card copy as a dialog over `make_id_card_copy` (`D05 T01 §23`). The p
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 (two-column `640 epx` live-preview dialog as in `Crop & Resize Pages`, `§6`) and adds `ID Card Copy` to the section 9.6 tool list.
+**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 (two-column `640 epx` live-preview dialog as in `Crop & Resize Pages`, `§6`) and adds `ID Card Copy` to the section 9.6 tool list. Design board: `design/SPEC.md` section 9.6.1 with `design/screenshots/D-OrganizePages.png` (drawn by `D06 T04 §15`).
 **Job:** The user can make a one-page copy of an identity card from two photos at true size and save it. Consumer: `ConversionRunner` (`D04 T01 §1`), `make_id_card_copy` (`D05 T01 §23`).
 **Treatment:** A `640 epx` `ContentDialog` with two image slots, per-image crop handles, size controls and a page preview. Cheaper substitute that fails the checkpoint: a file list that stacks images at their pixel size, or no crop.
 **Chrome:** consume the dialog host (`D02 T01 §10`), the crop handle conventions of `CropAndResizeDialog` (`§6`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
@@ -870,7 +876,7 @@ PDFelement's cross-page seal as a dialog over `add_paging_seal` (`D05 T01 §22`)
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 (two-column `640 epx` live-preview dialog as in `Watermark & Stamp`, `§7`) and adds `Paging Seal` to the section 9.6 tool list.
+**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 (two-column `640 epx` live-preview dialog as in `Watermark & Stamp`, `§7`) and adds `Paging Seal` to the section 9.6 tool list. Design board: `design/SPEC.md` section 9.6.2 with `design/screenshots/D-OrganizeMarks.png` (drawn by `D06 T04 §16`).
 **Job:** The user can place a seal across the edges of several pages and see the result before saving. Consumer: `ConversionRunner` (`D04 T01 §1`), `add_paging_seal` (`D05 T01 §22`), `§13`.
 **Treatment:** A `640 epx` `ContentDialog` with image, edge, page-scope, size and anchor controls and a preview strip of the first pages with their slices, plus a joined-seal inset. Cheaper substitute that fails the checkpoint: one preview page that never shows how the slices relate.
 **Chrome:** consume the dialog host (`D02 T01 §10`), the preview conventions of `WatermarkDialog` (`§7`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
@@ -899,7 +905,7 @@ Foxit PDF Editor and PDFelement save redaction patterns and detect personal data
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** SPEC section 8.2 (`Redaction & Sanitize Bar`) and 9.9 (dialogs); the review list and profile manager follow the Sanitize dialog and `FindCard` styling and are new controls.
+**Fidelity:** SPEC section 8.2 (`Redaction & Sanitize Bar`) and 9.9 (dialogs); the review list and profile manager follow the Sanitize dialog and `FindCard` styling and are new controls. Design board: `design/SPEC.md` section 8.2.5 with `design/screenshots/D-Redaction.png` (drawn by `D06 T04 §18`).
 **Job:** The user can find personal data by country pack or saved profile, review each match, and mark the accepted ones for redaction. Consumer: `RedactionViewModel` (`§9`), `PiiDetector` (`D05 T01 §25`), `RedactionProfileStore` (`D05 T01 §26`).
 **Treatment:** A review panel that lists `PiiMatch`es and profile matches with page, text, pack, validation badge and confidence, with `Mark selected` adding `RedactionMark`s as undoable pending marks. Cheaper substitute that fails the checkpoint: marking every match automatically, or listing only the six regular-expression presets.
 **Chrome:** consume `RedactionBar` and `RedactionViewModel` (`§9`), `FindCard` (`D03 T01 §6`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
@@ -929,7 +935,7 @@ This section completes the Redaction Bar (`§9`) in three ways. First, a `Sugges
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** SPEC section 8.2 (`Redaction & Sanitize Bar`) and 9.9 (`Apply Redactions` confirmation); the suggestion state, whiteout button and its label are new controls that use `RectoWarningBrush` and `RectoDangerBrush` with text labels.
+**Fidelity:** SPEC section 8.2 (`Redaction & Sanitize Bar`) and 9.9 (`Apply Redactions` confirmation); the suggestion state, whiteout button and its label are new controls that use `RectoWarningBrush` and `RectoDangerBrush` with text labels. Design board: `design/SPEC.md` section 8.2.5 with `design/screenshots/D-Redaction.png` (drawn by `D06 T04 §18`).
 **Job:** The user can accept or reject proposed marks, cover content with a clearly labelled whiteout, and redact whole pages for real. Consumer: `RedactionViewModel` (`§9`), `whiteout` and `redact_pages` (`D05 T01 §24`).
 **Treatment:** A third mark state in `RedactionViewModel` (`Pending`, `Suggested`, `Applied`) that the apply step filters on, a distinct dashed rendering and review controls, a separate `Whiteout` button whose result dialog repeats the warning, and routing of whole-page marks to `redact_pages`. Cheaper substitute that fails the checkpoint: suggestions that apply on `Apply Redactions`, or a whiteout presented as a redaction.
 **Chrome:** consume `RedactionBar`, `RedactionCanvasOverlay` and the confirmation dialog (`§9`), `RectoWarningBrush`, `RectoDangerBrush`, `CommandRegistry` (`D02 T03 §11`).
@@ -959,7 +965,7 @@ Acrobat Pro and Foxit PDF Editor list the hidden content of a file before it is 
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new panel; it follows `design/SPEC.md` section 8.3 (side-panel card container, switcher header) and the list styling of the `Signatures` panel (`§11`), and adds `Inspect Document` to the section 8.3 panel list.
+**Fidelity:** Genuinely new panel; it follows `design/SPEC.md` section 8.3 (side-panel card container, switcher header) and the list styling of the `Signatures` panel (`§11`), and adds `Inspect Document` to the section 8.3 panel list. Design board: `design/SPEC.md` section 8.2.5 with `design/screenshots/D-Redaction.png` (drawn by `D06 T04 §18`).
 **Job:** The user can see what a PDF hides, jump to each item, and go straight to removing it. Consumer: `SidePanelHost` (`D02 T03 §3`), `inspect_document` (`D05 T01 §27`), `SanitizeDocumentDialog` (`§9`).
 **Treatment:** A virtualized grouped list bound to `InspectorViewModel` that runs the inspection on a worker thread, with risk shown by icon and text, plus export and Sanitize actions. Cheaper substitute that fails the checkpoint: a summary line of counts with no item detail, or a panel that runs scripts to show their effect.
 **Chrome:** consume `SidePanelHost` (`D02 T03 §3`), `SanitizeDocumentDialog` (`§9`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` status tokens.
@@ -989,7 +995,7 @@ Foxit PDF Editor and Acrobat Pro show the document as it was when a signature wa
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** SPEC section 8.3 (`Signatures & Standards` panel signature cards); two new card actions and a report flyout that follow the card button styling.
+**Fidelity:** SPEC section 8.3 (`Signatures & Standards` panel signature cards); two new card actions and a report flyout that follow the card button styling. Design board: `design/SPEC.md` section 8.3.3 with `design/screenshots/D-Signatures.png` (drawn by `D06 T04 §4`).
 **Job:** The user can see exactly what a signer signed and what changed afterwards. Consumer: `SignaturesAndStandardsPanel` (`§11`), `extract_signed_revision` and `compare_signed_with_current` (`D05 T01 §28`), `OpenDocumentPipeline` (`D02 T01 §5`).
 **Treatment:** Card buttons that run the engine on a worker thread, open the temp revision through the normal open pipeline as a read-only tab with a persistent banner, and show the comparison report with a classification badge (text and icon). Cheaper substitute that fails the checkpoint: re-saving the old version through the engine, which changes its bytes and breaks its signature.
 **Chrome:** consume the Signatures panel and `SignatureStatusBanner` (`§10`, `§11`), the tab strip (`D02 T01 §3`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` status tokens.
@@ -1018,7 +1024,7 @@ The UI for `TrustStore` (`D05 T01 §29`), reachable from the Signatures panel (`
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 form-dialog chrome and the settings card styling of section 9.7, and adds `Trusted Lists` to the section 9.9 dialog list.
+**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 form-dialog chrome and the settings card styling of section 9.7, and adds `Trusted Lists` to the section 9.9 dialog list. Design board: `design/SPEC.md` section 8.3.3 with `design/screenshots/D-Signatures.png` (drawn by `D06 T04 §4`).
 **Job:** The user can decide which extra trust anchors Recto uses to verify signatures, and keep the network off unless they choose otherwise. Consumer: `SignatureStatusBanner` and `SignaturesAndStandardsPanel` (`§10`, `§11`), `TrustStore` and `TrustListDownloader` (`D05 T01 §29`).
 **Treatment:** A `ContentDialog` bound to `TrustListsViewModel` with a list, import and confirm flows, and an opt-in toggle for downloads that is off by default and writes `trust.downloadEnabled`. Cheaper substitute that fails the checkpoint: trusting an imported list without showing its fingerprint, or downloading on first run.
 **Chrome:** consume the dialog host (`D02 T01 §10`), `CertificateDetailsDialog` (`§11`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.

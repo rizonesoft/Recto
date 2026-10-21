@@ -11,7 +11,7 @@ track: M2
 
 > **Goal:** The WinUI 3 app exists as the SPEC's one shell: a self-contained unpackaged and MSIX-ready executable with `RectoColors.xaml` tokens, a custom title bar with document tabs and drag regions, named layout slots for all three presets, the Classic menu bar (`File`, `Edit`, `View`, `Tools`, `Window`, `Help`) and docked top command bar, all four file-opening pipelines (`Ctrl+O` picker, drag-and-drop with overlay, CLI arguments, and Explorer file activation with single-instance forwarding), file saving (`Save`, `Save a copy`, `Replace the original?`, and `Save your changes first?`), and the Password and Could-not-open dialogs per `design/SPEC.md` sections 8, 9.1, 9.2, 9.9, 10 and 11.
 
-> **Current state:** Measured 2026-10-14. `D00 T01 §3` created the compilable WinUI 3 scaffold (`src/app/Recto.vcxproj`, `App.xaml/.h/.cpp`, `MainWindow.xaml/.h/.cpp`). `D01` provides `DocumentHandle` open, authenticate, incremental save and describe. All visual assets exist in `resources/` (`resources/msix/Assets/`, `resources/ico/`, `resources/svg/`) and all colour tokens live in `design/tokens/RectoColors.xaml`.
+> **Current state:** Measured 2026-10-14. `D00 T01 §3` created the compilable WinUI 3 scaffold (`src/app/Recto.vcxproj`, `App.xaml/.h/.cpp`, `MainWindow.xaml/.h/.cpp`). `D01` provides `DocumentHandle` open, authenticate, incremental save and describe. All visual assets exist in `resources/` (`resources/msix/Assets/`, `resources/ico/`, `resources/svg/`) and all colour tokens live in `design/tokens/RectoColors.xaml`. Measured 2026-10-21: `resources/fonts/`, `scripts/build-icon-font.py`, any `RectoChipStyle` and any `ClassicStatusBar` do not exist yet, although SPEC sections 6, 7 and 8.4 (revised 2026-10-21) require them; §18 to §20 build them.
 
 ## Inputs
 
@@ -35,6 +35,11 @@ track: M2
 - -> XREF: D02 T04 §5 -- restore tabs setting.
 - -> XREF: D02 T06 §12 -- session exclusion of cloud copies.
 - -> XREF: D01 T02 §14 -- SavePipeline writes the exported revision and marks it saved.
+- -> XREF: D03 T02 §4 -- the Classic keyboard order test reaches the `ClassicStatusBar` that §20 builds.
+- -> XREF: D05 T02 §1 -- the Organize grid's selected-card check badge uses §19's `RectoChipStyle`.
+- -> XREF: D02 T04 §4 -- the Settings preset cards' `Default` and `"Custom"` badges use §19's `RectoChip`.
+- -> XREF: D02 T03 §3 -- the side-panel switcher's count badges use §19's `RectoChipStyle`; the command box keycaps of `D02 T03 §12` do too.
+- -> XREF: D06 T04 §24 -- the `D-Session.png` board and `design/SPEC.md` section 9.18 that §12, §14, §15, §16, §17 here build against.
 
 ## Outcome
 
@@ -44,6 +49,7 @@ track: M2
 - Password-protected and damaged PDFs trigger the SPEC 9.9 `PasswordDialog` and `CouldNotOpenDialog` (with diagnostic ring-buffer `Copy error details`) built on the shared `RectoDialogStyle`.
 - After the owner's decision, unsaved documents keep timer-driven recovery snapshots and are offered for restore after an abnormal exit, never overwriting the originals (`§12`).
 - Open tabs and their view state persist in a local `session.json` and reopen on the next launch (`RestoreTabsOnLaunch`), closed tabs come back with `Ctrl+Shift+T`, tabs can be closed in batches and reordered by drag or keyboard, and the open file can be shared through the Windows Share contract without Recto opening any network connection (§13 to §17).
+- Every interface glyph comes from the generated subset font `resources/fonts/RectoIcons.ttf` (exactly the SPEC section 6 glyphs, stable Private Use Area code points), every chip, keycap, badge and counter uses the pill `RectoChipStyle`, and the Classic preset shows the SPEC 8.4 status bar (§18 to §20).
 
 **Adjacency:** list=applicable @ D02 T03 §1; document=applicable @ D02 T01 §8; settings=applicable @ D02 T04 §4; reporting=not-applicable (no reports in the application shell; diagnostic error text is copied via §11); notifications=applicable @ D04 T01 §6; permissions=not-applicable (single-user desktop app; document-level link and action refusals live in D02 T02 §9); audit=not-applicable (no persistent audit log over shell window state); exchange=not-applicable (clipboard and share paths belong to D03 T01 §2); reverse=applicable @ D02 T01 §3
 
@@ -54,7 +60,7 @@ track: M2
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | App project, unpackaged/MSIX manifest, assets, tokens and minimum window size | D00 T01 §3 | [ ] |
-| 2 | §2 | Custom title bar, brand lockup, drag regions and caption buttons | §1 | [ ] |
+| 2 | §2 | Custom title bar, brand lockup, drag regions and caption buttons | §1, §18, §19 | [ ] |
 | 3 | §3 | Document `TabView`, tab session lifecycle, dirty state and actor teardown | §2, D01 T02 §10 | [ ] |
 | 4 | §4 | Named shell layout slots, Reading room mode switcher and Classic navigation rail | §2 | [ ] |
 | 5 | §5 | File Open Picker (`Ctrl+O`) and shared `OpenDocumentPipeline` | §3, D01 T02 §4 | [ ] |
@@ -64,12 +70,15 @@ track: M2
 | 9 | §9 | Classic menu bar (`File`, `Edit`, `View`, `Tools`, `Window`, `Help`) and docked top bar | §4, §5, §8 | [ ] |
 | 10 | §10 | Shared SPEC 9.9 `ContentDialog` chrome and Password dialog | §5 | [ ] |
 | 11 | §11 | Could-not-open error dialog and diagnostic clipboard copy | §5, §10 | [ ] |
-| 12 | §12 | Crash recovery snapshots for unsaved edits | §3, §8, §10, D04 T02 §1, D02 T04 §6 | [ ] |
+| 12 | §12 | Crash recovery snapshots for unsaved edits | §3, §8, §10, D04 T02 §1, D02 T04 §6, D06 T04 §24 | [ ] |
 | 13 | §13 | `SessionStore`: persist open tabs and the active tab | §3, D02 T04 §1 | [ ] |
-| 14 | §14 | Restore the previous tab session on launch and the restore setting | §5, §7, §13, D02 T04 §5, D02 T03 §11 | [ ] |
-| 15 | §15 | Reopen closed tab (`Ctrl+Shift+T`) and close-other, left and right tab commands | §3, §8, §13, D02 T03 §11 | [ ] |
-| 16 | §16 | Drag to reorder tabs and move a tab by keyboard | §3, §13, D02 T03 §11 | [ ] |
-| 17 | §17 | Share a copy through the Windows Share contract | §8, §9, D02 T03 §11 | [ ] |
+| 14 | §14 | Restore the previous tab session on launch and the restore setting | §5, §7, §13, D02 T04 §5, D02 T03 §11, D06 T04 §24 | [ ] |
+| 15 | §15 | Reopen closed tab (`Ctrl+Shift+T`) and close-other, left and right tab commands | §3, §8, §13, D02 T03 §11, D06 T04 §24 | [ ] |
+| 16 | §16 | Drag to reorder tabs and move a tab by keyboard | §3, §13, D02 T03 §11, D06 T04 §24 | [ ] |
+| 17 | §17 | Share a copy through the Windows Share contract | §8, §9, D02 T03 §11, D06 T04 §24 | [ ] |
+| 18 | §18 | `RectoIcons` subset icon font, stable code point map and glyph resources | §1 | [ ] |
+| 19 | §19 | `RectoChipStyle` pill style for chips, filter tags, keycaps, badges and counters | §1, §18 | [ ] |
+| 20 | §20 | Classic status bar: current page, page size, PDF version and zoom slider | §4, §9, D02 T02 §6, D02 T02 §7, D02 T03 §11, D02 T04 §3 | [ ] |
 
 ## 1. App project, unpackaged/MSIX manifest, assets, tokens and minimum window size
 
@@ -112,16 +121,16 @@ Build the SPEC section 8.1 custom title bar inside `src/app/ShellPage.xaml/.h/.c
 **Fidelity:** `design/SPEC.md` sections 3.1, 3.3, 6, 8.1 and 11 with `design/screenshots/D-Focus-Light.png` and `D-Focus-Dark.png`.
 **Job:** The user sees Recto's quiet branded title bar, can drag or snap the window naturally, and can reach Home, the Command Box, and Settings from the top bar at any time. Consumer: `MainWindow` hosts `ShellPage`; §3 mounts the document `TabView` into the title bar strip.
 **Treatment:** Custom title bar via `AppWindowTitleBar::ExtendsContentIntoTitleBar(true)` with explicit `SetRegionRects(NonClientRegionKind::Passthrough, ...)` for interactive controls and theme-switched `SvgImageSource` brand assets. Cheaper substitute that fails the checkpoint: stock system title bar with tabs pushed to a second row below it, or broken drag/Snap Layouts behavior.
-**Chrome:** consume `RectoWindowBrush`, `RectoTextBrush`, `RectoTextSecondaryBrush`, `resources/svg/app-icon-small.svg` (`-on-dark.svg`), and `resources/svg/wordmark-light.svg` (`-dark.svg`). Do not ship the Newsreader font file; use the outlined SVGs per SPEC 3.3.
+**Chrome:** consume `RectoWindowBrush`, `RectoTextBrush`, `RectoTextSecondaryBrush`, `resources/svg/app-icon-small.svg` (one file for both themes, SPEC 3.1), and `resources/svg/wordmark-light.svg` (`-dark.svg`). Do not ship the Newsreader font file; use the outlined SVGs per SPEC 3.3.
 
 **Build order:**
 
 1. Create `src/app/ShellPage.xaml`, `src/app/ShellPage.xaml.h`, and `src/app/ShellPage.xaml.cpp` and set `MainWindow` content to `ShellPage` with `ExtendsContentIntoTitleBar(true)` and transparent caption button backgrounds matching `RectoWindowBrush`. Done when: `MainWindow` renders the custom title bar row with native caption buttons styled to match Light and Dark themes.
-2. Add the brand lockup (`20 epx` `app-icon-small` + `17 epx` `wordmark` switched by theme), the icon-only `Home` tab button (`FontIcon` home glyph, `AutomationProperties.Name="Home"`, tooltip `"Home"`), the centred Command Box pill button (`"Search, open or run a command"`, `"Ctrl K"` caption badge, `AutomationProperties.Name="Command box"`, tooltip `"Command box (Ctrl+K)"`), and the Settings button (`FontIcon` settings glyph, `AutomationProperties.Name="Settings"`, tooltip `"Settings (Ctrl+,)"`), and update `InputNonClientPointerSource` passthrough rects on `SizeChanged` and layout updates. Done when: every title bar button is clickable, empty title bar areas drag and double-click maximize the window, and hovering the maximize button opens the Windows 11 Snap Layouts flyout.
+2. Add the brand lockup (`20 epx` `app-icon-small`, the same file in both themes, + `17 epx` `wordmark` switched by theme), the icon-only `Home` tab button (`FontIcon` `home` glyph from `RectoIcons`, `AutomationProperties.Name="Home"`, tooltip `"Home"`), the centred Command Box button (stock `ControlCornerRadius`, `"Search, open or run a command"`, `"Ctrl K"` keycaps in `RectoChipStyle`, `AutomationProperties.Name="Command box"`, tooltip `"Command box (Ctrl+K)"`), and the Settings button (`FontIcon` `settings` glyph from `RectoIcons`, `AutomationProperties.Name="Settings"`, tooltip `"Settings (Ctrl+,)"`), and update `InputNonClientPointerSource` passthrough rects on `SizeChanged` and layout updates. Done when: every title bar button is clickable, empty title bar areas drag and double-click maximize the window, and hovering the maximize button opens the Windows 11 Snap Layouts flyout.
 
 - [ ] Author `src/app/ShellPage.xaml/.h/.cpp` and mount it as the root content of `MainWindow`. Done when: `Recto.exe` boots into `ShellPage` with zero XAML binding errors.
 - [ ] Enable `AppWindowTitleBar::ExtendsContentIntoTitleBar(true)` and configure caption button foreground/background/hover colours from `RectoColors.xaml` tokens in both Light and Dark themes. Done when: caption buttons remain legible in Light, Dark, and HighContrast themes.
-- [ ] Render the `20 epx` app icon (`resources/svg/app-icon-small.svg` / `app-icon-small-on-dark.svg`) and `17 epx` `"Recto"` wordmark (`resources/svg/wordmark-light.svg` / `wordmark-dark.svg`) via `SvgImageSource` at the left of the title bar. Done when: the lockup matches `D-Focus-Light.png` and `D-Focus-Dark.png` metrics.
+- [ ] Render the `20 epx` app icon (`resources/svg/app-icon-small.svg`, the same file in Light and Dark) and `17 epx` `"Recto"` wordmark (`resources/svg/wordmark-light.svg` / `wordmark-dark.svg`) via `SvgImageSource` at the left of the title bar. Done when: the lockup matches `D-Focus-Light.png` and `D-Focus-Dark.png` metrics.
 - [ ] Add the icon-only `Home` button, centred Command Box trigger button (`"Search, open or run a command"` + `"Ctrl K"`), and `Settings` button in the exact SPEC 8.1 left-to-right order. Done when: visual inspection and layout tree order match SPEC 8.1. Cheaper substitute that fails the checkpoint: omitting `AutomationProperties.Name` or shortcut tooltips on icon-only title bar buttons.
 - [ ] Compute and register `NonClientRegionKind::Passthrough` rectangles via `InputNonClientPointerSource` for all interactive title bar controls whenever the window or tab strip resizes. Done when: clicking buttons activates them while dragging empty title bar space moves the window.
 - [ ] Dim the title bar lockup and inactive tab labels to `RectoTextSecondaryBrush` when `Window::Activated` reports `WindowActivationState::Deactivated`. Done when: deactivating the window visually dims the title bar chrome per Windows conventions.
@@ -138,7 +147,7 @@ Implement the document tab strip (`TabView`) in the title bar and the `DocumentT
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 7 (radius 8 for tabs), 8.1 (title bar tabs, max 240 epx, close on hover and active tab), and 10 (`Ctrl+W`, `Ctrl+Tab`, `Ctrl+Shift+Tab`) with `D-Focus-Light.png` and `D-Classic.png`.
+**Fidelity:** `design/SPEC.md` sections 7 (tabs use the stock `ControlCornerRadius`, 4 epx), 8.1 (title bar tabs, max 240 epx, close on hover and active tab), and 10 (`Ctrl+W`, `Ctrl+Tab`, `Ctrl+Shift+Tab`) with `D-Focus-Light.png` and `D-Classic.png`.
 **Job:** The user can hold multiple PDFs open simultaneously in tabs, switch between them effortlessly, see which tabs have unsaved changes, and close any tab knowing its background engine resources are immediately freed. Consumer: `OpenDocumentPipeline` (§5) creates tabs; `SavePipeline` (§8) clears the dirty indicator; `DocumentView` (`D02 T02`) renders inside the active tab's session.
 **Treatment:** Stock WinUI `TabView` styled to `240 epx` max tab width with a strongly typed `DocumentTabSession` per tab tied 1:1 to a `DocumentHandle` (`DocumentActor`). Cheaper substitute that fails the checkpoint: leaving orphaned `DocumentActor` threads alive after tab close, or opening each document in a separate OS window.
 **Chrome:** consume `ShellPage`'s title bar tab host (and secondary tab strip slot in `Reading room` preset, §4) with `RectoWindowBrush`, `RectoRaisedBrush` for the active tab, and `RectoTextSecondaryBrush` for inactive tabs. Do not invent a second tab strip control.
@@ -149,7 +158,7 @@ Implement the document tab strip (`TabView`) in the title bar and the `DocumentT
 2. Style and wire `TabView` inside `ShellPage`: `MaxWidth="240"` per `TabViewItem`, close button visibility on pointer hover and active state, `+` add-tab button activating `Home`, `Ctrl+W` closing the active tab, `Ctrl+Tab` and `Ctrl+Shift+Tab` cycling tabs, and closing the last document tab activating the `Home` view. Done when: 20 rapid tab open-and-close cycles leave the Debug live-clone and actor count at zero and return the shell to `Home`.
 
 - [ ] Author `src/app/DocumentTabSession.h/.cpp` encapsulating per-tab `DocumentHandle` lifetime, file path, display title, `is_loading` state, and `is_dirty` state. Done when: destroying a `DocumentTabSession` deterministically invokes `Runtime::close` on its `DocumentHandle`.
-- [ ] Embed `TabView` in `ShellPage`'s title bar strip with custom `TabViewItem` styling (`CornerRadius=8`, `MaxWidth=240 epx`, `CaptionTextBlockStyle` 12 epx title, close button on active tab and pointer hover). Done when: tab geometry and typography match `D-Focus-Light.png`.
+- [ ] Embed `TabView` in `ShellPage`'s title bar strip with custom `TabViewItem` styling (stock `ControlCornerRadius` with no `CornerRadius` literal, `MaxWidth=240 epx`, `CaptionTextBlockStyle` 12 epx title, close button on active tab and pointer hover). Done when: tab geometry and typography match `D-Focus-Light.png`.
 - [ ] Display an unsaved-changes dirty indicator (`•` or `*` badge with `AutomationProperties.Name` including `"Modified"`) on any tab whose `DocumentTabSession::is_dirty()` is true. Done when: toggling `set_dirty(true)` updates the tab header and accessibility name immediately.
 - [ ] Wire the `+` (`AddTabButton`) in `TabView` to focus the `Home` tab and place keyboard focus inside the inline Command Box. Done when: clicking `+` opens `Home` ready to type or pick a file.
 - [ ] Wire `Ctrl+Tab` (next tab), `Ctrl+Shift+Tab` (previous tab), `Ctrl+W` (close active document tab), and middle-click on a tab header to close that tab. Done when: keyboard and mouse tab cycling and closing match SPEC section 10.
@@ -176,19 +185,19 @@ Implement the eight named layout slot containers in `ShellPage` required by SPEC
 **Build order:**
 
 1. Add the eight named slot containers (`TitleBarSlot`, `TopBarSlot`, `BottomOverlaySlot`, `LeftDockSlot`, `RightDockSlot`, `LeftOverlaySlot`, `RightOverlaySlot`, `BottomDockSlot`) and the central workspace host (`CenterCanvasSlot` for `Home`, `DocumentView`, `ConvertPage`, `OrganizePage`, `SettingsPage`) to `src/app/ShellPage.xaml`, along with `ShellSlotManager` (`src/app/ShellSlotManager.h/.cpp`) to move live `UIElement` instances between slots without destroying their state. Done when: a stateful test control moved across all eight slots preserves its internal state and focusable children.
-2. Build the `Classic` left navigation rail (`NavigationRailControl` in `LeftDockSlot`, `20 epx` Segoe Fluent icons for `Home`, `Read`, `Convert`, `Organize`, `Settings`) and the `Reading room` title-bar mode switcher (`Home`, `Read`, `Convert`, `Organize` with `RectoAccentBrush` underline indicator and document tabs reparented to `TopBarSlot`). Done when: toggling slot configurations matches the shell chrome of `D-Focus-Light.png`, `D-Classic.png`, and `D-ReadingRoom.png`.
+2. Build the `Classic` left navigation rail (`NavigationRailControl` in `LeftDockSlot`, `20 epx` `RectoIcons` glyphs `home`, `document`, `document_arrow_right`, `grid` and `settings` for `Home`, `Read`, `Convert`, `Organize`, `Settings`) and the `Reading room` title-bar mode switcher (`Home`, `Read`, `Convert`, `Organize` with `RectoAccentBrush` underline indicator and document tabs reparented to `TopBarSlot`). Done when: toggling slot configurations matches the shell chrome of `D-Focus-Light.png`, `D-Classic.png`, and `D-ReadingRoom.png`.
 
 - [ ] Declare `TitleBarSlot`, `TopBarSlot`, `BottomOverlaySlot`, `LeftDockSlot`, `RightDockSlot`, `LeftOverlaySlot`, `RightOverlaySlot`, `BottomDockSlot`, and `CenterCanvasSlot` in `src/app/ShellPage.xaml`. Done when: all slot hosts exist in the visual tree and collapse cleanly (`Visibility::Collapsed`) when empty so they consume zero layout space.
 - [ ] Style docked slots (`TopBarSlot`, `LeftDockSlot`, `RightDockSlot`, `BottomDockSlot`) with `RectoSurfaceBrush` backgrounds and `1 epx` `RectoBorderBrush` dividers (zero drop shadows per SPEC 7). Done when: docked panes render flat with crisp `1 epx` borders.
 - [ ] Style floating overlay slots (`BottomOverlaySlot`, `LeftOverlaySlot`, `RightOverlaySlot`) with `16 epx` canvas margins and `ThemeShadow` (`Translation.Z = 32` per SPEC 7). Done when: floating cards cast the SPEC 7 elevation shadow over the page canvas.
-- [ ] Implement `ShellSlotManager::reparent_control(UIElement, SlotId)` in `src/app/ShellSlotManager.h/.cpp` that detaches a live control from its current slot panel and attaches it to the target slot panel in a single UI tick. Done when: reparenting `TabView` or a test toolbar preserves selection and text input state. Cheaper substitute that fails the checkpoint: destroying and instantiating new controls on layout change.
-- [ ] Build the `Classic` left navigation rail (`Home`, `Read`, `Convert`, `Organize`, plus `Settings` pinned at bottom) with `20 epx` Segoe Fluent glyphs, `AutomationProperties.Name`, and tooltips. Done when: activating rail items switches the active workspace mode in `ShellPage`.
+- [ ] Implement `ShellSlotManager::reparent_control(UIElement, SlotId, SlotOccupant)` in `src/app/ShellSlotManager.h/.cpp` that detaches a live control from its current slot panel and attaches it to the target slot panel in a single UI tick. `SlotOccupant` carries a stacking `order` (a slot holding several controls stacks them by ascending order, top to bottom, each at its own measured height, never overlapping) and a `focus_group` (`BeforeCanvas` by default, `AfterCanvas` for a control SPEC 11 places after the page, such as the Classic status bar of §20). Done when: reparenting `TabView` or a test toolbar preserves selection and text input state, and two test controls placed in `BottomDockSlot` with orders 0 and 1 stack in that order with disjoint bounds. Cheaper substitute that fails the checkpoint: destroying and instantiating new controls on layout change.
+- [ ] Build the `Classic` left navigation rail (`Home`, `Read`, `Convert`, `Organize`, plus `Settings` pinned at bottom) with `20 epx` `RectoIcons` glyphs (`home`, `document`, `document_arrow_right`, `grid`, `settings`), `AutomationProperties.Name`, and tooltips. Done when: activating rail items switches the active workspace mode in `ShellPage`.
 - [ ] Build the `Reading room` title-bar mode switcher (`Home`, `Read`, `Convert`, `Organize` with a `2 epx` `RectoAccentBrush` active underline indicator) and support reparenting the document `TabView` into `TopBarSlot` directly beneath the title bar per SPEC 8.1. Done when: the `Reading room` header matches `D-ReadingRoom.png`.
-- [ ] Enforce the SPEC 11 logical keyboard `Tab` order across slots (`TitleBarSlot -> TopBarSlot -> BottomOverlaySlot -> LeftDockSlot/LeftOverlaySlot -> RightDockSlot/RightOverlaySlot -> BottomDockSlot -> CenterCanvasSlot`). Done when: pressing `Tab` traverses populated slots in exact SPEC 11 order.
-- [ ] Add `Shell.NamedSlotsAndReparenting` test in `tests/recto-tests/` verifying lossless control reparenting across all eight slots, empty-slot collapse, and keyboard tab-index ordering. Done when: `recto-tests.exe --gtest_filter=Shell.NamedSlotsAndReparenting` passes.
+- [ ] Enforce the SPEC 11 logical keyboard `Tab` order by occupant focus group, not by slot alone (`TitleBarSlot -> TopBarSlot -> BottomOverlaySlot -> LeftDockSlot/LeftOverlaySlot -> RightDockSlot/RightOverlaySlot -> BottomDockSlot occupants in BeforeCanvas, such as the filmstrip -> CenterCanvasSlot -> occupants in AfterCanvas, such as the Classic status bar`), so a status bar sharing `BottomDockSlot` with the filmstrip is still reached after the page. Done when: pressing `Tab` traverses populated slots in exact SPEC 11 order, and with a `BeforeCanvas` and an `AfterCanvas` test occupant both in `BottomDockSlot`, `Tab` reaches the first before `CenterCanvasSlot` and the second after it (and `Shift+Tab` reverses).
+- [ ] Add `Shell.NamedSlotsAndReparenting` test in `tests/recto-tests/` verifying lossless control reparenting across all eight slots, empty-slot collapse, multi-occupant stacking order in `BottomDockSlot`, and keyboard tab-index ordering including the split `BottomDockSlot` focus groups. Done when: `recto-tests.exe --gtest_filter=Shell.NamedSlotsAndReparenting` passes, and fails when the `AfterCanvas` occupant is reached before `CenterCanvasSlot`.
 - [ ] Commit: `app: add named shell layout slots, Classic nav rail and Reading room mode switcher`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.NamedSlotsAndReparenting` passes on the display-session host, proving lossless control reparenting across all eight named slots and SPEC 11 keyboard tab order.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.NamedSlotsAndReparenting` passes on the display-session host, proving lossless control reparenting across all eight named slots and SPEC 11 keyboard tab order, with an `AfterCanvas` occupant of `BottomDockSlot` reached after the page; ordering by slot alone makes the test fail.
 
 ## 5. File Open Picker (`Ctrl+O`) and shared `OpenDocumentPipeline`
 
@@ -235,7 +244,7 @@ Implement window-wide drag-and-drop file opening per SPEC section 9.1: dragging 
 
 **Build order:**
 
-1. Build the `DropOverlayControl` (`src/app/controls/DropOverlayControl.xaml/.h/.cpp`) hosted at the top Z-layer of `ShellPage` (`IsHitTestVisible="False"`, `Visibility="Collapsed"` by default) with `RectoWindowBrush` / `RectoRaisedBrush` backdrop, `2 epx` `RectoAccentBrush` rounded border (`CornerRadius=16`, `24 epx` margin), `resources/svg/drop-files-{light,dark}.svg` illustration, and `"Drop a PDF anywhere in this window"` `SubtitleTextBlockStyle` text. Done when: toggling the overlay visibility in Light and Dark themes matches the SPEC 3.4 and 9.1 design.
+1. Build the `DropOverlayControl` (`src/app/controls/DropOverlayControl.xaml/.h/.cpp`) hosted at the top Z-layer of `ShellPage` (`IsHitTestVisible="False"`, `Visibility="Collapsed"` by default) with `RectoWindowBrush` / `RectoRaisedBrush` backdrop, `2 epx` `RectoAccentBrush` border on the stock `OverlayCornerRadius` (8 epx, SPEC 7) with a `24 epx` margin, `resources/svg/drop-files-{light,dark}.svg` illustration, and `"Drop a PDF anywhere in this window"` `SubtitleTextBlockStyle` text. Done when: toggling the overlay visibility in Light and Dark themes matches the SPEC 3.4 and 9.1 design.
 2. Wire `DragOver`, `DragLeave`, and `Drop` on `ShellPage`: inspect `DragEventArgs::DataView()` for `StandardDataFormats::StorageItems()`, set `AcceptedOperation = DataPackageOperation::Copy` and show `DropOverlayControl` when file items are present, hide the overlay on `DragLeave` or `Drop`, and pass the dropped file paths to `OpenDocumentPipeline::open_files_async`. Done when: dropping a batch of valid and broken corpus files onto `ShellPage` opens every valid PDF in a tab and routes broken/non-PDF files to §11's error dialog.
 
 - [ ] Author `src/app/controls/DropOverlayControl.xaml/.h/.cpp` consuming `resources/svg/drop-files-light.svg` and `resources/svg/drop-files-dark.svg` via `ThemeDictionaries` and `RectoColors.xaml` tokens. Done when: the overlay renders with zero hex literals and switches illustrations cleanly between Light and Dark themes.
@@ -314,16 +323,16 @@ Implement the viewer's file-saving pipeline (`src/app/SavePipeline.h/.cpp`) and 
 
 ## 9. Classic menu bar (`File`, `Edit`, `View`, `Tools`, `Window`, `Help`) and docked top bar
 
-Build the Classic menu bar (`MenuBar` with `File`, `Edit`, `View`, `Tools`, `Window`, `Help`) and docked top command bar hosted in `TopBarSlot` (`D-Classic.png`), exposing every file, view, annotation, form, redaction, signing, conversion, and organization command with its Segoe Fluent glyph and SPEC section 10 keyboard shortcut text.
+Build the Classic menu bar (`MenuBar` with `File`, `Edit`, `View`, `Tools`, `Window`, `Help`) and docked top command bar hosted in `TopBarSlot` (`D-Classic.png`), exposing every file, view, annotation, form, redaction, signing, conversion, and organization command with its `RectoIcons` glyph and SPEC section 10 keyboard shortcut text.
 
 **Phase:** 2
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 6 (`16 epx` toolbar/menu glyphs), 8, 8.2, 9.2 and 10 with `design/screenshots/D-Classic.png` and `explorations/A-*.png`.
+**Fidelity:** `design/SPEC.md` sections 6 (`16 epx` toolbar/menu glyphs), 8, 8.2, 8.4 (Classic menu bar), 9.2 and 10 with `design/screenshots/D-Classic.png` and `explorations/A-*.png`.
 **Job:** Users who prefer a traditional desktop PDF workflow (`Classic` preset) or menu-driven discovery can access `File` (`Open`, `Open Recent`, `Save`, `Save a Copy`, `Print`, `Properties`, `Close Tab`, `Exit`), `Edit`, `View`, `Tools`, `Window`, and `Help` from the top bar. Consumer: `ShellPage`'s `TopBarSlot` (§4), `CommandRegistry` (`D02 T03 §11`), and `LayoutPresetEngine` (`D02 T04 §3`).
 **Treatment:** Stock WinUI `MenuBar` and docked `CommandBar` in `TopBarSlot` on `RectoSurfaceBrush` with `1 epx` bottom `RectoBorderBrush`, sharing the exact command handlers as the floating toolbar and `Ctrl+K`. Cheaper substitute that fails the checkpoint: omitting a `File` / `View` / `Tools` menu structure in `Classic` mode or wiring menu items to duplicate handlers that drift from the toolbar.
-**Chrome:** consume `TopBarSlot` (§4), `RectoSurfaceBrush`, `RectoBorderBrush`, and `16 epx` Segoe Fluent `FontIcon`s.
+**Chrome:** consume `TopBarSlot` (§4), `RectoSurfaceBrush`, `RectoBorderBrush`, and `16 epx` `RectoIcons` `FontIcon`s.
 
 **Build order:**
 
@@ -344,7 +353,7 @@ Build the Classic menu bar (`MenuBar` with `File`, `Edit`, `View`, `Tools`, `Win
 
 ## 10. Shared SPEC 9.9 `ContentDialog` chrome and Password dialog
 
-Establish the shared `RectoDialogStyle` (`CornerRadius=20`, `Padding=28 epx`, `RectoRaisedBrush`, `ThemeShadow` Z=64, alert full-width stacked button layout vs. form left-aligned side-by-side button layout per SPEC 9.9) and implement `PasswordDialog` (`src/app/dialogs/PasswordDialog.xaml/.h/.cpp`) wired to `DocumentActor::authenticate`: a password-protected PDF prompts before any page renders, wrong attempts keep the dialog open with a `RectoDangerBrush` border and `"That password didn't work."`, and `Cancel` tears down the pending tab and actor cleanly.
+Establish the shared `RectoDialogStyle` (the stock `OverlayCornerRadius` of 8 epx, `Padding=28 epx`, `RectoRaisedBrush`, `ThemeShadow` Z=64, alert full-width stacked button layout vs. form left-aligned side-by-side button layout per SPEC 9.9) and implement `PasswordDialog` (`src/app/dialogs/PasswordDialog.xaml/.h/.cpp`) wired to `DocumentActor::authenticate`: a password-protected PDF prompts before any page renders, wrong attempts keep the dialog open with a `RectoDangerBrush` border and `"That password didn't work."`, and `Cancel` tears down the pending tab and actor cleanly.
 
 > **Deferred:** Queue-card password retry invocation from background conversion jobs -> XREF: D04 T01 §7
 
@@ -352,18 +361,18 @@ Establish the shared `RectoDialogStyle` (`CornerRadius=20`, `Padding=28 epx`, `R
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 6 (`24 epx` dialog header icons), 7 (`CornerRadius=20`, `ThemeShadow` Z=64), 9.2 and 9.9 (`Password` dialog row) with `design/screenshots/D-Dialogs.png`.
+**Fidelity:** `design/SPEC.md` sections 6 (`24 epx` dialog header glyphs, no tile), 7 (`OverlayCornerRadius` 8 epx, `ThemeShadow` Z=64), 9.2 and 9.9 (`Password` dialog row) with `design/screenshots/D-Dialogs.png`.
 **Job:** The user can unlock an encrypted PDF (`RC4`, `AES-128`, or `AES-256`) with immediate inline feedback on mistyped passwords, or cancel cleanly without leaving a broken empty tab behind. Consumer: `OpenDocumentPipeline` (§5) and the Convert queue (`D04 T01 §7`).
 **Treatment:** Shared `RectoDialogStyle` `ResourceDictionary` plus stateful `PasswordDialog` that validates credentials asynchronously against `DocumentActor::authenticate` inside `PrimaryButtonClick` (`args.Cancel(true)` while authenticating or on wrong password) so the dialog never closes and reopens on a typo. Cheaper substitute that fails the checkpoint: closing and reopening the dialog on a wrong password, or rendering blank pages behind the prompt before authentication succeeds.
 **Chrome:** author `src/app/dialogs/RectoDialogStyles.xaml` consumed by all SPEC 9.9 dialogs across the app (`D02`, `D04`, `D05`). Do not style dialogs individually.
 
 **Build order:**
 
-1. Author `src/app/dialogs/RectoDialogStyles.xaml` (merged into `App.xaml`) defining the SPEC 9.9 `ContentDialog` template overrides (`CornerRadius=20`, `Padding=28 epx`, `RectoRaisedBrush`, `RectoBorderBrush`, `24 epx` header icon slot, `SubtitleTextBlockStyle` 20 epx Semibold title, alert stacked full-width button template and form side-by-side `Cancel` + accent primary button template). Done when: test dialogs in both Alert and Form layouts match `D-Dialogs.png` geometry and token colours in Light and Dark themes.
+1. Author `src/app/dialogs/RectoDialogStyles.xaml` (merged into `App.xaml`) defining the SPEC 9.9 `ContentDialog` template overrides (the stock `OverlayCornerRadius` of 8 epx with no `CornerRadius` literal, `Padding=28 epx`, `RectoRaisedBrush`, `RectoBorderBrush`, a `24 epx` header glyph slot drawn directly in the status colour with no tile, tinted box or circle behind it, `SubtitleTextBlockStyle` 20 epx Semibold title, alert stacked full-width button template and form side-by-side `Cancel` + accent primary button template). Done when: test dialogs in both Alert and Form layouts match `D-Dialogs.png` geometry and token colours in Light and Dark themes.
 2. Build `PasswordDialog` (`src/app/dialogs/PasswordDialog.xaml/.h/.cpp`) with the `24 epx` lock `FontIcon`, `"Enter the password"` title, `"<filename> is protected."` body text, `PasswordBox` (auto-focused on open, `Enter` submits), inline error row (`RectoDangerBrush` border on `PasswordBox` + warning icon + `"That password didn't work."` text, hidden initially), and `Open` / `Cancel` buttons wired to `OpenDocumentPipeline` (§5). Done when: the encrypted corpus PDF unlocks on the correct password, displays the red border and `"That password didn't work."` in place on a wrong password, and closes the pending tab with zero leaked actors on `Cancel` or `Esc`.
 
-- [ ] Author `src/app/dialogs/RectoDialogStyles.xaml` with `CornerRadius=20`, `28 epx` padding, `RectoRaisedBrush`, `ThemeShadow` Z=64, Alert stacked buttons, and Form side-by-side buttons per SPEC 9.9. Done when: both dialog templates render with zero hex literals and match `D-Dialogs.png`.
-- [ ] Author `src/app/dialogs/PasswordDialog.xaml/.h/.cpp` with `24 epx` lock glyph, `"Enter the password"`, `"<file> is protected."`, `PasswordBox`, `Open` (primary accent), and `Cancel`. Done when: opening the dialog places keyboard focus directly inside `PasswordBox`.
+- [ ] Author `src/app/dialogs/RectoDialogStyles.xaml` with the stock `OverlayCornerRadius` (8 epx), `28 epx` padding, `RectoRaisedBrush`, `ThemeShadow` Z=64, a `24 epx` alert glyph drawn in the status colour (`RectoDangerBrush`, `RectoWarningBrush` or `RectoAccentBrush`) with no tile, tinted box or circle behind it, Alert stacked buttons, and Form side-by-side buttons per SPEC 9.9. Done when: both dialog templates render with zero hex or `CornerRadius` literals and match SPEC 9.9.
+- [ ] Author `src/app/dialogs/PasswordDialog.xaml/.h/.cpp` with the `24 epx` `lock_closed` glyph in `RectoAccentBrush` (no tile), `"Enter the password"`, `"<file> is protected."`, `PasswordBox`, `Open` (primary accent), and `Cancel`. Done when: opening the dialog places keyboard focus directly inside `PasswordBox`.
 - [ ] Keep `DocumentTabSession` in its pre-render `is_locked` state while `PasswordDialog` is open so zero page outlines or page contents appear behind the dialog. Done when: SPEC 9.2's rule ("show the password dialog before any page appears") holds in visual and state assertions. Cheaper substitute that fails the checkpoint: showing blank white pages behind the password dialog.
 - [ ] Defer dialog dismissal in `PrimaryButtonClick` (`ContentDialogButtonClickDeferral`) while `DocumentActor::authenticate` runs on the actor thread. Done when: the UI thread stays responsive during AES-256 `R=6` key-derivation rounds.
 - [ ] On `ErrorCode::InvalidPassword`, set `args.Cancel(true)` to keep `PasswordDialog` open in place, apply `RectoDangerBrush` to the `PasswordBox` border, show `"That password didn't work."` with a warning icon (colour is never the only signal per SPEC 11), and select the password text for immediate re-typing. Done when: a wrong password attempt never dismisses/re-animates the dialog.
@@ -384,7 +393,7 @@ Implement the SPEC section 9.9 `"Couldn't open this file"` alert `ContentDialog`
 **Fidelity:** `design/SPEC.md` section 9.9 (`Could not open` row, Alert layout with centred icon/title/text and full-width stacked buttons) with `design/screenshots/D-Dialogs.png`.
 **Job:** When a file is corrupt, truncated, or not a PDF, the user gets a clear explanation and a one-click `Copy error details` payload ready to paste into a bug report without exposing their private filesystem hierarchy. Consumer: `OpenDocumentPipeline` (§5).
 **Treatment:** Alert-styled `ContentDialog` consuming `RectoDialogStyles.xaml` (§10) and `recto::pdf::diagnostics_tail()` (`D01 T01 §1`) with path scrubbing. Cheaper substitute that fails the checkpoint: a generic Win32 `MessageBoxW`, silent open failure, or copying full `C:\Users\<username>\...` paths into the clipboard diagnostic block.
-**Chrome:** consume the Alert template from `RectoDialogStyles.xaml` (§10), `RectoWarningBrush`, and Segoe Fluent warning glyph (`24 epx`).
+**Chrome:** consume the Alert template from `RectoDialogStyles.xaml` (§10), `RectoWarningBrush`, and the `RectoIcons` `warning` glyph (`24 epx`, drawn in `RectoWarningBrush` with no tile behind it).
 
 **Build order:**
 
@@ -409,7 +418,7 @@ Users of PDF editors commonly lose edits when the app crashes or the machine res
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` section 9.9 dialog chrome; the restore prompt is a genuinely new dialog with no screenshot. The setting lives in SPEC 9.7's `Security, Performance & Privacy` group (`D02 T04 §6`).
+**Fidelity:** `design/SPEC.md` section 9.9 dialog chrome; the restore prompt is a genuinely new dialog with no screenshot. The setting lives in SPEC 9.7's `Performance and privacy` group (`D02 T04 §6`). Design board: `design/SPEC.md` section 9.18 with `design/screenshots/D-Session.png` (drawn by `D06 T04 §24`).
 **Job:** A user whose Recto session ended abnormally reopens Recto and restores each unsaved document, or discards it. Consumer: `DocumentTabSession` dirty state (§3), `AtomicFileWriter` (`D04 T02 §1`) and the `SettingsStore` interval setting.
 **Treatment:** One restore dialog listing recoverable documents with their original names and snapshot times, `Restore` and `Discard` per row. Cheaper substitute that fails the checkpoint: silently reopening snapshots as if they were the originals.
 **Chrome:** Shared `RectoDialogStyles.xaml` (§10), stock `ContentDialog` and `ListView`, `RectoColors.xaml` tokens.
@@ -461,7 +470,7 @@ UPDF's and Foxit's session restore, matched here: on launch Recto reopens the ta
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new behaviour; the setting row follows `design/SPEC.md` section 9.7 (Reading group) and the toast follows section 9 toast chrome.
+**Fidelity:** Genuinely new behaviour; the setting row follows `design/SPEC.md` section 9.7 (Reading group) and the toast follows section 9 toast chrome. Design board: `design/SPEC.md` section 9.18 with `design/screenshots/D-Session.png` (drawn by `D06 T04 §24`).
 **Job:** A user who closes Recto with a set of documents open gets the same tabs back at the same pages next time, and can switch that off. Consumer: `OpenDocumentPipeline` (§5), `SettingsStore` (`D02 T04 §2`).
 **Treatment:** Stock `ToggleSwitch` row and the existing toast; restore runs through the one open pipeline. Cheaper substitute that fails the checkpoint: a second code path that opens documents directly, or restoring all tabs in parallel before the first page appears.
 **Chrome:** `RectoColors.xaml` tokens, the shared toast host, `CommandRegistry`.
@@ -488,10 +497,10 @@ UPDF's tab menu closes tabs to the left or right and reopens the last closed tab
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.1 (title bar tabs) and 10 (keyboard); the context menu is a stock `MenuFlyout`, no screenshot.
+**Fidelity:** `design/SPEC.md` sections 8.1 (title bar tabs) and 10 (keyboard); the context menu is a stock `MenuFlyout`, no screenshot. Design board: `design/SPEC.md` section 9.18 with `design/screenshots/D-Session.png` (drawn by `D06 T04 §24`).
 **Job:** A user who closed the wrong tab gets it back at the same page with one key, and can clear a crowded tab strip in one command without losing edits. Consumer: `DocumentTabSession` (§3), `SavePipeline` (§8), `CommandRegistry` (`D02 T03 §11`).
 **Treatment:** Stock `TabView` and `MenuFlyout` over a bounded in-memory stack. Cheaper substitute that fails the checkpoint: closing batches without the unsaved-changes prompt, or keeping closed tabs alive in memory.
-**Chrome:** `RectoColors.xaml` tokens and Segoe Fluent Icons; no second tab control.
+**Chrome:** `RectoColors.xaml` tokens and Fluent UI System Icons (`RectoIcons`); no second tab control.
 
 **Build order:**
 
@@ -516,7 +525,7 @@ UPDF lets users drag document tabs into a new order; the strip is fixed today. R
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.1 (tabs) and 11 (keyboard and screen-reader operation).
+**Fidelity:** `design/SPEC.md` sections 8.1 (tabs) and 11 (keyboard and screen-reader operation). Design board: `design/SPEC.md` section 9.18 with `design/screenshots/D-Session.png` (drawn by `D06 T04 §24`).
 **Job:** A user arranges tabs to match their work and does the same from the keyboard. Consumer: `DocumentTabSession` (§3), `SessionStore` (§13).
 **Treatment:** Stock `TabView` reordering plus two commands. Cheaper substitute that fails the checkpoint: drag-only reordering, or reordering that leaves stale non-client hit regions.
 **Chrome:** `RectoColors.xaml` tokens; the existing tab strip.
@@ -543,10 +552,10 @@ UPDF, PDFelement and Foxit PDF Editor share or email the open file (Acrobat Pro 
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface; the Share sheet is the Windows one and the choice dialog follows `design/SPEC.md` section 9.9 form layout.
+**Fidelity:** Genuinely new surface; the Share sheet is the Windows one and the choice dialog follows `design/SPEC.md` section 9.9 form layout. Design board: `design/SPEC.md` section 9.18 with `design/screenshots/D-Session.png` (drawn by `D06 T04 §24`).
 **Job:** A user sends the open PDF, or a saved copy of it, through any installed share target without leaving Recto. Consumer: `SavePipeline` (§8), `CommandRegistry` (`D02 T03 §11`).
 **Treatment:** `DataTransferManager` with the window HWND and a StorageFile, copy through the existing save path. Cheaper substitute that fails the checkpoint: building a mail or upload client inside Recto, or sharing a dirty document's stale bytes without saying so.
-**Chrome:** `RectoDialogStyles.xaml` (§10) and Segoe Fluent Icons.
+**Chrome:** `RectoDialogStyles.xaml` (§10) and Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -562,9 +571,104 @@ UPDF, PDFelement and Foxit PDF Editor share or email the open file (Acrobat Pro 
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.ShareCopyForDirtyAndCloud:Audit.ShareNoDirectNetwork` passes on the display-session host.
 
+## 18. `RectoIcons` subset icon font, stable code point map and glyph resources
+
+`design/SPEC.md` section 6 (owner decision 2026-10-21, foundation plan D15 and the 2026-10-21 icons entry) makes Fluent UI System Icons (Microsoft, MIT, npm `@fluentui/svg-icons` pinned at `1.1.344`) the only source of Recto glyphs, delivered as the subset font `resources/fonts/RectoIcons.ttf` that holds exactly the section 6 table's glyphs (Regular and Filled) plus the two custom glyphs (Redact, Squiggly underline), used through `FontIcon` with `RectoIconsFontFamily`. No section built it, yet §2 and every later surface consume it, so it lands before §2. The build downloads nothing: the SVGs it needs are vendored into `resources/fonts/fluent-svg/` with the package's MIT licence by a separate, repeatable `--vendor` step, and custom glyphs live in `resources/fonts/custom/`. The SPEC table is the only glyph list: the script parses it, so a row added to SPEC section 6 becomes a glyph in the font through one documented workflow that later sections (the design boards of `D06 T04`) reuse: add the row, run `--vendor` (which copies the new name's two SVGs from the same pinned package and records their hashes in `SOURCE.md` and their names in `NOTICE.md`), or for a concept the set lacks draw a custom glyph under the SPEC section 6 acceptance rule, then rebuild. Default recorded here: the outlines are compiled with `fontTools` (the standard OpenType library for Python), pinned to one exact version in `scripts/requirements-icon-font.txt`; changing it later only rewrites the outline step of the script.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** no
+
+**Build order:**
+
+1. Write `scripts/build-icon-font.py --vendor`: unpack `npm pack @fluentui/svg-icons@1.1.344` in `R:\scratch`, check the tarball against the registry's `dist.integrity`, and for every distinct Fluent name in the SPEC section 6 table that has no file yet, copy only `icons/<name>_20_regular.svg` and `icons/<name>_20_filled.svg` into `resources/fonts/fluent-svg/`, append each file's name and SHA-256 to `resources/fonts/fluent-svg/SOURCE.md` (which names the package, version and tarball integrity), add the name to the Fluent UI System Icons entry of `NOTICE.md`, and copy the package `LICENSE` once. It never changes an existing file, and it refuses a different package version than the one `SOURCE.md` records. Run it once now for the initial table. Done when: the folder holds exactly two SVGs per distinct table name plus `LICENSE` and `SOURCE.md`, a second run changes nothing, and a name the pinned package lacks is reported by name (the fix is a dated correction of that SPEC section 6 row to the nearest existing 20 px glyph, or a custom glyph under the SPEC section 6 rule, never a silent substitute).
+2. Draw the custom glyphs `resources/fonts/custom/recto_redact_20_regular.svg`, `recto_redact_20_filled.svg`, `recto_squiggly_20_regular.svg` and `recto_squiggly_20_filled.svg` on the 20 px grid in the Fluent style (filled shapes, no strokes, the 20 x 20 `viewBox` of the vendored files) under the SPEC section 6 custom-glyph acceptance rule. Done when: each file has a `viewBox="0 0 20 20"` and only `path` elements, matching the vendored files' structure.
+3. Write the build in `scripts/build-icon-font.py`: parse the SPEC section 6 table, map each concept to its glyph name (a `custom glyph` row for concept `<Concept>` maps to `recto_<concept in snake case>` read from `resources/fonts/custom/`, today `recto_redact` and `recto_squiggly`; every other row reads `resources/fonts/fluent-svg/`), compile each SVG to TrueType outlines, assign each `<name>_regular` and `<name>_filled` a Private Use Area code point from `resources/fonts/RectoIcons.codepoints.json` (append only: existing names keep their code point, new names take the next free value from `U+E000`), and write the font with fixed `head` timestamps and a sorted glyph order so a rebuild is byte-identical. Done when: two consecutive runs produce identical bytes for `resources/fonts/RectoIcons.ttf`.
+4. Generate `src/app/RectoIconGlyphs.h` (one `constexpr wchar_t const*` per glyph in `recto::icons`) and `src/app/RectoIcons.xaml` (`RectoIconsFontFamily` as `/Assets/Fonts/RectoIcons.ttf#RectoIcons` plus one `x:String` per glyph keyed `RectoGlyph.<name>.Regular` and `.Filled`), merge `RectoIcons.xaml` into `src/app/App.xaml`, and copy the font into the build output as `Assets/Fonts/RectoIcons.ttf` through `src/app/Recto.vcxproj`. Done when: `build/bin/x64/Debug/Assets/Fonts/RectoIcons.ttf` exists after `.\build.cmd` and `App.xaml` merges `RectoIcons.xaml`.
+5. Add `--check` (rebuild in memory and compare with the committed font, map, header and XAML) and the tests. Done when: `python scripts/build-icon-font.py --check` exits 0 on the committed outputs and 1 after any one of them is edited.
+
+- [ ] Implement `--vendor` in `scripts/build-icon-font.py` and run it to vendor the pinned SVGs into `resources/fonts/fluent-svg/` with `LICENSE` and `SOURCE.md` (package, version, tarball integrity, per-file SHA-256), copying only the glyphs the SPEC section 6 table names and adding each name to `NOTICE.md`. Done when: the file count equals two per distinct table name, `SOURCE.md` lists every file with its hash, and on a fixture SPEC with one added row `--vendor` adds exactly that name's two SVGs, two `SOURCE.md` rows and one `NOTICE.md` name while leaving every existing file byte-identical.
+- [ ] Draw `recto_redact` and `recto_squiggly` in Regular and Filled under `resources/fonts/custom/` on the 20 px grid. Done when: the four SVGs exist with `viewBox="0 0 20 20"` and paths only. Cheaper substitute: an emoji, a stroke-only drawing or a Segoe glyph, which SPEC section 6 forbids.
+- [ ] Pin `fontTools` to one exact version in `scripts/requirements-icon-font.txt` and make `scripts/build-icon-font.py` exit with a clear install hint when it is missing. Done when: running the script without `fontTools` prints the install command and exits 2.
+- [ ] Parse the SPEC section 6 table in `scripts/build-icon-font.py` into the distinct glyph set (custom rows included, read from `resources/fonts/custom/`), failing on a row whose SVG is missing with the fix in the message (`run --vendor` for a Fluent name, draw the files under `resources/fonts/custom/` for a custom row). Done when: removing one vendored SVG makes the build exit 1 naming that concept, glyph and fix, and removing one custom SVG does the same for its custom row.
+- [ ] Compile Regular and Filled outlines into `resources/fonts/RectoIcons.ttf` with family name `RectoIcons`, fixed timestamps and sorted glyph order. Done when: two runs give the same SHA-256.
+- [ ] Assign code points through the append-only map `resources/fonts/RectoIcons.codepoints.json`. Done when: adding a name gives it the next free code point and leaves every existing one unchanged.
+- [ ] Generate `src/app/RectoIconGlyphs.h` and `src/app/RectoIcons.xaml` from the map and merge `RectoIcons.xaml` into `src/app/App.xaml`. Done when: both files list every glyph and `RectoIconsFontFamily` resolves in `App.Current.Resources`.
+- [ ] Copy the font into the app output through a `Content` item in `src/app/Recto.vcxproj`. Done when: the x64 and ARM64 build outputs both contain `Assets/Fonts/RectoIcons.ttf`.
+- [ ] List every vendored glyph name (written by `--vendor`) and both custom glyphs under the Fluent UI System Icons entry of `NOTICE.md`, with the MIT notice. Done when: every name in `RectoIcons.codepoints.json` appears in `NOTICE.md`.
+- [ ] Add `Shell.IconFontSpecimen` in `tests/recto-tests/`: for every name in `RectoIcons.codepoints.json` (Regular and Filled, the two custom glyphs included), render the code point through `FontIcon` with `RectoIconsFontFamily` at 16, 20 and 24 epx into a `RenderTargetBitmap`, rasterize the source SVG at the same size with Direct2D (`ID2D1DeviceContext5::CreateSvgDocument`), and require non-empty ink, no ink on the outer pixel rows and columns (no clipping) and an alpha-mask intersection over union of at least 0.9 with the SVG raster (so an empty, flipped or offset outline fails); run it against the font in the unpackaged output and in the `-EnableMsix` package layout. Done when: `recto-tests.exe --gtest_filter=Shell.IconFontSpecimen` passes, and fails on a fixture font with one glyph's outline emptied, one mirrored vertically and one shifted 4 units outside the em box.
+- [ ] Add `tests/scripts/test_build_icon_font.py` asserting: every SPEC section 6 glyph is in the font in both forms; no glyph outside the table (and `.notdef`) is present; no existing name's code point changed against the committed map; every map name is in `NOTICE.md`; `--check` passes. Done when: `python -m unittest tests.scripts.test_build_icon_font` passes, and fails on a fixture SPEC with an extra row, a fixture font with an extra glyph, and a fixture map with a moved code point.
+- [ ] Commit: `resources: build the RectoIcons subset font from the pinned Fluent UI System Icons`
+
+**Test checkpoint:** `python -m unittest tests.scripts.test_build_icon_font` passes, `python scripts/build-icon-font.py --check` exits 0 and `recto-tests.exe --gtest_filter=Shell.IconFontSpecimen` passes on the display-session host; a fixture font with an emptied, mirrored or shifted outline fails the specimen test, and adding a row to a fixture copy of the SPEC section 6 table without rebuilding, adding an unlisted glyph to a fixture font, or changing an existing name's code point in a fixture map each makes the test fail.
+
+## 19. `RectoChipStyle` pill style for chips, filter tags, keycaps, badges and counters
+
+`design/SPEC.md` section 7 (revised 2026-10-21) allows three corner radii: 4 epx on controls, 8 epx on overlays, and a full pill (radius half the height) through the style `RectoChipStyle`, used only for chips and filter tags, shortcut keycaps, status badges and counters. §2 (the `Ctrl K` keycaps on the command box button), `D02 T03 §3` (panel switcher count badges), `D02 T03 §12` (command box shortcut keycaps) and `D05 T02 §1` (selected-card check badge) already consume the style, and nothing created it; §10's `RectoDialogStyles.xaml` cannot host it because §10 sits after §5, which comes after §2. A pill has no stock radius resource, so the style owns the one place where the radius is computed from the height.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` sections 7 (full pill, `RectoChipStyle`, only chips, filter tags, keycaps, badges and counters), 6 (glyph colour rules), 9.4 (shortcut keycaps), 9.5 (removable file chips) and 11 (colour never the only signal; hit targets at least 32 x 32 epx), with `design/screenshots/D-Home.png` (key hints) and `D-Dialogs.png` (command box keycaps).
+**Job:** Every chip, filter tag, keycap, status badge and counter in Recto looks and behaves the same, so the user reads a pill as "a tag or a key", never as a button. Consumer: §2, `D02 T03 §3`, `D02 T03 §12`, `D02 T04 §4`, `D05 T02 §1`, and every later chip (Convert file chips, Comments filters, review status chips).
+**Treatment:** One templated control `RectoChip` with its default style `RectoChipStyle`, whose border radius is recomputed as half the rendered height. Cheaper substitute that fails the checkpoint: a literal `CornerRadius="10"` per control, a 4 epx rounded rectangle, or a status badge that shows colour without text or glyph.
+**Chrome:** `RectoBorderStrongBrush`, `RectoSurfaceBrush`, `RectoTextSecondaryBrush`, `RectoAccentTintBrush` and `RectoAccentBrush` (selected), `RectoSuccessBrush`, `RectoWarningBrush` and `RectoDangerBrush` (badge tones, always with text or a `RectoIcons` glyph), `CaptionTextBlockStyle`.
+
+**Build order:**
+
+1. Author `src/app/controls/RectoChip.idl/.h/.cpp`, a templated `ContentControl` with `Kind` (`Chip`, `FilterTag`, `Keycap`, `Badge`, `Counter`), `Tone` (`Neutral`, `Accent`, `Success`, `Warning`, `Danger`), `IsSelected` and `IsRemovable` (a dismiss button with `AutomationProperties.Name` `Remove <label>` and a tooltip), setting the visual pill border's `CornerRadius` to half of that border's `ActualHeight` on every `SizeChanged`. The visual pill and the hit area are separate template parts: for the interactive kinds (`Chip`, `FilterTag`) the control's hit bounds are at least 32 x 32 epx (SPEC 11), with the pill centred vertically inside a transparent hit border that still receives input, and a removable chip's dismiss button owns its own 32 x 32 epx hit box at the trailing end (its glyph is 12 epx), carved out of the chip body's hit region so a press lands on exactly one of them. `Keycap`, `Badge` and `Counter` are not interactive (no pointer or keyboard activation), so the hit rule does not apply to them. Done when: a chip whose pill renders at 16, 20, 24 and 32 epx height reports a pill corner radius of exactly half the pill height, and every interactive chip's hit bounds and dismiss box measure at least 32 x 32 epx.
+2. Author `src/app/styles/RectoChipStyles.xaml` with `RectoChipStyle` (default style of `RectoChip`): 20 epx high for `Keycap`, `Badge` and `Counter` and 24 epx for `Chip` and `FilterTag` (default recorded here; changing it is a one-line resource change), 8 epx horizontal padding, `CaptionTextBlockStyle`, token brushes per `Tone`, and merge it into `src/app/App.xaml`. Done when: each `Kind` and `Tone` renders with token colours in Light, Dark and HighContrast, and the 24 epx `Chip` and `FilterTag` pills sit in 32 epx hit bounds.
+
+- [ ] Author `src/app/controls/RectoChip.idl/.h/.cpp` with `Kind`, `Tone`, `IsSelected` and `IsRemovable` dependency properties. Done when: the control compiles and every property change re-applies its visual state.
+- [ ] Recompute the visual pill border `CornerRadius` as half of its own `ActualHeight` (not the hit bounds) in `RectoChip::OnSizeChanged`. Done when: resizing a chip keeps its ends fully round at every height. Cheaper substitute: a fixed literal radius that breaks when the text scale changes.
+- [ ] Author `src/app/styles/RectoChipStyles.xaml` with the `RectoChipStyle` metrics and token brushes, and merge it into `src/app/App.xaml`. Done when: `App.Current.Resources` resolves `RectoChipStyle`.
+- [ ] Render `Keycap` content in `CaptionTextBlockStyle` with `RectoTextSecondaryBrush` on `RectoSurfaceBrush` and a 1 epx `RectoBorderStrongBrush` edge, one pill per key (`Ctrl`, `K`). Done when: `Ctrl K` renders as two keycaps matching `D-Home.png` key hints.
+- [ ] Render `Badge` tones `Success`, `Warning` and `Danger` with a 12 epx `RectoIcons` glyph (`checkmark`, `warning`, `dismiss`) beside the text. Done when: no tone can render with colour alone (SPEC 11).
+- [ ] Give `Chip` and `FilterTag` hit bounds of at least 32 x 32 epx around the 24 epx pill in `src/app/styles/RectoChipStyles.xaml` (a transparent, hit-testable outer border; the visual pill stays 24 epx), and activate them by click, `Enter` or `Space` (raising `Click` and toggling `IsSelected` for `FilterTag`). Done when: a pointer press 3 epx above the pill's top edge activates the chip, and `Enter` and `Space` on a focused chip raise the same `Click`. Cheaper substitute: a 24 epx hit area equal to the visual pill, which SPEC 11 forbids.
+- [ ] Add the removable path: `IsRemovable` shows a dismiss button with its own 32 x 32 epx hit box at the trailing end, excluded from the chip body's hit region; `Delete` or `Backspace` on a focused chip raises `RemoveRequested`; the button has an automation name and tooltip. Done when: removing a chip by mouse and by keyboard raises the same event, a press inside the dismiss box raises `RemoveRequested` and never `Click`, and a press on the chip body outside it raises `Click` and never `RemoveRequested`.
+- [ ] Expose `RectoChip` through UI Automation as a text element (`Keycap`, `Badge`, `Counter`) or a button (`Chip`, `FilterTag`) with its label as the name. Done when: Accessibility Insights lists every chip with a name and the right control type.
+- [ ] Add a source scan that no XAML file under `src/app` sets a numeric `CornerRadius` literal. Done when: `Audit.NoCornerRadiusLiterals` passes and fails when a scratch copy sets `CornerRadius="10"`.
+- [ ] Add `Shell.ChipStyleShape` asserting half-height pill radius at 16, 20, 24 and 32 epx, token brushes per `Tone` in all three themes, glyph presence on status tones, interactive hit bounds and dismiss box of at least 32 x 32 epx, chip activation by pointer (including a press in the transparent hit margin), `Enter` and `Space`, and dismissal by pointer on the dismiss box, `Delete` and `Backspace` with no cross-firing between `Click` and `RemoveRequested`. Done when: `recto-tests.exe --gtest_filter=Shell.ChipStyleShape` passes.
+- [ ] Commit: `app: add RectoChipStyle pill style for chips, keycaps, badges and counters`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.ChipStyleShape:Audit.NoCornerRadiusLiterals` passes on the display-session host; replacing the computed radius with a literal makes `Shell.ChipStyleShape` fail at the 32 epx case, and shrinking the `FilterTag` hit bounds to the 24 epx pill, or letting a dismiss-box press also raise `Click`, makes it fail.
+
+## 20. Classic status bar: current page, page size, PDF version and zoom slider
+
+`design/SPEC.md` section 8.4 gives the Classic preset a status bar in the bottom dock slot: the current page (click to type a page), the page size, the PDF version, and the zoom percentage with a zoom slider, on `RectoSurfaceBrush` with a 1 epx `RectoBorderBrush` top edge, after the page in the keyboard order (section 11). `D03 T02 §4` already tests a `ClassicStatusBar` in the Classic tab order, but no section builds it; it belongs beside the Classic menu bar of §9. It reads and writes view state only through `CommandRegistry` and the viewport channel, never a second handler. Default recorded here: the status bar is shown exactly when `ShellMenuBar` is placed (the Classic preset, or a Custom layout whose page toolbar is the docked top command bar); changing that rule is a one-line change in the layout mapping. Because the page thumbnails setting is independent, a Custom layout can put the bottom filmstrip (`D02 T03 §4`) in `BottomDockSlot` together with the status bar; the composition rule is: the filmstrip stacks above the status bar (§4 `SlotOccupant` order 0 and 1), the status bar keeps a fixed 32 epx height (default recorded here, so its `NumberBox` and `Slider` meet the SPEC 11 32 epx hit target), the filmstrip keeps its own height, the canvas gives up the combined height, and in the keyboard order the filmstrip comes before the page and the status bar after it (§4 focus groups).
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` sections 8 (bottom dock slot), 8.4 (status bar), 10 (`Ctrl+G`, `Ctrl+Plus`, `Ctrl+Minus`) and 11 (keyboard order: status bar after the page), with `design/screenshots/D-Classic.png`.
+**Job:** A Classic user reads the page number, page size, PDF version and zoom at a glance, types a page number to jump, and drags the slider to zoom. Consumer: the viewport of `D02 T02 §6` and `§7`, `LayoutPresetEngine` (`D02 T04 §3`), and the Classic tab order test of `D03 T02 §4`.
+**Treatment:** A `ClassicStatusBar` user control in `BottomDockSlot` bound to the active tab's viewport state, with go-to-page and zoom routed through `CommandRegistry`. Cheaper substitute that fails the checkpoint: static text that does not follow scrolling, a page box with its own navigation handler, or a status bar that also shows in Focus or Reading room.
+**Chrome:** `BottomDockSlot` (§4), `RectoSurfaceBrush`, 1 epx `RectoBorderBrush` top edge, `CaptionTextBlockStyle`, stock `NumberBox` and `Slider` with `ControlCornerRadius`, `CommandRegistry` (`D02 T03 §11`).
+
+**Build order:**
+
+1. Author `src/app/controls/ClassicStatusBar.xaml/.h/.cpp` with four fields left to right: the page field (`3 / 9`; click or `Enter` turns it into a `NumberBox` that runs `view.goToPage` from `CommandRegistry`, `Esc` cancels, an out-of-range number shows `Pages 1 to 9` and keeps the current page), the page size of the current page (in millimetres or inches by the Windows measurement system, with all of mm, in and pt in the tooltip), the PDF version (`PDF 1.7`), and the zoom percentage with a `Slider` over the zoom engine's range from `D02 T02 §7`. Done when: scrolling, `Ctrl+G`, `Ctrl+Plus` and `Ctrl+Minus` update every field within one frame, and typing `5` and `Enter` jumps to page 5.
+2. Register the status bar with `LayoutPresetEngine` (`D02 T04 §3`) so it is placed in `BottomDockSlot` exactly when `ShellMenuBar` is placed, as `SlotOccupant` order 1 in focus group `AfterCanvas` (§4), and collapse its fields on `Home`. Done when: Classic shows it, Focus and Reading room do not, the Reading room filmstrip in `BottomDockSlot` is unaffected, a Custom layout with the docked top command bar and the bottom filmstrip shows the filmstrip directly above a 32 epx status bar with disjoint bounds and no clipping of either, and `Home` shows an empty bar with no stale values.
+
+- [ ] Author `src/app/controls/ClassicStatusBar.xaml/.h/.cpp` on `RectoSurfaceBrush` with a 1 epx `RectoBorderBrush` top edge and `CaptionTextBlockStyle` fields. Done when: the Classic window matches the status strip of `D-Classic.png`. Cheaper substitute: a `TextBlock` row with a hex background.
+- [ ] Bind the page field to the active tab's viewport state and route typed pages through `CommandRegistry` `view.goToPage`. Done when: the field follows scrolling and a typed page jumps there through the same handler as `Ctrl+G`.
+- [ ] Refuse an out-of-range or empty page entry in place with `Pages 1 to N` and keep the current page. Done when: entering `0`, `N+1` or letters leaves the view unchanged and shows the message.
+- [ ] Show the current page size from the page geometry of `D02 T02 §5` in the Windows measurement system, with mm, in and pt in the tooltip. Done when: an A4 page shows `210 x 297 mm` on a metric system and `8.27 x 11.69 in` on a US system.
+- [ ] Show the PDF version from the document description of `D01 T02 §4` as `PDF <major>.<minor>`. Done when: corpus files of versions 1.4, 1.7 and 2.0 show their versions.
+- [ ] Bind the zoom percentage and `Slider` two-way to the zoom engine of `D02 T02 §7` through `CommandRegistry` `view.zoomTo`. Done when: dragging the slider zooms with anchor preservation and `Ctrl+Plus` moves the slider.
+- [ ] Give the page field, size, version and zoom controls automation names and tooltips, and place the bar after the page in the keyboard order through the §4 `AfterCanvas` focus group. Done when: `Tab` from the page canvas reaches the page field first, in Classic and in the Custom filmstrip layout (where the filmstrip is reached before the canvas).
+- [ ] Register placement with `LayoutPresetEngine` so the bar follows `ShellMenuBar`, as `BottomDockSlot` occupant order 1 below the filmstrip's order 0, at a fixed 32 epx height. Done when: switching Focus, Classic and Reading room shows the bar only in Classic, and the Custom layout (docked top command bar plus bottom filmstrip) shows both strips stacked filmstrip first.
+- [ ] Add `Shell.ClassicStatusBar` covering field updates on scroll and zoom, typed page jump and refusal, unit display, version text, preset visibility, the Custom filmstrip plus status bar composition (stacking order, disjoint bounds, 32 epx bar height, filmstrip before and status bar after the canvas in `Tab` and `Shift+Tab`), `Home` state and automation names. Done when: `recto-tests.exe --gtest_filter=Shell.ClassicStatusBar` passes.
+- [ ] Commit: `app: build the Classic status bar with page, size, version and zoom`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.ClassicStatusBar` passes on the display-session host; making the page field ignore viewport changes, showing the bar in Focus, stacking it above the filmstrip in the Custom layout, or reaching it before the page makes the test fail.
+
 ## Verification
 
 - Every M2 shell obligation from `design/SPEC.md` (sections 3, 4, 7, 8, 8.1, 9.1 drop overlay, 9.2 loading states, 9.9 Password / Could-not-open / Replace-original / Unsaved-changes dialogs, 10 shell keys, 11 automation names and tab order) proven on rendered surfaces and by `Shell.*` tests in `recto-tests`.
 - Full `recto-tests` suite green; `Recto.sln` builds `Debug` and `Release` for `x64` and `ARM64` with zero warnings; `python scripts/todo-graph.py validate` passes.
 - Zero `#` hex colour literals exist under `src/app` outside `design/tokens/RectoColors.xaml`.
 - The tab session, closed-tab, reorder and share behaviour of §13 to §17 is proven by `Shell.SessionStorePersistence`, `Shell.SessionRestoreOnLaunch`, `Shell.ClosedTabStackAndBatchClose`, `Shell.TabReorderAndKeyboardMove`, `Shell.ShareCopyForDirtyAndCloud` and `Audit.ShareNoDirectNetwork`.
+- The icon font, chip style and Classic status bar of §18 to §20 are proven by `python scripts/build-icon-font.py --check`, `tests.scripts.test_build_icon_font`, `Shell.IconFontSpecimen`, `Shell.ChipStyleShape`, `Audit.NoCornerRadiusLiterals` and `Shell.ClassicStatusBar`.

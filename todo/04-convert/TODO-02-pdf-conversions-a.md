@@ -18,7 +18,7 @@ track: M4
 - `docs/plans/2026-10-13-recto-foundation.md` sections 4.1 item 6 (`PdfWriter`, `linearizer.cpp`), 4.7 (job isolation), 5 (PDF <-> Images/SVG/XPS, PDF -> Plain text, Searchable PDF OCR, Table & Image Extraction, PDF Optimization & Linearization, atomic replace rule).
 - `design/SPEC.md` sections 8.2 (`Table & Image Extractor Bar`), 9.5 (Convert step 2 and step 3 options for Images/TIFF/SVG/XPS, Plain text, Searchable PDF OCR, Extract Tables & Images, Optimize & Compress PDF) and 9.9 (Conversion options dialog, Optimize & Compress Audit dialog, Replace original dialog).
 - -> XREF: D01 T01 §10 -- `PdfWriter` in `src/pdf/writer.cpp` (§2 here) serializes `PdfValue` objects, `FlateDecode` streams, and cross-reference tables using `D01 T01`'s object and filter primitives.
-- -> XREF: D02 T01 §10 -- the `Optimize & Compress Audit Dialog` and `Preview Table` modal in §10 and §12 use `D02 T01 §10`'s single-active-dialog host.
+- -> XREF: D02 T01 §10 -- the `Optimize & Compress Audit Dialog` in §12 uses `D02 T01 §10`'s single-active-dialog host (the §10 `Preview Table` is a bottom drawer, not a dialog, per SPEC 8.2).
 - -> XREF: D02 T02 §8 -- the Floating Page Toolbar's `Extract tables / images` action toggles §10's `Table & Image Extractor Bar`.
 - -> XREF: D03 T01 §1 -- `TableExtractor` in §8 consumes `PageText` character and span quads from `D03 T01 §1`.
 - -> XREF: D03 T01 §4 -- the right-click selection context menu's `Export Selection as Table` action invokes §10's table extractor preview.
@@ -46,6 +46,9 @@ track: M4
 - -> XREF: D02 T01 §5 -- new tab path.
 - -> XREF: D02 T04 §5 -- size default setting.
 - -> XREF: D05 T01 §30 -- binder writer.
+- -> XREF: D06 T04 §14 -- the `D-DocumentDialogs.png` board and `design/SPEC.md` section 9.9.1 that §12 here build against.
+- -> XREF: D06 T04 §25 -- the `D-Lifecycle.png` board and `design/SPEC.md` section 9.19 that §13 here build against.
+- -> XREF: D06 T04 §29 -- the `D-Extract.png` board and `design/SPEC.md` section 8.2.6 that §10, §20, §22, §25 here build against.
 
 ## Outcome
 
@@ -76,22 +79,22 @@ track: M4
 | 7 | §7 | `Searchable PDF (OCR)` sandwich writer (`3 Tr` invisible text), `recto-cli ocr` & UI | §2, §6 | [ ] |
 | 8 | §8 | Native `TableExtractor` (ruled-grid & borderless clustering, `.csv`/`.tsv`/`.json`, CLI) | §1, D03 T01 §1 | [ ] |
 | 9 | §9 | Native lossless `ImageExtractor` (`DCTDecode` `.jpg`, `/SMask` `.png`/`.tiff`, CLI) | §1, D01 T01 §8 | [ ] |
-| 10 | §10 | Viewer `Table & Image Extractor Bar` (`SPEC 8.2`), `Preview Table` modal & Convert card | §8, §9, D02 T02 §8, D03 T01 §4, D04 T01 §4 | [ ] |
+| 10 | §10 | Viewer `Table & Image Extractor Bar` (`SPEC 8.2`), `Preview Table` drawer & Convert card | §8, §9, D02 T02 §8, D03 T01 §4, D04 T01 §4, D06 T04 §29 | [ ] |
 | 11 | §11 | `PdfOptimizer` (audit, downsampling, font subsetting) and Fast Web View `Linearizer` | §2 | [ ] |
-| 12 | §12 | `Optimize & Compress PDF` Convert card (`SPEC 9.5`) and `Audit Dialog` (`SPEC 9.9`) | §11, D04 T01 §4, D02 T01 §10 | [ ] |
-| 13 | §13 | Create PDF from a scanner (Windows Image Acquisition) | §5, §7, D04 T01 §3 | [ ] |
+| 12 | §12 | `Optimize & Compress PDF` Convert card (`SPEC 9.5`) and `Audit Dialog` (`SPEC 9.9`) | §11, D04 T01 §4, D02 T01 §10, D06 T04 §14, D02 T01 §9 | [ ] |
+| 13 | §13 | Create PDF from a scanner (Windows Image Acquisition) | §5, §7, D04 T01 §3, D06 T04 §25 | [ ] |
 | 14 | §14 | `ClipboardPdfBuilder`: clipboard images and image or PDF file lists to PDF | §5, D04 T01 §1 | [ ] |
 | 15 | §15 | **Create PDF from clipboard** command, new unsaved tab, `Ctrl+V` and Home entry points | §14, D02 T01 §3, D02 T01 §5, D02 T01 §8, D02 T01 §12, D02 T03 §1, D02 T03 §11, D04 T01 §5, D02 T04 §9 | [ ] |
 | 16 | §16 | Clipboard text, rich text, HTML and Office, Markdown file lists through their converters | §14, D04 T04 §1, D04 T04 §2, D04 T04 §3, D04 T04 §5, D04 T04 §6 | [ ] |
 | 17 | §17 | Image-only PDF engine (`image_only_pdf.cpp`) and `recto-cli rasterize-pdf` | §2, §3, §11 | [ ] |
 | 18 | §18 | Image-only PDF Convert card and Step 3 options | §17, D04 T01 §4 | [ ] |
 | 19 | §19 | Editable OCR writer: recognized text as live text objects in matched fonts | §7, D03 T01 §7, D03 T01 §8, D03 T04 §1, D03 T04 §2, D03 T04 §4 | [ ] |
-| 20 | §20 | Editable text output mode on the Searchable PDF (OCR) card and `Ctrl+K` | §19, D04 T01 §4, D03 T04 §11 | [ ] |
+| 20 | §20 | Editable text output mode on the Searchable PDF (OCR) card and `Ctrl+K` | §19, D04 T01 §4, D03 T04 §11, D06 T04 §29 | [ ] |
 | 21 | §21 | Page area export engine (image or text) and `recto-cli export-area` | §1, D03 T01 §8 | [ ] |
-| 22 | §22 | Export Area tool on the extractor bar, `Ctrl+K` commands and save dialog | §10, §21, D02 T03 §11 | [ ] |
+| 22 | §22 | Export Area tool on the extractor bar, `Ctrl+K` commands and save dialog | §10, §21, D02 T03 §11, D06 T04 §29 | [ ] |
 | 23 | §23 | More image inputs to PDF: ICO, JFIF, DIB, HEIC, WebP, JPEG XL via installed codecs | §5 | [ ] |
 | 24 | §24 | New blank PDF engine: size presets, paper styles and `recto-cli new-pdf` | §2 | [ ] |
-| 25 | §25 | New blank PDF dialog, File menu entry and `Ctrl+K` command | §24, §15, D02 T01 §10, D02 T03 §1, D02 T03 §11, D02 T04 §5 | [ ] |
+| 25 | §25 | New blank PDF dialog, File menu entry and `Ctrl+K` command | §24, §15, D02 T01 §10, D02 T03 §1, D02 T03 §11, D02 T04 §5, D06 T04 §29 | [ ] |
 
 ## 1. `AtomicFileWriter` (`src/core/atomic_file.cpp`) sibling temp-then-replace and rollback
 
@@ -334,30 +337,30 @@ Implement `src/core/image_extractor.h/.cpp` (`recto::core::ImageExtractor`) and 
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=ImageExtractor.*:Cli.ExtractImages` passes under ASan.
 
-## 10. Viewer `Table & Image Extractor Bar` (`SPEC 8.2`), `Preview Table` modal & Convert card
+## 10. Viewer `Table & Image Extractor Bar` (`SPEC 8.2`), `Preview Table` drawer & Convert card
 
 Build the visual table and image extraction surfaces specified in `design/SPEC.md` sections 8.2 (`Table & Image Extractor Bar`), 9.3 (`Export Selection as Table`), and 9.5 (`Extract Tables & Images` Convert card):
-- **Viewer `Table & Image Extractor Bar` (`40 epx` contextual bar, toggled from the floating page toolbar `D02 T02 §8`, Tools menu, `Export Selection as Table` in `D03 T01 §4`, or `Ctrl+K`):** `Auto-Detect Tables on Page`, `Draw Table Region` interactive lasso with draggable row (`-`) and column (`|`) divider lines on canvas, `Preview Table` modal data grid (`Copy to Clipboard`, `Export to .xlsx`, `Export to .csv`, `Export to .json`), and `Extract Page Images`.
+- **Viewer `Table & Image Extractor Bar` (`48 epx` contextual bar, toggled from the floating page toolbar `D02 T02 §8`, Tools menu, `Export Selection as Table` in `D03 T01 §4`, or `Ctrl+K`):** `Auto-Detect Tables on Page`, `Draw Table Region` interactive lasso with draggable row (`-`) and column (`|`) divider lines on canvas, `Preview Table` live bottom preview drawer with the extracted cells (SPEC 8.2: `Copy to Clipboard`, `Export to .xlsx`, `Export to .csv`, `Export to .json`), and `Extract Page Images`.
 - **`Extract Tables & Images` Convert Card (`SPEC 9.5`):** Batch extraction of `All Tables (.xlsx / .csv / .json)`, `All Embedded Images (.png / .jpg / .tiff)`, or `Both` across any page range, with `Skip decorative images smaller than 64 x 64 px` and `OCR scanned tables` toggles.
 
 **Phase:** 4
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 8.2 (`Table & Image Extractor Bar`), 9.3 (`Export Selection as Table` context menu action), and 9.5 (`Extract Tables & Images` Convert card and Step 3 options).
+**Fidelity:** `design/SPEC.md` sections 8.2 (`Table & Image Extractor Bar`), 9.3 (`Export Selection as Table` context menu action), and 9.5 (`Extract Tables & Images` Convert card and Step 3 options, the card drawn on `design/screenshots/D-Convert.png`). Design board: `design/SPEC.md` section 8.2.6 with `design/screenshots/D-Extract.png` (drawn by `D06 T04 §29`) for the bar, the on-canvas table region and dividers, and the table preview.
 **Job:** A reader viewing a page with a table or figure can auto-detect or lasso the table, tweak column/row dividers visually, preview the parsed cells in a grid, and copy/export to Excel/CSV/JSON, or batch-extract every table and embedded image from a PDF in the Convert tab. Consumer: `DocumentView` (`D02 T02`), clipboard, `ConvertPage` (`D04 T01 §4`), and `XlsxWriter` (`D04 T05 §1`).
-**Treatment:** Interactive canvas table-grid overlay with draggable `--accent` row/column splitters feeding `TableExtractor::extract_table_in_rect` (`§8`), a modal `TablePreviewDialog` (`ContentDialog` hosted via `D02 T01 §10`), and a registered `Extract Tables & Images` Convert card. Cheaper substitute that fails the checkpoint: batch-only extraction with no interactive on-canvas table region/splitter adjustment or preview grid.
-**Chrome:** consume `DocumentView` (`D02 T02`), the floating page toolbar's `Extract tables / images` button (`D02 T02 §8`), the modal dialog host (`D02 T01 §10`), and `ConvertPage` (`D04 T01 §4`).
+**Treatment:** Interactive canvas table-grid overlay with draggable `RectoAccentBrush` row/column splitters feeding `TableExtractor::extract_table_in_rect` (`§8`), a non-modal `TablePreviewDrawer` docked at the bottom of the canvas that shows the extracted cells live while the user adjusts the region (SPEC 8.2), and a registered `Extract Tables & Images` Convert card. Cheaper substitute that fails the checkpoint: batch-only extraction with no interactive on-canvas table region/splitter adjustment or preview grid, or a modal preview dialog that blocks the canvas while the dividers are adjusted.
+**Chrome:** consume `DocumentView` (`D02 T02`), the floating page toolbar's `Extract tables / images` button (`D02 T02 §8`), the bottom dock slot stacking of `ShellSlotManager` (`D02 T01 §4`) for the drawer, `RectoSurfaceBrush` and `RectoBorderBrush` tokens, and `ConvertPage` (`D04 T01 §4`).
 
 **Build order:**
 
-1. Build `TableImageExtractorBar` (`src/app/controls/TableImageExtractorBar.xaml/.cpp`), the on-canvas interactive table region & row/column splitter overlay (`TableCanvasOverlay`), and `TablePreviewDialog` (`src/app/dialogs/TablePreviewDialog.xaml/.cpp`). Done when: `AppTests.ExtractorViewerUi` auto-detects a table on canvas, drags a column divider, opens `Preview Table`, copies TSV/HTML to the clipboard, and exports `.csv`/`.json`.
+1. Build `TableImageExtractorBar` (`src/app/controls/TableImageExtractorBar.xaml/.cpp`), the on-canvas interactive table region & row/column splitter overlay (`TableCanvasOverlay`), and `TablePreviewDrawer` (`src/app/controls/TablePreviewDrawer.xaml/.cpp`). Done when: `AppTests.ExtractorViewerUi` auto-detects a table on canvas, opens `Preview Table`, drags a column divider and sees the drawer's cells change without closing it, copies TSV/HTML to the clipboard, and exports `.csv`/`.json`.
 2. Register the **Extract Tables & Images** card and Step 3 options in `ConvertPage` (`SPEC 9.5`). Done when: `AppTests.ExtractorConvertUi` runs batch table and image extraction through `ConversionRunner`.
 
-- [ ] Build the `40 epx` contextual `TableImageExtractorBar` (`SPEC 8.2`) with `Auto-Detect Tables on Page`, `Draw Table Region`, `Add/Remove Column Divider`, `Add/Remove Row Divider`, `Preview Table...`, `Copy Table`, and `Extract Page Images...` buttons, wired to `D02 T02 §8` and `Ctrl+K`. Done when: `TableImageExtractorBar` renders at `40 epx` and passes `D03 T02 §3` accessibility checks.
+- [ ] Build the `48 epx` contextual `TableImageExtractorBar` (`SPEC 8.2`) with `Auto-Detect Tables on Page`, `Draw Table Region`, `Add/Remove Column Divider`, `Add/Remove Row Divider`, `Preview Table...`, `Copy Table`, and `Extract Page Images...` buttons, wired to `D02 T02 §8` and `Ctrl+K`. Done when: `TableImageExtractorBar` renders at `48 epx` and passes `D03 T02 §3` accessibility checks.
 - [ ] Build `TableCanvasOverlay` rendering detected `ExtractedTable` bounding boxes and interior row (`row_dividers_y`) and column (`col_dividers_x`) grid lines in `RectoAccentBrush`, supporting pointer drag to resize the table box or drag/add/delete interior column and row splitters. Done when: dragging a column divider immediately re-runs `TableExtractor::extract_table_in_rect` (`§8`) and updates the cell partitioning. Cheaper substitute that fails the checkpoint: static non-interactive table boxes where the user cannot fix a missed or extra column split.
-- [ ] Wire `D03 T01 §4`'s right-click context menu `Export Selection as Table` to compute the bounding box of `SelectionModel`'s selected quads, open `TableImageExtractorBar` with that region selected, and launch `TablePreviewDialog`. Done when: selecting rows of a table and clicking `Export Selection as Table` opens the structured table preview for that region.
-- [ ] Build `TablePreviewDialog` (`src/app/dialogs/TablePreviewDialog.xaml/.cpp`, hosted via `D02 T01 §10`) displaying the extracted rows, columns, and merged headers in a scrollable data grid with `Copy to Clipboard (TSV & HTML)`, `Save as .csv`, `Save as .json`, and `Save as .xlsx` (`-> XREF: D04 T05 §1`) actions. Done when: `Copy to Clipboard` places both tab-separated text and an HTML `<table>` fragment on the clipboard so pasting into Excel or Word preserves cells.
+- [ ] Wire `D03 T01 §4`'s right-click context menu `Export Selection as Table` to compute the bounding box of `SelectionModel`'s selected quads, open `TableImageExtractorBar` with that region selected, and open `TablePreviewDrawer`. Done when: selecting rows of a table and clicking `Export Selection as Table` opens the structured table preview for that region.
+- [ ] Build `TablePreviewDrawer` (`src/app/controls/TablePreviewDrawer.xaml/.cpp`), a non-modal drawer in the bottom dock slot (`D02 T01 §4`, stacked with the Reading room filmstrip, closed by `Esc` or its close button) that re-renders from each `extract_table_in_rect` result and displays the extracted rows, columns, and merged headers in a scrollable data grid with `Copy to Clipboard (TSV & HTML)`, `Save as .csv`, `Save as .json`, and `Save as .xlsx` (`-> XREF: D04 T05 §1`) actions. Done when: `Copy to Clipboard` places both tab-separated text and an HTML `<table>` fragment on the clipboard so pasting into Excel or Word preserves cells.
 - [ ] Wire `Extract Page Images...` on `TableImageExtractorBar` (and right-click on an image) to save all embedded XObject images on the current page via `ImageExtractor` (`§9`). Done when: clicking `Extract Page Images...` exports the page's images to the chosen folder.
 - [ ] Register the **Extract Tables & Images** card and Step 3 options (`Extract`: `Tables & Images`, `Tables only`, `Images only`; `Table format`: `.csv`, `.json`, `.tsv`, `.xlsx`; `Image filter`: `Skip decorative icons smaller than 64 x 64 px`; `OCR scanned tables` toggle) in `ConvertPage` (`D04 T01 §3`-`§4`). Done when: `AppTests.ExtractorUi` drives both the viewer extractor bar and the Convert batch card end-to-end.
 - [ ] Commit: `convert: add TableExtractor, ImageExtractor, viewer extractor bar and Convert card`
@@ -401,7 +404,7 @@ Wire the **Optimize & Compress PDF** card and Step 3 options in `ConvertPage` (`
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` sections 9.5 (`Optimize & Compress PDF` Convert card and Step 3 options) and 9.9 (`Optimize & Compress Audit Dialog`).
+**Fidelity:** `design/SPEC.md` sections 9.5 (`Optimize & Compress PDF` Convert card and Step 3 options) and 9.9 (`Optimize & Compress Audit Dialog`). Design board: `design/SPEC.md` section 9.9.1 with `design/screenshots/D-DocumentDialogs.png` (drawn by `D06 T04 §14`).
 **Job:** Users can inspect what is taking up space inside a large PDF with a clear category breakdown, see the estimated size reduction before converting, and shrink + linearize the PDF through the Convert queue or `File -> Optimize & Compress...`. Consumer: `ConvertPage` (`D04 T01 §4`), viewer `File` menu / `Ctrl+K`, and `ConversionRunner`.
 **Treatment:** Step 3 optimization control with live estimated-size badge plus the modal `OptimizeAuditDialog` showing exact byte/percentage rows and a proportional segmented bar. Cheaper substitute that fails the checkpoint: a blind `"Compress"` button with no space audit breakdown, no DPI presets, or no Fast Web View linearization toggle.
 **Chrome:** consume `ConvertPage` (`D04 T01 §4`), `D02 T01 §10`'s single-active-dialog host, and `RectoColors.xaml` chart/badge tokens.
@@ -414,7 +417,7 @@ Wire the **Optimize & Compress PDF** card and Step 3 options in `ConvertPage` (`
 - [ ] Build `OptimizeAuditDialog` (`src/app/dialogs/OptimizeAuditDialog.xaml/.cpp`, hosted via `D02 T01 §10`) rendering the 6 space-usage categories (`Images`, `Fonts`, `Content Streams`, `Metadata & XMP`, `Annotations & Forms`, `Structure / XRef`) with formatted byte sizes (`KB`/`MB`), percentage column (`0.0%..100.0%`), horizontal segmented bar, and `Current size -> Estimated size (Save N%)` summary card. Done when: `AppTests.OptimizerAuditDialog` verifies all 6 rows and confirms percentages sum to `100%`.
 - [ ] Build `OptimizeConvertOptionsControl` (`SPEC 9.5`) with preset selector (`Web / Email -- smallest size`, `Balanced -- recommended`, `Print Ready -- high resolution`, `Custom`), custom DPI/quality inputs when `Custom` is selected, `Linearize for Fast Web View` toggle (on by default), `Subset embedded fonts` toggle, `Remove unused objects & private metadata` toggle, and the `Audit Space Usage...` button. Done when: switching presets updates the estimated output size badge live. Cheaper substitute that fails the checkpoint: offering no presets or omitting the `Audit Space Usage...` breakdown dialog.
 - [ ] Register the **Optimize & Compress PDF** card in `ConverterRegistry` (`D04 T01 §3`) with its SPEC Principle 4 honest hint line (`"Shrinks oversized images and unsubsetted fonts; already-compact text PDFs may shrink only slightly."`). Done when: selecting a PDF in Step 1 enables the `Optimize & Compress PDF` card.
-- [ ] Wire `File -> Optimize & Compress...` in `Classic` menu bar (`D02 T04 §2`) and `Optimize & Compress PDF` in `CommandRegistry` (`Ctrl+K`) to navigate to `ConvertPage` with the current document preloaded and the `Optimize & Compress PDF` card selected. Done when: invoking `Optimize & Compress PDF` from `Ctrl+K` opens the exact flow.
+- [ ] Wire `File -> Optimize & Compress...` in the `Classic` menu bar (`ShellMenuBar`, `D02 T01 §9`) and `Optimize & Compress PDF` in `CommandRegistry` (`Ctrl+K`) to navigate to `ConvertPage` with the current document preloaded and the `Optimize & Compress PDF` card selected. Done when: invoking `Optimize & Compress PDF` from `Ctrl+K` opens the exact flow.
 - [ ] Add `AppTests.OptimizerAuditDialog` and `AppTests.OptimizerUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=AppTests.Optimizer*` passes.
 - [ ] Commit: `convert: add PdfOptimizer, font subsetter, Fast Web View linearizer and audit UI`
 
@@ -428,10 +431,10 @@ Wire the **Optimize & Compress PDF** card and Step 3 options in `ConvertPage` (`
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** `design/SPEC.md` section 9.5 (Convert page cards and Step 3 options); a `Scanner` source card is a genuinely new surface on that page with no screenshot.
+**Fidelity:** `design/SPEC.md` section 9.5 (Convert page cards and Step 3 options); a `Scanner` source card is a genuinely new surface on that page with no screenshot. Design board: `design/SPEC.md` section 9.19 with `design/screenshots/D-Lifecycle.png` (drawn by `D06 T04 §25`).
 **Job:** A user with a scanner creates a PDF (optionally searchable) from one or more scanned pages without another app. Consumer: the `Images -> PDF` converter (§5) and `OcrPipeline` (§7).
 **Treatment:** A `From scanner` source card on the Convert page with device, source (flatbed or feeder), colour mode, resolution and duplex options, a running page list, and `Make PDF`. Cheaper substitute that fails the checkpoint: shelling out to the Windows Scan app or a vendor tool.
-**Chrome:** Convert page card registry and Step 3 options host (`D04 T01 §3`, `§4`), queue card for the job (`D04 T01 §5`), `RectoColors.xaml` tokens and Segoe Fluent Icons `E8FE` (scan).
+**Chrome:** Convert page card registry and Step 3 options host (`D04 T01 §3`, `§4`), queue card for the job (`D04 T01 §5`), `RectoColors.xaml` tokens and Fluent UI System Icons (`RectoIcons`: `scan`).
 
 **Build order:**
 
@@ -563,10 +566,10 @@ Put the image-only engine (`§17`) on the Convert page as a card named **Image-o
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** SPEC section 9.5 (the card grid and the Step 3 options host, the same pattern as the `Optimize & Compress PDF` card); the card is a genuinely new option with no screenshot, so it follows the existing card, option row and hint line chrome of `explorations/A-Convert.png` and `D-Convert.png`.
+**Fidelity:** SPEC section 9.5 (the card grid and the Step 3 options host, the same pattern as the `Optimize & Compress PDF` card); the `Image-only PDF` card is drawn in the card grid of `design/screenshots/D-Convert.png`, and SPEC 9.5 names every one of its Step 3 options (resolution, colour, threshold with the page 1 preview, compression, keep bookmarks, keep title and author, save location, file-exists rule, the size estimate and the removal warning), which use the option row and hint line chrome drawn on `D-Convert.png`; no new design board is needed.
 **Job:** The user can turn a PDF into a picture-only copy at a chosen resolution, see before converting what will be lost, and find the result beside the source without the source being touched. Consumer: `ConvertPage` (`D04 T01 §4`), `ConversionRunner` (`D04 T01 §1`) and the `Ctrl+K` command box.
 **Treatment:** A registered card, `ImageOnlyOptionsControl.xaml/.cpp` bound to `ImageOnlyOptionsViewModel`, a monochrome threshold slider with a live thumbnail of page 1 at the chosen settings, and the capability hint line. Cheaper substitute that fails the checkpoint: a card with no preview of the threshold and no warning that text is removed.
-**Chrome:** consume the Convert Step 2 card registry and the Step 3 options host (`D04 T01 §3`, `§4`), the queue card (`D04 T01 §5`), `RectoColors.xaml` tokens and Segoe Fluent Icons.
+**Chrome:** consume the Convert Step 2 card registry and the Step 3 options host (`D04 T01 §3`, `§4`), the queue card (`D04 T01 §5`), `RectoColors.xaml` tokens and Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -616,7 +619,7 @@ Expose the editable OCR writer (`§19`) on the existing **Searchable PDF (OCR)**
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** SPEC section 9.5 (the `Searchable PDF (OCR)` card and its Step 3 options); the `Output` selector and the editable-mode notes are a genuinely new option row that follows the card's existing option row and hint line chrome.
+**Fidelity:** SPEC section 9.5 (the `Searchable PDF (OCR)` card and its Step 3 options); the `Output` selector and the editable-mode notes are a genuinely new option row that follows the card's existing option row and hint line chrome. Design board: `design/SPEC.md` section 8.2.6 with `design/screenshots/D-Extract.png` (drawn by `D06 T04 §29`), which draws the `Output` row, the `Minimum confidence` slider, the report dialog and the `Edit text` completion action.
 **Job:** A user with a scanned contract or letter can make it editable in one conversion, understand what changes, see which lines could not be made editable, and open the result in Edit PDF. Consumer: `ConvertPage` (`D04 T01 §4`), `ConversionRunner` (`D04 T01 §1`), the completion notice (`D04 T01 §6`) and Edit PDF (`D03 T04 §11`).
 **Treatment:** An `Output` segmented control (`Searchable, keeps the scan` default, `Editable text`), a `Minimum confidence` slider shown for the editable mode, a report dialog listing the lines kept as image, and the `Edit text` completion action. Cheaper substitute that fails the checkpoint: a hidden CLI-only flag, or a mode that overwrites the searchable output without a choice.
 **Chrome:** consume the Convert Step 3 options host (`D04 T01 §4`), the completion notice (`D04 T01 §6`), the dialog host (`D02 T01 §10`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
@@ -669,10 +672,10 @@ Give the area engine (`§21`) a tool in the viewer: **Export Area** draws a rect
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** SPEC section 8.2 (contextual mode bars, the `Table & Image Extractor Bar` and its on-canvas region drag); the `Export Area...` button and the save popover are a genuinely new control on that bar and follow its 40 epx chrome.
+**Fidelity:** SPEC section 8.2 (contextual mode bars, the `Table & Image Extractor Bar` and its on-canvas region drag); the `Export Area...` button and the save popover are a genuinely new control on that bar and follow its 48 epx chrome. Design board: `design/SPEC.md` section 8.2.6 with `design/screenshots/D-Extract.png` (drawn by `D06 T04 §29`), which draws the button on the bar and the `AreaExportPopover` with its `Image` and `Text` tabs.
 **Job:** A reader can drag a rectangle over any part of a page, see its pixel size and a preview, and save it as a PNG, JPEG, TIFF or BMP picture at a chosen resolution, or as the text inside it, without exporting the whole page. Consumer: `DocumentView` (`D02 T02`), the extractor bar (`§10`) and the area engine (`§21`).
 **Treatment:** The shared rectangle drag of `TableCanvasOverlay`, an `AreaExportPopover` anchored to the rectangle with `Image` and `Text` tabs, a live pixel-size line, and `Save...` through the file picker. Cheaper substitute that fails the checkpoint: exporting the whole page, or a dialog with typed coordinates instead of an on-canvas rectangle.
-**Chrome:** consume `DocumentView` (`D02 T02`), `TableImageExtractorBar` and `TableCanvasOverlay` (`§10`), the modal host (`D02 T01 §10`), `CommandRegistry` (`D02 T03 §11`), `RectoAccentBrush` and Segoe Fluent Icons.
+**Chrome:** consume `DocumentView` (`D02 T02`), `TableImageExtractorBar` and `TableCanvasOverlay` (`§10`), the modal host (`D02 T01 §10`), `CommandRegistry` (`D02 T03 §11`), `RectoAccentBrush` and Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -747,7 +750,7 @@ Make the blank PDF engine (`§24`) a command: **New blank PDF** opens a small di
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new command on existing chrome: it adds an entry to the Home screen (`design/SPEC.md` section 9.1, `design/screenshots/D-Home.png`), the `+` New Tab menu of the title bar (section 8.1), the Classic `File` menu (section 9.2) and the command box (section 9.4), and a standard WinUI `ContentDialog` hosted as in section 9.9.
+**Fidelity:** Genuinely new command on existing chrome: it adds an entry to the Home screen (`design/SPEC.md` section 9.1, `design/screenshots/D-Home.png`), the `+` New Tab menu of the title bar (section 8.1), the Classic `File` menu (section 9.2) and the command box (section 9.4), and a standard WinUI `ContentDialog` hosted as in section 9.9. Design board: `design/SPEC.md` section 8.2.6 with `design/screenshots/D-Extract.png` (drawn by `D06 T04 §29`), which draws the `New blank PDF` dialog with its live preview.
 **Job:** A user can create a notebook, a ruled sheet, a music pad or a blank page in any common size in two clicks, see it before creating it, and start writing or annotating on it. Consumer: `OpenDocumentPipeline` (`D02 T01 §5`), `SavePipeline` (`D02 T01 §8`) and crash recovery (`D02 T01 §12`).
 **Treatment:** A `file.newBlank` command that opens `NewBlankPdfDialog` (preview rendered by the `§24` engine at low DPI on a worker), runs `create_blank_pdf` as a job into a private temp file, and opens it with `open_generated_async`. Cheaper substitute that fails the checkpoint: a dialog that writes into the Documents folder without the user saving, or a preview that is a static picture.
 **Chrome:** consume `ShellPage` and `TabView` (`D02 T01 §3`), `OpenDocumentPipeline` (`D02 T01 §5`), the dialog host (`D02 T01 §10`), the Home screen (`D02 T03 §1`), `CommandRegistry` (`D02 T03 §11`), the settings store (`D02 T04 §5`) and `RectoColors.xaml` tokens.

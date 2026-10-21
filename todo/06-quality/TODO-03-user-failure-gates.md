@@ -116,7 +116,7 @@ Users cannot tell a broken file from a broken viewer. When a visible page carrie
 **Fidelity:** Genuinely new surface: no SPEC screenshot shows it. It follows `design/SPEC.md` section 9.2 (page loading states) and section 4 tokens, using a stock WinUI `InfoBar` (`Severity=Informational`) in the page overlay slot.
 **Job:** A reader opening a damaged PDF sees which page lost content and why, and can copy the details into an issue. Consumer: the reader and the `D07 T03 §2` diagnostics copy.
 **Treatment:** One `InfoBar` per page that has notes, collapsed to one line, expanding to the note list. Cheaper substitute that fails the checkpoint: a log-only record or a modal error dialog.
-**Chrome:** Stock `InfoBar`, `RectoColors.xaml` brushes, Segoe Fluent Icons `E946` (info); no new colours or glyph fonts.
+**Chrome:** Stock `InfoBar`, `RectoColors.xaml` brushes, Fluent UI System Icons (`RectoIcons`: `info`); no new colours or glyph fonts.
 
 **Build order:**
 

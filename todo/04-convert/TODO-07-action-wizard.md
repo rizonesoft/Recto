@@ -36,6 +36,7 @@ track: M5
 - -> XREF: D05 T01 §2 -- insert pdf step.
 - -> XREF: D07 T01 §2 -- batch print step.
 - -> XREF: D04 T08 §6 -- CheckedOpen policy.
+- -> XREF: D06 T04 §20 -- the `D-Actions.png` board and `design/SPEC.md` section 9.15 that §12, §13, §23 here build against.
 
 ## Outcome
 
@@ -63,8 +64,8 @@ track: M5
 | 9 | §9 | Action runner: windowed per-file jobs, pause points, stop and password recovery | §6, §8, D04 T01 §2, D04 T01 §7 | [ ] |
 | 10 | §10 | Run report with per-file results and summary (JSON, CSV, HTML) | §9, D04 T02 §1 | [ ] |
 | 11 | §11 | `recto-cli action` command family | §2, §10, D01 T03 §1 | [ ] |
-| 12 | §12 | Actions list and step editor on the Convert page | §2, §3, D04 T01 §3, D02 T01 §10, D02 T03 §11 | [ ] |
-| 13 | §13 | Run panel, progress, pause prompt and report view | §10, §12, §20, D04 T01 §5, D04 T01 §6, D03 T02 §5 | [ ] |
+| 12 | §12 | Actions list and step editor on the Convert page | §2, §3, D04 T01 §3, D02 T01 §10, D02 T03 §11, D06 T04 §20 | [ ] |
+| 13 | §13 | Run panel, progress, pause prompt and report view | §10, §12, §20, D04 T01 §5, D04 T01 §6, D03 T02 §5, D06 T04 §20 | [ ] |
 | 14 | §14 | Action Wizard gates: no script, no overwrite, hostile actions, end-to-end actions | §7, §11, §13, D06 T03 §5 | [ ] |
 | 15 | §15 | `pdfua` step and the `scan-to-accessible` built-in action (OCR then tagged PDF/UA) | §2, §3, §4, §5, D04 T05 §7, D04 T05 §20, D04 T05 §24 | [ ] |
 | 16 | §16 | `greyscale` step over the whole-document greyscale fixup | §3, §5, D04 T06 §18 | [ ] |
@@ -74,7 +75,7 @@ track: M5
 | 20 | §20 | Aggregate terminal steps: one output for a whole run, with all-or-nothing publishing | §3, §6, §9, §10 | [ ] |
 | 21 | §21 | `combine_form_data` step: form values from many PDFs into one CSV or workbook | §20, D03 T03 §40, D03 T03 §41 | [ ] |
 | 22 | §22 | `print` terminal step: batch print to a named printer | §3, §9, D07 T01 §2, D07 T01 §9 | [ ] |
-| 23 | §23 | Print step safeguards: run confirmation, page budget and CLI refusal | §11, §13, §22, D02 T01 §10 | [ ] |
+| 23 | §23 | Print step safeguards: run confirmation, page budget and CLI refusal | §11, §13, §22, D02 T01 §10, D06 T04 §20 | [ ] |
 | 24 | §24 | Gates for the new steps: no overwrite, fail closed, honest reports | §14, §15, §16, §17, §18, §19, §21 | [ ] |
 
 ## 1. Action model, JSON schema and versioned migration
@@ -170,7 +171,7 @@ These six steps wrap engines that already exist, each as a thin adapter: paramet
 - [ ] Plan Bates numbers in `prepare_run`: read the page count of each input in run order (a cheap xref read) and give each file its first number, so concurrent files get deterministic continuous ranges; when a file later fails, record its reserved range as a `BatesGap` warning in the report rather than renumbering. Done when: `ActionDocSteps.BatesAcrossFiles` gives files of `3`, `5` and `2` pages the ranges `1-3`, `4-8` and `9-10` and reports the gap when the second file fails.
 - [ ] Implement `flatten` with `annotations` (`D03 T03 §2`), `forms` (`D03 T03 §6`) and `layers` (visible layers, `D02 T03 §7`) options, each independent. Done when: `ActionDocSteps.Flatten` flattens a form and a highlight and leaves unselected categories live.
 - [ ] Implement `sanitize` over `Redactor::sanitize_document` (`D05 T01 §10`) with the seven `SanitizeOptions` booleans. Done when: `ActionDocSteps.Sanitize` removes metadata, scripts and attachments from a fixture and reports each category removed.
-- [ ] Register all six in `ActionStepRegistry` with `ParamSchema`, summaries and Segoe Fluent glyph names. Done when: `ActionSteps.Registry` lists them and `validate_action` accepts the built-ins.
+- [ ] Register all six in `ActionStepRegistry` with `ParamSchema`, summaries and Fluent UI System Icons names from the SPEC section 6 table. Done when: `ActionSteps.Registry` lists them and `validate_action` accepts the built-ins.
 - [ ] Add `ActionDocSteps.*` tests in `tests/recto-tests/action_doc_steps_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=ActionDocSteps.*` passes under ASan.
 - [ ] Commit: `services: add OCR, optimize, watermark, header and Bates, flatten and sanitize action steps`
 
@@ -357,10 +358,10 @@ Users build and manage actions in a view beside the converters. This section add
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface: no SPEC screenshot shows it. It follows `design/SPEC.md` section 9.5 (the Convert page layout and cards) for the host, section 9.9 for dialogs, section 4 tokens, and the two-column editor pattern of the Watermark dialog.
+**Fidelity:** Genuinely new surface: no SPEC screenshot shows it. It follows `design/SPEC.md` section 9.5 (the Convert page layout and cards) for the host, section 9.9 for dialogs, section 4 tokens, and the two-column editor pattern of the Watermark dialog. Design board: `design/SPEC.md` section 9.15 with `design/screenshots/D-Actions.png` (drawn by `D06 T04 §20`).
 **Job:** A user opens Actions, picks a built-in or saved action, duplicates or creates one, adds steps from a grouped menu, reorders them, sets each step's parameters, marks a pause point if they want one, sees validation messages immediately, and saves, exports or imports it.
 **Treatment:** A `SelectorBar` at the top of `ConvertPage` (`Convert`, `Actions`); on the left an action list with search and `New`, `Duplicate`, `Delete`, `Import`, `Export`; on the right the editor with a name box, a description, an ordered `ListView` of step cards (glyph, title, one-line summary, pause marker, remove) reordered by drag and by `Move up` and `Move down` buttons, an `Add step` menu grouped as `Document`, `Protect and standards`, `Convert and save`, a parameter form generated from the step's `ParamSchema`, a validation `InfoBar` list, and `Save` and `Run...`. Built-in actions open read-only with a `Duplicate to edit` banner. Cheaper substitute that fails the checkpoint: a raw JSON text box, or reordering by drag only.
-**Chrome:** Consume `ConvertPage` and its registry (`D04 T01 §3`), the 9.9 dialog host (`D02 T01 §10`), `CommandRegistry` (`D02 T03 §11`), and `RectoColors.xaml` tokens with Segoe Fluent Icons.
+**Chrome:** Consume `ConvertPage` and its registry (`D04 T01 §3`), the 9.9 dialog host (`D02 T01 §10`), `CommandRegistry` (`D02 T03 §11`), and `RectoColors.xaml` tokens with Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -386,7 +387,7 @@ Running an action is a short flow: choose the inputs, choose the output folder, 
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface: no SPEC screenshot shows it. It follows `design/SPEC.md` section 9.5 (Step 1 file chips and drop zone, the queue card states) and section 9.9 (dialogs and the completion notice), with section 4 tokens.
+**Fidelity:** Genuinely new surface: no SPEC screenshot shows it. It follows `design/SPEC.md` section 9.5 (Step 1 file chips and drop zone, the queue card states) and section 9.9 (dialogs and the completion notice), with section 4 tokens. Design board: `design/SPEC.md` section 9.15 with `design/screenshots/D-Actions.png` (drawn by `D06 T04 §20`).
 **Job:** A user picks files or a folder (with a recursive option), picks where the results go, sees what the first outputs will be called, starts the run, watches per-file progress, answers a pause prompt when the action has one, stops if needed, and finishes on a summary they can open, filter, retry from and export.
 **Treatment:** A run panel with an `Inputs` block (the Step 1 chip bar and drop zone, a folder picker, `Include subfolders`, `Keep folder structure`), an `Output` block (folder picker seeded from `Where to save converted files`, `If a file exists` with `Add number` and `Skip` only, a name preview for the first three inputs, and prompts for any `secret` parameters) and a `Start` button. After start: a progress view with an overall bar, per-file rows (name, current step, state) and `Stop`; a pause prompt `ContentDialog` with the step's `prompt`, `Continue`, `Skip this file` and `Stop run`; and a report view grouped `Succeeded`, `With warnings`, `Failed`, `Skipped`, with `Open file`, `Show in folder`, `Retry failed`, `Save report...` and a details expander per failure. Cheaper substitute that fails the checkpoint: a single spinner with no per-file state, an `If a file exists` option that includes `Replace`, or a final toast with no list.
 **Chrome:** Consume the Step 1 chip bar and drop zone of `D04 T01 §3`, `QueueCard` (`D04 T01 §5`), the completion notice (`D04 T01 §6`), `PasswordDialog` (`D02 T01 §10`), `AnnouncementService` (`D03 T02 §5`), and `RectoColors.xaml` status brushes with icons.
@@ -634,10 +635,10 @@ Printing cannot be recalled, so the places that start an action with a `print` s
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface: no SPEC screenshot shows it. It follows `design/SPEC.md` section 9.9 (`ContentDialog` chrome and the completion notice) and the Run panel of `§13`.
+**Fidelity:** Genuinely new surface: no SPEC screenshot shows it. It follows `design/SPEC.md` section 9.9 (`ContentDialog` chrome and the completion notice) and the Run panel of `§13`. Design board: `design/SPEC.md` section 9.15 with `design/screenshots/D-Actions.png` (drawn by `D06 T04 §20`).
 **Job:** A person who starts an action that ends in printing sees the printer, the number of files and the total number of pages including copies, must confirm, and can stop the run; a script is told plainly that printing is not available from the command line.
 **Treatment:** A `ContentDialog` `"Print 240 pages (60 files x 1 copy x 4 pages) on <printer>? This cannot be undone."` with `Print` and `Cancel`, `Cancel` as the default button, shown after the Run panel's input check and before the first job, plus a Start-disabled reason when the page budget is exceeded. Cheaper substitute that fails the checkpoint: starting the print as soon as `Start` is pressed, or a confirmation that omits the page count.
-**Chrome:** consume the Run panel and `ActionRunViewModel` (`§13`), the 9.9 dialog host (`D02 T01 §10`), `AnnouncementService` (`D03 T02 §5`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens with Segoe Fluent Icons.
+**Chrome:** consume the Run panel and `ActionRunViewModel` (`§13`), the 9.9 dialog host (`D02 T01 §10`), `AnnouncementService` (`D03 T02 §5`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens with Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 

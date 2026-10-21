@@ -54,7 +54,7 @@ track: M5
 | 4 | §4 | Native C++20 OLE2 Compound File (`[MS-CFB]`) reader and VBA macro stream stripper | §1 | [ ] |
 | 5 | §5 | Native C++20 legacy Word 97-2003 (`.doc`) binary parser to `FlowDocumentModel` & PDF | §4 | [ ] |
 | 6 | §6 | Native C++20 legacy Excel (`.xls` BIFF8) and PowerPoint (`.ppt`) binary parsers to PDF | §2, §4 | [ ] |
-| 7 | §7 | Convert **PDF from Office, HTML, Markdown & Images** card and Step 3 UI (`SPEC 9.5`) | §3, §5, §6, D04 T01 §4, D02 T04 §5 | [ ] |
+| 7 | §7 | Convert **PDF from Office, HTML, Markdown & Images** card and Step 3 UI (`SPEC 9.5`) | §3, §5, §6, D04 T01 §4, D02 T04 §5, D04 T01 §6 | [ ] |
 | 8 | §8 | ODF package reader, style resolver and macro stripper (`odf_package.cpp`) | §1, D04 T03 §1 | [ ] |
 | 9 | §9 | OpenDocument Text (`.odt`) to PDF layout engine | §8, §1 | [ ] |
 | 10 | §10 | OpenDocument Spreadsheet (`.ods`) to PDF layout engine | §8, §2 | [ ] |
@@ -234,7 +234,7 @@ Register the **PDF from Office, HTML, Markdown & Images** card in `ConverterRegi
 - [ ] Build `OfficeToPdfOptionsControl` (`src/app/views/convert/OfficeToPdfOptionsControl.xaml/.cpp`) exposing `Page size` (`Original`, `A4`, `Letter`, initialized from `D02 T04 §5`), `Orientation` (`Auto`, `Portrait`, `Landscape`), `Margins` (`Default`, `Narrow`, `None`), `Fit all spreadsheet columns on one page` (`true`), `Generate PDF bookmarks from headings` (`true`), `HTML/Markdown CSS print styling` (`true`), and `Combine all files into one PDF` (`false` for single input, toggleable for `>= 2` inputs). Done when: all controls pass `D03 T02 §3` accessibility checks.
 - [ ] Render the SPEC Principle 4 capability hint line (`"Converts Office (.docx, .doc, .xlsx, .xls, .pptx, .ppt, .rtf), HTML, Markdown, CSV and images to vector PDF natively with zero external dependencies."`). Done when: the hint line is visible in Step 3.
 - [ ] Dispatch queued jobs across `office_to_pdf` (`§1`, `§2`), `legacy_office_to_pdf` (`§5`, `§6`), `html_md_to_pdf` (`§3`), and `images_to_pdf` (`D04 T02 §5`). Done when: `OfficeToPdf.ConvertPageUi` runs `.docx`, `.doc`, `.xlsx`, `.xls`, `.pptx`, `.ppt`, `.rtf`, `.html`, and `.md` conversions through `ConversionRunner` and verifies the produced PDFs. Cheaper substitute that fails the checkpoint: ignoring Step 3 page-setup options or failing on legacy `.doc`/`.xls`/`.ppt` inputs.
-- [ ] Support `Open file` in `QueueCard` and completion toasts (`D04 T01 §6`) so clicking `Open file` on a finished `Office -> PDF` job opens the newly created PDF directly in a Recto viewer tab (`D02 T01 §9`). Done when: clicking `Open file` opens the converted PDF in a new tab.
+- [ ] Support `Open file` in `QueueCard` and completion toasts (`D04 T01 §6`) so clicking `Open file` on a finished `Office -> PDF` job opens the newly created PDF directly in a Recto viewer tab through `JobOutputActions::open_output_file` (`D04 T01 §6`), which opens it with `OpenDocumentPipeline` (`D02 T01 §5`). Done when: clicking `Open file` opens the converted PDF in a new tab.
 - [ ] Add `OfficeToPdf.CardEnablement` and `OfficeToPdf.ConvertPageUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=OfficeToPdf.CardEnablement:OfficeToPdf.ConvertPageUi` passes.
 - [ ] Commit: `convert: wire 100% native Office, Legacy Office, HTML and Markdown to PDF Convert UI`
 
@@ -573,7 +573,7 @@ Make the new formats usable on the Convert page and in the Open dialog. The **PD
 **Fidelity:** SPEC section 9.5 (the card enable and disable rule and the Step 3 options of the `PDF from Office, HTML, Markdown & Images` card) with `D-Convert.png`, and section 9.1 (the Home drop overlay and Open dialog) for opening `.ofd`; the conditional option rows are a genuinely new addition that follow the existing option row and hint line chrome.
 **Job:** The user can drop an ODF file, an OFD document, a saved email, a saved web page or a log file onto the Convert page and get a PDF, with the options that matter for that format and a clear message when a file cannot be converted, and can open an `.ofd` straight into the viewer. Consumer: `ConvertPage` (`D04 T01 §3`, `§4`), `ConversionRunner` (`D04 T01 §1`), the queue card (`D04 T01 §5`) and `OpenDocumentPipeline` (`D02 T01 §5`).
 **Treatment:** The extension list and disable reason of the card, per-format conditional option rows bound to the existing `OfficeToPdfOptionsViewModel`, the dispatch of `§21`, and a converted-on-open flow for `.ofd`. Cheaper substitute that fails the checkpoint: listing the new extensions without options or messages, or an `.ofd` open that writes the PDF next to the original.
-**Chrome:** consume the Convert Step 2 card registry and Step 3 options host (`D04 T01 §3`, `§4`), the queue card and notices (`D04 T01 §5`, `§6`), the Open pipeline (`D02 T01 §5`), `RectoColors.xaml` tokens and Segoe Fluent Icons.
+**Chrome:** consume the Convert Step 2 card registry and Step 3 options host (`D04 T01 §3`, `§4`), the queue card and notices (`D04 T01 §5`, `§6`), the Open pipeline (`D02 T01 §5`), `RectoColors.xaml` tokens and Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
