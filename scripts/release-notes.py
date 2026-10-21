@@ -89,7 +89,8 @@ try:
     case = cls(method)
 except Exception:
     sys.exit(3)
-if case._testMethodName != method:
+if not (isinstance(case, cls) and isinstance(case, unittest.TestCase) and callable(case)
+        and case._testMethodName == method):
     sys.exit(3)
 print(nonce)
 """
@@ -124,6 +125,15 @@ def commits(repo, start, end):
     return found
 
 
+def _in_number(text, i):
+    """True when the apostrophe at i is a digit separator (1'000, 0xFF'FF): the token it sits in starts with a digit.
+    After an identifier or a literal prefix (L'x', u8'x') it opens a character literal instead."""
+    start = i
+    while start > 0 and (text[start - 1].isalnum() or text[start - 1] in "_'."):
+        start -= 1
+    return start < i and text[start].isdigit()
+
+
 def cpp_code(text):
     """C++ source with lines spliced, comments and literals blanked, and `#if 0` branches removed."""
     text = text.replace("\\\r\n", "").replace("\\\n", "")
@@ -141,7 +151,7 @@ def cpp_code(text):
             end = text.find(f'){raw.group(1)}"', raw.end())
             i = n if end < 0 else end + len(raw.group(1)) + 2
             out.append('""')
-        elif text[i] in "\"'" and not (text[i] == "'" and i and text[i - 1].isalnum()):
+        elif text[i] in "\"'" and not (text[i] == "'" and _in_number(text, i)):
             quote, i = text[i], i + 1
             while i < n and text[i] not in (quote, "\n"):
                 i += 2 if text[i] == "\\" else 1

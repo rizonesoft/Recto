@@ -218,6 +218,8 @@ class HostileFixtureTest(unittest.TestCase):
             "TEST (Multi,\n      Line)\n{\n}\n"
             "TYPED_TEST(Typed, Case)\n{\n}\n"
             "TEST(Spliced, Ca\\\nse)\n{\n}\n"
+            "constexpr wchar_t c = L'\"'; TEST(Prefixed, Char) {}\n"
+            "constexpr int n = 1'000; TEST(Separated, Num) {}\n"
         )
         py = (
             "import abc\nimport unittest\n"
@@ -233,6 +235,9 @@ class HostileFixtureTest(unittest.TestCase):
         )
         # A test whose body leaves a marker: verifying it must never run it.
         cls.marker = pathlib.Path(cls._tmp.name) / "test-body-ran.txt"
+        py += ("\n\nimport types\n\n\nclass FakeNew(unittest.TestCase):\n"
+               "    def __new__(cls, method):\n        return types.SimpleNamespace(_testMethodName=method)\n\n"
+               "    def test_case(self):\n        pass\n")
         py += ("\n\nclass WithClassmethod(unittest.TestCase):\n    @classmethod\n    def test_case(cls):\n"
                f"        open({str(cls.marker)!r}, 'w').close()\n")
         # A TestCase that lives outside the repository, which a repository module re-exports or inherits from.
@@ -266,6 +271,7 @@ class HostileFixtureTest(unittest.TestCase):
             "ReExported": "tests.scripts.test_reexport.ReExported.test_outside",
             "InheritedFromOutside": "tests.scripts.test_reexport.Local.test_outside",
             "AssignedFromOutside": "tests.scripts.test_reexport.Assigned.test_assigned",
+            "FakeNew": "tests.scripts.test_sample.FakeNew.test_case",
             "Stdlib": "unittest.case.TestCase.test_missing",
         }
         cls.real = {
@@ -275,6 +281,7 @@ class HostileFixtureTest(unittest.TestCase):
             "Alias": "tests.scripts.test_sample.ViaAlias.test_alias",
             "Noisy": "tests.scripts.test_noisy.NoisyTest.test_noisy",
             "Classmethod": "tests.scripts.test_sample.WithClassmethod.test_case", "Spliced": "Spliced.Case",
+            "Prefixed": "Prefixed.Char", "Separated": "Separated.Num",
         }
         cls.shas = {}
         for name, test_id in {**cls.fake, **cls.real}.items():
@@ -292,7 +299,8 @@ class HostileFixtureTest(unittest.TestCase):
             repo, {"src/ex.txt": "ex"}, "fix ex\n\nFixes-User: #3\nRegression-Test: Enabled.Case\n")
         _git(repo, "tag", "v2.1.0")
         # What the compiler builds: the macro, the continued comment and the #if (0) block are not tests.
-        cls.compiled = {"Enabled.Case", "Taken.Case", "Multi.Line", "Typed.Case", "Spliced.Case"}
+        cls.compiled = {"Enabled.Case", "Taken.Case", "Multi.Line", "Typed.Case", "Spliced.Case", "Prefixed.Char",
+                        "Separated.Num"}
         # A module that never finishes importing must time out into a violation, not abort the report; the short
         # timeout holds for every report this class builds and is restored in tearDownClass.
         cls._timeout, release_notes.PROBE_TIMEOUT = release_notes.PROBE_TIMEOUT, 3
