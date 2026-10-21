@@ -1,17 +1,31 @@
 """Tests for the PDF engine dependency policy (D00 T01 §2, decisions D3 and D9): Recto builds its own recto-pdf engine
 in C++20 with warnings as errors, vendors no engine as a submodule or third_party tree, and names no MuPDF anywhere a
 user or the build would see it."""
+import json
+import os
 import pathlib
 import re
 import subprocess
+import sys
 import unittest
-import xml.etree.ElementTree as ElementTree
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 # mupdf and artifex anywhere (libmupdf.lib, mupdf.h); jbig2dec as a whole word only, because the PDF filter name
 # JBIG2Decode, which recto-pdf implements itself, contains it.
 MUPDF = re.compile(r"mupdf|artifex|\bjbig2dec\b", re.IGNORECASE)
-MSBUILD = "{http://schemas.microsoft.com/developer/msbuild/2003}"
+CONFIGURATIONS = [(configuration, platform) for configuration in ("Debug", "Release") for platform in ("x64", "ARM64")]
+REQUIRED = {"LanguageStandard": "stdcpp20", "WarningLevel": "Level4", "TreatWarningAsError": "true"}
+
+
+def msbuild():
+    """MSBuild from the newest Visual Studio, found the way the build finds it (vswhere)."""
+    vswhere = pathlib.Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+                           "Microsoft Visual Studio", "Installer", "vswhere.exe")
+    if not vswhere.is_file():
+        return None
+    found = subprocess.run([str(vswhere), "-latest", "-prerelease", "-requires", "Microsoft.Component.MSBuild",
+                            "-find", r"MSBuild\**\Bin\MSBuild.exe"], capture_output=True, text=True).stdout.splitlines()
+    return found[0].strip() if found else None
 
 
 def tracked(*pathspecs):
@@ -35,22 +49,26 @@ class EngineDependencyPolicyTest(unittest.TestCase):
             with self.subTest(file=name):
                 self.assertIsNone(MUPDF.search((REPO / name).read_text(encoding="utf-8", errors="replace")))
 
+    @unittest.skipUnless(sys.platform == "win32", "the C++ build and MSBuild are Windows-only (foundation plan D15)")
     def test_every_module_compiles_as_cpp20_with_warnings_as_errors(self):
-        # The flags are ClCompile item metadata in Directory.Build.targets (see Directory.Build.props). The XML is
-        # parsed, so a commented-out setting does not count; the plain-language check catches settings put elsewhere.
-        root = ElementTree.parse(REPO / "Directory.Build.targets").getroot()
-        settings = {}
-        for compile_item in root.iter():
-            if compile_item.tag.replace(MSBUILD, "") != "ClCompile":
-                continue
-            for child in compile_item:
-                settings.setdefault(child.tag.replace(MSBUILD, ""), []).append((child.text or "").strip())
-        self.assertIn("stdcpp20", settings.get("LanguageStandard", []))
-        self.assertIn("Level4", settings.get("WarningLevel", []))
-        self.assertIn("true", settings.get("TreatWarningAsError", []))
-        for name, values in settings.items():
-            if name in ("LanguageStandard", "WarningLevel", "TreatWarningAsError"):
-                self.assertEqual(len(set(values)), 1, f"{name} is set to more than one value: {values}")
+        # MSBuild itself evaluates each project, conditions included, and reports every source file's effective
+        # ClCompile metadata, so nothing commented out, conditioned away or overridden per file can pass.
+        tool = msbuild()
+        self.assertIsNotNone(tool, "MSBuild was not found through vswhere; the policy cannot be checked")
+        projects = tracked("*.vcxproj")
+        self.assertTrue(projects)
+        for project in projects:
+            for configuration, platform in CONFIGURATIONS:
+                with self.subTest(project=project, configuration=configuration, platform=platform):
+                    out = subprocess.run([tool, str(REPO / project), f"-p:Configuration={configuration}",
+                                          f"-p:Platform={platform}", "-getItem:ClCompile", "-nologo"],
+                                         capture_output=True, text=True, encoding="utf-8", errors="replace")
+                    self.assertEqual(out.returncode, 0, out.stdout[-500:] + out.stderr[-500:])
+                    items = json.loads(out.stdout)["Items"].get("ClCompile", [])
+                    self.assertTrue(items, f"{project} has no ClCompile items")
+                    for item in items:
+                        for name, value in REQUIRED.items():
+                            self.assertEqual(item.get(name), value, f"{item.get('Identity')}: {name}")
 
 if __name__ == "__main__":
     unittest.main()

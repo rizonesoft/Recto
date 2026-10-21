@@ -175,3 +175,61 @@ OVERALL: needs-attention
 - Finding 1 (P1): the compiler check parses `Directory.Build.targets` as XML and reads only active `ClCompile` metadata, so a commented-out setting fails it; it also refuses conflicting values. Mutation: `LanguageStandard` commented out -> `FAILED (failures=1)`.
 - Finding 2 (P1): `mupdf` and `artifex` match anywhere (`libmupdf.lib`, `mupdf.h`); only `jbig2dec` keeps word boundaries, so recto-pdf's own `JBIG2Decode` filter does not match. Mutation: `libmupdf.lib` added to `Directory.Build.props` -> `FAILED (failures=1)`.
 - Finding 3 (P3): the `build` workflow runs `python -m unittest tests.scripts.test_engine_dependency_policy` before building, so every code change gates on the policy. Tests: `Ran 3 tests ... OK`. The checkpoint re-run now reads `valid: 677 sections` at this tip (the 676 at the top of this file was an earlier revision).
+
+## Round 5: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T14:32:34Z
+- Effort: medium
+- Lines: 41
+- Digest: 9851ae472836fa8e
+
+## adversarial: needs-attention
+
+1. **P1** `tests/scripts/test_engine_dependency_policy.py:43`: The compiler-policy guard accepts settings disabled by MSBuild conditions. It collects XML values without evaluating ancestor or metadata `Condition` attributes. Reproduced without writes by mocking `ElementTree.parse` to return:
+
+   ```xml
+   <Project>
+     <ItemDefinitionGroup Condition="'$(Configuration)' == 'NeverBuilt'">
+       <ClCompile>
+         <LanguageStandard>stdcpp20</LanguageStandard>
+         <WarningLevel>Level4</WarningLevel>
+         <TreatWarningAsError>true</TreatWarningAsError>
+       </ClCompile>
+     </ItemDefinitionGroup>
+   </Project>
+   ```
+
+   Calling `test_every_module_compiles_as_cpp20_with_warnings_as_errors()` passes, although none of these settings applies to Debug or Release. This is false acceptance by the new guard, not evidence that the current compiler configuration is broken.
+
+## consistency: approve
+
+No additional findings.
+
+## integration: advisory
+
+Current clean-clone compilation was not independently verified: building would write files, contrary to the audit instruction.
+
+## source-defect: needs-attention
+
+Finding 1 also applies here. XML element presence does not establish active MSBuild metadata. Microsoft documents that an `ItemDefinitionGroup` condition controls whether its metadata is included. [MSBuild item definitions](https://learn.microsoft.com/en-us/visualstudio/msbuild/item-definitions?view=visualstudio)
+
+## design: advisory
+
+Not applicable. This section owns no user surface.
+
+## record: advisory
+
+At `eb0a491`, the checkpoint independently returned `False`, `False`, and `valid: 677 sections`; the three policy tests passed. The opening record’s 676-section result concerns an earlier candidate, as its later correction acknowledges. These passing tests do not establish the compiler-policy claim because of finding 1.
+
+No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 5
+
+Rounds 4 and 5 showed that reading `Directory.Build.targets` as text or XML cannot say which settings apply: MSBuild conditions decide that. The check was re-thought rather than taught MSBuild's condition rules: it now asks MSBuild itself (found through `vswhere`, as the build does) to evaluate every tracked `.vcxproj` in Debug and Release for x64 and ARM64 with `-getItem:ClCompile`, and requires every source file's effective `LanguageStandard` `stdcpp20`, `WarningLevel` `Level4` and `TreatWarningAsError` `true`.
+
+- Finding 1 (P1): a setting conditioned away (or commented out, or overridden for one file) now fails. Mutation: `TreatWarningAsError` conditioned on a configuration that never builds -> `FAILED (failures=28)` (7 projects x 4 configurations).
+- The check is Windows-only like the build (D15); on Windows a missing MSBuild is a failure, not a skip. It runs in about 7 seconds. Tests: `Ran 3 tests ... OK`.
+- CI run `39615055510` on `15a21a7` (the first commit with the new `.gitattributes`) finished: build and ASan both `success`.
