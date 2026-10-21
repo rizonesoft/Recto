@@ -30,8 +30,8 @@ PLAN = "docs/plans/2026-10-13-recto-foundation.md"
 COLUMNS = ["Request", "Evidence", "Status", "Owner", "Cost of reversing", "Last reviewed"]
 STATUSES = {"planned", "decided", "not planned"}
 # `D02 T06 §1-§15`, `D02 T01 §3, §13-§16`: a file reference, then its sections and ranges up to the next file.
-SECTION_RUN = re.compile(r"\b(D\d\d T\d\d)((?:\s*,?\s*§\d+(?:\s*-\s*§?\d+)?)+)")
-SECTION = re.compile(r"§(\d+)(?:\s*-\s*§?(\d+))?")
+SECTION_RUN = re.compile(r"\b(D\d\d T\d\d)((?:\s*,?\s*§\d+(?:\s*[-\u2013]\s*§?\d+)?)+)")
+SECTION = re.compile(r"§(\d+)(?:\s*[-\u2013]\s*§?(\d+))?")
 FILE_ONLY = re.compile(r"\bD\d\d T\d\d\b(?!\s*,?\s*§)")
 RELEASE_WINDOW = timedelta(days=14)
 # The two parity tables (docs/acrobat-parity.md); any other table there is a fault, so none escapes coverage.
@@ -54,11 +54,19 @@ def split_cells(line):
     return [cell.strip().replace("\\|", "|") for cell in UNESCAPED_PIPE.split(inner)]
 
 
+HIDDEN = re.compile(r"<!--.*?(?:-->|\Z)|^[ \t]*(```|~~~).*?(?:^[ \t]*\1[ \t]*$|\Z)", re.S | re.M)
+
+
+def visible(text):
+    """The text a reader sees: HTML comments and fenced code blocks blanked (their newlines kept)."""
+    return HIDDEN.sub(lambda match: "\n" * match.group(0).count("\n"), text)
+
+
 def tables(text):
     """Every Markdown table as (header cells, rows, faults). A table is a header row and a divider, then every line up
     to the next blank line. Each of those lines must be written as a full `| ... |` row; any other line (a row without
     its leading pipe, stray text) is a fault rather than a row the checks never see."""
-    lines = [line.strip() for line in text.splitlines()]
+    lines = [line.strip() for line in visible(text).splitlines()]
     found, i = [], 0
     while i < len(lines) - 1:
         if "|" in lines[i] and "-" in lines[i + 1] and DIVIDER.fullmatch(lines[i + 1]):

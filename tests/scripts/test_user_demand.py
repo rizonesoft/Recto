@@ -54,6 +54,7 @@ class LedgerRulesTest(unittest.TestCase):
             "cells": (web.replace(" | 2026-10-21 |", " |"), "has 5 cells"),
             "request ref": (web.replace("A web version", "A web version (D99 T99 §999)"), "D99 T99 §999 does not resolve"),
             "backwards": (split.replace("§23-§24", "§24-§23"), "runs backwards"),
+            "en dash range": (split.replace("§23-§24", "§23\u2013999"), "D02 T02 §25 does not resolve"),
             "file only": (web.replace("D15: desktop only", "D15: desktop only, see D02 T02"), "without a section"),
             "future": (web.replace("2026-10-21", "9999-12-31"), "is in the future"),
             "request decision": (web.replace("A web version", "A web version (D99)"), "decision D99 is not in"),
@@ -124,6 +125,12 @@ class LedgerRulesTest(unittest.TestCase):
         narrow = ledger(*VALID.values()).replace("| --- | --- | --- | --- | --- | --- |", "| --- |")
         found = demand.problems(narrow, PARITY, PLAN, SECTIONS, today=TODAY)
         self.assertTrue(any("table divider has 1 cells for a 6-cell header" in line for line in found), found)
+        # A ledger only a comment or a code fence holds is no ledger.
+        for wrap in (("<!--\n\n", "\n-->\n"), ("```\n", "```\n")):
+            text = wrap[0] + ledger(*VALID.values()) + wrap[1]
+            with self.subTest(wrap=wrap[0]):
+                self.assertEqual(demand.problems(text, PARITY, PLAN, SECTIONS, today=TODAY),
+                                 [f"the ledger must hold exactly one table, with the columns {' | '.join(demand.COLUMNS)}"])
         # A short parity row has an empty owner, so it needs a ledger row.
         self.assertIn("parity row 'New request' has no owning TODO section and no ledger row",
                       problems(*VALID.values(), parity=PARITY + "| New request | Planned |\n"))
