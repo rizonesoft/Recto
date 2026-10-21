@@ -8,7 +8,7 @@ Format and rules: `todo/README.md`. Run sections with the `process-plan`, `proce
 
 ### Phase 0: M0 Repository and build
 
-Sections: 17 | Checklist items: 89
+Sections: 18 | Checklist items: 96
 
 | Status | Reference  | Deliverable                                                                              | Needs        | Items |
 | ------ | ---------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -29,6 +29,7 @@ Sections: 17 | Checklist items: 89
 | [ ]    | D07 T03 §1 | Issue forms, triage policy and `SECURITY.md`                                             | none         | 8     |
 | [ ]    | D07 T03 §4 | User-bug regression rule, closing on release and changelog mapping                       | none         | 7     |
 | [ ]    | D07 T03 §6 | Public scope page and user demand ledger                                                 | none         | 7     |
+| [ ]    | D07 T03 §8 | Strict issue-form YAML reader and top-level schema types                                 | none         | 7     |
 
 ### Phase 1: M1 Engine core
 
@@ -719,6 +720,6 @@ Sections: 4 | Checklist items: 22
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
-Progress: 24/650 verified sections, 14 ready to run now.
+Progress: 24/651 verified sections, 14 ready to run now.
 
-Checklist: 155/4723 items completed (includes Commit items).
+Checklist: 155/4730 items completed (includes Commit items).

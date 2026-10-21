@@ -48,6 +48,7 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 | 5 | §2 | In-app `Report a problem` with privacy-safe diagnostics | §1, D07 T02 §1, D07 T02 §4, D02 T03 §11, D06 T04 §25 | [ ] |
 | 6 | §5 | Release gate for unreleased fixes, security advisories and CI integrity | §4, D07 T02 §6, D07 T02 §7, D06 T03 §12 | [ ] |
 | 7 | §7 | What's new after update and opt-in update notice | §2, D02 T04 §6, D06 T04 §25 | [ ] |
+| 8 | §8 | Strict issue-form YAML reader and top-level schema types | §1 | [ ] |
 
 ## 1. Issue forms, triage policy and `SECURITY.md`
 
@@ -224,6 +225,29 @@ Users stay on old builds and report bugs already fixed, and cannot find features
 - [ ] Commit: `app: show What's new per version and an opt-in update notice`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.WhatsNewOncePerVersion:Shell.UpdateNoticeOptIn` passes on the display-session host, with zero network requests recorded while the setting is off.
+
+## 8. Strict issue-form YAML reader and top-level schema types
+
+§1's `tests/scripts/test_issue_forms.py` reads the issue forms with a stdlib YAML subset reader, because Recto's tooling is stdlib Python and CI has no PyYAML. Review round 4 of §1 (`docs/reviews/07-release/D07-T03-s1.md`, stopped at the three-round cap) found five shapes that the reader or the schema check accepts while YAML or GitHub would not; none occurs in today's forms, but each lets a broken form pass the stdlib gate. This section closes them so the reader accepts only what it can load exactly as YAML 1.1 does.
+
+**Phase:** 0
+**Needs:** none
+**Surface:** no
+
+**Build order:**
+
+1. Tighten `_Loader` in `tests/scripts/test_issue_forms.py` so each of the four reader findings is refused. Done when: each reproduction from round 4 raises `YamlSubsetError`.
+2. Type-check the remaining top-level keys in `form_faults`. Done when: `projects: true` added to the bug form makes `form_faults` return a fault.
+
+- [ ] Refuse a sequence item whose dash is followed by more than one space (`  -   type: input`) in `_Loader._sequence`, instead of re-indenting it to two columns. Done when: that line raises `YamlSubsetError`, matching PyYAML's `ParserError`.
+- [ ] Refuse characters outside YAML's printable set (C0 controls other than line feed and carriage return, C1 controls, `U+FFFE`, `U+FFFF`, and surrogates) in `_Loader.__init__`. Done when: a `\x00` inside `label: Recto version` raises `YamlSubsetError`, matching PyYAML's `ReaderError`.
+- [ ] Refuse `>` folded block scalars in `_Loader._value` (the forms use only `|`), naming `|` in the message. Done when: `a: >\n  one\n    two\n  three\n` raises `YamlSubsetError` and the forms still load.
+- [ ] Validate trailing whitespace-only lines in `_Loader._block_scalar` before they are dropped, refusing any that hold spaces past the block's indentation. Done when: `a: |\n  text\n     \n` raises `YamlSubsetError`.
+- [ ] Type-check top-level `assignees` and `projects` (a list of non-empty strings or a comma-separated string) and `type` (a non-empty string) in `form_faults`, per GitHub's top-level form syntax. Done when: `projects: true`, `assignees: 3` and `type: [bug]` each make `form_faults` return a fault.
+- [ ] Add each reproduction above to `test_refuses_what_it_does_not_understand` or `test_schema_type_errors_are_caught`. Done when: the suite passes with and without PyYAML, and removing any one new check makes its case fail.
+- [ ] Commit: `tests: refuse the remaining YAML shapes and type-check top-level form keys`
+
+**Test checkpoint:** `python -m unittest tests.scripts.test_issue_forms` passes with PyYAML installed and with it blocked (`sys.modules['yaml'] = None`), and deleting the dash-spacing refusal makes `test_refuses_what_it_does_not_understand` fail.
 
 ## Verification
 
