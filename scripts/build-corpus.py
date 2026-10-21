@@ -1027,8 +1027,9 @@ def validate_classic_xref_at(rel_path: str, data: bytes, xref_offset: int, visit
         pos = line_end + 1
         for idx in range(count):
             entry = data[pos : pos + 20]
-            if len(entry) != 20:
-                raise ValueError(f"{rel_path}: xref entry shorter than 20 bytes")
+            # The one form ISO 32000-1 7.5.4 allows: 10-digit offset, 5-digit generation, n or f, 2-byte end of line.
+            if re.fullmatch(rb"\d{10} \d{5} [nf](?: \r| \n|\r\n)", entry) is None:
+                raise ValueError(f"{rel_path}: malformed xref entry {entry!r}")
             off_str = entry[0:10].decode("ascii")
             gen_str = entry[11:16].decode("ascii")
             kind = chr(entry[17])
@@ -1061,7 +1062,8 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int) -> Non
     if b"/Type /XRef" not in dict_bytes:
         raise ValueError(f"{rel_path}: XRef stream missing /Type /XRef")
     size_m = re.search(rb"/Size\s+(\d+)", dict_bytes)
-    len_m = re.search(rb"/Length\s+(\d+)", dict_bytes)
+    len_values = top_level_values(dict_bytes, b"/Length")
+    len_m = re.fullmatch(rb"(\d+)", len_values[0]) if len(len_values) == 1 else None
     w_m = re.search(rb"/W\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s*\]", dict_bytes)
     if not (size_m and len_m and w_m):
         raise ValueError(f"{rel_path}: XRef stream missing /Size, /Length, or /W")
@@ -1108,7 +1110,8 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int) -> Non
             raise ValueError(f"{rel_path}: object {stm_obj_id} is not a valid /Type /ObjStm")
         n_m = re.search(rb"/N\s+(\d+)", stm_m.group(1))
         first_m = re.search(rb"/First\s+(\d+)", stm_m.group(1))
-        slen_m = re.search(rb"/Length\s+(\d+)", stm_m.group(1))
+        slen_values = top_level_values(stm_m.group(1), b"/Length")
+        slen_m = re.fullmatch(rb"(\d+)", slen_values[0]) if len(slen_values) == 1 else None
         if not (n_m and first_m and slen_m):
             raise ValueError(f"{rel_path}: ObjStm {stm_obj_id} missing /N, /First, or /Length")
         n_val = int(n_m.group(1))
@@ -1205,6 +1208,76 @@ def validate_content_stream_syntax(rel_path: str, raw: bytes) -> None:
                 )
 
 
+_DELIMITERS = b"()<>[]{}/%"
+
+
+def _skip_object(body: bytes, i: int) -> int:
+    """The index just past the PDF object starting at body[i] (a string, dictionary, array, name or plain token)."""
+    if body.startswith(b"<<", i) or body[i : i + 1] == b"[":
+        closing = b">>" if body.startswith(b"<<", i) else b"]"
+        i += 2 if closing == b">>" else 1
+        while i < len(body):
+            if body[i : i + 1].isspace():
+                i += 1
+            elif body.startswith(closing, i):
+                return i + len(closing)
+            else:
+                i = _skip_object(body, i)
+        raise ValueError("unterminated dictionary or array")
+    if body[i : i + 1] == b"(":
+        depth, i = 0, i
+        while i < len(body):
+            c = body[i : i + 1]
+            if c == b"\\":
+                i += 2
+                continue
+            depth += c == b"("
+            depth -= c == b")"
+            i += 1
+            if depth == 0:
+                return i
+        raise ValueError("unterminated literal string")
+    if body[i : i + 1] == b"<":
+        end = body.find(b">", i)
+        if end < 0:
+            raise ValueError("unterminated hex string")
+        return end + 1
+    j = i + 1 if body[i : i + 1] == b"/" else i
+    while j < len(body) and not body[j : j + 1].isspace() and body[j] not in _DELIMITERS:
+        j += 1
+    if j == i:
+        raise ValueError(f"unexpected byte {body[i:i + 1]!r} in dictionary")
+    return j
+
+
+def top_level_values(dict_body: bytes, key: bytes) -> list[bytes]:
+    """The values of key among a dictionary body's own entries, never one inside a nested dictionary, array or string.
+    A value written as an indirect reference ("12 0 R") is returned whole."""
+    values, i, n = [], 0, len(dict_body)
+    tokens: list[bytes] = []
+    while i < n:
+        if dict_body[i : i + 1].isspace():
+            i += 1
+            continue
+        j = _skip_object(dict_body, i)
+        tokens.append(dict_body[i:j])
+        i = j
+    k = 0
+    while k < len(tokens):
+        name = tokens[k]
+        if not name.startswith(b"/") or k + 1 >= len(tokens):
+            raise ValueError(f"dictionary entry {name!r} is not a name followed by a value")
+        value = tokens[k + 1]
+        k += 2
+        if (re.fullmatch(rb"\d+", value) and k + 1 < len(tokens)
+                and re.fullmatch(rb"\d+", tokens[k]) and tokens[k + 1] == b"R"):
+            value = b" ".join([value, tokens[k], tokens[k + 1]])
+            k += 2
+        if name == key:
+            values.append(value)
+    return values
+
+
 def _dict_open(data: bytes, close: int) -> int | None:
     """The index of the << that the >> at close balances, scanning back, or None."""
     depth = 0
@@ -1240,10 +1313,15 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
             raise ValueError(f"{rel_path}: stream at {m.end()} has no balanced << >> dictionary")
         dict_body = data[open_at + 2 : m.start()]
         checked += 1
-        len_m = re.search(rb"/Length\s+(\d+)", dict_body)
-        if len_m is None:
-            raise ValueError(f"{rel_path}: stream dictionary missing direct /Length")
-        declared_len = int(len_m.group(1))
+        try:
+            lengths = top_level_values(dict_body, b"/Length")
+        except ValueError as e:
+            raise ValueError(f"{rel_path}: stream dictionary at {open_at} does not parse: {e}") from None
+        # Exactly one /Length among the stream dictionary's own entries, a direct integer: a /Length inside a nested
+        # dictionary or a string is not the stream's.
+        if len(lengths) != 1 or re.fullmatch(rb"\d+", lengths[0]) is None:
+            raise ValueError(f"{rel_path}: stream dictionary needs exactly one direct /Length, found {lengths}")
+        declared_len = int(lengths[0])
         stream_start = m.end()
         end_pos = stream_start + declared_len
         if data[end_pos : end_pos + 10] != b"\nendstream":

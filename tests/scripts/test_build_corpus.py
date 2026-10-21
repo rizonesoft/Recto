@@ -148,6 +148,26 @@ class BuildCorpusTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, "is not followed by"):
                 self.mod.validate_pdf_structure("test.pdf", self._one_page_pdf(bad))
 
+    def test_only_the_stream_dictionarys_own_length_counts(self) -> None:
+        for bad in (b"<< /Params << /Length 3 >> /Length 999 >>\nstream\nq Q\nendstream",
+                    b"<< /Note (/Length 3) /Length 999 >>\nstream\nq Q\nendstream",
+                    b"<< /Params << /Length 3 >> >>\nstream\nq Q\nendstream",
+                    b"<< /Length 3 /Length 3 >>\nstream\nq Q\nendstream",
+                    b"<< /Length 4 0 R >>\nstream\nq Q\nendstream"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.mod.validate_pdf_structure("test.pdf", self._one_page_pdf(bad))
+        self.mod.validate_pdf_structure("test.pdf", self._one_page_pdf(b"<< /Params << /Length 999 >> /Length 3 >>\nstream\nq Q\nendstream"))
+
+    def test_a_classic_xref_entry_has_one_form(self) -> None:
+        data = self.mod.build_simple_1p()
+        self.mod.validate_pdf_structure("render/simple-1p.pdf", data)
+        xref = data.index(b"\nxref\n") + 1  # the table, not startxref
+        first_in_use = data.index(b" 00000 n \n", xref) - 10
+        for bad in (b"9999999999 00000 x \n", b"0000000015 00000 n  ", b"000000001x 00000 n \n"):
+            mutated = data[:first_in_use] + bad + data[first_in_use + 20 :]
+            with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, "malformed xref entry"):
+                self.mod.validate_pdf_structure("render/simple-1p.pdf", mutated)
+
     def test_object_stream_offsets_must_locate_their_objects(self) -> None:
         self.mod.validate_pdf_structure("render/compressed-xref-2p.pdf", self.mod.build_compressed_xref_2p())
         real = self.mod.flate_compress
