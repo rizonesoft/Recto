@@ -549,7 +549,8 @@ class Stamp(Tree):
             early = [{"round": n, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": verdict}]
             with self.assertRaises(tg.Refused) as ctx:
                 tg.stamp(self.root, "D00 T01 §1", self.sha, early, ["true -> ok"], "2026-10-13", cap_outcome="filed")
-            self.assertIn(f"must be stopped-at-{tg.REVIEW_ROUND_CAP}", str(ctx.exception))
+            self.assertRegex(str(ctx.exception), f"must be stopped-at-{tg.REVIEW_ROUND_CAP}|"
+                                                 f"a cap stop is the round that returns review {tg.REVIEW_ROUND_CAP}")
         self.assertEqual(self.snapshot(), before)
 
     def test_a_severity_stop_with_only_p3_findings_stamps(self):
@@ -580,7 +581,23 @@ class Stamp(Tree):
         with self.assertRaises(tg.Refused) as ctx:
             tg.stamp(self.root, "D00 T01 §1", self.sha, [{"round": cap, "report": report, "verdict": f"stopped-at-{cap}"}],
                      ["true -> ok"], "2026-10-13", cap_outcome="filed")
-        self.assertIn("short of the cap", str(ctx.exception))
+        self.assertIn("a cap stop is the round that returns review", str(ctx.exception))
+        # Blocked or empty replies are not returned reviews either.
+        for filler in (envelope(1).replace("OVERALL: approve", "OVERALL: blocked"), envelope(1).replace("OVERALL: approve", "")):
+            (self.root / report).write_text("".join(filler.replace("## Round 1:", f"## Round {n}:") for n in range(1, last))
+                                            + envelope(last).replace("Review text.\n\nOVERALL: approve",
+                                                                     "1. **P3: wording.**\n\nOVERALL: needs-attention"),
+                                            encoding="utf-8")
+            with self.assertRaises(tg.Refused) as ctx:
+                tg.stamp(self.root, "D00 T01 §1", self.sha,
+                         [{"round": last, "report": report, "verdict": "stopped-low-severity"}],
+                         ["true -> ok"], "2026-10-13", cap_outcome="filed")
+            self.assertIn("follows only 1 returned reviews", str(ctx.exception))
+        # An outage before the cap moves the cap stop to the round that returns review 22.
+        (self.root / report).write_text(envelope(1, "none") + "".join(
+            envelope(n, overall="needs-attention") for n in range(2, cap + 2)), encoding="utf-8")
+        tg.stamp(self.root, "D00 T01 §1", self.sha, [{"round": cap + 1, "report": report, "verdict": f"stopped-at-{cap}"}],
+                 ["true -> ok"], "2026-10-13", cap_outcome="filed")
 
     def test_a_severity_stop_before_the_cutoff_refuses(self):
         self.tick_work()
@@ -611,7 +628,7 @@ class Stamp(Tree):
             with self.assertRaises(tg.Refused) as ctx:
                 tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
             self.assertRegex(str(ctx.exception), "is not a review returned by another model family|"
-                                                 "is not a findings file the dispatcher can read")
+                                                 "is not a findings file the dispatcher can read|holds no returned review")
         for bad in (0, -1, True):
             with self.assertRaises(tg.Refused):
                 tg.stamp(self.root, "D00 T01 §1", self.sha,

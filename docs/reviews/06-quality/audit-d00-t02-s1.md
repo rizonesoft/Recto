@@ -518,3 +518,46 @@ OVERALL: needs-attention
 
 - Finding 1 (P1): a P3 tag must open the finding (`P3:` or `**P3:`); a P3 mentioned elsewhere in an untagged finding does not count (`test_a_severity_stop_with_a_p1_or_p2_finding_refuses`).
 - Finding 2 (P1): a stop is earned by reviews returned: a severity stop needs more than `SEVERITY_CUTOFF_ROUND` returned reviews in its loop, and a cap stop at least `round_cap`; outage rounds count toward neither (`test_outage_rounds_do_not_earn_a_stop`).
+
+## Round 11: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T16:00:52Z
+- Effort: medium
+- Lines: 27
+- Digest: 88bd1209f69e4ab3
+
+## adversarial: needs-attention
+
+1. **P1: Empty or blocked replies still earn severity stops.** `scripts/lib/todo_graph.py:253` includes every named reviewer in `reviewed`; line 275 counts them without checking their output. Only explicitly claimed rounds receive verdict validation. Reproduced in memory: eight named rounds ending `OVERALL: blocked`, followed by round 9 containing `1. **P3: wording.**` and `OVERALL: needs-attention`; claim only round 9 as `stopped-low-severity`. `receipt_data_ok()` accepts it. Eight empty replies also pass. One returned review therefore earns a stop requiring nine.
+
+## consistency: approve
+
+No additional finding.
+
+## integration: needs-attention
+
+2. **P2: An outage makes a legitimate cap stop impossible.** `scripts/lib/todo_graph.py:240` requires the recorded round number to equal the cap, although the dispatcher numbers outages too. Reproduced in memory: round 1 is `none`, followed by 22 returned reviews in rounds 2 through 23. Claim round 23 as `stopped-at-22`, with `rounds_spent=23`, `round_cap=22` and a nonempty outcome. Validation refuses: `a stopped-at verdict must be stopped-at-22 on round 22`. Round 22 has insufficient returned reviews; round 23 has sufficient reviews but cannot satisfy this equality.
+
+## source-defect: approve
+
+No additional finding.
+
+## design: advisory
+
+Not applicable to the section’s declared surface.
+
+## record: advisory
+
+The full-suite claim at `docs/reviews/06-quality/audit-d00-t02-s1.md:9` remains independently unconfirmed. At `8fdc2cc`, the suite attempted 78 tests: 77 encountered temporary-directory setup errors under the read-only sandbox; the Repository test passed. This is an environment limitation.
+
+Current validation reported `valid: 677 sections`; `plan --check` reported `plan current`. Both findings above were reproduced through in-memory report overlays. No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 11
+
+`Ran 78 tests`, `OK`; against `8fdc2cc` the extended `test_outage_rounds_do_not_earn_a_stop` fails; `valid: 677 sections`.
+
+- Finding 1 (P1): a returned review is now a round whose reviewer ran and replied with `OVERALL: approve` or `OVERALL: needs-attention`; blocked and empty replies are recorded rounds but count toward neither stop, nor as a loop's end (`test_outage_rounds_do_not_earn_a_stop`, blocked and empty fillers).
+- Finding 2 (P2): a cap stop is the round that returns review number `round_cap`, whatever its round number, so an outage earlier in the loop moves the stop to a later round instead of making it impossible (same test, an outage then rounds 2 to 23).

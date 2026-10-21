@@ -237,9 +237,8 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
         require(type(spent) is int and spent >= max(r["round"] for r in rounds) and type(cap) is int and cap >= 1,
                 f"receipt rounds_spent or round_cap is invalid: {ref}")
         # A cap stop is the current cap, reached: stopped-at-3, -8 and -13 belong to receipts older than this field.
-        require(all(r["verdict"] == f"stopped-at-{cap}" and r["round"] == cap
-                    for r in rounds if r["verdict"].startswith("stopped-at-")),
-                f"a stopped-at verdict must be stopped-at-{cap} on round {cap}: {ref}")
+        require(all(r["verdict"] == f"stopped-at-{cap}" for r in rounds if r["verdict"].startswith("stopped-at-")),
+                f"a stopped-at verdict must be stopped-at-{cap}: {ref}")
         if root is not None:
             # A claimed round is one scripts/review-dispatch.py recorded with a reviewer, read by the dispatcher's own
             # reader, so a report it would refuse is no evidence here either.
@@ -250,7 +249,12 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
             for report in dict.fromkeys(r["report"] for r in rounds):
                 recorded = dispatch.read_rounds((Path(root) / report).read_bytes().decode("utf-8"))
                 require(recorded is not None, f"{report} is not a findings file the dispatcher can read: {ref}")
-                reviewed = {e["number"]: e for e in recorded if e["reviewer"]}
+                # A returned review: a reviewer ran and replied with the prompt's OVERALL approve or needs-attention
+                # line. Outages, empty and blocked replies are recorded rounds but not reviews.
+                reviewed = {e["number"]: e for e in recorded if e["reviewer"] and (
+                    [x.strip() for x in e["review"].splitlines() if x.strip()] or [""])[-1]
+                    in ("OVERALL: approve", "OVERALL: needs-attention")}
+                require(reviewed, f"{report} holds no returned review: {ref}")
                 claimed = sorted((r for r in rounds if r["report"] == report), key=lambda r: r["round"])
                 for r in claimed:
                     e = reviewed.get(r["round"])
@@ -276,9 +280,9 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
                     require(r["verdict"] != "stopped-low-severity" or returned > SEVERITY_CUTOFF_ROUND,
                             f"round {r['round']} follows only {returned} returned reviews, so it cannot stop on "
                             f"severity before {SEVERITY_CUTOFF_ROUND + 1}: {ref}")
-                    require(not r["verdict"].startswith("stopped-at-") or returned >= cap,
-                            f"round {r['round']} follows only {returned} returned reviews, short of the cap {cap}: "
-                            f"{ref}")
+                    require(not r["verdict"].startswith("stopped-at-") or returned == cap,
+                            f"round {r['round']} follows {returned} returned reviews; a cap stop is the round that "
+                            f"returns review {cap}: {ref}")
                 # Each findings file is one review loop, and the loop's end is its last reviewed round: the receipt
                 # must name it, and it must be clean or a stop, so no later failing review can be left out.
                 require(claimed[-1]["round"] == max(reviewed)
