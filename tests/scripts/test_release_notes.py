@@ -278,7 +278,13 @@ class HostileFixtureTest(unittest.TestCase):
                        "tests/recto-tests/elif_tests.cpp":
                            "#if 1\nint a;\n#elif defined(X)\nTEST(ElifDead, Case) {}\n#else\n"
                            "TEST(ElseDead, Case) {}\n#endif\n"
-                           "#if defined(Y)\nint b;\n#else\nTEST(ElseMaybe, Case) {}\n#endif\n"},
+                           "#if defined(Y)\nint b;\n#else\nTEST(ElseMaybe, Case) {}\n#endif\n",
+                       # A TEST passed as a macro argument and a TEST produced by a wrapper macro are not plain
+                       # declarations; a TEST inside a namespace is.
+                       "tests/recto-tests/macro_tests.cpp":
+                           "#define IGNORE(x)\nIGNORE(TEST(AsArgument, Case) {})\n"
+                           "#define DECLARE_TEST TEST(ByWrapper, Case) {}\nDECLARE_TEST\n"
+                           "namespace recto {\nTEST(InNamespace, Case) {}\n}\n"},
                 "initial")
         _git(repo, "tag", "v2.0.0")
         cls.fake = {
@@ -289,6 +295,7 @@ class HostileFixtureTest(unittest.TestCase):
             "SplitRawPrefix": "SplitRawPrefix.Case", "SplitEscape": "SplitEscape.Case",
             "BomDisabled": "BomDisabled.Case", "DigraphHidden": "DigraphHidden.Case",
             "ElifDead": "ElifDead.Case", "ElseDead": "ElseDead.Case",
+            "AsArgument": "AsArgument.Case", "ByWrapper": "ByWrapper.Case",
             "Pretend": "tests.scripts.test_sample.Pretend.test_fake",
             "Ordinary": "tests.scripts.test_sample.Ordinary.test_missing",
             "Save": "tests.scripts.test_sample.Ordinary.save",
@@ -312,7 +319,7 @@ class HostileFixtureTest(unittest.TestCase):
             "Prefixed": "Prefixed.Char", "Separated": "Separated.Num", "Fraction": "Fraction.Case",
             "AfterRaw": "AfterRaw.Case", "SplicedNumber": "SplicedNumber.Case",
             "AfterSplitClose": "AfterSplitClose.Case", "BomEnabled": "BomEnabled.Case", "CrOnly": "CrOnly.Case",
-            "DigraphShown": "DigraphShown.Case", "ElseMaybe": "ElseMaybe.Case",
+            "DigraphShown": "DigraphShown.Case", "ElseMaybe": "ElseMaybe.Case", "InNamespace": "InNamespace.Case",
         }
         cls.shas = {}
         for name, test_id in {**cls.fake, **cls.real}.items():
@@ -337,7 +344,7 @@ class HostileFixtureTest(unittest.TestCase):
                         "CrOnly.Case", "DigraphHidden.Case", "DigraphShown.Case", "ElifDead.Case",
                         "ElseDead.Case", "ElseMaybe.Case",
                         # Listed as if a later commit expanded the macro: the source check alone must refuse it.
-                        "Macro.Case"}
+                        "Macro.Case", "AsArgument.Case", "ByWrapper.Case", "InNamespace.Case"}
         # A module that never finishes importing must time out into a violation, not abort the report; the short
         # timeout holds for every report this class builds and is restored in tearDownClass.
         cls._timeout, release_notes.PROBE_TIMEOUT = release_notes.PROBE_TIMEOUT, 3

@@ -8,7 +8,7 @@ Get the problem happening on your machine before you change any code. Use the re
 
 ## 2. Write the test, and watch it fail
 
-Write a regression test that fails because of the bug: a gtest case (`Suite.Case`) for app and engine code, or a Python test (`module.Class.test_name`) for tooling. A new case in an existing test file is fine. Run it on the parent commit, before your fix, and keep the failing output: the pull request quotes it.
+Write a regression test that fails because of the bug: a gtest case (`Suite.Case`) for app and engine code, or a Python test (`module.Class.test_name`) for tooling. A new case in an existing test file is fine. Declare a gtest regression test with a plain `TEST`, `TEST_F`, `TEST_P`, `TYPED_TEST` or `TYPED_TEST_P`, not through a wrapper macro: the release check reads the source at the fix commit and only a plain declaration counts. Run it on the parent commit, before your fix, and keep the failing output: the pull request quotes it.
 
 ## 3. Fix it, with both trailers
 
