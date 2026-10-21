@@ -360,7 +360,7 @@ class Stamp(Tree):
 
     def test_a_stopped_review_must_say_what_was_done(self):
         self.tick_work()
-        stopped = [{"round": 8, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": "stopped-at-8"}]
+        stopped = [{"round": 13, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": "stopped-at-13"}]
         with self.assertRaises(tg.Refused) as ctx:
             tg.stamp(self.root, "D00 T01 §1", self.sha, stopped, ["true -> ok"], "2026-10-13")
         self.assertIn("--cap-outcome", str(ctx.exception))
@@ -370,7 +370,7 @@ class Stamp(Tree):
         receipt = tg.stamp(self.root, "D00 T01 §1", self.sha, stopped, ["true -> ok"], "2026-10-13",
                            cap_outcome="filed two leftovers as D00 T01 §2")
         data = json.loads((self.root / receipt).read_text(encoding="utf-8"))
-        self.assertEqual((data["rounds_spent"], data["cap_outcome"]), (8, "filed two leftovers as D00 T01 §2"))
+        self.assertEqual((data["rounds_spent"], data["cap_outcome"]), (13, "filed two leftovers as D00 T01 §2"))
         self.assertEqual(tg.review_rounds(self.root)["summary"]["stopped_at_cap"], 1)
         # A receipt that drops the outcome no longer validates.
         del data["cap_outcome"]

@@ -26,9 +26,9 @@ NEEDS = {"windows-host", "arm64-host", "display-session", "office", "libreoffice
          "attended", "owner-decision", "third-party", "operator"}
 WAITING = {"owner-decision", "third-party", "operator"}
 STATUSES = {"draft", "active", "blocked", "done", "superseded"}
-# stopped-at-8 is the current review-round cap; stopped-at-3 stays valid on receipts written under the earlier cap.
-VERDICTS = {"clean", "fixed", "stopped-at-8", "stopped-at-3"}
-REVIEW_ROUND_CAP = 8
+# stopped-at-13 is the current review-round cap; stopped-at-8 and stopped-at-3 stay valid on earlier receipts.
+VERDICTS = {"clean", "fixed", "stopped-at-13", "stopped-at-8", "stopped-at-3"}
+REVIEW_ROUND_CAP = 13
 # A round scripts/review-dispatch.py recorded in a findings file, reviewed or not ("## Round 2: none").
 ROUND_RECORD = re.compile(r"^## Round ([0-9]+): ", re.M)
 ADJACENCY_KEYS = ["list", "document", "settings", "reporting", "notifications", "permissions",
