@@ -1,0 +1,56 @@
+# Recto's issue labels. The operator creates them on GitHub from this file (D99 T01 §2);
+# docs/support/triage.md says when each one is used.
+
+# Area: which part of Recto the issue is about.
+- name: engine
+  color: "1d76db"
+  description: The recto-pdf engine; parsing, rendering, saving.
+- name: viewer
+  color: "1d76db"
+  description: The app shell, page view, navigation and settings.
+- name: text
+  color: "1d76db"
+  description: Text selection, search, OCR, annotations and forms.
+- name: convert
+  color: "1d76db"
+  description: Converting PDF to and from Office, HTML, images and other formats.
+- name: organize
+  color: "1d76db"
+  description: Merging, splitting, reordering, rotating and other page operations.
+- name: print
+  color: "1d76db"
+  description: Printing and print production.
+- name: install
+  color: "1d76db"
+  description: Installer, portable mode, MSIX and updates.
+
+# Kind: what sort of issue it is.
+- name: bug
+  color: "d73a4a"
+  description: Recto does not behave as documented or expected.
+- name: feature
+  color: "a2eeef"
+  description: A request for something Recto does not do yet.
+- name: regression
+  color: "b60205"
+  description: Worked in an earlier release and is broken now.
+- name: data-loss
+  color: "b60205"
+  description: A file or user data was lost or damaged.
+- name: crash
+  color: "b60205"
+  description: Recto closed unexpectedly or stopped responding.
+- name: security
+  color: "b60205"
+  description: A security fix; the report itself stays private until the advisory.
+
+# State: where the issue is in its life.
+- name: needs-repro
+  color: "fbca04"
+  description: Waiting for a file, reproducer or steps that show the problem.
+- name: fixed-on-main
+  color: "0e8a16"
+  description: Fixed on main; closes when the release containing the fix ships.
+- name: released
+  color: "0e8a16"
+  description: The fix shipped in a published release.

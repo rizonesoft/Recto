@@ -1,0 +1,83 @@
+name: Bug report
+description: Something in Recto does not work the way it should.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. A maintainer reads every report and replies here, so watch this issue for questions.
+
+        Do not attach a confidential file to a public issue. Share a synthetic file, or a reproducer made with `recto-cli scrub`, instead. Security problems go to private reporting, not here: see [SECURITY.md](https://github.com/rizonesoft/Recto/blob/main/SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: Recto version
+      description: Shown in Help, then About.
+      placeholder: 1.0.0 (abc1234)
+    validations:
+      required: true
+  - type: input
+    id: install-type
+    attributes:
+      label: Install type
+      description: Installer, Portable or MSIX (Microsoft Store). Help, then About shows which one you have.
+      placeholder: Installer
+    validations:
+      required: true
+  - type: input
+    id: windows-build
+    attributes:
+      label: Windows build
+      description: Run `winver` and copy the version and OS build line.
+      placeholder: Windows 11 24H2 (OS Build 26100.2033)
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and driver
+      description: Device Manager, then Display adapters, shows the GPU; its Driver tab shows the version.
+      placeholder: Intel Arc A770, driver 32.0.101.6078
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Number each step, starting from opening Recto.
+      placeholder: |
+        1. Open the attached file.
+        2. Go to page 3.
+        3. Zoom to 200%.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What you expected Recto to do.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: What Recto did instead. Screenshots help.
+    validations:
+      required: true
+  - type: textarea
+    id: file
+    attributes:
+      label: File or reproducer
+      description: Attach the file that shows the problem, a reproducer made with `recto-cli scrub`, or a synthetic file. If you cannot share any file, say why and describe the file (producer, page count, size).
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Optional. Paste the text from Help, then Report a problem, then Copy diagnostics. It holds no document content.
+      render: text
+    validations:
+      required: false

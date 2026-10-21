@@ -1,0 +1,33 @@
+name: Feature request
+description: Ask for something Recto does not do yet.
+title: "[Feature]: "
+labels: [feature]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before you ask, please check whether someone already has:
+
+        - [Search the open issues](https://github.com/rizonesoft/Recto/issues?q=is%3Aissue+is%3Aopen) and add a thumbs-up to an existing request instead of opening a new one.
+        - Read the [user demand ledger](https://github.com/rizonesoft/Recto/blob/main/docs/user-demand.md), which records every recurring request and whether it is planned, decided or not planned, with the reason.
+  - type: textarea
+    id: task
+    attributes:
+      label: What are you trying to do?
+      description: Describe the task, not the button you want. For example, "send a signed contract back to a client" rather than "add a sign button".
+    validations:
+      required: true
+  - type: input
+    id: current-app
+    attributes:
+      label: What do you use for this today?
+      description: The app or workaround you use now, for example Adobe Acrobat, a web tool, or printing and scanning.
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Anything else?
+      description: Optional. How often you need this, files it should handle, screenshots of how another app does it.
+    validations:
+      required: false
