@@ -8,7 +8,7 @@ Format and rules: `todo/README.md`. Run sections with the `process-plan`, `proce
 
 ### Phase 0: M0 Repository and build
 
-Sections: 33 | Checklist items: 173
+Sections: 34 | Checklist items: 177
 
 | Status | Reference   | Deliverable                                                                              | Needs        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -40,6 +40,7 @@ Sections: 33 | Checklist items: 173
 | [ ]    | D06 T05 §12 | Audit D00 T03 §4: Encrypted (RC4/AES-128/AES-256), broken/ and seeds/ corpus fixtures    | windows-host | 5     |
 | [ ]    | D06 T05 §13 | Audit D00 T03 §5: tests/corpus/PROVENANCE.md and automated Corpus.Provenance SHA-256     | windows-host | 5     |
 | [ ]    | D06 T05 §14 | Audit D00 T03 §6: MSVC AddressSanitizer (/fsanitize=address) build configuration and CI  | windows-host | 5     |
+| [ ]    | D06 T05 §25 | Retired MuPDF and AGPL text removed from the A, B and C mockup boards                    | windows-host | 4     |
 | [x]    | D07 T03 §1  | Issue forms, triage policy and `SECURITY.md`                                             | none         | 8     |
 | [x]    | D07 T03 §9  | Gtest regression evidence from the fix commit's own CI test list                         | none         | 7     |
 | [x]    | D07 T03 §4  | User-bug regression rule, closing on release and changelog mapping                       | none         | 7     |
@@ -745,6 +746,6 @@ Sections: 4 | Checklist items: 22
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
-Progress: 30/676 verified sections, 12 ready to run now.
+Progress: 30/677 verified sections, 12 ready to run now.
 
-Checklist: 189/4857 items completed (includes Commit items).
+Checklist: 189/4861 items completed (includes Commit items).

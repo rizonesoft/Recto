@@ -55,6 +55,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 22 | §22 | Audit D01 T01 §8: Bi-level and image stream filters (CCITTFaxDecode, JBIG2Decode, WIC | D01 T01 §8, §21 | [ ] |
 | 23 | §23 | Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6 | D01 T01 §9, §22 | [ ] |
 | 24 | §24 | Audit D01 T01 §10: pdf::Document page-tree resolver, metadata, /Outlines, font list and | D01 T01 §10, §23 | [ ] |
+| 25 | §25 | Retired MuPDF and AGPL text removed from the A, B and C mockup boards | §2 | [ ] |
 
 ## 1. Audit D00 T01 §1: Git repository and repo-face files
 
@@ -566,6 +567,26 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 - [ ] Commit: `review: audit D01 T01 §10 under the current review process`
 
 **Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §10"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s10.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+## 25. Retired MuPDF and AGPL text removed from the A, B and C mockup boards
+
+The audit of `D00 T01 §2` (`docs/reviews/06-quality/audit-d00-t01-s2.md`) found the older A, B and C mockup boards under `design/mockups/source/` and their rendered `design/mockups/html/` copies still showing MuPDF as the engine and AGPL-3.0 as the licence (`A-About` lists MuPDF, jbig2dec and extract under AGPL, `A-Banner` shows `MuPDF` and `AGPL-3.0` chips, and about twenty boards in all mention MuPDF). Recto's engine is its own `recto-pdf` with zero MuPDF (D3, D9) and the licence is GPL-3.0-or-later (D2), so these boards contradict the plan. The `D-` boards are the current design; this section brings the older boards in line rather than leaving them to mislead.
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Edit every `design/mockups/source/[ABC]-*.dc.html` that names MuPDF, AGPL or a MuPDF-only component. Done when: `git grep -n -i -E "mupdf|agpl|jbig2dec|artifex" -- design/mockups/source` prints nothing.
+2. Re-render the edited boards with `node design/tools/render-mockups.mjs --only <names>`. Done when: `git grep -n -i -E "mupdf|agpl" -- design/mockups/html design/screenshots` prints nothing and each edited board's PNG is newer than its source.
+
+- [ ] Replace MuPDF with `recto-pdf` and AGPL-3.0 with GPL-3.0-or-later in every `design/mockups/source/[ABC]-*.dc.html`, and drop MuPDF-only third-party rows (jbig2dec, extract, Artifex) from the About boards' licence lists, keeping the rows for components Recto still ships. Done when: `git grep -n -i -E "mupdf|agpl|jbig2dec|artifex" -- design/mockups/source` prints nothing.
+- [ ] Re-render those boards through `design/tools/render-mockups.mjs --only` so `design/mockups/html/` and `design/screenshots/` match their sources. Done when: `git grep -n -i -E "mupdf|agpl" -- design/mockups/html` prints nothing and the boards' PNG files are newer than their sources.
+- [ ] Add `tests/scripts/test_engine_dependency_policy.py`'s design check (no MuPDF or AGPL text in `design/mockups/`). Done when: restoring one MuPDF chip in a source makes the test fail.
+- [ ] Commit: `design: retire MuPDF and AGPL text from the A, B and C mockup boards`
+
+**Test checkpoint:** `python -m unittest tests.scripts.test_engine_dependency_policy` passes, and `git grep -n -i -E "mupdf|agpl" -- design/mockups` prints nothing.
 
 ## Verification
 
