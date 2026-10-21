@@ -474,6 +474,6 @@ Must all be true before the M6 release (and any optional Microsoft Store submiss
 
 1. **Trademark & optional Store name reservation** for "Recto" (owner-only manual action in `D99 T01 §1` and `§3`).
 2. **Reference benchmark machine (primary `x64` host resolved 2026-10-14 in `D00 T01 §5`; physical `ARM64` device deferred to `D99 T01 §4`):** The primary development host machine (`11th Gen Intel Core i5-11600K`, 32 GB RAM, RTX 2060, NVMe SSD, Windows 11 Build `26300`) and the non-binding `ARM64` target profile are recorded in [`docs/reference-machines.md`](../reference-machines.md), with naming a specific physical `ARM64` benchmark device deferred to `D99 T01 §4`.
-3. **20-document PDF -> Word test corpus** assembled before M5 (`D04 T03 §6`) to evaluate `DocxWriter` layout and table reconstruction quality.
+3. **20-document PDF -> Word test corpus** assembled before M5 (`D04 T03 §7`, graded in `D04 T03 §6`) to evaluate `DocxWriter` layout and table reconstruction quality.
 4. **WinUI 3 printing API verification** at the start of M6 (`D07 T01 §1`: confirm `PrintManagerInterop::GetForWindow` + `ID2D1PrintControl` vs WinRT print document source behavior on the pinned Windows App SDK release).
 5. **Opt-in crash reporting & Post-v1 broker architecture (resolved 2026-10-14):** `D07 T02 §4` uses a local minidump-plus-log save-and-share `.zip` bundle (zero network telemetry), and `D06 T02 §6` pre-approves the D13 shared-memory `DisplayList`/`PageText`/`Bitmap` AppContainer broker architecture.

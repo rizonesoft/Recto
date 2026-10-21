@@ -300,7 +300,7 @@ Sections: 103 | Checklist items: 764
 
 ### Phase 4: M4 Conversions A
 
-Sections: 146 | Checklist items: 1140
+Sections: 147 | Checklist items: 1144
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -329,6 +329,7 @@ Sections: 146 | Checklist items: 1140
 | [ ]    | D04 T02 §21 | Page area export engine (image or text) and `recto-cli export-area`                      | windows-host                  | 8     |
 | [ ]    | D04 T02 §23 | More image inputs to PDF: ICO, JFIF, DIB, HEIC, WebP, JPEG XL via installed codecs       | windows-host                  | 9     |
 | [ ]    | D04 T02 §24 | New blank PDF engine: size presets, paper styles and `recto-cli new-pdf`                 | windows-host                  | 8     |
+| [ ]    | D04 T03 §7  | 20-document PDF -> Word evaluation corpus, assembled before M5                           | none                          | 4     |
 | [ ]    | D05 T01 §1  | `GraftMap` object-graph cloner, resource deduplicator (`graft.cpp`) & page-range parser  | windows-host                  | 7     |
 | [ ]    | D02 T03 §24 | `recto-pdf` import a page or an image as a layer                                         | windows-host                  | 4     |
 | [ ]    | D02 T03 §25 | Layers panel editing: new, rename, delete, merge and import as layer                     | windows-host, display-session | 5     |
@@ -453,7 +454,7 @@ Sections: 146 | Checklist items: 1140
 
 ### Phase 5: M5 Conversions B
 
-Sections: 114 | Checklist items: 923
+Sections: 114 | Checklist items: 922
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -464,7 +465,7 @@ Sections: 114 | Checklist items: 923
 | [ ]    | D04 T04 §1  | Built-in C++20 Word (`.docx`, `.docm`) and Rich Text (`.rtf`) to PDF layout engine       | windows-host                  | 8     |
 | [ ]    | D04 T03 §4  | Native RTF 1.9.1 writer (`rtf_writer.cpp`: `Flowing`, `Exact` frames, `\trowd` tables)   | windows-host                  | 8     |
 | [ ]    | D04 T03 §5  | Convert page **Word document (`.docx` & `.rtf`)** card and Step 3 UI (`B-Convert.png`)   | windows-host, display-session | 7     |
-| [ ]    | D04 T03 §6  | Foundation plan section 11 **20-document PDF -> Word quality review** and layout tuning  | windows-host                  | 7     |
+| [ ]    | D04 T03 §6  | Foundation plan section 11 **20-document PDF -> Word quality review** and layout tuning  | windows-host                  | 6     |
 | [ ]    | D04 T04 §2  | Built-in C++20 Excel (`.xlsx`), `.csv`, and PowerPoint (`.pptx`) to PDF layout engines   | windows-host                  | 7     |
 | [ ]    | D04 T04 §3  | Built-in C++20 `HTML/CSS` (`.html`) and `Markdown` (`.md`) to PDF engine and CLI verbs   | windows-host                  | 8     |
 | [ ]    | D04 T04 §4  | Native C++20 OLE2 Compound File (`[MS-CFB]`) reader and VBA macro stream stripper        | windows-host                  | 6     |
@@ -574,7 +575,7 @@ Sections: 114 | Checklist items: 923
 
 ### Phase 6: M6 Ship
 
-Sections: 57 | Checklist items: 405
+Sections: 57 | Checklist items: 406
 
 | Status | Reference   | Deliverable                                                                              | Needs                                   | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | --------------------------------------- | ----- |
@@ -633,7 +634,7 @@ Sections: 57 | Checklist items: 405
 | [ ]    | D07 T02 §7  | End-to-end v1 distribution bundle (`Setup.exe`, `Portable.zip`, `SHA256SUMS.txt`) & GPL  | windows-host, display-session           | 8     |
 | [ ]    | D06 T03 §12 | Clean-machine release smoke and upgrade persistence proof                                | windows-host, display-session, attended | 11    |
 | [ ]    | D07 T03 §2  | In-app `Report a problem` with privacy-safe diagnostics                                  | windows-host, display-session           | 7     |
-| [ ]    | D07 T03 §5  | Release gate for unreleased fixes, security advisories and CI integrity                  | windows-host                            | 7     |
+| [ ]    | D07 T03 §5  | Release gate for unreleased fixes, security advisories and CI integrity                  | windows-host                            | 8     |
 | [ ]    | D07 T03 §7  | What's new after update and opt-in update notice                                         | windows-host, display-session           | 7     |
 
 ### Phase 7: After v1
@@ -746,6 +747,6 @@ Sections: 4 | Checklist items: 22
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
-Progress: 36/677 verified sections, 13 ready to run now.
+Progress: 36/678 verified sections, 14 ready to run now.
 
-Checklist: 219/4861 items completed (includes Commit items).
+Checklist: 219/4865 items completed (includes Commit items).

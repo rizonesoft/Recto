@@ -47,7 +47,7 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 | 4 | §6 | Public scope page and user demand ledger | §1 | [x] |
 | 5 | §3 | Structure-preserving reproducer scrubber (`recto-cli scrub`) | D04 T02 §2 | [ ] |
 | 6 | §2 | In-app `Report a problem` with privacy-safe diagnostics | §1, D07 T02 §1, D07 T02 §4, D02 T03 §11, D06 T04 §25 | [ ] |
-| 7 | §5 | Release gate for unreleased fixes, security advisories and CI integrity | §4, D07 T02 §6, D07 T02 §7, D06 T03 §12 | [ ] |
+| 7 | §5 | Release gate for unreleased fixes, security advisories and CI integrity | §4, D07 T02 §6, D07 T02 §7, D06 T03 §12, D06 T03 §5, D06 T03 §6 | [ ] |
 | 8 | §7 | What's new after update and opt-in update notice | §2, D02 T04 §6, D06 T04 §25 | [ ] |
 | 9 | §8 | Strict issue-form YAML reader and top-level schema types | §1 | [x] |
 
@@ -179,6 +179,7 @@ Another is security and data-loss fixes sitting on main while the current releas
 - [ ] Require, for the candidate commit SHA itself, a `success` conclusion for every job and matrix combination named in `.github/release-required-jobs.txt` (workflow, job name and matrix values: build for x64 and ARM64 in Debug and Release, tests, the standard-user leg, plan gates), read with `gh run view <id> --json jobs`; a job that is missing, `skipped`, `cancelled` or `failure`, or a run for another SHA, fails the gate, because a workflow can report success while a conditionally skipped job did not run. Done when: fixtures with the ARM64 job skipped, a cancelled candidate run and a green run for a different SHA each fail the gate, and the full-matrix fixture passes.
 - [ ] Add a standard-user (non-administrator) test leg to `.github/workflows/build.yml` so privilege-dependent tests cannot pass only as admin. Done when: the workflow defines the leg and the gate requires its result.
 - [ ] Fail when `build/release-smoke/<version>.json` from `D06 T03 §12` is missing, not green, names a commit other than the candidate, or lists an artifact digest that differs from the bundle's `SHA256SUMS.txt` (`D07 T02 §7`). Done when: the missing-report, wrong-commit and rebuilt-artifact fixtures each fail.
+- [ ] Fail when any section in phases 0 to 6 other than this gate is unstamped, read from `python scripts/todo-graph.py query plan`, so no v1 feature or quality suite (save-integrity `D06 T03 §5` and raw-byte redaction `D06 T03 §6` among them, which this section also depends on directly) is left behind the tag. Done when: a fixture with one open phase 4 section fails the gate and the all-verified fixture passes.
 - [ ] Add `tests/scripts/test_release_gate.py` with JSON fixtures for each rule. Done when: each rule has a passing and a failing fixture.
 - [ ] Commit: `release: gate tags on unreleased critical fixes, advisories, green CI and the smoke report`
 
