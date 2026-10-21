@@ -27,8 +27,11 @@ NEEDS = {"windows-host", "arm64-host", "display-session", "office", "libreoffice
 WAITING = {"owner-decision", "third-party", "operator"}
 STATUSES = {"draft", "active", "blocked", "done", "superseded"}
 # stopped-at-22 is the current review-round cap; stopped-at-13, -8 and -3 stay valid on earlier receipts.
-VERDICTS = {"clean", "fixed", "stopped-at-22", "stopped-at-13", "stopped-at-8", "stopped-at-3"}
+# stopped-low-severity: after SEVERITY_CUTOFF_ROUND, a round whose findings are all P3 or advisory ends the loop and
+# its findings are filed as leftovers (review-todo-section).
+VERDICTS = {"clean", "fixed", "stopped-at-22", "stopped-at-13", "stopped-at-8", "stopped-at-3", "stopped-low-severity"}
 REVIEW_ROUND_CAP = 22
+SEVERITY_CUTOFF_ROUND = 8
 # A round scripts/review-dispatch.py recorded in a findings file, reviewed or not ("## Round 2: none").
 ROUND_RECORD = re.compile(r"^## Round ([0-9]+): ", re.M)
 ADJACENCY_KEYS = ["list", "document", "settings", "reporting", "notifications", "permissions",
@@ -205,10 +208,10 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
         spent, cap = data.get("rounds_spent"), data.get("round_cap")
         require(type(spent) is int and spent >= max(r["round"] for r in rounds) and type(cap) is int and cap >= 1,
                 f"receipt rounds_spent or round_cap is invalid: {ref}")
-        stopped = any(r["verdict"].startswith("stopped-at-") for r in rounds)
+        stopped = any(r["verdict"].startswith("stopped-") for r in rounds)
         outcome = data.get("cap_outcome")
         require((isinstance(outcome, str) and bool(outcome.strip())) == stopped,
-                f"receipt needs cap_outcome exactly when a review stopped at the cap: {ref}")
+                f"receipt needs cap_outcome exactly when a review stopped (at the cap or on severity): {ref}")
     checks = data.get("checks")
     require(isinstance(checks, list) and checks and all(isinstance(c, str) and c.strip() for c in checks),
             f"receipt has no checks: {ref}")
@@ -633,7 +636,8 @@ def review_rounds(root=ROOT):
                         "mean": round(sum(spent) / len(spent), 2) if spent else None,
                         "max": max(spent, default=None),
                         "stopped_at_cap": sum(any(v.startswith("stopped-at-") for v in s["verdicts"])
-                                              for s in sections)}}
+                                              for s in sections),
+                        "stopped_low_severity": sum("stopped-low-severity" in s["verdicts"] for s in sections)}}
 
 
 def stamp(root, ref, sha, reviews, checks, date, sync_plan=False, cap_outcome=None):
@@ -655,10 +659,10 @@ def stamp(root, ref, sha, reviews, checks, date, sync_plan=False, cap_outcome=No
             f"unticked checklist items in {ref}: {open_items[0] if open_items else ''}")
     slug = re.sub(r"[^a-z0-9]+", "-", ref.lower().replace("§", "s")).strip("-")
     receipt = f"docs/reviews/{slug}.json"
-    stopped = any(isinstance(r, dict) and str(r.get("verdict", "")).startswith("stopped-at-") for r in reviews)
+    stopped = any(isinstance(r, dict) and str(r.get("verdict", "")).startswith("stopped-") for r in reviews)
     require(stopped == bool((cap_outcome or "").strip()),
-            "--cap-outcome is required with a stopped-at verdict (what was done when the review cap was reached), "
-            "and only then")
+            "--cap-outcome is required with a stopped verdict (what was done when the review stopped at the cap or on "
+            "severity), and only then")
     data = {"ref": ref, "title": row.title, "implementation_sha": sha, "date": date,
             "reviews": reviews, "checks": checks}
     receipt_data_ok(data, ref, sha, root=root)  # every argument is checked before anything is read or written

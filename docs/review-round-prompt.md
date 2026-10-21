@@ -15,7 +15,7 @@ You are an independent, adversarial code reviewer. Do not modify any file. Revie
 
 ## Lenses
 
-Give a verdict per lens: `approve`, `needs-attention` (numbered findings, each with `file:line`, what fails and how to reproduce it) or `advisory`.
+Give a verdict per lens: `approve`, `needs-attention` (numbered findings, each with `file:line`, what fails and how to reproduce it) or `advisory`. Tag every finding with its severity: `P1` (wrong result, data loss, a check that passes what it must refuse, or a safety or security gap), `P2` (a real defect with a narrower trigger or a recoverable failure), `P3` (an edge case unlikely in practice, wording, or test coverage). An untagged finding counts as `P1`.
 
 - `adversarial`: hostile or malformed input, bounds, races, cancellation and error paths, unsafe automation, secrets reaching logs or arguments.
 - `consistency`: the repository's own module rules, naming, shared components, settings and error handling.

@@ -378,6 +378,19 @@ class Stamp(Tree):
         with self.assertRaises(tg.Refused):
             tg.graph(self.root)
 
+    def test_a_severity_stop_records_its_outcome(self):
+        self.tick_work()
+        low = [{"round": tg.SEVERITY_CUTOFF_ROUND + 1, "report": "docs/reviews/00-workspace/D00-T01-s1.md",
+                "verdict": "stopped-low-severity"}]
+        with self.assertRaises(tg.Refused):
+            tg.stamp(self.root, "D00 T01 §1", self.sha, low, ["true -> ok"], "2026-10-13")
+        receipt = tg.stamp(self.root, "D00 T01 §1", self.sha, low, ["true -> ok"], "2026-10-13",
+                           cap_outcome="round 9 had two P3 findings, filed as D00 T01 §2")
+        data = json.loads((self.root / receipt).read_text(encoding="utf-8"))
+        self.assertEqual(data["cap_outcome"], "round 9 had two P3 findings, filed as D00 T01 §2")
+        summary = tg.review_rounds(self.root)["summary"]
+        self.assertEqual((summary["stopped_low_severity"], summary["stopped_at_cap"]), (1, 0))
+
     def test_stale_deferral_refuses_when_owner_stamps(self):
         self.tick_work()
         path = self.root / "todo/00-workspace/TODO-01-a.md"
