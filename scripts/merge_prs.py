@@ -196,12 +196,16 @@ def open_prs(run, root):
 def stop(root, out, message):
     """Report message, and record it so later runs refuse until the operator clears it."""
     out(message)
+    record_stop(root, message)
+    return 1
+
+
+def record_stop(root, message):
     path = Path(root) / STOPPED
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps({"stopped": message}, indent=2) + "\n", encoding="utf-8")
     tmp.replace(path)
-    return 1
 
 
 def merge_all(run, root, args, out):
@@ -246,6 +250,9 @@ def merge_all(run, root, args, out):
         if args.dry_run:
             out(f"merge-prs: #{number} would merge at {pr['headRefOid'][:7]} ({pr['title']})")
             continue
+        # Recorded before GitHub is asked, cleared only once the merge is verified locally: a run killed in between
+        # (the task's timeout, a crash) leaves the marker, and the next run refuses until the operator has looked.
+        record_stop(root, f"merge-prs: merging #{number} was interrupted before its pull and validate finished")
         try:
             check(run, root, ["gh", "pr", "merge", str(number), "--repo", REPO[0], "--rebase", "--match-head-commit",
                               pr["headRefOid"]], f"merging #{number}")
@@ -274,6 +281,7 @@ def merge_all(run, root, args, out):
                   f"#{number}'s merge commit in the local checkout")
             check(run, root, [sys.executable, str(Path(root) / "scripts" / "todo-graph.py"), "validate"],
                   "todo-graph validate")
+            (Path(root) / STOPPED).unlink()
         except RuntimeError as e:
             return stop(root, out, f"merge-prs: #{number} merged on GitHub, but the local follow-up failed: {e}; stopped, any later pull "
                 f"request is left for you")
@@ -286,10 +294,9 @@ def main(argv=None, run=run_cmd, root=ROOT, out=print):
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--scheduled", action="store_true")
     args = parser.parse_args(argv)
-    if not args.scheduled:
-        return merge_all(run, root, args, out)
-    # The scheduled run holds the campaign guard's lock for its whole window: a campaign's acquire waits for it, so no
-    # run can start between the guard check and the last merge.
+    # Every run holds the campaign guard's lock for its whole window: two runs never interleave a merge with another's
+    # pull and validate, and (for the scheduled run) a campaign's acquire waits, so none starts between the guard check
+    # and the last merge.
     try:
         with campaign_guard._Lock(str(root)):
             return merge_all(run, root, args, out)

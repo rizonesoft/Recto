@@ -289,6 +289,38 @@ class MergePrs(unittest.TestCase):
         self.assertEqual(self.main(fake), 0)
         self.assertEqual(fake.merges(), ["1", "2"])
 
+    def test_a_run_killed_mid_merge_leaves_the_stop_marker(self):
+        class Killed(BaseException):
+            pass
+
+        fake = FakeRun([pr(1), pr(2)])
+        real = fake.__class__.__call__
+
+        def killed_in_validate(args, root):
+            if args[-1:] == ["validate"]:
+                raise Killed  # the task's timeout or a crash: nothing catches it
+            return real(fake, args, root)
+
+        with self.assertRaises(Killed):
+            merge_prs.main([], run=killed_in_validate, root=self.root, out=self.lines.append)
+        self.assertTrue((self.root / merge_prs.STOPPED).exists())
+        self.assertEqual(self.main(FakeRun([pr(2)])), 1)  # the next run refuses
+        self.assertIn("delete it to resume", self.lines[-1])
+
+    def test_every_run_holds_the_guard_lock(self):
+        seen = []
+
+        def probe(number, prs):
+            try:
+                with merge_prs.campaign_guard._Lock(str(self.root), wait=0.1):
+                    seen.append("free")
+            except merge_prs.campaign_guard.GuardError:
+                seen.append("held")
+
+        self.assertEqual(self.main(FakeRun([pr(1)], after_merge=probe)), 0)  # not --scheduled
+        self.assertEqual(seen, ["held"])
+        self.assertFalse((self.root / merge_prs.STOPPED).exists())  # a verified merge clears its marker
+
     def test_launches_open_no_console_window(self):
         with mock.patch.object(merge_prs.subprocess, "run") as run:
             merge_prs.run_cmd(["git", "status"], self.root)

@@ -266,3 +266,43 @@ OVERALL: needs-attention
 
 - Finding 1 (P1): every stop after a merge request (a failed or queued merge, an unreadable state, a failed pull, ancestry check or validate) writes `build/merge-prs-stopped.json`; every later run, scheduled or the campaign's, refuses with exit 1 until the operator checks `main` and deletes it (`test_a_stop_holds_until_the_operator_clears_it`). The README says so.
 - Finding 2 (P2): `run_cmd` passes `CREATE_NO_WINDOW` on Windows, so the scheduled task's git, gh and Python launches open no console (`test_launches_open_no_console_window`).
+
+## Round 7: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:37:37Z
+- Effort: medium
+- Lines: 24
+- Digest: c05df461b7a1d83b
+
+## adversarial: needs-attention
+
+1. **P1, `scripts/merge_prs.py:250`: Process termination bypasses the persistent stop safeguard.** The stop marker is written only after a caught failure. The scheduled runner forcibly kills the process tree after 20 minutes (`.conclave/automations/run.py:156`). If termination occurs after pulling a merged PR but before validation completes, the checkout can remain clean and synchronized without a stop marker. The next run merges further PRs without operator recovery. Reproduced in memory by interrupting validation and invoking again: marker absent, merge requests `['1', '2']`. Persist an unresolved operation before requesting the merge, clearing it only after verified follow-up.
+
+## consistency: approve
+
+## integration: needs-attention
+
+2. **P1, `scripts/merge_prs.py:289`: Unscheduled invocations bypass serialization entirely.** Only `--scheduled` acquires a lock. A manual invocation can overlap another invocation after its pull but before validation, when the checkout already satisfies the safety checks. It can merge another PR before the first operation is validated, defeating the one-at-a-time and stop-on-failure contract. Reproduced with an in-memory second invocation at that boundary: `merge #1, merge #2, validate, validate`. Require a shared merge-operation lock for every invocation, while retaining the scheduled campaign exclusion.
+
+## source-defect: needs-attention
+
+Findings 1 and 2 violate `.conclave/automations/README.md`’s promised merge, synchronize, validate sequence and operator handoff after failure.
+
+## design: advisory
+
+No rendered interface changes to assess.
+
+## record: advisory
+
+Inspected the candidate, follow-up commits and recorded evidence. Ran in-memory probes with bytecode generation disabled; no files were modified. Historical test counts and live GitHub claims were not independently reproduced.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 7
+
+`python -m unittest tests.scripts.test_merge_prs` -> `OK` (both new tests fail against `7eeca30`).
+
+- Finding 1 (P1): the stop marker is written before GitHub is asked to merge and deleted only after the pull, the ancestry check and validate all pass, so a run killed in between (the task's timeout, a crash) leaves it, and the next run refuses (`test_a_run_killed_mid_merge_leaves_the_stop_marker`).
+- Finding 2 (P1): every run, not only the scheduled one, holds the campaign guard's lock for its whole window, so two runs can never interleave a merge with another's pull and validate (`test_every_run_holds_the_guard_lock`, which also shows a verified merge clears its marker).
