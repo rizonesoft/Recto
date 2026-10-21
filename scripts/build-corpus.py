@@ -32,6 +32,16 @@ DEFLATE_BOMB_LIMIT_BYTES = 256 * 1024 * 1024
 CORPUS_USER_PASSWORD = b"recto-test"
 CORPUS_OWNER_PASSWORD = b"recto-owner"
 CORPUS_PERMISSIONS_MASK = -1028  # 0xFFFFFBFC: every permission but bit 11, document assembly (ISO 32000-1 Table 22)
+# The documented contract (tests/corpus/README.md), which the validators check fixtures against. These are separate
+# literals on purpose: the generator's constants above are what a regression would change, so a validator reading them
+# would follow the regression instead of catching it. test_the_documented_contract_matches_the_readme ties each one to
+# the README.
+DOCUMENTED_USER_PASSWORD = b"recto-test"
+DOCUMENTED_OWNER_PASSWORD = b"recto-owner"
+DOCUMENTED_PERMISSIONS = -1028
+DOCUMENTED_PDF_DATE = "D:20261013000000Z"
+DOCUMENTED_SEED_MAX_BYTES = 4_096
+DOCUMENTED_STREAM_CEILING = 256 * 1024 * 1024
 
 
 def write_atomic(dest: Path, data: bytes) -> None:
@@ -2770,12 +2780,12 @@ def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
     p_val = whole(enc.get(b"/P"), "/P", signed=True)
     # /P is a 32-bit two's-complement field whose reserved bits 7, 8 and 13 to 32 must be 1 and bits 1 and 2 must be 0
     # (ISO 32000-1 Table 22), and every encrypted fixture is documented (tests/corpus/README.md) as /P -1028. The value
-    # is written here as a literal, not read from the generator's constant, so a changed constant is caught.
+    # is the documented contract's, not the generator's constant, so a changed constant is caught.
     bits = p_val & 0xFFFFFFFF
     if not -(2**31) <= p_val < 2**31 or bits & 0x3 or bits & 0xC0 != 0xC0 or bits & 0xFFFFF000 != 0xFFFFF000:
         raise ValueError(f"{rel_path}: /P {p_val} breaks the reserved permission bits")
-    if p_val != -1028:
-        raise ValueError(f"{rel_path}: /P {p_val} is not the documented -1028")
+    if p_val != DOCUMENTED_PERMISSIONS:
+        raise ValueError(f"{rel_path}: /P {p_val} is not the documented {DOCUMENTED_PERMISSIONS}")
     o_bytes = hex_string(enc.get(b"/O"), "/O")
     u_bytes = hex_string(enc.get(b"/U"), "/U")
     # Each revision the corpus writes has exactly one form, and every entry that feeds key derivation or
@@ -2821,10 +2831,10 @@ def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
     if r_val in (3, 4):
         if len(o_bytes) != 32 or len(u_bytes) != 32:
             raise ValueError(f"{rel_path}: R={r_val} /O and /U must be 32 bytes")
-        user_fkey = pdf_r34_compute_file_key(CORPUS_USER_PASSWORD, o_bytes, p_val, id0_bytes)
+        user_fkey = pdf_r34_compute_file_key(DOCUMENTED_USER_PASSWORD, o_bytes, p_val, id0_bytes)
         if pdf_r34_compute_u(user_fkey, id0_bytes)[:16] != u_bytes[:16]:
             raise ValueError(f"{rel_path}: R={r_val} user password authentication failed")
-        recovered_padded_user = pdf_r34_unwrap_owner(CORPUS_OWNER_PASSWORD, o_bytes)
+        recovered_padded_user = pdf_r34_unwrap_owner(DOCUMENTED_OWNER_PASSWORD, o_bytes)
         owner_fkey = pdf_r34_compute_file_key(recovered_padded_user, o_bytes, p_val, id0_bytes)
         if owner_fkey != user_fkey:
             raise ValueError(f"{rel_path}: R={r_val} owner password unwrapped wrong file key")
@@ -2840,12 +2850,12 @@ def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
         perms_bytes = hex_string(enc.get(b"/Perms"), "/Perms")
         if (len(oe_bytes), len(ue_bytes), len(perms_bytes)) != (32, 32, 16):
             raise ValueError(f"{rel_path}: R=6 /OE, /UE and /Perms must be 32, 32 and 16 bytes")
-        if pdf_r6_hash_2b(CORPUS_USER_PASSWORD, u_bytes[32:40], b"") != u_bytes[:32]:
+        if pdf_r6_hash_2b(DOCUMENTED_USER_PASSWORD, u_bytes[32:40], b"") != u_bytes[:32]:
             raise ValueError(f"{rel_path}: R=6 user password /U verification failed")
-        if pdf_r6_hash_2b(CORPUS_OWNER_PASSWORD, o_bytes[32:40], u_bytes) != o_bytes[:32]:
+        if pdf_r6_hash_2b(DOCUMENTED_OWNER_PASSWORD, o_bytes[32:40], u_bytes) != o_bytes[:32]:
             raise ValueError(f"{rel_path}: R=6 owner password /O verification failed")
-        u_ikey = pdf_r6_hash_2b(CORPUS_USER_PASSWORD, u_bytes[40:48], b"")
-        o_ikey = pdf_r6_hash_2b(CORPUS_OWNER_PASSWORD, o_bytes[40:48], u_bytes)
+        u_ikey = pdf_r6_hash_2b(DOCUMENTED_USER_PASSWORD, u_bytes[40:48], b"")
+        o_ikey = pdf_r6_hash_2b(DOCUMENTED_OWNER_PASSWORD, o_bytes[40:48], u_bytes)
         user_fkey = aes_cbc_decrypt(u_ikey, b"\x00" * 16, ue_bytes, unpad=False)
         owner_fkey = aes_cbc_decrypt(o_ikey, b"\x00" * 16, oe_bytes, unpad=False)
         if user_fkey != owner_fkey:
@@ -2886,7 +2896,7 @@ def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
 
     # Every encrypted string decrypts (AES padding included) to exactly what the generator wrote.
     expected_info = {b"/Title": f"Recto Encrypted {promised[1]}".encode("ascii"),
-                     b"/Author": b"Recto Corpus Generator", b"/CreationDate": FIXED_PDF_DATE.encode("ascii")}
+                     b"/Author": b"Recto Corpus Generator", b"/CreationDate": DOCUMENTED_PDF_DATE.encode("ascii")}
     for key, plain in expected_info.items():
         if decrypt(6, hex_string(info[key], f"/Info {key.decode()}")) != plain:
             raise ValueError(f"{rel_path}: /Info {key.decode()} does not decrypt to the generator's value")
@@ -2977,7 +2987,7 @@ def validate_broken_pdf_structure(rel_path: str, data: bytes) -> None:
         one_page_objects(rel_path, data, objects)
         info_start, info_end = objects[6][:2]
         if dict_entries(data[info_start + 2 : info_end - 2]) != {b"/Title": b"(Recoverable Xref Fixture)",
-                                                                b"/CreationDate": f"({FIXED_PDF_DATE})".encode()}:
+                                                                b"/CreationDate": f"({DOCUMENTED_PDF_DATE})".encode()}:
             raise ValueError(f"{rel_path}: object 6 is not the generator's /Info dictionary")
         tail = data[ends[-1] :]
         if re.fullmatch(rb"xref\n0 7\n0000000000 65535 f \n9999999999 00000 n \nCORRUPT_XREF_TABLE_ROW\ntrailer\n"
@@ -3004,7 +3014,7 @@ def validate_broken_pdf_structure(rel_path: str, data: bytes) -> None:
             1: ONE_PAGE_FORMS[1],
             2: {b"/Type": b"/Pages", b"/Kids": b"[3 0 R]", b"/Count": b"1", b"/MediaBox": b"[0 0 595 842]"},
             3: {b"/Type": b"/Pages", b"/Parent": b"2 0 R", b"/Kids": b"[2 0 R]", b"/Count": b"1"},  # the 2 -> 3 -> 2 cycle
-            4: {b"/Title": b"(Cyclic Pages Tree)", b"/CreationDate": f"({FIXED_PDF_DATE})".encode()},
+            4: {b"/Title": b"(Cyclic Pages Tree)", b"/CreationDate": f"({DOCUMENTED_PDF_DATE})".encode()},
         }, streams=set())
         return
     if rel_path == "broken/deep-nested-array-70.pdf":
@@ -3034,8 +3044,8 @@ def validate_broken_pdf_structure(rel_path: str, data: bytes) -> None:
         inner_total, inner_deflate = inflate_bounded(data[objects[4][2] : objects[4][3]], 16 * 1024 * 1024)
         if inner_total > 16 * 1024 * 1024:
             raise ValueError(f"{rel_path}: the outer FlateDecode stage expands past 16 MiB")
-        total_expanded, _ = inflate_bounded(inner_deflate, DEFLATE_BOMB_LIMIT_BYTES, keep=False)
-        if total_expanded <= DEFLATE_BOMB_LIMIT_BYTES:
+        total_expanded, _ = inflate_bounded(inner_deflate, DOCUMENTED_STREAM_CEILING, keep=False)
+        if total_expanded <= DOCUMENTED_STREAM_CEILING:
             raise ValueError(
                 f"{rel_path}: expanded size {total_expanded} did not exceed 256 MB cap"
             )
@@ -3438,9 +3448,9 @@ def decode_seed_stream(rel_path: str, entries: dict[bytes, bytes], payload: byte
 
 
 def validate_seed_pdf_structure(rel_path: str, data: bytes) -> None:
-    if len(data) >= MAX_SEED_FILE_BYTES:
+    if len(data) >= DOCUMENTED_SEED_MAX_BYTES:
         raise ValueError(
-            f"{rel_path}: seed size {len(data)} must be < {MAX_SEED_FILE_BYTES} bytes"
+            f"{rel_path}: seed size {len(data)} must be < {DOCUMENTED_SEED_MAX_BYTES} bytes"
         )
     validate_pdf_structure(rel_path, data)
     if rel_path not in SEED_FORMS:
@@ -3510,9 +3520,9 @@ SEED_FILTER_SELECTORS: dict[str, int] = {
 
 def validate_seed_filter_bin_structure(rel_path: str, data: bytes) -> None:
     """Validate selector-prefixed raw filter seed files for fuzz_filters (D01 T03 §4)."""
-    if len(data) < 2 or len(data) >= MAX_SEED_FILE_BYTES:
+    if len(data) < 2 or len(data) >= DOCUMENTED_SEED_MAX_BYTES:
         raise ValueError(
-            f"{rel_path}: filter seed size {len(data)} must be in 2..{MAX_SEED_FILE_BYTES - 1}"
+            f"{rel_path}: filter seed size {len(data)} must be in 2..{DOCUMENTED_SEED_MAX_BYTES - 1}"
         )
     expected_sel = SEED_FILTER_SELECTORS.get(rel_path)
     if expected_sel is None or data[0] != expected_sel:

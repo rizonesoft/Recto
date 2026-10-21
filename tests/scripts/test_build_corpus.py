@@ -628,6 +628,26 @@ class BuildCorpusTests(unittest.TestCase):
             with self.subTest(mask=mask), self.assertRaisesRegex(ValueError, says):
                 self.mod.validate_encrypted_pdf_structure("render/encrypted-rc4-128.pdf", data)
 
+    def test_the_documented_contract_matches_the_readme(self) -> None:
+        readme = (Path(__file__).resolve().parents[2] / "tests" / "corpus" / "README.md").read_text(encoding="utf-8")
+        for stated in (f"**User password:** `{self.mod.DOCUMENTED_USER_PASSWORD.decode()}`",
+                       f"**Owner password:** `{self.mod.DOCUMENTED_OWNER_PASSWORD.decode()}`",
+                       f"`/P {self.mod.DOCUMENTED_PERMISSIONS}`", f"`{self.mod.DOCUMENTED_PDF_DATE}`",
+                       f"`< {self.mod.DOCUMENTED_SEED_MAX_BYTES // 1024} KB` each",
+                       f"`{self.mod.DOCUMENTED_STREAM_CEILING // (1024 * 1024)} MB` per-stream"):
+            self.assertIn(stated, readme)
+
+    def test_a_changed_generator_password_is_caught(self) -> None:
+        with mock.patch.object(self.mod, "CORPUS_USER_PASSWORD", b"changed-user"), \
+                mock.patch.object(self.mod, "CORPUS_OWNER_PASSWORD", b"changed-owner"):
+            regenerated = {name: build() for name, build in (
+                ("render/encrypted-rc4-128.pdf", self.mod.build_encrypted_rc4_128),
+                ("render/encrypted-aes-128.pdf", self.mod.build_encrypted_aes_128),
+                ("render/encrypted-aes-256.pdf", self.mod.build_encrypted_aes_256))}
+        for name, data in regenerated.items():
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "password"):
+                self.mod.validate_encrypted_pdf_structure(name, data)
+
     def test_inflation_stops_just_past_its_limit(self) -> None:
         bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))
         total, kept = self.mod.inflate_bounded(bomb, 1024, keep=False)
