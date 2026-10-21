@@ -9,6 +9,8 @@ Hardening the tree so a weaker executor can run it. Grooming adds prerequisites 
 
 ## Workflow
 
+Read `todo/README.md` (the format every TODO edit keeps) before the first edit.
+
 ### 1. Sequence check
 
 For every dependency edge (section `Depends On` and file `depends_on`), confirm the prerequisite sits no later than its consumer: phase first, then row order in the generated plan. The validator already refuses a prerequisite in a later phase and any cycle; grooming catches the legal-but-hostile orders. Where an edge points later in practice:

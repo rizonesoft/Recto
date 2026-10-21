@@ -352,3 +352,42 @@ OVERALL: needs-attention
 - Finding 1 (P2): `scripts/campaign_guard.py` `end --reason plan-done` now also reads `query stats` (`open_rows`) and refuses while any row is unstamped, naming the count and pointing to a park; `process-plan` and its heartbeat prompt choose `plan-done` only when every row is verified and park otherwise (`test_every_end_checks_its_marker_and_leaves_the_job_to_cancel` adds the blocked-row case).
 - Finding 2 (P2): `groom-plan` (all three kits) sends a stamped section that misses its own `Done when:` to `review-todo-section`'s audit stance and `unstamp`, keeping the new-section route only for scope beyond it.
 - Finding 3 (P3): `process-phase` (all three kits) reads `todo/README.md` before the run's first write.
+
+## Round 9: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T16:53:56Z
+- Effort: medium
+- Lines: 20
+- Digest: f0b29a6dfd899030
+
+## adversarial: approve
+
+## consistency: approve
+
+## integration: approve
+
+## source-defect: approve
+
+## design: advisory
+
+Not applicable: this section owns no user surface.
+
+## record: needs-attention
+
+1. **P3: First-edit routing remains incomplete.** `.claude/skills/groom-plan/SKILL.md:16` directs structural edits without requiring `todo/README.md` first. `.claude/skills/process-plan/SKILL.md:51` likewise permits repairs and `plan --sync` before reaching the format read in `process-phase`. Reproduce by entering either skill in a fresh session with a misplaced prerequisite or stale plan and following its instructions. The first edit precedes the promised format read, contradicting the ticked `Done when:` at `todo/00-workspace/TODO-02-todo-system.md:86`.
+
+Checkpoint independently reproduced at `0a9eab4`: all 12 skills validate without diagnostics; `valid: 677 sections`; `plan current`. Both read-only repository tests pass. A mocked guard check refuses `plan-done` with zero ready rows and one open row. No files modified.
+
+HIGHEST: P3
+OVERALL: needs-attention
+
+## Stop after round 9
+
+Round 9 returned one finding, tagged P3, and declared `HIGHEST: P3`, so the loop stopped on severity (`stopped-low-severity`).
+
+- Finding 1 (P3): `groom-plan` and `process-plan` (all three kits) now read `todo/README.md` before their first edit, completing the first-edit routing `D00 T02 §2` promised (`process-todo-section` and `process-phase` gained it in rounds 7 and 8). Landed after the stop; nothing left to file. `muse skills validate` -> valid in all three kits.
+
+## Outcome
+
+- The stamp of `D00 T02 §2` is confirmed with corrections: all 12 skills validate and the graph is clean, and the audit closed 20 findings over 9 rounds. Among them: `todo-graph.py unstamp` gives the audit stance a lawful way to reopen a regressed section (its consumers stay stamped but suspect, and new work waits on `settled()` prerequisites); audits cover the stamped commit through today's tip; `plan-done` needs every row stamped; plan gates run for all three skill kits; the template copies are kept equal by a test. No downstream stamp is suspect.
