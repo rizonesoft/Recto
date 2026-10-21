@@ -31,6 +31,20 @@
         "at": "07:05"
       },
       "timeout_minutes": 5
+    },
+    {
+      "name": "recto-pr-merge",
+      "description": "Merge green Dependabot and pins pull requests while no campaign runs; email when a merge fails",
+      "command": [
+        "python",
+        "scripts/merge_prs.py",
+        "--scheduled"
+      ],
+      "trigger": {
+        "at_logon_delay_minutes": 15,
+        "every_minutes": 360
+      },
+      "timeout_minutes": 20
     }
   ]
 }
