@@ -59,3 +59,47 @@ All in `scripts/lib/todo_graph.py`, each with a regression test in `tests/script
 - Finding 3 (P1): a stamped section declaring a waiting Need refuses validation (`test_a_stamped_section_with_a_waiting_need_refuses`).
 - Finding 4 (P2): `stamp` rolls back on `BaseException`, so an interrupt between writes leaves the tree as it was and a retry succeeds (`test_an_interrupted_stamp_rolls_back_and_allows_retry`).
 - Finding 5 (P1): every receipt round must be an integer of at least 1 (bools refused); a receipt with `rounds_spent` (every stamp since 2026-10-21) must name rounds its report records as reviewed `## Round N: <reviewer>` headings written by `scripts/review-dispatch.py`, not `none` (`test_a_claimed_round_must_be_a_reviewed_round_in_its_report`, including a receipt edited to claim round 999). The Stamp fixture now records a real round. Receipts from before 2026-10-21 predate the dispatcher's round format (their reports name rounds in free text), so they keep the presence check; each is re-audited by its own `D06 T05` section, which re-stamps it under the current format.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T15:23:03Z
+- Effort: medium
+- Lines: 27
+- Digest: d7cb77f33906c94a
+
+## adversarial: needs-attention
+
+1. **P1: An unexpected heading silently hides unfinished work.** `scripts/lib/todo_graph.py:344` ends a section at any level-two heading, but validation does not reject unrecognized headings. Reproduction: in an in-memory overlay of `TODO-02-todo-system.md`, insert `## Remaining work` followed by `- [ ] Unfinished required work.` immediately before section 2. `graph()` accepts all 677 sections, excludes the task from section 1’s body, and `disposition()` still returns `3` (verified). Malformed work disappears instead of being refused, leaving downstream prerequisites satisfied.
+
+## consistency: needs-attention
+
+2. **P1: Cap-stop verdicts bypass the review-round minimum.** `scripts/lib/todo_graph.py:211` checks that `rounds_spent` covers the claimed round, but never ties a `stopped-at-N` verdict to that cap. Reproduction: call `receipt_data_ok()` with otherwise valid evidence, the existing audit report’s round 1, `rounds_spent=1`, `round_cap=22`, `verdict="stopped-at-22"` and `cap_outcome="filed"`. It accepts. Substituting `stopped-at-3` also accepts a current-format receipt, although `todo/README.md:92` reserves that verdict for earlier receipts. The severity-stop fix therefore leaves another route to premature closure.
+
+## integration: needs-attention
+
+3. **P1: Receipt validation accepts reports the dispatcher rejects as invalid.** `scripts/lib/todo_graph.py:216` treats a matching heading as sufficient evidence of a reviewed round, bypassing the dispatcher’s envelope parser at `scripts/review-dispatch.py:347`. Reproduction: overlay an existing report with only `## Round 1: fake`, a blank line, and `No reviewer returned a review.` Supply a current-format receipt claiming round 1 as `clean`. `receipt_data_ok()` accepts it; the dispatcher’s `read_rounds()` returns `None`. This reproduces the unreviewed-round gap despite the round-1 fix, without invoking the intentional legacy-receipt exception.
+
+## source-defect: approve
+
+No additional finding.
+
+## design: advisory
+
+Not applicable to this section’s declared surface.
+
+## record: advisory
+
+The recorded full-suite pass remains independently unconfirmed. Running the current 64-test suite through `unittest` produced 63 setup errors because the read-only sandbox cannot create temporary fixtures; the Repository test passed. This is an environment limitation, not a candidate defect. Current `plan --check` returned `plan current`, and validation reported 677 sections. These results do not establish the historical checkpoint at `566b833`.
+
+All reproductions used in-memory overlays. No files were modified; the working tree remains clean at `15df83c`.
+
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+In `scripts/lib/todo_graph.py`, tested in `tests/scripts/test_todo_graph.py` (`Ran 66 tests`, `OK`; against `15df83c` the three new or changed tests report `FAILED (failures=3)`). The live tree still validates (`valid: 677 sections`), so all eight receipts carrying `rounds_spent` pass the stricter rules.
+
+- Finding 1 (P1): a TODO file may hold only the level-two headings the format defines (`## Inputs`, `## Outcome`, `## Implementation Order`, `## Verification`, `## N. <Title>`); any other refuses, so no heading can cut a section short (`test_unknown_level_two_heading_refuses`).
+- Finding 2 (P1): on a receipt with `round_cap`, a `stopped-at-N` verdict must be `stopped-at-<round_cap>` on round `round_cap`; earlier cap verdicts stay valid only on receipts older than that field (`test_a_cap_stop_must_be_the_current_cap_reached`).
+- Finding 3 (P1): a claimed round is checked with the dispatcher's own reader, `read_rounds` in `scripts/review-dispatch.py`, loaded by `review_dispatch()`: the report must read back whole and hold that round with a reviewer. A bare heading, a `none` round, or a round with no metadata block refuses. The test fixtures now write real dispatcher envelopes (`envelope()`).

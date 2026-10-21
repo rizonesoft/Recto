@@ -23,6 +23,11 @@ def section(n, title, phase, needs, extra=""):
             f"**Test checkpoint:** `true` exits 0.{extra}\n")
 
 
+def envelope(n, reviewer="astra (`m` via `codex`)"):
+    """One round as scripts/review-dispatch.py records it (without the optional Lines and Digest fields)."""
+    return f"## Round {n}: {reviewer}\n\n- Writer: claude\n- Run: 2026-10-21T00:00:00Z\n\nReview text.\n\n"
+
+
 def todo_file(rows, *, ident="alpha", domain="00-workspace", status="active", depends_on=None,
               table_override=None, inputs="- i"):
     """rows: (number, title, phase, needs, depends) tuples."""
@@ -126,6 +131,12 @@ class Graph(Tree):
             "| 1 | §1 | A | -- | [ ] |", "| 1 | §1 | A | -- | [ ] |\n | 2 | §999 | Orphan | -- | [ ] |")
         self.write(text)
         self.refuses("without a leading pipe")
+
+    def test_unknown_level_two_heading_refuses(self):
+        for bad in ("## Remaining work", "## Inputs ", "##\tNotes"):
+            self.write(todo_file([(1, "A", 0, "none", "--"), (2, "B", 0, "none", "--")]).replace(
+                "## 2. B\n", bad + "\n\n- [ ] Unfinished required work.\n\n## 2. B\n"))
+            self.refuses("unknown level-two heading")
 
     def test_numbered_checkbox_refuses(self):
         for bad in ("1. [ ] Unfinished work.", "2) [x] Done elsewhere."):
@@ -332,7 +343,7 @@ class Stamp(Tree):
         self.write(todo_file([(1, "A", 0, "none", "--"), (2, "B", 0, "owner-decision", "--")]))
         report_path = self.root / "docs/reviews/00-workspace/D00-T01-s1.md"
         report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text("# Review findings\n\n## Round 1: astra (`m` via `codex`)\n", encoding="utf-8")
+        report_path.write_text("# Review findings\n\n" + envelope(1), encoding="utf-8")
         for args in (["init", "-q"], ["config", "user.email", "t@example.com"],
                      ["config", "user.name", "T"], ["add", "-A"], ["commit", "-qm", "x"]):
             subprocess.run(["git", "-C", str(self.root), *args], check=True)
@@ -357,8 +368,7 @@ class Stamp(Tree):
     def test_receipt_records_rounds_spent_against_the_cap(self):
         self.tick_work()
         report = self.root / "docs/reviews/00-workspace/D00-T01-s1.md"
-        report.write_text("# Review findings\n\n## Round 1: none\n\n## Round 2: astra (`m` via `codex`)\n\n"
-                          "## Round 3: astra (`m` via `codex`)\n", encoding="utf-8")
+        report.write_text("# Review findings\n\n" + envelope(1, "none") + envelope(2) + envelope(3), encoding="utf-8")
         reviews = [{"round": 2, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": "fixed"},
                    {"round": 3, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": "clean"}]
         receipt = tg.stamp(self.root, "D00 T01 §1", self.sha, reviews, ["true -> ok"], "2026-10-13")
@@ -370,8 +380,7 @@ class Stamp(Tree):
         self.assertEqual(summary["summary"]["stopped_at_cap"], 0)
 
     def record_rounds(self, last, report="docs/reviews/00-workspace/D00-T01-s1.md"):
-        (self.root / report).write_text(
-            "".join(f"## Round {n}: astra (`m` via `codex`)\n\n" for n in range(1, last + 1)), encoding="utf-8")
+        (self.root / report).write_text("".join(envelope(n) for n in range(1, last + 1)), encoding="utf-8")
 
     def test_a_stopped_review_must_say_what_was_done(self):
         self.tick_work()
@@ -397,10 +406,9 @@ class Stamp(Tree):
     def test_rounds_spent_add_up_across_review_loops(self):
         self.tick_work()
         first = self.root / "docs/reviews/00-workspace/D00-T01-s1.md"
-        first.write_text("".join(f"## Round {n}: astra (`m` via `codex`)\n\n" for n in range(1, 23)), encoding="utf-8")
+        first.write_text("".join(envelope(n) for n in range(1, 23)), encoding="utf-8")
         second = self.root / "docs/reviews/00-workspace/D00-T01-s1-loop2.md"
-        second.write_text("## Round 1: astra (`m` via `codex`)\n\n## Round 2: astra (`m` via `codex`)\n\n",
-                          encoding="utf-8")
+        second.write_text(envelope(1) + envelope(2), encoding="utf-8")
         reviews = [{"round": 22, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": "stopped-at-22"},
                    {"round": 2, "report": "docs/reviews/00-workspace/D00-T01-s1-loop2.md", "verdict": "clean"}]
         receipt = tg.stamp(self.root, "D00 T01 §1", self.sha, reviews, ["true -> ok"], "2026-10-13",
@@ -421,6 +429,17 @@ class Stamp(Tree):
         summary = tg.review_rounds(self.root)["summary"]
         self.assertEqual((summary["stopped_low_severity"], summary["stopped_at_cap"]), (1, 0))
 
+    def test_a_cap_stop_must_be_the_current_cap_reached(self):
+        self.tick_work()
+        self.record_rounds(tg.REVIEW_ROUND_CAP)
+        before = self.snapshot()
+        for n, verdict in ((1, f"stopped-at-{tg.REVIEW_ROUND_CAP}"), (3, "stopped-at-3"), (13, "stopped-at-13")):
+            early = [{"round": n, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": verdict}]
+            with self.assertRaises(tg.Refused) as ctx:
+                tg.stamp(self.root, "D00 T01 §1", self.sha, early, ["true -> ok"], "2026-10-13", cap_outcome="filed")
+            self.assertIn(f"must be stopped-at-{tg.REVIEW_ROUND_CAP}", str(ctx.exception))
+        self.assertEqual(self.snapshot(), before)
+
     def test_a_severity_stop_before_the_cutoff_refuses(self):
         self.tick_work()
         self.record_rounds(tg.SEVERITY_CUTOFF_ROUND)
@@ -437,7 +456,9 @@ class Stamp(Tree):
         self.tick_work()
         report = self.root / "docs/reviews/00-workspace/D00-T01-s1.md"
         before = self.snapshot()
-        for text in ("# No independent review has run\n", "## Round 1: none\n", "## Round 2: astra (`m` via `codex`)\n"):
+        for text in ("# No independent review has run\n", envelope(1, "none"), envelope(2),
+                     "## Round 1: fake\n\nNo reviewer returned a review.\n",
+                     "## Round 1: astra (`m` via `codex`)\n\nNo metadata block.\n"):
             report.write_text(text, encoding="utf-8")
             with self.assertRaises(tg.Refused) as ctx:
                 tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
@@ -447,7 +468,7 @@ class Stamp(Tree):
                 tg.stamp(self.root, "D00 T01 §1", self.sha,
                          [{"round": bad, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": "clean"}],
                          ["true -> ok"], "2026-10-13")
-        report.write_text("# Review findings\n\n## Round 1: astra (`m` via `codex`)\n", encoding="utf-8")
+        report.write_text("# Review findings\n\n" + envelope(1), encoding="utf-8")
         receipt = tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
         # A receipt edited to claim a round its report never recorded no longer validates.
         data = json.loads((self.root / receipt).read_text(encoding="utf-8"))

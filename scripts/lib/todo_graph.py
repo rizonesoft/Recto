@@ -173,6 +173,21 @@ def receipt_ok(root, receipt, ref, stamp_sha, commits=None):
         commit_ok(root, stamp_sha)
 
 
+_REVIEW_DISPATCH = []
+
+
+def review_dispatch():
+    """scripts/review-dispatch.py as a module (its file name is not importable), loaded once."""
+    if not _REVIEW_DISPATCH:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "review_dispatch", Path(__file__).resolve().parents[1] / "review-dispatch.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _REVIEW_DISPATCH.append(module)
+    return _REVIEW_DISPATCH[0]
+
+
 def receipt_data_ok(data, ref, stamp_sha, root=None):
     require(isinstance(data, dict), f"receipt is not an object: {ref}")
     require(data.get("ref") == ref and data.get("implementation_sha") == stamp_sha,
@@ -210,11 +225,16 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
         spent, cap = data.get("rounds_spent"), data.get("round_cap")
         require(type(spent) is int and spent >= max(r["round"] for r in rounds) and type(cap) is int and cap >= 1,
                 f"receipt rounds_spent or round_cap is invalid: {ref}")
+        # A cap stop is the current cap, reached: stopped-at-3, -8 and -13 belong to receipts older than this field.
+        require(all(r["verdict"] == f"stopped-at-{cap}" and r["round"] == cap
+                    for r in rounds if r["verdict"].startswith("stopped-at-")),
+                f"a stopped-at verdict must be stopped-at-{cap} on round {cap}: {ref}")
         if root is not None:
-            # A claimed round is one the dispatcher recorded with a reviewer, not just any text in the report.
+            # A claimed round is one scripts/review-dispatch.py recorded with a reviewer, read by the dispatcher's own
+            # reader, so a report it would refuse is no evidence here either.
             for r in rounds:
-                reviewed = re.search(rf"^## Round {r['round']}: (?!none\b)\S", read_text(Path(root) / r["report"]), re.M)
-                require(reviewed is not None,
+                recorded = review_dispatch().read_rounds(read_text(Path(root) / r["report"]))
+                require(recorded is not None and any(e["number"] == r["round"] and e["reviewer"] for e in recorded),
                         f"round {r['round']} is not a reviewed round in {r['report']}: {ref}")
         stopped = any(r["verdict"].startswith("stopped-") for r in rounds)
         outcome = data.get("cap_outcome")
@@ -339,6 +359,11 @@ def graph(root=ROOT):
                 f"row/body mismatch: {relative}")
         require(body.rfind("## Verification\n") > headings[-1].start(),
                 f"Verification must follow numbered sections: {relative}")
+        # Any other level-two heading would end the section above it early and hide what follows from the graph.
+        for line in re.findall(r"^##(?:[ \t].*)?$", body, re.M):
+            require(line in ("## Inputs", "## Outcome", "## Implementation Order", "## Verification")
+                    or re.fullmatch(r"## \d+\. \S.*", line) is not None,
+                    f"unknown level-two heading ({line.strip()}): {relative}")
         for h in headings:
             n = int(h[1])
             section_body = body[h.end():].split("\n## ", 1)[0].strip()
