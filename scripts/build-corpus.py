@@ -2345,11 +2345,13 @@ def lzw_decode_pdf(rel_path: str, encoded: bytes, early_change: int = 1,
                    limit: int = VALIDATOR_INFLATE_LIMIT) -> bytes:
     """An LZWDecode stream decoded as ISO 32000-1 7.4.4.2 defines it: MSB-first codes starting 9 bits wide and growing
     to 12 as the table fills (one code early with /EarlyChange 1), 256 clearing the table, 257 ending the data. Refuses
-    a code past the next table entry, a table full without a clear, data with no EOD, anything after EOD but zero
+    data that does not begin with a clear-table code, a code past the next table entry, a table full without a clear,
+    data with no EOD, anything after EOD but zero
     padding in its last byte, and output past limit."""
     table: list[bytes] = [bytes([i]) for i in range(256)] + [b"", b""]
     width, prev, out = 9, None, bytearray()
     pos, total = 0, len(encoded) * 8
+    first = True
     while True:
         if pos + width > total:
             raise ValueError(f"{rel_path}: LZW data ends with no EOD code")
@@ -2357,6 +2359,9 @@ def lzw_decode_pdf(rel_path: str, encoded: bytes, early_change: int = 1,
         for bit in range(pos, pos + width):
             code = (code << 1) | (encoded[bit >> 3] >> (7 - (bit & 7)) & 1)
         pos += width
+        if first and code != 256:  # "The encoder shall begin by issuing a clear-table code" (7.4.4.2)
+            raise ValueError(f"{rel_path}: LZW data does not begin with the clear-table code 256")
+        first = False
         if code == 256:
             table, width, prev = table[:258], 9, None
             continue

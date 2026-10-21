@@ -704,7 +704,8 @@ class BuildCorpusTests(unittest.TestCase):
         decode = self.mod.lzw_decode_pdf
         self.assertEqual(decode("x", pack([256, 65, 66, 258, 257])), b"ABAB")
         self.assertEqual(decode("x", self.mod.lzw_encode_literals(b"hello " * 100)), b"hello " * 100)
-        for codes, says in (([256, 65, 300, 257], "past the next table entry"), ([256, 65, 66], "no EOD")):
+        for codes, says in (([256, 65, 300, 257], "past the next table entry"), ([256, 65, 66], "no EOD"),
+                            ([65, 257], "clear-table code")):
             with self.subTest(codes=codes), self.assertRaisesRegex(ValueError, says):
                 decode("x", pack(codes))
         # The regression through the generator: fixed 9-bit codes, no clears, past where the width must grow.
