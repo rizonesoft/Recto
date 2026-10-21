@@ -23,9 +23,9 @@ def section(n, title, phase, needs, extra=""):
             f"**Test checkpoint:** `true` exits 0.{extra}\n")
 
 
-def envelope(n, reviewer="astra (`m` via `codex`)"):
+def envelope(n, reviewer="astra (`m` via `codex`)", overall="approve"):
     """One round as scripts/review-dispatch.py records it (without the optional Lines and Digest fields)."""
-    return f"## Round {n}: {reviewer}\n\n- Writer: claude\n- Run: 2026-10-21T00:00:00Z\n\nReview text.\n\nOVERALL: approve\n\n"
+    return f"## Round {n}: {reviewer}\n\n- Writer: claude\n- Run: 2026-10-21T00:00:00Z\n\nReview text.\n\nOVERALL: {overall}\n\n"
 
 
 def todo_file(rows, *, ident="alpha", domain="00-workspace", status="active", depends_on=None,
@@ -407,7 +407,8 @@ class Stamp(Tree):
     def test_receipt_records_rounds_spent_against_the_cap(self):
         self.tick_work()
         report = self.root / "docs/reviews/00-workspace/D00-T01-s1.md"
-        report.write_text("# Review findings\n\n" + envelope(1, "none") + envelope(2) + envelope(3), encoding="utf-8")
+        report.write_text("# Review findings\n\n" + envelope(1, "none") + envelope(2, overall="needs-attention")
+                          + envelope(3), encoding="utf-8")
         reviews = [{"round": 2, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": "fixed"},
                    {"round": 3, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": "clean"}]
         receipt = tg.stamp(self.root, "D00 T01 §1", self.sha, reviews, ["true -> ok"], "2026-10-13")
@@ -419,7 +420,8 @@ class Stamp(Tree):
         self.assertEqual(summary["summary"]["stopped_at_cap"], 0)
 
     def record_rounds(self, last, report="docs/reviews/00-workspace/D00-T01-s1.md"):
-        (self.root / report).write_text("".join(envelope(n) for n in range(1, last + 1)), encoding="utf-8")
+        (self.root / report).write_text("".join(envelope(n, overall="needs-attention") for n in range(1, last + 1)),
+                                        encoding="utf-8")
 
     def test_a_stopped_review_must_say_what_was_done(self):
         self.tick_work()
@@ -445,13 +447,36 @@ class Stamp(Tree):
     def test_a_review_with_carriage_returns_is_read_as_the_dispatcher_wrote_it(self):
         self.tick_work()
         dispatch = tg.review_dispatch()
-        review = ["Captured progress: 10%\rCaptured progress: 100%", "OVERALL: approve"]
+        review = ["Captured progress: 10%\rCaptured progress: 100%", "Example heading:", "## Round 999: none",
+                  "OVERALL: approve"]
         text = ("## Round 1: astra (`m` via `codex`)\n\n- Writer: claude\n- Run: 2026-10-21T00:00:00Z\n"
-                f"- Lines: 2\n- Digest: {dispatch.digest(review)}\n\n" + "\n".join(review) + "\n")
+                f"- Lines: 4\n- Digest: {dispatch.digest(review)}\n\n" + "\n".join(review) + "\n")
         (self.root / "docs/reviews/00-workspace/D00-T01-s1.md").write_bytes(text.encode("utf-8"))
         self.assertIsNotNone(dispatch.read_rounds(text))
-        tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
+        receipt = tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
+        self.assertEqual(json.loads((self.root / receipt).read_text(encoding="utf-8"))["rounds_spent"], 1)
         tg.graph(self.root)
+
+    def test_a_round_verdict_must_match_its_review(self):
+        self.tick_work()
+        report = self.root / "docs/reviews/00-workspace/D00-T01-s1.md"
+        before = self.snapshot()
+        report.write_text(envelope(1, overall="needs-attention"), encoding="utf-8")
+        with self.assertRaises(tg.Refused) as ctx:  # a rejecting review claimed as clean
+            tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
+        self.assertIn("verdict matching clean", str(ctx.exception))
+        fixed_only = [{"round": 1, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": "fixed"}]
+        with self.assertRaises(tg.Refused) as ctx:  # fixed, but no later round saw the fixes
+            tg.stamp(self.root, "D00 T01 §1", self.sha, fixed_only, ["true -> ok"], "2026-10-13")
+        self.assertIn("must end in a clean round", str(ctx.exception))
+        report.write_text(envelope(1), encoding="utf-8")
+        with self.assertRaises(tg.Refused):  # an approving review claimed as fixed
+            tg.stamp(self.root, "D00 T01 §1", self.sha,
+                     fixed_only + [{"round": 1, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": "clean"}],
+                     ["true -> ok"], "2026-10-13")
+        report.unlink()
+        self.assertEqual({k: v for k, v in self.snapshot().items() if not k.endswith("D00-T01-s1.md")},
+                         {k: v for k, v in before.items() if not k.endswith("D00-T01-s1.md")})
 
     def test_a_round_heading_quoted_inside_a_review_is_not_counted(self):
         self.tick_work()
@@ -464,7 +489,7 @@ class Stamp(Tree):
     def test_rounds_spent_add_up_across_review_loops(self):
         self.tick_work()
         first = self.root / "docs/reviews/00-workspace/D00-T01-s1.md"
-        first.write_text("".join(envelope(n) for n in range(1, 23)), encoding="utf-8")
+        first.write_text("".join(envelope(n, overall="needs-attention") for n in range(1, 23)), encoding="utf-8")
         second = self.root / "docs/reviews/00-workspace/D00-T01-s1-loop2.md"
         second.write_text(envelope(1) + envelope(2), encoding="utf-8")
         reviews = [{"round": 22, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": "stopped-at-22"},

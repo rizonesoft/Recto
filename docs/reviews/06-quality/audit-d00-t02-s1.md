@@ -316,3 +316,61 @@ Tested in `tests/scripts/test_todo_graph.py` (`Ran 73 tests`, `OK`; against `6b0
 - Finding 1 (P1): `XREF_TARGET` gets the same boundary as `extract_ref`, so `-> XREF: D00 T02 §1.5` refuses (`test_malformed_xref_does_not_resolve_to_another_section`).
 - Finding 2 (P1): `read_rounds` in `scripts/review-dispatch.py` now returns each round's review text, and a claimed round must hold a review whose last line is `OVERALL: approve` or `OVERALL: needs-attention`; an empty, missing or `blocked` reply refuses (`test_a_claimed_round_must_be_a_reviewed_round_in_its_report`).
 - Finding 3 (P2): receipt validation reads reports as raw UTF-8, as the dispatcher writes them, so a review holding a lone carriage return keeps its count and digest (`test_a_review_with_carriage_returns_is_read_as_the_dispatcher_wrote_it`).
+
+## Round 7: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T15:44:12Z
+- Effort: medium
+- Lines: 40
+- Digest: 703b1490c79c1103
+
+## adversarial: needs-attention
+
+1. **P1: A rejecting review can be claimed as clean.** `scripts/lib/todo_graph.py:252` accepts either final verdict without checking its compatibility with the receipt’s claimed verdict. Reproduction: supply `receipt_data_ok()` with a current-format receipt claiming round 1 as `clean`, `rounds_spent=1`, and a valid cross-family report containing only round 1, an unresolved P1 finding, and `OVERALL: needs-attention`. The in-memory reproduction accepted it. No later review or stopped outcome is required. The stamp path calls this same validation at line 748.
+
+## consistency: approve
+
+No additional finding.
+
+## integration: approve
+
+No additional finding beyond finding 1’s effect on the stamp gate.
+
+## source-defect: needs-attention
+
+2. **P2: Round counting still normalizes reports and counts quoted headings as rounds.** `scripts/lib/todo_graph.py:686` uses `read_text()`, which converts carriage returns into newlines. When this breaks the dispatcher’s count or digest, line 690 falls back to matching headings throughout the report.
+
+   Reproduction: construct one correctly counted and digested round whose review contains these four newline-delimited lines:
+
+   ```text
+   Captured: 10%\rCaptured: 100%
+   Example heading:
+   ## Round 999: none
+   OVERALL: approve
+   ```
+
+   Here `\r` denotes an actual carriage-return character. The raw dispatcher reader returns only round `1`; `rounds_recorded()` returns `999`. Receipt validation accepts that inflated count. This persists false evidence through `stamp()` at line 744 and affects `query rounds`. The reproduction used an in-memory report overlay.
+
+## design: advisory
+
+Not applicable to this section’s declared surface.
+
+## record: advisory
+
+The full-suite claim at `docs/reviews/06-quality/audit-d00-t02-s1.md:9` remains independently unconfirmed. At `23183fb`, running the current suite through `unittest` produced 73 tests with 72 fixture-setup errors because the read-only environment cannot create temporary directories; the Repository test passed. This is an environment limitation, not a candidate defect.
+
+`validate` reported `valid: 677 sections`; `plan --check` reported `plan current`. These results do not establish the historical full-suite pass.
+
+No files were modified; the working tree remains clean.
+
+OVERALL: needs-attention
+
+## Fixes after round 7
+
+In `scripts/lib/todo_graph.py`, tested in `tests/scripts/test_todo_graph.py` (`Ran 74 tests`, `OK`; against `07f3563` the two new or changed tests report `FAILED (failures=2)`; the live tree validates, `valid: 677 sections`, so every current receipt's verdicts match its reviews).
+
+- Finding 1 (P1): a round's receipt verdict must match its review: `clean` needs a last line `OVERALL: approve`, every other verdict `OVERALL: needs-attention`; and a receipt must hold a clean round or a stopped verdict, so a round whose findings were fixed needs a later round that saw the fixes (`test_a_round_verdict_must_match_its_review`).
+- Finding 2 (P2): `rounds_recorded` reads reports byte for byte too, so a carriage return inside a review no longer breaks the dispatcher's reader into the heading fallback that counted a quoted `## Round 999` (`test_a_review_with_carriage_returns_is_read_as_the_dispatcher_wrote_it` now quotes one and expects `rounds_spent` 1).
+
+Separately, CI builds had failed since `59902fc` (D06 T05 §3): its `vswhere -requires` list named Windows SDK and WinUI components that GitHub's `windows-latest` image does not register. `07f3563` narrows it to the C++ x64 and ARM64 tools; the refusal now names what is missing.

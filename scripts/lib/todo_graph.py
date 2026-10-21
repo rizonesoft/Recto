@@ -253,10 +253,14 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
                     e["number"] == r["round"] and e["reviewer"]
                     and dispatch.FAMILY.get(e["cli"]) not in (None, dispatch.WRITER_FAMILY.get(e["writer"]))
                     and e["writer"] in dispatch.WRITER_FAMILY
-                    and re.fullmatch(r"OVERALL: (?:approve|needs-attention)",
-                                     ([x.strip() for x in e["review"].splitlines() if x.strip()] or [""])[-1])
+                    and ([x.strip() for x in e["review"].splitlines() if x.strip()] or [""])[-1]
+                    == ("OVERALL: approve" if r["verdict"] == "clean" else "OVERALL: needs-attention")
                     for e in recorded),
-                    f"round {r['round']} is not a review returned by another model family in {r['report']}: {ref}")
+                    f"round {r['round']} is not a review returned by another model family with a verdict matching "
+                    f"{r['verdict']} (clean needs OVERALL: approve, any other needs-attention) in {r['report']}: {ref}")
+        # A loop ends clean or stopped: a round whose findings were fixed needs a later round that saw the fixes.
+        require(any(r["verdict"] == "clean" or r["verdict"].startswith("stopped-") for r in rounds),
+                f"the review must end in a clean round or a stopped verdict: {ref}")
         stopped = any(r["verdict"].startswith("stopped-") for r in rounds)
         outcome = data.get("cap_outcome")
         require((isinstance(outcome, str) and bool(outcome.strip())) == stopped,
@@ -683,7 +687,7 @@ def rounds_recorded(root, reviews):
     for report in dict.fromkeys(r["report"] for r in reviews):
         named = max(r["round"] for r in reviews if r["report"] == report)
         path = Path(root) / report
-        text = read_text(path) if path.is_file() else ""
+        text = path.read_bytes().decode("utf-8") if path.is_file() else ""  # as written: the dispatcher keeps "\r"
         # The dispatcher's reader, so a round heading quoted inside a review is not counted; a report it cannot read
         # (one older than its format) falls back to the headings, and a new receipt refuses such a report anyway.
         parsed = review_dispatch().read_rounds(text)
