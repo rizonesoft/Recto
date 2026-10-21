@@ -3032,34 +3032,272 @@ def validate_broken_pdf_structure(rel_path: str, data: bytes) -> None:
     raise ValueError(f"unknown broken fixture {rel_path}")
 
 
+# What each seed exists to exercise, pinned as the parsed dictionary of every object it holds (a stream's /Length is its
+# own measured length, "*"): the filters, outlines, link actions, image parameters and primitives a fuzzer starts from.
+# A seed that lost its construct, or one seed standing in for another, no longer matches.
+SEED_FORMS: dict[str, dict[int, dict[bytes, bytes]]] = {
+    "seeds/seed-classic-xref.pdf": {
+        1: {b"/Type": b"/Catalog", b"/Pages": b"2 0 R", b"/PageLayout": b"/SinglePage"},
+        2: {b"/Type": b"/Pages", b"/Kids": b"[3 0 R]", b"/Count": b"1"},
+        3: {
+            b"/Type": b"/Page",
+            b"/Parent": b"2 0 R",
+            b"/MediaBox": b"[0 0 595 842]",
+            b"/Resources": b"<< /Font << /F1 5 0 R >> >>",
+            b"/Contents": b"4 0 R",
+            b"/SeedPrimitives": b"<< /BoolT true /BoolF false /NullVal null /Hex <48656C6C6F> /Arr [1 -2 3.5 (lit)] >>",
+        },
+        4: {b"/Filter": b"/FlateDecode", b"/Length": b"*"},
+        5: {b"/Type": b"/Font", b"/Subtype": b"/Type1", b"/BaseFont": b"/Helvetica", b"/Encoding": b"/WinAnsiEncoding"},
+        6: {b"/Title": b"(Seed Classic XRef)", b"/CreationDate": b"(D:20261013000000Z)"},
+    },
+    "seeds/seed-filters-ascii-rle.pdf": {
+        1: {b"/Type": b"/Catalog", b"/Pages": b"2 0 R"},
+        2: {b"/Type": b"/Pages", b"/Kids": b"[3 0 R]", b"/Count": b"1"},
+        3: {
+            b"/Type": b"/Page",
+            b"/Parent": b"2 0 R",
+            b"/MediaBox": b"[0 0 595 842]",
+            b"/Resources": b"<< /Font << /F1 8 0 R >> >>",
+            b"/Contents": b"[4 0 R 5 0 R 6 0 R 7 0 R]",
+        },
+        4: {b"/Filter": b"/ASCIIHexDecode", b"/Length": b"*"},
+        5: {b"/Filter": b"/ASCII85Decode", b"/Length": b"*"},
+        6: {b"/Filter": b"/RunLengthDecode", b"/Length": b"*"},
+        7: {b"/Filter": b"[/ASCII85Decode /FlateDecode]", b"/Length": b"*"},
+        8: {b"/Type": b"/Font", b"/Subtype": b"/Type1", b"/BaseFont": b"/Helvetica", b"/Encoding": b"/WinAnsiEncoding"},
+    },
+    "seeds/seed-filters-lzw-ccitt.pdf": {
+        1: {b"/Type": b"/Catalog", b"/Pages": b"2 0 R"},
+        2: {b"/Type": b"/Pages", b"/Kids": b"[3 0 R]", b"/Count": b"1"},
+        3: {
+            b"/Type": b"/Page",
+            b"/Parent": b"2 0 R",
+            b"/MediaBox": b"[0 0 595 842]",
+            b"/Resources": b"<< /Font << /F1 6 0 R >> /XObject << /Im1 5 0 R >> >>",
+            b"/Contents": b"4 0 R",
+        },
+        4: {b"/Filter": b"/LZWDecode", b"/DecodeParms": b"<< /EarlyChange 1 >>", b"/Length": b"*"},
+        5: {
+            b"/Type": b"/XObject",
+            b"/Subtype": b"/Image",
+            b"/Width": b"16",
+            b"/Height": b"16",
+            b"/ColorSpace": b"/DeviceGray",
+            b"/BitsPerComponent": b"1",
+            b"/Filter": b"/CCITTFaxDecode",
+            b"/DecodeParms": b"<< /K -1 /Columns 16 /Rows 16 >>",
+            b"/Length": b"*",
+        },
+        6: {b"/Type": b"/Font", b"/Subtype": b"/Type1", b"/BaseFont": b"/Helvetica", b"/Encoding": b"/WinAnsiEncoding"},
+    },
+    "seeds/seed-outlines-links.pdf": {
+        1: {
+            b"/Type": b"/Catalog",
+            b"/Pages": b"2 0 R",
+            b"/Outlines": b"6 0 R",
+            b"/Names": b"<< /Dests << /Names [(sec1) [3 0 R /XYZ 48 750 0]] >> >>",
+        },
+        2: {b"/Type": b"/Pages", b"/Kids": b"[3 0 R]", b"/Count": b"1"},
+        3: {
+            b"/Type": b"/Page",
+            b"/Parent": b"2 0 R",
+            b"/MediaBox": b"[0 0 595 842]",
+            b"/Resources": b"<< /Font << /F1 5 0 R >> >>",
+            b"/Contents": b"4 0 R",
+            b"/Annots": b"[8 0 R 9 0 R 10 0 R]",
+        },
+        4: {b"/Filter": b"/FlateDecode", b"/Length": b"*"},
+        5: {b"/Type": b"/Font", b"/Subtype": b"/Type1", b"/BaseFont": b"/Helvetica", b"/Encoding": b"/WinAnsiEncoding"},
+        6: {b"/Type": b"/Outlines", b"/First": b"7 0 R", b"/Last": b"7 0 R", b"/Count": b"1"},
+        7: {b"/Title": b"(Section 1)", b"/Parent": b"6 0 R", b"/Dest": b"(sec1)"},
+        8: {
+            b"/Type": b"/Annot",
+            b"/Subtype": b"/Link",
+            b"/Rect": b"[48 720 180 740]",
+            b"/Border": b"[0 0 0]",
+            b"/A": b"<< /S /URI /URI (https://example.com/recto) >>",
+        },
+        9: {
+            b"/Type": b"/Annot",
+            b"/Subtype": b"/Link",
+            b"/Rect": b"[48 695 180 715]",
+            b"/Border": b"[0 0 0]",
+            b"/A": b"<< /S /JavaScript /JS (app.alert('inert')) >>",
+        },
+        10: {
+            b"/Type": b"/Annot",
+            b"/Subtype": b"/Link",
+            b"/Rect": b"[48 670 180 690]",
+            b"/Border": b"[0 0 0]",
+            b"/A": b"<< /S /Launch /F (cmd.exe) >>",
+        },
+    },
+    "seeds/seed-render-ops.pdf": {
+        1: {b"/Type": b"/Catalog", b"/Pages": b"2 0 R"},
+        2: {b"/Type": b"/Pages", b"/Kids": b"[3 0 R]", b"/Count": b"1"},
+        3: {
+            b"/Type": b"/Page",
+            b"/Parent": b"2 0 R",
+            b"/MediaBox": b"[0 0 595 842]",
+            b"/Resources": b"<< /Font << /F1 5 0 R >> /ExtGState << /GS1 6 0 R >> /XObject << /Fm1 7 0 R >> >>",
+            b"/Contents": b"4 0 R",
+        },
+        4: {b"/Filter": b"/FlateDecode", b"/Length": b"*"},
+        5: {b"/Type": b"/Font", b"/Subtype": b"/Type1", b"/BaseFont": b"/Helvetica", b"/Encoding": b"/WinAnsiEncoding"},
+        6: {b"/Type": b"/ExtGState", b"/CA": b"0.85", b"/ca": b"0.75", b"/BM": b"/Normal"},
+        7: {
+            b"/Type": b"/XObject",
+            b"/Subtype": b"/Form",
+            b"/BBox": b"[0 0 60 40]",
+            b"/Matrix": b"[1 0 0 1 0 0]",
+            b"/Filter": b"/FlateDecode",
+            b"/Length": b"*",
+        },
+    },
+    "seeds/seed-xref-objstm.pdf": {
+        5: {b"/Type": b"/ObjStm", b"/N": b"4", b"/First": b"20", b"/Filter": b"/FlateDecode", b"/Length": b"*"},
+        6: {b"/Filter": b"/FlateDecode", b"/Length": b"*"},
+        7: {
+            b"/Type": b"/XRef",
+            b"/Size": b"8",
+            b"/W": b"[1 2 2]",
+            b"/Root": b"1 0 R",
+            b"/ID": b"[<03BC1CB155BB474CEEE97428B5BB6A9F> <03BC1CB155BB474CEEE97428B5BB6A9F>]",
+            b"/Filter": b"/FlateDecode",
+            b"/DecodeParms": b"<< /Predictor 12 /Columns 5 >>",
+            b"/Length": b"*",
+        },
+    },
+}
+# The cross-reference form each seed exercises: a classic table, or (the object-stream seed) an /XRef stream.
+SEED_XREF_STREAM = {"seeds/seed-xref-objstm.pdf"}
+# The objects the object-stream seed keeps inside its /ObjStm (object 5), as parsed dictionaries.
+SEED_OBJSTM_FORMS: dict[int, dict[bytes, bytes]] = {
+    1: {b"/Type": b"/Catalog", b"/Pages": b"2 0 R"},
+    2: {b"/Type": b"/Pages", b"/Kids": b"[3 0 R]", b"/Count": b"1"},
+    3: {b"/Type": b"/Page", b"/Parent": b"2 0 R", b"/MediaBox": b"[0 0 595 842]",
+        b"/Resources": b"<< /Font << /F1 4 0 R >> >>", b"/Contents": b"6 0 R"},
+    4: {b"/Type": b"/Font", b"/Subtype": b"/Type1", b"/BaseFont": b"/Helvetica", b"/Encoding": b"/WinAnsiEncoding"},
+}
+# The operators the render-ops seed's page content and form XObject use: path construction and painting, clipping,
+# colour, graphics state, text and XObject operators (ISO 32000-1 Table 51).
+SEED_RENDER_OPERATORS = {
+    4: {b"q", b"Q", b"cm", b"gs", b"rg", b"RG", b"k", b"w", b"J", b"j", b"d", b"m", b"l", b"c", b"y", b"h", b"B",
+        b"re", b"W*", b"n", b"f*", b"Do", b"BT", b"Tf", b"Tc", b"Tw", b"Tm", b"Tj", b"Td", b"TJ", b"ET"},
+    7: {b"q", b"Q", b"rg", b"re", b"f"},
+}
+CONTENT_DELIMITERS = b"()<>[]{}/%"
+
+
+def content_operators(rel_path: str, raw: bytes) -> list[bytes]:
+    """The operators of a content stream, in order, from a tokenizer that skips what operands contain: literal and hex
+    strings, names, numbers, arrays, dictionaries and comments (ISO 32000-1 7.2 and 7.8.2). Text inside a string is
+    never taken for an operator."""
+    ops: list[bytes] = []
+    i, n = 0, len(raw)
+    while i < n:
+        b = raw[i]
+        if b in b" \t\r\n\f\x00" or b in b"[]{}":
+            i += 1
+        elif b == 0x25:  # % comment to end of line
+            while i < n and raw[i] not in b"\r\n":
+                i += 1
+        elif b == 0x28:  # literal string, balanced, with escapes
+            depth, i = 1, i + 1
+            while i < n and depth:
+                if raw[i] == 0x5C:
+                    i += 2
+                    continue
+                depth += {0x28: 1, 0x29: -1}.get(raw[i], 0)
+                i += 1
+            if depth:
+                raise ValueError(f"{rel_path}: unterminated string in content stream")
+        elif raw.startswith(b"<<", i) or raw.startswith(b">>", i):
+            i += 2
+        elif b == 0x3C:  # hex string
+            close = raw.find(b">", i)
+            if close < 0:
+                raise ValueError(f"{rel_path}: unterminated hex string in content stream")
+            i = close + 1
+        else:
+            j = i + 1 if b == 0x2F else i  # a name's slash, then its regular characters
+            while j < n and raw[j] not in b" \t\r\n\f\x00" and raw[j] not in CONTENT_DELIMITERS:
+                j += 1
+            if j == i:
+                raise ValueError(f"{rel_path}: unexpected byte {raw[i]:#04x} in content stream")
+            token = raw[i:j]
+            if b != 0x2F and not re.fullmatch(rb"[+-]?(?:\d+\.?\d*|\.\d+)", token) and token not in (
+                    b"true", b"false", b"null"):
+                ops.append(token)
+            i = j
+    return ops
+
+
+def decode_seed_stream(rel_path: str, entries: dict[bytes, bytes], payload: bytes) -> bytes | None:
+    """A seed stream's decoded content for the filters the seeds exercise, or None for a stream that is not page
+    content (an image, an object or cross-reference stream)."""
+    if entries.get(b"/Type") in (b"/ObjStm", b"/XRef") or entries.get(b"/Subtype") == b"/Image":
+        return None
+    flt = entries.get(b"/Filter")
+    if flt == b"/FlateDecode":
+        return inflate(payload, rel_path)
+    if flt == b"/ASCIIHexDecode":
+        if not payload.endswith(b">"):
+            raise ValueError(f"{rel_path}: ASCIIHexDecode stream missing '>' EOD")
+        return bytes.fromhex(payload[:-1].decode("ascii"))
+    if flt == b"/ASCII85Decode":
+        return ascii85_decode_pdf(payload)
+    if flt == b"/RunLengthDecode":
+        return rle_decode_pdf(payload)
+    if flt == b"[/ASCII85Decode /FlateDecode]":
+        return inflate(ascii85_decode_pdf(payload), rel_path)
+    if flt == b"/LZWDecode":
+        return lzw_decode_literals(payload)
+    raise ValueError(f"{rel_path}: no seed content stream uses /Filter {flt!r}")
+
+
 def validate_seed_pdf_structure(rel_path: str, data: bytes) -> None:
     if len(data) >= MAX_SEED_FILE_BYTES:
         raise ValueError(
             f"{rel_path}: seed size {len(data)} must be < {MAX_SEED_FILE_BYTES} bytes"
         )
     validate_pdf_structure(rel_path, data)
-    for m in re.finditer(rb"<<([^\n]*?)>>\nstream\n", data):
-        dict_body = m.group(1)
-        slen = int(re.search(rb"/Length\s+(\d+)", dict_body).group(1))
-        s_start = m.end()
-        payload = data[s_start : s_start + slen]
-        if b"/Filter /ASCIIHexDecode" in dict_body:
-            if not payload.endswith(b">"):
-                raise ValueError(f"{rel_path}: ASCIIHexDecode stream missing '>' EOD")
-            dec = bytes.fromhex(payload[:-1].decode("ascii"))
-            validate_content_stream_syntax(rel_path, dec)
-        elif b"/Filter /ASCII85Decode" in dict_body:
-            dec = ascii85_decode_pdf(payload)
-            validate_content_stream_syntax(rel_path, dec)
-        elif b"/Filter /RunLengthDecode" in dict_body:
-            dec = rle_decode_pdf(payload)
-            validate_content_stream_syntax(rel_path, dec)
-        elif b"/Filter [/ASCII85Decode /FlateDecode]" in dict_body:
-            dec = inflate(ascii85_decode_pdf(payload), rel_path)
-            validate_content_stream_syntax(rel_path, dec)
-        elif b"/Filter /LZWDecode" in dict_body:
-            dec = lzw_decode_literals(payload)
-            validate_content_stream_syntax(rel_path, dec)
+    if rel_path not in SEED_FORMS:
+        raise ValueError(f"{rel_path}: not a known seed")
+    forms = SEED_FORMS[rel_path]
+    streams = {num for num, form in forms.items() if form.get(b"/Length") == b"*"}
+    objects = exact_objects(rel_path, data, forms, streams)
+    xref_at = int(re.search(rb"startxref\n(\d+)\n%%EOF\n\Z", data).group(1))
+    if data.startswith(b"xref\n", xref_at) == (rel_path in SEED_XREF_STREAM):
+        kind = "an /XRef stream" if rel_path in SEED_XREF_STREAM else "a classic xref table"
+        raise ValueError(f"{rel_path}: the seed must use {kind}")
+    for num in sorted(streams):
+        start, _, s0, s1 = objects[num]
+        entries = {**forms[num], b"/Length": str(s1 - s0).encode()}
+        content = decode_seed_stream(rel_path, entries, data[s0:s1])
+        if content is None:
+            continue
+        validate_content_stream_syntax(rel_path, content)
+        ops = content_operators(rel_path, content)
+        expected = SEED_RENDER_OPERATORS.get(num) if rel_path == "seeds/seed-render-ops.pdf" else None
+        if expected is not None and set(ops) != expected:
+            raise ValueError(f"{rel_path}: object {num} uses operators {sorted(set(ops))}, not {sorted(expected)}")
+        if expected is None and not {b"BT", b"Tf", b"ET"} <= set(ops):
+            raise ValueError(f"{rel_path}: object {num} decodes to no text block")
+    if rel_path == "seeds/seed-xref-objstm.pdf":
+        _, _, s0, s1 = objects[5]
+        dec = inflate(data[s0:s1], rel_path)
+        first = int(SEED_FORMS[rel_path][5][b"/First"])
+        header = dec[:first].split()
+        nums, offsets = [int(x) for x in header[0::2]], [int(x) for x in header[1::2]]
+        if nums != sorted(SEED_OBJSTM_FORMS):
+            raise ValueError(f"{rel_path}: the object stream must hold objects {sorted(SEED_OBJSTM_FORMS)}")
+        for num, off in zip(nums, offsets):
+            pos = first + off
+            end = _skip_object(dec, pos)
+            if not dec.startswith(b"<<", pos) or dict_entries(dec[pos + 2 : end - 2]) != SEED_OBJSTM_FORMS[num]:
+                raise ValueError(f"{rel_path}: object {num} in the object stream is not the generator's exact dictionary")
 
 
 SEED_FILTER_SELECTORS: dict[str, int] = {

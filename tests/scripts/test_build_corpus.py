@@ -549,6 +549,24 @@ class BuildCorpusTests(unittest.TestCase):
             self.mod.validate_broken_pdf_structure("broken/truncated-stream.pdf",
                                                    truncated.replace(b"/Length 512", b"/Length 999", 1))
 
+    def test_each_seed_proves_its_own_construct(self) -> None:
+        files = self.mod.expected_corpus_files()
+        seeds = sorted(k for k in files if k.startswith("seeds/") and k.endswith(".pdf"))
+        self.assertEqual(len(seeds), 6)
+        for name in seeds:
+            self.mod.validate_seed_pdf_structure(name, files[name])
+            for other in seeds:
+                if other != name:
+                    with self.subTest(name=name, standing_in=other), self.assertRaises(ValueError):
+                        self.mod.validate_seed_pdf_structure(name, files[other])
+
+    def test_content_operators_skip_what_operands_contain(self) -> None:
+        ops = self.mod.content_operators("x", b"q 1 0 0 1 5 5 cm BT /F1 12 Tf (re f BT \\) ET) Tj <414243> Tj "
+                                              b"[(a) -40 (b)] TJ ET % m l c\n<< /K 1 >> BDC EMC Q")
+        self.assertEqual(ops, [b"q", b"cm", b"BT", b"Tf", b"Tj", b"Tj", b"TJ", b"ET", b"BDC", b"EMC", b"Q"])
+        with self.assertRaisesRegex(ValueError, "unterminated string"):
+            self.mod.content_operators("x", b"BT (open Tj ET")
+
     def test_inflation_stops_just_past_its_limit(self) -> None:
         bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))
         total, kept = self.mod.inflate_bounded(bomb, 1024, keep=False)

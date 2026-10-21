@@ -340,3 +340,48 @@ OVERALL: needs-attention
 
 - Finding 1 (P1): instead of fixing the nested-array search alone, every parseable broken fixture now carries its fault as parsed objects through `exact_objects()`: the object set, each dictionary compared whole with values as parsed (so `/Depth70` must be a 70-deep array, never a literal string), and exactly the expected objects carrying streams. The nested-array, cyclic page tree and deflate-bomb fixtures use it (the bomb's stream is now located through it instead of a regex), and the truncated-stream fixture must be exactly the generator's three-object page followed by object 4 cut off inside its declared 512 bytes.
 - Finding 2 (P3), a record correction: round 6's note said every validator inflate uses the strict `inflate()`. The deflate-bomb check still uses `inflate_bounded()`, which only counts output and deliberately does not require a complete stream (the inner stage is never inflated to its end); its comment now says so.
+
+## Round 8: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T22:09:09Z
+- Effort: medium
+- Lines: 30
+- Digest: f6e989951559594e
+
+### adversarial: needs-attention
+
+1. **P1: Seed verification accepts loss of the promised syntax coverage.** `scripts/build-corpus.py:3035` checks size, general PDF validity and whichever filters happen to exist. It never requires each seed’s defining constructs. `tests/scripts/test_build_corpus.py:629` likewise counts files and invokes that validator.
+
+   Reproduced entirely in memory: replace all six `seeds/*.pdf` entries from `expected_corpus_files()` with `seed-classic-xref.pdf` bytes. Every `validate_seed_pdf_structure()` call succeeds. Mock those entries as generator output and file reads, with matching regenerated provenance: **`check_corpus()` returns `(True, [])`**.
+
+   A generator regression can therefore remove xref-stream, object-stream and outline coverage while passing the section checkpoint. This demonstrates a validator defect, not missing coverage in the currently committed fixtures.
+
+### consistency: approve
+
+No separate finding.
+
+### integration: advisory
+
+Finding 1 weakens the seed prerequisite consumed by `todo/01-engine/TODO-03-cli-and-fuzz.md:152`. The reproduced replacement removes starting inputs for distinct parser paths. No downstream engine defect is established.
+
+### source-defect: approve
+
+No separate finding.
+
+### design: advisory
+
+Not applicable; this section owns no user surface.
+
+### record: approve
+
+Independently reran the checkpoint at `c23dccb`: exit **0**, **39 fixtures verified**. The section fixture test and round 7 parsed-object regression test also passed: **2 tests, OK**. These checks do not detect finding 1. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 8
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 43 tests`, `OK` (`test_each_seed_proves_its_own_construct` fails against `c23dccb`: any seed stood in for another); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): each seed now proves what it exists to exercise, from parsed objects. `SEED_FORMS` pins every object's dictionary (the filters, the CCITT image parameters, the outline tree, the three link actions, the primitive types), `SEED_XREF_STREAM` the cross-reference form (classic table, or an `/XRef` stream for the object-stream seed), `SEED_OBJSTM_FORMS` the four objects inside the `/ObjStm`, and every content stream is decoded by its parsed `/Filter` (the regex scan of single-line dictionaries is gone) and must hold a text block; the render-ops seed's page and form streams must use exactly their operator sets, read by `content_operators()`, a tokenizer that skips strings, names, numbers, arrays, dictionaries and comments so text inside a string is never an operator.
