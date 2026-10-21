@@ -135,13 +135,24 @@ def _in_number(text, i):
     return start < i and (text[start].isdigit() or (text[start] == "." and text[start + 1].isdigit()))
 
 
+def _separator_follows(spliced_tail):
+    """True when an apostrophe after this already-spliced code would be a digit separator."""
+    return _in_number(spliced_tail + "'", len(spliced_tail))
+
+
 def cpp_code(text):
-    """C++ source with lines spliced, comments and literals blanked, and `#if 0` branches removed."""
-    text = text.replace("\\\r\n", "").replace("\\\n", "")
+    """C++ source with lines spliced, comments and literals blanked, and `#if 0` branches removed. Splices are
+    removed as the scan meets them, never inside a raw string literal, whose content C++ keeps byte for byte."""
+    text = text.replace("\r\n", "\n")
     out, i, n = [], 0, len(text)
     while i < n:
-        if text.startswith("//", i):
+        if text.startswith("\\\n", i):
+            i += 2
+        elif text.startswith("//", i):
+            # A line comment ends at the first newline that is not spliced onto the next line.
             end = text.find("\n", i)
+            while end > 0 and text[end - 1] == "\\":
+                end = text.find("\n", end + 1)
             i = n if end < 0 else end
         elif text.startswith("/*", i):
             end = text.find("*/", i + 2)
@@ -152,7 +163,7 @@ def cpp_code(text):
             end = text.find(f'){raw.group(1)}"', raw.end())
             i = n if end < 0 else end + len(raw.group(1)) + 2
             out.append('""')
-        elif text[i] in "\"'" and not (text[i] == "'" and _in_number(text, i)):
+        elif text[i] in "\"'" and not (text[i] == "'" and _separator_follows("".join(out[-64:]))):
             quote, i = text[i], i + 1
             while i < n and text[i] not in (quote, "\n"):
                 i += 2 if text[i] == "\\" else 1
