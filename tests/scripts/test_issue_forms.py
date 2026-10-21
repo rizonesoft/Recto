@@ -92,10 +92,16 @@ class _Loader:
     def __init__(self, text):
         if "\t" in text:
             raise YamlSubsetError("tab characters are not allowed")
-        bad = _NOT_PRINTABLE.search(text)
+        bad = _NOT_PRINTABLE.search(text) or next(
+            (match for match in re.finditer(r"\s", text) if match.group() not in " \n\r"), None)
         if bad:
+            # Unprintable characters are not YAML; other whitespace (a non-breaking space, U+2028, U+2029, NEL) is
+            # content YAML keeps but this line-based reader would strip or split, so it is refused, not misread.
             line = text.count("\n", 0, bad.start()) + 1
-            raise YamlSubsetError(f"line {line}: character U+{ord(bad.group()):04X} is not printable YAML")
+            raise YamlSubsetError(f"line {line}: character U+{ord(bad.group()):04X} is not supported here")
+        if text and not text.endswith("\n"):
+            # A last literal block keeps its final line break only if the text has one; requiring it keeps that exact.
+            raise YamlSubsetError("the document must end with a line break")
         self.lines = text.splitlines()
         self.i = 0
 
@@ -435,6 +441,11 @@ class YamlSubsetLoaderTest(unittest.TestCase):
             "a: x\x00y\n",
             "a: >\n  one\n    two\n  three\n",
             "a: |\n  text\n     \n",
+            "a:\n  - \u00a0type: input\n",
+            "a: |\n  \u00a0\n",
+            "a: |\n  text\u2028  next\n",
+            "a: |\n  text\u2029  next\n",
+            "a: |\n  text",
             "a: - invalid\n",
             "a: ]invalid\n",
             "a: 1.5\n",
