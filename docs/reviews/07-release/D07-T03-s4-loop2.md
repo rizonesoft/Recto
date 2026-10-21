@@ -496,3 +496,53 @@ OVERALL: needs-attention
 ## Fixes after round 10
 
 - Finding 1 (P1): the skip and expected-failure flags are read after the case is built, from every object `TestCase.run` reads: the class, the instance (a constructor can set them), the bound method, and the method's outer and unwrapped layers (`ExpectsOnInstance` refused). Mutation: the instance left out -> `HostileFixtureTest` fails. Tests: `Ran 25 tests ... OK`.
+
+## Round 11: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T13:49:45Z
+- Effort: medium
+- Lines: 36
+- Digest: 9d503b10fb559648
+
+## adversarial: needs-attention
+
+1. **P1**, `scripts/release-notes.py:126`: verifying the bound test method does not establish that unittest invokes it. A subclass can override `_callTestMethod` to suppress the regression body, and the probe still accepts it.
+
+   Reproduce with this module at the fix commit and `Regression-Test: module.Case.test_regression`:
+
+   ```python
+   import unittest
+
+   class Case(unittest.TestCase):
+       def _callTestMethod(self, method):
+           pass
+
+       def test_regression(self):
+           self.fail("bug remains")
+   ```
+
+   The candidate’s unchanged probe accepted an in-memory reproduction and printed its verification nonce. Running the same case through unittest’s loader reported one test, success, and zero failures: the failing regression body never executed. Validate the dispatch path as well as the method before granting verification.
+
+## consistency: approve
+
+## integration: approve
+
+## source-defect: needs-attention
+
+Finding 1 applies here too. The installed stdlib implementation dispatches through `self._callTestMethod(testMethod)`. Checking the identity of `testMethod` alone does not preserve unittest’s execution semantics.
+
+## design: advisory
+
+Not applicable.
+
+## record: advisory
+
+The full 25-test claim was not independently reproduced because the suite creates files and Git worktrees. Five read-only parser and documentation tests passed. Finding 1 was reproduced entirely in memory. No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 11
+
+- Finding 1 (P1): a test class must run with unittest's own machinery: `run`, `__call__`, `debug` and `_callTestMethod` must be `TestCase`'s (or `IsolatedAsyncioTestCase`'s), so an override that never calls the body is refused (`OverridesDispatch`). Tests: `Ran 25 tests ... OK`.
+- Threat model, recorded as a dated correction in §4 and in `docs/support/user-bugs.md`: the check guards against mistakes (a missing, skipped, disabled, expected-to-fail or outside test, a wrong id). It cannot rule out a committer deliberately defeating unittest from the test's own code, because any check that loads that code runs it; that boundary belongs to code review and the pull request's failing-on-parent, passing-on-fix evidence.

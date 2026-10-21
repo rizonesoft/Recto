@@ -126,6 +126,12 @@ if not (isinstance(case, cls) and isinstance(case, unittest.TestCase) and callab
 bound = getattr(case, method, None)
 if not (isinstance(bound, types.MethodType) and bound.__self__ is case and bound.__func__ is vars(owner)[method]):
     sys.exit(3)
+# The class must run its tests with unittest's own machinery: an override of how a test is called can skip the body.
+# (This check catches mistakes and the plain overrides; deliberate sabotage by a committer is code review's job, see
+# docs/support/user-bugs.md.)
+base = unittest.IsolatedAsyncioTestCase if issubclass(cls, unittest.IsolatedAsyncioTestCase) else unittest.TestCase
+if any(getattr(cls, name) is not getattr(base, name) for name in ("run", "__call__", "debug", "_callTestMethod")):
+    sys.exit(3)
 # A skipped test never runs its body, and an expected failure turns a failing body into a pass: neither proves a fix.
 # unittest's TestCase.run reads these flags from the class (inherited included), the instance (a constructor can set
 # them) and the method, so every one of those is checked, with each decorator layer of the method.
