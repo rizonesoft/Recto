@@ -227,6 +227,10 @@ class _Loader:
             trailing = "" if end is None else text[end + 1 :].strip()
             if end is None or (trailing and not trailing.startswith("#")):
                 self._fail(f"bad double-quoted scalar {text!r}")
+            # Only \" and \\ mean the same to JSON and YAML; any other escape (\u surrogates, \x, \N, \_ ...) is
+            # refused rather than decoded by rules YAML does not share.
+            if re.search(r'\\[^"\\]', text[: end + 1].replace("\\\\", "")):
+                self._fail(f"double-quoted escapes other than \\\" and \\\\ are not supported: {text!r}")
             return json.loads(text[: end + 1])
         if text.startswith("'"):
             match = re.match(r"^'((?:[^']|'')*)'\s*(#.*)?$", text)
@@ -446,6 +450,8 @@ class YamlSubsetLoaderTest(unittest.TestCase):
             "a: |\n  text\u2028  next\n",
             "a: |\n  text\u2029  next\n",
             "a: |\n  text",
+            'a: "\\ud83d\\ude00"\n',
+            'a: "tab\\there"\n',
             "a: - invalid\n",
             "a: ]invalid\n",
             "a: 1.5\n",
