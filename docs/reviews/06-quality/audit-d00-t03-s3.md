@@ -94,3 +94,52 @@ OVERALL: needs-attention
 
 - Finding 1 (P1): stream dictionaries are parsed, not searched: `top_level_values` walks a dictionary body object by object (strings with escapes, hex strings, nested dictionaries and arrays skipped whole, `N G R` references kept whole), and a stream needs exactly one direct `/Length` among its own entries. A `/Length` inside a nested dictionary or a string no longer counts; a duplicate, missing or indirect `/Length` refuses (`test_only_the_stream_dictionarys_own_length_counts`). The xref-stream and object-stream `/Length` reads use the same parser.
 - Finding 2 (P1): every classic xref entry must be the one 20-byte form ISO 32000-1 7.5.4 allows (`\d{10} \d{5} [nf]` plus a two-byte end of line), so an `x` flag, a bad end of line or a non-digit offset refuses (`test_a_classic_xref_entry_has_one_form`).
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T19:04:56Z
+- Effort: medium
+- Lines: 32
+- Digest: 7e7313b57343a93e
+
+## adversarial: needs-attention
+
+1. **P1: Escaped dictionary names bypass duplicate `/Length` rejection.** `scripts/build-corpus.py:1276` compares raw names without decoding hexadecimal escapes. Reproduce with `ClassicPdfBuilder`, using content object `b'<< /Length 3 /Len#67th 999 >>\nstream\nq Q\nendstream'`, then call `validate_pdf_structure`. It accepts this conflicting duplicate `/Length`. PDF names `/Len#67th` and `/Length` are identical under the [Adobe name-object rules](https://opensource.adobe.com/dc-acrobat-sdk-docs/library/plugin/Plugins_Cos.html). The round-2 promise of exactly one length therefore remains false.
+
+2. **P2: Literal-string delimiters break stream dictionary discovery.** `scripts/build-corpus.py:1281` balances raw `<<` and `>>` bytes without recognizing strings. Reproduce with content object `b'<< /Length 3 /Note (<<) >>\nstream\nq Q\nendstream'`. Despite correct length and builder-generated xref offsets, `validate_pdf_structure` rejects it with `unexpected byte b')' in dictionary`. A valid metadata string prevents corpus validation.
+
+## consistency: approve
+
+No independent findings.
+
+## integration: advisory
+
+The structural checks can certify malformed future fixtures used by engine tests. Byte equality against generator output cannot detect a defect shared by the generator and committed fixture. These reproductions do not establish corruption in the current committed PDFs.
+
+## source-defect: needs-attention
+
+3. **P1: Xref-stream validation ignores metadata that determines decoding and object numbering.** `scripts/build-corpus.py:1081` hardcodes Flate/PNG decoding; `scripts/build-corpus.py:1088` assumes entries enumerate objects starting at zero without checking `/Index`. Two independently reproduced mutations of `build_compressed_xref_2p()` pass `validate_pdf_structure`:
+   - Replace `b'/Type /XRef /Size 11'` with `b'/Type /XRef /Index [1 11] /Size 11'`. The declared numbering shifts every entry, but validation still checks the original numbering.
+   - Replace `b'/Filter /FlateDecode /DecodeParms'` with `b'/Filter /ASCII85Decode /DecodeParms'`. The payload remains Flate-compressed, but validation accepts the incompatible declared filter.
+
+   Both mutations preserve existing object offsets and stream lengths. The validator must honor or explicitly reject these declarations to substantiate structural validity. See [Adobe PDF Reference, sections 3.2.7 and 3.4.7](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.6.pdf).
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: advisory
+
+Independently reran the checkpoint at `af33f83`: `python -B scripts/build-corpus.py --check` exited 0 and reported 39 current fixtures. Four targeted regression tests from the previous rounds also passed. These results do not resolve findings 1–3. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 3
+
+The validator now checks the generator's own narrow PDF dialect and refuses anything outside it, instead of trying to read every legal spelling. `python -m unittest tests.scripts.test_build_corpus` -> `Ran 13 tests`, `OK` (the new tests fail against `af33f83`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): dictionary keys must be plain names (`/[A-Za-z0-9_.+-]+`); an escaped key such as `/Len#67th` refuses, so no second spelling of `/Length` can pass.
+- Finding 2 (P2): stream dictionaries are found by walking objects forward (`iter_stream_dicts`): each object's value is skipped with the string-aware parser and each stream's payload by its own `/Length`, so `(<<)` in a string is data, and stream bytes are never read as structure (`test_stream_dictionaries_parse_strings_and_refuse_escaped_keys`).
+- Finding 3 (P1): an xref stream must declare exactly what the validator applies: `/Filter /FlateDecode`, `/DecodeParms` with `/Predictor 12` and `/Columns` equal to the `/W` sum, and `/Index` absent or `[0 Size]` (`test_xref_stream_declarations_are_the_ones_applied`, both mutations).

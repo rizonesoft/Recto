@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -157,6 +158,27 @@ class BuildCorpusTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 self.mod.validate_pdf_structure("test.pdf", self._one_page_pdf(bad))
         self.mod.validate_pdf_structure("test.pdf", self._one_page_pdf(b"<< /Params << /Length 999 >> /Length 3 >>\nstream\nq Q\nendstream"))
+
+    def test_stream_dictionaries_parse_strings_and_refuse_escaped_keys(self) -> None:
+        # A string holding << or >> is data, not structure.
+        self.mod.validate_pdf_structure("test.pdf", self._one_page_pdf(b"<< /Length 3 /Note (<< x >>) >>\nstream\nq Q\nendstream"))
+        # /Len#67th is /Length spelled with an escape; the corpus dialect refuses escaped keys.
+        with self.assertRaisesRegex(ValueError, "not a plain name"):
+            self.mod.validate_pdf_structure("test.pdf", self._one_page_pdf(b"<< /Length 3 /Len#67th 999 >>\nstream\nq Q\nendstream"))
+
+    def test_xref_stream_declarations_are_the_ones_applied(self) -> None:
+        data = self.mod.build_compressed_xref_2p()
+        self.mod.validate_pdf_structure("render/compressed-xref-2p.pdf", data)
+        xref_at = int(re.search(rb"startxref\n(\d+)\n%%EOF\n\Z", data).group(1))
+        for old, new, reason in ((b"/Type /XRef /Size 11", b"/Type /XRef /Index [1 11] /Size 11", "/Index"),
+                                 (b"/Filter /FlateDecode /DecodeParms", b"/Filter /ASCII85Decode /DecodeParms", "/Filter")):
+            at = data.index(old)
+            # The edit sits in the xref stream's own dictionary, the last object, so every object offset and the
+            # startxref value stay right and only the declaration differs.
+            self.assertGreater(at, xref_at)
+            mutated = data[:at] + new + data[at + len(old):]
+            with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, re.escape(reason)):
+                self.mod.validate_pdf_structure("render/compressed-xref-2p.pdf", mutated)
 
     def test_a_classic_xref_entry_has_one_form(self) -> None:
         data = self.mod.build_simple_1p()

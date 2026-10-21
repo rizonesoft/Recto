@@ -1072,6 +1072,18 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int) -> Non
     w1, w2, w3 = int(w_m.group(1)), int(w_m.group(2)), int(w_m.group(3))
     if (w1, w2, w3) != (1, 2, 2):
         raise ValueError(f"{rel_path}: unexpected /W {(w1, w2, w3)}")
+    # Decoded below as Flate with the PNG Up predictor over whole entries, numbered from object 0: the dictionary must
+    # declare exactly that, or the entries would be read under rules the file does not state.
+    filters = top_level_values(dict_bytes, b"/Filter")
+    parms = top_level_values(dict_bytes, b"/DecodeParms")
+    index = top_level_values(dict_bytes, b"/Index")
+    if filters != [b"/FlateDecode"]:
+        raise ValueError(f"{rel_path}: XRef stream /Filter must be /FlateDecode, found {filters}")
+    if len(parms) != 1 or top_level_values(parms[0][2:-2], b"/Predictor") != [b"12"] \
+            or top_level_values(parms[0][2:-2], b"/Columns") != [str(w1 + w2 + w3).encode()]:
+        raise ValueError(f"{rel_path}: XRef stream /DecodeParms must be /Predictor 12 /Columns {w1 + w2 + w3}")
+    if index not in ([], [f"[0 {int(size_m.group(1))}]".encode()]):
+        raise ValueError(f"{rel_path}: XRef stream /Index {index} is not the default [0 Size]")
 
     row_width = w1 + w2 + w3
     stream_start = xref_offset + obj_match.end()
@@ -1267,6 +1279,9 @@ def top_level_values(dict_body: bytes, key: bytes) -> list[bytes]:
         name = tokens[k]
         if not name.startswith(b"/") or k + 1 >= len(tokens):
             raise ValueError(f"dictionary entry {name!r} is not a name followed by a value")
+        # The corpus writes plain key names only; a #xx escape would let one key pass for another (/Len#67th).
+        if re.fullmatch(rb"/[A-Za-z0-9_.+-]+", name) is None:
+            raise ValueError(f"dictionary key {name!r} is not a plain name")
         value = tokens[k + 1]
         k += 2
         if (re.fullmatch(rb"\d+", value) and k + 1 < len(tokens)
@@ -1278,22 +1293,33 @@ def top_level_values(dict_body: bytes, key: bytes) -> list[bytes]:
     return values
 
 
-def _dict_open(data: bytes, close: int) -> int | None:
-    """The index of the << that the >> at close balances, scanning back, or None."""
-    depth = 0
-    i = close
-    while i >= 0:
-        two = data[i : i + 2]
-        if two == b">>":
-            depth += 1
-            i -= 1
-        elif two == b"<<":
-            depth -= 1
-            if depth == 0:
-                return i
-            i -= 1
-        i -= 1
-    return None
+_OBJ_HEADER = re.compile(rb"(?:\A|(?<=\n))\d+ \d+ obj\n")
+
+
+def iter_stream_dicts(rel_path: str, data: bytes):
+    """(dictionary start, end, stream data start) for every stream, found by walking objects forward: each object's
+    value is skipped with the string-aware parser, and a stream's payload by its own /Length, so bytes inside strings
+    or stream data are never read as structure."""
+    pos = 0
+    while True:
+        m = _OBJ_HEADER.search(data, pos)
+        if m is None:
+            return
+        start = m.end()
+        if not data.startswith(b"<<", start):
+            pos = start
+            continue
+        try:
+            end = _skip_object(data, start)
+        except ValueError as e:
+            raise ValueError(f"{rel_path}: object at {m.start()} does not parse: {e}") from None
+        if not data.startswith(b"\nstream\n", end):
+            pos = end
+            continue
+        stream_start = end + len(b"\nstream\n")
+        yield start, end, stream_start
+        lengths = top_level_values(data[start + 2 : end - 2], b"/Length")
+        pos = stream_start + (int(lengths[0]) if len(lengths) == 1 and lengths[0].isdigit() else 0)
 
 
 def validate_pdf_structure(rel_path: str, data: bytes) -> None:
@@ -1307,11 +1333,8 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
     # its dictionary's layout (single-line or spread over lines), and each must be accounted for: an endstream no
     # dictionary was matched to refuses.
     checked = 0
-    for m in re.finditer(rb">>[ \t\r\n]*stream\n", data):
-        open_at = _dict_open(data, m.start())
-        if open_at is None:
-            raise ValueError(f"{rel_path}: stream at {m.end()} has no balanced << >> dictionary")
-        dict_body = data[open_at + 2 : m.start()]
+    for open_at, close_at, stream_start in iter_stream_dicts(rel_path, data):
+        dict_body = data[open_at + 2 : close_at - 2]
         checked += 1
         try:
             lengths = top_level_values(dict_body, b"/Length")
@@ -1322,7 +1345,6 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
         if len(lengths) != 1 or re.fullmatch(rb"\d+", lengths[0]) is None:
             raise ValueError(f"{rel_path}: stream dictionary needs exactly one direct /Length, found {lengths}")
         declared_len = int(lengths[0])
-        stream_start = m.end()
         end_pos = stream_start + declared_len
         if data[end_pos : end_pos + 10] != b"\nendstream":
             raise ValueError(
