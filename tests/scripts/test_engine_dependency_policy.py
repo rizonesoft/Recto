@@ -15,6 +15,8 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 MUPDF = re.compile(r"mupdf|artifex|\bjbig2dec\b", re.IGNORECASE)
 CONFIGURATIONS = [(configuration, platform) for configuration in ("Debug", "Release") for platform in ("x64", "ARM64")]
 REQUIRED = {"LanguageStandard": "stdcpp20", "WarningLevel": "Level4", "TreatWarningAsError": "true"}
+# Switches in AdditionalOptions that would override the required metadata on the compiler command line.
+OVERRIDES = re.compile(r"(?:^|\s)[/-](?:std:|W[0-3](?:\s|$)|WX-|w(?:\s|$)|wd)", re.IGNORECASE)
 
 
 def msbuild():
@@ -51,8 +53,10 @@ class EngineDependencyPolicyTest(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == "win32", "the C++ build and MSBuild are Windows-only (foundation plan D15)")
     def test_every_module_compiles_as_cpp20_with_warnings_as_errors(self):
-        # MSBuild itself evaluates each project, conditions included, and reports every source file's effective
-        # ClCompile metadata, so nothing commented out, conditioned away or overridden per file can pass.
+        # MSBuild itself evaluates each project, conditions included, and reports every source file's ClCompile
+        # metadata at evaluation time, so a setting commented out, conditioned away or overridden per file fails, and
+        # so does a switch in AdditionalOptions that would override it. Targets that rewrite flags during a build are
+        # outside what evaluation shows; the build itself enforces the result (/WX fails it on any warning).
         tool = msbuild()
         self.assertIsNotNone(tool, "MSBuild was not found through vswhere; the policy cannot be checked")
         projects = tracked("*.vcxproj")
@@ -69,6 +73,8 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                     for item in items:
                         for name, value in REQUIRED.items():
                             self.assertEqual(item.get(name), value, f"{item.get('Identity')}: {name}")
+                        self.assertIsNone(OVERRIDES.search(item.get("AdditionalOptions", "")),
+                                          f"{item.get('Identity')}: AdditionalOptions overrides the policy")
 
 if __name__ == "__main__":
     unittest.main()

@@ -233,3 +233,48 @@ Rounds 4 and 5 showed that reading `Directory.Build.targets` as text or XML cann
 - Finding 1 (P1): a setting conditioned away (or commented out, or overridden for one file) now fails. Mutation: `TreatWarningAsError` conditioned on a configuration that never builds -> `FAILED (failures=28)` (7 projects x 4 configurations).
 - The check is Windows-only like the build (D15); on Windows a missing MSBuild is a failure, not a skip. It runs in about 7 seconds. Tests: `Ran 3 tests ... OK`.
 - CI run `39615055510` on `15a21a7` (the first commit with the new `.gitattributes`) finished: build and ASan both `success`.
+
+## Round 6: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T14:35:51Z
+- Effort: medium
+- Lines: 31
+- Digest: ed6761e8b84d0630
+
+## adversarial: needs-attention
+
+1. **P1** `tests/scripts/test_engine_dependency_policy.py:70`: The compiler-policy guard ignores `AdditionalOptions`, which can override the three checked metadata values. A source item can retain `stdcpp20`, `Level4`, and `true` while supplying `/std:c++17 /W0 /WX-` through additional compiler options.
+
+   Reproduced without writes: wrapped the real `subprocess.run`, parsed each successful `-getItem:ClCompile` response, appended those switches to each item's `AdditionalOptions`, and returned the modified JSON to the unchanged test. The guard accepted all 124 modified source items. This demonstrates false acceptance by the guard, not incorrect settings in the current projects.
+
+## consistency: approve
+
+No additional findings.
+
+## integration: advisory
+
+Current clean-clone compilation was not independently verified because building writes files. The policy test passing does not establish effective compiler arguments because of finding 1.
+
+## source-defect: needs-attention
+
+Finding 1 applies here. Evaluated item metadata is not equivalent to the final compiler command line. The [CL task documentation](https://learn.microsoft.com/en-us/visualstudio/msbuild/cl-task) identifies `AdditionalOptions` as another source of compiler switches. The guard checks only three fields and ignores that source.
+
+Additionally, [`-getItem` without a target](https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-command-line-reference) reports evaluation-time items, before build targets execute. Its results should not be described as proof of every source file's final compilation settings.
+
+## design: advisory
+
+Not applicable: this section owns no user surface.
+
+## record: advisory
+
+At `ff153197367345feba66c42a49e23a8441225bef`, the checkpoint independently returned `False`, `False`, and `valid: 677 sections`; all three policy tests passed. The opening 676-section result concerns an earlier revision. The round-5 claim that per-file overrides cannot pass is too broad, as finding 1 demonstrates.
+
+No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 6
+
+- Finding 1 (P1): a switch in an item's `AdditionalOptions` that would override the policy (`/std:`, `/W0` to `/W3`, `/WX-`, `/w`, `/wd`) fails the check. Mutation: `/WX-` added to `AdditionalOptions` in `Directory.Build.targets` -> the test fails.
+- The claim is narrowed to what MSBuild evaluation shows: the project configuration, per source file, at evaluation time. Targets that rewrite flags during a build are outside it; the build enforces the result, since `/WX` fails it on any warning, and the CI build logs show `/W4 /WX /std:c++20`. Tests: `Ran 3 tests ... OK`.
