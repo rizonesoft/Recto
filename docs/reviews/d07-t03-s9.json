@@ -1,0 +1,36 @@
+{
+  "ref": "D07 T03 \u00a79",
+  "title": "Gtest regression evidence from the fix commit's own CI test list",
+  "implementation_sha": "c3f23b0d40af9891ead03b0b326146232af65435",
+  "date": "2026-10-21",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/07-release/D07-T03-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/07-release/D07-T03-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/07-release/D07-T03-s9.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/07-release/D07-T03-s9.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "python -m unittest tests.scripts.test_release_notes -> Ran 24 tests OK; note lookup disabled -> FAILED (failures=3)",
+    "live CI run 39598190636 on c3f23b0 -> build, asan, test-list-note success; git notes --ref=gtest-list show c3f23b0 -> 111 lines; origin holds 4 notes",
+    "python -m unittest discover -s tests/scripts -> Ran 192 tests OK",
+    "python scripts/check-actions-pins.py check -> every GitHub Action in .github/workflows is on its latest stable major"
+  ],
+  "rounds_spent": 4,
+  "round_cap": 22
+}

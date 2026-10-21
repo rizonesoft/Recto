@@ -42,7 +42,7 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | Issue forms, triage policy and `SECURITY.md` | -- | [x] |
-| 2 | §9 | Gtest regression evidence from the fix commit's own CI test list | §1 | [ ] |
+| 2 | §9 | Gtest regression evidence from the fix commit's own CI test list | §1 | [x] |
 | 3 | §4 | User-bug regression rule, closing on release and changelog mapping | §1, §9 | [ ] |
 | 4 | §6 | Public scope page and user demand ledger | §1 | [ ] |
 | 5 | §3 | Structure-preserving reproducer scrubber (`recto-cli scrub`) | D04 T02 §2 | [ ] |
@@ -278,9 +278,12 @@ Users stay on old builds and report bugs already fixed, and cannot find features
 - [x] Delete the C++ source scanner (`_spliced`, `cpp_lines`, `cpp_code`, `_conditional_lines`, `cpp_sources`, `gtest_declared`, `_in_number`, `_separator_follows`) and the `--gtest-list` option, and their fixtures in `tests/scripts/test_release_notes.py`. Done when: `git grep -n "cpp_lines\|gtest_declared\|--gtest-list" -- scripts tests` prints nothing.
 - [x] Update `docs/support/user-bugs.md`: a gtest regression test counts when CI's list for the fix commit names it; drop the plain-declaration convention. Done when: the file names `refs/notes/gtest-list` and no longer names the convention.
 - [x] Add fixtures to `tests/scripts/test_release_notes.py` that write notes with `git notes --ref=gtest-list add`. Done when: removing the note lookup makes the suite fail.
-- [ ] Commit: `release: verify gtest regression tests against the fix commit's CI test list`
+- [x] Commit: `release: verify gtest regression tests against the fix commit's CI test list`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_release_notes` passes; a fixture fix commit whose note lacks its `Regression-Test:` id, and one with no note, are each reported as violations; and a real push to `main` leaves a readable note (`git notes --ref=gtest-list show <sha>`).
+
+> **Verified:** 2026-10-21 | §9 | c3f23b0d40af9891ead03b0b326146232af65435
+> **Review:** `docs/reviews/d07-t03-s9.json`
 
 ## Verification
 

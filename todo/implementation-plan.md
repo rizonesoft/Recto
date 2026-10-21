@@ -27,7 +27,7 @@ Sections: 19 | Checklist items: 103
 | [x]    | D00 T03 §5 | `tests/corpus/PROVENANCE.md` and automated `Corpus.Provenance` SHA-256 integrity suite   | windows-host | 6     |
 | [x]    | D00 T03 §6 | MSVC AddressSanitizer (`/fsanitize=address`) build configuration and CI `asan` job       | windows-host | 6     |
 | [x]    | D07 T03 §1 | Issue forms, triage policy and `SECURITY.md`                                             | none         | 8     |
-| [ ]    | D07 T03 §9 | Gtest regression evidence from the fix commit's own CI test list                         | none         | 7     |
+| [x]    | D07 T03 §9 | Gtest regression evidence from the fix commit's own CI test list                         | none         | 7     |
 | [ ]    | D07 T03 §4 | User-bug regression rule, closing on release and changelog mapping                       | none         | 7     |
 | [ ]    | D07 T03 §6 | Public scope page and user demand ledger                                                 | none         | 7     |
 | [ ]    | D07 T03 §8 | Strict issue-form YAML reader and top-level schema types                                 | none         | 7     |
@@ -721,6 +721,6 @@ Sections: 4 | Checklist items: 22
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
-Progress: 25/652 verified sections, 16 ready to run now.
+Progress: 26/652 verified sections, 16 ready to run now.
 
-Checklist: 173/4737 items completed (includes Commit items).
+Checklist: 174/4737 items completed (includes Commit items).
