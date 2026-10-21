@@ -1,0 +1,115 @@
+{
+  "ref": "D06 T05 \u00a711",
+  "title": "Audit D00 T03 \u00a73: Deterministic PDF corpus generator (scripts/build-corpus.py) for",
+  "implementation_sha": "daf5ca94da3c99f209817031db7219e3ab026ef0",
+  "date": "2026-10-21",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 6,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 7,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 8,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 9,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 10,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 11,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 12,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 13,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 14,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 15,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 16,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 17,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 18,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 19,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 20,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s3.md",
+      "verdict": "stopped-low-severity"
+    }
+  ],
+  "checks": [
+    "python scripts/build-corpus.py --check -> verified: 39 corpus fixtures are current",
+    "python -m unittest tests.scripts.test_build_corpus -> OK; recto-tests.exe --gtest_filter=Corpus.* -> 4 tests passed"
+  ],
+  "rounds_spent": 20,
+  "round_cap": 22,
+  "cap_outcome": "Round 20 returned one P3 (the tables-and-forms fixture described as a 4x5 table) and declared HIGHEST: P3, so the loop stopped on severity; the description was corrected in the audit commit and PROVENANCE.md regenerated, so nothing was left to file."
+}

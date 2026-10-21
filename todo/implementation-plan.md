@@ -36,7 +36,7 @@ Sections: 34 | Checklist items: 177
 | [x]    | D06 T05 §8  | Audit D00 T02 §3: Seeded graph and generated plan                                        | none         | 5     |
 | [x]    | D06 T05 §9  | Audit D00 T03 §1: test_support corpus path resolver and TempDir RAII helper              | windows-host | 5     |
 | [x]    | D06 T05 §10 | Audit D00 T03 §2: RGBA pixel comparison (expect_rgba_equal, compute_ssim) and test       | windows-host | 5     |
-| [ ]    | D06 T05 §11 | Audit D00 T03 §3: Deterministic PDF corpus generator (scripts/build-corpus.py) for       | windows-host | 5     |
+| [x]    | D06 T05 §11 | Audit D00 T03 §3: Deterministic PDF corpus generator (scripts/build-corpus.py) for       | windows-host | 5     |
 | [ ]    | D06 T05 §12 | Audit D00 T03 §4: Encrypted (RC4/AES-128/AES-256), broken/ and seeds/ corpus fixtures    | windows-host | 5     |
 | [ ]    | D06 T05 §13 | Audit D00 T03 §5: tests/corpus/PROVENANCE.md and automated Corpus.Provenance SHA-256     | windows-host | 5     |
 | [ ]    | D06 T05 §14 | Audit D00 T03 §6: MSVC AddressSanitizer (/fsanitize=address) build configuration and CI  | windows-host | 5     |
@@ -747,6 +747,6 @@ Sections: 4 | Checklist items: 22
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
-Progress: 39/678 verified sections, 14 ready to run now.
+Progress: 40/678 verified sections, 14 ready to run now.
 
-Checklist: 238/4865 items completed (includes Commit items).
+Checklist: 239/4865 items completed (includes Commit items).
