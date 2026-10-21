@@ -209,21 +209,28 @@ def _conditional_lines(code):
         word, condition = directive.group(1), re.sub(r"[\s()]", "", directive.group(2))
         # A branch is kept unless it is certainly not compiled. `taken` means an earlier branch of this group is
         # certainly compiled (a literal 1), which makes every later branch dead whatever its condition.
+        # Depth: every alternative starts from the depth at its `#if`, and after `#endif` the depth is the one the
+        # first possibly-compiled alternative ended with (an inactive one contributes nothing).
         known = word in ("if", "elif") and condition in ("0", "1")
         if word in ("if", "ifdef", "ifndef"):
             frames.append({"active": not known or condition == "1", "taken": known and condition == "1",
-                           "depth": depth})
-        elif word == "elif" and frames:
-            frame = frames[-1]
+                           "depth": depth, "end": None})
+            continue
+        if not frames:
+            continue
+        frame = frames[-1]
+        if frame["active"] and frame["end"] is None:
+            frame["end"] = depth
+        if word == "elif":
             frame["active"] = not frame["taken"] and (not known or condition == "1")
             frame["taken"] = frame["taken"] or (known and condition == "1")
             depth = frame["depth"]
-        elif word == "else" and frames:
-            frame = frames[-1]
+        elif word == "else":
             frame["active"] = not frame["taken"]
             frame["taken"] = True
             depth = frame["depth"]
-        elif word == "endif" and frames:
+        else:  # endif
+            depth = frame["depth"] if frame["end"] is None else frame["end"]
             frames.pop()
     return kept
 
