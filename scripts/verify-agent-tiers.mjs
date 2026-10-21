@@ -121,7 +121,9 @@ export function readAgentFrontmatter(text) {
     // YAML needs whitespace after the colon in a block mapping: `model:sonnet`
     // is the plain scalar "model:sonnet", not a pin, and reading it as one let
     // a definition with no model field through.
-    const entry = /^([A-Za-z_][A-Za-z0-9_-]*):(?:[ \t]+([^\r\n]*?))?[ \t]*$/.exec(line);
+    // Spaces only between the colon and the value: some YAML loaders refuse a tab there, and this check must not
+    // accept a line the agent loader cannot read.
+    const entry = /^([A-Za-z_][A-Za-z0-9_-]*):(?:[ ]+([^\r\n]*?))?[ \t]*$/.exec(line);
     if (!entry) {
       return { fields: null, error: `frontmatter line ${JSON.stringify(line)} is not a plain "key: value" pair; agent frontmatter is read as a closed subset of YAML and anything else is refused rather than guessed` };
     }
@@ -184,6 +186,12 @@ export function readAgentFrontmatter(text) {
     const plain = value.replace(/(?:^|[ \t])#.*$/, "").trim();
     if (/^[&*!]/.test(plain) || /^[[{]/.test(plain)) {
       return { fields: null, error: `"${key}:" uses YAML ${plain.startsWith("[") || plain.startsWith("{") ? "flow collection" : "anchor, alias or tag"} syntax (${JSON.stringify(plain)}); write the value plainly, because an alias resolves to something this check cannot see` };
+    }
+    // A plain scalar YAML can read: it does not start with an indicator (a leading -, ? or : only when a non-space
+    // character follows), and holds no ": " or trailing ":", which YAML reads as a nested mapping and refuses. A line
+    // this check accepted but the agent loader cannot parse would pass here and break at load time.
+    if (/^[,\[\]{}#&*!|>'"%@`]/.test(plain) || /^[-?:](?:[ \t]|$)/.test(plain) || /:(?:[ \t]|$)/.test(plain)) {
+      return { fields: null, error: `"${key}:" has a plain value YAML cannot read (${JSON.stringify(plain)}); quote it` };
     }
     fields.set(key, { value: plain, isQuoted: false });
   }
