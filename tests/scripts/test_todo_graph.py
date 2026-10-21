@@ -143,12 +143,30 @@ class Graph(Tree):
                     "Note **Deferred:** later -> XREF: §2"):
             self.write(todo_file([(1, "A", 0, "none", "--"), (2, "B", 0, "none", "--")]).replace(
                 "- [ ] Work.", "- [ ] Work.\n\n" + bad + "\n", 1))
-            self.refuses("must open a blockquote line")
+            self.refuses("must open a blockquote line and say something")
 
-    def test_numbered_checkbox_refuses(self):
-        for bad in ("1. [ ] Unfinished work.", "2) [x] Done elsewhere."):
-            self.write(todo_file([(1, "A", 0, "none", "--")]).replace("- [ ] Work.", "- [ ] Work.\n" + bad))
-            self.refuses("numbered checklist item")
+    def test_checklist_item_in_another_spelling_refuses(self):
+        for bad in ("1. [ ] Unfinished work.", "2) [x] Done elsewhere.", "> - [ ] Quoted work.", ">- [ ] Quoted.",
+                    "  - [ ] Indented work.", "> 1. [ ] Quoted and numbered."):
+            self.write(todo_file([(1, "A", 0, "none", "--"), (2, "B", 0, "none", "--")]).replace(
+                "- [ ] Work.", "- [ ] Work.\n" + bad, 1))
+            self.refuses("malformed checklist item")
+
+    def test_empty_deferral_marker_refuses(self):
+        for bad in ("> **Deferred:**", "> **Resolved:**   "):
+            self.write(todo_file([(1, "A", 0, "none", "--"), (2, "B", 0, "none", "--")]).replace(
+                "**Test checkpoint:** `true` exits 0.\n\n## 2. B", "**Test checkpoint:** `true` exits 0.\n" + bad + "\n\n## 2. B"))
+            self.refuses("must open a blockquote line and say something")
+
+    def test_malformed_xref_does_not_resolve_to_another_section(self):
+        for bad in ("-> XREF: D00 T999 §1", "-> XREF: §1x", "-> XREF:§1", "-> XREF: D00 T01 §1 -> XREF: D00 T99 §999",
+                    "-> XREF: none yet"):
+            self.write(todo_file([(1, "A", 0, "none", "--"), (2, "B", 0, "none", "--")], inputs="- i " + bad))
+            with self.assertRaises(tg.Refused):
+                tg.graph(self.root)
+        self.write(todo_file([(1, "A", 0, "none", "--"), (2, "B", 0, "none", "--")],
+                             inputs="- see §2 -> XREF: §2 (the second)"))
+        tg.graph(self.root)
 
     def test_malformed_checklist_item_refuses(self):
         for bad in ("- [?] Work.", "- [] Work.", "- [X] Work.", "- Work without checkbox."):

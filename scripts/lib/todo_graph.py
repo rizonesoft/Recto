@@ -17,6 +17,8 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 PLAN = "todo/implementation-plan.md"
+# What follows each "-> XREF:": one space and exactly one well-formed reference, nothing run into it.
+XREF_TARGET = re.compile(r" (?:D(?P<d>\d{2}) )?(?:T(?P<t>\d{2}) )?§(?P<s>[1-9]\d*)(?![\w§])")
 REF = re.compile(r"(?:D(?P<d>\d{2})\s+)?(?:T(?P<t>\d{2})\s+)?§(?P<s>[1-9]\d*)")
 ROW = re.compile(r"^\|\s*([1-9]\d*)\s*\|\s*§([1-9]\d*)\s*\|\s*([^|]+)\|\s*([^|]*)\|\s*\[([ x])\]\s*\|$")
 # What a section needs from outside the repository. The WAITING values are people, companies, or the
@@ -82,10 +84,18 @@ def normalize(value, domain, todo):
 
 
 def find_ref(text, domain, todo):
-    m = REF.search(text)
+    """The section the whole text names (surrounding spaces and backticks aside), or None: a reference with anything
+    run into it does not parse, so a malformed one is never read as a neighbouring section."""
+    m = REF.fullmatch(text.strip().strip("`"))
     if m is None:
         return None
     return f"D{m['d'] or domain} T{m['t'] or todo} §{m['s']}"
+
+
+def xref_target(text, domain, todo):
+    """The section the text right after one "-> XREF:" names, or None when it is not exactly one reference."""
+    m = XREF_TARGET.match(text)
+    return f"D{m['d'] or domain} T{m['t'] or todo} §{m['s']}" if m else None
 
 
 def extract_ref(text, rows):
@@ -287,11 +297,12 @@ def adjacency_of(body, relative, domain, todo):
 def xrefs_of(body, domain, todo):
     refs = []
     for line in body.splitlines():
-        if "-> XREF:" not in line:
-            continue
-        ref = find_ref(line.split("-> XREF:", 1)[1], domain, todo)
-        require(ref is not None, f"XREF line names no section: {line.strip()}")
-        refs.append(ref)
+        # Every XREF on the line, each read strictly: a malformed one refuses instead of resolving to whatever
+        # reference text happens to follow it.
+        for tail in line.split("-> XREF:")[1:]:
+            ref = xref_target(tail, domain, todo)
+            require(ref is not None, f"XREF must name exactly one well-formed section: {line.strip()}")
+            refs.append(ref)
     return refs
 
 
@@ -384,9 +395,9 @@ def graph(root=ROOT):
             deps = [] if dep == "--" else [normalize(v, d, t) for v in dep.split(",")]
             require(len(deps) == len(set(deps)), f"duplicate dependency: {ref}")
             for line in section_body.splitlines():
-                # A numbered checkbox (1. [ ] ...) is a checklist item the graph would not count: refuse it.
-                require(re.match(r"^\s*\d+[.)]\s*\[[ xX]\]", line) is None, f"numbered checklist item: {ref}")
-                if re.match(r"^\s*[-*+]\s*\[(?![^\]]+\]\()", line):
+                # Every checklist-shaped line (a list marker and a box, quoted, numbered or indented) must be the one
+                # form the graph counts, so no item can hide in another spelling.
+                if re.match(r"^[\s>]*(?:[-*+]|\d+[.)])[ \t]*\[[^\]\n]*\](?!\()", line):
                     require(re.fullmatch(r"- \[([ x])\] \S.*", line) is not None,
                             f"malformed checklist item: {ref}")
             require("**Build order:**\n" in section_body and "\n- [" in section_body,
@@ -466,11 +477,11 @@ def graph(root=ROOT):
         # Only a blockquoted marker is read below; any other spelling would drop the deferral from every check.
         for line in row.body.splitlines():
             if re.search(r"\*\*(?:Deferred|Resolved):\*\*", line):
-                require(re.match(r"> \*\*(?:Deferred|Resolved):\*\*", line) is not None,
-                        f"a Deferred or Resolved marker must open a blockquote line: {row.ref}")
+                require(re.match(r"> \*\*(?:Deferred|Resolved):\*\*[ \t]*\S", line) is not None,
+                        f"a Deferred or Resolved marker must open a blockquote line and say something: {row.ref}")
         for marker in ("Deferred", "Resolved"):
-            for line in re.findall(r"^> \*\*" + marker + r":\*\*\s*(.+)$", row.body, re.M):
-                owner = find_ref(line.split("-> XREF:", 1)[1], row.ref[1:3], row.ref[5:7]) \
+            for line in re.findall(r"^> \*\*" + marker + r":\*\*[ \t]*(\S.*)$", row.body, re.M):
+                owner = xref_target(line.split("-> XREF:", 1)[1], row.ref[1:3], row.ref[5:7]) \
                     if "-> XREF:" in line else None
                 require(owner is not None and owner in sections,
                         f"{marker} without a resolving owner: {row.ref}")
@@ -633,7 +644,7 @@ def deferrals(root=ROOT):
     found = []
     for row in ordered(rows):
         for marker in ("Deferred", "Resolved"):
-            for line in re.findall(r"^> \*\*" + marker + r":\*\*\s*(.+)$", row.body, re.M):
+            for line in re.findall(r"^> \*\*" + marker + r":\*\*[ \t]*(\S.*)$", row.body, re.M):
                 found.append({"ref": row.ref, "state": marker.lower(), "text": line.strip()})
     return found
 

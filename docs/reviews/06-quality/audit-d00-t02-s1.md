@@ -147,3 +147,47 @@ In `scripts/lib/todo_graph.py`, tested in `tests/scripts/test_todo_graph.py` (`R
 - Finding 1 (P1): the level-two headings must be exactly `## Inputs`, `## Outcome`, `## Implementation Order`, the numbered sections and `## Verification`, once each and in that order, so a repeated structural heading can no longer cut a section short (`test_unknown_level_two_heading_refuses` now also inserts `## Inputs`, `## Outcome` and `## Verification`).
 - Finding 2 (P1): a `**Deferred:**` or `**Resolved:**` marker anywhere in a section must open a `> ` blockquote line, the only form the deferral checks and `deferrals()` read (`test_deferral_marker_outside_a_blockquote_refuses`).
 - Finding 3 (P2): `rounds_recorded` counts rounds with the dispatcher's `read_rounds`, so a round heading quoted inside a review is not counted; only a report the reader cannot read (older than its format) falls back to the headings (`test_a_round_heading_quoted_inside_a_review_is_not_counted`).
+
+## Round 4: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T15:31:08Z
+- Effort: medium
+- Lines: 27
+- Digest: e7c4f48fe9735262
+
+## adversarial: needs-attention
+
+1. **P1: Blockquoted checkboxes bypass unfinished-work checks.** `scripts/lib/todo_graph.py:386` checks ordinary and numbered checkboxes, while line 407 counts only unquoted checkboxes. Reproduce by inserting `> - [ ] Unfinished required work.` immediately before section 2 in `todo/00-workspace/TODO-02-todo-system.md`. An in-memory overlay passed validation with 677 sections; section 1 retained disposition `3` (verified). The strict parser must reject this noncanonical checklist syntax instead of silently excluding unfinished work.
+
+## consistency: approve
+
+No additional finding.
+
+## integration: needs-attention
+
+2. **P1: An empty deferral marker disappears from validation and reporting.** `scripts/lib/todo_graph.py:472` requires content after the marker before checking its owner; `scripts/lib/todo_graph.py:636` uses the same pattern for reporting. Reproduce by inserting `> **Deferred:**` as the final line of section 1, immediately before section 2. The marker passes the new blockquote-format check, but section-body trimming leaves it unmatched by both subsequent expressions. The in-memory reproduction passed validation, retained disposition `3`, and returned no deferral for this section. An ownerless deferral is therefore accepted and omitted from `query deferred`.
+
+## source-defect: needs-attention
+
+3. **P1: Malformed qualified references silently resolve to a different section.** `scripts/lib/todo_graph.py:84` uses an unanchored `REF.search`; `scripts/lib/todo_graph.py:292` accepts that partial match as an XREF target. Reproduce by inserting `-> XREF: D00 T999 §1` before section 2 in the audited TODO file. `xrefs_of()` returns `D00 T02 §1`, silently discarding the malformed qualification and substituting the current TODO. The overlaid tree passes validation. Likewise, `-> XREF: D00 T01 §1 -> XREF: D00 T99 §999` validates while checking only the first target. Invalid references evade both unresolved-target and bidirectional-XREF checks.
+
+## design: advisory
+
+Not applicable to this section’s declared surface.
+
+## record: advisory
+
+The full-suite checkpoint remains independently unconfirmed. Loading and running the current suite through `unittest` produced 68 tests with 67 fixture-setup errors because the read-only environment cannot create temporary directories; the Repository test passed. This is an environment limitation, not a candidate defect. Current `plan --check` returned `plan current`, and validation returned `valid: 677 sections`. These results do not establish the historical full-suite pass recorded at the findings file’s top.
+
+All reproductions used in-memory overlays at `d45ae78`. No files were modified; the working tree remains clean.
+
+OVERALL: needs-attention
+
+## Fixes after round 4
+
+The parser now works from an allow-list rather than patching one spelling at a time: each construct the graph reads has exactly one accepted form, and any line shaped like it in another form refuses. In `scripts/lib/todo_graph.py`, tested in `tests/scripts/test_todo_graph.py` (`Ran 70 tests`, `OK`; against `d45ae78` the four new or changed tests report `FAILED (failures=4)`; the live tree validates, `valid: 677 sections`).
+
+- Finding 1 (P1): any checklist-shaped line (a list marker or number, then a box, whether quoted, indented or numbered) must be the canonical `- [ ] ` or `- [x] ` at column 0 (`test_checklist_item_in_another_spelling_refuses`).
+- Finding 2 (P1): a `Deferred` or `Resolved` marker must open a blockquote line and carry text; the extraction regexes no longer let `\s*` run onto the next line (`test_empty_deferral_marker_refuses`).
+- Finding 3 (P1): every `-> XREF:` on a line is read with `XREF_TARGET` (one space, then exactly one well-formed reference not run into further text), and `find_ref` (adjacency owners) now requires the whole text to be one reference, so `D00 T999 §1` or a second malformed XREF refuses instead of resolving elsewhere (`test_malformed_xref_does_not_resolve_to_another_section`).
