@@ -1500,6 +1500,57 @@ def stream_object_at(rel_path: str, data: bytes, offset: int) -> tuple[dict[byte
     return entries, payload, payload + int(length.group(1))
 
 
+def validate_layout(rel_path: str, data: bytes) -> None:
+    """Account for every byte: the header, then objects and revision endings only. A classic revision ends with its
+    xref table, `trailer`, its dictionary, `startxref` naming that table and `%%EOF`; an xref-stream revision ends with
+    `startxref` naming its xref stream object and `%%EOF`. Nothing else may sit anywhere in the file, and every
+    `startxref` names the section of its own revision, so no fragment can stand in for another."""
+    header = re.match(rb"%PDF-[12]\.\d\n%[\x80-\xff]{4}\n", data)
+    if header is None:
+        raise ValueError(f"{rel_path}: the header is not %PDF-n.n and a binary comment line")
+    pos = header.end()
+    section = None  # where this revision's xref table or xref stream object starts
+    revisions = 0
+    while pos < len(data):
+        m = re.match(rb"\d+ \d+ obj\n", data[pos:])
+        if m is not None:
+            start = pos + m.end()
+            end = _skip_object(data, start)
+            if data.startswith(b"<<", start) and data.startswith(b"\nstream\n", end):
+                if dict_entries(data[start + 2 : end - 2]).get(b"/Type") == b"/XRef":
+                    section = pos
+                lengths = top_level_values(data[start + 2 : end - 2], b"/Length")
+                if len(lengths) != 1 or not lengths[0].isdigit():
+                    raise ValueError(f"{rel_path}: stream dictionary needs exactly one direct /Length, found {lengths}")
+                end += len(b"\nstream\n") + int(lengths[0])
+                if not data.startswith(b"\nendstream", end):
+                    raise ValueError(f"{rel_path}: stream at {pos} does not end at its /Length")
+                end += len(b"\nendstream")
+            if not data.startswith(b"\nendobj\n", end):
+                raise ValueError(f"{rel_path}: object at {pos} does not end with endobj")
+            pos = end + len(b"\nendobj\n")
+            continue
+        if data.startswith(b"xref\n", pos):
+            section = pos
+            trailer = data.find(b"trailer\n<<", pos)
+            if trailer < 0:
+                raise ValueError(f"{rel_path}: xref table at {pos} has no trailer")
+            pos = _skip_object(data, trailer + len(b"trailer\n")) + 1
+            if data[pos - 1 : pos] != b"\n":
+                raise ValueError(f"{rel_path}: the trailer dictionary at {trailer} is not followed by a line break")
+        ending = re.match(rb"startxref\n(\d+)\n%%EOF\n", data[pos:])
+        if ending is None:
+            raise ValueError(f"{rel_path}: unexpected bytes at {pos}: {data[pos:pos + 16]!r}")
+        if section is None or int(ending.group(1)) != section:
+            raise ValueError(f"{rel_path}: startxref at {pos} names {ending.group(1).decode()}, not its revision's "
+                             f"cross-reference section ({section})")
+        section = None
+        revisions += 1
+        pos += ending.end()
+    if revisions == 0:
+        raise ValueError(f"{rel_path}: no revision ends with startxref and %%EOF")
+
+
 def validate_pdf_structure(rel_path: str, data: bytes) -> None:
     """Validate PDF header, stream /Length exactness, xref offsets, and content semantics."""
     if not (data.startswith(b"%PDF-1.") or data.startswith(b"%PDF-2.")):
@@ -1631,6 +1682,9 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
         s4_raw = zlib.decompress(payload_of(4))
         if re.search(rb"\b(?:BT|ET|Tj|TJ|Tf)\b", s4_raw):
             raise ValueError("text/scanned.pdf content stream must contain 0 text operators")
+
+    # Last, the backstop: every byte belongs to an object or a revision ending (the checks above say why first).
+    validate_layout(rel_path, data)
 
 
 # ---------------------------------------------------------------------------

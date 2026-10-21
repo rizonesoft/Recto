@@ -813,3 +813,61 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `OK` (`test_the_trailer_is_followed_directly_by_startxref` fails against `8b4502c`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P1): a classic trailer dictionary must be followed by exactly one newline and `startxref`; any bytes in between refuse.
+
+## Round 17: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:42:56Z
+- Effort: medium
+- Lines: 43
+- Digest: e082ab3c24e50910
+
+## adversarial: needs-attention
+
+1. **P1: Trailer validation can validate a different `startxref` from the one used to locate the xref.** `scripts/build-corpus.py:1072` selects the first `startxref` following the trailer, while `scripts/build-corpus.py:1557` independently selects the block at EOF. Nothing requires these to be the same block. The round 16 fix therefore accepts a false trailer ending followed by garbage and another `startxref`.
+
+   Reproduced at `0acdd49`, entirely in memory:
+
+   ```python
+   import runpy
+   m = runpy.run_path("scripts/build-corpus.py")
+   data = m["build_simple_1p"]()
+   bad = data.replace(
+       b"\nstartxref\n",
+       b"\nstartxref\n0\n%%EOF\nGARBAGE\nstartxref\n",
+   )
+   m["validate_pdf_structure"]("render/simple-1p.pdf", bad)
+   ```
+
+   Validation returns successfully. All object offsets and stream lengths remain unchanged. Additionally, `validate_xref_stream_at` at `scripts/build-corpus.py:1096` lacks the equivalent boundary check: applying round 16’s `UNPARSED_GARBAGE` insertion to `build_compressed_xref_2p()` also passes. Malformed generator output can pass structural validation when generated and committed bytes agree.
+
+## consistency: approve
+
+No independent findings.
+
+## integration: advisory
+
+Finding 1 undermines the structural gate used by subsequent corpus additions. It does not establish corruption in the current fixtures or a native-engine defect.
+
+## source-defect: needs-attention
+
+Finding 1 conflicts with the trailer structure: the final `startxref` belongs to the trailer and identifies its cross-reference section. Independently accepting disconnected fragments does not validate that structure. [ISO 32000-2 errata, §7.5.5](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#7.5.5)
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: advisory
+
+Independently reran `python -B scripts/build-corpus.py --check`: exit 0, 39 fixtures current. All 25 selected read-only tests passed, including the round 16 regression. Two in-memory generations matched; total corpus size is 60,176 bytes. These checks miss finding 1.
+
+No files were modified by this audit.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 17
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 29 tests`, `OK` (`test_every_byte_belongs_to_an_object_or_a_revision_ending` fails against `0a952b4`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): `validate_layout` accounts for every byte, as the last check of `validate_pdf_structure`: the header, then only objects and revision endings, where a classic revision ends with its table, trailer, `startxref` and `%%EOF`, and an xref-stream revision with `startxref` and `%%EOF`; each `startxref` must name its own revision's table or xref stream object. A second, disconnected `startxref`, garbage before an xref stream's `startxref`, and bytes between two objects all refuse.

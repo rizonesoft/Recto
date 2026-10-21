@@ -386,6 +386,18 @@ class BuildCorpusTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not followed directly by startxref"):
             self.mod.validate_pdf_structure("render/simple-1p.pdf", bad)
 
+    def test_every_byte_belongs_to_an_object_or_a_revision_ending(self) -> None:
+        classic = self.mod.build_simple_1p()
+        compressed = self.mod.build_compressed_xref_2p()
+        for name, bad in (
+            ("second startxref", classic.replace(b"\nstartxref\n", b"\nstartxref\n0\n%%EOF\nGARBAGE\nstartxref\n")),
+            ("xref stream garbage", compressed.replace(b"\nstartxref\n", b"\nUNPARSED_GARBAGE\nstartxref\n")),
+            ("bytes between objects", classic.replace(b"endobj\n2 0 obj", b"endobj\nnoise\n2 0 obj", 1)),
+        ):
+            self.assertNotEqual(bad, classic if name != "xref stream garbage" else compressed)
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                self.mod.validate_pdf_structure("render/test.pdf", bad)
+
     def test_a_classic_xref_entry_has_one_form(self) -> None:
         data = self.mod.build_simple_1p()
         self.mod.validate_pdf_structure("render/simple-1p.pdf", data)
