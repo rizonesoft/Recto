@@ -56,6 +56,12 @@ class AgentFrontmatter(unittest.TestCase):
                 ok, error = read(["name: a", line, "model: sonnet"])
                 self.assertTrue(ok, error)
 
+    def test_an_indented_blank_or_comment_line_is_allowed(self):
+        for lines in (["description: helper", "  # comment"], ["description: helper", "  "]):
+            with self.subTest(lines=lines):
+                ok, error = read(["name: a", *lines, "model: sonnet"])
+                self.assertTrue(ok, error)
+
     def test_the_repository_agents_pass(self):
         result = subprocess.run(["node", str(ROOT / "scripts" / "verify-agent-tiers.mjs")], cwd=ROOT,
                                 capture_output=True, text=True)

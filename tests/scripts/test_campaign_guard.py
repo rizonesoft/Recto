@@ -12,6 +12,8 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
+import threading
 import unittest
 from unittest import mock
 
@@ -488,6 +490,30 @@ class Lifecycle(Workspace):
         else:
             with self.assertRaises(OSError):  # O_NOFOLLOW refuses the link instead of following it
                 guard._open_no_follow(dangling)
+
+    def test_a_stalled_path_is_outwaited_and_later_paths_count_by_name(self):
+        for name in ("a-stalls.txt", "b.txt", "c.txt"):
+            self.write(name, "x\n")
+        release = threading.Event()
+        seen = []
+        real = guard._untracked_line
+
+        def line(full, path, *rest):
+            seen.append(path)
+            if path == "a-stalls.txt":
+                release.wait(30)  # a call that never returns in time, like a read through a stalled share
+            return real(full, path, *rest)
+
+        started = time.monotonic()
+        try:
+            with mock.patch.object(guard, "_untracked_line", side_effect=line), \
+                    mock.patch.object(guard, "FILE_SECONDS", 0.3):
+                guard.fingerprint(self.root, RUN_FILE, "")
+        finally:
+            release.set()
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertNotIn("b.txt", seen)  # after the stall no further path is touched
+        self.assertNotIn("c.txt", seen)
 
     def test_whoami_names_what_a_heartbeat_is_to_the_run(self):
         self.assertEqual(guard.whoami(self.root, SESSION), "NO GUARD")

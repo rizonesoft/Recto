@@ -34,10 +34,12 @@ import datetime
 import hashlib
 import json
 import os
+import queue
 import re
 import stat
 import subprocess
 import sys
+import threading
 import time
 import uuid
 
@@ -618,6 +620,35 @@ def _open_no_follow(path: str) -> int:
         raise
 
 
+FILE_SECONDS = 5.0  # the longest the fingerprint waits on one untracked path before counting the rest by name
+
+
+def _untracked_line(full: str, path: str, hash_it: bool, stat_it: bool, max_bytes: int) -> bytes:
+    """The fingerprint line for one untracked path: its content hash, size and time, link target, kind, or name."""
+    try:
+        info = os.lstat(full)  # the path itself: a link is never followed
+    except OSError:
+        return f"{path} missing\n".encode("utf-8")
+    if stat.S_ISLNK(info.st_mode):
+        try:
+            target = os.readlink(full)
+        except OSError:
+            target = "?"
+        return f"{path} link {target}\n".encode("utf-8", "replace")
+    if not stat.S_ISREG(info.st_mode):
+        # A directory, FIFO, socket or device: its name and kind count, its content never (reading one could block or
+        # never end).
+        return f"{path} special {stat.S_IFMT(info.st_mode)}\n".encode("utf-8")
+    if hash_it and info.st_size <= max_bytes:
+        content = _read_regular(full, max_bytes, info)
+        if content is not None:
+            return f"{path} ".encode("utf-8") + hashlib.sha256(content).hexdigest().encode() + b"\n"
+        return f"{path} {info.st_size} {info.st_mtime_ns}\n".encode("utf-8")
+    if stat_it:
+        return f"{path} {info.st_size} {info.st_mtime_ns}\n".encode("utf-8")
+    return f"{path}\n".encode("utf-8")
+
+
 def _read_regular(path: str, max_bytes: int, seen: os.stat_result | None = None) -> bytes | None:
     """At most max_bytes of path, or None when what opened is not the regular file the lstat saw (seen): swapped for a
     FIFO, a device, or a link to elsewhere. Opened without following a link and without blocking where the OS allows;
@@ -667,37 +698,38 @@ def fingerprint(root: str, run_rel: str, run_text: str, deadline: float | None =
     digest.update(_git(root, deadline, "diff", "HEAD", "--", ".", f":(exclude){run_path}",
                        ":(exclude)build/claude-campaign-*") + b"\n")
     listed = _git(root, deadline, "ls-files", "-z", "--others", "--exclude-standard").decode("utf-8", "replace")
+    # Every file-system call on an untracked path runs on a daemon worker, waited on for at most FILE_SECONDS: no call
+    # can be interrupted once it blocks (a path whose parent became a link to a stalled share, say), so a stall is
+    # outwaited instead. After one, this and every later path count by name alone, with no further I/O, and the
+    # blocked worker is abandoned (a daemon thread never holds the process open).
+    jobs: queue.Queue = queue.Queue()
+    results: queue.Queue = queue.Queue()
+
+    def work():
+        while True:
+            item = jobs.get()
+            if item is None:
+                return
+            try:
+                results.put(_untracked_line(*item))
+            except Exception:  # an unreadable path still counts, by name
+                results.put(f"{item[1]} unreadable\n".encode("utf-8"))
+
+    threading.Thread(target=work, name="campaign-fingerprint", daemon=True).start()
+    stalled = False
     for index, path in enumerate((p for p in listed.split("\0") if p and p != run_path and not OWN_FILES.match(p)),
                                  1):
-        _remaining(deadline)
-        full = os.path.join(root, path)
-        try:
-            info = os.lstat(full)  # the path itself: a link is never followed
-        except OSError:
-            digest.update(f"{path} missing\n".encode("utf-8"))
-            continue
-        if stat.S_ISLNK(info.st_mode):
-            try:
-                target = os.readlink(full)
-            except OSError:
-                target = "?"
-            digest.update(f"{path} link {target}\n".encode("utf-8", "replace"))
-            continue
-        if not stat.S_ISREG(info.st_mode):
-            # A directory, FIFO, socket or device: its name and kind count, its content never (reading one could
-            # block or never end, and stall the hook).
-            digest.update(f"{path} special {stat.S_IFMT(info.st_mode)}\n".encode("utf-8"))
-            continue
-        if index <= max_hashed and info.st_size <= max_bytes:
-            content = _read_regular(full, max_bytes, info)
-            if content is None:
-                digest.update(f"{path} {info.st_size} {info.st_mtime_ns}\n".encode("utf-8"))
-            else:
-                digest.update(f"{path} ".encode("utf-8") + hashlib.sha256(content).hexdigest().encode() + b"\n")
-        elif index <= max_hashed + max_stat:
-            digest.update(f"{path} {info.st_size} {info.st_mtime_ns}\n".encode("utf-8"))
-        else:
+        if stalled:
             digest.update(f"{path}\n".encode("utf-8"))
+            continue
+        jobs.put((os.path.join(root, path), path, index <= max_hashed, index <= max_hashed + max_stat, max_bytes))
+        try:
+            digest.update(results.get(timeout=min(_remaining(deadline), FILE_SECONDS)))
+        except queue.Empty:
+            stalled = True
+            digest.update(f"{path} stalled\n".encode("utf-8"))
+    if not stalled:
+        jobs.put(None)
     digest.update(re.sub(r"(?m)^- bookkeeping:.*(\r?\n)?", "", run_text).encode("utf-8"))
     return digest.hexdigest()
 

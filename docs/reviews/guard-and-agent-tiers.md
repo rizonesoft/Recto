@@ -326,3 +326,57 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_campaign_guard` -> `Ran 34 tests`, `OK` (`test_a_real_link_is_opened_as_itself_never_followed` fails against `b57639e`).
 
 - Finding 1 (P2): on Windows the fingerprint opens a file with `CreateFileW` and `FILE_FLAG_OPEN_REPARSE_POINT` (`_open_no_follow`), which opens a link as itself instead of following it, so a link swapped in after the `lstat` (to a stalled network share, say) is never traversed; a descriptor carrying the reparse-point attribute is then refused. POSIX keeps `O_NOFOLLOW | O_NONBLOCK`. The test uses real links: a link to a file is refused, and a dangling link opens as itself (following it would fail).
+
+## Round 8: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T21:03:09Z
+- Effort: medium
+- Lines: 38
+- Digest: 1f9f28c27475fc96
+
+## adversarial: needs-attention
+
+1. **P2: Replacing a parent directory with a symlink can still stall the hook.** `scripts/campaign_guard.py:611` passes the complete path to `CreateFileW`. `FILE_FLAG_OPEN_REPARSE_POINT` protects only the final component. Reproduce by letting `lstat` inspect `scratch/sub/file.txt`, then replacing `scratch/sub` with a directory symlink to an unresponsive UNC share before `_open_no_follow` executes. Opening traverses that parent and can block before the identity check. The deadline cannot interrupt this call. This is a source-supported race, not a live network-stall reproduction. [Go’s Windows implementation documents this limitation](https://go.googlesource.com/go.git/+/59ea07ba27f521de41bbfab78a6a12f71c2fb17c%5E%21/).
+
+## consistency: needs-attention
+
+2. **P2: Valid flat frontmatter fails when a blank or comment line is indented.** `scripts/verify-agent-tiers.mjs:153` rejects any following line beginning with whitespace, including lines explicitly accepted by line 125. Reproduce with:
+
+   ```yaml
+   ---
+   name: a
+   description: helper
+     # comment
+   model: sonnet
+   tools: Read
+   ---
+   ```
+
+   Replacing the comment with two spaces also fails. In-memory execution confirmed both validator refusals, while PyYAML parsed both as the same flat mapping. Exclude blank and comment lines from the continuation check.
+
+## integration: needs-attention
+
+Finding 1 leaves the Stop hook vulnerable to the stall being repaired. Finding 2 unnecessarily blocks valid agent definitions without introducing any nested values.
+
+## source-defect: needs-attention
+
+Finding 1 confuses final-component protection with protection throughout path resolution. Microsoft separately documents `OBJ_DONT_REPARSE` for refusing reparses encountered while resolving a path. [OBJECT_ATTRIBUTES documentation](https://learn.microsoft.com/en-us/windows/win32/api/ntdef/ns-ntdef-_object_attributes).
+
+## design: advisory
+
+No user-facing surface changed.
+
+## record: advisory
+
+Ran `python -B -m unittest tests.scripts.test_verify_agent_tiers`: five tests passed despite finding 2. Guard review was static; filesystem-writing guard tests and the live directory-replacement race were not run. No files were modified; Git status remained clean.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 8
+
+`python -m unittest tests.scripts.test_campaign_guard` -> `Ran 35 tests`, `OK`; `python -m unittest tests.scripts.test_verify_agent_tiers` -> `OK` (the new tests fail against `1471f97`).
+
+- Finding 1 (P2): no file-system call can be interrupted once it blocks (a parent directory swapped for a link to a stalled share blocks `lstat` and `open` alike), so the fingerprint now runs each untracked path's inspection (`_untracked_line`) on a daemon worker and waits at most `FILE_SECONDS` (5 s); on a stall, that path and every later one count by name with no further I/O, and the blocked worker is abandoned (`test_a_stalled_path_is_outwaited_and_later_paths_count_by_name`).
+- Finding 2 (P2): an indented blank or comment line after a value is allowed again; only an indented line with content counts as a continuation (`test_an_indented_blank_or_comment_line_is_allowed`).

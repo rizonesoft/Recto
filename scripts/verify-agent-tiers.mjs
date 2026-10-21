@@ -150,7 +150,9 @@ export function readAgentFrontmatter(text) {
     if (key === HOOKS_FIELD) {
       return { fields: null, error: `"${key}:" is a nested block, and this check reads flat "key: value" lines only; Recto's agents declare no hooks, so one is refused rather than half-read` };
     }
-    if (/^[ \t]/.test(lines[index] ?? "")) {
+    // An indented line with content after a value would be its continuation; an indented blank or comment line is
+    // neither content nor structure to YAML, so it stays allowed.
+    if (/^[ \t]+[^ \t#]/.test(lines[index] ?? "")) {
       return { fields: null, error: `"${key}:" is followed by an indented line ${JSON.stringify(lines[index])}; this check reads flat "key: value" lines only` };
     }
 
