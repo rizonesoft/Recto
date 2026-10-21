@@ -11,7 +11,7 @@
                                                              # 4 waiting; a pasted plan row works too
     python scripts/todo-graph.py classify 'D02 T01 §1' ...   # dispositions as JSON
     python scripts/todo-graph.py stamp 'D02 T01 §1' --sha <40-char commit> \
-        --review '<round>:<report path>:<clean|fixed|stopped-at-3>' --check '<command> -> <result>'
+        --review '<round>:<report path>:<clean|fixed|stopped-at-8>' --check '<command> -> <result>'
 
 Format and rules: todo/README.md. Stdlib only.
 """

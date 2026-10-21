@@ -27,7 +27,7 @@ A reviewer is never of the writer's own model family, and a route has one fallba
 
    On Windows use `python` instead of `python3`; the command is otherwise the same.
 4. Read the review. Verify every finding against the code before acting: fix what is real, and record why anything else is not.
-5. Commit fixes as new commits and run another round on the new tip, up to 3 rounds. A unit that needs patching three rounds running gets re-thought, not patched again.
+5. Commit fixes as new commits and run another round on the new tip, up to 8 rounds. A unit that needs patching three rounds running gets re-thought, not patched again.
 
 ## Rules
 

@@ -26,7 +26,8 @@ NEEDS = {"windows-host", "arm64-host", "display-session", "office", "libreoffice
          "attended", "owner-decision", "third-party", "operator"}
 WAITING = {"owner-decision", "third-party", "operator"}
 STATUSES = {"draft", "active", "blocked", "done", "superseded"}
-VERDICTS = {"clean", "fixed", "stopped-at-3"}
+# stopped-at-8 is the current review-round cap; stopped-at-3 stays valid on receipts written under the earlier cap.
+VERDICTS = {"clean", "fixed", "stopped-at-8", "stopped-at-3"}
 ADJACENCY_KEYS = ["list", "document", "settings", "reporting", "notifications", "permissions",
                   "audit", "exchange", "reverse"]
 # The closed phase list. A project names its phases (and the plan's title and acceptance bar) in
