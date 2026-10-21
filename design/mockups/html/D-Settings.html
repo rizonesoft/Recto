@@ -2,75 +2,108 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Recto D: Settings</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500&amp;display=swap">
+<title>Recto D: Settings, other sections</title>
 <style>
 body{margin:0}
-a{color:#C8431F}a:hover{color:#A93717}
-.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
-.disp{font-family:'Segoe UI Variable Display','Segoe UI',sans-serif}
-.tb{display:flex;align-items:center;gap:8px;height:30px;padding:0 6px 0 12px;border-radius:8px;font-size:12px;color:#5C5C5C;text-decoration:none;max-width:240px;white-space:nowrap}
-.tb.on{background:#FFFFFF;color:#1B1B1B;box-shadow:0 1px 3px rgba(0,0,0,.12)}
-.wc{width:46px;height:44px;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:#1B1B1B}
-.ib{width:32px;height:32px;border:0;border-radius:8px;background:transparent;color:#1B1B1B;display:flex;align-items:center;justify-content:center;flex:none;text-decoration:none}
-.ib.on{background:#FBE4DC;color:#C8431F}
-.tx{width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:inherit;display:flex;align-items:center;justify-content:center}
-.cap{font-size:12px;color:#5C5C5C}
-.grp{flex:none;background:#FFFFFF;border-radius:16px;box-shadow:0 1px 2px rgba(0,0,0,.05);overflow:hidden}
-.r{display:flex;align-items:center;gap:16px;min-height:54px;padding:8px 20px;box-sizing:border-box;border-top:1px solid #F0F0F0}
+a{color:#A93717}
+.ic{width:16px;height:16px;fill:currentColor;flex:none;display:block}
+.lbl{font-size:12px;font-weight:600;color:#5C5C5C;letter-spacing:.6px}
+.pg{background:#EEF1F6;border-radius:8px;padding:2px 20px 16px;display:flex;flex-direction:column;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.cap{font-size:12px;color:#5C5C5C;line-height:16px}
+.gh{margin:12px 0 5px 4px;font-size:12px;font-weight:600;color:#5C5C5C;letter-spacing:.6px}
+.grp{flex:none;background:#FFFFFF;border-radius:8px;border:1px solid #E5E5E5;overflow:hidden}
+.r{display:flex;align-items:center;gap:12px;min-height:34px;padding:4px 16px;box-sizing:border-box;border-top:1px solid #E5E5E5}
 .r:first-child{border-top:0}
-.r .t{display:flex;flex-direction:column;gap:2px;flex-grow:1;min-width:0}
-.r .t b{font-weight:600;font-size:14px}
-.gh{margin:16px 0 8px 6px;font-size:12px;font-weight:600;color:#5C5C5C;letter-spacing:.6px}
-.seg{display:flex;padding:3px;background:#F3F3F3;border-radius:10px;gap:2px}
-.seg button{height:28px;padding:0 12px;border:0;border-radius:8px;background:transparent;font:inherit;font-size:12px;color:#5C5C5C}
-.seg button.on{background:#FFFFFF;color:#1B1B1B;font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.12)}
-.dd{display:flex;align-items:center;gap:8px;height:32px;padding:0 12px;border-radius:10px;border:1px solid #E0E0E0;background:#FFFFFF;font:inherit;font-size:13px;color:#1B1B1B}
-.sw{width:42px;height:24px;border-radius:12px;border:0;position:relative;padding:0}
-.sw i{position:absolute;top:3px;width:18px;height:18px;border-radius:9px;background:#FFFFFF;box-shadow:0 1px 2px rgba(0,0,0,.2);display:block}
+.r .t{display:flex;flex-direction:column;gap:1px;flex-grow:1;min-width:0}
+.r .t b{font-weight:600;font-size:14px;line-height:19px}
+.seg{display:flex;padding:2px;background:#EEF1F6;border:1px solid #D6D9DF;border-radius:4px;gap:2px}
+.seg button{height:24px;padding:0 10px;border:1px solid transparent;border-radius:4px;background:transparent;font:inherit;font-size:12px;color:#5C5C5C}
+.seg button.on{background:#FFFFFF;border-color:#D6D9DF;color:#1B1B1B;font-weight:600}
+.dd{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px 0 10px;border-radius:4px;border:1px solid #D6D9DF;background:#FFFFFF;font:inherit;font-size:13px;color:#1B1B1B;white-space:nowrap}
+.dd .ic{width:12px;height:12px;color:#5C5C5C}
+.btn{height:28px;padding:0 12px;border-radius:4px;border:1px solid #D6D9DF;background:#FFFFFF;font:inherit;font-size:13px;color:#1B1B1B;white-space:nowrap}
+.sw{width:40px;height:20px;border-radius:999px;box-sizing:border-box;position:relative;padding:0;flex:none}
+.sw.on{background:#C8431F;border:0}
+.sw.off{background:transparent;border:1px solid #5C5C5C}
+.sw i{position:absolute;top:50%;width:12px;height:12px;margin-top:-6px;border-radius:999px;display:block}
+.sw.on i{right:4px;width:14px;height:14px;margin-top:-7px;background:#FFFFFF}
+.sw.off i{left:4px;background:#5C5C5C}
+.ex{color:#5C5C5C}
+.st{font-size:12px;color:#5C5C5C;white-space:nowrap}
 </style>
 </head>
 <body>
-<div style="width:1440px;height:900px;display:flex;flex-direction:column;background:#EEF1F6;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;font-size:14px;color:#1B1B1B;overflow:hidden">
-  <div style="height:44px;display:flex;align-items:center;gap:4px;padding-left:14px;flex:none">
-    <svg viewBox="0 0 64 64" width="20" height="20" aria-hidden="true"><rect x="2" y="2" width="60" height="60" rx="14" fill="#2A2826"></rect><rect x="13" y="10" width="38" height="45" rx="3" fill="#F5F4F0"></rect><path d="M34 5 H47 V33 L40.5 27 L34 33 Z" fill="#F0603C"></path></svg><span style="font-family:'Newsreader',Georgia,serif;font-size:17px;font-weight:500;margin:0 14px 0 8px">Recto</span>
-    <a class="tb" href="D-Home.html"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"></path></svg></a>
-    <div class="tb on"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"></path></svg>Settings<button class="tx" aria-label="Close tab"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>
-    <div style="flex-grow:1"></div>
-    <a class="ib on" href="D-Settings.html" aria-label="Settings"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"></path></svg></a>
-    <button class="wc" aria-label="Minimize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M5 12h14"></path></svg></button>
-    <button class="wc" aria-label="Maximize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M5 5h14v14H5z"></path></svg></button>
-    <button class="wc" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
-  </div>
-  <main style="flex-grow:1;min-height:0;overflow:hidden;display:flex;justify-content:center;padding-top:28px">
-    <div style="width:760px;display:flex;flex-direction:column">
-      <div style="display:flex;align-items:center;gap:16px"><h1 class="disp" style="margin:0;font-size:34px;font-weight:600;letter-spacing:-0.6px;flex-grow:1">Settings</h1><label style="display:flex;align-items:center;gap:8px;width:260px;height:36px;padding:0 12px;box-sizing:border-box;border-radius:10px;background:#FFFFFF;border:1px solid #E0E0E0;color:#5C5C5C"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM20 20l-4.2-4.2"></path></svg><input aria-label="Find a setting" placeholder="Find a setting" style="border:0;outline:0;font:inherit;font-size:13px;flex-grow:1;background:transparent"></label></div>
-      <div class="gh">APPEARANCE</div>
-      <div class="grp">
-        <div class="r"><span class="t"><b>Theme</b></span><div class="seg"><button>Light</button><button>Dark</button><button class="on">Follow Windows</button></div></div>
-        <div class="r"><span class="t"><b>Pages in dark theme</b><span class="cap">How page colours look when the app is dark</span></span><div class="seg"><button>Original</button><button class="on">Dimmed</button><button>Inverted</button></div></div>
-        <div class="r"><span class="t"><b>Toolbar position</b><span class="cap">Where the floating page toolbar sits</span></span><div class="seg"><button>Top</button><button class="on">Bottom</button></div></div>
-      </div>
+<div style="width:1440px;height:900px;box-sizing:border-box;padding:24px 40px;background:#E6E7EA;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;font-size:14px;color:#1B1B1B;display:flex;flex-direction:column;gap:12px;overflow:hidden">
+  <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:32px;align-items:start;min-height:0">
+
+    <section class="pg" aria-label="Settings, first strip">
       <div class="gh">READING</div>
       <div class="grp">
-        <div class="r"><span class="t"><b>Default zoom</b></span><button class="dd">Fit width<svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button></div>
-        <div class="r"><span class="t"><b>Page layout</b></span><button class="dd">Continuous<svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button></div>
-        <div class="r"><span class="t"><b>Ask before opening links</b><span class="cap">Web and file links inside a PDF</span></span><button class="sw" role="switch" aria-checked="true" aria-label="Ask before opening links" style="background:#C8431F"><i style="right:3px"></i></button></div>
-        <div class="r"><span class="t"><b>Remember where I stopped reading</b></span><button class="sw" role="switch" aria-checked="true" aria-label="Remember reading position" style="background:#C8431F"><i style="right:3px"></i></button></div>
+        <div class="r"><span class="t"><b>Default zoom</b></span><button class="dd">Fit width<svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.85 7.65c.2.2.2.5 0 .7l-5.46 5.49a.55.55 0 0 1-.78 0L4.15 8.35a.5.5 0 1 1 .7-.7L10 12.8l5.15-5.16c.2-.2.5-.2.7 0"></path></svg></button></div>
+        <div class="r"><span class="t"><b>Default page layout</b></span><button class="dd">Continuous<svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.85 7.65c.2.2.2.5 0 .7l-5.46 5.49a.55.55 0 0 1-.78 0L4.15 8.35a.5.5 0 1 1 .7-.7L10 12.8l5.15-5.16c.2-.2.5-.2.7 0"></path></svg></button></div>
+        <div class="r"><span class="t"><b>Ask before opening links</b></span><button class="sw on" role="switch" aria-checked="true" aria-label="Ask before opening links"><i></i></button></div>
+        <div class="r"><span class="t"><b>Remember reading position</b></span><button class="sw on" role="switch" aria-checked="true" aria-label="Remember reading position"><i></i></button></div>
+        <div class="r"><span class="t"><b>Restore tabs on launch</b></span><button class="sw on" role="switch" aria-checked="true" aria-label="Restore tabs on launch"><i></i></button></div>
+        <div class="r"><span class="t"><b>Automatic OCR on scanned pages</b></span><button class="sw on" role="switch" aria-checked="true" aria-label="Automatic OCR on scanned pages"><i></i></button></div>
+        <div class="r"><span class="t"><b>Highlight form fields</b></span><button class="sw on" role="switch" aria-checked="true" aria-label="Highlight form fields"><i></i></button></div>
+        <div class="r"><span class="t"><b>Keep stamp tool selected</b></span><button class="sw off" role="switch" aria-checked="false" aria-label="Keep stamp tool selected"><i></i></button></div>
+        <div class="r"><span class="t"><b>Play page transitions and presentation auto-advance</b></span><button class="sw on" role="switch" aria-checked="true" aria-label="Play page transitions and presentation auto-advance"><i></i></button></div>
+        <div class="r"><span class="t"><b>Read aloud</b><span class="cap">Voice, speech rate, speech volume with Preview voice, read form fields</span></span><svg class="ic ex" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.85 7.65c.2.2.2.5 0 .7l-5.46 5.49a.55.55 0 0 1-.78 0L4.15 8.35a.5.5 0 1 1 .7-.7L10 12.8l5.15-5.16c.2-.2.5-.2.7 0"></path></svg></div>
+        <div class="r"><span class="t"><b>Reflow</b><span class="cap">Font, text size, line spacing, line width</span></span><svg class="ic ex" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.85 7.65c.2.2.2.5 0 .7l-5.46 5.49a.55.55 0 0 1-.78 0L4.15 8.35a.5.5 0 1 1 .7-.7L10 12.8l5.15-5.16c.2-.2.5-.2.7 0"></path></svg></div>
+        <div class="r"><span class="t"><b>Pen and touch</b><span class="cap">Pressure sensitivity, reject touch while using a pen, touch mode</span></span><svg class="ic ex" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.85 7.65c.2.2.2.5 0 .7l-5.46 5.49a.55.55 0 0 1-.78 0L4.15 8.35a.5.5 0 1 1 .7-.7L10 12.8l5.15-5.16c.2-.2.5-.2.7 0"></path></svg></div>
       </div>
       <div class="gh">CONVERTING</div>
       <div class="grp">
-        <div class="r"><span class="t"><b>Office to PDF converter</b><span class="cap">Found Microsoft Office. LibreOffice isn't installed.</span></span><button class="dd">Automatic<svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button></div>
-        <div class="r"><span class="t"><b>Save converted files</b></span><button class="dd">Next to the original<svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg></button></div>
+        <div class="r"><span class="t"><b>Default Office to PDF page setup</b></span><button class="dd">Match original document<svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.85 7.65c.2.2.2.5 0 .7l-5.46 5.49a.55.55 0 0 1-.78 0L4.15 8.35a.5.5 0 1 1 .7-.7L10 12.8l5.15-5.16c.2-.2.5-.2.7 0"></path></svg></button></div>
+        <div class="r"><span class="t"><b>Default PDF to Word reconstruction mode</b></span><div class="seg"><button class="on">Flowing</button><button>Exact</button><button>Continuous</button></div></div>
+        <div class="r"><span class="t"><b>OCR engine</b></span><button class="dd">Hybrid High-Accuracy Neural + Windows OCR<svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.85 7.65c.2.2.2.5 0 .7l-5.46 5.49a.55.55 0 0 1-.78 0L4.15 8.35a.5.5 0 1 1 .7-.7L10 12.8l5.15-5.16c.2-.2.5-.2.7 0"></path></svg></button></div>
+        <div class="r"><span class="t"><b>OCR language</b></span><button class="dd">English (United States)<svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.85 7.65c.2.2.2.5 0 .7l-5.46 5.49a.55.55 0 0 1-.78 0L4.15 8.35a.5.5 0 1 1 .7-.7L10 12.8l5.15-5.16c.2-.2.5-.2.7 0"></path></svg></button></div>
+        <div class="r"><span class="t"><b>Where to save converted files</b></span><button class="dd">Next to the original<svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.85 7.65c.2.2.2.5 0 .7l-5.46 5.49a.55.55 0 0 1-.78 0L4.15 8.35a.5.5 0 1 1 .7-.7L10 12.8l5.15-5.16c.2-.2.5-.2.7 0"></path></svg></button></div>
       </div>
+      <div class="gh">SIGNATURES AND SECURITY</div>
+      <div class="grp">
+        <div class="r"><span class="t"><b>Verify signatures when opening</b></span><button class="sw on" role="switch" aria-checked="true" aria-label="Verify signatures when opening"><i></i></button></div>
+        <div class="r"><span class="t"><b>Default timestamp server URL</b></span><input aria-label="Default timestamp server URL" placeholder="None" style="width:220px;height:28px;box-sizing:border-box;border-radius:4px;border:1px solid #D6D9DF;padding:0 10px;font:inherit;font-size:13px;color:#1B1B1B;background:#FFFFFF"></div>
+      </div>
+    </section>
+
+    <div style="display:flex;flex-direction:column;gap:12px">
+    <section class="pg" aria-label="Settings, second strip">
       <div class="gh">PERFORMANCE AND PRIVACY</div>
       <div class="grp">
-        <div class="r"><span class="t"><b>Page cache</b><span class="cap">More memory makes big files smoother</span></span><span style="display:flex;align-items:center;gap:12px;font-size:13px"><span style="width:160px;height:4px;border-radius:2px;background:#E0E0E0;position:relative;display:block"><span style="position:absolute;left:0;top:0;width:54px;height:4px;border-radius:2px;background:#C8431F;display:block"></span><span style="position:absolute;left:46px;top:-7px;width:18px;height:18px;border-radius:9px;background:#FFFFFF;box-shadow:0 1px 3px rgba(0,0,0,.3);display:block"></span></span>512 MB</span></div>
-        <div class="r"><span class="t"><b>Send crash reports</b><span class="cap">Crash details only, never your documents</span></span><button class="sw" role="switch" aria-checked="false" aria-label="Send crash reports" style="background:#D5D5D5"><i style="left:3px"></i></button></div>
+        <div class="r"><span class="t"><b>Portable mode</b><span class="cap">Store settings, recent files, cache and temporary files in a data folder next to Recto.exe</span></span><button class="sw off" role="switch" aria-checked="false" aria-label="Portable mode"><i></i></button></div>
+        <div class="r"><span class="t"><b>Page cache</b><span class="cap">128 MB to 2 GB. More memory makes big files smoother</span></span><span style="display:flex;align-items:center;gap:12px;font-size:13px"><span style="width:140px;height:4px;border-radius:999px;background:#D6D9DF;position:relative;display:block"><span style="position:absolute;left:0;top:0;width:28px;height:4px;border-radius:999px;background:#C8431F;display:block"></span><span style="position:absolute;left:20px;top:-6px;width:16px;height:16px;box-sizing:border-box;border-radius:999px;background:#FFFFFF;border:1px solid #D6D9DF;display:block"></span></span>512 MB</span></div>
+        <div class="r"><span class="t"><b>Crash recovery snapshots</b><span class="cap">Save a snapshot of unsaved documents every 5 minutes</span></span><button class="sw on" role="switch" aria-checked="true" aria-label="Crash recovery snapshots"><i></i></button></div>
+        <div class="r"><span class="t"><b>Save local crash report bundles</b><span class="cap">An inspectable .zip on this PC when Recto crashes. Nothing is sent</span></span><button class="sw off" role="switch" aria-checked="false" aria-label="Save local crash report bundles"><i></i></button></div>
+        <div class="r"><span class="t"><b>Search index</b><span class="cap">2 folders, 1,284 files, 212 MB, updated today</span></span><svg class="ic ex" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.85 7.65c.2.2.2.5 0 .7l-5.46 5.49a.55.55 0 0 1-.78 0L4.15 8.35a.5.5 0 1 1 .7-.7L10 12.8l5.15-5.16c.2-.2.5-.2.7 0"></path></svg></div>
+        <div class="r"><span class="t"><b>Cloud storage</b><span class="cap">OneDrive, Google Drive, Dropbox, Box and SharePoint</span></span><button class="sw off" role="switch" aria-checked="false" aria-label="Cloud storage"><i></i></button><svg class="ic ex" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.85 7.65c.2.2.2.5 0 .7l-5.46 5.49a.55.55 0 0 1-.78 0L4.15 8.35a.5.5 0 1 1 .7-.7L10 12.8l5.15-5.16c.2-.2.5-.2.7 0"></path></svg></div>
       </div>
+      <div class="gh">ASSISTANT</div>
+      <div class="grp">
+        <div class="r"><span class="t"><b>AI assistant</b><span class="cap">Provider, API key, model, base URL, Test connection, context limit</span></span><button class="sw off" role="switch" aria-checked="false" aria-label="AI assistant"><i></i></button><svg class="ic ex" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.85 7.65c.2.2.2.5 0 .7l-5.46 5.49a.55.55 0 0 1-.78 0L4.15 8.35a.5.5 0 1 1 .7-.7L10 12.8l5.15-5.16c.2-.2.5-.2.7 0"></path></svg></div>
+      </div>
+      <div class="gh">RECTO PDF VIRTUAL PRINTER</div>
+      <div class="grp">
+        <div class="r"><span class="t"><b>Recto PDF printer</b><span class="cap">Save mode, folder, Open after save</span></span><span class="st">Installed</span><svg class="ic ex" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.85 7.65c.2.2.2.5 0 .7l-5.46 5.49a.55.55 0 0 1-.78 0L4.15 8.35a.5.5 0 1 1 .7-.7L10 12.8l5.15-5.16c.2-.2.5-.2.7 0"></path></svg></div>
+      </div>
+      <div class="gh">LANGUAGE AND UPDATES</div>
+      <div class="grp">
+        <div class="r"><span class="t"><b>Language</b></span><button class="dd">Follow Windows<svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M15.85 7.65c.2.2.2.5 0 .7l-5.46 5.49a.55.55 0 0 1-.78 0L4.15 8.35a.5.5 0 1 1 .7-.7L10 12.8l5.15-5.16c.2-.2.5-.2.7 0"></path></svg></button></div>
+        <div class="r"><span class="t"><b>Check for updates</b><span class="cap">At most once a day. Never downloads or installs</span></span><button class="btn">Check now</button><button class="sw off" role="switch" aria-checked="false" aria-label="Check for updates"><i></i></button></div>
+      </div>
+      <div class="gh">DEFAULT PDF APP</div>
+      <div class="grp">
+        <a class="r" href="D-Settings.html" style="text-decoration:none;color:#1B1B1B"><span class="t"><b>Make Recto your default PDF viewer</b><span class="cap">Opens Default apps in Windows Settings</span></span><svg class="ic ex" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.65 4.15c.2-.2.5-.2.7 0l5.49 5.46c.21.22.21.57 0 .78l-5.49 5.47a.5.5 0 0 1-.7-.71L12.8 10 7.65 4.85a.5.5 0 0 1 0-.7"></path></svg></a>
+      </div>
+      <div class="gh">ABOUT</div>
+      <div class="grp">
+        <a class="r" href="D-About.html" style="text-decoration:none;color:#1B1B1B"><span class="t"><b>About Recto</b><span class="cap">Version 1.0.0, x64</span></span><svg class="ic ex" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.65 4.15c.2-.2.5-.2.7 0l5.49 5.46c.21.22.21.57 0 .78l-5.49 5.47a.5.5 0 0 1-.7-.71L12.8 10 7.65 4.85a.5.5 0 0 1 0-.7"></path></svg></a>
+      </div>
+    </section>
+    <span class="cap" style="padding:0 4px">Settings is one centred column (760 to 900 epx), scrolled below the Layout and Theme groups of D-Layout. It is split into two strips here so every group fits; read the left strip, then the right. Groups follow the SPEC 9.7 order.</span>
     </div>
-  </main>
+
+  </div>
 </div>
 </body>
 </html>

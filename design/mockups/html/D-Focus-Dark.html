@@ -7,107 +7,123 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500&amp;display=swap">
 <style>
 body{margin:0}
-a{color:#F48A6E}a:hover{color:#F7A890}
-.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
+a{color:#F48A6E}
+.ic{width:16px;height:16px;fill:currentColor;flex:none}
 .serif{font-family:'Newsreader',Georgia,serif}
-.tb{display:flex;align-items:center;gap:8px;height:30px;padding:0 6px 0 12px;border-radius:8px;font-size:12px;color:#B8B2A8;text-decoration:none;max-width:240px;white-space:nowrap}
+.tb{display:flex;align-items:center;gap:8px;height:30px;padding:0 3px 0 12px;border-radius:4px;font-size:12px;color:#B8B2A8;text-decoration:none;max-width:240px;white-space:nowrap}
+.tb.home{padding:0 7px}
 .tb.on{background:#2A2826;color:#EDEAE4}
 .tb span{overflow:hidden;text-overflow:ellipsis}
 .wc{width:46px;height:44px;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:#EDEAE4}
-.ib{width:36px;height:36px;border:0;border-radius:10px;background:transparent;color:#EDEAE4;display:flex;align-items:center;justify-content:center;flex:none;text-decoration:none}
-.ib.on{background:#3A2620;color:#F48A6E}
-.tx{width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:inherit;display:flex;align-items:center;justify-content:center}
+.ib{width:36px;height:36px;border:0;border-radius:4px;background:transparent;color:#B8B2A8;display:flex;align-items:center;justify-content:center;flex:none;text-decoration:none;font:inherit;font-size:13px}
+.ib.on{background:#3A2620;color:#F0603C}
+.tx{width:24px;height:24px;border:0;border-radius:4px;background:transparent;color:#B8B2A8;display:flex;align-items:center;justify-content:center;flex:none;padding:0}
 .sep{width:1px;height:22px;background:#3A3734;margin:0 4px}
 .cap{font-size:12px;color:#B8B2A8}
-.ol{display:flex;align-items:center;gap:6px;min-height:32px;border:0;background:transparent;border-radius:8px;font:inherit;font-size:13px;color:#D3CFC7;text-align:left;width:100%;box-sizing:border-box;padding-right:8px}
+.kc{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:9px;border:1px solid #3A3734;font-size:11px;color:#B8B2A8}
+.cmd{display:flex;align-items:center;gap:8px;width:340px;height:30px;padding:0 6px 0 10px;border-radius:4px;border:1px solid #4A4642;background:#232120;font:inherit;font-size:12px;color:#B8B2A8;box-sizing:border-box}
+.acc{display:flex;align-items:center;gap:8px;height:36px;padding:0 14px;border-radius:4px;border:0;background:#F0603C;color:#1B1A19;font:inherit;font-size:13px;font-weight:600;text-decoration:none}
+.ol{display:flex;align-items:center;gap:6px;min-height:32px;border:0;background:transparent;border-radius:4px;font:inherit;font-size:13px;color:#EDEAE4;text-align:left;width:100%;box-sizing:border-box;padding-right:8px;flex:none}
+.ol svg{color:#B8B2A8}
 .ol span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.bar{height:5px;border-radius:2px;background:#BDB8AF;display:block}
-.hit{background:#7A3A26;color:#FFFFFF;border-radius:2px}
+.tm{display:grid;grid-template-columns:118px 112px minmax(0,1fr);font-size:10px;line-height:14px}
+.tm span{padding:5px 6px;border-top:1px solid #B8B2A8}
+.tm b{padding:5px 6px}
+.doc code{font-family:Consolas,monospace;font-size:11.5px}
+.doc .tm code{font-size:9.5px}
 </style>
 </head>
 <body>
 <div style="width:1440px;height:900px;display:flex;flex-direction:column;background:#1B1A19;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;font-size:14px;color:#EDEAE4;overflow:hidden">
   <div style="height:44px;display:flex;align-items:center;gap:4px;padding-left:14px;flex:none">
-    <svg viewBox="0 0 64 64" width="20" height="20" aria-hidden="true"><rect x="2" y="2" width="60" height="60" rx="14" fill="#2A2826" stroke="#4A4642" stroke-width="2"></rect><rect x="13" y="10" width="38" height="45" rx="3" fill="#F5F4F0"></rect><path d="M34 5 H47 V33 L40.5 27 L34 33 Z" fill="#F0603C"></path></svg>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="20" height="20" role="img"><title>Recto</title><rect x="10" y="6" width="44" height="52" rx="6" fill="#FFFFFF" stroke="#6E6860" stroke-width="3.4"/><path d="M34 2 H48 V32 L41 25.6 L34 32 Z" fill="#E0532F"/></svg>
     <span class="serif" style="font-size:17px;font-weight:500;margin:0 14px 0 8px">Recto</span>
-    <a class="tb" href="D-Home.html" aria-label="Home"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"></path></svg></a>
-    <div class="tb on"><span>Recto foundation plan.pdf</span><button class="tx" aria-label="Close tab"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>
-    <div class="tb"><span>MuPDF API reference.pdf</span><button class="tx" aria-label="Close tab"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>
-    <button class="ib" aria-label="New tab" style="width:30px;height:30px"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
+    <a class="tb home" href="D-Home.html" aria-label="Home" title="Home"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M9 2.39a1.5 1.5 0 0 1 2 0l5.5 4.94c.32.28.5.69.5 1.12v7.05c0 .83-.67 1.5-1.5 1.5H13a1.5 1.5 0 0 1-1.5-1.5V12a.5.5 0 0 0-.5-.5H9a.5.5 0 0 0-.5.5v3.5c0 .83-.67 1.5-1.5 1.5H4.5A1.5 1.5 0 0 1 3 15.5V8.45c0-.43.18-.84.5-1.12zm1.33.74a.5.5 0 0 0-.66 0l-5.5 4.94a.5.5 0 0 0-.17.38v7.05c0 .28.22.5.5.5H7a.5.5 0 0 0 .5-.5V12c0-.83.67-1.5 1.5-1.5h2c.83 0 1.5.67 1.5 1.5v3.5c0 .28.22.5.5.5h2.5a.5.5 0 0 0 .5-.5V8.45a.5.5 0 0 0-.17-.38z"></path></svg></a>
+    <div class="tb on"><span>Recto foundation plan.pdf</span><button class="tx" aria-label="Close tab" title="Close tab (Ctrl+W)"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d="m4.09 4.22.06-.07a.5.5 0 0 1 .63-.06l.07.06L10 9.29l5.15-5.14a.5.5 0 0 1 .63-.06l.07.06c.18.17.2.44.06.63l-.06.07L10.71 10l5.14 5.15c.18.17.2.44.06.63l-.06.07a.5.5 0 0 1-.63.06l-.07-.06L10 10.71l-5.15 5.14a.5.5 0 0 1-.63.06l-.07-.06a.5.5 0 0 1-.06-.63l.06-.07L9.29 10 4.15 4.85a.5.5 0 0 1-.06-.63l.06-.07z"></path></svg></button></div>
+    <div class="tb"><span>Lease agreement 2026.pdf</span></div>
+    <button class="ib" aria-label="New tab" title="New tab" style="width:30px;height:30px"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5c.28 0 .5.22.5.5v6.5H17a.5.5 0 0 1 0 1h-6.5V17a.5.5 0 0 1-1 0v-6.5H3a.5.5 0 0 1 0-1h6.5V3c0-.28.22-.5.5-.5"></path></svg></button>
     <div style="flex-grow:1"></div>
-    <button style="display:flex;align-items:center;gap:10px;width:340px;height:30px;padding:0 10px;border-radius:8px;border:1px solid #3A3734;background:#232120;font:inherit;font-size:12px;color:#B8B2A8"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM20 20l-4.2-4.2"></path></svg><span style="flex-grow:1;text-align:left">Search, open or run a command</span><span style="font-size:11px">Ctrl K</span></button>
+    <button class="cmd" aria-label="Search, open or run a command (Ctrl+K)"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M13.73 14.44a6.5 6.5 0 1 1 .7-.7l3.42 3.4a.5.5 0 0 1-.63.77l-.07-.06zm-.71-.71A5.5 5.5 0 0 0 15 9.5a5.5 5.5 0 1 0-1.98 4.23"></path></svg><span style="flex-grow:1;text-align:left">Search, open or run a command</span><span class="kc">Ctrl</span><span class="kc">K</span></button>
     <div style="flex-grow:1"></div>
-    <a class="ib" href="D-Layout.html" aria-label="Settings" style="width:32px;height:32px"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"></path></svg></a>
-    <button class="wc" aria-label="Minimize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M5 12h14"></path></svg></button>
-    <button class="wc" aria-label="Maximize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M5 5h14v14H5z"></path></svg></button>
-    <button class="wc" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+    <a class="ib" href="D-Layout.html" aria-label="Settings" title="Settings (Ctrl+,)" style="width:32px;height:32px"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M1.91 7.38A8.5 8.5 0 0 1 3.7 4.3a.5.5 0 0 1 .54-.13l1.92.68a1 1 0 0 0 1.32-.76l.36-2a.5.5 0 0 1 .4-.4 9 9 0 0 1 3.55 0q.32.08.38.4l.37 2a1 1 0 0 0 1.32.76l1.92-.68a.5.5 0 0 1 .54.13 8.5 8.5 0 0 1 1.78 3.08q.08.31-.15.54l-1.56 1.32a1 1 0 0 0 0 1.52l1.56 1.32a.5.5 0 0 1 .15.54 8.5 8.5 0 0 1-1.78 3.08.5.5 0 0 1-.54.13l-1.92-.68a1 1 0 0 0-1.32.76l-.37 2a.5.5 0 0 1-.38.4 8.5 8.5 0 0 1-3.56 0 .5.5 0 0 1-.39-.4l-.36-2a1 1 0 0 0-1.32-.76l-1.92.68a.5.5 0 0 1-.54-.13 8.5 8.5 0 0 1-1.78-3.08.5.5 0 0 1 .15-.54l1.56-1.32a1 1 0 0 0 0-1.52L2.06 7.92a.5.5 0 0 1-.15-.54m1.06 0 1.3 1.1a2 2 0 0 1 0 3.04l-1.3 1.1q.45 1.19 1.25 2.16l1.6-.58a2 2 0 0 1 2.63 1.53l.3 1.67a8 8 0 0 0 2.5 0l.3-1.67a2 2 0 0 1 2.64-1.53l1.6.58a8 8 0 0 0 1.24-2.16l-1.3-1.1a2 2 0 0 1 0-3.04l1.3-1.1a8 8 0 0 0-1.25-2.16l-1.6.58a2 2 0 0 1-2.63-1.53l-.3-1.67a8 8 0 0 0-2.5 0l-.3 1.67A2 2 0 0 1 5.81 5.8l-1.6-.58a8 8 0 0 0-1.24 2.16M7.5 10a2.5 2.5 0 1 1 5 0 2.5 2.5 0 0 1-5 0m1 0a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0"></path></svg></a>
+    <button class="wc" aria-label="Minimize"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d="M3 10c0-.28.22-.5.5-.5h13a.5.5 0 0 1 0 1h-13A.5.5 0 0 1 3 10"></path></svg></button>
+    <button class="wc" aria-label="Maximize"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d="M3 6a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3zm3-2a2 2 0 0 0-2 2v8c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"></path></svg></button>
+    <button class="wc" aria-label="Close"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d="m4.09 4.22.06-.07a.5.5 0 0 1 .63-.06l.07.06L10 9.29l5.15-5.14a.5.5 0 0 1 .63-.06l.07.06c.18.17.2.44.06.63l-.06.07L10.71 10l5.14 5.15c.18.17.2.44.06.63l-.06.07a.5.5 0 0 1-.63.06l-.07-.06L10 10.71l-5.15 5.14a.5.5 0 0 1-.63.06l-.07-.06a.5.5 0 0 1-.06-.63l.06-.07L9.29 10 4.15 4.85a.5.5 0 0 1-.06-.63l.06-.07z"></path></svg></button>
   </div>
-  <div style="flex-grow:1;min-height:0;position:relative;background:#141312;border-top-left-radius:12px;border-top-right-radius:12px;margin:0 6px;overflow:hidden;display:flex;justify-content:center;padding-top:28px;padding-left:120px">
-    <article style="width:640px;height:830px;flex:none;background:#D9D5CE;box-shadow:0 12px 40px rgba(0,0,0,.6);padding:56px 68px;box-sizing:border-box;font-family:Cambria,Georgia,serif;color:#1F1D1B;display:flex;flex-direction:column;gap:12px;font-size:12.5px;line-height:20px">
-      <div style="font-size:9px;color:#55504A;text-align:right">Recto: foundation plan</div>
-      <h2 style="margin:0;font-size:17px">4.5 Thread map</h2>
-      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:#B4AFA7;font-size:10px;line-height:14px">
-        <span style="background:#CDC8C0;padding:5px;font-weight:700">Thread</span><span style="background:#CDC8C0;padding:5px;font-weight:700">Context</span><span style="background:#CDC8C0;padding:5px;font-weight:700">Owns</span>
-        <span style="background:#D9D5CE;padding:5px">UI (XAML dispatcher)</span><span style="background:#D9D5CE;padding:5px">none</span><span style="background:#D9D5CE;padding:5px">XAML tree, view models</span>
-        <span style="background:#D9D5CE;padding:5px">Presentation</span><span style="background:#D9D5CE;padding:5px">none</span><span style="background:#D9D5CE;padding:5px">Swap chain, D2D device context</span>
-        <span style="background:#D9D5CE;padding:5px">DocumentActor</span><span style="background:#D9D5CE;padding:5px">clone</span><span style="background:#D9D5CE;padding:5px">fz_document, pages, display list cache</span>
-        <span style="background:#D9D5CE;padding:5px">Render worker</span><span style="background:#D9D5CE;padding:5px">clone, made at thread start</span><span style="background:#D9D5CE;padding:5px">the pixmap it is rendering</span>
-        <span style="background:#D9D5CE;padding:5px">Conversion job</span><span style="background:#D9D5CE;padding:5px">clone</span><span style="background:#D9D5CE;padding:5px">its own fz_document and writer</span>
+  <div style="flex-grow:1;min-height:0;position:relative;background:#141312;border-radius:8px 8px 0 0;margin:0 6px;overflow:hidden;display:flex;justify-content:center;padding-top:28px;padding-left:180px">
+    <article class="doc" style="width:640px;height:830px;flex:none;background:#D9D5CE;box-shadow:0 12px 40px rgba(0,0,0,.6);padding:52px 60px;box-sizing:border-box;font-family:Cambria,Georgia,serif;color:#1B1A19;display:flex;flex-direction:column;gap:10px;font-size:12px;line-height:19px">
+      <div style="font-size:9px;text-align:right">Recto: Foundation Plan</div>
+      <h2 style="margin:0;font-size:17px">4.3 Runtime and Thread Map</h2>
+      <p style="margin:0">Recto creates one <code>recto::core::Runtime</code> at startup and destroys it after all documents, views, and jobs have closed.</p>
+      <div class="tm">
+        <b>Thread</b><b>How many</b><b>Owns and does</b>
+        <span>UI thread (WinUI 3 <code>DispatcherQueue</code>)</span><span>1</span><span>Never calls <code>recto-pdf</code>. Never blocks on an engine thread. Sends messages to DocumentActors; receives callbacks via queue.</span>
+        <span>DocumentActor</span><span>1 per document</span><span>Owns <code>pdf::Document</code>. Parses XRef, pages, outlines. Builds <code>DisplayList</code> and <code>PageText</code>.</span>
+        <span>Presentation</span><span>1 per view</span><span>Owns the D3D11/D2D context and the tile texture cache. Composites visible tiles.</span>
+        <span>RenderPool worker</span><span><code>clamp(cores - 2, 2, 8)</code></span><span>Owns its own D2D/WIC raster target. Renders 512x512 tiles from a <code>DisplayList</code> with a <code>CancelToken</code>.</span>
+        <span>Conversion job</span><span>at most 2 at once</span><span>Opens its own <code>pdf::Document</code>, never the viewer's.</span>
       </div>
-      <h2 style="margin:10px 0 0;font-size:17px">4.6 Opening and viewing a document</h2>
-      <p style="margin:0">1. The UI calls Runtime::open(path). This starts a DocumentActor thread, which clones the base context and calls fz_open_document.</p>
-      <p style="margin:0">2. If fz_needs_password is true, the actor reports it; the UI asks for the password and posts it back.</p>
-      <p style="margin:0">3. The actor reports page count, page sizes and the outline to the UI.</p>
-      <p style="margin:0">4. For each page the viewport needs, the actor builds an fz_display_list and hands a kept reference to the render scheduler.</p>
+      <h2 style="margin:8px 0 0;font-size:17px">4.4 Opening a Document and Recording Display Lists</h2>
+      <p style="margin:0">1. UI thread calls <code>Runtime::open(path)</code>, which spawns a <code>DocumentActor</code> thread for that tab and returns a lightweight <code>DocumentHandle</code>.</p>
+      <p style="margin:0">2. On the actor thread, Recto parses the header, trailer, and XRef table or stream. If the document is encrypted and the empty user password does not authenticate, the actor posts <code>NeedsPassword</code> to the UI thread.</p>
+      <p style="margin:0">3. Immediately after <code>DocumentOpened</code>, the UI can size the scroll canvas and draw page outlines.</p>
+      <p style="margin:0">4. When the viewport needs page <i>p</i>, the <code>TileScheduler</code> asks the actor for <code>DisplayList(p)</code>. The actor interprets the page's content stream into an immutable <code>DisplayList</code> and hands it to the <code>RenderPool</code>.</p>
     </article>
-    <aside aria-label="Outline" style="position:absolute;left:16px;top:16px;bottom:96px;width:280px;background:rgba(35,33,32,.94);border:1px solid #3A3734;border-radius:16px;box-shadow:0 12px 32px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:2px;padding:12px;box-sizing:border-box;overflow:hidden">
-      <div style="display:flex;align-items:center;padding:0 4px 8px 8px"><span style="font-size:12px;font-weight:600;flex-grow:1">Outline</span><button class="tx" aria-label="Show pages" style="width:26px;height:26px"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"></path></svg></button><button class="tx" aria-label="Close panel" style="width:26px;height:26px"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>
+    <aside aria-label="Outline" style="position:absolute;left:16px;top:16px;bottom:96px;width:300px;background:rgba(42,40,38,.9);border:1px solid #3A3734;border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,.5);display:flex;flex-direction:column;gap:2px;padding:10px 10px 12px;box-sizing:border-box;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:2px;padding:0 0 8px 8px;flex:none"><span style="font-size:12px;font-weight:600">Outline</span><button class="tx" aria-label="Switch panel" title="Switch panel"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d="M15.85 7.65c.2.2.2.5 0 .7l-5.46 5.49a.55.55 0 0 1-.78 0L4.15 8.35a.5.5 0 1 1 .7-.7L10 12.8l5.15-5.16c.2-.2.5-.2.7 0"></path></svg></button><span style="flex-grow:1"></span><button class="tx" aria-label="Add bookmark" title="Add bookmark at this page"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M19 5.5a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0m-4-2a.5.5 0 0 0-1 0V5h-1.5a.5.5 0 0 0 0 1H14v1.5a.5.5 0 0 0 1 0V6h1.5a.5.5 0 0 0 0-1H15zm0 13.02v-5.54q.51-.05 1-.19v6.71a.5.5 0 0 1-.8.4L10 14.12 4.8 17.9a.5.5 0 0 1-.8-.4v-13A2.5 2.5 0 0 1 6.5 2h3.76q-.39.46-.66 1H6.5C5.67 3 5 3.67 5 4.5v12.02l4.7-3.42a.5.5 0 0 1 .6 0z"></path></svg></button><button class="tx" aria-label="Close panel" title="Close panel (Ctrl+B)"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="m4.09 4.22.06-.07a.5.5 0 0 1 .63-.06l.07.06L10 9.29l5.15-5.14a.5.5 0 0 1 .63-.06l.07.06c.18.17.2.44.06.63l-.06.07L10.71 10l5.14 5.15c.18.17.2.44.06.63l-.06.07a.5.5 0 0 1-.63.06l-.07-.06L10 10.71l-5.15 5.14a.5.5 0 0 1-.63.06l-.07-.06a.5.5 0 0 1-.06-.63l.06-.07L9.29 10 4.15 4.85a.5.5 0 0 1-.06-.63l.06-.07z"></path></svg></button></div>
       
-        <button class="ol" style="padding-left:6px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span>1. Decisions</span></button>
+        <button class="ol" style="padding-left:6px;"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d="M7.65 4.15c.2-.2.5-.2.7 0l5.49 5.46c.21.22.21.57 0 .78l-5.49 5.47a.5.5 0 0 1-.7-.71L12.8 10 7.65 4.85a.5.5 0 0 1 0-.7"></path></svg><span>1. Decisions</span></button>
       
-        <button class="ol" style="padding-left:6px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span>2. Tech stack</span></button>
+        <button class="ol" style="padding-left:6px;"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d="M7.65 4.15c.2-.2.5-.2.7 0l5.49 5.46c.21.22.21.57 0 .78l-5.49 5.47a.5.5 0 0 1-.7-.71L12.8 10 7.65 4.85a.5.5 0 0 1 0-.7"></path></svg><span>2. Tech Stack</span></button>
       
-        <button class="ol" style="padding-left:6px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span>3. Architecture</span></button>
+        <button class="ol" style="padding-left:6px;"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d="M7.65 4.15c.2-.2.5-.2.7 0l5.49 5.46c.21.22.21.57 0 .78l-5.49 5.47a.5.5 0 0 1-.7-.71L12.8 10 7.65 4.85a.5.5 0 0 1 0-.7"></path></svg><span>3. Solution Structure</span></button>
       
-        <button class="ol" style="padding-left:6px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;transform:rotate(90deg)" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span>4. MuPDF thread-safety setup</span></button>
+        <button class="ol" style="padding-left:6px;"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d="M15.85 7.65c.2.2.2.5 0 .7l-5.46 5.49a.55.55 0 0 1-.78 0L4.15 8.35a.5.5 0 1 1 .7-.7L10 12.8l5.15-5.16c.2-.2.5-.2.7 0"></path></svg><span>4. recto-pdf Engine and Threading Contract</span></button>
       
-        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.1 Why the C bridge</span></button>
+        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d=""></path></svg><span>4.1 What recto-pdf Implements</span></button>
       
-        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.2 MuPDF's rules</span></button>
+        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d=""></path></svg><span>4.2 Thread Ownership Rules</span></button>
       
-        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.3 Lock implementation</span></button>
+        <button class="ol" style="padding-left:26px;background:#3A2620;font-weight:600;box-shadow:inset 3px 0 0 #F0603C"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d=""></path></svg><span>4.3 Runtime and Thread Map</span></button>
       
-        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.4 Error handling</span></button>
+        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d=""></path></svg><span>4.4 Opening a Document and Recording Display Lists</span></button>
       
-        <button class="ol" style="padding-left:26px;background:#3A2620;color:#EDEAE4;font-weight:600;box-shadow:inset 3px 0 0 #F0603C"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.5 Thread map</span></button>
+        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d=""></path></svg><span>4.5 Rendering Tiles and Zoom</span></button>
       
-        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.6 Opening a document</span></button>
+        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d=""></path></svg><span>4.6 Presentation Thread</span></button>
       
-        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.7 Rendering one tile</span></button>
+        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d=""></path></svg><span>4.7 Conversion, Authoring, and OCR Jobs</span></button>
       
-        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.8 Presentation thread</span></button>
+        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d=""></path></svg><span>4.8 Shutdown Order</span></button>
       
-        <button class="ol" style="padding-left:6px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span>5. Conversions (v1)</span></button>
+        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d=""></path></svg><span>4.9 Thread-Safety Verification Battery</span></button>
       
-        <button class="ol" style="padding-left:6px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span>6. UI design</span></button>
+        <button class="ol" style="padding-left:6px;"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d="M7.65 4.15c.2-.2.5-.2.7 0l5.49 5.46c.21.22.21.57 0 .78l-5.49 5.47a.5.5 0 0 1-.7-.71L12.8 10 7.65 4.85a.5.5 0 0 1 0-.7"></path></svg><span>5. Conversions, Built-in OCR, Authoring, Security, and Standards Compliance</span></button>
       
-        <button class="ol" style="padding-left:6px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span>7. Milestones</span></button>
+        <button class="ol" style="padding-left:6px;"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d="M7.65 4.15c.2-.2.5-.2.7 0l5.49 5.46c.21.22.21.57 0 .78l-5.49 5.47a.5.5 0 0 1-.7-.71L12.8 10 7.65 4.85a.5.5 0 0 1 0-.7"></path></svg><span>6. Interface and Accessibility</span></button>
+      
+        <button class="ol" style="padding-left:6px;"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d="M7.65 4.15c.2-.2.5-.2.7 0l5.49 5.46c.21.22.21.57 0 .78l-5.49 5.47a.5.5 0 0 1-.7-.71L12.8 10 7.65 4.85a.5.5 0 0 1 0-.7"></path></svg><span>7. Milestones</span></button>
       
     </aside>
-    <div role="toolbar" aria-label="Document commands" style="position:absolute;left:50%;bottom:22px;transform:translateX(-50%);display:flex;align-items:center;gap:2px;padding:6px;background:#2A2826;border:1px solid #3A3734;border-radius:16px;box-shadow:0 12px 36px rgba(0,0,0,.5)">
-      <button class="ib on" aria-label="Outline panel"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM9 5v14"></path></svg></button>
+    <div role="toolbar" aria-label="Page toolbar" style="position:absolute;left:50%;bottom:22px;transform:translateX(-50%);display:flex;align-items:center;gap:2px;padding:6px;background:#2A2826;border:1px solid #3A3734;border-radius:8px;box-shadow:0 12px 36px rgba(0,0,0,.5)">
+      <button class="ib on" aria-label="Side panel" title="Side panel (Ctrl+B)"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M15 4a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3zM8.5 15H15a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H8.5z"></path></svg></button>
       <span class="sep"></span>
-      <button class="ib" aria-label="Previous page"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg></button>
-      <span style="font-size:13px;padding:0 6px;white-space:nowrap"><b>6</b> <span class="cap" style="font-size:13px">/ 9</span></span>
-      <button class="ib" aria-label="Next page"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></button>
+      <button class="ib" aria-label="Previous page" title="Previous page"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M12.35 15.85a.5.5 0 0 1-.7 0L6.16 10.4a.55.55 0 0 1 0-.78l5.49-5.46a.5.5 0 1 1 .7.7L7.2 10l5.16 5.15c.2.2.2.5 0 .7"></path></svg></button>
+      <button class="ib" aria-label="Page 6 of 9, go to page" title="Go to page (Ctrl+G)" style="width:auto;padding:0 6px;color:#EDEAE4"><b>6</b>&nbsp;<span class="cap" style="font-size:13px">/ 9</span></button>
+      <button class="ib" aria-label="Next page" title="Next page"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.65 4.15c.2-.2.5-.2.7 0l5.49 5.46c.21.22.21.57 0 .78l-5.49 5.47a.5.5 0 0 1-.7-.71L12.8 10 7.65 4.85a.5.5 0 0 1 0-.7"></path></svg></button>
       <span class="sep"></span>
-      <span style="font-size:13px;width:44px;text-align:center">80%</span>
-      <button class="ib" aria-label="Fit width"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h16M7 9l-3 3 3 3M17 9l3 3-3 3"></path></svg></button>
-      <button class="ib on" aria-label="Dim pages"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14a8 8 0 1 1-10-10 7 7 0 0 0 10 10z"></path></svg></button>
+      <button class="ib" aria-label="Zoom out" title="Zoom out (Ctrl+Minus)"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M11 8a.5.5 0 0 1 0 1H6a.5.5 0 0 1 0-1zM8.5 2a6.5 6.5 0 0 1 4.94 10.73l3.41 3.42a.5.5 0 0 1-.63.76l-.07-.06-3.42-3.41A6.5 6.5 0 1 1 8.5 2m0 1a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11"></path></svg></button>
+      <button class="ib" aria-label="Zoom 80%, presets" title="Zoom presets" style="width:48px;color:#EDEAE4">80%</button>
+      <button class="ib" aria-label="Zoom in" title="Zoom in (Ctrl+Plus)"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M8.5 5.5c.28 0 .5.22.5.5v2h2a.5.5 0 0 1 0 1H9v2a.5.5 0 0 1-1 0V9H6a.5.5 0 0 1 0-1h2V6c0-.28.22-.5.5-.5m0-3.5a6.5 6.5 0 0 1 4.94 10.73l3.41 3.42a.5.5 0 0 1-.63.76l-.07-.06-3.42-3.41A6.5 6.5 0 1 1 8.5 2m0 1a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11"></path></svg></button>
+      <button class="ib" aria-label="Fit width" title="Fit width (Ctrl+0)"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="m16.37 15-1.18 1.14a.5.5 0 1 0 .7.72l1.88-1.82c.3-.3.3-.78 0-1.08l-1.88-1.82a.5.5 0 1 0-.7.72L16.38 14H12.5a.5.5 0 1 0 0 1zM15 3a2 2 0 0 1 2 2v4.5a.5.5 0 0 1-1 0V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v4.5a.5.5 0 0 1-1 0V5c0-1.1.9-2 2-2zM4.81 16.14 3.63 15H7.5a.5.5 0 1 0 0-1H3.63l1.18-1.14a.5.5 0 0 0-.7-.72l-1.88 1.82c-.3.3-.3.79 0 1.08l1.89 1.82a.5.5 0 1 0 .69-.72"></path></svg></button>
       <span class="sep"></span>
-      <button class="ib" aria-label="Find"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM20 20l-4.2-4.2"></path></svg></button>
-      <button style="display:flex;align-items:center;gap:8px;height:36px;padding:0 14px;border-radius:10px;border:0;background:#F0603C;color:#1B1A19;font:inherit;font-size:13px;font-weight:600"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h14l-4-4M20 16H6l4 4"></path></svg>Convert</button>
-      <button class="ib" aria-label="More"><svg class="ic" viewBox="0 0 24 24" style="stroke-width:2.6" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01"></path></svg></button>
+      <button class="ib" aria-label="Find" title="Find (Ctrl+F)"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M13.73 14.44a6.5 6.5 0 1 1 .7-.7l3.42 3.4a.5.5 0 0 1-.63.77l-.07-.06zm-.71-.71A5.5 5.5 0 0 0 15 9.5a5.5 5.5 0 1 0-1.98 4.23"></path></svg></button>
+      <button class="ib" aria-label="Rotate view right" title="Rotate view right (Ctrl+R)"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3a7 7 0 0 1 3.6 13H16a.5.5 0 0 1 0 1h-3.5a.5.5 0 0 1-.5-.5V13a.5.5 0 0 1 1 0v2.2A6 6 0 1 0 4 10a.5.5 0 0 1-1 0 7 7 0 0 1 7-7m0 5a2 2 0 1 1 0 4 2 2 0 0 1 0-4m0 1a1 1 0 1 0 0 2 1 1 0 0 0 0-2"></path></svg></button>
+      <button class="ib" aria-label="Annotate and tools" title="Annotate and tools (Ctrl+Shift+A)"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M17.18 2.93a2.97 2.97 0 0 0-4.26-.06l-9.37 9.38q-.5.5-.66 1.2l-.88 3.94a.5.5 0 0 0 .6.6l3.93-.87c.46-.1.9-.34 1.23-.68l9.36-9.36a2.97 2.97 0 0 0 .05-4.15m-3.55.65a1.97 1.97 0 1 1 2.8 2.8l-.68.66-2.8-2.79zm-1.38 1.38 2.8 2.8-7.99 7.97q-.31.31-.74.41l-3.16.7.7-3.18q.1-.41.4-.7z"></path></svg></button>
+      <button class="ib" aria-label="Print" title="Print (Ctrl+P)"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 4.5C5 3.67 5.67 3 6.5 3h7c.83 0 1.5.67 1.5 1.5V5h.5A2.5 2.5 0 0 1 18 7.5v5c0 .83-.67 1.5-1.5 1.5H15v1.5c0 .83-.67 1.5-1.5 1.5h-7A1.5 1.5 0 0 1 5 15.5V14H3.5A1.5 1.5 0 0 1 2 12.5v-5A2.5 2.5 0 0 1 4.5 5H5zM6 5h8v-.5a.5.5 0 0 0-.5-.5h-7a.5.5 0 0 0-.5.5zm-1 8v-1.5c0-.83.67-1.5 1.5-1.5h7c.83 0 1.5.67 1.5 1.5V13h1.5a.5.5 0 0 0 .5-.5v-5c0-.83-.67-1.5-1.5-1.5h-11C3.67 6 3 6.67 3 7.5v5c0 .28.22.5.5.5zm1.5-2a.5.5 0 0 0-.5.5v4c0 .28.22.5.5.5h7a.5.5 0 0 0 .5-.5v-4a.5.5 0 0 0-.5-.5z"></path></svg></button>
+      <span class="sep"></span>
+      <a class="acc" href="D-Convert.html"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M6 2a2 2 0 0 0-2 2v5.2q.49-.13 1-.18V4a1 1 0 0 1 1-1h4v3.5c0 .83.67 1.5 1.5 1.5H15v8a1 1 0 0 1-1 1h-3.6q-.27.54-.66 1H14a2 2 0 0 0 2-2V7.41c0-.4-.16-.78-.44-1.06l-3.91-3.91A1.5 1.5 0 0 0 10.59 2zm8.8 5h-3.3a.5.5 0 0 1-.5-.5V3.2zM5.5 19a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9m.35-2.15a.5.5 0 0 1-.7-.7L6.29 15H3.5a.5.5 0 0 1 0-1h2.8l-1.15-1.15a.5.5 0 0 1 .7-.7l2 2a.5.5 0 0 1 .15.35.5.5 0 0 1-.14.35z"></path></svg>Convert</a>
+      <button class="ib" aria-label="More" title="More"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="M6.25 10a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0m5 0a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0M15 11.25a1.25 1.25 0 1 0 0-2.5 1.25 1.25 0 0 0 0 2.5"></path></svg></button>
     </div>
   </div>
 </div>

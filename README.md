@@ -5,7 +5,7 @@
 Recto will be an open-source PDF viewer, OCR tool and document converter for Windows 11.
 It is designed as a single native WinUI 3 application backed by Recto's own C++20 PDF engine (`recto-pdf`), built-in High-Accuracy Neural OCR + `Windows.Media.Ocr`, and 100% pure native C++20 document converters (`PDF <-> Word`, `Office & Legacy Office -> PDF`, `PDF <-> Images`, `PDF -> Text`, and page organization): read, search, OCR, convert and organize documents without accounts, telemetry by default, external converter requirements, or artificial limits.
 
-**Status:** Early milestone M0 (repository and build scaffold). No application functionality is shipped yet; the repository holds the approved interface specification, the foundation architecture plan, the generated graphics, the C++20 module scaffold, and the live TODO execution plan that builds version 1 from M0 (repository and build) through M6 (Microsoft Store release).
+**Status:** Early milestone M0 (repository and build scaffold). No application functionality is shipped yet; the repository holds the approved interface specification, the foundation architecture plan, the generated graphics, the C++20 module scaffold, and the live TODO execution plan that builds version 1 from M0 (repository and build) through M6 (Inno Setup and portable release, with optional Microsoft Store MSIX).
 
 ## Planned for version 1
 
@@ -18,10 +18,10 @@ It is designed as a single native WinUI 3 application backed by Recto's own C++2
 
 | Document | Role |
 | -------- | ---- |
-| [`docs/plans/2026-10-13-recto-foundation.md`](./docs/plans/2026-10-13-recto-foundation.md) | Decisions D1 to D17, module boundaries, the `recto-pdf` engine and threading contract, built-in OCR, native converters, milestones M0 to M6, performance targets, security rules. |
+| [`docs/plans/2026-10-13-recto-foundation.md`](./docs/plans/2026-10-13-recto-foundation.md) | Decisions D1 to D21, module boundaries, the `recto-pdf` engine and threading contract, built-in OCR, native converters, milestones M0 to M6, performance targets, security rules. |
 | [`design/SPEC.md`](./design/SPEC.md) | The interface source of truth: tokens, typography, layout presets, screens, dialogs, keyboard shortcuts and accessibility. |
-| [`todo/TODO-00-INDEX.md`](./todo/TODO-00-INDEX.md) | The live execution plan across domains `00-workspace` to `07-release` and `99-manual`, projected into [`todo/implementation-plan.md`](./todo/implementation-plan.md). |
-| [`resources/README.md`](./resources/README.md) | The shipped icons, wordmarks and MSIX package assets generated from the design tokens. |
+| [`todo/TODO-00-INDEX.md`](./todo/TODO-00-INDEX.md) | The live execution plan across domains `00-workspace` to `08-assistant` and `99-manual`, projected into [`todo/implementation-plan.md`](./todo/implementation-plan.md). |
+| [`resources/README.md`](./resources/README.md) | The shipped icons, wordmarks, MSIX package assets and installer images generated from the design tokens, and the `RectoIcons.ttf` interface icon font. |
 
 ## Building and verifying
 

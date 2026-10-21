@@ -64,10 +64,26 @@
     "invertedText": "#EDEAE4"
   },
   "brand": {
-    "iconTile": "#2A2826",
-    "iconTileEdgeOnDark": "#4A4642",
-    "iconPage": "#F5F4F0",
-    "iconRibbon": "#F0603C",
-    "iconLines": "#8A857D"
+    "$description": "Fixed colours of the app icon, the PDF file-type icon and the brand graphics (SPEC section 3); they never follow the theme. Built by design/tools/build_resources.py.",
+    "iconPageTop": "#FFFFFF",
+    "iconPageBottom": "#ECE8E1",
+    "iconPageEdge": "rgba(0, 0, 0, 0.10)",
+    "iconPageEdgeMedium": "rgba(0, 0, 0, 0.30)",
+    "iconPageOutlineSmall": "#6E6860",
+    "iconRibbonTop": "#F46A44",
+    "iconRibbonBottom": "#C8431F",
+    "iconRibbonSmall": "#E0532F",
+    "iconLines": "#CFC8BD",
+    "iconShadow": "rgba(0, 0, 0, 0.22)",
+    "fileTypePage": "#FFFFFF",
+    "fileTypeEdge": "#BDB8B0",
+    "fileTypeFold": "#E9E5DF",
+    "fileTypeLines": "#C9C4BC",
+    "fileTypeBadge": "#C8431F",
+    "fileTypeBadgeText": "#FFFFFF"
+  },
+  "illustration": {
+    "$description": "Colours used only inside in-app illustrations (SPEC section 3.4).",
+    "wireframeWindowLight": "#E2E6EE"
   }
 }

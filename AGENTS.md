@@ -48,14 +48,15 @@ The generic `review-todo-section` and `independent-review` skills check the fail
 - A tile cached after abort, a bitmap stride assumed to be `width * 4`, or a `CancelToken` polled without cooperative abort semantics.
 - A file write that is not temp-file-then-replace, or an original modified in place by an Organize or authoring operation.
 - A macro stream parsed or executed, an HTML script enabled, a PDF launch or JavaScript action run, or a document link or attachment opened without asking.
-- A hex colour, font size or glyph set directly on a control instead of `RectoColors.xaml` tokens and Segoe Fluent Icons.
+- A hex colour, font size or glyph set directly on a control instead of `RectoColors.xaml` tokens and Fluent UI System Icons through the `RectoIcons` font (`RectoIconsFontFamily`).
+- A glyph inside a filled or tinted tile, or a control radius other than the SPEC section 7 system (4 epx controls, 8 epx overlays, pills only for chips, keycaps, badges and counters).
 - A setting nothing reads, a command unreachable from the command box (Ctrl+K), or an icon-only control without an automation name and tooltip.
 
 Review lenses read against Recto's sources: `adversarial` covers malformed PDFs, races, aborts, macros and links; `integration` covers the actor contract, tile hand-off, job queue and shell slots; `source-defect` covers ISO 32000-1/-2, ECMA-376, WinUI and the SPEC.
 
 ## Interface rules
 
-- `design/SPEC.md` wins over any screenshot, mockup or memory. Colours come only from `design/tokens/RectoColors.xaml`; no control sets a hex value. Glyphs are Segoe Fluent Icons. Stock WinUI 3 controls first.
+- `design/SPEC.md` wins over any screenshot, mockup or memory. Colours come only from `design/tokens/RectoColors.xaml`; no control sets a hex value. Glyphs are Fluent UI System Icons through the `RectoIcons` font (SPEC section 6), never inside a filled or tinted tile. Corner radii follow SPEC section 7. Stock WinUI 3 controls first.
 - One app shell, three layout presets (Focus default, Classic, Reading room) through settings and named slots: never three shells (D17).
 - Every toolbar and menu command is reachable from the command box (Ctrl+K), every icon-only button carries an automation name and tooltip, and every control on a SPEC surface is accounted for as working or deferred to a named section before the section stamps.
 

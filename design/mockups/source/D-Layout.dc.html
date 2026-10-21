@@ -12,74 +12,82 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500&amp;display=swap">
 <style>
 body{margin:0}
-a{color:#C8431F}a:hover{color:#A93717}
-.ic{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:none}
-.tb{display:flex;align-items:center;gap:8px;height:30px;padding:0 6px 0 12px;border-radius:8px;font-size:12px;color:#5C5C5C;text-decoration:none;white-space:nowrap}
-.tb.on{background:#FFFFFF;color:#1B1B1B;box-shadow:0 1px 3px rgba(0,0,0,.10)}
-.wc{width:46px;height:44px;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:#1B1B1B}
-.ib{width:32px;height:32px;border:0;border-radius:8px;background:transparent;color:#1B1B1B;display:flex;align-items:center;justify-content:center;flex:none;text-decoration:none}
+a{color:#A93717}
+.ic{width:16px;height:16px;fill:currentColor;flex:none;display:block}
+.ai20 svg{width:20px;height:20px;display:block}
+.wm{font-family:'Newsreader',Georgia,serif;font-size:17px;font-weight:500;margin:0 14px 0 8px}
+.tb{display:flex;align-items:center;gap:8px;height:30px;padding:0 6px 0 10px;box-sizing:border-box;border-radius:4px;border:1px solid transparent;font-size:12px;color:#5C5C5C;text-decoration:none;max-width:240px;white-space:nowrap}
+.tb.on{background:#FFFFFF;color:#1B1B1B;border-color:#E5E5E5}
+.tb.home{padding:0 10px}
+.tx{width:22px;height:22px;border:0;border-radius:4px;background:transparent;color:#5C5C5C;display:flex;align-items:center;justify-content:center;padding:0}
+.ib{width:32px;height:32px;border:0;border-radius:4px;background:transparent;color:#5C5C5C;display:flex;align-items:center;justify-content:center;flex:none;text-decoration:none;padding:0}
 .ib.on{background:#FBE4DC;color:#C8431F}
-.tx{width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:inherit;display:flex;align-items:center;justify-content:center}
+.cb{display:flex;align-items:center;gap:8px;width:340px;height:30px;padding:0 6px 0 10px;box-sizing:border-box;border-radius:4px;border:1px solid #E5E5E5;background:#FFFFFF;font-size:12px;color:#5C5C5C;text-decoration:none}
+.cb span{flex-grow:1}
+.wc{width:46px;height:44px;display:flex;align-items:center;justify-content:center;border:0;background:transparent;color:#1B1B1B;padding:0}
+kbd{font-family:inherit;font-size:11px;line-height:16px;padding:0 7px;border-radius:999px;background:#EEF1F6;color:#5C5C5C;border:1px solid #D6D9DF}
 .cap{font-size:12px;color:#5C5C5C}
-.gh{margin:22px 0 8px 6px;font-size:12px;font-weight:600;color:#5C5C5C;letter-spacing:.6px}
-.grp{flex:none;background:#FFFFFF;border-radius:16px;border:1px solid #E5E5E5;overflow:hidden}
-.r{display:flex;align-items:center;gap:16px;min-height:58px;padding:10px 20px;box-sizing:border-box;border-top:1px solid #F0F0F0}
-.r .t{display:flex;flex-direction:column;gap:2px;flex-grow:1}
+.gh{margin:20px 0 8px 4px;font-size:12px;font-weight:600;color:#5C5C5C;letter-spacing:.6px}
+.grp{flex:none;background:#FFFFFF;border-radius:8px;border:1px solid #E5E5E5;overflow:hidden}
+.r{display:flex;align-items:center;gap:16px;min-height:50px;padding:6px 20px;box-sizing:border-box;border-top:1px solid #E5E5E5}
+.r .t{display:flex;flex-direction:column;gap:2px;flex-grow:1;min-width:0}
 .r .t b{font-weight:600;font-size:14px}
-.seg{display:flex;padding:3px;background:#F0F0F0;border-radius:10px;gap:2px}
-.seg button{height:28px;padding:0 12px;border:0;border-radius:8px;background:transparent;font:inherit;font-size:12px;color:#5C5C5C}
-.seg button.on{background:#FFFFFF;color:#1B1B1B;font-weight:600;box-shadow:0 1px 3px rgba(0,0,0,.12)}
-.pre{display:flex;flex-direction:column;gap:10px;border:0;background:transparent;padding:0;font:inherit;text-align:left;color:#1B1B1B}
-.wf{height:150px;border-radius:12px;background:#EEF1F6;position:relative;overflow:hidden;display:block}
-.wf span{position:absolute;display:block}
+.seg{display:flex;padding:2px;background:#EEF1F6;border:1px solid #D6D9DF;border-radius:4px;gap:2px}
+.seg button{height:26px;padding:0 12px;border:1px solid transparent;border-radius:4px;background:transparent;font:inherit;font-size:12px;color:#5C5C5C}
+.seg button.on{background:#FFFFFF;border-color:#D6D9DF;color:#1B1B1B;font-weight:600}
+.pre{display:flex;flex-direction:column;gap:8px;padding:10px 10px 12px;border-radius:8px;border:1px solid #E5E5E5;background:#FFFFFF;font:inherit;text-align:left;color:#1B1B1B}
+.pre.on{border-color:#C8431F;box-shadow:0 0 0 1px #C8431F}
+.wf svg{width:100%;height:124px;display:block}
+.badge{font-size:11px;font-weight:600;line-height:18px;padding:0 8px;border-radius:999px;background:#FBE4DC;color:#A93717}
 </style>
 </helmet>
 <div style="width:1440px;height:900px;display:flex;flex-direction:column;background:#EEF1F6;font-family:'Segoe UI Variable Text','Segoe UI',system-ui,sans-serif;font-size:14px;color:#1B1B1B;overflow:hidden">
   <div style="height:44px;display:flex;align-items:center;gap:4px;padding-left:14px;flex:none">
-    <svg viewBox="0 0 64 64" width="20" height="20" aria-hidden="true"><rect x="2" y="2" width="60" height="60" rx="14" fill="#2A2826"></rect><rect x="13" y="10" width="38" height="45" rx="3" fill="#F5F4F0"></rect><path d="M34 5 H47 V33 L40.5 27 L34 33 Z" fill="#F0603C"></path></svg>
-    <span style="font-family:'Newsreader',Georgia,serif;font-size:17px;font-weight:500;margin:0 14px 0 8px">Recto</span>
-    <a class="tb" href="D-Home.dc.html" aria-label="Home"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="{{i.home}}"></path></svg></a>
-    <div class="tb on"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="{{i.gear}}"></path></svg>Settings<button class="tx" aria-label="Close tab"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button></div>
+    <span class="ai20" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="24" height="24" role="img"><title>Recto</title><rect x="10" y="6" width="44" height="52" rx="6" fill="#FFFFFF" stroke="#6E6860" stroke-width="3.4"/><path d="M34 2 H48 V32 L41 25.6 L34 32 Z" fill="#E0532F"/></svg></span><span class="wm">Recto</span>
+    <a class="tb home" href="D-Home.dc.html" aria-label="Home" title="Home"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="{{i.home}}"></path></svg></a>
+    <div class="tb on"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="{{i.settings}}"></path></svg>Settings<button class="tx" aria-label="Close tab" title="Close tab (Ctrl+W)"><svg class="ic" viewBox="0 0 20 20" style="width:12px;height:12px" aria-hidden="true"><path d="{{i.dismiss}}"></path></svg></button></div>
+    <button class="ib" aria-label="New tab" title="New tab"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="{{i.add}}"></path></svg></button>
     <div style="flex-grow:1"></div>
-    <a class="ib on" href="D-Layout.dc.html" aria-label="Settings"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.gear}}"></path></svg></a>
-    <button class="wc" aria-label="Minimize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.min}}"></path></svg></button>
-    <button class="wc" aria-label="Maximize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.max}}"></path></svg></button>
-    <button class="wc" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button>
+    <a class="cb" href="D-Dialogs.dc.html" aria-label="Search, open or run a command"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="{{i.search}}"></path></svg><span>Search, open or run a command</span><kbd>Ctrl K</kbd></a>
+    <div style="flex-grow:1"></div>
+    <a class="ib on" href="D-Layout.dc.html" aria-label="Settings" title="Settings (Ctrl+,)"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="{{i.settings_filled}}"></path></svg></a>
+    <button class="wc" aria-label="Minimize"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="{{i.subtract}}"></path></svg></button>
+    <button class="wc" aria-label="Maximize"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="{{i.square}}"></path></svg></button>
+    <button class="wc" aria-label="Close"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="{{i.dismiss}}"></path></svg></button>
   </div>
   <main style="flex-grow:1;min-height:0;overflow:hidden;display:flex;justify-content:center;padding-top:24px">
     <div style="width:900px;display:flex;flex-direction:column">
-      <h1 style="margin:0;font-family:'Segoe UI Variable Display','Segoe UI',sans-serif;font-size:32px;font-weight:600">Settings</h1>
+      <div style="display:flex;align-items:center;gap:16px"><h1 style="margin:0;font-family:'Segoe UI Variable Display','Segoe UI',sans-serif;font-size:28px;line-height:36px;font-weight:600;flex-grow:1">Settings</h1><label style="display:flex;align-items:center;gap:8px;width:280px;height:32px;padding:0 10px;box-sizing:border-box;border-radius:4px;background:#FFFFFF;border:1px solid #D6D9DF;color:#5C5C5C"><svg class="ic" viewBox="0 0 20 20" aria-hidden="true"><path d="{{i.search}}"></path></svg><input aria-label="Find a setting" placeholder="Find a setting" style="border:0;outline:0;font:inherit;font-size:13px;flex-grow:1;min-width:0;background:transparent;color:#1B1B1B"></label></div>
       <div class="gh">LAYOUT</div>
-      <div class="grp" style="padding:20px">
-        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px" role="radiogroup" aria-label="Layout preset">
-          <button class="pre" role="radio" aria-checked="true">
-            <span class="wf" style="box-shadow:0 0 0 2px #FFFFFF,0 0 0 4px #C8431F"><span style="left:0;right:0;top:0;height:14px;background:#E2E6EE"></span><span style="left:58px;right:58px;top:24px;bottom:0;background:#FFFFFF"></span><span style="left:8px;top:24px;width:34px;bottom:40px;border-radius:6px;background:#FFFFFF;box-shadow:0 2px 6px rgba(0,0,0,.15)"></span><span style="left:50%;bottom:10px;width:120px;margin-left:-60px;height:18px;border-radius:7px;background:#FFFFFF;box-shadow:0 2px 6px rgba(0,0,0,.18)"></span><span style="left:50%;bottom:16px;width:18px;margin-left:34px;height:6px;border-radius:3px;background:#C8431F"></span></span>
-            <span style="display:flex;align-items:center;gap:8px;font-weight:600">Focus<span style="font-size:11px;font-weight:600;padding:1px 8px;border-radius:9px;background:#FBE4DC;color:#A93717">Default</span></span>
+      <div class="grp">
+        <div style="padding:16px 20px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px" role="radiogroup" aria-label="Layout preset">
+          <button class="pre on" role="radio" aria-checked="true">
+            <span class="wf" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" width="240" height="150" role="img"><title>focus layout preview</title><rect width="240" height="150" rx="12" fill="#E6E7EA"/><path d="M12 0 H228 Q240 0 240 12 V14 H0 V12 Q0 0 12 0 Z" fill="#E2E6EE"/><rect x="60" y="24" width="120" height="126" fill="#FFFFFF"/><rect x="8" y="24" width="36" height="86" rx="6" fill="#FFFFFF" stroke="#E5E5E5"/><rect x="60" y="122" width="120" height="18" rx="7" fill="#FFFFFF" stroke="#E5E5E5"/><rect x="150" y="128" width="22" height="6" rx="3" fill="#C8431F"/></svg></span>
+            <span style="display:flex;align-items:center;gap:8px;font-weight:600">Focus<span class="badge">Default</span></span>
             <span class="cap" style="line-height:17px">Floating toolbar under the page. Panels float over the page and hide when you don't need them.</span>
           </button>
           <button class="pre" role="radio" aria-checked="false">
-            <span class="wf" style="box-shadow:0 0 0 1px #E0E0E0"><span style="left:0;right:0;top:0;height:14px;background:#E2E6EE"></span><span style="left:0;top:14px;width:16px;bottom:0;background:#E2E6EE"></span><span style="left:16px;right:0;top:14px;height:14px;background:#FAFAFA;border-bottom:1px solid #E0E0E0"></span><span style="left:16px;top:29px;width:36px;bottom:0;background:#FAFAFA;border-right:1px solid #E0E0E0"></span><span style="left:76px;right:24px;top:36px;bottom:0;background:#FFFFFF"></span><span style="right:30px;top:17px;width:22px;height:8px;border-radius:2px;background:#C8431F"></span></span>
-            <span style="font-weight:600">Classic</span>
-            <span class="cap" style="line-height:17px">Command bar along the top, navigation rail and a docked pane on the left.</span>
+            <span class="wf" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" width="240" height="150" role="img"><title>classic layout preview</title><rect width="240" height="150" rx="12" fill="#E6E7EA"/><path d="M12 0 H228 Q240 0 240 12 V14 H0 V12 Q0 0 12 0 Z" fill="#E2E6EE"/><rect x="0" y="14" width="16" height="136" fill="#E2E6EE"/><rect x="16" y="14" width="224" height="14" fill="#FAFAFA"/><rect x="16" y="28" width="38" height="122" fill="#FAFAFA"/><path d="M16 28 H240 M54 28 V150" stroke="#E5E5E5"/><rect x="80" y="38" width="130" height="112" fill="#FFFFFF"/><rect x="206" y="17" width="26" height="8" rx="2" fill="#C8431F"/></svg></span>
+            <span style="font-weight:600;line-height:18px">Classic</span>
+            <span class="cap" style="line-height:17px">Menu bar and command bar along the top, navigation rail and a docked pane on the left, status bar.</span>
           </button>
           <button class="pre" role="radio" aria-checked="false">
-            <span class="wf" style="box-shadow:0 0 0 1px #E0E0E0;background:#232120"><span style="left:0;right:0;top:0;height:14px;background:#1B1A19"></span><span style="left:0;right:0;top:14px;height:12px;background:#2A2826"></span><span style="right:0;top:26px;width:48px;bottom:0;background:#2A2826"></span><span style="left:0;right:48px;bottom:0;height:28px;background:#1B1A19"></span><span style="left:70px;right:110px;top:34px;bottom:34px;background:#F5F4F0"></span><span style="left:20px;top:5px;width:18px;height:4px;border-radius:2px;background:#F0603C"></span></span>
-            <span style="font-weight:600">Reading room</span>
+            <span class="wf" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 150" width="240" height="150" role="img"><title>readingroom layout preview</title><rect width="240" height="150" rx="12" fill="#E6E7EA"/><path d="M12 0 H228 Q240 0 240 12 V14 H0 V12 Q0 0 12 0 Z" fill="#E2E6EE"/><rect x="0" y="14" width="240" height="12" fill="#FAFAFA"/><rect x="20" y="5" width="20" height="4" rx="2" fill="#C8431F"/><rect x="190" y="26" width="50" height="124" fill="#FAFAFA"/><rect x="0" y="122" width="190" height="28" fill="#E2E6EE"/><rect x="60" y="34" width="72" height="84" fill="#FFFFFF"/><rect x="18" y="128" width="14" height="16" fill="#FFFFFF" opacity=".8"/><rect x="40" y="128" width="14" height="16" fill="#FFFFFF" opacity=".8"/><rect x="62" y="128" width="14" height="16" fill="#FFFFFF" opacity=".8"/><rect x="84" y="128" width="14" height="16" fill="#FFFFFF" opacity=".8"/><rect x="106" y="128" width="14" height="16" fill="#FFFFFF" opacity=".8"/><rect x="128" y="128" width="14" height="16" fill="#FFFFFF" opacity=".8"/><rect x="150" y="128" width="14" height="16" fill="#FFFFFF" opacity=".8"/></svg></span>
+            <span style="font-weight:600;line-height:18px">Reading room</span>
             <span class="cap" style="line-height:17px">Mode switcher in the title bar, page filmstrip along the bottom, inspector on the right.</span>
           </button>
         </div>
-      </div>
-      <div class="gh">FINE-TUNE THE LAYOUT <span style="font-weight:400;letter-spacing:0">· changing any of these switches the preset to Custom</span></div>
-      <div class="grp">
-        <div class="r" style="border-top:0"><span class="t"><b>Page toolbar</b><span class="cap">Docked along the top, or floating under the page</span></span><div class="seg"><button>Top</button><button class="on">Floating, bottom</button></div></div>
-        <div class="r"><span class="t"><b>Side panels</b><span class="cap">Thumbnails, outline and search</span></span><div class="seg"><button>Docked</button><button class="on">Floating</button></div></div>
-        <div class="r"><span class="t"><b>Page thumbnails</b></span><div class="seg"><button class="on">Side panel</button><button>Filmstrip at the bottom</button></div></div>
+        <div class="cap" style="padding:10px 20px;border-top:1px solid #E5E5E5">Changing any setting below switches the preset to Custom.</div>
+        <div class="r"><span class="t"><b>Page toolbar</b><span class="cap">Where the page toolbar sits</span></span><div class="seg"><button class="on">Floating, bottom</button><button>Docked, top</button><button>Strip under the tabs</button></div></div>
+        <div class="r"><span class="t"><b>Side panels</b><span class="cap">Thumbnails, outline, search and the other panels</span></span><div class="seg"><button class="on">Floating</button><button>Docked left</button><button>Docked right</button></div></div>
+        <div class="r"><span class="t"><b>Page thumbnails</b></span><div class="seg"><button class="on">In the side panel</button><button>Filmstrip at the bottom</button></div></div>
         <div class="r"><span class="t"><b>Search and outline</b></span><div class="seg"><button class="on">Left</button><button>Right</button></div></div>
         <div class="r"><span class="t"><b>Navigation</b><span class="cap">How you move between Home, Convert and Organize</span></span><div class="seg"><button class="on">Tabs and command box</button><button>Left rail</button><button>Title bar modes</button></div></div>
       </div>
       <div class="gh">THEME</div>
       <div class="grp">
         <div class="r" style="border-top:0"><span class="t"><b>App theme</b></span><div class="seg"><button>Light</button><button>Dark</button><button class="on">Follow Windows</button></div></div>
+        <div class="r"><span class="t"><b>Pages in dark theme</b><span class="cap">How pages look when the app is dark</span></span><div class="seg"><button>Original</button><button class="on">Dimmed</button><button>Inverted</button></div></div>
       </div>
     </div>
   </main>
@@ -88,7 +96,7 @@ a{color:#C8431F}a:hover{color:#A93717}
 <script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
 class Component extends DCLogic {
 renderVals() {
-const i={gear:"M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1",x:"M6 6l12 12M18 6L6 18",min:"M5 12h14",max:"M5 5h14v14H5z",home:"M4 11l8-7 8 7v9h-5v-6H9v6H4z"};
+const i={"add":"M10 2.5c.28 0 .5.22.5.5v6.5H17a.5.5 0 0 1 0 1h-6.5V17a.5.5 0 0 1-1 0v-6.5H3a.5.5 0 0 1 0-1h6.5V3c0-.28.22-.5.5-.5","dismiss":"m4.09 4.22.06-.07a.5.5 0 0 1 .63-.06l.07.06L10 9.29l5.15-5.14a.5.5 0 0 1 .63-.06l.07.06c.18.17.2.44.06.63l-.06.07L10.71 10l5.14 5.15c.18.17.2.44.06.63l-.06.07a.5.5 0 0 1-.63.06l-.07-.06L10 10.71l-5.15 5.14a.5.5 0 0 1-.63.06l-.07-.06a.5.5 0 0 1-.06-.63l.06-.07L9.29 10 4.15 4.85a.5.5 0 0 1-.06-.63l.06-.07z","home":"M9 2.39a1.5 1.5 0 0 1 2 0l5.5 4.94c.32.28.5.69.5 1.12v7.05c0 .83-.67 1.5-1.5 1.5H13a1.5 1.5 0 0 1-1.5-1.5V12a.5.5 0 0 0-.5-.5H9a.5.5 0 0 0-.5.5v3.5c0 .83-.67 1.5-1.5 1.5H4.5A1.5 1.5 0 0 1 3 15.5V8.45c0-.43.18-.84.5-1.12zm1.33.74a.5.5 0 0 0-.66 0l-5.5 4.94a.5.5 0 0 0-.17.38v7.05c0 .28.22.5.5.5H7a.5.5 0 0 0 .5-.5V12c0-.83.67-1.5 1.5-1.5h2c.83 0 1.5.67 1.5 1.5v3.5c0 .28.22.5.5.5h2.5a.5.5 0 0 0 .5-.5V8.45a.5.5 0 0 0-.17-.38z","search":"M13.73 14.44a6.5 6.5 0 1 1 .7-.7l3.42 3.4a.5.5 0 0 1-.63.77l-.07-.06zm-.71-.71A5.5 5.5 0 0 0 15 9.5a5.5 5.5 0 1 0-1.98 4.23","settings":"M1.91 7.38A8.5 8.5 0 0 1 3.7 4.3a.5.5 0 0 1 .54-.13l1.92.68a1 1 0 0 0 1.32-.76l.36-2a.5.5 0 0 1 .4-.4 9 9 0 0 1 3.55 0q.32.08.38.4l.37 2a1 1 0 0 0 1.32.76l1.92-.68a.5.5 0 0 1 .54.13 8.5 8.5 0 0 1 1.78 3.08q.08.31-.15.54l-1.56 1.32a1 1 0 0 0 0 1.52l1.56 1.32a.5.5 0 0 1 .15.54 8.5 8.5 0 0 1-1.78 3.08.5.5 0 0 1-.54.13l-1.92-.68a1 1 0 0 0-1.32.76l-.37 2a.5.5 0 0 1-.38.4 8.5 8.5 0 0 1-3.56 0 .5.5 0 0 1-.39-.4l-.36-2a1 1 0 0 0-1.32-.76l-1.92.68a.5.5 0 0 1-.54-.13 8.5 8.5 0 0 1-1.78-3.08.5.5 0 0 1 .15-.54l1.56-1.32a1 1 0 0 0 0-1.52L2.06 7.92a.5.5 0 0 1-.15-.54m1.06 0 1.3 1.1a2 2 0 0 1 0 3.04l-1.3 1.1q.45 1.19 1.25 2.16l1.6-.58a2 2 0 0 1 2.63 1.53l.3 1.67a8 8 0 0 0 2.5 0l.3-1.67a2 2 0 0 1 2.64-1.53l1.6.58a8 8 0 0 0 1.24-2.16l-1.3-1.1a2 2 0 0 1 0-3.04l1.3-1.1a8 8 0 0 0-1.25-2.16l-1.6.58a2 2 0 0 1-2.63-1.53l-.3-1.67a8 8 0 0 0-2.5 0l-.3 1.67A2 2 0 0 1 5.81 5.8l-1.6-.58a8 8 0 0 0-1.24 2.16M7.5 10a2.5 2.5 0 1 1 5 0 2.5 2.5 0 0 1-5 0m1 0a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0","settings_filled":"M1.91 7.38A8.5 8.5 0 0 1 3.7 4.3a.5.5 0 0 1 .54-.13l1.92.68a1 1 0 0 0 1.32-.76l.36-2a.5.5 0 0 1 .4-.4 9 9 0 0 1 3.55 0q.32.08.38.4l.37 2a1 1 0 0 0 1.32.76l1.92-.68a.5.5 0 0 1 .54.13 8.5 8.5 0 0 1 1.78 3.08q.08.31-.15.54l-1.56 1.32a1 1 0 0 0 0 1.52l1.56 1.32a.5.5 0 0 1 .15.54 8.5 8.5 0 0 1-1.78 3.08.5.5 0 0 1-.54.13l-1.92-.68a1 1 0 0 0-1.32.76l-.37 2a.5.5 0 0 1-.38.4 8.5 8.5 0 0 1-3.56 0 .5.5 0 0 1-.39-.4l-.36-2a1 1 0 0 0-1.32-.76l-1.92.68a.5.5 0 0 1-.54-.13 8.5 8.5 0 0 1-1.78-3.08.5.5 0 0 1 .15-.54l1.56-1.32a1 1 0 0 0 0-1.52L2.06 7.92a.5.5 0 0 1-.15-.54M8 10a2 2 0 1 0 4 0 2 2 0 0 0-4 0","square":"M3 6a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3zm3-2a2 2 0 0 0-2 2v8c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z","subtract":"M3 10c0-.28.22-.5.5-.5h13a.5.5 0 0 1 0 1h-13A.5.5 0 0 1 3 10"};
 return {i};
 }
 }
