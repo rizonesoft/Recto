@@ -275,3 +275,47 @@ OVERALL: needs-attention
 
 - Finding 1 (P1): an xref offset (classic entry or xref-stream type-1 entry) must be one of the object-header offsets the forward walk parsed (`object_header_offsets`), so a header written inside a stream payload or a string can never be selected (`test_xref_offsets_name_only_objects_the_walk_parsed`).
 - Finding 2 (P1): an object-stream slot is checked with the same string-aware parser as every other object, which keeps `>>` and `]` apart; the separate depth counter is gone (`test_an_object_stream_slot_keeps_dictionary_and_array_delimiters_apart`).
+
+## Round 7: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T19:33:40Z
+- Effort: medium
+- Lines: 26
+- Digest: 98b4230fc94cf09c
+
+## adversarial: needs-attention
+
+1. **P1: An entirely missing cross-reference index passes validation.** `scripts/build-corpus.py:1027` accepts a zero-entry subsection without checking overall object coverage; `scripts/build-corpus.py:1057` also never validates `/Size`. Reproduced using `d = build_simple_1p()`, locating `x = d.index(b'\nxref\n') + 1` and `t = d.index(b'trailer\n', x)`, then validating `d[:x] + b'xref\n0 0\n' + d[t:]`. Validation succeeds although this single-revision document now has no entries locating its objects. Independently, replacing the trailer’s `/Size` value with `0` also passes. The cross-reference table must cover every object number across its revision chain. [Adobe PDF Reference, §3.4.3](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.6.pdf)
+
+## consistency: approve
+
+No independent findings.
+
+## integration: advisory
+
+Both findings allow malformed future fixtures through the structural gate used by downstream engine tests. Deterministic byte comparison cannot detect a defect shared by the generator and committed output. These reproductions do not establish corruption in the current committed fixtures.
+
+## source-defect: needs-attention
+
+2. **P1: Compressed-object validation checks delimiters but still accepts invalid dictionary syntax.** `scripts/build-corpus.py:1177` delegates to `_skip_object`, whose dictionary branch at `scripts/build-corpus.py:1244` skips arbitrary tokens without enforcing name/value pairs. Reproduced by wrapping `flate_compress` during `build_compressed_xref_2p()` and replacing `b'<< /Type /Catalog'` with equal-length `b'<< 12345 /Catalog'` before compression. `validate_pdf_structure` accepts the malformed catalog; all object offsets and stream lengths remain correct. Replacing the same prefix with `b'<< /Type XXXXXXXX'` also passes despite the invalid bare value. Dictionary keys must be names, and values must be PDF objects. [Adobe’s object syntax documentation](https://developer.adobe.com/acrobat-pdfl-sdk/guides/plugin/plugins-cos)
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: advisory
+
+At `43c6678`, independently reran `python -B scripts/build-corpus.py --check`: exit 0, 39 current fixtures. Ten targeted regression tests passed; two in-memory generations matched; corpus size was 60,176 bytes. The recorded checkpoint result holds, but does not substantiate complete structural validation given findings 1 and 2. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 7
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 19 tests`, `OK` (the two new tests fail against `43c6678` in all nine cases); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): the cross-reference chain must locate every parsed object at its newest definition's header, and the newest `/Size` (trailer or xref stream) must be exactly one past the highest object number; an empty `xref 0 0` section or `/Size 0` refuses (`test_the_xref_chain_locates_every_object_and_sizes_it`).
+- Finding 2 (P1): `_skip_object` is now a grammar for the values the corpus writes: dictionaries of plain-name keys each with a value, arrays, literal and hex strings (hex digits only), plain names, numbers, `N G R` references, `true`, `false`, `null`; anything else refuses, so `<< 12345 /Catalog` and `<< /Type XXXXXXXX` no longer pass (`test_every_object_follows_the_pdf_value_grammar`).
+
+The encryption validators (`validate_encrypted_*`) still read some dictionaries by text search; they validate the encrypted fixtures that `D00 T03 §4` owns, and are taken up in that section's audit (`D06 T05 §12`).

@@ -1008,7 +1008,11 @@ def build_sample_xlsx() -> bytes:
     )
 
 
-def validate_classic_xref_at(rel_path: str, data: bytes, xref_offset: int, visited: set[int]) -> None:
+def validate_classic_xref_at(rel_path: str, data: bytes, xref_offset: int, visited: set[int],
+                             located: dict | None = None, sizes: list[int] | None = None) -> None:
+    """located (newest section first): object number -> header offset of each in-use entry; sizes: each /Size."""
+    located = {} if located is None else located
+    sizes = [] if sizes is None else sizes
     if xref_offset in visited:
         raise ValueError(f"{rel_path}: cyclic /Prev xref offset {xref_offset}")
     visited.add(xref_offset)
@@ -1044,6 +1048,7 @@ def validate_classic_xref_at(rel_path: str, data: bytes, xref_offset: int, visit
                         f"{rel_path}: xref entry for {obj_num} {gen} at offset {off} "
                         f"does not start with {expected_prefix!r}"
                     )
+                located.setdefault(obj_num, off)
             pos += 20
 
     trailer_end = data.find(b"startxref\n", pos)
@@ -1058,15 +1063,22 @@ def validate_classic_xref_at(rel_path: str, data: bytes, xref_offset: int, visit
     allowed = {b"/Size", b"/Root", b"/Info", b"/ID", b"/Prev", b"/Encrypt"}
     if not set(trailer) <= allowed:
         raise ValueError(f"{rel_path}: trailer has keys the corpus never writes: {sorted(set(trailer) - allowed)}")
+    size = re.fullmatch(rb"\d+", trailer.get(b"/Size", b""))
+    if size is None:
+        raise ValueError(f"{rel_path}: trailer needs a direct /Size")
+    sizes.append(int(size.group(0)))
     if b"/Prev" in trailer:
         prev = re.fullmatch(rb"\d+", trailer[b"/Prev"])
         if prev is None:
             raise ValueError(f"{rel_path}: trailer /Prev {trailer[b'/Prev']!r} is not an offset")
-        validate_classic_xref_at(rel_path, data, int(prev.group(0)), visited)
+        validate_classic_xref_at(rel_path, data, int(prev.group(0)), visited, located, sizes)
 
 
-def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int, visited: set[int] | None = None) -> None:
+def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int, visited: set[int] | None = None,
+                            located: dict | None = None, sizes: list[int] | None = None) -> None:
     visited = set() if visited is None else visited
+    located = {} if located is None else located
+    sizes = [] if sizes is None else sizes
     if xref_offset in visited:
         raise ValueError(f"{rel_path}: cyclic /Prev xref offset {xref_offset}")
     visited.add(xref_offset)
@@ -1110,11 +1122,12 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int, visite
             raise ValueError(f"{rel_path}: XRef stream /Prev {entries[b'/Prev']!r} does not locate an xref section")
         prev_at = int(prev.group(0))
         if data.startswith(b"xref\n", prev_at):
-            validate_classic_xref_at(rel_path, data, prev_at, visited)
+            validate_classic_xref_at(rel_path, data, prev_at, visited, located, sizes)
         else:
-            validate_xref_stream_at(rel_path, data, prev_at, visited)
+            validate_xref_stream_at(rel_path, data, prev_at, visited, located, sizes)
 
     row_width = w1 + w2 + w3
+    sizes.append(size)
     stream_payload = data[stream_start:stream_end]
     unpacked = flate_png_up_decompress(stream_payload, columns=row_width)
     if len(unpacked) != size * row_width:
@@ -1136,8 +1149,10 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int, visite
                     f"{rel_path}: XRef type-1 entry for {obj_id} at {f2} does not match object header"
                 )
             type1_offsets[obj_id] = f2
+            located.setdefault(obj_id, f2)
         elif etype == 2:
             type2_refs.append((obj_id, f2, f3))
+            located.setdefault(obj_id, ("compressed", f2, f3))
 
     for obj_id, stm_obj_id, idx in type2_refs:
         if stm_obj_id not in type1_offsets:
@@ -1239,24 +1254,50 @@ def validate_content_stream_syntax(rel_path: str, raw: bytes) -> None:
 _DELIMITERS = b"()<>[]{}/%"
 
 
+_NUMBER = re.compile(rb"[+-]?(?:\d+\.?\d*|\.\d+)")
+_INTEGER = re.compile(rb"\d+")
+_NAME = re.compile(rb"/[A-Za-z0-9_.+-]*")
+_KEYWORDS = (b"true", b"false", b"null")
+
+
+def _skip_ws(body: bytes, i: int) -> int:
+    while i < len(body) and body[i : i + 1].isspace():
+        i += 1
+    return i
+
+
 def _skip_object(body: bytes, i: int) -> int:
-    """The index just past the PDF object starting at body[i] (a string, dictionary, array, name or plain token)."""
-    if body.startswith(b"<<", i) or body[i : i + 1] == b"[":
-        closing = b">>" if body.startswith(b"<<", i) else b"]"
-        i += 2 if closing == b">>" else 1
-        while i < len(body):
-            if body[i : i + 1].isspace():
-                i += 1
-            elif body.startswith(closing, i):
-                return i + len(closing)
-            else:
-                i = _skip_object(body, i)
-        raise ValueError("unterminated dictionary or array")
+    """The index just past the one PDF value starting at body[i], read by the grammar the corpus writes: a dictionary of
+    name keys and values, an array of values, a literal or hex string, a plain name, a number, an indirect reference
+    (N G R), true, false or null. Anything else refuses, so a malformed object is never skipped over."""
+    if body.startswith(b"<<", i):
+        i = _skip_ws(body, i + 2)
+        while not body.startswith(b">>", i):
+            if i >= len(body):
+                raise ValueError("unterminated dictionary")
+            key = _NAME.match(body, i)
+            if key is None or key.end() == i + 1:
+                raise ValueError(f"dictionary key at {i} is not a name")
+            after = key.end()
+            if after < len(body) and not body[after : after + 1].isspace() and body[after] not in _DELIMITERS:
+                raise ValueError(f"dictionary key at {i} is not a plain name")
+            i = _skip_ws(body, key.end())
+            if body.startswith(b">>", i):
+                raise ValueError(f"dictionary key {key.group(0)!r} has no value")
+            i = _skip_ws(body, _skip_object(body, i))
+        return i + 2
+    if body[i : i + 1] == b"[":
+        i = _skip_ws(body, i + 1)
+        while body[i : i + 1] != b"]":
+            if i >= len(body):
+                raise ValueError("unterminated array")
+            i = _skip_ws(body, _skip_object(body, i))
+        return i + 1
     if body[i : i + 1] == b"(":
-        depth, i = 0, i
+        depth = 0
         while i < len(body):
             c = body[i : i + 1]
-            if c == b"\\":
+            if c == b"\\":  # an escaped byte never opens or closes the string
                 i += 2
                 continue
             depth += c == b"("
@@ -1267,15 +1308,28 @@ def _skip_object(body: bytes, i: int) -> int:
         raise ValueError("unterminated literal string")
     if body[i : i + 1] == b"<":
         end = body.find(b">", i)
-        if end < 0:
-            raise ValueError("unterminated hex string")
+        if end < 0 or re.fullmatch(rb"[0-9A-Fa-f\s]*", body[i + 1 : end]) is None:
+            raise ValueError(f"malformed hex string at {i}")
         return end + 1
-    j = i + 1 if body[i : i + 1] == b"/" else i
-    while j < len(body) and not body[j : j + 1].isspace() and body[j] not in _DELIMITERS:
-        j += 1
-    if j == i:
-        raise ValueError(f"unexpected byte {body[i:i + 1]!r} in dictionary")
-    return j
+    if body[i : i + 1] == b"/":
+        name = _NAME.match(body, i)
+        end = name.end()
+        if end < len(body) and not body[end : end + 1].isspace() and body[end] not in _DELIMITERS:
+            raise ValueError(f"name at {i} is not a plain name")
+        return end
+    for word in _KEYWORDS:
+        if body.startswith(word, i) and (i + len(word) == len(body) or body[i + len(word)] in _DELIMITERS
+                                        or body[i + len(word) : i + len(word) + 1].isspace()):
+            return i + len(word)
+    number = _NUMBER.match(body, i)
+    if number is None:
+        raise ValueError(f"unexpected {body[i:i + 12]!r} where a PDF value belongs")
+    end = number.end()
+    if end < len(body) and not body[end : end + 1].isspace() and body[end] not in _DELIMITERS:
+        raise ValueError(f"number at {i} runs into {body[end:end + 1]!r}")
+    # An integer may open an indirect reference: N G R.
+    ref = re.match(rb"\s+(\d+)\s+R(?![^\s()<>\[\]{}/%])", body[end:]) if _INTEGER.fullmatch(number.group(0)) else None
+    return end + ref.end() if ref else end
 
 
 def top_level_values(dict_body: bytes, key: bytes) -> list[bytes]:
@@ -1406,8 +1460,10 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
     # dictionary was matched to refuses.
     # Every object, parsed once; a later revision's object replaces the earlier one (incremental updates).
     objects: dict[int, tuple[int, int, int | None, int | None]] = {}
-    for num, start, end, stream_start, end_pos, _header in iter_objects(rel_path, data):
+    headers: dict[int, int] = {}
+    for num, start, end, stream_start, end_pos, header in iter_objects(rel_path, data):
         objects[num] = (start, end, stream_start, end_pos)
+        headers[num] = header
         if stream_start is None:
             continue
         stream_entries = dict_entries(data[start + 2 : end - 2])
@@ -1474,10 +1530,21 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
     if eof_m is None:
         raise ValueError(f"{rel_path}: missing startxref before %%EOF")
     xref_offset = int(eof_m.group(1))
+    located: dict = {}
+    sizes: list[int] = []
     if data[xref_offset:].startswith(b"xref\n"):
-        validate_classic_xref_at(rel_path, data, xref_offset, set())
+        validate_classic_xref_at(rel_path, data, xref_offset, set(), located, sizes)
     else:
-        validate_xref_stream_at(rel_path, data, xref_offset)
+        validate_xref_stream_at(rel_path, data, xref_offset, None, located, sizes)
+    # The chain must locate every object at its newest definition, and the newest /Size must be one past the highest
+    # object number (ISO 32000-1 7.5.4, 7.5.5): an empty or partial index refuses.
+    for num, header in headers.items():
+        if located.get(num) != header:
+            raise ValueError(f"{rel_path}: object {num} at {header} is not what the cross-reference chain locates "
+                             f"({located.get(num)})")
+    highest = max([*headers, *located], default=0)
+    if not sizes or sizes[0] != highest + 1:
+        raise ValueError(f"{rel_path}: newest /Size {sizes[0] if sizes else None} is not {highest + 1}")
 
     if rel_path == "text/two-column-links-outline.pdf":
         s5_raw = zlib.decompress(payload_of(5))
