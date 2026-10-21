@@ -1048,18 +1048,33 @@ def validate_classic_xref_at(rel_path: str, data: bytes, xref_offset: int, visit
     trailer_end = data.find(b"startxref\n", pos)
     if trailer_end < 0:
         raise ValueError(f"{rel_path}: missing startxref after trailer")
-    trailer_slice = data[pos:trailer_end]
-    prev_match = re.search(rb"/Prev\s+(\d+)", trailer_slice)
-    if prev_match is not None:
-        validate_classic_xref_at(rel_path, data, int(prev_match.group(1)), visited)
+    if not data.startswith(b"trailer\n<<", pos):
+        raise ValueError(f"{rel_path}: xref section at {xref_offset} is not followed by a trailer dictionary")
+    trailer_dict_end = _skip_object(data, pos + len(b"trailer\n"))
+    if trailer_dict_end > trailer_end:
+        raise ValueError(f"{rel_path}: trailer at {pos} runs past startxref")
+    trailer = dict_entries(data[pos + len(b"trailer\n") + 2 : trailer_dict_end - 2])
+    allowed = {b"/Size", b"/Root", b"/Info", b"/ID", b"/Prev", b"/Encrypt"}
+    if not set(trailer) <= allowed:
+        raise ValueError(f"{rel_path}: trailer has keys the corpus never writes: {sorted(set(trailer) - allowed)}")
+    if b"/Prev" in trailer:
+        prev = re.fullmatch(rb"\d+", trailer[b"/Prev"])
+        if prev is None:
+            raise ValueError(f"{rel_path}: trailer /Prev {trailer[b'/Prev']!r} is not an offset")
+        validate_classic_xref_at(rel_path, data, int(prev.group(0)), visited)
 
 
-def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int) -> None:
-    obj_match = re.match(rb"(\d+)\s+(\d+)\s+obj\n<<(.*?)>>\nstream\n", data[xref_offset:], re.DOTALL)
-    if obj_match is None:
-        raise ValueError(f"{rel_path}: startxref {xref_offset} is not a valid XRef stream object")
-    dict_bytes = obj_match.group(3)
-    entries = dict_entries(dict_bytes)
+def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int, visited: set[int] | None = None) -> None:
+    visited = set() if visited is None else visited
+    if xref_offset in visited:
+        raise ValueError(f"{rel_path}: cyclic /Prev xref offset {xref_offset}")
+    visited.add(xref_offset)
+    try:
+        entries, stream_start, stream_end = stream_object_at(rel_path, data, xref_offset)
+    except ValueError:
+        raise ValueError(f"{rel_path}: startxref {xref_offset} is not a valid XRef stream object") from None
+    m_end = re.match(rb"\d+ \d+ obj\n", data[xref_offset:]).end()
+    dict_bytes = data[xref_offset + m_end + 2 : _skip_object(data, xref_offset + m_end) - 2]
     allowed = {b"/Type", b"/Size", b"/Root", b"/Info", b"/ID", b"/W", b"/Filter", b"/DecodeParms", b"/Length",
                b"/Prev", b"/Index"}
     if not set(entries) <= allowed:
@@ -1072,7 +1087,6 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int) -> Non
     if not (size_m and len_m and w_m):
         raise ValueError(f"{rel_path}: XRef stream missing /Size, /Length, or /W")
     size = int(size_m.group(1))
-    stream_len = int(len_m.group(1))
     w1, w2, w3 = int(w_m.group(1)), int(w_m.group(2)), int(w_m.group(3))
     if (w1, w2, w3) != (1, 2, 2):
         raise ValueError(f"{rel_path}: unexpected /W {(w1, w2, w3)}")
@@ -1089,10 +1103,18 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int) -> Non
         raise ValueError(f"{rel_path}: XRef stream /DecodeParms must be exactly /Predictor 12 /Columns {w1 + w2 + w3}")
     if index not in ([], [f"[0 {int(size_m.group(1))}]".encode()]):
         raise ValueError(f"{rel_path}: XRef stream /Index {index} is not the default [0 Size]")
+    if b"/Prev" in entries:
+        prev = re.fullmatch(rb"\d+", entries[b"/Prev"])
+        if prev is None or int(prev.group(0)) >= len(data):
+            raise ValueError(f"{rel_path}: XRef stream /Prev {entries[b'/Prev']!r} does not locate an xref section")
+        prev_at = int(prev.group(0))
+        if data.startswith(b"xref\n", prev_at):
+            validate_classic_xref_at(rel_path, data, prev_at, visited)
+        else:
+            validate_xref_stream_at(rel_path, data, prev_at, visited)
 
     row_width = w1 + w2 + w3
-    stream_start = xref_offset + obj_match.end()
-    stream_payload = data[stream_start : stream_start + stream_len]
+    stream_payload = data[stream_start:stream_end]
     unpacked = flate_png_up_decompress(stream_payload, columns=row_width)
     if len(unpacked) != size * row_width:
         raise ValueError(f"{rel_path}: unpacked XRef length {len(unpacked)} != {size * row_width}")
@@ -1120,23 +1142,24 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int) -> Non
         if stm_obj_id not in type1_offsets:
             raise ValueError(f"{rel_path}: ObjStm {stm_obj_id} not found in type-1 XRef entries")
         stm_off = type1_offsets[stm_obj_id]
-        stm_m = re.match(
-            rb"\d+\s+0\s+obj\n<<(.*?)>>\nstream\n", data[stm_off:], re.DOTALL
-        )
-        if stm_m is None or b"/Type /ObjStm" not in stm_m.group(1):
-            raise ValueError(f"{rel_path}: object {stm_obj_id} is not a valid /Type /ObjStm")
-        n_m = re.search(rb"/N\s+(\d+)", stm_m.group(1))
-        first_m = re.search(rb"/First\s+(\d+)", stm_m.group(1))
-        slen_values = top_level_values(stm_m.group(1), b"/Length")
-        slen_m = re.fullmatch(rb"(\d+)", slen_values[0]) if len(slen_values) == 1 else None
-        if not (n_m and first_m and slen_m):
-            raise ValueError(f"{rel_path}: ObjStm {stm_obj_id} missing /N, /First, or /Length")
+        try:
+            stm, s_start, s_end = stream_object_at(rel_path, data, stm_off)
+        except ValueError:
+            raise ValueError(f"{rel_path}: object {stm_obj_id} is not a valid /Type /ObjStm") from None
+        allowed = {b"/Type", b"/N", b"/First", b"/Filter", b"/Length"}
+        if stm.get(b"/Type") != b"/ObjStm" or not set(stm) <= allowed:
+            raise ValueError(f"{rel_path}: object {stm_obj_id} is not a /Type /ObjStm the corpus writes: {sorted(stm)}")
+        # Decoded below as plain Flate: the stream must declare exactly that.
+        if stm.get(b"/Filter") != b"/FlateDecode":
+            raise ValueError(f"{rel_path}: ObjStm {stm_obj_id} /Filter must be /FlateDecode")
+        n_m = re.fullmatch(rb"(\d+)", stm.get(b"/N", b""))
+        first_m = re.fullmatch(rb"(\d+)", stm.get(b"/First", b""))
+        if not (n_m and first_m):
+            raise ValueError(f"{rel_path}: ObjStm {stm_obj_id} missing /N or /First")
         n_val = int(n_m.group(1))
         if not (0 <= idx < n_val):
             raise ValueError(f"{rel_path}: ObjStm index {idx} out of range 0..{n_val - 1}")
-        s_start = stm_off + stm_m.end()
-        s_len = int(slen_m.group(1))
-        dec = zlib.decompress(data[s_start : s_start + s_len])
+        dec = zlib.decompress(data[s_start:s_end])
         first_val = int(first_m.group(1))
         tokens = dec[:first_val].decode("ascii").split()
         if len(tokens) != n_val * 2:
@@ -1323,32 +1346,57 @@ def dict_entries(dict_body: bytes) -> dict[bytes, bytes]:
 _OBJ_HEADER = re.compile(rb"(?:\A|(?<=\n))\d+ \d+ obj\n")
 
 
-def iter_stream_dicts(rel_path: str, data: bytes):
-    """(dictionary start, end, stream data start) for every stream, found by walking objects forward: each object's
-    value is skipped with the string-aware parser, and a stream's payload by its own /Length, so bytes inside strings
-    or stream data are never read as structure."""
+def iter_objects(rel_path: str, data: bytes):
+    """(object number, value start, value end, stream payload start or None, payload end) for every object, found by
+    walking objects forward: each value is skipped with the string-aware parser and a stream's payload by its own
+    /Length, so bytes inside strings or stream data are never read as structure."""
     pos = 0
     while True:
         m = _OBJ_HEADER.search(data, pos)
         if m is None:
             return
+        num = int(m.group(0).split()[0])
         start = m.end()
         try:
             end = _skip_object(data, start)
         except ValueError as e:
             raise ValueError(f"{rel_path}: object at {m.start()} does not parse: {e}") from None
+        stream_start = stream_end = None
+        after = end
         if data.startswith(b"<<", start) and data.startswith(b"\nstream\n", end):
             stream_start = end + len(b"\nstream\n")
-            yield start, end, stream_start
             lengths = top_level_values(data[start + 2 : end - 2], b"/Length")
-            end = stream_start + (int(lengths[0]) if len(lengths) == 1 and lengths[0].isdigit() else 0)
-            if not data.startswith(b"\nendstream", end):
-                raise ValueError(f"{rel_path}: stream at {stream_start} does not end at its /Length")
-            end += len(b"\nendstream")
+            if len(lengths) != 1 or re.fullmatch(rb"\d+", lengths[0]) is None:
+                raise ValueError(f"{rel_path}: stream dictionary needs exactly one direct /Length, found {lengths}")
+            stream_end = stream_start + int(lengths[0])
+            if not data.startswith(b"\nendstream", stream_end):
+                raise ValueError(
+                    f"{rel_path}: stream at {stream_start} with /Length {int(lengths[0])} "
+                    f"is not followed by '\\nendstream'"
+                )
+            after = stream_end + len(b"\nendstream")
         # Every object ends with endobj right after its value (or its stream), so nothing is left unparsed in between.
-        if not data.startswith(b"\nendobj\n", end):
+        if not data.startswith(b"\nendobj\n", after):
             raise ValueError(f"{rel_path}: object at {m.start()} does not end with endobj after its value")
-        pos = end + len(b"\nendobj\n")
+        yield num, start, end, stream_start, stream_end
+        pos = after + len(b"\nendobj\n")
+
+
+def stream_object_at(rel_path: str, data: bytes, offset: int) -> tuple[dict[bytes, bytes], int, int]:
+    """The stream object starting exactly at offset: (its dictionary's entries, payload start, payload end)."""
+    m = re.match(rb"\d+ \d+ obj\n", data[offset:])
+    if m is None or not data.startswith(b"<<", offset + m.end()):
+        raise ValueError(f"{rel_path}: offset {offset} is not a stream object")
+    start = offset + m.end()
+    end = _skip_object(data, start)
+    if not data.startswith(b"\nstream\n", end):
+        raise ValueError(f"{rel_path}: object at {offset} is not a stream")
+    entries = dict_entries(data[start + 2 : end - 2])
+    length = re.fullmatch(rb"(\d+)", entries.get(b"/Length", b""))
+    if length is None:
+        raise ValueError(f"{rel_path}: stream at {offset} needs a direct /Length")
+    payload = end + len(b"\nstream\n")
+    return entries, payload, payload + int(length.group(1))
 
 
 def validate_pdf_structure(rel_path: str, data: bytes) -> None:
@@ -1361,61 +1409,71 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
     # Verify every stream's /Length matches the exact distance to \nendstream. Every stream keyword is found, whatever
     # its dictionary's layout (single-line or spread over lines), and each must be accounted for: an endstream no
     # dictionary was matched to refuses.
-    checked = 0
-    for open_at, close_at, stream_start in iter_stream_dicts(rel_path, data):
-        dict_body = data[open_at + 2 : close_at - 2]
-        checked += 1
-        try:
-            lengths = top_level_values(dict_body, b"/Length")
-        except ValueError as e:
-            raise ValueError(f"{rel_path}: stream dictionary at {open_at} does not parse: {e}") from None
-        # Exactly one /Length among the stream dictionary's own entries, a direct integer: a /Length inside a nested
-        # dictionary or a string is not the stream's.
-        if len(lengths) != 1 or re.fullmatch(rb"\d+", lengths[0]) is None:
-            raise ValueError(f"{rel_path}: stream dictionary needs exactly one direct /Length, found {lengths}")
-        declared_len = int(lengths[0])
-        end_pos = stream_start + declared_len
-        if data[end_pos : end_pos + 10] != b"\nendstream":
-            raise ValueError(
-                f"{rel_path}: stream at {stream_start} with /Length {declared_len} "
-                f"is not followed by '\\nendstream'"
-            )
+    # Every object, parsed once; a later revision's object replaces the earlier one (incremental updates).
+    objects: dict[int, tuple[int, int, int | None, int | None]] = {}
+    for num, start, end, stream_start, end_pos in iter_objects(rel_path, data):
+        objects[num] = (start, end, stream_start, end_pos)
+        if stream_start is None:
+            continue
+        stream_entries = dict_entries(data[start + 2 : end - 2])
+        # A plain Flate content stream (no predictor parameters, not an image, object or xref stream) is checked as
+        # page content.
         if (
-            b"/Filter /FlateDecode" in dict_body
-            and b"/Predictor" not in dict_body
-            and b"/Subtype /Image" not in dict_body
-            and b"/Type /ObjStm" not in dict_body
+            stream_entries.get(b"/Filter") == b"/FlateDecode"
+            and b"/DecodeParms" not in stream_entries
+            and stream_entries.get(b"/Subtype") != b"/Image"
+            and stream_entries.get(b"/Type") not in (b"/ObjStm", b"/XRef")
         ):
             dec = zlib.decompress(data[stream_start:end_pos])
             if b"/CMapName" not in dec:
                 validate_content_stream_syntax(rel_path, dec)
 
 
-    if b"/AcroForm" in data and b"/DA (" in data:
-        if b"/DR << /Font" not in data:
+    def value_of(raw: bytes) -> bytes:
+        """raw itself, or the value of the object it references ("12 0 R")."""
+        ref = re.fullmatch(rb"(\d+) \d+ R", raw)
+        if ref is None:
+            return raw
+        target = objects.get(int(ref.group(1)))
+        if target is None:
+            raise ValueError(f"{rel_path}: reference {raw!r} names no object")
+        return data[target[0] : target[1]]
+
+    def entries_of(raw: bytes) -> dict[bytes, bytes]:
+        value = value_of(raw)
+        if not (value.startswith(b"<<") and value.endswith(b">>")):
+            raise ValueError(f"{rel_path}: {raw!r} is not a dictionary")
+        return dict_entries(value[2:-2])
+
+    dicts = {num: entries_of(data[s:e]) for num, (s, e, _, _) in objects.items() if data.startswith(b"<<", s)}
+    catalogs = [d for d in dicts.values() if d.get(b"/Type") == b"/Catalog"]
+    acroform = entries_of(catalogs[-1][b"/AcroForm"]) if catalogs and b"/AcroForm" in catalogs[-1] else None
+    if acroform is not None and b"/DA" in acroform:
+        if b"/DR" not in acroform or b"/Font" not in entries_of(acroform[b"/DR"]):
             raise ValueError(f"{rel_path}: /AcroForm with /DA is missing /DR /Font resources")
-        for w_m in re.finditer(rb"(\d+)\s+0\s+obj\n<<([^\n]*?/Subtype\s+/Widget[^\n]*?)>>\nendobj", data):
-            w_obj_id = int(w_m.group(1))
-            w_dict = w_m.group(2)
-            if b"/AP << /N" not in w_dict:
+        for w_obj_id, w_dict in dicts.items():
+            if w_dict.get(b"/Subtype") != b"/Widget":
+                continue
+            if b"/AP" not in w_dict or b"/N" not in entries_of(w_dict[b"/AP"]):
                 raise ValueError(f"{rel_path}: Widget object {w_obj_id} missing /AP << /N appearance")
-            as_m = re.search(rb"/AS\s+/([A-Za-z0-9_]+)", w_dict)
-            if as_m is not None:
-                state_name = as_m.group(1).decode("ascii")
-                for req_state in (state_name, "Off"):
-                    ref_m = re.search(rf"/{req_state}\s+(\d+)\s+0\s+R".encode("ascii"), w_dict)
-                    if ref_m is None:
-                        raise ValueError(
-                            f"{rel_path}: Widget {w_obj_id} missing /{req_state} in /AP /N"
-                        )
-                    ap_id = int(ref_m.group(1))
-                    if not re.search(
-                        rf"\b{ap_id}\s+0\s+obj\n<<[^\n]*?/Subtype\s+/Form".encode("ascii"),
-                        data,
-                    ):
-                        raise ValueError(
-                            f"{rel_path}: Widget {w_obj_id} /{req_state} target {ap_id} is not a /Subtype /Form"
-                        )
+            if b"/AS" not in w_dict:
+                continue
+            normal = entries_of(entries_of(w_dict[b"/AP"])[b"/N"])
+            for req_state in (w_dict[b"/AS"], b"/Off"):
+                ref = re.fullmatch(rb"(\d+) 0 R", normal.get(req_state, b""))
+                if ref is None:
+                    raise ValueError(f"{rel_path}: Widget {w_obj_id} missing {req_state.decode()} in /AP /N")
+                if dicts.get(int(ref.group(1)), {}).get(b"/Subtype") != b"/Form":
+                    raise ValueError(
+                        f"{rel_path}: Widget {w_obj_id} {req_state.decode()} target {ref.group(1).decode()} "
+                        f"is not a /Subtype /Form"
+                    )
+
+    def payload_of(num: int) -> bytes:
+        start, _, stream_start, stream_end = objects[num]
+        if stream_start is None:
+            raise ValueError(f"{rel_path}: object {num} is not a stream")
+        return data[stream_start:stream_end]
 
     eof_m = re.search(rb"startxref\n(\d+)\n%%EOF\n\Z", data)
     if eof_m is None:
@@ -1427,12 +1485,7 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
         validate_xref_stream_at(rel_path, data, xref_offset)
 
     if rel_path == "text/two-column-links-outline.pdf":
-        obj5_m = re.search(rb"5 0 obj\n<<([^\n]*?)>>\nstream\n", data)
-        assert obj5_m is not None
-        len5_m = re.search(rb"/Length\s+(\d+)", obj5_m.group(1))
-        assert len5_m is not None
-        s5_start = obj5_m.end()
-        s5_raw = zlib.decompress(data[s5_start : s5_start + int(len5_m.group(1))])
+        s5_raw = zlib.decompress(payload_of(5))
         if b"\x1d" not in s5_raw or b"\x1e" not in s5_raw or b"\xad" not in s5_raw:
             raise ValueError(
                 "text/two-column-links-outline.pdf must exercise 0x1D (fi), 0x1E (fl), and 0xAD (soft hyphen)"
@@ -1441,15 +1494,9 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
     if rel_path == "text/scanned.pdf":
         if b"/Font" in data:
             raise ValueError("text/scanned.pdf must not declare any /Font resources")
-        obj4_m = re.search(
-            rb"4 0 obj\n<<([^\n]*?)>>\nstream\n", data
-        )
-        if obj4_m is None:
+        if 4 not in objects:
             raise ValueError("text/scanned.pdf missing page content stream 4 0 obj")
-        len4_m = re.search(rb"/Length\s+(\d+)", obj4_m.group(1))
-        assert len4_m is not None
-        s4_start = obj4_m.end()
-        s4_raw = zlib.decompress(data[s4_start : s4_start + int(len4_m.group(1))])
+        s4_raw = zlib.decompress(payload_of(4))
         if re.search(rb"\b(?:BT|ET|Tj|TJ|Tf)\b", s4_raw):
             raise ValueError("text/scanned.pdf content stream must contain 0 text operators")
 

@@ -188,3 +188,48 @@ OVERALL: needs-attention
 - Finding 1 (P1): the xref stream dictionary is read through `dict_entries` (parsed key-value pairs, a repeated key refused) and may hold only the keys the corpus writes, so `/Note (/W [1 2 2])` refuses and `/W` comes from the real entry.
 - Finding 2 (P2): the raw `endstream` count is gone; `iter_stream_dicts` now parses every object through its `endobj` (a stream's payload skipped by its `/Length` and required to end in `endstream`), so the keyword inside a string is data and no object can be skipped unparsed.
 - Finding 3 (P1): `/DecodeParms` must be exactly `/Predictor 12 /Columns <W sum>`; `/Colors` or `/BitsPerComponent` refuses rather than being ignored.
+
+## Round 5: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T19:17:19Z
+- Effort: medium
+- Lines: 28
+- Digest: 200ceb14a4f1a04d
+
+## adversarial: needs-attention
+
+1. **P1: Object-stream offsets can still be read from a string.** `scripts/build-corpus.py:1129` searches raw dictionary bytes for `/First`. Reproduced by wrapping `make_stream_obj` during `build_compressed_xref_2p()` and, only for `/ObjStm`, replacing `/First 32` with `/Note (/First 32) /First 0`. The builder recomputes all outer offsets. `validate_pdf_structure` accepts the result using 32, although the actual dictionary declares 0, placing compressed objects at incorrect locations.
+
+2. **P1: Invalid previous-revision pointers pass validation.** `scripts/build-corpus.py:1052` reads `/Prev` through a regex over the trailer. Reproduce with `build_incremental_2rev()`: replace the final `/Prev 577` with `/Note (/Prev 577) /Prev 999999`. Validation succeeds by following the string’s value, leaving the actual out-of-file pointer unchecked. Separately, `scripts/build-corpus.py:1064` allows `/Prev` in xref-stream dictionaries but never validates it: inserting `/Prev 999999` immediately after `/Type /XRef` in `build_compressed_xref_2p()` also passes. `/Prev` must locate the previous cross-reference section. [Adobe PDF Reference, Table 3.13](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.6.pdf)
+
+## consistency: approve
+
+No independent findings.
+
+## integration: advisory
+
+These gaps allow malformed future fixtures through the structural gate used by downstream engine tests. Deterministic comparison cannot detect a defect shared by generated and committed bytes. The reproductions do not establish corruption in the current committed fixtures.
+
+## source-defect: needs-attention
+
+3. **P1: Object-stream decoding ignores its declared filter.** `scripts/build-corpus.py:1139` unconditionally applies `zlib.decompress`. Reproduced by wrapping `make_stream_obj` during `build_compressed_xref_2p()` and replacing `/Filter /FlateDecode` with `/Filter /ASCII85Decode` only in `/ObjStm`. Outer offsets are recomputed; compressed payload and `/Length` remain intact. `validate_pdf_structure` accepts the PDF despite validating different decoding semantics from those declared. The stream’s `/Filter` specifies how its bytes must be decoded. [Adobe CosStream documentation](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdflsdk/apireference/COS_Layer/CosStream.html)
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: advisory
+
+At `ac030f1`, independently reran `python -B scripts/build-corpus.py --check`: exit 0, 39 current fixtures. Seven targeted regression tests passed; two in-memory generations matched; on-disk corpus size was 60,176 bytes. These verify the recorded checkpoint result, but not the complete structural-validation promise given findings 1–3. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 5
+
+Every dictionary the validator reads now comes from one parsed object walk; no raw text search over dictionary bytes is left (the trailer, xref streams, object streams, content-stream filters, AcroForm and Widget checks, and the per-fixture checks were all converted). `python -m unittest tests.scripts.test_build_corpus` -> `Ran 15 tests`, `OK` (the new test fails against `ac030f1` in all four cases); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`; the converted AcroForm checks still refuse a renamed `/DR` and a missing `/Off` appearance.
+
+- Finding 1 (P1): object streams are read with `stream_object_at` and `dict_entries`, limited to the keys the corpus writes (`/Type /N /First /Filter /Length`), so `/Note (/First 32)` refuses and `/First` is the real entry.
+- Finding 2 (P1): classic trailers are parsed (keys limited to `/Size /Root /Info /ID /Prev /Encrypt`) and `/Prev` comes from the trailer's own entry; an xref stream's `/Prev` must locate a previous xref section, which is validated in turn (cycle-guarded).
+- Finding 3 (P1): an object stream must declare `/Filter /FlateDecode`, the decoding the validator applies.

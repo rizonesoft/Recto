@@ -194,6 +194,36 @@ class BuildCorpusTests(unittest.TestCase):
         self.mod.validate_pdf_structure(
             "test.pdf", self._one_page_pdf(b"<< /Length 3 /Note (\nendstream) >>\nstream\nq Q\nendstream"))
 
+    def _objstm_variant(self, old: bytes, new: bytes) -> bytes:
+        """compressed-xref-2p with old replaced by new in the object stream's dictionary only; the builder recomputes
+        every outer offset."""
+        real = self.mod.make_stream_obj
+
+        def edited(extra_dict, payload, compress=True):
+            out = real(extra_dict, payload, compress)
+            return out.replace(old, new, 1) if b"/Type /ObjStm" in out else out
+
+        with mock.patch.object(self.mod, "make_stream_obj", side_effect=edited):
+            return self.mod.build_compressed_xref_2p()
+
+    def test_object_streams_and_prev_pointers_are_read_from_their_own_entries(self) -> None:
+        cases = [
+            (self._objstm_variant(b"/First 32", b"/Note (/First 32) /First 0"), "/Type /ObjStm the corpus writes"),
+            (self._objstm_variant(b"/Filter /FlateDecode", b"/Filter /ASCII85Decode"), "/Filter must be /FlateDecode"),
+        ]
+        incremental = self.mod.build_incremental_2rev()
+        self.mod.validate_pdf_structure("render/incremental-2rev.pdf", incremental)
+        prev = re.findall(rb"/Prev \d+", incremental)[-1]
+        at = incremental.rindex(prev)
+        cases.append((incremental[:at] + b"/Note (" + prev + b") /Prev 999999" + incremental[at + len(prev):],
+                       "trailer has keys the corpus never writes"))
+        compressed = self.mod.build_compressed_xref_2p()
+        at = compressed.index(b"/Type /XRef") + len(b"/Type /XRef")
+        cases.append((compressed[:at] + b" /Prev 999999" + compressed[at:], "does not locate an xref section"))
+        for data, reason in cases:
+            with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, re.escape(reason)):
+                self.mod.validate_pdf_structure("render/test.pdf", data)
+
     def test_a_classic_xref_entry_has_one_form(self) -> None:
         data = self.mod.build_simple_1p()
         self.mod.validate_pdf_structure("render/simple-1p.pdf", data)
