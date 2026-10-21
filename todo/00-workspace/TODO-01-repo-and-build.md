@@ -150,6 +150,8 @@ Add `.github/workflows/build.yml` running on `windows-latest` on every push and 
 - [x] Push to `origin/main` and verify the live GitHub Actions `build.yml` run completes `success` across all steps. Done when: `gh run list --workflow=build.yml --limit 1` reports `completed / success`.
 - [x] Commit: `ci: build x64 and ARM64 and run recto-tests on every push`
 
+> **Audit 2026-10-21 (D06 T05 §7):** CI no longer builds on every push: since 2026-10-21 `build.yml` skips pushes that touch only `todo/`, `docs/` or Markdown (`paths-ignore`; the foundation plan carries the dated correction). The four-configuration build and the ASan job now keep separate dependency caches, keyed also on `vcpkg-configuration.json`, so the x64-only ASan job can no longer save an incomplete cache the full build restores.
+
 **Test checkpoint:** `gh run list --workflow=build.yml --limit 1` and `gh run view <run-id> --log` for the candidate commit show `x64` build, `ARM64` build and `recto-tests` steps all succeeding with 0 warnings.
 
 > **Verified:** 2026-10-18 | §4 | 6f0c29e1e65dd6e746849079f8e7e203ae3a76cd

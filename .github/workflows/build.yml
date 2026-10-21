@@ -90,9 +90,11 @@ jobs:
           path: |
             ${{ runner.temp }}/nuget-packages
             ${{ runner.temp }}/vcpkg-archives
-          key: build-deps-${{ runner.os }}-${{ hashFiles('src/app/Recto.vcxproj', 'vcpkg.json', 'Directory.Build.props', 'Directory.Build.targets') }}
+          # One cache per job: a cache is never updated once saved, so the x64-only ASan job must not save the key the
+          # four-configuration build restores (it would lack the ARM64 and app packages for good).
+          key: build-deps-full-${{ runner.os }}-${{ hashFiles('src/app/Recto.vcxproj', 'vcpkg.json', 'vcpkg-configuration.json', 'Directory.Build.props', 'Directory.Build.targets') }}
           restore-keys: |
-            build-deps-${{ runner.os }}-
+            build-deps-full-${{ runner.os }}-
 
       - name: Build Debug (x64 and ARM64) and run Debug|x64 recto-tests
         shell: pwsh
@@ -218,9 +220,9 @@ jobs:
           path: |
             ${{ runner.temp }}/nuget-packages
             ${{ runner.temp }}/vcpkg-archives
-          key: build-deps-${{ runner.os }}-${{ hashFiles('src/app/Recto.vcxproj', 'vcpkg.json', 'Directory.Build.props', 'Directory.Build.targets') }}
+          key: build-deps-asan-${{ runner.os }}-${{ hashFiles('src/app/Recto.vcxproj', 'vcpkg.json', 'vcpkg-configuration.json', 'Directory.Build.props', 'Directory.Build.targets') }}
           restore-keys: |
-            build-deps-${{ runner.os }}-
+            build-deps-asan-${{ runner.os }}-
 
       - name: Build and run recto-tests with AddressSanitizer (/fsanitize=address)
         shell: pwsh

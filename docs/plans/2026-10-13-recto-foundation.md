@@ -55,7 +55,7 @@ Owner decisions recorded 2026-10-21 (they answer the `owner-decision` Needs of t
 | Layer | Choice | Notes |
 | ----- | ------ | ----- |
 | OS | Windows 11 22H2+ (`10.0.22621.0` min, `10.0.26100.0` target SDK) | Required for Mica Alt, Segoe UI Variable, `Windows.Media.Ocr` |
-| Architectures | `x64`, `ARM64` | Both built in CI on every push |
+| Architectures | `x64`, `ARM64` | Both built in CI on every push that changes code (**Corrected 2026-10-21:** pushes touching only `todo/`, `docs/` or Markdown skip the build, `build.yml` `paths-ignore`; reversing it costs one full build per docs commit) |
 | Toolchain | Visual Studio 2026 (`v145`), MSVC C++20 | `/W4 /WX /permissive- /utf-8 /Zc:preprocessor` |
 | UI | WinUI 3, Windows App SDK `2.5.1`, C++/WinRT | Stock controls + `design/tokens/RectoColors.xaml` + the `RectoIcons.ttf` subset of Fluent UI System Icons (`@fluentui/svg-icons` `1.1.344`, MIT; `design/SPEC.md` section 6) |
 | Page surface | `SwapChainPanel` + Direct3D 11 + Direct2D 1.3 + DirectWrite | Tiled rendering from background presentation thread, plus interactive overlays for selection, annotations, form fields, redaction marks, table regions, crop handles, and diff highlights |
