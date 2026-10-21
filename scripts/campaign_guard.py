@@ -730,6 +730,10 @@ def fingerprint(root: str, run_rel: str, run_text: str, deadline: float | None =
             digest.update(f"{path} stalled\n".encode("utf-8"))
     if not stalled:
         jobs.put(None)
+    else:
+        # An incomplete observation is not evidence of no progress: a fresh random part makes this fingerprint differ
+        # from every other, so the stall breaker never counts a run whose changes it could not see.
+        digest.update(os.urandom(16))
     digest.update(re.sub(r"(?m)^- bookkeeping:.*(\r?\n)?", "", run_text).encode("utf-8"))
     return digest.hexdigest()
 

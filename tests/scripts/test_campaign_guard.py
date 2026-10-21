@@ -514,6 +514,16 @@ class Lifecycle(Workspace):
         self.assertLess(time.monotonic() - started, 5)
         self.assertNotIn("b.txt", seen)  # after the stall no further path is touched
         self.assertNotIn("c.txt", seen)
+        # An incomplete observation never matches another fingerprint, so the stall breaker cannot count it.
+        release.clear()
+        try:
+            with mock.patch.object(guard, "_untracked_line", side_effect=line), \
+                    mock.patch.object(guard, "FILE_SECONDS", 0.3):
+                first = guard.fingerprint(self.root, RUN_FILE, "")
+                second = guard.fingerprint(self.root, RUN_FILE, "")
+        finally:
+            release.set()
+        self.assertNotEqual(first, second)
 
     def test_whoami_names_what_a_heartbeat_is_to_the_run(self):
         self.assertEqual(guard.whoami(self.root, SESSION), "NO GUARD")

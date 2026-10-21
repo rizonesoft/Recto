@@ -380,3 +380,42 @@ OVERALL: needs-attention
 
 - Finding 1 (P2): no file-system call can be interrupted once it blocks (a parent directory swapped for a link to a stalled share blocks `lstat` and `open` alike), so the fingerprint now runs each untracked path's inspection (`_untracked_line`) on a daemon worker and waits at most `FILE_SECONDS` (5 s); on a stall, that path and every later one count by name with no further I/O, and the blocked worker is abandoned (`test_a_stalled_path_is_outwaited_and_later_paths_count_by_name`).
 - Finding 2 (P2): an indented blank or comment line after a value is allowed again; only an indented line with content counts as a continuation (`test_an_indented_blank_or_comment_line_is_allowed`).
+
+## Round 9: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T21:13:26Z
+- Effort: medium
+- Lines: 24
+- Digest: cc9e67529e0175d0
+
+## adversarial: needs-attention
+
+1. **P2: One stalled path hides subsequent progress from the stall breaker.** `scripts/campaign_guard.py:722-730` fingerprints every later untracked file by name after a timeout, then returns an ordinary fingerprint without marking it incomplete. At `scripts/campaign_guard.py:782-786`, unchanged fingerprints count toward a stall even when those files are actively changing. After two trips, the heartbeat ends the campaign.
+
+   Reproduce with untracked `a-stalls` and `b-new.cpp`: make `_untracked_line` exceed `FILE_SECONDS` for `a-stalls`, fingerprint, change `b-new.cpp`, then fingerprint again with identical HEAD, tracked diff, and run text. An in-memory reproduction returned identical fingerprints. Timeout handling must distinguish incomplete observation from verified absence of progress.
+
+## consistency: approve
+
+## integration: needs-attention
+
+Finding 1 (**P2**) violates the heartbeat’s “stalled twice with no change” condition in `.claude/skills/process-plan/SKILL.md:95`. The fingerprint consumer receives no indication that changes were not observable.
+
+## source-defect: approve
+
+## design: advisory
+
+No user-facing surface changed.
+
+## record: advisory
+
+Ran `python -B -m unittest tests.scripts.test_verify_agent_tiers`: six tests passed. Reproduced finding 1 with in-memory mocks. Filesystem-writing guard tests and live network-stall scenarios were not run. No files were modified; Git status remained clean.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 9
+
+`python -m unittest tests.scripts.test_campaign_guard` -> `OK` (the extended stall test fails against `1cf1f0b`).
+
+- Finding 1 (P2): a fingerprint cut short by a stall carries fresh random bytes, so it never equals another fingerprint and the stall breaker never counts a run whose changes it could not observe.
