@@ -150,16 +150,29 @@ export function readAgentFrontmatter(text) {
     // A comment after the value is ordinary YAML, and rejecting it would fail
     // correct definitions. It is stripped here, outside the quoted region, so
     // `model: "sonnet # haiku"` still keeps its hash as content.
-    const quotedWithComment = /^((["'])(?:[^\\]|\\.)*?\2)[ \t]+#[^\r\n]*$/.exec(rest);
+    // A quoted value is one run of characters between its quotes with no quote or backslash inside (YAML would end
+    // the scalar at an inner quote, or decode an escape this check does not), then optionally a comment.
+    const quotedWithComment = /^("[^"\\]*"|'[^'\\]*')[ \t]+#[^\r\n]*$/.exec(rest);
     const scalarWithComment = /^([|>][-+0-9]*)[ \t]+#[^\r\n]*$/.exec(rest);
     const value = quotedWithComment?.[1] ?? scalarWithComment?.[1] ?? rest;
 
     if (/^[|>]$/.test(value)) {
       // A bare block scalar only. An indentation indicator (`|2`) changes what
       // counts as content, and this reader does not model that.
+      // Every content line is indented with spaces at least as deep as the first one; a shallower or tab-indented
+      // line is one YAML refuses or reads differently.
       const collected = [];
+      let depth = null;
       while (index < lines.length && (lines[index].trim() === "" || /^[ \t]/.test(lines[index]))) {
-        collected.push(lines[index].trim());
+        const blockLine = lines[index];
+        if (blockLine.trim() !== "") {
+          const indent = /^ */.exec(blockLine)[0].length;
+          if (/^ *\t/.test(blockLine) || (depth !== null && indent < depth)) {
+            return { fields: null, error: `"${key}:" block line ${JSON.stringify(blockLine)} is indented less than the block or with a tab; YAML refuses it` };
+          }
+          depth ??= indent;
+        }
+        collected.push(blockLine.trim());
         index += 1;
       }
       fields.set(key, { value: collected.filter(Boolean).join(" "), isQuoted: true });
@@ -171,6 +184,9 @@ export function readAgentFrontmatter(text) {
     }
 
     const quoted = /^(["'])((?:[^\\]|\\.)*?)\1[ \t]*$/.exec(value);
+    if (quoted && quoted[2].includes(quoted[1])) {
+      return { fields: null, error: `"${key}:" has a quote inside its quoted value (${JSON.stringify(value)}); YAML ends the scalar there` };
+    }
     if (quoted) {
       if (/\\/.test(quoted[2])) {
         return { fields: null, error: `"${key}:" contains a backslash escape; this check does not decode escapes, so write the value plainly` };

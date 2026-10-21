@@ -30,6 +30,15 @@ class AgentFrontmatter(unittest.TestCase):
                 ok, error = read(["name: a", line, "model: sonnet"])
                 self.assertFalse(ok, line)
 
+    def test_quoted_and_block_values_yaml_refuses_are_refused(self):
+        for lines in (['description: "a"b"'], ["description: 'a'b'"], ['description: "a"b" # note'],
+                      ["description: |", "  first", " second"], ["description: |", "  first", "\tsecond"]):
+            with self.subTest(lines=lines):
+                ok, error = read(["name: a", *lines, "model: sonnet"])
+                self.assertFalse(ok, lines)
+        ok, error = read(["name: a", "description: |", "  first", "    deeper is fine", "model: sonnet"])
+        self.assertTrue(ok, error)
+
     def test_values_yaml_reads_are_accepted(self):
         for line in ("description: a #comment", 'description: "Use this: quoted"', "description: -dash-word",
                      "description: plain words, commas", "description: key:value without space",

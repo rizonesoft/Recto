@@ -593,16 +593,21 @@ OWN_FILES = re.compile(r"^build/claude-campaign-(guard|state|pending-cancel)\.js
                        r"^build/claude-campaign-guard\.lock$|^build/claude-campaign-hook-errors/")
 
 
-def _read_regular(path: str, max_bytes: int) -> bytes | None:
-    """At most max_bytes of path, or None when it is no longer a regular file once opened (it was swapped for a FIFO,
-    a device or a link after the lstat). Opened without following a link and without blocking where the OS allows."""
+def _read_regular(path: str, max_bytes: int, seen: os.stat_result | None = None) -> bytes | None:
+    """At most max_bytes of path, or None when what opened is not the regular file the lstat saw (seen): swapped for a
+    FIFO, a device, or a link to elsewhere. Opened without following a link and without blocking where the OS allows;
+    where it does not (Windows has neither flag), the device and inode comparison catches a link followed to another
+    file."""
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
     try:
         fd = os.open(path, flags)
     except OSError:
         return None
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode):
+            return None
+        if seen is not None and (opened.st_dev, opened.st_ino) != (seen.st_dev, seen.st_ino):
             return None
         chunks, left = [], max_bytes + 1
         while left > 0:
@@ -658,7 +663,7 @@ def fingerprint(root: str, run_rel: str, run_text: str, deadline: float | None =
             digest.update(f"{path} special {stat.S_IFMT(info.st_mode)}\n".encode("utf-8"))
             continue
         if index <= max_hashed and info.st_size <= max_bytes:
-            content = _read_regular(full, max_bytes)
+            content = _read_regular(full, max_bytes, info)
             if content is None:
                 digest.update(f"{path} {info.st_size} {info.st_mtime_ns}\n".encode("utf-8"))
             else:

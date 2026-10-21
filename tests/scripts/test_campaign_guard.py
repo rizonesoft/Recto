@@ -453,13 +453,18 @@ class Lifecycle(Workspace):
         read = []
         real_read = guard._read_regular
         with mock.patch.object(guard.os, "lstat", side_effect=as_fifo), \
-                mock.patch.object(guard, "_read_regular", side_effect=lambda p, n: read.append(p) or real_read(p, n)):
+                mock.patch.object(guard, "_read_regular", side_effect=lambda p, n, seen=None: read.append(p) or real_read(p, n, seen)):
             first = guard.fingerprint(self.root, RUN_FILE, "")
         self.assertEqual([os.path.basename(p) for p in read], ["notes.txt"])  # the FIFO is named, never opened
         with mock.patch.object(guard.os, "lstat", side_effect=as_fifo):
             self.assertEqual(guard.fingerprint(self.root, RUN_FILE, ""), first)
-        # A regular file swapped for something else after the lstat is not read either.
+        # A regular file swapped for something else after the lstat is not read either: a directory, or another file
+        # (what following a link swapped in would open) whose identity differs from what the lstat saw.
         self.assertIsNone(guard._read_regular(os.path.join(self.root, "build"), 10))
+        self.write("other.txt", "secret\n")
+        seen = os.lstat(os.path.join(self.root, "notes.txt"))
+        self.assertIsNone(guard._read_regular(os.path.join(self.root, "other.txt"), 100, seen))
+        self.assertEqual(guard._read_regular(os.path.join(self.root, "notes.txt"), 100, seen), b"x\n")
 
     def test_whoami_names_what_a_heartbeat_is_to_the_run(self):
         self.assertEqual(guard.whoami(self.root, SESSION), "NO GUARD")
