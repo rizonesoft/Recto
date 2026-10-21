@@ -224,6 +224,8 @@ class HostileFixtureTest(unittest.TestCase):
             "const char* q = R\"(abc)\\\n\"; TEST(InRaw, Case) {} //\n)\"; TEST(AfterRaw, Case) {}\n"
             "int z = 1\\\n'000; TEST(SplicedNumber, Case) {}\n"
             "// spliced comment \\\nTEST(InComment, Case) {}\n"
+            "/\\\n* opener split by a splice\nTEST(InSplitBlock, Case) {}\n*/\n"
+            "/* closer split by a splice *\\\n/\nTEST(AfterSplitClose, Case) {}\n"
         )
         py = (
             "import abc\nimport unittest\n"
@@ -265,7 +267,7 @@ class HostileFixtureTest(unittest.TestCase):
             "Commented": "Commented.Case", "Block": "Block.Case", "Disabled": "Disabled.Case",
             "NotTaken": "NotTaken.Case", "Parenthesised": "Parenthesised.Case", "Macro": "Macro.Case",
             "Continued": "Continued.Case", "Quoted": "Quoted.Case", "Raw": "Raw.Case",
-            "InRaw": "InRaw.Case", "InComment": "InComment.Case",
+            "InRaw": "InRaw.Case", "InComment": "InComment.Case", "InSplitBlock": "InSplitBlock.Case",
             "Pretend": "tests.scripts.test_sample.Pretend.test_fake",
             "Ordinary": "tests.scripts.test_sample.Ordinary.test_missing",
             "Save": "tests.scripts.test_sample.Ordinary.save",
@@ -288,6 +290,7 @@ class HostileFixtureTest(unittest.TestCase):
             "Classmethod": "tests.scripts.test_sample.WithClassmethod.test_case", "Spliced": "Spliced.Case",
             "Prefixed": "Prefixed.Char", "Separated": "Separated.Num", "Fraction": "Fraction.Case",
             "AfterRaw": "AfterRaw.Case", "SplicedNumber": "SplicedNumber.Case",
+            "AfterSplitClose": "AfterSplitClose.Case",
         }
         cls.shas = {}
         for name, test_id in {**cls.fake, **cls.real}.items():
@@ -307,7 +310,7 @@ class HostileFixtureTest(unittest.TestCase):
         # What the compiler builds: the macro, the continued comment and the #if (0) block are not tests.
         cls.compiled = {"Enabled.Case", "Taken.Case", "Multi.Line", "Typed.Case", "Spliced.Case", "Prefixed.Char",
                         "Separated.Num", "Fraction.Case", "AfterRaw.Case", "SplicedNumber.Case",
-                        "InRaw.Case", "InComment.Case"}
+                        "InRaw.Case", "InComment.Case", "InSplitBlock.Case", "AfterSplitClose.Case"}
         # A module that never finishes importing must time out into a violation, not abort the report; the short
         # timeout holds for every report this class builds and is restored in tearDownClass.
         cls._timeout, release_notes.PROBE_TIMEOUT = release_notes.PROBE_TIMEOUT, 3

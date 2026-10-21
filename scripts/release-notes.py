@@ -145,18 +145,29 @@ def cpp_code(text):
     removed as the scan meets them, never inside a raw string literal, whose content C++ keeps byte for byte."""
     text = text.replace("\r\n", "\n")
     out, i, n = [], 0, len(text)
+
+    def after_splices(j):
+        """The index of the next character at or after j once spliced newlines are skipped."""
+        while text.startswith("\\\n", j):
+            j += 2
+        return j
+
     while i < n:
+        second = after_splices(i + 1) if text[i] == "/" else i
         if text.startswith("\\\n", i):
             i += 2
-        elif text.startswith("//", i):
+        elif text[i] == "/" and second < n and text[second] == "/":
             # A line comment ends at the first newline that is not spliced onto the next line.
-            end = text.find("\n", i)
+            end = text.find("\n", second)
             while end > 0 and text[end - 1] == "\\":
                 end = text.find("\n", end + 1)
             i = n if end < 0 else end
-        elif text.startswith("/*", i):
-            end = text.find("*/", i + 2)
-            i = n if end < 0 else end + 2
+        elif text[i] == "/" and second < n and text[second] == "*":
+            # A block comment ends at `*/`, which a splice may split (`*\` newline `/`).
+            j = second + 1
+            while j < n and not (text[j] == "*" and after_splices(j + 1) < n and text[after_splices(j + 1)] == "/"):
+                j += 1
+            i = n if j >= n else after_splices(j + 1) + 1
             out.append(" ")
         elif (raw := RAW_STRING.match(text, i)) and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_")
                                                      or text[i - 1] in "8uUL"):
