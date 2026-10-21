@@ -55,3 +55,51 @@ OVERALL: needs-attention
 - Finding 2 (P1): the deflate-bomb check inflates through `inflate_bounded`, 1 MiB of output at a time, stopping just past its limit (16 MiB for the outer stage, 256 MiB counted but not kept for the inner), so it never allocates what it is measuring (`test_inflation_stops_just_past_its_limit`).
 - Finding 3 (P3): the permission-mask comment now says `-1028` grants every permission but bit 11, document assembly.
 - Finding 4 (P3): a dated audit note in `D00 T03 §4` records that the earlier review overstated decoder verification (CCITT and JBIG2 compared with the generator's own output, DCT and JPX marker checks only).
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T21:22:35Z
+- Effort: medium
+- Lines: 33
+- Digest: 47665dcc6f32c08f
+
+### adversarial: needs-attention
+
+1. **P1: Encryption validation still ignores parameters that determine authentication.** `scripts/build-corpus.py:2713` reads `/V`, `/R` and `/P` but ignores `/Length` and `/EncryptMetadata`; `:2740` always derives the fixed 128-bit key, and `:2770` checks `/Perms` against literal `T` instead of the declared metadata setting.
+
+   Reproduced without writing files:
+   - Replace `/Length 128` with `/Length 040` in `render/encrypted-rc4-128.pdf`. `validate_encrypted_pdf_structure()` accepts it although authentication requires the declared 40-bit key derivation.
+   - Intercept `ClassicPdfBuilder.set_obj()` for object 7 and replace `/EncryptMetadata true` with `/EncryptMetadata false` when generating either AES fixture. Both validators accept the result. AES-128 now declares a different key derivation; AES-256 contradicts its encrypted `/Perms` flag.
+   - Supply these mutated bytes through mocked `expected_corpus_files()` and `Path.read_bytes()`, with matching regenerated provenance. **`check_corpus()` returns `(True, [])`.**
+
+   Standalone corruption is caught by byte comparison, but a generator regression producing these invalid encryption declarations passes the complete gate.
+
+### consistency: approve
+
+No separate finding.
+
+### integration: advisory
+
+Finding 1 weakens the fixture gate supporting downstream authentication tests. This audit does not establish a defect in the current committed encrypted fixtures or the C++ engine.
+
+### source-defect: needs-attention
+
+Finding 1 reflects incomplete application of the security-handler algorithms: revision 3 key derivation depends on `/Length`, and revision 4 additionally depends on `/EncryptMetadata`. These inputs are explicit in the [reference implementation of Algorithm 2](https://pdfnaut.readthedocs.io/en/latest/_modules/pdfnaut/security/standard_handler.html).
+
+### design: advisory
+
+Not applicable; this section owns no user surface.
+
+### record: approve
+
+At `0f0e935`, the checkpoint independently exited 0 with **39 fixtures verified**. The section-specific fixture test and both round 1 regression tests passed: **3 tests, OK**. Those checks do not detect finding 1. No files were modified by this audit.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+`python -m unittest tests.scripts.test_build_corpus` -> `OK` (the new subtests fail against `0f0e935`, each with a length-preserving mutation so the layout check cannot be what catches it); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): each revision the corpus writes now has exactly one form of `/Encrypt` dictionary: its exact key set, `/Length` equal to the key the decryption derives (128 for RC4 and AES-128, 256 for AES-256), `/EncryptMetadata true` where the revision has it (Algorithm 2 step f and the `/Perms` flag both assume it), and a `/CF` holding only `/StdCF` with exactly `/Type /CryptFilter`, the revision's `/CFM`, `/AuthEvent /DocOpen` and its `/Length` (`test_rc4_and_aes_256_declare_the_key_they_derive`, and the extended `test_encryption_is_read_from_what_the_trailer_names`).

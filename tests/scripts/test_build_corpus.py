@@ -435,10 +435,24 @@ class BuildCorpusTests(unittest.TestCase):
         files = self.mod.expected_corpus_files()
         aes = files["render/encrypted-aes-128.pdf"]
         self.mod.validate_encrypted_pdf_structure("render/encrypted-aes-128.pdf", aes)
-        for old, new in ((b"/Encrypt 7 0 R", b"/Encrypt 6 0 R"), (b"/CFM /AESV2", b"/CFM /V2   ")):
+        for old, new in ((b"/Encrypt 7 0 R", b"/Encrypt 6 0 R"), (b"/CFM /AESV2", b"/CFM /V2   "),
+                         (b"/Length 128 /P", b"/Length 040 /P"),
+                         (b"/EncryptMetadata true /CF", b"/EncryptMetadata false/CF")):  # same length: no layout error
             self.assertIn(old, aes)
             with self.subTest(old=old), self.assertRaises(ValueError):
                 self.mod.validate_encrypted_pdf_structure("render/encrypted-aes-128.pdf", aes.replace(old, new, 1))
+
+    def test_rc4_and_aes_256_declare_the_key_they_derive(self) -> None:
+        files = self.mod.expected_corpus_files()
+        rc4, aes256 = files["render/encrypted-rc4-128.pdf"], files["render/encrypted-aes-256.pdf"]
+        for name, data, old, new, says in (
+                ("render/encrypted-rc4-128.pdf", rc4, b"/Length 128", b"/Length 040", "/Length 040"),
+                ("render/encrypted-aes-256.pdf", aes256, b"/EncryptMetadata true /CF", b"/EncryptMetadata false/CF",
+                 "/EncryptMetadata must be true")):
+            self.mod.validate_encrypted_pdf_structure(name, data)
+            self.assertIn(old, data)
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, re.escape(says)):
+                self.mod.validate_encrypted_pdf_structure(name, data.replace(old, new, 1))
 
     def test_inflation_stops_just_past_its_limit(self) -> None:
         bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))

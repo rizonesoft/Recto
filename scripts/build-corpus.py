@@ -2715,11 +2715,26 @@ def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
     p_val = whole(enc.get(b"/P"), "/P", signed=True)
     o_bytes = hex_string(enc.get(b"/O"), "/O")
     u_bytes = hex_string(enc.get(b"/U"), "/U")
-    # The crypt filters declared must be the ones this revision's decryption below applies (ISO 32000-1 7.6.5): none
-    # for RC4 (V 2, R 3), and StdCF as both stream and string filter with AESV2 (V 4, R 4) or AESV3 (V 5, R 6).
-    expected_cfm = {(2, 3): None, (4, 4): b"/AESV2", (5, 6): b"/AESV3"}.get((v_val, r_val), b"?")
-    if expected_cfm == b"?":
+    # Each revision the corpus writes has exactly one form, and every entry that feeds key derivation or
+    # authentication (ISO 32000-1 7.6.3, Algorithms 2, 2.A, 2.B) must be the value the decryption below assumes: a
+    # 128-bit key for RC4 and AES-128, 256 for AES-256, metadata encrypted, and crypt filters as declared here.
+    forms = {
+        (2, 3): ({b"/Filter", b"/V", b"/R", b"/Length", b"/P", b"/O", b"/U"}, b"128", None, None),
+        (4, 4): ({b"/Filter", b"/V", b"/R", b"/Length", b"/P", b"/EncryptMetadata", b"/CF", b"/StmF", b"/StrF", b"/O",
+                  b"/U"}, b"128", b"/AESV2", b"16"),
+        (5, 6): ({b"/Filter", b"/V", b"/R", b"/Length", b"/P", b"/EncryptMetadata", b"/CF", b"/StmF", b"/StrF", b"/O",
+                  b"/U", b"/OE", b"/UE", b"/Perms"}, b"256", b"/AESV3", b"32"),
+    }
+    if (v_val, r_val) not in forms:
         raise ValueError(f"{rel_path}: unsupported (/V {v_val}, /R {r_val})")
+    keys, key_bits, expected_cfm, cf_length = forms[(v_val, r_val)]
+    if set(enc) != keys:
+        raise ValueError(f"{rel_path}: the /V {v_val} /Encrypt dictionary must hold exactly {sorted(k.decode() for k in keys)}")
+    if enc[b"/Length"] != key_bits:
+        raise ValueError(f"{rel_path}: /Length {enc[b'/Length'].decode()} is not the {key_bits.decode()}-bit key the "
+                         f"corpus derives")
+    if expected_cfm is not None and enc[b"/EncryptMetadata"] != b"true":
+        raise ValueError(f"{rel_path}: /EncryptMetadata must be true, which the key derivation and /Perms assume")
     if expected_cfm is None:
         if any(k in enc for k in (b"/CF", b"/StmF", b"/StrF")):
             raise ValueError(f"{rel_path}: an RC4 (/V 2) dictionary declares crypt filters it does not use")
@@ -2727,10 +2742,13 @@ def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
         cf = enc.get(b"/CF", b"")
         if not cf.startswith(b"<<"):
             raise ValueError(f"{rel_path}: /V {v_val} needs a /CF dictionary")
-        std = dict_entries(cf[2:-2]).get(b"/StdCF", b"")
+        filters = dict_entries(cf[2:-2])
+        std = filters.get(b"/StdCF", b"")
         std_entries = dict_entries(std[2:-2]) if std.startswith(b"<<") else {}
-        if (std_entries.get(b"/CFM") != expected_cfm or enc.get(b"/StmF") != b"/StdCF"
-                or enc.get(b"/StrF") != b"/StdCF"):
+        if (set(filters) != {b"/StdCF"}
+                or std_entries != {b"/Type": b"/CryptFilter", b"/CFM": expected_cfm, b"/AuthEvent": b"/DocOpen",
+                                   b"/Length": cf_length}
+                or enc.get(b"/StmF") != b"/StdCF" or enc.get(b"/StrF") != b"/StdCF"):
             raise ValueError(f"{rel_path}: /V {v_val} must declare /StdCF with /CFM {expected_cfm.decode()} as both "
                              f"/StmF and /StrF")
 
