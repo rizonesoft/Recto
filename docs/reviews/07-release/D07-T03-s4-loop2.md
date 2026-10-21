@@ -546,3 +546,39 @@ OVERALL: needs-attention
 
 - Finding 1 (P1): a test class must run with unittest's own machinery: `run`, `__call__`, `debug` and `_callTestMethod` must be `TestCase`'s (or `IsolatedAsyncioTestCase`'s), so an override that never calls the body is refused (`OverridesDispatch`). Tests: `Ran 25 tests ... OK`.
 - Threat model, recorded as a dated correction in §4 and in `docs/support/user-bugs.md`: the check guards against mistakes (a missing, skipped, disabled, expected-to-fail or outside test, a wrong id). It cannot rule out a committer deliberately defeating unittest from the test's own code, because any check that loads that code runs it; that boundary belongs to code review and the pull request's failing-on-parent, passing-on-fix evidence.
+
+## Round 12: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T13:52:56Z
+- Effort: medium
+- Lines: 23
+- Digest: 2b18c2a80af1ae5a
+
+## adversarial: needs-attention
+
+1. **P2**, `scripts/release-notes.py:159-163`: reversed release endpoints silently produce a successful empty report. Validation checks only that both endpoints resolve to commits. Git accepts `newer..older` and returns no commits when the older endpoint is an ancestor, so the script reports no violations and exits 0.
+
+   Read-only reproduction: `report(Path.cwd(), "c2549dc", "a05ffe9")` returned `fixes=[]` and `violations=[]`, yielding exit status 0 under line 415. Swapping the documented release-tag arguments produces the same failure. Reject a reversed release range before generating the report.
+
+## consistency: approve
+
+## integration: approve
+
+## source-defect: needs-attention
+
+Finding 1 applies here: Git revision ranges express reachability differences, so a valid but reversed range does not generate a Git error. Successful `rev-parse` calls do not validate release ordering.
+
+## design: advisory
+
+Not applicable.
+
+## record: advisory
+
+Five read-only parser and documentation tests passed. The full 25-test claim was not independently reproduced because that suite creates files and worktrees. No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 12
+
+- Finding 1 (P2): the `from` tag must be an ancestor of the `to` tag (`git merge-base --is-ancestor`), or the script exits 2 asking for the previous release first; a reversed range no longer reads as a release with no user fixes. Tests: `Ran 25 tests ... OK` (the unreadable-input test covers `v1.1.0 v1.0.0`).

@@ -205,6 +205,7 @@ class ReleaseNotesTest(unittest.TestCase):
 
     def test_unreadable_input_exits_2(self):
         self.assertEqual(self.run_main("v0.9.0", "v1.1.0")[0], 2)
+        self.assertEqual(self.run_main("v1.1.0", "v1.0.0")[0], 2)  # reversed range
         self.assertEqual(self.run_main("v1.0.0", "v1.1.0", "--allow-no-test", "nosha")[0], 2)
         self.assertEqual(self.run_main("v1.0.0", "v1.1.0", "--issues", str(self.repo / "missing.json"))[0], 2)
         bad_issues = pathlib.Path(self._tmp.name) / "bad-issues.json"

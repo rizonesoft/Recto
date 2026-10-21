@@ -159,6 +159,9 @@ def commits(repo, start, end):
     revision = end if start == "root" else f"{start}..{end}"
     for ref in ([end] if start == "root" else [start, end]):
         git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    # Git accepts a reversed range and lists nothing, which would read as a release with no user fixes.
+    if start != "root" and git(repo, "merge-base", "--is-ancestor", start, end, check=False).returncode != 0:
+        raise Unreadable(f"{start} is not an ancestor of {end}: give the previous release first, then the new one")
     found = []
     for sha in git(repo, "rev-list", "--reverse", revision).stdout.split():
         # NUL separates the fields and the trailers: git cannot store NUL in a commit message, so no subject or
