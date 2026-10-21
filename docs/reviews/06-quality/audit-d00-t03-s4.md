@@ -471,3 +471,48 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `Ran 44 tests`, `OK` (the five new subtests fail against `9956476`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P1): an array operand now carries its elements' kinds, and the operand table says what they must be: `TJ` takes a non-empty array of strings and numbers, `d` an array of numbers. `[/Invalid] TJ` refuses. The same layer now also checks operand values (`_check_operand_values`, ISO 32000-1 8.4.3, 8.6.4 and 9.3.6): colour components from 0 to 1, line cap and join 0 to 2, text rendering mode 0 to 7, a non-negative line width, and dash lengths non-negative and not all zero.
+
+## Round 11: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T22:28:39Z
+- Effort: medium
+- Lines: 30
+- Digest: 9379cd7a856d924d
+
+### adversarial: needs-attention
+
+1. **P1: Seed validation accepts text shown before a font is selected.** `scripts/build-corpus.py:3298` tracks nesting but no current font; `:3344` checks only that a `Tf` resource exists.
+
+   Reproduced entirely in memory: intercept `flate_compress()` during `build_seed_render_ops()`, remove `/F1 12 Tf` immediately after `BT`, and insert it immediately before `ET`. Both `Tj` and `TJ` now execute without a selected font, while all required operators remain present. `validate_seed_pdf_structure()` accepts this seed. Mocking regenerated expected bytes, file reads and matching provenance makes **`check_corpus()` return `(True, [])`**.
+
+   This permits a generator regression to remove valid text-rendering coverage while passing the checkpoint. It does not establish malformed content in the committed seed.
+
+### consistency: approve
+
+No separate finding.
+
+### integration: advisory
+
+Finding 1 weakens the rendering seeds required by `todo/01-engine/TODO-03-cli-and-fuzz.md:156`. No downstream engine defect is established.
+
+### source-defect: needs-attention
+
+Finding **1 (P1)**: resource existence and eventual `Tf` presence do not establish a valid font at text-showing time. Text font and size have no default initial values. See the [PDF Association operator reference](https://pdfa.org/wp-content/uploads/2023/08/PDF-Operators-CheatSheet.pdf).
+
+### design: advisory
+
+Not applicable; this section owns no user surface.
+
+### record: approve
+
+At `45aba13`, independently reran `python -B scripts/build-corpus.py --check`: exit **0**, **39 fixtures verified**. `test_seed_content_must_be_executable_as_written` also passed. Neither detects finding 1. No files were modified; the working tree remains clean.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 11
+
+`python -m unittest tests.scripts.test_build_corpus` -> `OK` (the four new subtests fail against `45aba13`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): the text font is tracked as graphics state (set by `Tf`, saved by `q`, restored by `Q`, with no default), and `Tj` or `TJ` before a font is selected refuses, including after a `Q` that restored a state with none. The same validator now also enforces what a text object may contain (ISO 32000-1 Figure 9): `q`, `Q`, `Do` and path operators between `BT` and `ET` refuse.

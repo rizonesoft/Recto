@@ -3205,6 +3205,10 @@ CONTENT_OPERANDS: dict[bytes, str] = {
 PATH_CONSTRUCTION = {b"m", b"l", b"c", b"v", b"y", b"h", b"re"}
 PATH_PAINTING = {b"S", b"s", b"f", b"F", b"f*", b"B", b"B*", b"b", b"b*", b"n"}
 TEXT_SHOWING = {b"Td", b"TD", b"Tm", b"T*", b"Tj", b"TJ"}  # only inside BT ... ET
+# What a text object may contain (ISO 32000-1 Figure 9): general graphics state, colour, text state, text positioning
+# and showing, and marked content; never q, Q, an XObject or a path.
+TEXT_OBJECT_ALLOWED = ({b"w", b"J", b"j", b"M", b"d", b"gs", b"g", b"G", b"rg", b"RG", b"k", b"K", b"Tc", b"Tw",
+                        b"Tz", b"TL", b"Tf", b"Tr", b"Ts", b"ET", b"BMC", b"BDC", b"EMC"} | TEXT_SHOWING)
 
 
 def _content_operand(rel_path: str, raw: bytes, i: int) -> tuple[str, int]:
@@ -3295,6 +3299,7 @@ def validate_content_instructions(rel_path: str, raw: bytes, resources: dict[byt
     nothing else between), or a font, XObject or graphics-state name that the stream's resources do not define
     (resources maps /Font, /XObject and /ExtGState to their names). Returns the operators."""
     saves, in_text, in_path = 0, False, False
+    fonts: list[bytes | None] = [None]  # the text font is graphics state: q saves it, Q restores it, nothing sets a default
     ops = []
     for op, operands in content_instructions(rel_path, raw):
         shape = CONTENT_OPERANDS.get(op)
@@ -3326,10 +3331,12 @@ def validate_content_instructions(rel_path: str, raw: bytes, resources: dict[byt
             in_path = op in (b"W", b"W*")
         elif op == b"q":
             saves += 1
+            fonts.append(fonts[-1])
         elif op == b"Q":
             saves -= 1
             if saves < 0:
                 raise ValueError(f"{rel_path}: Q with no matching q")
+            fonts.pop()
         elif op == b"BT":
             if in_text:
                 raise ValueError(f"{rel_path}: BT inside a text object")
@@ -3340,6 +3347,12 @@ def validate_content_instructions(rel_path: str, raw: bytes, resources: dict[byt
             in_text = False
         elif op in TEXT_SHOWING and not in_text:
             raise ValueError(f"{rel_path}: {op.decode()} outside BT ... ET")
+        if in_text and op != b"BT" and op not in TEXT_OBJECT_ALLOWED:  # BT itself just opened the object
+            raise ValueError(f"{rel_path}: {op.decode()} inside BT ... ET")
+        if op == b"Tf":
+            fonts[-1] = operands[0][1]
+        elif op in (b"Tj", b"TJ") and fonts[-1] is None:
+            raise ValueError(f"{rel_path}: {op.decode()} shows text before any Tf selects a font")
         category = {b"Tf": b"/Font", b"Do": b"/XObject", b"gs": b"/ExtGState"}.get(op)
         if category is not None and operands[0][1] not in resources.get(category, set()):
             raise ValueError(f"{rel_path}: {op.decode()} names {operands[0][1].decode()}, which its resources lack")
