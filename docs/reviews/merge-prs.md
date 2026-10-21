@@ -95,3 +95,45 @@ OVERALL: needs-attention
 - Finding 3 (P3): the README no longer promises email for skipped pull requests: only a stopped merge, or a failed pull or validate after one, emails; `merge_prs.py --dry-run` says why each other one waits.
 
 Also: GitHub computes mergeability in the background, so `current()` re-reads a pull request still `UNKNOWN` up to five times, three seconds apart, before skipping it for that run.
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:06:05Z
+- Effort: medium
+- Lines: 26
+- Digest: 10d31ed2f6457db6
+
+## adversarial: needs-attention
+
+1. **P1, `scripts/merge_prs.py:102`: A failing status beyond the first page does not block merging.** `commit_statuses()` neither paginates nor reads the combined `state`. GitHub defaults this endpoint to 30 results per page. Reproduce with successful required check runs, 30 successful status contexts on page 1, and a failing context on page 2. The in-memory probe returned exit 0 and merged PR #1. Paginate the statuses or evaluate the combined state with explicit handling for no statuses. [GitHub API documentation](https://docs.github.com/en/rest/commits/statuses#get-the-combined-status-for-a-specific-reference)
+
+## consistency: approve
+
+No additional findings.
+
+## integration: needs-attention
+
+2. **P1, `scripts/merge_prs.py:161`: Clone safety is checked only once for the entire batch.** Subsequent merges do not recheck working-tree cleanliness, synchronization, or whether a section has started. The campaign lock does not prevent ordinary user edits. Reproduce with two eligible PRs and make the working tree dirty after the first merge. The in-memory probe merged both PRs, returned exit 0, and recorded only one `git status` call. A nonconflicting edit can survive `git pull --ff-only`, so that command does not enforce the promised clean-tree gate. Recheck safety before each merge and stop when it changes.
+
+## source-defect: needs-attention
+
+Finding 1 violates the upstream pagination contract. Finding 2 violates the governing requirement that merges run only from a clean, synchronized clone with no section in progress.
+
+## design: advisory
+
+No user-facing design surface changed.
+
+## record: advisory
+
+Validation used candidate and fix-diff inspection plus two in-memory mocked probes with bytecode generation disabled. The full test suite and historical live-check claims were not independently reproduced. No files were modified by this review.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 3
+
+`python -m unittest tests.scripts.test_merge_prs` -> `Ran 14 tests`, `OK`.
+
+- Finding 1 (P1): commit statuses are read with `--paginate` and `per_page=100`, so a failing status past the first 30 still blocks (`test_commit_statuses_are_read_across_every_page`).
+- Finding 2 (P1): the safety check (clean tree, `HEAD` at `origin/main`, no section in progress, and for the scheduled run no campaign guard) runs again before every pull request after the first; a change stops the run, and later pull requests wait (`test_safety_is_checked_again_before_each_merge`).

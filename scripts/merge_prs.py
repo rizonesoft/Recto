@@ -99,7 +99,8 @@ def check_runs(run, root, sha):
 
 def commit_statuses(run, root, sha):
     """Every legacy commit status on a commit: (context, state). CI can report through these as well as check runs."""
-    out = check(run, root, ["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{sha}/status",
+    # Every page: the endpoint returns 30 statuses a page by default, and a failing one may sit past the first.
+    out = check(run, root, ["gh", "api", "--paginate", f"repos/{{owner}}/{{repo}}/commits/{sha}/status?per_page=100",
                             "--jq", ".statuses[] | [.context, .state]"], f"reading statuses of {sha[:7]}")
     return [tuple(json.loads(line)) for line in out.splitlines() if line.strip()]
 
@@ -167,7 +168,18 @@ def merge_all(run, root, args, out):
         out(f"merge-prs: {e}")
         return 1
     merged = 0
-    for number in numbers:
+    for index, number in enumerate(numbers):
+        if index:
+            # Safe at the start is not safe for the whole batch: the operator may have started editing or a section
+            # since the last merge, so each merge checks again.
+            try:
+                ensure_safe(run, root, args.scheduled)
+            except Unsafe as e:
+                out(f"merge-prs: stopped after {merged} merged: {e}; any later pull request waits")
+                return 0
+            except RuntimeError as e:
+                out(f"merge-prs: {e}")
+                return 1
         try:
             # Judged on its state right now, after any earlier merge: labels, base, mergeability and the checks of the
             # exact commit that will merge.

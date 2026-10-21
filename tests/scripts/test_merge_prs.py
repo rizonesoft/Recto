@@ -115,6 +115,21 @@ class MergePrs(unittest.TestCase):
         self.assertEqual(self.main(fake), 0)
         self.assertEqual(fake.merges(), ["3"])
 
+    def test_safety_is_checked_again_before_each_merge(self):
+        def edit_after_first(number, prs):
+            fake.dirty = " M todo/x.md"
+
+        fake = FakeRun([pr(1), pr(2)], after_merge=edit_after_first)
+        self.assertEqual(self.main(fake), 0)
+        self.assertEqual(fake.merges(), ["1"])
+        self.assertIn("stopped after 1 merged", self.lines[-1])
+
+    def test_commit_statuses_are_read_across_every_page(self):
+        fake = FakeRun([pr(1)])
+        self.assertEqual(self.main(fake, "--dry-run"), 0)
+        status_call = next(c for c in fake.calls if c[:2] == ["gh", "api"] and "/status" in " ".join(c))
+        self.assertIn("--paginate", status_call)
+
     def test_only_pull_requests_into_main_are_considered(self):
         fake = FakeRun([pr(1, base="release/1.0")])
         self.assertEqual(self.main(fake), 0)
