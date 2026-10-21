@@ -35,6 +35,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -165,14 +166,15 @@ def _utc_now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime(UTC_FORMAT)
 
 
-def acquire(root: str, session: str, phase: int, run_file: str, cron_id: str,
+def acquire(root: str, session: str, phase: int | None, run_file: str, cron_id: str,
             handover: str | None = None, generation: str | None = None, scope: str | None = None) -> str:
     """Write the guard for `session`. Only one session can hold it: every guard change holds the lock, so two sessions
     racing to start a run cannot both win; the owner re-points its own guard; a live guard owned by another session is
     refused unless the operator hands it over, and the handover is recorded in the guard.
 
     `scope` is what the run covers: `plan` (process-plan chains every ready phase) or `phase` (process-phase was asked
-    for one phase), so a heartbeat resumes only what was asked for. A re-point keeps the scope unless one is given."""
+    for one phase), so a heartbeat resumes only what was asked for. A re-point keeps the scope and the phase unless one
+    is given; a new guard, or one taken from another run, needs its phase."""
     if not session or not run_file or not cron_id:
         raise GuardError("acquire needs --session, --run-file, and --cron-id")
     if os.path.isabs(run_file) or ".." in run_file.replace("\\", "/").split("/"):
@@ -183,7 +185,7 @@ def acquire(root: str, session: str, phase: int, run_file: str, cron_id: str,
         return _acquire_locked(root, session, phase, run_file, cron_id, handover, generation, scope)
 
 
-def _acquire_locked(root: str, session: str, phase: int, run_file: str, cron_id: str,
+def _acquire_locked(root: str, session: str, phase: int | None, run_file: str, cron_id: str,
                     handover: str | None, generation: str | None, scope: str | None) -> str:
     guard, state_path = _paths(root)
     os.makedirs(os.path.dirname(guard), exist_ok=True)
@@ -193,6 +195,10 @@ def _acquire_locked(root: str, session: str, phase: int, run_file: str, cron_id:
     except GuardError:
         previous = {}  # a torn or unreadable guard: only an operator handover may replace it (below)
     same_run = previous.get("run_file") == run_file and previous.get("session_id") == session
+    if phase is None:
+        if not (previous.get("session_id") == session and isinstance(previous.get("phase"), int)):
+            raise GuardError("acquire needs --phase for a new guard (a re-point of your own guard keeps its phase)")
+        phase = previous["phase"]
     doc = {"runner": "claude", "workspace": root.replace("\\", "/"), "phase": phase,
            "run_file": run_file, "session_id": session, "cron_id": cron_id,
            "scope": scope or (previous.get("scope") if previous.get("session_id") == session or
@@ -340,19 +346,26 @@ def _end_locked(root: str, session: str, reason: str, ready: int | None, still_o
             trips = 0
         if trips < 2:
             raise GuardError(f"stall needs a state file with trips of 2 or more; it reads {trips}")
+    # The guard goes first, so the run is over the moment anything is written: an end interrupted after this leaves no
+    # guard (the heartbeat finds none and deletes itself, the Stop hook lets the turn end), never a live guard that a
+    # heartbeat would resume beside a recorded cancellation.
+    jobs = [j for j in _pending_jobs(root) if j.get("cron_id") != guard.get("cron_id")]
+    try:
+        os.unlink(guard_path)
+    except FileNotFoundError:
+        pass
+    if os.path.exists(guard_path):
+        raise GuardError(f"could not delete {guard_path}")
+    try:
+        os.unlink(state_path)
+    except FileNotFoundError:
+        pass
     # The job id outlives the guard until CronDelete is confirmed, so a failed delete stays recoverable, and a later
     # end never overwrites an earlier unconfirmed cancellation.
-    jobs = [j for j in _pending_jobs(root) if j.get("cron_id") != guard.get("cron_id")]
     jobs.append({"cron_id": guard.get("cron_id"), "reason": reason, "at": _utc_now()})
     _write_json(_pending_path(root), jobs)
-    for path in (guard_path, state_path):
-        try:
-            os.unlink(path)
-        except FileNotFoundError:
-            pass
-    left = [p for p in (guard_path, state_path) if os.path.exists(p)]
-    if left:
-        raise GuardError(f"could not delete {', '.join(left)}")
+    if os.path.exists(state_path):
+        raise GuardError(f"could not delete {state_path}")
     return (f"end: {reason}: guard and state deleted; CronDelete {guard.get('cron_id')} now "
             f"(the heartbeat job), confirm it is gone with CronList, then run "
             f"cancel-confirmed --cron-id {guard.get('cron_id')}")
@@ -580,6 +593,31 @@ OWN_FILES = re.compile(r"^build/claude-campaign-(guard|state|pending-cancel)\.js
                        r"^build/claude-campaign-guard\.lock$|^build/claude-campaign-hook-errors/")
 
 
+def _read_regular(path: str, max_bytes: int) -> bytes | None:
+    """At most max_bytes of path, or None when it is no longer a regular file once opened (it was swapped for a FIFO,
+    a device or a link after the lstat). Opened without following a link and without blocking where the OS allows."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        chunks, left = [], max_bytes + 1
+        while left > 0:
+            chunk = os.read(fd, min(left, 1 << 20))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            left -= len(chunk)
+        return b"".join(chunks)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
 def fingerprint(root: str, run_rel: str, run_text: str, deadline: float | None = None) -> str:
     """HEAD, the working-tree diff, the untracked files, and the run file without its `- bookkeeping:` lines.
 
@@ -603,13 +641,28 @@ def fingerprint(root: str, run_rel: str, run_text: str, deadline: float | None =
         _remaining(deadline)
         full = os.path.join(root, path)
         try:
-            info = os.stat(full)
+            info = os.lstat(full)  # the path itself: a link is never followed
         except OSError:
             digest.update(f"{path} missing\n".encode("utf-8"))
             continue
+        if stat.S_ISLNK(info.st_mode):
+            try:
+                target = os.readlink(full)
+            except OSError:
+                target = "?"
+            digest.update(f"{path} link {target}\n".encode("utf-8", "replace"))
+            continue
+        if not stat.S_ISREG(info.st_mode):
+            # A directory, FIFO, socket or device: its name and kind count, its content never (reading one could
+            # block or never end, and stall the hook).
+            digest.update(f"{path} special {stat.S_IFMT(info.st_mode)}\n".encode("utf-8"))
+            continue
         if index <= max_hashed and info.st_size <= max_bytes:
-            with open(full, "rb") as fh:
-                digest.update(f"{path} ".encode("utf-8") + hashlib.sha256(fh.read()).hexdigest().encode() + b"\n")
+            content = _read_regular(full, max_bytes)
+            if content is None:
+                digest.update(f"{path} {info.st_size} {info.st_mtime_ns}\n".encode("utf-8"))
+            else:
+                digest.update(f"{path} ".encode("utf-8") + hashlib.sha256(content).hexdigest().encode() + b"\n")
         elif index <= max_hashed + max_stat:
             digest.update(f"{path} {info.st_size} {info.st_mtime_ns}\n".encode("utf-8"))
         else:
@@ -763,7 +816,10 @@ def main(argv: list[str]) -> int:
         opts = _opts(argv[1:])
         root = opts.pop("root", REPO)
         if argv[0] == "acquire":
-            print(acquire(root, opts.get("session", ""), int(opts.get("phase", "0")), opts.get("run_file", ""),
+            phase = opts.get("phase")
+            if phase is not None and not phase.isdigit():
+                raise GuardError(f"--phase {phase!r} is not a phase number")
+            print(acquire(root, opts.get("session", ""), int(phase) if phase is not None else None, opts.get("run_file", ""),
                           opts.get("cron_id", ""), opts.get("handover"), opts.get("generation"), opts.get("scope")))
             return 0
         if argv[0] == "end":

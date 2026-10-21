@@ -8,10 +8,12 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
 GUARD_PY = REPO / "scripts" / "campaign_guard.py"
@@ -402,6 +404,62 @@ class Lifecycle(Workspace):
         self.assertIn("still open", str(ctx.exception))
         self.write("scripts/open.txt", "0")
         self.assertIn("plan-done", guard.end(self.root, SESSION, "plan-done"))
+
+    def test_a_re_point_without_a_phase_keeps_the_phase(self):
+        guard.acquire(self.root, SESSION, 4, RUN_FILE, "job-1")
+        guard.acquire(self.root, SESSION, None, RUN_FILE, "job-2")  # a new heartbeat job, no --phase
+        self.assertEqual(guard.read_guard(self.root)["phase"], 4)
+        with self.assertRaises(guard.GuardError):  # another session's guard is never taken without its phase
+            guard.acquire(self.root, OTHER, None, RUN_FILE, "job-3", handover="test")
+        self.assertEqual(guard.read_guard(self.root)["phase"], 4)
+        self.assertEqual(guard.main(["acquire", "--session", SESSION, "--run-file", RUN_FILE, "--cron-id", "job-4",
+                                     "--root", self.root]), 0)
+        self.assertEqual(guard.read_guard(self.root)["phase"], 4)
+
+    def test_a_fresh_guard_needs_a_phase(self):
+        with self.assertRaises(guard.GuardError):
+            guard.acquire(self.root, SESSION, None, RUN_FILE, "job-1")
+        self.assertIsNone(guard.read_guard(self.root))
+
+    def test_an_interrupted_end_leaves_no_run_to_resume(self):
+        self.acquire()
+        self.write(RUN_FILE, f"## Closeout run={self.run_id()}\n", "a")
+        real = guard._write_json
+
+        def die_on_pending(path, doc):
+            if path.endswith("pending-cancel.json"):
+                raise KeyboardInterrupt
+            return real(path, doc)
+
+        with mock.patch.object(guard, "_write_json", side_effect=die_on_pending):
+            with self.assertRaises(KeyboardInterrupt):
+                guard.end(self.root, SESSION, "closeout")
+        self.assertIsNone(guard.read_guard(self.root))  # the heartbeat finds no guard and deletes itself
+        self.assertEqual(guard.whoami(self.root, SESSION), "NO GUARD")
+
+    def test_the_fingerprint_never_reads_a_link_or_a_special_file(self):
+        self.write("notes.txt", "x\n")
+        self.write("fifo-standin", "")
+        real_lstat = os.lstat
+
+        def as_fifo(path, *a, **k):
+            info = real_lstat(path, *a, **k)
+            if os.path.basename(path) == "fifo-standin":
+                fields = list(info)
+                fields[0] = stat.S_IFIFO | 0o644
+                return os.stat_result(fields)
+            return info
+
+        read = []
+        real_read = guard._read_regular
+        with mock.patch.object(guard.os, "lstat", side_effect=as_fifo), \
+                mock.patch.object(guard, "_read_regular", side_effect=lambda p, n: read.append(p) or real_read(p, n)):
+            first = guard.fingerprint(self.root, RUN_FILE, "")
+        self.assertEqual([os.path.basename(p) for p in read], ["notes.txt"])  # the FIFO is named, never opened
+        with mock.patch.object(guard.os, "lstat", side_effect=as_fifo):
+            self.assertEqual(guard.fingerprint(self.root, RUN_FILE, ""), first)
+        # A regular file swapped for something else after the lstat is not read either.
+        self.assertIsNone(guard._read_regular(os.path.join(self.root, "build"), 10))
 
     def test_whoami_names_what_a_heartbeat_is_to_the_run(self):
         self.assertEqual(guard.whoami(self.root, SESSION), "NO GUARD")
