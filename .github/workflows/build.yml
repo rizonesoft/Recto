@@ -43,7 +43,7 @@ jobs:
           if ($env:REQUESTED_SHA -cnotmatch '^[0-9a-f]{40}$') { throw "sha must be a full 40-character commit, not '$env:REQUESTED_SHA'" }
 
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.sha || github.sha }}
           persist-credentials: false
@@ -129,7 +129,7 @@ jobs:
       TARGET_SHA: ${{ needs.build.outputs.sha }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -182,7 +182,7 @@ jobs:
     steps:
       # The same commit the build job tests (a manual run's sha is checked there).
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.sha || github.sha }}
           persist-credentials: false
