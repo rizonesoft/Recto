@@ -12,32 +12,50 @@ spec = importlib.util.spec_from_file_location("merge_prs", ROOT / "scripts" / "m
 merge_prs = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(merge_prs)
 SECTION_IN_PROGRESS = merge_prs.section_in_progress  # the real one; the merge tests patch it
-
 SHA = "a" * 40
+GREEN_RUNS = [(name, "completed", "success") for name in sorted(merge_prs.REQUIRED_CHECKS)]
 
 
 def pr(number, *, author="app/github-actions", labels=("dependencies", "pins"), mergeable="MERGEABLE",
-       checks=(("COMPLETED", "SUCCESS"),), branch="pins/vcpkg-2026.10.16"):
-    return {"number": number, "title": f"pin {number}", "author": {"login": author},
-            "labels": [{"name": n} for n in labels], "headRefName": branch, "headRefOid": f"{number:040d}",
-            "mergeable": mergeable,
-            "statusCheckRollup": [{"__typename": "CheckRun", "status": s, "conclusion": c} for s, c in checks]}
+       checks=None, branch="pins/vcpkg-2026.10.16", base="main"):
+    """A pull request as gh pr view shows it, with its head commit's check runs under "_runs" (for the fake)."""
+    return {"number": number, "title": f"pin {number}", "author": {"login": author}, "state": "OPEN",
+            "labels": [{"name": n} for n in labels], "baseRefName": base, "headRefName": branch,
+            "headRefOid": f"{number:040d}", "mergeable": mergeable,
+            "_runs": GREEN_RUNS if checks is None else list(checks)}
 
 
 class FakeRun:
-    """Answers git and gh the way a test asks, and records every call."""
+    """Answers git and gh the way a test asks, and records every call. after_merge(number, prs) may change later
+    answers."""
 
-    def __init__(self, prs, *, dirty="", head=SHA, upstream=SHA, fail=None):
-        self.prs, self.dirty, self.head, self.upstream, self.fail = prs, dirty, head, upstream, fail or ()
+    def __init__(self, prs, *, dirty="", head=SHA, upstream=SHA, fail=(), after_merge=None):
+        self.prs = {p["number"]: p for p in prs}
+        self.dirty, self.head, self.upstream, self.fail, self.after_merge = dirty, head, upstream, fail, after_merge
         self.calls = []
 
     def __call__(self, args, root):
         self.calls.append(args)
         if any(f in " ".join(args) for f in self.fail):
             return subprocess.CompletedProcess(args, 1, "", "refused")
-        answers = {("git", "status"): self.dirty, ("git", "rev-parse", "HEAD"): self.head,
-                   ("git", "rev-parse", "origin/main"): self.upstream, ("gh", "pr", "list"): json.dumps(self.prs)}
-        out = next((v for k, v in answers.items() if tuple(args[: len(k)]) == k), "")
+        out = ""
+        if args[:2] == ["git", "status"]:
+            out = self.dirty
+        elif args[:3] == ["git", "rev-parse", "HEAD"]:
+            out = self.head
+        elif args[:3] == ["git", "rev-parse", "origin/main"]:
+            out = self.upstream
+        elif args[:3] == ["gh", "pr", "list"]:
+            base = args[args.index("--base") + 1]
+            out = json.dumps([{"number": n} for n, p in self.prs.items() if p["baseRefName"] == base])
+        elif args[:3] == ["gh", "pr", "view"]:
+            out = json.dumps({k: v for k, v in self.prs[int(args[3])].items() if not k.startswith("_")})
+        elif args[:2] == ["gh", "api"]:
+            sha = args[3].split("/commits/")[1].split("/")[0]
+            runs = next(p["_runs"] for p in self.prs.values() if p["headRefOid"] == sha)
+            out = "".join(json.dumps(list(r)) + "\n" for r in runs)
+        elif args[:3] == ["gh", "pr", "merge"] and self.after_merge:
+            self.after_merge(int(args[3]), self.prs)
         return subprocess.CompletedProcess(args, 0, out, "")
 
     def merges(self):
@@ -67,15 +85,36 @@ class MergePrs(unittest.TestCase):
         self.assertEqual(merge[4:], ["--rebase", "--match-head-commit", f"{1:040d}"])
         after = fake.calls[fake.calls.index(merge) + 1 :]
         self.assertEqual(after[0][:3], ["git", "pull", "--ff-only"])
-        self.assertTrue(after[1][-1] == "validate")
+        self.assertEqual(after[1][-1], "validate")
 
     def test_ineligible_pull_requests_are_skipped(self):
+        failing = GREEN_RUNS[:-1] + [(GREEN_RUNS[-1][0], "completed", "failure")]
+        running = GREEN_RUNS + [("extra", "in_progress", None)]
+        all_skipped = [(name, "completed", "skipped") for name, _, _ in GREEN_RUNS]
         fake = FakeRun([pr(1, author="someone"), pr(2, labels=("bug",)), pr(3, mergeable="CONFLICTING"),
-                        pr(4, checks=()), pr(5, checks=(("COMPLETED", "FAILURE"),)),
-                        pr(6, checks=(("IN_PROGRESS", None),))])
+                        pr(4, checks=()), pr(5, checks=failing), pr(6, checks=running),
+                        pr(7, checks=GREEN_RUNS[1:]),  # a required job never ran
+                        pr(8, checks=all_skipped), pr(9, mergeable="UNKNOWN")])
         self.assertEqual(self.main(fake), 0)
         self.assertEqual(fake.merges(), [])
-        self.assertEqual(sum("skipped" in line for line in self.lines), 6)
+        self.assertEqual(sum("skipped" in line for line in self.lines), 9)
+
+    def test_only_pull_requests_into_main_are_considered(self):
+        fake = FakeRun([pr(1, base="release/1.0")])
+        self.assertEqual(self.main(fake), 0)
+        self.assertEqual(fake.merges(), [])
+        listing = next(c for c in fake.calls if c[:3] == ["gh", "pr", "list"])
+        self.assertEqual(listing[listing.index("--base") + 1], "main")
+        self.assertEqual(merge_prs.why_not(pr(2, base="release/1.0"), GREEN_RUNS), "not an open pull request into main")
+
+    def test_each_pull_request_is_judged_as_it_is_right_before_its_merge(self):
+        def rerun_failed(number, prs):  # while #1 merges, #2's checks are rerun and fail on the same head
+            if number == 1:
+                prs[2]["_runs"] = GREEN_RUNS[:-1] + [(GREEN_RUNS[-1][0], "completed", "failure")]
+
+        fake = FakeRun([pr(1), pr(2)], after_merge=rerun_failed)
+        self.assertEqual(self.main(fake), 0)
+        self.assertEqual(fake.merges(), ["1"])
 
     def test_excluded_branches_are_left_for_their_section(self):
         fake = FakeRun([pr(1, branch="pins/section-work-1")])
@@ -107,13 +146,31 @@ class MergePrs(unittest.TestCase):
         self.assertEqual(self.main(fake), 0)  # the loop itself runs it at a section boundary
         self.assertEqual(fake.merges(), ["1"])
 
-    def test_the_first_failure_stops_and_leaves_the_rest(self):
-        for failing in ("merge 1", "pull", "validate"):
+    def test_the_scheduled_task_holds_the_guard_lock_for_its_whole_window(self):
+        seen = []
+
+        def probe(number, prs):  # during the merge, a campaign's attempt to take the lock must fail
+            try:
+                with merge_prs.campaign_guard._Lock(str(self.root), wait=0.1):
+                    seen.append("free")
+            except merge_prs.campaign_guard.GuardError:
+                seen.append("held")
+
+        self.assertEqual(self.main(FakeRun([pr(1)], after_merge=probe), "--scheduled"), 0)
+        self.assertEqual(seen, ["held"])
+
+    def test_the_first_failure_stops_and_says_what_state_it_left(self):
+        fake = FakeRun([pr(1), pr(2)], fail=("merge 1",))
+        self.assertEqual(self.main(fake), 1)
+        self.assertNotIn("2", fake.merges())
+        self.assertIn("still open", self.lines[-1])
+        for failing in ("pull", "validate"):
+            self.lines.clear()
             fake = FakeRun([pr(1), pr(2)], fail=(failing,))
             with self.subTest(failing=failing):
                 self.assertEqual(self.main(fake), 1)
-                self.assertNotIn("2", fake.merges())
-                self.assertIn("left for you", self.lines[-1])
+                self.assertEqual(fake.merges(), ["1"])
+                self.assertIn("merged on GitHub, but the local follow-up failed", self.lines[-1])
 
     def test_a_dry_run_merges_nothing(self):
         fake = FakeRun([pr(1)])
@@ -134,6 +191,7 @@ class MergePrs(unittest.TestCase):
             self.assertEqual(SECTION_IN_PROGRESS(self.root), "D06 T05 §11")
             rows.remove(ready)
             self.assertIsNone(SECTION_IN_PROGRESS(self.root))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,12 +8,14 @@
 Safe to run: the working tree is clean, HEAD is origin/main after a fetch (nothing waits to be pushed or pulled), no
 TODO section is in progress (open, started and ready), and, when scheduled, no campaign run guard is held.
 
-Eligible: opened by Dependabot or the pins workflow, labelled `dependencies` or `pins`, every check green, GitHub says
-mergeable, and its branch is not on EXCLUDED_BRANCHES (pins that are section work, merged by that section instead).
+Eligible: an open pull request into main, opened by Dependabot or the pins workflow, labelled `dependencies` or `pins`,
+mergeable, its head commit's checks all finished and green with every REQUIRED_CHECKS job succeeded, and its branch not on
+EXCLUDED_BRANCHES (pins that are section work, merged by that section instead). Each is re-read right before it is
+judged. The scheduled run holds the campaign guard's lock for its whole window.
 
 Each merge: `gh pr merge <n> --rebase --match-head-commit <sha>` (linear history, and only the commit that was
-checked), then `git pull --ff-only`, then `todo-graph.py validate`. The first failure stops the run and leaves the
-remaining pull requests for the operator.
+checked), then `git pull --ff-only`, then `todo-graph.py validate`. The first failure stops the run, saying whether that
+pull request is still open (the merge failed) or merged (the local follow-up failed); later ones wait for the operator.
 
 Exit 0: merged, or nothing eligible, or not safe right now (said why). Exit 1: a merge or its follow-up failed.
 """
@@ -28,12 +30,20 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts" / "lib"))
 import todo_graph  # noqa: E402
 
+sys.path.insert(0, str(ROOT / "scripts"))
+import campaign_guard  # noqa: E402
+
 AUTHORS = {"app/dependabot", "dependabot[bot]", "app/github-actions", "github-actions[bot]"}
 LABELS = {"dependencies", "pins"}
 # Branch prefixes of pin pull requests that belong to TODO section work and are merged there, never here. Recto has
 # none today: the Windows SDK line moves through an issue and the operator's decision, not a pull request.
 EXCLUDED_BRANCHES: tuple[str, ...] = ()
-GREEN = {"SUCCESS", "NEUTRAL", "SKIPPED"}
+GREEN = {"success", "neutral", "skipped"}
+# The jobs that prove a change builds and keeps the plan valid. They must have run on the pull request's head commit:
+# the pins workflow dispatches them there, and GitHub does not list dispatched runs among a pull request's checks
+# (whose own pull_request runs wait for approval), so checks are read from the commit, not the pull request.
+REQUIRED_CHECKS = {"plan-gates", "Build x64 & ARM64 and run recto-tests",
+                   "Build x64 Release with AddressSanitizer and run recto-tests"}
 GUARD = Path("build") / "claude-campaign-guard.json"
 
 
@@ -65,7 +75,7 @@ def section_in_progress(root):
 
 
 def ensure_safe(run, root, scheduled):
-    if scheduled and (Path(root) / GUARD).exists():
+    if scheduled and (Path(root) / GUARD).exists():  # read under the guard lock (main), so no campaign starts after it
         raise Unsafe("a campaign run holds the guard; the loop merges at its own section boundaries")
     if check(run, root, ["git", "status", "--porcelain"], "git status").strip():
         raise Unsafe("the working tree has changes")
@@ -79,48 +89,58 @@ def ensure_safe(run, root, scheduled):
         raise Unsafe(f"section {ref} is in progress")
 
 
-def checks_green(pr):
-    rollup = pr.get("statusCheckRollup") or []
-    if not rollup:
-        return False  # no checks ran, so nothing says the change builds
-    for item in rollup:
-        if item.get("__typename") == "StatusContext":
-            if item.get("state") != "SUCCESS":
-                return False
-        elif item.get("status") != "COMPLETED" or item.get("conclusion") not in GREEN:
-            return False
-    return True
+def check_runs(run, root, sha):
+    """Every check run on a commit: (name, status, conclusion)."""
+    out = check(run, root, ["gh", "api", "--paginate", f"repos/{{owner}}/{{repo}}/commits/{sha}/check-runs?per_page=100",
+                            "--jq", ".check_runs[] | [.name, .status, .conclusion]"], f"reading checks of {sha[:7]}")
+    return [tuple(json.loads(line)) for line in out.splitlines() if line.strip()]
 
 
-def why_not(pr):
-    """Why a pull request is not eligible, or None when it is."""
+def checks_green(runs):
+    """Every check run on the commit completed green, and each required job succeeded (no checks never passes)."""
+    # The required jobs must have actually run and passed (a skipped build proves nothing); any other check may also be
+    # neutral or skipped, but every check must have finished.
+    if not REQUIRED_CHECKS <= {name for name, _, conclusion in runs if conclusion == "success"}:
+        return False
+    return all(status == "completed" and conclusion in GREEN for _, status, conclusion in runs)
+
+
+def why_not(pr, runs):
+    """Why a pull request is not eligible, or None when it is. runs: the check runs on its head commit."""
     if (pr.get("author") or {}).get("login") not in AUTHORS:
         return "not from Dependabot or the pins workflow"
     if not LABELS & {label["name"] for label in pr.get("labels") or []}:
         return "not labelled dependencies or pins"
+    if pr.get("state") != "OPEN" or pr.get("baseRefName") != "main":
+        return "not an open pull request into main"
     if EXCLUDED_BRANCHES and pr.get("headRefName", "").startswith(EXCLUDED_BRANCHES):
         return "a pin that is section work"
     if pr.get("mergeable") != "MERGEABLE":
         return f"GitHub says {pr.get('mergeable')}"
-    if not checks_green(pr):
-        return "its checks are not all green"
+    if not checks_green(runs):
+        return "its head commit's checks are not all green, or a required job did not run"
     return None
 
 
+FIELDS = "number,title,author,labels,baseRefName,headRefName,headRefOid,mergeable,state"
+
+
+def current(run, root, number):
+    """A pull request as it is now (gh pr view also makes GitHub compute mergeable, which a listing leaves UNKNOWN)."""
+    return json.loads(check(run, root, ["gh", "pr", "view", str(number), "--json", FIELDS], f"gh pr view {number}"))
+
+
 def open_prs(run, root):
-    fields = "number,title,author,labels,headRefName,headRefOid,mergeable,statusCheckRollup"
-    out = check(run, root, ["gh", "pr", "list", "--state", "open", "--limit", "100", "--json", fields], "gh pr list")
-    return sorted(json.loads(out), key=lambda pr: pr["number"])
+    """Open pull requests into main, oldest first; each is re-read just before it is judged."""
+    out = check(run, root, ["gh", "pr", "list", "--state", "open", "--base", "main", "--limit", "100", "--json",
+                            "number"], "gh pr list")
+    return sorted(pr["number"] for pr in json.loads(out))
 
 
-def main(argv=None, run=run_cmd, root=ROOT, out=print):
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--scheduled", action="store_true")
-    args = parser.parse_args(argv)
+def merge_all(run, root, args, out):
     try:
         ensure_safe(run, root, args.scheduled)
-        prs = open_prs(run, root)
+        numbers = open_prs(run, root)
     except Unsafe as e:
         out(f"merge-prs: not now: {e}")
         return 0
@@ -128,28 +148,57 @@ def main(argv=None, run=run_cmd, root=ROOT, out=print):
         out(f"merge-prs: {e}")
         return 1
     merged = 0
-    for pr in prs:
-        reason = why_not(pr)
+    for number in numbers:
+        try:
+            # Judged on its state right now, after any earlier merge: labels, base, mergeability and the checks of the
+            # exact commit that will merge.
+            pr = current(run, root, number)
+            reason = why_not(pr, check_runs(run, root, pr["headRefOid"]))
+        except RuntimeError as e:
+            out(f"merge-prs: {e}")
+            return 1
         if reason:
-            out(f"merge-prs: #{pr['number']} skipped: {reason} ({pr['title']})")
+            out(f"merge-prs: #{number} skipped: {reason} ({pr['title']})")
             continue
         if args.dry_run:
-            out(f"merge-prs: #{pr['number']} would merge at {pr['headRefOid'][:7]} ({pr['title']})")
+            out(f"merge-prs: #{number} would merge at {pr['headRefOid'][:7]} ({pr['title']})")
             continue
         try:
-            check(run, root, ["gh", "pr", "merge", str(pr["number"]), "--rebase",
-                              "--match-head-commit", pr["headRefOid"]], f"merging #{pr['number']}")
+            check(run, root, ["gh", "pr", "merge", str(number), "--rebase", "--match-head-commit", pr["headRefOid"]],
+                  f"merging #{number}")
+        except RuntimeError as e:
+            out(f"merge-prs: stopped at #{number}, which is still open: {e}; it and any later pull request are left "
+                f"for you")
+            return 1
+        merged += 1
+        out(f"merge-prs: merged #{number} ({pr['title']})")
+        try:
             check(run, root, ["git", "pull", "--ff-only", "--quiet", "origin", "main"], "git pull --ff-only")
             check(run, root, [sys.executable, str(Path(root) / "scripts" / "todo-graph.py"), "validate"],
                   "todo-graph validate")
         except RuntimeError as e:
-            out(f"merge-prs: stopped at #{pr['number']}: {e}; it and any later pull request are left for you")
+            out(f"merge-prs: #{number} merged on GitHub, but the local follow-up failed: {e}; stopped, any later pull "
+                f"request is left for you")
             return 1
-        merged += 1
-        out(f"merge-prs: merged #{pr['number']} ({pr['title']})")
     out(f"merge-prs: {merged} merged")
     return 0
 
+
+def main(argv=None, run=run_cmd, root=ROOT, out=print):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--scheduled", action="store_true")
+    args = parser.parse_args(argv)
+    if not args.scheduled:
+        return merge_all(run, root, args, out)
+    # The scheduled run holds the campaign guard's lock for its whole window: a campaign's acquire waits for it, so no
+    # run can start between the guard check and the last merge.
+    try:
+        with campaign_guard._Lock(str(root)):
+            return merge_all(run, root, args, out)
+    except campaign_guard.GuardError as e:
+        out(f"merge-prs: not now: {e}")
+        return 0
 
 if __name__ == "__main__":
     sys.exit(main())
