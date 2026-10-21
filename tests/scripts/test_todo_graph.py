@@ -583,7 +583,8 @@ class Stamp(Tree):
                      ["true -> ok"], "2026-10-13", cap_outcome="filed")
         self.assertIn("a cap stop is the round that returns review", str(ctx.exception))
         # Blocked or empty replies are not returned reviews either.
-        for filler in (envelope(1).replace("OVERALL: approve", "OVERALL: blocked"), envelope(1).replace("OVERALL: approve", "")):
+        for filler in (envelope(1).replace("OVERALL: approve", "OVERALL: blocked"), envelope(1).replace("OVERALL: approve", ""),
+                       envelope(1, "claude (`claude-opus-5` via `claude`)", overall="needs-attention")):
             (self.root / report).write_text("".join(filler.replace("## Round 1:", f"## Round {n}:") for n in range(1, last))
                                             + envelope(last).replace("Review text.\n\nOVERALL: approve",
                                                                      "1. **P3: wording.**\n\nOVERALL: needs-attention"),

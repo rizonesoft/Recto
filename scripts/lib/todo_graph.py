@@ -249,11 +249,14 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
             for report in dict.fromkeys(r["report"] for r in rounds):
                 recorded = dispatch.read_rounds((Path(root) / report).read_bytes().decode("utf-8"))
                 require(recorded is not None, f"{report} is not a findings file the dispatcher can read: {ref}")
-                # A returned review: a reviewer ran and replied with the prompt's OVERALL approve or needs-attention
-                # line. Outages, empty and blocked replies are recorded rounds but not reviews.
-                reviewed = {e["number"]: e for e in recorded if e["reviewer"] and (
-                    [x.strip() for x in e["review"].splitlines() if x.strip()] or [""])[-1]
-                    in ("OVERALL: approve", "OVERALL: needs-attention")}
+                # A returned review: a reviewer of another model family than the writer ran and replied with the
+                # prompt's OVERALL approve or needs-attention line. Outages, self-reviews, empty and blocked replies are
+                # recorded rounds but not reviews: they earn no stop and end no loop.
+                reviewed = {e["number"]: e for e in recorded if e["reviewer"]
+                            and e["writer"] in dispatch.WRITER_FAMILY
+                            and dispatch.FAMILY.get(e["cli"]) not in (None, dispatch.WRITER_FAMILY[e["writer"]])
+                            and ([x.strip() for x in e["review"].splitlines() if x.strip()] or [""])[-1]
+                            in ("OVERALL: approve", "OVERALL: needs-attention")}
                 require(reviewed, f"{report} holds no returned review: {ref}")
                 claimed = sorted((r for r in rounds if r["report"] == report), key=lambda r: r["round"])
                 for r in claimed:

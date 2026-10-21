@@ -561,3 +561,51 @@ OVERALL: needs-attention
 
 - Finding 1 (P1): a returned review is now a round whose reviewer ran and replied with `OVERALL: approve` or `OVERALL: needs-attention`; blocked and empty replies are recorded rounds but count toward neither stop, nor as a loop's end (`test_outage_rounds_do_not_earn_a_stop`, blocked and empty fillers).
 - Finding 2 (P2): a cap stop is the round that returns review number `round_cap`, whatever its round number, so an outage earlier in the loop moves the stop to a later round instead of making it impossible (same test, an outage then rounds 2 to 23).
+
+## Round 12: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T16:04:41Z
+- Effort: medium
+- Lines: 35
+- Digest: ba89f9fab4bba013
+
+## adversarial: needs-attention
+
+1. **P1: Self-reviews earn independent-review stops.** `scripts/lib/todo_graph.py:254` includes same-family replies in `reviewed`; the independence check at line 262 applies only to explicitly claimed rounds. Line 279 counts all included replies toward stops.
+
+   Reproduced with in-memory report overlays and the existing `envelope()` fixture:
+   - Eight rounds with writer `claude`, reviewer CLI `claude`, and `OVERALL: needs-attention`, followed by one independent round containing `1. **P3: wording.**`. Claim only round 9 as `stopped-low-severity`: `receipt_data_ok()` accepts.
+   - Twenty-one same-family rounds followed by one independent round. Claim only round 22 as `stopped-at-22`: accepted.
+
+   Both stops are earned with only one independent review.
+
+## consistency: needs-attention
+
+Finding 1 violates the different-model-family requirement in `.codex/skills/review-todo-section/SKILL.md:10`. No separate finding.
+
+## integration: needs-attention
+
+Finding 1 affects the shared gate used by `stamp()` at `scripts/lib/todo_graph.py:780` and receipt validation at line 182. Premature stops can therefore satisfy downstream prerequisites.
+
+## source-defect: approve
+
+No additional finding.
+
+## design: advisory
+
+Not applicable to this section’s declared surface.
+
+## record: advisory
+
+The full-suite claim at `docs/reviews/06-quality/audit-d00-t02-s1.md:9` remains independently unconfirmed. At `33c5a34`, the suite attempted 78 tests: 77 encountered temporary-directory setup errors under the read-only sandbox; the Repository test passed. This is an environment limitation.
+
+Current validation reported `valid: 677 sections`; `plan --check` reported `plan current`. These checks do not establish the historical full-suite pass.
+
+No files were modified; the working tree remains clean.
+
+OVERALL: needs-attention
+
+## Fixes after round 12
+
+- Finding 1 (P1): a returned review now also requires a reviewer of another model family than the writer, so self-reviews, like outages and blocked replies, earn no stop and end no loop. `test_outage_rounds_do_not_earn_a_stop` adds same-family fillers and fails against `33c5a34`; `Ran 78 tests`, `OK`; `valid: 677 sections`.
