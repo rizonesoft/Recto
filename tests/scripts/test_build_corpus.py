@@ -372,6 +372,13 @@ class BuildCorpusTests(unittest.TestCase):
             self.mod.validate_pdf_structure("render/simple-1p.pdf", d[:t] + b"1 1\n0000000000 65535 f \n" + d[t:])
         self.mod.validate_pdf_structure("render/incremental-2rev.pdf", self.mod.build_incremental_2rev())
 
+    def test_a_subsection_header_is_two_non_negative_numbers(self) -> None:
+        data = self.mod.build_simple_1p()
+        at = data.index(b"trailer\n")
+        for subsection in (b"7 -1\n", b"-1 1\n0000000000 65535 f \n", b"+7 0\n", b"7  0\n"):
+            with self.subTest(subsection=subsection), self.assertRaisesRegex(ValueError, "invalid xref subsection header"):
+                self.mod.validate_pdf_structure("render/simple-1p.pdf", data[:at] + subsection + data[at:])
+
     def test_a_classic_xref_entry_has_one_form(self) -> None:
         data = self.mod.build_simple_1p()
         self.mod.validate_pdf_structure("render/simple-1p.pdf", data)

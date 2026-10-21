@@ -697,3 +697,61 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `Ran 26 tests`, `OK`; `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P1): an object number may appear only once within one classic xref section (ISO 32000-1 7.5.4); a duplicate refuses, while a newer section still overrides an older one (`test_an_object_appears_once_in_a_section`, which also validates the two-revision fixture).
+
+## Round 15: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:32:16Z
+- Effort: medium
+- Lines: 43
+- Digest: a810f9f96314868c
+
+## adversarial: needs-attention
+
+1. **P1: Classic xref subsection headers accept negative object numbers and entry counts.** `scripts/build-corpus.py:1035` converts both fields with `int()` without checking their ranges. A negative count skips validation through `range(count)`; a negative object number can enter `located` as a free entry. Both malformed structures pass `validate_pdf_structure`.
+
+   Reproduced at `eabd038`, entirely in memory after importing `scripts/build-corpus.py` as `m`:
+
+   ```python
+   data = m.build_simple_1p()
+   at = data.index(b"trailer\n")
+   for subsection in (
+       b"7 -1\n",
+       b"-1 1\n0000000000 65535 f \n",
+   ):
+       bad = data[:at] + subsection + data[at:]
+       m.validate_pdf_structure("render/simple-1p.pdf", bad)
+   ```
+
+   Both calls return successfully. Existing object offsets, stream lengths and `startxref` remain unchanged. The structural gate therefore accepts malformed generator output.
+
+## consistency: approve
+
+No independent findings.
+
+## integration: advisory
+
+Finding 1 permits malformed future fixtures to pass structural validation when generated and committed bytes agree. It does not establish corruption in the current fixtures or a native-engine defect.
+
+## source-defect: needs-attention
+
+Finding 1 violates the xref subsection header requirements. Both fields must be non-negative integers, as explicitly clarified in the [ISO 32000-2 §7.5.4 errata](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html). Python’s acceptance of signed integers is insufficient validation.
+
+## design: advisory
+
+Not applicable: this section owns no user surface.
+
+## record: advisory
+
+Independently reran `python -B scripts/build-corpus.py --check` at `eabd038`: exit 0, 39 fixtures current. All 23 selected read-only tests passed, including the round-14 regression. Two in-memory generations matched; the corpus totals 60,176 bytes. These checks miss finding 1.
+
+No files were modified by this audit.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 15
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 27 tests`, `OK`; `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): a classic subsection header must be exactly two non-negative integers separated by one space (`\d+ \d+`), so `7 -1`, `-1 1`, `+7 0` and a doubled space refuse (`test_a_subsection_header_is_two_non_negative_numbers`).

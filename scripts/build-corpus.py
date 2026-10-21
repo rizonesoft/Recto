@@ -1028,11 +1028,11 @@ def validate_classic_xref_at(rel_path: str, data: bytes, xref_offset: int, visit
         line_end = data.find(b"\n", pos)
         if line_end < 0:
             raise ValueError(f"{rel_path}: unexpected EOF in xref subsection header")
-        header_line = data[pos:line_end].decode("ascii").strip()
-        parts = header_line.split()
-        if len(parts) != 2:
-            raise ValueError(f"{rel_path}: invalid xref subsection header '{header_line}'")
-        first_obj, count = int(parts[0]), int(parts[1])
+        # Exactly two non-negative integers and a single space between them, as the corpus writes it.
+        header = re.fullmatch(rb"(\d+) (\d+)", data[pos:line_end])
+        if header is None:
+            raise ValueError(f"{rel_path}: invalid xref subsection header {data[pos:line_end]!r}")
+        first_obj, count = int(header.group(1)), int(header.group(2))
         pos = line_end + 1
         for idx in range(count):
             entry = data[pos : pos + 20]
