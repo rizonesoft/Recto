@@ -1,0 +1,29 @@
+{
+  "ref": "D07 T03 \u00a71",
+  "title": "Issue forms, triage policy and `SECURITY.md`",
+  "implementation_sha": "8449427b06e5045650c9dd9b4964e866a42b7a1b",
+  "date": "2026-10-21",
+  "reviews": [
+    {
+      "round": 2,
+      "report": "docs/reviews/07-release/D07-T03-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/07-release/D07-T03-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/07-release/D07-T03-s1.md",
+      "verdict": "stopped-at-3"
+    }
+  ],
+  "checks": [
+    "python -m unittest tests.scripts.test_issue_forms -> Ran 15 tests OK; with PyYAML blocked -> OK (skipped=1)",
+    "version validations block deleted -> FAIL: test_bug_form_requires_every_field: field 'version' lacks 'validations: required: true'",
+    "python scripts/todo-graph.py validate -> valid: 651 sections",
+    "live GitHub chooser -> Bug report, Feature request, one Report a security vulnerability entry; bug form prefills version, install-type, windows-build"
+  ]
+}

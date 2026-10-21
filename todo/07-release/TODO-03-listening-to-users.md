@@ -41,7 +41,7 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | Issue forms, triage policy and `SECURITY.md` | -- | [ ] |
+| 1 | §1 | Issue forms, triage policy and `SECURITY.md` | -- | [x] |
 | 2 | §4 | User-bug regression rule, closing on release and changelog mapping | §1 | [ ] |
 | 3 | §6 | Public scope page and user demand ledger | §1 | [ ] |
 | 4 | §3 | Structure-preserving reproducer scrubber (`recto-cli scrub`) | D04 T02 §2 | [ ] |
@@ -72,9 +72,12 @@ Common user-handling failures are no issue template, reports relayed to GitHub w
 - [x] Author `.github/labels.yml` with area labels (`engine`, `viewer`, `text`, `convert`, `organize`, `print`, `install`), kind labels (`bug`, `feature`, `regression`, `data-loss`, `crash`, `security`) and state labels (`needs-repro`, `fixed-on-main`, `released`). Done when: the file parses and every label has a description.
 - [x] Author `docs/support/triage.md`: a person, not a bot, closes an issue; a duplicate close links the canonical issue and states its status; a feature request is never closed as "support"; `needs-repro` offers `recto-cli scrub` and a synthetic-file guide; one owner per issue, and a superseded pull request is closed with a link. Done when: the file covers each rule and `test_issue_forms` checks the headings.
 - [x] Add `tests/scripts/test_issue_forms.py` validating the YAML forms, required fields, labels and the security file. Done when: removing a required field makes the test fail.
-- [ ] Commit: `repo: add issue forms, labels, triage policy and SECURITY.md`
+- [x] Commit: `repo: add issue forms, labels, triage policy and SECURITY.md`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_issue_forms` passes, and deleting the `validations` block from the version field makes it fail.
+
+> **Verified:** 2026-10-21 | §1 | 8449427b06e5045650c9dd9b4964e866a42b7a1b
+> **Review:** `docs/reviews/d07-t03-s1.json`
 
 ## 2. In-app `Report a problem` with privacy-safe diagnostics
 
