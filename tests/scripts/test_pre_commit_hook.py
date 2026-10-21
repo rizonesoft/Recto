@@ -89,6 +89,13 @@ class PreCommitHook(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("docs/reviews/ has unstaged or untracked changes", result.stderr)
 
+    def test_an_evidence_only_commit_that_breaks_the_graph_is_refused(self):
+        (self.root / "docs/reviews").mkdir(parents=True)
+        (self.root / "docs/reviews/legacy-receipts.json").write_text("not json\n", encoding="utf-8")
+        self.git("add", "docs/reviews")  # no todo/ change staged
+        result = self.commit()
+        self.assertNotEqual(result.returncode, 0)
+
     def test_the_hook_is_tracked_as_executable(self):
         mode = subprocess.run(["git", "-C", str(ROOT), "ls-files", "-s", "scripts/hooks/pre-commit"],
                               capture_output=True, text=True, check=True).stdout.split()[0]

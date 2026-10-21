@@ -410,6 +410,7 @@ def graph(root=ROOT):
     """Parse every TODO file strictly; a malformed row or section refuses, it is never read as empty."""
     root = Path(root)
     plan_config(root)
+    legacy_receipts(root)  # a malformed freeze list refuses even before any old receipt is read against it
     sections, ids, files = {}, {}, {}
     head_commits = None
     paths = sorted((root / "todo").glob("[0-9][0-9]-*/TODO-*.md"))
