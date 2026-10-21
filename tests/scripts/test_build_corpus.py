@@ -417,6 +417,19 @@ class BuildCorpusTests(unittest.TestCase):
             with self.subTest(bad=bad[:first_eof][-80:]), self.assertRaisesRegex(ValueError, "revision ending at byte"):
                 self.mod.validate_pdf_structure("render/incremental-2rev.pdf", bad)
 
+    def test_earlier_revisions_are_validated_once_each(self) -> None:
+        data = self.mod.build_incremental_2rev()
+        real = self.mod.validate_pdf_structure
+        calls = []
+
+        def counted(rel_path, data, earlier_revisions=True):
+            calls.append(earlier_revisions)
+            return real(rel_path, data, earlier_revisions)
+
+        with mock.patch.dict(real.__globals__, {"validate_pdf_structure": counted}):
+            real("render/incremental-2rev.pdf", data)
+        self.assertEqual(calls, [False])  # one earlier revision, validated once, without recursing again
+
     def test_a_classic_xref_entry_has_one_form(self) -> None:
         data = self.mod.build_simple_1p()
         self.mod.validate_pdf_structure("render/simple-1p.pdf", data)

@@ -932,3 +932,87 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `OK` (`test_each_earlier_revision_is_valid_on_its_own` fails against `ec59dd7` in all three cases); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P1): an incremental update leaves each earlier revision a complete PDF up to its own `%%EOF`, so `validate_pdf_structure` validates each earlier revision on its own (`data[:end]`, the ends found by `validate_layout`): its xref may locate only objects it contains, and its own `/Size` and `/Root` must hold. An earlier `/Size 0`, an earlier `/Root` naming a missing object, and an earlier entry pointed at a header that only the later revision holds all refuse.
+
+## Round 19: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:56:49Z
+- Effort: medium
+- Lines: 69
+- Digest: 06ba520478ff6566
+
+## adversarial: needs-attention
+
+1. **P2: Earlier-revision validation grows exponentially.** `scripts/build-corpus.py:1693-1694` recursively validates every earlier prefix, each of which recursively validates its own earlier prefixes again. With N revisions, this invokes the validator `2^(N-1)` times. `--check` performs this work before rejecting a byte mismatch (`scripts/build-corpus.py:3165-3168`), so a small modified fixture can make checking impractically slow.
+
+   Reproduced entirely in memory at `b57639e`:
+
+   | Revisions | PDF bytes | Validator calls | Seconds |
+   | --- | --- | --- | --- |
+   | 8 | 1,741 | 128 | 0.229 |
+   | 10 | 1,931 | 512 | 0.845 |
+   | 12 | 2,121 | 2,048 | 3.370 |
+
+   Reproduction:
+
+   ```python
+   import re, runpy
+
+   m = runpy.run_path("scripts/build-corpus.py")
+   validate = m["validate_pdf_structure"]
+   calls = 0
+
+   def counted(path, data):
+       global calls
+       calls += 1
+       return validate(path, data)
+
+   validate.__globals__["validate_pdf_structure"] = counted
+   data = m["build_simple_1p"]()
+   size = int(re.findall(rb"/Size (\d+)", data)[-1])
+
+   for _ in range(11):
+       prev = int(re.findall(rb"startxref\n(\d+)", data)[-1])
+       offset = len(data)
+       data += (
+           f"xref\n0 1\n0000000000 65535 f \n"
+           f"trailer\n<< /Size {size} /Root 1 0 R /Prev {prev} >>\n"
+           f"startxref\n{offset}\n%%EOF\n"
+       ).encode()
+
+   counted("render/probe.pdf", data)
+   print(len(data), calls)  # 2121 2048
+   ```
+
+   Validate each revision once, retaining the revision-local checks introduced after round 18.
+
+## consistency: approve
+
+No independent findings.
+
+## integration: advisory
+
+Finding 1 affects the shared corpus gate and future incremental fixtures. It does not establish corruption in the committed two-revision fixture.
+
+## source-defect: approve
+
+No independent findings.
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: advisory
+
+Independently reran `python -B scripts/build-corpus.py --check`: exit 0, 39 fixtures current. All 27 selected read-only tests passed, including the round 18 regression. Two in-memory generations matched; total corpus size was 60,176 bytes. Three tests requiring filesystem writes were excluded. These checks do not cover finding 1.
+
+No files were modified by this audit. An unrelated change to `docs/reviews/guard-and-agent-tiers.md` appeared during review.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 19
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 31 tests`, `OK` (`test_earlier_revisions_are_validated_once_each` fails against `97f42a8`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P2): each earlier revision is validated once, with `earlier_revisions=False`, so its own earlier revisions are not validated again: linear, not exponential, in the number of revisions.

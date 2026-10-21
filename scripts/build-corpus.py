@@ -1554,7 +1554,7 @@ def validate_layout(rel_path: str, data: bytes) -> list[int]:
     return ends
 
 
-def validate_pdf_structure(rel_path: str, data: bytes) -> None:
+def validate_pdf_structure(rel_path: str, data: bytes, earlier_revisions: bool = True) -> None:
     """Validate PDF header, stream /Length exactness, xref offsets, and content semantics."""
     if not (data.startswith(b"%PDF-1.") or data.startswith(b"%PDF-2.")):
         raise ValueError(f"{rel_path}: missing %PDF- header")
@@ -1690,8 +1690,11 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
     ends = validate_layout(rel_path, data)
     # An incremental update leaves each earlier revision a complete PDF up to its own %%EOF: each is validated on its
     # own, so its xref, /Size and /Root must hold for what it contained, not only for the newest state.
-    for end in ends[:-1]:
-        validate_pdf_structure(f"{rel_path} (revision ending at byte {end})", data[:end])
+    # Each is validated once, without validating its own earlier revisions again: linear, not exponential, in the
+    # number of revisions.
+    if earlier_revisions:
+        for end in ends[:-1]:
+            validate_pdf_structure(f"{rel_path} (revision ending at byte {end})", data[:end], earlier_revisions=False)
 
 
 # ---------------------------------------------------------------------------
