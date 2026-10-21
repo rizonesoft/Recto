@@ -86,3 +86,52 @@ Every finding was checked against the commit; all 20 were accepted and fixed in 
 18. D04 T05 §14: undo history is capped by bytes, not count.
 19. D04 T06 §17: "conformant" is reserved; profiles report what was and was not checked.
 20. D04 T07: actions are local-only (UNC and remote drives refused); the Goal no longer overstates.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T00:56:41Z
+- Effort: medium
+- Lines: 27
+- Digest: 21f745d8b55f86d7
+
+Review basis: the supplied diff. Both repository-read attempts failed before PowerShell started (`helper_unknown_error: setup refresh had errors`), so surrounding repository contracts remain unverified. No files were modified; no Git commands or tests ran.
+
+**record: needs-attention**
+
+The claim that all 20 findings are resolved is unsupported. Round 1 findings **4, 8, 14, 15, 16, 19 and 20** remain incompletely resolved, as detailed below.
+
+**source-defect: needs-attention**
+
+1. **T06 §5: the replacement TAC algorithm still permits false passes. Round 1 #14 remains unresolved.** A Type 2 function’s component sum need not remain monotone after output clipping. For example, use `N=1`, `Domain=[0,1]`, `C0=[0,2,0,0]`, `C1=[2,0,0,0]` and component ranges `[0,1]`. Both endpoints produce 100% TAC, but the midpoint produces 200%. Endpoint-only checking therefore passes a 150% limit incorrectly. Type 0 also supports cubic interpolation, so the blanket “linear interpolation” assumption is unjustified. Require bounds that account for clipping and interpolation order, or return `Incomplete`; add this interior-maximum fixture. [Adobe PDF Reference, §3.9](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.3.pdf).
+
+2. **T02 §14: the five-second timeout does not define a viable acquisition-thread lifetime. Round 1 #4 remains partially unresolved.** Moving acquisition off the UI thread fixes responsiveness, but `GetClipboardData` can remain blocked beyond five seconds. Its delayed-rendering timeout is controlled by Windows and is not configurable. Returning `ClipboardTimeout` cannot simultaneously end the acquisition lifetime as specified. Define ownership of the still-running call, late-result disposal, eventual clipboard closure, bounded concurrent requests and shutdown behavior. Test cancellation followed immediately by another paste and window closure. [Microsoft’s delayed-rendering timeout explanation](https://devblogs.microsoft.com/oldnewthing/20220609-00/?p=106731).
+
+3. **T06 §1 and §5: the shear fixture cannot satisfy its required verdict.** The fixture specifies a `0.5 w` stroke under `[1 0 0.9 1 0 0]`, and §5 requires it to be flagged against the default `0.25 pt` minimum. Using the candidate’s own formula, this matrix’s maximum directional stretch is approximately `1.547`; its determinant is `1`, so the minimum possible thickness is approximately `0.323 pt`. No segment direction makes that stroke a hairline at this threshold. Change the fixture width or shear and explicitly specify its direction and expected thickness.
+
+**consistency: needs-attention**
+
+4. **T07 §6: containment checks still leave a publication race. Round 1 #16 remains unresolved.** The final-path check happens after temp-file creation, while publication later uses path-based `MoveFileExW`. Replace a destination ancestor after the check but before publication and the destination can resolve outside the approved root. No requirement pins directory identities through publication. Moreover, detecting escape after creation does not establish the test’s claim that nothing was written outside the root. Require containment-preserving directory ownership or handle-relative operations throughout creation, publication and rollback, with fault injection after the final-path check.
+
+5. **T07 §6 and §14: the local-only policy checks path spelling and drive type, not the actual access target. Round 1 #20 remains unresolved.** A parameter such as `C:\assets\stamp.png` can traverse a local symbolic link to an SMB target while passing the enumerated UNC and `DRIVE_REMOTE` checks. The parameter-path policy specifies no corresponding reparse-point rejection before access. Test a local-looking stamp path whose ancestor redirects to a remote share, and require refusal before following that redirection. Windows symbolic links transparently redirect filesystem operations. [Microsoft symbolic-link documentation](https://learn.microsoft.com/en-us/windows/win32/fileio/symbolic-links).
+
+6. **T07 Goal, §5 and §14: the explicit redaction exception still contradicts the unconditional guarantee and verification. Round 1 #8 remains partially unresolved.** Section 5 permits `skip_with_warning` to succeed without searching a page. The Goal still says a redaction step that could not see a page fails the file; the post-apply verification requires complete coverage; and §14 requires complete redaction or failure with no output. A scanned page explicitly skipped under this option cannot satisfy all these contracts. Define the exception consistently, including the post-verification scope and reported outcome, and separately test default fail-closed behavior and explicit skipped-page behavior.
+
+7. **T07 §7 versus §9: rollback semantics contradict both failure isolation and cancellation. Round 1 #15 remains partially unresolved.** Section 7 permits `Failed` with retained outputs when rollback deletion fails, whereas §9 still requires a failing file to “never leave[] a partial output.” Section 7 also rolls back a set cancelled during publication, whereas §9 says stopping keeps outputs already published. Cancelling after image four produces incompatible required outcomes. Distinguish completed output sets from an in-progress set, and carry the retained-output exception into the runner contract and cancellation tests.
+
+8. **T06 §17: the inventory test rejects the status explicitly required elsewhere in the same section. Round 1 #19 remains partially unresolved.** Valid fixtures must report `PartialChecksPassed` despite unimplemented requirements, but `Preflight.PdfEVtInventory` must fail when a profile “claims a pass status” while its inventory contains an unimplemented entry. `PartialChecksPassed` is such a status unless the test explicitly excludes it. Define the exact allowed status matrix: partial checks may pass while full conformance remains unclaimed. Also replace “every normative requirement the implementer read” with an authoritative requirement inventory; otherwise omitted reading can make the inventory appear complete.
+
+OVERALL: needs-attention
+
+## Response to round 2
+
+All 8 findings were accepted and fixed in the next commit:
+
+1. D04 T06 §5: a TAC maximum is accepted only where provable (Type 2 with endpoints in range, Type 3 of provable parts, Type 0 Order 1); everything else can only fail or be `Incomplete`.
+2. D04 T02 §14: one long-lived clipboard thread; a blocked call stays outstanding, new requests get `ClipboardBusy`, and shutdown has a bounded wait.
+3. D04 T06 §1, §5: the shear fixture is now `1 0 3 1 0 0` with verdicts per stroke direction.
+4. D04 T07 §6: publication goes through held directory handles with identity rechecks; no path is re-resolved.
+5. D04 T07 §6, §14: local-only is decided on the opened target's final path after a reparse-point walk.
+6. D04 T07 Goal, §5, §14: `skip_with_warning` is the single, reported redaction exception, unavailable for `Truncated` pages.
+7. D04 T07 §9: stop keeps completed sets and rolls back the set in progress; retained outputs are listed and the file stays `Failed`.
+8. D04 T06 §17: an exact status matrix; `Conformant` needs a complete, second-read inventory.

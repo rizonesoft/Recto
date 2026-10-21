@@ -265,7 +265,7 @@ Sections: 74 | Checklist items: 569
 
 ### Phase 5: M5 Conversions B
 
-Sections: 63 | Checklist items: 520
+Sections: 63 | Checklist items: 521
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -330,7 +330,7 @@ Sections: 63 | Checklist items: 520
 | [ ]    | D04 T07 §11 | `recto-cli action` command family                                                        | windows-host                  | 7     |
 | [ ]    | D04 T07 §12 | Actions list and step editor on the Convert page                                         | windows-host, display-session | 8     |
 | [ ]    | D04 T07 §13 | Run panel, progress, pause prompt and report view                                        | windows-host, display-session | 8     |
-| [ ]    | D04 T07 §14 | Action Wizard gates: no script, no overwrite, hostile actions, end-to-end actions        | windows-host, display-session | 10    |
+| [ ]    | D04 T07 §14 | Action Wizard gates: no script, no overwrite, hostile actions, end-to-end actions        | windows-host, display-session | 11    |
 | [ ]    | D06 T01 §6  | Conversion round-trip matrix Part 2 (`RoundTrips.DocumentsAndSecurity`: Word, Sign)      | windows-host                  | 7     |
 
 ### Phase 6: M6 Ship
@@ -370,7 +370,7 @@ Sections: 28 | Checklist items: 207
 
 ### Phase 7: After v1
 
-Sections: 35 | Checklist items: 235
+Sections: 35 | Checklist items: 236
 
 | Status | Reference   | Deliverable                                                                              | Needs                                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | --------------------------------------------- | ----- |
@@ -391,7 +391,7 @@ Sections: 35 | Checklist items: 235
 | [ ]    | D02 T05 §15 | Register `fuzz_media`, `fuzz_u3d`, `fuzz_prc`, `fuzz_geo` in the fuzz campaign and audit | windows-host                                  | 5     |
 | [ ]    | D04 T02 §13 | Create PDF from a scanner (Windows Image Acquisition)                                    | windows-host, display-session, owner-decision | 7     |
 | [ ]    | D08 T01 §1  | Provider interface, request model and typed `AssistantError` taxonomy                    | windows-host                                  | 6     |
-| [ ]    | D08 T01 §2  | HTTPS-only WinHTTP transport with proxy, TLS, timeouts, size caps and cancel             | windows-host                                  | 7     |
+| [ ]    | D08 T01 §2  | HTTPS-only WinHTTP transport with proxy, TLS, timeouts, size caps and cancel             | windows-host                                  | 8     |
 | [ ]    | D08 T01 §3  | Retry with backoff on 429 and 5xx, honouring `Retry-After`                               | windows-host                                  | 5     |
 | [ ]    | D08 T01 §4  | Fake transport and scripted provider fixtures for adapter tests                          | windows-host                                  | 5     |
 | [ ]    | D08 T01 §5  | Anthropic Messages API adapter with streaming                                            | windows-host                                  | 5     |
@@ -412,7 +412,7 @@ Sections: 35 | Checklist items: 235
 
 ### Phase 98: Recto Cloud (web)
 
-Sections: 97 | Checklist items: 537
+Sections: 97 | Checklist items: 542
 
 | Status | Reference   | Deliverable                                                                 | Needs                                 | Items |
 | ------ | ----------- | --------------------------------------------------------------------------- | ------------------------------------- | ----- |
@@ -463,7 +463,7 @@ Sections: 97 | Checklist items: 537
 | [ ]    | D09 T03 §3  | Review, invitee and comment tables in D1                                    | none                                  | 6     |
 | [ ]    | D09 T03 §4  | Review lifecycle API: start, invite, accept, close                          | none                                  | 6     |
 | [ ]    | D09 T03 §5  | ReviewRoom Durable Object: sockets, ordering, presence                      | none                                  | 5     |
-| [ ]    | D09 T03 §6  | Comment operations: add, edit, reply, mention, resolve, delete              | none                                  | 5     |
+| [ ]    | D09 T03 §6  | Comment operations: add, edit, reply, mention, resolve, delete              | none                                  | 7     |
 | [ ]    | D09 T03 §7  | Reconnection, resync and concurrent edit convergence                        | none                                  | 5     |
 | [ ]    | D09 T03 §8  | Review email notifications and deadline reminders                           | none                                  | 4     |
 | [ ]    | D09 T03 §9  | Review access control, rate limits and size caps                            | none                                  | 5     |
@@ -479,7 +479,7 @@ Sections: 97 | Checklist items: 537
 | [ ]    | D09 T04 §4  | Envelope Durable Object state machine                                       | none                                  | 5     |
 | [ ]    | D09 T04 §5  | Envelope API: draft, recipients, fields, send, void                         | none                                  | 5     |
 | [ ]    | D09 T04 §6  | Field placement UI for signature, initials, date, text and checkbox         | none                                  | 5     |
-| [ ]    | D09 T04 §7  | Single-use signing links, routing order and invitation email                | none                                  | 5     |
+| [ ]    | D09 T04 §7  | Single-use signing links, routing order and invitation email                | none                                  | 6     |
 | [ ]    | D09 T04 §8  | Signer ceremony API: consent, access code, adopt, fill, sign, decline       | none                                  | 7     |
 | [ ]    | D09 T04 §9  | Signer ceremony UI: consent, adopt, fill and sign                           | none                                  | 5     |
 | [ ]    | D09 T04 §10 | Reminders and expiry by Cron                                                | none                                  | 4     |
@@ -503,8 +503,8 @@ Sections: 97 | Checklist items: 537
 | [ ]    | D09 T05 §6  | Settings `RECTO CLOUD` group, sign-in and sign-out commands                 | windows-host, display-session         | 8     |
 | [ ]    | D09 T05 §7  | `Open from Recto Cloud` picker and verified download                        | windows-host, display-session         | 8     |
 | [ ]    | D09 T05 §8  | `Save to Recto Cloud` with version conflict handling                        | windows-host, display-session         | 8     |
-| [ ]    | D09 T05 §9  | `Send for signature`: upload preview and hand-off to web field placement    | windows-host, display-session         | 7     |
-| [ ]    | D09 T05 §10 | `Start a shared review` from the open document                              | windows-host, display-session         | 7     |
+| [ ]    | D09 T05 §9  | `Send for signature`: upload preview and hand-off to web field placement    | windows-host, display-session         | 8     |
+| [ ]    | D09 T05 §10 | `Start a shared review` from the open document                              | windows-host, display-session         | 8     |
 | [ ]    | D09 T05 §11 | Live review comments in the Comments panel                                  | windows-host, display-session         | 9     |
 | [ ]    | D09 T05 §12 | Zero network before sign-in, token privacy and redirect safety suite        | windows-host, display-session         | 8     |
 | [ ]    | D09 T05 §13 | Record domain, sender domain and data region decisions                      | owner-decision                        | 6     |
@@ -527,4 +527,4 @@ Sections: 4 | Checklist items: 22
 
 Progress: 24/449 verified sections, 11 ready to run now.
 
-Checklist: 148/3207 items completed (includes Commit items).
+Checklist: 148/3214 items completed (includes Commit items).

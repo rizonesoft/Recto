@@ -92,3 +92,47 @@ Every finding was checked against the commit; all 22 were accepted and fixed in 
 22. D03 T05 Outcome and §9: the index's privacy and performance claims match what it does.
 
 These fixes have not had a second independent round yet.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T00:57:57Z
+- Effort: medium
+- Lines: 23
+- Digest: 5a6f4842708bf299
+
+Review is limited to the supplied diff: repository reads failed twice with `helper_unknown_error: setup refresh had errors`. No files were modified, Git commands run, or tests executed.
+
+**record: needs-attention**
+
+1. **Round 1 #13 remains incomplete: auxiliary text cannot reliably use the promised quad filter.** `todo/08-assistant/TODO-01-ai-assistant.md` §11 step 4 requires existing `/Alt` and conversation history to be filtered by character quads, but neither has a defined mapping to those quads. Section 13 explicitly retains earlier answers, which can quote subsequently redacted content. Reproduce by obtaining an answer containing an account number, marking that number for redaction, then asking a follow-up. Image masking passes while the earlier answer can resend the number. Define conservative exclusion for text without reliable provenance, and test the complete follow-up request body.
+
+2. **Round 1 #14 remains incomplete: key sanitization conflicts with the new access restriction.** `todo/08-assistant/TODO-01-ai-assistant.md` §§1, 3 and 9 require provider error sanitization to receive the configured key, but permit `with_key` only in the transport’s header-add scope and the fake transport’s presentation check. `RetryingSender` subsequently passes the buffered error body to the provider without a key or a defined sanitization service. An endpoint echoing an arbitrary key without a recognized prefix exposes this gap. Specify an authorized sanitization boundary and test such an echoed key through the production response path.
+
+3. **Round 1 #16 remains incomplete: freshness is specified for index building, not for excluding files during a search.** `todo/03-text/TODO-05-multi-file-search.md` §§4-5 define `plan_update`, post-read metadata validation and manual digest verification, but do not require `run_indexed` to validate every eligible entry before trusting negative postings. The remaining instruction even drops a *replaced* file from candidates rather than searching its replacement. Reproduce by indexing a file without `invoice`, replacing it with one containing `invoice`, then searching before another index build. Require changed, new and unverifiable files to enter a direct scan or synchronous refresh before candidate exclusion. Manual `Verify index` cannot establish ordinary search completeness.
+
+4. **Round 1 #19 remains incomplete: stripping page keys does not strip all imported structure associations.** `todo/05-organize/TODO-01-page-operations.md` §14 removes imported page `/StructParents`, but imports widgets and other page content without specifying removal of annotation `/StructParent` or Form XObject `/StructParents`. Those keys can still collide with retained destination entries. Rebuilding the parent tree “for retained pages only” also leaves retained annotation and XObject mappings unspecified. Parent-tree keys belong to individual objects and content streams as well as pages. Require complete removal of imported structural associations and preservation of every retained association, tested with tagged widgets and Form XObjects. [PDF Association structure reference](https://pdfa.org/download-area/cheat-sheets/LogicalStructureObjects.pdf)
+
+**consistency: needs-attention**
+
+5. **The preview implementation still follows the superseded authorization contract.** `todo/08-assistant/TODO-01-ai-assistant.md` §12 hashes the complete `HttpRequest` inside `OutboundPreview`, while §16 step 1 says the dialog binds to a `ContextPackage` that is “the same object the gate hashes.” Its acceptance test compares only page text. Consequently, the implementation checkpoint can pass without proving that displayed history, destination and images match the authorized request. Bind the dialog to the complete immutable preview and require end-to-end equality after page selection and protected-content changes.
+
+6. **Malformed U3D updates are now explicitly returned as successful models.** `todo/02-viewer/TODO-05-rich-media-3d-geo.md` §6 requires `U3D.ClodBadUpdate` to return an intermediate mesh with `reduced_detail`, grouping malformed input with unsupported features. This contradicts the supplied `AGENTS.md` failure mode prohibiting malformed-input failures reported as success. Return a typed malformed-input error; if partial display is intended, define an explicit recovery result that preserves the failure and distinguishes it from valid but unsupported content.
+
+**source-defect: needs-attention**
+
+7. **The revised certificate validation requires content that a valid PDF need not contain.** `todo/05-organize/TODO-01-page-operations.md` §12 requires decrypting the first encrypted stream of the first page’s `/Contents`. A blank first page may have no `/Contents`; encrypted content may exist only on later pages, or there may be no suitable encrypted sample. The plan defines neither case, so following it literally can reject correctly encrypted documents. Define bounded sample selection across eligible encrypted objects and explicit behavior when no sample exists. Add blank-first-page and empty-document fixtures. Also replace “catch a wrong or corrupted key” with probabilistic sanity-check language consistent with the paragraph’s acknowledgment that CBC provides no authentication.
+
+OVERALL: needs-attention
+
+## Response to round 2
+
+All 7 findings were accepted and fixed in the next commit:
+
+1. D08 T01 §11, §13: text without quads follows a fail-closed provenance rule; answers derived from later-marked pages are dropped from follow-ups.
+2. D08 T01 §1, §2, §9: the transport scrubs the exact key from error bodies inside its key scope; nothing above it needs the key.
+3. D03 T05 §5: freshness is checked at search time; only `Unchanged` files may be excluded by the index.
+4. D05 T01 §14: every imported structure association (pages, annotations, widgets, XObjects) is stripped, and the parent tree keeps retained owners only.
+5. D08 T01 §12, §16: the dialog binds the exact `OutboundPreview` the gate digests and authorizes.
+6. D02 T05 §6: a malformed U3D update is a typed error with poster fallback; only a valid unsupported update yields reduced detail.
+7. D05 T01 §12: the key check samples up to 8 encrypted objects of any kind and reports `key_unverified` when none exist.

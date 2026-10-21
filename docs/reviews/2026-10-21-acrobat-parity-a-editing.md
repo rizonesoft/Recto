@@ -71,3 +71,45 @@ Every finding was checked against the commit; all 15 were accepted and fixed in 
 13. D03 T04 §9: destructive crop forces a full rewrite.
 14. D03 T04 §10: vector resize, rotate and flip are built, matching the §13 handles.
 15. D03 T04 Outcome: a shared XObject is removed only when nothing else uses it.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T00:55:15Z
+- Effort: medium
+- Lines: 23
+- Digest: 383ea303e67b525a
+
+Review is based on the supplied candidate diff. Both attempts to read repository files failed because the command runner could not start (`helper_unknown_error`). Governing files beyond the supplied instructions were not independently inspected. No files were modified and git was not run.
+
+References below use `T02`, `T03` and `T04` for the candidate files under `todo/03-text/`.
+
+**record: needs-attention**
+
+1. **Round 1 #11 remains unresolved: fingerprint reconciliation cannot preserve indistinguishable identities.** `T04 §1` matches identical fingerprints by paint order relative to matched neighbours. Three identical adjacent strings between unchanged neighbours offer no evidence distinguishing insertion before them from insertion after them. The prescribed algorithm cannot guarantee the checkpoint’s original identities. Fingerprints also change when an object moves or its text changes. Carry identities through explicit patch provenance, including insertion, replacement and copy-on-write mappings; do not infer identity from the rebuilt drawing alone.
+
+2. **Round 1 #5 remains partially unresolved: Enter still has competing actions.** `T03 §13` requires `Enter` on a selected link both to open its properties flyout and to activate its target. Selecting an external link and pressing Enter therefore remains ambiguous. Assign separate gestures and test that the properties gesture never requests activation.
+
+3. **Round 1 #12 remains partially unresolved: destination deletion omits `/OpenAction`.** `T03 §12` explicitly includes `/OpenAction` in rename handling, but `DeletePolicy::DropReferences` removes only Link and outline references. `§14` likewise counts only links and bookmarks. Deleting a destination used by an opening action can therefore leave that supported reference dangling. Include opening actions in deletion handling, confirmation and tests.
+
+Round 1 #1 also remains unresolved, as finding 5 below explains. The correction for #2 introduces the contradiction in finding 4.
+
+**consistency: needs-attention**
+
+4. **The vector transform requirements prescribe mutually exclusive implementations.** `T04 §10` requires resize to leave path coordinates unchanged, and `VectorEdit.Transform` explicitly checks unchanged path bytes. The next requirement mandates rewriting those coordinates for a non-uniform resize of a stroked path. The section introduction also prohibits rebuilding paths. Separate the matrix-only cases from geometry normalization, qualify the byte-preservation assertion, and test both branches.
+
+**source-defect: needs-attention**
+
+5. **UAX #9 is still being used in the wrong direction.** `T04 §2` prescribes recovering logical text by applying UAX #9 “over the visual positions.” UAX #9 determines display ordering from logical text; it does not define this inverse recovery operation. Agreement with `PageText` is not independent confirmation when both can derive the same incorrect order from positioned glyphs. The ambiguity refusal therefore does not repair the ordering contract. Define the evidence that establishes logical order, refuse cases without sufficient evidence, and apply UAX #9 only after recovery. Test mixed RTL text, numbers and punctuation with an independently specified logical string. [Unicode UAX #9, Introduction](https://www.unicode.org/reports/tr9/#Introduction)
+
+**OVERALL: needs-attention**
+
+## Response to round 2
+
+All 5 findings were accepted and fixed in the next commit:
+
+1. D03 T04 §1-§3: edit ids are assigned once per session and carried by each patch's provenance map; they are promised stable within a session only, and a stale id returns `StaleObject`.
+2. D03 T03 §13: `Enter` only opens Link Properties; activation is `Ctrl+click` or `Ctrl+Enter`.
+3. D03 T03 §12, §14: `DropReferences` also clears a catalog `/OpenAction` naming the deleted destination.
+4. D03 T04 §10: one method: compose into `cm` for similarity transforms or unstroked paths, rewrite into page space only for a non-uniform or skewed transform on a stroked path; tests distinguish the branches.
+5. D03 T04 §2, §5: logical text comes from `/ActualText` or content-stream order, UAX #9 is applied forward and accepted only when it reproduces the drawn positions; mixed-direction runs with positions as the only evidence are refused.
