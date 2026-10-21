@@ -36,7 +36,7 @@ Last reviewed: 2026-10-21, against the Acrobat Pro "All tools" list.
 | Layers (optional content) | Planned | D02 T03 §7 | |
 | Document properties, metadata, initial view | Planned | D02 T03 §9-§10 | |
 | Rich media (audio, video) | Planned | D02 T05 §1-§4 | Ask before play; no Flash, no scripts, no network |
-| 3D models | Planned | D02 T05 §5-§10 | Bounded, fuzzed parsers; 3D JavaScript never runs |
+| 3D models | Partial | D02 T05 §5-§10 | Bounded, fuzzed parsers; 3D JavaScript never runs. Not covered: PRC B-rep parts without stored tessellation (listed, drawn as bounding boxes), PRC compressed tessellation (poster fallback with the reason), and U3D block kinds outside the listed set (skipped and noted); B-rep tessellation needs its own section when asked for |
 | Geospatial PDF | Planned | D02 T05 §11-§14 | |
 | JavaScript (document, field, 3D) | Excluded | | Zero PDF JavaScript by construction (D9); forms that need scripts get a banner (D03 T03 §7) |
 
@@ -50,8 +50,8 @@ Last reviewed: 2026-10-21, against the Acrobat Pro "All tools" list.
 | Fill and Sign (flat forms) | Planned | D03 T03 §22, D05 T02 §10 | Unicode-safe typed text; Lock on save only on a copy |
 | Prepare form, fill forms | Planned | D03 T03 §6-§10 | XFA to AcroForm conversion |
 | Digital signatures: sign, certify, validate, timestamp, LTV | Planned | D05 T01 §8-§9, D05 T02 §10-§11 | Windows certificate store; verdicts never "valid" when unknown |
-| Request e-signatures (Acrobat Sign) | Excluded | | Cloud service; Recto is offline by default (D16) |
-| Shared review, Send for comments | Excluded | | Cloud service; comments exchange as XFDF and JSON files (D03 T03 §2, §5) |
+| Request e-signatures (Acrobat Sign) | Planned, phase 98 | D09 T04, D09 T05 | Recto Cloud (D20): simple electronic signatures with a hash-chained audit trail and a PAdES seal; the desktop stays offline until the user signs in (D16) |
+| Shared review, Send for comments | Planned, phase 98 | D09 T03, D09 T05 | Recto Cloud (D20) live reviews in Recto's annotation model; XFDF and JSON file exchange remains (D03 T03 §2, §5) |
 
 ## Protect and standards
 
@@ -66,7 +66,7 @@ Last reviewed: 2026-10-21, against the Acrobat Pro "All tools" list.
 | PDF/A validate and convert | Planned | D04 T05 §5-§6 | |
 | PDF/UA check, autotag | Planned | D04 T05 §7 | |
 | PDF/X validate and convert | Planned | D04 T06 §4-§10 | |
-| PDF/E and PDF/VT identify and preflight | Partial | D04 T06 §17 | Conversion to PDF/E or PDF/VT not planned until requested (`docs/user-demand.md`) |
+| PDF/E and PDF/VT identify and preflight | Partial | D04 T06 §17 | Partial preflight profiles for PDF/E-1, PDF/VT-1 and PDF/VT-2 that report what was and was not checked, never "conformant"; PDF/VT-3 (on PDF/X-6) is identified only; conversion is not planned until requested (`docs/user-demand.md`) |
 | E-invoices (ZUGFeRD, Factur-X) | Recto only | D04 T05 §8 | Beyond Acrobat |
 
 ## Accessibility
@@ -123,5 +123,6 @@ Last reviewed: 2026-10-21, against the Acrobat Pro "All tools" list.
 | Acrobat Pro tool | Status | Recto sections | Recto keeps |
 | --- | --- | --- | --- |
 | AI Assistant (summarize, ask, generative features) | Planned, opt-in | D08 T01 §1-§19 | Off by default; the user's own Anthropic, OpenAI, OpenRouter or Gemini key; preview before every request (D19) |
-| Document Cloud storage, sharing links | Excluded | | Cloud service; offline by default (D16) |
-| Mobile and web apps | Excluded | | Recto is a Windows desktop app (D15) |
+| Document Cloud storage, sharing links | Planned, phase 98 | D09 T01, D09 T02, D09 T05 | Recto Cloud (D20), AGPL and self-hostable on `workerd`; opt-in from the desktop |
+| Web app | Planned, phase 98 | D09 T02 | Scriptless `pdf.js` viewer (D9) |
+| Mobile apps | Excluded | | Recto is a Windows desktop app (D15); the Recto Cloud web app works in mobile browsers |

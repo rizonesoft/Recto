@@ -23,6 +23,7 @@ The live execution plan for building Recto to version 1. Format spec: [README.md
 | 06 | [Quality](./06-quality/INDEX.md) | all | Golden, text, round-trip and performance suites; hostile-input audit, fuzz & broker spec. |
 | 07 | [Release](./07-release/INDEX.md) | M6 | Printing, Inno Setup (Full & Portable), Portable `.zip`, MSIX, About, GPL & crash bundle. |
 | 08 | [Assistant](./08-assistant/INDEX.md) | 7 | Opt-in AI assistant with the user's own Anthropic, OpenAI, OpenRouter or Gemini key. |
+| 09 | [Cloud](./09-cloud/INDEX.md) | 98 | Recto Cloud: signature requests, shared reviews, storage and web app (D20). |
 | 99 | [Manual](./99-manual/INDEX.md) | 99 | Operator-only steps: trademark, repository face, Partner Center and reference machines. |
 
 ## Coverage: every promise in the governing documents, and who owns it
@@ -90,6 +91,11 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 - [04 Convert] [TODO-06 Print Production: Preflight, PDF/X, Output Preview and Separations](./04-convert/TODO-06-print-production.md): preflight profiles and fixups, PDF/X, output preview, separations and ink coverage.
 - [04 Convert] [TODO-07 Action Wizard: Saved Multi-Step Actions over Files and Folders](./04-convert/TODO-07-action-wizard.md): saved action sequences run over files and folders.
 - [08 Assistant] [TODO-01 Opt-in AI Assistant with User-Supplied Provider Keys](./08-assistant/TODO-01-ai-assistant.md): off by default; summarize, ask with citations, explain, translate and alt text with the user's own key.
+- [09 Cloud] [TODO-01 Recto Cloud Platform, Accounts and Security](./09-cloud/TODO-01-platform-and-accounts.md): the AGPL `cloud/` workspace on Workers, D1, R2 and Durable Objects, self-host build, passkey and email-link sign-in, security and CI (phase 98).
+- [09 Cloud] [TODO-02 Recto Cloud Documents, Sharing and Web Viewer](./09-cloud/TODO-02-documents-and-sharing.md): versions, folders, sharing links and the scriptless pdf.js web viewer.
+- [09 Cloud] [TODO-03 Recto Cloud Shared Reviews](./09-cloud/TODO-03-shared-reviews.md): live comments in a Durable Object per review, round-tripping Recto's annotation model.
+- [09 Cloud] [TODO-04 Recto Cloud Signature Requests, Audit Trail and Seal](./09-cloud/TODO-04-signature-requests.md): envelopes, the signing ceremony, a hash-chained audit trail and the PAdES seal.
+- [09 Cloud] [TODO-05 Recto Cloud Desktop Integration and Launch](./09-cloud/TODO-05-desktop-integration-and-launch.md): opt-in sign-in, open and save, send for signature and reviews from Windows, and launch work.
 - [99 Manual] [TODO-01 Operator Setup (Manual)](./99-manual/TODO-01-operator-setup.md): trademark search, repository face, optional Partner Center reservation, reference machines. Operator only.
 
 ## Completed TODOs

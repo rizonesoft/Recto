@@ -31,7 +31,9 @@ ADJACENCY_KEYS = ["list", "document", "settings", "reporting", "notifications", 
                   "audit", "exchange", "reverse"]
 # The closed phase list. A project names its phases (and the plan's title and acceptance bar) in
 # todo/plan.json; without it the plan shows bare phase numbers.
-PHASES = (0, 1, 2, 3, 4, 5, 6, 7, 99)
+# WORKAROUND: 98 (Recto Cloud, foundation plan D20) is added here because the SDK's phase list is closed; held until
+# the SDK reads phases from todo/plan.json (todo/findings.md, 2026-10-21; .conclave/kit-drift-allow.txt).
+PHASES = (0, 1, 2, 3, 4, 5, 6, 7, 98, 99)
 PLAN_CONFIG = "todo/plan.json"
 PLAN_DEFAULTS = {"title": "Implementation plan", "acceptance": None, "phases": {99: "Manual, operator only"}}
 MAX_SECTIONS_PER_FILE = 55

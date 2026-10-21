@@ -125,7 +125,7 @@ Sections: 47 | Checklist items: 395
 
 ### Phase 3: M3 Text
 
-Sections: 52 | Checklist items: 403
+Sections: 52 | Checklist items: 406
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -145,7 +145,7 @@ Sections: 52 | Checklist items: 403
 | [ ]    | D03 T02 §4  | Logical `Tab` / `Shift+Tab` focus order and `--accent` focus ring across all 3 presets   | windows-host, display-session | 7     |
 | [ ]    | D03 T02 §5  | Polite coalescing `AnnouncementService` for page changes, find counts, and selection     | windows-host, display-session | 8     |
 | [ ]    | D03 T02 §6  | Conversion job completion announcement sink (`D04 T01 §6`) and UIA verification pass     | windows-host, display-session | 6     |
-| [ ]    | D03 T02 §7  | Read Out Loud reading plan: current page, to end of document and selection               | none                          | 8     |
+| [ ]    | D03 T02 §7  | Read Out Loud reading plan: current page, to end of document and selection               | none                          | 9     |
 | [ ]    | D03 T02 §8  | `SpeechService` over `Windows.Media.SpeechSynthesis`: voices, rate, volume, pause, stop  | windows-host                  | 8     |
 | [ ]    | D03 T02 §9  | Read Out Loud bar, word highlight, shortcuts, `Ctrl+K` commands and settings             | windows-host, display-session | 9     |
 | [ ]    | D03 T03 §1  | PDF `/Annots` parser and serializer for all 15 annotation subtypes (`annotations.cpp`)   | none                          | 8     |
@@ -165,7 +165,7 @@ Sections: 52 | Checklist items: 403
 | [ ]    | D03 T03 §15 | Article thread engine (`/Threads` beads): read flow and thread authoring                 | none                          | 7     |
 | [ ]    | D03 T03 §16 | `Articles` panel, follow-the-article reading flow and `Article` authoring tool           | windows-host, display-session | 8     |
 | [ ]    | D03 T03 §17 | `/Measure` engine: scale, distance, perimeter and area, units and `Measure` export       | none                          | 8     |
-| [ ]    | D03 T03 §18 | Snap point index from page vector content: endpoints, midpoints and intersections        | none                          | 7     |
+| [ ]    | D03 T03 §18 | Snap point index from page vector content: endpoints, midpoints and intersections        | none                          | 8     |
 | [ ]    | D03 T03 §19 | `Measure` tool bar, scale dialog, snapping, live readout and `Measurements` panel        | windows-host, display-session | 8     |
 | [ ]    | D03 T03 §20 | Stamp library store and dynamic stamp token resolution (no JavaScript)                   | none                          | 8     |
 | [ ]    | D03 T03 §21 | Stamp Manager, custom image stamps, dynamic stamp editor and sticky Stamp tool           | windows-host, display-session | 8     |
@@ -177,14 +177,14 @@ Sections: 52 | Checklist items: 403
 | [ ]    | D03 T05 §6  | `recto-cli find --folder` and `--index`                                                  | windows-host                  | 5     |
 | [ ]    | D03 T05 §7  | Search panel scope picker and grouped results list                                       | windows-host, display-session | 7     |
 | [ ]    | D03 T05 §8  | Open a result at its location from the grouped results list                              | windows-host, display-session | 6     |
-| [ ]    | D03 T05 §9  | Settings index manager (folders, size, rebuild, delete)                                  | windows-host, display-session | 7     |
+| [ ]    | D03 T05 §9  | Settings index manager (folders, size, rebuild, delete)                                  | windows-host, display-session | 8     |
 | [ ]    | D06 T01 §3  | Per-file text extraction and find expectation tables (`expectations/` & `TextTables.*`)  | windows-host                  | 7     |
 | [ ]    | D06 T01 §4  | Normalization and regex adversarial verification rows (ligatures, soft hyphens, bidi)    | windows-host                  | 8     |
 | [ ]    | D06 T03 §11 | Text extraction, reading order and selection fidelity fixtures                           | windows-host                  | 9     |
 
 ### Phase 4: M4 Conversions A
 
-Sections: 74 | Checklist items: 564
+Sections: 74 | Checklist items: 569
 
 | Status | Reference   | Deliverable                                                                              | Needs                                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | --------------------------------------------- | ----- |
@@ -241,14 +241,14 @@ Sections: 74 | Checklist items: 564
 | [ ]    | D05 T02 §15 | Certificate prompt when opening a public-key encrypted PDF                               | windows-host, display-session                 | 8     |
 | [ ]    | D06 T01 §5  | Conversion round-trip matrix Part 1 (`RoundTrips.Formats`: Images/SVG/XPS, OCR, Tables)  | windows-host                                  | 7     |
 | [ ]    | D06 T03 §4  | Single-interpreter differential suite across every content consumer                      | windows-host                                  | 7     |
-| [ ]    | D03 T04 §1  | Editable object model (`EditModel`) built from the shared interpreter                    | windows-host                                  | 7     |
-| [ ]    | D03 T04 §2  | Stable paragraph model: lines, paragraphs, columns, table cells and rotation             | windows-host                                  | 7     |
-| [ ]    | D03 T04 §3  | Edit session on an isolated copy with a content patch journal and undo/redo              | windows-host                                  | 6     |
+| [ ]    | D03 T04 §1  | Editable object model (`EditModel`) built from the shared interpreter                    | windows-host                                  | 8     |
+| [ ]    | D03 T04 §2  | Stable paragraph model: lines, paragraphs, columns, table cells and rotation             | windows-host                                  | 8     |
+| [ ]    | D03 T04 §3  | Edit session on an isolated copy with a content patch journal and undo/redo              | windows-host                                  | 7     |
 | [ ]    | D03 T04 §8  | Image objects: add, replace, move, resize, rotate, flip, crop and export                 | windows-host                                  | 7     |
 | [ ]    | D03 T04 §11 | Edit PDF mode bar, object hit-testing and not-editable messages                          | windows-host, display-session                 | 6     |
 | [ ]    | D06 T03 §5  | Save integrity fault-injection suite                                                     | windows-host                                  | 12    |
 | [ ]    | D03 T04 §9  | Object removal, atomic marked content and full-rewrite save with orphan pruning          | windows-host                                  | 6     |
-| [ ]    | D03 T04 §10 | Vector objects: select, move, recolour, line width and delete                            | windows-host                                  | 5     |
+| [ ]    | D03 T04 §10 | Vector objects: select, move, resize, rotate, flip, recolour, width and delete           | windows-host                                  | 6     |
 | [ ]    | D03 T04 §13 | On-canvas image and vector handles, alignment guides, nudges and z-order                 | windows-host, display-session                 | 6     |
 | [ ]    | D06 T03 §6  | Redaction completeness and audit suite on raw bytes                                      | windows-host                                  | 9     |
 | [ ]    | D06 T03 §7  | Unicode authoring round-trip suite for every text-writing path                           | windows-host                                  | 7     |
@@ -258,14 +258,14 @@ Sections: 74 | Checklist items: 564
 | [ ]    | D03 T04 §6  | Structure tree, marked content and layers kept consistent across text edits              | windows-host                                  | 5     |
 | [ ]    | D03 T04 §7  | Add Text box as real page content (not an annotation)                                    | windows-host                                  | 5     |
 | [ ]    | D03 T04 §12 | Inline on-canvas text editing with caret, selection and per-run formatting               | windows-host, display-session                 | 6     |
-| [ ]    | D03 T04 §14 | Edit session commit, save, dirty state and Ctrl+K commands                               | windows-host, display-session                 | 5     |
+| [ ]    | D03 T04 §14 | Edit session commit, save, dirty state and Ctrl+K commands                               | windows-host, display-session                 | 6     |
 | [ ]    | D03 T04 §15 | `recto-cli edit`: list, text, image and vector verbs                                     | windows-host                                  | 4     |
 | [ ]    | D03 T04 §16 | Producer fixture matrix and Edit PDF round-trip suite                                    | windows-host                                  | 8     |
 | [ ]    | D07 T03 §3  | Structure-preserving reproducer scrubber (`recto-cli scrub`)                             | windows-host                                  | 9     |
 
 ### Phase 5: M5 Conversions B
 
-Sections: 63 | Checklist items: 515
+Sections: 63 | Checklist items: 520
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -293,7 +293,7 @@ Sections: 63 | Checklist items: 515
 | [ ]    | D04 T05 §8  | `ZUGFeRD 2.x / Factur-X` (`EN 16931`) hybrid `PDF/A-3` e-invoice engine & `recto-cli`    | windows-host                  | 6     |
 | [ ]    | D04 T05 §9  | Viewer `Signatures & Standards` side panel (`SPEC 8.3`) and `PDF/A & E-Invoice` card     | windows-host, display-session | 6     |
 | [ ]    | D04 T05 §10 | `PptxWriter` PresentationML package: one slide per page, text boxes, reading order       | windows-host                  | 10    |
-| [ ]    | D04 T05 §11 | `PptxWriter` pictures, vector shapes and `a:tbl` tables with raster fallback             | windows-host                  | 9     |
+| [ ]    | D04 T05 §11 | `PptxWriter` pictures, vector shapes and `a:tbl` tables with raster fallback             | windows-host                  | 10    |
 | [ ]    | D04 T05 §12 | `PptxWriter` reopen validation, empty-result refusal and `recto-cli pdf-to-pptx`         | windows-host                  | 7     |
 | [ ]    | D04 T05 §13 | Convert page **PowerPoint presentation (`.pptx`)** card and Step 3 UI (`SPEC 9.5`)       | windows-host, display-session | 9     |
 | [ ]    | D04 T05 §14 | `StructTreeEditor` engine: add, retag, move, delete tags, edit `/Alt` and `/ActualText`  | windows-host                  | 13    |
@@ -316,13 +316,13 @@ Sections: 63 | Checklist items: 515
 | [ ]    | D04 T06 §14 | Output Preview panel with plate toggles and pointer ink readout                          | windows-host, display-session | 9     |
 | [ ]    | D04 T06 §15 | `recto-cli preflight` command family                                                     | windows-host                  | 8     |
 | [ ]    | D04 T06 §16 | Print production honesty gates and fuzz targets                                          | windows-host                  | 8     |
-| [ ]    | D04 T06 §17 | PDF/E and PDF/VT identification and preflight profiles                                   | windows-host                  | 8     |
+| [ ]    | D04 T06 §17 | PDF/E and PDF/VT identification and partial preflight profiles                           | windows-host                  | 10    |
 | [ ]    | D04 T07 §1  | Action model, JSON schema and versioned migration                                        | windows-host                  | 9     |
 | [ ]    | D04 T07 §2  | Action store with built-in actions, import and export under hostile-file limits          | windows-host                  | 8     |
 | [ ]    | D04 T07 §3  | Step contract, step registry and whole-action validation                                 | windows-host                  | 8     |
 | [ ]    | D04 T07 §4  | Document steps: OCR, optimize, watermark, header and Bates, flatten, sanitize            | windows-host                  | 10    |
 | [ ]    | D04 T07 §5  | Protection and standards steps: redact by pattern, encrypt, metadata, PDF/A, preflight   | windows-host                  | 11    |
-| [ ]    | D04 T07 §6  | Output naming template and collision-free exclusive publish                              | windows-host                  | 10    |
+| [ ]    | D04 T07 §6  | Output naming template and collision-free exclusive publish                              | windows-host                  | 11    |
 | [ ]    | D04 T07 §7  | Convert and export steps through the converter registry                                  | windows-host                  | 6     |
 | [ ]    | D04 T07 §8  | Input set builder over FileScope with recursion and output planning                      | windows-host                  | 8     |
 | [ ]    | D04 T07 §9  | Action runner: windowed per-file jobs, pause points, stop and password recovery          | windows-host                  | 11    |
@@ -330,7 +330,7 @@ Sections: 63 | Checklist items: 515
 | [ ]    | D04 T07 §11 | `recto-cli action` command family                                                        | windows-host                  | 7     |
 | [ ]    | D04 T07 §12 | Actions list and step editor on the Convert page                                         | windows-host, display-session | 8     |
 | [ ]    | D04 T07 §13 | Run panel, progress, pause prompt and report view                                        | windows-host, display-session | 8     |
-| [ ]    | D04 T07 §14 | Action Wizard gates: no script, no overwrite, hostile actions, end-to-end actions        | windows-host, display-session | 9     |
+| [ ]    | D04 T07 §14 | Action Wizard gates: no script, no overwrite, hostile actions, end-to-end actions        | windows-host, display-session | 10    |
 | [ ]    | D06 T01 §6  | Conversion round-trip matrix Part 2 (`RoundTrips.DocumentsAndSecurity`: Word, Sign)      | windows-host                  | 7     |
 
 ### Phase 6: M6 Ship
@@ -370,11 +370,11 @@ Sections: 28 | Checklist items: 207
 
 ### Phase 7: After v1
 
-Sections: 35 | Checklist items: 233
+Sections: 35 | Checklist items: 235
 
 | Status | Reference   | Deliverable                                                                              | Needs                                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | --------------------------------------------- | ----- |
-| [ ]    | D02 T05 §1  | Rich media, 3D and geospatial corpus fixtures in `tests/corpus/rich/`                    | none                                          | 8     |
+| [ ]    | D02 T05 §1  | Rich media, 3D and geospatial corpus fixtures in `tests/corpus/rich/`                    | none                                          | 9     |
 | [ ]    | D02 T05 §2  | `recto-pdf` media model: `/RichMedia`, `/Screen`, `/Sound`, `/Movie`, bounded extract    | windows-host                                  | 9     |
 | [ ]    | D02 T05 §3  | Embedded media playback service on Windows media APIs with no network access             | windows-host                                  | 7     |
 | [ ]    | D02 T05 §4  | Media annotation surface: ask before play, Flash placeholder, `Save media as...`         | windows-host, display-session                 | 9     |
@@ -403,12 +403,116 @@ Sections: 35 | Checklist items: 233
 | [ ]    | D08 T01 §11 | `ContextBuilder`: exact send set, exclusions and visible budget truncation               | windows-host                                  | 7     |
 | [ ]    | D08 T01 §12 | Consent gate: no key no network, per-request authorization and ledger                    | windows-host                                  | 6     |
 | [ ]    | D08 T01 §13 | `AssistantService`: summarize, cited answers, explain and translate                      | windows-host                                  | 7     |
-| [ ]    | D08 T01 §14 | Figure alt-text drafting and undoable Apply                                              | windows-host                                  | 6     |
+| [ ]    | D08 T01 §14 | Figure alt-text drafting and undoable Apply                                              | windows-host                                  | 7     |
 | [ ]    | D08 T01 §15 | Settings page `ASSISTANT` group with key entry and Test connection                       | windows-host, display-session                 | 7     |
 | [ ]    | D08 T01 §16 | Request preview `ContentDialog` with exact send set and opt-ins                          | windows-host, display-session                 | 5     |
 | [ ]    | D08 T01 §17 | Assistant side panel, clickable citations and Markdown export                            | windows-host, display-session                 | 7     |
 | [ ]    | D08 T01 §18 | `Ctrl+K` commands, UIA names and polite announcements                                    | windows-host, display-session                 | 5     |
 | [ ]    | D08 T01 §19 | Privacy and security suite: zero network, key scan, consent gates, cancel                | windows-host, display-session                 | 7     |
+
+### Phase 98: Recto Cloud (web)
+
+Sections: 97 | Checklist items: 537
+
+| Status | Reference   | Deliverable                                                                 | Needs                                 | Items |
+| ------ | ----------- | --------------------------------------------------------------------------- | ------------------------------------- | ----- |
+| [ ]    | D09 T01 §1  | Workspace scaffold, AGPL licence, NOTICE and licence allowlist check        | none                                  | 6     |
+| [ ]    | D09 T01 §2  | Wrangler configuration for dev, staging and production with typed bindings  | none                                  | 6     |
+| [ ]    | D09 T01 §3  | D1 schema, forward-only migrations and the SQLite database interface        | none                                  | 7     |
+| [ ]    | D09 T01 §4  | Storage interface with R2 and S3-compatible adapters                        | none                                  | 6     |
+| [ ]    | D09 T01 §5  | API foundation: router, error model, request ids and content-free logging   | none                                  | 6     |
+| [ ]    | D09 T01 §6  | Security headers and strict Content Security Policy                         | none                                  | 5     |
+| [ ]    | D09 T01 §7  | Sessions, HttpOnly cookies, principals and CSRF protection                  | none                                  | 6     |
+| [ ]    | D09 T01 §8  | Rate limits with a Durable Object counter                                   | none                                  | 5     |
+| [ ]    | D09 T01 §9  | Email Queue consumer, SMTP2GO transport and dev outbox                      | none                                  | 6     |
+| [ ]    | D09 T01 §10 | Sign-up and sign-in with one-time email links                               | none                                  | 6     |
+| [ ]    | D09 T01 §11 | Passkey registration and sign-in (WebAuthn)                                 | none                                  | 5     |
+| [ ]    | D09 T01 §12 | Account recovery and email change                                           | none                                  | 5     |
+| [ ]    | D09 T01 §13 | Account settings API: profile, sessions and passkeys                        | none                                  | 4     |
+| [ ]    | D09 T01 §14 | OAuth 2.0 authorization code with PKCE endpoints for the desktop app        | none                                  | 7     |
+| [ ]    | D09 T01 §15 | Data export and account deletion with a grace period                        | none                                  | 6     |
+| [ ]    | D09 T01 §16 | Admin API, abuse reports and takedown by content hash                       | none                                  | 6     |
+| [ ]    | D09 T01 §17 | Backups and restore                                                         | none                                  | 5     |
+| [ ]    | D09 T01 §18 | Self-host adapters: Durable Object SQLite, job queue and scheduler          | none                                  | 5     |
+| [ ]    | D09 T01 §19 | Self-host build on plain workerd with a smoke test                          | none                                  | 5     |
+| [ ]    | D09 T01 §20 | GitHub Actions CI: lint, typecheck, Vitest, Playwright and self-host smoke  | none                                  | 5     |
+| [ ]    | D09 T01 §21 | Staging and production deploy job gated on operator secrets                 | operator, owner-decision, third-party | 6     |
+| [ ]    | D09 T02 §1  | Document, folder, version and sharing schema with repositories              | none                                  | 6     |
+| [ ]    | D09 T02 §2  | Access resolver: roles, inheritance and one decision point                  | none                                  | 5     |
+| [ ]    | D09 T02 §3  | Upload sessions: size cap, part uploads and magic-byte checks               | none                                  | 7     |
+| [ ]    | D09 T02 §4  | Version commit: hash check and immutable content-addressed blobs            | none                                  | 5     |
+| [ ]    | D09 T02 §5  | Folders: create, rename, move and list                                      | none                                  | 5     |
+| [ ]    | D09 T02 §6  | Trash, restore and purge with blob garbage collection                       | none                                  | 5     |
+| [ ]    | D09 T02 §7  | Quotas and usage accounting                                                 | none                                  | 5     |
+| [ ]    | D09 T02 §8  | Account grants: invite, change role and revoke                              | none                                  | 5     |
+| [ ]    | D09 T02 §9  | Share links: expiry, password, redeem and revoke                            | none                                  | 5     |
+| [ ]    | D09 T02 §10 | Audit of grants and access with an owner-visible log                        | none                                  | 5     |
+| [ ]    | D09 T02 §11 | Read API: metadata, ranged content and download                             | none                                  | 5     |
+| [ ]    | D09 T02 §12 | Design tokens from RectoColors.xaml and the web app scaffold                | none                                  | 6     |
+| [ ]    | D09 T02 §13 | Web shell with sign-in, account and consent screens                         | none                                  | 7     |
+| [ ]    | D09 T02 §14 | Library page: folders, upload, rename, move, trash and quota                | none                                  | 6     |
+| [ ]    | D09 T02 §15 | Sharing dialog and shared-with-me list                                      | none                                  | 5     |
+| [ ]    | D09 T02 §16 | Document page and scriptless pdf.js viewer                                  | none                                  | 7     |
+| [ ]    | D09 T02 §17 | Viewer navigation: page controls, zoom and thumbnails                       | none                                  | 6     |
+| [ ]    | D09 T02 §18 | Viewer search and download                                                  | none                                  | 5     |
+| [ ]    | D09 T02 §19 | Accessibility: WCAG 2.2 AA checks, keyboard paths and statement             | none                                  | 7     |
+| [ ]    | D09 T02 §20 | Playwright end-to-end suite for sign-in, upload, share and read             | none                                  | 5     |
+| [ ]    | D09 T02 §21 | Quota, retention and terms values recorded from the owner                   | owner-decision, third-party           | 4     |
+| [ ]    | D09 T03 §1  | Annotation JSON schema package for comments and markup                      | none                                  | 6     |
+| [ ]    | D09 T03 §2  | Desktop exchange fixtures from recto-cli annot                              | windows-host                          | 4     |
+| [ ]    | D09 T03 §3  | Review, invitee and comment tables in D1                                    | none                                  | 6     |
+| [ ]    | D09 T03 §4  | Review lifecycle API: start, invite, accept, close                          | none                                  | 6     |
+| [ ]    | D09 T03 §5  | ReviewRoom Durable Object: sockets, ordering, presence                      | none                                  | 5     |
+| [ ]    | D09 T03 §6  | Comment operations: add, edit, reply, mention, resolve, delete              | none                                  | 5     |
+| [ ]    | D09 T03 §7  | Reconnection, resync and concurrent edit convergence                        | none                                  | 5     |
+| [ ]    | D09 T03 §8  | Review email notifications and deadline reminders                           | none                                  | 4     |
+| [ ]    | D09 T03 §9  | Review access control, rate limits and size caps                            | none                                  | 5     |
+| [ ]    | D09 T03 §10 | Annotation exchange API: JSON and XFDF import and export                    | none                                  | 4     |
+| [ ]    | D09 T03 §13 | Web review room: viewer overlay, comment panel, presence                    | none                                  | 5     |
+| [ ]    | D09 T03 §14 | Start-a-review dialog and reviews list in the web app                       | none                                  | 4     |
+| [ ]    | D09 T04 §1  | Bounded PDF reader and incremental update writer package                    | none                                  | 6     |
+| [ ]    | D09 T03 §11 | Markup appearance streams for exported annotations                          | none                                  | 4     |
+| [ ]    | D09 T03 §12 | Reviewed PDF export job with comments                                       | none                                  | 5     |
+| [ ]    | D09 T03 §15 | End-to-end review tests in two browsers                                     | none                                  | 4     |
+| [ ]    | D09 T04 §2  | Envelope, recipient and field model with D1 tables                          | none                                  | 6     |
+| [ ]    | D09 T04 §3  | Hash-chained audit trail package and verifier                               | none                                  | 5     |
+| [ ]    | D09 T04 §4  | Envelope Durable Object state machine                                       | none                                  | 5     |
+| [ ]    | D09 T04 §5  | Envelope API: draft, recipients, fields, send, void                         | none                                  | 5     |
+| [ ]    | D09 T04 §6  | Field placement UI for signature, initials, date, text and checkbox         | none                                  | 5     |
+| [ ]    | D09 T04 §7  | Single-use signing links, routing order and invitation email                | none                                  | 5     |
+| [ ]    | D09 T04 §8  | Signer ceremony API: consent, access code, adopt, fill, sign, decline       | none                                  | 7     |
+| [ ]    | D09 T04 §9  | Signer ceremony UI: consent, adopt, fill and sign                           | none                                  | 5     |
+| [ ]    | D09 T04 §10 | Reminders and expiry by Cron                                                | none                                  | 4     |
+| [ ]    | D09 T04 §11 | Render text, date and checkbox values with an embedded subset font          | none                                  | 4     |
+| [ ]    | D09 T04 §12 | Signature and initials images: validate, store and embed                    | none                                  | 4     |
+| [ ]    | D09 T04 §13 | Certificate of completion with audit chain head                             | none                                  | 4     |
+| [ ]    | D09 T04 §14 | PAdES-B-T seal engine with RFC 3161 timestamp and test certificate          | none                                  | 6     |
+| [ ]    | D09 T04 §15 | Production seal signer through an HSM or signing service                    | third-party, operator                 | 4     |
+| [ ]    | D09 T04 §16 | Completion Queue job: render, certify, seal, version and notify             | none                                  | 7     |
+| [ ]    | D09 T04 §17 | Golden PDFs, independent validator and tamper tests                         | none                                  | 4     |
+| [ ]    | D09 T04 §18 | Retention, legal hold, data export and deletion for envelopes               | none                                  | 4     |
+| [ ]    | D09 T04 §19 | Set retention, quota and expiry defaults                                    | owner-decision                        | 2     |
+| [ ]    | D09 T04 §20 | Approve ESIGN consent disclosure and signer legal texts                     | third-party, owner-decision           | 3     |
+| [ ]    | D09 T04 §21 | Sender dashboard: envelopes, status, audit view and downloads               | none                                  | 4     |
+| [ ]    | D09 T04 §22 | End-to-end signature ceremony tests in the browser                          | none                                  | 4     |
+| [ ]    | D09 T05 §1  | HTTPS-only WinHTTP cloud transport with no redirect credential leakage      | windows-host                          | 9     |
+| [ ]    | D09 T05 §2  | Windows Credential Manager `TokenStore` for Recto Cloud sessions            | windows-host                          | 7     |
+| [ ]    | D09 T05 §3  | OAuth 2.0 PKCE sign-in through the system browser and a loopback redirect   | windows-host                          | 7     |
+| [ ]    | D09 T05 §4  | `CloudClient` with typed errors, token refresh, retry and offline detection | windows-host                          | 8     |
+| [ ]    | D09 T05 §5  | Upload consent gate and exact-send preview dialog                           | windows-host, display-session         | 7     |
+| [ ]    | D09 T05 §6  | Settings `RECTO CLOUD` group, sign-in and sign-out commands                 | windows-host, display-session         | 8     |
+| [ ]    | D09 T05 §7  | `Open from Recto Cloud` picker and verified download                        | windows-host, display-session         | 8     |
+| [ ]    | D09 T05 §8  | `Save to Recto Cloud` with version conflict handling                        | windows-host, display-session         | 8     |
+| [ ]    | D09 T05 §9  | `Send for signature`: upload preview and hand-off to web field placement    | windows-host, display-session         | 7     |
+| [ ]    | D09 T05 §10 | `Start a shared review` from the open document                              | windows-host, display-session         | 7     |
+| [ ]    | D09 T05 §11 | Live review comments in the Comments panel                                  | windows-host, display-session         | 9     |
+| [ ]    | D09 T05 §12 | Zero network before sign-in, token privacy and redirect safety suite        | windows-host, display-session         | 8     |
+| [ ]    | D09 T05 §13 | Record domain, sender domain and data region decisions                      | owner-decision                        | 6     |
+| [ ]    | D09 T05 §14 | Obtain the seal certificate from an AATL CA for an HSM or signing service   | third-party, operator                 | 5     |
+| [ ]    | D09 T05 §15 | Terms, privacy policy, ESIGN disclosure and DPA reviewed by counsel         | owner-decision, third-party           | 6     |
+| [ ]    | D09 T05 §16 | Production verification, content-free monitoring and acceptance run         | owner-decision, third-party, operator | 6     |
+| [ ]    | D09 T05 §17 | Status page, abuse contact and security disclosure                          | owner-decision, third-party, operator | 6     |
+| [ ]    | D09 T05 §18 | Go-live gate: desktop default server, parity ledger and release note        | owner-decision, third-party, operator | 6     |
 
 ### Phase 99: Manual, operator only
 
@@ -421,6 +525,6 @@ Sections: 4 | Checklist items: 22
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
-Progress: 24/352 verified sections, 10 ready to run now.
+Progress: 24/449 verified sections, 11 ready to run now.
 
-Checklist: 148/2655 items completed (includes Commit items).
+Checklist: 148/3207 items completed (includes Commit items).

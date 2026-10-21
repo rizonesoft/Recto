@@ -8,7 +8,7 @@ title: "TODO-04 -- Edit PDF: Text, Image and Vector Object Editing"
 
 # TODO-04 -- Edit PDF: Text, Image and Vector Object Editing
 
-> **Goal:** Recto matches Acrobat Pro's Edit PDF tool: the user opens Edit PDF mode, clicks a paragraph and retypes it on the page with the text reflowing inside its original box in the original embedded font, adds new text as real page content, and selects, moves, resizes, rotates, flips, crops, replaces, recolours, reorders and deletes image and vector objects, with undo and redo per committed edit. Nothing is written to the open viewer document; edits apply to an isolated edit copy, saved through the atomic writers, and removed content is physically gone from the saved file. Text that cannot be drawn is refused before commit, never written as `?`.
+> **Goal:** Recto matches Acrobat Pro's Edit PDF tool: the user opens Edit PDF mode, clicks a paragraph and retypes it on the page with the text reflowing inside its original box in the original embedded font, adds new text as real page content, and selects, moves, resizes, rotates, flips, crops, replaces, recolours, reorders and deletes image and vector objects, with undo and redo per committed edit. Nothing is written to the open viewer document; edits apply to an isolated edit copy, saved through the atomic writers, and removed or replaced content, including rewritten text and destructively cropped pixels, is physically gone from the saved file. Text that cannot be drawn is refused before commit, never written as `?`.
 
 > **Current state:** Measured 2026-10-21. `src/pdf` holds the lexer, object model, filters, crypto, `display_list.cpp` and `document.cpp`; there is no content-stream editor, no object listing, no writer and no `src/app` document view yet. Recto's only text change today is content-stream Find and Replace (`D03 T01 §9`, planned), which rewrites matched `Tj` / `TJ` strings and cannot move, add, retype a paragraph or touch an image or path. `D06 T03 §4` makes the shared interpreter the only content reader, `D06 T03 §7` fixes the Unicode authoring rules and `D06 T03 §5` the save-integrity rules this file must satisfy. The corpus (`tests/corpus/text`, `scripts/build-corpus.py`) has no producer-idiom fixtures for editing.
 
@@ -32,7 +32,7 @@ title: "TODO-04 -- Edit PDF: Text, Image and Vector Object Editing"
 
 - A page opened in Edit PDF mode lists every text paragraph, image and path as an object with an identity that survives edits to other objects, and a retyped paragraph re-reads as exactly the typed text with unchanged neighbours.
 - Each text edit keeps the original embedded font for every glyph it contains and embeds a Unicode subset only for glyphs it lacks; an undrawable character is refused with its code point before anything changes.
-- Image and vector edits save into a copy in which a deleted or replaced object, and its XObject, are absent from the file bytes.
+- Image and vector edits save into a copy in which the deleted or replaced occurrence is absent from the page content, and every resource with no remaining use (including its XObject, when no other occurrence or page uses it) is absent from the file bytes.
 
 **Adjacency:** list=applicable @ D03 T04 §15; document=applicable @ D03 T04 §14; settings=not-applicable (no persistent edit setting exists; fonts, sizes and colours are chosen per edit); reporting=not-applicable (each edit reports its result inline in §11 and §15, with no cross-document report); notifications=applicable @ D03 T04 §11; permissions=applicable @ D03 T04 §11; audit=not-applicable (the undo journal is session-only and no edit history is stored in the PDF); exchange=applicable @ D03 T04 §15; reverse=applicable @ D03 T04 §3
 
@@ -51,7 +51,7 @@ title: "TODO-04 -- Edit PDF: Text, Image and Vector Object Editing"
 | 7 | §7 | Add Text box as real page content (not an annotation) | §3, §4 | [ ] |
 | 8 | §8 | Image objects: add, replace, move, resize, rotate, flip, crop and export | §3, D01 T01 §8, D04 T02 §5, D04 T02 §9 | [ ] |
 | 9 | §9 | Object removal, atomic marked content and full-rewrite save with orphan pruning | §3, §8, D06 T03 §5 | [ ] |
-| 10 | §10 | Vector objects: select, move, recolour, line width and delete | §3, §9 | [ ] |
+| 10 | §10 | Vector objects: select, move, resize, rotate, flip, recolour, width and delete | §3, §9 | [ ] |
 | 11 | §11 | Edit PDF mode bar, object hit-testing and not-editable messages | §1, §2, D02 T02 §4, D03 T03 §3, D03 T01 §7 | [ ] |
 | 12 | §12 | Inline on-canvas text editing with caret, selection and per-run formatting | §5, §6, §7, §11, D03 T01 §3 | [ ] |
 | 13 | §13 | On-canvas image and vector handles, alignment guides, nudges and z-order | §8, §9, §10, §11, D03 T03 §4 | [ ] |
@@ -69,14 +69,15 @@ Editing needs a list of what is on the page: text runs, images, paths and forms 
 
 **Build order:**
 
-1. Add `src/pdf/edit_model.h/.cpp` defining `EditObject` (kind `Text`, `Image`, `Path`, `Form`, `Shading`), its bounding box in page points, the source operator range (stream part index and operator ordinals), the full graphics state at the point of drawing, the marked-content stack with `/MCID`, the optional-content membership and the paint order index. Done when: `EditModel.Build` lists every object of a three-object fixture page with the correct kind, box and operator range.
+1. Add `src/pdf/edit_model.h/.cpp` defining `EditObject` (kind `Text`, `Image`, `Path`, `Form`, `Shading`), its bounding box in page points, the source operator range (stream part index and operator ordinals), the occurrence path (the chain of `Do` invocations, with the invoking operator range of each, that reaches the object through nested Form XObjects), the full graphics state at the point of drawing, the marked-content stack with `/MCID`, the optional-content membership and the paint order index. Done when: `EditModel.Build` lists every object of a three-object fixture page with the correct kind, box and operator range.
 2. Build the model by subscribing to the interpreter's operator trace (`D01 T02 §3`, `§4`) instead of re-parsing. Done when: `EditModel.SingleInterpreter` fails when the model builder is pointed at a private tokenizer and passes on the shared one.
 3. Give every object a stable `EditId` independent of list position. Done when: inserting an unrelated object before it leaves its `EditId` unchanged.
 
 - [ ] Define `EditObject` and `EditModel::build(Document&, page_index, CancelToken)` returning `PdfResult<EditModel>` in `src/pdf/edit_model.h/.cpp`. Done when: a split-`/Contents` fixture yields the same objects as the same page in one stream.
+- [ ] Record the occurrence path for every object reached through a Form XObject, so two invocations of one form give two distinct `EditObject`s with distinct paths. Done when: `EditModel.FormOccurrences` lists an image inside a form invoked twice as two objects with different occurrence paths.
 - [ ] Record per text run the font resource name, size, `Tc`, `Tw`, `Tz`, `TL`, `Ts`, `Tr`, fill and stroke colour with colour space, text matrix, clip stack and alpha. Done when: a fixture with every state value distinct reads each back exactly (pdfcraft #2517, #3215).
 - [ ] Record the marked-content stack (`BDC` / `BMC` tags, property dictionaries, `/MCID`) and the optional-content group per object, resolving `/OC` through the page's `/Properties`. Done when: an object inside an OFF group reports `visible=false` and its group id.
-- [ ] Derive `EditId` from the page object number, the marked-content tag and `/MCID` when present, the font name, the first drawn operand bytes and the object origin rounded to 0.01 pt, with an ordinal suffix for collisions. Done when: adding a path above an object and rebuilding keeps its `EditId`, and two identical strings at identical origin get distinct ids.
+- [ ] Assign `EditId` values from a session-persistent registry in `src/pdf/edit_model.cpp`: the first time an object is seen it receives a never-reused 64-bit id, keyed by a fingerprint (page object number, marked-content tag and `/MCID` when present, font name, first drawn operand bytes, origin rounded to 0.01 pt, occurrence path); on rebuild each object is matched to the registry by fingerprint and, among equal fingerprints, by paint order relative to its matched neighbours, and an unmatched object gets a new id. Done when: adding a path above an object keeps its `EditId`, and with three identical strings at one origin, inserting a fourth identical string before them keeps the original three ids on the original three objects and gives the new one a new id.
 - [ ] Bound recursion and allocation: form XObject depth, object count per page and operator count come from the interpreter's shared caps (`D06 T03 §4`). Done when: the cap fixtures give a `Truncated` model, not a crash or a private cap (pdfcraft #3120, #3504).
 - [ ] Add `EditModel` as a seventh consumer in `UserClasses.Differential`. Done when: its glyph boxes match the other consumers within 0.01 pt on every differential fixture.
 - [ ] Commit: `pdf: add EditModel object listing over the shared interpreter`
@@ -101,8 +102,9 @@ A paragraph is not a stream feature, so the editor must infer it from runs, and 
 - [ ] Detect left, right, centre and justified alignment from line start and end offsets, and record the first-line indent and the line pitch. Done when: the four alignment fixtures report the right class and pitch within 0.05 pt.
 - [ ] Detect columns using the `PageText` XY-cut result (`D03 T01 §1`) so a paragraph never spans a column gutter. Done when: a two-column fixture yields paragraphs wholly inside one column with distinct column indexes.
 - [ ] Detect table cells from ruled lines and aligned text and tag each paragraph with row and column, never merging text across cells. Done when: a 3 by 3 ruled table fixture yields nine paragraphs with correct addresses (pdfcraft #3429).
+- [ ] Record on each `Paragraph` the operator range of every line (`line_ranges`), which need not be contiguous, and the objects painted between them. Done when: a fixture with paragraph A line 1, an overlapping shape, then A line 2 reports two line ranges and the shape between them.
 - [ ] Define `ParagraphId` as the `EditId` of its first run plus a hash of its line count and box, and keep a remap table the session updates on commit. Done when: a rebuild after a rewrite resolves the old id to the new paragraph.
-- [ ] Mark bidi and complex-script runs (Arabic, Hebrew, Indic) with their logical order from `ToUnicode` and refuse to regroup them by position. Done when: an Arabic fixture keeps logical order and is editable only as whole lines (pdfcraft #1039, #2878).
+- [ ] Derive the logical order of bidi and complex-script runs (Arabic, Hebrew, Indic) from the `ToUnicode` text of each run ordered by the Unicode Bidirectional Algorithm (UAX #9) over the visual positions, using `/ActualText` when the run has one, and mark the paragraph `NotEditable("ambiguous order")` when the result cannot be confirmed (visual-order text with per-glyph positioning and no `/ActualText`, whose reordered text differs from the `PageText` order). Done when: a logical-order Arabic fixture is editable as whole lines, and a visual-order, glyph-positioned fixture is refused with the reason and no mutation (pdfcraft #1039, #2878).
 - [ ] Commit: `pdf: group text runs into stable paragraphs with alignment, columns and cells`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=ParagraphModel.*` passes, and merging two paragraph fixtures by gap threshold change makes `ParagraphModel.NeverMergeAcrossCells` fail.
@@ -119,10 +121,12 @@ AGENTS.md forbids modifying the open viewer document, and `D03 T01 §9` already 
 
 1. Add `src/pdf/edit_session.h/.cpp`: `EditSession::open(path)` loads its own `Document`, `apply(EditCommand)` returns `PdfResult<EditResult>`, `undo()` and `redo()` restore exact prior bytes of the touched streams. Done when: `EditSession.UndoRedo` restores byte-identical content streams after each undo.
 2. Express every edit as a `ContentPatch` (stream part, operator range, replacement bytes, new resources). Done when: `EditSession.PatchOnly` shows a text edit changes only the patched range and the resource dictionary.
-3. Define commit semantics: an edit is committed when the engine returns success, and a failed edit changes nothing. Done when: an injected failure mid-apply leaves the session identical to before.
+3. Isolate shared forms: an edit to an object reached through a Form XObject patches a private copy (copy-on-write) of that form and of every enclosing form on its occurrence path, and repoints only the selected invocation's `Do` to the copy. Done when: `EditSession.FormCopyOnWrite` edits one of two invocations of a form (and one nested two levels deep) and the other invocation renders and reads back unchanged.
+4. Define commit semantics: an edit is committed when the engine returns success, and a failed edit changes nothing. Done when: an injected failure mid-apply leaves the session identical to before.
 
 - [ ] Author `EditCommand` variants (`RewriteParagraph`, `AddTextBox`, `MoveObject`, `ResizeObject`, `RotateObject`, `FlipObject`, `CropImage`, `ReplaceImage`, `Recolour`, `SetLineWidth`, `Reorder`, `Delete`) as plain data in `src/pdf/edit_command.h`. Done when: each variant serialises to and from a stable JSON form for `§15`.
 - [ ] Keep the undo journal as inverse patches with the structure-tree and resource changes they made, bounded by a configurable entry count and a byte budget. Done when: 200 edits of a 5 MB page undo and redo in reverse order within the budget.
+- [ ] Require a clean document before entry: if the tab holds unsaved changes (annotations, form values, bookmarks, metadata), the entry flow in `§14` asks the user to save them or discard them, and the session opens only from the file on disk afterward, so no earlier unsaved work can be silently lost on the later swap. Done when: `EditSession.OpensCleanFile` shows an unsaved annotation is either in the opened file or explicitly discarded, never dropped without a choice.
 - [ ] Open the session from a snapshot of the saved file, never the viewer's `DocumentActor` instance, and run all work on a job thread. Done when: ASan with `EditSession.IsolatedFromViewer` shows no shared mutable state and the viewer's `DisplayList` for the page is untouched until swap.
 - [ ] Make edits idempotent: applying a rewrite whose result equals the current text produces no patch. Done when: three identical rewrites leave the content stream byte-identical to one.
 - [ ] Reject an edit when the file's `/Encrypt` permissions forbid modification and report `PermissionDenied` naming the flag. Done when: a permission-restricted fixture refuses the edit and the file is unchanged.
@@ -166,12 +170,12 @@ This is the core of Edit PDF: the user changes a paragraph's text and it reflows
 
 1. Add `src/pdf/paragraph_rewrite.h/.cpp`: `rewrite(session, paragraph_id, new_text_runs)` producing a `ContentPatch`. Done when: `ParagraphRewrite.Basic` retypes one paragraph and `PageText` readback returns the new text with neighbours unchanged.
 2. Lay out the new text with the resolved fonts' advances, honouring the original box width, alignment, line pitch, indent, `Tc`, `Tw` and `Tz`, with word-wrap and a hyphenation-free break rule. Done when: shortened text keeps the left edge and the original first-baseline position within 0.05 pt.
-3. Place the patch at the original operator range so z-order is unchanged. Done when: an overlapping-shape fixture keeps the shape above the edited text.
+3. Place the patch at the original operator ranges so z-order is unchanged: write each new line into the original range of the line it replaces, in order, put surplus lines into the last range, and leave an emptied range as `q Q`, so objects painted between lines stay between them. Done when: the interleaved fixture (line 1, overlapping shape, line 2) keeps the shape's paint position relative to every line after a rewrite that adds a line and a rewrite that removes one, and a layout where this cannot be kept returns `NotEditable("interleaved content")` before any mutation.
 
 - [ ] Emit per run its own `Tf`, `Tc`, `Tw`, `Tz`, `Ts`, `Tr`, colour and clip, restoring the state before leaving the range, never inheriting the first run's state (pdfcraft #2517, #3215). Done when: a four-run fixture with distinct state per run rewrites with each run's state intact.
 - [ ] Preserve a run's formatting when text is added inside it and give inserted text the state of the run at the caret. Done when: typing inside a bold run yields bold glyphs with the same font resource.
 - [ ] When the new text needs more lines than the box, grow downward without overlapping the next object, and stop with `NoRoom` naming the blocking object when growth would overlap. Done when: a tight-layout fixture returns `NoRoom` and writes nothing.
-- [ ] Lay out right-to-left runs in logical order with correct visual order, and keep Arabic joining by mapping through the font's shaped glyph ids, refusing when the font lacks the required shaping glyphs. Done when: an Arabic paragraph round-trips in logical order through save and extraction (pdfcraft #1039, #3277).
+- [ ] Lay out right-to-left runs by shaping the logical string with DirectWrite for the resolved font, emitting the shaped glyph ids in visual order, and refusing before mutation when the font lacks a required joining form or the paragraph was marked ambiguous in `§2`. Done when: an Arabic paragraph round-trips in logical order through save and extraction (pdfcraft #1039, #3277).
 - [ ] Reflow within the original rotation frame so a rotated paragraph stays at its angle. Done when: the 90 degree and 33 degree fixtures keep their baseline angle within 0.01 degrees.
 - [ ] Prove idempotence: rewriting a paragraph with its own current text is a no-op and ten rewrites of the same edit equal one. Done when: the content streams of both runs are byte-identical.
 - [ ] Commit: `pdf: rewrite paragraphs with reflow, per-run state and stable z-order`
@@ -258,18 +262,18 @@ pdfcraft deleted images from an incremental update and left the old bytes in the
 
 1. Add `delete` to `EditSession` that removes the object's operator range including its enclosing `q ... Q` and `BDC ... EMC` when that wrapper holds only the object. Done when: `EditDelete.AtomicWrapper` leaves no empty `BDC`/`EMC` pair and the `q`/`Q` count balances.
 2. Add a resource reference counter that marks an XObject, font, ExtGState, pattern or shading unreferenced after the edit. Done when: deleting the only use of an image marks it for pruning.
-3. Make a save containing any delete or replace use the full-rewrite path of `PdfWriter` (`D04 T02 §2`) and write only reachable objects. Done when: the saved file contains no deleted object bytes (scan of the file).
+3. Make a save containing any delete, replace, text rewrite or destructive crop use the full-rewrite path of `PdfWriter` (`D04 T02 §2`) and write only reachable objects. Done when: the saved file contains no deleted object bytes (scan of the file).
 
 - [ ] Remove the deleted object from the structure tree (`/K` references, `/ParentTree`) and from `/OCProperties` use lists when the object was the only member of a group. Done when: the saved file's structure tree has no dangling `/MCID`.
 - [ ] Prune unreferenced objects including `/SMask` children and the thumbnail `/Thumb` for the page, and keep an XObject shared with another page. Done when: a shared-image fixture keeps the image after one page's use is deleted.
-- [ ] Choose between incremental and full rewrite per session: text-only, move, resize and recolour edits may save incrementally, while delete and replace always rewrite. Done when: the writer chosen for each edit kind is asserted in `EditSave.WriterChoice`.
+- [ ] Choose between incremental and full rewrite per session: only edits that remove nothing (move, resize, rotate, flip, recolour, line width, reversible crop, add text, add image, reorder) may save incrementally; a paragraph rewrite that removes or replaces existing text, delete, replace image and destructive `Apply crop` always rewrite in full, so no earlier revision keeps the old text or pixels. Done when: `EditSave.WriterChoice` asserts the writer for every edit kind, and `EditSave.NoPriorRevisionLeak` saves a text rewrite and a destructive crop and finds the old text and the discarded pixels absent from every byte of the saved file.
 - [ ] Run the save-integrity verification of `D06 T03 §5` on the written file: page count, outlines, `/PageLabels`, `/Info`, `/AcroForm`, signatures noted. Done when: a planted writer that drops `/PageLabels` aborts the save.
 - [ ] Warn before rewriting a signed document, since a rewrite invalidates its signatures, via the dialog in `§14`. Done when: a signed fixture returns `InvalidatesSignature` and writes nothing until confirmed.
 - [ ] Commit: `pdf: remove objects atomically with orphan pruning and full-rewrite save`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=EditDelete.*:EditSave.*` passes, and skipping the prune pass makes `EditDelete.NoOrphanBytes` fail on a raw-byte scan.
 
-## 10. Vector objects: select, move, recolour, line width and delete
+## 10. Vector objects: select, move, resize, rotate, flip, recolour, width and delete
 
 Path and shading objects are the third class Edit PDF exposes. They are edited by changing the colour operators, line width and `cm` that apply to a path, never by tracing and rebuilding. This section selects a path object as a unit, moves it, changes fill and stroke colour and line width, and deletes it, over `EditModel` and the removal rules in `§9`. It matches Acrobat's path editing and does not edit individual path points (recorded as out of scope).
 
@@ -279,13 +283,14 @@ Path and shading objects are the third class Edit PDF exposes. They are edited b
 
 **Build order:**
 
-1. Add `src/pdf/vector_edit.h/.cpp` with `move`, `recolour_fill`, `recolour_stroke`, `set_line_width` and `delete` over a path object's operator range. Done when: `VectorEdit.Basic` changes a fixture rectangle's fill and width and re-renders it with the new values.
+1. Add `src/pdf/vector_edit.h/.cpp` with `move`, `resize`, `rotate`, `flip_h`, `flip_v`, `recolour_fill`, `recolour_stroke`, `set_line_width` and `delete` over a path object's operator range. Done when: `VectorEdit.Basic` changes a fixture rectangle's fill and width and re-renders it with the new values.
 2. Recolour by rewriting the colour operator or inserting one at the object start inside its `q ... Q`, honouring the colour space (`DeviceGray`, `DeviceRGB`, `DeviceCMYK`, `ICCBased`, `Separation`). Done when: an ICCBased path recolours to a `DeviceRGB` value without altering the neighbouring path.
 3. Handle clip paths, patterns and shadings explicitly. Done when: a clip-only path is `NotEditable` with a reason and a shading fill can be moved and deleted but not recoloured.
 
 - [ ] Group the operators of a compound path (many `m` / `l` / `c` with one paint operator) as one object, and a multi-paint sequence as separate objects. Done when: `VectorEdit.Grouping` selects a compound path as one.
 - [ ] Preserve transparency (`/ca`, `/CA`, blend mode through `gs`) when recolouring. Done when: a 50 percent alpha path keeps 50 percent alpha after a recolour.
-- [ ] Apply line width in the object's own space so a scaled `cm` gives the displayed width the user chose. Done when: a width set to 2 pt displays 2 pt under a scaled `cm`.
+- [ ] Implement `resize`, `rotate`, `flip_h` and `flip_v` by composing the transform into the object's `cm` (or wrapping it in `q <matrix> cm ... Q`), leaving path coordinates and paint operators unchanged. Done when: `VectorEdit.Transform` rotates 33 degrees, flips and resizes a fixture path with the rendered box matching the expected transform within 0.05 pt and the path bytes unchanged.
+- [ ] Keep the displayed stroke width when a transform is applied: under a uniform scale `s` set `w` to the requested width divided by `s`; under a non-uniform scale or skew one `w` cannot give a uniform width, so a non-uniform resize of a stroked path, and `set_line_width` on an object under a non-uniform `cm`, first rewrite the path coordinates into page space and drop that `cm`. Done when: a 2 pt stroked rectangle resized non-uniformly shows 2 pt horizontal and vertical strokes within 0.05 pt.
 - [ ] Reject a recolour of a pattern or shading fill with a clear reason, never silently ignoring it. Done when: `VectorEdit.PatternFill` returns `NotEditable("pattern fill")`.
 - [ ] Commit: `pdf: edit vector objects with colour, width, move and delete`
 
@@ -394,6 +399,7 @@ Edits are unsaved work, so they must light the tab's dirty state, be committed b
 2. Connect `EditSession` to `SavePipeline` so a save runs the chosen writer from `§9` on a job thread, verifies, replaces atomically, then swaps the viewer onto a fresh `DocumentActor`. Done when: `AppTests.EditSave` shows the viewer re-rendering the saved file and the original untouched after a forced failure.
 3. Register the commands `edit.enter`, `edit.exit`, `edit.addText`, `edit.addImage`, `edit.replaceImage`, `edit.delete`, `edit.undo`, `edit.redo`, `edit.flipH`, `edit.flipV`, `edit.crop`, `edit.front`, `edit.back`, `edit.font`, `edit.exportImage` with the accelerator `Ctrl+Shift+E` for `edit.enter`. Done when: `Keyboard.Audit` and the command box find all fifteen.
 
+- [ ] On `edit.enter` with a dirty tab, show the SPEC 9.9 unsaved-changes dialog (`Save`, `Discard`, `Cancel`) before the session opens, and open the session from the resulting file on disk. Done when: `AppTests.EditEntryDirtyTab` adds an annotation, enters Edit PDF, chooses `Save`, edits text, saves, and finds both the annotation and the edit in the result; `Cancel` stays out of Edit PDF. Cheaper substitute: opening the session from the stale file and swapping over the unsaved work.
 - [ ] Snapshot the edit session into the crash recovery store of `D02 T01 §12` at each committed edit and restore it on relaunch. Done when: killing the app mid-session and relaunching offers the edits back. Cheaper substitute: snapshotting only on close.
 - [ ] Show the signed-document confirmation of `§9` and the unsaved-changes dialog when leaving Edit PDF with committed edits. Done when: `Keep editing`, `Discard` and `Save` behave as the SPEC 9.9 dialog defines.
 - [ ] Mark the tab dirty on the first committed edit and clean it only after a verified save, never on partial success. Done when: a forced writer failure leaves the tab dirty.
@@ -451,6 +457,6 @@ Editing breaks differently per producer: Word writes one `Tj` per word with `TJ`
 ## Verification
 
 - `recto-tests.exe --gtest_filter=EditModel.*:ParagraphModel.*:EditSession.*:EditFonts.*:ParagraphRewrite.*:AddText.*:ImageEdit.*:EditDelete.*:EditSave.*:VectorEdit.*:AppTests.Edit*:AppTests.Inline*:A11y.Edit*:A11y.Inline*:Cli.Edit*:EditMatrix.*` all pass (engine suites under ASan).
-- Retyping a paragraph in each producer fixture keeps neighbours byte-identical, keeps the original font for present glyphs, refuses an undrawable character with its code point, and a deleted image's bytes are absent from the saved file.
+- Retyping a paragraph in each producer fixture keeps neighbours byte-identical, keeps the original font for present glyphs, refuses an undrawable character with its code point, and a deleted image's bytes are absent from the saved file when nothing else uses it, and a shared image is kept while any other use remains.
 - The open viewer document is unchanged after any failed or cancelled edit, save or export.
 - `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` pass.
