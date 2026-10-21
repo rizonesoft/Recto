@@ -83,10 +83,13 @@ func = inspect.unwrap(getattr(func, "__func__", func))
 code = getattr(func, "__code__", None)
 if code is None or not inside(func) or not pathlib.Path(code.co_filename).resolve().is_relative_to(here):
     sys.exit(3)
-# Only now is loadTestsFromName safe: on a TestCase method it builds the case (refusing, for example, an abstract
-# class) and never calls the method.
-tests = list(unittest.defaultTestLoader.loadTestsFromName(name))
-if len(tests) != 1 or not isinstance(tests[0], cls) or tests[0]._testMethodName != method:
+# Build the case the way unittest's loader does for a TestCase method, without calling anything: cls(method) checks
+# the method exists and refuses, for example, an abstract class. (loadTestsFromName would call a classmethod.)
+try:
+    case = cls(method)
+except Exception:
+    sys.exit(3)
+if case._testMethodName != method:
     sys.exit(3)
 print(nonce)
 """
@@ -173,17 +176,38 @@ def cpp_code(text):
     return "\n".join(kept)
 
 
+_CPP_SOURCES = {}
+
+
+def cpp_sources(repo, sha):
+    """Every C++ file at the commit as compiled code (`cpp_code`), read in one `git cat-file --batch` and cached.
+    Every file is read, never a text-search shortlist: a line splice can break any identifier across lines."""
+    key = (str(repo), sha)
+    if key not in _CPP_SOURCES:
+        names = [name for name in git(repo, "ls-tree", "-r", "-z", "--name-only", sha).stdout.split("\0")
+                 if name and any(Path(name).match(pattern) for pattern in CPP_FILES)]
+        request = "".join(f"{sha}:{name}\n" for name in names).encode("utf-8")
+        out = subprocess.run(["git", "-C", str(repo), "cat-file", "--batch"], input=request, capture_output=True,
+                             check=False).stdout
+        sources, at = [], 0
+        for _ in names:
+            header_end = out.index(b"\n", at)
+            header = out[at:header_end].split()
+            at = header_end + 1
+            if len(header) == 3 and header[1] == b"blob":
+                size = int(header[2])
+                sources.append(cpp_code(out[at:at + size].decode("utf-8", errors="replace")))
+                at += size + 1
+        _CPP_SOURCES[key] = sources
+    return _CPP_SOURCES[key]
+
+
 def gtest_declared(repo, sha, test_id):
-    """True when TEST, TEST_F, TEST_P, TYPED_TEST or TYPED_TEST_P declares Suite.Case in C++ source at the commit (comments, literals and
-    `#if 0` branches excluded). Whether it compiles into a test is `--gtest-list`'s job."""
+    """True when TEST, TEST_F, TEST_P, TYPED_TEST or TYPED_TEST_P declares Suite.Case in C++ source at the commit
+    (comments, literals and `#if 0` branches excluded). Whether it compiles into a test is `--gtest-list`'s job."""
     suite, case = GTEST_ID.match(test_id).groups()
     declaration = re.compile(rf"\b(?:TEST(?:_F|_P)?|TYPED_TEST(?:_P)?)\s*\(\s*{suite}\s*,\s*{case}\s*\)")
-    listed = git(repo, "grep", "-l", "-w", "-e", case, sha, "--", *CPP_FILES, check=False).stdout
-    for line in listed.splitlines():
-        shown = git(repo, "show", f"{sha}:{line.split(':', 1)[1]}", check=False)
-        if shown.returncode == 0 and declaration.search(cpp_code(shown.stdout)):
-            return True
-    return False
+    return any(declaration.search(source) for source in cpp_sources(repo, sha))
 
 
 def read_gtest_list(path):

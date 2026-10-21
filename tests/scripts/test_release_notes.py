@@ -217,6 +217,7 @@ class HostileFixtureTest(unittest.TestCase):
             "const char* r = R\"x(TEST(Raw, Case))x\";\n"
             "TEST (Multi,\n      Line)\n{\n}\n"
             "TYPED_TEST(Typed, Case)\n{\n}\n"
+            "TEST(Spliced, Ca\\\nse)\n{\n}\n"
         )
         py = (
             "import abc\nimport unittest\n"
@@ -230,6 +231,10 @@ class HostileFixtureTest(unittest.TestCase):
             "class Child(Derived):\n    pass\n\n\n"
             "class ViaAlias(Aliased):\n    def test_alias(self):\n        pass\n"
         )
+        # A test whose body leaves a marker: verifying it must never run it.
+        cls.marker = pathlib.Path(cls._tmp.name) / "test-body-ran.txt"
+        py += ("\n\nclass WithClassmethod(unittest.TestCase):\n    @classmethod\n    def test_case(cls):\n"
+               f"        open({str(cls.marker)!r}, 'w').close()\n")
         # A TestCase that lives outside the repository, which a repository module re-exports or inherits from.
         outside = pathlib.Path(cls._tmp.name) / "outside"
         outside.mkdir()
@@ -269,6 +274,7 @@ class HostileFixtureTest(unittest.TestCase):
             "Inherited": "tests.scripts.test_sample.Child.test_real",
             "Alias": "tests.scripts.test_sample.ViaAlias.test_alias",
             "Noisy": "tests.scripts.test_noisy.NoisyTest.test_noisy",
+            "Classmethod": "tests.scripts.test_sample.WithClassmethod.test_case", "Spliced": "Spliced.Case",
         }
         cls.shas = {}
         for name, test_id in {**cls.fake, **cls.real}.items():
@@ -286,7 +292,7 @@ class HostileFixtureTest(unittest.TestCase):
             repo, {"src/ex.txt": "ex"}, "fix ex\n\nFixes-User: #3\nRegression-Test: Enabled.Case\n")
         _git(repo, "tag", "v2.1.0")
         # What the compiler builds: the macro, the continued comment and the #if (0) block are not tests.
-        cls.compiled = {"Enabled.Case", "Taken.Case", "Multi.Line", "Typed.Case"}
+        cls.compiled = {"Enabled.Case", "Taken.Case", "Multi.Line", "Typed.Case", "Spliced.Case"}
         # A module that never finishes importing must time out into a violation, not abort the report; the short
         # timeout holds for every report this class builds and is restored in tearDownClass.
         cls._timeout, release_notes.PROBE_TIMEOUT = release_notes.PROBE_TIMEOUT, 3
@@ -317,6 +323,9 @@ class HostileFixtureTest(unittest.TestCase):
     def test_a_vertical_tab_does_not_split_a_trailer(self):
         self.assertTrue(any("without a Regression-Test" in v for v in self.violations_for("VerticalTab")),
                         self.result["violations"])
+
+    def test_verifying_a_test_never_runs_it(self):
+        self.assertFalse(self.marker.exists(), "the probe ran a test body")
 
     def test_an_overlong_issue_number_is_a_violation(self):
         self.assertTrue(any("names no issue number" in v for v in self.violations_for("HugeIssue")),
