@@ -275,12 +275,19 @@ class HostileFixtureTest(unittest.TestCase):
         outside = pathlib.Path(cls._tmp.name) / "outside"
         outside.mkdir()
         (outside / "outside_mod.py").write_text(
-            "import unittest\n\n\nclass OutsideTest(unittest.TestCase):\n    def test_outside(self):\n        pass\n",
-            encoding="utf-8")
+            "import functools\nimport unittest\n\n\nclass OutsideTest(unittest.TestCase):\n    def test_outside(self):\n"
+            "        pass\n\n\ndef replace(fn):\n    @functools.wraps(fn)\n    def wrapper(self):\n        pass\n"
+            "    return wrapper\n", encoding="utf-8")
         reexport = (f"import sys\nimport unittest\nsys.path.append({str(outside)!r})\n"
                     "from outside_mod import OutsideTest as ReExported\n\n\n"
                     "class Local(ReExported):\n    pass\n\n\n"
-                    "class Assigned(unittest.TestCase):\n    test_assigned = ReExported.test_outside\n")
+                    "class Assigned(unittest.TestCase):\n    test_assigned = ReExported.test_outside\n\n\n"
+                    "from outside_mod import replace\n\n\n"
+                    "class Decorated(unittest.TestCase):\n    @replace\n    def test_regression(self):\n"
+                    "        raise AssertionError('the regression body must run')\n\n\n"
+                    "import functools\n\n\ndef local_wrap(fn):\n    @functools.wraps(fn)\n    def wrapper(self):\n"
+                    "        return fn(self)\n    return wrapper\n\n\n"
+                    "class WrapsOutside(unittest.TestCase):\n    test_wrapped = local_wrap(ReExported.test_outside)\n")
         noisy = ("import os\nimport unittest\nos.write(1, bytes([255, 129]) + b'\\n')\n\n\n"
                  "class NoisyTest(unittest.TestCase):\n    def test_noisy(self):\n        pass\n")
         _commit(repo, {"tests/scripts/test_sample.py": py,
@@ -300,6 +307,8 @@ class HostileFixtureTest(unittest.TestCase):
             "ReExported": "tests.scripts.test_reexport.ReExported.test_outside",
             "InheritedFromOutside": "tests.scripts.test_reexport.Local.test_outside",
             "AssignedFromOutside": "tests.scripts.test_reexport.Assigned.test_assigned",
+            "DecoratedFromOutside": "tests.scripts.test_reexport.Decorated.test_regression",
+            "LocalWrapperOfOutside": "tests.scripts.test_reexport.WrapsOutside.test_wrapped",
             "FakeNew": "tests.scripts.test_sample.FakeNew.test_case",
             # A classmethod takes unittest's callable path, so it is refused (and never run).
             "Classmethod": "tests.scripts.test_sample.WithClassmethod.test_case",

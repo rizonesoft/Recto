@@ -81,12 +81,16 @@ if not (inside(mod) and inside(cls) and owner is not None and inside(owner)):
 # calls it, so it is refused here without being run.
 if not isinstance(vars(owner)[method], types.FunctionType):
     sys.exit(3)
-# The method body too: a repository class can assign a function defined elsewhere (test_x = Other.test_y).
-func = vars(owner)[method]
-func = inspect.unwrap(getattr(func, "__func__", func))
-code = getattr(func, "__code__", None)
-if code is None or not inside(func) or not pathlib.Path(code.co_filename).resolve().is_relative_to(here):
-    sys.exit(3)
+# The method body too, layer by layer from the one unittest runs: a repository class can assign a function defined
+# elsewhere (test_x = Other.test_y), or wrap its test in a decorator from outside the tree that never calls it.
+layer, seen = vars(owner)[method], set()
+while layer is not None and id(layer) not in seen:
+    seen.add(id(layer))
+    code = getattr(layer, "__code__", None)
+    if (not isinstance(layer, types.FunctionType) or code is None or not inside(layer)
+            or not pathlib.Path(code.co_filename).resolve().is_relative_to(here)):
+        sys.exit(3)
+    layer = getattr(layer, "__wrapped__", None)
 # Build the case the way unittest's loader does for a plain TestCase method, without calling anything: cls(method)
 # checks the method exists and refuses, for example, an abstract class.
 try:

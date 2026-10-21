@@ -148,3 +148,51 @@ OVERALL: needs-attention
 ## Fixes after round 3
 
 - Finding 1 (P1): the instance lookup must return the verified method itself, bound to this case (`types.MethodType`, `__self__ is case`, `__func__ is` the class-dictionary function already checked for provenance); a built-in bound method, `None` or any other replacement set on the instance is refused (`ShadowedByBuiltin` fixture). Mutation: back to the plain-function check -> `HostileFixtureTest` fails. Tests: `Ran 24 tests ... OK`.
+
+## Round 4: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T13:19:53Z
+- Effort: medium
+- Lines: 35
+- Digest: bb505cb3b22b4bd7
+
+## adversarial: needs-attention
+
+1. **P1, `scripts/release-notes.py:89`: External decorators bypass test-body provenance.** `inspect.unwrap()` discards the callable wrapper before checking its source. The later bound-method check accepts that wrapper, even when its implementation lives outside the fix commit and never calls the regression body.
+
+   Reproduce with an external decorator:
+   ```python
+   def replace(fn):
+       @functools.wraps(fn)
+       def wrapper(self):
+           pass
+       return wrapper
+   ```
+   Apply it to a repository `TestCase.test_regression` whose body raises `AssertionError`. The candidate’s actual probe printed its success nonce; unittest reported `1 run, 0 failures, 0 errors`, without executing the regression body. This was reproduced entirely in memory.
+
+   Check the actual callable’s provenance before unwrapping, and validate each wrapper layer.
+
+## consistency: approve
+
+## integration: approve
+
+## source-defect: needs-attention
+
+Finding 1 also applies at `scripts/release-notes.py:108` (**P1**): unittest executes the bound wrapper, not the function returned by `inspect.unwrap()`. The provenance check and execution target differ.
+
+## design: advisory
+
+Not applicable.
+
+## record: needs-attention
+
+Finding 1 contradicts the checked verification requirement at `todo/07-release/TODO-03-listening-to-users.md:153` (**P1**): an external replacement callable still counts as the fix commit’s regression test.
+
+Four read-only parser/documentation tests passed. The full 24-test claim was not independently verified because that suite creates files and worktrees. No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 4
+
+- Finding 1 (P1): provenance is checked layer by layer from the function unittest actually runs: the class-dictionary function, then each `__wrapped__` inside it, must each be a plain function whose code is in the fix commit's tree. An outside decorator wrapping a repository test (`DecoratedFromOutside`) and a repository decorator wrapping an outside test (`LocalWrapperOfOutside`) are both refused. Mutations: unwrap before checking -> `FAILED (failures=1)`; stop after the outer layer -> `FAILED (failures=1)`. Tests: `Ran 24 tests ... OK`.
