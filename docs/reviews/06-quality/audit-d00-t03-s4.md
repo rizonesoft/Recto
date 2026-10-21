@@ -783,3 +783,46 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `Ran 49 tests`, `OK` (`test_aes_256_perms_block_is_exact` fails against `9a2ad1e` for exactly bytes 4 to 7); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P1): the decrypted `/Perms` block is compared whole over the twelve bytes Algorithm 10 defines (ISO 32000-2 7.6.4.4.9): `/P` as 64-bit little-endian with the upper 32 bits all ones, `T` for `/EncryptMetadata true`, then `adb`; only bytes 12 to 15 are free. The test regenerates the fixture with each defined byte changed in turn and re-encrypted with the real file key, and every one refuses.
+
+## Round 18: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T23:08:36Z
+- Effort: medium
+- Lines: 28
+- Digest: 0beef25b98544fc8
+
+### adversarial: needs-attention
+
+1. **P1: AES-256 validation accepts an incompatible PDF version declaration.** `scripts/build-corpus.py:2731` accepts either header without tying it to the encryption revision. Reproduce entirely in memory: replace `%PDF-2.0` with `%PDF-1.7` in `render/encrypted-aes-256.pdf`, preserving byte length. `validate_encrypted_pdf_structure()` accepts it. Supply those bytes through mocked generator output and file reads, with matching regenerated provenance: **`check_corpus()` returns `(True, [])`**. The catalog declares neither `/Version` nor `/Extensions`. A generator regression can therefore pass the checkpoint with an incorrectly declared AES-256 fixture.
+
+### consistency: approve
+
+No separate finding.
+
+### integration: advisory
+
+Finding 1 weakens the fixture gate supporting `tests/recto-tests/pdf_crypto_tests.cpp:167` and `tests/recto-tests/pdf_document_tests.cpp:142`. No defect in the committed fixture or downstream engine was established.
+
+### source-defect: needs-attention
+
+Finding **1 (P1)**: revision-6 encryption requires PDF 2.0 or PDF 1.7 with the appropriate extension declaration. Plain PDF 1.7 is insufficient. [QPDF’s documented minimum is PDF 1.7 extension level 8](https://qpdf.readthedocs.io/en/latest/cli.html#encryption).
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: advisory
+
+At `cbf4162`, independently reran `python -B scripts/build-corpus.py --check`: exit **0**, **39 fixtures verified**.
+
+`python -B -m unittest tests.scripts.test_build_corpus` ran **49 tests**: **46 passed**, including the `/Perms` regression; **3 errored because the read-only environment had no usable temporary directory**. The complete suite could not be verified here. No repository files changed; working tree remains clean.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 18
+
+`python -m unittest tests.scripts.test_build_corpus` -> `OK` (`test_each_encrypted_fixture_declares_the_version_its_revision_needs` fails against `cbf4162`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`. Round 18's record lens could not run three filesystem tests in its read-only sandbox; they pass here.
+
+- Finding 1 (P1): `ENCRYPTED_REVISIONS` now also binds each encrypted path to the header its handler needs: PDF 1.7 for RC4 128-bit and AES-128, PDF 2.0 for revision 6 (the catalogs declare no 1.7 extension that could stand in). A same-length `%PDF-1.7` on the AES-256 fixture, or `%PDF-2.0` on the RC4 one, refuses.

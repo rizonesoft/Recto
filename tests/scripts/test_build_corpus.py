@@ -664,6 +664,13 @@ class BuildCorpusTests(unittest.TestCase):
             with self.subTest(byte=index), self.assertRaisesRegex(ValueError, "/Perms"):
                 self.mod.validate_encrypted_pdf_structure(name, data)
 
+    def test_each_encrypted_fixture_declares_the_version_its_revision_needs(self) -> None:
+        files = self.mod.expected_corpus_files()
+        for name, old, new in (("render/encrypted-aes-256.pdf", b"%PDF-2.0", b"%PDF-1.7"),
+                               ("render/encrypted-rc4-128.pdf", b"%PDF-1.7", b"%PDF-2.0")):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "header"):
+                self.mod.validate_encrypted_pdf_structure(name, files[name].replace(old, new, 1))
+
     def test_inflation_stops_just_past_its_limit(self) -> None:
         bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))
         total, kept = self.mod.inflate_bounded(bomb, 1024, keep=False)

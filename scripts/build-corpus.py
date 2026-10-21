@@ -2703,11 +2703,13 @@ ONE_PAGE_FORMS = {
         b"/Resources": b"<< /Font << /F1 5 0 R >> >>", b"/Contents": b"4 0 R"},
     5: {b"/Type": b"/Font", b"/Subtype": b"/Type1", b"/BaseFont": b"/Helvetica", b"/Encoding": b"/WinAnsiEncoding"},
 }
-# The encryption each encrypted fixture's path promises: (/V, /R), and the mode its /Info title names.
+# The encryption each encrypted fixture's path promises: (/V, /R), the mode its /Info title names, and the header
+# that version of the handler needs (ISO 32000-1 7.6.1: RC4 128-bit and AES-128 are PDF 1.7; revision 6, AES-256, is
+# PDF 2.0, which the catalog would otherwise have to declare as a 1.7 extension, and these catalogs declare none).
 ENCRYPTED_REVISIONS = {
-    "render/encrypted-rc4-128.pdf": ((2, 3), "RC4-128"),
-    "render/encrypted-aes-128.pdf": ((4, 4), "AES-128"),
-    "render/encrypted-aes-256.pdf": ((5, 6), "AES-256"),
+    "render/encrypted-rc4-128.pdf": ((2, 3), "RC4-128", b"%PDF-1.7\n"),
+    "render/encrypted-aes-128.pdf": ((4, 4), "AES-128", b"%PDF-1.7\n"),
+    "render/encrypted-aes-256.pdf": ((5, 6), "AES-256", b"%PDF-2.0\n"),
 }
 
 
@@ -2803,6 +2805,8 @@ def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
     promised = ENCRYPTED_REVISIONS.get(rel_path)
     if promised is None or promised[0] != (v_val, r_val):
         raise ValueError(f"{rel_path}: (/V {v_val}, /R {r_val}) is not the revision this fixture's path promises")
+    if not data.startswith(promised[2]):
+        raise ValueError(f"{rel_path}: /R {r_val} needs the {promised[2].strip().decode()} header")
     keys, key_bits, expected_cfm, cf_length = forms[(v_val, r_val)]
     if set(enc) != keys:
         raise ValueError(f"{rel_path}: the /V {v_val} /Encrypt dictionary must hold exactly {sorted(k.decode() for k in keys)}")
