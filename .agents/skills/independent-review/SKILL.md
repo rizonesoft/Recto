@@ -10,10 +10,10 @@ Your own review is not enough for a nontrivial change: a different model reviews
 | Work written by | Reviewer | Fallback |
 | --- | --- | --- |
 | Claude | GPT-6 Astra | Gemini 4 |
-| Codex | Gemini 4 | Sonnet 5.5 |
+| Codex | Sonnet 5.5 | Gemini 4 |
 | Gemini | GPT-6 Astra | Sonnet 5.5 |
 
-A reviewer is never of the writer's own model family, and a route has one fallback at most: the pin refuses anything else.
+A reviewer is never of the writer's own model family, and a route has one fallback at most: the pin refuses anything else. Gemini is only ever a fallback, at medium effort.
 
 ## Steps
 

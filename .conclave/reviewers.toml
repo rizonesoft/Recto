@@ -19,11 +19,12 @@ cli = "codex"
 model = "gpt-6-astra"
 effort = "medium"
 
-# Gemini 4 through the Antigravity CLI in plan mode and its sandbox. The
-# effort is part of the model name (gemini-4-argon-low, -medium or -high).
+# Gemini 4 through the Antigravity CLI in plan mode and its sandbox, at medium
+# effort; it is only ever a fallback. The effort is part of the model name
+# (gemini-4-argon-low, -medium or -high).
 [reviewers.gemini]
 cli = "agy"
-model = "gemini-4-argon-high"
+model = "gemini-4-argon-medium"
 
 # Sonnet 5.5 through Claude Code in plan mode.
 [reviewers.sonnet]
@@ -31,9 +32,10 @@ cli = "claude"
 model = "claude-sonnet-5-5"
 effort = "high"
 
-# Each writer is reviewed by the other two families: Astra first wherever it
-# may review, and the third family as the one fallback.
+# Each writer is reviewed by the other two families. Gemini is only a fallback
+# (owner decision 2026-10-21): Astra first wherever it may review, otherwise
+# Sonnet, and Gemini second.
 [routes]
 claude = ["astra", "gemini"]
-codex = ["gemini", "sonnet"]
+codex = ["sonnet", "gemini"]
 gemini = ["astra", "sonnet"]
