@@ -44,12 +44,12 @@ def _init(tmp):
     return repo
 
 
-def _gtest_list(tmp, suites):
-    """A `--gtest_list_tests` file listing {suite: [cases]}."""
-    path = pathlib.Path(tmp.name) / "gtest-list.txt"
-    path.write_text("".join(f"{suite}.\n" + "".join(f"  {case}\n" for case in cases)
-                            for suite, cases in suites.items()), encoding="utf-8")
-    return path
+def _note(repo, sha, suites):
+    """Record a `--gtest_list_tests` list of {suite: [cases]} as the commit's CI note, as the build workflow does."""
+    listing = "Running main() from gtest_main.cc\n" + "".join(
+        f"{suite}.\n" + "".join(f"  {case}\n" for case in cases) for suite, cases in suites.items())
+    subprocess.run(["git", "-C", str(repo), "notes", "--ref=gtest-list", "add", "-f", "-m", listing, sha],
+                   check=True, capture_output=True, text=True)
 
 
 def _run_main(repo, *args):
@@ -90,8 +90,10 @@ class ReleaseNotesTest(unittest.TestCase):
         _commit(repo, {"README.md": "unrelated\n"}, "repo: unrelated change")
         _git(repo, "tag", "v1.1.0")
         _commit(repo, {"tests/recto-tests/late_tests.cpp": "TEST(PdfLate, Case)\n{\n}\n"}, "tests: late test")
-        cls.listed = {"PdfXref.ParsesTable", "PdfXref.EmptyTable", "PdfLate.Case"}
-        cls.list_file = _gtest_list(cls._tmp, {"PdfXref": ["ParsesTable", "EmptyTable"], "PdfLate": ["Case"]})
+        # What CI recorded for each fix commit's build: PdfLate.Case was not yet a test when late_fix was built.
+        xref = {"PdfXref": ["ParsesTable", "EmptyTable"]}
+        for sha in (cls.gtest_fix, cls.python_fix, cls.late_fix, cls.second_fix):
+            _note(repo, sha, xref)
 
     @classmethod
     def tearDownClass(cls):
@@ -101,7 +103,6 @@ class ReleaseNotesTest(unittest.TestCase):
         return _run_main(self.repo, *args)
 
     def report(self, **kwargs):
-        kwargs.setdefault("gtest_list", self.listed)
         return release_notes.report(self.repo, "v1.0.0", "v1.1.0", **kwargs)
 
     def test_every_fixes_user_commit_is_an_entry(self):
@@ -120,24 +121,27 @@ class ReleaseNotesTest(unittest.TestCase):
         violations = self.report()["violations"]
         self.assertEqual(len(violations), 2, violations)
         self.assertTrue(any(self.docs_fix[:7] in v and "without a Regression-Test" in v for v in violations))
-        self.assertTrue(any(self.late_fix[:7] in v and "PdfLate.Case is not declared" in v for v in violations))
+        self.assertTrue(any(self.late_fix[:7] in v and "PdfLate.Case is not in" in v for v in violations))
         for sha in (self.gtest_fix, self.python_fix, self.second_fix):
             self.assertFalse(any(sha[:7] in v for v in violations), sha)
 
-    def test_gtest_ids_need_the_release_build_list(self):
-        unverified = self.report(gtest_list=None)["violations"]
-        for sha in (self.gtest_fix, self.second_fix):
-            self.assertTrue(any(sha[:7] in v and "unverified" in v for v in unverified), unverified)
-        missing = self.report(gtest_list={"PdfXref.ParsesTable"})["violations"]
-        self.assertTrue(any(self.gtest_fix[:7] in v and "not in the release build's test list" in v for v in missing))
+    def test_gtest_ids_need_the_fix_commits_ci_list(self):
+        subprocess.run(["git", "-C", str(self.repo), "notes", "--ref=gtest-list", "remove", self.gtest_fix],
+                       check=True, capture_output=True)
+        try:
+            violations = self.report()["violations"]
+        finally:
+            _note(self.repo, self.gtest_fix, {"PdfXref": ["ParsesTable", "EmptyTable"]})
+        self.assertTrue(any(self.gtest_fix[:7] in v and "has no CI test list" in v for v in violations), violations)
+        # The note on the next commit does not stand in for the fix commit's own.
+        self.assertFalse(any(self.second_fix[:7] in v for v in violations), violations)
 
     def test_allow_no_test_excuses_one_commit_and_is_reported(self):
         result = self.report(allowances={self.docs_fix[:10]: "documentation only"})
         self.assertEqual(len(result["violations"]), 1, result["violations"])
         docs = next(fix for fix in result["fixes"] if fix["sha"] == self.docs_fix)
         self.assertEqual(docs["allowed_no_test"], "documentation only")
-        code, text = self.run_main("v1.0.0", "v1.1.0", "--gtest-list", str(self.list_file),
-                                   "--allow-no-test", f"{self.docs_fix[:10]}=documentation only")
+        code, text = self.run_main("v1.0.0", "v1.1.0", "--allow-no-test", f"{self.docs_fix[:10]}=documentation only")
         self.assertIn("no test; excused: documentation only", text)
         self.assertEqual(code, 1)  # the late test is still a violation
 
@@ -151,23 +155,20 @@ class ReleaseNotesTest(unittest.TestCase):
         self.assertEqual(groups, {12: "crash", 14: "bug", 15: "unlabelled", 16: "data-loss", 20: "unlabelled"})
 
     def test_text_and_json_output_and_exit_codes(self):
-        code, text = self.run_main("v1.0.0", "v1.1.0", "--gtest-list", str(self.list_file))
+        code, text = self.run_main("v1.0.0", "v1.1.0")
         self.assertEqual(code, 1)
         self.assertIn(f"  #12: Fixed in v1.1.0 ({self.gtest_fix[:7]}, {self.second_fix[:7]}, ", text)
         self.assertIn("Violations:", text)
-        code, text = self.run_main("v1.0.0", "v1.1.0", "--gtest-list", str(self.list_file), "--json")
+        code, text = self.run_main("v1.0.0", "v1.1.0", "--json")
         self.assertEqual(json.loads(text)["to"], "v1.1.0")
         code, text = self.run_main("v1.1.0", "HEAD")
         self.assertEqual(code, 0)
         self.assertIn("none", text)
 
     def test_unreadable_input_exits_2(self):
-        bad_list = pathlib.Path(self._tmp.name) / "not-a-list.txt"
-        bad_list.write_text("Note: Google Test filter = *\n", encoding="utf-8")
         self.assertEqual(self.run_main("v0.9.0", "v1.1.0")[0], 2)
         self.assertEqual(self.run_main("v1.0.0", "v1.1.0", "--allow-no-test", "nosha")[0], 2)
         self.assertEqual(self.run_main("v1.0.0", "v1.1.0", "--issues", str(self.repo / "missing.json"))[0], 2)
-        self.assertEqual(self.run_main("v1.0.0", "v1.1.0", "--gtest-list", str(bad_list))[0], 2)
         bad_issues = pathlib.Path(self._tmp.name) / "bad-issues.json"
         for labels in ("1", "{}", "0", "false", '""'):
             bad_issues.write_text(f'[{{"number": 12, "labels": {labels}}}]', encoding="utf-8")
@@ -185,17 +186,19 @@ class ReleaseNotesTest(unittest.TestCase):
 
 class GtestListTest(unittest.TestCase):
     def test_reads_plain_typed_and_parameterised_entries(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        path = pathlib.Path(tmp.name) / "list.txt"
-        path.write_text("Running main() from C:/Program Files/gtest/src/gtest_main.cc\nPdfXref.\n  ParsesTable\n"
-                        "  EmptyTable\nInstance/PdfRender.\n  Draws/0  # GetParam() = 1\n  Draws/1  # GetParam() = 2\n"
-                        "PdfTyped/0.  # TypeParam = int\n  Holds\nPdfTyped/1.  # TypeParam = long\n  Holds\n"
-                        "Ints/PdfTypedP/0.  # TypeParam = int\n  Grows\nNamed/int.  # TypeParam = int\n  Works\n"
-                        "Ints/NamedP/int.  # TypeParam = int\n  Grows\n", encoding="utf-8")
-        self.assertEqual(release_notes.read_gtest_list(path),
+        text = ("Running main() from C:/Program Files/gtest/src/gtest_main.cc\nPdfXref.\n  ParsesTable\n"
+                "  EmptyTable\nInstance/PdfRender.\n  Draws/0  # GetParam() = 1\n  Draws/1  # GetParam() = 2\n"
+                "PdfTyped/0.  # TypeParam = int\n  Holds\nPdfTyped/1.  # TypeParam = long\n  Holds\n"
+                "Ints/PdfTypedP/0.  # TypeParam = int\n  Grows\nNamed/int.  # TypeParam = int\n  Works\n"
+                "Ints/NamedP/int.  # TypeParam = int\n  Grows\n")
+        self.assertEqual(release_notes.parse_gtest_list(text, "fixture"),
                          {"PdfXref.ParsesTable", "PdfXref.EmptyTable", "PdfRender.Draws", "PdfTyped.Holds",
                           "PdfTypedP.Grows", "Named.Works", "NamedP.Grows"})
+
+    def test_refuses_what_is_not_a_test_list(self):
+        for text in ("Note: Google Test filter = *\n", "  Orphan\n", ""):
+            with self.subTest(text=text), self.assertRaises(release_notes.Unreadable):
+                release_notes.parse_gtest_list(text, "fixture")
 
 
 class HostileFixtureTest(unittest.TestCase):
@@ -205,32 +208,6 @@ class HostileFixtureTest(unittest.TestCase):
     def setUpClass(cls):
         cls._tmp = tempfile.TemporaryDirectory()
         repo = cls.repo = _init(cls._tmp)
-        cpp = (
-            "// TEST(Commented, Case)\n"
-            "/* TEST(Block, Case) */\n"
-            "#if 0\nTEST(Disabled, Case)\n{\n}\n#else\nTEST(Enabled, Case)\n{\n}\n#endif\n"
-            "#if 1\nTEST(Taken, Case)\n{\n}\n#else\nTEST(NotTaken, Case)\n{\n}\n#endif\n"
-            "#if (0)\nTEST(Parenthesised, Case)\n{\n}\n#endif\n"
-            "#define UNUSED TEST(Macro, Case) {}\n"
-            "// a comment that continues \\\nTEST(Continued, Case)\n{\n}\n"
-            "const char* s = \"TEST(Quoted, Case)\";\n"
-            "const char* r = R\"x(TEST(Raw, Case))x\";\n"
-            "TEST (Multi,\n      Line)\n{\n}\n"
-            "TYPED_TEST(Typed, Case)\n{\n}\n"
-            "TEST(Spliced, Ca\\\nse)\n{\n}\n"
-            "constexpr wchar_t c = L'\"'; TEST(Prefixed, Char) {}\n"
-            "constexpr int n = 1'000; TEST(Separated, Num) {}\n"
-            "constexpr double d = .1'0; TEST(Fraction, Case) {}\n"
-            "const char* q = R\"(abc)\\\n\"; TEST(InRaw, Case) {} //\n)\"; TEST(AfterRaw, Case) {}\n"
-            "int z = 1\\\n'000; TEST(SplicedNumber, Case) {}\n"
-            "// spliced comment \\\nTEST(InComment, Case) {}\n"
-            "/\\\n* opener split by a splice\nTEST(InSplitBlock, Case) {}\n*/\n"
-            "/* closer split by a splice *\\\n/\nTEST(AfterSplitClose, Case) {}\n"
-            # A splice before a raw string's quote, and a splice after an escaped backslash in a string: both
-            # keep the TEST inside the literal.
-            "const char* p = R\\\n\"(a\" TEST(SplitRawPrefix, Case) {} \")\";\n"
-            "const char* e = \"abc\\\\\\\nn TEST(SplitEscape, Case) {}\";\n"
-        )
         py = (
             "import abc\nimport unittest\n"
             "from unittest import TestCase as Aliased\n\n\n"
@@ -262,54 +239,13 @@ class HostileFixtureTest(unittest.TestCase):
                     "class Assigned(unittest.TestCase):\n    test_assigned = ReExported.test_outside\n")
         noisy = ("import os\nimport unittest\nos.write(1, bytes([255, 129]) + b'\\n')\n\n\n"
                  "class NoisyTest(unittest.TestCase):\n    def test_noisy(self):\n        pass\n")
-        _commit(repo, {"tests/recto-tests/hostile_tests.cpp": cpp, "tests/scripts/test_sample.py": py,
+        _commit(repo, {"tests/scripts/test_sample.py": py,
                        "tests/scripts/test_exits.py": "raise SystemExit(0)\n",
                        "tests/scripts/test_sleeps.py": "import time\ntime.sleep(60)\n",
-                       "tests/scripts/test_reexport.py": reexport, "tests/scripts/test_noisy.py": noisy,
-                       # A byte-order mark before `#if 0`, and lone-CR line endings.
-                       "tests/recto-tests/bom_tests.cpp":
-                           "\ufeff#if 0\nTEST(BomDisabled, Case) {}\n#endif\nTEST(BomEnabled, Case) {}\n",
-                       "tests/recto-tests/cr_tests.cpp": "// header comment\rTEST(CrOnly, Case) {}\r",
-                       # The digraph spelling of #if 0 disables its block too.
-                       "tests/recto-tests/digraph_tests.cpp":
-                           "%:if 0\nTEST(DigraphHidden, Case) {}\n%:endif\nTEST(DigraphShown, Case) {}\n",
-                       # After a certainly-taken #if 1, an unknown #elif and the #else are both dead;
-                       # after an unknown #if, the #else may be compiled.
-                       "tests/recto-tests/elif_tests.cpp":
-                           "#if 1\nint a;\n#elif defined(X)\nTEST(ElifDead, Case) {}\n#else\n"
-                           "TEST(ElseDead, Case) {}\n#endif\n"
-                           "#if defined(Y)\nint b;\n#else\nTEST(ElseMaybe, Case) {}\n#endif\n",
-                       # A TEST passed as a macro argument and a TEST produced by a wrapper macro are not plain
-                       # declarations; a TEST inside a namespace is.
-                       "tests/recto-tests/macro_tests.cpp":
-                           "#define IGNORE(x)\nIGNORE(TEST(AsArgument, Case) {})\n"
-                           "#define DECLARE_TEST TEST(ByWrapper, Case) {}\nDECLARE_TEST\n"
-                           "namespace recto {\nTEST(InNamespace, Case) {}\n}\n",
-                       # A directive after a multi-line block comment still starts its line; and unbalanced
-                       # parentheses across #if/#else alternatives do not hide a later plain TEST.
-                       "tests/recto-tests/layout_tests.cpp":
-                           "int sentinel; /* comment\n*/ #if 0\n;\nTEST(AfterBlockComment, Case) {}\n#endif\n"
-                           "void use(int, int);\nvoid f() {\n#if defined(_WIN32)\n    use(1,\n#else\n"
-                           "    use(2,\n#endif\n    3);\n}\nTEST(AfterAlternatives, Case) {}\n"
-                           # Braces inside a discarded macro argument do not make it a declaration.
-                           "#define IGNORE_ALL(...)\n"
-                           "IGNORE_ALL(namespace hidden { TEST(BracedArgument, Case) {} })\n",
-                       # An inactive #else must not reset the depth the active #if branch reached.
-                       "tests/recto-tests/depth_tests.cpp":
-                           "#if 1\nint sentinel = (\n#else\n#endif\n0);\n#define IGNORE_GHOST(...)\n"
-                           "IGNORE_GHOST(namespace hidden { TEST(Ghost, Case) {} });\nTEST(AfterDepth, Case) {}\n"},
+                       "tests/scripts/test_reexport.py": reexport, "tests/scripts/test_noisy.py": noisy},
                 "initial")
         _git(repo, "tag", "v2.0.0")
         cls.fake = {
-            "Commented": "Commented.Case", "Block": "Block.Case", "Disabled": "Disabled.Case",
-            "NotTaken": "NotTaken.Case", "Parenthesised": "Parenthesised.Case", "Macro": "Macro.Case",
-            "Continued": "Continued.Case", "Quoted": "Quoted.Case", "Raw": "Raw.Case",
-            "InRaw": "InRaw.Case", "InComment": "InComment.Case", "InSplitBlock": "InSplitBlock.Case",
-            "SplitRawPrefix": "SplitRawPrefix.Case", "SplitEscape": "SplitEscape.Case",
-            "BomDisabled": "BomDisabled.Case", "DigraphHidden": "DigraphHidden.Case",
-            "ElifDead": "ElifDead.Case", "ElseDead": "ElseDead.Case",
-            "AsArgument": "AsArgument.Case", "ByWrapper": "ByWrapper.Case",
-            "AfterBlockComment": "AfterBlockComment.Case", "BracedArgument": "BracedArgument.Case", "Ghost": "Ghost.Case",
             "Pretend": "tests.scripts.test_sample.Pretend.test_fake",
             "Ordinary": "tests.scripts.test_sample.Ordinary.test_missing",
             "Save": "tests.scripts.test_sample.Ordinary.save",
@@ -324,17 +260,11 @@ class HostileFixtureTest(unittest.TestCase):
             "Stdlib": "unittest.case.TestCase.test_missing",
         }
         cls.real = {
-            "Enabled": "Enabled.Case", "Taken": "Taken.Case", "Multi": "Multi.Line", "Typed": "Typed.Case",
             "Derived": "tests.scripts.test_sample.Derived.test_real",
             "Inherited": "tests.scripts.test_sample.Child.test_real",
             "Alias": "tests.scripts.test_sample.ViaAlias.test_alias",
             "Noisy": "tests.scripts.test_noisy.NoisyTest.test_noisy",
-            "Classmethod": "tests.scripts.test_sample.WithClassmethod.test_case", "Spliced": "Spliced.Case",
-            "Prefixed": "Prefixed.Char", "Separated": "Separated.Num", "Fraction": "Fraction.Case",
-            "AfterRaw": "AfterRaw.Case", "SplicedNumber": "SplicedNumber.Case",
-            "AfterSplitClose": "AfterSplitClose.Case", "BomEnabled": "BomEnabled.Case", "CrOnly": "CrOnly.Case",
-            "DigraphShown": "DigraphShown.Case", "ElseMaybe": "ElseMaybe.Case", "InNamespace": "InNamespace.Case",
-            "AfterAlternatives": "AfterAlternatives.Case", "AfterDepth": "AfterDepth.Case",
+            "Classmethod": "tests.scripts.test_sample.WithClassmethod.test_case",
         }
         cls.shas = {}
         for name, test_id in {**cls.fake, **cls.real}.items():
@@ -342,30 +272,19 @@ class HostileFixtureTest(unittest.TestCase):
                                                                      f"Regression-Test: {test_id}\n")
         # One physical trailer line holding a vertical tab: git reads it as one Fixes-User value.
         cls.shas["VerticalTab"] = _commit(
-            repo, {"src/vt.txt": "vt"}, "fix vt\n\nFixes-User: #2\x0bRegression-Test: Enabled.Case\n")
+            repo, {"src/vt.txt": "vt"}, "fix vt\n\nFixes-User: #2\x0bRegression-Test: tests.scripts.test_sample.Derived.test_real\n")
         # An issue "number" too long to be one is reported, not converted.
         cls.shas["HugeIssue"] = _commit(repo, {"src/huge.txt": "huge"},
-                                        "fix huge\n\nFixes-User: #" + "1" * 5000 + "\nRegression-Test: Enabled.Case\n")
+                                        "fix huge\n\nFixes-User: #" + "1" * 5000 + "\nRegression-Test: tests.scripts.test_sample.Derived.test_real\n")
         # Separator characters in a subject must not break the report.
         cls.shas["Separators"] = _commit(repo, {"src/sep.txt": "sep"}, "odd \x1e subject \x1f here\n")
         cls.shas["ExcusedWithTest"] = _commit(
-            repo, {"src/ex.txt": "ex"}, "fix ex\n\nFixes-User: #3\nRegression-Test: Enabled.Case\n")
+            repo, {"src/ex.txt": "ex"}, "fix ex\n\nFixes-User: #3\nRegression-Test: tests.scripts.test_sample.Derived.test_real\n")
         _git(repo, "tag", "v2.1.0")
-        # What the compiler builds: the macro, the continued comment and the #if (0) block are not tests.
-        cls.compiled = {"Enabled.Case", "Taken.Case", "Multi.Line", "Typed.Case", "Spliced.Case", "Prefixed.Char",
-                        "Separated.Num", "Fraction.Case", "AfterRaw.Case", "SplicedNumber.Case",
-                        "InRaw.Case", "InComment.Case", "InSplitBlock.Case", "AfterSplitClose.Case",
-                        "SplitRawPrefix.Case", "SplitEscape.Case", "BomDisabled.Case", "BomEnabled.Case",
-                        "CrOnly.Case", "DigraphHidden.Case", "DigraphShown.Case", "ElifDead.Case",
-                        "ElseDead.Case", "ElseMaybe.Case",
-                        # Listed as if a later commit expanded the macro: the source check alone must refuse it.
-                        "Macro.Case", "AsArgument.Case", "ByWrapper.Case", "InNamespace.Case",
-                        "AfterBlockComment.Case", "AfterAlternatives.Case", "BracedArgument.Case",
-                        "Ghost.Case", "AfterDepth.Case"}
         # A module that never finishes importing must time out into a violation, not abort the report; the short
         # timeout holds for every report this class builds and is restored in tearDownClass.
         cls._timeout, release_notes.PROBE_TIMEOUT = release_notes.PROBE_TIMEOUT, 3
-        cls.result = release_notes.report(repo, "v2.0.0", "v2.1.0", gtest_list=cls.compiled)
+        cls.result = release_notes.report(repo, "v2.0.0", "v2.1.0")
 
     @classmethod
     def tearDownClass(cls):
@@ -383,12 +302,6 @@ class HostileFixtureTest(unittest.TestCase):
             with self.subTest(real=name):
                 self.assertEqual(self.violations_for(name), [])
 
-    def test_source_check_alone_refuses_what_the_list_would_also_refuse(self):
-        # Without the compiler's list, the source scan must still reject comments, literals and #if 0 forms.
-        for name in ("Commented", "Block", "Disabled", "NotTaken", "Parenthesised", "Continued", "Quoted", "Raw"):
-            with self.subTest(fake=name):
-                self.assertFalse(release_notes.gtest_declared(self.repo, self.shas[name], self.fake[name]))
-
     def test_a_vertical_tab_does_not_split_a_trailer(self):
         self.assertTrue(any("without a Regression-Test" in v for v in self.violations_for("VerticalTab")),
                         self.result["violations"])
@@ -405,9 +318,9 @@ class HostileFixtureTest(unittest.TestCase):
 
     def test_an_allowance_never_hides_a_named_test(self):
         excuse = {self.shas["ExcusedWithTest"][:10]: "documentation only"}
-        result = release_notes.report(self.repo, "v2.0.0", "v2.1.0", allowances=excuse, gtest_list=self.compiled)
+        result = release_notes.report(self.repo, "v2.0.0", "v2.1.0", allowances=excuse)
         self.assertTrue(any("drop one" in v for v in self.violations_for("ExcusedWithTest", result)))
-        self.assertIn("Enabled.Case; excused: documentation only", release_notes.render(result))
+        self.assertIn("tests.scripts.test_sample.Derived.test_real; excused: documentation only", release_notes.render(result))
 
 
 class UserBugRuleDocsTest(unittest.TestCase):
@@ -418,7 +331,7 @@ class UserBugRuleDocsTest(unittest.TestCase):
                         "## 5. Close it when the release ships"):
             self.assertIn(f"\n{heading}\n", text)
         for needle in ("tests/corpus/user-reports/", "tests/corpus/PROVENANCE.md", "Fixes-User: #",
-                       "Regression-Test: ", "scripts/release-notes.py", "--gtest-list"):
+                       "Regression-Test: ", "scripts/release-notes.py", "refs/notes/gtest-list"):
             self.assertIn(needle, text)
 
     def test_template_and_agents_point_at_the_rule(self):

@@ -8,7 +8,7 @@ Get the problem happening on your machine before you change any code. Use the re
 
 ## 2. Write the test, and watch it fail
 
-Write a regression test that fails because of the bug: a gtest case (`Suite.Case`) for app and engine code, or a Python test (`module.Class.test_name`) for tooling. A new case in an existing test file is fine. Declare a gtest regression test with a plain `TEST`, `TEST_F`, `TEST_P`, `TYPED_TEST` or `TYPED_TEST_P`, not through a wrapper macro: the release check reads the source at the fix commit and only a plain declaration counts. Run it on the parent commit, before your fix, and keep the failing output: the pull request quotes it.
+Write a regression test that fails because of the bug: a gtest case (`Suite.Case`) for app and engine code, or a Python test (`module.Class.test_name`) for tooling. A new case in an existing test file is fine. A gtest regression test counts when the CI build of the fix commit lists it: every push to `main` records `recto-tests.exe --gtest_list_tests` as a git note on the commit (`refs/notes/gtest-list`), so land the test with the fix, not after it. Run it on the parent commit, before your fix, and keep the failing output: the pull request quotes it.
 
 ## 3. Fix it, with both trailers
 
@@ -32,7 +32,7 @@ When the fix merges, label the issue `fixed-on-main` and comment with the commit
 When the release containing the fix is published, run:
 
 ```powershell
-python scripts/release-notes.py <previous tag> <new tag> --issues issues.json --gtest-list tests.txt
+python scripts/release-notes.py <previous tag> <new tag> --issues issues.json
 ```
 
-with `issues.json` from `gh issue list --state all --limit 1000 --json number,title,labels` and `tests.txt` from `recto-tests.exe --gtest_list_tests` in the release build. A gtest id must be declared at its fix commit and appear in that list; a Python id must be a unittest test at its fix commit. It lists the release's user fixes by kind label, prints a "Fixed in vX.Y.Z" comment for each issue, and exits 1 if any fix lacks an existing regression test. Post each comment, change the label from `fixed-on-main` to `released`, and close the issue.
+with `issues.json` from `gh issue list --state all --limit 1000 --json number,title,labels`. A gtest id must be in its fix commit's CI test list (the script fetches `refs/notes/gtest-list` from GitHub); a Python id must be a unittest test at its fix commit. It lists the release's user fixes by kind label, prints a "Fixed in vX.Y.Z" comment for each issue, and exits 1 if any fix lacks an existing regression test. Post each comment, change the label from `fixed-on-main` to `released`, and close the issue.

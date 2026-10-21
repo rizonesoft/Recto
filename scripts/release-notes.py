@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """List the user-reported bugs a release fixes, and refuse fixes that carry no regression test (D07 T03 §4).
 
-    python scripts/release-notes.py v1.0.0 v1.1.0 --gtest-list tests.txt     # text: issues, closing comments
-    python scripts/release-notes.py v1.0.0 v1.1.0 --gtest-list tests.txt --json   # JSON (D07 T03 §7 embeds it)
-    python scripts/release-notes.py v1.0.0 v1.1.0 --issues issues.json       # group by the issues' kind labels
-    python scripts/release-notes.py root v1.0.0                              # the first release
+    python scripts/release-notes.py v1.0.0 v1.1.0                      # text: issues, closing comments
+    python scripts/release-notes.py v1.0.0 v1.1.0 --json               # the same as JSON (D07 T03 §7 embeds it)
+    python scripts/release-notes.py v1.0.0 v1.1.0 --issues issues.json # group by the issues' kind labels
+    python scripts/release-notes.py root v1.0.0                        # the first release
 
 A fix for a user-reported bug carries two commit trailers (docs/support/user-bugs.md):
 
@@ -18,9 +18,9 @@ checked exactly:
 
 - a Python id must be a test method of a `unittest.TestCase` subclass at the fix commit, as unittest's own loader
   resolves it in a temporary worktree of that commit (the module is imported; no test runs);
-- a gtest id must be declared in C++ source at the fix commit, and must be in `--gtest-list`, the
-  `recto-tests.exe --gtest_list_tests` output of the release build, which is the compiler's word that it is a test.
-  Without `--gtest-list` a gtest id is reported as unverified.
+- a gtest id must be in the fix commit's own test list: CI records every `main` build's
+  `recto-tests.exe --gtest_list_tests` as a git note on the commit (`refs/notes/gtest-list`, D07 T03 §9), the
+  compiler's word for what was a test at that commit. A fix commit with no note reports its gtest ids unverified.
 
 `--issues` reads `gh issue list --state all --json number,title,labels` so issues group by their kind label.
 
@@ -28,7 +28,6 @@ Exit 0 when every fix carries a verified regression test, 1 when any does not (t
 range or an argument cannot be read.
 """
 import argparse
-import bisect
 import json
 from pathlib import Path
 import re
@@ -47,11 +46,8 @@ ISSUE = re.compile(r"#([0-9]{1,10})\b")
 GTEST_ID = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$")
 PYTHON_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){2,}$")
 TRAILER = re.compile(r"^([A-Za-z0-9-]+):\s*(.*)$", re.DOTALL)
-CPP_FILES = ("*.cpp", "*.cc", "*.cxx", "*.h", "*.hpp")
-RAW_STRING = re.compile(r'R"([^ ()\\\t\v\f\n]{0,16})\(')
-# `%:` is the standard alternative spelling of `#` (C++ [lex.digraph]).
-DIRECTIVE = re.compile(r"^\s*(?:#|%:)\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)$")
-ANY_DIRECTIVE = re.compile(r"^\s*(?:#|%:)")
+# Where CI records each main build's `--gtest_list_tests` output, one note per commit (D07 T03 §9).
+NOTES_REF = "refs/notes/gtest-list"
 GTEST_MAIN_BANNER = re.compile(r"^Running main\(\) from .+$")
 PROBE_TIMEOUT = 120  # seconds for one Python test module to import in its worktree
 # Run in a worktree of the fix commit: resolve module.Class.method the way unittest does, without running it. The
@@ -128,177 +124,11 @@ def commits(repo, start, end):
     return found
 
 
-def _in_number(text, i):
-    """True when the apostrophe at i is a digit separator (1'000, 0xFF'FF): the token it sits in starts with a digit.
-    After an identifier or a literal prefix (L'x', u8'x') it opens a character literal instead."""
-    start = i
-    while start > 0 and (text[start - 1].isalnum() or text[start - 1] in "_'."):
-        start -= 1
-    # A number starts with a digit, or with a dot and a digit (.1'0).
-    return start < i and (text[start].isdigit() or (text[start] == "." and text[start + 1].isdigit()))
-
-
-def _separator_follows(spliced_tail):
-    """True when an apostrophe after this already-spliced code would be a digit separator."""
-    return _in_number(spliced_tail + "'", len(spliced_tail))
-
-
-def _spliced(text):
-    """The text with every backslash-newline removed (translation phase 2), and for each kept character its index in
-    the original text, so a raw string literal can be read back from the unspliced characters."""
-    chars, origin, i, n = [], [], 0, len(text)
-    while i < n:
-        if text.startswith("\\\n", i):
-            i += 2
-            continue
-        chars.append(text[i])
-        origin.append(i)
-        i += 1
-    return "".join(chars), origin
-
-
-def cpp_lines(text):
-    """C++ source as the lines that may be compiled, each with its starting parenthesis depth: lines spliced,
-    comments and literals blanked, directives and `#if 0` branches removed. As the compiler does, every splice is
-    removed before tokens are read, and only a raw string literal's content is taken from the original characters
-    (C++ reverts splices between its delimiters)."""
-    # Translation phase 1: a leading byte-order mark is not source, and CRLF or a lone CR ends a line as LF does.
-    original = text.removeprefix("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
-    text, origin = _spliced(original)
-    out, i, n = [], 0, len(text)
-    while i < n:
-        if text.startswith("//", i):
-            end = text.find("\n", i)
-            i = n if end < 0 else end
-        elif text.startswith("/*", i):
-            end = text.find("*/", i + 2)
-            # The comment's newlines are kept, so a directive after a multi-line comment still starts its line.
-            out.append("\n" * text.count("\n", i, n if end < 0 else end) or " ")
-            i = n if end < 0 else end + 2
-        elif (raw := RAW_STRING.match(text, i)) and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_")
-                                                     or text[i - 1] in "8uUL"):
-            # The closing `)delim"` is found in the original text, after the opening parenthesis.
-            close = original.find(f'){raw.group(1)}"', origin[raw.end() - 1] + 1)
-            i = n if close < 0 else bisect.bisect_left(origin, close + len(raw.group(1)) + 2)
-            out.append('""')
-        elif text[i] in "\"'" and not (text[i] == "'" and _separator_follows("".join(out[-64:]))):
-            quote, i = text[i], i + 1
-            while i < n and text[i] not in (quote, "\n"):
-                i += 2 if text[i] == "\\" else 1
-            i += 1
-            out.append('""')
-        else:
-            out.append(text[i])
-            i += 1
-    return _conditional_lines("".join(out))
-
-
-def _conditional_lines(code):
-    """The lines of comment- and literal-free code that may be compiled, each with the parenthesis depth at its
-    start. `#elif` and `#else` alternatives are mutually exclusive, so each one starts from the depth at its `#if`."""
-    kept, frames, depth = [], [], 0
-    for line in code.split("\n"):
-        directive = DIRECTIVE.match(line)
-        if not directive:
-            # Any other directive (#define, #pragma, #error ...) is never a declaration: a TEST in an unexpanded
-            # macro body is not a test until some later code expands it.
-            if not ANY_DIRECTIVE.match(line) and all(frame["active"] for frame in frames):
-                kept.append((line, depth))
-                depth += line.count("(") - line.count(")")
-            continue
-        word, condition = directive.group(1), re.sub(r"[\s()]", "", directive.group(2))
-        # A branch is kept unless it is certainly not compiled. `taken` means an earlier branch of this group is
-        # certainly compiled (a literal 1), which makes every later branch dead whatever its condition.
-        # Depth: every alternative starts from the depth at its `#if`, and after `#endif` the depth is the one the
-        # first possibly-compiled alternative ended with (an inactive one contributes nothing).
-        known = word in ("if", "elif") and condition in ("0", "1")
-        if word in ("if", "ifdef", "ifndef"):
-            frames.append({"active": not known or condition == "1", "taken": known and condition == "1",
-                           "depth": depth, "end": None})
-            continue
-        if not frames:
-            continue
-        frame = frames[-1]
-        if frame["active"] and frame["end"] is None:
-            frame["end"] = depth
-        if word == "elif":
-            frame["active"] = not frame["taken"] and (not known or condition == "1")
-            frame["taken"] = frame["taken"] or (known and condition == "1")
-            depth = frame["depth"]
-        elif word == "else":
-            frame["active"] = not frame["taken"]
-            frame["taken"] = True
-            depth = frame["depth"]
-        else:  # endif
-            depth = frame["depth"] if frame["end"] is None else frame["end"]
-            frames.pop()
-    return kept
-
-
-def cpp_code(text):
-    """The compiled code `cpp_lines` keeps, as one string."""
-    return "\n".join(line for line, _ in cpp_lines(text))
-
-
-_CPP_SOURCES = {}
-
-
-def cpp_sources(repo, sha):
-    """Every C++ file at the commit as compiled lines (`cpp_lines`), read in one `git cat-file --batch` and cached.
-    Every file is read, never a text-search shortlist: a line splice can break any identifier across lines."""
-    key = (str(repo), sha)
-    if key not in _CPP_SOURCES:
-        names = [name for name in git(repo, "ls-tree", "-r", "-z", "--name-only", sha).stdout.split("\0")
-                 if name and any(Path(name).match(pattern) for pattern in CPP_FILES)]
-        request = "".join(f"{sha}:{name}\n" for name in names).encode("utf-8")
-        out = subprocess.run(["git", "-C", str(repo), "cat-file", "--batch"], input=request, capture_output=True,
-                             check=False).stdout
-        sources, at = [], 0
-        for _ in names:
-            header_end = out.index(b"\n", at)
-            header = out[at:header_end].split()
-            at = header_end + 1
-            if len(header) == 3 and header[1] == b"blob":
-                size = int(header[2])
-                sources.append(cpp_lines(out[at:at + size].decode("utf-8", errors="replace")))
-                at += size + 1
-        _CPP_SOURCES[key] = sources
-    return _CPP_SOURCES[key]
-
-
-def gtest_declared(repo, sha, test_id):
-    """True when a plain TEST, TEST_F, TEST_P, TYPED_TEST or TYPED_TEST_P declares Suite.Case in compiled C++ code at
-    the commit, starting a declaration outside any parentheses: the code before it ends at the start of the file,
-    `;`, `{` or `}`, and its parenthesis depth (tracked per `#if` alternative) is zero. A
-    regression test is declared plainly (docs/support/user-bugs.md): a TEST passed as a macro argument, or generated
-    by a wrapper macro, is not evidence, because only a preprocessor could say whether it becomes a test. Whether it
-    compiles into a test is `--gtest-list`'s job."""
-    suite, case = GTEST_ID.match(test_id).groups()
-    declaration = re.compile(rf"\b(?:TEST(?:_F|_P)?|TYPED_TEST(?:_P)?)\s*\(\s*{suite}\s*,\s*{case}\s*\)")
-    for lines in cpp_sources(repo, sha):
-        source = "\n".join(line for line, _ in lines)
-        starts = [0]
-        for line, _ in lines[:-1]:
-            starts.append(starts[-1] + len(line) + 1)
-        for match in declaration.finditer(source):
-            row = bisect.bisect_right(starts, match.start()) - 1
-            prefix = source[starts[row]:match.start()]
-            depth = lines[row][1] + prefix.count("(") - prefix.count(")")
-            before = source[:match.start()].rstrip()
-            if depth == 0 and (not before or before[-1] in ";{}"):
-                return True
-    return False
-
-
-def read_gtest_list(path):
+def parse_gtest_list(text, where):
     """`Suite.Case` names from `--gtest_list_tests` output. A typed suite (gtest marks it `# TypeParam = ...`) ends in
     its type name or index, which is dropped: `Suite/0.` or `Suite/int.` (TYPED_TEST) and `Prefix/Suite/0.`
     (TYPED_TEST_P) are `Suite`. Otherwise the suite is the last part: `Prefix/Suite.` (TEST_P) is `Suite`. A
-    parameterised case `Case/0` is `Case`."""
-    try:
-        text = Path(path).read_text(encoding="utf-8-sig")
-    except (OSError, UnicodeDecodeError) as exc:
-        raise Unreadable(f"--gtest-list {path}: {exc}") from None
+    parameterised case `Case/0` is `Case`. `where` names the source in a refusal."""
     names, suite = set(), None
     for line in text.splitlines():
         entry, _, comment = line.partition("#")
@@ -309,18 +139,41 @@ def read_gtest_list(path):
             continue  # gtest_main.cc prints this before the list
         if not entry[0].isspace():
             if not entry.endswith("."):
-                raise Unreadable(f"--gtest-list {path}: {line!r} is not --gtest_list_tests output")
+                raise Unreadable(f"{where}: {line!r} is not --gtest_list_tests output")
             parts = entry[:-1].split("/")
             if comment.strip().startswith("TypeParam") and len(parts) > 1:
                 parts = parts[:-1]
             suite = parts[-1]
         elif suite is None:
-            raise Unreadable(f"--gtest-list {path}: a test case comes before any suite")
+            raise Unreadable(f"{where}: a test case comes before any suite")
         else:
             names.add(f"{suite}.{entry.strip().split('/')[0]}")
     if not names:
-        raise Unreadable(f"--gtest-list {path}: no tests listed")
+        raise Unreadable(f"{where}: no tests listed")
     return names
+
+
+class GtestNotes:
+    """The test list CI recorded for a commit, from `refs/notes/gtest-list` (fetched from origin once when asked)."""
+
+    def __init__(self, repo, fetch):
+        self.repo, self.lists = repo, {}
+        if fetch:
+            # A missing remote or notes ref leaves the local notes, and every gtest id then reports what it lacks.
+            git(repo, "fetch", "--quiet", "origin", f"+{NOTES_REF}:{NOTES_REF}", check=False)
+
+    def tests_at(self, sha):
+        """The `Suite.Case` names in the commit's note, None when the commit has no note."""
+        if sha not in self.lists:
+            note = git(self.repo, "notes", f"--ref={NOTES_REF}", "show", sha, check=False)
+            if note.returncode != 0:
+                self.lists[sha] = None
+            else:
+                try:
+                    self.lists[sha] = parse_gtest_list(note.stdout, f"{NOTES_REF} note on {sha[:7]}")
+                except Unreadable:
+                    self.lists[sha] = set()
+        return self.lists[sha]
 
 
 class PythonTests:
@@ -391,15 +244,14 @@ def parse_allowances(values):
     return allowed
 
 
-def test_problem(repo, python_tests, gtest_list, commit, test_id):
+def test_problem(python_tests, gtest_notes, commit, test_id):
     """Why a named regression test does not count, or None when it does."""
     if GTEST_ID.match(test_id):
-        if not gtest_declared(repo, commit["sha"], test_id):
-            return f"Regression-Test {test_id} is not declared at {commit['short']}"
-        if gtest_list is None:
-            return f"Regression-Test {test_id} is unverified: pass --gtest-list from the release build"
-        if test_id not in gtest_list:
-            return f"Regression-Test {test_id} is not in the release build's test list"
+        listed = gtest_notes.tests_at(commit["sha"])
+        if listed is None:
+            return f"Regression-Test {test_id} is unverified: {commit['short']} has no CI test list ({NOTES_REF})"
+        if test_id not in listed:
+            return f"Regression-Test {test_id} is not in {commit['short']}'s CI test list"
         return None
     if PYTHON_ID.match(test_id):
         if not python_tests.exists(commit["sha"], test_id):
@@ -408,8 +260,9 @@ def test_problem(repo, python_tests, gtest_list, commit, test_id):
     return f"Regression-Test {test_id!r} is neither Suite.Case nor module.Class.test_name"
 
 
-def report(repo, start, end, issue_labels=None, allowances=None, gtest_list=None, repo_url=REPO_URL):
+def report(repo, start, end, issue_labels=None, allowances=None, repo_url=REPO_URL, fetch_notes=False):
     """The release's user fixes, issues and closing comments, and every fix that breaks the regression-test rule."""
+    gtest_notes = GtestNotes(repo, fetch_notes)
     allowances = dict(allowances or {})
     used = set()
     release_url = f"{repo_url}/releases/tag/{end}"
@@ -433,7 +286,7 @@ def report(repo, start, end, issue_labels=None, allowances=None, gtest_list=None
             if tests and excuse is not None:
                 violations.append(f"{where}: --allow-no-test excuses a commit that names Regression-Test; drop one")
             for test_id in tests:
-                problem = test_problem(repo, python_tests, gtest_list, commit, test_id)
+                problem = test_problem(python_tests, gtest_notes, commit, test_id)
                 if problem:
                     violations.append(f"{where}: {problem}")
             fix = {"sha": commit["sha"], "short": commit["short"], "subject": commit["subject"], "issues": numbers,
@@ -483,7 +336,6 @@ def main(argv=None, repo=ROOT):
     parser.add_argument("end", metavar="to-tag", help="the release tag being published")
     parser.add_argument("--json", action="store_true", help="print JSON instead of text")
     parser.add_argument("--issues", help="gh issue list --state all --json number,title,labels output")
-    parser.add_argument("--gtest-list", help="recto-tests.exe --gtest_list_tests output from the release build")
     parser.add_argument("--allow-no-test", action="append", default=[], metavar="SHA=REASON",
                         help="excuse one documentation-only fix from the regression-test rule")
     parser.add_argument("--repo-url", default=REPO_URL, help=argparse.SUPPRESS)
@@ -491,8 +343,7 @@ def main(argv=None, repo=ROOT):
     try:
         allowances = parse_allowances(args.allow_no_test)
         labels = read_issues(args.issues) if args.issues else None
-        gtest_list = read_gtest_list(args.gtest_list) if args.gtest_list else None
-        result = report(repo, args.start, args.end, labels, allowances, gtest_list, args.repo_url)
+        result = report(repo, args.start, args.end, labels, allowances, args.repo_url, fetch_notes=True)
     except Unreadable as exc:
         print(f"release-notes: {exc}", file=sys.stderr)
         return 2

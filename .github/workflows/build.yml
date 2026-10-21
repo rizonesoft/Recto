@@ -51,6 +51,24 @@ jobs:
         shell: pwsh
         run: powershell -NoProfile -ExecutionPolicy Bypass -File build/build.ps1 -Configuration Release -Platform x64,ARM64
 
+      # D07 T03 §9: the compiler's own list of tests at this commit, which scripts/release-notes.py reads to check a
+      # fix's Regression-Test. This job only uploads it; the test-list-note job records it, so no step that runs
+      # built code ever holds a token that can write to the repository.
+      - name: List the Release|x64 tests
+        shell: pwsh
+        run: |
+          $list = & build\bin\x64\Release\recto-tests\recto-tests.exe --gtest_list_tests
+          if ($LASTEXITCODE -ne 0) { throw "recto-tests --gtest_list_tests exited $LASTEXITCODE" }
+          $list | Set-Content -Encoding utf8NoBOM build\gtest-list.txt
+
+      - name: Upload the test list
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtest-list
+          path: build/gtest-list.txt
+          retention-days: 1
+          if-no-files-found: error
+
       - name: Upload test results and MSBuild logs on failure
         if: always()
         uses: actions/upload-artifact@v4
@@ -60,6 +78,56 @@ jobs:
             build/test-results-*.xml
             build/msbuild-*.log
           if-no-files-found: ignore
+
+  test-list-note:
+    name: Record the test list on the commit
+    # Only builds of main record a note; pull requests and forks never write to refs/notes/gtest-list.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download the test list
+        uses: actions/download-artifact@v4
+        with:
+          name: gtest-list
+          path: ${{ runner.temp }}/gtest-list
+
+      - name: Add the list as a git note and push refs/notes/gtest-list
+        shell: bash
+        run: |
+          set -eu
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          list="$RUNNER_TEMP/gtest-list/gtest-list.txt"
+          # Another main build may push the notes ref at the same time: take the remote's notes fresh each try and
+          # re-add this commit's note on top, so no other commit's note is lost.
+          for try in 1 2 3 4 5; do
+            # The ref is absent only before the first note (ls-remote exits 2); any other failure stops the job.
+            set +e
+            git ls-remote --exit-code origin refs/notes/gtest-list > /dev/null
+            present=$?
+            set -e
+            if [ "$present" -eq 0 ]; then
+              git fetch --quiet origin "+refs/notes/gtest-list:refs/notes/gtest-list"
+            elif [ "$present" -ne 2 ]; then
+              echo "git ls-remote failed with exit $present" >&2
+              exit 1
+            fi
+            git notes --ref=gtest-list add -f -F "$list" "$GITHUB_SHA"
+            if git push --quiet origin refs/notes/gtest-list; then
+              git notes --ref=gtest-list show "$GITHUB_SHA" | head -n 3
+              exit 0
+            fi
+            sleep $((try * 5))
+          done
+          echo "could not push refs/notes/gtest-list after 5 tries" >&2
+          exit 1
 
   asan:
     name: Build x64 Release with AddressSanitizer and run recto-tests

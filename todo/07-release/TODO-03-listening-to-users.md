@@ -257,6 +257,8 @@ Users stay on old builds and report bugs already fixed, and cannot find features
 
 ## 9. Gtest regression evidence from the fix commit's own CI test list
 
+> **Started:** 2026-10-21T11:10:00Z
+
 `D07 T03 §4` checks that a `Regression-Test:` gtest id existed at its fix commit by scanning C++ source, and its review ran to the 22-round cap (`docs/reviews/07-release/D07-T03-s4.md`, `## Cap reached`) because a text scan cannot decide what the compiler builds: a macro-defined `#if` condition, a `TEST` passed to a macro, or a declaration whose start depends on the `#if` alternative all need a preprocessor. The compiler's own answer is the test binary's `--gtest_list_tests`. CI already builds and tests every push to `main` (`.github/workflows/build.yml`); this section has it record that list against the commit as a git note (`refs/notes/gtest-list`), which is permanent and keyed by commit, and makes `scripts/release-notes.py` read the fix commit's note instead of scanning source. Default taken 2026-10-21: git notes rather than workflow artifacts, because artifacts expire after at most 90 days and a release can be further from its fixes; the cost of changing is a different reader in `scripts/release-notes.py` and a different publish step.
 
 **Phase:** 0
@@ -269,11 +271,11 @@ Users stay on old builds and report bugs already fixed, and cannot find features
 2. Read it in `scripts/release-notes.py`. Done when: a gtest id is verified only by the fix commit's note, and the source scanner is gone.
 
 - [ ] Add a step to the x64 Release test job in `.github/workflows/build.yml` that runs `recto-tests.exe --gtest_list_tests`, adds the output as a git note on `github.sha` under `refs/notes/gtest-list`, and pushes `refs/notes/gtest-list` (with `contents: write` for that job only, retrying on a concurrent-push rejection by fetching and merging the notes ref). Done when: after a push, `git fetch origin refs/notes/gtest-list:refs/notes/gtest-list` and `git notes --ref=gtest-list show <sha>` print the list.
-- [ ] Run the step only on pushes to `main`, never on pull requests or forks, so no untrusted build writes notes. Done when: the workflow condition names `push` and `refs/heads/main`.
-- [ ] In `scripts/release-notes.py`, fetch `refs/notes/gtest-list` once per run and verify a gtest id by reading the fix commit's note with `read_gtest_list`; a commit with no note reports the id as unverified (`the fix commit has no CI test list`). Done when: a fixture repository with a note on the fix commit passes, one whose note lacks the id fails, and one with no note fails.
-- [ ] Delete the C++ source scanner (`_spliced`, `cpp_lines`, `cpp_code`, `_conditional_lines`, `cpp_sources`, `gtest_declared`, `_in_number`, `_separator_follows`) and the `--gtest-list` option, and their fixtures in `tests/scripts/test_release_notes.py`. Done when: `git grep -n "cpp_lines\|gtest_declared\|--gtest-list" -- scripts tests` prints nothing.
-- [ ] Update `docs/support/user-bugs.md`: a gtest regression test counts when CI's list for the fix commit names it; drop the plain-declaration convention. Done when: the file names `refs/notes/gtest-list` and no longer names the convention.
-- [ ] Add fixtures to `tests/scripts/test_release_notes.py` that write notes with `git notes --ref=gtest-list add`. Done when: removing the note lookup makes the suite fail.
+- [x] Run the step only on pushes to `main`, never on pull requests or forks, so no untrusted build writes notes. Done when: the workflow condition names `push` and `refs/heads/main`.
+- [x] In `scripts/release-notes.py`, fetch `refs/notes/gtest-list` once per run and verify a gtest id by reading the fix commit's note with `read_gtest_list`; a commit with no note reports the id as unverified (`the fix commit has no CI test list`). Done when: a fixture repository with a note on the fix commit passes, one whose note lacks the id fails, and one with no note fails.
+- [x] Delete the C++ source scanner (`_spliced`, `cpp_lines`, `cpp_code`, `_conditional_lines`, `cpp_sources`, `gtest_declared`, `_in_number`, `_separator_follows`) and the `--gtest-list` option, and their fixtures in `tests/scripts/test_release_notes.py`. Done when: `git grep -n "cpp_lines\|gtest_declared\|--gtest-list" -- scripts tests` prints nothing.
+- [x] Update `docs/support/user-bugs.md`: a gtest regression test counts when CI's list for the fix commit names it; drop the plain-declaration convention. Done when: the file names `refs/notes/gtest-list` and no longer names the convention.
+- [x] Add fixtures to `tests/scripts/test_release_notes.py` that write notes with `git notes --ref=gtest-list add`. Done when: removing the note lookup makes the suite fail.
 - [ ] Commit: `release: verify gtest regression tests against the fix commit's CI test list`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_release_notes` passes; a fixture fix commit whose note lacks its `Regression-Test:` id, and one with no note, are each reported as violations; and a real push to `main` leaves a readable note (`git notes --ref=gtest-list show <sha>`).
