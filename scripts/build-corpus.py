@@ -2281,10 +2281,43 @@ def ascii85_encode_pdf(raw: bytes) -> bytes:
 
 
 def ascii85_decode_pdf(encoded: bytes) -> bytes:
+    """An ASCII85Decode stream decoded as ISO 32000-1 7.4.3 defines it, refusing what a lenient decoder would pass:
+    a character outside ! to u (whitespace aside), z anywhere but at the start of a group, a group worth 2**32 or
+    more, a final group of one character, and anything but whitespace after the ~> EOD marker."""
     body = encoded.strip()
-    if not body.endswith(b"~>"):
-        raise ValueError("ASCII85 stream missing '~>' EOD marker")
-    return base64.a85decode(body[:-2])
+    if not body.endswith(b"~>") or b"~" in body[:-2]:
+        raise ValueError("ASCII85 stream must end at its one '~>' EOD marker")
+    out, group = bytearray(), []
+    for b in body[:-2]:
+        if b in b" \t\r\n\f\x00":
+            continue
+        if b == 0x7A:  # z: four zero bytes, only as a whole group
+            if group:
+                raise ValueError("ASCII85 'z' inside a group")
+            out += b"\x00\x00\x00\x00"
+            continue
+        if not 0x21 <= b <= 0x75:
+            raise ValueError(f"ASCII85 character {b:#04x} outside ! to u")
+        group.append(b - 0x21)
+        if len(group) == 5:
+            value = 0
+            for digit in group:
+                value = value * 85 + digit
+            if value >= 1 << 32:
+                raise ValueError("ASCII85 group worth 2**32 or more")
+            out += value.to_bytes(4, "big")
+            group = []
+    if len(group) == 1:
+        raise ValueError("ASCII85 final group of one character")
+    if group:
+        kept = len(group) - 1
+        value = 0
+        for digit in group + [84] * (5 - len(group)):  # pad with u, keep len - 1 bytes
+            value = value * 85 + digit
+        if value >= 1 << 32:
+            raise ValueError("ASCII85 final group worth 2**32 or more")
+        out += value.to_bytes(4, "big")[:kept]
+    return bytes(out)
 
 
 def rle_encode_pdf(raw: bytes) -> bytes:

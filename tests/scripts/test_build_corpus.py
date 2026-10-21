@@ -715,6 +715,20 @@ class BuildCorpusTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "LZW"):
             self.mod.validate_seed_pdf_structure("seeds/seed-filters-lzw-ccitt.pdf", seed)
 
+    def test_ascii85_is_decoded_strictly(self) -> None:
+        import base64
+        decode = self.mod.ascii85_decode_pdf
+        for plain in (b"", b"a", b"ab", b"abc", b"abcd", b"\x00" * 8 + b"xyz", bytes(range(256))):
+            with self.subTest(plain=plain):
+                self.assertEqual(decode(base64.a85encode(plain) + b"~>"), plain)
+        self.assertEqual(decode(b"z~>"), b"\x00" * 4)
+        for bad in (b"!~>", b"ab!z!~>", b"s8W-\"~>", b"abc{~>", b"9jqo^~>x~>"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                decode(bad)
+        seed = self.mod.build_seed_filter_03_ascii85()
+        with self.assertRaisesRegex(ValueError, "one character"):
+            self.mod.validate_seed_filter_bin_structure("seeds/seed-filter-03-ascii85.bin", seed[:-2] + b"!~>")
+
     def test_inflation_stops_just_past_its_limit(self) -> None:
         bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))
         total, kept = self.mod.inflate_bounded(bomb, 1024, keep=False)

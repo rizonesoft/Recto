@@ -56,6 +56,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 23 | §23 | Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6 | D01 T01 §9, §22 | [ ] |
 | 24 | §24 | Audit D01 T01 §10: pdf::Document page-tree resolver, metadata, /Outlines, font list and | D01 T01 §10, §23 | [ ] |
 | 25 | §25 | Retired MuPDF and AGPL text removed from the A, B and C mockup boards | §2 | [ ] |
+| 26 | §26 | Corpus validator filter decoders conform to ISO 32000-1 7.4 | §12 | [ ] |
 
 ## 1. Audit D00 T01 §1: Git repository and repo-face files
 
@@ -346,6 +347,8 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 ## 12. Audit D00 T03 §4: Encrypted (RC4/AES-128/AES-256), broken/ and seeds/ corpus fixtures
 
 > **Started:** 2026-10-22T00:40:00Z
+>
+> **Deferred:** a systematic pass over every corpus validator stream decoder against ISO 32000-1 7.4, the pattern rounds 19 to 22 found one decoder at a time -> XREF: D06 T05 §26
 
 `D00 T03 §4` (Encrypted (`RC4`/`AES-128`/`AES-256`), `broken/` and `seeds/` corpus fixtures) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d00-t03-s4.json` records 2 rounds (fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
 
@@ -358,10 +361,10 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 1. Re-run `D00 T03 §4`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d00-t03-s4.md`.
 2. Audit `D00 T03 §4` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d00-t03-s4.md` ends in an approving round or a recorded stop with every finding owned.
 
-- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D00 T03 §4"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d00-t03-s4.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
-- [ ] Run audit rounds on `D00 T03 §4`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t03-s4.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
-- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t03-s4.md` is open without a fix commit or a filed section.
-- [ ] On a confirmed regression, add a dated blocking note to `D00 T03 §4`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t03-s4.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [x] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D00 T03 §4"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d00-t03-s4.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [x] Run audit rounds on `D00 T03 §4`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t03-s4.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [x] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t03-s4.md` is open without a fix commit or a filed section.
+- [x] On a confirmed regression, add a dated blocking note to `D00 T03 §4`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t03-s4.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
 - [ ] Commit: `review: audit D00 T03 §4 under the current review process`
 
 **Test checkpoint:** `python scripts/todo-graph.py resolve "D00 T03 §4"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d00-t03-s4.md` ends in an approving round or a recorded stop with every finding fixed or filed.
@@ -637,6 +640,28 @@ The audit of `D00 T01 §2` (`docs/reviews/06-quality/audit-d00-t01-s2.md`) found
 - [ ] Commit: `design: retire MuPDF and AGPL text from the A, B and C mockup boards`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_engine_dependency_policy` passes, and `git grep -n -i -E "mupdf|agpl" -- design/mockups` prints nothing.
+
+## 26. Corpus validator filter decoders conform to ISO 32000-1 7.4
+
+The audit of `D00 T03 §4` (`docs/reviews/06-quality/audit-d00-t03-s4.md`, D06 T05 §12) reached its 22-round cap (`stopped-at-22`). Its last four rounds each found one more stream decoder in `scripts/build-corpus.py`'s validators that was laxer than ISO 32000-1 7.4: the deflate bomb's outer stage (round 19), LZW code widths (round 20), the LZW initial clear code (round 21) and ASCII85 one-character final groups (round 22), each fixed in turn. The pattern, not one more case, is the leftover: this section reviews every validator decoder against 7.4 at once, so that a generator regression producing a malformed filter stream cannot pass the corpus checkpoint while `src/pdf/filters.cpp` would refuse the same bytes. -> XREF: D06 T05 §12
+
+**Phase:** 0
+**Needs:** none
+**Surface:** no
+
+**Build order:**
+
+1. List every decoder the validators call (`inflate`, `inflate_bounded`, `flate_png_up_decompress`, `ascii85_decode_pdf`, the ASCIIHex path, `rle_decode_pdf`, `lzw_decode_pdf`, and the CCITT, JBIG2, DCT and JPX seed checks) with the 7.4 clause each implements. Done when: the list is in the section's findings file with one line per decoder.
+2. Make each decoder refuse what its clause forbids, matching the refusals in `src/pdf/filters.cpp`. Done when: each has a test that fails against the tree before this section.
+
+- [ ] Write the decoder inventory with each decoder's ISO 32000-1 7.4 clause and the matching `src/pdf/filters.cpp` refusal into `docs/reviews/06-quality/D06-T05-s26.md`. Done when: every decoder the validators call appears with its clause.
+- [ ] Make the ASCIIHex path in `decode_seed_stream` and `validate_seed_filter_bin_structure` refuse non-hex characters other than whitespace, a missing `>` and data after it, per 7.4.2. Done when: a test with each malformation fails before the change and passes after.
+- [ ] Make `rle_decode_pdf` refuse a run that reads past the data, a missing EOD (128) and data after EOD, per 7.4.5. Done when: a test with each malformation fails before the change and passes after.
+- [ ] Make `flate_png_up_decompress` refuse a row whose predictor byte is not 2 (Up) and a length that is not whole rows, per 7.4.4.4. Done when: a test with each malformation fails before the change and passes after.
+- [ ] Replace the CCITT, JBIG2, DCT and JPX seed checks that compare against the generator's own output or only markers with checks of the structure 7.4.6, 7.4.7, 7.4.8 and 7.4.9 define (CCITT `/K`, `/Columns` and EOFB; JBIG2 segment headers; DCT SOI, SOF, SOS, EOI order; JPX box and codestream markers). Done when: a test regenerating each seed with one structural fault fails before the change and passes after.
+- [ ] Commit: `corpus: validator filter decoders conform to ISO 32000-1 7.4`
+
+**Test checkpoint:** `python -m unittest tests.scripts.test_build_corpus` passes and `python scripts/build-corpus.py --check` prints `verified: 39 corpus fixtures`.
 
 ## Verification
 

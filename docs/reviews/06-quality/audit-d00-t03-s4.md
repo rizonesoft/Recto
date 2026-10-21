@@ -967,3 +967,67 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `Ran 52 tests`, `OK` (the new subtest fails against `9b693d5`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P1): `lzw_decode_pdf()` now requires the first code to be the clear-table code 256, as ISO 32000-1 7.4.4.2 requires of the encoder; the reviewer's `20c040` (codes 65, 257) refuses.
+
+## Round 22: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T23:39:18Z
+- Effort: medium
+- Lines: 45
+- Digest: a5dc9ea08b3608ce
+
+### adversarial: needs-attention
+
+1. **P1: ASCII85 validation accepts an invalid one-character final group.** `scripts/build-corpus.py:2287` delegates to `base64.a85decode()`, which silently discards that group. The seed validator at `scripts/build-corpus.py:3576` consequently accepts malformed data.
+
+   Reproduce in memory after importing the script as `m`:
+
+   ```python
+   seed = m.build_seed_filter_03_ascii85()
+   malformed = seed[:-2] + b"!~>"
+   m.validate_seed_filter_bin_structure(
+       "seeds/seed-filter-03-ascii85.bin", malformed
+   )
+   ```
+
+   This returns successfully and decodes to the expected 64 bytes. I also simulated a generator emitting this suffix, with matching generated files and provenance: **`check_corpus()` returned `(True, [])`**. A generator regression can therefore pass the checkpoint with invalid seeds. This does not establish corruption of the committed fixtures.
+
+### consistency: approve
+
+No separate finding.
+
+### integration: needs-attention
+
+Finding **1 (P1)** creates a validator/consumer mismatch: `src/pdf/filters.cpp:1373` explicitly rejects a single-character final ASCII85 tuple with `DamagedFormat`. The seed consumed by `tests/recto-tests/pdf_filters_tests.cpp:417` can pass corpus verification while violating the engine’s decoding contract. This conclusion uses static C++ evidence; no C++ tests were run.
+
+### source-defect: needs-attention
+
+Finding **1 (P1)** violates ISO 32000-1 §7.4.3, which requires rejection of impossible ASCII85 combinations and explicitly identifies a one-character final group as invalid. Python’s decoder does not enforce that requirement. [ISO 32000-1](https://www.pdftron.com/downloads/pdfref.pdf)
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: approve
+
+Independently verified at `4992789`:
+
+- Checkpoint: exit 0, **39 fixtures verified**.
+- Read-only test subset: **49 tests passed**; three filesystem-writing tests excluded.
+- Graph: **678 sections valid**; generated plan current.
+- Round-21 reproduction now rejects the missing initial LZW clear code.
+
+These checks do not detect finding 1. No files modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 22
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 53 tests`, `OK` (`test_ascii85_is_decoded_strictly` fails against `4992789`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): `ascii85_decode_pdf()` no longer delegates to `base64.a85decode`. It decodes per ISO 32000-1 7.4.3 and refuses a character outside `!` to `u`, `z` inside a group, a group worth 2**32 or more, a one-character final group, and anything but whitespace after `~>`, matching `src/pdf/filters.cpp`'s refusal. The reviewer's `!~>` suffix refuses.
+
+## Stop after round 22 (cap)
+
+The loop reached the 22-round cap (`stopped-at-22`). Every finding from rounds 1 to 22 is fixed in a commit with a regression test that failed before it. Rounds 19 to 22 each found one more validator stream decoder laxer than ISO 32000-1 7.4, so the remaining risk is the pattern rather than any known defect: a systematic pass over every validator decoder is filed as `D06 T05 §26` (deferral recorded in `D06 T05 §12`). Nothing left is a safety, data-integrity or stamp-invalidating problem: every committed fixture is byte-identical to the generator's output, the checkpoint passes, and every finding concerned a generator regression the validator could have missed, not a defect in shipped fixtures. The audit confirms the stamp on `D00 T03 §4`; no dependent section is suspect.
