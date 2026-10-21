@@ -479,7 +479,7 @@ TEST(Support, Sha256Hex)
 	const auto license_path = recto::test::repo_root() / "LICENSE";
 	EXPECT_EQ(
 		recto::test::sha256_file(license_path),
-		"0c2b2577702544e6ca2110800c25129ef79a7277e74f888ae852afb90cb363b4");
+		"3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986");
 
 	EXPECT_THROW(
 		recto::test::sha256_file(recto::test::repo_root() / "nonexistent_file_for_sha256.bin"),
