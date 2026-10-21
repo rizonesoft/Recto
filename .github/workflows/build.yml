@@ -4,10 +4,21 @@ name: build
 # across Debug|x64, Release|x64, Debug|ARM64, and Release|ARM64 with
 # /W4 /WX (/p:TreatWarningsAsErrors=true) and runs recto-tests on x64.
 
+# A push or pull request that changes only the plan, review records or other Markdown builds nothing new: GitHub
+# skips the run only when every changed file matches, so any change to code, tests, build files or workflows still
+# builds (and records its test list). Such a commit cannot be a gtest fix commit, so release notes lose nothing.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'todo/**'
+      - 'docs/**'
+      - '**/*.md'
   pull_request:
+    paths-ignore:
+      - 'todo/**'
+      - 'docs/**'
+      - '**/*.md'
   workflow_dispatch:
     inputs:
       sha:
