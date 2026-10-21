@@ -53,28 +53,41 @@ def table_rows(text, columns=None):
 
 
 def section_refs(text):
-    """The TODO sections a cell names, with ranges and lists expanded, and the faults in how it names them."""
+    """The TODO sections a cell names, with ranges and lists expanded, and the faults in how it names them: a file
+    without a section, a backwards range, or a `§` the reference syntax does not reach (`§23 and §99`)."""
     refs, faults = [], [f"{m.group(0)} names a TODO file without a section" for m in FILE_ONLY.finditer(text)]
+    consumed = set()
     for match in SECTION_RUN.finditer(text):
+        consumed.update(range(*match.span(2)))
         prefix = match.group(1)
         for first, last in SECTION.findall(match.group(2)):
             if last and int(last) < int(first):
                 faults.append(f"{prefix} §{first}-§{last} runs backwards")
                 continue
             refs += [f"{prefix} §{n}" for n in range(int(first), int(last or first) + 1)]
+    for mark in re.finditer("§", text):
+        if mark.start() not in consumed:
+            faults.append(f"{text[mark.start():mark.start() + 8].strip()} is not part of a `DNN TNN §N` reference")
     return refs, faults
 
 
 def parity_names(text):
-    """Every tool name in the parity ledger, and the ones that must have a ledger row (Excluded, Partial, or naming
-    this ledger)."""
-    names, needed = set(), set()
-    for cells in table_rows(text):
-        if len(cells) < 4 or cells[0] in ("Acrobat Pro tool", "Competitor feature"):
+    """Every tool name in the parity ledger, and the ones that must have a ledger row: no TODO section in the table's
+    `Recto sections` column, Excluded or Partial, or naming this ledger."""
+    names, needed, sections_at = set(), set(), None
+    for line in text.splitlines():
+        if not line.startswith("|") or re.fullmatch(r"\|(\s*-+\s*\|)+", line.strip()):
             continue
-        name, line = cells[0], " | ".join(cells)
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if cells[0] in ("Acrobat Pro tool", "Competitor feature"):
+            sections_at = cells.index("Recto sections") if "Recto sections" in cells else None
+            continue
+        if sections_at is None or len(cells) <= sections_at:
+            continue
+        name = cells[0]
         names.add(name)
-        if "Excluded" in cells[1:3] or "Partial" in cells[1:3] or "user-demand.md" in line:
+        owned = SECTION_RUN.search(cells[sections_at]) is not None
+        if not owned or "Excluded" in cells or "Partial" in cells or "user-demand.md" in line:
             needed.add(name)
     return names, needed
 
@@ -124,14 +137,18 @@ def problems(ledger_text, parity_text, plan_text, sections, release=(None, None,
         owned_decisions = [int(n) for n in DECISION.findall(owner)]
         if not refs and not owned_decisions:
             found.append(f"{where}: the owner names no TODO section and no decision")
+        if status == "planned" and not refs:
+            found.append(f"{where}: a planned row needs a TODO section that builds it")
+        cited_decisions = list(owned_decisions)
         for cell in (request, evidence, cost):
             more, more_faults = section_refs(cell)
             refs, faults = refs + more, faults + more_faults
+            cited_decisions += [int(n) for n in DECISION.findall(cell)]
         found += [f"{where}: {fault}" for fault in faults]
         for ref in dict.fromkeys(refs):
             if ref not in sections:
                 found.append(f"{where}: {ref} does not resolve")
-        for decision in owned_decisions:
+        for decision in dict.fromkeys(cited_decisions):
             if decision not in decisions:
                 found.append(f"{where}: decision D{decision} is not in the foundation plan")
         if status != "planned" and not cost:

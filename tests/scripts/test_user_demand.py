@@ -56,6 +56,9 @@ class LedgerRulesTest(unittest.TestCase):
             "backwards": (split.replace("§23-§24", "§24-§23"), "runs backwards"),
             "file only": (web.replace("D15: desktop only", "D15: desktop only, see D02 T02"), "without a section"),
             "future": (web.replace("2026-10-21", "9999-12-31"), "is in the future"),
+            "request decision": (web.replace("A web version", "A web version (D99)"), "decision D99 is not in"),
+            "planned decision only": (split.replace("D02 T02 §23-§24", "D17"), "needs a TODO section that builds it"),
+            "unparsed section": (split.replace("§23-§24", "§23 and §999"), "is not part of a `DNN TNN §N` reference"),
         }
         for name, (row, message) in cases.items():
             with self.subTest(rule=name):
@@ -68,6 +71,11 @@ class LedgerRulesTest(unittest.TestCase):
         # A Planned row that points at the ledger needs a row too.
         found = problems(VALID["web"])
         self.assertIn("parity row 'Split view' has no owning TODO section and no ledger row", found)
+
+    def test_a_parity_row_without_a_section_needs_a_ledger_row_whatever_its_status(self):
+        parity = PARITY + "| New request | Planned | | No owner yet |\n"
+        self.assertIn("parity row 'New request' has no owning TODO section and no ledger row",
+                      problems(*VALID.values(), parity=parity))
 
     def test_rows_older_than_the_last_release_are_refused(self):
         found = problems(*VALID.values(), release=("v1.0.0", date(2026, 11, 1), True))
