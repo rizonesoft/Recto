@@ -81,6 +81,10 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                             self.assertEqual(item.get(name), value, f"{item.get('Identity')}: {name}")
                         for name, allowed in ALLOWED_METADATA.items():
                             self.assertIn(item.get(name), allowed, f"{item.get('Identity')}: {name}")
+                        if item.get("CompileAs") == "Default":
+                            # Default compiles by extension: .c is C, so every source must carry a C++ extension.
+                            suffix = pathlib.PurePath(item.get("Identity", "")).suffix.lower()
+                            self.assertIn(suffix, {".cpp", ".cxx", ".cc"}, f"{item.get('Identity')}: compiled as C")
                         options = {token.strip('"').lower() for token in item.get("AdditionalOptions", "").split()}
                         self.assertLessEqual(options, ALLOWED_OPTIONS,
                                              f"{item.get('Identity')}: AdditionalOptions has unlisted switches")

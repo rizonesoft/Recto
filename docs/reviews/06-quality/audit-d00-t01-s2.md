@@ -367,3 +367,45 @@ OVERALL: needs-attention
 ## Fixes after round 8
 
 - Finding 1 (P1): the metadata that could undermine C++20 with `/W4 /WX` besides the three required fields is held to the values in use: `CompileAs` (`Default` or `CompileAsCpp`; `CompileAsC` is `/TC`), `DisableSpecificWarnings` and `WarningVersion` (absent), and `ExternalWarningLevel` (`InheritWarningLevel`). Mutation: `CompileAs` `CompileAsC` -> `FAILED (failures=28)`. Tests: `Ran 3 tests ... OK`.
+
+## Round 9: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T14:43:22Z
+- Effort: medium
+- Lines: 29
+- Digest: a72155532fda988c
+
+## adversarial: needs-attention
+
+1. **P1** `tests/scripts/test_engine_dependency_policy.py:21`: Allowing `CompileAs=Default` without checking the source extension still accepts C compilation as C++20. A `.c` source uses the C compiler under this setting, even when `LanguageStandard=stdcpp20` remains present.
+
+   Reproduced without modifying files: wrapped the real MSBuild subprocess responses, changed each source’s `Identity` and `FullPath` suffix to `.c`, set `Extension=.c` and `CompileAs=Default`, then ran the unchanged policy test. It accepted all **124 modified items**, with zero failures or errors. This demonstrates false acceptance by the guard, not C compilation in the current projects.
+
+## consistency: approve
+
+No additional findings.
+
+## integration: advisory
+
+Current clean-clone compilation was not independently rerun because building writes files. Passing the policy test does not establish that promise.
+
+## source-defect: needs-attention
+
+Finding **1 (P1)** applies here. `Default` does not select C++ unconditionally: Microsoft documents that `.c` selects C and `.cpp` or `.cxx` selects C++ unless explicitly overridden. [MSVC source-file type options](https://learn.microsoft.com/en-us/cpp/build/reference/tc-tp-tc-tp-specify-source-file-type?view=msvc-170)
+
+## design: advisory
+
+Not applicable. This section owns no user surface.
+
+## record: advisory
+
+At `9d77556`, the checkpoint independently returned `False`, `False`, and `valid: 677 sections`; all three policy tests passed. The opening record’s 676-section count belongs to its named earlier revision. These passing results do not resolve finding 1.
+
+No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 9
+
+- Finding 1 (P1): with `CompileAs` `Default`, which compiles by extension, every source must have a C++ extension (`.cpp`, `.cxx` or `.cc`); a `.c` source fails. Tests: `Ran 3 tests ... OK` (all 124 current sources are `.cpp`).
