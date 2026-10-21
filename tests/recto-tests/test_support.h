@@ -20,7 +20,8 @@ std::filesystem::path repo_root();
 
 // Resolves a path inside the test corpus directory. If the environment
 // variable RECTO_CORPUS_DIR is set and non-empty, resolves relative to
-// that directory; otherwise resolves relative to repo_root() / "tests" / "corpus".
+// that directory (a relative value is taken from repo_root(), never from the
+// current directory); otherwise resolves relative to repo_root() / "tests" / "corpus".
 std::filesystem::path corpus_path(std::string_view relative = {});
 
 // Converts a filesystem path to a Windows extended-length path (\\?\)

@@ -152,6 +152,14 @@ TEST(Support, CorpusPathResolution)
 			const auto redirected = recto::test::corpus_path("a.pdf");
 			EXPECT_EQ(redirected, (temp.path() / "a.pdf").lexically_normal());
 		}
+
+		{
+			// A relative override is anchored at the repository root, not the current directory.
+			ScopedEnvVar relative_env(L"RECTO_CORPUS_DIR", L"tests\\corpus");
+			ScopedCurrentDir cwd_guard(temp.path());
+			EXPECT_EQ(recto::test::corpus_path("render/simple-1p.pdf"),
+				(root1 / "tests" / "corpus" / "render" / "simple-1p.pdf").lexically_normal());
+		}
 	}
 	EXPECT_FALSE(std::filesystem::exists(recto::test::to_long_path(temp1_root)));
 }
@@ -250,11 +258,15 @@ TEST(Support, TempDirLongPathAndReadOnly)
 
 		long_file = temp.file_path(deep_rel);
 		EXPECT_GT(long_file.native().size(), 280u);
+		// file_path() hands back the extended-length form itself, so Win32 accepts it without LongPathsEnabled.
+		EXPECT_EQ(long_file.native().rfind(L"\\\\?\\", 0), 0u);
+		EXPECT_EQ(temp.file_path("short.bin").native().rfind(L"\\\\?\\", 0), std::wstring::npos);
 
 		const std::vector<uint8_t> expected{0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x37};
 		recto::test::write_file_bytes(long_file, expected);
 		const auto actual = recto::test::read_file_bytes(long_file);
 		EXPECT_EQ(actual, expected);
+		EXPECT_NE(GetFileAttributesW(long_file.c_str()), INVALID_FILE_ATTRIBUTES);
 
 		// Near-limit (250-character) single filename component regression test.
 		const std::string near_limit_name = std::string(246, 'f') + ".bin";

@@ -195,6 +195,9 @@ std::filesystem::path corpus_path(std::string_view relative)
 	}
 	if (base.empty()) {
 		base = repo_root() / L"tests" / L"corpus";
+	} else if (base.is_relative()) {
+		// A relative override is anchored at the repository root, so the result never depends on the current directory.
+		base = repo_root() / base;
 	}
 	if (relative.empty()) {
 		return base.lexically_normal();
@@ -406,7 +409,10 @@ std::filesystem::path TempDir::file_path(std::string_view relative) const
 	if (relative.empty()) {
 		return path_;
 	}
-	return (path_ / std::filesystem::path(utf8_to_wide(relative))).lexically_normal();
+	const auto full = (path_ / std::filesystem::path(utf8_to_wide(relative))).lexically_normal();
+	// Past what plain Win32 calls accept (CreateDirectoryW stops at MAX_PATH - 12), hand back the \\?\ form so a caller
+	// can pass the path to any Win32 API without LongPathsEnabled; shorter paths stay as they are.
+	return full.native().size() >= MAX_PATH - 12 ? to_long_path(full) : full;
 }
 
 void TempDir::cleanup() noexcept

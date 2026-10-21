@@ -11,6 +11,7 @@
 #
 # Options: -Platform x64|ARM64 (default both, or x64 under -EnableASAN),
 # -Configuration Debug|Release (default both), -TestFilter <pattern>,
+# -TestOutputDir <folder> (where the gtest XML reports go; default build\),
 # -SkipTests, -EnableASAN.
 # Requirements: Visual Studio 2026 with the v145 C++ toolset (its
 # bundled vcpkg is used unless VCPKG_ROOT already points at one), the
@@ -24,6 +25,7 @@ param(
     [ValidateSet('x64', 'ARM64', 'x64,ARM64', 'ARM64,x64')][string[]]$Platform = @('x64', 'ARM64'),
     [ValidateSet('Debug', 'Release', 'Debug,Release', 'Release,Debug')][string[]]$Configuration = @('Debug', 'Release'),
     [string]$TestFilter = '',
+    [string]$TestOutputDir = '',
     [switch]$SkipTests,
     [switch]$EnableASAN
 )
@@ -140,7 +142,9 @@ if (-not $SkipTests -and $Platform -contains 'x64') {
         $env:RECTO_EXPECT_ASAN = if ($EnableASAN) { '1' } else { '0' }
         foreach ($cfg in $Configuration) {
             $tests = Join-Path $root "build\bin\x64\$cfg\recto-tests\recto-tests.exe"
-            $xmlOut = Join-Path $root "build\test-results-x64-$cfg.xml"
+            $xmlDir = if (-not $TestOutputDir) { Join-Path $root 'build' } elseif ([System.IO.Path]::IsPathRooted($TestOutputDir)) { $TestOutputDir } else { Join-Path $root $TestOutputDir }
+            New-Item -ItemType Directory -Path $xmlDir -Force | Out-Null
+            $xmlOut = Join-Path $xmlDir "test-results-x64-$cfg.xml"
             if (Test-Path $xmlOut) { Remove-Item $xmlOut -Force }
             $argsList = @("--gtest_output=xml:$xmlOut")
             if ($TestFilter) {
