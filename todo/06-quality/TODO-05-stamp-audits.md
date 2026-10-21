@@ -37,7 +37,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 4 | §4 | Audit D00 T01 §5: Reference benchmark machines recorded | D00 T01 §5, §3 | [x] |
 | 5 | §5 | Audit D00 T02 §1: Graph engine, CLI and tests | D00 T02 §1, §4 | [x] |
 | 6 | §6 | Audit D00 T02 §2: Skills, rules and the CI gate | D00 T02 §2, §5 | [x] |
-| 7 | §7 | Audit D00 T01 §4: Build CI for x64 and ARM64 | D00 T01 §4, §6 | [ ] |
+| 7 | §7 | Audit D00 T01 §4: Build CI for x64 and ARM64 | D00 T01 §4, §6 | [x] |
 | 8 | §8 | Audit D00 T02 §3: Seeded graph and generated plan | D00 T02 §3, §7 | [ ] |
 | 9 | §9 | Audit D00 T03 §1: test_support corpus path resolver and TempDir RAII helper | D00 T03 §1, §8 | [ ] |
 | 10 | §10 | Audit D00 T03 §2: RGBA pixel comparison (expect_rgba_equal, compute_ssim) and test | D00 T03 §2, §9 | [ ] |
@@ -232,9 +232,12 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 - [x] Run audit rounds on `D00 T01 §4`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t01-s4.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
 - [x] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t01-s4.md` is open without a fix commit or a filed section.
 - [x] On a confirmed regression, add a dated blocking note to `D00 T01 §4`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t01-s4.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
-- [ ] Commit: `review: audit D00 T01 §4 under the current review process`
+- [x] Commit: `review: audit D00 T01 §4 under the current review process`
 
 **Test checkpoint:** `python scripts/todo-graph.py resolve "D00 T01 §4"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d00-t01-s4.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+> **Verified:** 2026-10-21 | §7 | e41f2ce57c591ce7f16767f6b6b7c988db293a89
+> **Review:** `docs/reviews/d06-t05-s7.json`
 
 ## 8. Audit D00 T02 §3: Seeded graph and generated plan
 

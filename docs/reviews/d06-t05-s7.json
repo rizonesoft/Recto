@@ -1,0 +1,29 @@
+{
+  "ref": "D06 T05 \u00a77",
+  "title": "Audit D00 T01 \u00a74: Build CI for x64 and ARM64",
+  "implementation_sha": "e41f2ce57c591ce7f16767f6b6b7c988db293a89",
+  "date": "2026-10-21",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/audit-d00-t01-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/audit-d00-t01-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/audit-d00-t01-s4.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "gh run 39641899790 (push, 8b34d96) -> all jobs success; 5 x 0 Warning(s); 3 x [  PASSED  ] 98 tests",
+    "gh run 39644094799 (repeat of 8b34d96) -> all jobs success; ASan exact cache hit; per-toolchain full cache saved"
+  ],
+  "rounds_spent": 3,
+  "round_cap": 22
+}
