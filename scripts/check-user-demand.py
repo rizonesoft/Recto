@@ -22,7 +22,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts" / "lib"))
-from todo_graph import Refused, graph  # noqa: E402
+from todo_graph import MAX_SECTIONS_PER_FILE, Refused, graph  # noqa: E402
 
 LEDGER = "docs/user-demand.md"
 PARITY = "docs/acrobat-parity.md"
@@ -117,6 +117,10 @@ def section_refs(text):
         for first, last in SECTION.findall(match.group(2)):
             if last and int(last) < int(first):
                 faults.append(f"{prefix} §{first}-§{last} runs backwards")
+                continue
+            if last and int(last) - int(first) >= MAX_SECTIONS_PER_FILE:
+                # A TODO file holds at most MAX_SECTIONS_PER_FILE sections; a longer range is a typo, not expanded.
+                faults.append(f"{prefix} §{first}-§{last} spans more sections than a TODO file can hold")
                 continue
             refs += [f"{prefix} §{n}" for n in range(int(first), int(last or first) + 1)]
     for mark in re.finditer("§", text):
