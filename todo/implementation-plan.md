@@ -32,7 +32,7 @@ Sections: 17 | Checklist items: 89
 
 ### Phase 1: M1 Engine core
 
-Sections: 37 | Checklist items: 262
+Sections: 37 | Checklist items: 264
 
 | Status | Reference   | Deliverable                                                                              | Needs        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -57,7 +57,7 @@ Sections: 37 | Checklist items: 262
 | [ ]    | D01 T02 §9  | `RenderPool` worker threads and 4-tier priority `TileScheduler` with jump cancellation   | windows-host | 7     |
 | [ ]    | D01 T02 §10 | `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters    | windows-host | 7     |
 | [ ]    | D01 T02 §11 | `RenderOptions::line_weight_mode` in the rasterizer and the `TileKey` identity           | windows-host | 7     |
-| [ ]    | D01 T02 §13 | `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter`       | windows-host | 8     |
+| [ ]    | D01 T02 §13 | `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter`       | windows-host | 9     |
 | [ ]    | D01 T03 §1  | `recto-cli` command dispatcher, exit-code contract and `recto-cli info` (`--json`)       | windows-host | 7     |
 | [ ]    | D01 T03 §2  | `recto-cli render` (full-page and stitched `512 x 512` tile modes, WIC PNG encoder)      | windows-host | 6     |
 | [ ]    | D01 T03 §3  | `recto-cli bench` and `recto-cli stress` commands                                        | windows-host | 5     |
@@ -67,7 +67,7 @@ Sections: 37 | Checklist items: 262
 | [ ]    | D01 T03 §7  | Section 4.9 Battery Part 2: `CancellationStorm` (30 s) and `MultiDocumentStress`         | windows-host | 7     |
 | [ ]    | D01 T03 §8  | `recto::cli::Dispatcher` in its own unit and the read-only `Dispatcher::verb_names()`    | windows-host | 6     |
 | [ ]    | D01 T03 §9  | `--password env:NAME` in the shared flag parser, never echoed or logged                  | windows-host | 8     |
-| [ ]    | D01 T03 §10 | Verb extension rule: later verb families register under the `§1` exit-code contract      | windows-host | 6     |
+| [ ]    | D01 T03 §10 | Verb extension rule: later verb families register under the `§1` exit-code contract      | windows-host | 7     |
 | [ ]    | D06 T01 §1  | Pixel-exact golden render comparison harness (`Goldens.*` in `recto-tests`)              | windows-host | 7     |
 | [ ]    | D06 T01 §2  | Disciplined golden refresh tool (`--refresh-goldens`) and `x64` vs `ARM64` pixel gate    | windows-host | 7     |
 | [ ]    | D06 T03 §1  | Hostile-input fixture pack from user-reported failure classes                            | windows-host | 10    |
@@ -76,7 +76,7 @@ Sections: 37 | Checklist items: 262
 
 ### Phase 2: M2 Viewer
 
-Sections: 72 | Checklist items: 537
+Sections: 72 | Checklist items: 539
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -111,7 +111,7 @@ Sections: 72 | Checklist items: 537
 | [ ]    | D02 T03 §5  | Outline tree panel (`OutlinePanel`) and bidirectional section tracking                   | windows-host, display-session | 9     |
 | [ ]    | D02 T03 §6  | Interactive Bookmark Editor and heading-based outline auto-generation                    | windows-host, display-session | 9     |
 | [ ]    | D02 T03 §7  | Optional Content Groups (`OCG` / Layers) engine and live Layers panel                    | windows-host, display-session | 9     |
-| [ ]    | D01 T02 §14 | `DocumentActor` optional-content edit session: stage, undo, redo, `ocg_generation`       | windows-host                  | 12    |
+| [ ]    | D01 T02 §14 | `DocumentActor` optional-content edit session: stage, undo, redo, `ocg_generation`       | windows-host                  | 14    |
 | [ ]    | D02 T02 §22 | Line weights view toggle: true widths or uniform thin lines                              | windows-host, display-session | 5     |
 | [ ]    | D02 T03 §8  | Embedded Files and PDF Portfolios (`/EmbeddedFiles` and `/Collection`) engine and panel  | windows-host, display-session | 9     |
 | [ ]    | D02 T03 §9  | Document Info panel: metadata, security permissions and embedded font inventory          | windows-host, display-session | 8     |
@@ -155,7 +155,7 @@ Sections: 72 | Checklist items: 537
 
 ### Phase 3: M3 Text
 
-Sections: 96 | Checklist items: 712
+Sections: 96 | Checklist items: 714
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -177,7 +177,7 @@ Sections: 96 | Checklist items: 712
 | [ ]    | D03 T01 §11 | Page-area render with chosen DPI, clipboard image and `recto-cli snapshot`               | windows-host                  | 9     |
 | [ ]    | D03 T01 §14 | Offline spell check service over `ISpellChecker` and platform text boxes                 | windows-host                  | 9     |
 | [ ]    | D03 T01 §15 | Zone OCR engine: recognize a drawn area and `recto-cli ocr --zone`                       | windows-host                  | 8     |
-| [ ]    | D03 T01 §16 | OCR word confidence, suspect list and undoable in-memory corrections                     | windows-host                  | 8     |
+| [ ]    | D03 T01 §16 | OCR word confidence, suspect list and undoable in-memory corrections                     | windows-host                  | 9     |
 | [ ]    | D03 T02 §1  | `DocumentViewAutomationPeer` implementing `ITextProvider` and `ITextRangeProvider`       | windows-host, display-session | 8     |
 | [ ]    | D03 T02 §2  | Two-way UIA text selection synchronization, `FindText`, and child peer hooks             | windows-host, display-session | 7     |
 | [ ]    | D03 T02 §3  | Automated control accessibility inventory (`AutomationProperties.Name`, `32/36 epx`)     | windows-host, display-session | 8     |
@@ -239,7 +239,7 @@ Sections: 96 | Checklist items: 712
 | [ ]    | D03 T03 §49 | Multi-select and `Group` and `Ungroup` commands for markups                              | windows-host, display-session | 6     |
 | [ ]    | D03 T03 §50 | `Cloud` and `Arc` tools on the Markup & Annotation Bar                                   | windows-host, display-session | 7     |
 | [ ]    | D03 T03 §51 | `Circle` tool in the `Measure` bar                                                       | windows-host, display-session | 5     |
-| [ ]    | D03 T03 §52 | Sticker packs: shipped sticker sets and import of user sticker folders                   | none                          | 7     |
+| [ ]    | D03 T03 §52 | Sticker packs: shipped sticker sets and import of user sticker folders                   | none                          | 8     |
 | [ ]    | D03 T03 §53 | `Stickers` tab in the Stamp Picker, import and export of packs                           | windows-host, display-session | 6     |
 | [ ]    | D03 T03 §54 | Accounting tickmark stamp set and calculator stamp tokens                                | none                          | 7     |
 | [ ]    | D03 T03 §55 | Accounting set in the Stamp Picker and the `Sum of selection` stamp                      | windows-host, display-session | 6     |
@@ -258,7 +258,7 @@ Sections: 96 | Checklist items: 712
 
 ### Phase 4: M4 Conversions A
 
-Sections: 138 | Checklist items: 1075
+Sections: 138 | Checklist items: 1080
 
 | Status | Reference   | Deliverable                                                                              | Needs                                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | --------------------------------------------- | ----- |
@@ -305,12 +305,12 @@ Sections: 138 | Checklist items: 1075
 | [ ]    | D05 T01 §11 | `/Adobe.PubSec` certificate encryption writer: recipients, CMS envelopes, AES-256        | windows-host                                  | 13    |
 | [ ]    | D05 T01 §12 | `/Adobe.PubSec` decryption with a certificate private key through CNG on open            | windows-host                                  | 10    |
 | [ ]    | D05 T01 §13 | Page backgrounds engine: add, update, list and remove managed marks                      | windows-host                                  | 13    |
-| [ ]    | D05 T01 §6  | 3-zone `Headers & Footers` and legal **Bates Numbering** (`stamp_watermark.cpp` & CLI)   | windows-host                                  | 8     |
+| [ ]    | D05 T01 §6  | 3-zone `Headers & Footers` and legal **Bates Numbering** (`stamp_watermark.cpp` & CLI)   | windows-host                                  | 9     |
 | [ ]    | D05 T01 §14 | `replace_pages`: replace pages from another PDF, remapping links, fields and tags        | windows-host                                  | 12    |
 | [ ]    | D05 T01 §15 | Split by maximum file size and by top-level bookmarks (engine and CLI)                   | windows-host                                  | 11    |
 | [ ]    | D05 T01 §17 | N-up sheets: several pages on one sheet as a new PDF (engine and CLI)                    | windows-host                                  | 10    |
 | [ ]    | D05 T01 §19 | Page labels: read, edit, preview and carry through page operations (engine and CLI)      | windows-host                                  | 11    |
-| [ ]    | D05 T01 §16 | Split one page into several: grid or custom cut lines (engine and CLI)                   | windows-host                                  | 11    |
+| [ ]    | D05 T01 §16 | Split one page into several: grid or custom cut lines (engine and CLI)                   | windows-host                                  | 12    |
 | [ ]    | D05 T01 §18 | Interleave two PDFs, swap odd and even pages, reverse page order (engine and CLI)        | windows-host                                  | 10    |
 | [ ]    | D05 T01 §20 | Blank page detection with a local heuristic and a deletion plan (engine and CLI)         | windows-host                                  | 9     |
 | [ ]    | D05 T01 §21 | Reorder pages by bookmark order (engine and CLI)                                         | windows-host                                  | 7     |
@@ -341,7 +341,7 @@ Sections: 138 | Checklist items: 1075
 | [ ]    | D05 T02 §16 | Split mode: split by file size and by top-level bookmarks                                | windows-host, display-session                 | 9     |
 | [ ]    | D05 T02 §17 | Split Page dialog: grid or draggable cut lines with a live preview                       | windows-host, display-session                 | 9     |
 | [ ]    | D05 T02 §18 | N-up dialog: several pages on one sheet with a live sheet preview                        | windows-host, display-session                 | 8     |
-| [ ]    | D05 T02 §19 | Reverse, swap odd and even, and interleave as Organize commands                          | windows-host, display-session                 | 8     |
+| [ ]    | D05 T02 §19 | Reverse, swap, interleave and bookmark-order commands in Organize                        | windows-host, display-session                 | 9     |
 | [ ]    | D05 T02 §20 | Page Labels dialog: ranges, styles, prefixes and a live label preview                    | windows-host, display-session                 | 9     |
 | [ ]    | D05 T02 §21 | Blank page review: find, check and remove blank pages from the grid                      | windows-host, display-session                 | 7     |
 | [ ]    | D05 T02 §22 | Drag pages between open documents and out to Explorer                                    | windows-host, display-session                 | 9     |
@@ -353,7 +353,7 @@ Sections: 138 | Checklist items: 1075
 | [ ]    | D05 T02 §28 | Redaction Bar: suggested marks, whiteout and whole-page redaction                        | windows-host, display-session                 | 9     |
 | [ ]    | D05 T02 §29 | Inspect Document panel: what the file carries, with a path to Sanitize                   | windows-host, display-session                 | 9     |
 | [ ]    | D05 T02 §30 | Signatures panel: view the signed version and compare it with the current document       | windows-host, display-session                 | 8     |
-| [ ]    | D05 T02 §31 | Trusted Lists dialog: opt-in download, manual import and per-list control                | windows-host, display-session                 | 9     |
+| [ ]    | D05 T02 §31 | Trusted Lists dialog: opt-in download, manual import and per-list control                | windows-host, display-session                 | 10    |
 | [ ]    | D05 T02 §32 | Pressure-sensitive pen capture for handwritten signatures                                | windows-host, display-session                 | 7     |
 | [ ]    | D06 T01 §5  | Conversion round-trip matrix Part 1 (`RoundTrips.Formats`: Images/SVG/XPS, OCR, Tables)  | windows-host                                  | 7     |
 | [ ]    | D06 T03 §4  | Single-interpreter differential suite across every content consumer                      | windows-host                                  | 7     |
@@ -364,7 +364,7 @@ Sections: 138 | Checklist items: 1075
 | [ ]    | D03 T04 §11 | Edit PDF mode bar, object hit-testing and not-editable messages                          | windows-host, display-session                 | 6     |
 | [ ]    | D03 T04 §18 | Vertical writing (`/WMode 1`) model: detection, metrics and editability classes          | windows-host                                  | 7     |
 | [ ]    | D06 T03 §5  | Save integrity fault-injection suite                                                     | windows-host                                  | 12    |
-| [ ]    | D03 T01 §19 | Save OCR corrections and zone text into the text layer of a copy                         | windows-host, display-session                 | 7     |
+| [ ]    | D03 T01 §19 | Save OCR corrections and zone text into the text layer of a copy                         | windows-host, display-session                 | 8     |
 | [ ]    | D03 T04 §9  | Object removal, atomic marked content and full-rewrite save with orphan pruning          | windows-host                                  | 6     |
 | [ ]    | D03 T04 §10 | Vector objects: select, move, resize, rotate, flip, recolour, width and delete           | windows-host                                  | 6     |
 | [ ]    | D03 T04 §13 | On-canvas image and vector handles, alignment guides, nudges and z-order                 | windows-host, display-session                 | 6     |
@@ -403,7 +403,7 @@ Sections: 138 | Checklist items: 1075
 
 ### Phase 5: M5 Conversions B
 
-Sections: 112 | Checklist items: 903
+Sections: 112 | Checklist items: 905
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -432,9 +432,9 @@ Sections: 112 | Checklist items: 903
 | [ ]    | D04 T04 §15 | OFD outlines, links, attachments, annotations and seal report                            | windows-host                  | 6     |
 | [ ]    | D04 T04 §16 | MIME message parser (RFC 5322, RFC 2045 to 2049) with bounds and fuzz target             | windows-host                  | 7     |
 | [ ]    | D04 T04 §17 | Outlook `.msg` ([MS-OXMSG]) reader over the CFB reader                                   | windows-host                  | 8     |
-| [ ]    | D04 T04 §18 | Email (`.eml`, `.msg`) to PDF with attachments that ask before opening                   | windows-host                  | 8     |
 | [ ]    | D04 T04 §19 | MHTML (`.mht`, `.mhtml`) to PDF through the HTML engine                                  | windows-host                  | 6     |
 | [ ]    | D04 T04 §20 | Plain-text family (`.txt`, `.log`, `.ini`, `.cfg`, `.xml`) to PDF, encoding detected     | windows-host                  | 8     |
+| [ ]    | D04 T04 §18 | Email (`.eml`, `.msg`) to PDF with attachments that ask before opening                   | windows-host                  | 8     |
 | [ ]    | D04 T04 §21 | `recto-cli office-to-pdf` dispatch for the new input formats                             | windows-host                  | 5     |
 | [ ]    | D04 T04 §22 | Convert card inputs for ODF, OFD, email, MHTML, text and image formats, and open `.ofd`  | windows-host, display-session | 7     |
 | [ ]    | D04 T05 §1  | Native ECMA-376 `XlsxWriter` (`.xlsx`, `.csv`, `.xml`) over `TableExtractor` and CLI     | windows-host                  | 8     |
@@ -509,7 +509,7 @@ Sections: 112 | Checklist items: 903
 | [ ]    | D04 T08 §1  | `VerbSpec` model, argument kinds and the verb registry JSON schema                       | windows-host                  | 8     |
 | [ ]    | D04 T08 §2  | `recto-cli verbs --json` export and the dispatcher coverage gate                         | windows-host                  | 7     |
 | [ ]    | D01 T03 §11 | Dispatcher and `recto-cli verbs --json` agreement gate for every registered verb         | windows-host                  | 4     |
-| [ ]    | D04 T08 §3  | Verb specifications for every `recto-cli` verb family                                    | windows-host                  | 8     |
+| [ ]    | D04 T08 §3  | Verb specifications for every `recto-cli` verb family                                    | windows-host                  | 9     |
 | [ ]    | D04 T08 §4  | `recto-mcp` stdio server: framing, modern and legacy handshake, tool methods             | windows-host                  | 10    |
 | [ ]    | D04 T08 §5  | Tool schema generation, annotations and argument validation from the registry            | windows-host                  | 10    |
 | [ ]    | D04 T08 §6  | Path policy, allow-list, staged inputs and exclusive output publishing                   | windows-host                  | 10    |
@@ -517,12 +517,12 @@ Sections: 112 | Checklist items: 903
 | [ ]    | D04 T08 §8  | Tool call execution: child `recto-cli`, limits, cancellation and results                 | windows-host                  | 11    |
 | [ ]    | D04 T08 §9  | MCP client test harness, stub CLI and the `fuzz_mcp_message` target                      | windows-host                  | 7     |
 | [ ]    | D04 T08 §11 | `docs/automation.md` with a generated verb reference and a sync test                     | windows-host                  | 4     |
-| [ ]    | D04 T08 §12 | MCP safety gates: no listener, no shell, confinement, secrets, inputs untouched          | windows-host                  | 10    |
+| [ ]    | D04 T08 §12 | MCP safety gates: no listener, no shell, confinement, secrets, inputs untouched          | windows-host                  | 11    |
 | [ ]    | D06 T01 §6  | Conversion round-trip matrix Part 2 (`RoundTrips.DocumentsAndSecurity`: Word, Sign)      | windows-host                  | 7     |
 
 ### Phase 6: M6 Ship
 
-Sections: 54 | Checklist items: 381
+Sections: 54 | Checklist items: 383
 
 | Status | Reference   | Deliverable                                                                              | Needs                                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | --------------------------------------------- | ----- |
@@ -541,7 +541,7 @@ Sections: 54 | Checklist items: 381
 | [ ]    | D07 T01 §7  | Automated Self-Contained Portable Install zero-registry and zero-`%LOCALAPPDATA%` proof  | windows-host, display-session                 | 6     |
 | [ ]    | D07 T01 §8  | Explorer thumbnail and preview handlers (`IThumbnailProvider`, `IPreviewHandler`)        | windows-host, display-session                 | 8     |
 | [ ]    | D07 T01 §9  | Explorer verbs: print, printto, Combine and Convert to PDF (`IExplorerCommand`)          | windows-host, display-session                 | 10    |
-| [ ]    | D04 T07 §22 | `print` terminal step: batch print to a named printer                                    | windows-host                                  | 10    |
+| [ ]    | D04 T07 §22 | `print` terminal step: batch print to a named printer                                    | windows-host                                  | 11    |
 | [ ]    | D04 T07 §23 | Print step safeguards: run confirmation, page budget and CLI refusal                     | windows-host, display-session                 | 7     |
 | [ ]    | D07 T01 §10 | Print layouts: booklet, multiple pages per sheet and poster tiling                       | windows-host, display-session                 | 9     |
 | [ ]    | D07 T01 §11 | Print page selection: reverse order, pages with comments, a bookmark section, an area    | windows-host                                  | 8     |
@@ -574,7 +574,7 @@ Sections: 54 | Checklist items: 381
 | [ ]    | D06 T02 §8  | Enforce the FIPS policy in decryption, encryption writers, signing digests and the CLI   | windows-host                                  | 6     |
 | [ ]    | D06 T02 §9  | FIPS mode proof on a FIPS-enabled Windows host                                           | windows-host, attended                        | 4     |
 | [ ]    | D07 T02 §16 | Right-to-left readiness: flow direction, mirrored icons and a mirrored pseudolocale      | windows-host, display-session                 | 5     |
-| [ ]    | D07 T02 §17 | First shipped language set: ten reviewed translations and installer languages            | third-party                                   | 7     |
+| [ ]    | D07 T02 §17 | First shipped language set: ten reviewed translations and installer languages            | third-party                                   | 8     |
 | [ ]    | D07 T02 §7  | End-to-end v1 distribution bundle (`Setup.exe`, `Portable.zip`, `SHA256SUMS.txt`) & GPL  | windows-host, display-session                 | 8     |
 | [ ]    | D06 T03 §12 | Clean-machine release smoke and upgrade persistence proof                                | windows-host, display-session, attended       | 11    |
 | [ ]    | D07 T03 §2  | In-app `Report a problem` with privacy-safe diagnostics                                  | windows-host, display-session                 | 7     |
@@ -583,7 +583,7 @@ Sections: 54 | Checklist items: 381
 
 ### Phase 7: After v1
 
-Sections: 88 | Checklist items: 469
+Sections: 88 | Checklist items: 476
 
 | Status | Reference   | Deliverable                                                                              | Needs                                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | --------------------------------------------- | ----- |
@@ -641,9 +641,9 @@ Sections: 88 | Checklist items: 469
 | [ ]    | D08 T01 §18 | `Ctrl+K` commands, UIA names and polite announcements                                    | windows-host, display-session                 | 5     |
 | [ ]    | D08 T01 §19 | Privacy and security suite: zero network, key scan, consent gates, cancel                | windows-host, display-session                 | 7     |
 | [ ]    | D08 T02 §1  | Provider capability matrix and disabled-with-reason rule                                 | windows-host                                  | 4     |
-| [ ]    | D08 T02 §2  | Local provider: loopback OpenAI-compatible endpoint, no key, no proxy                    | windows-host                                  | 6     |
+| [ ]    | D08 T02 §2  | Local provider: loopback OpenAI-compatible endpoint, no key, no proxy                    | windows-host                                  | 8     |
 | [ ]    | D08 T02 §3  | Batch authorization: one job preview, many single-use request grants                     | windows-host                                  | 5     |
-| [ ]    | D08 T02 §4  | Structured output runner: bounded JSON, schema checks and verified quotes                | windows-host                                  | 6     |
+| [ ]    | D08 T02 §4  | Structured output runner: bounded JSON, schema checks and verified quotes                | windows-host                                  | 7     |
 | [ ]    | D08 T02 §5  | Rewrite, proofread, tone, expand and condense suggestion engine                          | windows-host                                  | 4     |
 | [ ]    | D08 T02 §6  | Apply AI text suggestions through the undoable Edit PDF path                             | windows-host                                  | 5     |
 | [ ]    | D08 T02 §7  | Rewrite and proofread review in the Assistant panel                                      | windows-host, display-session                 | 4     |
@@ -659,18 +659,18 @@ Sections: 88 | Checklist items: 469
 | [ ]    | D08 T02 §17 | Search by meaning mode, results and index controls                                       | windows-host, display-session                 | 3     |
 | [ ]    | D08 T02 §18 | Natural-language command planner over the command registry                               | windows-host                                  | 4     |
 | [ ]    | D08 T02 §19 | Command box: ask for a command, review the plan, run what you choose                     | windows-host, display-session                 | 3     |
-| [ ]    | D08 T02 §20 | AI bookmark proposals and per-bookmark summaries                                         | windows-host                                  | 5     |
+| [ ]    | D08 T02 §20 | AI bookmark proposals and per-bookmark summaries                                         | windows-host                                  | 6     |
 | [ ]    | D08 T02 §21 | Bookmark proposals review in the Outline panel                                           | windows-host, display-session                 | 2     |
-| [ ]    | D08 T02 §22 | AI page proposals: blank, misoriented and duplicate pages                                | windows-host                                  | 4     |
+| [ ]    | D08 T02 §22 | AI page proposals: blank, misoriented and duplicate pages                                | windows-host                                  | 5     |
 | [ ]    | D08 T02 §23 | Page proposals review in the Organize grid                                               | windows-host, display-session                 | 2     |
 | [ ]    | D08 T02 §24 | Mind map: outline, layout, Markdown, OPML and image exports                              | windows-host                                  | 4     |
 | [ ]    | D08 T02 §25 | Flashcards and quizzes with Markdown and CSV exports                                     | windows-host                                  | 4     |
 | [ ]    | D08 T02 §26 | Contract risk review with verified quotes and the not-legal-advice notice                | windows-host                                  | 4     |
-| [ ]    | D08 T02 §27 | Contract review list, page jumps and optional Apply as comments                          | windows-host, display-session                 | 3     |
+| [ ]    | D08 T02 §27 | Contract review list, page jumps and optional Apply as comments                          | windows-host, display-session                 | 4     |
 | [ ]    | D08 T02 §28 | AI-content estimate with fixed limits text                                               | windows-host                                  | 3     |
 | [ ]    | D08 T02 §29 | Image generation inserted through the undoable Edit PDF path                             | windows-host                                  | 4     |
 | [ ]    | D08 T02 §30 | Audio summaries: Windows voices or provider speech, WAV and MP3                          | windows-host                                  | 4     |
-| [ ]    | D08 T02 §31 | AI-assisted PII suggestions as unapplied redaction marks                                 | windows-host                                  | 4     |
+| [ ]    | D08 T02 §31 | AI-assisted PII suggestions as unapplied redaction marks                                 | windows-host                                  | 5     |
 | [ ]    | D08 T02 §32 | Redaction Bar: review, accept and reject AI suggestions                                  | windows-host, display-session                 | 2     |
 | [ ]    | D08 T02 §33 | Study and creation tools in the Assistant panel                                          | windows-host, display-session                 | 4     |
 | [ ]    | D08 T02 §34 | Ctrl+K commands, UIA names and announcements for the workspace tools                     | windows-host, display-session                 | 4     |
@@ -803,4 +803,4 @@ Sections: 4 | Checklist items: 22
 
 Progress: 24/725 verified sections, 15 ready to run now.
 
-Checklist: 148/5041 items completed (includes Commit items).
+Checklist: 148/5063 items completed (includes Commit items).

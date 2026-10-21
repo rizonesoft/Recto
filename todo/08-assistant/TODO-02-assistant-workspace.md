@@ -112,7 +112,7 @@ Providers differ: not every one offers embeddings, image generation, speech or i
 
 1. Author `src/services/assistant/capabilities.h/.cpp`: `Capability` (`Chat`, `Vision`, `StructuredJson`, `Embeddings`, `ImageGeneration`, `SpeechSynthesis`), a table keyed by `ProviderId` and model-ID pattern with each entry `Verified` (with the date) or `Unknown`, and `FeatureRequirements` mapping every workspace feature to the capabilities it needs. Done when: `AssistantWs.CapabilityTableCoversEveryFeature` asserts every feature has a requirement list and every provider has an entry for every capability.
 2. Add `explain_disabled(feature, provider, model)` returning a sentence naming the provider, the missing capability and what to do (choose another provider, or tick the override). Done when: `AssistantWs.DisabledReasonNamesCapabilityAndFix` asserts the sentence for an Anthropic embeddings request mentions embeddings and a provider switch and is not empty for any disabled pair.
-3. Add the per-model override setting `assistant.capabilityOverride.<provider>.<capability>` (default off) that the user can tick in Settings (§2) when they know their model supports a capability; an override never bypasses consent. Done when: `AssistantWs.OverrideEnablesCapabilityOnly` asserts an override flips availability and changes nothing in the gate.
+3. Add the per-model override setting, stored as a list of entries `{provider, model ID, capability}` (default none) that the user can tick in Settings (§2) when they know that exact model supports a capability; an override never bypasses consent and applies only to the model ID it was recorded for. Done when: `AssistantWs.OverrideEnablesCapabilityOnly` asserts an override flips availability and changes nothing in the gate, and `AssistantWs.OverrideDoesNotFollowModelSwitch` shows switching to a different model ID makes the capability unavailable again.
 4. Record the verification date of every `Verified` entry and the source page in `docs/assistant.md`. Done when: `AssistantWs.CapabilityDocsMatchTable` asserts each `Verified` entry has a dated line in `docs/assistant.md`.
 
 - [ ] Implement the capability table with every entry `Unknown` until it is verified against the provider's published documentation on the day the section is built. Done when: `AssistantWs.UnknownIsOff` asserts an `Unknown` capability is unavailable.
@@ -140,6 +140,8 @@ Users who will not send documents to a cloud can point Recto at a local model se
 - [ ] Implement `ProviderId::Local`, the descriptor and the `assistant.baseUrl.local` setting with validation through `loopback_policy`. Done when: `AssistantWs.LocalBuildsRequestWithoutAuth` and `AssistantWs.InvalidLocalUrlFallsBack` pass.
 - [ ] Implement `loopback_policy` and its use in the transport and in settings load. Done when: `AssistantWs.LoopbackPolicyRules` passes.
 - [ ] Add a plain-HTTP loopback test server under `tests/` that records every request and a second listener on a non-loopback address that must record none. Done when: `AssistantWs.LocalRequestStaysOnLoopback` sends a request and the second listener saw zero connections.
+- [ ] Prove the keyless path end to end: the readiness function (`D08 T01 §12`) reports the local provider ready with a valid endpoint and no credential, and a request goes through the transport with `SecretSource::None`. Done when: `AssistantWs.LocalKeylessRequestSucceeds` completes a streamed answer against the loopback test server with no `with_key` call.
+- [ ] Make `Test connection` and model discovery obey the gate: they run only on an explicit click, are disabled when the assistant is off or `AssistantDisabled` is set, and use the same transport and loopback policy. Done when: `AssistantWs.TestConnectionAndModelListObeyDisabledState` asserts zero requests when disabled and one request per click when enabled.
 - [ ] Implement `Test connection` for the local endpoint, listing models from the endpoint's model list when it offers one and otherwise leaving the model field free text. Done when: `AssistantWs.LocalTestConnectionTypedErrors` covers server not running, wrong port and unknown model with plain-language messages.
 - [ ] Add the local provider to the Settings `ASSISTANT` group: provider choice, endpoint field with inline validation, model field, no key row. Done when: `Settings.AssistantLocalProviderRows` finds the rows and no key control for `Local`.
 - [ ] Commit: `assistant: add local loopback provider with no key, no proxy and a narrow HTTP exception`
@@ -183,7 +185,9 @@ Most features here need machine-readable answers: proposed bookmarks, flashcards
 2. Add a small schema DSL (types, required fields, enums, string max lengths, array max sizes, integer ranges) and validate before any use. Done when: `AssistantWs.SchemaRejectsOutOfRange` rejects an unknown enum, an oversize array and a page number outside the sent pages.
 3. Add `verify_quote(quote, ContextPackage)` normalizing whitespace and hyphenation line breaks and requiring the quote to occur in the sent text of the stated page. Done when: `AssistantWs.QuoteVerification` accepts a real quote across a line break and rejects an invented one.
 4. On invalid output return `MalformedResponse` with a plain message and a Try again action that needs a new authorization; never re-send automatically. Done when: `AssistantWs.InvalidJsonNeverResendsAutomatically` counts one request.
+5. Bind every structured result to the document it was made from with a `RevisionToken` (document identity plus the tab session's revision counter, which increments on every committed edit, annotation, bookmark or page-order change, plus a content hash of each page the result refers to), and provide `revalidate(result, current_state)` returning `Fresh`, `RebasedByHash` (page indices moved but the referenced pages' hashes match) or `Stale`. Every Apply in §20, §22, §27 and §31 calls it and refuses `Stale` before any mutation. Done when: `AssistantWs.RevisionTokenDetectsEditsAndReorder` covers an edit, a page deletion and a reorder between response and Apply.
 
+- [ ] Implement `RevisionToken` capture and `revalidate`. Done when: `AssistantWs.RevisionTokenDetectsEditsAndReorder` passes.
 - [ ] Implement the bounded JSON parser and the runner. Done when: `AssistantWs.StructuredParserBounds` passes.
 - [ ] Implement the schema DSL and validation. Done when: `AssistantWs.SchemaRejectsOutOfRange` passes.
 - [ ] Implement `verify_quote` and the `Unverified` marking used by later sections. Done when: `AssistantWs.QuoteVerification` passes.
@@ -205,7 +209,7 @@ UPDF's and PDFelement's AI writing tools rewrite or proofread text, change its t
 
 1. Author `src/services/assistant/text_tasks.h/.cpp` with modes `Rewrite` (free instruction up to 500 characters), `Proofread`, `Tone` (formal, friendly, confident, neutral, plain), `Expand` and `Condense` (target ratio 25 to 200 percent), taking the selected paragraphs by `ParagraphId` (`D03 T04 §2`) and their text from `ContextBuilder`. Done when: `AssistantWs.TextTaskBuildsOneRequestPerBatch` asserts the request contains only the selected paragraphs.
 2. Return `TextSuggestion{paragraph_id, original, suggested, changes}` through the structured runner (§4) with one entry per input paragraph id, exactly once. Done when: `AssistantWs.SuggestionIdsMatchInput` rejects a response that drops, duplicates or invents an id.
-3. Compute a word-level diff (longest common subsequence) between original and suggestion for display and for run mapping in §6, and flag a suggestion longer than 3 times the original or empty as `Suspect`. Done when: `AssistantWs.DiffAndSuspectFlag` covers insert, delete, replace and the two flags.
+3. Compute a word-level diff (Myers shortest edit script) between original and suggestion for display and for run mapping in §6, bounded: at most 20000 words per side, an edit-distance cap of 2000 and a working-memory cap of 32 MB, polling the `CancelToken`; beyond any bound the paragraph is shown as a whole replacement with `diff: unavailable` and §6 gives it the formatting of its first run. Flag a suggestion longer than 3 times the original, longer than 200000 characters, or empty as `Suspect`. Done when: `AssistantWs.DiffAndSuspectFlag` covers insert, delete, replace and the flags, and `AssistantWs.DiffWorstCaseIsBounded` diffs two fully disjoint 20000-word texts within the memory cap and a 2-second budget and returns the whole-replacement result.
 4. Honour the length target for `Expand` and `Condense` by reporting the achieved ratio instead of hiding a miss. Done when: `AssistantWs.RatioReported` asserts the ratio field.
 
 - [ ] Implement the five modes and their prompts, with the paragraph text inside the data block (`D08 T01 §13`). Done when: `AssistantWs.TextTaskBuildsOneRequestPerBatch` passes.
@@ -397,7 +401,8 @@ Search by meaning needs vectors. UPDF and PDFelement compute them on their own s
 
 1. Extend `IAssistantProvider` (`D08 T01 §1`) with optional `build_embedding_request(texts, config)` and `parse_embedding_response(body)` for OpenAI-compatible `/embeddings` (OpenAI, OpenRouter where the model offers it, local) and the Gemini embedding endpoint; providers without one report the `Embeddings` capability as absent. Done when: `AssistantWs.EmbeddingRequestShapes` asserts each adapter's request against a fixture and that no key appears in the request object.
 2. Bound the call: at most 96 texts per request and 8000 characters per text (longer text is cut at a sentence boundary and the cut is recorded, never silent), vectors validated for count, finite floats and a single dimension, and normalized to unit length. Done when: `AssistantWs.EmbeddingResponseValidation` rejects a wrong count, NaN and mixed dimensions.
-3. Add the settings `assistant.embeddingModel.<provider>` with a default verified against the provider's published list on the day the section is built and recorded with its date in `docs/assistant.md`. Done when: `AssistantWs.EmbeddingModelDefaultsDocumented` passes.
+3. Define `EmbeddingSpaceId` in `src/services/assistant/embedding_space.h/.cpp` as a SHA-256 over the provider ID, the normalized endpoint (origin and path, so two local servers or a changed OpenRouter URL differ), the model ID, the returned dimension and every request option that changes the vectors (truncation, task type, normalization); every cache, index set and mismatch check below uses it. Done when: `AssistantWs.EmbeddingSpaceIdChangesWithEndpoint` asserts a changed endpoint, model, dimension or option changes the ID and a changed API key does not.
+4. Add the settings `assistant.embeddingModel.<provider>` with a default verified against the provider's published list on the day the section is built and recorded with its date in `docs/assistant.md`. Done when: `AssistantWs.EmbeddingModelDefaultsDocumented` passes.
 
 - [ ] Implement the request builders and parsers for the three wire shapes with fixtures under `tests/assistant-fixtures/`. Done when: `AssistantWs.EmbeddingRequestShapes` passes.
 - [ ] Implement validation, normalization and the visible cut record. Done when: `AssistantWs.EmbeddingResponseValidation` and `AssistantWs.EmbeddingCutIsRecorded` pass.
@@ -416,10 +421,10 @@ The vectors for search by meaning are stored locally, beside the text index of `
 
 **Build order:**
 
-1. Define the format in `src/core/semantic_index.h/.cpp` (magic `RSEM`, version, little-endian): header (provider, embedding model, dimension, chunker version), file table (path, file ID, size, last write time, change time, page count, status), chunk table (file, page, start and end offsets, SHA-256 of the chunk text) and float32 unit vectors. Done when: `SemanticIndex.RoundTrip` writes and reads a 3-file index byte-identically.
+1. Define the format in `src/core/semantic_index.h/.cpp` (magic `RSEM`, version, little-endian): header (`EmbeddingSpaceId` and its components provider, endpoint, model and dimension, plus chunker version), file table (path, file ID, size, last write time, change time, page count, status), chunk table (file, page, start and end offsets, SHA-256 of the chunk text) and float32 unit vectors. Done when: `SemanticIndex.RoundTrip` writes and reads a 3-file index byte-identically.
 2. Load with full validation (every offset and length checked with checked arithmetic, 2 GB total cap, chunk count cap) returning `PdfResult<SemanticIndex>`. Done when: `SemanticIndex.RejectsCorrupt` returns a typed error for truncation, flipped bytes, a wrong version and a table claiming 4 billion chunks, allocating under 64 MB.
 3. Resolve the folder as `AppPaths::data_dir() / "semantic-index"` (Portable mode respected) and write every file temp-file-then-replace. Done when: `SemanticIndex.PortableMode` and `SemanticIndex.AtomicWrite` pass.
-4. Add the vector cache keyed by (model, chunk SHA-256) so identical text, even in another file, is never embedded again, and keep one index set per model so switching model never mixes vectors. Done when: `SemanticIndex.CacheDedupesAcrossFiles` and `SemanticIndex.ModelSwitchUsesSeparateSet` pass.
+4. Add the vector cache keyed by (`EmbeddingSpaceId`, chunk SHA-256) so identical text, even in another file, is never embedded again, and keep one index set per `EmbeddingSpaceId` so switching provider, endpoint or model never mixes vectors. Done when: `SemanticIndex.CacheDedupesAcrossFiles` and `SemanticIndex.SpaceSwitchUsesSeparateSet` pass, the latter also with two local endpoints serving the same model ID.
 
 - [ ] Implement the format, loader and writer. Done when: `SemanticIndex.RoundTrip` and `SemanticIndex.RejectsCorrupt` pass.
 - [ ] Treat a corrupt or wrong-version index as absent and record the reason. Done when: `SemanticIndex.CorruptIsRebuiltNotTrusted` shows a flipped byte yields an empty index and never a wrong hit.
@@ -440,7 +445,7 @@ Building the index sends text to the embedding model, so the user reviews every 
 **Build order:**
 
 1. Author `src/services/assistant/semantic_index_job.h/.cpp`: chunk page text from `PageText` (paragraph-aligned, at most 1200 characters with 150 overlap, chunker version recorded), apply the exclusions of `D08 T01 §11` for open documents, read unopened files through `FileScope::open_checked` (`D03 T05 §2`), and build a `JobPreview` (§3) of only the chunks whose hash is not in the cache. Done when: `AssistantWs.SemanticJobPreviewsOnlyUncachedChunks` indexes a corpus twice and the second preview is empty.
-2. Embed through `BatchAuthorization` grants with checkpointing every 50 batches, cancel at any batch boundary within 500 ms, and resume after cancel or crash by recomputing the preview for the remaining chunks (a new confirmation). Done when: `AssistantWs.SemanticJobResumesWithNewPreview` passes.
+2. Embed through `BatchAuthorization` grants with checkpointing every 50 batches, cancel within 500 ms at any moment by propagating the `CancelToken` into the in-flight request (the transport's cancel watcher, `D08 T01 §2`) and into any checkpoint write (a checkpoint is written to a temp file and abandoned on cancel, so the previous index stays intact), and resume after cancel or crash by recomputing the preview for the remaining chunks (a new confirmation). Done when: `AssistantWs.SemanticJobResumesWithNewPreview` passes and `AssistantWs.SemanticJobCancelDuringStalledResponse` stalls a response and a checkpoint write and finds the job ended with `Cancelled` in under 500 ms and the previous index loadable.
 3. Validate freshness as `D03 T05 §5` does (file identity, size, times read from the same handle after reading) and discard chunks from a file that changed mid-read. Done when: `AssistantWs.SemanticJobFileChangedMidRead` finds no vectors from the changed read.
 4. Cap a job at 200000 chunks and the limits of §3, and run at below-viewer priority. Done when: `AssistantWs.SemanticJobCapsAndPriority` passes.
 
@@ -462,9 +467,9 @@ A meaning search embeds the user's query and ranks stored vectors locally. The q
 
 **Build order:**
 
-1. Author `src/services/assistant/semantic_query.h/.cpp`: `search(query, scope, k)` embeds the query with one authorized request (cached in memory per session by query text and model so a repeat sends nothing), then ranks by cosine similarity against the scoped vectors and returns the top `k` (default 20) above a minimum score. Done when: `AssistantWs.SemanticRankingOrder` ranks a fixture so the known best chunk is first.
+1. Author `src/services/assistant/semantic_query.h/.cpp`: `search(query, scope, k)` embeds the query with one authorized request (cached in memory per session by (`EmbeddingSpaceId`, query text) so a repeat sends nothing), then ranks by cosine similarity against the scoped vectors and returns the top `k` (default 20) above a minimum score. Done when: `AssistantWs.SemanticRankingOrder` ranks a fixture so the known best chunk is first.
 2. Confirm every hit: re-read the file with `FileScope::open_checked`, require the stored file identity to match, extract the chunk text from the real `PageText` and return the page, a quote and the score; files that changed since indexing are excluded and counted as stale. Done when: `AssistantWs.SemanticHitsAreConfirmed` and `AssistantWs.SemanticStaleFilesExcluded` pass.
-3. Refuse when the query model differs from the index model, with a message naming both and the rebuild action. Done when: `AssistantWs.SemanticModelMismatchRefused` passes.
+3. Refuse when the query's `EmbeddingSpaceId` differs from the index's, with a message naming the provider, endpoint host and model of both and the rebuild action. Done when: `AssistantWs.SemanticModelMismatchRefused` passes for a changed model and for a changed endpoint with the same model ID.
 
 - [ ] Implement the cache, ranking and top-k selection (bounded heap). Done when: `AssistantWs.SemanticRankingOrder` and `AssistantWs.SemanticRepeatQuerySendsNothing` pass.
 - [ ] Implement confirmation and the stale count. Done when: `AssistantWs.SemanticHitsAreConfirmed` passes.
@@ -564,6 +569,7 @@ PDFelement and UPDF generate outlines and section summaries with AI. Recto propo
 - [ ] Implement batching and merge. Done when: `AssistantWs.BookmarkProposalMergesBatches` passes.
 - [ ] Implement apply and undo. Done when: `AssistantWs.BookmarkApplyIsOneUndoStep` passes.
 - [ ] Implement the summary export. Done when: `AssistantWs.BookmarkSummaryExport` passes.
+- [ ] Revalidate proposals with the §4 `RevisionToken` before Apply. Done when: `AssistantWs.BookmarkApplyRejectsStale` edits or reorders pages after the response and Apply refuses with `Stale` and changes nothing.
 - [ ] Commit: `assistant: add AI bookmark proposals with summaries and undoable apply`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=AssistantWs.Bookmark*` passes under ASan, and a proposal to an unsent page fails `AssistantWs.BookmarkProposalValidation`.
@@ -609,6 +615,7 @@ Scanned files often contain blank pages, sideways pages and duplicates. UPDF and
 - [ ] Implement the local detectors with deterministic thresholds recorded in `docs/assistant.md`. Done when: `AssistantWs.LocalBlankAndDuplicateNeedNoRequest` and `AssistantWs.DuplicateHashIgnoresWhitespace` pass.
 - [ ] Implement the image candidate rendering through the `RenderPool` path. Done when: `AssistantWs.PageProposalImagesAreBoundedAndMasked` passes.
 - [ ] Implement proposal validation (pages exist, rotations allowed) and the edit-list conversion. Done when: `AssistantWs.PageProposalValidation` and `AssistantWs.PageProposalsToEditList` pass.
+- [ ] Revalidate proposals with the §4 `RevisionToken` before conversion to the edit list, so a proposal for page 7 never lands on different content after a reorder. Done when: `AssistantWs.PageProposalsRejectStale` passes for a deletion and a reorder after the response.
 - [ ] Commit: `assistant: add AI page proposals with local blank and duplicate detection`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=AssistantWs.PageProposal*:AssistantWs.LocalBlank*:AssistantWs.DuplicateHash*` passes, and a blank-page request sent for a clear blank fixture fails `AssistantWs.LocalBlankAndDuplicateNeedNoRequest`.
@@ -724,6 +731,7 @@ The review result is a list the user can filter by severity and category, with e
 
 - [ ] Label every control for UIA and test keyboard use. Done when: the accessibility inventory reports zero missing names and `Panels.ContractKeyboard` passes.
 - [ ] Render in Light, Dark and HighContrast with token brushes only. Done when: `Panels.ContractThemes` finds no literal colour.
+- [ ] Revalidate the quote against the current page text with the §4 `RevisionToken` before creating comments, and skip stale clauses with a note. Done when: `Panels.ContractApplyRejectsStale` edits the quoted text after the response and no comment is created for it.
 - [ ] Commit: `app: add contract review view with page jumps and undoable comments`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Panels.Contract*` passes on the display-session host, and creating comments on arrival fails `Panels.ContractApplyAsCommentsUndo`.
@@ -810,6 +818,7 @@ Regex presets (`D05 T02 §9`) miss names, addresses and free-form identifiers. P
 - [ ] Implement the task and verification. Done when: `AssistantWs.PiiSpanMustExistVerbatim` passes.
 - [ ] Implement quad mapping. Done when: `AssistantWs.PiiSpansMapToQuads` passes.
 - [ ] Implement the `Suggested` state and acceptance conversion. Done when: `AssistantWs.SuggestedMarksAreNeverApplied` and `AssistantWs.AcceptConvertsToUndoablePendingMark` pass.
+- [ ] Revalidate suggested marks with the §4 `RevisionToken` at acceptance, so a suggestion made before a page was reordered, edited or redacted is refused. Done when: `AssistantWs.PiiAcceptRejectsStale` passes for an edit and a reorder between response and Accept.
 - [ ] Commit: `assistant: add AI PII suggestions as unapplied redaction marks`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=AssistantWs.Pii*:AssistantWs.SuggestedMarks*:AssistantWs.AcceptConverts*` passes, and applying a suggested mark fails `AssistantWs.SuggestedMarksAreNeverApplied`.
@@ -896,7 +905,7 @@ This suite proves the widened D19 promises for every feature in this file so a l
 
 **Build order:**
 
-1. Add `tests/recto-tests/assistant/workspace_privacy_suite.cpp` with a table of every feature entry point (one row per command in §34). For each row with no key and no endpoint, assert the transport factory counter is unchanged after invoking it. Done when: `AssistantWs.NoKeyZeroNetworkEveryFeature` passes and fails if any row constructs a transport.
+1. Add `tests/recto-tests/assistant/workspace_privacy_suite.cpp` with a table of every feature entry point (one row per command in §34, plus rows for every other route that can reach the transport: Settings `Test connection`, local model discovery, the command-box ask row and the embedding rebuild button). For each row with no key and no endpoint, and again with `AssistantDisabled` set, assert the transport factory counter is unchanged after invoking it. Done when: `AssistantWs.NoKeyZeroNetworkEveryFeature` passes and fails if any row constructs a transport.
 2. Assert for each row that sending requires an `Authorization` or a `BatchAuthorization` grant and that the preview dialog or job preview is shown first, using a recording fake gate. Done when: `AssistantWs.EveryFeatureNeedsPreviewAndGrant` passes.
 3. Assert no feature changes the document without an explicit Apply: run each feature to completion and compare the source file bytes and the open document revision. Done when: `AssistantWs.NoFeatureAutoApplies` passes.
 4. Assert redaction, protected-content and unselected-page exclusions in the recorded request bodies of every text-sending feature, including images and history (§22, §11). Done when: `AssistantWs.ExclusionsEveryFeature` passes.
