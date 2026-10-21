@@ -690,6 +690,30 @@ class BuildCorpusTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "incomplete"):
             self.mod.validate_broken_pdf_structure(name, data)
 
+    def test_lzw_is_decoded_with_growing_code_widths(self) -> None:
+        def pack(codes):
+            buf = count = 0
+            out = bytearray()
+            for code in codes:
+                buf, count = (buf << 9) | code, count + 9
+                while count >= 8:
+                    count -= 8
+                    out.append((buf >> count) & 0xFF)
+            return bytes(out + (bytes([(buf << (8 - count)) & 0xFF]) if count else b""))
+
+        decode = self.mod.lzw_decode_pdf
+        self.assertEqual(decode("x", pack([256, 65, 66, 258, 257])), b"ABAB")
+        self.assertEqual(decode("x", self.mod.lzw_encode_literals(b"hello " * 100)), b"hello " * 100)
+        for codes, says in (([256, 65, 300, 257], "past the next table entry"), ([256, 65, 66], "no EOD")):
+            with self.subTest(codes=codes), self.assertRaisesRegex(ValueError, says):
+                decode("x", pack(codes))
+        # The regression through the generator: fixed 9-bit codes, no clears, past where the width must grow.
+        with mock.patch.object(self.mod, "lzw_encode_literals",
+                               side_effect=lambda raw: pack([256, *(raw + b" " * 300), 257])):
+            seed = self.mod.build_seed_filters_lzw_ccitt()
+        with self.assertRaisesRegex(ValueError, "LZW"):
+            self.mod.validate_seed_pdf_structure("seeds/seed-filters-lzw-ccitt.pdf", seed)
+
     def test_inflation_stops_just_past_its_limit(self) -> None:
         bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))
         total, kept = self.mod.inflate_bounded(bomb, 1024, keep=False)

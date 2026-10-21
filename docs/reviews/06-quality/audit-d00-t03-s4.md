@@ -871,3 +871,48 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `OK` (`test_the_bomb_outer_stage_must_be_complete` fails against `9d865f3`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P1): the deflate bomb's outer stage is an ordinary stream, so it now goes through the strict `inflate()` (one complete Flate stream, nothing after it, at most 16 MiB produced). Only the inner stage, the bomb itself, keeps the count-only `inflate_bounded()`, which stops past the ceiling and so cannot ask for completeness. An outer stage regenerated six bytes short refuses as incomplete.
+
+## Round 20: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T23:23:08Z
+- Effort: medium
+- Lines: 30
+- Digest: 00c751772ecaaaa4
+
+### adversarial: needs-attention
+
+1. **P1: LZW validation accepts invalid code widths.** `scripts/build-corpus.py:2351` always reads 9-bit codes without tracking dictionary growth or enforcing timely clear codes. `scripts/build-corpus.py:3449` uses this decoder to validate the LZW PDF seed.
+
+   Reproduced entirely in memory: replace `lzw_encode_literals()` with an encoder that appends 300 spaces to its input and packs `[256, *input, 257]` as fixed 9-bit codes without intermediate clears. Regenerate `seed-filters-lzw-ccitt.pdf`. Its validator accepts the resulting 1,451-byte PDF. Mocking generator output, file reads and matching provenance makes **`check_corpus()` return `(True, [])`**. A width-aware decoder encounters invalid code **260**, with next available code **258**, before EOD.
+
+   This permits a generator regression to pass verification with an invalid filter seed. The committed seed is not shown to be defective.
+
+### consistency: approve
+
+No separate finding.
+
+### integration: advisory
+
+Finding 1 weakens the seed prerequisite for `D01 T03 §4`. Downstream C++ execution was not performed.
+
+### source-defect: needs-attention
+
+Finding **1 (P1)** contradicts LZW’s required code-width growth and `/EarlyChange` semantics. A literal-only validator must still enforce these rules or reject streams exceeding its supported 9-bit interval. See [ISO 32000-1, §7.4.4.2 and Table 8](https://developer.adobe.com/document-services/docs/assets/35e4369068f86065372c18787171a17e/PDF_ISO_32000-1.pdf).
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: approve
+
+At `a867aca`, `python -B scripts/build-corpus.py --check` exited **0**, verifying **39 fixtures**. The read-only subset passed **48 tests**, including the round 19 regression. Three filesystem-writing tests were excluded. These checks do not detect finding 1. No files modified; working tree remains clean.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 20
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 52 tests`, `OK` (`test_lzw_is_decoded_with_growing_code_widths` errors against `a867aca`, which had no conforming decoder); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): the literal-only, fixed 9-bit reader is replaced by `lzw_decode_pdf()`, a conforming LZWDecode decoder (ISO 32000-1 7.4.4.2): MSB-first codes from 9 to 12 bits that widen one code early under `/EarlyChange 1`, a table that grows with every code and resets on 256, and refusal of a code past the next table entry, a full table with no clear, data with no EOD, anything after EOD but zero padding, and output past the validator ceiling. Both LZW checks (the PDF seed and the raw filter seed) use it; the reviewer's fixed-width, clear-free stream regenerated through the generator refuses.

@@ -2341,31 +2341,49 @@ def lzw_encode_literals(raw: bytes) -> bytes:
     return bytes(out)
 
 
-def lzw_decode_literals(encoded: bytes) -> bytes:
-    codes: list[int] = []
-    bit_buf = 0
-    bit_cnt = 0
-    for b in encoded:
-        bit_buf = (bit_buf << 8) | b
-        bit_cnt += 8
-        while bit_cnt >= 9:
-            bit_cnt -= 9
-            code = (bit_buf >> bit_cnt) & 0x1FF
-            codes.append(code)
-            if code == 257:
-                break
-    if not codes or codes[0] != 256 or 257 not in codes:
-        raise ValueError("invalid 9-bit LZW stream in seed validator")
-    out = bytearray()
-    for code in codes:
+def lzw_decode_pdf(rel_path: str, encoded: bytes, early_change: int = 1,
+                   limit: int = VALIDATOR_INFLATE_LIMIT) -> bytes:
+    """An LZWDecode stream decoded as ISO 32000-1 7.4.4.2 defines it: MSB-first codes starting 9 bits wide and growing
+    to 12 as the table fills (one code early with /EarlyChange 1), 256 clearing the table, 257 ending the data. Refuses
+    a code past the next table entry, a table full without a clear, data with no EOD, anything after EOD but zero
+    padding in its last byte, and output past limit."""
+    table: list[bytes] = [bytes([i]) for i in range(256)] + [b"", b""]
+    width, prev, out = 9, None, bytearray()
+    pos, total = 0, len(encoded) * 8
+    while True:
+        if pos + width > total:
+            raise ValueError(f"{rel_path}: LZW data ends with no EOD code")
+        code = 0
+        for bit in range(pos, pos + width):
+            code = (code << 1) | (encoded[bit >> 3] >> (7 - (bit & 7)) & 1)
+        pos += width
         if code == 256:
+            table, width, prev = table[:258], 9, None
             continue
         if code == 257:
             break
-        if 0 <= code <= 255:
-            out.append(code)
+        if prev is None:
+            if code > 255:
+                raise ValueError(f"{rel_path}: LZW code {code} right after a clear")
+            entry = table[code]
         else:
-            raise ValueError(f"unexpected LZW code {code} in literal-mode seed")
+            if code < len(table):
+                entry = table[code]
+            elif code == len(table):
+                entry = prev + prev[:1]
+            else:
+                raise ValueError(f"{rel_path}: LZW code {code} is past the next table entry {len(table)}")
+            if len(table) >= 4096:
+                raise ValueError(f"{rel_path}: LZW table full without a clear code")
+            table.append(prev + entry[:1])
+            if len(table) + early_change >= 1 << width and width < 12:
+                width += 1
+        out += entry
+        if len(out) > limit:
+            raise ValueError(f"{rel_path}: LZW output past {limit} bytes")
+        prev = entry
+    if total - pos >= 8 or (pos < total and encoded[-1] & ((1 << (total - pos)) - 1)):
+        raise ValueError(f"{rel_path}: bytes after the LZW EOD code")
     return bytes(out)
 
 
@@ -3446,7 +3464,7 @@ def decode_seed_stream(rel_path: str, entries: dict[bytes, bytes], payload: byte
     if flt == b"[/ASCII85Decode /FlateDecode]":
         return inflate(ascii85_decode_pdf(payload), rel_path)
     if flt == b"/LZWDecode":
-        return lzw_decode_literals(payload)
+        return lzw_decode_pdf(rel_path, payload, early_change=1)
     raise ValueError(f"{rel_path}: no seed content stream uses /Filter {flt!r}")
 
 
@@ -3538,7 +3556,7 @@ def validate_seed_filter_bin_structure(rel_path: str, data: bytes) -> None:
         if dec != KNOWN_FILTER_PLAINTEXT:
             raise ValueError(f"{rel_path}: FlateDecode output mismatch")
     elif expected_sel == 0x01:
-        dec = lzw_decode_literals(payload)
+        dec = lzw_decode_pdf(rel_path, payload)
         if dec != KNOWN_FILTER_PLAINTEXT:
             raise ValueError(f"{rel_path}: LZWDecode output mismatch")
     elif expected_sel == 0x02:
