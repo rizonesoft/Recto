@@ -59,3 +59,43 @@ OVERALL: needs-attention
 - Finding 4 (P2): `CLA.md` adds a Developer Certificate of Origin section (`git commit -s`, DCO 1.1) and `CONTRIBUTING.md` asks for the sign-off.
 - Finding 5 (P2): the PR template carries `CLA.md`'s statement verbatim and a DCO sign-off checkbox.
 - Findings 6 and 7 (P2, P3): a dated audit note in `D00 T01 §1` records the current LICENSE hash (after the verbatim restore in `2affdc1`) and `build/build.ps1` as the tracked exception; the stamped checklist is not rewritten.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T14:15:37Z
+- Effort: medium
+- Lines: 27
+- Digest: 6296be271dc57d3a
+
+## adversarial: approve
+
+No additional confirmed finding.
+
+## consistency: needs-attention
+
+1. **[P2] The DCO fix commit omits its own required sign-off.** `CONTRIBUTING.md:39` and `CLA.md:16` require every commit to carry `Signed-off-by:`, but candidate `15a21a7` has no trailers. Reproduce with `git show -s --format=%B 15a21a7` or `git show -s --format="%(trailers)" 15a21a7`; neither supplies the required certification. Adding the policy and checkbox does not certify this contribution under the [DCO](https://developercertificate.org/).
+
+## integration: approve
+
+No additional confirmed finding.
+
+## source-defect: advisory
+
+Independent FSF byte comparison remains unverified because the upstream text fetch timed out. The local license test passes, but its stored checksum is not independent upstream evidence.
+
+## design: advisory
+
+Not applicable.
+
+## record: advisory
+
+The fresh-clone checkpoint remains independently unverified. At `15a21a7`, validation reports 676 sections, the plan check passes, and `LICENSE` is 35,149 bytes with the audit note’s checksum. However, the graph suite reports 57 setup errors across 58 tests because the sandbox has no writable temporary directory. Fresh cloning is unavailable, and `git ls-remote` fails through the configured proxy. These are verification limitations, not candidate defects.
+
+No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+- Finding 1 (P2): the DCO and CLA apply to contributions made to the project owner; the owner does not certify or grant to himself, and an agent must not add a legal sign-off on the owner's behalf. `CLA.md` and `CONTRIBUTING.md` now say the sign-off is for every commit a contributor other than the project owner submits. Default taken 2026-10-21 (unattended run); reversing it means the owner signs off his own commits with `git commit -s` from then on.

@@ -13,7 +13,7 @@ By submitting a contribution (code, documentation, tests, graphics or other mate
 
 ## Developer Certificate of Origin
 
-Every commit in a contribution is signed off with `git commit -s`, which adds a `Signed-off-by: Your Name <you@example.com>` line. The sign-off certifies the [Developer Certificate of Origin 1.1](https://developercertificate.org/): that you wrote the change or otherwise have the right to submit it under the project's license. The DCO covers where each commit came from; the terms above cover the license grant (foundation plan decision D11 asks for both).
+Every commit a contributor submits (anyone other than the project owner, who holds the rights the terms above grant) is signed off with `git commit -s`, which adds a `Signed-off-by: Your Name <you@example.com>` line. The sign-off certifies the [Developer Certificate of Origin 1.1](https://developercertificate.org/): that you wrote the change or otherwise have the right to submit it under the project's license. The DCO covers where each commit came from; the terms above cover the license grant (foundation plan decision D11 asks for both).
 
 ## How to sign on a pull request
 
