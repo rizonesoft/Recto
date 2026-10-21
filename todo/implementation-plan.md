@@ -260,146 +260,146 @@ Sections: 96 | Checklist items: 714
 
 Sections: 138 | Checklist items: 1080
 
-| Status | Reference   | Deliverable                                                                              | Needs                                         | Items |
-| ------ | ----------- | ---------------------------------------------------------------------------------------- | --------------------------------------------- | ----- |
-| [ ]    | D04 T01 §1  | Isolated `ConversionJob` 2-worker runtime, dedicated `pdf::Document` and `CancelToken`   | windows-host                                  | 8     |
-| [ ]    | D04 T01 §2  | Job result & recovery state machine (`Completed`..`NeedsPassword`) and temp cleanup      | windows-host                                  | 7     |
-| [ ]    | D04 T01 §3  | Convert Step 1 (`Files` drop zone & chips) and Step 2 (`What to make` card registry)     | windows-host, display-session                 | 8     |
-| [ ]    | D04 T01 §4  | Convert Step 3 dynamic options host, capability hint line, and primary action button     | windows-host, display-session                 | 8     |
-| [ ]    | D04 T01 §5  | App-wide floating `QueueCard` (progress ring, job states, expanded list, per-job cancel) | windows-host, display-session                 | 7     |
-| [ ]    | D04 T01 §6  | Focus-aware completion notices (Windows toast vs in-app toast, `Open file` & folder)     | windows-host, display-session                 | 7     |
-| [ ]    | D04 T01 §7  | Queue error recovery (`Enter password` modal retry, transient retry, batch breakdown)    | windows-host, display-session                 | 7     |
-| [ ]    | D04 T02 §1  | `AtomicFileWriter` (`src/core/atomic_file.cpp`) sibling temp-then-replace and rollback   | windows-host                                  | 10    |
-| [ ]    | D02 T01 §12 | Crash recovery snapshots for unsaved edits                                               | windows-host, display-session, owner-decision | 9     |
-| [ ]    | D04 T02 §2  | Native `PdfWriter` (`writer.cpp`: object allocation, `FlateDecode`, `/Pages`, `xref`)    | windows-host                                  | 7     |
-| [ ]    | D04 T02 §3  | Streamed `PDF -> Images` (`PNG`, `JPEG`, `BMP`, Multipage `TIFF`, `GIF`) and CLI command | windows-host                                  | 11    |
-| [ ]    | D04 T02 §4  | Vector `PDF -> SVG (.svg)` and `PDF -> OpenXPS (.xps)` exporters and Convert Step 3 UI   | windows-host, display-session                 | 8     |
-| [ ]    | D04 T02 §5  | `Images, SVG & XPS -> PDF` converter (`DCTDecode` pass-through, TIFF, EXIF) & Convert UI | windows-host, display-session                 | 7     |
-| [ ]    | D04 T02 §6  | `PDF -> Plain Text (.txt)` exporter with automatic OCR fallback, CLI and Convert UI      | windows-host, display-session                 | 7     |
-| [ ]    | D04 T02 §7  | `Searchable PDF (OCR)` sandwich writer (`3 Tr` invisible text), `recto-cli ocr` & UI     | windows-host, display-session                 | 7     |
-| [ ]    | D04 T02 §8  | Native `TableExtractor` (ruled-grid & borderless clustering, `.csv`/`.tsv`/`.json`, CLI) | windows-host                                  | 8     |
-| [ ]    | D04 T02 §9  | Native lossless `ImageExtractor` (`DCTDecode` `.jpg`, `/SMask` `.png`/`.tiff`, CLI)      | windows-host                                  | 8     |
-| [ ]    | D04 T02 §10 | Viewer `Table & Image Extractor Bar` (`SPEC 8.2`), `Preview Table` modal & Convert card  | windows-host, display-session                 | 7     |
-| [ ]    | D04 T02 §11 | `PdfOptimizer` (audit, downsampling, font subsetting) and Fast Web View `Linearizer`     | windows-host                                  | 8     |
-| [ ]    | D04 T02 §12 | `Optimize & Compress PDF` Convert card (`SPEC 9.5`) and `Audit Dialog` (`SPEC 9.9`)      | windows-host, display-session                 | 6     |
-| [ ]    | D04 T02 §14 | `ClipboardPdfBuilder`: clipboard images and image or PDF file lists to PDF               | windows-host                                  | 10    |
-| [ ]    | D04 T02 §15 | **Create PDF from clipboard** command, new unsaved tab, `Ctrl+V` and Home entry points   | windows-host, display-session                 | 10    |
-| [ ]    | D04 T02 §17 | Image-only PDF engine (`image_only_pdf.cpp`) and `recto-cli rasterize-pdf`               | windows-host                                  | 9     |
-| [ ]    | D04 T02 §18 | Image-only PDF Convert card and Step 3 options                                           | windows-host, display-session                 | 7     |
-| [ ]    | D04 T02 §21 | Page area export engine (image or text) and `recto-cli export-area`                      | windows-host                                  | 8     |
-| [ ]    | D04 T02 §22 | Export Area tool on the extractor bar, `Ctrl+K` commands and save dialog                 | windows-host, display-session                 | 8     |
-| [ ]    | D04 T02 §23 | More image inputs to PDF: ICO, JFIF, DIB, HEIC, WebP, JPEG XL via installed codecs       | windows-host                                  | 9     |
-| [ ]    | D04 T02 §24 | New blank PDF engine: size presets, paper styles and `recto-cli new-pdf`                 | windows-host                                  | 8     |
-| [ ]    | D04 T02 §25 | New blank PDF dialog, File menu entry and `Ctrl+K` command                               | windows-host, display-session                 | 8     |
-| [ ]    | D05 T01 §1  | `GraftMap` object-graph cloner, resource deduplicator (`graft.cpp`) & page-range parser  | windows-host                                  | 7     |
-| [ ]    | D02 T03 §24 | `recto-pdf` import a page or an image as a layer                                         | windows-host                                  | 4     |
-| [ ]    | D02 T03 §25 | Layers panel editing: new, rename, delete, merge and import as layer                     | windows-host, display-session                 | 5     |
-| [ ]    | D05 T01 §2  | Multi-document graft `merge` and multi-method `split` (`recto-cli merge` & `split`)      | windows-host                                  | 8     |
-| [ ]    | D05 T01 §3  | Copy-based page-tree edit list (`reorder`, `/Rotate` delta, `delete`, `extract`)         | windows-host                                  | 8     |
-| [ ]    | D05 T01 §4  | `Insert Blank Page`, box cropping (`/MediaBox`..`/ArtBox`), margin detection & rescaling | windows-host                                  | 7     |
-| [ ]    | D05 T01 §5  | Vector and image `Watermark & Stamp` engine (`stamp_watermark.cpp`, `cli watermark`)     | windows-host                                  | 8     |
-| [ ]    | D05 T01 §7  | Windows CNG (`bcrypt.dll`) `AES-256` (`V=5, R=6`) encrypt/decrypt writer and CLI verbs   | windows-host                                  | 7     |
-| [ ]    | D05 T01 §8  | X.509 / PKCS#12 and Windows Certificate Store `PKCS#7` & `PAdES` signer (`cli sign`)     | windows-host                                  | 7     |
-| [ ]    | D05 T01 §9  | Cryptographic signature verifier (`/ByteRange`, CMS/CAdES, chain trust & tamper check)   | windows-host                                  | 8     |
-| [ ]    | D05 T01 §10 | True physical content-stream redactor (glyph/path/image scrubbing) & `sanitize_document` | windows-host                                  | 7     |
-| [ ]    | D05 T01 §11 | `/Adobe.PubSec` certificate encryption writer: recipients, CMS envelopes, AES-256        | windows-host                                  | 13    |
-| [ ]    | D05 T01 §12 | `/Adobe.PubSec` decryption with a certificate private key through CNG on open            | windows-host                                  | 10    |
-| [ ]    | D05 T01 §13 | Page backgrounds engine: add, update, list and remove managed marks                      | windows-host                                  | 13    |
-| [ ]    | D05 T01 §6  | 3-zone `Headers & Footers` and legal **Bates Numbering** (`stamp_watermark.cpp` & CLI)   | windows-host                                  | 9     |
-| [ ]    | D05 T01 §14 | `replace_pages`: replace pages from another PDF, remapping links, fields and tags        | windows-host                                  | 12    |
-| [ ]    | D05 T01 §15 | Split by maximum file size and by top-level bookmarks (engine and CLI)                   | windows-host                                  | 11    |
-| [ ]    | D05 T01 §17 | N-up sheets: several pages on one sheet as a new PDF (engine and CLI)                    | windows-host                                  | 10    |
-| [ ]    | D05 T01 §19 | Page labels: read, edit, preview and carry through page operations (engine and CLI)      | windows-host                                  | 11    |
-| [ ]    | D05 T01 §16 | Split one page into several: grid or custom cut lines (engine and CLI)                   | windows-host                                  | 12    |
-| [ ]    | D05 T01 §18 | Interleave two PDFs, swap odd and even pages, reverse page order (engine and CLI)        | windows-host                                  | 10    |
-| [ ]    | D05 T01 §20 | Blank page detection with a local heuristic and a deletion plan (engine and CLI)         | windows-host                                  | 9     |
-| [ ]    | D05 T01 §21 | Reorder pages by bookmark order (engine and CLI)                                         | windows-host                                  | 7     |
-| [ ]    | D05 T01 §22 | Cross-page paging seal: split a seal image across page edges (engine and CLI)            | windows-host                                  | 9     |
-| [ ]    | D05 T01 §23 | ID card copy: front and back images on one page (engine and CLI)                         | windows-host                                  | 8     |
-| [ ]    | D05 T01 §24 | Whiteout and whole-page redaction (engine and CLI)                                       | windows-host                                  | 9     |
-| [ ]    | D05 T01 §25 | PII country packs with checksum validation, local only (engine and CLI)                  | windows-host                                  | 9     |
-| [ ]    | D05 T01 §26 | Redaction profiles: saved patterns, appearance and scope as a JSON file (engine and CLI) | windows-host                                  | 8     |
-| [ ]    | D05 T01 §27 | Document inspector report: what a PDF carries before sanitizing (engine and CLI)         | windows-host                                  | 9     |
-| [ ]    | D05 T01 §28 | Signed revision extraction and comparison with the current document (engine and CLI)     | windows-host                                  | 8     |
-| [ ]    | D05 T01 §29 | Trust lists: opt-in download and manual import into a Recto trust store (engine and CLI) | windows-host                                  | 11    |
-| [ ]    | D05 T01 §30 | PDF Binder: combine files with a table-of-contents page and a project file               | windows-host                                  | 10    |
-| [ ]    | D05 T02 §1  | Virtualized Organize `PageGrid`, `OrganizeEditModel`, multi-select & `Undo`/`Redo` stack | windows-host, display-session                 | 8     |
-| [ ]    | D05 T02 §2  | Drag-and-drop and keyboard page reordering, floating action bar & `90°` rotation badges  | windows-host, display-session                 | 7     |
-| [ ]    | D05 T02 §3  | Organize **Combine** mode (`A-Organize.png`: per-source chips, `Add files` & edge tint)  | windows-host, display-session                 | 6     |
-| [ ]    | D05 T02 §4  | Organize **Split** mode (`B-Organize.png`: click-between-pages dividers & part names)    | windows-host, display-session                 | 7     |
-| [ ]    | D05 T02 §5  | Organize `Save` (replace-original) and `Save as copy` jobs plus `Unsaved-Changes` guard  | windows-host, display-session                 | 6     |
-| [ ]    | D05 T02 §6  | `Insert Blank Page` dialog (`E8A5`) and interactive `Crop & Resize Pages` (`E7A8`)       | windows-host, display-session                 | 6     |
-| [ ]    | D05 T02 §7  | Two-column `640 epx` `Watermark & Stamp` dialog (`SPEC 9.6` & `9.9` with live preview)   | windows-host, display-session                 | 6     |
-| [ ]    | D05 T02 §8  | Two-column `640 epx` `Header, Footer & Bates Numbering` dialog with live page preview    | windows-host, display-session                 | 6     |
-| [ ]    | D05 T02 §9  | Viewer `Redaction & Sanitize Bar` (`Ctrl+Shift+X`), `Find & Redact` & `Sanitize` dialog  | windows-host, display-session                 | 7     |
-| [ ]    | D05 T02 §10 | Viewer `Signature Status Banner`, `Draw Signature Box` (`Ctrl+Shift+G`) & `Sign Dialog`  | windows-host, display-session                 | 10    |
-| [ ]    | D05 T02 §11 | Viewer `Signatures` side panel (`SPEC 8.3`) and `Protected & Signed` / `Unlocked` cards  | windows-host, display-session                 | 6     |
-| [ ]    | D05 T02 §12 | `Replace Pages` dialog: source picker, before and after preview, consequences            | windows-host, display-session                 | 11    |
-| [ ]    | D05 T02 §13 | `Backgrounds` dialog: live preview over page content and managed marks list              | windows-host, display-session                 | 10    |
-| [ ]    | D05 T02 §14 | Certificate encryption in the Protect flow: recipients, permissions, warnings            | windows-host, display-session                 | 11    |
-| [ ]    | D05 T02 §15 | Certificate prompt when opening a public-key encrypted PDF                               | windows-host, display-session                 | 8     |
-| [ ]    | D05 T02 §16 | Split mode: split by file size and by top-level bookmarks                                | windows-host, display-session                 | 9     |
-| [ ]    | D05 T02 §17 | Split Page dialog: grid or draggable cut lines with a live preview                       | windows-host, display-session                 | 9     |
-| [ ]    | D05 T02 §18 | N-up dialog: several pages on one sheet with a live sheet preview                        | windows-host, display-session                 | 8     |
-| [ ]    | D05 T02 §19 | Reverse, swap, interleave and bookmark-order commands in Organize                        | windows-host, display-session                 | 9     |
-| [ ]    | D05 T02 §20 | Page Labels dialog: ranges, styles, prefixes and a live label preview                    | windows-host, display-session                 | 9     |
-| [ ]    | D05 T02 §21 | Blank page review: find, check and remove blank pages from the grid                      | windows-host, display-session                 | 7     |
-| [ ]    | D05 T02 §22 | Drag pages between open documents and out to Explorer                                    | windows-host, display-session                 | 9     |
-| [ ]    | D05 T02 §23 | Copy a page as an image from the Organize grid                                           | windows-host, display-session                 | 8     |
-| [ ]    | D05 T02 §24 | Combine mode: table of contents page and a rebuildable binder project                    | windows-host, display-session                 | 9     |
-| [ ]    | D05 T02 §25 | ID Card Copy dialog: front and back images on one page                                   | windows-host, display-session                 | 8     |
-| [ ]    | D05 T02 §26 | Paging Seal dialog: a seal image split across page edges                                 | windows-host, display-session                 | 8     |
-| [ ]    | D05 T02 §27 | Redaction Bar: saved profiles, country packs and a match review list                     | windows-host, display-session                 | 9     |
-| [ ]    | D05 T02 §28 | Redaction Bar: suggested marks, whiteout and whole-page redaction                        | windows-host, display-session                 | 9     |
-| [ ]    | D05 T02 §29 | Inspect Document panel: what the file carries, with a path to Sanitize                   | windows-host, display-session                 | 9     |
-| [ ]    | D05 T02 §30 | Signatures panel: view the signed version and compare it with the current document       | windows-host, display-session                 | 8     |
-| [ ]    | D05 T02 §31 | Trusted Lists dialog: opt-in download, manual import and per-list control                | windows-host, display-session                 | 10    |
-| [ ]    | D05 T02 §32 | Pressure-sensitive pen capture for handwritten signatures                                | windows-host, display-session                 | 7     |
-| [ ]    | D06 T01 §5  | Conversion round-trip matrix Part 1 (`RoundTrips.Formats`: Images/SVG/XPS, OCR, Tables)  | windows-host                                  | 7     |
-| [ ]    | D06 T03 §4  | Single-interpreter differential suite across every content consumer                      | windows-host                                  | 7     |
-| [ ]    | D03 T04 §1  | Editable object model (`EditModel`) built from the shared interpreter                    | windows-host                                  | 8     |
-| [ ]    | D03 T04 §2  | Stable paragraph model: lines, paragraphs, columns, table cells and rotation             | windows-host                                  | 8     |
-| [ ]    | D03 T04 §3  | Edit session on an isolated copy with a content patch journal and undo/redo              | windows-host                                  | 7     |
-| [ ]    | D03 T04 §8  | Image objects: add, replace, move, resize, rotate, flip, crop and export                 | windows-host                                  | 7     |
-| [ ]    | D03 T04 §11 | Edit PDF mode bar, object hit-testing and not-editable messages                          | windows-host, display-session                 | 6     |
-| [ ]    | D03 T04 §18 | Vertical writing (`/WMode 1`) model: detection, metrics and editability classes          | windows-host                                  | 7     |
-| [ ]    | D06 T03 §5  | Save integrity fault-injection suite                                                     | windows-host                                  | 12    |
-| [ ]    | D03 T01 §19 | Save OCR corrections and zone text into the text layer of a copy                         | windows-host, display-session                 | 8     |
-| [ ]    | D03 T04 §9  | Object removal, atomic marked content and full-rewrite save with orphan pruning          | windows-host                                  | 6     |
-| [ ]    | D03 T04 §10 | Vector objects: select, move, resize, rotate, flip, recolour, width and delete           | windows-host                                  | 6     |
-| [ ]    | D03 T04 §13 | On-canvas image and vector handles, alignment guides, nudges and z-order                 | windows-host, display-session                 | 6     |
-| [ ]    | D03 T04 §24 | Move objects to another page: text, images and paths                                     | windows-host                                  | 6     |
-| [ ]    | D03 T04 §25 | Image filters: brightness, contrast, greyscale and invert on a copy                      | windows-host                                  | 7     |
-| [ ]    | D03 T04 §26 | Blend modes, opacity and shading objects for text, images and paths                      | windows-host                                  | 8     |
-| [ ]    | D03 T04 §28 | Appearance panel: image filters, blend mode, opacity and gradient fill                   | windows-host, display-session                 | 5     |
-| [ ]    | D06 T03 §6  | Redaction completeness and audit suite on raw bytes                                      | windows-host                                  | 9     |
-| [ ]    | D06 T03 §7  | Unicode authoring round-trip suite for every text-writing path                           | windows-host                                  | 7     |
-| [ ]    | D03 T03 §22 | Fill and Sign: typed text, symbols and signatures on flat forms                          | windows-host, display-session                 | 9     |
-| [ ]    | D03 T03 §26 | Comment summary PDF: comments beside pages and a comments-only list                      | none                                          | 8     |
-| [ ]    | D03 T03 §27 | `Summarize Comments` dialog in the Comments panel                                        | windows-host, display-session                 | 6     |
-| [ ]    | D03 T03 §29 | Save only the pages with comments as a new PDF                                           | none                                          | 5     |
-| [ ]    | D03 T04 §4  | Edit font resolver: original glyph coverage, installed fonts and Unicode fallback        | windows-host                                  | 7     |
-| [ ]    | D02 T03 §21 | `recto-pdf` contents page generated from bookmarks                                       | windows-host                                  | 4     |
-| [ ]    | D02 T03 §22 | Insert contents page dialog and `recto-cli toc`                                          | windows-host, display-session                 | 3     |
-| [ ]    | D03 T04 §5  | Paragraph rewrite: reflow in the original box with per-run state and z-order kept        | windows-host                                  | 7     |
-| [ ]    | D03 T04 §6  | Structure tree, marked content and layers kept consistent across text edits              | windows-host                                  | 5     |
-| [ ]    | D03 T04 §7  | Add Text box as real page content (not an annotation)                                    | windows-host                                  | 5     |
-| [ ]    | D03 T04 §12 | Inline on-canvas text editing with caret, selection and per-run formatting               | windows-host, display-session                 | 6     |
-| [ ]    | D03 T04 §14 | Edit session commit, save, dirty state and Ctrl+K commands                               | windows-host, display-session                 | 6     |
-| [ ]    | D03 T04 §15 | `recto-cli edit`: list, text, image and vector verbs                                     | windows-host                                  | 4     |
-| [ ]    | D03 T04 §16 | Producer fixture matrix and Edit PDF round-trip suite                                    | windows-host                                  | 8     |
-| [ ]    | D03 T04 §17 | Spell check in the inline Edit PDF text editor                                           | windows-host, display-session                 | 7     |
-| [ ]    | D03 T04 §19 | Vertical paragraph rewrite with vertical metrics and embedded fallback fonts             | windows-host                                  | 7     |
-| [ ]    | D03 T04 §20 | Vertical text in the inline editor: caret, hit testing and IME                           | windows-host, display-session                 | 5     |
-| [ ]    | D03 T04 §21 | Convert text to outlines (paths) for a selection or the page, on a copy                  | windows-host                                  | 7     |
-| [ ]    | D03 T04 §22 | Linked text flows across boxes and pages, stored as article threads                      | windows-host                                  | 7     |
-| [ ]    | D03 T04 §23 | Join and split text objects: paragraphs, lines and boxes                                 | windows-host                                  | 6     |
-| [ ]    | D03 T04 §27 | Arrange and convert commands: outlines, link flow, join, split and move to page          | windows-host, display-session                 | 6     |
-| [ ]    | D03 T04 §29 | `recto-cli edit` verbs for outlines, flows, join, split, move, filters and appearance    | windows-host                                  | 7     |
-| [ ]    | D03 T04 §30 | Fixtures and round-trip suite for the parity edits                                       | windows-host                                  | 6     |
-| [ ]    | D04 T02 §19 | Editable OCR writer: recognized text as live text objects in matched fonts               | windows-host                                  | 9     |
-| [ ]    | D04 T02 §20 | Editable text output mode on the Searchable PDF (OCR) card and `Ctrl+K`                  | windows-host, display-session                 | 8     |
-| [ ]    | D07 T03 §3  | Structure-preserving reproducer scrubber (`recto-cli scrub`)                             | windows-host                                  | 9     |
+| Status | Reference   | Deliverable                                                                              | Needs                         | Items |
+| ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
+| [ ]    | D04 T01 §1  | Isolated `ConversionJob` 2-worker runtime, dedicated `pdf::Document` and `CancelToken`   | windows-host                  | 8     |
+| [ ]    | D04 T01 §2  | Job result & recovery state machine (`Completed`..`NeedsPassword`) and temp cleanup      | windows-host                  | 7     |
+| [ ]    | D04 T01 §3  | Convert Step 1 (`Files` drop zone & chips) and Step 2 (`What to make` card registry)     | windows-host, display-session | 8     |
+| [ ]    | D04 T01 §4  | Convert Step 3 dynamic options host, capability hint line, and primary action button     | windows-host, display-session | 8     |
+| [ ]    | D04 T01 §5  | App-wide floating `QueueCard` (progress ring, job states, expanded list, per-job cancel) | windows-host, display-session | 7     |
+| [ ]    | D04 T01 §6  | Focus-aware completion notices (Windows toast vs in-app toast, `Open file` & folder)     | windows-host, display-session | 7     |
+| [ ]    | D04 T01 §7  | Queue error recovery (`Enter password` modal retry, transient retry, batch breakdown)    | windows-host, display-session | 7     |
+| [ ]    | D04 T02 §1  | `AtomicFileWriter` (`src/core/atomic_file.cpp`) sibling temp-then-replace and rollback   | windows-host                  | 10    |
+| [ ]    | D02 T01 §12 | Crash recovery snapshots for unsaved edits                                               | windows-host, display-session | 9     |
+| [ ]    | D04 T02 §2  | Native `PdfWriter` (`writer.cpp`: object allocation, `FlateDecode`, `/Pages`, `xref`)    | windows-host                  | 7     |
+| [ ]    | D04 T02 §3  | Streamed `PDF -> Images` (`PNG`, `JPEG`, `BMP`, Multipage `TIFF`, `GIF`) and CLI command | windows-host                  | 11    |
+| [ ]    | D04 T02 §4  | Vector `PDF -> SVG (.svg)` and `PDF -> OpenXPS (.xps)` exporters and Convert Step 3 UI   | windows-host, display-session | 8     |
+| [ ]    | D04 T02 §5  | `Images, SVG & XPS -> PDF` converter (`DCTDecode` pass-through, TIFF, EXIF) & Convert UI | windows-host, display-session | 7     |
+| [ ]    | D04 T02 §6  | `PDF -> Plain Text (.txt)` exporter with automatic OCR fallback, CLI and Convert UI      | windows-host, display-session | 7     |
+| [ ]    | D04 T02 §7  | `Searchable PDF (OCR)` sandwich writer (`3 Tr` invisible text), `recto-cli ocr` & UI     | windows-host, display-session | 7     |
+| [ ]    | D04 T02 §8  | Native `TableExtractor` (ruled-grid & borderless clustering, `.csv`/`.tsv`/`.json`, CLI) | windows-host                  | 8     |
+| [ ]    | D04 T02 §9  | Native lossless `ImageExtractor` (`DCTDecode` `.jpg`, `/SMask` `.png`/`.tiff`, CLI)      | windows-host                  | 8     |
+| [ ]    | D04 T02 §10 | Viewer `Table & Image Extractor Bar` (`SPEC 8.2`), `Preview Table` modal & Convert card  | windows-host, display-session | 7     |
+| [ ]    | D04 T02 §11 | `PdfOptimizer` (audit, downsampling, font subsetting) and Fast Web View `Linearizer`     | windows-host                  | 8     |
+| [ ]    | D04 T02 §12 | `Optimize & Compress PDF` Convert card (`SPEC 9.5`) and `Audit Dialog` (`SPEC 9.9`)      | windows-host, display-session | 6     |
+| [ ]    | D04 T02 §14 | `ClipboardPdfBuilder`: clipboard images and image or PDF file lists to PDF               | windows-host                  | 10    |
+| [ ]    | D04 T02 §15 | **Create PDF from clipboard** command, new unsaved tab, `Ctrl+V` and Home entry points   | windows-host, display-session | 10    |
+| [ ]    | D04 T02 §17 | Image-only PDF engine (`image_only_pdf.cpp`) and `recto-cli rasterize-pdf`               | windows-host                  | 9     |
+| [ ]    | D04 T02 §18 | Image-only PDF Convert card and Step 3 options                                           | windows-host, display-session | 7     |
+| [ ]    | D04 T02 §21 | Page area export engine (image or text) and `recto-cli export-area`                      | windows-host                  | 8     |
+| [ ]    | D04 T02 §22 | Export Area tool on the extractor bar, `Ctrl+K` commands and save dialog                 | windows-host, display-session | 8     |
+| [ ]    | D04 T02 §23 | More image inputs to PDF: ICO, JFIF, DIB, HEIC, WebP, JPEG XL via installed codecs       | windows-host                  | 9     |
+| [ ]    | D04 T02 §24 | New blank PDF engine: size presets, paper styles and `recto-cli new-pdf`                 | windows-host                  | 8     |
+| [ ]    | D04 T02 §25 | New blank PDF dialog, File menu entry and `Ctrl+K` command                               | windows-host, display-session | 8     |
+| [ ]    | D05 T01 §1  | `GraftMap` object-graph cloner, resource deduplicator (`graft.cpp`) & page-range parser  | windows-host                  | 7     |
+| [ ]    | D02 T03 §24 | `recto-pdf` import a page or an image as a layer                                         | windows-host                  | 4     |
+| [ ]    | D02 T03 §25 | Layers panel editing: new, rename, delete, merge and import as layer                     | windows-host, display-session | 5     |
+| [ ]    | D05 T01 §2  | Multi-document graft `merge` and multi-method `split` (`recto-cli merge` & `split`)      | windows-host                  | 8     |
+| [ ]    | D05 T01 §3  | Copy-based page-tree edit list (`reorder`, `/Rotate` delta, `delete`, `extract`)         | windows-host                  | 8     |
+| [ ]    | D05 T01 §4  | `Insert Blank Page`, box cropping (`/MediaBox`..`/ArtBox`), margin detection & rescaling | windows-host                  | 7     |
+| [ ]    | D05 T01 §5  | Vector and image `Watermark & Stamp` engine (`stamp_watermark.cpp`, `cli watermark`)     | windows-host                  | 8     |
+| [ ]    | D05 T01 §7  | Windows CNG (`bcrypt.dll`) `AES-256` (`V=5, R=6`) encrypt/decrypt writer and CLI verbs   | windows-host                  | 7     |
+| [ ]    | D05 T01 §8  | X.509 / PKCS#12 and Windows Certificate Store `PKCS#7` & `PAdES` signer (`cli sign`)     | windows-host                  | 7     |
+| [ ]    | D05 T01 §9  | Cryptographic signature verifier (`/ByteRange`, CMS/CAdES, chain trust & tamper check)   | windows-host                  | 8     |
+| [ ]    | D05 T01 §10 | True physical content-stream redactor (glyph/path/image scrubbing) & `sanitize_document` | windows-host                  | 7     |
+| [ ]    | D05 T01 §11 | `/Adobe.PubSec` certificate encryption writer: recipients, CMS envelopes, AES-256        | windows-host                  | 13    |
+| [ ]    | D05 T01 §12 | `/Adobe.PubSec` decryption with a certificate private key through CNG on open            | windows-host                  | 10    |
+| [ ]    | D05 T01 §13 | Page backgrounds engine: add, update, list and remove managed marks                      | windows-host                  | 13    |
+| [ ]    | D05 T01 §6  | 3-zone `Headers & Footers` and legal **Bates Numbering** (`stamp_watermark.cpp` & CLI)   | windows-host                  | 9     |
+| [ ]    | D05 T01 §14 | `replace_pages`: replace pages from another PDF, remapping links, fields and tags        | windows-host                  | 12    |
+| [ ]    | D05 T01 §15 | Split by maximum file size and by top-level bookmarks (engine and CLI)                   | windows-host                  | 11    |
+| [ ]    | D05 T01 §17 | N-up sheets: several pages on one sheet as a new PDF (engine and CLI)                    | windows-host                  | 10    |
+| [ ]    | D05 T01 §19 | Page labels: read, edit, preview and carry through page operations (engine and CLI)      | windows-host                  | 11    |
+| [ ]    | D05 T01 §16 | Split one page into several: grid or custom cut lines (engine and CLI)                   | windows-host                  | 12    |
+| [ ]    | D05 T01 §18 | Interleave two PDFs, swap odd and even pages, reverse page order (engine and CLI)        | windows-host                  | 10    |
+| [ ]    | D05 T01 §20 | Blank page detection with a local heuristic and a deletion plan (engine and CLI)         | windows-host                  | 9     |
+| [ ]    | D05 T01 §21 | Reorder pages by bookmark order (engine and CLI)                                         | windows-host                  | 7     |
+| [ ]    | D05 T01 §22 | Cross-page paging seal: split a seal image across page edges (engine and CLI)            | windows-host                  | 9     |
+| [ ]    | D05 T01 §23 | ID card copy: front and back images on one page (engine and CLI)                         | windows-host                  | 8     |
+| [ ]    | D05 T01 §24 | Whiteout and whole-page redaction (engine and CLI)                                       | windows-host                  | 9     |
+| [ ]    | D05 T01 §25 | PII country packs with checksum validation, local only (engine and CLI)                  | windows-host                  | 9     |
+| [ ]    | D05 T01 §26 | Redaction profiles: saved patterns, appearance and scope as a JSON file (engine and CLI) | windows-host                  | 8     |
+| [ ]    | D05 T01 §27 | Document inspector report: what a PDF carries before sanitizing (engine and CLI)         | windows-host                  | 9     |
+| [ ]    | D05 T01 §28 | Signed revision extraction and comparison with the current document (engine and CLI)     | windows-host                  | 8     |
+| [ ]    | D05 T01 §29 | Trust lists: opt-in download and manual import into a Recto trust store (engine and CLI) | windows-host                  | 11    |
+| [ ]    | D05 T01 §30 | PDF Binder: combine files with a table-of-contents page and a project file               | windows-host                  | 10    |
+| [ ]    | D05 T02 §1  | Virtualized Organize `PageGrid`, `OrganizeEditModel`, multi-select & `Undo`/`Redo` stack | windows-host, display-session | 8     |
+| [ ]    | D05 T02 §2  | Drag-and-drop and keyboard page reordering, floating action bar & `90°` rotation badges  | windows-host, display-session | 7     |
+| [ ]    | D05 T02 §3  | Organize **Combine** mode (`A-Organize.png`: per-source chips, `Add files` & edge tint)  | windows-host, display-session | 6     |
+| [ ]    | D05 T02 §4  | Organize **Split** mode (`B-Organize.png`: click-between-pages dividers & part names)    | windows-host, display-session | 7     |
+| [ ]    | D05 T02 §5  | Organize `Save` (replace-original) and `Save as copy` jobs plus `Unsaved-Changes` guard  | windows-host, display-session | 6     |
+| [ ]    | D05 T02 §6  | `Insert Blank Page` dialog (`E8A5`) and interactive `Crop & Resize Pages` (`E7A8`)       | windows-host, display-session | 6     |
+| [ ]    | D05 T02 §7  | Two-column `640 epx` `Watermark & Stamp` dialog (`SPEC 9.6` & `9.9` with live preview)   | windows-host, display-session | 6     |
+| [ ]    | D05 T02 §8  | Two-column `640 epx` `Header, Footer & Bates Numbering` dialog with live page preview    | windows-host, display-session | 6     |
+| [ ]    | D05 T02 §9  | Viewer `Redaction & Sanitize Bar` (`Ctrl+Shift+X`), `Find & Redact` & `Sanitize` dialog  | windows-host, display-session | 7     |
+| [ ]    | D05 T02 §10 | Viewer `Signature Status Banner`, `Draw Signature Box` (`Ctrl+Shift+G`) & `Sign Dialog`  | windows-host, display-session | 10    |
+| [ ]    | D05 T02 §11 | Viewer `Signatures` side panel (`SPEC 8.3`) and `Protected & Signed` / `Unlocked` cards  | windows-host, display-session | 6     |
+| [ ]    | D05 T02 §12 | `Replace Pages` dialog: source picker, before and after preview, consequences            | windows-host, display-session | 11    |
+| [ ]    | D05 T02 §13 | `Backgrounds` dialog: live preview over page content and managed marks list              | windows-host, display-session | 10    |
+| [ ]    | D05 T02 §14 | Certificate encryption in the Protect flow: recipients, permissions, warnings            | windows-host, display-session | 11    |
+| [ ]    | D05 T02 §15 | Certificate prompt when opening a public-key encrypted PDF                               | windows-host, display-session | 8     |
+| [ ]    | D05 T02 §16 | Split mode: split by file size and by top-level bookmarks                                | windows-host, display-session | 9     |
+| [ ]    | D05 T02 §17 | Split Page dialog: grid or draggable cut lines with a live preview                       | windows-host, display-session | 9     |
+| [ ]    | D05 T02 §18 | N-up dialog: several pages on one sheet with a live sheet preview                        | windows-host, display-session | 8     |
+| [ ]    | D05 T02 §19 | Reverse, swap, interleave and bookmark-order commands in Organize                        | windows-host, display-session | 9     |
+| [ ]    | D05 T02 §20 | Page Labels dialog: ranges, styles, prefixes and a live label preview                    | windows-host, display-session | 9     |
+| [ ]    | D05 T02 §21 | Blank page review: find, check and remove blank pages from the grid                      | windows-host, display-session | 7     |
+| [ ]    | D05 T02 §22 | Drag pages between open documents and out to Explorer                                    | windows-host, display-session | 9     |
+| [ ]    | D05 T02 §23 | Copy a page as an image from the Organize grid                                           | windows-host, display-session | 8     |
+| [ ]    | D05 T02 §24 | Combine mode: table of contents page and a rebuildable binder project                    | windows-host, display-session | 9     |
+| [ ]    | D05 T02 §25 | ID Card Copy dialog: front and back images on one page                                   | windows-host, display-session | 8     |
+| [ ]    | D05 T02 §26 | Paging Seal dialog: a seal image split across page edges                                 | windows-host, display-session | 8     |
+| [ ]    | D05 T02 §27 | Redaction Bar: saved profiles, country packs and a match review list                     | windows-host, display-session | 9     |
+| [ ]    | D05 T02 §28 | Redaction Bar: suggested marks, whiteout and whole-page redaction                        | windows-host, display-session | 9     |
+| [ ]    | D05 T02 §29 | Inspect Document panel: what the file carries, with a path to Sanitize                   | windows-host, display-session | 9     |
+| [ ]    | D05 T02 §30 | Signatures panel: view the signed version and compare it with the current document       | windows-host, display-session | 8     |
+| [ ]    | D05 T02 §31 | Trusted Lists dialog: opt-in download, manual import and per-list control                | windows-host, display-session | 10    |
+| [ ]    | D05 T02 §32 | Pressure-sensitive pen capture for handwritten signatures                                | windows-host, display-session | 7     |
+| [ ]    | D06 T01 §5  | Conversion round-trip matrix Part 1 (`RoundTrips.Formats`: Images/SVG/XPS, OCR, Tables)  | windows-host                  | 7     |
+| [ ]    | D06 T03 §4  | Single-interpreter differential suite across every content consumer                      | windows-host                  | 7     |
+| [ ]    | D03 T04 §1  | Editable object model (`EditModel`) built from the shared interpreter                    | windows-host                  | 8     |
+| [ ]    | D03 T04 §2  | Stable paragraph model: lines, paragraphs, columns, table cells and rotation             | windows-host                  | 8     |
+| [ ]    | D03 T04 §3  | Edit session on an isolated copy with a content patch journal and undo/redo              | windows-host                  | 7     |
+| [ ]    | D03 T04 §8  | Image objects: add, replace, move, resize, rotate, flip, crop and export                 | windows-host                  | 7     |
+| [ ]    | D03 T04 §11 | Edit PDF mode bar, object hit-testing and not-editable messages                          | windows-host, display-session | 6     |
+| [ ]    | D03 T04 §18 | Vertical writing (`/WMode 1`) model: detection, metrics and editability classes          | windows-host                  | 7     |
+| [ ]    | D06 T03 §5  | Save integrity fault-injection suite                                                     | windows-host                  | 12    |
+| [ ]    | D03 T01 §19 | Save OCR corrections and zone text into the text layer of a copy                         | windows-host, display-session | 8     |
+| [ ]    | D03 T04 §9  | Object removal, atomic marked content and full-rewrite save with orphan pruning          | windows-host                  | 6     |
+| [ ]    | D03 T04 §10 | Vector objects: select, move, resize, rotate, flip, recolour, width and delete           | windows-host                  | 6     |
+| [ ]    | D03 T04 §13 | On-canvas image and vector handles, alignment guides, nudges and z-order                 | windows-host, display-session | 6     |
+| [ ]    | D03 T04 §24 | Move objects to another page: text, images and paths                                     | windows-host                  | 6     |
+| [ ]    | D03 T04 §25 | Image filters: brightness, contrast, greyscale and invert on a copy                      | windows-host                  | 7     |
+| [ ]    | D03 T04 §26 | Blend modes, opacity and shading objects for text, images and paths                      | windows-host                  | 8     |
+| [ ]    | D03 T04 §28 | Appearance panel: image filters, blend mode, opacity and gradient fill                   | windows-host, display-session | 5     |
+| [ ]    | D06 T03 §6  | Redaction completeness and audit suite on raw bytes                                      | windows-host                  | 9     |
+| [ ]    | D06 T03 §7  | Unicode authoring round-trip suite for every text-writing path                           | windows-host                  | 7     |
+| [ ]    | D03 T03 §22 | Fill and Sign: typed text, symbols and signatures on flat forms                          | windows-host, display-session | 9     |
+| [ ]    | D03 T03 §26 | Comment summary PDF: comments beside pages and a comments-only list                      | none                          | 8     |
+| [ ]    | D03 T03 §27 | `Summarize Comments` dialog in the Comments panel                                        | windows-host, display-session | 6     |
+| [ ]    | D03 T03 §29 | Save only the pages with comments as a new PDF                                           | none                          | 5     |
+| [ ]    | D03 T04 §4  | Edit font resolver: original glyph coverage, installed fonts and Unicode fallback        | windows-host                  | 7     |
+| [ ]    | D02 T03 §21 | `recto-pdf` contents page generated from bookmarks                                       | windows-host                  | 4     |
+| [ ]    | D02 T03 §22 | Insert contents page dialog and `recto-cli toc`                                          | windows-host, display-session | 3     |
+| [ ]    | D03 T04 §5  | Paragraph rewrite: reflow in the original box with per-run state and z-order kept        | windows-host                  | 7     |
+| [ ]    | D03 T04 §6  | Structure tree, marked content and layers kept consistent across text edits              | windows-host                  | 5     |
+| [ ]    | D03 T04 §7  | Add Text box as real page content (not an annotation)                                    | windows-host                  | 5     |
+| [ ]    | D03 T04 §12 | Inline on-canvas text editing with caret, selection and per-run formatting               | windows-host, display-session | 6     |
+| [ ]    | D03 T04 §14 | Edit session commit, save, dirty state and Ctrl+K commands                               | windows-host, display-session | 6     |
+| [ ]    | D03 T04 §15 | `recto-cli edit`: list, text, image and vector verbs                                     | windows-host                  | 4     |
+| [ ]    | D03 T04 §16 | Producer fixture matrix and Edit PDF round-trip suite                                    | windows-host                  | 8     |
+| [ ]    | D03 T04 §17 | Spell check in the inline Edit PDF text editor                                           | windows-host, display-session | 7     |
+| [ ]    | D03 T04 §19 | Vertical paragraph rewrite with vertical metrics and embedded fallback fonts             | windows-host                  | 7     |
+| [ ]    | D03 T04 §20 | Vertical text in the inline editor: caret, hit testing and IME                           | windows-host, display-session | 5     |
+| [ ]    | D03 T04 §21 | Convert text to outlines (paths) for a selection or the page, on a copy                  | windows-host                  | 7     |
+| [ ]    | D03 T04 §22 | Linked text flows across boxes and pages, stored as article threads                      | windows-host                  | 7     |
+| [ ]    | D03 T04 §23 | Join and split text objects: paragraphs, lines and boxes                                 | windows-host                  | 6     |
+| [ ]    | D03 T04 §27 | Arrange and convert commands: outlines, link flow, join, split and move to page          | windows-host, display-session | 6     |
+| [ ]    | D03 T04 §29 | `recto-cli edit` verbs for outlines, flows, join, split, move, filters and appearance    | windows-host                  | 7     |
+| [ ]    | D03 T04 §30 | Fixtures and round-trip suite for the parity edits                                       | windows-host                  | 6     |
+| [ ]    | D04 T02 §19 | Editable OCR writer: recognized text as live text objects in matched fonts               | windows-host                  | 9     |
+| [ ]    | D04 T02 §20 | Editable text output mode on the Searchable PDF (OCR) card and `Ctrl+K`                  | windows-host, display-session | 8     |
+| [ ]    | D07 T03 §3  | Structure-preserving reproducer scrubber (`recto-cli scrub`)                             | windows-host                  | 9     |
 
 ### Phase 5: M5 Conversions B
 
@@ -524,271 +524,271 @@ Sections: 112 | Checklist items: 905
 
 Sections: 54 | Checklist items: 383
 
-| Status | Reference   | Deliverable                                                                              | Needs                                         | Items |
-| ------ | ----------- | ---------------------------------------------------------------------------------------- | --------------------------------------------- | ----- |
-| [ ]    | D06 T02 §1  | Hostile-input audit Part 1 (`docs/security-audit.md`: zero-JS, `/Launch` & bomb bounds)  | windows-host                                  | 6     |
-| [ ]    | D06 T02 §2  | Hostile-input audit Part 2 (macro suppression, HTML script block, link prompt, redact)   | windows-host, display-session                 | 7     |
-| [ ]    | D06 T02 §5  | `recto-pdf` public API boundary inventory (`recto_pdf.h` ownership and mutability table) | none                                          | 6     |
-| [ ]    | D06 T02 §6  | Post-v1 AppContainer broker process design (`2026-10-14-broker-process-design.md`)       | none                                          | 8     |
-| [ ]    | D07 T01 §1  | WinUI 3 print API spike (`PrintManagerInterop` vs `ID2D1PrintControl`) & section 11 note | windows-host, display-session                 | 6     |
-| [ ]    | D07 T01 §2  | Non-blocking print pipeline (`src/app/printing/`, printer-DPI job, preview & `Ctrl+P`)   | windows-host, display-session                 | 13    |
-| [ ]    | D07 T01 §3  | Automated `Print-to-PDF` verification seam (`Print.*` in `recto-tests`) against corpus   | windows-host                                  | 6     |
-| [ ]    | D06 T03 §9  | Printer driver compatibility and print failure isolation suite                           | windows-host, display-session                 | 11    |
-| [ ]    | D07 T01 §4  | Inno Setup installer (`installer/recto.iss`) for Full and Self-Contained Portable modes  | windows-host                                  | 7     |
-| [ ]    | D07 T01 §5  | Release packaging pipeline (`build-installer.ps1`: Setup `.exe`, Portable `.zip` & MSIX) | windows-host                                  | 7     |
-| [ ]    | D04 T08 §10 | Installer option, Portable layout and client configuration snippets                      | windows-host                                  | 7     |
-| [ ]    | D07 T01 §6  | Automated Full Install, `.pdf` association, upgrade and uninstall proof (`installer`)    | windows-host, display-session                 | 7     |
-| [ ]    | D07 T01 §7  | Automated Self-Contained Portable Install zero-registry and zero-`%LOCALAPPDATA%` proof  | windows-host, display-session                 | 6     |
-| [ ]    | D07 T01 §8  | Explorer thumbnail and preview handlers (`IThumbnailProvider`, `IPreviewHandler`)        | windows-host, display-session                 | 8     |
-| [ ]    | D07 T01 §9  | Explorer verbs: print, printto, Combine and Convert to PDF (`IExplorerCommand`)          | windows-host, display-session                 | 10    |
-| [ ]    | D04 T07 §22 | `print` terminal step: batch print to a named printer                                    | windows-host                                  | 11    |
-| [ ]    | D04 T07 §23 | Print step safeguards: run confirmation, page budget and CLI refusal                     | windows-host, display-session                 | 7     |
-| [ ]    | D07 T01 §10 | Print layouts: booklet, multiple pages per sheet and poster tiling                       | windows-host, display-session                 | 9     |
-| [ ]    | D07 T01 §11 | Print page selection: reverse order, pages with comments, a bookmark section, an area    | windows-host                                  | 8     |
-| [ ]    | D07 T01 §12 | Print render modes: print as image, grayscale and text as outlines                       | windows-host                                  | 6     |
-| [ ]    | D07 T01 §13 | Printer's marks: crop marks, bleed marks, registration marks and page information        | windows-host                                  | 6     |
-| [ ]    | D07 T01 §14 | Print options pane and Ctrl+K commands for page selection, render modes and marks        | windows-host, display-session                 | 9     |
-| [ ]    | D07 T01 §15 | Recto PDF virtual printer design: v4 driver, hand-off and trust boundary                 | windows-host, display-session                 | 8     |
-| [ ]    | D07 T01 §16 | Recto PDF v4 driver package: manifest, INF, print capabilities and test-signed install   | windows-host, attended                        | 6     |
-| [ ]    | D07 T01 §17 | Virtual printer spool hand-off: XPS to PDF in the user's session                         | windows-host                                  | 7     |
-| [ ]    | D06 T02 §3  | M3-M5 fuzz targets (`fuzz_text`, `fuzz_forms`, `fuzz_openxml_zip`) & scheduled workflow  | windows-host                                  | 8     |
-| [ ]    | D06 T02 §4  | Crash triage runbook (`fuzz/README.md`) proven end-to-end on a planted crash input       | windows-host                                  | 6     |
-| [ ]    | D07 T01 §18 | Recto PDF virtual printer settings and the save window                                   | windows-host, display-session                 | 7     |
-| [ ]    | D07 T02 §1  | Build-time version and provenance generator (version, SHA, `Standard` vs `Portable`)     | windows-host                                  | 7     |
-| [ ]    | D07 T02 §2  | `AboutPage` (`SPEC 9.8`, `D-About.png`: version truth, `LICENSE` modal and `Built-with`) | windows-host, display-session                 | 7     |
-| [ ]    | D07 T02 §3  | Build-derived dependency enumeration script, `NOTICE.md` and `docs/license-audit.md`     | windows-host                                  | 7     |
-| [ ]    | D07 T02 §4  | Opt-in local crash report bundle writer (`MiniDumpNormal` + D16 ring log `.zip` prompt)  | windows-host, display-session                 | 7     |
-| [ ]    | D06 T02 §7  | FIPS mode detection and the algorithm policy in `recto-pdf`                              | windows-host                                  | 5     |
-| [ ]    | D07 T02 §5  | Localization readiness (`Resources.resw` `x:Uid` extraction and 40% pseudolocale check)  | windows-host, display-session                 | 6     |
-| [ ]    | D07 T02 §6  | GitHub Release runbook (`docs/release-and-store-runbook.md`) and Store submission kit    | windows-host, display-session                 | 8     |
-| [ ]    | D07 T01 §19 | Full installer integration and end-to-end proof for the Recto PDF printer                | windows-host, display-session, attended       | 7     |
-| [ ]    | D07 T01 §20 | Recto PDF driver signing through the Windows Hardware Dev Center and release gate        | third-party, operator                         | 5     |
-| [ ]    | D07 T02 §8  | Group Policy catalogue and templates: `policy/Recto.admx` and `Recto.adml`               | windows-host                                  | 6     |
-| [ ]    | D07 T02 §9  | `PolicyProvider`: read machine and user policy values, typed and bounded                 | windows-host                                  | 7     |
-| [ ]    | D07 T02 §10 | `SettingsStore` policy precedence: locked settings and policy gates                      | windows-host                                  | 6     |
-| [ ]    | D07 T02 §11 | "Managed by your organization" notes on locked settings and `recto-cli policy show`      | windows-host, display-session                 | 6     |
-| [ ]    | D07 T02 §12 | Policy templates release artifact and end-to-end Group Policy proof                      | windows-host, display-session                 | 6     |
-| [ ]    | D07 T02 §13 | Translation catalogue: languages manifest, glossary, plural rules and the checker        | windows-host                                  | 6     |
-| [ ]    | D07 T02 §14 | Interface language setting: Follow Windows or a shipped language                         | windows-host, display-session                 | 6     |
-| [ ]    | D07 T02 §15 | Localised errors, plurals, dates and numbers: no English assembled in code               | windows-host                                  | 5     |
-| [ ]    | D06 T02 §8  | Enforce the FIPS policy in decryption, encryption writers, signing digests and the CLI   | windows-host                                  | 6     |
-| [ ]    | D06 T02 §9  | FIPS mode proof on a FIPS-enabled Windows host                                           | windows-host, attended                        | 4     |
-| [ ]    | D07 T02 §16 | Right-to-left readiness: flow direction, mirrored icons and a mirrored pseudolocale      | windows-host, display-session                 | 5     |
-| [ ]    | D07 T02 §17 | First shipped language set: ten reviewed translations and installer languages            | third-party                                   | 8     |
-| [ ]    | D07 T02 §7  | End-to-end v1 distribution bundle (`Setup.exe`, `Portable.zip`, `SHA256SUMS.txt`) & GPL  | windows-host, display-session                 | 8     |
-| [ ]    | D06 T03 §12 | Clean-machine release smoke and upgrade persistence proof                                | windows-host, display-session, attended       | 11    |
-| [ ]    | D07 T03 §2  | In-app `Report a problem` with privacy-safe diagnostics                                  | windows-host, display-session                 | 7     |
-| [ ]    | D07 T03 §5  | Release gate for unreleased fixes, security advisories and CI integrity                  | windows-host                                  | 7     |
-| [ ]    | D07 T03 §7  | What's new after update and opt-in update notice                                         | windows-host, display-session, owner-decision | 7     |
+| Status | Reference   | Deliverable                                                                              | Needs                                   | Items |
+| ------ | ----------- | ---------------------------------------------------------------------------------------- | --------------------------------------- | ----- |
+| [ ]    | D06 T02 §1  | Hostile-input audit Part 1 (`docs/security-audit.md`: zero-JS, `/Launch` & bomb bounds)  | windows-host                            | 6     |
+| [ ]    | D06 T02 §2  | Hostile-input audit Part 2 (macro suppression, HTML script block, link prompt, redact)   | windows-host, display-session           | 7     |
+| [ ]    | D06 T02 §5  | `recto-pdf` public API boundary inventory (`recto_pdf.h` ownership and mutability table) | none                                    | 6     |
+| [ ]    | D06 T02 §6  | Post-v1 AppContainer broker process design (`2026-10-14-broker-process-design.md`)       | none                                    | 8     |
+| [ ]    | D07 T01 §1  | WinUI 3 print API spike (`PrintManagerInterop` vs `ID2D1PrintControl`) & section 11 note | windows-host, display-session           | 6     |
+| [ ]    | D07 T01 §2  | Non-blocking print pipeline (`src/app/printing/`, printer-DPI job, preview & `Ctrl+P`)   | windows-host, display-session           | 13    |
+| [ ]    | D07 T01 §3  | Automated `Print-to-PDF` verification seam (`Print.*` in `recto-tests`) against corpus   | windows-host                            | 6     |
+| [ ]    | D06 T03 §9  | Printer driver compatibility and print failure isolation suite                           | windows-host, display-session           | 11    |
+| [ ]    | D07 T01 §4  | Inno Setup installer (`installer/recto.iss`) for Full and Self-Contained Portable modes  | windows-host                            | 7     |
+| [ ]    | D07 T01 §5  | Release packaging pipeline (`build-installer.ps1`: Setup `.exe`, Portable `.zip` & MSIX) | windows-host                            | 7     |
+| [ ]    | D04 T08 §10 | Installer option, Portable layout and client configuration snippets                      | windows-host                            | 7     |
+| [ ]    | D07 T01 §6  | Automated Full Install, `.pdf` association, upgrade and uninstall proof (`installer`)    | windows-host, display-session           | 7     |
+| [ ]    | D07 T01 §7  | Automated Self-Contained Portable Install zero-registry and zero-`%LOCALAPPDATA%` proof  | windows-host, display-session           | 6     |
+| [ ]    | D07 T01 §8  | Explorer thumbnail and preview handlers (`IThumbnailProvider`, `IPreviewHandler`)        | windows-host, display-session           | 8     |
+| [ ]    | D07 T01 §9  | Explorer verbs: print, printto, Combine and Convert to PDF (`IExplorerCommand`)          | windows-host, display-session           | 10    |
+| [ ]    | D04 T07 §22 | `print` terminal step: batch print to a named printer                                    | windows-host                            | 11    |
+| [ ]    | D04 T07 §23 | Print step safeguards: run confirmation, page budget and CLI refusal                     | windows-host, display-session           | 7     |
+| [ ]    | D07 T01 §10 | Print layouts: booklet, multiple pages per sheet and poster tiling                       | windows-host, display-session           | 9     |
+| [ ]    | D07 T01 §11 | Print page selection: reverse order, pages with comments, a bookmark section, an area    | windows-host                            | 8     |
+| [ ]    | D07 T01 §12 | Print render modes: print as image, grayscale and text as outlines                       | windows-host                            | 6     |
+| [ ]    | D07 T01 §13 | Printer's marks: crop marks, bleed marks, registration marks and page information        | windows-host                            | 6     |
+| [ ]    | D07 T01 §14 | Print options pane and Ctrl+K commands for page selection, render modes and marks        | windows-host, display-session           | 9     |
+| [ ]    | D07 T01 §15 | Recto PDF virtual printer design: v4 driver, hand-off and trust boundary                 | windows-host, display-session           | 8     |
+| [ ]    | D07 T01 §16 | Recto PDF v4 driver package: manifest, INF, print capabilities and test-signed install   | windows-host, attended                  | 6     |
+| [ ]    | D07 T01 §17 | Virtual printer spool hand-off: XPS to PDF in the user's session                         | windows-host                            | 7     |
+| [ ]    | D06 T02 §3  | M3-M5 fuzz targets (`fuzz_text`, `fuzz_forms`, `fuzz_openxml_zip`) & scheduled workflow  | windows-host                            | 8     |
+| [ ]    | D06 T02 §4  | Crash triage runbook (`fuzz/README.md`) proven end-to-end on a planted crash input       | windows-host                            | 6     |
+| [ ]    | D07 T01 §18 | Recto PDF virtual printer settings and the save window                                   | windows-host, display-session           | 7     |
+| [ ]    | D07 T02 §1  | Build-time version and provenance generator (version, SHA, `Standard` vs `Portable`)     | windows-host                            | 7     |
+| [ ]    | D07 T02 §2  | `AboutPage` (`SPEC 9.8`, `D-About.png`: version truth, `LICENSE` modal and `Built-with`) | windows-host, display-session           | 7     |
+| [ ]    | D07 T02 §3  | Build-derived dependency enumeration script, `NOTICE.md` and `docs/license-audit.md`     | windows-host                            | 7     |
+| [ ]    | D07 T02 §4  | Opt-in local crash report bundle writer (`MiniDumpNormal` + D16 ring log `.zip` prompt)  | windows-host, display-session           | 7     |
+| [ ]    | D06 T02 §7  | FIPS mode detection and the algorithm policy in `recto-pdf`                              | windows-host                            | 5     |
+| [ ]    | D07 T02 §5  | Localization readiness (`Resources.resw` `x:Uid` extraction and 40% pseudolocale check)  | windows-host, display-session           | 6     |
+| [ ]    | D07 T02 §6  | GitHub Release runbook (`docs/release-and-store-runbook.md`) and Store submission kit    | windows-host, display-session           | 8     |
+| [ ]    | D07 T01 §19 | Full installer integration and end-to-end proof for the Recto PDF printer                | windows-host, display-session, attended | 7     |
+| [ ]    | D07 T01 §20 | Recto PDF driver signing through the Windows Hardware Dev Center and release gate        | third-party, operator                   | 5     |
+| [ ]    | D07 T02 §8  | Group Policy catalogue and templates: `policy/Recto.admx` and `Recto.adml`               | windows-host                            | 6     |
+| [ ]    | D07 T02 §9  | `PolicyProvider`: read machine and user policy values, typed and bounded                 | windows-host                            | 7     |
+| [ ]    | D07 T02 §10 | `SettingsStore` policy precedence: locked settings and policy gates                      | windows-host                            | 6     |
+| [ ]    | D07 T02 §11 | "Managed by your organization" notes on locked settings and `recto-cli policy show`      | windows-host, display-session           | 6     |
+| [ ]    | D07 T02 §12 | Policy templates release artifact and end-to-end Group Policy proof                      | windows-host, display-session           | 6     |
+| [ ]    | D07 T02 §13 | Translation catalogue: languages manifest, glossary, plural rules and the checker        | windows-host                            | 6     |
+| [ ]    | D07 T02 §14 | Interface language setting: Follow Windows or a shipped language                         | windows-host, display-session           | 6     |
+| [ ]    | D07 T02 §15 | Localised errors, plurals, dates and numbers: no English assembled in code               | windows-host                            | 5     |
+| [ ]    | D06 T02 §8  | Enforce the FIPS policy in decryption, encryption writers, signing digests and the CLI   | windows-host                            | 6     |
+| [ ]    | D06 T02 §9  | FIPS mode proof on a FIPS-enabled Windows host                                           | windows-host, attended                  | 4     |
+| [ ]    | D07 T02 §16 | Right-to-left readiness: flow direction, mirrored icons and a mirrored pseudolocale      | windows-host, display-session           | 5     |
+| [ ]    | D07 T02 §17 | First shipped language set: ten reviewed translations and installer languages            | third-party                             | 8     |
+| [ ]    | D07 T02 §7  | End-to-end v1 distribution bundle (`Setup.exe`, `Portable.zip`, `SHA256SUMS.txt`) & GPL  | windows-host, display-session           | 8     |
+| [ ]    | D06 T03 §12 | Clean-machine release smoke and upgrade persistence proof                                | windows-host, display-session, attended | 11    |
+| [ ]    | D07 T03 §2  | In-app `Report a problem` with privacy-safe diagnostics                                  | windows-host, display-session           | 7     |
+| [ ]    | D07 T03 §5  | Release gate for unreleased fixes, security advisories and CI integrity                  | windows-host                            | 7     |
+| [ ]    | D07 T03 §7  | What's new after update and opt-in update notice                                         | windows-host, display-session           | 7     |
 
 ### Phase 7: After v1
 
 Sections: 88 | Checklist items: 476
 
-| Status | Reference   | Deliverable                                                                              | Needs                                         | Items |
-| ------ | ----------- | ---------------------------------------------------------------------------------------- | --------------------------------------------- | ----- |
-| [ ]    | D02 T05 §1  | Rich media, 3D and geospatial corpus fixtures in `tests/corpus/rich/`                    | none                                          | 9     |
-| [ ]    | D02 T05 §2  | `recto-pdf` media model: `/RichMedia`, `/Screen`, `/Sound`, `/Movie`, bounded extract    | windows-host                                  | 9     |
-| [ ]    | D02 T05 §3  | Embedded media playback service on Windows media APIs with no network access             | windows-host                                  | 7     |
-| [ ]    | D02 T05 §4  | Media annotation surface: ask before play, Flash placeholder, `Save media as...`         | windows-host, display-session                 | 9     |
-| [ ]    | D02 T05 §5  | `recto-pdf` 3D model: `/3D` annotations, `/3DV` views, `/VA`, lighting, cross sections   | windows-host                                  | 8     |
-| [ ]    | D02 T05 §6  | Bounded U3D (ECMA-363) parser into `Scene3D` and `fuzz_u3d`                              | windows-host                                  | 8     |
-| [ ]    | D02 T05 §7  | Bounded PRC (ISO 14739-1) tessellation parser into `Scene3D` and `fuzz_prc`              | windows-host                                  | 7     |
-| [ ]    | D02 T05 §8  | Direct3D 11 `Scene3DRenderer`: camera, lighting presets, visibility, cross section       | windows-host, display-session                 | 8     |
-| [ ]    | D02 T05 §9  | 3D view surface: poster fallback, activation, orbit, pan, zoom                           | windows-host, display-session                 | 9     |
-| [ ]    | D02 T05 §10 | 3D panel: named views, model tree, show/hide parts, lighting, cross section              | windows-host, display-session                 | 9     |
-| [ ]    | D02 T05 §11 | `recto-pdf` geospatial model: `/VP`, `/Measure` `/GEO` and page-to-coordinate transform  | none                                          | 7     |
-| [ ]    | D02 T05 §12 | Geodesic distance and area on the ellipsoid (`geodesy.cpp`)                              | none                                          | 6     |
-| [ ]    | D02 T05 §13 | Geo surface: coordinates under the pointer and `Find location`                           | windows-host, display-session                 | 8     |
-| [ ]    | D02 T05 §14 | Geo measure tools and coordinate export (CSV, GeoJSON)                                   | windows-host, display-session                 | 9     |
-| [ ]    | D02 T05 §15 | Register `fuzz_media`, `fuzz_u3d`, `fuzz_prc`, `fuzz_geo` in the fuzz campaign and audit | windows-host                                  | 5     |
-| [ ]    | D02 T05 §16 | `recto-pdf` media authoring: embed audio or video as a `/Screen` annotation              | windows-host                                  | 5     |
-| [ ]    | D02 T05 §17 | Add audio or video tool: pick a file, place it, choose a poster, preview                 | windows-host, display-session                 | 6     |
-| [ ]    | D02 T05 §18 | `recto-cli media`: add and list embedded audio and video                                 | windows-host                                  | 3     |
-| [ ]    | D02 T06 §1  | Provider-neutral connector interface, errors and the network gate                        | windows-host                                  | 5     |
-| [ ]    | D02 T06 §2  | HTTPS client for connectors with same-provider redirects only                            | windows-host                                  | 6     |
-| [ ]    | D02 T06 §3  | OAuth 2.0 authorization code with PKCE through a loopback redirect                       | windows-host, display-session                 | 6     |
-| [ ]    | D02 T06 §4  | Token store in Windows Credential Manager, refresh and sign-out                          | windows-host                                  | 4     |
-| [ ]    | D02 T06 §5  | Cloud storage settings group: off by default, per-provider sign-out, policy lock         | windows-host, display-session                 | 5     |
-| [ ]    | D02 T06 §6  | OneDrive provider over Microsoft Graph                                                   | windows-host, third-party                     | 5     |
-| [ ]    | D02 T06 §7  | SharePoint document libraries over Microsoft Graph                                       | windows-host, third-party                     | 4     |
-| [ ]    | D02 T06 §8  | Google Drive provider over Drive API v3                                                  | windows-host, third-party                     | 5     |
-| [ ]    | D02 T06 §9  | Dropbox provider over API v2                                                             | windows-host, third-party                     | 4     |
-| [ ]    | D02 T06 §10 | Box provider over API 2.0                                                                | windows-host, third-party                     | 4     |
-| [ ]    | D02 T06 §11 | Open from cloud: provider and folder browser                                             | windows-host, display-session                 | 4     |
-| [ ]    | D02 T06 §12 | Open a cloud file as a temporary local copy                                              | windows-host, display-session                 | 5     |
-| [ ]    | D02 T06 §13 | Save and Save a copy to the cloud with conflict detection                                | windows-host, display-session                 | 5     |
-| [ ]    | D02 T06 §14 | Recent cloud files on Home and in the command box                                        | windows-host, display-session                 | 4     |
-| [ ]    | D02 T06 §15 | Privacy and security tests: zero requests until sign-in, no secrets on disk              | windows-host                                  | 5     |
-| [ ]    | D04 T02 §13 | Create PDF from a scanner (Windows Image Acquisition)                                    | windows-host, display-session, owner-decision | 7     |
-| [ ]    | D08 T01 §1  | Provider interface, request model and typed `AssistantError` taxonomy                    | windows-host                                  | 7     |
-| [ ]    | D08 T01 §2  | HTTPS-only WinHTTP transport with proxy, TLS, timeouts, size caps and cancel             | windows-host                                  | 9     |
-| [ ]    | D08 T01 §3  | Retry with backoff on 429 and 5xx, honouring `Retry-After`                               | windows-host                                  | 5     |
-| [ ]    | D08 T01 §4  | Fake transport and scripted provider fixtures for adapter tests                          | windows-host                                  | 5     |
-| [ ]    | D08 T01 §5  | Anthropic Messages API adapter with streaming                                            | windows-host                                  | 5     |
-| [ ]    | D08 T01 §6  | OpenAI Chat Completions adapter with streaming                                           | windows-host                                  | 5     |
-| [ ]    | D08 T01 §7  | OpenRouter adapter over the OpenAI-compatible wire format                                | windows-host                                  | 4     |
-| [ ]    | D08 T01 §8  | Google Gemini API adapter with streaming                                                 | windows-host                                  | 4     |
-| [ ]    | D08 T01 §9  | Windows Credential Manager `CredentialStore` per provider                                | windows-host                                  | 5     |
-| [ ]    | D08 T01 §10 | Provider settings, model defaults, base URL rule and Test connection                     | windows-host                                  | 6     |
-| [ ]    | D08 T01 §11 | `ContextBuilder`: exact send set, exclusions and visible budget truncation               | windows-host                                  | 7     |
-| [ ]    | D08 T01 §12 | Consent gate: no key no network, per-request authorization and ledger                    | windows-host                                  | 7     |
-| [ ]    | D08 T01 §13 | `AssistantService`: summarize, cited answers, explain and translate                      | windows-host                                  | 7     |
-| [ ]    | D08 T01 §14 | Figure alt-text drafting and undoable Apply                                              | windows-host                                  | 7     |
-| [ ]    | D08 T01 §15 | Settings page `ASSISTANT` group with key entry and Test connection                       | windows-host, display-session                 | 7     |
-| [ ]    | D08 T01 §16 | Request preview `ContentDialog` with exact send set and opt-ins                          | windows-host, display-session                 | 5     |
-| [ ]    | D08 T01 §17 | Assistant side panel, clickable citations and Markdown export                            | windows-host, display-session                 | 8     |
-| [ ]    | D08 T01 §18 | `Ctrl+K` commands, UIA names and polite announcements                                    | windows-host, display-session                 | 5     |
-| [ ]    | D08 T01 §19 | Privacy and security suite: zero network, key scan, consent gates, cancel                | windows-host, display-session                 | 7     |
-| [ ]    | D08 T02 §1  | Provider capability matrix and disabled-with-reason rule                                 | windows-host                                  | 4     |
-| [ ]    | D08 T02 §2  | Local provider: loopback OpenAI-compatible endpoint, no key, no proxy                    | windows-host                                  | 8     |
-| [ ]    | D08 T02 §3  | Batch authorization: one job preview, many single-use request grants                     | windows-host                                  | 5     |
-| [ ]    | D08 T02 §4  | Structured output runner: bounded JSON, schema checks and verified quotes                | windows-host                                  | 7     |
-| [ ]    | D08 T02 §5  | Rewrite, proofread, tone, expand and condense suggestion engine                          | windows-host                                  | 4     |
-| [ ]    | D08 T02 §6  | Apply AI text suggestions through the undoable Edit PDF path                             | windows-host                                  | 5     |
-| [ ]    | D08 T02 §7  | Rewrite and proofread review in the Assistant panel                                      | windows-host, display-session                 | 4     |
-| [ ]    | D08 T02 §8  | Whole-document translation on a copy keeping layout                                      | windows-host                                  | 6     |
-| [ ]    | D08 T02 §9  | Bilingual output: side-by-side wide pages and interleaved pages                          | windows-host                                  | 4     |
-| [ ]    | D08 T02 §10 | Translation dialog: language, glossary, job preview, progress and report                 | windows-host, display-session                 | 4     |
-| [ ]    | D08 T02 §11 | Multi-document context builder with per-file citations                                   | windows-host                                  | 4     |
-| [ ]    | D08 T02 §12 | Multi-document chat across chosen open files                                             | windows-host, display-session                 | 4     |
-| [ ]    | D08 T02 §13 | Embeddings requests for providers and local models                                       | windows-host                                  | 4     |
-| [ ]    | D08 T02 §14 | Semantic index store beside the text index                                               | windows-host                                  | 5     |
-| [ ]    | D08 T02 §15 | Semantic index build job with one preview and never-upload-twice reuse                   | windows-host                                  | 5     |
-| [ ]    | D08 T02 §16 | Semantic query: previewed query embedding, ranking and verified hits                     | windows-host                                  | 4     |
-| [ ]    | D08 T02 §17 | Search by meaning mode, results and index controls                                       | windows-host, display-session                 | 3     |
-| [ ]    | D08 T02 §18 | Natural-language command planner over the command registry                               | windows-host                                  | 4     |
-| [ ]    | D08 T02 §19 | Command box: ask for a command, review the plan, run what you choose                     | windows-host, display-session                 | 3     |
-| [ ]    | D08 T02 §20 | AI bookmark proposals and per-bookmark summaries                                         | windows-host                                  | 6     |
-| [ ]    | D08 T02 §21 | Bookmark proposals review in the Outline panel                                           | windows-host, display-session                 | 2     |
-| [ ]    | D08 T02 §22 | AI page proposals: blank, misoriented and duplicate pages                                | windows-host                                  | 5     |
-| [ ]    | D08 T02 §23 | Page proposals review in the Organize grid                                               | windows-host, display-session                 | 2     |
-| [ ]    | D08 T02 §24 | Mind map: outline, layout, Markdown, OPML and image exports                              | windows-host                                  | 4     |
-| [ ]    | D08 T02 §25 | Flashcards and quizzes with Markdown and CSV exports                                     | windows-host                                  | 4     |
-| [ ]    | D08 T02 §26 | Contract risk review with verified quotes and the not-legal-advice notice                | windows-host                                  | 4     |
-| [ ]    | D08 T02 §27 | Contract review list, page jumps and optional Apply as comments                          | windows-host, display-session                 | 4     |
-| [ ]    | D08 T02 §28 | AI-content estimate with fixed limits text                                               | windows-host                                  | 3     |
-| [ ]    | D08 T02 §29 | Image generation inserted through the undoable Edit PDF path                             | windows-host                                  | 4     |
-| [ ]    | D08 T02 §30 | Audio summaries: Windows voices or provider speech, WAV and MP3                          | windows-host                                  | 4     |
-| [ ]    | D08 T02 §31 | AI-assisted PII suggestions as unapplied redaction marks                                 | windows-host                                  | 5     |
-| [ ]    | D08 T02 §32 | Redaction Bar: review, accept and reject AI suggestions                                  | windows-host, display-session                 | 2     |
-| [ ]    | D08 T02 §33 | Study and creation tools in the Assistant panel                                          | windows-host, display-session                 | 4     |
-| [ ]    | D08 T02 §34 | Ctrl+K commands, UIA names and announcements for the workspace tools                     | windows-host, display-session                 | 4     |
-| [ ]    | D08 T02 §35 | Workspace privacy suite: loopback only, previews, no auto-apply, zero network            | windows-host, display-session                 | 7     |
+| Status | Reference   | Deliverable                                                                              | Needs                         | Items |
+| ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
+| [ ]    | D02 T05 §1  | Rich media, 3D and geospatial corpus fixtures in `tests/corpus/rich/`                    | none                          | 9     |
+| [ ]    | D02 T05 §2  | `recto-pdf` media model: `/RichMedia`, `/Screen`, `/Sound`, `/Movie`, bounded extract    | windows-host                  | 9     |
+| [ ]    | D02 T05 §3  | Embedded media playback service on Windows media APIs with no network access             | windows-host                  | 7     |
+| [ ]    | D02 T05 §4  | Media annotation surface: ask before play, Flash placeholder, `Save media as...`         | windows-host, display-session | 9     |
+| [ ]    | D02 T05 §5  | `recto-pdf` 3D model: `/3D` annotations, `/3DV` views, `/VA`, lighting, cross sections   | windows-host                  | 8     |
+| [ ]    | D02 T05 §6  | Bounded U3D (ECMA-363) parser into `Scene3D` and `fuzz_u3d`                              | windows-host                  | 8     |
+| [ ]    | D02 T05 §7  | Bounded PRC (ISO 14739-1) tessellation parser into `Scene3D` and `fuzz_prc`              | windows-host                  | 7     |
+| [ ]    | D02 T05 §8  | Direct3D 11 `Scene3DRenderer`: camera, lighting presets, visibility, cross section       | windows-host, display-session | 8     |
+| [ ]    | D02 T05 §9  | 3D view surface: poster fallback, activation, orbit, pan, zoom                           | windows-host, display-session | 9     |
+| [ ]    | D02 T05 §10 | 3D panel: named views, model tree, show/hide parts, lighting, cross section              | windows-host, display-session | 9     |
+| [ ]    | D02 T05 §11 | `recto-pdf` geospatial model: `/VP`, `/Measure` `/GEO` and page-to-coordinate transform  | none                          | 7     |
+| [ ]    | D02 T05 §12 | Geodesic distance and area on the ellipsoid (`geodesy.cpp`)                              | none                          | 6     |
+| [ ]    | D02 T05 §13 | Geo surface: coordinates under the pointer and `Find location`                           | windows-host, display-session | 8     |
+| [ ]    | D02 T05 §14 | Geo measure tools and coordinate export (CSV, GeoJSON)                                   | windows-host, display-session | 9     |
+| [ ]    | D02 T05 §15 | Register `fuzz_media`, `fuzz_u3d`, `fuzz_prc`, `fuzz_geo` in the fuzz campaign and audit | windows-host                  | 5     |
+| [ ]    | D02 T05 §16 | `recto-pdf` media authoring: embed audio or video as a `/Screen` annotation              | windows-host                  | 5     |
+| [ ]    | D02 T05 §17 | Add audio or video tool: pick a file, place it, choose a poster, preview                 | windows-host, display-session | 6     |
+| [ ]    | D02 T05 §18 | `recto-cli media`: add and list embedded audio and video                                 | windows-host                  | 3     |
+| [ ]    | D02 T06 §1  | Provider-neutral connector interface, errors and the network gate                        | windows-host                  | 5     |
+| [ ]    | D02 T06 §2  | HTTPS client for connectors with same-provider redirects only                            | windows-host                  | 6     |
+| [ ]    | D02 T06 §3  | OAuth 2.0 authorization code with PKCE through a loopback redirect                       | windows-host, display-session | 6     |
+| [ ]    | D02 T06 §4  | Token store in Windows Credential Manager, refresh and sign-out                          | windows-host                  | 4     |
+| [ ]    | D02 T06 §5  | Cloud storage settings group: off by default, per-provider sign-out, policy lock         | windows-host, display-session | 5     |
+| [ ]    | D02 T06 §6  | OneDrive provider over Microsoft Graph                                                   | windows-host, third-party     | 5     |
+| [ ]    | D02 T06 §7  | SharePoint document libraries over Microsoft Graph                                       | windows-host, third-party     | 4     |
+| [ ]    | D02 T06 §8  | Google Drive provider over Drive API v3                                                  | windows-host, third-party     | 5     |
+| [ ]    | D02 T06 §9  | Dropbox provider over API v2                                                             | windows-host, third-party     | 4     |
+| [ ]    | D02 T06 §10 | Box provider over API 2.0                                                                | windows-host, third-party     | 4     |
+| [ ]    | D02 T06 §11 | Open from cloud: provider and folder browser                                             | windows-host, display-session | 4     |
+| [ ]    | D02 T06 §12 | Open a cloud file as a temporary local copy                                              | windows-host, display-session | 5     |
+| [ ]    | D02 T06 §13 | Save and Save a copy to the cloud with conflict detection                                | windows-host, display-session | 5     |
+| [ ]    | D02 T06 §14 | Recent cloud files on Home and in the command box                                        | windows-host, display-session | 4     |
+| [ ]    | D02 T06 §15 | Privacy and security tests: zero requests until sign-in, no secrets on disk              | windows-host                  | 5     |
+| [ ]    | D04 T02 §13 | Create PDF from a scanner (Windows Image Acquisition)                                    | windows-host, display-session | 7     |
+| [ ]    | D08 T01 §1  | Provider interface, request model and typed `AssistantError` taxonomy                    | windows-host                  | 7     |
+| [ ]    | D08 T01 §2  | HTTPS-only WinHTTP transport with proxy, TLS, timeouts, size caps and cancel             | windows-host                  | 9     |
+| [ ]    | D08 T01 §3  | Retry with backoff on 429 and 5xx, honouring `Retry-After`                               | windows-host                  | 5     |
+| [ ]    | D08 T01 §4  | Fake transport and scripted provider fixtures for adapter tests                          | windows-host                  | 5     |
+| [ ]    | D08 T01 §5  | Anthropic Messages API adapter with streaming                                            | windows-host                  | 5     |
+| [ ]    | D08 T01 §6  | OpenAI Chat Completions adapter with streaming                                           | windows-host                  | 5     |
+| [ ]    | D08 T01 §7  | OpenRouter adapter over the OpenAI-compatible wire format                                | windows-host                  | 4     |
+| [ ]    | D08 T01 §8  | Google Gemini API adapter with streaming                                                 | windows-host                  | 4     |
+| [ ]    | D08 T01 §9  | Windows Credential Manager `CredentialStore` per provider                                | windows-host                  | 5     |
+| [ ]    | D08 T01 §10 | Provider settings, model defaults, base URL rule and Test connection                     | windows-host                  | 6     |
+| [ ]    | D08 T01 §11 | `ContextBuilder`: exact send set, exclusions and visible budget truncation               | windows-host                  | 7     |
+| [ ]    | D08 T01 §12 | Consent gate: no key no network, per-request authorization and ledger                    | windows-host                  | 7     |
+| [ ]    | D08 T01 §13 | `AssistantService`: summarize, cited answers, explain and translate                      | windows-host                  | 7     |
+| [ ]    | D08 T01 §14 | Figure alt-text drafting and undoable Apply                                              | windows-host                  | 7     |
+| [ ]    | D08 T01 §15 | Settings page `ASSISTANT` group with key entry and Test connection                       | windows-host, display-session | 7     |
+| [ ]    | D08 T01 §16 | Request preview `ContentDialog` with exact send set and opt-ins                          | windows-host, display-session | 5     |
+| [ ]    | D08 T01 §17 | Assistant side panel, clickable citations and Markdown export                            | windows-host, display-session | 8     |
+| [ ]    | D08 T01 §18 | `Ctrl+K` commands, UIA names and polite announcements                                    | windows-host, display-session | 5     |
+| [ ]    | D08 T01 §19 | Privacy and security suite: zero network, key scan, consent gates, cancel                | windows-host, display-session | 7     |
+| [ ]    | D08 T02 §1  | Provider capability matrix and disabled-with-reason rule                                 | windows-host                  | 4     |
+| [ ]    | D08 T02 §2  | Local provider: loopback OpenAI-compatible endpoint, no key, no proxy                    | windows-host                  | 8     |
+| [ ]    | D08 T02 §3  | Batch authorization: one job preview, many single-use request grants                     | windows-host                  | 5     |
+| [ ]    | D08 T02 §4  | Structured output runner: bounded JSON, schema checks and verified quotes                | windows-host                  | 7     |
+| [ ]    | D08 T02 §5  | Rewrite, proofread, tone, expand and condense suggestion engine                          | windows-host                  | 4     |
+| [ ]    | D08 T02 §6  | Apply AI text suggestions through the undoable Edit PDF path                             | windows-host                  | 5     |
+| [ ]    | D08 T02 §7  | Rewrite and proofread review in the Assistant panel                                      | windows-host, display-session | 4     |
+| [ ]    | D08 T02 §8  | Whole-document translation on a copy keeping layout                                      | windows-host                  | 6     |
+| [ ]    | D08 T02 §9  | Bilingual output: side-by-side wide pages and interleaved pages                          | windows-host                  | 4     |
+| [ ]    | D08 T02 §10 | Translation dialog: language, glossary, job preview, progress and report                 | windows-host, display-session | 4     |
+| [ ]    | D08 T02 §11 | Multi-document context builder with per-file citations                                   | windows-host                  | 4     |
+| [ ]    | D08 T02 §12 | Multi-document chat across chosen open files                                             | windows-host, display-session | 4     |
+| [ ]    | D08 T02 §13 | Embeddings requests for providers and local models                                       | windows-host                  | 4     |
+| [ ]    | D08 T02 §14 | Semantic index store beside the text index                                               | windows-host                  | 5     |
+| [ ]    | D08 T02 §15 | Semantic index build job with one preview and never-upload-twice reuse                   | windows-host                  | 5     |
+| [ ]    | D08 T02 §16 | Semantic query: previewed query embedding, ranking and verified hits                     | windows-host                  | 4     |
+| [ ]    | D08 T02 §17 | Search by meaning mode, results and index controls                                       | windows-host, display-session | 3     |
+| [ ]    | D08 T02 §18 | Natural-language command planner over the command registry                               | windows-host                  | 4     |
+| [ ]    | D08 T02 §19 | Command box: ask for a command, review the plan, run what you choose                     | windows-host, display-session | 3     |
+| [ ]    | D08 T02 §20 | AI bookmark proposals and per-bookmark summaries                                         | windows-host                  | 6     |
+| [ ]    | D08 T02 §21 | Bookmark proposals review in the Outline panel                                           | windows-host, display-session | 2     |
+| [ ]    | D08 T02 §22 | AI page proposals: blank, misoriented and duplicate pages                                | windows-host                  | 5     |
+| [ ]    | D08 T02 §23 | Page proposals review in the Organize grid                                               | windows-host, display-session | 2     |
+| [ ]    | D08 T02 §24 | Mind map: outline, layout, Markdown, OPML and image exports                              | windows-host                  | 4     |
+| [ ]    | D08 T02 §25 | Flashcards and quizzes with Markdown and CSV exports                                     | windows-host                  | 4     |
+| [ ]    | D08 T02 §26 | Contract risk review with verified quotes and the not-legal-advice notice                | windows-host                  | 4     |
+| [ ]    | D08 T02 §27 | Contract review list, page jumps and optional Apply as comments                          | windows-host, display-session | 4     |
+| [ ]    | D08 T02 §28 | AI-content estimate with fixed limits text                                               | windows-host                  | 3     |
+| [ ]    | D08 T02 §29 | Image generation inserted through the undoable Edit PDF path                             | windows-host                  | 4     |
+| [ ]    | D08 T02 §30 | Audio summaries: Windows voices or provider speech, WAV and MP3                          | windows-host                  | 4     |
+| [ ]    | D08 T02 §31 | AI-assisted PII suggestions as unapplied redaction marks                                 | windows-host                  | 5     |
+| [ ]    | D08 T02 §32 | Redaction Bar: review, accept and reject AI suggestions                                  | windows-host, display-session | 2     |
+| [ ]    | D08 T02 §33 | Study and creation tools in the Assistant panel                                          | windows-host, display-session | 4     |
+| [ ]    | D08 T02 §34 | Ctrl+K commands, UIA names and announcements for the workspace tools                     | windows-host, display-session | 4     |
+| [ ]    | D08 T02 §35 | Workspace privacy suite: loopback only, previews, no auto-apply, zero network            | windows-host, display-session | 7     |
 
 ### Phase 98: Recto Cloud (web)
 
-Sections: 107 | Checklist items: 591
+Sections: 107 | Checklist items: 593
 
-| Status | Reference   | Deliverable                                                                 | Needs                                 | Items |
-| ------ | ----------- | --------------------------------------------------------------------------- | ------------------------------------- | ----- |
-| [ ]    | D09 T01 §1  | Workspace scaffold, AGPL licence, NOTICE and licence allowlist check        | none                                  | 6     |
-| [ ]    | D09 T01 §2  | Wrangler configuration for dev, staging and production with typed bindings  | none                                  | 6     |
-| [ ]    | D09 T01 §3  | D1 schema, forward-only migrations and the SQLite database interface        | none                                  | 7     |
-| [ ]    | D09 T01 §4  | Storage interface with R2 and S3-compatible adapters                        | none                                  | 6     |
-| [ ]    | D09 T01 §5  | API foundation: router, error model, request ids and content-free logging   | none                                  | 6     |
-| [ ]    | D09 T01 §6  | Security headers and strict Content Security Policy                         | none                                  | 5     |
-| [ ]    | D09 T01 §7  | Sessions, HttpOnly cookies, principals and CSRF protection                  | none                                  | 6     |
-| [ ]    | D09 T01 §8  | Rate limits with a Durable Object counter                                   | none                                  | 5     |
-| [ ]    | D09 T01 §9  | Email Queue consumer, SMTP2GO transport and dev outbox                      | none                                  | 6     |
-| [ ]    | D09 T01 §10 | Sign-up and sign-in with one-time email links                               | none                                  | 6     |
-| [ ]    | D09 T01 §11 | Passkey registration and sign-in (WebAuthn)                                 | none                                  | 5     |
-| [ ]    | D09 T01 §12 | Account recovery and email change                                           | none                                  | 5     |
-| [ ]    | D09 T01 §13 | Account settings API: profile, sessions and passkeys                        | none                                  | 4     |
-| [ ]    | D09 T01 §14 | OAuth 2.0 authorization code with PKCE endpoints for the desktop app        | none                                  | 7     |
-| [ ]    | D09 T01 §15 | Data export and account deletion with a grace period                        | none                                  | 6     |
-| [ ]    | D09 T01 §16 | Admin API, abuse reports and takedown by content hash                       | none                                  | 6     |
-| [ ]    | D09 T01 §17 | Backups and restore                                                         | none                                  | 5     |
-| [ ]    | D09 T01 §18 | Self-host adapters: Durable Object SQLite, job queue and scheduler          | none                                  | 5     |
-| [ ]    | D09 T01 §19 | Self-host build on plain workerd with a smoke test                          | none                                  | 5     |
-| [ ]    | D09 T01 §20 | GitHub Actions CI: lint, typecheck, Vitest, Playwright and self-host smoke  | none                                  | 5     |
-| [ ]    | D09 T01 §21 | Staging and production deploy job gated on operator secrets                 | operator, owner-decision, third-party | 6     |
-| [ ]    | D09 T02 §1  | Document, folder, version and sharing schema with repositories              | none                                  | 6     |
-| [ ]    | D09 T02 §2  | Access resolver: roles, inheritance and one decision point                  | none                                  | 5     |
-| [ ]    | D09 T02 §3  | Upload sessions: size cap, part uploads and magic-byte checks               | none                                  | 7     |
-| [ ]    | D09 T02 §4  | Version commit: hash check and immutable content-addressed blobs            | none                                  | 5     |
-| [ ]    | D09 T02 §5  | Folders: create, rename, move and list                                      | none                                  | 5     |
-| [ ]    | D09 T02 §6  | Trash, restore and purge with blob garbage collection                       | none                                  | 5     |
-| [ ]    | D09 T02 §7  | Quotas and usage accounting                                                 | none                                  | 5     |
-| [ ]    | D09 T02 §8  | Account grants: invite, change role and revoke                              | none                                  | 5     |
-| [ ]    | D09 T02 §9  | Share links: expiry, password, redeem and revoke                            | none                                  | 5     |
-| [ ]    | D09 T02 §10 | Audit of grants and access with an owner-visible log                        | none                                  | 5     |
-| [ ]    | D09 T02 §11 | Read API: metadata, ranged content and download                             | none                                  | 5     |
-| [ ]    | D09 T02 §12 | Design tokens from RectoColors.xaml and the web app scaffold                | none                                  | 6     |
-| [ ]    | D09 T02 §13 | Web shell with sign-in, account and consent screens                         | none                                  | 7     |
-| [ ]    | D09 T02 §14 | Library page: folders, upload, rename, move, trash and quota                | none                                  | 6     |
-| [ ]    | D09 T02 §15 | Sharing dialog and shared-with-me list                                      | none                                  | 5     |
-| [ ]    | D09 T02 §16 | Document page and scriptless pdf.js viewer                                  | none                                  | 7     |
-| [ ]    | D09 T02 §17 | Viewer navigation: page controls, zoom and thumbnails                       | none                                  | 6     |
-| [ ]    | D09 T02 §18 | Viewer search and download                                                  | none                                  | 5     |
-| [ ]    | D09 T02 §19 | Accessibility: WCAG 2.2 AA checks, keyboard paths and statement             | none                                  | 7     |
-| [ ]    | D09 T02 §20 | Playwright end-to-end suite for sign-in, upload, share and read             | none                                  | 5     |
-| [ ]    | D09 T02 §21 | Quota, retention and terms values recorded from the owner                   | owner-decision, third-party           | 4     |
-| [ ]    | D09 T02 §22 | QR code for a share link, rendered locally as SVG                           | none                                  | 5     |
-| [ ]    | D09 T03 §1  | Annotation JSON schema package for comments and markup                      | none                                  | 6     |
-| [ ]    | D09 T03 §2  | Desktop exchange fixtures from recto-cli annot                              | windows-host                          | 4     |
-| [ ]    | D09 T03 §3  | Review, invitee and comment tables in D1                                    | none                                  | 6     |
-| [ ]    | D09 T03 §4  | Review lifecycle API: start, invite, accept, close                          | none                                  | 6     |
-| [ ]    | D09 T03 §5  | ReviewRoom Durable Object: sockets, ordering, presence                      | none                                  | 5     |
-| [ ]    | D09 T03 §6  | Comment operations: add, edit, reply, mention, resolve, delete              | none                                  | 7     |
-| [ ]    | D09 T03 §7  | Reconnection, resync and concurrent edit convergence                        | none                                  | 6     |
-| [ ]    | D09 T03 §8  | Review email notifications and deadline reminders                           | none                                  | 4     |
-| [ ]    | D09 T03 §9  | Review access control, rate limits and size caps                            | none                                  | 5     |
-| [ ]    | D09 T03 §10 | Annotation exchange API: JSON and XFDF import and export                    | none                                  | 4     |
-| [ ]    | D09 T03 §13 | Web review room: viewer overlay, comment panel, presence                    | none                                  | 5     |
-| [ ]    | D09 T03 §14 | Start-a-review dialog and reviews list in the web app                       | none                                  | 4     |
-| [ ]    | D09 T04 §1  | Bounded PDF reader and incremental update writer package                    | none                                  | 6     |
-| [ ]    | D09 T03 §11 | Markup appearance streams for exported annotations                          | none                                  | 4     |
-| [ ]    | D09 T03 §12 | Reviewed PDF export job with comments                                       | none                                  | 5     |
-| [ ]    | D09 T03 §15 | End-to-end review tests in two browsers                                     | none                                  | 4     |
-| [ ]    | D09 T04 §2  | Envelope, recipient and field model with D1 tables                          | none                                  | 6     |
-| [ ]    | D09 T04 §3  | Hash-chained audit trail package and verifier                               | none                                  | 5     |
-| [ ]    | D09 T04 §4  | Envelope Durable Object state machine                                       | none                                  | 5     |
-| [ ]    | D09 T04 §5  | Envelope API: draft, recipients, fields, send, void                         | none                                  | 5     |
-| [ ]    | D09 T04 §6  | Field placement UI for signature, initials, date, text and checkbox         | none                                  | 5     |
-| [ ]    | D09 T04 §7  | Single-use signing links, routing order and invitation email                | none                                  | 6     |
-| [ ]    | D09 T04 §8  | Signer ceremony API: consent, access code, adopt, fill, sign, decline       | none                                  | 7     |
-| [ ]    | D09 T04 §9  | Signer ceremony UI: consent, adopt, fill and sign                           | none                                  | 5     |
-| [ ]    | D09 T04 §10 | Reminders and expiry by Cron                                                | none                                  | 4     |
-| [ ]    | D09 T04 §11 | Render text, date and checkbox values with an embedded subset font          | none                                  | 4     |
-| [ ]    | D09 T04 §12 | Signature and initials images: validate, store and embed                    | none                                  | 4     |
-| [ ]    | D09 T04 §13 | Certificate of completion with audit chain head                             | none                                  | 4     |
-| [ ]    | D09 T04 §14 | PAdES-B-T seal engine with RFC 3161 timestamp and test certificate          | none                                  | 6     |
-| [ ]    | D09 T04 §15 | Production seal signer through an HSM or signing service                    | third-party, operator                 | 4     |
-| [ ]    | D09 T04 §16 | Completion Queue job: render, certify, seal, version and notify             | none                                  | 7     |
-| [ ]    | D09 T04 §17 | Golden PDFs, independent validator and tamper tests                         | none                                  | 4     |
-| [ ]    | D09 T04 §18 | Retention, legal hold, data export and deletion for envelopes               | none                                  | 4     |
-| [ ]    | D09 T04 §19 | Set retention, quota and expiry defaults                                    | owner-decision                        | 2     |
-| [ ]    | D09 T04 §20 | Approve ESIGN consent disclosure and signer legal texts                     | third-party, owner-decision           | 3     |
-| [ ]    | D09 T04 §21 | Sender dashboard: envelopes, status, audit view and downloads               | none                                  | 4     |
-| [ ]    | D09 T04 §22 | End-to-end signature ceremony tests in the browser                          | none                                  | 4     |
-| [ ]    | D09 T04 §23 | Envelope templates: reusable recipients, roles and fields                   | none                                  | 5     |
-| [ ]    | D09 T04 §24 | Bulk send: one template to a CSV, one envelope per row                      | none                                  | 5     |
-| [ ]    | D09 T04 §25 | Web form link engine: one envelope per submitter with abuse limits          | none                                  | 4     |
-| [ ]    | D09 T04 §26 | Web form link page and owner management                                     | none                                  | 3     |
-| [ ]    | D09 T04 §27 | In-person signing: hand a device to a signer, attested in the audit         | none                                  | 4     |
-| [ ]    | D09 T04 §28 | In-person hand-over screens and templates, bulk and form pages              | none                                  | 3     |
-| [ ]    | D09 T04 §29 | End-to-end tests for templates, bulk send, web forms and in-person          | none                                  | 2     |
-| [ ]    | D09 T05 §1  | HTTPS-only WinHTTP cloud transport with no redirect credential leakage      | windows-host                          | 9     |
-| [ ]    | D09 T05 §2  | Windows Credential Manager `TokenStore` for Recto Cloud sessions            | windows-host                          | 7     |
-| [ ]    | D09 T05 §3  | OAuth 2.0 PKCE sign-in through the system browser and a loopback redirect   | windows-host                          | 7     |
-| [ ]    | D09 T05 §4  | `CloudClient` with typed errors, token refresh, retry and offline detection | windows-host                          | 8     |
-| [ ]    | D09 T05 §5  | Upload consent gate and exact-send preview dialog                           | windows-host, display-session         | 7     |
-| [ ]    | D09 T05 §6  | Settings `RECTO CLOUD` group, sign-in and sign-out commands                 | windows-host, display-session         | 8     |
-| [ ]    | D09 T05 §7  | `Open from Recto Cloud` picker and verified download                        | windows-host, display-session         | 8     |
-| [ ]    | D09 T05 §8  | `Save to Recto Cloud` with version conflict handling                        | windows-host, display-session         | 8     |
-| [ ]    | D09 T05 §9  | `Send for signature`: upload preview and hand-off to web field placement    | windows-host, display-session         | 8     |
-| [ ]    | D09 T05 §10 | `Start a shared review` from the open document                              | windows-host, display-session         | 8     |
-| [ ]    | D09 T05 §11 | Live review comments in the Comments panel                                  | windows-host, display-session         | 10    |
-| [ ]    | D09 T05 §12 | Zero network before sign-in, token privacy and redirect safety suite        | windows-host, display-session         | 8     |
-| [ ]    | D09 T05 §13 | Record domain, sender domain and data region decisions                      | owner-decision                        | 6     |
-| [ ]    | D09 T05 §14 | Obtain the seal certificate from an AATL CA for an HSM or signing service   | third-party, operator                 | 5     |
-| [ ]    | D09 T05 §15 | Terms, privacy policy, ESIGN disclosure and DPA reviewed by counsel         | owner-decision, third-party           | 6     |
-| [ ]    | D09 T05 §16 | Production verification, content-free monitoring and acceptance run         | owner-decision, third-party, operator | 6     |
-| [ ]    | D09 T05 §17 | Status page, abuse contact and security disclosure                          | owner-decision, third-party, operator | 6     |
-| [ ]    | D09 T05 §18 | Go-live gate: desktop default server, parity ledger and release note        | owner-decision, third-party, operator | 6     |
-| [ ]    | D09 T05 §19 | Account assets API: encrypted signature appearance and stamp storage        | none                                  | 7     |
-| [ ]    | D09 T05 §20 | Signature and stamp sync across devices, opt-in                             | windows-host, display-session         | 9     |
+| Status | Reference   | Deliverable                                                                 | Needs                         | Items |
+| ------ | ----------- | --------------------------------------------------------------------------- | ----------------------------- | ----- |
+| [ ]    | D09 T01 §1  | Workspace scaffold, AGPL licence, NOTICE and licence allowlist check        | none                          | 6     |
+| [ ]    | D09 T01 §2  | Wrangler configuration for dev, staging and production with typed bindings  | none                          | 6     |
+| [ ]    | D09 T01 §3  | D1 schema, forward-only migrations and the SQLite database interface        | none                          | 7     |
+| [ ]    | D09 T01 §4  | Storage interface with R2 and S3-compatible adapters                        | none                          | 6     |
+| [ ]    | D09 T01 §5  | API foundation: router, error model, request ids and content-free logging   | none                          | 6     |
+| [ ]    | D09 T01 §6  | Security headers and strict Content Security Policy                         | none                          | 5     |
+| [ ]    | D09 T01 §7  | Sessions, HttpOnly cookies, principals and CSRF protection                  | none                          | 6     |
+| [ ]    | D09 T01 §8  | Rate limits with a Durable Object counter                                   | none                          | 5     |
+| [ ]    | D09 T01 §9  | Email Queue consumer, SMTP2GO transport and dev outbox                      | none                          | 6     |
+| [ ]    | D09 T01 §10 | Sign-up and sign-in with one-time email links                               | none                          | 6     |
+| [ ]    | D09 T01 §11 | Passkey registration and sign-in (WebAuthn)                                 | none                          | 5     |
+| [ ]    | D09 T01 §12 | Account recovery and email change                                           | none                          | 5     |
+| [ ]    | D09 T01 §13 | Account settings API: profile, sessions and passkeys                        | none                          | 4     |
+| [ ]    | D09 T01 §14 | OAuth 2.0 authorization code with PKCE endpoints for the desktop app        | none                          | 7     |
+| [ ]    | D09 T01 §15 | Data export and account deletion with a grace period                        | none                          | 6     |
+| [ ]    | D09 T01 §16 | Admin API, abuse reports and takedown by content hash                       | none                          | 6     |
+| [ ]    | D09 T01 §17 | Backups and restore                                                         | none                          | 5     |
+| [ ]    | D09 T01 §18 | Self-host adapters: Durable Object SQLite, job queue and scheduler          | none                          | 5     |
+| [ ]    | D09 T01 §19 | Self-host build on plain workerd with a smoke test                          | none                          | 5     |
+| [ ]    | D09 T01 §20 | GitHub Actions CI: lint, typecheck, Vitest, Playwright and self-host smoke  | none                          | 5     |
+| [ ]    | D09 T01 §21 | Staging and production deploy job gated on operator secrets                 | operator, third-party         | 6     |
+| [ ]    | D09 T02 §1  | Document, folder, version and sharing schema with repositories              | none                          | 6     |
+| [ ]    | D09 T02 §2  | Access resolver: roles, inheritance and one decision point                  | none                          | 5     |
+| [ ]    | D09 T02 §3  | Upload sessions: size cap, part uploads and magic-byte checks               | none                          | 7     |
+| [ ]    | D09 T02 §4  | Version commit: hash check and immutable content-addressed blobs            | none                          | 5     |
+| [ ]    | D09 T02 §5  | Folders: create, rename, move and list                                      | none                          | 5     |
+| [ ]    | D09 T02 §6  | Trash, restore and purge with blob garbage collection                       | none                          | 5     |
+| [ ]    | D09 T02 §7  | Quotas and usage accounting                                                 | none                          | 5     |
+| [ ]    | D09 T02 §8  | Account grants: invite, change role and revoke                              | none                          | 5     |
+| [ ]    | D09 T02 §9  | Share links: expiry, password, redeem and revoke                            | none                          | 5     |
+| [ ]    | D09 T02 §10 | Audit of grants and access with an owner-visible log                        | none                          | 5     |
+| [ ]    | D09 T02 §11 | Read API: metadata, ranged content and download                             | none                          | 5     |
+| [ ]    | D09 T02 §12 | Design tokens from RectoColors.xaml and the web app scaffold                | none                          | 6     |
+| [ ]    | D09 T02 §13 | Web shell with sign-in, account and consent screens                         | none                          | 7     |
+| [ ]    | D09 T02 §14 | Library page: folders, upload, rename, move, trash and quota                | none                          | 6     |
+| [ ]    | D09 T02 §15 | Sharing dialog and shared-with-me list                                      | none                          | 5     |
+| [ ]    | D09 T02 §16 | Document page and scriptless pdf.js viewer                                  | none                          | 7     |
+| [ ]    | D09 T02 §17 | Viewer navigation: page controls, zoom and thumbnails                       | none                          | 6     |
+| [ ]    | D09 T02 §18 | Viewer search and download                                                  | none                          | 5     |
+| [ ]    | D09 T02 §19 | Accessibility: WCAG 2.2 AA checks, keyboard paths and statement             | none                          | 7     |
+| [ ]    | D09 T02 §20 | Playwright end-to-end suite for sign-in, upload, share and read             | none                          | 5     |
+| [ ]    | D09 T02 §21 | Quota, retention and terms values recorded from the owner                   | third-party                   | 4     |
+| [ ]    | D09 T02 §22 | QR code for a share link, rendered locally as SVG                           | none                          | 5     |
+| [ ]    | D09 T03 §1  | Annotation JSON schema package for comments and markup                      | none                          | 6     |
+| [ ]    | D09 T03 §2  | Desktop exchange fixtures from recto-cli annot                              | windows-host                  | 4     |
+| [ ]    | D09 T03 §3  | Review, invitee and comment tables in D1                                    | none                          | 6     |
+| [ ]    | D09 T03 §4  | Review lifecycle API: start, invite, accept, close                          | none                          | 6     |
+| [ ]    | D09 T03 §5  | ReviewRoom Durable Object: sockets, ordering, presence                      | none                          | 5     |
+| [ ]    | D09 T03 §6  | Comment operations: add, edit, reply, mention, resolve, delete              | none                          | 7     |
+| [ ]    | D09 T03 §7  | Reconnection, resync and concurrent edit convergence                        | none                          | 6     |
+| [ ]    | D09 T03 §8  | Review email notifications and deadline reminders                           | none                          | 4     |
+| [ ]    | D09 T03 §9  | Review access control, rate limits and size caps                            | none                          | 5     |
+| [ ]    | D09 T03 §10 | Annotation exchange API: JSON and XFDF import and export                    | none                          | 4     |
+| [ ]    | D09 T03 §13 | Web review room: viewer overlay, comment panel, presence                    | none                          | 5     |
+| [ ]    | D09 T03 §14 | Start-a-review dialog and reviews list in the web app                       | none                          | 4     |
+| [ ]    | D09 T04 §1  | Bounded PDF reader and incremental update writer package                    | none                          | 6     |
+| [ ]    | D09 T03 §11 | Markup appearance streams for exported annotations                          | none                          | 4     |
+| [ ]    | D09 T03 §12 | Reviewed PDF export job with comments                                       | none                          | 5     |
+| [ ]    | D09 T03 §15 | End-to-end review tests in two browsers                                     | none                          | 4     |
+| [ ]    | D09 T04 §2  | Envelope, recipient and field model with D1 tables                          | none                          | 6     |
+| [ ]    | D09 T04 §3  | Hash-chained audit trail package and verifier                               | none                          | 5     |
+| [ ]    | D09 T04 §4  | Envelope Durable Object state machine                                       | none                          | 5     |
+| [ ]    | D09 T04 §5  | Envelope API: draft, recipients, fields, send, void                         | none                          | 5     |
+| [ ]    | D09 T04 §6  | Field placement UI for signature, initials, date, text and checkbox         | none                          | 5     |
+| [ ]    | D09 T04 §7  | Single-use signing links, routing order and invitation email                | none                          | 6     |
+| [ ]    | D09 T04 §8  | Signer ceremony API: consent, access code, adopt, fill, sign, decline       | none                          | 7     |
+| [ ]    | D09 T04 §9  | Signer ceremony UI: consent, adopt, fill and sign                           | none                          | 5     |
+| [ ]    | D09 T04 §10 | Reminders and expiry by Cron                                                | none                          | 4     |
+| [ ]    | D09 T04 §11 | Render text, date and checkbox values with an embedded subset font          | none                          | 4     |
+| [ ]    | D09 T04 §12 | Signature and initials images: validate, store and embed                    | none                          | 4     |
+| [ ]    | D09 T04 §13 | Certificate of completion with audit chain head                             | none                          | 4     |
+| [ ]    | D09 T04 §14 | PAdES-B-T seal engine with RFC 3161 timestamp and test certificate          | none                          | 6     |
+| [ ]    | D09 T04 §15 | Production seal signer through an HSM or signing service                    | third-party, operator         | 4     |
+| [ ]    | D09 T04 §16 | Completion Queue job: render, certify, seal, version and notify             | none                          | 7     |
+| [ ]    | D09 T04 §17 | Golden PDFs, independent validator and tamper tests                         | none                          | 4     |
+| [ ]    | D09 T04 §18 | Retention, legal hold, data export and deletion for envelopes               | none                          | 4     |
+| [ ]    | D09 T04 §19 | Set retention, quota and expiry defaults                                    | none                          | 2     |
+| [ ]    | D09 T04 §20 | Approve ESIGN consent disclosure and signer legal texts                     | third-party                   | 4     |
+| [ ]    | D09 T04 §21 | Sender dashboard: envelopes, status, audit view and downloads               | none                          | 4     |
+| [ ]    | D09 T04 §22 | End-to-end signature ceremony tests in the browser                          | none                          | 4     |
+| [ ]    | D09 T04 §23 | Envelope templates: reusable recipients, roles and fields                   | none                          | 5     |
+| [ ]    | D09 T04 §24 | Bulk send: one template to a CSV, one envelope per row                      | none                          | 5     |
+| [ ]    | D09 T04 §25 | Web form link engine: one envelope per submitter with abuse limits          | none                          | 4     |
+| [ ]    | D09 T04 §26 | Web form link page and owner management                                     | none                          | 3     |
+| [ ]    | D09 T04 §27 | In-person signing: hand a device to a signer, attested in the audit         | none                          | 4     |
+| [ ]    | D09 T04 §28 | In-person hand-over screens and templates, bulk and form pages              | none                          | 3     |
+| [ ]    | D09 T04 §29 | End-to-end tests for templates, bulk send, web forms and in-person          | none                          | 2     |
+| [ ]    | D09 T05 §1  | HTTPS-only WinHTTP cloud transport with no redirect credential leakage      | windows-host                  | 9     |
+| [ ]    | D09 T05 §2  | Windows Credential Manager `TokenStore` for Recto Cloud sessions            | windows-host                  | 7     |
+| [ ]    | D09 T05 §3  | OAuth 2.0 PKCE sign-in through the system browser and a loopback redirect   | windows-host                  | 7     |
+| [ ]    | D09 T05 §4  | `CloudClient` with typed errors, token refresh, retry and offline detection | windows-host                  | 8     |
+| [ ]    | D09 T05 §5  | Upload consent gate and exact-send preview dialog                           | windows-host, display-session | 7     |
+| [ ]    | D09 T05 §6  | Settings `RECTO CLOUD` group, sign-in and sign-out commands                 | windows-host, display-session | 8     |
+| [ ]    | D09 T05 §7  | `Open from Recto Cloud` picker and verified download                        | windows-host, display-session | 8     |
+| [ ]    | D09 T05 §8  | `Save to Recto Cloud` with version conflict handling                        | windows-host, display-session | 8     |
+| [ ]    | D09 T05 §9  | `Send for signature`: upload preview and hand-off to web field placement    | windows-host, display-session | 9     |
+| [ ]    | D09 T05 §10 | `Start a shared review` from the open document                              | windows-host, display-session | 8     |
+| [ ]    | D09 T05 §11 | Live review comments in the Comments panel                                  | windows-host, display-session | 10    |
+| [ ]    | D09 T05 §12 | Zero network before sign-in, token privacy and redirect safety suite        | windows-host, display-session | 8     |
+| [ ]    | D09 T05 §13 | Record domain, sender domain and data region decisions                      | operator                      | 6     |
+| [ ]    | D09 T05 §14 | Obtain the seal certificate from an AATL CA for an HSM or signing service   | third-party, operator         | 5     |
+| [ ]    | D09 T05 §15 | Terms, privacy policy, ESIGN disclosure and DPA reviewed by counsel         | third-party                   | 6     |
+| [ ]    | D09 T05 §16 | Production verification, content-free monitoring and acceptance run         | third-party, operator         | 6     |
+| [ ]    | D09 T05 §17 | Status page, abuse contact and security disclosure                          | third-party, operator         | 6     |
+| [ ]    | D09 T05 §18 | Go-live gate: desktop default server, parity ledger and release note        | third-party, operator         | 6     |
+| [ ]    | D09 T05 §19 | Account assets API: encrypted signature appearance and stamp storage        | none                          | 7     |
+| [ ]    | D09 T05 §20 | Signature and stamp sync across devices, opt-in                             | windows-host, display-session | 9     |
 
 ### Phase 99: Manual, operator only
 
@@ -803,4 +803,4 @@ Sections: 4 | Checklist items: 22
 
 Progress: 24/725 verified sections, 15 ready to run now.
 
-Checklist: 148/5063 items completed (includes Commit items).
+Checklist: 148/5065 items completed (includes Commit items).

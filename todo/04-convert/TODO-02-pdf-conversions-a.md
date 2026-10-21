@@ -422,10 +422,10 @@ Wire the **Optimize & Compress PDF** card and Step 3 options in `ConvertPage` (`
 
 ## 13. Create PDF from a scanner (Windows Image Acquisition)
 
-"Create PDF from scanner" is one of the most repeated requests users make of PDF tools. Recto can acquire pages through Windows Image Acquisition 2.0 (`IWiaDevMgr2`), feed them to the `Images -> PDF` converter (§5 here) and optionally to the searchable-PDF OCR writer (§7 here), all locally. This is new v1-plus scope, so the owner decides whether and when it ships before any code is written.
+"Create PDF from scanner" is one of the most repeated requests users make of PDF tools. Recto can acquire pages through Windows Image Acquisition 2.0 (`IWiaDevMgr2`), feed them to the `Images -> PDF` converter (§5 here) and optionally to the searchable-PDF OCR writer (§7 here), all locally. This is new v1-plus scope; the owner decided on 2026-10-21 (foundation plan, owner decisions after the decision table) that it ships in v1.1, after v1, through WIA 2.0 only (flatbed and document feeder, duplex included); TWAIN is not planned.
 
 **Phase:** 7
-**Needs:** windows-host, display-session, owner-decision
+**Needs:** windows-host, display-session
 **Surface:** yes
 
 **Fidelity:** `design/SPEC.md` section 9.5 (Convert page cards and Step 3 options); a `Scanner` source card is a genuinely new surface on that page with no screenshot.
@@ -435,7 +435,7 @@ Wire the **Optimize & Compress PDF** card and Step 3 options in `ConvertPage` (`
 
 **Build order:**
 
-1. Record the owner decision (ship in which release, supported device classes) in the foundation plan with its date and cost of reversing, then remove `owner-decision` from this section's Needs. Done when: the decision line exists in the plan.
+1. Confirm the owner decision recorded 2026-10-21 in the foundation plan (v1.1, WIA 2.0 flatbed and feeder with duplex, no TWAIN) and keep this section in phase 7 (After v1). Done when: the decision line exists in the plan and this section's Phase is 7.
 2. Implement `src/services/scanner/WiaScanner.h/.cpp` enumerating WIA 2.0 devices and acquiring pages on a job worker with `CancelToken`, then convert through §5 and optionally §7. Done when: `Convert.ScannerToPdf` passes against the WIA test driver.
 
 - [ ] Record the owner decision in `docs/plans/2026-10-13-recto-foundation.md` and in `docs/user-demand.md`. Done when: both files name the decision and its date.

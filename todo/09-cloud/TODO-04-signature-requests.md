@@ -15,7 +15,7 @@ title: "TODO-04 -- Recto Cloud Signature Requests, Audit Trail and Seal"
 ## Inputs
 
 - `docs/plans/2026-10-13-recto-foundation.md` decisions D9, D16, D18, D20 and section 3.2 (the `cloud/` correction of 2026-10-21).
-- `docs/specs/2026-10-21-recto-cloud-design.md` sections Decisions (Signatures), Open owner decisions, Architecture (Signature requests, Audit trail, Completion, Email), Security and privacy, Testing.
+- `docs/specs/2026-10-21-recto-cloud-design.md` sections Decisions (Signatures), Owner decisions, Architecture (Signature requests, Audit trail, Completion, Email), Security and privacy, Testing.
 - `todo/05-organize/TODO-01-page-operations.md` section 8 (the desktop `PAdES` signer whose signature dictionary conventions the seal follows).
 - `design/SPEC.md` sections 3 (brand), 4 (colour), 5 (type), 7 (shape) and 9.9 (dialogs and system states).
 - ESIGN Act (15 U.S.C. 7001 and following, especially 7001(c) consumer consent), UETA, eIDAS Regulation (EU) 910/2014 for simple electronic signatures, ETSI EN 319 142-1 (PAdES baseline), RFC 3161 (time-stamp protocol), RFC 5652 (CMS), RFC 8785 (JSON canonicalisation), ISO 32000-1 sections 12.8 and 7.5.6 (digital signatures, incremental updates).
@@ -410,7 +410,7 @@ The seal is what makes the finished file tamper-evident to any PDF reader. This 
 
 ## 15. Production seal signer through an HSM or signing service
 
-In production the private key must never sit in a Worker secret (spec, Open owner decisions). This section implements the production `SealSigner` that sends only the digest to a cloud HSM or a signing service over authenticated HTTPS, and wires the certificate chain and timestamp authority configuration. It waits on the owner obtaining a document-signing certificate from a CA on the Adobe Approved Trust List and choosing the service, so it cannot complete in a local test run.
+In production the private key must never sit in a Worker secret (spec, Owner decisions). This section implements the production `SealSigner` that sends only the digest to a cloud HSM or a signing service over authenticated HTTPS, and wires the certificate chain and timestamp authority configuration. The owner chose GlobalSign Digital Signing Service on 2026-10-21 (spec, Owner decisions: Seal certificate); the section waits on the certificate being issued (`D09 T05 §14`), so it cannot complete in a local test run.
 
 **Phase:** 98
 **Needs:** third-party, operator
@@ -418,7 +418,7 @@ In production the private key must never sit in a Worker secret (spec, Open owne
 
 **Build order:**
 
-1. Record the decision in `docs/specs/2026-10-21-recto-cloud-design.md` under Open owner decisions: provider, certificate subject, key algorithm and signing cost per operation. Done when: the spec section names the choice and the date.
+1. Complete the GlobalSign row in `docs/specs/2026-10-21-recto-cloud-design.md` under Owner decisions (provider recorded 2026-10-21) with the certificate subject, key algorithm and signing cost per operation once the certificate is issued. Done when: the spec row names all four and the date.
 2. Implement `HsmSealSigner` in `cloud/packages/seal/src/hsm.ts` calling the provider's remote signing API with a short-lived credential from the platform secret store (a credential to call the service, never the key), request signing with the provider's required scheme, and a 5 second timeout with 2 retries. Done when: a contract test against a local fake of the provider's API passes.
 3. Add configuration `SEAL_SIGNER`, `SEAL_CERT_CHAIN_R2_KEY`, `TSA_URL` and fail-closed startup: in production the Worker refuses to enqueue completion when the signer is not `hsm`. Done when: a test with `ENVIRONMENT=production` and `SEAL_SIGNER=test` aborts at startup.
 4. Run the live checks on staging with the real provider: seal a fixture and validate it with the independent validator, with the CA root added to the validator trust store. Done when: the validator reports an intact signature and a trusted chain (operator evidence stored in `docs/reviews/`).
@@ -501,15 +501,15 @@ Evidence must outlive convenience, and users must be able to leave. This section
 
 ## 19. Set retention, quota and expiry defaults
 
-The mechanism exists; the numbers are a business decision (spec, Open owner decisions: quotas, pricing or free limits, and retention defaults). This section records the owner's choices for default envelope expiry, reminder cadence, retention of completed and unfinished envelopes, monthly send quotas and the maximum document size for signing, and sets them in configuration. It waits for the owner.
+The mechanism exists; the numbers are a business decision (spec, Owner decisions: quotas, pricing or free limits, and retention defaults). This section records the owner's choices for default envelope expiry, reminder cadence, retention of completed and unfinished envelopes, monthly send quotas and the maximum document size for signing, and sets them in configuration. The owner decided the values on 2026-10-21 (spec, Owner decisions: Signature requests): expiry 30 days, a reminder every 3 days at most 5 times, completed envelopes kept until the sender deletes them, unfinished envelopes removed 90 days after expiry, 25 sends per account per month and documents up to 25 MiB.
 
 **Phase:** 98
-**Needs:** owner-decision
+**Needs:** none
 **Surface:** no
 
 **Build order:**
 
-1. Ask the owner for the values in one batch and record them with the date in `docs/specs/2026-10-21-recto-cloud-design.md` under Decisions. Done when: the table lists each value and the cost of changing it.
+1. Confirm the `Signature requests` row of `docs/specs/2026-10-21-recto-cloud-design.md` (Owner decisions, 2026-10-21) carries each value above with its cost of changing. Done when: the row lists all six values and the date.
 2. Apply the values to `cloud/apps/api/wrangler.jsonc` vars and the settings defaults, with a test that reads the deployed defaults. Done when: the test asserts every recorded number.
 3. Update the sender UI help text and the `§18` policy defaults to match, recording them in the same owner batch as `D09 T02 §21`. Done when: no screen shows a number that differs from configuration.
 
@@ -520,10 +520,10 @@ The mechanism exists; the numbers are a business decision (spec, Open owner deci
 
 ## 20. Approve ESIGN consent disclosure and signer legal texts
 
-The consent disclosure, terms of service and privacy policy are legal documents that need legal review (spec, Open owner decisions, third-party). This section gets the approved texts into the product as versioned content. Until approved, production refuses to send; staging uses a fixture version marked not for production. It does not provide legal advice.
+The consent disclosure, terms of service and privacy policy are legal documents that need legal review (spec, Owner decisions, third-party). This section gets the approved texts into the product as versioned content. Until approved, production refuses to send; staging uses a fixture version marked not for production. It does not provide legal advice.
 
 **Phase:** 98
-**Needs:** third-party, owner-decision
+**Needs:** third-party
 **Surface:** no
 
 **Build order:**
@@ -532,7 +532,9 @@ The consent disclosure, terms of service and privacy policy are legal documents 
 2. Store each approved text as `cloud/apps/web/content/legal/consent-v<N>.md` with a version, effective date and reviewer name in frontmatter. Done when: the server loads the highest approved version and records it in `consent.accepted` events.
 3. Make production fail closed: with no approved consent version configured, `POST /v1/envelopes/:id/send` returns `503 consent_not_configured`. Done when: a test with `ENVIRONMENT=production` and no version fails the send.
 4. Link the terms of service, privacy policy and data processing agreement from the sign pages and email footers once approved. Done when: the links resolve and are versioned.
+5. Add the launch-stage switch the owner decided on 2026-10-21 (spec, Owner decisions: Launch staging): `SIGNATURES_ENABLED` in `cloud/apps/api/wrangler.jsonc`, `false` in production until stage 2. While it is false, `POST /v1/envelopes` returns `503 signatures_not_available` before any row or object is written, `GET /api/health` reports `{"ok":true,"features":{"signatures":false}}`, and the web app hides `Request signatures` and shows "Signature requests are not available on this server yet". The Worker refuses to start in production with the switch on while no approved consent version or no `hsm` seal signer (§15) is configured. Done when: `test/sign/signatures-switch.test.ts` covers the refused create with zero D1 rows and zero R2 objects written, the health feature flag in both states, and the startup refusal.
 
+- [ ] Add the `SIGNATURES_ENABLED` switch, the `503 signatures_not_available` refusal, the health feature flag, the hidden web entry point and the production startup refusal. Done when: `npm --prefix cloud run test:api -- test/sign/signatures-switch` passes and removing the create guard fails it. Cheaper substitute: letting the sender place fields and fail only at `Send`.
 - [ ] Add the staging fixture `consent-v0-staging.md` containing the words `STAGING TEXT NOT LEGAL ADVICE` and refuse it when `ENVIRONMENT` is `production`. Done when: a test confirms both behaviours.
 - [ ] Add the reviewer evidence record in `docs/reviews/` with date, reviewer and the version approved. Done when: the file exists and names `consent-v1.md`.
 - [ ] Commit: `cloud: approved ESIGN consent disclosure and legal texts`

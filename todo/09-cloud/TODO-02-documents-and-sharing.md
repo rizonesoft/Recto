@@ -10,7 +10,7 @@ title: "TODO-02 -- Recto Cloud Documents, Sharing and Web Viewer"
 
 > **Goal:** A signed-in person can upload PDFs of up to the configured size cap to Recto Cloud, organise them in folders, rename, move, trash and restore them, stay inside a quota, and share them with view, comment or edit roles to accounts or to expiring, optionally password-protected links, with every grant and access recorded. People and link holders read documents in a web app whose pdf.js viewer runs with scripting and `eval` disabled (D9), with page navigation, search, zoom, thumbnails and download, and the web app's own interface is built to WCAG 2.2 AA with keyboard and screen reader support, published as a statement of partial conformance because the content of uploaded PDFs is third-party content that Recto does not control.
 
-> **Current state:** Measured 2026-10-21. `cloud/` does not exist yet; `D09 T01` builds the workspace, the `SqlDatabase` and `BlobStore` interfaces, sessions, principals, rate limits, the job queue, security headers and the admin takedown table this file consumes. `design/SPEC.md` sections 3 to 7, 9.2, 9.9, 10 and 11 and `design/tokens/RectoColors.xaml` define the brand, colour, type, dialog copy and keyboard the web app follows; `resources/svg/` holds the lockup, wordmark and `drop-files-{light,dark}.svg`. The web app has no screenshots of its own: every web surface here is a "Genuinely new surface" that translates the SPEC. Quotas, retention defaults and the terms text are open owner decisions (design spec), and only section 21 waits on them.
+> **Current state:** Measured 2026-10-21. `cloud/` does not exist yet; `D09 T01` builds the workspace, the `SqlDatabase` and `BlobStore` interfaces, sessions, principals, rate limits, the job queue, security headers and the admin takedown table this file consumes. `design/SPEC.md` sections 3 to 7, 9.2, 9.9, 10 and 11 and `design/tokens/RectoColors.xaml` define the brand, colour, type, dialog copy and keyboard the web app follows; `resources/svg/` holds the lockup, wordmark and `drop-files-{light,dark}.svg`. The web app has no screenshots of its own: every web surface here is a "Genuinely new surface" that translates the SPEC. Quotas, retention defaults and the terms text are owner decisions (design spec), and only section 21 waits on them.
 
 ## Inputs
 
@@ -584,15 +584,15 @@ The unit tests prove each piece; this suite proves a person can do the whole job
 
 ## 21. Quota, retention and terms values recorded from the owner
 
-The mechanisms above run on defaults. The numbers that become a public promise are the owner's decision: how much space a person gets, how long trash, audit and unclaimed uploads are kept, and the terms and privacy text people accept at sign-up. This section records the answers in configuration; it changes values, not code.
+The mechanisms above run on defaults. The numbers that become a public promise are the owner's decision: how much space a person gets, how long trash, audit and unclaimed uploads are kept, and the terms and privacy text people accept at sign-up. This section records the answers in configuration; it changes values, not code. The owner decided the numbers on 2026-10-21 (design spec, Owner decisions: Pricing and Account limits): free only, 2 GiB per account, 100 MiB per upload, trash kept 30 days, share links at most 90 days, account deletion grace 30 days and audit records kept 7 years (2557 days), with no paid tier; the legal texts still wait on counsel (`third-party`).
 
 **Phase:** 98
-**Needs:** owner-decision, third-party
+**Needs:** third-party
 **Surface:** no
 
 **Build order:**
 
-1. Obtain from the owner and record in `cloud/apps/api/wrangler.jsonc` production vars: `DEFAULT_QUOTA_BYTES`, `MAX_UPLOAD_BYTES`, `TRASH_RETENTION_DAYS`, `AUDIT_RETENTION_DAYS`, `LINK_MAX_DAYS`, the account deletion grace period, and any paid or free tier names. Done when: `wrangler deploy --dry-run --env production` passes and `cloud/apps/api/test/config.test.ts` asserts the recorded values.
+1. Record the owner's values of 2026-10-21 in `cloud/apps/api/wrangler.jsonc` production vars: `DEFAULT_QUOTA_BYTES` 2147483648, `MAX_UPLOAD_BYTES` 104857600, `TRASH_RETENTION_DAYS` 30, `AUDIT_RETENTION_DAYS` 2557, `LINK_MAX_DAYS` 90, the account deletion grace period of 30 days, and the single tier name `free`. Done when: `wrangler deploy --dry-run --env production` passes and `cloud/apps/api/test/config.test.ts` asserts the recorded values.
 2. Obtain the terms of service and privacy policy text and version from the legal reviewer (`third-party`), serve them at `/terms` and `/privacy` from `cloud/apps/web/src/screens/Legal.tsx` rendering the supplied Markdown, and set the configured `termsVersion` so sign-up (D09 T01 §10) records acceptance of that version. Done when: sign-up refuses a stale `termsVersion` and the pages render the supplied text unmodified.
 3. Record each decision, its date and the cost of changing it in the design spec's decision table by a dated correction, so the next reader sees the owner's choice. Done when: `docs/specs/2026-10-21-recto-cloud-design.md` lists the values with the decision date.
 

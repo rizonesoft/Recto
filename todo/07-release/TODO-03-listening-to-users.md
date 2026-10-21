@@ -197,10 +197,10 @@ Users file bugs for features that exist but are hidden, ask scope questions nobo
 
 ## 7. What's new after update and opt-in update notice
 
-Users stay on old builds and report bugs already fixed, and cannot find features that have shipped. Recto shows a `What's new` page once after each version change, built from §4's release notes embedded at build time (no network), and offers an opt-in update notice that checks GitHub Releases at most once a day only when the user turns it on. Because the notice is outbound network access, the owner decides whether it ships in v1 and its default; until then this section waits.
+Users stay on old builds and report bugs already fixed, and cannot find features that have shipped. Recto shows a `What's new` page once after each version change, built from §4's release notes embedded at build time (no network), and offers an opt-in update notice that checks GitHub Releases at most once a day only when the user turns it on. Because the notice is outbound network access, the owner decided on 2026-10-21 (foundation plan, owner decisions after the decision table): it ships in v1, off by default, and checks at most once a day while on.
 
 **Phase:** 6
-**Needs:** windows-host, display-session, owner-decision
+**Needs:** windows-host, display-session
 **Surface:** yes
 
 **Fidelity:** `design/SPEC.md` section 9.8 (About) for placement; the `What's new` page is a genuinely new surface on the same chrome, with no screenshot.
@@ -211,9 +211,9 @@ Users stay on old builds and report bugs already fixed, and cannot find features
 **Build order:**
 
 1. Embed the release notes for the current version at build time (`build/generated/whats_new.json` from `scripts/release-notes.py`) and show the `What's new` page once when `SettingsStore` records a different last-seen version. Done when: `Shell.WhatsNewOncePerVersion` passes.
-2. After the owner decision, add `Check for updates` (off by default unless decided otherwise) that queries the GitHub Releases API at most once a day and shows an `InfoBar` linking to the release; it never downloads or installs. Done when: `Shell.UpdateNoticeOptIn` passes and no request is made while the setting is off.
+2. Add `Check for updates` (off by default, owner decision 2026-10-21) that queries the GitHub Releases API at most once a day and shows an `InfoBar` linking to the release; it never downloads or installs. Done when: `Shell.UpdateNoticeOptIn` passes and no request is made while the setting is off.
 
-- [ ] Record the owner decision (ship in v1 or not, default off or on, check interval) in foundation plan D16 with its date and cost of reversing, then remove `owner-decision` from this section's Needs. Done when: the decision line exists in the plan.
+- [ ] Confirm the owner decision recorded 2026-10-21 in the foundation plan (v1, off by default, at most once a day) and use it as the `SettingsStore` default. Done when: the decision line exists in the plan and a fresh settings file reads `updates.check_enabled = false`.
 - [ ] Generate `build/generated/whats_new.json` from `scripts/release-notes.py` during the build and embed it as a resource. Done when: the built app contains the current version's entries.
 - [ ] Build the `What's new` page and show it once per version change, reachable later from `Help` and `Ctrl+K` ("what's new", "changelog"). Done when: the page appears once after a version change and never on a normal start. Cheaper substitute: a link to a web changelog the user must find.
 - [ ] Add the `Check for updates` setting with the decided default, reading it through `SettingsStore`, and a manual `Check now` command. Done when: the setting is read at startup and listed in the settings search.

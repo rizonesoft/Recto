@@ -403,10 +403,10 @@ Implement the SPEC section 9.9 `"Couldn't open this file"` alert `ContentDialog`
 
 ## 12. Crash recovery snapshots for unsaved edits
 
-Users of PDF editors commonly lose edits when the app crashes or the machine restarts; a typical autosave runs only when the window repaints, skips new documents, marks failed snapshots as written, and lets a second instance list the first instance's live snapshots as crash leftovers. Recto keeps a recovery snapshot for each dirty document on a timer, independent of input and repaint, and offers to restore after an abnormal exit. A snapshot holds document content on disk, so the owner decides whether it ships on by default and how encrypted documents are handled before code is written.
+Users of PDF editors commonly lose edits when the app crashes or the machine restarts; a typical autosave runs only when the window repaints, skips new documents, marks failed snapshots as written, and lets a second instance list the first instance's live snapshots as crash leftovers. Recto keeps a recovery snapshot for each dirty document on a timer, independent of input and repaint, and offers to restore after an abnormal exit. A snapshot holds document content on disk, so the owner decided its defaults on 2026-10-21 (foundation plan, owner decisions after the decision table): on by default, written every 5 minutes while a document is dirty, and a snapshot of an encrypted document stays encrypted with that document's own security handler.
 
 **Phase:** 4
-**Needs:** windows-host, display-session, owner-decision
+**Needs:** windows-host, display-session
 **Surface:** yes
 
 **Fidelity:** `design/SPEC.md` section 9.9 dialog chrome; the restore prompt is a genuinely new dialog with no screenshot. The setting lives in SPEC 9.7's `Security, Performance & Privacy` group (`D02 T04 §6`).
@@ -416,7 +416,7 @@ Users of PDF editors commonly lose edits when the app crashes or the machine res
 
 **Build order:**
 
-1. Record the owner decision (default on or off, interval, handling of encrypted documents) in foundation plan D16 with its date and cost of reversing, then remove `owner-decision` from this section's Needs. Done when: the decision line exists in the plan.
+1. Read the owner decision recorded 2026-10-21 in the foundation plan (on by default, 5 minute interval, encrypted snapshots kept encrypted) and make it the `SettingsStore` default for the recovery setting. Done when: the decision line exists in the plan and a fresh settings file reads `recovery.enabled = true` and `recovery.interval_minutes = 5`.
 2. Implement `src/services/recovery_store.h/.cpp` writing a full PDF snapshot of each dirty document through `AtomicFileWriter` into `AppPaths::recovery_dir()` on a timer, with a per-instance lock file. Done when: `Shell.RecoverySnapshots` finds a snapshot after the interval with no input events.
 
 - [ ] Record the decision in `docs/plans/2026-10-13-recto-foundation.md` and `docs/user-demand.md`. Done when: both files name the decision and its date.
@@ -424,7 +424,7 @@ Users of PDF editors commonly lose edits when the app crashes or the machine res
 - [ ] Mark a snapshot written only after `AtomicFileWriter` reports a verified replace, and retry a failed snapshot on the next tick without a new edit. Done when: an injected write failure is retried and the second tick succeeds.
 - [ ] Cover new, never-saved documents and documents opened from read-only or temporary locations. Done when: a new document's edits are recoverable.
 - [ ] Hold a lock file per running instance and offer restore only for snapshots whose owning instance is gone. Done when: a second instance lists none of the first instance's live snapshots.
-- [ ] Keep snapshots of encrypted documents encrypted with the document's own security handler, or skip them, as the owner decided. Done when: a snapshot of an AES-256 fixture cannot be opened without its password.
+- [ ] Keep snapshots of encrypted documents encrypted with the document's own security handler (owner decision 2026-10-21; never skip them and never write them in the clear). Done when: a snapshot of an AES-256 fixture cannot be opened without its password.
 - [ ] Delete a document's snapshot on save, on close with `Don't save` and after `Discard`, and keep Portable mode snapshots under the portable data folder. Done when: the recovery folder is empty after each path and Portable mode writes nothing to `%LOCALAPPDATA%`.
 - [ ] Build `RecoveryDialog` shown at startup after an abnormal exit, restoring into new dirty tabs named after the originals, never overwriting the original files. Done when: restore opens a dirty tab and the original file's hash is unchanged. Cheaper substitute: restoring by replacing the original file.
 - [ ] Commit: `app: keep crash recovery snapshots of unsaved documents and offer restore`

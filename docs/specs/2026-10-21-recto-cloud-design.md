@@ -18,15 +18,21 @@ Recto Cloud is a web service and web app that bring Acrobat Pro's cloud tools in
 | Web viewer | `pdf.js` in the browser with scripting and `eval` disabled, so the web app keeps Recto's zero PDF JavaScript rule (D9) | Medium: a WebAssembly build of `recto-pdf` could replace it later |
 | Repository | A `cloud/` npm workspace (`cloud/apps/api`, `cloud/apps/web`, `cloud/packages/*`), outside `Recto.sln`; the desktop app uses only the documented HTTPS API (foundation plan section 3.2, corrected 2026-10-21) | Low |
 
-## Open owner decisions
+## Owner decisions
 
-These block only the sections that name them (`Needs: owner-decision` or `third-party`):
+The owner answered these on 2026-10-21; they replace the open owner decisions this spec listed before. The work still waiting on someone else is marked `third-party` or `operator` in the sections that name it: counsel's review of the legal texts, the seal certificate's identity validation, DNS records and secrets.
 
-- Public domain name and the email sender domain (for example a `recto` subdomain of a domain the owner controls).
-- Data region: Cloudflare's default global storage, or R2 and D1 restricted to the EU jurisdiction.
-- The seal certificate: a document-signing certificate from a CA on the Adobe Approved Trust List, held in a cloud HSM or signing service so the private key never sits in a Worker secret (`third-party`). Until then, staging seals with a test certificate that validators show as untrusted.
-- Quotas, pricing or free limits, and retention defaults.
-- Terms of service, privacy policy, the ESIGN consumer consent disclosure and the data processing agreement (`third-party`, legal review).
+| Topic | Decision | Cost of changing |
+| --- | --- | --- |
+| Domain | Service (web app and API) at `https://cloud.recto.co.za`; the apex `recto.co.za` stays free for the product website. `PUBLIC_ORIGIN` is `https://cloud.recto.co.za` and the WebAuthn `RP_ID` is `cloud.recto.co.za`. | High after launch: passkeys are bound to the RP ID and every sent share or signing link carries the host |
+| Email sender | Mail is sent from the subdomain `mail.recto.co.za` (for example `no-reply@mail.recto.co.za`) through SMTP2GO, with SPF, DKIM and DMARC on that subdomain; the abuse and security contacts are `abuse@recto.co.za` and `security@recto.co.za` | Medium: a new sender subdomain starts with no reputation |
+| Data region | EU jurisdiction: R2 buckets created with the `eu` jurisdiction, the D1 database created with a jurisdiction (not only a location hint), and Durable Objects restricted to the EU where the product supports it; the `cloud/README.md` data location table states what is and is not covered | High: none of these can be changed after creation, so moving means a full data migration |
+| Seal certificate | GlobalSign Digital Signing Service (AATL-listed, cloud HSM, signing API), organization validated; the private key never leaves GlobalSign's HSM | Medium: another AATL CA means a new contract and identity validation, and no code change beyond the signer adapter |
+| Launch staging | Two stages. Stage 1 opens document storage, sharing and shared reviews once counsel has approved the terms, privacy policy and DPA. Stage 2 opens signature requests once the ESIGN disclosure is approved and the GlobalSign certificate is issued. Until stage 2, production keeps `SIGNATURES_ENABLED` false, so the API refuses envelope creation and the web app and desktop show the feature as not yet available | Low: the switch is one configuration value and the stages share one codebase |
+| Pricing | Free only at launch, with the limits below; anyone needing more can self-host the AGPL code on `workerd`. No billing system | Low: a paid tier is a configuration and terms change plus a billing provider |
+| Account limits | `DEFAULT_QUOTA_BYTES` 2 GiB (2147483648), `MAX_UPLOAD_BYTES` 100 MiB (104857600), `TRASH_RETENTION_DAYS` 30, `LINK_MAX_DAYS` 90, account deletion grace 30 days, `AUDIT_RETENTION_DAYS` 2557 (7 years) | Low to raise; lowering needs notice to existing users under the terms |
+| Signature requests | Default expiry 30 days; a reminder every 3 days, at most 5; completed envelopes kept until the sender deletes them (their audit records follow `AUDIT_RETENTION_DAYS`); unfinished envelopes removed 90 days after they expire; 25 sends per account per month; documents for signing up to 25 MiB | Low to raise; lowering needs notice under the terms |
+| Legal review | The owner's counsel reviews the terms of service, privacy policy, DPA and the ESIGN consent disclosure. The service uses a South African domain and stores data in the EU, so the facts given to counsel ask whether South Africa's Protection of Personal Information Act (POPIA), including its cross-border transfer rules, applies alongside GDPR | Not applicable: it is a launch requirement |
 
 ## Architecture
 
@@ -73,4 +79,4 @@ The Windows app gains a `Recto Cloud` group in Settings (off until the user sign
 
 ## Phasing
 
-Phase 98, in dependency order: platform and accounts, documents and sharing, the web app viewer, shared reviews, signature requests, desktop integration, then launch work (domain, legal, seal certificate, monitoring) that waits on the owner decisions above.
+Phase 98, in dependency order: platform and accounts, documents and sharing, the web app viewer, shared reviews, signature requests, desktop integration, then launch work (domain, legal, seal certificate, monitoring) in the two stages the owner decided above: storage, sharing and reviews first, signature requests second.

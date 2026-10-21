@@ -10,12 +10,12 @@ title: "TODO-01 -- Recto Cloud Platform, Accounts and Security"
 
 > **Goal:** The `cloud/` npm workspace exists as an AGPL-3.0-or-later TypeScript project that runs on Cloudflare Workers (D1, R2, Durable Objects, Queues, Cron) and, from the same code, on plain `workerd` with a SQLite database and an S3-compatible store. People can sign up and sign in with passkeys or one-time email links, hold sessions in safe cookies, recover their account, export their data and delete their account, and the desktop app can obtain tokens through OAuth 2.0 authorization code with PKCE. Every response carries strict security headers, logs never contain document content, email goes out through a Queue consumer and SMTP2GO, abuse can be handled by an admin, backups restore, and CI proves all of it on every pull request.
 
-> **Current state:** Measured 2026-10-21. No `cloud/` directory exists. Foundation plan D20 and `docs/specs/2026-10-21-recto-cloud-design.md` fix the stack and licence. `todo/09-cloud/` holds this file and four siblings (T02 to T05), all in phase 98. `.github/workflows/` has `build.yml`, `pins.yml` and `plan.yml` for the desktop and the TODO tree; none touches `cloud/`. `design/tokens/RectoColors.xaml` exists for the web tokens built in T02. The public domain, the email sender domain, the data region and the seal certificate are open owner decisions (design spec, "Open owner decisions"); only section 21 waits on them.
+> **Current state:** Measured 2026-10-21. No `cloud/` directory exists. Foundation plan D20 and `docs/specs/2026-10-21-recto-cloud-design.md` fix the stack and licence. `todo/09-cloud/` holds this file and four siblings (T02 to T05), all in phase 98. `.github/workflows/` has `build.yml`, `pins.yml` and `plan.yml` for the desktop and the TODO tree; none touches `cloud/`. `design/tokens/RectoColors.xaml` exists for the web tokens built in T02. The public domain, the email sender domain, the data region and the seal certificate are owner decisions (design spec, "Owner decisions"); only section 21 waits on them.
 
 ## Inputs
 
 - `docs/plans/2026-10-13-recto-foundation.md` row D20 and the 2026-10-21 correction under section 3.2 (the `cloud/` layout and its isolation from `Recto.sln`); D9 (zero PDF JavaScript) and D16 (offline by default) bound what the web app and the desktop may do.
-- `docs/specs/2026-10-21-recto-cloud-design.md`: decisions table, architecture, security and privacy, testing, open owner decisions. Where a section here says "the spec", it means this file.
+- `docs/specs/2026-10-21-recto-cloud-design.md`: decisions table, architecture, security and privacy, testing, owner decisions. Where a section here says "the spec", it means this file.
 - RFC 8252 (OAuth 2.0 for native apps: loopback redirect), RFC 7636 (PKCE), RFC 6749, and the W3C WebAuthn Level 2 specification for the account endpoints.
 - -> XREF: D09 T05 §3 -- the OAuth 2.0 PKCE endpoints and scopes the Windows app signs in through.
 - -> XREF: D09 T03 §8 -- review invitations, mentions and reminders use the email Queue consumer.
@@ -549,10 +549,10 @@ Every pull request that touches `cloud/` must prove the whole workspace, and a p
 
 ## 21. Staging and production deploy job gated on operator secrets
 
-Deployment is the first step that needs the owner's Cloudflare account and decisions, so it is the one section in this file that waits. The workflow is written and tested to refuse safely without secrets; the owner then supplies the domain, sender domain, data region and secrets, and the job deploys migrations and the Worker.
+Deployment is the first step that needs the owner's Cloudflare account and decisions, so it is the one section in this file that waits. The workflow is written and tested to refuse safely without secrets. The owner decided the domain, sender domain and data region on 2026-10-21 (spec, Owner decisions): `https://cloud.recto.co.za` with RP ID `cloud.recto.co.za`, mail from `mail.recto.co.za`, and the EU jurisdiction for every store that supports one; the operator then supplies the secrets, and the job deploys migrations and the Worker.
 
 **Phase:** 98
-**Needs:** operator, owner-decision, third-party
+**Needs:** operator, third-party
 **Surface:** no
 
 **Build order:**
