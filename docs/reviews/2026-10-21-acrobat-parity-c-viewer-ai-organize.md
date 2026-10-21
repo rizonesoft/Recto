@@ -136,3 +136,36 @@ All 7 findings were accepted and fixed in the next commit:
 5. D08 T01 §12, §16: the dialog binds the exact `OutboundPreview` the gate digests and authorizes.
 6. D02 T05 §6: a malformed U3D update is a typed error with poster fallback; only a valid unsupported update yields reduced detail.
 7. D05 T01 §12: the key check samples up to 8 encrypted objects of any kind and reports `key_unverified` when none exist.
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T01:08:13Z
+- Effort: medium
+- Lines: 16
+- Digest: 10d7d0f41aae84db
+
+Repository reads failed twice with `helper_unknown_error: setup refresh had errors`. This review therefore covers the supplied diff, not the wider repository. No files were modified, Git commands run, or tests executed.
+
+1. **Exact-key scrubbing can still leak the key after JSON decoding.** `todo/08-assistant/TODO-01-ai-assistant.md` §2, build step 1. Replacing the key and “its JSON-escaped form” does not cover JSON’s multiple equivalent representations. For example, a response can escape only one character of an otherwise unprefixed key as `\u0041`. The byte replacement misses it; `classify_error` decodes it back into the original key; the prefix-based helper does nothing. JSON permits escaping any character. Require bounded JSON decoding and sanitization of decoded strings inside the authorized secret scope, with mixed-escape tests through `describe`. **Round 2 #2 / Round 1 #14 remain incomplete.** [RFC 8259, §7](https://www.rfc-editor.org/rfc/rfc8259#section-7)
+
+2. **Search-time freshness still has a check/use gap for negative postings.** `todo/03-text/TODO-05-multi-file-search.md` §5. Calling metadata-only `plan_update` first does not bind subsequent exclusion to a stable file version. Pause after a file is classified `Unchanged`, replace it with content containing the query, then resume: the old negative posting excludes it without opening or revalidating the replacement. The new test replaces the file *before* searching, so it cannot detect this case. Define a consistent search snapshot or revalidate excluded entries before publishing, scanning changed entries and reporting instability when necessary. **Round 2 #3 / Round 1 #16 remain incomplete.**
+
+3. **The preview checkpoint still does not verify the transmitted images.** `todo/08-assistant/TODO-01-ai-assistant.md` §16. `AssistantPreviewMatchesOutboundPreview` compares text, history and host; `AssistantAuthorizesWhatItShows` compares a request digest against the same underlying preview object. Both can pass when the image strip displays a masked image but the request contains different PNG bytes. Neither proves the requested equality after page toggles and protected-content changes. Require an end-to-end check that decodes outbound image attachments and compares them with the preview’s image content, exercising both rebuild paths. **Round 2 #5 remains incomplete at its acceptance checkpoint.**
+
+Lens verdicts:
+
+- **record: needs-attention**, findings 1 to 3.
+- **consistency: needs-attention**, finding 3.
+- **source-defect: needs-attention**, finding 1.
+- **adversarial: needs-attention**, findings 1 and 2.
+
+OVERALL: needs-attention
+
+## Response to round 3
+
+All 3 findings were accepted and fixed in the next commit. This was the last allowed round:
+
+1. D08 T01 §2: error bodies and headers are decoded in bounded rounds (JSON unescape including surrogate pairs, percent-decoding) before the key is scrubbed from every decoded form; a body that still contains the key, or exceeds the bounds, is discarded. The test covers raw, escaped, mixed, surrogate, URL-encoded, double-encoded and over-deep bodies.
+2. D03 T05 §5: exclusion is decided only while holding the handle opened by `FileScope::open_checked` (no writers admitted), from the identity read through that handle; anything else is scanned. `MultiSearch.ExclusionBoundToHandle` writes between the identity read and the exclusion.
+3. D08 T01 §16: `Shell.AssistantImagesSentEqualImagesShown` decodes every image in the recorded request per provider format and compares SHA-256 with the bytes the image strip showed, after a page toggle and the protected-content rebuild, and checks masked regions are black.

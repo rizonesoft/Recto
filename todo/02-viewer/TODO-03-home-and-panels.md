@@ -28,6 +28,24 @@ track: M2
 - -> XREF: D07 T03 §2 -- `help.reportProblem` and `What's new` (§7 there) are registered in §11's `CommandRegistry` and found through §12's command box.
 - -> XREF: D03 T04 §14 -- Edit PDF registers its `edit.*` commands here.
 - -> XREF: D08 T01 §17 -- hosts the Assistant side panel (D08 T01 §17).
+- -> XREF: D08 T02 §18 -- command registry.
+- -> XREF: D08 T02 §19 -- ask AI row in command box.
+- -> XREF: D08 T02 §20 -- bookmark undo stack.
+- -> XREF: D08 T02 §21 -- bookmark proposals.
+- -> XREF: D07 T01 §14 -- print commands.
+- -> XREF: D04 T04 §18 -- attachments ask before opening.
+- -> XREF: D05 T01 §19 -- page labels in thumbnails.
+- -> XREF: D05 T02 §22 -- thumbnail drag source.
+- -> XREF: D03 T01 §2 -- PageText counts.
+- -> XREF: D03 T01 §5 -- find engine for bookmark proposals.
+- -> XREF: D03 T04 §4 -- font resolver for contents page.
+- -> XREF: D05 T01 §4 -- page insertion.
+- -> XREF: D05 T01 §1 -- GraftMap.
+- -> XREF: D01 T02 §11 -- line_weight_mode sits beside ocg_generation in TileKey.
+- -> XREF: D01 T02 §14 -- layer edits are OcgEdit builders on the actor session.
+- -> XREF: D01 T02 §14 -- import as layer uses the same builder contract.
+- -> XREF: D01 T02 §14 -- Layers panel drives stage, undo, redo and discard.
+- -> XREF: D01 T03 §10 -- bookmarks verb follows the registration rule.
 
 ## Outcome
 
@@ -36,6 +54,7 @@ track: M2
 - `SidePanelHost` (`Ctrl+B`) hosts `Pages` (virtualized thumbnails with ribbon marker, filmstrip orientation switch, and page context menu), `Outline` (`TreeView` with two-way section tracking and full Bookmark CRUD + heading auto-generation), `Layers` (`OCG` live visibility toggles and layer flattening), and `Attachments & Portfolio` (`/EmbeddedFiles` and `/Collection` inspect/extract/add/remove).
 - `DocumentInfoPanel` displays formatted metadata, security/permission flags, and embedded fonts in both the `Reading room` inspector and `Properties` dialog, and switches into `"Edit Info & Preferences"` mode to edit `/Info`, XMP metadata, and `/ViewerPreferences`.
 - `CommandRegistry` unifies every toolbar, menu, and shortcut command under one table, and `CommandBoxControl` (`Ctrl+K` overlay and Home inline box) filters across `"This document"`, `"Go to"`, `"Files"`, and `"Actions"` with bolded match spans.
+- Word and character counts, bookmark creation from text styles, search strings and structure tags, bookmark import and export with `recto-cli bookmarks`, per-bookmark style, a generated contents page, and layer authoring (create, rename, delete, merge, import a page or image as a layer) are planned in §13 to §25.
 
 **Adjacency:** list=applicable @ D02 T03 §1; document=applicable @ D02 T03 §6; settings=applicable @ D02 T04 §5; reporting=not-applicable (no reports); notifications=not-applicable (none originate here); permissions=not-applicable (no user roles; PDF encryption permission flags are displayed in §9 and external attachment open prompts in §8); audit=not-applicable (recents are user state with removal controls in §1 and §2, not an audit trail); exchange=applicable @ D02 T03 §8; reverse=applicable @ D02 T03 §1
 
@@ -57,6 +76,19 @@ track: M2
 | 10 | §10 | Editable Document Info, XMP metadata synchronization and `/ViewerPreferences` editor | §9, D02 T01 §8, D01 T02 §5 | [ ] |
 | 11 | §11 | Unified `CommandRegistry` across toolbars, menus, panels and keyboard accelerators | D02 T01 §9, D02 T02 §8 | [ ] |
 | 12 | §12 | Command Box (`Ctrl+K`) overlay and Home inline search experience | §2, §5, §11 | [ ] |
+| 13 | §13 | Word, character, line and page counts for the document and the selection | §9, D03 T01 §2, D03 T01 §3, D02 T03 §11 | [ ] |
+| 14 | §14 | Bookmark proposals from text styles (font, size, weight) | §6, D03 T01 §1 | [ ] |
+| 15 | §15 | Bookmark proposals from search strings and patterns | §6, D03 T01 §5 | [ ] |
+| 16 | §16 | Bookmark proposals from structure tags (`H1` to `H6`, `Title`, `Sect`) | §6, D03 T01 §2 | [ ] |
+| 17 | §17 | `Create bookmarks` dialog: choose a source, preview, apply with undo | §5, §6, §14, §15, §16, D02 T01 §10, D02 T01 §9 | [ ] |
+| 18 | §18 | Bookmark import and export: JSON and plain-text outline, plus `recto-cli bookmarks` | §6, D01 T03 §1 | [ ] |
+| 19 | §19 | Import and export bookmarks from the Outline panel | §5, §18, D02 T01 §10, D02 T01 §9 | [ ] |
+| 20 | §20 | Per-bookmark style: colour, bold and italic (`/C` and `/F`) | §5, §6, §18 | [ ] |
+| 21 | §21 | `recto-pdf` contents page generated from bookmarks | §6, D03 T04 §4, D05 T01 §3, D05 T01 §4 | [ ] |
+| 22 | §22 | Insert contents page dialog and `recto-cli toc` | §21, D02 T01 §8, D02 T01 §10, D02 T01 §9 | [ ] |
+| 23 | §23 | `recto-pdf` layer authoring: create, rename, delete, properties and merge | §7, D01 T02 §14 | [ ] |
+| 24 | §24 | `recto-pdf` import a page or an image as a layer | §7, §23, D05 T01 §1 | [ ] |
+| 25 | §25 | Layers panel editing: new, rename, delete, merge and import as layer | §7, §23, §24, D02 T01 §10 | [ ] |
 
 ## 1. Recent files and remembered reading-position store (`RecentFilesStore`)
 
@@ -401,13 +433,306 @@ Build `CommandBoxControl` (`src/app/controls/CommandBoxControl.xaml/.h/.cpp`) pe
 - [ ] Mount `CommandBoxControl` in `ShellPage` as the `Ctrl+K` top-centred overlay (`CornerRadius=20`, `ThemeShadow` Z=64) and on `HomePage` (§2) in `InlineHomeMode` (`720 epx` wide with footer key hints and `"Browse files"` button). Done when: pressing `Ctrl+K` on `HomePage` focuses the inline box rather than opening a duplicate popup over it, and pressing `Ctrl+K` on any other page opens the top-centred overlay card.
 - [ ] Announce result counts politely to screen readers as the user types (`"5 results, Rotate view right selected"`). Done when: UIA live-region / automation peer notifications fire on filter updates.
 - [ ] Add `Panels.CommandBoxFilterAndKeyboardFlow` test in `tests/recto-tests/` driving `Ctrl+K` queries for commands (`"rotate"`), outline titles, page numbers (`"page 3"`), and recent filenames, verifying bold span indices and end-to-end execution. Done when: `recto-tests.exe --gtest_filter=Panels.CommandBoxFilterAndKeyboardFlow` passes.
-- [ ] Keep IME composition intact in the command box: never re-request focus or rewrite the query while `TextCompositionStarted` is active, and filter only on committed text (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`, pdfcraft #1252). Done when: `Panels.CommandBoxFilterAndKeyboardFlow` composes a Microsoft Pinyin, Japanese and Korean query and executes the selected result.
+- [ ] Keep IME composition intact in the command box: never re-request focus or rewrite the query while `TextCompositionStarted` is active, and filter only on committed text. Done when: `Panels.CommandBoxFilterAndKeyboardFlow` composes a Microsoft Pinyin, Japanese and Korean query and executes the selected result.
 - [ ] Commit: `viewer: build Ctrl+K CommandBoxControl in overlay and Home inline modes`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Panels.CommandBoxFilterAndKeyboardFlow` passes on the display-session host, and screenshots of `CommandBoxControl` in overlay (`D-Dialogs.png`) and Home inline (`D-Home.png`) modes match the SPEC boards.
+
+## 13. Word, character, line and page counts for the document and the selection
+
+Foxit PDF Editor and PDFelement show word and character counts; Acrobat Pro does not. §9 shows the facts stored in the file; counts need the extracted text, so this section sits on `PageText` and runs in the background, never on the UI thread. Counts cover a whole document, a page range and the current selection, and say plainly when pages have no text (scanned and not yet OCR'd) instead of reporting zero as if it were the answer.
+
+**Phase:** 3
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` section 9.2 (Info panel) and section 5 type styles, with `design/screenshots/D-ReadingRoom.png`.
+**Job:** A writer or translator learns how long a document is and how long their selection is. Consumer: `DocumentInfoPanel` (§9), `SelectionModel` (`D03 T01 §3`).
+**Treatment:** Background job over cached `PageText`. Cheaper substitute that fails the checkpoint: counting on the UI thread or treating a text-free page as zero words without saying so.
+**Chrome:** `CaptionTextBlockStyle`, `BodyTextBlockStyle`, tokens.
+
+**Build order:**
+
+1. Implement `src/services/text_counts.h/.cpp`: `count_text(PageTextSnapshot, TextRange) -> TextCounts { words, characters, characters_no_spaces, lines, paragraphs }` using `Windows.Data.Text.WordsSegmenter` for word boundaries (so CJK and Thai count correctly) and `PageText` line and paragraph spans, plus `DocumentActor` job `count_document(page_range, CancelToken)` that reads `PageText` through the `get_page_text` cache (`D03 T01 §2`), reports progress, and returns per-page counts and the list of pages with no text. Done when: a 100-page corpus file counts within 1 percent of the independent reference counts in `tests/corpus/counts.csv` and cancels within 200 ms.
+2. Show a `Text` group in `DocumentInfoPanel` (§9) with `Words`, `Characters`, `Characters without spaces`, `Lines`, `Paragraphs`, a progress bar while counting, a note `N pages have no text` listing the pages (with a link to the OCR command), and a `Selection` row that follows the current selection (`D03 T01 §3`) with a 250 ms debounce. Done when: selecting a paragraph updates the `Selection` row and a scanned page appears in the no-text note.
+
+- [ ] Add `Count words and characters` to `CommandRegistry` (`D02 T03 §11`) and the `Tools` menu, opening the Info panel on the `Text` group. Done when: `Ctrl+K` finds it.
+- [ ] Add the verb `recto-cli count <file> [--pages 1-5] [--json]` in `src/cli/` returning the same numbers and the no-text page list, exit code 0 on success. Done when: the CLI numbers equal the panel numbers on three corpus files.
+- [ ] Mark OCR-derived counts with `from OCR` when `PageText` came from recognition, since they are estimates. Done when: an OCR'd fixture shows the label.
+- [ ] Add `tests/corpus/counts.csv` with reference counts produced by an independent script and a `tests/corpus/PROVENANCE.md` row. Done when: `python scripts/build-corpus.py --check` passes.
+- [ ] Add `Panels.TextCounts` and `Cli.Count` covering CJK, hyphenated line ends, empty pages, ranges, selection and cancel. Done when: `recto-tests.exe --gtest_filter=Panels.TextCounts:Cli.Count` passes. Cheaper substitute: counting by splitting on spaces, which miscounts CJK.
+- [ ] Commit: `viewer: add word and character counts to Document Info and recto-cli count`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Panels.TextCounts:Cli.Count` passes on the display-session host.
+
+## 14. Bookmark proposals from text styles (font, size, weight)
+
+Foxit's and UPDF's bookmark-from-styles tools let the user say that every line in 18 pt bold is a chapter. §6's `generate_outline_from_headings` guesses the hierarchy; this engine lets the user decide, by listing the styles the document actually uses and mapping chosen ones to levels. It only proposes: it returns a tree and writes nothing.
+
+**Phase:** 3
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `src/pdf/bookmark_styles.h/.cpp`: `collect_text_styles(PageTextSnapshot) -> std::vector<TextStyleGroup>` grouping spans by normalized font name (subset prefix removed), size rounded to 0.5 pt, bold, italic and fill colour, each with occurrence count, page list and a sample string, sorted by size then count. Done when: a corpus book lists its chapter, section and body styles in size order with correct counts.
+2. Implement `propose_bookmarks_from_styles(styles_to_levels, StyleOptions { min_chars, max_chars, join_lines, ignore_repeated }) -> PdfResult<std::vector<OutlineItem>>`: join consecutive lines of one style within 1.5 line heights into one title, drop titles repeated on more than 30 percent of pages (running headers), set each destination to `XYZ` at the span's top-left, and nest by level without skipping levels. Done when: mapping two styles to levels 1 and 2 produces the expected nested tree and ignores a running header.
+
+- [ ] Bound the work: at most 50,000 spans per document considered, titles trimmed to 512 characters, depth at most 32. Done when: a synthetic 1,000,000-span document returns a bounded result with a truncation flag.
+- [ ] Refuse pages with no text with a typed `NoTextOnPages` error listing them. Done when: a scanned fixture returns the error, not an empty tree.
+- [ ] Add `PdfBookmarkStyles.Collect`, `PdfBookmarkStyles.Propose` and `PdfBookmarkStyles.Bounds` under ASan. Done when: `recto-tests.exe --gtest_filter=PdfBookmarkStyles.*` passes. Cheaper substitute: reusing the heading heuristic with a fixed size threshold.
+- [ ] Commit: `pdf: propose bookmarks from user-mapped text styles`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfBookmarkStyles.*` passes under ASan.
+
+## 15. Bookmark proposals from search strings and patterns
+
+Foxit's bookmark-from-search tool turns every `Chapter 3`, `Article 12` or `Section 4.2` into a bookmark. Recto already has a background find engine (`D03 T01 §5`) with `Match case`, `Whole word` and `Regex`; this engine reuses it so there is one matcher, then turns the matches into a proposed tree. It writes nothing.
+
+**Phase:** 3
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `propose_bookmarks_from_search(FindQuery, SearchOptions { level, title_source (Match, Line, Template), template, max_results }) -> PdfResult<std::vector<OutlineItem>>` over the find engine's results, taking the title from the match, the whole line, or a template such as `Chapter {1}` filled from regex groups, trimmed to 512 characters. Done when: the query `^Chapter \d+` yields one bookmark per chapter with the line as its title and a `Template` of `{0}` yields the matched text.
+2. Drop duplicate matches at the same position, cap results at 5,000 with a truncation flag, honour `CancelToken`, and bound the regex through the engine's existing step limit so a hostile pattern cannot hang the job. Done when: a catastrophic-backtracking pattern ends in under 2 s with a `PatternTooComplex` error.
+
+- [ ] Order proposals by page then vertical position and assign one level to all, leaving nesting to the user in the dialog (§17). Done when: the output order matches reading order.
+- [ ] Add `PdfBookmarkSearch.Propose`, `PdfBookmarkSearch.Templates` and `PdfBookmarkSearch.HostilePattern` under ASan. Done when: `recto-tests.exe --gtest_filter=PdfBookmarkSearch.*` passes. Cheaper substitute: a second regex implementation next to the find engine.
+- [ ] Commit: `pdf: propose bookmarks from search matches`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfBookmarkSearch.*` passes under ASan.
+
+## 16. Bookmark proposals from structure tags (`H1` to `H6`, `Title`, `Sect`)
+
+Foxit and UPDF build bookmarks from a tagged PDF's headings. A tagged document already says what is a heading, so this is the most accurate source and costs nothing in guesswork. It reads the immutable `StructNode` snapshot (`D03 T01 §2`), turns `H1` to `H6`, `H` and `Title` into levels, and refuses an untagged document with a message that points to the style and search sources.
+
+**Phase:** 3
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `propose_bookmarks_from_structure(StructSnapshot, StructOptions { include_title, use_actual_text }) -> PdfResult<std::vector<OutlineItem>>`: walk `/StructTreeRoot` in reading order, map `H1` to `H6` to levels 1 to 6, treat a bare `H` as one level below its nearest heading ancestor, take titles from `/ActualText` or the element's text, and resolve each destination from the element's `/Pg` and marked-content bounding box. Done when: a tagged corpus book yields the same tree as its existing outline within the title text.
+2. Return a typed `NoStructure` error for a document without a structure tree and `NoHeadings` when it has one with no heading elements; bound depth to 32 and node visits to 200,000. Done when: an untagged file returns `NoStructure` and a cyclic `/K` fixture ends at the bound.
+
+- [ ] Skip elements marked `/Artifact` and headings with empty text. Done when: an artifact heading is not proposed.
+- [ ] Add `PdfBookmarkStructure.Propose`, `PdfBookmarkStructure.NoStructure` and `PdfBookmarkStructure.Bounds` under ASan. Done when: `recto-tests.exe --gtest_filter=PdfBookmarkStructure.*` passes. Cheaper substitute: guessing headings by font size on a tagged document.
+- [ ] Commit: `pdf: propose bookmarks from structure tags`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfBookmarkStructure.*` passes under ASan.
+
+## 17. `Create bookmarks` dialog: choose a source, preview, apply with undo
+
+One place to use §14, §15 and §16: the user picks `Text styles`, `Search` or `Structure tags`, sees the proposed tree with checkboxes, and applies it. Existing bookmarks are never replaced silently: the default is to append, and `Replace existing` says how many bookmarks it will remove. Applying goes through the Bookmark Editor's undoable command stack (§6), and nothing reaches the file until Save.
+
+**Phase:** 3
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 9.9 form layout and section 8.3 `Outline`.
+**Job:** A user turns a long untagged report into a navigable outline in a minute, and can back out in one keystroke. Consumer: `OutlinePanel` (§5), bookmark undo stack (§6).
+**Treatment:** Preview then one undoable composite command. Cheaper substitute that fails the checkpoint: writing bookmarks immediately, or replacing the existing outline without a count.
+**Chrome:** `RectoDialogStyles.xaml` (`D02 T01 §10`), `RectoAccentTintBrush`, stock `TreeView`.
+
+**Build order:**
+
+1. Build `CreateBookmarksDialog` (`src/app/dialogs/CreateBookmarksDialog.xaml/.h/.cpp`) with a source selector, a style table for `Text styles` (sample text, size, count, a level `ComboBox` of `Ignore` and 1 to 6), a query box with the §5 find options for `Search`, a `Structure` option showing the engine's refusal reason when unavailable, a `TreeView` preview with per-node checkboxes, and `Append` or `Replace existing (N bookmarks)`. Done when: choosing styles shows the preview tree live within 500 ms on a 300-page file, and an untagged file shows why `Structure` is unavailable.
+2. On `Apply`, push one composite command onto the bookmark undo stack (§6) so a single `Ctrl+Z` removes everything added, mark the tab dirty, and select the first new bookmark in `OutlinePanel`. Done when: apply then `Ctrl+Z` restores the previous outline exactly, and save writes standard `/Outlines`.
+
+- [ ] Run the proposal engines on the actor thread with a cancel button and a progress ring. Done when: cancelling a long search leaves the outline unchanged.
+- [ ] Add `Create bookmarks...` to the `OutlinePanel` header menu (§5), the `Edit` menu (`D02 T01 §9`) and `CommandRegistry`. Done when: `Ctrl+K` finds it.
+- [ ] Require at least one checked proposal and disable `Apply` otherwise, with a text reason. Done when: unchecking everything disables `Apply` and says why.
+- [ ] Add `Panels.CreateBookmarksDialog` covering the three sources, append and replace, undo as one step, cancel and refusal text. Done when: `recto-tests.exe --gtest_filter=Panels.CreateBookmarksDialog` passes. Cheaper substitute: applying proposals directly to the file without a preview.
+- [ ] Commit: `viewer: add the Create bookmarks dialog with preview and undo`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Panels.CreateBookmarksDialog` passes on the display-session host.
+
+## 18. Bookmark import and export: JSON and plain-text outline, plus `recto-cli bookmarks`
+
+Foxit and UPDF import and export bookmarks so an outline built for one file can be reused or edited in a text editor. This section defines the two formats and the engine that reads and writes them, and a `recto-cli bookmarks` verb. Import is hostile input: titles, depth, counts and page numbers are validated, and the CLI writes a new file with `-o`, never in place.
+
+**Phase:** 2
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `src/pdf/bookmark_io.h/.cpp`: `export_bookmarks(OutlineTree, Format) -> std::string` for JSON (`{"version":1,"bookmarks":[{"title","page","x","y","zoom","color","bold","italic","open","children"}]}` with 1-based pages) and for a text outline (one bookmark per line, nesting by leading tab characters, then a tab and the 1-based page number), and `parse_bookmarks(std::string_view, Format, page_count) -> PdfResult<OutlineTree>`. Done when: export then parse reproduces the tree for both formats on three corpus outlines.
+2. Validate on parse: UTF-8 titles up to 512 characters, depth at most 32, at most 100,000 nodes, pages within 1 to `page_count`, unknown JSON fields ignored, unknown version refused, and report the 1-based line or JSON path of the first fault. Done when: a file with page 9999, a 40-deep tree and a 200,000-node tree each fail with a typed error naming the fault.
+
+- [ ] Add `recto-cli bookmarks export <in.pdf> --format json|txt [-o file]` and `recto-cli bookmarks import <in.pdf> <bookmarks> --mode replace|append -o <out.pdf>` (via the §6 outline writer and the incremental writer, `D01 T02 §5`), exit code 2 on validation failure, and refuse `-o` equal to the input. Done when: import writes a new file whose outline equals the source and leaves the input byte-identical.
+- [ ] Handle a UTF-8 byte order mark, `\r\n` line ends and tab or four-space indents in the text format. Done when: all three variants parse to the same tree.
+- [ ] Add `tests/corpus/bookmarks/` fixtures (valid, deep, huge, bad page, bad UTF-8) and register `fuzz_bookmarks` in `scripts/run-fuzz-campaign.ps1`. Done when: a 60 s `fuzz_bookmarks` run is clean.
+- [ ] Add `PdfBookmarkIo.*` and `Cli.Bookmarks` under ASan. Done when: `recto-tests.exe --gtest_filter=PdfBookmarkIo.*:Cli.Bookmarks` passes. Cheaper substitute: an ad-hoc parser that trusts page numbers.
+- [ ] Commit: `pdf: import and export bookmarks as JSON and text with recto-cli bookmarks`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfBookmarkIo.*:Cli.Bookmarks` passes under ASan and the 60 s `fuzz_bookmarks` run is clean.
+
+## 19. Import and export bookmarks from the Outline panel
+
+The UI half of §18: `Export bookmarks...` and `Import bookmarks...` in the `OutlinePanel` header menu (§5), using the file pickers and the same append or replace choice as §17. Import goes through the undoable bookmark stack so a wrong file costs one `Ctrl+Z`.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` sections 8.3 (`Outline` header actions) and 9.9 form dialog layout.
+**Job:** A user moves an outline between files or edits it in a text editor. Consumer: `OutlinePanel` (§5), `bookmark_io` (§18).
+**Treatment:** Stock pickers and the existing undo stack. Cheaper substitute that fails the checkpoint: a hidden developer-only command.
+**Chrome:** `RectoDialogStyles.xaml`, Segoe Fluent Icons.
+
+**Build order:**
+
+1. Add `Export bookmarks...` (a `FileSavePicker` offering `.json` and `.txt`, writing through temp-file-then-replace) and `Import bookmarks...` (a `FileOpenPicker`, a `ContentDialog` offering `Append` or `Replace existing (N bookmarks)` and showing the validation error text on failure) to the `OutlinePanel` header menu. Done when: exporting then importing with `Replace` on a fresh copy of the document yields an identical outline.
+2. Apply an import as one composite undo command (§6) and mark the tab dirty. Done when: `Ctrl+Z` after import restores the previous outline.
+
+- [ ] Register `Export bookmarks` and `Import bookmarks` in `CommandRegistry` and the `Edit` menu. Done when: both are reachable from `Ctrl+K`.
+- [ ] Show the parser's line or path in the error dialog and keep the document unchanged. Done when: a bad file shows its fault location and changes nothing.
+- [ ] Add `Panels.BookmarkImportExport` covering both formats, append, replace, undo and error display. Done when: `recto-tests.exe --gtest_filter=Panels.BookmarkImportExport` passes. Cheaper substitute: importing without a validation step.
+- [ ] Commit: `viewer: import and export bookmarks from the Outline panel`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Panels.BookmarkImportExport` passes on the display-session host.
+
+## 20. Per-bookmark style: colour, bold and italic (`/C` and `/F`)
+
+Foxit and UPDF let each bookmark have its own colour and bold or italic text. PDF stores this in the outline item's `/C` (RGB array) and `/F` (flags: italic, bold; ISO 32000-1 outline item dictionary), so other readers show it too. §6 writes titles and destinations only; this section adds the two keys, an editor control, and tree rendering that stays readable.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` section 8.3 `Outline (with Bookmark Editor)` and section 11 (colour is never the only cue).
+**Job:** A user highlights important bookmarks in a way every PDF reader shows. Consumer: `OutlinePanel` (§5, §6).
+**Treatment:** Standard `/C` and `/F` keys. Cheaper substitute that fails the checkpoint: styles kept outside the PDF.
+**Chrome:** `RectoTextBrush`, `RectoSurfaceBrush`, stock `ColorPicker`.
+
+**Build order:**
+
+1. Extend `src/pdf/outlines_edit.cpp` and `OutlineItem` with `color` (three floats 0 to 1, omitted when black) and `bold` and `italic` flags written as `/C` and `/F`, read back on open, preserved on items the user did not edit, and covered by the §18 JSON format. Done when: set, save and reopen reproduces colour and flags, and a file with unknown `/F` bits keeps them.
+2. Add `Bookmark style` to the `OutlinePanel` editor (§6): a colour swatch flyout with 8 preset swatches and a custom `ColorPicker`, and `Bold` and `Italic` toggle buttons, applying to the selection and undoable. Done when: styling two selected bookmarks then `Ctrl+Z` removes both styles in one step.
+
+- [ ] Render a styled row with its colour and weight, but fall back to `RectoTextBrush` when the colour has less than 3:1 contrast against the panel surface and show a small swatch dot so the style is still visible. Done when: a near-white bookmark in the Light theme shows in text colour with its swatch.
+- [ ] Expose the style in the automation name (`Chapter 1, bold, red`). Done when: Narrator reads the style.
+- [ ] Add `PdfOutlineStyle.RoundTrip` and `Panels.BookmarkStyle` covering flags, colour, undo and contrast fallback. Done when: `recto-tests.exe --gtest_filter=PdfOutlineStyle.*:Panels.BookmarkStyle` passes. Cheaper substitute: storing styles in an app-local file.
+- [ ] Commit: `viewer: add per-bookmark colour, bold and italic`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfOutlineStyle.*:Panels.BookmarkStyle` passes on the display-session host.
+
+## 21. `recto-pdf` contents page generated from bookmarks
+
+Foxit and UPDF can insert a table-of-contents page built from the bookmarks. The engine adds one or more new pages with title lines, dot leaders and right-aligned page numbers, each line a `/Link` to its destination, on a copy. Inserting pages shifts later page numbers, so the numbers shown and every `/Dest` in the outline and links are computed after the shift. Text uses the Edit font resolver so titles outside WinAnsi never become `?`.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `src/pdf/toc_page.h/.cpp`: `insert_contents_page(Document&, OutlineTree, TocOptions { position (Start or AfterPage n), heading, max_depth, font, size, dot_leaders, add_bookmark }) -> PdfResult<TocResult>` laying out lines by the first page's size, flowing to extra pages, using `D03 T04 §4` glyph coverage, writing `/Link` annotations with `/Dest` arrays, and returning the inserted page range. Done when: a 40-bookmark outline yields a contents page whose every line links to the right page after the shift.
+2. Insert through the copy-based page-tree edit list (`D05 T01 §3`, `§4`) so existing outline, link and named-destination targets are remapped, and optionally add a `Contents` bookmark at the new page. Done when: after insertion every original bookmark still lands on the same content page.
+
+- [ ] Bound the work to 5,000 entries and 100 contents pages and refuse an empty outline with a typed error. Done when: a 50,000-entry outline returns a bounded result with a truncation flag.
+- [ ] Write only to a copy; the open document is never modified in place. Done when: the source file hash is unchanged.
+- [ ] Add `PdfTocPage.Layout`, `PdfTocPage.RemapsTargets` and `PdfTocPage.NoQuestionMarks` (CJK and accented titles) under ASan. Done when: `recto-tests.exe --gtest_filter=PdfTocPage.*` passes. Cheaper substitute: a text-only page of numbers without links.
+- [ ] Commit: `pdf: generate a contents page from bookmarks`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfTocPage.*` passes under ASan.
+
+## 22. Insert contents page dialog and `recto-cli toc`
+
+The user-facing half of §21: a dialog with a live preview, reachable from the `OutlinePanel` header menu and `Ctrl+K`, and a `recto-cli toc` verb. The result is saved as a copy, never over the open document.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 9.9 form layout.
+**Job:** A user adds a clickable contents page to a long document and saves it as a copy. Consumer: `toc_page` (§21), `SavePipeline` (`D02 T01 §8`).
+**Treatment:** Dialog over the engine with a scratch-copy preview. Cheaper substitute that fails the checkpoint: previewing by modifying the open document.
+**Chrome:** `RectoDialogStyles.xaml`.
+
+**Build order:**
+
+1. Build `InsertContentsDialog` (`src/app/dialogs/InsertContentsDialog.xaml/.h/.cpp`) with position, heading text, depth, font and size, dot leaders, `Add Contents bookmark`, a live first-page preview rendered from §21 on a scratch copy, and `Create copy` using `SavePipeline::save_copy_async` (`D02 T01 §8`). Done when: the preview updates within 1 s of a change and `Create copy` writes a valid PDF with the contents page.
+2. Add `recto-cli toc <in.pdf> -o <out.pdf> [--position start|after N] [--depth N] [--heading text]`, refusing `-o` equal to the input, exit code 2 on an empty outline. Done when: the CLI output equals the dialog output for the same options.
+
+- [ ] Register `Insert contents page` in `CommandRegistry` and the `Tools` menu. Done when: `Ctrl+K` finds it.
+- [ ] Add `Panels.InsertContentsDialog` and `Cli.Toc` covering preview, copy save, options and refusals. Done when: `recto-tests.exe --gtest_filter=Panels.InsertContentsDialog:Cli.Toc` passes. Cheaper substitute: editing the open document in place.
+- [ ] Commit: `viewer: add the Insert contents page dialog and recto-cli toc`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Panels.InsertContentsDialog:Cli.Toc` passes on the display-session host.
+
+## 23. `recto-pdf` layer authoring: create, rename, delete, properties and merge
+
+Foxit and PDFelement edit layers and Acrobat Pro does too; §7 only views and flattens them. This engine edits the `/OCProperties` structure: create an empty layer, rename it, delete it, set its initial state and `/Usage` (view, print, export), reorder in `/Order`, and merge several layers into one by repointing references (page `/Properties` entries, XObject and annotation `/OC` entries, and `/OCMD` member lists) so no content stream is rewritten. Flatten stays in §7 (`flatten_visible_layers`). Edits are staged in the actor and saved through the normal save paths.
+
+**Phase:** 2
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Extend `src/pdf/ocg.cpp` with `create_layer(name, initial_state)`, `rename_layer`, `delete_layer(mode: RemoveMembership | KeepContent)`, `set_layer_usage(print, view, export)`, and `reorder_layers`, all returning `PdfResult` and keeping `/OCGs`, `/D /Order`, `/ON`, `/OFF`, `/RBGroups` and `/Locked` consistent; `delete_layer` with `KeepContent` makes the content permanent by dropping only the `/OC` association. Done when: after each operation the written file reopens with the expected layer list and a pixel check of a fixture matches the expected visibility.
+2. Implement `merge_layers(sources, target)` by repointing every reference to a source `OCG` to the target `OCG` and removing the sources, rejecting merges that include a `/Locked` layer or members of one `/RBGroups` set. Done when: merging two layers of a fixture leaves one layer showing the union of their content and no dangling `OCG` reference.
+
+- [ ] Expose the operations on `DocumentActor` as staged edits with undo, marking the document dirty (request to frozen `D01 T02` listed in the report). Done when: a staged create then undo leaves the file unchanged.
+- [ ] Bound work: at most 10,000 layers and 200 merge sources; names are UTF-16BE or PDFDocEncoding text strings of at most 512 characters. Done when: an oversize request returns a typed error.
+- [ ] Add `PdfOcgEdit.CreateRenameDelete`, `PdfOcgEdit.Usage`, `PdfOcgEdit.Merge` and `PdfOcgEdit.LockedAndRadioGroupsRefused` under ASan. Done when: `recto-tests.exe --gtest_filter=PdfOcgEdit.*` passes. Cheaper substitute: rewriting content streams to merge layers.
+- [ ] Commit: `pdf: add layer create, rename, delete, usage and merge`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfOcgEdit.*` passes under ASan.
+
+## 24. `recto-pdf` import a page or an image as a layer
+
+Foxit's and PDFelement's `Import as layer` places an image or another PDF's page over the current page as a new layer, which is how people add a translation overlay or an annotated scan. The source page becomes a Form XObject (grafted with `GraftMap`, `D05 T01 §1`, so fonts and images are deduplicated) drawn inside `BDC /OC` on the target page, with position, scale and opacity. The source file is only read.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `import_page_as_layer(Document& target, int page, const Document& source, int source_page, LayerPlacement { origin, scale, rotation, opacity, layer_name }) -> PdfResult<LayerId>` using `GraftMap` to copy the source page into a Form XObject and appending a marked-content block to the target page's content with the new `OCG`. Done when: a two-page fixture overlaid on page 1 shows both when visible and only the original when the layer is hidden.
+2. Implement `import_image_as_layer` for JPEG, PNG and other WIC-decodable images by creating an image XObject (DCT passthrough for JPEG, Flate for the rest) with the same placement fields. Done when: a PNG with transparency imports with its alpha as an `/SMask`.
+
+- [ ] Bound inputs: source page object graph limits from `GraftMap`, image at most 16,384 by 16,384 pixels and 256 MB decoded, reject encrypted sources without a password with a typed error. Done when: oversize and encrypted sources fail cleanly.
+- [ ] Write to a copy through the edit session (staged, undoable) and never modify the source. Done when: source file hash unchanged.
+- [ ] Add `PdfOcgImport.Page`, `PdfOcgImport.Image` and `PdfOcgImport.Bounds` under ASan. Done when: `recto-tests.exe --gtest_filter=PdfOcgImport.*` passes. Cheaper substitute: flattening the source into the page content with no layer.
+- [ ] Commit: `pdf: import a page or image as a new layer`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfOcgImport.*` passes under ASan.
+
+## 25. Layers panel editing: new, rename, delete, merge and import as layer
+
+The UI half of §23 and §24 inside `LayersPanel` (§7): `New layer`, `Rename` (`F2`), `Delete`, `Merge selected layers`, `Layer properties` (initial state, print, view, export), `Import page as layer...` and `Import image as layer...`. Every edit is undoable and shows its effect at once; `Flatten Visible Layers` stays where §7 put it.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` section 8.3 `Layers (OCG)` with `design/screenshots/D-Focus-Light.png`; the dialogs follow section 9.9 form layout.
+**Job:** A user builds and tidies layers, including adding an overlay, without leaving the panel. Consumer: `LayersPanel` (§7), `ocg_edit` (§23, §24).
+**Treatment:** Panel commands over the staged-edit engine. Cheaper substitute that fails the checkpoint: edit support only through the command box.
+**Chrome:** `RectoDialogStyles.xaml`, `SidePanelHost` (§3), Segoe Fluent Icons.
+
+**Build order:**
+
+1. Add a `Layer tools` header menu and an item context menu to `LayersPanel` for the seven commands, with multi-select for merge, a `Delete layer` dialog offering `Remove the layer and its content association (keep content visible)` or `Delete the layer`, and a placement dialog for the imports (position, scale, opacity, preview). Done when: creating a layer, importing a page into it, merging it with another and undoing each step returns the panel and canvas to the previous state.
+2. Drive the canvas through `set_ocg_visibility` and the `ocg_generation` invalidation of §7 so a new or merged layer renders at once. Done when: a new layer appears in the tree and an imported overlay renders without reopening the file.
+
+- [ ] Disable the tools for `/Locked` layers, radio-group members where merge is refused, and encrypted documents without edit permission, each with a reason in the tooltip. Done when: each disabled state names its reason.
+- [ ] Register the seven commands in `CommandRegistry` (`D02 T03 §11`). Done when: all are found by `Ctrl+K`.
+- [ ] Keep names and states in the automation tree and announce edits politely. Done when: Narrator reads `Layer Overlay created`.
+- [ ] Add `Panels.LayersEditing` covering each command, undo, disabled reasons and canvas refresh. Done when: `recto-tests.exe --gtest_filter=Panels.LayersEditing` passes. Cheaper substitute: a read-only panel with edit commands only on `Ctrl+K`.
+- [ ] Commit: `viewer: edit layers in the Layers panel`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Panels.LayersEditing` passes on the display-session host.
 
 ## Verification
 
 - Every `design/SPEC.md` section 8.3, 9.1, 9.2 (Info, XMP & Viewer Preferences) and 9.4 element is working and proven on rendered surfaces in the review findings.
 - `RecentFilesStore` survives restarts, prunes deleted files, and recovers from corrupt JSON; `ThumbnailList`, `OutlinePanel`, `LayersPanel`, `AttachmentsPanel`, `DocumentInfoPanel`, and `CommandBoxControl` pass their `Panels.*`, `PdfOcg.*`, `PdfPortfolio.*`, `PdfOutlinesEdit.*`, and `PdfMetadataEdit.*` test suites under ASan.
 - Full `recto-tests` suite green; `python scripts/todo-graph.py validate` passes.
+- The panel features of §13 to §25 are proven by `Panels.TextCounts`, `Cli.Count`, `PdfBookmark*.*`, `Panels.CreateBookmarksDialog`, `PdfBookmarkIo.*`, `Cli.Bookmarks`, `Panels.BookmarkImportExport`, `PdfOutlineStyle.*`, `PdfTocPage.*`, `Cli.Toc`, `PdfOcgEdit.*`, `PdfOcgImport.*` and `Panels.LayersEditing`.

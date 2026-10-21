@@ -33,6 +33,25 @@ track: M4
 - -> XREF: D04 T05 §7 -- backgrounds are written as artifacts in tagged documents.
 - -> XREF: D04 T06 §10 -- page operations keep PDF/X output intents (D04 T06 §10).
 - -> XREF: D09 T04 §14 -- Recto Cloud's PAdES seal (D09 T04 §14) follows this signer's conventions.
+- -> XREF: D08 T02 §9 -- GraftMap.
+- -> XREF: D08 T02 §9 -- merge.
+- -> XREF: D08 T02 §22 -- page operations.
+- -> XREF: D06 T02 §8 -- FIPS gate in encryption.
+- -> XREF: D06 T02 §8 -- FIPS gate in certificate encryption.
+- -> XREF: D04 T02 §2 -- binder writer.
+- -> XREF: D02 T03 §4 -- page labels in thumbnails.
+- -> XREF: D04 T07 §5 -- redact-by-pattern packs.
+- -> XREF: D05 T02 §9 -- sanitize counts from the inspector.
+- -> XREF: D03 T01 §10 -- compare engine.
+- -> XREF: D02 T04 §6 -- trust settings.
+- -> XREF: D02 T03 §21 -- page insertion.
+- -> XREF: D02 T03 §24 -- GraftMap.
+- -> XREF: D04 T07 §17 -- crop step.
+- -> XREF: D04 T07 §18 -- remove marks step.
+- -> XREF: D04 T07 §18 -- delete blank pages step.
+- -> XREF: D04 T07 §19 -- insert pdf step.
+- -> XREF: D04 T08 §3 -- verb specs.
+- -> XREF: D01 T03 §10 -- organize verbs follow the registration rule.
 
 ## Outcome
 
@@ -45,6 +64,9 @@ track: M4
 - Certificate (public-key) encryption (`§11`, `§12`) encrypts a PDF for the X.509 certificates of named recipients with the `/Adobe.PubSec` security handler and `AES-256`, with per-recipient permissions, and opens such a file with the user's certificate private key through CNG, never falling back to an unencrypted or weaker file.
 - Page backgrounds (`§13`) add colour, image or PDF-page backgrounds as managed marks that can be listed, updated and removed later, and list and remove watermarks, without rewriting the original page content streams.
 - Replace pages (`§14`) replaces any set of pages with pages from another PDF on a copy, remapping or removing bookmarks, links, named destinations, form fields and tags of the replaced pages so no reference dangles.
+- Page tools beyond Acrobat parity (`§15` to `§23`): split by file size and by top-level bookmarks, split one page into several, N-up sheets, interleave, swap odd and even and reverse, page label editing that survives every page operation, blank page detection, reorder by bookmarks, a paging seal and ID card copy, all copy operations with a CLI verb.
+- Redaction and inspection beyond Acrobat parity (`§24` to `§27`): a labelled whiteout and whole-page redaction, country PII packs with checksums, versioned redaction profiles and a document inspector report, all local and never executing content.
+- Signature and binder tools (`§28` to `§30`): the signed version of a document and its comparison with the current one, a Recto-only trust store with opt-in download and manual import, and a PDF Binder with a linked table of contents and a rebuildable project.
 
 **Adjacency:** all=not-applicable (engine operations inside the `D04 T01` job frame; cards, queue, notices and save settings are owned there and by `D02 T04 §5`)
 
@@ -59,7 +81,7 @@ track: M4
 | 3 | §3 | Copy-based page-tree edit list (`reorder`, `/Rotate` delta, `delete`, `extract`) | §2 | [ ] |
 | 4 | §4 | `Insert Blank Page`, box cropping (`/MediaBox`..`/ArtBox`), margin detection & rescaling | §3 | [ ] |
 | 5 | §5 | Vector and image `Watermark & Stamp` engine (`stamp_watermark.cpp`, `cli watermark`) | §3 | [ ] |
-| 6 | §6 | 3-zone `Headers & Footers` and legal **Bates Numbering** (`stamp_watermark.cpp` & CLI) | §5 | [ ] |
+| 6 | §6 | 3-zone `Headers & Footers` and legal **Bates Numbering** (`stamp_watermark.cpp` & CLI) | §5, §13 | [ ] |
 | 7 | §7 | Windows CNG (`bcrypt.dll`) `AES-256` (`V=5, R=6`) encrypt/decrypt writer and CLI verbs | §1, D01 T01 §9 | [ ] |
 | 8 | §8 | X.509 / PKCS#12 and Windows Certificate Store `PKCS#7` & `PAdES` signer (`cli sign`) | §7, D01 T02 §5 | [ ] |
 | 9 | §9 | Cryptographic signature verifier (`/ByteRange`, CMS/CAdES, chain trust & tamper check) | §8 | [ ] |
@@ -68,6 +90,22 @@ track: M4
 | 12 | §12 | `/Adobe.PubSec` decryption with a certificate private key through CNG on open | §11, D01 T01 §9, D01 T02 §8 | [ ] |
 | 13 | §13 | Page backgrounds engine: add, update, list and remove managed marks | §1, §3, §5 | [ ] |
 | 14 | §14 | `replace_pages`: replace pages from another PDF, remapping links, fields and tags | §1, §2, §3 | [ ] |
+| 15 | §15 | Split by maximum file size and by top-level bookmarks (engine and CLI) | §2, D01 T01 §10 | [ ] |
+| 16 | §16 | Split one page into several: grid or custom cut lines (engine and CLI) | §3, §10, §14, §19 | [ ] |
+| 17 | §17 | N-up sheets: several pages on one sheet as a new PDF (engine and CLI) | §1, §3 | [ ] |
+| 18 | §18 | Interleave two PDFs, swap odd and even pages, reverse page order (engine and CLI) | §2, §3, §19 | [ ] |
+| 19 | §19 | Page labels: read, edit, preview and carry through page operations (engine and CLI) | §2, §3, §14 | [ ] |
+| 20 | §20 | Blank page detection with a local heuristic and a deletion plan (engine and CLI) | §3, D01 T02 §1, D01 T02 §6 | [ ] |
+| 21 | §21 | Reorder pages by bookmark order (engine and CLI) | §3, §19, D01 T01 §10 | [ ] |
+| 22 | §22 | Cross-page paging seal: split a seal image across page edges (engine and CLI) | §5, §13 | [ ] |
+| 23 | §23 | ID card copy: front and back images on one page (engine and CLI) | D04 T02 §2, D04 T02 §5 | [ ] |
+| 24 | §24 | Whiteout and whole-page redaction (engine and CLI) | §10 | [ ] |
+| 25 | §25 | PII country packs with checksum validation, local only (engine and CLI) | D03 T01 §1 | [ ] |
+| 26 | §26 | Redaction profiles: saved patterns, appearance and scope as a JSON file (engine and CLI) | §10, §25, D03 T01 §5 | [ ] |
+| 27 | §27 | Document inspector report: what a PDF carries before sanitizing (engine and CLI) | §10, D01 T01 §10, D01 T02 §1 | [ ] |
+| 28 | §28 | Signed revision extraction and comparison with the current document (engine and CLI) | §9, D03 T01 §10 | [ ] |
+| 29 | §29 | Trust lists: opt-in download and manual import into a Recto trust store (engine and CLI) | §9 | [ ] |
+| 30 | §30 | PDF Binder: combine files with a table-of-contents page and a project file | §2, §6, §19 | [ ] |
 
 ## 1. `GraftMap` object-graph cloner, resource deduplicator (`graft.cpp`) & page-range parser
 
@@ -116,6 +154,7 @@ Implement `merge_pdfs` and `split_pdf` in `src/core/page_ops.h/.cpp` and their C
 - [ ] Surface `PdfErrorCode::PasswordRequired` / `InvalidPassword` with the exact offending source file path when any input in `merge_pdfs` or `split_pdf` is encrypted without a valid password, so `D04 T01 §2` / `D05 T02 §3` can prompt for that file's password. Done when: `PageOps.MergeEncryptedRefusal` returns `PasswordRequired` naming the encrypted source and writes zero partial output files.
 - [ ] Implement `split_pdf(src_path, password, span<const SplitPartSpec>, CancelToken)` validating all part page indices up front and writing each part via its own `PdfWriter` + `GraftMap` + `AtomicFileWriter`, cleaning up all already-written parts if `CancelToken` is tripped mid-batch. Done when: `PageOps.SplitRoundTripAndCancel` verifies pixel-exact merge->split round-tripping and clean multi-part rollback on cancel.
 - [ ] Implement `recto-cli merge` and `recto-cli split` in `src/cli/cmd_page_ops.cpp`. Done when: `recto-tests.exe --gtest_filter=PageOps.Merge*:PageOps.Split*:Cli.MergeAndSplit` passes under ASan.
+- [ ] Add `MergeOutlinePolicy` (`WrapPerSource`, `TargetOnly`) to `merge_pdfs`: `WrapPerSource` is the behaviour above; `TargetOnly` keeps only the first (target) source's bookmarks, links and named destinations remapped to their new positions, adds no per-source top-level entries, drops the other sources' outlines (counted in `MergeResult::outlines_dropped`), and exposes `recto-cli merge --outlines wrap|target-only`. Done when: `PageOps.MergeTargetOnlyOutlines` inserts one PDF into another at a position and finds only the target's bookmarks on their moved pages, no dangling page reference, and the dropped count.
 - [ ] Commit: `organize: graft-based merge and split with shared range parsing`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PageOps.Merge*:PageOps.Split*:Cli.MergeAndSplit` passes under ASan: merge-split round-trip pixel equality and range refusals.
@@ -217,6 +256,7 @@ Extend `src/core/stamp_watermark.h/.cpp` with **6-Zone Headers & Footers** (`Top
 - [ ] Implement `shrink_content_to_avoid_overlap`: when enabled, scale and translate the existing page `/Contents` stream and `/Annots` rects into `[margin_left, margin_bottom + footer_height, width - margin_right, height - margin_top - header_height]` before drawing the 6 header/footer zones at full size in the top and bottom margin bands. Done when: `StampWatermark.ShrinkToAvoidOverlap` stamps a full-bleed page and verifies zero bounding-box intersection between the original content and the Bates footer. Cheaper substitute: drawing headers/footers directly over full-bleed page text and ignoring the SPEC 9.9 `Shrink page content to avoid overlapping` option.
 - [ ] Emit header/footer text runs using standard `BT ... Tf ... Tm (...) Tj ET` content-stream operators with `/ToUnicode` mapping so stamped Bates numbers are immediately searchable via `Ctrl+F` (`D03 T01 §5`) and extractable via `PageText` (`D03 T01 §1`). Done when: `SearchEngine` finds `"CASE-000107"` on page 7 of the stamped output.
 - [ ] Implement `recto-cli bates` in `src/cli/cmd_watermark.cpp`. Done when: `recto-tests.exe --gtest_filter=StampWatermark.*:Cli.BatesCommand` passes under ASan.
+- [ ] Make header, footer and Bates stamps managed marks: wrap each stamped zone run in `/Artifact << /Type /Pagination /Subtype /Header|/Footer /RectoMarkId (id) >> BDC ... EMC`, record the options (zones, Bates config, font, margins) in `/PieceInfo << /Recto << /Private >> >>` on the page, add `HeaderFooter` and `Bates` to `PageMarkKind`, and teach `list_marks` and `remove_mark` (`§13`) to return and remove them. Done when: `StampWatermark.HeaderFooterBatesManagedMarks` stamps a 10-page file, lists the mark with its options and page set, removes it, and finds no stamp bytes in the raw output with page text and pixels equal to the unstamped source. Cheaper substitute: unmarked text runs that cannot be listed or removed later.
 - [ ] Commit: `organize: add blank page insertion, crop/resize, watermarks, headers/footers and Bates numbering`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PageOps.Crop*:StampWatermark.*:Cli.WatermarkCommand:Cli.BatesCommand` passes under ASan.
@@ -388,7 +428,7 @@ Open and decrypt files produced by `§11` (and by other readers' certificate enc
 
 ## 13. Page backgrounds engine: add, update, list and remove managed marks
 
-Acrobat Pro lets a person add a background (a colour, an image or a PDF page), change it later and remove it, and remove watermarks too. Users of a comparable app ask for watermark and background removal (pdfcraft #2931, #2962). `src/core/page_background.h/.cpp` (`recto::core::PageMarks`) adds backgrounds as managed marks: each mark is one Form XObject whose settings live in the object itself (`/PieceInfo` private data holding the mark id, kind, name and options), placed by a content stream inserted at the front of the page's `/Contents` array inside an `/Artifact` marked-content sequence that carries the mark id, so the original content streams stay byte-identical and tagged documents treat the background as an artifact. Because the record lives in the stored content, listing, editing and removing later read it back from the file and cannot drift from what the pages show. `PageMarks` also lists and removes watermarks it can recognise (the `WatermarkFm` Form XObject of `§5` and `/Artifact` sequences declaring `/Subtype /Watermark`), but does not edit them. All work is on an isolated copy and saved as a full rewrite, so a removed mark leaves no bytes behind.
+Acrobat Pro lets a person add a background (a colour, an image or a PDF page), change it later and remove it, and remove watermarks too. Removing a watermark or background later is a common need. `src/core/page_background.h/.cpp` (`recto::core::PageMarks`) adds backgrounds as managed marks: each mark is one Form XObject whose settings live in the object itself (`/PieceInfo` private data holding the mark id, kind, name and options), placed by a content stream inserted at the front of the page's `/Contents` array inside an `/Artifact` marked-content sequence that carries the mark id, so the original content streams stay byte-identical and tagged documents treat the background as an artifact. Because the record lives in the stored content, listing, editing and removing later read it back from the file and cannot drift from what the pages show. `PageMarks` also lists and removes watermarks it can recognise (the `WatermarkFm` Form XObject of `§5` and `/Artifact` sequences declaring `/Subtype /Watermark`), but does not edit them. All work is on an isolated copy and saved as a full rewrite, so a removed mark leaves no bytes behind.
 
 **Phase:** 4
 **Needs:** windows-host
@@ -407,7 +447,7 @@ Acrobat Pro lets a person add a background (a colour, an image or a PDF page), c
 - [ ] Implement `list_marks(doc)` enumerating every element of each page's `/Contents` array and reading the first `256` bytes of each stream for a `/RectoMarkId` wrapper (cost linear in the number of content streams), so several backgrounds on one page are all listed, and recognising `WatermarkFm` and `/Artifact /Subtype /Watermark` sequences as `Watermark` marks with `editable = false`. Done when: `PageMarks.ListUpdateRemove` lists two backgrounds on the same page, saved and reopened, plus a `§5` watermark, with the right page sets.
 - [ ] Implement `update_mark(mark_id, options)` rebuilding the Form XObject and moving the mark to a changed page scope (removing it from pages that leave scope and adding it to pages that enter), keeping the same `mark_id`. Done when: `PageMarks.ListUpdateRemove` changes a colour and a page range and finds the earlier version gone from every page.
 - [ ] Implement `remove_mark(mark_id)` removing that mark's inserted stream and its own uniquely named `/Resources /XObject` entry (`RectoBg_<id8>` rather than a shared `/Bg1`), deleting the Form XObject and other objects only when a reference scan finds nothing else uses them, and for recognised watermarks removing the `q /WatermarkFm Do Q` sequence or the `/Artifact` marked-content sequence located through the shared interpreter (`D06 T03 §4`). Done when: `PageMarks.RemoveLeavesNoBytes` removes a background and a watermark and finds no mark bytes in the raw output with page text and pixels equal to the unmarked source, and `PageMarks.RemoveOneOfTwo` removes one of two backgrounds on a page and leaves the other and any shared image intact.
-- [ ] Implement `build_background_preview_display_list(page_dl, options)` returning the page's real `DisplayList` with the background composited beneath it, within `5 ms`, without writing a file, so a dialog preview shows true page content (pdfcraft #2837). Done when: `PageMarks.PreviewMatchesSaved` renders identical pixels to the saved page.
+- [ ] Implement `build_background_preview_display_list(page_dl, options)` returning the page's real `DisplayList` with the background composited beneath it, within `5 ms`, without writing a file, so a dialog preview shows true page content. Done when: `PageMarks.PreviewMatchesSaved` renders identical pixels to the saved page.
 - [ ] Save the result through `AtomicFileWriter` as a full rewrite on a copy, refuse an encrypted source without its password (`PasswordRequired`), honour `CancelToken`, and never touch the open viewer document. Done when: `PageMarks.CopySemanticsAndCancel` shows the source unchanged after success, failure and cancel.
 - [ ] Implement `recto-cli background <add|update|list|remove> <in.pdf> [--colour <rrggbb>] [--image <path>] [--pdf <path> --pdf-page <n>] [--fit fill|fit|centre|tile] [--opacity <0..1>] [--pages <range>] [--id <mark_id>] --out <out.pdf> [--json]` in `src/cli/cmd_background.cpp`. Done when: `Cli.BackgroundCommand` verifies each verb and `--json` listing.
 - [ ] Add `PageMarks.*` tests in `tests/recto-tests/page_marks_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=PageMarks.*:Cli.BackgroundCommand` passes under ASan.
@@ -417,7 +457,7 @@ Acrobat Pro lets a person add a background (a colour, an image or a PDF page), c
 
 ## 14. `replace_pages`: replace pages from another PDF, remapping links, fields and tags
 
-Acrobat Pro replaces pages of one PDF with pages of another and keeps the document consistent; users of a comparable app hit a replace that also replaced the gap between non-adjacent pages (pdfcraft #1305) and ask for the feature outright (pdfcraft #3188). `replace_pages` (`src/core/page_ops.h/.cpp`) takes any set of destination pages, including non-adjacent ones, and a sequence of source pages, and builds a copy in which only the chosen pages change. Pages in the gaps are untouched. The destination keeps its catalog (outlines, named destinations, page labels, form, optional content, metadata, viewer preferences) and every reference that pointed at a replaced page is remapped to its replacement or removed on purpose, so the output has no dangling page reference, no orphan form field and no tag pointing at a removed page. It builds on `GraftMap` (`§1`) and the copy rules of `§3`, never edits the open viewer document, and reports what it changed and what it could not carry over.
+Acrobat Pro replaces pages of one PDF with pages of another and keeps the document consistent; a replace must never also replace the gap between non-adjacent pages. `replace_pages` (`src/core/page_ops.h/.cpp`) takes any set of destination pages, including non-adjacent ones, and a sequence of source pages, and builds a copy in which only the chosen pages change. Pages in the gaps are untouched. The destination keeps its catalog (outlines, named destinations, page labels, form, optional content, metadata, viewer preferences) and every reference that pointed at a replaced page is remapped to its replacement or removed on purpose, so the output has no dangling page reference, no orphan form field and no tag pointing at a removed page. It builds on `GraftMap` (`§1`) and the copy rules of `§3`, never edits the open viewer document, and reports what it changed and what it could not carry over.
 
 **Phase:** 4
 **Needs:** windows-host
@@ -443,8 +483,416 @@ Acrobat Pro replaces pages of one PDF with pages of another and keeps the docume
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=ReplacePages.*:Cli.PagesReplaceCommand` passes under ASan with the gap-untouched pixel comparison and the no-dangling-reference scan quoted.
 
+## 15. Split by maximum file size and by top-level bookmarks (engine and CLI)
+
+Acrobat Pro's Split Document, Foxit PDF Editor's Split, PDFelement's Split and UPDF's Split can all cut a PDF by a maximum file size and by top-level bookmarks, which `§2` does not do (it splits by explicit ranges, every `N` pages and one file per page). This section adds both as `SplitMethod` values on the existing `split_pdf` so they share its graft, atomic-write and cancel behaviour. Each part is a copy written through `GraftMap` (`§1`) and `AtomicFileWriter` (`D04 T02 §1`) on an isolated `pdf::Document`, so the source is never touched, and the plan is computed before any file is created so a refusal leaves nothing on disk. The Recto improvement kept: bookmark titles become file names through a Windows-safe, Unicode-preserving name sanitizer (non-Latin titles stay readable, `D06 T03 §8`), and a part that cannot meet the size limit is reported, never silently split mid-page or dropped.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add `MaxFileSize` and `TopLevelBookmarks` to `SplitMethod`, implement `plan_split_by_size` and `plan_split_by_bookmarks` returning a `SplitPlan` (the parts, their page lists and warnings) before any write. Done when: `SplitBySize.PlanGreedy` and `SplitByBookmarks.PlanFromOutline` produce the expected page lists for the corpus fixtures without creating a file.
+2. Execute a `SplitPlan` through the existing `split_pdf` part writer and add the CLI options. Done when: `SplitBySize.RoundTripPixels`, `SplitByBookmarks.RoundTripPixels` and `Cli.SplitBySizeAndBookmarks` pass under ASan.
+
+- [ ] Define `SplitPlan` (`parts` of `SplitPartSpec` plus `title`, `warnings`), `SplitWarning` (`OversizePart`, `BookmarksOutOfOrder`, `BookmarkUnresolved`, `DuplicateTitleRenamed`, `FrontMatterPart`) and `FrontMatterPolicy` (`SeparatePart`, `AttachToFirst`, `Drop`) in `src/core/page_ops.h`, extending `SplitMethod`. Done when: the header compiles across `recto-core`, `recto-services` and `recto-cli` and `PageOps.SplitMethodEnumsStable` pins the enum values.
+- [ ] Implement `parse_size_spec(std::string_view)` accepting `500KB`, `2.5MB`, `1GB` as 1024-based units as Windows Explorer shows them, and `KiB`, `MiB`, `GiB` as the same values, refusing zero, negatives, text and any limit below `1 KiB` with `PdfErrorCode::InvalidArgument` naming the token. Done when: `SplitBySize.SizeSpecParsing` covers each unit and every refusal.
+- [ ] Implement `plan_split_by_size(doc, max_bytes, CancelToken)`: estimate each page's incremental cost with a `GraftMap` dry run that counts the stream bytes and dictionary overhead of objects not yet in the current part, grow the part page by page, then write the candidate part to a temp stream and measure the real length; when the real length exceeds the limit, shrink by binary search with at most `ceil(log2(n)) + 2` writes per part. Done when: `SplitBySize.PlanGreedy` splits a 40-page fixture with shared fonts into parts that are each at or below the limit and uses no more than the stated writes per part. Cheaper substitute: dividing the source file size by the limit and splitting by equal page counts, which exceeds the limit whenever pages differ in weight.
+- [ ] Treat shared resources honestly: every part carries its own copy of the fonts and images its pages use, so part sizes are not additive, and a single page that alone exceeds the limit is written as its own part with an `OversizePart` warning naming the page and its size instead of being refused or cut. Done when: `SplitBySize.OversizeSinglePage` writes the oversize page alone, reports the warning, and `--strict-size` on the CLI exits non-zero with no files written.
+- [ ] Implement `plan_split_by_bookmarks(doc, level, FrontMatterPolicy)`: take the outline nodes at depth `level` (`1` is top-level) from `D01 T01 §10`, resolve each destination to a page index, start each part at its bookmark's page and end it before the next part's start page, sort nodes by page when the outline is not in page order (`BookmarksOutOfOrder`), merge nodes that resolve to the same page keeping the first title, skip unresolvable destinations (`BookmarkUnresolved`), and apply the front-matter policy to pages before the first bookmark. Done when: `SplitByBookmarks.PlanFromOutline` covers out-of-order, same-page, unresolvable and front-matter cases and every page lands in exactly one part (or is dropped only under `Drop`).
+- [ ] Implement `sanitize_part_file_name(title, used_names)`: replace `<>:"/\|?*` and control characters with `_`, strip trailing dots and spaces, prefix `_` to reserved device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9`, `LPT1` to `LPT9`) with or without an extension, cut at `100` UTF-16 code units without splitting a surrogate pair, keep non-Latin text unchanged, append ` (2)`, ` (3)` for case-insensitive duplicates, and fall back to `part-N` for an empty result. Done when: `SplitByBookmarks.FileNameSanitizer` passes the table of hostile, reserved, duplicate, emoji and CJK titles.
+- [ ] Carry each part's own bookmark subtree: remap the children of the part's bookmark and any destinations inside the part with the link remap of `§1`, and drop outline entries whose pages are in other parts. Done when: `SplitByBookmarks.PartOutlinesRemapped` finds each part's outline pointing only at pages inside that part.
+- [ ] Execute the plan through `split_pdf`'s part writer (`GraftMap`, `PdfWriter`, `AtomicFileWriter`), validating all names and page lists up front, writing no part when any name collides with an existing file unless the caller asked to overwrite, and rolling back already-written parts on `CancelToken` as `§2` does. Done when: `SplitBySize.RoundTripPixels` and `SplitByBookmarks.RoundTripPixels` match the source pages pixel for pixel (`expect_rgba_equal`) and `SplitBySize.CancelRollsBack` leaves no part file.
+- [ ] Implement `recto-cli split <in.pdf> --out-dir <dir> [--max-size <size> [--strict-size] | --by-bookmarks [--level <n>] [--front-matter separate|attach|drop]] [--json]` in `src/cli/cmd_page_ops.cpp`, registered in the `recto-cli` verb table (`D01 T03 §1`), printing the plan with `--dry-run`. Done when: `Cli.SplitBySizeAndBookmarks` verifies exit codes, `--dry-run` writing nothing, and the JSON plan.
+- [ ] Add `SplitBySize.*` and `SplitByBookmarks.*` tests and the fixtures (a heavy-page document, an out-of-order outline, a CJK-titled outline) to `tests/recto-tests/split_methods_tests.cpp`, `scripts/build-corpus.py` and `tests/corpus/PROVENANCE.md`. Done when: `recto-tests.exe --gtest_filter=SplitBySize.*:SplitByBookmarks.*:Cli.SplitBySizeAndBookmarks` passes under ASan.
+- [ ] Commit: `organize: split by maximum file size and by top-level bookmarks`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=SplitBySize.*:SplitByBookmarks.*:Cli.SplitBySizeAndBookmarks` passes under ASan, with the oversize-page warning and the hostile-title table quoted.
+
+## 16. Split one page into several: grid or custom cut lines (engine and CLI)
+
+UPDF's Split Page, PDFelement's and Foxit PDF Editor's page division cut one page into several pages, which is how a two-page scan spread or an oversize sheet becomes separate pages; Acrobat Pro can only crop. `split_page` (`src/core/page_split.h/.cpp`) takes a page, a `rows x cols` grid or explicit horizontal and vertical cut lines in displayed-page points, and writes each cell as its own page. A page box alone only hides content, so by default the engine also removes the text, paths and image pixels that lie outside each cell (`Redactor::strip_outside_regions`, added here), keeping Recto's true-removal rule: a piece does not secretly carry the other pieces. Work is on an isolated copy through `GraftMap` (`§1`) and `AtomicFileWriter`, bookmarks, links and named destinations of the split page are remapped with the reference table of `§14`, and the open viewer document is never modified.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Define `PageSplitSpec`, compute cell rectangles in user space for any `/Rotate` and implement `split_page` with the keep-outside option. Done when: `PageSplit.GridAndCutLines` splits a rotated and an unrotated fixture into the expected cell boxes and renders each cell pixel-identical to the matching region of the source render.
+2. Add true removal outside each cell, annotation and form assignment, reference remapping and `recto-cli split-page`. Done when: `PageSplit.NoContentOutsideCell`, `PageSplit.AnnotationsAndFields`, `PageSplit.ReferencesRemapped` and `Cli.SplitPageCommand` pass under ASan.
+
+- [ ] Define `PageSplitSpec` (`rows`, `cols`, `vertical_cuts_pt`, `horizontal_cuts_pt` measured from the top-left of the displayed page, `column_order` of `LeftToRight` or `RightToLeft`, `page_indices`, `remove_content_outside_cells`) and `PageSplitResult` (`cells_written`, `net_page_change`, `annotations_dropped`, `widgets_assigned`, `content_removed_outside`) in `src/core/page_split.h`. Done when: the header compiles across `recto-core`, `recto-services` and `recto-cli`.
+- [ ] Validate before writing: cut lines strictly inside the displayed page and at least `4 pt` apart, grid at most `10 x 10`, not both a grid and explicit cuts, and a non-empty page set, refusing with `PdfErrorCode::InvalidArgument` naming the offending value. Done when: `PageSplit.Validation` covers every refusal and no file is created.
+- [ ] Convert displayed-page cuts to user-space cell rectangles for `/Rotate` `0`, `90`, `180` and `270` and for a non-zero `/CropBox` origin, order cells top to bottom and left to right (or right to left), and write each cell as a new page grafting the original content once with `/MediaBox` and `/CropBox` set to the cell rectangle and `/Rotate` preserved. Done when: `PageSplit.GridAndCutLines` passes for all four rotations.
+- [ ] Add `Redactor::strip_outside_regions(page, cell_rect)` to `src/pdf/redactor.cpp` by adding a `draw_burn_in` flag (default `true`) to `RedactionMark` and calling the glyph-run splitter, vector clip and image pixel scrubber of `§10` on the four strips of the page box outside the cell with `draw_burn_in = false`. Done when: `PageSplit.NoContentOutsideCell` finds no text, path or image pixel outside each cell in a raw stream scan and `PageText` of each cell holds only that cell's words. Cheaper substitute: setting only `/CropBox`, which leaves every other cell's text extractable.
+- [ ] Allow `remove_content_outside_cells = false` for callers that want a box-only split, and set `content_removed_outside = false` in the result so the CLI and UI can state that the other cells' content remains in the file. Done when: `PageSplit.KeepOutsideReported` shows the flag and the retained text.
+- [ ] Assign annotations by rectangle: keep a link or markup annotation in every cell its `/Rect` intersects, assign each form widget to the single cell containing its centre (dropping it from the others so field names stay unique), and rewrite `/Rect` and `/QuadPoints` unchanged because user space is unchanged. Done when: `PageSplit.AnnotationsAndFields` finds each widget on exactly one cell and links on every cell they cross.
+- [ ] Remap bookmarks, link destinations and named destinations of the split page to its first cell and the page labels through `remap_page_labels` (`§19`) using the reference table of `§14`, and run `verify_page_references` before commit. Done when: `PageSplit.ReferencesRemapped` finds no dangling page reference and the net page count equals `cells - 1` per split page.
+- [ ] Commit through `AtomicFileWriter` as a copy (`dst_path == src_path` supported as in `§3`), refuse an encrypted source without its password naming the file, and honour `CancelToken`. Done when: `PageSplit.CopySemanticsAndCancel` shows the source unchanged after success, failure and cancel.
+- [ ] Implement `recto-cli split-page <in.pdf> --out <out.pdf> (--grid <RxC> | --cuts-v <pt,...> --cuts-h <pt,...>) [--pages <spec>] [--rtl] [--keep-outside] [--json]` in `src/cli/cmd_page_ops.cpp`. Done when: `Cli.SplitPageCommand` verifies the verbs, refusals and the `--keep-outside` message.
+- [ ] Add `PageSplit.*` tests and the fixtures (a two-page scan spread, a rotated page, a page with a widget and a link on the cut) to `tests/recto-tests/page_split_tests.cpp` and `tests/corpus/PROVENANCE.md`. Done when: `recto-tests.exe --gtest_filter=PageSplit.*:Cli.SplitPageCommand` passes under ASan.
+- [ ] Commit: `organize: split one page into several with true removal outside each cell`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PageSplit.*:Cli.SplitPageCommand` passes under ASan with the raw-scan "nothing outside the cell" result quoted.
+
+## 17. N-up sheets: several pages on one sheet as a new PDF (engine and CLI)
+
+PDFelement's page layout and Foxit PDF Editor's N-up put several pages on one sheet as a saved PDF; Acrobat Pro only does this when printing, and Recto's print layouts live in `D07 T01 §10`. `make_nup` (`src/core/nup.h/.cpp`) builds a new document in which each output sheet places `rows x cols` source pages as Form XObjects grafted once per source page (`GraftMap`, `§1`), so vector text stays vector and a repeated page is stored once. It runs on an isolated copy and never modifies the source. The sheets are flattened by nature: links, bookmarks and tags of the source are not carried, which the result reports, and visible annotation appearances are drawn so comments still show.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Define `NUpOptions` and implement cell layout, fit scaling and the Form XObject placement with page rotation. Done when: `NUp.TwoUpAndFourUp` lays 2-up landscape and 4-up portrait sheets from a mixed-size fixture and every cell renders the source page scaled to fit.
+2. Add annotation appearances, orientation choice, border, ordering, repeat mode and `recto-cli nup`. Done when: `NUp.AnnotationsBordersAndOrder`, `NUp.RepeatPage` and `Cli.NUpCommand` pass under ASan.
+
+- [ ] Define `NUpOptions` (`rows`, `cols`, `sheet` of `A3`, `A4`, `A5`, `Letter`, `Legal`, `Tabloid` or `Custom` with `width_pt x height_pt`, `orientation` of `Auto`, `Portrait` or `Landscape`, `margin_pt`, `gutter_pt`, `order` of `RowsLeftToRight`, `RowsRightToLeft` or `ColumnsTopToBottom`, `border_width_pt`, `border_rgba`, `include_annotations`, `repeat_each_page`, `page_indices`) and `NUpResult` (`sheets_written`, `orientation_used`, `links_dropped`, `tags_dropped`) in `src/core/nup.h`. Done when: the header compiles across `recto-core`, `recto-services` and `recto-cli`.
+- [ ] Validate `rows` and `cols` between `1` and `8`, margins and gutters that leave a positive cell, and a non-empty page set, with `PdfErrorCode::InvalidArgument` naming the value. Done when: `NUp.Validation` covers every refusal and writes no file.
+- [ ] Wrap each source page as a Form XObject through `GraftMap` with `/BBox` equal to the page's `/CropBox` and `/Matrix` applying `/Rotate`, and place it in its cell with `q a b c d e f cm /P<n> Do Q` using a uniform scale `min(cell_w / w, cell_h / h)` centred in the cell. Done when: `NUp.TwoUpAndFourUp` pixel-matches reference renders of a mixed A4, Letter and landscape fixture. Cheaper substitute: rasterizing each page to an image, which loses selectable text and vector sharpness.
+- [ ] Resolve `Auto` orientation once per document by choosing the sheet orientation that gives the larger scale for the first selected page, and record it in `orientation_used`. Done when: `NUp.AutoOrientation` picks landscape for a portrait page in a 1x2 grid and portrait for a landscape page in a 2x1 grid.
+- [ ] Draw visible annotation appearance streams (`/AP /N`, ISO 32000-2 section 12.5.5 matrix algorithm) inside the placed page when `include_annotations` is set, skipping hidden, no-view and zero-size annotations, and count dropped links and tag trees in the result. Done when: `NUp.AnnotationsBordersAndOrder` shows a highlight and a stamp on the sheet and `links_dropped` equals the source link count.
+- [ ] Implement the three cell orders, the optional border rectangle and `repeat_each_page` (the same page in every cell of its sheet, stored once). Done when: `NUp.AnnotationsBordersAndOrder` and `NUp.RepeatPage` verify cell order by text position and that a repeated page adds one Form XObject.
+- [ ] Write the result as a new document through `PdfWriter` and `AtomicFileWriter` with `/Info` copied from the source and `/Producer` set by Recto, refuse an encrypted source without its password naming the file, and honour `CancelToken`. Done when: `NUp.CopySemanticsAndCancel` shows the source unchanged after success, failure and cancel.
+- [ ] Implement `recto-cli nup <in.pdf> --out <out.pdf> --grid <RxC> [--sheet a4|a3|letter|legal|<WxH>] [--orientation auto|portrait|landscape] [--margin <pt>] [--gutter <pt>] [--order rows|rtl|columns] [--border <pt>] [--repeat] [--pages <spec>] [--json]` in `src/cli/cmd_nup.cpp`. Done when: `Cli.NUpCommand` verifies exit codes and the JSON result.
+- [ ] Add `NUp.*` tests and a mixed-size fixture to `tests/recto-tests/nup_tests.cpp` and `tests/corpus/PROVENANCE.md`. Done when: `recto-tests.exe --gtest_filter=NUp.*:Cli.NUpCommand` passes under ASan.
+- [ ] Commit: `organize: N-up sheets as a new PDF with vector pages`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=NUp.*:Cli.NUpCommand` passes under ASan with the mixed-size pixel comparison quoted.
+
+## 18. Interleave two PDFs, swap odd and even pages, reverse page order (engine and CLI)
+
+UPDF, PDFelement and Foxit PDF Editor offer Interleave, Swap Odd and Even, and Reverse Order for the common two-pass duplex scan: the feeder scans all fronts into one file and, after the stack is flipped, all backs into another in reverse. `§2` already grafts any interleaved selection, so this section adds the named operations on top of `PageEditPlan` (`§3`) and the merge graft (`§2`): `interleave_pdfs`, `swap_odd_even` and `reverse_pages`. All three are copy operations on isolated documents through `AtomicFileWriter`, and none changes the source files.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `reverse_pages` and `swap_odd_even` as `PageEditPlan` builders and `interleave_pdfs` over two `GraftMap`s. Done when: `PageOrder.ReverseSwapInterleave` produces the expected page sequences for odd and even counts and a sub-range, verified by per-page text.
+2. Handle unequal counts, outline and label remapping and the CLI verbs. Done when: `PageOrder.UnequalCounts`, `PageOrder.OutlineAndLabels` and `Cli.PagesInterleaveSwapReverse` pass under ASan.
+
+- [ ] Define `InterleaveOptions` (`reverse_b`, `allow_unequal_counts`, `a_pages`, `b_pages`, `password_a`, `password_b`) and `PageOrderResult` (`pages_written`, `unmatched_pages`, `b_outlines_dropped`) in `src/core/page_ops.h`. Done when: the header compiles across `recto-core`, `recto-services` and `recto-cli`.
+- [ ] Implement `reverse_pages(src, range)` as a `PageEditPlan` that reverses the chosen contiguous range (or all pages) and leaves pages outside it in place. Done when: `PageOrder.ReverseSwapInterleave` reverses a 7-page file and pages 3 to 6 of a 9-page file correctly.
+- [ ] Implement `swap_odd_even(src, range)` swapping pairs `(1,2)`, `(3,4)` and so on inside the range, leaving an unpaired last page in place, and reporting the pair count. Done when: `PageOrder.ReverseSwapInterleave` covers even and odd page counts and a range starting on an even page.
+- [ ] Implement `interleave_pdfs(a, b, InterleaveOptions, dst, CancelToken)` building `A1, B1, A2, B2, ...` (with `reverse_b` taking B from its last page to its first), one `GraftMap` per source so shared resources are stored once per source. Done when: `PageOrder.ReverseSwapInterleave` matches the expected order for the duplex scan case (fronts `1,2,3`, backs `3,2,1`) and renders pixel-identical to the manual merge of the same order.
+- [ ] Refuse unequal page counts with `InvalidArgument` naming both counts unless `allow_unequal_counts` is set, in which case append the remaining pages of the longer file in order and report them as `unmatched_pages`. Done when: `PageOrder.UnequalCounts` covers both modes and the refusal writes no file.
+- [ ] Remap the first source's bookmarks, links and named destinations to the new page positions with the link remap of `§1`, drop the second source's (counted in `b_outlines_dropped`), and carry labels through `remap_page_labels` (`§19`). Done when: `PageOrder.OutlineAndLabels` finds A's bookmarks on the right interleaved pages and no dangling page reference.
+- [ ] Surface `PasswordRequired` and `InvalidPassword` with the offending file path for either input, honour `CancelToken` and write through `AtomicFileWriter`. Done when: `PageOrder.EncryptedAndCancel` shows no output file and the source files unchanged.
+- [ ] Implement `recto-cli pages interleave <a.pdf> <b.pdf> --out <out.pdf> [--reverse-b] [--allow-unequal]`, `recto-cli pages swap-odd-even <in.pdf> --out <out.pdf> [--pages <spec>]` and `recto-cli pages reverse <in.pdf> --out <out.pdf> [--pages <spec>]` in `src/cli/cmd_page_ops.cpp`, extending the verb family of `§3`. Done when: `Cli.PagesInterleaveSwapReverse` verifies each verb, the refusals and exit codes.
+- [ ] Add `PageOrder.*` tests to `tests/recto-tests/page_order_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=PageOrder.*:Cli.PagesInterleaveSwapReverse` passes under ASan.
+- [ ] Commit: `organize: interleave two PDFs, swap odd and even pages, reverse page order`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PageOrder.*:Cli.PagesInterleaveSwapReverse` passes under ASan with the duplex-scan sequence quoted.
+
+## 19. Page labels: read, edit, preview and carry through page operations (engine and CLI)
+
+Acrobat Pro's Page Labels, Foxit PDF Editor's, PDFelement's and UPDF's page-number settings let a person make front matter `i, ii, iii` and the body `1, 2, 3`, or add prefixes such as `A-1`. Recto today only preserves `/PageLabels` (`§14` rebuilds them after a replace) and `§3` does not say what happens to them when pages are reordered, extracted or merged. `PageLabels` (`src/core/page_labels.h/.cpp`) reads the `/PageLabels` number tree with bounded recursion, formats labels exactly as ISO 32000-2 section 12.4.2 defines, writes a normalised flat `/Nums` array on a copy, and supplies `remap_page_labels`, the one function every page operation uses so a page keeps the label it showed. The stored tree is the single source of truth: previews, the viewer and print all read it back from the file.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Define the range model, read the number tree with bounds and format labels for all styles. Done when: `PageLabels.ReadAndFormat` reads flat and nested trees and formats decimal, upper and lower Roman, and upper and lower letter styles with prefixes.
+2. Write labels, add `remap_page_labels`, hook the page operations and add `recto-cli labels`. Done when: `PageLabels.WriteRoundTrip`, `PageLabels.RemapThroughOperations`, `Cli.LabelsCommand` and `fuzz_page_labels` (60 second smoke) pass under ASan.
+
+- [ ] Define `PageLabelStyle` (`None`, `Decimal`, `UpperRoman`, `LowerRoman`, `UpperLetters`, `LowerLetters`), `PageLabelRange` (`first_page_index`, `style`, `prefix`, `start` of at least `1`) and `LabelPolicy` (`KeepLabels`, `Renumber`) in `src/core/page_labels.h`. Done when: the header compiles across `recto-core`, `recto-services` and `recto-cli`.
+- [ ] Implement `read_page_labels(doc)` over the `/Catalog /PageLabels` number tree (`/Nums` and `/Kids`) with an iterative walk, depth at most `16`, at most `10000` nodes and `100000` entries, cycle-safe, tolerating unsorted keys and a missing first key at `0`, reading prefixes in PDFDocEncoding or UTF-16BE, and returning `PdfResult<std::vector<PageLabelRange>>` with a typed fault for a hostile tree. Done when: `PageLabels.ReadAndFormat` and `PageLabels.HostileTree` (a cyclic and a 100000-entry tree) pass under ASan.
+- [ ] Implement `label_for_page(ranges, page_index)` per ISO 32000-2 Table 159: Roman numerals in additive form with repeated `M` above `3999`, letters `A` to `Z`, then `AA` to `ZZ`, then `AAA` to `ZZZ`, an absent style giving the prefix alone, and a page before the first range using decimal from `1`. Done when: `PageLabels.ReadAndFormat` covers `4`, `9`, `14`, `3999`, `4000`, `26`, `27`, `52` and `53` for the styles.
+- [ ] Implement `set_page_labels(src, ranges, dst, CancelToken)` writing a normalised flat `/Nums` array, inserting a decimal range at page `0` when the first range starts later, rejecting ranges that are out of order, duplicated, or beyond the page count, and `clear_page_labels`, always on a copy through `PdfWriter` and `AtomicFileWriter`. Done when: `PageLabels.WriteRoundTrip` writes, reopens and reads back the same ranges and `PageLabels.Validation` covers each refusal.
+- [ ] Implement `remap_page_labels(source_ranges, kept_source_indices, policy)` producing the output ranges so that, under `KeepLabels`, output page `k` shows the label source page `kept[k]` showed: consecutive source pages with the same style and prefix and consecutive numbers share one range, anything else starts a new range with an explicit `start`; an inserted blank page gets an empty label with no style; under `Renumber` no ranges are written. Done when: `PageLabels.RemapThroughOperations` keeps `iv` on a moved page and shows the expected ranges for reorder, delete, extract and a blank insert.
+- [ ] Hook `remap_page_labels` into `apply_page_edits`, `extract_pages`, `split_pdf`, `merge_pdfs` (each labelled source keeps its labels, an unlabelled segment continues decimal from its physical position when any source has labels, and no labels are written when none do) and the label rebuild of `replace_pages` (`§14`). Done when: `PageLabels.RemapThroughOperations` runs each operation and reads the output labels back, and `ReplacePages.TagsAndLabels` still passes.
+- [ ] Add `build_label_preview(ranges, page_count)` returning every page's label string for the dialog and CLI preview, capped at `100000` pages. Done when: `PageLabels.Preview` returns `i, ii, iii, 1, 2, 3` for a front-matter fixture.
+- [ ] Add a libFuzzer target `fuzz_page_labels` in `fuzz/fuzz_page_labels.cpp` mutating the number tree and prefix strings. Done when: a 60 second smoke run (`D01 T03 §5` CI mode) finds no crash, hang or unbounded allocation.
+- [ ] Implement `recto-cli labels list <in.pdf> [--json]`, `recto-cli labels set <in.pdf> --out <out.pdf> --range <page>:<style>[:<prefix>][:<start>]...` and `recto-cli labels clear <in.pdf> --out <out.pdf>` in `src/cli/cmd_labels.cpp`. Done when: `Cli.LabelsCommand` verifies each verb, the style letters `D r R a A` and the refusals.
+- [ ] Add `PageLabels.*` tests and a front-matter fixture to `tests/recto-tests/page_labels_tests.cpp` and `tests/corpus/PROVENANCE.md`. Done when: `recto-tests.exe --gtest_filter=PageLabels.*:Cli.LabelsCommand` passes under ASan.
+- [ ] Commit: `organize: page labels engine with remapping through page operations`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PageLabels.*:Cli.LabelsCommand` passes under ASan with the Roman and letter table and the moved-page `iv` result quoted.
+
+## 20. Blank page detection with a local heuristic and a deletion plan (engine and CLI)
+
+PDFelement's and UPDF's Delete Blank Pages remove the empty sheets a duplex scanner or a bad export leaves in a file. `detect_blank_pages` (`src/core/blank_pages.h/.cpp`) classifies every page with a deterministic, local, two-stage heuristic and returns the evidence for each verdict so the person can review it; it never deletes anything itself. Deleting is a separate `plan_blank_page_deletion` that produces a `PageEditPlan` for `apply_page_edits` (`§3`), a copy operation. The heuristic is conservative: a page with visible text, an annotation, or enough ink is never called blank, an invisible OCR text layer over a blank scan does not make the page non-blank by default, and the thresholds are settings the caller can change.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement the structural pass over the page `DisplayList` and the raster ink-ratio pass with margin and speckle handling. Done when: `BlankPages.Verdicts` classifies the corpus fixtures (truly blank, white text on white, blank scan with edge shadow and speckle, faint watermark, one dot, a signature box) as expected at each sensitivity.
+2. Add the annotation and hidden-text policies, the deletion plan and `recto-cli blank-pages`. Done when: `BlankPages.AnnotationAndHiddenTextPolicy`, `BlankPages.DeletionPlan` and `Cli.BlankPagesCommand` pass under ASan.
+
+- [ ] Define `BlankSensitivity` (`Low`, `Medium`, `High`), `BlankDetectOptions` (`sensitivity`, `ignore_margin_percent` default `5`, `annotations_count_as_content` default `true`, `hidden_text_counts_as_content` default `false`, `page_indices`), `BlankVerdict` (`Blank`, `NearlyBlank`, `NotBlank`) and `BlankPageFinding` (`page_index`, `verdict`, `ink_ratio`, `reasons`) in `src/core/blank_pages.h`. Done when: the header compiles across `recto-core`, `recto-services` and `recto-cli`.
+- [ ] Implement the structural pass on the `DisplayList` (`D01 T02 §1`): a glyph run with a visible fill (not render mode `3`, non-zero alpha, colour not within a small distance of white), any painted path above a minimum area or length, any placed image or shading, or a non-empty Form XObject that draws any of these marks the page as having content; a page with none of them is `Blank` without rasterizing. Done when: `BlankPages.Verdicts` marks an empty page and a page with only white text on white as `Blank` and a one-word page as `NotBlank`.
+- [ ] Implement the raster pass for pages with images or paths: render at `36 DPI` greyscale through the tile rasterizer (`D01 T02 §6`), ignore the outer margin band, erode isolated pixels with a `3 x 3` kernel to drop speckle, and compute the ratio of pixels darker than luminance `200`; thresholds are `0.5%` for `High`, `0.1%` for `Medium` and `0.02%` for `Low` sensitivity, `Blank` at or below the threshold, `NearlyBlank` up to four times it, otherwise `NotBlank`. Done when: `BlankPages.Verdicts` classifies a scanned blank with a dark edge shadow and punch holes as `Blank` at `Medium` and a page with a faint watermark as `NotBlank` at `Low` and `NearlyBlank` at `High`.
+- [ ] Apply the annotation policy (a visible annotation, widget with a value, or stamp makes a page `NotBlank` with the reason named) and the hidden-text policy (text in render mode `3` over an otherwise blank page keeps the page blank unless `hidden_text_counts_as_content`, and the finding lists `hidden text present`). Done when: `BlankPages.AnnotationAndHiddenTextPolicy` covers each combination.
+- [ ] Bound the work: honour `CancelToken` between pages, skip nothing silently (a page that fails to render is reported `NotBlank` with the reason `render failed`), and cap the raster pass at `4 MP` per page. Done when: `BlankPages.CancelAndRenderFailure` shows both behaviours.
+- [ ] Implement `plan_blank_page_deletion(findings, include_nearly_blank, extra_exclusions)` returning a `PageEditPlan` for `apply_page_edits`, refusing with `InvalidArgument` when it would delete every page and never including a page the caller excluded. Done when: `BlankPages.DeletionPlan` deletes only the chosen pages and the output renders the kept pages pixel-identical to the source.
+- [ ] Implement `recto-cli blank-pages detect <in.pdf> [--sensitivity low|medium|high] [--annotations-blank] [--hidden-text-content] [--json]` and `recto-cli blank-pages delete <in.pdf> --out <out.pdf> [--sensitivity ...] [--include-nearly-blank] [--keep <spec>]` in `src/cli/cmd_blank_pages.cpp`. Done when: `Cli.BlankPagesCommand` verifies the JSON findings and that `delete` writes only a copy.
+- [ ] Add `BlankPages.*` tests and the six fixtures to `tests/recto-tests/blank_pages_tests.cpp`, `scripts/build-corpus.py` and `tests/corpus/PROVENANCE.md`. Done when: `recto-tests.exe --gtest_filter=BlankPages.*:Cli.BlankPagesCommand` passes under ASan.
+- [ ] Commit: `organize: blank page detection with evidence and a deletion plan`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=BlankPages.*:Cli.BlankPagesCommand` passes under ASan with the per-fixture verdict table quoted.
+
+## 21. Reorder pages by bookmark order (engine and CLI)
+
+Foxit PDF Editor can reorder pages to follow the bookmark order, which fixes a document whose outline was rearranged by hand and whose pages were not. `order_pages_by_bookmarks` (`src/core/page_ops.cpp`) builds a `PageEditPlan` (`§3`) from the outline (`D01 T01 §10`) so the physical order follows the outline's depth-first order: each bookmarked page leads a run made of itself and the unbookmarked pages that followed it in the source, and the runs are laid out in outline order. It is a copy operation, deterministic, and never drops a page.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement run building and the plan. Done when: `OrderByBookmarks.RunsFollowOutline` reorders a fixture whose outline lists chapters `3, 1, 2` into chapters `3, 1, 2` with every page present exactly once.
+2. Add depth control, duplicate and unresolved handling and the CLI verb. Done when: `OrderByBookmarks.DepthAndEdgeCases` and `Cli.PagesOrderByBookmarks` pass under ASan.
+
+- [ ] Define `OrderByBookmarksOptions` (`max_depth` default unlimited, `front_pages` of `KeepAtFront`) and `OrderByBookmarksResult` (`runs`, `unresolved_bookmarks`, `duplicate_destinations`, `already_in_order`) in `src/core/page_ops.h`. Done when: the header compiles across `recto-core`, `recto-services` and `recto-cli`.
+- [ ] Walk the outline depth first to `max_depth`, resolve each destination to a page index, keep the first bookmark for a page that several bookmarks target, and skip unresolvable destinations, counting both. Done when: `OrderByBookmarks.DepthAndEdgeCases` covers duplicates, unresolved destinations and a depth limit of `1`.
+- [ ] Build runs in the source order (a bookmarked page plus the following unbookmarked pages up to the next bookmarked page), keep pages before the first bookmarked page at the front, order the runs by the outline sequence, and set `already_in_order` when the plan is the identity. Done when: `OrderByBookmarks.RunsFollowOutline` shows every page exactly once and an identity plan for an ordered fixture.
+- [ ] Apply the plan with `apply_page_edits` on a copy, keeping labels through `remap_page_labels` (`§19`) and remapping bookmarks and links through the link remap of `§1`. Done when: `OrderByBookmarks.OutlinePointsAtMovedPages` finds each bookmark on its moved page and no dangling reference.
+- [ ] Implement `recto-cli pages order-by-bookmarks <in.pdf> --out <out.pdf> [--depth <n>] [--dry-run] [--json]` in `src/cli/cmd_page_ops.cpp`, where `--dry-run` prints the new order and writes nothing. Done when: `Cli.PagesOrderByBookmarks` verifies the dry run and the written copy.
+- [ ] Add `OrderByBookmarks.*` tests and a rearranged-outline fixture to `tests/recto-tests/page_order_tests.cpp` and `tests/corpus/PROVENANCE.md`. Done when: `recto-tests.exe --gtest_filter=OrderByBookmarks.*:Cli.PagesOrderByBookmarks` passes under ASan.
+- [ ] Commit: `organize: reorder pages to follow the bookmark order`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OrderByBookmarks.*:Cli.PagesOrderByBookmarks` passes under ASan.
+
+## 22. Cross-page paging seal: split a seal image across page edges (engine and CLI)
+
+PDFelement's cross-page ("paging") seal, used for contracts, cuts one seal image into slices and puts one slice on the edge of each page so a stack of pages cannot be swapped without breaking the seal. `add_paging_seal` (`src/core/paging_seal.h/.cpp`) takes a seal image, a page set and an edge, decodes the image through WIC, cuts it into one pixel slice per page, and places slice `k` flush to the chosen edge of the `k`-th page of the set. Each page carries only its own slice as an image XObject (not the whole image clipped), so extracting images from one page never reveals the full seal, matching Recto's true-removal stance. The slices are managed marks of kind `PagingSeal` in the registry of `§13` (an `/Artifact` marked-content sequence with `/RectoMarkId` and the options in `/PieceInfo`), so they can be listed and removed later. It works on an isolated copy and is a visual aid only: it is not a digital signature and the report says so.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Define `PagingSealOptions`, slice the image and place each slice on its page edge. Done when: `PagingSeal.SlicesAndPlacement` seals a 5-page file with a PNG seal on the right edge and each page holds one slice image at the expected rectangle.
+2. Register the marks for list and remove, add other edges and the CLI. Done when: `PagingSeal.ListAndRemove`, `PagingSeal.AllEdges` and `Cli.SealAcrossCommand` pass under ASan.
+
+- [ ] Define `SealEdge` (`Right`, `Left`, `Top`, `Bottom`), `PagingSealOptions` (`image_path`, `edge`, `page_indices`, `seal_width_pt`, `seal_height_pt`, `anchor_percent` along the edge, `opacity`, `layer` of `InFront` or `Behind`) and `PagingSealResult` (`slices_written`, `slice_pixel_sizes`, `mark_id`) in `src/core/paging_seal.h`, and add `PagingSeal` to `PageMarkKind` in `src/core/page_background.h`. Done when: the headers compile across `recto-core`, `recto-services` and `recto-cli`.
+- [ ] Validate that the page set is at least `2` pages, the seal is between `10 pt` and the shortest page side, the image decodes through WIC within a `64 MP` limit, and the anchor lies inside the page, refusing with `InvalidArgument` naming the value. Done when: `PagingSeal.Validation` covers each refusal and writes no file.
+- [ ] Decode the image to RGBA through WIC, scale it to `seal_width_pt x seal_height_pt` at its native pixel density, cut it into `N` equal pixel slices along the edge's axis (the last slice absorbing the remainder), and write each slice as its own Flate image XObject with an `/SMask` for alpha. Done when: `PagingSeal.SlicesAndPlacement` finds the slice widths sum to the image width and reassembling them reproduces the source pixels.
+- [ ] Place slice `k` on the `k`-th page of the set flush to the edge at the anchor, inside an `/Artifact << /RectoMarkId (id) >> BDC q ... Do Q EMC` sequence appended to the page `/Contents` array without rewriting existing streams, with `/ExtGState` opacity when set. Done when: `PagingSeal.AllEdges` renders each edge on portrait, landscape and rotated pages with the slice at the edge.
+- [ ] Store the options in `/PieceInfo << /Recto << /Private << /MarkId /Kind /Options >> >> >>` on each slice XObject and teach `list_marks` and `remove_mark` (`§13`) to list and remove `PagingSeal` marks, deleting the slice images with the mark. Done when: `PagingSeal.ListAndRemove` removes a seal and finds no slice bytes in the raw output and page pixels equal to the unsealed source.
+- [ ] Write through `AtomicFileWriter` as a full rewrite on a copy, refuse an encrypted source without its password, honour `CancelToken`, and state in the result that the seal is not a digital signature. Done when: `PagingSeal.CopySemanticsAndCancel` shows the source unchanged after success, failure and cancel.
+- [ ] Implement `recto-cli seal-across <in.pdf> --out <out.pdf> --image <seal.png> [--edge right|left|top|bottom] [--pages <spec>] [--width <pt>] [--anchor <percent>] [--opacity <0..1>] [--json]` in `src/cli/cmd_seal_across.cpp`. Done when: `Cli.SealAcrossCommand` verifies the options and refusals.
+- [ ] Add `PagingSeal.*` tests and a seal PNG fixture to `tests/recto-tests/paging_seal_tests.cpp` and `tests/corpus/PROVENANCE.md`. Done when: `recto-tests.exe --gtest_filter=PagingSeal.*:Cli.SealAcrossCommand` passes under ASan.
+- [ ] Commit: `organize: cross-page paging seal with per-page image slices`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PagingSeal.*:Cli.SealAcrossCommand` passes under ASan with the slice-sum and extracted-image checks quoted.
+
+## 23. ID card copy: front and back images on one page (engine and CLI)
+
+UPDF's ID card copy puts the front and back photos of an identity card on one page at real size, the usual form for a photocopy that a bank or an employer asks for. `make_id_card_copy` (`src/core/id_card_copy.h/.cpp`) builds a new one-page PDF from two images through WIC (`D04 T02 §5`), places each at the true card size (ISO/IEC 7810 ID-1, `85.60 x 53.98 mm`, by default) centred on the page one above the other, and keeps the camera's orientation. The image data is embedded as given when it needs no crop or rotation (a JPEG stays a pass-through `DCTDecode` stream), so there is no quality loss. It runs offline, on the files the user names, and writes through `AtomicFileWriter`.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `make_id_card_copy` with card-size presets, EXIF orientation and crop. Done when: `IdCardCopy.LayoutAndSize` produces an A4 page with two images at `85.60 x 53.98 mm` centred with the stated gap, from a rotated phone photo and a scan.
+2. Add the CLI verb and the lossless embedding check. Done when: `IdCardCopy.JpegPassThrough` and `Cli.IdCardCommand` pass under ASan.
+
+- [ ] Define `CardSizePreset` (`Id1_85_6x53_98mm`, `Id3_125x88mm`, `A6`, `Custom`), `IdCardCopyOptions` (`front_image`, `back_image`, `paper` of `A4`, `Letter` or custom, `card_size`, `gap_mm` default `10`, `border_width_pt`, `front_crop` and `back_crop` as normalised rectangles, `title`) and `IdCardCopyResult` in `src/core/id_card_copy.h`. Done when: the header compiles across `recto-core`, `recto-services` and `recto-cli`.
+- [ ] Decode both images through WIC with a `64 MP` limit, apply the EXIF orientation, apply the optional normalised crop, and refuse an unreadable or oversize image naming the file. Done when: `IdCardCopy.OrientationAndCrop` renders a rotated phone photo upright and cropped.
+- [ ] Lay out the two cards centred horizontally, stacked with the gap, centred vertically as a pair, scaled to the card size preserving aspect ratio and centred in the card box, with an optional hairline border. Done when: `IdCardCopy.LayoutAndSize` checks the placed rectangles to within `0.01 pt`.
+- [ ] Embed a JPEG without crop or rotation as a `DCTDecode` pass-through and anything else as Flate RGB with an `/SMask` when it has alpha. Done when: `IdCardCopy.JpegPassThrough` finds the original JPEG bytes in the output stream. Cheaper substitute: re-encoding every image through a bitmap, which degrades the photo.
+- [ ] Write through `PdfWriter` and `AtomicFileWriter` with `/Info /Title` set from the option and no source image path or EXIF location data in the output, and honour `CancelToken`. Done when: `IdCardCopy.NoMetadataLeak` finds no GPS tag or file path in the raw output.
+- [ ] Implement `recto-cli idcard --front <img> --back <img> --out <out.pdf> [--paper a4|letter|<WxHmm>] [--card id1|id3|a6|<WxHmm>] [--gap <mm>] [--border <pt>]` in `src/cli/cmd_idcard.cpp`. Done when: `Cli.IdCardCommand` verifies the options and refusals.
+- [ ] Add `IdCardCopy.*` tests and the image fixtures to `tests/recto-tests/id_card_copy_tests.cpp` and `tests/corpus/PROVENANCE.md` (synthetic cards only, no real identity data). Done when: `recto-tests.exe --gtest_filter=IdCardCopy.*:Cli.IdCardCommand` passes under ASan.
+- [ ] Commit: `organize: ID card copy with front and back at true card size`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=IdCardCopy.*:Cli.IdCardCommand` passes under ASan with the placed-rectangle and JPEG pass-through checks quoted.
+
+## 24. Whiteout and whole-page redaction (engine and CLI)
+
+Foxit PDF Editor, PDFelement and UPDF offer a whiteout that covers content with an opaque box, and redaction by page range. Acrobat Pro has no whiteout. Recto adds both without blurring the line between them: `whiteout` draws an opaque cover and removes nothing, and its result and every surface say so, while `redact_pages` removes a whole page's content for real. A whiteout is not a redaction: `D06 T03 §6`'s audit is expected to flag Recto's own whiteout as a cover without removal, which is the correct finding. `redact_pages` replaces a page's content with the burn-in only, drops its annotations, thumbnail, private data and now-unreferenced resources, and writes a full rewrite so no earlier revision of the page remains.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `whiteout` and `redact_pages` in `src/pdf/redactor.cpp` with their reports. Done when: `Whiteout.CoverKeepsContentAndSaysSo` and `RedactPages.WholePageRemoved` pass under ASan.
+2. Add the CLI options and the audit relationship. Done when: `Cli.WhiteoutAndRedactPages` and `Whiteout.AuditFlagsCover` pass.
+
+- [ ] Define `WhiteoutMark` (`page_index`, `rect_pt`, `fill_color_rgba`), `WhiteoutReport` (`covered_marks`, `text_characters_under_cover`, `content_removed` always `false`, `message`) and `PageRedactionOptions` (`page_indices`, `fill_color_rgba`, `overlay_text`) in `src/pdf/redactor.h`. Done when: the header compiles across `recto-pdf`, `recto-core` and `recto-cli`.
+- [ ] Implement `Redactor::whiteout`: append an opaque `re f` in the chosen colour at the end of the page contents inside `/Artifact << /RectoWhiteout true >> BDC ... EMC`, count the text characters whose quads (`PageText`) lie under the cover, and write on a copy with `AtomicFileWriter`. Done when: `Whiteout.CoverKeepsContentAndSaysSo` renders the cover, still extracts the covered words, and reports the count and `content_removed = false`. Cheaper substitute: naming the cover a redaction or hiding the remaining-text count.
+- [ ] Implement `Redactor::redact_pages`: replace each chosen page's `/Contents` with only the burn-in rectangle and optional overlay text, remove its `/Annots`, `/Thumb`, `/PieceInfo`, `/AA`, article beads and structure associations, and write through a full `PdfWriter` rewrite that keeps only objects reachable from the new document so the old content, fonts and images are gone. Done when: `RedactPages.WholePageRemoved` finds no byte of the page's former text, images or fonts in the raw output and unredacted pages render pixel-identical.
+- [ ] Keep references honest: bookmarks, named destinations and page labels that name a redacted page are kept and listed in the report as `references_to_review` so the person can check titles that may reveal the removed content, never edited silently. Done when: `RedactPages.ReferencesListed` lists the bookmark and destination of a redacted page.
+- [ ] Refuse the whole operation, writing nothing, when any chosen page cannot be parsed, as `D06 T03 §6` requires of apply. Done when: `RedactPages.UnreadableRefusesAll` yields an error and an unchanged source hash.
+- [ ] Extend `recto-cli redact` with `--pages <spec>` (whole-page redaction, with `--label <text>`) and add `recto-cli whiteout <in.pdf> --out <out.pdf> --rect <page,x,y,w,h>... [--color <rrggbb>] [--json]`, which always prints `NOT REDACTION: content under the cover remains in the file` and exits `0` only after writing. Done when: `Cli.WhiteoutAndRedactPages` verifies the message, the JSON `"redaction": false` and the page-range redaction.
+- [ ] Add the audit relationship test: `D06 T03 §6`'s cover audit flags Recto's whiteout output and reports zero findings on `redact_pages` output. Done when: `Whiteout.AuditFlagsCover` passes both directions.
+- [ ] Add `Whiteout.*` and `RedactPages.*` tests to `tests/recto-tests/redactor_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=Whiteout.*:RedactPages.*:Cli.WhiteoutAndRedactPages` passes under ASan.
+- [ ] Commit: `organize: whiteout labelled as not redaction, and whole-page redaction`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Whiteout.*:RedactPages.*:Cli.WhiteoutAndRedactPages` passes under ASan with the "still extractable under a whiteout" and "nothing left after page redaction" results quoted.
+
+## 25. PII country packs with checksum validation, local only (engine and CLI)
+
+Foxit PDF Editor's and PDFelement's redaction find personal data by pattern; Recto's six regular-expression presets (`D05 T02 §9`) do not check that a number is plausible, so they redact false positives and miss formatted numbers. `PiiDetector` (`src/core/pii_detector.h/.cpp`) adds country packs that pair a pattern with the checksum or structure rule that country's identifier follows, runs only on the extracted page text (`PageText`, `D03 T01 §1`), and uses no network and no model. It returns matches with character quads so the redaction flow (`D05 T02 §9`) can mark them for review, never apply them. The shipped set is a default chosen for reach, and a pack is one registry entry, so adding a country does not touch the engine. Optional AI-assisted detection is a separate feature (`D08`) and not part of this section.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement the pack registry, the shared matcher (word boundaries, separators, quads) and the `intl` pack (IBAN, payment cards, E.164 phone, passport MRZ). Done when: `PiiPacks.Intl` finds full IBAN, Luhn-valid card, E.164 and MRZ matches only, with no fragment of a match surviving.
+2. Add the country packs and the confidence model, then the CLI. Done when: `PiiPacks.CountryPacks`, `PiiPacks.ContextAndConfidence`, `PiiPacks.BoundsAndSpeed` and `Cli.PiiScanCommand` pass under ASan.
+
+- [ ] Define `PiiPack` (`id`, `display_name`, `detectors`), `PiiDetectorSpec` (`kind`, `pattern`, `validator`, `context_keywords`), `PiiValidation` (`ChecksumValid`, `StructureValid`, `FormatOnly`), `PiiConfidence` (`High`, `Low`) and `PiiMatch` (`pack_id`, `kind`, `page_index`, `quads`, `text`, `validation`, `confidence`) in `src/core/pii_detector.h`. Done when: the header compiles across `recto-core`, `recto-services` and `recto-cli`.
+- [ ] Implement the shared matcher over `PageText`: candidates are found on the normalised text, separators (space, hyphen, dot) are tolerated inside groups, a match must not be part of a longer digit or letter run, the match is mapped back to character quads across glyph runs, and a candidate that spans a line break is rejected. Done when: `PiiPacks.Intl` finds a hyphen-grouped number split across two glyph runs with exact quads and rejects a number inside a longer digit string.
+- [ ] Implement the `intl` pack: IBAN with the ISO 13616 country length table (`resources/pii/iban-lengths.csv` with its source recorded in `tests/corpus/PROVENANCE.md`) and the mod-97 check, payment cards `13` to `19` digits with the Luhn check and issuer prefix ranges, E.164 numbers (`+` and up to `15` digits) with plausible country calling codes, and ICAO 9303 machine-readable-zone lines whose check digits (weights `7, 3, 1`) validate. Done when: `PiiPacks.Intl` accepts valid synthetic values and rejects a one-digit change in each.
+- [ ] Implement validators for the Luhn family (Canadian SIN, South African ID number with its date part, French SIREN and SIRET), the mod-11 family (UK NHS number, Dutch BSN 11-proof, Australian TFN with weights `1, 4, 3, 7, 5, 8, 6, 9, 10`, Brazilian CPF and CNPJ), the French NIR with its key `97 - (n mod 97)`, the Spanish DNI and NIE control letter, the Italian codice fiscale control character, the German tax identification number check, the Indian Aadhaar Verhoeff check and PAN structure, the US SSN and ITIN structure rules (no `000`, `666` or `9xx` area for SSN, group `00` or serial `0000`) and the UK National Insurance number format with unallocated prefixes refused. Done when: `PiiPacks.CountryPacks` has accepted and rejected cases for each validator built from synthetic numbers.
+- [ ] Add the confidence model: a detector with a checksum yields `High`; a structure-only or format-only detector (US SSN, EIN, PAN, phone without `+`) yields `High` only when one of its localised context keywords (`SSN`, `tax id`, `NIF`, `passport` and the like) appears within `40` characters before or after, otherwise `Low`. Done when: `PiiPacks.ContextAndConfidence` shows the same number `High` with a keyword and `Low` without.
+- [ ] Bound the work: scan at most `1 MiB` of text per page (the rest reported as `page_truncated`), reject any candidate regex that is not linear-time, honour `CancelToken` between pages, and keep every pack's regular expressions in a table checked by a test for catastrophic backtracking. Done when: `PiiPacks.BoundsAndSpeed` scans a `500`-page text fixture within the stated budget and a pathological page returns `page_truncated`.
+- [ ] Implement `recto-cli pii scan <in.pdf> [--packs <ids>] [--include-low] [--json]` in `src/cli/cmd_pii.cpp`, listing matches with page, pack, validation and confidence and no raw document text beyond the match. Done when: `Cli.PiiScanCommand` verifies the pack selection, the JSON and the `Low` filter.
+- [ ] Add `PiiPacks.*` tests with synthetic fixtures only (numbers computed from random bases at test time, never real people's identifiers) to `tests/recto-tests/pii_packs_tests.cpp` and record the policy in `tests/corpus/PROVENANCE.md`. Done when: `recto-tests.exe --gtest_filter=PiiPacks.*:Cli.PiiScanCommand` passes under ASan.
+- [ ] Commit: `organize: PII country packs with checksum validation, local only`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PiiPacks.*:Cli.PiiScanCommand` passes under ASan with the accepted and one-digit-changed rejected tables quoted.
+
+## 26. Redaction profiles: saved patterns, appearance and scope as a JSON file (engine and CLI)
+
+Foxit PDF Editor and PDFelement let a team save a redaction pattern set and reuse it. A `RedactionProfile` (`src/core/redaction_profile.h/.cpp`) is a small versioned JSON file naming patterns (a regular expression, a literal, or a PII pack from `§25`), the burn-in appearance, an optional page scope and optional sanitize categories. It never contains document text or earlier matches, so a profile can be shared safely. Profiles produce marks for review by default (`MarkOnly`); applying without review needs the explicit `--apply` flag on the CLI, and the desktop UI never applies without its confirmation (`D05 T02 §9`). The store writes atomically and parses hostile files under hard bounds.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Define the schema, the parser with bounds and the atomic store. Done when: `RedactionProfile.ParseAndStore` round-trips a profile and `RedactionProfile.HostileFiles` refuses the oversize, deep, unknown-version and catastrophic-pattern files.
+2. Resolve a profile against a document into marks and add the CLI. Done when: `RedactionProfile.ResolveMarks` and `Cli.RedactProfileCommand` pass under ASan and `fuzz_redaction_profile` (60 second smoke) is clean.
+
+- [ ] Define `RedactionProfile` (`schema_version` `1`, `name`, `description`, `patterns` of `kind` `Regex`, `Literal` or `PiiPack` with `value`, `case_sensitive`, `whole_word`, `appearance` of `fill_color`, `overlay_text`, `text_color`, `page_scope`, `sanitize` of `SanitizeOptions` flags, `apply_mode` of `MarkOnly` or `ApplyDirect`) in `src/core/redaction_profile.h`, with a JSON schema in `resources/schemas/redaction-profile.schema.json`. Done when: the header compiles and `RedactionProfile.SchemaMatchesParser` validates example files against the schema.
+- [ ] Implement `parse_redaction_profile(bytes)` with a `256 KiB` file limit, at most `200` patterns, a `2 KiB` limit per pattern, depth at most `8`, an unknown `schema_version` refused naming it, unknown keys ignored with a warning, and every regular expression compiled with the find engine's linear-time rule and a per-page step budget, refusing a catastrophic pattern such as `(a+)+$` naming it. Done when: `RedactionProfile.HostileFiles` covers each refusal.
+- [ ] Implement `RedactionProfileStore` in `AppPaths::data_dir()/redaction-profiles/` with one JSON file per profile written atomically (temp-then-replace), list, rename, delete, import and export of a single file, name collisions resolved by suffix, and the shipped read-only profiles generated from the packs of `§25`. Done when: `RedactionProfile.ParseAndStore` round-trips, `RedactionProfile.AtomicWriteCrash` leaves the old file on a simulated mid-write failure, and a read-only profile cannot be edited.
+- [ ] Implement `resolve_profile(doc, profile, CancelToken)` returning `RedactionMark`s (`D05 T01 §10`) from regex and literal matches over `PageText`, from `PiiDetector` for pack patterns (`§25`), and from the page scope, with each mark carrying the pattern that produced it. Done when: `RedactionProfile.ResolveMarks` returns the expected quads for a fixture with an email, an IBAN and a literal.
+- [ ] Extend `recto-cli redact` with `--profile <file.json>`, `--marks-out <marks.json>` (writing the pending marks without changing the PDF), `--marks <marks.json>` (reading marks produced earlier) and `--apply`, so the default invocation with a profile only writes marks and applying always needs `--apply --out`. Done when: `Cli.RedactProfileCommand` verifies that omitting `--apply` writes no PDF and that `--apply` removes the matched text from the raw bytes.
+- [ ] Add a libFuzzer target `fuzz_redaction_profile` in `fuzz/fuzz_redaction_profile.cpp`. Done when: a 60 second smoke run (`D01 T03 §5` CI mode) finds no crash, hang or unbounded allocation.
+- [ ] Add `RedactionProfile.*` tests to `tests/recto-tests/redaction_profile_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=RedactionProfile.*:Cli.RedactProfileCommand` passes under ASan.
+- [ ] Commit: `organize: redaction profiles as versioned JSON with marks-only default`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=RedactionProfile.*:Cli.RedactProfileCommand` passes under ASan with the catastrophic-pattern refusal and the no-apply-without-flag result quoted.
+
+## 27. Document inspector report: what a PDF carries before sanitizing (engine and CLI)
+
+Acrobat Pro's Inspect Document and Foxit PDF Editor's equivalent list what a file hides (scripts, attachments, hidden layers, metadata, comments, form data, hidden text, earlier revisions) so a person can decide what to remove. `inspect_document` (`src/pdf/inspector.h/.cpp`, `recto::pdf::Inspector`) builds that report from the document without executing anything: JavaScript is listed and shown as bounded escaped text, never run (D9); links and attachments are listed, never opened. Each item names the `SanitizeOptions` flag of `§10` that removes it, so the report and the sanitizer agree, and the same counts feed the Sanitize dialog. Hidden text includes text under a later opaque shape, the usual sign of a cover that was not a redaction.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement the structural categories (JavaScript and actions, embedded files, layers, metadata, comments, form data, revisions, thumbnails). Done when: `Inspector.StructuralCategories` reports the expected items for a fixture that contains each.
+2. Implement hidden-text detection over the `DisplayList`, the report model and the CLI. Done when: `Inspector.HiddenText`, `Inspector.BoundsAndTruncation` and `Cli.InspectCommand` pass under ASan.
+
+- [ ] Define `InspectionCategory` (`JavaScript`, `Actions`, `EmbeddedFiles`, `HiddenLayers`, `Metadata`, `Comments`, `FormData`, `HiddenText`, `PreviousRevisions`, `Thumbnails`, `ExternalLinks`), `InspectionItem` (`category`, `location` as page or object reference, `summary`, `detail` bounded to `4 KiB` and escaped, `size_bytes`, `risk` of `Info`, `Review` or `Warning`, `removable_by` as a `SanitizeOptions` flag name or `none`) and `InspectionReport` (`items`, `counts_by_category`, `truncated`) in `src/pdf/inspector.h`. Done when: the header compiles across `recto-pdf`, `recto-core` and `recto-cli`.
+- [ ] List JavaScript from `/Names /JavaScript`, `/OpenAction`, document, page, field and annotation `/AA` entries and `/JS` actions, and other actions (`Launch`, `URI`, `SubmitForm`, `ImportData`, `GoToR`, `GoToE`) with their targets, showing script text escaped and truncated and never evaluating it. Done when: `Inspector.StructuralCategories` lists a `Launch` action and a script, and `Inspector.NeverExecutes` shows the script's side effect did not occur.
+- [ ] List embedded files from `/Names /EmbeddedFiles` and file-attachment annotations with name, size, declared type and SHA-256, hidden layers (optional content groups whose default state is off or that are referenced by `/OC`), metadata (`/Info` keys, XMP presence and size, `/PieceInfo`), comment authors and counts by subtype, form fields that hold values (and an `/XFA` entry), thumbnails, and external link counts. Done when: `Inspector.StructuralCategories` matches the fixture's known contents.
+- [ ] Count previous revisions by walking the `xref` and `/Prev` chain and `%%EOF` markers (`D01 T01 §5`), reporting each earlier revision's size and the objects it replaced, mapped to the `Deleted objects and incremental history` sanitize flag. Done when: `Inspector.PreviousRevisions` reports `3` revisions for a fixture with two incremental updates.
+- [ ] Detect hidden text from the interpreter's `DisplayList`: glyph runs in render mode `3` (marked `likely OCR layer` when the page also has a page-sized image), runs fully outside the page's `/CropBox`, runs with an effective size under `1 pt`, and runs whose quads are fully covered by a later opaque fill (marked `possible cover without redaction`). Done when: `Inspector.HiddenText` flags each planted kind and does not flag ordinary visible text or an OCR layer without the covering image.
+- [ ] Bound the work: at most `10000` items (setting `truncated`), recursion depth at most `32` in action and name trees, cycle-safe, and `CancelToken` honoured between pages. Done when: `Inspector.BoundsAndTruncation` inspects a hostile tree fixture and a `20000`-annotation fixture without crash or unbounded allocation.
+- [ ] Implement `recto-cli inspect <in.pdf> [--json] [--category <name>...]` in `src/cli/cmd_inspect.cpp`, printing a summary table or the JSON report and exiting `0` whatever it finds. Done when: `Cli.InspectCommand` verifies the JSON fields and category filter.
+- [ ] Add `Inspector.*` tests and the fixture (script, launch action, attachment, hidden layer, XMP, comment, form value, two incremental updates, hidden text kinds) to `tests/recto-tests/inspector_tests.cpp`, `scripts/build-corpus.py` and `tests/corpus/PROVENANCE.md`. Done when: `recto-tests.exe --gtest_filter=Inspector.*:Cli.InspectCommand` passes under ASan.
+- [ ] Commit: `pdf: document inspector report for hidden content, never executing it`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Inspector.*:Cli.InspectCommand` passes under ASan with the per-category counts for the fixture quoted.
+
+## 28. Signed revision extraction and comparison with the current document (engine and CLI)
+
+Foxit PDF Editor and Acrobat Pro can show the version of a document as it was when a signature was applied and what changed since. `SignedRevision` (`src/pdf/signed_revision.h/.cpp`) takes a verified signature (`§9`), validates its `/ByteRange` with the same hostile-input checks as the verifier, and writes the exact bytes `[0, off2 + len2)` that the signer covered to a read-only temp file: a byte-for-byte prefix of the file, never a re-save, so its own signature still verifies. `compare_signed_with_current` then runs the document comparison engine (`D03 T01 §10`) between that revision and the current file and classifies the differences with the verifier's incremental-update analysis, so allowed changes (form filling, counter-signatures) and unauthorized edits are told apart.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `extract_signed_revision` with validation and the temp file. Done when: `SignedRevision.ExtractPrefix` writes a prefix whose bytes equal the source's first `off2 + len2` bytes and which `verify_signatures` reports `ValidTrusted` or `ValidUntrustedRoot` on its own.
+2. Implement the comparison report and the CLI. Done when: `SignedRevision.CompareWithCurrent`, `SignedRevision.Hostile` and `Cli.SignedRevisionCommand` pass under ASan.
+
+- [ ] Define `SignedRevisionResult` (`signature_field_name`, `revision_index`, `revision_bytes`, `covers_entire_file`, `temp_path`) and `SignedVsCurrentReport` (`pages_added`, `pages_removed`, `pages_changed` with text and pixel deltas, `annotations_added`, `annotations_removed`, `annotations_modified`, `form_fields_changed`, `metadata_changed`, `later_signatures`, `classification` of `NoChanges`, `AllowedChangesOnly` or `UnauthorizedChanges`) in `src/pdf/signed_revision.h`. Done when: the header compiles across `recto-pdf`, `recto-core` and `recto-cli`.
+- [ ] Implement `extract_signed_revision(src_path, signature_selector, dst_path)` reusing the strict `/ByteRange` validation of `§9` (`b0 == 0`, no gap outside `/Contents`, `b1 + l1 <= file_size`), requiring the prefix to end at an `%%EOF` marker followed only by line endings, and returning `SignedRevisionIncomplete` otherwise. Done when: `SignedRevision.ExtractPrefix` passes and `SignedRevision.Hostile` refuses a range that skips a stream and a prefix with no `%%EOF`.
+- [ ] Write the prefix byte for byte through `AtomicFileWriter` to `AppPaths::temp_dir()/signed-revisions/` as a read-only file, never altering the source, and delete it on close and at next launch. Done when: `SignedRevision.TempLifecycle` shows the file created read-only, the source hash unchanged and the file removed on close.
+- [ ] Implement `compare_signed_with_current(src_path, signature_selector, CancelToken)` over `compare_documents` (`D03 T01 §10`) for page text and pixels, the annotation and field trees, and `/Info`, and fill `classification` from the incremental-update analysis of `§9` (counter-signatures and form fills allowed by `/DocMDP`, page content or structure changes unauthorized). Done when: `SignedRevision.CompareWithCurrent` reports an added annotation after signing as `UnauthorizedChanges` under `P=1` and a filled field as `AllowedChangesOnly` under `P=2`.
+- [ ] Handle a file with several signatures: `signature_selector` takes a field name or an index in revision order, the report lists `later_signatures`, and a signature that covers the entire file reports `covers_entire_file = true` with `NoChanges`. Done when: `SignedRevision.MultipleSignatures` covers a counter-signed file.
+- [ ] Implement `recto-cli signed-revision <in.pdf> --signature <name|index> --out <revision.pdf>` and `recto-cli signed-revision <in.pdf> --signature <name|index> --compare [--json]` in `src/cli/cmd_signature.cpp`. Done when: `Cli.SignedRevisionCommand` verifies the extraction, the comparison JSON and the refusals.
+- [ ] Add `SignedRevision.*` tests to `tests/recto-tests/signed_revision_tests.cpp` using certificates created at test time. Done when: `recto-tests.exe --gtest_filter=SignedRevision.*:Cli.SignedRevisionCommand` passes under ASan.
+- [ ] Commit: `pdf: extract the signed revision and compare it with the current document`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=SignedRevision.*:Cli.SignedRevisionCommand` passes under ASan with the byte-equality of the prefix and the two classifications quoted.
+
+## 29. Trust lists: opt-in download and manual import into a Recto trust store (engine and CLI)
+
+Foxit PDF Editor trusts signers through the Adobe Approved Trust List and the European Union trusted lists; Recto's verifier (`§9`) otherwise relies on the Windows certificate store alone, so a signature from a European qualified service provider may read as `ValidUntrustedRoot` on a machine that does not already trust it. `TrustStore` (`src/pdf/trust_store.h/.cpp`) is a Recto-only set of extra trust anchors, never added to the Windows store. A list reaches it by manual import (always available) or by an opt-in download (off by default, D16: nothing is fetched until the person turns it on and asks). Import accepts certificate bundles (`.cer`, `.crt`, `.pem`, `.p7b`) and an ETSI TS 119 612 trusted-list XML file. Known limit, stated in the UI: this version does not verify the XML signature on a downloaded list, so each list needs the person's confirmation of its SHA-256 fingerprint and source, and the report says "signature not verified". The verifier uses the store only after the Windows chain is untrusted, through a chain engine whose exclusive root store is the Recto store.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement the store, the bundle and trusted-list parsers with hostile-input bounds, and the verifier hook. Done when: `TrustStore.ImportBundle`, `TrustStore.ParseTrustedList` and `TrustStore.VerifierUsesStore` pass under ASan and `fuzz_trust_list` (60 second smoke) is clean.
+2. Implement the opt-in downloader and the CLI. Done when: `TrustStore.DownloadOptIn`, `TrustStore.DownloadBounds` and `Cli.TrustCommand` pass.
+
+- [ ] Define `TrustListRecord` (`id`, `name`, `kind` of `Manual`, `CertificateBundle` or `EuTrustedList`, `source_url`, `imported_utc`, `issue_date`, `next_update`, `sha256`, `certificate_count`, `enabled`, `signature_verified` always `false` in this version, `confirmed_by_user`) and the `TrustStore` interface in `src/pdf/trust_store.h`. Done when: the header compiles across `recto-pdf`, `recto-core`, `recto-services` and `recto-cli`.
+- [ ] Implement the store under `AppPaths::data_dir()/trust/` as a JSON index plus one DER certificate file per list, written atomically (temp-then-replace), with enable, disable, remove and list, and no copy of any certificate into the Windows store. Done when: `TrustStore.AtomicAndIsolated` shows a simulated mid-write failure keeping the old index and the Windows `ROOT` store unchanged after import.
+- [ ] Implement certificate-bundle import for `.cer`, `.crt` (DER or PEM), `.pem` and `.p7b`, bounded to `5 MiB` per file and `5000` certificates, skipping expired certificates with a count, and recording the list as `confirmed_by_user` only after the caller passes the confirmed fingerprint. Done when: `TrustStore.ImportBundle` imports each format and refuses an oversize file and a fingerprint mismatch.
+- [ ] Implement the ETSI TS 119 612 trusted-list parser with a hardened XML reader (no DTD, no external entities, depth at most `64`, `20 MiB` limit, linear time) that extracts, per trust service provider, the certificates of services of the qualified certification-authority type whose current status is granted, plus the list's issue date and next update. Done when: `TrustStore.ParseTrustedList` extracts the expected certificates from a synthetic list and rejects a billion-laughs and an external-entity file.
+- [ ] Hook the verifier (`§9`): when `CertGetCertificateChain` against the Windows default engine is untrusted, rebuild the chain with `CertCreateCertificateChainEngine` whose `hExclusiveRoot` is the enabled Recto store, and report `ValidTrusted` with `trust_source = "Recto trust list: <name>"` only when that chain is valid and the policy check passes, otherwise leave the Windows result. Done when: `TrustStore.VerifierUsesStore` shows an untrusted-root fixture becoming trusted by an imported list and returning to untrusted when the list is disabled.
+- [ ] Implement `TrustListDownloader` through WinHTTP: HTTPS only, certificate validation on, redirects only to HTTPS, no cookies or credentials, a `20 MiB` limit per file and `60 s` timeout, a User-Agent with the app version and nothing else, never started unless the setting `trust.downloadEnabled` is on and the person pressed `Update now` (or the optional once-a-week check they enabled), and a list reference followed only to HTTPS URLs found in the downloaded index with at most `64` lists per update. Done when: `TrustStore.DownloadOptIn` shows no network call with the setting off and `TrustStore.DownloadBounds` refuses an HTTP redirect, an oversize body and a `65`th list, against a local test server.
+- [ ] Ship no default AATL address and one editable default for the EU list of lists (`https://ec.europa.eu/tools/lotl/eu-lotl.xml`, recorded as a default whose change cost is one settings value), and show in every result that the list's signature was not verified. Done when: `TrustStore.NoDefaultAatl` finds the setting empty and `TrustStore.UnverifiedNotice` finds the notice in the result.
+- [ ] Add a libFuzzer target `fuzz_trust_list` in `fuzz/fuzz_trust_list.cpp` mutating trusted-list XML and PEM bundles. Done when: a 60 second smoke run (`D01 T03 §5` CI mode) finds no crash, hang or unbounded allocation.
+- [ ] Implement `recto-cli trust list [--json]`, `recto-cli trust import <file> --confirm-sha256 <hex> [--name <text>]`, `recto-cli trust remove <id>`, `recto-cli trust enable|disable <id>` and `recto-cli trust update [--url <https-url>]` in `src/cli/cmd_trust.cpp`, where `update` refuses to run while `trust.downloadEnabled` is off. Done when: `Cli.TrustCommand` verifies each verb and the opt-in refusal.
+- [ ] Add `TrustStore.*` tests with test-time certificates and synthetic trusted lists to `tests/recto-tests/trust_store_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=TrustStore.*:Cli.TrustCommand` passes under ASan.
+- [ ] Commit: `pdf: Recto trust store with manual import and opt-in trusted-list download`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=TrustStore.*:Cli.TrustCommand` passes under ASan with the no-network-when-off and untrusted-to-trusted results quoted.
+
+## 30. PDF Binder: combine files with a table-of-contents page and a project file
+
+Foxit PDF Editor's PDF Binder combines files into one document with a generated table of contents and keeps a project so the binder can be rebuilt when a source changes; Acrobat's Combine does not. `build_binder` (`src/core/binder.h/.cpp`) reads a `.rectobinder` JSON project (versioned, bounded, never storing passwords), merges the listed files with `merge_pdfs` (`§2`), prepends a generated table-of-contents page set with a clickable entry per item and a page number per entry, adds a bookmark per item, and labels the table pages `i, ii, ...` and the body from `1` using `§19`. The project records each input's SHA-256 and size at the last build, so `binder check` tells which sources changed or went missing and `binder rebuild` regenerates the output as a new file. Inputs are never modified or overwritten.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Define the project schema, the parser and the table-of-contents layout with a two-pass page count. Done when: `Binder.ProjectParse` and `Binder.TocLayout` pass, including a table that spills onto a second page.
+2. Build, check and rebuild, and add the CLI. Done when: `Binder.BuildAndRebuild`, `Binder.ChangedAndMissingInputs`, `Binder.HostileProject` and `Cli.BinderCommand` pass under ASan and `fuzz_binder_project` (60 second smoke) is clean.
+
+- [ ] Define `BinderProject` (`schema_version` `1`, `title`, `items` of `path`, `page_selection`, `title_override`, `include_in_toc`, `toc` of `enabled`, `title`, `font_family`, `font_size_pt`, `leader_dots`, `depth`, `output` of `path_template`, `last_build` of per-item `sha256`, `size`, `page_count` and `built_utc`) in `src/core/binder.h` with a schema in `resources/schemas/binder-project.schema.json`; paths are stored relative to the project file when possible. Done when: the header compiles and `Binder.ProjectParse` validates example projects against the schema.
+- [ ] Implement `parse_binder_project(bytes)` with a `1 MiB` limit, at most `1000` items, depth at most `8`, an unknown `schema_version` refused naming it, and a typed fault for a path that escapes to a UNC or device path (`\\.\`, `\\?\`) the caller did not allow. Done when: `Binder.HostileProject` covers each refusal.
+- [ ] Lay out the table of contents with the stamp text emitter of `§6` (Unicode text with `/ToUnicode`, DirectWrite metrics): one line per item and per bookmark down to `depth`, right-aligned page numbers with optional dot leaders, wrapping long titles, and a two-pass count so the page numbers account for the table's own length. Done when: `Binder.TocLayout` shows correct page numbers for a table that fits one page and one that spills to two, and `SearchEngine` finds an entry title.
+- [ ] Implement `build_binder(project, passwords, dst, CancelToken)`: merge the items with `merge_pdfs`, prepend the table pages, make every entry a `/Link` annotation with a `/GoTo` destination to its item's first page, add one top-level bookmark per item (with the item's own bookmarks beneath) and a `Table of Contents` bookmark, and label the table pages lowercase Roman and the body decimal from `1` through `set_page_labels` (`§19`). Done when: `Binder.BuildAndRebuild` builds a three-file binder whose entries link to the right pages and whose labels read `i` then `1`. Cheaper substitute: a flat merge with a text list that has no links, bookmarks or page labels.
+- [ ] Record each input's SHA-256, size and page count in `last_build` after a successful build, written to the project file atomically, and implement `check_binder(project)` listing items that are `Unchanged`, `Changed`, `Missing` or `New` since the last build. Done when: `Binder.ChangedAndMissingInputs` reports each state after editing, deleting and adding a source.
+- [ ] Rebuild to a new file name from the template (never replacing an existing file or any input), take passwords from the caller and never store them in the project, and surface `PasswordRequired` naming the item. Done when: `Binder.BuildAndRebuild` shows the previous output and all inputs byte-identical after a rebuild and `Binder.EncryptedInput` names the encrypted item.
+- [ ] Add a libFuzzer target `fuzz_binder_project` in `fuzz/fuzz_binder_project.cpp`. Done when: a 60 second smoke run (`D01 T03 §5` CI mode) finds no crash, hang or unbounded allocation.
+- [ ] Implement `recto-cli binder build <project.rectobinder> [--out <out.pdf>] [--password <file>=<pw>...]`, `recto-cli binder check <project.rectobinder> [--json]` and `recto-cli binder init <out.rectobinder> <file.pdf>...` in `src/cli/cmd_binder.cpp`. Done when: `Cli.BinderCommand` verifies each verb and the exit codes.
+- [ ] Add `Binder.*` tests to `tests/recto-tests/binder_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=Binder.*:Cli.BinderCommand` passes under ASan.
+- [ ] Commit: `organize: PDF Binder with a linked table of contents and a rebuildable project`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Binder.*:Cli.BinderCommand` passes under ASan with the linked-entry page check and the changed-source report quoted.
+
 ## Verification
 
 - M4's merge, split, reorder, rotate, delete, blank-page insert, crop/resize, watermarks, headers/footers, Bates numbering, encrypt/decrypt, digital signatures, and true redaction/sanitization each pass under ASan and round-trip in `D06 T01 §6`'s suite.
 - No operation path modifies the open viewer's document instance in place.
+- Every page tool of `§15` to `§23` and `§30` leaves its source byte-identical on success, failure and cancel, and each has a `recto-cli` verb.
+- Nothing in `§24` to `§29` executes document content or touches the network unless the person opted in (`trust.downloadEnabled`).
 - `python scripts/todo-graph.py validate` passes.

@@ -28,6 +28,8 @@ track: M5
 - -> XREF: D04 T05 §1 -- `XlsxWriter` (`D04 T05 §1`) and `WebDocWriter` (`D04 T05 §4` EPUB 3) share the `zip_archive.h/.cpp` reader/writer built in §1 here.
 - -> XREF: D06 T01 §6 -- `RoundTrips.DocumentsAndSecurity` (`D06 T01 §6`) exercises `DocxWriter` (`§2`, `§3`) and `RtfWriter` (`§4`) built here.
 - -> XREF: D07 T02 §4 -- the local diagnostic crash-report `.zip` bundler (`D07 T02 §4`) reuses `zip_archive.h/.cpp` built in §1 here.
+- -> XREF: D04 T04 §8 -- ZIP reader.
+- -> XREF: D03 T03 §28 -- DocxWriter write_blocks.
 
 ## Outcome
 

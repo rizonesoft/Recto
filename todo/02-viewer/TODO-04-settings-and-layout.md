@@ -33,6 +33,22 @@ track: M2
 - -> XREF: D03 T05 §4 -- the multi-file search index (D03 T05 §4) is stored under these paths.
 - -> XREF: D03 T02 §9 -- binds the Read Out Loud accelerators (D03 T02 §9).
 - -> XREF: D09 T05 §6 -- hosts the Recto Cloud settings group (D09 T05 §6).
+- -> XREF: D03 T01 §14 -- settings rows.
+- -> XREF: D03 T02 §12 -- Ctrl+4 shortcut table.
+- -> XREF: D07 T01 §18 -- printer settings keys.
+- -> XREF: D07 T01 §18 -- printer settings group.
+- -> XREF: D07 T02 §10 -- SettingSource and locks.
+- -> XREF: D07 T02 §11 -- lock note rows.
+- -> XREF: D07 T02 §11 -- find a setting filter.
+- -> XREF: D07 T02 §14 -- UiLanguage setting.
+- -> XREF: D04 T02 §25 -- size default setting.
+- -> XREF: D03 T03 §43 -- pen settings rows.
+- -> XREF: D03 T03 §44 -- touch mode setting.
+- -> XREF: D05 T01 §29 -- trust settings.
+- -> XREF: D05 T02 §23 -- copy image DPI setting.
+- -> XREF: D02 T01 §14 -- restore tabs setting.
+- -> XREF: D02 T02 §11 -- tint and reading settings.
+- -> XREF: D02 T06 §5 -- cloud storage card.
 
 ## Outcome
 
@@ -318,8 +334,8 @@ Bind every row of the `design/SPEC.md` section 10 keyboard shortcut table throug
 - [ ] Ensure that in `Classic` and `Reading room` presets where `SidePanelHost` is docked (`LeftDockSlot` / `RightDockSlot`) rather than a floating card, pressing `Esc` does not unexpectedly collapse the permanent docked pane (closing it only via `Ctrl+B` or its close button). Done when: `Esc` closes floating cards in `Focus` while leaving docked panes in `Classic`/`Reading room` stable.
 - [ ] Verify that stock WinUI focus visuals use `RectoAccentBrush` (`SystemControlFocusVisualPrimaryBrush`) with `2 epx` outer thickness across all controls per SPEC section 11. Done when: keyboard `Tab` focus rings render in vermilion across Light and Dark themes.
 - [ ] Add `Keyboard.BindingsAndEscapeStack` test in `tests/recto-tests/` verifying numpad + main-keyboard zoom/fit keys, text-input focus guards for `Home`/`End`, and multi-layer `Esc` unwinding (`Ctrl+K -> Floating SidePanel -> FullScreen`). Done when: `recto-tests.exe --gtest_filter=Keyboard.BindingsAndEscapeStack` passes.
-- [ ] Treat `Ctrl+Alt` (AltGr) as text input whenever a text field has focus, so it never triggers a command on German, Polish or French layouts (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`, pdfcraft #1980). Done when: `Keyboard.BindingsAndEscapeStack` types `@` with AltGr+Q on the German layout in the find box and no command runs.
-- [ ] Match editing shortcuts (`Ctrl+C`, `Ctrl+X`, `Ctrl+V`, `Ctrl+A`, `Ctrl+Z`) by the layout's logical key and let a focused text field win them over canvas commands (pdfcraft #3655, #2669). Done when: `Keyboard.BindingsAndEscapeStack` pastes into the find box on Dvorak, AZERTY and Colemak layouts without opening another surface.
+- [ ] Treat `Ctrl+Alt` (AltGr) as text input whenever a text field has focus, so it never triggers a command on German, Polish or French layouts. Done when: `Keyboard.BindingsAndEscapeStack` types `@` with AltGr+Q on the German layout in the find box and no command runs.
+- [ ] Match editing shortcuts (`Ctrl+C`, `Ctrl+X`, `Ctrl+V`, `Ctrl+A`, `Ctrl+Z`) by the layout's logical key and let a focused text field win them over canvas commands. Done when: `Keyboard.BindingsAndEscapeStack` pastes into the find box on Dvorak, AZERTY and Colemak layouts without opening another surface.
 - [ ] Commit: `viewer: bind all SPEC section 10 keyboard shortcuts and implement EscapeLayerManager`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Keyboard.BindingsAndEscapeStack` passes on the display-session host, proving all 33 key combinations, text-box focus guards, and 6-tier `Esc` unwinding.

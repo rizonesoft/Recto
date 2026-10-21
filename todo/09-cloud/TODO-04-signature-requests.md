@@ -25,6 +25,13 @@ title: "TODO-04 -- Recto Cloud Signature Requests, Audit Trail and Seal"
 - -> XREF: D09 T03 §11 -- `pdf-lite` also serves the reviewed-PDF export (D09 T03 §11).
 - -> XREF: D09 T05 §9 -- the desktop Send for signature creates envelopes through this API.
 - -> XREF: D05 T01 §8 -- the cloud seal follows the desktop signer's signature dictionary conventions; advanced and qualified signatures stay on the desktop.
+- -> XREF: D09 T01 §15 -- export and deletion include templates.
+- -> XREF: D09 T01 §8 -- rate-limit policies.
+- -> XREF: D09 T01 §9 -- email kinds.
+- -> XREF: D09 T01 §7 -- recent authentication.
+- -> XREF: D09 T02 §13 -- web shell.
+- -> XREF: D09 T02 §12 -- design tokens.
+- -> XREF: D09 T05 §9 -- in-person option.
 
 ## Outcome
 
@@ -32,6 +39,7 @@ title: "TODO-04 -- Recto Cloud Signature Requests, Audit Trail and Seal"
 - An `Envelope` Durable Object enforces the draft, sent, in progress, completed, declined, voided and expired state machine, and an API plus a field placement UI let a sender prepare and send an envelope with signer, approver and copy recipients.
 - Signers complete a consent, identity, adopt, fill and sign ceremony through single-use links, with an optional access code, a decline path, Cron reminders and expiry, and sender void.
 - A Queue job produces a sealed PDF with a certificate of completion, a PAdES-B-T signature and an RFC 3161 timestamp, validated by an independent validator in CI, with tamper tests that detect any change to the bytes or the audit chain.
+- Senders can reuse templates, send one template to a CSV of recipients, publish a web form link that makes one envelope per submitter, and hand a device to a signer in person, all owner-only, audited and rate limited.
 - Retention, legal hold, export and deletion follow the spec, the seal key is behind a signing-service interface, and no screen or document claims advanced or qualified signatures.
 
 **Adjacency:** list=applicable; document=applicable @ D09 T02 §4; settings=applicable; reporting=applicable; notifications=applicable; permissions=applicable @ D09 T02 §2; audit=applicable; exchange=applicable; reverse=applicable
@@ -64,6 +72,13 @@ title: "TODO-04 -- Recto Cloud Signature Requests, Audit Trail and Seal"
 | 20 | §20 | Approve ESIGN consent disclosure and signer legal texts | §9 | [ ] |
 | 21 | §21 | Sender dashboard: envelopes, status, audit view and downloads | §16, D09 T02 §13 | [ ] |
 | 22 | §22 | End-to-end signature ceremony tests in the browser | §9, §10, §16, §21, D09 T01 §20 | [ ] |
+| 23 | §23 | Envelope templates: reusable recipients, roles and fields | §5, §6 | [ ] |
+| 24 | §24 | Bulk send: one template to a CSV, one envelope per row | §23, §7, D09 T01 §8 | [ ] |
+| 25 | §25 | Web form link engine: one envelope per submitter with abuse limits | §23, §7, D09 T01 §8 | [ ] |
+| 26 | §26 | Web form link page and owner management | §25, D09 T02 §13 | [ ] |
+| 27 | §27 | In-person signing: hand a device to a signer, attested in the audit | §8, §13, D09 T01 §7 | [ ] |
+| 28 | §28 | In-person hand-over screens and templates, bulk and form pages | §24, §26, §27, §21 | [ ] |
+| 29 | §29 | End-to-end tests for templates, bulk send, web forms and in-person | §28, §22 | [ ] |
 
 ## 1. Bounded PDF reader and incremental update writer package
 
@@ -75,10 +90,10 @@ The cloud must read an uploaded PDF enough to count pages, find page boxes and a
 
 **Build order:**
 
-1. Create `cloud/packages/pdf-lite` (`@recto-cloud/pdf-lite`, AGPL-3.0-or-later, strict TypeScript) with `readPdf(bytes, limits): Result<PdfView, PdfLiteError>` that parses the header, the last cross-reference section (table or stream), the trailer and the page tree only. Done when: a corpus of 30 valid PDFs reports correct page counts and boxes.
-2. Define limits as constants: input 200 MiB read only through a `RangeSource` (`read(offset, length)` backed by R2 range reads, never the whole file in memory), 20000 objects visited, object nesting depth 32, page tree depth 16, 10000 pages, cross-reference chain length 64, decompressed object stream 16 MiB, at most 16 MiB of new content per update, a peak heap budget of 64 MiB for any operation (a Worker isolate has 128 MB shared by concurrent requests), and a wall-clock budget of 2 seconds for parsing checked cooperatively. Done when: each limit has a fixture that fails one unit over.
+1. Create `cloud/packages/pdf-lite` (`@recto-cloud/pdf-lite`, AGPL-3.0-or-later, strict TypeScript) with `readPdf(source: RangeSource, limits): Promise<Result<PdfView, PdfLiteError>>` that parses the header, the last cross-reference section (table or stream), the trailer and the page tree only. No public function in `pdf-lite`, `seal` or the PDF jobs takes or returns a whole-file `Uint8Array`; whole-file inputs are `RangeSource` or `ReadableStream`, outputs are `WritableStream`, and only small objects, the update tail and images are buffers. Done when: a corpus of 30 valid PDFs reports correct page counts and boxes, and a lint rule fails the build on a whole-file buffer parameter or on `.arrayBuffer()` of an R2 body in these modules.
+2. Define limits as constants: input 200 MiB read only through a `RangeSource` (`read(offset, length)` backed by R2 range reads, never the whole file in memory), 20000 objects visited, object nesting depth 32, page tree depth 16, 10000 pages, cross-reference chain length 64, decompressed object stream 16 MiB, at most 16 MiB of new content per update, and a wall-clock budget of 2 seconds for parsing checked cooperatively. Memory is bounded isolate-wide by admission control: `pdf-lite` exports `PdfBudget`, a per-isolate accountant of 80 MiB in total (a Worker isolate has 128 MB shared by all concurrent requests, so the rest is left for the runtime and the framework). Every buffer of 64 KiB or more is allocated through `allocBuffer(n)`, which charges the budget and throws `busy` when it would exceed it. A parse-only operation reserves 8 MiB, a write or seal operation reserves 48 MiB, and an operation that cannot reserve returns `busy` (HTTP `503` with `Retry-After`, or a queue retry). PDF-writing, sealing and export work runs only in a Queue consumer `pdf-jobs` configured with `max_concurrency` 1 and batch size 1, so at most one heavy operation per consumer isolate competes with request-path parses. Done when: each limit has a fixture that fails one unit over.
 3. Refuse with typed errors: `encrypted`, `malformed`, `too_large`, `too_complex`, `unsupported_xref`, `timeout`. Done when: a table test maps 25 hostile fixtures to the expected error and none throws an untyped exception.
-4. Implement `writeUpdate(view, changes, sink: WritableStream): Promise<UpdateInfo>` that streams the original bytes from the `RangeSource` to the sink and then appends only the new and replaced objects, a new cross-reference section and trailer with `/Prev`, so memory holds the appended tail and never the original. Done when: the output starts with the exact original bytes, re-parses with the same page count, and a 200 MiB fixture is written with a peak heap under 64 MiB measured by the package test run with a 96 MiB V8 heap limit.
+4. Implement `writeUpdate(view, changes, sink: WritableStream): Promise<UpdateInfo>` that streams the original bytes from the `RangeSource` to the sink and then appends only the new and replaced objects, a new cross-reference section and trailer with `/Prev`, so memory holds the appended tail and never the original. Done when: the output starts with the exact original bytes, re-parses with the same page count, and a 200 MiB fixture is written within the 48 MiB reservation, shown by `PdfBudget` accounting and by the package test run with a 96 MiB V8 heap limit, and a Workers-pool test that runs one heavy operation together with the maximum admitted parse-only operations at the same time completes without an isolate memory error, while a further operation returns `busy`.
 
 - [ ] Add `src/reader/` (lexer, object parser, xref table and stream, object streams, page tree) with no `eval`, no `Function` and no dynamic import. Done when: a lint rule `no-eval` and a grep test over the package find zero uses.
 - [ ] Add `src/writer/incremental.ts` with deterministic object numbering and offsets. Done when: two runs on the same input produce byte-identical output.
@@ -104,7 +119,7 @@ Every other section needs one agreed model of an envelope. This section defines 
 3. Add `cloud/apps/api/src/envelopes/store.ts` behind the platform database interface. Done when: tests pass on D1 and on the SQLite adapter.
 
 - [ ] Define `Envelope` columns: `id`, `owner_id`, `document_id`, `version_id` (pinned), `title`, `status`, `routing` (`sequential` or `parallel`), `certificate_mode` (`appended` or `separate`), `expires_at`, `reminder_days`, `legal_hold`, `sealed_version_id`, `chain_head`, `created_at`, `sent_at`, `completed_at`. Done when: `status` rejects any value outside the seven states by a `CHECK`.
-- [ ] Define `Recipient` columns: `id`, `envelope_id`, `role`, `name`, `email`, `routing_order`, `access_code_hash`, `access_code_attempts`, `status` (`pending`, `notified`, `viewed`, `consented`, `completed`, `declined`). Done when: two recipients cannot share the same email within one envelope for the same role.
+- [ ] Define `Recipient` columns: `id`, `envelope_id`, `role`, `name`, `email`, `routing_order`, `signing_mode` (`remote` or `in_person`), `access_code_hash`, `access_code_attempts`, `status` (`pending`, `notified`, `viewed`, `consented`, `completed`, `declined`). Done when: two recipients cannot share the same email within one envelope for the same role.
 - [ ] Define `Field` columns: `id`, `envelope_id`, `recipient_id`, `kind`, `page`, `x`, `y`, `width`, `height` (PDF points from the bottom-left of the crop box), `required`, `label`, `options` (text max length, date format). Done when: a field outside the page box fails validation against the page box from `pdf-lite`.
 - [ ] Enforce limits: 10 recipients per envelope, 500 fields, 100 fields per recipient per page, field minimum 8 by 8 points. Done when: each limit has a test.
 - [ ] Store recipient email addresses as given for sending, with a salted hash column for lookups. Done when: lookups use only the hash.
@@ -124,11 +139,11 @@ The audit trail is the evidence. This section builds the append-only, hash-chain
 
 1. Create `cloud/packages/audit-chain` with `canonicalize(event)` (RFC 8785 JSON canonical form) and `hashEvent(prevHash, event)` as SHA-256 of `prevHash || canonical bytes`, hex encoded. Done when: published RFC 8785 test vectors and fixed SHA-256 vectors pass.
 2. Define the event: `seq` (starting at 1), `type`, `actor` (`sender`, `recipient:<id>`, `system`), `at` (UTC ISO 8601 with milliseconds), `ip`, `userAgent`, `data` (small typed object), `prev` (hash of event `seq-1`, 64 zeros for the first) and `hash`. Done when: a validator rejects unknown types and oversized `data` over 2 KiB.
-3. Implement two functions and keep their meanings apart. `verifyChain(events): VerifyResult` checks internal consistency only and returns `consistent` with the head and count, or the first failing `seq` and reason (`gap`, `prev_mismatch`, `hash_mismatch`, `time_regression`, `schema`); it cannot see removed trailing events or a fully recomputed chain. `verifyAgainstCheckpoint(events, checkpoint: {count, head})` additionally requires the event at `seq = count` to have `hash = head`, and is the only function that may report `authenticated`. Done when: mutating any single field of any event in a 50-event chain is detected at the right `seq` by `verifyChain`, and truncating to a shorter prefix or recomputing every hash after an edit is detected only by `verifyAgainstCheckpoint`.
+3. Implement two functions and keep their meanings apart. `verifyChain(events): VerifyResult` checks internal consistency only and returns `consistent` with the head and count, or the first failing `seq` and reason (`gap`, `prev_mismatch`, `hash_mismatch`, `time_regression`, `schema`); it cannot see removed trailing events or a fully recomputed chain. `verifyAgainstCheckpoint(events, checkpoint: {count, head})` returns `{authenticatedPrefix: {count, head}, unauthenticatedSuffix: {count, head}}` or a failure: it requires the event at `seq = count` to have `hash = head`, labels only events 1 to `count` authentic, and reports every later event as an unauthenticated suffix, because the seal cannot cover events that happen after it. Done when: mutating any single field of any event in a 50-event chain is detected at the right `seq` by `verifyChain`, truncating or recomputing events inside the prefix is detected only by `verifyAgainstCheckpoint`, and truncating or replacing suffix events is reported as an unauthenticated suffix, not as tampering and not as authentic.
 4. Implement the authoritative append inside the `Envelope` Durable Object storage (`cloud/apps/api/src/envelopes/audit.ts`, called by `§4` in the same storage transaction as the transition) and the D1 projection `envelope_audit` with unique `(envelope_id, seq)`. Add SQL triggers on the projection refusing every `UPDATE`, and refusing `DELETE` unless a row exists in `envelope_audit_purge(envelope_id, authorized_at, reason)`; only the purge job of `§18` writes that row, in the same D1 batch as the deletes. Done when: a test that updates or deletes a row without authorization fails and the authorized purge succeeds.
 
-- [ ] Define the event types: `envelope.created`, `envelope.sent`, `link.issued`, `link.redeemed`, `recipient.viewed`, `consent.accepted`, `consent.declined`, `access_code.failed`, `access_code.locked`, `signature.adopted`, `field.completed`, `recipient.signed`, `recipient.approved`, `recipient.declined`, `reminder.sent`, `envelope.voided`, `envelope.expired`, `envelope.completing`, `envelope.sealed`, `envelope.completed`, `legal_hold.set`, `legal_hold.cleared`. Done when: the schema test lists exactly these.
-- [ ] Add a CLI `cloud/packages/audit-chain/bin/verify.mjs <audit.json> [--checkpoint <count>:<head>]` that prints `CONSISTENT <head> (not authenticated)` without a checkpoint, `AUTHENTIC <head>` with a matching one, or the failure, and exits 0 or 2. The checkpoint is read from a sealed PDF whose seal verified (`§13`, `§17`). Done when: running it on a good, a tampered and a truncated export gives 0, 2 and 2 with a checkpoint, and the output never says `AUTHENTIC` without one.
+- [ ] Define the event types: `envelope.created_from_template`, `envelope.created_from_form`, `inperson.started`, `inperson.handed_back`, `envelope.created`, `envelope.sent`, `link.issued`, `link.redeemed`, `recipient.viewed`, `consent.accepted`, `consent.declined`, `access_code.failed`, `access_code.locked`, `signature.adopted`, `field.completed`, `recipient.signed`, `recipient.approved`, `recipient.declined`, `reminder.sent`, `envelope.voided`, `envelope.expired`, `envelope.completing`, `envelope.sealed`, `envelope.completed`, `legal_hold.set`, `legal_hold.cleared`. Done when: the schema test lists exactly these.
+- [ ] Add a CLI `cloud/packages/audit-chain/bin/verify.mjs <audit.json> [--checkpoint <count>:<head>]` that prints `CONSISTENT <head> (not authenticated)` without a checkpoint, `AUTHENTIC PREFIX <count> <head>; SUFFIX <n> events (not authenticated)` with a matching one, or the failure, and exits 0 or 2. The checkpoint is read from a sealed PDF whose seal verified (`§13`, `§17`). Done when: a good, a prefix-tampered and a prefix-truncated export give 0, 2 and 2 with a checkpoint, and the output never uses the word `AUTHENTIC` for any event after the checkpoint.
 - [ ] Add concurrency protection: two appends racing for the same `seq` leave one winner and one retry. Done when: a test with 20 parallel appends yields a gap-free chain of 20.
 - [ ] Record `ip` and `userAgent` only for recipient and sender actions, truncating the user agent to 256 bytes. Done when: system events carry null for both.
 - [ ] Commit: `cloud: hash-chained audit trail and verifier`
@@ -152,8 +167,8 @@ One `Envelope` Durable Object per request serialises every state change so two c
 
 - [ ] Implement `finalizing`: the append of `envelope.completing` is the commit point. In the same storage transaction set `completion_started_at` and `generation` (its `seq`) and add the completion message to the outbox; the job carries the generation. From then on `void`, `decline`, expiry and any further `sign` return `409 envelope_finalizing` (completion wins, because every required signature already exists), and the Cron expiry skips finalizing envelopes. Before the commit point a terminal transition wins and no completion is ever enqueued. Only the dead-letter state (`envelope.completion_failed`, `§16`) re-allows `void` by the sender. Done when: tests inject `void`, `decline` and expiry before and after the commit point, and at pauses before sealing, before storing the version and before publication, and each lands on the documented winner.
 - [ ] Implement the guard that a voided, declined or expired envelope rejects `sign`, `view`-to-act and link redemption with typed errors. Done when: each terminal state has a rejection test.
-- [ ] Make the Durable Object's own SQLite storage the single authority: one storage transaction writes the new `status`, the next audit event (with its `prev` and `hash`) and one `outbox` row per side effect (D1 projection of the status and the event, queue messages, emails). An alarm drains the outbox in order and deletes a row only after its effect succeeded; every effect is idempotent (D1 upserts by `(envelope_id, seq)`, queue messages carry a `dedupe_key` that consumers check, emails keyed by event `seq`), and on wake the Durable Object resumes any undrained rows. D1 is a query projection and never an input to a transition. Done when: crash-injection tests that abort after the storage commit and before each effect (D1 projection, enqueue, email) end, after restart, with exactly one of each effect and a D1 chain equal to the authority's chain.
-- [ ] Add a concurrency test: 10 parallel `sign` commands from the last two parallel signers produce exactly one completion enqueue. Done when: the queue stub shows one message, and a replay of the drained outbox after a crash does not enqueue a second.
+- [ ] Make the Durable Object's own SQLite storage the single authority, with at-least-once effects and idempotent consumers (exactly-once enqueue is not promised): one storage transaction writes the new `status`, the next audit event (with its `prev` and `hash`) and one `outbox` row per side effect (D1 projection of the status and the event, queue messages, emails). An alarm drains the outbox in order and deletes a row only after its effect was accepted, so a crash after acceptance and before the delete sends the effect again. Consumers deduplicate atomically: each effect has a `dedupe_key`, and its consumer inserts the key into D1 `processed_effects(dedupe_key primary key)` in the same D1 batch as the effect's own writes, skipping the effect if the key exists. D1 upserts are keyed by `(envelope_id, seq)`. Emails are keyed by event `seq`; an email may rarely be delivered twice if a crash falls between the mail transport accepting it and the key being recorded, which is accepted, and the duplicate carries the same link because the link is created once and held in the outbox row until acknowledged. D1 is a query projection and never an input to a transition. Done when: crash-injection tests abort after the storage commit and before each effect, and after each effect was accepted and before its outbox row is deleted, and end with a D1 chain equal to the authority's chain, exactly one completion performed and one completion state change, and at most the documented duplicate email.
+- [ ] Add a concurrency test: 10 parallel `sign` commands from the last two parallel signers produce one `envelope.completing` event and one completion performed. Done when: the queue stub may observe a repeated message after an injected crash but the consumer performs the completion once.
 - [ ] Commit: `cloud: Envelope Durable Object state machine`
 
 **Test checkpoint:** `npm --prefix cloud run test:api -- test/envelopes/machine` passes on the Workers pool; allowing `voided` to `sent` in the table makes the exhaustive transition test fail.
@@ -358,7 +373,7 @@ The certificate is the human-readable record: who signed what, when, from where,
 **Build order:**
 
 1. Implement `buildCertificate(envelope, recipients, events, hashes): PdfPages` in `cloud/apps/api/src/envelopes/certificate.ts` producing A4 or Letter pages (matching page one of the document) with title, envelope id, sender, document name, original document SHA-256, one block per recipient (name, email, role, status, consent version and time, adoption method, signed time, IP, user agent summary) and the full event list with `seq`, time, type and actor. Done when: a fixture envelope renders to a readable PDF with correct text extraction.
-2. Print the sealed checkpoint: the `seq` and hash of the `envelope.completing` event (the last event the seal covers), as `count` and `head`, and write both into the sealed file's Info dictionary keys `RectoEnvelopeChainCount` and `RectoEnvelopeChainHead`. Events appended after sealing (`envelope.sealed`, `envelope.completed`, notices) are outside the checkpoint by design and are only chained after it. Done when: `verify.mjs --checkpoint` on the exported audit, which holds more events than the checkpoint, reports `AUTHENTIC` with the printed head.
+2. Print the sealed checkpoint: the `seq` and hash of the `envelope.completing` event (the last event the seal covers), as `count` and `head`, and write both into the sealed file's Info dictionary keys `RectoEnvelopeChainCount` and `RectoEnvelopeChainHead`. Events appended after sealing (`envelope.sealed`, `envelope.completed`, notices) are outside the checkpoint by design and are only chained after it. Done when: `verify.mjs --checkpoint` on the exported audit, which holds more events than the checkpoint, reports `AUTHENTIC PREFIX` with the printed count and head and lists the later events as an unauthenticated suffix.
 3. Support `certificate_mode`: `appended` adds the pages after the last page inside the sealed file; `separate` produces a second PDF sealed on its own. Done when: both modes are tested end to end in `§16`.
 4. Add a statement line: `This is a simple electronic signature record. It is not an advanced or qualified electronic signature under eIDAS.` Done when: the claims lint of `§9` accepts exactly this negated statement through an allow-list entry and rejects other uses.
 
@@ -384,7 +399,7 @@ The seal is what makes the finished file tamper-evident to any PDF reader. This 
 3. Implement CMS construction with a BSD or MIT licensed library such as `pkijs` and `asn1js`: `SignedData` version 1, SHA-256 digest, `content-type`, `message-digest`, `signing-certificate-v2` signed attributes, no `signing-time` attribute (the `/M` and the timestamp carry time), and the RFC 3161 token as the `signature-time-stamp-token` unsigned attribute (`id-aa-timeStampToken`). Done when: the CMS parses with `openssl cms -cmsout -print` in CI.
 4. Implement the RFC 3161 client: a `TimeStampReq` over SHA-256 of the signature value with `certReq` true and a random nonce, POSTed to the configured TSA URL with `application/timestamp-query`, a 10 second timeout, and full verification before accepting the token: PKIStatus granted, nonce, message imprint, the token's CMS signature, a certificate chain to the configured `TSA_TRUST_ROOTS`, the signer certificate's critical `id-kp-timeStamping` extended key usage and validity at `genTime`, the `ESSCertIDv2` match, and `genTime` within 5 minutes of the Worker clock. Done when: a test TSA (an in-test RFC 3161 responder using WebCrypto with the test CA) issues tokens that verify, and wrong-nonce, wrong-imprint, forged-signature, untrusted-TSA, wrong-key-usage, expired-certificate and skewed-`genTime` responses are each rejected with a typed error.
 
-- [ ] Implement `sealPdf(source: RangeSource, update, signer, tsa, sink, options): Promise<Result<SealInfo, SealError>>` in two streamed passes: hash the original bytes and the in-memory tail pieces around `/Contents` with a digest stream, build the CMS, then write the original and the filled tail once to the sink, so the tail (not the original) is the only buffer and no unsealed full PDF is ever written. Done when: a re-read finds the signature and `/ByteRange` covering all bytes except `/Contents`, and a 200 MiB fixture seals under the 64 MiB heap budget.
+- [ ] Implement `sealPdf(source: RangeSource, update, signer, tsa, sink, options): Promise<Result<SealInfo, SealError>>` in two streamed passes: hash the original bytes and the in-memory tail pieces around `/Contents` with a digest stream, build the CMS, then write the original and the filled tail once to the sink, so the tail (not the original) is the only buffer and no unsealed full PDF is ever written. Done when: a re-read finds the signature and `/ByteRange` covering all bytes except `/Contents`, and a 200 MiB fixture seals within the 48 MiB reservation of `PdfBudget`.
 - [ ] Generate a staging test CA and signing certificate with a script `cloud/packages/seal/scripts/make-test-ca.mjs`, output kept out of the repository, with CN `Recto Cloud TEST Seal (not trusted)`, validity 5 years and `keyUsage` `digitalSignature`, `nonRepudiation`. Done when: the script runs offline and tests use its output from a temp directory.
 - [ ] Implement `TestSealSigner` reading a test key from a path in the test environment only and refusing to start when `ENVIRONMENT` is `production`. Done when: a test sets production and sees the refusal.
 - [ ] Implement size handling: if the CMS exceeds the `/Contents` capacity, fail with `seal_too_large` rather than truncate. Done when: a test with a long fake chain produces that error.
@@ -425,17 +440,17 @@ When the last signer finishes, one Queue job must produce the final file exactly
 
 **Build order:**
 
-1. Add `cloud/apps/api/src/envelopes/completion-job.ts` consuming `envelope-completion` messages carrying only the envelope id. Done when: a message with an unknown id is acknowledged and logged without retry.
-2. Implement the pipeline: take the frozen checkpoint (the `envelope.completing` event, already in the chain), load the pinned version, verify its SHA-256 matches the envelope record and that each recipient's recorded `values_hash` (`§8`) equals the hash of the values and image hashes being rendered, apply values (`§11`) and images (`§12`) as a streamed incremental update, build the certificate from events 1 to the checkpoint (`§13`), seal (`§14` or `§15`), store the result as a new immutable version through `commitVersion(bytes, {source: 'envelope'})`, a function extracted in this section from `cloud/apps/api/src/uploads/commit-job.ts` so the upload path and this path share the blob and version row logic, record `sealed_version_id`, then call the Durable Object `finalize(generation)` (the `seq` of `envelope.completing`), which appends `envelope.sealed` (sealed SHA-256, version id) and `envelope.completed` after the checkpoint and moves the state to `completed`. Done when: an end-to-end test on the Workers pool yields a new version whose bytes verify.
-3. Make the job idempotent: if `sealed_version_id` is set, only the notification step may run; use a unique index on `(envelope_id)` for the version link. Done when: running the job twice creates one version.
-4. Implement failure handling: retry up to 6 times with exponential backoff, then dead-letter, append `envelope.completion_failed` through the Durable Object, which allows the sender to void or request a retry, and email the sender and the operator contact. The job's final `finalize(generation)` is conditional on the generation still matching and the status still `in_progress`. Done when: a forced seal failure test shows the dead-letter path and the sender email.
+1. Add `cloud/apps/api/src/envelopes/completion-job.ts` consuming `envelope-completion` messages from the `pdf-jobs` queue (`max_concurrency` 1, batch size 1) carrying `{envelopeId, generation, attempt}`, where `generation` is the `seq` of `envelope.completing` and `attempt` starts at 1 and is bumped by the Durable Object each time the sender requests a retry after a dead letter. Done when: a message with an unknown id, or a stale `generation` or `attempt`, is acknowledged and logged without retry.
+2. Implement the pipeline in this order: take the frozen checkpoint (the `envelope.completing` event, already in the chain), open the pinned version through a `RangeSource`, verify its SHA-256 matches the envelope record and that each recipient's recorded `values_hash` (`§8`) equals the hash of the values and image hashes being rendered, apply values (`§11`) and images (`§12`) as a streamed incremental update, build the certificate from events 1 to the checkpoint (`§13`), seal (`§14` or `§15`) into the staging object `staging/envelopes/<id>/<generation>-<attempt>.pdf` computing its SHA-256 as it is written, and then call the Durable Object `accept(generation, attempt, stagingKey, sha256, size)`. Nothing is visible in the library yet. `accept` is the authoritative commit: it succeeds only if the envelope is still `in_progress` with that generation and attempt, then in one storage transaction appends `envelope.sealed` and `envelope.completed` after the checkpoint, sets `completed` and adds outbox rows `publish` then `notify`. The `publish` effect runs `commitVersion` (below) and records `sealed_version_id`, and `notify` runs only after `publish` was acknowledged. Done when: an end-to-end test on the Workers pool yields a new version whose bytes verify and recipients are notified only after the version exists.
+3. Make every step idempotent and fenced: the staging key is deterministic per generation and attempt, so a retried job overwrites only its own unpublished object; a second `accept` for an already accepted `(generation, attempt)` returns success without effect; `commitVersion` is keyed by the envelope id with a unique index on `(envelope_id)` for the version link, so a repeated `publish` creates one version; and a worker holding a stale attempt, or a voided or expired envelope, gets `accept` refused and deletes its staging object. Staging objects older than 48 hours are swept by Cron. Done when: tests resume an old worker after failure, void and sender retry (new attempt) and show its `accept` refused and no version created, and crash a worker between sealing and `accept`, and between `accept` and `publish`, and end with one version and one notification set.
+4. Implement failure handling: retry up to 6 times with exponential backoff, then dead-letter, append `envelope.completion_failed` through the Durable Object, which allows the sender to void or to request a retry (bumping `attempt`), and email the sender and the operator contact. Void after a dead letter wins over any older attempt because only `accept` can publish and it requires `in_progress` with the current attempt. Done when: a forced seal failure test shows the dead-letter path and the sender email.
 
 - [ ] Notify every party (signers, approvers, copy recipients, sender) with a link: account holders get the document link, others get a single-use download link valid 14 days that returns the sealed file and the certificate. Done when: each recipient kind receives the expected link type.
 - [ ] Store the exported audit trail JSON next to the sealed version as `audit.json` and expose it through an authenticated route. Done when: `verify.mjs` on the download returns `OK` with the printed head.
-- [ ] Extract `commitVersion` into `cloud/apps/api/src/uploads/commit-version.ts` and call it from `commit-job.ts` and this job. Done when: `test/uploads/commit-job.test.ts` still passes unchanged and the job test shows one blob keyed by the sealed bytes' SHA-256.
+- [ ] Extract `commitVersion(stagingKey, {sha256, size, source: 'envelope', envelopeId})` into `cloud/apps/api/src/uploads/commit-version.ts`: it copies the already-hashed staging object to `blobs/<sha256>` with an R2 server-side copy (or multipart copy), never loading the bytes, and writes the version row; `commit-job.ts` calls it after its own streamed hashing. Done when: `test/uploads/commit-job.test.ts` still passes unchanged, the function signature has no `Uint8Array` parameter, and the job test shows one blob keyed by the sealed bytes' SHA-256.
 - [ ] Charge the sealed version to the owner's quota (`D09 T02 §7`) without blocking completion when the quota is exceeded: record the overage and notify the owner. Done when: a test over quota still completes and the owner is notified.
-- [ ] Never write an unsealed full PDF anywhere: the sealed object is written once by the streamed pipeline. Done when: a test lists R2 keys after the job, including after a failure injected mid-seal, and finds only the sealed outputs and no staging object.
-- [ ] Bound resource use: read through `RangeSource`, write through the sink, hold at most the 64 MiB heap budget of `§1`, and refuse inputs over 200 MiB with a typed error before any work. Done when: an over-limit fixture ends in `completion_failed` with `too_large`, and a 200 MiB fixture completes within the heap budget.
+- [ ] Never write an unsealed full PDF anywhere: the staging object is written once by the streamed pipeline and is already sealed. Done when: a test lists R2 keys after the job, including after a failure injected mid-seal, and finds only sealed staging objects (swept by Cron) and published blobs.
+- [ ] Bound resource use: read through `RangeSource`, write through the sink, hold at most the 48 MiB `PdfBudget` reservation of `§1` (returning `busy` for retry when it cannot reserve), and refuse inputs over 200 MiB with a typed error before any work. Done when: an over-limit fixture ends in `completion_failed` with `too_large`, and a 200 MiB fixture completes within the heap budget.
 - [ ] Commit: `cloud: envelope completion queue job`
 
 **Test checkpoint:** `npm --prefix cloud run test:api -- test/envelopes/completion` passes; running the job twice must fail the single-version assertion if the unique link is removed.
@@ -453,7 +468,7 @@ A signature the service checks itself proves nothing. This section commits golde
 1. Generate golden sealed PDFs from fixed inputs and a fixed test CA kept in the repository for tests only (`cloud/packages/seal/test-fixtures/` with a clearly named `TEST ONLY` CA), covering: one signer, three sequential signers, parallel signers, appended certificate, separate certificate, a document with an earlier signature, and a non-Latin name. Done when: the files exist with a `PROVENANCE.md` giving the generation command and inputs.
 2. Add the CI job `.github/workflows/cloud-seal-validation.yml` installing pyHanko (MIT) and Poppler `pdfsig`, then validating each golden file: pyHanko must report an intact signature, a valid timestamp and a trusted chain against the test root; `pdfsig` must report the signature as valid. Done when: the job passes and a golden file with one byte changed turns it red.
 3. Add the tamper tests in `cloud/packages/seal/test/tamper.test.ts`: change one byte in the signed ranges, change the `/Contents` hex, append a new revision that edits page text, and replace the certificate page; each must make the validator or the service verifier report modification. Done when: each of the four cases is detected by both the service verifier and pyHanko.
-4. Add the audit tamper tests: edit one event, remove one event, reorder two events, truncate the trail; edits, removal and reordering inside the chain are detected by `verifyChain`; truncation of the prefix and a fully recomputed chain are detected only by `verifyAgainstCheckpoint` against the checkpoint read from the verified seal. Done when: all four are detected, the first three at the right `seq`, and the last two are shown to pass `verifyChain` alone and fail the checkpoint check.
+4. Add the audit tamper tests: edit one event, remove one event, reorder two events, truncate the prefix, recompute a whole altered chain, truncate the suffix, replace the suffix with recomputed events. Edits, removal and reordering inside the chain are detected by `verifyChain`; prefix truncation and a recomputed prefix are detected only by `verifyAgainstCheckpoint` against the checkpoint read from the verified seal; suffix truncation and replacement are expected to be reported as an unauthenticated suffix and the test asserts exactly that, documenting the limit. Done when: every case produces its stated result and the report never labels a suffix event authentic.
 
 - [ ] Add `cloud/packages/seal/src/verify.ts` exposing `verifySealedPdf(bytes, trustRoots)` used by the dashboard's `Verify` action, returning intact, modified-after-sealing, timestamp status and trust status. Done when: it agrees with pyHanko on all golden files.
 - [ ] Add an assertion that staging output shows `untrusted` against the default trust store and `trusted` only against the test root. Done when: the test checks both.
@@ -474,7 +489,7 @@ Evidence must outlive convenience, and users must be able to leave. This section
 
 1. Add policy settings `retention_days_completed`, `retention_days_unfinished` and `deletion_grace_days`, configurable per deployment, defaulting to keep completed envelopes until the owner deletes them and unfinished ones until expiry plus the grace period. Done when: a settings test reads the defaults and an override.
 2. Implement legal hold: `POST /v1/envelopes/:id/hold` and `DELETE` for the owner or an admin, with a reason, appending `legal_hold.set` and `legal_hold.cleared`. Done when: a held envelope survives a purge run and an owner delete request returns `409 legal_hold`.
-3. Implement the purge cron in `cloud/apps/api/src/envelopes/purge.ts` that deletes R2 objects and D1 rows for envelopes past retention and not held, keeping a tombstone row of id, completion time, checkpoint count and head, and purge time. The job first writes the `envelope_audit_purge` authorization row (`§3`), then deletes the D1 rows and R2 objects in that order, and calls the Durable Object `purge()`, which marks it purged, cancels its alarm, drains no further outbox rows and calls `deleteAll()`, so a delayed outbox flush cannot restore data. Done when: the purged envelope has no objects, no D1 rows and no Durable Object content, a paused outbox flush resumed after the purge writes nothing, and the tombstone matches the checkpoint the recipients hold in their sealed copy.
+3. Implement the purge cron in `cloud/apps/api/src/envelopes/purge.ts` for envelopes past retention and not held, in this order. Step 1: write the durable fence `purge_fences(kind='envelope', id, purged_at)` and the `envelope_audit_purge` authorization row in D1, outside the Durable Object. Step 2: call the Durable Object `purge()`, which stops producers first (rejects commands, stops the outbox drain, cancels the alarm) and then calls `deleteAll()`; an object recreated after eviction reads the D1 fence on its first request and refuses to run. Step 3: delete R2 objects, then D1 rows, keeping a tombstone row of id, completion time, checkpoint count and head, and purge time. Every projection write and every effect consumer is a statement guarded by `WHERE NOT EXISTS (SELECT 1 FROM purge_fences WHERE kind = 'envelope' AND id = ?)` in the same D1 batch. Done when: the purged envelope has no objects, no D1 rows other than the tombstone and fence, and no Durable Object content; tests pause an outbox flush after its marker check, evict the object mid-purge, and deliver a delayed queue message after the purge, and in each case nothing is recreated; and the tombstone matches the checkpoint the recipients hold in their sealed copy.
 4. Implement export and account deletion: the user data export includes their envelopes, sealed PDFs, certificates and audit JSON; account deletion removes unfinished envelopes after the grace period and, for completed envelopes where other parties hold copies, removes the owner link but keeps the sealed file until retention allows. Done when: an account deletion test leaves the completed envelope reachable by its recipients.
 
 - [ ] Add the dry-run mode `POST /v1/admin/purge/dry-run` returning counts only. Done when: it deletes nothing and reports the count.
@@ -571,6 +586,165 @@ The whole flow must work as a person would use it. This section adds Playwright 
 - [ ] Commit: `cloud-web: end-to-end signature ceremony tests`
 
 **Test checkpoint:** `npm --prefix cloud run e2e -- e2e/signatures.spec.ts --repeat-each=3` passes all repeats; removing the Durable Object transition guard for voided envelopes makes the void case fail.
+
+## 23. Envelope templates: reusable recipients, roles and fields
+
+Senders repeat the same document, roles and field layout. A template stores that so a new envelope starts prepared. It matches the template feature of Foxit, PDFelement and UPDF while keeping Recto's rules: owner-only sending, a pinned immutable version and no document bytes copied. A template never sends anything by itself.
+
+**Phase:** 98
+**Needs:** none
+**Surface:** no
+
+**Build order:**
+
+1. Add tables `envelope_templates` (id, owner_id, document_id, version_id, name, settings, created_at, archived_at) and `template_roles` and `template_fields` in a migration in `cloud/packages/db/migrations/` (next free number); roles carry `role`, `label`, `routing_order`, `signing_mode` and no email address, and fields reference a role, never a person. Done when: the migration applies and a field referencing a missing role fails a foreign key.
+2. Add routes `POST /v1/templates` (from scratch or from an envelope draft), `GET /v1/templates`, `GET /v1/templates/:id`, `PUT /v1/templates/:id`, `DELETE /v1/templates/:id` (archive), `POST /v1/templates/:id/instantiate` taking the people for each role and returning a draft envelope. Done when: each route has schemas and tests, and only the document owner can create or use a template (`403 not_owner` for `view`, `comment` and `edit` roles, as in `§5`).
+3. Implement `instantiate` as a pure copy into the `§5` draft API: same pinned version, the roles filled with the given names and emails, fields copied with new ids, and an `envelope.created_from_template` event appended with the template id (no names). Done when: the draft passes the same `send` preconditions as a hand-made one, and a template whose version was trashed returns `409 version_unavailable`.
+
+- [ ] Add `cloud/apps/api/src/templates/` with store, routes and the instantiate function. Done when: `npm --prefix cloud run test:api -- test/templates` passes.
+- [ ] Reuse the field placement UI of `§6` with a `template` mode that assigns fields to roles instead of people. Done when: the template editor saves roles and fields and the UI test of `§6` still passes. Cheaper substitute: a second placement editor.
+- [ ] Enforce limits: 100 templates per account, 10 roles and 500 fields per template. Done when: the 101st template returns `422 template_limit`.
+- [ ] Add the template data to the user data export of `D09 T01 §15` and to account deletion. Done when: an export test finds the templates and a deletion test removes them.
+- [ ] Commit: `cloud: envelope templates with roles and fields`
+
+**Test checkpoint:** `npm --prefix cloud run test:api -- test/templates` passes; a test that instantiates a template as a `comment`-role user must fail if the owner check is removed.
+
+## 24. Bulk send: one template to a CSV, one envelope per row
+
+Sending the same agreement to many people is a common job. Bulk send turns a template and a CSV of recipients into one separate envelope per row, so each signer sees only their own envelope and one failure never blocks the rest. It must be owner-only, rate limited, bounded, audited per envelope and never a way to spam strangers.
+
+**Phase:** 98
+**Needs:** none
+**Surface:** no
+
+**Build order:**
+
+1. Add `POST /v1/templates/:id/bulk` accepting a CSV up to 1 MiB and 500 rows (columns: one `name` and `email` per role, plus optional `message`), parsed by a bounded RFC 4180 parser in `cloud/apps/api/src/bulk/csv.ts` (no formulas evaluated, UTF-8 only, a header row required, quoted fields supported, line and field length limits). Done when: 30 malformed CSV fixtures return `422` with row numbers and nothing is created.
+2. Validate every row before creating anything: email syntax, duplicates within the file, role coverage, and the account's daily send limit and active-envelope limit from `§5`. Done when: a file with one bad row creates no envelope and returns all row errors.
+3. Create a `bulk_jobs` row and process rows through the `JobQueue`, one message per row, each creating and sending its own envelope through the `§5` functions (so every `send` precondition applies) with the `envelope.created_from_template` event and a `bulk_job_id`. Rows are idempotent by `(bulk_job_id, row_number)`. Done when: killing the consumer mid-run and restarting produces exactly one envelope per row.
+4. Add `GET /v1/bulk/:id` returning per-row results (`queued`, `sent`, `failed` with a code) and `GET /v1/bulk/:id/results.csv`, whose cells starting with `=`, `+`, `-` or `@` are prefixed with a quote so spreadsheets do not execute them. Done when: a test with such cells passes.
+
+- [ ] Rate limit with named policies in `cloud/apps/api/src/ratelimit/policy.ts`: 5 bulk jobs per day per account, 500 envelopes per day per account, and at most 3 invitations per recipient address per day across all senders. Done when: boundary tests pass and a row beyond the per-address limit fails with `recipient_limited` while other rows proceed.
+- [ ] Require an attestation field `attest_permission` (the sender confirms they may contact these people) stored on the job and shown in the audit view. Done when: a request without it returns `422`.
+- [ ] Allow cancel: `POST /v1/bulk/:id/cancel` stops unprocessed rows and leaves sent envelopes alone. Done when: a mid-run cancel test shows the split.
+- [ ] Add audit and security events with identifiers only (job id, counts), never addresses. Done when: a log test greps for `@` and finds none.
+- [ ] Commit: `cloud: bulk send from a template and a CSV`
+
+**Test checkpoint:** `npm --prefix cloud run test:api -- test/bulk` passes including the kill-and-resume case; removing the `(bulk_job_id, row_number)` idempotency key makes that case create duplicates and fail.
+
+## 25. Web form link engine: one envelope per submitter with abuse limits
+
+A web form link lets anyone with the link start their own signature of a document, such as a waiver or an application, without the owner creating each envelope. This is the highest abuse risk in the file, so it is narrow: a published link belongs to a template with exactly one `signer` role, the submitter proves control of their email address before anything is created, and the link has hard caps. It must never become an open relay or reveal who has signed.
+
+**Phase:** 98
+**Needs:** none
+**Surface:** no
+
+**Build order:**
+
+1. Add table `form_links` (id, owner_id, template_id, token_hash, status `active|paused|closed`, max_submissions, expires_at, per_email_limit, created_at) and routes to create, list, pause, close and delete a link, owner-only. A link token is 256 bits and only its hash is stored. Done when: a template with more than one signer role or any role with `in_person` returns `422 form_unsupported`.
+2. Add the public routes `GET /v1/forms/:token` (title and sender name only, no document content) and `POST /v1/forms/:token/start` taking `name`, `email` and a proof-of-work solution. Start creates nothing in the library: it stores a pending submission and emails a single-use confirmation link to that address, and only redeeming that link creates the envelope from the template (`envelope.created_from_form`) and begins the `§8` ceremony in the same session. Done when: a submitter who never confirms causes no envelope and no document access.
+3. Implement abuse limits: a self-hosted proof-of-work challenge (SHA-256 with a difficulty that costs about one second of client CPU, issued per request and valid for 5 minutes; no third-party captcha or tracker), policies `form-start` (5 per hour per IP hash, 3 per day per email hash per link), `form-link` (200 starts per hour per link), the link's `max_submissions` (default 100, maximum 1000) and `expires_at` (maximum 365 days). Done when: boundary tests pass and the link auto-pauses at its cap with an owner email.
+4. Make the response identical for known and unknown or blocked addresses and keep timing within 50 ms, so the form cannot be used to learn who has signed. Done when: the equality test passes.
+
+- [ ] Add the owner's per-link submissions list (counts and status, with names and emails visible only to the owner). Done when: a non-owner request gets `403`.
+- [ ] Add the abuse switch: a platform admin or the owner can pause a link, and a link whose submissions bounce above 30 percent pauses itself. Done when: a test with 10 bounced starts pauses the link.
+- [ ] Record `form.started`, `form.confirmed`, `form.paused` as security events with identifiers only. Done when: a log test finds no email addresses.
+- [ ] Commit: `cloud: web form links with confirmation, proof of work and caps`
+
+**Test checkpoint:** `npm --prefix cloud run test:api -- test/forms` passes; a test that posts 6 starts from one IP in an hour must fail if the `form-start` policy is removed.
+
+## 26. Web form link page and owner management
+
+People who follow a form link need a clear, short page, and the owner needs to manage links without a developer tool. This section builds both. It follows `design/SPEC.md` brand, colour and type, works on a phone, and never implies an identity check beyond email control.
+
+**Phase:** 98
+**Needs:** none
+**Surface:** yes
+
+**Fidelity:** Genuinely new surface following `design/SPEC.md` sections 3, 4, 5 and 7 and the dialog pattern of 9.9 with `design/screenshots/D-Dialogs.png`.
+**Job:** A visitor opens the link, sees who is asking and the document title, enters their name and email, waits a moment while the browser solves the challenge, is told to check their email, and continues in the signing ceremony from the emailed link. The owner creates, copies, pauses and closes links and sees counts. Consumer: `§25` is the API; `§9` is the ceremony.
+**Treatment:** A page at `/f/:token` and an owner list under `cloud/apps/web/src/forms/`, with the proof of work in a Web Worker so the page stays responsive, a progress message, and an error state that never says whether an address was seen before. Cheaper substitute that fails the checkpoint: a form that creates the envelope on submit without email confirmation, or a third-party captcha script.
+**Chrome:** consume the token stylesheet; one primary button in accent; touch targets at least 44 CSS pixels; icon-only controls carry `aria-label` and `title`.
+
+**Build order:**
+
+1. Add `FormStartPage.ts` with the fields, the worker-based challenge, and the check-your-email state. Done when: the page works at 360 pixel width with no horizontal scroll.
+2. Add `FormLinksPage.ts` (create from a template, copy link, pause, close, limits, counts). Done when: copy is announced to screen readers.
+3. Add accessibility and theme checks. Done when: axe-core finds zero serious violations and screenshot tests exist for light, dark and forced-colors.
+
+- [ ] Add the claims lint to cover the form pages. Done when: the lint of `§9` scans these strings too.
+- [ ] Add the Content Security Policy check (no inline script; the worker is a same-origin file). Done when: zero violations logged.
+- [ ] Commit: `cloud-web: web form link page and owner management`
+
+**Test checkpoint:** `npm --prefix cloud run e2e -- e2e/forms.spec.ts` passes; the spec fails if the page creates an envelope before the emailed confirmation.
+
+## 27. In-person signing: hand a device to a signer, attested in the audit
+
+Some signers are in the room. In-person signing lets the sender open the ceremony for that recipient on the sender's own device and hand it over, without emailing a link. The signer still sees and accepts the electronic records disclosure and signs themselves; what changes is the identity evidence, which is now the sender's attestation and not control of an email address, and the audit trail and certificate must say exactly that. It must be owner-only, short-lived and never usable to sign for someone who is not there.
+
+**Phase:** 98
+**Needs:** none
+**Surface:** no
+
+**Build order:**
+
+1. Mark a recipient `signing_mode: in_person` at draft time (`§2`, `§5`). Such a recipient gets no emailed link. Done when: `send` for an envelope with an in-person recipient enqueues no invitation for that recipient and still emails the sender's own notices.
+2. Add `POST /v1/envelopes/:id/recipients/:rid/in-person` for the document owner with a recent authentication (`D09 T01 §7`, within 10 minutes) when it is that recipient's turn in the routing order. It appends `inperson.started` (sender id, a device note up to 80 characters, no address) and issues a ceremony session cookie bound to that recipient with idle 15 minutes and absolute 60 minutes, valid only for that one recipient and only on the browser that requested it. Done when: a request out of turn, without recent authentication, or by a non-owner is refused.
+3. Run the normal `§8` steps, including consent (the signer types the consent-check code themselves) and the optional access code. Add the sender hand-back: `POST /v1/sign/hand-back` ends the session and appends `inperson.handed_back`; the signer's screen then asks for the sender to re-authenticate before anything else shows. Done when: after hand-back the ceremony cookie is invalid and the sender's session has not been given the signer's adopted images.
+4. Record the identity method on the recipient (`email_link` or `in_person_attested`), show it in the certificate block (`§13`: `Identity: attested in person by <sender name>`) and in the audit export. Done when: the certificate fixture for an in-person recipient contains that line and not an email-possession statement.
+
+- [ ] Forbid in-person mode on form links (`§25`) and bulk rows (`§24`). Done when: both return `422`.
+- [ ] Add a `sender_is_signer` guard: when the sender's account email equals the recipient email, the envelope records that fact and the certificate shows it. Done when: the fixture shows the line.
+- [ ] Add the claims lint entry: no text may call in-person attestation a verified identity or a qualified signature. Done when: the lint fails on `verified identity`.
+- [ ] Commit: `cloud: in-person signing attested by the sender in the audit trail`
+
+**Test checkpoint:** `npm --prefix cloud run test:api -- test/sign/in-person` passes; a test that starts an in-person session without recent authentication must fail if that check is removed.
+
+## 28. In-person hand-over screens and templates, bulk and form pages
+
+The owner needs screens to use sections 23, 24 and 27: pick or save a template, upload a CSV and see per-row results, and run the hand-over safely. This section builds them in the same web app, using the same tokens, and reuses `§6`, `§9` and `§21`.
+
+**Phase:** 98
+**Needs:** none
+**Surface:** yes
+
+**Fidelity:** Genuinely new surface following `design/SPEC.md` sections 3, 4, 5 and 7, the dialog pattern of 9.9 with `design/screenshots/D-Dialogs.png`, and the list-and-detail rhythm of `§21`.
+**Job:** A sender saves an envelope as a template, starts an envelope from a template, uploads a CSV with a preview of the first rows and the exact count, confirms with the permission attestation, watches per-row results and downloads them, and for an in-person recipient presses `Sign in person`, hands the device over, and takes it back by authenticating again. Consumer: `§23`, `§24` and `§27` are the APIs.
+**Treatment:** Pages under `cloud/apps/web/src/templates/` and `cloud/apps/web/src/envelopes/` with a confirmation summary before bulk send that states the count and the template, and a full-screen hand-over mode that hides every sender control. Cheaper substitute that fails the checkpoint: a bulk upload that sends on file selection, or a hand-over that leaves the sender's navigation visible.
+**Chrome:** consume the token stylesheet; the hand-over screen uses large type from the shared scale and one primary button; icon-only controls carry `aria-label` and `title`.
+
+**Build order:**
+
+1. Add `TemplatesPage.ts` and the template picker in the start flow. Done when: a template creates a draft in two clicks.
+2. Add `BulkSendPage.ts` with CSV preview, row errors, attestation, confirmation and live per-row results with the download. Done when: a file with errors shows them by row and sends nothing.
+3. Add `HandOverScreen.ts` for in-person mode with the `Return device to sender` flow. Done when: after return, the sender view needs authentication to continue.
+
+- [ ] Add accessibility and theme checks for the three pages. Done when: axe-core finds zero serious violations and forced-colors screenshots exist.
+- [ ] Add the in-person option and role labels to the recipients panel of `§6`. Done when: the existing `§6` spec still passes.
+- [ ] Commit: `cloud-web: template, bulk send and in-person hand-over screens`
+
+**Test checkpoint:** `npm --prefix cloud run e2e -- e2e/templates-bulk.spec.ts` passes; the spec fails if the bulk page sends before confirmation.
+
+## 29. End-to-end tests for templates, bulk send, web forms and in-person
+
+The four features must work end to end in the browser and refuse abuse. This section adds Playwright specs against the local stack with the fake mail transport and the test seal, and wires them into CI.
+
+**Phase:** 98
+**Needs:** none
+**Surface:** no
+
+**Build order:**
+
+1. Add `cloud/apps/web/e2e/templates-bulk.spec.ts`: create a template, send it to a 20 row CSV, assert 20 separate envelopes, sign two of them, and download the result CSV. Done when: the happy path passes.
+2. Add `cloud/apps/web/e2e/forms.spec.ts`: publish a link, submit with a valid challenge, confirm from the emailed link, sign, then assert the cap pauses the link and a sixth rapid start from one context is refused. Done when: all assertions pass.
+3. Add `cloud/apps/web/e2e/in-person.spec.ts`: the sender starts an in-person ceremony, the signer signs on the same device, the sender re-authenticates, and the certificate shows the attestation line; a second browser context cannot use the ceremony cookie. Done when: all assertions pass.
+4. Add a negative suite: a non-owner cannot instantiate, bulk send or publish, a CSV with formula cells is neutralised in the results, and a form link for a multi-signer template is refused. Done when: each case asserts its status code.
+
+- [ ] Wire the specs into the CI workflow from `D09 T01 §20` with traces on failure. Done when: a deliberately failing assertion turns CI red.
+- [ ] Commit: `cloud-web: end-to-end tests for templates, bulk send, web forms and in-person signing`
+
+**Test checkpoint:** `npm --prefix cloud run e2e -- e2e/templates-bulk.spec.ts e2e/forms.spec.ts e2e/in-person.spec.ts` passes; removing the email confirmation requirement makes the forms spec fail.
 
 ## Verification
 

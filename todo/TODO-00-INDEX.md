@@ -22,7 +22,7 @@ The live execution plan for building Recto to version 1. Format spec: [README.md
 | 05 | [Organize](./05-organize/INDEX.md) | M4 | Graft merge/split/edit, crop, stamps, Bates, AES-256, digital signatures & redaction. |
 | 06 | [Quality](./06-quality/INDEX.md) | all | Golden, text, round-trip and performance suites; hostile-input audit, fuzz & broker spec. |
 | 07 | [Release](./07-release/INDEX.md) | M6 | Printing, Inno Setup (Full & Portable), Portable `.zip`, MSIX, About, GPL & crash bundle. |
-| 08 | [Assistant](./08-assistant/INDEX.md) | 7 | Opt-in AI assistant with the user's own Anthropic, OpenAI, OpenRouter or Gemini key. |
+| 08 | [Assistant](./08-assistant/INDEX.md) | 7 | Opt-in AI assistant with the user's own Anthropic, OpenAI, OpenRouter or Gemini key, or a local model on loopback. |
 | 09 | [Cloud](./09-cloud/INDEX.md) | 98 | Recto Cloud: signature requests, shared reviews, storage and web app (D20). |
 | 99 | [Manual](./99-manual/INDEX.md) | 99 | Operator-only steps: trademark, repository face, Partner Center and reference machines. |
 
@@ -54,7 +54,7 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 | Organize grid (`Combine`/`Split`/`Reorder`), authoring dialogs, Redact Bar & Sign UI | D05 T02 §1-§11 |
 | Goldens, text tables, round-trips, performance targets (plan 8) | D06 T01 §1-§8 |
 | Security rules audit, fuzz operations, broker design (plan 9, D13) | D06 T02 §1-§6 |
-| Gates for pdfcraft's user-reported failure classes (`docs/research/`) | D06 T03 §1-§12 |
+| Gates for user-reported failure classes common in PDF tools | D06 T03 §1-§12 |
 | Printing, Inno Setup (`Full` & `Portable`) installer, Portable `.zip`, MSIX & proof | D07 T01 §1-§9 |
 | About, NOTICE and GPL-3.0 audit, opt-in local crash bundle & GitHub Release / Store kit | D07 T02 §1-§7 |
 | Listening to users: intake, triage, diagnostics, reproducers, releases, demand | D07 T03 §1-§7 |
@@ -83,14 +83,17 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 - [06 Quality] [TODO-02 Hostile-Input Rules, Fuzz Operations and the Broker Design](./06-quality/TODO-02-security-and-fuzzing.md): plan section 9 audit, scheduled fuzzing with triage, pre-approved D13 shared-memory broker design record.
 - [07 Release] [TODO-01 Printing, Inno Setup (Full & Portable) Installer, Optional MSIX and Install Proof](./07-release/TODO-01-packaging-and-print.md): print API decision, Inno Setup Full & Portable installer, Portable `.zip`, optional MSIX, automated install/portable/upgrade proof.
 - [07 Release] [TODO-02 About, GPL-3.0-or-later Compliance, Local Crash Bundle and Release Distribution](./07-release/TODO-02-store-and-compliance.md): About with generated truth, NOTICE audit, opt-in local minidump-plus-log crash bundle, GitHub Release bundle and optional Store submission kit.
-- [06 Quality] [TODO-03 User-Reported Failure Class Gates (Lessons from pdfcraft)](./06-quality/TODO-03-user-failure-gates.md): hostile-input and recovered-error fixtures, a recovered-content page notice, the single-interpreter differential suite, save fault injection, raw-byte redaction proof, Unicode authoring round trips, UI glyph coverage, printer driver matrix, render and text fidelity fixtures, and the clean-machine release smoke.
+- [06 Quality] [TODO-03 User-Reported Failure Class Gates](./06-quality/TODO-03-user-failure-gates.md): hostile-input and recovered-error fixtures, a recovered-content page notice, the single-interpreter differential suite, save fault injection, raw-byte redaction proof, Unicode authoring round trips, UI glyph coverage, printer driver matrix, render and text fidelity fixtures, and the clean-machine release smoke.
 - [07 Release] [TODO-03 Listening to Users: Intake, Triage, Diagnostics, Releases and Demand](./07-release/TODO-03-listening-to-users.md): issue forms and `SECURITY.md`, triage rules, in-app `Report a problem`, `recto-cli scrub` reproducers, a regression test per user bug, closing on release, the release gate, the scope page and demand ledger, and What's new with an opt-in update notice.
 - [02 Viewer] [TODO-05 Rich Media, 3D Models and Geospatial PDFs](./02-viewer/TODO-05-rich-media-3d-geo.md): safe media playback, 3D model viewing and geospatial coordinates and measurement.
+- [02 Viewer] [TODO-06 Cloud Storage Connectors: OneDrive, SharePoint, Google Drive, Dropbox and Box](./02-viewer/TODO-06-cloud-storage-connectors.md): opt-in OAuth PKCE connectors, browse, open as temporary copy, conditional save, off by default.
 - [03 Text] [TODO-04 Edit PDF: Text, Image and Vector Object Editing](./03-text/TODO-04-edit-pdf.md): Acrobat-class Edit PDF over a stable paragraph model, images and vector objects.
 - [03 Text] [TODO-05 Search Across Files and Local Index](./03-text/TODO-05-multi-file-search.md): search a folder of PDFs, with an optional local index.
 - [04 Convert] [TODO-06 Print Production: Preflight, PDF/X, Output Preview and Separations](./04-convert/TODO-06-print-production.md): preflight profiles and fixups, PDF/X, output preview, separations and ink coverage.
 - [04 Convert] [TODO-07 Action Wizard: Saved Multi-Step Actions over Files and Folders](./04-convert/TODO-07-action-wizard.md): saved action sequences run over files and folders.
+- [04 Convert] [TODO-08 Automation: recto-cli Verb Registry and the Local recto-mcp Server](./04-convert/TODO-08-automation-mcp.md): `recto-cli verbs --json` registry and a stdio-only `recto-mcp` server with an allow-list, staged inputs, new-file outputs and a call log (D21).
 - [08 Assistant] [TODO-01 Opt-in AI Assistant with User-Supplied Provider Keys](./08-assistant/TODO-01-ai-assistant.md): off by default; summarize, ask with citations, explain, translate and alt text with the user's own key.
+- [08 Assistant] [TODO-02 Assistant Workspace: Translate, Rewrite, Chat, Search, Commands and Tools](./08-assistant/TODO-02-assistant-workspace.md): whole-document translation keeping layout, rewrite and proofread, multi-file chat, semantic search, command planning, AI bookmarks and page fixes, study and contract tools, image and audio, and a keyless local provider.
 - [09 Cloud] [TODO-01 Recto Cloud Platform, Accounts and Security](./09-cloud/TODO-01-platform-and-accounts.md): the AGPL `cloud/` workspace on Workers, D1, R2 and Durable Objects, self-host build, passkey and email-link sign-in, security and CI (phase 98).
 - [09 Cloud] [TODO-02 Recto Cloud Documents, Sharing and Web Viewer](./09-cloud/TODO-02-documents-and-sharing.md): versions, folders, sharing links and the scriptless pdf.js web viewer.
 - [09 Cloud] [TODO-03 Recto Cloud Shared Reviews](./09-cloud/TODO-03-shared-reviews.md): live comments in a Durable Object per review, round-tripping Recto's annotation model.

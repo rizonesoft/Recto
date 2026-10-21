@@ -33,6 +33,19 @@ track: M4
 - -> XREF: D06 T03 §5 -- the save integrity fault-injection suite that fails every step of `AtomicFileWriter` (§1 here) and checks originals survive.
 - -> XREF: D03 T04 §4 -- Edit PDF's font resolver embeds fallback subsets with this subsetter.
 - -> XREF: D02 T01 §5 -- clipboard PDFs open as new unsaved tabs through `OpenDocumentPipeline`.
+- -> XREF: D03 T01 §13 -- stitch_page_areas reuse.
+- -> XREF: D03 T01 §19 -- searchable word writer.
+- -> XREF: D07 T01 §17 -- XPS to PDF for spool.
+- -> XREF: D03 T04 §1 -- EditModel accepts OCR text.
+- -> XREF: D03 T04 §2 -- paragraph model.
+- -> XREF: D03 T04 §4 -- EditFontResolver.
+- -> XREF: D03 T01 §8 -- OcrPipeline layout.
+- -> XREF: D03 T01 §16 -- suspects review input.
+- -> XREF: D03 T01 §12 -- snapshot tool owns clipboard copy.
+- -> XREF: D03 T01 §13 -- stitch_page_areas.
+- -> XREF: D02 T01 §5 -- new tab path.
+- -> XREF: D02 T04 §5 -- size default setting.
+- -> XREF: D05 T01 §30 -- binder writer.
 
 ## Outcome
 
@@ -44,6 +57,7 @@ track: M4
 - `PdfOptimizer` and `Linearizer` (`§11`, `§12`) downsample images, recompress colour/grayscale/monochrome streams, subset fonts, strip unused objects, linearize for Fast Web View, and present a per-category byte-savings audit dialog.
 - After the owner's decision, a `From scanner` source acquires pages through WIA 2.0 into the Images to PDF and searchable OCR paths (`§13`).
 - Create PDF from clipboard (`§14`-`§16`) turns an image, text, rich text, HTML or a copied file list on the Windows clipboard into a new unsaved PDF tab through the `Images, SVG & XPS -> PDF` path (`§5`) and the Office, HTML and text paths, from `Ctrl+V`, Home, the tab strip, the `File` menu or `Ctrl+K`, and never produces a silent empty document.
+- Image-only PDF (`§17`, `§18`), editable OCR output with live text in matched fonts (`§19`, `§20`), page area export to an image or text (`§21`, `§22`), more image inputs through installed WIC codecs (`§23`) and a blank PDF with page-size presets and paper styles (`§24`, `§25`) match the Foxit PDF Editor, PDFelement and UPDF conversion features that Acrobat lacks, offline and on copies.
 
 **Adjacency:** all=not-applicable (converter engines and option bindings inside `D04 T01`'s Convert frame plus the viewer's contextual extractor bar; queue, notifications and save-location settings are owned by `D04 T01` and `D02 T04 §5`)
 
@@ -69,6 +83,15 @@ track: M4
 | 14 | §14 | `ClipboardPdfBuilder`: clipboard images and image or PDF file lists to PDF | §5, D04 T01 §1 | [ ] |
 | 15 | §15 | **Create PDF from clipboard** command, new unsaved tab, `Ctrl+V` and Home entry points | §14, D02 T01 §3, D02 T01 §5, D02 T01 §8, D02 T01 §12, D02 T03 §1, D02 T03 §11, D04 T01 §5, D02 T04 §9 | [ ] |
 | 16 | §16 | Clipboard text, rich text, HTML and Office, Markdown file lists through their converters | §14, D04 T04 §1, D04 T04 §2, D04 T04 §3, D04 T04 §5, D04 T04 §6 | [ ] |
+| 17 | §17 | Image-only PDF engine (`image_only_pdf.cpp`) and `recto-cli rasterize-pdf` | §2, §3, §11 | [ ] |
+| 18 | §18 | Image-only PDF Convert card and Step 3 options | §17, D04 T01 §4 | [ ] |
+| 19 | §19 | Editable OCR writer: recognized text as live text objects in matched fonts | §7, D03 T01 §7, D03 T01 §8, D03 T04 §1, D03 T04 §2, D03 T04 §4 | [ ] |
+| 20 | §20 | Editable text output mode on the Searchable PDF (OCR) card and `Ctrl+K` | §19, D04 T01 §4, D03 T04 §11 | [ ] |
+| 21 | §21 | Page area export engine (image or text) and `recto-cli export-area` | §1, D03 T01 §8 | [ ] |
+| 22 | §22 | Export Area tool on the extractor bar, `Ctrl+K` commands and save dialog | §10, §21, D02 T03 §11 | [ ] |
+| 23 | §23 | More image inputs to PDF: ICO, JFIF, DIB, HEIC, WebP, JPEG XL via installed codecs | §5 | [ ] |
+| 24 | §24 | New blank PDF engine: size presets, paper styles and `recto-cli new-pdf` | §2 | [ ] |
+| 25 | §25 | New blank PDF dialog, File menu entry and `Ctrl+K` command | §24, §15, D02 T01 §10, D02 T03 §1, D02 T03 §11, D02 T04 §5 | [ ] |
 
 ## 1. `AtomicFileWriter` (`src/core/atomic_file.cpp`) sibling temp-then-replace and rollback
 
@@ -89,8 +112,8 @@ Implement `src/core/atomic_file.h` and `src/core/atomic_file.cpp` (`recto::core:
 - [ ] Flush file buffers to disk via `FlushFileBuffers` and close the handle inside `commit()`, then branch on the target: a new file is published with `MoveFileExW(temp_path, target_path, MOVEFILE_WRITE_THROUGH)`, and an existing file only through the `ReplaceFileW` step below, never `MOVEFILE_REPLACE_EXISTING`. Done when: `AtomicFile.CommitNewAndReplace` writes new files with `MoveFileExW` and replaces existing files only through `ReplaceFileW`.
 - [ ] Ensure `~AtomicFileWriter()` closes any open handle and calls `DeleteFileW(temp_path)` whenever `committed_ == false`. Done when: `AtomicFile.DestructorRollback` proves that scope exit without `commit()` leaves zero `.tmp` files in the directory and leaves an existing target file's SHA-256 unchanged. Cheaper substitute: writing directly to `target_path` with `std::ofstream`, which truncates and corrupts the user's file on cancel or error.
 - [ ] Surface descriptive `PdfError::IoError` messages when the destination directory is read-only or the target file is locked by another process (`ERROR_SHARING_VIOLATION`). Done when: `AtomicFile.LockedTargetError` verifies an open sharing lock on `target_path` fails `commit()` cleanly, deletes the `.tmp` file, and leaves the locked file intact.
-- [ ] When the target already exists, call `ReplaceFileW(target, temp, backup, 0, nullptr, nullptr)` (no `REPLACEFILE_WRITE_THROUGH`, which Microsoft documents as unsupported; durability comes from the earlier `FlushFileBuffers`) so the destination keeps its ACL, attributes, creation time and alternate streams, and reconcile each documented failure state on its own terms: `ERROR_UNABLE_TO_REMOVE_REPLACED` (1175) and `ERROR_UNABLE_TO_MOVE_REPLACEMENT` (1176, with a backup name given) leave both files under their original names, so delete the temp file and report the failure with the original untouched; `ERROR_UNABLE_TO_MOVE_REPLACEMENT_2` (1177) leaves the original under the backup name, so move the backup back to `target` and delete the temp file, reporting the backup path if that move fails (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`, pdfcraft #2658, #2921). Done when: `AtomicFile.ReplacePreservesMetadata` keeps the ACL and creation time, and `AtomicFile.ReplacePartialFailure` ends each of the three injected states with the original content at `target`, or a reported backup path holding it.
-- [ ] Accept an optional `verify(temp_path)` callback that `commit()` runs after `FlushFileBuffers` and before the replace, aborting with the original untouched when it fails (pdfcraft #1698, #2366). Done when: `AtomicFile.VerifyBeforeReplace` proves a failing callback leaves the destination hash unchanged.
+- [ ] When the target already exists, call `ReplaceFileW(target, temp, backup, 0, nullptr, nullptr)` (no `REPLACEFILE_WRITE_THROUGH`, which Microsoft documents as unsupported; durability comes from the earlier `FlushFileBuffers`) so the destination keeps its ACL, attributes, creation time and alternate streams, and reconcile each documented failure state on its own terms: `ERROR_UNABLE_TO_REMOVE_REPLACED` (1175) and `ERROR_UNABLE_TO_MOVE_REPLACEMENT` (1176, with a backup name given) leave both files under their original names, so delete the temp file and report the failure with the original untouched; `ERROR_UNABLE_TO_MOVE_REPLACEMENT_2` (1177) leaves the original under the backup name, so move the backup back to `target` and delete the temp file, reporting the backup path if that move fails. Done when: `AtomicFile.ReplacePreservesMetadata` keeps the ACL and creation time, and `AtomicFile.ReplacePartialFailure` ends each of the three injected states with the original content at `target`, or a reported backup path holding it.
+- [ ] Accept an optional `verify(temp_path)` callback that `commit()` runs after `FlushFileBuffers` and before the replace, aborting with the original untouched when it fails. Done when: `AtomicFile.VerifyBeforeReplace` proves a failing callback leaves the destination hash unchanged.
 - [ ] Add `AtomicFile.*` unit tests in `tests/recto-tests/atomic_file_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=AtomicFile.*` passes under ASan.
 
 - [ ] Commit: `AtomicFileWriter` (`src/core/atomic_file.cpp`) sibling temp-then-replace and RAII rollback helper
@@ -140,6 +163,9 @@ Implement `src/core/pdf_to_images.h/.cpp` in `recto-core` and `recto-cli pdf-to-
 - [ ] Implement **Multipage `TIFF`** encoding appending one `IWICBitmapFrameEncode` per page into a single `.tiff` container with `TiffCompressionMethod` set to `WICTiffCompressionLZW` or `WICTiffCompressionCCITT4` (automatically converting frames to `1-bpp` for `CCITT4`). Done when: `ConvertImages.MultipageTiff` exports a 5-page PDF to a single `.tiff` and `IWICBitmapDecoder::GetFrameCount` returns `5`.
 - [ ] Implement **Animated `GIF`** encoding (`GUID_ContainerFormatGif`) writing global/frame palettes (`IWICPalette::InitializeFromBitmap`) and Graphic Control Extension (`" /grctlext/Delay"`) metadata per page frame. Done when: `ConvertImages.AnimatedGif` exports a 3-page PDF to `.gif` with `3` frames and verified frame delay metadata.
 - [ ] Implement `recto-cli pdf-to-images <in.pdf> --out <dir_or_file> [--format png|jpg|tiff|multipage-tiff|bmp|gif] [--dpi <72..1200>] [--tiff-compression lzw|ccitt4|none] [--pages <range>]` in `src/cli/cmd_pdf_to_images.cpp`. Done when: `recto-tests.exe --gtest_filter=ConvertImages.*:Cli.PdfToImages` passes under ASan.
+- [ ] Add the `LongImage` format to `ImageExportFormat` with `long_image_container` (`Png`, `Jpeg`, `Tiff`), `long_image_gap_pt` (`0`, `8`, `16`) and `long_image_max_height_px` (default `30000`, hard caps `65500` for JPEG and `1000000` for PNG and TIFF): stitch the requested pages top to bottom into one tall image at the widest page's pixel width, centre narrower pages on a white background, compute the final height from the page sizes first, and stream each page into the WIC encoder with `IWICBitmapFrameEncode::WritePixels` in bands so memory stays at one page. Done when: `ConvertImages.LongImage` stitches a 5-page PDF at `150` DPI into one image whose height equals the sum of the page heights and gaps, with at most one page bitmap alive. Cheaper substitute: rendering all pages into one huge bitmap in RAM.
+- [ ] When the stitched height would exceed `long_image_max_height_px`, close the file at the last page that fits and continue in `name-part-2` and so on, reporting the split in the job note instead of failing or truncating. Done when: `ConvertImages.LongImageSplit` splits a 40-page export into numbered parts that together contain every page once.
+- [ ] Add `--format long-png|long-jpg|long-tiff [--gap <pt>] [--max-height <px>]` to `recto-cli pdf-to-images`. Done when: `Cli.PdfToImages` stitches a corpus PDF and the output height is asserted.
 
 - [ ] Commit: streamed `PDF -> Images` converter (`PNG`, `JPEG`, `BMP`, single/multipage `TIFF` `LZW`/`CCITT4`, `Animated GIF`) and `recto-cli pdf-to-images`
 
@@ -168,6 +194,7 @@ Implement `src/core/svg_xps_writer.h/.cpp` in `recto-core` (`PDF -> SVG (.svg)` 
 - [ ] Implement `recto-cli pdf-to-svg <in.pdf> --out <dir_or_file> [--pages <range>]` and `recto-cli pdf-to-xps <in.pdf> --out <out.xps> [--pages <range>]` in `src/cli/`. Done when: `Cli.PdfToSvgAndXps` passes under ASan.
 - [ ] Build the **Images, TIFF, SVG & XPS** Step 3 options control (`src/app/views/convert/ImagesConvertOptionsControl.xaml/.cpp`) exposing `Format` (`PNG`, `JPEG`, `Multipage TIFF`, `Single-page TIFF`, `Animated GIF`, `BMP`, `Vector SVG (.svg)`, `OpenXPS (.xps)`), `Resolution` (`72`, `150`, `300`, `600`, `1200 DPI` for raster formats), `Colour` (`RGB`, `Grayscale`, `Black & White 1-bit`), `TIFF compression` (`LZW`, `CCITT Group 4`, `JPEG`, `None` when TIFF is selected), and `JPEG quality` slider. Done when: selecting `Vector SVG` or `OpenXPS` hides raster-only DPI controls and selecting `Multipage TIFF` reveals the compression dropdown.
 - [ ] Update the Step 3 primary action button label dynamically (`"Save 9 images"` for a 9-page single-page image export, `"Save Multipage TIFF"`, `"Save 9 SVG files"`, `"Save XPS document"`) matching `D-Dialogs.png`. Done when: `ConvertImagesUi.ButtonLabelAndOptions` verifies dynamic button labels and screenshot parity with `D-Dialogs.png`.
+- [ ] Add `Long image (one tall picture)` to the `Format` list of the Images options control with `Page gap` (`None`, `Small`, `Medium`) and `Maximum height` fields shown only for it, and the primary action label `"Save 1 long image"` (or `"Save N long image parts"` when the split applies). Done when: `ConvertImagesUi.LongImageOptions` shows the fields only for that format and the label changes with the page count. Cheaper substitute: a CLI-only format with no Step 3 option.
 - [ ] Verify that cancelling a multi-page image, SVG, or XPS export mid-job via `QueueCard` (`D04 T01 §5`) removes all uncommitted temp files. Done when: `ConvertImagesUi.CancelMidJob` passes.
 - [ ] Commit: `convert: implement PDF to images, multipage TIFF, GIF, vector SVG and OpenXPS`
 
@@ -395,7 +422,7 @@ Wire the **Optimize & Compress PDF** card and Step 3 options in `ConvertPage` (`
 
 ## 13. Create PDF from a scanner (Windows Image Acquisition)
 
-"Create PDF from scanner" was one of pdfcraft's most repeated requests, filed at least eight times (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`; pdfcraft #312, #1774, #2010, #3256, #3384). Recto can acquire pages through Windows Image Acquisition 2.0 (`IWiaDevMgr2`), feed them to the `Images -> PDF` converter (§5 here) and optionally to the searchable-PDF OCR writer (§7 here), all locally. This is new v1-plus scope, so the owner decides whether and when it ships before any code is written.
+"Create PDF from scanner" is one of the most repeated requests users make of PDF tools. Recto can acquire pages through Windows Image Acquisition 2.0 (`IWiaDevMgr2`), feed them to the `Images -> PDF` converter (§5 here) and optionally to the searchable-PDF OCR writer (§7 here), all locally. This is new v1-plus scope, so the owner decides whether and when it ships before any code is written.
 
 **Phase:** 7
 **Needs:** windows-host, display-session, owner-decision
@@ -423,7 +450,7 @@ Wire the **Optimize & Compress PDF** card and Step 3 options in `ConvertPage` (`
 
 ## 14. `ClipboardPdfBuilder`: clipboard images and image or PDF file lists to PDF
 
-Acrobat Pro creates a PDF from whatever is on the clipboard, and users of a comparable app ask for the same, because a screenshot or a copied picture is the quickest way into a PDF (pdfcraft #1289, #2709). `ClipboardPdfBuilder` (`src/core/clipboard_pdf.h/.cpp`, `recto::core::ClipboardPdfBuilder`) turns a `ClipboardSnapshot` into a PDF through the existing `Images, SVG & XPS -> PDF` converter (`§5`): bitmaps (`CF_DIBV5`, `CF_DIB`, `CF_BITMAP`), the registered `PNG` format, and `CF_HDROP` file lists of images, SVG and XPS files. PDF files in a list are not rebuilt; they are reported so the app opens them as tabs. The builder reads nothing from the clipboard itself: a dedicated clipboard acquisition thread copies the clipboard into an owned, size-bounded snapshot with a time limit and cancellation (rendering a format can wait on the application that owns the clipboard, so the UI thread never calls `GetClipboardData`), and the build runs as a job with its own state (`D04 T01 §1`). Text, rich text, HTML and Office files are routed by `§16` through the same `ClipboardRoute` registry, so this section never grows a second converter. A paste with nothing usable is a typed refusal that names the formats found, never an empty document.
+Acrobat Pro creates a PDF from whatever is on the clipboard, and users ask for the same, because a screenshot or a copied picture is the quickest way into a PDF. `ClipboardPdfBuilder` (`src/core/clipboard_pdf.h/.cpp`, `recto::core::ClipboardPdfBuilder`) turns a `ClipboardSnapshot` into a PDF through the existing `Images, SVG & XPS -> PDF` converter (`§5`): bitmaps (`CF_DIBV5`, `CF_DIB`, `CF_BITMAP`), the registered `PNG` format, and `CF_HDROP` file lists of images, SVG and XPS files. PDF files in a list are not rebuilt; they are reported so the app opens them as tabs. The builder reads nothing from the clipboard itself: a dedicated clipboard acquisition thread copies the clipboard into an owned, size-bounded snapshot with a time limit and cancellation (rendering a format can wait on the application that owns the clipboard, so the UI thread never calls `GetClipboardData`), and the build runs as a job with its own state (`D04 T01 §1`). Text, rich text, HTML and Office files are routed by `§16` through the same `ClipboardRoute` registry, so this section never grows a second converter. A paste with nothing usable is a typed refusal that names the formats found, never an empty document.
 
 **Phase:** 4
 **Needs:** windows-host
@@ -501,6 +528,244 @@ Complete the clipboard routes with the converters that arrive in phase 5. This s
 - [ ] Commit: `convert: route clipboard text, rich text, HTML and Office file lists to PDF`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=ClipboardPdf.TextModeSelection:ClipboardPdf.HtmlFormat:ClipboardPdf.RtfFormat:ClipboardPdf.PlainTextUnicode:ClipboardPdf.OfficeFileList:ClipboardPdf.UnroutedReported` passes under ASan.
+
+## 17. Image-only PDF engine (`image_only_pdf.cpp`) and `recto-cli rasterize-pdf`
+
+PDFelement's and UPDF's "image-only PDF" is the reverse of OCR: every page is drawn at a chosen resolution and rebuilt as one picture, so the file looks the same in every viewer and carries no text, fonts, hidden layers or form logic. Acrobat has no dedicated tool for this. `rasterize_pdf` (`src/core/image_only_pdf.h/.cpp`, `recto::core`) renders each page through the Direct2D rasterizer of `D01 T02 §6` (annotation and form appearances included, as the viewer shows them), and writes a new PDF through `PdfWriter` (`§2`) and `AtomicFileWriter` (`§1`) with one image XObject per page, at the source page size and rotation. It keeps the rules that make Recto safe: it runs as a job on its own `recto::pdf::Document`, never modifies the source, holds one page bitmap in memory at a time, and says plainly what the output no longer contains (text, links, form fields, annotations as objects, attachments), because the result cannot be searched, selected or edited. Bookmarks, page labels and the document title and author are kept by default.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Define `ImageOnlyOptions` and `ImageOnlyReport` and implement the page loop (render, encode, write, release) in `src/core/image_only_pdf.cpp`. Done when: `ImageOnlyPdf.PageLoop` converts a 50-page corpus PDF at `150` DPI with at most one page bitmap alive at any moment (counted by the test allocator) and the output page count, `/MediaBox` and `/Rotate` match the source.
+2. Add the colour modes and compressions (`Colour`, `Grayscale`, `Monochrome` with `Auto` Otsu or a fixed threshold `1..254`; `Auto`, `Jpeg`, `Flate`, `CcittG4`), the kept metadata and bookmarks, the report, and `recto-cli rasterize-pdf`. Done when: `ImageOnlyPdf.*` and `Cli.RasterizePdf` pass under ASan and the output of every mode re-renders within the stated tolerance.
+
+- [ ] Define `ImageOnlyOptions` (`page_range`, `dpi` `72..1200` default `150`, `colour_mode` `Colour|Grayscale|Monochrome`, `mono_threshold` `Auto|1..254`, `compression` `Auto|Jpeg|Flate|CcittG4`, `jpeg_quality` `1..100` default `85`, `keep_bookmarks`, `keep_page_labels`, `keep_document_info`, `include_annotations`) and `ImageOnlyReport` (`pages_written`, `text_characters_removed`, `links_removed`, `form_fields_flattened`, `annotations_flattened`, `attachments_dropped`, `bookmarks_kept`, `warnings`) in `src/core/image_only_pdf.h`. Done when: the header compiles across `recto-core`, `recto-services` and `recto-cli`.
+- [ ] Render each requested page on the job worker at `dpi` with the CropBox and `/Rotate` applied, then encode it at once and release the bitmap: `Colour` uses 8-bit RGB, `Grayscale` uses `GUID_WICPixelFormat8bppGray`, `Monochrome` thresholds to 1 bit. Done when: `ImageOnlyPdf.ColourModes` shows the three pixel formats in the written XObjects (`/ColorSpace`, `/BitsPerComponent`). Cheaper substitute: rendering every page into RAM before writing, which fails `ImageOnlyPdf.PageLoop`.
+- [ ] Write each page as `q <w> 0 0 <h> 0 0 cm /Im0 Do Q` over a page whose `/MediaBox` equals the source CropBox size, choosing the stream filter per mode: `DCTDecode` (WIC JPEG bytes embedded unchanged) for colour and grey `Jpeg`, `FlateDecode` for lossless, and `CCITTFaxDecode` Group 4 for `Monochrome` through the encoder of `PdfOptimizer` (`§11`), falling back to `FlateDecode` when it is smaller. Done when: `ImageOnlyPdf.Compressions` re-renders each output and compares it with the source render (exact for `Flate`, `SSIM >= 0.98` for `Jpeg` at quality `85`, identical bits for `CcittG4`).
+- [ ] Keep `/Outlines` (re-pointing each destination to the same page index), `/PageLabels` and `/Info` `Title` and `Author` when the options say so, and drop everything else (text, `/Annots`, `/AcroForm`, `/Names` embedded files, XMP other than a minimal `dc:title`). Done when: `ImageOnlyPdf.KeptAndDropped` finds the bookmark tree and labels intact and finds no `/Annots`, `/AcroForm`, `/EmbeddedFiles` or `/Font` in the output, and `PageText` of every page is empty.
+- [ ] Fill `ImageOnlyReport` and show it as the job's completion note (`D04 T01 §6`): `"Made 12 pages into pictures. Removed 4,310 characters of text, 9 links and 2 form fields. This file can no longer be searched or edited; use Searchable PDF (OCR) to add text back."`. Done when: `ImageOnlyPdf.Report` matches the counts of a fixture with known text, links and fields.
+- [ ] Commit the output only through `AtomicFileWriter` (`§1`), check `CancelToken` between pages, and refuse to write over the source path. Done when: `ImageOnlyPdf.CancelLeavesNothing` aborts mid-job and finds the folder unchanged, and `ImageOnlyPdf.RefusesSourcePath` returns a typed error. Cheaper substitute: writing next to the source with `std::ofstream`.
+- [ ] Implement `recto-cli rasterize-pdf <in.pdf> --out <out.pdf> [--dpi <72..1200>] [--colour colour|grayscale|mono] [--threshold auto|<1..254>] [--compression auto|jpeg|flate|ccitt4] [--pages <range>] [--drop-bookmarks] [--json]` in `src/cli/cmd_rasterize_pdf.cpp`. Done when: `Cli.RasterizePdf` passes under ASan with the report in `--json`.
+- [ ] Add `ImageOnlyPdf.*` tests in `tests/recto-tests/image_only_pdf_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=ImageOnlyPdf.*:Cli.RasterizePdf` passes under ASan.
+- [ ] Commit: `convert: add image-only PDF engine and recto-cli rasterize-pdf`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=ImageOnlyPdf.*:Cli.RasterizePdf` passes under ASan, and removing the `PageText` emptiness assertion or keeping a `/Font` resource in the output makes `ImageOnlyPdf.KeptAndDropped` fail.
+
+## 18. Image-only PDF Convert card and Step 3 options
+
+Put the image-only engine (`§17`) on the Convert page as a card named **Image-only PDF**, matching PDFelement's and UPDF's flatten-to-picture output while keeping Recto's honest hint line and its rule that the original is never replaced without the Replace-original dialog. The card is enabled when Step 1 holds at least one PDF; its Step 3 options are resolution, colour mode (with the threshold for monochrome), compression, and the keep-bookmarks and keep-metadata toggles, and it shows the plain warning that the result has no text. The command **Make image-only PDF** is reachable from `Ctrl+K`.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** SPEC section 9.5 (the card grid and the Step 3 options host, the same pattern as the `Optimize & Compress PDF` card); the card is a genuinely new option with no screenshot, so it follows the existing card, option row and hint line chrome of `explorations/A-Convert.png` and `D-Convert.png`.
+**Job:** The user can turn a PDF into a picture-only copy at a chosen resolution, see before converting what will be lost, and find the result beside the source without the source being touched. Consumer: `ConvertPage` (`D04 T01 §4`), `ConversionRunner` (`D04 T01 §1`) and the `Ctrl+K` command box.
+**Treatment:** A registered card, `ImageOnlyOptionsControl.xaml/.cpp` bound to `ImageOnlyOptionsViewModel`, a monochrome threshold slider with a live thumbnail of page 1 at the chosen settings, and the capability hint line. Cheaper substitute that fails the checkpoint: a card with no preview of the threshold and no warning that text is removed.
+**Chrome:** consume the Convert Step 2 card registry and the Step 3 options host (`D04 T01 §3`, `§4`), the queue card (`D04 T01 §5`), `RectoColors.xaml` tokens and Segoe Fluent Icons.
+
+**Build order:**
+
+1. Register the **Image-only PDF** card and build `ImageOnlyOptionsControl` with its view model and the thumbnail preview. Done when: `AppTests.ImageOnlyUi` selects a PDF, opens the card and sees all options and the warning line.
+2. Wire the job factory, the completion note and the `Ctrl+K` command. Done when: `AppTests.ImageOnlyUi` runs a conversion through `ConversionRunner` and finds the output without text.
+
+- [ ] Register the **Image-only PDF** card in `ConverterRegistry` (`D04 T01 §3`), enabled when Step 1 contains a PDF, with the disable reason `"Add a PDF to use this"` otherwise and the hint line `"Turns each page into a picture. The file looks identical everywhere but has no selectable text, links or fields."`. Done when: `AppTests.ImageOnlyUi` verifies enablement and the reason text.
+- [ ] Build `ImageOnlyOptionsControl` (`src/app/views/convert/ImageOnlyOptionsControl.xaml/.cpp`) with `Resolution` (`72`, `150`, `300`, `600`, `1200` DPI), `Colour` (`Colour`, `Grayscale`, `Black and white`), a `Threshold` slider (`Auto` or `1..254`) shown only for black and white, `Compression`, `Keep bookmarks`, `Keep title and author` and `Save to` and `If file exists`, with automation names and tooltips on every control. Done when: the controls pass the `D03 T02 §3` inventory and the threshold slider appears only in black and white mode. Cheaper substitute: an unlabelled icon-only slider.
+- [ ] Render the page 1 preview at the chosen settings on a worker through the `§17` loop with a `CancelToken` and a 300 ms debounce, never on the UI thread. Done when: moving the threshold updates the thumbnail and the UI thread never blocks over 16 ms in `AppTests.ImageOnlyUi`.
+- [ ] Show the estimated output size from a one-page sample and the removal warning (`"Text, links and form fields will be removed."`) in the options card before the primary action. Done when: the estimate and the warning render and the warning is announced to assistive technology (`D03 T02 §5`).
+- [ ] Register `convert.imageOnly` in `CommandRegistry` (`D02 T03 §11`) with the title `Make image-only PDF` and synonyms `flatten`, `rasterize`, `picture only`, opening Convert with the current document and this card selected. Done when: `Ctrl+K` "flatten" finds it and starts the flow. Cheaper substitute: a card reachable only by scrolling the Convert page.
+- [ ] Add `AppTests.ImageOnlyUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=AppTests.ImageOnlyUi` passes on the display-session host.
+- [ ] Commit: `convert: add the Image-only PDF card and options`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=AppTests.ImageOnlyUi` passes, and a display-session screenshot of the card sits beside `D-Convert.png` with the same card, option row and hint line chrome.
+
+## 19. Editable OCR writer: recognized text as live text objects in matched fonts
+
+Acrobat's "Editable text and images" OCR output and the "Editable PDF" output of PDFelement, UPDF and Foxit PDF Editor turn a scan into a document whose text is real text that Edit PDF can change. Recto's Searchable PDF (`§7`) keeps the scan and hides the text, so the words cannot be edited. This section adds the second output: `create_editable_pdf` (`src/core/editable_ocr_pdf.h/.cpp`) takes the `OcrPipeline` result (`D03 T01 §8`) and, for each text region the layout segmenter found (`D03 T01 §7`), paints that region's pixels out of a copy of the page image with the local background colour and writes the recognized lines as visible text objects (`0 Tr`) in a matched font. Fonts are chosen per line as serif, sans or monospace, bold and italic, at the size that matches the ink height, using the standard fonts for Latin text and the `EditFontResolver` (`D03 T04 §4`) for anything outside them, so no character is ever written as `?`. Regions that are not text (pictures, line art) stay as image pixels. A line with any word below the confidence floor, or a region whose background is not a flat colour, is left as image under an invisible text layer exactly as `§7` writes it, and is listed in the report, so a wrong guess is never baked in and nothing is silently lost. The source file is never touched and the output is a new file. Recto keeps its offline, on-a-copy, temp-file-then-replace rules and adds no script or external OCR service.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement font matching (`OcrFontMatcher`) and live-text synthesis in `src/core/editable_ocr_pdf.cpp`: one `BT ... ET` per recognized line with a single `Tf`, real space characters, `Tz` fitted to the line width and the baseline from the x-height ink. Done when: `EditableOcr.LiveText` makes a PDF from `tests/corpus/text/scanned.pdf` whose text objects are visible (`Tr 0`), selectable, and whose `PageText` readback (OCR disabled) equals the recognized text.
+2. Implement background cleanup, the hybrid fallback for low-confidence lines and non-flat backgrounds, the report, and `recto-cli ocr --editable`. Done when: `EditableOcr.*` and `Cli.OcrEditable` pass under ASan, and `EditableOcr.EditModelAccepts` shows `EditModel` (`D03 T04 §1`) lists the recreated paragraphs as editable text objects.
+
+- [ ] Define `EditableOcrOptions` (`page_range`, `ocr_language_bcp47`, `engine`, `min_word_confidence` default `0.85`, `preprocess_deskew_and_enhance`, `replace_text_regions`, `keep_unrecognized_as_image`) and `EditableOcrReport` (`pages`, `lines_replaced`, `lines_kept_as_image` with the reason per line, `fonts_used`, `fallback_fonts_embedded`, `warnings`) in `src/core/editable_ocr_pdf.h`. Done when: the header compiles across `recto-core`, `recto-services` and `recto-cli`.
+- [ ] Implement `OcrFontMatcher` classifying each line as serif, sans or monospace (stroke contrast and advance regularity), bold (stroke thickness against x-height) and italic (dominant slant of connected components), mapping it to the matching standard font (Times, Helvetica or Courier family with its bold and italic faces) and sizing it so the line's x-height equals the measured ink height. Done when: `EditableOcr.FontMatch` classifies a fixture of serif, sans, monospace, bold and italic lines correctly and sizes each within `5%` of the ink height.
+- [ ] Write each line as live text and route every character the standard font cannot draw through `EditFontResolver::cover` (`D03 T04 §4`) into an embedded subset fallback with a `/ToUnicode` CMap, refusing `?` and `.notdef`. Done when: `EditableOcr.UnicodeFallback` writes Cyrillic and accented text and extracts the same Unicode back. Cheaper substitute: forcing a Latin-1 font and writing `?` for other characters.
+- [ ] Paint each replaced region out of a copy of the page image using the median colour of the region border and re-encode that copy as a new image XObject (lossless `FlateDecode` for 1-bit and 8-bit, `DCTDecode` at quality `90` for colour photographs), leaving the original image stream and every non-text region untouched in the source file. Done when: `EditableOcr.BackgroundCleanup` shows the replaced region is the border colour, a figure region is byte-identical to the scan, and the source file hash is unchanged. Cheaper substitute: drawing the visible text over the unmodified scan, which doubles every word and fails `EditableOcr.NoDoubleImage`.
+- [ ] Keep any line with a word under `min_word_confidence`, and any region whose border colour varies more than a set tolerance, as image pixels with the invisible `3 Tr` layer of `§7`, and list each in `lines_kept_as_image`. Done when: `EditableOcr.LowConfidenceKept` keeps a smudged line as image, lists it with the reason, and replaces its neighbours.
+- [ ] Group the lines into paragraphs with the regular line pitch and shared left edge that `D03 T04 §2`'s paragraph model reads, and keep one `/Contents` stream order that paints the cleaned image first and text after. Done when: `EditableOcr.EditModelAccepts` builds an `EditModel` from the output and finds one editable paragraph per recognized paragraph.
+- [ ] Write the output through `PdfWriter` (`§2`) and `AtomicFileWriter` (`§1`), checking `CancelToken` per page, and implement `recto-cli ocr <in.pdf> --out <out.pdf> --editable [--min-confidence <0..1>] [--lang <tag>] [--pages <range>] [--json]` in `src/cli/cmd_ocr.cpp`. Done when: `EditableOcr.CancelLeavesNothing` and `Cli.OcrEditable` pass under ASan.
+- [ ] Add `EditableOcr.*` tests in `tests/recto-tests/editable_ocr_tests.cpp` with the scan fixtures recorded in `tests/corpus/PROVENANCE.md`. Done when: `recto-tests.exe --gtest_filter=EditableOcr.*:Cli.OcrEditable` passes under ASan.
+- [ ] Commit: `convert: add editable OCR output with live text in matched fonts`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=EditableOcr.*:Cli.OcrEditable` passes under ASan, and drawing text over the unmodified scan makes `EditableOcr.NoDoubleImage` fail.
+
+## 20. Editable text output mode on the Searchable PDF (OCR) card and `Ctrl+K`
+
+Expose the editable OCR writer (`§19`) on the existing **Searchable PDF (OCR)** card as a second output, so a user picks between a searchable scan that looks identical and an editable document whose recognized text is real text. The choice is explicit, defaults to the searchable output, and states the trade-off in the card (editable output changes how the page looks slightly, keeps low-confidence lines as image, and is never applied over the source). The command **Make scan editable (OCR)** is reachable from `Ctrl+K`, and a finished editable job offers `Edit text` in its completion notice, which opens the result in Edit PDF mode (`D03 T04 §11`).
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** SPEC section 9.5 (the `Searchable PDF (OCR)` card and its Step 3 options); the `Output` selector and the editable-mode notes are a genuinely new option row that follows the card's existing option row and hint line chrome.
+**Job:** A user with a scanned contract or letter can make it editable in one conversion, understand what changes, see which lines could not be made editable, and open the result in Edit PDF. Consumer: `ConvertPage` (`D04 T01 §4`), `ConversionRunner` (`D04 T01 §1`), the completion notice (`D04 T01 §6`) and Edit PDF (`D03 T04 §11`).
+**Treatment:** An `Output` segmented control (`Searchable, keeps the scan` default, `Editable text`), a `Minimum confidence` slider shown for the editable mode, a report dialog listing the lines kept as image, and the `Edit text` completion action. Cheaper substitute that fails the checkpoint: a hidden CLI-only flag, or a mode that overwrites the searchable output without a choice.
+**Chrome:** consume the Convert Step 3 options host (`D04 T01 §4`), the completion notice (`D04 T01 §6`), the dialog host (`D02 T01 §10`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Add the `Output` selector, the confidence slider and the hint text to the Searchable PDF card options and bind them to `EditableOcrOptions`. Done when: `AppTests.EditableOcrUi` switches the mode and sees the editable-only controls appear and the searchable-only ones stay.
+2. Add the report dialog, the `Edit text` completion action and the `Ctrl+K` command. Done when: `AppTests.EditableOcrUi` runs an editable job, opens the report and opens the result in Edit PDF mode.
+
+- [ ] Extend the Searchable PDF Step 3 options control (`src/app/views/convert/SearchableOcrOptionsControl.xaml/.cpp`, the control `§7` registers) with the `Output` segmented control and the `Minimum confidence` slider (`0.50..0.99`, default `0.85`), each with an automation name and tooltip. Done when: both controls pass the `D03 T02 §3` inventory and the slider shows only in editable mode.
+- [ ] Add the honest hint line for the editable mode (`"Replaces recognized text with real text so you can edit it. Lines Recto is unsure about stay as pictures. The page may look slightly different."`). Done when: the line is visible in editable mode and the searchable hint of `§7` is unchanged in the other mode.
+- [ ] Dispatch the job to `create_editable_pdf` when the mode is `Editable text` and to `create_searchable_pdf` otherwise, writing to a new file and never to the source. Done when: `AppTests.EditableOcrUi` finds an editable output whose text objects are visible and a searchable output whose text is invisible from the same input.
+- [ ] Build `EditableOcrReportDialog` (`src/app/dialogs/EditableOcrReportDialog.xaml/.cpp`, hosted via `D02 T01 §10`) listing the lines kept as image with their page, a thumbnail and the reason, with `Open in Edit PDF` and `Close`. Done when: the dialog lists a seeded low-confidence line and `Open in Edit PDF` opens the page. Cheaper substitute: a count in a toast with no list.
+- [ ] Add the `Edit text` action to the completion notice of an editable job (`D04 T01 §6`), opening the output in a new tab with Edit PDF mode on (`D03 T04 §11`). Done when: clicking it opens the file in Edit PDF mode.
+- [ ] Register `convert.editableOcr` in `CommandRegistry` (`D02 T03 §11`) as `Make scan editable (OCR)` with synonyms `editable`, `ocr edit`, `scan to editable`, opening Convert with the current document and the editable mode selected. Done when: `Ctrl+K` "editable" finds it.
+- [ ] Add `AppTests.EditableOcrUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=AppTests.EditableOcrUi` passes on the display-session host.
+- [ ] Commit: `convert: add the editable text output mode to the Searchable PDF card`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=AppTests.EditableOcrUi` passes on the display-session host, and a build with the `Output` selector removed fails it.
+
+## 21. Page area export engine (image or text) and `recto-cli export-area`
+
+Foxit PDF Editor's snapshot and area export lets a reader save a chosen rectangle of a page as a picture or as its text. `export_area` (`src/core/area_export.h/.cpp`, `recto::core`) is the engine for it: the rectangle is given in points on the page as displayed (top-left origin, `/Rotate` applied, inside the CropBox), the image output renders only that rectangle through the Direct2D rasterizer of `D01 T02 §6` at `72..1200` DPI into `PNG`, `JPEG`, `TIFF` or `BMP`, and the text output collects the `PageText` characters whose quad centres fall inside the rectangle in reading order, running `OcrPipeline` on the cropped area when the area is a scanned image or holds no text (`D03 T01 §7`, `§8`). It never renders the whole page to crop it, bounds the pixel size, runs as a job on its own `recto::pdf::Document`, and commits files through `AtomicFileWriter` (`§1`). It does not touch the clipboard; the viewer tool of `§22` and the snapshot tool of `D03 T01` own that.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `export_area_image` (clip-rect rasterization with banded output for large areas) and `export_area_text` (quad-centre selection, reading order, OCR fallback) in `src/core/area_export.cpp`. Done when: `AreaExport.Image` renders a known `100 x 50 pt` area at `300` DPI to exactly `417 x 208` pixels with the expected pixels, and `AreaExport.Text` returns exactly the words inside a rectangle that cuts a paragraph.
+2. Add the bounds, the units and `recto-cli export-area`. Done when: `AreaExport.*` and `Cli.ExportArea` pass under ASan.
+
+- [ ] Define `AreaExportOptions` (`page_index`, `rect_pt`, `kind` `Image|Text`, `image_format`, `dpi`, `colour_mode`, `transparent_background`, `ocr` `Auto|Never|Always`, `ocr_language_bcp47`, `keep_line_breaks`) and `AreaExportResult` (`bytes` or `text`, `pixel_size`, `ocr_used`, `warnings`) in `src/core/area_export.h`. Done when: the header compiles across `recto-core`, `recto-services`, `recto-cli` and `recto-app`.
+- [ ] Normalize `rect_pt` (swap reversed corners, clamp to the CropBox, refuse an empty or under `1 x 1 pt` rectangle with a typed error) and convert it to the page's user space for the renderer. Done when: `AreaExport.RectNormalization` covers a reversed rectangle, a rectangle partly off the page, a rotated page (`/Rotate 90`) and an empty rectangle.
+- [ ] Render only the rectangle (translate and clip the `DisplayList` replay, never render the full page and crop), in horizontal bands of at most `256` pixel rows when the area exceeds `64` megapixels, and refuse an area above `268` megapixels or `16384` pixels on a side with a typed error. Done when: `AreaExport.LargeAreaBanded` exports a `600` DPI area of a large-format page with bounded memory and `AreaExport.Bounds` refuses the oversized request. Cheaper substitute: rasterizing the whole page and cropping the bitmap.
+- [ ] Select text by quad centre inside the rectangle, order it by the reading order of `PageText` (`D03 T01 §1`), join lines with `\r\n` or a space per `keep_line_breaks`, and fall back to `OcrPipeline` on the cropped area when `ocr` is `Auto` and the area has no text or lies on a `ScannedRaster` page. Done when: `AreaExport.TextAndOcr` returns the digital words for a text area and the recognized words for a scanned area, and marks `ocr_used`.
+- [ ] Write image files through WIC with exact `SetResolution(dpi, dpi)` and text files as UTF-8 through `AtomicFileWriter`, checking `CancelToken` per band. Done when: `AreaExport.WriteAndCancel` reads back the DPI and, on cancel, leaves no temp file.
+- [ ] Implement `recto-cli export-area <in.pdf> --page <n> --rect <x0,y0,x1,y1> [--unit pt|mm|in] --as image|text --out <file> [--format png|jpg|tiff|bmp] [--dpi <72..1200>] [--ocr auto|never|always] [--lang <tag>] [--json]` in `src/cli/cmd_export_area.cpp`. Done when: `Cli.ExportArea` passes under ASan for an image export and a text export.
+- [ ] Add `AreaExport.*` tests in `tests/recto-tests/area_export_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=AreaExport.*:Cli.ExportArea` passes under ASan.
+- [ ] Commit: `convert: add the page area export engine and recto-cli export-area`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=AreaExport.*:Cli.ExportArea` passes under ASan, and cropping a full-page render instead of clipping makes `AreaExport.LargeAreaBanded` fail its memory bound.
+
+## 22. Export Area tool on the extractor bar, `Ctrl+K` commands and save dialog
+
+Give the area engine (`§21`) a tool in the viewer: **Export Area** draws a rectangle on the page, then offers `Save as image` or `Save as text` with the format, resolution and OCR choices, and saves to a file the user picks. It reuses the region drag of `TableCanvasOverlay` (`§10`) so the page has one rectangle-drawing behaviour, adds an `Export Area...` button to the `TableImageExtractorBar` (`§10`), and is reachable from `Ctrl+K` as `Export area as image` and `Export area as text`. Foxit PDF Editor offers the same area export; Acrobat has only the snapshot copy. Recto keeps its rules: the tool never changes the document, the save is atomic, and OCR on a scanned area runs locally.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** SPEC section 8.2 (contextual mode bars, the `Table & Image Extractor Bar` and its on-canvas region drag); the `Export Area...` button and the save popover are a genuinely new control on that bar and follow its 40 epx chrome.
+**Job:** A reader can drag a rectangle over any part of a page, see its pixel size and a preview, and save it as a PNG, JPEG, TIFF or BMP picture at a chosen resolution, or as the text inside it, without exporting the whole page. Consumer: `DocumentView` (`D02 T02`), the extractor bar (`§10`) and the area engine (`§21`).
+**Treatment:** The shared rectangle drag of `TableCanvasOverlay`, an `AreaExportPopover` anchored to the rectangle with `Image` and `Text` tabs, a live pixel-size line, and `Save...` through the file picker. Cheaper substitute that fails the checkpoint: exporting the whole page, or a dialog with typed coordinates instead of an on-canvas rectangle.
+**Chrome:** consume `DocumentView` (`D02 T02`), `TableImageExtractorBar` and `TableCanvasOverlay` (`§10`), the modal host (`D02 T01 §10`), `CommandRegistry` (`D02 T03 §11`), `RectoAccentBrush` and Segoe Fluent Icons.
+
+**Build order:**
+
+1. Add the `Export Area` mode to `TableCanvasOverlay`, the bar button and the `AreaExportPopover`. Done when: `AppTests.ExportAreaUi` draws a rectangle on a page and the popover shows the size in pixels at the chosen DPI.
+2. Wire `Save...`, the `Ctrl+K` commands and the OCR indicator. Done when: `AppTests.ExportAreaUi` saves an image and a text file and finds the expected content.
+
+- [ ] Add an `Export Area` mode to `TableCanvasOverlay` that reuses its rectangle create, move and resize handles in `RectoAccentBrush` and reports the rectangle to a new `AreaExportViewModel`. Done when: dragging, moving and resizing the rectangle updates the view model and `Esc` clears it.
+- [ ] Add the `Export Area...` button to `TableImageExtractorBar` (`§10`) with an automation name and tooltip, and open the bar in this mode. Done when: the button passes the `D03 T02 §3` inventory and opens the mode.
+- [ ] Build `AreaExportPopover` (`src/app/controls/AreaExportPopover.xaml/.cpp`) with `Image` (`Format`, `Resolution`, `Colour`, `Transparent background` for PNG, pixel-size line) and `Text` (`Keep line breaks`, `OCR scanned areas` with a note when OCR will run) tabs and a `Save...` button. Done when: changing the DPI updates the pixel-size line within 100 ms and the controls are keyboard reachable in the order of `D03 T02 §4`. Cheaper substitute: typed coordinates in a modal dialog.
+- [ ] Render a small preview of the rectangle on a worker with `CancelToken` and show it in the popover. Done when: the preview shows the area and never blocks the UI thread over 16 ms.
+- [ ] Save through the `FileSavePicker`, run `export_area` as a queue job (`D04 T01 §5`), and report success or the typed error in an `InfoBar`. Done when: `AppTests.ExportAreaUi` saves a `PNG` and a `.txt` and a refusal for an oversized area shows its message and writes nothing.
+- [ ] Register `view.exportAreaImage` and `view.exportAreaText` in `CommandRegistry` (`D02 T03 §11`) as `Export area as image` and `Export area as text` with synonyms `crop`, `snapshot`, `save region`. Done when: `Ctrl+K` "crop" finds both and starts the mode.
+- [ ] Add `AppTests.ExportAreaUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=AppTests.ExportAreaUi` passes on the display-session host.
+- [ ] Commit: `viewer: add the Export Area tool for page areas as image or text`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=AppTests.ExportAreaUi` passes on the display-session host, and exporting the whole page instead of the rectangle makes it fail on the saved pixel size.
+
+## 23. More image inputs to PDF: ICO, JFIF, DIB, HEIC, WebP, JPEG XL via installed codecs
+
+PDFelement converts more picture types than Recto's `Images -> PDF` path (`§5`): ICO, JFIF, DIB, HEIC, WebP and JPEG XL. Recto reads them through the Windows Imaging Component, so a format works when the machine has a codec for it and otherwise fails with a message that names the missing codec, never a bare error and never a blank page. `ImageCodecProbe` (`src/core/image_codec_probe.h/.cpp`) identifies a file by its signature rather than its extension (a renamed `.png` that is really a WebP still converts), asks WIC whether a decoder exists, and `images_to_pdf` (`§5`) then decodes and embeds the pixels. Recto bundles no codec and downloads nothing (offline by default, D16); it says which Windows extension provides the missing one. JFIF files are ordinary JPEGs and take the lossless `DCTDecode` pass-through of `§5`. Formats that need a decode are written losslessly with `FlateDecode` (never a lossy re-encode), alpha goes to an `/SMask`, EXIF orientation is honoured, and images with a wide gamut or more than 8 bits per channel are converted to 8-bit sRGB through the WIC colour context with a recorded warning.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `ImageCodecProbe::identify` (signature sniffing for ICO, JPEG/JFIF, DIB, HEIC/HEIF, WebP, JPEG XL, plus the formats of `§5`) and `has_decoder` (WIC `CreateDecoderFromStream` failure classification) with the missing-codec message table. Done when: `ConvertImagesToPdf.CodecProbe` identifies a renamed file by signature and returns the right missing-codec message when a fake `IWICImagingFactory` reports no component.
+2. Extend `images_to_pdf` (`§5`) to use the probe: ICO frame choice, JFIF pass-through, headerless DIB, and the decoded formats, plus `recto-cli images-to-pdf --list-codecs`. Done when: `ConvertImagesToPdf.MoreFormats` and `Cli.ImagesToPdf` pass under ASan on every format whose codec is present and skip, with the codec message asserted, for each one that is absent.
+
+- [ ] Implement signature sniffing in `src/core/image_codec_probe.cpp`: ICO (`00 00 01 00`), JFIF/JPEG (`FF D8 FF`), DIB (a `BITMAPINFOHEADER`, `BITMAPV4HEADER` or `BITMAPV5HEADER` size field with sane dimensions and no `BM` file header), HEIC/HEIF (an ISO base media `ftyp` box with a `heic`, `heix`, `mif1` or `msf1` brand), WebP (`RIFF....WEBP`) and JPEG XL (the `FF 0A` codestream or the `JXL ` container box). Done when: `ConvertImagesToPdf.CodecProbe` identifies each, and a text file named `.png` is refused with `UnsupportedImageFormat`.
+- [ ] Map a WIC decoder failure (`WINCODEC_ERR_COMPONENTNOTFOUND`, `WINCODEC_ERR_UNKNOWNIMAGEFORMAT`) to a message that names the format and the Windows codec extension that provides it, kept in one table (`src/core/image_codec_names.h`) checked against Microsoft Learn when written, and state that Recto does not download codecs. Done when: `ConvertImagesToPdf.MissingCodecMessage` returns the message with the format and extension name for HEIC, WebP and JPEG XL on a machine double with no codecs, and the message appears in the queue card error (`D04 T01 §7`). Cheaper substitute: a generic `Could not read image` message.
+- [ ] Treat `.jfif`, `.jpe` and JFIF-signed files as JPEG: parse SOF for dimensions and components and embed the bytes unchanged with `/DCTDecode`. Done when: `ConvertImagesToPdf.JfifPassThrough` finds the embedded stream byte-identical to the input.
+- [ ] Decode `.ico` through WIC and add `ico_frames` (`Largest` default, `All`) to the options: the largest frame as one page, or every frame as its own page, with alpha as an `/SMask`. Done when: `ConvertImagesToPdf.IcoFrames` converts a 4-size icon into one page (`Largest`) and four pages (`All`) with transparency preserved.
+- [ ] Wrap a headerless `.dib` in a `BITMAPFILEHEADER` in memory and decode it through the BMP decoder, applying the alpha policy of `D04 T02 §14` (opaque unless a real alpha mask exists). Done when: `ConvertImagesToPdf.DibFile` converts 8, 24 and 32 bit DIBs and a 32-bit screenshot DIB stays opaque.
+- [ ] Decode HEIC, WebP and JPEG XL through WIC when the codec is present, apply EXIF orientation, convert 16-bit or wide-gamut pixels to 8-bit sRGB with the image's colour context and record `ColourConvertedToSrgb` as a warning, and write the pixels with `FlateDecode` (and an `/SMask` for alpha). Done when: `ConvertImagesToPdf.DecodedFormats` converts a fixture of each format on a machine that has the codec, never uses a lossy re-encode, and records the warning for a 16-bit fixture.
+- [ ] Add `recto-cli images-to-pdf --list-codecs [--json]` printing which of the formats this machine can read and the extension that adds each missing one. Done when: `Cli.ImagesToPdf` asserts the list against the machine double.
+- [ ] Add fixtures to `scripts/build-corpus.py` (ICO, DIB and JFIF built from stdlib; HEIC, WebP and JPEG XL as small committed binaries) and record each in `tests/corpus/PROVENANCE.md` with its origin and licence. Done when: `python scripts/build-corpus.py --check` passes and every new fixture has a provenance row.
+- [ ] Commit: `convert: read ICO, JFIF, DIB, HEIC, WebP and JPEG XL images through installed codecs`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=ConvertImagesToPdf.CodecProbe:ConvertImagesToPdf.MissingCodecMessage:ConvertImagesToPdf.JfifPassThrough:ConvertImagesToPdf.IcoFrames:ConvertImagesToPdf.DibFile:ConvertImagesToPdf.MoreFormats:Cli.ImagesToPdf` passes under ASan, and re-encoding the JFIF as a lossy JPEG makes `ConvertImagesToPdf.JfifPassThrough` fail.
+
+## 24. New blank PDF engine: size presets, paper styles and `recto-cli new-pdf`
+
+UPDF and PDFelement create a new, empty PDF from a page size and a paper style, and Acrobat offers a blank page insert but not paper styles. `create_blank_pdf` (`src/core/blank_pdf.h/.cpp`, `recto::core`) writes a new PDF through `PdfWriter` (`§2`) and `AtomicFileWriter` (`§1`) with `1..1000` pages of a chosen size, orientation and paper style: `Plain`, `Lined` (narrow, college and wide rule spacing), `Grid`, `Dot` and `Music` (five-line staves, a set number per page). The ruling is vector content in one shared Form XObject reused on every page, so a 1000-page notebook stays small, drawn in light grey stroke values, with an optional margin line. Presets cover ISO A0 to A6, B4 and B5, Letter, Legal, Tabloid, Executive and Statement, plus a custom width and height in points, millimetres or inches within the `3..14400` point limit of PDF 1.7 implementations. Recto keeps its rules: the file is a new document, written temp-file-then-replace, with no script, and the sizes are exact.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Define `BlankPdfOptions`, the size preset table and the style parameters, and implement the page and shared-style Form XObject writer in `src/core/blank_pdf.cpp`. Done when: `BlankPdf.PagesAndSizes` writes `3` pages for each preset and orientation and the `/MediaBox` equals the preset to `0.01 pt`.
+2. Implement each paper style and `recto-cli new-pdf`. Done when: `BlankPdf.*` and `Cli.NewPdf` pass under ASan and the style pixels re-render as the style requires.
+
+- [ ] Define `BlankPageSize` (the preset enum and `Custom` with width, height and unit), `BlankPaperStyle` (`Plain`, `Lined`, `Grid`, `Dot`, `Music`), `BlankPdfOptions` (`size`, `landscape`, `page_count` `1..1000`, `style`, `spacing_pt`, `line_weight_pt`, `margin_line`, `staves_per_page`, `title`) and the preset table in millimetres from the ISO 216 and North American sizes in `src/core/blank_pdf.h`. Done when: `BlankPdf.PresetTable` checks A4 `595.28 x 841.89 pt` and Letter `612 x 792 pt` to `0.01 pt`.
+- [ ] Refuse a custom size outside `3..14400` points on a side and a page count outside `1..1000` with typed errors before writing. Done when: `BlankPdf.Bounds` covers both limits and writes no file.
+- [ ] Write each style as vector content in one shared Form XObject (`/Subtype /Form`, `/BBox` equal to the page) painted on every page with `Do`: `Lined` horizontal rules at the chosen spacing, `Grid` crossing rules, `Dot` small filled circles at the grid points, `Music` groups of five staff lines with a gap between staves, and an optional vertical margin line. Done when: `BlankPdf.Styles` re-renders each style and finds the expected rule count and spacing, and a 1000-page `Lined` file stays under `200 KB`. Cheaper substitute: one content stream per page, which fails the size bound.
+- [ ] Draw the ruling in a fixed light grey (`0.75 G`) with the requested line weight, clipped to the printable area (a `36 pt` inner margin), so printing and dark mode both show it. Done when: `BlankPdf.Printable` finds no ruling outside the margin box.
+- [ ] Write `/Info` `Title` (default `Untitled`), `/ID` and the page tree through `PdfWriter` and commit through `AtomicFileWriter`, checking `CancelToken` per page. Done when: `BlankPdf.CancelLeavesNothing` aborts mid-write and finds the folder unchanged, and `Document::open` parses the output without recovery.
+- [ ] Implement `recto-cli new-pdf --out <file.pdf> [--size a0..a6|b4|b5|letter|legal|tabloid|executive|statement|<w>x<h><pt|mm|in>] [--landscape] [--pages <1..1000>] [--style plain|lined|grid|dot|music] [--spacing <pt>] [--margin-line] [--title <text>]` in `src/cli/cmd_new_pdf.cpp`. Done when: `Cli.NewPdf` passes under ASan for each style.
+- [ ] Add `BlankPdf.*` tests in `tests/recto-tests/blank_pdf_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=BlankPdf.*:Cli.NewPdf` passes under ASan.
+- [ ] Commit: `convert: add the blank PDF engine with page-size presets and paper styles`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=BlankPdf.*:Cli.NewPdf` passes under ASan, and writing the style per page instead of through the shared Form XObject makes `BlankPdf.Styles` fail its size bound.
+
+## 25. New blank PDF dialog, File menu entry and `Ctrl+K` command
+
+Make the blank PDF engine (`§24`) a command: **New blank PDF** opens a small dialog with the page size, orientation, number of pages and paper style with a live preview, and opens the result as a new unsaved tab through `OpenDocumentPipeline::open_generated_async` (`§15`), so it behaves exactly like a pasted clipboard PDF (dirty on close, `Save a copy`, crash recovery). It is reachable from the Home screen, the `+` New Tab menu, the Classic `File > New` menu and `Ctrl+K`. The dialog's first page size is seeded from the `Default Office to PDF page setup` setting (`D02 T04 §5`), and the last choices are remembered in settings. UPDF and PDFelement offer this; Recto keeps its rule that nothing is written until the user saves.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new command on existing chrome: it adds an entry to the Home screen (`design/SPEC.md` section 9.1, `design/screenshots/D-Home.png`), the `+` New Tab menu of the title bar (section 8.1), the Classic `File` menu (section 9.2) and the command box (section 9.4), and a standard WinUI `ContentDialog` hosted as in section 9.9.
+**Job:** A user can create a notebook, a ruled sheet, a music pad or a blank page in any common size in two clicks, see it before creating it, and start writing or annotating on it. Consumer: `OpenDocumentPipeline` (`D02 T01 §5`), `SavePipeline` (`D02 T01 §8`) and crash recovery (`D02 T01 §12`).
+**Treatment:** A `file.newBlank` command that opens `NewBlankPdfDialog` (preview rendered by the `§24` engine at low DPI on a worker), runs `create_blank_pdf` as a job into a private temp file, and opens it with `open_generated_async`. Cheaper substitute that fails the checkpoint: a dialog that writes into the Documents folder without the user saving, or a preview that is a static picture.
+**Chrome:** consume `ShellPage` and `TabView` (`D02 T01 §3`), `OpenDocumentPipeline` (`D02 T01 §5`), the dialog host (`D02 T01 §10`), the Home screen (`D02 T03 §1`), `CommandRegistry` (`D02 T03 §11`), the settings store (`D02 T04 §5`) and `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Build `NewBlankPdfDialog` with the size, orientation, pages and style controls and the live preview. Done when: `AppTests.NewBlankPdfUi` changes each control and the preview updates.
+2. Wire the command, the four entry points, the settings memory and the open-as-new-tab flow. Done when: `AppTests.NewBlankPdfUi` creates a notebook through each entry point and finds an unsaved tab with the chosen page count and size.
+
+- [ ] Build `NewBlankPdfDialog` (`src/app/dialogs/NewBlankPdfDialog.xaml/.cpp`, hosted via `D02 T01 §10`) with `Page size` (the presets plus `Custom` with unit), `Orientation`, `Pages` (`1..1000`), `Paper style` and its spacing option, each with an automation name and tooltip. Done when: the dialog passes the `D03 T02 §3` inventory and a custom size outside `3..14400 pt` shows an inline error and disables `Create`.
+- [ ] Render the preview of page 1 with `create_blank_pdf` at low DPI on a worker with a `CancelToken` and a 150 ms debounce. Done when: changing the style updates the preview and the UI thread never blocks over 16 ms. Cheaper substitute: a static sample image per style.
+- [ ] Register `file.newBlank` in `CommandRegistry` (`D02 T03 §11`) as `New blank PDF` with synonyms `notebook`, `ruled`, `grid paper`, `music paper`, `empty pdf`, always enabled while the shell is open. Done when: `Ctrl+K` "notebook" finds it.
+- [ ] Add the entry to the Home screen action row, the `+` New Tab menu and the Classic `File > New` menu, each routed to the same command with an automation name and tooltip. Done when: all three entry points open the dialog.
+- [ ] Seed `Page size` from `Default Office to PDF page setup` (`D02 T04 §5`) the first time and store the last choices under a `newBlankPdf.*` settings key that the dialog reads on the next open. Done when: `AppTests.NewBlankPdfUi` shows the first-use default follows the setting and a second open restores the last choices. Cheaper substitute: storing the choices and never reading them.
+- [ ] Run `create_blank_pdf` as a queue job into a private temp file, then open it with `OpenDocumentPipeline::open_generated_async` (`§15`) as `Notebook 1.pdf` style display names, marked unsaved, with the temp file owned by the tab and covered by crash recovery. Done when: closing the tab asks `Save your changes first?` and a simulated crash restores it.
+- [ ] Add `AppTests.NewBlankPdfUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=AppTests.NewBlankPdfUi` passes on the display-session host.
+- [ ] Commit: `app: add New blank PDF with page-size presets and paper styles`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=AppTests.NewBlankPdfUi` passes on the display-session host, and creating the file before the user saves makes the close-prompt assertion fail.
 
 ## Verification
 

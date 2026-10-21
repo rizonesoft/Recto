@@ -135,3 +135,39 @@ All 8 findings were accepted and fixed in the next commit:
 6. D04 T07 Goal, §5, §14: `skip_with_warning` is the single, reported redaction exception, unavailable for `Truncated` pages.
 7. D04 T07 §9: stop keeps completed sets and rolls back the set in progress; retained outputs are listed and the file stays `Failed`.
 8. D04 T06 §17: an exact status matrix; `Conformant` needs a complete, second-read inventory.
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T01:07:04Z
+- Effort: medium
+- Lines: 19
+- Digest: fbf35b59aa16e689
+
+**record: needs-attention**
+
+Round 1 **#14** / Round 2 **#1**, and Round 1 **#20** / Round 2 **#5**, remain incompletely resolved. Findings below explain why.
+
+Review limitation: both repository-read attempts failed before PowerShell started (`helper_unknown_error: setup refresh had errors`). This review uses the supplied diff and primary documentation. Surrounding repository contracts remain unverified. No files were modified; no Git commands or tests ran.
+
+**source-defect: needs-attention**
+
+1. **T06 §5: the Type 2 TAC proof still permits false passes.** `C0` and `C1` describe function values at inputs zero and one, not necessarily the actual domain endpoints. Consider a CMYK axial shading and function with `/Domain [0 4]`, `N=1`, `C0=[0 1 0 0]`, `C1=[1 0.75 0 0]`, and component ranges `[0 1]`. Both coefficient arrays satisfy the new eligibility rule. Nevertheless, after clipping, TAC is 100% at both domain endpoints and 175% at `x=1`. Endpoint checking incorrectly passes a 150% limit. The candidate’s new tests do not exercise this case. Prove monotonicity and absence of clipping over the actual evaluated domain, including stitching mappings, or return `Incomplete`. Add this fixture. This leaves Round 1 #14 and Round 2 #1 unresolved. [ISO 32000-1, §7.10.3](https://opensource.adobe.com/dc-acrobat-sdk-docs/standards/pdfstandards/pdf/PDF32000_2008.pdf?from=20423&from_column=20423).
+
+**adversarial: needs-attention**
+
+2. **T07 §6 and §14: the local-target check still races with parameter access.** The policy walks components, “then open[s] the target,” and runs at import, save and run start. Unlike output publication, it does not require retained parent handles or require step implementations to consume the checked target handle. Replace `C:\assets` with an SMB symlink after its inspection but before opening the stamp, or after run-start validation but before the watermark step reads it. A subsequent path-based open follows the replacement; checking its final path afterward cannot undo remote access. The static symlink fixture passes without testing either race. Require handle-relative acquisition through retained, checked parents and consumption of that same opened object, with fault injection between validation and use. This leaves Round 1 #20 and Round 2 #5 unresolved. [Microsoft’s `NtCreateFile` contract](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile).
+
+**consistency: needs-attention**
+
+3. **T07 §6: an output root that is a junction is simultaneously supported and forbidden.** The containment bullet explicitly permits a root that is itself a junction. The revised local-only bullet rejects any symbolic link or mount point at an ancestor **or leaf**, explicitly including output folders. A junction to another local directory therefore must both be accepted and refused. Choose one policy and align both bullets and their tests. If local junction roots remain supported, specify how their targets are resolved safely and retained without following a remote redirection.
+
+OVERALL: needs-attention
+
+## Response to round 3
+
+All 3 findings were accepted and fixed in the next commit. This was the last allowed round:
+
+1. D04 T06 §1, §5: a Type 2 maximum is accepted only with `/Domain [0 1]`, `N > 0` and `C0`, `C1` inside `/Range`; Type 3 parts only with `/Encode [0 1]` or `[1 0]`; Type 0 only when `/Encode` spans the sample grid; anything else is sampled and can only be `Failed` or `Incomplete`. The reviewer's `/Domain [0 4]` case is a fixture.
+2. D04 T07 §3, §6, §14: parameter files are opened once through `CheckedOpen` (retained parent handles, `FILE_OPEN_REPARSE_POINT`, no `FILE_SHARE_DELETE`, final path local) and steps read them only from that handle; earlier checks are advisory. `ActionNaming.CheckedOpenRace` swaps a folder for an SMB symlink after each check.
+3. D04 T07 §6: one rule: a symlink or junction output root is refused, and the root is held through `CheckedOpen` for the run; all bullets and tests agree.

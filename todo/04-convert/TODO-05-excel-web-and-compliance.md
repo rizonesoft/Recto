@@ -33,6 +33,13 @@ track: M5
 - -> XREF: D06 T03 §4 -- the Reading Order engine reads content through the one interpreter.
 - -> XREF: D05 T01 §13 -- backgrounds (D05 T01 §13) stay artifacts under PDF/UA.
 - -> XREF: D04 T06 §2 -- preflight and PDF/X (D04 T06) build on this validator.
+- -> XREF: D03 T03 §41 -- XlsxWriter.
+- -> XREF: D03 T01 §1 -- page text for math detection.
+- -> XREF: D04 T06 §7 -- ICC conversion for contrast.
+- -> XREF: D04 T06 §17 -- inventory method.
+- -> XREF: D04 T06 §15 -- shared exit codes.
+- -> XREF: D04 T07 §15 -- pdfua step.
+- -> XREF: D01 T03 §10 -- a11y verb follows the registration rule.
 
 ## Outcome
 
@@ -43,6 +50,8 @@ track: M5
 - `PptxWriter` (`src/core/pptx_writer.cpp`, `§10`-`§12`, card in `§13`) converts a PDF into a native ECMA-376 PresentationML `.pptx` with one slide per page, editable text boxes in reading order, pictures, vector shapes and tables, validates every output by reopening it with Recto's own OOXML reader, and never reports an empty or unreadable result as success.
 - `StructTreeEditor` (`src/pdf/struct_tree_editor.cpp`, `§14`) and the Viewer `Tags` panel (`§16`) add, retag, reorder and delete tags and edit `/Alt` and `/ActualText` while keeping every `/K`, `/P`, `/Pg`, MCID and `/ParentTree` entry consistent, as Acrobat Pro's Tags panel does.
 - `ReadingOrderEditor` (`src/pdf/reading_order.cpp`, `§15`) and the Viewer `Reading Order` tool (`§17`) draw content regions, tag them as heading, paragraph, figure, table or artifact, and reorder them, building on the `PDF/UA-1` validator and auto-tagger of `§7`.
+- `MathRegionDetector`, `MathExporter` and `tag_formulas` (`§18`-`§21`) find equations, export them as MathML or LaTeX and tag them as `Formula` elements with MathML associated files, keeping uncertain regions as text.
+- `ContrastChecker`, the PDF/UA-2 rule set, the WCAG 2.2 report and `recto-cli a11y` (`§22`-`§27`) check accessibility beyond PDF/UA-1, and never report `Passed` or conformance for content they could not evaluate.
 
 **Adjacency:** all=not-applicable (converter engines, compliance validators and side-panel views inside `D04 T01`'s Convert frame and `D02 T03`'s side-panel host)
 
@@ -69,6 +78,16 @@ track: M5
 | 15 | §15 | `ReadingOrderEditor` engine: content regions, roles, artifacts and reorder | §14, D06 T03 §4, D01 T02 §4, D04 T02 §8 | [ ] |
 | 16 | §16 | Viewer **Tags** tree editor panel in `Signatures & Standards` (`SPEC 8.3`) | §9, §14, §15, D02 T03 §3, D02 T03 §11, D02 T01 §8 | [ ] |
 | 17 | §17 | Viewer **Reading Order** tool: draw regions, assign roles, reorder, mark artifacts | §15, §16, D05 T02 §9, D03 T01 §3, D02 T03 §11 | [ ] |
+| 18 | §18 | `MathRegionDetector` engine: math zones, symbols and expression trees | D03 T01 §1, D01 T02 §1, §14 | [ ] |
+| 19 | §19 | `MathExporter`: MathML 3 and LaTeX serializers, web equations, `recto-cli math` | §18, §3, §4 | [ ] |
+| 20 | §20 | Tag detected formulas as `Formula` elements with MathML associated files | §18, §19, §14, §15 | [ ] |
+| 21 | §21 | Equations option on the web Convert card and the Reading Order bar | §4, §17, §19, §20, D02 T03 §11 | [ ] |
+| 22 | §22 | Colour contrast check engine (WCAG 2.2 success criterion 1.4.3) | §5, §7, D03 T01 §1, D01 T02 §1, D01 T02 §6, D04 T06 §7 | [ ] |
+| 23 | §23 | PDF/UA-2 (ISO 14289-2) rule set, requirement inventory and validator | §5, §7, D04 T06 §2 | [ ] |
+| 24 | §24 | PDF/UA-2 output: the auto-tagger writes PDF 2.0 structure | §7, §23 | [ ] |
+| 25 | §25 | WCAG 2.2 report model: criteria mapping, statuses and exporters | §7, §22, §23, D04 T06 §2 | [ ] |
+| 26 | §26 | `recto-cli a11y` check and report commands | §25, D01 T03 §1 | [ ] |
+| 27 | §27 | Accessibility checks and WCAG report in the Standards & Accessibility panel | §9, §16, §22, §24, §25, D02 T03 §11 | [ ] |
 
 ## 1. Native ECMA-376 `XlsxWriter` (`.xlsx`, `.csv`, `.xml`) over `TableExtractor` and CLI
 
@@ -307,7 +326,7 @@ Build the visual compliance and e-invoicing surfaces specified in `design/SPEC.m
 
 ## 10. `PptxWriter` PresentationML package: one slide per page, text boxes, reading order
 
-Acrobat Pro exports a PDF to a PowerPoint presentation, and Recto matches that with its own writer and no Office install, so the Convert page can offer it beside Word and Excel. `PptxWriter` (`src/core/pptx_writer.h/.cpp`, `recto::core::PptxWriter`) builds an ECMA-376 PresentationML package on the shared ZIP and OpenXML scaffold of `D04 T03 §1`: one slide per PDF page sized to the page, with editable text boxes that keep font family, size, weight, italics, colour and reading order. It consumes `PageText` (`D03 T01 §1`) and the heading and list inference of `D04 T03 §2`, never parses content streams itself, and writes `.pptx` only, so no macro stream can exist in the output (D10). Comparable tools ship presentations with missing text or lost formatting (pdfcraft #1776 and #3448 in `docs/research/2026-10-20-pdfcraft-issue-lessons.md`), so this section fixes the text and ordering contract and `§12` enforces that an empty result is never reported as success. Pictures, shapes and tables follow in `§11`.
+Acrobat Pro exports a PDF to a PowerPoint presentation, and Recto matches that with its own writer and no Office install, so the Convert page can offer it beside Word and Excel. `PptxWriter` (`src/core/pptx_writer.h/.cpp`, `recto::core::PptxWriter`) builds an ECMA-376 PresentationML package on the shared ZIP and OpenXML scaffold of `D04 T03 §1`: one slide per PDF page sized to the page, with editable text boxes that keep font family, size, weight, italics, colour and reading order. It consumes `PageText` (`D03 T01 §1`) and the heading and list inference of `D04 T03 §2`, never parses content streams itself, and writes `.pptx` only, so no macro stream can exist in the output (D10). Comparable tools ship presentations with missing text or lost formatting, so this section fixes the text and ordering contract and `§12` enforces that an empty result is never reported as success. Pictures, shapes and tables follow in `§11`.
 
 **Phase:** 5
 **Needs:** windows-host
@@ -359,7 +378,7 @@ Complete the slide content of `PptxWriter` (`src/core/pptx_writer.cpp`): embedde
 
 ## 12. `PptxWriter` reopen validation, empty-result refusal and `recto-cli pdf-to-pptx`
 
-Make `PptxWriter` trustworthy: before `AtomicFileWriter::commit()` (`D04 T02 §1`) every presentation is reopened with Recto's own OOXML reader (the `.pptx` path of `OfficeToPdf`, `D04 T04 §2`) and checked against structural and schema rules and against the source `PageText`, so a presentation that is empty, missing text, or unreadable never reaches the destination folder and never shows as complete. This answers the empty and unformatted exports users report elsewhere (pdfcraft #1776, #3448). The section also adds `recto-cli pdf-to-pptx`.
+Make `PptxWriter` trustworthy: before `AtomicFileWriter::commit()` (`D04 T02 §1`) every presentation is reopened with Recto's own OOXML reader (the `.pptx` path of `OfficeToPdf`, `D04 T04 §2`) and checked against structural and schema rules and against the source `PageText`, so a presentation that is empty, missing text, or unreadable never reaches the destination folder and never shows as complete. This answers the empty and unformatted exports users report elsewhere. The section also adds `recto-cli pdf-to-pptx`.
 
 **Phase:** 5
 **Needs:** windows-host
@@ -412,7 +431,7 @@ Add the **PowerPoint presentation (`.pptx`)** card to the Convert page beside **
 
 ## 14. `StructTreeEditor` engine: add, retag, move, delete tags, edit `/Alt` and `/ActualText`
 
-Acrobat Pro's Tags panel lets a person repair a tagged PDF by hand, and `§7` can only validate and auto-tag. `StructTreeEditor` (`src/pdf/struct_tree_editor.h/.cpp`, `recto::pdf::StructTreeEditor`) adds the manual verbs: add an element, retag it, move or reorder it, delete it, and edit its `/Alt` and `/ActualText`, on an isolated working copy of the document (never the viewer's `pdf::Document`, and saved as a full rewrite so deleted elements leave no trace). Its one job beyond the verbs is consistency: after every operation `/K`, `/P`, `/Pg`, marked-content references, object references, `/StructParents`, `/StructParent` and the `/ParentTree` number tree agree, or the whole operation is rolled back with a typed error. Users of a comparable app hit trees broken by single edits: a decorative-marking tool that ignored named `BDC` property lists (pdfcraft #1813) and an edit that removed a `BDC` with its `/MCID` so the new text was untagged and its element pointed at nothing (pdfcraft #3219). Recto keeps `§7`'s validator as the arbiter and adds no new concept of structure.
+Acrobat Pro's Tags panel lets a person repair a tagged PDF by hand, and `§7` can only validate and auto-tag. `StructTreeEditor` (`src/pdf/struct_tree_editor.h/.cpp`, `recto::pdf::StructTreeEditor`) adds the manual verbs: add an element, retag it, move or reorder it, delete it, and edit its `/Alt` and `/ActualText`, on an isolated working copy of the document (never the viewer's `pdf::Document`, and saved as a full rewrite so deleted elements leave no trace). Its one job beyond the verbs is consistency: after every operation `/K`, `/P`, `/Pg`, marked-content references, object references, `/StructParents`, `/StructParent` and the `/ParentTree` number tree agree, or the whole operation is rolled back with a typed error. Single edits can break trees in two known ways: a decorative-marking tool that ignores named `BDC` property lists, and an edit that removes a `BDC` with its `/MCID` so the new text is untagged and its element points at nothing. Recto keeps `§7`'s validator as the arbiter and adds no new concept of structure.
 
 **Phase:** 5
 **Needs:** windows-host
@@ -427,8 +446,8 @@ Acrobat Pro's Tags panel lets a person repair a tagged PDF by hand, and `§7` ca
 - [ ] Load the tree iteratively with a visited set, a depth cap of `256` and a node cap of `1000000`, and refuse a malformed tree (cycle, `/P` mismatch, dangling `/Pg`, `/ParentTree` hole) with `PdfErrorCode::StructTreeMalformed` naming the first violation instead of guessing a repair. Done when: `StructTreeEditor.MalformedTreeRefused` refuses a cyclic and a dangling fixture without crash or allocation growth.
 - [ ] Implement `add_element(parent, index, role, attributes)` and `retag(node, role)` accepting the standard structure types and custom roles that resolve through `/RoleMap` to a standard type, refusing a role-map cycle and an unmapped custom role. Done when: `StructTreeEditor.AddAndRetag` adds a `/Sect` and retags a `/P` to `/H2`, and a cyclic `/RoleMap` is refused.
 - [ ] Implement `move(node, new_parent, new_index)` for reorder and reparent, refusing a move into the node's own subtree, and keep `/P` back-pointers current. Done when: `StructTreeEditor.MoveAndReorder` reorders siblings and reparents a subtree and `check_integrity` passes.
-- [ ] Implement `delete(node, DeletePolicy)`: `PromoteChildren` re-parents kids to the deleted node's parent at its position, `DeleteSubtreeMarkContentAsArtifact` rewrites the subtree's marked-content sequences to `/Artifact` (handling both inline `/P << /MCID n >> BDC` and named property lists resolved through `/Resources /Properties`, and removing the matching `/ParentTree` entries), and `DeleteSubtreeLeaveContentUntagged` unwraps them. Done when: `StructTreeEditor.DeletePolicies` covers all three policies including a named `/MC0 BDC` property list (pdfcraft #1813) and no `/ParentTree` entry or `/MCID` is left dangling. Cheaper substitute: removing the element dictionary and leaving `/ParentTree` and the `BDC` behind.
-- [ ] Implement `set_alt` and `set_actual_text` on the element, and when the element's own marked content carries `/ActualText` in its property list, update that too so `PageText` and the tree agree; never remove a `BDC` or its `/MCID` when only text changes (pdfcraft #3219). Done when: `StructTreeEditor.AltAndActualText` edits both, extracts the new text through `PageText`, and finds the `BDC` and `/MCID` unchanged.
+- [ ] Implement `delete(node, DeletePolicy)`: `PromoteChildren` re-parents kids to the deleted node's parent at its position, `DeleteSubtreeMarkContentAsArtifact` rewrites the subtree's marked-content sequences to `/Artifact` (handling both inline `/P << /MCID n >> BDC` and named property lists resolved through `/Resources /Properties`, and removing the matching `/ParentTree` entries), and `DeleteSubtreeLeaveContentUntagged` unwraps them. Done when: `StructTreeEditor.DeletePolicies` covers all three policies including a named `/MC0 BDC` property list and no `/ParentTree` entry or `/MCID` is left dangling. Cheaper substitute: removing the element dictionary and leaving `/ParentTree` and the `BDC` behind.
+- [ ] Implement `set_alt` and `set_actual_text` on the element, and when the element's own marked content carries `/ActualText` in its property list, update that too so `PageText` and the tree agree; never remove a `BDC` or its `/MCID` when only text changes. Done when: `StructTreeEditor.AltAndActualText` edits both, extracts the new text through `PageText`, and finds the `BDC` and `/MCID` unchanged.
 - [ ] Implement `check_integrity` returning `ComplianceFinding`s (`§5`, category `TaggedStructure`) for `/K`, `/P`, `/Pg`, `MCR`, `OBJR`, `/StructParents`, `/StructParent`, `/ParentTree` and `/ParentTreeNextKey` consistency, run it after every operation, and roll the whole operation back on any finding. Done when: `StructTreeEditor.RollbackOnFailure` injects a fault mid-operation and the tree equals its pre-operation state.
 - [ ] Record each operation as an invertible command that stores only the changed objects (before and after), so `undo()` and `redo()` restore the exact prior object state, bounded to the last `200` operations and to a retained-history budget of `64 MiB`: the oldest entries are evicted first, and an operation whose own inverse exceeds the budget is refused with `PdfErrorCode::UndoBudgetExceeded` unless the caller passes `allow_irreversible`, which applies it and clears the history. Done when: `StructTreeEditor.UndoRedo` applies ten mixed operations, undoes all of them and equals the original byte for byte after commit, and `StructTreeEditor.UndoBudget` deletes and restores a document-sized subtree repeatedly and stays under the budget with the refusal and the irreversible path both exercised.
 - [ ] Implement `commit(dst_path, CancelToken)` writing the working copy through `PdfWriter` (`D04 T02 §2`) as a full rewrite and `AtomicFileWriter` (`D04 T02 §1`), then reopen it and rerun `check_integrity` before reporting success. Done when: `StructTreeEditor.CommitFullRewrite` finds no deleted element text or `/Alt` string in the raw output bytes.
@@ -441,7 +460,7 @@ Acrobat Pro's Tags panel lets a person repair a tagged PDF by hand, and `§7` ca
 
 ## 15. `ReadingOrderEditor` engine: content regions, roles, artifacts and reorder
 
-Acrobat Pro's Reading Order tool lets a person draw a box over page content, say what it is (heading, paragraph, figure, table, artifact) and fix the order screen readers follow. `ReadingOrderEditor` (`src/pdf/reading_order.h/.cpp`, `recto::pdf::ReadingOrderEditor`) is the engine for that: it turns page areas into `ContentRegion`s, binds the content under a region to a new structure element by wrapping the right painting operators in `BDC`/`EMC` with a fresh `/MCID`, marks decorative content as `/Artifact`, and reorders regions, all through `StructTreeEditor` (`§14`) so the tree stays consistent. It works on an isolated working copy, uses the single content-stream interpreter that every consumer shares (`D06 T03 §4`) to know which operators paint where, resolves named property lists as well as inline ones (pdfcraft #1813), and never discards an existing `/ActualText` or `/MCID` (pdfcraft #3219). It builds on the `PDF/UA-1` validator and auto-tagger of `§7`, which remain the arbiter of whether the result is accessible.
+Acrobat Pro's Reading Order tool lets a person draw a box over page content, say what it is (heading, paragraph, figure, table, artifact) and fix the order screen readers follow. `ReadingOrderEditor` (`src/pdf/reading_order.h/.cpp`, `recto::pdf::ReadingOrderEditor`) is the engine for that: it turns page areas into `ContentRegion`s, binds the content under a region to a new structure element by wrapping the right painting operators in `BDC`/`EMC` with a fresh `/MCID`, marks decorative content as `/Artifact`, and reorders regions, all through `StructTreeEditor` (`§14`) so the tree stays consistent. It works on an isolated working copy, uses the single content-stream interpreter that every consumer shares (`D06 T03 §4`) to know which operators paint where, resolves named property lists as well as inline ones, and never discards an existing `/ActualText` or `/MCID`. It builds on the `PDF/UA-1` validator and auto-tagger of `§7`, which remain the arbiter of whether the result is accessible.
 
 **Phase:** 5
 **Needs:** windows-host
@@ -456,8 +475,8 @@ Acrobat Pro's Reading Order tool lets a person draw a box over page content, say
 - [ ] Implement `detect_regions(page)` from existing tags (marked-content bounds per element) when the page is tagged, else from `PageText` blocks (`D03 T01 §1`), `TableExtractor` grids and image `Do` bounds, in reading order. Done when: `ReadingOrder.DetectAndAttribute` returns the expected regions for a tagged and an untagged page.
 - [ ] Implement `attribute_operators(page)` through the shared interpreter, including operators inside Form XObjects (attributed at the enclosing `Do`), with a recursion cap of `32` and a per-page operator cap, returning a typed `Truncated` result at the cap. Done when: `ReadingOrder.NestedFormsAndCaps` attributes a nested-form page and reports truncation on a hostile page.
 - [ ] Implement `tag_region(region_rect, role, parent, index)`: select the operators whose bounds fall inside the rect, expand to the enclosing balanced `q`/`Q` or `BT`/`ET` group so no pair is split, report `expanded_beyond_region`, wrap the span in `<tag> << /MCID n >> BDC ... EMC`, create the element and `/ParentTree` entry through `StructTreeEditor`, and refuse when the span is already inside tagged marked content unless `retag_existing` is set. Done when: `ReadingOrder.TagRegion` tags a paragraph, a figure with `/Alt` and a table, and `validate_pdfua` plus `check_integrity` pass on the output.
-- [ ] Implement `mark_artifact(region_rect, ArtifactKind)` wrapping the span in an `/Artifact` marked-content sequence and removing any `/MCID` binding and `/ParentTree` entry it replaces, and `untag_region` as its inverse, resolving named `/Properties` entries rather than assuming inline dictionaries (pdfcraft #1813). Done when: `ReadingOrder.ArtifactNamedProperties` marks and unmarks content wrapped by `/MC0 BDC` and leaves no dangling `/MCID`.
-- [ ] Preserve `/ActualText` and `/MCID` of existing marked content when regions are retagged, split or merged. Done when: `ReadingOrder.PreservesActualText` retags a region whose `BDC` carries `/ActualText` and finds both kept (pdfcraft #3219).
+- [ ] Implement `mark_artifact(region_rect, ArtifactKind)` wrapping the span in an `/Artifact` marked-content sequence and removing any `/MCID` binding and `/ParentTree` entry it replaces, and `untag_region` as its inverse, resolving named `/Properties` entries rather than assuming inline dictionaries. Done when: `ReadingOrder.ArtifactNamedProperties` marks and unmarks content wrapped by `/MC0 BDC` and leaves no dangling `/MCID`.
+- [ ] Preserve `/ActualText` and `/MCID` of existing marked content when regions are retagged, split or merged. Done when: `ReadingOrder.PreservesActualText` retags a region whose `BDC` carries `/ActualText` and finds both kept.
 - [ ] Implement `reorder_regions(page, ordered_region_ids)`: regions sharing a parent reorder in place through `StructTreeEditor::move`, and regions with different parents are first moved under their lowest common ancestor in the requested order. Done when: `ReadingOrder.Reorder` reorders siblings and cross-parent regions and the `PageText` tagged reading order follows.
 - [ ] Implement `recto-cli reading-order <list|tag|artifact|untag|reorder> <in.pdf> --page <n> [--rect x0,y0,x1,y1] [--role <role>] [--kind header|footer|background|other] [--order <ids>] [--out <out.pdf>] [--json]` in `src/cli/cmd_reading_order.cpp`. Done when: `Cli.ReadingOrderCommand` verifies each verb and exit code.
 - [ ] Extend `fuzz/fuzz_struct_edit.cpp` (`§14`) with region operations on hostile content streams. Done when: a 60 second smoke run finds no crash, hang or integrity failure.
@@ -526,6 +545,262 @@ Build the Reading Order tool that matches Acrobat Pro: a contextual mode bar tha
 - [ ] Commit: `app: add the Reading Order tool with regions, roles, artifacts and keyboard route`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=ReadingOrderUi.*:AppTests.ReadingOrderUi` passes on the display-session host.
+
+## 18. `MathRegionDetector` engine: math zones, symbols and expression trees
+
+Foxit PDF Editor recognises equations in a PDF and exports them as MathML or LaTeX; Acrobat Pro has no equation recognition (its Tags panel only lets a person mark a `Formula` element and type Alt text). `MathRegionDetector` (`src/core/math_detector.h/.cpp`, `recto::core::MathRegionDetector`) finds math on a page and builds an expression tree for each region, so `§19` can serialize it and `§20` can tag it. It reads existing `/Formula` tags first and falls back to geometry. It never invents math: a region whose layout cannot be parsed into a complete tree is reported as `Uncertain` with its unparsed fragments, and exporters keep the original text for it. It runs on the conversion job's own `pdf::Document` off the UI thread, consumes the immutable `PageText` and `DisplayList` snapshots, bounds recursion and allocation against hostile pages, and works fully offline.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Define `MathNode`, `MathRegion` and `MathDetectOptions` in `src/core/math_detector.h`, and implement region detection (existing `/Formula` elements, math fonts and symbols, display and inline zones). Done when: `MathDetect.Regions` finds every planted display and inline region in the `math` fixtures and returns `0` regions on the prose fixture, under ASan.
+2. Implement the layout parser that turns a region into a `MathNode` tree and the confidence rule. Done when: `MathDetect.Trees` reproduces the planted expression tree of each fixture and `MathDetect.UncertainNeverGuesses` returns `Uncertain` with fragments for a deliberately overlapping layout, under ASan.
+
+- [ ] Define `MathNodeKind` (`Row`, `Identifier`, `Number`, `Operator`, `Text`, `Fraction`, `Root`, `Superscript`, `Subscript`, `SubSuperscript`, `UnderOver`, `Fenced`, `Table`, `TableRow`, `TableCell`), `MathNode` (`kind`, `text`, `children`, `stretchy`, `bbox_pt`), `MathRegion` (`page_index`, `bbox_pt`, `display` of `Block` or `Inline`, `source` of `FormulaTag`, `Heuristic`, `confidence` `0..1`, `status` of `Parsed` or `Uncertain`, `tree`, `unparsed_fragments`, `equation_label`) and `MathDetectOptions` (`min_confidence` default `0.6`, `detect_inline` default `true`, `pages`) in `src/core/math_detector.h`. Done when: the header compiles cleanly across `recto-core`, `recto-services` and `recto-cli`.
+- [ ] Read existing `/Formula` structure elements through the read-only listing of `StructTreeEditor` (`§14`) with its depth and node caps, take their page rectangles and `/ActualText` or `/Alt`, and mark the region `source = FormulaTag`. Done when: `MathDetect.ExistingFormulaTags` returns the region and the tag text for a tagged fixture and ignores a cyclic tree without crash.
+- [ ] Detect math zones on untagged pages from `PageText` spans (`D03 T01 §1`): a span is a math signal when its font family matches the editable table `src/core/resources/math_fonts.json` (Cambria Math, STIX, Latin Modern Math, the TeX `CMMI`, `CMSY`, `CMEX` and `CMR` families, Symbol, MT Extra), or its characters fall in Unicode Mathematical Operators `U+2200` to `U+22FF`, Supplemental Mathematical Operators `U+2A00` to `U+2AFF` or Mathematical Alphanumeric Symbols `U+1D400` to `U+1D7FF`. A line is a display zone when it is centred, alone on its band, and carries at least `2` signals; an inline zone is a run of at least `2` signals joined by adjacent single italic letters inside a prose line. A single Greek letter or unit symbol in prose (`5 µm`, `α-helix`) is not a zone. Done when: `MathDetect.ProseNotMath` returns `0` regions on a prose page full of Greek letters and units and `MathDetect.Regions` finds every planted zone.
+- [ ] Read geometry from the `DisplayList` (`D01 T02 §1`) for the structures text cannot show: a horizontal rule whose x-range overlaps text above and below is a fraction bar, a `U+221A` glyph with an overline path is a radical, tall delimiter pieces from the extension fonts group into one stretchy fence, and large operators (`U+2211`, `U+220F`, `U+222B`) take limits placed above, below or beside them. Done when: `MathDetect.Geometry` recognises a fraction bar, a radical with an index, a stretched parenthesis and a summation with limits.
+- [ ] Parse each zone into a `MathNode` tree by baseline analysis with a recursion depth cap of `32` and a node cap of `20000` per region: stacked groups around a bar become `Fraction`, size-reduced baseline-shifted groups become `Superscript`, `Subscript` or `SubSuperscript`, grids of aligned cells inside a fence become `Table`, italic single letters become `Identifier`, digits with one decimal point become `Number`, multi-letter upright names such as `sin` and `log` become one `Identifier` with upright style, and everything else becomes `Operator`. Done when: `MathDetect.Trees` matches the planted canonical tree for fraction, superscript, subscript, radical, summation with limits, integral with limits, a `2 x 2` matrix and a `cases` block.
+- [ ] Set `confidence` from the share of the zone's glyphs that the tree consumed and the absence of overlapping sibling boxes, mark a region `Uncertain` below `min_confidence`, and list the leftover glyph runs in `unparsed_fragments`. Done when: `MathDetect.UncertainNeverGuesses` reports `Uncertain` and the fragments for an overlapping layout and no exporter output is produced for it in `§19`.
+- [ ] Attach a trailing equation label such as `(3.1)` at the right margin of a display zone to the region as `equation_label` and exclude it from the tree. Done when: `MathDetect.EquationLabel` separates `(3.1)` from the expression and leaves a parenthesised sub-expression inside a formula untouched.
+- [ ] Bound work: stop on `CancelToken` every `64` zones, cap regions per page at `5000` and glyphs inspected per page at `500000`, and return a typed `Truncated` outcome naming the cap that fired. Done when: `MathDetect.CapsAndCancel` truncates a page of `2 million` glyphs without unbounded allocation under ASan and cancels within `50 ms`.
+- [ ] Add a `math` group to `scripts/build-corpus.py` that writes `tests/corpus/math/*.pdf` with `.expect.json` sidecars holding the planted canonical tree, MathML and LaTeX of each expression (emitted by the generator and never read back from Recto), a prose-with-Greek-letters page, a tagged `/Formula` page and an overlapping layout, and record them in `tests/corpus/PROVENANCE.md`. Done when: `python scripts/build-corpus.py --group math` run twice yields byte-identical files and `Corpus.Provenance` passes.
+- [ ] Add `MathDetect.*` tests in `tests/recto-tests/math_detector_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=MathDetect.*` passes under ASan.
+- [ ] Commit: `core: add MathRegionDetector for math zones and expression trees`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=MathDetect.*` passes under ASan, and making `MathDetect.ProseNotMath` count a lone `µm` as a zone fails it.
+
+## 19. `MathExporter`: MathML 3 and LaTeX serializers, web equations, `recto-cli math`
+
+Foxit PDF Editor exports recognised equations as MathML or LaTeX; this section does the same from the trees of `§18`. `MathExporter` (`src/core/math_export.h/.cpp`) serializes a `MathNode` tree to MathML 3 and to LaTeX, and `WebDocWriter` (`§3`, `§4`) gains an `equations` option that places each `Parsed` region as MathML in HTML5 and EPUB 3, as LaTeX in Markdown and `.tex`, or keeps the text. A symbol that has no LaTeX macro is never dropped: it is written as its Unicode character and listed in `unmapped_symbols`, so the output stays honest. Regions marked `Uncertain` are left as the original text. All output is escaped for its target, so hostile PDF text cannot inject markup, and nothing runs scripts.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `to_mathml` and `to_latex` in `src/core/math_export.cpp` with escaping, the symbol table and `unmapped_symbols`. Done when: `MathExport.MathMl` and `MathExport.Latex` equal the planted MathML and LaTeX of every `math` fixture after canonicalisation, under ASan.
+2. Wire `equations` into `WebDocWriter` and add `recto-cli math`. Done when: `WebDocWriter.EquationsHtmlEpubMdTex` and `Cli.MathCommand` pass under ASan.
+
+- [ ] Implement `to_mathml(const MathNode&, MathMlOptions)` emitting MathML 3 core elements (`math`, `mrow`, `mi`, `mn`, `mo`, `mtext`, `mfrac`, `msqrt`, `mroot`, `msup`, `msub`, `msubsup`, `munderover`, `mfenced` replaced by `mo` fences, `mtable`) in the `http://www.w3.org/1998/Math/MathML` namespace with `display` of `block` or `inline` and an `alttext` holding the linear text. Done when: `MathExport.MathMl` parses its own output as strict XML and matches each planted MathML.
+- [ ] Implement `to_latex(const MathNode&, LatexOptions)` with `\frac`, `^{}`, `_{}`, `\sqrt[n]{}`, `\sum`, `\int`, `\left` and `\right` fences, `pmatrix` and `cases` environments, a Greek and operator macro table, escaping of the LaTeX reserved characters inside `\text{}`, and `unmapped_symbols`. Done when: `MathExport.Latex` matches each planted LaTeX and `MathExport.UnmappedSymbolsListed` reports a symbol with no macro rather than dropping it.
+- [ ] Add a bounded structural check `check_latex_balanced` (braces, `\begin` and `\end`, `\left` and `\right`) and a MathML re-parse used by the writer before it embeds a result. Done when: `MathExport.ValidateBeforeEmbed` rejects a hand-broken tree serialization and the writer falls back to the original text for that region.
+- [ ] Add `EquationMode` (`KeepText`, `Auto`, `MathMl`, `Latex`) and `equations` (default `Auto`: MathML for HTML5 and EPUB 3, LaTeX for Markdown and `.tex`) to `WebDocExportOptions` in `src/core/web_doc_writer.h`. Done when: the header compiles in `recto-core`, `recto-services` and `recto-cli`.
+- [ ] Emit equations in `src/core/web_doc_writer.cpp`: inline `<math>` in Flowing HTML with the `alttext` attribute, `$...$` and `$$...$$` in Markdown, `\(...\)` and `equation` environments in `.tex` with `amsmath` and `amssymb` added to the preamble, and MathML in EPUB 3 chapters with `properties="mathml"` on the manifest items that contain it. Fixed-layout HTML keeps its positioned text spans and adds the MathML as a visually hidden sibling. Done when: `WebDocWriter.EquationsHtmlEpubMdTex` finds each format's equation form on a math fixture and the EPUB manifest property is present. Cheaper substitute: rendering each equation as a picture, which loses the structure.
+- [ ] Leave `Uncertain` regions and regions below `min_confidence` as the original text in every format and count them in `WebDocWriteSummary::equations_kept_as_text`. Done when: `WebDocWriter.UncertainEquationKeptAsText` shows the overlapping-layout fixture unchanged and counted.
+- [ ] Escape every string that reaches XML or LaTeX output, including `alttext`. Done when: `MathExport.HostileText` converts a region whose text contains `<script>`, `&`, `\input{x}` and `%` and finds them inert in the HTML, MathML and `.tex` outputs.
+- [ ] Implement `recto-cli math <detect|export> <in.pdf> [--pages <range>] [--min-confidence <0..1>] [--format json|mathml|latex] [--out <path>] [--password <pw>]` in `src/cli/cmd_math.cpp`: `detect` prints regions with page, box, confidence and status; `export --format json` writes both serializations per region, `--format mathml` writes one `.mml` file per region into the `--out` folder, `--format latex` writes one `.tex` with one equation per region. Done when: `Cli.MathCommand` verifies each verb, the exit-code contract of `D01 T03 §1` and that no output is written for a PDF with no regions beyond an empty report.
+- [ ] Add `MathExport.*` tests in `tests/recto-tests/math_export_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=MathExport.*:WebDocWriter.Equation*:WebDocWriter.UncertainEquation*:Cli.MathCommand` passes under ASan.
+- [ ] Commit: `core: add MathML and LaTeX equation export and recto-cli math`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=MathExport.*:WebDocWriter.Equation*:WebDocWriter.UncertainEquation*:Cli.MathCommand` passes under ASan, and dropping the escaping in `to_latex` fails `MathExport.HostileText`.
+
+## 20. Tag detected formulas as `Formula` elements with MathML associated files
+
+Foxit PDF Editor tags recognised equations as `Formula` structure elements that carry MathML; Acrobat Pro can mark a `Formula` only by hand and type Alt text. This section tags `§18` regions on a working copy through `ReadingOrderEditor::tag_region` (`§15`) and `StructTreeEditor` (`§14`): the painting operators are wrapped in `BDC`/`EMC` with a fresh `/MCID`, a `Formula` element is created with `/Alt` text, and the MathML from `§19` is embedded as an associated file (`/AF`) of the element, which is the PDF 2.0 way to give assistive technology the structure of an equation. Because PDF/A-1 and PDF/A-2 restrict embedded files, the MathML file is skipped and only `/Alt` is written when the document claims one of those levels. Everything is on a copy, saved as a full rewrite, and the open viewer document is never touched.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `tag_formulas(pdf::Document& working_copy, span<const MathRegion>, TagFormulaOptions)` in `src/pdf/formula_tagging.h/.cpp`. Done when: `FormulaTag.TagAndAttach` tags the fixture equations, `check_integrity` of `§14` passes and each `Formula` element carries `/Alt` and a MathML `/AF` entry, under ASan.
+2. Wire the option into the auto-tagger and add `recto-cli math tag`. Done when: `FormulaTag.AutoTaggerOption` and `Cli.MathTag` pass under ASan.
+
+- [ ] Define `TagFormulaOptions` (`min_confidence`, `attach_mathml`, `allow_version_upgrade` default `true`, `alt_text_source` of `Linear`, `Latex`) and `TagFormulaReport` (`tagged`, `skipped_uncertain`, `skipped_already_tagged`, `mathml_attached`, `mathml_skipped_reason`, `version_upgraded`) in `src/pdf/formula_tagging.h`. Done when: the header compiles across `recto-pdf`, `recto-core`, `recto-services` and `recto-cli`.
+- [ ] Tag each `Parsed` region at or above `min_confidence` with `ReadingOrderEditor::tag_region(rect, RegionRole::Formula, parent, index)` (`§15`), refuse a region already inside tagged marked content unless the caller passes `retag_existing`, and preserve existing `/ActualText` and `/MCID` values. Done when: `FormulaTag.TagAndAttach` tags three equations and `validate_pdfua` plus `check_integrity` pass on the output.
+- [ ] Write `/Alt` on the element from the region's linear text (or its LaTeX when `alt_text_source = Latex`). Done when: `FormulaTag.AltText` reads the `/Alt` of each element through `PageText::struct_nodes`.
+- [ ] Embed each MathML string as an `/EmbeddedFile` stream (`/Subtype /application#2Fmathml+xml`, `/Params` with `/Size` and `/ModDate`), wrap it in a `/Filespec` with `/F`, `/UF`, `/EF` and `/AFRelationship /Supplement`, and list it in the `/AF` array of the `Formula` element, capped at `256 KiB` per file and `5000` files per document. Done when: `FormulaTag.MathMlAssociatedFile` finds each file reachable from its element and byte-identical to `to_mathml` output. Cheaper substitute: putting MathML into `/Alt`, which screen readers read as plain text.
+- [ ] Skip the MathML file and record `mathml_skipped_reason = PdfA12` when XMP `pdfaid:part` is `1` or `2`, so the claimed conformance is not broken (`§5` embedded-file rules), and still write `/Alt`. Done when: `FormulaTag.PdfA2Respected` tags a PDF/A-2b fixture and `validate_pdfa(PdfA_2b)` still reports no embedded-file finding.
+- [ ] Raise the output to PDF 2.0 through `PdfWriter` when `attach_mathml` applies and the source is older, report it in `version_upgraded`, and refuse the upgrade when `allow_version_upgrade` is `false`, falling back to `/Alt` only. Done when: `FormulaTag.VersionUpgrade` shows a 1.7 source written as 2.0 with the report flag and the refusal path writing no `/AF`.
+- [ ] Add the `tag_math` option to `convert_to_pdfua` (`§7`, `§24`) so equation regions become `Formula` elements instead of paragraphs, and commit through `AtomicFileWriter` as a full rewrite. Done when: `FormulaTag.AutoTaggerOption` converts a math fixture and its equations are `Formula` elements while the surrounding text keeps its paragraph tags.
+- [ ] Implement `recto-cli math tag <in.pdf> --out <out.pdf> [--pages <range>] [--min-confidence <0..1>] [--no-mathml] [--json]` in `src/cli/cmd_math.cpp`, refusing an `--out` equal to the input. Done when: `Cli.MathTag` writes a tagged copy, never the input, and prints the `TagFormulaReport` with `--json`.
+- [ ] Add `FormulaTag.*` tests in `tests/recto-tests/formula_tagging_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=FormulaTag.*:Cli.MathTag` passes under ASan.
+- [ ] Commit: `pdf: tag detected equations as Formula elements with MathML associated files`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=FormulaTag.*:Cli.MathTag` passes under ASan, and writing the MathML into `/Alt` instead of `/AF` fails `FormulaTag.MathMlAssociatedFile`.
+
+## 21. Equations option on the web Convert card and the Reading Order bar
+
+Make the equation features of `§18` to `§20` reachable by a person. The **HTML, Markdown, EPUB & LaTeX** card of `§4` gains an `Equations` choice, and the Reading Order bar of `§17` gains `Detect equations`, which tags the page's equations on the shared `TagEditSession`. It follows Foxit PDF Editor's equation export and keeps Recto's rules: offline, edits on a copy, every command reachable from `Ctrl+K`, every icon-only control named, colours only from `RectoColors.xaml` tokens.
+
+**Phase:** 5
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` section 9.5 (the `HTML, Markdown, EPUB & LaTeX` Step 3 options, `D-Convert.png`) for the option row, and the Reading Order bar of `§17` (SPEC section 8.2 contextual bar) for the button; no screenshot shows either addition, so both follow the existing controls beside them.
+**Job:** A person converting a paper to Markdown or EPUB chooses how equations are written and reads how many were kept as text, and an accessibility remediator tags a page's equations in one action and reviews them before saving.
+**Treatment:** An `Equations` combo (`Detect and convert`, `Keep as text`, `MathML`, `LaTeX`) in `WebConvertOptionsControl` with a result line `"12 equations converted, 2 kept as text"` in the completion toast, and a `Detect equations` button in `ReadingOrderBar` that shows the detected regions as numbered boxes (with confidence as text) before applying. Cheaper substitute that fails the checkpoint: a hidden default with no choice or count, or applying detected tags without a review step.
+**Chrome:** consume `WebConvertOptionsControl` (`§4`), the completion notice of `D04 T01 §6`, `ReadingOrderBar` and `ReadingOrderCanvasOverlay` (`§17`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens with Segoe Fluent Icons.
+
+**Build order:**
+
+1. Add the `Equations` option to `WebConvertOptionsControl` and the completion summary. Done when: `AppTests.ConvertWebDocUi` converts a math fixture with each choice and reads the count line.
+2. Add `Detect equations` to the Reading Order bar. Done when: `AppTests.ReadingOrderUi` detects, reviews and tags equations by pointer and by keyboard and saves a copy that passes `validate_pdfua`.
+
+- [ ] Add the `Equations` combo to `src/app/views/convert/WebConvertOptionsControl.xaml/.cpp`, bound to `WebDocExportOptions::equations`, visible for HTML5, Markdown, EPUB 3 and LaTeX only, with an automation name and tooltip. Done when: choosing `Keep as text` produces output identical to the pre-feature writer. Cheaper substitute: an unlabelled toggle.
+- [ ] Show the equation counts from `WebDocWriteSummary` in the completion toast and `QueueCard` summary. Done when: `AppTests.ConvertWebDocUi` reads `"N equations converted, M kept as text"`.
+- [ ] Add `Detect equations` to `src/app/controls/ReadingOrderBar.xaml/.cpp` calling `MathRegionDetector` on the `TagEditSession` worker thread and drawing the regions in `ReadingOrderCanvasOverlay` with number and confidence as text, with `Apply to all`, `Apply to selected` and `Cancel`. Done when: no tag changes until `Apply`, and `Cancel` leaves the copy unchanged.
+- [ ] Apply through `tag_formulas` (`§20`) with one undo step per apply and show `mathml_skipped_reason` as a plain sentence when MathML was not attached. Done when: `Ctrl+Z` removes the applied tags and a PDF/A-2 fixture shows the sentence.
+- [ ] Register `convert.equations.mode`, `accessibility.readingOrder.detectEquations` and `accessibility.formula.tagPage` in `CommandRegistry` with synonyms `equation`, `math`, `mathml`, `latex`, `formula`. Done when: `Ctrl+K` "equation" finds the Reading Order command with a document open.
+- [ ] Add `AppTests.EquationsUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=AppTests.EquationsUi` passes on the display-session host.
+- [ ] Commit: `app: add the Equations option and Detect equations to the Reading Order bar`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=AppTests.EquationsUi:AppTests.ConvertWebDocUi:AppTests.ReadingOrderUi` passes on the display-session host, and applying tags without the review step fails `AppTests.EquationsUi`.
+
+## 22. Colour contrast check engine (WCAG 2.2 success criterion 1.4.3)
+
+Foxit PDF Editor's accessibility checks go beyond PDF/UA-1 with a colour contrast check; Acrobat Pro's checker leaves contrast to manual review. `ContrastChecker` (`src/core/contrast_check.h/.cpp`) measures every visible text run against the background it is drawn on and reports the WCAG contrast ratio: `4.5:1` for normal text and `3:1` for large text (at least `18` pt, or `14` pt bold). The foreground colour comes from the run's paint state, and the background comes from rendering the page with all text removed, so gradients, images and filled boxes under text are measured as drawn. It is honest about what it could not measure: text painted with a pattern or shading, text on top of other text, and scanned pages are listed as `NotEvaluated` with a reason, and a page with any such text can never make the verdict `Passed`. It runs on the job's own `pdf::Document`, never on the UI thread.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement the WCAG ratio functions and the run collector in `src/core/contrast_check.cpp`. Done when: `Contrast.Ratio` returns `21.0` for black on white, `4.54` for `#767676` on white and `4.48` for `#777777` on white, and `Contrast.LargeTextThreshold` applies `3:1` at `18` pt and `14` pt bold only.
+2. Implement background sampling from a text-free render and the verdict. Done when: `Contrast.Fixtures` matches every sidecar fact of the `contrast` fixture and `Contrast.NeverPassesUnevaluated` shows pattern-filled text makes the verdict `Incomplete`, under ASan.
+
+- [ ] Implement `relative_luminance` and `contrast_ratio` in `src/core/contrast_check.cpp` using the WCAG 2.2 relative luminance definition (sRGB linearisation, weights `0.2126`, `0.7152`, `0.0722`) and compare against the threshold without rounding, so `4.499` fails `4.5`. Done when: `Contrast.Ratio` and `Contrast.NoRounding` pass on the known pairs.
+- [ ] Collect visible text runs from `PageText` (`D03 T01 §1`) with fill colour, size, bold flag, rendering mode and alpha, skipping invisible runs (rendering mode `3`, including the OCR layer of `D04 T02 §7`) and clipping-only modes, converting the fill colour to sRGB through the colour engine of `D04 T06 §7` for ICC-based spaces, and applying fill alpha over the sampled background. Done when: `Contrast.RunCollection` skips an invisible OCR layer and converts a CMYK and an ICC-based fill.
+- [ ] Build the background plane for each page by copying the immutable `DisplayList` without its text items and rasterizing it with the tile rasterizer (`D01 T02 §6`) at `150` DPI on the job thread, then take, for each text box, the quantised background colours that cover at least `2` percent of the box and compute the ratio against each. The reported ratio is the lowest, and `background_varies` is set when more than one colour qualifies. Done when: `Contrast.Fixtures` measures text on a solid fill, on a gradient (lowest end reported) and on an image.
+- [ ] Mark a run `NotEvaluated` with a reason when its fill is a pattern or shading, when it overlaps other text, or when its page is image-only without a text layer, count it in the ledger, and never let a page with such runs report `Passed`. Done when: `Contrast.NeverPassesUnevaluated` returns `Incomplete` for the pattern-filled fixture and for a scanned fixture.
+- [ ] Define `ContrastFinding` (`page_index`, `bbox_pt`, `text_sample` of at most `40` characters, `foreground_srgb`, `background_srgb`, `ratio`, `required`, `large_text`, `background_varies`, `in_artifact`) with severity `Error` for content text and `Warning` for text inside an `/Artifact`, add `ComplianceCategory::Contrast` to `src/pdf/compliance.h`, and convert a finding to the `ComplianceFinding` of `§5`. Done when: `Contrast.FindingAdapter` converts a finding without losing its ratio.
+- [ ] Compute the verdict with the rule of `D04 T06 §6`: `Failed` if any evaluated run is under its threshold, else `Incomplete` if any run was `NotEvaluated`, else `Passed`, and report `runs_total`, `runs_evaluated`, `runs_failed` and per-page counts. Done when: `Contrast.Verdict` covers the three outcomes.
+- [ ] Bound work: cap runs per page at `200000`, rasterized pixels per page at `16 million`, stop on `CancelToken` every `256` runs, and return `Truncated` with the cap named. Done when: `Contrast.CapsAndCancel` truncates an oversized page without unbounded allocation under ASan.
+- [ ] Add an `a11y` group to `scripts/build-corpus.py` that writes `tests/corpus/a11y/contrast-pairs.pdf` with planted pairs (`#767676` and `#777777` on white, an `18` pt and a `14` pt bold `3:1` case, text on a gradient, on an image, a semi-transparent fill, an invisible OCR layer, a pattern-filled run, text over text) and a sidecar listing each expected ratio to two decimals, and record it in `tests/corpus/PROVENANCE.md`. Done when: `python scripts/build-corpus.py --group a11y` run twice yields byte-identical files and `Corpus.Provenance` passes.
+- [ ] Add `Contrast.*` tests in `tests/recto-tests/contrast_check_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=Contrast.*` passes under ASan.
+- [ ] Commit: `core: add WCAG colour contrast check over text-free page renders`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Contrast.*` passes under ASan, and rounding the ratio to one decimal before the comparison fails `Contrast.NoRounding`.
+
+## 23. PDF/UA-2 (ISO 14289-2) rule set, requirement inventory and validator
+
+Foxit PDF Editor checks accessibility beyond PDF/UA-1; this section adds the PDF/UA-2 (ISO 14289-2, built on ISO 32000-2) rule set to the `ComplianceEngine` of `§5`. The ISO text is paywalled, so the section follows the honest-coverage method of `D04 T06 §17`: each rule records in its `source` field the clause the implementer read, a requirement inventory generated from the standard's clause index marks every clause `implemented`, `not implemented` or `not applicable` with a reason, and `inventory_complete` stays `false` until a second reader has compared it with the standard. The report status is `NotClaimed` (no identification), `IdentifiedOnly` (identified, no checks run), `PartialChecksPassed` or `PartialChecksFailed`; the word `Conformant` is reachable only when `inventory_complete` is `true`, no entry is `not implemented` and every check passes, which no v1 build satisfies. Acrobat Pro's checker is not extended here; this is a Recto addition.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add `PdfStandardLevel::PdfUa_2`, the XMP identification reader and `resources/compliance/pdfua-2.json` (rules plus inventory) on the preflight schema of `D04 T06 §2`. Done when: `PdfUa2.Profile` loads the rule file, every rule has a non-empty `source`, and an unclaimed fixture reports `NotClaimed`.
+2. Implement `ComplianceEngine::validate_pdfua2` and the status matrix. Done when: `PdfUa2.ValidFixture` reports `PartialChecksPassed`, each broken fixture fails its named rule, and `PdfUa2.StatusMatrix` refuses `Conformant`, under ASan.
+
+- [ ] Add `PdfUa_2` to `PdfStandardLevel` (`§5`) and read the claim from XMP (`pdfuaid:part` equal to `2` and the revision property the standard defines, recorded in the rule's `source`), reporting `NotClaimed` rather than guessing from content. Done when: `PdfUa2.Identification` reads the claim from a claimed fixture and reports `NotClaimed` for a PDF/UA-1 fixture.
+- [ ] Author `resources/compliance/pdfua-2.json` with the rules the engine can check, each with `source`: PDF version `2.0` in the header or catalog, `/MarkInfo /Marked true`, `/Lang` on the catalog, `dc:title` in XMP with `/ViewerPreferences /DisplayDocTitle true`, a single root structure element and `/ParentTree` integrity, PDF 2.0 structure namespace use, `/Tabs /S` on every page, `/Alt` on figures, MathML associated files on `Formula` elements where the clause read requires them, heading nesting, table header cells, links and form fields represented in the structure tree with a tooltip, and every content operator either tagged or marked as an artifact. Done when: `PdfUa2.Profile` fails when any rule's `source` is empty.
+- [ ] Write the requirement inventory `resources/compliance/inventory/pdfua-2.json` from the standard's clause index (clause id, title as read, `implemented` of `true`, `false` or `not_applicable` with a reason, rule id) with `inventory_complete: false`. Done when: `PdfUa2.Inventory` asserts every rule id appears in the inventory and every `implemented: true` entry names an existing rule.
+- [ ] Implement `ComplianceEngine::validate_pdfua2(const pdf::Document&)` returning `ComplianceFinding`s with clause ids, object ids and page indices, reusing the structure readers and caps of `§7` (iterative walk, depth `64`, nodes `1000000`) and returning `Truncated` with a finding at a cap. Done when: `PdfUa2.ValidateRules` detects each planted fault in the `ua2-broken-*` fixtures by rule id.
+- [ ] Derive `ConformanceStatus` with the matrix above in the report and in `recto-cli pdfa validate --level ua2`, and extend the `--level` list of `recto-cli pdfa` (`§6`) with `ua2` for `validate` only. Done when: `PdfUa2.StatusMatrix` covers a table of cases (`PartialChecksPassed` with unimplemented entries accepted, `Conformant` with an unimplemented entry or `inventory_complete: false` refused) and `Cli.PdfACommand` validates a UA-2 fixture.
+- [ ] Add `ua2-valid.pdf` and one `ua2-broken-*.pdf` per rule to the `a11y` group of `scripts/build-corpus.py` with sidecars naming the planted rule id, and record in `tests/corpus/PROVENANCE.md` that no independent PDF/UA-2 validator was available and that an externally validated sample (for example from a PDF/UA-capable validator or a commercial checker) is a future owner-supplied addition, not a blocker. Done when: `Corpus.Provenance` passes with the rows.
+- [ ] Add `PdfUa2.*` tests in `tests/recto-tests/pdf_ua2_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=PdfUa2.*:Cli.PdfACommand` passes under ASan.
+- [ ] Commit: `pdf: add the PDF/UA-2 rule set, requirement inventory and validator`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfUa2.*:Cli.PdfACommand` passes under ASan, and letting the status matrix return `Conformant` with `inventory_complete: false` fails `PdfUa2.StatusMatrix`.
+
+## 24. PDF/UA-2 output: the auto-tagger writes PDF 2.0 structure
+
+Let `convert_to_pdfua` (`§7`) target PDF/UA-2 as well as PDF/UA-1, so a person who finds UA-2 findings can produce a copy that clears the ones the engine can check. The auto-tagger keeps its reading-order, heading, list and table inference and changes only what the part requires: the output is written as PDF 2.0, the structure tree uses the PDF 2.0 standard structure namespace (`http://iso.org/pdf2/ssn`) with the `/Namespaces` entry and `/NS` on elements as ISO 32000-2 defines, `Formula` elements get MathML when `§20` runs, and XMP identifies the file with `pdfuaid:part` `2`. The honest ceiling stays: the best claim Recto makes for the result is `PartialChecksPassed` from `§23`, and placeholder Alt text is reported, never counted as accessible.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add `PdfUaPart` (`Ua1`, `Ua2`) to `convert_to_pdfua` and write the PDF 2.0 structure output. Done when: `PdfUa2.AutoTagOutput` converts an untagged corpus PDF with headings, a list, a table, a figure and an equation and `validate_pdfua2` reports `PartialChecksPassed` with no findings for implemented rules, under ASan.
+2. Report placeholder Alt text and wire `recto-cli pdfa convert --level ua2`. Done when: `PdfUa2.PlaceholderAltReported` and `Cli.PdfACommand` pass under ASan.
+
+- [ ] Extend `convert_to_pdfua` in `src/pdf/compliance.cpp` with a `PdfUaPart` parameter (default `Ua1`, unchanged behaviour). Done when: `PdfCompliance.PdfUaAutoTagAndValidate` still passes with the default.
+- [ ] For `Ua2`, write `/Version /2.0` through `PdfWriter`, add the `/Namespaces` array and `/NS` entries for the PDF 2.0 standard structure namespace, map the elements the auto-tagger already creates, and refuse inputs that use features PDF 2.0 removed with a typed error naming the feature. Done when: `PdfUa2.AutoTagOutput` finds the namespace on the root and elements, and a source with a removed feature is refused with no output.
+- [ ] Write `pdfuaid:part` `2` and the revision property into XMP, keep `/Lang`, the document title and `/DisplayDocTitle`, and set `/Tabs /S` on every page as in `§7`. Done when: `validate_pdfua2` finds no identification, language, title or tab-order finding on the output.
+- [ ] Count Alt text the tagger synthesised as a placeholder (`"Figure on page N"`) in `PdfUaConvertReport::placeholder_alt_count` and never treat it as satisfying a human-quality Alt text check in `§25`. Done when: `PdfUa2.PlaceholderAltReported` returns the count for a fixture with three figures.
+- [ ] Extend `recto-cli pdfa convert --level ua2` in `src/cli/cmd_pdfa.cpp`, with the exit codes of `§6`, and refuse combining `ua2` with a PDF/A level other than `3a`, `3b` or `3u` (PDF/A-1 and PDF/A-2 cannot carry the PDF 2.0 version). Done when: `Cli.PdfACommand` converts to `ua2` and refuses `ua2` with `2b`.
+- [ ] Add `PdfUa2.AutoTag*` tests in `tests/recto-tests/pdf_ua2_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=PdfUa2.AutoTag*:PdfUa2.PlaceholderAltReported:Cli.PdfACommand` passes under ASan.
+- [ ] Commit: `pdf: let the auto-tagger write PDF/UA-2 structure in PDF 2.0`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfUa2.AutoTag*:PdfUa2.PlaceholderAltReported:Cli.PdfACommand` passes under ASan, and omitting the structure namespace fails `PdfUa2.AutoTagOutput`.
+
+## 25. WCAG 2.2 report model: criteria mapping, statuses and exporters
+
+Foxit PDF Editor can produce an accessibility report against WCAG; this section builds Recto's. `WcagReport` (`src/core/wcag_report.h/.cpp`) gathers the findings of the PDF/UA-1 validator (`§7`), the PDF/UA-2 validator (`§23`) and the contrast check (`§22`), maps each rule through a data table to the WCAG 2.2 success criteria it evidences (for example 1.1.1 Non-text Content, 1.3.1 Info and Relationships, 1.3.2 Meaningful Sequence, 1.4.3 Contrast (Minimum), 2.4.2 Page Titled, 2.4.3 Focus Order, 3.1.1 Language of Page, 4.1.2 Name, Role, Value), and reports each criterion as `Pass`, `Fail`, `NotTested` or `ManualReview`. Automated checks cannot establish WCAG conformance, so the report never says a document conforms: criteria that need a human (Alt text quality, reading order correctness, use of colour) are `ManualReview`, and the summary states how many Level A and AA criteria the automated checks covered. The report is the document an accessibility reviewer files and the audit record of which checks ran.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `WcagReport::build` and the mapping table `resources/compliance/wcag-map.json`. Done when: `WcagReport.Mapping` maps every rule id of `§7`, `§22` and `§23` to at least one criterion or to an explicit `no_wcag_mapping` reason.
+2. Implement the exporters. Done when: `WcagReport.Exports` writes valid JSON, a script-free HTML file and text for a failing and a passing run.
+
+- [ ] Define `WcagCriterionStatus` (`Pass`, `Fail`, `NotTested`, `ManualReview`), `WcagCriterionResult` (`id`, `name`, `level`, `status`, `evidence` rule ids, `finding_count`, `reason`) and `WcagReport` (tool version, input name, size and SHA-256, standard parts checked, per-criterion results, summary counts, the contrast ledger, `statement`) in `src/core/wcag_report.h`. Done when: the header compiles across `recto-core`, `recto-services` and `recto-cli`.
+- [ ] Write `resources/compliance/wcag-map.json` (rule id to criterion ids, with the WCAG 2.2 version stated) and load it with the bounded reader of `D04 T06 §2`. Done when: `WcagReport.Mapping` fails when a rule id has neither a mapping nor a `no_wcag_mapping` reason.
+- [ ] Derive each criterion status: `Fail` if any evidencing finding is an error, `ManualReview` if the criterion needs human judgement even when automated rules pass, `Pass` only when every evidencing check was evaluated and passed and no human judgement is needed, else `NotTested`; a truncated or `Incomplete` check makes its criteria `NotTested`. Done when: `WcagReport.Status` covers the four outcomes and an `Incomplete` contrast run never yields `Pass` for 1.4.3.
+- [ ] Always include the `statement` `"Automated checks cannot establish WCAG conformance. Criteria marked Manual review need a person."` and the count of Level A and AA criteria covered by an automated check. Done when: `WcagReport.NeverClaimsConformance` fails if any export contains `conforms` or `compliant` for the document as a whole.
+- [ ] Export JSON against a versioned `wcag-report.schema.json`, a self-contained static HTML file with every value escaped, no script and `prefers-color-scheme` styling, and a text summary, through `AtomicFileWriter`. Done when: `WcagReport.Exports` validates the JSON, the HTML parser finds no `<script>`, and a failed write leaves no partial file. Cheaper substitute: concatenating unescaped HTML, which lets a hostile text sample inject markup.
+- [ ] Make the report deterministic (findings sorted by page, object and rule, timestamps excluded from comparison). Done when: `WcagReport.Deterministic` produces byte-identical JSON from a 1-worker and an 8-worker run.
+- [ ] Add `WcagReport.*` tests in `tests/recto-tests/wcag_report_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=WcagReport.*` passes under ASan.
+- [ ] Commit: `core: add the WCAG 2.2 report model with criteria mapping and exports`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=WcagReport.*` passes under ASan, and mapping an `Incomplete` contrast run to `Pass` fails `WcagReport.Status`.
+
+## 26. `recto-cli a11y` check and report commands
+
+Make the accessibility checks scriptable and give tests a seam below the UI. `recto-cli a11y` runs the PDF/UA validators, the contrast check and the WCAG report as one job on the same engine as the app, follows the dispatcher and exit-code contract of `D01 T03 §1`, and uses the verdict codes of `recto-cli preflight` (`D04 T06 §15`) so a script can tell a failed file from an unchecked one. It never modifies the input.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `recto-cli a11y <check|report>` in `src/cli/cmd_a11y.cpp`. Done when: `Cli.A11yCheck` returns the documented exit code for passing, failing and incomplete fixtures.
+2. Implement report output and the exit-code table. Done when: `Cli.A11yReport` and `Cli.A11yExitCodes` pass under ASan.
+
+- [ ] Implement `recto-cli a11y check <in.pdf> [--part ua1|ua2|both] [--contrast on|off] [--pages <range>] [--password <pw>] [--json]` running `validate_pdfua`, `validate_pdfua2` and `ContrastChecker` as one job, printing findings by rule, page and object. Done when: `Cli.A11yCheck` lists the planted faults of the `a11y` fixtures by rule id.
+- [ ] Implement `recto-cli a11y report <in.pdf> --report <out.json|.html|.txt> [same options]` writing the `WcagReport` of `§25`. Done when: `Cli.A11yReport` writes all three formats and refuses a `--report` path equal to the input.
+- [ ] Map exit codes: `0` when no error finding exists and no check was `Incomplete`, `4` when an error finding exists, `5` when a check was `Incomplete` and none failed, with `1`, `2` and `3` as in `D01 T03 §1`; write the requested report for exits `0`, `4` and `5` and nothing for `1`, `2`, `3`. Done when: `Cli.A11yExitCodes` verifies each code and the output rule.
+- [ ] Add `Cli.A11y*` tests in `tests/recto-tests/cli_a11y_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=Cli.A11y*` passes under ASan.
+- [ ] Commit: `cli: add recto-cli a11y check and report`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Cli.A11y*` passes under ASan, and mapping `Incomplete` to exit `0` fails `Cli.A11yExitCodes`.
+
+## 27. Accessibility checks and WCAG report in the Standards & Accessibility panel
+
+Surface the checks of `§22` to `§26` in the Standards & Accessibility tab of the `Signatures & Standards` panel (`§9`, `§16`), beside the PDF/UA-1 checklist and the Tags tree: a standard selector that gains `PDF/UA-2 (partial checks)`, a contrast section whose rows show the measured ratio as text with the page and a jump to the run, a WCAG criteria table with `Manual review` items clearly marked, and `Save WCAG report...`. The Convert card of `§9` gains `PDF/UA-2` as a target through `§24`. Findings are never shown by colour alone, and the panel states plainly when a check was `Incomplete`.
+
+**Phase:** 5
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` section 8.3, `Signatures & Standards` panel, *Standards & Accessibility tab*; no screenshot exists, so it follows the panel chrome and the checklist rows built in `§9` and `§16`.
+**Job:** An accessibility reviewer runs the checks on the open document, reads which WCAG criteria failed, which need manual review and which were not tested, jumps from a contrast finding to the text on the page, and saves a report to file.
+**Treatment:** Expandable sections `PDF/UA`, `Colour contrast` and `WCAG 2.2`, each row with an icon and a text status (`Pass`, `Fail`, `Manual review`, `Not tested`), the ratio and required ratio as numbers on contrast rows, a verdict banner that reads `Incomplete` when it is, and `Save WCAG report...`. Cheaper substitute that fails the checkpoint: a colour-only status dot, a green banner on `Incomplete`, or a single pass or fail line with no criteria.
+**Chrome:** consume `SignaturesAndStandardsPanel` and `StandardsPanelViewModel` (`§9`), `SidePanelHost` (`D02 T03 §3`), `CommandRegistry` (`D02 T03 §11`), `AnnouncementService` (`D03 T02 §5`) and `RectoColors.xaml` status brushes with Segoe Fluent Icons.
+
+**Build order:**
+
+1. Extend `StandardsPanelViewModel` with the accessibility job and results. Done when: `StandardsPanel.A11yViewModel` runs the checks off the UI thread on a fixture and exposes sections, rows and the verdict.
+2. Build the panel sections and the export. Done when: `AppTests.A11yPanelUi` runs the checks, jumps from a contrast row to the page, shows an `Incomplete` verdict and saves a report.
+
+- [ ] Extend `src/services/standards_panel_view_model.h/.cpp` with `run_accessibility_checks(part, contrast)` using the job runner and the engines of `§22`, `§23` and `§25`, with progress and cancel. Done when: `StandardsPanel.A11yViewModel` populates without blocking the UI thread and cancels within `100 ms`.
+- [ ] Add the `PDF/UA-2 (partial checks)` option to the target-standard selector of `SignaturesAndStandardsPanel` and to `ComplianceConvertOptionsControl` (`§9`), showing `PartialChecksPassed` as the sentence `"Passed the checks Recto can run; not a full conformance claim"`. Done when: `AppTests.A11yPanelUi` shows the sentence and never the word conformant.
+- [ ] Build the `Colour contrast` section: each failing run as a row with the page, a short text sample, the measured and required ratio as numbers, and a click-to-jump that scrolls `DocumentView` to the run and highlights its box. Done when: clicking a row highlights the run. Cheaper substitute: a list of page numbers with no jump.
+- [ ] Build the `WCAG 2.2` section from `WcagReport`: a table of criteria with level, text status and evidence count, a `Manual review` filter, and the report statement. Done when: `AppTests.A11yPanelUi` filters to `Manual review` and shows the statement.
+- [ ] Show `Incomplete` and `Truncated` outcomes as a plain sentence with the reason, never as `Passed`, and announce the verdict through `AnnouncementService`. Done when: the pattern-filled fixture shows `Incomplete` and the announcement is recorded.
+- [ ] Add `Save WCAG report...` with a `FileSavePicker` for `.json`, `.html` and `.txt` writing through `§25`. Done when: the three exports open correctly.
+- [ ] Register `accessibility.check`, `accessibility.contrast`, `accessibility.wcagReport` and `accessibility.checkUa2` in `CommandRegistry` with synonyms `wcag`, `contrast`, `accessibility check`, `ua2`. Done when: `Ctrl+K` "contrast" runs the contrast section on the open document.
+- [ ] Give every control an automation name and tooltip and make the sections keyboard operable. Done when: `A11yInventory` (`D03 T02 §3`) passes on the new sections.
+- [ ] Add `StandardsPanel.A11y*` and `AppTests.A11yPanelUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=StandardsPanel.A11y*:AppTests.A11yPanelUi` passes on the display-session host.
+- [ ] Commit: `app: add accessibility checks and the WCAG report to the Standards panel`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=StandardsPanel.A11y*:AppTests.A11yPanelUi` passes on the display-session host, and showing a green banner on `Incomplete` fails `AppTests.A11yPanelUi`.
 
 ## Verification
 

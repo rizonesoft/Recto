@@ -29,6 +29,15 @@ track: M4
 - -> XREF: D05 T01 §1 -- the engine operation vocabulary (`D05 T01 §1`-`§10`) every mode, dialog, and security bar compiles to.
 - -> XREF: D08 T01 §11 -- the assistant's ContextBuilder reads pending marks so redacted content is never sent.
 - -> XREF: D04 T07 §5 -- the Action Wizard's redact step (D04 T07 §5) uses these presets.
+- -> XREF: D09 T05 §20 -- signature appearance library sync.
+- -> XREF: D08 T02 §23 -- organize grid.
+- -> XREF: D08 T02 §31 -- Suggested redaction mark state.
+- -> XREF: D03 T01 §15 -- zone OCR to redaction.
+- -> XREF: D05 T01 §27 -- sanitize counts from the inspector.
+- -> XREF: D02 T04 §2 -- copy image DPI setting.
+- -> XREF: D08 T02 §31 -- suggested marks.
+- -> XREF: D02 T03 §4 -- thumbnail drag source.
+- -> XREF: D02 T01 §5 -- signed version tab opens normally.
 
 ## Outcome
 
@@ -39,6 +48,8 @@ track: M4
 - A `Replace Pages` dialog (`§12`) lets a user pick pages to replace, a source PDF and its pages, preview before and after, and see exactly what bookmarks, links and form fields will change before a copy is written.
 - A `Backgrounds` dialog (`§13`) adds a colour, image or PDF-page background with a live preview over the real page content, and lists, edits and removes the managed backgrounds and watermarks already in the file.
 - Certificate encryption in the existing Protect flow (`§14`) lets a user choose recipients from the Windows certificate store or `.cer` files with per-recipient permissions, and a certificate prompt (`§15`) opens public-key encrypted files, each reachable from `Ctrl+K`.
+- The page tools of `D05 T01 §15` to `§23` and `§30` have their surfaces (`§16` to `§26`): split methods, Split Page, N-up, order commands, Page Labels, blank page review, cross-document drag, copy as image, binder in Combine, ID Card Copy and Paging Seal, each reachable from `Ctrl+K`.
+- The Redaction Bar gains profiles, country packs and a review list (`§27`), suggested marks, a labelled whiteout and whole-page redaction (`§28`); an Inspect Document panel (`§29`), signed-version view and comparison (`§30`), Trusted Lists (`§31`) and pen pressure capture (`§32`) complete the security surfaces.
 
 **Adjacency:** list=not-applicable (the grid is the list, in this file); document=applicable @ D05 T02 §5; settings=applicable @ D02 T04 §6; reporting=not-applicable (the unsaved-change summary is in-place state, §2); notifications=applicable @ D04 T01 §6; permissions=not-applicable (no roles); audit=not-applicable (session undo is in-memory state, not a history record); exchange=not-applicable (file in and out are the modes themselves, §3 and §4); reverse=applicable @ D05 T02 §1
 
@@ -63,6 +74,23 @@ track: M4
 | 13 | §13 | `Backgrounds` dialog: live preview over page content and managed marks list | §7, D05 T01 §13, D02 T03 §11 | [ ] |
 | 14 | §14 | Certificate encryption in the Protect flow: recipients, permissions, warnings | §11, D05 T01 §11, D04 T01 §4, D02 T03 §11 | [ ] |
 | 15 | §15 | Certificate prompt when opening a public-key encrypted PDF | D05 T01 §12, D02 T01 §5, D02 T01 §10, D04 T01 §7 | [ ] |
+| 16 | §16 | Split mode: split by file size and by top-level bookmarks | §4, D05 T01 §15 | [ ] |
+| 17 | §17 | Split Page dialog: grid or draggable cut lines with a live preview | §5, §6, D05 T01 §16 | [ ] |
+| 18 | §18 | N-up dialog: several pages on one sheet with a live sheet preview | §5, §7, D05 T01 §17 | [ ] |
+| 19 | §19 | Reverse, swap odd and even, and interleave as Organize commands | §3, D05 T01 §18 | [ ] |
+| 20 | §20 | Page Labels dialog: ranges, styles, prefixes and a live label preview | §5, D05 T01 §19 | [ ] |
+| 21 | §21 | Blank page review: find, check and remove blank pages from the grid | §1, D05 T01 §20 | [ ] |
+| 22 | §22 | Drag pages between open documents and out to Explorer | §3, §5, D05 T01 §3 | [ ] |
+| 23 | §23 | Copy a page as an image from the Organize grid | §2, D01 T02 §9 | [ ] |
+| 24 | §24 | Combine mode: table of contents page and a rebuildable binder project | §3, §5, D05 T01 §30 | [ ] |
+| 25 | §25 | ID Card Copy dialog: front and back images on one page | §5, §6, D05 T01 §23 | [ ] |
+| 26 | §26 | Paging Seal dialog: a seal image split across page edges | §7, §13, D05 T01 §22 | [ ] |
+| 27 | §27 | Redaction Bar: saved profiles, country packs and a match review list | §9, D05 T01 §25, D05 T01 §26 | [ ] |
+| 28 | §28 | Redaction Bar: suggested marks, whiteout and whole-page redaction | §9, D05 T01 §24 | [ ] |
+| 29 | §29 | Inspect Document panel: what the file carries, with a path to Sanitize | §9, D05 T01 §27, D02 T03 §3 | [ ] |
+| 30 | §30 | Signatures panel: view the signed version and compare it with the current document | §11, D05 T01 §28 | [ ] |
+| 31 | §31 | Trusted Lists dialog: opt-in download, manual import and per-list control | §11, D05 T01 §29 | [ ] |
+| 32 | §32 | Pressure-sensitive pen capture for handwritten signatures | §10 | [ ] |
 
 ## 1. Virtualized Organize `PageGrid`, `OrganizeEditModel`, multi-select & `Undo`/`Redo` stack
 
@@ -377,9 +405,9 @@ Build the Viewer's digital signature banner and interactive signing workflow spe
 - [ ] Build the **Cryptographic Standards** section: `Format` (`PAdES / ETSI.CAdES.detached` vs `PKCS#7 / adbe.pkcs7.detached`), `Hash algorithm` (`SHA-256`, `SHA-384`, `SHA-512`), `Timestamp server URL` (pre-filled from `D02 T04 §6`'s `Default timestamp server URL` setting), and `Lock document after signing (/DocMDP)` dropdown (`Do not lock`, `No changes allowed (P=1)`, `Allow form filling and counter-signing (P=2)`, `Allow annotations, form filling, and counter-signing (P=3)`). Done when: all options bind cleanly to `PdfSignOptions` (`D05 T01 §8`).
 - [ ] Execute `SignatureEngine::sign_document` (`D05 T01 §8`) via `ConversionRunner` / `AtomicFileWriter` on dialog confirmation and reload the signed PDF tab so `SignatureStatusBanner` updates immediately. Done when: `AppTests.SignDocumentDialogUi` signs and counter-signs a document end-to-end.
 
-- [ ] Keep a signature appearance library in `AppPaths::data_dir()`: add, rename, delete, set default and preview several typed, drawn and image appearances, and initials, persisted atomically and kept across upgrades (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`, pdfcraft #163, #1288, #1684, #3272, #3606). Done when: `SignatureUi.AppearanceLibrary` stores three appearances, restarts, and finds all three and the default.
-- [ ] Import a signature photo by resampling first and limiting size after, then removing the paper background with an adjustable threshold and live preview (pdfcraft #127, #220, #1110, #1195). Done when: `SignatureUi.ImageBackgroundRemoval` turns a 12 MP phone photo fixture into a transparent appearance under the stored size limit.
-- [ ] Place appearances upright as displayed on pages rotated 0, 90, 180 and 270 degrees, and keep the aspect ratio while resizing (pdfcraft #299, #331, #434, #2392). Done when: `SignatureUi.UprightOnRotatedPages` renders the appearance upright on all four rotations after save and reopen.
+- [ ] Keep a signature appearance library in `AppPaths::data_dir()`: add, rename, delete, set default and preview several typed, drawn and image appearances, and initials, persisted atomically and kept across upgrades. Done when: `SignatureUi.AppearanceLibrary` stores three appearances, restarts, and finds all three and the default.
+- [ ] Import a signature photo by resampling first and limiting size after, then removing the paper background with an adjustable threshold and live preview. Done when: `SignatureUi.ImageBackgroundRemoval` turns a 12 MP phone photo fixture into a transparent appearance under the stored size limit.
+- [ ] Place appearances upright as displayed on pages rotated 0, 90, 180 and 270 degrees, and keep the aspect ratio while resizing. Done when: `SignatureUi.UprightOnRotatedPages` renders the appearance upright on all four rotations after save and reopen.
 - [ ] Commit: viewer `Signature Status Banner`, on-canvas `Draw Signature Box` mode (`Ctrl+Shift+G`), and `Sign Document Dialog` (`SPEC 9.9`)
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=SignatureUi.*:AppTests.SignDocumentDialogUi:SignatureUi.AppearanceLibrary:SignatureUi.ImageBackgroundRemoval:SignatureUi.UprightOnRotatedPages` passes.
@@ -450,7 +478,7 @@ Build the dialog for Acrobat Pro's Replace Pages tool (`src/app/dialogs/ReplaceP
 
 ## 13. `Backgrounds` dialog: live preview over page content and managed marks list
 
-Build the **Backgrounds** dialog (`src/app/dialogs/BackgroundDialog.xaml/.cpp`) beside the Watermark dialog (`§7`), wired to the managed marks engine (`D05 T01 §13`). It matches Acrobat Pro's Background tool (add, update, remove) and its watermark removal. The preview shows the real content of the selected page with the background composited beneath it, so what the user sees is what is saved (pdfcraft #2837). A second tab lists the managed backgrounds and the recognised watermarks already in the file, with `Edit` and `Remove`, so a mark can be changed or taken off long after it was added (pdfcraft #2931, #2962). Reachable from the Organize header, the viewer `Tools -> Background...` menu and `Ctrl+K`.
+Build the **Backgrounds** dialog (`src/app/dialogs/BackgroundDialog.xaml/.cpp`) beside the Watermark dialog (`§7`), wired to the managed marks engine (`D05 T01 §13`). It matches Acrobat Pro's Background tool (add, update, remove) and its watermark removal. The preview shows the real content of the selected page with the background composited beneath it, so what the user sees is what is saved. A second tab lists the managed backgrounds and the recognised watermarks already in the file, with `Edit` and `Remove`, so a mark can be changed or taken off long after it was added. Reachable from the Organize header, the viewer `Tools -> Background...` menu and `Ctrl+K`.
 
 **Phase:** 4
 **Needs:** windows-host, display-session
@@ -539,6 +567,506 @@ Make files from `§14` (and other readers' certificate encryption) open in the U
 - [ ] Commit: `app: add the certificate prompt for opening public-key encrypted PDFs`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=CertificatePrompt.*:AppTests.CertificatePromptUi` passes on the display-session host.
+
+## 16. Split mode: split by file size and by top-level bookmarks
+
+UPDF, PDFelement, Foxit PDF Editor and Acrobat Pro split by file size and by top-level bookmarks. This section adds both to the Split mode method selector of `§4` (`By placed breaks`, `Every N pages`, `One file per page`), driven by the engine plans of `D05 T01 §15`. The grid stays the truth: choosing a method places the breaks and fills the Parts panel, so the person sees which pages go where before anything is written, and can still edit names and move breaks. Bookmark titles become file names through the engine's Windows-safe sanitizer and stay editable. Saves run through `§5`; the source is never touched.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** SPEC section 9.6 (`Split` mode and Parts panel) with `design/screenshots/explorations/B-Organize.png`; the two added methods and the size field are new controls that follow the existing method selector and `NumberBox` styling.
+**Job:** The user can split a PDF into files no larger than a size they type, or into one file per top-level bookmark, see the resulting parts and warnings first, and save them in one job. Consumer: `OrganizeEditModel` (`§1`, `§4`), `plan_split_by_size` and `plan_split_by_bookmarks` (`D05 T01 §15`), the save flow (`§5`).
+**Treatment:** Two more entries in the method selector that call the engine plan on a worker thread (debounced `250 ms`), convert the plan to split breaks and part names in `OrganizeEditModel`, and show plan warnings as `InfoBar` rows. Cheaper substitute that fails the checkpoint: a size box that divides pages equally without the engine plan, or bookmark splitting that shows no preview and cannot rename parts.
+**Chrome:** consume the shared `PageGrid` and Parts panel (`§1`, `§4`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Extend `OrganizeEditModel` with plan-driven breaks (`apply_split_plan`) and the two methods. Done when: `OrganizeUi.SplitBySizeModel` and `OrganizeUi.SplitByBookmarksModel` turn engine plans into the expected breaks and names with undo.
+2. Build the controls, warnings and entry points. Done when: `AppTests.SplitMethodsUi` splits a fixture by size and by bookmarks and the saved files match the engine plan.
+
+- [ ] Implement `apply_split_plan(SplitPlan)` in `src/services/organize_edit_model.cpp` converting a `SplitPlan` (`D05 T01 §15`) into split breaks, part colours and default names, keeping user-edited names keyed by start page as `§4` does, as one undoable step. Done when: `OrganizeUi.SplitBySizeModel` applies a plan and `undo()` restores the previous breaks.
+- [ ] Add `By file size` and `By top-level bookmarks` to the method selector of the Parts panel (`OrganizePage.xaml`), the first with a `NumberBox` and a unit `ComboBox` (`KB`, `MB`, `GB`) and the second with a `Level` `NumberBox` and a front-matter choice (`Separate file`, `Attach to first part`, `Leave out`). Done when: switching methods swaps the option rows and preserves the other method's entries. Cheaper substitute: free-text size entry with no unit control.
+- [ ] Run the plan on a worker thread with a `CancelToken` and show a progress ring while it computes, then fill the Parts panel; a plan failure leaves the previous breaks and shows the engine's message. Done when: changing the size cancels the previous plan and a refusal (`1 KB` limit) keeps the earlier parts.
+- [ ] Show plan warnings inline: `OversizePart` on the part card with the page and its size, `BookmarksOutOfOrder` and `BookmarkUnresolved` in an `InfoBar` above the parts with counts, each with a text label as well as an icon (`SPEC 11`). Done when: `AppTests.SplitMethodsUi` shows each warning for the matching fixture.
+- [ ] Keep part names editable with the live collision validation of `§4`, including the names sanitized from bookmark titles, and show non-Latin titles correctly. Done when: a CJK-titled outline fixture yields readable names and a duplicate edit disables `Save N files`.
+- [ ] Register `organize.splitBySize` and `organize.splitByBookmarks` in `CommandRegistry` with synonyms `split by size`, `chapters`, `max size`, `split bookmarks`, opening Organize in Split mode with the method chosen. Done when: `Ctrl+K` "chapters" opens Split mode by bookmarks. Cheaper substitute: no command-box entry.
+- [ ] Give every new control an automation name and tooltip and make the method rows keyboard operable (`D03 T02 §3`). Done when: the control inventory test passes.
+- [ ] Add `OrganizeUi.SplitBySize*`, `OrganizeUi.SplitByBookmarks*` and `AppTests.SplitMethodsUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=OrganizeUi.SplitBy*:AppTests.SplitMethodsUi` passes.
+- [ ] Commit: `organize: split by file size and by top-level bookmarks in Split mode`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OrganizeUi.SplitBy*:AppTests.SplitMethodsUi` passes on the display-session host.
+
+## 17. Split Page dialog: grid or draggable cut lines with a live preview
+
+UPDF's, PDFelement's and Foxit PDF Editor's Split Page turns one page into several, for example a two-page scan spread; Acrobat Pro can only crop. This dialog drives `split_page` (`D05 T01 §16`). The person picks a grid or drags cut lines on a preview of the real page, chooses which pages to split, and decides whether the pieces keep the other pieces' content (default: removed, so each piece carries only its own text and pixels). The result is a copy through the save flow of `§5`.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 (two-column `640 epx` live-preview dialog as in `Crop & Resize Pages`, `§6`) and adds `Split Page` to the section 9.6 tool list.
+**Job:** The user can split pages into a grid or along cut lines they place, see the pieces, and save a copy. Consumer: `ConversionRunner` (`D04 T01 §1`), `split_page` (`D05 T01 §16`), the save flows of `§5`.
+**Treatment:** A `640 epx` `ContentDialog` bound to `SplitPageDialogViewModel` with grid inputs on the left, a page preview with draggable and keyboard-nudgeable cut lines on the right, and a page stepper. Cheaper substitute that fails the checkpoint: numeric cut positions only with no preview, or cut lines that can only be moved with the mouse.
+**Chrome:** consume the dialog host (`D02 T01 §10`), the preview and handle conventions of `CropAndResizeDialog` (`§6`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Implement `SplitPageDialogViewModel` and the preview with cut lines. Done when: `AppTests.SplitPageDialogUi` sets a `1 x 2` grid, nudges a cut line, and the preview shows the expected pieces.
+2. Add scope, content-removal choice, save and entry points. Done when: `AppTests.SplitPageDialogUi` saves a copy whose pieces match the preview and whose source is byte-identical.
+
+- [ ] Implement `SplitPageDialogViewModel` in `src/services/split_page_dialog_view_model.h/.cpp` building `PageSplitSpec` (`D05 T01 §16`) from the grid fields or the cut lines and validating with the engine's rules on each change. Done when: an invalid cut shows the engine's text and a valid one enables `Split`.
+- [ ] Build the left column: `Rows` and `Cols` `NumberBox` (`1` to `10`), `Cut lines` list with a numeric position per line in `pt`, `mm` or `in`, `Reading order` (`Left to right`, `Right to left`), and `Pages` (`Current`, `Selected`, `All`, `Range`). Done when: editing a number moves the matching preview line.
+- [ ] Build the right-column preview with draggable cut lines (`RectoAccentBrush`), a `1 epx` grid for the grid mode, arrow-key nudging of the focused line by `1 pt` (`10 pt` with `Shift`), and the page stepper. Done when: dragging a line updates its number and arrow keys move it. Cheaper substitute: mouse-only lines.
+- [ ] Add the `Remove other pieces' content from each piece` toggle, on by default, with the one-line explanation `"Off keeps the other pieces' text and images hidden in each file."`. Done when: `AppTests.SplitPageDialogUi` saves with the toggle on and finds no text outside each piece in the output.
+- [ ] Apply through `ConversionRunner` to a copy (default `<stem> (split pages).pdf`), show the Unsaved-Changes guard first when the Organize grid has edits, and offer `Open copy` and `Replace original` (`§5`). Done when: the source is byte-identical after `Save as copy`.
+- [ ] Wire the entry points: Organize header and `OrganizeSelectionBar` `Split page...`, the viewer thumbnail context menu (`D02 T03 §4`), the `Tools` menu, and `organize.splitPage` in `CommandRegistry` with synonyms `divide page`, `cut page`, `split spread`; add `Split Page` to the section 9.6 tool list of `design/SPEC.md`. Done when: `Ctrl+K` "spread" opens the dialog. Cheaper substitute: no command-box entry.
+- [ ] Give every control an automation name and tooltip and operate the whole dialog by keyboard (`D03 T02 §3`). Done when: the control inventory test passes.
+- [ ] Add `SplitPageDialog.*` and `AppTests.SplitPageDialogUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=SplitPageDialog.*:AppTests.SplitPageDialogUi` passes.
+- [ ] Commit: `app: add the Split Page dialog with draggable cut lines`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=SplitPageDialog.*:AppTests.SplitPageDialogUi` passes on the display-session host.
+
+## 18. N-up dialog: several pages on one sheet with a live sheet preview
+
+PDFelement's and Foxit PDF Editor's N-up create a saved PDF with several pages per sheet. This dialog drives `make_nup` (`D05 T01 §17`); printing N-up stays in the print dialog (`D07 T01 §10`). The person picks rows and columns, sheet size and orientation, margins, order and border, sees sheet 1 of the result rendered from the real pages, and saves a new file. The open document is not changed.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 (two-column `640 epx` live-preview dialog as in `Watermark & Stamp`, `§7`) and adds `N-up` to the section 9.6 tool list.
+**Job:** The user can lay several pages on each sheet, see the sheet, and save the result as a new PDF. Consumer: `ConversionRunner` (`D04 T01 §1`), `make_nup` (`D05 T01 §17`), `§5` save flows.
+**Treatment:** A `640 epx` `ContentDialog` bound to `NUpDialogViewModel`, with a grid picker and sheet controls on the left and a sheet preview with a sheet stepper on the right, rendered from `make_nup` on a worker thread for the first sheets. Cheaper substitute that fails the checkpoint: a form with no preview, or a preview drawn from placeholders instead of the real pages.
+**Chrome:** consume the dialog host (`D02 T01 §10`), the preview pane conventions of `WatermarkDialog` (`§7`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Implement `NUpDialogViewModel` and the preview. Done when: `AppTests.NUpDialogUi` changes the grid, sheet and order and the preview shows the matching sheet each time.
+2. Add save, scope and entry points. Done when: `AppTests.NUpDialogUi` saves a new file whose sheets match the preview.
+
+- [ ] Implement `NUpDialogViewModel` in `src/services/nup_dialog_view_model.h/.cpp` building `NUpOptions` (`D05 T01 §17`) from UI state and rendering a debounced (`250 ms`) preview of sheet `k` by running `make_nup` on the first `rows * cols * 3` pages to a memory stream. Done when: every property change produces a new preview bitmap and a refused value shows the engine's text.
+- [ ] Build the left column: grid presets (`2`, `4`, `6`, `9` per sheet) plus custom `Rows` and `Cols`, `Sheet size`, `Orientation` (`Automatic`, `Portrait`, `Landscape`), `Margin`, `Gap`, `Order`, `Border` toggle with width, `Repeat each page` toggle and `Pages` scope. Done when: switching a preset updates the numbers and the preview.
+- [ ] Build the right-column sheet preview with a `< Prev sheet` / `Sheet k of M` / `Next sheet >` stepper and a one-line note when links, tags or bookmarks of the source are not carried. Done when: the note shows `links_dropped` from the result.
+- [ ] Apply through `ConversionRunner` to a new file (default `<stem> (N-up).pdf`) and offer `Open file`; the source document is never replaced by this operation. Done when: `AppTests.NUpDialogUi` leaves the source byte-identical. Cheaper substitute: offering `Replace original`.
+- [ ] Wire the entry points: Organize header `N-up...`, the viewer `Tools` menu, and `organize.nup` in `CommandRegistry` with synonyms `pages per sheet`, `multiple pages per page`, `imposition`; add `N-up` to the section 9.6 tool list of `design/SPEC.md`. Done when: `Ctrl+K` "pages per sheet" opens the dialog. Cheaper substitute: no command-box entry.
+- [ ] Give every control an automation name and tooltip and operate the whole dialog by keyboard (`D03 T02 §3`). Done when: the control inventory test passes.
+- [ ] Add `NUpDialog.*` and `AppTests.NUpDialogUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=NUpDialog.*:AppTests.NUpDialogUi` passes.
+- [ ] Commit: `app: add the N-up dialog with a live sheet preview`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=NUpDialog.*:AppTests.NUpDialogUi` passes on the display-session host.
+
+## 19. Reverse, swap odd and even, and interleave as Organize commands
+
+UPDF, PDFelement and Foxit PDF Editor expose Reverse Order, Swap Odd and Even, and Interleave as one-click page commands. In Recto the Organize grid is the truth (`§1`), so Reverse and Swap act on the grid model on the selection or all pages with full undo and a live change summary, and Interleave is an order choice in Combine mode (`§3`) that arranges the pages of sources `A` and `B` as `A1, B1, A2, B2` with an option to reverse `B` for two-pass duplex scans. The engine functions of `D05 T01 §18` serve the CLI and Action Wizard; a test proves the UI result equals the engine output so the two cannot drift.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** SPEC section 9.6 (`Organize` header, selection action bar, Combine header) with `design/screenshots/D-Organize.png` and `design/screenshots/explorations/A-Organize.png`; the commands extend the existing overflow menu and the Combine header with a segmented `Order` control.
+**Job:** The user can reverse the page order, swap odd and even pages, or interleave two files in one or two clicks, see the result in the grid, and undo it. Consumer: `OrganizeEditModel` (`§1`), the Combine mode (`§3`), `interleave_pdfs`, `swap_odd_even` and `reverse_pages` (`D05 T01 §18`).
+**Treatment:** Model operations `reverse_range`, `swap_odd_even_range` and `interleave_sources` that rewrite the ordered item list as one undoable step, plus the menu items and a Combine `Order` segmented control. Cheaper substitute that fails the checkpoint: reordering by dragging page by page, or a UI order that differs from the engine's.
+**Chrome:** consume the Organize header overflow menu and `OrganizeSelectionBar` (`§2`), the Combine header (`§3`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Implement the three model operations with undo and change-summary integration. Done when: `OrganizeUi.ReverseSwapInterleave` verifies the sequences, undo and the summary text.
+2. Add the controls, entry points and the engine-equality test. Done when: `AppTests.OrganizeOrderCommandsUi` runs each command and `OrganizeUi.EngineEquality` shows the saved output equals the engine's.
+
+- [ ] Implement `reverse_range`, `swap_odd_even_range` and `interleave_sources(a, b, reverse_b, allow_unequal)` in `src/services/organize_edit_model.cpp`, each as one undo step acting on the selection or, with no selection, on all pages, and refusing unequal counts with the engine's message unless allowed. Done when: `OrganizeUi.ReverseSwapInterleave` covers odd and even counts, a selection, and the duplex case.
+- [ ] Count the result in `compute_change_summary()` (`§2`) as moved pages so the header says `"6 moved"` and returns to `"No changes"` after undo. Done when: `OrganizeUi.ReverseSwapInterleave` checks the summary.
+- [ ] Add `Reverse order` and `Swap odd and even pages` to the Organize header overflow menu and the selection bar, with automation names and tooltips. Done when: both commands act from the pointer and the keyboard. Cheaper substitute: commands reachable only from `Ctrl+K`.
+- [ ] Add an `Order` segmented control to the Combine header (`One after another`, `Alternate A and B`, `Alternate A and B, B reversed`) enabled when exactly two sources are loaded, reflowing the grid through `interleave_sources`. Done when: `AppTests.OrganizeOrderCommandsUi` combines a fronts file and a backs file and the grid shows fronts and backs alternating.
+- [ ] Prove UI and engine agree: compile the saved Combine output and compare it pixel for pixel with `interleave_pdfs` on the same inputs, and the Reverse and Swap outputs with `reverse_pages` and `swap_odd_even`. Done when: `OrganizeUi.EngineEquality` passes for all three.
+- [ ] Register `organize.reverse`, `organize.swapOddEven` and `organize.interleave` in `CommandRegistry` with synonyms `flip order`, `backwards`, `odd even`, `duplex scan`, `front and back`. Done when: `Ctrl+K` "duplex scan" opens Combine with the alternate order. Cheaper substitute: no command-box entry.
+- [ ] Add `OrganizeUi.ReverseSwapInterleave`, `OrganizeUi.EngineEquality` and `AppTests.OrganizeOrderCommandsUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=OrganizeUi.ReverseSwapInterleave:OrganizeUi.EngineEquality:AppTests.OrganizeOrderCommandsUi` passes.
+- [ ] Commit: `organize: reverse, swap odd and even, and interleave commands`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OrganizeUi.ReverseSwapInterleave:OrganizeUi.EngineEquality:AppTests.OrganizeOrderCommandsUi` passes on the display-session host.
+
+## 20. Page Labels dialog: ranges, styles, prefixes and a live label preview
+
+Acrobat Pro, Foxit PDF Editor, PDFelement and UPDF all let a person set page labels (`i, ii, iii` then `1, 2, 3`, or `A-1`). This dialog edits the ranges of `D05 T01 §19` on a copy, with a table of ranges on the left and a strip of the resulting labels for every page on the right, so the result is visible before saving. The Organize grid shows each page's label under its physical number whenever labels exist. The labels live in the file's `/PageLabels`, so what the dialog shows is read back from the stored tree.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 form-dialog chrome (`ContentDialog`, radius 20, `28 epx` padding) and the card grid of section 9.6, and adds `Page Labels` to the section 9.6 tool list.
+**Job:** The user can define label ranges, see every page's resulting label, and save a copy with the labels. Consumer: `ConversionRunner` (`D04 T01 §1`), `set_page_labels` and `build_label_preview` (`D05 T01 §19`), the save flows of `§5`.
+**Treatment:** A `ContentDialog` bound to `PageLabelsDialogViewModel` with an editable range table and a virtualized preview list of `physical page -> label`. Cheaper substitute that fails the checkpoint: a single prefix and start field with no ranges, or a preview that is not read from the engine formatter.
+**Chrome:** consume the dialog host (`D02 T01 §10`), the thumbnail tile pipeline (`D02 T03 §4`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Implement `PageLabelsDialogViewModel` and the range table with the live preview. Done when: `AppTests.PageLabelsDialogUi` adds a Roman range and a decimal range and the preview shows `i, ii, iii, 1, 2`.
+2. Add card labels in the grid, save and entry points. Done when: `AppTests.PageLabelsDialogUi` saves a copy and reads the labels back from the file.
+
+- [ ] Implement `PageLabelsDialogViewModel` in `src/services/page_labels_dialog_view_model.h/.cpp` loading `read_page_labels`, validating edits with the engine's rules (first range at page `1`, ascending, within the page count, start of at least `1`) and producing the preview with `build_label_preview`. Done when: an invalid edit shows the engine's text and disables `Apply`.
+- [ ] Build the range table: `From page`, `Style` (`None`, `1, 2, 3`, `i, ii, iii`, `I, II, III`, `a, b, c`, `A, B, C`), `Prefix`, `Start at`, with `Add range` and `Remove`, each cell keyboard operable. Done when: adding and removing ranges updates the preview immediately.
+- [ ] Build the preview list with a `page k -> label` row per page (virtualized) and a toggle `Show only range starts`. Done when: a `2000`-page fixture scrolls smoothly.
+- [ ] Show the label under the page number on each Organize grid card and the viewer-agnostic helper `format_page_caption(page, label)` (`"4 (iv)"`) whenever the document has labels. Done when: `AppTests.PageLabelsDialogUi` finds the captions on cards.
+- [ ] Apply through `ConversionRunner` to a copy with the Replace-original and Unsaved-Changes behaviour of `§5`, and offer `Remove all labels`. Done when: the source is byte-identical after `Save as copy`. Cheaper substitute: writing the labels into the open document in place.
+- [ ] Wire the entry points: Organize header `Page labels...`, the viewer `Tools` menu and `organize.pageLabels` in `CommandRegistry` with synonyms `page numbers`, `roman numerals`, `numbering`; add `Page Labels` to the section 9.6 tool list of `design/SPEC.md`. Done when: `Ctrl+K` "roman numerals" opens the dialog. Cheaper substitute: no command-box entry.
+- [ ] Give every control an automation name and tooltip and operate the table by keyboard (`D03 T02 §3`). Done when: the control inventory test passes.
+- [ ] Add `PageLabelsDialog.*` and `AppTests.PageLabelsDialogUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=PageLabelsDialog.*:AppTests.PageLabelsDialogUi` passes.
+- [ ] Commit: `app: add the Page Labels dialog with a live label preview`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PageLabelsDialog.*:AppTests.PageLabelsDialogUi` passes on the display-session host.
+
+## 21. Blank page review: find, check and remove blank pages from the grid
+
+PDFelement and UPDF delete blank pages automatically; Recto shows its evidence first. This section adds a `Find blank pages` review to Organize on top of `detect_blank_pages` (`D05 T01 §20`): a sensitivity choice, a list of flagged pages as thumbnails with the reason, a checkbox per page, and a button that selects them in the grid or removes them into the edit model so the normal undo and unsaved-change summary apply. Nothing is deleted from the file until the person saves.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 form-dialog chrome and the card grid of section 9.6, and adds `Find Blank Pages` to the section 9.6 tool list.
+**Job:** The user can find blank pages, judge each from its thumbnail and reason, and remove the chosen ones as an undoable edit. Consumer: `OrganizeEditModel` (`§1`), `detect_blank_pages` and `plan_blank_page_deletion` (`D05 T01 §20`).
+**Treatment:** A `ContentDialog` bound to `BlankPagesViewModel` listing findings with thumbnails and reasons, running detection on a worker thread with cancel, and two actions (`Select in grid`, `Remove from document`). Cheaper substitute that fails the checkpoint: a one-click delete with no list and no reasons.
+**Chrome:** consume the dialog host (`D02 T01 §10`), the thumbnail tile pipeline (`D02 T03 §4`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Implement `BlankPagesViewModel` and the review list. Done when: `AppTests.BlankPagesUi` detects the fixture's blank pages at each sensitivity and lists reasons.
+2. Add the grid actions and entry points. Done when: `AppTests.BlankPagesUi` removes the chosen pages, undoes, and saves a copy without them.
+
+- [ ] Implement `BlankPagesViewModel` in `src/services/blank_pages_view_model.h/.cpp` running `detect_blank_pages` on a worker thread with a `CancelToken` and progress, exposing findings, the `Sensitivity` choice and the two policy toggles (`Treat pages with comments as blank`, `Treat hidden text as content`). Done when: changing the sensitivity reruns detection and cancels the previous run.
+- [ ] Build the review list: thumbnail, page number, verdict badge with text (`Blank`, `Nearly blank`), reason, and a checkbox that defaults on for `Blank` and off for `Nearly blank`. Done when: `AppTests.BlankPagesUi` shows each badge and reason.
+- [ ] Implement `Select in grid` and `Remove from document` in `OrganizeEditModel` through `plan_blank_page_deletion`, refusing to remove every page, as one undo step with the change summary counting deleted pages. Done when: `OrganizeUi.BlankPageRemoval` removes, undoes and shows `"3 deleted"` then `"No changes"`. Cheaper substitute: deleting from the file at once.
+- [ ] Wire `Find blank pages...` into the Organize header, the viewer `Tools` menu and `organize.findBlankPages` in `CommandRegistry` with synonyms `empty pages`, `delete blank`, `remove blank`; add `Find Blank Pages` to the section 9.6 tool list of `design/SPEC.md`. Done when: `Ctrl+K` "empty pages" opens the review. Cheaper substitute: no command-box entry.
+- [ ] Give every control an automation name and tooltip and operate the list by keyboard (`D03 T02 §3`). Done when: the control inventory test passes.
+- [ ] Add `BlankPagesUi.*`, `OrganizeUi.BlankPageRemoval` and `AppTests.BlankPagesUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=OrganizeUi.BlankPageRemoval:AppTests.BlankPagesUi` passes.
+- [ ] Commit: `app: add blank page review to Organize`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OrganizeUi.BlankPageRemoval:AppTests.BlankPagesUi` passes on the display-session host.
+
+## 22. Drag pages between open documents and out to Explorer
+
+UPDF lets a person drag pages from one document to another and out to a folder as a new PDF. This section makes the Organize grid a drag source and target. Dropping on another document's Organize grid inserts the pages as a pending, undoable edit (as a new source in that document's model, `§3`); dragging to Explorer or the desktop writes a new PDF of the dragged pages only when the drop happens. Permission flags are honoured: a document whose permissions forbid assembling pages or extracting content cannot be dragged out, and an encrypted document is never written out unencrypted.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** SPEC section 9.6 (`Organize` grid and the drop indicator of `D-Organize.png`); cross-document and Explorer drag are genuinely new interactions that reuse the existing drop-insertion indicator and source chips.
+**Job:** The user can move or copy pages between open documents and out to a folder by dragging, without any file being modified until they save. Consumer: `OrganizeEditModel` (`§1`, `§3`), `extract_pages` (`D05 T01 §3`), `DocumentActor` permissions (`D01 T02 §8`).
+**Treatment:** A drag source on selected cards that offers a private in-process `Recto.PageSet` format and a lazily produced `StorageItems` file, and a drop target on grids and tab headers that inserts the pages as a new source. Cheaper substitute that fails the checkpoint: writing a temp PDF for every drag start (slow and leaves files), or dropping pages straight into the other open document in place.
+**Chrome:** consume the drop indicator (`§2`), source chips (`§3`), the tab strip (`D02 T01 §3`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Implement the drag payload, the in-process drop and the permission checks. Done when: `OrganizeUi.CrossDocumentDrop` drags two pages from document `A` to the grid of document `B` and `B`'s model shows them as a new source with undo.
+2. Implement the Explorer drop and the lifecycle of the temp files. Done when: `AppTests.DragToExplorer` drops pages onto a folder and the new PDF contains exactly those pages.
+
+- [ ] Start a drag from selected `PageGrid` cards (`§1`) with a `DataPackage` offering `Recto.PageSet` (a document session id and page indices, valid only inside the process), a rendered drag image of up to three stacked thumbnails with a count badge, and `StorageItems` supplied by a data provider that runs only on drop. Done when: starting a drag creates no file on disk.
+- [ ] Implement `OrganizeEditModel::insert_pages_from(source_ref, indices, position)` adding the pages as a new source (`§3` chips and colours) at the drop position as one undo step, with the source document opened by its own `pdf::Document` for thumbnails. Done when: `OrganizeUi.CrossDocumentDrop` shows the pages, the new chip, and undo removing them.
+- [ ] Accept the drop on another document's Organize grid (insertion bar at the gap), on a tab header (opens Organize for that document with the pages inserted at the end), and in the same grid (reorder as `§2`); show a polite message when the target document is read-only or has no Organize mode. Done when: `AppTests.CrossDocumentDropUi` covers the three targets.
+- [ ] On an Explorer drop, run `extract_pages` (`D05 T01 §3`) to `AppPaths::temp_dir()/drag/<guid>/<source stem> (pages 3-5).pdf` through `AtomicFileWriter` when the drop is committed, then hand the file to the shell, and delete the temp folder at app exit and at next launch. Done when: `AppTests.DragToExplorer` drops onto a folder, finds the new PDF with the dragged pages and finds the temp folder cleaned after exit.
+- [ ] Honour permissions: disable dragging out of the app when the document forbids assembling pages or copying content, and when the document is encrypted show `"Pages cannot be dragged out of a password-protected document. Use Extract."` instead of writing unencrypted pages; in-app drops follow the same permission check. Done when: `OrganizeUi.DragPermissions` covers a restricted and an encrypted fixture.
+- [ ] Support keyboard parity: `Ctrl+C` on selected cards and `Ctrl+V` in another document's Organize grid copy the pages through the same in-process path, and a `Copy to document...` command lists open documents. Done when: `OrganizeUi.KeyboardCopyParity` yields the same model state as the pointer drop. Cheaper substitute: pointer-only drag.
+- [ ] Give the drag source and targets automation names and announce results (`"2 pages added from report.pdf"`) to assistive technology (`D03 T02 §5`). Done when: the control inventory test passes and the announcement is produced.
+- [ ] Add `OrganizeUi.CrossDocumentDrop`, `OrganizeUi.DragPermissions`, `OrganizeUi.KeyboardCopyParity`, `AppTests.CrossDocumentDropUi` and `AppTests.DragToExplorer` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=OrganizeUi.CrossDocumentDrop:OrganizeUi.DragPermissions:OrganizeUi.KeyboardCopyParity:AppTests.CrossDocumentDropUi:AppTests.DragToExplorer` passes.
+- [ ] Commit: `organize: drag pages between open documents and out to Explorer`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OrganizeUi.CrossDocumentDrop:OrganizeUi.DragPermissions:OrganizeUi.KeyboardCopyParity:AppTests.CrossDocumentDropUi:AppTests.DragToExplorer` passes on the display-session host.
+
+## 23. Copy a page as an image from the Organize grid
+
+UPDF copies a page as an image to the clipboard. Selecting one page card and choosing `Copy page as image` (or `Ctrl+Shift+C` on the focused card) renders that page at a chosen resolution and puts a bitmap on the clipboard, so it can be pasted into a chat or a document. The render uses the same tile rasterizer as the viewer on a worker thread and is capped so a huge page cannot exhaust memory. The region snapshot tool belongs to the text domain; this command copies whole pages.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** SPEC section 9.6 (`Organize` selection action bar and card context menu); a small new command that follows the existing menu items.
+**Job:** The user can copy one page as an image and paste it elsewhere. Consumer: `RenderPool` (`D01 T02 §9`), the Windows clipboard `DataPackage`.
+**Treatment:** A command that renders the selected page at the setting `organize.copyImageDpi` (default `150`) with the `4096 x 4096` tile limit lifted only by stitching bounded bands, limited to `100` megapixels, and sets `DataPackage::SetBitmap`. Cheaper substitute that fails the checkpoint: copying the grid thumbnail, which is low resolution.
+**Chrome:** consume the selection bar and card menu (`§2`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Implement `render_page_bitmap(doc, page, dpi, limit)` and the clipboard command. Done when: `OrganizeUi.CopyPageAsImage` renders page 2 at `150 DPI` with the expected pixel size and sets a bitmap on a test clipboard.
+2. Add the controls, setting and entry points. Done when: `AppTests.CopyPageAsImageUi` copies from the menu and from `Ctrl+Shift+C`.
+
+- [ ] Implement `render_page_bitmap` in `src/services/page_image_renderer.h/.cpp` rendering through `RenderPool` in bands, honouring page rotation and `/UserUnit`, refusing a result over `100` megapixels by lowering the DPI and telling the person the DPI used. Done when: `OrganizeUi.CopyPageAsImage` covers a normal page, a rotated page and an oversize page that is lowered.
+- [ ] Implement `Copy page as image` on the selection bar, the card context menu and `Ctrl+Shift+C`, enabled for exactly one selected card (with the reason `"Select one page."` otherwise), showing a toast when done. Done when: the command copies a bitmap whose pixels equal a render of that page.
+- [ ] Respect permissions: disabled with a stated reason when the document forbids copying content. Done when: `OrganizeUi.CopyPageAsImage` covers a restricted fixture.
+- [ ] Add the setting `organize.copyImageDpi` (`72` to `600`, default `150`) read by the command, registered in `SettingsStore` through the settings pattern of `D02 T04 §2`. Done when: changing the setting changes the pixel size of the next copy.
+- [ ] Register `organize.copyPageAsImage` in `CommandRegistry` with synonyms `screenshot page`, `page to clipboard`, `copy as picture`. Done when: `Ctrl+K` "copy as picture" runs it. Cheaper substitute: no command-box entry.
+- [ ] Give the command an automation name and tooltip (`D03 T02 §3`). Done when: the control inventory test passes.
+- [ ] Add `OrganizeUi.CopyPageAsImage` and `AppTests.CopyPageAsImageUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=OrganizeUi.CopyPageAsImage:AppTests.CopyPageAsImageUi` passes.
+- [ ] Commit: `organize: copy a page as an image`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OrganizeUi.CopyPageAsImage:AppTests.CopyPageAsImageUi` passes on the display-session host.
+
+## 24. Combine mode: table of contents page and a rebuildable binder project
+
+Foxit PDF Editor's PDF Binder combines files with a generated table of contents and a saved project. This section adds both to Combine mode (`§3`) as options rather than a fourth mode, driven by `build_binder` (`D05 T01 §30`): a `Create table of contents page` toggle with its options, `Save binder project...`, `Open binder project...`, and a changed-sources notice that offers `Rebuild`. The grid remains the truth for page order; the project stores the files and options, never passwords.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** SPEC section 9.6 (`Combine` header and source chips) with `design/screenshots/explorations/A-Organize.png`; the table-of-contents options flyout and project commands are new controls that follow the Combine header styling.
+**Job:** The user can combine files with a linked table of contents, save the setup as a project, and rebuild it later when a source file changes. Consumer: `OrganizeEditModel` (`§3`), `build_binder` and `check_binder` (`D05 T01 §30`), the save flow (`§5`).
+**Treatment:** A flyout on the Combine header holding the table options, project commands in the header overflow, and a notice bar when `check_binder` reports changed or missing sources. Cheaper substitute that fails the checkpoint: a plain merge with a separate text list, or a project that stores passwords.
+**Chrome:** consume the Combine header and source chips (`§3`), `InfoBar`, `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Implement the binder view model, table options and project save and open. Done when: `OrganizeUi.BinderModel` saves a project from a three-source Combine and reopens it to the same sources and options.
+2. Add the build, check and rebuild flow and entry points. Done when: `AppTests.BinderUi` builds a binder with a table of contents, edits a source, sees the changed notice and rebuilds to a new file.
+
+- [ ] Implement `BinderViewModel` in `src/services/binder_view_model.h/.cpp` mapping the Combine model to a `BinderProject` (`D05 T01 §30`) and back, with relative paths where possible and no passwords. Done when: `OrganizeUi.BinderModel` round-trips a project and finds no password text in the file.
+- [ ] Build the `Table of contents` flyout on the Combine header: toggle, title, depth, dot leaders, font and size, with a note that the table pages are labelled `i, ii` and the body starts at `1`. Done when: toggling the table changes the build input and the page count shown.
+- [ ] Add `Save binder project...` and `Open binder project...` (`.rectobinder`) to the header overflow, using `FileSavePicker` and `FileOpenPicker`, and open a project by double click or `Ctrl+O` association through `OpenDocumentPipeline`. Done when: `AppTests.BinderUi` saves and reopens a project.
+- [ ] Prompt for the password of each encrypted source through `PasswordDialog` (`D02 T01 §10`) on open and build, keeping passwords in memory only. Done when: `AppTests.BinderUi` builds a project with one encrypted source after the prompt.
+- [ ] Run `check_binder` when a project opens and show an `InfoBar` listing changed, missing and new sources with `Rebuild`, `Update list` and `Dismiss`; `Rebuild` writes a new file, never replacing the previous output or any source. Done when: editing a source shows `"1 source changed"` and rebuilding leaves every earlier file byte-identical. Cheaper substitute: silently overwriting the previous output.
+- [ ] Register `organize.binderNew`, `organize.binderOpen` and `organize.binderRebuild` in `CommandRegistry` with synonyms `binder`, `table of contents`, `combine with contents`. Done when: `Ctrl+K` "binder" lists the three. Cheaper substitute: no command-box entry.
+- [ ] Give every control an automation name and tooltip and operate the flyout by keyboard (`D03 T02 §3`). Done when: the control inventory test passes.
+- [ ] Add `OrganizeUi.BinderModel` and `AppTests.BinderUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=OrganizeUi.BinderModel:AppTests.BinderUi` passes.
+- [ ] Commit: `organize: table of contents and binder projects in Combine mode`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OrganizeUi.BinderModel:AppTests.BinderUi` passes on the display-session host.
+
+## 25. ID Card Copy dialog: front and back images on one page
+
+UPDF's ID card copy as a dialog over `make_id_card_copy` (`D05 T01 §23`). The person chooses the front and back photos (file pickers or drag and drop), adjusts a crop on each, picks the card and paper size, sees the page, and saves a new one-page PDF. Everything is local; no image is uploaded.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 (two-column `640 epx` live-preview dialog as in `Crop & Resize Pages`, `§6`) and adds `ID Card Copy` to the section 9.6 tool list.
+**Job:** The user can make a one-page copy of an identity card from two photos at true size and save it. Consumer: `ConversionRunner` (`D04 T01 §1`), `make_id_card_copy` (`D05 T01 §23`).
+**Treatment:** A `640 epx` `ContentDialog` with two image slots, per-image crop handles, size controls and a page preview. Cheaper substitute that fails the checkpoint: a file list that stacks images at their pixel size, or no crop.
+**Chrome:** consume the dialog host (`D02 T01 §10`), the crop handle conventions of `CropAndResizeDialog` (`§6`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Implement `IdCardCopyViewModel` with image slots, crop and the page preview. Done when: `AppTests.IdCardCopyUi` loads two fixtures, crops the front and sees the page preview at card size.
+2. Add save and entry points. Done when: `AppTests.IdCardCopyUi` saves a PDF whose placed rectangles match the preview.
+
+- [ ] Implement `IdCardCopyViewModel` in `src/services/id_card_copy_view_model.h/.cpp` building `IdCardCopyOptions` (`D05 T01 §23`) and rendering the page preview through the engine on a worker thread. Done when: every change updates the preview and an unreadable image shows the engine's message naming the file.
+- [ ] Build two image slots (`Front`, `Back`) with `Choose image...`, drag and drop, orientation handled automatically, and eight-handle crop overlays that are keyboard adjustable. Done when: dropping a phone photo shows it upright with a crop box.
+- [ ] Build the size controls (`Card size`, `Paper`, `Gap`, `Border`) and the page preview showing the true-size layout. Done when: changing the card size to `ID-3` moves the cards as in the engine.
+- [ ] Save through `ConversionRunner` as a new file (default `ID card copy.pdf`), offering `Open file`, and warn that the output contains the images the person chose. Done when: `AppTests.IdCardCopyUi` leaves the source images untouched. Cheaper substitute: overwriting an existing file without asking.
+- [ ] Wire the entry points: Organize header `ID card copy...`, the Home screen tools row, and `organize.idCardCopy` in `CommandRegistry` with synonyms `id copy`, `identity card`, `licence copy`; add `ID Card Copy` to the section 9.6 tool list of `design/SPEC.md`. Done when: `Ctrl+K` "identity card" opens the dialog. Cheaper substitute: no command-box entry.
+- [ ] Give every control an automation name and tooltip and operate the whole dialog by keyboard (`D03 T02 §3`). Done when: the control inventory test passes.
+- [ ] Add `IdCardCopyDialog.*` and `AppTests.IdCardCopyUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=IdCardCopyDialog.*:AppTests.IdCardCopyUi` passes.
+- [ ] Commit: `app: add the ID Card Copy dialog`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=IdCardCopyDialog.*:AppTests.IdCardCopyUi` passes on the display-session host.
+
+## 26. Paging Seal dialog: a seal image split across page edges
+
+PDFelement's cross-page seal as a dialog over `add_paging_seal` (`D05 T01 §22`). The person picks a seal image, the edge, the pages and the size, sees the slices on a strip of page previews that shows how they line up, and saves a copy. A note states that a paging seal is a visual aid and not a digital signature. Existing seals can be listed and removed through the Backgrounds dialog's `Existing marks` tab (`§13`).
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 (two-column `640 epx` live-preview dialog as in `Watermark & Stamp`, `§7`) and adds `Paging Seal` to the section 9.6 tool list.
+**Job:** The user can place a seal across the edges of several pages and see the result before saving. Consumer: `ConversionRunner` (`D04 T01 §1`), `add_paging_seal` (`D05 T01 §22`), `§13`.
+**Treatment:** A `640 epx` `ContentDialog` with image, edge, page-scope, size and anchor controls and a preview strip of the first pages with their slices, plus a joined-seal inset. Cheaper substitute that fails the checkpoint: one preview page that never shows how the slices relate.
+**Chrome:** consume the dialog host (`D02 T01 §10`), the preview conventions of `WatermarkDialog` (`§7`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Implement `PagingSealViewModel` and the preview strip. Done when: `AppTests.PagingSealUi` loads a seal, picks the right edge and `5` pages and sees five slices that sum to the seal.
+2. Add apply, list and remove integration, and entry points. Done when: `AppTests.PagingSealUi` applies, then removes the seal through `§13`.
+
+- [ ] Implement `PagingSealViewModel` in `src/services/paging_seal_view_model.h/.cpp` building `PagingSealOptions` (`D05 T01 §22`) and rendering the preview strip with a joined-seal inset. Done when: each property change updates the strip and a refused value shows the engine's text.
+- [ ] Build the controls: image picker with a transparent-background hint, `Edge` (`Right`, `Left`, `Top`, `Bottom`), `Pages` (`All`, `Range`, `Selected`) with the minimum-two-pages rule, `Width`, `Anchor` slider and `Opacity`. Done when: switching the edge rotates the strip layout.
+- [ ] Show the note `"A paging seal is a visual aid. It is not a digital signature."` and an `Apply` button that submits through `ConversionRunner` to a copy with the `§5` Replace-original behaviour. Done when: the source is byte-identical after `Save as copy`. Cheaper substitute: presenting the seal as a signature.
+- [ ] List applied seals in the `Existing marks` tab of the Backgrounds dialog (`§13`) with `Remove`, using `list_marks` and `remove_mark` for kind `PagingSeal`. Done when: `AppTests.PagingSealUi` removes a seal and finds the pages unsealed.
+- [ ] Wire the entry points: Organize header `Paging seal...`, the viewer `Tools` menu and `organize.pagingSeal` in `CommandRegistry` with synonyms `cross page seal`, `edge seal`, `riding seal`; add `Paging Seal` to the section 9.6 tool list of `design/SPEC.md`. Done when: `Ctrl+K` "edge seal" opens the dialog. Cheaper substitute: no command-box entry.
+- [ ] Give every control an automation name and tooltip and operate the whole dialog by keyboard (`D03 T02 §3`). Done when: the control inventory test passes.
+- [ ] Add `PagingSealDialog.*` and `AppTests.PagingSealUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=PagingSealDialog.*:AppTests.PagingSealUi` passes.
+- [ ] Commit: `app: add the Paging Seal dialog`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PagingSealDialog.*:AppTests.PagingSealUi` passes on the display-session host.
+
+## 27. Redaction Bar: saved profiles, country packs and a match review list
+
+Foxit PDF Editor and PDFelement save redaction patterns and detect personal data by country. This section adds to the `Find & Redact` menu of the Redaction Bar (`§9`): a `Profiles` submenu (apply, save current, manage, import, export, from `D05 T01 §26`), country pack checkboxes (`D05 T01 §25`), and a review list of matches with validation and confidence, `Low` confidence unticked, so nothing is marked without the person's review. Matches become pending marks like any other; applying still goes through the confirmation of `§9`.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** SPEC section 8.2 (`Redaction & Sanitize Bar`) and 9.9 (dialogs); the review list and profile manager follow the Sanitize dialog and `FindCard` styling and are new controls.
+**Job:** The user can find personal data by country pack or saved profile, review each match, and mark the accepted ones for redaction. Consumer: `RedactionViewModel` (`§9`), `PiiDetector` (`D05 T01 §25`), `RedactionProfileStore` (`D05 T01 §26`).
+**Treatment:** A review panel that lists `PiiMatch`es and profile matches with page, text, pack, validation badge and confidence, with `Mark selected` adding `RedactionMark`s as undoable pending marks. Cheaper substitute that fails the checkpoint: marking every match automatically, or listing only the six regular-expression presets.
+**Chrome:** consume `RedactionBar` and `RedactionViewModel` (`§9`), `FindCard` (`D03 T01 §6`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Extend `RedactionViewModel` with pack scans, profile resolution and the review list. Done when: `RedactionUi.PacksAndProfiles` scans a fixture with a pack, resolves a profile and marks only the ticked matches.
+2. Build the review panel, profile manager and entry points. Done when: `AppTests.RedactionProfilesUi` saves a profile, applies it, reviews matches and marks them.
+
+- [ ] Extend `RedactionViewModel` (`src/services/redaction_view_model.h/.cpp`) with `scan_packs(pack_ids)` and `apply_profile(profile)` running `PiiDetector` and `resolve_profile` on a worker thread with a `CancelToken`, producing review rows (not marks) and, on `Mark selected`, undoable pending marks. Done when: `RedactionUi.PacksAndProfiles` shows no marks before acceptance and one undo step after.
+- [ ] Build the review list: columns `Mark`, `Page`, `Text` (with the matched text masked to its first and last characters until the row is focused), `Kind`, `Validation` (text badge, not colour alone) and `Confidence`, with `Select all high confidence` and `Clear`. Done when: `Low` rows are unticked and the masking toggles on focus.
+- [ ] Add country pack checkboxes to the `Find & Redact` menu grouped by region, remembering the last selection in `SettingsStore`, and `Scan` with a progress ring and cancel. Done when: scanning a multi-page fixture can be cancelled and leaves no marks.
+- [ ] Build the `Profiles` submenu and a `Manage profiles` dialog: apply, `Save current patterns as profile...`, rename, delete (user profiles only), `Import...` and `Export...` through file pickers, and show the shipped read-only profiles. Done when: `AppTests.RedactionProfilesUi` saves, exports, deletes and re-imports a profile.
+- [ ] Show profile load errors from the parser (`D05 T01 §26`) plainly, naming the field, and never apply a profile that failed to parse. Done when: a malformed profile file shows its error and changes nothing.
+- [ ] Register `redact.scanPii`, `redact.applyProfile` and `redact.manageProfiles` in `CommandRegistry` with synonyms `find personal data`, `redaction profile`, `iban`, `national id`. Done when: `Ctrl+K` "personal data" opens the scan. Cheaper substitute: no command-box entry.
+- [ ] Give every control an automation name and tooltip and operate the review list by keyboard (`D03 T02 §3`). Done when: the control inventory test passes.
+- [ ] Add `RedactionUi.PacksAndProfiles` and `AppTests.RedactionProfilesUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=RedactionUi.PacksAndProfiles:AppTests.RedactionProfilesUi` passes.
+- [ ] Commit: `app: redaction profiles, country packs and a match review list`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=RedactionUi.PacksAndProfiles:AppTests.RedactionProfilesUi` passes on the display-session host.
+
+## 28. Redaction Bar: suggested marks, whiteout and whole-page redaction
+
+This section completes the Redaction Bar (`§9`) in three ways. First, a `Suggested` mark state: other features (the AI assistant's personal-data detection, `D08 T02`) can propose marks, which appear as dashed outlines that `Apply Redactions` ignores until the person accepts them, with `Accept` and `Reject` controls per suggestion and for all. Second, a `Whiteout` tool beside the redaction tools that covers content with a plain box and is labelled everywhere as not redaction (`D05 T01 §24`). Third, `Mark pages` uses the engine's whole-page redaction so entire pages are really removed.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** SPEC section 8.2 (`Redaction & Sanitize Bar`) and 9.9 (`Apply Redactions` confirmation); the suggestion state, whiteout button and its label are new controls that use `RectoWarningBrush` and `RectoDangerBrush` with text labels.
+**Job:** The user can accept or reject proposed marks, cover content with a clearly labelled whiteout, and redact whole pages for real. Consumer: `RedactionViewModel` (`§9`), `whiteout` and `redact_pages` (`D05 T01 §24`).
+**Treatment:** A third mark state in `RedactionViewModel` (`Pending`, `Suggested`, `Applied`) that the apply step filters on, a distinct dashed rendering and review controls, a separate `Whiteout` button whose result dialog repeats the warning, and routing of whole-page marks to `redact_pages`. Cheaper substitute that fails the checkpoint: suggestions that apply on `Apply Redactions`, or a whiteout presented as a redaction.
+**Chrome:** consume `RedactionBar`, `RedactionCanvasOverlay` and the confirmation dialog (`§9`), `RectoWarningBrush`, `RectoDangerBrush`, `CommandRegistry` (`D02 T03 §11`).
+
+**Build order:**
+
+1. Add the `Suggested` state, the accept and reject controls and the apply filter. Done when: `RedactionUi.SuggestedMarks` shows suggestions excluded from `Apply Redactions` until accepted, and accepted ones applied.
+2. Add the whiteout tool, whole-page routing and entry points. Done when: `AppTests.WhiteoutAndPageRedactionUi` covers a whiteout with its warning and a redacted page with nothing left in the raw bytes.
+
+- [ ] Add `MarkState` (`Pending`, `Suggested`, `Applied`) and `RedactionViewModel::add_suggested_marks(marks, source_label)`, `accept_suggestion(id)`, `reject_suggestion(id)`, `accept_all_suggestions()` and `reject_all_suggestions()` in `src/services/redaction_view_model.h/.cpp`, undoable, with `Apply Redactions (N)` counting and applying only `Pending` marks. Done when: `RedactionUi.SuggestedMarks` applies zero suggested marks and applies a mark after `accept_suggestion`.
+- [ ] Render suggested marks on `DocumentView` as dashed `RectoWarningBrush` outlines with a `Suggested` text tag and the `source_label`, distinct from solid pending marks, and show `Accept` and `Reject` buttons on hover and on keyboard focus. Done when: `AppTests.WhiteoutAndPageRedactionUi` shows both renderings and the buttons work from the keyboard.
+- [ ] Add a `Suggestions (N)` control to `RedactionBar` with `Accept all`, `Reject all` and `Review...` (stepping through each suggestion), shown only when suggestions exist, and block closing the document with an unreviewed suggestion count in the unapplied-marks prompt (`D06 T03 §6`). Done when: closing with suggestions asks first and counts them separately.
+- [ ] Add the `Whiteout` tool to `RedactionBar` as a separate button with the label `Whiteout (does not remove content)`, a rubber-band rectangle, and a result dialog that shows `WhiteoutReport` (covered marks, characters still under the cover) and the sentence `"This hides content. It does not remove it. Use Redact to remove content."`. Done when: `AppTests.WhiteoutAndPageRedactionUi` shows the dialog and the page text still extractable. Cheaper substitute: a whiteout button with a redaction label.
+- [ ] Route `Mark Pages for Redaction` to `redact_pages` (`D05 T01 §24`) when the marks cover whole pages, show the `references_to_review` list (bookmarks and destinations naming those pages) after apply, and confirm with the non-bypassable dialog of `§9`. Done when: applying a page range leaves no former text in the raw output and lists the referencing bookmark.
+- [ ] Register `redact.whiteout` and `redact.acceptSuggestions` in `CommandRegistry` with synonyms `cover`, `white out`, `accept suggestions`. Done when: `Ctrl+K` "white out" arms the tool. Cheaper substitute: no command-box entry.
+- [ ] Give every new control an automation name and tooltip and keep suggestion review fully keyboard operable (`D03 T02 §3`). Done when: the control inventory test passes.
+- [ ] Add `RedactionUi.SuggestedMarks` and `AppTests.WhiteoutAndPageRedactionUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=RedactionUi.SuggestedMarks:AppTests.WhiteoutAndPageRedactionUi` passes.
+- [ ] Commit: `app: suggested redaction marks, labelled whiteout and whole-page redaction`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=RedactionUi.SuggestedMarks:AppTests.WhiteoutAndPageRedactionUi` passes on the display-session host.
+
+## 29. Inspect Document panel: what the file carries, with a path to Sanitize
+
+Acrobat Pro and Foxit PDF Editor list the hidden content of a file before it is removed. This panel shows the report of `inspect_document` (`D05 T01 §27`) in the side panel host: a category list with counts, expandable items with location and bounded detail, a `Go to` action that jumps to the page, and `Sanitize...` that opens the Sanitize dialog (`§9`) with the matching categories ticked. Scripts and links are shown as text and never run or opened. The report can be exported as JSON or text.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new panel; it follows `design/SPEC.md` section 8.3 (side-panel card container, switcher header) and the list styling of the `Signatures` panel (`§11`), and adds `Inspect Document` to the section 8.3 panel list.
+**Job:** The user can see what a PDF hides, jump to each item, and go straight to removing it. Consumer: `SidePanelHost` (`D02 T03 §3`), `inspect_document` (`D05 T01 §27`), `SanitizeDocumentDialog` (`§9`).
+**Treatment:** A virtualized grouped list bound to `InspectorViewModel` that runs the inspection on a worker thread, with risk shown by icon and text, plus export and Sanitize actions. Cheaper substitute that fails the checkpoint: a summary line of counts with no item detail, or a panel that runs scripts to show their effect.
+**Chrome:** consume `SidePanelHost` (`D02 T03 §3`), `SanitizeDocumentDialog` (`§9`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` status tokens.
+
+**Build order:**
+
+1. Implement `InspectorViewModel` and the grouped list. Done when: `AppTests.InspectorPanelUi` inspects the fixture and shows each category with its count.
+2. Add detail, jump, export, Sanitize hand-off and entry points. Done when: `AppTests.InspectorPanelUi` jumps to a page, exports JSON and opens Sanitize with the right boxes ticked.
+
+- [ ] Implement `InspectorViewModel` in `src/services/inspector_view_model.h/.cpp` running `inspect_document` on a worker thread with a `CancelToken` and progress, grouping items by category, and exposing counts, risk filters and `truncated`. Done when: the panel shows a progress ring and a cancel leaves it empty without error.
+- [ ] Build the panel in `src/app/panels/InspectorPanel.xaml/.cpp`: grouped virtualized list with category header counts, item rows with risk icon and text, an expander for the bounded escaped detail, and a notice when the report is truncated. Done when: a `10000`-item fixture scrolls smoothly.
+- [ ] Add `Go to` for items with a page location, `Copy details` and a note on script and attachment rows that they are shown, not run or opened. Done when: `Go to` scrolls `DocumentView` to the page and no script runs. Cheaper substitute: a `Run` or `Open` action on attachments and scripts.
+- [ ] Add `Sanitize...` mapping each category's `removable_by` flag to the checkboxes of `SanitizeDocumentDialog` (`§9`), and feed the dialog its item counts from the report. Done when: `AppTests.InspectorPanelUi` opens the dialog with the matching boxes ticked and the same counts.
+- [ ] Add `Export report...` writing JSON or plain text through `AtomicFileWriter`, with no document content beyond the bounded details. Done when: the exported JSON equals `recto-cli inspect --json` for the same file.
+- [ ] Register the panel in `SidePanelHost` and `inspect.document` in `CommandRegistry` with synonyms `hidden data`, `metadata`, `what is in this pdf`, `before sharing`. Done when: `Ctrl+K` "hidden data" opens the panel. Cheaper substitute: no command-box entry.
+- [ ] Give every control an automation name and tooltip and operate the list by keyboard (`D03 T02 §3`). Done when: the control inventory test passes.
+- [ ] Add `InspectorPanel.*` and `AppTests.InspectorPanelUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=InspectorPanel.*:AppTests.InspectorPanelUi` passes.
+- [ ] Commit: `app: add the Inspect Document panel with a Sanitize hand-off`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=InspectorPanel.*:AppTests.InspectorPanelUi` passes on the display-session host.
+
+## 30. Signatures panel: view the signed version and compare it with the current document
+
+Foxit PDF Editor and Acrobat Pro show the document as it was when a signature was applied. This section adds two actions to each signature card of the `Signatures` panel (`§11`): `View signed version`, which opens the exact signed bytes read-only in a new tab labelled `Signed version (read-only)`, and `Compare with current`, which shows the report of `D05 T01 §28` (what changed after signing, with allowed and unauthorized changes told apart) and opens the comparison view of `D03 T01 §10`. Nothing is modified; the signed copy is a temp file removed on close.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** SPEC section 8.3 (`Signatures & Standards` panel signature cards); two new card actions and a report flyout that follow the card button styling.
+**Job:** The user can see exactly what a signer signed and what changed afterwards. Consumer: `SignaturesAndStandardsPanel` (`§11`), `extract_signed_revision` and `compare_signed_with_current` (`D05 T01 §28`), `OpenDocumentPipeline` (`D02 T01 §5`).
+**Treatment:** Card buttons that run the engine on a worker thread, open the temp revision through the normal open pipeline as a read-only tab with a persistent banner, and show the comparison report with a classification badge (text and icon). Cheaper substitute that fails the checkpoint: re-saving the old version through the engine, which changes its bytes and breaks its signature.
+**Chrome:** consume the Signatures panel and `SignatureStatusBanner` (`§10`, `§11`), the tab strip (`D02 T01 §3`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` status tokens.
+
+**Build order:**
+
+1. Implement the two actions and the read-only tab. Done when: `AppTests.SignedVersionUi` opens a signed file's first signature version and the tab shows its pages with the read-only banner.
+2. Add the comparison report and entry points. Done when: `AppTests.SignedVersionUi` shows the classification and opens the comparison for a file edited after signing.
+
+- [ ] Add `View signed version` and `Compare with current` buttons to each signature card in `SignaturesAndStandardsPanel.xaml/.cpp`, disabled with a stated reason when the signature is invalid or its `/ByteRange` fails validation. Done when: both buttons enable for a valid signature and disable with the engine's reason for a bad range.
+- [ ] Run `extract_signed_revision` on a worker thread and open the result through `OpenDocumentPipeline` as a read-only tab titled `<name> (signed version)` with a banner `"This is the version the signer signed. It cannot be edited."` and Save disabled. Done when: the tab opens, Save and Edit are disabled, and the temp file is removed when the tab closes.
+- [ ] Show the `SignedVsCurrentReport` in a flyout: classification badge (`No changes`, `Allowed changes only`, `Unauthorized changes`) with an icon and text, counts of added, removed and changed pages, annotations and fields, and later signatures, with `Open comparison` launching `D03 T01 §10`'s view between the two files. Done when: `AppTests.SignedVersionUi` shows each classification for the matching fixture.
+- [ ] Keep the signed bytes safe: the temp copy is read-only, outside any user folder, never offered by `Save as` without an explicit copy dialog that warns it is the signed version, and the signed file's signature verifies in its own tab. Done when: `SignatureUi.SignedVersionSafety` finds the temp file read-only and the tab banner reporting the signature valid.
+- [ ] Register `signature.viewSignedVersion` and `signature.compareWithCurrent` in `CommandRegistry` with synonyms `original version`, `what changed since signing`, `signed copy`. Done when: `Ctrl+K` "signed copy" opens the version of the first signature. Cheaper substitute: no command-box entry.
+- [ ] Give every new control an automation name and tooltip (`D03 T02 §3`). Done when: the control inventory test passes.
+- [ ] Add `SignatureUi.SignedVersionSafety` and `AppTests.SignedVersionUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=SignatureUi.SignedVersionSafety:AppTests.SignedVersionUi` passes.
+- [ ] Commit: `app: view the signed version and compare it with the current document`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=SignatureUi.SignedVersionSafety:AppTests.SignedVersionUi` passes on the display-session host.
+
+## 31. Trusted Lists dialog: opt-in download, manual import and per-list control
+
+The UI for `TrustStore` (`D05 T01 §29`), reachable from the Signatures panel (`§11`), `Ctrl+K` and the settings link of `D02 T04 §6`. It shows the lists the person has imported (name, kind, source, last update, next update, certificate count, enabled), imports certificate bundles and trusted-list files by file picker with a fingerprint confirmation, and, only after the person turns on `Download trusted lists`, offers `Update now`. It says plainly that a downloaded list's signature is not verified in this version and that nothing is fetched unless asked.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.9 form-dialog chrome and the settings card styling of section 9.7, and adds `Trusted Lists` to the section 9.9 dialog list.
+**Job:** The user can decide which extra trust anchors Recto uses to verify signatures, and keep the network off unless they choose otherwise. Consumer: `SignatureStatusBanner` and `SignaturesAndStandardsPanel` (`§10`, `§11`), `TrustStore` and `TrustListDownloader` (`D05 T01 §29`).
+**Treatment:** A `ContentDialog` bound to `TrustListsViewModel` with a list, import and confirm flows, and an opt-in toggle for downloads that is off by default and writes `trust.downloadEnabled`. Cheaper substitute that fails the checkpoint: trusting an imported list without showing its fingerprint, or downloading on first run.
+**Chrome:** consume the dialog host (`D02 T01 §10`), `CertificateDetailsDialog` (`§11`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Implement `TrustListsViewModel` and the list, import and confirm flows. Done when: `AppTests.TrustListsUi` imports a bundle after confirming its fingerprint and the list appears enabled.
+2. Add the opt-in download flow, the verifier refresh and entry points. Done when: `AppTests.TrustListsUi` shows no network call with the toggle off and a signature turning trusted after import.
+
+- [ ] Implement `TrustListsViewModel` in `src/services/trust_lists_view_model.h/.cpp` over `TrustStore` (list, enable, disable, remove, import) with errors from the engine shown by name. Done when: removing a list updates the view and a bad file shows its refusal.
+- [ ] Build the list with name, kind, source, issue and next-update dates, certificate count, an enable switch and `Details...` (opening the certificates in `CertificateDetailsDialog`), plus `Import file...`. Done when: the list matches the store contents.
+- [ ] Build the import confirmation step: show the file's SHA-256, the source, the certificate count and the sentence `"Recto cannot verify the signature of this list. Only continue if you trust where it came from."`, and enable `Add list` only after the person ticks the confirmation. Done when: `AppTests.TrustListsUi` cannot add without the tick. Cheaper substitute: importing without showing the fingerprint.
+- [ ] Add the `Download trusted lists` switch (off by default, writes `trust.downloadEnabled`), an editable list address field pre-filled with the EU default and empty for the Adobe-style list, and `Update now` with progress, per-list results and cancel, enabled only when the switch is on. Done when: `AppTests.TrustListsUi` shows `Update now` disabled and no request with the switch off.
+- [ ] Refresh signature verification after a change: re-run `verify_signatures` on open documents so banners and cards update, and show the trust source on trusted cards (`"Trusted through Recto list: <name>"`). Done when: a fixture signature turns from untrusted to trusted after import and back after disable.
+- [ ] Register `signature.trustedLists` in `CommandRegistry` with synonyms `trust list`, `eu trusted list`, `aatl`, `trust anchors` and add the link in the `Signatures` panel header. Done when: `Ctrl+K` "trust list" opens the dialog. Cheaper substitute: no command-box entry.
+- [ ] Give every control an automation name and tooltip and operate the dialog by keyboard (`D03 T02 §3`). Done when: the control inventory test passes.
+- [ ] Add `TrustLists.*` and `AppTests.TrustListsUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=TrustLists.*:AppTests.TrustListsUi` passes.
+- [ ] Commit: `app: add the Trusted Lists dialog with opt-in download and manual import`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=TrustLists.*:AppTests.TrustListsUi` passes on the display-session host.
+
+## 32. Pressure-sensitive pen capture for handwritten signatures
+
+Foxit PDF Editor can take a signature from a signature pad. Recto's `Draw Handwritten Ink` canvas (`§10`) takes pointer input only; this section makes it use Windows Ink pen input (`Microsoft.UI.Input.Inking` `InkPresenter` with pen pressure), so a pen tablet or a Windows Ink digitizer produces a signature whose stroke width follows pressure. Devices that need a vendor SDK to draw on their own display, such as LCD signature pads, are not supported and the dialog says that device input arrives only as a pen on a normal digitizer. Strokes are stored as vector paths in the appearance stream, as before.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** SPEC section 9.9 (`Sign Document Dialog`, ink appearance canvas) with the existing `Draw Handwritten Ink` mode of `§10`; the pressure control and device note are small additions.
+**Job:** A person with a pen tablet can sign with natural pressure variation and still get a crisp vector signature. Consumer: `SignDocumentDialog` (`§10`), the appearance library (`§10`), `SignatureAppearanceConfig` (`D05 T01 §8`).
+**Treatment:** Replace the pointer-only canvas with an `InkCanvas` and `InkPresenter` configured for pen and mouse, convert `InkStroke` points with pressure into variable-width vector outlines for the `/AP /N` stream, and keep mouse and touch working. Cheaper substitute that fails the checkpoint: constant-width strokes that ignore pressure, or a bitmap signature.
+**Chrome:** consume the ink pad of `SignDocumentDialog` (`§10`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Implement `InkToAppearance` converting pressure strokes to vector paths. Done when: `SignatureUi.PressureStrokes` turns a synthetic pressure-varying stroke into an outline whose width follows pressure.
+2. Wire the canvas, the fallback and the device note. Done when: `AppTests.PenCaptureUi` draws with simulated pen and mouse input and the appearance previews both.
+
+- [ ] Implement `ink_to_appearance(strokes, options)` in `src/services/ink_appearance.h/.cpp` converting `InkStroke` points with pressure into smoothed variable-width closed paths (minimum width `0.4 pt`, maximum `3 pt`), at most `20000` points per signature, as Bezier paths for the appearance stream. Done when: `SignatureUi.PressureStrokes` verifies width ranges, the point limit and smooth joins.
+- [ ] Replace the pointer canvas of `SignDocumentDialog` with an `InkCanvas` using `InkPresenter` for pen, mouse and touch, with `Clear` and `Undo stroke`, and fall back to constant width when the device reports no pressure. Done when: `AppTests.PenCaptureUi` draws with simulated pen pressure and with mouse input.
+- [ ] Show a one-line device note `"Pen tablets and Windows Ink screens work. Signature pads that need their own software are not supported."` and detect whether a pen digitizer is present to show `"Pen detected"` or `"No pen detected. The mouse works."`. Done when: the note and the detected state appear.
+- [ ] Store the strokes in the signature appearance library (`§10`) as vector paths and keep the live preview identical to the saved `/AP`. Done when: `SignatureUi.AppearanceLibrary` still passes and the preview pixels equal the signed appearance. Cheaper substitute: storing a bitmap of the canvas.
+- [ ] Give the canvas and its buttons automation names, tooltips and a keyboard alternative (typed or image appearance) so signing never requires a pen (`D03 T02 §3`). Done when: the control inventory test passes.
+- [ ] Add `SignatureUi.PressureStrokes` and `AppTests.PenCaptureUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=SignatureUi.PressureStrokes:AppTests.PenCaptureUi` passes.
+- [ ] Commit: `app: pressure-sensitive pen capture for handwritten signatures`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=SignatureUi.PressureStrokes:AppTests.PenCaptureUi` passes on the display-session host.
 
 ## Verification
 

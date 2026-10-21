@@ -87,6 +87,7 @@ All colours come from `tokens/RectoColors.xaml`. No control sets a hex value dir
 | `RectoSearchHitBrush` | `#F6CDBF` | `#FFD8A8` | Search matches on the page |
 | `RectoSearchHitCurrentBrush` | `#C8431F` | `#F0603C` | The current match (text on it uses `RectoOnAccentBrush`) |
 | `RectoTextSelectionBrush` | accent at 18% | accent at 22% | Selected text on the page |
+| `RectoFloatingBarBackgroundBrush` / `Border` / `Foreground` | `#1B1A19` / `#2A2826` / `#EDEAE4` | same as light | The small dark selection toolbar and edit popovers over the page (9.3), dark in both themes |
 | `RectoSuccessBrush` / `Warning` / `Danger` | `#0F7B0F` / `#8A5300` / `#B3261E` | `#7DD3A0` / `#E2C27A` / `#FF9A85` | Status icons and messages |
 
 The dictionary also replaces the Windows accent ramp (`SystemAccentColor` and its `Light1..3` and `Dark1..3` variants), so stock controls pick up vermilion. With WinUI's default mapping this gives accent fills of `#C8431F` in light and `#F0603C` in dark, and accent text of `#A93717` and `#F48A6E`. Check this against the Windows App SDK version in use when the shell is first built; if the mapping differs, adjust the ramp, not individual controls.

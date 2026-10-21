@@ -51,6 +51,12 @@
     "warning": "#E2C27A",
     "danger": "#FF9A85"
   },
+  "floatingBar": {
+    "$description": "Theme-independent dark selection toolbar (SPEC 9.3); high contrast maps to system colours.",
+    "background": "#1B1A19",
+    "border": "#2A2826",
+    "foreground": "#EDEAE4"
+  },
   "pageColourInDarkTheme": {
     "original": "#FFFFFF",
     "dimmed": "#D9D5CE",

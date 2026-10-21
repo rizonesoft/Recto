@@ -13,6 +13,7 @@ The WinUI app as the SPEC's one shell: title-bar tabs, the tiled document view, 
 | [TODO-03](./TODO-03-home-and-panels.md) | Home, Side Panels, Outlines, Layers, Portfolios, Document Info and Command Box | active |
 | [TODO-04](./TODO-04-settings-and-layout.md) | Settings Store, Portable Mode, Layout Presets, Settings Page, Theme and Keyboard | active |
 | [TODO-05](./TODO-05-rich-media-3d-geo.md) | Rich Media, 3D Models and Geospatial PDFs | active |
+| [TODO-06](./TODO-06-cloud-storage-connectors.md) | Cloud Storage Connectors: OneDrive, SharePoint, Google Drive, Dropbox and Box | active |
 
 ## Completed
 
@@ -26,6 +27,7 @@ The WinUI app as the SPEC's one shell: title-bar tabs, the tiled document view, 
 - `src/app` shell, custom title bar, tabs, named slots, Classic menu bar (`File`, `Edit`, `View`, `Tools`, `Window`, `Help`), four open paths (`Ctrl+O` picker, drag-and-drop, CLI args, Explorer activation), `Save` / `Save a copy` / `Replace original` / `Unsaved changes`, and shell dialogs (Password, Could-not-open)
 - Presentation thread, worker D3D11 texture uploads, budgeted LRU tile cache, Continuous/Single-Page/Two-Page Spread geometry, scroll, zoom with stretched preview, Floating Page Toolbar with 3s auto-fade, safe links, dark page colour modes, `F11` Full Screen
 - `RecentFilesStore`, `HomePage`, `SidePanelHost`, `ThumbnailList` (with filmstrip orientation), `OutlinePanel`, interactive Bookmark Editor, `OCG` Layers panel, Attachments and PDF Portfolios (`/EmbeddedFiles` and `/Collection`), read-only and editable Info/XMP/ViewerPreferences, unified `CommandRegistry`, `Ctrl+K` Command Box, `AppPaths` Portable mode, `SettingsStore`, `LayoutPresetEngine`, `SettingsPage`, live `ThemeManager`, `MotionHelper`, and the audited SPEC section 10 keyboard map
+- Tab session restore, closed-tab stack, tab reorder and Share; reading tints, presentation mode with presenter view, auto-scroll, reverse order, rulers, grid and guides, line weights, split and side-by-side views; bookmark creation, import and export, contents page, layer authoring; media authoring; and opt-in cloud storage connectors (OneDrive, SharePoint, Google Drive, Dropbox, Box)
 
 ## Out of scope
 

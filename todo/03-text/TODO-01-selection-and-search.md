@@ -35,6 +35,24 @@ track: M3
 - -> XREF: D03 T04 §5 -- content-stream replace reuses Edit PDF's rewrite engine (§5 there) and font resolver (§4 there).
 - -> XREF: D03 T05 §3 -- search across files (D03 T05) reuses this engine and its options.
 - -> XREF: D03 T02 §7 -- Read Out Loud (D03 T02 §7) consumes this text model.
+- -> XREF: D03 T03 §4 -- spell service in comment editors.
+- -> XREF: D03 T03 §8 -- spell service in form fields.
+- -> XREF: D02 T04 §5 -- settings rows.
+- -> XREF: D04 T02 §3 -- stitch_page_areas reuse.
+- -> XREF: D07 T01 §10 -- render_page_area for print area.
+- -> XREF: D04 T02 §7 -- searchable word writer.
+- -> XREF: D05 T02 §9 -- zone OCR to redaction.
+- -> XREF: D07 T01 §14 -- print area marquee.
+- -> XREF: D07 T01 §11 -- render_page_area.
+- -> XREF: D04 T02 §19 -- OcrPipeline layout.
+- -> XREF: D04 T02 §19 -- suspects review input.
+- -> XREF: D04 T02 §22 -- snapshot tool owns clipboard copy.
+- -> XREF: D04 T02 §3 -- stitch_page_areas.
+- -> XREF: D03 T03 §36 -- ruling-line removal feeds detection.
+- -> XREF: D05 T01 §28 -- compare engine.
+- -> XREF: D02 T03 §13 -- PageText counts.
+- -> XREF: D02 T03 §14 -- find engine for bookmark proposals.
+- -> XREF: D04 T05 §18 -- page text for math detection.
 
 ## Outcome
 
@@ -62,6 +80,15 @@ track: M3
 | 8 | §8 | Hybrid Neural OCR + `Windows.Media.Ocr` pipeline, CTC quad alignment & CLI | §6, §7, D02 T04 §5 | [ ] |
 | 9 | §9 | Content-stream Find & Replace (`text_replace.cpp`), `recto-cli replace` and `Ctrl+H` | §6, D01 T02 §5 | [ ] |
 | 10 | §10 | Two-document comparison (`pdf_compare.cpp`), `recto-cli compare` and `Ctrl+Shift+D` | §6, §8 | [ ] |
+| 11 | §11 | Page-area render with chosen DPI, clipboard image and `recto-cli snapshot` | §2, D01 T02 §6, D01 T03 §1 | [ ] |
+| 12 | §12 | Snapshot tool: drag an area, choose DPI, copy the image to the clipboard | §4, §11, D02 T02 §5, D02 T03 §11, D02 T04 §5, D03 T02 §5 | [ ] |
+| 13 | §13 | Scrolling capture: stitch an area spanning pages into one tall image | §11, §12 | [ ] |
+| 14 | §14 | Offline spell check service over `ISpellChecker` and platform text boxes | D02 T04 §5 | [ ] |
+| 15 | §15 | Zone OCR engine: recognize a drawn area and `recto-cli ocr --zone` | §8, §11 | [ ] |
+| 16 | §16 | OCR word confidence, suspect list and undoable in-memory corrections | §8, §14 | [ ] |
+| 17 | §17 | Zone OCR tool: draw an area, review the text, copy or add it to the text layer | §12, §15, §16, D02 T03 §11 | [ ] |
+| 18 | §18 | OCR review panel: word crop beside recognized text, accept or correct | §11, §16, D02 T03 §3, D02 T03 §11, D03 T02 §5 | [ ] |
+| 19 | §19 | Save OCR corrections and zone text into the text layer of a copy | §16, §18, §17, D04 T02 §7, D06 T03 §5, D02 T01 §8 | [ ] |
 
 ## 1. Native `PageText` glyph-to-Unicode extraction and column reading-order clustering
 
@@ -195,8 +222,8 @@ Implement the background find engine in `src/core/search.h/.cpp` and `recto-cli 
 - [ ] Extract context snippets (`prefix`, `match_text`, `suffix` trimmed at word boundaries within `~80` characters) for each `SearchHit` to populate the SPEC 9.3 results list. Done when: `Search.ContextSnippets` produces clean single-line snippets with newline characters normalized to spaces.
 - [ ] Schedule multi-page search outward from `start_page` (`start_page, start_page+1, ..., N-1, 0, ..., start_page-1`), invoking a progressive per-page callback and aborting within `< 5 ms` when `CancelToken::is_cancelled()` flips. Done when: `Search.ProgressiveAndCancel` cancels a 200-page search mid-flight cleanly.
 - [ ] Implement `recto-cli find <file.pdf> <query> [--case] [--whole-word] [--regex] [--json]` in `src/cli/cmd_find.cpp`. Done when: `recto-tests.exe --gtest_filter=Search.*:Cli.FindCommand` passes under ASan.
-- [ ] Add `SearchOptions::match_diacritics` (default `false`) folding the search buffer and query through Unicode NFD with combining marks removed, so `resume` finds `résumé` unless the user turns on exact accents (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`, pdfcraft #3460). Done when: `Search.DiacriticInsensitive` finds `résumé`, `Résumé` and `resume` with the default and only `résumé` with `match_diacritics`.
-- [ ] Keep hit offsets mapped to the original characters when folding changes string length (`İ`, `ß`, decomposed accents), so highlights never slice out of range (pdfcraft #816). Done when: `Search.FoldingKeepsOffsets` highlights the exact original glyph quads for each folded match.
+- [ ] Add `SearchOptions::match_diacritics` (default `false`) folding the search buffer and query through Unicode NFD with combining marks removed, so `resume` finds `résumé` unless the user turns on exact accents. Done when: `Search.DiacriticInsensitive` finds `résumé`, `Résumé` and `resume` with the default and only `résumé` with `match_diacritics`.
+- [ ] Keep hit offsets mapped to the original characters when folding changes string length (`İ`, `ß`, decomposed accents), so highlights never slice out of range. Done when: `Search.FoldingKeepsOffsets` highlights the exact original glyph quads for each folded match.
 - [ ] Commit: `feat(text): implement background SearchEngine with regex and recto-cli find`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Search.*:Cli.FindCommand` passes under ASan across multi-page, ligature, hyphenated, and regex fixtures.
@@ -349,8 +376,258 @@ Implement `src/core/pdf_compare.h/.cpp` in `recto-core` (word/line Myers diff ov
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfCompare.*:Cli.CompareCommand:AppTests.ComparePdfsUi` passes under ASan, and display-session screenshots verify the `Ctrl+Shift+D` Compare PDFs view.
 
+## 11. Page-area render with chosen DPI, clipboard image and `recto-cli snapshot`
+
+Add the engine behind a snapshot tool: render any rectangle of a page to a bitmap at a chosen DPI on a `RenderPool` worker, put it on the clipboard as an image, save it to a file, and expose it as `recto-cli snapshot`. This is Acrobat Pro's `Snapshot` tool and matches Foxit PDF Editor's Snapshot, UPDF's Screenshot and PDFelement's Screenshot. It must not break the thread contract (the render reads only immutable `DisplayList` snapshots and never the live `recto::pdf::Document`) and it keeps Recto's improvement that the image is re-rendered from the page at the requested DPI, so it is crisp at any zoom and never a capture of window pixels. Every file write is temp-file-then-replace.
+
+**Phase:** 3
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that `render_page_area` obtains `std::shared_ptr<const DisplayList>` snapshots from `DocumentActor`, runs on `RenderPool` workers with a `CancelToken`, never calls `recto::pdf::Document` from the caller thread, and caches no tile after an abort.
+
+**Build order:**
+
+1. Define `AreaRenderRequest` and implement `render_page_area` in `src/services/area_render.h/.cpp`, rasterizing the rectangle tile by tile through the shared rasterizer (`D01 T02 §6`) into one `RgbaBitmap`. Done when: `AreaRender.PixelSize` renders a `200 x 100 pt` area at `72`, `150` and `300` DPI and gets `200 x 100`, `417 x 208` and `834 x 417` pixels, with stride read from the bitmap and never assumed to be `width * 4`.
+2. Add the image sinks: the clipboard payload (PNG stream plus device-independent bitmap), file encoding through WIC (`PNG`, `JPEG`, `BMP`, `TIFF`), and `recto-cli snapshot`. Done when: `Cli.SnapshotCommand` writes a PNG whose size and pixels match `render_page_area` for the same request.
+
+- [ ] Define `AreaRenderRequest` (`page_index`, `rect_pt` in unrotated user space with the origin at the bottom-left of the crop box, `dpi` `72..1200`, `include_annotations`, `transparent_background`, `grayscale`) and `AreaRenderResult` in `src/services/area_render.h`. Done when: the header compiles in `recto-services` with no XAML include.
+- [ ] Convert the displayed rectangle to user space for pages with `/Rotate` `90`, `180` and `270` and a crop box not at the origin, with `area_from_viewport_rect` using `D02 T02 §5`'s transform. Done when: `AreaRender.RotatedPages` renders the same page content for a rectangle drawn on each rotation of one fixture.
+- [ ] Bound the work: refuse a request over `268435456` pixels with a typed `AreaTooLarge` error naming the largest DPI that fits, refuse a rectangle that is empty, non-finite or outside the crop box, and poll the `CancelToken` between tiles. Done when: `AreaRender.Bounds` returns each error and a cancelled render ends within `50 ms` leaving no cached tile.
+- [ ] Honour `include_annotations` and an optional transparent background (alpha `0` where the page paints nothing). Done when: `AreaRender.AnnotationsAndAlpha` shows a highlight present only when requested and a transparent corner pixel with alpha `0`.
+- [ ] Encode with WIC on the calling worker and write files through `AtomicFileWriter` (temp file in the destination folder, then replace). Done when: `AreaRender.FileSinks` writes the four formats, reads each back at the same size, and leaves no temp file after a forced failure.
+- [ ] Build the clipboard payload (`SnapshotClipboardPayload`: PNG stream plus a `CF_DIBV5`-compatible bitmap) off the UI thread, and hand it to the UI thread only for `Clipboard::SetContent`. Done when: `AreaRender.ClipboardPayload` decodes both formats to the same pixels and a source search shows no WinRT clipboard call outside the UI hand-off.
+- [ ] Implement `recto-cli snapshot <file.pdf> --page <N> --rect <x,y,w,h> [--dpi <n>] [--format png|jpg|bmp|tiff] [--no-annotations] [--transparent] [--gray] --out <file>` in `src/cli/cmd_snapshot.cpp`, reading `--rect` in user-space points, with the shared exit codes (`D01 T03 §1`) and a refusal to overwrite the input. Done when: `Cli.SnapshotCommand` verifies success, an out-of-range page, an oversize request (`AreaTooLarge` message) and the input hash unchanged.
+- [ ] Add `AreaRender.*` and `Cli.SnapshotCommand` tests in `tests/recto-tests/area_render_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=AreaRender.*:Cli.SnapshotCommand` passes under ASan.
+- [ ] Commit: `feat(text): add page-area render, clipboard image and recto-cli snapshot`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=AreaRender.*:Cli.SnapshotCommand` passes under ASan, and scaling a `72` DPI render up instead of re-rendering makes `AreaRender.PixelSize` fail on edge sharpness.
+
+## 12. Snapshot tool: drag an area, choose DPI, copy the image to the clipboard
+
+Build the `Snapshot` tool on top of §11: the user chooses `Snapshot` from the command box or the Tools menu, drags a rectangle on a page, picks a DPI, and copies the area to the clipboard as an image or saves it to a file. This matches Acrobat Pro's `Snapshot` tool and Foxit PDF Editor's, UPDF's and PDFelement's screenshot tools. It must not break the shell rules (`Esc` cancels, every command is in `Ctrl+K`, motion respects "Show animations in Windows") and it keeps Recto's improvement that a keyboard-only user can set the area numerically and the result is announced.
+
+**Phase:** 3
+**Needs:** windows-host, display-session
+**Surface:** yes
+**Freeze check:** Confirm that the tool reads page geometry from the cached transform of `D02 T02 §5`, hands the render to §11 on a worker, and shows progress without blocking the UI thread.
+
+**Fidelity:** Genuinely new surface. It follows `design/SPEC.md` section 8.2 (contextual popover chrome) and section 9.3 (the dark floating selection toolbar, `D03 T01 §4`), with `design/screenshots/D-Search.png` for the toolbar treatment.
+**Job:** The user drags a rectangle over a figure, a table or a paragraph, sees its pixel size, chooses `150` or `300` DPI, presses `Copy` and pastes a sharp image into another app. Consumer: the Windows clipboard, §13, and `Save as...`.
+**Treatment:** A transparent `AreaPickerLayer` over `DocumentView` with a dashed `RectoAccentBrush` outline, eight `8 x 8 epx` handles and a text label (`1240 x 880 px at 150 DPI`), then a dark floating popover with `36 x 36 epx` buttons (`Copy`, `Save as...`, `Cancel`) and a DPI combo. Cheaper substitute that fails the checkpoint: capturing the window pixels at the current zoom, or a tool with no keyboard path.
+**Chrome:** consume `RectoAccentBrush`, the dark floating-bar tokens used by `D03 T01 §4`, `RectoTextBrush` for the size label and Segoe Fluent Icons (`E722` Camera); no hex values.
+
+**Build order:**
+
+1. Implement `AreaPickerLayer` (`src/app/controls/AreaPickerLayer.xaml/.h/.cpp`, reusable by §17) with drag, resize handles, move, `Esc` cancel and a numeric `Precise area` expander (`X`, `Y`, `Width`, `Height` in points and a `Page` box). Done when: `AppTests.AreaPicker` draws, moves and resizes a rectangle by pointer and sets the same rectangle by keyboard only.
+2. Add the `Snapshot` command and popover wired to §11, with DPI choices `72`, `96`, `150`, `300`, `600` and `Custom`, the `Snapshot default DPI` setting, and an announcement of the result. Done when: `AppTests.SnapshotCopy` copies a rectangle at `300` DPI and the clipboard image has the announced size.
+
+- [ ] Register `Snapshot` (`tools.snapshot`, no default accelerator) in `CommandRegistry` (`D02 T03 §11`), enabled when a document is open, and list it under the Tools menu. Done when: the command box finds `Snapshot` and `Keyboard.Audit` finds no accelerator clash.
+- [ ] Change the cursor to a crosshair while the tool is active, restore it on exit, and keep text selection (`§3`) disabled only while the tool is active. Done when: `AppTests.AreaPicker` verifies the cursor and that a drag selects no text.
+- [ ] Show the live pixel size label and a `File size estimate unavailable until saved` note only for `Save as...`; keep the label text, not colour, as the size signal. Done when: the label reads `<w> x <h> px at <dpi> DPI` and updates while resizing.
+- [ ] Add `Snapshot default DPI` (`SnapshotDefaultDpi`, default `150`, choices as above) to Settings (`D02 T04 §5`), searchable in `Find a setting`, read by the popover. Done when: `AppTests.SnapshotSettings` changes it and the next popover opens with the new value.
+- [ ] Copy on `Enter` or `Copy` through the §11 payload, save through `FileSavePicker` and the atomic writer, and announce `Snapshot copied, <w> by <h> pixels` through `AnnouncementService` (`D03 T02 §5`) without moving focus. Done when: `A11y.SnapshotAnnouncements` records the announcement and `FocusManager::GetFocusedElement` is unchanged.
+- [ ] Give the handles, DPI combo and every popover button an automation name and tooltip, and keep every target at least `36 x 36 epx` in the popover. Done when: the inventory (`D03 T02 §3`) reports none missing or undersized. Cheaper substitute: tooltips only.
+- [ ] Add `AppTests.AreaPicker`, `AppTests.SnapshotCopy`, `AppTests.SnapshotSettings` and `A11y.SnapshotAnnouncements`. Done when: `recto-tests.exe --gtest_filter=AppTests.AreaPicker:AppTests.Snapshot*:A11y.SnapshotAnnouncements` passes on the display-session host.
+- [ ] Commit: `feat(app): add the Snapshot tool with DPI choice and clipboard copy`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=AppTests.AreaPicker:AppTests.Snapshot*:A11y.SnapshotAnnouncements` passes on the display-session host, and replacing the §11 render with a window-pixel grab makes `AppTests.SnapshotCopy` fail on the size assertion.
+
+## 13. Scrolling capture: stitch an area spanning pages into one tall image
+
+Extend the Snapshot tool so a rectangle dragged across a page boundary, or a page range chosen in the popover, becomes one tall image with the pages stitched top to bottom. This matches PDFelement's scrolling screenshot and covers the case where Acrobat's Snapshot is limited to one page. It must not break §11's bounds (the stitched result obeys the same pixel cap and lowers the DPI with a visible message instead of failing) and it keeps Recto's rule that the render is re-rendered per page, never a screenshot of a scrolled window.
+
+**Phase:** 3
+**Needs:** windows-host, display-session
+**Surface:** yes
+**Freeze check:** Confirm that `stitch_page_areas` renders each page strip through §11 on `RenderPool`, joins strips on the worker, and never reads `recto::pdf::Document` from the UI thread.
+
+**Fidelity:** Genuinely new surface. It adds a `Spans pages <a> to <b>` row and a `Gap between pages` control to the §12 popover, following `design/SPEC.md` section 9.3 popover chrome.
+**Job:** The user drags from the middle of page 3 into page 5, sees `Spans pages 3 to 5`, chooses to remove or keep the gaps, and copies one continuous image. Consumer: the clipboard and file sinks of §11, and `recto-cli snapshot --stitch`.
+**Treatment:** Per-page strips rendered at one common DPI and joined vertically, narrower strips centred on the widest with page-white padding, with a `Gap between pages` choice of `None` (default), `Page gap` (`8 pt` in the `RectoCanvasBrush` colour) or `Page break line`. Cheaper substitute that fails the checkpoint: scrolling the viewport and grabbing window pixels, or scaling strips to different DPIs so text sizes differ.
+**Chrome:** consume the §12 popover, `RectoCanvasBrush` for the gap colour and `RectoTextBrush` for labels.
+
+**Build order:**
+
+1. Implement `stitch_page_areas` in `src/services/area_render.cpp`: split a request that spans pages into per-page strips, render each with `render_page_area`, and join them with the chosen gap. Done when: `AreaRender.Stitch` joins a three-page fixture into one image whose height equals the strip heights plus gaps and whose seams show no duplicated or missing pixel row.
+2. Add the cross-page drag, the span label and the gap control to the popover, and `recto-cli snapshot --pages <range> --stitch`. Done when: `AppTests.SnapshotSpan` drags across a page boundary and copies a stitched image, and `Cli.SnapshotStitch` writes the same pixels.
+
+- [ ] Allow `AreaPickerLayer` (§12) to extend a drag across page boundaries in the vertical layout, clipping the rectangle to each page's visible crop box, and show `Spans pages <a> to <b>`. Done when: `AppTests.SnapshotSpan` shows the label for a drag from page 3 to page 5.
+- [ ] Choose the common DPI as the requested DPI, lowering it with the visible message `Reduced to <n> DPI to fit` when the stitched size would pass the `268435456` pixel cap, and refuse only when even `36` DPI cannot fit. Done when: `AreaRender.StitchBounds` shows the lowered DPI, the message text and the refusal.
+- [ ] Join strips of different widths by centring on the widest strip with white padding, and keep the same scale for every strip. Done when: `AreaRender.StitchWidths` stitches a letter page and an A3 page and finds both text heights in the ratio of their sources.
+- [ ] Implement the three `Gap between pages` modes. Done when: `AreaRender.StitchGap` finds `0` gap rows, `8 pt` of gap rows and a gap with a line for the three modes.
+- [ ] Extend the CLI with `--pages <range> --stitch [--gap none|gap|line]`, selecting the whole page boxes of the range. Done when: `Cli.SnapshotStitch` verifies the output height and an invalid range exit code.
+- [ ] Make the render cancellable from the popover's `Cancel` and show progress (`Rendering page 4 of 12`) as text. Done when: `AppTests.SnapshotSpan` cancels mid-render and finds no image on the clipboard.
+- [ ] Add `AreaRender.Stitch*`, `AppTests.SnapshotSpan` and `Cli.SnapshotStitch`. Done when: `recto-tests.exe --gtest_filter=AreaRender.Stitch*:AppTests.SnapshotSpan:Cli.SnapshotStitch` passes (engine under ASan).
+- [ ] Commit: `feat(text): add scrolling capture that stitches an area across pages`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=AreaRender.Stitch*:AppTests.SnapshotSpan:Cli.SnapshotStitch` passes, and rendering each strip at a different DPI makes `AreaRender.StitchWidths` fail.
+
+## 14. Offline spell check service over `ISpellChecker` and platform text boxes
+
+Add one spelling service for every place Recto lets the user type text into a document: Edit PDF text (`D03 T04 §17`), comments and free text (`D03 T03 §4`) and form fields (`D03 T03 §8`). This matches Acrobat Pro's `Check Spelling` and the spell check in Foxit PDF Editor, PDFelement and UPDF. It must not break offline-by-default (D16): the service calls only the Windows spelling API, which uses dictionaries installed on the machine, and Recto makes no network call and adds no dictionary download. It keeps Recto's rule that spelling never alters text on its own: the service reports ranges and suggestions and the user decides.
+
+**Phase:** 3
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that `SpellService` runs `ISpellChecker` calls on a worker, returns plain value types, holds no pointer into `PageText` or `recto::pdf::Document`, and is never called from the UI thread for more than one word.
+
+**Build order:**
+
+1. Implement `ISpellEngine` (`check(text, language)`, `suggest(word, language)`, `add_word`, `ignore_word`, `supported(language)`) and `WindowsSpellEngine` in `src/services/spell_service.h/.cpp` over `ISpellCheckerFactory` (`IsSupported`, `CreateSpellChecker`), `ISpellChecker::Check`, `Suggest`, `Add` and `Ignore`, with a `FakeSpellEngine` for tests. Done when: `Spell.EngineFake` drives check, suggest, add and ignore through the fake and `Spell.EngineWindows` flags `recieve` in an English sentence on the Windows host.
+2. Add `SpellService` on top: per-language checker cache, a document-local ignore list, skip rules, and the platform-control helper. Done when: `Spell.SkipRules` skips URLs, e-mail addresses, all-digit tokens and words with digits, and `Spell.PlatformControls` finds `IsSpellCheckEnabled` set on every `TextBox` and `RichEditBox` the app builds for comments, free text and form fields.
+
+- [ ] Define `SpellIssue` (`start`, `length`, `word`, `suggestions` up to `8`, `action` among `Suggest`, `Delete`, `Replace`) and `SpellLanguage` (BCP 47 tag, `supported`) in `src/services/spell_service.h`. Done when: the header compiles in `recto-services` with no XAML include.
+- [ ] Pick the language per text span from the nearest `/Lang` (marked content, then structure element, then the document catalog), then the `SpellingLanguage` setting, then the Windows display language, and return a typed `SpellError::NoDictionary(tag)` with the plain message `No spelling dictionary for <tag>. Add the language in Windows Settings.` when `IsSupported` is false. Done when: `Spell.LanguagePick` selects by span, by document, by setting and by fallback, and reports the missing dictionary without throwing.
+- [ ] Implement `Add to dictionary` through `ISpellChecker::Add` (the Windows user dictionary), `Ignore once` as a range in the caller, and `Ignore all` through `ISpellChecker::Ignore` for the session. Done when: `Spell.AddIgnore` adds a word and sees it accepted, and an ignored word is flagged again in a new service instance.
+- [ ] Skip URLs, e-mail addresses, file paths, words containing digits, and all-capital tokens of up to `5` letters, and bound the input at `20000` characters per call by splitting at sentence ends. Done when: `Spell.SkipRules` and `Spell.Bounds` pass, and a `5` million character string returns after the cap without allocating a second copy.
+- [ ] Apply the platform's own spell check where the editor is a stock text control: set `IsSpellCheckEnabled` from the `Check spelling while typing` setting and `Language` from the span language on every `TextBox` and `RichEditBox` that edits comments, free text and form-field values. Done when: `Spell.PlatformControls` walks those controls and finds the flag and language set, and turning the setting off clears the flag.
+- [ ] Add `Check spelling while typing` (`CheckSpellingWhileTyping`, default `true`) and `Spelling language` (`SpellingLanguage`, default `Automatic`, choices from the supported list) to Settings (`D02 T04 §5`), searchable in `Find a setting`. Done when: `Spell.SettingsRows` changes each and sees `SpellService` read it.
+- [ ] Confirm no network use: no `HttpClient`, `WinHttp` or `WebSocket` symbol appears in `spell_service.cpp`, and the service starts with the network disabled. Done when: `Spell.Offline` passes.
+- [ ] Add `Spell.*` tests in `tests/recto-tests/spell_service_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=Spell.*` passes on the Windows host.
+- [ ] Commit: `feat(text): add the offline spell check service over ISpellChecker`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Spell.*` passes on the Windows host, and removing the `/Lang` lookup makes `Spell.LanguagePick` fail.
+
+## 15. Zone OCR engine: recognize a drawn area and `recto-cli ocr --zone`
+
+Add recognition of a user-chosen area. The whole-page OCR of §8 segments a page automatically and has no way to read one figure caption, one table or one block of a mixed page, and it skips a digital page that carries an image of text. This matches PDFelement's area OCR and UPDF's and Foxit PDF Editor's selective recognition, and adds what Acrobat Pro's whole-page `Recognize Text` lacks. It must not break the thread contract (the zone is rasterized and recognized on `RenderPool` workers from immutable snapshots and never mutates a `PageText`) and it keeps Recto's offline in-process engines.
+
+**Phase:** 3
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that `recognize_zone` rasterizes through §11, runs `preprocess_for_ocr` and `NeuralOcrRecognizer` / `OcrEngine` on `RenderPool` workers with a `CancelToken`, and returns a new `std::shared_ptr<const PageText>` without mutating any cached snapshot.
+
+**Build order:**
+
+1. Implement `recognize_zone(DocumentActor&, ZoneRequest, CancelToken)` in `src/core/ocr_pipeline.cpp`: render only the zone at `300` DPI, run §7's deskew, binarization and (for `Table`) ruling-line removal and cell segmentation restricted to the zone, recognize with the selected engine and language, align characters with §8's CTC alignment, and map every quad back to page points. Done when: `OcrZone.TextZone` recognizes a paragraph of `scanned.pdf` inside a zone with `> 99%` character accuracy and no word outside the zone.
+2. Add `recto-cli ocr` zone flags. Done when: `Cli.OcrZone` prints the zone text and refuses an empty zone.
+
+- [ ] Define `ZoneRequest` (`page_index`, `rect_pt` in user space, `kind` among `Auto`, `Text`, `Table`, `SingleLine`, `engine`, `language`) and `ZoneOcrResult` (`std::shared_ptr<const PageText> text`, `words`, `mean_confidence`) in `src/core/ocr_pipeline.h`. Done when: the header compiles in `recto-core`.
+- [ ] Run on any page, including a digital page whose zone covers an image of text, without consulting `classify_page_for_ocr`, and leave the page's existing `PageText` untouched. Done when: `OcrZone.OnDigitalPage` recognizes a raster caption on a page that already has `500` text characters and leaves `get_page_text` unchanged.
+- [ ] Implement `Table` kind: detect ruling lines and cells inside the zone and return `StructNode` table cells with row and column indices. Done when: `OcrZone.TableZone` returns a `3 x 3` grid with the cell texts in row order.
+- [ ] Implement `SingleLine` kind: skip layout segmentation and recognize the zone as one line strip. Done when: `OcrZone.SingleLine` reads a one-line zone and returns one `Line`.
+- [ ] Reject an empty, non-finite or out-of-page zone and a zone larger than the page with a typed `ZoneError`, and bound the work at one page of pixels at `300` DPI. Done when: `OcrZone.Bounds` returns each error.
+- [ ] Extend `recto-cli ocr <file.pdf> --page <N> --zone <x,y,w,h> [--zone-kind auto|text|table|line] [--engine hybrid|neural|windows] [--lang <tag>] --text` and `--zones <zones.json>` for several zones, printing `TSV` for `table` and plain text otherwise. Done when: `Cli.OcrZone` verifies text, table and multi-zone output and the exit codes.
+- [ ] Add `OcrZone.*` and `Cli.OcrZone` tests in `tests/recto-tests/ocr_zone_tests.cpp` on `tests/corpus/text/scanned.pdf` and a new `text/ocr-zones.pdf` fixture (a digital page with a raster caption and a bordered scanned table) added to `scripts/build-corpus.py` with its `PROVENANCE.md` row. Done when: `python scripts/build-corpus.py --check` and `recto-tests.exe --gtest_filter=OcrZone.*:Cli.OcrZone` pass under ASan.
+- [ ] Commit: `feat(ocr): recognize a user-drawn zone and add recto-cli ocr --zone`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OcrZone.*:Cli.OcrZone` passes under ASan, and running whole-page OCR then cropping makes `OcrZone.OnDigitalPage` fail.
+
+## 16. OCR word confidence, suspect list and undoable in-memory corrections
+
+Give OCR results the data a reviewer needs: a confidence for each recognized word, a list of suspect words with the reason each is suspect, and an undoable store of corrections applied to the in-memory text. This matches Foxit PDF Editor's OCR suspects review and has no Acrobat equivalent (Acrobat's `Recognize Text` marks suspects only in a separate dialog). It must not break the immutability rule (a correction publishes a new `std::shared_ptr<const PageText>` through an actor message and never edits a snapshot in place) and it keeps Recto's honesty about engines: `Windows.Media.Ocr` exposes no confidence, so a Windows-only page reports none and is reviewed by the other reasons, never by a made-up number.
+
+**Phase:** 3
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Confirm that `OcrPageResult` and every `OcrTextEdit` application produce new immutable snapshots, that the actor swaps them by message, and that no reviewer or UI code writes into a published `PageText`.
+
+**Build order:**
+
+1. Extend `OcrPipeline` (§8) to publish `OcrPageResult` (the `PageText` snapshot plus `OcrWordInfo` per word: `char_start`, `char_count`, `quad`, `confidence` as `std::optional<float>`, `engine`, `alternate_text`), taking confidence from the CTC non-blank posteriors and `alternate_text` from the other engine in `HybridAuto` when the two readings differ. Done when: `OcrReview.WordInfo` shows a confidence in `0..1` for every neural word and an empty confidence for Windows-only words.
+2. Implement `find_suspects` and the `OcrTextEdits` store. Done when: `OcrReview.Suspects` flags a planted `l0ve` and a low-confidence word, and `OcrReview.EditsUndoRedo` applies, undoes and redoes a replacement with `get_page_text` following each step.
+
+- [ ] Implement `find_suspects(const OcrPageResult&, SuspectOptions, SpellService*)` in `src/core/ocr_review.h/.cpp` returning `Suspect` (`page_index`, `word_index`, `reasons`) ordered by page and reading order, with reasons `LowConfidence` (below the `OcrSuspectThreshold` setting), `EnginesDisagree`, `NotInDictionary` (only when `SpellService` (§14) has a dictionary for the language) and `ImplausibleMix` (digits inside letters, or two scripts in one word). Done when: `OcrReview.Suspects` returns each reason on its own fixture word and none on clean text.
+- [ ] Define `OcrTextEdit` (`ReplaceWord`, `DeleteWord`, `AddWords` for zone text from §15) and `OcrTextEdits` with `apply`, `undo`, `redo`, a journal bounded at `10000` entries, and a replacement that keeps the word's quad and re-splits character quads proportionally across it. Done when: `OcrReview.EditsUndoRedo` and `OcrReview.QuadResplit` pass.
+- [ ] Publish each applied edit as a new `PageText` snapshot to `DocumentActor` by actor message, invalidating that page's LRU entry (`§2`) so selection, `Ctrl+F` and UIA see the corrected word at once. Done when: `OcrReview.ActorPublish` searches for the corrected word and finds it after the edit and not after the undo.
+- [ ] Mark corrected and accepted words `reviewed` in `OcrTextEdits` so the suspect list can hide them, without changing confidence values. Done when: `OcrReview.ReviewedState` hides an accepted suspect and shows it again after undo.
+- [ ] Add `OCR suspect threshold` (`OcrSuspectThreshold`, `0.50` to `0.99`, default `0.85`) to Settings (`D02 T04 §5`), searchable in `Find a setting`. Done when: `OcrReview.ThresholdSetting` changes it and the suspect count changes.
+- [ ] Bound the work: at most `100000` suspects per document, `CancelToken` between pages, and a correction text of at most `200` characters. Done when: `OcrReview.Bounds` returns the typed error for an oversize correction and stops a hostile `500000`-word page inside the cap.
+- [ ] Add `OcrReview.*` tests in `tests/recto-tests/ocr_review_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=OcrReview.*` passes under ASan.
+- [ ] Commit: `feat(ocr): add word confidence, suspect detection and undoable corrections`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OcrReview.*` passes under ASan, and reporting a fixed confidence for Windows-only words makes `OcrReview.WordInfo` fail.
+
+## 17. Zone OCR tool: draw an area, review the text, copy or add it to the text layer
+
+Build the `Recognize Text in Area` tool on §15 and the shared `AreaPickerLayer` of §12: the user drags a zone, chooses the kind and language, reads the recognized text in a card, and copies it, copies a table as tab-separated text, or adds it to the page's text layer so it becomes selectable and searchable. This matches PDFelement's area OCR and the zone recognition of UPDF and Foxit PDF Editor. It must not break the shell rules (`Esc` cancels, `Ctrl+K` reachable, nothing blocks the UI thread, no PDF write until the user saves through §19) and it keeps Recto's offline recognition.
+
+**Phase:** 3
+**Needs:** windows-host, display-session
+**Surface:** yes
+**Freeze check:** Confirm that the tool starts `recognize_zone` on a worker, marshals the result back with `DispatcherQueue::TryEnqueue`, and adds words only through `OcrTextEdits` (§16).
+
+**Fidelity:** Genuinely new surface. It follows `design/SPEC.md` section 8.2 (contextual cards) and section 9.7 (OCR engine and language rows), and reuses the §12 area outline and popover chrome.
+**Job:** The user drags over a scanned table on a mixed page, chooses `Table`, reads the recognized grid, presses `Copy as table`, and pastes it into a spreadsheet; or presses `Add to text layer` so the zone's words can be selected and found with `Ctrl+F`. Consumer: the clipboard, `OcrTextEdits` (§16) and the save path (§19).
+**Treatment:** The `AreaPickerLayer` of §12 followed by a result card with a kind selector (`Auto`, `Text`, `Table`, `Single line`), a language combo, an editable multi-line text box with the recognized text, the mean confidence as text, and `Copy text`, `Copy as table`, `Add to text layer` and `Cancel` buttons. Cheaper substitute that fails the checkpoint: running OCR on the whole page and cropping the text, or a card that cannot be edited before copying.
+**Chrome:** consume `RectoSurfaceBrush`, `RectoBorderBrush`, `RectoAccentBrush` for the zone outline, `RectoWarningBrush` for low-confidence words (paired with a `!` glyph and the confidence text), Segoe Fluent Icons (`E8D2` Scan); no hex values.
+
+**Build order:**
+
+1. Register `Recognize Text in Area` (`ocr.zone`, no default accelerator) and add the result card with a progress state and a `Cancel` that aborts the `CancelToken`. Done when: `AppTests.OcrZoneTool` draws a zone on `scanned.pdf`, sees recognized text in the card, and cancels a second run with no result applied.
+2. Wire `Copy text`, `Copy as table` (tab-separated, rows by newline) and `Add to text layer` to the clipboard and to `OcrTextEdits::AddWords`. Done when: after `Add to text layer`, `Ctrl+F` finds a zone word at its image coordinates and `Undo` removes it.
+
+- [ ] Reuse `AreaPickerLayer` (§12) with the OCR cursor and the numeric `Precise area` expander for keyboard-only use. Done when: `AppTests.OcrZoneTool` creates the same zone by keyboard only.
+- [ ] Show low-confidence words in the card with a `!` marker and the confidence value, never colour alone. Done when: `A11y.OcrZoneCard` finds the marker and the text for each word under the threshold.
+- [ ] Offer the engine and language from `D02 T04 §5` as defaults and let the card override the language for this zone only, without changing the setting. Done when: `AppTests.OcrZoneTool` recognizes a French zone with the override and leaves `OcrLanguage` unchanged.
+- [ ] Mark the page `text layer edited` in the tab (a dirty indicator on the tab, not a file write) after `Add to text layer`, and warn on close that the added text is saved only through `Save corrected copy` (§19). Done when: `AppTests.OcrZoneDirty` closes the tab and finds the warning.
+- [ ] Give the card controls and the zone handles automation names and tooltips, and announce `Recognized <n> words` through `AnnouncementService`. Done when: the inventory (`D03 T02 §3`) finds none missing and `A11y.OcrZoneCard` records the announcement.
+- [ ] Add `AppTests.OcrZoneTool`, `AppTests.OcrZoneDirty` and `A11y.OcrZoneCard`. Done when: `recto-tests.exe --gtest_filter=AppTests.OcrZone*:A11y.OcrZoneCard` passes on the display-session host.
+- [ ] Commit: `feat(app): add the Recognize Text in Area tool with copy and add-to-layer`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=AppTests.OcrZone*:A11y.OcrZoneCard` passes on the display-session host, and recognizing the whole page then cropping makes `AppTests.OcrZoneTool` fail on the no-text-outside-zone assertion.
+
+## 18. OCR review panel: word crop beside recognized text, accept or correct
+
+Build the review surface for §16: a side panel that lists suspect words, each with an image crop of the scanned word beside the recognized text, so the user accepts it or types the correct text. This matches Foxit PDF Editor's OCR suspects review and has no Acrobat equivalent. It must not break the panel contract (`D02 T03 §3`), the thread rule (crops are rendered by §11 on workers) or the immutable text rule (a correction goes through `OcrTextEdits`), and it keeps Recto's rule that no correction is applied without the user's action.
+
+**Phase:** 3
+**Needs:** windows-host, display-session
+**Surface:** yes
+**Freeze check:** Confirm that the panel reads `Suspect` values and crops only from worker-built results, applies corrections only through `OcrTextEdits` on the actor, and never touches `recto::pdf::Document`.
+
+**Fidelity:** Genuinely new surface. It follows `design/SPEC.md` section 8.3 (side-panel cards through `SidePanelHost`, `D02 T03 §3`), with the Reading room inspector tab variant of `D-Search.png` and `explorations/B-Search.png`.
+**Job:** After OCR the user opens `OCR review`, sees `12 of 48 reviewed`, steps through suspects with the crop and the recognized text side by side, presses `Enter` to correct or `Accept` to keep, and watches the page highlight move. Consumer: `OcrTextEdits` (§16) and `DocumentView`.
+**Treatment:** A virtualized list in `SidePanelHost` (Focus and Classic) or an inspector tab (Reading room); each row holds a `160 x 48 epx` crop rendered at `300` DPI with `8 px` padding, an editable text box with the recognized word, reason chips with text (`Low confidence 62%`, `Not in dictionary`), and `Accept`, `Skip` and `Correct` actions; the canvas marks the active word with a `RectoWarningBrush` box and a marker glyph. Cheaper substitute that fails the checkpoint: a text-only list with no image crop, or highlighting the word on the canvas only.
+**Chrome:** consume `SidePanelHost` (`D02 T03 §3`), `RectoSurfaceBrush`, `RectoWarningBrush`, `RectoAccentBrush`, `RectoTextBrush`, Segoe Fluent Icons (`E73E` CheckMark, `E70D` ChevronDown); no hex values.
+
+**Build order:**
+
+1. Add `OcrReviewViewModel` (`src/services/ocr_review_view_model.h/.cpp`) and the virtualized panel with crops rendered on workers via `render_page_area` and cached by `(page, word_index, edit_version)`. Done when: `AppTests.OcrReviewPanel` lists suspects of `scanned.pdf` with a crop for each and the counter `0 of N reviewed`.
+2. Wire `Accept`, `Correct`, `Skip`, `Next` and `Previous`, the canvas highlight, filters by reason, and the `Ctrl+K` command `OCR review`. Done when: `AppTests.OcrReviewCorrect` corrects three words, sees the page text update, undoes one with `Ctrl+Z`, and the counter reads `2 of N reviewed`.
+
+- [ ] Register `OCR review` (`ocr.review`, no default accelerator) and the actions `Accept suspect`, `Correct suspect`, `Next suspect` (`Alt+Down`) and `Previous suspect` (`Alt+Up`) in `CommandRegistry` (`D02 T03 §11`), active only while the panel has focus. Done when: the command box finds all four and `Keyboard.Audit` finds no clash.
+- [ ] Show the active suspect on the canvas with a box and a marker glyph, scroll it into view without changing zoom, and keep the highlight after a preset switch. Done when: `AppTests.OcrReviewPanel` verifies the box quad equals the word quad.
+- [ ] Filter by reason (`All`, `Low confidence`, `Engines disagree`, `Not in dictionary`, `Mixed`) and show `No suspects` when the page set is clean. Done when: `AppTests.OcrReviewFilters` shows the counts per reason.
+- [ ] Offer `Accept all above <n>%` as a confirmed bulk action that marks words reviewed without changing text, with an undo. Done when: `AppTests.OcrReviewBulk` accepts a batch and undoes it as one step.
+- [ ] Keep the panel responsive: crop rendering and `find_suspects` run off the UI thread, and a `200`-page OCR result with `5000` suspects scrolls at under `16.7 ms` per frame. Done when: `AppTests.OcrReviewPerf` records the frame times.
+- [ ] Give every row control an automation name and tooltip, announce `Corrected to <text>` and `Accepted` through `AnnouncementService`, and make the list operable by keyboard alone. Done when: `A11y.OcrReviewPanel` finds all names and a keyboard-only run corrects and accepts a word.
+- [ ] Add `AppTests.OcrReview*` and `A11y.OcrReviewPanel`. Done when: `recto-tests.exe --gtest_filter=AppTests.OcrReview*:A11y.OcrReviewPanel` passes on the display-session host.
+- [ ] Commit: `feat(app): add the OCR review panel with word crops and corrections`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=AppTests.OcrReview*:A11y.OcrReviewPanel` passes on the display-session host, and applying a correction without an explicit action makes `AppTests.OcrReviewCorrect` fail.
+
+## 19. Save OCR corrections and zone text into the text layer of a copy
+
+Make the corrections of §16 and the zone text of §17 permanent: write them into the invisible text layer of a copy of the PDF, never the open document, so the saved file selects, searches and extracts the corrected text. This matches Foxit PDF Editor's save of corrected OCR text and Acrobat Pro's rewritten `Recognize Text` layer. It must not break the write rules (temp-file-then-replace, the open viewer document is never modified in place, authoring works on an isolated `recto::pdf::Document`) and it keeps Recto's true removal: the old wrong invisible text is removed from the file by a full rewrite, not hidden under new text, and the visible pixels are unchanged.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+**Freeze check:** Confirm that the writer opens its own `recto::pdf::Document` on a job thread from the saved file, takes only the immutable `OcrTextEdits` and `OcrPageResult` values, and leaves the viewer's `DocumentActor` and snapshots untouched on success, failure or cancellation.
+
+**Fidelity:** Genuinely new surface. It adds a `Save corrected copy` button to the §18 panel footer and the §17 card, using the `Save a copy` dialog of `D02 T01 §8` and the SPEC 9.9 dialog style.
+**Job:** The user finishes reviewing, presses `Save corrected copy`, chooses a file, and opens the result in any reader to find the corrected words selectable and searchable while the page looks the same. Consumer: any PDF reader and `recto-cli ocr correct`.
+**Treatment:** An isolated writer that, for each edited page, removes the page's existing OCR invisible-text runs (`3 Tr` runs on a page whose images cover at least `50%` of the box) and writes a fresh layer from the corrected `OcrPageResult` words with the `searchable_pdf` word writer (`D04 T02 §7`), then saves with the full-rewrite path. Cheaper substitute that fails the checkpoint: appending a second invisible layer over the old one, which leaves the wrong text extractable.
+**Chrome:** consume `RectoDialogStyle`, the §18 panel footer and `D02 T01 §8`'s save dialogs; no hex values.
+
+**Build order:**
+
+1. Implement `apply_ocr_text_edits_to_copy(in, edits, out, CancelToken)` in `src/core/ocr_text_writer.cpp`: open an isolated document, find each edited page's OCR layer, remove it, write the corrected layer, and save by full rewrite through `PdfWriter` (`D04 T02 §2`) and `AtomicFileWriter`. Done when: `OcrWrite.CorrectedLayer` saves a corrected `scanned.pdf`, extraction with OCR disabled returns the corrected text, and a raw-byte scan finds the old wrong word absent.
+2. Add `Save corrected copy` to the §18 panel and §17 card and `recto-cli ocr correct <in.pdf> --corrections <file.json> --out <out.pdf>`. Done when: `AppTests.OcrSaveCopy` saves from the panel and `Cli.OcrCorrect` applies a JSON edit list.
+
+- [ ] Identify a page's OCR layer as the set of `3 Tr` runs on a page classified `ScannedRaster`, and write pages that have no layer (OCR was in memory only) with the `searchable_pdf` word writer. Done when: `OcrWrite.LayerDetection` replaces an existing layer on one page and creates one on another in the same file.
+- [ ] Prove the visible page is unchanged: render every edited page before and after and compare. Done when: `OcrWrite.VisualIdentity` finds `0` differing pixels.
+- [ ] Run the save-integrity verification of `D06 T03 §5` (page count, outlines, `/PageLabels`, `/Info`, `/AcroForm`, signatures noted) and warn before rewriting a signed document. Done when: a planted writer that drops `/PageLabels` aborts the save and a signed fixture returns `InvalidatesSignature` until confirmed.
+- [ ] Define the `corrections.json` schema (`page`, `bbox_pt`, `old_text`, `new_text`, `kind` among `replace`, `delete`, `add`) with a version field, and reject an edit whose `old_text` does not match the word at the box. Done when: `Cli.OcrCorrect` applies a valid file, refuses a mismatched one with a non-zero exit code and writes no output.
+- [ ] Mark the tab clean of `text layer edited` only after a verified save of the copy, and keep the edits if the save fails. Done when: `AppTests.OcrSaveCopy` forces a failure and finds the edits and the indicator intact.
+- [ ] Add `OcrWrite.*`, `AppTests.OcrSaveCopy` and `Cli.OcrCorrect`. Done when: `recto-tests.exe --gtest_filter=OcrWrite.*:AppTests.OcrSaveCopy:Cli.OcrCorrect` passes (engine under ASan).
+- [ ] Commit: `feat(ocr): save OCR corrections and zone text into the text layer of a copy`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OcrWrite.*:AppTests.OcrSaveCopy:Cli.OcrCorrect` passes, and appending a second layer instead of replacing the first makes `OcrWrite.CorrectedLayer` fail on the raw-byte scan.
+
 ## Verification
 
 - M3 text and OCR obligations (`docs/plans/2026-10-13-recto-foundation.md` section 7): `Ctrl+F` and `Ctrl+H` find and replace across multi-hundred-page PDFs without blocking scrolling, scanned and vector-outlined PDFs become selectable and searchable via built-in OCR, and `Compare PDFs` highlights every text and graphic change.
-- `recto-tests` (`PdfText.*`, `ActorText.*`, `TextSelection.*`, `Search.*`, `SearchUi.*`, `OcrPreprocess.*`, `Ocr.*`, `TextReplace.*`, `PdfCompare.*`, `AppTests.ComparePdfsUi`) green under ASan.
+- `recto-tests` (`PdfText.*`, `ActorText.*`, `TextSelection.*`, `Search.*`, `SearchUi.*`, `OcrPreprocess.*`, `Ocr.*`, `TextReplace.*`, `PdfCompare.*`, `AppTests.ComparePdfsUi`, `AreaRender.*`, `Spell.*`, `OcrZone.*`, `OcrReview.*`, `OcrWrite.*`) green under ASan.
 - `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` exit 0.

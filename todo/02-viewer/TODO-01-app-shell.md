@@ -28,6 +28,13 @@ track: M2
 - -> XREF: D06 T03 §5 -- the save integrity fault-injection suite gating §8's Save, Save As and Replace-Original paths and §12's recovery snapshots.
 - -> XREF: D03 T04 §14 -- Edit PDF sessions commit through these save paths.
 - -> XREF: D04 T02 §15 -- opens PDFs created from the clipboard (D04 T02 §15).
+- -> XREF: D07 T01 §17 -- /virtual-print launch arg.
+- -> XREF: D04 T02 §25 -- new tab path.
+- -> XREF: D04 T04 §22 -- open dialog accepts .ofd.
+- -> XREF: D05 T02 §30 -- signed version tab opens normally.
+- -> XREF: D02 T04 §5 -- restore tabs setting.
+- -> XREF: D02 T06 §12 -- session exclusion of cloud copies.
+- -> XREF: D01 T02 §14 -- SavePipeline writes the exported revision and marks it saved.
 
 ## Outcome
 
@@ -36,6 +43,7 @@ track: M2
 - PDFs open through the `Ctrl+O` picker, full-window drag-and-drop, command-line arguments, and Explorer file activation (redirecting to the primary running instance) into tabs over one shared `OpenDocumentPipeline`, and modified documents save through `Ctrl+S` (incremental or atomic replace) and `Ctrl+Shift+S` (`Save a copy`) with `Replace the original?` and `Save your changes first?` prompts.
 - Password-protected and damaged PDFs trigger the SPEC 9.9 `PasswordDialog` and `CouldNotOpenDialog` (with diagnostic ring-buffer `Copy error details`) built on the shared `RectoDialogStyle`.
 - After the owner's decision, unsaved documents keep timer-driven recovery snapshots and are offered for restore after an abnormal exit, never overwriting the originals (`§12`).
+- Open tabs and their view state persist in a local `session.json` and reopen on the next launch (`RestoreTabsOnLaunch`), closed tabs come back with `Ctrl+Shift+T`, tabs can be closed in batches and reordered by drag or keyboard, and the open file can be shared through the Windows Share contract without Recto opening any network connection (§13 to §17).
 
 **Adjacency:** list=applicable @ D02 T03 §1; document=applicable @ D02 T01 §8; settings=applicable @ D02 T04 §4; reporting=not-applicable (no reports in the application shell; diagnostic error text is copied via §11); notifications=applicable @ D04 T01 §6; permissions=not-applicable (single-user desktop app; document-level link and action refusals live in D02 T02 §9); audit=not-applicable (no persistent audit log over shell window state); exchange=not-applicable (clipboard and share paths belong to D03 T01 §2); reverse=applicable @ D02 T01 §3
 
@@ -57,6 +65,11 @@ track: M2
 | 10 | §10 | Shared SPEC 9.9 `ContentDialog` chrome and Password dialog | §5 | [ ] |
 | 11 | §11 | Could-not-open error dialog and diagnostic clipboard copy | §5, §10 | [ ] |
 | 12 | §12 | Crash recovery snapshots for unsaved edits | §3, §8, §10, D04 T02 §1, D02 T04 §6 | [ ] |
+| 13 | §13 | `SessionStore`: persist open tabs and the active tab | §3, D02 T04 §1 | [ ] |
+| 14 | §14 | Restore the previous tab session on launch and the restore setting | §5, §7, §13, D02 T04 §5, D02 T03 §11 | [ ] |
+| 15 | §15 | Reopen closed tab (`Ctrl+Shift+T`) and close-other, left and right tab commands | §3, §8, §13, D02 T03 §11 | [ ] |
+| 16 | §16 | Drag to reorder tabs and move a tab by keyboard | §3, §13, D02 T03 §11 | [ ] |
+| 17 | §17 | Share a copy through the Windows Share contract | §8, §9, D02 T03 §11 | [ ] |
 
 ## 1. App project, unpackaged/MSIX manifest, assets, tokens and minimum window size
 
@@ -261,9 +274,9 @@ Complete the remaining two Windows file-opening entry points in `src/app/App.xam
 - [ ] Marshal redirected `AppInstance::Activated` background-thread callbacks onto `MainWindow`'s `DispatcherQueue` (`TryEnqueue`) and bring `MainWindow` to the foreground (`ShowWindow(SW_RESTORE)` + `SetForegroundWindow`). Done when: activating a file while Recto is minimized restores the window and focuses the newly opened tab.
 - [ ] Honor `--page=N` on command-line launch by passing `initial_page` into `OpenDocumentPipeline::open_file_async` so the tab opens directly at page `N`. Done when: `Recto.exe sample.pdf --page=3` opens `sample.pdf` positioned on page 3.
 - [ ] Add `Shell.LaunchArgsAndActivation` test in `tests/recto-tests/` covering `LaunchArgs` parsing (quotes, Unicode, relative paths, `--page=N`), cold CLI launch, and secondary-instance tab forwarding. Done when: `recto-tests.exe --gtest_filter=Shell.LaunchArgsAndActivation` passes.
-- [ ] Rejoin unquoted, space-split arguments into the longest existing file path before treating them as separate files (`C:\My Files\a b.pdf` passed unquoted by host software) (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`, pdfcraft #1455). Done when: `Shell.LaunchArgsAndActivation` opens the spaced fixture from the unquoted argument list.
-- [ ] Accept Adobe-style open parameters after `#` in a file argument (`page=N`, `nameddest=Name`, `zoom=P`, `search=word`) and strip them from the path, so a help link such as `manual.pdf#nameddest=intro` opens the document at that destination (pdfcraft #3425). Done when: `Shell.LaunchArgsAndActivation` opens `manual.pdf#nameddest=intro` at the named destination and reports no file error.
-- [ ] Give single-instance forwarding a liveness handshake: if the primary instance does not acknowledge a redirected activation within 3 s, the new process opens its own window and logs why, never exiting silently (pdfcraft #3414). Done when: `Shell.LaunchArgsAndActivation` with a primary instance frozen in the test harness still shows the requested file within 5 s.
+- [ ] Rejoin unquoted, space-split arguments into the longest existing file path before treating them as separate files (`C:\My Files\a b.pdf` passed unquoted by host software). Done when: `Shell.LaunchArgsAndActivation` opens the spaced fixture from the unquoted argument list.
+- [ ] Accept Adobe-style open parameters after `#` in a file argument (`page=N`, `nameddest=Name`, `zoom=P`, `search=word`) and strip them from the path, so a help link such as `manual.pdf#nameddest=intro` opens the document at that destination. Done when: `Shell.LaunchArgsAndActivation` opens `manual.pdf#nameddest=intro` at the named destination and reports no file error.
+- [ ] Give single-instance forwarding a liveness handshake: if the primary instance does not acknowledge a redirected activation within 3 s, the new process opens its own window and logs why, never exiting silently. Done when: `Shell.LaunchArgsAndActivation` with a primary instance frozen in the test harness still shows the requested file within 5 s.
 - [ ] Parse `/p <file>` and `/pt <file> <printer> <driver> <port>` into a print-only `LaunchRequest` consumed by `D07 T01 §9`. Done when: `Shell.LaunchArgsAndActivation` parses both forms into print requests with the printer name preserved.
 - [ ] Commit: `app: support CLI arguments, Explorer .pdf activation and single-instance tab forwarding`
 
@@ -390,7 +403,7 @@ Implement the SPEC section 9.9 `"Couldn't open this file"` alert `ContentDialog`
 
 ## 12. Crash recovery snapshots for unsaved edits
 
-pdfcraft users lost edits when the app crashed or the machine restarted; its autosave ran only when the window repainted, skipped new documents, marked failed snapshots as written, and a second instance listed the first instance's live snapshots as crash leftovers (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`; pdfcraft #815, #1803, #2150, #2663). Recto keeps a recovery snapshot for each dirty document on a timer, independent of input and repaint, and offers to restore after an abnormal exit. A snapshot holds document content on disk, so the owner decides whether it ships on by default and how encrypted documents are handled before code is written.
+Users of PDF editors commonly lose edits when the app crashes or the machine restarts; a typical autosave runs only when the window repaints, skips new documents, marks failed snapshots as written, and lets a second instance list the first instance's live snapshots as crash leftovers. Recto keeps a recovery snapshot for each dirty document on a timer, independent of input and repaint, and offers to restore after an abnormal exit. A snapshot holds document content on disk, so the owner decides whether it ships on by default and how encrypted documents are handled before code is written.
 
 **Phase:** 4
 **Needs:** windows-host, display-session, owner-decision
@@ -407,10 +420,10 @@ pdfcraft users lost edits when the app crashed or the machine restarted; its aut
 2. Implement `src/services/recovery_store.h/.cpp` writing a full PDF snapshot of each dirty document through `AtomicFileWriter` into `AppPaths::recovery_dir()` on a timer, with a per-instance lock file. Done when: `Shell.RecoverySnapshots` finds a snapshot after the interval with no input events.
 
 - [ ] Record the decision in `docs/plans/2026-10-13-recto-foundation.md` and `docs/user-demand.md`. Done when: both files name the decision and its date.
-- [ ] Write snapshots from a thread-pool timer at the configured interval while any document is dirty, never from the render or input loop (pdfcraft #2663). Done when: the test sees a snapshot after one interval with the window idle and unfocused.
-- [ ] Mark a snapshot written only after `AtomicFileWriter` reports a verified replace, and retry a failed snapshot on the next tick without a new edit (pdfcraft #1803). Done when: an injected write failure is retried and the second tick succeeds.
-- [ ] Cover new, never-saved documents and documents opened from read-only or temporary locations (pdfcraft #815). Done when: a new document's edits are recoverable.
-- [ ] Hold a lock file per running instance and offer restore only for snapshots whose owning instance is gone (pdfcraft #2150). Done when: a second instance lists none of the first instance's live snapshots.
+- [ ] Write snapshots from a thread-pool timer at the configured interval while any document is dirty, never from the render or input loop. Done when: the test sees a snapshot after one interval with the window idle and unfocused.
+- [ ] Mark a snapshot written only after `AtomicFileWriter` reports a verified replace, and retry a failed snapshot on the next tick without a new edit. Done when: an injected write failure is retried and the second tick succeeds.
+- [ ] Cover new, never-saved documents and documents opened from read-only or temporary locations. Done when: a new document's edits are recoverable.
+- [ ] Hold a lock file per running instance and offer restore only for snapshots whose owning instance is gone. Done when: a second instance lists none of the first instance's live snapshots.
 - [ ] Keep snapshots of encrypted documents encrypted with the document's own security handler, or skip them, as the owner decided. Done when: a snapshot of an AES-256 fixture cannot be opened without its password.
 - [ ] Delete a document's snapshot on save, on close with `Don't save` and after `Discard`, and keep Portable mode snapshots under the portable data folder. Done when: the recovery folder is empty after each path and Portable mode writes nothing to `%LOCALAPPDATA%`.
 - [ ] Build `RecoveryDialog` shown at startup after an abnormal exit, restoring into new dirty tabs named after the originals, never overwriting the original files. Done when: restore opens a dirty tab and the original file's hash is unchanged. Cheaper substitute: restoring by replacing the original file.
@@ -418,8 +431,140 @@ pdfcraft users lost edits when the app crashed or the machine restarted; its aut
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.RecoverySnapshots:Shell.RecoveryDialog` passes on the display-session host, including the idle-timer, retry, second-instance and Portable mode cases.
 
+## 13. `SessionStore`: persist open tabs and the active tab
+
+UPDF's and Foxit PDF Editor's restore-last-session behaviour (Acrobat Pro also reopens its tabs) needs the open tabs to survive an exit; today only `RecentFilesStore` remembers files. This section is the storage half: a small local `session.json` holding each open tab's path and view state, never document content. It keeps Recto's rules: offline, temp-file-then-replace, Portable mode data folder, no telemetry.
+
+**Phase:** 2
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `src/services/session_store.h/.cpp` with `SessionSnapshot` (`schema_version`, `saved_utc`, `clean_exit`, `active_index`, and per tab `canonical_path`, `page_index`, `zoom_factor`, `zoom_mode`, `scroll_offset_y`, `layout_mode`) and `SessionStore::save` / `load` writing through temp-file-then-replace (`ReplaceFileW` or `MoveFileExW`) to `AppPaths::session_path()`. Done when: a save then reload reproduces the snapshot field for field, and an injected write failure leaves the previous `session.json` unchanged.
+2. Skip tabs that cannot be restored safely: documents that needed a password, documents opened from a temporary or cloud cache folder, and tabs still loading. Debounce writes to 2 s after the last tab or view change; write at once on tab close and clean exit. Done when: a fixture with one encrypted, one temp-folder and two normal tabs saves exactly the two normal tabs.
+
+- [ ] Add `AppPaths::session_path()` beside `settings_path()` (`D02 T04 §1`) so Portable mode keeps the file under the portable data folder. Done when: Portable mode writes no session file to `%LOCALAPPDATA%`.
+- [ ] Return an empty snapshot for a corrupt, truncated or newer-schema `session.json` and record one `recto::pdf::diagnostics_tail()` line. Done when: a planted `{corrupt` file loads as zero tabs without throwing.
+- [ ] Cap the snapshot at 50 tabs. Done when: a 200-tab synthetic snapshot saves 50 tabs.
+- [ ] Store paths and view state only: no page text, thumbnails or document bytes. Done when: `Shell.SessionStorePersistence` finds a sentinel string placed in the PDF body nowhere in the saved file.
+- [ ] Add `Shell.SessionStorePersistence` in `tests/recto-tests/` covering round trip, atomic failure, skipped tabs, corrupt file, cap and the Portable path. Done when: `recto-tests.exe --gtest_filter=Shell.SessionStorePersistence` passes.
+- [ ] Commit: `services: add SessionStore for open tab persistence`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.SessionStorePersistence` passes, and the atomic-failure case fails if `session.json` is rewritten in place.
+
+## 14. Restore the previous tab session on launch and the restore setting
+
+UPDF's and Foxit's session restore, matched here: on launch Recto reopens the tabs from `SessionStore` (§13), the active tab first, at their saved page and zoom, unless the user turned it off. It must not open a file twice (§5 dedup), must not fight crash recovery (§12) or file arguments (§7), and must report missing files once instead of failing silently. Offline, no scripts, tokens only, and reachable from `Ctrl+K`.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new behaviour; the setting row follows `design/SPEC.md` section 9.7 (Reading group) and the toast follows section 9 toast chrome.
+**Job:** A user who closes Recto with a set of documents open gets the same tabs back at the same pages next time, and can switch that off. Consumer: `OpenDocumentPipeline` (§5), `SettingsStore` (`D02 T04 §2`).
+**Treatment:** Stock `ToggleSwitch` row and the existing toast; restore runs through the one open pipeline. Cheaper substitute that fails the checkpoint: a second code path that opens documents directly, or restoring all tabs in parallel before the first page appears.
+**Chrome:** `RectoColors.xaml` tokens, the shared toast host, `CommandRegistry`.
+
+**Build order:**
+
+1. Add the setting `RestoreTabsOnLaunch` (default on, because `RememberReadingPosition` is already on by default and stores the same facts) to `RectoSettings` and a `Restore tabs on launch` row in the Reading group of the Settings page (`D02 T04 §5`). Done when: the row toggles the setting and a restart honours it.
+2. After `ShellPage` loads, call `OpenDocumentPipeline::open_files_async` for each saved tab in order: open the active tab first, then the rest one at a time after the first page renders, at most 20 restored tabs; collect missing files and show one in-app toast `N files from your last session were not found` naming up to three of them. Done when: a session of 5 tabs reopens all 5 with the saved active tab selected and the first page visible before the 5th tab starts loading.
+
+- [ ] Run restore after the recovery dialog (§12) and treat files named on the command line or by Explorer activation (§7) as additional tabs opened last and selected. Done when: launching with `second.pdf` while a 2-tab session exists yields 3 tabs with `second.pdf` active.
+- [ ] Skip restore when `RestoreTabsOnLaunch` is off, and in that case do not write `session.json`. Done when: with the setting off no `session.json` exists after a run.
+- [ ] Show the missing-files toast through the existing toast host and expose the names in its details flyout, with an `AutomationProperties.Name`. Done when: deleting two files between runs shows one toast naming both.
+- [ ] Register `Restore tabs on launch` as a toggle command in `CommandRegistry` (`D02 T03 §11`). Done when: the command is reachable from `Ctrl+K` and flips the setting.
+- [ ] Add `Shell.SessionRestoreOnLaunch` covering order, active tab, dedup, missing files, argument precedence and the off setting. Done when: `recto-tests.exe --gtest_filter=Shell.SessionRestoreOnLaunch` passes. Cheaper substitute: a restore that opens every tab in parallel at startup.
+- [ ] Commit: `app: restore the previous tab session on launch`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.SessionRestoreOnLaunch` passes on the display-session host.
+
+## 15. Reopen closed tab (`Ctrl+Shift+T`) and close-other, left and right tab commands
+
+UPDF's tab menu closes tabs to the left or right and reopens the last closed tab with `Ctrl+Shift+T`, as browsers do; Acrobat Pro has no reopen command. Recto's `TabView` today closes one tab at a time (§3). This section adds a bounded closed-tab stack and the batch close commands, every one routed through §8's unsaved-changes prompt so no edit is lost, and reachable from the tab context menu and `Ctrl+K`.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` sections 8.1 (title bar tabs) and 10 (keyboard); the context menu is a stock `MenuFlyout`, no screenshot.
+**Job:** A user who closed the wrong tab gets it back at the same page with one key, and can clear a crowded tab strip in one command without losing edits. Consumer: `DocumentTabSession` (§3), `SavePipeline` (§8), `CommandRegistry` (`D02 T03 §11`).
+**Treatment:** Stock `TabView` and `MenuFlyout` over a bounded in-memory stack. Cheaper substitute that fails the checkpoint: closing batches without the unsaved-changes prompt, or keeping closed tabs alive in memory.
+**Chrome:** `RectoColors.xaml` tokens and Segoe Fluent Icons; no second tab control.
+
+**Build order:**
+
+1. Implement `ClosedTabStack` (`src/app/ClosedTabStack.h/.cpp`): a last-in first-out list of at most 10 entries holding `canonical_path`, `page_index`, `zoom_factor`, `layout_mode` and the tab's position; push on every tab close that was not discarded because the file is gone; pop restores through `OpenDocumentPipeline` (§5). Done when: closing 3 tabs then pressing `Ctrl+Shift+T` three times reopens them in reverse order at their saved pages.
+2. Add `Close other tabs`, `Close tabs to the right`, `Close tabs to the left` and `Reopen closed tab` to the tab context menu, the `ShellMenuBar` `Window` menu (§9) and `CommandRegistry`; a batch close asks `Save your changes first?` for each dirty tab in order and stops the whole batch when the user presses `Cancel`. Done when: closing 4 tabs with one dirty tab prompts once, and `Cancel` leaves all remaining tabs open.
+
+- [ ] Bind `Ctrl+Shift+T` on `ShellPage` `PreviewKeyDown` and skip it while a text box has focus and the key means something there. Done when: `Ctrl+Shift+T` from the canvas reopens the last closed tab and from the find box does not.
+- [ ] Disable `Reopen closed tab` when the stack is empty and when the top entry's file no longer exists, removing that entry and showing the toast `That file is gone`. Done when: a deleted file's entry is dropped and the next entry is offered.
+- [ ] Keep dirty tabs out of the stack until their close completes with `Discard` or `Save`, and record only the on-disk state for a discarded tab. Done when: discarding a dirty tab pushes the on-disk state only.
+- [ ] Put `Copy path` and `Show in folder` on the same context menu through `CommandRegistry`. Done when: both commands act on the right-clicked tab, not the active tab.
+- [ ] Give every new command an `AutomationProperties.Name` and a tooltip with its shortcut. Done when: `Panels.CommandRegistryCompleteness` still passes.
+- [ ] Add `Shell.ClosedTabStackAndBatchClose` covering stack order, the 10 cap, missing files, dirty batch with `Cancel`, and the key guard in a text box. Done when: `recto-tests.exe --gtest_filter=Shell.ClosedTabStackAndBatchClose` passes. Cheaper substitute: closing dirty tabs in a batch without the prompt.
+- [ ] Commit: `app: add reopen closed tab and batch tab close commands`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.ClosedTabStackAndBatchClose` passes on the display-session host.
+
+## 16. Drag to reorder tabs and move a tab by keyboard
+
+UPDF lets users drag document tabs into a new order; the strip is fixed today. Reordering must also work without a pointer (`Ctrl+Shift+PageUp` and `Ctrl+Shift+PageDown`), keep the title-bar drag regions correct, and save the new order in the session (§13). Tab tear-off into a second window is not planned (one shell, D17).
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` sections 8.1 (tabs) and 11 (keyboard and screen-reader operation).
+**Job:** A user arranges tabs to match their work and does the same from the keyboard. Consumer: `DocumentTabSession` (§3), `SessionStore` (§13).
+**Treatment:** Stock `TabView` reordering plus two commands. Cheaper substitute that fails the checkpoint: drag-only reordering, or reordering that leaves stale non-client hit regions.
+**Chrome:** `RectoColors.xaml` tokens; the existing tab strip.
+
+**Build order:**
+
+1. Set `TabView.CanReorderTabs` and `CanDragTabs=false` for cross-window drags, handle `TabItemsChanged` to move the `DocumentTabSession` in the session list, and recompute `InputNonClientPointerSource` passthrough rectangles after each move. Done when: dragging tab 3 before tab 1 reorders the session list and tab headers stay clickable.
+2. Add `Move tab left` and `Move tab right` commands on `Ctrl+Shift+PageUp` and `Ctrl+Shift+PageDown` that move the active tab one slot and announce `Tab moved to position N of M` through a polite UIA live region. Done when: the keys move the tab and Narrator reads the new position.
+
+- [ ] Keep `Home` pinned as the first tab and refuse to drop a document tab before it. Done when: dropping a tab left of `Home` lands it right of `Home`.
+- [ ] Save the new order through `SessionStore` (§13) on the 2 s debounce. Done when: reorder, close, relaunch restores the new order.
+- [ ] Disable drag reordering while a modal dialog is open and respect `UISettings.AnimationsEnabled` for the slide animation. Done when: with animations off the tab jumps without a transition.
+- [ ] Register the two move commands in `CommandRegistry` (`D02 T03 §11`). Done when: both are reachable from `Ctrl+K`.
+- [ ] Add `Shell.TabReorderAndKeyboardMove` covering drag order, keyboard order, `Home` pin and session persistence. Done when: `recto-tests.exe --gtest_filter=Shell.TabReorderAndKeyboardMove` passes. Cheaper substitute: a pointer-only reorder with no keyboard equivalent.
+- [ ] Commit: `app: reorder tabs by drag and keyboard`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.TabReorderAndKeyboardMove` passes on the display-session host.
+
+## 17. Share a copy through the Windows Share contract
+
+UPDF, PDFelement and Foxit PDF Editor share or email the open file (Acrobat Pro has Share and Send by email too); Recto does it with the Windows Share contract (`IDataTransferManagerInterop::ShowShareUIForWindow` and `DataTransferManager`) so the user's installed mail, Teams or Nearby Sharing target does the sending and Recto itself opens no network connection (D16). If the tab has unsaved changes the user chooses between sharing the saved file and sharing a fresh copy.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new surface; the Share sheet is the Windows one and the choice dialog follows `design/SPEC.md` section 9.9 form layout.
+**Job:** A user sends the open PDF, or a saved copy of it, through any installed share target without leaving Recto. Consumer: `SavePipeline` (§8), `CommandRegistry` (`D02 T03 §11`).
+**Treatment:** `DataTransferManager` with the window HWND and a StorageFile, copy through the existing save path. Cheaper substitute that fails the checkpoint: building a mail or upload client inside Recto, or sharing a dirty document's stale bytes without saying so.
+**Chrome:** `RectoDialogStyles.xaml` (§10) and Segoe Fluent Icons.
+
+**Build order:**
+
+1. Implement `ShareService::share_file_async(session)` in `src/app/ShareService.h/.cpp`: bind `DataTransferManager` with the `MainWindow` HWND, answer `DataRequested` with the file as `StorageItems` (title the file name, description `Shared from Recto`), and fail with a typed message when the OS refuses the call. Done when: sharing a corpus PDF opens the Windows Share sheet listing installed targets, and an injected refusal shows `Sharing isn't available here` without a crash.
+2. For a dirty tab show a `ContentDialog` (§10 style) with `Share saved file` and `Save a copy and share`; the second path writes a copy through `SavePipeline::save_copy_async` into a `share` folder under `AppPaths::temp_dir()`, shares it, and deletes it when the share completes, with a sweep of stale files at next launch. Done when: sharing a dirty tab with the second choice sends bytes that include the edit and leaves the temp folder empty afterwards.
+
+- [ ] Add `Share...` to the `File` menu (§9), the `More` menu of `PageToolbar` (`D02 T02 §8`), the tab context menu and `CommandRegistry`. Done when: `Ctrl+K` finds `Share`.
+- [ ] Disable `Share` on `Home`, while a tab is loading and for password-locked tabs. Done when: each state shows the command disabled.
+- [ ] Add a source scan that `ShareService` contains no WinHTTP, `LaunchUriAsync` or `mailto:` use. Done when: `Audit.ShareNoDirectNetwork` passes and fails when a banned call is added to a scratch copy.
+- [ ] Share a fresh copy, never the cloud-cache temp file, for a document opened through a cloud connector (`D02 T06`). Done when: `Shell.ShareCopyForDirtyAndCloud` shares a copy for the cloud case.
+- [ ] Add `Shell.ShareCopyForDirtyAndCloud` covering clean share, dirty share choices, temp cleanup and the refusal message. Done when: `recto-tests.exe --gtest_filter=Shell.ShareCopyForDirtyAndCloud` passes. Cheaper substitute: a `mailto:` link, which cannot attach the file.
+- [ ] Commit: `app: share a copy through the Windows Share contract`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.ShareCopyForDirtyAndCloud:Audit.ShareNoDirectNetwork` passes on the display-session host.
+
 ## Verification
 
 - Every M2 shell obligation from `design/SPEC.md` (sections 3, 4, 7, 8, 8.1, 9.1 drop overlay, 9.2 loading states, 9.9 Password / Could-not-open / Replace-original / Unsaved-changes dialogs, 10 shell keys, 11 automation names and tab order) proven on rendered surfaces and by `Shell.*` tests in `recto-tests`.
 - Full `recto-tests` suite green; `Recto.sln` builds `Debug` and `Release` for `x64` and `ARM64` with zero warnings; `python scripts/todo-graph.py validate` passes.
 - Zero `#` hex colour literals exist under `src/app` outside `design/tokens/RectoColors.xaml`.
+- The tab session, closed-tab, reorder and share behaviour of §13 to §17 is proven by `Shell.SessionStorePersistence`, `Shell.SessionRestoreOnLaunch`, `Shell.ClosedTabStackAndBatchClose`, `Shell.TabReorderAndKeyboardMove`, `Shell.ShareCopyForDirtyAndCloud` and `Audit.ShareNoDirectNetwork`.

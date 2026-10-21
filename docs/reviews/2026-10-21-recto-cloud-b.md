@@ -55,3 +55,49 @@ OVERALL: needs-attention
 ## Response to round 1
 
 All 15 findings were accepted and fixed in D09 T03, D09 T04 and D09 T05 in the next commit: `pdf-lite` streams through ranged reads within a 64 MiB heap budget, tested with a 200 MiB fixture (1); the envelope Durable Object's own SQLite is the authority with a transactional outbox, D1 a projection (2); the ceremony order is summary, access code, consent with a static consent-check PDF, then document (3); the sealed checkpoint is `envelope.completing` (4); audit deletes need a purge authorization row written by the purge job (5); the signer cookie is `__Host-recto-sign` with `Path=/` (6); a `restore` operation and one undo table shared by web and desktop (7); review limits fit the transport caps and snapshots are chunked with a digest (8); starting reviews and sending envelopes is owner-only (9); a completed recipient's values are frozen with a hash (10); `envelope.completing` is the commit point that refuses late terminal transitions (11); RFC 3161 tokens are fully verified (12); uploads stream from the locked, hashed handle and the service checks the hash (13); the operator-blind claim is removed (14); `verifyChain` reports consistency only and authenticity needs the sealed checkpoint (15).
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T01:11:02Z
+- Effort: medium
+- Lines: 33
+- Digest: c653edc18d0d87b4
+
+**The candidate needs attention.** Repository reads failed twice with `helper_unknown_error: setup refresh had errors`. These findings cite the supplied diff; governing-file verification remains incomplete. No files were changed, and no git commands or tests ran.
+
+`T03`, `T04` and `T05` refer to the three candidate files under `todo/09-cloud/`.
+
+**record: needs-attention**
+
+Round 1 findings **1, 2, 5, 7, 8, 11 and 15** remain incompletely resolved for the reasons below.
+
+**source-defect: needs-attention**
+
+1. **Purge deletes its own protection against resurrection.** `T03 §3`, `T04 §18`, unresolved **R1 #5**. Both write a Durable Object `purged` marker and then call `deleteAll()`, which removes that marker too. Cancelling an alarm does not cancel an already executing handler. Moreover, envelope purge deletes D1/R2 before stopping the authoritative outbox, allowing a flush to recreate rows during deletion. Preserve a durable deletion fence, stop producers before deleting projections, and make destination writes reject purged generations. Test a flush already past its marker check, object eviction, and delayed queue delivery. [Cloudflare storage API](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/)
+
+2. **The outbox still promises exactly-once enqueue without a protocol that provides it.** `T04 §4`, unresolved **R1 #2**. A crash after Queue accepts a message but before the outbox row is deleted causes another enqueue. Consumer deduplication cannot make the queue stub observe only one enqueue. The specified crash tests stop *before* effects and miss this boundary. Require at-least-once dispatch with durable, atomic consumer deduplication, and inject failures after effect acceptance but before acknowledgement recording. Email delivery needs its own explicit treatment of this ambiguity. [Cloudflare Queue delivery guarantees](https://developers.cloudflare.com/queues/reference/delivery-guarantees/)
+
+3. **The memory fix does not establish an isolate-wide bound.** `T04 §1, §14, §16`, unresolved **R1 #1**. A 64 MiB budget per operation permits concurrent operations to exceed the shared 128 MB isolate limit. A Node test under a V8 heap limit also does not establish total Workers memory consumption. Add bounded admission/concurrency and measure simultaneous worst-case operations, including binary buffers. The contracts also remain inconsistent: `readPdf(bytes, ...)` and `commitVersion(bytes, ...)` survive alongside the new ranged/streamed interfaces. Specify those boundaries explicitly so implementation cannot reintroduce whole-file buffering. [Cloudflare Workers limits](https://developers.cloudflare.com/workers/platform/limits/)
+
+**consistency: needs-attention**
+
+4. **The desktop still implements the superseded review protocol.** `T03 §5–7` versus `T05 §11`, unresolved **R1 #7 and #8**. The server replaces `resync` with `snapshot_begin/chunk/end` and adds `restore`; desktop receive handling still lists `resync` and omits `restore`. Desktop limits also remain 5,000 annotations, 64 KiB and 20,000 characters rather than the new limits. Scripted-room tests can pass against this obsolete protocol while actual reconnects and another client's restore fail. Update both sides and test the desktop against the actual server protocol, including chunk loss, digest verification and remote restoration.
+
+5. **The replay path still exceeds the message cap.** `T03 §7`, unresolved **R1 #8**. `welcome` still contains all missed operations for gaps up to 2,000. Just two near-limit operations exceed the 64 KiB socket cap; limiting current annotation state to 8 MiB does not bound historical operations. Stream or paginate replay by encoded byte size, and test a gap below the snapshot threshold containing large operations.
+
+6. **Completion can become permanently stuck after its version is stored.** `T04 §16`, related to **R1 #11**. The pipeline records `sealed_version_id` before calling `finalize(generation)`, but retries with that field set may run only notifications. A crash between those steps leaves the envelope finalizing forever and may notify recipients before authoritative completion. Resume finalization idempotently when the version already exists; notify only after the completed transition commits. Also reconcile §16's message “carrying only the envelope id” with §4's required generation.
+
+**adversarial: needs-attention**
+
+7. **Checkpoint verification labels unauthenticated suffix events authentic.** `T04 §3, §13, §17`, unresolved **R1 #15**. The checkpoint authenticates only events through `envelope.completing`. An attacker can remove subsequent events, or replace them and recompute their hashes, without changing the checkpoint. The specified verifier nevertheless reports `AUTHENTIC` for the export containing that suffix. Return an explicitly authenticated prefix count/head and separately identify the unauthenticated suffix. Test both suffix truncation and suffix replacement; neither can be detected as tampering from this checkpoint alone.
+
+8. **The dead-letter exception reopens the publication race.** `T04 §4, §16`, unresolved **R1 #11**. After completion failure, void is allowed, but the worker still commits a document version before its conditional `finalize(generation)`. A delayed worker can therefore create a library version after void even when finalization is rejected. No generation change on retry is specified either. Keep output unpublished until authoritative acceptance, fence failed/retried attempts with generations, and test an old worker resuming after failure, void and retry.
+
+9. **Individual comment scrubbing still lacks coordination with the room's retained history.** `T03 §6`, unresolved **R1 #5**. The scrub handler explicitly clears D1 comments and operation rows, while its acceptance condition additionally promises removal from the room. It defines no removal of Durable Object WAL payloads, in-memory history, or protection against a pending flush restoring them. Specify the scrub as an authoritative room operation with projection fencing, and test eviction and replay of pending flushes after the seven-day scrub.
+
+OVERALL: needs-attention
+
+## Response to round 2
+
+All 9 findings were accepted and fixed in the next commit: a D1 `purge_fences` table outside the deleted Durable Object storage guards every later write (1); the outbox promise is narrowed to at-least-once with atomic consumer dedupe through `processed_effects` (2); a per-isolate `PdfBudget` and a `pdf-jobs` queue consumer with `max_concurrency` 1 make the memory bound real (3); the desktop (D09 T05 §11) now follows the single protocol in D09 T03 §5-§7 and replays its fixture transcripts (4); `welcome` carries no operations and replay is paged in byte-bounded chunks (5); completion seals into staging and commits through the Durable Object's `accept`, then publishes and notifies (6); checkpoint verification reports an authenticated prefix and an unauthenticated suffix (7); nothing is published before `accept`, which checks the current generation and attempt (8); comment scrub is an authoritative `ReviewRoom.scrub` that clears the write-ahead log and queued flushes before D1, with guarded upserts (9).

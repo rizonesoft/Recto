@@ -25,6 +25,8 @@ track: M3
 - -> XREF: D07 T02 §6 -- the M6 Store & Release Compliance verification (`D07 T02 §6`) gates on the UIA verification pass in `§6` here.
 - -> XREF: D02 T04 §9 -- Read Out Loud accelerators join the audited keyboard map.
 - -> XREF: D03 T01 §1 -- Read Out Loud reads `PageText` in reading order.
+- -> XREF: D03 T03 §15 -- article threads for reading order.
+- -> XREF: D02 T04 §9 -- Ctrl+4 shortcut table.
 
 ## Outcome
 
@@ -48,9 +50,12 @@ track: M3
 | 4 | §4 | Logical `Tab` / `Shift+Tab` focus order and `--accent` focus ring across all 3 presets | §3 | [ ] |
 | 5 | §5 | Polite coalescing `AnnouncementService` for page changes, find counts, and selection | §2, D03 T01 §6 | [ ] |
 | 6 | §6 | Conversion job completion announcement sink (`D04 T01 §6`) and UIA verification pass | §4, §5 | [ ] |
-| 7 | §7 | Read Out Loud reading plan: current page, to end of document and selection | D03 T01 §2, D03 T01 §3, D03 T01 §8 | [ ] |
+| 7 | §7 | Read Out Loud reading plan: current page, to end of document and selection | D03 T01 §2, D03 T01 §3, D03 T01 §8, D03 T03 §6, D03 T03 §8 | [ ] |
 | 8 | §8 | `SpeechService` over `Windows.Media.SpeechSynthesis`: voices, rate, volume, pause, stop | §7, D02 T04 §2 | [ ] |
 | 9 | §9 | Read Out Loud bar, word highlight, shortcuts, `Ctrl+K` commands and settings | §5, §7, §8, D03 T01 §4, D02 T03 §11, D02 T04 §5, D02 T04 §8 | [ ] |
+| 10 | §10 | Reflow model: logical blocks from the structure tree, article threads or heuristics | D03 T01 §2, D03 T03 §15 | [ ] |
+| 11 | §11 | Reflow layout: DirectWrite text layout at a chosen width, size and spacing | §10, D03 T01 §11 | [ ] |
+| 12 | §12 | Reflow view and Text Viewer: `Ctrl+4`, size controls, settings and accessibility | §5, §9, §11, D03 T01 §6, D02 T03 §11, D02 T04 §5, D02 T04 §9 | [ ] |
 
 ## 1. `DocumentViewAutomationPeer` implementing `ITextProvider` and `ITextRangeProvider`
 
@@ -236,6 +241,7 @@ Build the engine that decides what Read Out Loud says and in which order: a `Rea
 2. Implement the word map from each unit to the `CharQuad` ranges of its drawn words so the viewer can highlight the word being spoken, mark inserted words (figure `/Alt` text, table header prefixes) `synthetic` with no quads, and implement the prefetch of the next page's `PageText` through `DocumentActor::get_page_text`. Done when: `A11y.ReadAloudWordMap` maps every drawn word of a fixture page to the exact quads, reports every synthetic word as quad-less, and `A11y.ReadAloudPrefetch` shows page `N+1` requested before page `N` ends.
 
 - [ ] Split text into units at block, list item, table cell and sentence boundaries with a maximum of `1000` characters per unit (long paragraphs split at the last sentence end or space before the cap), so one synthesis request stays short. Done when: `A11y.ReadAloudPlanOrder` shows no unit over `1000` characters on a `5000`-character paragraph fixture.
+- [ ] Add a `FormField` unit kind: read each AcroForm field (`D03 T03 §6` field tree) as its name (`/TU`, else `/T`), its type (`text field`, `check box`, `radio button`, `drop-down`, `button`), its value or state (`checked`, `not checked`, selected option), and `required` or `read only` when set, in the `/Tabs` order or structure order of `D03 T03 §8`, and highlight the widget rectangle as a box like a figure. Done when: `A11y.ReadAloudFormFields` reads a fixture form's text field, check box, radio group and combo box in tab order with the expected phrases and a box highlight for each, and speaks no password field value.
 - [ ] Use `/Alt` text for `Figure` nodes and `/ActualText` where present, mark heading units as `Heading` (the word `Heading` is not spoken) so the speaker can pause longer, and read `TableCell` units row by row with the header cell text prefixed on the first row only. Done when: `A11y.ReadAloudTaggedStructure` reads a tagged fixture's figure alt text, heading and a `2 x 3` table in the expected order.
 - [ ] Define the highlight policy for synthetic text: a `FigureAlt` unit is highlighted as one box over the figure's `StructNode::bbox_pt` for its whole duration, and header-cell prefix words are spoken without any highlight while the cell's own drawn words highlight normally. Done when: `A11y.ReadAloudSyntheticHighlight` reads a tagged figure and a table, finds a box highlight for the figure and quads only for drawn table words, and finds no unit asking for quads that do not exist.
 - [ ] Skip page artifacts (running headers, footers, page numbers marked `/Artifact`) on tagged pages and repeat nothing for hidden text (`Tr 3` invisible runs are read only when they are the OCR layer of a scanned page). Done when: `A11y.ReadAloudArtifacts` omits a tagged footer and reads the OCR layer of `text/scanned.pdf` after OCR.
@@ -292,6 +298,7 @@ Add the Read Out Loud surface: a contextual `ReadAloudBar`, the on-canvas highli
 - [ ] Build `ReadAloudBar` (`src/app/controls/ReadAloudBar.xaml/.h/.cpp`, `40 epx`) with `Pause`/`Resume` and `Stop` icon buttons (automation names `Pause reading`, `Resume reading`, `Stop reading`, tooltips with their shortcuts), a `Voice` combo box, `Rate` and `Volume` sliders and a status label, opened by any read command and closed by `Esc` or `Stop`. Done when: the bar passes the `D03 T02 §3` inventory and `Esc` stops speech and closes the bar.
 - [ ] Register `Read This Page` (`Ctrl+Shift+V`), `Read to End of Document` (`Ctrl+Shift+B`), `Read Selection` (selection context menu and `Ctrl+K`), `Pause or Resume Reading` (`Ctrl+Shift+C`) and `Stop Reading` (`Ctrl+Shift+Y`) in `CommandRegistry`, enabled only when a document is open (`Read Selection` only with a selection) and active only while the document view has focus so text boxes keep their own `Ctrl+Shift+C`. Done when: `ReadAloudUi.CommandsAndBar` triggers each shortcut and the generated `docs/keyboard-shortcuts.md` (`D02 T04 §10`) lists all five.
 - [ ] Draw `ReadAloudHighlightLayer` from `on_word` and `on_unit_box` events marshalled to the UI thread through `DispatcherQueue`, with the word fill plus underline (or the box outline for a figure) and the sentence tint, and scroll to keep the word at least `64 epx` inside the viewport, instantly when animations are off and with the `167 ms` transition when on. Done when: `ReadAloudUi.HighlightAndFollow` and `ReadAloudUi.ReducedMotion` verify the quads and the two scroll modes. Cheaper substitute: highlighting the whole line.
+- [ ] Add a `Read form fields` row (`SpeechReadFormFields`, default on) to the Settings `Reading` group (`D02 T04 §5`) read by the plan builder of `§7`, and never speak the value of a field flagged password or with a hidden appearance. Done when: `ReadAloudUi.FormFieldSetting` turns field reading off and on and sees the plan change.
 - [ ] Add `Voice`, `Speech rate` and `Speech volume` rows to the Settings `Reading` group (`D02 T04 §5`) bound to `SpeechVoiceId`, `SpeechRate` and `SpeechVolume`, searchable in `Find a setting`, with a `Preview voice` button speaking one sentence. Done when: `ReadAloudUi.SettingsRows` changes each setting, sees `SpeechService` read it, and finds the rows through `Find a setting`.
 - [ ] Announce `Reading started`, `Reading paused`, `Reading resumed`, `Reading stopped` and `Reached the end of the document` through `AnnouncementService` without moving keyboard focus, and never announce individual words. Done when: `ReadAloudUi.Announcements` records exactly those notifications for a scripted session.
 - [ ] Keep the UI responsive while reading: no synthesis, plan building or `PageText` fetch on the UI thread, and a frame-time check that reading a `200`-page document adds no frame over `16.7 ms` from this feature. Done when: `ReadAloudUi.UiThreadSafety` asserts no blocking call on the UI thread and records the frame times.
@@ -301,8 +308,86 @@ Add the Read Out Loud surface: a contextual `ReadAloudBar`, the on-canvas highli
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=ReadAloudUi.*` passes on the display-session host, quoting the highlight quads, the announcement log and the frame-time record.
 
+## 10. Reflow model: logical blocks from the structure tree, article threads or heuristics
+
+Build the content half of Reflow: a `ReflowDocument` that turns the shared `PageText` snapshots into a flow of logical blocks (headings, paragraphs, lists, table rows, figures) that can be laid out at any width. This is Acrobat Pro's `Reflow` (View, Zoom) and matches Foxit PDF Editor's Reflow and Text Viewer. It is an accessibility feature because a low-vision or small-screen reader gets one column of text at a chosen size instead of a page to pan. It must not break the thread contract (built from immutable `std::shared_ptr<const PageText>` snapshots off the UI thread, never the live `recto::pdf::Document`) and it keeps Recto's rule that nothing is written to the file; OCR text on scanned pages reflows like any other text.
+
+**Phase:** 3
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Define `ReflowBlock` (`kind` among `Heading`, `Paragraph`, `ListItem`, `TableRow`, `Figure`, `PageBreak`, `heading_level`, `list_depth`, `marker`, `text`, `cells`, `alt_text`, `figure_bbox_pt`, and `anchors` as `(page_index, char_start, char_end)` ranges) and `ReflowDocument` in `src/services/reflow_model.h/.cpp`, and implement `build_reflow_page` with this precedence for order and roles: `PageText::struct_nodes` (tagged), then `/Threads` article order (`D03 T03 §15`), then geometric reading order. Done when: `Reflow.OrderPrecedence` reads a tagged fixture in structure order, an untagged fixture with an article thread in thread order, and a two-column untagged fixture column by column.
+2. Implement the untagged heuristics and the cross-page join. Done when: `Reflow.Heuristics` finds headings, lists and merged paragraphs on `text/two-column-links-outline.pdf` and `Reflow.CrossPage` joins a paragraph split by a page break.
+
+- [ ] Join lines into paragraphs using the hyphen folding of `D03 T01 §1`, line-end punctuation, indent and vertical gap, and never join across a column gutter or table cell. Done when: `Reflow.Paragraphs` yields one block per source paragraph on the two-column fixture.
+- [ ] Detect headings on untagged pages as spans whose size is at least `1.2` times the page's most common body size or that are bold on a line of their own, assigning levels by distinct size rank (`1..6`), and take `heading_level` from `Span::heading_level` when tagged. Done when: `Reflow.Headings` finds the same levels on the tagged and untagged versions of one fixture.
+- [ ] Detect list items from bullets (`U+2022`, `U+25E6`, `-`, `*`) and numbering (`1.`, `1)`, `a.`, `(i)`) at a consistent indent, keeping the marker separate from the text. Done when: `Reflow.Lists` reads a nested list with markers and depths.
+- [ ] Produce `TableRow` blocks from `StructNode` table cells, one block per row with cell texts, header cells first, and read an untagged table as ordinary paragraphs line by line. Done when: `Reflow.Tables` reads a `3 x 3` table row by row.
+- [ ] Drop page artifacts: tagged `/Artifact` content, and on untagged pages text repeating at the same position on at least `3` pages (running headers, footers, page numbers). Done when: `Reflow.Artifacts` omits the repeated footer on an untagged fixture and keeps a title that appears once.
+- [ ] Add `Figure` blocks from `StructNode` `/Figure` and image XObject boxes, with `/Alt` text as `alt_text`. Done when: `Reflow.Figures` lists a figure with its alt text and box.
+- [ ] Bound the work: at most `20000` blocks per page, `50` million characters per document, `CancelToken` between pages, build lazily one page at a time. Done when: `Reflow.Bounds` ends a hostile page of `500000` one-character blocks inside the cap under ASan.
+- [ ] Add `Reflow.*` tests in `tests/recto-tests/reflow_model_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=Reflow.*` passes under ASan.
+- [ ] Commit: `feat(a11y): add the Reflow model from structure, article threads and heuristics`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Reflow.*` passes under ASan, and ignoring `/Threads` makes `Reflow.OrderPrecedence` fail on the threaded fixture.
+
+## 11. Reflow layout: DirectWrite text layout at a chosen width, size and spacing
+
+Lay a `ReflowDocument` (§10) out at a given width: wrapped lines at a chosen font, size and line spacing, with figure images sized to the width. This is the layout half of Acrobat Pro's `Reflow` and Foxit PDF Editor's Reflow. It must not break the UI thread rule (layout runs on a worker and returns plain line and run data) and it keeps Recto's improvement that the reading font is the user's choice, not the PDF's embedded font, so low-vision readers get a large clear face.
+
+**Phase:** 3
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `layout_reflow(ReflowDocument page range, ReflowStyle, width_px, CancelToken)` in `src/services/reflow_layout.h/.cpp` over DirectWrite `IDWriteTextLayout`, returning `ReflowLine` items (`block_index`, `y`, `height`, runs with text ranges and style) and total height for virtualization. Done when: `ReflowLayout.Wrap` wraps a paragraph to the width and `ReflowLayout.Heights` totals the line heights.
+2. Add figure sizing, right-to-left blocks and the hit-test and anchor maps. Done when: `ReflowLayout.Figures`, `ReflowLayout.Bidi` and `ReflowLayout.AnchorMap` pass.
+
+- [ ] Define `ReflowStyle` (`font_family`, `font_size_pt` `8..72`, `line_spacing` `1.0..2.5`, `max_line_width_chars` `0` for none or `40..120`, `plain_text_mode`) and clamp out-of-range values. Done when: `ReflowLayout.StyleClamp` clamps each field.
+- [ ] Size `Figure` blocks to at most the layout width and `60%` of the viewport height, with `alt_text` as the fallback line when the crop cannot render, using `render_page_area` (`D03 T01 §11`) for the crop. Done when: `ReflowLayout.Figures` finds the width cap and the alt fallback.
+- [ ] Shape right-to-left and mixed-direction text with the DirectWrite bidi analysis so Arabic and Hebrew blocks read in logical order and align to the right. Done when: `ReflowLayout.Bidi` lays out an Arabic block right-aligned in logical order.
+- [ ] Build the maps between layout positions and `(page_index, char_index)` anchors: `hit_test(point)`, `caret_to_anchor`, `anchor_to_rect`. Done when: `ReflowLayout.AnchorMap` round-trips ten random positions to the same anchor.
+- [ ] Lay out incrementally by block range so a `1000`-page document lays out only the visible range plus one screen on each side, and cancel stale layouts on a width change. Done when: `ReflowLayout.Incremental` lays out `3` screens of a long fixture in under `50 ms` and cancels a superseded request.
+- [ ] Add `ReflowLayout.*` tests in `tests/recto-tests/reflow_layout_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=ReflowLayout.*` passes on the Windows host.
+- [ ] Commit: `feat(a11y): add DirectWrite layout for the Reflow view`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=ReflowLayout.*` passes on the Windows host, and mapping positions by character count instead of anchors makes `ReflowLayout.AnchorMap` fail.
+
+## 12. Reflow view and Text Viewer: `Ctrl+4`, size controls, settings and accessibility
+
+Add the reading surface: a `ReflowView` in the document slot of the one shell that shows §10 and §11 as a single column, plus a `Text Viewer` mode that shows the same text as plain, unstyled text. This is Acrobat Pro's `Reflow` (`Ctrl+4`) and Foxit PDF Editor's Reflow and Text Viewer. It must not break the shell rules (one shell, no new window, `Esc` and `Ctrl+K` work, motion respects "Show animations in Windows") and it keeps Recto's improvements that the view is fully exposed to UI Automation, selection and `Ctrl+F` keep working, and the file is never changed.
+
+**Phase:** 3
+**Needs:** windows-host, display-session
+**Surface:** yes
+**Fidelity:** Genuinely new surface. It follows `design/SPEC.md` section 8 (the document slot in the three presets), section 9.3 (selection and search behave as on a page) and section 11 (accessibility), with `design/screenshots/D-Search.png` for the search treatment.
+**Job:** The user presses `Ctrl+4`, sees the document as one readable column at their chosen size and font, reads or listens to it, searches, selects and copies text, jumps to the page position of any paragraph, and presses `Ctrl+4` again to return to the page. Consumer: `DocumentView` slot, `FindCard` (`D03 T01 §6`), `AnnouncementService` (§5) and screen readers.
+**Treatment:** A virtualized `ReflowView` drawn from §11 line data on a `Canvas` surface with `RectoCanvasBrush` background and `RectoTextBrush` text, a `Reflow` toggle in the View menu and a label `Reflow view` in the status area (text, not colour), size controls bound to `Ctrl+Plus` and `Ctrl+Minus` while the view is active, and a `Text Viewer` toggle that sets `plain_text_mode`. Cheaper substitute that fails the checkpoint: re-rendering the page bitmap at a larger zoom, or a view that screen readers read as one unlabelled image.
+**Chrome:** consume `RectoCanvasBrush`, `RectoTextBrush`, `RectoTextSecondaryBrush`, `RectoSearchHitBrush`, `RectoTextSelectionBrush` from `design/tokens/RectoColors.xaml` and the high-contrast dictionary; no hex values.
+
+**Build order:**
+
+1. Build `ReflowView` (`src/app/views/ReflowView.xaml/.h/.cpp`) and `ReflowViewModel` (`src/services/reflow_view_model.h/.cpp`) with virtualized drawing from §11, pointer and keyboard selection over anchors, copy as plain text, and the `Show in page` action. Done when: `AppTests.ReflowView` opens a fixture, scrolls, selects two paragraphs, copies the text and uses `Show in page` to land on the source page with the anchor highlighted.
+2. Register the commands, settings rows, search mapping and UIA peer. Done when: `AppTests.ReflowCommands`, `AppTests.ReflowSearch` and `A11y.ReflowPeer` pass.
+
+- [ ] Register `Reflow` (`view.reflow`, `Ctrl+4`), `Text Viewer` (`view.textViewer`, no default accelerator) and `Show in page` (`view.reflowShowInPage`) in `CommandRegistry` (`D02 T03 §11`), enabled when a document is open, and add `Ctrl+4` to the SPEC section 10 table through `D02 T04 §9`. Done when: the command box finds all three and `Keyboard.Audit` reports `Ctrl+4` bound once.
+- [ ] Keep the current position when toggling: entering reflow scrolls to the first block of the current page, and leaving it scrolls the page view to the page of the block at the top. Done when: `AppTests.ReflowView` toggles twice and lands on the same page.
+- [ ] Add `Reflow font` (`ReflowFontFamily`, default `Segoe UI`), `Reflow text size` (`ReflowFontSize`, default `16` pt), `Reflow line spacing` (`ReflowLineSpacing`, default `1.4`) and `Reflow line width` (`ReflowMaxLineChars`, default `80`) to the Settings `Reading` group (`D02 T04 §5`), searchable in `Find a setting`. Done when: `AppTests.ReflowSettings` changes each and sees the view re-layout.
+- [ ] Map `Ctrl+F` hits from `SearchEngine` (`D03 T01 §5`) to reflow anchors so hits highlight in `RectoSearchHitBrush` and `F3` scrolls to them. Done when: `AppTests.ReflowSearch` finds a word across two pages and highlights it in the reflow text.
+- [ ] Expose the view to UI Automation as a document with a text pattern, `AutomationProperties.HeadingLevel` on headings, list and table item peers, and `alt_text` as the name of figures. Done when: `A11y.ReflowPeer` walks a tagged fixture with a UIA client and reads headings, a list, a table row and a figure alt text in order.
+- [ ] Read Out Loud (`§7` to `§9`) keeps working in reflow by reading the same plan and highlighting the matching reflow words through the anchors. Done when: `ReadAloudUi.ReflowHighlight` highlights the spoken word in the reflow view.
+- [ ] Honour reduced motion and high contrast: no animated scrolling when animations are off, and `HighContrast` brushes used for text and selection. Done when: `AppTests.ReflowMotionAndContrast` checks both.
+- [ ] Give the toggle, size controls and `Show in page` an automation name and a tooltip with their shortcut. Done when: the inventory (`§3`) finds none missing or undersized. Cheaper substitute: tooltips only.
+- [ ] Add the tests named above. Done when: `recto-tests.exe --gtest_filter=AppTests.Reflow*:A11y.ReflowPeer:ReadAloudUi.ReflowHighlight` passes on the display-session host.
+- [ ] Commit: `feat(a11y): add the Reflow view and Text Viewer`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=AppTests.Reflow*:A11y.ReflowPeer:ReadAloudUi.ReflowHighlight` passes on the display-session host, and drawing the page bitmap instead of text makes `A11y.ReflowPeer` fail.
+
 ## Verification
 
-- SPEC section 11 read line by line against the findings: every clause proven by `A11y.*` tests (`TextRangeUnits`, `TextProvider`, `SelectionAndFind`, `Inventory`, `TabOrder`, `EscapeStack`, `Announcements`, `FastScrollCoalescing`, `JobAnnouncementSink`, `ColourNotOnlySignal`, `EndToEndSection11`, `ReadAloud*`, `Speech*`) and `ReadAloudUi.*`.
+- SPEC section 11 read line by line against the findings: every clause proven by `A11y.*` tests (`TextRangeUnits`, `TextProvider`, `SelectionAndFind`, `Inventory`, `TabOrder`, `EscapeStack`, `Announcements`, `FastScrollCoalescing`, `JobAnnouncementSink`, `ColourNotOnlySignal`, `EndToEndSection11`, `ReadAloud*`, `Speech*`), `ReadAloudUi.*`, `Reflow.*`, `ReflowLayout.*`, `AppTests.Reflow*` and `A11y.ReflowPeer`.
 - M3's UIA deliverable demonstrable with Windows Narrator on the reference machine.
 - `recto-tests` full suite green; `python scripts/todo-graph.py validate` passes.

@@ -26,6 +26,19 @@ track: M6
 - -> XREF: D07 T01 §7 -- the verified `RectoSetup-*.exe` and `Recto-Portable-*.zip` artifacts tested there are assembled into the signed-off v1 release bundle in `§6` and `§7`.
 - -> XREF: D99 T01 §3 -- the operator's optional Partner Center account and app reservation that `§6`'s optional Store submission kit prepares for.
 - -> XREF: D07 T03 §2 -- `Report a problem` reuses §4's diagnostics text, and §4 and §5 there extend §6's release runbook with closing on release and the release gate.
+- -> XREF: D08 T02 §35 -- AssistantDisabled policy.
+- -> XREF: D07 T01 §19 -- runbook.
+- -> XREF: D07 T01 §20 -- release kit.
+- -> XREF: D08 T01 §15 -- AssistantDisabled policy.
+- -> XREF: D09 T05 §6 -- CloudDisabled policy.
+- -> XREF: D07 T03 §7 -- update notice policy.
+- -> XREF: D02 T04 §2 -- SettingSource and locks.
+- -> XREF: D02 T04 §4 -- lock note rows.
+- -> XREF: D02 T04 §6 -- find a setting filter.
+- -> XREF: D02 T04 §2 -- UiLanguage setting.
+- -> XREF: D06 T02 §7 -- fips_mode in crash bundle.
+- -> XREF: D02 T06 §5 -- CloudConnectorsDisabled policy.
+- -> XREF: D02 T06 §15 -- crash bundle scan.
 
 ## Outcome
 
@@ -34,6 +47,8 @@ track: M6
 - When opted in via Settings (`Save local crash report bundles`, off by default), unhandled exceptions write a local `crash-reports/recto-crash-<timestamp>.zip` inside `AppPaths::data_dir()` containing only `version.json`, `ring-log.txt` (`D16`), and a thread-stack `minidump.dmp` (`MiniDumpNormal`, zero document heap bytes) with zero network sockets opened (`§4`).
 - Every user-facing UI string lives in `src/app/Strings/en-US/Resources.resw` (enforced by `scripts/check-unresourced-strings.py`) and survives a 40%-expansion pseudolocale layout pass without clipping (`§5`).
 - `docs/release-and-store-runbook.md` and `docs/store-listing.md` (`§6`) and the final v1 distribution bundle (`§7`) verify every checkbox in foundation plan section 10 with quoted evidence.
+- Administrators can lock Recto with Group Policy: six documented policies in `policy/Recto.admx`, read by `PolicyProvider`, applied by `SettingsStore` with a visible "Managed by your organization" note, and shipped as `Recto-PolicyTemplates-<version>.zip` (`§8` to `§12`).
+- Recto ships ten reviewed interface languages with a checked translation process, a language setting, localised errors and plurals, right-to-left readiness and matching installer languages (`§13` to `§17`).
 
 **Adjacency:** list=not-applicable (component roster lives inside AboutPage in §2); document=applicable @ D07 T02 §2; settings=applicable @ D02 T04 §6; reporting=applicable @ D07 T02 §4; notifications=not-applicable (next-launch crash folder prompt is part of §4's reporting flow); permissions=not-applicable (no user roles); audit=applicable @ D07 T02 §3; exchange=not-applicable (crash `.zip` bundles and clipboard version blocks are covered in §2 and §4); reverse=not-applicable (release rollback and optional Store delisting are operator procedures documented in §6's runbook)
 
@@ -49,7 +64,17 @@ track: M6
 | 4 | §4 | Opt-in local crash report bundle writer (`MiniDumpNormal` + D16 ring log `.zip` prompt) | §2 | [ ] |
 | 5 | §5 | Localization readiness (`Resources.resw` `x:Uid` extraction and 40% pseudolocale check) | §2 | [ ] |
 | 6 | §6 | GitHub Release runbook (`docs/release-and-store-runbook.md`) and Store submission kit | §3, §4, §5, D03 T02 §6, D03 T03 §5, D03 T03 §10, D04 T03 §6, D06 T01 §4, D06 T01 §6, D06 T01 §8, D06 T02 §4, D06 T02 §6, D07 T01 §7 | [ ] |
-| 7 | §7 | End-to-end v1 distribution bundle (`Setup.exe`, `Portable.zip`, `SHA256SUMS.txt`) & GPL | §6 | [ ] |
+| 7 | §7 | End-to-end v1 distribution bundle (`Setup.exe`, `Portable.zip`, `SHA256SUMS.txt`) & GPL | §6, §12, §17 | [ ] |
+| 8 | §8 | Group Policy catalogue and templates: `policy/Recto.admx` and `Recto.adml` | -- | [ ] |
+| 9 | §9 | `PolicyProvider`: read machine and user policy values, typed and bounded | D01 T02 §10 | [ ] |
+| 10 | §10 | `SettingsStore` policy precedence: locked settings and policy gates | §9, D02 T04 §2 | [ ] |
+| 11 | §11 | "Managed by your organization" notes on locked settings and `recto-cli policy show` | §10, D02 T04 §4, D02 T04 §6, D02 T03 §11 | [ ] |
+| 12 | §12 | Policy templates release artifact and end-to-end Group Policy proof | §6, §8, §11, D07 T01 §5 | [ ] |
+| 13 | §13 | Translation catalogue: languages manifest, glossary, plural rules and the checker | §5 | [ ] |
+| 14 | §14 | Interface language setting: Follow Windows or a shipped language | §13, D02 T04 §2, D02 T04 §6, D02 T03 §11 | [ ] |
+| 15 | §15 | Localised errors, plurals, dates and numbers: no English assembled in code | §13, D01 T01 §1 | [ ] |
+| 16 | §16 | Right-to-left readiness: flow direction, mirrored icons and a mirrored pseudolocale | §13, §14 | [ ] |
+| 17 | §17 | First shipped language set: ten reviewed translations and installer languages | §12, §14, §16, D07 T01 §4, D07 T01 §19 | [ ] |
 
 ## 1. Build-time version and provenance generator (version, SHA, `Standard` vs `Portable`)
 
@@ -213,6 +238,7 @@ Author the step-by-step release engineering runbook (`docs/release-and-store-run
 - [ ] Create `docs/store-license-terms.txt` as an exact byte-for-byte copy of root `LICENSE` (`GPL-3.0-or-later`) for the Partner Center "License terms" field (where decision D6 requires supplying Recto's own `GPL-3.0-or-later` terms rather than the Standard Microsoft Store EULA). Done when: `scripts/verify-release-kit.py` asserts `sha256(docs/store-license-terms.txt) == sha256(LICENSE)`.
 - [ ] Capture real-app release screenshots from the built `Recto.exe` (`1440 x 900`) into `docs/release-screenshots/` covering `Home`, `DocumentView` (`Focus` and `Classic`), `Convert`, `Organize`, `Settings`, and `About`. Done when: `scripts/verify-release-kit.py` verifies all 7 PNG screenshots exist and have dimensions `1440 x 900`.
 - [ ] Add `tests/scripts/test_release_kit.py` testing `scripts/verify-release-kit.py` (including failure on a 1-byte drift between `docs/store-license-terms.txt` and `LICENSE`). Done when: `python -m unittest tests.scripts.test_release_kit` passes.
+- [ ] Add the Group Policy templates archive and the driver signing runbook to the release procedure: list `Recto-PolicyTemplates-<version>.zip` in the pre-release verification and `gh release create` asset list, and link `docs/driver-signing-runbook.md` from the Store and release steps. Done when: `docs/release-and-store-runbook.md` names both and `scripts/verify-release-kit.py` fails when either is missing.
 - [ ] Commit: `docs(release): add GitHub Release runbook, optional Store kit, and real-app release screenshots`
 
 **Test checkpoint:** `python scripts/verify-release-kit.py` exits `0` (confirming `docs/store-license-terms.txt` equals `LICENSE` byte-for-byte and all screenshots exist) and `python -m unittest tests.scripts.test_release_kit` passes.
@@ -243,9 +269,245 @@ Execute the complete v1 release candidate build, reference-machine performance v
   Done when: all 6 checkboxes in `docs/plans/2026-10-13-recto-foundation.md` section 10 are marked `[x]` with their evidence paths cited.
 - [ ] Run `python scripts/audit-dependencies.py --check --binaries-dir build/stage/x64` and `--binaries-dir build/stage/arm64` to verify the final staged release binaries contain zero undocumented DLL imports. Done when: both architecture checks exit `0`.
 - [ ] Run `python scripts/todo-graph.py validate`, `python scripts/todo-graph.py plan --check`, and `python -m unittest discover -s tests/scripts` to verify the entire repository tooling and TODO graph are green. Done when: all three commands exit `0`.
+- [ ] Verify the release bundle also contains `Recto-PolicyTemplates-<version>.zip` in `build/dist/SHA256SUMS.txt` and, when the driver signature gate of `D07 T01 §20` passes, that the Full installer carries the `Recto PDF` printer task (otherwise that it carries none). Done when: `Get-FileHash` on the archive matches `SHA256SUMS.txt` and `tests/scripts/verify_installer.ps1 -Mode Printer` agrees with the gate result.
 - [ ] Commit: `release: verify v1 distribution bundle and sign off foundation plan section 10 compliance checklist`
 
 **Test checkpoint:** the contents of `build/dist/SHA256SUMS.txt`, the 5-row `PASS` summary from `docs/perf/v1-release-candidate.md`, the output of `tests/scripts/verify_installer.ps1`, the output of `python scripts/audit-dependencies.py --check --binaries-dir build/stage/x64`, and the ticked section 10 checklist in `docs/plans/2026-10-13-recto-foundation.md` are quoted verbatim.
+
+## 8. Group Policy catalogue and templates: `policy/Recto.admx` and `Recto.adml`
+
+Foxit PDF Editor ships Group Policy templates so administrators can lock settings across a fleet; Acrobat Pro uses registry feature lockdown, and owner decision D21 gives Recto ADMX templates under `HKLM\Software\Policies\Recto` and `HKCU\Software\Policies\Recto`. This section defines the six policies, writes the templates and validates them. It adds no network use, no telemetry and no remote management: a policy is a registry value that Windows Group Policy, a management tool or an administrator writes, and Recto only reads it (§9).
+
+**Phase:** 6
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Write `docs/group-policy.md` with the catalogue below and author `policy/Recto.admx` and `policy/en-US/Recto.adml` to match it. Done when: `python scripts/check-admx.py` exits `0`.
+2. Add `tests/scripts/test_check_admx.py` proving the checker catches drift. Done when: `python -m unittest tests.scripts.test_check_admx` passes.
+
+- [ ] Write `docs/group-policy.md` with one row per policy: `AssistantDisabled` (DWORD, `1` turns the AI assistant off and locks its settings), `CloudDisabled` (DWORD, `1` turns Recto Cloud off), `CloudConnectorsDisabled` (DWORD, `1` turns the cloud storage connectors off), `UpdateNoticeDisabled` (DWORD, `1` turns the opt-in update notice off), `DefaultLayoutPreset` (string, `Focus`, `Classic` or `ReadingRoom`) and `DefaultSaveFolder` (expandable string, an absolute folder), each with scope (machine and user), effect, the setting it locks, and the behaviour for a malformed value. Done when: every policy name used in `src/` appears in the table and the table has no policy missing from the templates.
+- [ ] Author `policy/Recto.admx` with the category `Recto`, the six policies under `Software\Policies\Recto` for the machine and user classes, enumerated items for the layout preset and an expandable text element for the folder. Done when: `python scripts/check-admx.py` finds each policy's key, value name and class.
+- [ ] Author `policy/en-US/Recto.adml` with a display name, explanatory text and presentation for every policy, written plainly and stating what each policy locks. Done when: `check-admx.py` finds every `stringTable` reference resolved and no unused string.
+- [ ] Write `scripts/check-admx.py`, which parses both files as XML, checks namespaces and ids, that every policy in `docs/group-policy.md` exists with the same value name and type, and that no template names a value the table lacks. Done when: it exits `0` on the repository and exits `2` for a synthetic template with a missing string and one with an undocumented policy.
+- [ ] Add `tests/scripts/test_check_admx.py` covering the two synthetic failures and the live files. Done when: `python -m unittest tests.scripts.test_check_admx` passes.
+- [ ] Commit: `feat(policy): add Group Policy catalogue and ADMX and ADML templates (D21)`
+
+**Test checkpoint:** `python scripts/check-admx.py` exits `0` and `python -m unittest tests.scripts.test_check_admx` passes.
+
+## 9. `PolicyProvider`: read machine and user policy values, typed and bounded
+
+Recto needs one place that answers "is this policy set, and to what" (owner decision D21). This section implements `PolicyProvider` in `src/services/policy.h/.cpp`: it reads the six values from `HKLM\Software\Policies\Recto` and `HKCU\Software\Policies\Recto`, validates them, and notifies when they change. It reads only; it writes no registry value, so it adds no footprint in Portable mode, and it opens no network connection.
+
+**Phase:** 6
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `PolicyProvider` over injected root keys (`HKEY` values passed to the constructor, the real hives in production). Done when: `Policy.ReadsAllSixValues` passes against a scratch key.
+2. Add the change watcher. Done when: `Policy.LiveChange` observes a value change within `2 s`.
+
+- [ ] Implement `PolicyProvider::read_all()` returning a `PolicySnapshot` of `PolicyValue` entries (`id`, `state` of `NotSet`, `Set` or `Invalid`, typed value, `source` of `Machine` or `User`), reading with `RegGetValueW` and bounded buffers (strings at most `4096` characters). Done when: `Policy.ReadsAllSixValues` returns the expected typed values for a scratch key under `HKCU\Software\RectoTest`.
+- [ ] Apply precedence: a machine value wins over a user value, and both win over any user setting. Done when: `Policy.MachineBeatsUser` sets different values in both hives and gets the machine value.
+- [ ] Apply fail-closed rules for the four disable policies (any non-zero DWORD, or a value of the wrong type, means disabled) and ignore-with-`Invalid` rules for the two value policies (unknown preset, relative or empty folder). Done when: `Policy.MalformedValues` covers a string in a DWORD slot, `2` in a DWORD slot, a preset `Sepia` and a folder `..\x`.
+- [ ] Expand environment variables in `DefaultSaveFolder` with `ExpandEnvironmentStringsW` and reject the result unless it is an absolute path. Done when: `Policy.FolderExpansion` expands `%USERPROFILE%\Documents` and rejects `Documents`.
+- [ ] Implement the watcher with `RegNotifyChangeKeyValue` on both keys on a dedicated thread owned by `Runtime` (`D01 T02 §10`) and joined before shutdown, raising a change event on the settings thread, never the UI thread. Done when: `Policy.LiveChange` sees a change within `2 s` and `Policy.WatcherJoinsOnShutdown` finds no live thread after `Runtime` shuts down.
+- [ ] Add `PolicyProvider` to the static banned-API scan so it uses no network and writes no registry value. Done when: `SecurityAudit.PolicyProviderReadOnly` finds no `RegSetValue*`, `RegCreateKey*` or socket import in `src/services/policy.cpp`.
+- [ ] Commit: `feat(policy): add PolicyProvider reading machine and user policy values`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Policy.ReadsAllSixValues:Policy.MachineBeatsUser:Policy.MalformedValues:Policy.FolderExpansion:Policy.LiveChange:Policy.WatcherJoinsOnShutdown:SecurityAudit.PolicyProviderReadOnly` passes under ASan.
+
+## 10. `SettingsStore` policy precedence: locked settings and policy gates
+
+A policy only helps if every consumer sees it the same way. This section makes `SettingsStore` (`D02 T04 §2`) report whether a setting is locked by policy and return the policy value at read time, and gives features without a stored setting (the assistant, Recto Cloud, the connectors, the update notice) one gate to ask. A policy never writes `settings.json`, so removing a policy restores the user's own choice.
+
+**Phase:** 6
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add `SettingSource` and `SettingsStore::is_locked(key)` with policy-first reads. Done when: `Policy.SettingsPrecedence` passes.
+2. Add `PolicyGate::is_disabled(PolicyId)` and the lock registration API for other sections. Done when: `Policy.GateContract` passes with a stub feature.
+
+- [ ] Add `SettingSource` (`Default`, `User`, `Policy`) and `SettingsStore::source(key)`, `is_locked(key)` and `effective_value(key)` in `src/services/settings.h/.cpp`; reads return the policy value while a policy is set, and `set` on a locked key returns `SettingError::LockedByPolicy` without touching disk. Done when: `Policy.SettingsPrecedence` shows a user value of `Classic` with policy `Focus` reads `Focus`, `set` fails, and removing the policy returns `Classic`.
+- [ ] Register the two built-in locks: `DefaultLayoutPreset` locks `LayoutPreset`, and `DefaultSaveFolder` sets `SaveConvertedLocation` to `CustomFolder` and locks it and `CustomSaveConvertedFolder`. Done when: `Policy.BuiltInLocks` checks both mappings and that an invalid policy value leaves the setting unlocked.
+- [ ] Expose `register_policy_lock(setting_key, PolicyId, mapper)` and `PolicyGate::is_disabled(PolicyId)` so the assistant (`D08 T01`), Recto Cloud (`D09 T05`), the cloud connectors (`D02 T06`) and the update notice (`D07 T03 §7`) register their own locks or query the gate without reading the registry. Done when: `Policy.GateContract` registers a stub setting and a stub feature and sees both lock when the policy is set.
+- [ ] Raise the existing change notification when a policy appears, changes or goes away while the app runs. Done when: `Policy.LiveChange` shows a subscribed view model receives one notification per change.
+- [ ] Keep every persisted file unchanged by policy: assert `settings.json` bytes are identical before and after a policy is applied and removed. Done when: `Policy.SettingsFileUntouched` passes. Cheaper substitute: writing the policy value into the user's settings file, which survives after the policy is removed.
+- [ ] Commit: `feat(policy): apply policy precedence and locks in SettingsStore`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Policy.SettingsPrecedence:Policy.BuiltInLocks:Policy.GateContract:Policy.LiveChange:Policy.SettingsFileUntouched` passes under ASan.
+
+## 11. "Managed by your organization" notes on locked settings and `recto-cli policy show`
+
+A locked control that gives no reason looks broken. This section shows a lock note on every setting a policy controls, hides or disables the commands of a disabled feature with the reason, and gives administrators `recto-cli policy show` to see the effective policy. It follows the Settings page of `design/SPEC.md` section 9.7 and the Foxit PDF Editor behaviour of showing managed options as unavailable.
+
+**Phase:** 6
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` section 9.7 (Settings rows and helper text); the lock note is a genuinely new element that follows the helper text style.
+**Job:** A user opens Settings and sees which options their organisation controls and why they cannot change them; an administrator runs `recto-cli policy show --json` and sees every policy, its source and its state. Consumer: `SettingsStore` and `PolicyProvider`.
+**Treatment:** Disabled controls with an inline "Managed by your organization" note and a lock glyph (Segoe Fluent Icons ``), `Ctrl+K` commands disabled with a reason string, and a `policy show` verb. Cheaper substitute that fails the checkpoint: leaving locked controls enabled and ignoring the click, or hiding them with no explanation.
+**Chrome:** Stock WinUI controls, `RectoColors.xaml` tokens, helper-text style of section 9.7.
+
+**Build order:**
+
+1. Bind the lock state to the Settings rows of the layout, save-location and update notice settings and show the note. Done when: `Policy.SettingsRowsShowNote` finds the note on each locked row.
+2. Add the `Ctrl+K` command reasons and `recto-cli policy show`. Done when: `Policy.CommandsDisabledWithReason` and `Policy.CliShow` pass.
+
+- [ ] Add a `ManagedNote` element to the Settings row template in `src/app/views/SettingsPage.xaml`, visible when `SettingsStore::is_locked(key)`, with automation name "Managed by your organization" and the control disabled. Done when: `Policy.SettingsRowsShowNote` locks `LayoutPreset` through a scratch policy and finds the disabled control and the note. Cheaper substitute: a tooltip only.
+- [ ] Make the "Find a setting" filter (`D02 T04 §4`) keep locked rows searchable and mark them "Managed". Done when: `Policy.FindSettingIncludesManaged` finds a locked row by name.
+- [ ] Disable layout preset commands in `CommandRegistry` while `LayoutPreset` is locked and show the reason "Managed by your organization" in `Ctrl+K`. Done when: `Policy.CommandsDisabledWithReason` checks `Ctrl+K` shows the reason and the shortcut does nothing.
+- [ ] Implement `recto-cli policy show [--json]` printing each policy, its state, value, source hive and any invalid reason, exit code `0`. Done when: `Policy.CliShow` matches the documented JSON schema in `docs/group-policy.md` for set, unset and invalid values.
+- [ ] Give the lock note and glyph an automation name, tooltip and a keyboard path, and check light, dark and high contrast. Done when: `Policy.NoteAccessibility` passes and screenshots are committed under `docs/release-screenshots/`.
+- [ ] Commit: `feat(policy): show managed-by-organization notes and add recto-cli policy show`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Policy.SettingsRowsShowNote:Policy.FindSettingIncludesManaged:Policy.CommandsDisabledWithReason:Policy.CliShow:Policy.NoteAccessibility` passes on the display-session host.
+
+## 12. Policy templates release artifact and end-to-end Group Policy proof
+
+Administrators need the templates as a download and need proof that a real registry value changes real behaviour. This section packages `Recto-PolicyTemplates-<version>.zip`, adds it to the hash list, copies `policy/` into the Full install and Portable folders, and proves the whole path with `tests/scripts/verify_policy.ps1`. The proof reads and writes only test values under the policy keys and removes them in a `finally` block.
+
+**Phase:** 6
+**Needs:** windows-host, display-session
+**Surface:** no
+
+**Build order:**
+
+1. Extend `build/build-installer.ps1` to build the templates zip. Done when: `build/dist/Recto-PolicyTemplates-<version>.zip` exists and is in `SHA256SUMS.txt`.
+2. Write `tests/scripts/verify_policy.ps1`. Done when: it exits `0` and leaves no policy value behind.
+
+- [ ] Add the packaging step to `build/build-installer.ps1`: zip `policy/Recto.admx`, `policy/en-US/Recto.adml`, every shipped language folder and a `README.txt` explaining the copy to `%SystemRoot%\PolicyDefinitions` or the central store; copy `policy/` into the Full install and Portable stage folders. Done when: inspecting the zip with Python `zipfile` finds the files and `SHA256SUMS.txt` lists the archive.
+- [ ] Write `tests/scripts/verify_policy.ps1` that backs up and restores the policy keys, sets `AssistantDisabled`, `DefaultLayoutPreset` and `DefaultSaveFolder` in `HKCU\Software\Policies\Recto`, runs `recto-cli policy show --json`, and checks the values and states. Done when: the script exits `0` with a `[PASS]` line per policy.
+- [ ] Launch `Recto.exe` under the script with `DefaultLayoutPreset` set and assert the shell opens in that preset and the layout setting is locked, then change the value while the app runs and assert the shell reacts within `2 s`. Done when: `verify_policy.ps1` reports both `[PASS]` lines.
+- [ ] Run the same checks from a Portable folder and assert the run adds no key under `HKCU\Software\Classes\Recto.PDF` or the uninstall hive and writes nothing under `%LOCALAPPDATA%\Recto`. Done when: `verify_policy.ps1 -Portable` exits `0`.
+- [ ] Add the templates archive and the policy copy to `docs/release-and-store-runbook.md` (the pre-release commands and the `gh release create` asset list) and to `scripts/verify-release-kit.py`. Done when: `python scripts/verify-release-kit.py` fails when the archive is missing from the asset list.
+- [ ] Commit: `release: ship Group Policy templates and prove policy end to end`
+
+**Test checkpoint:** `pwsh -NoProfile -File tests/scripts/verify_policy.ps1` exits `0` with its `[PASS]` lines quoted and `python scripts/verify-release-kit.py` exits `0`.
+
+## 13. Translation catalogue: languages manifest, glossary, plural rules and the checker
+
+PDFelement, UPDF and Foxit PDF Editor ship translated interfaces, and `§5` made Recto ready for translation without choosing a language or a process. This section defines the process so anyone can add a language by editing files: a manifest of shipped languages, a glossary of terms that stay fixed, plural handling, and one checker that blocks a language that is incomplete or unreviewed. No cloud translation service is required and no string leaves the machine.
+
+**Phase:** 6
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add `src/app/Strings/languages.json`, `src/app/Strings/glossary.json` and `docs/translating.md`. Done when: `python scripts/check-translations.py` exits `0` with only `en-US` listed.
+2. Add plural rules and the checker tests. Done when: `Localization.PluralRules` and `python -m unittest tests.scripts.test_translations` pass.
+
+- [ ] Define the `languages.json` schema: `tag` (BCP 47), `native_name`, `direction` (`ltr` or `rtl`), `status` (`draft` or `reviewed`), `reviewer` and `reviewed_on`. Only `reviewed` languages are built into `resources.pri`, offered in Settings and installed. Done when: `check-translations.py` rejects a `reviewed` entry with no reviewer or date.
+- [ ] Define `glossary.json` (terms that stay in English or have a fixed translation, such as `Recto`, `PDF/A`, `OCR`, `Ctrl+K`) and have the checker flag a translated value that drops or alters a fixed term. Done when: a test fixture with `PDF/A` translated is reported.
+- [ ] Write `scripts/check-translations.py`: for every language folder `src/app/Strings/<tag>/Resources.resw`, the key set equals `en-US`, no value is empty, `{0}` and `%s` style placeholders match in count and order, plural groups are complete for the language's categories, and values identical to English are reported unless listed in the glossary. Done when: `tests/scripts/test_translations.py` injects each defect and the checker exits `2` for each.
+- [ ] Add `src/core/plural_rules.h/.cpp` selecting a plural category from a language and a number for the first language set, with rules taken from the CLDR plural rules for the pinned CLDR release recorded in `docs/translating.md`, and plural keys written as `Key_one`, `Key_few`, `Key_many` and `Key_other` in `Resources.resw`. Done when: `Localization.PluralRules` passes the sample numbers per category, including Russian `1`, `2`, `5`, `21` and `0`.
+- [ ] Write `docs/translating.md`: how to add a language by copying `en-US`, the review rule, the glossary, how to test with `--language <tag>`, and that no translation is accepted without a named reviewer. Done when: the steps are followed in a scratch checkout to add a `draft` language that the checker accepts and the build ignores.
+- [ ] Commit: `feat(i18n): add the translation catalogue, plural rules and checker`
+
+**Test checkpoint:** `python scripts/check-translations.py` exits `0`, `python -m unittest tests.scripts.test_translations` passes and `recto-tests.exe --gtest_filter=Localization.PluralRules` passes.
+
+## 14. Interface language setting: Follow Windows or a shipped language
+
+A user who works in a language other than Windows' must be able to choose Recto's language, as in PDFelement, UPDF and Foxit PDF Editor. This section adds the setting and its Settings row. The language is applied on the next start with a restart prompt, which is the reliable behaviour for a WinUI 3 app; the cost of changing to live switching is a rebuild of every `x:Uid` binding on language change. `recto-cli` keeps English, stable output for scripts.
+
+**Phase:** 6
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` section 9.7 (Settings rows, `Default & About` group).
+**Job:** A user picks German in Settings, restarts, and sees every menu, dialog and error in German; picking `Follow Windows` returns to the system language. Consumer: the resource loader at startup.
+**Treatment:** `SettingsStore` key `UiLanguage` (`FollowWindows` default or a shipped tag), a `ComboBox` of native language names, the language applied before the first window through `Microsoft.Windows.Globalization.ApplicationLanguages.PrimaryLanguageOverride`, and a restart prompt. Cheaper substitute that fails the checkpoint: a setting that is saved but not applied, or a list that shows languages the build does not contain.
+**Chrome:** Stock `ComboBox` and `InfoBar`, `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Add `UiLanguage` and apply it at startup. Done when: `Localization.LanguageOverrideAppliesOnLaunch` starts with a draft test language and reads its string.
+2. Add the Settings row and the restart prompt. Done when: `Localization.SettingsRow` passes.
+
+- [ ] Add `UiLanguage` to `src/services/settings.h/.cpp` with validation against the shipped list from `languages.json`, and apply it in `App.xaml.cpp` before the first XAML is loaded. Done when: `Localization.LanguageOverrideAppliesOnLaunch` shows the German test string after launch with `de-DE` and English after `FollowWindows` on an English system.
+- [ ] Add the `Language` row to the Settings page with native names, "Follow Windows" first, and an `InfoBar` with `Restart now` and `Later` after a change. Done when: `Localization.SettingsRow` changes the value, sees the prompt, and `Restart now` relaunches into the language. Cheaper substitute: asking the user to restart manually with no prompt.
+- [ ] Store the choice in `<exe-dir>\data\settings.json` in Portable mode like every setting. Done when: `Localization.PortableLanguageStaysInData` finds no write under `%LOCALAPPDATA%`.
+- [ ] Register `settings.language` in `CommandRegistry` so `Ctrl+K` finds "Language". Done when: `Localization.CommandReachable` passes.
+- [ ] Add an automation name and tooltip, then check the keyboard path. Done when: `Localization.SettingsRowAccessibility` passes.
+- [ ] Commit: `feat(i18n): add the interface language setting with restart prompt`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Localization.LanguageOverrideAppliesOnLaunch:Localization.SettingsRow:Localization.PortableLanguageStaysInData:Localization.CommandReachable:Localization.SettingsRowAccessibility` passes on the display-session host.
+
+## 15. Localised errors, plurals, dates and numbers: no English assembled in code
+
+A translated menu is not enough if an error says "Could not open file" in English or a count reads "1 pages". This section makes every engine error message, plural and formatted value come from resources and the system locale, and extends the literal scanner of `§5` to catch assembled English.
+
+**Phase:** 6
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Map every error code to a resource key. Done when: `Localization.EveryErrorCodeHasMessage` passes.
+2. Replace assembled strings with plural keys and locale formatting. Done when: `Localization.PluralsAndFormats` passes.
+
+- [ ] Add a `Error_<Code>` key to `Resources.resw` for every `PdfErrorCode` and services error code, and a function that maps a typed error to its localised message, keeping the English technical text for the diagnostic copy. Done when: `Localization.EveryErrorCodeHasMessage` iterates the error enums and fails when one lacks a key.
+- [ ] Move every count-dependent string (pages, matches, files, results) to plural groups selected with `plural_rules` (`§13`). Done when: `Localization.PluralsAndFormats` renders `1` and `2` for English and `1`, `2` and `5` for Russian test data.
+- [ ] Format dates, times, file sizes and numbers with `Windows.Globalization.DateTimeFormatting.DateTimeFormatter` and `Windows.Globalization.NumberFormatting` using the interface language, not hand-built strings. Done when: `Localization.PluralsAndFormats` formats a date and `1234567.5` under `en-US` and `de-DE` with the expected separators.
+- [ ] Extend `scripts/check-unresourced-strings.py` to report prose literals of two or more words passed to UI setters, `std::format` and string concatenation in `src/app`. Done when: its test injects `L"Opened " + name` and the checker reports the line.
+- [ ] Commit: `feat(i18n): localise error messages, plurals, dates and numbers`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Localization.EveryErrorCodeHasMessage:Localization.PluralsAndFormats` passes and `python -m unittest tests.scripts.test_unresourced_strings` passes.
+
+## 16. Right-to-left readiness: flow direction, mirrored icons and a mirrored pseudolocale
+
+Arabic and Hebrew users are part of the Windows install base and the same apps that translate to them mirror the interface. No right-to-left language is in the first set (§17), but the interface must be ready so adding one is a translation task and not a layout rewrite. This section keeps the page canvas left to right (PDF page coordinates are not mirrored) and mirrors only the interface.
+
+**Phase:** 6
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` sections 6 through 9; layouts mirror about the vertical axis while the document canvas does not.
+**Job:** With a right-to-left language selected, panels, toolbars and dialogs mirror and directional icons flip, while the page keeps reading left to right. Consumer: translators and users of right-to-left Windows.
+**Treatment:** Root `FlowDirection` from `languages.json`, `FlowDirection=LeftToRight` on the page canvas and thumbnails, `FontIcon.MirroredWhenRightToLeft` on directional glyphs, and a mirrored pseudolocale generated beside `qps-ploc`. Cheaper substitute that fails the checkpoint: mirroring the whole window including the PDF page.
+**Chrome:** Stock WinUI flow direction behaviour, `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Add the flow direction plumbing and the mirrored pseudolocale. Done when: `Localization.RtlFlowDirection` passes.
+2. Check layouts. Done when: `Localization.RtlSurfaceLayout` passes with screenshots.
+
+- [ ] Set the root `FlowDirection` at startup from the selected language's `direction` and pin the document canvas, page thumbnails and page number box to `LeftToRight`. Done when: `Localization.RtlFlowDirection` finds the shell right to left and the canvas left to right.
+- [ ] Set `MirroredWhenRightToLeft` on back, forward, previous, next and panel toggle glyphs only, not on glyphs that carry meaning independent of reading direction (search, print, zoom). Done when: `Localization.RtlIconAudit` lists each directional glyph and finds the flag only on those.
+- [ ] Extend `scripts/generate-pseudolocale.py` to emit a mirrored pseudolocale and check it with `--check`. Done when: the generated resource has the same keys and the script exits `0`.
+- [ ] Run the `Localization.PseudolocaleSurfaceLayoutSurvival` checks of `§5` under the mirrored pseudolocale and capture `Settings` and `Convert` screenshots. Done when: `Localization.RtlSurfaceLayout` finds no overlapping controls.
+- [ ] Commit: `feat(i18n): add right-to-left readiness and a mirrored pseudolocale`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Localization.RtlFlowDirection:Localization.RtlIconAudit:Localization.RtlSurfaceLayout` passes on the display-session host.
+
+## 17. First shipped language set: ten reviewed translations and installer languages
+
+PDFelement, UPDF and Foxit PDF Editor ship many interface languages, and Recto needs a first set chosen on a stated basis. Default (a decision, with its cost of changing): the ten languages with the largest Windows install bases that Windows and Inno Setup both support well, `zh-Hans`, `es-ES`, `pt-BR`, `ru-RU`, `de-DE`, `fr-FR`, `ja-JP`, `it-IT`, `ko-KR` and `tr-TR`. Changing the set costs one folder and one `languages.json` entry per language plus a review; a second set (including `ar-SA` and `he-IL` for §16, `hi-IN`, `pl-PL`, `nl-NL`, `id-ID`, `uk-UA`, `vi-VN`) follows the same steps. This section needs native-speaker reviewers (`third-party`) and ships only languages that pass the checker with a named reviewer.
+
+**Phase:** 6
+**Needs:** third-party
+**Surface:** no
+
+**Build order:**
+
+1. Translate and review the ten `Resources.resw` files and record them in `languages.json`. Done when: `python scripts/check-translations.py` exits `0` with ten `reviewed` entries.
+2. Add the installer languages and the layout test for every language. Done when: `python -m unittest tests.scripts.test_installer_script` and `Localization.AllShippedLanguagesLayout` pass.
+
+- [ ] Create `src/app/Strings/<tag>/Resources.resw` for each of the ten tags from `en-US` using the glossary, and record a named native-speaker reviewer and review date for each in `languages.json`. Done when: `check-translations.py` exits `0` and every entry is `reviewed`. Cheaper substitute: an unreviewed machine translation listed as shipped.
+- [ ] Add the language list to the `resources.pri` build so only `reviewed` languages are included, and make the Settings list (`§14`) read the same file. Done when: `Localization.ShippedListMatchesPri` compares the Settings list and the packaged languages.
+- [ ] Add a `[Languages]` entry for each language in `installer/recto.iss` using the `.isl` files that ship with Inno Setup 7, vendoring any missing file under `installer/languages/` with its licence recorded in `NOTICE.md`, set `ShowLanguageDialog=auto`, and add `[CustomMessages]` for the Installation Mode page and the printer task in each language. Done when: `ISCC.exe` compiles with zero warnings and `tests/scripts/test_installer_script.py` finds every language has the custom messages.
+- [ ] Translate `policy/<tag>/Recto.adml` for the ten languages and include them in the templates archive (`§12`). Done when: `check-admx.py` finds a resolved string table for each tag.
+- [ ] Add `Localization.AllShippedLanguagesLayout` running the surface layout survival check of `§5` for the `Home`, `Settings`, `Convert` and `About` pages in every shipped language at `1280 x 800`. Done when: it finds no clipped or overlapping control.
+- [ ] Record in `docs/store-listing.md` that the first Store listing is English only and that the listing languages follow the shipped set later. Done when: `scripts/verify-release-kit.py` finds the sentence.
+- [ ] Commit: `feat(i18n): ship ten reviewed interface languages and installer languages`
+
+**Test checkpoint:** `python scripts/check-translations.py` exits `0`, `python -m unittest tests.scripts.test_installer_script` passes and `recto-tests.exe --gtest_filter=Localization.ShippedListMatchesPri:Localization.AllShippedLanguagesLayout` passes.
 
 ## Verification
 

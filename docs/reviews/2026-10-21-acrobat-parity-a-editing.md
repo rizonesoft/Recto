@@ -113,3 +113,38 @@ All 5 findings were accepted and fixed in the next commit:
 3. D03 T03 §12, §14: `DropReferences` also clears a catalog `/OpenAction` naming the deleted destination.
 4. D03 T04 §10: one method: compose into `cm` for similarity transforms or unstroked paths, rewrite into page space only for a non-uniform or skewed transform on a stroked path; tests distinguish the branches.
 5. D03 T04 §2, §5: logical text comes from `/ActualText` or content-stream order, UAX #9 is applied forward and accepted only when it reproduces the drawn positions; mixed-direction runs with positions as the only evidence are refused.
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T01:05:11Z
+- Effort: medium
+- Lines: 19
+- Digest: aac448efe919e39f
+
+Review is limited to the supplied diff. Local reads repeatedly failed with `helper_unknown_error`; the governing files and earlier fixes outside this diff remain unverified. No files were modified and git was not run.
+
+**record: needs-attention**
+
+Round 1 #1 and #2 remain partially unresolved for the cases below. The supplied diff does not establish closure of all 15 original findings, particularly those in the omitted accessibility file.
+
+**source-defect: needs-attention**
+
+1. **T04 §2: the forward check still conflates character order with shaped glyph order.** Applying UAX #9 does not supply the glyph positions needed by the acceptance check. For example, Devanagari `कि` has logical order consonant then vowel sign, but the vowel sign appears to the left. Arabic ligatures also prevent a one-character-to-one-position comparison. An implementation can pass the named Arabic fixtures while rejecting valid Indic `/ActualText` or accepting incorrectly ordered text. Specify shaping, character-to-glyph cluster mapping, and comparison against the original glyph placement before declaring the paragraph editable. Add independently specified Indic and Arabic ligature fixtures. This leaves the ordering-and-shaping contract requested in Round 1 #1 incomplete. [Unicode UAX #9, shaping and line breaking](https://www.unicode.org/reports/tr9/#Shaping).
+
+**consistency: needs-attention**
+
+2. **T04 §10: page-space normalization drops only the object’s own `cm`, leaving inherited transforms active.** Consider a stroked rectangle inside a Form invoked beneath `2 0 0 1 0 0 cm`, with no local `cm`. Rewriting its coordinates into page space and setting `w = 2` still subjects both to the inherited transform: geometry is transformed again and stroke width remains direction-dependent. Likewise, selecting the matrix branch from the requested rotation alone misses an already non-uniform effective transform. Define the branch using the complete effective transform, including enclosing forms, and define how normalized coordinates are emitted under a matching graphics state without changing siblings or clipping. Round 1 #2’s width guarantee remains incomplete.
+
+**adversarial: needs-attention**
+
+The proposed checkpoints can pass with both defects present: `ParagraphModel.BidiEvidence` requires no Indic or ligature case, and `VectorEdit.TransformNormalize` requires no inherited-transform case. Add those fixtures with independent expected text, page geometry and stroke widths.
+
+OVERALL: needs-attention
+
+## Response to round 3
+
+Both findings were accepted and fixed in the next commit. This was the last allowed round:
+
+1. D03 T04 §2: candidates are checked by shaping with the run's embedded font (DirectWrite, UAX #9 levels, shaper clusters) against the drawn glyph ids and positions within 0.05 pt; a font without layout tables, or a run that cannot be shaped, is refused as `NotEditable("cannot verify order")`. The test adds an Arabic lam-alef ligature, Devanagari `कि` and a font without layout tables.
+2. D03 T04 §10: the branch is chosen from the complete effective transform (own `cm`, enclosing `cm` and Form `/Matrix`) times the requested transform; normalization emits `q <inverse of inherited> cm ... Q` so geometry and `w` are in page space; a singular inherited transform is refused. The test adds a stroked rectangle in a Form under `2 0 0 1 0 0 cm` and an already non-uniform page.

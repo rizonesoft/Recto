@@ -28,6 +28,13 @@ track: M2
 - -> XREF: D02 T05 §4 -- rich media references (D02 T05 §4) use this ask-first path.
 - -> XREF: D02 T05 §8 -- the 3D view (D02 T05 §8) shares this device and thread.
 - -> XREF: D03 T03 §13 -- links authored with the Link tool (D03 T03 §13) activate here.
+- -> XREF: D02 T04 §5 -- tint and reading settings.
+- -> XREF: D03 T03 §18 -- ViewSnapProvider.
+- -> XREF: D03 T04 §13 -- ViewSnapProvider.
+- -> XREF: D01 T02 §11 -- line-weight option joins the tile identity.
+- -> XREF: D01 T02 §11 -- TileTextureCache keys by the full TileKey.
+- -> XREF: D01 T02 §12 -- page transition parser and duration accessor.
+- -> XREF: D01 T02 §12 -- transitions read through the actor query.
 
 ## Outcome
 
@@ -35,6 +42,7 @@ track: M2
 - Continuous, Single-Page, and Two-Page Spread (lone cover, then side-by-side pairs) layouts all work over one shared `PageLayoutGeometry` model with `0°`, `90°`, `180°`, and `270°` rotation.
 - The SPEC 8.2 Floating Page Toolbar drives page navigation, zoom, rotation, tools, conversion, and the More menu, auto-fading to `40%` opacity after 3 seconds of idle reading (unless OS animations are disabled).
 - Internal links navigate with back-history, external links prompt via the SPEC 9.9 `"Open this link?"` dialog, launch/script actions never execute, dark-theme page colour modes (`Original`, `Dimmed`, `Inverted`) composite on the GPU without re-rendering tiles, and `F11` Full Screen mode reveals chrome on screen-edge hover.
+- Reading tints (sepia, eye-care green, custom), a presentation mode with page transitions, pen, laser, presenter view and slide navigator, hands-free auto-scroll, reverse page order, rulers, grid and guides, a line weights toggle, split view of one document and side-by-side view of two documents are planned in §11 to §24, all screen-only and none changing the file.
 
 **Adjacency:** list=not-applicable (finding pages is the thumbnail and outline panels, D02 T03 §4 and §5); document=applicable @ D07 T01 §1; settings=applicable @ D02 T04 §5; reporting=not-applicable (no reports over viewing state); notifications=not-applicable (viewing produces no lifecycle notices); permissions=applicable @ D02 T02 §9; audit=not-applicable (reading position is session state, D02 T03 §1); exchange=not-applicable (copy and share are D03 T01 §3); reverse=not-applicable (view changes are stateless; nothing is created)
 
@@ -54,6 +62,20 @@ track: M2
 | 8 | §8 | Floating Page Toolbar (`Focus`) and reading auto-fade behavior | §6, §7, D02 T01 §9 | [ ] |
 | 9 | §9 | Link hit-testing, internal navigation, `"Open this link?"` prompt and launch refusal | §5, §6, D02 T01 §10 | [ ] |
 | 10 | §10 | Dark-theme page colour modes (`Original`, `Dimmed`, `Inverted`) and `F11` Full Screen | §4, §8 | [ ] |
+| 11 | §11 | Reading tints: sepia, eye-care green and a custom page colour | §10, D02 T04 §5, D02 T03 §11 | [ ] |
+| 12 | §12 | `recto-pdf` page transitions and timings: `/Trans` and `/Dur` | D01 T01 §10, D00 T03 §3 | [ ] |
+| 13 | §13 | Presentation mode: full-screen slideshow, navigation and blank screen | §6, §9, §10, §12, D02 T03 §11 | [ ] |
+| 14 | §14 | Render page transitions and honour automatic page timing | §12, §13, D02 T04 §5, D01 T02 §12 | [ ] |
+| 15 | §15 | Presentation pen and laser pointer | §13 | [ ] |
+| 16 | §16 | Presenter view on a second display with page preview and timer | §3, §13, D02 T04 §5 | [ ] |
+| 17 | §17 | Slide navigator: jump to any page during a presentation | §3, §13, §16 | [ ] |
+| 18 | §18 | Hands-free auto-scroll with speed control | §2, §6, D02 T03 §11, D02 T04 §5 | [ ] |
+| 19 | §19 | Reverse page order view and right-to-left spreads | §5, §6, D02 T03 §1 | [ ] |
+| 20 | §20 | Rulers and cursor coordinates in chosen units | §5, §7, D02 T01 §4, D02 T03 §11 | [ ] |
+| 21 | §21 | Grid, guides and the view snap provider | §20, D02 T03 §1 | [ ] |
+| 22 | §22 | Line weights view toggle: true widths or uniform thin lines | §3, D02 T03 §7, D01 T02 §6, D01 T02 §11 | [ ] |
+| 23 | §23 | Split view: two panes of one document with independent scroll and zoom | §6, §7, D02 T04 §6, D02 T01 §13 | [ ] |
+| 24 | §24 | Side-by-side view of two documents with synchronized scrolling | §6, D02 T01 §3, D02 T01 §13 | [ ] |
 
 ## 1. `SwapChainPanel`, Direct3D 11 / Direct2D 1.3 device creation and presentation thread
 
@@ -340,14 +362,380 @@ Implement SPEC section 4's dark-theme page colour compositing modes (`Original`,
 - [ ] Add `8 epx` top-edge and bottom-edge pointer proximity detection in Full Screen mode to reveal `TitleBarSlot` and `PageToolbar` on hover and hide them again when the pointer moves back onto the page canvas. Done when: moving the cursor to `Y <= 8` in Full Screen reveals the title bar and tabs.
 - [ ] Exit Full Screen mode on `F11` or `Esc` (when no modal dialog, Command Box, Find card, or contextual mode bar is open), restoring the prior `OverlappedPresenter` window bounds and slot visibility. Done when: pressing `Esc` in Full Screen with no open popups exits Full Screen cleanly.
 - [ ] Add `View.PageColorModesAndFullScreen` test in `tests/recto-tests/` asserting zero tile re-renders across `Original` / `Dimmed` / `Inverted` switches, `#D9D5CE` dimmed paper sampling, un-inverted image preservation in `Inverted` mode, and `F11` / edge-hover / `Esc` Full Screen transitions. Done when: `recto-tests.exe --gtest_filter=View.PageColorModesAndFullScreen` passes.
-- [ ] Keep `Dimmed` and `Inverted` screen-only: printing (`D07 T01 §2`), export and saved files ignore `PageColorMode`, and highlight, underline and ink annotations keep at least 4.5:1 contrast against the text beneath them (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`, pdfcraft #1548, #1519). Done when: `View.PageColorModesAndFullScreen` measures the contrast on a highlighted fixture in both modes and a print-to-PDF of the same page is byte-identical to `Original`.
-- [ ] Paint page placeholders in the active mode's paper colour from the first frame, so switching pages in a dark mode never flashes white (pdfcraft #2059, #2841). Done when: `View.PageColorModesAndFullScreen` captures 100 rapid page flips in `Inverted` with zero white frames.
+- [ ] Keep `Dimmed` and `Inverted` screen-only: printing (`D07 T01 §2`), export and saved files ignore `PageColorMode`, and highlight, underline and ink annotations keep at least 4.5:1 contrast against the text beneath them. Done when: `View.PageColorModesAndFullScreen` measures the contrast on a highlighted fixture in both modes and a print-to-PDF of the same page is byte-identical to `Original`.
+- [ ] Paint page placeholders in the active mode's paper colour from the first frame, so switching pages in a dark mode never flashes white. Done when: `View.PageColorModesAndFullScreen` captures 100 rapid page flips in `Inverted` with zero white frames.
 - [ ] Commit: `viewer: add GPU Dimmed/Inverted dark page colour modes and F11 Full Screen`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=View.PageColorModesAndFullScreen` passes on the display-session host, `Dimmed` page matches `D-Focus-Dark.png`, `Inverted` leaves corpus images un-inverted, and `F11` Full Screen edge-reveal and `Esc` restore work end to end.
+
+## 11. Reading tints: sepia, eye-care green and a custom page colour
+
+UPDF's and PDFelement's page background colours (sepia, eye-care green, custom) match a need Acrobat Pro only meets through its accessibility colour override. §10 gives dark-theme `Dimmed` and `Inverted`; this section adds three light-theme tints that work in any app theme. A tint is composited on the GPU over cached tiles, so switching re-renders nothing, and it is screen only: printing, export and saved files ignore it. Colours come from tokens; the custom colour is the user's own value, stored in settings, never a hex literal in a control.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` sections 4 (colour tokens, pages in dark theme) and 9.7 (Reading group) with `design/screenshots/D-Focus-Light.png` for the unchanged chrome.
+**Job:** A user who reads for hours picks a warmer or greener paper and keeps it across documents. Consumer: `PresentationRenderer` (§1), `PageToolbar` (§8), `ShellMenuBar` (`D02 T01 §9`), `SettingsPage` (`D02 T04 §5`).
+**Treatment:** GPU colour-matrix scale over cached tiles. Cheaper substitute that fails the checkpoint: re-rendering tiles with a new background, or hard-coding hex values in XAML.
+**Chrome:** `RectoColors.xaml` tokens, stock `RadioMenuFlyoutItem` and `ColorPicker`.
+
+**Build order:**
+
+1. Add the tokens `RectoPageSepiaBrush` (paper `#F4ECD8`) and `RectoPageEyeCareBrush` (paper `#CCE8CF`) to the Light, Dark and HighContrast dictionaries of `design/tokens/RectoColors.xaml` and `design/tokens/colors.json`, and a row for each in `design/SPEC.md` section 4; in HighContrast both resolve to the system window colour so a tint never overrides the user's contrast theme. Done when: `App.Current.Resources` resolves both keys in every theme and the HighContrast value equals `SystemColorWindowColor`.
+2. Add `PageTint` (`None`, `Sepia`, `EyeCare`, `Custom`; default `None`) and `CustomPageColor` (ARGB, default `#FFF4ECD8` as stored user data) to `RectoSettings`, and implement the tint in `PresentationRenderer` as a Direct2D colour-matrix scale that maps white paper to the tint colour after `Original` or `Dimmed`, and is ignored while `Inverted` is active. Done when: switching `None` to `Sepia` to `Custom` sends 0 requests to `TileScheduler` and samples paper at the token colour, then at the stored custom colour.
+
+- [ ] Show `Page tint` as a radio group under `View -> Page Colour` (`D02 T01 §9`), in the `PageToolbar` `More -> Page colour` flyout (`D02 T02 §8`) and as a row in the Reading group of Settings (`D02 T04 §5`), all bound to one `PageTint` value. Done when: the three surfaces stay in sync.
+- [ ] Offer a `ColorPicker` flyout for `Custom` that shows the contrast ratio of black text on the chosen colour and a warning chip below 4.5:1 (icon plus text, never colour alone). Done when: choosing `#FF202020` shows the warning and choosing `#FFF4ECD8` does not.
+- [ ] Register `Page tint: None`, `Sepia`, `Eye care` and `Custom colour...` in `CommandRegistry` (`D02 T03 §11`). Done when: all four are found by `Ctrl+K`.
+- [ ] Keep printing, `recto-cli render` output and saved PDFs free of the tint. Done when: a print-to-PDF of a tinted page is byte-identical to the untinted one.
+- [ ] Add `View.ReadingTints` in `tests/recto-tests/` covering token resolution, zero re-renders, custom colour persistence, `Inverted` precedence and HighContrast. Done when: `recto-tests.exe --gtest_filter=View.ReadingTints` passes. Cheaper substitute: re-rasterizing tiles on the CPU or painting a coloured rectangle behind transparent pages.
+- [ ] Commit: `viewer: add sepia, eye-care and custom reading tints`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=View.ReadingTints` passes on the display-session host and a sepia screenshot shows paper at `#F4ECD8`.
+
+## 12. `recto-pdf` page transitions and timings: `/Trans` and `/Dur`
+
+PDFelement and UPDF play slide-style PDFs with their page transitions; Acrobat Pro does too. The engine must read the data safely before any surface draws it. This section parses a page's `/Trans` dictionary (ISO 32000-1 section 12.4.4 and its transition dictionary: `/S` style, `/D` duration, `/Dm`, `/M`, `/Di`, `/SS`, `/B`) and the page `/Dur` auto-advance time into a plain value type, and reads the catalog `/PageMode /FullScreen` hint. It never runs an action; unknown or hostile values degrade to a cut.
+
+**Phase:** 2
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `src/pdf/page_transition.h/.cpp` with `PageTransition { style, duration_s, dimension, motion, direction_deg, scale, base_opaque }` `Document::page_transition(page_index) -> PdfResult<std::optional<PageTransition>>` and `Document::page_duration(page_index) -> PdfResult<std::optional<double>>` for the page's `/Dur` display time, covering the styles `Split`, `Blinds`, `Box`, `Wipe`, `Dissolve`, `Glitter`, `R`, `Fly`, `Push`, `Cover`, `Uncover` and `Fade`; map any other `/S` name to `R` and record one diagnostics line. Done when: a fixture page per style returns the matching enum and an unknown name returns `R`.
+2. Clamp `/D` to 0 to 60 s (default 1 s), `/Di` to the allowed set (`0`, `90`, `180`, `270`, `315`, `None`), `/SS` to 0.1 to 10, and `/Dur` to 0 to 3600 s; reject non-numeric values as defaults; read `/PageMode` into the `DocumentDescription` extension as `opens_full_screen`. Done when: a hostile fixture with `/D -5`, `/D 1e9`, `/Di 77` and a nested `/Trans` array parses without a throw and with clamped values.
+
+- [ ] Confirm `DocumentActor::get_page_transition(page_index)` from `D01 T02 §12` returns this section's `PageTransition` and `page_duration` values unchanged. Done when: the call returns both values for a fixture page on the actor thread.
+- [ ] Add `tests/corpus/transitions.pdf` (12 pages, one per style, with `/Dur` on pages 2 and 3) to `scripts/build-corpus.py` and a `tests/corpus/PROVENANCE.md` row. Done when: `python scripts/build-corpus.py --check` regenerates it byte for byte.
+- [ ] Add the hostile fixture and a libFuzzer seed so `fuzz_open` reaches the parser. Done when: `fuzz_open` runs 60 s with the seed and no crash.
+- [ ] Add `PdfTransition.Parse`, `PdfTransition.ClampsHostileValues` and `PdfTransition.NoActionRuns` under ASan. Done when: `recto-tests.exe --gtest_filter=PdfTransition.*` passes. Cheaper substitute: reading transitions with a regex over raw page bytes.
+- [ ] Commit: `pdf: parse page transitions, timings and the full-screen page mode`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfTransition.*` passes under ASan and the 60 s `fuzz_open` run is clean.
+
+## 13. Presentation mode: full-screen slideshow, navigation and blank screen
+
+UPDF's Presentation mode and Foxit's slide show view show one page at a time, edge to edge on a black backdrop with no chrome; Acrobat Pro has Full Screen mode. It differs from `F11` (§10), which keeps the reading layout. Recto keeps its rules: no script, no action runs, link clicks still ask first (§9), and entering is the user's choice. A document whose catalog asks for full screen gets one question, never an automatic switch.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 4 tokens, section 10 keys and the F11 behaviour of §10 here.
+**Job:** A user presents a PDF edge to edge and drives it from the keyboard. Consumer: `DocumentView` (§6, §10), `CommandRegistry` (`D02 T03 §11`), `PresentationRenderer` (§1).
+**Treatment:** One controller over the existing `SinglePage` layout and `AppWindow` full-screen presenter. Cheaper substitute that fails the checkpoint: a second renderer or window class for slideshows, or auto-entering full screen from the document.
+**Chrome:** `RectoPresentationBackdropBrush`, `RectoDialogStyles.xaml` (`D02 T01 §10`).
+
+**Build order:**
+
+1. Add `PresentationController` (`src/app/PresentationController.h/.cpp`): `F5` starts from the current page, `Ctrl+K` offers `Start presentation from first page`; it saves the tab's layout, zoom and slots, switches `AppWindow` to `FullScreen`, selects `SinglePage` with fit-page, paints the new token `RectoPresentationBackdropBrush` (black in every theme, added to `RectoColors.xaml` and SPEC section 4), and restores everything on exit. Done when: entering then leaving restores the previous layout, zoom, page and slot visibility exactly.
+2. Handle keys while presenting: `Right`, `Down`, `PageDown`, `Space`, `Enter` and wheel-down next; `Left`, `Up`, `PageUp`, `Backspace` and wheel-up previous; `Home` and `End`; digits then `Enter` jump to a page; `B` and `W` toggle a black or white screen; `Esc` exits; a left click on a non-link area advances; hide the cursor after 3 s idle and show it on movement. Done when: a scripted key run lands on the expected page for every binding and the cursor hides after 3 s.
+
+- [ ] If `opens_full_screen` (§12) is true show one `ContentDialog` `This document asks to open full screen` with `Allow` and `Not now`, remembered for the session only. Done when: opening the fixture never switches to full screen without a click.
+- [ ] Keep links working through §9's `Open this link?` prompt and never execute launch or script actions. Done when: `Security.ActionRefusal` still passes in presentation mode.
+- [ ] Exit on `Esc` only when no dialog or card is open, on window deactivation never (the user may alt-tab), and when the document closes. Done when: alt-tab away and back keeps presenting.
+- [ ] Register `Start presentation`, `Start presentation from first page` and `Exit presentation` in `CommandRegistry` (`D02 T03 §11`) and the `View` menu (`D02 T01 §9`). Done when: all are reachable from `Ctrl+K`.
+- [ ] Add `View.PresentationModeNavigation` covering entry and exit state, every key binding, blank and white screens, cursor hiding and the full-screen question. Done when: `recto-tests.exe --gtest_filter=View.PresentationModeNavigation` passes. Cheaper substitute: reusing `F11` and hiding the toolbar only.
+- [ ] Commit: `viewer: add presentation mode with slideshow navigation`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=View.PresentationModeNavigation` passes on the display-session host.
+
+## 14. Render page transitions and honour automatic page timing
+
+PDFelement and UPDF play the transition a PDF page declares; Acrobat Pro does too. §12 reads `/Trans` and `/Dur`; this section draws the transition between two cached page textures on the presentation thread and optionally advances by `/Dur`. Windows animation settings win: when animations are off every transition is a cut. Page timing is off by default because a PDF that moves on by itself can skip content the reader has not read.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 12 (motion, reduced-motion rule) and §13 here.
+**Job:** A user who opens a slide-style PDF sees its transitions, unless Windows animations are off, and can let its timings drive the show. Consumer: `PresentationController` (§13), `PageTransition` (§12).
+**Treatment:** Direct2D effects on the presentation thread between two textures already in `TileTextureCache`. Cheaper substitute that fails the checkpoint: ignoring `/Trans`, or animating when Windows reduced motion is on.
+**Chrome:** `RectoPresentationBackdropBrush`; no new chrome.
+
+**Build order:**
+
+1. In `PresentationRenderer` add `draw_transition(from_texture, to_texture, PageTransition, t)` for `Fade` and `Dissolve` (cross-fade), `Wipe` (moving clip edge by `/Di`), `Push` (both slide), `Cover` and `Fly` (new page slides over), `Uncover` (old page slides off), and `Split`, `Blinds`, `Box` (clip-geometry reveals by `/Dm`, `/M`); `Glitter` falls back to a cross-fade and `R` is a cut. Done when: each style renders a frame sequence whose first frame equals the old page and last frame equals the new page.
+2. Start the transition on page change in presentation mode (§13) using `/D`, never longer than 2 s, and skip it when `UISettings.AnimationsEnabled` is false or the user turns off `Play page transitions` in Settings; add `PresentationAutoAdvance` (default off) that moves to the next page after `/Dur` seconds when set. Done when: with animations disabled a page change takes one frame, and with auto-advance on the fixture advances after its `/Dur`.
+
+- [ ] Pause auto-advance on any key, click, wheel or when the presenter view (§16) is paused, and stop at the last page. Done when: a key press pauses the timer until the next explicit advance.
+- [ ] Cancel an in-flight transition when the user navigates again so the target page appears at once. Done when: ten rapid presses end on the right page with no stuck frame.
+- [ ] Add `PresentationAutoAdvance` and `Play page transitions` rows to the Reading group of Settings (`D02 T04 §5`). Done when: both rows change behaviour at the next page turn.
+- [ ] Add `View.PageTransitionsRender` covering all 12 styles' endpoints, the cut when animations are off, cancel on navigation and auto-advance timing with a fake clock. Done when: `recto-tests.exe --gtest_filter=View.PageTransitionsRender` passes. Cheaper substitute: playing transitions on the UI thread with XAML animations.
+- [ ] Commit: `viewer: render page transitions and optional automatic page timing`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=View.PageTransitionsRender` passes on the display-session host.
+
+## 15. Presentation pen and laser pointer
+
+UPDF and Foxit let a presenter draw on the page and point with a laser; Acrobat Pro has no presentation pen. In Recto the pen writes ink to an overlay that is thrown away when the slideshow ends, so a presentation can never change the PDF (D18 keeps edits on a copy). Single-key commands apply only while presenting.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 4 tokens and section 11 (a text hint accompanies every colour cue).
+**Job:** A presenter marks the page they are talking about and points without touching the file. Consumer: `PresentationController` (§13).
+**Treatment:** Stock `InkCanvas` on an overlay with session-only storage. Cheaper substitute that fails the checkpoint: ink that is written to the document, or colour-only tool state.
+**Chrome:** `RectoColors.xaml` tokens, Segoe Fluent Icons.
+
+**Build order:**
+
+1. Add `PresentationInkLayer` (`src/app/PresentationInkLayer.h/.cpp`) using WinUI 3 `InkCanvas`/`InkPresenter` over the page: `P` pen, `H` highlighter, `L` laser, `E` eraser, `Ctrl+Z` undo last stroke, `Delete` clear page; colours from `RectoDangerBrush`, `RectoSuccessBrush`, `RectoWarningBrush` and `RectoTextBrush`, widths 2, 4 and 8 epx; strokes live per page for the session and are discarded on exit. Done when: drawing on page 2, moving to page 3 and back shows the stroke again, and exiting leaves the PDF byte-identical.
+2. Draw the laser as a 12 epx `RectoDangerBrush` dot with a soft glow following the mouse, pen hover or touch contact, with no effect on the document, and hide it when the pointer leaves. Done when: the dot tracks the pointer within one frame and vanishes on leave.
+
+- [ ] Show a one-time hint `Ink is not saved` the first time a pen tool is used in a session and list the keys on `?` in a dismissible card. Done when: the hint shows once per session.
+- [ ] Map pen pressure to width for Windows Ink devices and ignore pressure for the mouse. Done when: a pressure fixture varies the stroke width.
+- [ ] Disable the tools when the user opens a link prompt or dialog, and restore the tool afterwards. Done when: a dialog opening mid-stroke ends the stroke cleanly.
+- [ ] Register `Pen`, `Highlighter`, `Laser pointer`, `Eraser` and `Clear ink on this page` in `CommandRegistry`, enabled only while presenting. Done when: they appear in `Ctrl+K` only during a presentation.
+- [ ] Add `View.PresentationInkAndLaser` covering strokes per page, undo, clear, discard on exit, laser tracking and the unchanged-file check. Done when: `recto-tests.exe --gtest_filter=View.PresentationInkAndLaser` passes. Cheaper substitute: writing the ink into the PDF as annotations.
+- [ ] Commit: `viewer: add presentation pen, highlighter and laser pointer`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=View.PresentationInkAndLaser` passes on the display-session host.
+
+## 16. Presenter view on a second display with page preview and timer
+
+PowerPoint-style presenter views are in UPDF and Foxit's presentation features: the audience sees the page on one display while the presenter sees the current page, the next page, the clock and an elapsed or countdown timer on another. Recto opens a second `AppWindow` on another `DisplayArea`; with one display it opens as an ordinary window the user can place. It reads from the same document actor, never opens the file twice, and survives a display being unplugged.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 7 spacing, section 4 tokens and section 11.
+**Job:** A presenter sees what is next and how long they have, while the audience sees only the page. Consumer: `PresentationController` (§13), `TileTextureCache` (§3).
+**Treatment:** A second `AppWindow` bound to the same viewport state. Cheaper substitute that fails the checkpoint: duplicating the document in a second actor, or requiring two displays.
+**Chrome:** `RectoColors.xaml` tokens, Segoe Fluent Icons, `RectoDialogStyles.xaml`.
+
+**Build order:**
+
+1. Add `PresenterWindow` (`src/app/PresenterWindow.xaml/.h/.cpp`) shown by `Presenter view` in the presentation controls or the key `T`: pick the audience display as the one that does not hold the main window (`DisplayArea.FindAll`), place the audience window full screen there and the presenter window on the other, with a `Swap displays` button; with a single display open the presenter view as a normal movable window. Done when: on a two-display rig the audience page and the presenter window appear on different displays, and on one display a movable window opens.
+2. Show in the presenter window the current page, a next-page preview (a tile from `TileTextureCache`), `Page N of M`, the wall clock, and a timer: count up from zero by default, or count down from `PresentationCountdownMinutes` (setting, 0 means count up) with start, pause and reset buttons; turn the timer `RectoWarningBrush` with text `Under 1 minute` in the last minute and `RectoDangerBrush` with text `Over time` after zero. Done when: the timer advances with a fake clock, pauses and resets, and shows the state text at 60 s and 0 s.
+
+- [ ] React to `DisplayArea` changes by moving both windows to a remaining display and showing a toast, never closing the show. Done when: unplugging the audience display keeps the presentation running on the remaining one.
+- [ ] Mirror navigation both ways: keys in either window move both, and the presenter window shows the same page as the audience at all times. Done when: pressing `Right` in the presenter window advances the audience page within one frame.
+- [ ] Give every control an `AutomationProperties.Name`, tooltip and keyboard access, and announce `Next page, N of M` politely. Done when: the UIA tree lists every control with a name.
+- [ ] Add the `PresentationCountdownMinutes` row to Settings (`D02 T04 §5`). Done when: changing it changes the next presentation's timer.
+- [ ] Add `View.PresenterViewAndTimer` covering display placement with fake displays, mirror navigation, timer states and display removal. Done when: `recto-tests.exe --gtest_filter=View.PresenterViewAndTimer` passes. Cheaper substitute: a second `DocumentActor` for the presenter window.
+- [ ] Commit: `viewer: add presenter view with next-page preview and timer`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=View.PresenterViewAndTimer` passes on the display-session host, and a two-display manual run is recorded in the stamp.
+
+## 17. Slide navigator: jump to any page during a presentation
+
+PowerPoint-style `See all slides` is in UPDF's presentation tools. A presenter who is asked a question needs to jump to a page by its picture. The navigator is a grid of page thumbnails from the existing cache, opened with `G` in presentation mode and permanently shown as a strip in the presenter view (§16).
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 8.3 `Pages` thumbnail styling and section 11.
+**Job:** A presenter jumps to any page by its picture. Consumer: `PresentationController` (§13), `PresenterWindow` (§16).
+**Treatment:** Virtualized stock `GridView` over cached thumbnails. Cheaper substitute that fails the checkpoint: a text list of page numbers.
+**Chrome:** `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Build `SlideNavigator` (`src/app/controls/SlideNavigator.xaml/.h/.cpp`) as a virtualized `GridView` of thumbnails from `TileTextureCache` (`D02 T02 §3`) with page numbers, the current page highlighted with `RectoAccentTintBrush` and a text `Current` label, keyboard arrows and `Enter` to jump, `Esc` to close; show it as an overlay on the audience display only when invoked, and as an always-visible strip in `PresenterWindow`. Done when: a 500-page document opens the grid in under 300 ms and jumping lands on the chosen page.
+2. Request thumbnails at low priority so the live page never waits. Done when: the live page's tile latency is unchanged while the grid fills.
+
+- [ ] Add `Show slide navigator` to `CommandRegistry` (while presenting) and bind `G`. Done when: `Ctrl+K` and `G` both open it.
+- [ ] Make every thumbnail an automation element named `Page N`. Done when: Narrator reads the page numbers.
+- [ ] Add `View.SlideNavigator` covering virtualization, jump, highlight text and the priority rule. Done when: `recto-tests.exe --gtest_filter=View.SlideNavigator` passes. Cheaper substitute: rendering full pages for the grid.
+- [ ] Commit: `viewer: add the presentation slide navigator`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=View.SlideNavigator` passes on the display-session host.
+
+## 18. Hands-free auto-scroll with speed control
+
+UPDF and Foxit scroll a document by themselves for reading aloud or teleprompting, and Acrobat Pro has Automatically Scroll (`Ctrl+Shift+H`). The user starts it, steers speed and direction from the keyboard, and any manual input stops it. It moves only the viewport, so it never changes the file and honours the same bounds as manual scrolling.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 7 (floating card), section 10 and section 11.
+**Job:** A user reads, rehearses or follows along without touching the mouse. Consumer: `DocumentView` (§6), `ViewportChannel` (§2).
+**Treatment:** Clock-driven viewport updates. Cheaper substitute that fails the checkpoint: a timer that nudges the scrollbar a fixed amount per tick.
+**Chrome:** `RectoRaisedBrush`, `ThemeShadow` Z=32 floating card, Segoe Fluent Icons.
+
+**Build order:**
+
+1. Add `AutoScroller` (`src/app/AutoScroller.h/.cpp`) driving `ViewportChannel` (§2) from the presentation clock: speed levels 1 to 10 map to 12 to 240 pt per second at 100 percent zoom (scaled by zoom), `Ctrl+Shift+H` starts and stops, digits `1` to `9` and `0` set speed, `Up` and `Down` adjust it, `Left` reverses and `Right` goes forward, `Space` pauses and resumes, `Esc` stops; frame-rate independent using elapsed time. Done when: a 10 s run at level 5 scrolls the expected distance within 1 percent at 60 and at 30 fps.
+2. Stop on wheel, drag, touch or scrollbar input, on tab switch, on window deactivation and at the last page; show a small `AutoScrollChip` in `BottomOverlaySlot` with the level and a pause button, announce `Auto scroll on, speed N` politely, and keep the chip text and not colour as the state cue. Done when: a wheel tick stops the scroll and removes the chip.
+
+- [ ] Add the `AutoScrollDefaultSpeed` row (1 to 10, default 3) to the Reading group of Settings (`D02 T04 §5`). Done when: the next start uses the stored speed.
+- [ ] In `SinglePage` and `TwoPageSpread` layouts scroll within the page and then advance to the next page. Done when: single-page mode crosses pages without a jump.
+- [ ] Register `Start auto scroll`, `Stop auto scroll`, `Faster` and `Slower` in `CommandRegistry` (`D02 T03 §11`). Done when: all four are in `Ctrl+K`.
+- [ ] Add `View.AutoScroll` covering speed maths, direction, pause, stop conditions and the layout cases with a fake clock. Done when: `recto-tests.exe --gtest_filter=View.AutoScroll` passes. Cheaper substitute: a fixed per-frame pixel step, which changes speed with frame rate.
+- [ ] Commit: `viewer: add hands-free auto-scroll with speed control`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=View.AutoScroll` passes on the display-session host.
+
+## 19. Reverse page order view and right-to-left spreads
+
+Foxit and PDFelement can show pages in reverse order, which helps when scans arrive last page first; PDFs can also declare `/ViewerPreferences /Direction /R2L` for right-to-left reading. §5 lays pages out in numeric order only. This section adds a per-tab view option that reverses the display order without touching page numbers or the file, and uses `/Direction /R2L` as the default for two-page spreads.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` section 9.2 (layouts) with `design/screenshots/D-Focus-Light.png`; the toggle is a stock menu item.
+**Job:** A user reads scans that came in backwards, or a right-to-left book, in the right order without editing the file. Consumer: `DocumentView` (§6), `ShellMenuBar` (`D02 T01 §9`).
+**Treatment:** A mapping inside `PageLayoutGeometry`. Cheaper substitute that fails the checkpoint: reordering the pages in the document, which is an Organize operation.
+**Chrome:** Stock `ToggleMenuFlyoutItem`, tokens.
+
+**Build order:**
+
+1. Add `reverse_order` to `PageLayoutGeometry` (`src/services/page_layout.h/.cpp`) mapping display slot to page index for `Continuous`, `SinglePage` and `TwoPageSpread`; with `R2L` or reverse the spread pairs mirror (page 2 on the right of page 3's slot) and the cover sits on the left; page numbers, coordinates and `current_page_index` keep their meaning. Done when: round-trip transforms stay within 0.01 epx in all layouts, rotations and both orders.
+2. Add the `Reverse page order` toggle (View menu, `More` menu, `Ctrl+K`), default taken from `/Direction` (R2L means on for spreads only), stored per file as `reverse_order` in the reading-position record (`D02 T03 §1`), and keep `Page Down` meaning the next screen in the display direction while `Home`, `End` and `Ctrl+G` keep SPEC meanings by page number. Done when: reverse view of a 10-page file shows page 10 first, `Home` goes to page 1 and `Ctrl+G` 3 lands on page 3.
+
+- [ ] Keep thumbnails and the outline in numeric order and highlight the current page in both. Done when: reverse view changes neither panel's order.
+- [ ] Preserve the current page when toggling. Done when: toggling on page 4 keeps page 4 in the viewport centre.
+- [ ] Add the fixture `tests/corpus/direction-r2l.pdf` to `scripts/build-corpus.py`. Done when: `python scripts/build-corpus.py --check` passes.
+- [ ] Add `View.ReversePageOrder` covering mapping, spreads, `/Direction`, persistence and key meanings. Done when: `recto-tests.exe --gtest_filter=View.ReversePageOrder` passes. Cheaper substitute: reversing only the thumbnail list.
+- [ ] Commit: `viewer: add reverse page order view and R2L spreads`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=View.ReversePageOrder:View.PageLayoutGeometryAndTransforms` passes on the display-session host.
+
+## 20. Rulers and cursor coordinates in chosen units
+
+Foxit and PDFelement show rulers and live cursor coordinates, and Acrobat Pro has both (View, Show/Hide). Recto draws rulers along the canvas edges and a coordinate chip using §5's page transforms, with a zero at the top-left of the page under the pointer. They are screen furniture: never saved, never printed, and `Ctrl+R` stays rotate (so rulers use `Ctrl+Alt+R`).
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 5 caption type, section 7 spacing and section 4 tokens.
+**Job:** A user measures and aligns by eye in real units. Consumer: `PageLayoutGeometry` (§5), `GuideStore` (§21).
+**Treatment:** Overlay drawn from page-space transforms. Cheaper substitute that fails the checkpoint: screen-pixel rulers that ignore zoom.
+**Chrome:** `RectoSurfaceBrush`, `RectoBorderBrush`, `RectoTextSecondaryBrush`.
+
+**Build order:**
+
+1. Add `RulerOverlay` (`src/app/controls/RulerOverlay.xaml/.h/.cpp`) with a horizontal and a vertical ruler (20 epx thick) in `CenterCanvasSlot`, ticks adapting to zoom (major, minor, label), units `pt`, `in`, `mm`, `cm`, `pc` from the `RulerUnits` setting (default from `GetLocaleInfoEx(LOCALE_IMEASURE)`: millimetres for metric, inches otherwise), and pointer marker lines; origin is the CropBox top-left of the page under the pointer. Done when: at 100 percent zoom an A4 page reads 210 mm across and 297 mm down within 0.5 mm, and the origin follows the page under the pointer in continuous mode.
+2. Add `CursorCoordinates` chip in `LeftOverlaySlot` showing `Page N  x, y unit` while the pointer is over a page, toggled separately (`Show cursor coordinates`), text selectable for copy. Done when: moving over page 2 shows `Page 2` and coordinates matching `viewport_point_to_page`.
+
+- [ ] Add `Rulers` (`Ctrl+Alt+R`), `Cursor coordinates` and `Ruler units` to the View menu, `More` menu, Settings (`D02 T04 §5`) and `CommandRegistry`. Done when: all are reachable from `Ctrl+K`.
+- [ ] Hide rulers and the chip in presentation mode (§13) and full screen (§10), and keep ruler text at system colours in HighContrast. Done when: none show in presentation mode.
+- [ ] Handle rotation and `Reverse page order` (§19) so the ruler origin and direction follow the displayed page. Done when: a 90 degree rotation swaps the ruler roles and keeps values correct.
+- [ ] Make ruler marks non-focusable and expose the coordinate chip as a UIA name that updates on a 250 ms debounce, not per pixel. Done when: Narrator is not flooded while moving the mouse.
+- [ ] Add `View.RulersAndCoordinates` covering unit conversion, tick spacing at 10 zoom levels, origin and rotation. Done when: `recto-tests.exe --gtest_filter=View.RulersAndCoordinates` passes. Cheaper substitute: pixel-based units that ignore page size.
+- [ ] Commit: `viewer: add rulers and cursor coordinates`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=View.RulersAndCoordinates` passes on the display-session host.
+
+## 21. Grid, guides and the view snap provider
+
+Foxit and PDFelement give a grid and drag-out guides, and Acrobat Pro has a grid and guides (View, Show/Hide, Rulers & Grids). This section draws the grid and guides on the canvas and offers one `ViewSnapProvider` that annotation, form and edit tools can ask for a snapped point. Guides and the grid are view state stored beside the reading position, never written into the PDF.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 4 tokens and section 7.
+**Job:** A user aligns marks and form fields to a grid and guides that stay out of the file. Consumer: `RulerOverlay` (§20), annotation, form and edit tools through `ViewSnapProvider`.
+**Treatment:** Overlay drawing and a pure snap function. Cheaper substitute that fails the checkpoint: guides stored in the PDF.
+**Chrome:** `RectoBorderBrush`, `RectoAccentBrush`.
+
+**Build order:**
+
+1. Implement `src/services/view_snap.h/.cpp`: `GridSpec` (spacing in the ruler unit, default 0.25 in or 5 mm, subdivisions), `GuideStore` (per file, per page or all pages: axis and position in points, persisted in the reading-position record of `RecentFilesStore`, `D02 T03 §1`), and `ViewSnapProvider::snap(page_index, PagePoint, tolerance_epx) -> SnapResult` returning the nearest guide or grid line within the tolerance. Done when: a point 3 epx from a guide snaps to it and a point 20 epx away does not, at three zoom levels.
+2. Draw the grid (`Ctrl+U`) and guides on the canvas; drag from a ruler (§20) to create a guide, drag it back to a ruler to remove it, double-click to type its position, `Clear all guides` command; colours `RectoBorderBrush` and `RectoAccentBrush` with a dash pattern so colour is not the only cue. Done when: creating, moving, typing and removing a guide each update the store and the drawing.
+
+- [ ] Add `Snap to grid` and `Snap to guides` toggles (default on while shown) in the View menu, Settings and `CommandRegistry`. Done when: turning a toggle off makes `snap` return no result for that source.
+- [ ] Make guides and grid screen-only: absent from print, export and saved files. Done when: a saved PDF has the same bytes as without guides.
+- [ ] Publish the provider for consumers (request cross references to `D03 T03 §9`, `§18`, `D03 T04 §13`) without editing their files. Done when: the provider header is included by a test double standing in for a tool.
+- [ ] Add `View.GridGuidesSnap` covering snapping maths, persistence, removal, rotation and the unchanged-file check. Done when: `recto-tests.exe --gtest_filter=View.GridGuidesSnap` passes. Cheaper substitute: storing guides as annotations in the PDF.
+- [ ] Commit: `viewer: add grid, guides and the view snap provider`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=View.GridGuidesSnap` passes on the display-session host.
+
+## 22. Line weights view toggle: true widths or uniform thin lines
+
+Acrobat Pro and Foxit have a Line Weights view option; CAD and map PDFs are often easier to read when every stroke is drawn one device pixel wide. `Actual` keeps today's behaviour (specified width, with the rasterizer's minimum); `Uniform` draws every stroke as exactly one device pixel. This is a render option, so it must be part of the tile identity or stale tiles would show. The tile contract lives in frozen `D01 T02`: this section lists the request instead of editing it.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` section 8.2 `More` menu; a stock toggle item.
+**Job:** A user inspects dense line art with uniform thin lines and switches back. Consumer: `Rasterizer`, `TileTextureCache` (§3).
+**Treatment:** A render option in the tile identity. Cheaper substitute that fails the checkpoint: a screen-space blur or filter over finished tiles.
+**Chrome:** Stock `ToggleMenuFlyoutItem`.
+
+**Build order:**
+
+1. Add `RenderOptions::line_weight_mode` (`Actual`, `Uniform`) read by `Rasterizer` (`src/pdf/rasterizer.cpp`) for every stroke path, and carry it in the tile identity the same way `ocg_generation` is carried (`D02 T03 §7`), so toggling invalidates cached tiles. Done when: the same page rendered in both modes differs, and a `Uniform` stroke measures 1 pixel at 25 percent and 800 percent zoom.
+2. Add the `Show line weights` toggle (default on) to the View menu, the `More` menu and `Ctrl+K`, per tab, resetting to default for new documents. Done when: toggling re-renders the visible pages within one tile cycle.
+
+- [ ] Leave text, images and fills unchanged by the option. Done when: a text-only page is byte-identical in both modes.
+- [ ] Ignore the mode for print, export and `recto-cli render`. Done when: print output equals the `Actual` render.
+- [ ] Add `tests/corpus/line-weights.pdf` (hairline, 0.25 pt, 4 pt and dashed strokes) to `scripts/build-corpus.py`. Done when: `python scripts/build-corpus.py --check` passes.
+- [ ] Add `View.LineWeightsToggle` and `Render.UniformStrokeWidth` covering the pixel widths and cache invalidation. Done when: `recto-tests.exe --gtest_filter=View.LineWeightsToggle:Render.UniformStrokeWidth` passes. Cheaper substitute: scaling the bitmap afterwards.
+- [ ] Commit: `viewer: add the line weights view toggle`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=View.LineWeightsToggle:Render.UniformStrokeWidth` passes on the display-session host.
+
+## 23. Split view: two panes of one document with independent scroll and zoom
+
+Foxit, PDFelement and UPDF split the window so two places in one document stay visible (a contents page and its target, a figure and its text); Acrobat Pro has Split and Spreadsheet Split. Both panes read one `DocumentActor`, so there is one parse, one tile cache budget and no state drift. Today split view is only a request (`D02 T01 §3` area); it is now planned.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 7 (borders, no shadows on docked panes) and section 8 (named slots).
+**Job:** A user reads two places in one document together. Consumer: `ShellPage` `CenterCanvasSlot` (`D02 T01 §4`), `DocumentView` (§6).
+**Treatment:** Two views over one actor and one cache. Cheaper substitute that fails the checkpoint: duplicating the document in a second tab.
+**Chrome:** `RectoBorderBrush`, `RectoAccentBrush`, stock splitter.
+
+**Build order:**
+
+1. Add `SplitDocumentView` (`src/app/SplitDocumentView.xaml/.h/.cpp`) hosting two `DocumentView` instances bound to the same `DocumentTabSession`, horizontal or vertical split with a draggable `Splitter` (minimum pane 240 epx), each pane with its own `ViewportChannel`, zoom, layout and rotation, and the active pane marked with a `RectoAccentBrush` border plus the text `Active pane` for screen readers. Done when: scrolling pane 1 to page 40 leaves pane 2 on page 3, and both show the same annotation changes.
+2. Add commands `Split view horizontally`, `Split view vertically`, `Remove split` (View menu, `More` menu, `Ctrl+K`), `Switch pane` (`F6`), and an optional `Link scrolling` toggle that moves both panes by the same offset. Done when: `F6` moves focus between panes and `Remove split` restores one pane at the active pane's position.
+
+- [ ] Share one `TileTextureCache` budget between panes so memory stays within `TileCacheBudgetMb` (`D02 T04 §6`). Done when: two panes at different zooms stay under the budget in the stress run.
+- [ ] Make text selection, find highlights and annotations render in both panes and act in the focused pane. Done when: a find match highlights in both panes.
+- [ ] Save the split orientation and ratio in the session snapshot (§13). Done when: relaunch restores the split.
+- [ ] Collapse to one pane in presentation mode (§13) and keep the Reading room inspector outside the panes. Done when: presentation mode shows one pane.
+- [ ] Add `View.SplitViewSharedActor` covering one actor, independent viewports, budget, linked scrolling and session persistence. Done when: `recto-tests.exe --gtest_filter=View.SplitViewSharedActor` passes. Cheaper substitute: opening the file twice in two actors.
+- [ ] Commit: `viewer: add split view of one document`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=View.SplitViewSharedActor` passes on the display-session host and the tile cache stays within budget.
+
+## 24. Side-by-side view of two documents with synchronized scrolling
+
+PDFelement, Foxit and UPDF show two PDFs side by side to compare versions; Recto already compares content (`D03 T01 §10`), and this is the plain reading view. Each side is its own tab and actor; the parallel view only arranges two tabs in `CenterCanvasSlot`. Tab tear-off to separate windows stays unplanned (one shell, D17).
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 8.1 (tabs), section 7 and `D-Classic.png` pane borders.
+**Job:** A user reads two documents next to each other and scrolls them together when they choose. Consumer: `ShellPage` (`D02 T01 §4`), `DocumentTabSession` (`D02 T01 §3`).
+**Treatment:** Two existing tabs arranged in one slot. Cheaper substitute that fails the checkpoint: a second shell window.
+**Chrome:** `RectoBorderBrush`, `RectoAccentBrush`, stock splitter.
+
+**Build order:**
+
+1. Add `ParallelView` (`src/app/ParallelView.xaml/.h/.cpp`): `Compare side by side` on a tab's context menu and `Ctrl+K` picks a second open tab (or opens one with the picker) and shows both in `CenterCanvasSlot` with a splitter, each keeping its `DocumentTabSession`, viewport and zoom; `Close side by side` returns to single view without closing either tab. Done when: choosing a second tab shows both documents, and closing the view leaves both tabs open.
+2. Add `Synchronized scrolling` (off by default): moving one side by a page-relative offset moves the other by the same fraction of its page, with `Align pages` to snap both to the current page numbers, and zoom linking as a separate toggle. Done when: with sync on, scrolling document A by 3 pages scrolls B by 3 pages, and pages of different sizes stay proportionally aligned.
+
+- [ ] Route tab close, dirty prompts and `Ctrl+Tab` through §3 and §8 unchanged; closing one document ends the parallel view. Done when: closing a dirty side prompts and `Cancel` keeps both.
+- [ ] Show the file name above each side and mark the active side with text and `RectoAccentBrush`. Done when: both names are visible and Narrator reads the active side.
+- [ ] Save the pair in the session snapshot (§13) as two adjacent tabs flagged `parallel`. Done when: relaunch restores the side-by-side view.
+- [ ] Keep memory within the shared tile budget when both sides are visible. Done when: the two-document stress run stays under `TileCacheBudgetMb`.
+- [ ] Add `View.ParallelViewAndSyncScroll` covering pairing, sync maths, close behaviour and session restore. Done when: `recto-tests.exe --gtest_filter=View.ParallelViewAndSyncScroll` passes. Cheaper substitute: merging both documents into one actor.
+- [ ] Commit: `viewer: add side-by-side view with synchronized scrolling`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=View.ParallelViewAndSyncScroll` passes on the display-session host.
 
 ## Verification
 
 - Foundation plan section 8 targets owned here (first page `< 300 ms` on a 100-page text PDF, 60 fps scroll, in-frame stretched zoom preview with sharp tiles `< 150 ms`, one-document memory within the 512 MB texture cache budget) measured on the reference machines (`D00 T01 §5`) and quoted.
 - Rendered surfaces match `D-Focus-Light.png`, `D-Focus-Dark.png`, `D-Classic.png`, `D-ReadingRoom.png`, and `D-Dialogs.png`; every SPEC section 10 view shortcut (`Ctrl+Plus`, `Ctrl+Minus`, `Ctrl+0`, `Ctrl+1`, `Ctrl+R`, `Ctrl+Shift+R`, `Ctrl+G`, `Home`, `End`, `Page Up`, `Page Down`, `F11`, `Esc`) is exercised and proven.
 - Full `recto-tests` suite green; `python scripts/todo-graph.py validate` passes.
+- The viewing features of §11 to §24 are proven by `View.ReadingTints`, `PdfTransition.*`, `View.PresentationModeNavigation`, `View.PageTransitionsRender`, `View.PresentationInkAndLaser`, `View.PresenterViewAndTimer`, `View.SlideNavigator`, `View.AutoScroll`, `View.ReversePageOrder`, `View.RulersAndCoordinates`, `View.GridGuidesSnap`, `View.LineWeightsToggle`, `View.SplitViewSharedActor` and `View.ParallelViewAndSyncScroll`.

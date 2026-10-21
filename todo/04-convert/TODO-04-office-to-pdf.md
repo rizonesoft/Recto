@@ -24,6 +24,13 @@ track: M5
 - -> XREF: D06 T01 §6 -- `ConvertSuite.OfficeAndHtmlRoundTrip` and `ConvertSuite.LegacyBinaryOfficeRoundTrip` (`D06 T01 §6`) verify multi-format Office and legacy binary Office conversion quality built in §6 and §7 here.
 - -> XREF: D06 T02 §2 -- the security audit in `D06 T02 §2` re-runs the macro-stream stripping (`vbaProject.bin`, `_VBA_PROJECT_CUR`, `Macros`, `VBA` on `macro-canary.docm` and `macro-canary.doc`), HTML external network/script blocking, and zero-external-subprocess proofs built here, and `fuzz_openxml_zip` (`D06 T02 §3`) fuzzes both the OpenXML (`ZipReader`) and OLE2 Compound File (`Ole2Reader`) parsers (`§1`, `§2`, `§4`).
 - -> XREF: D04 T05 §12 -- validates PDF to PowerPoint output (D04 T05 §12).
+- -> XREF: D02 T01 §5 -- open dialog accepts .ofd.
+- -> XREF: D06 T02 §3 -- fuzz_odf.
+- -> XREF: D06 T02 §3 -- fuzz_ofd.
+- -> XREF: D06 T02 §3 -- fuzz_mime.
+- -> XREF: D06 T02 §3 -- fuzz_msg.
+- -> XREF: D02 T03 §8 -- attachments ask before opening.
+- -> XREF: D04 T03 §1 -- ZIP reader.
 
 ## Outcome
 
@@ -31,6 +38,7 @@ track: M5
 - `Ole2Reader` (`§4`) parses `[MS-CFB]` Compound File Binary containers with strict sector-chain cycle detection and a `256 MB` allocation cap while stripping `_VBA_PROJECT_CUR`, `Macros`, and `VBA` macro storages by construction.
 - Legacy Word 97-2003 `.doc` (`§5`), Excel 97-2003 `.xls` BIFF8, and PowerPoint 97-2003 `.ppt` (`§6`) binary streams lower directly into the shared `FlowDocumentModel`, spreadsheet model, and slide model, with `macro-canary.docm` and `macro-canary.doc` proving that embedded VBA macros are completely inert.
 - The Convert page (`§7`, `SPEC 9.5`) ties all native C++20 engines together cleanly.
+- OpenDocument (`.odt`, `.ods`, `.odp`), OFD, Outlook `.msg` and `.eml` email, MHTML and plain-text-family files convert to PDF through Recto's native engines (`§8` to `§22`), with macros stripped, nothing fetched from the network, and each refusal or approximation named, matching what PDFelement and Foxit PDF Editor accept beyond Acrobat.
 
 **Adjacency:** all=not-applicable (converter engines inside `D04 T01`'s Convert frame; default page-setup preference is owned by `D02 T04 §5` and read here)
 
@@ -47,6 +55,21 @@ track: M5
 | 5 | §5 | Native C++20 legacy Word 97-2003 (`.doc`) binary parser to `FlowDocumentModel` & PDF | §4 | [ ] |
 | 6 | §6 | Native C++20 legacy Excel (`.xls` BIFF8) and PowerPoint (`.ppt`) binary parsers to PDF | §2, §4 | [ ] |
 | 7 | §7 | Convert **PDF from Office, HTML, Markdown & Images** card and Step 3 UI (`SPEC 9.5`) | §3, §5, §6, D04 T01 §4, D02 T04 §5 | [ ] |
+| 8 | §8 | ODF package reader, style resolver and macro stripper (`odf_package.cpp`) | §1, D04 T03 §1 | [ ] |
+| 9 | §9 | OpenDocument Text (`.odt`) to PDF layout engine | §8, §1 | [ ] |
+| 10 | §10 | OpenDocument Spreadsheet (`.ods`) to PDF layout engine | §8, §2 | [ ] |
+| 11 | §11 | OpenDocument Presentation (`.odp`) to PDF layout engine | §8, §2 | [ ] |
+| 12 | §12 | Native C++20 OFD (GB/T 33190) package and document reader | §1, D04 T03 §1 | [ ] |
+| 13 | §13 | OFD page graphics to PDF: paths, images, clips, colours and templates | §12, D04 T02 §2 | [ ] |
+| 14 | §14 | OFD text and fonts to PDF with font subsets and Unicode mapping | §13, D03 T04 §4, D04 T02 §11 | [ ] |
+| 15 | §15 | OFD outlines, links, attachments, annotations and seal report | §14 | [ ] |
+| 16 | §16 | MIME message parser (RFC 5322, RFC 2045 to 2049) with bounds and fuzz target | -- | [ ] |
+| 17 | §17 | Outlook `.msg` ([MS-OXMSG]) reader over the CFB reader | §4 | [ ] |
+| 18 | §18 | Email (`.eml`, `.msg`) to PDF with attachments that ask before opening | §16, §17, §3, §1, D04 T02 §2 | [ ] |
+| 19 | §19 | MHTML (`.mht`, `.mhtml`) to PDF through the HTML engine | §16, §3 | [ ] |
+| 20 | §20 | Plain-text family (`.txt`, `.log`, `.ini`, `.cfg`, `.xml`) to PDF, encoding detected | §1 | [ ] |
+| 21 | §21 | `recto-cli office-to-pdf` dispatch for the new input formats | §9, §10, §11, §13, §18, §19, §20, D04 T02 §23 | [ ] |
+| 22 | §22 | Convert card inputs for ODF, OFD, email, MHTML, text and images, and open `.ofd` | §7, §21, D04 T02 §15 | [ ] |
 
 ## 1. Built-in C++20 Word (`.docx`, `.docm`) and Rich Text (`.rtf`) to PDF layout engine
 
@@ -114,6 +137,7 @@ Implement `src/core/html_md_to_pdf.h` and `src/core/html_md_to_pdf.cpp` in `rect
 - [ ] Enforce hostile-HTML isolation (`foundation plan section 9`): strip `<script>`, `<noscript>`, `<iframe>`, `<frame>`, `<object>`, `<embed>`, and `on*` event attributes during DOM construction, and forbid opening any `http://`, `https://`, `ftp://`, or `\\` UNC path (loading only `data:` URIs and relative local assets resolved strictly underneath the input `.html` file's parent directory without `..` traversal). Done when: `HtmlMdToPdf.HostileHtmlIsolation` proves `<script>` tags, remote `<img src="https://...">`, and `<img src="../../secret.png">` never execute or read outside the document folder. Cheaper substitute: invoking an external browser/WebView that fetches remote URLs or runs JavaScript during conversion.
 - [ ] Implement the GitHub-Flavored Markdown (`.md`) parser in `src/core/html_md_to_pdf.cpp` supporting ATX/Setext headings (`H1`..`H6`), paragraphs, nested bullet/numbered lists, task-list checkboxes (`- [ ]` / `- [x]` rendered as crisp vector checkbox glyphs), pipe tables (`|---|---|` with left/center/right column alignment), blockquotes (`>` with left accent bar), horizontal rules, and monospace shaded fenced code blocks (` ``` `). Done when: `HtmlMdToPdf.MarkdownGfm` converts a comprehensive `.md` fixture into a paginated vector PDF.
 - [ ] Emit clickable PDF `/Subtype /Link` annotations (`D01 T01 §10`) for `<a href="...">` and Markdown `[label](url)` links (internal `#anchor` destinations mapped to PDF page coordinates, external `https://`/`mailto:` URIs mapped to `/A << /S /URI /URI (...) >>`), and generate PDF `/Outlines` bookmarks from `<h1>`..`<h3>` / `#`..`###` headings. Done when: `HtmlMdToPdf.LinksAndBookmarks` verifies clickable `/Link` annotations and `/Outlines` hierarchy in the output PDF.
+- [ ] Define `HtmlResourceProvider` in `src/core/html_md_to_pdf.h` (`resolve(url) -> bytes` or a typed miss) with a folder provider (the existing rule: relative files strictly under the input's folder) and an in-memory provider that serves only the parts of a MIME archive or email, so MHTML (`§19`) and email (`§18`) resolve `cid:` and `Content-Location` references from inside the file and nothing else. Done when: `HtmlMdToPdf.ResourceProviders` renders an image from each provider and a reference outside the provider is a typed miss with no file or network access.
 - [ ] Commit output PDFs via `AtomicFileWriter` (`D04 T02 §1`) and check `CancelToken` across layout and pagination passes. Done when: cancelling mid-render leaves zero temp files.
 - [ ] Implement `recto-cli html-to-pdf <in.html> --out <out.pdf> [--page-size a4|letter]` and `recto-cli md-to-pdf <in.md> --out <out.pdf> [--page-size a4|letter]` in `src/cli/`. Done when: `recto-tests.exe --gtest_filter=HtmlMdToPdf.*:Cli.HtmlAndMdToPdf` passes under ASan.
 - [ ] Commit: `feat(convert): implement built-in C++20 HTML/CSS and Markdown to PDF layout engine`
@@ -215,6 +239,356 @@ Register the **PDF from Office, HTML, Markdown & Images** card in `ConverterRegi
 - [ ] Commit: `convert: wire 100% native Office, Legacy Office, HTML and Markdown to PDF Convert UI`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=OfficeToPdf.*:HtmlMdToPdf.*:Ole2Cfb.*` passes, and display-session screenshots confirm the `PDF from Office, HTML, Markdown & Images` card and Step 3 options.
+
+## 8. ODF package reader, style resolver and macro stripper (`odf_package.cpp`)
+
+WPS and LibreOffice users hold OpenDocument files, and PDFelement converts `.odt`, `.ods` and `.odp`; Acrobat does not. This section is the safe front door for all three: `OdfPackage` (`src/core/odf_package.h/.cpp`, `recto::core`) opens an ODF ZIP package through `ZipReader` (`D04 T03 §1`), identifies the kind from the `mimetype` entry (`application/vnd.oasis.opendocument.text`, `.spreadsheet`, `.presentation`) rather than the extension, and exposes only the parts a layout engine needs (`content.xml`, `styles.xml`, `meta.xml`, `META-INF/manifest.xml`, and the images and replacement pictures the manifest lists). Macros never run and are never read: the `Basic/`, `Scripts/` and `Dialogs/` folders, `<office:scripts>`, every `script:event-listener`, embedded OLE objects (only their `ObjectReplacements/` picture is used) and `Configurations2/` are stripped by construction, external links are never fetched, and password-protected packages (`manifest:encryption-data`) are refused with a typed `PasswordProtectedOdf` error and a plain message, which records the gap. The shared `OdfStyleSheet` resolves automatic and common styles, parent styles, list styles and ODF lengths (`cm`, `mm`, `in`, `pt`, `pc`, `px`) for the three engines. It matches PDFelement's OpenDocument input and keeps Recto's native, no-Office, no-macro rule (D7, D9, D10).
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `OdfPackage::open`, kind detection, the part allow-list, the macro and script stripping and the manifest checks in `src/core/odf_package.cpp` over `ZipReader` and the bounded XML parser of `§1`. Done when: `OdfPackage.OpenAndKinds` opens an `.odt`, `.ods` and `.odp` fixture, identifies each by `mimetype`, and `OdfPackage.MacroCanaryInert` proves no stripped part is ever opened.
+2. Implement `OdfStyleSheet` (style inheritance, list styles, length units, page layouts) and the encrypted-package refusal. Done when: `OdfPackage.StyleResolution` and `OdfPackage.EncryptedRefused` pass under ASan.
+
+- [ ] Define `OdfKind`, `OdfPackage` (`open`, `kind`, `part`, `manifest`, `meta`) and `OdfStyleSheet` in `src/core/odf_package.h`, returning `PdfResult<OdfPackage>`. Done when: the header compiles across `recto-core`, `recto-services` and `recto-cli` with no COM, Office or WebView type.
+- [ ] Read the `mimetype` entry (the first entry, stored uncompressed) and the manifest, set the kind from the media type, and refuse a package whose `mimetype` is missing, wrong, or disagrees with a manifest media type with `CorruptStructure`. Done when: `OdfPackage.OpenAndKinds` covers a renamed `.odt` that is really a spreadsheet (opened as a spreadsheet) and a ZIP without `mimetype` (refused).
+- [ ] Allow-list the readable parts and make the rest unreachable: `Basic/`, `Scripts/`, `Dialogs/`, `Configurations2/`, `Thumbnails/` and any manifest entry with a script media type return `NotFound` from `part()`, `<office:scripts>` and `script:event-listener` elements are dropped during the XML pass, and OLE object folders expose only `ObjectReplacements/`. Done when: `OdfPackage.MacroCanaryInert` opens `tests/corpus/convert/macro-canary.odt` (with `Basic/Standard/Module1.xml`, a document-open event listener and a `Scripts/python/` file), converts it, and shows through an instrumented reader that no stripped part was opened and the canary file was never created. Cheaper substitute: relying on the layout engine to ignore script content it has already read.
+- [ ] Refuse any package whose manifest holds `manifest:encryption-data` with `PasswordProtectedOdf`, the message `"This OpenDocument file is password protected. Recto cannot open protected OpenDocument files yet."`, and a gap line in `docs/user-demand.md`. Done when: `OdfPackage.EncryptedRefused` returns the error without reading the encrypted entries.
+- [ ] Enforce limits shared with `ZipReader` and the XML parser: at most `256 MB` per part, a decompression ratio cap, XML depth `128`, `5,000,000` elements, no external entity or DTD loading, and `xlink:href` accepted only when it names a package entry (no `http:`, `file:` or UNC target). Done when: `OdfPackage.Limits` rejects a zip bomb, a billion-laughs entity and an external image link without reading outside the package.
+- [ ] Implement `OdfStyleSheet` resolving `style:parent-style-name` chains (cycle-safe, depth capped at `32`), automatic versus common styles, `text:list-style`, `style:master-page` and page layouts, and ODF lengths to points. Done when: `OdfPackage.StyleResolution` resolves inherited bold, font size, margins and a `1.5in` length to `108 pt`.
+- [ ] Add `fuzz/fuzz_odf.cpp` opening and style-resolving arbitrary bytes, and the `OdfPackage.*` tests in `tests/recto-tests/odf_package_tests.cpp` with fixtures from `scripts/build-corpus.py` recorded in `tests/corpus/PROVENANCE.md`. Done when: `recto-tests.exe --gtest_filter=OdfPackage.*` passes under ASan and `fuzz_odf` runs `60 s` with no finding.
+- [ ] Commit: `convert: add the ODF package reader, style resolver and macro stripping`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OdfPackage.*` passes under ASan, and reading the `Basic/` folder makes `OdfPackage.MacroCanaryInert` fail.
+
+## 9. OpenDocument Text (`.odt`) to PDF layout engine
+
+Lower an `.odt` (`§8`) into the shared `FlowDocumentModel` of `§1` and render it through the same DirectWrite paginator, so ODT output has the quality and the `/Outlines` bookmarks of `.docx`. The engine reads `office:text` in `content.xml`: `text:p` and `text:h` (outline level to heading bookmarks), `text:span`, `text:a` (links become `/Link` annotations and are never fetched), `text:tab`, `text:line-break`, `text:s`, lists with their list styles, tables with column and row spans, frames and images inside the package, headers and footers from the master page, page size and margins from the page layout, and the page-number field. Tracked changes show the final text. Footnotes and endnotes are rendered as numbered notes at the end of the section with a `FootnotesMovedToEnd` warning. Objects it cannot draw (formulas, charts, OLE) use their stored replacement picture, or a labelled placeholder and a warning, never a silent gap. It matches PDFelement's `.odt` input without LibreOffice.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `parse_odt_to_flow_model(const OdfPackage&, CancelToken)` in `src/core/odf_to_pdf.cpp` producing `FlowDocumentModel` for paragraphs, headings, spans, lists, tables, frames and images. Done when: `OdfToPdf.OdtParse` parses single-column, list, table and image fixtures under ASan.
+2. Add page layout, headers, footers, fields, links, notes and the render through `§1`'s paginator, then route `.odt` through `convert_office_to_pdf`. Done when: `OdfToPdf.OdtRender` converts fixtures into multi-page vector PDFs whose `PageText` holds every source word.
+
+- [ ] Parse `text:p`, `text:h`, spans, `text:tab`, `text:line-break`, `text:s` and `text:a` with the style resolution of `§8` into `FlowDocumentModel`. Done when: `OdfToPdf.OdtParse` keeps bold, italic, underline, colour, font and size for a styled fixture.
+- [ ] Parse lists (`text:list`, list styles, numbering formats, nesting) and tables (`table:table`, `number-columns-spanned`, `number-rows-spanned`, covered cells, borders and background) into the model, with repeated-column and repeated-row counts capped at `16384` and `1048576`. Done when: `OdfToPdf.OdtListsAndTables` renders a nested list and a table with merged cells and a repeat-bomb fixture is capped with a warning.
+- [ ] Apply the page layout (`fo:page-width`, `fo:page-height`, margins, orientation), master-page headers and footers, and the page-number and page-count fields in the paginator of `§1`. Done when: `OdfToPdf.OdtPageSetup` produces the fixture's page size to `0.1 pt` with header and footer text on every page.
+- [ ] Place images and frames from the package (`draw:frame` with `draw:image` anchored as character, paragraph or page), use `ObjectReplacements/` pictures for objects, and emit a labelled placeholder with a warning for an object without one. Done when: `OdfToPdf.OdtImagesAndObjects` shows the image position, a replacement picture, and a placeholder warning for a chart without a replacement.
+- [ ] Emit `/Outlines` from heading levels, `/Link` annotations for `text:a` (internal bookmarks to page destinations, external IRIs as URI actions that the viewer asks about), and the notes as numbered end-of-section notes with the `FootnotesMovedToEnd` warning. Done when: `OdfToPdf.OdtLinksAndNotes` populates the Bookmarks panel, resolves an internal link, and reports the warning.
+- [ ] Commit the PDF through `AtomicFileWriter` (`D04 T02 §1`) checking `CancelToken` through parse, layout and pagination, and add `OdfToPdf.Odt*` tests in `tests/recto-tests/odf_to_pdf_tests.cpp`. Done when: cancelling mid-render leaves no temp file and `recto-tests.exe --gtest_filter=OdfToPdf.Odt*` passes under ASan. Cheaper substitute: converting through an installed office suite.
+- [ ] Commit: `convert: add the OpenDocument Text to PDF layout engine`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OdfToPdf.Odt*` passes under ASan, and an engine that launches an office suite makes the zero-subprocess assertion in `OdfToPdf.OdtRender` fail.
+
+## 10. OpenDocument Spreadsheet (`.ods`) to PDF layout engine
+
+Lower an `.ods` (`§8`) into the `SpreadsheetWorkbookModel` of `§2` and render it through the spreadsheet paginator, matching PDFelement's `.ods` input. Cells use their stored values and number formats; formulas are never evaluated (the cached `office:value` or `office:string-value` is shown, and a formula with no cached value shows an empty cell with a `FormulaWithoutCachedValue` warning). Value types (`float`, `percentage`, `currency`, `date`, `time`, `boolean`, `string`), `number:*-style` formats, merged cells, column widths, row heights, hidden sheets, rows and columns, and print ranges are honoured. Repeated cells and rows are expanded with a cap so a hostile repeat count cannot allocate without bound. Charts use their replacement picture.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `parse_ods_to_workbook_model(const OdfPackage&, CancelToken)` in `src/core/odf_to_pdf.cpp` for sheets, rows, cells, value types and number styles. Done when: `OdfToPdf.OdsParse` reads strings, floats, percentages, currencies, dates and booleans with their displayed text under ASan.
+2. Add merges, sizes, hidden items, print ranges, bookmarks, the render through `§2`'s paginator and the repeat caps. Done when: `OdfToPdf.OdsRender` converts a multi-sheet fixture into a vector PDF whose `PageText` and `TableExtractor` readback match the source cells.
+
+- [ ] Parse `table:table` sheets, `table:table-row`, `table:table-cell` and covered cells, with `number-columns-repeated` and `number-rows-repeated` expanded up to `16384` columns and `1048576` rows per sheet and trailing empty repeats ignored. Done when: `OdfToPdf.OdsRepeatCaps` converts a fixture that declares a repeat of `2^31` cells in bounded time and memory with a warning.
+- [ ] Map `office:value-type` and the `number:number-style`, `number:currency-style`, `number:percentage-style`, `number:date-style` and `number:time-style` definitions to display strings through the number format path of `§2`, using the cached values and never evaluating a formula. Done when: `OdfToPdf.OdsFormats` shows a currency, a percentage, a date and a boolean as the spreadsheet displays them and a formula without a cached value yields an empty cell and the warning.
+- [ ] Apply merges (`number-columns-spanned`, `number-rows-spanned`), column widths, row heights, cell borders and fills, and skip hidden sheets, rows and columns (`table:visibility`). Done when: `OdfToPdf.OdsLayout` renders merged headers and omits hidden columns.
+- [ ] Honour `table:print-ranges` when present and the `fit_spreadsheet_columns` option of `§1`, emit one `/Outlines` entry per visible sheet name, and use chart replacement pictures. Done when: `OdfToPdf.OdsPrintRange` prints only the print range and the Bookmarks panel lists the sheet names.
+- [ ] Add `OdfToPdf.Ods*` tests in `tests/recto-tests/odf_to_pdf_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=OdfToPdf.Ods*` passes under ASan.
+- [ ] Commit: `convert: add the OpenDocument Spreadsheet to PDF layout engine`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OdfToPdf.Ods*` passes under ASan, and evaluating formulas instead of reading cached values makes `OdfToPdf.OdsFormats` fail.
+
+## 11. OpenDocument Presentation (`.odp`) to PDF layout engine
+
+Lower an `.odp` (`§8`) into the `PresentationDeckModel` of `§2` and render one PDF page per slide, matching PDFelement's `.odp` input. Slide size comes from the page layout, backgrounds and shapes from the master page and the slide (`draw:page`, `style:master-page`), and the engine draws `draw:frame`, `draw:text-box`, `draw:rect`, `draw:ellipse`, `draw:line`, `draw:polygon`, `draw:path` (SVG path data), `draw:custom-shape` presets it can resolve, `draw:image` and tables inside frames. Speaker notes are skipped unless the option is on. Transitions and animations are ignored and reported once. Each slide gets a bookmark from its title frame.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `parse_odp_to_deck_model(const OdfPackage&, CancelToken)` in `src/core/odf_to_pdf.cpp` for slides, masters, backgrounds and shapes. Done when: `OdfToPdf.OdpParse` resolves slide size, background fills and positioned shapes under ASan.
+2. Render text frames, images, tables and notes through `§2`'s presentation renderer, with bookmarks. Done when: `OdfToPdf.OdpRender` converts a multi-slide fixture into one PDF page per slide with selectable text.
+
+- [ ] Parse `draw:page` slides, their master pages, `presentation:class` placeholders and drawing page backgrounds, with the slide size from `style:page-layout-properties`. Done when: `OdfToPdf.OdpParse` reads a 16:9 and a 4:3 fixture at the right page sizes.
+- [ ] Parse shapes: `draw:frame` and `draw:text-box` (paragraphs and lists through the text path of `§9`), `draw:rect`, `draw:ellipse`, `draw:line`, `draw:polygon`, `draw:path` (`svg:d` path data and `svg:viewBox`) and resolvable `draw:custom-shape` presets, with `draw:transform`. Done when: `OdfToPdf.OdpShapes` renders each shape kind at its position and an unresolved preset becomes a labelled outline with a warning.
+- [ ] Draw images and tables inside frames, gradient and solid fills, and strokes with dash styles via `PdfWriter` (`D04 T02 §2`). Done when: `OdfToPdf.OdpImagesAndTables` shows a picture and a 3 x 3 table with their text selectable.
+- [ ] Add an `include_speaker_notes` option (default off) appending each slide's notes below the slide on a following page when on, and report ignored transitions and animations once. Done when: `OdfToPdf.OdpNotes` adds the notes pages only when on and records `TransitionsIgnored`.
+- [ ] Emit one `/Outlines` entry per slide from its title frame, falling back to `Slide N`. Done when: `OdfToPdf.OdpBookmarks` lists every slide in the Bookmarks panel.
+- [ ] Add `OdfToPdf.Odp*` tests in `tests/recto-tests/odf_to_pdf_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=OdfToPdf.Odp*` passes under ASan.
+- [ ] Commit: `convert: add the OpenDocument Presentation to PDF layout engine`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OdfToPdf.Odp*` passes under ASan, and rasterizing the slides into pictures makes the `PageText` assertion in `OdfToPdf.OdpRender` fail.
+
+## 12. Native C++20 OFD (GB/T 33190) package and document reader
+
+OFD is China's open fixed-layout document standard (GB/T 33190), used for e-invoices, government documents and archives, and PDFelement converts it to PDF; Acrobat does not open it. `OfdReader` (`src/core/ofd_reader.h/.cpp`, `recto::core`) opens the ZIP package through `ZipReader` (`D04 T03 §1`), reads `OFD.xml` (`DocBody`, `DocInfo`, `DocRoot`), `Document.xml` (`CommonData` with `PageArea` and its `PhysicalBox`, `PublicRes` and `DocumentRes`, `Pages`, `Outlines`, `Attachments`), each page's `Content.xml` (`Template` references, `Content` layers) and the resource files (fonts, colour spaces, draw parameters, multimedia), into a typed `OfdDocument` model, and records signatures and seals as present without verifying them. OFD lengths are millimetres; the model converts them to points. Everything is bounded and treated as hostile: no script, no external fetch, ID references resolved with cycle and depth limits. It keeps Recto's native, offline, no-subprocess rule.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `OfdReader::open` for the package, `OFD.xml`, `Document.xml`, resources and the page list in `src/core/ofd_reader.cpp` over the bounded XML parser of `§1`. Done when: `OfdReader.OpenAndPages` opens a multi-page fixture, reports page boxes in points and resolves resource IDs.
+2. Add page content parsing into object trees and the limits. Done when: `OfdReader.PageContent` and `OfdReader.Limits` pass under ASan.
+
+- [ ] Define `OfdDocument` (`info`, `pages`, `public_res`, `document_res`, `outlines`, `attachments`, `signatures`), `OfdPage` (`physical_box_pt`, `content_box_pt`, `templates`, `layers`) and `OfdObject` variants (`Text`, `Path`, `Image`, `Composite`, `PageBlock`) in `src/core/ofd_reader.h`. Done when: the header compiles across `recto-core`, `recto-services` and `recto-cli`.
+- [ ] Parse `OFD.xml` and `Document.xml`, resolve `BaseLoc` paths inside the package only (no `..`, no absolute or UNC path), convert millimetres to points, and report a missing required element as `CorruptStructure`. Done when: `OfdReader.OpenAndPages` covers a valid package, a `BaseLoc` that escapes the package (refused) and a missing `DocRoot`.
+- [ ] Parse resource files into id-keyed tables (`Fonts`, `ColorSpaces`, `DrawParams`, `MultiMedias`, `CompositeGraphicUnits`) with duplicate-ID detection and a reference-depth cap of `32`. Done when: `OfdReader.Resources` resolves a `DrawParam` chain and rejects a cyclic one without recursion overflow.
+- [ ] Parse page `Content.xml` into the object tree (`Layer`, `PageBlock`, `TextObject`, `PathObject`, `ImageObject`, `CompositeObject`) with each object's `Boundary`, `CTM`, `Alpha`, `DrawParam` and clip, capping nesting at `32` levels and objects at `2,000,000` per page. Done when: `OfdReader.PageContent` loads each object kind and `OfdReader.Limits` refuses the nesting and object-count bombs and a decompression bomb.
+- [ ] Record `Signs` and seal files (`Seal.esl`, signature XML) as `OfdSignatureInfo` (present, signer name text if plain, not verified) and ignore `CustomTags` and `Actions` of kind sound or movie. Done when: `OfdReader.SignaturesRecorded` lists a signed invoice fixture's signatures as unverified and runs no code.
+- [ ] Add `fuzz/fuzz_ofd.cpp` and the `OfdReader.*` tests in `tests/recto-tests/ofd_reader_tests.cpp`, with a synthetic OFD built by `scripts/build-corpus.py` (generated from the public standard's structure, recorded in `tests/corpus/PROVENANCE.md`). Done when: `recto-tests.exe --gtest_filter=OfdReader.*` passes under ASan and `fuzz_ofd` runs `60 s` with no finding.
+- [ ] Commit: `convert: add the native OFD (GB/T 33190) package and document reader`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OfdReader.*` passes under ASan, and resolving a `BaseLoc` outside the package makes `OfdReader.OpenAndPages` fail.
+
+## 13. OFD page graphics to PDF: paths, images, clips, colours and templates
+
+Render the page object trees of `§12` into PDF content through `PdfWriter` (`D04 T02 §2`), so an OFD page keeps its geometry and look. OFD has its origin at the top left with y downward and lengths in millimetres, so each page gets one explicit flip matrix and text matrices are counter-flipped (text is `§14`). Paths come from `AbbreviatedData` (`S`, `M`, `L`, `Q`, `B`, `A`, `C` commands; quadratic curves are raised to cubic and arcs are split into cubic segments), with fill and stroke colours (RGB, grey, CMYK, alpha), line width, dash, cap, join and miter limit from the `DrawParam`. Images use the multimedia resource; PNG, JPEG, BMP, TIFF and GIF are embedded (JPEG unchanged with `DCTDecode`, others decoded through WIC and written lossless) and an unsupported image format becomes a labelled placeholder with a warning. Composite objects expand their graphic unit with the object's `CTM`; clips apply as PDF clip paths; layers keep their z-order and page templates are drawn first. Pattern fills draw as the average colour with a `PatternFillApproximated` warning; axial and radial shadings become PDF shadings.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement the page transform, path conversion, colour and stroke mapping and clip handling in `src/core/ofd_to_pdf.cpp`. Done when: `OfdToPdf.PathsAndColours` renders a fixture of filled, stroked, dashed and clipped paths whose pixels match the expected render within `SSIM >= 0.98`.
+2. Add images, composites, layers, templates and the warnings. Done when: `OfdToPdf.ImagesAndTemplates` passes under ASan.
+
+- [ ] Convert each page to a PDF page with `/MediaBox` from the `PhysicalBox` and `/CropBox` from the `ContentBox`, one flip matrix `1 0 0 -1 0 H` and millimetre-to-point scaling applied once. Done when: `OfdToPdf.PageGeometry` checks the box sizes to `0.01 pt` and an object at a known millimetre position lands at the expected point.
+- [ ] Convert `AbbreviatedData` (`S`, `M`, `L`, `Q`, `B`, `A`, `C`) to `m`, `l`, `c` and `h` with quadratic-to-cubic and arc-to-cubic conversion, honouring the `Fill` and `Stroke` flags and the even-odd or non-zero rule. Done when: `OfdToPdf.PathsAndColours` renders every command including an arc and a quadratic.
+- [ ] Map colours and strokes (RGB, grey and CMYK `Value`, `Alpha` as `/ca` and `/CA`, `LineWidth`, `DashPattern`, `Cap`, `Join`, `MiterLimit`) through the `DrawParam` inheritance chain. Done when: `OfdToPdf.DrawParamInheritance` resolves a parameter inherited through two levels.
+- [ ] Embed images from `MultiMedia` resources, passing JPEG through with `/DCTDecode` and writing PNG, BMP, TIFF and GIF losslessly with `/SMask` for alpha, and draw a labelled placeholder plus an `UnsupportedImageFormat` warning for a format it cannot decode. Done when: `OfdToPdf.ImagesAndTemplates` embeds a JPEG byte-identically and shows a placeholder for an unsupported format. Cheaper substitute: rasterizing the whole page.
+- [ ] Expand `CompositeObject` graphic units with the object's `CTM`, apply clips, keep `Layer` z-order, and draw `Template` pages first by their z-order. Done when: `OfdToPdf.CompositesAndTemplates` shows a stamped composite, a clipped image and a template header under the body.
+- [ ] Convert axial and radial shadings to PDF shadings, draw pattern fills as the average colour with `PatternFillApproximated`, and return the warnings in the job note. Done when: `OfdToPdf.Shadings` renders a gradient and records the pattern warning.
+- [ ] Commit through `AtomicFileWriter`, check `CancelToken` per page, and add `OfdToPdf.*` tests in `tests/recto-tests/ofd_to_pdf_tests.cpp`. Done when: cancelling leaves no temp file and `recto-tests.exe --gtest_filter=OfdToPdf.*` passes under ASan.
+- [ ] Commit: `convert: render OFD page graphics to PDF`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OfdToPdf.*` passes under ASan, and skipping the flip matrix makes `OfdToPdf.PageGeometry` fail.
+
+## 14. OFD text and fonts to PDF with font subsets and Unicode mapping
+
+OFD text is the part that makes a converted invoice searchable or garbage, so it has its own section. A `TextObject` has a font reference, a size and a `TextCode` run with per-glyph positions (`X`, `Y`, `DeltaX`, `DeltaY`) and an optional `CGTransform` that maps code points to glyph indices. This section writes each run as PDF text with exact glyph positions, embeds the font as a Type 0 / `CIDFontType2` subset with `Identity-H` and a `/ToUnicode` CMap when the package carries a font file (OpenType or TrueType, subset by `font_subsetter.cpp`, `D04 T02 §11`), and otherwise resolves the named font through DirectWrite with the `EditFontResolver` fallback order (`D03 T04 §4`), so CJK text never becomes `?`. Text colour, size, horizontal scale, weight and italic come from the object and its `DrawParam`. Extracted text from the converted PDF must equal the OFD text.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement run layout and the PDF text emission with per-glyph positions in `src/core/ofd_text.cpp`. Done when: `OfdText.GlyphPositions` places each glyph of a run at its `X`/`Y`/`DeltaX`/`DeltaY` position within `0.05 pt` and upright after the page flip.
+2. Implement font resolution, embedding and the `/ToUnicode` map. Done when: `OfdText.FontsAndUnicode` extracts the same Unicode text back, for embedded and system fonts, under ASan.
+
+- [ ] Parse `TextCode` runs into glyph lists applying `X`, `Y` and the `DeltaX`/`DeltaY` series (including the `g` repeat form), and convert them to `Tm`/`Tj` or `TJ` with the counter-flipped text matrix. Done when: `OfdText.GlyphPositions` covers absolute positions, delta series and a repeat form.
+- [ ] Apply `CGTransform` glyph mappings (code position, glyph count and glyph indices) so ligatures and many-to-one mappings keep the right glyphs and the right Unicode. Done when: `OfdText.CgTransform` renders a fixture with a ligature and extracts the original characters.
+- [ ] Embed package fonts (`FontFile` of OpenType or TrueType) as `CIDFontType2` subsets through `font_subsetter.cpp` with `Identity-H`, keeping only the glyphs used, and refuse a font whose `OS/2 fsType` forbids embedding by falling back to a system font with a warning. Done when: `OfdText.EmbeddedFont` embeds a subset smaller than the source font and renders identical glyphs, and a no-embedding font falls back with `FontEmbeddingRestricted`.
+- [ ] Resolve fonts named without a file through DirectWrite (`FontName`, `FamilyName`, `Serif`, `Bold`, `Italic`, `FixedWidth` flags), then the per-character fallback of `EditFontResolver` for characters the font lacks, and never write `?` or `.notdef`. Done when: `OfdText.FontFallback` converts SimSun-named, Kai-named and Latin text on a machine without those fonts and extracts every character.
+- [ ] Emit a `/ToUnicode` CMap for every font and carry text fill and stroke colour, size, `HScale`, weight and italic from the object and its `DrawParam`. Done when: `OfdText.FontsAndUnicode` extracts the OFD text exactly through `PageText` and the colour and size match.
+- [ ] Add `OfdText.*` tests in `tests/recto-tests/ofd_text_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=OfdText.*` passes under ASan.
+- [ ] Commit: `convert: convert OFD text and fonts to PDF with Unicode mapping`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OfdText.*` passes under ASan, and writing glyph indices without a `/ToUnicode` map makes `OfdText.FontsAndUnicode` fail on extraction.
+
+## 15. OFD outlines, links, attachments, annotations and seal report
+
+Complete the OFD conversion with the document-level parts so nothing is silently dropped. `Outlines` become `/Outlines` bookmarks, `Goto` and `URI` actions become `/Link` annotations (URI links are only written, and the viewer asks before opening them), `Attachments` become PDF embedded files that ask before opening, `Annotations` with an appearance are drawn into the page as non-editable content, `DocInfo` fills `/Info` (title, author, creation date) and the XMP basics, and signatures and seals found by `§12` are listed in the job note as `"Contains N digital seals that Recto did not verify and that the PDF does not carry."`. The conversion never claims the PDF is signed.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement outlines, link actions, attachments and document info in `src/core/ofd_to_pdf.cpp`. Done when: `OfdToPdf.OutlinesLinksAttachments` shows the bookmark tree, a working internal and a URI link, and an embedded file.
+2. Implement appearance annotations and the seal report. Done when: `OfdToPdf.AnnotationsAndSeals` draws an annotation appearance and lists the seals as unverified.
+
+- [ ] Convert `Outlines` to `/Outlines` with destinations to the converted page index and top coordinate, and keep titles as Unicode. Done when: `OfdToPdf.OutlinesLinksAttachments` shows a two-level tree that opens the right pages.
+- [ ] Convert `Goto` actions to internal `/Link` destinations and `URI` actions to `/Link` URI actions, ignoring every other action type and recording it once. Done when: `OfdToPdf.Links` resolves an internal link and a URI link and records `ActionsIgnored` for a movie action.
+- [ ] Embed `Attachments` as PDF embedded files with sanitized names (no path, no reserved Windows names, no control characters) and the original media type, so the viewer asks before opening them (`D02 T03 §8`). Done when: `OfdToPdf.Attachments` embeds two files with safe names and no attachment is opened or run.
+- [ ] Draw `Annotations` that carry an appearance object into the page content, and skip those without one with a warning. Done when: `OfdToPdf.AnnotationsAndSeals` shows a stamp annotation on the converted page.
+- [ ] Fill `/Info` and the XMP basics from `DocInfo` and write the seal report to the job note and to the `recto-cli` JSON output. Done when: `OfdToPdf.AnnotationsAndSeals` finds the title and author in `/Info` and the seal count in the report, and the PDF has no signature field.
+- [ ] Commit: `convert: add OFD outlines, links, attachments, annotations and seal report`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OfdToPdf.OutlinesLinksAttachments:OfdToPdf.Links:OfdToPdf.Attachments:OfdToPdf.AnnotationsAndSeals` passes under ASan, and writing a signature field for a seal makes `OfdToPdf.AnnotationsAndSeals` fail.
+
+## 16. MIME message parser (RFC 5322, RFC 2045 to 2049) with bounds and fuzz target
+
+Email `.eml` files, `.mht` pages and Outlook attachments are all MIME. `MimeParser` (`src/core/mime_parser.h/.cpp`, `recto::core`) parses an RFC 5322 header block and an RFC 2045 to 2049 body tree into a `MimeEntity` tree: folded headers, RFC 2047 encoded words in headers, RFC 2231 parameter continuations and charsets, `Content-Type` and `Content-Disposition` parameters, `Content-Transfer-Encoding` (`7bit`, `8bit`, `binary`, `quoted-printable`, `base64`), nested `multipart/*` with boundary handling, and `message/rfc822` parts. Charsets convert to UTF-16 through the Windows code-page tables (`IMultiLanguage2::GetCharsetInfo`), with an unknown charset falling back to UTF-8 then Windows-1252 and a warning. It is a hostile-input parser: depth, part count, header and total sizes are capped, nothing is executed or fetched, and it returns `PdfResult<MimeEntity>`.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement header parsing, encoded words and parameters in `src/core/mime_parser.cpp`. Done when: `Mime.Headers` decodes folded, RFC 2047 and RFC 2231 headers from a fixture set including non-ASCII names.
+2. Implement transfer decoding, multipart nesting, the limits and the fuzz target. Done when: `Mime.*` passes under ASan and `fuzz_mime` runs `60 s` with no finding.
+
+- [ ] Define `MimeEntity` (`headers`, `content_type`, `disposition`, `filename`, `content_id`, `charset`, `decoded_bytes`, `children`, `warnings`) and `MimeParseOptions` (`max_depth` `16`, `max_parts` `2000`, `max_header_bytes` `1 MiB`, `max_total_bytes` `512 MiB`) in `src/core/mime_parser.h`. Done when: the header compiles across `recto-core`, `recto-services` and `recto-cli`.
+- [ ] Parse header blocks (unfolding, case-insensitive names, duplicate headers kept in order), RFC 2047 encoded words (`B` and `Q`) and RFC 2231 parameters (continuations, `charset'language'` percent encoding). Done when: `Mime.Headers` and `Mime.Rfc2231` decode a UTF-8 Chinese filename given as continuations and a Q-encoded subject.
+- [ ] Decode `quoted-printable` and `base64` (tolerating line breaks and trailing garbage with a warning) and convert text parts from their charset through `IMultiLanguage2`, with the UTF-8 then Windows-1252 fallback and a warning for an unknown charset. Done when: `Mime.TransferAndCharset` decodes each encoding and a `charset=gb2312` and `iso-8859-1` part to the right Unicode.
+- [ ] Parse `multipart/*` with boundary matching (including a boundary-like line inside a part), preamble and epilogue, and `message/rfc822` as a child entity, within the depth, part and size caps. Done when: `Mime.Multipart` and `Mime.Limits` parse nested multiparts and refuse a depth-17 nest, a 3000-part message and a 600 MiB body with typed errors.
+- [ ] Sanitize attachment names (strip any path, drop control characters, replace reserved Windows names and `:`, cap length, keep the extension) in `MimeEntity::safe_filename()`. Done when: `Mime.SafeFilename` maps `..\..\evil.exe`, `CON.txt` and a 400-character name to safe names.
+- [ ] Add `fuzz/fuzz_mime.cpp` and the `Mime.*` tests in `tests/recto-tests/mime_parser_tests.cpp` with fixtures from `scripts/build-corpus.py` recorded in `tests/corpus/PROVENANCE.md`. Done when: `recto-tests.exe --gtest_filter=Mime.*` passes under ASan and `fuzz_mime` runs `60 s` with no finding.
+- [ ] Commit: `convert: add the bounded MIME message parser`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Mime.*` passes under ASan, and removing the part-count cap makes `Mime.Limits` fail.
+
+## 17. Outlook `.msg` ([MS-OXMSG]) reader over the CFB reader
+
+Foxit PDF Editor converts Outlook `.msg` messages, and Outlook users save mail that way. `MsgReader` (`src/core/msg_reader.h/.cpp`, `recto::core`) reads the property streams of a `[MS-OXMSG]` message from the `Ole2Reader` of `§4`: the top-level `__properties_version1.0` stream, the `__substg1.0_<tag><type>` variable-length property streams (Unicode `001F`, 8-bit `001E`, binary `0102`), the recipient storages `__recip_version1.0_#nnnnnnnn` and the attachment storages `__attach_version1.0_#nnnnnnnn`, into an `EmailMessageModel` (subject, sender, To, Cc, sent time, plain body, HTML body, compressed RTF body, recipients, attachments with name, media type, content ID and bytes, and embedded messages). The compressed RTF body is expanded by a bounded `[MS-OXRTFCP]` decompressor. Property tags are taken from `[MS-OXPROPS]` and recorded in one table that was checked against the specification when written. Because `Ole2Reader` already hides macro storages and `.msg` has none to run, nothing executes; rights-managed and S/MIME-encrypted messages are refused with a typed error.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement the property stream and `__substg1.0_` readers and the recipient and attachment storages in `src/core/msg_reader.cpp`, with the verified tag table in `src/core/msg_props.h`. Done when: `MsgReader.Properties` reads subject, sender, recipients, body and a attachment from a fixture `.msg` under ASan.
+2. Implement the `[MS-OXRTFCP]` decompressor, embedded messages and the refusals. Done when: `MsgReader.*` passes under ASan and `fuzz_msg` runs `60 s` with no finding.
+
+- [ ] Define `EmailMessageModel` (`subject`, `from`, `to`, `cc`, `bcc`, `sent`, `plain_body`, `html_body`, `rtf_body`, `attachments`, `inline_images`, `embedded_messages`, `warnings`) and `MsgReader::open(const Ole2Reader&)` in `src/core/msg_reader.h`, shared by the EML adapter of `§18`. Done when: the header compiles across `recto-core` and `recto-cli`.
+- [ ] Record each property tag and type used (subject, plain body, HTML body, compressed RTF, sender name and address, display To and Cc, sent time, message code page, recipient display name and SMTP address, attachment data, long and short file name, media type, content ID, attach method and flags) in `src/core/msg_props.h` and check each against `[MS-OXPROPS]`. Done when: `MsgReader.TagTable` passes and the header comment names the specification section for every tag.
+- [ ] Read string properties as UTF-16LE (`001F`) or as 8-bit text in the message code page (`001E`), refusing a stream larger than `256 MB`, and read the recipient and attachment storages with their counts bounded at `2000`. Done when: `MsgReader.Properties` reads a Unicode message, a legacy 8-bit message in a `windows-1251` code page and a message with `2001` attachments (refused with a typed error).
+- [ ] Implement a bounded `[MS-OXRTFCP]` decompressor (`LZFu` with the prefilled dictionary, the `MELA` uncompressed form, CRC check, `RAWSIZE` cap `256 MB`) and use the HTML body, then the RTF body, then the plain body. Done when: `MsgReader.CompressedRtf` expands a fixture to the original RTF and rejects a header with a lying `RAWSIZE`.
+- [ ] Read attachments by value (attach method `1`) with their file name and content ID, and embedded messages (attach method `5`) as nested `EmailMessageModel`s to a depth of `4`; list OLE-object attachments (method `6`) by name without loading them. Done when: `MsgReader.Attachments` yields a file, an inline image, a nested message and a listed OLE object.
+- [ ] Refuse messages whose class marks rights management or S/MIME encryption (`IPM.Note.SMIME`, `.RPMSG`) with `EncryptedMessage` and a plain message. Done when: `MsgReader.EncryptedRefused` returns the error and reads no body.
+- [ ] Add `fuzz/fuzz_msg.cpp` and the `MsgReader.*` tests in `tests/recto-tests/msg_reader_tests.cpp`, with `.msg` fixtures built by `scripts/build-corpus.py` and recorded in `tests/corpus/PROVENANCE.md`. Done when: `recto-tests.exe --gtest_filter=MsgReader.*` passes under ASan and `fuzz_msg` runs `60 s` with no finding.
+- [ ] Commit: `convert: add the Outlook .msg ([MS-OXMSG]) reader`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=MsgReader.*` passes under ASan, and trusting `RAWSIZE` without the cap makes `MsgReader.CompressedRtf` fail.
+
+## 18. Email (`.eml`, `.msg`) to PDF with attachments that ask before opening
+
+Foxit PDF Editor converts email to PDF; Acrobat does this only inside Outlook. This section renders an `EmailMessageModel` (from `.msg`, `§17`, or built from a `MimeEntity` tree for `.eml`, `§16`) as a PDF: a header block (From, To, Cc, Date as written with its offset, Subject), then the body, preferring HTML (through the HTML engine of `§3` with scripts off and nothing fetched) over RTF (the engine of `§1`) over plain text, with `cid:` images resolved from inside the message only and remote images replaced by a labelled placeholder and counted in a warning. Non-inline attachments are embedded in the PDF as embedded files with safe names, listed in a block under the header, and the viewer asks before opening them (`D02 T03 §8`); inline images stay in the body; nested messages are rendered as their own section after the parent, to a depth of `4`. Signed and encrypted messages are handled honestly: a `multipart/signed` body is shown and the signature is reported as not verified, and an encrypted body is refused with a typed error. Nothing is sent, opened, or looked up on the network.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Build the `.eml` adapter (`MimeEntity` to `EmailMessageModel`) and the header block and body renderer in `src/core/email_to_pdf.cpp`. Done when: `EmailToPdf.EmlRender` converts plain, HTML and multipart fixtures into PDFs whose `PageText` holds the headers and body.
+2. Add the attachment embedding, inline images, nested messages, and the signed and encrypted handling, then `.msg` through the same renderer. Done when: `EmailToPdf.*` passes under ASan for `.eml` and `.msg`.
+
+- [ ] Implement the `.eml` adapter choosing the body by `multipart/alternative` preference (HTML, then plain), collecting inline images by `Content-ID` and attachments by disposition and name, and mapping a `message/rfc822` child to a nested message. Done when: `EmailToPdf.EmlAdapter` builds the model for an alternative, a related and a mixed message.
+- [ ] Render the header block and body: format the headers in a fixed layout with the display names and addresses escaped, show the Date header as written with its offset, route HTML through `html_md_to_pdf` with the in-message `HtmlResourceProvider` (`§3`), RTF through the RTF engine (`§1`) with `\objdata` objects skipped and reported, and plain text through the text path (`§20`). Done when: `EmailToPdf.BodyRoutes` renders each body kind and a hostile HTML body runs no script and makes no network request.
+- [ ] Resolve `cid:` images from the message only, replace remote images (`http:`, `https:`) with a labelled placeholder and count them in the `RemoteImagesBlocked` warning. Done when: `EmailToPdf.InlineAndRemoteImages` shows an inline image drawn and a tracking pixel blocked and counted.
+- [ ] Embed non-inline attachments as PDF embedded files with `MimeEntity::safe_filename()` names and their media type, list them in a block under the headers (name, size, type), and cap each at `512 MiB` and the total at `2 GiB`, reporting any skipped by the cap. Done when: `EmailToPdf.Attachments` embeds three attachments, lists them, opens none, and records a skipped oversized one. Cheaper substitute: dropping attachments, or opening or converting them during the conversion.
+- [ ] Render nested `message/rfc822` and `.msg` attachments as following sections to a depth of `4` with a separator heading, and report deeper ones as attachments. Done when: `EmailToPdf.NestedMessages` renders two levels and embeds the third.
+- [ ] Handle `multipart/signed` (show the body, report `SignatureNotVerified`) and `application/pkcs7-mime` or `.msg` encrypted bodies (typed `EncryptedMessage`). Done when: `EmailToPdf.SignedAndEncrypted` shows the signed body with the warning and refuses the encrypted one.
+- [ ] Commit through `AtomicFileWriter` (`D04 T02 §1`) checking `CancelToken`, and add `EmailToPdf.*` tests in `tests/recto-tests/email_to_pdf_tests.cpp`. Done when: cancelling leaves no temp file and `recto-tests.exe --gtest_filter=EmailToPdf.*` passes under ASan.
+- [ ] Commit: `convert: add email (.eml and .msg) to PDF with embedded attachments`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=EmailToPdf.*` passes under ASan, and fetching a remote image makes the zero-network assertion in `EmailToPdf.InlineAndRemoteImages` fail.
+
+## 19. MHTML (`.mht`, `.mhtml`) to PDF through the HTML engine
+
+PDFelement converts web archives saved by Edge and Chrome. An MHTML file is a MIME `multipart/related` message whose first part is the page and whose other parts are its images and styles, found by `Content-Location` or `Content-ID`. `mhtml_to_pdf` (`src/core/mhtml_to_pdf.cpp`) parses it with the `MimeParser` of `§16`, hands the HTML part to the engine of `§3` through the in-memory `HtmlResourceProvider`, and resolves every resource from the archive only. A resource not in the file is not fetched: its image becomes a labelled placeholder and its stylesheet is skipped, both counted in a warning. Scripts stay off. This is the offline answer to saving a page: a saved page converts, while live web-page capture stays excluded by plan section 9.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement the archive resolver and `mhtml_to_pdf` in `src/core/mhtml_to_pdf.cpp`. Done when: `Mhtml.Convert` converts an archive with an embedded image and stylesheet into a PDF showing both, with zero network requests.
+2. Add the missing-resource handling and the security checks. Done when: `Mhtml.*` passes under ASan.
+
+- [ ] Choose the main HTML part by the `type` and `start` parameters or the first `text/html` part, decode its charset, and index the other parts by `Content-Location` (absolute and relative) and `Content-ID`. Done when: `Mhtml.MainPartAndIndex` selects the right part in an archive with the page second.
+- [ ] Resolve `src`, `href`, CSS `url()` and `@import` references against the archive index only, normalizing `cid:` and `Content-Location` values, and ignore `<base>` for fetching. Done when: `Mhtml.ResolveFromArchive` draws an image referenced by absolute URL and a stylesheet referenced by `cid:`.
+- [ ] Replace a resource that is not in the archive with a labelled placeholder (images) or skip it (stylesheets, fonts) and report `ResourcesNotInArchive` with the count, without any fetch. Done when: `Mhtml.MissingResources` shows placeholders and the warning and records zero network calls. Cheaper substitute: letting the HTML engine fetch the live URL.
+- [ ] Keep scripts, `<iframe>` and `<object>` off through the engine's existing isolation (`§3`) and cap the archive at the MIME limits of `§16`. Done when: `Mhtml.HostileArchive` runs no script and refuses an oversized archive.
+- [ ] Add `Mhtml.*` tests in `tests/recto-tests/mhtml_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=Mhtml.*` passes under ASan.
+- [ ] Commit: `convert: add MHTML to PDF through the HTML engine`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Mhtml.*` passes under ASan, and resolving a missing resource over the network makes `Mhtml.MissingResources` fail.
+
+## 20. Plain-text family (`.txt`, `.log`, `.ini`, `.cfg`, `.xml`) to PDF, encoding detected
+
+PDFelement converts plain text and log-style files. Recto's Convert card already lists `.txt` and `.xml` as inputs (`§7`) and the clipboard path renders pasted text (`D04 T02 §16`), but no section converted a text file, so this section does. `text_to_pdf` (`src/core/text_to_pdf.h/.cpp`) converts `.txt`, `.text`, `.log`, `.ini`, `.cfg`, `.conf`, `.properties` and `.xml` into a paginated monospace PDF through the paginator of `§1`: encoding is detected by byte-order mark, then valid UTF-8, then `IMultiLanguage2::DetectInputCodepage` with Windows-1252 as the last resort (overridable), a file whose bytes are mostly binary is refused rather than printed as garbage, long lines wrap or shrink to fit by option, tabs expand, and line numbers, a header with the file name, and page numbers are optional. `.xml` is shown as text, not rendered. `.csv` is not handled here: it stays a table through `§2`, and a test pins that routing. Very large logs stop at a page cap with an explicit last-page notice, never silently.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement encoding detection, the binary check and the monospace layout in `src/core/text_to_pdf.cpp`. Done when: `TextToPdf.Encodings` converts UTF-8 with and without a BOM, UTF-16LE and BE, Windows-1252, Shift-JIS and GB18030 fixtures to the right Unicode text in the PDF.
+2. Add the options, the page cap and `recto-cli` wiring (`§21`). Done when: `TextToPdf.*` passes under ASan.
+
+- [ ] Define `TextToPdfOptions` (`encoding` `Auto` or a name, `font_family` default `Consolas`, `font_size_pt` default `10`, `wrap` `Wrap|Shrink|Clip`, `tab_width`, `line_numbers`, `header_file_name`, `page_numbers`, `page_size`, `margins`, `max_pages` default `20000`) in `src/core/text_to_pdf.h`. Done when: the header compiles across `recto-core`, `recto-services` and `recto-cli`.
+- [ ] Detect the encoding (BOM, then strict UTF-8 validation, then MLang detection on a `64 KiB` sample, then Windows-1252) and honour an explicit override, recording the choice in the job note. Done when: `TextToPdf.Encodings` covers each case and `TextToPdf.EncodingOverride` forces `windows-1251`.
+- [ ] Refuse a file in which more than `5%` of the first `64 KiB` are NUL or control bytes (other than tab, CR, LF and form feed) with `NotATextFile` and the message `"This file looks like binary data, not text."`. Done when: `TextToPdf.BinaryRefused` refuses an executable renamed `.log` and accepts a UTF-16 text file.
+- [ ] Lay out the text in the monospace font with per-script font fallback and subset embedding, no `?` or `.notdef` (`D06 T03 §7`), wrapping, shrinking or clipping long lines per option, and optional line numbers, header and page numbers. Done when: `TextToPdf.Layout` converts Latin, CJK and Arabic text and `PageText` returns the same Unicode, and a 5000-character line wraps without loss.
+- [ ] Stop at `max_pages`, add a last-page notice (`"This file was cut after 20,000 pages."`) and the `TextTruncated` warning, and stream the layout so memory stays bounded for a `1 GiB` log. Done when: `TextToPdf.PageCap` converts a generated 300 MiB log within the memory bound and shows the notice. Cheaper substitute: reading the whole file into memory.
+- [ ] Pin the routing so `.csv` goes to the spreadsheet engine (`§2`) and `.md`, `.html` to `§3`, and every other listed extension here. Done when: `TextRouting.Extensions` asserts the engine chosen for each extension.
+- [ ] Add `TextToPdf.*` tests in `tests/recto-tests/text_to_pdf_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=TextToPdf.*:TextRouting.*` passes under ASan.
+- [ ] Commit: `convert: add the plain-text family to PDF with encoding detection`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=TextToPdf.*:TextRouting.*` passes under ASan, and decoding every file as Windows-1252 makes `TextToPdf.Encodings` fail.
+
+## 21. `recto-cli office-to-pdf` dispatch for the new input formats
+
+Extend the one conversion verb of `§2` so scripts, the Action Wizard and the local MCP server reach the new engines through the same exit-code contract, instead of adding a verb per format. `recto-cli office-to-pdf <in> --out <out.pdf>` identifies the input by signature first and extension second, and now routes `.odt`, `.ods`, `.odp` (`§9` to `§11`), `.ofd` (`§13` to `§15`), `.eml`, `.msg` (`§18`), `.mht`, `.mhtml` (`§19`), the text family (`§20`) and the image formats of `D04 T02 §23`, besides the Office, RTF, CSV, HTML and Markdown inputs it already takes. New flags carry the per-format options. A format whose engine refuses the file (password-protected ODF, encrypted email, binary data) exits non-zero with the typed reason in `--json`.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add signature-first format identification and the dispatch table in `src/cli/cmd_office_to_pdf.cpp` and `src/core/convert_dispatch.cpp`, shared with the Convert page job factory. Done when: `Cli.OfficeToPdfFormats` converts one fixture per new format and a renamed file by signature.
+2. Add the flags and the typed exit codes. Done when: `Cli.OfficeToPdfFormats` and `Cli.OfficeToPdfRefusals` pass under ASan.
+
+- [ ] Implement `identify_input(path)` returning the engine from magic bytes (ZIP plus `mimetype` or `OFD.xml`, CFB plus `__properties_version1.0`, MIME headers, text) before the extension, in `src/core/convert_dispatch.cpp`. Done when: `ConvertDispatch.Signatures` routes a `.docx`-named ODT, a `.txt`-named EML and an extensionless OFD correctly.
+- [ ] Route each identified format to its engine and keep the existing routes unchanged. Done when: `Cli.OfficeToPdfFormats` converts `.odt`, `.ods`, `.odp`, `.ofd`, `.eml`, `.msg`, `.mhtml`, `.log`, `.ini`, `.xml` and a `.webp` (skipped with the codec message when absent) and still converts `.docx`, `.xlsx` and `.html`.
+- [ ] Add `--include-notes` (ODP), `--prefer-plain-text` (email), `--encoding <name>` and `--max-pages <n>` (text), `--ico-frames largest|all` (images), and print `warnings` and the seal and attachment counts in `--json`. Done when: `Cli.OfficeToPdfFormats` asserts each flag changes the output as documented.
+- [ ] Map typed refusals (`PasswordProtectedOdf`, `EncryptedMessage`, `NotATextFile`, `UnsupportedImageFormat`, a missing codec) to distinct non-zero exit codes with the plain message on stderr and the code in `--json`. Done when: `Cli.OfficeToPdfRefusals` asserts each exit code and message.
+- [ ] Commit: `convert: dispatch ODF, OFD, email, MHTML, text and more images in recto-cli office-to-pdf`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=ConvertDispatch.*:Cli.OfficeToPdfFormats:Cli.OfficeToPdfRefusals` passes under ASan, and routing by extension only makes `ConvertDispatch.Signatures` fail.
+
+## 22. Convert card inputs for ODF, OFD, email, MHTML, text and image formats, and open `.ofd`
+
+Make the new formats usable on the Convert page and in the Open dialog. The **PDF from Office, HTML, Markdown & Images** card (`§7`) now accepts `.odt`, `.ods`, `.odp`, `.ofd`, `.eml`, `.msg`, `.mht`, `.mhtml`, the text family and the extra image types, dispatches them through `§21`'s table, shows the new option rows only when a file that uses them is loaded (speaker notes for ODP, prefer plain text for email, encoding for text, icon frames for ICO), and surfaces each job's warnings and typed refusals in the queue card. A `.ofd` file opened from the Open dialog or dropped on the window converts to a temporary PDF and opens as an unsaved tab through `OpenDocumentPipeline::open_generated_async` (`D04 T02 §15`), titled `<name>.ofd (converted)`, so OFD is readable in Recto and the original is never modified.
+
+**Phase:** 5
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** SPEC section 9.5 (the card enable and disable rule and the Step 3 options of the `PDF from Office, HTML, Markdown & Images` card) with `D-Convert.png`, and section 9.1 (the Home drop overlay and Open dialog) for opening `.ofd`; the conditional option rows are a genuinely new addition that follow the existing option row and hint line chrome.
+**Job:** The user can drop an ODF file, an OFD document, a saved email, a saved web page or a log file onto the Convert page and get a PDF, with the options that matter for that format and a clear message when a file cannot be converted, and can open an `.ofd` straight into the viewer. Consumer: `ConvertPage` (`D04 T01 §3`, `§4`), `ConversionRunner` (`D04 T01 §1`), the queue card (`D04 T01 §5`) and `OpenDocumentPipeline` (`D02 T01 §5`).
+**Treatment:** The extension list and disable reason of the card, per-format conditional option rows bound to the existing `OfficeToPdfOptionsViewModel`, the dispatch of `§21`, and a converted-on-open flow for `.ofd`. Cheaper substitute that fails the checkpoint: listing the new extensions without options or messages, or an `.ofd` open that writes the PDF next to the original.
+**Chrome:** consume the Convert Step 2 card registry and Step 3 options host (`D04 T01 §3`, `§4`), the queue card and notices (`D04 T01 §5`, `§6`), the Open pipeline (`D02 T01 §5`), `RectoColors.xaml` tokens and Segoe Fluent Icons.
+
+**Build order:**
+
+1. Extend the card's enablement, hint line and conditional option rows in `OfficeToPdfOptionsControl` (`§7`) and the job factory dispatch. Done when: `OfficeToPdf.NewFormatsCardUi` loads one file per new format and sees the card enabled with the right option rows.
+2. Add the warnings and refusals display and the converted-on-open flow for `.ofd`. Done when: `AppTests.OpenOfdUi` opens an `.ofd` as an unsaved converted tab and shows a refusal message for an encrypted ODF.
+
+- [ ] Extend the card's enabling extension list with `.odt`, `.ods`, `.odp`, `.ofd`, `.eml`, `.msg`, `.mht`, `.mhtml`, `.txt`, `.text`, `.log`, `.ini`, `.cfg`, `.conf`, `.properties`, `.xml`, `.ico`, `.jfif`, `.dib`, `.heic`, `.heif`, `.webp` and `.jxl`, and update the disable reason and hint line to name the new kinds. Done when: `OfficeToPdf.NewFormatsCardUi` verifies enablement and the new hint line.
+- [ ] Add conditional option rows to `OfficeToPdfOptionsControl`: `Include speaker notes` (ODP loaded), `Prefer plain text` (email loaded), `Text encoding` (`Auto` and a list) and `Wrap long lines` (text loaded), and `Icon sizes` (`Largest`, `All`) (ICO loaded), each with an automation name and tooltip and shown only when a file that uses it is in Step 1. Done when: the rows appear and disappear with the file mix and pass the `D03 T02 §3` inventory. Cheaper substitute: always showing every row.
+- [ ] Dispatch queued jobs through `convert_dispatch` (`§21`) and show job warnings (`FootnotesMovedToEnd`, `RemoteImagesBlocked`, `ResourcesNotInArchive`, `PatternFillApproximated`, `TextTruncated`, a missing-codec message) as a count and expandable list in the queue card. Done when: `OfficeToPdf.NewFormatsCardUi` shows the warnings of a seeded email and a seeded OFD.
+- [ ] Show the typed refusals (`PasswordProtectedOdf`, `EncryptedMessage`, `NotATextFile`, `UnsupportedImageFormat` with the codec name) as failed queue cards with their plain message and no retry loop. Done when: `OfficeToPdf.NewFormatsCardUi` shows each message for a seeded refusal.
+- [ ] Add `.ofd` to the Open dialog filter and the Home drop target: converting through `convert_office_to_pdf` into a private temp file as a queue job, then `open_generated_async` as `<name>.ofd (converted)`, marked unsaved with the temp file owned by the tab, `Save a copy` defaulting to `<name>.pdf`, and the `.ofd` never modified. Done when: `AppTests.OpenOfdUi` opens an OFD, closes it with the unsaved prompt, and finds the source `.ofd` hash unchanged. Cheaper substitute: writing the PDF beside the `.ofd`.
+- [ ] Add `OfficeToPdf.NewFormatsCardUi` and `AppTests.OpenOfdUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=OfficeToPdf.NewFormatsCardUi:AppTests.OpenOfdUi` passes on the display-session host.
+- [ ] Commit: `convert: accept ODF, OFD, email, MHTML, text and more image types on the Convert page and open OFD`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OfficeToPdf.NewFormatsCardUi:AppTests.OpenOfdUi` passes on the display-session host, and display-session screenshots confirm the card and the conditional option rows.
 
 ## Verification
 

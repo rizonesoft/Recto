@@ -24,6 +24,9 @@
             <SolidColorBrush x:Key="RectoWindowBrush" Color="#FFEEF1F6" />
             <SolidColorBrush x:Key="RectoSurfaceBrush" Color="#FFFAFAFA" />
             <SolidColorBrush x:Key="RectoRaisedBrush" Color="#FFFFFFFF" />
+            <SolidColorBrush x:Key="RectoFloatingBarBackgroundBrush" Color="#FF1B1A19" />
+            <SolidColorBrush x:Key="RectoFloatingBarBorderBrush" Color="#FF2A2826" />
+            <SolidColorBrush x:Key="RectoFloatingBarForegroundBrush" Color="#FFEDEAE4" />
             <SolidColorBrush x:Key="RectoCanvasBrush" Color="#FFE6E7EA" />
             <SolidColorBrush x:Key="RectoBorderBrush" Color="#FFE5E5E5" />
             <SolidColorBrush x:Key="RectoBorderStrongBrush" Color="#FFD6D9DF" />
@@ -46,6 +49,9 @@
             <SolidColorBrush x:Key="RectoWindowBrush" Color="#FF1B1A19" />
             <SolidColorBrush x:Key="RectoSurfaceBrush" Color="#FF232120" />
             <SolidColorBrush x:Key="RectoRaisedBrush" Color="#FF2A2826" />
+            <SolidColorBrush x:Key="RectoFloatingBarBackgroundBrush" Color="#FF1B1A19" />
+            <SolidColorBrush x:Key="RectoFloatingBarBorderBrush" Color="#FF2A2826" />
+            <SolidColorBrush x:Key="RectoFloatingBarForegroundBrush" Color="#FFEDEAE4" />
             <SolidColorBrush x:Key="RectoCanvasBrush" Color="#FF141312" />
             <SolidColorBrush x:Key="RectoBorderBrush" Color="#FF3A3734" />
             <SolidColorBrush x:Key="RectoBorderStrongBrush" Color="#FF4A4642" />
@@ -68,6 +74,9 @@
             <SolidColorBrush x:Key="RectoWindowBrush" Color="{ThemeResource SystemColorWindowColor}" />
             <SolidColorBrush x:Key="RectoSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
             <SolidColorBrush x:Key="RectoRaisedBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="RectoFloatingBarBackgroundBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="RectoFloatingBarBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="RectoFloatingBarForegroundBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
             <SolidColorBrush x:Key="RectoCanvasBrush" Color="{ThemeResource SystemColorWindowColor}" />
             <SolidColorBrush x:Key="RectoBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
             <SolidColorBrush x:Key="RectoBorderStrongBrush" Color="{ThemeResource SystemColorWindowTextColor}" />

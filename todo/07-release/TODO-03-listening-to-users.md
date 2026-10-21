@@ -8,13 +8,12 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 
 # TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and Demand
 
-> **Goal:** Recto hears its users and answers them in the open. A report arrives through one GitHub form with the version, install type, OS and steps it needs, prefilled from the app's own diagnostics; a user with a private file can share a structure-preserving reproducer after inspecting it; every user-reported bug gets a regression test before it closes; an issue closes when the release containing its fix ships; security reports have a private channel and an advisory; and what users ask for is recorded in a public demand ledger that is reviewed before every release. These are the process failures pdfcraft's users met most (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`, "How pdfcraft treated its users").
+> **Goal:** Recto hears its users and answers them in the open. A report arrives through one GitHub form with the version, install type, OS and steps it needs, prefilled from the app's own diagnostics; a user with a private file can share a structure-preserving reproducer after inspecting it; every user-reported bug gets a regression test before it closes; an issue closes when the release containing its fix ships; security reports have a private channel and an advisory; and what users ask for is recorded in a public demand ledger that is reviewed before every release.
 
 > **Current state:** Measured 2026-10-21. `.github/` holds `pull_request_template.md` and CI workflows only: there are no issue forms, no `SECURITY.md`, no triage or release-closing policy, no reproducer tooling, no demand ledger and no in-app path from a problem to a report. `D07 T02 §4` plans a local crash bundle and `D07 T02 §6` a release runbook; neither covers non-crash reports or closing issues on release.
 
 ## Inputs
 
-- `docs/research/2026-10-20-pdfcraft-issue-lessons.md`: the user-handling failures (fixed on main but unreleased, no security channel, missing template fields, relay with no reply path, needs-info dead ends for private files, bot closures, hidden features) and the rule each sets.
 - Foundation plan D16 (local diagnostics and zero network telemetry) and section 9 (hostile input); AGENTS.md "Tests prove claims" and "Fix at the owning layer".
 - -> XREF: D07 T02 §4 -- the opt-in local crash bundle that §2 here reuses for its diagnostics text, and that links to §1's issue form.
 - -> XREF: D07 T02 §6 -- the GitHub release runbook that §4 and §5 here extend with closing-on-release and the release gate.
@@ -24,6 +23,7 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 - -> XREF: D08 T01 §9 -- diagnostics must never carry an assistant key (D08 T01 §9 scans for it).
 - -> XREF: D04 T07 §2 -- records the Action Wizard's watched-folder request (D04 T07 §2).
 - -> XREF: D09 T05 §12 -- diagnostics must never carry a Recto Cloud token (D09 T05 §12).
+- -> XREF: D07 T02 §10 -- update notice policy.
 
 ## Outcome
 
@@ -51,7 +51,7 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 
 ## 1. Issue forms, triage policy and `SECURITY.md`
 
-pdfcraft had no issue template for most of its life, relayed Discord reports to GitHub where reporters could not read replies, let a bot split reports and close real requests as support questions, and kept private vulnerability reporting off while researchers waited (research record; pdfcraft #499, #1114, #2380, #2517, #2743, #3085, #3433). This section writes Recto's intake files and the triage rules people follow. Turning on GitHub's private vulnerability reporting is an operator setting owned by `D99 T01 §2`.
+Common user-handling failures are no issue template, reports relayed to GitHub where reporters cannot read replies, a bot that splits reports and closes real requests as support questions, and private vulnerability reporting left off while researchers wait. This section writes Recto's intake files and the triage rules people follow. Turning on GitHub's private vulnerability reporting is an operator setting owned by `D99 T01 §2`.
 
 **Phase:** 0
 **Needs:** none
@@ -62,12 +62,12 @@ pdfcraft had no issue template for most of its life, relayed Discord reports to 
 1. Author `.github/ISSUE_TEMPLATE/bug_report.yml`, `feature_request.yml` and `config.yml`, plus `SECURITY.md` at the repository root. Done when: `python -m unittest tests.scripts.test_issue_forms` parses each form and finds every required field.
 2. Author `docs/support/triage.md` with labels, response targets and the closing rules. Done when: the labels it names exist in `.github/labels.yml` and the test checks the file lists every label.
 
-- [ ] Author `.github/ISSUE_TEMPLATE/bug_report.yml` with required fields: Recto version (from `Help -> About`), install type (`Installer`, `Portable`, `MSIX`), Windows build, GPU and driver, steps, expected, actual, and a file or `recto-cli scrub` reproducer, plus an optional diagnostics paste from §2. Done when: the form renders on GitHub and every required field has `validations: required: true`. Cheaper substitute: a Markdown template whose placeholders reporters leave unfilled (pdfcraft #499, #1860).
+- [ ] Author `.github/ISSUE_TEMPLATE/bug_report.yml` with required fields: Recto version (from `Help -> About`), install type (`Installer`, `Portable`, `MSIX`), Windows build, GPU and driver, steps, expected, actual, and a file or `recto-cli scrub` reproducer, plus an optional diagnostics paste from §2. Done when: the form renders on GitHub and every required field has `validations: required: true`. Cheaper substitute: a Markdown template whose placeholders reporters leave unfilled.
 - [ ] Author `.github/ISSUE_TEMPLATE/feature_request.yml` that opens with a link to search existing issues and `docs/user-demand.md`, then asks for the task the user is trying to do and the app they use today. Done when: the form renders and the search link targets this repository's open issues.
 - [ ] Author `.github/ISSUE_TEMPLATE/config.yml` disabling blank issues and linking `SECURITY.md` for vulnerabilities. Done when: GitHub's new-issue page shows only the two forms and the security link.
-- [ ] Author `SECURITY.md` naming supported versions, the private reporting route (GitHub "Report a vulnerability"), a first-response target of 3 working days, and the promise of an advisory with every security release (pdfcraft #1114, #2380). Done when: the file exists and `test_issue_forms` checks those four items.
+- [ ] Author `SECURITY.md` naming supported versions, the private reporting route (GitHub "Report a vulnerability"), a first-response target of 3 working days, and the promise of an advisory with every security release. Done when: the file exists and `test_issue_forms` checks those four items.
 - [ ] Author `.github/labels.yml` with area labels (`engine`, `viewer`, `text`, `convert`, `organize`, `print`, `install`), kind labels (`bug`, `feature`, `regression`, `data-loss`, `crash`, `security`) and state labels (`needs-repro`, `fixed-on-main`, `released`). Done when: the file parses and every label has a description.
-- [ ] Author `docs/support/triage.md`: a person, not a bot, closes an issue; a duplicate close links the canonical issue and states its status; a feature request is never closed as "support"; `needs-repro` offers `recto-cli scrub` and a synthetic-file guide; one owner per issue, and a superseded pull request is closed with a link (pdfcraft #2743, #2800, #3433, #3490). Done when: the file covers each rule and `test_issue_forms` checks the headings.
+- [ ] Author `docs/support/triage.md`: a person, not a bot, closes an issue; a duplicate close links the canonical issue and states its status; a feature request is never closed as "support"; `needs-repro` offers `recto-cli scrub` and a synthetic-file guide; one owner per issue, and a superseded pull request is closed with a link. Done when: the file covers each rule and `test_issue_forms` checks the headings.
 - [ ] Add `tests/scripts/test_issue_forms.py` validating the YAML forms, required fields, labels and the security file. Done when: removing a required field makes the test fail.
 - [ ] Commit: `repo: add issue forms, labels, triage policy and SECURITY.md`
 
@@ -75,7 +75,7 @@ pdfcraft had no issue template for most of its life, relayed Discord reports to 
 
 ## 2. In-app `Report a problem` with privacy-safe diagnostics
 
-pdfcraft's reporters could not say which version, install type or GPU they had, and maintainers spent their replies asking (research record; pdfcraft #3046, #3352, #3626, #3751). Recto offers `Help -> Report a problem`: it builds a diagnostics block with no document content, copies it, and opens the bug form with the version, install type and Windows build prefilled through GitHub's form URL parameters. Nothing is sent by Recto itself; the user's browser opens the form.
+Reporters often cannot say which version, install type or GPU they had, and maintainers spend their replies asking. Recto offers `Help -> Report a problem`: it builds a diagnostics block with no document content, copies it, and opens the bug form with the version, install type and Windows build prefilled through GitHub's form URL parameters. Nothing is sent by Recto itself; the user's browser opens the form.
 
 **Phase:** 6
 **Needs:** windows-host, display-session
@@ -103,7 +103,7 @@ pdfcraft's reporters could not say which version, install type or GPU they had, 
 
 ## 3. Structure-preserving reproducer scrubber (`recto-cli scrub`)
 
-pdfcraft's maintainers asked for files that users could not share (identity documents, legal and company files), and reports died in `needs info` (research record; pdfcraft #1628, #2159, #2423, #2722). `recto-cli scrub` writes a copy that keeps the object graph, filters, content-stream operator structure and page geometry that trigger a bug, while replacing text bytes, image samples, metadata and attachments with neutral placeholders of the same shape. Channels a user cannot check by looking at the pages are removed by default: unreachable objects are dropped, font programs are stripped, and unknown or private streams, JavaScript, XFA data and attachment data are zeroed to the same length; each can be kept only by an explicit flag that the report names. What stays visible (a name drawn as vector outlines, a signature drawn as paths) is the user's to check: the tool renders the scrubbed pages for inspection and never calls its output safe. It always writes a new file; the original is never touched.
+Maintainers often ask for files that users cannot share (identity documents, legal and company files), and reports die in `needs info`. `recto-cli scrub` writes a copy that keeps the object graph, filters, content-stream operator structure and page geometry that trigger a bug, while replacing text bytes, image samples, metadata and attachments with neutral placeholders of the same shape. Channels a user cannot check by looking at the pages are removed by default: unreachable objects are dropped, font programs are stripped, and unknown or private streams, JavaScript, XFA data and attachment data are zeroed to the same length; each can be kept only by an explicit flag that the report names. What stays visible (a name drawn as vector outlines, a signature drawn as paths) is the user's to check: the tool renders the scrubbed pages for inspection and never calls its output safe. It always writes a new file; the original is never touched.
 
 **Phase:** 4
 **Needs:** windows-host
@@ -128,7 +128,7 @@ pdfcraft's maintainers asked for files that users could not share (identity docu
 
 ## 4. User-bug regression rule, closing on release and changelog mapping
 
-pdfcraft closed issues when a fix merged, users on the release kept hitting them, and duplicates piled up; several fixes shipped without tests (research record; pdfcraft #160, #638, #826, #2470, #3535). Recto's rule: a user-reported bug closes with a regression test that fails before the fix, the fix commit carries `Fixes-User: #N` and `Regression-Test: <test id>` trailers, the pull request quotes the test failing on the parent commit and passing on the fix, the issue is labelled `fixed-on-main`, and it closes only when the release that contains the commit is published, with a "Fixed in vX.Y.Z" comment.
+A common failure is closing issues when a fix merges while users on the release keep hitting them, duplicates piling up, and fixes shipping without tests. Recto's rule: a user-reported bug closes with a regression test that fails before the fix, the fix commit carries `Fixes-User: #N` and `Regression-Test: <test id>` trailers, the pull request quotes the test failing on the parent commit and passing on the fix, the issue is labelled `fixed-on-main`, and it closes only when the release that contains the commit is published, with a "Fixed in vX.Y.Z" comment.
 
 **Phase:** 0
 **Needs:** none
@@ -151,7 +151,7 @@ pdfcraft closed issues when a fix merged, users on the release kept hitting them
 
 ## 5. Release gate for unreleased fixes, security advisories and CI integrity
 
-pdfcraft's security and data-loss fixes sat on main while the current release stayed vulnerable, with no advisory, and its CI was red or cancelled on main so regressions shipped unseen (research record; pdfcraft #671, #948, #1844, #1969, #2415). `scripts/release-gate.py` blocks tagging when the release would leave a `fixed-on-main` crash, data-loss or security fix unreleased for more than seven days without a patch release, when a security fix has no advisory draft, when the last main CI run was cancelled or red, or when the `D06 T03 §12` smoke report is missing.
+Another is security and data-loss fixes sitting on main while the current release stays vulnerable with no advisory, and CI red or cancelled on main so regressions ship unseen. `scripts/release-gate.py` blocks tagging when the release would leave a `fixed-on-main` crash, data-loss or security fix unreleased for more than seven days without a patch release, when a security fix has no advisory draft, when the last main CI run was cancelled or red, or when the `D06 T03 §12` smoke report is missing.
 
 **Phase:** 6
 **Needs:** windows-host
@@ -164,8 +164,8 @@ pdfcraft's security and data-loss fixes sat on main while the current release st
 
 - [ ] Fail when an issue labelled `fixed-on-main` and `crash`, `data-loss` or `security` has been fixed for more than seven days and its fix commit is not an ancestor of the candidate commit (`git merge-base --is-ancestor`), so the patch release that ships an overdue fix always passes. Done when: an eight-day-old fix outside the candidate fails the gate and the same fix inside the candidate passes.
 - [ ] Fail when a release includes a `security` fix and no draft GitHub security advisory names the affected versions. Done when: the fixture without an advisory fails.
-- [ ] Require, for the candidate commit SHA itself, a `success` conclusion for every job and matrix combination named in `.github/release-required-jobs.txt` (workflow, job name and matrix values: build for x64 and ARM64 in Debug and Release, tests, the standard-user leg, plan gates), read with `gh run view <id> --json jobs`; a job that is missing, `skipped`, `cancelled` or `failure`, or a run for another SHA, fails the gate, because a workflow can report success while a conditionally skipped job did not run (pdfcraft #671, #2415). Done when: fixtures with the ARM64 job skipped, a cancelled candidate run and a green run for a different SHA each fail the gate, and the full-matrix fixture passes.
-- [ ] Add a standard-user (non-administrator) test leg to `.github/workflows/build.yml` so privilege-dependent tests cannot pass only as admin (pdfcraft #948). Done when: the workflow defines the leg and the gate requires its result.
+- [ ] Require, for the candidate commit SHA itself, a `success` conclusion for every job and matrix combination named in `.github/release-required-jobs.txt` (workflow, job name and matrix values: build for x64 and ARM64 in Debug and Release, tests, the standard-user leg, plan gates), read with `gh run view <id> --json jobs`; a job that is missing, `skipped`, `cancelled` or `failure`, or a run for another SHA, fails the gate, because a workflow can report success while a conditionally skipped job did not run. Done when: fixtures with the ARM64 job skipped, a cancelled candidate run and a green run for a different SHA each fail the gate, and the full-matrix fixture passes.
+- [ ] Add a standard-user (non-administrator) test leg to `.github/workflows/build.yml` so privilege-dependent tests cannot pass only as admin. Done when: the workflow defines the leg and the gate requires its result.
 - [ ] Fail when `build/release-smoke/<version>.json` from `D06 T03 §12` is missing, not green, names a commit other than the candidate, or lists an artifact digest that differs from the bundle's `SHA256SUMS.txt` (`D07 T02 §7`). Done when: the missing-report, wrong-commit and rebuilt-artifact fixtures each fail.
 - [ ] Add `tests/scripts/test_release_gate.py` with JSON fixtures for each rule. Done when: each rule has a passing and a failing fixture.
 - [ ] Commit: `release: gate tags on unreleased critical fixes, advisories, green CI and the smoke report`
@@ -174,7 +174,7 @@ pdfcraft's security and data-loss fixes sat on main while the current release st
 
 ## 6. Public scope page and user demand ledger
 
-pdfcraft users filed bugs for features that existed but were hidden, asked scope questions nobody answered, and could not tell shipped from planned (research record; pdfcraft #493, #2231, #2596, #2721, #3188). Recto publishes `docs/scope.md` (what it does, what it never does and why: no PDF JavaScript, no network by default, Windows only, how XFA is handled) and `docs/user-demand.md`, a ledger that maps each recurring request to a TODO section, a recorded decision, or an explicit "not planned" with its reason. The ledger is seeded from the pdfcraft research ranking and reviewed before every release.
+Users file bugs for features that exist but are hidden, ask scope questions nobody answers, and cannot tell shipped from planned. Recto publishes `docs/scope.md` (what it does, what it never does and why: no PDF JavaScript, no network by default, Windows only, how XFA is handled) and `docs/user-demand.md`, a ledger that maps each recurring request to a TODO section, a recorded decision, or an explicit "not planned" with its reason. The ledger is seeded from Recto's own GitHub issues, `docs/acrobat-parity.md` and the competitor parity rows, and reviewed before every release.
 
 **Phase:** 0
 **Needs:** none
@@ -182,22 +182,22 @@ pdfcraft users filed bugs for features that existed but were hidden, asked scope
 
 **Build order:**
 
-1. Author `docs/scope.md` and `docs/user-demand.md`, seeding the ledger from the research record's request ranking. Done when: every ledger row names a TODO reference, a decision, or "not planned" with a reason.
+1. Author `docs/scope.md` and `docs/user-demand.md`, seeding the ledger from Recto's own GitHub issues, `docs/acrobat-parity.md` and the competitor parity rows. Done when: every ledger row names a TODO reference, a decision, or "not planned" with a reason.
 2. Add `scripts/check-user-demand.py` validating that each TODO reference in the ledger resolves through `scripts/todo-graph.py resolve`. Done when: `python -m unittest tests.scripts.test_user_demand` passes and a bogus reference fails it.
 
 - [ ] Author `docs/scope.md`: supported Windows versions and architectures, what Recto never does (run PDF JavaScript, contact the network without consent, collect telemetry), XFA and dynamic-form handling, and where to ask. Done when: each topic has a heading and the file is linked from `README.md`.
-- [ ] Author `docs/user-demand.md` with columns Request, Evidence (issue numbers, Recto's and pdfcraft's), Status (`planned`, `decided`, `not planned`), Owner (TODO reference or decision) and Last reviewed. Done when: the 18 ranked requests from the research record each have a row.
+- [ ] Author `docs/user-demand.md` with columns Request, Evidence (Recto issue numbers and parity rows), Status (`planned`, `decided`, `not planned`), Owner (TODO reference or decision) and Last reviewed. Done when: every open Recto issue labelled as a request, and every `docs/acrobat-parity.md` row without a TODO owner, has a row.
 - [ ] Record the requests no section owns yet as `decided` or `not planned` with the decision and its cost of reversing, never as silence (tab tear-off and split view, mobile apps, AI features). Done when: no row has an empty Owner.
 - [ ] Author `scripts/check-user-demand.py` resolving every TODO reference and failing on an unknown one or a row older than the last release's review date. Done when: the script exits 0 on the seeded ledger.
 - [ ] Add `tests/scripts/test_user_demand.py` with a valid and an invalid ledger fixture. Done when: the invalid fixture fails.
 - [ ] Add the ledger review to the release runbook checklist in `docs/release-and-store-runbook.md` once `D07 T02 §6` creates it, and to `docs/support/triage.md` now. Done when: `docs/support/triage.md` names the review.
-- [ ] Commit: `docs: publish Recto's scope and a user demand ledger seeded from pdfcraft research`
+- [ ] Commit: `docs: publish Recto's scope and a user demand ledger seeded from Recto issues and parity rows`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_user_demand` passes and `python scripts/check-user-demand.py` exits 0 on the committed ledger.
 
 ## 7. What's new after update and opt-in update notice
 
-pdfcraft users stayed on old builds and reported bugs already fixed, and could not find features that had shipped (research record; pdfcraft #28, #99, #2231, #2814, #3197). Recto shows a `What's new` page once after each version change, built from §4's release notes embedded at build time (no network), and offers an opt-in update notice that checks GitHub Releases at most once a day only when the user turns it on. Because the notice is outbound network access, the owner decides whether it ships in v1 and its default; until then this section waits.
+Users stay on old builds and report bugs already fixed, and cannot find features that have shipped. Recto shows a `What's new` page once after each version change, built from §4's release notes embedded at build time (no network), and offers an opt-in update notice that checks GitHub Releases at most once a day only when the user turns it on. Because the notice is outbound network access, the owner decides whether it ships in v1 and its default; until then this section waits.
 
 **Phase:** 6
 **Needs:** windows-host, display-session, owner-decision
@@ -218,7 +218,7 @@ pdfcraft users stayed on old builds and reported bugs already fixed, and could n
 - [ ] Build the `What's new` page and show it once per version change, reachable later from `Help` and `Ctrl+K` ("what's new", "changelog"). Done when: the page appears once after a version change and never on a normal start. Cheaper substitute: a link to a web changelog the user must find.
 - [ ] Add the `Check for updates` setting with the decided default, reading it through `SettingsStore`, and a manual `Check now` command. Done when: the setting is read at startup and listed in the settings search.
 - [ ] Query `https://api.github.com/repos/rizonesoft/RectoPDF/releases/latest` at most once per 24 hours only while the setting is on, compare versions, and show a dismissible `InfoBar` linking to the release page; never download or install. Done when: a test with the setting off records zero network requests and with it on records one.
-- [ ] Show a clear message on a failed check (cause and when it will retry) instead of a bare status code (pdfcraft #727). Done when: a 403 fixture shows the rate-limit message.
+- [ ] Show a clear message on a failed check (cause and when it will retry) instead of a bare status code. Done when: a 403 fixture shows the rate-limit message.
 - [ ] Commit: `app: show What's new per version and an opt-in update notice`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.WhatsNewOncePerVersion:Shell.UpdateNoticeOptIn` passes on the display-session host, with zero network requests recorded while the setting is off.

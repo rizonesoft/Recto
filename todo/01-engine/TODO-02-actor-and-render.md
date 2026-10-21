@@ -29,6 +29,15 @@ track: M1
 - -> XREF: D03 T04 §1 -- Edit PDF's `EditModel` consumes this interpreter's operator stream and graphics state.
 - -> XREF: D05 T01 §12 -- the actor accepts a certificate for `/Adobe.PubSec` files (D05 T01 §12).
 - -> XREF: D04 T06 §3 -- print production observes paint events here (D04 T06 §3).
+- -> XREF: D02 T02 §22 -- line-weight option joins the tile identity.
+- -> XREF: D02 T02 §3 -- TileTextureCache keys by the full TileKey.
+- -> XREF: D02 T03 §7 -- line_weight_mode sits beside ocg_generation in TileKey.
+- -> XREF: D02 T02 §12 -- page transition parser and duration accessor.
+- -> XREF: D02 T02 §14 -- transitions read through the actor query.
+- -> XREF: D02 T03 §23 -- layer edits are OcgEdit builders on the actor session.
+- -> XREF: D02 T03 §24 -- import as layer uses the same builder contract.
+- -> XREF: D02 T03 §25 -- Layers panel drives stage, undo, redo and discard.
+- -> XREF: D02 T01 §8 -- SavePipeline writes the exported revision and marks it saved.
 
 ## Outcome
 
@@ -36,6 +45,7 @@ track: M1
 - Each open document runs on its own `DocumentActor` thread (`src/core/document_actor.cpp`) with a 32-page LRU cache of `DisplayList`s; the UI thread never blocks on PDF parsing or content-stream interpretation.
 - `RenderPool` worker threads rasterize `512 x 512` premultiplied BGRA tiles from `std::shared_ptr<const DisplayList>` in parallel via per-worker Direct2D / WIC bitmap targets, honoring `CancelToken` every 64 commands and producing byte-identical output regardless of thread count.
 - `Runtime::~Runtime()` tears down actors, jobs, workers and presentation hooks in the exact 6-step order of foundation plan section 4.8, verified by zeroed Debug live-object counters.
+- Parity additions (D18): a `line_weight_mode` render option carried in `TileKey` (`§11`), a page transition query (`§12`), in-memory staged revisions (`§13`) and an undoable optional-content edit session on the actor that publishes a new `ocg_generation` (`§14`).
 
 **Adjacency:** all=not-applicable (engine rendering, incremental writing, and concurrency runtime in `src/pdf` and `src/core`; UI presentation and controls live in domain 02)
 
@@ -55,6 +65,10 @@ track: M1
 | 8 | §8 | `DocumentActor` thread, MPSC queue, 32-page `DisplayList` cache and password state | §4, §5 | [ ] |
 | 9 | §9 | `RenderPool` worker threads and 4-tier priority `TileScheduler` with jump cancellation | §7, §8 | [ ] |
 | 10 | §10 | `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters | §9 | [ ] |
+| 11 | §11 | `RenderOptions::line_weight_mode` in the rasterizer and the `TileKey` identity | §9 | [ ] |
+| 12 | §12 | `DocumentActor::get_page_transition` query for the parsed `/Trans` and `/Dur` | §8, D02 T02 §12 | [ ] |
+| 13 | §13 | `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter` | §5 | [ ] |
+| 14 | §14 | `DocumentActor` optional-content edit session: stage, undo, redo, `ocg_generation` | §8, §13, D02 T03 §7 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
 
@@ -340,8 +354,110 @@ Implement `src/core/runtime.h` and `src/core/runtime.cpp` (`recto::core::Runtime
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Runtime.*` passes under ASan across all 50 shutdown-under-load iterations.
 
+## 11. `RenderOptions::line_weight_mode` in the rasterizer and the `TileKey` identity
+
+Acrobat Pro's `Line Weights` view draws every stroke one device pixel wide so dense CAD drawings and maps stay readable; the viewer toggle for it is `D02 T02 §22`, and it needs the engine to support a per-render option. Because the option changes pixels, it must be part of the tile identity the same way the layer state is (`ocg_generation`, which `D02 T03 §7` adds to `TileKey`), or a cached or in-flight tile from the other mode would be shown after a toggle. The option is applied at rasterization time over the same immutable `DisplayList`, so a toggle never recompiles a page on the `DocumentActor`. It must not break the default rendering (an `Actual` render stays byte-identical), seam-free tile stitching (`§6`), 64-command cooperative cancellation (`§7`) or worker-count determinism (`D01 T03 §6`). The Recto improvement it keeps: the toggle is a per-tab view option served from the shared tile cache, and print, export and `recto-cli render` always use `Actual`.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that `RenderOptions` is a plain value copied into every `TileSpec` and `TileKey`, that `Rasterizer::render_tile` reads it without mutating the `const DisplayList` (one `DisplayList` serves both modes, with no per-mode mutable cache or lazy state), that `line_weight_mode` takes part in `TileKey` equality and `std::hash<TileKey>` so the scheduler never deduplicates and the texture cache never serves a tile across modes, that the 64-command `CancelToken` polling of `§7` is unchanged in `Uniform`, and that the UI thread only sets the option on a `ViewportRequest` and never rasterizes.
+
+**Build order:**
+
+1. Add `enum class LineWeightMode : uint8_t { Actual, Uniform }` and `struct RenderOptions { LineWeightMode line_weight_mode = LineWeightMode::Actual; }` to `src/pdf/rasterizer.h`, carry them as `TileSpec::options`, and apply `Uniform` inside `Rasterizer::render_tile` to `DrawPath` strokes only. Done when: `PdfRasterizer.UniformLineWeight` passes under ASan.
+2. Add `line_weight_mode` to `recto::core::TileKey` and `RenderOptions` to `ViewportRequest` in `src/core/tile_scheduler.h`, and build every `TileSpec` from the request's options. Done when: `Scheduler.LineWeightModeInTileKey` and `Scheduler.LineWeightModeSwitchCancelsStaleTiles` pass under ASan.
+
+- [ ] Define `LineWeightMode` and `RenderOptions` in `src/pdf/rasterizer.h` with `Actual` as the default and add `RenderOptions options` to `TileSpec`. Done when: `PdfRasterizer.RenderOptionsDefault` shows `RenderOptions{}` is `Actual`, and every page of `render/images-and-vectors.pdf` at 150 DPI renders with the same SHA-256 that the test records from the build before the change.
+- [ ] In `Uniform`, draw every `DrawPath` stroke (from `S`, `s`, `B`, `B*`, `b` and `b*`) exactly one device pixel wide whatever the CTM, `dpi_scale` and `/LW` are, keeping cap, join and dash pattern, in `src/pdf/rasterizer.cpp` (for example with an `ID2D1StrokeStyle1` created with `D2D1_STROKE_TRANSFORM_TYPE_HAIRLINE`, or a width computed from the device transform). Done when: `PdfRasterizer.UniformLineWeight` renders horizontal strokes of `0` (hairline), `0.25 pt` and `4 pt`, each centred on a device pixel centre, at 18 DPI (25 percent) and 576 DPI (800 percent), and finds exactly one non-background row in the sampled column for each. Cheaper substitute: thinning or blurring finished tiles in a pixel post-process.
+- [ ] Leave fills, clips, glyph runs (including stroked text with `Tr` `1`, `2`, `5` and `6`), images and shadings unchanged by `Uniform` in `src/pdf/rasterizer.cpp`. Done when: `PdfRasterizer.UniformLeavesNonStrokesAlone` renders a `DisplayList` holding fills, glyph runs and an image but no path strokes byte-identically in both modes.
+- [ ] Keep tiling seam-free in `Uniform` across `0`, `90`, `180` and `270` degree rotations. Done when: `PdfRasterizer.UniformTileStitchIdentity` finds a full-page render and stitched `512 x 512` tiles pixel-identical (`max_delta = 0`) on `render/images-and-vectors.pdf`.
+- [ ] Add `uint8_t line_weight_mode` to `recto::core::TileKey` in `src/core/tile_scheduler.h` and include it in `operator==` and `std::hash<TileKey>` exactly as every other identity field is included. Done when: `Scheduler.LineWeightModeInTileKey` shows two keys differing only in `line_weight_mode` compare unequal and hash differently.
+- [ ] Carry `RenderOptions` on `ViewportRequest` and copy it into every `TileSpec` and `TileKey` the `TileScheduler` builds, so `update_viewport` with a changed mode trips `CancelSource::cancel()` on queued and in-flight tiles of the old mode (they leave the requested set) and in-flight deduplication never merges keys of different modes. Done when: `Scheduler.LineWeightModeSwitchCancelsStaleTiles` switches the mode while tiles are in flight and every delivered tile's key carries the mode its pixels were rendered with.
+- [ ] Commit: `pdf: add the line weight render option and carry it in the tile identity`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfRasterizer.Uniform*:PdfRasterizer.RenderOptions*:Scheduler.LineWeightMode*` passes under ASan, and removing `line_weight_mode` from `std::hash<TileKey>` and `operator==` fails `Scheduler.LineWeightModeInTileKey`.
+
+## 12. `DocumentActor::get_page_transition` query for the parsed `/Trans` and `/Dur`
+
+Acrobat Pro plays page transitions and honours automatic page timing in Full Screen mode; Recto's presentation surfaces (`D02 T02 §13`, `§14`) need the same data. `D02 T02 §12` owns the parser (`Document::page_transition` over the page's `/Trans` dictionary and the clamped page `/Dur`, ISO 32000-1 section 12.4.4), but `recto::pdf::Document` lives on its `DocumentActor`, so the viewer needs an actor query that returns the parsed result as an immutable value. This section adds only that query; it parses nothing itself. It must not break the rule that the UI thread never parses a PDF and never blocks on the actor, and it must never expose a pointer or reference into the `Document`. The Recto improvement it keeps: the value carries no action, so a transition can never run PDF JavaScript or a launch action (D9), and hostile values arrive already clamped by the parser.
+
+**Phase:** 2
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that `get_page_transition` is an MPSC queue message like every other actor query, that `Document::page_transition` and the `/Dur` read run only on the owning actor thread, that the reply is a `PageTransitionInfo` value copied into the future with no pointer, reference or view into the `Document`, and that requests still queued when `close()` runs resolve with `ErrorCode::Cancelled`.
+
+**Build order:**
+
+1. Add `struct PageTransitionInfo { std::optional<recto::pdf::PageTransition> transition; std::optional<float> auto_advance_s; }` and `DocumentActor::get_page_transition(size_t page_index) -> std::future<PdfResult<PageTransitionInfo>>` to `src/core/document_actor.h/.cpp`, filling `transition` from `Document::page_transition(page_index)` and `auto_advance_s` from the page `/Dur` accessor of `D02 T02 §12`. Done when: `document_actor.cpp` compiles cleanly on `x64` and `ARM64`.
+2. Add `Actor.PageTransition*` tests to `tests/recto-tests/actor_tests.cpp` over `tests/corpus/transitions.pdf` (12 pages, one per style, `/Dur` on pages 2 and 3, from `D02 T02 §12`). Done when: `recto-tests.exe --gtest_filter=Actor.PageTransition*` passes under ASan.
+
+- [ ] Add the `GetPageTransition` message to the actor queue in `src/core/document_actor.cpp` and call the parser only from the actor loop. Done when: `Actor.PageTransitionOnActorThread` records that the parser ran on the actor thread's id, never the caller's.
+- [ ] Return `PageTransitionInfo` by value and assert it at compile time with `static_assert(std::is_trivially_copyable_v<recto::pdf::PageTransition>)` in `src/core/document_actor.cpp`. Done when: the assertion compiles, and a reply read after `close()` still holds its values.
+- [ ] Report a page with neither `/Trans` nor `/Dur` as both fields empty, and a page with only `/Dur` as `transition` empty and `auto_advance_s` set. Done when: `Actor.PageTransitionValues` reads the matching style enum on every page of `transitions.pdf`, `auto_advance_s` on pages 2 and 3 only, and empty fields on a page of `render/simple-1p.pdf`.
+- [ ] Return the same typed `PdfError` that `Document::page_description` returns for a page index at or past the page count. Done when: `Actor.PageTransitionBounds` gets that error for index `page_count` and for `SIZE_MAX` without a crash under ASan.
+- [ ] Resolve queued `get_page_transition` requests with `ErrorCode::Cancelled` when the actor closes. Done when: `Actor.PageTransitionCloseCancels` enqueues 20 requests, closes at once, and every future resolves without hanging, with `debug_live_documents() == 0`.
+- [ ] Commit: `core: add the DocumentActor page transition query`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Actor.PageTransition*` passes under ASan, and calling the parser on the caller's thread instead of the actor fails `Actor.PageTransitionOnActorThread`.
+
+## 13. `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter`
+
+Acrobat Pro keeps an edit (a new layer, a renamed destination) unsaved until the user saves, and undoes it on request. Recto's rule is stricter: authoring always works on a copy and never modifies the open viewer document in place, and `recto::pdf::Document` is read-only. This section gives the engine the two pieces an actor needs for that: `ObjectChangeSet`, a plain value listing replaced and newly allocated indirect objects, and `StagedRevisionChain`, which appends each change set as one incremental revision (`§5`) to an in-memory copy of the opened bytes, reopens a working `Document` from that copy, undoes by truncating the last revision, and exports one squashed revision for the save path. It writes no file. It must not break `§5`'s byte-prefix rule (existing signatures stay valid), the `PdfResult<T>` contract, or the bounds on hostile input. The Recto improvement it keeps: the original file and the viewer's opened bytes are never touched until the save path (`D02 T01 §8`) writes a new file by temp-file-then-replace.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that `ObjectChangeSet` holds only values (`IndirectRef` keys and `PdfValue`s) with no pointer into any `Document`, that a `StagedRevisionChain` and its working `Document` are owned and used by one thread only (the `DocumentActor` that creates it) and never shared, that it never mutates the base byte buffer or any other open `Document`, and that every buffer it exports is an immutable `std::shared_ptr<const std::vector<uint8_t>>`.
+
+**Build order:**
+
+1. Implement `src/pdf/staged_revisions.h` and `src/pdf/staged_revisions.cpp`: `ObjectChangeSet` (`replace(IndirectRef, PdfValue)`, `allocate(PdfValue) -> IndirectRef`, `merge(const ObjectChangeSet& later)`) and `StagedRevisionChain` (`create(std::span<const uint8_t> base, std::string_view password)`, `push(ObjectChangeSet)`, `undo()`, `redo()`, `working() -> const Document&`, `next_free_object()`, `depth()`, `export_squashed() -> PdfResult<std::shared_ptr<const std::vector<uint8_t>>>`), every fallible call returning `PdfResult`. Done when: `staged_revisions.cpp` compiles cleanly on `x64` and `ARM64`.
+2. Add `tests/recto-tests/pdf_staged_revisions_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=PdfStagedRevisions.*` passes under ASan.
+
+- [ ] Implement `ObjectChangeSet` in `src/pdf/staged_revisions.h` with `allocate` numbering new objects from the working document's `next_free_object()`, and `merge` keeping the later value for a reference set twice and every allocated reference. Done when: `PdfStagedRevisions.MergeOrder` shows the later value wins and no allocated reference is lost.
+- [ ] Implement `StagedRevisionChain::push` writing the change set through `IncrementalWriter` (`§5`) on the current working document, appending the revision to the in-memory working bytes, and reopening the working `Document` from them with the retained password. Done when: `PdfStagedRevisions.PushPopRedo` sets page 1 `/Rotate 90` on `render/simple-1p.pdf` and the working document reports rotation `90`.
+- [ ] Implement `undo` by truncating the working bytes to the length before the last revision and `redo` by re-appending the stored revision bytes, with a new `push` after an `undo` clearing the redo stack. Done when: `PdfStagedRevisions.PushPopRedo` reads rotation `0` after `undo`, `90` after `redo`, and `redo` fails with a typed error after a fresh `push`.
+- [ ] Keep the base bytes as an untouched prefix of every working buffer. Done when: `PdfStagedRevisions.BasePrefixPreserved` finds `std::memcmp` of the base length equal to `0` after 3 pushes, 2 undos and 1 redo. Cheaper substitute: rewriting the whole file on each edit.
+- [ ] Implement `export_squashed` as the base bytes plus one revision holding the merged change set, writing allocated objects at their recorded numbers (extend `IncrementalWriter` in `src/pdf/incremental_writer.cpp` with `set_new_object(IndirectRef, PdfValue)` if `set_object` refuses numbers at or past the base `/Size`). Done when: `PdfStagedRevisions.SquashEquivalent` reopens the squashed buffer and resolves every changed and allocated object equal to the working document after 3 pushes that each allocate one object.
+- [ ] Support classic `xref`, `/Type /XRef` stream and encrypted bases through `IncrementalWriter`'s existing paths. Done when: `PdfStagedRevisions.CompressedAndEncrypted` pushes and squashes on `render/compressed-xref-2p.pdf` and on `render/encrypted-aes-256.pdf` with `recto-test`, and both reopen.
+- [ ] Bound the chain at 1,000 pushed revisions, 100,000 objects per change set and 256 MiB of working bytes beyond the base, returning a typed `PdfError` with `ErrorCode::UnsupportedFeature` naming the limit, and zero the retained password with `SecureZeroMemory` on destruction. Done when: `PdfStagedRevisions.Bounds` hits each limit with a typed error and no partial revision left in the working bytes.
+- [ ] Commit: `pdf: add ObjectChangeSet and the in-memory StagedRevisionChain`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfStagedRevisions.*` passes under ASan, and making `undo` reopen the working document without truncating the bytes fails `PdfStagedRevisions.PushPopRedo`.
+
+## 14. `DocumentActor` optional-content edit session: stage, undo, redo, `ocg_generation`
+
+Acrobat Pro creates, renames, deletes, merges and imports layers from its Layers panel. Recto builds those operations in `D02 T03 §23` (create, rename, delete, usage, reorder, merge) and `§24` (import a page or an image as a layer), and the panel in `§25`; all of them must run where the `Document` lives, on a copy, undoably, and must make the canvas re-render at once. This section adds that edit session to the `DocumentActor`: each edit is a value describing the operation and a builder that runs on the actor thread against the working `Document` of a `StagedRevisionChain` (`§13`) and returns an `ObjectChangeSet`; every stage, undo, redo or discard clears the `DisplayList` cache and publishes a new `ocg_generation` (the per-actor counter `D02 T03 §7` introduced for visibility toggles), so no stale tile or display list survives. It must not break the actor contract (`§8`), the visibility state of `D02 T03 §7`, or the shutdown order (`§10`). The Recto improvement it keeps: the original file and the opened bytes are never modified; the save path (`D02 T01 §8`) writes the exported revision to a new file by temp-file-then-replace.
+
+**Phase:** 2
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that the session's `StagedRevisionChain` and working `Document` are created, used and destroyed only on the owning actor thread, alongside the opened instance; that each `OcgEdit` builder runs on the actor thread and captures only values (strings, numbers, paths, `std::shared_ptr<const std::vector<uint8_t>>` bytes), never a reference to a `Document`, a UI object or another thread's state; that only `OcgEditState` values, `std::shared_ptr<const DisplayList>` and the exported `std::shared_ptr<const std::vector<uint8_t>>` revision leave the actor; that every publish increments the one monotonic `ocg_generation` and clears the 32-page `DisplayList` cache before replying, with each `get_display_list` reply carrying the generation it was compiled at so tiles are keyed by the generation of their content; and that `close()` trips the running builder's `CancelToken` and joins within the `§10` shutdown order.
+
+**Build order:**
+
+1. Add `src/core/ocg_edit.h` (`OcgEditKind`, `OcgEdit`, `OcgEditState`) and the actor messages `begin_ocg_edit`, `stage_ocg_edit`, `undo_ocg_edit`, `redo_ocg_edit`, `export_ocg_revision`, `mark_ocg_saved` and `discard_ocg_edits` in `src/core/document_actor.h/.cpp`, each returning a `std::future<PdfResult<...>>`. Done when: `document_actor.cpp` compiles cleanly on `x64` and `ARM64`.
+2. Add `Actor.OcgEdit*` tests to `tests/recto-tests/actor_tests.cpp` with test-only builders over a two-layer fixture. Done when: `recto-tests.exe --gtest_filter=Actor.OcgEdit*` passes under ASan.
+
+- [ ] Define `OcgEditKind` (`CreateLayer`, `RenameLayer`, `DeleteLayer`, `SetLayerUsage`, `ReorderLayers`, `MergeLayers`, `ImportPageAsLayer`, `ImportImageAsLayer`, one per operation `create_layer`, `rename_layer`, `delete_layer`, `set_layer_usage`, `reorder_layers` and `merge_layers` of `D02 T03 §23` and `import_page_as_layer` and `import_image_as_layer` of `D02 T03 §24`) and `OcgEdit { OcgEditKind kind; std::string label; std::function<PdfResult<recto::pdf::ObjectChangeSet>(const recto::pdf::Document&, const CancelToken&)> build; }` in `src/core/ocg_edit.h`, with `label` UTF-8 of at most 128 characters used as the undo label. Done when: the header compiles in `recto-core` and `recto-tests`.
+- [ ] Add `tests/corpus/render/layers-2ocg.pdf` (one page, OCGs `Base` and `Overlay` both in `/D /ON`, each drawing one filled rectangle inside its own `BDC /OC ... EMC`) and `tests/corpus/render/encrypted-aes-256-no-modify.pdf` (AES-256 `R 6`, user password `recto-test`, owner password `recto-owner`, `/P` with bit 4 cleared) to `scripts/build-corpus.py` with `tests/corpus/PROVENANCE.md` rows; if `D02 T03 §7` already added a two-layer fixture, reuse it and record its path in the tests instead of adding the first file. Done when: `python scripts/build-corpus.py --check` regenerates both byte for byte.
+- [ ] Implement `begin_ocg_edit()` creating the `StagedRevisionChain` over `Document::file_bytes()` and the password the actor already holds, idempotent while a session is open, and refusing with `ErrorCode::AccessDenied` when the authenticated document reports `permissions().can_modify == false`. Done when: `Actor.OcgEditPermissions` refuses on `encrypted-aes-256-no-modify.pdf` opened with `recto-test` and opens a session on `layers-2ocg.pdf`.
+- [ ] Implement `stage_ocg_edit(OcgEdit)` running `build` on the actor thread against the working document, pushing the returned change set, re-reading `/OCProperties` from the working document, and keeping the user's `set_ocg_visibility` overrides for layers that still exist. Done when: `Actor.OcgEditStageAndRender` stages a test builder that moves `Overlay` from `/D /ON` to `/D /OFF`, gets page 0's `DisplayList` from the actor, renders it without the overlay rectangle, and finds the opened file's SHA-256 unchanged. Cheaper substitute: mutating the opened `Document` in place.
+- [ ] Leave the chain, the generation and the cache untouched when a builder returns an error or is cancelled, and return its `PdfError`. Done when: `Actor.OcgEditFailedBuildIsNoOp` stages a failing builder and reads the same `OcgEditState` as before.
+- [ ] Publish on every stage, undo, redo and discard: increment the actor's single `ocg_generation` (shared with `set_ocg_visibility`), clear the 32-page `DisplayList` cache, and reply with `OcgEditState { ocg_generation, undo_depth, redo_depth, dirty, undo_label, redo_label }`. Done when: `Actor.OcgEditGenerationMonotonic` interleaves visibility toggles and staged edits and reads strictly increasing generations, and the next `get_display_list` after each publish is a cache miss.
+- [ ] Tag every `get_display_list` reply with the `ocg_generation` it was compiled at, and make `TileScheduler` (`§9`) key tiles with the reply's generation rather than the request's. Done when: `Scheduler.TileKeyUsesCompiledGeneration` queues a request before a stage, serves it after, and finds the delivered tile keyed with the new generation.
+- [ ] Implement `undo_ocg_edit` and `redo_ocg_edit` over the chain's `undo` and `redo`. Done when: `Actor.OcgEditUndoRedo` stages 3 edits, undoes 3 and renders page 0 byte-identical to the original, redoes 1 and sees it again, and a new stage after an undo leaves `redo_depth == 0`.
+- [ ] Implement `export_ocg_revision()` returning the chain's `export_squashed()` buffer for `SavePipeline` (`D02 T01 §8`) to write by temp-file-then-replace; the actor itself writes no file. Done when: `Actor.OcgEditExport` reopens the exported bytes with the edited layer state, finds the original bytes as their prefix, and finds the test's temporary folder listing unchanged by the actor. Cheaper substitute: writing the revision onto the source file from the actor thread.
+- [ ] Implement `mark_ocg_saved()` clearing `dirty` while keeping undo history, and `discard_ocg_edits()` dropping the chain, rendering from the opened instance again and publishing a new generation. Done when: `Actor.OcgEditDiscard` renders page 0 byte-identical to the original after discard and reads `dirty == false` after `mark_ocg_saved`.
+- [ ] Pass each builder a `CancelToken` tripped by `close()` and `Runtime::shutdown()`, and resolve queued session messages with `ErrorCode::Cancelled`. Done when: `Actor.OcgEditCloseCancels` closes during a builder that polls its token, every future resolves within 1 second, and `debug_live_documents() == 0` and `debug_live_display_lists() == 0` after close.
+- [ ] Commit: `core: add the DocumentActor optional-content edit session`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Actor.OcgEdit*:Scheduler.TileKeyUsesCompiledGeneration` passes under ASan, and skipping the `DisplayList` cache clear on publish fails `Actor.OcgEditStageAndRender`.
+
 ## Verification
 
 - `recto-tests.exe --gtest_filter=PdfDisplayList.*:PdfFont.*:PdfInterpreter.*:PdfIncrementalWriter.*:PdfRasterizer.*:Actor.*:Scheduler.*:Runtime.*` passes in Debug, Release, and ASan builds.
 - Debug live-object counters (`debug_live_documents()`, `debug_live_display_lists()`, `debug_live_workers()`) end at `0` after every test.
+- `recto-tests.exe --gtest_filter=PdfStagedRevisions.*:Actor.PageTransition*:Actor.OcgEdit*:Scheduler.LineWeightMode*:Scheduler.TileKeyUsesCompiledGeneration` passes under ASan once `§11` to `§14` ship (`§12` and `§14` are phase 2).
 - `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` exit 0.

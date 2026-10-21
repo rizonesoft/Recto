@@ -10,7 +10,7 @@ title: "TODO-05 -- Rich Media, 3D Models and Geospatial PDFs"
 
 > **Goal:** Match Acrobat Pro for the three content kinds Recto cannot show today. Rich media (`/RichMedia`, `/Screen` with media renditions, `/Sound`, `/Movie`) plays embedded audio and video only after the user says yes, through Windows media APIs, and saves any embedded media as a file; legacy Flash is never run and is explained. 3D annotations (U3D and PRC) open in a Direct3D 11 viewer with orbit, pan, zoom, named views, a model tree, part visibility, lighting presets and a cross section, over a poster image fallback. Geospatial PDFs report latitude and longitude under the pointer, find a location, measure geodesic distance and area, and export coordinates. No script ever runs, nothing leaves the machine, and every parser is bounded and fuzzed.
 
-> **Current state:** Measured 2026-10-21. `D01 T01 §10` resolves pages, `/Annots` and links; `D02 T02 §1` creates the Direct3D 11 device and presentation thread; `D02 T02 §5` and `§9` provide `PageLayoutGeometry` (`viewport_to_page_point`) and the `"Open this link?"` prompt; `D02 T03 §8` provides the embedded-file filename sanitiser. No code parses `/RichMedia`, `/Screen`, `/Sound`, `/Movie`, `/3D`, U3D, PRC, `/VP` or `/Measure`; a PDF that uses them shows its poster appearance or a blank box with no explanation (the Flash case is pdfcraft #1276, `docs/research/2026-10-20-pdfcraft-issues.csv`). `tests/corpus/` has no rich media, 3D or geospatial fixture, and `fuzz/` has no media, 3D or geo target. Every unknown annotation subtype keeps its existing behaviour (preserved on save, appearance drawn) until a section below changes it.
+> **Current state:** Measured 2026-10-21. `D01 T01 §10` resolves pages, `/Annots` and links; `D02 T02 §1` creates the Direct3D 11 device and presentation thread; `D02 T02 §5` and `§9` provide `PageLayoutGeometry` (`viewport_to_page_point`) and the `"Open this link?"` prompt; `D02 T03 §8` provides the embedded-file filename sanitiser. No code parses `/RichMedia`, `/Screen`, `/Sound`, `/Movie`, `/3D`, U3D, PRC, `/VP` or `/Measure`; a PDF that uses them shows its poster appearance or a blank box with no explanation. `tests/corpus/` has no rich media, 3D or geospatial fixture, and `fuzz/` has no media, 3D or geo target. Every unknown annotation subtype keeps its existing behaviour (preserved on save, appearance drawn) until a section below changes it.
 
 ## Inputs
 
@@ -18,10 +18,11 @@ title: "TODO-05 -- Rich Media, 3D Models and Geospatial PDFs"
 - `docs/plans/2026-10-13-recto-foundation.md` sections 3.3, 4 (actor and render contract), 9 (security), decisions D3, D9 (no PDF JavaScript), D12, D16 (offline by default), D17 (one shell) and D18 (Acrobat Pro parity).
 - ISO 32000-1 sections 12.5.6.18 to 12.5.6.20 (Screen, Movie, Sound annotations), 13.2 to 13.3 (sounds, movies), 13.6 (3D artwork), ISO 32000-2 sections 12.5.6.22 (RichMedia) and 12.9 (geospatial features: viewports, `/Measure` `/GEO`), ECMA-363 (U3D) and ISO 14739-1 (PRC).
 - Windows APIs: `Windows.Media.Playback.MediaPlayer`, `Windows.Media.Core.MediaSource` (`CreateFromStream`), `Windows.Storage.Streams.InMemoryRandomAccessStream`, Direct3D 11 (`ID3D11Device`, `IDXGISwapChain1`), `Windows.Storage.Pickers.FileSavePicker`.
-- `docs/research/2026-10-20-pdfcraft-issue-lessons.md` and `todo/06-quality/TODO-03-user-failure-gates.md`: the hostile-number fixtures (`D06 T03 §1`) are the template for the fixtures here.
+- `todo/06-quality/TODO-03-user-failure-gates.md`: the hostile-number fixtures (`D06 T03 §1`) are the template for the fixtures here.
 - -> XREF: D02 T02 §9 -- external media references go through the ask-first link prompt.
 - -> XREF: D02 T02 §1 -- the 3D renderer builds on the Direct3D 11 device and presentation thread.
 - -> XREF: D06 T02 §3 -- media, U3D, PRC and geospatial fuzz targets join the scheduled campaign.
+- -> XREF: D03 T04 §3 -- staged edit session.
 
 ## Outcome
 
@@ -29,6 +30,7 @@ title: "TODO-05 -- Rich Media, 3D Models and Geospatial PDFs"
 - A `/3D` annotation shows its poster image; clicking it opens the 3D view where the model can be orbited, panned and zoomed, switched between named views, shown part by part from a model tree, lit by a preset, and cut by a cross section. Corrupt or oversized models fall back to the poster with a stated reason. 3D JavaScript never runs.
 - A PDF with a geospatial viewport shows `Lat, Lon` under the pointer, finds a typed location, measures geodesic distance and area, and exports clicked or measured points as CSV and GeoJSON.
 - U3D, PRC, media and geo parsers return `PdfResult`, bound recursion and allocation, and are covered by corpus fixtures and libFuzzer targets in the scheduled campaign.
+- A user can embed a local audio or video file in a page as a `/Screen` annotation with a poster, from the app or `recto-cli media add`, without any script, external reference or autoplay (§16 to §18).
 
 **Adjacency:** list=applicable @ D02 T05 §10; document=applicable @ D02 T05 §4; settings=not-applicable (play-on-ask and script-never-runs are fixed security rules, not options; no setting would be read); reporting=not-applicable (no report is produced); notifications=applicable @ D02 T05 §4; permissions=applicable @ D02 T05 §4; audit=not-applicable (nothing about the user's action is persisted); exchange=applicable @ D02 T05 §14; reverse=applicable @ D02 T05 §9
 
@@ -53,6 +55,9 @@ title: "TODO-05 -- Rich Media, 3D Models and Geospatial PDFs"
 | 13 | §13 | Geo surface: coordinates under the pointer and `Find location` | §11, D02 T02 §5, D02 T03 §11 | [ ] |
 | 14 | §14 | Geo measure tools and coordinate export (CSV, GeoJSON) | §12, §13 | [ ] |
 | 15 | §15 | Register `fuzz_media`, `fuzz_u3d`, `fuzz_prc`, `fuzz_geo` in the fuzz campaign and audit | §2, §6, §7, §11, D06 T02 §3 | [ ] |
+| 16 | §16 | `recto-pdf` media authoring: embed audio or video as a `/Screen` annotation | §2, D03 T04 §3, D01 T02 §5 | [ ] |
+| 17 | §17 | Add audio or video tool: pick a file, place it, choose a poster, preview | §3, §4, §16, D03 T03 §4, D02 T01 §10 | [ ] |
+| 18 | §18 | `recto-cli media`: add and list embedded audio and video | §2, §16, D01 T03 §1 | [ ] |
 
 ## 1. Rich media, 3D and geospatial corpus fixtures in `tests/corpus/rich/`
 
@@ -129,7 +134,7 @@ Play a `MediaItem` from its extracted bytes only. The service wraps `Windows.Med
 
 ## 4. Media annotation surface: ask before play, Flash placeholder, `Save media as...`
 
-The user sees what an audio or video annotation is, decides whether to play it, and can always take the file out. Matches Acrobat Pro's media playback and `Save media`, and keeps Recto's rule that nothing embedded runs without consent. A Flash annotation is explained, not left as a blank box (pdfcraft #1276).
+The user sees what an audio or video annotation is, decides whether to play it, and can always take the file out. Matches Acrobat Pro's media playback and `Save media`, and keeps Recto's rule that nothing embedded runs without consent. A Flash annotation is explained, not left as a blank box.
 
 **Phase:** 7
 **Needs:** windows-host, display-session
@@ -437,6 +442,73 @@ The four parsers read hostile bytes, so they join the scheduled campaign with th
 
 **Test checkpoint:** `pwsh -NoProfile -File scripts/run-fuzz-campaign.ps1 -SecondsPerTarget 60` completes with no crash for all targets, and `recto-tests.exe --gtest_filter=Audit.RichMediaNoNetworkNoLaunch` passes.
 
+## 16. `recto-pdf` media authoring: embed audio or video as a `/Screen` annotation
+
+Foxit PDF Editor and PDFelement add audio and video to a page, and Acrobat Pro does too. §2 to §4 only play what a file already contains; this section writes the annotation. It embeds a local file as a `/Screen` annotation whose rendition holds a media clip with the file as an embedded stream (`/EF`) and a MIME type, plus a poster appearance (`/AP /N`). It writes no `/JS`, no external file or URL reference, no `Launch` and no autoplay, so §4's ask-before-play rule still governs playback. RichMedia authoring is not built (Acrobat reads `/Screen` renditions; RichMedia needs a player asset bundle); that is recorded as a default.
+
+**Phase:** 7
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `src/pdf/media_author.h/.cpp`: `add_media_annotation(Document&, int page, PdfRect rect, MediaSource { bytes_or_stream, file_name, mime }, Poster { rgba, width, height }, MediaOptions { alt_text, title }) -> PdfResult<AnnotRef>` writing the `/Screen` annotation (`/Rect`, `/T`, `/Contents` alt text, `/P`), a `/MediaClip` of subtype `MCD` with the embedded `/Filespec` and `/CT`, a rendition action limited to a play operation with no `/JS` entry, and a poster form XObject as `/AP /N`. Done when: the written fixture reopens through §2's parser as one `MediaItem` with the expected size, MIME and poster, and contains no `/JS`, `/Launch` or `/URI`.
+2. Allow only these extensions and sniffed container types: `.mp3`, `.m4a`, `.aac`, `.wav`, `.wma`, `.mp4`, `.m4v`, `.mov`, `.wmv`; refuse `.swf` and everything else with a typed `UnsupportedMedia` error naming the reason; cap one file at 256 MB and a document at 1 GB of embedded media, streaming the file into the output without loading it whole. Done when: an `.swf`, a renamed `.exe`, a 300 MB file and a file that fails the container sniff are each refused with the right error.
+
+- [ ] Add the accessibility alt text and title as required inputs with a default taken from the file name. Done when: the annotation has `/Contents` set.
+- [ ] Write through the staged edit session (`D03 T04 §3`) on a copy and the incremental writer, never in place. Done when: the source file hash is unchanged until Save.
+- [ ] Add `tests/corpus/rich/` inputs (a 1 s mp3, a 1 s mp4) generated by `scripts/build-corpus.py` and a `PROVENANCE.md` row. Done when: `python scripts/build-corpus.py --check` passes.
+- [ ] Add `PdfMediaAuthor.WritesScreenAnnotation`, `PdfMediaAuthor.NoScriptNoLaunchNoUri`, `PdfMediaAuthor.RefusesUnsupported` and `PdfMediaAuthor.SizeCaps` under ASan. Done when: `recto-tests.exe --gtest_filter=PdfMediaAuthor.*` passes. Cheaper substitute: referencing the media by path instead of embedding it.
+- [ ] Commit: `pdf: embed audio and video as a Screen annotation`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfMediaAuthor.*` passes under ASan and the written fixture plays through `D02 T05 §3` after the ask-first dialog.
+
+## 17. Add audio or video tool: pick a file, place it, choose a poster, preview
+
+The user-facing half of §16, matching Foxit's and PDFelement's `Add video` and `Add audio` tools and Acrobat Pro's media tools. The user picks a local file (no network sources), draws or accepts a rectangle on the page, chooses a poster (a frame from the video through the Windows thumbnail service, a chosen image, or a generic speaker tile for audio), previews it, and adds it as an undoable staged edit. Playback of the result still asks first (§4).
+
+**Phase:** 7
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 9.9 form layout, section 8.2 contextual bars and `D03 T03 §4` creation handles.
+**Job:** A user embeds a recording or clip in a page and sees what readers will see. Consumer: `media_author` (§16), `MediaPlaybackService` (§3), annotation handles (`D03 T03 §4`).
+**Treatment:** A picker, a placement mode and a dialog over the engine. Cheaper substitute that fails the checkpoint: adding the media with no alt text, or from a URL.
+**Chrome:** `RectoDialogStyles.xaml` (`D02 T01 §10`), `RectoColors.xaml` tokens, Segoe Fluent Icons.
+
+**Build order:**
+
+1. Add the `Add audio or video...` command (Tools menu, `PageToolbar` `More` menu, `Ctrl+K`): `FileOpenPicker` for the allowed extensions, then a placement mode on the canvas using the annotation creation handles (`D03 T03 §4`) with a default rectangle sized from the video's aspect ratio (at most 320 epx wide), then `AddMediaDialog` with alt text, poster choice and a preview that plays the local file once through the §3 playback service muted by default. Done when: choosing an mp4 draws the placeholder, the dialog shows a frame poster, and `Add` creates the annotation on the page.
+2. Generate the poster with `StorageFile.GetThumbnailAsync` for video, accept `PNG` or `JPEG` for a custom poster, and use a token-coloured speaker tile for audio; keep the poster at most 1024 px on the long side. Done when: a video poster, a custom poster and an audio tile each render in the page appearance.
+
+- [ ] Apply through the staged edit session as one undoable step, mark the tab dirty, and select the new annotation so it can be moved and resized with the standard handles. Done when: `Ctrl+Z` removes the annotation and its embedded stream.
+- [ ] Show the file size and warn above 50 MB that the PDF will grow by that amount. Done when: a 60 MB file shows the warning with the size.
+- [ ] Surface refusals from §16 as plain messages (`Flash isn't supported`, `This file is larger than 256 MB`). Done when: each refusal shows its reason and adds nothing.
+- [ ] Give the dialog, the placeholder and the added annotation automation names, including the alt text. Done when: Narrator reads the alt text of the added media.
+- [ ] Add `Overlays.AddMediaTool` covering placement, poster choices, refusal messages, undo and the dirty state. Done when: `recto-tests.exe --gtest_filter=Overlays.AddMediaTool` passes. Cheaper substitute: a tool that writes the annotation without the preview and alt text.
+- [ ] Commit: `viewer: add the add audio or video tool`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Overlays.AddMediaTool` passes on the display-session host.
+
+## 18. `recto-cli media`: add and list embedded audio and video
+
+Scripts and the local MCP server (D21) need the same operation without a window. `recto-cli media add` embeds a file through §16 and `recto-cli media list` prints the `MediaItem` model of §2. Both are offline, and `add` always writes a new file.
+
+**Phase:** 7
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add `recto-cli media add <in.pdf> --page N --rect x1,y1,x2,y2 --file <media> [--poster <image>] [--alt <text>] -o <out.pdf>` and `recto-cli media list <in.pdf> [--json]` in `src/cli/`, exit code 2 on validation failure or unsupported media, 0 on success, and refuse `-o` equal to the input. Done when: add then list reports the new item and the input file is byte-identical.
+2. Make `media list --json` print `page`, `rect`, `kind`, `mime`, `size`, `title`, `alt` and `embedded` for each item with a stable field order. Done when: the JSON output matches a golden file.
+
+- [ ] Register the verbs in the `recto-cli verbs --json` table so the MCP server exposes them. Done when: the verb table lists both verbs with their argument schemas.
+- [ ] Add `Cli.MediaAddList` covering success, refusals, an out-of-range page and rectangle, and golden JSON. Done when: `recto-tests.exe --gtest_filter=Cli.MediaAddList` passes. Cheaper substitute: a CLI that edits the input in place.
+- [ ] Commit: `cli: add recto-cli media add and list`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Cli.MediaAddList` passes.
+
 ## Verification
 
 - A PDF with a `/Screen` audio rendition, a `/Sound` annotation and a `/Movie` annotation plays only after `Play this media?` is accepted, plays from memory through `MediaPlayer` (`MediaPlayback.StreamOnly`), and `Save media as...` writes the exact embedded bytes (`Overlays.SaveMediaAs`); the Flash fixture shows the placeholder and never runs (`Overlays.FlashPlaceholder`).
@@ -444,3 +516,4 @@ The four parsers read hostile bytes, so they join the scheduled campaign with th
 - `geo-map.pdf` reports coordinates under the pointer, finds a location, measures a distance and an area that agree with the independent reference set (`Geodesy.ReferenceSet`) and exports CSV and GeoJSON in the right axis order (`GeoExport.LonLatOrder`).
 - The scheduled fuzz campaign covers `fuzz_media`, `fuzz_u3d`, `fuzz_prc` and `fuzz_geo` with no crash, and `Audit.RichMediaNoNetworkNoLaunch` passes.
 - `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` pass.
+- Media authoring (§16 to §18) is proven by `PdfMediaAuthor.*`, `Overlays.AddMediaTool` and `Cli.MediaAddList`.

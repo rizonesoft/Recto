@@ -55,3 +55,49 @@ OVERALL: needs-attention
 ## Response to round 1
 
 All 15 findings were accepted and fixed in D09 T01 and D09 T02 in the next commit: pdf.js options verified against the pinned typings with a mutation bundle and a dist check (1); email retries on 429 and 5xx with `Retry-After` (2); account purge hands blobs to reference-aware collection (3); the sweeper spares open and verifying uploads and young blobs, with a verify lease (4); quota is enforced at commit with a separate staging allowance (5); link sessions carry their own CSRF token and declared authority (6); admin access uses a PKCE public client with a recent-passkey requirement (7); staging is deleted only after the commit batch, crash-tested at every boundary (8); quota and `baseVersion` are enforced in one guarded batch (9); upload routes and the commit job re-check access (10); cross-device sign-in is decided at start and every auth POST checks Origin (11); backups take a write fence and are tested under concurrent writes (12); export ZIPs expire and deletion tombstones outlive dumps (13); the EU option is set per store and no residency claim goes beyond it (14); the accessibility claim covers the web app's own interface only (15).
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T01:09:37Z
+- Effort: medium
+- Lines: 33
+- Digest: 9accfaf66f41638b
+
+Review limited to the supplied diff and primary web sources: direct repository reads failed twice with `helper_unknown_error`. Foundation/design cross-checking remains incomplete. No files were modified, Git used, or tests run.
+
+T01 and T02 below refer to the two candidate TODO files.
+
+**record: needs-attention**
+
+Round 1 findings **1, 11, 12, 13 and 15 remain incompletely resolved**, as detailed below. Finding **10** also retains an authorization race.
+
+**adversarial: needs-attention**
+
+1. **T01 §10: login CSRF still works through the confirmation page. Round 1 #11.** An attacker starts a cross-device login for their own address, receives the token, then sends the victim `/auth/email/confirm#token=...`. The legitimate confirmation page submits the token with the correct Origin, and the stored cross-device flag bypasses the cookie. Merely displaying the address does not prevent the specified automatic redemption. Require explicit confirmation before creating or replacing a session in this flow, and test navigation to an attacker-supplied confirmation URL, not just a cross-origin POST.
+
+2. **T02 §4: authorization is checked before lengthy storage work, not atomically at commit. Round 1 #10.** A grant or link can be revoked after `resolveAccess` succeeds but before hashing/copying finishes. The specified guarded batch checks quota and `baseVersion`, but not current authorization, suspension, trash state or takedown state. It can therefore commit after revocation. Include these predicates in the commit transaction or an equivalent serialization contract. Test revocation after authorization but before the batch.
+
+3. **T02 §§4, 6: reference-aware collection still races new references.** A collector can observe an old hash with no references, a concurrent upload can reuse that existing blob and commit a version, and the collector can then delete its bytes. The 24-hour protection covers young blobs, not reuse of old ones. Specify coordination between collection and reference creation, including storage deletion outside the database transaction. Test that exact interleaving.
+
+4. **T01 §§15, 17: deletion tombstones are not durably published before purge completes. Round 1 #13.** The external tombstone list is written only by a later mirror run. A disaster after account purge but before that run leaves both the older dump and `tombstones.json` without the deletion, so restoration resurrects the account. Require durable deletion-journal publication before declaring purge complete, with retry-safe ordering and a restore test interrupted at that boundary.
+
+5. **T02 §3: the staging allowance excludes verifying uploads.** The allowance counts only open sessions, while completion moves their potentially large objects into `verifying`. Repeated completion frees admission capacity without freeing storage, allowing queued verification work to exceed the purported staging bound. Count all retained staging reservations until cleanup, and reserve/release capacity atomically. Test repeated completion while the verifier is stalled.
+
+**consistency: needs-attention**
+
+6. **T01 §17: retained database dumps have no corresponding retained blob set. Round 1 #12.** The mirror now propagates primary deletions after 24 hours, while dumps survive for up to 13 months. Restoring an older dump can therefore recover metadata whose document bytes have disappeared from both stores. Marking versions `missing_blob` detects loss; it does not provide the requested recoverable snapshot. Define snapshot-associated blob retention with explicit deletion-policy exceptions, and test restoration after subsequent purges and mirror cleanup.
+
+7. **T01 §17 step 2: restore acceptance criteria contradict deletion replay.** Replaying newer tombstones deliberately removes rows from the restored dump, but the same step requires row counts to equal the dump header and every table’s rows to be equal. A correct deletion-suppressing restore cannot satisfy those checks. Validate dump integrity before replay, then validate the expected transformed state and deletion effects separately.
+
+**source-defect: needs-attention**
+
+8. **T02 §19: the revised WCAG claim still misstates the standard. Round 1 #15.** WCAG conformance applies to full pages; excluding uncontrolled content supports a *statement of partial conformance*, not the prescribed claim that the interface conforms while part of the page is excluded. Downloading an arbitrary untagged or scanned PDF also does not establish a conforming alternative, and download-disabled links make that route unavailable. Use the prescribed partial-conformance approach or demonstrate an actual conforming alternative. [WCAG full-page requirements](https://www.w3.org/TR/WCAG22/#cc2), [third-party partial conformance](https://www.w3.org/TR/WCAG22/#conformance-partial)
+
+9. **T02 §16: the scripting fix still describes `enableScripting` as a constructor option. Round 1 #1.** The mutation now supplies a manager, but still says to pass `enableScripting: true`, contradicting its own requirement to validate option names against typings. Mozilla’s source defines `enableScripting` as a getter derived from the presence of the manager. Specify the mutation entirely through the selected version’s supported manager setup, and identify that version before claiming API verification. [Mozilla PDFViewer source](https://raw.githubusercontent.com/mozilla/pdf.js/master/web/pdf_viewer.js)
+
+OVERALL: needs-attention
+
+## Response to round 2
+
+All 9 findings were accepted and fixed in the next commit: cross-device email sign-in removed, so the login cookie is always required (1); an `access_epoch` bumped by every access-reducing change guards the commit batch (2); blobs are claimed with `deleting_at` before collection and claimed blobs cannot gain references (3); tombstones are published before purge and kept 14 months (4); the staging allowance counts every upload until its staged object is deleted, admitted in one conditional insert (5); the restore promise is narrowed to metadata plus blobs that still exist (6); restore checks run in three stages (dump integrity, tombstone replay with counted removals, final state) (7); the accessibility claim is a WCAG statement of partial conformance for third-party content (8); the pdf.js mutation wires scripting the way the pinned version's reference viewer does and records the verified API in `pdfjs-pin.json` (9).

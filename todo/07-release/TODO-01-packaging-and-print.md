@@ -23,6 +23,20 @@ track: M6
 - -> XREF: D05 T01 §1 -- the shared page-range parser (`parse_page_ranges("1-3, 5, 8-10", page_count)`) is reused by `§2` for custom print page ranges.
 - -> XREF: D07 T02 §3 -- the Authenticode release signing and `SHA256SUMS.txt` pipeline (`D07 T02 §3`) signs and hashes the installer, Portable `.zip`, and MSIX artifacts built in `§4`-`§7` here.
 - -> XREF: D06 T03 §9 -- the printer driver compatibility and failure isolation suite gating §2's print pipeline, and the clean-machine smoke (§12 there) over §4 to §7.
+- -> XREF: D03 T01 §11 -- render_page_area for print area.
+- -> XREF: D03 T01 §4 -- print area marquee.
+- -> XREF: D02 T03 §11 -- print commands.
+- -> XREF: D04 T02 §5 -- XPS to PDF for spool.
+- -> XREF: D02 T01 §7 -- /virtual-print launch arg.
+- -> XREF: D02 T04 §2 -- printer settings keys.
+- -> XREF: D02 T04 §6 -- printer settings group.
+- -> XREF: D07 T02 §6 -- runbook.
+- -> XREF: D07 T02 §6 -- release kit.
+- -> XREF: D03 T01 §11 -- render_page_area.
+- -> XREF: D03 T03 §25 -- pages_with_comments for print.
+- -> XREF: D04 T06 §18 -- print greyscale engine.
+- -> XREF: D04 T07 §22 -- batch print step.
+- -> XREF: D04 T08 §10 -- installer option.
 
 ## Outcome
 
@@ -30,6 +44,8 @@ track: M6
 - `installer/recto.iss` (`§4`) and `build/build-installer.ps1` (`§5`) build `RectoSetup-x64.exe`, `RectoSetup-ARM64.exe`, `Recto-Portable-x64.zip`, and `Recto-Portable-ARM64.zip` (plus optional MSIX when `-EnableMsix` is passed), with every icon and manifest capability verified by an automated audit script.
 - `tests/scripts/verify_installer.ps1` proves silent **Full Install**, `.pdf` `ProgId` and icon registration, `v1.0.0 -> v1.0.1` upgrade continuity of `settings.json` and `recents.json`, clean silent uninstall (`§6`), and zero-registry, zero-`%LOCALAPPDATA%` **Self-Contained Portable Install** isolation (`§7`).
 - Explorer shows PDF thumbnails and a preview pane from a process-isolated `RectoShell.dll` (`§8`), and `print`, `printto`, `Combine in Recto` and `Convert to PDF with Recto` work on Explorer selections without ever changing the user's default PDF handler (`§9`).
+- Printing can select pages by reverse order, comments, bookmark section and area, print as image, in grayscale or with text as outlines, and add crop, bleed and registration marks, all from the print options pane or `Ctrl+K` (`§11` to `§14`).
+- The Full installer installs the signed `Recto PDF` v4 virtual printer, which converts any application's print job to a PDF in the user's session, with settings and a save window; Portable and per-user installs install nothing, and a missing driver signature removes the feature rather than shipping an untrusted driver (`§15` to `§20`).
 
 **Adjacency:** list=not-applicable (installed apps are listed by Windows, not Recto); document=applicable @ D07 T01 §2; settings=not-applicable (print choices live in the Windows print dialog; Portable mode and Default PDF app rows live in D02 T04 §6); reporting=not-applicable (crash reporting is D07 T02 §4); notifications=not-applicable (none originate here); permissions=not-applicable (manifest capabilities are declared in D02 T01 §1 and audited in §5); audit=not-applicable (release provenance is D07 T02 §1 and §3); exchange=not-applicable (no data import); reverse=applicable @ D07 T01 §6
 
@@ -49,6 +65,16 @@ track: M6
 | 8 | §8 | Explorer thumbnail and preview handlers (`IThumbnailProvider`, `IPreviewHandler`) | §4, D01 T02 §6 | [ ] |
 | 9 | §9 | Explorer verbs: print, printto, Combine and Convert to PDF (`IExplorerCommand`) | §2, §4, D02 T01 §7, D05 T02 §3, D04 T01 §3 | [ ] |
 | 10 | §10 | Print layouts: booklet, multiple pages per sheet and poster tiling | §2 | [ ] |
+| 11 | §11 | Print page selection: reverse order, pages with comments, a bookmark section, an area | §2, D01 T01 §10 | [ ] |
+| 12 | §12 | Print render modes: print as image, grayscale and text as outlines | §2, §10 | [ ] |
+| 13 | §13 | Printer's marks: crop marks, bleed marks, registration marks and page information | §10 | [ ] |
+| 14 | §14 | Print options pane and Ctrl+K commands for page selection, render modes and marks | §11, §12, §13, D02 T03 §11 | [ ] |
+| 15 | §15 | Recto PDF virtual printer design: v4 driver, hand-off and trust boundary | §1, D04 T02 §5 | [ ] |
+| 16 | §16 | Recto PDF v4 driver package: manifest, INF, print capabilities and test-signed install | §15 | [ ] |
+| 17 | §17 | Virtual printer spool hand-off: XPS to PDF in the user's session | §3, §15, D04 T02 §5, D02 T01 §7 | [ ] |
+| 18 | §18 | Recto PDF virtual printer settings and the save window | §17, D02 T04 §2, D02 T04 §6, D02 T03 §11 | [ ] |
+| 19 | §19 | Full installer integration and end-to-end proof for the Recto PDF printer | §6, §9, §16, §17, §18, D07 T02 §6 | [ ] |
+| 20 | §20 | Recto PDF driver signing through the Windows Hardware Dev Center and release gate | §5, §16, D07 T02 §6 | [ ] |
 
 ## 1. WinUI 3 print API spike (`PrintManagerInterop` vs `ID2D1PrintControl`) & section 11 note
 
@@ -96,10 +122,12 @@ Implement the production print pipeline in `src/app/printing/PrintService.h` and
 - [ ] Render print pages from `DisplayList` into `ID2D1CommandList` / printer-DPI (`300+ DPI`) targets rather than screen-resolution `96 DPI` viewport tiles, including visible `/Annots` and filled `/AcroForm` appearance streams (`/AP /N`) that Do Not Carry the `NoView` or `Print`-disabled annotation flag (`F` bit 3 `Print` per ISO 32000-1 Table 165). Done when: `Print.RespectsAnnotationPrintFlag` verifies annotations with the `Print` bit set appear on printed output while annotations without the `Print` bit are omitted.
 - [ ] Wire `CancelToken` into both preview generation and final spooling so dismissing the print dialog or clicking Cancel mid-job aborts the background print worker within `< 20 ms` and deletes any incomplete spool file. Done when: `Print.CancelMidSpoolCleansUp` cancels a 50-page print job on page 3 and verifies `< 20 ms` abort and zero leftover temp files.
 - [ ] Wire `file.print` (`Ctrl+P`), the Floating Page Toolbar Print button (`D02 T02 §8`), the Classic File menu `Print...` item (`D02 T01 §10`), and the `Ctrl+K` Command Palette (`D02 T01 §9`) to `PrintService::show_print_dialog`, keeping the action disabled when no document tab is active (on Home, Convert, or Settings). Done when: all 4 entry points invoke `PrintService` when a PDF is open and are disabled on Home.
-- [ ] Read paper sizes, custom forms and roll sizes from the selected printer's capabilities, default to the document page at 100% when the driver has no match, and persist paper, duplex, colour and scale per printer (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`, pdfcraft #1103, #2001, #2826, #3096). Done when: `Print.DriverPaperSizesAndPersistence` lists a stub driver's 62 by 100 mm form and preselects the previous session's choices.
-- [ ] Send in the PrintTicket only the options the user changed, so driver defaults for colour, duplex and paper apply untouched (pdfcraft #2422). Done when: `Print.TicketSendsOnlyChangedSettings` finds no colour or duplex override in an untouched job's ticket.
-- [ ] Run spooling in a worker with a watchdog so a driver crash or hang ends the job with the full error chain while the viewer stays responsive, and query printer capabilities off the UI thread with a per-printer timeout (pdfcraft #2192, #2684, #2922, #3472). Done when: `Print.WorkerFailureIsolated` survives a stub driver that crashes the worker and shows the error dialog with the driver's HRESULT.
-- [ ] Disable Print with a stated reason when the document forbids printing, and map `Current page` to the viewed physical page when page labels restart (pdfcraft #1308, #2669). Done when: `Print.PageRangeSelection` prints the viewed page of a labelled fixture and the restricted fixture shows the reason without opening the dialog.
+- [ ] Read paper sizes, custom forms and roll sizes from the selected printer's capabilities, default to the document page at 100% when the driver has no match, and persist paper, duplex, colour and scale per printer. Done when: `Print.DriverPaperSizesAndPersistence` lists a stub driver's 62 by 100 mm form and preselects the previous session's choices.
+- [ ] Send in the PrintTicket only the options the user changed, so driver defaults for colour, duplex and paper apply untouched. Done when: `Print.TicketSendsOnlyChangedSettings` finds no colour or duplex override in an untouched job's ticket.
+- [ ] Run spooling in a worker with a watchdog so a driver crash or hang ends the job with the full error chain while the viewer stays responsive, and query printer capabilities off the UI thread with a per-printer timeout. Done when: `Print.WorkerFailureIsolated` survives a stub driver that crashes the worker and shows the error dialog with the driver's HRESULT.
+- [ ] Disable Print with a stated reason when the document forbids printing, and map `Current page` to the viewed physical page when page labels restart. Done when: `Print.PageRangeSelection` prints the viewed page of a labelled fixture and the restricted fixture shows the reason without opening the dialog.
+- [ ] Add `printer_name` (empty means the system default) and `ticket_overrides` (only settings the caller changed: copies, duplex, colour, paper) to `PrintJobOptions` in `src/app/printing/PrintService.h`, resolve the name against the installed queues, and fail with `PrinterNotFound` listing the available names. Done when: `Print.NamedPrinterAndTicket` prints to a named Microsoft Print to PDF queue with `duplex` overridden and finds no other ticket feature set, and an unknown name returns `PrinterNotFound`. Cheaper substitute: always printing to the default printer.
+- [ ] Add `PrintService::print_headless(doc_path, PrintJobOptions, cancel_token)`, which spools without opening the print dialog or any window, runs only inside the Recto app process (never a second helper process), and is called by callers that already hold the user's confirmation (the Action Wizard batch print step of `D04 T07 §22` shows its own confirmation first). Done when: `Print.HeadlessNoDialog` prints a corpus PDF with no top-level window created, honours the page range, `CancelToken` and watchdog of this section, and returns a typed error for a refused-print document without prompting. Cheaper substitute: calling the dialog path with the dialog hidden.
 - [ ] Commit: `feat(print): implement non-blocking print pipeline with page ranges, printer-DPI rendering, and Ctrl+P`
 
 **Test checkpoint:** `recto-tests --gtest_filter=Print.UsesIsolatedDocumentInstanceOffUiThread:Print.PageRangeSelection:Print.MixedOrientationAndScale:Print.RespectsAnnotationPrintFlag:Print.CancelMidSpoolCleansUp:Print.DriverPaperSizesAndPersistence:Print.TicketSendsOnlyChangedSettings:Print.WorkerFailureIsolated` passes under ASan.
@@ -239,7 +267,7 @@ Complete `tests/scripts/verify_installer.ps1` by proving both **Self-Contained P
 
 ## 8. Explorer thumbnail and preview handlers (`IThumbnailProvider`, `IPreviewHandler`)
 
-pdfcraft users asked for PDF thumbnails in Explorer and a preview pane in Explorer and Outlook, and complained that every PDF showed the app icon instead of a document icon (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`; pdfcraft #308, #2194, #2206, #3207). Recto ships a COM server `RectoShell.dll` with a thumbnail provider and a preview handler that render page 1 through `recto-pdf`. Explorer must never load the parser into its own process: both handlers run process-isolated in the system surrogate, with a hard time and memory budget, no JavaScript, no links and no network, and they fail to the stock document icon on any error.
+Users of comparable PDF apps ask for PDF thumbnails in Explorer and a preview pane in Explorer and Outlook, and complain when every PDF shows the app icon instead of a document icon. Recto ships a COM server `RectoShell.dll` with a thumbnail provider and a preview handler that render page 1 through `recto-pdf`. Explorer must never load the parser into its own process: both handlers run process-isolated in the system surrogate, with a hard time and memory budget, no JavaScript, no links and no network, and they fail to the stock document icon on any error.
 
 **Phase:** 6
 **Needs:** windows-host, display-session
@@ -255,7 +283,7 @@ pdfcraft users asked for PDF thumbnails in Explorer and a preview pane in Explor
 - [ ] Enforce the render limits at a process boundary, not by polling: the handler starts `recto-shellrender.exe` inside a Job Object with `JOB_OBJECT_LIMIT_JOB_MEMORY` 256 MiB (an aggregate limit over every process in the job, so a child cannot escape it), `JOB_OBJECT_LIMIT_ACTIVE_PROCESS` 1 and `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, waits at most 2 s, and terminates only that job on timeout so the shared preview surrogate and other handlers are never killed; it returns `E_FAIL` so Explorer falls back to the stock icon on timeout, error or encrypted input. Done when: every `tests/corpus/broken/` file returns within 3 s, a fixture that commits 300 MiB is killed by the job limit, and the surrogate process survives.
 - [ ] Bound the stream copy in the surrogate without creating threads that can outlive the call: read synchronously on the calling thread in 1 MiB chunks into a buffer capped at 64 MiB, checking a 1 s total deadline between chunks and stopping at the cap. A single `IStream::Read` has no timeout parameter, so a provider that blocks inside one read can only be bounded by the caller; record that limit in `docs/security-audit.md` and keep the per-call state (buffer, stream reference) released on every return path. Done when: 200 consecutive timed-out or capped calls leave the surrogate's thread, handle and private-bytes counts within 5% of their starting values.
 - [ ] Register with process isolation (no `DisableProcessIsolation` value) so the handlers run in the system surrogate, never inside `explorer.exe`, and parsing happens only in `recto-shellrender.exe`. Done when: a test lists `explorer.exe` and surrogate modules during preview and finds no `recto-pdf` code in either.
-- [ ] Register the handlers and a dedicated PDF document icon (separate from the app icon) in `installer/recto.iss` for Full installs only, and skip them in Portable mode. Done when: `verify_installer.ps1` finds the registration in Full mode and none in Portable mode (pdfcraft #308).
+- [ ] Register the handlers and a dedicated PDF document icon (separate from the app icon) in `installer/recto.iss` for Full installs only, and skip them in Portable mode. Done when: `verify_installer.ps1` finds the registration in Full mode and none in Portable mode.
 - [ ] Add `Shell.ThumbnailProvider` and `Shell.PreviewHandlerHostile` tests in `tests/recto-tests/` driving the COM objects in-process for the test only. Done when: both pass under ASan.
 - [ ] Commit: `shell: add process-isolated Explorer thumbnail and preview handlers for PDFs`
 
@@ -263,7 +291,7 @@ pdfcraft users asked for PDF thumbnails in Explorer and a preview pane in Explor
 
 ## 9. Explorer verbs: print, printto, Combine and Convert to PDF (`IExplorerCommand`)
 
-pdfcraft users asked repeatedly for "Combine" and "Convert to PDF" on a multi-file Explorer selection, for Outlook's Quick Print to print silently instead of opening the viewer, and objected when the app made itself the default PDF handler on first run (research record; pdfcraft #585, #1674, #1695, #2082, #2363, #3417, #3724). Recto registers `print` and `printto` verbs that print without a window, and a Windows 11 `IExplorerCommand` menu (with classic verbs for "Show more options") that hands the whole selection to one running instance in selection order. It never changes the user's default PDF handler.
+Users of comparable PDF apps ask repeatedly for "Combine" and "Convert to PDF" on a multi-file Explorer selection, for Outlook's Quick Print to print silently instead of opening the viewer, and object when the app makes itself the default PDF handler on first run. Recto registers `print` and `printto` verbs that print without a window, and a Windows 11 `IExplorerCommand` menu (with classic verbs for "Show more options") that hands the whole selection to one running instance in selection order. It never changes the user's default PDF handler.
 
 **Phase:** 6
 **Needs:** windows-host, display-session
@@ -280,20 +308,21 @@ pdfcraft users asked repeatedly for "Combine" and "Convert to PDF" on a multi-fi
 2. Add `src/shell/ExplorerCommands.h/.cpp` in `RectoShell.dll` implementing `IExplorerCommand` for "Combine in Recto" (two or more PDF or image files) and "Convert to PDF with Recto" (Office, HTML, Markdown and image files), registered for Windows 11 and as classic verbs. Done when: invoking the command on five files opens one Recto window with five staged files in Explorer selection order.
 
 - [ ] Parse `/p <file>` and `/pt <file> <printer> <driver> <port>` in `LaunchArgs` into a print-only request and run it headless through the print worker, exiting with 0 on success and a non-zero code with a logged reason on failure. Done when: `Shell.PrintVerbHeadless` asserts no window and the expected exit code.
-- [ ] When the document needs a password, show the password dialog and then print; when its permissions forbid printing, refuse with the reason and exit code 3 without opening any print dialog, matching §2's refusal (pdfcraft #2082, #2669). Done when: `Shell.PrintVerbHeadless` sees the password dialog for the encrypted fixture and exit code 3 with no dialog for the print-restricted fixture.
+- [ ] When the document needs a password, show the password dialog and then print; when its permissions forbid printing, refuse with the reason and exit code 3 without opening any print dialog, matching §2's refusal. Done when: `Shell.PrintVerbHeadless` sees the password dialog for the encrypted fixture and exit code 3 with no dialog for the print-restricted fixture.
 - [ ] Implement `ExplorerCommands` returning `ECS_HIDDEN` for selections the command cannot handle and passing the full `IShellItemArray` to the running instance through the single-instance channel. Done when: a mixed selection shows only the applicable commands.
 - [ ] Preserve Explorer selection order and stage the files in Organize Combine or the Convert page without starting the job until the user confirms. Done when: the staged list matches the selection order in `Shell.ExplorerCombineOrder`.
 - [ ] Give the Full Inno Setup install package identity for the Windows 11 menu with a signed sparse package: author `installer/sparse/AppxManifest.xml` with `AllowExternalContent`, a `com:Extension Category="windows.comServer"` declaring `RectoShell.dll` as a `com:SurrogateServer` with the `IExplorerCommand` class ID, and a `desktop4:Extension Category="windows.fileExplorerContextMenus"` whose `desktop5:Verb` entries point at that class ID; sign the `.msix` with the release certificate. Done when: `MakeAppx`, `SignTool verify /pa` and a manifest schema check pass on the built package.
 - [ ] Register the sparse package per user, because `Add-AppxPackage` installs for the account that runs it: `Recto.exe` registers it for the signed-in user at first launch when `PackageManager.FindPackagesForUser` does not find it (`AddPackageByUriAsync` with `ExternalLocationUri` set to the install folder), the installer's `[Run]` step uses `runasoriginaluser` so the installing user is registered immediately, an upgrade re-registers the new version for each user at their next launch, and uninstall runs `Remove-AppxPackage -AllUsers` from the elevated uninstaller. The optional MSIX build carries the same declarations natively, and Portable mode registers nothing. Done when: on Windows 11 the installing user and a second standard user (after their first launch) both see the entries in the top-level menu, an upgrade keeps them, and uninstall leaves no package in `Get-AppxPackage -AllUsers`.
 - [ ] Register the classic `shell` verbs in `installer/recto.iss` for Windows 10 and "Show more options", and keep them as the fallback when sparse registration fails (logged, never fatal). Done when: both menus show the entries after install on Windows 11, the classic menu shows them on Windows 10, and none remain after uninstall.
-- [ ] Assert install and first run never change the user's default PDF handler; only `Settings -> Default & About -> Make Recto the default` opens the Windows Default Apps page (pdfcraft #2363). Done when: `verify_installer.ps1` reads `UserChoice` before and after install and finds it unchanged.
+- [ ] Assert install and first run never change the user's default PDF handler; only `Settings -> Default & About -> Make Recto the default` opens the Windows Default Apps page. Done when: `verify_installer.ps1` reads `UserChoice` before and after install and finds it unchanged.
+- [ ] Route the `print` and `printto` verbs through `PrintService::print_headless` with the `printto` printer argument as `PrintJobOptions::printer_name`. Done when: `Shell.PrintVerbHeadless` prints to the named queue given by `/pt` and `Print.NamedPrinterAndTicket` passes.
 - [ ] Commit: `shell: add print verbs and Explorer Combine and Convert commands for multi-file selections`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.PrintVerbHeadless:Shell.ExplorerCombineOrder` passes on the display-session host, and `pwsh tests/scripts/verify_installer.ps1` shows the verbs registered, the `UserChoice` default unchanged, and the verbs removed after uninstall.
 
 ## 10. Print layouts: booklet, multiple pages per sheet and poster tiling
 
-Acrobat Pro's print dialog offers Booklet, Multiple pages per sheet and Poster as page sizing modes; Recto's print pipeline (§2) prints one page per sheet only (`docs/acrobat-parity.md`, foundation plan D18). pdfcraft users hit wrong output in exactly these modes: three pages per sheet put four on the first sheet, poster scale overflowed, and the booklet back side printed upside down (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`; pdfcraft #1335, #1336, #3745). This section adds the three layouts as imposition computed on the print worker from the same `DisplayList`s, never a rasterized shortcut, and keeps every guarantee of §2 (own document instance, printer-DPI rendering, cancellation, driver isolation).
+Acrobat Pro's print dialog offers Booklet, Multiple pages per sheet and Poster as page sizing modes; Recto's print pipeline (§2) prints one page per sheet only (`docs/acrobat-parity.md`, foundation plan D18). Comparable apps produce wrong output in exactly these modes: three pages per sheet put four on the first sheet, poster scale overflows, and the booklet back side prints upside down. This section adds the three layouts as imposition computed on the print worker from the same `DisplayList`s, never a rasterized shortcut, and keeps every guarantee of §2 (own document instance, printer-DPI rendering, cancellation, driver isolation).
 
 **Phase:** 6
 **Needs:** windows-host, display-session
@@ -311,9 +340,9 @@ Acrobat Pro's print dialog offers Booklet, Multiple pages per sheet and Poster a
 2. Render each sheet on the print worker by placing page `DisplayList`s with a transform per cell or tile at printer DPI, and add the options and a sheet preview to the §2 dialog. Done when: `Print.ImpositionOutput` prints every mode to Microsoft Print to PDF and the output pages match the plans.
 
 - [ ] Author `Imposition::booklet(page_count, binding, sides)` returning signature sheets with front and back cell assignments, padding blank pages at the end. Done when: 17 pages yield 20 page slots on five sheets in the standard saddle-stitch order.
-- [ ] Author `Imposition::n_up(page_count, rows, cols, order, auto_rotate)` so exactly N pages land on each sheet and the last sheet holds the remainder (pdfcraft #1336). Done when: 7 pages at 3 per sheet yield sheets of 3, 3 and 1.
-- [ ] Author `Imposition::poster(page_size, tile_scale, overlap, paper)` with tile count bounded at 400 and a typed refusal past it (pdfcraft #1335). Done when: an A0 page on A4 at 100 percent yields 16 tiles plus overlap, and a 1e6 percent scale returns `PosterTooLarge` without allocating.
-- [ ] Render booklet back sides rotated for the printer's duplex edge (long or short, from the driver) and offer a manual two-pass mode with a "flip the stack" prompt between passes (pdfcraft #3745, #2860). Done when: a captured duplex job's back sides are upright when folded.
+- [ ] Author `Imposition::n_up(page_count, rows, cols, order, auto_rotate)` so exactly N pages land on each sheet and the last sheet holds the remainder. Done when: 7 pages at 3 per sheet yield sheets of 3, 3 and 1.
+- [ ] Author `Imposition::poster(page_size, tile_scale, overlap, paper)` with tile count bounded at 400 and a typed refusal past it. Done when: an A0 page on A4 at 100 percent yields 16 tiles plus overlap, and a 1e6 percent scale returns `PosterTooLarge` without allocating.
+- [ ] Render booklet back sides rotated for the printer's duplex edge (long or short, from the driver) and offer a manual two-pass mode with a "flip the stack" prompt between passes. Done when: a captured duplex job's back sides are upright when folded.
 - [ ] Draw optional page borders, cut marks and tile labels as vector content in the sheet, never on the source pages. Done when: the printed PDF shows the marks only when enabled. Cheaper substitute: marks burned into a copy of the document.
 - [ ] Add the `Page sizing` modes and their options to the §2 print dialog with a sheet preview that renders thumbnails from the same plans, and keep `Current page` and custom ranges working with every mode. Done when: `Print.ImpositionDialog` shows the preview sheet count equal to the plan's.
 - [ ] Persist the last layout per printer with the other print settings (§2). Done when: reopening the dialog restores the mode and its options.
@@ -321,6 +350,245 @@ Acrobat Pro's print dialog offers Booklet, Multiple pages per sheet and Poster a
 - [ ] Commit: `feat(print): add booklet, multiple pages per sheet and poster print layouts`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Print.ImpositionPlans:Print.ImpositionOutput:Print.ImpositionDialog` passes, and 7 pages at 3 per sheet print exactly three sheets of 3, 3 and 1 pages to Microsoft Print to PDF.
+
+## 11. Print page selection: reverse order, pages with comments, a bookmark section, an area
+
+Foxit PDF Editor, PDFelement and UPDF let a user print pages in reverse order, print only the pages that carry comments, print one bookmarked section and print a selected area of a page; Acrobat Pro also reverses pages and prints the pages a bookmark covers (`docs/acrobat-parity.md`, foundation plan D18). Recto's pipeline (§2) prints an explicit page range only. This section adds the page selection engine as pure, testable resolution on the print worker's own `recto::pdf::Document` instance, so the dialog (§14) only binds to it. It keeps every §2 guarantee: no `recto::pdf` call on the UI thread, nothing written to the open document, and a clear refusal instead of printing zero pages or silently printing all pages.
+
+**Phase:** 6
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add `src/app/printing/PrintSelection.h/.cpp` with `PrintSelection` (`range_spec`, `reverse`, `comments_only`, `bookmark_node`, `area`) and `resolve_print_pages(selection, DocumentSnapshot)` returning `PdfResult<ResolvedPrintPages>` of `PageRef` values (`page_index`, optional clip rectangle). Done when: `Print.SelectionResolve` passes the table of selection cases below.
+2. Feed `ResolvedPrintPages` into the §2 spool loop and the §10 imposition input in place of the raw range. Done when: `Print.SelectionFeedsSpool` prints the resolved pages in resolved order to the print package target of §3.
+
+- [ ] Implement `resolve_print_pages` so the order of operations is fixed: parse `range_spec` with `D05 T01 §1`'s `parse_page_ranges`, intersect with the comments filter and the bookmark section, then reverse. Done when: `Print.SelectionResolve` resolves range `2-5` with `comments_only` on a document with comments on pages 2, 4 and 6 to `[2, 4]`, and to `[4, 2]` with `reverse`.
+- [ ] Implement the comments filter in `src/app/printing/PrintSelection.cpp`: a page matches when its `/Annots` holds at least one annotation whose subtype is a markup type (Text, FreeText, Line, Square, Circle, Polygon, PolyLine, Highlight, Underline, Squiggly, StrikeOut, Stamp, Caret, Ink, FileAttachment, Redact, Popup excluded) with the Print flag set and the Hidden and NoView flags clear. Links and widgets never count. Done when: `Print.SelectionCommentPages` resolves `[2, 5]` for a six page fixture with printable comments on pages 2 and 5, ignores a Hidden comment on page 3 and a Link on page 4, and returns `NoPagesMatch` for a fixture with no comments.
+- [ ] Implement the bookmark section: from the chosen `/Outlines` node, resolve its destination (explicit and named destinations) to a start page, and end the section on the page before the next bookmark in document order at the same or a shallower level, never before the start page; children are included. Done when: `Print.SelectionBookmarkSection` resolves an outline `A (pages 1-3)`, `B (4-6)` with child `B1 (4-5)` to `A = [1, 2, 3]`, `B = [4, 5, 6]` and `B1 = [4, 5]`, and refuses a node whose destination does not resolve with `BookmarkDestinationUnresolved`.
+- [ ] Implement the area selection: a rectangle in the page's default user space on one page, mapped through `/Rotate` and the `CropBox` so the rectangle drawn on a rotated page selects the same content, clipped at replay time on the print worker and scaled by the §2 scale mode (`Fit to printable area` or `Actual size`). Done when: `Print.SelectionArea` prints a `100 x 100` pt area of a `/Rotate 90` page and the output equals the same area of the unrotated fixture within `SSIM >= 0.98`. Cheaper substitute: cropping a screen raster of the area, which loses vector quality.
+- [ ] State in the code and in the dialog tooltip text that an area print only clips the printed output and hides nothing in the file; redaction stays in `D05 T01 §10`. Done when: `Print.SelectionArea` asserts the source document bytes are unchanged and the tooltip string key `Print_Area_NotRedaction` exists in `Resources.resw`.
+- [ ] Refuse combinations that have no meaning with a reason string, never a silent change: `reverse` with the §10 booklet mode, and `area` with any imposition mode other than `Fit` or `Actual size`. Done when: `Print.SelectionCombinationRefusals` returns `ReverseNotValidForBooklet` and `AreaNotValidForImposition` with their reason keys.
+- [ ] Compute the selection on the print worker only, from the worker's own document instance, and cancel it with the job's `CancelToken`. Done when: `Print.SelectionResolveOffUiThread` asserts the thread id differs from the UI thread and that cancelling a 2,000 page resolve returns within `20 ms`.
+- [ ] Commit: `feat(print): add print page selection by reverse order, comments, bookmark section and area`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Print.SelectionResolve:Print.SelectionCommentPages:Print.SelectionBookmarkSection:Print.SelectionArea:Print.SelectionCombinationRefusals:Print.SelectionResolveOffUiThread:Print.SelectionFeedsSpool` passes under ASan.
+
+## 12. Print render modes: print as image, grayscale and text as outlines
+
+PDFelement and UPDF print a page as an image so a driver cannot reinterpret fonts or transparency, Foxit PDF Editor prints text as outlines, and all three print in grayscale; Acrobat Pro has Print As Image and Print in Grayscale (`docs/acrobat-parity.md`, foundation plan D18). Recto's pipeline (§2) always replays the `DisplayList` as vector content with the document's colours. This section adds the three render modes on the print worker. They keep the §2 guarantees (own document instance, printer DPI, `CancelToken`, driver isolation) and never modify the document; the choice affects only what is sent to the spooler.
+
+**Phase:** 6
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add `PrintRenderOptions` (`image_mode`, `image_dpi`, `grayscale`, `text_as_outlines`) to `PrintJobOptions` in `src/app/printing/PrintService.h` and apply them in the replay stage of `src/app/printing/PrintRenderer.cpp`. Done when: `Print.RenderModesOptionPlumbing` shows each option reaches the replay stage.
+2. Implement the three modes below behind the options. Done when: `Print.AsImage*`, `Print.Grayscale*` and `Print.TextAsOutlines*` pass.
+
+- [ ] Implement print as image: rasterize each sheet with the tile rasterizer of `D01 T02 §6` at `150`, `300` or `600` DPI (default: the printer's reported DPI capped at `600`) in horizontal bands of at most `4096` rows, send each band into the print stream, and read bitmaps through their reported stride, never `width * 4`. Done when: `Print.AsImageBandedMemory` prints an A0 page at `600` DPI with peak private bytes under `300 MB` and `Print.AsImageStride` passes with a bitmap whose stride is wider than `width * 4`. Cheaper substitute: one full-page bitmap, which fails on large pages.
+- [ ] Implement grayscale by replaying the sheet through a Direct2D colour matrix effect with Rec. 709 luminance weights (`0.2126`, `0.7152`, `0.0722`) so vector paths, shadings, images and annotation appearances all convert, and request monochrome in the PrintTicket only when the driver's `PrintCapabilities` advertise it and the user chose grayscale. Done when: `Print.GrayscaleConvertsAllContent` prints a fixture with a red fill, a gradient and an RGB image and every output pixel has equal R, G and B within `1`, and `Print.GrayscaleTicketOnlyWhenChosen` finds no colour feature in an untouched job's ticket.
+- [ ] Implement text as outlines by replaying glyph runs as filled and stroked paths from `IDWriteFontFace::GetGlyphRunOutline`, honouring text render modes (fill, stroke, clip) and skipping invisible text (mode 3), so the spool carries no font resources. Done when: `Print.TextAsOutlinesNoFonts` prints `two-column-article.pdf` to the print package target of §3 and finds no font parts in the output while page `SSIM >= 0.97` against the normal print. Cheaper substitute: rasterizing the text, which is the image mode.
+- [ ] Define the interactions: image mode overrides text as outlines (the option is disabled with a reason), grayscale composes with both, and every mode applies after the §10 imposition so a booklet or N-up sheet prints in the chosen mode. Done when: `Print.RenderModesCompose` prints a two-up sheet in image mode and in grayscale mode and matches the expected pixels.
+- [ ] Check the `CancelToken` between bands and between glyph runs and delete any partial spool. Done when: `Print.RenderModesCancel` cancels mid-band and mid-outline jobs within `20 ms` and finds no leftover temporary files.
+- [ ] Commit: `feat(print): add print as image, grayscale and text as outlines render modes`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Print.RenderModesOptionPlumbing:Print.AsImageBandedMemory:Print.AsImageStride:Print.GrayscaleConvertsAllContent:Print.GrayscaleTicketOnlyWhenChosen:Print.TextAsOutlinesNoFonts:Print.RenderModesCompose:Print.RenderModesCancel` passes under ASan.
+
+## 13. Printer's marks: crop marks, bleed marks, registration marks and page information
+
+PDFelement and Foxit PDF Editor print crop and bleed marks for pages bound for a commercial printer, and Acrobat Pro offers marks and bleeds in its output settings (`docs/acrobat-parity.md`, foundation plan D18). Recto prints only the page box today (§2). This section adds marks as vector content in the slug area around the page, using the page boundaries of ISO 32000-1 section 14.11.2 (`MediaBox`, `CropBox`, `BleedBox`, `TrimBox`), drawn on the sheet and never added to the document. It reuses the sheet layer and cut-mark drawing of §10 so the two features cannot disagree.
+
+**Phase:** 6
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add `src/app/printing/PrinterMarks.h/.cpp` computing mark geometry from the trim box (fallback `CropBox`, then `MediaBox`), the bleed box (fallback trim plus a user bleed), and the options. Done when: `Print.MarksGeometry` matches the expected line coordinates.
+2. Draw the marks in the §10 sheet layer and check paper fit before spooling. Done when: `Print.MarksOutput` prints a fixture with marks to the print package target of §3 and finds them only outside the bleed box.
+
+- [ ] Implement `PrinterMarks::compute(trim, bleed, options)` returning crop marks at each trim corner (offset `6 pt` from the bleed edge by default, length `18 pt`), bleed marks at each bleed corner, registration targets at the middle of each side, and a page information line (file name, page number, date) drawn with a fixed font in the top slug, all with a default weight of `0.25 pt` and black ink. Done when: `Print.MarksGeometry` matches the expected coordinates for a `200 x 300` pt trim box at `(50, 50)` with a `9 pt` bleed.
+- [ ] Compute the slug as bleed plus offset plus mark length and refuse with the minimum paper size (`PaperTooSmallForMarks`) when the selected paper cannot hold it, never scaling the page silently; marks force `Actual size` and disable `Fit to printable area` with a reason. Done when: `Print.MarksPaperTooSmall` returns the required width and height for A4 paper and a Letter page with a `0.25 in` bleed.
+- [ ] Take the bleed from the `BleedBox` when present, from a user value in points, inches or millimetres otherwise, and clamp it inside the `MediaBox`, never beyond the page content. Done when: `Print.MarksBleedSources` covers `BleedBox` present, user value and clamping.
+- [ ] Draw the marks as vector content in the sheet on the print worker, rotated with the page and the §10 duplex edge, and never burn them into a copy of the document. Done when: `Print.MarksOutput` finds mark paths in the output, none inside the bleed box, and the source document bytes unchanged. Cheaper substitute: stamping the marks into a temporary PDF and printing that file.
+- [ ] Combine marks with the §10 booklet, N-up and poster modes: marks apply per sheet in N-up (around the grid) and are refused with a reason for booklet. Done when: `Print.MarksWithImposition` covers the three modes.
+- [ ] Commit: `feat(print): add crop, bleed and registration marks with page information`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Print.MarksGeometry:Print.MarksPaperTooSmall:Print.MarksBleedSources:Print.MarksOutput:Print.MarksWithImposition` passes under ASan.
+
+## 14. Print options pane and Ctrl+K commands for page selection, render modes and marks
+
+The engine sections §11 to §13 need one place where a user sets them. This section adds the pages, output and marks groups to the Recto options pane that §10 extends beside the platform print dialog, and registers each option as a `Ctrl+K` command that opens the print dialog with the option preselected. It matches the print dialogs of Foxit PDF Editor, PDFelement and UPDF (Acrobat Pro has several of these options), and keeps Recto's rule of consuming the platform print dialog and never inventing a print shell.
+
+**Phase:** 6
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new options inside the §2 and §10 print options pane, following `design/SPEC.md` section 9.9 dialog rules and the Floating Page Toolbar print icon of section 6.4.
+**Job:** A user who wants only the commented pages, one bookmarked chapter, a reversed stack, a grayscale or image copy, or pages with crop marks sets that in the print dialog or from `Ctrl+K` in two steps and sees the sheet count update before printing. Consumer: the print worker of §2.
+**Treatment:** Native WinUI 3 controls bound to `PrintSelection`, `PrintRenderOptions` and `PrinterMarksOptions`, each unavailable option disabled with its reason shown, and a live sheet count. Cheaper substitute that fails the checkpoint: a free text box where the user types page numbers computed by hand, or options reachable only by mouse.
+**Chrome:** Stock WinUI `RadioButtons`, `ToggleSwitch`, `ComboBox`, `NumberBox`, `TreeView` and `InfoBar`, `RectoColors.xaml` tokens, Segoe Fluent Icons, a reason line under each disabled control.
+
+**Build order:**
+
+1. Add a `Pages` group (All, Current, Range, Bookmark section, Pages with comments, Selected area, Reverse order) and an `Output` group (Print as image with DPI, Grayscale, Text as outlines) to the options pane. Done when: `Print.OptionsPaneBindings` drives each control and the sheet count matches `resolve_print_pages`.
+2. Add a `Marks` group, the `Ctrl+K` commands and per-printer persistence. Done when: `Print.OptionsCommandsReachable` finds every command and `Print.OptionsPersistence` restores the stored values.
+
+- [ ] Bind the `Pages` group to `PrintSelection`, with a bookmark `TreeView` built from the document outline (disabled with "This document has no bookmarks" when empty), a comments option disabled with "This document has no printable comments" when none, and a live "N sheets" count. Done when: `Print.OptionsPaneBindings` selects each option on a fixture and the displayed count equals the resolved page count. Cheaper substitute: computing the count only after printing.
+- [ ] Implement `Choose area`: hide the dialog, show a marquee on the viewer that confirms with `Enter` and cancels with `Esc`, then return with a chip such as "Page 3, 4.2 x 2.9 in" and a `Clear` button; the marquee reuses the viewer selection layer. Done when: `Print.OptionsAreaChooser` drives the marquee with the keyboard alone and the chip shows the confirmed size.
+- [ ] Bind the `Output` group to `PrintRenderOptions` with the §12 interaction rules shown as reasons (image mode disables text as outlines). Done when: `Print.OptionsPaneBindings` asserts each disabled control carries a non-empty reason string.
+- [ ] Bind the `Marks` group (crop, bleed, registration, page information, offset, weight, bleed source) to `PrinterMarksOptions` and show the `PaperTooSmallForMarks` size in an `InfoBar`. Done when: `Print.OptionsMarksPaperWarning` shows the minimum paper size for the A4 and Letter fixture.
+- [ ] Register `file.print.reverse`, `file.print.comments`, `file.print.bookmark`, `file.print.area`, `file.print.image`, `file.print.grayscale`, `file.print.outlines` and `file.print.marks` in `CommandRegistry` (`D02 T03 §11`) so `Ctrl+K` lists them, each opening the print dialog with that option set and disabled with a reason when no document is active. Done when: `Print.OptionsCommandsReachable` finds all eight commands and each preselects its option.
+- [ ] Persist output and marks options per printer with the other print settings of §2 and never persist the page selection, which belongs to one job. Done when: `Print.OptionsPersistence` restores output and marks values after a restart and starts with `All pages` every time.
+- [ ] Give every control an automation name and tooltip, a complete keyboard path and tokens only. Done when: `Print.OptionsAccessibility` finds no control without a name and no hex colour in the XAML.
+- [ ] Capture light and dark screenshots of the options pane with every group expanded. Done when: the screenshots are committed under `docs/release-screenshots/` and match the SPEC 9.9 chrome.
+- [ ] Commit: `feat(print): add print options pane groups and Ctrl+K commands for selection, output and marks`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Print.OptionsPaneBindings:Print.OptionsAreaChooser:Print.OptionsMarksPaperWarning:Print.OptionsCommandsReachable:Print.OptionsPersistence:Print.OptionsAccessibility` passes on the display-session host.
+
+## 15. Recto PDF virtual printer design: v4 driver, hand-off and trust boundary
+
+Foxit PDF Editor and PDFelement install a virtual PDF printer so any Windows application can save a PDF, and Acrobat Pro installs `Adobe PDF`; owner decision D21 gives Recto a signed `Recto PDF` v4 printer driver on the XPS print pipeline, installed by the Full installer only. A print driver runs in the spooler as `SYSTEM`, so the design must keep every conversion in the user's session and treat the spooled file as hostile input. This section is a spike that ends in a written, dated decision; it implements nothing shippable. It keeps Recto's rules: offline, no telemetry, Portable mode installs nothing, temp-file-then-replace writes.
+
+**Phase:** 6
+**Needs:** windows-host, display-session
+**Surface:** no
+
+**Build order:**
+
+1. Prototype the hand-off candidates against Windows 11 and record measured behaviour. Done when: each candidate below has a recorded run with HRESULTs, file locations and account names.
+2. Write `docs/specs/2026-10-21-virtual-printer-design.md` with the decision, trust boundary, install commands and rollback. Done when: the document is committed and quotes the measured results.
+
+- [ ] Prototype candidate A: a v4 manifest driver whose queue uses the `PORTPROMPT:` port and a `FileSave` section for XPS and OpenXPS, then a Recto step that converts the file the user saved. Done when: the run records which account writes the file, where the dialog appears, and whether a job from a service or another session still works.
+- [ ] Prototype candidate B: a v4 driver whose queue writes the spooled XPS to a per-user inbox folder that a user-session process watches and converts. Done when: the run records the inbox ACL needed, how the right user is chosen on a multi-user machine, and the behaviour when no user process is running.
+- [ ] Prototype candidate C: a v4 driver with a `PrinterExtensions` `DriverEvent` app that is notified for the job and receives its spool file. Done when: the run records the events delivered, the account the app runs under and whether the spool file can be read.
+- [ ] Evaluate candidate D, which Microsoft's v4 driver documentation now recommends for new work: the inbox IPP class driver with a Print Support App. Done when: the document states whether it can meet the D21 requirements (named queue, XPS or PDF output to a Recto handler, Full installer only) and, if it is clearly better, records a correction request for the owner and does not silently switch.
+- [ ] Fix the trust boundary: the spooler and port only write the spool file; the conversion runs in the interactive user's session as that user; the spool file has a user-only ACL, a size cap of `1 GiB`, is never opened by `SYSTEM` code and is deleted after conversion on success and failure; no network is used. Done when: the design document lists each rule with the check that proves it (`§17`, `§19`).
+- [ ] Record the driver identity: queue name `Recto PDF`, a fixed `PrinterDriverID` GUID, `NotShareable`, supported XPS formats, architecture coverage for `x64` and `ARM64`, default paper sizes and colour. Done when: the document lists the values and the source of the GUID.
+- [ ] Record the exact install and removal commands (`pnputil`, `Add-PrinterDriver`, `Add-Printer`, `Remove-Printer`, `Remove-PrinterDriver`) and the signing route Hardware Dev Center accepts for a v4 printer driver (attestation or HLK submission). Done when: `§16`, `§19` and `§20` can be implemented from the document alone.
+- [ ] Commit: `docs: record the Recto PDF virtual printer design decision (D21)`
+
+**Test checkpoint:** the dated decision section of `docs/specs/2026-10-21-virtual-printer-design.md` and the measured candidate runs are quoted verbatim.
+
+## 16. Recto PDF v4 driver package: manifest, INF, print capabilities and test-signed install
+
+This section builds the driver package chosen in §15 so a developer can install `Recto PDF` on a test machine and the Full installer (§19) has a package to install. It is the Windows driver artefact of owner decision D21 and matches the virtual printers of Foxit PDF Editor and PDFelement. The package contains no code that parses documents; that stays in `Recto.exe` (§17), so a driver defect cannot become a parser exploit running as `SYSTEM`.
+
+**Phase:** 6
+**Needs:** windows-host, attended
+**Surface:** no
+
+**Build order:**
+
+1. Add `src/printer/RectoPrinter.vcxproj` producing the package (`RectoPDF.inf`, the v4 manifest, print capabilities and catalog) for `x64` and `ARM64`. Done when: `build.cmd` builds both and `InfVerif` reports no errors.
+2. Add `scripts/install-test-printer.ps1` and `scripts/remove-test-printer.ps1` for developer machines in test-signing mode. Done when: `Get-Printer -Name "Recto PDF"` finds the queue after install and nothing after removal.
+
+- [ ] Author `src/printer/RectoPDF.inf` and the v4 manifest with the §15 `PrinterDriverID`, `NotShareable`, the XPS formats and the port or extension wiring chosen there. Done when: `InfVerif /v` passes and the manifest parses with `MakeCat`. Cheaper substitute: reusing the name of another vendor's driver.
+- [ ] Author the `PrintDeviceCapabilities` and default `PrintTicket` files: paper sizes A3, A4, A5, Letter, Legal and Tabloid, portrait and landscape, colour, and no finishing or duplex features. Done when: `scripts/install-test-printer.ps1` followed by `Get-PrintConfiguration -PrinterName "Recto PDF"` lists those sizes.
+- [ ] Write `scripts/install-test-printer.ps1`, which refuses to run unless the machine is in test-signing mode and the shell is elevated, stages the package with `pnputil`, adds the driver and the queue, and prints each step. Done when: running it on a clean test VM creates the queue and a second run is a no-op.
+- [ ] Write `scripts/remove-test-printer.ps1`, which removes the queue, the driver and the staged package and reports anything left behind. Done when: after removal `pnputil /enum-drivers` and `Get-PrinterDriver` show no Recto entry.
+- [ ] Add `tests/scripts/verify_printer.ps1 -Mode Driver` that installs the test package, prints a one page test document to the queue with the §17 hand-off disabled, finds one spool file, and removes the package in a `try / finally`. Done when: it exits `0` and leaves no queue or file behind.
+- [ ] Commit: `feat(printer): add the Recto PDF v4 driver package and test-signed install scripts`
+
+**Test checkpoint:** `pwsh -NoProfile -File tests/scripts/verify_printer.ps1 -Mode Driver` exits `0` on a test-signing VM with its `[PASS]` lines quoted.
+
+## 17. Virtual printer spool hand-off: XPS to PDF in the user's session
+
+A job printed to `Recto PDF` must become a PDF without a second program, a network call or a conversion in the spooler. This section implements the user-session side of §15: `Recto.exe /virtual-print <spool>` and `recto-cli virtual-print` convert the spooled XPS with Recto's native XPS to PDF converter (`D04 T02 §5`) in an independent `recto::pdf::Document`, and save the result with temp-file-then-replace. The spool file comes from any local application, so it is hostile input like every other XPS file.
+
+**Phase:** 6
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add `src/app/printing/VirtualPrintJob.h/.cpp` (`validate_spool`, `convert_to_pdf`, `publish`) and the `recto-cli virtual-print --spool <file> --out <pdf>` verb over the same code. Done when: `VirtualPrint.ConvertsSpool` converts a corpus spool and `recto-cli virtual-print` exits `0`.
+2. Add `/virtual-print` to `LaunchArgs` (`D02 T01 §7`) and forward to the running instance through the single-instance channel. Done when: `VirtualPrint.LaunchArgsForwarded` shows one instance handles two jobs in order.
+
+- [ ] Implement `validate_spool`: refuse files over `1 GiB`, archives that fail the `ZipReader` bounds of `D04 T04 §1`, path traversal entries, external resource references and more than `10,000` parts. Done when: `VirtualPrint.HostileSpool` returns a typed error for a zip bomb, a `../` entry, an oversize file and a part count over the cap, each in under `50 ms` and without writing outside the temp folder.
+- [ ] Implement `convert_to_pdf` over the `D04 T02 §5` converter in its own `recto::pdf::Document`, with the job name as the PDF title, producer `Recto PDF`, and the text kept selectable. Done when: `VirtualPrint.ConvertsSpool` extracts the fixture's words from the output with `recto-cli text` and the page count and sizes match the spool.
+- [ ] Implement `publish` with the `AtomicFileWriter` (temp file in the destination folder, then replace) and collision-free names (`name.pdf`, `name (2).pdf`), never overwriting an existing file. Done when: `VirtualPrint.PublishAtomicNoOverwrite` publishes twice to one folder and kills the process between write and replace without leaving a partial `.pdf`.
+- [ ] Delete the spool file after success and after failure, log the failure reason in the D16 ring log without document text, and return exit codes (`0` ok, `2` invalid spool, `3` destination not writable, `4` cancelled). Done when: `VirtualPrint.SpoolAlwaysDeleted` checks the file is gone on each path.
+- [ ] Run the conversion on a worker with `CancelToken`, a watchdog and a memory ceiling so a hostile spool cannot hang the interactive session. Done when: `VirtualPrint.WorkerBounds` converts a pathological fixture and ends within `30 s` and `1 GiB` working set.
+- [ ] Add the XPS spool entry point to the `fuzz_openxml_zip` dispatcher (`D06 T02 §3`) and seed it from `tests/corpus/`. Done when: `recto-fuzz.exe fuzz_openxml_zip` runs `60 s` on the XPS seeds without findings.
+- [ ] Commit: `feat(printer): convert Recto PDF virtual printer spool files to PDF in the user session`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=VirtualPrint.*` passes under ASan and `recto-cli virtual-print --spool tests/corpus/render/printed-sample.xps --out R:\scratch\vp.pdf` exits `0`.
+
+## 18. Recto PDF virtual printer settings and the save window
+
+When a user prints from another program to `Recto PDF`, the result is either saved to a configured folder or offered in a small save window, as in the virtual printers of Foxit PDF Editor and PDFelement. This section adds the three settings, their Settings page group, the save window and the status line that tells a user whether the printer is installed. It keeps Recto's rules: a setting that something reads (§17 reads all of them), `Ctrl+K` reachability, tokens and Segoe Fluent Icons, and an automation name on every icon-only control.
+
+**Phase:** 6
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` section 9.7 (Settings rows, `Default & About` group) and section 9.9 (dialog family) for the window.
+**Job:** A user who prints a web page or an Office file to `Recto PDF` either finds the PDF in their chosen folder or names and places it in one small window, then optionally opens it in Recto. Consumer: `VirtualPrintJob` (§17).
+**Treatment:** `SettingsStore` keys `VirtualPrinterSaveMode` (`AskEachTime` default, `SaveToFolder`), `VirtualPrinterFolder` and `VirtualPrinterOpenAfterSave` (default on), a Settings group with an install status line, and a stock WinUI window with the file name, folder, a page 1 thumbnail and progress. Cheaper substitute that fails the checkpoint: saving every job to a fixed folder with no choice, or a settings row nothing reads.
+**Chrome:** Stock `ToggleSwitch`, `ComboBox`, `TextBox` and `Button`, the Settings row pattern of section 9.7, `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Add the three keys to `SettingsStore` (`D02 T04 §2`) and the `Recto PDF virtual printer` group to the Settings page. Done when: `VirtualPrintSettings.RoundTrip` persists and restores each key.
+2. Add the save window shown by `/virtual-print` when the mode is `AskEachTime`. Done when: `VirtualPrintWindow.SaveFlow` saves a fixture job from the window.
+
+- [ ] Add `VirtualPrinterSaveMode`, `VirtualPrinterFolder` and `VirtualPrinterOpenAfterSave` to `src/services/settings.h/.cpp` with validation (an absolute existing folder, defaulting to the user's Documents). Done when: `VirtualPrintSettings.RoundTrip` and `VirtualPrintSettings.RejectsInvalidFolder` pass.
+- [ ] Build the Settings group in the `Default & About` page with the save mode, folder picker, open-after-save toggle and a status line reading "Installed", "Not installed: run the Full installer as administrator" or "Not available in Portable mode", decided from `Get-Printer` equivalent API calls (`EnumPrintersW`). Done when: `VirtualPrintSettings.StatusLine` shows each of the three states with a stub printer list. Cheaper substitute: a static label that never reflects the real queue.
+- [ ] Build the save window opened by `/virtual-print` in `AskEachTime` mode: editable file name, folder chip with `Change`, first page thumbnail, progress while converting, `Save` and `Cancel`, and `Save and open` when the open-after-save setting is on. Done when: `VirtualPrintWindow.SaveFlow` saves, cancels (exit code `4`, spool deleted) and opens the result in Recto.
+- [ ] Skip the window and save directly in `SaveToFolder` mode, showing a Windows toast with `Open` and `Show in folder` only when the app is already running. Done when: `VirtualPrintWindow.DirectSave` produces the file with no window created.
+- [ ] Register `printer.settings` and `printer.openfolder` in `CommandRegistry` so `Ctrl+K` finds "Recto PDF printer settings". Done when: `VirtualPrintSettings.CommandsReachable` finds both and the first scrolls to the group.
+- [ ] Give every control an automation name and tooltip and check the keyboard path. Done when: `VirtualPrintWindow.Accessibility` finds none missing.
+- [ ] Commit: `feat(printer): add Recto PDF virtual printer settings, status line and save window`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=VirtualPrintSettings.*:VirtualPrintWindow.*` passes on the display-session host.
+
+## 19. Full installer integration and end-to-end proof for the Recto PDF printer
+
+The Full installer installs the signed `Recto PDF` driver and queue; Portable mode and per-user installs install nothing, and uninstall removes everything (owner decision D21). This section wires the §16 package into `installer/recto.iss`, extends `tests/scripts/verify_installer.ps1`, and proves a real print from a real program reaches a PDF. The optional MSIX build cannot install a driver, so it omits the printer and says so.
+
+**Phase:** 6
+**Needs:** windows-host, display-session, attended
+**Surface:** no
+
+**Build order:**
+
+1. Add the printer task and the `[Run]` and `[UninstallRun]` steps to `installer/recto.iss`, all guarded by `Check: not IsPortableMode` and an elevation check. Done when: `python -m unittest tests.scripts.test_installer_printer` passes.
+2. Add `verify_installer.ps1 -Mode Printer`, which installs, prints, upgrades and uninstalls. Done when: it exits `0` on a test-signing VM.
+
+- [ ] Add a `printer` task to `installer/recto.iss` (checked by default, shown only when the installer runs elevated and the printer package is present in the stage folder) running the §15 install commands, and skip it with a logged message in `/CURRENTUSER` installs and in Portable mode. Done when: `tests/scripts/test_installer_printer.py` finds every printer `[Run]` row guarded and the task hidden when not elevated.
+- [ ] Add the matching `[UninstallRun]` removal (queue, driver, staged package) that tolerates a missing queue and reports a stuck job. Done when: `verify_installer.ps1 -Mode Printer` finds no queue, driver or `pnputil` entry after uninstall.
+- [ ] On upgrade, replace the driver package in place when the version is newer and keep the queue and the user's saved settings. Done when: `verify_installer.ps1 -Mode Printer` upgrades `1.0.0` to `1.0.1` and finds the same queue name with the new package version.
+- [ ] Print `tests/corpus/render/two-column-article.pdf` to the queue with `Recto.exe /pt` (the `printto` verb of §9) in `SaveToFolder` mode and compare the output PDF text and page images. Done when: the PDF exists, `recto-cli text` returns the fixture's words, and page `SSIM >= 0.95` against the source render.
+- [ ] Assert Portable mode (`/PORTABLE=1` and the `.zip`) installs no queue and the Settings status line reads "Not available in Portable mode". Done when: `verify_installer.ps1 -Mode Printer` finds no Recto printer after a portable run.
+- [ ] Make `build/build-installer.ps1 -EnableMsix` skip the printer and write "The Recto PDF printer is not part of the MSIX package" to the build log and to `docs/store-listing.md`. Done when: the MSIX build log contains the line and `scripts/verify-release-kit.py` finds the sentence.
+- [ ] Commit: `release: install and prove the Recto PDF virtual printer in the Full installer only`
+
+**Test checkpoint:** `pwsh -NoProfile -File tests/scripts/verify_installer.ps1 -Mode Printer` exits `0` with its `[PASS]` lines quoted.
+
+## 20. Recto PDF driver signing through the Windows Hardware Dev Center and release gate
+
+A production printer driver must carry a signature that Windows accepts without test mode, and Microsoft issues it through the Windows Hardware Dev Center (owner decision D21; `third-party`). This section documents the signing procedure, adds the check that keeps an unsigned or test-signed driver out of a release, and defines what ships if signing is not finished: the Full installer ships without the printer and the Settings status line says it is not available, so a missing signature removes a feature and never ships a broken or untrusted driver.
+
+**Phase:** 6
+**Needs:** third-party, operator
+**Surface:** no
+
+**Build order:**
+
+1. Write `docs/driver-signing-runbook.md` and `scripts/check-driver-signature.ps1`. Done when: the script rejects a test-signed package and accepts a Microsoft-signed one.
+2. Gate `build/build-installer.ps1` on that check. Done when: a release build with a test-signed package omits the printer task.
+
+- [ ] Write `docs/driver-signing-runbook.md` covering the Hardware Dev Center account and its extended validation code signing certificate, building the submission package for `x64` and `ARM64`, the route chosen in §15 (attestation or HLK), downloading the signed package, and verifying it on a clean machine without test mode. Done when: an operator can follow it without other documents, and the owner's account steps are listed as operator actions in `todo/99-manual`.
+- [ ] Write `scripts/check-driver-signature.ps1` running `signtool verify /kp /v` on the catalog and `pnputil /add-driver` on a clean VM, failing on test certificates. Done when: the script exits non-zero for the §16 test-signed package.
+- [ ] Add the gate to `build/build-installer.ps1`: a release build includes the printer task only when `check-driver-signature.ps1` passes; `-AllowTestSignedPrinter` exists for developer builds only and writes a banner to the log and the setup file name. Done when: `tests/scripts/test_installer_printer.py` finds a release build without a signature contains no printer task and no printer files.
+- [ ] Record the shipping default in `docs/release-and-store-runbook.md`: version 1 ships without the printer if the signature is missing (the cost is a missing feature, not a broken one). Done when: the runbook states the default and how to add the printer in a point release.
+- [ ] Commit: `release: gate the Recto PDF driver on a Hardware Dev Center signature`
+
+**Test checkpoint:** `python -m unittest tests.scripts.test_installer_printer` passes and `pwsh scripts/check-driver-signature.ps1 -Path build/stage/x64/printer` exits non-zero for a test-signed package and `0` for the Microsoft-signed one, with both outputs quoted.
 
 ## Verification
 

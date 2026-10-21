@@ -15,6 +15,7 @@ One job frame for every conversion, then Recto's native C++20 converters: `PdfWr
 | [TODO-05](./TODO-05-excel-web-and-compliance.md) | PDF to Excel/CSV/XML, HTML5/Markdown/EPUB/LaTeX, and PDF/A, PDF/UA & ZUGFeRD Compliance | active |
 | [TODO-06](./TODO-06-print-production.md) | Print Production: Preflight, PDF/X, Output Preview and Separations | active |
 | [TODO-07](./TODO-07-action-wizard.md) | Action Wizard: Saved Multi-Step Actions over Files and Folders | active |
+| [TODO-08](./TODO-08-automation-mcp.md) | Automation: recto-cli Verb Registry and the Local recto-mcp Server | active |
 
 ## Completed
 
@@ -29,6 +30,7 @@ One job frame for every conversion, then Recto's native C++20 converters: `PdfWr
 - Native `PdfWriter`, atomic saves, Searchable PDF (OCR) invisible-text sandwich export, `TableExtractor` and `ImageExtractor` (plus the Viewer `Table & Image Extractor Bar`), `PdfOptimizer`, font subsetter, and Fast Web View `Linearizer`
 - 3-mode (`Flowing`, `Exact`, `Continuous`) native C++20 `DocxWriter` and `RtfWriter` (`PDF -> Word .docx & .rtf`) and 100% built-in C++20 OpenXML, legacy binary OLE2 (`.doc`, `.xls`, `.ppt`), RTF, HTML, Markdown and CSV `-> PDF` engines
 - Native C++20 `XlsxWriter` (`PDF -> .xlsx, .csv, .xml`), `WebDocWriter` (`PDF -> HTML5, .md, .epub, .tex`), and `ComplianceEngine` (`PDF/A`, `PDF/UA-1`, `ZUGFeRD / Factur-X` + Viewer `Standards & E-Invoice` side panel)
+- Equation detection with MathML and LaTeX export, colour contrast, PDF/UA-2 and WCAG 2.2 accessibility reports, whole-document greyscale conversion, the extended Action Wizard steps, and the `recto-cli` verb registry with the local stdio `recto-mcp` server (D21)
 
 ## Out of scope
 
