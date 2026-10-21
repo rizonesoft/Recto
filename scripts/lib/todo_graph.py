@@ -103,11 +103,12 @@ def extract_ref(text, rows):
     or a '<path> §N' pair (POSIX or Windows path). Returns (ref_or_None, exit_code): 1 no such
     section, 2 no reference."""
     normalized = text.replace("\\", "/")
-    m = re.search(r"D(\d{2})\s+T(\d{2})\s+§([1-9]\d*)", normalized)
+    # A reference run into more text ("§1oops", "§1.5") is not a reference to §1.
+    m = re.search(r"D(\d{2})\s+T(\d{2})\s+§([1-9]\d*)(?![\w§]|\.\d)", normalized)
     if m:
         ref = f"D{m[1]} T{m[2]} §{int(m[3])}"
         return (ref, 0) if ref in rows else (ref, 1)
-    m = re.search(r"(\d{2})-[a-z0-9-]+/TODO-(\d{2})-[a-z0-9-]+\.md\s*§([1-9]\d*)", normalized)
+    m = re.search(r"(\d{2})-[a-z0-9-]+/TODO-(\d{2})-[a-z0-9-]+\.md\s*§([1-9]\d*)(?![\w§]|\.\d)", normalized)
     if m:
         ref = f"D{m[1]} T{m[2]} §{int(m[3])}"
         return (ref, 0) if ref in rows else (ref, 1)
@@ -242,10 +243,15 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
         if root is not None:
             # A claimed round is one scripts/review-dispatch.py recorded with a reviewer, read by the dispatcher's own
             # reader, so a report it would refuse is no evidence here either.
+            # The reviewer must also be of another model family than the writer: a self-review is not a round.
+            dispatch = review_dispatch()
             for r in rounds:
-                recorded = review_dispatch().read_rounds(read_text(Path(root) / r["report"]))
-                require(recorded is not None and any(e["number"] == r["round"] and e["reviewer"] for e in recorded),
-                        f"round {r['round']} is not a reviewed round in {r['report']}: {ref}")
+                recorded = dispatch.read_rounds(read_text(Path(root) / r["report"]))
+                require(recorded is not None and any(
+                    e["number"] == r["round"] and e["reviewer"]
+                    and dispatch.FAMILY.get(e["cli"]) not in (None, dispatch.WRITER_FAMILY.get(e["writer"]))
+                    and e["writer"] in dispatch.WRITER_FAMILY for e in recorded),
+                    f"round {r['round']} is not a round reviewed by another model family in {r['report']}: {ref}")
         stopped = any(r["verdict"].startswith("stopped-") for r in rounds)
         outcome = data.get("cap_outcome")
         require((isinstance(outcome, str) and bool(outcome.strip())) == stopped,
@@ -476,6 +482,8 @@ def graph(root=ROOT):
     for row in sections.values():
         # Only a blockquoted marker is read below; any other spelling would drop the deferral from every check.
         for line in row.body.splitlines():
+            require(len(re.findall(r"\*\*(?:Deferred|Resolved):\*\*", line)) <= 1,
+                    f"one Deferred or Resolved marker per line: {row.ref}")
             if re.search(r"\*\*(?:Deferred|Resolved):\*\*", line):
                 require(re.match(r"> \*\*(?:Deferred|Resolved):\*\*[ \t]*\S", line) is not None,
                         f"a Deferred or Resolved marker must open a blockquote line and say something: {row.ref}")

@@ -191,3 +191,70 @@ The parser now works from an allow-list rather than patching one spelling at a t
 - Finding 1 (P1): any checklist-shaped line (a list marker or number, then a box, whether quoted, indented or numbered) must be the canonical `- [ ] ` or `- [x] ` at column 0 (`test_checklist_item_in_another_spelling_refuses`).
 - Finding 2 (P1): a `Deferred` or `Resolved` marker must open a blockquote line and carry text; the extraction regexes no longer let `\s*` run onto the next line (`test_empty_deferral_marker_refuses`).
 - Finding 3 (P1): every `-> XREF:` on a line is read with `XREF_TARGET` (one space, then exactly one well-formed reference not run into further text), and `find_ref` (adjacency owners) now requires the whole text to be one reference, so `D00 T999 §1` or a second malformed XREF refuses instead of resolving elsewhere (`test_malformed_xref_does_not_resolve_to_another_section`).
+
+## Round 5: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T15:35:34Z
+- Effort: medium
+- Lines: 50
+- Digest: b5da995410beea75
+
+## adversarial: needs-attention
+
+1. **P1: A second deferral marker bypasses ownership checks.** `scripts/lib/todo_graph.py:479` checks only that the line begins with an accepted marker; line 483 extracts only that first marker. Insert this before section 2 in `todo/00-workspace/TODO-02-todo-system.md`:
+
+   ```markdown
+   > **Resolved:** Old work -> XREF: D00 T02 §1 **Deferred:** New unowned work.
+   ```
+
+   The in-memory reproduction passed validation with 677 sections and retained disposition `3` (verified). `deferrals()` returned only a resolved entry, hiding the ownerless outstanding work.
+
+## consistency: approve
+
+No additional finding.
+
+## integration: needs-attention
+
+2. **P1: Receipt validation accepts self-review as independent evidence.** `scripts/lib/todo_graph.py:247` requires a matching round with a reviewer, but never compares the parsed reviewer with the writer. Reproduce with a current-format receipt claiming round 1 as `clean` and this report:
+
+   ```markdown
+   ## Round 1: claude (`claude-opus-5` via `claude`)
+
+   - Writer: claude
+   - Run: 2026-10-21T00:00:00Z
+
+   OVERALL: approve
+   ```
+
+   The dispatcher's reader returns `writer='claude'` and `reviewer='claude'`; `receipt_data_ok()` accepts it. The stamp validation path therefore accepts evidence that violates the mandatory independent-review rule.
+
+## source-defect: needs-attention
+
+3. **P2: CLI resolution silently truncates malformed section references.** `scripts/lib/todo_graph.py:106` searches for a reference without checking its trailing boundary. Run:
+
+   ```powershell
+   python -B -X utf8 scripts/todo-graph.py classify 'D00 T02 §1oops' 'D00 T02 §1.5'
+   ```
+
+   Both return disposition `3`, resolving to `D00 T02 §1`. `resolve` uses the same extractor and supplies that section as `skill_arg`. Malformed input can therefore route downstream execution to a different section instead of being refused.
+
+## design: advisory
+
+Not applicable to this section’s declared surface.
+
+## record: advisory
+
+The full-suite claim at `docs/reviews/06-quality/audit-d00-t02-s1.md:9` remains independently unconfirmed. At `49c6a12`, the suite ran 70 tests with 69 fixture-setup errors because the read-only environment cannot create temporary directories; the Repository test passed. Validation reported `valid: 677 sections`, and `plan --check` returned `plan current`. These results do not establish the recorded historical full-suite pass.
+
+All mutation probes used in-memory overlays. No files were modified; the working tree remains clean.
+
+OVERALL: needs-attention
+
+## Fixes after round 5
+
+In `scripts/lib/todo_graph.py`, tested in `tests/scripts/test_todo_graph.py` (`Ran 72 tests`, `OK`; against `49c6a12` the three new or changed tests report `FAILED (failures=3)`; the live tree validates, `valid: 677 sections`, so every current receipt is a cross-family review).
+
+- Finding 1 (P1): a line may carry at most one `Deferred` or `Resolved` marker (`test_two_deferral_markers_on_one_line_refuse`).
+- Finding 2 (P1): a claimed round must be reviewed by another model family than its writer, judged with the dispatcher's own `FAMILY` and `WRITER_FAMILY` maps; a self-review, or an unknown writer, refuses (`test_a_claimed_round_must_be_a_reviewed_round_in_its_report`).
+- Finding 3 (P2): `extract_ref` no longer reads a reference run into more text (`§1oops`, `§1.5`) as `§1`; such input exits 2, while a trailing full stop, bracket or table pipe still resolves (`test_reference_run_into_more_text_does_not_resolve`).

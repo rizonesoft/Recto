@@ -152,6 +152,20 @@ class Graph(Tree):
                 "- [ ] Work.", "- [ ] Work.\n" + bad, 1))
             self.refuses("malformed checklist item")
 
+    def test_two_deferral_markers_on_one_line_refuse(self):
+        self.write(todo_file([(1, "A", 0, "none", "--"), (2, "B", 0, "none", "--")]).replace(
+            "**Test checkpoint:** `true` exits 0.\n\n## 2. B",
+            "**Test checkpoint:** `true` exits 0.\n> **Resolved:** old -> XREF: §2 **Deferred:** new unowned work.\n\n## 2. B"))
+        self.refuses("one Deferred or Resolved marker per line")
+
+    def test_reference_run_into_more_text_does_not_resolve(self):
+        self.write(todo_file([(1, "A", 0, "none", "--")]))
+        rows = tg.graph(self.root)
+        for text in ("D00 T01 §1oops", "D00 T01 §1.5", "todo/00-workspace/TODO-01-a.md §1x"):
+            self.assertEqual(tg.extract_ref(text, rows), (None, 2))
+        for text in ("D00 T01 §1", "process D00 T01 §1.", "D00 T01 §1 (run file x)", "| 1 | D00 T01 §1 | A |"):
+            self.assertEqual(tg.extract_ref(text, rows), ("D00 T01 §1", 0))
+
     def test_empty_deferral_marker_refuses(self):
         for bad in ("> **Deferred:**", "> **Resolved:**   "):
             self.write(todo_file([(1, "A", 0, "none", "--"), (2, "B", 0, "none", "--")]).replace(
@@ -490,12 +504,15 @@ class Stamp(Tree):
         report = self.root / "docs/reviews/00-workspace/D00-T01-s1.md"
         before = self.snapshot()
         for text in ("# No independent review has run\n", envelope(1, "none"), envelope(2),
+                     envelope(1, "claude (`claude-opus-5` via `claude`)"),
+                     envelope(1).replace("- Writer: claude", "- Writer: codex"),
+                     envelope(1).replace("- Writer: claude", "- Writer: someone"),
                      "## Round 1: fake\n\nNo reviewer returned a review.\n",
                      "## Round 1: astra (`m` via `codex`)\n\nNo metadata block.\n"):
             report.write_text(text, encoding="utf-8")
             with self.assertRaises(tg.Refused) as ctx:
                 tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
-            self.assertIn("is not a reviewed round", str(ctx.exception))
+            self.assertIn("is not a round reviewed by another model family", str(ctx.exception))
         for bad in (0, -1, True):
             with self.assertRaises(tg.Refused):
                 tg.stamp(self.root, "D00 T01 §1", self.sha,
@@ -508,7 +525,7 @@ class Stamp(Tree):
         data["reviews"][0]["round"] = 999
         data["rounds_spent"] = 999
         (self.root / receipt).write_text(json.dumps(data), encoding="utf-8")
-        self.refuses("round 999 is not a reviewed round")
+        self.refuses("round 999 is not a round reviewed by another model family")
 
     def test_a_stamped_section_with_a_waiting_need_refuses(self):
         self.tick_work()
