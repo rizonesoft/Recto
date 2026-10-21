@@ -70,3 +70,47 @@ All 16 findings were verified; 15 were fixed in the next commit and one (9) was 
 14. D02 T06 §4: replacement refresh tokens are persisted before use, and a generation counter stops a late refresh after sign-out.
 15. D02 T06 §13: uploads are bound to an immutable snapshot and clear dirty only when the tab is still at that revision.
 16. D02 T02 §14: transitions are tested on intermediate frames against golden images with a fake clock; `docs/presentation-transitions.md` lists support per style.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T04:58:17Z
+- Effort: medium
+- Lines: 25
+- Digest: 52536e4b19d79357
+
+Review is limited to the supplied diff: local reads failed before shell execution. I could not verify the surrounding governing files or the actor-side assertion for previous finding 9. No files were modified; no git commands or tests ran.
+
+**record: needs-attention**
+
+1. **Previous finding 7 remains incomplete: exported revisions can expire before acknowledgement.** `todo/01-engine/TODO-02-actor-and-render.md` §14 retains exported buffers only “until a later export or close,” but `mark_ocg_saved(revision)` must retrieve any acknowledged export’s bytes. Export A, start writing A, export B, then acknowledge A: A’s snapshot need no longer exist. Retain pending exports until completion or explicit abandonment, and test this sequence.
+
+2. **Previous finding 15 remains incomplete: local and remote saved state conflict.** `todo/02-viewer/TODO-01-app-shell.md` §8 clears dirty after local save and acknowledges the actor revision; `todo/01-engine/TODO-02-actor-and-render.md` §14 defines dirty exactly as current versus saved revision. Meanwhile, `todo/02-viewer/TODO-06-cloud-storage-connectors.md` §13 requires dirty to remain set until upload succeeds. After a successful local save followed by upload failure, these contracts disagree. Define separate locally saved and remotely acknowledged revisions, with tab-close protection covering pending uploads, and test through the actual SavePipeline and actor.
+
+**consistency: needs-attention**
+
+3. **The new authentication gate blocks routine refresh and revocation.** `todo/02-viewer/TODO-06-cloud-storage-connectors.md` §§1, 3–4: token-endpoint and revocation requests require an authorization token issued only by pressing `Open browser`, expiring after 180 seconds. Background refresh after expiry or restart has no valid authorization path; ordinary sign-out cannot perform its specified revocation either. Define narrowly scoped refresh and revocation authorization based on the existing account session, and exercise both through the real gate without reopening sign-in.
+
+4. **The builder fix introduces a dependency from the PDF engine back into core.** `todo/02-viewer/TODO-03-home-and-panels.md` §§23–24 now require functions in `src/pdf` to return `OcgEditOutput`, defined in `src/core/ocg_edit.h` by `todo/01-engine/TODO-02-actor-and-render.md` §14. That core type itself contains PDF-engine types. Put the engine result in `recto-pdf`, then adapt it to actor messages in core; verify the engine builds independently of core headers.
+
+**source-defect: needs-attention**
+
+5. **The new transition requirements contradict both cut semantics and the PDF parameter definitions.** `todo/02-viewer/TODO-02-document-view.md` §14 requires intermediate frames differing from both endpoints for *every* style, including `R`, explicitly defined as a cut. It also requires `/M` to reverse `Blinds`, although `/M` applies to `Split`, `Box` and `Fly`; Blinds has fixed movement directions. Exempt cuts from intermediate-image assertions and use style-specific parameter tests. Previous finding 16 therefore needs another correction. [ISO 32000-1, Table 162](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf)
+
+**adversarial: needs-attention**
+
+6. **Previous finding 12 remains incomplete: path confinement is checked after the download writes.** `todo/02-viewer/TODO-06-cloud-storage-connectors.md` §12 orders download before verifying containment and reparse points. A planted junction can redirect the write before rejection; merely asserting that the operation is refused misses that damage. Establish confinement before opening the destination and maintain it through writing and cleanup. Test that an external sentinel file remains unchanged.
+
+7. **Previous finding 14 still permits credential resurrection unless sign-out and persistence are atomic relative to each other.** `todo/02-viewer/TODO-06-cloud-storage-connectors.md` §4 specifies comparing the generation “before the write.” Refresh can pass that comparison, sign-out can increment the generation and delete credentials, then refresh can write the replacement token. Serialize generation validation and credential persistence with sign-out, and test a barrier specifically between validation and `CredWriteW`.
+
+OVERALL: needs-attention
+
+## Response to round 2
+
+1. Fixed: `D01 T02 §14` keeps every pending export (not acknowledged and not released by the new `abandon_ocg_export(revision)`) up to 4, releases older pending exports on acknowledgement, and adds `Actor.OcgEditPendingExports` for export A, export B, acknowledge A; `D02 T01 §8` calls `abandon_ocg_export` on a failed or cancelled write.
+2. Fixed: `D02 T06 §13` now keeps two states apart: local dirty stays the actor's (`D01 T02 §14`), and `CloudOrigin.uploaded_revision` drives a separate `upload pending` state with a `Not uploaded` badge and its own close prompt; `Cloud.SaveUploadPendingState` runs through the real `SavePipeline` and `DocumentActor`.
+3. Fixed: `D02 T06 §1` splits the gate's request classes into `Api`, `Authorize`, `Refresh` (allowed with a stored refresh credential, token host only) and `Revoke` (a 30 s `SignOutInProgress` token, revocation host only); `§4` refresh and sign-out go through the real gate.
+4. Fixed: `D01 T02 §14` defines `recto::pdf::OcgBuildResult` in `src/pdf/ocg_build.h` with `OcgEditOutput` as a core alias, and requires the engine header to compile with no `src/core` include path; `D02 T03 §23` and `§24` builders return `PdfResult<recto::pdf::OcgBuildResult>`.
+5. Fixed: `D02 T02 §14` exempts `R` (a cut) from the intermediate-frame assertion and applies `/M` to `Split`, `Box` and `Fly` per ISO 32000-1 Table 162, with a test that `/M` leaves `Blinds` unchanged.
+6. Fixed: `D02 T06 §12` establishes confinement before any write (reparse-point checks on each folder component, `CREATE_NEW` with `FILE_FLAG_OPEN_REPARSE_POINT`, `GetFinalPathNameByHandleW` on the open handle, handles held through write and cleanup) and tests that an outside sentinel file is unchanged.
+7. Fixed: `D02 T06 §4` holds a per-provider mutex across the generation check and `CredWriteW` that `sign_out` also takes, with `Cloud.RefreshSignOutRace` parking the refresh at a barrier between check and write.

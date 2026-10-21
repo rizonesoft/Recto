@@ -220,15 +220,15 @@ Foxit PDF Editor honours Windows FIPS mode for regulated customers (Acrobat Pro 
 **Build order:**
 
 1. Add `src/pdf/crypto_policy.h/.cpp` with `FipsProbe`, `AlgorithmPolicy` and the typed error. Done when: `Fips.PolicyTable` passes with an injected probe.
-2. Wire the real probe and expose the state to `recto-cli info --json`. Done when: `Fips.RealProbeReturnsBool` passes and the JSON carries `fips_mode`.
+2. Wire the real probe and expose the state to `recto-cli info --json`. Done when: `Fips.RealProbeReturnsState` passes and the JSON carries `fips_mode` as one of the three state strings.
 
 - [ ] Add `PdfErrorCode::AlgorithmNotPermittedByFips` to `src/pdf/error.h` with a stable string name and a message naming the algorithm. Done when: `Fips.ErrorCodeStable` checks the code, name and that the message names RC4 or MD5.
-- [ ] Implement `FipsProbe` as an interface with the default `BCryptFipsProbe` calling `BCryptGetFipsAlgorithmMode` once per process, returning a three-state result (`Enabled`, `Disabled`, or `Unknown` when the call fails, which is logged to the D16 ring log) and treating `Unknown` as `Enabled` for every refusal decision, so a failed query never enables a prohibited algorithm. Done when: `Fips.RealProbeReturnsBool` runs the real probe and `Fips.ProbeFailureRefuses` injects a failing call and finds RC4 and MD5 operations refused. Cheaper substitute: reading the Lsa registry value directly, which skips the supported API.
+- [ ] Implement `FipsProbe` as an interface with the default `BCryptFipsProbe` calling `BCryptGetFipsAlgorithmMode` once per process, returning a three-state result (`Enabled`, `Disabled`, or `Unknown` when the call fails, which is logged to the D16 ring log) and treating `Unknown` as `Enabled` for every refusal decision, so a failed query never enables a prohibited algorithm. Done when: `Fips.RealProbeReturnsState` runs the real probe and gets `Enabled` or `Disabled` (never `Unknown` on a healthy host), and `Fips.ProbeFailureRefuses` injects a failing call and finds RC4 and MD5 operations refused. Cheaper substitute: reading the Lsa registry value directly, which skips the supported API.
 - [ ] Implement `AlgorithmPolicy::check(Algorithm, Use)` returning `PdfResult<void>`: in FIPS mode refuse RC4 (any key length), MD5, and encryption revisions that depend on them (`R=2` to `R=4`); allow AES with SHA-2 key derivation (`R=6`), SHA-256 or stronger digests and `BCryptGenRandom`. The policy is keyed by algorithm and by use: creating or verifying an MD5 or SHA-1 digest is refused in FIPS mode (a signature that needs one is reported as `DigestUnavailableUnderFips`, never as verified), while SHA-1 used only as a certificate thumbprint identifier is not a cryptographic use and is allowed. Outside FIPS mode every existing algorithm stays allowed for reading. Done when: `Fips.PolicyTable` checks each algorithm and use in both modes.
-- [ ] Add `fips_mode` to `recto-cli info --json` and to the crash bundle `version.json` of `D07 T02 §4`. Done when: `Fips.CliInfoReportsMode` finds the field and `CrashReport.BundleContainsOnlyThreeAllowlistedFiles` still passes.
+- [ ] Add `fips_mode` to `recto-cli info --json` and to the crash bundle `version.json` of `D07 T02 §4` as a string, `"enabled"`, `"disabled"` or `"unknown"` (never a Boolean, so a failed probe is never shown as an observed state), plus `fips_probe_status` holding the `NTSTATUS` of the failed call as `0x` hex when the state is `"unknown"` and `null` otherwise. Done when: `Fips.CliInfoReportsMode` injects each of the three probe results and finds the matching string and status, and `CrashReport.BundleContainsOnlyThreeAllowlistedFiles` still passes.
 - [ ] Commit: `feat(security): detect Windows FIPS mode and add the algorithm policy`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Fips.ErrorCodeStable:Fips.RealProbeReturnsBool:Fips.ProbeFailureRefuses:Fips.PolicyTable:Fips.CliInfoReportsMode` passes under ASan.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Fips.ErrorCodeStable:Fips.RealProbeReturnsState:Fips.ProbeFailureRefuses:Fips.PolicyTable:Fips.CliInfoReportsMode` passes under ASan.
 
 ## 8. Enforce the FIPS policy in decryption, encryption writers, signing digests and the CLI
 
@@ -254,7 +254,7 @@ The detection of §7 only protects users if every code path that opens an encryp
 
 ## 9. FIPS mode proof on a FIPS-enabled Windows host
 
-Injected probes prove the logic; only a host with Windows FIPS policy enabled proves the real call and the real CNG behaviour. This section is a short attended run on a test machine or virtual machine and records the evidence in `docs/security-audit.md`. The script refuses to continue unless `recto-cli info --json` reports `fips_mode` as true, so it never reports a pass on a normal machine.
+Injected probes prove the logic; only a host with Windows FIPS policy enabled proves the real call and the real CNG behaviour. This section is a short attended run on a test machine or virtual machine and records the evidence in `docs/security-audit.md`. The script refuses to continue unless `recto-cli info --json` reports `fips_mode` as `"enabled"`, so it never reports a pass on a normal machine.
 
 **Phase:** 6
 **Needs:** windows-host, attended
@@ -265,7 +265,7 @@ Injected probes prove the logic; only a host with Windows FIPS policy enabled pr
 1. Write `tests/scripts/verify_fips.ps1`. Done when: it exits `2` on a machine without FIPS mode.
 2. Run it on a FIPS-enabled host and record the result. Done when: `docs/security-audit.md` holds the quoted output.
 
-- [ ] Write `tests/scripts/verify_fips.ps1`, which runs `recto-cli info --json`, stops with exit code `2` unless `fips_mode` is true, then opens each encrypted corpus fixture and encrypts a copy with `AES-256`. Done when: on a normal machine it exits `2` with the message "FIPS mode is not enabled on this host".
+- [ ] Write `tests/scripts/verify_fips.ps1`, which runs `recto-cli info --json`, stops with exit code `2` unless `fips_mode` is `"enabled"` (a `"disabled"` or `"unknown"` state both stop it), then opens each encrypted corpus fixture and encrypts a copy with `AES-256`. Done when: on a normal machine it exits `2` with the message "FIPS mode is not enabled on this host".
 - [ ] Extend the script to expect `AlgorithmNotPermittedByFips` for `encrypted-rc4-128.pdf` and `encrypted-aes-128.pdf`, success for `encrypted-aes-256.pdf` and for a new `AES-256` file, and a signed fixture with SHA-256. Done when: the expectations are encoded and a failed one exits non-zero.
 - [ ] Run the script on a Windows host with FIPS policy enabled and paste the output into a new `FIPS mode` section of `docs/security-audit.md` with the host build and date. Done when: the section holds the quoted `[PASS]` lines.
 - [ ] Commit: `test(security): add the attended FIPS mode proof and record the result`

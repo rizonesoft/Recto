@@ -58,3 +58,40 @@ All 12 findings were verified and fixed in the next commit:
 10. D03 T01 §19: a `SourceIdentity` recorded at first OCR publish rejects a changed file with `StaleSource`.
 11. D03 T02 §10: repeated text is dropped only in the top or bottom 10% of the page; body and table repeats are kept.
 12. D03 T01 §16, §18: words carry a never-reused `word_id`; actions carry `(word_id, snapshot_version)` and a mismatch is `StaleSuspect`.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T04:59:13Z
+- Effort: medium
+- Lines: 21
+- Digest: 942aafbd14ae25e5
+
+Review is limited to the supplied candidate diff. Repository reads failed before PowerShell started (`helper_unknown_error`), so governing context could not be verified. No files were modified; git and validation were not run.
+
+**record: needs-attention**
+
+Round 1 findings **3, 4 and 10 remain incompletely resolved**, as detailed below.
+
+**consistency: needs-attention**
+
+1. **Text-and-quad matching does not establish OCR provenance.** `todo/03-text/TODO-01-selection-and-search.md` §19, Treatment and layer-detection checklist. This leaves finding **4** unresolved. A foreign invisible run can have the same text and geometry, while the original run will no longer match a corrected word’s text or a deleted word. The contract does not retain an immutable mapping from original words to source operator ranges, resolve ambiguous matches, or distinguish an unmatched replacement from a genuinely new word. Its fallback can therefore preserve the wrong layer and append another, or replace foreign content. Require original source-range provenance, explicit replacement/deletion/insertion semantics, and refusal of ambiguous matches. Test identical overlapping foreign text and replacement/deletion after the reviewed snapshot changes.
+
+2. **Join still permits changing the paint order of unrelated text.** `todo/03-text/TODO-04-edit-pdf.md` §23, Build order 1 and per-run-state checklist. The refusal checks only intervening **non-text** objects, but the checklist requires preserving every other object’s paint order. For selected paragraphs A and B with an unselected overlapping text object C painted between them, moving B into A’s ranges changes B’s relationship to C. Refuse intervening unselected painted text too, or preserve distributed ranges. Add an A → C → B fixture with overlapping text.
+
+**source-defect: needs-attention**
+
+3. **The gradient subset still includes representations the stop model does not account for.** `todo/03-text/TODO-04-edit-pdf.md` §26, existing-gradient checklist. Finding **3** remains unresolved: `/Domain [0 1]` does not constrain a Type 2 function to linear interpolation. `/N 2`, for example, produces a nonlinear ramp; Type 3 stitching also carries `/Encode` mappings and potentially discontinuous boundaries. The candidate neither preserves these parameters nor precisely excludes unsupported cases. “Any other stitching layout” does not define that boundary. Require faithful round-trip preservation or an explicit narrower subset, with fixtures for nonlinear exponents, reversed encoding and discontinuities. Refusing sampled functions alone does not test these cases. [ISO 32000-1, §§7.10.3 and 7.10.4](https://developer.adobe.com/document-services/docs/assets/35e4369068f86065372c18787171a17e/PDF_ISO_32000-1.pdf).
+
+**adversarial: needs-attention**
+
+4. **Source identity is captured too late and checked separately from the bytes consumed.** `todo/03-text/TODO-01-selection-and-search.md` §19, `SourceIdentity` checklist. Finding **10** remains unresolved in two windows. If the pathname is replaced after the viewer opens the document but before first OCR publication, the recorded hash can identify the replacement while corrections describe the original. A replacement after the comparison but before the isolated document opens also passes the prescribed check. The single replacement-after-review test covers neither case. Bind identity to the actual immutable input used by OCR, then make the writer consume that same snapshot or a verified, protected handle. Test replacement before first publication and between verification and writer open.
+
+OVERALL: needs-attention
+
+## Response to round 2
+
+1. Fixed: `D03 T01 §19` records an immutable `OcrLayerMap` from each original word id to its single matching `3 Tr` run when the OCR result is first published; edits address words by id (`replace`, `delete`, `add`), ambiguous or mixed pages refuse with `AmbiguousTextLayer`, and `OcrWrite.AmbiguousLayer` and `OcrWrite.ReplaceAndDeleteByProvenance` test both cases.
+2. Fixed: `D03 T04 §23` refuses a join when any other painted object, including unselected text, lies between the ranges, and `ParagraphJoinSplit.Interleaved` adds the A, unselected text C, B fixture.
+3. Fixed: `D03 T04 §26` narrows the editable subset to linear type 2 functions (`/N 1`) and one-level stitching of them with unit `/Encode` and continuous boundaries, refusing everything else; `ObjectAppearance.FunctionRefusal` adds `/N 2`, reversed `/Encode` and discontinuous fixtures.
+4. Fixed: `D03 T01 §19` binds OCR, the layer map and the writer to the one immutable byte snapshot the actor opened, and the writer never reopens the path; `OcrWrite.SnapshotIdentity` replaces the file before first publication, between review and save, and during the write. The Freeze check names the snapshot.

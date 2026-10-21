@@ -101,3 +101,57 @@ OVERALL: needs-attention
 ## Response to round 2
 
 All 9 findings were accepted and fixed in the next commit: a D1 `purge_fences` table outside the deleted Durable Object storage guards every later write (1); the outbox promise is narrowed to at-least-once with atomic consumer dedupe through `processed_effects` (2); a per-isolate `PdfBudget` and a `pdf-jobs` queue consumer with `max_concurrency` 1 make the memory bound real (3); the desktop (D09 T05 §11) now follows the single protocol in D09 T03 §5-§7 and replays its fixture transcripts (4); `welcome` carries no operations and replay is paged in byte-bounded chunks (5); completion seals into staging and commits through the Durable Object's `accept`, then publishes and notifies (6); checkpoint verification reports an authenticated prefix and an unauthenticated suffix (7); nothing is published before `accept`, which checks the current generation and attempt (8); comment scrub is an authoritative `ReviewRoom.scrub` that clears the write-ahead log and queued flushes before D1, with guarded upserts (9).
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T05:09:22Z
+- Effort: medium
+- Lines: 33
+- Digest: e7c6c9781931ed15
+
+**The candidate needs attention.** Direct repository reads failed twice with `helper_unknown_error: setup refresh had errors`. This review therefore cites the supplied diff; governing-file verification remains incomplete. No files were modified, and no git commands or tests ran.
+
+`T03`, `T04` and `T05` below mean the corresponding files under `todo/09-cloud/`.
+
+**record: needs-attention**
+
+Round 2 findings **#1, #3, #6 and #8** remain incompletely resolved, corresponding to Round 1 **#5, #1 and #11**. Findings 1–4 below identify the remaining defects. Unchanged portions of the earlier fixes could not be verified directly.
+
+**adversarial: needs-attention**
+
+1. **Accepted completion bytes remain replaceable.** `T04 §16`, Build order 2–3. A duplicate delivery can reseal and overwrite the same `generation-attempt.pdf` after the first worker’s `accept` commits but before `publish` copies it. A fresh timestamp can produce different bytes, while publication still uses the first accepted hash. The 48-hour sweep can also delete accepted output awaiting publication. Use immutable staging objects, bind acceptance to the exact object and digest, and retain accepted objects until publication completes. Test duplicate delivery between acceptance and publication, plus publication delayed beyond 48 hours. This leaves **R2 #6/#8** incomplete.
+
+2. **Dead-lettering does not invalidate the failed attempt.** `T04 §4, §16`. `accept` requires `in_progress` and matching generation/attempt, but dead-lettering only appends `envelope.completion_failed`; the attempt increments only when the sender retries. A delayed worker can therefore still satisfy the stated acceptance predicate after failure, before retry or void. Atomically close the attempt on failure and require an active attempt in `accept`. Test a worker resuming immediately after dead-lettering without any sender action. This leaves **R2 #8** incomplete.
+
+3. **The purge fence guards SQL, but not R2 writes.** `T03 §3, §11`; `T04 §16, §18`. An export or publication already executing can finish its R2 write after purge deletes the objects. Its subsequent D1 write being refused does not remove the recreated object. “Every effect consumer is a statement guarded” cannot atomically fence an R2 operation. Define coordination with in-flight object writers and durable cleanup before purge is considered complete. Pause an R2 write or copy before completion, purge, resume it, and verify no content remains. This leaves **R2 #1** incomplete.
+
+4. **In-person hand-over leaves the sender’s authority available.** `T04 §27–29`. The plan adds a recipient cookie and hides sender controls, but never suspends the sender’s existing account session before handing over the browser. The signer can navigate directly to the library or another sender page. Reauthentication after hand-back is too late. Require server-enforced suspension of sender authority during hand-over, with explicit reauthentication to restore it. Test direct account API calls, navigation and another existing tab while the recipient ceremony is active.
+
+5. **Asset sync consent and state are not scoped to an account and server.** `T05 §20`, Build order 1–2, 7. `cloud.syncAssets` survives sign-out, local libraries remain, and one `cloud-sync.json` stores synchronization state without a specified origin/account namespace. Signing into another account or self-hosted server can therefore upload the previous account’s appearances on opening a picker, or apply its revision/deletion state to the wrong account. Bind consent and synchronization metadata to `(origin, accountId)` and require fresh consent when either changes. Test account switching and a copied Portable folder signed into another account.
+
+**source-defect: needs-attention**
+
+6. **The memory contract still has an explicit whole-file escape.** `T04 §1, §17`. Section 1 forbids whole-file buffers throughout `seal`, but §17 still requires `verifySealedPdf(bytes, trustRoots)`. Furthermore, accounting only allocations of at least 64 KiB omits smaller buffers, parsed objects and library allocations; a reservation alone does not bound their actual consumption. Workers’ limit includes both JavaScript heap and binary allocations. Define a ranged verification interface and enforce bounds on all retained memory, with measured simultaneous worst-case verification, parsing and sealing. This leaves **R2 #3** incomplete. [Cloudflare memory limits](https://developers.cloudflare.com/workers/platform/limits/#memory)
+
+**consistency: needs-attention**
+
+7. **Signature activation requires evidence that cannot be produced while signatures are disabled.** `T05 §16, §18`; `T04 §20`. The signature go-live gate requires a completed production signature acceptance run, but §18 permits enabling signatures only after that gate passes. Production envelope creation is refused until enabled. Define a restricted production acceptance mode for the canary account, followed by the public activation gate. As written, completing the gate requires violating its activation order.
+
+8. **The desktop’s zero-upload guarantee cannot hold for the create-time refusal.** `T05 §9`, Build order 4 and 7. Draft creation follows upload, yet step 7 requires zero uploaded bytes when creation returns `503 signatures_not_available`. The health check cannot guarantee this: the switch can change between health and creation. Either introduce an enforceable pre-upload authorization protocol or narrow the guarantee to the preflight refusal and specify what happens to an upload when creation subsequently fails. Test that exact interleaving.
+
+9. **The launch switch is specified at one HTTP route rather than the shared creation boundary.** `T04 §20, §23–25`. The guard explicitly protects `POST /v1/envelopes`, while template instantiation, bulk consumers and form confirmation create envelopes through internal functions. Their tests do not require refusal while signatures are disabled. Enforce the switch in the shared envelope creation/send functions and test every entry point, including queued bulk rows and previously issued form confirmations.
+
+OVERALL: needs-attention
+
+## Response to round 3
+
+1. Fixed: D09 T04 §16 now seals into a per-execution key `sealing/envelopes/<id>/<generation>-<attempt>-<runId>.pdf` (never overwritten, outside the upload `staging/*` prefix), `accept` binds the exact key, SHA-256 and size, `publish` copies only the accepted key after checking its recorded digest and deletes it afterwards, and the 48-hour sweep deletes only keys the Durable Object retired through `retireStaging` (never an accepted, unpublished key), with tests for a duplicate delivery between `accept` and `publish`, publication delayed past 48 hours and the sweep-versus-late-accept race.
+2. Fixed: D09 T04 §4 and §16: the dead-letter transaction appends `envelope.completion_failed` and closes the attempt (`attempt_open = false`), `accept` requires an open attempt, a sender retry appends `envelope.completion_retried` and opens a new attempt, both events are added to the §3 event list, and a test resumes a worker immediately after the dead letter with no sender action and expects `409 attempt_closed` and no version.
+3. Fixed: D09 T04 §18 (with §12 and §16) and D09 T03 §3 and §12 add R2 coordination: the fence row records the keys and prefixes to empty, every R2 writer checks the fence before and after its put or copy and deletes what it wrote when fenced, review exports move under `exports/reviews/<reviewId>/`, and a durable re-sweep 30 minutes (twice the Queue consumer wall-clock limit) and 24 hours after the fence must find nothing before `completed_at` is set, with pause-and-resume and killed-writer tests.
+4. Fixed: D09 T04 §27 now revokes the sender's web session on the server in the request that starts the hand-over (session revocation of D09 T01 §7) and restores authority only through a fresh sign-in, with tests for direct account API calls, navigation and a second tab opened before the hand-over in §27 and §29.
+5. Fixed: D09 T05 §20 binds the sync consent to `{origin, accountId}`, keeps sync state per account and server in `cloud-sync\<hash>.json`, asks for fresh consent when either changes, and adds `Cloud.AssetSyncConsentBoundToAccountAndOrigin`, `Cloud.AssetSyncStateNamespacedPerAccount` and `Cloud.AssetSyncCopiedPortableOtherAccountIsSilent`.
+6. Fixed: D09 T04 §17 now defines `verifySealedPdf(source: RangeSource, trustRoots)` under the §1 buffer lint, and D09 T04 §1 makes reservations cover all retained memory (every buffer through `allocBuffer`, parsed objects charged by an upper-bound estimate in a 4 MiB capped cache, third-party work only on charged bounded inputs) and measures the simultaneous worst-case seal, verification and parses with `process.memoryUsage()` under 80 MiB plus a staging load test with no `exceededMemory` outcome.
+7. Fixed: new D09 T04 §30 adds a restricted canary activation (`SIGNATURES_CANARY_ACCOUNTS`, sends only to `SIGNATURES_CANARY_RECIPIENTS`, public health flag still off), and the stage 2 order is now D09 T05 §21: `go-live --stage signatures-canary`, canary activation, signature acceptance run, then `go-live --stage signatures` and the public switch, with a checkpoint showing the canary stage passes while the public stage still refuses.
+8. Fixed: D09 T05 §9 now requires a server admission (`POST /v1/envelopes/admissions`, D09 T04 §30 step 4) before any document byte is sent, states the narrowed guarantee exactly (a switch change after admission refuses the create, creates no envelope and leaves the upload only as an ordinary document in the user's library, reported with `Delete uploaded copy`), and adds `Cloud.SendForSignatureSwitchRaceAfterAdmission` for that interleaving.
+9. Fixed: D09 T04 §30 enforces the switch in the single creation function `createEnvelopeDraft` (used by the route, template instantiation, bulk rows and form confirmation, with a lint against other inserts) and in every Durable Object command and consumer, holding queued effects through `holdEffect`, with tests for an existing draft, a queued bulk row, a previously issued form confirmation and an enqueued completion; the switch moved out of D09 T04 §20 so stage 1 no longer waits on that section's legal review.

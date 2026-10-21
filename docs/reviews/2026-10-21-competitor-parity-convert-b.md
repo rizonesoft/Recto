@@ -46,3 +46,36 @@ All 8 findings were verified and fixed in the next commit:
 6. D04 T05 §20: `retag_existing` (default false) controls retagging, keeping MCIDs and `/ActualText`.
 7. D04 T05 §22: every pixel in each glyph quad is read and the lowest ratio reported; unsampled runs are `NotEvaluated`.
 8. D04 T05 §22: image-based text is tracked independently of any text layer; a low-contrast scan stays `Incomplete` before and after OCR.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T05:02:26Z
+- Effort: medium
+- Lines: 19
+- Digest: 9f13db4760fdb17f
+
+Review limited to the supplied diff: repository reads failed because the command runner could not start. Surrounding contracts remain unverified. No files were modified and no git commands ran.
+
+**record: needs-attention**
+
+1. **Earlier finding #5 remains partially unresolved.** `todo/04-convert/TODO-06-print-production.md`, §18 restricts `/DA` conversion to fields and `/AcroForm`, omitting the `/DA` on a FreeText annotation itself. A plain FreeText annotation can retain a red default appearance while its converted `/AP` passes `colour.only_gray`; regenerating the appearance restores red text. Include annotation-level `/DA` and add a FreeText regeneration test without `/DS` or `/RC`. The existing widget test cannot catch this. [PDF reference, Free Text Annotations, Table 8.17](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.4.pdf)
+
+**consistency: needs-attention**
+
+Finding 1 leaves the promised conversion of stored appearance-generating properties incomplete.
+
+**source-defect: needs-attention**
+
+Finding 1 overlooks a separately defined annotation property, distinct from field and AcroForm default appearances.
+
+**adversarial: needs-attention**
+
+2. **The exhaustive contrast sampler lacks a sampling-work budget and inner-loop cancellation.** `todo/04-convert/TODO-05-excel-web-and-compliance.md`, §22 now reads every pixel for every glyph quad, but limits only raster size and run count, polling cancellation every 256 runs. Those limits do not bound repeated pixel visits: one run containing many large glyph quads can repeatedly scan substantial portions of the 16-million-pixel plane before reaching another cancellation check. The oversized-page test can pass without exercising this case. Cap cumulative pixel visits and glyph processing, poll cancellation inside sampling loops, and test a single pathological run on a page below the raster cap. Budget exhaustion must produce an incomplete or truncated result.
+
+OVERALL: needs-attention
+
+## Response to round 2
+
+1. Fixed: D04 T06 §18 now converts every stored `/DA` including the annotation-level `/DA` of `FreeText` (ISO 32000-1 Table 174) and of `Redact` with `/OverlayText` (Table 187), adds `FixupsGrey.RegeneratedFreeText` (red `/DA`, no `/DS` or `/RC`, regenerated through `D03 T03 §2`), adds both annotations to `greyscale-mixed.pdf`, and lists `D03 T03 §2` and `D03 T03 §6` as dependencies of the §18 row.
+2. Fixed: D04 T05 §22 caps glyph quads per page at `1 million` and cumulative pixel visits at `64 million`, polls the `CancelToken` every `65536` pixel visits inside the sampling loop, marks the run in progress and later runs `NotEvaluated(sampling budget)` with a `Truncated` result and at most `Incomplete`, and adds `Contrast.SamplingBudget` (one pathological run below the raster cap) and `Contrast.CancelInsideRun`, named in the Test checkpoint.

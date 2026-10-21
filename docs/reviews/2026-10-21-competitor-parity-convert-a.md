@@ -66,3 +66,39 @@ All 14 findings were verified and fixed in the next commit:
 12. D04 T02 §19: regions with non-text interior pixels stay image; `EditableOcr.FigureUnderText`.
 13. D04 T02 §3: a page taller than the cap is refused with `PageTooTallForLongImage` and nothing is written.
 14. D04 T02 §17, §25: checkpoints fail on retained fonts, text, annotations or forms, and on a clean tab or files outside the private temp folder.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T05:01:10Z
+- Effort: medium
+- Lines: 21
+- Digest: 221d9c98e7cd228f
+
+Review scope: supplied candidate diff. Direct repository reads failed twice because the execution helper could not start (`helper_unknown_error`). Surrounding contracts remain unverified. No files were modified; git was not used.
+
+**record: needs-attention**
+
+Round 1 findings **3 and 9 remain partially unresolved**. Finding **5’s encoding-order requirements remain contradictory**, despite the added acceptance tests. Details follow.
+
+**consistency: needs-attention**
+
+1. **`todo/04-convert/TODO-02-pdf-conversions-a.md`, §17: the writer still specifies unrotated page dimensions.** The revised Build order requires a rotation-applied CropBox size with `/Rotate 0`, but the unchanged writing step requires `/MediaBox` equal to the source CropBox size. For a nonsquare page rotated 90 or 270 degrees, these prescribe different dimensions. Round 1 finding **3** therefore remains. Make the writing step use the same displayed dimensions and image transform as `ImageOnlyPdf.Geometry`.
+
+2. **`todo/04-convert/TODO-04-office-to-pdf.md`, §20: encoding detection still has two incompatible orders.** The first step explicitly specifies BOM, strict UTF-8, MLang, then Windows-1252. The next step says to detect BOM-less UTF-16 “first.” Mostly-ASCII UTF-16 bytes, including their NUL bytes, can pass strict UTF-8 validation, so following the first step still produces the rejection identified in Round 1 finding **5**. Specify one ordered detection algorithm, placing BOM-less UTF-16 recognition before UTF-8 validation while preserving explicit overrides.
+
+**adversarial: needs-attention**
+
+3. **`todo/04-convert/TODO-04-office-to-pdf.md`, §10: the new budget excludes empty cells that still drive expansion.** Only *non-empty* expanded cells count toward the four-million limit; only *trailing* empty repeats are ignored. A row containing 16,383 repeated empty cells followed by one nonempty cell, repeated 1,048,576 times, stays below the nonempty-cell budget while permitting approximately 17.2 billion expanded positions. The new all-nonempty attack fixture does not catch this. Round 1 finding **9** remains for ODS. Bound all materialized cells and traversal work, or require sparse range handling with a bounded pagination budget; test repeated leading/interior empty cells followed by nonempty content.
+
+**source-defect: advisory**
+
+Repository context and external standards/API verification remain incomplete. This lens does not constitute approval of the new CFF or CMS prescriptions.
+
+OVERALL: needs-attention
+
+## Response to round 2
+
+1. Fixed: T02 §17 context paragraph and writing step now use the displayed size (`/MediaBox [0 0 W H]` with the CropBox swapped for `90` and `270`, `cm` operands equal to it, `/Rotate 0`), split into its own checklist item asserted by `ImageOnlyPdf.Geometry`; the Test checkpoint now fails on the unrotated CropBox size or a copied `/Rotate`.
+2. Fixed: T04 §20 context paragraph and detection step now give one ordered algorithm (override, BOM, BOM-less UTF-16 by NUL pattern, strict UTF-8, MLang, Windows-1252) in `detect_text_encoding`, the binary check no longer restates a competing order, and the new `TextToPdf.DetectionOrder` plus the Test checkpoint fail if UTF-8 validation runs before UTF-16 recognition.
+3. Fixed: T04 §10 repeat step now counts every materialized cell position, empty or not, against the `4,000,000` budget (row repeat times the larger of `1` and the positions up to the last non-empty cell, overflow-safe), keeps only trailing empty runs sparse, and `OdfToPdf.OdsRepeatCaps` adds leading-empty, interior-empty and interior-empty-row cases; the Test checkpoint fails when only non-empty cells are counted.

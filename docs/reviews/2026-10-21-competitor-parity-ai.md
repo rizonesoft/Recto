@@ -51,3 +51,41 @@ All 9 findings were verified and fixed in the next commit:
 7. D08 T02 §5: a bounded Myers diff (20000 words, edit distance 2000, 32 MB, cancel polling) with a whole-replacement fallback; `AssistantWs.DiffWorstCaseIsBounded`.
 8. D08 T02 §4, §20, §22, §27, §31: results carry a `RevisionToken` and every Apply refuses `Stale` before changing anything; one test per consumer.
 9. D08 T02 §2, §35: `Test connection` and local model discovery run only on an explicit click and are disabled when the assistant is off or `AssistantDisabled` is set; the zero-network table covers them.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T05:06:56Z
+- Effort: medium
+- Lines: 23
+- Digest: 012fe480df539eac
+
+Review is limited to the supplied diff. Repository reads failed twice because the command runner could not start (`helper_unknown_error: setup refresh had errors`). Governing-document consistency beyond the supplied text remains unverified. No files were modified and no Git commands ran.
+
+T01 and T02 refer to the two candidate files under `todo/08-assistant/`.
+
+**record: needs-attention**
+
+1. **Earlier finding 8 remains incompletely resolved: T02 §4 build step 5, §22 acceptance path.** `revalidate` can return `RebasedByHash`, but its specified return contract supplies no corrected page targets. Consumers only have to refuse `Stale`; §22 can therefore accept a reordered document and convert the proposal’s original page numbers into an edit list. The new check does not require the conversion to use the matched pages. Require either unconditional rejection on revision changes or an explicit, uniquely resolved target mapping consumed by the mutation. Test which page actually changes after reordering, including duplicate-content pages.
+
+No other earlier finding is demonstrably unresolved within the supplied diff. This is a review of planned contracts, not evidence that their named tests exist or pass.
+
+**consistency: needs-attention**
+
+2. **T02 §4 versus §§20 and 31: reorder handling has contradictory acceptance criteria.** The shared contract explicitly allows `RebasedByHash` when page indices move and referenced content hashes match. However, `BookmarkApplyRejectsStale` requires refusal after a reorder, and §31 explicitly requires reordered-page suggestions to be refused. An implementation following the shared contract can fail the consumer checkpoints; one following the checkpoints disables the advertised rebasing. Specify whether each consumer permits rebasing, and make the shared contract and tests enforce that choice.
+
+**source-defect: advisory**
+
+The unavailable repository context prevents verification against the full provider interfaces and governing documents. No separate standard or API defect is established from the supplied changes alone.
+
+**adversarial: needs-attention**
+
+3. **T01 §2 build step 1: structural sanitization omits JSON member names.** The replacement algorithm walks and scrubs string **values**, then serializes the tree. A valid error body such as `{"<exact credential>":"failure"}` preserves the credential in its member name and returns it in `RawErrorResponse`. This violates the requirement that everything above the transport receive already-scrubbed content. The decoded-form check is described within the value-scrubbing path and does not explicitly cover member names or the complete serialized result. Scrub both names and values, or discard bodies containing a credential in a member name. Add raw, Unicode-escaped and percent-encoded member-name fixtures using a credential without a recognized prefix, and inspect `RawErrorResponse` itself.
+
+OVERALL: needs-attention
+
+## Response to round 2
+
+1. Fixed: D08 T02 §4 step 5 replaces `RebasedByHash` with `Rebased{PageMap}`, produced only when every referenced page's hash matches exactly one current page (duplicate content, a gone or edited page, or another document gives `Stale`), and a consumer that accepts it must take every page target from the `PageMap`; §22 (`RequireFresh`) now tests a deletion, a reorder and a swap of identical-content pages with no edit list and an unchanged copy, §27 adds `Panels.ContractApplyFollowsReorder` (comment lands on the moved page's new index; a clause on a page with an identical twin is skipped), and §4 adds `AssistantWs.RevalidateDuplicatePagesAreStale`.
+2. Fixed: D08 T02 §4 step 5 adds a `RebasePolicy` argument fixed per consumer (§20 bookmarks, §22 page proposals and §31 PII suggestions use `RequireFresh`, §27 contract comments uses `AllowRebase`), `AssistantWs.RevisionTokenDetectsEditsAndReorder` covers both policies, and the §20, §22, §27 and §31 revalidation items name their policy so the reorder-refusal tests match the shared contract.
+3. Fixed: D08 T01 §2 step 1 decodes every member name as well as every value, discards the body when a member name holds the key, drops a response header whose name holds the key, and decodes the complete re-serialized output as a last check before returning; the scrubber item adds `Assistant.TransportScrubsKeyInMemberNames` (raw, `\u`-escaped and percent-encoded member names with a prefix-free key, plus a header name, inspecting `RawErrorResponse` itself) and the Test checkpoint names it as the falsifier and now includes `Assistant.Scrubber*`.

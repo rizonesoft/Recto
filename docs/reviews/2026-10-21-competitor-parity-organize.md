@@ -75,3 +75,50 @@ OVERALL: needs-attention
 15. D05 T01 §29, D05 T02 §31: downloaded trust lists stay `PendingConfirmation` until the person confirms.
 16. D05 T01 §19: `/St`, prefix, label and preview budgets are bounded.
 17. D05 T01 §30: the CLI takes passwords only by prompt or stdin; `Cli.BinderNoPasswordLeak`.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T05:05:04Z
+- Effort: medium
+- Lines: 27
+- Digest: b4e797714766aab1
+
+Review limited to the supplied diff and instructions: both repository-read attempts failed before PowerShell started. No files were modified and no git commands ran. `T01` and `T02` below refer to the two candidate files under `todo/05-organize/`.
+
+**record: needs-attention**
+
+1. **Finding 2 remains incomplete: cancellation can race deferred file creation.** **T02 §22** orders immediate folder deletion when a drag is cancelled, but does not require cancelling and awaiting an in-flight `extract_pages` request first. Cancellation during extraction can therefore delete the folder before the producer finishes, leaving a subsequently created file behind. `DragCancelled` can pass by cancelling only after data production completes. Specify producer cancellation, completion and cleanup ordering, and test cancellation during extraction as well as after data delivery.
+
+2. **Finding 6 remains incomplete: removing nested shrink marks can strand the transformation.** **T01 §6** retains an inner shrink when an outer shrink exists, but does not say how its restoration record survives removal of its owning mark or when that retained shrink is unwound. Removing inner mark A and then outer mark B can leave A’s transformation permanently applied. Require persistent ownership of retained transformations and explicit final geometry assertions for both removal orders. Merely “covers a double stamp” does not establish restoration.
+
+3. **Finding 13 remains incomplete for fields shared across pages.** **T01 §24** removes each redacted widget “together with its field,” while requiring an unredacted field and unredacted page pixels to survive. A single field can own widgets on both redacted and retained pages. Removing that field can break the retained widget; keeping it can retain the sensitive value. Define this case explicitly, including any refusal or reported destructive treatment, and test a single field with widgets on both pages. The current checkpoint can pass using two unrelated fields.
+
+**consistency: needs-attention**
+
+4. **Crossing links lose their function.** **T01 §16** retains a crossing link with a clamped `/Rect` and “no other data.” That removes its destination or action, producing an inert annotation and conflicting with the next step’s promise to remap link destinations. Preserve or reconstruct the permitted destination and required annotation entries while removing unrelated payloads. Test activating both resulting links, not just their presence.
+
+5. **Whole-page redaction’s empty resources conflict with overlay text.** **T01 §24** requires optional overlay text but assigns a “new empty `/Resources`.” A text overlay needs its font resources. Require a fresh resource dictionary containing only resources used by the replacement content, and test a nonempty overlay after reopening the output. Otherwise an implementation can satisfy the resource-removal checkpoint while breaking `--label`.
+
+**source-defect: needs-attention**
+
+6. **The new literal page-label expectations encode the wrong alphabetic sequence.** **T01 §19** pairs values `26, 27, 52, 53, 703` with `Z, AA, AZ, ZZ, AAA`. PDF alphabetic labels repeat the same letter: `26 → Z`, `27 → AA`, `52 → ZZ`, `53 → AAA`; `703` produces 28 `A` characters. `AZ` is not part of this sequence. These assertions would reject a correct formatter or encourage an incorrect one. Use explicit `(style, value, expected)` cases, also separating uppercase and lowercase Roman expectations. See the numbering-style definition in the [PDF Reference, page-label dictionary](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.7old.pdf).
+
+**adversarial: needs-attention**
+
+7. **The rollback backup namespace is not protected.** **T01 §15** introduces `.recto-bak` siblings without specifying collision handling or exclusive reservation. A pre-existing backup can cause a commit-time rename failure or be overwritten by an implementation using replacement semantics. The rollback test only covers the three destination files, so it cannot detect destruction of an unrelated backup. Reserve unique backup paths without replacement before committing any output, retain backups if restoration fails, and test pre-existing backup names plus a failure during restoration.
+
+**record advisory:** Finding 10’s disputed §10/§11 ownership cannot be adjudicated from this diff because the appearance-library definition is absent and repository reads failed. Also, **T02 §32** names `SignatureUi.PressureAppearanceRestart` in its new requirement but does not add it to the displayed test command. That command can pass without executing the new persistence check.
+
+OVERALL: needs-attention
+
+## Response to round 2
+
+1. Fixed: D05 T02 §22 now orders drag cleanup as mark the session ended, cancel the session `CancelToken`, await the in-flight `extract_pages` producer, then delete the folder, with late requests creating nothing; added `AppTests.DragCancelledDuringExtraction` (cancel while a test gate holds the producer mid-write) and `AppTests.DragLateRequest` to the step, the test list and the checkpoint.
+2. Fixed: D05 T01 §6 moves a retained inner shrink record into `/PieceInfo /Recto /Private /RetainedShrinks` tagged with its blocking outer mark and unwinds it (`shrink_unwound`) once no outer shrink remains; added `StampWatermark.RemoveNestedShrinkBothOrders` asserting the original `/Contents` list, link `/Rect` and pixels after both removal orders, quoted in the checkpoint.
+3. Fixed: D05 T01 §24 defines a field with widgets on redacted and unredacted pages: it keeps its value because the unredacted page still shows it (the shared-font rule), loses only the redacted pages' widgets and is reported in `shared_fields_kept`, while a field whose visible widgets are all on redacted pages is removed with its value; added `RedactPages.SharedFieldAcrossPages` with one shared and one page-only field, `PageRedactionReport`, and the `shared_fields_kept` list in D05 T02 §28's apply result.
+4. Fixed: D05 T01 §16 keeps a crossing link's `/Dest` or `GoTo`, `GoToR` or `URI` action, `/Border` or `/BS`, `/H`, `/F` and clipped `/QuadPoints`, drops `/Contents`, `/AP`, `/NM`, `/PA`, `/StructParent` and other action types; added `PageSplit.CrossingLinksActivate` hit-testing both halves of a `GoTo` and a `URI` link through `PdfLinkAnnotation` (`D01 T01 §4`) after reopen, quoted in the checkpoint.
+5. Fixed: D05 T01 §24 gives a redacted page a fresh `/Resources` holding only what the replacement uses (one new font subset `/F0` for overlay text, none otherwise); added `RedactPages.OverlayTextAfterReopen` and a `--label REDACTED` readback in `Cli.WhiteoutAndRedactPages`.
+6. Fixed: D05 T01 §19 now states the ISO 32000 Table 159 repeated-letter rule (value `n` is letter `(n - 1) % 26` repeated `(n - 1) / 26 + 1` times) and tests a literal `(style, value, expected)` table with separate upper and lower Roman cases, `52 -> ZZ`, `53 -> AAA`, `703 ->` 28 `A`s, and `PageLabels.LabelTooLong` returning `LabelOutOfBounds` instead of truncating.
+7. Fixed: D05 T01 §15 moves each existing destination aside to a unique `<name>.recto-bak-<32 hex>` with `MoveFileExW` without replacement before any part commits, restores without replacement, keeps a backup whose restore fails and returns the new `PdfErrorCode::RollbackIncomplete`; added `SplitBySize.BackupNameCollision` and `SplitBySize.RestoreFailureKeepsBackups`, quoted in the checkpoint.
+8. Partly fixed (advisory): the §10 versus §11 ownership is not changed because D05 T02 §10 holds the step "Keep a signature appearance library in `AppPaths::data_dir()`" (§11 begins after it); the §32 test step and checkpoint now run `SignatureUi.PressureAppearanceRestart` and `SignatureUi.AppearanceLibrary`.

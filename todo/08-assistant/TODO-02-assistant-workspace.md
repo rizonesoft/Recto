@@ -185,9 +185,9 @@ Most features here need machine-readable answers: proposed bookmarks, flashcards
 2. Add a small schema DSL (types, required fields, enums, string max lengths, array max sizes, integer ranges) and validate before any use. Done when: `AssistantWs.SchemaRejectsOutOfRange` rejects an unknown enum, an oversize array and a page number outside the sent pages.
 3. Add `verify_quote(quote, ContextPackage)` normalizing whitespace and hyphenation line breaks and requiring the quote to occur in the sent text of the stated page. Done when: `AssistantWs.QuoteVerification` accepts a real quote across a line break and rejects an invented one.
 4. On invalid output return `MalformedResponse` with a plain message and a Try again action that needs a new authorization; never re-send automatically. Done when: `AssistantWs.InvalidJsonNeverResendsAutomatically` counts one request.
-5. Bind every structured result to the document it was made from with a `RevisionToken` (document identity plus the tab session's revision counter, which increments on every committed edit, annotation, bookmark or page-order change, plus a content hash of each page the result refers to), and provide `revalidate(result, current_state)` returning `Fresh`, `RebasedByHash` (page indices moved but the referenced pages' hashes match) or `Stale`. Every Apply in §20, §22, §27 and §31 calls it and refuses `Stale` before any mutation. Done when: `AssistantWs.RevisionTokenDetectsEditsAndReorder` covers an edit, a page deletion and a reorder between response and Apply.
+5. Bind every structured result to the document it was made from with a `RevisionToken` (document identity plus the tab session's revision counter, which increments on every committed edit, annotation, bookmark or page-order change, plus the index and content hash of each page the result refers to), and provide `revalidate(result, current_state, RebasePolicy)` returning `Fresh` (same document and revision), `Rebased{PageMap}` or `Stale`. Under `RebasePolicy::RequireFresh` any revision change gives `Stale`. Under `RebasePolicy::AllowRebase` a changed revision gives `Rebased` only when every referenced page's hash matches exactly one current page, and `PageMap` maps each referenced original index to that current index; a referenced page that is gone, edited, or whose hash matches two or more current pages (duplicate content), or a different document, gives `Stale`. A consumer that accepts `Rebased` takes every page target from the `PageMap`, never from the result's original page numbers. Policies, fixed per consumer: §20 bookmarks, §22 page proposals and §31 PII suggestions use `RequireFresh` (a reorder changes what an outline, a delete, a rotation or a redaction mark targets, so they are refused and re-run); §27 contract comments use `AllowRebase`. Every Apply in §20, §22, §27 and §31 calls it with its policy and refuses `Stale` before any mutation. Done when: `AssistantWs.RevisionTokenDetectsEditsAndReorder` covers an edit, a page deletion and a reorder between response and Apply under both policies (`Stale` under `RequireFresh`; under `AllowRebase` a reorder gives `Rebased` with the moved indices and an edit of a referenced page gives `Stale`), and `AssistantWs.RevalidateDuplicatePagesAreStale` gives `Stale` under `AllowRebase` when a referenced page's hash matches two current pages.
 
-- [ ] Implement `RevisionToken` capture and `revalidate`. Done when: `AssistantWs.RevisionTokenDetectsEditsAndReorder` passes.
+- [ ] Implement `RevisionToken` capture, `RebasePolicy` and `revalidate`. Done when: `AssistantWs.RevisionTokenDetectsEditsAndReorder` and `AssistantWs.RevalidateDuplicatePagesAreStale` pass.
 - [ ] Implement the bounded JSON parser and the runner. Done when: `AssistantWs.StructuredParserBounds` passes.
 - [ ] Implement the schema DSL and validation. Done when: `AssistantWs.SchemaRejectsOutOfRange` passes.
 - [ ] Implement `verify_quote` and the `Unverified` marking used by later sections. Done when: `AssistantWs.QuoteVerification` passes.
@@ -195,7 +195,7 @@ Most features here need machine-readable answers: proposed bookmarks, flashcards
 - [ ] Add `fuzz/fuzz_structured_json.cpp` to `recto-fuzz.exe` with seeds in `tests/corpus/seeds/`. Done when: `recto-fuzz.exe fuzz_structured_json -runs=100000` reports no crash, leak or oversize allocation under ASan.
 - [ ] Commit: `assistant: add bounded structured output runner with schema and verified quotes`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=AssistantWs.Structured*:AssistantWs.Schema*:AssistantWs.Quote*:AssistantWs.InvalidJson*` passes under ASan, and skipping `verify_quote` makes `AssistantWs.QuoteVerification` fail.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=AssistantWs.Structured*:AssistantWs.Schema*:AssistantWs.Quote*:AssistantWs.InvalidJson*:AssistantWs.RevisionToken*:AssistantWs.Revalidate*` passes under ASan, skipping `verify_quote` makes `AssistantWs.QuoteVerification` fail, and returning `Rebased` for a hash that matches two pages fails `AssistantWs.RevalidateDuplicatePagesAreStale`.
 
 ## 5. Rewrite, proofread, tone, expand and condense suggestion engine
 
@@ -569,7 +569,7 @@ PDFelement and UPDF generate outlines and section summaries with AI. Recto propo
 - [ ] Implement batching and merge. Done when: `AssistantWs.BookmarkProposalMergesBatches` passes.
 - [ ] Implement apply and undo. Done when: `AssistantWs.BookmarkApplyIsOneUndoStep` passes.
 - [ ] Implement the summary export. Done when: `AssistantWs.BookmarkSummaryExport` passes.
-- [ ] Revalidate proposals with the §4 `RevisionToken` before Apply. Done when: `AssistantWs.BookmarkApplyRejectsStale` edits or reorders pages after the response and Apply refuses with `Stale` and changes nothing.
+- [ ] Revalidate proposals with the §4 `RevisionToken` under `RebasePolicy::RequireFresh` before Apply. Done when: `AssistantWs.BookmarkApplyRejectsStale` edits or reorders pages after the response and Apply refuses with `Stale` and leaves `/Outlines` byte-identical.
 - [ ] Commit: `assistant: add AI bookmark proposals with summaries and undoable apply`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=AssistantWs.Bookmark*` passes under ASan, and a proposal to an unsent page fails `AssistantWs.BookmarkProposalValidation`.
@@ -615,7 +615,7 @@ Scanned files often contain blank pages, sideways pages and duplicates. UPDF and
 - [ ] Implement the local detectors with deterministic thresholds recorded in `docs/assistant.md`. Done when: `AssistantWs.LocalBlankAndDuplicateNeedNoRequest` and `AssistantWs.DuplicateHashIgnoresWhitespace` pass.
 - [ ] Implement the image candidate rendering through the `RenderPool` path. Done when: `AssistantWs.PageProposalImagesAreBoundedAndMasked` passes.
 - [ ] Implement proposal validation (pages exist, rotations allowed) and the edit-list conversion. Done when: `AssistantWs.PageProposalValidation` and `AssistantWs.PageProposalsToEditList` pass.
-- [ ] Revalidate proposals with the §4 `RevisionToken` before conversion to the edit list, so a proposal for page 7 never lands on different content after a reorder. Done when: `AssistantWs.PageProposalsRejectStale` passes for a deletion and a reorder after the response.
+- [ ] Revalidate proposals with the §4 `RevisionToken` under `RebasePolicy::RequireFresh` before conversion to the edit list, so a proposal for page 7 never lands on different content after a reorder. Done when: `AssistantWs.PageProposalsRejectStale` covers a deletion, a reorder, and a swap of two identical-content pages after the response, and for each produces no edit list and leaves the copy's page count, order and rotations unchanged.
 - [ ] Commit: `assistant: add AI page proposals with local blank and duplicate detection`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=AssistantWs.PageProposal*:AssistantWs.LocalBlank*:AssistantWs.DuplicateHash*` passes, and a blank-page request sent for a clear blank fixture fails `AssistantWs.LocalBlankAndDuplicateNeedNoRequest`.
@@ -731,7 +731,7 @@ The review result is a list the user can filter by severity and category, with e
 
 - [ ] Label every control for UIA and test keyboard use. Done when: the accessibility inventory reports zero missing names and `Panels.ContractKeyboard` passes.
 - [ ] Render in Light, Dark and HighContrast with token brushes only. Done when: `Panels.ContractThemes` finds no literal colour.
-- [ ] Revalidate the quote against the current page text with the §4 `RevisionToken` before creating comments, and skip stale clauses with a note. Done when: `Panels.ContractApplyRejectsStale` edits the quoted text after the response and no comment is created for it.
+- [ ] Revalidate each clause with the §4 `RevisionToken` under `RebasePolicy::AllowRebase` before creating comments: on `Rebased` take the target page from the `PageMap` and re-run `verify_quote` on that page's current text for the quads; skip `Stale` clauses with a note. Done when: `Panels.ContractApplyRejectsStale` edits the quoted text after the response and no comment is created for it, and `Panels.ContractApplyFollowsReorder` moves the cited page after the response and finds the comment on the page's new index (none on the old index), while a clause whose page has an identical-content twin is skipped as stale with no comment created.
 - [ ] Commit: `app: add contract review view with page jumps and undoable comments`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Panels.Contract*` passes on the display-session host, and creating comments on arrival fails `Panels.ContractApplyAsCommentsUndo`.
@@ -818,7 +818,7 @@ Regex presets (`D05 T02 §9`) miss names, addresses and free-form identifiers. P
 - [ ] Implement the task and verification. Done when: `AssistantWs.PiiSpanMustExistVerbatim` passes.
 - [ ] Implement quad mapping. Done when: `AssistantWs.PiiSpansMapToQuads` passes.
 - [ ] Implement the `Suggested` state and acceptance conversion. Done when: `AssistantWs.SuggestedMarksAreNeverApplied` and `AssistantWs.AcceptConvertsToUndoablePendingMark` pass.
-- [ ] Revalidate suggested marks with the §4 `RevisionToken` at acceptance, so a suggestion made before a page was reordered, edited or redacted is refused. Done when: `AssistantWs.PiiAcceptRejectsStale` passes for an edit and a reorder between response and Accept.
+- [ ] Revalidate suggested marks with the §4 `RevisionToken` under `RebasePolicy::RequireFresh` at acceptance, so a suggestion made before a page was reordered, edited or redacted is refused. Done when: `AssistantWs.PiiAcceptRejectsStale` passes for an edit and a reorder between response and Accept.
 - [ ] Commit: `assistant: add AI PII suggestions as unapplied redaction marks`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=AssistantWs.Pii*:AssistantWs.SuggestedMarks*:AssistantWs.AcceptConverts*` passes, and applying a suggested mark fails `AssistantWs.SuggestedMarksAreNeverApplied`.

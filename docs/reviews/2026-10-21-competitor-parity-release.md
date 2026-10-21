@@ -58,3 +58,41 @@ All 12 findings were verified and fixed in the next commit:
 10. D07 T01 §17: publishing uses `MoveFileExW` without replace and retries numbered names; `VirtualPrint.PublishRace`.
 11. D06 T02 §7: the FIPS probe returns Enabled, Disabled or Unknown, and Unknown refuses like Enabled; `Fips.ProbeFailureRefuses`.
 12. D07 T01 §17: conversion runs in a child `recto-cli.exe virtual-print` in a Job Object with memory and time limits and kill-on-close; `VirtualPrint.WorkerBounds`.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T05:06:04Z
+- Effort: medium
+- Lines: 21
+- Digest: 977eabfe72249aa0
+
+Reviewed the supplied diff. Repository reads failed because the command helper could not start, so governing-document and cross-file consistency remain unverified. No files were modified; git was not run.
+
+**record: needs-attention**
+
+Earlier findings **3 and 12 remain incompletely resolved**, as detailed below. The response’s claim that all 12 are fixed is therefore premature.
+
+**adversarial: needs-attention**
+
+1. **The policy watcher can permanently miss a policy change.** `todo/07-release/TODO-02-store-and-compliance.md` §9 explicitly closes the watch, reads the snapshot, then reopens and rearms. A change between that read and registration leaves a stale snapshot with no pending notification. For example, `AssistantDisabled` can remain unapplied indefinitely. Open and arm before reading, handle key deletion during registration, and repeat reconciliation when signalled. Add a deterministic test inserting a change between snapshot and rearm; the sequential lifecycle test does not expose this. Earlier finding **3** remains incomplete. [Microsoft API contract](https://learn.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regnotifychangekeyvalue).
+
+2. **Direct CLI conversion bypasses the specified supervisor.** `todo/07-release/TODO-01-packaging-and-print.md` §17 exposes `recto-cli virtual-print --spool … --import`, but assigns Job Object creation and the timeout exclusively to `Recto.exe`. Running the documented CLI command directly therefore has no specified enforcing parent. Require both public entry points to launch a supervised worker, and test stalled and allocating converters through direct CLI invocation as well as the app. This leaves earlier finding **12** incomplete.
+
+**source-defect: needs-attention**
+
+3. **The Job Object memory limit does not kill the allocating worker.** Packaging §17 claims the operating system stops an allocation-hungry parser and requires `ConversionMemoryLimit`. `JOB_OBJECT_LIMIT_JOB_MEMORY` instead rejects allocations exceeding the committed-memory limit. A worker can catch allocation failure and continue, eventually being classified as a timeout. Specify allocation-failure propagation and parent termination/result handling; test a stub that catches allocation failure and keeps running. `KILL_ON_JOB_CLOSE` does not supply memory-triggered termination. This also affects earlier finding **12**. [Microsoft limit semantics](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_limit_information).
+
+**consistency: advisory**
+
+`todo/06-quality/TODO-02-security-and-fuzzing.md` §7 now defines a three-state probe but retains `Fips.RealProbeReturnsBool` and leaves the JSON representation of `Unknown` unspecified. Align the checkpoint and serialization contract so diagnostic output preserves probe failure instead of presenting it as a successfully observed Boolean state.
+
+OVERALL: needs-attention
+
+## Response to round 2
+
+1. Fixed: D07 T02 §9 watcher now opens the nearest existing ancestor, arms `RegNotifyChangeKeyValue`, re-resolves (restarting if a deeper key appeared or the key was deleted during registration) and only then reads and publishes the snapshot, so a change during the read signals the armed event; new `Policy.WatcherNoLostUpdate` writes `AssistantDisabled` from `after_open`, `after_arm` and `after_read` test hooks (plus key creation and deletion) and fails for a read-before-arm watcher; added to Build order step 2 and the Test checkpoint.
+2. Fixed: D07 T01 §17 makes both public entry points (`Recto.exe /virtual-print` and `recto-cli virtual-print`) supervisors through one `VirtualPrintSupervisor`, the conversion runs only in `recto-cli virtual-print --worker` (an internal flag, so the `D04 T08 §3` verb registry is unchanged), the worker refuses to run outside a job with the expected limits (`VirtualPrint.WorkerRefusesUnsupervised`), and `VirtualPrint.CliWorkerBounds` repeats the stalled and allocating stubs through a direct CLI invocation (exit codes `6` and `5`); the Test checkpoint command now passes `--import` so the corpus file is not treated as an owned spool.
+3. Fixed: D07 T01 §17 states that `JOB_OBJECT_LIMIT_JOB_MEMORY` only fails commits, adds a guaranteed `JobObjectNotificationLimitInformation` memory notification at `960 MiB` on a completion port (the `JOB_OBJECT_MSG_JOB_MEMORY_LIMIT` message is best effort per Microsoft Learn), and makes the supervisor call `TerminateJobObject` and return `ConversionMemoryLimit` on it; the worker maps allocation failure to `OutOfMemory` and exit `5`, and `VirtualPrint.WorkerBounds` uses an `allocate-and-swallow` stub that catches every allocation failure and keeps looping, which must end as `ConversionMemoryLimit` in under `5 s`, not as a timeout.
+4. Fixed (consistency advisory): D06 T02 §7 renames the checkpoint test to `Fips.RealProbeReturnsState` and serialises `fips_mode` as `"enabled"`, `"disabled"` or `"unknown"` with `fips_probe_status` (the failing `NTSTATUS`, else `null`), tested for all three states by `Fips.CliInfoReportsMode`; D06 T02 §9 now requires `fips_mode` to be `"enabled"` instead of true.
+5. Record: the round 1 claim is corrected here; earlier findings 3 and 12 are completed by items 1, 2 and 3 above.
