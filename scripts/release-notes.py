@@ -35,9 +35,10 @@ UNLABELLED = "unlabelled"
 ISSUE = re.compile(r"#([0-9]+)\b")
 GTEST_ID = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$")
 PYTHON_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){2,}$")
-TRAILER = re.compile(r"^([A-Za-z0-9-]+):\s*(.*)$")
-# Field and record separators for `git log`: control characters a commit subject or trailer cannot hold.
-FIELD, RECORD = "\x1f", "\x1e"
+TRAILER = re.compile(r"^([A-Za-z0-9-]+):\s*(.*)$", re.DOTALL)
+CPP_FILES = ("*.cpp", "*.cc", "*.cxx", "*.h", "*.hpp")
+RAW_STRING = re.compile(r'R"([^ ()\\\t\v\f\n]{0,16})\(')
+DIRECTIVE = re.compile(r"^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)$")
 
 
 class Unreadable(Exception):
@@ -57,31 +58,105 @@ def commits(repo, start, end):
     revision = end if start == "root" else f"{start}..{end}"
     for ref in ([end] if start == "root" else [start, end]):
         git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
-    out = git(repo, "log", "--reverse", f"--format=%H{FIELD}%h{FIELD}%s{FIELD}%(trailers:unfold,only){RECORD}",
-              revision).stdout
     found = []
-    for record in out.split(RECORD):
-        record = record.strip("\n")
-        if not record:
-            continue
-        sha, short, subject, trailers = record.split(FIELD)
-        pairs = [TRAILER.match(line) for line in trailers.splitlines() if line.strip()]
+    for sha in git(repo, "rev-list", "--reverse", revision).stdout.split():
+        # NUL separates the fields and the trailers: git cannot store NUL in a commit message, so no subject or
+        # trailer value can split or merge a field (a vertical tab or U+001E stays inside its value).
+        out = git(repo, "show", "-s", "--format=%h%x00%s%x00%(trailers:unfold,only,separator=%x00)", sha).stdout
+        short, subject, *trailers = out.rstrip("\n").split("\x00")
+        pairs = [TRAILER.match(trailer) for trailer in trailers if trailer.strip()]
         found.append({"sha": sha, "short": short, "subject": subject,
                       "trailers": [(m.group(1).lower(), m.group(2).strip()) for m in pairs if m]})
     return found
 
 
+def cpp_code(text):
+    """C++ source with comments and string or character literals blanked and `#if 0` branches removed, so only code
+    the compiler sees can define a test."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        if text.startswith("//", i):
+            end = text.find("\n", i)
+            i = n if end < 0 else end
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            out.append(" ")
+        elif (raw := RAW_STRING.match(text, i)) and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_")
+                                                     or text[i - 1] in "8uUL"):
+            end = text.find(f'){raw.group(1)}"', raw.end())
+            i = n if end < 0 else end + len(raw.group(1)) + 2
+            out.append('""')
+        elif text[i] in "\"'" and not (text[i] == "'" and i and text[i - 1].isalnum()):
+            quote, i = text[i], i + 1
+            while i < n and text[i] not in (quote, "\n"):
+                i += 2 if text[i] == "\\" else 1
+            i += 1
+            out.append('""')
+        else:
+            out.append(text[i])
+            i += 1
+    kept, frames = [], []
+    for line in "".join(out).split("\n"):
+        directive = DIRECTIVE.match(line)
+        if not directive:
+            if all(frame["active"] for frame in frames):
+                kept.append(line)
+            continue
+        word, condition = directive.group(1), directive.group(2).strip()
+        if word in ("if", "ifdef", "ifndef") or (word == "elif" and frames):
+            known = condition in ("0", "1") and word in ("if", "elif")
+            if word == "elif":
+                frame = frames[-1]
+                taken = frame["taken"]
+                frame["active"] = not taken and (not known or condition == "1")
+                frame["taken"] = taken or (known and condition == "1")
+                frame["known"] = frame["known"] and known
+            else:
+                frames.append({"known": known, "active": not known or condition == "1",
+                               "taken": known and condition == "1"})
+        elif word == "else" and frames:
+            frame = frames[-1]
+            frame["active"] = not frame["taken"] or not frame["known"]
+            frame["taken"] = True
+        elif word == "endif" and frames:
+            frames.pop()
+    return "\n".join(kept)
+
+
 def gtest_exists(repo, sha, test_id):
+    """True when TEST, TEST_F or TEST_P declares Suite.Case in compiled C++ code at the commit."""
     suite, case = GTEST_ID.match(test_id).groups()
-    pattern = rf"TEST(_F|_P)?\(\s*{suite}\s*,\s*{case}\s*\)"
-    result = git(repo, "grep", "-q", "-E", pattern, sha, "--", "*.cpp", "*.cc", "*.h", "*.hpp", check=False)
-    return result.returncode == 0
+    declaration = re.compile(rf"\bTEST(?:_F|_P)?\s*\(\s*{suite}\s*,\s*{case}\s*\)")
+    listed = git(repo, "grep", "-l", "-w", "-e", case, sha, "--", *CPP_FILES, check=False).stdout
+    for line in listed.splitlines():
+        path = line.split(":", 1)[1]
+        shown = git(repo, "show", f"{sha}:{path}", check=False)
+        if shown.returncode == 0 and declaration.search(cpp_code(shown.stdout)):
+            return True
+    return False
+
+
+def _is_test_case(classes, name, seen=()):
+    """True when the module-level class `name` derives from a `*TestCase` class, directly or through classes of the
+    same module; a base from another module is not followed, so it does not count."""
+    node = classes.get(name)
+    if node is None or name in seen:
+        return False
+    for base in node.bases:
+        base_name = base.id if isinstance(base, ast.Name) else base.attr if isinstance(base, ast.Attribute) else None
+        if base_name and (base_name.endswith("TestCase") or _is_test_case(classes, base_name, (*seen, name))):
+            return True
+    return False
 
 
 def python_test_exists(repo, sha, test_id):
-    """True when module.Class.test_name names a method of a class in that module's file at the commit."""
+    """True when module.Class.test_name names a `test*` method of a unittest TestCase class in that module's file at
+    the commit, which is what `python -m unittest <id>` runs."""
     parts = test_id.split(".")
     module, cls, method = parts[:-2], parts[-2], parts[-1]
+    if not method.startswith("test"):
+        return False
     shown = git(repo, "show", f"{sha}:{'/'.join(module)}.py", check=False)
     if shown.returncode != 0:
         return False
@@ -89,9 +164,9 @@ def python_test_exists(repo, sha, test_id):
         tree = ast.parse(shown.stdout)
     except SyntaxError:
         return False
-    return any(isinstance(node, ast.ClassDef) and node.name == cls and any(
-        isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == method for item in node.body)
-        for node in tree.body)
+    classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+    return _is_test_case(classes, cls) and any(
+        isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == method for item in classes[cls].body)
 
 
 def test_exists(repo, sha, test_id):
@@ -147,15 +222,17 @@ def report(repo, start, end, issue_labels=None, allowances=None, repo_url=REPO_U
         where = f"{commit['short']} {commit['subject']}"
         if not numbers:
             violations.append(f"{where}: Fixes-User names no issue number ({'; '.join(fixes_user)})")
-        if excuse is None:
-            if not tests:
-                violations.append(f"{where}: Fixes-User without a Regression-Test trailer")
-            for test_id in tests:
-                if not (GTEST_ID.match(test_id) or PYTHON_ID.match(test_id)):
-                    violations.append(f"{where}: Regression-Test {test_id!r} is neither Suite.Case nor "
-                                      f"module.Class.test_name")
-                elif not test_exists(repo, commit["sha"], test_id):
-                    violations.append(f"{where}: Regression-Test {test_id} does not exist at {commit['short']}")
+        # An allowance excuses only the absence of a Regression-Test trailer; a test the commit names is always checked.
+        if not tests and excuse is None:
+            violations.append(f"{where}: Fixes-User without a Regression-Test trailer")
+        if tests and excuse is not None:
+            violations.append(f"{where}: --allow-no-test excuses a commit that names Regression-Test; drop one")
+        for test_id in tests:
+            if not (GTEST_ID.match(test_id) or PYTHON_ID.match(test_id)):
+                violations.append(f"{where}: Regression-Test {test_id!r} is neither Suite.Case nor "
+                                  f"module.Class.test_name")
+            elif not test_exists(repo, commit["sha"], test_id):
+                violations.append(f"{where}: Regression-Test {test_id} does not exist at {commit['short']}")
         fix = {"sha": commit["sha"], "short": commit["short"], "subject": commit["subject"], "issues": numbers,
                "tests": tests, "allowed_no_test": excuse}
         fixes.append(fix)
@@ -184,7 +261,9 @@ def render(result):
         lines += ["", f"{group}:"]
         for issue in members:
             for fix in (f for f in result["fixes"] if f["sha"] in issue["commits"]):
-                proof = ", ".join(fix["tests"]) or f"no test: {fix['allowed_no_test']}"
+                proof = ", ".join(fix["tests"]) or "no test"
+                if fix["allowed_no_test"] is not None:
+                    proof += f"; excused: {fix['allowed_no_test']}"
                 lines.append(f"  #{issue['number']}  {fix['short']}  {fix['subject']}  ({proof})")
     if not result["issues"]:
         lines.append("  none")

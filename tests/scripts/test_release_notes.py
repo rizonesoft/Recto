@@ -26,9 +26,19 @@ def _commit(repo, files, message):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8", newline="\n")
     _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "--allow-empty", "-m", message)
+    # The message goes through a file so control characters in it reach git byte for byte.
+    message_file = repo.parent / f"{repo.name}-message.txt"
+    message_file.write_text(message, encoding="utf-8", newline="\n")
+    _git(repo, "commit", "-q", "--allow-empty", "--cleanup=verbatim", "-F", str(message_file))
     return subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, capture_output=True,
                           text=True).stdout.strip()
+
+
+def _init(repo):
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "config", "user.name", "Fixture")
+    _git(repo, "config", "user.email", "fixture@example.invalid")
+    _git(repo, "config", "commit.gpgsign", "false")
 
 
 class ReleaseNotesTest(unittest.TestCase):
@@ -37,11 +47,9 @@ class ReleaseNotesTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._tmp = tempfile.TemporaryDirectory()
-        repo = cls.repo = pathlib.Path(cls._tmp.name)
-        _git(repo, "init", "-q", "-b", "main")
-        _git(repo, "config", "user.name", "Fixture")
-        _git(repo, "config", "user.email", "fixture@example.invalid")
-        _git(repo, "config", "commit.gpgsign", "false")
+        repo = cls.repo = pathlib.Path(cls._tmp.name) / "repo"
+        repo.mkdir()
+        _init(repo)
         cpp = "#include <gtest/gtest.h>\n\nTEST(PdfXref, ParsesTable)\n{\n}\n"
         py = "import unittest\n\n\nclass ModTest(unittest.TestCase):\n    def test_a(self):\n        pass\n"
         _commit(repo, {"tests/recto-tests/xref_tests.cpp": cpp, "tests/scripts/test_mod.py": py}, "initial")
@@ -106,7 +114,7 @@ class ReleaseNotesTest(unittest.TestCase):
         docs = next(fix for fix in result["fixes"] if fix["sha"] == self.docs_fix)
         self.assertEqual(docs["allowed_no_test"], "documentation only")
         code, text = self.run_main("v1.0.0", "v1.1.0", "--allow-no-test", f"{self.docs_fix[:10]}=documentation only")
-        self.assertIn("no test: documentation only", text)
+        self.assertIn("no test; excused: documentation only", text)
         self.assertEqual(code, 1)  # the late test is still a violation
 
     def test_an_unused_allowance_is_a_violation(self):
@@ -137,6 +145,90 @@ class ReleaseNotesTest(unittest.TestCase):
     def test_root_covers_the_first_release(self):
         result = release_notes.report(self.repo, "root", "v1.0.0")
         self.assertEqual(result["fixes"], [])
+
+
+class HostileFixtureTest(unittest.TestCase):
+    """Test ids that only look real, trailers that only look separate, and subjects holding separator characters."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        repo = cls.repo = pathlib.Path(cls._tmp.name) / "repo"
+        repo.mkdir()
+        _init(repo)
+        cpp = (
+            "// TEST(Commented, Case)\n"
+            "/* TEST(Block, Case) */\n"
+            "#if 0\nTEST(Disabled, Case)\n{\n}\n#else\nTEST(Enabled, Case)\n{\n}\n#endif\n"
+            "#if 1\nTEST(Taken, Case)\n{\n}\n#else\nTEST(NotTaken, Case)\n{\n}\n#endif\n"
+            "const char* s = \"TEST(Quoted, Case)\";\n"
+            "const char* r = R\"x(TEST(Raw, Case))x\";\n"
+            "TEST (Multi,\n      Line)\n{\n}\n"
+        )
+        py = (
+            "import unittest\n\n\n"
+            "class Ordinary:\n    def test_missing(self):\n        pass\n\n    def save(self):\n        pass\n\n\n"
+            "class Base(unittest.TestCase):\n    pass\n\n\n"
+            "class Derived(Base):\n    def test_real(self):\n        pass\n\n    def helper(self):\n        pass\n"
+        )
+        _commit(repo, {"tests/recto-tests/hostile_tests.cpp": cpp, "tests/scripts/test_sample.py": py}, "initial")
+        _git(repo, "tag", "v2.0.0")
+        cls.shas = {}
+        for name, test_id in [
+            ("Commented", "Commented.Case"), ("Block", "Block.Case"), ("Disabled", "Disabled.Case"),
+            ("NotTaken", "NotTaken.Case"), ("Quoted", "Quoted.Case"), ("Raw", "Raw.Case"),
+            ("Ordinary", "tests.scripts.test_sample.Ordinary.test_missing"),
+            ("Save", "tests.scripts.test_sample.Ordinary.save"),
+            ("Helper", "tests.scripts.test_sample.Derived.helper"),
+            ("Enabled", "Enabled.Case"), ("Taken", "Taken.Case"), ("Multi", "Multi.Line"),
+            ("Real", "tests.scripts.test_sample.Derived.test_real"),
+        ]:
+            cls.shas[name] = _commit(repo, {f"src/{name}.txt": name}, f"fix {name}\n\nFixes-User: #1\n"
+                                                                     f"Regression-Test: {test_id}\n")
+        # One physical trailer line holding a vertical tab: git reads it as one Fixes-User value.
+        cls.shas["VerticalTab"] = _commit(
+            repo, {"src/vt.txt": "vt"},
+            "fix vt\n\nFixes-User: #2\x0bRegression-Test: Enabled.Case\n")
+        # Separator characters in a subject must not break the report.
+        cls.shas["Separators"] = _commit(repo, {"src/sep.txt": "sep"}, "odd \x1e subject \x1f here\n")
+        cls.shas["ExcusedWithTest"] = _commit(
+            repo, {"src/ex.txt": "ex"}, "fix ex\n\nFixes-User: #3\nRegression-Test: Enabled.Case\n")
+        _git(repo, "tag", "v2.1.0")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def violations_for(self, result, name):
+        return [v for v in result["violations"] if v.startswith(self.shas[name][:7])]
+
+    def test_only_compiled_test_declarations_count(self):
+        result = release_notes.report(self.repo, "v2.0.0", "v2.1.0")
+        for name in ("Commented", "Block", "Disabled", "NotTaken", "Quoted", "Raw", "Ordinary", "Save", "Helper"):
+            with self.subTest(fake=name):
+                self.assertTrue(any("does not exist" in v for v in self.violations_for(result, name)),
+                                result["violations"])
+        for name in ("Enabled", "Taken", "Multi", "Real"):
+            with self.subTest(real=name):
+                self.assertEqual(self.violations_for(result, name), [])
+
+    def test_a_vertical_tab_does_not_split_a_trailer(self):
+        result = release_notes.report(self.repo, "v2.0.0", "v2.1.0")
+        self.assertTrue(any("without a Regression-Test" in v for v in self.violations_for(result, "VerticalTab")),
+                        result["violations"])
+
+    def test_separator_characters_in_a_subject_are_kept(self):
+        code, out = 0, io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = release_notes.main(["v2.0.0", "v2.1.0", "--json"], repo=self.repo)
+        self.assertEqual(code, 1)
+        self.assertEqual(len(json.loads(out.getvalue())["fixes"]), 15)
+
+    def test_an_allowance_never_hides_a_named_test(self):
+        excuse = {self.shas["ExcusedWithTest"][:10]: "documentation only"}
+        result = release_notes.report(self.repo, "v2.0.0", "v2.1.0", allowances=excuse)
+        self.assertTrue(any("drop one" in v for v in self.violations_for(result, "ExcusedWithTest")))
+        self.assertIn("Enabled.Case; excused: documentation only", release_notes.render(result))
 
 
 class UserBugRuleDocsTest(unittest.TestCase):
