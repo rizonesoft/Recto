@@ -34,6 +34,9 @@ SECTION_RUN = re.compile(r"\b(D\d\d T\d\d)((?:\s*,?\s*§\d+(?:\s*[-\u2013]\s*§?
 SECTION = re.compile(r"§(\d+)(?:\s*[-\u2013]\s*§?(\d+))?")
 FILE_ONLY = re.compile(r"\bD\d\d T\d\d\b(?!\s*,?\s*§)")
 RELEASE_WINDOW = timedelta(days=14)
+# The parity Status values (docs/acrobat-parity.md says what each means); any other value is a fault, so a status
+# written differently (`**Partial**`) cannot exempt a row from coverage.
+PARITY_STATUSES = {"Planned", "Planned, opt-in", "Partial", "Excluded", "Recto only"}
 # The two parity tables (docs/acrobat-parity.md); any other table there is a fault, so none escapes coverage.
 PARITY_SCHEMAS = (["Acrobat Pro tool", "Status", "Recto sections", "Recto keeps"],
                   ["Competitor feature", "Products", "Status", "Recto sections"])
@@ -134,18 +137,21 @@ def parity_names(text, sections):
         if header not in PARITY_SCHEMAS:
             faults_found.append(f"{PARITY}: table {' | '.join(header)[:60]!r} is not one of the parity table schemas")
             continue
-        sections_at = header.index("Recto sections")
+        sections_at, status_at = header.index("Recto sections"), header.index("Status")
         for cells in rows:
             cells = cells + [""] * (len(header) - len(cells))
-            name, owner = cells[0], cells[sections_at]
+            name, owner, status = cells[0], cells[sections_at], cells[status_at]
             names.add(name)
+            if status not in PARITY_STATUSES:
+                faults_found.append(f"{PARITY}: {name!r} has status {status!r}, not one of "
+                                    f"{', '.join(sorted(PARITY_STATUSES))}")
             refs, faults = section_refs(owner)
             # A parity owner may name a whole TODO file (`D04 T08`), which counts when the file has sections.
             files = [m.group(0) for m in FILE_ONLY.finditer(owner)]
             faults = [fault for fault in faults if not fault.endswith("names a TODO file without a section")]
             owned = (bool(refs) or bool(files)) and not faults and all(ref in sections for ref in refs) and all(
                 any(section.startswith(f"{file} §") for section in sections) for file in files)
-            if not owned or "Excluded" in cells or "Partial" in cells or "user-demand.md" in " | ".join(cells):
+            if not owned or status in ("Excluded", "Partial") or "user-demand.md" in " | ".join(cells):
                 needed.add(name)
     return names, needed, faults_found
 

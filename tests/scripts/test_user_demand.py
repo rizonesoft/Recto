@@ -149,6 +149,9 @@ class LedgerRulesTest(unittest.TestCase):
         colon = ledger(*VALID.values()).replace("| --- | --- | --- | --- | --- | --- |", "| --- | --- | --- | --- | --- | :")
         found = demand.problems(colon, PARITY, PLAN, SECTIONS, today=TODAY)
         self.assertTrue(any("has a cell without a hyphen" in line for line in found), found)
+        # A parity status outside the known set (emphasis included) is a fault, never an exemption.
+        found = problems(*VALID.values(), parity=PARITY + "| Toolbar | **Partial** | D05 T01 §1 | Custom |\n")
+        self.assertTrue(any("has status '**Partial**'" in line for line in found), found)
         # A short parity row has an empty owner, so it needs a ledger row.
         self.assertIn("parity row 'New request' has no owning TODO section and no ledger row",
                       problems(*VALID.values(), parity=PARITY + "| New request | Planned |\n"))
