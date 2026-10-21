@@ -324,6 +324,22 @@ class BuildCorpusTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "generation 1; the corpus writes 0 only"):
             self.mod.validate_pdf_structure("render/simple-1p.pdf", mutated)
 
+    def test_an_xref_stream_update_takes_precedence_over_the_section_it_points_back_to(self) -> None:
+        base = self.mod.build_simple_1p()
+        prev = int(re.search(rb"startxref\n(\d+)\n%%EOF\n\Z", base).group(1))
+        headers = {int(m.group(1)): m.start() + 1 for m in re.finditer(rb"\n(\d+) 0 obj\n", base)}
+        new_at = len(base)
+        rows = struct.pack(">BHH", 0, 0, 65535) + b"".join(
+            struct.pack(">BHH", 1, headers[n], 0) for n in range(1, max(headers) + 1))
+        rows += struct.pack(">BHH", 1, new_at, 0)
+        size = max(headers) + 2
+        payload = self.mod.flate_png_up_compress(rows, 5)
+        update = (f"{size - 1} 0 obj\n<< /Type /XRef /Size {size} /Root 1 0 R /Prev {prev} /W [1 2 2] "
+                  f"/Filter /FlateDecode /DecodeParms << /Predictor 12 /Columns 5 >> /Length {len(payload)} >>\n"
+                  "stream\n").encode() + payload + f"\nendstream\nendobj\nstartxref\n{new_at}\n%%EOF\n".encode()
+        # The newest section says /Size 8; the classic section it points back to says 7.
+        self.mod.validate_pdf_structure("test.pdf", base + update)
+
     def test_a_classic_xref_entry_has_one_form(self) -> None:
         data = self.mod.build_simple_1p()
         self.mod.validate_pdf_structure("render/simple-1p.pdf", data)

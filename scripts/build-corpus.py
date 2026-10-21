@@ -1127,15 +1127,6 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int, visite
         raise ValueError(f"{rel_path}: XRef stream /DecodeParms must be exactly /Predictor 12 /Columns {w1 + w2 + w3}")
     if index not in ([], [f"[0 {int(size_m.group(1))}]".encode()]):
         raise ValueError(f"{rel_path}: XRef stream /Index {index} is not the default [0 Size]")
-    if b"/Prev" in entries:
-        prev = re.fullmatch(rb"\d+", entries[b"/Prev"])
-        if prev is None or int(prev.group(0)) >= len(data):
-            raise ValueError(f"{rel_path}: XRef stream /Prev {entries[b'/Prev']!r} does not locate an xref section")
-        prev_at = int(prev.group(0))
-        if data.startswith(b"xref\n", prev_at):
-            validate_classic_xref_at(rel_path, data, prev_at, visited, located, sizes, roots)
-        else:
-            validate_xref_stream_at(rel_path, data, prev_at, visited, located, sizes, roots)
 
     row_width = w1 + w2 + w3
     sizes.append(size)
@@ -1199,6 +1190,16 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int, visite
         if int(tokens[idx * 2]) != obj_id:
             raise ValueError(f"{rel_path}: ObjStm slot {idx} has id {tokens[idx * 2]} != {obj_id}")
         validate_objstm_offsets(rel_path, stm_obj_id, dec, first_val, [int(t) for t in tokens[1::2]])
+    # Older revisions last: this (newer) section's entries, /Size and /Root are recorded first and take precedence.
+    if b"/Prev" in entries:
+        prev = re.fullmatch(rb"\d+", entries[b"/Prev"])
+        if prev is None or int(prev.group(0)) >= len(data):
+            raise ValueError(f"{rel_path}: XRef stream /Prev {entries[b'/Prev']!r} does not locate an xref section")
+        prev_at = int(prev.group(0))
+        if data.startswith(b"xref\n", prev_at):
+            validate_classic_xref_at(rel_path, data, prev_at, visited, located, sizes, roots)
+        else:
+            validate_xref_stream_at(rel_path, data, prev_at, visited, located, sizes, roots)
 
 
 def _complete_pdf_object(chunk: bytes) -> bool:

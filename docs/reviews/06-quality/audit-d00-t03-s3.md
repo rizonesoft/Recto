@@ -495,3 +495,52 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `Ran 22 tests`, `OK` (`test_every_object_is_generation_zero` fails against `b53e03d`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current` (every fixture already uses generation 0).
 
 - Finding 1 (P1): the corpus dialect is generation 0 throughout: an object header, a classic in-use xref entry or an xref-stream type-1 entry with another generation refuses, so every `N 0 R` (the `/Root` included) names exactly the one object it resolves to.
+
+## Round 11: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T19:57:13Z
+- Effort: medium
+- Lines: 34
+- Digest: b69adc45fc0035a3
+
+## adversarial: needs-attention
+
+1. **P2: Xref-stream `/Prev` traversal gives older revisions precedence.** `scripts/build-corpus.py:1136` processes the previous section before recording the current section at lines 1141-1142. Consequently, `sizes[0]`, `roots[0]`, and entries retained by `located.setdefault()` describe the older revision.
+
+   Reproduced entirely in memory:
+   - Generate `build_simple_1p()`, whose trailer has `/Size 7`.
+   - Append object `7 0 obj` containing an xref stream with `/Size 8`, `/Root 1 0 R`, `/Prev` pointing to the original classic xref, and `/W [1 2 2]`.
+   - Encode entries 0-7 using the existing Flate/PNG-Up helper, preserving original object offsets and indexing object 7 at its appended offset.
+   - Append `startxref` pointing to object 7 and call `validate_pdf_structure()`.
+
+   **Actual:** rejects with `newest /Size 7 is not 8`. The newest size is correctly 8. The validator reads the older trailer instead. This affects incremental xref-stream validation; the current committed fixtures do not exercise that combination.
+
+## consistency: approve
+
+No independent findings.
+
+## integration: advisory
+
+Finding 1 impedes adding combined incremental/xref-stream fixtures for the incremental-writer coverage specified in `todo/01-engine/TODO-02-actor-and-render.md:207`. It does not establish corruption of existing fixtures or a defect in the native engine.
+
+## source-defect: needs-attention
+
+Finding 1 reverses incremental-update precedence. The newest revision must govern updated object locations and trailer information. See [Adobe PDF Reference, sections 3.4.5 and 3.4.7](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.6.pdf).
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: advisory
+
+At `2d8e79b`, independently reran `python -B scripts/build-corpus.py --check`: exit 0, **39 current fixtures**. Nineteen selected read-only tests passed; two in-memory generations matched; corpus size was **60,176 bytes**. The recorded checkpoint holds, but misses finding 1. No files were modified by this audit.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 11
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 23 tests`, `OK` (the new test fails against `2d8e79b` with "newest /Size 7 is not 8"); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P2): an xref stream records its own entries, `/Size` and `/Root` before it follows `/Prev`, so the newest revision takes precedence over the section it points back to (`test_an_xref_stream_update_takes_precedence_over_the_section_it_points_back_to`, an xref-stream update over a classic section).
