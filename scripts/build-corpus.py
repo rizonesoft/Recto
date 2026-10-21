@@ -3042,12 +3042,11 @@ def validate_broken_pdf_structure(rel_path: str, data: bytes) -> None:
             3: {b"/Type": b"/Page", b"/Parent": b"2 0 R", b"/MediaBox": b"[0 0 595 842]", b"/Contents": b"4 0 R"},
             4: {b"/Filter": b"[/FlateDecode /FlateDecode]", b"/Length": b"*"},  # the two-stage bomb
         }, streams={4})
-        # Each stage inflates in bounded steps (1 MiB of output at a time) and stops once past its limit, so checking the
-        # bomb never allocates what it is checking for. (inflate_bounded only counts; unlike inflate() it does not
-        # require a complete stream, since the inner stage is deliberately never inflated to its end.)
-        inner_total, inner_deflate = inflate_bounded(data[objects[4][2] : objects[4][3]], 16 * 1024 * 1024)
-        if inner_total > 16 * 1024 * 1024:
-            raise ValueError(f"{rel_path}: the outer FlateDecode stage expands past 16 MiB")
+        # The outer stage is an ordinary stream and must be one complete Flate stream (strict inflate(), at most 16 MiB
+        # produced). Only the inner stage is the bomb: it is inflated in bounded 1 MiB steps and merely counted until
+        # past the ceiling, never to its end, so inflate_bounded() deliberately does not ask for completeness there.
+        inner_deflate = inflate(data[objects[4][2] : objects[4][3]], f"{rel_path}: the outer FlateDecode stage",
+                                limit=16 * 1024 * 1024)
         total_expanded, _ = inflate_bounded(inner_deflate, DOCUMENTED_STREAM_CEILING, keep=False)
         if total_expanded <= DOCUMENTED_STREAM_CEILING:
             raise ValueError(

@@ -671,6 +671,25 @@ class BuildCorpusTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, "header"):
                 self.mod.validate_encrypted_pdf_structure(name, files[name].replace(old, new, 1))
 
+    def test_the_bomb_outer_stage_must_be_complete(self) -> None:
+        name = "broken/deflate-bomb-10kb.pdf"
+        real = self.mod.ClassicPdfBuilder.set_obj
+
+        def truncate_outer(builder, num, content):
+            if num == 4:
+                raw = content.encode("latin-1") if isinstance(content, str) else content
+                start = raw.index(b"stream\n") + len(b"stream\n")
+                end = raw.rindex(b"\nendstream")
+                payload = raw[start:end][:-6]
+                head = re.sub(rb"/Length \d+", f"/Length {len(payload)}".encode(), raw[:start], count=1)
+                content = head + payload + raw[end:]
+            return real(builder, num, content)
+
+        with mock.patch.object(self.mod.ClassicPdfBuilder, "set_obj", truncate_outer):
+            data = self.mod.build_broken_deflate_bomb_10kb()
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            self.mod.validate_broken_pdf_structure(name, data)
+
     def test_inflation_stops_just_past_its_limit(self) -> None:
         bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))
         total, kept = self.mod.inflate_bounded(bomb, 1024, keep=False)

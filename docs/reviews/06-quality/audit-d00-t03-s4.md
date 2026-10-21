@@ -826,3 +826,48 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `OK` (`test_each_encrypted_fixture_declares_the_version_its_revision_needs` fails against `cbf4162`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`. Round 18's record lens could not run three filesystem tests in its read-only sandbox; they pass here.
 
 - Finding 1 (P1): `ENCRYPTED_REVISIONS` now also binds each encrypted path to the header its handler needs: PDF 1.7 for RC4 128-bit and AES-128, PDF 2.0 for revision 6 (the catalogs declare no 1.7 extension that could stand in). A same-length `%PDF-1.7` on the AES-256 fixture, or `%PDF-2.0` on the RC4 one, refuses.
+
+## Round 19: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T23:15:25Z
+- Effort: medium
+- Lines: 30
+- Digest: 93246581a4b7ce57
+
+### adversarial: needs-attention
+
+1. **P1: The bomb validator accepts an incomplete outer compression stream.** `scripts/build-corpus.py:2924` stops when input and output run dry without checking `d.eof`; `:3048` applies this permissive check to the outer stage, which must finish successfully before the inner bomb can be decoded.
+
+   Reproduced entirely in memory: remove the final six bytes from object 4’s compressed payload in `broken/deflate-bomb-10kb.pdf`, then rebuild its `/Length` and xref using `ClassicPdfBuilder`. Validation succeeds despite the outer decompressor reporting **`eof=False`**. Supply the mutated fixture through mocked generator output and file reads, with matching regenerated provenance: **`check_corpus()` returns `(True, [])`**.
+
+   This permits a generator regression that replaces the intended decompression-limit fixture with a prematurely truncated stream. Ordinary on-disk corruption remains caught by byte comparison.
+
+### consistency: approve
+
+No separate finding.
+
+### integration: advisory
+
+Finding 1 weakens the prerequisite for `tests/recto-tests/pdf_filters_tests.cpp:176`, which expects `DecompressionLimitExceeded`. No downstream C++ execution was performed, and no defect in the committed fixture is established.
+
+### source-defect: needs-attention
+
+Finding **1 (P1)** conflates exhausted input with a completed compressed stream. Python explicitly provides `Decompress.eof` to distinguish complete streams from truncated ones. Early stopping is appropriate for the inner stage after exceeding its limit, but not for the outer stage before completion. [Python zlib documentation](https://docs.python.org/3/library/zlib.html#zlib.Decompress.eof)
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: approve
+
+At `9d865f3`, independently reran `python -B scripts/build-corpus.py --check`: exit **0**, **39 fixtures verified**. The header-binding and bounded-inflation regression tests passed: **2 tests, OK**. These checks do not detect finding 1. No files modified; working tree remains clean.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 19
+
+`python -m unittest tests.scripts.test_build_corpus` -> `OK` (`test_the_bomb_outer_stage_must_be_complete` fails against `9d865f3`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): the deflate bomb's outer stage is an ordinary stream, so it now goes through the strict `inflate()` (one complete Flate stream, nothing after it, at most 16 MiB produced). Only the inner stage, the bomb itself, keeps the count-only `inflate_bounded()`, which stops past the ceiling and so cannot ask for completeness. An outer stage regenerated six bytes short refuses as incomplete.
