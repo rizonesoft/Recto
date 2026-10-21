@@ -82,15 +82,24 @@ if not (inside(mod) and inside(cls) and owner is not None and inside(owner)):
 if not isinstance(vars(owner)[method], types.FunctionType):
     sys.exit(3)
 # The method body too, layer by layer from the one unittest runs: a repository class can assign a function defined
-# elsewhere (test_x = Other.test_y), or wrap its test in a decorator from outside the tree that never calls it.
+# elsewhere (test_x = Other.test_y), or wrap its test in a decorator from outside the tree that never calls it. Each
+# layer must come from the fix commit's tree, except a wrapper from unittest.mock (patch and friends), which always
+# calls what it wraps; the innermost function, the test body itself, must always come from the tree.
+# Trust is decided by where the wrapper's code lives: functools.wraps copies __module__ from the wrapped test.
+import unittest.mock
+TRUSTED_WRAPPER_FILES = {pathlib.Path(unittest.mock.__file__).resolve()}
 layer, seen = vars(owner)[method], set()
 while layer is not None and id(layer) not in seen:
     seen.add(id(layer))
+    inner = getattr(layer, "__wrapped__", None)
     code = getattr(layer, "__code__", None)
-    if (not isinstance(layer, types.FunctionType) or code is None or not inside(layer)
-            or not pathlib.Path(code.co_filename).resolve().is_relative_to(here)):
+    from_tree = (isinstance(layer, types.FunctionType) and code is not None and inside(layer)
+                 and pathlib.Path(code.co_filename).resolve().is_relative_to(here))
+    trusted = (inner is not None and isinstance(layer, types.FunctionType) and code is not None
+               and pathlib.Path(code.co_filename).resolve() in TRUSTED_WRAPPER_FILES)
+    if not (from_tree or trusted):
         sys.exit(3)
-    layer = getattr(layer, "__wrapped__", None)
+    layer = inner
 # Build the case the way unittest's loader does for a plain TestCase method, without calling anything: cls(method)
 # checks the method exists and refuses, for example, an abstract class.
 try:

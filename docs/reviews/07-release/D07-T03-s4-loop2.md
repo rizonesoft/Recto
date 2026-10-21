@@ -196,3 +196,53 @@ OVERALL: needs-attention
 ## Fixes after round 4
 
 - Finding 1 (P1): provenance is checked layer by layer from the function unittest actually runs: the class-dictionary function, then each `__wrapped__` inside it, must each be a plain function whose code is in the fix commit's tree. An outside decorator wrapping a repository test (`DecoratedFromOutside`) and a repository decorator wrapping an outside test (`LocalWrapperOfOutside`) are both refused. Mutations: unwrap before checking -> `FAILED (failures=1)`; stop after the outer layer -> `FAILED (failures=1)`. Tests: `Ran 24 tests ... OK`.
+
+## Round 5: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T13:25:36Z
+- Effort: medium
+- Lines: 37
+- Digest: 647dd629bcf5e12f
+
+## adversarial: needs-attention
+
+1. **P2, `scripts/release-notes.py:90`: Valid `unittest.mock.patch` tests are rejected.** Requiring every wrapper’s code to reside inside the worktree rejects standard-library decorators that execute a repository-owned test.
+
+   Reproduce by committing this test and naming `module.Case.test_regression` in a fix’s trailer:
+
+   ```python
+   import unittest
+   from unittest.mock import patch
+
+   class Case(unittest.TestCase):
+       @patch("os.getcwd", return_value="fixture")
+       def test_regression(self, getcwd):
+           self.assertEqual(getcwd(), "fixture")
+   ```
+
+   The outer wrapper lives in `unittest/mock.py`, so the probe exits 3 and the release report marks the existing test invalid. Reproduced in memory using the candidate’s actual probe: exit 3, no success nonce. Unittest loaded and executed the same test: `1 run, 0 failures, 0 errors`.
+
+## consistency: approve
+
+## integration: needs-attention
+
+Finding 1 (**P2**, `scripts/release-notes.py:90`) blocks release-note generation and §7’s JSON build input for fixes using ordinary mock decorators. The documented test-ID contract does not exclude these tests.
+
+## source-defect: needs-attention
+
+Finding 1 (**P2**, `scripts/release-notes.py:90`): an external wrapper’s location does not establish that the underlying repository test is absent. Standard-library `patch` preserves and executes that test.
+
+## design: advisory
+
+Not applicable.
+
+## record: advisory
+
+The claimed 24-test pass remains independently unverified. Running `python -B -m unittest tests.scripts.test_release_notes` produced four completed tests and two fixture-setup errors because this read-only sandbox cannot create temporary directories. No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 5
+
+- Finding 1 (P2): a wrapper layer whose code is `unittest/mock.py` itself (`patch` and friends, which always call what they wrap) is accepted; trust is decided by the code's file, because `functools.wraps` copies `__module__` from the test. The innermost function, the test body, must still come from the fix commit's tree, and any other outside wrapper is refused (`MockPatched` accepted, `DecoratedFromOutside` and `LocalWrapperOfOutside` still refused). Mutation: trusting any wrapper -> `HostileFixtureTest` fails. `docs/support/user-bugs.md` states the rule. Tests: `Ran 24 tests ... OK`.

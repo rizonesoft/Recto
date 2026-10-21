@@ -263,6 +263,9 @@ class HostileFixtureTest(unittest.TestCase):
         py += ("\n\nimport types\n\n\nclass FakeNew(unittest.TestCase):\n"
                "    def __new__(cls, method):\n        return types.SimpleNamespace(_testMethodName=method)\n\n"
                "    def test_case(self):\n        pass\n")
+        py += ("\n\nfrom unittest.mock import patch\n\n\nclass Patched(unittest.TestCase):\n"
+               "    @patch('os.getcwd', return_value='fixture')\n    def test_regression(self, getcwd):\n"
+               "        self.assertEqual(getcwd(), 'fixture')\n")
         py += ("\n\nclass ShadowedByBuiltin(unittest.TestCase):\n    def __init__(self, methodName='runTest'):\n"
                "        super().__init__(methodName)\n        self.test_case = [].clear\n\n"
                "    def test_case(self):\n        raise AssertionError('the regression body must run')\n")
@@ -321,6 +324,8 @@ class HostileFixtureTest(unittest.TestCase):
             "Derived": "tests.scripts.test_sample.Derived.test_real",
             "Inherited": "tests.scripts.test_sample.Child.test_real",
             "Alias": "tests.scripts.test_sample.ViaAlias.test_alias",
+            # unittest.mock's patch is the one outside wrapper allowed: it always calls the repository's test.
+            "MockPatched": "tests.scripts.test_sample.Patched.test_regression",
             "Noisy": "tests.scripts.test_noisy.NoisyTest.test_noisy",
         }
         cls.shas = {}
