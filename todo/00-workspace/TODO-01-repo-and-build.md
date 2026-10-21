@@ -88,6 +88,8 @@ Originally stamped for the `third_party/mupdf` submodule pin at tag `1.28.5` (`4
 - [x] Clean-clone reproducibility with zero external submodules. Done when: `build.cmd` builds from a fresh clone without fetching any git submodule.
 - [x] Commit: `build: pin MuPDF submodule with JavaScript disabled (D9, D12)`
 
+> **Audit 2026-10-21 (D06 T05 §2):** `git status` cannot show a committed, unchanged submodule; the reliable gitlink check is the index (`git ls-files --stage` holds no mode `160000` entry, 0 at the audit). The checkpoint's two paths and graph validation do not compile the engine; the clean-clone C++20 `/W4 /WX` build is proven by the `build` workflow, which builds every push to `main` from a fresh checkout (see `docs/reviews/06-quality/audit-d00-t01-s2.md`).
+
 **Test checkpoint:** `Test-Path .gitmodules` is `False`, `Test-Path third_party` is `False`, and `python scripts/todo-graph.py validate` exits 0.
 
 > **Verified:** 2026-10-14 | §2 | 433c72e34da3f4aeffde1cc0461d490f3ef32f42
