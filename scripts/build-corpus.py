@@ -1075,8 +1075,8 @@ def validate_classic_xref_at(rel_path: str, data: bytes, xref_offset: int, visit
     if not data.startswith(b"trailer\n<<", pos):
         raise ValueError(f"{rel_path}: xref section at {xref_offset} is not followed by a trailer dictionary")
     trailer_dict_end = _skip_object(data, pos + len(b"trailer\n"))
-    if trailer_dict_end > trailer_end:
-        raise ValueError(f"{rel_path}: trailer at {pos} runs past startxref")
+    if trailer_dict_end + 1 != trailer_end or data[trailer_dict_end : trailer_end] != b"\n":
+        raise ValueError(f"{rel_path}: the trailer dictionary at {pos} is not followed directly by startxref")
     trailer = dict_entries(data[pos + len(b"trailer\n") + 2 : trailer_dict_end - 2])
     allowed = {b"/Size", b"/Root", b"/Info", b"/ID", b"/Prev", b"/Encrypt"}
     if not set(trailer) <= allowed:

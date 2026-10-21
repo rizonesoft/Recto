@@ -755,3 +755,61 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `Ran 27 tests`, `OK`; `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P1): a classic subsection header must be exactly two non-negative integers separated by one space (`\d+ \d+`), so `7 -1`, `-1 1`, `+7 0` and a doubled space refuse (`test_a_subsection_header_is_two_non_negative_numbers`).
+
+## Round 16: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:37:53Z
+- Effort: medium
+- Lines: 43
+- Digest: 4ef296eeee12cd70
+
+## adversarial: needs-attention
+
+1. **P1: Trailer validation silently accepts unparsed garbage.** `scripts/build-corpus.py:1072` searches forward for `startxref`; line 1078 only checks that the trailer dictionary ends before it. Nothing validates the intervening bytes.
+
+   Reproduced at `76330ff`, entirely in memory:
+
+   ```python
+   import runpy
+   m = runpy.run_path("scripts/build-corpus.py")
+   data = m["build_simple_1p"]()
+   bad = data.replace(
+       b"\nstartxref\n",
+       b"\nUNPARSED_GARBAGE\nstartxref\n",
+   )
+   m["validate_pdf_structure"]("render/simple-1p.pdf", bad)
+   ```
+
+   Validation returns successfully. The insertion preserves every object offset, stream length and `startxref` value, but creates an invalid trailer. Malformed generator output can therefore pass structural validation when generated and committed bytes agree.
+
+## consistency: approve
+
+No independent findings.
+
+## integration: advisory
+
+Finding 1 weakens the structural gate consumed by later corpus work. It does not establish corruption in the current fixtures or a native-engine defect.
+
+## source-defect: needs-attention
+
+Finding 1 conflicts with the trailer structure specified in §7.5.5: the trailer dictionary precedes `startxref`; arbitrary intervening tokens are not part of that structure. [PDF specification errata, §7.5.5](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#7.5.5)
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: advisory
+
+Independently reran `python -B scripts/build-corpus.py --check`: exit 0, 39 fixtures current. All 24 selected read-only tests passed, including the round-15 regression. Two in-memory generations matched; total corpus size is 60,176 bytes. These checks miss finding 1.
+
+No files were modified by this audit. An unrelated review document became dirty during the audit.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 16
+
+`python -m unittest tests.scripts.test_build_corpus` -> `OK` (`test_the_trailer_is_followed_directly_by_startxref` fails against `8b4502c`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): a classic trailer dictionary must be followed by exactly one newline and `startxref`; any bytes in between refuse.

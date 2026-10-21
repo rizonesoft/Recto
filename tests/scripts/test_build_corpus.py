@@ -379,6 +379,13 @@ class BuildCorpusTests(unittest.TestCase):
             with self.subTest(subsection=subsection), self.assertRaisesRegex(ValueError, "invalid xref subsection header"):
                 self.mod.validate_pdf_structure("render/simple-1p.pdf", data[:at] + subsection + data[at:])
 
+    def test_the_trailer_is_followed_directly_by_startxref(self) -> None:
+        data = self.mod.build_simple_1p()
+        bad = data.replace(b"\nstartxref\n", b"\nUNPARSED_GARBAGE\nstartxref\n")
+        self.assertNotEqual(bad, data)
+        with self.assertRaisesRegex(ValueError, "not followed directly by startxref"):
+            self.mod.validate_pdf_structure("render/simple-1p.pdf", bad)
+
     def test_a_classic_xref_entry_has_one_form(self) -> None:
         data = self.mod.build_simple_1p()
         self.mod.validate_pdf_structure("render/simple-1p.pdf", data)
