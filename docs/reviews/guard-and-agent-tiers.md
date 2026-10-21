@@ -94,3 +94,52 @@ OVERALL: needs-attention
 - Finding 1 (P1): one block-scalar check (`blockScalarProblem`) serves top-level values and the `hooks:` block: blank lines before the first content line may not carry more spaces than it, every content line is space-indented at least as deep as the first, and a tab refuses.
 - Finding 2 (P1): `hooks:` double-quoted values accept only YAML's escape set (5.7), so `"\q"` refuses, and `hooks:` block scalars go through the same indentation check.
 - Finding 3 (P1): the whole frontmatter must be YAML-printable: a C0 or C1 control character (tab and line breaks aside), U+FFFE, U+FFFF or a lone surrogate refuses.
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:31:13Z
+- Effort: medium
+- Lines: 34
+- Digest: 1dadbb66c028a025
+
+## adversarial: needs-attention
+
+All reproductions below used frontmatter containing `name: a`, `model: sonnet`, and `tools: Read`. The reader returned `error: null`, accepted the model, and reported no tool problems. PyYAML 6.0.3 rejected every example. Here, `\n` and `\t` represent actual newline and tab characters.
+
+1. **P1: Invalid hook structure still passes.** `scripts/verify-agent-tiers.mjs:239` checks individual lines without validating their structural relationship; line 331 also accepts repeated inline mapping prefixes. Reproduce with `hooks:\n  Stop:\n    - matcher: a: b` (ScannerError), or `hooks:\n  Stop:\n    - matcher: a\n   hooks: b` (ParserError). Both allow unloadable definitions through the gate.
+
+2. **P1: Hook block-scalar headers are accepted without enforcing their meaning.** `scripts/verify-agent-tiers.mjs:316` accepts invalid `|++`, while line 243 discards explicit indentation indicators. Reproduce with `hooks:\n  Stop:\n    - command: |++\n        first`, or replace `|++` with `|9`. The former has duplicate chomping indicators; the latter has insufficient indentation. Both pass this reader and fail YAML parsing.
+
+3. **P1: Whitespace-only lines bypass tab validation.** `scripts/verify-agent-tiers.mjs:269` skips whitespace-only lines before checking for tabs. Reproduce with `description: |\n\t\n  first`. The reader accepts it, but PyYAML raises ScannerError. The shared block checker therefore still accepts forbidden indentation.
+
+4. **P1: Unicode escapes lack a code-point bound.** `scripts/verify-agent-tiers.mjs:309` accepts any eight hexadecimal digits after `\U`. Reproduce with the literal YAML value `hooks:\n  Stop:\n    - matcher: "\U00110000"`. This exceeds Unicode’s maximum; the reader accepts it while PyYAML raises ValueError.
+
+## consistency: approve
+
+No additional findings.
+
+## integration: needs-attention
+
+Findings 1-4 leave the validation gate accepting agent frontmatter that fails YAML loading. Actual Claude Code loading was not exercised.
+
+## source-defect: needs-attention
+
+Findings 1-4 conflict with YAML’s block structure, scalar-header, indentation, and character-escape rules. See [YAML 1.2.2, sections 5.7, 6.1, 8.1 and 8.2](https://yaml.org/spec/1.2.2/).
+
+## design: advisory
+
+No user-facing surface changed.
+
+## record: advisory
+
+Ran `python -B -m unittest tests.scripts.test_verify_agent_tiers`: all five tests passed despite these reproduced bypasses. The recorded guard-suite result was not independently rerun because its fixtures write files. No files were modified; final Git status was clean.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 3
+
+`python -m unittest tests.scripts.test_verify_agent_tiers` -> `Ran 5 tests`, `OK`; `node scripts/verify-agent-tiers.mjs` -> 5 definitions valid.
+
+Findings 1 to 4 (P1) were all in the readers for the nested `hooks:` block and block scalars, the fourth round in a row to find another YAML rule those readers missed. Recto's five agents use neither form (each is flat `name`, `description`, `model`, `tools`), so Recto's dialect is now flat `key: value` lines only: `hooks:`, a block scalar (`|`, `>`, with any header), or any indented continuation line refuses with a reason, and the block and hooks readers are removed. Values stay plain or quoted on one line, in YAML's printable characters, with the plain-scalar and quote rules from rounds 1 and 2 (`test_nested_blocks_and_block_values_are_refused`, `test_quoted_values_yaml_refuses_are_refused`).

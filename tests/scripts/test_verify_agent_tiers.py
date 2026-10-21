@@ -30,32 +30,21 @@ class AgentFrontmatter(unittest.TestCase):
                 ok, error = read(["name: a", line, "model: sonnet"])
                 self.assertFalse(ok, line)
 
-    def test_quoted_and_block_values_yaml_refuses_are_refused(self):
+    def test_quoted_values_yaml_refuses_are_refused(self):
         for lines in (['description: "a"b"'], ["description: 'a'b'"], ['description: "a"b" # note'],
-                      ["description: |", "  first", " second"], ["description: |", "  first", "\tsecond"]):
+                      ["description: a\x01b"], ['description: "\\q"']):
             with self.subTest(lines=lines):
                 ok, error = read(["name: a", *lines, "model: sonnet"])
                 self.assertFalse(ok, lines)
-        ok, error = read(["name: a", "description: |", "  first", "    deeper is fine", "model: sonnet"])
-        self.assertTrue(ok, error)
 
-    def test_blank_lines_hook_values_and_control_characters_yaml_refuses_are_refused(self):
-        cases = (
-            ["description: |", "    ", "  first"],
-            ["tools: Read", "hooks:", "  Stop:", '    - matcher: "\\q"'],
-            ["tools: Read", "hooks:", "  Stop:", "    - command: |", "        first", "       second"],
-            ["description: a\x01b"],
-        )
-        for lines in cases:
+    def test_nested_blocks_and_block_values_are_refused(self):
+        # Recto reads flat key: value lines only; each of these is valid YAML or not, but none is flat.
+        for lines in (["description: |", "  first"], ["description: >", "  first"], ["description: |2", "  x"],
+                      ["tools: Read", "hooks:", "  Stop:", "    - matcher: a"], ["description: a", "  continued"],
+                      ["description: |", "    ", "  first"], ["description: |", "\t", "  first"]):
             with self.subTest(lines=lines):
                 ok, error = read(["name: a", *lines, "model: sonnet"])
                 self.assertFalse(ok, lines)
-        for lines in (["tools: Read", "hooks:", "  Stop:", '    - matcher: "a\\tb"'],
-                      ["tools: Read", "hooks:", "  Stop:", "    - command: |", "        first", "          deeper"],
-                      ["description: |", "", "  first"]):
-            with self.subTest(lines=lines):
-                ok, error = read(["name: a", *lines, "model: sonnet"])
-                self.assertTrue(ok, error)
 
     def test_values_yaml_reads_are_accepted(self):
         for line in ("description: a #comment", 'description: "Use this: quoted"', "description: -dash-word",
