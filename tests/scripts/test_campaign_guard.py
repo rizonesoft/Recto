@@ -466,6 +466,29 @@ class Lifecycle(Workspace):
         self.assertIsNone(guard._read_regular(os.path.join(self.root, "other.txt"), 100, seen))
         self.assertEqual(guard._read_regular(os.path.join(self.root, "notes.txt"), 100, seen), b"x\n")
 
+    def test_a_real_link_is_opened_as_itself_never_followed(self):
+        target = os.path.join(self.root, "target.txt")
+        self.write("target.txt", "secret\n")
+        link = os.path.join(self.root, "link.txt")
+        try:
+            os.symlink(target, link)
+        except OSError:
+            self.skipTest("this account cannot create symbolic links")
+        self.assertIsNone(guard._read_regular(link, 100, os.lstat(link)))
+        self.assertEqual(guard._read_regular(target, 100, os.lstat(target)), b"secret\n")
+        # A dangling link proves the open never follows: following would fail on the missing target.
+        dangling = os.path.join(self.root, "dangling.txt")
+        os.symlink(os.path.join(self.root, "nowhere.txt"), dangling)
+        if os.name == "nt":
+            fd = guard._open_no_follow(dangling)  # the link itself opens
+            try:
+                self.assertTrue(os.fstat(fd).st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+            finally:
+                os.close(fd)
+        else:
+            with self.assertRaises(OSError):  # O_NOFOLLOW refuses the link instead of following it
+                guard._open_no_follow(dangling)
+
     def test_whoami_names_what_a_heartbeat_is_to_the_run(self):
         self.assertEqual(guard.whoami(self.root, SESSION), "NO GUARD")
         self.acquire(generation="gen000000001")

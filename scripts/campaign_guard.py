@@ -593,14 +593,38 @@ OWN_FILES = re.compile(r"^build/claude-campaign-(guard|state|pending-cancel)\.js
                        r"^build/claude-campaign-guard\.lock$|^build/claude-campaign-hook-errors/")
 
 
+def _open_no_follow(path: str) -> int:
+    """A read descriptor for path that never follows a link and never blocks on a special file. POSIX has O_NOFOLLOW
+    and O_NONBLOCK; Windows has neither, so there the file is opened with CreateFileW's FILE_FLAG_OPEN_REPARSE_POINT,
+    which opens a link as itself instead of following it (to a stalled network share, say)."""
+    if os.name != "nt":
+        return os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = kernel32.CreateFileW
+    create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD,
+                       wintypes.DWORD, wintypes.HANDLE]
+    create.restype = wintypes.HANDLE
+    generic_read, share_all, open_existing, open_reparse_point = 0x80000000, 0x7, 3, 0x00200000
+    handle = create(path, generic_read, share_all, None, open_existing, open_reparse_point, None)
+    if handle in (None, ctypes.c_void_p(-1).value):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except OSError:
+        kernel32.CloseHandle(wintypes.HANDLE(handle))
+        raise
+
+
 def _read_regular(path: str, max_bytes: int, seen: os.stat_result | None = None) -> bytes | None:
     """At most max_bytes of path, or None when what opened is not the regular file the lstat saw (seen): swapped for a
     FIFO, a device, or a link to elsewhere. Opened without following a link and without blocking where the OS allows;
     where it does not (Windows has neither flag), the device and inode comparison catches a link followed to another
     file."""
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
     try:
-        fd = os.open(path, flags)
+        fd = _open_no_follow(path)
     except OSError:
         return None
     try:
@@ -609,6 +633,8 @@ def _read_regular(path: str, max_bytes: int, seen: os.stat_result | None = None)
             return None
         if seen is not None and (opened.st_dev, opened.st_ino) != (seen.st_dev, seen.st_ino):
             return None
+        if getattr(opened, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
+            return None  # a link opened as itself, never followed
         chunks, left = [], max_bytes + 1
         while left > 0:
             chunk = os.read(fd, min(left, 1 << 20))

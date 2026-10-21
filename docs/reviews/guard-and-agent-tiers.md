@@ -285,3 +285,44 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_verify_agent_tiers` -> `OK` (the new cases fail against `be32399`); `node scripts/verify-agent-tiers.mjs` -> 5 definitions valid.
 
 - Finding 1 (P1): frontmatter keys are an allow-list (`KNOWN_KEYS`: name, description, model, tools, color, and the tier fields this check reads), so an unknown key refuses and no key can approach YAML's 1024-character limit for an implicit key.
+
+## Round 7: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:56:02Z
+- Effort: medium
+- Lines: 26
+- Digest: a7bdcf7f29cc3127
+
+## adversarial: needs-attention
+
+1. **P2: Windows can still stall while opening a replacement symlink.** `scripts/campaign_guard.py:603` opens the path before checking its identity at line 610. Windows has neither `O_NOFOLLOW` nor `O_NONBLOCK`, confirmed on this interpreter. Reproduce by replacing an inspected regular file with a symlink to an unresponsive UNC target between `lstat` and `os.open`. The open follows the target and can block before the identity check; the hook deadline cannot interrupt it. The repair needs protection at the Windows open operation. This is a source-supported race, not a live network-stall reproduction.
+
+## consistency: approve
+
+No additional findings.
+
+## integration: needs-attention
+
+Finding 1 leaves the Stop hook exposed to the stall this candidate is intended to prevent. Rejecting the opened handle afterward does not bound the opening operation.
+
+## source-defect: needs-attention
+
+Finding 1 overlooks Windows’ distinction between opening a symlink and opening its target. Preventing target traversal requires the appropriate open semantics, documented under [CreateFile symbolic-link behavior](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew).
+
+## design: advisory
+
+No user-facing surface changed.
+
+## record: advisory
+
+Ran `python -B -m unittest tests.scripts.test_verify_agent_tiers`: five tests passed. Guard review used source inspection and in-memory mocks; filesystem-writing guard tests and a live replacement race were not run. No files were modified; Git status remained clean.
+
+HIGHEST: P2  
+OVERALL: needs-attention
+
+## Fixes after round 7
+
+`python -m unittest tests.scripts.test_campaign_guard` -> `Ran 34 tests`, `OK` (`test_a_real_link_is_opened_as_itself_never_followed` fails against `b57639e`).
+
+- Finding 1 (P2): on Windows the fingerprint opens a file with `CreateFileW` and `FILE_FLAG_OPEN_REPARSE_POINT` (`_open_no_follow`), which opens a link as itself instead of following it, so a link swapped in after the `lstat` (to a stalled network share, say) is never traversed; a descriptor carrying the reparse-point attribute is then refused. POSIX keeps `O_NOFOLLOW | O_NONBLOCK`. The test uses real links: a link to a file is refused, and a dangling link opens as itself (following it would fail).
