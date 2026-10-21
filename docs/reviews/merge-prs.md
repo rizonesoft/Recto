@@ -567,3 +567,48 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_merge_prs` -> `OK` (`test_a_late_change_to_eligibility_skips_the_merge` fails against `283a841` for each change).
 
 - Finding 1 (P1): the final read just before the merge request is judged in full by `why_not`, against the check runs and statuses already read for the same head commit, and a head that moved since is skipped too: a removed label, a switch to draft, a retarget or a new head commit each skip the pull request with the reason logged.
+
+## Round 14: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T21:30:32Z
+- Effort: medium
+- Lines: 28
+- Digest: 0feef399bf07d21c
+
+## adversarial: needs-attention
+
+1. **P1, `scripts/merge_prs.py:322`: Final eligibility uses stale CI results.** `why_not(final, runs, statuses)` reuses results collected before the final read. For pins PRs with an empty rollup, a dispatched check rerun that fails before that read finishes is invisible. Reproduction using `FakeRun`: replace `_runs` with failed required checks on the second `gh pr view`, leaving the head unchanged. The script issues merge `#1` and exits 0; evaluating the current checks rejects it. Refresh CI evidence at the final eligibility boundary. This precedes the acknowledged residual race after that boundary.
+
+2. **P1, `scripts/merge_prs.py:328`: Checkout safety is not rechecked after the network queries.** A user edit or newly started section during PR inspection does not prevent the merge. Reproduction: set `fake.dirty` on the second `gh pr view`. The script issues merge `#1`, exits 0, and calls `git status` only once. A nonconflicting edit can survive the subsequent pull. Recheck checkout safety immediately before recording the merge attempt.
+
+## consistency: approve
+
+No additional findings.
+
+## integration: needs-attention
+
+Finding 1 affects dispatched pins checks, which the implementation explicitly permits to be absent from the final PR rollup.
+
+## source-defect: needs-attention
+
+Findings 1 and 2 violate the governing requirements for green checks and a clean checkout at merge time.
+
+## design: advisory
+
+No rendered interface changes to assess.
+
+## record: advisory
+
+Both findings were reproduced in memory with filesystem mutations mocked and bytecode disabled. No files changed or live merges attempted. Historical test results were not independently rerun.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 14
+
+`python -m unittest tests.scripts.test_merge_prs` -> `Ran 31 tests`, `OK` (`test_a_check_failing_or_an_edit_during_judging_stops_the_merge` fails against `b505628` for both cases).
+
+- Finding 1 (P1): judging is one bracketed read, `judge()`: the pull request, its head commit's checks and statuses, its test merge's, then the pull request again and its head commit's checks and statuses again; the second half decides, so a check that failed while the first half was read is seen.
+- Finding 2 (P1): the checkout is checked again after all network reads, locally only (`ensure_safe(..., fetch=False)`: guard, origin, clean tree, HEAD equal to the fetched `origin/main`, no section in progress), in the last instant before the merge request; an edit made during judging stops the run.
+- What remains is the instant between that local check and GitHub acting on the request: GitHub offers no snapshot across its API calls and its merge call can pin only the head commit (`--match-head-commit`), so no read order can close it; a retarget there fails the post-merge ancestry check and stops the run with the marker set.

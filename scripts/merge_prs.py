@@ -97,7 +97,10 @@ def section_in_progress(root):
     return None
 
 
-def ensure_safe(run, root, scheduled):
+def ensure_safe(run, root, scheduled, fetch=True):
+    """Raise Unsafe unless this checkout may take a merge now. With fetch=False only local state is read (no network),
+    which is what runs in the last instant before a merge request: no edit, section or campaign can start unseen
+    during the pull request's own (network) judging."""
     if scheduled and (Path(root) / GUARD).exists():  # read under the guard lock (main), so no campaign starts after it
         raise Unsafe("a campaign run holds the guard; the loop merges at its own section boundaries")
     # Resolved before any fetch, so an origin that is not github.com is refused before its URL can reach a network
@@ -105,7 +108,8 @@ def ensure_safe(run, root, scheduled):
     REPO[0] = origin_repo(run, root)
     if check(run, root, ["git", "status", "--porcelain"], "git status").strip():
         raise Unsafe("the working tree has changes")
-    check(run, root, ["git", "fetch", "--quiet", "origin", "main"], "git fetch")
+    if fetch:
+        check(run, root, ["git", "fetch", "--quiet", "origin", "main"], "git fetch")
     head = check(run, root, ["git", "rev-parse", "HEAD"], "git rev-parse HEAD").strip()
     upstream = check(run, root, ["git", "rev-parse", "origin/main"], "git rev-parse origin/main").strip()
     if head != upstream:
@@ -113,6 +117,25 @@ def ensure_safe(run, root, scheduled):
     ref = section_in_progress(root)
     if ref:
         raise Unsafe(f"section {ref} is in progress")
+
+
+def judge(run, root, number):
+    """(pull request, reason it may not merge or ""), from one bracketed read: the pull request, its head commit's
+    checks and statuses, its test merge's, then the pull request again and its head commit's checks and statuses again.
+    The second half is what decides, so a label, draft flag, base, head or check that changed while the first half was
+    being read is seen. GitHub offers no snapshot across these calls, and its merge call can pin only the head commit,
+    so what remains is the instant between this last read and the merge request (one local check)."""
+    pr = current(run, root, number)
+    reason = why_not(pr, check_runs(run, root, pr["headRefOid"]), commit_statuses(run, root, pr["headRefOid"]))
+    if reason:
+        return pr, reason
+    merge_sha = test_merge_sha(run, root, number)
+    if merge_sha and not test_merge_green(check_runs(run, root, merge_sha), commit_statuses(run, root, merge_sha)):
+        return pr, "a check on its test merge with main is failing or unfinished"
+    final = current(run, root, number)
+    if final.get("headRefOid") != pr["headRefOid"]:
+        return final, "its head moved while it was judged"
+    return final, why_not(final, check_runs(run, root, pr["headRefOid"]), commit_statuses(run, root, pr["headRefOid"]))
 
 
 def origin_repo(run, root):
@@ -289,14 +312,8 @@ def merge_all(run, root, args, out):
                 return 1
         try:
             # Judged on its state right now, after any earlier merge: labels, base, mergeability and the checks of the
-            # exact commit that will merge.
-            pr = current(run, root, number)
-            runs = check_runs(run, root, pr["headRefOid"])
-            statuses = commit_statuses(run, root, pr["headRefOid"])
-            reason = why_not(pr, runs, statuses)
-            merge_sha = "" if reason else test_merge_sha(run, root, number)
-            if merge_sha and not test_merge_green(check_runs(run, root, merge_sha), commit_statuses(run, root, merge_sha)):
-                reason = "a check on its test merge with main is failing or unfinished"
+            # exact commit that will merge, and of its test merge.
+            pr, reason = judge(run, root, number)
         except RuntimeError as e:
             out(f"merge-prs: {e}")
             return 1
@@ -306,23 +323,17 @@ def merge_all(run, root, args, out):
         if args.dry_run:
             out(f"merge-prs: #{number} would merge at {pr['headRefOid'][:7]} ({pr['title']})")
             continue
-        # The base is read again immediately before the request. GitHub's merge call can pin the head commit
-        # (--match-head-commit) but has no precondition on the base branch, so a retarget in the last instant is caught
-        # afterwards instead: the merge commit then is not in main, the follow-up fails and the run stops.
-        # The whole final snapshot is judged again, against the same head commit whose checks were read: a label removed,
-        # a switch to draft or a retarget during the check queries skips the pull request.
+        # The checkout is checked again after the network reads, locally only, in the last instant before the request:
+        # an edit, a section or a campaign started while the pull request was being judged stops the run. A retarget in
+        # that instant is caught afterwards: the merge commit then is not in main, the follow-up fails and the run stops.
         try:
-            final = current(run, root, number)
+            ensure_safe(run, root, args.scheduled, fetch=False)
+        except Unsafe as e:
+            out(f"merge-prs: stopped after {merged} merged: {e}; any later pull request waits")
+            return 0
         except RuntimeError as e:
             out(f"merge-prs: {e}")
             return 1
-        if final.get("headRefOid") != pr["headRefOid"]:
-            out(f"merge-prs: #{number}'s head moved while it was judged; skipped")
-            continue
-        late = why_not(final, runs, statuses)
-        if late:
-            out(f"merge-prs: #{number} skipped just before merging: {late}")
-            continue
         # Recorded before GitHub is asked, cleared only once the merge is verified locally: a run killed in between
         # (the task's timeout, a crash) leaves the marker, and the next run refuses until the operator has looked.
         record_stop(root, f"merge-prs: merging #{number} was interrupted before its pull and validate finished")

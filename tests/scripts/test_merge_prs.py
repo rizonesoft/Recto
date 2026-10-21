@@ -384,7 +384,7 @@ class MergePrs(unittest.TestCase):
 
         self.assertEqual(merge_prs.main([], run=retarget_on_second_view, root=self.root, out=self.lines.append), 0)
         self.assertEqual(fake.merges(), ["2"])
-        self.assertIn("skipped just before merging: not an open pull request into main", " ".join(self.lines))
+        self.assertIn("#1 skipped: not an open pull request into main", " ".join(self.lines))
 
     def test_a_late_change_to_eligibility_skips_the_merge(self):
         for change in ({"labels": []}, {"isDraft": True}, {"headRefOid": "9" * 40}):
@@ -403,6 +403,27 @@ class MergePrs(unittest.TestCase):
                 self.lines.clear()
                 self.assertEqual(merge_prs.main([], run=late, root=self.root, out=self.lines.append), 0)
                 self.assertEqual(fake.merges(), ["2"])
+
+    def test_a_check_failing_or_an_edit_during_judging_stops_the_merge(self):
+        cases = (("check", lambda fake: fake.prs[1].update(_runs=[(n, "completed", "failure")
+                                                                   for n in merge_prs.REQUIRED_CHECKS]), ["2"], 0),
+                 ("edit", lambda fake: setattr(fake, "dirty", " M src/x.cpp\n"), [], 0))
+        for what, change, merges, code in cases:
+            with self.subTest(what=what):
+                fake = FakeRun([pr(1), pr(2)])
+                real = fake.__class__.__call__
+                views = []
+
+                def late(args, root):
+                    if args[:3] == ["gh", "pr", "view"] and args[3] == "1":
+                        views.append(1)
+                        if len(views) == 2:  # the second half of the judging read
+                            change(fake)
+                    return real(fake, args, root)
+
+                self.lines.clear()
+                self.assertEqual(merge_prs.main([], run=late, root=self.root, out=self.lines.append), code)
+                self.assertEqual(fake.merges(), merges)
 
     def test_launches_open_no_console_window(self):
         with mock.patch.object(merge_prs.subprocess, "run") as run:

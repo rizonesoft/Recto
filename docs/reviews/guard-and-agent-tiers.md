@@ -464,3 +464,42 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_campaign_guard` -> `OK` (the extended stall test fails against `0f0e935`).
 
 - Finding 1 (P2): round 9's random bytes are gone. A fingerprint cut short by a stall raises `GuardError`; the Stop hook fails open and records it for the heartbeat (`hook_error` in the state file), and the breaker's `blocks`, `trips` and stored fingerprint stay where they were: unknown progress is neither progress nor a stall (the test asserts all three, and the recorded error).
+
+## Round 11: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T21:30:25Z
+- Effort: medium
+- Lines: 26
+- Digest: 5ab4ccc1adec51e6
+
+## adversarial: approve
+
+No confirmed actionable findings in the final candidate.
+
+## consistency: approve
+
+No findings.
+
+## integration: advisory
+
+Claude Code’s actual YAML loader was not exercised. PyYAML 6.0.3 rejects tab-indented comment lines accepted by the verifier, but that alone does not establish a consumer defect.
+
+## source-defect: approve
+
+No confirmed deviations from the governing documents.
+
+## design: advisory
+
+No user-facing surface changed.
+
+## record: advisory
+
+Ran the six frontmatter tests, read-only Windows regular-file and mocked special-file checks, and scoped `git diff --check`. The filesystem-writing guard suite and live filesystem race scenarios were not run, so their recorded results remain independently unverified. No files were modified; Git status remained clean.
+
+HIGHEST: none
+OVERALL: approve
+
+## Closed after round 11
+
+Round 11 approved with `HIGHEST: none` (`4a8ce84`). Its integration advisory (PyYAML 6.0.3 refuses a tab-indented comment line the verifier accepts) is not a confirmed defect in Claude Code's loader, so the dialect stays as reviewed.
