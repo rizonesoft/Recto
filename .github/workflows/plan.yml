@@ -22,7 +22,9 @@ on:
       - '.codex/skills/**'
       - '.agents/skills/**'
       - '.gitattributes'
-      - '.github/workflows/plan.yml'
+      # Any workflow change, so a Dependabot action update gets plan-gates like every other pull request.
+      - '.github/workflows/**'
+      - '.github/dependabot.yml'
   pull_request:
     paths:
       - 'docs/user-demand.md'
@@ -39,7 +41,9 @@ on:
       - '.codex/skills/**'
       - '.agents/skills/**'
       - '.gitattributes'
-      - '.github/workflows/plan.yml'
+      # Any workflow change, so a Dependabot action update gets plan-gates like every other pull request.
+      - '.github/workflows/**'
+      - '.github/dependabot.yml'
   workflow_dispatch:
 
 jobs:

@@ -22,7 +22,7 @@ def pr(number, *, author="app/github-actions", labels=("dependencies", "pins"), 
     return {"number": number, "title": f"pin {number}", "author": {"login": author}, "state": "OPEN",
             "labels": [{"name": n} for n in labels], "baseRefName": base, "headRefName": branch,
             "headRefOid": f"{number:040d}", "mergeable": mergeable,
-            "_runs": GREEN_RUNS if checks is None else list(checks)}
+            "_runs": GREEN_RUNS if checks is None else list(checks), "_statuses": []}
 
 
 class FakeRun:
@@ -51,9 +51,11 @@ class FakeRun:
         elif args[:3] == ["gh", "pr", "view"]:
             out = json.dumps({k: v for k, v in self.prs[int(args[3])].items() if not k.startswith("_")})
         elif args[:2] == ["gh", "api"]:
-            sha = args[3].split("/commits/")[1].split("/")[0]
-            runs = next(p["_runs"] for p in self.prs.values() if p["headRefOid"] == sha)
-            out = "".join(json.dumps(list(r)) + "\n" for r in runs)
+            path = next(a for a in args if "/commits/" in a)
+            sha = path.split("/commits/")[1].split("/")[0]
+            p = next(p for p in self.prs.values() if p["headRefOid"] == sha)
+            rows = p["_statuses"] if path.split("?")[0].endswith("/status") else p["_runs"]
+            out = "".join(json.dumps(list(r)) + "\n" for r in rows)
         elif args[:3] == ["gh", "pr", "merge"] and self.after_merge:
             self.after_merge(int(args[3]), self.prs)
         return subprocess.CompletedProcess(args, 0, out, "")
@@ -70,6 +72,9 @@ class MergePrs(unittest.TestCase):
         patcher = mock.patch.object(merge_prs, "section_in_progress", return_value=None)
         self.in_progress = patcher.start()
         self.addCleanup(patcher.stop)
+        no_wait = mock.patch.object(merge_prs, "SETTLE_WAIT", 0)
+        no_wait.start()
+        self.addCleanup(no_wait.stop)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -98,6 +103,17 @@ class MergePrs(unittest.TestCase):
         self.assertEqual(self.main(fake), 0)
         self.assertEqual(fake.merges(), [])
         self.assertEqual(sum("skipped" in line for line in self.lines), 9)
+
+    def test_a_failing_or_pending_commit_status_blocks_the_merge(self):
+        blocked = pr(1)
+        blocked["_statuses"] = [("ci/legacy", "failure")]
+        pending = pr(2)
+        pending["_statuses"] = [("ci/legacy", "pending")]
+        passing = pr(3)
+        passing["_statuses"] = [("ci/legacy", "success")]
+        fake = FakeRun([blocked, pending, passing])
+        self.assertEqual(self.main(fake), 0)
+        self.assertEqual(fake.merges(), ["3"])
 
     def test_only_pull_requests_into_main_are_considered(self):
         fake = FakeRun([pr(1, base="release/1.0")])

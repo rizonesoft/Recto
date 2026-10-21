@@ -25,6 +25,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts" / "lib"))
@@ -96,6 +97,13 @@ def check_runs(run, root, sha):
     return [tuple(json.loads(line)) for line in out.splitlines() if line.strip()]
 
 
+def commit_statuses(run, root, sha):
+    """Every legacy commit status on a commit: (context, state). CI can report through these as well as check runs."""
+    out = check(run, root, ["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{sha}/status",
+                            "--jq", ".statuses[] | [.context, .state]"], f"reading statuses of {sha[:7]}")
+    return [tuple(json.loads(line)) for line in out.splitlines() if line.strip()]
+
+
 def checks_green(runs):
     """Every check run on the commit completed green, and each required job succeeded (no checks never passes)."""
     # The required jobs must have actually run and passed (a skipped build proves nothing); any other check may also be
@@ -105,8 +113,9 @@ def checks_green(runs):
     return all(status == "completed" and conclusion in GREEN for _, status, conclusion in runs)
 
 
-def why_not(pr, runs):
-    """Why a pull request is not eligible, or None when it is. runs: the check runs on its head commit."""
+def why_not(pr, runs, statuses=()):
+    """Why a pull request is not eligible, or None when it is. runs and statuses: the check runs and the legacy commit
+    statuses on its head commit."""
     if (pr.get("author") or {}).get("login") not in AUTHORS:
         return "not from Dependabot or the pins workflow"
     if not LABELS & {label["name"] for label in pr.get("labels") or []}:
@@ -119,15 +128,25 @@ def why_not(pr, runs):
         return f"GitHub says {pr.get('mergeable')}"
     if not checks_green(runs):
         return "its head commit's checks are not all green, or a required job did not run"
+    if any(state != "success" for _, state in statuses):
+        return "a commit status on its head commit is not success"
     return None
 
 
 FIELDS = "number,title,author,labels,baseRefName,headRefName,headRefOid,mergeable,state"
 
 
+SETTLE_TRIES, SETTLE_WAIT = 5, 3.0
+
+
 def current(run, root, number):
-    """A pull request as it is now (gh pr view also makes GitHub compute mergeable, which a listing leaves UNKNOWN)."""
-    return json.loads(check(run, root, ["gh", "pr", "view", str(number), "--json", FIELDS], f"gh pr view {number}"))
+    """A pull request as it is now. GitHub computes mergeability in the background and answers UNKNOWN meanwhile, so an
+    UNKNOWN is asked again a few times; one still UNKNOWN is skipped this run."""
+    for attempt in range(SETTLE_TRIES):
+        pr = json.loads(check(run, root, ["gh", "pr", "view", str(number), "--json", FIELDS], f"gh pr view {number}"))
+        if pr.get("mergeable") != "UNKNOWN" or attempt == SETTLE_TRIES - 1:
+            return pr
+        time.sleep(SETTLE_WAIT)
 
 
 def open_prs(run, root):
@@ -153,7 +172,7 @@ def merge_all(run, root, args, out):
             # Judged on its state right now, after any earlier merge: labels, base, mergeability and the checks of the
             # exact commit that will merge.
             pr = current(run, root, number)
-            reason = why_not(pr, check_runs(run, root, pr["headRefOid"]))
+            reason = why_not(pr, check_runs(run, root, pr["headRefOid"]), commit_statuses(run, root, pr["headRefOid"]))
         except RuntimeError as e:
             out(f"merge-prs: {e}")
             return 1
