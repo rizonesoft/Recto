@@ -37,7 +37,19 @@ LABEL_GROUPS = {
     "kind": {"bug", "feature", "regression", "data-loss", "crash", "security"},
     "state": {"needs-repro", "fixed-on-main", "released"},
 }
-ELEMENT_TYPES = {"markdown", "textarea", "input", "dropdown", "checkboxes", "upload"}
+# GitHub's form schema: top-level keys, element keys, and per element type the required attributes, the
+# optional attributes and the allowed validations.
+TOP_LEVEL_KEYS = {"name", "description", "title", "labels", "assignees", "projects", "type", "body"}
+ELEMENT_KEYS = {"type", "id", "attributes", "validations"}
+_TEXT_FIELD = ({"label"}, {"description", "placeholder", "value"}, {"required", "min_length"})
+ELEMENT_SCHEMA = {
+    "markdown": ({"value"}, set(), set()),
+    "input": _TEXT_FIELD,
+    "textarea": (_TEXT_FIELD[0], _TEXT_FIELD[1] | {"render"}, _TEXT_FIELD[2]),
+    "dropdown": ({"label", "options"}, {"description", "multiple", "default"}, {"required"}),
+    "checkboxes": ({"label", "options"}, {"description"}, {"required"}),
+    "upload": ({"label"}, {"description"}, {"required", "accept"}),
+}
 TRIAGE_HEADINGS = [
     "## Labels",
     "## Response targets",
@@ -58,6 +70,7 @@ class YamlSubsetError(ValueError):
 
 _KEY = re.compile(r"^([A-Za-z0-9_-]+):(?:[ ]+(.*))?$")
 _INT = re.compile(r"^-?[0-9]+$")
+_FLOW_ITEM = re.compile(r"[A-Za-z0-9_.-]+(?: [A-Za-z0-9_.-]+)*")
 
 
 class _Loader:
@@ -165,7 +178,12 @@ class _Loader:
             raw.pop()
         if not raw:
             return ""
-        block = min(len(line) - len(line.lstrip(" ")) for line in raw if line.strip())
+        # The first content line fixes the block's indentation; a later line indented less is malformed YAML.
+        block = next(len(line) - len(line.lstrip(" ")) for line in raw if line.strip())
+        for offset, line in enumerate(raw):
+            if line.strip() and len(line) - len(line.lstrip(" ")) < block:
+                self.i -= len(raw) - offset
+                self._fail("block scalar line indented less than its first line")
         lines = [line[block:] if line.strip() else "" for line in raw]
         if style == "|":
             return "\n".join(lines) + "\n"
@@ -196,7 +214,13 @@ class _Loader:
             if not text.endswith("]"):
                 self._fail(f"unterminated flow list {text!r}")
             inner = text[1:-1].strip()
-            return [self._scalar(part) for part in inner.split(",")] if inner else []
+            if not inner:
+                return []
+            parts = [part.strip() for part in inner.split(",")]
+            # Only plain words: a quoted item could hold a comma, and an empty item is a YAML error.
+            if not all(_FLOW_ITEM.fullmatch(part) for part in parts):
+                self._fail(f"flow list outside the supported subset: {text!r}")
+            return [self._scalar(part) for part in parts]
         text = re.sub(r"\s+#.*$", "", text)
         if text[:1] in set("{&*!%@`|>") or ": " in text or text.endswith(":"):
             self._fail(f"plain scalar outside the supported subset: {text!r}")
@@ -229,6 +253,71 @@ def read_yaml(path):
     return load_yaml(path.read_text(encoding="utf-8"))
 
 
+def _text(value):
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _element_faults(where, element, seen):
+    """Faults in one body element against GitHub's form schema: keys, attribute types and validations."""
+    if not isinstance(element, dict):
+        return [f"{where} is not a mapping"]
+    faults = [f"{where} key {key!r} is not in GitHub's schema" for key in sorted(set(element) - ELEMENT_KEYS)]
+    kind = element.get("type")
+    if kind not in ELEMENT_SCHEMA:
+        return faults + [f"{where} has unknown type {kind!r}"]
+    required_attributes, optional_attributes, validation_keys = ELEMENT_SCHEMA[kind]
+    attributes = element.get("attributes")
+    if not isinstance(attributes, dict):
+        return faults + [f"{where} has no attributes mapping"]
+    for key in sorted(set(attributes) - required_attributes - optional_attributes):
+        faults.append(f"{where} attribute {key!r} is not allowed on {kind}")
+    for key in sorted(required_attributes - {"options"}):
+        if not _text(attributes.get(key)):
+            faults.append(f"{where} attribute {key!r} must be a non-empty string")
+    for key in sorted(optional_attributes & {"description", "placeholder", "value", "render"}):
+        if key in attributes and not isinstance(attributes[key], str):
+            faults.append(f"{where} attribute {key!r} must be a string")
+    if "multiple" in attributes and not isinstance(attributes["multiple"], bool):
+        faults.append(f"{where} attribute 'multiple' must be true or false")
+    if "default" in attributes and (type(attributes["default"]) is not int or attributes["default"] < 0):
+        faults.append(f"{where} attribute 'default' must be a non-negative integer")
+    if "options" in required_attributes:
+        options = attributes.get("options")
+        if kind == "dropdown":
+            if not (isinstance(options, list) and options and all(_text(o) for o in options)
+                    and len(set(options)) == len(options)):
+                faults.append(f"{where} options must be a non-empty list of distinct strings")
+        elif not (isinstance(options, list) and options and all(
+                isinstance(o, dict) and _text(o.get("label")) and set(o) <= {"label", "required"}
+                and isinstance(o.get("required", False), bool) for o in options)):
+            faults.append(f"{where} options must be a non-empty list of {{label, required}} mappings")
+    validations = element.get("validations")
+    if validations is not None:
+        if not isinstance(validations, dict):
+            faults.append(f"{where} validations must be a mapping")
+        else:
+            for key in sorted(set(validations) - validation_keys):
+                faults.append(f"{where} validation {key!r} is not allowed on {kind}")
+            if "required" in validations and not isinstance(validations["required"], bool):
+                faults.append(f"{where} validation 'required' must be true or false")
+            if "min_length" in validations and (
+                    type(validations["min_length"]) is not int or validations["min_length"] < 0):
+                faults.append(f"{where} validation 'min_length' must be a non-negative integer")
+            if "accept" in validations and not _text(validations["accept"]):
+                faults.append(f"{where} validation 'accept' must be a non-empty string")
+    element_id = element.get("id")
+    if kind == "markdown" and element_id is not None:
+        faults.append(f"{where} markdown elements take no id")
+    elif element_id is not None:
+        if not (isinstance(element_id, str) and re.fullmatch(r"[A-Za-z0-9_-]+", element_id)):
+            faults.append(f"{where} id {element_id!r} must be a string of letters, digits, '-' and '_'")
+        elif element_id in seen:
+            faults.append(f"{where} repeats id {element_id!r}")
+        else:
+            seen.add(element_id)
+    return faults
+
+
 def _fields(form):
     return {element.get("id"): element for element in form.get("body", []) if isinstance(element, dict)}
 
@@ -238,35 +327,22 @@ def form_faults(form, required):
     faults = []
     if not isinstance(form, dict):
         return ["the form is not a mapping"]
-    for key in ("name", "description", "body"):
-        if not form.get(key):
-            faults.append(f"top-level {key!r} is missing")
+    for key in sorted(set(form) - TOP_LEVEL_KEYS):
+        faults.append(f"top-level key {key!r} is not in GitHub's schema")
+    for key in ("name", "description"):
+        if not _text(form.get(key)):
+            faults.append(f"top-level {key!r} must be a non-empty string")
+    if "title" in form and not isinstance(form["title"], str):
+        faults.append("top-level 'title' must be a string")
+    labels = form.get("labels", [])
+    if not (isinstance(labels, str) or (isinstance(labels, list) and all(_text(label) for label in labels))):
+        faults.append("top-level 'labels' must be a string or a list of strings")
+    body = form.get("body")
+    if not isinstance(body, list) or not body:
+        return faults + ["top-level 'body' must be a non-empty list"]
     seen = set()
-    for index, element in enumerate(form.get("body") or []):
-        where = f"body[{index}]"
-        if not isinstance(element, dict):
-            faults.append(f"{where} is not a mapping")
-            continue
-        kind = element.get("type")
-        if kind not in ELEMENT_TYPES:
-            faults.append(f"{where} has unknown type {kind!r}")
-        attributes = element.get("attributes")
-        if not isinstance(attributes, dict):
-            faults.append(f"{where} has no attributes")
-            continue
-        if kind == "markdown":
-            if not attributes.get("value"):
-                faults.append(f"{where} markdown has no value")
-            continue
-        if not attributes.get("label"):
-            faults.append(f"{where} has no label")
-        element_id = element.get("id")
-        if element_id is not None:
-            if not re.fullmatch(r"[A-Za-z0-9_-]+", str(element_id)):
-                faults.append(f"{where} id {element_id!r} uses characters GitHub refuses")
-            if element_id in seen:
-                faults.append(f"{where} repeats id {element_id!r}")
-            seen.add(element_id)
+    for index, element in enumerate(body):
+        faults.extend(_element_faults(f"body[{index}]", element, seen))
     fields = _fields(form)
     for field_id, kind in required.items():
         element = fields.get(field_id)
@@ -319,7 +395,17 @@ class YamlSubsetLoaderTest(unittest.TestCase):
         )
 
     def test_refuses_what_it_does_not_understand(self):
-        for text in ("a: {b: c}\n", "a: b: c\n", "a:\n\tb: c\n", "a: &anchor x\n", "a: 1\na: 2\n"):
+        for text in (
+            "a: {b: c}\n",
+            "a: b: c\n",
+            "a:\n\tb: c\n",
+            "a: &anchor x\n",
+            "a: 1\na: 2\n",
+            "a: [bug,,crash]\n",
+            "a: [bug, \"x, y\"]\n",
+            "a: |\n    first line\n  second line\n",
+            "a:\n  b: |\n      Thanks.\n\n    Next.\n",
+        ):
             with self.subTest(text=text), self.assertRaises(YamlSubsetError):
                 load_yaml(text)
 
@@ -379,6 +465,30 @@ class IssueFormsTest(unittest.TestCase):
         mutated = copy.deepcopy(self.bug)
         mutated["body"] = [e for e in mutated["body"] if e.get("id") != "steps"]
         self.assertIn("required field 'steps' is missing", form_faults(mutated, BUG_REQUIRED))
+
+    def test_schema_type_errors_are_caught(self):
+        def mutate(change):
+            mutated = copy.deepcopy(self.bug)
+            change(mutated, _fields(mutated))
+            return form_faults(mutated, BUG_REQUIRED)
+
+        cases = {
+            "label true": lambda f, by: by["version"]["attributes"].__setitem__("label", True),
+            "label missing": lambda f, by: by["version"]["attributes"].pop("label"),
+            "description number": lambda f, by: by["gpu"]["attributes"].__setitem__("description", 3),
+            "required string": lambda f, by: by["steps"]["validations"].__setitem__("required", "true"),
+            "unknown attribute": lambda f, by: by["actual"]["attributes"].__setitem__("options", ["a"]),
+            "render on input": lambda f, by: by["version"]["attributes"].__setitem__("render", "text"),
+            "unknown element key": lambda f, by: by["file"].__setitem__("required", True),
+            "unknown type": lambda f, by: by["file"].__setitem__("type", "file"),
+            "markdown id": lambda f, by: f["body"][0].__setitem__("id", "intro"),
+            "duplicate id": lambda f, by: by["gpu"].__setitem__("id", "version"),
+            "unknown top-level key": lambda f, by: f.__setitem__("template", "x"),
+            "name not a string": lambda f, by: f.__setitem__("name", ["Bug"]),
+        }
+        for name, change in cases.items():
+            with self.subTest(case=name):
+                self.assertNotEqual(mutate(change), [])
 
     def test_config_disables_blank_issues_and_leaves_security_to_github(self):
         config = read_yaml(TEMPLATES / "config.yml")
