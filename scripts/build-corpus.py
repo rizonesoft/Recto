@@ -2768,6 +2768,14 @@ def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
     v_val = whole(enc.get(b"/V"), "/V")
     r_val = whole(enc.get(b"/R"), "/R")
     p_val = whole(enc.get(b"/P"), "/P", signed=True)
+    # /P is a 32-bit two's-complement field whose reserved bits 7, 8 and 13 to 32 must be 1 and bits 1 and 2 must be 0
+    # (ISO 32000-1 Table 22), and every encrypted fixture is documented (tests/corpus/README.md) as /P -1028. The value
+    # is written here as a literal, not read from the generator's constant, so a changed constant is caught.
+    bits = p_val & 0xFFFFFFFF
+    if not -(2**31) <= p_val < 2**31 or bits & 0x3 or bits & 0xC0 != 0xC0 or bits & 0xFFFFF000 != 0xFFFFF000:
+        raise ValueError(f"{rel_path}: /P {p_val} breaks the reserved permission bits")
+    if p_val != -1028:
+        raise ValueError(f"{rel_path}: /P {p_val} is not the documented -1028")
     o_bytes = hex_string(enc.get(b"/O"), "/O")
     u_bytes = hex_string(enc.get(b"/U"), "/U")
     # Each revision the corpus writes has exactly one form, and every entry that feeds key derivation or

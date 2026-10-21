@@ -620,6 +620,14 @@ class BuildCorpusTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, "not one the corpus content uses"):
                 validate(name, mutated)
 
+    def test_encrypted_permissions_are_the_documented_mask(self) -> None:
+        for mask, says in ((0, "reserved permission bits"), (-1092, "reserved permission bits"),
+                           (-4, "not the documented -1028")):
+            with self.subTest(mask=mask), mock.patch.object(self.mod, "CORPUS_PERMISSIONS_MASK", mask):
+                data = self.mod.build_encrypted_rc4_128()
+            with self.subTest(mask=mask), self.assertRaisesRegex(ValueError, says):
+                self.mod.validate_encrypted_pdf_structure("render/encrypted-rc4-128.pdf", data)
+
     def test_inflation_stops_just_past_its_limit(self) -> None:
         bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))
         total, kept = self.mod.inflate_bounded(bomb, 1024, keep=False)

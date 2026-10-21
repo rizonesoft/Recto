@@ -651,3 +651,46 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `Ran 45 tests`, `OK` (`test_encrypted_and_broken_content_must_be_executable_too` fails against `1c526d7` for all three fixtures); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P1): every decodable content stream this section's fixtures carry now goes through the same instruction validator as the seeds (`validate_page_content`, with the page's own `/Resources`): the decrypted page content of the encrypted fixtures, and the content of the recoverable and nested-array fixtures. The operator table's description now names the fixtures it governs. A stray `EMC` regenerated into any of the three refuses. (The deflate bomb's content is deliberately never inflated in full, and the truncated stream cannot be, so neither carries content to check.)
+
+## Round 15: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T22:48:57Z
+- Effort: medium
+- Lines: 28
+- Digest: a404f8e42cd608d8
+
+### adversarial: needs-attention
+
+1. **P1: Encryption validation accepts invalid permission flags.** `scripts/build-corpus.py:2772` reads `/P` but never validates its reserved bits or enforces the documented `/P -1028`. Authentication then derives its key using the unchecked value, so matching encryption does not detect the defect.
+
+   Reproduced entirely in memory: patch `CORPUS_PERMISSIONS_MASK` to `0`, call `build_encrypted_rc4_128()`, then validate the result. `validate_encrypted_pdf_structure()` accepts `/P 0`. Substitute those bytes into mocked generator output and file reads, with matching regenerated provenance: **`check_corpus()` returns `(True, [])`**. A generator regression can therefore pass the complete checkpoint with invalid permissions. This does not establish corruption in the committed fixtures.
+
+### consistency: approve
+
+No separate finding.
+
+### integration: advisory
+
+Finding 1 weakens the encrypted-fixture gate consumed by downstream engine and CLI tests. No downstream implementation defect established.
+
+### source-defect: needs-attention
+
+Finding **1 (P1)** violates the permission-field requirements: reserved bits 7, 8 and 13 through 32 must be set, while bits 1 and 2 must be clear. `/P 0` fails these requirements and contradicts `tests/corpus/README.md:19`. See [QPDF’s permission-field documentation](https://qpdf.readthedocs.io/en/stable/encryption.html#pdf-security-restrictions).
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: approve
+
+At `46c6686`, independently reran `python -B scripts/build-corpus.py --check`: exit **0**, **39 fixtures verified**. The focused `test_encrypted_and_broken_content_must_be_executable_too` test also passed. Neither detects finding 1. No files modified; working tree remains clean.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 15
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 46 tests`, `OK` (`test_encrypted_permissions_are_the_documented_mask` fails against `46c6686` for all three masks); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): `/P` must be a 32-bit value with the reserved bits ISO 32000-1 Table 22 fixes (bits 7, 8 and 13 to 32 set, bits 1 and 2 clear) and must equal `-1028`, the value `tests/corpus/README.md` documents. The expected value is a literal in the validator, not the generator's `CORPUS_PERMISSIONS_MASK`, so a regenerated fixture with a changed constant refuses (`0` and `-1092` on the reserved bits, `-4` on the documented value).
