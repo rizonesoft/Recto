@@ -454,6 +454,16 @@ class BuildCorpusTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, re.escape(says)):
                 self.mod.validate_encrypted_pdf_structure(name, data.replace(old, new, 1))
 
+    def test_the_objects_around_the_encryption_have_one_form(self) -> None:
+        name = "render/encrypted-rc4-128.pdf"
+        data = self.mod.expected_corpus_files()[name]
+        for old, new, says in ((b"/FlateDecode", b"/DCTDecode  ", "/Filter /FlateDecode"),
+                               (b"/Type /Catalog", b"/Type /INVALID", "object 1"),
+                               (b"/BaseFont /Helvetica", b"/BaseFont /Courier  ", "object 5")):
+            self.assertIn(old, data)
+            with self.subTest(old=old), self.assertRaisesRegex(ValueError, re.escape(says)):
+                self.mod.validate_encrypted_pdf_structure(name, data.replace(old, new, 1))
+
     def test_inflation_stops_just_past_its_limit(self) -> None:
         bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))
         total, kept = self.mod.inflate_bounded(bomb, 1024, keep=False)

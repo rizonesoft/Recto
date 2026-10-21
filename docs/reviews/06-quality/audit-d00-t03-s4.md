@@ -103,3 +103,48 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `OK` (the new subtests fail against `0f0e935`, each with a length-preserving mutation so the layout check cannot be what catches it); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P1): each revision the corpus writes now has exactly one form of `/Encrypt` dictionary: its exact key set, `/Length` equal to the key the decryption derives (128 for RC4 and AES-128, 256 for AES-256), `/EncryptMetadata true` where the revision has it (Algorithm 2 step f and the `/Perms` flag both assume it), and a `/CF` holding only `/StdCF` with exactly `/Type /CryptFilter`, the revision's `/CFM`, `/AuthEvent /DocOpen` and its `/Length` (`test_rc4_and_aes_256_declare_the_key_they_derive`, and the extended `test_encryption_is_read_from_what_the_trailer_names`).
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T21:30:59Z
+- Effort: medium
+- Lines: 30
+- Digest: 051938d30bcc2326
+
+### adversarial: needs-attention
+
+1. **P1: Encrypted-stream validation ignores the declared decoding filter.** `scripts/build-corpus.py:2815` always applies `zlib.decompress()` without checking the content stream’s `/Filter`. Reproduce in memory using `render/encrypted-rc4-128.pdf`: replace `b"/FlateDecode"` with `b"/DCTDecode  "`. The length-preserving mutation passes `validate_encrypted_pdf_structure()`, although the decrypted payload is Flate data, not JPEG data.
+
+2. **P1: Encrypted PDFs can pass with an invalid document catalog.** `scripts/build-corpus.py:2798` follows `/Root` to `/Pages` without verifying the root dictionary’s `/Type`. Replace `b"/Type /Catalog"` with `b"/Type /INVALID"` in the same fixture. The length-preserving mutation passes validation.
+
+For **each** reproduction, I also mocked `expected_corpus_files()` and `Path.read_bytes()` with the mutated fixture and matching regenerated provenance. The complete `check_corpus()` returned **`(True, [])`**. Standalone corruption is caught by byte comparison, but these generator regressions pass the gate.
+
+### consistency: approve
+
+No separate finding.
+
+### integration: advisory
+
+Findings 1 and 2 weaken the fixture gate relied on by downstream encrypted-document tests. These reproductions establish validator defects, not defects in the committed fixtures or C++ engine.
+
+### source-defect: needs-attention
+
+Finding 1 contradicts the stream-decoding contract: the stream dictionary specifies which filters must process its data. Hardcoding Flate decoding verifies a different interpretation from the one declared by the PDF. See [ISO 32000 clause 7.4.1 corrections](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html).
+
+### design: advisory
+
+Not applicable; this section owns no user surface.
+
+### record: approve
+
+At `4a8ce84`, the checkpoint independently exited 0 with **39 fixtures verified**. The section-specific fixture test and three encryption/inflation regression tests passed: **4 tests, OK**. These checks do not detect findings 1 and 2. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 3
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 35 tests`, `OK` (`test_the_objects_around_the_encryption_have_one_form` fails against `4a8ce84` for each length-preserving mutation); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Findings 1 and 2 (P1): instead of checking one more entry, the objects around the encryption now have one exact form each, as the generator writes them: the trailer's key set with `/Root 1 0 R` and `/Info 6 0 R`, the catalog, page tree, page and font dictionaries compared whole, objects 1 to 7 with object 4 the only stream, its dictionary exactly `/Filter /FlateDecode` with its own `/Length`, and `/Info` exactly `/Title`, `/Author`, `/CreationDate` as hex strings. `/DCTDecode` in place of `/FlateDecode`, `/Type /INVALID` in the catalog and a changed font each refuse.

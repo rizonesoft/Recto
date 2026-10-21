@@ -2794,14 +2794,33 @@ def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
     else:
         raise ValueError(f"{rel_path}: unsupported (/V {v_val}, /R {r_val})")
 
-    # The first page's content stream, reached from /Root through /Pages and /Kids.
-    pages = entries(ref(entries(ref(trailer.get(b"/Root", b""), "trailer /Root")).get(b"/Pages", b""), "/Pages"))
-    kids = re.fullmatch(rb"\[\s*(\d+ 0 R)(?:\s+\d+ 0 R)*\s*\]", pages.get(b"/Kids", b""))
-    if kids is None:
-        raise ValueError(f"{rel_path}: /Pages /Kids is not an array of references")
-    content_num = ref(entries(ref(kids.group(1), "/Kids")).get(b"/Contents", b""), "page /Contents")
-    if content_num != 4 or objects[4][2] is None:
-        raise ValueError(f"{rel_path}: the page content stream is object {content_num}, not stream object 4")
+    # The objects around the encryption have one exact form each, as the generator writes them: a catalog, one page
+    # tree with one page, its font, its Flate content stream (object 4) and the encrypted /Info strings. Anything else,
+    # a changed /Type, a different /Filter or an extra entry, is not this corpus's file.
+    trailer_keys = {b"/Size", b"/Root", b"/Info", b"/Encrypt", b"/ID"}
+    if set(trailer) != trailer_keys or (trailer[b"/Root"], trailer[b"/Info"]) != (b"1 0 R", b"6 0 R"):
+        raise ValueError(f"{rel_path}: the trailer must hold exactly /Size, /Root 1 0 R, /Info 6 0 R, /Encrypt, /ID")
+    forms = {
+        1: {b"/Type": b"/Catalog", b"/Pages": b"2 0 R"},
+        2: {b"/Type": b"/Pages", b"/Kids": b"[3 0 R]", b"/Count": b"1"},
+        3: {b"/Type": b"/Page", b"/Parent": b"2 0 R", b"/MediaBox": b"[0 0 595 842]",
+            b"/Resources": b"<< /Font << /F1 5 0 R >> >>", b"/Contents": b"4 0 R"},
+        5: {b"/Type": b"/Font", b"/Subtype": b"/Type1", b"/BaseFont": b"/Helvetica", b"/Encoding": b"/WinAnsiEncoding"},
+    }
+    for num, form in forms.items():
+        if objects.get(num, (0, 0, None))[2] is not None or entries(num) != form:
+            raise ValueError(f"{rel_path}: object {num} is not the generator's exact dictionary")
+    if sorted(objects) != [1, 2, 3, 4, 5, 6, 7] or objects[4][2] is None or objects[7][2] is not None:
+        raise ValueError(f"{rel_path}: expected objects 1 to 7 with object 4 the only stream")
+    stream_start = objects[4][0]
+    stream_dict = dict_entries(data[stream_start + 2 : data.index(b">>\nstream\n", stream_start)])
+    if stream_dict != {b"/Filter": b"/FlateDecode", b"/Length": str(objects[4][3] - objects[4][2]).encode()}:
+        raise ValueError(f"{rel_path}: the content stream must be exactly /Filter /FlateDecode with its /Length")
+    info = entries(6)
+    if set(info) != {b"/Title", b"/Author", b"/CreationDate"}:
+        raise ValueError(f"{rel_path}: /Info must hold exactly /Title, /Author and /CreationDate")
+    for key in info:
+        hex_string(info[key], f"/Info {key.decode()}")
     enc_payload = data[objects[4][2] : objects[4][3]]
     if r_val == 3:
         okey = pdf_r34_object_key(file_key, 4, 0, is_aes=False)
