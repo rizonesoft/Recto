@@ -96,3 +96,55 @@ OVERALL: needs-attention
 ## Fixes after round 2
 
 - Finding 1 (P1): after building the case, the probe looks the method up on the instance as unittest's `loadTestsFromName` does; a plain function there (an attribute set in `__init__`, a staticmethod) means the loader would take its callable path, so the id is refused (`ShadowedByInstance` fixture). Mutation: the instance check removed -> `HostileFixtureTest` fails. Tests: `Ran 24 tests ... OK`.
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T13:16:39Z
+- Effort: medium
+- Lines: 39
+- Digest: 69d0d000c9ec22a0
+
+## adversarial: needs-attention
+
+1. **P1: Instance shadowing still bypasses method verification.** `scripts/release-notes.py:101` rejects only `FunctionType`. A built-in bound method passes, although it replaces the repository method whose provenance was checked:
+
+   ```python
+   import unittest
+
+   class Case(unittest.TestCase):
+       def __init__(self, methodName="runTest"):
+           super().__init__(methodName)
+           self.test_case = [].clear
+
+       def test_case(self):
+           raise AssertionError("Regression body must run")
+   ```
+
+   Name `module.Case.test_case` in `Regression-Test:`. Reproduced with the candidate’s actual probe and an in-memory module: the probe prints its success nonce, and unittest reports success without executing the regression body. Assigning `None` instead also passes verification, then errors during execution.
+
+   Validate the instance’s resolved method and its provenance, not merely the class dictionary function and the absence of `FunctionType`.
+
+## consistency: approve
+
+## integration: approve
+
+## source-defect: needs-attention
+
+Finding 1 (`scripts/release-notes.py:101`, **P1**): unittest’s loader accepts these instances. Mirroring its branch condition alone does not establish that the callable executed is the repository method already checked.
+
+## design: advisory
+
+Not applicable.
+
+## record: needs-attention
+
+Finding 1 contradicts the checked test-verification requirement at `todo/07-release/TODO-03-listening-to-users.md:153`: verification can accept a replacement callable outside the fix commit’s code.
+
+Four read-only parser/documentation tests passed. The full 24-test result was not independently reproduced because that suite creates files and worktrees. No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 3
+
+- Finding 1 (P1): the instance lookup must return the verified method itself, bound to this case (`types.MethodType`, `__self__ is case`, `__func__ is` the class-dictionary function already checked for provenance); a built-in bound method, `None` or any other replacement set on the instance is refused (`ShadowedByBuiltin` fixture). Mutation: back to the plain-function check -> `HostileFixtureTest` fails. Tests: `Ran 24 tests ... OK`.

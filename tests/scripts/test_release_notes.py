@@ -263,6 +263,9 @@ class HostileFixtureTest(unittest.TestCase):
         py += ("\n\nimport types\n\n\nclass FakeNew(unittest.TestCase):\n"
                "    def __new__(cls, method):\n        return types.SimpleNamespace(_testMethodName=method)\n\n"
                "    def test_case(self):\n        pass\n")
+        py += ("\n\nclass ShadowedByBuiltin(unittest.TestCase):\n    def __init__(self, methodName='runTest'):\n"
+               "        super().__init__(methodName)\n        self.test_case = [].clear\n\n"
+               "    def test_case(self):\n        raise AssertionError('the regression body must run')\n")
         py += ("\n\nclass ShadowedByInstance(unittest.TestCase):\n    def __init__(self, methodName='runTest'):\n"
                "        super().__init__(methodName)\n        self.test_case = lambda: None\n\n"
                "    def test_case(self):\n        pass\n")
@@ -302,6 +305,7 @@ class HostileFixtureTest(unittest.TestCase):
             "Classmethod": "tests.scripts.test_sample.WithClassmethod.test_case",
             # An instance attribute that shadows the method sends unittest down its callable path too.
             "ShadowedByInstance": "tests.scripts.test_sample.ShadowedByInstance.test_case",
+            "ShadowedByBuiltin": "tests.scripts.test_sample.ShadowedByBuiltin.test_case",
             "Stdlib": "unittest.case.TestCase.test_missing",
         }
         cls.real = {

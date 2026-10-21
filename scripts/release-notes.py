@@ -96,9 +96,11 @@ except Exception:
 if not (isinstance(case, cls) and isinstance(case, unittest.TestCase) and callable(case)
         and case._testMethodName == method):
     sys.exit(3)
-# unittest's loadTestsFromName then looks the name up on the instance: if that is a plain function (an attribute set
-# in __init__, a staticmethod), it takes its callable path instead of returning the case, so the id would not load.
-if isinstance(getattr(case, method), types.FunctionType):
+# unittest's loadTestsFromName then looks the name up on the instance, and the case runs whatever that returns. It
+# must be the verified method itself, bound to this case: anything else (a function, a built-in method or None set
+# in __init__) either sends the loader down its callable path or runs code other than the fix commit's test.
+bound = getattr(case, method, None)
+if not (isinstance(bound, types.MethodType) and bound.__self__ is case and bound.__func__ is vars(owner)[method]):
     sys.exit(3)
 print(nonce)
 """
