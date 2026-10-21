@@ -14,7 +14,7 @@ This skill does not ship a section and does not write a stamp. It audits, then c
 One continuous loop. You do not stop between sections or phases:
 
 1. Audit (below), start the run guard (below), then start `process-phase` on the first phase with a ready row, in this same turn.
-2. After that phase's closeout or park, re-run `python scripts/todo-graph.py query ready` and start the next ready phase.
+2. After that phase's closeout or park, re-run `python scripts/todo-graph.py query ready` and start the next phase with a ready row this session can run: `query ready` does not know which hosts are reachable, so a row whose Needs name an unreachable host (`arm64-host`, `display-session`, `office`, `attended`) is a leftover here even when listed.
 3. Stop only when no phase has a ready row: every remaining `[ ]` row is blocked or waiting in this context, or the plan is done. That, and an operator stop, are the only halts.
 
 A report to the operator is not a stop. An audit-only reply while a ready phase exists is a process defect: starting the phase is the next action, in the same turn. The self-correcting parts stay in the loop: drifted plan claims are corrected before building (inside `process-todo-section`), every gap and review leftover files through `add-todo`, and red gates are fixed, never bypassed (no `--no-verify`, no amend of a reviewed candidate, no force-push).
@@ -67,7 +67,7 @@ A run without a guard dies silently when the session stalls, so starting the fir
 - **Stop hook** (`python3 ... scripts/campaign_guard.py stop-hook`, wired in `.claude/settings.json`): while the run is open it blocks this session's end of turn and names the next ready row. It lets the turn end when the guard file is gone, the run file has a `## Closeout run=<run id>` heading or a column-0 `PARKED <UTC> run=<run id>` line, or `query ready` has nothing runnable. It blocks only the session named in the guard, never a subagent or a second session, and it fails open on a bad payload or an error, recording the error for the heartbeat. Its stall breaker lets the turn end after 3 blocks with no change to HEAD, the working-tree diff, the untracked files, or the run file without its `- bookkeeping:` lines, and counts a trip in `build/claude-campaign-state.json`. A heartbeat or retry note is written as a `- bookkeeping: ...` line, so it never passes for progress.
 - **Heartbeat** (`CronCreate`): it fires only when this session is idle and runs inside it with full context, so it is a real resume. It covers what the hook cannot hold: a tripped breaker, an API error, a turn that crashed out.
 
-Commands here are written `python`; on Linux and WSL run them with `python3`. The heartbeat prompt says `<python>`: fill in the interpreter of the machine the session runs on.
+Commands here are written `python`; on Linux and WSL run them with `python3`. The session id is written `$CLAUDE_CODE_SESSION_ID`, the bash spelling; in PowerShell it is `$env:CLAUDE_CODE_SESSION_ID` (a bare `$CLAUDE_CODE_SESSION_ID` there is an empty variable and the guard refuses the arguments). The heartbeat prompt says `<python>`: fill in the interpreter of the machine the session runs on.
 
 Start it in this order:
 
@@ -100,7 +100,7 @@ Claude run-guard heartbeat for Phase <N> (run file <run file>, generation <gener
 
 `process-phase` ends in exactly one of three ways: the phase table is all `[x]` with a written closeout; every leftover is blocked here and it parked (a `PARKED` line and park record in its run file); or the operator paused it. A parked phase is not complete and not a stall. Do not call it either.
 
-Re-run `python scripts/todo-graph.py query ready`. If another phase has a ready row, re-point the guard to it before anything else (`CronDelete` the old job, `CronCreate` a new one for the new phase and run file, and `acquire` with the new phase, run file, job and a fresh generation), then start `process-phase` on it in the same turn, same session, same rules. If none does, end the run through `end` (plan-done, or park with the leftovers) and delete its job. If none does, report which: plan done, or the leftovers and their blockers, with the run files named.
+Re-run `python scripts/todo-graph.py query ready`. If another phase has a ready row this session can run (Needs within reach, as in the loop above), re-point the guard to it before anything else (`CronDelete` the old job, `CronCreate` a new one for the new phase and run file, and `acquire` with the new phase, run file, job and a fresh generation), then start `process-phase` on it in the same turn, same session, same rules. If none does, end the run through `end` (plan-done, or park with the leftovers) and delete its job. If none does, report which: plan done, or the leftovers and their blockers, with the run files named.
 
 ## Deny
 

@@ -220,3 +220,52 @@ OVERALL: needs-attention
 
 - Finding 1 (P2): `.github/workflows/plan.yml` runs on changes under `.codex/skills/**` and `.agents/skills/**` as well as `.claude/skills/**`, in both the push and pull-request filters, so the template-equality test runs for every copy it checks.
 - Finding 2 (P2): `process-todo-file` (all three kits) sends a partly shipped ticked item in a stamped section through `review-todo-section`'s audit stance, which files the repair and reopens the section with `unstamp`; only work beyond the item's own `Done when:` becomes a new section. `muse skills validate` -> `valid=True` in all three kits.
+
+## Round 6: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T16:42:52Z
+- Effort: medium
+- Lines: 33
+- Digest: 7333bb50ae094d2e
+
+## adversarial: needs-attention
+
+1. **P2: Host-blocked work does not follow the prescribed parking path.** `.claude/skills/process-phase/SKILL.md:39` treats an unreachable host as an exit-4 leftover; line 52 skips only nonzero resolutions. However, `scripts/lib/todo_graph.py:600` checks person Needs, not host availability. Reproduced in memory by replacing a ready row’s Needs with `arm64-host`: `disposition()` still returned `0`. On a machine without that host, section execution stops at its environment check, but the phase instructions still direct review and retry instead of reliably classifying the row as parked.
+
+## consistency: approve
+
+## integration: needs-attention
+
+Finding **1 (P2)** affects `.claude/skills/process-plan/SKILL.md:17` and `:94`: both use `query ready` to resume work after parking, although that query retains environmentally unavailable rows. The runner needs to carry session-specific blockers through phase selection and heartbeat resumption.
+
+## source-defect: needs-attention
+
+2. **P2: Run-guard commands lose the session identifier in PowerShell.** `.claude/skills/process-plan/SKILL.md:74`, `:76`, `:90`, and `.claude/skills/process-phase/SKILL.md:14` use `$CLAUDE_CODE_SESSION_ID` without assigning that PowerShell variable. Environment variables require `$env:CLAUDE_CODE_SESSION_ID`. [Microsoft documents this syntax](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_environment_variables#use-the-variable-syntax).
+
+   Reproduction in a fresh PowerShell process:
+
+   ```powershell
+   $env:CLAUDE_CODE_SESSION_ID = 'audit-fixture'
+   python -B scripts/campaign_guard.py whoami --session $CLAUDE_CODE_SESSION_ID --generation audit-fixture
+   ```
+
+   Actual result: `campaign_guard: bad argument 'audit-fixture'`, exit 1. This affects acquisition, ownership checks and shutdown. The corrected syntax reached the guard implementation, but further verification was blocked by the read-only sandbox denying its lock-file creation.
+
+## design: advisory
+
+Not applicable: `Surface: no`.
+
+## record: approve
+
+Independently reproduced the checkpoint at `e7cf65d`: all 12 skills valid with zero diagnostics; `valid: 677 sections`; `plan current`. Both read-only `Repository` tests passed. These checks do not detect the findings above. No files were modified.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 6
+
+`muse skills validate` -> `valid=True` for `process-plan` and `process-phase` in all three kits.
+
+- Finding 1 (P2): `process-phase` and `process-plan` (all three kits) now say that `resolve` and `query ready` do not know which hosts are reachable, so a row whose Needs name an unreachable host is a leftover even at exit 0: phase step 3 skips it, and the plan loop and the after-park step pick only phases with a ready row this session can run. Teaching the graph which hosts a session reaches would need a host registry; the industry-standard default here is the runner's own environment check (step 0 of `process-todo-section`), now named in each place that selects work.
+- Finding 2 (P2): `process-plan` (Claude kit, the only one with the run guard) and `process-phase` state that the session id is `$env:CLAUDE_CODE_SESSION_ID` in PowerShell; the bare bash spelling is an empty PowerShell variable and the guard refuses its arguments.
