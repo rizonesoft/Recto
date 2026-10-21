@@ -140,3 +140,44 @@ OVERALL: needs-attention
 ## Fixes after round 3
 
 - Finding 1 (P3): the plain-path assertions now also accept a `TempDir` created under a `TEMP` given in the `\\?\` form, whose spelling it keeps. With `TMP` and `TEMP` set to `\\?\<scratch>\shorttmp\`, the old test fails (`[  FAILED  ] Support.TempDirLongPathAndReadOnly`) and the new one passes (`[  PASSED  ] 10 tests.` for `Support.*`); `.\build.cmd -SkipTests` -> 4 x `0 Warning(s)`; Release x64 with default `TEMP` -> `[  PASSED  ] 98 tests.`.
+
+## Round 4: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T18:18:23Z
+- Effort: medium
+- Lines: 28
+- Digest: 6ccdebfe4ee4328a
+
+## adversarial: approve
+
+No additional substantiated findings.
+
+## consistency: approve
+
+No findings.
+
+## integration: approve
+
+No additional substantiated findings.
+
+## source-defect: approve
+
+No additional substantiated findings.
+
+## design: advisory
+
+Not applicable: this section owns no user surface.
+
+## record: advisory
+
+At `5578e86`, the exact checkpoint exited **1**: all three tests threw `CreateDirectoryW failed in TempDir` under the read-only sandbox. This prevents independent confirmation of the recorded pass; it does not establish a code regression.
+
+The claimed absence of source changes between `59902fc` and `2ee5ad7` checks out. Fresh warning-clean builds and the reported old-test/new-test runs with extended-length `TMP` and `TEMP` were not independently verified. No files were modified.
+
+HIGHEST: none
+OVERALL: approve
+
+## Outcome
+
+- The stamp of `D00 T03 §1` is confirmed with corrections: `Support.CorpusPathResolution`, `Support.TempDirCleanup` and `Support.TempDirLongPathAndReadOnly` pass, and all four configurations build with 0 warnings. The audit anchored relative corpus overrides at the repository root (refusing a cross-drive drive-relative one), made `TempDir::file_path()` return extended-length paths past the Win32 limit, and added `build.ps1 -TestOutputDir`. No downstream stamp is suspect.
