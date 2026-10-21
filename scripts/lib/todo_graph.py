@@ -8,6 +8,7 @@ deferrals. Rules: todo/README.md.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -33,6 +34,13 @@ STATUSES = {"draft", "active", "blocked", "done", "superseded"}
 # its findings are filed as leftovers (review-todo-section).
 VERDICTS = {"clean", "fixed", "stopped-at-22", "stopped-at-13", "stopped-at-8", "stopped-at-3", "stopped-low-severity"}
 REVIEW_ROUND_CAP = 22
+# Caps a receipt that records round_cap may name: the current one and the earlier ones this repository used.
+EARLIER_CAPS = {8, 13}
+# Receipts older than the rounds_spent field (stamped before 2026-10-21 under the earlier process). Each is frozen by the
+# digest of its content in LEGACY_RECEIPTS, so a new receipt cannot pass by dropping the field. Their round counts vary
+# (up to 16), so unlike their verdicts they are not bounded here; the digest is what binds them.
+LEGACY_RECEIPTS = "docs/reviews/legacy-receipts.json"
+LEGACY_VERDICTS = {"clean", "fixed", "stopped-at-3"}
 SEVERITY_CUTOFF_ROUND = 8
 # A round scripts/review-dispatch.py recorded in a findings file, reviewed or not ("## Round 2: none").
 ROUND_RECORD = re.compile(r"^## Round ([0-9]+): ", re.M)
@@ -199,7 +207,29 @@ def review_dispatch():
     return _REVIEW_DISPATCH[0]
 
 
-def receipt_data_ok(data, ref, stamp_sha, root=None):
+def receipt_digest(data):
+    """The SHA-256 of a receipt's content, independent of key order, spacing and line endings."""
+    return hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def legacy_receipts(root):
+    """ref -> digest of every receipt written before rounds_spent existed; empty when the file is absent."""
+    path = Path(root) / LEGACY_RECEIPTS
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(read_text(path))
+    except ValueError:
+        raise Refused(f"{LEGACY_RECEIPTS} is not JSON") from None
+    receipts = data.get("receipts") if isinstance(data, dict) and data.get("schema_version") == 1 else None
+    require(isinstance(receipts, dict) and all(isinstance(k, str) and isinstance(v, str)
+                                               and re.fullmatch(r"[0-9a-f]{64}", v) for k, v in receipts.items()),
+            f"{LEGACY_RECEIPTS} needs schema_version 1 and receipts mapping each ref to a SHA-256 digest")
+    return receipts
+
+
+def receipt_data_ok(data, ref, stamp_sha, root=None, building=False):
+    """building: stamp's first pass over its arguments, before it adds rounds_spent and round_cap."""
     require(isinstance(data, dict), f"receipt is not an object: {ref}")
     require(data.get("ref") == ref and data.get("implementation_sha") == stamp_sha,
             f"receipt does not match its stamp: {ref}")
@@ -232,9 +262,18 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
                     f"missing or empty review report ({raw_report}): {ref}")
     # Receipts written since 2026-10-21 record the rounds spent against the cap, and what was done when a review
     # stopped at the cap; earlier receipts carry neither field.
+    if "rounds_spent" not in data and not building:
+        # Dropping the field must not dodge the checks below: an old receipt holds only what the old process wrote,
+        # and is one of the receipts LEGACY_RECEIPTS froze.
+        require(all(r["verdict"] in LEGACY_VERDICTS for r in rounds)
+                and "round_cap" not in data and "cap_outcome" not in data,
+                f"a receipt without rounds_spent may only hold verdicts {', '.join(sorted(LEGACY_VERDICTS))}: {ref}")
+        require(root is not None and legacy_receipts(root).get(ref) == receipt_digest(data),
+                f"a receipt without rounds_spent must be one of the old receipts {LEGACY_RECEIPTS} freezes: {ref}")
     if "rounds_spent" in data:
         spent, cap = data.get("rounds_spent"), data.get("round_cap")
-        require(type(spent) is int and spent >= max(r["round"] for r in rounds) and type(cap) is int and cap >= 1,
+        require(type(spent) is int and spent >= max(r["round"] for r in rounds)
+                and type(cap) is int and cap in EARLIER_CAPS | {REVIEW_ROUND_CAP},
                 f"receipt rounds_spent or round_cap is invalid: {ref}")
         # A cap stop is the current cap, reached: stopped-at-3, -8 and -13 belong to receipts older than this field.
         require(all(r["verdict"] == f"stopped-at-{cap}" for r in rounds if r["verdict"].startswith("stopped-at-")),
@@ -249,6 +288,11 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
             for report in dict.fromkeys(r["report"] for r in rounds):
                 recorded = dispatch.read_rounds((Path(root) / report).read_bytes().decode("utf-8"))
                 require(recorded is not None, f"{report} is not a findings file the dispatcher can read: {ref}")
+                # The dispatcher numbers rounds 1, 2, 3 in order; a repeated or reordered number would let one round
+                # stand in for others when they are keyed by number below.
+                numbers = [e["number"] for e in recorded]
+                require(numbers == list(range(1, len(numbers) + 1)),
+                        f"{report} must number its rounds 1 to {len(numbers)} in order, once each: {ref}")
                 # A returned review: a reviewer of another model family than the writer ran and replied with the
                 # prompt's OVERALL approve or needs-attention line. Outages, self-reviews, empty and blocked replies are
                 # recorded rounds but not reviews: they earn no stop and end no loop.
@@ -258,6 +302,9 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
                             and ([x.strip() for x in e["review"].splitlines() if x.strip()] or [""])[-1]
                             in ("OVERALL: approve", "OVERALL: needs-attention")}
                 require(reviewed, f"{report} holds no returned review: {ref}")
+                # The cap bounds every loop, however it ends: a clean round after review 22 is past the cap.
+                require(len(reviewed) <= cap,
+                        f"{report} holds {len(reviewed)} returned reviews, over the {cap}-round cap: {ref}")
                 claimed = sorted((r for r in rounds if r["report"] == report), key=lambda r: r["round"])
                 for r in claimed:
                     e = reviewed.get(r["round"])
@@ -285,11 +332,20 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
                             f"round {r['round']} follows {returned} returned reviews; a cap stop is the round that "
                             f"returns review {cap}: {ref}")
                 # Each findings file is one review loop, and the loop's end is its last reviewed round: the receipt
-                # must name it, and it must be clean or a stop, so no later failing review can be left out.
+                # must name it, and it must be clean or a stop, so no later failing review can be left out. Nothing may
+                # be recorded after it either: a round run later (even one that returned no review) was run on work
+                # the earlier verdict does not cover, so an outage at the end means no stamp until a review returns.
+                require(max(reviewed) == len(recorded),
+                        f"the review loop in {report} ends with round {len(recorded)}, which returned no review; "
+                        f"run another round before stamping: {ref}")
                 require(claimed[-1]["round"] == max(reviewed)
                         and (claimed[-1]["verdict"] == "clean" or claimed[-1]["verdict"].startswith("stopped-")),
                         f"the review loop in {report} must end at its last reviewed round ({max(reviewed)}), clean or "
                         f"stopped, and the receipt must name that round: {ref}")
+            # The count the receipt reports is the count the findings files hold, so query rounds sums real rounds.
+            require(spent == rounds_recorded(root, rounds),
+                    f"receipt rounds_spent {spent} is not the {rounds_recorded(root, rounds)} rounds its findings files "
+                    f"record: {ref}")
         stopped = any(r["verdict"].startswith("stopped-") for r in rounds)
         outcome = data.get("cap_outcome")
         require((isinstance(outcome, str) and bool(outcome.strip())) == stopped,
@@ -792,7 +848,8 @@ def stamp(root, ref, sha, reviews, checks, date, sync_plan=False, cap_outcome=No
             "severity), and only then")
     data = {"ref": ref, "title": row.title, "implementation_sha": sha, "date": date,
             "reviews": reviews, "checks": checks}
-    receipt_data_ok(data, ref, sha, root=root)  # every argument is checked before anything is read or written
+    # Every argument is checked before anything is read or written.
+    receipt_data_ok(data, ref, sha, root=root, building=True)
     data["rounds_spent"] = rounds_recorded(root, reviews)
     data["round_cap"] = REVIEW_ROUND_CAP
     if stopped:

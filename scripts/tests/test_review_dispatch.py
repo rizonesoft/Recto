@@ -10,6 +10,7 @@ import sys
 import tempfile
 import textwrap
 import time
+import tomllib
 import unittest
 import unittest.mock
 
@@ -699,6 +700,15 @@ class RepositoryPin(unittest.TestCase):
         spec.loader.exec_module(module)
         pin = module.load_pin(REPO_PIN)
         self.assertTrue(pin["routes"], "the repository pin routes no writer")
+
+    def test_every_route_in_the_repository_pin_names_one_reviewer_and_no_fallback(self):
+        # Owner decision 2026-10-21: one reviewer per writer, no fallback. The dispatcher still accepts a fallback
+        # (the fixture above exercises it), so this repository holds its own pin to one.
+        with open(REPO_PIN, "rb") as handle:
+            routes = tomllib.load(handle)["routes"]
+        self.assertEqual(set(routes), {"claude", "codex", "gemini"})
+        for writer, chain in routes.items():
+            self.assertEqual(len(chain), 1, f"route {writer!r} names a fallback: {chain}")
 
 
 if __name__ == "__main__":
