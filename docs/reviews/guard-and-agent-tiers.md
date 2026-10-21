@@ -419,3 +419,48 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_campaign_guard` -> `OK` (the extended stall test fails against `1cf1f0b`).
 
 - Finding 1 (P2): a fingerprint cut short by a stall carries fresh random bytes, so it never equals another fingerprint and the stall breaker never counts a run whose changes it could not observe.
+
+## Round 10: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T21:21:38Z
+- Effort: medium
+- Lines: 30
+- Digest: 971ca458daf51574
+
+## adversarial: needs-attention
+
+1. **P2: A persistently slow path disables the stall breaker indefinitely.** `scripts/campaign_guard.py:736` adds random bytes when fingerprinting times out. The consumer at `scripts/campaign_guard.py:787` treats each different fingerprint as real progress, resetting both `blocks` and `trips`. Every subsequent Stop event blocks again, preventing the session from becoming idle for heartbeat recovery.
+
+   Reproduce with an open guard and ready work, unchanged Git output and run text, and `_untracked_line` taking longer than `FILE_SECONDS` on every call. An in-memory reproduction calling `stop_decision` nine times returned nine blocks, with final `blocks=1`, `trips=0`.
+
+   Return an explicit incomplete-observation error and use the hook’s recorded fail-open path. Unknown progress must not become fabricated progress.
+
+## consistency: approve
+
+No additional findings.
+
+## integration: needs-attention
+
+Finding 1 (**P2**) breaks the fingerprint-to-breaker contract: observation failure resets counters reserved for actual progress.
+
+## source-defect: needs-attention
+
+Finding 1 (**P2**) conflicts with `.claude/skills/process-plan/SKILL.md:67`, which requires errors to fail open and be recorded for the heartbeat. The timeout instead becomes a successful observation that continually blocks stopping.
+
+## design: advisory
+
+No user-facing surface changed.
+
+## record: advisory
+
+Ran `python -B -m unittest tests.scripts.test_verify_agent_tiers`: six tests passed. Reproduced finding 1 using in-memory mocks. Filesystem-writing guard tests and live network-stall scenarios were not run. No files were modified; Git status remained clean.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 10
+
+`python -m unittest tests.scripts.test_campaign_guard` -> `OK` (the extended stall test fails against `0f0e935`).
+
+- Finding 1 (P2): round 9's random bytes are gone. A fingerprint cut short by a stall raises `GuardError`; the Stop hook fails open and records it for the heartbeat (`hook_error` in the state file), and the breaker's `blocks`, `trips` and stored fingerprint stay where they were: unknown progress is neither progress nor a stall (the test asserts all three, and the recorded error).

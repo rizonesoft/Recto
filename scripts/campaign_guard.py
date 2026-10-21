@@ -728,12 +728,12 @@ def fingerprint(root: str, run_rel: str, run_text: str, deadline: float | None =
         except queue.Empty:
             stalled = True
             digest.update(f"{path} stalled\n".encode("utf-8"))
-    if not stalled:
-        jobs.put(None)
-    else:
-        # An incomplete observation is not evidence of no progress: a fresh random part makes this fingerprint differ
-        # from every other, so the stall breaker never counts a run whose changes it could not see.
-        digest.update(os.urandom(16))
+    if stalled:
+        # An incomplete observation is neither progress nor its absence: it is an error, which the Stop hook handles
+        # the way it handles every error (it fails open and records the error for the heartbeat), so the breaker's
+        # counters are never moved by something nobody could see.
+        raise GuardError("the fingerprint could not read every untracked path in time (a path stalled)")
+    jobs.put(None)
     digest.update(re.sub(r"(?m)^- bookkeeping:.*(\r?\n)?", "", run_text).encode("utf-8"))
     return digest.hexdigest()
 

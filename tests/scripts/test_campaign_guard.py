@@ -507,23 +507,28 @@ class Lifecycle(Workspace):
         started = time.monotonic()
         try:
             with mock.patch.object(guard, "_untracked_line", side_effect=line), \
-                    mock.patch.object(guard, "FILE_SECONDS", 0.3):
+                    mock.patch.object(guard, "FILE_SECONDS", 0.3), self.assertRaises(guard.GuardError):
                 guard.fingerprint(self.root, RUN_FILE, "")
         finally:
             release.set()
         self.assertLess(time.monotonic() - started, 5)
         self.assertNotIn("b.txt", seen)  # after the stall no further path is touched
         self.assertNotIn("c.txt", seen)
-        # An incomplete observation never matches another fingerprint, so the stall breaker cannot count it.
+        # An incomplete observation is an error: the hook fails open and records it, and the breaker's counters stay
+        # where they were (neither progress nor a stall).
+        self.acquire()
+        before = guard._read_state(self.root)
         release.clear()
         try:
             with mock.patch.object(guard, "_untracked_line", side_effect=line), \
                     mock.patch.object(guard, "FILE_SECONDS", 0.3):
-                first = guard.fingerprint(self.root, RUN_FILE, "")
-                second = guard.fingerprint(self.root, RUN_FILE, "")
+                self.assertIsNone(self.hook())  # fails open
         finally:
             release.set()
-        self.assertNotEqual(first, second)
+        after = guard._read_state(self.root)
+        self.assertIn("a path stalled", after.get("hook_error", ""))  # recorded for the heartbeat
+        self.assertEqual({k: after.get(k) for k in ("blocks", "trips", "fingerprint")},
+                         {k: before.get(k) for k in ("blocks", "trips", "fingerprint")})
 
     def test_whoami_names_what_a_heartbeat_is_to_the_run(self):
         self.assertEqual(guard.whoami(self.root, SESSION), "NO GUARD")
