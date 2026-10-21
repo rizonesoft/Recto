@@ -1500,7 +1500,7 @@ def stream_object_at(rel_path: str, data: bytes, offset: int) -> tuple[dict[byte
     return entries, payload, payload + int(length.group(1))
 
 
-def validate_layout(rel_path: str, data: bytes) -> None:
+def validate_layout(rel_path: str, data: bytes) -> list[int]:
     """Account for every byte: the header, then objects and revision endings only. A classic revision ends with its
     xref table, `trailer`, its dictionary, `startxref` naming that table and `%%EOF`; an xref-stream revision ends with
     `startxref` naming its xref stream object and `%%EOF`. Nothing else may sit anywhere in the file, and every
@@ -1511,6 +1511,7 @@ def validate_layout(rel_path: str, data: bytes) -> None:
     pos = header.end()
     section = None  # where this revision's xref table or xref stream object starts
     revisions = 0
+    ends: list[int] = []
     while pos < len(data):
         m = re.match(rb"\d+ \d+ obj\n", data[pos:])
         if m is not None:
@@ -1547,8 +1548,10 @@ def validate_layout(rel_path: str, data: bytes) -> None:
         section = None
         revisions += 1
         pos += ending.end()
+        ends.append(pos)
     if revisions == 0:
         raise ValueError(f"{rel_path}: no revision ends with startxref and %%EOF")
+    return ends
 
 
 def validate_pdf_structure(rel_path: str, data: bytes) -> None:
@@ -1684,7 +1687,11 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
             raise ValueError("text/scanned.pdf content stream must contain 0 text operators")
 
     # Last, the backstop: every byte belongs to an object or a revision ending (the checks above say why first).
-    validate_layout(rel_path, data)
+    ends = validate_layout(rel_path, data)
+    # An incremental update leaves each earlier revision a complete PDF up to its own %%EOF: each is validated on its
+    # own, so its xref, /Size and /Root must hold for what it contained, not only for the newest state.
+    for end in ends[:-1]:
+        validate_pdf_structure(f"{rel_path} (revision ending at byte {end})", data[:end])
 
 
 # ---------------------------------------------------------------------------

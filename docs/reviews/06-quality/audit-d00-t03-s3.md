@@ -871,3 +871,64 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `Ran 29 tests`, `OK` (`test_every_byte_belongs_to_an_object_or_a_revision_ending` fails against `0a952b4`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P1): `validate_layout` accounts for every byte, as the last check of `validate_pdf_structure`: the header, then only objects and revision endings, where a classic revision ends with its table, trailer, `startxref` and `%%EOF`, and an xref-stream revision with `startxref` and `%%EOF`; each `startxref` must name its own revision's table or xref stream object. A second, disconnected `startxref`, garbage before an xref stream's `startxref`, and bytes between two objects all refuse.
+
+## Round 18: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:49:19Z
+- Effort: medium
+- Lines: 46
+- Digest: 39bb66babefd5cb1
+
+## adversarial: needs-attention
+
+1. **P1: Older revisions are not validated against their own state.** `scripts/build-corpus.py:1060` checks xref offsets against objects anywhere in the complete file. Lines `1628` and `1634` validate only the newest `/Size` and `/Root`. Consequently, malformed earlier revisions pass the structural gate.
+
+   Reproduced at `be32399`, entirely in memory:
+
+   ```python
+   import runpy
+   m = runpy.run_path("scripts/build-corpus.py")
+   data = m["build_incremental_2rev"]()
+   for old, new in [
+       (b"/Size 7", b"/Size 0"),
+       (b"/Root 1 0 R", b"/Root 9 0 R"),
+       (b"0000000121 00000 n ", b"0000000868 00000 n "),
+   ]:
+       bad = data.replace(old, new, 1)
+       assert bad != data
+       m["validate_pdf_structure"]("render/incremental-2rev.pdf", bad)
+   ```
+
+   All three mutations pass. The last makes revision 1 locate object 3 at byte 868, beyond its own EOF and inside revision 2. Validating that first revision alone correctly rejects it. `validate_layout` accounts for byte placement but does not establish revision-local validity. Deterministically generating these corruptions would defeat the promised structural check.
+
+## consistency: approve
+
+No independent findings.
+
+## integration: advisory
+
+Finding 1 affects the structural gate inherited by later corpus additions. It does not establish corruption in the committed fixtures or a native-engine defect.
+
+## source-defect: needs-attention
+
+Finding 1 conflates the latest merged object state with validation of each revision. In particular, an older `/Size 0` contradicts that revision’s defined objects. The specification defines `/Size` from the highest object number and `/Prev` as the previous cross-reference section. [ISO 32000-2 errata, §7.5.5](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#7.5.5)
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: advisory
+
+Independently reran the checkpoint: 39 fixtures current. Two in-memory generations matched; total corpus size was 60,176 bytes. Of 29 tests, 26 passed; three could not create temporary directories under the read-only restrictions. These checks miss finding 1.
+
+No files were modified by this audit. An unrelated `docs/reviews/merge-prs.md` change appeared during the audit.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 18
+
+`python -m unittest tests.scripts.test_build_corpus` -> `OK` (`test_each_earlier_revision_is_valid_on_its_own` fails against `ec59dd7` in all three cases); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): an incremental update leaves each earlier revision a complete PDF up to its own `%%EOF`, so `validate_pdf_structure` validates each earlier revision on its own (`data[:end]`, the ends found by `validate_layout`): its xref may locate only objects it contains, and its own `/Size` and `/Root` must hold. An earlier `/Size 0`, an earlier `/Root` naming a missing object, and an earlier entry pointed at a header that only the later revision holds all refuse.

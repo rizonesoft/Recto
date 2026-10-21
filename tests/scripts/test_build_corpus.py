@@ -398,6 +398,25 @@ class BuildCorpusTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 self.mod.validate_pdf_structure("render/test.pdf", bad)
 
+    def test_each_earlier_revision_is_valid_on_its_own(self) -> None:
+        data = self.mod.build_incremental_2rev()
+        self.mod.validate_pdf_structure("render/incremental-2rev.pdf", data)
+        first_eof = data.index(b"%%EOF\n") + len(b"%%EOF\n")
+        # Revision 1's entry for an object revision 2 redefines, pointed at revision 2's copy: a real header, but one
+        # revision 1 cannot contain.
+        later = re.search(rb"\n(\d+) 0 obj\n", data[first_eof - 1 :])
+        num, later_at = int(later.group(1)), first_eof - 1 + later.start() + 1
+        table = data.index(b"\nxref\n") + 1
+        subsection = re.match(rb"xref\n0 (\d+)\n", data[table:])
+        at = table + subsection.end() + 20 * num
+        retargeted = data[:at] + f"{later_at:010d}".encode() + data[at + 10 :]
+        for bad in (data.replace(b"/Size 7", b"/Size 0", 1), data.replace(b"/Root 1 0 R", b"/Root 9 0 R", 1), retargeted):
+            self.assertNotEqual(bad, data)
+            self.assertEqual(bad[first_eof:], data[first_eof:])  # each edit is in the first revision
+            self.assertEqual(len(bad[:first_eof]), first_eof)
+            with self.subTest(bad=bad[:first_eof][-80:]), self.assertRaisesRegex(ValueError, "revision ending at byte"):
+                self.mod.validate_pdf_structure("render/incremental-2rev.pdf", bad)
+
     def test_a_classic_xref_entry_has_one_form(self) -> None:
         data = self.mod.build_simple_1p()
         self.mod.validate_pdf_structure("render/simple-1p.pdf", data)
