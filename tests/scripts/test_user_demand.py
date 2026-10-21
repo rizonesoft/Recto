@@ -140,6 +140,15 @@ class LedgerRulesTest(unittest.TestCase):
         self.assertTrue(any("a table row outside any table" in line for line in found), found)
         found = problems(*VALID.values(), parity=PARITY + "\n| New unowned request | Excluded | | No answer |\n")
         self.assertTrue(any("a table row outside any table" in line for line in found), found)
+        # The same rows without their leading pipe, and a divider cell without a hyphen, are refused too.
+        loose_row = "\nInvalid | #1 | planned | D99 T99 §999 | cost | 2026-10-21 |\n"
+        found = demand.problems(ledger(*VALID.values()) + loose_row, PARITY, PLAN, SECTIONS, today=TODAY)
+        self.assertTrue(any("a table row outside any table" in line for line in found), found)
+        found = problems(*VALID.values(), parity=PARITY + "\nNew request | Excluded | | No answer |\n")
+        self.assertTrue(any("a table row outside any table" in line for line in found), found)
+        colon = ledger(*VALID.values()).replace("| --- | --- | --- | --- | --- | --- |", "| --- | --- | --- | --- | --- | :")
+        found = demand.problems(colon, PARITY, PLAN, SECTIONS, today=TODAY)
+        self.assertTrue(any("has a cell without a hyphen" in line for line in found), found)
         # A short parity row has an empty owner, so it needs a ledger row.
         self.assertIn("parity row 'New request' has no owning TODO section and no ledger row",
                       problems(*VALID.values(), parity=PARITY + "| New request | Planned |\n"))

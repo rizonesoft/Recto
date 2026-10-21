@@ -66,9 +66,10 @@ def format_faults(text, name):
     found = [f"{name} line {number}: {what} is not allowed in this file"
              for number, line in enumerate(text.splitlines(), 1) for pattern, what in DISALLOWED if pattern.search(line)]
     in_tables = set().union(*(lines for _, _, _, lines in tables(text, with_lines=True))) if text else set()
+    # Outside a table, an unescaped pipe would be a row with or without its leading pipe: refused, not skipped.
     found += [f"{name} line {number}: a table row outside any table (a blank line ends a table)"
               for number, line in enumerate(text.splitlines(), 1)
-              if line.lstrip().startswith("|") and number not in in_tables]
+              if UNESCAPED_PIPE.search(line) and number not in in_tables]
     return found
 
 
@@ -86,6 +87,8 @@ def tables(text, with_lines=False):
             divider = split_cells(lines[i + 1] if lines[i + 1].startswith("|") else "|" + lines[i + 1])
             if len(divider) != len(header):
                 faults.append(f"table divider has {len(divider)} cells for a {len(header)}-cell header")
+            if not all(re.fullmatch(r":?-+:?", cell) for cell in divider):
+                faults.append(f"table divider {lines[i + 1][:40]!r} has a cell without a hyphen")
             i += 2
             while i < len(lines) and lines[i]:
                 numbers.add(i + 1)
