@@ -117,7 +117,8 @@ export function readAgentFrontmatter(text) {
   while (index < lines.length) {
     const line = lines[index];
     index += 1;
-    if (line.trim() === "" || /^[ \t]*#/.test(line)) continue;
+    // Blank means spaces and tabs only (YAML 5.5): a no-break or other Unicode space is content to YAML.
+    if (/^[ \t]*$/.test(line) || /^[ \t]*#/.test(line)) continue;
 
     // YAML needs whitespace after the colon in a block mapping: `model:sonnet`
     // is the plain scalar "model:sonnet", not a pin, and reading it as one let

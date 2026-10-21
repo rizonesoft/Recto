@@ -190,3 +190,50 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_verify_agent_tiers` -> `OK` (the new cases fail against `76330ff`); `node scripts/verify-agent-tiers.mjs` -> 5 definitions valid.
 
 - Finding 1 (P1): frontmatter lines end only in LF or CRLF; a bare CR, and NEL, LS or PS (line breaks to some YAML loaders), refuse, so no key can hide behind a comment or be read two ways (`# comment\rmodel: haiku`, `\x85`, ` ` cases).
+
+## Round 5: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:42:08Z
+- Effort: medium
+- Lines: 32
+- Digest: 50ad23ee2a6a74e1
+
+## adversarial: needs-attention
+
+1. **P1: Unicode-only lines bypass YAML validation.** `scripts/verify-agent-tiers.mjs:120` uses JavaScript `trim()` to discard blank lines, including characters YAML treats as content. Reproduce with this string, interpreting the escapes:
+
+   ```text
+   ---\nname: a\nmodel: sonnet\ntools: Read\n\n\u00a0\n---\n
+   ```
+
+   `readAgentFrontmatter` returns `error: null`, `tierPin` returns `sonnet`, and `toolProblems` returns `[]`. PyYAML 6.0.3 rejects the frontmatter with `ScannerError`. U+2003 produces the same failure. Restrict blank-line recognition to the supported YAML whitespace instead of JavaScript whitespace.
+
+## consistency: approve
+
+No additional findings.
+
+## integration: needs-attention
+
+Finding 1 allows malformed frontmatter through the agent validation gate. Actual Claude Code loading was not exercised.
+
+## source-defect: needs-attention
+
+Finding 1 contradicts [YAML 1.2.2 section 5.5](https://yaml.org/spec/1.2.2/#55-white-space-characters): YAML recognizes space and tab as whitespace; other printable characters are content. The deliberate flat dialect does not resolve this mismatch.
+
+## design: advisory
+
+No user-facing surface changed.
+
+## record: advisory
+
+Ran `python -B -m unittest tests.scripts.test_verify_agent_tiers`: all five tests passed despite the reproduced bypass. Guard changes received static review; their filesystem-writing tests were not rerun. No files were modified; final Git status was clean.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 5
+
+`python -m unittest tests.scripts.test_verify_agent_tiers` -> `OK` (the `\u00a0` and `\u2003` cases fail against `0acdd49`); `node scripts/verify-agent-tiers.mjs` -> 5 definitions valid.
+
+- Finding 1 (P1): a blank line is spaces and tabs only (YAML 5.5); a line holding a no-break space or another Unicode space is content, so it reaches the `key: value` rule and refuses.

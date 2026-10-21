@@ -33,7 +33,7 @@ class AgentFrontmatter(unittest.TestCase):
     def test_quoted_values_yaml_refuses_are_refused(self):
         for lines in (['description: "a"b"'], ["description: 'a'b'"], ['description: "a"b" # note'],
                       ["description: a\x01b"], ['description: "\\q"'], ["# comment\rmodel: haiku"],
-                      ["description: a\x85b"], ["description: a\u2028b"]):
+                      ["description: a\x85b"], ["description: a\u2028b"], ["\u00a0"], ["\u2003"]):
             with self.subTest(lines=lines):
                 ok, error = read(["name: a", *lines, "model: sonnet"])
                 self.assertFalse(ok, lines)
