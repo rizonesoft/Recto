@@ -21,6 +21,7 @@ It is designed as a single native WinUI 3 application backed by Recto's own C++2
 | [`docs/plans/2026-10-13-recto-foundation.md`](./docs/plans/2026-10-13-recto-foundation.md) | Decisions D1 to D21, module boundaries, the `recto-pdf` engine and threading contract, built-in OCR, native converters, milestones M0 to M6, performance targets, security rules. |
 | [`design/SPEC.md`](./design/SPEC.md) | The interface source of truth: tokens, typography, layout presets, screens, dialogs, keyboard shortcuts and accessibility. |
 | [`todo/TODO-00-INDEX.md`](./todo/TODO-00-INDEX.md) | The live execution plan across domains `00-workspace` to `08-assistant` and `99-manual`, projected into [`todo/implementation-plan.md`](./todo/implementation-plan.md). |
+| [`docs/scope.md`](docs/scope.md) | What Recto does and never does (supported Windows, no PDF JavaScript, no network without consent, XFA forms) and where to ask; every recurring request and its answer is in [`docs/user-demand.md`](docs/user-demand.md). |
 | [`resources/README.md`](./resources/README.md) | The shipped icons, wordmarks, MSIX package assets and installer images generated from the design tokens, and the `RectoIcons.ttf` interface icon font. |
 
 ## Building and verifying

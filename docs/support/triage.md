@@ -64,6 +64,10 @@ Each issue being worked on has exactly one assignee. Reassign rather than add a 
 
 When a pull request replaces another, close the older one with a comment linking its replacement. Never leave two open pull requests for the same fix.
 
+## Reviewing the demand ledger before each release
+
+Before every release, review `docs/user-demand.md`: add a row for every request asked more than once since the last release, revisit every `decided` and `not planned` row against what users have said, and set each row's Last reviewed date. `python scripts/check-user-demand.py` fails while any row is older than the newest release tag, so a release cannot ship on an unreviewed ledger. Once the release runbook exists (D07 T02 §6), this review is one of its checklist steps.
+
 ## Closing a fixed bug
 
 A user-reported bug closes only when the release containing its fix is published, and its fix carries a regression test (the full rule is `docs/support/user-bugs.md`). Until then it carries `fixed-on-main`. When the release ships, label it `released`, comment "Fixed in vX.Y.Z" with the release link, and close it.

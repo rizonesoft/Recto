@@ -183,6 +183,8 @@ Another is security and data-loss fixes sitting on main while the current releas
 
 ## 6. Public scope page and user demand ledger
 
+> **Started:** 2026-10-21T11:40:00Z
+
 Users file bugs for features that exist but are hidden, ask scope questions nobody answers, and cannot tell shipped from planned. Recto publishes `docs/scope.md` (what it does, what it never does and why: no PDF JavaScript, no network by default, Windows only, how XFA is handled) and `docs/user-demand.md`, a ledger that maps each recurring request to a TODO section, a recorded decision, or an explicit "not planned" with its reason. The ledger is seeded from Recto's own GitHub issues, `docs/acrobat-parity.md` and the competitor parity rows, and reviewed before every release.
 
 **Phase:** 0
@@ -194,12 +196,12 @@ Users file bugs for features that exist but are hidden, ask scope questions nobo
 1. Author `docs/scope.md` and `docs/user-demand.md`, seeding the ledger from Recto's own GitHub issues, `docs/acrobat-parity.md` and the competitor parity rows. Done when: every ledger row names a TODO reference, a decision, or "not planned" with a reason.
 2. Add `scripts/check-user-demand.py` validating that each TODO reference in the ledger resolves through `scripts/todo-graph.py resolve`. Done when: `python -m unittest tests.scripts.test_user_demand` passes and a bogus reference fails it.
 
-- [ ] Author `docs/scope.md`: supported Windows versions and architectures, what Recto never does (run PDF JavaScript, contact the network without consent, collect telemetry), XFA and dynamic-form handling, and where to ask. Done when: each topic has a heading and the file is linked from `README.md`.
-- [ ] Author `docs/user-demand.md` with columns Request, Evidence (Recto issue numbers and parity rows), Status (`planned`, `decided`, `not planned`), Owner (TODO reference or decision) and Last reviewed. Done when: every open Recto issue labelled as a request, and every `docs/acrobat-parity.md` row without a TODO owner, has a row.
-- [ ] Record the requests no section owns yet as `decided` or `not planned` with the decision and its cost of reversing, never as silence (tab tear-off and split view, mobile apps, AI features). Done when: no row has an empty Owner.
-- [ ] Author `scripts/check-user-demand.py` resolving every TODO reference and failing on an unknown one or a row older than the last release's review date. Done when: the script exits 0 on the seeded ledger.
-- [ ] Add `tests/scripts/test_user_demand.py` with a valid and an invalid ledger fixture. Done when: the invalid fixture fails.
-- [ ] Add the ledger review to the release runbook checklist in `docs/release-and-store-runbook.md` once `D07 T02 §6` creates it, and to `docs/support/triage.md` now. Done when: `docs/support/triage.md` names the review.
+- [x] Author `docs/scope.md`: supported Windows versions and architectures, what Recto never does (run PDF JavaScript, contact the network without consent, collect telemetry), XFA and dynamic-form handling, and where to ask. Done when: each topic has a heading and the file is linked from `README.md`.
+- [x] Author `docs/user-demand.md` with columns Request, Evidence (Recto issue numbers and parity rows), Status (`planned`, `decided`, `not planned`), Owner (TODO reference or decision) and Last reviewed. Done when: every open Recto issue labelled as a request, and every `docs/acrobat-parity.md` row without a TODO owner, has a row. **Corrected 2026-10-21:** a sixth column, Cost of reversing, holds each decision's reversal cost, which the next item requires; the two open issues are pin-automation alerts, not requests, so the seed comes from the parity ledger.
+- [x] Record the requests no section owns yet as `decided` or `not planned` with the decision and its cost of reversing, never as silence (tab tear-off and split view, mobile apps, AI features). Done when: no row has an empty Owner.
+- [x] Author `scripts/check-user-demand.py` resolving every TODO reference and failing on an unknown one or a row older than the last release's review date. Done when: the script exits 0 on the seeded ledger.
+- [x] Add `tests/scripts/test_user_demand.py` with a valid and an invalid ledger fixture. Done when: the invalid fixture fails.
+- [x] Add the ledger review to the release runbook checklist in `docs/release-and-store-runbook.md` once `D07 T02 §6` creates it, and to `docs/support/triage.md` now. Done when: `docs/support/triage.md` names the review.
 - [ ] Commit: `docs: publish Recto's scope and a user demand ledger seeded from Recto issues and parity rows`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_user_demand` passes and `python scripts/check-user-demand.py` exits 0 on the committed ledger.
