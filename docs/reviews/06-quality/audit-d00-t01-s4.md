@@ -93,3 +93,44 @@ OVERALL: needs-attention
 
 - Finding 1 (P2): both jobs gain an "Identify the C++ toolchain for the cache key" step (the same `vswhere` selection as `build/build.ps1`, then the newest MSVC tools folder) whose `id` (`vs<installationVersion>-msvc<version>`, locally `vs18.11.12315.225-msvc14.51.36231`) is part of each cache key, so a runner image with a new compiler misses the old key, restores the nearest older cache through `restore-keys`, and saves the rebuilt archives under the new key. The `D00 T01 §4` audit note names it.
 Checkpoint on `8b34d96`: push run `39641899790` succeeded (5 x `0 Warning(s)`, 5 x `0 Error(s)`, 3 x `[  PASSED  ] 98 tests.`), restored the previous caches through `restore-keys` and saved `build-deps-full-Windows-vs18.11.12306.390-msvc14.51.36231-<hash>` and `build-deps-asan-Windows-vs18.11.12306.390-msvc14.51.36231-<hash>`. A repeat run of the same commit (`workflow_dispatch`, run `39644094799`, all jobs succeeded, 5 x `0 Warning(s)`, 3 x `[  PASSED  ] 98 tests.`): the ASan job logged "Cache hit occurred on the primary key build-deps-asan-Windows-vs18.11.12306.390-msvc14.51.36231-<hash>, not saving cache"; the full build ran on a runner with another image (`vs18.10.12224.181`), restored the nearest cache and saved `build-deps-full-Windows-vs18.10.12224.181-msvc14.51.36231-<hash>`, so each toolchain on GitHub's mixed fleet now keeps its own complete cache.
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T17:40:38Z
+- Effort: medium
+- Lines: 28
+- Digest: 8c8ab9ced6e1ab22
+
+### adversarial: approve
+
+No new actionable findings.
+
+### consistency: approve
+
+No new actionable findings.
+
+### integration: approve
+
+No new actionable findings.
+
+### source-defect: approve
+
+No new actionable findings.
+
+### design: advisory
+
+Not applicable; this section owns no user surface.
+
+### record: advisory
+
+Live checkpoint verification remains incomplete. `gh run list --workflow=build.yml --limit 1`, the job lookup for `39644094799`, and the log lookup for `39641899790` failed because the configured proxy at `127.0.0.1:9` refused connections. The reported success, warning counts, and cache restoration therefore remain independently unverified.
+
+Only the audit findings file differs between `8b34d96` and candidate `70b240a`; no build inputs changed. Static inspection found no additional defect requiring correction. No files were modified.
+
+HIGHEST: none
+OVERALL: approve
+
+## Outcome
+
+- The stamp of `D00 T01 §4` is confirmed with corrections: CI builds x64 and ARM64 in Debug and Release with 0 warnings and runs the x64 tests on every code push (run `39641899790`, repeat `39644094799`). The audit separated the full and ASan dependency caches and keyed them on `vcpkg-configuration.json` and the runner's Visual Studio and MSVC versions, and recorded the `paths-ignore` change in the foundation plan. No downstream stamp is suspect.
