@@ -1,0 +1,85 @@
+{
+  "ref": "D06 T05 \u00a75",
+  "title": "Audit D00 T02 \u00a71: Graph engine, CLI and tests",
+  "implementation_sha": "995b6fbc64f5745f723c1b2740108816b3318d78",
+  "date": "2026-10-21",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 6,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 7,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 8,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 9,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 10,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 11,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 12,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 13,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 14,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s1.md",
+      "verdict": "stopped-low-severity"
+    }
+  ],
+  "checks": [
+    "python -m unittest tests.scripts.test_todo_graph -> Ran 78 tests, OK",
+    "validate -> valid: 677 sections; plan --check -> plan current"
+  ],
+  "rounds_spent": 14,
+  "round_cap": 22,
+  "cap_outcome": "Round 14 returned one P3 (the 88-character rule text named the heading, not the title) and declared HIGHEST: P3, so the loop stopped on severity; the finding was fixed in d3c520c (AGENTS.md and todo/README.md wording plus a test), so nothing was left to file."
+}
