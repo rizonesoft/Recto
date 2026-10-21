@@ -42,13 +42,14 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | Issue forms, triage policy and `SECURITY.md` | -- | [x] |
-| 2 | §4 | User-bug regression rule, closing on release and changelog mapping | §1 | [ ] |
-| 3 | §6 | Public scope page and user demand ledger | §1 | [ ] |
-| 4 | §3 | Structure-preserving reproducer scrubber (`recto-cli scrub`) | D04 T02 §2 | [ ] |
-| 5 | §2 | In-app `Report a problem` with privacy-safe diagnostics | §1, D07 T02 §1, D07 T02 §4, D02 T03 §11, D06 T04 §25 | [ ] |
-| 6 | §5 | Release gate for unreleased fixes, security advisories and CI integrity | §4, D07 T02 §6, D07 T02 §7, D06 T03 §12 | [ ] |
-| 7 | §7 | What's new after update and opt-in update notice | §2, D02 T04 §6, D06 T04 §25 | [ ] |
-| 8 | §8 | Strict issue-form YAML reader and top-level schema types | §1 | [ ] |
+| 2 | §9 | Gtest regression evidence from the fix commit's own CI test list | §1 | [ ] |
+| 3 | §4 | User-bug regression rule, closing on release and changelog mapping | §1, §9 | [ ] |
+| 4 | §6 | Public scope page and user demand ledger | §1 | [ ] |
+| 5 | §3 | Structure-preserving reproducer scrubber (`recto-cli scrub`) | D04 T02 §2 | [ ] |
+| 6 | §2 | In-app `Report a problem` with privacy-safe diagnostics | §1, D07 T02 §1, D07 T02 §4, D02 T03 §11, D06 T04 §25 | [ ] |
+| 7 | §5 | Release gate for unreleased fixes, security advisories and CI integrity | §4, D07 T02 §6, D07 T02 §7, D06 T03 §12 | [ ] |
+| 8 | §7 | What's new after update and opt-in update notice | §2, D02 T04 §6, D06 T04 §25 | [ ] |
+| 9 | §8 | Strict issue-form YAML reader and top-level schema types | §1 | [ ] |
 
 ## 1. Issue forms, triage policy and `SECURITY.md`
 
@@ -149,7 +150,7 @@ A common failure is closing issues when a fix merges while users on the release 
 
 - [x] Author `scripts/release-notes.py <from-tag> <to-tag> [--json] [--issues <file>]` reading commit trailers with `git log --format=%(trailers)`, and grouping issues by their kind label from `--issues` (the JSON of `gh issue list --state all --json number,title,labels`), `unlabelled` without it. Done when: a fixture repository with three trailers yields three entries. **Corrected 2026-10-21:** named no source for the labels it groups by; labels live on GitHub issues, not in commits, so they are read from a `gh` export and the script stays offline and testable.
 - [x] Print, per issue, the closing comment "Fixed in vX.Y.Z (commit, release link)". Done when: the output matches the fixture's expected text.
-- [x] Refuse a `Fixes-User:` commit without a `Regression-Test:` trailer, or whose named test (a gtest `Suite.Case` or a Python `module.Class.test_name`) does not exist at that commit, with `--allow-no-test <sha>=<reason>` (one per excused commit) recorded in the output for documentation-only fixes; whether the file is new or existing does not matter. Done when: a fixture adding a real case to an existing test file passes and a fixture naming a missing test is reported as a violation. **Corrected 2026-10-21:** said `--allow-no-test <reason>`, a single flag that would excuse every commit in the range at once. **Corrected 2026-10-21:** "exists at that commit" was checked by scanning source text, which review showed comments, macros, `#if (0)` and look-alike classes defeat; a Python id is now resolved by unittest's own loader in a worktree of the fix commit, and a gtest id must be declared in source at the fix commit and appear in `--gtest-list` (the release build's `--gtest_list_tests` output), without which it is reported unverified. **Corrected 2026-10-21:** a gtest id counts as declared only when a plain `TEST`, `TEST_F`, `TEST_P`, `TYPED_TEST` or `TYPED_TEST_P` names it in compiled code at the start of a declaration (after the start of the file, `;`, `{` or `}`) and outside any parentheses (depth tracked per `#if` alternative); review round 18 showed that macro arguments and wrapper macros need a preprocessor to judge, so regression tests are declared plainly (`docs/support/user-bugs.md`).
+- [ ] Refuse a `Fixes-User:` commit without a `Regression-Test:` trailer, or whose named test (a gtest `Suite.Case` or a Python `module.Class.test_name`) does not exist at that commit, with `--allow-no-test <sha>=<reason>` (one per excused commit) recorded in the output for documentation-only fixes; whether the file is new or existing does not matter. Done when: a fixture adding a real case to an existing test file passes and a fixture naming a missing test is reported as a violation. **Corrected 2026-10-21:** said `--allow-no-test <reason>`, a single flag that would excuse every commit in the range at once. **Corrected 2026-10-21:** "exists at that commit" was checked by scanning source text, which review showed comments, macros, `#if (0)` and look-alike classes defeat; a Python id is now resolved by unittest's own loader in a worktree of the fix commit, and a gtest id must be declared in source at the fix commit and appear in `--gtest-list` (the release build's `--gtest_list_tests` output), without which it is reported unverified. **Corrected 2026-10-21:** a gtest id counts as declared only when a plain `TEST`, `TEST_F`, `TEST_P`, `TYPED_TEST` or `TYPED_TEST_P` names it in compiled code at the start of a declaration (after the start of the file, `;`, `{` or `}`) and outside any parentheses (depth tracked per `#if` alternative); review round 18 showed that macro arguments and wrapper macros need a preprocessor to judge, so regression tests are declared plainly (`docs/support/user-bugs.md`). **Corrected 2026-10-21:** the review reached its 22-round cap with the same class still open (a macro-defined `#if` condition), so gtest evidence moves to the fix commit's own CI test list in -> XREF: D07 T03 §9, which replaces the source scan; this item stamps with it.
 - [x] Author `docs/support/user-bugs.md`: reproduce first (scrubbed or synthetic file into `tests/corpus/user-reports/` with a provenance row), test fails before the fix, trailer on the fix, label `fixed-on-main`, close on release. Done when: the file states each step.
 - [x] Add both trailers and a "Regression test: failing on parent, passing on fix" evidence block to `.github/pull_request_template.md`, and a pointer from `AGENTS.md` "Working rules". Done when: both files reference `docs/support/user-bugs.md`.
 - [x] Add `tests/scripts/test_release_notes.py` building a temporary git repository with tagged commits. Done when: the test passes and removing the trailer parsing makes it fail.
@@ -253,6 +254,29 @@ Users stay on old builds and report bugs already fixed, and cannot find features
 - [ ] Commit: `tests: refuse the remaining YAML shapes and type-check top-level form keys`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_issue_forms` passes with PyYAML installed and with it blocked (`sys.modules['yaml'] = None`), and deleting the dash-spacing refusal makes `test_refuses_what_it_does_not_understand` fail.
+
+## 9. Gtest regression evidence from the fix commit's own CI test list
+
+`D07 T03 §4` checks that a `Regression-Test:` gtest id existed at its fix commit by scanning C++ source, and its review ran to the 22-round cap (`docs/reviews/07-release/D07-T03-s4.md`, `## Cap reached`) because a text scan cannot decide what the compiler builds: a macro-defined `#if` condition, a `TEST` passed to a macro, or a declaration whose start depends on the `#if` alternative all need a preprocessor. The compiler's own answer is the test binary's `--gtest_list_tests`. CI already builds and tests every push to `main` (`.github/workflows/build.yml`); this section has it record that list against the commit as a git note (`refs/notes/gtest-list`), which is permanent and keyed by commit, and makes `scripts/release-notes.py` read the fix commit's note instead of scanning source. Default taken 2026-10-21: git notes rather than workflow artifacts, because artifacts expire after at most 90 days and a release can be further from its fixes; the cost of changing is a different reader in `scripts/release-notes.py` and a different publish step.
+
+**Phase:** 0
+**Needs:** none
+**Surface:** no
+
+**Build order:**
+
+1. Publish the list from CI. Done when: a push to `main` adds a note under `refs/notes/gtest-list` holding that commit's `recto-tests.exe --gtest_list_tests` output.
+2. Read it in `scripts/release-notes.py`. Done when: a gtest id is verified only by the fix commit's note, and the source scanner is gone.
+
+- [ ] Add a step to the x64 Release test job in `.github/workflows/build.yml` that runs `recto-tests.exe --gtest_list_tests`, adds the output as a git note on `github.sha` under `refs/notes/gtest-list`, and pushes `refs/notes/gtest-list` (with `contents: write` for that job only, retrying on a concurrent-push rejection by fetching and merging the notes ref). Done when: after a push, `git fetch origin refs/notes/gtest-list:refs/notes/gtest-list` and `git notes --ref=gtest-list show <sha>` print the list.
+- [ ] Run the step only on pushes to `main`, never on pull requests or forks, so no untrusted build writes notes. Done when: the workflow condition names `push` and `refs/heads/main`.
+- [ ] In `scripts/release-notes.py`, fetch `refs/notes/gtest-list` once per run and verify a gtest id by reading the fix commit's note with `read_gtest_list`; a commit with no note reports the id as unverified (`the fix commit has no CI test list`). Done when: a fixture repository with a note on the fix commit passes, one whose note lacks the id fails, and one with no note fails.
+- [ ] Delete the C++ source scanner (`_spliced`, `cpp_lines`, `cpp_code`, `_conditional_lines`, `cpp_sources`, `gtest_declared`, `_in_number`, `_separator_follows`) and the `--gtest-list` option, and their fixtures in `tests/scripts/test_release_notes.py`. Done when: `git grep -n "cpp_lines\|gtest_declared\|--gtest-list" -- scripts tests` prints nothing.
+- [ ] Update `docs/support/user-bugs.md`: a gtest regression test counts when CI's list for the fix commit names it; drop the plain-declaration convention. Done when: the file names `refs/notes/gtest-list` and no longer names the convention.
+- [ ] Add fixtures to `tests/scripts/test_release_notes.py` that write notes with `git notes --ref=gtest-list add`. Done when: removing the note lookup makes the suite fail.
+- [ ] Commit: `release: verify gtest regression tests against the fix commit's CI test list`
+
+**Test checkpoint:** `python -m unittest tests.scripts.test_release_notes` passes; a fixture fix commit whose note lacks its `Regression-Test:` id, and one with no note, are each reported as violations; and a real push to `main` leaves a readable note (`git notes --ref=gtest-list show <sha>`).
 
 ## Verification
 
