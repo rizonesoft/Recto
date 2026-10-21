@@ -39,6 +39,24 @@ class AgentFrontmatter(unittest.TestCase):
         ok, error = read(["name: a", "description: |", "  first", "    deeper is fine", "model: sonnet"])
         self.assertTrue(ok, error)
 
+    def test_blank_lines_hook_values_and_control_characters_yaml_refuses_are_refused(self):
+        cases = (
+            ["description: |", "    ", "  first"],
+            ["tools: Read", "hooks:", "  Stop:", '    - matcher: "\\q"'],
+            ["tools: Read", "hooks:", "  Stop:", "    - command: |", "        first", "       second"],
+            ["description: a\x01b"],
+        )
+        for lines in cases:
+            with self.subTest(lines=lines):
+                ok, error = read(["name: a", *lines, "model: sonnet"])
+                self.assertFalse(ok, lines)
+        for lines in (["tools: Read", "hooks:", "  Stop:", '    - matcher: "a\\tb"'],
+                      ["tools: Read", "hooks:", "  Stop:", "    - command: |", "        first", "          deeper"],
+                      ["description: |", "", "  first"]):
+            with self.subTest(lines=lines):
+                ok, error = read(["name: a", *lines, "model: sonnet"])
+                self.assertTrue(ok, error)
+
     def test_values_yaml_reads_are_accepted(self):
         for line in ("description: a #comment", 'description: "Use this: quoted"', "description: -dash-word",
                      "description: plain words, commas", "description: key:value without space",

@@ -109,6 +109,13 @@ export function readAgentFrontmatter(text) {
   const match = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text);
   if (!match) return { fields: null, error: "has no opening frontmatter block; the tier pin must be a machine-read field, not prose" };
 
+  // YAML admits only printable characters (tab, line breaks, and the printable ranges); a control character or a lone
+  // surrogate makes the loader refuse the whole file.
+  const unprintable = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x84\x86-\x9F\uFFFE\uFFFF]|\p{Cs}/u.exec(match[1]);
+  if (unprintable) {
+    return { fields: null, error: `frontmatter holds U+${unprintable[0].codePointAt(0).toString(16).toUpperCase().padStart(4, "0")}, a character YAML refuses` };
+  }
+
   const lines = match[1].split(/\r?\n/);
   const fields = new Map();
   let index = 0;
@@ -162,19 +169,9 @@ export function readAgentFrontmatter(text) {
       // Every content line is indented with spaces at least as deep as the first one; a shallower or tab-indented
       // line is one YAML refuses or reads differently.
       const collected = [];
-      let depth = null;
-      while (index < lines.length && (lines[index].trim() === "" || /^[ \t]/.test(lines[index]))) {
-        const blockLine = lines[index];
-        if (blockLine.trim() !== "") {
-          const indent = /^ */.exec(blockLine)[0].length;
-          if (/^ *\t/.test(blockLine) || (depth !== null && indent < depth)) {
-            return { fields: null, error: `"${key}:" block line ${JSON.stringify(blockLine)} is indented less than the block or with a tab; YAML refuses it` };
-          }
-          depth ??= indent;
-        }
-        collected.push(blockLine.trim());
-        index += 1;
-      }
+      const block = blockScalarProblem(lines, index, 0);
+      if (block.error) return { fields: null, error: `"${key}:" ${block.error}` };
+      for (; index < block.end; index += 1) collected.push(lines[index].trim());
       fields.set(key, { value: collected.filter(Boolean).join(" "), isQuoted: true });
       continue;
     }
@@ -224,7 +221,6 @@ export function readAgentFrontmatter(text) {
 function skipHooksBlock(lines, start) {
   let index = start;
   let content = 0;
-  let scalarIndent = null;
   while (index < lines.length) {
     const line = lines[index];
     if (line.trim() === "") {
@@ -240,14 +236,14 @@ function skipHooksBlock(lines, start) {
     index += 1;
     content += 1;
 
-    // A block scalar's content is text, not structure, and ends at the first
-    // line indented no deeper than the line that opened it.
-    if (scalarIndent !== null && indentation.length > scalarIndent) continue;
-    scalarIndent = null;
-
     const shape = hooksLineProblem(line.slice(indentation.length));
     if (shape === BLOCK_SCALAR) {
-      scalarIndent = indentation.length;
+      // A block scalar's content is text, not structure: it runs to the first line indented no deeper than the line
+      // that opened it, and is checked like a top-level block scalar's.
+      const block = blockScalarProblem(lines, index, indentation.length);
+      if (block.error) return { index, error: `"${HOOKS_FIELD}:" ${block.error}` };
+      content += block.end - index;
+      index = block.end;
     } else if (shape) {
       return { index, error: `"${HOOKS_FIELD}:" block line ${JSON.stringify(line)} ${shape}` };
     }
@@ -256,6 +252,40 @@ function skipHooksBlock(lines, start) {
     return { index, error: `"${HOOKS_FIELD}:" has no indented block under it; write "${HOOKS_FIELD}:" alone followed by an indented block, or leave the key out` };
   }
   return { index, error: null };
+}
+
+/**
+ * Check a block scalar's content, from `start` to the first non-blank line indented `parent` or less, and return
+ * that line's index. The first content line sets the depth: every later content line is space-indented at least that
+ * deep, and no blank line before it carries more spaces than it (YAML refuses both, and a tab in the indentation).
+ */
+function blockScalarProblem(lines, start, parent) {
+  let index = start;
+  let depth = null;
+  let leading = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    const spaces = /^ */.exec(line)[0].length;
+    if (line.trim() === "") {
+      if (depth === null) leading = Math.max(leading, spaces);
+      index += 1;
+      continue;
+    }
+    if (!/^[ \t]/.test(line) || (spaces <= parent && !/^ *\t/.test(line))) break;
+    if (/^ *\t/.test(line)) {
+      return { end: index, error: `block line ${JSON.stringify(line)} is indented with a tab; YAML refuses it` };
+    }
+    if (depth === null) {
+      if (leading > spaces) {
+        return { end: index, error: `block has a blank line indented deeper than its first line ${JSON.stringify(line)}; YAML refuses it` };
+      }
+      depth = spaces;
+    } else if (spaces < depth) {
+      return { end: index, error: `block line ${JSON.stringify(line)} is indented less than the block; YAML refuses it` };
+    }
+    index += 1;
+  }
+  return { end: index, error: null };
 }
 
 const BLOCK_SCALAR = Symbol("block scalar");
@@ -274,7 +304,10 @@ function hooksLineProblem(text) {
 
     let node;
     if (rest.startsWith('"') || rest.startsWith("'")) {
-      const closed = rest.startsWith('"') ? /^"(?:[^"\\]|\\.)*"/.exec(rest) : /^'(?:[^']|'')*'/.exec(rest);
+      // Double-quoted escapes are YAML's own set (5.7); any other backslash sequence makes the loader refuse the file.
+      const closed = rest.startsWith('"')
+        ? /^"(?:[^"\\]|\\(?:[0abtnvfre "/\\N_LP\t]|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}))*"/.exec(rest)
+        : /^'(?:[^']|'')*'/.exec(rest);
       if (!closed) {
         return "opens a quote that does not close on the same line; a multi-line quoted scalar can carry a column-0 line that YAML reads as content and this check reads as a key";
       }
