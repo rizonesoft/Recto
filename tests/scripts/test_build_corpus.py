@@ -649,6 +649,21 @@ class BuildCorpusTests(unittest.TestCase):
                 with self.subTest(name=name), self.assertRaisesRegex(ValueError, "password"):
                     self.mod.validate_encrypted_pdf_structure(name, build())
 
+    def test_aes_256_perms_block_is_exact(self) -> None:
+        # Regenerate with each of the twelve defined /Perms plaintext bytes changed in turn, re-encrypted with the real
+        # file key, so only the block's meaning differs.
+        name = "render/encrypted-aes-256.pdf"
+        real = self.mod.aes_encrypt_block
+        for index in range(12):
+            def corrupt(block, round_keys, index=index):
+                if len(block) == 16 and block[8:12] == b"Tadb":  # the /Perms plaintext
+                    block = block[:index] + bytes([block[index] ^ 0x01]) + block[index + 1 :]
+                return real(block, round_keys)
+            with mock.patch.object(self.mod, "aes_encrypt_block", side_effect=corrupt):
+                data = self.mod.build_encrypted_aes_256()
+            with self.subTest(byte=index), self.assertRaisesRegex(ValueError, "/Perms"):
+                self.mod.validate_encrypted_pdf_structure(name, data)
+
     def test_inflation_stops_just_past_its_limit(self) -> None:
         bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))
         total, kept = self.mod.inflate_bounded(bomb, 1024, keep=False)

@@ -2861,11 +2861,11 @@ def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
         if user_fkey != owner_fkey:
             raise ValueError(f"{rel_path}: R=6 /UE and /OE unwrapped different file keys")
         perms_pt = aes_decrypt_block(perms_bytes, aes_expand_key(user_fkey))
-        if perms_pt[9:12] != b"adb" or perms_pt[8:9] != b"T":
-            raise ValueError(f"{rel_path}: R=6 /Perms signature verification failed")
-        perms_p = struct.unpack("<i", perms_pt[:4])[0]
-        if perms_p != p_val:
-            raise ValueError(f"{rel_path}: R=6 /Perms permissions {perms_p} != /P {p_val}")
+        # Algorithm 10 (ISO 32000-2 7.6.4.4.9) defines the first 12 bytes exactly: /P as a 64-bit little-endian value
+        # whose upper 32 bits are all ones, then T for /EncryptMetadata true, then "adb"; only bytes 12 to 15 are free.
+        expected_perms = struct.pack("<i", p_val) + b"\xff\xff\xff\xff" + b"T" + b"adb"
+        if perms_pt[:12] != expected_perms:
+            raise ValueError(f"{rel_path}: R=6 /Perms does not decrypt to /P, four FF bytes, T and adb")
         file_key = user_fkey
     else:
         raise ValueError(f"{rel_path}: unsupported (/V {v_val}, /R {r_val})")

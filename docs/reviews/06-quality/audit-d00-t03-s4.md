@@ -738,3 +738,48 @@ OVERALL: needs-attention
 
 - Finding 1 (P1), fixed as a class with round 15's: the validators no longer read any generator constant. The documented contract (`tests/corpus/README.md`) is held in separate literals, `DOCUMENTED_USER_PASSWORD`, `DOCUMENTED_OWNER_PASSWORD`, `DOCUMENTED_PERMISSIONS`, `DOCUMENTED_PDF_DATE`, `DOCUMENTED_SEED_MAX_BYTES` and `DOCUMENTED_STREAM_CEILING`, which every validator uses in place of `CORPUS_USER_PASSWORD`, `CORPUS_OWNER_PASSWORD`, `CORPUS_PERMISSIONS_MASK`, `FIXED_PDF_DATE`, `MAX_SEED_FILE_BYTES` and `DEFLATE_BOMB_LIMIT_BYTES`. `test_the_documented_contract_matches_the_readme` ties each literal to the README's own wording, and fixtures regenerated with changed passwords refuse.
 Correction to the round 16 note: as first committed (`92924c9`), `test_a_changed_generator_password_is_caught` validated after leaving the patched constants, so it also passed against `d46d9ac` and proved nothing. It now regenerates and validates while the generator's passwords are still changed, the regression as it would happen, and fails against `d46d9ac` for all three encrypted fixtures.
+
+## Round 17: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T22:59:11Z
+- Effort: medium
+- Lines: 30
+- Digest: d376ab61e9a641d6
+
+### adversarial: needs-attention
+
+1. **P1: AES-256 validation accepts malformed `/Perms`.** `scripts/build-corpus.py:2863` checks the metadata flag, signature and low 32 permission bits, but ignores bytes 4 through 7, which must all be `FF`.
+
+   Reproduced entirely in memory: decrypt the committed AES-256 fixture’s `/Perms` using its deterministic file key, replace plaintext bytes `[4:8]` with four zero bytes, re-encrypt and replace the same-length hexadecimal value. `validate_encrypted_pdf_structure()` accepts it. With these bytes supplied through mocked generator output and file reads, alongside matching regenerated provenance, **`check_corpus()` returns `(True, [])`**.
+
+   This permits a malformed generator result through the checkpoint; it does not establish corruption in the committed fixture.
+
+### consistency: approve
+
+No separate finding.
+
+### integration: advisory
+
+Finding 1 weakens the fixture gate supporting downstream crypto tests, including `tests/recto-tests/pdf_crypto_tests.cpp:465`. No downstream engine defect established.
+
+### source-defect: needs-attention
+
+Finding **1 (P1)** violates Algorithm 10’s requirement to extend permissions to 64 bits with the upper 32 bits set to one. The validator verifies only the lower half. See [ISO 32000-2, Algorithm 10](https://developer.adobe.com/document-services/docs/assets/5b15559b96303194340b99820d3a70fa/PDF_ISO_32000-2.pdf).
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: approve
+
+At `9a2ad1e`, independently reran `python -B scripts/build-corpus.py --check`: exit **0**, **39 fixtures verified**. The password-regression, README-contract and permission-mask tests passed: **3 tests, OK**. These checks do not detect finding 1. No files modified; working tree remains clean.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 17
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 49 tests`, `OK` (`test_aes_256_perms_block_is_exact` fails against `9a2ad1e` for exactly bytes 4 to 7); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): the decrypted `/Perms` block is compared whole over the twelve bytes Algorithm 10 defines (ISO 32000-2 7.6.4.4.9): `/P` as 64-bit little-endian with the upper 32 bits all ones, `T` for `/EncryptMetadata true`, then `adb`; only bytes 12 to 15 are free. The test regenerates the fixture with each defined byte changed in turn and re-encrypted with the real file key, and every one refuses.
