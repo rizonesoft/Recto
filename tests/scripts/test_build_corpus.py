@@ -522,6 +522,33 @@ class BuildCorpusTests(unittest.TestCase):
             with self.subTest(old=old), self.assertRaisesRegex(ValueError, re.escape(says)):
                 self.mod.validate_broken_pdf_structure(name, data.replace(old, new, 1))
 
+    def test_broken_fixtures_carry_their_fault_as_parsed_objects(self) -> None:
+        # Each mutation goes through the generator, so offsets stay valid and only the fault's own form changes.
+        real = self.mod.ClassicPdfBuilder.set_obj
+
+        def regenerate(build, num, old, new):
+            def set_obj(builder, obj_num, content):
+                if obj_num == num:
+                    text = content.decode("latin-1") if isinstance(content, bytes) else content
+                    self.assertIn(old, text)
+                    content = text.replace(old, new, 1)
+                return real(builder, obj_num, content)
+            with mock.patch.object(self.mod.ClassicPdfBuilder, "set_obj", set_obj):
+                return build()
+
+        nested = "[" * 70 + "42" + "]" * 70
+        cases = (("broken/deep-nested-array-70.pdf", self.mod.build_broken_deep_nested_array_70, 6,
+                  nested, f"({nested})"),
+                 ("broken/cyclic-pages-tree.pdf", self.mod.build_broken_cyclic_pages_tree, 3,
+                  "/Kids [2 0 R]", "/Kids [3 0 R]"))
+        for name, build, num, old, new in cases:
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, f"object {num}"):
+                self.mod.validate_broken_pdf_structure(name, regenerate(build, num, old, new))
+        truncated = self.mod.expected_corpus_files()["broken/truncated-stream.pdf"]
+        with self.assertRaisesRegex(ValueError, "truncated-stream"):
+            self.mod.validate_broken_pdf_structure("broken/truncated-stream.pdf",
+                                                   truncated.replace(b"/Length 512", b"/Length 999", 1))
+
     def test_inflation_stops_just_past_its_limit(self) -> None:
         bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))
         total, kept = self.mod.inflate_bounded(bomb, 1024, keep=False)

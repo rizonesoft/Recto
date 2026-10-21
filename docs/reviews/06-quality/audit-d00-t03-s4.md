@@ -292,3 +292,51 @@ OVERALL: needs-attention
 
 - Finding 1 (P1): every validator inflate now goes through `inflate()`: one complete Flate stream, refused past `VALIDATOR_INFLATE_LIMIT` (4 MiB; the largest corpus stream is under 1 KiB) with at most limit + 1 bytes ever produced, and refused when truncated, malformed or followed by stray bytes. No `zlib.decompress` call remains in the file (the PNG-predictor helper included); an encrypted fixture whose content inflates past the ceiling refuses (`test_validator_inflation_is_bounded_and_exact`).
 - Finding 2 (P1): the recoverable fixture must start with the exact `%PDF-1.7` header and binary comment, object 1 right after, every object directly after the previous `endobj` line, and the tail directly after the last (`test_the_recoverable_fixture_starts_with_its_exact_header`).
+
+## Round 7: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T22:02:43Z
+- Effort: medium
+- Lines: 32
+- Digest: d25e3fe2b256335c
+
+### adversarial: needs-attention
+
+1. **P1: The recursion-limit fixture can lose its nested array while passing verification.** `scripts/build-corpus.py:2983` checks only whether 70 opening brackets, `42`, and 70 closing brackets occur anywhere in the file.
+
+   Reproduced entirely in memory: intercept object 6 during `build_broken_deep_nested_array_70()` generation and change `/Depth70 [...[42]...]` into `/Depth70 ([...[42]...])`. The builder recalculates valid offsets. `validate_broken_pdf_structure()` accepts the resulting literal string. Supplying those bytes as simulated generator output and file contents, with matching provenance, makes **`check_corpus()` return `(True, [])`**.
+
+   This permits a generator regression to remove the promised recursion-limit coverage. Ordinary standalone corruption remains caught by byte comparison.
+
+### consistency: approve
+
+No separate finding.
+
+### integration: needs-attention
+
+Finding **1 (P1)** violates the prerequisite explicitly relied upon at `tests/recto-tests/pdf_parser_tests.cpp:317`: object 6 must contain a nested array that produces `RecursionLimitExceeded`. The accepted replacement contains a string instead. This establishes a fixture-validator defect, not an engine defect.
+
+### source-defect: needs-attention
+
+Finding **1 (P1)** confuses bracket bytes with array syntax. Parentheses delimit a literal string; brackets inside it are string characters, not nested objects. [ISO 32000-1, §7.3.4.2](https://developer.adobe.com/document-services/docs/assets/35e4369068f86065372c18787171a17e/PDF_ISO_32000-1.pdf)
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: needs-attention
+
+2. **P3: The round 6 fix description overstates strict inflation coverage.** `docs/reviews/06-quality/audit-d00-t03-s4.md:293` says every validator inflation uses strict `inflate()`. However, `scripts/build-corpus.py:3000` and `:3003` still call `inflate_bounded()`, whose implementation at `:2891` does not check stream completion or trailing bytes. Reproduce by inspecting these call sites. The record should distinguish the bomb-specific bounded helper from the strict helper.
+
+At `e2ea8a1`, the checkpoint independently exited **0**, reporting **39 fixtures verified**. Both focused round 6 regression tests passed. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 7
+
+`python -m unittest tests.scripts.test_build_corpus` -> `OK` (`test_broken_fixtures_carry_their_fault_as_parsed_objects` fails against `e2ea8a1` for the nested-array and page-tree cases, each regenerated through the builder so offsets stay valid); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): instead of fixing the nested-array search alone, every parseable broken fixture now carries its fault as parsed objects through `exact_objects()`: the object set, each dictionary compared whole with values as parsed (so `/Depth70` must be a 70-deep array, never a literal string), and exactly the expected objects carrying streams. The nested-array, cyclic page tree and deflate-bomb fixtures use it (the bomb's stream is now located through it instead of a regex), and the truncated-stream fixture must be exactly the generator's three-object page followed by object 4 cut off inside its declared 512 bytes.
+- Finding 2 (P3), a record correction: round 6's note said every validator inflate uses the strict `inflate()`. The deflate-bomb check still uses `inflate_bounded()`, which only counts output and deliberately does not require a complete stream (the inner stage is never inflated to its end); its comment now says so.

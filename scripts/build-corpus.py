@@ -2904,6 +2904,26 @@ def inflate_bounded(data: bytes, limit: int, keep: bool = True) -> tuple[int, by
     return total, b"".join(out)
 
 
+def exact_objects(rel_path: str, data: bytes, forms: dict[int, dict[bytes, bytes]], streams: set[int]) -> dict:
+    """The parsed objects of a fixture, refusing unless they are exactly the numbers in forms, each object's dictionary
+    equal to its form (values as parsed, so a literal string can never stand in for an array), and exactly the objects
+    in streams carrying a stream. Returns {num: (start, end, stream_start, stream_end)}."""
+    objects = {num: (start, end, s0, s1) for num, start, end, s0, s1, _ in iter_objects(rel_path, data)}
+    if sorted(objects) != sorted(forms):
+        raise ValueError(f"{rel_path}: expected objects {sorted(forms)}, got {sorted(objects)}")
+    for num, form in forms.items():
+        start, end, s0, s1 = objects[num]
+        if (s0 is not None) != (num in streams) or not data.startswith(b"<<", start):
+            raise ValueError(f"{rel_path}: object {num} is not the generator's exact dictionary")
+        body_end = data.index(b">>\nstream\n", start) + 2 if s0 is not None else end
+        entries = dict_entries(data[start + 2 : body_end - 2])
+        if s0 is not None and form.get(b"/Length") == b"*":
+            form = {**form, b"/Length": str(s1 - s0).encode()}  # a stream's /Length is its own measured length
+        if entries != form:
+            raise ValueError(f"{rel_path}: object {num} is not the generator's exact dictionary")
+    return objects
+
+
 def validate_broken_pdf_structure(rel_path: str, data: bytes) -> None:
     """Validate that each broken/ fixture contains its exact expected fault."""
     if rel_path == "broken/empty-0b.pdf":
@@ -2919,12 +2939,13 @@ def validate_broken_pdf_structure(rel_path: str, data: bytes) -> None:
             raise ValueError(f"{rel_path}: expected truncated b'%PDF-1.' header")
         return
     if rel_path == "broken/truncated-stream.pdf":
-        if (
-            not data.startswith(b"%PDF-1.7\n")
-            or b"/Length 512 >>\nstream\n" not in data
-            or b"endstream" in data
-            or b"%%EOF" in data
-        ):
+        # The generator's three-object page, then object 4 cut off inside a stream that declares 512 bytes.
+        prefix = (b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+                  b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+                  b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R >>\nendobj\n"
+                  b"4 0 obj\n<< /Filter /FlateDecode /Length 512 >>\nstream\n")
+        rest = data[len(prefix) :]
+        if not data.startswith(prefix) or not 0 < len(rest) < 512 or b"endstream" in rest or b"%%EOF" in rest:
             raise ValueError(f"{rel_path}: invalid truncated-stream structure")
         return
     if rel_path == "broken/corrupt-xref-recoverable.pdf":
@@ -2971,33 +2992,35 @@ def validate_broken_pdf_structure(rel_path: str, data: bytes) -> None:
         raise ValueError(f"{rel_path}: expected cyclic /Prev xref offset error")
     if rel_path == "broken/cyclic-pages-tree.pdf":
         validate_pdf_structure(rel_path, data)
-        if (
-            b"2 0 obj\n<< /Type /Pages /Kids [3 0 R]" not in data
-            or b"3 0 obj\n<< /Type /Pages /Parent 2 0 R /Kids [2 0 R]" not in data
-        ):
-            raise ValueError(f"{rel_path}: missing 2 -> 3 -> 2 /Pages /Kids cycle")
+        exact_objects(rel_path, data, {
+            1: ONE_PAGE_FORMS[1],
+            2: {b"/Type": b"/Pages", b"/Kids": b"[3 0 R]", b"/Count": b"1", b"/MediaBox": b"[0 0 595 842]"},
+            3: {b"/Type": b"/Pages", b"/Parent": b"2 0 R", b"/Kids": b"[2 0 R]", b"/Count": b"1"},  # the 2 -> 3 -> 2 cycle
+            4: {b"/Title": b"(Cyclic Pages Tree)", b"/CreationDate": f"({FIXED_PDF_DATE})".encode()},
+        }, streams=set())
         return
     if rel_path == "broken/deep-nested-array-70.pdf":
         validate_pdf_structure(rel_path, data)
-        expected_nested = (b"[" * 70) + b"42" + (b"]" * 70)
-        if expected_nested not in data:
-            raise ValueError(f"{rel_path}: missing 70-level nested array")
+        exact_objects(rel_path, data, {
+            1: ONE_PAGE_FORMS[1], 2: ONE_PAGE_FORMS[2], 5: ONE_PAGE_FORMS[5],
+            3: {**ONE_PAGE_FORMS[3], b"/RectoDeepNested": b"6 0 R"},
+            4: {b"/Filter": b"/FlateDecode", b"/Length": b"*"},
+            6: {b"/Depth70": (b"[" * 70) + b"42" + (b"]" * 70)},  # parsed as a value: an array 70 deep, never a string
+        }, streams={4})
         return
     if rel_path == "broken/deflate-bomb-10kb.pdf":
         validate_pdf_structure(rel_path, data)
         if not (8_000 <= len(data) <= 16_384):
             raise ValueError(f"{rel_path}: expected ~10 KB file size, got {len(data)} bytes")
-        stm_m = re.search(
-            rb"4 0 obj\n<<\s*/Filter\s*\[\s*/FlateDecode\s+/FlateDecode\s*\]\s*/Length\s+(\d+)\s*>>\nstream\n",
-            data,
-        )
-        if stm_m is None:
-            raise ValueError(f"{rel_path}: missing 2-stage FlateDecode stream in 4 0 obj")
-        slen = int(stm_m.group(1))
-        s_start = stm_m.end()
+        objects = exact_objects(rel_path, data, {
+            1: ONE_PAGE_FORMS[1], 2: ONE_PAGE_FORMS[2],
+            3: {b"/Type": b"/Page", b"/Parent": b"2 0 R", b"/MediaBox": b"[0 0 595 842]", b"/Contents": b"4 0 R"},
+            4: {b"/Filter": b"[/FlateDecode /FlateDecode]", b"/Length": b"*"},  # the two-stage bomb
+        }, streams={4})
         # Each stage inflates in bounded steps (1 MiB of output at a time) and stops once past its limit, so checking the
-        # bomb never allocates what it is checking for.
-        inner_total, inner_deflate = inflate_bounded(data[s_start : s_start + slen], 16 * 1024 * 1024)
+        # bomb never allocates what it is checking for. (inflate_bounded only counts; unlike inflate() it does not
+        # require a complete stream, since the inner stage is deliberately never inflated to its end.)
+        inner_total, inner_deflate = inflate_bounded(data[objects[4][2] : objects[4][3]], 16 * 1024 * 1024)
         if inner_total > 16 * 1024 * 1024:
             raise ValueError(f"{rel_path}: the outer FlateDecode stage expands past 16 MiB")
         total_expanded, _ = inflate_bounded(inner_deflate, DEFLATE_BOMB_LIMIT_BYTES, keep=False)
