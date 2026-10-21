@@ -77,6 +77,23 @@ class LedgerRulesTest(unittest.TestCase):
         self.assertIn("parity row 'New request' has no owning TODO section and no ledger row",
                       problems(*VALID.values(), parity=parity))
 
+    def test_indented_rows_and_long_decisions_are_checked(self):
+        text = ledger(*VALID.values()) + "  | Bad request | #1 | invalid | D99 T99 §999 | null | 9999-12-31 |\n"
+        found = demand.problems(text, PARITY, PLAN, SECTIONS, today=TODAY)
+        for message in ("is not planned, decided or not planned", "D99 T99 §999 does not resolve", "is in the future"):
+            self.assertTrue(any(message in line for line in found), (message, found))
+        found = problems(VALID["web"].replace("A web version", "A web version (D100)"), VALID["split"])
+        self.assertTrue(any("decision D100 is not in" in line for line in found), found)
+
+    def test_a_parity_owner_must_resolve_to_exempt_a_row(self):
+        whole_file = PARITY + "| Whole file | Recto only | D05 T01 (`recto-cli`) | Owned by a file |\n"
+        self.assertEqual(problems(*VALID.values(), parity=whole_file), [])
+        for owner in ("D99 T99 §999", "D02 T02 §24-§23", "D99 T99 (no such file)"):
+            with self.subTest(owner=owner):
+                parity = PARITY + f"| New request | Planned | {owner} | No real owner |\n"
+                self.assertIn("parity row 'New request' has no owning TODO section and no ledger row",
+                              problems(*VALID.values(), parity=parity))
+
     def test_rows_older_than_the_last_release_are_refused(self):
         found = problems(*VALID.values(), release=("v1.0.0", date(2026, 11, 1), True))
         self.assertTrue(any("is before the v1.0.0 release" in line for line in found), found)
