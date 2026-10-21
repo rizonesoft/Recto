@@ -286,7 +286,10 @@ class HostileFixtureTest(unittest.TestCase):
                "    def test_regression(self):\n        raise AssertionError('bug still present')\n\n\n"
                "class InheritsSkip(SkippedClass):\n    pass\n\n\n"
                "class ExpectedFailure(unittest.TestCase):\n    @unittest.expectedFailure\n"
-               "    def test_regression(self):\n        raise AssertionError('bug still present')\n")
+               "    def test_regression(self):\n        raise AssertionError('bug still present')\n\n\n"
+               "class ExpectsOnInstance(unittest.TestCase):\n    def __init__(self, methodName='runTest'):\n"
+               "        super().__init__(methodName)\n        self.__unittest_expecting_failure__ = True\n\n"
+               "    def test_regression(self):\n        self.fail('bug remains')\n")
         py += ("\n\nclass ShadowedByBuiltin(unittest.TestCase):\n    def __init__(self, methodName='runTest'):\n"
                "        super().__init__(methodName)\n        self.test_case = [].clear\n\n"
                "    def test_case(self):\n        raise AssertionError('the regression body must run')\n")
@@ -348,6 +351,7 @@ class HostileFixtureTest(unittest.TestCase):
             "SkippedMethod": "tests.scripts.test_sample.SkippedMethod.test_regression",
             "InheritsSkip": "tests.scripts.test_sample.InheritsSkip.test_regression",
             "ExpectedFailure": "tests.scripts.test_sample.ExpectedFailure.test_regression",
+            "ExpectsOnInstance": "tests.scripts.test_sample.ExpectsOnInstance.test_regression",
             "Stdlib": "unittest.case.TestCase.test_missing",
         }
         cls.real = {

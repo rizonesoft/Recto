@@ -446,3 +446,53 @@ OVERALL: needs-attention
 ## Fixes after round 9
 
 - Finding 1 (P1): `parse_gtest_list` leaves out disabled tests, which gtest does not run: a `DISABLED_` case, a `DISABLED_` suite, or a `DISABLED_` instantiation prefix (checked before the prefix is dropped), so `PdfXref.DISABLED_EmptyTable`, `DISABLED_PdfOld.Case` and `DISABLED_Instance/PdfParam.Draws/0` are never evidence. Mutation: disabled entries kept -> `GtestListTest` fails. Tests: `Ran 25 tests ... OK`.
+
+## Round 10: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T13:46:05Z
+- Effort: medium
+- Lines: 37
+- Digest: f489147ce327e801
+
+## adversarial: needs-attention
+
+1. **P1**: `scripts/release-notes.py:117` checks expected-failure flags on the class and method, but never on the constructed instance. A constructor can set `self.__unittest_expecting_failure__ = True`, and the probe accepts a regression test whose failure unittest suppresses.
+
+   Reproduce with this module at the fix commit and its test ID in `Regression-Test:`:
+
+   ```python
+   import unittest
+
+   class Case(unittest.TestCase):
+       def __init__(self, methodName="runTest"):
+           super().__init__(methodName)
+           self.__unittest_expecting_failure__ = True
+
+       def test_regression(self):
+           self.fail("bug remains")
+   ```
+
+   Executing the candidate’s unchanged probe against an in-memory fixture returned exit 0 and the verification nonce. Running the same test through unittest recorded one expected failure and `wasSuccessful() == True`. Check the instance’s expected-failure flag after `cls(method)`.
+
+## consistency: approve
+
+## integration: approve
+
+## source-defect: needs-attention
+
+Finding 1 also applies here. The installed `unittest.TestCase.run` explicitly reads `getattr(self, "__unittest_expecting_failure__", False)`. The candidate checks `cls` instead, so it does not reproduce unittest’s semantics.
+
+## design: advisory
+
+Not applicable.
+
+## record: advisory
+
+The claimed 25-test result was not independently reproduced: that suite creates files and Git worktrees, contrary to this review’s no-file-modification constraint. The five read-only parser and documentation tests passed. Finding 1 remains outside their coverage.
+
+OVERALL: needs-attention
+
+## Fixes after round 10
+
+- Finding 1 (P1): the skip and expected-failure flags are read after the case is built, from every object `TestCase.run` reads: the class, the instance (a constructor can set them), the bound method, and the method's outer and unwrapped layers (`ExpectsOnInstance` refused). Mutation: the instance left out -> `HostileFixtureTest` fails. Tests: `Ran 25 tests ... OK`.

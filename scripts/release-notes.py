@@ -111,12 +111,6 @@ outermost = vars(owner)[method]
 if has_coroutine and not (inspect.iscoroutinefunction(outermost)
                           and issubclass(cls, unittest.IsolatedAsyncioTestCase)):
     sys.exit(3)
-# A skipped test never runs its body, and an expected failure turns a failing body into a pass: neither proves a fix.
-# unittest reads these flags from the class (inherited included) and the method (any decorator layer).
-flags = ("__unittest_skip__", "__unittest_expecting_failure__")
-if any(getattr(cls, flag, False) for flag in flags) or any(
-        getattr(layer_seen, flag, False) for layer_seen in (outermost, inspect.unwrap(outermost)) for flag in flags):
-    sys.exit(3)
 # Build the case the way unittest's loader does for a plain TestCase method, without calling anything: cls(method)
 # checks the method exists and refuses, for example, an abstract class.
 try:
@@ -131,6 +125,12 @@ if not (isinstance(case, cls) and isinstance(case, unittest.TestCase) and callab
 # in __init__) either sends the loader down its callable path or runs code other than the fix commit's test.
 bound = getattr(case, method, None)
 if not (isinstance(bound, types.MethodType) and bound.__self__ is case and bound.__func__ is vars(owner)[method]):
+    sys.exit(3)
+# A skipped test never runs its body, and an expected failure turns a failing body into a pass: neither proves a fix.
+# unittest's TestCase.run reads these flags from the class (inherited included), the instance (a constructor can set
+# them) and the method, so every one of those is checked, with each decorator layer of the method.
+flags = ("__unittest_skip__", "__unittest_expecting_failure__")
+if any(getattr(obj, flag, False) for obj in (cls, case, bound, outermost, inspect.unwrap(outermost)) for flag in flags):
     sys.exit(3)
 print(nonce)
 """
