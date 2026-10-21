@@ -827,6 +827,17 @@ class Stamp(Tree):
         rows = tg.graph(self.root)
         self.assertEqual([rows[f"D00 T02 §{n}"].done for n in (1, 2, 3)], [False, True, True])
         self.assertEqual(tg.suspects(self.root, "D00 T02 §1"), ["D00 T02 §2", "D00 T02 §3"])
+        # New work on a suspect stamp waits, and cannot stamp, until the reopened ancestor re-stamps.
+        extra = self.root / "todo/00-workspace/TODO-03-c.md"
+        extra.write_text(todo_file([(1, "On top", 0, "none", "D00 T02 §3")], ident="charlie")
+                         .replace("- [ ] Work.", "- [x] Work."), encoding="utf-8")
+        self.index("TODO-03-c.md")
+        rows = tg.graph(self.root)
+        self.assertEqual(tg.disposition(rows["D00 T03 §1"], rows), 4)
+        with self.assertRaises(tg.Refused) as ctx:
+            tg.stamp(self.root, "D00 T03 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-21")
+        self.assertIn("resting on a reopened section", str(ctx.exception))
+        extra.unlink()
         # Without the Unstamped note, a stamped consumer of an open section still refuses.
         path.write_text(path.read_text(encoding="utf-8").replace("> **Unstamped:** ", "> **Note:** "), encoding="utf-8")
         self.refuses("stamped section has open dependency")

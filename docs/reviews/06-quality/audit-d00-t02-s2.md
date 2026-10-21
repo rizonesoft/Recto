@@ -106,3 +106,42 @@ OVERALL: needs-attention
 
 - Finding 1 (P2): reopening a prerequisite with stamped consumers now works. The graph accepts a stamped section on an open prerequisite only when that prerequisite carries an `Unstamped:` note (a consumer cannot be stamped on an open prerequisite in the first place, so only stamps that predate the regression qualify); the consumers stay stamped and are suspect until it re-stamps, which `unstamp` prints from the new `suspects()`. Without the note the old refusal stands (same test).
 - Finding 2 (P2): `process-todo-section` (all three kits) checks for another writer before any write, then writes `Started:`.
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T16:33:29Z
+- Effort: medium
+- Lines: 24
+- Digest: 955e5da6bd258bd5
+
+## adversarial: needs-attention
+
+1. **P1: Suspect stamps still satisfy dependency gates.** `scripts/lib/todo_graph.py:590` and `scripts/lib/todo_graph.py:762` check only whether direct prerequisites are stamped. After reopening A, its stamped consumer B remains suspect, but an open section C depending on B is still considered ready and passes the stamp dependency check.
+
+   Reproduced without filesystem writes using an in-memory fixture: reopened `D00 T02 §2`, retained its stamped consumer `D00 T02 §3`, and configured an open section to depend on that consumer. `suspects()` included B, but `disposition(C)` returned `0`; invoking `stamp()` with a sentinel at `commit_ok` reached that sentinel after passing the dependency gate. Retaining historical stamps must not let new work bypass an unresolved ancestor regression.
+
+## consistency: approve
+
+## integration: needs-attention
+
+Finding 1 affects `.claude/skills/review-todo-section/SKILL.md:91` and `.claude/skills/process-phase/SKILL.md:44`: the audit workflow declares consumers suspect, but readiness and stamping continue treating those consumers as sufficient prerequisites. Subsequent sessions can build on the regressed dependency chain.
+
+## source-defect: approve
+
+## design: advisory
+
+Not applicable; the section declares `Surface: no`.
+
+## record: approve
+
+Checkpoint independently reproduced at `dca3611`: all 12 skill directories valid with zero diagnostics; `valid: 677 sections`; `plan current`. These checks do not detect finding 1. No files modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 3
+
+`Ran 82 tests`, `OK` (the extended suspect test fails against `dca3611`); `valid: 677 sections`; `plan current`.
+
+- Finding 1 (P1): a prerequisite now holds only when it is `settled()`: it and every ancestor are stamped. `disposition`, `stamp` and `resolve`'s unmet list use it, so new work on a suspect stamp waits (exit 4) and cannot stamp until the reopened ancestor re-stamps (`test_unstamping_a_prerequisite_leaves_its_consumers_stamped_and_suspect`).

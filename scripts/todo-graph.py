@@ -26,7 +26,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from todo_graph import (ROOT, Refused, adjacency_report, atomic, deferrals, disposition,  # noqa: E402
-                        extract_ref, graph, ordered, plan_config, projections, require, review_rounds, stamp,
+                        extract_ref, graph, ordered, plan_config, projections, require, review_rounds, settled, stamp,
                         suspects, unstamp)
 
 
@@ -97,7 +97,7 @@ def main():
             print("TODO refused: no such section: " + ref, file=sys.stderr)
             return 1
         row = rows[ref]
-        unmet = [d for d in row.depends if not rows[d].done]
+        unmet = [d for d in row.depends if not settled(d, rows)]
         print(json.dumps({**row.public(), "body": row.body, "unmet_depends": unmet,
                           "skill_arg": ref, "exit": disposition(row, rows)},
                          indent=2, ensure_ascii=False))

@@ -582,12 +582,27 @@ def _index_coverage(root, files):
             require(f"{domain}/{filename}" in root_text, f"missing from root index: {domain}/{filename}")
 
 
+def settled(ref, rows):
+    """A prerequisite that holds: it and every section it depends on, however far back, are stamped. A stamp on top of
+    an ancestor an audit reopened is suspect, so new work may not build on it."""
+    stack, seen = [ref], set()
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        if not rows[current].done:
+            return False
+        stack.extend(rows[current].depends)
+    return True
+
+
 def disposition(row, rows):
-    """0 ready, 3 already verified, 4 waiting (inactive file, open prerequisite, or a person to answer)."""
+    """0 ready, 3 already verified, 4 waiting (inactive file, open or suspect prerequisite, or a person to answer)."""
     if row.done:
         return 3
     if row.status != "active" or set(row.needs) & WAITING \
-            or any(not rows[d].done for d in row.depends):
+            or any(not settled(d, rows) for d in row.depends):
         return 4
     return 0
 
@@ -759,7 +774,8 @@ def stamp(root, ref, sha, reviews, checks, date, sync_plan=False, cap_outcome=No
     require(ref in rows, "unresolved section: " + ref)
     row = rows[ref]
     require(not row.done, f"already verified: {ref}")
-    require(all(rows[d].done for d in row.depends), f"open prerequisite: {ref}")
+    require(all(settled(d, rows) for d in row.depends),
+            f"open prerequisite, or one resting on a reopened section: {ref}")
     require(not set(row.needs) & WAITING,
             f"still waiting on {', '.join(sorted(set(row.needs) & WAITING))}: {ref}")
     require(re.fullmatch(r"[0-9a-f]{40}", sha) is not None,
