@@ -381,3 +381,69 @@ OVERALL: needs-attention
 
 - Finding 1 (P1): free entries are recorded in the chain too (classic `f`, xref-stream type 0), newest first, so an object a newer revision frees cannot fall back to an older live entry; the coverage check then refuses the walked object the chain no longer locates.
 - Finding 2 (P1): the grammar refuses a dictionary key that appears twice, wherever the dictionary sits (compressed objects included).
+
+## Round 9: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T19:45:42Z
+- Effort: medium
+- Lines: 51
+- Digest: 14792bf61bd646d5
+
+## adversarial: needs-attention
+
+1. **P1: Structural validation accepts an unavailable document catalog.** `scripts/build-corpus.py:1065` parses `/Root` without validating its target; `scripts/build-corpus.py:1509` finds catalogs by scanning objects instead of resolving `/Root`. The coverage check at `scripts/build-corpus.py:1550` excludes compressed objects, so round 8’s free-entry protection does not catch a freed compressed catalog.
+
+   Reproduced in memory, with `m` importing `scripts/build-corpus.py`:
+
+   ```python
+   original = m.flate_png_up_compress
+
+   def freed_catalog(raw, columns):
+       rows = bytearray(raw)
+       rows[5:10] = struct.pack(">BHH", 0, 0, 1)
+       return original(bytes(rows), columns)
+
+   m.flate_png_up_compress = freed_catalog
+   d = m.build_compressed_xref_2p()
+   m.flate_png_up_compress = original
+   m.validate_pdf_structure("probe.pdf", d)
+   ```
+
+   Validation succeeds although catalog object 1 is free and `/Root` remains `1 0 R`. The builder recalculates stream lengths and offsets. A simpler reproduction also passes:
+
+   ```python
+   d = m.build_simple_1p().replace(b"/Root 1 0 R", b"/Root 9 0 R")
+   m.validate_pdf_structure("probe.pdf", d)
+   ```
+
+   Object 9 does not exist. The structural gate therefore certifies a document without a usable root catalog.
+
+## consistency: approve
+
+No independent findings.
+
+## integration: advisory
+
+Finding 1 allows malformed generated fixtures through the structural gate used to support downstream PDF tests. Deterministic byte comparison cannot detect a defect shared by generated and committed bytes. These probes do not establish corruption in the currently committed fixtures.
+
+## source-defect: needs-attention
+
+Finding 1 contradicts the requirement for a valid document catalog reference. Free objects resolve as null, so retaining catalog bytes inside an object stream does not make a freed catalog available. See [Adobe PDF Reference, sections 3.4 and 3.6.1](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.7old.pdf).
+
+## design: advisory
+
+Not applicable: this section owns no user surface.
+
+## record: advisory
+
+Independently reran `python -B scripts/build-corpus.py --check` at `0c9bae9`: exit 0, **39 current fixtures**. Sixteen selected read-only regression tests passed; two in-memory generations matched; corpus size was **60,176 bytes**. The recorded checkpoint result holds, but does not establish the structural guarantee contradicted by finding 1. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 9
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 21 tests`, `OK` (`test_the_root_resolves_to_a_live_catalog` fails against `0c9bae9`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): the newest trailer's (or xref stream's) `/Root` is resolved through the cross-reference chain, to a walked object or a live object-stream slot (`compressed_dict`), and must be a `/Type /Catalog` dictionary; a `/Root` naming a missing object, a non-catalog, or a catalog the newest xref stream frees refuses. The AcroForm and Widget checks now read that resolved catalog instead of scanning for one.

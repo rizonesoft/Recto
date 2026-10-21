@@ -1,6 +1,7 @@
 import importlib.util
 import os
 import re
+import struct
 from pathlib import Path
 import subprocess
 import tempfile
@@ -294,6 +295,24 @@ class BuildCorpusTests(unittest.TestCase):
             self.mod.validate_pdf_structure("render/compressed-xref-2p.pdf", data)
         with self.assertRaisesRegex(ValueError, "appears twice"):
             self.mod._skip_object(b"<< /A 1 /A 2 >>", 0)
+
+    def test_the_root_resolves_to_a_live_catalog(self) -> None:
+        d = self.mod.build_simple_1p()
+        with self.assertRaisesRegex(ValueError, "does not locate"):
+            self.mod.validate_pdf_structure("render/simple-1p.pdf", d.replace(b"/Root 1 0 R", b"/Root 9 0 R"))
+        with self.assertRaisesRegex(ValueError, "is not a /Type /Catalog"):
+            self.mod.validate_pdf_structure("render/simple-1p.pdf", d.replace(b"/Root 1 0 R", b"/Root 2 0 R"))
+        real = self.mod.flate_png_up_compress
+
+        def freed_catalog(raw, columns):  # the xref stream's entry for object 1 becomes free
+            rows = bytearray(raw)
+            rows[5:10] = struct.pack(">BHH", 0, 0, 1)
+            return real(bytes(rows), columns)
+
+        with mock.patch.object(self.mod, "flate_png_up_compress", side_effect=freed_catalog):
+            data = self.mod.build_compressed_xref_2p()
+        with self.assertRaisesRegex(ValueError, "does not locate"):
+            self.mod.validate_pdf_structure("render/compressed-xref-2p.pdf", data)
 
     def test_a_classic_xref_entry_has_one_form(self) -> None:
         data = self.mod.build_simple_1p()

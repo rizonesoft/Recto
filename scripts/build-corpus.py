@@ -1009,10 +1009,13 @@ def build_sample_xlsx() -> bytes:
 
 
 def validate_classic_xref_at(rel_path: str, data: bytes, xref_offset: int, visited: set[int],
-                             located: dict | None = None, sizes: list[int] | None = None) -> None:
-    """located (newest section first): object number -> header offset of each in-use entry; sizes: each /Size."""
+                             located: dict | None = None, sizes: list[int] | None = None,
+                             roots: list[bytes] | None = None) -> None:
+    """located (newest section first): object number -> header offset of each in-use entry; sizes and roots: each
+    section's /Size and /Root."""
     located = {} if located is None else located
     sizes = [] if sizes is None else sizes
+    roots = [] if roots is None else roots
     if xref_offset in visited:
         raise ValueError(f"{rel_path}: cyclic /Prev xref offset {xref_offset}")
     visited.add(xref_offset)
@@ -1070,18 +1073,21 @@ def validate_classic_xref_at(rel_path: str, data: bytes, xref_offset: int, visit
     if size is None:
         raise ValueError(f"{rel_path}: trailer needs a direct /Size")
     sizes.append(int(size.group(0)))
+    roots.append(trailer.get(b"/Root", b""))
     if b"/Prev" in trailer:
         prev = re.fullmatch(rb"\d+", trailer[b"/Prev"])
         if prev is None:
             raise ValueError(f"{rel_path}: trailer /Prev {trailer[b'/Prev']!r} is not an offset")
-        validate_classic_xref_at(rel_path, data, int(prev.group(0)), visited, located, sizes)
+        validate_classic_xref_at(rel_path, data, int(prev.group(0)), visited, located, sizes, roots)
 
 
 def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int, visited: set[int] | None = None,
-                            located: dict | None = None, sizes: list[int] | None = None) -> None:
+                            located: dict | None = None, sizes: list[int] | None = None,
+                            roots: list[bytes] | None = None) -> None:
     visited = set() if visited is None else visited
     located = {} if located is None else located
     sizes = [] if sizes is None else sizes
+    roots = [] if roots is None else roots
     if xref_offset in visited:
         raise ValueError(f"{rel_path}: cyclic /Prev xref offset {xref_offset}")
     visited.add(xref_offset)
@@ -1125,12 +1131,13 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int, visite
             raise ValueError(f"{rel_path}: XRef stream /Prev {entries[b'/Prev']!r} does not locate an xref section")
         prev_at = int(prev.group(0))
         if data.startswith(b"xref\n", prev_at):
-            validate_classic_xref_at(rel_path, data, prev_at, visited, located, sizes)
+            validate_classic_xref_at(rel_path, data, prev_at, visited, located, sizes, roots)
         else:
-            validate_xref_stream_at(rel_path, data, prev_at, visited, located, sizes)
+            validate_xref_stream_at(rel_path, data, prev_at, visited, located, sizes, roots)
 
     row_width = w1 + w2 + w3
     sizes.append(size)
+    roots.append(entries.get(b"/Root", b""))
     stream_payload = data[stream_start:stream_end]
     unpacked = flate_png_up_decompress(stream_payload, columns=row_width)
     if len(unpacked) != size * row_width:
@@ -1440,6 +1447,22 @@ def object_header_offsets(rel_path: str, data: bytes) -> frozenset[int]:
     return frozenset(header for *_, header in iter_objects(rel_path, data))
 
 
+def compressed_dict(rel_path: str, data: bytes, located: dict, where: tuple) -> dict[bytes, bytes] | None:
+    """The dictionary stored in an object-stream slot ("compressed", stream number, index), or None when the slot
+    holds no dictionary."""
+    _, stm_num, idx = where
+    stm_header = located.get(stm_num)
+    if not isinstance(stm_header, int):
+        raise ValueError(f"{rel_path}: object stream {stm_num} is not located by the cross-reference chain")
+    entries, start, end = stream_object_at(rel_path, data, stm_header)
+    dec = zlib.decompress(data[start:end])
+    first = int(entries[b"/First"])
+    offsets = [int(v) for v in dec[:first].split()[1::2]]
+    slot_end = first + offsets[idx + 1] if idx + 1 < len(offsets) else len(dec)
+    slot = dec[first + offsets[idx] : slot_end].strip()
+    return dict_entries(slot[2:-2]) if slot.startswith(b"<<") else None
+
+
 def stream_object_at(rel_path: str, data: bytes, offset: int) -> tuple[dict[bytes, bytes], int, int]:
     """The stream object starting exactly at offset: (its dictionary's entries, payload start, payload end)."""
     m = re.match(rb"\d+ \d+ obj\n", data[offset:])
@@ -1505,9 +1528,50 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
             raise ValueError(f"{rel_path}: {raw!r} is not a dictionary")
         return dict_entries(value[2:-2])
 
+    def payload_of(num: int) -> bytes:
+        start, _, stream_start, stream_end = objects[num]
+        if stream_start is None:
+            raise ValueError(f"{rel_path}: object {num} is not a stream")
+        return data[stream_start:stream_end]
+
+    eof_m = re.search(rb"startxref\n(\d+)\n%%EOF\n\Z", data)
+    if eof_m is None:
+        raise ValueError(f"{rel_path}: missing startxref before %%EOF")
+    xref_offset = int(eof_m.group(1))
+    located: dict = {}
+    sizes: list[int] = []
+    roots: list[bytes] = []
+    if data[xref_offset:].startswith(b"xref\n"):
+        validate_classic_xref_at(rel_path, data, xref_offset, set(), located, sizes, roots)
+    else:
+        validate_xref_stream_at(rel_path, data, xref_offset, None, located, sizes, roots)
+    # The chain must locate every object at its newest definition, and the newest /Size must be one past the highest
+    # object number (ISO 32000-1 7.5.4, 7.5.5): an empty or partial index refuses.
+    for num, header in headers.items():
+        if located.get(num) != header:
+            raise ValueError(f"{rel_path}: object {num} at {header} is not what the cross-reference chain locates "
+                             f"({located.get(num)})")
+    highest = max([*headers, *located], default=0)
+    if not sizes or sizes[0] != highest + 1:
+        raise ValueError(f"{rel_path}: newest /Size {sizes[0] if sizes else None} is not {highest + 1}")
+
+    # The newest /Root must name an object the chain locates (a walked object or a live object-stream slot) whose
+    # dictionary is the catalog.
     dicts = {num: entries_of(data[s:e]) for num, (s, e, _, _) in objects.items() if data.startswith(b"<<", s)}
-    catalogs = [d for d in dicts.values() if d.get(b"/Type") == b"/Catalog"]
-    acroform = entries_of(catalogs[-1][b"/AcroForm"]) if catalogs and b"/AcroForm" in catalogs[-1] else None
+    root_ref = re.fullmatch(rb"(\d+) 0 R", roots[0]) if roots else None
+    if root_ref is None:
+        raise ValueError(f"{rel_path}: the newest trailer has no /Root reference")
+    root_num = int(root_ref.group(1))
+    where = located.get(root_num)
+    if isinstance(where, int):
+        root = dicts.get(root_num)
+    elif isinstance(where, tuple):
+        root = compressed_dict(rel_path, data, located, where)
+    else:
+        raise ValueError(f"{rel_path}: /Root names object {root_num}, which the cross-reference chain does not locate")
+    if root is None or root.get(b"/Type") != b"/Catalog":
+        raise ValueError(f"{rel_path}: /Root object {root_num} is not a /Type /Catalog dictionary")
+    acroform = entries_of(root[b"/AcroForm"]) if b"/AcroForm" in root else None
     if acroform is not None and b"/DA" in acroform:
         if b"/DR" not in acroform or b"/Font" not in entries_of(acroform[b"/DR"]):
             raise ValueError(f"{rel_path}: /AcroForm with /DA is missing /DR /Font resources")
@@ -1529,31 +1593,6 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
                         f"is not a /Subtype /Form"
                     )
 
-    def payload_of(num: int) -> bytes:
-        start, _, stream_start, stream_end = objects[num]
-        if stream_start is None:
-            raise ValueError(f"{rel_path}: object {num} is not a stream")
-        return data[stream_start:stream_end]
-
-    eof_m = re.search(rb"startxref\n(\d+)\n%%EOF\n\Z", data)
-    if eof_m is None:
-        raise ValueError(f"{rel_path}: missing startxref before %%EOF")
-    xref_offset = int(eof_m.group(1))
-    located: dict = {}
-    sizes: list[int] = []
-    if data[xref_offset:].startswith(b"xref\n"):
-        validate_classic_xref_at(rel_path, data, xref_offset, set(), located, sizes)
-    else:
-        validate_xref_stream_at(rel_path, data, xref_offset, None, located, sizes)
-    # The chain must locate every object at its newest definition, and the newest /Size must be one past the highest
-    # object number (ISO 32000-1 7.5.4, 7.5.5): an empty or partial index refuses.
-    for num, header in headers.items():
-        if located.get(num) != header:
-            raise ValueError(f"{rel_path}: object {num} at {header} is not what the cross-reference chain locates "
-                             f"({located.get(num)})")
-    highest = max([*headers, *located], default=0)
-    if not sizes or sizes[0] != highest + 1:
-        raise ValueError(f"{rel_path}: newest /Size {sizes[0] if sizes else None} is not {highest + 1}")
 
     if rel_path == "text/two-column-links-outline.pdf":
         s5_raw = zlib.decompress(payload_of(5))
