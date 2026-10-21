@@ -429,3 +429,53 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_merge_prs` -> `OK` (`test_a_failing_or_pending_check_on_the_pull_request_blocks` fails against `3543c40`).
 
 - Finding 1 (P1): the pull request's own check rollup (`statusCheckRollup`, which includes checks on GitHub's test merge with current `main`) is read too; any entry that is not a completed success, neutral or skipped check, or a successful status, blocks. An empty rollup stays allowed, because the pins workflow's dispatched runs never appear there and the head commit's required jobs already prove those changes build.
+
+## Round 11: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T21:03:27Z
+- Effort: medium
+- Lines: 34
+- Digest: 9a27d4f34dec0059
+
+## adversarial: needs-attention
+
+1. **P1, `scripts/merge_prs.py:178`: Test-merge failures remain invisible.** The round 10 fix assumes `gh pr view --json statusCheckRollup` includes the test merge commit. Installed CLI version 2.102.0 actually queries `commits(last: 1)`, so this reads the PR head again. [CLI source](https://github.com/cli/cli/blob/v2.102.0/api/query_builder.go#L222-L257)
+
+   Reproduce with an eligible pins PR whose head checks succeed but whose test merge against current `main` fails. The supplied head checks and rollup pass `why_not()`; my in-memory probe returned `None`. Without independent branch protection, the script can merge the failing combination. Query the current test merge SHA and its checks explicitly.
+
+2. **P1, `scripts/merge_prs.py:97`: Fetch errors can disclose credentials before origin validation.** `ensure_safe()` fetches before `origin_repo()` rejects unsupported URLs, and line 77 copies raw stderr into output that the scheduled runner logs and emails.
+
+   Reproduce with an origin containing a synthetic query credential, such as `https://example.invalid/repo.git?token=SYNTHETIC_REVIEW_TOKEN`, and a connection failure. A read-only Git transport probe confirmed that the query token survives in stderr; the candidate’s error handler preserves it. Validate the origin before fetching and prevent credential-bearing diagnostics from entering logs.
+
+## consistency: needs-attention
+
+Finding 2 violates the governing rule that credentials must never enter logs. Rejecting the URL later does not protect the earlier fetch error.
+
+## integration: needs-attention
+
+Finding 1 leaves integration failures against `main` outside the eligibility decision. Post-merge `todo-graph validate` cannot detect build failures and occurs after the remote mutation.
+
+## source-defect: needs-attention
+
+Finding 1 misreads the CLI field’s meaning. GitHub distinguishes head checks from test-merge checks and requires the latter when the test merge has statuses. [GitHub documentation](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#conflicts-between-head-commit-and-test-merge-commit)
+
+## design: advisory
+
+No rendered interface changes to assess.
+
+## record: needs-attention
+
+3. **P2, `docs/reviews/merge-prs.md:431`: Round 10 incorrectly records the test-merge gap as fixed.** Its regression test injects a failing rollup directly rather than establishing that the CLI retrieves test-merge evidence. Reproduce using finding 1’s separate green-head/failing-merge scenario: eligibility still passes. Correct the evidence claim and test the actual retrieval contract.
+
+Reviewed the candidate commit directly and ran read-only, in-memory probes with bytecode disabled. No files were modified, no merges were attempted, and the historical full test suite was not rerun.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 11
+
+`python -m unittest tests.scripts.test_merge_prs` -> `Ran 28 tests`, `OK` (the new tests fail against `0a2c93d`). Live: GitHub reports test-merge commit `f5bdcf9` for PR #1, read through GraphQL.
+
+- Finding 1 (P1), and finding 3 (P2) on the record: round 10's claim was wrong. `gh pr view --json statusCheckRollup` reads the head commit, so the rollup never covered the test merge, and its test only injected a rollup. Now `test_merge_sha` asks GitHub for the pull request's `potentialMergeCommit` (GraphQL, host pinned), and when there is one, every check run and status on it must have finished green (`test_a_failing_or_unfinished_test_merge_blocks`); with none, no check ran there and the head commit's required jobs stand. The rollup comment now says it reads the head.
+- Finding 2 (P1): `origin` is resolved (a local read) before any fetch, so a non-github.com remote is refused before a network error could quote it, and every failure message passes through `redact`, which replaces URLs and scp-style remotes (`test_a_fetch_error_never_shows_the_remote`).

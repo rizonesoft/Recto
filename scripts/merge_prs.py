@@ -68,13 +68,21 @@ def run_cmd(args, root):
                           timeout=600, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
+def redact(text):
+    """text with every URL and scp-style remote replaced, since a remote can carry a credential and this text reaches
+    logs and email."""
+    text = re.sub(r"\b[A-Za-z][A-Za-z0-9+.-]*://\S+", "<url>", text)
+    return re.sub(r"\b[\w.-]+@[\w.-]+:\S+", "<remote>", text)
+
+
 def check(run, root, args, what):
     try:
         result = run(args, root)
     except (OSError, subprocess.TimeoutExpired) as e:
         raise RuntimeError(f"{what} did not finish: {e}") from None
     if result.returncode != 0:
-        raise RuntimeError(f"{what} failed (exit {result.returncode}): {(result.stderr or result.stdout).strip()[:400]}")
+        detail = (result.stderr or result.stdout).strip()[:400]
+        raise RuntimeError(f"{what} failed (exit {result.returncode}): {redact(detail)}")
     return result.stdout
 
 
@@ -92,6 +100,9 @@ def section_in_progress(root):
 def ensure_safe(run, root, scheduled):
     if scheduled and (Path(root) / GUARD).exists():  # read under the guard lock (main), so no campaign starts after it
         raise Unsafe("a campaign run holds the guard; the loop merges at its own section boundaries")
+    # Resolved before any fetch, so an origin that is not github.com is refused before its URL can reach a network
+    # error message.
+    REPO[0] = origin_repo(run, root)
     if check(run, root, ["git", "status", "--porcelain"], "git status").strip():
         raise Unsafe("the working tree has changes")
     check(run, root, ["git", "fetch", "--quiet", "origin", "main"], "git fetch")
@@ -172,9 +183,9 @@ def why_not(pr, runs, statuses=()):
         return "its head commit's checks are not all green, or a required job did not run"
     if any(state != "success" for _, state in statuses):
         return "a commit status on its head commit is not success"
-    # The pull request's own checks, including those on GitHub's test merge with current main: any that has run must
-    # have passed. (The pins workflow's dispatched runs do not appear here, so an empty rollup is allowed; the head
-    # commit's required jobs above are what prove those changes build.)
+    # The pull request's check rollup (gh reads it from the head commit): any check that has run must have passed. The
+    # pins workflow's dispatched runs do not appear here, so an empty rollup is allowed; the head commit's required
+    # jobs above prove those changes build, and the test merge's own checks are read separately (test_merge_sha).
     for item in pr.get("statusCheckRollup") or []:
         if item.get("__typename") == "StatusContext":
             if item.get("state") != "SUCCESS":
@@ -207,6 +218,26 @@ def current(run, root, number):
         time.sleep(SETTLE_WAIT)
 
 
+def test_merge_sha(run, root, number):
+    """The commit GitHub has built for merging this pull request into current main (potentialMergeCommit), or "" when
+    it has none. gh pr view's statusCheckRollup reads the head commit only, so the test merge is asked for directly."""
+    owner, name = owner_name().split("/")
+    query = ("query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) "
+             "{ pullRequest(number: $number) { potentialMergeCommit { oid } } } }")
+    out = check(run, root, ["gh", "api", "graphql", "--hostname", "github.com", "-f", f"query={query}",
+                            "-F", f"owner={owner}", "-F", f"name={name}", "-F", f"number={number}",
+                            "--jq", ".data.repository.pullRequest.potentialMergeCommit.oid // \"\""],
+                f"reading #{number}'s test merge")
+    return out.strip()
+
+
+def test_merge_green(runs, statuses):
+    """Every check run and status on the test merge commit has finished green (none at all is fine: no check ran there,
+    as for the pins workflow, whose builds run on the head commit)."""
+    return (all(status == "completed" and conclusion in GREEN for _, status, conclusion in runs)
+            and all(state == "success" for _, state in statuses))
+
+
 def open_prs(run, root):
     """Open pull requests into main, oldest first; each is re-read just before it is judged."""
     out = check(run, root, ["gh", "pr", "list", "--repo", REPO[0], "--state", "open", "--base", "main", "--limit",
@@ -236,7 +267,6 @@ def merge_all(run, root, args, out):
         return 1
     try:
         ensure_safe(run, root, args.scheduled)
-        REPO[0] = origin_repo(run, root)
         numbers = open_prs(run, root)
     except Unsafe as e:
         out(f"merge-prs: not now: {e}")
@@ -262,6 +292,9 @@ def merge_all(run, root, args, out):
             # exact commit that will merge.
             pr = current(run, root, number)
             reason = why_not(pr, check_runs(run, root, pr["headRefOid"]), commit_statuses(run, root, pr["headRefOid"]))
+            merge_sha = "" if reason else test_merge_sha(run, root, number)
+            if merge_sha and not test_merge_green(check_runs(run, root, merge_sha), commit_statuses(run, root, merge_sha)):
+                reason = "a check on its test merge with main is failing or unfinished"
         except RuntimeError as e:
             out(f"merge-prs: {e}")
             return 1

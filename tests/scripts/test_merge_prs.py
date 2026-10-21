@@ -60,11 +60,19 @@ class FakeRun:
             out = json.dumps([{"number": n} for n, p in self.prs.items() if p["baseRefName"] == base])
         elif args[:3] == ["gh", "pr", "view"]:
             out = json.dumps({k: v for k, v in self.prs[int(args[3])].items() if not k.startswith("_")})
+        elif args[:3] == ["gh", "api", "graphql"]:
+            number = int(next(a for a in args if a.startswith("number=")).split("=", 1)[1])
+            out = self.prs[number].get("_test_merge", "") + "\n"
         elif args[:2] == ["gh", "api"]:
             path = next(a for a in args if "/commits/" in a)
             sha = path.split("/commits/")[1].split("/")[0]
-            p = next(p for p in self.prs.values() if p["headRefOid"] == sha)
-            rows = p["_statuses"] if path.split("?")[0].endswith("/status") else p["_runs"]
+            status = path.split("?")[0].endswith("/status")
+            merge = next((p for p in self.prs.values() if p.get("_test_merge") == sha), None)
+            if merge is not None:
+                rows = merge.get("_merge_statuses" if status else "_merge_runs", [])
+            else:
+                p = next(p for p in self.prs.values() if p["headRefOid"] == sha)
+                rows = p["_statuses"] if status else p["_runs"]
             out = "".join(json.dumps(list(r)) + "\n" for r in rows)
         elif args[:3] == ["gh", "pr", "merge"]:
             if self.lands:
@@ -211,7 +219,7 @@ class MergePrs(unittest.TestCase):
         self.assertEqual(self.main(fake), 1)
         self.assertNotIn("2", fake.merges())
         self.assertIn("state is now OPEN", self.lines[-1])
-        for failing in ("pull", "validate"):
+        for failing in ("pull --ff-only", "validate"):
             self.lines.clear()
             (self.root / merge_prs.STOPPED).unlink()  # each case starts after the operator cleared the last stop
             fake = FakeRun([pr(1), pr(2)], fail=(failing,))
@@ -230,7 +238,9 @@ class MergePrs(unittest.TestCase):
             joined = " ".join(call)
             # The host is named in every call, so neither GH_REPO nor GH_HOST is followed.
             self.assertTrue("--repo github.com/rizonesoft/Recto" in joined
-                            or ("--hostname github.com" in joined and "repos/rizonesoft/Recto/" in joined), joined)
+                            or ("--hostname github.com" in joined and "repos/rizonesoft/Recto/" in joined)
+                            or ("--hostname github.com" in joined and "owner=rizonesoft" in joined
+                                and "name=Recto" in joined), joined)
 
     def test_a_timed_out_merge_reports_what_github_says(self):
         fake = FakeRun([pr(1)], raise_on="pr merge")
@@ -342,6 +352,23 @@ class MergePrs(unittest.TestCase):
         fake = FakeRun([failing, pending, passing, pr(4)])  # pr(4): no rollup, as the pins workflow's pull requests
         self.assertEqual(self.main(fake), 0)
         self.assertEqual(fake.merges(), ["3", "4"])
+
+    def test_a_failing_or_unfinished_test_merge_blocks(self):
+        failing = pr(1)
+        failing.update(_test_merge="d" * 40, _merge_runs=[("build", "completed", "failure")])
+        pending = pr(2)
+        pending.update(_test_merge="e" * 40, _merge_statuses=[("ci", "pending")])
+        green = pr(3)
+        green.update(_test_merge="f" * 40, _merge_runs=[("build", "completed", "success")])
+        fake = FakeRun([failing, pending, green, pr(4)])  # pr(4): GitHub reports no test merge
+        self.assertEqual(self.main(fake), 0)
+        self.assertEqual(fake.merges(), ["3", "4"])
+        self.assertIn("test merge", " ".join(self.lines))
+
+    def test_a_fetch_error_never_shows_the_remote(self):
+        fake = FakeRun([pr(1)], fail=("fetch",))
+        self.assertEqual(self.main(fake), 1)
+        self.assertEqual(merge_prs.redact("unable to access https://u:t0k@github.com/x.git/"), "unable to access <url>")
 
     def test_launches_open_no_console_window(self):
         with mock.patch.object(merge_prs.subprocess, "run") as run:
