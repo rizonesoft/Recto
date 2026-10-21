@@ -34,9 +34,13 @@ SECTION_RUN = re.compile(r"\b(D\d\d T\d\d)((?:\s*,?\s*§\d+(?:\s*-\s*§?\d+)?)+)
 SECTION = re.compile(r"§(\d+)(?:\s*-\s*§?(\d+))?")
 FILE_ONLY = re.compile(r"\bD\d\d T\d\d\b(?!\s*,?\s*§)")
 RELEASE_WINDOW = timedelta(days=14)
+# The two parity tables (docs/acrobat-parity.md); any other table there is a fault, so none escapes coverage.
+PARITY_SCHEMAS = (["Acrobat Pro tool", "Status", "Recto sections", "Recto keeps"],
+                  ["Competitor feature", "Products", "Status", "Recto sections"])
 # A decision is D<n> without a leading zero and not followed by a TODO file number (any length, so D100 is checked).
 DECISION = re.compile(r"\bD([1-9]\d*)\b(?!\s*T\d)")
-PARITY_REF = re.compile(r"parity: ([^;|]+)")
+# Evidence lists sources separated by `;`; a cell is already split, so a decoded `\|` stays inside a name.
+PARITY_REF = re.compile(r"parity: ([^;]+)")
 
 
 DIVIDER = re.compile(r"\|?(\s*:?-+:?\s*\|)+\s*:?-*:?\s*")
@@ -57,8 +61,10 @@ def tables(text):
     lines = [line.strip() for line in text.splitlines()]
     found, i = [], 0
     while i < len(lines) - 1:
-        if lines[i].startswith("|") and DIVIDER.fullmatch(lines[i + 1]):
-            header, rows, faults = split_cells(lines[i]), [], []
+        if "|" in lines[i] and "-" in lines[i + 1] and DIVIDER.fullmatch(lines[i + 1]):
+            faults = [] if lines[i].startswith("|") and lines[i].endswith("|") else [
+                f"table header {lines[i][:40]!r} is not a `| ... |` row"]
+            header, rows = split_cells(lines[i] if lines[i].startswith("|") else "|" + lines[i]), []
             i += 2
             while i < len(lines) and lines[i]:
                 if lines[i].startswith("|") and lines[i].endswith("|"):
@@ -99,9 +105,10 @@ def parity_names(text, sections):
     cells are empty, as Markdown renders them), Excluded or Partial, or naming this ledger."""
     names, needed, faults_found = set(), set(), []
     for header, rows, table_faults in tables(text):
-        if "Recto sections" not in header:
-            continue
         faults_found += [f"{PARITY}: {fault}" for fault in table_faults]
+        if header not in PARITY_SCHEMAS:
+            faults_found.append(f"{PARITY}: table {' | '.join(header)[:60]!r} is not one of the parity table schemas")
+            continue
         sections_at = header.index("Recto sections")
         for cells in rows:
             cells = cells + [""] * (len(header) - len(cells))

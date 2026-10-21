@@ -106,6 +106,16 @@ class LedgerRulesTest(unittest.TestCase):
             with self.subTest(row=row):
                 found = problems(*VALID.values(), parity=PARITY + row)
                 self.assertTrue(any(line.startswith("docs/acrobat-parity.md:") for line in found), found)
+        # A parity table without its leading pipes, or with another schema, is reported.
+        loose = "\nCompetitor feature | Products | Status | Recto sections |\n--- | --- | --- | --- |\nNew | W | Excluded | |\n"
+        other = "\n| Feature | Owner |\n| --- | --- |\n| New | none |\n"
+        for extra in (loose, other):
+            with self.subTest(extra=extra[:30]):
+                found = problems(*VALID.values(), parity=PARITY + extra)
+                self.assertTrue(any(line.startswith("docs/acrobat-parity.md:") for line in found), found)
+        # A parity name with an escaped pipe round-trips through the evidence cell.
+        piped = "| Choice | parity: A \\| B | not planned | D15: desktop | New UI | 2026-10-21 |"
+        self.assertEqual(problems(*VALID.values(), piped, parity=PARITY + "| A \\| B | Excluded | | |\n"), [])
         # A short parity row has an empty owner, so it needs a ledger row.
         self.assertIn("parity row 'New request' has no owning TODO section and no ledger row",
                       problems(*VALID.values(), parity=PARITY + "| New request | Planned |\n"))
