@@ -263,6 +263,19 @@ def ready_rows(root: str, timeout: float = 300.0, phase: int | None = None) -> t
     return int(counts[-1]), (lines[0] if lines else "")
 
 
+def open_rows(root: str, timeout: float = 300.0) -> int | None:
+    """How many rows the plan still has open (not stamped), from `query stats`, or None when it cannot be read. A plan
+    with nothing ready can still hold blocked rows: that is a park, not a finished plan."""
+    try:
+        proc = subprocess.run([sys.executable, os.path.join(root, "scripts", "todo-graph.py"), "query", "stats"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=root,
+                              timeout=max(timeout, 1.0))
+        stats = json.loads(proc.stdout) if proc.returncode == 0 else None
+        return int(stats["total"]) - int(stats["verified"])
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, KeyError):
+        return None
+
+
 def marker_run(line: str) -> str | None:
     m = re.search(r"\brun=([0-9a-f]{6,})\b", line)
     return m.group(1) if m else None
@@ -294,11 +307,12 @@ def end(root: str, session: str, reason: str) -> str:
         raise GuardError("end needs --session (the session that owns the guard)")
     # The plan query runs before the lock, so no subprocess is ever held under it.
     ready = ready_rows(root)[0] if reason == "plan-done" else None
+    still_open = open_rows(root) if reason == "plan-done" else None
     with _Lock(root):
-        return _end_locked(root, session, reason, ready)
+        return _end_locked(root, session, reason, ready, still_open)
 
 
-def _end_locked(root: str, session: str, reason: str, ready: int | None) -> str:
+def _end_locked(root: str, session: str, reason: str, ready: int | None, still_open: int | None = None) -> str:
     guard_path, state_path = _paths(root)
     guard = read_guard(root)
     if guard is None:
@@ -317,6 +331,8 @@ def _end_locked(root: str, session: str, reason: str, ready: int | None) -> str:
         raise GuardError(f"escalation needs a column-0 'PARKED <UTC>{tag} escalation: <cause>' line in {run_rel}")
     if reason == "plan-done" and ready != 0:
         raise GuardError(f"plan-done needs nothing runnable; query ready reads {ready}")
+    if reason == "plan-done" and still_open != 0:
+        raise GuardError(f"plan-done needs every row stamped; {still_open} still open, so end with a park")
     if reason == "stall":
         try:
             trips = int(_read_state(root).get("trips", 0))

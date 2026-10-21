@@ -45,7 +45,7 @@ Audit section and checklist granularity across every open file (and upgrade lega
 - Split coarse umbrella sections (bundling multiple subsystems, dialogs, or workflows into one section) into small, single-responsibility sections with explicit `Depends On` edges.
 - Shorten any `Deliverable` cell, `## N. <Title>` heading, or index `Scope` cell over 88 characters to a concise noun phrase (`<= 88` chars) so raw Markdown table rows stay under 140 characters (with description cells <= 88 characters) and never wrap in raw `.md` view; move parenthetical symbol lists and file paths into the section body and checklist.
 - Expand any 1-bullet or 2-bullet summary checklist into concrete buildable micro-steps (typically 4 to 15 micro-steps per section, max 30, ending with `Commit:`). Every non-Commit item must follow the five-part rule: one action, named path/symbol in backticks, `Done when:` observable end state in the same bullet, `Cheaper substitute:` on UI and write items, and source citation.
-- Never rewrite a `[x]` section's checklist; if a shipped `[x]` section was coarse or incomplete, leave it intact and add a new open `## N.` section in numerical order for the missing pieces.
+- Never rewrite a `[x]` section's checklist. If a shipped `[x]` section misses something its own `Done when:` requires, its stamp is unearned: hand it to `review-todo-section` in audit stance, which files the repair and reopens it with `todo-graph.py unstamp` so its consumers wait. If it was only coarse (the new pieces are scope beyond its `Done when:`), leave it intact and add a new open `## N.` section in numerical order for them.
 
 ### 5. Report and commit
 

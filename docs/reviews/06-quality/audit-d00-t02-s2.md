@@ -309,3 +309,46 @@ OVERALL: needs-attention
 
 - Finding 1 (P2): `process-plan` (Claude kit, the one with the run guard) now says that when no remaining phase has a row this session can run but `query ready` still lists rows, the run writes the column-0 `PARKED ... run=<id>` line and park record, commits, then ends with `--reason park` (which refuses without that marker); `plan-done` is only for an empty `query ready`. The canonical heartbeat prompt's step 5 does the same when only unreachable-host rows remain.
 - Finding 2 (P3): `process-todo-section` (all three kits) reads `todo/README.md` before a session's first edit, as `D00 T02 §2` promised.
+
+## Round 8: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T16:48:46Z
+- Effort: medium
+- Lines: 26
+- Digest: 4db9b3d85a8a6e36
+
+## adversarial: needs-attention
+
+1. **P2: An empty ready queue is reported as a completed plan despite blocked work.** `.claude/skills/process-plan/SKILL.md:103` selects `plan-done` when `query ready` lists nothing, then directs reporting “plan done”. The heartbeat repeats this at line 94. Reproduce by finishing the last runnable phase while another section awaits `owner-decision`: that section remains open but produces no ready row. An in-memory reproduction returned `open=1 ready=0`; `_end_locked(..., 'plan-done', 0)` accepted termination. Distinguish completion from parking by checking remaining open rows, not only readiness.
+
+## consistency: needs-attention
+
+2. **P2: Grooming preserves stamps it discovers are unearned.** `.claude/skills/groom-plan/SKILL.md:48` says to leave an incomplete stamped section intact and add a new section for its missing pieces. It does not distinguish unmet existing `Done when:` requirements from additional scope or route the former through audit and `unstamp`. Reproduce with stamped prerequisite A, open consumer B, and a discovered missing requirement in A: follow the instruction and add a repair section. In-memory verification showed B remains ready (`disposition=0`); reopening A correctly makes B wait (`disposition=4`). The round 5 correction to file closeout did not cover this equivalent grooming path.
+
+## integration: needs-attention
+
+Finding **2 (P2)** bypasses the suspect-prerequisite protection in `scripts/lib/todo_graph.py:584`. Downstream sections remain eligible because grooming retains the prerequisite’s stamp instead of invoking the reopening mechanism.
+
+## source-defect: approve
+
+## design: advisory
+
+Not applicable: this section owns no user surface.
+
+## record: needs-attention
+
+3. **P3: First-edit routing remains incomplete outside direct section execution.** `.claude/skills/process-phase/SKILL.md:20` directs creating and writing the run file before requiring a read of `todo/README.md`; line 39 also permits reference repairs before entering `process-todo-section`. Reproduce by starting a named phase in a fresh session and following Step 0. Its first write precedes the format read added in round 7. This still contradicts the ticked promise at `todo/00-workspace/TODO-02-todo-system.md:86`.
+
+Checkpoint independently reproduced at `83ef5b2`: all 12 skills valid with zero diagnostics, `valid: 677 sections`, and `plan current`. Both read-only `Repository` tests passed. The behavioral reproductions used memory-only fixtures and mocked filesystem mutations. No files were modified.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 8
+
+`python -m unittest tests.scripts.test_campaign_guard` -> `Ran 29 tests`, `OK` (the extended end test fails against `83ef5b2`); `muse skills validate` -> valid for every changed skill in all three kits.
+
+- Finding 1 (P2): `scripts/campaign_guard.py` `end --reason plan-done` now also reads `query stats` (`open_rows`) and refuses while any row is unstamped, naming the count and pointing to a park; `process-plan` and its heartbeat prompt choose `plan-done` only when every row is verified and park otherwise (`test_every_end_checks_its_marker_and_leaves_the_job_to_cancel` adds the blocked-row case).
+- Finding 2 (P2): `groom-plan` (all three kits) sends a stamped section that misses its own `Done when:` to `review-todo-section`'s audit stance and `unstamp`, keeping the new-section route only for scope beyond it.
+- Finding 3 (P3): `process-phase` (all three kits) reads `todo/README.md` before the run's first write.

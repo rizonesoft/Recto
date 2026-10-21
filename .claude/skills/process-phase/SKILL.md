@@ -17,7 +17,7 @@ Completion never buys completion with a bypass: no `--no-verify`, no amend of a 
 
 ## Step 0: open the run
 
-Check that no other writer holds the tree (`git status`; ask about unfamiliar uncommitted work). Writes are serial: this run is the only writer. Open the run file `docs/phase-runs/<YYYY-MM-DD>-phase-<N>.md` (create `docs/phase-runs/` if absent) and append every finding the moment it is made: the file survives session death where chat scrollback does not. A phase started on its own (not from `process-plan`) starts the run guard first, as `process-plan` describes, with `--scope phase`, so its heartbeat resumes this phase and never the rest of the plan; one started from `process-plan` already has it.
+Read `todo/README.md` (the format every TODO edit keeps) before the run's first write, then check that no other writer holds the tree (`git status`; ask about unfamiliar uncommitted work). Writes are serial: this run is the only writer. Open the run file `docs/phase-runs/<YYYY-MM-DD>-phase-<N>.md` (create `docs/phase-runs/` if absent) and append every finding the moment it is made: the file survives session death where chat scrollback does not. A phase started on its own (not from `process-plan`) starts the run guard first, as `process-plan` describes, with `--scope phase`, so its heartbeat resumes this phase and never the rest of the plan; one started from `process-plan` already has it.
 
 ```markdown
 # Phase run: <heading>
