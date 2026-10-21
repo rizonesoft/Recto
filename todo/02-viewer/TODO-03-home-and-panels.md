@@ -26,6 +26,8 @@ track: M2
 - -> XREF: D05 T02 §1 -- the Organize page grid reuses the thumbnail tile pipeline and page operation commands wired in §4 here.
 - -> XREF: D05 T02 §9 -- the Viewer Signatures side panel tab (`D05 T02 §9`) plugs into `SidePanelHost` (§3).
 - -> XREF: D07 T03 §2 -- `help.reportProblem` and `What's new` (§7 there) are registered in §11's `CommandRegistry` and found through §12's command box.
+- -> XREF: D03 T04 §14 -- Edit PDF registers its `edit.*` commands here.
+- -> XREF: D08 T01 §17 -- hosts the Assistant side panel (D08 T01 §17).
 
 ## Outcome
 

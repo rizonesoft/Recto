@@ -48,6 +48,7 @@ track: M6
 | 7 | §7 | Automated Self-Contained Portable Install zero-registry and zero-`%LOCALAPPDATA%` proof | §6 | [ ] |
 | 8 | §8 | Explorer thumbnail and preview handlers (`IThumbnailProvider`, `IPreviewHandler`) | §4, D01 T02 §6 | [ ] |
 | 9 | §9 | Explorer verbs: print, printto, Combine and Convert to PDF (`IExplorerCommand`) | §2, §4, D02 T01 §7, D05 T02 §3, D04 T01 §3 | [ ] |
+| 10 | §10 | Print layouts: booklet, multiple pages per sheet and poster tiling | §2 | [ ] |
 
 ## 1. WinUI 3 print API spike (`PrintManagerInterop` vs `ID2D1PrintControl`) & section 11 note
 
@@ -289,6 +290,37 @@ pdfcraft users asked repeatedly for "Combine" and "Convert to PDF" on a multi-fi
 - [ ] Commit: `shell: add print verbs and Explorer Combine and Convert commands for multi-file selections`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.PrintVerbHeadless:Shell.ExplorerCombineOrder` passes on the display-session host, and `pwsh tests/scripts/verify_installer.ps1` shows the verbs registered, the `UserChoice` default unchanged, and the verbs removed after uninstall.
+
+## 10. Print layouts: booklet, multiple pages per sheet and poster tiling
+
+Acrobat Pro's print dialog offers Booklet, Multiple pages per sheet and Poster as page sizing modes; Recto's print pipeline (§2) prints one page per sheet only (`docs/acrobat-parity.md`, foundation plan D18). pdfcraft users hit wrong output in exactly these modes: three pages per sheet put four on the first sheet, poster scale overflowed, and the booklet back side printed upside down (`docs/research/2026-10-20-pdfcraft-issue-lessons.md`; pdfcraft #1335, #1336, #3745). This section adds the three layouts as imposition computed on the print worker from the same `DisplayList`s, never a rasterized shortcut, and keeps every guarantee of §2 (own document instance, printer-DPI rendering, cancellation, driver isolation).
+
+**Phase:** 6
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new options inside the print dialog of §2, following its chrome; `design/SPEC.md` section 9.9 dialog rules apply.
+**Job:** A user prints a booklet for saddle stitching, several pages per sheet, or a large page tiled across sheets, and gets exactly the sheets the preview showed. Consumer: the print worker of §2 and the printer.
+**Treatment:** A `Page sizing` choice (`Fit`, `Actual size`, `Booklet`, `Multiple pages per sheet`, `Poster`) with each mode's options and a live sheet preview. Cheaper substitute that fails the checkpoint: printing a pre-imposed temporary PDF rasterized at screen resolution.
+
+**Chrome:** The §2 print dialog, stock WinUI `ComboBox`, `NumberBox` and `ToggleSwitch`, `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Implement `src/app/printing/Imposition.h/.cpp` computing sheet plans: booklet signatures (pages padded to a multiple of four, both-sides or front-only and back-only passes, left or right binding, sheets from-to), N-up grids (2, 4, 6, 9, 16 and custom rows by columns, page order, border, auto-rotate), and poster tiles (tile scale, overlap, cut marks, labels). Done when: `Print.ImpositionPlans` matches the expected sheet maps for 1 to 17 pages in every mode.
+2. Render each sheet on the print worker by placing page `DisplayList`s with a transform per cell or tile at printer DPI, and add the options and a sheet preview to the §2 dialog. Done when: `Print.ImpositionOutput` prints every mode to Microsoft Print to PDF and the output pages match the plans.
+
+- [ ] Author `Imposition::booklet(page_count, binding, sides)` returning signature sheets with front and back cell assignments, padding blank pages at the end. Done when: 17 pages yield 20 page slots on five sheets in the standard saddle-stitch order.
+- [ ] Author `Imposition::n_up(page_count, rows, cols, order, auto_rotate)` so exactly N pages land on each sheet and the last sheet holds the remainder (pdfcraft #1336). Done when: 7 pages at 3 per sheet yield sheets of 3, 3 and 1.
+- [ ] Author `Imposition::poster(page_size, tile_scale, overlap, paper)` with tile count bounded at 400 and a typed refusal past it (pdfcraft #1335). Done when: an A0 page on A4 at 100 percent yields 16 tiles plus overlap, and a 1e6 percent scale returns `PosterTooLarge` without allocating.
+- [ ] Render booklet back sides rotated for the printer's duplex edge (long or short, from the driver) and offer a manual two-pass mode with a "flip the stack" prompt between passes (pdfcraft #3745, #2860). Done when: a captured duplex job's back sides are upright when folded.
+- [ ] Draw optional page borders, cut marks and tile labels as vector content in the sheet, never on the source pages. Done when: the printed PDF shows the marks only when enabled. Cheaper substitute: marks burned into a copy of the document.
+- [ ] Add the `Page sizing` modes and their options to the §2 print dialog with a sheet preview that renders thumbnails from the same plans, and keep `Current page` and custom ranges working with every mode. Done when: `Print.ImpositionDialog` shows the preview sheet count equal to the plan's.
+- [ ] Persist the last layout per printer with the other print settings (§2). Done when: reopening the dialog restores the mode and its options.
+- [ ] Add `Print.ImpositionPlans`, `Print.ImpositionOutput` and `Print.ImpositionDialog` in `tests/recto-tests/`. Done when: the three suites pass on the display-session host.
+- [ ] Commit: `feat(print): add booklet, multiple pages per sheet and poster print layouts`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Print.ImpositionPlans:Print.ImpositionOutput:Print.ImpositionDialog` passes, and 7 pages at 3 per sheet print exactly three sheets of 3, 3 and 1 pages to Microsoft Print to PDF.
 
 ## Verification
 

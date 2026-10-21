@@ -21,6 +21,8 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 - -> XREF: D02 T03 §11 -- `CommandRegistry`, through which §2's `Report a problem` and §7's `What's new` are reachable from `Ctrl+K`.
 - -> XREF: D06 T03 §12 -- the clean-machine release smoke whose report §5's gate requires.
 - -> XREF: D99 T01 §2 -- the operator enables GitHub private vulnerability reporting that §1's `SECURITY.md` points to.
+- -> XREF: D08 T01 §9 -- diagnostics must never carry an assistant key (D08 T01 §9 scans for it).
+- -> XREF: D04 T07 §2 -- records the Action Wizard's watched-folder request (D04 T07 §2).
 
 ## Outcome
 

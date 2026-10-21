@@ -12,6 +12,7 @@ The WinUI app as the SPEC's one shell: title-bar tabs, the tiled document view, 
 | [TODO-02](./TODO-02-document-view.md) | Document View: Presentation, Tiles, Layouts, Scroll, Zoom, Toolbar and Links | active |
 | [TODO-03](./TODO-03-home-and-panels.md) | Home, Side Panels, Outlines, Layers, Portfolios, Document Info and Command Box | active |
 | [TODO-04](./TODO-04-settings-and-layout.md) | Settings Store, Portable Mode, Layout Presets, Settings Page, Theme and Keyboard | active |
+| [TODO-05](./TODO-05-rich-media-3d-geo.md) | Rich Media, 3D Models and Geospatial PDFs | active |
 
 ## Completed
 

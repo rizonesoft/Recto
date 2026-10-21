@@ -27,6 +27,8 @@ track: M4
 - -> XREF: D04 T01 §5 -- saves from Organize (§5) run as queue jobs with progress and cancel on `D04 T01 §5`'s `QueueCard`.
 - -> XREF: D04 T05 §9 -- the `Signatures` section (§11 here) and `Standards & E-Invoice` section (`D04 T05 §9`) share `SignaturesAndStandardsPanel`.
 - -> XREF: D05 T01 §1 -- the engine operation vocabulary (`D05 T01 §1`-`§10`) every mode, dialog, and security bar compiles to.
+- -> XREF: D08 T01 §11 -- the assistant's ContextBuilder reads pending marks so redacted content is never sent.
+- -> XREF: D04 T07 §5 -- the Action Wizard's redact step (D04 T07 §5) uses these presets.
 
 ## Outcome
 
@@ -34,6 +36,9 @@ track: M4
 - Combining files (`§3`, `explorations/A-Organize.png`) and splitting into named parts (`§4`, `explorations/B-Organize.png`) produce the exact outputs shown in the grid.
 - Interactive `Insert Blank Page` and `Crop & Resize Pages` (`§6`), `Watermark & Stamp` (`§7`), and `Header, Footer, Page Numbers & Bates Numbering` (`§8`) dialogs provide a live miniature page preview and compile to `D05 T01 §4`-`§6` operations.
 - The Viewer's `Redaction & Sanitize Bar` (`Ctrl+Shift+X`, `§9`), `Signature Status Banner` & `Sign Document Dialog` (`Ctrl+Shift+G`, `§10`), `Signatures` side panel, and `Protected & Signed PDF` / `Unlocked PDF` Convert cards (`§11`) provide end-to-end visual redaction, sanitization, cryptographic signing, and verification.
+- A `Replace Pages` dialog (`§12`) lets a user pick pages to replace, a source PDF and its pages, preview before and after, and see exactly what bookmarks, links and form fields will change before a copy is written.
+- A `Backgrounds` dialog (`§13`) adds a colour, image or PDF-page background with a live preview over the real page content, and lists, edits and removes the managed backgrounds and watermarks already in the file.
+- Certificate encryption in the existing Protect flow (`§14`) lets a user choose recipients from the Windows certificate store or `.cer` files with per-recipient permissions, and a certificate prompt (`§15`) opens public-key encrypted files, each reachable from `Ctrl+K`.
 
 **Adjacency:** list=not-applicable (the grid is the list, in this file); document=applicable @ D05 T02 §5; settings=applicable @ D02 T04 §6; reporting=not-applicable (the unsaved-change summary is in-place state, §2); notifications=applicable @ D04 T01 §6; permissions=not-applicable (no roles); audit=not-applicable (session undo is in-memory state, not a history record); exchange=not-applicable (file in and out are the modes themselves, §3 and §4); reverse=applicable @ D05 T02 §1
 
@@ -54,6 +59,10 @@ track: M4
 | 9 | §9 | Viewer `Redaction & Sanitize Bar` (`Ctrl+Shift+X`), `Find & Redact` & `Sanitize` dialog | §5, D05 T01 §10, D03 T01 §4, D03 T01 §6 | [ ] |
 | 10 | §10 | Viewer `Signature Status Banner`, `Draw Signature Box` (`Ctrl+Shift+G`) & `Sign Dialog` | §5, D05 T01 §8, D05 T01 §9, D02 T04 §6 | [ ] |
 | 11 | §11 | Viewer `Signatures` side panel (`SPEC 8.3`) and `Protected & Signed` / `Unlocked` cards | §10, D02 T03 §3, D04 T01 §4, D05 T01 §9 | [ ] |
+| 12 | §12 | `Replace Pages` dialog: source picker, before and after preview, consequences | §5, D05 T01 §14, D02 T01 §10, D02 T03 §4, D02 T03 §11 | [ ] |
+| 13 | §13 | `Backgrounds` dialog: live preview over page content and managed marks list | §7, D05 T01 §13, D02 T03 §11 | [ ] |
+| 14 | §14 | Certificate encryption in the Protect flow: recipients, permissions, warnings | §11, D05 T01 §11, D04 T01 §4, D02 T03 §11 | [ ] |
+| 15 | §15 | Certificate prompt when opening a public-key encrypted PDF | D05 T01 §12, D02 T01 §5, D02 T01 §10, D04 T01 §7 | [ ] |
 
 ## 1. Virtualized Organize `PageGrid`, `OrganizeEditModel`, multi-select & `Undo`/`Redo` stack
 
@@ -406,6 +415,130 @@ Complete the digital signature and encryption surfaces specified in `design/SPEC
 - [ ] Commit: `app: add Redaction and Sanitize bar, Sign Document dialog and Signatures side panel`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=RedactionUi.*:SignatureUi.*:AppTests.RedactionAndSanitizeUi:AppTests.SignDocumentDialogUi:AppTests.DigitalSignaturesUi` passes.
+
+## 12. `Replace Pages` dialog: source picker, before and after preview, consequences
+
+Build the dialog for Acrobat Pro's Replace Pages tool (`src/app/dialogs/ReplacePagesDialog.xaml/.cpp`), wired to `replace_pages` (`D05 T01 §14`). A user chooses the pages to replace (prefilled from the Organize selection or the viewer thumbnail selection, and not required to be adjacent), picks a source PDF and the pages to use, sees the target pages and their replacements side by side, and is told what the operation will do to bookmarks, links and form fields before writing anything, using the engine's dry run. The result is a copy; the original is only replaced through the existing Replace-original flow (`§5`). Reachable from the Organize header and selection bar, the viewer thumbnail context menu, the `Tools` menu and `Ctrl+K`.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new dialog; it follows `design/SPEC.md` section 9.6 (Organize Page & Document Tools, dialogs with a live page preview over the working copy) and the section 9.9 form-dialog chrome (`ContentDialog`, radius 20, `28 epx` padding, Cancel and primary buttons side by side), and adds `Replace Pages` to the section 9.6 tool list.
+**Job:** A user can replace chosen pages of the open document with pages from another PDF, see the before and after pages and the consequences, and save a consistent copy. Consumer: `ConversionRunner` (`D04 T01 §1`), `replace_pages` (`D05 T01 §14`), the save flows of `§5`.
+**Treatment:** A `ContentDialog` bound to `ReplacePagesDialogViewModel` with a target field, source picker, source pages field, paired thumbnail strips, mode and bookmark-policy choices, and a consequence summary from `replace_pages` with `dry_run`. Cheaper substitute that fails the checkpoint: a dialog with two text boxes that replaces the whole span between the first and last page, or one with no preview and no consequence summary.
+**Chrome:** consume the single-active-dialog host (`D02 T01 §10`), the thumbnail tile pipeline (`D02 T03 §4`), `OrganizeSelectionBar` (`§2`), the Unsaved-Changes guard and Replace-original flow (`§5`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Implement `ReplacePagesDialogViewModel` in `src/services/replace_pages_dialog_view_model.h/.cpp` and build `ReplacePagesDialog.xaml/.cpp` with the target and source fields, paired previews and dry-run summary. Done when: `AppTests.ReplacePagesDialogUi` replaces pages 2 and 6 of a 10-page PDF with pages 1 and 2 of another, shows the before and after strips and the consequence summary, and writes a copy whose pages 3 to 5 are unchanged.
+2. Wire the entry points, the unsaved-changes guard and the result report. Done when: `AppTests.ReplacePagesDialogUi` opens the dialog from the selection bar, the thumbnail menu and `Ctrl+K`, and shows the post-run summary with warnings.
+
+- [ ] Implement `ReplacePagesDialogViewModel` building `ReplacePagesOptions` from UI state, validating fields with `parse_page_range_spec` (`D05 T01 §1`) on each keystroke with the engine's error text, and running `replace_pages` with `dry_run` on a worker thread (debounced `250 ms`) to fill the consequence summary. Done when: an inverted range shows the exact refusal and a valid input shows counts without writing a file.
+- [ ] Build the target pages field (prefilled from the current selection, any set of pages, with a `Use selection` button) and the source row (`Choose PDF...` through `FileOpenPicker`, a `Use this document` option, the source page count, and the source password through the SPEC 9.9 Password dialog when needed). Done when: choosing an encrypted source prompts for its password by file name.
+- [ ] Build the paired preview: a `Before` strip of target page thumbnails and an `After` strip of the replacement thumbnails with arrows, using the tile pipeline at strip size, and an inline message when the counts differ. Done when: changing either field updates the strips and a count mismatch in `One to one` mode disables `Replace` with the stated reason.
+- [ ] Build the mode and policy choices: `One to one` or `Replace with a different number of pages`, and `Point bookmarks and links at the replacement` or `Remove bookmarks that pointed at replaced pages`, with one-line effects shown from the dry run (`"3 bookmarks move, 1 is removed, 4 form fields are removed"`). Done when: switching the policy changes the dry-run numbers.
+- [ ] Show the engine's warnings before the user confirms (`pages_untagged`, `xfa_dropped`, `fields_renamed`) in an `InfoBar` with plain wording. Done when: replacing a page of a tagged form with an untagged page shows all three.
+- [ ] Apply through `ConversionRunner` (`D04 T01 §1`) to a copy (default `<stem> (pages replaced).pdf`), then offer `Open copy` and `Replace original` (the SPEC 9.9 dialog of `§5`); if the Organize grid has unsaved edits, show the Unsaved-Changes guard first because the engine reads the file on disk. Done when: `AppTests.ReplacePagesDialogUi` covers the guard, the copy and the original left byte-identical.
+- [ ] Wire the entry points: Organize header `Replace pages...` and `OrganizeSelectionBar` action, the viewer thumbnail context menu (`D02 T03 §4`), the `Tools` menu, and `organize.replacePages` in `CommandRegistry` with synonyms `swap pages`, `replace page`, `substitute`. Done when: `Ctrl+K` "swap" opens the dialog with the current selection. Cheaper substitute: a dialog with no command-box entry.
+- [ ] Add `Replace Pages` to the section 9.6 tool list of `design/SPEC.md`. Done when: the SPEC names the tool and the dialog matches it.
+- [ ] Give every control an automation name and tooltip and operate the whole dialog by keyboard (`D03 T02 §3`). Done when: the control inventory test passes for the dialog.
+- [ ] Add `ReplacePagesDialog.*` and `AppTests.ReplacePagesDialogUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=ReplacePagesDialog.*:AppTests.ReplacePagesDialogUi` passes.
+- [ ] Commit: `app: add the Replace Pages dialog with preview and consequence summary`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=ReplacePagesDialog.*:AppTests.ReplacePagesDialogUi` passes on the display-session host.
+
+## 13. `Backgrounds` dialog: live preview over page content and managed marks list
+
+Build the **Backgrounds** dialog (`src/app/dialogs/BackgroundDialog.xaml/.cpp`) beside the Watermark dialog (`§7`), wired to the managed marks engine (`D05 T01 §13`). It matches Acrobat Pro's Background tool (add, update, remove) and its watermark removal. The preview shows the real content of the selected page with the background composited beneath it, so what the user sees is what is saved (pdfcraft #2837). A second tab lists the managed backgrounds and the recognised watermarks already in the file, with `Edit` and `Remove`, so a mark can be changed or taken off long after it was added (pdfcraft #2931, #2962). Reachable from the Organize header, the viewer `Tools -> Background...` menu and `Ctrl+K`.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` section 9.9 (`Watermark / Header & Footer / Bates` two-column dialog with a live rendered page preview) and section 9.6 (Organize Page & Document Tools), following the `Watermark & Stamp` dialog of `§7` and adding `Background` to the section 9.6 tool list; no separate screenshot exists.
+**Job:** A user can add a colour, image or PDF-page background, see it under the real page content, change or remove it later, and remove an unwanted watermark. Consumer: `ConversionRunner` (`D04 T01 §1`), `PageMarks` (`D05 T01 §13`) and `OrganizePage` / `DocumentView`.
+**Treatment:** A two-column `640 epx` `ContentDialog` with a segmented `New background | Existing marks` switch, source, fit, scale, offset, rotation, opacity and page-scope controls on the left, and a live preview from `build_background_preview_display_list` with a page stepper on the right. Cheaper substitute that fails the checkpoint: a form with no live preview, a preview on a blank page, or a dialog that can add a background but never list or remove one.
+**Chrome:** consume the dialog host (`D02 T01 §10`), the layout and 9-point conventions of `WatermarkDialog` (`§7`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Implement `BackgroundDialogViewModel` in `src/services/background_dialog_view_model.h/.cpp` and build the `New background` tab with live preview. Done when: `AppTests.BackgroundDialogUi` changes source, fit, opacity and scope and sees the preview update under real page text on each change, then applies a background through `ConversionRunner`.
+2. Build the `Existing marks` tab with edit and remove, and wire the entry points. Done when: `AppTests.BackgroundDialogUi` lists a background and a watermark in a prepared file, edits the background, removes the watermark, and the output has no remaining mark bytes.
+
+- [ ] Implement `BackgroundDialogViewModel` building `BackgroundOptions` (`D05 T01 §13`) from UI state and requesting a debounced (`16 ms`) preview from `build_background_preview_display_list` on a worker thread. Done when: every property change produces an updated bitmap whose pixels equal the saved page.
+- [ ] Build the left-column controls: `Source` segmented (`Colour`, `Image`, `PDF page`), a colour swatch for content colour, file pickers for image and PDF (with a source page number), `Fit` (`Fill page`, `Fit inside`, `Centre`, `Tile`), scale, offsets, rotation, opacity, `Area` (`Page box` or `Media box`) and page scope (`All`, `Even`, `Odd`, custom range). Done when: switching the source swaps the input rows cleanly. Cheaper substitute: colour only.
+- [ ] Build the right-column preview pane with the page stepper (`< Prev Page`, `Page k of N`, `Next Page >`) showing the real page content with the background under it, and a note naming pages in `occluded_pages` whose own fill hides the background. Done when: stepping to an occluded page shows the note and the preview still shows the page content.
+- [ ] Build the `Existing marks` tab as a `ListView` of marks from `list_marks` (name, kind, pages, whether editable) with `Edit` (loads the mark into the first tab and applies as `update_mark`) and `Remove` (a confirmation dialog stating which pages lose it); recognised watermarks show `Remove` only. Done when: editing a colour changes it on every page of the mark and removing a mark leaves page text and pixels as in the unmarked file.
+- [ ] Apply through `ConversionRunner` and `AtomicFileWriter` on a copy using the same save and Replace-original behaviour as the Watermark dialog (`§7`, `§5`), and show the Unsaved-Changes guard first when the Organize grid has edits. Done when: `AppTests.BackgroundDialogUi` leaves the original byte-identical on `Save as copy`.
+- [ ] Wire the entry points: Organize header `Background...`, the viewer `Tools -> Background...` menu, and `organize.backgrounds` and `organize.removeWatermark` in `CommandRegistry` with synonyms `background`, `page colour`, `remove watermark`, `wallpaper`. Done when: `Ctrl+K` "remove watermark" opens the dialog on the `Existing marks` tab. Cheaper substitute: no command-box entry.
+- [ ] Add `Background` to the section 9.6 tool list of `design/SPEC.md`. Done when: the SPEC names the tool.
+- [ ] Give every control an automation name and tooltip, with all nine anchor and fit controls keyboard operable (`D03 T02 §3`). Done when: the control inventory test passes for the dialog.
+- [ ] Add `BackgroundDialog.*` and `AppTests.BackgroundDialogUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=BackgroundDialog.*:AppTests.BackgroundDialogUi` passes.
+- [ ] Commit: `app: add the Backgrounds dialog with live preview and managed marks list`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=BackgroundDialog.*:AppTests.BackgroundDialogUi` passes on the display-session host.
+
+## 14. Certificate encryption in the Protect flow: recipients, permissions, warnings
+
+Add certificate (public-key) encryption to the existing **Protected & Signed PDF** card (`§11`) as a second way to protect a file: a `Protect with` choice of `Password` or `Certificate`. In certificate mode the user builds a recipient list from the Windows certificate store or from `.cer`, `.crt` and `.p7b` files, sets permissions for each recipient, and is warned about every problem (expired certificate, no encipherment key usage, not able to reopen the file themselves) before anything is written. It runs `encrypt_pdf_for_recipients` (`D05 T01 §11`) and never offers a path that produces an unprotected file. Reachable from the Convert card, the viewer `Tools` menu and `Ctrl+K`.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` section 9.5 (`Protected & Signed PDF` card and Step 3 options, `D-Convert.png`); the recipient list and certificate picker are a genuinely new part of that Step 3 form and follow its toggle, `PasswordBox` and checkbox conventions and the `CertificateDetailsDialog` of `§11`.
+**Job:** A user can encrypt a PDF so only chosen people can open it, choose what each person may do, and know before saving that the file will open for them and for the user. Consumer: `ConvertPage` (`D04 T01 §3`-`§4`), `ConversionRunner` and `PubSec` (`D05 T01 §11`).
+**Treatment:** A `CertificateRecipientsControl` inside `ProtectedPdfOptionsControl` with a recipient `ListView`, a `CertificatePickerDialog`, per-recipient permission checkboxes, an `Include me` selector, and warnings that gate the primary button. Cheaper substitute that fails the checkpoint: one permission set for all recipients, an expired or unsuitable certificate accepted silently, or an `Encrypt` button that falls back to a password or to no encryption.
+**Chrome:** consume `ProtectedPdfOptionsControl` and the Step 3 host (`§11`, `D04 T01 §4`), `CertificateDetailsDialog` (`§11`), the dialog host (`D02 T01 §10`), `CommandRegistry` (`D02 T03 §11`) and `RectoColors.xaml` status tokens paired with icons and text (`SPEC 11`).
+
+**Build order:**
+
+1. Implement `CertificateRecipientsViewModel` in `src/services/certificate_recipients_view_model.h/.cpp` and `CertificatePickerDialog` over `D05 T01 §11`'s recipient loading and validation. Done when: `AppTests.CertificateEncryptionUi` adds a store certificate and a `.cer` file, sees validation badges, sets different permissions for each, and builds a matching `PubSecEncryptionOptions`.
+2. Build `CertificateRecipientsControl`, gate the primary action on its warnings, and run the job. Done when: `AppTests.CertificateEncryptionUi` encrypts a file for two test recipients through `ConversionRunner` and reopens it with each test key at its own permissions.
+
+- [ ] Add the `Protect with` segmented choice (`Password`, `Certificate`) to `ProtectedPdfOptionsControl` (`§11`) without changing the password controls; `Certificate` shows `CertificateRecipientsControl`. Done when: switching modes swaps the option rows and keeps the other mode's entries.
+- [ ] Implement `CertificateRecipientsViewModel` holding recipients with their validation state (`Valid`, `Expiring`, `Expired`, `Unsuitable`, with reason), per-recipient `PdfPermissions`, `EncryptMetadata`, the `Include me` certificate and the acknowledgment state, and producing `PubSecEncryptionOptions`. Done when: each state maps to the matching option field in `AppTests.CertificateEncryptionUi`.
+- [ ] Build `CertificatePickerDialog` (`src/app/dialogs/CertificatePickerDialog.xaml/.cpp`) listing certificates from the `AddressBook` and `MY` stores with search by name or email, columns for name, issuer, expiry and usage, multi-select, and a `Details...` button opening `CertificateDetailsDialog` (`§11`); `Add from file...` takes `.cer`, `.crt` and `.p7b`. Done when: searching narrows the list and an unsuitable certificate shows its reason instead of being hidden.
+- [ ] Build the recipient `ListView` with a status icon plus text badge per row (never colour alone), `Remove`, and the permission checkboxes (`Allow printing`, `Allow high-resolution printing`, `Allow copying text and graphics`, `Allow annotations and form filling`, `Allow page changes`) for the selected recipient with an `Apply to all recipients` button. Done when: two recipients keep different permissions. Cheaper substitute: one shared permission set.
+- [ ] Build the `Include me so I can reopen this file` selector (certificates from `MY` with a private key), defaulting on when one exists; when no recipient has an available private key require an explicit `I understand I will not be able to open this file` acknowledgment before the primary button enables. Done when: the button stays disabled without an eligible recipient or the acknowledgment.
+- [ ] Disable `Digitally sign document` in certificate mode with the stated reason `"Encrypting for certificates rewrites the file and would invalidate a signature."`, and block expired or unsuitable recipients unless the user checks `Allow expired certificates` for the expired case. Done when: `AppTests.CertificateEncryptionUi` shows the reason and the gating.
+- [ ] Set the primary button label to `"Encrypt with certificates"` and enqueue `encrypt_pdf_for_recipients` through `ConversionRunner`; a typed refusal appears in the `QueueCard` and no output file exists. Done when: an injected CMS failure shows the error and creates no file.
+- [ ] Register `protect.encryptWithCertificate` in `CommandRegistry` (opens the Convert page on the card in `Certificate` mode with the current file) and add `Encrypt with certificate...` to the viewer `Tools` menu, with synonyms `certificate`, `public key`, `encrypt for`, `recipients`. Done when: `Ctrl+K` "recipients" lands on the card in certificate mode. Cheaper substitute: no command-box entry.
+- [ ] Give every control an automation name and tooltip and make the picker and list keyboard operable (`D03 T02 §3`). Done when: the control inventory test passes.
+- [ ] Add `CertificateRecipients.*` and `AppTests.CertificateEncryptionUi` in `tests/recto-tests/` using test-time certificates (no key material committed). Done when: `recto-tests.exe --gtest_filter=CertificateRecipients.*:AppTests.CertificateEncryptionUi` passes.
+- [ ] Commit: `app: add certificate encryption to the Protect card with recipients and permissions`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=CertificateRecipients.*:AppTests.CertificateEncryptionUi` passes on the display-session host.
+
+## 15. Certificate prompt when opening a public-key encrypted PDF
+
+Make files from `§14` (and other readers' certificate encryption) open in the UI. When `OpenDocumentPipeline` (`D02 T01 §5`) or a Convert job receives `PdfErrorCode::CertificateRequired` (`D05 T01 §12`), it shows a **Choose a certificate** dialog beside the SPEC 9.9 Password dialog instead of the password prompt. The dialog lists the user's certificates that match the file's recipients, lets the user pick another certificate or a `.pfx` file (imported for this session only, never into the store), and waits visibly while Windows asks for a smart-card or token PIN. The file is never opened as a damaged or blank document, and a wrong certificate is a clear message with a way to try another.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` section 9.9 (Password dialog, `ContentDialog` radius 20, wrong-attempt state with a red border and message); the certificate list and recipient hints are a genuinely new dialog that follows its layout and button conventions.
+**Job:** A recipient can open, convert or print a certificate-encrypted PDF by choosing the certificate that was used for them, and sees plainly when their certificates do not match. Consumer: `OpenDocumentPipeline` (`D02 T01 §5`), the queue error recovery (`D04 T01 §7`) and `DocumentActor::supply_certificate` (`D05 T01 §12`).
+**Treatment:** A `CertificatePromptDialog` listing matching certificates (preselected), a `Choose another certificate...` list, an `Open a .pfx file...` path with its password, a waiting state for the PIN, and inline errors. Cheaper substitute that fails the checkpoint: reusing the password box, auto-picking a certificate without asking, or importing a `.pfx` private key into the user's store.
+**Chrome:** consume the dialog host and Password dialog conventions (`D02 T01 §10`), `OpenDocumentPipeline` (`D02 T01 §5`), the `Enter password` recovery flow of `QueueCard` (`D04 T01 §7`), and `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Implement `CertificatePromptViewModel` in `src/services/certificate_prompt_view_model.h/.cpp` matching `PubSecRecipientHint`s against `MY` certificates that have an available private key, and `CertificatePromptDialog.xaml/.cpp`. Done when: `AppTests.CertificatePromptUi` opens a `D05 T01 §11` output, preselects the matching test certificate, opens the document after `Open`, and shows the permissions the recipient was given.
+2. Wire the open pipeline and the queue recovery. Done when: `AppTests.CertificatePromptUi` also shows the no-match message, a cancelled PIN returning to the dialog, and a Convert job that pauses for a certificate and resumes.
+
+- [ ] Add a `CertificateRequired` branch to `OpenDocumentPipeline` (`src/app/OpenPipeline.cpp`) that shows `CertificatePromptDialog` and calls `DocumentActor::supply_certificate`, keeping the tab in its loading state while the key operation runs. Done when: the tab opens only after a successful decrypt and the UI thread is never blocked.
+- [ ] Build the matching list (name, issuer, expiry, a `Matches this file` badge with text) from the recipient hints and `MY` store certificates with private keys, preselecting the unique match; with none, show `"None of your certificates can open this file."` and the number of recipients, without revealing recipient names beyond the issuer and serial. Done when: the no-match state shows the message and a `Choose another certificate...` list.
+- [ ] Build `Open a .pfx file...` using `PFXImportCertStore` with `PKCS12_NO_PERSIST_KEY` into an in-memory store, asking the `.pfx` password through the SPEC 9.9 Password dialog, and never adding the certificate or key to the Windows store. Done when: `AppTests.CertificatePromptUi` opens a file with a `.pfx` and finds the user's certificate store unchanged.
+- [ ] Show a visible waiting state `"Waiting for your smart card or PIN..."` with a `Cancel` while the key operation runs, announced to assistive technology (`D03 T02 §5`), and map `PinCancelled`, `PrivateKeyUnavailable`, `NoMatchingCertificate` and `DecryptionFailed` to plain messages with a next step, returning to the dialog for another attempt. Done when: each code shows its message in `AppTests.CertificatePromptUi`.
+- [ ] Handle the same code in `QueueCard` recovery (`D04 T01 §7`): a job whose input needs a certificate pauses as `NeedsCertificate`, shows the dialog, and resumes with the chosen certificate. Done when: a Convert job over a certificate-encrypted PDF completes after the choice and fails cleanly on cancel.
+- [ ] Give every control an automation name and tooltip and make the list and buttons keyboard operable (`D03 T02 §3`). Done when: the control inventory test passes.
+- [ ] Add `CertificatePrompt.*` and `AppTests.CertificatePromptUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=CertificatePrompt.*:AppTests.CertificatePromptUi` passes.
+- [ ] Commit: `app: add the certificate prompt for opening public-key encrypted PDFs`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=CertificatePrompt.*:AppTests.CertificatePromptUi` passes on the display-session host.
 
 ## Verification
 

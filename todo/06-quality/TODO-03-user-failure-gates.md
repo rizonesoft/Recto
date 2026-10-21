@@ -25,6 +25,10 @@ title: "TODO-03 -- User-Reported Failure Class Gates (Lessons from pdfcraft)"
 - -> XREF: D05 T01 §10 -- the physical redactor and sanitizer gated by §6.
 - -> XREF: D07 T01 §2 -- the print pipeline gated by §9.
 - -> XREF: D07 T03 §5 -- the release gate that refuses a tag without §12's green smoke report.
+- -> XREF: D03 T04 §4 -- Edit PDF's font resolver (§4 there) and Add Text (§7 there) are gated here.
+- -> XREF: D03 T04 §9 -- Edit PDF's removal edits and orphan pruning are proven by this suite.
+- -> XREF: D04 T05 §15 -- the Reading Order engine (D04 T05 §15) is a consumer in this differential suite.
+- -> XREF: D04 T06 §16 -- print production's ink hook (D04 T06 §16) is checked by this suite.
 
 ## Outcome
 

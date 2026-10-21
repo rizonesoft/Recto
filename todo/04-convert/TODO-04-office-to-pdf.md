@@ -23,6 +23,7 @@ track: M5
 - -> XREF: D04 T03 §1 -- `office_to_pdf.cpp` (§1, §2) reads OpenXML `.docx`, `.xlsx`, and `.pptx` ZIP packages via `D04 T03 §1`'s `zip_archive.cpp`.
 - -> XREF: D06 T01 §6 -- `ConvertSuite.OfficeAndHtmlRoundTrip` and `ConvertSuite.LegacyBinaryOfficeRoundTrip` (`D06 T01 §6`) verify multi-format Office and legacy binary Office conversion quality built in §6 and §7 here.
 - -> XREF: D06 T02 §2 -- the security audit in `D06 T02 §2` re-runs the macro-stream stripping (`vbaProject.bin`, `_VBA_PROJECT_CUR`, `Macros`, `VBA` on `macro-canary.docm` and `macro-canary.doc`), HTML external network/script blocking, and zero-external-subprocess proofs built here, and `fuzz_openxml_zip` (`D06 T02 §3`) fuzzes both the OpenXML (`ZipReader`) and OLE2 Compound File (`Ole2Reader`) parsers (`§1`, `§2`, `§4`).
+- -> XREF: D04 T05 §12 -- validates PDF to PowerPoint output (D04 T05 §12).
 
 ## Outcome
 

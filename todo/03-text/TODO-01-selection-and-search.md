@@ -32,6 +32,9 @@ track: M3
 - -> XREF: D06 T01 §4 -- `TextTables.*` (`D06 T01 §4`) verifies `PageText` normalization, regex search, `Replace Text` (`§9`), and `Compare PDFs` (`§10`) built here.
 - -> XREF: D06 T02 §3 -- `fuzz_text` (`D06 T02 §3`) fuzzes the `PageText` extractor, `SearchEngine`, and content-stream text replacer (`§1`, `§5`, `§9`) built here.
 - -> XREF: D06 T03 §11 -- user-reported extraction, reading-order and cross-page selection fixtures, and the single-interpreter differential suite (§4 there) over `PageText`, find and replace.
+- -> XREF: D03 T04 §5 -- content-stream replace reuses Edit PDF's rewrite engine (§5 there) and font resolver (§4 there).
+- -> XREF: D03 T05 §3 -- search across files (D03 T05) reuses this engine and its options.
+- -> XREF: D03 T02 §7 -- Read Out Loud (D03 T02 §7) consumes this text model.
 
 ## Outcome
 

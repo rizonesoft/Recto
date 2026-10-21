@@ -29,6 +29,7 @@ track: M6
 - -> XREF: D04 T04 §5 -- the macro-stream inertness proof on `macro-canary.docm` and `macro-canary.doc` (`§5`) re-verified in `§2`.
 - -> XREF: D05 T01 §10 -- the physical content-stream redaction (`Redactor`) and `sanitize_document` proofs re-verified in `§2`.
 - -> XREF: D06 T03 §1 -- the user-reported hostile-input fixture pack whose files seed the fuzz corpora scheduled here.
+- -> XREF: D02 T05 §15 -- runs the rich media, 3D and geospatial fuzz targets (D02 T05 §15).
 
 ## Outcome
 

@@ -27,6 +27,7 @@ frozen: true
 - -> XREF: D04 T04 §7 -- the 100% native C++20 `Office & Legacy Office -> PDF` converters register the `PDF from Office, HTML, Markdown & Images` card against §3 and §4 here.
 - -> XREF: D04 T05 §2 -- the Excel/CSV/XML, HTML5/Markdown/EPUB/LaTeX, and PDF/A/PDF-UA/ZUGFeRD converters register their cards and Step 3 options against §3 and §4's converter-card registry.
 - -> XREF: D05 T02 §5 -- Organize saves and `D05 T02 §11`'s Protected/Unlocked PDF cards run as jobs on this frame.
+- -> XREF: D04 T07 §9 -- the Action Wizard (D04 T07 §9) runs its steps as these jobs.
 
 ## Outcome
 

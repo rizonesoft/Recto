@@ -23,6 +23,8 @@ track: M3
 - -> XREF: D03 T03 §10 -- Interactive form fields and annotation comments expose UIA peers alongside the page text provider.
 - -> XREF: D04 T01 §6 -- Conversion job completion notifications invoke the polite announcement sink built in §6 here.
 - -> XREF: D07 T02 §6 -- the M6 Store & Release Compliance verification (`D07 T02 §6`) gates on the UIA verification pass in `§6` here.
+- -> XREF: D02 T04 §9 -- Read Out Loud accelerators join the audited keyboard map.
+- -> XREF: D03 T01 §1 -- Read Out Loud reads `PageText` in reading order.
 
 ## Outcome
 
@@ -30,6 +32,7 @@ track: M3
 - Every icon-only control across the shell, panels, and toolbars is verified by an automated inventory to carry `AutomationProperties.Name`, a shortcut tooltip, and `>= 32 epx` (`>= 36 epx` in floating bars) hit targets (`§3`).
 - Keyboard-only operation reaches every control in title-bar, toolbar, panel, page order with a visible `--accent` focus indicator across `Focus`, `Classic` and `Reading room` presets (`§4`).
 - Find counts, current page changes, selection extents, document open/close, and conversion completion (when `D04 T01 §6` emits its events) announce politely without stealing focus (`§5`, `§6`).
+- Read Out Loud speaks the current page, the rest of the document or the selection in `PageText` reading order (tagged structure when present, OCR text on scanned pages) through installed Windows voices with `Windows.Media.SpeechSynthesis`, with pause, stop, voice, rate and volume, a highlighted word that the page follows, `Ctrl+K` commands and shortcuts, and no work on the UI thread (`§7`, `§8`, `§9`).
 
 **Adjacency:** all=not-applicable (an access layer over other files' records and surfaces; it owns no data, and its every element is the accessible twin of a surface owned elsewhere)
 
@@ -45,6 +48,9 @@ track: M3
 | 4 | §4 | Logical `Tab` / `Shift+Tab` focus order and `--accent` focus ring across all 3 presets | §3 | [ ] |
 | 5 | §5 | Polite coalescing `AnnouncementService` for page changes, find counts, and selection | §2, D03 T01 §6 | [ ] |
 | 6 | §6 | Conversion job completion announcement sink (`D04 T01 §6`) and UIA verification pass | §4, §5 | [ ] |
+| 7 | §7 | Read Out Loud reading plan: current page, to end of document and selection | D03 T01 §2, D03 T01 §3, D03 T01 §8 | [ ] |
+| 8 | §8 | `SpeechService` over `Windows.Media.SpeechSynthesis`: voices, rate, volume, pause, stop | §7, D02 T04 §2 | [ ] |
+| 9 | §9 | Read Out Loud bar, word highlight, shortcuts, `Ctrl+K` commands and settings | §5, §7, §8, D03 T01 §4, D02 T03 §11, D02 T04 §5, D02 T04 §8 | [ ] |
 
 ## 1. `DocumentViewAutomationPeer` implementing `ITextProvider` and `ITextRangeProvider`
 
@@ -216,8 +222,86 @@ Add the conversion and background-job completion announcement API (`Announcement
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=A11y.*` passes 100%, quoting listener logs for the scripted session, fast-scroll coalescing, job completion sink, and `A11y.EndToEndSection11`.
 
+## 7. Read Out Loud reading plan: current page, to end of document and selection
+
+Build the engine that decides what Read Out Loud says and in which order: a `ReadAloudPlan` made from the shared `PageText` snapshots (`D03 T01 §1`-`§2`) for the current page, from the current page to the end of the document, or for the current selection (`D03 T01 §3`), in tagged reading order when the page has structure and in geometric reading order otherwise. This is the content half of Acrobat Pro's `Read Out Loud`. It must not break the thread contract (the plan is built from immutable `std::shared_ptr<const PageText>` snapshots off the UI thread and never touches the live `recto::pdf::Document`) and it keeps Recto's improvement that scanned pages read through the OCR text layer when one exists (`D03 T01 §8`) and say so plainly when none does.
+
+**Phase:** 3
+**Needs:** none
+**Surface:** no
+
+**Build order:**
+
+1. Define `ReadAloudUnit` (`text`, `page_index`, `char_start`, `char_end`, `kind` among `Heading`, `Paragraph`, `ListItem`, `TableCell`, `FigureAlt`) and `ReadAloudPlan` in `src/services/read_aloud_plan.h/.cpp`, and implement `build_page_plan`, `build_to_end_plan` (lazy, one page at a time) and `build_selection_plan` over `PageText`. Done when: `A11y.ReadAloudPlanOrder` reads `text/two-column-links-outline.pdf` column by column and a tagged fixture in `/StructTreeRoot` order.
+2. Implement the word map from each unit to the `CharQuad` ranges of its words so the viewer can highlight the word being spoken, and the prefetch of the next page's `PageText` through `DocumentActor::get_page_text`. Done when: `A11y.ReadAloudWordMap` maps every word of a fixture page to the exact quads and `A11y.ReadAloudPrefetch` shows page `N+1` requested before page `N` ends.
+
+- [ ] Split text into units at block, list item, table cell and sentence boundaries with a maximum of `1000` characters per unit (long paragraphs split at the last sentence end or space before the cap), so one synthesis request stays short. Done when: `A11y.ReadAloudPlanOrder` shows no unit over `1000` characters on a `5000`-character paragraph fixture.
+- [ ] Use `/Alt` text for `Figure` nodes and `/ActualText` where present, mark heading units as `Heading` (the word `Heading` is not spoken) so the speaker can pause longer, and read `TableCell` units row by row with the header cell text prefixed on the first row only. Done when: `A11y.ReadAloudTaggedStructure` reads a tagged fixture's figure alt text, heading and a `2 x 3` table in the expected order.
+- [ ] Skip page artifacts (running headers, footers, page numbers marked `/Artifact`) on tagged pages and repeat nothing for hidden text (`Tr 3` invisible runs are read only when they are the OCR layer of a scanned page). Done when: `A11y.ReadAloudArtifacts` omits a tagged footer and reads the OCR layer of `text/scanned.pdf` after OCR.
+- [ ] Return a typed `ReadAloudNotice::NoReadableText` for a page with no text and no OCR layer, and continue to the next page in a to-end plan after recording it. Done when: `A11y.ReadAloudNoText` shows the notice for an image-only page and the plan continuing to the next page.
+- [ ] Build the selection plan from `SelectionModel` quads in selection order across lines and pages, trimmed to whole words, and reject an empty selection. Done when: `A11y.ReadAloudSelection` reads a selection that spans two pages in order and returns `NoReadableText` for an empty one.
+- [ ] Make plan building cancellable with `CancelToken` and bounded at `2000` units per page and `100000` units per plan. Done when: `A11y.ReadAloudBounds` ends a hostile page of `500000` one-character blocks inside the cap under ASan.
+- [ ] Add `A11y.ReadAloudPlanOrder`, `ReadAloudWordMap`, `ReadAloudPrefetch`, `ReadAloudTaggedStructure`, `ReadAloudArtifacts`, `ReadAloudNoText`, `ReadAloudSelection` and `ReadAloudBounds` in `tests/recto-tests/a11y_read_aloud_plan_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=A11y.ReadAloud*` passes under ASan.
+- [ ] Commit: `feat(a11y): add the Read Out Loud reading plan`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=A11y.ReadAloud*` passes under ASan, quoting the unit order for the two-column and tagged fixtures.
+
+## 8. `SpeechService` over `Windows.Media.SpeechSynthesis`: voices, rate, volume, pause, stop
+
+Add the speaking half of Read Out Loud: a `SpeechService` that turns `ReadAloudUnit`s (`§7`) into audio with `Windows.Media.SpeechSynthesis`, supports pause, resume and stop, a chosen installed voice, speaking rate and volume, and reports each word boundary so the viewer can highlight it. It must not break the UI thread rule (all synthesis and playback run on background threads and only small progress events reach the UI) and keeps Recto's improvement that the text never leaves the machine: only voices installed in Windows are listed and used, and no network call is made by Recto.
+
+**Phase:** 3
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `ISpeechEngine` (`synthesize(text, options)`, `play`, `pause`, `resume`, `stop`, word-boundary callback) and `WinRtSpeechEngine` in `src/services/speech_service.h/.cpp` using `SpeechSynthesizer`, `SpeechSynthesizerOptions` (`SpeakingRate`, `AudioVolume`, `IncludeWordBoundaryMetadata`), `MediaSource` and `MediaPlayer`, with a `FakeSpeechEngine` for tests. Done when: `A11y.SpeechServiceFake` drives play, pause, resume and stop through the fake and `A11y.SpeechServiceWinRt` speaks a short phrase through the real engine on the Windows host.
+2. Implement `SpeechService` over the plan: one unit synthesising ahead while the previous plays, a monotonic position (unit index, word index), and a state machine `Idle`, `Preparing`, `Speaking`, `Paused`, `Stopping`, `Failed`. Done when: `A11y.SpeechStateMachine` verifies every legal transition and that `stop` from any state ends in `Idle` with no pending operation.
+
+- [ ] Enumerate `SpeechSynthesizer::AllVoices` into `SpeechVoice` (`id`, `display_name`, `language`, `gender`), pick the saved `SpeechVoiceId` setting when it still exists and otherwise the voice matching the document `/Lang` or the Windows display language, and return a typed `SpeechError::NoVoiceInstalled` when the list is empty. Done when: `A11y.SpeechVoices` selects by saved id, by document language, by fallback, and reports no voice with a fake empty list.
+- [ ] Apply `SpeechRate` (`0.5` to `3.0`, default `1.0`) and `SpeechVolume` (`0.0` to `1.0`, default `1.0`) from `SettingsStore` (`D02 T04 §2`), clamp out-of-range values, and apply a changed rate or volume to the next unit without restarting the current one. Done when: `A11y.SpeechSettingsApply` shows the clamp and the next-unit application.
+- [ ] Read word boundaries from the synthesized stream's timed metadata (`SpeechCue` cues carrying start and end positions in the input text), map them to `(unit, word)` through `§7`'s word map, and raise `on_word(unit, word)` on a background thread. Done when: `A11y.SpeechWordEvents` shows ordered word events for a three-sentence plan and none after `stop`.
+- [ ] Implement `pause`, `resume` and `stop` with `MediaPlayer::Pause`, `Play` and `Close`, cancel any in-flight `IAsyncOperation` for a synthesis not yet played, and complete `stop` within `250 ms` of the call. Done when: `A11y.SpeechStopLatency` measures `stop` during synthesis and during playback under `250 ms` and leaves no running operation.
+- [ ] Handle failure without throwing: a synthesis `winrt::hresult_error`, an audio device removal and a voice that disappears mid-read become `SpeechError` values with a plain message, move the state to `Failed`, and leave the document untouched. Done when: `A11y.SpeechFailures` injects each failure through the fake and finds `Failed` with the expected message.
+- [ ] Confirm no network use: the service calls no HTTP API and no cloud voice, and a source search in the test finds no `HttpClient`, `WinHttp` or `WebSocket` symbol in `speech_service.cpp`. Done when: `A11y.SpeechOffline` passes.
+- [ ] Add the tests named above in `tests/recto-tests/a11y_speech_service_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=A11y.Speech*` passes on the Windows host.
+- [ ] Commit: `feat(a11y): add the SpeechService over Windows.Media.SpeechSynthesis`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=A11y.Speech*` passes on the Windows host, with the stop-latency measurement quoted.
+
+## 9. Read Out Loud bar, word highlight, shortcuts, `Ctrl+K` commands and settings
+
+Add the Read Out Loud surface: a contextual `ReadAloudBar`, the on-canvas highlight of the word and sentence being read with automatic scrolling, the commands and shortcuts, and the voice, rate and volume settings, matching Acrobat Pro's `View` > `Read Out Loud`. It must not break the shell rules (`Esc` closes the bar and stops reading, every command is in `Ctrl+K`, motion respects "Show animations in Windows") and keeps Recto's improvement that reading never blocks the UI thread and never speaks for a screen-reader user by default: Recto announces only `Reading started`, `Paused` and `Stopped` through `AnnouncementService` so Narrator or NVDA is not talked over.
+
+**Phase:** 3
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** `design/SPEC.md` sections 8.2 (contextual mode bars), 9.7 (Reading settings group), 10 (keyboard) and 11 (colour never the only signal, reduced motion); genuinely new surface, following the `Markup & Annotation Bar` chrome (`40 epx`, `RectoSurfaceBrush`, `1 epx` `RectoBorderSubtleBrush`).
+**Job:** The user presses `Ctrl+Shift+V` to hear the current page, `Ctrl+Shift+B` to hear from here to the end, or chooses `Read selection` on selected text. They pause with `Ctrl+Shift+C`, stop with `Ctrl+Shift+E`, change voice, rate and volume while listening, and see the spoken word highlighted with the page following along. Consumer: `DocumentView`, `SelectionFloatingToolbar` context menu (`D03 T01 §4`), `CommandRegistry`, `SettingsPage` (`D02 T04 §5`).
+**Treatment:** A `ReadAloudBar` bound to `ReadAloudViewModel` (`src/services/read_aloud_view_model.h/.cpp`) over `SpeechService` (`§8`) and `ReadAloudPlan` (`§7`), a `ReadAloudHighlightLayer` on `DocumentView` drawing the word as a `RectoAccentTintBrush` fill with a `2 epx` `RectoAccentBrush` underline (not colour alone) and the sentence as a lighter tint, and an auto-scroll that keeps the word in view. Cheaper substitute that fails the checkpoint: reading the whole document with no pause or stop, no highlight, or a highlight updated from the UI thread by polling.
+**Chrome:** consume `RectoColors.xaml` tokens, `D02 T04 §8` motion rules, `DocumentView` geometry (`D02 T02 §5`), Segoe Fluent Icons (`E768` Play, `E769` Pause, `E71A` Stop), and `AnnouncementService` (`§5`).
+
+**Build order:**
+
+1. Implement `ReadAloudViewModel` and the `ReadAloudBar` with `Pause`/`Resume`, `Stop`, a `Voice` combo, `Rate` and `Volume` sliders, and the status text (`Reading page 4 of 20`), with commands `Read This Page`, `Read to End of Document`, `Read Selection`, `Pause or Resume Reading` and `Stop Reading` in `CommandRegistry`. Done when: `ReadAloudUi.CommandsAndBar` runs each command against a `FakeSpeechEngine` and every command appears in `Ctrl+K`.
+2. Implement `ReadAloudHighlightLayer` with word and sentence highlighting, auto-scroll that follows the speech across lines and pages, and the `Reading` settings rows. Done when: `ReadAloudUi.HighlightAndFollow` reads a two-page fixture and the highlighted quads equal the spoken words' quads in order, with the viewport following to page 2.
+
+- [ ] Build `ReadAloudBar` (`src/app/controls/ReadAloudBar.xaml/.h/.cpp`, `40 epx`) with `Pause`/`Resume` and `Stop` icon buttons (automation names `Pause reading`, `Resume reading`, `Stop reading`, tooltips with their shortcuts), a `Voice` combo box, `Rate` and `Volume` sliders and a status label, opened by any read command and closed by `Esc` or `Stop`. Done when: the bar passes the `D03 T02 §3` inventory and `Esc` stops speech and closes the bar.
+- [ ] Register `Read This Page` (`Ctrl+Shift+V`), `Read to End of Document` (`Ctrl+Shift+B`), `Read Selection` (selection context menu and `Ctrl+K`), `Pause or Resume Reading` (`Ctrl+Shift+C`) and `Stop Reading` (`Ctrl+Shift+E`) in `CommandRegistry`, enabled only when a document is open (`Read Selection` only with a selection) and active only while the document view has focus so text boxes keep their own `Ctrl+Shift+C`. Done when: `ReadAloudUi.CommandsAndBar` triggers each shortcut and the generated `docs/keyboard-shortcuts.md` (`D02 T04 §10`) lists all five.
+- [ ] Draw `ReadAloudHighlightLayer` from `on_word` events marshalled to the UI thread through `DispatcherQueue`, with the word fill plus underline and the sentence tint, and scroll to keep the word at least `64 epx` inside the viewport, instantly when animations are off and with the `167 ms` transition when on. Done when: `ReadAloudUi.HighlightAndFollow` and `ReadAloudUi.ReducedMotion` verify the quads and the two scroll modes. Cheaper substitute: highlighting the whole line.
+- [ ] Add `Voice`, `Speech rate` and `Speech volume` rows to the Settings `Reading` group (`D02 T04 §5`) bound to `SpeechVoiceId`, `SpeechRate` and `SpeechVolume`, searchable in `Find a setting`, with a `Preview voice` button speaking one sentence. Done when: `ReadAloudUi.SettingsRows` changes each setting, sees `SpeechService` read it, and finds the rows through `Find a setting`.
+- [ ] Announce `Reading started`, `Reading paused`, `Reading resumed`, `Reading stopped` and `Reached the end of the document` through `AnnouncementService` without moving keyboard focus, and never announce individual words. Done when: `ReadAloudUi.Announcements` records exactly those notifications for a scripted session.
+- [ ] Keep the UI responsive while reading: no synthesis, plan building or `PageText` fetch on the UI thread, and a frame-time check that reading a `200`-page document adds no frame over `16.7 ms` from this feature. Done when: `ReadAloudUi.UiThreadSafety` asserts no blocking call on the UI thread and records the frame times.
+- [ ] Stop reading on tab close, on document switch and on app exit, and release the audio device within `250 ms`. Done when: `ReadAloudUi.LifecycleStop` closes the tab mid-sentence and finds `SpeechService` in `Idle`.
+- [ ] Add `ReadAloudUi.*` tests in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=ReadAloudUi.*` passes on the display-session host.
+- [ ] Commit: `feat(app): add Read Out Loud with word highlight, shortcuts and settings`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=ReadAloudUi.*` passes on the display-session host, quoting the highlight quads, the announcement log and the frame-time record.
+
 ## Verification
 
-- SPEC section 11 read line by line against the findings: every clause proven by `A11y.*` tests (`TextRangeUnits`, `TextProvider`, `SelectionAndFind`, `Inventory`, `TabOrder`, `EscapeStack`, `Announcements`, `FastScrollCoalescing`, `JobAnnouncementSink`, `ColourNotOnlySignal`, `EndToEndSection11`).
+- SPEC section 11 read line by line against the findings: every clause proven by `A11y.*` tests (`TextRangeUnits`, `TextProvider`, `SelectionAndFind`, `Inventory`, `TabOrder`, `EscapeStack`, `Announcements`, `FastScrollCoalescing`, `JobAnnouncementSink`, `ColourNotOnlySignal`, `EndToEndSection11`, `ReadAloud*`, `Speech*`) and `ReadAloudUi.*`.
 - M3's UIA deliverable demonstrable with Windows Narrator on the reference machine.
 - `recto-tests` full suite green; `python scripts/todo-graph.py validate` passes.

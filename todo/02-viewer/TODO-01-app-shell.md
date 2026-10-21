@@ -26,6 +26,8 @@ track: M2
 - -> XREF: D06 T01 §7 -- `PerfSmoke` (`D06 T01 §7`) exercises the viewer shell open/dialog paths (`§7`, `§11`) built here.
 - -> XREF: D07 T01 §4 -- packaging completes what §1 here starts: the self-contained configuration, manifest and assets authored here are packaged into the Inno Setup installer, Portable `.zip` (`§5`) and optional MSIX (`§6`).
 - -> XREF: D06 T03 §5 -- the save integrity fault-injection suite gating §8's Save, Save As and Replace-Original paths and §12's recovery snapshots.
+- -> XREF: D03 T04 §14 -- Edit PDF sessions commit through these save paths.
+- -> XREF: D04 T02 §15 -- opens PDFs created from the clipboard (D04 T02 §15).
 
 ## Outcome
 

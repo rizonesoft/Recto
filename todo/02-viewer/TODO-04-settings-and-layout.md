@@ -29,6 +29,9 @@ track: M2
 - -> XREF: D05 T02 §9 -- `Verify signatures when opening` setting in §6 here is consumed by `D05 T02 §9`.
 - -> XREF: D07 T01 §5 -- the Inno Setup Portable installer and `Recto-Portable-*.zip` archives pre-create `data\portable.mode` consumed by `AppPaths` (§1) here.
 - -> XREF: D07 T02 §1 -- the `About Recto` page (`D07 T02 §1`) and `Save local crash report bundles` (`D07 T02 §5`) complete the navigation and toggle in §6 and §10 here.
+- -> XREF: D08 T01 §15 -- hosts the assistant's settings group (D08 T01 §15).
+- -> XREF: D03 T05 §4 -- the multi-file search index (D03 T05 §4) is stored under these paths.
+- -> XREF: D03 T02 §9 -- binds the Read Out Loud accelerators (D03 T02 §9).
 
 ## Outcome
 

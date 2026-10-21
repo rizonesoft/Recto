@@ -26,6 +26,9 @@ track: M1
 - -> XREF: D04 T05 §5 -- the `PDF/A` font-subsetting compliance engine (`D04 T05 §5`) inspects `§2`'s font loader and embedded font streams.
 - -> XREF: D05 T01 §8 -- `SignatureEngine` (`D05 T01 §8`) uses `§5`'s `IncrementalWriter` when counter-signing documents.
 - -> XREF: D06 T03 §1 -- user-reported hostile-input fixtures (inline `EI`, short operators, overflowing operands) and the recovered-error contract (§2 there) gate this interpreter and `DisplayList` builder.
+- -> XREF: D03 T04 §1 -- Edit PDF's `EditModel` consumes this interpreter's operator stream and graphics state.
+- -> XREF: D05 T01 §12 -- the actor accepts a certificate for `/Adobe.PubSec` files (D05 T01 §12).
+- -> XREF: D04 T06 §3 -- print production observes paint events here (D04 T06 §3).
 
 ## Outcome
 

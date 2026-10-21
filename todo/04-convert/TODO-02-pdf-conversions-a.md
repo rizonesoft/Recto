@@ -31,6 +31,8 @@ track: M4
 - -> XREF: D05 T01 §1 -- `D05 T01`'s graft, merge, split, reorder, crop, watermark, Bates, AES-256 encrypt, digital signature, and redaction operations build directly on `AtomicFileWriter` (§1) and `PdfWriter` (§2) created here.
 - -> XREF: D06 T01 §5 -- `RoundTrips.Formats` (`D06 T01 §5`) exercises `PDF <-> Images/SVG/XPS` (`§3`-`§5`), `PDF -> Plain Text` (`§6`), `Searchable PDF (OCR)` (`§7`), `TableExtractor`/`ImageExtractor` (`§8`-`§10`), and `PdfOptimizer`/`Linearizer` (`§11`, `§12`) built here.
 - -> XREF: D06 T03 §5 -- the save integrity fault-injection suite that fails every step of `AtomicFileWriter` (§1 here) and checks originals survive.
+- -> XREF: D03 T04 §4 -- Edit PDF's font resolver embeds fallback subsets with this subsetter.
+- -> XREF: D02 T01 §5 -- clipboard PDFs open as new unsaved tabs through `OpenDocumentPipeline`.
 
 ## Outcome
 
@@ -41,6 +43,7 @@ track: M4
 - `TableExtractor` (`§8`) and `ImageExtractor` (`§9`) detect bordered and borderless tables and extract embedded XObject images without re-compression, powering the Viewer `Table & Image Extractor Bar` and the `Extract Tables & Images` Convert card (`§10`).
 - `PdfOptimizer` and `Linearizer` (`§11`, `§12`) downsample images, recompress colour/grayscale/monochrome streams, subset fonts, strip unused objects, linearize for Fast Web View, and present a per-category byte-savings audit dialog.
 - After the owner's decision, a `From scanner` source acquires pages through WIA 2.0 into the Images to PDF and searchable OCR paths (`§13`).
+- Create PDF from clipboard (`§14`-`§16`) turns an image, text, rich text, HTML or a copied file list on the Windows clipboard into a new unsaved PDF tab through the `Images, SVG & XPS -> PDF` path (`§5`) and the Office, HTML and text paths, from `Ctrl+V`, Home, the tab strip, the `File` menu or `Ctrl+K`, and never produces a silent empty document.
 
 **Adjacency:** all=not-applicable (converter engines and option bindings inside `D04 T01`'s Convert frame plus the viewer's contextual extractor bar; queue, notifications and save-location settings are owned by `D04 T01` and `D02 T04 §5`)
 
@@ -63,6 +66,9 @@ track: M4
 | 11 | §11 | `PdfOptimizer` (audit, downsampling, font subsetting) and Fast Web View `Linearizer` | §2 | [ ] |
 | 12 | §12 | `Optimize & Compress PDF` Convert card (`SPEC 9.5`) and `Audit Dialog` (`SPEC 9.9`) | §11, D04 T01 §4, D02 T01 §10 | [ ] |
 | 13 | §13 | Create PDF from a scanner (Windows Image Acquisition) | §5, §7, D04 T01 §3 | [ ] |
+| 14 | §14 | `ClipboardPdfBuilder`: clipboard images and image or PDF file lists to PDF | §5, D04 T01 §1 | [ ] |
+| 15 | §15 | **Create PDF from clipboard** command, new unsaved tab, `Ctrl+V` and Home entry points | §14, D02 T01 §3, D02 T01 §5, D02 T01 §8, D02 T01 §12, D02 T03 §1, D02 T03 §11, D04 T01 §5, D02 T04 §9 | [ ] |
+| 16 | §16 | Clipboard text, rich text, HTML and Office, Markdown file lists through their converters | §14, D04 T04 §1, D04 T04 §2, D04 T04 §3, D04 T04 §5, D04 T04 §6 | [ ] |
 
 ## 1. `AtomicFileWriter` (`src/core/atomic_file.cpp`) sibling temp-then-replace and rollback
 
@@ -414,6 +420,87 @@ Wire the **Optimize & Compress PDF** card and Step 3 options in `ConvertPage` (`
 - [ ] Commit: `convert: create PDFs from WIA scanners with optional OCR`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Convert.ScannerToPdf:Convert.ScannerErrors` passes against the WIA sample test driver on the display-session host.
+
+## 14. `ClipboardPdfBuilder`: clipboard images and image or PDF file lists to PDF
+
+Acrobat Pro creates a PDF from whatever is on the clipboard, and users of a comparable app ask for the same, because a screenshot or a copied picture is the quickest way into a PDF (pdfcraft #1289, #2709). `ClipboardPdfBuilder` (`src/core/clipboard_pdf.h/.cpp`, `recto::core::ClipboardPdfBuilder`) turns a `ClipboardSnapshot` into a PDF through the existing `Images, SVG & XPS -> PDF` converter (`§5`): bitmaps (`CF_DIBV5`, `CF_DIB`, `CF_BITMAP`), the registered `PNG` format, and `CF_HDROP` file lists of images, SVG and XPS files. PDF files in a list are not rebuilt; they are reported so the app opens them as tabs. The builder reads nothing from the clipboard itself: the UI thread copies the clipboard into an owned, size-bounded snapshot (the Win32 clipboard belongs to the thread that opens it), and the build runs as a job with its own state (`D04 T01 §1`). Text, rich text, HTML and Office files are routed by `§16` through the same `ClipboardRoute` registry, so this section never grows a second converter. A paste with nothing usable is a typed refusal that names the formats found, never an empty document.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Define `ClipboardSnapshot`, `ClipboardRoute`, `ClipboardRouteRegistry` and `ClipboardPdfResult`, and implement the image route (PNG first, then `CF_DIBV5`, `CF_DIB`, `CF_BITMAP`) and the file-list route over `images_to_pdf` (`§5`). Done when: `ClipboardPdf.ImageRoute` builds a one-page PDF from each of the four bitmap formats with the right pixel size and, for the PNG format, preserved alpha, under ASan.
+2. Add refusal, bounds and `recto-cli clipboard-to-pdf`. Done when: `ClipboardPdf.EmptyAndUnsupportedRefused`, `ClipboardPdf.Bounds` and `Cli.ClipboardToPdf` pass under ASan.
+
+- [ ] Define `ClipboardSnapshot` (`formats`, owned `bytes` per format, `file_paths`, `taken_at`), `ClipboardRoute` (`can_handle(snapshot)`, `build(snapshot, options, CancelToken)`), `ClipboardRouteRegistry` and `ClipboardPdfResult` (`pdf_path`, `source_kind`, `page_count`, `pdfs_to_open`, `unrouted` with reasons, `warnings`) in `src/core/clipboard_pdf.h`. Done when: the header compiles cleanly across `recto-core`, `recto-services`, `recto-cli` and `recto-app`.
+- [ ] Implement `ClipboardSource` as an interface with a Win32 implementation (`OpenClipboard`, `EnumClipboardFormats`, `GetClipboardData`, copying into owned memory and closing the clipboard before any decode) and an in-memory fake for tests, bounded to `512 MiB` total with a typed `ClipboardTooLarge` refusal. Done when: `ClipboardPdf.SnapshotBounds` refuses an oversized fake and the Win32 source reads a real clipboard on the display-session host.
+- [ ] Implement the image route in `src/core/clipboard_pdf.cpp`: prefer the registered `PNG` format (bytes passed through to `§5` unchanged), then `CF_DIBV5`, `CF_DIB` and `CF_BITMAP`, decoding `BI_RGB` and `BI_BITFIELDS`, palettes and top-down DIBs through WIC, and treating a `CF_DIB` alpha channel as opaque unless the alpha is genuinely present (`CF_DIBV5` with an alpha mask) so screenshots do not become transparent. Done when: `ClipboardPdf.ImageRoute` and `ClipboardPdf.DibAlphaPolicy` pass for 8, 24 and 32 bits per pixel. Cheaper substitute: always decoding `CF_DIB` and losing the PNG alpha, or treating every `32` bit DIB as transparent.
+- [ ] Write each image to a private temp file under the app temp folder through `AtomicFileWriter` (`D04 T02 §1`), call `images_to_pdf` (`§5`) with the page size and margin defaults of its Step 3 options, and delete the temp files on completion, failure and cancel. Done when: `ClipboardPdf.TempCleanup` finds no temp file after success, failure and `CancelToken` abort.
+- [ ] Implement the file-list route for `CF_HDROP`: sniff each file by signature rather than extension, combine images, SVG and XPS files into one PDF in list order, add `.pdf` files to `pdfs_to_open` without copying them, skip folders with a warning, cap the list at `500` files and each file at `2 GiB`, and put every other file in `unrouted` with its reason. Done when: `ClipboardPdf.FileList` passes a mixed list (two images, an SVG, a PDF, a folder, a `.docx`) and a renamed `.png` that is really a JPEG.
+- [ ] Refuse an unusable clipboard with `PdfErrorCode::ClipboardEmpty` or `ClipboardUnsupported` listing the format names found, refuse a zero-size or all-transparent-and-empty bitmap, and cap bitmaps at `16384` pixels on a side and `268` megapixels with a typed error. Done when: `ClipboardPdf.EmptyAndUnsupportedRefused` and `ClipboardPdf.Bounds` cover an empty clipboard, text only (before `§16`), a zero-size DIB and an oversized DIB, and none produces a file.
+- [ ] Run the build as a `ConversionJob` on its own `pdf::Document` and `CancelToken` and write the output through `AtomicFileWriter`, so cancel leaves nothing behind. Done when: `ClipboardPdf.CancelLeavesNothing` aborts mid-build and finds the output folder unchanged.
+- [ ] Implement `recto-cli clipboard-to-pdf --out <out.pdf> [--page-size original|a4|letter] [--json]` in `src/cli/cmd_clipboard_to_pdf.cpp` reading the live clipboard, with the typed refusals as non-zero exit codes. Done when: `Cli.ClipboardToPdf` passes with a fake source and with a real clipboard on the display-session host.
+- [ ] Add `ClipboardPdf.*` tests in `tests/recto-tests/clipboard_pdf_tests.cpp` with DIB, PNG and file-list fixtures from `scripts/build-corpus.py` (recorded in `tests/corpus/PROVENANCE.md`). Done when: `recto-tests.exe --gtest_filter=ClipboardPdf.*:Cli.ClipboardToPdf` passes under ASan.
+- [ ] Commit: `convert: build PDFs from clipboard bitmaps and image file lists`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=ClipboardPdf.*:Cli.ClipboardToPdf` passes under ASan with the four bitmap formats, the file-list mix and the refusal cases quoted.
+
+## 15. **Create PDF from clipboard** command, new unsaved tab, `Ctrl+V` and Home entry points
+
+Make the clipboard builder (`§14`) usable: one command, **Create PDF from clipboard**, reachable from `Ctrl+V` (when nothing else owns paste), the Home screen, the tab strip `+` menu, the Classic `File` menu and `Ctrl+K`, which opens the result as a new tab. The tab is an unsaved new document: it is backed by a private temp file, is treated as dirty so closing asks `Save your changes first?`, offers `Save a copy` with a dated default name, and is covered by crash recovery (`D02 T01 §12`) so a pasted screenshot is not lost to a crash. Nothing is ever pasted silently or into an existing document; when the clipboard has nothing usable the user is told why and what was found. PDF files in a copied file list open as tabs through the normal pipeline.
+
+**Phase:** 4
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new command on existing chrome: it adds an entry to the Home screen (`design/SPEC.md` section 9.1, `design/screenshots/D-Home.png`), the `+` New Tab menu of the title bar (section 8.1), the Classic `File` menu (section 9.2) and the command box (section 9.4), with a standard WinUI `InfoBar` for refusals.
+**Job:** A user who copied a screenshot, a picture or files can press `Ctrl+V` or choose **Create PDF from clipboard** and have the result open as a new tab ready to read, save or convert, and is told clearly when the clipboard cannot be made into a PDF. Consumer: `OpenDocumentPipeline` (`D02 T01 §5`), `SavePipeline` (`D02 T01 §8`) and crash recovery (`D02 T01 §12`).
+**Treatment:** A `file.createFromClipboard` command in `CommandRegistry` that reads the clipboard on the UI thread, runs `ClipboardPdfBuilder` as a queue job, and opens the output through a new `OpenDocumentPipeline::open_generated_async` entry as an unsaved tab. Cheaper substitute that fails the checkpoint: a paste that does nothing when the clipboard is unusable, writes the PDF next to the executable, or saves a file without asking.
+**Chrome:** consume `ShellPage` and the `TabView` (`D02 T01 §3`), `OpenDocumentPipeline` (`D02 T01 §5`), `SavePipeline` and the Unsaved-Changes dialog (`D02 T01 §8`), the Home screen (`D02 T03 §1`), `CommandRegistry` (`D02 T03 §11`), `QueueCard` (`D04 T01 §5`) and `RectoColors.xaml` tokens.
+
+**Build order:**
+
+1. Implement `open_generated_async(temp_path, display_name)` in `src/app/OpenPipeline.h/.cpp` and the `file.createFromClipboard` command with its job, tab and refusal flows. Done when: `AppTests.CreateFromClipboardUi` copies a PNG, runs the command, and finds a new tab titled `Clipboard 1.pdf` showing the image, marked unsaved.
+2. Bind the entry points and the save, close and recovery behaviour. Done when: `AppTests.CreateFromClipboardUi` pastes with `Ctrl+V`, closes with the Unsaved-Changes prompt, saves a copy with the dated name, and restores the tab after a simulated crash.
+
+- [ ] Add `OpenDocumentPipeline::open_generated_async(temp_path, display_name)` in `src/app/OpenPipeline.h/.cpp` that opens a generated file as a new tab marked `is_new_unsaved`, without deduplicating by path and with the temp file owned by the tab. Done when: opening two generated files with the same name yields `Clipboard 1.pdf` and `Clipboard 2.pdf`.
+- [ ] Register `file.createFromClipboard` in `CommandRegistry` (`D02 T03 §11`), enabled only when `ClipboardRouteRegistry` can handle at least one format on the clipboard, with synonyms `paste`, `clipboard`, `screenshot`, `new pdf`. Done when: `Ctrl+K` "screenshot" finds it and it is disabled with a stated reason on an empty clipboard.
+- [ ] Bind `Ctrl+V` on `ShellPage` to the command only when no text input has focus and no mode that owns paste (Form Designer field paste, `D03 T03 §9`) is active, so text fields keep `Ctrl+V` (`D02 T04 §9`). Done when: `AppTests.CreateFromClipboardUi` shows `Ctrl+V` in a text box pastes text and `Ctrl+V` on the canvas creates the PDF. Cheaper substitute: claiming `Ctrl+V` globally.
+- [ ] Add the entry to the Home screen action row, the `+` New Tab menu and the Classic `File` menu, each routed to the same command with an automation name and tooltip. Done when: all three entry points create the same tab.
+- [ ] Run the build as a queue job (`D04 T01 §5`), reading the clipboard once on the UI thread into a snapshot, and open the result in the new tab, opening any `pdfs_to_open` through the normal pipeline. Done when: pasting a copied file list of one image and one PDF opens two tabs.
+- [ ] Show an `InfoBar` for refusals (`"Nothing on the clipboard can be made into a PDF."` with `"Found: <format names>."`) and for `unrouted` files naming each file and reason, and announce it to assistive technology (`D03 T02 §5`). Done when: an empty clipboard, a text-only clipboard (before `§16`) and a list with a `.docx` each show the message and create no tab or file.
+- [ ] Treat the new tab as dirty: closing or exiting shows `Save your changes first?` (`D02 T01 §8`), `Save a copy` defaults to `Clipboard <yyyy-MM-dd HH-mm>.pdf` in the user's Documents folder, and the temp file is deleted after save or discard. Done when: `AppTests.CreateFromClipboardUi` covers Discard, Cancel and Save and finds no temp file afterwards.
+- [ ] Include the unsaved clipboard tab in crash-recovery snapshots (`D02 T01 §12`). Done when: a simulated crash and relaunch restores the pasted PDF as an unsaved tab.
+- [ ] Add `AppTests.CreateFromClipboardUi` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=AppTests.CreateFromClipboardUi` passes.
+- [ ] Commit: `app: add Create PDF from clipboard with Ctrl+V and unsaved new tabs`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=AppTests.CreateFromClipboardUi` passes on the display-session host.
+
+## 16. Clipboard text, rich text, HTML and Office, Markdown file lists through their converters
+
+Complete the clipboard routes with the converters that arrive in phase 5. This section registers routes in the `ClipboardRouteRegistry` of `§14` so text and documents copied from Word, a browser, a spreadsheet or Explorer become PDFs without a second converter: `Rich Text Format` goes to the RTF engine (`D04 T04 §1`), `HTML Format` and Markdown or plain text go to the HTML and Markdown engine (`D04 T04 §3`), and copied files go to the Office and legacy engines (`D04 T04 §1`, `§2`, `§5`, `§6`). Clipboard content is hostile like any file: HTML scripts stay off, nothing is fetched from the network (D16), and RTF embedded objects and Office macro streams are never loaded or run (D10). Every file the routes cannot convert is reported with its reason, never dropped.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Register the text routes (`Rich Text Format`, `HTML Format`, `CF_UNICODETEXT`) with `ClipboardTextMode` (`Auto`, `PlainText`, `Html`) and a `CF_HTML` fragment parser. Done when: `ClipboardPdf.TextRoutes` builds a PDF from each format with the right text, scripts not run and no network request made, under ASan.
+2. Register the document file-list route. Done when: `ClipboardPdf.OfficeFileList` converts a copied `.docx`, `.xlsx`, `.pptx`, `.html`, `.md`, `.txt` and legacy `.doc` list into one PDF per file and reports an unsupported file in `unrouted`, under ASan.
+
+- [ ] Define `ClipboardTextMode` and add it to the `ClipboardPdf` options in `src/core/clipboard_pdf.h`, defaulting to `Auto` (prefer `Rich Text Format`, then `HTML Format`, then plain text). Done when: `ClipboardPdf.TextModeSelection` picks the documented format for each combination.
+- [ ] Parse the `HTML Format` clipboard header (`StartHTML`, `EndHTML`, `StartFragment`, `EndFragment`, `SourceURL`) with bounds checks, convert the fragment through the HTML engine of `D04 T04 §3` with scripts disabled and external resources unfetched (`SourceURL` is metadata only), and warn about images that could not be loaded. Done when: `ClipboardPdf.HtmlFormat` rejects out-of-range offsets, converts a Word and a browser fragment, and shows no network access.
+- [ ] Convert `Rich Text Format` through the RTF engine (`D04 T04 §1`) with embedded objects (`\objdata`) skipped and reported. Done when: `ClipboardPdf.RtfFormat` converts formatted text and reports a skipped OLE object.
+- [ ] Convert `CF_UNICODETEXT` through the HTML and Markdown engine as escaped, wrapped, paginated text with the page size of `§5`'s Step 3 defaults, per-script font fallback and subset embedding, and no `?` or `.notdef` substitution (`D06 T03 §7`). Done when: `ClipboardPdf.PlainTextUnicode` converts Latin, CJK, Arabic and emoji text and `PageText` returns the same Unicode.
+- [ ] Add the document file-list route: sniff `.docx`, `.docm`, `.rtf`, `.xlsx`, `.xlsm`, `.csv`, `.pptx`, `.pptm`, `.html`, `.md`, `.txt` and legacy `.doc`, `.xls`, `.ppt` by signature, convert each through its engine (`D04 T04 §1`, `§2`, `§3`, `§5`, `§6`) as its own job producing one PDF per file, strip macro streams by construction, and leave images to the `§14` route. Done when: `ClipboardPdf.OfficeFileList` covers every type and a macro-bearing `.docm` converts with its macros stripped.
+- [ ] Report every file and format no route handles in `unrouted` with a plain reason, and let the `§15` message list them. Done when: `ClipboardPdf.UnroutedReported` shows a `.zip` and a corrupt `.docx` named with reasons and no silent drop.
+- [ ] Extend `AppTests.CreateFromClipboardUi` (`§15`) with text, HTML and Office clipboard cases and add `ClipboardPdf.*` tests in `tests/recto-tests/clipboard_pdf_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=ClipboardPdf.*:AppTests.CreateFromClipboardUi` passes under ASan.
+- [ ] Commit: `convert: route clipboard text, rich text, HTML and Office file lists to PDF`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=ClipboardPdf.TextModeSelection:ClipboardPdf.HtmlFormat:ClipboardPdf.RtfFormat:ClipboardPdf.PlainTextUnicode:ClipboardPdf.OfficeFileList:ClipboardPdf.UnroutedReported` passes under ASan.
 
 ## Verification
 

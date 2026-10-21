@@ -25,6 +25,9 @@ track: M2
 - -> XREF: D05 T02 §1 -- the `Organize` mode switcher and page-surgery commands attach to §8's `PageToolbar` `More` menu.
 - -> XREF: D06 T02 §1 -- the security audit (`Security.ActionRefusal` and link prompt audit) verifies §9's untrusted-action refusal boundary.
 - -> XREF: D07 T01 §1 -- the `Print` button (`Ctrl+P`) on §8's `PageToolbar` invokes `D07 T01 §1`'s `PrintDialog`.
+- -> XREF: D02 T05 §4 -- rich media references (D02 T05 §4) use this ask-first path.
+- -> XREF: D02 T05 §8 -- the 3D view (D02 T05 §8) shares this device and thread.
+- -> XREF: D03 T03 §13 -- links authored with the Link tool (D03 T03 §13) activate here.
 
 ## Outcome
 

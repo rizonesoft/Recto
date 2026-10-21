@@ -11,6 +11,8 @@ Making page text, annotations and interactive forms usable on both digital and s
 | [TODO-01](./TODO-01-selection-and-search.md) | Text Extraction, Built-in OCR, Selection and Search | active |
 | [TODO-02](./TODO-02-accessibility.md) | Accessibility: UIA Text, Keyboard Order and Announcements | active |
 | [TODO-03](./TODO-03-annotations-and-forms.md) | Interactive Annotations, Markup, AcroForms and Form Designer | active |
+| [TODO-04](./TODO-04-edit-pdf.md) | Edit PDF: Text, Image and Vector Object Editing | active |
+| [TODO-05](./TODO-05-multi-file-search.md) | Search Across Files and Local Index | active |
 
 ## Completed
 
