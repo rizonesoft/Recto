@@ -70,6 +70,8 @@ class YamlSubsetError(ValueError):
 
 _KEY = re.compile(r"^([A-Za-z0-9_-]+):(?:[ ]+(.*))?$")
 _INT = re.compile(r"^-?(?:0|[1-9][0-9]*)$")
+# Characters outside YAML's printable set (YAML 1.2 section 5.1), tab handled separately.
+_NOT_PRINTABLE = re.compile("[^\n\r\x20-\x7e\x85\xa0-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
 _FLOW_ITEM = re.compile(r"[A-Za-z0-9_.-]+(?: [A-Za-z0-9_.-]+)*")
 # Characters that start YAML syntax rather than a plain string.
 _INDICATORS = set("-?:,[]{}#&*!|>'\"%@`")
@@ -85,11 +87,15 @@ _IMPLICIT = re.compile(
 
 
 class _Loader:
-    """Block mappings, block sequences, `|` and `>` block scalars, quoted and plain scalars, flow lists of scalars."""
+    """Block mappings, block sequences, `|` block scalars, quoted and plain scalars, flow lists of scalars."""
 
     def __init__(self, text):
         if "\t" in text:
             raise YamlSubsetError("tab characters are not allowed")
+        bad = _NOT_PRINTABLE.search(text)
+        if bad:
+            line = text.count("\n", 0, bad.start()) + 1
+            raise YamlSubsetError(f"line {line}: character U+{ord(bad.group()):04X} is not printable YAML")
         self.lines = text.splitlines()
         self.i = 0
 
@@ -145,6 +151,9 @@ class _Loader:
             content = head[1]
             if not (content == "-" or content.startswith("- ")):
                 break
+            if content != "-" and content[2:3] == " ":
+                # `-   key: value` puts the item's content further right than its following lines; YAML refuses it.
+                self._fail("more than one space after a sequence dash")
             rest = content[2:].strip() if content != "-" else ""
             if not rest:
                 self.i += 1
@@ -175,11 +184,13 @@ class _Loader:
             if nxt[1] == "-" or nxt[1].startswith("- "):
                 return self._sequence(indent)
             return None
-        if rest in ("|", ">"):
-            return self._block_scalar(rest, indent)
+        if rest == ">":
+            self._fail("folded block scalars (>) are not supported; use a literal block (|)")
+        if rest == "|":
+            return self._block_scalar(indent)
         return self._scalar(rest)
 
-    def _block_scalar(self, style, indent):
+    def _block_scalar(self, indent):
         raw = []
         while self.i < len(self.lines):
             line = self.lines[self.i]
@@ -187,31 +198,21 @@ class _Loader:
                 break
             raw.append(line)
             self.i += 1
-        while raw and not raw[-1].strip():
-            raw.pop()
-        if not raw:
+        if not any(line.strip() for line in raw):
             return ""
         # The first content line fixes the block's indentation. A later content line indented less, or a blank line
-        # before the first content line indented more, is malformed YAML; a blank line holding spaces past the
-        # block's indentation is refused anywhere, since its kept spaces are easy to miss.
+        # anywhere (trailing ones included, checked before they are dropped) holding spaces past it, is refused: the
+        # first is malformed YAML, and the kept spaces of the second are easy to miss.
         first = next(offset for offset, line in enumerate(raw) if line.strip())
         block = len(raw[first]) - len(raw[first].lstrip(" "))
         for offset, line in enumerate(raw):
             if (line.strip() and len(line) - len(line.lstrip(" ")) < block) or (not line.strip() and len(line) > block):
                 self.i -= len(raw) - offset
                 self._fail("block scalar line indented inconsistently with its first line")
+        while raw and not raw[-1].strip():
+            raw.pop()
         lines = [line[block:] if line.strip() else "" for line in raw]
-        if style == "|":
-            return "\n".join(lines) + "\n"
-        folded, paragraph = [], []
-        for line in lines:
-            if line:
-                paragraph.append(line)
-            else:
-                folded.append(" ".join(paragraph))
-                paragraph = []
-        folded.append(" ".join(paragraph))
-        return "\n".join(folded) + "\n"
+        return "\n".join(lines) + "\n"
 
     def _scalar(self, text):
         text = text.strip()
@@ -352,6 +353,12 @@ def form_faults(form, required):
             faults.append(f"top-level {key!r} must be a non-empty string")
     if "title" in form and not isinstance(form["title"], str):
         faults.append("top-level 'title' must be a string")
+    for key in ("assignees", "projects"):
+        value = form.get(key, [])
+        if not (_text(value) or (isinstance(value, list) and all(_text(item) for item in value))):
+            faults.append(f"top-level {key!r} must be a list of strings or a comma-separated string")
+    if "type" in form and not _text(form["type"]):
+        faults.append("top-level 'type' must be a non-empty string")
     labels = form.get("labels", [])
     if not (isinstance(labels, str) or (isinstance(labels, list) and all(_text(label) for label in labels))):
         faults.append("top-level 'labels' must be a string or a list of strings")
@@ -424,6 +431,10 @@ class YamlSubsetLoaderTest(unittest.TestCase):
             "a: |\n    first line\n  second line\n",
             "a:\n  b: |\n      Thanks.\n\n    Next.\n",
             "a: |\n          \n    text\n",
+            "a:\n-   b: c\n",
+            "a: x\x00y\n",
+            "a: >\n  one\n    two\n  three\n",
+            "a: |\n  text\n     \n",
             "a: - invalid\n",
             "a: ]invalid\n",
             "a: 1.5\n",
@@ -511,6 +522,9 @@ class IssueFormsTest(unittest.TestCase):
             "duplicate id": lambda f, by: by["gpu"].__setitem__("id", "version"),
             "unknown top-level key": lambda f, by: f.__setitem__("template", "x"),
             "name not a string": lambda f, by: f.__setitem__("name", ["Bug"]),
+            "projects true": lambda f, by: f.__setitem__("projects", True),
+            "assignees number": lambda f, by: f.__setitem__("assignees", 3),
+            "type list": lambda f, by: f.__setitem__("type", ["bug"]),
         }
         for name, change in cases.items():
             with self.subTest(case=name):
