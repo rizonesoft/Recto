@@ -101,3 +101,44 @@ Gates: `.\build.cmd` -> 4 x `0 Warning(s)`, 4 x `0 Error(s)`, 2 x `[  PASSED  ] 
 
 - Finding 1 (P3): the `compute_ssim` comment and the test comment no longer claim location independence: area weighting stops an edge block from outweighing its area, while scores still depend on each block's statistics.
 - Finding 2 (P3): `Support.RgbaSizeOverflowRefused` now asserts the overflow refusal's own message. With the guard replaced by a no-op it fails ("Which is: "RGBA buffer is smaller than required for dimensions and stride""), so it can no longer pass on the short-buffer path.
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T18:36:16Z
+- Effort: medium
+- Lines: 28
+- Digest: 3bf27c78a4752141
+
+### adversarial: approve
+
+No new findings.
+
+### consistency: approve
+
+No new findings.
+
+### integration: approve
+
+No new findings.
+
+### source-defect: approve
+
+No new findings.
+
+### design: advisory
+
+Not applicable: this section owns no user surface.
+
+### record: advisory
+
+The recorded clean checkpoint was not independently reproduced. The existing Release x64 binary ran 14 `Support.*` tests: 10 passed and four failed with `CreateDirectoryW failed in TempDir` under the read-only sandbox. Exit code: `1`. These environmental failures do not establish a product defect.
+
+No rebuild or mutation test was performed. Binary provenance and the reported four-configuration build remain unverified. No files were modified.
+
+HIGHEST: none
+OVERALL: approve
+
+## Outcome
+
+- The stamp of `D00 T03 §2` is confirmed with corrections: every `Support.*` test passes (14 now) and all four configurations build with 0 warnings. The audit area-weighted SSIM, split the first-pixel and global deltas in mismatch messages, and gave the overflow refusal and multi-chunk hashing real tests (the overflow one mutation-checked). No downstream stamp is suspect.
