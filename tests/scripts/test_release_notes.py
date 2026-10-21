@@ -168,6 +168,9 @@ class ReleaseNotesTest(unittest.TestCase):
         self.assertEqual(self.run_main("v1.0.0", "v1.1.0", "--allow-no-test", "nosha")[0], 2)
         self.assertEqual(self.run_main("v1.0.0", "v1.1.0", "--issues", str(self.repo / "missing.json"))[0], 2)
         self.assertEqual(self.run_main("v1.0.0", "v1.1.0", "--gtest-list", str(bad_list))[0], 2)
+        bad_issues = pathlib.Path(self._tmp.name) / "bad-issues.json"
+        bad_issues.write_text('[{"number": 12, "labels": 1}]', encoding="utf-8")
+        self.assertEqual(self.run_main("v1.0.0", "v1.1.0", "--issues", str(bad_issues))[0], 2)
 
     def test_root_covers_the_first_release(self):
         result = release_notes.report(self.repo, "root", "v1.0.0")
@@ -226,9 +229,21 @@ class HostileFixtureTest(unittest.TestCase):
             "class Child(Derived):\n    pass\n\n\n"
             "class ViaAlias(Aliased):\n    def test_alias(self):\n        pass\n"
         )
+        # A TestCase that lives outside the repository, which a repository module re-exports or inherits from.
+        outside = pathlib.Path(cls._tmp.name) / "outside"
+        outside.mkdir()
+        (outside / "outside_mod.py").write_text(
+            "import unittest\n\n\nclass OutsideTest(unittest.TestCase):\n    def test_outside(self):\n        pass\n",
+            encoding="utf-8")
+        reexport = (f"import sys\nimport unittest\nsys.path.append({str(outside)!r})\n"
+                    "from outside_mod import OutsideTest as ReExported\n\n\n"
+                    "class Local(ReExported):\n    pass\n")
+        noisy = ("import os\nimport unittest\nos.write(1, bytes([255, 129]) + b'\\n')\n\n\n"
+                 "class NoisyTest(unittest.TestCase):\n    def test_noisy(self):\n        pass\n")
         _commit(repo, {"tests/recto-tests/hostile_tests.cpp": cpp, "tests/scripts/test_sample.py": py,
                        "tests/scripts/test_exits.py": "raise SystemExit(0)\n",
-                       "tests/scripts/test_sleeps.py": "import time\ntime.sleep(60)\n"}, "initial")
+                       "tests/scripts/test_sleeps.py": "import time\ntime.sleep(60)\n",
+                       "tests/scripts/test_reexport.py": reexport, "tests/scripts/test_noisy.py": noisy}, "initial")
         _git(repo, "tag", "v2.0.0")
         cls.fake = {
             "Commented": "Commented.Case", "Block": "Block.Case", "Disabled": "Disabled.Case",
@@ -241,12 +256,16 @@ class HostileFixtureTest(unittest.TestCase):
             "Abstract": "tests.scripts.test_sample.Abstract.test_abstract",
             "ExitsOnImport": "tests.scripts.test_exits.Missing.test_missing",
             "SleepsOnImport": "tests.scripts.test_sleeps.Slow.test_slow",
+            "ReExported": "tests.scripts.test_reexport.ReExported.test_outside",
+            "InheritedFromOutside": "tests.scripts.test_reexport.Local.test_outside",
+            "Stdlib": "unittest.case.TestCase.test_missing",
         }
         cls.real = {
             "Enabled": "Enabled.Case", "Taken": "Taken.Case", "Multi": "Multi.Line", "Typed": "Typed.Case",
             "Derived": "tests.scripts.test_sample.Derived.test_real",
             "Inherited": "tests.scripts.test_sample.Child.test_real",
             "Alias": "tests.scripts.test_sample.ViaAlias.test_alias",
+            "Noisy": "tests.scripts.test_noisy.NoisyTest.test_noisy",
         }
         cls.shas = {}
         for name, test_id in {**cls.fake, **cls.real}.items():

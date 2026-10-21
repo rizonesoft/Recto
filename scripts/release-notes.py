@@ -54,15 +54,27 @@ PROBE_TIMEOUT = 120  # seconds for one Python test module to import in its workt
 # verdict is a nonce read from stdin before the module is imported and printed only after every check passed, so a
 # module that exits during import (even with status 0) is never read as a verified test.
 PYTHON_PROBE = """
-import importlib, sys, unittest
+import importlib, inspect, pathlib, sys, unittest
 nonce = sys.stdin.readline().strip()
 sys.stdin.close()
-sys.path.insert(0, ".")
+here = pathlib.Path.cwd().resolve()
+sys.path.insert(0, str(here))
 name = sys.argv[1]
 *module, cls_name, method = name.split(".")
-cls = getattr(importlib.import_module(".".join(module)), cls_name, None)
+mod = importlib.import_module(".".join(module))
+cls = getattr(mod, cls_name, None)
 if not (isinstance(cls, type) and issubclass(cls, unittest.TestCase)
         and method in unittest.defaultTestLoader.getTestCaseNames(cls)):
+    sys.exit(3)
+def inside(obj):
+    try:
+        return pathlib.Path(inspect.getfile(obj)).resolve().is_relative_to(here)
+    except (TypeError, OSError):
+        return False
+# The module, the class and the class that defines the method must all come from the fix commit's tree, not from
+# the standard library or an installed package.
+owner = next((klass for klass in cls.__mro__ if method in vars(klass)), None)
+if not (inside(mod) and inside(cls) and owner is not None and inside(owner)):
     sys.exit(3)
 # Only now is loadTestsFromName safe: on a TestCase method it builds the case (refusing, for example, an abstract
 # class) and never calls the method.
@@ -225,14 +237,17 @@ class PythonTests:
                 git(self.repo, "worktree", "add", "--detach", "--quiet", str(tree), sha)
             nonce = secrets.token_hex(16)
             try:
+                # Bytes, not text: an imported module may print anything, and only the ASCII nonce is compared.
                 probe = subprocess.run([sys.executable, "-I", "-c", PYTHON_PROBE, test_id], cwd=tree,
-                                       input=nonce + "\n", capture_output=True, text=True, timeout=PROBE_TIMEOUT)
+                                       input=(nonce + "\n").encode("ascii"), capture_output=True,
+                                       timeout=PROBE_TIMEOUT)
             except subprocess.TimeoutExpired:
                 # An import that never finishes proves nothing: the test is unverified, and the report still prints.
                 self.answers[(sha, test_id)] = False
                 return False
             lines = probe.stdout.strip().splitlines()
-            self.answers[(sha, test_id)] = probe.returncode == 0 and bool(lines) and lines[-1] == nonce
+            self.answers[(sha, test_id)] = (probe.returncode == 0 and bool(lines)
+                                            and lines[-1] == nonce.encode("ascii"))
         return self.answers[(sha, test_id)]
 
 
@@ -248,6 +263,8 @@ def read_issues(path):
     for issue in data:
         if not isinstance(issue, dict) or not isinstance(issue.get("number"), int):
             raise Unreadable(f"--issues {path}: an entry has no integer number")
+        if not isinstance(issue.get("labels") or [], list):
+            raise Unreadable(f"--issues {path}: issue #{issue['number']} has labels that are not a list")
         labels[issue["number"]] = [label.get("name") for label in issue.get("labels") or []
                                    if isinstance(label, dict) and isinstance(label.get("name"), str)]
     return labels
