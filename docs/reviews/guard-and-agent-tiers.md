@@ -237,3 +237,51 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_verify_agent_tiers` -> `OK` (the `\u00a0` and `\u2003` cases fail against `0acdd49`); `node scripts/verify-agent-tiers.mjs` -> 5 definitions valid.
 
 - Finding 1 (P1): a blank line is spaces and tabs only (YAML 5.5); a line holding a no-break space or another Unicode space is content, so it reaches the `key: value` rule and refuses.
+
+## Round 6: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:49:04Z
+- Effort: medium
+- Lines: 33
+- Digest: 9cec45b949b04148
+
+## adversarial: needs-attention
+
+1. **P1: Overlong mapping keys pass validation but fail YAML loading.** `scripts/verify-agent-tiers.mjs:128` accepts keys of unlimited length. Reproduce by passing this constructed string to `readAgentFrontmatter`:
+
+   ```javascript
+   "---\nname: a\nmodel: sonnet\ntools: Read\n"
+     + "x".repeat(1025) + ": value\n---\n"
+   ```
+
+   In-memory execution returned `error: null`, model `sonnet`, and no tool problems. PyYAML 6.0.3 rejected the enclosed mapping with `ScannerError`. Enforce YAML’s implicit-key length limit before accepting the entry.
+
+## consistency: approve
+
+No additional findings.
+
+## integration: needs-attention
+
+Finding 1 allows a definition through the validation gate that fails YAML parsing. Actual Claude Code loading was not exercised.
+
+## source-defect: needs-attention
+
+Finding 1 violates the 1,024-character limit for implicit block-mapping keys in [YAML 1.2.2 section 8.2.2](https://yaml.org/spec/1.2.2/#822-block-mappings). The intentional flat dialect still uses implicit mapping keys.
+
+## design: advisory
+
+No user-facing surface changed.
+
+## record: advisory
+
+Ran `python -B -m unittest tests.scripts.test_verify_agent_tiers`: all five tests passed despite finding 1. Guard changes received static review; filesystem-writing guard tests were not rerun. No files were modified; final Git status was clean.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 6
+
+`python -m unittest tests.scripts.test_verify_agent_tiers` -> `OK` (the new cases fail against `be32399`); `node scripts/verify-agent-tiers.mjs` -> 5 definitions valid.
+
+- Finding 1 (P1): frontmatter keys are an allow-list (`KNOWN_KEYS`: name, description, model, tools, color, and the tier fields this check reads), so an unknown key refuses and no key can approach YAML's 1024-character limit for an implicit key.

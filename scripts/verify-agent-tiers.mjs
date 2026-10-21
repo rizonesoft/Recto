@@ -64,6 +64,10 @@ export const ELEVATION_RATIONALE_FIELD = "model_rationale";
 /** The one key whose value may be a nested block: Claude Code's per-agent hooks. */
 export const HOOKS_FIELD = "hooks";
 
+/** The frontmatter keys Recto's agent definitions may carry. */
+const KNOWN_KEYS = new Set(["name", "description", "model", "tools", "color", HAIKU_MECHANICAL_FIELD, HAIKU_REPLAY_FIELD,
+  ELEVATION_RATIONALE_FIELD, HOOKS_FIELD]);
+
 /**
  * Tools no subagent on any tier is given. A `*` grant includes them, and so
  * does a missing `tools:` list, because the agent then inherits every tool.
@@ -131,6 +135,11 @@ export function readAgentFrontmatter(text) {
     }
 
     const [, key, rest = ""] = entry;
+    // Only the keys Recto's agents and this check use: an unknown key is refused, which also keeps every key far below
+    // YAML's 1024-character limit for an implicit key.
+    if (!KNOWN_KEYS.has(key)) {
+      return { fields: null, error: `declares "${key.slice(0, 40)}:", a key Recto's agent definitions do not use (${[...KNOWN_KEYS].join(", ")})` };
+    }
     if (fields.has(key)) {
       // This reader takes the first, a YAML parser takes the last. Refuse the
       // ambiguity rather than pick a winner: `model: sonnet` above
