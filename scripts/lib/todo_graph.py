@@ -263,11 +263,21 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
                             f"{report}: {ref}")
                     # A severity stop is for a round whose findings are all P3 or advisory: every numbered finding
                     # must carry a P3 tag (an untagged finding counts as P1), and no P1 or P2 may appear.
+                    # The tag opens the finding ("P3:" or "**P3:"); a P3 mentioned elsewhere in it is not a tag.
                     findings = re.findall(r"^[ \t>]*\d+[.)][ \t]+(.*)$", e["review"], re.M)
                     require(r["verdict"] != "stopped-low-severity"
                             or (re.search(r"\bP[12]\b", e["review"]) is None
-                                and all(re.search(r"\bP3\b", f) for f in findings)),
+                                and all(re.match(r"(?:\*\*)?P3:", f) for f in findings)),
                             f"round {r['round']} has a finding that is not tagged P3, so it cannot stop on severity: "
+                            f"{ref}")
+                    # Stopping is earned by reviews returned: a round that returned no review (an outage) does not
+                    # count toward the severity cutoff or the cap.
+                    returned = sum(1 for n in reviewed if n <= r["round"])
+                    require(r["verdict"] != "stopped-low-severity" or returned > SEVERITY_CUTOFF_ROUND,
+                            f"round {r['round']} follows only {returned} returned reviews, so it cannot stop on "
+                            f"severity before {SEVERITY_CUTOFF_ROUND + 1}: {ref}")
+                    require(not r["verdict"].startswith("stopped-at-") or returned >= cap,
+                            f"round {r['round']} follows only {returned} returned reviews, short of the cap {cap}: "
                             f"{ref}")
                 # Each findings file is one review loop, and the loop's end is its last reviewed round: the receipt
                 # must name it, and it must be clean or a stop, so no later failing review can be left out.

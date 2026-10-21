@@ -495,7 +495,8 @@ class Stamp(Tree):
         report = "docs/reviews/00-workspace/D00-T01-s1.md"
         last = tg.SEVERITY_CUTOFF_ROUND + 1
         for finding in ("1. **P1: unresolved unsafe stamp.**", "1. **P2: unresolved unsafe stamp.**",
-                        "1. `x.py:1`: an untagged finding counts as P1.", "1. **P3: fine.**\n2. untagged second finding."):
+                        "1. `x.py:1`: an untagged finding counts as P1.", "1. **P3: fine.**\n2. untagged second finding.",
+                        "1. `x.py:1`: unsafe stamps bypass the P3 gate."):
             (self.root / report).write_text(
                 "".join(envelope(n, overall="needs-attention") for n in range(1, last)) + envelope(last).replace(
                     "Review text.\n\nOVERALL: approve", f"{finding}\n\nOVERALL: needs-attention"),
@@ -561,6 +562,25 @@ class Stamp(Tree):
             encoding="utf-8")
         tg.stamp(self.root, "D00 T01 §1", self.sha, [{"round": last, "report": report, "verdict": "stopped-low-severity"}],
                  ["true -> ok"], "2026-10-13", cap_outcome="two P3 findings filed")
+
+    def test_outage_rounds_do_not_earn_a_stop(self):
+        self.tick_work()
+        report = "docs/reviews/00-workspace/D00-T01-s1.md"
+        last = tg.SEVERITY_CUTOFF_ROUND + 1
+        (self.root / report).write_text(
+            "".join(envelope(n, "none") for n in range(1, last)) + envelope(last).replace(
+                "Review text.\n\nOVERALL: approve", "1. **P3: wording.**\n\nOVERALL: needs-attention"), encoding="utf-8")
+        with self.assertRaises(tg.Refused) as ctx:
+            tg.stamp(self.root, "D00 T01 §1", self.sha, [{"round": last, "report": report, "verdict": "stopped-low-severity"}],
+                     ["true -> ok"], "2026-10-13", cap_outcome="filed")
+        self.assertIn("follows only 1 returned reviews", str(ctx.exception))
+        cap = tg.REVIEW_ROUND_CAP
+        (self.root / report).write_text(envelope(1, "none") + "".join(
+            envelope(n, overall="needs-attention") for n in range(2, cap + 1)), encoding="utf-8")
+        with self.assertRaises(tg.Refused) as ctx:
+            tg.stamp(self.root, "D00 T01 §1", self.sha, [{"round": cap, "report": report, "verdict": f"stopped-at-{cap}"}],
+                     ["true -> ok"], "2026-10-13", cap_outcome="filed")
+        self.assertIn("short of the cap", str(ctx.exception))
 
     def test_a_severity_stop_before_the_cutoff_refuses(self):
         self.tick_work()

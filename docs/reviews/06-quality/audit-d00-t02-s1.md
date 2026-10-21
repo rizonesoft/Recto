@@ -473,3 +473,48 @@ OVERALL: needs-attention
 ## Fixes after round 9
 
 - Finding 1 (P1): a severity stop now works from an allow-list: every numbered finding in the stopping round must carry a `P3` tag (an untagged finding counts as P1), and no `P1` or `P2` may appear. `test_a_severity_stop_with_a_p1_or_p2_finding_refuses` adds an untagged finding and a P3 list with one untagged item, and fails against `b90550c`; `test_a_severity_stop_with_only_p3_findings_stamps` keeps the allowed case. `Ran 77 tests`, `OK`; `valid: 677 sections`.
+
+## Round 10: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T15:57:54Z
+- Effort: medium
+- Lines: 29
+- Digest: 0736fcbaf860223e
+
+## adversarial: needs-attention
+
+1. **P1: Mentioning P3 substitutes for a severity tag.** `scripts/lib/todo_graph.py:269` accepts any occurrence of `P3` within a numbered finding. Reproduced in memory using nine cross-family `envelope()` records containing `1. scripts/lib/todo_graph.py:269: unsafe stamps bypass the P3 gate.` and ending `OVERALL: needs-attention`. A receipt claiming round 9 as `stopped-low-severity`, with `rounds_spent=9`, `round_cap=22` and `cap_outcome="filed"`, passes `receipt_data_ok()`. This finding has no severity tag and must therefore count as P1.
+
+## consistency: needs-attention
+
+2. **P1: Outages count toward eligibility for a severity stop.** `scripts/lib/todo_graph.py:212` checks the recorded round number rather than completed review rounds. Reproduced with eight `reviewer="none"` envelopes followed by one cross-family review containing `1. P3: wording.` and ending `OVERALL: needs-attention`. Claiming round 9 as `stopped-low-severity` passes. Only one review returned, contrary to `.codex/skills/review-todo-section/SKILL.md`’s explicit rule that a round returning no review does not count toward the bounded loop.
+
+## integration: needs-attention
+
+Findings 1 and 2 affect the shared receipt gate called by `stamp()` at `scripts/lib/todo_graph.py:766` and subsequent graph validation. Both permit premature closure that downstream sections can treat as satisfied evidence.
+
+## source-defect: approve
+
+No additional finding.
+
+## design: advisory
+
+Not applicable to this section’s declared surface.
+
+## record: advisory
+
+The full-suite claim at `docs/reviews/06-quality/audit-d00-t02-s1.md:9` remains independently unconfirmed. At `a767133`, the suite ran 77 tests with 76 temporary-directory setup errors under the read-only sandbox; the Repository test passed. This is an environment limitation.
+
+`validate` reported 677 sections, `plan --check` reported `plan current`, and resolving the section returned verified status `3`. An in-memory comparison confirmed that the ordinary untagged-finding probe passes on `b90550c` and refuses on `a767133`; this does not establish the claimed full regression-test run.
+
+No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 10
+
+`Ran 78 tests`, `OK`; against `a767133` the two new or changed tests report `FAILED (failures=2)`; `valid: 677 sections` (D07 T03 §4's first loop holds 22 returned reviews, so its cap stop still validates).
+
+- Finding 1 (P1): a P3 tag must open the finding (`P3:` or `**P3:`); a P3 mentioned elsewhere in an untagged finding does not count (`test_a_severity_stop_with_a_p1_or_p2_finding_refuses`).
+- Finding 2 (P1): a stop is earned by reviews returned: a severity stop needs more than `SEVERITY_CUTOFF_ROUND` returned reviews in its loop, and a cap stop at least `round_cap`; outage rounds count toward neither (`test_outage_rounds_do_not_earn_a_stop`).
