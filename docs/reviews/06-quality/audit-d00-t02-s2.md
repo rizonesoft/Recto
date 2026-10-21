@@ -145,3 +145,40 @@ OVERALL: needs-attention
 `Ran 82 tests`, `OK` (the extended suspect test fails against `dca3611`); `valid: 677 sections`; `plan current`.
 
 - Finding 1 (P1): a prerequisite now holds only when it is `settled()`: it and every ancestor are stamped. `disposition`, `stamp` and `resolve`'s unmet list use it, so new work on a suspect stamp waits (exit 4) and cannot stamp until the reopened ancestor re-stamps (`test_unstamping_a_prerequisite_leaves_its_consumers_stamped_and_suspect`).
+
+## Round 4: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T16:37:35Z
+- Effort: medium
+- Lines: 24
+- Digest: bec1408e8074838a
+
+## adversarial: needs-attention
+
+1. **P2: Audit instructions still invalidate the graph before reopening a section.** `.claude/skills/review-todo-section/SKILL.md:34` instructs reviewers to untick checklist items whose `Done when:` fails. Line 91 applies that step to stamped sections before `unstamp`. Reproduced against `92120ec` using mocked reads: unticking the first non-Commit checklist item in `D00 T02 §2` makes both `graph()` and `unstamp()` refuse with `unfinished stamped checklist: D00 T02 §2`. The prescribed recovery cannot proceed. Audit findings must leave the stamped checklist intact until `unstamp` succeeds.
+
+## consistency: needs-attention
+
+Finding 1 also contradicts `.claude/skills/review-todo-section/SKILL.md:85`, which prohibits rewriting a stamped section’s checklist. Following the audit’s step 1 violates that rule.
+
+## integration: needs-attention
+
+Finding 1 breaks the recovery path invoked by `.claude/skills/process-phase/SKILL.md:44` when a shipped prerequisite’s checkpoint fails. Once the reviewer follows the unticking instruction, subsequent graph operations refuse.
+
+## source-defect: approve
+
+## design: advisory
+
+Not applicable: `Surface: no`.
+
+## record: approve
+
+Independently reran the checkpoint: all 12 skill directories validated with zero diagnostics; graph validation reported `valid: 677 sections`; `plan --check` reported `plan current`. These checks miss finding 1. No files modified.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 4
+
+- Finding 1 (P2): `review-todo-section` (all three kits) now says that on a stamped section the audit edits nothing in the section by hand: an unmet item is recorded in the findings file, a regression goes through `unstamp` first, and only the reopened section's items are unticked afterwards. This matches its own rule that a stamped checklist is never rewritten. `muse skills validate` -> `valid=True` in all three kits.
