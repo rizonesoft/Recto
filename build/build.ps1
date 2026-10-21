@@ -17,8 +17,9 @@
 # Windows 11 SDK 10.0.26100, and network access for the first restore.
 # VS 2022 cannot substitute: the projects use the v145 toolset, which
 # only VS 2026 ships. The installation must have the C++ x64 and ARM64
-# tools, the Windows 11 SDK 10.0.26100 and WinUI (Windows App SDK) C++
-# support; vswhere picks the newest one that does.
+# tools; vswhere picks the newest one that does. The Windows SDK comes
+# from its own install and the Windows App SDK from NuGet, so neither is
+# asked of Visual Studio (MSBuild names a missing SDK itself).
 param(
     [ValidateSet('x64', 'ARM64', 'x64,ARM64', 'ARM64,x64')][string[]]$Platform = @('x64', 'ARM64'),
     [ValidateSet('Debug', 'Release', 'Debug,Release', 'Release,Debug')][string[]]$Configuration = @('Debug', 'Release'),
@@ -41,12 +42,13 @@ Set-Location $root
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $required = @(
     'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
-    'Microsoft.VisualStudio.Component.VC.Tools.ARM64',
-    'Microsoft.VisualStudio.Component.Windows11SDK.26100',
-    'Microsoft.VisualStudio.Component.WindowsAppSdkSupport.Cpp'
+    'Microsoft.VisualStudio.Component.VC.Tools.ARM64'
 )
 $vs = & $vswhere -version '[18.0,19.0)' -latest -requires $required -property installationPath
-if (-not $vs) { throw "No Visual Studio 2026 with the components Recto needs: $($required -join ', ') (the v145 toolset is VS 2026 only)" }
+if (-not $vs) {
+    $missing = @($required | Where-Object { -not (& $vswhere -version '[18.0,19.0)' -latest -requires $_ -property installationPath) })
+    throw "No Visual Studio 2026 with the C++ x64 and ARM64 tools (the v145 toolset is VS 2026 only); the newest one lacks: $($missing -join ', ')"
+}
 $msbuild = Join-Path $vs 'MSBuild\Current\Bin\MSBuild.exe'
 if (-not $env:VCPKG_ROOT) {
     $vsVcpkg = Join-Path $vs 'VC\vcpkg'
