@@ -268,15 +268,13 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
                             f"round {r['round']} is not a review returned by another model family with a verdict "
                             f"matching {r['verdict']} (clean needs OVERALL: approve, any other needs-attention) in "
                             f"{report}: {ref}")
-                    # A severity stop is for a round whose findings are all P3 or advisory: every numbered finding
-                    # must carry a P3 tag (an untagged finding counts as P1), and no P1 or P2 may appear.
-                    # The tag opens the finding ("P3:" or "**P3:"); a P3 mentioned elsewhere in it is not a tag.
-                    findings = re.findall(r"^[ \t>]*\d+[.)][ \t]+(.*)$", e["review"], re.M)
-                    require(r["verdict"] != "stopped-low-severity"
-                            or (re.search(r"\bP[12]\b", e["review"]) is None
-                                and all(re.match(r"(?:\*\*)?P3:", f) for f in findings)),
-                            f"round {r['round']} has a finding that is not tagged P3, so it cannot stop on severity: "
-                            f"{ref}")
+                    # A severity stop is for a round whose findings are all P3 or advisory. The reviewer, who tags each
+                    # finding (an untagged one counts as P1), declares the highest on the line before OVERALL; reading
+                    # severities back out of free prose would guess where the reviewer already said.
+                    lines = [x.strip() for x in e["review"].splitlines() if x.strip()]
+                    require(r["verdict"] != "stopped-low-severity" or (len(lines) >= 2 and lines[-2] == "HIGHEST: P3"),
+                            f"round {r['round']} does not declare HIGHEST: P3 before its OVERALL line, so it cannot "
+                            f"stop on severity: {ref}")
                     # Stopping is earned by reviews returned: a round that returned no review (an outage) does not
                     # count toward the severity cutoff or the cap.
                     returned = sum(1 for n in reviewed if n <= r["round"])

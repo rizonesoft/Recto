@@ -609,3 +609,58 @@ OVERALL: needs-attention
 ## Fixes after round 12
 
 - Finding 1 (P1): a returned review now also requires a reviewer of another model family than the writer, so self-reviews, like outages and blocked replies, earn no stop and end no loop. `test_outage_rounds_do_not_earn_a_stop` adds same-family fillers and fails against `33c5a34`; `Ran 78 tests`, `OK`; `valid: 677 sections`.
+
+## Round 13: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T16:08:17Z
+- Effort: medium
+- Lines: 39
+- Digest: c6134c624de2a12e
+
+## adversarial: needs-attention
+
+1. **P1: Unnumbered, untagged findings bypass the severity gate.** `scripts/lib/todo_graph.py:274` extracts only numbered findings. An unnumbered finding leaves `findings` empty, so `all(...)` at line 277 passes. Reproduced through in-memory report overlays: create nine cross-family `envelope()` rounds ending `OVERALL: needs-attention`; replace round 9’s review text with:
+
+   ```text
+   - `scripts/lib/todo_graph.py:280`: The stamp accepts unfinished work.
+   ```
+
+   Claim round 9 as `stopped-low-severity`, with `rounds_spent=9`, `round_cap=22` and `cap_outcome="filed"`. `receipt_data_ok()` accepts it. The malformed finding is silently omitted instead of refused; its missing severity must count as P1.
+
+## consistency: needs-attention
+
+2. **P2: A valid P3-only review can be refused because its prose mentions another severity.** `scripts/lib/todo_graph.py:276` searches the entire review for `P1` or `P2`, rather than checking finding tags. Using the same nine-round reproduction, this sole finding is refused:
+
+   ```text
+   1. **P3: Fix the spelling in the comment describing P1 findings.**
+   ```
+
+   Removing “P1” makes it pass. This prevents the required round-9 stop despite every finding being explicitly P3.
+
+## integration: needs-attention
+
+Finding 1 affects both existing-receipt validation at `scripts/lib/todo_graph.py:182` and stamping at line 783. The shared gate can accept a premature stop and allow the resulting stamp to satisfy downstream prerequisites.
+
+## source-defect: approve
+
+No additional finding.
+
+## design: advisory
+
+Not applicable to this section’s declared surface.
+
+## record: advisory
+
+The full-suite claim at `docs/reviews/06-quality/audit-d00-t02-s1.md:9` remains independently unconfirmed. At `a47f5bc`, the suite attempted 78 tests: 77 encountered temporary-directory setup errors under the read-only sandbox; the Repository test passed. This is an environment limitation.
+
+Current validation reported `valid: 677 sections`; `plan --check` reported `plan current`. These results do not establish the historical full-suite pass. All defect reproductions used in-memory overlays. No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 13
+
+Severity is now read from its authoritative source rather than parsed back out of free prose: `docs/review-round-prompt.md` asks the reviewer, who already tags every finding (an untagged one counting as `P1`), for a `HIGHEST: P1|P2|P3|none` line before `OVERALL`, and `receipt_data_ok` accepts `stopped-low-severity` only when that line reads `HIGHEST: P3`. The three `review-todo-section` skills and `todo/README.md` state the rule. `Ran 78 tests`, `OK`; against `a47f5bc` the severity tests fail (`failures=1, errors=1`); `valid: 677 sections`, `plan current`.
+
+- Finding 1 (P1): an unnumbered, untagged finding no longer slips past: the gate no longer depends on finding layout, and a reviewer whose findings include it declares `HIGHEST: P1` (`test_a_severity_stop_with_a_p1_or_p2_finding_refuses` covers P1, P2, `none`, a missing line, and a `HIGHEST` line not just before `OVERALL`).
+- Finding 2 (P2): a P3-only review that mentions P1 in prose now stops as it should (`test_a_severity_stop_with_only_p3_findings_stamps`).
