@@ -20,4 +20,5 @@ Regression test: failing on parent, passing on fix
 
 ## CLA
 
-- [ ] I agree to the Recto Contributor License Agreement (CLA.md).
+- [ ] I have read `CLA.md` and I agree to the Recto Contributor License Agreement for this contribution.
+- [ ] Every commit is signed off (`git commit -s`), certifying the Developer Certificate of Origin 1.1.

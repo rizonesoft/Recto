@@ -2,8 +2,7 @@
 
 Recto is distributed under the GNU General Public License, version 3 or later (`GPL-3.0-or-later`); see [`LICENSE`](./LICENSE) for the full text.
 
-This file records the third-party components and assets that exist in the repository today and the components that will enter the build as the milestones land.
-The full build-derived audit and compatibility record is owned by [`todo/07-release/TODO-02-store-and-compliance.md`](./todo/07-release/TODO-02-store-and-compliance.md) section 2 before version 1 ships, and the in-app **About -> Built with** list is generated from the same data so the two cannot drift.
+This file records the third-party components and assets that exist in the repository today and the components that will enter the build as the milestones land. The full build-derived audit and compatibility record is owned by [`todo/07-release/TODO-02-store-and-compliance.md`](./todo/07-release/TODO-02-store-and-compliance.md) section 2 before version 1 ships, and the in-app **About -> Built with** list is generated from the same data so the two cannot drift.
 
 ## Present in the repository now (M0)
 

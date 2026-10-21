@@ -2,8 +2,7 @@
 
 # Recto
 
-Recto will be an open-source PDF viewer, OCR tool and document converter for Windows 11.
-It is designed as a single native WinUI 3 application backed by Recto's own C++20 PDF engine (`recto-pdf`), built-in High-Accuracy Neural OCR + `Windows.Media.Ocr`, and 100% pure native C++20 document converters (`PDF <-> Word`, `Office & Legacy Office -> PDF`, `PDF <-> Images`, `PDF -> Text`, and page organization): read, search, OCR, convert and organize documents without accounts, telemetry by default, external converter requirements, or artificial limits.
+Recto will be an open-source PDF viewer, OCR tool and document converter for Windows 11. It is designed as a single native WinUI 3 application backed by Recto's own C++20 PDF engine (`recto-pdf`), built-in High-Accuracy Neural OCR + `Windows.Media.Ocr`, and 100% pure native C++20 document converters (`PDF <-> Word`, `Office & Legacy Office -> PDF`, `PDF <-> Images`, `PDF -> Text`, and page organization): read, search, OCR, convert and organize documents without accounts, telemetry by default, external converter requirements, or artificial limits.
 
 **Status:** Early milestone M0 (repository and build scaffold). No application functionality is shipped yet; the repository holds the approved interface specification, the foundation architecture plan, the generated graphics, the C++20 module scaffold, and the live TODO execution plan that builds version 1 from M0 (repository and build) through M6 (Inno Setup and portable release, with optional Microsoft Store MSIX).
 
@@ -26,8 +25,7 @@ It is designed as a single native WinUI 3 application backed by Recto's own C++2
 
 ## Building and verifying
 
-The one-command native build (`.\build.cmd`) compiles `Recto.sln` (`recto-pdf`, `recto-core`, `recto-services`, `Recto`, `recto-cli`, `recto-tests`, `recto-fuzz`) for x64 and ARM64 in Debug and Release and runs the x64 test suite (see [`CONTRIBUTING.md`](./CONTRIBUTING.md) for prerequisites).
-Validate the execution plan and its tooling with Python 3.11 or newer:
+The one-command native build (`.\build.cmd`) compiles `Recto.sln` (`recto-pdf`, `recto-core`, `recto-services`, `Recto`, `recto-cli`, `recto-tests`, `recto-fuzz`) for x64 and ARM64 in Debug and Release and runs the x64 test suite (see [`CONTRIBUTING.md`](./CONTRIBUTING.md) for prerequisites). Validate the execution plan and its tooling with Python 3.11 or newer:
 
 ```powershell
 python scripts/todo-graph.py validate

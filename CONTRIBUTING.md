@@ -36,4 +36,5 @@ Pass `-Platform x64` or `-Configuration Release` (or `-SkipTests`) through `buil
 
 - Branch from `main`, keep one logical section per commit, and cite the section reference (`DNN TNN §N`) in the commit body.
 - Do not include credentials, signing material or private paths in commits, logs or pull-request descriptions.
+- Sign off every commit with `git commit -s` (`Signed-off-by:`), certifying the [Developer Certificate of Origin 1.1](https://developercertificate.org/) as [`CLA.md`](./CLA.md) explains.
 - By submitting a pull request, you agree to the [`CLA.md`](./CLA.md) terms under `GPL-3.0-or-later`.

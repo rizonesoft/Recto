@@ -48,6 +48,8 @@ Initialize the repository (or verify the existing remote if already created), se
 
 > **Corrected:** 2026-10-14 -- Updated `LICENSE`, `README.md`, `NOTICE.md`, `CONTRIBUTING.md` and `CLA.md` from `AGPL-3.0-or-later` to `GPL-3.0-or-later` under revised decision D2 (`LICENSE` is the unmodified FSF GPL-3.0 text, 35,149 LF bytes, sha256 `0c2b2577702544e6ca2110800c25129ef79a7277e74f888ae852afb90cb363b4`).
 
+> **Audit 2026-10-21 (D06 T05 §1):** `LICENSE` was restored to the verbatim GPL-3.0 text in `2affdc1`; it is still 35,149 LF bytes and its sha256 is now `3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986` (checked by `tests/scripts/test_license.py`). `build/build.ps1` is tracked by design (`D00 T01 §3`), the one exception `.gitignore` names to "no file under `build/` is tracked". The audit added the crash-dump ignores, the `.svg`, `.xaml`, Visual Studio, `.cmd` and image attributes, and the DCO sign-off this section promised.
+
 **Phase:** 0
 **Needs:** none
 **Surface:** no
