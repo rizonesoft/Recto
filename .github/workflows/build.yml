@@ -30,12 +30,34 @@ jobs:
     name: Build x64 & ARM64 and run recto-tests
     runs-on: windows-latest
     timeout-minutes: 45
+    outputs:
+      sha: ${{ steps.target.outputs.sha }}
     steps:
+      # A manual run names an immutable commit, never a branch or tag that could move between jobs.
+      - name: Check the requested commit
+        if: inputs.sha != ''
+        shell: pwsh
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: |
+          if ($env:REQUESTED_SHA -cnotmatch '^[0-9a-f]{40}$') { throw "sha must be a full 40-character commit, not '$env:REQUESTED_SHA'" }
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.sha || github.sha }}
           persist-credentials: false
+
+      # The commit actually built, which test-list-note records the list against.
+      - name: Record the built commit
+        id: target
+        shell: pwsh
+        env:
+          REQUESTED_SHA: ${{ inputs.sha || github.sha }}
+        run: |
+          $sha = git rev-parse HEAD
+          if ($sha -ne $env:REQUESTED_SHA) { throw "checked out $sha, expected $env:REQUESTED_SHA" }
+          "sha=$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Configure NuGet and vcpkg cache directories
         shell: pwsh
@@ -104,7 +126,7 @@ jobs:
     permissions:
       contents: write
     env:
-      TARGET_SHA: ${{ inputs.sha || github.sha }}
+      TARGET_SHA: ${{ needs.build.outputs.sha }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -143,7 +165,9 @@ jobs:
             fi
             git notes --ref=gtest-list add -f -F "$list" "$sha"
             if git push --quiet origin refs/notes/gtest-list; then
-              git notes --ref=gtest-list show "$sha" | head -n 3
+              # Read the note whole before showing its start: a pipe into head could break under pipefail.
+              git notes --ref=gtest-list show "$sha" > "$RUNNER_TEMP/note.txt"
+              head -n 3 "$RUNNER_TEMP/note.txt"
               exit 0
             fi
             sleep $((try * 5))
@@ -156,8 +180,12 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
+      # The same commit the build job tests (a manual run's sha is checked there).
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
 
       - name: Configure NuGet and vcpkg cache directories
         shell: pwsh
