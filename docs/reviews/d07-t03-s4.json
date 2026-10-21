@@ -1,0 +1,86 @@
+{
+  "ref": "D07 T03 \u00a74",
+  "title": "User-bug regression rule, closing on release and changelog mapping",
+  "implementation_sha": "4a3506a5c3d57f0a0483214e7c46858478073f07",
+  "date": "2026-10-21",
+  "reviews": [
+    {
+      "round": 22,
+      "report": "docs/reviews/07-release/D07-T03-s4.md",
+      "verdict": "stopped-at-22"
+    },
+    {
+      "round": 1,
+      "report": "docs/reviews/07-release/D07-T03-s4-loop2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/07-release/D07-T03-s4-loop2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/07-release/D07-T03-s4-loop2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/07-release/D07-T03-s4-loop2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/07-release/D07-T03-s4-loop2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 6,
+      "report": "docs/reviews/07-release/D07-T03-s4-loop2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 7,
+      "report": "docs/reviews/07-release/D07-T03-s4-loop2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 8,
+      "report": "docs/reviews/07-release/D07-T03-s4-loop2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 9,
+      "report": "docs/reviews/07-release/D07-T03-s4-loop2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 10,
+      "report": "docs/reviews/07-release/D07-T03-s4-loop2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 11,
+      "report": "docs/reviews/07-release/D07-T03-s4-loop2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 12,
+      "report": "docs/reviews/07-release/D07-T03-s4-loop2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 13,
+      "report": "docs/reviews/07-release/D07-T03-s4-loop2.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "python -m unittest tests.scripts.test_release_notes -> Ran 25 tests OK",
+    "python -m unittest discover -s tests/scripts -> Ran 208 tests OK",
+    "fixture fix commit naming a test absent from its CI note or not loadable at the fix commit -> reported as a violation"
+  ],
+  "rounds_spent": 35,
+  "round_cap": 22,
+  "cap_outcome": "Loop 1 spent 22 of 22 rounds; its last P1 (a C++ source scan cannot decide what compiles) was filed as D07 T03 \u00a79, which replaced the scanner with each main build's CI test list as a git note and is stamped. \u00a74 then ran a second loop on its finished form: 12 rounds fixed, round 13 clean, with the check's threat model recorded as a dated correction."
+}

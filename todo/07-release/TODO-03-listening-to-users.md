@@ -43,7 +43,7 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | Issue forms, triage policy and `SECURITY.md` | -- | [x] |
 | 2 | §9 | Gtest regression evidence from the fix commit's own CI test list | §1 | [x] |
-| 3 | §4 | User-bug regression rule, closing on release and changelog mapping | §1, §9 | [ ] |
+| 3 | §4 | User-bug regression rule, closing on release and changelog mapping | §1, §9 | [x] |
 | 4 | §6 | Public scope page and user demand ledger | §1 | [x] |
 | 5 | §3 | Structure-preserving reproducer scrubber (`recto-cli scrub`) | D04 T02 §2 | [ ] |
 | 6 | §2 | In-app `Report a problem` with privacy-safe diagnostics | §1, D07 T02 §1, D07 T02 §4, D02 T03 §11, D06 T04 §25 | [ ] |
@@ -154,9 +154,12 @@ A common failure is closing issues when a fix merges while users on the release 
 - [x] Author `docs/support/user-bugs.md`: reproduce first (scrubbed or synthetic file into `tests/corpus/user-reports/` with a provenance row), test fails before the fix, trailer on the fix, label `fixed-on-main`, close on release. Done when: the file states each step.
 - [x] Add both trailers and a "Regression test: failing on parent, passing on fix" evidence block to `.github/pull_request_template.md`, and a pointer from `AGENTS.md` "Working rules". Done when: both files reference `docs/support/user-bugs.md`.
 - [x] Add `tests/scripts/test_release_notes.py` building a temporary git repository with tagged commits. Done when: the test passes and removing the trailer parsing makes it fail.
-- [ ] Commit: `repo: map user-reported fixes to releases and require a regression test per fix`
+- [x] Commit: `repo: map user-reported fixes to releases and require a regression test per fix`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_release_notes` passes, and a fixture `Fixes-User:` commit whose `Regression-Test:` names a test that does not exist is reported as a violation.
+
+> **Verified:** 2026-10-21 | §4 | 4a3506a5c3d57f0a0483214e7c46858478073f07
+> **Review:** `docs/reviews/d07-t03-s4.json`
 
 ## 5. Release gate for unreleased fixes, security advisories and CI integrity
 
