@@ -247,20 +247,29 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
             # must have returned a review: one ending in the prompt's OVERALL approve or needs-attention line, not an
             # empty or blocked reply. Reports are read as the dispatcher wrote them, "\r" bytes and all.
             dispatch = review_dispatch()
-            for r in rounds:
-                recorded = dispatch.read_rounds((Path(root) / r["report"]).read_bytes().decode("utf-8"))
-                require(recorded is not None and any(
-                    e["number"] == r["round"] and e["reviewer"]
-                    and dispatch.FAMILY.get(e["cli"]) not in (None, dispatch.WRITER_FAMILY.get(e["writer"]))
-                    and e["writer"] in dispatch.WRITER_FAMILY
-                    and ([x.strip() for x in e["review"].splitlines() if x.strip()] or [""])[-1]
-                    == ("OVERALL: approve" if r["verdict"] == "clean" else "OVERALL: needs-attention")
-                    for e in recorded),
-                    f"round {r['round']} is not a review returned by another model family with a verdict matching "
-                    f"{r['verdict']} (clean needs OVERALL: approve, any other needs-attention) in {r['report']}: {ref}")
-        # A loop ends clean or stopped: a round whose findings were fixed needs a later round that saw the fixes.
-        require(any(r["verdict"] == "clean" or r["verdict"].startswith("stopped-") for r in rounds),
-                f"the review must end in a clean round or a stopped verdict: {ref}")
+            for report in dict.fromkeys(r["report"] for r in rounds):
+                recorded = dispatch.read_rounds((Path(root) / report).read_bytes().decode("utf-8"))
+                require(recorded is not None, f"{report} is not a findings file the dispatcher can read: {ref}")
+                reviewed = {e["number"]: e for e in recorded if e["reviewer"]}
+                claimed = sorted((r for r in rounds if r["report"] == report), key=lambda r: r["round"])
+                for r in claimed:
+                    e = reviewed.get(r["round"])
+                    last = ([x.strip() for x in e["review"].splitlines() if x.strip()] or [""])[-1] if e else ""
+                    require(e is not None and e["writer"] in dispatch.WRITER_FAMILY
+                            and dispatch.FAMILY.get(e["cli"]) not in (None, dispatch.WRITER_FAMILY[e["writer"]])
+                            and last == ("OVERALL: approve" if r["verdict"] == "clean" else "OVERALL: needs-attention"),
+                            f"round {r['round']} is not a review returned by another model family with a verdict "
+                            f"matching {r['verdict']} (clean needs OVERALL: approve, any other needs-attention) in "
+                            f"{report}: {ref}")
+                    # A severity stop is for a round whose findings are all P3 or advisory.
+                    require(r["verdict"] != "stopped-low-severity" or re.search(r"\bP[12]\b", e["review"]) is None,
+                            f"round {r['round']} has a P1 or P2 finding, so it cannot stop on severity: {ref}")
+                # Each findings file is one review loop, and the loop's end is its last reviewed round: the receipt
+                # must name it, and it must be clean or a stop, so no later failing review can be left out.
+                require(claimed[-1]["round"] == max(reviewed)
+                        and (claimed[-1]["verdict"] == "clean" or claimed[-1]["verdict"].startswith("stopped-")),
+                        f"the review loop in {report} must end at its last reviewed round ({max(reviewed)}), clean or "
+                        f"stopped, and the receipt must name that round: {ref}")
         stopped = any(r["verdict"].startswith("stopped-") for r in rounds)
         outcome = data.get("cap_outcome")
         require((isinstance(outcome, str) and bool(outcome.strip())) == stopped,

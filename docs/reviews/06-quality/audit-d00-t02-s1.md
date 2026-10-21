@@ -374,3 +374,48 @@ In `scripts/lib/todo_graph.py`, tested in `tests/scripts/test_todo_graph.py` (`R
 - Finding 2 (P2): `rounds_recorded` reads reports byte for byte too, so a carriage return inside a review no longer breaks the dispatcher's reader into the heading fallback that counted a quoted `## Round 999` (`test_a_review_with_carriage_returns_is_read_as_the_dispatcher_wrote_it` now quotes one and expects `rounds_spent` 1).
 
 Separately, CI builds had failed since `59902fc` (D06 T05 §3): its `vswhere -requires` list named Windows SDK and WinUI components that GitHub's `windows-latest` image does not register. `07f3563` narrows it to the C++ x64 and ARM64 tools; the refusal now names what is missing.
+
+## Round 8: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T15:49:49Z
+- Effort: medium
+- Lines: 29
+- Digest: de4aeff6a1fdf80f
+
+## adversarial: needs-attention
+
+1. **P1: An earlier approval bypasses a later failing review.** `scripts/lib/todo_graph.py:262` checks whether *any* receipt round is clean or stopped, rather than requiring the review loop to end that way. Reproduced using valid cross-family report envelopes: round 1 ends `OVERALL: approve`, round 2 ends `OVERALL: needs-attention`; the receipt claims `1:clean`, `2:fixed`. `receipt_data_ok()` accepts it without a subsequent review of the fixes. Omitting round 2 from the receipt also passes, even though `rounds_recorded()` returns 2. The stamp path invokes this gate at line 752.
+
+## consistency: needs-attention
+
+2. **P1: A severity stop accepts unresolved P1 findings.** `scripts/lib/todo_graph.py:212` enforces the round-number threshold but never checks finding severity. Reproduced with nine valid cross-family review envelopes containing `1. P1: unresolved unsafe stamp.` and ending `OVERALL: needs-attention`. Claiming round 9 as `stopped-low-severity`, with `rounds_spent=9`, `round_cap=22`, and `cap_outcome="filed"`, passes `receipt_data_ok()`. This contradicts `todo/README.md:92`, which permits that stop only for P3 or advisory findings.
+
+## integration: needs-attention
+
+Finding 1 affects both stamp creation and subsequent graph validation. A receipt retaining an earlier approval can satisfy the gate despite a later rejecting review, allowing downstream sections to rely on that stamp. No separate finding.
+
+## source-defect: approve
+
+No additional finding.
+
+## design: advisory
+
+Not applicable to this section’s declared surface.
+
+## record: advisory
+
+The full-suite claim at `docs/reviews/06-quality/audit-d00-t02-s1.md:9` remains independently unconfirmed. At `68cb8f2`, the checkpoint suite ran 74 tests with 73 temporary-fixture setup errors under the read-only sandbox; the Repository test passed. This is an environment limitation, not a candidate defect.
+
+`plan --check` exited 0, `validate` reported 677 sections, and resolving `D00 T02 §1` exited 3. These results do not establish the recorded historical full-suite pass.
+
+All mutation probes used memory only. No files were modified; `main` remains clean.
+
+OVERALL: needs-attention
+
+## Fixes after round 8
+
+In `scripts/lib/todo_graph.py`, tested in `tests/scripts/test_todo_graph.py` (`Ran 76 tests`, `OK`; against `68cb8f2` the three new or changed tests report `FAILED (failures=3)`; the live tree validates, `valid: 677 sections`).
+
+- Finding 1 (P1): each findings file is one review loop, and the receipt must name that loop's last reviewed round, which must be clean or a stop; an earlier approval can no longer stand in for a later failing review, and a receipt cannot omit the last round (`test_a_loop_ends_at_its_last_reviewed_round`). This replaces the receipt-wide "any clean round" rule.
+- Finding 2 (P1): a `stopped-low-severity` round must carry no `P1` or `P2` tag in its review (`test_a_severity_stop_with_a_p1_or_p2_finding_refuses`). The check is deliberately strict: a review that mentions P1 or P2 at all cannot be a severity stop.

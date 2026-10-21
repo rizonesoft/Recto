@@ -468,7 +468,7 @@ class Stamp(Tree):
         fixed_only = [{"round": 1, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": "fixed"}]
         with self.assertRaises(tg.Refused) as ctx:  # fixed, but no later round saw the fixes
             tg.stamp(self.root, "D00 T01 §1", self.sha, fixed_only, ["true -> ok"], "2026-10-13")
-        self.assertIn("must end in a clean round", str(ctx.exception))
+        self.assertIn("must end at its last reviewed round", str(ctx.exception))
         report.write_text(envelope(1), encoding="utf-8")
         with self.assertRaises(tg.Refused):  # an approving review claimed as fixed
             tg.stamp(self.root, "D00 T01 §1", self.sha,
@@ -477,6 +477,33 @@ class Stamp(Tree):
         report.unlink()
         self.assertEqual({k: v for k, v in self.snapshot().items() if not k.endswith("D00-T01-s1.md")},
                          {k: v for k, v in before.items() if not k.endswith("D00-T01-s1.md")})
+
+    def test_a_loop_ends_at_its_last_reviewed_round(self):
+        self.tick_work()
+        report = "docs/reviews/00-workspace/D00-T01-s1.md"
+        (self.root / report).write_text(envelope(1) + envelope(2, overall="needs-attention"), encoding="utf-8")
+        before = self.snapshot()
+        for claimed in ([{"round": 1, "report": report, "verdict": "clean"}, {"round": 2, "report": report, "verdict": "fixed"}],
+                        [{"round": 1, "report": report, "verdict": "clean"}]):
+            with self.assertRaises(tg.Refused) as ctx:  # a later failing review cannot be left behind an approval
+                tg.stamp(self.root, "D00 T01 §1", self.sha, claimed, ["true -> ok"], "2026-10-13")
+            self.assertIn("must end at its last reviewed round (2)", str(ctx.exception))
+        self.assertEqual(self.snapshot(), before)
+
+    def test_a_severity_stop_with_a_p1_or_p2_finding_refuses(self):
+        self.tick_work()
+        report = "docs/reviews/00-workspace/D00-T01-s1.md"
+        last = tg.SEVERITY_CUTOFF_ROUND + 1
+        for tag in ("P1", "P2"):
+            (self.root / report).write_text(
+                "".join(envelope(n, overall="needs-attention") for n in range(1, last)) + envelope(last).replace(
+                    "Review text.\n\nOVERALL: approve", f"1. **{tag}: unresolved unsafe stamp.**\n\nOVERALL: needs-attention"),
+                encoding="utf-8")
+            with self.assertRaises(tg.Refused) as ctx:
+                tg.stamp(self.root, "D00 T01 §1", self.sha,
+                         [{"round": last, "report": report, "verdict": "stopped-low-severity"}], ["true -> ok"],
+                         "2026-10-13", cap_outcome="filed")
+            self.assertIn("cannot stop on severity", str(ctx.exception))
 
     def test_a_round_heading_quoted_inside_a_review_is_not_counted(self):
         self.tick_work()
@@ -551,7 +578,8 @@ class Stamp(Tree):
             report.write_text(text, encoding="utf-8")
             with self.assertRaises(tg.Refused) as ctx:
                 tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
-            self.assertIn("is not a review returned by another model family", str(ctx.exception))
+            self.assertRegex(str(ctx.exception), "is not a review returned by another model family|"
+                                                 "is not a findings file the dispatcher can read")
         for bad in (0, -1, True):
             with self.assertRaises(tg.Refused):
                 tg.stamp(self.root, "D00 T01 §1", self.sha,
