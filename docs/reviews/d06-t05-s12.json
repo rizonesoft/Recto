@@ -1,0 +1,126 @@
+{
+  "ref": "D06 T05 \u00a712",
+  "title": "Audit D00 T03 \u00a74: Encrypted (RC4/AES-128/AES-256), broken/ and seeds/ corpus fixtures",
+  "implementation_sha": "d4c2c4eb66919e6c322537c812ce412f38672aa2",
+  "date": "2026-10-22",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 6,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 7,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 8,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 9,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 10,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 11,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 12,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 13,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 14,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 15,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 16,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 17,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 18,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 19,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 20,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 21,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 22,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s4.md",
+      "verdict": "stopped-at-22"
+    }
+  ],
+  "checks": [
+    "python scripts/build-corpus.py --check -> verified: 39 corpus fixtures in R:\\GitHub\\Recto\\tests\\corpus are current",
+    "python -m unittest tests.scripts.test_build_corpus -> Ran 53 tests, OK",
+    "python scripts/todo-graph.py resolve \"D00 T03 \u00a74\" -> exit 3 (still verified)"
+  ],
+  "rounds_spent": 22,
+  "round_cap": 22,
+  "cap_outcome": "Cap reached at round 22 with every finding fixed and regression-tested; the remaining pattern (validator stream decoders laxer than ISO 32000-1 7.4, found one per round in rounds 19 to 22) is filed as D06 T05 \u00a726. No safety, data-integrity or stamp-invalidating leftover; the audit confirms the stamp on D00 T03 \u00a74."
+}
