@@ -1,0 +1,29 @@
+{
+  "ref": "D06 T05 \u00a78",
+  "title": "Audit D00 T02 \u00a73: Seeded graph and generated plan",
+  "implementation_sha": "5e4b26610421ec2ab6d0cccc324df87b981ae60b",
+  "date": "2026-10-21",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/audit-d00-t02-s3.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "python -m unittest discover -s tests/scripts -> Ran 238 tests, OK; discover -s scripts/tests -> Ran 73 tests, OK (skipped=5)",
+    "validate -> valid: 678 sections; plan --check -> plan current; resolve 'D00 T01 \u00a71' -> exit 3"
+  ],
+  "rounds_spent": 3,
+  "round_cap": 22
+}
