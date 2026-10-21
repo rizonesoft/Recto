@@ -18,7 +18,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[2]
 PLAN = "todo/implementation-plan.md"
 # What follows each "-> XREF:": one space and exactly one well-formed reference, nothing run into it.
-XREF_TARGET = re.compile(r" (?:D(?P<d>\d{2}) )?(?:T(?P<t>\d{2}) )?§(?P<s>[1-9]\d*)(?![\w§])")
+XREF_TARGET = re.compile(r" (?:D(?P<d>\d{2}) )?(?:T(?P<t>\d{2}) )?§(?P<s>[1-9]\d*)(?![\w§]|\.\d)")
 REF = re.compile(r"(?:D(?P<d>\d{2})\s+)?(?:T(?P<t>\d{2})\s+)?§(?P<s>[1-9]\d*)")
 ROW = re.compile(r"^\|\s*([1-9]\d*)\s*\|\s*§([1-9]\d*)\s*\|\s*([^|]+)\|\s*([^|]*)\|\s*\[([ x])\]\s*\|$")
 # What a section needs from outside the repository. The WAITING values are people, companies, or the
@@ -243,15 +243,20 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
         if root is not None:
             # A claimed round is one scripts/review-dispatch.py recorded with a reviewer, read by the dispatcher's own
             # reader, so a report it would refuse is no evidence here either.
-            # The reviewer must also be of another model family than the writer: a self-review is not a round.
+            # The reviewer must also be of another model family than the writer (a self-review is not a round), and
+            # must have returned a review: one ending in the prompt's OVERALL approve or needs-attention line, not an
+            # empty or blocked reply. Reports are read as the dispatcher wrote them, "\r" bytes and all.
             dispatch = review_dispatch()
             for r in rounds:
-                recorded = dispatch.read_rounds(read_text(Path(root) / r["report"]))
+                recorded = dispatch.read_rounds((Path(root) / r["report"]).read_bytes().decode("utf-8"))
                 require(recorded is not None and any(
                     e["number"] == r["round"] and e["reviewer"]
                     and dispatch.FAMILY.get(e["cli"]) not in (None, dispatch.WRITER_FAMILY.get(e["writer"]))
-                    and e["writer"] in dispatch.WRITER_FAMILY for e in recorded),
-                    f"round {r['round']} is not a round reviewed by another model family in {r['report']}: {ref}")
+                    and e["writer"] in dispatch.WRITER_FAMILY
+                    and re.fullmatch(r"OVERALL: (?:approve|needs-attention)",
+                                     ([x.strip() for x in e["review"].splitlines() if x.strip()] or [""])[-1])
+                    for e in recorded),
+                    f"round {r['round']} is not a review returned by another model family in {r['report']}: {ref}")
         stopped = any(r["verdict"].startswith("stopped-") for r in rounds)
         outcome = data.get("cap_outcome")
         require((isinstance(outcome, str) and bool(outcome.strip())) == stopped,

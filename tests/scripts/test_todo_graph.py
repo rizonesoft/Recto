@@ -25,7 +25,7 @@ def section(n, title, phase, needs, extra=""):
 
 def envelope(n, reviewer="astra (`m` via `codex`)"):
     """One round as scripts/review-dispatch.py records it (without the optional Lines and Digest fields)."""
-    return f"## Round {n}: {reviewer}\n\n- Writer: claude\n- Run: 2026-10-21T00:00:00Z\n\nReview text.\n\n"
+    return f"## Round {n}: {reviewer}\n\n- Writer: claude\n- Run: 2026-10-21T00:00:00Z\n\nReview text.\n\nOVERALL: approve\n\n"
 
 
 def todo_file(rows, *, ident="alpha", domain="00-workspace", status="active", depends_on=None,
@@ -173,7 +173,7 @@ class Graph(Tree):
             self.refuses("must open a blockquote line and say something")
 
     def test_malformed_xref_does_not_resolve_to_another_section(self):
-        for bad in ("-> XREF: D00 T999 §1", "-> XREF: §1x", "-> XREF:§1", "-> XREF: D00 T01 §1 -> XREF: D00 T99 §999",
+        for bad in ("-> XREF: D00 T999 §1", "-> XREF: §1x", "-> XREF: D00 T01 §1.5", "-> XREF:§1", "-> XREF: D00 T01 §1 -> XREF: D00 T99 §999",
                     "-> XREF: none yet"):
             self.write(todo_file([(1, "A", 0, "none", "--"), (2, "B", 0, "none", "--")], inputs="- i " + bad))
             with self.assertRaises(tg.Refused):
@@ -442,11 +442,22 @@ class Stamp(Tree):
         with self.assertRaises(tg.Refused):
             tg.graph(self.root)
 
+    def test_a_review_with_carriage_returns_is_read_as_the_dispatcher_wrote_it(self):
+        self.tick_work()
+        dispatch = tg.review_dispatch()
+        review = ["Captured progress: 10%\rCaptured progress: 100%", "OVERALL: approve"]
+        text = ("## Round 1: astra (`m` via `codex`)\n\n- Writer: claude\n- Run: 2026-10-21T00:00:00Z\n"
+                f"- Lines: 2\n- Digest: {dispatch.digest(review)}\n\n" + "\n".join(review) + "\n")
+        (self.root / "docs/reviews/00-workspace/D00-T01-s1.md").write_bytes(text.encode("utf-8"))
+        self.assertIsNotNone(dispatch.read_rounds(text))
+        tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
+        tg.graph(self.root)
+
     def test_a_round_heading_quoted_inside_a_review_is_not_counted(self):
         self.tick_work()
         (self.root / "docs/reviews/00-workspace/D00-T01-s1.md").write_text(
-            "## Round 1: astra (`m` via `codex`)\n\n- Writer: claude\n- Run: 2026-10-21T00:00:00Z\n- Lines: 1\n\n"
-            "## Round 999: none\n", encoding="utf-8")
+            "## Round 1: astra (`m` via `codex`)\n\n- Writer: claude\n- Run: 2026-10-21T00:00:00Z\n- Lines: 2\n\n"
+            "## Round 999: none\nOVERALL: approve\n", encoding="utf-8")
         receipt = tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
         self.assertEqual(json.loads((self.root / receipt).read_text(encoding="utf-8"))["rounds_spent"], 1)
 
@@ -507,12 +518,15 @@ class Stamp(Tree):
                      envelope(1, "claude (`claude-opus-5` via `claude`)"),
                      envelope(1).replace("- Writer: claude", "- Writer: codex"),
                      envelope(1).replace("- Writer: claude", "- Writer: someone"),
+                     envelope(1).replace("OVERALL: approve", "OVERALL: blocked"),
+                     envelope(1).replace("OVERALL: approve", ""),
+                     "## Round 1: astra (`m` via `codex`)\n\n- Writer: claude\n- Run: 2026-10-21T00:00:00Z\n- Lines: 0\n",
                      "## Round 1: fake\n\nNo reviewer returned a review.\n",
                      "## Round 1: astra (`m` via `codex`)\n\nNo metadata block.\n"):
             report.write_text(text, encoding="utf-8")
             with self.assertRaises(tg.Refused) as ctx:
                 tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13")
-            self.assertIn("is not a round reviewed by another model family", str(ctx.exception))
+            self.assertIn("is not a review returned by another model family", str(ctx.exception))
         for bad in (0, -1, True):
             with self.assertRaises(tg.Refused):
                 tg.stamp(self.root, "D00 T01 §1", self.sha,
@@ -525,7 +539,7 @@ class Stamp(Tree):
         data["reviews"][0]["round"] = 999
         data["rounds_spent"] = 999
         (self.root / receipt).write_text(json.dumps(data), encoding="utf-8")
-        self.refuses("round 999 is not a round reviewed by another model family")
+        self.refuses("round 999 is not a review returned by another model family")
 
     def test_a_stamped_section_with_a_waiting_need_refuses(self):
         self.tick_work()

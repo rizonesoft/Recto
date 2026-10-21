@@ -258,3 +258,61 @@ In `scripts/lib/todo_graph.py`, tested in `tests/scripts/test_todo_graph.py` (`R
 - Finding 1 (P1): a line may carry at most one `Deferred` or `Resolved` marker (`test_two_deferral_markers_on_one_line_refuse`).
 - Finding 2 (P1): a claimed round must be reviewed by another model family than its writer, judged with the dispatcher's own `FAMILY` and `WRITER_FAMILY` maps; a self-review, or an unknown writer, refuses (`test_a_claimed_round_must_be_a_reviewed_round_in_its_report`).
 - Finding 3 (P2): `extract_ref` no longer reads a reference run into more text (`§1oops`, `§1.5`) as `§1`; such input exits 2, while a trailing full stop, bracket or table pipe still resolves (`test_reference_run_into_more_text_does_not_resolve`).
+
+## Round 6: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T15:39:05Z
+- Effort: medium
+- Lines: 41
+- Digest: c34e55248a323981
+
+## adversarial: needs-attention
+
+1. **P1: Malformed XREFs still resolve to another section.** `scripts/lib/todo_graph.py:21` accepts `§1.5` as `§1`. Reproduce by inserting `-> XREF: D00 T02 §1.5` before section 2 in `todo/00-workspace/TODO-02-todo-system.md`. An in-memory overlay passed validation with 677 sections and retained disposition `3` for section 1. The unresolved reference escapes validation. Round 5 hardened `extract_ref`, but the XREF parser retains this defect.
+
+## consistency: approve
+
+No additional finding.
+
+## integration: needs-attention
+
+2. **P1: Empty or blocked reviewer output qualifies as independent review.** `scripts/lib/todo_graph.py:250` checks the round envelope and model families without checking whether a review was returned. Reproduce with an otherwise valid current-format receipt claiming round 1 as `clean`, pointing to:
+
+   ```markdown
+   ## Round 1: astra (`gpt-6-astra` via `codex`)
+
+   - Writer: claude
+   - Run: 2026-10-21T00:00:00Z
+   - Lines: 1
+
+   OVERALL: blocked
+   ```
+
+   `receipt_data_ok()` accepts it. Changing `Lines` to `0` and removing the body also passes. Both reproductions ran in memory. The dispatcher explicitly defines `blocked` as a reviewer that never saw the work (`scripts/review-dispatch.py:55`), so envelope validity does not establish review evidence.
+
+## source-defect: needs-attention
+
+3. **P2: Report normalization rejects valid dispatcher records.** `scripts/lib/todo_graph.py:249` reads reports through `read_text()`, which converts lone carriage returns into newlines. The dispatcher deliberately preserves these characters when counting and hashing review lines (`scripts/review-dispatch.py:332`).
+
+   Reproduce with a correctly counted and digested two-line review whose first line contains `Captured progress: 10%\rCaptured progress: 100%` and whose second line is `OVERALL: approve`. The dispatcher’s `read_rounds(raw)` accepts it; receipt validation rejects it after normalization. Legitimate captured output can therefore prevent stamping or invalidate subsequent graph validation.
+
+## design: advisory
+
+Not applicable to the section’s declared surface.
+
+## record: advisory
+
+The full-suite checkpoint remains independently unconfirmed. At `6b0704b`, the suite reported 72 tests with 71 fixture-setup errors because the read-only environment cannot create temporary directories. The Repository test separately passed. `validate` reported `valid: 677 sections`; `plan --check` reported `plan current`. These results do not establish the historical full-suite pass recorded at `docs/reviews/06-quality/audit-d00-t02-s1.md:9`.
+
+All mutation probes used memory only. No files were modified; the working tree remains clean.
+
+OVERALL: needs-attention
+
+## Fixes after round 6
+
+Tested in `tests/scripts/test_todo_graph.py` (`Ran 73 tests`, `OK`; against `6b0704b` the three new or changed tests report `FAILED (failures=2, errors=1)`); `python -m unittest discover -s scripts/tests` -> `OK (skipped=5)`; the live tree validates (`valid: 677 sections`), so every current receipt round ends in a real `OVERALL` verdict.
+
+- Finding 1 (P1): `XREF_TARGET` gets the same boundary as `extract_ref`, so `-> XREF: D00 T02 §1.5` refuses (`test_malformed_xref_does_not_resolve_to_another_section`).
+- Finding 2 (P1): `read_rounds` in `scripts/review-dispatch.py` now returns each round's review text, and a claimed round must hold a review whose last line is `OVERALL: approve` or `OVERALL: needs-attention`; an empty, missing or `blocked` reply refuses (`test_a_claimed_round_must_be_a_reviewed_round_in_its_report`).
+- Finding 3 (P2): receipt validation reads reports as raw UTF-8, as the dispatcher writes them, so a review holding a lone carriage return keeps its count and digest (`test_a_review_with_carriage_returns_is_read_as_the_dispatcher_wrote_it`).
