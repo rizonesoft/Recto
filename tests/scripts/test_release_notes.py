@@ -263,6 +263,9 @@ class HostileFixtureTest(unittest.TestCase):
         py += ("\n\nimport types\n\n\nclass FakeNew(unittest.TestCase):\n"
                "    def __new__(cls, method):\n        return types.SimpleNamespace(_testMethodName=method)\n\n"
                "    def test_case(self):\n        pass\n")
+        py += ("\n\nclass ShadowedByInstance(unittest.TestCase):\n    def __init__(self, methodName='runTest'):\n"
+               "        super().__init__(methodName)\n        self.test_case = lambda: None\n\n"
+               "    def test_case(self):\n        pass\n")
         py += ("\n\nclass WithClassmethod(unittest.TestCase):\n    @classmethod\n    def test_case(cls):\n"
                f"        open({str(cls.marker)!r}, 'w').close()\n")
         # A TestCase that lives outside the repository, which a repository module re-exports or inherits from.
@@ -297,6 +300,8 @@ class HostileFixtureTest(unittest.TestCase):
             "FakeNew": "tests.scripts.test_sample.FakeNew.test_case",
             # A classmethod takes unittest's callable path, so it is refused (and never run).
             "Classmethod": "tests.scripts.test_sample.WithClassmethod.test_case",
+            # An instance attribute that shadows the method sends unittest down its callable path too.
+            "ShadowedByInstance": "tests.scripts.test_sample.ShadowedByInstance.test_case",
             "Stdlib": "unittest.case.TestCase.test_missing",
         }
         cls.real = {

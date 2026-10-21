@@ -96,6 +96,10 @@ except Exception:
 if not (isinstance(case, cls) and isinstance(case, unittest.TestCase) and callable(case)
         and case._testMethodName == method):
     sys.exit(3)
+# unittest's loadTestsFromName then looks the name up on the instance: if that is a plain function (an attribute set
+# in __init__, a staticmethod), it takes its callable path instead of returning the case, so the id would not load.
+if isinstance(getattr(case, method), types.FunctionType):
+    sys.exit(3)
 print(nonce)
 """
 

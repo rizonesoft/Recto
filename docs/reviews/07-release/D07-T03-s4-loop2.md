@@ -46,3 +46,53 @@ OVERALL: needs-attention
 
 - Finding 1 (P1): a Python regression test must be a plain instance method (`types.FunctionType` in its owner class). For that shape unittest's loader builds `cls(method)`, which is exactly what the probe does; a classmethod, staticmethod or other descriptor takes the loader's callable path and is refused without being run (`Classmethod` fixture moved to refused; its marker still never appears).
 - Finding 2 (P2): the §4 correction now says a Python id must be a plain test method built the way unittest's loader builds it. Tests: `Ran 24 tests ... OK`.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T13:13:09Z
+- Effort: medium
+- Lines: 37
+- Digest: be7bcd4a64a72bea
+
+## adversarial: needs-attention
+
+1. **P1: The Python probe still accepts an ID that unittest cannot load.** `scripts/release-notes.py:96` validates the constructed case but omits the loader’s check of the instance’s resolved method. Reproduce with this module at the fix commit:
+
+   ```python
+   import unittest
+
+   class Case(unittest.TestCase):
+       def __init__(self, methodName="runTest"):
+           super().__init__(methodName)
+           self.test_case = lambda: None
+
+       def test_case(self):
+           pass
+   ```
+
+   Name `module.Case.test_case` in `Regression-Test:`. The candidate probe accepts it. However, `unittest.defaultTestLoader.loadTestsFromName("module.Case.test_case")` takes its callable branch and raises `TypeError: Case.test_case() missing 1 required positional argument: 'self'`. Thus an unusable regression ID passes verification. Reproduced using the actual probe and an in-memory module, without writing files.
+
+## consistency: approve
+
+## integration: approve
+
+## source-defect: needs-attention
+
+Finding 1: a plain function in the class dictionary does not guarantee unittest constructs a suite containing `cls(method)`. Its loader additionally checks `getattr(instance, method)` before choosing that branch. The probe must account for this without executing the test body.
+
+## design: advisory
+
+Not applicable.
+
+## record: needs-attention
+
+Finding 1 contradicts the checked existence-verification requirement at `todo/07-release/TODO-03-listening-to-users.md:153`. The round-1 correction does not fully establish equivalent loader behavior.
+
+Four read-only parser/documentation tests passed. The full 24-test claim was not independently verified because that suite writes fixture repositories and worktrees. No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+- Finding 1 (P1): after building the case, the probe looks the method up on the instance as unittest's `loadTestsFromName` does; a plain function there (an attribute set in `__init__`, a staticmethod) means the loader would take its callable path, so the id is refused (`ShadowedByInstance` fixture). Mutation: the instance check removed -> `HostileFixtureTest` fails. Tests: `Ran 24 tests ... OK`.
