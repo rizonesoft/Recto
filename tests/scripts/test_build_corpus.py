@@ -464,6 +464,28 @@ class BuildCorpusTests(unittest.TestCase):
             with self.subTest(old=old), self.assertRaisesRegex(ValueError, re.escape(says)):
                 self.mod.validate_encrypted_pdf_structure(name, data.replace(old, new, 1))
 
+    def test_encrypted_strings_and_the_promised_revision_are_proved(self) -> None:
+        files = self.mod.expected_corpus_files()
+        aes256 = files["render/encrypted-aes-256.pdf"]
+        start = aes256.index(b"/Title <") + 8
+        end = aes256.index(b">", start)
+        zeroed = aes256[:start] + b"0" * (end - start) + aes256[end:]
+        with self.assertRaisesRegex(ValueError, "object 6 does not decrypt"):
+            self.mod.validate_encrypted_pdf_structure("render/encrypted-aes-256.pdf", zeroed)
+        with self.assertRaisesRegex(ValueError, "not the revision this fixture's path promises"):
+            self.mod.validate_encrypted_pdf_structure("render/encrypted-aes-256.pdf",
+                                                      files["render/encrypted-rc4-128.pdf"])
+
+    def test_the_recoverable_fixture_is_the_one_page_document_exactly(self) -> None:
+        name = "broken/corrupt-xref-recoverable.pdf"
+        data = self.mod.expected_corpus_files()[name]
+        self.mod.validate_broken_pdf_structure(name, data)
+        for old, new, says in ((b"<< /Type /Catalog /Pages 2 0 R >>", b"null", "object 1"),
+                               (b"/Info 6 0 R", b"/Info 5 0 R", "the tail")):
+            self.assertIn(old, data)
+            with self.subTest(old=old), self.assertRaisesRegex(ValueError, re.escape(says)):
+                self.mod.validate_broken_pdf_structure(name, data.replace(old, new, 1))
+
     def test_inflation_stops_just_past_its_limit(self) -> None:
         bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))
         total, kept = self.mod.inflate_bounded(bomb, 1024, keep=False)

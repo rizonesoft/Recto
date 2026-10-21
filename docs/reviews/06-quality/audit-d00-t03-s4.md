@@ -148,3 +148,52 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `Ran 35 tests`, `OK` (`test_the_objects_around_the_encryption_have_one_form` fails against `4a8ce84` for each length-preserving mutation); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Findings 1 and 2 (P1): instead of checking one more entry, the objects around the encryption now have one exact form each, as the generator writes them: the trailer's key set with `/Root 1 0 R` and `/Info 6 0 R`, the catalog, page tree, page and font dictionaries compared whole, objects 1 to 7 with object 4 the only stream, its dictionary exactly `/Filter /FlateDecode` with its own `/Length`, and `/Info` exactly `/Title`, `/Author`, `/CreationDate` as hex strings. `/DCTDecode` in place of `/FlateDecode`, `/Type /INVALID` in the catalog and a changed font each refuse.
+
+## Round 4: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T21:38:22Z
+- Effort: medium
+- Lines: 32
+- Digest: 5871e6f50ca75f38
+
+### adversarial: needs-attention
+
+1. **P1: Invalid encrypted metadata passes validation.** `scripts/build-corpus.py:2823` checks `/Info` values only for hexadecimal syntax, without decrypting them. Reproduced by replacing every hex digit of `/Title` in `render/encrypted-aes-256.pdf` with `0`, preserving its length. `validate_encrypted_pdf_structure()` accepts it, while decrypting that title with the fixture’s file key raises `invalid PKCS#7 padding in AES-CBC payload`.
+
+2. **P1: The validator does not enforce the encryption revision promised by each filename.** `scripts/build-corpus.py:2728` accepts any supported `(V, R)` pair regardless of `rel_path`. Reproduce by passing the committed RC4 fixture bytes as `render/encrypted-aes-256.pdf`. Validation succeeds despite the section explicitly requiring `V=5, R=6` at that path. A generator regression can therefore remove AES-256 coverage while the checkpoint remains green.
+
+3. **P1: The recoverable fixture check accepts a document without a catalog.** `scripts/build-corpus.py:2881` checks object numbers and the content stream, but does not establish that the surviving objects form a recoverable document. Reproduce in `broken/corrupt-xref-recoverable.pdf` by replacing `b"<< /Type /Catalog /Pages 2 0 R >>"` with `b"null"`. Validation succeeds even though `/Root 1 0 R` now resolves to `null` and no catalog survives recovery.
+
+For each reproduction, I also mocked `expected_corpus_files()` and `Path.read_bytes()` with the mutated fixture and matching regenerated provenance. The complete `check_corpus()` returned **`(True, [])`**. These demonstrate generator-regression gaps; ordinary file corruption still fails the byte comparison.
+
+### consistency: approve
+
+No separate finding.
+
+### integration: advisory
+
+Findings 1 and 2 undermine the fixture checkpoint used by downstream crypto tests. `tests/recto-tests/pdf_crypto_tests.cpp:165` independently specifies the expected revisions and metadata, so the downstream suite has stronger expectations than this checkpoint. Finding 3 undermines the recoverability prerequisite of `D01 T01 §6`. No C++ engine defect is established by these reproductions.
+
+### source-defect: needs-attention
+
+Finding 1 applies encryption validation incompletely: encrypted PDF strings require decryption as well as hexadecimal decoding. AES strings require CBC padding validation, just like streams. See [PDF 1.7 specification, section 3.5.1](https://zxyle.github.io/PDF-Explained/resources/pdf_reference_1.7.pdf). The current validator proves only the content stream decrypts successfully.
+
+### design: advisory
+
+Not applicable; this section owns no user surface.
+
+### record: approve
+
+At `e347776`, the checkpoint independently exited **0**, reporting **39 fixtures verified**. Four focused tests covering the section fixtures, encryption declarations, surrounding objects and bounded inflation passed. These results do not detect findings 1 to 3. No files were modified by this audit.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 4
+
+`python -m unittest discover -s tests/scripts` -> `Ran 322 tests`, `OK` (the two new tests fail against `e347776`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): every `/Info` string is decrypted with the same per-object rule as the stream (AES padding checked, an AES payload must be an IV and whole blocks) and must equal what the generator wrote: `Recto Encrypted <mode>`, `Recto Corpus Generator` and the fixed creation date.
+- Finding 2 (P1): `ENCRYPTED_REVISIONS` binds each encrypted fixture's path to the `(/V, /R)` it promises (and the mode its title names); the RC4 file passed as `encrypted-aes-256.pdf` refuses.
+- Finding 3 (P1): the recoverable fixture is checked as the one-page document it is: objects 1 to 6 back to back from the header, the shared exact forms (`one_page_objects`, also used by the encrypted fixtures), the exact `/Info`, and a tail that is exactly the deliberately broken xref and a trailer naming `/Root 1 0 R` and `/Info 6 0 R`. A `null` catalog refuses (`test_the_recoverable_fixture_is_the_one_page_document_exactly`).

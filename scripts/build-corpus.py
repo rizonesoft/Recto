@@ -2663,6 +2663,36 @@ def build_seed_filter_0a_chain_a85_flate() -> bytes:
     return b"\x0A" + ascii85_encode_pdf(flate_compress(KNOWN_FILTER_PLAINTEXT))
 
 
+ONE_PAGE_FORMS = {
+    1: {b"/Type": b"/Catalog", b"/Pages": b"2 0 R"},
+    2: {b"/Type": b"/Pages", b"/Kids": b"[3 0 R]", b"/Count": b"1"},
+    3: {b"/Type": b"/Page", b"/Parent": b"2 0 R", b"/MediaBox": b"[0 0 595 842]",
+        b"/Resources": b"<< /Font << /F1 5 0 R >> >>", b"/Contents": b"4 0 R"},
+    5: {b"/Type": b"/Font", b"/Subtype": b"/Type1", b"/BaseFont": b"/Helvetica", b"/Encoding": b"/WinAnsiEncoding"},
+}
+# The encryption each encrypted fixture's path promises: (/V, /R), and the mode its /Info title names.
+ENCRYPTED_REVISIONS = {
+    "render/encrypted-rc4-128.pdf": ((2, 3), "RC4-128"),
+    "render/encrypted-aes-128.pdf": ((4, 4), "AES-128"),
+    "render/encrypted-aes-256.pdf": ((5, 6), "AES-256"),
+}
+
+
+def one_page_objects(rel_path: str, data: bytes, objects: dict) -> None:
+    """Objects 1, 2, 3 and 5 are the generator's exact one-page catalog, page tree, page and font dictionaries, and
+    object 4 its only stream, exactly /Filter /FlateDecode with its own /Length."""
+    for num, form in ONE_PAGE_FORMS.items():
+        start, end, s0 = objects[num][:3] if num in objects else (0, 0, 0)
+        if s0 is not None or not data.startswith(b"<<", start) or dict_entries(data[start + 2 : end - 2]) != form:
+            raise ValueError(f"{rel_path}: object {num} is not the generator's exact dictionary")
+    if 4 not in objects or objects[4][2] is None:
+        raise ValueError(f"{rel_path}: object 4 must be the page's content stream")
+    start = objects[4][0]
+    stream_dict = dict_entries(data[start + 2 : data.index(b">>\nstream\n", start)])
+    if stream_dict != {b"/Filter": b"/FlateDecode", b"/Length": str(objects[4][3] - objects[4][2]).encode()}:
+        raise ValueError(f"{rel_path}: the content stream must be exactly /Filter /FlateDecode with its /Length")
+
+
 def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
     """Validate encrypted PDF structure and verify user/owner password decryption."""
     if not (data.startswith(b"%PDF-1.7\n") or data.startswith(b"%PDF-2.0\n")):
@@ -2727,6 +2757,9 @@ def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
     }
     if (v_val, r_val) not in forms:
         raise ValueError(f"{rel_path}: unsupported (/V {v_val}, /R {r_val})")
+    promised = ENCRYPTED_REVISIONS.get(rel_path)
+    if promised is None or promised[0] != (v_val, r_val):
+        raise ValueError(f"{rel_path}: (/V {v_val}, /R {r_val}) is not the revision this fixture's path promises")
     keys, key_bits, expected_cfm, cf_length = forms[(v_val, r_val)]
     if set(enc) != keys:
         raise ValueError(f"{rel_path}: the /V {v_val} /Encrypt dictionary must hold exactly {sorted(k.decode() for k in keys)}")
@@ -2800,36 +2833,31 @@ def validate_encrypted_pdf_structure(rel_path: str, data: bytes) -> None:
     trailer_keys = {b"/Size", b"/Root", b"/Info", b"/Encrypt", b"/ID"}
     if set(trailer) != trailer_keys or (trailer[b"/Root"], trailer[b"/Info"]) != (b"1 0 R", b"6 0 R"):
         raise ValueError(f"{rel_path}: the trailer must hold exactly /Size, /Root 1 0 R, /Info 6 0 R, /Encrypt, /ID")
-    forms = {
-        1: {b"/Type": b"/Catalog", b"/Pages": b"2 0 R"},
-        2: {b"/Type": b"/Pages", b"/Kids": b"[3 0 R]", b"/Count": b"1"},
-        3: {b"/Type": b"/Page", b"/Parent": b"2 0 R", b"/MediaBox": b"[0 0 595 842]",
-            b"/Resources": b"<< /Font << /F1 5 0 R >> >>", b"/Contents": b"4 0 R"},
-        5: {b"/Type": b"/Font", b"/Subtype": b"/Type1", b"/BaseFont": b"/Helvetica", b"/Encoding": b"/WinAnsiEncoding"},
-    }
-    for num, form in forms.items():
-        if objects.get(num, (0, 0, None))[2] is not None or entries(num) != form:
-            raise ValueError(f"{rel_path}: object {num} is not the generator's exact dictionary")
-    if sorted(objects) != [1, 2, 3, 4, 5, 6, 7] or objects[4][2] is None or objects[7][2] is not None:
+    if sorted(objects) != [1, 2, 3, 4, 5, 6, 7] or objects[7][2] is not None:
         raise ValueError(f"{rel_path}: expected objects 1 to 7 with object 4 the only stream")
-    stream_start = objects[4][0]
-    stream_dict = dict_entries(data[stream_start + 2 : data.index(b">>\nstream\n", stream_start)])
-    if stream_dict != {b"/Filter": b"/FlateDecode", b"/Length": str(objects[4][3] - objects[4][2]).encode()}:
-        raise ValueError(f"{rel_path}: the content stream must be exactly /Filter /FlateDecode with its /Length")
+    one_page_objects(rel_path, data, objects)
     info = entries(6)
     if set(info) != {b"/Title", b"/Author", b"/CreationDate"}:
         raise ValueError(f"{rel_path}: /Info must hold exactly /Title, /Author and /CreationDate")
-    for key in info:
-        hex_string(info[key], f"/Info {key.decode()}")
     enc_payload = data[objects[4][2] : objects[4][3]]
-    if r_val == 3:
-        okey = pdf_r34_object_key(file_key, 4, 0, is_aes=False)
-        comp_payload = rc4_crypt(okey, enc_payload)
-    elif r_val == 4:
-        okey = pdf_r34_object_key(file_key, 4, 0, is_aes=True)
-        comp_payload = aes_cbc_decrypt(okey, enc_payload[:16], enc_payload[16:], unpad=True)
-    else:
-        comp_payload = aes_cbc_decrypt(file_key, enc_payload[:16], enc_payload[16:], unpad=True)
+    def decrypt(obj_num: int, payload: bytes) -> bytes:
+        if r_val == 3:
+            return rc4_crypt(pdf_r34_object_key(file_key, obj_num, 0, is_aes=False), payload)
+        key = pdf_r34_object_key(file_key, obj_num, 0, is_aes=True) if r_val == 4 else file_key
+        if len(payload) < 32 or len(payload) % 16:
+            raise ValueError(f"{rel_path}: object {obj_num}'s AES payload is not an IV and whole blocks")
+        try:
+            return aes_cbc_decrypt(key, payload[:16], payload[16:], unpad=True)
+        except ValueError as exc:
+            raise ValueError(f"{rel_path}: object {obj_num} does not decrypt: {exc}") from exc
+
+    # Every encrypted string decrypts (AES padding included) to exactly what the generator wrote.
+    expected_info = {b"/Title": f"Recto Encrypted {promised[1]}".encode("ascii"),
+                     b"/Author": b"Recto Corpus Generator", b"/CreationDate": FIXED_PDF_DATE.encode("ascii")}
+    for key, plain in expected_info.items():
+        if decrypt(6, hex_string(info[key], f"/Info {key.decode()}")) != plain:
+            raise ValueError(f"{rel_path}: /Info {key.decode()} does not decrypt to the generator's value")
+    comp_payload = decrypt(4, enc_payload)
 
     raw_content = zlib.decompress(comp_payload)
     validate_content_stream_syntax(rel_path, raw_content)
@@ -2878,17 +2906,23 @@ def validate_broken_pdf_structure(rel_path: str, data: bytes) -> None:
         eof_m = re.search(rb"startxref\n(\d+)\n%%EOF\n\Z", data)
         if eof_m is None or int(eof_m.group(1)) < len(data):
             raise ValueError(f"{rel_path}: startxref must be deliberately out-of-bounds")
-        found_objs = {
-            int(m.group(1))
-            for m in re.finditer(rb"(\d+)\s+0\s+obj\n(.*?)\nendobj\n", data, re.DOTALL)
-        }
-        if found_objs != {1, 2, 3, 4, 5, 6}:
-            raise ValueError(f"{rel_path}: expected recoverable objects 1..6, got {found_objs}")
-        stm_m = re.search(rb"4 0 obj\n<<([^\n]*?)>>\nstream\n", data)
-        assert stm_m is not None
-        slen = int(re.search(rb"/Length\s+(\d+)", stm_m.group(1)).group(1))
-        s_start = stm_m.end()
-        dec = zlib.decompress(data[s_start : s_start + slen])
+        # What a recovering reader finds by scanning: the generator's one-page document, objects 1 to 6, back to back
+        # from the header, then the deliberately broken xref table and a trailer whose /Root and /Info name them.
+        walked = list(iter_objects(rel_path, data))
+        objects = {num: (start, end, s0, s1) for num, start, end, s0, s1, _ in walked}
+        if [w[0] for w in walked] != [1, 2, 3, 4, 5, 6]:
+            raise ValueError(f"{rel_path}: expected recoverable objects 1..6, got {[w[0] for w in walked]}")
+        one_page_objects(rel_path, data, objects)
+        info_start, info_end = objects[6][:2]
+        if dict_entries(data[info_start + 2 : info_end - 2]) != {b"/Title": b"(Recoverable Xref Fixture)",
+                                                                b"/CreationDate": f"({FIXED_PDF_DATE})".encode()}:
+            raise ValueError(f"{rel_path}: object 6 is not the generator's /Info dictionary")
+        tail = data[info_end + len(b"\nendobj\n") :]
+        if re.fullmatch(rb"xref\n0 7\n0000000000 65535 f \n9999999999 00000 n \nCORRUPT_XREF_TABLE_ROW\ntrailer\n"
+                        rb"<< /Size 7 /Root 1 0 R /Info 6 0 R /ID \[<([0-9A-F]{32})> <\1>\] >>\n"
+                        rb"startxref\n999999\n%%EOF\n", tail) is None:
+            raise ValueError(f"{rel_path}: the tail must be exactly the deliberately broken xref and its trailer")
+        dec = zlib.decompress(data[objects[4][2] : objects[4][3]])
         validate_content_stream_syntax(rel_path, dec)
         return
     if rel_path == "broken/cyclic-xref-prev.pdf":
