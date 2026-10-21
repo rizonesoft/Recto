@@ -49,3 +49,45 @@ OVERALL: needs-attention
 
 - Finding 1 (P1): the release gate `D07 T03 §5` now depends directly on the save-integrity suite `D06 T03 §5` and the raw-byte redaction suite `D06 T03 §6` (it already reached the release smoke `D06 T03 §12`), and gains a rule that fails the gate while any section in phases 0 to 6 other than itself is unstamped, so no v1 feature or quality suite can be left behind the tag; 27 quality sections and many feature sections were not upstream of the gate before, and the rule covers them all.
 - Finding 2 (P2): corpus assembly moves from `D04 T03 §6` (Phase 5, after the converter) to a new `D04 T03 §7` (Phase 4: 20 deterministic fixtures, an expected-structure oracle and provenance), which `D04 T03 §2` and `§6` now depend on; `§6` keeps the evaluation, tuning and report with a dated correction, its moved item is struck with a reason, and the foundation plan's section 11 item 3 names both.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T17:51:38Z
+- Effort: medium
+- Lines: 28
+- Digest: e8858f48d3fa9785
+
+### adversarial: approve
+
+No additional actionable finding established.
+
+### consistency: needs-attention
+
+1. **P3: Coverage ownership omits the relocated Word corpus.** `todo/TODO-00-INDEX.md:49` still lists only `D04 T03 §1-§6`. Corpus assembly now belongs to §7, explicitly named by foundation plan line 477. This leaves the stamped coverage sweep incomplete after the round 1 correction. Reproduce by comparing that index row with `python scripts/todo-graph.py resolve "D04 T03 §7"`. Include §7 in the recorded ownership.
+
+### integration: approve
+
+No additional actionable finding established.
+
+### source-defect: approve
+
+No additional actionable finding established.
+
+### design: advisory
+
+Not applicable: this section owns no user surface.
+
+### record: needs-attention
+
+Finding **1 (P3)** also affects the ticked promise that the coverage record names every resolving section.
+
+Checkpoint verification remains incomplete: `validate` reports 678 sections, `plan --check` passes, and resolving `D00 T01 §1` reports exit 3. Both unittest suites encountered temporary-directory errors under the read-only sandbox. These are verification limitations, not established repository defects. The historical passing results at `docs/reviews/06-quality/audit-d00-t02-s3.md:9` do not establish a passing full checkpoint at `c7c20d3`; two tooling files changed after the cited test commit.
+
+HIGHEST: P3
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+- Finding 1 (P3): the root index coverage row now names `D04 T03 §1-§7`.
+- Record: the full checkpoint re-run at `c7c20d3` (the tip after round 1; this round only edits the index): `python -m unittest discover -s tests/scripts` -> `Ran 238 tests`, `OK` (the three new pre-commit hook tests included); `python -m unittest discover -s scripts/tests` -> `Ran 73 tests`, `OK (skipped=5)`; `validate` -> `valid: 678 sections`; `plan --check` -> `plan current`; `resolve 'D00 T01 §1'` -> exit 3.

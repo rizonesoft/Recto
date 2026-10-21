@@ -46,7 +46,7 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 | 15 annotation/markup types, `/AP` synthesis, Markup Bar, Comments, AcroForms & Designer | D03 T03 §1-§10 |
 | Job runtime, Convert page, queue, completion notices (SPEC 9.5, 9.9) | D04 T01 §1-§7 |
 | `PdfWriter`, atomic saves, Images/TIFF/GIF/SVG/XPS, OCR PDF, Table/Image & Optimizer | D04 T02 §1-§13 |
-| 3-mode (`Flowing`, `Exact`, `Continuous`) native `DocxWriter`, `RtfWriter` & 20-file gate | D04 T03 §1-§6 |
+| 3-mode (`Flowing`, `Exact`, `Continuous`) native `DocxWriter`, `RtfWriter` & 20-file gate | D04 T03 §1-§7 |
 | 100% native C++20 OpenXML, legacy OLE2 (`.doc`/`.xls`/`.ppt`), RTF, HTML & MD to PDF (D7, D10) | D04 T04 §1-§7 |
 | Native `XlsxWriter`, `WebDocWriter` (`HTML5`/`MD`/`EPUB`/`LaTeX`) & `PDF/A`/`UA`/`ZUGFeRD` | D04 T05 §1-§9 |
 | `GraftMap` merge/split/edit, crop, watermarks, Bates, AES-256, PKCS#7/PAdES & redaction | D05 T01 §1-§10 |
