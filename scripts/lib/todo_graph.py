@@ -28,6 +28,9 @@ WAITING = {"owner-decision", "third-party", "operator"}
 STATUSES = {"draft", "active", "blocked", "done", "superseded"}
 # stopped-at-8 is the current review-round cap; stopped-at-3 stays valid on receipts written under the earlier cap.
 VERDICTS = {"clean", "fixed", "stopped-at-8", "stopped-at-3"}
+REVIEW_ROUND_CAP = 8
+# A round scripts/review-dispatch.py recorded in a findings file, reviewed or not ("## Round 2: none").
+ROUND_RECORD = re.compile(r"^## Round ([0-9]+): ", re.M)
 ADJACENCY_KEYS = ["list", "document", "settings", "reporting", "notifications", "permissions",
                   "audit", "exchange", "reverse"]
 # The closed phase list. A project names its phases (and the plan's title and acceptance bar) in
@@ -196,6 +199,16 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
                     and report_path.resolve().is_relative_to(root_resolved)
                     and bool(read_text(report_path).strip()),
                     f"missing or empty review report ({raw_report}): {ref}")
+    # Receipts written since 2026-10-21 record the rounds spent against the cap, and what was done when a review
+    # stopped at the cap; earlier receipts carry neither field.
+    if "rounds_spent" in data:
+        spent, cap = data.get("rounds_spent"), data.get("round_cap")
+        require(type(spent) is int and spent >= max(r["round"] for r in rounds) and type(cap) is int and cap >= 1,
+                f"receipt rounds_spent or round_cap is invalid: {ref}")
+        stopped = any(r["verdict"].startswith("stopped-at-") for r in rounds)
+        outcome = data.get("cap_outcome")
+        require((isinstance(outcome, str) and bool(outcome.strip())) == stopped,
+                f"receipt needs cap_outcome exactly when a review stopped at the cap: {ref}")
     checks = data.get("checks")
     require(isinstance(checks, list) and checks and all(isinstance(c, str) and c.strip() for c in checks),
             f"receipt has no checks: {ref}")
@@ -590,8 +603,42 @@ def adjacency_report(root=ROOT):
     return report
 
 
-def stamp(root, ref, sha, reviews, checks, date, sync_plan=False):
-    """Close a section: write its receipt, tick its row and checklist, add the Verified and Review lines."""
+def rounds_recorded(root, reviews):
+    """Review rounds spent on a section: the highest round the dispatcher recorded in its findings files (an outage
+    round that returned no review counts), or the highest round named on the command line if that is higher."""
+    spent = max((r["round"] for r in reviews), default=0)
+    for report in {r["report"] for r in reviews}:
+        path = Path(root) / report
+        if path.is_file():
+            spent = max([spent, *(int(n) for n in ROUND_RECORD.findall(read_text(path)))])
+    return spent
+
+
+def review_rounds(root=ROOT):
+    """Rounds spent per stamped section, from each receipt (or its findings files, for receipts older than the
+    rounds_spent field), and a summary for tuning the cap."""
+    root = Path(root)
+    sections = []
+    for row in ordered(graph(root)):
+        if not row.done or not row.receipt:
+            continue
+        data = json.loads(read_text(root / row.receipt))
+        spent = data.get("rounds_spent") or rounds_recorded(root, data["reviews"])
+        sections.append({"ref": row.ref, "rounds_spent": spent, "round_cap": data.get("round_cap"),
+                         "verdicts": [r["verdict"] for r in data["reviews"]],
+                         "cap_outcome": data.get("cap_outcome")})
+    spent = [s["rounds_spent"] for s in sections]
+    return {"cap": REVIEW_ROUND_CAP, "sections": sections,
+            "summary": {"stamped": len(sections), "rounds": sum(spent),
+                        "mean": round(sum(spent) / len(spent), 2) if spent else None,
+                        "max": max(spent, default=None),
+                        "stopped_at_cap": sum(any(v.startswith("stopped-at-") for v in s["verdicts"])
+                                              for s in sections)}}
+
+
+def stamp(root, ref, sha, reviews, checks, date, sync_plan=False, cap_outcome=None):
+    """Close a section: write its receipt, tick its row and checklist, add the Verified and Review lines. The receipt
+    records the review rounds spent against the cap and, when a review stopped at the cap, what was done about it."""
     root = Path(root)
     rows = graph(root)
     require(ref in rows, "unresolved section: " + ref)
@@ -608,9 +655,18 @@ def stamp(root, ref, sha, reviews, checks, date, sync_plan=False):
             f"unticked checklist items in {ref}: {open_items[0] if open_items else ''}")
     slug = re.sub(r"[^a-z0-9]+", "-", ref.lower().replace("§", "s")).strip("-")
     receipt = f"docs/reviews/{slug}.json"
+    stopped = any(isinstance(r, dict) and str(r.get("verdict", "")).startswith("stopped-at-") for r in reviews)
+    require(stopped == bool((cap_outcome or "").strip()),
+            "--cap-outcome is required with a stopped-at verdict (what was done when the review cap was reached), "
+            "and only then")
     data = {"ref": ref, "title": row.title, "implementation_sha": sha, "date": date,
             "reviews": reviews, "checks": checks}
-    receipt_data_ok(data, ref, sha, root=root)  # every argument is checked before anything is written
+    receipt_data_ok(data, ref, sha, root=root)  # every argument is checked before anything is read or written
+    data["rounds_spent"] = rounds_recorded(root, reviews)
+    data["round_cap"] = REVIEW_ROUND_CAP
+    if stopped:
+        data["cap_outcome"] = cap_outcome.strip()
+    receipt_data_ok(data, ref, sha, root=root)
     receipt_path = root / receipt
     require(not receipt_path.exists(), f"receipt already exists: {receipt}")
     path = root / row.path

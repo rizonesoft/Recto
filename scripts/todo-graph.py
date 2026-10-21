@@ -5,13 +5,14 @@
     python scripts/todo-graph.py build                       # todo/ -> build/todo-cache.json
     python scripts/todo-graph.py render                      # mermaid dependency graph
     python scripts/todo-graph.py plan --sync | --check
-    python scripts/todo-graph.py query ready | blocked | stats | deferred | adjacency | plan
+    python scripts/todo-graph.py query ready | blocked | stats | deferred | adjacency | plan | rounds
     python scripts/todo-graph.py resolve 'D02 T01 §1'        # exit 0 ready, 1 no such section,
                                                              # 2 no reference in input, 3 verified,
                                                              # 4 waiting; a pasted plan row works too
     python scripts/todo-graph.py classify 'D02 T01 §1' ...   # dispositions as JSON
     python scripts/todo-graph.py stamp 'D02 T01 §1' --sha <40-char commit> \
-        --review '<round>:<report path>:<clean|fixed|stopped-at-8>' --check '<command> -> <result>'
+        --review '<round>:<report path>:<clean|fixed|stopped-at-8>' --check '<command> -> <result>' \
+        [--cap-outcome '<what was done when the review cap was reached>']   # required with stopped-at-8
 
 Format and rules: todo/README.md. Stdlib only.
 """
@@ -24,7 +25,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
 from todo_graph import (ROOT, Refused, adjacency_report, atomic, deferrals, disposition,  # noqa: E402
-                        extract_ref, graph, ordered, plan_config, projections, require, stamp)
+                        extract_ref, graph, ordered, plan_config, projections, require, review_rounds, stamp)
 
 
 def review_round(value):
@@ -49,7 +50,7 @@ def main():
     for name in ("validate", "build", "render"):
         sub.add_parser(name)
     q = sub.add_parser("query")
-    q.add_argument("kind", choices=["ready", "blocked", "stats", "deferred", "adjacency", "plan"])
+    q.add_argument("kind", choices=["ready", "blocked", "stats", "deferred", "adjacency", "plan", "rounds"])
     r = sub.add_parser("resolve")
     r.add_argument("ref")
     c = sub.add_parser("classify")
@@ -64,9 +65,11 @@ def main():
     s.add_argument("--review", action="append", default=[], type=review_round)
     s.add_argument("--check", dest="checks", action="append", default=[])
     s.add_argument("--date", default=date.today().isoformat())
+    s.add_argument("--cap-outcome", help="with a stopped-at verdict: what was done when the review cap was reached")
     args = p.parse_args()
     if args.command == "stamp":
-        receipt = stamp(ROOT, args.ref, args.sha, args.review, args.checks, args.date, sync_plan=True)
+        receipt = stamp(ROOT, args.ref, args.sha, args.review, args.checks, args.date, sync_plan=True,
+                        cap_outcome=args.cap_outcome)
         print(f"stamped {args.ref}; receipt {receipt}; plan synchronized")
         return 0
     rows = graph()
@@ -102,6 +105,8 @@ def main():
             result = deferrals()
         elif args.kind == "adjacency":
             result = adjacency_report()
+        elif args.kind == "rounds":
+            result = review_rounds()
         elif args.kind == "plan":
             # The plan's names come from plan_config and every section from the graph, so a reader such as the
             # editor extension never parses todo/ itself (plan R34). graph() has already loaded todo/plan.json

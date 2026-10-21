@@ -343,6 +343,41 @@ class Stamp(Tree):
         self.assertEqual(json.loads((self.root / receipt).read_text(encoding="utf-8"))
                          ["implementation_sha"], self.sha)
 
+    def test_receipt_records_rounds_spent_against_the_cap(self):
+        self.tick_work()
+        report = self.root / "docs/reviews/00-workspace/D00-T01-s1.md"
+        report.write_text("# Review findings\n\n## Round 1: none\n\n## Round 2: astra (`m` via `codex`)\n\n"
+                          "## Round 3: astra (`m` via `codex`)\n", encoding="utf-8")
+        reviews = [{"round": 2, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": "fixed"},
+                   {"round": 3, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": "clean"}]
+        receipt = tg.stamp(self.root, "D00 T01 §1", self.sha, reviews, ["true -> ok"], "2026-10-13")
+        data = json.loads((self.root / receipt).read_text(encoding="utf-8"))
+        self.assertEqual((data["rounds_spent"], data["round_cap"]), (3, tg.REVIEW_ROUND_CAP))
+        self.assertNotIn("cap_outcome", data)
+        summary = tg.review_rounds(self.root)
+        self.assertEqual(summary["sections"][0]["rounds_spent"], 3)
+        self.assertEqual(summary["summary"]["stopped_at_cap"], 0)
+
+    def test_a_stopped_review_must_say_what_was_done(self):
+        self.tick_work()
+        stopped = [{"round": 8, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": "stopped-at-8"}]
+        with self.assertRaises(tg.Refused) as ctx:
+            tg.stamp(self.root, "D00 T01 §1", self.sha, stopped, ["true -> ok"], "2026-10-13")
+        self.assertIn("--cap-outcome", str(ctx.exception))
+        with self.assertRaises(tg.Refused):
+            tg.stamp(self.root, "D00 T01 §1", self.sha, self.reviews, ["true -> ok"], "2026-10-13",
+                     cap_outcome="nothing stopped")
+        receipt = tg.stamp(self.root, "D00 T01 §1", self.sha, stopped, ["true -> ok"], "2026-10-13",
+                           cap_outcome="filed two leftovers as D00 T01 §2")
+        data = json.loads((self.root / receipt).read_text(encoding="utf-8"))
+        self.assertEqual((data["rounds_spent"], data["cap_outcome"]), (8, "filed two leftovers as D00 T01 §2"))
+        self.assertEqual(tg.review_rounds(self.root)["summary"]["stopped_at_cap"], 1)
+        # A receipt that drops the outcome no longer validates.
+        del data["cap_outcome"]
+        (self.root / receipt).write_text(json.dumps(data), encoding="utf-8")
+        with self.assertRaises(tg.Refused):
+            tg.graph(self.root)
+
     def test_stale_deferral_refuses_when_owner_stamps(self):
         self.tick_work()
         path = self.root / "todo/00-workspace/TODO-01-a.md"
