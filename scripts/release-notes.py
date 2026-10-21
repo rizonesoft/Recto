@@ -99,6 +99,11 @@ while layer is not None and id(layer) not in seen:
                and pathlib.Path(code.co_filename).resolve() in TRUSTED_WRAPPER_FILES)
     if not (from_tree or trusted):
         sys.exit(3)
+    # A body that unittest would not run: a generator (never iterated), or a coroutine on a plain TestCase (never
+    # awaited; IsolatedAsyncioTestCase awaits it).
+    if inspect.isgeneratorfunction(layer) or inspect.isasyncgenfunction(layer) or (
+            inspect.iscoroutinefunction(layer) and not issubclass(cls, unittest.IsolatedAsyncioTestCase)):
+        sys.exit(3)
     layer = inner
 # Build the case the way unittest's loader does for a plain TestCase method, without calling anything: cls(method)
 # checks the method exists and refuses, for example, an abstract class.

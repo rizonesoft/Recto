@@ -246,3 +246,53 @@ OVERALL: needs-attention
 ## Fixes after round 5
 
 - Finding 1 (P2): a wrapper layer whose code is `unittest/mock.py` itself (`patch` and friends, which always call what they wrap) is accepted; trust is decided by the code's file, because `functools.wraps` copies `__module__` from the test. The innermost function, the test body, must still come from the fix commit's tree, and any other outside wrapper is refused (`MockPatched` accepted, `DecoratedFromOutside` and `LocalWrapperOfOutside` still refused). Mutation: trusting any wrapper -> `HostileFixtureTest` fails. `docs/support/user-bugs.md` states the rule. Tests: `Ran 24 tests ... OK`.
+
+## Round 6: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T13:31:08Z
+- Effort: medium
+- Lines: 37
+- Digest: e1dbb525c19797bb
+
+## adversarial: needs-attention
+
+1. **P1, `scripts/release-notes.py:82`: Coroutine methods count as regression tests even when unittest never executes their bodies.** `types.FunctionType` includes `async def`, and the remaining checks accept it on an ordinary `unittest.TestCase`.
+
+   Reproduce by committing this as `test_example.py` and naming `test_example.Case.test_regression` in the trailer:
+
+   ```python
+   import unittest
+
+   class Case(unittest.TestCase):
+       async def test_regression(self):
+           raise AssertionError("regression still broken")
+   ```
+
+   I exercised the candidate’s actual probe with this fixture in memory. It printed the success nonce. Unittest reported `1 run; 0 failures; 0 errors`, with a warning that the coroutine was never awaited. The check therefore accepts a regression body that cannot detect the bug. Reject coroutine methods on ordinary `TestCase`, while preserving support for correctly executed `IsolatedAsyncioTestCase` methods.
+
+## consistency: approve
+
+## integration: needs-attention
+
+Finding 1 (**P1**, `scripts/release-notes.py:82`) lets invalid regression evidence pass into the release report and §7’s JSON input without a violation.
+
+## source-defect: needs-attention
+
+Finding 1 (**P1**, `scripts/release-notes.py:82`) confuses a loadable method with an executable unittest test body. Ordinary `TestCase` does not await coroutine methods.
+
+## design: advisory
+
+Not applicable.
+
+## record: needs-attention
+
+Finding 1 contradicts the checked regression-verification requirement at `todo/07-release/TODO-03-listening-to-users.md:153`.
+
+Four read-only parser/documentation tests passed. The full 24-test claim remains independently unverified because its fixtures create files and worktrees. No files were modified.
+
+OVERALL: needs-attention
+
+## Fixes after round 6
+
+- Finding 1 (P1): a test body unittest would not run is refused: a coroutine on a plain `TestCase` (never awaited), and a generator or async generator on any case. A coroutine on `unittest.IsolatedAsyncioTestCase`, which awaits it, is accepted (`AsyncOnPlain` and `Generator` refused, `AsyncOnIsolated` accepted). Mutation: the coroutine rule removed -> `HostileFixtureTest` fails. Tests: `Ran 24 tests ... OK`.

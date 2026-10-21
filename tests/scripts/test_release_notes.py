@@ -266,6 +266,11 @@ class HostileFixtureTest(unittest.TestCase):
         py += ("\n\nfrom unittest.mock import patch\n\n\nclass Patched(unittest.TestCase):\n"
                "    @patch('os.getcwd', return_value='fixture')\n    def test_regression(self, getcwd):\n"
                "        self.assertEqual(getcwd(), 'fixture')\n")
+        py += ("\n\nclass AsyncOnPlain(unittest.TestCase):\n    async def test_regression(self):\n"
+               "        raise AssertionError('never awaited')\n\n\n"
+               "class GeneratorTest(unittest.TestCase):\n    def test_regression(self):\n        yield\n\n\n"
+               "class AsyncOnIsolated(unittest.IsolatedAsyncioTestCase):\n    async def test_regression(self):\n"
+               "        pass\n")
         py += ("\n\nclass ShadowedByBuiltin(unittest.TestCase):\n    def __init__(self, methodName='runTest'):\n"
                "        super().__init__(methodName)\n        self.test_case = [].clear\n\n"
                "    def test_case(self):\n        raise AssertionError('the regression body must run')\n")
@@ -318,6 +323,9 @@ class HostileFixtureTest(unittest.TestCase):
             # An instance attribute that shadows the method sends unittest down its callable path too.
             "ShadowedByInstance": "tests.scripts.test_sample.ShadowedByInstance.test_case",
             "ShadowedByBuiltin": "tests.scripts.test_sample.ShadowedByBuiltin.test_case",
+            # Bodies unittest would not run: a coroutine on a plain TestCase, a generator.
+            "AsyncOnPlain": "tests.scripts.test_sample.AsyncOnPlain.test_regression",
+            "Generator": "tests.scripts.test_sample.GeneratorTest.test_regression",
             "Stdlib": "unittest.case.TestCase.test_missing",
         }
         cls.real = {
@@ -326,6 +334,7 @@ class HostileFixtureTest(unittest.TestCase):
             "Alias": "tests.scripts.test_sample.ViaAlias.test_alias",
             # unittest.mock's patch is the one outside wrapper allowed: it always calls the repository's test.
             "MockPatched": "tests.scripts.test_sample.Patched.test_regression",
+            "AsyncOnIsolated": "tests.scripts.test_sample.AsyncOnIsolated.test_regression",
             "Noisy": "tests.scripts.test_noisy.NoisyTest.test_noisy",
         }
         cls.shas = {}
