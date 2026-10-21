@@ -664,3 +664,52 @@ Severity is now read from its authoritative source rather than parsed back out o
 
 - Finding 1 (P1): an unnumbered, untagged finding no longer slips past: the gate no longer depends on finding layout, and a reviewer whose findings include it declares `HIGHEST: P1` (`test_a_severity_stop_with_a_p1_or_p2_finding_refuses` covers P1, P2, `none`, a missing line, and a `HIGHEST` line not just before `OVERALL`).
 - Finding 2 (P2): a P3-only review that mentions P1 in prose now stops as it should (`test_a_severity_stop_with_only_p3_findings_stamps`).
+
+## Round 14: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T16:16:41Z
+- Effort: medium
+- Lines: 30
+- Digest: a48274b81d42234e
+
+## adversarial: approve
+
+No additional finding.
+
+## consistency: needs-attention
+
+1. **P3: Heading-length validation excludes the heading prefix.** `scripts/lib/todo_graph.py:430` measures only the title, although `AGENTS.md` and `todo/README.md:54` limit the complete `## N. <Title>` heading to 88 characters. Reproduced with an in-memory overlay replacing section 1’s heading with `## 1. ` followed by 88 `A` characters: `graph()` accepted the 94-character heading.
+
+## integration: approve
+
+No additional finding.
+
+## source-defect: approve
+
+No additional finding.
+
+## design: advisory
+
+Not applicable to this section’s declared surface.
+
+## record: advisory
+
+The full-suite claim at `docs/reviews/06-quality/audit-d00-t02-s1.md:9` remains independently unconfirmed. At `48223a2`, the suite attempted 78 tests: 77 encountered temporary-directory setup errors under the read-only sandbox; the Repository test passed. This is an environment limitation.
+
+Current validation reported `valid: 677 sections`; `plan --check` reported `plan current`. In-memory probes confirmed the revised severity gate accepts `HIGHEST: P3` and refuses P1, P2, `none`, and a missing declaration.
+
+No files were modified; the working tree remains clean.
+
+HIGHEST: P3
+OVERALL: needs-attention
+
+## Round 14 and the stop
+
+Round 14 returned one finding, tagged P3, and declared `HIGHEST: P3`. From round 9 on that ends the loop (`stopped-low-severity`).
+
+- Finding 1 (P3): the 88-character limit is the title's (the `Deliverable` cell it equals), since the `## N. ` prefix appears in no table; the validator already measures the title, and 180 headings in the tree pass that way. The ambiguity was in the rule text, so `AGENTS.md` and `todo/README.md` now say "the `<Title>` in `## N. <Title>`", and `test_deliverable_or_title_over_max_len_refuses` also pins that an 88-character title validates. This landed after the stop as a follow-up commit; nothing is left to file.
+
+## Outcome
+
+- The stamp of `D00 T02 §1` is confirmed with corrections: the graph engine's checkpoint holds, and the audit closed 32 findings (13 rounds needing attention, then the severity stop) by making the parser accept one canonical form per construct and by checking each receipt round against the dispatcher's own record: a cross-family returned review whose `OVERALL` matches its verdict, a loop ending at its last returned review, and stops earned by returned reviews, with severity taken from the reviewer's `HIGHEST` line. No downstream stamp is suspect: the live tree and all eight current receipts validate under the stricter rules.

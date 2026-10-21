@@ -53,7 +53,7 @@ In order: frontmatter, `# TODO-NN -- Title`, `> **Goal:**`, `> **Current state:*
 
 ### The Implementation Order table is the dependency graph
 
-Every `## N.` body section has exactly one row (`Order`, `§N`, `Deliverable`, `Depends On`, `[ ]`), and every row has exactly one body section. Both the `Deliverable` cell and the `## N. <Title>` heading must be at most 88 characters (`MAX_DELIVERABLE_LEN = 88`) so Markdown tables never wrap in the editor. The validator enforces both directions, refuses cycles, refuses a prerequisite in a later phase than its consumer, and refuses a ticked row without its stamp. A file holds at most 55 sections: past that, the next work opens a new file in the same domain, split by subject. Section numbers are permanent addresses and are never renumbered.
+Every `## N.` body section has exactly one row (`Order`, `§N`, `Deliverable`, `Depends On`, `[ ]`), and every row has exactly one body section. Both the `Deliverable` cell and the section title (the `<Title>` in `## N. <Title>`, without the `## N. ` prefix, which no table shows) must be at most 88 characters (`MAX_DELIVERABLE_LEN = 88`) so Markdown tables never wrap in the editor. The validator enforces both directions, refuses cycles, refuses a prerequisite in a later phase than its consumer, and refuses a ticked row without its stamp. A file holds at most 55 sections: past that, the next work opens a new file in the same domain, split by subject. Section numbers are permanent addresses and are never renumbered.
 
 ### Cross-reference notation
 
@@ -135,7 +135,7 @@ When something needs doing, start at `add-todo`. Reaching for `create-todo` dire
 ## Rules for every file
 
 - One line per paragraph and per list item in Markdown prose; no em dashes or en dashes in new text.
-- Keep every section heading (`## N. <Title>`), `Deliverable` cell, and index scope cell `<= 88` characters (`MAX_DELIVERABLE_LEN = 88`) so Markdown tables never wrap in the editor. Move detailed parenthetical symbol lists, file paths, CLI flags, and SPEC references into the section's context paragraph or checklist items.
+- Keep every section title (the `<Title>` in `## N. <Title>`), `Deliverable` cell, and index scope cell `<= 88` characters (`MAX_DELIVERABLE_LEN = 88`) so Markdown tables never wrap in the editor. Move detailed parenthetical symbol lists, file paths, CLI flags, and SPEC references into the section's context paragraph or checklist items.
 - A defect noticed outside the current work is filed in `todo/findings.md` with `file:line`, not fixed on the side inside someone else's commit; scheduling it means writing a section through `add-todo`.
 - Questions that need a person are not TODO rows without a Need: the section names `owner-decision` or `third-party` and records the answer before the Need is removed.
 - Standing product decisions live in the foundation plan (D1 to D17). A section that effectively revises one records the correction there and here, dated, never silently.
