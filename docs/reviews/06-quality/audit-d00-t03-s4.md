@@ -561,3 +561,48 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `Ran 44 tests`, `OK` (the two new subtests fail against `77e9207`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P1): no seed uses marked content, yet the operand table admitted `BMC`, `BDC` and `EMC` (and a dozen other operators no seed uses) without tracking them. The table now holds exactly the 33 operators the seeds' content uses, so any other operator, an unmatched `EMC` included, refuses as one the corpus content does not use; the path, text and value sets were narrowed to match.
+
+## Round 13: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T22:39:02Z
+- Effort: medium
+- Lines: 30
+- Digest: 4a93e6ea58b5a214
+
+### adversarial: needs-attention
+
+1. **P1: Seed validation accepts path construction after a clipping operator.** `scripts/build-corpus.py:3318` permits further path construction while `in_path` remains true; `:3328` tracks no separate state requiring painting immediately after `W` or `W*`.
+
+   Reproduced entirely in memory: intercept `flate_compress()` during `build_seed_classic_xref()` and append `b"\n0 0 m W 10 10 l n\n"` to the plaintext. `validate_seed_pdf_structure("seeds/seed-classic-xref.pdf", mutated)` accepts the resulting **1,028-byte PDF**. Supply those bytes through mocked generator output and file reads, with matching regenerated provenance: **`check_corpus()` returns `(True, [])`**.
+
+   A generator regression can therefore introduce invalid operator ordering while passing the complete checkpoint. This does not establish corruption in the committed fixture.
+
+### consistency: approve
+
+No separate finding.
+
+### integration: advisory
+
+Finding 1 weakens the seed-validation gate supporting downstream rendering fuzz tests. No downstream engine defect was established.
+
+### source-defect: needs-attention
+
+Finding **1 (P1)**: ISO 32000-1 sections 8.5.1 and 8.5.4 place clipping after the last path-construction operator and immediately before painting. The accepted sequence constructs another segment between clipping and painting. See [ISO 32000-1:2008](https://www.levien.com/pdf/PDF32000_2008.pdf).
+
+### design: advisory
+
+Not applicable; this section owns no user surface.
+
+### record: approve
+
+At `7b81ff1`, independently reran `python scripts/build-corpus.py --check`: exit **0**, **39 fixtures verified**. The focused `test_seed_content_must_be_executable_as_written` test also passed. Neither detects finding 1. No files were modified; the working tree remains clean.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 13
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 44 tests`, `OK` (the three new subtests fail against `7b81ff1`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): the path is a three-state machine (none, building, clipped). `W` or `W*` needs a path under construction and moves it to clipped, where only a painting operator may follow (ISO 32000-1 8.5.4): construction after clipping, a second clip, and a clip with no path each refuse.

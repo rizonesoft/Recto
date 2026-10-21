@@ -588,7 +588,10 @@ class BuildCorpusTests(unittest.TestCase):
                               (b"BT /F1 12 Tf q (a) Tj Q ET", "inside BT"),
                               (b"BT /Fm1 Do ET", "inside BT"),
                               (b"q Q EMC", "not one the corpus content uses"),
-                              (b"/Tag BMC q Q EMC", "not one the corpus content uses")):
+                              (b"/Tag BMC q Q EMC", "not one the corpus content uses"),
+                              (b"0 0 m W 10 10 l n", "only a painting operator"),
+                              (b"0 0 m W W* n", "only a painting operator"),
+                              (b"W n", "no path to clip")):
             with self.subTest(content=content), self.assertRaisesRegex(ValueError, says):
                 check("x", content, res)
         # The same regression through the generator: the render seed's page content reduced to bare operator names.

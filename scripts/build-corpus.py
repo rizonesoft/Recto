@@ -3296,7 +3296,9 @@ def validate_content_instructions(rel_path: str, raw: bytes, resources: dict[byt
     BT/ET out of balance, a text-showing operator outside BT ... ET, a path not ended by a painting operator (with
     nothing else between), or a font, XObject or graphics-state name that the stream's resources do not define
     (resources maps /Font, /XObject and /ExtGState to their names). Returns the operators."""
-    saves, in_text, in_path = 0, False, False
+    # in_path: "" (no path), "building" (construction under way) or "clipped" (W or W* given; ISO 32000-1 8.5.4 puts
+    # clipping after the last construction operator, so only a painting operator may follow).
+    saves, in_text, in_path = 0, False, ""
     fonts: list[bytes | None] = [None]  # the text font is graphics state: q saves it, Q restores it, nothing sets a default
     ops = []
     for op, operands in content_instructions(rel_path, raw):
@@ -3315,16 +3317,22 @@ def validate_content_instructions(rel_path: str, raw: bytes, resources: dict[byt
             raise ValueError(f"{rel_path}: {op.decode()} takes operands {shape!r}, got "
                              f"{[k for k, _ in operands]!r}")
         _check_operand_values(rel_path, op, operands)
-        if in_path and op not in PATH_CONSTRUCTION | PATH_PAINTING | {b"W", b"W*"}:
+        if in_path == "building" and op not in PATH_CONSTRUCTION | PATH_PAINTING | {b"W", b"W*"}:
             raise ValueError(f"{rel_path}: {op.decode()} inside a path before its painting operator")
+        if in_path == "clipped" and op not in PATH_PAINTING:
+            raise ValueError(f"{rel_path}: {op.decode()} after W or W*, where only a painting operator may follow")
         if op in PATH_CONSTRUCTION:
             if op not in (b"m", b"re") and not in_path:
                 raise ValueError(f"{rel_path}: {op.decode()} with no current path")
-            in_path = True
-        elif op in PATH_PAINTING or op in (b"W", b"W*"):
+            in_path = "building"
+        elif op in (b"W", b"W*"):
+            if in_path != "building":
+                raise ValueError(f"{rel_path}: {op.decode()} with no path to clip")
+            in_path = "clipped"
+        elif op in PATH_PAINTING:
             if not in_path:
                 raise ValueError(f"{rel_path}: {op.decode()} with no path to paint")
-            in_path = op in (b"W", b"W*")
+            in_path = ""
         elif op == b"q":
             saves += 1
             fonts.append(fonts[-1])
