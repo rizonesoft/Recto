@@ -198,6 +198,11 @@ std::filesystem::path corpus_path(std::string_view relative)
 	} else if (base.is_relative()) {
 		// A relative override is anchored at the repository root, so the result never depends on the current directory.
 		base = repo_root() / base;
+		// A drive-relative value on another drive ("C:corpus" with the repository on R:) stays relative to that drive's
+		// current directory after the join: refuse it rather than resolve it differently from run to run.
+		if (!base.is_absolute()) {
+			throw std::runtime_error("RECTO_CORPUS_DIR must be absolute or relative to the repository root");
+		}
 	}
 	if (relative.empty()) {
 		return base.lexically_normal();
@@ -406,10 +411,8 @@ TempDir& TempDir::operator=(TempDir&& other) noexcept
 
 std::filesystem::path TempDir::file_path(std::string_view relative) const
 {
-	if (relative.empty()) {
-		return path_;
-	}
-	const auto full = (path_ / std::filesystem::path(utf8_to_wide(relative))).lexically_normal();
+	const auto full =
+		relative.empty() ? path_ : (path_ / std::filesystem::path(utf8_to_wide(relative))).lexically_normal();
 	// Past what plain Win32 calls accept (CreateDirectoryW stops at MAX_PATH - 12), hand back the \\?\ form so a caller
 	// can pass the path to any Win32 API without LongPathsEnabled; shorter paths stay as they are.
 	return full.native().size() >= MAX_PATH - 12 ? to_long_path(full) : full;

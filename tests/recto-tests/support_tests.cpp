@@ -15,6 +15,7 @@
 #include <sanitizer/asan_interface.h>
 #endif
 
+#include <cwctype>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -160,6 +161,14 @@ TEST(Support, CorpusPathResolution)
 			EXPECT_EQ(recto::test::corpus_path("render/simple-1p.pdf"),
 				(root1 / "tests" / "corpus" / "render" / "simple-1p.pdf").lexically_normal());
 		}
+
+		{
+			// A drive-relative override on another drive cannot be anchored, so it is refused.
+			const wchar_t repo_drive = static_cast<wchar_t>(std::towupper(root1.native().front()));
+			const std::wstring other_drive = std::wstring(1, repo_drive == L'Z' ? L'Y' : L'Z') + L":corpus";
+			ScopedEnvVar drive_relative_env(L"RECTO_CORPUS_DIR", other_drive.c_str());
+			EXPECT_THROW((void)recto::test::corpus_path("a.pdf"), std::runtime_error);
+		}
 	}
 	EXPECT_FALSE(std::filesystem::exists(recto::test::to_long_path(temp1_root)));
 }
@@ -260,7 +269,11 @@ TEST(Support, TempDirLongPathAndReadOnly)
 		EXPECT_GT(long_file.native().size(), 280u);
 		// file_path() hands back the extended-length form itself, so Win32 accepts it without LongPathsEnabled.
 		EXPECT_EQ(long_file.native().rfind(L"\\\\?\\", 0), 0u);
-		EXPECT_EQ(temp.file_path("short.bin").native().rfind(L"\\\\?\\", 0), std::wstring::npos);
+		// A path below the limit stays plain (unless TEMP itself is deep enough to push it over), and so does the root.
+		const auto plain_short = (temp.path() / "short.bin").lexically_normal();
+		EXPECT_EQ(temp.file_path("short.bin").native().rfind(L"\\\\?\\", 0) == 0,
+			plain_short.native().size() >= MAX_PATH - 12);
+		EXPECT_EQ(temp.file_path("").native().rfind(L"\\\\?\\", 0) == 0, temp.path().native().size() >= MAX_PATH - 12);
 
 		const std::vector<uint8_t> expected{0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x37};
 		recto::test::write_file_bytes(long_file, expected);

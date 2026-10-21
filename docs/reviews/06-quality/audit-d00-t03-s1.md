@@ -52,3 +52,50 @@ Gates: `.\build.cmd` -> Debug x64 and ARM64 `0 Warning(s)`, `0 Error(s)`, `[  PA
 - Finding 1 (P2): `corpus_path()` anchors a relative `RECTO_CORPUS_DIR` at `repo_root()`, so the result never depends on the current directory; `Support.CorpusPathResolution` sets `tests\corpus` while the current directory is a temp folder and expects the repository corpus path.
 - Finding 2 (P2): `TempDir::file_path()` returns the `\\?\` form once a path reaches `MAX_PATH - 12` (where plain `CreateDirectoryW` stops), so Win32 accepts it without `LongPathsEnabled`; shorter paths are unchanged, so existing callers are untouched. `Support.TempDirLongPathAndReadOnly` asserts the prefix on the deep path, its absence on a short one, and calls `GetFileAttributesW` on `file_path()` directly.
 - Finding 3 (P3): `build/build.ps1` takes `-TestOutputDir <folder>` for the gtest XML reports (default `build\`, relative values taken from the repository root, Windows PowerShell 5.1 compatible); `-TestFilter "Support.*" -TestOutputDir <scratch>\xml-out` built, ran 10 tests and wrote `test-results-x64-Release.xml` there.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T18:10:16Z
+- Effort: medium
+- Lines: 30
+- Digest: 5a9d1b2ecf4b0283
+
+## adversarial: needs-attention
+
+1. **P2**: `tests/recto-tests/test_support.cpp:200` does not anchor every relative override. With the repository on `R:`, setting `RECTO_CORPUS_DIR=C:corpus` makes `repo_root() / base` discard the repository path because the drive names differ. The returned `C:corpus\a.pdf` remains drive-relative, so subsequent reads depend on C’s current directory. **Reproduce:** set that override, switch between two existing C-drive directories, and resolve/read `corpus_path("a.pdf")`. This violates the working-directory independence promise. This is a source-derived reproduction, supported by [Microsoft’s STL implementation](https://raw.githubusercontent.com/microsoft/STL/main/stl/inc/filesystem) and [Windows path semantics](https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file).
+
+2. **P3**: `tests/recto-tests/test_support.cpp:409` bypasses long-path conversion when `relative` is empty. **Reproduce:** use a sufficiently deep `TEMP` location so the generated directory exceeds 260 characters, construct `TempDir`, then call `file_path("")`. It returns the unprefixed path despite the corrected nonempty branch returning an extended-length path. Direct Win32 use can consequently fail without long-path opt-in.
+
+## consistency: approve
+
+No additional findings.
+
+## integration: needs-attention
+
+3. **P2**: `tests/recto-tests/support_tests.cpp:263` assumes `"short.bin"` produces a short absolute path. A valid long `TEMP` location makes `file_path("short.bin")` correctly return the extended-length prefix, which this assertion rejects. **Reproduce:** point `TEMP` at an existing writable nested directory approximately 230 characters long, then run `--gtest_filter=Support.TempDirLongPathAndReadOnly`. The generated directory name pushes the complete path beyond the implementation’s 248-character threshold. The checkpoint therefore fails on supported long-temp-path configurations even when the helper behaves correctly. This reproduction is source-derived, not executed here.
+
+## source-defect: needs-attention
+
+Finding 1 applies: Windows drive-relative paths require explicit handling; joining them to a different-drive repository root does not make them absolute.
+
+## design: advisory
+
+Not applicable; this section owns no user surface.
+
+## record: advisory
+
+I reran the exact checkpoint at `5134358`. It exited **1**, with all three tests throwing `CreateDirectoryW failed in TempDir` under the read-only sandbox. This does not establish a code regression, but prevents independent confirmation of the recorded pass.
+
+The claimed absence of changes under `src/` and `tests/recto-tests/` between `59902fc` and `2ee5ad7` checks out. Fresh builds, the 98-test pass, and old-code regression failures were not independently verified. No files were modified.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+Gates: `.\build.cmd` -> x64 and ARM64, Debug and Release, 4 x `0 Warning(s)`, 4 x `0 Error(s)`, 2 x `[  PASSED  ] 98 tests.`; against `5134358`'s `test_support.cpp` the new assertion fails ("Expected: (void)recto::test::corpus_path("a.pdf") throws an exception of type std::runtime_error"); with the fix Release x64 passes 98 tests.
+
+- Finding 1 (P2): after anchoring, `corpus_path()` requires an absolute base and throws for a drive-relative override on another drive (`C:corpus` with the repository on `R:`), which no join can anchor; `Support.CorpusPathResolution` sets such a value on a drive other than the repository's and expects the throw.
+- Finding 2 (P3): `TempDir::file_path("")` follows the same long-path rule as a non-empty path.
+- Finding 3 (P2): the test's plain-path assertions are conditioned on the unprefixed length, so a deep `TEMP` no longer fails a correct helper; the root path gets the same check.
