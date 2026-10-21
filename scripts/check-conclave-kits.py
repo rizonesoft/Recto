@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Alert when RectoPDF's Conclave SDK kit files drift from the SDK, or the SDK's doctor reports a gap.
+"""Alert when Recto's Conclave SDK kit files drift from the SDK, or the SDK's doctor reports a gap.
 
     python scripts/check-conclave-kits.py check     # exit 0 in step, 1 drift or a doctor gap, 2 cannot check
     python scripts/check-conclave-kits.py notify    # as check, but drift is emailed once per state, exit 0
@@ -105,7 +105,7 @@ def main(argv=None, root=ROOT, sdk=None, mail=pin_proposal.notify):
         print(f"check-conclave-kits: {exc}", file=sys.stderr)
         return 2
     if not found:
-        print("RectoPDF's Conclave kit files match the SDK and the doctor reports no gap")
+        print("Recto's Conclave kit files match the SDK and the doctor reports no gap")
         return 0
     print("\n".join(found))
     if args.mode == "check":

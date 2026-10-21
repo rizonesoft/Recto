@@ -1,7 +1,7 @@
 # Recto's one-command build (D00 T01 section 3). From a clean clone:
 #
-#     git clone https://github.com/rizonesoft/RectoPDF.git
-#     cd RectoPDF
+#     git clone https://github.com/rizonesoft/Recto.git
+#     cd Recto
 #     .\build.cmd
 #
 # That restores NuGet packages, installs the vcpkg manifest (GoogleTest,
