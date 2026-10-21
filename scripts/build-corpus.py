@@ -1059,12 +1059,16 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int) -> Non
     if obj_match is None:
         raise ValueError(f"{rel_path}: startxref {xref_offset} is not a valid XRef stream object")
     dict_bytes = obj_match.group(3)
-    if b"/Type /XRef" not in dict_bytes:
+    entries = dict_entries(dict_bytes)
+    allowed = {b"/Type", b"/Size", b"/Root", b"/Info", b"/ID", b"/W", b"/Filter", b"/DecodeParms", b"/Length",
+               b"/Prev", b"/Index"}
+    if not set(entries) <= allowed:
+        raise ValueError(f"{rel_path}: XRef stream has keys the corpus never writes: {sorted(set(entries) - allowed)}")
+    if entries.get(b"/Type") != b"/XRef":
         raise ValueError(f"{rel_path}: XRef stream missing /Type /XRef")
-    size_m = re.search(rb"/Size\s+(\d+)", dict_bytes)
-    len_values = top_level_values(dict_bytes, b"/Length")
-    len_m = re.fullmatch(rb"(\d+)", len_values[0]) if len(len_values) == 1 else None
-    w_m = re.search(rb"/W\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s*\]", dict_bytes)
+    size_m = re.fullmatch(rb"(\d+)", entries.get(b"/Size", b""))
+    len_m = re.fullmatch(rb"(\d+)", entries.get(b"/Length", b""))
+    w_m = re.fullmatch(rb"\[\s*(\d+)\s+(\d+)\s+(\d+)\s*\]", entries.get(b"/W", b""))
     if not (size_m and len_m and w_m):
         raise ValueError(f"{rel_path}: XRef stream missing /Size, /Length, or /W")
     size = int(size_m.group(1))
@@ -1079,9 +1083,10 @@ def validate_xref_stream_at(rel_path: str, data: bytes, xref_offset: int) -> Non
     index = top_level_values(dict_bytes, b"/Index")
     if filters != [b"/FlateDecode"]:
         raise ValueError(f"{rel_path}: XRef stream /Filter must be /FlateDecode, found {filters}")
-    if len(parms) != 1 or top_level_values(parms[0][2:-2], b"/Predictor") != [b"12"] \
-            or top_level_values(parms[0][2:-2], b"/Columns") != [str(w1 + w2 + w3).encode()]:
-        raise ValueError(f"{rel_path}: XRef stream /DecodeParms must be /Predictor 12 /Columns {w1 + w2 + w3}")
+    # Exactly these two parameters: /Colors or /BitsPerComponent would change the row width the decoder uses.
+    if len(parms) != 1 or not parms[0].startswith(b"<<") \
+            or dict_entries(parms[0][2:-2]) != {b"/Predictor": b"12", b"/Columns": str(w1 + w2 + w3).encode()}:
+        raise ValueError(f"{rel_path}: XRef stream /DecodeParms must be exactly /Predictor 12 /Columns {w1 + w2 + w3}")
     if index not in ([], [f"[0 {int(size_m.group(1))}]".encode()]):
         raise ValueError(f"{rel_path}: XRef stream /Index {index} is not the default [0 Size]")
 
@@ -1293,6 +1298,28 @@ def top_level_values(dict_body: bytes, key: bytes) -> list[bytes]:
     return values
 
 
+def dict_entries(dict_body: bytes) -> dict[bytes, bytes]:
+    """A dictionary body's own entries, key -> value, each key once (a repeated key refuses)."""
+    entries: dict[bytes, bytes] = {}
+    i, n = 0, len(dict_body)
+    names = []
+    while i < n:
+        if dict_body[i : i + 1].isspace():
+            i += 1
+            continue
+        j = _skip_object(dict_body, i)
+        if dict_body[i : i + 1] == b"/":
+            names.append(dict_body[i:j])
+        i = j
+    for name in dict.fromkeys(names):
+        values = top_level_values(dict_body, name)
+        if len(values) > 1:
+            raise ValueError(f"dictionary key {name!r} appears {len(values)} times")
+        if values:
+            entries[name] = values[0]
+    return entries
+
+
 _OBJ_HEADER = re.compile(rb"(?:\A|(?<=\n))\d+ \d+ obj\n")
 
 
@@ -1306,20 +1333,22 @@ def iter_stream_dicts(rel_path: str, data: bytes):
         if m is None:
             return
         start = m.end()
-        if not data.startswith(b"<<", start):
-            pos = start
-            continue
         try:
             end = _skip_object(data, start)
         except ValueError as e:
             raise ValueError(f"{rel_path}: object at {m.start()} does not parse: {e}") from None
-        if not data.startswith(b"\nstream\n", end):
-            pos = end
-            continue
-        stream_start = end + len(b"\nstream\n")
-        yield start, end, stream_start
-        lengths = top_level_values(data[start + 2 : end - 2], b"/Length")
-        pos = stream_start + (int(lengths[0]) if len(lengths) == 1 and lengths[0].isdigit() else 0)
+        if data.startswith(b"<<", start) and data.startswith(b"\nstream\n", end):
+            stream_start = end + len(b"\nstream\n")
+            yield start, end, stream_start
+            lengths = top_level_values(data[start + 2 : end - 2], b"/Length")
+            end = stream_start + (int(lengths[0]) if len(lengths) == 1 and lengths[0].isdigit() else 0)
+            if not data.startswith(b"\nendstream", end):
+                raise ValueError(f"{rel_path}: stream at {stream_start} does not end at its /Length")
+            end += len(b"\nendstream")
+        # Every object ends with endobj right after its value (or its stream), so nothing is left unparsed in between.
+        if not data.startswith(b"\nendobj\n", end):
+            raise ValueError(f"{rel_path}: object at {m.start()} does not end with endobj after its value")
+        pos = end + len(b"\nendobj\n")
 
 
 def validate_pdf_structure(rel_path: str, data: bytes) -> None:
@@ -1361,9 +1390,6 @@ def validate_pdf_structure(rel_path: str, data: bytes) -> None:
             if b"/CMapName" not in dec:
                 validate_content_stream_syntax(rel_path, dec)
 
-    ends = data.count(b"\nendstream")
-    if checked != ends:
-        raise ValueError(f"{rel_path}: {ends - checked} stream(s) were not length-checked")
 
     if b"/AcroForm" in data and b"/DA (" in data:
         if b"/DR << /Font" not in data:

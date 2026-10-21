@@ -180,6 +180,20 @@ class BuildCorpusTests(unittest.TestCase):
             with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, re.escape(reason)):
                 self.mod.validate_pdf_structure("render/compressed-xref-2p.pdf", mutated)
 
+    def test_only_the_corpus_dialect_passes_for_xref_streams_and_strings(self) -> None:
+        data = self.mod.build_compressed_xref_2p()
+        xref_at = int(re.search(rb"startxref\n(\d+)\n%%EOF\n\Z", data).group(1))
+        for old, new, reason in ((b"/W [1 2 2]", b"/Note (/W [1 2 2]) /W [1 1 3]", "keys the corpus never writes"),
+                                 (b"/Predictor 12 /Columns 5", b"/Predictor 12 /Colors 3 /Columns 5", "/DecodeParms")):
+            at = data.index(old)
+            self.assertGreater(at, xref_at)  # inside the last object: no offset moves
+            mutated = data[:at] + new + data[at + len(old):]
+            with self.subTest(reason=reason), self.assertRaisesRegex(ValueError, re.escape(reason)):
+                self.mod.validate_pdf_structure("render/compressed-xref-2p.pdf", mutated)
+        # A string may hold the endstream keyword; it is data, and the stream is still length-checked.
+        self.mod.validate_pdf_structure(
+            "test.pdf", self._one_page_pdf(b"<< /Length 3 /Note (\nendstream) >>\nstream\nq Q\nendstream"))
+
     def test_a_classic_xref_entry_has_one_form(self) -> None:
         data = self.mod.build_simple_1p()
         self.mod.validate_pdf_structure("render/simple-1p.pdf", data)

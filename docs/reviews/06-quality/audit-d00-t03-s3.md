@@ -143,3 +143,48 @@ The validator now checks the generator's own narrow PDF dialect and refuses anyt
 - Finding 1 (P1): dictionary keys must be plain names (`/[A-Za-z0-9_.+-]+`); an escaped key such as `/Len#67th` refuses, so no second spelling of `/Length` can pass.
 - Finding 2 (P2): stream dictionaries are found by walking objects forward (`iter_stream_dicts`): each object's value is skipped with the string-aware parser and each stream's payload by its own `/Length`, so `(<<)` in a string is data, and stream bytes are never read as structure (`test_stream_dictionaries_parse_strings_and_refuse_escaped_keys`).
 - Finding 3 (P1): an xref stream must declare exactly what the validator applies: `/Filter /FlateDecode`, `/DecodeParms` with `/Predictor 12` and `/Columns` equal to the `/W` sum, and `/Index` absent or `[0 Size]` (`test_xref_stream_declarations_are_the_ones_applied`, both mutations).
+
+## Round 4: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T19:12:20Z
+- Effort: medium
+- Lines: 28
+- Digest: 8e7bc7ee0de6b812
+
+## adversarial: needs-attention
+
+1. **P1: A string can override the xref field widths used by validation.** `scripts/build-corpus.py:1067` searches raw dictionary bytes for `/W`. Reproduced by generating `build_compressed_xref_2p()`, replacing `b'/W [1 2 2]'` with `b'/Note (/W [1 2 2]) /W [1 1 3]'`, then calling `validate_pdf_structure`. Validation succeeds using the string’s widths, although the actual `/W` changes how object offsets and indexes decode. Existing object offsets, stream lengths and `startxref` remain unchanged.
+
+2. **P2: Valid literal-string content causes false stream-length failures.** `scripts/build-corpus.py:1364` counts `b'\nendstream'` throughout the file, including strings. Reproduced with `ClassicPdfBuilder`, setting the page’s content object to `b'<< /Length 3 /Note (\nendstream) >>\nstream\nq Q\nendstream'`. Validation rejects it with `1 stream(s) were not length-checked`, despite correct length and builder-generated xref offsets. The final raw count defeats the string-aware object walk.
+
+## consistency: approve
+
+No independent findings.
+
+## integration: advisory
+
+Findings 1 and 3 allow malformed future fixtures to pass structural validation. Deterministic byte comparison cannot catch an error shared by generated and committed bytes. These reproductions do not establish corruption in the currently committed fixtures.
+
+## source-defect: needs-attention
+
+3. **P1: Predictor validation ignores parameters that change decoded row boundaries.** `scripts/build-corpus.py:1082` checks `/Predictor` and `/Columns` but ignores `/Colors` and `/BitsPerComponent`. Reproduced by replacing `b'/Predictor 12 /Columns 5'` with `b'/Predictor 12 /Colors 3 /Columns 5'` in `build_compressed_xref_2p()` output. `validate_pdf_structure` accepts it while decoding five-byte rows; the declaration requires fifteen-byte rows at the default eight bits per component. These parameters govern prediction together, as documented in [Adobe PDF Reference, Table 3.7](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.6.pdf). The validator must enforce its supported defaults or apply the declared values.
+
+## design: advisory
+
+Not applicable: this section owns no user surface.
+
+## record: advisory
+
+At `d12f073`, independently reran `python -B scripts/build-corpus.py --check`: exit 0, 39 current fixtures. Seven targeted regression tests passed. Two in-memory generations were identical; on-disk corpus size was 60,176 bytes. This confirms the recorded checkpoint’s current result, but does not substantiate complete structural validation given findings 1 and 3. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 4
+
+`python -m unittest tests.scripts.test_build_corpus` -> `Ran 14 tests`, `OK` (the new test fails against `d12f073`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
+
+- Finding 1 (P1): the xref stream dictionary is read through `dict_entries` (parsed key-value pairs, a repeated key refused) and may hold only the keys the corpus writes, so `/Note (/W [1 2 2])` refuses and `/W` comes from the real entry.
+- Finding 2 (P2): the raw `endstream` count is gone; `iter_stream_dicts` now parses every object through its `endobj` (a stream's payload skipped by its `/Length` and required to end in `endstream`), so the keyword inside a string is data and no object can be skipped unparsed.
+- Finding 3 (P1): `/DecodeParms` must be exactly `/Predictor 12 /Columns <W sum>`; `/Colors` or `/BitsPerComponent` refuses rather than being ignored.
