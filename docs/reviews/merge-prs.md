@@ -137,3 +137,45 @@ OVERALL: needs-attention
 
 - Finding 1 (P1): commit statuses are read with `--paginate` and `per_page=100`, so a failing status past the first 30 still blocks (`test_commit_statuses_are_read_across_every_page`).
 - Finding 2 (P1): the safety check (clean tree, `HEAD` at `origin/main`, no section in progress, and for the scheduled run no campaign guard) runs again before every pull request after the first; a change stops the run, and later pull requests wait (`test_safety_is_checked_again_before_each_merge`).
+
+## Round 4: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:17:03Z
+- Effort: medium
+- Lines: 26
+- Digest: b9f6ab216d7eb012
+
+## adversarial: needs-attention
+
+1. **P1, `scripts/merge_prs.py:198`: The merge target is not bound to the repository whose safety was checked.** Git checks and subsequent validation use the local clone’s `origin/main`, but every `gh` command inherits repository selection independently. An inherited `GH_REPO` can therefore redirect listing, checks and merges to another repository while Recto passes all local gates. Reproduce in a controlled fixture with `GH_REPO` pointing to another repository containing an eligible PR with the required check names. The script can merge that PR, pull unchanged Recto, and report success. The in-memory probe confirmed no explicit repository binding. Resolve and verify the target against `origin`, then bind all GitHub operations to it. [GitHub CLI environment contract](https://cli.github.com/manual/gh_help_environment)
+
+## consistency: needs-attention
+
+2. **P2, `scripts/merge_prs.py:60`: Subprocess timeouts bypass the promised failure reporting.** `subprocess.run(timeout=600)` raises `TimeoutExpired`, but the surrounding handlers catch only `RuntimeError`. Reproduce by having the injected runner raise `TimeoutExpired` during `gh pr merge`: the exception escapes with no state report, as confirmed by the in-memory probe. The remote merge may already have completed. Also, a nonzero merge exit unconditionally reports “still open” at line 201 without checking GitHub. Handle transport failures and timeouts explicitly, and read back the PR state before claiming whether it merged; report unknown when verification fails.
+
+## integration: needs-attention
+
+Finding 1 disconnects remote mutations from local synchronization and validation: those checks can succeed against a different repository.
+
+## source-defect: needs-attention
+
+Finding 1 overlooks documented `GH_REPO` behavior. Finding 2 violates the script’s stated contract to distinguish a failed merge from a completed merge whose follow-up failed.
+
+## design: advisory
+
+No user-facing design surface changed.
+
+## record: advisory
+
+Reviewed the candidate diff and follow-up fixes, and ran in-memory probes with bytecode generation disabled. No files were modified. The full test suite and historical live-check claims were not independently reproduced. Live GitHub inspection was blocked by the network proxy.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 4
+
+`python -m unittest tests.scripts.test_merge_prs` -> `Ran 17 tests`, `OK`. Live: `origin_repo` -> `rizonesoft/Recto`; PR #1 judged eligible with every call bound to it.
+
+- Finding 1 (P1): the GitHub repository is read from `origin` (`origin_repo`, refusing a non-GitHub origin), and every `gh` call names it (`--repo`, or the explicit `repos/<owner>/<name>/` API path), so an inherited `GH_REPO` cannot redirect a merge (`test_every_github_call_names_the_repository_behind_origin`).
+- Finding 2 (P2): a timeout or a failure to start a command becomes a reported failure, and a failed or timed-out merge reports the pull request's state read back from GitHub (or that it is unknown) instead of assuming it is still open (`test_a_timed_out_merge_reports_what_github_says`).

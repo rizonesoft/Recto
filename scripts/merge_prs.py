@@ -58,7 +58,10 @@ def run_cmd(args, root):
 
 
 def check(run, root, args, what):
-    result = run(args, root)
+    try:
+        result = run(args, root)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise RuntimeError(f"{what} did not finish: {e}") from None
     if result.returncode != 0:
         raise RuntimeError(f"{what} failed (exit {result.returncode}): {(result.stderr or result.stdout).strip()[:400]}")
     return result.stdout
@@ -90,9 +93,19 @@ def ensure_safe(run, root, scheduled):
         raise Unsafe(f"section {ref} is in progress")
 
 
+def origin_repo(run, root):
+    """owner/name of the GitHub repository behind origin: every gh call names it, so an inherited GH_REPO or another
+    default can never point the merges at a repository other than the one this clone checked."""
+    url = check(run, root, ["git", "remote", "get-url", "origin"], "git remote get-url origin").strip()
+    m = re.fullmatch(r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)([\w.-]+/[\w.-]+?)(?:\.git)?/?", url)
+    if m is None:
+        raise RuntimeError(f"origin {url!r} is not a GitHub repository")
+    return m.group(1)
+
+
 def check_runs(run, root, sha):
     """Every check run on a commit: (name, status, conclusion)."""
-    out = check(run, root, ["gh", "api", "--paginate", f"repos/{{owner}}/{{repo}}/commits/{sha}/check-runs?per_page=100",
+    out = check(run, root, ["gh", "api", "--paginate", f"repos/{REPO[0]}/commits/{sha}/check-runs?per_page=100",
                             "--jq", ".check_runs[] | [.name, .status, .conclusion]"], f"reading checks of {sha[:7]}")
     return [tuple(json.loads(line)) for line in out.splitlines() if line.strip()]
 
@@ -100,7 +113,7 @@ def check_runs(run, root, sha):
 def commit_statuses(run, root, sha):
     """Every legacy commit status on a commit: (context, state). CI can report through these as well as check runs."""
     # Every page: the endpoint returns 30 statuses a page by default, and a failing one may sit past the first.
-    out = check(run, root, ["gh", "api", "--paginate", f"repos/{{owner}}/{{repo}}/commits/{sha}/status?per_page=100",
+    out = check(run, root, ["gh", "api", "--paginate", f"repos/{REPO[0]}/commits/{sha}/status?per_page=100",
                             "--jq", ".statuses[] | [.context, .state]"], f"reading statuses of {sha[:7]}")
     return [tuple(json.loads(line)) for line in out.splitlines() if line.strip()]
 
@@ -135,6 +148,7 @@ def why_not(pr, runs, statuses=()):
 
 
 FIELDS = "number,title,author,labels,baseRefName,headRefName,headRefOid,mergeable,state"
+REPO: list[str] = [""]  # owner/name, set from origin by merge_all before any gh call
 
 
 SETTLE_TRIES, SETTLE_WAIT = 5, 3.0
@@ -144,7 +158,8 @@ def current(run, root, number):
     """A pull request as it is now. GitHub computes mergeability in the background and answers UNKNOWN meanwhile, so an
     UNKNOWN is asked again a few times; one still UNKNOWN is skipped this run."""
     for attempt in range(SETTLE_TRIES):
-        pr = json.loads(check(run, root, ["gh", "pr", "view", str(number), "--json", FIELDS], f"gh pr view {number}"))
+        pr = json.loads(check(run, root, ["gh", "pr", "view", str(number), "--repo", REPO[0], "--json", FIELDS],
+                              f"gh pr view {number}"))
         if pr.get("mergeable") != "UNKNOWN" or attempt == SETTLE_TRIES - 1:
             return pr
         time.sleep(SETTLE_WAIT)
@@ -152,14 +167,15 @@ def current(run, root, number):
 
 def open_prs(run, root):
     """Open pull requests into main, oldest first; each is re-read just before it is judged."""
-    out = check(run, root, ["gh", "pr", "list", "--state", "open", "--base", "main", "--limit", "100", "--json",
-                            "number"], "gh pr list")
+    out = check(run, root, ["gh", "pr", "list", "--repo", REPO[0], "--state", "open", "--base", "main", "--limit",
+                            "100", "--json", "number"], "gh pr list")
     return sorted(pr["number"] for pr in json.loads(out))
 
 
 def merge_all(run, root, args, out):
     try:
         ensure_safe(run, root, args.scheduled)
+        REPO[0] = origin_repo(run, root)
         numbers = open_prs(run, root)
     except Unsafe as e:
         out(f"merge-prs: not now: {e}")
@@ -195,11 +211,16 @@ def merge_all(run, root, args, out):
             out(f"merge-prs: #{number} would merge at {pr['headRefOid'][:7]} ({pr['title']})")
             continue
         try:
-            check(run, root, ["gh", "pr", "merge", str(number), "--rebase", "--match-head-commit", pr["headRefOid"]],
-                  f"merging #{number}")
+            check(run, root, ["gh", "pr", "merge", str(number), "--repo", REPO[0], "--rebase", "--match-head-commit",
+                              pr["headRefOid"]], f"merging #{number}")
         except RuntimeError as e:
-            out(f"merge-prs: stopped at #{number}, which is still open: {e}; it and any later pull request are left "
-                f"for you")
+            # A failed or timed-out merge may still have landed: say what GitHub reports, or that it is unknown.
+            try:
+                state = current(run, root, number).get("state", "UNKNOWN")
+            except RuntimeError:
+                state = "unknown (GitHub could not be read)"
+            out(f"merge-prs: stopped at #{number}, whose state is now {state}: {e}; it and any later pull request "
+                f"are left for you")
             return 1
         merged += 1
         out(f"merge-prs: merged #{number} ({pr['title']})")

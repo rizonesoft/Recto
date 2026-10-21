@@ -29,7 +29,8 @@ class FakeRun:
     """Answers git and gh the way a test asks, and records every call. after_merge(number, prs) may change later
     answers."""
 
-    def __init__(self, prs, *, dirty="", head=SHA, upstream=SHA, fail=(), after_merge=None):
+    def __init__(self, prs, *, dirty="", head=SHA, upstream=SHA, fail=(), after_merge=None, raise_on=None):
+        self.raise_on = raise_on
         self.prs = {p["number"]: p for p in prs}
         self.dirty, self.head, self.upstream, self.fail, self.after_merge = dirty, head, upstream, fail, after_merge
         self.calls = []
@@ -39,7 +40,13 @@ class FakeRun:
         if any(f in " ".join(args) for f in self.fail):
             return subprocess.CompletedProcess(args, 1, "", "refused")
         out = ""
-        if args[:2] == ["git", "status"]:
+        if self.raise_on and self.raise_on in " ".join(args):
+            if args[:3] == ["gh", "pr", "merge"]:
+                self.prs[int(args[3])]["state"] = "MERGED"  # it landed before the timeout
+            raise subprocess.TimeoutExpired(args, 600)
+        if args[:4] == ["git", "remote", "get-url", "origin"]:
+            out = "https://github.com/rizonesoft/Recto.git\n"
+        elif args[:2] == ["git", "status"]:
             out = self.dirty
         elif args[:3] == ["git", "rev-parse", "HEAD"]:
             out = self.head
@@ -87,7 +94,7 @@ class MergePrs(unittest.TestCase):
         self.assertEqual(self.main(fake), 0)
         self.assertEqual(fake.merges(), ["1", "2"])
         merge = next(c for c in fake.calls if c[:3] == ["gh", "pr", "merge"])
-        self.assertEqual(merge[4:], ["--rebase", "--match-head-commit", f"{1:040d}"])
+        self.assertEqual(merge[4:], ["--repo", "rizonesoft/Recto", "--rebase", "--match-head-commit", f"{1:040d}"])
         after = fake.calls[fake.calls.index(merge) + 1 :]
         self.assertEqual(after[0][:3], ["git", "pull", "--ff-only"])
         self.assertEqual(after[1][-1], "validate")
@@ -194,7 +201,7 @@ class MergePrs(unittest.TestCase):
         fake = FakeRun([pr(1), pr(2)], fail=("merge 1",))
         self.assertEqual(self.main(fake), 1)
         self.assertNotIn("2", fake.merges())
-        self.assertIn("still open", self.lines[-1])
+        self.assertIn("state is now OPEN", self.lines[-1])
         for failing in ("pull", "validate"):
             self.lines.clear()
             fake = FakeRun([pr(1), pr(2)], fail=(failing,))
@@ -202,6 +209,34 @@ class MergePrs(unittest.TestCase):
                 self.assertEqual(self.main(fake), 1)
                 self.assertEqual(fake.merges(), ["1"])
                 self.assertIn("merged on GitHub, but the local follow-up failed", self.lines[-1])
+
+    def test_every_github_call_names_the_repository_behind_origin(self):
+        fake = FakeRun([pr(1)])
+        with mock.patch.dict("os.environ", {"GH_REPO": "someone/else"}):
+            self.assertEqual(self.main(fake), 0)
+        gh_calls = [c for c in fake.calls if c[0] == "gh"]
+        self.assertTrue(gh_calls)
+        for call in gh_calls:
+            joined = " ".join(call)
+            self.assertTrue("--repo rizonesoft/Recto" in joined or "repos/rizonesoft/Recto/" in joined, joined)
+
+    def test_a_timed_out_merge_reports_what_github_says(self):
+        fake = FakeRun([pr(1)], raise_on="pr merge")
+        self.assertEqual(self.main(fake), 1)
+        self.assertIn("state is now MERGED", self.lines[-1])
+        self.assertIn("did not finish", self.lines[-1])
+
+    def test_a_non_github_origin_refuses(self):
+        class Elsewhere(FakeRun):
+            def __call__(self, args, root):
+                if args[:4] == ["git", "remote", "get-url", "origin"]:
+                    self.calls.append(args)
+                    return subprocess.CompletedProcess(args, 0, "https://example.com/x.git\n", "")
+                return super().__call__(args, root)
+
+        fake = Elsewhere([pr(1)])
+        self.assertEqual(self.main(fake), 1)
+        self.assertEqual(fake.merges(), [])
 
     def test_a_dry_run_merges_nothing(self):
         fake = FakeRun([pr(1)])
