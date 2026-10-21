@@ -157,6 +157,8 @@ def why_not(pr, runs, statuses=()):
         return "not labelled dependencies or pins"
     if pr.get("state") != "OPEN" or pr.get("baseRefName") != "main":
         return "not an open pull request into main"
+    if pr.get("isDraft") is not False:
+        return "a draft (GitHub refuses to merge one)"
     if EXCLUDED_BRANCHES and pr.get("headRefName", "").startswith(EXCLUDED_BRANCHES):
         return "a pin that is section work"
     if pr.get("mergeable") != "MERGEABLE":
@@ -168,7 +170,7 @@ def why_not(pr, runs, statuses=()):
     return None
 
 
-FIELDS = "number,title,author,labels,baseRefName,headRefName,headRefOid,mergeable,state,files,mergeCommit"
+FIELDS = "number,title,author,labels,baseRefName,headRefName,headRefOid,mergeable,state,isDraft,files,mergeCommit"
 REPO: list[str] = [""]  # owner/name, set from origin by merge_all before any gh call
 
 

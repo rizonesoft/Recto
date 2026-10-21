@@ -20,7 +20,7 @@ def pr(number, *, author="app/github-actions", labels=("dependencies", "pins"), 
        checks=None, branch=None, base="main"):
     branch = branch or ("dependabot/github_actions/x" if "dependabot" in author else "pins/vcpkg-2026.10.16")
     """A pull request as gh pr view shows it, with its head commit's check runs under "_runs" (for the fake)."""
-    return {"number": number, "title": f"pin {number}", "author": {"login": author}, "state": "OPEN",
+    return {"number": number, "title": f"pin {number}", "author": {"login": author}, "state": "OPEN", "isDraft": False,
             "labels": [{"name": n} for n in labels], "baseRefName": base, "headRefName": branch,
             "headRefOid": f"{number:040d}", "mergeable": mergeable, "mergeCommit": None,
             "files": [{"path": ".github/workflows/build.yml" if "dependabot" in author else "vcpkg-configuration.json"}],
@@ -320,6 +320,14 @@ class MergePrs(unittest.TestCase):
         self.assertEqual(self.main(FakeRun([pr(1)], after_merge=probe)), 0)  # not --scheduled
         self.assertEqual(seen, ["held"])
         self.assertFalse((self.root / merge_prs.STOPPED).exists())  # a verified merge clears its marker
+
+    def test_a_draft_is_skipped_and_later_pull_requests_still_merge(self):
+        draft = pr(1)
+        draft["isDraft"] = True
+        fake = FakeRun([draft, pr(2)])
+        self.assertEqual(self.main(fake), 0)
+        self.assertEqual(fake.merges(), ["2"])
+        self.assertFalse((self.root / merge_prs.STOPPED).exists())
 
     def test_launches_open_no_console_window(self):
         with mock.patch.object(merge_prs.subprocess, "run") as run:

@@ -306,3 +306,44 @@ OVERALL: needs-attention
 
 - Finding 1 (P1): the stop marker is written before GitHub is asked to merge and deleted only after the pull, the ancestry check and validate all pass, so a run killed in between (the task's timeout, a crash) leaves it, and the next run refuses (`test_a_run_killed_mid_merge_leaves_the_stop_marker`).
 - Finding 2 (P1): every run, not only the scheduled one, holds the campaign guard's lock for its whole window, so two runs can never interleave a merge with another's pull and validate (`test_every_run_holds_the_guard_lock`, which also shows a verified merge clears its marker).
+
+## Round 8: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:42:40Z
+- Effort: medium
+- Lines: 26
+- Digest: f992c6091045145e
+
+## adversarial: needs-attention
+
+1. **P2, `scripts/merge_prs.py:171`: A draft dependency PR can halt all automatic merging indefinitely.** `FIELDS` omits `isDraft`, and `why_not()` accepts an otherwise eligible draft. GitHub refuses its merge, causing the script to persist the stop marker and block subsequent runs, including unrelated eligible PRs. Draft PRs cannot be merged. [GitHub documentation](https://docs.github.com/en/pull-requests/reference/pull-requests)
+
+   Reproduce by converting a green pins PR to draft while another eligible PR waits, then invoking the automation. An in-memory probe confirmed eligibility returned `None`, the draft received a merge attempt, execution returned 1, and the stop-marker writer was called. Fetch `isDraft` and skip drafts before requesting a merge; add regression coverage showing a later eligible PR still proceeds.
+
+## consistency: approve
+
+## integration: needs-attention
+
+Finding 1 turns an intentionally deferred PR into a persistent outage of both scheduled and campaign-boundary merging. Making the PR ready again does not clear the local stop marker.
+
+## source-defect: needs-attention
+
+Finding 1 treats conflict-free `MERGEABLE` status as sufficient readiness without checking GitHub’s separate draft restriction.
+
+## design: advisory
+
+No rendered interface changes to assess.
+
+## record: advisory
+
+Inspected the candidate, follow-up changes and review record. Ran an in-memory mocked reproduction with bytecode generation disabled. No files were modified. Historical test results and live GitHub claims were not independently reproduced.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 8
+
+`python -m unittest tests.scripts.test_merge_prs` -> `OK` (`test_a_draft_is_skipped_and_later_pull_requests_still_merge` fails against `38715aa`).
+
+- Finding 1 (P2): `isDraft` is read, and a draft (or a pull request whose draft state is not reported) is skipped, never attempted, so it cannot trip the stop marker; a later eligible pull request still merges.
