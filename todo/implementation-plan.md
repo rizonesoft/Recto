@@ -30,7 +30,7 @@ Sections: 19 | Checklist items: 103
 | [x]    | D07 T03 §9 | Gtest regression evidence from the fix commit's own CI test list                         | none         | 7     |
 | [x]    | D07 T03 §4 | User-bug regression rule, closing on release and changelog mapping                       | none         | 7     |
 | [x]    | D07 T03 §6 | Public scope page and user demand ledger                                                 | none         | 7     |
-| [ ]    | D07 T03 §8 | Strict issue-form YAML reader and top-level schema types                                 | none         | 7     |
+| [x]    | D07 T03 §8 | Strict issue-form YAML reader and top-level schema types                                 | none         | 7     |
 
 ### Phase 1: M1 Engine core
 
@@ -721,6 +721,6 @@ Sections: 4 | Checklist items: 22
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
-Progress: 28/652 verified sections, 14 ready to run now.
+Progress: 29/652 verified sections, 13 ready to run now.
 
-Checklist: 183/4737 items completed (includes Commit items).
+Checklist: 184/4737 items completed (includes Commit items).

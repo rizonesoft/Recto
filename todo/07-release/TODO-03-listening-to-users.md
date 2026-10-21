@@ -49,7 +49,7 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 | 6 | §2 | In-app `Report a problem` with privacy-safe diagnostics | §1, D07 T02 §1, D07 T02 §4, D02 T03 §11, D06 T04 §25 | [ ] |
 | 7 | §5 | Release gate for unreleased fixes, security advisories and CI integrity | §4, D07 T02 §6, D07 T02 §7, D06 T03 §12 | [ ] |
 | 8 | §7 | What's new after update and opt-in update notice | §2, D02 T04 §6, D06 T04 §25 | [ ] |
-| 9 | §8 | Strict issue-form YAML reader and top-level schema types | §1 | [ ] |
+| 9 | §8 | Strict issue-form YAML reader and top-level schema types | §1 | [x] |
 
 ## 1. Issue forms, triage policy and `SECURITY.md`
 
@@ -261,9 +261,12 @@ Users stay on old builds and report bugs already fixed, and cannot find features
 - [x] Validate trailing whitespace-only lines in `_Loader._block_scalar` before they are dropped, refusing any that hold spaces past the block's indentation. Done when: `a: |\n  text\n     \n` raises `YamlSubsetError`.
 - [x] Type-check top-level `assignees` and `projects` (a list of non-empty strings or a comma-separated string) and `type` (a non-empty string) in `form_faults`, per GitHub's top-level form syntax. Done when: `projects: true`, `assignees: 3` and `type: [bug]` each make `form_faults` return a fault.
 - [x] Add each reproduction above to `test_refuses_what_it_does_not_understand` or `test_schema_type_errors_are_caught`. Done when: the suite passes with and without PyYAML, and removing any one new check makes its case fail.
-- [ ] Commit: `tests: refuse the remaining YAML shapes and type-check top-level form keys`
+- [x] Commit: `tests: refuse the remaining YAML shapes and type-check top-level form keys`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_issue_forms` passes with PyYAML installed and with it blocked (`sys.modules['yaml'] = None`), and deleting the dash-spacing refusal makes `test_refuses_what_it_does_not_understand` fail.
+
+> **Verified:** 2026-10-21 | §8 | 7060e141e01280ad0d7ecffd66f7d32f9caf5783
+> **Review:** `docs/reviews/d07-t03-s8.json`
 
 ## 9. Gtest regression evidence from the fix commit's own CI test list
 
