@@ -103,7 +103,9 @@ export function readAgentFrontmatter(text) {
 
   // YAML admits only printable characters (tab, line breaks, and the printable ranges); a control character or a lone
   // surrogate makes the loader refuse the whole file.
-  const unprintable = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x84\x86-\x9F\uFFFE\uFFFF]|\p{Cs}/u.exec(match[1]);
+  // A bare CR, NEL, LS or PS ends a line for some YAML loaders and not for this reader (which splits on LF and CRLF),
+  // so it is refused rather than read two ways.
+  const unprintable = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F\u2028\u2029\uFFFE\uFFFF]|\r(?!\n)|\p{Cs}/u.exec(match[1]);
   if (unprintable) {
     return { fields: null, error: `frontmatter holds U+${unprintable[0].codePointAt(0).toString(16).toUpperCase().padStart(4, "0")}, a character YAML refuses` };
   }

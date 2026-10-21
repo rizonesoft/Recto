@@ -143,3 +143,50 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_verify_agent_tiers` -> `Ran 5 tests`, `OK`; `node scripts/verify-agent-tiers.mjs` -> 5 definitions valid.
 
 Findings 1 to 4 (P1) were all in the readers for the nested `hooks:` block and block scalars, the fourth round in a row to find another YAML rule those readers missed. Recto's five agents use neither form (each is flat `name`, `description`, `model`, `tools`), so Recto's dialect is now flat `key: value` lines only: `hooks:`, a block scalar (`|`, `>`, with any header), or any indented continuation line refuses with a reason, and the block and hooks readers are removed. Values stay plain or quoted on one line, in YAML's printable characters, with the plain-scalar and quote rules from rounds 1 and 2 (`test_nested_blocks_and_block_values_are_refused`, `test_quoted_values_yaml_refuses_are_refused`).
+
+## Round 4: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T20:37:16Z
+- Effort: medium
+- Lines: 32
+- Digest: 8c1baa728d35daaf
+
+## adversarial: needs-attention
+
+1. **P1: Bare carriage returns hide malformed YAML and duplicate fields.** `scripts/verify-agent-tiers.mjs:111` splits only on LF or CRLF; line 118 then skips everything beginning with `#`, including content after a bare CR. Reproduce with this string, where `\r` is an actual carriage return:
+
+   ```text
+   ---\nname: a\nmodel: sonnet\ntools: Read\n# comment\rdescription: @bad\n---\n
+   ```
+
+   In-memory execution returned `error: null`, model `sonnet`, and no tool problems. PyYAML rejected it with `ScannerError`. Replacing `description: @bad` with `model: haiku` also passes the checker as Sonnet, while PyYAML reads Haiku. Reject unsupported line endings before skipping comments, or tokenize all YAML line endings consistently.
+
+## consistency: approve
+
+No additional findings.
+
+## integration: needs-attention
+
+Finding 1 bypasses the frontmatter gate: an accepted definition can fail YAML loading or expose a different model field to the consumer. Actual Claude Code loading was not exercised.
+
+## source-defect: needs-attention
+
+Finding 1 conflicts with [YAML 1.2.2 section 5.4](https://yaml.org/spec/1.2.2/#54-line-break-characters), which recognizes a bare CR as a line break. Restricting frontmatter to flat mappings does not resolve this tokenizer mismatch.
+
+## design: advisory
+
+No user-facing surface changed.
+
+## record: advisory
+
+Ran `python -B -m unittest tests.scripts.test_verify_agent_tiers`: all five tests passed despite the reproduced bypass. The recorded guard-suite results were not independently rerun because its fixtures write files. No files were modified; Git status was clean.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 4
+
+`python -m unittest tests.scripts.test_verify_agent_tiers` -> `OK` (the new cases fail against `76330ff`); `node scripts/verify-agent-tiers.mjs` -> 5 definitions valid.
+
+- Finding 1 (P1): frontmatter lines end only in LF or CRLF; a bare CR, and NEL, LS or PS (line breaks to some YAML loaders), refuse, so no key can hide behind a comment or be read two ways (`# comment\rmodel: haiku`, `\x85`, ` ` cases).
