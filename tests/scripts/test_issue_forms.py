@@ -380,14 +380,15 @@ class IssueFormsTest(unittest.TestCase):
         mutated["body"] = [e for e in mutated["body"] if e.get("id") != "steps"]
         self.assertIn("required field 'steps' is missing", form_faults(mutated, BUG_REQUIRED))
 
-    def test_config_disables_blank_issues_and_links_security(self):
+    def test_config_disables_blank_issues_and_leaves_security_to_github(self):
         config = read_yaml(TEMPLATES / "config.yml")
         self.assertIs(config["blank_issues_enabled"], False)
-        urls = [link["url"] for link in config["contact_links"]]
-        self.assertIn(ADVISORY_URL, urls)
-        self.assertTrue(any(url.endswith("/SECURITY.md") for url in urls))
-        for link in config["contact_links"]:
-            self.assertTrue(link.get("name") and link.get("about"), link)
+        # GitHub's chooser lists "Report a security vulnerability" from SECURITY.md on its own; a contact
+        # link to the same place shows the entry twice.
+        self.assertTrue(SECURITY.is_file())
+        for link in config.get("contact_links") or []:
+            self.assertNotIn("/security", link.get("url", "").lower(), link)
+            self.assertNotIn("SECURITY.md", link.get("url", ""), link)
 
 
 class LabelsTest(unittest.TestCase):
