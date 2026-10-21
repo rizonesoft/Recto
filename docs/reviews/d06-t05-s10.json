@@ -1,0 +1,29 @@
+{
+  "ref": "D06 T05 \u00a710",
+  "title": "Audit D00 T03 \u00a72: RGBA pixel comparison (expect_rgba_equal, compute_ssim) and test",
+  "implementation_sha": "50c635897a6b859fa22251aba0eedfd9298ccc6d",
+  "date": "2026-10-21",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s2.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    ".\\build.cmd -> x64 and ARM64 Debug/Release 0 Warning(s) 0 Error(s); 102 tests passed",
+    "recto-tests.exe --gtest_filter=Support.* -> 14 tests passed; overflow test fails with its guard removed"
+  ],
+  "rounds_spent": 3,
+  "round_cap": 22
+}
