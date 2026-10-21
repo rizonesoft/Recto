@@ -179,10 +179,12 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
             f"receipt does not match its stamp: {ref}")
     rounds = data.get("reviews")
     require(isinstance(rounds, list) and rounds and all(
-        isinstance(r, dict) and isinstance(r.get("round"), int)
+        isinstance(r, dict) and type(r.get("round")) is int and r["round"] >= 1
         and isinstance(r.get("report"), str) and r["report"]
         and isinstance(r.get("verdict"), str) and r["verdict"] in VERDICTS for r in rounds),
         f"receipt has no valid review rounds (verdict one of {', '.join(sorted(VERDICTS))}): {ref}")
+    require(all(r["round"] > SEVERITY_CUTOFF_ROUND for r in rounds if r["verdict"] == "stopped-low-severity"),
+            f"stopped-low-severity is allowed only after round {SEVERITY_CUTOFF_ROUND}: {ref}")
     if root is not None:
         root_path = Path(root)
         root_resolved = root_path.resolve()
@@ -208,6 +210,12 @@ def receipt_data_ok(data, ref, stamp_sha, root=None):
         spent, cap = data.get("rounds_spent"), data.get("round_cap")
         require(type(spent) is int and spent >= max(r["round"] for r in rounds) and type(cap) is int and cap >= 1,
                 f"receipt rounds_spent or round_cap is invalid: {ref}")
+        if root is not None:
+            # A claimed round is one the dispatcher recorded with a reviewer, not just any text in the report.
+            for r in rounds:
+                reviewed = re.search(rf"^## Round {r['round']}: (?!none\b)\S", read_text(Path(root) / r["report"]), re.M)
+                require(reviewed is not None,
+                        f"round {r['round']} is not a reviewed round in {r['report']}: {ref}")
         stopped = any(r["verdict"].startswith("stopped-") for r in rounds)
         outcome = data.get("cap_outcome")
         require((isinstance(outcome, str) and bool(outcome.strip())) == stopped,
@@ -309,6 +317,8 @@ def graph(root=ROOT):
         rows, orders = {}, []
         for line in table.splitlines():
             if not line.startswith("|"):
+                # A row written without its leading pipe would otherwise vanish from the graph.
+                require("|" not in line, f"implementation table line without a leading pipe: {relative}")
                 continue
             m = ROW.fullmatch(line)
             if not m:
@@ -347,6 +357,8 @@ def graph(root=ROOT):
             deps = [] if dep == "--" else [normalize(v, d, t) for v in dep.split(",")]
             require(len(deps) == len(set(deps)), f"duplicate dependency: {ref}")
             for line in section_body.splitlines():
+                # A numbered checkbox (1. [ ] ...) is a checklist item the graph would not count: refuse it.
+                require(re.match(r"^\s*\d+[.)]\s*\[[ xX]\]", line) is None, f"numbered checklist item: {ref}")
                 if re.match(r"^\s*[-*+]\s*\[(?![^\]]+\]\()", line):
                     require(re.fullmatch(r"- \[([ x])\] \S.*", line) is not None,
                             f"malformed checklist item: {ref}")
@@ -387,6 +399,7 @@ def graph(root=ROOT):
                     f"checkbox/stamp/receipt mismatch: {ref}")
             if done:
                 require(all(x[0] == "x" for x in checks), f"unfinished stamped checklist: {ref}")
+                require(not set(needs) & WAITING, f"stamped section has a waiting Need: {ref}")
                 m = re.fullmatch(r"\d{4}-\d{2}-\d{2} \| §" + str(n) + r" \| ([0-9a-f]{40})", stamp_line)
                 require(m is not None, f"invalid stamp: {ref}")
                 if head_commits is None:
@@ -699,7 +712,7 @@ def stamp(root, ref, sha, reviews, checks, date, sync_plan=False, cap_outcome=No
         graph(root)
         if sync_plan or original_plan_bytes is not None:
             projections(root, sync=True)
-    except Exception:
+    except BaseException:  # an interrupt between writes must roll back as an error does
         receipt_path.unlink(missing_ok=True)
         try:
             if not path.is_file() or path.read_bytes() != original_bytes:
