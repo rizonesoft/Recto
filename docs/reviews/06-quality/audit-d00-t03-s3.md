@@ -1016,3 +1016,52 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_corpus` -> `Ran 31 tests`, `OK` (`test_earlier_revisions_are_validated_once_each` fails against `97f42a8`); `python scripts/build-corpus.py --check` -> `verified: 39 corpus fixtures ... are current`.
 
 - Finding 1 (P2): each earlier revision is validated once, with `earlier_revisions=False`, so its own earlier revisions are not validated again: linear, not exponential, in the number of revisions.
+
+## Round 20: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-21T21:03:48Z
+- Effort: medium
+- Lines: 30
+- Digest: 1d53937f408d940a
+
+## adversarial: approve
+
+No new findings.
+
+## consistency: approve
+
+No findings.
+
+## integration: approve
+
+No findings.
+
+## source-defect: approve
+
+No findings.
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: needs-attention
+
+1. **P3: Provenance misstates the table dimensions.** `scripts/build-corpus.py:2992` describes a “Ruled 4x5 financial table”, propagated to `tests/corpus/PROVENANCE.md:20`. The fixture contains four rows and three columns, with a merged header. Reproduce by generating `build_tables_and_forms()` in memory and decompressing object 4: the outer rectangle has three internal horizontal separators and two vertical separators. Correct the generator’s description, which currently misleads fixture selection.
+
+Independently reran the checkpoint: exit 0, all 39 fixtures current. All 28 read-only tests passed; three filesystem-writing tests were excluded. Two in-memory generations matched, and total corpus size was 60,176 bytes. Revision probes confirmed exactly 12, 40 and 80 validation calls for those respective revision counts.
+
+No files were modified. An unrelated change to `docs/reviews/guard-and-agent-tiers.md` appeared during review. This P3-only round meets the stated loop-stop condition.
+
+HIGHEST: P3
+OVERALL: needs-attention
+
+## Stop after round 20
+
+Round 20 returned one finding, tagged P3, and declared `HIGHEST: P3`; from round 9 on that ends the loop (`stopped-low-severity`).
+
+- Finding 1 (P3): the `convert/tables-and-forms.pdf` description now matches the fixture (a ruled table of 4 rows and 3 columns with a merged header row, a borderless 3x3 table, and the AcroForm fields); only `tests/corpus/PROVENANCE.md` was regenerated, every fixture's bytes unchanged. Landed after the stop; nothing left to file. `python scripts/build-corpus.py --check` -> current; `recto-tests.exe --gtest_filter=Corpus.*` -> `[  PASSED  ] 4 tests.`.
+
+## Outcome
+
+- The stamp of `D00 T03 §3` is confirmed with corrections: `python scripts/build-corpus.py --check` passes and all 39 fixtures are byte-for-byte reproducible and unchanged. Over 20 rounds the structural validator was rebuilt from text searches into a check of the generator's own PDF dialect: a strict value grammar (plain keys, typed values, generation 0), a forward object walk, every stream length and xref offset tied to a parsed object, cross-reference coverage with exact free entries, `/Size` and `/Root` resolution, object-stream offsets and declarations, a byte-for-byte layout check, and each earlier revision validated as the PDF it was. The encryption validators' remaining text searches belong to `D00 T03 §4` and its audit (`D06 T05 §12`). No downstream stamp is suspect.

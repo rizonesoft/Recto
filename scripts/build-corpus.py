@@ -2989,7 +2989,7 @@ CORPUS_PURPOSES: dict[str, str] = {
     "render/encrypted-aes-256.pdf": "PDF 2.0 Standard Security Handler V=5 R=6 256-bit AES-CBC (Algorithm 2.B + /Perms) PDF",
     "text/two-column-links-outline.pdf": "Two-column article layout with hyphenation, /Outlines tree, and /URI + /Dest links",
     "text/scanned.pdf": "Image-only scanned 300 DPI page without /Font resources for OCR pipeline testing",
-    "convert/tables-and-forms.pdf": "Ruled 4x5 financial table and AcroForm /Tx, /Btn, and /Ch interactive fields",
+    "convert/tables-and-forms.pdf": "Ruled 4-row, 3-column table with a merged header row, a borderless 3x3 table, and AcroForm /Tx, /Btn, and /Ch fields",
     "convert/sample.docx": "Minimal ECMA-376 WordprocessingML document with two plain paragraphs",
     "convert/sample.xlsx": "Minimal ECMA-376 SpreadsheetML workbook with inline-string and numeric cells",
     "broken/empty-0b.pdf": "Zero-byte file testing empty-input error handling",
