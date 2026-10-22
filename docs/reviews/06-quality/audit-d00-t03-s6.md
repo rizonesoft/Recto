@@ -82,3 +82,42 @@ OVERALL: needs-attention
 `python -m unittest tests.scripts.test_build_ps1` -> `Ran 5 tests`, `OK`; with the `Copy-Item` removed from the staging function, `test_the_imported_runtime_is_staged` fails; with a stray `}` appended to `build.ps1`, `test_the_scripts_parse` fails. `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN` and `-Configuration Debug -EnableASAN` -> exit 0, `[  PASSED  ] 102 tests.`, `Staged for recto-tests: clang_rt.asan_dynamic-x86_64.dll` (and for `recto-cli`), Release `0 Warning(s)`.
 
 - Finding 1 (P3): the staging is now `Copy-AsanRuntime` in `build/asan-runtime.ps1` (tracked beside `build.ps1`, which dot-sources it), and the test drives the real function with a fake `dumpbin` and temporary folders: it stages exactly the imported DLL (not the other one present), refuses an executable that imports none, and refuses a missing runtime. A parse check for both scripts was added after my own edit left a stray brace in `build.ps1` during this fix (caught by the Release ASan run before any commit). PowerShell is on GitHub's Ubuntu and Windows runners, so `plan-gates` runs these tests.
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T00:33:45Z
+- Effort: medium
+- Lines: 28
+- Digest: 0d808986edc94836
+
+### adversarial: approve
+
+No actionable defect found in the current staging implementation.
+
+### consistency: approve
+
+No section-owned rule violation found.
+
+### integration: approve
+
+No demonstrated regression in the section’s integration points.
+
+### source-defect: approve
+
+No remaining runtime-naming defect against [Microsoft’s ASan runtime specification](https://learn.microsoft.com/en-us/cpp/sanitizers/asan-runtime?view=msvc-170).
+
+### design: advisory
+
+Not applicable. No user surface.
+
+### record: advisory
+
+`docs/reviews/06-quality/audit-d00-t03-s6.md:10`: Full checkpoint verification remains incomplete in this audit. Existing Release logs report zero warnings/errors, and the XML records 102 passing tests. I independently verified the executable’s ASan DLL import and ran `Support.AsanActiveWhenEnabled` with `RECTO_EXPECT_ASAN=1`; it passed.
+
+The build and behavioural staging tests were not rerun because they write files. The cited CI run could not be verified: `gh run view 39697676260` failed through the configured proxy. These are verification limits, not demonstrated implementation defects.
+
+HIGHEST: none
+OVERALL: approve
+
+CI on the round 2 fix: build run `39700317776` on `12ba7d3` -> `Build x64 Release with AddressSanitizer and run recto-tests: success`, `Build x64 & ARM64 and run recto-tests: success`.
