@@ -1,0 +1,119 @@
+Running main() from D:\a\Recto\Recto\vcpkg_installed\x64-windows\vcpkg\blds\gtest\src\v1.18.0-e6987f02b9.clean\googletest\src\gtest_main.cc
+Corpus.
+  Provenance
+  DetectsUnlistedAndCorruptedFiles
+  RejectsUnlistedOrModifiedFile
+  ProvenanceParserRejectsMalformedRows
+PdfCrypto.
+  ParseEncryptDict
+  CorpusRc4AndAes128AndAes256UnlockAndDecrypt
+  EmptyUserPasswordAutoUnlock
+  SaslprepAndTruncatedAesCiphertext
+  OutOfMemoryFaultInjection
+  Exemptions
+  PermissionsBitmask
+PdfDisplayList.
+  CommandRecordingAndContiguousStorage
+  PathRecording
+  DecodedBitmapZeroCopySharing
+  ContentBounds
+  StrokeBoundsAndCapsMitersTransforms
+  PolygonAndEvenOddClippingBounds
+  GlyphInkBoundsDescendersOverhangsAndSpaces
+  TransparentOperationsExcludedFromContentBounds
+  ConfigurableBudgetsAndStatePreservation
+  RejectsMalformedAndNonFiniteInputs
+  AccessorBoundaryValidation
+  SaveDepthOverflowPreventsPublication
+  OneShotFinishSemantics
+  LiveDisplayListsCounter
+  ConcurrentRead
+  CurvedClipAndRoundCapExactBoundsBetweenSamplePoints
+  DashPatternPhaseOddLengthAndGapClipping
+  GlyphRunInterGlyphClipAndImageMaskCoverage
+  FiniteInputTransformationOverflowRejected
+  ClipDepthGeometryWorkAndFaultInjection
+PdfDocument.
+  OpenAndAuthenticate
+  PageTreeAndRotatedPages
+  PageContents
+  Metadata
+  OutlinesAndNamedDests
+  LinksAndRefusedActions
+  FontInventory
+  BrokenCorpusSweep
+PdfError.
+  ValueOrReturnsAValue
+  EtwProviderEnabledOnlyByASession
+  EtwRefusedWritesAreCounted
+  ResultValueAndError
+  DiagnosticRingWraparound
+  ConcurrentDiagnosticRecording
+  EtwTraceLoggingProviderAndSpans
+PdfFilters.
+  FlateDecode
+  LzwDecode
+  Predictors
+  AsciiFilters
+  CorpusImageSeedsDecode
+  RunLengthDecode
+  ChainedPipeline
+  CcittGroup4
+  CcittGroup3AndBlackIs1
+  Jbig2Decode
+  ConcurrentWicDecode
+  DctRgbAndCmyk
+PdfLexer.
+  WhitespaceAndComments
+  Numbers
+  LiteralStrings
+  HexStrings
+  Names
+  StreamEolRule
+  TruncationSweep
+PdfObject.
+  AllTenVariantKindsAndAccessors
+  NumericPromotion
+  DictHelpersAndNullValueElision
+  RectAndMatrixNormalization
+  StringEncoding
+  DeepCloneIsolationAndDepthLimit
+PdfParser.
+  PrimitivesAndComments
+  IndirectRefsAndIntegers
+  ArraysAndDicts
+  RecursionLimit
+  IndirectObjects
+  Streams
+  OutOfMemoryAndResolverExceptions
+  TruncationSweep
+PdfXref.
+  ClassicSimple1pAndMultiSubsection
+  HeaderOffsetAdjustment
+  ClassicHeaderOffsetAdjustment
+  IncrementalTwoRevisions
+  CyclicPrevAndRevisionCeiling
+  CyclicIndirectRef
+  XrefStreamUnpack
+  ObjectStream
+  DamagedRecovery
+  RejectsBrokenFiles
+Scaffold.
+  PdfEngineReportsAbiVersionOne
+  CoreReportsThePdfEngineAbi
+  ServicesReportTheCoreAbi
+Support.
+  CorpusPathResolution
+  TempDirCleanup
+  TempDirLongPathAndReadOnly
+  PixelComparison
+  PixelStridePadding
+  SsimCalculation
+  SsimWeighsEdgeBlocksByArea
+  RgbaDiffReportsFirstAndMaxDelta
+  RgbaSizeOverflowRefused
+  Sha256FileStreamsAcrossChunks
+  Sha256Hex
+  ResultMacros
+  AsanActiveWhenEnabled
+  AsanInstrumentation
