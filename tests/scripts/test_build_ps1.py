@@ -101,9 +101,9 @@ MSBUILD = _msbuild() if sys.platform == "win32" else None
 
 @unittest.skipUnless(MSBUILD, "needs MSBuild (Windows with Visual Studio)")
 class LibraryPathDefaults(unittest.TestCase):
-    """RectoDropAbsentUnusedLibraryPaths in Directory.Build.targets, run by MSBuild on a throwaway project: it drops the
-    ATL/MFC and .NET Framework library defaults only when absent, and keeps every other entry, an absent one included,
-    in order."""
+    """RectoDropAbsentUnusedLibraryPaths in Directory.Build.targets, run by MSBuild on a throwaway project through the
+    dependency chain the toolset sets LIB with: it drops the ATL/MFC and .NET Framework library defaults only when
+    absent, and keeps every other entry, an absent one included, in order."""
 
     def library_path(self, platform: str, atl_exists: bool) -> list[str]:
         with tempfile.TemporaryDirectory() as tmp:
@@ -123,10 +123,16 @@ class LibraryPathDefaults(unittest.TestCase):
     <LibraryPath>{kept};{atl};{mistyped};{netfx}\\lib\\um\\{platform.lower()};</LibraryPath>
   </PropertyGroup>
   <Import Project="{ROOT / 'Directory.Build.targets'}" />
+  <!-- Shaped like the toolset's SetBuildDefaultEnvironmentVariables (Microsoft.Cpp.Current.targets): it depends on
+       $(SetBuildDefaultEnvironmentVariablesDependsOn) and copies LibraryPath into LIB, so the probe sees what LIB
+       would hold only if Directory.Build.targets hooks its target into that chain. -->
+  <Target Name="ProbeSetLib" DependsOnTargets="$(SetBuildDefaultEnvironmentVariablesDependsOn)">
+    <PropertyGroup><ProbeLIB>$(LibraryPath)</ProbeLIB></PropertyGroup>
+  </Target>
 </Project>
 """, encoding="utf-8")
-            run = subprocess.run([MSBUILD, str(proj), "-nologo", "-t:RectoDropAbsentUnusedLibraryPaths",
-                                  "-getProperty:LibraryPath"], capture_output=True, text=True, timeout=300)
+            run = subprocess.run([MSBUILD, str(proj), "-nologo", "-t:ProbeSetLib", "-getProperty:ProbeLIB"],
+                                 capture_output=True, text=True, timeout=300)
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
             names = {str(kept): "kept", str(atl): "atl", str(mistyped): "mistyped"}
             return [names.get(p, "netfx" if p.endswith("um\\" + platform.lower()) else p)
