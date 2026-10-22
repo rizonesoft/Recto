@@ -132,12 +132,12 @@ std::string logical_source(const std::string& raw_with_bom)
 		} else if (c == '/' && next == '*') {
 			i += 2;
 			while (i + 1 < spliced.size() && !(spliced[i] == '*' && spliced[i + 1] == '/')) {
-				if (spliced[i] == '\n') {
-					out.push_back('\n');
-				}
 				++i;
 			}
 			++i;
+			// One space for the whole comment, newlines inside it included: a comment
+			// that spans lines does not split the directive around it. Line numbers
+			// in a finding are therefore those of the comment-free text.
 			out.push_back(' ');
 		} else if (c == '"' && !out.empty() && out.back() == 'R' && raw_string_end(spliced, i) != std::string::npos) {
 			// R"delim( ... )delim": the body is opaque, whatever quotes or comment openers it holds.
@@ -371,7 +371,7 @@ RECTO_UI_TEST(Project, IncludeBoundary)
 		"#include UI_HEADER\n");
 	write_text(scratch.path() / "src" / "ui" / "planted_bom.cpp", "\xEF\xBB\xBF#include \"recto_pdf.h\"\n");
 	write_text(scratch.path() / "src" / "ui" / "planted_splice.cpp", "#inc\\\nlude \"recto_pdf.h\"\n");
-	write_text(scratch.path() / "src" / "pdf" / "planted_pdf.cpp", "#include <recto/ui/ui.h>\n#include \"document.h\"\n#include /* toolkit */ \"../ui/include/recto/ui/ui.h\"\n");
+	write_text(scratch.path() / "src" / "pdf" / "planted_pdf.cpp", "#include <recto/ui/ui.h>\n#include \"document.h\"\n#include /* toolkit */ \"../ui/include/recto/ui/ui.h\"\n#include /* a comment\nspanning lines */ \"../ui/include/recto/ui/ui.h\"\n");
 	write_text(scratch.path() / "src" / "core" / "planted_core.cpp", "#include \"../ui/application.h\"\n");
 	write_text(scratch.path() / "src" / "services" / "planted_services.h", "// #include <recto/ui/ui.h> in a comment is not an include\n#  include \"recto/ui/theme.h\"\n");
 
@@ -382,7 +382,7 @@ RECTO_UI_TEST(Project, IncludeBoundary)
 	}
 	const std::set<std::string> expected = {
 		"planted_ui.cpp:4", "planted_ui.cpp:5", "planted_ui.cpp:6", "planted_ui.cpp:7", "planted_ui.cpp:8", "planted_ui.cpp:9",
-		"planted_ui.cpp:10", "planted_ui.cpp:12", "planted_ui.cpp:14", "planted_ui.cpp:16", "planted_bom.cpp:1", "planted_splice.cpp:1", "planted_pdf.cpp:1", "planted_pdf.cpp:3", "planted_core.cpp:1",
+		"planted_ui.cpp:10", "planted_ui.cpp:12", "planted_ui.cpp:14", "planted_ui.cpp:16", "planted_bom.cpp:1", "planted_splice.cpp:1", "planted_pdf.cpp:1", "planted_pdf.cpp:3", "planted_pdf.cpp:4","planted_core.cpp:1",
 		"planted_services.h:2"};
 	EXPECT_EQ(caught, expected) << describe(planted);
 }
