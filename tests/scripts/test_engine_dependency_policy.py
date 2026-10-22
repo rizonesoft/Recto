@@ -7,10 +7,10 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import unittest
-import urllib.parse
 import xml.etree.ElementTree as ElementTree
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
@@ -90,28 +90,38 @@ REVIEWED_OFFICE_UNITS = frozenset({
     # The find options' "Whole word", not Microsoft Word.
     "Whole word",
 })
-# The suites' pages, read from every link a board holds (href, src, action, formaction), decoded and parsed, so an
-# entity or a localized path cannot hide one: any LibreOffice, Office or Microsoft 365 host, or a Microsoft page whose
-# path names Microsoft 365 or Office.
+# The suites' pages, read from every link a board holds (href, src, action, formaction), entities decoded, and each
+# resolved by Node's WHATWG URL parser, the algorithm browsers use, so an entity, a percent-encoded or full-width host,
+# extra slashes, backslashes or user info cannot disguise one: any LibreOffice, Office, Microsoft 365 or Office 365
+# host, or a Microsoft page whose path names Microsoft 365 or Office (localized paths included).
 OFFICE_HOSTS = ("libreoffice.org", "office.com", "microsoft365.com", "office365.com")
 LINK_ATTRIBUTES = {"href", "src", "action", "formaction"}
+NODE = shutil.which("node")
+_RESOLVE_URLS = (
+    "const urls = JSON.parse(require('fs').readFileSync(0, 'utf8'));"
+    "process.stdout.write(JSON.stringify(urls.map(u => { try { const p = new URL(u, 'https://recto.invalid/');"
+    " return [p.hostname, decodeURIComponent(p.pathname)]; } catch { return ['', '']; } })));")
 
 
-def office_install_link(url: str) -> bool:
-    parts = urllib.parse.urlsplit(url.strip())
-    # The host as a browser resolves it: percent-decoded, then IDNA-mapped (which also folds case and full-width
-    # dots), so www.%6cibreoffice.org and LIBREOFFICE\uff0eORG are libreoffice.org.
-    host = urllib.parse.unquote(parts.hostname or "")
-    try:
-        host = host.encode("idna").decode("ascii")
-    except UnicodeError:
-        pass
-    host = host.lower().rstrip(".")
-    if any(host == h or host.endswith("." + h) for h in OFFICE_HOSTS):
-        return True
-    path = urllib.parse.unquote(parts.path).lower()
-    return (host == "microsoft.com" or host.endswith(".microsoft.com")) and bool(
-        re.search(r"(^|/)(microsoft-365|office|office-365)(/|$)", path))
+def resolve_urls(urls: list[str]) -> list[tuple[str, str]]:
+    """(hostname, path) for each URL as a browser resolves it, relative ones against a placeholder host."""
+    if not urls:
+        return []
+    run = subprocess.run([NODE, "-e", _RESOLVE_URLS], input=json.dumps(urls), capture_output=True, text=True,
+                         encoding="utf-8", timeout=60, check=True)
+    return [tuple(pair) for pair in json.loads(run.stdout)]
+
+
+def office_install_links(urls: list[str]) -> list[str]:
+    """The URLs among urls that lead to an Office suite's pages."""
+    found = []
+    for url, (host, path) in zip(urls, resolve_urls(urls)):
+        host = host.lower().rstrip(".")
+        if any(host == h or host.endswith("." + h) for h in OFFICE_HOSTS) or (
+                (host == "microsoft.com" or host.endswith(".microsoft.com"))
+                and re.search(r"(^|/)(microsoft-365|office|office-365)(/|$)", path.lower())):
+            found.append(url)
+    return found
 
 
 # How rendered text breaks into units: inline elements (and a word-break opportunity, <wbr>) do not break words, a line
@@ -245,6 +255,7 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                 for text in texts:
                     self.assertIsNone(MUPDF.search(text))
 
+    @unittest.skipUnless(NODE, "needs Node.js for browser URL parsing")
     def test_design_boards_name_no_mupdf_agpl_or_office_dependency(self):
         # The mockup sources and their rendered HTML describe Recto: its engine is recto-pdf (D3) and its licence
         # GPL-3.0-or-later (D2), so no board may present MuPDF, its components or AGPL as Recto's (D06 T05 §25).
@@ -260,20 +271,23 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                 # Recto converts Office files with its own engines (D5, D7, D10): no board may present Office or
                 # LibreOffice as a converter Recto needs (D06 T05 §28).
                 self.assertIsNone(office_dependency(text))
-                self.assertEqual([url for url in board_links(text) if office_install_link(url)], [])
+                self.assertEqual(office_install_links(board_links(text)), [])
 
+    @unittest.skipUnless(NODE, "needs Node.js for browser URL parsing")
     def test_office_install_links_are_found_however_written(self):
         for markup in ('<a href="https://www.microsoft.com/en-us/microsoft-365">Install converter</a>',
                        '<a href="https://www.libreoffice&#46;org/">Install converter</a>',
                        "<a href=https://www.office.com>Get it</a>", '<form action="https://download.libreoffice.org/x">',
                        '<a href="https://www.%6cibreoffice.org/download/download-libreoffice/">Install converter</a>',
-                       '<a href="https://WWW.LIBREOFFICE\uff0eORG/">Install converter</a>'):
+                       '<a href="https://WWW.LIBREOFFICE\uff0eORG/">Install converter</a>',
+                       '<a href="https:///www.libreoffice.org/download/">Install converter</a>',
+                       '<a href="https://www.libreoffice.org\\@example.com/download/">Install converter</a>'):
             with self.subTest(markup=markup):
-                self.assertTrue(any(office_install_link(url) for url in board_links(markup)))
+                self.assertTrue(office_install_links(board_links(markup)))
         for markup in ('<a href="https://learn.microsoft.com/windows/apps/windows-app-sdk/">Docs</a>',
                        '<a href="https://github.com/rizonesoft/Recto">Source</a>'):
             with self.subTest(markup=markup):
-                self.assertFalse(any(office_install_link(url) for url in board_links(markup)))
+                self.assertFalse(office_install_links(board_links(markup)))
 
     def test_office_dependency_wording_is_refused(self):
         for markup in ("<p>Get LibreOffice (free)</p>", "<p>Get Libre<span>Office</span></p>",
