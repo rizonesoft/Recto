@@ -109,3 +109,49 @@ OVERALL: needs-attention
 - Mutations now restore with `cp` and `touch`, and both mutants were re-run on rebuilt objects: x64 Debug `PdfError.*` -> `0 Warning(s)`, `[  PASSED  ] 7 tests.`
 
 Gates after round 2: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 106 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfError.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 7 tests.`; `python -m unittest tests.scripts.test_etw_registration` -> `OK`.
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T05:31:01Z
+- Effort: medium
+- Lines: 28
+- Digest: 4a0fcdb726b4362a
+
+### adversarial: needs-attention
+
+1. **P3** `src/pdf/error.cpp:927`: Timestamps are sampled before acquiring the ring lock, so the promised chronological ordering can disagree with the stored timestamps. Reproduce by suspending thread A after timestamp acquisition, allowing thread B to record a later timestamp, then resuming A. The tail returns B before A, with decreasing timestamps. The concurrent test checks sequence numbers only. This is a static interleaving, not an executed reproduction.
+
+### consistency: approve
+
+No additional findings.
+
+### integration: approve
+
+No additional findings.
+
+### source-defect: needs-attention
+
+2. **P2** `src/pdf/error.cpp:961`: Every diagnostic, including malformed-document and resource-limit errors, implicitly uses ETW’s default **Verbose** level. An ordinary Error- or Warning-level collection therefore excludes these errors. Reproduce by enabling `Recto.Diagnostics` at `WINEVENT_LEVEL_ERROR`, then calling `make_pdf_error(ErrorCode::DamagedFormat, "bad token")`: the ring records it, but ETW filters out the diagnostic. The tests force Verbose enablement and miss this. Microsoft documents the omitted-level default as 5. [TraceLoggingWrite documentation](https://learn.microsoft.com/en-us/windows/win32/api/traceloggingprovider/nf-traceloggingprovider-traceloggingwrite)
+
+### design: advisory
+
+Not applicable: no user surface.
+
+### record: needs-attention
+
+3. **P3** `tests/recto-tests/pdf_error_tests.cpp:704`: The span/concurrency test still verifies attempted writes without asserting that `etw_write_failures()` stayed unchanged. The round-2 correction covers sequential diagnostics, but leaves span rejection undetected. Reproduce in a test harness by injecting `ERROR_INVALID_PARAMETER` during `EtwTraceLoggingProviderAndSpans`: captured packets and attempted-write counts still satisfy its assertions. This is a static coverage finding; no mutation was performed.
+
+Checkpoint verification at `a20d27c`: the full filter aborted because Google Test’s death-test helper could not create a temporary file, reporting access denied. Excluding `EtwProviderEnabledOnlyByASession`, six `PdfError` tests and `Support.AsanActiveWhenEnabled` passed, reporting `ASan=enabled`. Both Python registration checks passed. A warning-free rebuild, binary/source correspondence, and the complete checkpoint were not independently established. No files were modified.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 3
+
+- Finding 2 (P2): `Diagnostic` events are written at `WINEVENT_LEVEL_ERROR` (each one is a `PdfError` handed to a caller), so an Error-level session collects them; `SpanStart` and `SpanEnd` say `WINEVENT_LEVEL_VERBOSE` explicitly (tracing detail). The capture seam records the descriptor's level (`CapturedEtwEvent::level`), and `EtwTraceLoggingProviderAndSpans` asserts 2 for the diagnostic and 5 for the span. With the Error level removed from the diagnostic it fails (`Which is: '\x5' (5)` against 2).
+- Finding 1 (P3): the timestamp is taken under the ring lock with the sequence number, so time follows sequence order. `ConcurrentDiagnosticRecording` asserts non-decreasing timestamps across the tail. This check can only fail when an inversion happens to occur (millisecond resolution), so it guards rather than proves; the ordering itself now holds by construction.
+- Finding 3 (P3): both the sequential and the concurrent parts of `EtwTraceLoggingProviderAndSpans` assert `etw_write_failures()` is unchanged, so a refused span write fails them (the counter's own sensitivity is proven by `EtwRefusedWritesAreCounted`).
+- The reviewer's sandbox could not run `EtwProviderEnabledOnlyByASession` (gtest's death-test helper needs a temporary file and the read-only sandbox refused it); it runs in the gates below.
+
+Gates after round 3: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 106 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfError.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 7 tests.`

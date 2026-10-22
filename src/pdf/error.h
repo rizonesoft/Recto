@@ -1138,6 +1138,7 @@ struct CapturedEtwEvent {
 	std::string provider_name;
 	std::string event_name;
 	std::vector<std::string> field_names;
+	uint8_t level{0}; // the ETW level the event was written at (WINEVENT_LEVEL_*)
 	uint64_t sequence{0};
 	uint32_t error_code{0};
 	std::string error_code_name;

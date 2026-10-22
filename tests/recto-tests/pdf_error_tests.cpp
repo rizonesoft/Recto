@@ -5,6 +5,7 @@
 
 #include <windows.h>
 #include <evntrace.h>
+#include <winmeta.h>
 
 
 #include <gtest/gtest.h>
@@ -561,6 +562,10 @@ TEST(PdfError, ConcurrentDiagnosticRecording)
 		EXPECT_EQ(
 			final_tail[idx].sequence,
 			(kThreadCount * kOpsPerThread) - kDiagnosticRingCapacity + idx + 1);
+		if (idx > 0) {
+			// Time follows sequence order: both are assigned under the ring lock.
+			EXPECT_LE(final_tail[idx - 1].timestamp_utc_ms, final_tail[idx].timestamp_utc_ms);
+		}
 	}
 }
 
@@ -580,6 +585,7 @@ TEST(PdfError, EtwTraceLoggingProviderAndSpans)
 	set_etw_capture_for_testing(true);
 
 	const uint64_t spans_before = etw_span_events_emitted();
+	const uint64_t span_failures_before = etw_write_failures();
 	{
 		// Construct with a temporary std::string to prove EtwSpan resolves to a
 		// closed EtwPhaseId across the scope until ~EtwSpan() emits SpanEnd.
@@ -598,12 +604,14 @@ TEST(PdfError, EtwTraceLoggingProviderAndSpans)
 	set_etw_capture_for_testing(false);
 
 	EXPECT_EQ(etw_span_events_emitted() - spans_before, 4u);
+	EXPECT_EQ(etw_write_failures(), span_failures_before); // Windows accepted every write
 	const auto captured = captured_etw_events_for_testing();
 	ASSERT_EQ(captured.size(), 5u);
 
 	// 1. SpanStart for OpenDocument
 	EXPECT_EQ(captured[0].provider_name, "Recto.Diagnostics");
 	EXPECT_EQ(captured[0].event_name, "SpanStart");
+	EXPECT_EQ(captured[0].level, WINEVENT_LEVEL_VERBOSE);
 	const std::vector<std::string> expected_start_fields = {
 		"Phase", "DocumentId", "PageIndex", "ThreadId"};
 	EXPECT_EQ(captured[0].field_names, expected_start_fields);
@@ -615,6 +623,7 @@ TEST(PdfError, EtwTraceLoggingProviderAndSpans)
 	// 2. Diagnostic inside the span
 	EXPECT_EQ(captured[1].provider_name, "Recto.Diagnostics");
 	EXPECT_EQ(captured[1].event_name, "Diagnostic");
+	EXPECT_EQ(captured[1].level, WINEVENT_LEVEL_ERROR); // an Error-level session collects every diagnostic
 	const std::vector<std::string> expected_diag_fields = {
 		"Sequence",
 		"ErrorCode",
@@ -662,6 +671,7 @@ TEST(PdfError, EtwTraceLoggingProviderAndSpans)
 	constexpr size_t kOpsPerThread = 1250; // 8 * 1250 = 10,000 concurrent spans & diagnostics
 	const uint64_t total_spans_start = etw_span_events_emitted();
 	const uint64_t total_diags_start = etw_diagnostic_events_emitted();
+	const uint64_t total_failures_start = etw_write_failures();
 
 	std::atomic<bool> start_flag{false};
 	std::atomic<size_t> ready_count{0};
@@ -703,6 +713,7 @@ TEST(PdfError, EtwTraceLoggingProviderAndSpans)
 	const uint64_t expected_diag_events = kThreadCount * kOpsPerThread;
 	EXPECT_EQ(etw_span_events_emitted() - total_spans_start, expected_span_events);
 	EXPECT_EQ(etw_diagnostic_events_emitted() - total_diags_start, expected_diag_events);
+	EXPECT_EQ(etw_write_failures(), total_failures_start); // Windows accepted every concurrent write
 }
 
 } // namespace

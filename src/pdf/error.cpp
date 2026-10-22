@@ -9,6 +9,7 @@
 #endif
 #include <windows.h>
 #include <evntprov.h>
+#include <winmeta.h>
 #include <intrin.h>
 
 #include <algorithm>
@@ -122,6 +123,7 @@ struct CapturedEtwSlot {
 	std::array<char, kMaxCapturedNameLen + 1> event_name{};
 	uint8_t field_count{0};
 	std::array<std::array<char, kMaxCapturedNameLen + 1>, kMaxCapturedFields> field_names{};
+	uint8_t level{0};
 	uint64_t sequence{0};
 	uint32_t error_code{0};
 	std::array<char, kMaxCapturedNameLen + 1> error_code_name{};
@@ -522,6 +524,7 @@ void parse_event_metadata_into(
 }
 
 void process_tlg_write_transfer(
+	UCHAR level,
 	ULONG user_data_count,
 	PEVENT_DATA_DESCRIPTOR user_data) noexcept
 {
@@ -557,6 +560,7 @@ void process_tlg_write_transfer(
 	}
 
 	CapturedEtwSlot slot{};
+	slot.level = level;
 	extract_provider_name_into(slot.provider_name, user_data[0]);
 	parse_event_metadata_into(slot, user_data[1]);
 	const std::string_view parsed_name(slot.event_name.data());
@@ -609,7 +613,7 @@ extern "C" ULONG WINAPI RectoTlgEventWriteTransfer(
 	ULONG UserDataCount,
 	PEVENT_DATA_DESCRIPTOR UserData) noexcept
 {
-	recto::pdf::process_tlg_write_transfer(UserDataCount, UserData);
+	recto::pdf::process_tlg_write_transfer(EventDescriptor ? EventDescriptor->Level : 0, UserDataCount, UserData);
 	// What Windows answers is counted too: an event counted as emitted but refused by EventWriteTransfer is a failure
 	// the tests can see (etw_write_failures).
 	const ULONG injected = recto::pdf::detail::g_etw_injected_write_status.load(std::memory_order_acquire);
@@ -892,6 +896,7 @@ std::vector<CapturedEtwEvent> captured_etw_events_for_testing() noexcept
 			for (uint8_t f = 0; f < s.field_count; ++f) {
 				ev.field_names.emplace_back(s.field_names[f].data());
 			}
+			ev.level = s.level;
 			ev.sequence = s.sequence;
 			ev.error_code = s.error_code;
 			ev.error_code_name = s.error_code_name.data();
@@ -924,7 +929,6 @@ void record_diagnostic(
 {
 	ensure_etw_provider_registered();
 
-	const uint64_t ts_ms = current_utc_timestamp_ms();
 	const uint32_t tid = static_cast<uint32_t>(GetCurrentThreadId());
 
 	uint64_t assigned_seq = 0;
@@ -933,7 +937,7 @@ void record_diagnostic(
 		DiagnosticSlot& slot = g_ring_slots[g_ring_write_index];
 		assigned_seq = g_ring_next_sequence++;
 		slot.sequence = assigned_seq;
-		slot.timestamp_utc_ms = ts_ms;
+		slot.timestamp_utc_ms = current_utc_timestamp_ms(); // under the lock, so time follows sequence order
 		slot.thread_id = tid;
 		slot.code = code;
 		slot.diagnostic_id = diagnostic_id;
@@ -961,6 +965,7 @@ void record_diagnostic(
 	TraceLoggingWrite(
 		g_recto_etw_provider,
 		"Diagnostic",
+		TraceLoggingLevel(WINEVENT_LEVEL_ERROR), // every diagnostic is a PdfError returned to a caller
 		TraceLoggingUInt64(assigned_seq, "Sequence"),
 		TraceLoggingUInt32(code_u32, "ErrorCode"),
 		TraceLoggingString(code_name_str, "ErrorCodeName"),
@@ -1094,6 +1099,7 @@ EtwSpan::EtwSpan(
 	TraceLoggingWrite(
 		g_recto_etw_provider,
 		"SpanStart",
+		TraceLoggingLevel(WINEVENT_LEVEL_VERBOSE), // tracing detail
 		TraceLoggingString(etw_phase_cstr(phase_id_), "Phase"),
 		TraceLoggingUInt64(document_id_, "DocumentId"),
 		TraceLoggingUInt32(page_index_, "PageIndex"),
@@ -1114,6 +1120,7 @@ EtwSpan::~EtwSpan() noexcept
 	TraceLoggingWrite(
 		g_recto_etw_provider,
 		"SpanEnd",
+		TraceLoggingLevel(WINEVENT_LEVEL_VERBOSE),
 		TraceLoggingString(etw_phase_cstr(phase_id_), "Phase"),
 		TraceLoggingUInt64(duration_us, "DurationUs"),
 		TraceLoggingUInt64(document_id_, "DocumentId"),
