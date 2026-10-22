@@ -2642,8 +2642,8 @@ def _validate_jpeg_baseline(rel_path: str, data: bytes, width: int, height: int,
                 symbols = body[at + 17 : at + 17 + sum(counts)]
                 if len(counts) != 16 or len(symbols) != sum(counts):
                     raise ValueError(f"{rel_path}: JPEG DHT table cut short")
-                if tc_th >> 4 > 1 or tc_th & 0x0F > 3:
-                    raise ValueError(f"{rel_path}: JPEG DHT class or id out of range")
+                if tc_th >> 4 > 1 or tc_th & 0x0F > 1:  # baseline: table ids 0 and 1 only (T.81 Table B.5)
+                    raise ValueError(f"{rel_path}: JPEG DHT class or id out of range for baseline")
                 codes, code = {}, 0
                 for bits_len, count in enumerate(counts, 1):
                     for _ in range(count):
@@ -2761,10 +2761,11 @@ def _validate_jpx_codestream(rel_path: str, data: bytes, width: int, height: int
             if length != 12:
                 raise ValueError(f"{rel_path}: JPX COD length {length} is not 12 (no precinct sizes)")
             scod, order, layers, mct, levels, xcb, ycb, style, transform = struct.unpack(">BBHBBBBBB", body)
-            if (scod, order, layers, mct, levels, style, transform) != (0, 0, 1, 0, 0, 0, 1) \
-                    or xcb > 8 or ycb > 8 or xcb + ycb > 8:
+            # 64x64 code-blocks (exponents 4 + 2) cover the 8x8 tile in one, the single code-block the packet reader
+            # reads; smaller blocks would need a code-block grid and real tag trees.
+            if (scod, order, layers, mct, levels, xcb, ycb, style, transform) != (0, 0, 1, 0, 0, 4, 4, 0, 1):
                 raise ValueError(f"{rel_path}: JPX COD is not one layer, no transform, no decomposition (one resolution, "
-                                 f"so one packet), valid code-blocks and 5-3 reversible")
+                                 f"so one packet), 64x64 code-blocks (one per tile) and 5-3 reversible")
         elif marker == 0x5C:
             # QCD (T.800 A.6.4): no quantization (style 0, for the reversible transform), one exponent byte per subband.
             if levels is None:

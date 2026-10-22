@@ -859,6 +859,20 @@ class BuildCorpusTests(unittest.TestCase):
             with self.subTest(packet=packet), self.assertRaisesRegex(ValueError, says):
                 self.mod.validate_jpx_codestream("x", with_packet(packet), 8, 8)
 
+    def test_jpx_single_code_block_and_baseline_huffman_ids(self) -> None:
+        p = bytearray(self.mod.make_minimal_jpx_8x8_gray())
+        c = p.index(b"\xff\x52")
+        p[c + 10 : c + 12] = b"\x00\x00"  # 4x4 code-blocks: four in the tile
+        p[-3] = 0xE0
+        with self.assertRaisesRegex(ValueError, "64x64 code-blocks"):
+            self.mod.validate_jpx_codestream("x", bytes(p), 8, 8)
+        j = bytearray(self.mod.make_minimal_jpeg_8x8_rgb())
+        d, s = j.index(b"\xff\xc4"), j.index(b"\xff\xda")
+        j[d + 4] = 2  # the first DC table becomes id 2, and the scan names it
+        j[s + 6] = 0x20
+        with self.assertRaisesRegex(ValueError, "baseline"):
+            self.mod.validate_jpeg_baseline("x", bytes(j), 8, 8, 3)
+
     def test_jpx_cod_qcd_and_packet_are_read(self) -> None:
         jpx = self.mod.make_minimal_jpx_8x8_gray()
         cod, qcd = jpx.index(b"\xFF\x52"), jpx.index(b"\xFF\x5C")
