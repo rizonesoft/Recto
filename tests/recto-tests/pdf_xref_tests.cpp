@@ -237,6 +237,43 @@ TEST(PdfXref, RecoveryChargesFailedObjStmDecodes)
 	pdf += "trailer\n<< /Size 8 /Root 1 0 R >>\n%%EOF\n";
 	RECTO_EXPECT_ERR(XrefTable::recover_damaged_xref(as_bytes(pdf), 16), ErrorCode::DecompressionLimitExceeded);
 
+	// A container behind an image filter (JBIG2 here: a 2048 x 2048 page, then a truncated segment) is never decoded
+	// by recovery, so no unmetered raster allocation happens; the catalog still recovers.
+	std::string jbig2;
+	const auto be32 = [&](uint32_t v) {
+		for (int s = 24; s >= 0; s -= 8) {
+			jbig2.push_back(static_cast<char>((v >> s) & 0xFF));
+		}
+	};
+	be32(1);
+	jbig2 += std::string("\x30\x00\x01", 3);
+	be32(19);
+	be32(2048);
+	be32(2048);
+	be32(0);
+	be32(0);
+	jbig2 += std::string("\x00\x00\x00\x00", 4);
+	std::string image_pdf = base.substr(0, base.find("trailer"));
+	for (uint32_t n = 5; n < 8; ++n) {
+		image_pdf += std::to_string(n) + " 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Filter /JBIG2Decode /Length " +
+			std::to_string(jbig2.size()) + " >>\nstream\n" + jbig2 + "\nendstream\nendobj\n";
+	}
+	image_pdf += "trailer\n<< /Size 8 /Root 1 0 R >>\n%%EOF\n";
+	{
+		detail::ScopedDecodeWorkMeter outer;
+		auto image_rec = XrefTable::recover_damaged_xref(as_bytes(image_pdf), 16);
+		RECTO_ASSERT_OK(image_rec);
+		EXPECT_EQ(image_rec->root_ref(), (IndirectRef{1u, 0u}));
+		EXPECT_EQ(outer.bytes(), 0u);
+	}
+	PdfDict lossless;
+	lossless.set(PdfName::from_decoded("Filter"),
+		PdfValue(PdfArray{PdfValue(PdfName::from_decoded("AHx")), PdfValue(PdfName::from_decoded("FlateDecode"))}));
+	EXPECT_TRUE(filters_are_metered_lossless(lossless));
+	lossless.set(PdfName::from_decoded("Filter"), PdfValue(PdfName::from_decoded("DCTDecode")));
+	EXPECT_FALSE(filters_are_metered_lossless(lossless));
+	EXPECT_TRUE(filters_are_metered_lossless(PdfDict{}));
+
 	// The meter itself counts a decode that fails after expanding.
 	std::string one = failing_container(5);
 	const size_t z_at = one.find("stream\n") + 7;

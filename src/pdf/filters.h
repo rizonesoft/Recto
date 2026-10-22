@@ -194,6 +194,12 @@ using DecodedImage = WicDecodedImage;
 	size_t max_decoded_bytes = kMaxDecodedStreamBytes,
 	const IndirectObjectResolver* resolver = nullptr) noexcept;
 
+// Whether every stage of `stream_dict`'s /Filter (a direct name or array of names; none at all counts) is one of the
+// general-purpose lossless filters whose output detail::ScopedDecodeWorkMeter measures: FlateDecode, LZWDecode,
+// ASCIIHexDecode, ASCII85Decode, RunLengthDecode or their abbreviations. Image filters (DCT, JPX, JBIG2, CCITT) are
+// not: their raster buffers are allocated outside the meter, and they never produce PDF syntax.
+[[nodiscard]] bool filters_are_metered_lossless(const PdfDict& stream_dict) noexcept;
+
 namespace detail {
 
 // Measures decoding work on this thread: the output capacity every decoder that can expand its input (Flate, LZW,

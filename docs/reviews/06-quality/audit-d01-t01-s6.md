@@ -335,3 +335,46 @@ OVERALL: needs-attention
 - Finding 2 (P3): correct. Round 6's "no post-scan reads" had no test that fails if reads return, because the reads would produce the same answer. Work that produces the same answer is invisible at run time, so the guard is on the source, as for §15's ETW registration: `tests/scripts/test_recovery_post_scan.py` asserts the post-scan catalog step calls no reader, parser, decoder or `file_bytes` and consults `catalog_names`. It fails on `7b3f62d` (`read_indirect_object`, `file_bytes`), and `plan-gates` runs it.
 
 Gates after round 7: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 124 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*:PdfCrypto.*:PdfFilters.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 52 tests.`; `python -m unittest tests.scripts.test_recovery_post_scan` -> `OK`.
+
+## Round 8: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T13:08:09Z
+- Effort: xhigh
+- Lines: 28
+- Digest: 445177a4a3f9dd2f
+
+### adversarial: needs-attention
+
+1. **P1: Failed JBIG2 decodes still bypass recovery’s cumulative work budget.** `src/pdf/filters.cpp:2453` allocates bitmap output with `data.assign`, bypassing `reserve_metered`. Recovery at `src/pdf/xref.cpp:909` consequently charges zero when that decoder subsequently fails.
+
+   Reproduce with an intact uncompressed catalog, missing `startxref`, and three `/ObjStm` containers using `/N 1 /First 4 /Filter /JBIG2Decode /Length 31`. Each payload is a JBIG2 Page Information segment declaring a 2048 × 2048 page, followed by one byte that triggers “Truncated JBIG2 segment header”:
+
+   ```python
+   struct.pack(">IBBBI", 1, 48, 0, 1, 19) + struct.pack(">IIIIBH", 2048, 2048, 0, 0, 0, 0) + b"\0"
+   ```
+
+   Each attempt allocates and initializes 512 KiB before returning `DamagedFormat`. `recover_damaged_xref(bytes, 16)` therefore succeeds after 1.5 MiB of output allocation despite its 1 MiB cumulative budget. Scaling to 1,024 containers with 8192 × 8192 pages causes 8 GiB of allocation work while charging zero. This is separate from §29 and §30. The reproduction is source-traced, not executed.
+
+### consistency: approve
+
+### integration: approve
+
+### source-defect: approve
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: advisory
+
+The existing Release binary passed all 16 `PdfXref.*` tests plus ASan activation (`ASan=enabled`). Graph validation, the generated-plan check, and the post-scan source guard passed. No fresh compilation was performed, so this verifies the available binary rather than independently establishing a build from `6b0bcbe`. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 8
+
+- Finding 1 (P1): correct. The meter covered every decoder's output reservation, but the image decoders allocate their raster buffers elsewhere (JBIG2's page bitmap here), so a container behind an image filter could fail with its work uncharged. Metering every image buffer would chase allocation sites one round at a time. The rule instead closes the class: an object stream holds PDF syntax, which only the general-purpose lossless filters produce, so recovery (a speculative path) decodes a container only when `filters_are_metered_lossless` holds for its whole filter chain (`FlateDecode`, `LZWDecode`, `ASCIIHexDecode`, `ASCII85Decode`, `RunLengthDecode` and their abbreviations, all metered). Any other container is recorded as `DamagedStream` damage and left undecoded. Normal resolution is unchanged. JBIG2's page bitmap now also counts on the meter, which is what lets the test see an attempted decode. `PdfXref.RecoveryChargesFailedObjStmDecodes` adds three JBIG2 containers declaring 2048 x 2048 pages: recovery skips them, the catalog recovers, and the meter stays at zero. With the round 7 recovery it fails (the attempted decodes exhaust the budget). `filters_are_metered_lossless` is checked for an abbreviated chain, an image filter and no filter.
+
+Gates after round 8: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 124 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*:PdfCrypto.*:PdfFilters.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 52 tests.`

@@ -2451,6 +2451,9 @@ struct Jbig2Bitmap {
 		bm.height = h;
 		bm.stride = row_stride;
 		bm.data.assign(static_cast<size_t>(total_bytes), default_pixel ? 0xFFu : 0x00u);
+		if (detail::g_decode_work_meter != nullptr) {
+			*detail::g_decode_work_meter += bm.data.size(); // bitmaps count as decode work too
+		}
 		if (default_pixel && (w & 7u) != 0u) {
 			const uint8_t mask = static_cast<uint8_t>(0xFFu << (8u - (w & 7u)));
 			for (uint32_t y = 0; y < h; ++y) {
@@ -9524,6 +9527,25 @@ namespace {
 }
 
 } // namespace
+
+bool filters_are_metered_lossless(const PdfDict& stream_dict) noexcept
+{
+	static constexpr std::array<std::string_view, 10> kMetered = {
+		"FlateDecode", "Fl", "LZWDecode", "LZW", "ASCIIHexDecode", "AHx", "ASCII85Decode", "A85", "RunLengthDecode",
+		"RL"};
+	const auto metered = [](const PdfValue& v) {
+		const auto name = v.as_name();
+		return name.has_value() && std::find(kMetered.begin(), kMetered.end(), *name) != kMetered.end();
+	};
+	const PdfValue* filter = stream_dict.get("Filter");
+	if (filter == nullptr || filter->is_null()) {
+		return true;
+	}
+	if (const PdfArray* arr = filter->as_array()) {
+		return std::all_of(arr->begin(), arr->end(), metered);
+	}
+	return metered(*filter);
+}
 
 PdfResult<std::vector<uint8_t>> decode_stream(
 	std::span<const uint8_t> raw_bytes,

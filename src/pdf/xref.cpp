@@ -891,6 +891,13 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 									if (!ov_res.has_value()) {
 										return ov_res.error();
 									}
+								} else if (type_opt.has_value() && *type_opt == "ObjStm" && gen_num == 0u &&
+									!filters_are_metered_lossless(sdict)) {
+									// Recovery decodes a container only through filters whose work the decode meter
+									// measures, so its cumulative budget holds; an image-filtered container cannot hold
+									// PDF syntax anyway. It is recorded as damage and left undecoded.
+									record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream,
+										static_cast<uint64_t>(pos), obj_num, gen_num);
 								} else if (type_opt.has_value() && *type_opt == "ObjStm" && gen_num == 0u) {
 									// Also unpack any intact generation-0 `/Type /ObjStm` stream discovered during
 									// recovery so compressed objects inside object streams remain accessible and
