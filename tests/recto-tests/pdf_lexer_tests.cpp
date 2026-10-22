@@ -371,6 +371,17 @@ TEST(PdfLexer, LiteralStrings)
 		EXPECT_EQ(lex.next_token().value().bytes, expected_0053);
 	}
 
+	// 3a. Single-digit octal escapes, ended by the string or by a non-octal byte, and a backslash before a byte that
+	// starts no escape, which is ignored (ISO 32000-1 section 7.3.4.2).
+	{
+		const auto buf = to_bytes("(\\5) (\\5X) (\\7\\0) (\\8)");
+		Lexer lex(buf);
+		EXPECT_EQ(lex.next_token().value().bytes, (std::vector<uint8_t>{0x05u}));
+		EXPECT_EQ(lex.next_token().value().bytes, (std::vector<uint8_t>{0x05u, 'X'}));
+		EXPECT_EQ(lex.next_token().value().bytes, (std::vector<uint8_t>{0x07u, 0x00u}));
+		EXPECT_EQ(lex.next_token().value().bytes, (std::vector<uint8_t>{'8'}));
+	}
+
 	// 1b. ISO 32000-1 section 7.3.4.2, examples 1 and 2 as printed (raw newlines inside strings, a brace and a
 	// percent sign in text, and backslash-newline continuations).
 	{

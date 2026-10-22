@@ -94,3 +94,46 @@ OVERALL: needs-attention
 - Finding 1 (P3): correct. `PdfLexer.LiteralStrings` now carries section 7.3.4.2 examples 1 and 2 exactly as printed (all six example 1 strings, including raw newlines, the balanced parentheses with `(*!&}^% and so on)`, the empty string, and both example 2 strings with backslash-newline continuations). With examples 3 and 4 from round 1 and example 5's octal forms already present, every example in the section is covered. They pass on the existing lexer, so this closes a coverage gap rather than a decoding defect. The correction note in `D01 T01 §3` says examples 1 to 4.
 
 Gates after round 2: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 108 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfLexer.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 8 tests.`
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T06:49:10Z
+- Effort: medium
+- Lines: 28
+- Digest: 414fed2e117121e6
+
+## adversarial: approve
+
+No behavioral or hostile-input defect established.
+
+## consistency: approve
+
+No findings.
+
+## integration: approve
+
+No findings.
+
+## source-defect: approve
+
+No additional mismatch established against the [ISO literal-string examples](https://opensource.adobe.com/dc-acrobat-sdk-docs/standards/pdfstandards/pdf/PDF32000_2008.pdf) or [PDF 2.0 syntax errata](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html).
+
+## design: advisory
+
+Not applicable; this section owns no user surface.
+
+## record: needs-attention
+
+1. **P3: Single-digit octal decoding lacks the promised test coverage.** `tests/recto-tests/pdf_lexer_tests.cpp:357` claims coverage of one-, two- and three-digit octal escapes, but the inputs at line 359 contain only two- and three-digit escapes. Reproduce by inspecting every octal input in this file: `\539` consumes two octal digits; `\0053` consumes three. Neither tests a single-digit escape. Add byte assertions for PDF strings such as `(\5)` and `(\5X)`, expecting `0x05` and `0x05, 0x58`. This leaves the “every ... escape sequence” requirement at `todo/01-engine/TODO-01-bridge-runtime.md:141` incompletely evidenced. No decoding failure is demonstrated.
+
+Checkpoint verification at `28ef3aa`: the existing executable passed eight lexer tests, eight parser tests and `Support.AsanActiveWhenEnabled`, reporting `ASan=enabled`. Current-source build provenance, ARM64 compilation and zero compiler warnings remain unverified because rebuilding would modify files.
+
+HIGHEST: P3
+OVERALL: needs-attention
+
+## Fixes after round 3
+
+- Finding 1 (P3): correct. `PdfLexer.LiteralStrings` adds single-digit octal escapes ended by the string (`(\5)` -> `05`), by a non-octal byte (`(\5X)` -> `05 58`), and back to back (`(\7\0)` -> `07 00`), plus a backslash before a byte that starts no escape (`(\8)` -> `8`, ISO 32000-1 section 7.3.4.2). They pass on the existing lexer: a coverage gap, not a decoding defect.
+
+Gates after round 3: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 108 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfLexer.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 8 tests.`
