@@ -66,6 +66,7 @@ Write-Host "MSBuild:    $msbuild"
 Write-Host "VCPKG_ROOT: $env:VCPKG_ROOT"
 
 . (Join-Path $PSScriptRoot 'asan-runtime.ps1')
+. (Join-Path $PSScriptRoot 'msbuild-log.ps1')
 $asanBinDir = $null
 if ($EnableASAN) {
     $vcToolsRoot = Join-Path $vs 'VC\Tools\MSVC'
@@ -119,6 +120,9 @@ foreach ($plat in $Platform) {
         }
         & $msbuild @msbuildArgs
         if ($LASTEXITCODE -ne 0) { throw "build failed: $cfg|$plat (exit $LASTEXITCODE)" }
+        # A warning from any tool MSBuild runs (not only the compiler, which /WX already stops) fails the build: the
+        # build is warning-free on x64 and ARM64 by contract (D00 T01 §3, D06 T05 §27).
+        Assert-NoMSBuildWarnings -LogFile $logFile -What "$cfg|$plat"
 
         if ($EnableASAN -and $plat -eq 'x64') {
             foreach ($exeProj in @('recto-tests', 'recto-cli')) {

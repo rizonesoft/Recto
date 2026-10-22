@@ -8,6 +8,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 BUILD_PS1 = ROOT / "build" / "build.ps1"
 ASAN_RUNTIME_PS1 = ROOT / "build" / "asan-runtime.ps1"
+MSBUILD_LOG_PS1 = ROOT / "build" / "msbuild-log.ps1"
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
 
 
@@ -54,10 +55,40 @@ class AsanRuntimeStaging(unittest.TestCase):
         self.assertIn("ASan runtime DLL not found", output)
 
 
+@unittest.skipUnless(POWERSHELL, "needs PowerShell")
+class MSBuildWarningCheck(unittest.TestCase):
+    """Assert-NoMSBuildWarnings on sample logs: a warning from any tool fails the build, as does a log with no
+    summary; a clean log passes."""
+
+    def check(self, log_text: str) -> subprocess.CompletedProcess:
+        with tempfile.TemporaryDirectory() as tmp:
+            log = pathlib.Path(tmp) / "msbuild.log"
+            log.write_text(log_text, encoding="utf-8")
+            script = f". '{MSBUILD_LOG_PS1}'; Assert-NoMSBuildWarnings -LogFile '{log}' -What 'Debug|ARM64'"
+            return subprocess.run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+                                  capture_output=True, text=True, timeout=120)
+
+    def test_a_clean_log_passes(self):
+        run = self.check("Build succeeded.\n    0 Warning(s)\n    0 Error(s)\n")
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+
+    def test_a_tool_warning_fails(self):
+        run = self.check("ROSLYNCODETASKFACTORYCSHARPCOMPILER : warning CS1668: Invalid search path 'X'\n"
+                         "Build succeeded.\n    1 Warning(s)\n    0 Error(s)\n")
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIn("1 warning(s)", run.stdout + run.stderr)
+        self.assertIn("CS1668", run.stdout + run.stderr)
+
+    def test_a_log_without_a_summary_fails(self):
+        run = self.check("Build started.\n")
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIn("no warning summary", run.stdout + run.stderr)
+
+
 class BuildScript(unittest.TestCase):
     @unittest.skipUnless(POWERSHELL, "needs PowerShell")
     def test_the_scripts_parse(self):
-        for script in (BUILD_PS1, ASAN_RUNTIME_PS1):
+        for script in (BUILD_PS1, ASAN_RUNTIME_PS1, MSBUILD_LOG_PS1):
             check = (f"$errors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile('{script}', "
                      f"[ref]$null, [ref]$errors); $errors | ForEach-Object {{ $_.Message }}; exit $errors.Count")
             run = subprocess.run([POWERSHELL, "-NoProfile", "-Command", check], capture_output=True, text=True,
@@ -69,6 +100,8 @@ class BuildScript(unittest.TestCase):
         text = BUILD_PS1.read_text(encoding="utf-8")
         self.assertIn(". (Join-Path $PSScriptRoot 'asan-runtime.ps1')", text)
         self.assertIn("Copy-AsanRuntime -ExePath $exe", text)
+        self.assertIn(". (Join-Path $PSScriptRoot 'msbuild-log.ps1')", text)
+        self.assertIn("Assert-NoMSBuildWarnings -LogFile $logFile", text)
         self.assertNotIn("asan_dbg_dynamic", text)
 
 

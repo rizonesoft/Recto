@@ -33,4 +33,25 @@
       <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
     </Link>
   </ItemDefinitionGroup>
+  <!-- Library folders Recto builds against are the ones that exist. The toolset's default LibraryPath names the
+       ATL/MFC and .NET Framework 4.8 library folders for every platform whether or not they are installed (on ARM64
+       they usually are not), and Recto links neither. SetBuildDefaultEnvironmentVariables copies LibraryPath into
+       LIB, so an absent folder there made the C# compiler behind vcpkg's inline MSBuild tasks warn CS1668
+       (D06 T05 §27). This runs just before LIB is set. -->
+  <PropertyGroup>
+    <SetBuildDefaultEnvironmentVariablesDependsOn>$(SetBuildDefaultEnvironmentVariablesDependsOn);RectoKeepExistingLibraryPaths</SetBuildDefaultEnvironmentVariablesDependsOn>
+  </PropertyGroup>
+  <Target Name="RectoKeepExistingLibraryPaths">
+    <ItemGroup>
+      <_RectoLibraryPath Include="$(LibraryPath)" />
+      <_RectoExistingLibraryPath Include="@(_RectoLibraryPath)" Condition="Exists('%(Identity)')" />
+    </ItemGroup>
+    <PropertyGroup>
+      <LibraryPath>@(_RectoExistingLibraryPath)</LibraryPath>
+    </PropertyGroup>
+    <ItemGroup>
+      <_RectoLibraryPath Remove="@(_RectoLibraryPath)" />
+      <_RectoExistingLibraryPath Remove="@(_RectoExistingLibraryPath)" />
+    </ItemGroup>
+  </Target>
 </Project>
