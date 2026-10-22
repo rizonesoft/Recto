@@ -249,13 +249,17 @@ SPLIT_NAME = re.compile(
              ("libreoffice", "office", "word", "excel", "powerpoint")), re.IGNORECASE)
 
 
+SUITE_ANYWHERE = re.compile(r"libre\s*office|microsoft\s*(office|365)|office\s*com", re.IGNORECASE)
+
+
 def suite_across_elements(markup: str) -> str | None:
     """A suite name anywhere in the board's visible text with every element boundary removed ("Install Microsoft"
     and "365 to convert" in two flex items read "Microsoft365"), or None."""
     parser = _VisibleText()
     parser.feed(markup)
     parser.close()
-    m = OFFICE_SUITE.search(" ".join("".join(parser.marked).replace("\x01", "").split()))
+    # No word boundary here: joining erases the space before a name ("Install" + "Microsoft" reads "InstallMicrosoft").
+    m = SUITE_ANYWHERE.search(" ".join("".join(parser.marked).replace("\x01", "").split()))
     return m.group(0) if m else None
 
 
@@ -390,7 +394,9 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                        "<p>Install Wo<template><div title='x'>y</div></template>rd to convert documents.</p>",
                        '<div style="display:flex;gap:8px"><span>Install Microsoft</span>'
                        '<span>365 to convert documents.</span></div>',
-                       "<div>Get Microsoft</div><div>Office</div>"):
+                       "<div>Get Microsoft</div><div>Office</div>",
+                       '<div style="display:flex;gap:8px"><span>Install</span><span>Microsoft</span>'
+                       '<span>365 to convert documents.</span></div>'):
             with self.subTest(markup=markup):
                 self.assertIsNotNone(office_dependency(markup))
         for markup in ("<p>Office to PDF is built in.</p>", "<td>PDF to Word</td><td>needs a password</td>",
