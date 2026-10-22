@@ -41,7 +41,7 @@
   <Import Project="$(VcpkgRoot)\scripts\buildsystems\msbuild\vcpkg.props" Condition="Exists('$(VcpkgRoot)\scripts\buildsystems\msbuild\vcpkg.props')" />
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>..\..\src\pdf;..\..\src\core;..\..\src\services;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\src\pdf;..\..\src\core;..\..\src\services;..\..\src\ui\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <Link>
@@ -51,11 +51,13 @@
            integration's auto-link does not pull an unreferenced main. -->
       <!-- Same file names in both configurations; vcpkg puts the Debug
            build under debug/lib and its props select the directory. -->
-      <AdditionalDependencies>bcrypt.lib;gtest_main.lib;gtest.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>bcrypt.lib;d2d1.lib;windowscodecs.lib;ole32.lib;gtest_main.lib;gtest.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="test_support.h" />
+    <ClInclude Include="ui_render_harness.h" />
+    <ClInclude Include="ui_test.h" />
   </ItemGroup>
   <ItemGroup>
     <Manifest Include="recto-tests.manifest" />
@@ -74,6 +76,9 @@
     <ClCompile Include="scaffold_smoke.cpp" />
     <ClCompile Include="support_tests.cpp" />
     <ClCompile Include="test_support.cpp" />
+    <ClCompile Include="ui_render_harness.cpp" />
+    <!-- Every ui_*_tests.cpp is compiled with no project edit, so later recto-ui sections add files freely. -->
+    <ClCompile Include="ui_*_tests.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\pdf\recto-pdf.vcxproj">
@@ -84,6 +89,9 @@
     </ProjectReference>
     <ProjectReference Include="..\..\src\services\recto-services.vcxproj">
       <Project>{BC770090-4845-59C9-90FD-C6471D0DDA13}</Project>
+    </ProjectReference>
+    <ProjectReference Include="..\..\src\ui\recto-ui.vcxproj">
+      <Project>{DC06AE43-AD42-4200-81C2-CB2E3893EC23}</Project>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VcpkgRoot)\scripts\buildsystems\msbuild\vcpkg.targets" Condition="Exists('$(VcpkgRoot)\scripts\buildsystems\msbuild\vcpkg.targets')" />

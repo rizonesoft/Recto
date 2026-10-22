@@ -86,7 +86,7 @@ if ($EnableASAN) {
 }
 
 New-Item -ItemType Directory -Path (Join-Path $root 'build') -Force | Out-Null
-$asanProjects = @('recto-pdf', 'recto-core', 'recto-services', 'recto-cli', 'recto-tests')
+$asanProjects = @('recto-pdf', 'recto-core', 'recto-services', 'recto-ui', 'recto-cli', 'recto-tests')
 
 foreach ($plat in $Platform) {
     foreach ($cfg in $Configuration) {
@@ -116,7 +116,7 @@ foreach ($plat in $Platform) {
             '/nologo'
         )
         if ($EnableASAN) {
-            $msbuildArgs += '-t:recto-pdf;recto-core;recto-services;recto-cli;recto-tests'
+            $msbuildArgs += '-t:recto-pdf;recto-core;recto-services;recto-ui;recto-cli;recto-tests'
             Write-Host "=== Recto $cfg|$plat (ASan)"
         } else {
             Write-Host "=== Recto $cfg|$plat"
