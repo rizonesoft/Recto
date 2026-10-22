@@ -131,3 +131,50 @@ OVERALL: needs-attention
 - Findings 4 and 5 (P1): conformance features filed with their codecs. Retained JBIG2 symbol-dictionary contexts (flag bits 8 and 9, T.88 7.4.2.2) join `D06 T05 §31`, and JPX region-of-interest scaling (`RGN`, T.800 A.6.3, Annex H) joins `D06 T05 §32`, each with its own checklist item and test.
 
 Gates after round 2: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 125 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 18 tests.` (the 256-byte budget case refuses in Release as in Debug).
+
+## Round 3: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T14:36:38Z
+- Effort: xhigh
+- Lines: 30
+- Digest: 96d0009c25e50e15
+
+## adversarial: needs-attention
+
+The following reproductions are source-derived and were not executed against the native decoder.
+
+1. **[P1] JBIG2 MMR transition buffers remain outside the memory budget.** `src/pdf/filters.cpp:2782`: unlike the CCITT entry point, this path never bounds transition storage. Reproduce with a 1 MiB limit, an 8×2 page, and a 131000×2 MMR region: encode alternating one-pixel runs in row one and repeated `V(0)` operations in row two. The dimension guard accepts 1,048,000 bytes, but the bitmap and two transition buffers require at least 1,080,742 bytes, before capacity growth and other allocations.
+
+2. **[P1] Text-region symbol references can multiply unbudgeted memory.** `src/pdf/filters.cpp:4673`, `:5059`: every referred dictionary appends its symbol pointers without a cumulative size check. Reproduce with a dictionary exporting 1,024 one-pixel symbols and a text region listing that dictionary 1,024 times. At a 1 MiB ceiling, `syms` alone reaches 8 MiB on x64 before payload validation. With 65,536 references it exceeds the default 256 MiB ceiling. Huffman decoding additionally allocates `sbsymcodes` from this unchecked count.
+
+3. **[P1] Tiny MMR halftones can trigger billions of unnecessary compositing iterations.** `src/pdf/filters.cpp:5663`, `:5681`, `:2517`: compositing traverses each entire pattern even when its horizontal extent is completely outside the destination. Reproduce with two 255×255 patterns, a 255×255 region, `HGW=1048576`, `HGH=1`, `HGX=HGY=0`, `HRX=1`, `HRY=0`, and an all-white MMR grid selecting pattern zero. Dimensions pass, but rendering performs 68,183,654,400 inner iterations. This requires neither arithmetic coding nor `HENABLESKIP`.
+
+## consistency: approve
+
+## integration: needs-attention
+
+4. **[P1] Round 2’s `/Decode` resolution introduces memory amplification before type validation.** `src/pdf/filters.cpp:9551`, `:9552`, `:9569`: referenced values are retained and deeply cloned before checking that they are numbers. `src/pdf/object.cpp:248` copies string bytes during cloning. Reproduce with a small JPEG and a `/Decode` array containing 64 references to one 8 MiB string. The accepted 64-element bound permits at least 512 MiB of cloned strings, plus retained resolver results and another array clone, without charging the 256 MiB budget. The malformed mapping is only discarded afterwards.
+
+## source-defect: advisory
+
+5. **[P2, owned by D06 T05 §31] Halftone grid vectors are incorrectly signed.** `src/pdf/filters.cpp:5565`: `HRX` and `HRY` pass through `int16_t`, although [T.88 Table 20](https://www.itu.int/rec/dologin_pub.asp?id=T-REC-T.88-200002-S%21%21PDF-E&lang=e&type=items) defines unsigned 16-bit values. Reproduce with two black 1×1 patterns, a 129×1 region, a 2×1 all-zero index grid, and `HRX=0x8000`, `HRY=0`. Expected placements are x=0 and x=128; Recto places the second at x=-128 and clips it.
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: advisory
+
+The existing x64 Release binary passed all 18 `PdfFilters.*` tests and `Support.AsanActiveWhenEnabled`, reporting `ASan=enabled`. Graph validation reported `valid: 687 sections`; the plan check reported `plan current`. No rebuild was performed, so current x64/ARM64 compilation and warning claims were not independently reverified. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 3
+
+- Finding 4 (P1): correct, and a regression from my round 2 fix: `/Decode` elements were resolved and deep-cloned before their type was checked, so 64 references to one 8 MiB string retained and copied 512 MiB. Each element now resolves one level and only its number is kept; the first element that is not a number drops the whole mapping, as a malformed direct array does. No resolved object is retained or copied. The only difference from round 2 is memory retained, which no output observes, so this rests on the construction (a number per element, nothing else stored), stated here rather than claimed as tested.
+- Finding 1 (P1): correct. JBIG2 MMR regions lacked CCITT's bound on the two transition buffers. They now get the same bound. `PdfFilters.CcittAndMmrBounds` refuses a one-row MMR region 200,000 pixels wide at a 1 MiB ceiling (its bitmap fits, its transition buffers do not), and the round 2 code accepts it.
+- Finding 2 (P1), finding 3 (P1) and finding 5 (P2): fixed at their sites. Each symbol a text region refers to is charged (its pointer and Huffman code entry), compositing visits only the part of a source that lands inside the destination, and `HRX`/`HRY` are read unsigned (T.88 7.4.5.1, Table 20). These three shipped without a test that fails before them, because each needs a hand-built JBIG2 fixture (a text region listing a dictionary many times, a halftone grid far outside its region, an `HRX=0x8000` grid). Those fixtures are owed, each required to fail with its fix reverted, and are filed with a systematic JBIG2 allocation-and-loop pass as `D06 T05 §35`. JBIG2 has yielded a new resource site in each of rounds 2 and 3, and §35 replaces site-by-site discovery with an inventory.
+
+Gates after round 3: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 125 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 18 tests.`; `python scripts/todo-graph.py validate` -> `valid: 688 sections`.

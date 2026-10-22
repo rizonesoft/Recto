@@ -2514,16 +2514,16 @@ struct Jbig2Bitmap {
 		int32_t dst_y,
 		uint8_t comb_op) noexcept
 	{
-		for (uint32_t sy = 0; sy < src.height; ++sy) {
-			const int64_t dy = static_cast<int64_t>(dst_y) + static_cast<int64_t>(sy);
-			if (dy < 0 || dy >= static_cast<int64_t>(height)) {
-				continue;
-			}
-			for (uint32_t sx = 0; sx < src.width; ++sx) {
-				const int64_t dx = static_cast<int64_t>(dst_x) + static_cast<int64_t>(sx);
-				if (dx < 0 || dx >= static_cast<int64_t>(width)) {
-					continue;
-				}
+		// Only the part of `src` that lands inside this bitmap is visited, so a source placed far outside costs
+		// nothing however large it is.
+		const int64_t sy_begin = std::max<int64_t>(0, -static_cast<int64_t>(dst_y));
+		const int64_t sy_end = std::min<int64_t>(src.height, static_cast<int64_t>(height) - dst_y);
+		const int64_t sx_begin = std::max<int64_t>(0, -static_cast<int64_t>(dst_x));
+		const int64_t sx_end = std::min<int64_t>(src.width, static_cast<int64_t>(width) - dst_x);
+		for (int64_t sy = sy_begin; sy < sy_end; ++sy) {
+			const int64_t dy = static_cast<int64_t>(dst_y) + sy;
+			for (int64_t sx = sx_begin; sx < sx_end; ++sx) {
+				const int64_t dx = static_cast<int64_t>(dst_x) + sx;
 				const uint8_t s = src.get_pixel(static_cast<int32_t>(sx), static_cast<int32_t>(sy));
 				const uint8_t d = get_pixel(static_cast<int32_t>(dx), static_cast<int32_t>(dy));
 				uint8_t r = d;
@@ -2776,6 +2776,14 @@ private:
 	RECTO_PDF_TRY(Jbig2Bitmap bm, Jbig2Bitmap::create(width, height, 0u, effective_limit));
 
 	if (mmr) {
+		// The two transition buffers (an `int32_t` per change, at most one per column) are working memory held to
+		// the same ceiling as the bitmap, as in CCITTFaxDecode.
+		if (static_cast<uint64_t>(width) > effective_limit / (2ULL * sizeof(int32_t))) {
+			return make_filter_error(
+				ErrorCode::DecompressionLimitExceeded,
+				DiagnosticId::DecompressionLimitExceeded,
+				"JBIG2 MMR region width exceeds the working-memory ceiling for row transitions");
+		}
 		MsbBitReader reader{
 			payload,
 			(inout_mmr_bit_offset != nullptr) ? *inout_mmr_bit_offset : 0u};
@@ -4675,6 +4683,10 @@ struct Jbig2DecoderState {
 				const auto it = state.symbol_dicts.find(ref_id);
 				if (it != state.symbol_dicts.end()) {
 					for (const auto& s : it->second) {
+						// Each reference costs its pointer and a Huffman code entry, so listing a dictionary many
+						// times cannot grow these tables past the budget.
+						RECTO_PDF_RETURN_IF_ERROR(state.account_bytes(
+							sizeof(const Jbig2Bitmap*) + sizeof(Jbig2HuffEntry), effective_limit, seg_header_start));
 						syms.push_back(&s);
 					}
 				}
@@ -5562,10 +5574,9 @@ struct Jbig2DecoderState {
 			const uint32_t hgh = read_u32_be(seg_data.data() + 22u);
 			const int32_t hgx = read_i32_be(seg_data.data() + 26u);
 			const int32_t hgy = read_i32_be(seg_data.data() + 30u);
-			const int32_t hrx = static_cast<int32_t>(
-				static_cast<int16_t>(read_u16_be(seg_data.data() + 34u)));
-			const int32_t hry = static_cast<int32_t>(
-				static_cast<int16_t>(read_u16_be(seg_data.data() + 36u)));
+			// HRX and HRY are unsigned 16-bit values (T.88 7.4.5.1, Table 20).
+			const int32_t hrx = static_cast<int32_t>(read_u16_be(seg_data.data() + 34u));
+			const int32_t hry = static_cast<int32_t>(read_u16_be(seg_data.data() + 36u));
 			if (hgw == 0u || hgh == 0u) {
 				return make_filter_error(
 					ErrorCode::DamagedFormat,
@@ -9542,18 +9553,32 @@ constexpr size_t kMaxImageDecodeComponents = 32;
 				decode_entry = decode_in(stream_dict_context);
 			}
 			RECTO_PDF_TRY(const PdfValue* decode_value, deref(decode_entry));
-			// Its elements may be indirect numbers too; they resolve one level into a copy of the array.
+			// Its elements may be indirect numbers too. Each resolves one level and only its number is kept, so a
+			// reference to anything else (a large string, say) is never retained or copied; the first element that is
+			// not a number drops the whole mapping, as a malformed direct array does.
 			if (const PdfArray* decode_arr = decode_value != nullptr ? decode_value->as_array() : nullptr;
-				decode_arr != nullptr && decode_arr->size() <= 2u * kMaxImageDecodeComponents &&
+				can_resolve && decode_arr != nullptr && decode_arr->size() <= 2u * kMaxImageDecodeComponents &&
 				std::any_of(decode_arr->begin(), decode_arr->end(), [](const PdfValue& e) { return e.is_ref(); })) {
-				PdfArray resolved_arr;
+				PdfArray numbers;
+				bool all_numbers = true;
 				for (const PdfValue& e : *decode_arr) {
-					RECTO_PDF_TRY(const PdfValue* elem, deref(&e));
-					RECTO_PDF_TRY_REF(elem_copy, elem->deep_clone());
-					resolved_arr.push_back(std::move(elem_copy));
+					std::optional<double> n = e.as_number();
+					if (const auto elem_ref = e.as_ref()) {
+						RECTO_PDF_TRY_REF(target, (*resolver)(*elem_ref));
+						n = target.as_number();
+					}
+					if (!n.has_value()) {
+						all_numbers = false;
+						break;
+					}
+					numbers.push_back(PdfValue(*n));
 				}
-				resolved.emplace_back(std::move(resolved_arr));
-				decode_value = &resolved.back();
+				if (all_numbers) {
+					resolved.emplace_back(std::move(numbers));
+					decode_value = &resolved.back();
+				} else {
+					decode_value = nullptr;
+				}
 			}
 			bool apply_decode = decode_value != nullptr && !decode_value->is_null();
 			if (is_jpx && apply_decode) {

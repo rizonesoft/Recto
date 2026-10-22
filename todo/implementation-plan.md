@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 53 | Checklist items: 343
+Sections: 54 | Checklist items: 349
 
 | Status | Reference   | Deliverable                                                                              | Needs        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -109,6 +109,7 @@ Sections: 53 | Checklist items: 343
 | [ ]    | D06 T05 §32 | JPX per-component precision and sampling, and the full coding-style set                  | windows-host | 6     |
 | [ ]    | D06 T05 §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding                               | windows-host | 4     |
 | [ ]    | D06 T05 §34 | CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies                             | windows-host | 4     |
+| [ ]    | D06 T05 §35 | JBIG2 decoder work and memory bounded at every allocation and loop                       | windows-host | 6     |
 
 ### Phase 2: M2 Viewer
 
@@ -756,6 +757,6 @@ Sections: 4 | Checklist items: 22
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
-Progress: 54/687 verified sections, 15 ready to run now.
+Progress: 54/688 verified sections, 15 ready to run now.
 
-Checklist: 308/4909 items completed (includes Commit items).
+Checklist: 308/4915 items completed (includes Commit items).

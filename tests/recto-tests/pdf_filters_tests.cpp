@@ -4044,6 +4044,24 @@ TEST(PdfFilters, CcittAndMmrBounds)
 		};
 		RECTO_EXPECT_ERR(decode_jbig2(make_page("0000000000010000")), ErrorCode::DamagedFormat); // one EOL only
 		RECTO_ASSERT_OK(decode_jbig2(make_page("000000000001000000000001")));                 // a whole EOFB
+
+		// A one-row JBIG2 MMR region 200,000 pixels wide passes the bitmap ceiling (width x height x 4 within 1 MiB)
+		// but needs transition buffers past it: refused before decoding, as for CCITTFaxDecode.
+		std::vector<uint8_t> wide = {
+			0x97u, 0x4Au, 0x42u, 0x32u, 0x0Du, 0x0Au, 0x1Au, 0x0Au, 0x01u, 0x00u, 0x00u, 0x00u, 0x01u};
+		append_jbig2_segment(wide, 0u, 48u, {}, 1u, make_jbig2_page_info_payload(8u, 1u, 0u));
+		std::vector<uint8_t> wide_region;
+		append_u32_be(wide_region, 200000u);
+		append_u32_be(wide_region, 1u);
+		append_u32_be(wide_region, 0u);
+		append_u32_be(wide_region, 0u);
+		wide_region.push_back(0u);
+		wide_region.push_back(0x01u); // MMR
+		const auto wide_mmr = pack_bitstring("000000000001000000000001");
+		wide_region.insert(wide_region.end(), wide_mmr.begin(), wide_mmr.end());
+		append_jbig2_segment(wide, 1u, 38u, {}, 1u, wide_region);
+		append_jbig2_segment(wide, 2u, 49u, {}, 1u, {});
+		RECTO_EXPECT_ERR(decode_jbig2(wide, nullptr, 1u << 20u), ErrorCode::DecompressionLimitExceeded);
 	}
 }
 

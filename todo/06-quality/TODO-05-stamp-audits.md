@@ -65,6 +65,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 32 | §32 | JPX per-component precision and sampling, and the full coding-style set | §22 | [ ] |
 | 33 | §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding | §22 | [ ] |
 | 34 | §34 | CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies | §22 | [ ] |
+| 35 | §35 | JBIG2 decoder work and memory bounded at every allocation and loop | §22 | [ ] |
 
 ## 1. Audit D00 T01 §1: Git repository and repo-face files
 
@@ -649,6 +650,8 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 > **Deferred:** CCITT damaged-row recovery per ISO 32000-1 Table 11 -> XREF: D06 T05 §34
 
+> **Deferred:** a systematic JBIG2 work-and-memory pass, and the regression fixtures for the round-3 reference-charging, compositing-clip and unsigned HRX/HRY fixes -> XREF: D06 T05 §35
+
 **Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §8"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s8.md` ends in an approving round or a recorded stop with every finding fixed or filed.
 
 ## 23. Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6
@@ -921,6 +924,28 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 - [ ] Commit: `pdf: CCITT damaged-row recovery per ISO 32000-1 Table 11`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.CcittDamagedRowRecovery`.
+
+## 35. JBIG2 decoder work and memory bounded at every allocation and loop
+
+The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T05 §22) found a new JBIG2 resource gap in each of rounds 2 and 3: retained symbols charged only their pixel bytes, MMR transition buffers unbounded, text-region symbol references uncharged, and halftone compositing walking patterns entirely outside the page. Each was fixed where found, but one site per round is the pattern this section ends: a systematic pass over every allocation and every data-driven loop in the JBIG2 decoder, the way `D06 T05 §26` covered the corpus validator's decoders. It also owns the regression fixtures for three of those round-3 fixes, which shipped without a test that fails before them: text-region reference charging, compositing clipped to the destination, and unsigned `HRX`/`HRY` (T.88 7.4.5.1, Table 20). -> XREF: D06 T05 §22
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Inventory every allocation and every loop whose trip count comes from segment data in the JBIG2 decoder in `src/pdf/filters.cpp`, and record for each the budget or bound that holds it. Done when: the inventory is in this section's findings file with no entry unbounded.
+2. Add the missing bounds and the three owed regression fixtures. Done when: each fixture fails with its fix reverted.
+
+- [ ] Write the inventory (allocation or loop, `file:line`, the bound that holds it) for the JBIG2 decoder in `docs/reviews/06-quality/D06-T05-s35.md`. Done when: every entry names a budget charge (`state.account_bytes`, `jbig2_footprint`, the decode work meter) or a structural bound.
+- [ ] Bound each entry the inventory finds unbounded, at its owning site in `src/pdf/filters.cpp`. Done when: the inventory has no unbounded entry.
+- [ ] Add a fixture for text-region symbol references: a dictionary of many symbols listed many times by one text region at a small ceiling. Done when: it is refused with `DecompressionLimitExceeded`, and accepted with the reference charging reverted (so it fails then).
+- [ ] Add a fixture for compositing far outside the destination: a halftone grid of large patterns placed outside a small region. Done when: it decodes within a time bound, and the unclipped loop exceeds it.
+- [ ] Add a fixture for unsigned `HRX`/`HRY`: two 1x1 patterns, a 129x1 region, a 2x1 grid, `HRX=0x8000`. Done when: the second pattern lands at x=128, and the signed reading fails it.
+- [ ] Commit: `pdf: JBIG2 decoder bounded at every allocation and loop`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including the three fixtures above, and `docs/reviews/06-quality/D06-T05-s35.md` lists no unbounded entry.
 
 ## Verification
 
