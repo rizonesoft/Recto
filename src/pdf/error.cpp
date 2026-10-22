@@ -937,7 +937,8 @@ void record_diagnostic(
 		DiagnosticSlot& slot = g_ring_slots[g_ring_write_index];
 		assigned_seq = g_ring_next_sequence++;
 		slot.sequence = assigned_seq;
-		slot.timestamp_utc_ms = current_utc_timestamp_ms(); // under the lock, so time follows sequence order
+		// Wall-clock UTC for people reading the log; order is the sequence number (system time can be set back).
+		slot.timestamp_utc_ms = current_utc_timestamp_ms();
 		slot.thread_id = tid;
 		slot.code = code;
 		slot.diagnostic_id = diagnostic_id;

@@ -150,8 +150,52 @@ OVERALL: needs-attention
 ## Fixes after round 3
 
 - Finding 2 (P2): `Diagnostic` events are written at `WINEVENT_LEVEL_ERROR` (each one is a `PdfError` handed to a caller), so an Error-level session collects them; `SpanStart` and `SpanEnd` say `WINEVENT_LEVEL_VERBOSE` explicitly (tracing detail). The capture seam records the descriptor's level (`CapturedEtwEvent::level`), and `EtwTraceLoggingProviderAndSpans` asserts 2 for the diagnostic and 5 for the span. With the Error level removed from the diagnostic it fails (`Which is: '\x5' (5)` against 2).
-- Finding 1 (P3): the timestamp is taken under the ring lock with the sequence number, so time follows sequence order. `ConcurrentDiagnosticRecording` asserts non-decreasing timestamps across the tail. This check can only fail when an inversion happens to occur (millisecond resolution), so it guards rather than proves; the ordering itself now holds by construction.
+- Finding 1 (P3): the timestamp is taken under the ring lock with the sequence number, so time follows sequence order. `ConcurrentDiagnosticRecording` asserts non-decreasing timestamps across the tail. **Corrected after round 4:** that assertion and the claim that time follows sequence order were wrong, since system time can be set backwards; see round 4's fixes.
 - Finding 3 (P3): both the sequential and the concurrent parts of `EtwTraceLoggingProviderAndSpans` assert `etw_write_failures()` is unchanged, so a refused span write fails them (the counter's own sensitivity is proven by `EtwRefusedWritesAreCounted`).
 - The reviewer's sandbox could not run `EtwProviderEnabledOnlyByASession` (gtest's death-test helper needs a temporary file and the read-only sandbox refused it); it runs in the gates below.
 
 Gates after round 3: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 106 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfError.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 7 tests.`
+
+## Round 4: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T05:43:25Z
+- Effort: medium
+- Lines: 28
+- Digest: 1b49a5c44872ba28
+
+### adversarial: needs-attention
+
+1. **P2** `src/pdf/error.cpp:1009`, `src/pdf/error.cpp:1028`, `src/pdf/error.cpp:638`: The round-2 Debug allocation-failure defect remains. MSVC’s Debug `std::vector` constructor allocates an iterator proxy inside a `noexcept` constructor, so allocation failure terminates before the surrounding catch can recover. Even `diagnostics_tail(0)` constructs that vector. Reproduce in Debug with a CRT allocation hook rejecting allocations, then call `diagnostics_tail(0)` or format a preconstructed `PdfError`. Rechecked against the installed MSVC headers: `vector:672-673` and `xmemory:1231`. This is source-verified, not an executed fault-injection test. The acceptance statement at `docs/reviews/06-quality/audit-d01-t01-s1.md:106` leaves the defect in place; the governing contract declares no Debug exception to failure handling.
+
+### consistency: approve
+
+No additional findings.
+
+### integration: approve
+
+No additional findings.
+
+### source-defect: needs-attention
+
+2. **P3** `src/pdf/error.cpp:940`, `tests/recto-tests/pdf_error_tests.cpp:567`: Taking UTC timestamps under the lock does not guarantee non-decreasing timestamps. `GetSystemTimePreciseAsFileTime` follows system time, which can be corrected backwards. Reproduce in an isolated test environment by recording an entry, moving system time backwards, then recording another: sequence order remains correct, but the new timestamp assertion fails. The claim that timestamp ordering now holds “by construction” at `docs/reviews/06-quality/audit-d01-t01-s1.md:153` is therefore false. Preserve sequence-based ordering and distinguish UTC timestamps from monotonic elapsed time. This is a static reproduction, not an executed clock change. [Microsoft timing guidance](https://learn.microsoft.com/en-us/windows/win32/sysinfo/acquiring-high-resolution-time-stamps)
+
+### design: advisory
+
+Not applicable: this section owns no user surface.
+
+### record: advisory
+
+The complete checkpoint was not independently established. The existing x64 Release executable passed six `PdfError` tests, excluding `EtwProviderEnabledOnlyByASession`; `Support.AsanActiveWhenEnabled` passed and reported `ASan=enabled`. Both Python ETW registration checks passed.
+
+The death test requires temporary-file writes, and rebuilding modifies files, so neither was performed under the read-only instruction. These results do not establish binary correspondence to `fdd66bd` or a warning-free rebuild. No files were modified.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 4
+
+- Finding 1 (P2): the reviewer is right that a findings-file note does not change the contract. The scope is now in the contract: `D01 T01 §1` carries a dated correction saying the allocation-failure contract holds in Release (shipped, and the ASan checkpoint) and that Debug's iterator-debugging proxies terminate on allocation failure inside `noexcept` STL constructors, with the cost of reversing it (`_ITERATOR_DEBUG_LEVEL=0` across Recto and every vcpkg dependency, or no standard container returned from a `noexcept` function). No code changes, since the behaviour belongs to MSVC's Debug STL, not to `error.cpp`.
+- Finding 2 (P3): correct. The non-decreasing timestamp assertion is removed from `ConcurrentDiagnosticRecording`: entries are ordered by sequence number (still asserted), and `timestamp_utc_ms` is wall-clock time for people reading the log, which can move backwards when system time is corrected. The timestamp stays under the lock (it narrows the gap between the two), with a comment saying what orders the ring.
+
+Gates after round 4: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 106 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfError.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 7 tests.`; `python scripts/todo-graph.py validate` -> `valid: 681 sections`.

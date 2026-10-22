@@ -80,6 +80,8 @@ Define the foundational error-handling and diagnostic primitives in `src/pdf/err
 
 > **Audit 2026-10-22 (D06 T05 §15):** the concurrency item's "zero data races" overstates its evidence: AddressSanitizer finds memory errors, not races (Microsoft documents ThreadSanitizer separately), so the 8-thread tests prove counts and ordering under ASan, not race freedom. The audit also found production registration forcing the ETW provider on as if a session listened; registration now only registers (`etw_provider_enabled`, `force_enable_etw_provider_for_testing`), `value_or` returns a value, and `RECTO_PDF_TRY` needs a nothrow-movable payload, with `RECTO_PDF_TRY_REF` for the rest.
 
+> **Corrected 2026-10-22 (D06 T05 §15 round 4):** the allocation-failure contract (a failed allocation comes back as `ErrorCode::OutOfMemory`, never a crash) holds in Release, the configuration that ships and that the ASan checkpoint runs. In Debug, MSVC's iterator debugging (`_ITERATOR_DEBUG_LEVEL=2`) allocates a proxy inside the STL's `noexcept` container constructors, so an allocation failure while constructing a `std::vector` or `std::string` in a `noexcept` function (`diagnostics_tail`, `PdfError::format`, and every other such function) terminates. The section previously stated no build scope. Reversing this means building Debug with `_ITERATOR_DEBUG_LEVEL=0` across Recto and every vcpkg dependency (a custom triplet), which gives up Debug iterator checking, or returning no standard container from a `noexcept` function.
+
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*` passes under ASan with 0 warnings.
 
 > **Verified:** 2026-10-18 | §1 | a0b2e1721fb9fb1fe3662162c86301e84d74154d

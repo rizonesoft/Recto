@@ -562,10 +562,6 @@ TEST(PdfError, ConcurrentDiagnosticRecording)
 		EXPECT_EQ(
 			final_tail[idx].sequence,
 			(kThreadCount * kOpsPerThread) - kDiagnosticRingCapacity + idx + 1);
-		if (idx > 0) {
-			// Time follows sequence order: both are assigned under the ring lock.
-			EXPECT_LE(final_tail[idx - 1].timestamp_utc_ms, final_tail[idx].timestamp_utc_ms);
-		}
 	}
 }
 
