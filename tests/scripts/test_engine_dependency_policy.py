@@ -57,22 +57,25 @@ DEPENDENCY_WORD = re.compile(r"\b(install\w*|requir\w*|need\w*|necessar\w*|depen
 REVIEWED_SENTENCES = {
     # B-Convert, PDF to Word: the user may tidy the converted document in Word; Recto does not need Word to convert.
     "Pages with several columns, tables or floating pictures may need tidying in Word afterwards",
+    # A-Convert and B-Convert, a failed job: the PDF being converted to Word needs a password.
+    "To Word failed: the file needs a password",
 }
 # The suites' install pages, matched in the raw text so a link counts whatever its anchor says.
 OFFICE_INSTALL_LINK = re.compile(r"libreoffice\.org|microsoft\.com/microsoft-365|office\.com", re.IGNORECASE)
 # Inline elements and comments do not break words when rendered (Libre<span>Office</span>, Libre<!-- x -->Office), so
-# they are removed without a space; every other tag ends a unit.
+# they are removed without a space; every other tag ends a unit. White space, newlines included, is only a space, and a
+# colon does not end a unit ("Required converter: Office" is one statement).
 INLINE_TAG = re.compile(r"</?(a|abbr|b|bdi|bdo|cite|code|data|dfn|em|i|kbd|mark|q|s|samp|small|span|strong|sub|sup|time"
                         r"|u|var)\b[^>]*>", re.IGNORECASE)
 
 
 def visible_units(markup: str) -> list[str]:
-    """The text a reader sees, as units split at block elements and at sentence or clause punctuation, with entities
-    decoded and white space collapsed."""
+    """The text a reader sees, as units split at element boundaries (other than inline elements) and at sentence
+    punctuation (. ! ? ;), with entities decoded and white space, newlines included, collapsed to single spaces."""
     text = re.sub(r"(?s)<!--.*?-->", "", markup)
-    text = re.sub(r"(?is)<(script|style)\b.*?</\1>", "\n", text)
-    text = html.unescape(re.sub(r"<[^>]+>", "\n", INLINE_TAG.sub("", text)))
-    return [" ".join(unit.split()) for unit in re.split(r"[\n.!?:;]", text) if unit.strip()]
+    text = re.sub(r"(?is)<(script|style)\b.*?</\1>", "\x00", text)
+    text = html.unescape(re.sub(r"<[^>]+>", "\x00", INLINE_TAG.sub("", text)))
+    return [" ".join(unit.split()) for unit in re.split(r"[\x00.!?;]", text) if unit.strip()]
 
 
 def office_dependency(markup: str) -> str | None:
@@ -144,10 +147,12 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                        "<p>Office is required to convert documents.</p>",
                        "<p>Office installation is required to convert documents.</p>",
                        "<p>Conversion requires an installed copy of Office.</p>",
-                       "<p>Conversion uses Word to create the PDF.</p>", "<p>Converts through PowerPoint.</p>"):
+                       "<p>Conversion uses Word to create the PDF.</p>", "<p>Converts through PowerPoint.</p>",
+                       "<p>Office is\nrequired to convert documents.</p>", "<p>Required converter: Office.</p>"):
             with self.subTest(markup=markup):
                 self.assertIsNotNone(office_dependency(markup))
         for markup in ("<p>Office to PDF is built in.</p>", "<td>PDF to Word</td><td>needs a password</td>",
+                       "<p>To Word failed: the file needs a password</p>",
                        "<p>Updates come through the Microsoft Store.</p>",
                        "<p>Pages with several columns, tables or floating pictures may need tidying in Word afterwards.</p>"):
             with self.subTest(markup=markup):
