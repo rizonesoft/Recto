@@ -841,7 +841,7 @@ The audit of `D01 T01 §6` (`docs/reviews/06-quality/audit-d01-t01-s6.md`, D06 T
 
 ## 31. JBIG2 striped pages, MMR halftone alignment and HENABLESKIP
 
-The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T05 §22, round 1) found three JBIG2 decoding gaps against ITU-T T.88. A page of unknown height (`0xFFFFFFFF`) with striping takes its maximum stripe size as the permanent height and ignores End-of-Stripe segments, so later stripes are clipped (T.88 7.4.9 and 7.4.10). Consecutive MMR halftone bitplanes are read from the exact bit where the previous one ended, though each MMR invocation begins and ends on a byte boundary (T.88 6.2.6); the existing fixture concatenates unaligned planes and hides this. Arithmetic halftone regions never read `HENABLESKIP` (flag bit `0x08`) and decode symbols for skipped cells (T.88 6.6.5, Annex C). -> XREF: D06 T05 §22
+The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T05 §22, round 1) found three JBIG2 decoding gaps against ITU-T T.88. A page of unknown height (`0xFFFFFFFF`) with striping takes its maximum stripe size as the permanent height and ignores End-of-Stripe segments, so later stripes are clipped (T.88 7.4.9 and 7.4.10). Consecutive MMR halftone bitplanes are read from the exact bit where the previous one ended, though each MMR invocation begins and ends on a byte boundary (T.88 6.2.6); the existing fixture concatenates unaligned planes and hides this. Arithmetic halftone regions never read `HENABLESKIP` (flag bit `0x08`) and decode symbols for skipped cells (T.88 6.6.5, Annex C). Round 2 added a fourth: symbol dictionaries never read flag bits 8 and 9, so retained arithmetic contexts are reset instead of restored (T.88 7.4.2.2). -> XREF: D06 T05 §22
 
 **Phase:** 1
 **Needs:** windows-host
@@ -855,6 +855,7 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 - [ ] Track the page height of a `0xFFFFFFFF`-height page from End-of-Stripe segments (T.88 7.4.9, 7.4.10) in the JBIG2 page composer in `src/pdf/filters.cpp`. Done when: an 8-pixel page with striping `0x8001` and two one-row regions separated by End-of-Stripe decodes two rows.
 - [ ] Align to the next byte after each MMR halftone bitplane (T.88 6.2.6) and correct the `PdfFilters` halftone fixture to pad its first plane from 38 to 40 bits. Done when: the corrected fixture decodes and the unaligned form is refused.
 - [ ] Read `HENABLESKIP` and build the halftone skip mask (T.88 6.6.5, Annex C) for arithmetic halftones in `src/pdf/filters.cpp`. Done when: a grid with cells outside the region and `HENABLESKIP=1` decodes with those cells skipped.
+- [ ] Honour symbol dictionary flag bits 8 and 9 (bitmap coding context used and retained, T.88 7.4.2.2): restore the referenced dictionary's generic and refinement contexts and keep this dictionary's when asked, in `src/pdf/filters.cpp`. Done when: a dictionary encoded with the contexts another retained decodes correctly.
 - [ ] Add `PdfFilters.Jbig2StripesAlignmentAndSkip` covering all three. Done when: it fails on the code before this section.
 - [ ] Commit: `pdf: JBIG2 stripes, aligned MMR halftone planes and HENABLESKIP`
 
@@ -862,7 +863,7 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 
 ## 32. JPX per-component precision and sampling, and the full coding-style set
 
-The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T05 §22, round 1) found the native JPEG 2000 decoder taking every component's bit depth and signedness from component zero and ignoring `XRsiz`/`YRsiz` subsampling (ITU-T T.800 A.5.1), and rejecting more than 10 decomposition levels and every nonzero code-block style, while `D01 T01 §8`'s original review recorded 32 levels and all six style flags as supported. -> XREF: D06 T05 §22
+The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T05 §22, round 1) found the native JPEG 2000 decoder taking every component's bit depth and signedness from component zero and ignoring `XRsiz`/`YRsiz` subsampling (ITU-T T.800 A.5.1), and rejecting more than 10 decomposition levels and every nonzero code-block style, while `D01 T01 §8`'s original review recorded 32 levels and all six style flags as supported. Round 2 added region-of-interest scaling: `RGN` markers are skipped and coefficients are not realigned (T.800 A.6.3, Annex H). -> XREF: D06 T05 §22
 
 **Phase:** 1
 **Needs:** windows-host
@@ -876,6 +877,7 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 - [ ] Read precision and signedness per component from SIZ and normalize each component by its own depth in the JPX reconstruction in `src/pdf/filters.cpp`. Done when: a codestream with components of 8 and 12 bits decodes each to its own range.
 - [ ] Apply `XRsiz`/`YRsiz` to component bounds and upsample subsampled components to the image grid. Done when: a 4:2:0 codestream reconstructs at full resolution.
 - [ ] Accept up to 32 decomposition levels and implement the six code-block style flags in the Tier-1 decoder. Done when: `seed-filter-09-jpx.bin` with byte 58 set to `0x02` (context reset) decodes, and each other flag has a decoding test.
+- [ ] Read `RGN` (`0xFF5E`) markers and apply the region-of-interest Maxshift realignment to coefficients (T.800 A.6.3, Annex H) in the native decoder in `src/pdf/filters.cpp`. Done when: a lossless grayscale codestream encoded with `-ROI c=0,U=4` decodes to its original samples.
 - [ ] Add `PdfFilters.JpxComponentsAndCodingStyles` for the cases above, and record in `docs/reviews/06-quality/audit-d01-t01-s8.md` that the original review's capability claims were corrected here. Done when: the test fails on the code before this section.
 - [ ] Commit: `pdf: JPX per-component geometry and the full coding-style set`
 

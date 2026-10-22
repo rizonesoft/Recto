@@ -1525,6 +1525,14 @@ TEST(PdfFilters, Jbig2Decode)
 					reinterpret_cast<const uint8_t*>(at1),
 					reinterpret_cast<const uint8_t*>(at1) + 2);
 			}
+			// With no coded data at all the region is damaged, not a decoded bitmap (T.88 Annex E reads 0xFF past
+			// the end of real data, but a region needs some).
+			{
+				std::vector<uint8_t> empty_stream = stream;
+				append_jbig2_segment(empty_stream, 1u, 39u, {}, 1u, gr);
+				append_jbig2_segment(empty_stream, 2u, 49u, {}, 1u, {});
+				RECTO_EXPECT_ERR(decode_jbig2(empty_stream), ErrorCode::DamagedFormat);
+			}
 			gr.insert(gr.end(), 16u, 0xFFu);
 			append_jbig2_segment(stream, 1u, 39u, {}, 1u, gr);
 			append_jbig2_segment(stream, 2u, 49u, {}, 1u, {});
@@ -1739,6 +1747,10 @@ TEST(PdfFilters, Jbig2Decode)
 		auto dec = decode_stream(page_bytes, stm_dict, kMaxDecodedStreamBytes, &resolver);
 		RECTO_ASSERT_OK(dec);
 		ASSERT_EQ(dec->size(), 4u); // 16x2 = 2 bytes per row * 2 rows = 4 bytes
+		// The decode budget charges each retained bitmap's object as well as its pixels: this page's few symbols,
+		// patterns and regions fit a 256-byte ceiling by pixel bytes alone but not with their objects counted.
+		RECTO_EXPECT_ERR(decode_stream(page_bytes, stm_dict, 256u, &resolver), ErrorCode::DecompressionLimitExceeded);
+		RECTO_ASSERT_OK(decode_stream(page_bytes, stm_dict, 4096u, &resolver));
 		// Cols 0..7 (Text Region): [1, 1, 0, 0, 0, 0, 1, 1] in JBIG2 -> ~0xC3 = 0x3C in PDF DeviceGray
 		// Cols 8..11 (MMR Halftone Pattern 3) + Cols 12..15 (Arith Halftone Pattern 3): all 1s -> 0x00 in PDF DeviceGray
 		EXPECT_EQ((*dec)[0], 0x3Cu);
@@ -2753,6 +2765,31 @@ TEST(PdfFilters, DctRgbAndCmyk)
 		EXPECT_EQ((*indirect_rgba)[0], 255u);
 		EXPECT_EQ((*indirect_rgba)[1], 0u);
 		EXPECT_EQ((*indirect_rgba)[2], 255u);
+
+		// A direct array whose first number is an indirect reference (to 0) maps the same way.
+		const IndirectObjectResolver element_resolver = [](IndirectRef ref) -> PdfResult<PdfValue> {
+			if (ref.obj_num != 43u) {
+				return make_pdf_error(ErrorCode::DamagedFormat, "Unexpected object reference");
+			}
+			return PdfValue(int64_t{0});
+		};
+		PdfArray element_decode;
+		element_decode.push_back(PdfValue(IndirectRef{43u, 0u}));
+		for (const int64_t v : {0, 1, 1, 0, 0, 0, 0}) {
+			element_decode.push_back(PdfValue(v));
+		}
+		PdfDict element_stm_dict;
+		element_stm_dict.set("Filter", PdfValue(PdfName("DCTDecode")));
+		element_stm_dict.set("Decode", PdfValue(std::move(element_decode)));
+		PdfDict element_dp;
+		element_dp.set("ColorTransform", PdfValue(int64_t{0}));
+		element_stm_dict.set("DecodeParms", PdfValue(std::move(element_dp)));
+		auto element_rgba = decode_stream(cmyk_jpeg, element_stm_dict, kMaxDecodedStreamBytes, &element_resolver);
+		RECTO_ASSERT_OK(element_rgba);
+		ASSERT_EQ(element_rgba->size(), 256u);
+		EXPECT_EQ((*element_rgba)[0], 255u);
+		EXPECT_EQ((*element_rgba)[1], 0u);
+		EXPECT_EQ((*element_rgba)[2], 255u);
 	}
 
 	// 3. Decode genuine ITU-T T.800 JPXDecode (JP2 box container and raw J2K codestream

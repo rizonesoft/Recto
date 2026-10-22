@@ -83,3 +83,51 @@ Filed:
 - Finding 11 (CCITT damaged-row substitution and mixed Group 3 recovery): `D06 T05 §34`.
 
 Gates after round 1: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 125 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 18 tests.`; `python scripts/todo-graph.py validate` -> `valid: 687 sections`.
+
+## Round 2: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T14:15:24Z
+- Effort: xhigh
+- Lines: 30
+- Digest: 396b5eaac591e68e
+
+## adversarial: needs-attention
+
+Findings below are source-derived. The new reproduction cases were not executed.
+
+1. **[P1] JBIG2’s memory budget excludes bitmap metadata.** `src/pdf/filters.cpp:3772`, `:4564` charge only `s.data.size()` before copying whole `Jbig2Bitmap` objects into retained dictionaries. Reproduce with a 1 MiB limit: create a dictionary containing 1,024 one-pixel symbols, then 32 retained dictionaries that each import and export those symbols without adding new ones. The retained objects alone occupy about 1.25 MiB on x64 Release, while the counter charges roughly 66 KiB. Per-symbol heap allocations increase the discrepancy. This scales beyond the default 256 MiB ceiling without triggering its guard.
+
+2. **[P1] Empty JBIG2 arithmetic payloads produce successful images.** `src/pdf/filters.cpp:2618`, `:2623` synthesize `0xFF` indefinitely after exhaustion; generic-region decoding never validates termination before returning success at `:2933`. Reproduce by removing `gr.insert(gr.end(), 16u, 0xFFu)` from the fixture at `tests/recto-tests/pdf_filters_tests.cpp:1528`, leaving its segment header, dimensions and adaptive-template bytes intact. The empty payload behaves identically to the existing all-`0xFF` payload. Missing arithmetic data is therefore reported as a decoded bitmap, contrary to the malformed-input contract and [T.88 Annex E’s termination procedure](https://www.itu.int/rec/dologin_pub.asp?id=T-REC-T.88-200002-S%21%21PDF-E&lang=e&type=items).
+
+## consistency: approve
+
+## integration: needs-attention
+
+3. **[P1] Indirect numbers inside image `/Decode` arrays still disable the mapping.** `src/pdf/filters.cpp:9502` resolves the array object only; `:6103` reads its elements directly and silently abandons the entire mapping when an element is a reference. Reproduce using the existing CMYK magenta pipeline case: replace its first `0` with `42 0 R`, with the resolver returning integer `0`. The equivalent direct array produces magenta; the referenced element causes the mapping to be skipped. PDF permits indirect references as array elements. [Adobe PDF Reference, §4.11](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.2.pdf).
+
+## source-defect: needs-attention
+
+4. **[P1] JBIG2 symbol dictionaries ignore retained arithmetic contexts.** `src/pdf/filters.cpp:3727` never reads flag bits 8 and 9; `:3783` instead initializes fresh generic and refinement contexts for every dictionary. Reproduce with dictionary A retaining its learned bitmap contexts (`0x0200`) and dictionary B referencing A and using those contexts (`0x0100`), with matching templates and adaptive pixels. Encode B using A’s learned contexts. Recto resets them, corrupting glyphs or rejecting valid data. [T.88 §7.4.2.2](https://www.itu.int/rec/dologin_pub.asp?id=T-REC-T.88-200002-S%21%21PDF-E&lang=e&type=items) requires restoring and preserving these statistics.
+
+5. **[P1] Native JPX decoding silently ignores region-of-interest scaling.** `src/pdf/filters.cpp:7968` and `:8038` skip `RGN` (`0xFF5E`) markers; coefficient reconstruction at `:8925` has no ROI scaling state. Reproduce on the native fallback with a lossless, unsigned grayscale image containing non-neutral samples, encoded using OpenJPEG’s `-n 1 -r 1 -ROI c=0,U=4`. Compare Recto’s samples with the original and reference decoder. Recto interprets the shifted coefficients without the required realignment, producing incorrect pixels. This is separate from the filed component-geometry and coding-style gaps. [T.800 §A.6.3 and Annex H](https://www.itu.int/rec/dologin_pub.asp?id=T-REC-T.800-200208-S%21%21PDF-E&lang=e&type=items).
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: advisory
+
+The existing x64 Release binary passed all 18 `PdfFilters.*` tests and `Support.AsanActiveWhenEnabled`, reporting `ASan=enabled`. No rebuild was performed, so current x64/ARM64 compilation was not independently reverified. Graph validation and the generated-plan check passed. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+- Finding 1 (P1): correct. JBIG2's decode budget charged a retained symbol only its pixel bytes, while each copy also costs its `Jbig2Bitmap` object and allocation, so many tiny symbols retained across dictionaries outgrew the budget. Every one of the 19 charges now uses `jbig2_footprint` (the object plus its pixel storage's capacity). `PdfFilters.Jbig2Decode` decodes its symbol-and-halftone page at a 256-byte ceiling, which pixel bytes alone fit but the footprints do not, and refuses with `DecompressionLimitExceeded`; at 4 KiB it decodes. The old accounting passes at 256, so the test fails on it.
+- Finding 2 (P1): partly agreed. The MQ decoder reading `0xFF` past the end is T.88 Annex E's specified marker behaviour, normal near the end of real coded data and what other readers do, so an underrun is not refused. A region with no coded data at all cannot be a coded region: all five JBIG2 arithmetic starts (generic, refinement, symbol dictionary, text and halftone) now refuse an empty payload with `DamagedFormat`. `PdfFilters.Jbig2Decode` checks the reviewer's case (the arithmetic generic fixture with its payload removed) for every template and TPGDON setting.
+- Finding 3 (P1): correct. Round 1 resolved the `/Decode` array but not its elements. Indirect numbers inside it now resolve one level into a copy (bounded at 64 elements, 32 components). `PdfFilters.DctRgbAndCmyk` adds the magenta case with the first element `43 0 R`; it fails on the round 1 code.
+- Findings 4 and 5 (P1): conformance features filed with their codecs. Retained JBIG2 symbol-dictionary contexts (flag bits 8 and 9, T.88 7.4.2.2) join `D06 T05 §31`, and JPX region-of-interest scaling (`RGN`, T.800 A.6.3, Annex H) joins `D06 T05 §32`, each with its own checklist item and test.
+
+Gates after round 2: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 125 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 18 tests.` (the 256-byte budget case refuses in Release as in Debug).

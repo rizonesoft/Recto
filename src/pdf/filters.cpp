@@ -2541,6 +2541,13 @@ struct Jbig2Bitmap {
 	}
 };
 
+// What a JBIG2 bitmap costs against the decode budget: the object itself and the bytes its pixel storage holds, so
+// retaining many small symbols cannot exceed the budget through their per-object overhead.
+[[nodiscard]] size_t jbig2_footprint(const Jbig2Bitmap& bm) noexcept
+{
+	return sizeof(Jbig2Bitmap) + bm.data.capacity();
+}
+
 // ISO/IEC 14492 Annex E Table E.1: QM-coder probability estimation state table.
 struct MqQeEntry {
 	uint16_t qe;
@@ -2823,6 +2830,14 @@ private:
 	MqDecoder* mq = shared_mq;
 	std::vector<MqContext>* cx_vec = shared_cx;
 	if (mq == nullptr) {
+		// Reading past the end yields marker-mode 0xFF bytes (T.88 Annex E), normal near the end of real data, so an
+		// underrun is not refused; a region with no coded data at all cannot be one, and is.
+		if (payload.empty()) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"JBIG2 arithmetic-coded region has no coded data");
+		}
 		local_mq.emplace(payload);
 		mq = &(*local_mq);
 	}
@@ -2954,6 +2969,12 @@ private:
 	MqDecoder* mq = shared_mq;
 	std::vector<MqContext>* cx_vec = shared_cx;
 	if (mq == nullptr) {
+		if (payload.empty()) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"JBIG2 arithmetic-coded region has no coded data");
+		}
 		local_mq.emplace(payload);
 		mq = &(*local_mq);
 	}
@@ -3643,7 +3664,7 @@ struct Jbig2DecoderState {
 					state.default_pixel,
 					state.remaining_limit(effective_limit)));
 			RECTO_PDF_RETURN_IF_ERROR(
-				state.account_bytes(pbm.data.size(), effective_limit, seg_header_start));
+				state.account_bytes(jbig2_footprint(pbm), effective_limit, seg_header_start));
 			state.page_bitmap = std::move(pbm);
 		} else if (seg_type == 36u || seg_type == 38u || seg_type == 39u) {
 			// Intermediate (36) or Immediate (38, 39) Generic Region segment.
@@ -3698,7 +3719,7 @@ struct Jbig2DecoderState {
 
 			if (seg_type == 36u) {
 				RECTO_PDF_RETURN_IF_ERROR(
-					state.account_bytes(rbm.data.size(), effective_limit, seg_header_start));
+					state.account_bytes(jbig2_footprint(rbm), effective_limit, seg_header_start));
 				state.aux_regions[seg_num] = std::move(rbm);
 			} else {
 				if (!state.page_bitmap.has_value()) {
@@ -3710,7 +3731,7 @@ struct Jbig2DecoderState {
 							0u,
 							state.remaining_limit(effective_limit)));
 					RECTO_PDF_RETURN_IF_ERROR(
-						state.account_bytes(pbm.data.size(), effective_limit, seg_header_start));
+						state.account_bytes(jbig2_footprint(pbm), effective_limit, seg_header_start));
 					state.page_bitmap = std::move(pbm);
 				}
 				state.page_bitmap->composite(rbm, reg_x, reg_y, reg_comb_op);
@@ -3769,7 +3790,7 @@ struct Jbig2DecoderState {
 				if (it != state.symbol_dicts.end()) {
 					for (const auto& s : it->second) {
 						RECTO_PDF_RETURN_IF_ERROR(
-							state.account_bytes(s.data.size(), effective_limit, seg_header_start));
+							state.account_bytes(jbig2_footprint(s), effective_limit, seg_header_start));
 						input_syms.push_back(s);
 					}
 				}
@@ -3779,6 +3800,12 @@ struct Jbig2DecoderState {
 			const size_t num_in_syms = all_syms.size();
 			const std::span<const uint8_t> arith_data = seg_data.subspan(counts_off + 8u);
 			if (!sd_huff) {
+				if (arith_data.empty()) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"JBIG2 arithmetic-coded region has no coded data");
+				}
 				MqDecoder mq(arith_data);
 				std::vector<MqContext> gb_cx(
 					(sd_template == 0u) ? 65536u : ((sd_template == 1u) ? 8192u : 1024u));
@@ -3858,7 +3885,7 @@ struct Jbig2DecoderState {
 									&mq,
 									&gb_cx));
 							RECTO_PDF_RETURN_IF_ERROR(
-								state.account_bytes(sbm.data.size(), effective_limit, seg_header_start));
+								state.account_bytes(jbig2_footprint(sbm), effective_limit, seg_header_start));
 							all_syms.push_back(std::move(sbm));
 						} else {
 							int32_t ref_agg_n = 0;
@@ -3904,7 +3931,7 @@ struct Jbig2DecoderState {
 										&mq,
 										&gr_cx));
 								RECTO_PDF_RETURN_IF_ERROR(
-									state.account_bytes(sbm.data.size(), effective_limit, seg_header_start));
+									state.account_bytes(jbig2_footprint(sbm), effective_limit, seg_header_start));
 								all_syms.push_back(std::move(sbm));
 							} else {
 								// Multi-symbol aggregation (ITU-T T.88 section 6.5.8.2.1, Table 17):
@@ -4050,7 +4077,7 @@ struct Jbig2DecoderState {
 									}
 								}
 								RECTO_PDF_RETURN_IF_ERROR(
-									state.account_bytes(sbm.data.size(), effective_limit, seg_header_start));
+									state.account_bytes(jbig2_footprint(sbm), effective_limit, seg_header_start));
 								all_syms.push_back(std::move(sbm));
 							}
 						}
@@ -4076,7 +4103,7 @@ struct Jbig2DecoderState {
 						for (int32_t k = 0; k < run_len; ++k) {
 							const auto& sym = all_syms[idx + static_cast<size_t>(k)];
 							RECTO_PDF_RETURN_IF_ERROR(
-								state.account_bytes(sym.data.size(), effective_limit, seg_header_start));
+								state.account_bytes(jbig2_footprint(sym), effective_limit, seg_header_start));
 							exported.push_back(sym);
 						}
 					}
@@ -4284,7 +4311,7 @@ struct Jbig2DecoderState {
 										&huff_gr_cx));
 								br.set_bit_pos((br.byte_pos() + static_cast<size_t>(ref_bmsize)) * 8u);
 								RECTO_PDF_RETURN_IF_ERROR(
-									state.account_bytes(sbm.data.size(), effective_limit, seg_header_start));
+									state.account_bytes(jbig2_footprint(sbm), effective_limit, seg_header_start));
 								all_syms.push_back(std::move(sbm));
 							} else {
 								// Multi-symbol Huffman aggregation (ITU-T T.88 section 6.5.8.2.1 & 6.5.8.2.3):
@@ -4451,7 +4478,7 @@ struct Jbig2DecoderState {
 									}
 								}
 								RECTO_PDF_RETURN_IF_ERROR(
-									state.account_bytes(sbm.data.size(), effective_limit, seg_header_start));
+									state.account_bytes(jbig2_footprint(sbm), effective_limit, seg_header_start));
 								all_syms.push_back(std::move(sbm));
 							}
 							++decoded_new;
@@ -4526,7 +4553,7 @@ struct Jbig2DecoderState {
 										0u,
 										state.remaining_limit(effective_limit)));
 								RECTO_PDF_RETURN_IF_ERROR(
-									state.account_bytes(sbm.data.size(), effective_limit, seg_header_start));
+									state.account_bytes(jbig2_footprint(sbm), effective_limit, seg_header_start));
 								for (int32_t y = 0; y < hc_height; ++y) {
 									for (uint32_t x = 0; x < sw; ++x) {
 										if (collective.get_pixel(static_cast<int32_t>(x_off + x), y) != 0u) {
@@ -4561,7 +4588,7 @@ struct Jbig2DecoderState {
 						for (int32_t k = 0; k < run_len; ++k) {
 							const auto& sym = all_syms[idx + static_cast<size_t>(k)];
 							RECTO_PDF_RETURN_IF_ERROR(
-								state.account_bytes(sym.data.size(), effective_limit, seg_header_start));
+								state.account_bytes(jbig2_footprint(sym), effective_limit, seg_header_start));
 							exported.push_back(sym);
 						}
 					}
@@ -4676,6 +4703,12 @@ struct Jbig2DecoderState {
 
 			const std::span<const uint8_t> tr_body = seg_data.subspan(tr_hdr_off);
 			if (!sb_huff) {
+				if (tr_body.empty()) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"JBIG2 arithmetic-coded region has no coded data");
+				}
 				MqDecoder mq(tr_body);
 				std::vector<MqContext> gr_cx((sb_r_template == 0u) ? 8192u : 1024u);
 				Jbig2ArithIntDecoder iadt;
@@ -5301,7 +5334,7 @@ struct Jbig2DecoderState {
 
 			if (seg_type == 4u) {
 				RECTO_PDF_RETURN_IF_ERROR(
-					state.account_bytes(rbm.data.size(), effective_limit, seg_header_start));
+					state.account_bytes(jbig2_footprint(rbm), effective_limit, seg_header_start));
 				state.aux_regions[seg_num] = std::move(rbm);
 			} else {
 				if (!state.page_bitmap.has_value()) {
@@ -5313,7 +5346,7 @@ struct Jbig2DecoderState {
 							0u,
 							state.remaining_limit(effective_limit)));
 					RECTO_PDF_RETURN_IF_ERROR(
-						state.account_bytes(pbm.data.size(), effective_limit, seg_header_start));
+						state.account_bytes(jbig2_footprint(pbm), effective_limit, seg_header_start));
 					state.page_bitmap = std::move(pbm);
 				}
 				state.page_bitmap->composite(rbm, reg_x, reg_y, reg_comb_op);
@@ -5418,7 +5451,7 @@ struct Jbig2DecoderState {
 
 			if (seg_type == 40u) {
 				RECTO_PDF_RETURN_IF_ERROR(
-					state.account_bytes(rbm.data.size(), effective_limit, seg_header_start));
+					state.account_bytes(jbig2_footprint(rbm), effective_limit, seg_header_start));
 				state.aux_regions[seg_num] = std::move(rbm);
 			} else {
 				if (!state.page_bitmap.has_value()) {
@@ -5430,7 +5463,7 @@ struct Jbig2DecoderState {
 							0u,
 							state.remaining_limit(effective_limit)));
 					RECTO_PDF_RETURN_IF_ERROR(
-						state.account_bytes(pbm.data.size(), effective_limit, seg_header_start));
+						state.account_bytes(jbig2_footprint(pbm), effective_limit, seg_header_start));
 					state.page_bitmap = std::move(pbm);
 				}
 				state.page_bitmap->composite(rbm, reg_x, reg_y, reg_comb_op);
@@ -5483,7 +5516,7 @@ struct Jbig2DecoderState {
 						0u,
 						state.remaining_limit(effective_limit)));
 				RECTO_PDF_RETURN_IF_ERROR(
-					state.account_bytes(pbm.data.size(), effective_limit, seg_header_start));
+					state.account_bytes(jbig2_footprint(pbm), effective_limit, seg_header_start));
 				for (uint32_t y = 0; y < hdph; ++y) {
 					for (uint32_t x = 0; x < hdpw; ++x) {
 						pbm.set_pixel(
@@ -5568,6 +5601,12 @@ struct Jbig2DecoderState {
 				ht_at_coords,
 				(ht_template == 0u) ? 8u : 2u);
 			if (!ht_mmr) {
+				if (ht_body.empty()) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"JBIG2 arithmetic-coded region has no coded data");
+				}
 				MqDecoder mq(ht_body);
 				std::vector<MqContext> cx(
 					(ht_template == 0u) ? 65536u : ((ht_template == 1u) ? 8192u : 1024u));
@@ -5644,7 +5683,7 @@ struct Jbig2DecoderState {
 			}
 			if (seg_type == 20u) {
 				RECTO_PDF_RETURN_IF_ERROR(
-					state.account_bytes(rbm.data.size(), effective_limit, seg_header_start));
+					state.account_bytes(jbig2_footprint(rbm), effective_limit, seg_header_start));
 				state.aux_regions[seg_num] = std::move(rbm);
 			} else {
 				if (!state.page_bitmap.has_value()) {
@@ -5656,7 +5695,7 @@ struct Jbig2DecoderState {
 							0u,
 							state.remaining_limit(effective_limit)));
 					RECTO_PDF_RETURN_IF_ERROR(
-						state.account_bytes(pbm.data.size(), effective_limit, seg_header_start));
+						state.account_bytes(jbig2_footprint(pbm), effective_limit, seg_header_start));
 					state.page_bitmap = std::move(pbm);
 				}
 				state.page_bitmap->composite(rbm, reg_x, reg_y, reg_comb_op);
@@ -9257,6 +9296,9 @@ namespace {
 	return {};
 }
 
+// An image /Decode array holds two numbers per colour component; DeviceN allows up to 32 components.
+constexpr size_t kMaxImageDecodeComponents = 32;
+
 [[nodiscard]] PdfResult<std::vector<uint8_t>> execute_filter_pipeline(
 	std::span<const uint8_t> raw_bytes,
 	const PdfValue* filter_val,
@@ -9500,6 +9542,19 @@ namespace {
 				decode_entry = decode_in(stream_dict_context);
 			}
 			RECTO_PDF_TRY(const PdfValue* decode_value, deref(decode_entry));
+			// Its elements may be indirect numbers too; they resolve one level into a copy of the array.
+			if (const PdfArray* decode_arr = decode_value != nullptr ? decode_value->as_array() : nullptr;
+				decode_arr != nullptr && decode_arr->size() <= 2u * kMaxImageDecodeComponents &&
+				std::any_of(decode_arr->begin(), decode_arr->end(), [](const PdfValue& e) { return e.is_ref(); })) {
+				PdfArray resolved_arr;
+				for (const PdfValue& e : *decode_arr) {
+					RECTO_PDF_TRY(const PdfValue* elem, deref(&e));
+					RECTO_PDF_TRY_REF(elem_copy, elem->deep_clone());
+					resolved_arr.push_back(std::move(elem_copy));
+				}
+				resolved.emplace_back(std::move(resolved_arr));
+				decode_value = &resolved.back();
+			}
 			bool apply_decode = decode_value != nullptr && !decode_value->is_null();
 			if (is_jpx && apply_decode) {
 				const PdfValue* mask_entry =
