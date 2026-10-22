@@ -7,6 +7,7 @@
 #include "test_support.h"
 
 #include <array>
+#include <chrono>
 #include <atomic>
 #include <bit>
 #include <cstdint>
@@ -672,6 +673,17 @@ TEST(PdfFilters, CorpusImageSeedsDecode)
 	ASSERT_GE(jpx_seed.size(), 2u);
 	ASSERT_EQ(jpx_seed[0], 0x09u);
 	auto jpx = decode_jpx_image(std::span<const uint8_t>(jpx_seed).subspan(1));
+	{
+		// ISO 32000-2 Table 87: a JPXDecode image that is not an ImageMask ignores /Decode, so [0 0] leaves 128.
+		const std::vector<uint8_t> codestream(jpx_seed.begin() + 1, jpx_seed.end());
+		PdfDict jpx_dict;
+		jpx_dict.set("Filter", PdfValue(PdfName("JPXDecode")));
+		jpx_dict.set("Decode", PdfValue(PdfArray{PdfValue(int64_t{0}), PdfValue(int64_t{0})}));
+		auto via_stream = decode_stream(codestream, jpx_dict);
+		RECTO_ASSERT_OK(via_stream);
+		ASSERT_FALSE(via_stream->empty());
+		EXPECT_EQ((*via_stream)[0], 128u);
+	}
 	RECTO_ASSERT_OK(jpx);
 	EXPECT_EQ(jpx->width, 8u);
 	EXPECT_EQ(jpx->height, 8u);
@@ -2717,6 +2729,30 @@ TEST(PdfFilters, DctRgbAndCmyk)
 		EXPECT_EQ((*magenta_rgba)[1], 0u);   // G
 		EXPECT_EQ((*magenta_rgba)[2], 255u); // B
 		EXPECT_EQ((*magenta_rgba)[3], 255u); // A
+
+		// The same /Decode as an indirect reference (resolved one level by the caller's resolver) maps the same way.
+		const IndirectObjectResolver decode_resolver = [](IndirectRef ref) -> PdfResult<PdfValue> {
+			if (ref.obj_num != 42u) {
+				return make_pdf_error(ErrorCode::DamagedFormat, "Unexpected object reference");
+			}
+			PdfArray arr;
+			for (const int64_t v : {0, 0, 1, 1, 0, 0, 0, 0}) {
+				arr.push_back(PdfValue(v));
+			}
+			return PdfValue(std::move(arr));
+		};
+		PdfDict indirect_stm_dict;
+		indirect_stm_dict.set("Filter", PdfValue(PdfName("DCTDecode")));
+		indirect_stm_dict.set("Decode", PdfValue(IndirectRef{42u, 0u}));
+		PdfDict indirect_dp;
+		indirect_dp.set("ColorTransform", PdfValue(int64_t{0}));
+		indirect_stm_dict.set("DecodeParms", PdfValue(std::move(indirect_dp)));
+		auto indirect_rgba = decode_stream(cmyk_jpeg, indirect_stm_dict, kMaxDecodedStreamBytes, &decode_resolver);
+		RECTO_ASSERT_OK(indirect_rgba);
+		ASSERT_EQ(indirect_rgba->size(), 256u);
+		EXPECT_EQ((*indirect_rgba)[0], 255u);
+		EXPECT_EQ((*indirect_rgba)[1], 0u);
+		EXPECT_EQ((*indirect_rgba)[2], 255u);
 	}
 
 	// 3. Decode genuine ITU-T T.800 JPXDecode (JP2 box container and raw J2K codestream
@@ -3910,6 +3946,67 @@ TEST(PdfFilters, DctRgbAndCmyk)
 		}
 
 		EXPECT_TRUE(diagnostics_tail().empty());
+	}
+}
+
+// CCITT and JBIG2 MMR bounds: the row transition buffers fit the ceiling, the reference-line search is linear (two
+// 131,072-pixel alternating rows decode quickly), and a lone EOL in MMR data is a damaged block, not a finished page.
+TEST(PdfFilters, CcittAndMmrBounds)
+{
+	{
+		PdfDict parms;
+		parms.set("K", PdfValue(int64_t{-1}));
+		parms.set("Columns", PdfValue(int64_t{200000}));
+		parms.set("Rows", PdfValue(int64_t{1}));
+		const std::vector<uint8_t> input = {0x00u, 0x10u};
+		RECTO_EXPECT_ERR(decode_ccitt_fax(input, &parms, 1u << 20u), ErrorCode::DecompressionLimitExceeded);
+	}
+	{
+		constexpr int64_t kColumns = 131072;
+		std::string bits;
+		bits.reserve(static_cast<size_t>(kColumns) * 7u + 64u);
+		for (int64_t x = 0; x < kColumns; x += 2) {
+			bits += "001";    // horizontal mode
+			bits += "000111"; // white run 1
+			bits += "010";    // black run 1
+		}
+		bits.append(static_cast<size_t>(kColumns), '1'); // row 2: V(0) at every transition of row 1
+		bits += "000000000001000000000001";               // EOFB
+		const auto g4 = pack_bitstring(bits);
+		PdfDict parms;
+		parms.set("K", PdfValue(int64_t{-1}));
+		parms.set("Columns", PdfValue(kColumns));
+		parms.set("Rows", PdfValue(int64_t{2}));
+		const auto started = std::chrono::steady_clock::now();
+		auto rows = decode_ccitt_fax(g4, &parms);
+		const auto elapsed = std::chrono::steady_clock::now() - started;
+		RECTO_ASSERT_OK(rows);
+		ASSERT_EQ(rows->size(), static_cast<size_t>(kColumns / 8) * 2u);
+		EXPECT_TRUE(std::all_of(rows->begin(), rows->end(), [](uint8_t b) { return b == 0xAAu; }));
+		// Quadratic search takes billions of comparisons here; linear takes well under a second even under ASan.
+		EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 3000);
+	}
+	{
+		const auto make_page = [](const std::string& mmr_bits) {
+			std::vector<uint8_t> stream = {
+				0x97u, 0x4Au, 0x42u, 0x32u, 0x0Du, 0x0Au, 0x1Au, 0x0Au, 0x01u, 0x00u, 0x00u, 0x00u, 0x01u};
+			append_jbig2_segment(stream, 0u, 48u, {}, 1u, make_jbig2_page_info_payload(8u, 2u, 0u));
+			std::vector<uint8_t> gr_payload;
+			append_u32_be(gr_payload, 8u);
+			append_u32_be(gr_payload, 2u);
+			append_u32_be(gr_payload, 0u);
+			append_u32_be(gr_payload, 0u);
+			gr_payload.push_back(0u);
+			gr_payload.push_back(0x01u); // MMR
+			const auto mmr = pack_bitstring(mmr_bits);
+			gr_payload.insert(gr_payload.end(), mmr.begin(), mmr.end());
+			append_jbig2_segment(stream, 1u, 38u, {}, 1u, gr_payload);
+			append_jbig2_segment(stream, 2u, 49u, {}, 1u, {});
+			append_jbig2_segment(stream, 3u, 51u, {}, 0u, {});
+			return stream;
+		};
+		RECTO_EXPECT_ERR(decode_jbig2(make_page("0000000000010000")), ErrorCode::DamagedFormat); // one EOL only
+		RECTO_ASSERT_OK(decode_jbig2(make_page("000000000001000000000001")));                 // a whole EOFB
 	}
 }
 

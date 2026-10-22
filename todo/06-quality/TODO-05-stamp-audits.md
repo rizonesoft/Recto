@@ -61,6 +61,10 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 28 | §28 | Retired Office and LibreOffice converter surfaces removed from the A, B and C boards | §25 | [x] |
 | 29 | §29 | Damaged-file recovery resolves indirect object-stream parameters | §21 | [ ] |
 | 30 | §30 | Damaged-file recovery keeps an encrypted file's compressed objects | §21 | [ ] |
+| 31 | §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP | §22 | [ ] |
+| 32 | §32 | JPX per-component precision and sampling, and the full coding-style set | §22 | [ ] |
+| 33 | §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding | §22 | [ ] |
+| 34 | §34 | CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies | §22 | [ ] |
 
 ## 1. Audit D00 T01 §1: Git repository and repo-face files
 
@@ -637,6 +641,14 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 - [ ] On a confirmed regression, add a dated blocking note to `D01 T01 §8`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s8.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
 - [ ] Commit: `review: audit D01 T01 §8 under the current review process`
 
+> **Deferred:** JBIG2 striped pages, MMR halftone plane alignment and HENABLESKIP -> XREF: D06 T05 §31
+
+> **Deferred:** JPX per-component precision and sampling, and the full coding-style set -> XREF: D06 T05 §32
+
+> **Deferred:** DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding -> XREF: D06 T05 §33
+
+> **Deferred:** CCITT damaged-row recovery per ISO 32000-1 Table 11 -> XREF: D06 T05 §34
+
 **Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §8"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s8.md` ends in an approving round or a recorded stop with every finding fixed or filed.
 
 ## 23. Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6
@@ -826,6 +838,87 @@ The audit of `D01 T01 §6` (`docs/reviews/06-quality/audit-d01-t01-s6.md`, D06 T
 - [ ] Commit: `pdf: recovery keeps an encrypted file's compressed objects`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfXref.*:PdfDocument.*` passes under ASan with 0 warnings, including `PdfDocument.RecoveredEncryptedObjectStreamsResolve`.
+
+## 31. JBIG2 striped pages, MMR halftone alignment and HENABLESKIP
+
+The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T05 §22, round 1) found three JBIG2 decoding gaps against ITU-T T.88. A page of unknown height (`0xFFFFFFFF`) with striping takes its maximum stripe size as the permanent height and ignores End-of-Stripe segments, so later stripes are clipped (T.88 7.4.9 and 7.4.10). Consecutive MMR halftone bitplanes are read from the exact bit where the previous one ended, though each MMR invocation begins and ends on a byte boundary (T.88 6.2.6); the existing fixture concatenates unaligned planes and hides this. Arithmetic halftone regions never read `HENABLESKIP` (flag bit `0x08`) and decode symbols for skipped cells (T.88 6.6.5, Annex C). -> XREF: D06 T05 §22
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Make page height follow End-of-Stripe segments for unknown-height pages in `src/pdf/filters.cpp`. Done when: a page striped into two one-row regions decodes both rows.
+2. Byte-align each MMR halftone plane and implement the halftone skip mask. Done when: byte-aligned planes decode and skipped cells consume no symbols.
+
+- [ ] Track the page height of a `0xFFFFFFFF`-height page from End-of-Stripe segments (T.88 7.4.9, 7.4.10) in the JBIG2 page composer in `src/pdf/filters.cpp`. Done when: an 8-pixel page with striping `0x8001` and two one-row regions separated by End-of-Stripe decodes two rows.
+- [ ] Align to the next byte after each MMR halftone bitplane (T.88 6.2.6) and correct the `PdfFilters` halftone fixture to pad its first plane from 38 to 40 bits. Done when: the corrected fixture decodes and the unaligned form is refused.
+- [ ] Read `HENABLESKIP` and build the halftone skip mask (T.88 6.6.5, Annex C) for arithmetic halftones in `src/pdf/filters.cpp`. Done when: a grid with cells outside the region and `HENABLESKIP=1` decodes with those cells skipped.
+- [ ] Add `PdfFilters.Jbig2StripesAlignmentAndSkip` covering all three. Done when: it fails on the code before this section.
+- [ ] Commit: `pdf: JBIG2 stripes, aligned MMR halftone planes and HENABLESKIP`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.Jbig2StripesAlignmentAndSkip`.
+
+## 32. JPX per-component precision and sampling, and the full coding-style set
+
+The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T05 §22, round 1) found the native JPEG 2000 decoder taking every component's bit depth and signedness from component zero and ignoring `XRsiz`/`YRsiz` subsampling (ITU-T T.800 A.5.1), and rejecting more than 10 decomposition levels and every nonzero code-block style, while `D01 T01 §8`'s original review recorded 32 levels and all six style flags as supported. -> XREF: D06 T05 §22
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Carry `Ssiz`, `XRsiz` and `YRsiz` per component through decoding and reconstruction in `src/pdf/filters.cpp`. Done when: components of different precision and 2x2 chroma subsampling reconstruct correctly.
+2. Support up to 32 decomposition levels and the T.800 code-block style flags (selective arithmetic bypass, reset, termination, vertically causal context, predictable termination, segmentation symbols). Done when: a codestream using each decodes.
+
+- [ ] Read precision and signedness per component from SIZ and normalize each component by its own depth in the JPX reconstruction in `src/pdf/filters.cpp`. Done when: a codestream with components of 8 and 12 bits decodes each to its own range.
+- [ ] Apply `XRsiz`/`YRsiz` to component bounds and upsample subsampled components to the image grid. Done when: a 4:2:0 codestream reconstructs at full resolution.
+- [ ] Accept up to 32 decomposition levels and implement the six code-block style flags in the Tier-1 decoder. Done when: `seed-filter-09-jpx.bin` with byte 58 set to `0x02` (context reset) decodes, and each other flag has a decoding test.
+- [ ] Add `PdfFilters.JpxComponentsAndCodingStyles` for the cases above, and record in `docs/reviews/06-quality/audit-d01-t01-s8.md` that the original review's capability claims were corrected here. Done when: the test fails on the code before this section.
+- [ ] Commit: `pdf: JPX per-component geometry and the full coding-style set`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.JpxComponentsAndCodingStyles`.
+
+## 33. DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding
+
+The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T05 §22, round 1) found DCT decoding ignoring `/ColorTransform` (WIC's interpretation is always used), so a three-component JPEG without an Adobe marker and `/ColorTransform 0` is colour-converted when it must not be (PDF Reference Table 3.11). It also found that the checked Adobe CMYK/YCCK verification of `D01 T01 §8` never existed: the generated JPEG has no APP14 marker, its samples are neutral and no YCCK case is tested. -> XREF: D06 T05 §22
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Honour `/ColorTransform` (and the Adobe APP14 transform flag when present) when decoding through WIC in `src/pdf/filters.cpp`. Done when: `/ColorTransform 0` yields untransformed samples.
+2. Test Adobe APP14 CMYK and YCCK images with non-neutral samples. Done when: both decode to the expected colours.
+
+- [ ] Read `/ColorTransform` in the DCT decoder and decode with or without the YCbCr/YCCK transform accordingly, preferring the Adobe APP14 transform byte when present, in `src/pdf/filters.cpp`. Done when: a non-neutral three-component JPEG with `/ColorTransform 0` decodes to its raw samples.
+- [ ] Add JPEG fixtures with an Adobe APP14 marker for CMYK (transform 0) and YCCK (transform 2) with non-neutral samples under `tests/corpus/` with provenance rows. Done when: `python scripts/build-corpus.py check` passes with them.
+- [ ] Add `PdfFilters.DctColorTransformAndAdobeCmykYcck` asserting the decoded colours. Done when: it fails on the code before this section.
+- [ ] Commit: `pdf: DCT /ColorTransform and Adobe CMYK and YCCK`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.DctColorTransformAndAdobeCmykYcck`.
+
+## 34. CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies
+
+The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T05 §22, round 1) found CCITT damaged-row handling diverging from `/DamagedRowsBeforeError` (ISO 32000-1 Table 11): consecutive damaged rows each repeat the last recovered row (a second consecutive substitution should be white), and mixed Group 3 (`K > 0`) decoding has no recovery and refuses the stream. -> XREF: D06 T05 §22
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement Table 11's damaged-row substitution for pure and mixed Group 3 in `src/pdf/filters.cpp`. Done when: two consecutive damaged rows after a non-white good row produce the good row then white, for `K = 0` and `K > 0`.
+
+- [ ] Resynchronize at the next EOL after a damaged row and substitute per Table 11 (the previous good row once, then white) up to `/DamagedRowsBeforeError`, in the CCITT decoder in `src/pdf/filters.cpp`. Done when: the `K = 0` case yields the good row followed by a white row.
+- [ ] Apply the same recovery to mixed Group 3 (`K > 0`), honouring each row's 1D/2D tag bit. Done when: the `K > 0` case recovers instead of being refused.
+- [ ] Add `PdfFilters.CcittDamagedRowRecovery` for both cases and for exceeding `/DamagedRowsBeforeError`. Done when: it fails on the code before this section.
+- [ ] Commit: `pdf: CCITT damaged-row recovery per ISO 32000-1 Table 11`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.CcittDamagedRowRecovery`.
 
 ## Verification
 

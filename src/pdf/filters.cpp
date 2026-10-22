@@ -1881,19 +1881,24 @@ void find_b1_b2(
 	int32_t a0,
 	int32_t a0_color,
 	int32_t columns,
+	size_t& cursor,
 	int32_t& out_b1,
 	int32_t& out_b2) noexcept
 {
 	// Even indices in `ref_changes` are transitions to Black (1); odd indices are
 	// transitions to White (0). `b1` is the first transition on `ref_changes`
-	// to color `(1 - a0_color)` at position `> a0`.
+	// to color `(1 - a0_color)` at position `> a0`. The transitions increase and
+	// `a0` never moves back within a row, so the search resumes at `cursor` (the
+	// first transition past the previous `a0`) and a row costs linear time.
+	while (cursor < ref_changes.size() && ref_changes[cursor] <= a0) {
+		++cursor;
+	}
 	const size_t target_parity = (a0_color == 0) ? 0u : 1u;
-	for (size_t i = target_parity; i < ref_changes.size(); i += 2u) {
-		if (ref_changes[i] > a0) {
-			out_b1 = ref_changes[i];
-			out_b2 = (i + 1u < ref_changes.size()) ? ref_changes[i + 1u] : columns;
-			return;
-		}
+	const size_t i = (cursor % 2u == target_parity) ? cursor : cursor + 1u;
+	if (i < ref_changes.size()) {
+		out_b1 = ref_changes[i];
+		out_b2 = (i + 1u < ref_changes.size()) ? ref_changes[i + 1u] : columns;
+		return;
 	}
 	out_b1 = columns;
 	out_b2 = columns;
@@ -1983,6 +1988,7 @@ void pack_changes_to_row(
 	int32_t a0 = -1;
 	int32_t a0_color = 0; // White
 	size_t step_count = 0;
+	size_t ref_cursor = 0;
 	const size_t max_steps = static_cast<size_t>(columns) * 2u + 8u;
 
 	while (a0 < columns) {
@@ -2002,7 +2008,7 @@ void pack_changes_to_row(
 
 		int32_t b1 = columns;
 		int32_t b2 = columns;
-		find_b1_b2(ref_changes, a0, a0_color, columns, b1, b2);
+		find_b1_b2(ref_changes, a0, a0_color, columns, ref_cursor, b1, b2);
 
 		if (mode == Ccitt2dMode::Pass) {
 			if (b2 <= a0 || (a0 == -1 && b2 == 0)) {
@@ -2137,6 +2143,15 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 				"CCITTFaxDecode image dimensions exceed maximum decoded bitmap ceiling");
 		}
 
+		// The two transition buffers (`int32_t` per change, at most one change per column) are working memory held
+		// to the same ceiling as the output.
+		if (width_u64 > effective_limit / (2ULL * sizeof(int32_t))) {
+			return make_filter_error(
+				ErrorCode::DecompressionLimitExceeded,
+				DiagnosticId::DecompressionLimitExceeded,
+				"CCITTFaxDecode /Columns exceed the working-memory ceiling for row transitions");
+		}
+
 		const size_t row_bytes = static_cast<size_t>((width_u64 + 7ULL) / 8ULL);
 		if (params.rows > 0 &&
 			static_cast<uint64_t>(row_bytes) * static_cast<uint64_t>(params.rows) > effective_limit) {
@@ -2185,7 +2200,7 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 				params.black_is_1,
 				out.data() + prev_size,
 				row_bytes);
-			ref_changes = cur_changes;
+			ref_changes.swap(cur_changes); // the next row's decoder clears cur_changes before use
 			++decoded_rows;
 			return {};
 		};
@@ -2766,7 +2781,14 @@ private:
 				ref_changes,
 				cur_changes);
 			if (status == 0) {
-				(void)reader.try_consume_eol();
+				// The row decoder consumed one EOL; an EOFB is two (T.88 6.2.6, T.6 2.4.1.2), so a lone EOL is a
+				// damaged block rather than the end of the region.
+				if (!reader.try_consume_eol()) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"Incomplete EOFB inside JBIG2 Generic Region MMR data");
+				}
 				break;
 			}
 			if (status < 0) {
@@ -2781,7 +2803,7 @@ private:
 				/*black_is_1=*/true,
 				bm.data.data() + static_cast<size_t>(y) * bm.stride,
 				bm.stride);
-			ref_changes = cur_changes;
+			ref_changes.swap(cur_changes); // the next row's decoder clears cur_changes before use
 		}
 		// Consume optional trailing EOFB (`000000000001000000000001`) if present after `height` rows.
 		const size_t saved_bit_pos = reader.bit_pos;
@@ -9460,24 +9482,39 @@ namespace {
 			(i == 0) ? raw_bytes : std::span<const uint8_t>(stage_buf);
 		RECTO_PDF_TRY(const PdfDict* stage_parms, resolve_stage_parms(filter_names[i], filter_parms[i]));
 		std::optional<PdfDict> merged_image_parms;
-		if (filter_names[i] == "DCTDecode" || filter_names[i] == "DCT" ||
-			filter_names[i] == "JPXDecode") {
-			if (stage_parms == nullptr) {
-				stage_parms = stream_dict_context;
-			} else if (stream_dict_context != nullptr &&
-					   stage_parms != stream_dict_context &&
-					   stage_parms->get("Decode") == nullptr &&
-					   stage_parms->get("D") == nullptr) {
-				const PdfValue* stm_decode = stream_dict_context->get("Decode");
-				if (stm_decode == nullptr) {
-					stm_decode = stream_dict_context->get("D");
+		const bool is_jpx = filter_names[i] == "JPXDecode";
+		if (filter_names[i] == "DCTDecode" || filter_names[i] == "DCT" || is_jpx) {
+			// The image's /Decode comes from the stage's parameters or else the image dictionary, resolved one level
+			// (it may be an indirect array). For JPX it applies only to an image mask (ISO 32000-2 Table 87: a
+			// JPXDecode image that is not an ImageMask ignores /Decode).
+			const PdfDict* base = stage_parms != nullptr ? stage_parms : stream_dict_context;
+			const auto decode_in = [](const PdfDict* d) -> const PdfValue* {
+				if (d == nullptr) {
+					return nullptr;
 				}
-				if (stm_decode != nullptr) {
-					merged_image_parms = *stage_parms;
-					merged_image_parms->set("Decode", PdfValue(*stm_decode));
-					stage_parms = &(*merged_image_parms);
-				}
+				const PdfValue* v = d->get("Decode");
+				return v != nullptr ? v : d->get("D");
+			};
+			const PdfValue* decode_entry = decode_in(base);
+			if (decode_entry == nullptr && base != stream_dict_context) {
+				decode_entry = decode_in(stream_dict_context);
 			}
+			RECTO_PDF_TRY(const PdfValue* decode_value, deref(decode_entry));
+			bool apply_decode = decode_value != nullptr && !decode_value->is_null();
+			if (is_jpx && apply_decode) {
+				const PdfValue* mask_entry =
+					stream_dict_context != nullptr ? stream_dict_context->get("ImageMask") : nullptr;
+				RECTO_PDF_TRY(const PdfValue* mask_value, deref(mask_entry));
+				apply_decode = mask_value != nullptr && mask_value->as_bool() == std::optional<bool>(true);
+			}
+			merged_image_parms = base != nullptr ? *base : PdfDict{};
+			merged_image_parms->erase("Decode");
+			merged_image_parms->erase("D");
+			if (apply_decode) {
+				RECTO_PDF_TRY_REF(decode_copy, decode_value->deep_clone());
+				merged_image_parms->set("Decode", std::move(decode_copy));
+			}
+			stage_parms = &(*merged_image_parms);
 		}
 		RECTO_PDF_TRY(
 			std::vector<uint8_t> next_buf,
