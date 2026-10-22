@@ -21,6 +21,7 @@
 #pragma comment(lib, "ole32.lib")
 
 #include <algorithm>
+#include <deque>
 #include <array>
 #include <bit>
 #include <cmath>
@@ -9136,14 +9137,17 @@ namespace {
 	const IndirectObjectResolver* resolver = nullptr,
 	bool allow_jbig2 = true)
 {
-	// Any of /Filter, /DecodeParms and their array elements may be an indirect reference (ISO 32000-1 section
-	// 7.3.10). Each is resolved one level through the resolver into storage that outlives the pipeline (reserved
-	// up front, so the pointers taken below stay valid); without a resolver a reference is refused below as before.
-	std::vector<PdfValue> resolved;
-	resolved.reserve(2 + 2 * kMaxFilterChainDepth);
+	// Any of /Filter, /DecodeParms, their array elements and the values inside a /DecodeParms dictionary may be an
+	// indirect reference (ISO 32000-1 section 7.3.10). Each is resolved one level through the resolver into a deque,
+	// whose elements stay put as it grows, so the pointers taken below outlive the pipeline. Without a resolver a
+	// reference is left as it is and refused below as before. Arrays longer than the filter chain are left for the
+	// length checks below to refuse, and a /DecodeParms dictionary with more references than any filter defines
+	// parameters is refused here, so hostile input cannot drive unbounded resolution.
+	constexpr size_t kMaxResolvedParmsEntries = 16;
+	std::deque<PdfValue> resolved;
+	const bool can_resolve = resolver != nullptr && static_cast<bool>(*resolver);
 	const auto deref = [&](const PdfValue* v) -> PdfResult<const PdfValue*> {
-		if (v == nullptr || !v->is_ref() || resolver == nullptr || !*resolver ||
-			resolved.size() == resolved.capacity()) {
+		if (v == nullptr || !v->is_ref() || !can_resolve) {
 			return v;
 		}
 		auto target = (*resolver)(*v->as_ref());
@@ -9153,19 +9157,51 @@ namespace {
 		resolved.push_back(std::move(*target));
 		return &resolved.back();
 	};
-	const auto deref_array = [&](const PdfValue* v) -> PdfResult<const PdfValue*> {
+	const auto deref_dict = [&](const PdfValue* v) -> PdfResult<const PdfValue*> {
+		const PdfDict* dict = v != nullptr ? v->as_dict() : nullptr;
+		if (dict == nullptr || !can_resolve) {
+			return v;
+		}
+		size_t refs = 0;
+		for (const auto& entry : dict->entries()) {
+			refs += entry.second.is_ref() ? 1u : 0u;
+		}
+		if (refs == 0) {
+			return v;
+		}
+		if (refs > kMaxResolvedParmsEntries) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"/DecodeParms dictionary holds more indirect values than any filter defines parameters");
+		}
+		PdfDict copy;
+		for (const auto& [key, value] : dict->entries()) {
+			RECTO_PDF_TRY(const PdfValue* target, deref(&value));
+			RECTO_PDF_TRY_REF(value_copy, target->deep_clone());
+			copy.set(key, std::move(value_copy));
+		}
+		resolved.emplace_back(std::move(copy));
+		return &resolved.back();
+	};
+	const auto deref_array = [&](const PdfValue* v, bool parms) -> PdfResult<const PdfValue*> {
 		const PdfArray* arr = v != nullptr ? v->as_array() : nullptr;
-		if (arr == nullptr || resolver == nullptr || !*resolver ||
-			std::none_of(arr->begin(), arr->end(), [](const PdfValue& e) { return e.is_ref(); })) {
+		if (arr == nullptr || !can_resolve || arr->size() > kMaxFilterChainDepth) {
 			return v;
 		}
 		PdfArray copy;
+		bool changed = false;
 		for (const PdfValue& e : *arr) {
 			RECTO_PDF_TRY(const PdfValue* elem, deref(&e));
+			if (parms) {
+				RECTO_PDF_TRY(const PdfValue* elem_dict, deref_dict(elem));
+				elem = elem_dict;
+			}
+			changed = changed || elem != &e;
 			RECTO_PDF_TRY_REF(elem_copy, elem->deep_clone());
 			copy.push_back(std::move(elem_copy));
 		}
-		if (resolved.size() == resolved.capacity()) {
+		if (!changed) {
 			return v;
 		}
 		resolved.emplace_back(std::move(copy));
@@ -9173,10 +9209,11 @@ namespace {
 	};
 	{
 		RECTO_PDF_TRY(const PdfValue* f, deref(filter_val));
-		RECTO_PDF_TRY(const PdfValue* fa, deref_array(f));
+		RECTO_PDF_TRY(const PdfValue* fa, deref_array(f, false));
 		filter_val = fa;
 		RECTO_PDF_TRY(const PdfValue* p, deref(parms_val));
-		RECTO_PDF_TRY(const PdfValue* pa, deref_array(p));
+		RECTO_PDF_TRY(const PdfValue* pd, deref_dict(p));
+		RECTO_PDF_TRY(const PdfValue* pa, deref_array(pd, true));
 		parms_val = pa;
 	}
 

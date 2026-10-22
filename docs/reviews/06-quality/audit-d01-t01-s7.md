@@ -48,3 +48,48 @@ OVERALL: needs-attention
 - Finding 3 (P3): correct. `u` is the highest base-85 digit; the invalid range is `v..y`. The decoder was right and the contract wrong: `D01 T01 §7` carries a dated correction, and `PdfFilters.AsciiFilters` now rejects each of `v`, `w`, `x`, `y` and decodes `!!!!u~>` to `00 00 00 54`.
 
 Gates after round 1: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 113 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfDocument.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 22 tests.`; `python scripts/todo-graph.py validate` -> `valid: 681 sections`.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T08:00:21Z
+- Effort: medium
+- Lines: 28
+- Digest: 64c42bd4fe6037eb
+
+### adversarial: needs-attention
+
+1. **P3: Indirect references exhaust temporary storage within the permitted eight-filter limit.** `src/pdf/filters.cpp:9143` reserves 18 entries, but resolving two indirect arrays, their 16 indirect elements, and two array copies requires 20. At capacity, lines 9146 and 9168 silently retain unresolved values. Reproduce with `/Filter 10 0 R` and `/DecodeParms 11 0 R`, each resolving to eight references: filter references resolve to `/ASCIIHexDecode`, parameter references to empty dictionaries. Supply eight nested ASCIIHex encodings of `A`. The pipeline returns `DamagedFormat` before decoding, although the equivalent direct arrays work. This is a source-traced reproduction.
+
+### consistency: needs-attention
+
+2. **P3: The trailer repair contradicts the frozen statelessness contract.** `src/pdf/filters.cpp:955` calls `record_diagnostic`, which mutates the process-wide ring under a global lock at `src/pdf/error.cpp:936`. The section still promises pure functions sharing zero mutable state. Reproduce with the existing `PdfFilters.FlateTrailerDamageIsRecorded` test: decoding `78 9C 73 04 00` increments global diagnostic state. The test passed during this audit. Keeping recovered data and recording damage is the accepted behavior, but its implementation and the unchanged Freeze check now disagree.
+
+### integration: needs-attention
+
+3. **P2: Indirect values inside `/DecodeParms` still reject valid streams.** `src/pdf/filters.cpp:680` reads `/Predictor` directly with `as_int()`; `/Colors`, `/BitsPerComponent`, `/Columns`, and `/EarlyChange` have the same limitation. The new resolver handles the enclosing dictionary and array elements but never its parameter values.
+
+   Reproduce through `Document::decode_stream` with `/Filter /FlateDecode /DecodeParms << /Predictor 10 0 R >>`, object `10 0 obj 1 endobj`, and bytes `78 9C 73 04 00 00 42 00 42`. Expected output is `A`; source execution instead returns `DamagedFormat` for a non-integer predictor. The resolver supplied at `src/pdf/document.cpp:1764` never receives that reference. This is a source-traced reproduction.
+
+### source-defect: needs-attention
+
+Finding 3 violates the equivalence of direct and indirect parameter values. These integer parameters have no direct-only restriction. See [Adobe PDF Reference §3.2.9 and Table 3.7](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.6.pdf#page=62).
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: advisory
+
+Independently ran the existing Release executable with `--gtest_filter=PdfFilters.*:Support.AsanActiveWhenEnabled`: all 14 filter tests passed, plus the support test reporting `ASan=enabled`. This verifies the executable’s checkpoint result, including the round 1 regressions. It does not independently establish a fresh build from `6814970`, ARM64 compilation, or warning counts. No files were modified and no custom C++ reproducers were compiled.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+- Finding 1 (P3): correct, and my mistake: the reserved vector capped resolution at 18 entries and silently left references unresolved past it. Resolved values now live in a `std::deque` (stable addresses as it grows) with no silent cap. Arrays longer than the filter chain are left for the existing length checks to refuse, and a `/DecodeParms` dictionary with more than 16 references (more than any filter defines parameters) is refused explicitly. `PdfFilters.IndirectValuesAndFullChainsResolve` decodes eight nested ASCIIHex stages where `/Filter` and `/DecodeParms` are each an indirect array of eight references.
+- Finding 3 (P2): correct. Values inside a `/DecodeParms` dictionary (`/Predictor`, `/Colors`, `/BitsPerComponent`, `/Columns`, `/EarlyChange` and the rest) now resolve one level through the resolver, in a direct dictionary and in each array element. The same test decodes a stream whose `/Predictor` is `10 0 R`. It fails on the round 1 code.
+- Finding 2 (P3): the file is `frozen: true`, so the Freeze check is not rewritten. Its purpose is thread safety, which holds: filters already wrote to the D16 diagnostic ring through `make_pdf_error` (out of memory, internal errors), a lock-protected sink that no decode reads, and the trailer diagnostic is the same kind of write. A dated note in `D01 T01 §7` records that reading of "zero mutable state" as decode state.
+
+Gates after round 2: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 114 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfDocument.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 23 tests.`

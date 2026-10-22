@@ -120,6 +120,61 @@ TEST(PdfFilters, IndirectFilterAndDecodeParmsResolve)
 	RECTO_EXPECT_ERR(decode_stream(raw, missing, kMaxDecodedStreamBytes, &resolver), ErrorCode::DamagedFormat);
 }
 
+// The values inside /DecodeParms may be indirect too, and a full eight-stage chain of references resolves.
+TEST(PdfFilters, IndirectValuesAndFullChainsResolve)
+{
+	const std::vector<uint8_t> raw = {0x78u, 0x9Cu, 0x73u, 0x04u, 0x00u, 0x00u, 0x42u, 0x00u, 0x42u};
+	const IndirectObjectResolver one = [](IndirectRef ref) -> PdfResult<PdfValue> {
+		if (ref.obj_num == 10u) {
+			return PdfValue(int64_t{1});
+		}
+		return PdfError{ErrorCode::DamagedFormat, "missing object"};
+	};
+	PdfDict parms;
+	parms.set(PdfName::from_decoded("Predictor"), PdfValue(IndirectRef{10u, 0u}));
+	PdfDict dict;
+	dict.set(PdfName::from_decoded("Filter"), PdfValue(PdfName::from_decoded("FlateDecode")));
+	dict.set(PdfName::from_decoded("DecodeParms"), PdfValue(parms));
+	auto dec = decode_stream(raw, dict, kMaxDecodedStreamBytes, &one);
+	RECTO_ASSERT_OK(dec);
+	EXPECT_EQ(*dec, std::vector<uint8_t>{'A'});
+
+	// Eight nested ASCIIHex encodings of "A", with /Filter and /DecodeParms each an indirect array of references.
+	std::string encoded = "A";
+	for (int i = 0; i < 8; ++i) {
+		std::string next;
+		static constexpr char kHex[] = "0123456789ABCDEF";
+		for (const unsigned char c : encoded) {
+			next += kHex[c >> 4u];
+			next += kHex[c & 0x0Fu];
+		}
+		encoded = next + ">";
+	}
+	const std::vector<uint8_t> hex_raw(encoded.begin(), encoded.end());
+	const IndirectObjectResolver chain = [](IndirectRef ref) -> PdfResult<PdfValue> {
+		if (ref.obj_num == 10u || ref.obj_num == 11u) {
+			PdfArray refs;
+			for (uint32_t i = 0; i < 8u; ++i) {
+				refs.push_back(PdfValue(IndirectRef{(ref.obj_num == 10u ? 20u : 30u) + i, 0u}));
+			}
+			return PdfValue(std::move(refs));
+		}
+		if (ref.obj_num >= 20u && ref.obj_num < 28u) {
+			return PdfValue(PdfName::from_decoded("ASCIIHexDecode"));
+		}
+		if (ref.obj_num >= 30u && ref.obj_num < 38u) {
+			return PdfValue(PdfDict{});
+		}
+		return PdfError{ErrorCode::DamagedFormat, "missing object"};
+	};
+	PdfDict chained;
+	chained.set(PdfName::from_decoded("Filter"), PdfValue(IndirectRef{10u, 0u}));
+	chained.set(PdfName::from_decoded("DecodeParms"), PdfValue(IndirectRef{11u, 0u}));
+	auto chained_dec = decode_stream(hex_raw, chained, kMaxDecodedStreamBytes, &chain);
+	RECTO_ASSERT_OK(chained_dec);
+	EXPECT_EQ(*chained_dec, std::vector<uint8_t>{'A'});
+}
+
 TEST(PdfFilters, FlateDecode)
 {
 	// 1. Seed fixture seeds/seed-filter-00-flate.bin (selector 0x00 + zlib payload).
