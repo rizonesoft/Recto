@@ -93,3 +93,42 @@ OVERALL: needs-attention
 - Finding 2 (P3): the file is `frozen: true`, so the Freeze check is not rewritten. Its purpose is thread safety, which holds: filters already wrote to the D16 diagnostic ring through `make_pdf_error` (out of memory, internal errors), a lock-protected sink that no decode reads, and the trailer diagnostic is the same kind of write. A dated note in `D01 T01 §7` records that reading of "zero mutable state" as decode state.
 
 Gates after round 2: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 114 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfDocument.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 23 tests.`
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T08:10:55Z
+- Effort: medium
+- Lines: 24
+- Digest: 79325dc24d2c42e3
+
+### adversarial: needs-attention
+
+Finding 1 below leaves a narrow gap in the promised RFC 1951 support. Reproduction is source-traced, not executed against a custom C++ harness.
+
+### consistency: approve
+
+### integration: approve
+
+### source-defect: needs-attention
+
+1. **P3: Flate rejects permitted distance-table sizes.** `src/pdf/filters.cpp:493` rejects `hdist > 30`. RFC 1951 permits 1 to 32 distance-table entries; unused entries have zero code length. Prohibiting reserved distance symbols from occurring does not require rejecting their unused table entries. [RFC 1951 §3.2.7](https://www.rfc-editor.org/rfc/rfc1951.html#section-3.2.7)
+
+   Reproduce with a final dynamic DEFLATE block declaring 257 literal/length entries and 31 distance entries: give only literal symbol 256 a one-bit code, distance symbol 0 a one-bit code, and all other entries zero lengths; encode only EOB. Expected output is empty. `decode_flate` instead returns `DamagedFormat` at the header check before reading those tables. This is an uncommon interoperability edge case.
+
+### design: advisory
+
+Not applicable; this section owns no user surface.
+
+### record: advisory
+
+Independently ran the existing Release executable with `--gtest_filter=PdfFilters.*:Support.AsanActiveWhenEnabled`: all 15 filter tests passed, and the support test reported `ASan=enabled`. This verifies the existing executable’s checkpoint result, including round 2 regressions. It does not independently establish the recorded fresh-build warning counts, ARM64 compilation, or that the executable was built from `1c768d3`. No files were modified.
+
+HIGHEST: P3
+OVERALL: needs-attention
+
+## Fixes after round 3
+
+- Finding 1 (P3), kept as a deliberate refusal: RFC 1951 section 3.2.7 does allow HDIST up to 32 (and HLIT up to 288) when the extra entries have length 0. zlib's `inflate`, the reference implementation every producer is tested against, refuses those headers ("too many length or distance symbols") unless built with `PKZIP_BUG_WORKAROUND`, so no stream other readers open is lost by refusing the same; accepting them would make Recto read streams zlib rejects. The reason is now a comment at the check in `src/pdf/filters.cpp`. No behaviour change.
+
+Gates after round 3: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 114 tests.` for x64 Debug and Release.

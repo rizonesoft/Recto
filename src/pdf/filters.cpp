@@ -490,6 +490,9 @@ struct HuffmanTree {
 			const uint32_t hlit = hlit_raw + 257u;
 			const uint32_t hdist = hdist_raw + 1u;
 			const uint32_t hclen = hclen_raw + 4u;
+			// RFC 1951 section 3.2.7 lets HLIT reach 288 and HDIST 32 (the extra entries can only have length 0,
+			// since those symbols never occur). zlib, the reference inflater, refuses them ("too many length or
+			// distance symbols"), so no producer's output that other readers open is lost; Recto refuses the same.
 			if (hlit > 286u || hdist > 30u) {
 				return make_filter_error(
 					ErrorCode::DamagedFormat,
