@@ -759,6 +759,18 @@ class BuildCorpusTests(unittest.TestCase):
             prov.write_text(prov.read_text(encoding="utf-8").replace("Issue #123", "Issue 123"), encoding="utf-8",
                             newline="\n")
             self.assertIn("malformed user-report row", " ".join(self.mod.check_corpus(root)[1]))
+            # A spacing variant or a blank cell is refused, by --check and by regeneration, never silently dropped.
+            for variant in (" " + row, row.replace("| user-reports/", "|  user-reports/"),
+                            row.replace("| Empty xref table |", "|   |"), row.replace("Issue #123, synthetic", "  ")):
+                with self.subTest(variant=variant):
+                    prov.write_text(prov.read_text(encoding="utf-8").replace("Issue 123", "Issue #123"), encoding="utf-8",
+                                    newline="\n")
+                    good = prov.read_text(encoding="utf-8")
+                    prov.write_text(good.replace(row, variant), encoding="utf-8", newline="\n")
+                    self.assertIn("malformed user-report row", " ".join(self.mod.check_corpus(root)[1]))
+                    with self.assertRaisesRegex(ValueError, "malformed user-report row"):
+                        self.mod.generate_corpus(root)
+                    prov.write_text(good, encoding="utf-8", newline="\n")
 
     def test_inflation_stops_just_past_its_limit(self) -> None:
         bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))

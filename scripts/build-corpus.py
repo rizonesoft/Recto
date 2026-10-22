@@ -3773,7 +3773,8 @@ USER_REPORTS_PREFIX = "user-reports/"
 # A maintainer-recorded row for a user-report reproduction (docs/support/user-bugs.md): a plain file name under
 # user-reports/, its SHA-256, CC0-1.0, an Origin naming the issue (#N) and where the file came from, and a Purpose.
 USER_REPORT_ROW = re.compile(
-    r"\| (user-reports/[A-Za-z0-9][A-Za-z0-9._-]{0,99}) \| ([0-9a-f]{64}) \| CC0-1\.0 \| ([^|]*#\d+[^|]*) \| ([^|]+) \|")
+    r"\| (user-reports/[A-Za-z0-9][A-Za-z0-9._-]{0,99}) \| ([0-9a-f]{64}) \| CC0-1\.0 "
+    r"\| ([^|\s](?:[^|]*[^|\s])?) \| ([^|\s](?:[^|]*[^|\s])?) \|")  # origin and purpose never blank or padded
 
 
 def user_report_rows(corpus_root: Path) -> dict[str, tuple[str, str, str]]:
@@ -3787,12 +3788,16 @@ def user_report_rows(corpus_root: Path) -> dict[str, tuple[str, str, str]]:
         return {}
     rows: dict[str, tuple[str, str, str]] = {}
     for line in text.splitlines():
-        if not line.startswith(f"| {USER_REPORTS_PREFIX}"):
+        # Any table row whose path cell names user-reports/, however it is spaced, is a user-report row and must be
+        # in the one strict form: a variant is refused rather than skipped, so regenerating can never drop it.
+        cells = line.strip().split("|")
+        if len(cells) < 3 or not line.strip().startswith("|") or not cells[1].strip().startswith(USER_REPORTS_PREFIX):
             continue
         m = USER_REPORT_ROW.fullmatch(line)
-        if m is None or m.group(1) in rows or m.group(1).endswith((".", "..")):
+        if (m is None or m.group(1) in rows or m.group(1).endswith((".", ".."))
+                or re.search(r"#\d+", m.group(3)) is None):
             raise ValueError(f"malformed user-report row in PROVENANCE.md: {line}")
-        rows[m.group(1)] = (m.group(2), m.group(3).strip(), m.group(4).strip())
+        rows[m.group(1)] = (m.group(2), m.group(3), m.group(4))
     return rows
 
 

@@ -57,6 +57,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 24 | §24 | Audit D01 T01 §10: pdf::Document page-tree resolver, metadata, /Outlines, font list and | D01 T01 §10, §23 | [ ] |
 | 25 | §25 | Retired MuPDF and AGPL text removed from the A, B and C mockup boards | §2 | [ ] |
 | 26 | §26 | Corpus validator filter decoders conform to ISO 32000-1 7.4 | §12 | [ ] |
+| 27 | §27 | ARM64 Debug build free of the CS1668 LIB search-path warnings | §13 | [ ] |
 
 ## 1. Audit D00 T01 §1: Git repository and repo-face files
 
@@ -667,6 +668,26 @@ The audit of `D00 T03 §4` (`docs/reviews/06-quality/audit-d00-t03-s4.md`, D06 T
 - [ ] Commit: `corpus: validator filter decoders conform to ISO 32000-1 7.4`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_build_corpus` passes and `python scripts/build-corpus.py --check` prints `verified: 39 corpus fixtures`.
+
+## 27. ARM64 Debug build free of the CS1668 LIB search-path warnings
+
+The audit of `D00 T03 §5` (`docs/reviews/06-quality/audit-d00-t03-s5.md`, D06 T05 §13) found the full `.\build.cmd` at `8d88cac` exiting 0 but logging 4 warnings while building `tests/recto-tests/recto-tests.vcxproj` for ARM64 Debug: `ROSLYNCODETASKFACTORYCSHARPCOMPILER : warning CS1668: Invalid search path` for `VC\Tools\MSVC\14.51.36231\atlmfc\lib\ARM64` and `Windows Kits\NETFXSDK\4.8\lib\um\arm64` on `LIB`. They come from MSBuild compiling an inline Roslyn code task under the ARM64 environment, not from Recto's C++, but `D00 T01 §3`'s checkpoint promises zero warnings on x64 and ARM64. -> XREF: D06 T05 §13
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Find the task that runs through `RoslynCodeTaskFactory` in the ARM64 Debug `recto-tests` build, through `build/build.ps1` (which sets up vcpkg) with a binary log. Done when: the task name, the file that declares it and the `LIB` entries it inherits are recorded in this section's findings file.
+2. Fix it at the layer that owns it: the project or `Directory.Build.*` property that adds the absent ATL/MFC and .NET ARM64 library folders to `LIB`, or the declaring package's version. Done when: the warnings are gone without suppressing CS1668.
+
+- [ ] Capture a binary log of the ARM64 Debug `recto-tests` build through `build/build.ps1` and name the inline task, its declaring `.targets` file and the `LIB` value it sees, in `docs/reviews/06-quality/D06-T05-s27.md`. Done when: the findings file names all three.
+- [ ] Remove the absent ARM64 folders from `LIB` at their source (a project property, `Directory.Build.props`, or an installed but unused component), or update the package that declares the task. Done when: `.\build.cmd` logs `0 Warning(s)` for every configuration and no warning is suppressed or filtered.
+- [ ] Add a check to `build/build.ps1` that fails the run when MSBuild reports any warning in any configuration. Done when: reintroducing an absent folder on `LIB` makes `.\build.cmd` exit non-zero.
+- [ ] Commit: `build: ARM64 Debug builds without CS1668 warnings`
+
+**Test checkpoint:** `.\build.cmd` exits 0 and its log shows `0 Warning(s)` for x64 and ARM64, Debug and Release.
 
 ## Verification
 
