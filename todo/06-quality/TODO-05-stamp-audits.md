@@ -667,6 +667,8 @@ The audit of `D00 T01 §2` (`docs/reviews/06-quality/audit-d00-t01-s2.md`) found
 
 ## 26. Corpus validator filter decoders conform to ISO 32000-1 7.4
 
+> **Started:** 2026-10-22T06:30:00Z
+
 The audit of `D00 T03 §4` (`docs/reviews/06-quality/audit-d00-t03-s4.md`, D06 T05 §12) reached its 22-round cap (`stopped-at-22`). Its last four rounds each found one more stream decoder in `scripts/build-corpus.py`'s validators that was laxer than ISO 32000-1 7.4: the deflate bomb's outer stage (round 19), LZW code widths (round 20), the LZW initial clear code (round 21) and ASCII85 one-character final groups (round 22), each fixed in turn. The pattern, not one more case, is the leftover: this section reviews every validator decoder against 7.4 at once, so that a generator regression producing a malformed filter stream cannot pass the corpus checkpoint while `src/pdf/filters.cpp` would refuse the same bytes. -> XREF: D06 T05 §12
 
 **Phase:** 0
@@ -678,11 +680,11 @@ The audit of `D00 T03 §4` (`docs/reviews/06-quality/audit-d00-t03-s4.md`, D06 T
 1. List every decoder the validators call (`inflate`, `inflate_bounded`, `flate_png_up_decompress`, `ascii85_decode_pdf`, the ASCIIHex path, `rle_decode_pdf`, `lzw_decode_pdf`, and the CCITT, JBIG2, DCT and JPX seed checks) with the 7.4 clause each implements. Done when: the list is in the section's findings file with one line per decoder.
 2. Make each decoder refuse what its clause forbids, matching the refusals in `src/pdf/filters.cpp`. Done when: each has a test that fails against the tree before this section.
 
-- [ ] Write the decoder inventory with each decoder's ISO 32000-1 7.4 clause and the matching `src/pdf/filters.cpp` refusal into `docs/reviews/06-quality/D06-T05-s26.md`. Done when: every decoder the validators call appears with its clause.
-- [ ] Make the ASCIIHex path in `decode_seed_stream` and `validate_seed_filter_bin_structure` refuse non-hex characters other than whitespace, a missing `>` and data after it, per 7.4.2. Done when: a test with each malformation fails before the change and passes after.
-- [ ] Make `rle_decode_pdf` refuse a run that reads past the data, a missing EOD (128) and data after EOD, per 7.4.5. Done when: a test with each malformation fails before the change and passes after.
-- [ ] Make `flate_png_up_decompress` refuse a row whose predictor byte is not 2 (Up) and a length that is not whole rows, per 7.4.4.4. Done when: a test with each malformation fails before the change and passes after.
-- [ ] Replace the CCITT, JBIG2, DCT and JPX seed checks that compare against the generator's own output or only markers with checks of the structure 7.4.6, 7.4.7, 7.4.8 and 7.4.9 define (CCITT `/K`, `/Columns` and EOFB; JBIG2 segment headers; DCT SOI, SOF, SOS, EOI order; JPX box and codestream markers). Done when: a test regenerating each seed with one structural fault fails before the change and passes after.
+- [x] Write the decoder inventory with each decoder's ISO 32000-1 7.4 clause and the matching `src/pdf/filters.cpp` refusal into `docs/reviews/06-quality/D06-T05-s26.md`. Done when: every decoder the validators call appears with its clause.
+- [x] Make the ASCIIHex path in `decode_seed_stream` and `validate_seed_filter_bin_structure` refuse non-hex characters other than whitespace, a missing `>` and data after it, per 7.4.2. Done when: a test with each malformation fails before the change and passes after.
+- [x] Make `rle_decode_pdf` refuse a run that reads past the data, a missing EOD (128) and data after EOD, per 7.4.5. Done when: a test with each malformation fails before the change and passes after.
+- [x] Make `flate_png_up_decompress` refuse a row whose predictor byte is not 2 (Up) and a length that is not whole rows, per 7.4.4.4. Done when: a test with each malformation fails before the change and passes after.
+- [x] Replace the CCITT, JBIG2, DCT and JPX seed checks that compare against the generator's own output or only markers with checks of the structure 7.4.6, 7.4.7, 7.4.8 and 7.4.9 define (CCITT `/K`, `/Columns` and EOFB; JBIG2 segment headers; DCT SOI, SOF, SOS, EOI order; JPX box and codestream markers). Done when: a test regenerating each seed with one structural fault fails before the change and passes after.
 - [ ] Commit: `corpus: validator filter decoders conform to ISO 32000-1 7.4`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_build_corpus` passes and `python scripts/build-corpus.py --check` prints `verified: 39 corpus fixtures`.

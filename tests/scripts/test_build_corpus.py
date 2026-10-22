@@ -772,6 +772,58 @@ class BuildCorpusTests(unittest.TestCase):
                         self.mod.generate_corpus(root)
                     prov.write_text(good, encoding="utf-8", newline="\n")
 
+    def test_ascii_hex_run_length_and_png_predictor_decoders_are_strict(self) -> None:
+        m = self.mod
+        self.assertEqual(m.asciihex_decode_pdf("x", b"48 65\n6c6C6>"), b"Hell`")  # odd final digit reads as x0
+        for bad in (b"4G>", b"48", b"48>x", b"4>8>"):
+            with self.subTest(hex=bad), self.assertRaises(ValueError):
+                m.asciihex_decode_pdf("x", bad)
+        self.assertEqual(m.rle_decode_pdf(bytes([1]) + b"ab" + bytes([128])), b"ab")
+        with self.assertRaisesRegex(ValueError, "after the RunLengthDecode EOD"):
+            m.rle_decode_pdf(bytes([1]) + b"ab" + bytes([128]) + b"x")
+        none_row = zlib.compress(bytes([0]) + b"abcdefgh")  # tag 0, a row the corpus never writes
+        with self.assertRaisesRegex(ValueError, "not Up"):
+            m.flate_png_up_decompress(none_row, columns=8)
+        with self.assertRaisesRegex(ValueError, "whole rows"):
+            m.flate_png_up_decompress(zlib.compress(b""), columns=8)
+
+    def test_image_codecs_are_read_by_their_own_structure(self) -> None:
+        m = self.mod
+
+        def bits_to_bytes(bits):
+            bits += "0" * (-len(bits) % 8)
+            return bytes(int(bits[i : i + 8], 2) for i in range(0, len(bits), 8))
+
+        self.assertEqual(m.ccitt_g4_decode("x", m.make_ccitt_group4_16x16(), 16, 16), m.CCITT_EXPECTED_16X16)
+        all_white = bits_to_bytes("1" * 16 + "000000000001000000000001")
+        self.assertEqual(m.ccitt_g4_decode("x", all_white, 16, 16), [[0] * 16] * 16)
+        good = m.make_ccitt_group4_16x16()
+        for data, says in ((good[:-3], "ends before"), (good + b"\x00", "after the CCITT EOFB"),
+                           (bits_to_bytes("0000001" + "1" * 15), "no valid mode code")):
+            with self.subTest(ccitt=says), self.assertRaisesRegex(ValueError, says):
+                m.ccitt_g4_decode("x", data, 16, 16)
+        m.validate_jbig2_embedded("x", m.make_minimal_jbig2_16x16())
+        m.validate_jpeg_baseline("x", m.make_minimal_jpeg_8x8_rgb(), 8, 8, 3)
+        m.validate_jpx_codestream("x", m.make_minimal_jpx_8x8_gray(), 8, 8)
+        jpeg, jpx = m.make_minimal_jpeg_8x8_rgb(), m.make_minimal_jpx_8x8_gray()
+        for check, data, says in (
+                (lambda d: m.validate_jpeg_baseline("x", d, 8, 8, 3), jpeg.replace(b"\x08\x00\x08\x00\x08\x03", b"\x08\x00\x10\x00\x08\x03", 1), "SOF0"),
+                (lambda d: m.validate_jpeg_baseline("x", d, 8, 8, 3), jpeg[:-3] + b"\x00\xFF\xD9", "MCUs"),
+                (lambda d: m.validate_jpeg_baseline("x", d, 8, 8, 3), jpeg + b"\x00", "EOI"),
+                (lambda d: m.validate_jpx_codestream("x", d, 8, 8), jpx[:-2] + b"\x00\xFF\xD9", "Psot"),
+                (lambda d: m.validate_jbig2_embedded("x", d),
+                 m.make_minimal_jbig2_16x16().replace(m.struct.pack(">IIII", 16, 16, 72, 72), m.struct.pack(">IIII", 16, 15, 72, 72), 1),
+                 "page information")):
+            with self.subTest(says=says), self.assertRaisesRegex(ValueError, says):
+                check(data)
+        # The regression the old checks missed: the generator drawing a different picture. They compared the seed with
+        # the generator's own output, so it passed; the decoders compare with the documented image.
+        with mock.patch.object(m, "make_ccitt_group4_16x16", return_value=all_white):
+            for name, build in (("seeds/seed-filter-06-ccitt.bin", m.build_seed_filter_06_ccitt),
+                                ("seeds/seed-filter-07-jbig2.bin", m.build_seed_filter_07_jbig2)):
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, "expected"):
+                    m.validate_seed_filter_bin_structure(name, build())
+
     def test_inflation_stops_just_past_its_limit(self) -> None:
         bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))
         total, kept = self.mod.inflate_bounded(bomb, 1024, keep=False)

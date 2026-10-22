@@ -117,8 +117,8 @@ def inflate(data: bytes, what: str, limit: int = VALIDATOR_INFLATE_LIMIT) -> byt
 def flate_png_up_decompress(compressed: bytes, columns: int) -> bytes:
     raw = inflate(compressed, "a PNG-predicted Flate stream")
     stride = columns + 1
-    if len(raw) % stride != 0:
-        raise ValueError("invalid PNG predicted stream length")
+    if not raw or len(raw) % stride != 0:
+        raise ValueError("a PNG-predicted stream must be whole rows of 1 + columns bytes")
     rows = len(raw) // stride
     out = bytearray()
     prev = bytearray(columns)
@@ -126,13 +126,13 @@ def flate_png_up_decompress(compressed: bytes, columns: int) -> bytes:
         tag = raw[r * stride]
         row_in = raw[r * stride + 1 : (r + 1) * stride]
         cur = bytearray(columns)
-        if tag == 0:
-            cur[:] = row_in
-        elif tag == 2:
+        # Every row the corpus writes uses Up (PNG filter type 2, ISO 32000-1 7.4.4.4); any other tag, None (0)
+        # included, is not this generator's output.
+        if tag == 2:
             for c in range(columns):
                 cur[c] = (row_in[c] + prev[c]) & 0xFF
         else:
-            raise ValueError(f"unsupported predictor tag {tag} in test validator")
+            raise ValueError(f"PNG predictor row {r} has tag {tag}, not Up (2)")
         out.extend(cur)
         prev = cur
     return bytes(out)
@@ -2337,6 +2337,8 @@ def rle_decode_pdf(encoded: bytes) -> bytes:
         length_byte = encoded[pos]
         pos += 1
         if length_byte == 128:
+            if pos != len(encoded):
+                raise ValueError("bytes after the RunLengthDecode EOD (128)")
             return bytes(out)
         if length_byte < 128:
             count = length_byte + 1
@@ -2423,6 +2425,294 @@ def lzw_decode_pdf(rel_path: str, encoded: bytes, early_change: int = 1,
     if total - pos >= 8 or (pos < total and encoded[-1] & ((1 << (total - pos)) - 1)):
         raise ValueError(f"{rel_path}: bytes after the LZW EOD code")
     return bytes(out)
+
+
+def asciihex_decode_pdf(rel_path: str, encoded: bytes) -> bytes:
+    """An ASCIIHexDecode stream decoded as ISO 32000-1 7.4.2 defines it: hex digits in either case and white space up
+    to one '>' EOD that ends the data, an odd final digit read as if followed by 0. Refuses any other character,
+    a missing EOD and anything after it."""
+    if not encoded.endswith(b">") or b">" in encoded[:-1]:
+        raise ValueError(f"{rel_path}: ASCIIHexDecode data must end at its one '>' EOD")
+    digits = bytes(b for b in encoded[:-1] if b not in b" \t\r\n\f\x00")
+    if re.fullmatch(rb"[0-9A-Fa-f]*", digits) is None:
+        raise ValueError(f"{rel_path}: ASCIIHexDecode data holds a character that is neither hex nor white space")
+    if len(digits) % 2:
+        digits += b"0"
+    return bytes.fromhex(digits.decode("ascii"))
+
+
+# ITU-T T.4 terminating codes for run lengths 0 to 16, as (code, bit length), white then black: the longest run a
+# 16-pixel line can hold, which is every corpus CCITT image. The same values as src/pdf/filters.cpp's tables.
+CCITT_WHITE = {0: (0x35, 8), 1: (0x07, 6), 2: (0x07, 4), 3: (0x08, 4), 4: (0x0B, 4), 5: (0x0C, 4), 6: (0x0E, 4),
+               7: (0x0F, 4), 8: (0x13, 5), 9: (0x14, 5), 10: (0x07, 5), 11: (0x08, 5), 12: (0x08, 6), 13: (0x03, 6),
+               14: (0x34, 6), 15: (0x35, 6), 16: (0x2A, 6)}
+CCITT_BLACK = {0: (0x37, 10), 1: (0x02, 3), 2: (0x03, 2), 3: (0x02, 2), 4: (0x03, 3), 5: (0x03, 4), 6: (0x02, 4),
+               7: (0x03, 5), 8: (0x05, 6), 9: (0x04, 6), 10: (0x04, 7), 11: (0x05, 7), 12: (0x07, 7), 13: (0x04, 8),
+               14: (0x07, 8), 15: (0x18, 9), 16: (0x17, 10)}
+# T.6 two-dimensional mode codes: (code, bit length) -> mode, with V(d) as ("V", d).
+CCITT_MODES = {(0x1, 4): ("P",), (0x1, 3): ("H",), (0x1, 1): ("V", 0), (0x3, 3): ("V", 1), (0x3, 6): ("V", 2),
+               (0x3, 7): ("V", 3), (0x2, 3): ("V", -1), (0x2, 6): ("V", -2), (0x2, 7): ("V", -3)}
+CCITT_MAX_COLUMNS = 16
+
+
+class _Bits:
+    """MSB-first bit reader over bytes."""
+
+    def __init__(self, data: bytes):
+        self.data, self.pos = data, 0
+
+    def read(self, count: int) -> int:
+        if self.pos + count > len(self.data) * 8:
+            raise EOFError
+        value = 0
+        for bit in range(self.pos, self.pos + count):
+            value = (value << 1) | (self.data[bit >> 3] >> (7 - (bit & 7)) & 1)
+        self.pos += count
+        return value
+
+    def code(self, table: dict, longest: int):
+        """The table entry whose (code, length) key matches the next bits, consuming them; None if none does."""
+        for length in range(1, longest + 1):
+            if self.pos + length > len(self.data) * 8:
+                return None
+            start = self.pos
+            value = self.read(length)
+            if (value, length) in table:
+                return table[(value, length)]
+            self.pos = start
+        return None
+
+    def rest_is_zero_padding(self) -> bool:
+        tail = len(self.data) * 8 - self.pos
+        return tail < 8 and (tail == 0 or self.data[-1] & ((1 << tail) - 1) == 0)
+
+
+def ccitt_g4_decode(rel_path: str, data: bytes, columns: int, rows: int) -> list[list[int]]:
+    """A CCITTFaxDecode /K -1 (ITU-T T.6 Group 4) stream decoded into rows of pixels (1 is black), per ISO 32000-1
+    7.4.6: each line coded against the one above (the first against an all-white line) with pass, horizontal and
+    vertical modes, then EOFB and only zero padding to the end of the last byte. Refuses an unknown code, a changing
+    element out of order or past the line, too few lines, a missing EOFB and anything after it. Runs are read from the
+    0 to 16 terminating codes, so lines are at most 16 pixels wide, the width of every corpus CCITT image."""
+    if not 0 < columns <= CCITT_MAX_COLUMNS or rows <= 0:
+        raise ValueError(f"{rel_path}: CCITT /Columns {columns} /Rows {rows} outside what the corpus validator reads")
+    white = {code: run for run, code in CCITT_WHITE.items()}
+    black = {code: run for run, code in CCITT_BLACK.items()}
+    bits = _Bits(data)
+    reference: list[int] = []  # changing elements of the line above; the imaginary first line has none
+    bitmap = []
+    try:
+        for row in range(rows):
+            changes: list[int] = []
+            a0, colour = -1, 0
+            while a0 < columns:
+                # b1: the first changing element above, right of a0, that changes to the colour opposite a0's; b2 the
+                # next one. Elements alternate white-to-black (even index) and black-to-white (odd).
+                start = max(a0 + 1, 0) if a0 >= 0 else 0
+                index = next((i for i, x in enumerate(reference) if x >= start and i % 2 == colour), len(reference))
+                b1 = reference[index] if index < len(reference) else columns
+                b2 = reference[index + 1] if index + 1 < len(reference) else columns
+                mode = bits.code(CCITT_MODES, 7)
+                if mode is None:
+                    raise ValueError(f"{rel_path}: CCITT line {row} holds no valid mode code")
+                if mode[0] == "P":
+                    if b2 >= columns:
+                        raise ValueError(f"{rel_path}: CCITT pass mode on line {row} passes the end of the line")
+                    a0 = b2
+                    continue
+                if mode[0] == "H":
+                    runs = []
+                    for run_colour in (colour, 1 - colour):
+                        run = bits.code(black if run_colour else white, 10 if run_colour else 8)
+                        if run is None:
+                            raise ValueError(f"{rel_path}: CCITT line {row} holds a run code outside 0 to 16")
+                        runs.append(run)
+                    a1 = max(a0, 0) + runs[0]
+                    a2 = a1 + runs[1]
+                    if a2 > columns:
+                        raise ValueError(f"{rel_path}: CCITT horizontal runs on line {row} pass the end of the line")
+                    changes += [x for x in (a1, a2) if x < columns]
+                    a0 = a2
+                    continue
+                a1 = b1 + mode[1]
+                if a1 < max(a0, 0) or a1 > columns or (a0 >= 0 and a1 <= a0 and a1 < columns):
+                    raise ValueError(f"{rel_path}: CCITT vertical mode on line {row} puts a changing element at {a1}")
+                if a1 < columns:
+                    changes.append(a1)
+                a0, colour = a1, 1 - colour
+            pixels, colour, at = [], 0, 0
+            for x in [*changes, columns]:
+                pixels += [colour] * (x - at)
+                at, colour = x, 1 - colour
+            bitmap.append(pixels)
+            reference = changes
+        if bits.read(24) != 0x001001:
+            raise ValueError(f"{rel_path}: CCITT data does not end with EOFB after {rows} lines")
+    except EOFError:
+        raise ValueError(f"{rel_path}: CCITT data ends before {rows} lines and EOFB") from None
+    if not bits.rest_is_zero_padding():
+        raise ValueError(f"{rel_path}: bytes after the CCITT EOFB")
+    return bitmap
+
+
+# The 16x16 image every corpus CCITT stream encodes (make_ccitt_group4_16x16's docstring): rows 0, 1 and 3 are 4 white,
+# 8 black, 4 white; row 2 is 5 white, 8 black, 3 white; rows 4 to 15 are white.
+CCITT_EXPECTED_16X16 = ([[0] * 4 + [1] * 8 + [0] * 4] * 2 + [[0] * 5 + [1] * 8 + [0] * 3]
+                        + [[0] * 4 + [1] * 8 + [0] * 4] + [[0] * 16] * 12)
+
+
+def validate_jbig2_embedded(rel_path: str, data: bytes) -> None:
+    """An embedded JBIG2 stream (ISO 32000-1 7.4.7, ISO/IEC 14492 7.2) read segment by segment: exactly a page
+    information segment (48) for a 16x16 page, an immediate lossless generic region (38) of 16x16 at the origin coded
+    with MMR, whose data decodes as CCITT Group 4 to the expected image, and an end of page (49), numbered 0 to 2 on
+    page 1, with nothing after."""
+    pos, seen = 0, []
+    while pos < len(data):
+        if pos + 11 > len(data):
+            raise ValueError(f"{rel_path}: JBIG2 segment header cut short at byte {pos}")
+        number, flags, referred = struct.unpack(">IBB", data[pos : pos + 6])
+        kind, long_page = flags & 0x3F, flags & 0x40
+        if referred >> 5 != 0 or long_page:
+            raise ValueError(f"{rel_path}: JBIG2 segment {number} refers to others or uses a 4-byte page association")
+        page = data[pos + 6]
+        (length,) = struct.unpack(">I", data[pos + 7 : pos + 11])
+        body = data[pos + 11 : pos + 11 + length]
+        if length == 0xFFFFFFFF or len(body) != length:
+            raise ValueError(f"{rel_path}: JBIG2 segment {number} data length {length} does not fit the stream")
+        seen.append((number, kind, page))
+        if kind == 48:
+            if body != struct.pack(">IIIIBBB", 16, 16, 72, 72, 0, 0, 0):
+                raise ValueError(f"{rel_path}: JBIG2 page information is not a 16x16 page at 72 dpi")
+        elif kind == 38:
+            if body[:18] != struct.pack(">IIIIB", 16, 16, 0, 0, 0) + b"\x01":
+                raise ValueError(f"{rel_path}: JBIG2 generic region is not 16x16 at the origin with MMR")
+            if ccitt_g4_decode(rel_path, body[18:], 16, 16) != CCITT_EXPECTED_16X16:
+                raise ValueError(f"{rel_path}: JBIG2 generic region's MMR data does not decode to the expected image")
+        elif kind != 49 or body:
+            raise ValueError(f"{rel_path}: JBIG2 segment {number} has type {kind}")
+        pos += 11 + length
+    if seen != [(0, 48, 1), (1, 38, 1), (2, 49, 1)]:
+        raise ValueError(f"{rel_path}: JBIG2 segments are {seen}, not page information, generic region, end of page")
+
+
+def validate_jpeg_baseline(rel_path: str, data: bytes, width: int, height: int, components: int) -> None:
+    """A baseline JPEG (ISO 32000-1 7.4.8, ITU-T T.81) read marker by marker and its one scan decoded: SOI, then
+    length-prefixed segments including DQT, SOF0 (8-bit, width x height, the given component count, 1x1 sampling),
+    DHT and SOS, then entropy-coded data holding exactly the MCUs the frame needs, padded with 1 bits, then EOI and
+    nothing after."""
+    if not data.startswith(b"\xFF\xD8"):
+        raise ValueError(f"{rel_path}: JPEG does not start with SOI")
+    pos, seen, tables, frame, scan = 2, [], {}, None, None
+    while scan is None:
+        if pos + 4 > len(data) or data[pos] != 0xFF:
+            raise ValueError(f"{rel_path}: JPEG marker expected at byte {pos}")
+        marker = data[pos + 1]
+        (length,) = struct.unpack(">H", data[pos + 2 : pos + 4])
+        body = data[pos + 4 : pos + 2 + length]
+        if length < 2 or len(body) != length - 2:
+            raise ValueError(f"{rel_path}: JPEG segment {marker:#04x} length {length} does not fit")
+        seen.append(marker)
+        if marker == 0xC0:
+            p, y, x, n = struct.unpack(">BHHB", body[:6])
+            comps = [body[6 + 3 * i : 9 + 3 * i] for i in range(n)]
+            if (p, y, x, n) != (8, height, width, components) or len(body) != 6 + 3 * n or any(c[1] != 0x11 for c in comps):
+                raise ValueError(f"{rel_path}: JPEG SOF0 is not 8-bit {width}x{height} with {components} 1x1 components")
+            frame = [c[0] for c in comps]
+        elif marker == 0xC4:
+            at = 0
+            while at < len(body):
+                tc_th, counts = body[at], body[at + 1 : at + 17]
+                symbols = body[at + 17 : at + 17 + sum(counts)]
+                if len(counts) != 16 or len(symbols) != sum(counts):
+                    raise ValueError(f"{rel_path}: JPEG DHT table cut short")
+                codes, code = {}, 0
+                for bits_len, count in enumerate(counts, 1):
+                    for _ in range(count):
+                        codes[(code, bits_len)] = symbols[len(codes)]
+                        code += 1
+                    code <<= 1
+                tables[tc_th] = codes
+                at += 17 + sum(counts)
+        elif marker == 0xDA:
+            n = body[0]
+            if frame is None or n != len(frame) or len(body) != 4 + 2 * n or body[-3:] != b"\x00\x3F\x00":
+                raise ValueError(f"{rel_path}: JPEG SOS is not one baseline scan of the frame's components")
+            scan = [(body[1 + 2 * i], body[2 + 2 * i]) for i in range(n)]
+        elif marker not in (0xDB, 0xE0):
+            raise ValueError(f"{rel_path}: JPEG segment {marker:#04x} is not one a baseline corpus image uses")
+        pos += 2 + length
+    if not {0xDB, 0xC0, 0xC4, 0xDA} <= set(seen):
+        raise ValueError(f"{rel_path}: JPEG lacks one of DQT, SOF0, DHT, SOS")
+    if not data.endswith(b"\xFF\xD9"):
+        raise ValueError(f"{rel_path}: JPEG does not end with EOI")
+    entropy = data[pos:-2]
+    if re.search(rb"\xFF(?!\x00)", entropy):
+        raise ValueError(f"{rel_path}: a marker inside the JPEG scan data")
+    bits = _Bits(entropy.replace(b"\xFF\x00", b"\xFF"))
+    try:
+        for _ in range(((width + 7) // 8) * ((height + 7) // 8)):
+            for _, selectors in scan:
+                dc, ac = tables.get(selectors >> 4), tables.get(0x10 | (selectors & 0x0F))
+                if dc is None or ac is None:
+                    raise ValueError(f"{rel_path}: JPEG scan names a Huffman table no DHT defines")
+                size = bits.code(dc, 16)
+                if size is None or size > 11:
+                    raise ValueError(f"{rel_path}: JPEG DC code invalid")
+                bits.read(size)
+                k = 1
+                while k < 64:
+                    rs = bits.code(ac, 16)
+                    if rs is None:
+                        raise ValueError(f"{rel_path}: JPEG AC code invalid")
+                    if rs == 0x00:
+                        break
+                    k += 16 if rs == 0xF0 else (rs >> 4) + 1
+                    bits.read(rs & 0x0F)
+                if k > 64:
+                    raise ValueError(f"{rel_path}: JPEG block runs past 64 coefficients")
+    except EOFError:
+        raise ValueError(f"{rel_path}: JPEG scan data ends before the frame's MCUs") from None
+    tail = len(bits.data) * 8 - bits.pos
+    if tail >= 8 or (tail and bits.data[-1] & ((1 << tail) - 1) != (1 << tail) - 1):
+        raise ValueError(f"{rel_path}: JPEG scan data is not exactly the frame's MCUs padded with 1 bits")
+
+
+def validate_jpx_codestream(rel_path: str, data: bytes, width: int, height: int) -> None:
+    """A JPEG 2000 codestream (ISO 32000-1 7.4.9, ISO/IEC 15444-1 Annex A) read marker by marker: SOC, SIZ for one
+    8-bit unsigned component of width x height in one tile, COD and QCD in the main header, then one tile-part whose
+    SOT Psot spans exactly from SOT to EOC, SOD, and EOC as the last two bytes."""
+    if not data.startswith(b"\xFF\x4F\xFF\x51"):
+        raise ValueError(f"{rel_path}: JPX codestream does not start with SOC then SIZ")
+    pos, seen = 2, []
+    while True:
+        if pos + 4 > len(data) or data[pos] != 0xFF:
+            raise ValueError(f"{rel_path}: JPX marker expected at byte {pos}")
+        marker = data[pos + 1]
+        (length,) = struct.unpack(">H", data[pos + 2 : pos + 4])
+        body = data[pos + 4 : pos + 2 + length]
+        if len(body) != length - 2:
+            raise ValueError(f"{rel_path}: JPX segment {marker:#04x} length {length} does not fit")
+        seen.append(marker)
+        if marker == 0x51:
+            fields = struct.unpack(">HIIIIIIIIH", body[:36])
+            if length != 38 + 3 * fields[9] or fields[1:] != (width, height, 0, 0, width, height, 0, 0, 1) \
+                    or body[36:39] != b"\x07\x01\x01":
+                raise ValueError(f"{rel_path}: JPX SIZ is not one 8-bit unsigned {width}x{height} component in one tile")
+        elif marker == 0x90:
+            if length != 10:
+                raise ValueError(f"{rel_path}: JPX SOT length {length} is not 10")
+            isot, psot, tpsot, tnsot = struct.unpack(">HIBB", body)
+            if (isot, tpsot, tnsot) != (0, 0, 1) or pos + psot != len(data) - 2:
+                raise ValueError(f"{rel_path}: JPX tile-part Psot {psot} does not span SOT to EOC")
+            if data[pos + 12 : pos + 14] != b"\xFF\x93":
+                raise ValueError(f"{rel_path}: JPX tile-part header does not end in SOD")
+            break
+        elif marker not in (0x52, 0x5C):
+            raise ValueError(f"{rel_path}: JPX main-header segment {marker:#04x} is not one the corpus image uses")
+        pos += 2 + length
+    if seen[:1] != [0x51] or not {0x52, 0x5C} <= set(seen):
+        raise ValueError(f"{rel_path}: JPX main header lacks SIZ first, COD or QCD")
+    if not data.endswith(b"\xFF\xD9") or len(data) - 2 <= pos + 14:
+        raise ValueError(f"{rel_path}: JPX codestream does not end with EOC after tile data")
 
 
 def build_seed_classic_xref() -> bytes:
@@ -3492,9 +3782,7 @@ def decode_seed_stream(rel_path: str, entries: dict[bytes, bytes], payload: byte
     if flt == b"/FlateDecode":
         return inflate(payload, rel_path)
     if flt == b"/ASCIIHexDecode":
-        if not payload.endswith(b">"):
-            raise ValueError(f"{rel_path}: ASCIIHexDecode stream missing '>' EOD")
-        return bytes.fromhex(payload[:-1].decode("ascii"))
+        return asciihex_decode_pdf(rel_path, payload)
     if flt == b"/ASCII85Decode":
         return ascii85_decode_pdf(payload)
     if flt == b"/RunLengthDecode":
@@ -3535,6 +3823,12 @@ def validate_seed_pdf_structure(rel_path: str, data: bytes) -> None:
     for num in sorted(streams):
         start, _, s0, s1 = objects[num]
         entries = {**forms[num], b"/Length": str(s1 - s0).encode()}
+        if entries.get(b"/Filter") == b"/CCITTFaxDecode":
+            # The image's own parameters say how to read it; the corpus draws one 16x16 picture.
+            if entries.get(b"/DecodeParms") != b"<< /K -1 /Columns 16 /Rows 16 >>" \
+                    or ccitt_g4_decode(rel_path, data[s0:s1], 16, 16) != CCITT_EXPECTED_16X16:
+                raise ValueError(f"{rel_path}: object {num}'s CCITT image does not decode to the expected 16x16 picture")
+            continue
         content = decode_seed_stream(rel_path, entries, data[s0:s1])
         if content is None:
             continue
@@ -3606,9 +3900,7 @@ def validate_seed_filter_bin_structure(rel_path: str, data: bytes) -> None:
         if dec != KNOWN_FILTER_PLAINTEXT:
             raise ValueError(f"{rel_path}: ASCII85Decode output mismatch")
     elif expected_sel == 0x04:
-        if not payload.endswith(b">"):
-            raise ValueError(f"{rel_path}: ASCIIHexDecode missing '>' EOD")
-        dec = bytes.fromhex(payload[:-1].decode("ascii"))
+        dec = asciihex_decode_pdf(rel_path, payload)
         if dec != KNOWN_FILTER_PLAINTEXT:
             raise ValueError(f"{rel_path}: ASCIIHexDecode output mismatch")
     elif expected_sel == 0x05:
@@ -3616,17 +3908,14 @@ def validate_seed_filter_bin_structure(rel_path: str, data: bytes) -> None:
         if dec != KNOWN_FILTER_PLAINTEXT:
             raise ValueError(f"{rel_path}: RunLengthDecode output mismatch")
     elif expected_sel == 0x06:
-        if payload != make_ccitt_group4_16x16():
-            raise ValueError(f"{rel_path}: CCITTFaxDecode Group 4 payload mismatch")
+        if ccitt_g4_decode(rel_path, payload, 16, 16) != CCITT_EXPECTED_16X16:
+            raise ValueError(f"{rel_path}: CCITTFaxDecode Group 4 data does not decode to the expected 16x16 picture")
     elif expected_sel == 0x07:
-        if payload != make_minimal_jbig2_16x16() or make_ccitt_group4_16x16() not in payload:
-            raise ValueError(f"{rel_path}: JBIG2Decode payload mismatch")
+        validate_jbig2_embedded(rel_path, payload)
     elif expected_sel == 0x08:
-        if not (payload.startswith(b"\xFF\xD8") and payload.endswith(b"\xFF\xD9")):
-            raise ValueError(f"{rel_path}: DCTDecode JPEG missing SOI/EOI markers")
+        validate_jpeg_baseline(rel_path, payload, 8, 8, 3)
     elif expected_sel == 0x09:
-        if not (payload.startswith(b"\xFF\x4F\xFF\x51") and payload.endswith(b"\xFF\xD9")):
-            raise ValueError(f"{rel_path}: JPXDecode codestream missing SOC/SIZ/EOC markers")
+        validate_jpx_codestream(rel_path, payload, 8, 8)
     elif expected_sel == 0x0A:
         dec = inflate(ascii85_decode_pdf(payload), rel_path)
         if dec != KNOWN_FILTER_PLAINTEXT:
