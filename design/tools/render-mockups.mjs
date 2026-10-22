@@ -2,6 +2,7 @@
 // (design/mockups/html) and PNG screenshots (design/screenshots) with headless Edge.
 //
 // Usage: node design/tools/render-mockups.mjs [--no-png] [--only A-About,B-Banner,...]
+// RECTO_RENDER_BROWSER, when set, is the browser to run instead of Edge or Chrome.
 //
 // --only renders just the named boards (file names without .dc.html), so an edit to a few boards
 // leaves every other board's HTML and PNG untouched.
@@ -85,6 +86,11 @@ function render(tpl, scope) {
 }
 
 function edgePath() {
+  // RECTO_RENDER_BROWSER names the browser to use instead (tests point it at a stand-in).
+  if (process.env.RECTO_RENDER_BROWSER) {
+    if (!existsSync(process.env.RECTO_RENDER_BROWSER)) throw new Error(`RECTO_RENDER_BROWSER not found: ${process.env.RECTO_RENDER_BROWSER}`);
+    return process.env.RECTO_RENDER_BROWSER;
+  }
   const candidates = [
     "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
     "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
