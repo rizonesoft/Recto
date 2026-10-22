@@ -729,6 +729,37 @@ class BuildCorpusTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "one character"):
             self.mod.validate_seed_filter_bin_structure("seeds/seed-filter-03-ascii85.bin", seed[:-2] + b"!~>")
 
+    def test_user_report_reproductions_are_kept_and_verified(self) -> None:
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.mod.generate_corpus(root)
+            repro = b"%PDF-1.7\n% user report reproduction\n"
+            (root / "user-reports").mkdir()
+            (root / "user-reports" / "issue-123.pdf").write_bytes(repro)
+            prov = root / "PROVENANCE.md"
+            row = (f"| user-reports/issue-123.pdf | {hashlib.sha256(repro).hexdigest()} | CC0-1.0 | "
+                   f"Issue #123, synthetic reproducer, no private data | Empty xref table |")
+            lines = prov.read_text(encoding="utf-8").splitlines()
+            at = max(i for i, line in enumerate(lines) if line.startswith("| ")) + 1  # sorts after text/, last
+            prov.write_text("\n".join(lines[:at] + [row] + lines[at:]) + "\n", encoding="utf-8", newline="\n")
+            self.assertEqual(self.mod.check_corpus(root), (True, []))
+            self.mod.generate_corpus(root)  # regenerating keeps the recorded row
+            self.assertIn(row, prov.read_text(encoding="utf-8"))
+            self.assertEqual(self.mod.check_corpus(root), (True, []))
+            # An altered reproduction, an unrecorded one and a row without an issue each refuse.
+            (root / "user-reports" / "issue-123.pdf").write_bytes(repro + b"x")
+            self.assertIn("does not match its PROVENANCE.md SHA-256", " ".join(self.mod.check_corpus(root)[1]))
+            with self.assertRaisesRegex(ValueError, "does not match"):
+                self.mod.generate_corpus(root)
+            (root / "user-reports" / "issue-123.pdf").write_bytes(repro)
+            (root / "user-reports" / "issue-124.pdf").write_bytes(repro)
+            self.assertIn("unexpected corpus file: user-reports/issue-124.pdf", self.mod.check_corpus(root)[1])
+            (root / "user-reports" / "issue-124.pdf").unlink()
+            prov.write_text(prov.read_text(encoding="utf-8").replace("Issue #123", "Issue 123"), encoding="utf-8",
+                            newline="\n")
+            self.assertIn("malformed user-report row", " ".join(self.mod.check_corpus(root)[1]))
+
     def test_inflation_stops_just_past_its_limit(self) -> None:
         bomb = zlib.compress(b"\0" * (8 * 1024 * 1024))
         total, kept = self.mod.inflate_bounded(bomb, 1024, keep=False)

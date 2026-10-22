@@ -4,7 +4,7 @@ A bug a user reported is fixed only when a test proves it, and it is closed only
 
 ## 1. Reproduce first
 
-Get the problem happening on your machine before you change any code. Use the reporter's file if they shared it; otherwise a reproducer made with `recto-cli scrub` (the command arrives with D07 T03 §3) or a synthetic file that shows the same problem (`docs/support/triage.md` explains both). Add the file to `tests/corpus/user-reports/` with a row in `tests/corpus/PROVENANCE.md` naming the issue, where the file came from and that it holds nothing private.
+Get the problem happening on your machine before you change any code. Use the reporter's file if they shared it; otherwise a reproducer made with `recto-cli scrub` (the command arrives with D07 T03 §3) or a synthetic file that shows the same problem (`docs/support/triage.md` explains both). Add the file to `tests/corpus/user-reports/` with a row in `tests/corpus/PROVENANCE.md` naming the issue, where the file came from and that it holds nothing private: `| user-reports/<file> | <sha-256> | CC0-1.0 | Issue #<n>, <where it came from>, no private data | <what it reproduces> |`, in sorted order with the other rows. `python scripts/build-corpus.py --check` verifies the file against that row, and regenerating the corpus keeps it.
 
 ## 2. Write the test, and watch it fail
 
