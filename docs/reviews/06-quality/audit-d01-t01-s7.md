@@ -402,3 +402,57 @@ OVERALL: needs-attention
 - Finding 2 (P3), unchanged and recorded: the HDIST refusal (above 30) was decided in round 3 to match zlib's reference inflater, documented at the check, and is not reopened.
 
 Gates after round 9: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 118 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 46 tests.`
+
+## Round 10: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T10:26:46Z
+- Effort: xhigh
+- Lines: 24
+- Digest: 30d4414ec644d60d
+
+### adversarial: needs-attention
+
+1. **P3: Indirect null external-stream entries cause false refusals.** `src/pdf/filters.cpp:9483` tests `/F` before resolving it. Source-traced reproduction: call `decode_stream` with bytes `41>`, dictionary `<< /Filter /ASCIIHexDecode /F 10 0 R >>`, and a resolver returning `PdfNull` for object 10. Expected output is `A`; execution returns `UnsupportedFeature` before consulting the resolver. Indirect null `/FFilter` and `/FDecodeParms` similarly produce false orphan errors at lines 9492 and 9499. This is an uncommon encoding edge case.
+
+### consistency: approve
+
+### integration: needs-attention
+
+1. **P3, finding 1:** `src/pdf/document.cpp:1786` forwards streams into this validation unchanged. The same reproduction through `Document::decode_stream` therefore refuses valid inline content.
+
+### source-defect: needs-attention
+
+1. **P3, finding 1:** `src/pdf/filters.cpp:9483` distinguishes direct null from a reference resolving to null. Null dictionary entries are equivalent to absent entries, and direct and indirect values have equivalent semantics. [Adobe PDF Reference §§3.2.8–3.2.9](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.6.pdf#page=61)
+
+### design: advisory
+
+Not applicable; this section owns no user surface.
+
+### record: advisory
+
+Independently reran the existing Release executable: 16 filter tests passed, the support test reported `ASan=enabled`, and 30 XRef/document/crypto tests passed. Graph validation and plan checks passed. These runs do not independently establish executable correspondence to `42e069c`, fresh-build warnings, or ARM64 compilation. Finding 1 is source-traced, not an executed custom regression. The worktree remains clean.
+
+HIGHEST: P3
+OVERALL: needs-attention
+
+## Fixes after round 10
+
+Round 10's findings are all P3, so under the operator's rule (from round 9 on, an all-P3 round ends the loop) the loop stops here, `stopped-low-severity`. Its one finding is fixed rather than filed, since the fix is small:
+
+- Finding 1 (P3): correct. `/F`, `/FFilter` and `/FDecodeParms` were tested before resolution, so a reference resolving to null (the same as an absent entry, ISO 32000-1 section 7.3.9) was refused as an external stream or an orphan entry. `stream_entry_present` resolves the entry through the caller's resolver first, in `decode_stream` and in the JBIG2 globals path; without a resolver a reference still counts as present. `PdfFilters.IndirectNullExternalEntriesAreAbsent` decodes `41>` with each of the three entries pointing at null, and fails on the round 9 code.
+
+Gates after round 10: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 119 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 47 tests.`
+
+## Audit outcome
+
+The stamp on `D01 T01 §7` is confirmed: every defect found existed at that stamp (none is a regression) and each is fixed at its owning layer with a test that fails on the code before it, in `6814970` through the round 10 fix. They fall into four groups:
+
+- Indirect `/Filter`, `/DecodeParms`, parameter values and external-stream entries, now resolved through the caller's resolver per stage and in every object-stream, decryption and JBIG2 globals path.
+- Zlib integrity: the trailer is checked on every body; a damaged header follows one stated rule; lone multi-bit Huffman codes are refused.
+- A contract error: ASCII85's invalid range is `v..y`.
+- The `/Crypt` cipher chosen from an indirect filter.
+
+The HDIST refusal above 30 is a recorded decision (zlib parity). Dependants are not suspect: every change widens what decodes correctly or refuses what zlib refuses, the corpus decodes unchanged, and all 119 tests pass. The loop stopped at round 10 with only P3 findings (`stopped-low-severity`), and that finding is fixed.
+
+Test checkpoint: `python scripts/todo-graph.py resolve "D01 T01 §7"` -> exit 3 (still verified). `D01 T01 §7`'s own checkpoint: `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 47 tests.`

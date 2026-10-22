@@ -9151,6 +9151,24 @@ PdfResult<std::vector<uint8_t>> decode_single_filter(
 
 namespace {
 
+// Whether a stream dictionary entry is present: a null value, direct or reached through a reference, is the same as
+// an absent entry (ISO 32000-1 section 7.3.9). Without a resolver a reference counts as present, as before.
+[[nodiscard]] PdfResult<bool> stream_entry_present(
+	const PdfDict& dict,
+	std::string_view key,
+	const IndirectObjectResolver* resolver)
+{
+	const PdfValue* v = dict.get(key);
+	if (v == nullptr || v->is_null()) {
+		return false;
+	}
+	if (const auto ref = v->as_ref(); ref.has_value() && resolver != nullptr && *resolver) {
+		RECTO_PDF_TRY_REF(target, (*resolver)(*ref));
+		return !target.is_null();
+	}
+	return true;
+}
+
 // The /DecodeParms keys each standard filter defines (ISO 32000-1 Tables 8, 11, 12 and 14, and /Crypt's Table 14
 // entries). /JBIG2Globals is absent: the JBIG2 decoder resolves it itself.
 [[nodiscard]] std::span<const std::string_view> stage_parameter_keys(std::string_view filter_name) noexcept
@@ -9437,18 +9455,21 @@ namespace {
 	size_t effective_limit,
 	const IndirectObjectResolver* resolver)
 {
-	if (const PdfValue* f_spec = gstm.dict.get("F"); f_spec != nullptr && !f_spec->is_null()) {
+	RECTO_PDF_TRY(const bool globals_f, stream_entry_present(gstm.dict, "F", resolver));
+	if (globals_f) {
 		return make_pdf_error(
 			ErrorCode::UnsupportedFeature,
 			"External /JBIG2Globals stream file specification (/F) is unsupported");
 	}
-	if (const PdfValue* ffilter = gstm.dict.get("FFilter"); ffilter != nullptr && !ffilter->is_null()) {
+	RECTO_PDF_TRY(const bool globals_ffilter, stream_entry_present(gstm.dict, "FFilter", resolver));
+	if (globals_ffilter) {
 		return make_filter_error(
 			ErrorCode::DamagedFormat,
 			DiagnosticId::DamagedStream,
 			"/JBIG2Globals stream specifies /FFilter without /F");
 	}
-	if (const PdfValue* fparms = gstm.dict.get("FDecodeParms"); fparms != nullptr && !fparms->is_null()) {
+	RECTO_PDF_TRY(const bool globals_fparms, stream_entry_present(gstm.dict, "FDecodeParms", resolver));
+	if (globals_fparms) {
 		return make_filter_error(
 			ErrorCode::DamagedFormat,
 			DiagnosticId::DamagedStream,
@@ -9479,8 +9500,8 @@ PdfResult<std::vector<uint8_t>> decode_stream(
 	try {
 		const size_t effective_limit = std::min<size_t>(max_decoded_bytes, kMaxDecodedStreamBytes);
 
-		const PdfValue* f_spec = stream_dict.get("F");
-		if (f_spec != nullptr && !f_spec->is_null()) {
+		RECTO_PDF_TRY(const bool has_f, stream_entry_present(stream_dict, "F", resolver));
+		if (has_f) {
 			return make_pdf_error(
 				ErrorCode::UnsupportedFeature,
 				"External stream file specification (/F) requires decode_external_stream with resolved external bytes");
@@ -9488,15 +9509,15 @@ PdfResult<std::vector<uint8_t>> decode_stream(
 
 		// Orphan /FFilter or /FDecodeParms without /F are malformed regardless
 		// of whether inline /Filter is also present.
-		if (const PdfValue* ffilter_only = stream_dict.get("FFilter");
-			ffilter_only != nullptr && !ffilter_only->is_null()) {
+		RECTO_PDF_TRY(const bool has_ffilter, stream_entry_present(stream_dict, "FFilter", resolver));
+		if (has_ffilter) {
 			return make_filter_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedStream,
 				"Stream dictionary specifies /FFilter without /F external file specification");
 		}
-		if (const PdfValue* fparms_only = stream_dict.get("FDecodeParms");
-			fparms_only != nullptr && !fparms_only->is_null()) {
+		RECTO_PDF_TRY(const bool has_fparms, stream_entry_present(stream_dict, "FDecodeParms", resolver));
+		if (has_fparms) {
 			return make_filter_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedStream,

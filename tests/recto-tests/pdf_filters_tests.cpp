@@ -170,6 +170,22 @@ TEST(PdfFilters, LoneHuffmanCodeLongerThanOneBitIsRefused)
 	RECTO_EXPECT_ERR(decode_flate(distance), ErrorCode::DamagedFormat);
 }
 
+// An indirect /F, /FFilter or /FDecodeParms that resolves to null is an absent entry, as a direct null is.
+TEST(PdfFilters, IndirectNullExternalEntriesAreAbsent)
+{
+	const std::vector<uint8_t> raw = {'4', '1', '>'};
+	const IndirectObjectResolver to_null = [](IndirectRef) -> PdfResult<PdfValue> { return PdfValue(PdfNull{}); };
+	for (const char* key : {"F", "FFilter", "FDecodeParms"}) {
+		PdfDict dict;
+		dict.set(PdfName::from_decoded("Filter"), PdfValue(PdfName::from_decoded("ASCIIHexDecode")));
+		dict.set(PdfName::from_decoded(key), PdfValue(IndirectRef{10u, 0u}));
+		auto dec = decode_stream(raw, dict, kMaxDecodedStreamBytes, &to_null);
+		RECTO_ASSERT_OK(dec);
+		EXPECT_EQ(*dec, std::vector<uint8_t>{'A'}) << key;
+		EXPECT_FALSE(decode_stream(raw, dict).has_value()) << key; // no resolver: a reference still counts
+	}
+}
+
 // The values inside /DecodeParms may be indirect too, and a full eight-stage chain of references resolves.
 TEST(PdfFilters, IndirectValuesAndFullChainsResolve)
 {
