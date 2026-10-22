@@ -137,3 +137,46 @@ OVERALL: needs-attention
 - Finding 1 (P3): correct. `PdfLexer.LiteralStrings` adds single-digit octal escapes ended by the string (`(\5)` -> `05`), by a non-octal byte (`(\5X)` -> `05 58`), and back to back (`(\7\0)` -> `07 00`), plus a backslash before a byte that starts no escape (`(\8)` -> `8`, ISO 32000-1 section 7.3.4.2). They pass on the existing lexer: a coverage gap, not a decoding defect.
 
 Gates after round 3: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 108 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfLexer.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 8 tests.`
+
+## Round 4: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T06:55:19Z
+- Effort: medium
+- Lines: 28
+- Digest: 6e3411dd5d43620e
+
+## adversarial: approve
+
+No new behavioral or hostile-input defect established at `9f40b0f`.
+
+## consistency: approve
+
+No findings in the audited files.
+
+## integration: approve
+
+No integration defect established.
+
+## source-defect: approve
+
+No additional mismatch established against the [PDF Association syntax errata](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html).
+
+## design: advisory
+
+Not applicable; this section owns no user surface.
+
+## record: advisory
+
+The round 3 coverage gap is closed in `tests/recto-tests/pdf_lexer_tests.cpp:377`.
+
+Checkpoint verification used the existing executable with `--gtest_filter=PdfLexer.*:PdfParser.*:Support.AsanActiveWhenEnabled`: all 17 tests passed, reporting `ASan=enabled`. Current-source build provenance, ARM64 compilation and zero compiler warnings remain unverified because rebuilding would violate the no-file-modification instruction. No files were modified.
+
+HIGHEST: none
+OVERALL: approve
+
+## Audit outcome
+
+The stamp on `D01 T01 §3` is confirmed. The audit found one defect present since that stamp, not a regression: `{` and `}` were delimiters in ordinary syntax, splitting valid names such as `/A{B}` (fixed in `6896643` with `LexerSyntax`, and the contract corrected). It also found that the literal-string evidence fell short of the contract's claims, which `28ef3aa` and `9f40b0f` close. Dependants of `D01 T01 §3` are not suspect: the only consumer of brace tokens (`parser.cpp`) rejected them before and now never receives them in PDF syntax, and all 108 tests pass in x64 Debug and Release.
+
+Test checkpoint at `9f40b0f`: `python scripts/todo-graph.py resolve "D01 T01 §3"` -> exit 3 (still verified); round 4 approves (`OVERALL: approve`). `D01 T01 §3`'s own checkpoint: `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfLexer.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 8 tests.`
