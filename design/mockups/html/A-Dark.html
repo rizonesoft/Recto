@@ -96,15 +96,17 @@ a{color:#8AB0FF}a:hover{color:#B3CBFF}
             
               <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.2 Thread ownership rules</span></button>
             
-              <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.3 Runtime and thread map</span></button>
+              <button class="ol" style="padding-left:26px;background:rgba(138,176,255,.16);color:#FFFFFF;font-weight:600;box-shadow:inset 3px 0 0 #8AB0FF"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.3 Runtime and thread map</span></button>
             
               <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.4 Opening a document</span></button>
             
-              <button class="ol" style="padding-left:26px;background:rgba(138,176,255,.16);color:#FFFFFF;font-weight:600;box-shadow:inset 3px 0 0 #8AB0FF"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.5 Rendering tiles</span></button>
+              <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.5 Rendering tiles and zoom</span></button>
             
               <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.6 Presentation thread</span></button>
             
-              <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.7 Jobs and shutdown</span></button>
+              <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.7 Conversion and OCR jobs</span></button>
+            
+              <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.8 Shutdown order</span></button>
             
               <button class="ol" style="padding-left:6px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span>5. Conversions (v1)</span></button>
             
@@ -117,7 +119,7 @@ a{color:#8AB0FF}a:hover{color:#B3CBFF}
         <div style="flex-grow:1;min-width:0;background:#1B1B1B;display:flex;justify-content:center;align-items:flex-start;gap:6px;padding-top:40px;overflow:hidden">
           <article style="width:460px;height:595px;background:#E4E4E4;box-shadow:0 8px 28px rgba(0,0,0,.5);padding:40px 46px;box-sizing:border-box;font-family:Cambria,Georgia,serif;color:#1B1B1B;display:flex;flex-direction:column;gap:8px">
             <div style="font-size:7px;color:#666;text-align:right">Recto: foundation plan</div>
-            <div style="font-size:12px;font-weight:700">4.5 Rendering tiles</div>
+            <div style="font-size:12px;font-weight:700">4.3 Runtime and thread map</div>
             <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:#BDBDBD;font-size:7px;line-height:10px">
               <span style="background:#D6D6D6;padding:3px;font-weight:700">Thread</span><span style="background:#D6D6D6;padding:3px;font-weight:700">Context</span><span style="background:#D6D6D6;padding:3px;font-weight:700">Owns</span>
               <span style="background:#E4E4E4;padding:3px">UI (XAML)</span><span style="background:#E4E4E4;padding:3px">none</span><span style="background:#E4E4E4;padding:3px">XAML tree, view models</span>
@@ -126,7 +128,7 @@ a{color:#8AB0FF}a:hover{color:#B3CBFF}
               <span style="background:#E4E4E4;padding:3px">Render worker</span><span style="background:#E4E4E4;padding:3px">read-only</span><span style="background:#E4E4E4;padding:3px">the tile it rasterizes</span>
               <span style="background:#E4E4E4;padding:3px">Conversion job</span><span style="background:#E4E4E4;padding:3px">own copy</span><span style="background:#E4E4E4;padding:3px">its own pdf::Document</span>
             </div>
-            <div style="font-size:12px;font-weight:700;margin-top:8px">4.6 Opening and viewing a document</div>
+            <div style="font-size:12px;font-weight:700;margin-top:8px">4.4 Opening a document</div>
             <span class="bar" style="width:100%"></span><span class="bar" style="width:94%"></span><span class="bar" style="width:97%"></span><span class="bar" style="width:60%"></span>
             <span style="height:4px"></span>
             <span class="bar" style="width:100%"></span><span class="bar" style="width:91%"></span><span class="bar" style="width:84%"></span>
@@ -136,7 +138,7 @@ a{color:#8AB0FF}a:hover{color:#B3CBFF}
           </article>
           <article style="width:460px;height:595px;background:#E4E4E4;box-shadow:0 8px 28px rgba(0,0,0,.5);padding:40px 46px;box-sizing:border-box;font-family:Cambria,Georgia,serif;color:#1B1B1B;display:flex;flex-direction:column;gap:8px">
             <div style="font-size:7px;color:#666;text-align:right">Recto: foundation plan</div>
-            <div style="font-size:12px;font-weight:700">4.7 Jobs and shutdown (render worker)</div>
+            <div style="font-size:12px;font-weight:700">4.5 Rendering tiles and zoom</div>
             <div style="background:#D4D4D4;padding:10px;display:flex;flex-direction:column;gap:5px">
               <span class="bar" style="width:70%;background:#9C9C9C"></span><span class="bar" style="width:84%;background:#9C9C9C"></span><span class="bar" style="width:40%;background:#9C9C9C"></span><span class="bar" style="width:76%;background:#9C9C9C;margin-left:12px"></span><span class="bar" style="width:66%;background:#9C9C9C;margin-left:12px"></span><span class="bar" style="width:80%;background:#9C9C9C;margin-left:12px"></span><span class="bar" style="width:58%;background:#9C9C9C;margin-left:12px"></span><span class="bar" style="width:30%;background:#9C9C9C"></span>
             </div>

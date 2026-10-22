@@ -73,7 +73,7 @@ a{color:#C8431F}a:hover{color:#9E3217}
       <div style="flex-grow:1;min-height:0;background:#E4E1DC;display:flex;justify-content:center;align-items:flex-start;padding-top:36px;overflow:hidden">
         <div style="display:flex;box-shadow:0 10px 30px rgba(60,40,20,.18)">
           <article style="width:430px;height:556px;background:#FFFFFF;padding:40px 44px;box-sizing:border-box;font-family:Cambria,Georgia,serif;color:#1F1D1B;display:flex;flex-direction:column;gap:7px;border-right:1px solid #E6E2DC">
-            <div style="font-size:12px;font-weight:700">4.5 Rendering tiles</div>
+            <div style="font-size:12px;font-weight:700">4.3 Runtime and thread map</div>
             <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:#CFCBC3;font-size:7px;line-height:10px">
               <span style="background:#EFEDE9;padding:3px;font-weight:700">Thread</span><span style="background:#EFEDE9;padding:3px;font-weight:700">Context</span><span style="background:#EFEDE9;padding:3px;font-weight:700">Owns</span>
               <span style="background:#FFFFFF;padding:3px">UI (XAML)</span><span style="background:#FFFFFF;padding:3px">none</span><span style="background:#FFFFFF;padding:3px">XAML tree, view models</span>
@@ -81,7 +81,7 @@ a{color:#C8431F}a:hover{color:#9E3217}
               <span style="background:#FFFFFF;padding:3px">DocumentActor</span><span style="background:#FFFFFF;padding:3px">owner</span><span style="background:#FFFFFF;padding:3px">pdf::Document, page cache, display lists</span>
               <span style="background:#FFFFFF;padding:3px">Render worker</span><span style="background:#FFFFFF;padding:3px">read-only</span><span style="background:#FFFFFF;padding:3px">the tile it rasterizes</span>
             </div>
-            <div style="font-size:12px;font-weight:700;margin-top:8px">4.6 Opening and viewing a document</div>
+            <div style="font-size:12px;font-weight:700;margin-top:8px">4.4 Opening a document</div>
             <span class="bar" style="width:100%"></span><span class="bar" style="width:94%"></span><span class="bar" style="width:97%"></span><span class="bar" style="width:60%"></span>
             <span style="height:4px"></span>
             <span class="bar" style="width:100%"></span><span class="bar" style="width:91%"></span><span class="bar" style="width:84%"></span>
@@ -90,7 +90,7 @@ a{color:#C8431F}a:hover{color:#9E3217}
             <div style="margin-top:auto;font-size:7px;color:#5E5951;text-align:center">6</div>
           </article>
           <article style="width:430px;height:556px;background:#FFFFFF;padding:40px 44px;box-sizing:border-box;font-family:Cambria,Georgia,serif;color:#1F1D1B;display:flex;flex-direction:column;gap:7px">
-            <div style="font-size:12px;font-weight:700">4.7 Jobs and shutdown</div>
+            <div style="font-size:12px;font-weight:700">4.5 Rendering tiles and zoom</div>
             <div style="background:#F2F0EC;padding:10px;display:flex;flex-direction:column;gap:5px">
               <span class="bar" style="width:70%;background:#A8A39B"></span><span class="bar" style="width:84%;background:#A8A39B"></span><span class="bar" style="width:76%;background:#A8A39B;margin-left:12px"></span><span class="bar" style="width:66%;background:#A8A39B;margin-left:12px"></span><span class="bar" style="width:58%;background:#A8A39B;margin-left:12px"></span><span class="bar" style="width:30%;background:#A8A39B"></span>
             </div>
@@ -131,17 +131,17 @@ a{color:#C8431F}a:hover{color:#9E3217}
         
           <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.2 Thread ownership rules</span><em>5</em></button>
         
-          <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.3 Runtime and thread map</span><em>5</em></button>
+          <button class="ol" style="padding-left:26px;background:#FBE4DC;font-weight:600;box-shadow:inset 3px 0 0 #C8431F"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.3 Runtime and thread map</span><em>5</em></button>
         
           <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.4 Opening a document</span><em>5</em></button>
         
-          <button class="ol" style="padding-left:26px;background:#FBE4DC;font-weight:600;box-shadow:inset 3px 0 0 #C8431F"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.5 Rendering tiles</span><em>6</em></button>
+          <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.5 Rendering tiles and zoom</span><em>6</em></button>
         
           <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.6 Presentation thread</span><em>6</em></button>
         
-          <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.7 Jobs and shutdown</span><em>7</em></button>
+          <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.7 Conversion and OCR jobs</span><em>7</em></button>
         
-          <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.8 Presentation thread</span><em>7</em></button>
+          <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.8 Shutdown order</span><em>7</em></button>
         
           <button class="ol" style="padding-left:6px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span>5. Conversions (v1)</span><em>8</em></button>
         

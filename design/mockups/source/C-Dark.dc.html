@@ -43,7 +43,7 @@ a{color:#B3ADFF}a:hover{color:#CFCBFF}
   </div>
   <div style="flex-grow:1;min-height:0;position:relative;background:#1A1830;border-top-left-radius:12px;border-top-right-radius:12px;margin:0 6px;overflow:hidden;display:flex;justify-content:center;align-items:flex-start;gap:4px;padding-top:44px;padding-left:200px">
     <article style="width:440px;height:570px;background:#E2E0EC;box-shadow:0 12px 40px rgba(0,0,0,.5);padding:40px 44px;box-sizing:border-box;font-family:Cambria,Georgia,serif;color:#17152B;display:flex;flex-direction:column;gap:8px">
-      <div style="font-size:12px;font-weight:700">4.5 Rendering tiles</div>
+      <div style="font-size:12px;font-weight:700">4.3 Runtime and thread map</div>
       <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:#B9B6CB;font-size:7px;line-height:10px">
         <span style="background:#D4D1E2;padding:3px;font-weight:700">Thread</span><span style="background:#D4D1E2;padding:3px;font-weight:700">Context</span><span style="background:#D4D1E2;padding:3px;font-weight:700">Owns</span>
         <span style="background:#E2E0EC;padding:3px">UI (XAML)</span><span style="background:#E2E0EC;padding:3px">none</span><span style="background:#E2E0EC;padding:3px">XAML tree, view models</span>
@@ -51,14 +51,14 @@ a{color:#B3ADFF}a:hover{color:#CFCBFF}
         <span style="background:#E2E0EC;padding:3px">DocumentActor</span><span style="background:#E2E0EC;padding:3px">owner</span><span style="background:#E2E0EC;padding:3px">pdf::Document, page cache, display lists</span>
         <span style="background:#E2E0EC;padding:3px">Render worker</span><span style="background:#E2E0EC;padding:3px">read-only</span><span style="background:#E2E0EC;padding:3px">the tile it rasterizes</span>
       </div>
-      <div style="font-size:12px;font-weight:700;margin-top:8px">4.6 Opening and viewing a document</div>
+      <div style="font-size:12px;font-weight:700;margin-top:8px">4.4 Opening a document</div>
       <span class="bar" style="width:100%"></span><span class="bar" style="width:94%"></span><span class="bar" style="width:97%"></span><span class="bar" style="width:60%"></span>
       <span style="height:4px"></span>
       <span class="bar" style="width:100%"></span><span class="bar" style="width:91%"></span><span class="bar" style="width:84%"></span>
       <div style="margin-top:auto;font-size:7px;color:#55526B;text-align:center">6</div>
     </article>
     <article style="width:440px;height:570px;background:#E2E0EC;box-shadow:0 12px 40px rgba(0,0,0,.5);padding:40px 44px;box-sizing:border-box;font-family:Cambria,Georgia,serif;color:#17152B;display:flex;flex-direction:column;gap:8px">
-      <div style="font-size:12px;font-weight:700">4.7 Jobs and shutdown</div>
+      <div style="font-size:12px;font-weight:700">4.5 Rendering tiles and zoom</div>
       <div style="background:#D4D1E2;padding:10px;display:flex;flex-direction:column;gap:5px"><span class="bar" style="width:70%;background:#8E8AA8"></span><span class="bar" style="width:84%;background:#8E8AA8"></span><span class="bar" style="width:76%;background:#8E8AA8;margin-left:12px"></span><span class="bar" style="width:58%;background:#8E8AA8;margin-left:12px"></span><span class="bar" style="width:30%;background:#8E8AA8"></span></div>
       <div style="font-size:9px;font-weight:700;margin-top:6px">Notes on the tile path</div>
       <span class="bar" style="width:100%"></span><span class="bar" style="width:88%"></span><span class="bar" style="width:96%"></span><span class="bar" style="width:74%"></span>
@@ -92,7 +92,7 @@ a{color:#B3ADFF}a:hover{color:#CFCBFF}
 class Component extends DCLogic {
 renderVals() {
 const i={search:"M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM20 20l-4.2-4.2",convert:"M4 8h14l-4-4M20 16H6l4 4",grid:"M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",gear:"M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1",cr:"M9 6l6 6-6 6",cl:"M15 6l-6 6 6 6",x:"M6 6l12 12M18 6L6 18",min:"M5 12h14",max:"M5 5h14v14H5z",plus:"M12 5v14M5 12h14",home:"M4 11l8-7 8 7v9h-5v-6H9v6H4z",side:"M4 5h16v14H4zM9 5v14",spread:"M3 5h8v14H3zM13 5h8v14h-8z",moon:"M20 14a8 8 0 1 1-10-10 7 7 0 0 0 10 10z",dot:""};
-const rows=[["1. Decisions",0,"c"],["2. Tech stack",0,"c"],["3. Architecture",0,"c"],["4. Engine threading contract",0,"o"],["4.1 What recto-pdf implements",1,""],["4.2 Thread ownership rules",1,""],["4.3 Runtime and thread map",1,""],["4.4 Opening a document",1,""],["4.5 Rendering tiles",1,"sel"],["4.6 Presentation thread",1,""],["4.7 Jobs and shutdown",1,""],["4.8 Presentation thread",1,""],["5. Conversions (v1)",0,"c"],["6. UI outline",0,"c"],["7. Milestones",0,"c"]];
+const rows=[["1. Decisions",0,"c"],["2. Tech stack",0,"c"],["3. Architecture",0,"c"],["4. Engine threading contract",0,"o"],["4.1 What recto-pdf implements",1,""],["4.2 Thread ownership rules",1,""],["4.3 Runtime and thread map",1,"sel"],["4.4 Opening a document",1,""],["4.5 Rendering tiles and zoom",1,""],["4.6 Presentation thread",1,""],["4.7 Conversion and OCR jobs",1,""],["4.8 Shutdown order",1,""],["5. Conversions (v1)",0,"c"],["6. UI outline",0,"c"],["7. Milestones",0,"c"]];
 const outline=rows.map(([t,l,s])=>({t,icon:(s==="c"||s==="o")?i.cr:i.dot,chev:"width:12px;height:12px;"+(s==="o"?"transform:rotate(90deg)":""),st:"padding-left:"+(l*20+6)+"px;"+(s==="sel"?"background:#34306A;color:#FFFFFF;font-weight:600":"")}));
 return {i,outline};
 }

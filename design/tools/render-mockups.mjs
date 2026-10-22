@@ -130,11 +130,16 @@ for (const file of sources.filter((f) => !only || only.has(f.replace(/\.dc\.html
   if (browser) {
     const board = canvas.boards[file];
     const png = join(shotDir, name.startsWith("D-") ? "" : "explorations", `${name}.png`);
+    // The browser writes a temporary file beside the board's PNG, which replaces it only once complete: a failed or
+    // timed-out screenshot leaves the previous PNG as it was.
+    const pending = `${png}.tmp.png`;
+    rmSync(pending, { force: true });
     const started = Date.now();
     execFileSync(browser, ["--headless=new", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=1",
       `--user-data-dir=${profileDir}`, `--window-size=${board.w},${board.h}`, "--virtual-time-budget=8000",
-      `--screenshot=${png}`, pathToFileURL(htmlPath).href], { stdio: ["ignore", "ignore", "pipe"] });
-    waitForScreenshot(png, started);
+      `--screenshot=${pending}`, pathToFileURL(htmlPath).href], { stdio: ["ignore", "ignore", "pipe"] });
+    waitForScreenshot(pending, started);
+    renameSync(pending, png);
   }
   console.log(name);
 }
