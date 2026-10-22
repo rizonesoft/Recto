@@ -20,9 +20,19 @@ const designDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const srcDir = join(designDir, "mockups", "source");
 const htmlDir = join(designDir, "mockups", "html");
 const shotDir = join(designDir, "screenshots");
-const withPng = !process.argv.includes("--no-png");
-const onlyAt = process.argv.indexOf("--only");
-const only = onlyAt >= 0 ? new Set((process.argv[onlyAt + 1] ?? "").split(",").filter(Boolean)) : null;
+// Every argument is consumed or refused, so a mistyped or repeated option never leaves a requested board unrendered.
+let withPng = true;
+let only = null;
+for (let i = 2; i < process.argv.length; i++) {
+  const arg = process.argv[i];
+  if (arg === "--no-png" && withPng) {
+    withPng = false;
+  } else if (arg === "--only" && only === null && i + 1 < process.argv.length) {
+    only = new Set(process.argv[++i].split(",").filter(Boolean));
+  } else {
+    throw new Error(`unexpected argument ${JSON.stringify(arg)}; usage: [--no-png] [--only A-About,B-Banner,...]`);
+  }
+}
 
 const canvas = JSON.parse(readFileSync(join(srcDir, "canvas.json"), "utf8"));
 
