@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <span>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -91,7 +92,7 @@ void verify_simple_1p_with_preamble(std::span<const uint8_t> preamble)
 // ISO 32000-1 Table 15: /Size is required, and an object numbered above it is ignored and treated as missing.
 TEST(PdfXref, ClassicEntriesAboveSizeAreMissing)
 {
-	const auto build = [](std::string_view trailer) {
+	const auto build = [](std::string_view trailer, std::optional<size_t> seven_offset = std::nullopt) {
 		std::string pdf = "%PDF-1.7\n";
 		const size_t off1 = pdf.size();
 		pdf += "1 0 obj\n<< /Type /Catalog /Pages 3 0 R >>\nendobj\n";
@@ -108,7 +109,7 @@ TEST(PdfXref, ClassicEntriesAboveSizeAreMissing)
 		std::snprintf(row, sizeof(row), "%010zu 00000 n \n", off3);
 		pdf += row;
 		pdf += "7 1\n";
-		std::snprintf(row, sizeof(row), "%010zu 00002 n \n", off7);
+		std::snprintf(row, sizeof(row), "%010zu 00002 n \n", seven_offset.value_or(off7));
 		pdf += row;
 		pdf += "trailer\n";
 		pdf += trailer;
@@ -133,6 +134,19 @@ TEST(PdfXref, ClassicEntriesAboveSizeAreMissing)
 	}
 	{
 		const std::string pdf = build("<< /Root 1 0 R >>"); // /Size missing
+		RECTO_EXPECT_ERR(XrefTable::parse(as_bytes(pdf)), ErrorCode::DamagedFormat);
+	}
+	{
+		// A row above /Size is missing, so an offset outside the file in it cannot fail the parse...
+		const std::string pdf = build("<< /Size 4 /Root 1 0 R >>", size_t{9999999999ULL});
+		auto xref = XrefTable::parse(as_bytes(pdf));
+		RECTO_ASSERT_OK(xref);
+		EXPECT_EQ(xref->find(7), nullptr);
+		EXPECT_FALSE(xref->recovered());
+	}
+	{
+		// ...while one within /Size still does.
+		const std::string pdf = build("<< /Size 8 /Root 1 0 R >>", size_t{9999999999ULL});
 		RECTO_EXPECT_ERR(XrefTable::parse(as_bytes(pdf)), ErrorCode::DamagedFormat);
 	}
 }

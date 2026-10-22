@@ -52,3 +52,48 @@ OVERALL: needs-attention
 - Finding 1 (P1): correct. ISO 32000-1 Table 15 makes the trailer's `/Size` required and says an object in a cross-reference section numbered greater than it shall be ignored and treated as missing (unchanged in ISO 32000-2; the PDF Association errata keep it). `XrefTable::parse` copied `/Size` but never applied it. The strict path now refuses a missing or invalid `/Size` (non-positive or above 2^32, as the xref stream path already does), handing it to recovery when `allow_recovery` is set, and erases entries numbered above `/Size` from the merged table, recording a `DamagedXRef` diagnostic for each. `document.cpp`'s `xref_.find` therefore sees them as missing. An object numbered exactly `/Size` is kept, since the text says only "greater than" (recorded as a default). The recovery path, which rebuilds the table by scanning objects, is unchanged. `PdfXref.ClassicEntriesAboveSizeAreMissing` drops object 7 under `/Size 4`, keeps it under `/Size 7`, and refuses a trailer without `/Size`; with the erase removed it fails. All 111 tests pass, the corpus included. `D01 T01 §5` carries a dated correction.
 
 Gates after round 1: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 111 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 19 tests.`; `python scripts/todo-graph.py validate` -> `valid: 681 sections`.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T07:35:36Z
+- Effort: medium
+- Lines: 30
+- Digest: 0932bd55f7628347
+
+### adversarial: needs-attention
+
+1. **P2: Entries above `/Size` can abort parsing before being ignored.** `src/pdf/xref.cpp:1284` rejects an out-of-bounds offset immediately, before the `/Size` filtering at `src/pdf/xref.cpp:1481`. An entry required to be treated as missing therefore prevents strict parsing of the remaining document.
+
+   **Reproduce:** Use the fixture in `tests/recto-tests/pdf_xref_tests.cpp:92` with `/Size 4`. Replace object 7’s xref row with `9999999999 00002 n \n`, preserving its length. Call `XrefTable::parse` with recovery disabled. It returns `DamagedFormat` instead of succeeding with object 7 absent. This reproduction is established by source inspection, not an executed modified test.
+
+### consistency: approve
+
+No findings.
+
+### integration: needs-attention
+
+Finding **1 (P2)** also affects `src/pdf/document.cpp:1300`: document opening enables recovery, so the ignored entry instead triggers reconstruction by scanning objects. The parser unnecessarily abandons the authoritative xref table and its incremental revision semantics.
+
+### source-defect: needs-attention
+
+Finding **1 (P2)** conflicts with Table 15’s requirement to ignore objects numbered above `/Size` and treat them as missing. Applying that rule only after validating their target offsets is insufficient. [PDF Association Table 15 clarification](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#7.5.5)
+
+### design: advisory
+
+Not applicable: no user surface.
+
+### record: advisory
+
+The existing Release executable passes all six current checkpoint tests plus `Support.AsanActiveWhenEnabled`, which reports `ASan=enabled`. This verifies the available binary’s results, not its source provenance or the historical build recorded at `b56e4bb`. No rebuild was performed under the no-modification constraint. The current regression test does not cover finding 1.
+
+No files were modified.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+- Finding 1 (P2): correct. Classic rows are buffered until the revision's trailer is parsed, but the out-of-bounds offset check ran per row, before `/Size` was known, so an entry that must be missing could fail the strict parse (or send document opening to recovery). In-use rows whose offset lies outside the file are now held and checked after the trailer merges: one numbered above the merged `/Size` is skipped as missing, and any other still fails as before. `PdfXref.ClassicEntriesAboveSizeAreMissing` adds both cases (offset `9999999999` above `/Size 4` parses without recovery and object 7 is absent; the same row under `/Size 8` is refused) and fails on the round 1 code.
+
+Gates after round 2: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 111 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 19 tests.`

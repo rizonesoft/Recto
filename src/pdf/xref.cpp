@@ -1184,6 +1184,14 @@ PdfResult<XrefTable> XrefTable::parse(
 				// free placeholders for compressed objects per ISO 32000-1 7.5.8.4)
 				// while preserving entries from newer revisions.
 				std::vector<std::pair<uint32_t, XrefEntry>> classic_rev_entries;
+				// In-use rows whose offset lies outside the file, checked once the trailer's /Size is known: a row
+				// numbered above /Size is missing (ISO 32000-1 Table 15), so its offset cannot fail the parse.
+				struct OutOfBoundsRow {
+					uint32_t obj_num;
+					uint16_t gen_num;
+					uint64_t row_offset;
+				};
+				std::vector<OutOfBoundsRow> out_of_bounds_rows;
 				while (true) {
 					Token first_tok;
 					if (!next_non_comment_token(lexer, first_tok, err)) {
@@ -1283,13 +1291,8 @@ PdfResult<XrefTable> XrefTable::parse(
 							}
 							if (raw_off > file_bytes.size() - header_off ||
 								raw_off + header_off >= file_bytes.size()) {
-								return try_recover(make_xref_error(
-									ErrorCode::DamagedFormat,
-									DiagnosticId::DamagedXRef,
-									"In-use xref entry offset points outside file bounds",
-									off_tok.byte_offset,
-									obj_num,
-									gen_num));
+								out_of_bounds_rows.push_back({obj_num, gen_num, off_tok.byte_offset});
+								continue;
 							}
 							classic_rev_entries.emplace_back(
 								obj_num,
@@ -1328,6 +1331,22 @@ PdfResult<XrefTable> XrefTable::parse(
 				auto merge_res = merge_trailer_from_revision(table.trailer_, rev_trailer);
 				if (!merge_res.has_value()) {
 					return merge_res.error();
+				}
+				if (!out_of_bounds_rows.empty()) {
+					const auto merged_size = table.trailer_.get_int("Size");
+					for (const OutOfBoundsRow& row : out_of_bounds_rows) {
+						if (merged_size.has_value() && *merged_size > 0 &&
+							static_cast<uint64_t>(row.obj_num) > static_cast<uint64_t>(*merged_size)) {
+							continue; // above /Size: missing, so its offset does not matter
+						}
+						return try_recover(make_xref_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedXRef,
+							"In-use xref entry offset points outside file bounds",
+							row.row_offset,
+							row.obj_num,
+							row.gen_num));
+					}
 				}
 
 				// Hybrid cross-reference stream (`/XRefStm` in a classic trailer, ISO 32000-1 7.5.8.4):
