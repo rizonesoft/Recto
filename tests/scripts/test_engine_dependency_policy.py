@@ -109,12 +109,31 @@ def office_install_link(url: str) -> bool:
 
 # How rendered text breaks into units: inline elements (and a word-break opportunity, <wbr>) do not break words, a line
 # break (<br>) is a space within the same text, and every other element ends a unit, as do sentence punctuation
-# (. ! ? ;). Comments, scripts and styles are not shown. Text a reader sees or hears in attributes (a button's value,
-# a field's placeholder, an image's alt, a tooltip, an accessible name) is a unit of its own. Parsed with html.parser,
+# (. ! ? ;). Comments, scripts and styles are not shown. Text in attributes (a button's value, an option's label, a
+# field's placeholder, an image's alt, a tooltip, an accessible name) is a unit of its own. Parsed with html.parser,
 # which reads quoting, unquoted attributes, entities and comments as a browser does.
 INLINE_ELEMENTS = {"a", "abbr", "b", "bdi", "bdo", "cite", "code", "data", "dfn", "em", "i", "kbd", "mark", "q", "s",
                    "samp", "small", "span", "strong", "sub", "sup", "time", "u", "var", "wbr"}
-VISIBLE_ATTRIBUTES = {"value", "placeholder", "alt", "title", "aria-label"}
+# Attributes that cannot carry text a reader sees or hears: structure, styling, geometry, link targets (checked on
+# their own), states and references. Every other attribute's value (value, label, placeholder, alt, title,
+# aria-label, aria-description, and any attribute not listed here) is read as text, so a new text-bearing attribute
+# is covered by default. data-* and event handlers (on*) are not text either.
+NON_TEXT_ATTRIBUTES = {
+    "class", "style", "id", "href", "src", "action", "formaction", "d", "viewbox", "xmlns", "fill", "stroke",
+    "stroke-width", "stroke-linecap", "stroke-linejoin", "width", "height", "x", "y", "x1", "x2", "y1", "y2", "rx",
+    "ry", "cx", "cy", "r", "points", "transform", "role", "type", "name", "for", "tabindex", "lang", "dir", "rel",
+    "target", "colspan", "rowspan", "hidden", "disabled", "checked", "selected", "readonly", "multiple", "required",
+    "charset", "content", "http-equiv", "list", "as", "value-type", "aria-hidden", "aria-checked", "aria-selected",
+    "aria-expanded", "aria-pressed", "aria-current", "aria-controls", "aria-labelledby", "aria-describedby",
+    "aria-orientation", "aria-level", "aria-valuenow", "aria-valuemin", "aria-valuemax", "aria-haspopup",
+    "aria-modal", "aria-live", "aria-atomic", "aria-busy", "aria-disabled", "aria-invalid", "aria-setsize",
+    "aria-posinset", "aria-colcount", "aria-rowcount", "aria-colindex", "aria-rowindex", "aria-multiselectable",
+    "aria-sort", "aria-owns", "aria-activedescendant", "aria-errormessage", "aria-flowto", "aria-details",
+    "aria-keyshortcuts", "aria-autocomplete", "aria-readonly", "aria-required"}
+
+
+def _is_text_attribute(name: str) -> bool:
+    return name not in NON_TEXT_ATTRIBUTES and not name.startswith(("data-", "on", "hint-"))
 
 
 class _VisibleText(html.parser.HTMLParser):
@@ -131,7 +150,7 @@ class _VisibleText(html.parser.HTMLParser):
             self.parts.append("\x00")
             return
         for name, value in attrs:
-            if name in VISIBLE_ATTRIBUTES and value:
+            if _is_text_attribute(name) and value:
                 self.attributes.append(value)
             if name in LINK_ATTRIBUTES and value:
                 self.links.append(value)
@@ -262,7 +281,9 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                        '<button aria-label="Requires Word">Convert</button>',
                        """<button title="You'll need Microsoft Office to convert">Convert</button>""",
                        "<button title=LibreOffice>Convert</button>",
-                       "<p>Get Libre<!-- branding -->Office</p>", "<p>Get Libre<span class='x'>Office</span></p>"):
+                       "<p>Get Libre<!-- branding -->Office</p>", "<p>Get Libre<span class='x'>Office</span></p>",
+                       '<select><option label="Install Microsoft Office to convert">Converter</option></select>',
+                       '<div aria-description="Requires Word">Convert</div>'):
             with self.subTest(markup=markup):
                 self.assertIsNotNone(office_dependency(markup))
         for markup in ("<p>Office to PDF is built in.</p>", "<td>PDF to Word</td><td>needs a password</td>",
