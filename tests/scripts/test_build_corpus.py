@@ -901,6 +901,16 @@ class BuildCorpusTests(unittest.TestCase):
                                                     b"/ColorSpace": b"/DeviceGray", b"/BitsPerComponent": b"8",
                                                     b"/Filter": b"/FlateDecode"}, zlib.compress(b"abc"))
 
+    def test_jpeg_huffman_tables_are_bounded(self) -> None:
+        j = self.mod.make_minimal_jpeg_8x8_rgb()
+        d = j.index(b"\xff\xc4")
+        end = d + 2 + int.from_bytes(j[d + 2 : d + 4], "big")
+        counts = bytes([1] + [0] * 7 + [255, 1] + [0] * 6)  # 257 symbols in one DC table
+        body = b"\x00" + counts + bytes(257) + j[d + 22 : end]
+        oversized = j[:d] + b"\xff\xc4" + (len(body) + 2).to_bytes(2, "big") + body + j[end:]
+        with self.assertRaisesRegex(ValueError, "more symbols"):
+            self.mod.validate_jpeg_baseline("x", oversized, 8, 8, 3)
+
     def test_jpx_cod_qcd_and_packet_are_read(self) -> None:
         jpx = self.mod.make_minimal_jpx_8x8_gray()
         cod, qcd = jpx.index(b"\xFF\x52"), jpx.index(b"\xFF\x5C")

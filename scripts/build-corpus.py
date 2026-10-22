@@ -2685,6 +2685,9 @@ def _validate_jpeg_baseline(rel_path: str, data: bytes, width: int, height: int,
                     raise ValueError(f"{rel_path}: JPEG DHT table cut short")
                 if tc_th >> 4 > 1 or tc_th & 0x0F > 1:  # baseline: table ids 0 and 1 only (T.81 Table B.5)
                     raise ValueError(f"{rel_path}: JPEG DHT class or id out of range for baseline")
+                # At most 256 values (T.81 B.2.4.2), each a distinct legal symbol: 12 DC sizes, 162 AC run/size pairs.
+                if len(symbols) > (12 if tc_th >> 4 == 0 else 162) or len(set(symbols)) != len(symbols):
+                    raise ValueError(f"{rel_path}: JPEG DHT holds more symbols than its class allows, or a repeat")
                 codes, code = {}, 0
                 for bits_len, count in enumerate(counts, 1):
                     for _ in range(count):
