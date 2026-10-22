@@ -1004,14 +1004,17 @@ PdfResult<std::vector<uint8_t>> decode_flate(
 			//    does not outrank.
 			// 3. Otherwise the body after the header, if it inflated: with no trailer it is kept and the damage
 			//    recorded; with a wrong one it is refused.
+			// The attempt after the header is speculative, so no failure of it, a resource ceiling included, decides
+			// anything before the raw reading has had its turn; a ceiling it hit is reported only if raw fails too.
 			std::optional<std::vector<uint8_t>> body;
+			std::optional<PdfError> body_resource_error;
 			size_t consumed = 0;
 			if (input.size() > 2) {
 				auto skip2_res = inflate_raw_deflate(input.subspan(2), effective_limit, &consumed);
 				if (skip2_res.has_value()) {
 					body = std::move(*skip2_res);
 				} else if (is_resource_error(skip2_res.error())) {
-					return skip2_res.error();
+					body_resource_error = std::move(skip2_res).error();
 				}
 			}
 			const bool verified = body.has_value() && input.size() - 2 - consumed >= 4 &&
@@ -1029,6 +1032,8 @@ PdfResult<std::vector<uint8_t>> decode_flate(
 					RECTO_PDF_RETURN_IF_ERROR(check_adler_trailer(consumed, *body)); // wrong: refused; none: recorded
 					record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream, uint64_t{0});
 					inflated = std::move(*body);
+				} else if (body_resource_error.has_value()) {
+					return *body_resource_error;
 				} else {
 					return raw_res.error();
 				}

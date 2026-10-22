@@ -110,6 +110,12 @@ TEST(PdfFilters, FlateTrailerDamageIsRecorded)
 	auto stored_res = decode_flate(stored);
 	RECTO_ASSERT_OK(stored_res);
 	EXPECT_EQ(*stored_res, std::vector<uint8_t>(1023, 0x41u));
+	// The attempt after the header hitting the caller's ceiling (a 65,530-byte stored block from offset 2) does not
+	// stop the valid five-byte raw reading from byte 0.
+	const std::vector<uint8_t> small_raw = {0x01u, 0x05u, 0x00u, 0xFAu, 0xFFu, 0x05u, 0x00u, 0x41u, 0x41u, 0x41u};
+	auto small_res = decode_flate(small_raw, nullptr, 1024);
+	RECTO_ASSERT_OK(small_res);
+	EXPECT_EQ(*small_res, (std::vector<uint8_t>{0x05u, 0x00u, 0x41u, 0x41u, 0x41u}));
 	// "B" (Adler-32 00430043) behind a damaged header and a trailer that names "A": refused, not recovered.
 	const std::vector<uint8_t> mismatched = {0x78u, 0x00u, 0x73u, 0x02u, 0x00u, 0x00u, 0x42u, 0x00u, 0x42u};
 	RECTO_EXPECT_ERR(decode_flate(mismatched), ErrorCode::DamagedFormat);

@@ -362,3 +362,43 @@ OVERALL: needs-attention
 - Both tests fail on the round 7 code.
 
 Gates after round 8: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 118 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 46 tests.`; `python scripts/todo-graph.py validate` -> valid.
+
+## Round 9: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T10:12:01Z
+- Effort: xhigh
+- Lines: 24
+- Digest: 0c655fcf71d554a1
+
+### adversarial: needs-attention
+
+1. **P2: An unverified header-skipping attempt can prevent valid raw decoding.** `src/pdf/filters.cpp:1013` returns resource errors before trying byte 0, contradicting the stated selection rule. Reproduce with `decode_flate(bytes, nullptr, 1024)`, where bytes are `01 05 00 FA FF 05 00 41 41 41`. The valid raw stream produces five bytes, `05 00 41 41 41`. The byte-2 interpretation instead declares a 65,530-byte stored block, hits the ceiling at line 424 and returns `DecompressionLimitExceeded`; raw fallback is never reached. This failure is source-traced. Python zlib independently confirmed the valid raw output.
+
+### consistency: approve
+
+### integration: needs-attention
+
+1. **P2, same defect:** `src/pdf/document.cpp:1786` forwards the caller’s ceiling into the affected decoder. Put finding 1’s bytes in a `/FlateDecode` stream and call `Document::decode_stream(stream, 1024)`: the valid five-byte result is refused. The failure therefore reaches the document API.
+
+### source-defect: needs-attention
+
+2. **P3: The documented HDIST restriction still falls short of promised RFC 1951 support.** `src/pdf/filters.cpp:498` rejects 31 or 32 distance-table entries. Reproduce with a dynamic block declaring 257 literal/length entries and 31 distance entries, using only a one-bit EOB literal code and one-bit distance code 0, with all other lengths zero, then emitting EOB. Expected output is empty; the header check returns `DamagedFormat`. The zlib compatibility rationale documents this restriction but does not make it RFC compliant. [RFC 1951 §3.2.7](https://www.rfc-editor.org/rfc/rfc1951.html#section-3.2.7)
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: advisory
+
+The existing Release executable passed 16 filter tests and 30 XRef/document/crypto tests; the support test reported `ASan=enabled`. Graph validation and plan checks passed. These reruns do not independently verify executable correspondence to `cee1dcd`, fresh-build warnings or ARM64 compilation. No files were modified.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 9
+
+- Finding 1 (P2): correct, an implementation gap in round 8's rule. A resource ceiling hit by the speculative attempt after the header returned before the raw reading had its turn, so `01 05 00 FA FF 05 00 41 41 41` at a 1,024-byte ceiling was refused although its raw reading is five valid bytes. The speculative attempt's resource error is now held and reported only if the raw reading fails too. `PdfFilters.FlateTrailerDamageIsRecorded` decodes that stream at that ceiling; it fails on the round 8 code.
+- Finding 2 (P3), unchanged and recorded: the HDIST refusal (above 30) was decided in round 3 to match zlib's reference inflater, documented at the check, and is not reopened.
+
+Gates after round 9: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 118 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 46 tests.`
