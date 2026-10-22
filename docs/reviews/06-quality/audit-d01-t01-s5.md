@@ -97,3 +97,48 @@ OVERALL: needs-attention
 - Finding 1 (P2): correct. Classic rows are buffered until the revision's trailer is parsed, but the out-of-bounds offset check ran per row, before `/Size` was known, so an entry that must be missing could fail the strict parse (or send document opening to recovery). In-use rows whose offset lies outside the file are now held and checked after the trailer merges: one numbered above the merged `/Size` is skipped as missing, and any other still fails as before. `PdfXref.ClassicEntriesAboveSizeAreMissing` adds both cases (offset `9999999999` above `/Size 4` parses without recovery and object 7 is absent; the same row under `/Size 8` is refused) and fails on the round 1 code.
 
 Gates after round 2: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 111 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 19 tests.`
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T07:45:52Z
+- Effort: medium
+- Lines: 30
+- Digest: 2d6dd386d300349a
+
+### adversarial: approve
+
+No actionable findings at `6245896`.
+
+### consistency: approve
+
+No findings.
+
+### integration: approve
+
+No findings.
+
+### source-defect: approve
+
+No findings against the section’s contract and the applicable [PDF specification clarifications](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#7.5.5).
+
+### design: advisory
+
+Not applicable: this section owns no user surface.
+
+### record: advisory
+
+The available Release executable passed all six current checkpoint tests, plus `PdfXref.HeaderOffsetAdjustment` and `Support.AsanActiveWhenEnabled`, which reported `ASan=enabled`.
+
+This verifies the available binary’s results. Its source provenance, the historical checkpoint at `b56e4bb`, and the x64/ARM64 compilation claims were not independently established. No rebuild was performed under the no-modification constraint.
+
+No files were modified; the working tree remains clean.
+
+HIGHEST: none
+OVERALL: approve
+
+## Audit outcome
+
+The stamp on `D01 T01 §5` is confirmed. The audit found a defect present since that stamp, not a regression: the trailer's `/Size` was never enforced, so entries ISO 32000-1 Table 15 says are missing were resolved, and their offsets could fail the parse (fixed in `8c4ecdf` and `6245896`, contract corrected). Dependants of `D01 T01 §5` are not suspect: a conforming file has no entry above `/Size`, the corpus parses unchanged, and all 111 tests pass in x64 Debug and Release.
+
+Test checkpoint at `6245896`: `python scripts/todo-graph.py resolve "D01 T01 §5"` -> exit 3 (still verified); round 3 approves (`OVERALL: approve`). `D01 T01 §5`'s own checkpoint: `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 19 tests.`
