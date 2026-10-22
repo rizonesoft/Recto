@@ -642,7 +642,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 > **Started:** 2026-10-22T05:10:00Z
 >
-> **Deferred:** the retired Office and LibreOffice converter dialog and setting on the A, B and C boards, a design choice beyond a text swap -> XREF: D06 T05 §28
+> **Resolved:** the retired Office and LibreOffice converter dialog and setting on the A, B and C boards, a design choice beyond a text swap -> XREF: D06 T05 §28 (2026-10-22: closed by D06 T05 §28, which replaces them with SPEC 9.9's redaction confirm and SPEC 9.7's page-setup row)
 
 The audit of `D00 T01 §2` (`docs/reviews/06-quality/audit-d00-t01-s2.md`) found the older A, B and C mockup boards under `design/mockups/source/` and their rendered `design/mockups/html/` copies still showing MuPDF as the engine and AGPL-3.0 as the licence (`A-About` lists MuPDF, jbig2dec and extract under AGPL, `A-Banner` shows `MuPDF` and `AGPL-3.0` chips, and about twenty boards in all mention MuPDF). Recto's engine is its own `recto-pdf` with zero MuPDF (D3, D9) and the licence is GPL-3.0-or-later (D2), so these boards contradict the plan. The `D-` boards are the current design; this section brings the older boards in line rather than leaving them to mislead.
 
