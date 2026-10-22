@@ -45,7 +45,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 12 | §12 | Audit D00 T03 §4: Encrypted (RC4/AES-128/AES-256), broken/ and seeds/ corpus fixtures | D00 T03 §4, §11 | [x] |
 | 13 | §13 | Audit D00 T03 §5: tests/corpus/PROVENANCE.md and automated Corpus.Provenance SHA-256 | D00 T03 §5, §12 | [x] |
 | 14 | §14 | Audit D00 T03 §6: MSVC AddressSanitizer (/fsanitize=address) build configuration and CI | D00 T03 §6, §13 | [x] |
-| 15 | §15 | Audit D01 T01 §1: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW | D01 T01 §1, §14 | [ ] |
+| 15 | §15 | Audit D01 T01 §1: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW | D01 T01 §1, §14 | [x] |
 | 16 | §16 | Audit D01 T01 §2: PdfValue variant object model, dictionary/array helpers and deep | D01 T01 §2, §15 | [ ] |
 | 17 | §17 | Audit D01 T01 §3: Binary-safe PDF 1.7 and 2.0 lexer (src/pdf/lexer.cpp) | D01 T01 §3, §16 | [ ] |
 | 18 | §18 | Audit D01 T01 §4: Bounded recursive-descent indirect object parser (src/pdf/parser.cpp) | D01 T01 §4, §17 | [ ] |
@@ -447,9 +447,12 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 - [x] Run audit rounds on `D01 T01 §1`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d01-t01-s1.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
 - [x] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d01-t01-s1.md` is open without a fix commit or a filed section.
 - [x] On a confirmed regression, add a dated blocking note to `D01 T01 §1`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s1.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
-- [ ] Commit: `review: audit D01 T01 §1 under the current review process`
+- [x] Commit: `review: audit D01 T01 §1 under the current review process`
 
 **Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §1"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s1.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+> **Verified:** 2026-10-22 | §15 | be99c41b93d924225fcc375904b51a42fb90f342
+> **Review:** `docs/reviews/d06-t05-s15.json`
 
 ## 16. Audit D01 T01 §2: PdfValue variant object model, dictionary/array helpers and deep
 

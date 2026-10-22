@@ -1,0 +1,46 @@
+{
+  "ref": "D06 T05 \u00a715",
+  "title": "Audit D01 T01 \u00a71: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW",
+  "implementation_sha": "be99c41b93d924225fcc375904b51a42fb90f342",
+  "date": "2026-10-22",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 6,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s1.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "python scripts/todo-graph.py resolve \"D01 T01 \u00a71\" -> exit 3 (still verified); audit round 6 OVERALL: approve",
+    ".\\build.cmd -> exit 0, 0 Warning(s) in all four configurations, [  PASSED  ] 106 tests. (x64 Debug and Release)",
+    "build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfError.* -> exit 0, 0 Warning(s), [  PASSED  ] 7 tests.",
+    "python -m unittest tests.scripts.test_etw_registration -> OK"
+  ],
+  "rounds_spent": 6,
+  "round_cap": 22
+}
