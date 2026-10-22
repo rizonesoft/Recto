@@ -95,3 +95,40 @@ OVERALL: needs-attention
 - Finding 3 (P2): the origin and purpose cells may not be blank or padded (`USER_REPORT_ROW`), and the origin must name the issue as `#N`, so a row that parses always serializes back to a row that parses (here and in `Corpus.Provenance`'s empty-cell check).
 - Finding 2 (P3): `tests/corpus/README.md` now says only files outside `user-reports/` are generated, and its provenance rule names both kinds of origin.
 - Record advisory: the full build's 4 warnings are MSBuild infrastructure, C# `CS1668` from `ROSLYNCODETASKFACTORYCSHARPCOMPILER` while building `recto-tests.vcxproj` for ARM64 Debug (ATL/MFC and .NET ARM64 library folders on `LIB` that are not installed), not compiler warnings from `corpus_tests.cpp`, whose own claim holds. They do break `D00 T01 §3`'s zero-warnings checkpoint, so the cleanup is filed as `D06 T05 §27`.
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T00:21:13Z
+- Effort: medium
+- Lines: 28
+- Digest: 805644a26d188747
+
+### adversarial: approve
+
+No new actionable finding.
+
+### consistency: approve
+
+No new actionable finding.
+
+### integration: approve
+
+No new actionable finding.
+
+### source-defect: approve
+
+No actionable finding.
+
+### design: advisory
+
+Not applicable; this section owns no user surface.
+
+### record: advisory
+
+Verification remains partial under the no-file-modification constraint. The read-only C++ subset passed both tests and verified 39 files; `python -B scripts/build-corpus.py --check` passed. In-memory probes confirmed rejection of the reported spacing and blank-cell variants.
+
+The full `Corpus.*` checkpoint and rebuild were not rerun because they write files. Existing logs corroborate four successful builds, including the four ARM64 Debug CS1668 warnings already assigned to `D06 T05 §27`.
+
+HIGHEST: none
+OVERALL: approve

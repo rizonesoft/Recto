@@ -376,6 +376,8 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 ## 13. Audit D00 T03 §5: tests/corpus/PROVENANCE.md and automated Corpus.Provenance SHA-256
 
 > **Started:** 2026-10-22T02:10:00Z
+>
+> **Deferred:** the 4 MSBuild CS1668 warnings in the ARM64 Debug `recto-tests` build, which break `D00 T01 §3`'s zero-warnings checkpoint -> XREF: D06 T05 §27
 
 `D00 T03 §5` (`tests/corpus/PROVENANCE.md` and automated `Corpus.Provenance` SHA-256 integrity suite) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d00-t03-s5.json` records 3 rounds (fixed, fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
 
@@ -388,10 +390,10 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 1. Re-run `D00 T03 §5`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d00-t03-s5.md`.
 2. Audit `D00 T03 §5` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d00-t03-s5.md` ends in an approving round or a recorded stop with every finding owned.
 
-- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D00 T03 §5"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d00-t03-s5.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
-- [ ] Run audit rounds on `D00 T03 §5`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t03-s5.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
-- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t03-s5.md` is open without a fix commit or a filed section.
-- [ ] On a confirmed regression, add a dated blocking note to `D00 T03 §5`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t03-s5.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [x] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D00 T03 §5"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d00-t03-s5.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [x] Run audit rounds on `D00 T03 §5`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t03-s5.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [x] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t03-s5.md` is open without a fix commit or a filed section.
+- [x] On a confirmed regression, add a dated blocking note to `D00 T03 §5`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t03-s5.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
 - [ ] Commit: `review: audit D00 T03 §5 under the current review process`
 
 **Test checkpoint:** `python scripts/todo-graph.py resolve "D00 T03 §5"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d00-t03-s5.md` ends in an approving round or a recorded stop with every finding fixed or filed.
