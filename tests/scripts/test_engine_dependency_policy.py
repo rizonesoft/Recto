@@ -131,13 +131,20 @@ def office_install_links(urls: list[str]) -> list[str]:
     return found
 
 
-# How rendered text breaks into units: inline elements (and a word-break opportunity, <wbr>) do not break words, a line
-# break (<br>) is a space within the same text, and every other element ends a unit, as do sentence punctuation
+# How rendered text breaks into units: block elements (BLOCK_ELEMENTS) end a unit, a line break (<br>) is a space
+# within the same text, every other element runs on without a break, and sentence punctuation also ends a unit
 # (. ! ? ;). Comments, scripts and styles are not shown. Text in attributes (a button's value, an option's label, a
 # field's placeholder, an image's alt, a tooltip, an accessible name) is a unit of its own. Parsed with html.parser,
 # which reads quoting, unquoted attributes, entities and comments as a browser does.
-INLINE_ELEMENTS = {"a", "abbr", "b", "bdi", "bdo", "cite", "code", "data", "dfn", "em", "i", "kbd", "mark", "q", "s",
-                   "samp", "small", "span", "strong", "sub", "sup", "time", "u", "var", "wbr"}
+# The elements that end a unit: HTML's block, list, table and form-control elements, and each SVG text element.
+# Every other element (span, label, a, tspan, wbr and any element not listed) runs on with the text around it, so
+# markup cannot split a word.
+BLOCK_ELEMENTS = {
+    "address", "article", "aside", "blockquote", "body", "button", "caption", "col", "colgroup", "dd", "details",
+    "dialog", "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5",
+    "h6", "head", "header", "hgroup", "hr", "html", "img", "input", "legend", "li", "main", "menu", "meter", "nav",
+    "ol", "optgroup", "option", "output", "p", "pre", "progress", "section", "select", "summary", "table", "tbody",
+    "td", "textarea", "tfoot", "th", "thead", "title", "tr", "ul", "svg", "text", "g", "sc-for", "sc-if"}
 # Attributes that cannot carry text a reader sees or hears: structure, styling, geometry, link targets (checked on
 # their own), states and references. Every other attribute's value (value, label, placeholder, alt, title,
 # aria-label, aria-description, and any attribute not listed here) is read as text, so a new text-bearing attribute
@@ -180,7 +187,7 @@ class _VisibleText(html.parser.HTMLParser):
                 self.links.append(value)
         if tag == "br":
             self.parts.append(" ")
-        elif tag not in INLINE_ELEMENTS:
+        elif tag in BLOCK_ELEMENTS:
             self.parts.append("\x00")
 
     def handle_starttag(self, tag, attrs):
@@ -315,7 +322,9 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                        "<button title=LibreOffice>Convert</button>",
                        "<p>Get Libre<!-- branding -->Office</p>", "<p>Get Libre<span class='x'>Office</span></p>",
                        '<select><option label="Install Microsoft Office to convert">Converter</option></select>',
-                       '<div aria-description="Requires Word">Convert</div>'):
+                       '<div aria-description="Requires Word">Convert</div>',
+                       "<p>Install <label>Wo</label>rd to convert documents.</p>",
+                       '<svg><text x="0" y="20">Install Wo<tspan>rd</tspan> to convert documents.</text></svg>'):
             with self.subTest(markup=markup):
                 self.assertIsNotNone(office_dependency(markup))
         for markup in ("<p>Office to PDF is built in.</p>", "<td>PDF to Word</td><td>needs a password</td>",
