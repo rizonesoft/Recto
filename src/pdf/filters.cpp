@@ -51,6 +51,40 @@ constexpr size_t kMaxInitialReserveBytes = 1024ULL * 1024ULL; // 1 MiB
 
 // Ensures `out` has capacity for `additional` more bytes without geometric
 // allocation growth ever exceeding `max_decoded_bytes`.
+} // namespace
+
+namespace detail {
+
+thread_local uint64_t* g_decode_work_meter = nullptr;
+
+ScopedDecodeWorkMeter::ScopedDecodeWorkMeter() noexcept : previous_(g_decode_work_meter)
+{
+	g_decode_work_meter = &bytes_;
+}
+
+ScopedDecodeWorkMeter::~ScopedDecodeWorkMeter() noexcept
+{
+	g_decode_work_meter = previous_;
+	if (previous_ != nullptr) {
+		*previous_ += bytes_;
+	}
+}
+
+} // namespace detail
+
+namespace {
+
+// Reserves output capacity and counts the growth on this thread's decode work meter, if one is in scope. Every
+// decoder's output reservation goes through here, so the meter sees the work of a decode that later fails.
+void reserve_metered(std::vector<uint8_t>& out, size_t capacity)
+{
+	const size_t before = out.capacity();
+	out.reserve(capacity);
+	if (detail::g_decode_work_meter != nullptr && out.capacity() > before) {
+		*detail::g_decode_work_meter += out.capacity() - before;
+	}
+}
+
 void ensure_bounded_capacity(
 	std::vector<uint8_t>& out,
 	size_t additional,
@@ -67,7 +101,7 @@ void ensure_bounded_capacity(
 	const size_t next_cap = std::min<size_t>(
 		max_decoded_bytes,
 		std::max<size_t>(required, doubled));
-	out.reserve(next_cap);
+	reserve_metered(out, next_cap);
 }
 
 [[nodiscard]] constexpr bool is_pdf_whitespace(uint8_t b) noexcept
@@ -385,7 +419,7 @@ struct HuffmanTree {
 	std::vector<uint8_t> out;
 	const size_t initial_res = std::min<size_t>(
 		{max_decoded_bytes, kMaxInitialReserveBytes, std::max<size_t>(deflate_bytes.size() * 2u, 256u)});
-	out.reserve(initial_res);
+	reserve_metered(out, initial_res);
 
 	DeflateBitReader br{deflate_bytes, 0, 0, 0};
 	bool is_final = false;
@@ -1134,7 +1168,7 @@ PdfResult<std::vector<uint8_t>> decode_lzw(
 		};
 
 		std::vector<uint8_t> out;
-		out.reserve(std::min<size_t>(
+		reserve_metered(out, std::min<size_t>(
 			{effective_limit, kMaxInitialReserveBytes, std::max<size_t>(input.size() * 2u, 256u)}));
 
 		std::vector<uint8_t> cur_seq;
@@ -1236,7 +1270,7 @@ PdfResult<std::vector<uint8_t>> decode_ascii_hex(
 	try {
 		const size_t effective_limit = std::min<size_t>(max_decoded_bytes, kMaxDecodedStreamBytes);
 		std::vector<uint8_t> out;
-		out.reserve(std::min<size_t>({effective_limit, kMaxInitialReserveBytes, (input.size() + 1u) / 2u}));
+		reserve_metered(out, std::min<size_t>({effective_limit, kMaxInitialReserveBytes, (input.size() + 1u) / 2u}));
 
 		int high_nibble = -1;
 		bool saw_eod = false;
@@ -1313,7 +1347,7 @@ PdfResult<std::vector<uint8_t>> decode_ascii85(
 	try {
 		const size_t effective_limit = std::min<size_t>(max_decoded_bytes, kMaxDecodedStreamBytes);
 		std::vector<uint8_t> out;
-		out.reserve(std::min<size_t>({effective_limit, kMaxInitialReserveBytes, input.size()}));
+		reserve_metered(out, std::min<size_t>({effective_limit, kMaxInitialReserveBytes, input.size()}));
 
 		std::array<uint32_t, 5> tuple{};
 		size_t tuple_len = 0;
@@ -1456,7 +1490,7 @@ PdfResult<std::vector<uint8_t>> decode_run_length(
 	try {
 		const size_t effective_limit = std::min<size_t>(max_decoded_bytes, kMaxDecodedStreamBytes);
 		std::vector<uint8_t> out;
-		out.reserve(std::min<size_t>({effective_limit, kMaxInitialReserveBytes, input.size()}));
+		reserve_metered(out, std::min<size_t>({effective_limit, kMaxInitialReserveBytes, input.size()}));
 
 		size_t pos = 0;
 		bool saw_eod = false;
@@ -2125,7 +2159,7 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 			const size_t reserve_bytes = std::min<size_t>(
 				row_bytes * static_cast<size_t>(params.rows),
 				std::min<size_t>(kMaxInitialReserveBytes, effective_limit));
-			out.reserve(reserve_bytes);
+			reserve_metered(out, reserve_bytes);
 		}
 
 		std::vector<int32_t> ref_changes;

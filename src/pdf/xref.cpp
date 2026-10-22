@@ -897,21 +897,24 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 									// override earlier revisions regardless of storage kind.
 									const auto n_opt = sdict.get_int("N");
 									const auto first_opt = sdict.get_int("First");
+									// Every decode is charged to the cumulative budget, including one that fails after
+									// expanding (a bad checksum after inflation): the meter counts the work either way.
+									detail::ScopedDecodeWorkMeter decode_work;
 									auto dec_stm = decode_stream(stm);
 									if (!dec_stm.has_value() &&
 										(dec_stm.error().code == ErrorCode::OutOfMemory ||
 										 dec_stm.error().code == ErrorCode::DecompressionLimitExceeded)) {
 										return dec_stm.error();
 									}
-									if (dec_stm.has_value()) {
-										cumulative_decoded_objstm_bytes += static_cast<uint64_t>(dec_stm->size());
-										if (cumulative_decoded_objstm_bytes > max_recovery_decoded_objstm_bytes) {
-											return make_xref_error(
-												ErrorCode::DecompressionLimitExceeded,
-												DiagnosticId::DamagedStream,
-												"Damaged-file recovery exceeded cumulative decoded /ObjStm byte budget",
-												pos);
-										}
+									cumulative_decoded_objstm_bytes += std::max<uint64_t>(
+										decode_work.bytes(),
+										dec_stm.has_value() ? static_cast<uint64_t>(dec_stm->size()) : 0u);
+									if (cumulative_decoded_objstm_bytes > max_recovery_decoded_objstm_bytes) {
+										return make_xref_error(
+											ErrorCode::DecompressionLimitExceeded,
+											DiagnosticId::DamagedStream,
+											"Damaged-file recovery exceeded cumulative decoded /ObjStm byte budget",
+											pos);
 									}
 									if (n_opt.has_value() &&
 										*n_opt > 0 &&

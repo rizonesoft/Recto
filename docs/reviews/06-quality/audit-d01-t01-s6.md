@@ -289,3 +289,49 @@ OVERALL: needs-attention
 - Finding 2 (P3): correct. `PdfXref.DamagedRecovery` now distinguishes one level from alias following: object 8 is `/Catalog`, object 9 is `8 0 R`, and a later dictionary with `/Type 9 0 R` must not become the root (the earlier direct catalog stays). Round 4's alias-following code fails it (root 13 instead of 1). A second case redefines the `/Catalog` name object later as `/Pages`, and recovery then finds no catalog.
 
 Gates after round 6: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 123 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 34 tests.`
+
+## Round 7: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T12:45:57Z
+- Effort: xhigh
+- Lines: 30
+- Digest: 14d3a7d0477e453b
+
+### adversarial: needs-attention
+
+1. **P1, failed decompressions bypass recovery’s cumulative decoded-byte limit.** At `src/pdf/xref.cpp:900`, recovery decodes each container with the full per-stream ceiling. Line 906 charges the cumulative budget only on success. A checksum failure occurs after inflation at `src/pdf/filters.cpp:980`, then recovery skips it without charging that work.
+
+   Reproduce with an intact uncompressed catalog, missing `startxref`, and 1,024 `/ObjStm` containers using `/N 1 /First 4 /Filter /FlateDecode`. Compress `b"1 0 42 "` padded to 16 MiB with spaces, then flip the last Adler-32 byte. Each container inflates before returning `DamagedFormat`. Recovery processes approximately 16 GiB of expanded data from 16 MiB of encoded payload while its cumulative decoded-byte counter remains zero. This defeats the hostile-input resource guard and is separate from §29 and §30.
+
+### consistency: approve
+
+No additional findings.
+
+### integration: approve
+
+No additional findings.
+
+### source-defect: approve
+
+No additional findings.
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: needs-attention
+
+2. **P3, round 6’s work-bound fix lacks a distinguishing regression test.** The cases at `tests/recto-tests/pdf_xref_tests.cpp:1553` test catalog recognition, aliases and redefinition. They do not detect secondary parsing through a stream-valued `/Type`. Restoring `7b3f62d`’s post-scan `read_indirect_object` loop, without its obsolete counter, preserves these assertions while restoring round 6’s expensive `/Length` reproduction. The required before-failing regression for that fix is absent.
+
+At clean `1cbd5ae`, the existing Release binary passed 35 tests covering `PdfXref.*`, `PdfDocument.*`, `PdfCrypto.*` and ASan activation (`ASan=enabled`). Graph validation and the plan check passed. No rebuild or custom Recto probe was performed; both findings are source-traced. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 7
+
+- Finding 1 (P1): correct. Recovery charged its cumulative decoded `/ObjStm` budget only for containers that decoded, so a container that inflated and then failed its checksum cost nothing against the budget, and 1,024 of them expanded 16 GiB. Decoding work is now measured: `detail::ScopedDecodeWorkMeter` (`src/pdf/filters.h`) counts the output capacity every expanding decoder reserves (all seven output reservations in `filters.cpp` go through `reserve_metered`, including `ensure_bounded_capacity`'s growth), whether the decode then succeeds or fails. Recovery charges each container `max(measured work, decoded size)` and fails with `DecompressionLimitExceeded` past the budget, as it already did for successful decodes. `PdfXref.RecoveryChargesFailedObjStmDecodes` runs a 16-entry recovery (1 MiB budget) over three Flate containers that each inflate about 400 KiB and fail their checksum. Recovery is refused, while the same file without them recovers, and the meter counts a failed decode's work. The test fails on the round 6 code.
+- Finding 2 (P3): correct. Round 6's "no post-scan reads" had no test that fails if reads return, because the reads would produce the same answer. Work that produces the same answer is invisible at run time, so the guard is on the source, as for §15's ETW registration: `tests/scripts/test_recovery_post_scan.py` asserts the post-scan catalog step calls no reader, parser, decoder or `file_bytes` and consults `catalog_names`. It fails on `7b3f62d` (`read_indirect_object`, `file_bytes`), and `plan-gates` runs it.
+
+Gates after round 7: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 124 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*:PdfCrypto.*:PdfFilters.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 52 tests.`; `python -m unittest tests.scripts.test_recovery_post_scan` -> `OK`.

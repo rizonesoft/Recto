@@ -204,6 +204,50 @@ TEST(PdfXref, ObjStmCacheBoundsCountAndBytes)
 	EXPECT_EQ(counted.size(), kMaxCachedObjStreams - 1u);
 }
 
+// Recovery charges a container that inflates and then fails its checksum to the cumulative decoded budget too:
+// three such containers of about 400 KiB each exceed the 1 MiB budget of a 16-entry recovery.
+TEST(PdfXref, RecoveryChargesFailedObjStmDecodes)
+{
+	const auto failing_container = [](uint32_t num) {
+		// zlib with stored deflate blocks holding "1 0 42 " and spaces, then a wrong Adler-32.
+		std::string body = "1 0 42 ";
+		body.append(410000u - body.size(), ' ');
+		std::string z = "\x78\x01";
+		for (size_t at = 0; at < body.size(); at += 60000u) {
+			const size_t len = std::min<size_t>(60000u, body.size() - at);
+			z.push_back(at + len == body.size() ? '\x01' : '\x00');
+			z.push_back(static_cast<char>(len & 0xFF));
+			z.push_back(static_cast<char>((len >> 8) & 0xFF));
+			z.push_back(static_cast<char>(~len & 0xFF));
+			z.push_back(static_cast<char>((~len >> 8) & 0xFF));
+			z.append(body, at, len);
+		}
+		z.append("\x00\x00\x00\x00", 4);
+		return std::to_string(num) + " 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Filter /FlateDecode /Length " +
+			std::to_string(z.size()) + " >>\nstream\n" + z + "\nendstream\nendobj\n";
+	};
+	std::string pdf = "%PDF-1.7\n";
+	pdf += "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
+	pdf += "2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+	const std::string base = pdf + "trailer\n<< /Size 3 /Root 1 0 R >>\n%%EOF\n";
+	RECTO_ASSERT_OK(XrefTable::recover_damaged_xref(as_bytes(base), 16));
+	for (uint32_t n = 5; n < 8; ++n) {
+		pdf += failing_container(n);
+	}
+	pdf += "trailer\n<< /Size 8 /Root 1 0 R >>\n%%EOF\n";
+	RECTO_EXPECT_ERR(XrefTable::recover_damaged_xref(as_bytes(pdf), 16), ErrorCode::DecompressionLimitExceeded);
+
+	// The meter itself counts a decode that fails after expanding.
+	std::string one = failing_container(5);
+	const size_t z_at = one.find("stream\n") + 7;
+	const size_t z_end = one.rfind("\nendstream");
+	const std::vector<uint8_t> z(one.begin() + static_cast<std::ptrdiff_t>(z_at),
+		one.begin() + static_cast<std::ptrdiff_t>(z_end));
+	detail::ScopedDecodeWorkMeter meter;
+	RECTO_EXPECT_ERR(decode_flate(z), ErrorCode::DamagedFormat);
+	EXPECT_GE(meter.bytes(), 410000u);
+}
+
 TEST(PdfXref, XrefStreamEntriesAboveSizeAreMissing)
 {
 	std::string pdf = "%PDF-1.7\n";

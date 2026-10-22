@@ -194,4 +194,29 @@ using DecodedImage = WicDecodedImage;
 	size_t max_decoded_bytes = kMaxDecodedStreamBytes,
 	const IndirectObjectResolver* resolver = nullptr) noexcept;
 
+namespace detail {
+
+// Measures decoding work on this thread: the output capacity every decoder that can expand its input (Flate, LZW,
+// RunLength, ASCIIHex, ASCII85) grows while the meter is in scope, counted whether the decode then succeeds or fails.
+// Damaged-file recovery charges its cumulative decoded budget by it, so a container that inflates and then fails
+// its checksum still pays for the inflation. Meters nest; an inner meter's count is added to the outer one.
+class ScopedDecodeWorkMeter {
+public:
+	ScopedDecodeWorkMeter() noexcept;
+	~ScopedDecodeWorkMeter() noexcept;
+	ScopedDecodeWorkMeter(const ScopedDecodeWorkMeter&) = delete;
+	ScopedDecodeWorkMeter& operator=(const ScopedDecodeWorkMeter&) = delete;
+
+	[[nodiscard]] uint64_t bytes() const noexcept
+	{
+		return bytes_;
+	}
+
+private:
+	uint64_t* previous_{nullptr};
+	uint64_t bytes_{0};
+};
+
+} // namespace detail
+
 } // namespace recto::pdf
