@@ -17,6 +17,7 @@ track: M6
 
 - `docs/plans/2026-10-13-recto-foundation.md` sections 1 (D12, D13), 3.1 (`recto-pdf` boundary), 3.2 (`fuzz/`), 4.11 (`fuzz_open`, `fuzz_filters`, `fuzz_render`, `fuzz_text`, `fuzz_forms`, `fuzz_openxml_zip`), 9 (security and untrusted-input posture), and 11 item 5 (broker process design).
 - -> XREF: D01 T01 §4 -- the 64-level recursive-descent parser and object-graph cycle bounds audited in `§1`.
+- -> XREF: D99 T01 §10 -- the operator runs the FIPS proof script of `§9` on a FIPS-enabled host and records the result in `docs/security-audit.md`.
 - -> XREF: D01 T01 §7 -- the 256 MB stream decompression-bomb ceiling and filter bounds audited in `§1`.
 - -> XREF: D01 T01 §10 -- the `recto-pdf` public API header (`src/pdf/recto_pdf.h`) and action reader (`/URI` surfaced, `/JS` and `/Launch` ignored) audited in `§1` and inventoried in `§5`.
 - -> XREF: D01 T03 §4 -- the three M1 fuzz targets (`fuzz_open`, `fuzz_filters`, `fuzz_render`) extended with `fuzz_text`, `fuzz_forms`, and `fuzz_openxml_zip` and operated continuously in `§3` and `§4`.
@@ -45,7 +46,7 @@ track: M6
 - Every rule in foundation plan section 9 has both a static/symbol-level proof and an automated `recto-tests` regression test recorded with quoted evidence in `docs/security-audit.md`.
 - All six foundation-plan fuzz targets (`fuzz_open`, `fuzz_filters`, `fuzz_render`, `fuzz_text`, `fuzz_forms`, `fuzz_openxml_zip`) run under continuous scheduled fuzzing with coverage summaries and corpus delta archiving, and `fuzz/README.md`'s crash triage loop is proven end-to-end on a planted crash input.
 - The `src/pdf/recto_pdf.h` public API surface is machine-inventoried against the shipped headers (`§5`), and the post-v1 AppContainer shared-memory broker specification (`docs/specs/2026-10-14-broker-process-design.md`, `§6`) proves that moving `recto-pdf` out-of-process requires zero changes to `DocumentViewCanvas` or `ConversionRunner` callers.
-- Windows FIPS mode is detected with `BCryptGetFipsAlgorithmMode` and enforced across decryption, encryption writers and signing digests, with an attended proof on a FIPS-enabled host (`§7` to `§9`).
+- Windows FIPS mode is detected with `BCryptGetFipsAlgorithmMode` and enforced across decryption, encryption writers and signing digests, with a proof script that is tested here and run on a FIPS-enabled host by the operator (`§7` to `§9`, `D99 T01 §10`).
 
 **Adjacency:** all=not-applicable (security assurance audit, continuous fuzzing operations, and post-v1 architecture specification; no user-facing product surfaces)
 
@@ -63,7 +64,7 @@ track: M6
 | 6 | §6 | Post-v1 AppContainer broker process design (`2026-10-14-broker-process-design.md`) | §5 | [ ] |
 | 7 | §7 | FIPS mode detection and the algorithm policy in `recto-pdf` | D01 T01 §9, D07 T02 §4 | [ ] |
 | 8 | §8 | Enforce the FIPS policy in decryption, encryption writers, signing digests and the CLI | §7, D01 T02 §5, D05 T01 §7, D05 T01 §11, D04 T07 §5, D07 T02 §15 | [ ] |
-| 9 | §9 | FIPS mode proof on a FIPS-enabled Windows host | §8 | [ ] |
+| 9 | §9 | FIPS mode proof script, tested to refuse on an ordinary host | §8 | [ ] |
 
 ## 1. Hostile-input audit Part 1 (`docs/security-audit.md`: zero-JS, `/Launch` & bomb bounds)
 
@@ -252,25 +253,27 @@ The detection of §7 only protects users if every code path that opens an encryp
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Fips.DecryptRefusesRc4:Fips.WritersUseGate:Fips.IncrementalUpdateOfRc4Refused:Fips.SignatureDigests:Fips.CliExitCode:Fips.ActionStepReportsFailure` passes under ASan.
 
-## 9. FIPS mode proof on a FIPS-enabled Windows host
+## 9. FIPS mode proof script, tested to refuse on an ordinary host
 
-Injected probes prove the logic; only a host with Windows FIPS policy enabled proves the real call and the real CNG behaviour. This section is a short attended run on a test machine or virtual machine and records the evidence in `docs/security-audit.md`. The script refuses to continue unless `recto-cli info --json` reports `fips_mode` as `"enabled"`, so it never reports a pass on a normal machine.
+Injected probes prove the logic; only a host with Windows FIPS policy enabled proves the real call and the real CNG behaviour. This section authors the proof script and tests it on the campaign host, where it must refuse; the run on a FIPS-enabled test machine is an operator release-checklist item (`D99 T01 §10`) that records its evidence in `docs/security-audit.md`. The script refuses to continue unless `recto-cli info --json` reports `fips_mode` as `"enabled"`, so it never reports a pass on a normal machine.
+
+> **Groomed 2026-10-22:** removed `attended`. Authoring the script and proving that it refuses on an ordinary host is unattended; switching a machine into FIPS mode and running it is the operator release-checklist section `D99 T01 §10`, and no section depends on that run (owner decision 2026-10-22 (foundation plan section 1)).
 
 **Phase:** 6
-**Needs:** windows-host, attended
+**Needs:** windows-host
 **Surface:** no
 
 **Build order:**
 
-1. Write `tests/scripts/verify_fips.ps1`. Done when: it exits `2` on a machine without FIPS mode.
-2. Run it on a FIPS-enabled host and record the result. Done when: `docs/security-audit.md` holds the quoted output.
+1. Write `tests/scripts/verify_fips.ps1` with a `-CliPath` parameter. Done when: it exits `2` on this machine without FIPS mode and `tests/scripts/test_verify_fips.py` drives it with stub CLIs reporting `enabled`, `disabled` and `unknown`.
+2. Add the `FIPS mode` section to `docs/security-audit.md` with the expected `[PASS]` lines and the status `pending operator run (D99 T01 §10)`. Done when: the section exists in `docs/security-audit.md` with the pending status.
 
 - [ ] Write `tests/scripts/verify_fips.ps1`, which runs `recto-cli info --json`, stops with exit code `2` unless `fips_mode` is `"enabled"` (a `"disabled"` or `"unknown"` state both stop it), then opens each encrypted corpus fixture and encrypts a copy with `AES-256`. Done when: on a normal machine it exits `2` with the message "FIPS mode is not enabled on this host".
 - [ ] Extend the script to expect `AlgorithmNotPermittedByFips` for `encrypted-rc4-128.pdf` and `encrypted-aes-128.pdf`, success for `encrypted-aes-256.pdf` and for a new `AES-256` file, and a signed fixture with SHA-256. Done when: the expectations are encoded and a failed one exits non-zero.
-- [ ] Run the script on a Windows host with FIPS policy enabled and paste the output into a new `FIPS mode` section of `docs/security-audit.md` with the host build and date. Done when: the section holds the quoted `[PASS]` lines.
-- [ ] Commit: `test(security): add the attended FIPS mode proof and record the result`
+- [ ] Add the `FIPS mode` section to `docs/security-audit.md` naming the script, the expected `[PASS]` lines and the status `pending operator run (D99 T01 §10)`; the operator replaces the status with the quoted output, host build and date. Done when: the section holds the expected lines and the pending status.
+- [ ] Commit: `test(security): add the FIPS mode proof script and its pending audit record`
 
-**Test checkpoint:** `pwsh -NoProfile -File tests/scripts/verify_fips.ps1` exits `0` on the FIPS-enabled host and exits `2` on an ordinary one, and both outputs are quoted.
+**Test checkpoint:** `pwsh -NoProfile -File tests/scripts/verify_fips.ps1` exits `2` with "FIPS mode is not enabled on this host" on this machine, and `python -m unittest tests.scripts.test_verify_fips` passes; the exit `0` run on a FIPS-enabled host is quoted by `D99 T01 §10`.
 
 ## Verification
 

@@ -31,6 +31,7 @@ title: "TODO-06 -- Cloud Storage Connectors: OneDrive, SharePoint, Google Drive,
 - Builds on D10 T01 §3: transfer completions reach the UI thread through `ui::Dispatcher` (§12 here).
 - Builds on D10 T03 §1 and §2: automation names and patterns come from `ui::Element` automation properties and the UIA providers (§3, §11 here).
 - -> XREF: D07 T02 §10 -- CloudConnectorsDisabled policy.
+- -> XREF: D99 T01 §9 -- the operator registers the five OAuth apps, records the public client IDs in `config/cloud-clients.json` and proves live sign-in, browse, open and save for each provider built in `§6` to `§10`.
 - -> XREF: D02 T04 §6 -- cloud storage card.
 - -> XREF: D07 T02 §4 -- crash bundle scan.
 - -> XREF: D08 T01 §2 -- separate transport.
@@ -140,6 +141,8 @@ Sign-in follows RFC 7636 (PKCE, S256) and RFC 8252 (native apps use the system b
 - [ ] Reject an authorization response that arrives after the timeout or twice. Done when: a late or repeated callback is ignored.
 - [ ] Give the dialog and waiting card `ui::Element` automation names (`D10 T03 §1`) and keyboard access through `ui::FocusManager` (`D10 T01 §13`). Done when: the UIA tree lists both buttons with names.
 - [ ] Add `Cloud.OAuthPkceFlow` covering challenge maths against RFC 7636 test vectors, state checks, timeouts, cancel and denial. Done when: `recto-tests.exe --gtest_filter=Cloud.OAuth*` passes. Cheaper substitute: an embedded web view or a client secret in the URL.
+- [ ] Read provider client IDs from `config/cloud-clients.json` (`{"onedrive": {"client_id": ""}, "sharepoint": ..., "gdrive": ..., "dropbox": ..., "box": ...}`; public desktop-client IDs only, an empty value means `Not configured`) through `src/services/cloud/cloud_clients.h/.cpp`, and add `scripts/check-cloud-clients.py` rejecting any key named like a secret or a value that is not a plain client ID. Done when: `Cloud.ClientConfig` reads a fixture, reports an empty ID as `Not configured` and hides that provider, and `python scripts/check-cloud-clients.py` exits `2` on a planted `client_secret` key.
+- [ ] Add `Cloud.OAuthFakeAuthorizationEndpoint`, driving the whole flow (authorization URL, loopback redirect, code exchange, refresh) against a fake authorization and token server on `127.0.0.1` that checks the `code_challenge` against the later `code_verifier`. Done when: the flow ends with fake tokens and the fake rejects a wrong `code_verifier`.
 - [ ] Commit: `services: add OAuth PKCE sign-in through a loopback redirect`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Cloud.OAuth*` passes on the display-session host.
@@ -192,10 +195,12 @@ The settings half of the opt-in. `CloudConnectorsEnabled` is off by default; wit
 
 ## 6. OneDrive provider over Microsoft Graph
 
-Foxit, PDFelement and UPDF open and save OneDrive files. This provider implements `ICloudProvider` (§1) for a personal or work OneDrive over Microsoft Graph with the Microsoft identity platform (authorization code with PKCE, public client with a loopback redirect, scopes `offline_access` and `Files.ReadWrite`; confirm the least-privilege scope names against Microsoft's current documentation when registering). Download follows Graph's redirect to a pre-authenticated URL without the bearer header (§2). Replace is conditional on the item's `eTag`. Needs `third-party` because the shipped build needs the provider's registered application (a client ID); every other step builds and tests against a fake server so the section is implementable without it.
+Foxit, PDFelement and UPDF open and save OneDrive files. This provider implements `ICloudProvider` (§1) for a personal or work OneDrive over Microsoft Graph with the Microsoft identity platform (authorization code with PKCE, public client with a loopback redirect, scopes `offline_access` and `Files.ReadWrite`; confirm the least-privilege scope names against Microsoft's current documentation when registering). Download follows Graph's redirect to a pre-authenticated URL without the bearer header (§2). Replace is conditional on the item's `eTag`. The provider is built and proven against a local fake of its API (a loopback HTTP server replaying recorded responses), with sign-in driven against a fake authorization endpoint. The client ID is a public value read from `config/cloud-clients.json` (a public desktop client, no secret in the repository); a provider whose client ID is empty is reported as `Not configured` and hidden from the cloud menu. Registering the app and proving a live sign-in is the operator section `D99 T01 §9`.
+
+> **Groomed 2026-10-22:** removed `third-party`. The OneDrive provider is proven against a fake Graph server and the client ID comes from `config/cloud-clients.json`. Registering the OAuth app and proving live sign-in, browse, open and save moved to the operator section `D99 T01 §9` (owner decision 2026-10-22 (foundation plan section 1)).
 
 **Phase:** 7
-**Needs:** windows-host, third-party
+**Needs:** windows-host
 **Surface:** no
 
 **Build order:**
@@ -204,19 +209,22 @@ Foxit, PDFelement and UPDF open and save OneDrive files. This provider implement
 2. Make `upload_replace` send the expected `eTag` in `If-Match`, map `412 Precondition Failed` to `CloudError::Conflict`, and return the new `eTag` as the version token. Done when: the fake server's changed `eTag` produces `Conflict` and the file on the server is unchanged.
 
 - [ ] Show the account name from `/me` on the settings row. Done when: the row shows the fake account.
-- [ ] Author `docs/cloud-connectors.md` with a section per provider (registration steps, scopes, redirect rule, conflict method, known limits) and read the OneDrive client ID from a build-time constant. Done when: the document has the OneDrive section and no credential is in the repository.
-- [ ] Run a live smoke test (`tests/live/cloud_onedrive.ps1`, opt-in, never in CI) that signs in, lists, downloads and uploads a test file. Done when: the smoke script's recorded output is quoted in the stamp.
+- [ ] Build the fake Graph server fixture `tests/fakes/cloud/fake_graph_server` (a loopback HTTP server replaying recorded responses from `tests/corpus/cloud/graph/`, with paging, redirect, `eTag` and chunked upload behaviour). Done when: `Cloud.OneDriveProvider` runs entirely against it with no outside request.
+- [ ] Author `docs/cloud-connectors.md` with a section per provider (registration steps, scopes, redirect rule, conflict method, known limits) and read the OneDrive client ID from `config/cloud-clients.json` (`§3`). Done when: the document has the OneDrive section and no credential is in the repository.
+- [ ] Author the opt-in live smoke script `tests/live/cloud_onedrive.ps1` (never in CI) that signs in, lists, downloads and uploads a test file, with a `-Fake` mode that runs the same steps against the fake Graph server. Done when: `-Fake` passes in `Cloud.OneDriveLiveScriptFake`; the live run is recorded by the operator in `D99 T01 §9`.
 - [ ] Add `Cloud.OneDriveProvider` against the fake server covering paging, redirect without auth header, conflict and chunking. Done when: `recto-tests.exe --gtest_filter=Cloud.OneDriveProvider` passes. Cheaper substitute: treating a 412 as a generic network error.
 - [ ] Commit: `services: add the OneDrive provider over Microsoft Graph`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Cloud.OneDriveProvider` passes against the fake server; the live smoke run is recorded when the client ID exists.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Cloud.OneDriveProvider` passes against the fake server; the live smoke run is recorded by the operator in `D99 T01 §9`.
 
 ## 7. SharePoint document libraries over Microsoft Graph
 
-UPDF and Foxit open files in SharePoint libraries. This reuses §6's Graph client, sign-in and conditional replace, and adds site and library discovery: search or follow sites (`/sites?search=`), list a site's document libraries (`/sites/{id}/drives`), then browse a library by drive and item ids. Work or school accounts only. Needs `third-party` because the shipped build needs the provider's registered application (a client ID); every other step builds and tests against a fake server so the section is implementable without it.
+UPDF and Foxit open files in SharePoint libraries. This reuses §6's Graph client, sign-in and conditional replace, and adds site and library discovery: search or follow sites (`/sites?search=`), list a site's document libraries (`/sites/{id}/drives`), then browse a library by drive and item ids. Work or school accounts only. The provider is built and proven against a local fake of its API (a loopback HTTP server replaying recorded responses), with sign-in driven against a fake authorization endpoint. The client ID is a public value read from `config/cloud-clients.json` (a public desktop client, no secret in the repository); a provider whose client ID is empty is reported as `Not configured` and hidden from the cloud menu. Registering the app and proving a live sign-in is the operator section `D99 T01 §9`.
+
+> **Groomed 2026-10-22:** removed `third-party`. SharePoint reuses the fake Graph server of `§6` and the same client ID entry. Registering the OAuth app and proving live sign-in, browse, open and save moved to the operator section `D99 T01 §9` (owner decision 2026-10-22 (foundation plan section 1)).
 
 **Phase:** 7
-**Needs:** windows-host, third-party
+**Needs:** windows-host
 **Surface:** no
 
 **Build order:**
@@ -229,14 +237,16 @@ UPDF and Foxit open files in SharePoint libraries. This reuses §6's Graph clien
 - [ ] Add `Cloud.SharePointProvider` covering discovery, paging, id validation, scopes and conditional replace. Done when: `recto-tests.exe --gtest_filter=Cloud.SharePointProvider` passes. Cheaper substitute: a second hand-rolled Graph client.
 - [ ] Commit: `services: add the SharePoint provider over Microsoft Graph`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Cloud.SharePointProvider` passes against the fake server.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Cloud.SharePointProvider` passes against the fake server; the live work-account run is `D99 T01 §9`.
 
 ## 8. Google Drive provider over Drive API v3
 
-Foxit, PDFelement and UPDF open and save Google Drive files. This provider implements `ICloudProvider` over Drive API v3 with Google's OAuth for installed apps (authorization code with PKCE, loopback redirect). Browsing a user's whole Drive needs the restricted `https://www.googleapis.com/auth/drive` scope, which Google must verify (third-party); the narrower `drive.file` scope only sees files the app created, so it cannot browse. The installed-app flow may require a client secret that Google documents as non-confidential; repository rules still keep credentials out of tracked files, so it is injected at build time. Drive v3 has no documented conditional-write header on `files.update`, so this provider cannot meet the no-overwrite guarantee for replacing a file: it saves a changed file as a new copy (`upload_new`), and replaces in place only when an atomic condition is proven (see the build order). Needs `third-party` because the shipped build needs the provider's registered application (a client ID); every other step builds and tests against a fake server so the section is implementable without it.
+Foxit, PDFelement and UPDF open and save Google Drive files. This provider implements `ICloudProvider` over Drive API v3 with Google's OAuth for installed apps (authorization code with PKCE, loopback redirect). Browsing a user's whole Drive needs the restricted `https://www.googleapis.com/auth/drive` scope, which Google must verify (an operator step, `D99 T01 §9`); the narrower `drive.file` scope only sees files the app created, so it cannot browse. The installed-app flow may require a client secret that Google documents as non-confidential; repository rules still keep credentials out of tracked files, so it is injected at build time. Drive v3 has no documented conditional-write header on `files.update`, so this provider cannot meet the no-overwrite guarantee for replacing a file: it saves a changed file as a new copy (`upload_new`), and replaces in place only when an atomic condition is proven (see the build order). The provider is built and proven against a local fake of its API (a loopback HTTP server replaying recorded responses), with sign-in driven against a fake authorization endpoint. The client ID is a public value read from `config/cloud-clients.json` (a public desktop client, no secret in the repository); a provider whose client ID is empty is reported as `Not configured` and hidden from the cloud menu. Registering the app and proving a live sign-in is the operator section `D99 T01 §9`.
+
+> **Groomed 2026-10-22:** removed `third-party`. The Drive provider is proven against a fake Drive server; the client ID comes from `config/cloud-clients.json` and any client secret from a build environment variable, never from the repository. Registering the OAuth app and proving live sign-in, browse, open and save moved to the operator section `D99 T01 §9` (owner decision 2026-10-22 (foundation plan section 1)).
 
 **Phase:** 7
-**Needs:** windows-host, third-party
+**Needs:** windows-host
 **Surface:** no
 
 **Build order:**
@@ -245,19 +255,22 @@ Foxit, PDFelement and UPDF open and save Google Drive files. This provider imple
 2. Implement `upload_replace` as `Unsupported` unless the Drive API documents an atomic conditional write when the section is built (check the current reference for `If-Match` or revision preconditions and record the finding in `docs/cloud-connectors.md`); until then the save flow (§13) offers only `Save as a new file` and `Save a copy to cloud...` for Google Drive, and says why. Done when: `Cloud.GoogleDriveNoUnconditionalOverwrite` changes the fake remote file after open and before save, and the server file is never overwritten: the save flow offers only a new copy.
 
 - [ ] Record in `docs/cloud-connectors.md` that v1 requests the full `drive` scope (a default taken because `drive.file` cannot browse), that Google's restricted-scope verification is required before release, and that changing to a narrower scope removes browsing. Done when: the document states the default, the verification need and the cost of changing it.
-- [ ] Read the client ID and any client secret from build environment variables and add `Cloud.NoSecretInSource`, which scans tracked files under `src/` and `docs/` for a `client_secret` literal. Done when: the test passes and fails when a planted literal is added to a scratch copy.
+- [ ] Read the client ID from `config/cloud-clients.json` and any client secret from a build environment variable, and add `Cloud.NoSecretInSource`, which scans tracked files under `src/`, `config/` and `docs/` for a `client_secret` literal. Done when: the test passes and fails when a planted literal is added to a scratch copy.
 - [ ] Hide shortcuts, shared drives and trashed files from the browse list in v1 and say so in the folder empty state. Done when: shortcut and trashed items are absent.
+- [ ] Build the fake Drive server fixture `tests/fakes/cloud/fake_drive_server` replaying recorded Drive v3 responses from `tests/corpus/cloud/drive/` and author `tests/live/cloud_gdrive.ps1` (with a `-Fake` mode). Done when: `Cloud.GoogleDriveProvider` runs entirely against the fake with no outside request.
 - [ ] Add `Cloud.GoogleDriveProvider` covering paging, MIME filtering, chunking and the version conflict. Done when: `recto-tests.exe --gtest_filter=Cloud.GoogleDriveProvider` passes. Cheaper substitute: using `drive.file` and calling it browsing.
 - [ ] Commit: `services: add the Google Drive provider over Drive API v3`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Cloud.GoogleDriveProvider` passes against the fake server.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Cloud.GoogleDriveProvider` passes against the fake server; the live run is `D99 T01 §9`.
 
 ## 9. Dropbox provider over API v2
 
-UPDF, PDFelement and Foxit open and save Dropbox files. This provider implements `ICloudProvider` over Dropbox API v2 with authorization code and PKCE (`token_access_type=offline` for a refresh token). Uploads use `mode: update` with the last known `rev`, `autorename` false and `strict_conflict` true, so a stale `rev` is rejected with a conflict response that the provider maps straight to `Conflict`; a preliminary metadata read is a courtesy for the message, not the guard. Needs `third-party` because the shipped build needs the provider's registered application (a client ID); every other step builds and tests against a fake server so the section is implementable without it.
+UPDF, PDFelement and Foxit open and save Dropbox files. This provider implements `ICloudProvider` over Dropbox API v2 with authorization code and PKCE (`token_access_type=offline` for a refresh token). Uploads use `mode: update` with the last known `rev`, `autorename` false and `strict_conflict` true, so a stale `rev` is rejected with a conflict response that the provider maps straight to `Conflict`; a preliminary metadata read is a courtesy for the message, not the guard. The provider is built and proven against a local fake of its API (a loopback HTTP server replaying recorded responses), with sign-in driven against a fake authorization endpoint. The client ID is a public value read from `config/cloud-clients.json` (a public desktop client, no secret in the repository); a provider whose client ID is empty is reported as `Not configured` and hidden from the cloud menu. Registering the app and proving a live sign-in is the operator section `D99 T01 §9`.
+
+> **Groomed 2026-10-22:** removed `third-party`. The Dropbox provider is proven against a fake Dropbox server and the client ID comes from `config/cloud-clients.json`. Registering the OAuth app and proving live sign-in, browse, open and save moved to the operator section `D99 T01 §9` (owner decision 2026-10-22 (foundation plan section 1)).
 
 **Phase:** 7
-**Needs:** windows-host, third-party
+**Needs:** windows-host
 **Surface:** no
 
 **Build order:**
@@ -266,18 +279,21 @@ UPDF, PDFelement and Foxit open and save Dropbox files. This provider implements
 2. Implement conflict detection by sending the expected `rev` in `mode: update` with `autorename` false and `strict_conflict` true on both `files/upload` and `upload_session/finish` (the commit carries the `mode`), mapping the conflict error to `Conflict`, and failing closed with `Conflict` if a response ever reports a path other than the requested one. Done when: a remote change made after the preliminary metadata read and before the commit yields `Conflict` for a small upload and for a session finish, and the server file is unchanged.
 
 - [ ] Escape and validate the JSON in the `Dropbox-API-Arg` header, rejecting non-ASCII by the documented escaping. Done when: a file named with accented and CJK characters round-trips.
+- [ ] Build the fake Dropbox server fixture `tests/fakes/cloud/fake_dropbox_server` replaying recorded API v2 responses from `tests/corpus/cloud/dropbox/` and author `tests/live/cloud_dropbox.ps1` (with a `-Fake` mode), reading the client ID from `config/cloud-clients.json`. Done when: `Cloud.DropboxProvider` runs entirely against the fake with no outside request.
 - [ ] Show the account display name on the settings row. Done when: the row shows the fake account.
 - [ ] Add `Cloud.DropboxProvider` covering paging, unicode names, chunking and both conflict paths. Done when: `recto-tests.exe --gtest_filter=Cloud.DropboxProvider` passes. Cheaper substitute: overwriting the server file when the `rev` differs.
 - [ ] Commit: `services: add the Dropbox provider over API v2`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Cloud.DropboxProvider` passes against the fake server.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Cloud.DropboxProvider` passes against the fake server; the live run is `D99 T01 §9`.
 
 ## 10. Box provider over API 2.0
 
-Foxit and PDFelement open and save Box files. This provider implements `ICloudProvider` over Box API 2.0 with authorization code and PKCE. Download follows Box's redirect to a download host (§2 allow-list); a new version of an existing file is uploaded with the `If-Match` header carrying the file's `etag`, and a `412` is a conflict. Box documents PKCE for public clients; if the registration instead requires a client secret that cannot be kept public, this section records the gap and ships Box disabled rather than weakening the sign-in. Needs `third-party` because the shipped build needs the provider's registered application (a client ID); every other step builds and tests against a fake server so the section is implementable without it.
+Foxit and PDFelement open and save Box files. This provider implements `ICloudProvider` over Box API 2.0 with authorization code and PKCE. Download follows Box's redirect to a download host (§2 allow-list); a new version of an existing file is uploaded with the `If-Match` header carrying the file's `etag`, and a `412` is a conflict. Box documents PKCE for public clients; if the registration instead requires a client secret that cannot be kept public, this section records the gap and ships Box disabled rather than weakening the sign-in. The provider is built and proven against a local fake of its API (a loopback HTTP server replaying recorded responses), with sign-in driven against a fake authorization endpoint. The client ID is a public value read from `config/cloud-clients.json` (a public desktop client, no secret in the repository); a provider whose client ID is empty is reported as `Not configured` and hidden from the cloud menu. Registering the app and proving a live sign-in is the operator section `D99 T01 §9`.
+
+> **Groomed 2026-10-22:** removed `third-party`. The Box provider is proven against a fake Box server and the client ID comes from `config/cloud-clients.json`. Registering the OAuth app and proving live sign-in, browse, open and save moved to the operator section `D99 T01 §9` (owner decision 2026-10-22 (foundation plan section 1)).
 
 **Phase:** 7
-**Needs:** windows-host, third-party
+**Needs:** windows-host
 **Surface:** no
 
 **Build order:**
@@ -285,12 +301,13 @@ Foxit and PDFelement open and save Box files. This provider implements `ICloudPr
 1. Implement `src/services/cloud/box_provider.h/.cpp`: descriptor (`account.box.com/api/oauth2/authorize`, `api.box.com/oauth2/token`, `allowed_redirect_hosts` `api.box.com`, `upload.box.com` and `.boxcloud.com`), `list_folder` via `/2.0/folders/{id}/items` with `offset` and `limit` paging (root is folder `0`), `get_metadata`, `download` via `/2.0/files/{id}/content`, `upload_new` via the upload host, `upload_replace` as a new file version with `If-Match: <etag>`, and chunked upload sessions for files above 50 MB. Done when: against the fake Box server list, download, small upload, chunked upload and version replace all round-trip.
 2. Map `412` to `Conflict` and `409` name collisions on `upload_new` to a typed `NameExists` result that the save flow (§13) turns into a rename prompt. Done when: both statuses map as listed.
 
-- [ ] Verify, while registering the app, that PKCE works for a public client, and record the result in `docs/cloud-connectors.md`; if it does not, set the provider `shipping=false` and say so in the report. Done when: the doc records the verified behaviour or the disabled state.
+- [ ] Record in `docs/cloud-connectors.md` that Box documents PKCE for public clients, that the provider sets `shipping=false` while `config/cloud-clients.json` has no Box client ID or the operator records that PKCE failed (`D99 T01 §9`), and that nothing weakens the sign-in to compensate. Done when: the doc records the documented behaviour, the live-verification owner and the disabled state.
 - [ ] Show the account name on the settings row. Done when: the row shows the fake account.
+- [ ] Build the fake Box server fixture `tests/fakes/cloud/fake_box_server` replaying recorded API 2.0 responses from `tests/corpus/cloud/box/` and author `tests/live/cloud_box.ps1` (with a `-Fake` mode), reading the client ID from `config/cloud-clients.json`. Done when: `Cloud.BoxProvider` runs entirely against the fake with no outside request.
 - [ ] Add `Cloud.BoxProvider` covering paging, redirect without auth header, `412`, `409` and chunking. Done when: `recto-tests.exe --gtest_filter=Cloud.BoxProvider` passes. Cheaper substitute: forwarding the bearer token to the download host.
 - [ ] Commit: `services: add the Box provider over API 2.0`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Cloud.BoxProvider` passes against the fake server.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Cloud.BoxProvider` passes against the fake server; the live run is `D99 T01 §9`.
 
 ## 11. Open from cloud: provider and folder browser
 

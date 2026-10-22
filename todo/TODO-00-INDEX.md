@@ -24,7 +24,7 @@ The live execution plan for building Recto to version 1. Format spec: [README.md
 | 07 | [Release](./07-release/INDEX.md) | M6 | Printing, Inno Setup (Full & Portable), Portable `.zip`, MSIX, About, GPL & crash bundle. |
 | 08 | [Assistant](./08-assistant/INDEX.md) | 7 | Opt-in AI assistant with the user's own Anthropic, OpenAI, OpenRouter or Gemini key, or a local model on loopback. |
 | 10 | [UI Toolkit](./10-ui/INDEX.md) | M2 | `recto-ui`: Win32 window, composition, layout, tokens, text, input, Fluent controls & UIA. |
-| 99 | [Manual](./99-manual/INDEX.md) | 99 | Operator-only steps: trademark, repository face, Partner Center and reference machines. |
+| 99 | [Manual](./99-manual/INDEX.md) | 99 | Operator-only steps: name, repo face, Partner Center, machines, proofs and release. |
 
 ## Coverage: every promise in the governing documents, and who owns it
 
@@ -66,6 +66,7 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 | Listening to users: intake, triage, diagnostics, reproducers, releases, demand | D07 T03 §1-§7 |
 | Opt-in AI assistant with the user's own key or a loopback local model, and its tools (D19) | D08 T01 §1-§19, D08 T02 §1-§35 |
 | Trademark search, repo face, optional Partner Center, reference machines (D1, plan 11) | D99 T01 §1-§4 |
+| Operator proofs left out of the unattended run, and the v1 release checklist (plan 1) | D99 T01 §5-§11 |
 | Sandboxed broker process | Pre-approved design in D06 T02 §6; built after v1 (D13) |
 
 ## Active TODOs
@@ -106,7 +107,7 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 - [10 UI Toolkit] [TODO-01 recto-ui Foundation: Window, Composition, Elements, Layout, Tokens, Text and Input](./10-ui/TODO-01-ui-foundation.md): `recto-ui` library and headless harness, the Win32 host replacing the WinUI scaffold, window frame, Mica Alt, DPI, DirectComposition, elements, layout, generated tokens, drawing and elevation, DirectWrite text, icons, input, focus, motion, popups, binding, drag-and-drop, the page canvas `SwapChainHost`, Snap Layouts hit testing and golden images.
 - [10 UI Toolkit] [TODO-02 recto-ui Controls: the Fluent Control Set the SPEC Uses](./10-ui/TODO-02-ui-controls.md): buttons, tooltips, `TextBox` with TSF, password and number boxes, check, radio and toggle, sliders and progress, combo boxes, `ScrollViewer` with DirectManipulation, virtualized `ItemsView`, `TreeView`, `TabStrip`, menus and `MenuBar`, flyouts and cards, `Dialog`, segmented controls, settings cards, info bars, toasts and pills, `SearchBox`, colour swatches and custom colour entry, spell checking, calendar and date picker, pane splitter and the control gallery.
 - [10 UI Toolkit] [TODO-03 recto-ui Accessibility: UI Automation, High Contrast, Text Scale and Strings](./10-ui/TODO-03-ui-accessibility.md): UIA provider tree and patterns, the reusable text-range adapter, announcements, high contrast, text scaling, string tables with pseudo-localization and right-to-left readiness, and the accessibility verification suite.
-- [99 Manual] [TODO-01 Operator Setup (Manual)](./99-manual/TODO-01-operator-setup.md): trademark search, repository face, optional Partner Center reservation, reference machines. Operator only.
+- [99 Manual] [TODO-01 Operator Setup (Manual)](./99-manual/TODO-01-operator-setup.md): trademark search, repository face, optional Partner Center reservation, reference machines, then the Narrator pass, driver install and signing, translation reviews, OAuth app registrations, clean-machine and FIPS proofs and the v1 release checklist. Operator only.
 
 ## Completed TODOs
 

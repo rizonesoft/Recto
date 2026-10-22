@@ -115,143 +115,143 @@ Sections: 54 | Checklist items: 349
 
 Sections: 135 | Checklist items: 1149
 
-| Status | Reference   | Deliverable                                                                              | Needs                                   | Items |
-| ------ | ----------- | ---------------------------------------------------------------------------------------- | --------------------------------------- | ----- |
-| [ ]    | D02 T02 §12 | `recto-pdf` page transitions and timings: `/Trans` and `/Dur`                            | windows-host                            | 5     |
-| [ ]    | D01 T02 §12 | `DocumentActor::get_page_transition` query for the parsed `/Trans` and `/Dur`            | windows-host                            | 6     |
-| [ ]    | D02 T04 §1  | `AppPaths` Portable mode path resolver and live atomic data migration                    | windows-host                            | 8     |
-| [ ]    | D02 T04 §2  | Typed `SettingsStore` service with atomic persistence and change notifications           | windows-host                            | 7     |
-| [ ]    | D10 T01 §1  | `recto-ui` static library, module boundary and headless render harness                   | windows-host                            | 8     |
-| [ ]    | D10 T01 §2  | Win32 `Recto.exe` host replaces the WinUI scaffold; Windows App SDK pins retired         | windows-host, display-session           | 10    |
-| [ ]    | D10 T01 §3  | UI thread `Dispatcher`, timers and engine callback marshalling                           | windows-host                            | 7     |
-| [ ]    | D10 T01 §4  | Top-level `Window`: custom frame, Mica Alt, dark mode, DPI and minimum size              | windows-host, display-session           | 9     |
-| [ ]    | D10 T01 §5  | Compositor: shared D3D11 device, DirectComposition tree, D2D surfaces, device loss       | windows-host                            | 8     |
-| [ ]    | D10 T01 §6  | `Element` tree: retained rendering, invalidation, hit testing and visual layers          | windows-host                            | 8     |
-| [ ]    | D10 T01 §7  | Layout engine: epx measure and arrange, pixel snapping, Stack, Grid, Dock, Overlay       | windows-host                            | 9     |
-| [ ]    | D10 T01 §8  | Design tokens generated from `design/tokens/colors.json` and `ThemeManager`              | windows-host                            | 10    |
-| [ ]    | D02 T01 §1  | App project, unpackaged/MSIX manifest, assets, tokens and minimum window size            | windows-host, display-session           | 9     |
-| [ ]    | D02 T01 §18 | `RectoIcons` subset icon font, stable code point map and glyph resources                 | windows-host, display-session           | 12    |
-| [ ]    | D10 T01 §9  | Drawing primitives: token radii, hairlines, borders, opacity, elevation shadows          | windows-host                            | 9     |
-| [ ]    | D10 T01 §10 | Text: DirectWrite type ramp, `TextBlock`, trimming and highlighted ranges                | windows-host                            | 9     |
-| [ ]    | D10 T01 §11 | Icon, SVG and bitmap image elements                                                      | windows-host                            | 8     |
-| [ ]    | D10 T01 §12 | Pointer and keyboard input: routing, capture, wheel, accelerators, access keys           | windows-host, display-session           | 9     |
-| [ ]    | D10 T01 §13 | Focus manager: tab order, focus scopes, arrow groups and the Fluent focus visual         | windows-host                            | 9     |
-| [ ]    | D10 T01 §14 | Motion: frame clock, Fluent easing, panel motion and the Windows animation setting       | windows-host, display-session           | 8     |
-| [ ]    | D10 T01 §15 | Popup host: owned popup windows, placement, light dismiss, in-window overlay layer       | windows-host, display-session           | 9     |
-| [ ]    | D10 T01 §16 | Observable properties, `Command` objects and view-model binding helpers                  | windows-host                            | 7     |
-| [ ]    | D10 T01 §17 | OLE drag-and-drop target and clipboard formats                                           | windows-host                            | 7     |
-| [ ]    | D10 T01 §18 | `SwapChainHost`: composition swap chain element for the page canvas                      | windows-host                            | 8     |
-| [ ]    | D10 T01 §19 | Non-client hit testing: drag regions, resize edges, caption buttons, Snap Layouts        | windows-host, display-session           | 9     |
-| [ ]    | D10 T01 §20 | Golden-image suite: headless renders at 100, 150 and 200 percent against SPEC boards     | windows-host                            | 9     |
-| [ ]    | D10 T02 §1  | `Control` base: visual states, tokens, automation name, tooltip and command hooks        | windows-host                            | 9     |
-| [ ]    | D10 T02 §2  | Buttons: standard, accent, danger, icon, toggle and hyperlink                            | windows-host                            | 12    |
-| [ ]    | D10 T02 §3  | `ToolTip` with name and shortcut text                                                    | windows-host, display-session           | 9     |
-| [ ]    | D10 T02 §4  | `TextBox` editing core: caret, selection, undo, clipboard and placeholder                | windows-host                            | 12    |
-| [ ]    | D10 T02 §5  | Text Services Framework for `TextBox`: IME, dictation and touch keyboard                 | windows-host, display-session           | 11    |
-| [ ]    | D10 T02 §6  | `PasswordBox` and `NumberBox`                                                            | windows-host                            | 11    |
-| [ ]    | D10 T02 §7  | `CheckBox`, `RadioButton` group and `ToggleSwitch`                                       | windows-host                            | 10    |
-| [ ]    | D10 T02 §8  | `Slider`, `ProgressBar` and `ProgressRing`                                               | windows-host                            | 11    |
-| [ ]    | D10 T02 §9  | `ComboBox` and `DropDownButton`                                                          | windows-host, display-session           | 10    |
-| [ ]    | D10 T02 §10 | `ScrollViewer`: overlay scrollbars, smooth wheel, DirectManipulation pan and pinch       | windows-host, display-session           | 11    |
-| [ ]    | D10 T02 §11 | Virtualized `ItemsView`: stack, filmstrip and grid layouts, selection, reorder hooks     | windows-host                            | 10    |
-| [ ]    | D10 T02 §12 | `TreeView`: expand, collapse, keyboard, selection bar and drag reorder                   | windows-host                            | 10    |
-| [ ]    | D10 T02 §13 | `TabStrip`: title-bar document tabs, close, add, overflow and drag reorder               | windows-host                            | 12    |
-| [ ]    | D10 T02 §14 | `Menu` and context menu: glyphs, shortcuts, separators, submenus and check items         | windows-host, display-session           | 11    |
-| [ ]    | D10 T02 §15 | `MenuBar` with access keys and Alt activation                                            | windows-host, display-session           | 10    |
-| [ ]    | D10 T02 §16 | `Flyout` popover and the floating `Card` container                                       | windows-host, display-session           | 10    |
-| [ ]    | D10 T02 §17 | `Dialog`: modal overlay, smoke, alert and form layouts and Fluent motion                 | windows-host                            | 11    |
-| [ ]    | D10 T02 §18 | `SegmentedControl` and the underlined mode switcher                                      | windows-host                            | 10    |
-| [ ]    | D10 T02 §19 | `NavigationRail`, `Expander`, `SettingsGroup` and `SettingsCard`                         | windows-host                            | 11    |
-| [ ]    | D10 T02 §20 | `InfoBar`, in-app `Toast`, and the `Chip`, `Badge` and `Keycap` pills                    | windows-host                            | 12    |
-| [ ]    | D02 T01 §19 | `RectoChipStyle` pill style for chips, filter tags, keycaps, badges and counters         | windows-host, display-session           | 11    |
-| [ ]    | D10 T02 §21 | `SearchBox` with a suggestion list for the command box and Find a setting                | windows-host, display-session           | 11    |
-| [ ]    | D10 T02 §22 | `ColorSwatchPicker` from token swatches                                                  | windows-host                            | 10    |
-| [ ]    | D10 T02 §24 | Spell checking for `TextBox` through the Windows Spell Checking API                      | windows-host                            | 8     |
-| [ ]    | D10 T02 §25 | `CalendarFlyout` and `DatePicker` with locale-aware weeks and formats                    | windows-host, display-session           | 7     |
-| [ ]    | D10 T02 §26 | `Splitter` for resizable panes with pointer, keyboard and limits                         | windows-host                            | 7     |
-| [ ]    | D10 T02 §27 | Custom colour entry: hex field, live preview and recent colours                          | windows-host                            | 7     |
-| [ ]    | D10 T02 §23 | Control gallery: every control in Light, Dark and HighContrast with golden images        | windows-host, display-session           | 9     |
-| [ ]    | D06 T04 §1  | Board check script and single-board render option                                        | windows-host                            | 11    |
-| [ ]    | D06 T04 §2  | Outline editor, Layers, Attachments and Info editing panel board                         | windows-host                            | 7     |
-| [ ]    | D06 T04 §5  | Presentation mode, presenter view and slide navigator board                              | windows-host                            | 7     |
-| [ ]    | D06 T04 §6  | Auto-scroll, rulers, grid, line weights and split view board                             | windows-host                            | 7     |
-| [ ]    | D06 T04 §24 | Session board: crash recovery, session restore, tab commands and Share                   | windows-host                            | 7     |
-| [ ]    | D10 T03 §1  | UI Automation provider tree: fragment root, navigation, properties, focus events         | windows-host, display-session           | 12    |
-| [ ]    | D10 T03 §2  | UIA control patterns for every recto-ui control                                          | windows-host, display-session           | 11    |
-| [ ]    | D10 T03 §3  | UIA `TextPattern` for `TextBox` and a reusable text-range adapter                        | windows-host, display-session           | 11    |
-| [ ]    | D10 T03 §4  | UIA notification and live-region announcements                                           | windows-host, display-session           | 10    |
-| [ ]    | D10 T03 §5  | High contrast: system colour mapping, live switching and high-contrast focus visuals     | windows-host, display-session           | 12    |
-| [ ]    | D10 T03 §6  | Windows text scaling applied to the type ramp and layout                                 | windows-host, display-session           | 10    |
-| [ ]    | D10 T03 §7  | `Strings`: localized string tables, fallback and pseudo-localization                     | windows-host, display-session           | 15    |
-| [ ]    | D02 T01 §2  | Custom title bar, brand lockup, drag regions and caption buttons                         | windows-host, display-session           | 8     |
-| [ ]    | D02 T01 §3  | Document `ui::TabStrip`, tab session lifecycle, dirty state and actor teardown           | windows-host, display-session           | 9     |
-| [ ]    | D02 T01 §4  | Named shell layout slots, Reading room mode switcher and Classic navigation rail         | windows-host, display-session           | 9     |
-| [ ]    | D02 T01 §5  | File Open Picker (`Ctrl+O`) and shared `OpenDocumentPipeline`                            | windows-host, display-session           | 9     |
-| [ ]    | D02 T01 §6  | Drag-and-drop file opening and full-window drop overlay                                  | windows-host, display-session           | 8     |
-| [ ]    | D02 T01 §7  | Command-line arguments, Explorer `.pdf` activation and single-instance forwarding        | windows-host, display-session           | 12    |
-| [ ]    | D02 T01 §8  | Save (`Ctrl+S`), Save As (`Ctrl+Shift+S`), Replace-Original and Unsaved-Changes dialogs  | windows-host, display-session           | 9     |
-| [ ]    | D02 T01 §9  | Classic menu bar (`File`, `Edit`, `View`, `Tools`, `Window`, `Help`) and docked top bar  | windows-host, display-session           | 9     |
-| [ ]    | D02 T01 §10 | Shared SPEC 9.9 `ui::Dialog` chrome and Password dialog                                  | windows-host, display-session           | 8     |
-| [ ]    | D02 T01 §11 | Could-not-open error dialog and diagnostic clipboard copy                                | windows-host, display-session           | 7     |
-| [ ]    | D02 T01 §13 | `SessionStore`: persist open tabs and the active tab                                     | windows-host                            | 6     |
-| [ ]    | D02 T02 §1  | `ui::SwapChainHost`, Direct3D 11 / Direct2D 1.3 device creation and presentation thread  | windows-host, display-session           | 8     |
-| [ ]    | D02 T02 §2  | Lock-free viewport state channel, DPI scaling and page-outline loading placeholders      | windows-host, display-session           | 7     |
-| [ ]    | D02 T02 §3  | Worker D3D11 texture upload and LRU budgeted tile texture cache                          | windows-host, display-session           | 9     |
-| [ ]    | D02 T02 §4  | Viewport-to-scheduler tile driver and seam-free page compositing                         | windows-host, display-session           | 8     |
-| [ ]    | D02 T02 §5  | Page geometry engine for Continuous, Single-Page and Two-Page Spread layouts             | windows-host                            | 9     |
-| [ ]    | D02 T02 §6  | Continuous scrolling, inertia, keyboard page nav, rotation and Go-to-Page (`Ctrl+G`)     | windows-host, display-session           | 9     |
-| [ ]    | D02 T02 §7  | Zoom engine with in-frame stretched tile preview and anchor preservation                 | windows-host, display-session           | 8     |
-| [ ]    | D02 T02 §8  | Floating Page Toolbar (`Focus`) and reading auto-fade behavior                           | windows-host, display-session           | 10    |
-| [ ]    | D02 T02 §9  | Link hit-testing, internal navigation, `"Open this link?"` prompt and launch refusal     | windows-host, display-session           | 8     |
-| [ ]    | D02 T02 §10 | Dark-theme page colour modes (`Original`, `Dimmed`, `Inverted`) and `F11` Full Screen    | windows-host, display-session           | 10    |
-| [ ]    | D02 T02 §24 | Side-by-side view of two documents with synchronized scrolling                           | windows-host, display-session           | 6     |
-| [ ]    | D02 T03 §1  | Recent files and remembered reading-position store (`RecentFilesStore`)                  | windows-host                            | 9     |
-| [ ]    | D02 T02 §19 | Reverse page order view and right-to-left spreads                                        | windows-host, display-session           | 5     |
-| [ ]    | D02 T03 §2  | Home screen (`D-Home.png`), recent covers, inline command box host and empty state       | windows-host, display-session           | 9     |
-| [ ]    | D02 T03 §3  | Side-panel card container (`SidePanelHost`), switcher header and narrow auto-close       | windows-host, display-session           | 8     |
-| [ ]    | D02 T03 §4  | Pages thumbnail panel (`ThumbnailList`), filmstrip orientation and page context menu     | windows-host, display-session           | 9     |
-| [ ]    | D02 T03 §5  | Outline tree panel (`OutlinePanel`) and bidirectional section tracking                   | windows-host, display-session           | 9     |
-| [ ]    | D02 T03 §6  | Interactive Bookmark Editor and heading-based outline auto-generation                    | windows-host, display-session           | 9     |
-| [ ]    | D02 T03 §7  | Optional Content Groups (`OCG` / Layers) engine and live Layers panel                    | windows-host, display-session           | 9     |
-| [ ]    | D01 T02 §14 | `DocumentActor` optional-content edit session: stage, undo, redo, `ocg_generation`       | windows-host                            | 14    |
-| [ ]    | D02 T02 §22 | Line weights view toggle: true widths or uniform thin lines                              | windows-host, display-session           | 5     |
-| [ ]    | D02 T03 §8  | Embedded Files and PDF Portfolios (`/EmbeddedFiles` and `/Collection`) engine and panel  | windows-host, display-session           | 9     |
-| [ ]    | D02 T03 §9  | Document Info panel: metadata, security permissions and embedded font inventory          | windows-host, display-session           | 8     |
-| [ ]    | D02 T03 §10 | Editable Document Info, XMP metadata synchronization and `/ViewerPreferences` editor     | windows-host, display-session           | 8     |
-| [ ]    | D02 T03 §11 | Unified `CommandRegistry` across toolbars, menus, panels and keyboard accelerators       | windows-host, display-session           | 7     |
-| [ ]    | D02 T01 §15 | Reopen closed tab (`Ctrl+Shift+T`) and close-other, left and right tab commands          | windows-host, display-session           | 7     |
-| [ ]    | D02 T01 §16 | Drag to reorder tabs and move a tab by keyboard                                          | windows-host, display-session           | 6     |
-| [ ]    | D02 T01 §17 | Share a copy through the Windows Share contract                                          | windows-host, display-session           | 6     |
-| [ ]    | D02 T02 §13 | Presentation mode: full-screen slideshow, navigation and blank screen                    | windows-host, display-session           | 6     |
-| [ ]    | D02 T02 §15 | Presentation pen and laser pointer                                                       | windows-host, display-session           | 6     |
-| [ ]    | D02 T02 §20 | Rulers and cursor coordinates in chosen units                                            | windows-host, display-session           | 6     |
-| [ ]    | D02 T02 §21 | Grid, guides and the view snap provider                                                  | windows-host, display-session           | 5     |
-| [ ]    | D02 T03 §12 | Command Box (`Ctrl+K`) overlay and Home inline search experience                         | windows-host, display-session           | 10    |
-| [ ]    | D02 T03 §18 | Bookmark import and export: JSON and plain-text outline, plus `recto-cli bookmarks`      | windows-host                            | 5     |
-| [ ]    | D02 T03 §19 | Import and export bookmarks from the Outline panel                                       | windows-host, display-session           | 4     |
-| [ ]    | D02 T03 §20 | Per-bookmark style: colour, bold and italic (`/C` and `/F`)                              | windows-host, display-session           | 4     |
-| [ ]    | D02 T03 §23 | `recto-pdf` layer authoring: create, rename, delete, properties and merge                | windows-host                            | 4     |
-| [ ]    | D02 T04 §3  | Layout preset engine (`Focus`, `Classic`, `Reading room`, `Custom`) over shell slots     | windows-host, display-session           | 9     |
-| [ ]    | D02 T01 §20 | Classic status bar: current page, page size, PDF version and zoom slider                 | windows-host, display-session           | 10    |
-| [ ]    | D02 T04 §4  | Settings page frame, `"Find a setting"` live filter, and Layout & Theme (`D-Layout.png`) | windows-host, display-session           | 10    |
-| [ ]    | D02 T04 §5  | Settings page: Reading and Converting groups (`D-Settings.png`)                          | windows-host, display-session           | 9     |
-| [ ]    | D02 T01 §14 | Restore the previous tab session on launch and the restore setting                       | windows-host, display-session           | 6     |
-| [ ]    | D02 T02 §11 | Reading tints: sepia, eye-care green and a custom page colour                            | windows-host, display-session           | 6     |
-| [ ]    | D02 T02 §14 | Render page transitions and honour automatic page timing                                 | windows-host, display-session           | 5     |
-| [ ]    | D02 T02 §16 | Presenter view on a second display with page preview and timer                           | windows-host, display-session           | 6     |
-| [ ]    | D02 T02 §17 | Slide navigator: jump to any page during a presentation                                  | windows-host, display-session           | 4     |
-| [ ]    | D02 T02 §18 | Hands-free auto-scroll with speed control                                                | windows-host, display-session           | 5     |
-| [ ]    | D02 T04 §6  | Settings: Signatures and security, Performance and privacy, Default PDF app, About       | windows-host, display-session           | 9     |
-| [ ]    | D02 T02 §23 | Split view: two panes of one document with independent scroll and zoom                   | windows-host, display-session           | 6     |
-| [ ]    | D02 T04 §7  | Live theme switching (`Light`, `Dark`, `Follow Windows`), Mica Alt and HighContrast      | windows-host, display-session           | 8     |
-| [ ]    | D02 T04 §8  | Motion system (`167 ms` Fluent transitions) and Windows reduced-motion compliance        | windows-host, display-session           | 7     |
-| [ ]    | D02 T04 §9  | Complete SPEC section 10 keyboard accelerator bindings and `Escape` layer stack          | windows-host, display-session           | 10    |
-| [ ]    | D02 T04 §10 | End-to-end keyboard audit harness (`Keyboard.Audit`) and `docs/keyboard-shortcuts.md`    | windows-host, display-session           | 7     |
-| [ ]    | D06 T01 §7  | Automated performance targets harness (`tests/perf/` and `recto-cli bench`)              | windows-host, display-session           | 7     |
-| [ ]    | D06 T01 §8  | Primary reference-machine M2/M6 performance baseline record (`docs/perf/`)               | windows-host, display-session           | 6     |
-| [ ]    | D06 T03 §3  | Page notice for recovered or truncated content                                           | windows-host, display-session           | 6     |
-| [ ]    | D06 T03 §8  | UI glyph coverage, non-Latin file names and input conventions suite                      | windows-host, display-session           | 7     |
-| [ ]    | D10 T03 §8  | Accessibility verification: UIA tree walk, keyboard-only traversal, Narrator smoke       | windows-host, display-session, attended | 13    |
+| Status | Reference   | Deliverable                                                                              | Needs                         | Items |
+| ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
+| [ ]    | D02 T02 §12 | `recto-pdf` page transitions and timings: `/Trans` and `/Dur`                            | windows-host                  | 5     |
+| [ ]    | D01 T02 §12 | `DocumentActor::get_page_transition` query for the parsed `/Trans` and `/Dur`            | windows-host                  | 6     |
+| [ ]    | D02 T04 §1  | `AppPaths` Portable mode path resolver and live atomic data migration                    | windows-host                  | 8     |
+| [ ]    | D02 T04 §2  | Typed `SettingsStore` service with atomic persistence and change notifications           | windows-host                  | 7     |
+| [ ]    | D10 T01 §1  | `recto-ui` static library, module boundary and headless render harness                   | windows-host                  | 8     |
+| [ ]    | D10 T01 §2  | Win32 `Recto.exe` host replaces the WinUI scaffold; Windows App SDK pins retired         | windows-host, display-session | 10    |
+| [ ]    | D10 T01 §3  | UI thread `Dispatcher`, timers and engine callback marshalling                           | windows-host                  | 7     |
+| [ ]    | D10 T01 §4  | Top-level `Window`: custom frame, Mica Alt, dark mode, DPI and minimum size              | windows-host, display-session | 9     |
+| [ ]    | D10 T01 §5  | Compositor: shared D3D11 device, DirectComposition tree, D2D surfaces, device loss       | windows-host                  | 8     |
+| [ ]    | D10 T01 §6  | `Element` tree: retained rendering, invalidation, hit testing and visual layers          | windows-host                  | 8     |
+| [ ]    | D10 T01 §7  | Layout engine: epx measure and arrange, pixel snapping, Stack, Grid, Dock, Overlay       | windows-host                  | 9     |
+| [ ]    | D10 T01 §8  | Design tokens generated from `design/tokens/colors.json` and `ThemeManager`              | windows-host                  | 10    |
+| [ ]    | D02 T01 §1  | App project, unpackaged/MSIX manifest, assets, tokens and minimum window size            | windows-host, display-session | 9     |
+| [ ]    | D02 T01 §18 | `RectoIcons` subset icon font, stable code point map and glyph resources                 | windows-host, display-session | 12    |
+| [ ]    | D10 T01 §9  | Drawing primitives: token radii, hairlines, borders, opacity, elevation shadows          | windows-host                  | 9     |
+| [ ]    | D10 T01 §10 | Text: DirectWrite type ramp, `TextBlock`, trimming and highlighted ranges                | windows-host                  | 9     |
+| [ ]    | D10 T01 §11 | Icon, SVG and bitmap image elements                                                      | windows-host                  | 8     |
+| [ ]    | D10 T01 §12 | Pointer and keyboard input: routing, capture, wheel, accelerators, access keys           | windows-host, display-session | 9     |
+| [ ]    | D10 T01 §13 | Focus manager: tab order, focus scopes, arrow groups and the Fluent focus visual         | windows-host                  | 9     |
+| [ ]    | D10 T01 §14 | Motion: frame clock, Fluent easing, panel motion and the Windows animation setting       | windows-host, display-session | 8     |
+| [ ]    | D10 T01 §15 | Popup host: owned popup windows, placement, light dismiss, in-window overlay layer       | windows-host, display-session | 9     |
+| [ ]    | D10 T01 §16 | Observable properties, `Command` objects and view-model binding helpers                  | windows-host                  | 7     |
+| [ ]    | D10 T01 §17 | OLE drag-and-drop target and clipboard formats                                           | windows-host                  | 7     |
+| [ ]    | D10 T01 §18 | `SwapChainHost`: composition swap chain element for the page canvas                      | windows-host                  | 8     |
+| [ ]    | D10 T01 §19 | Non-client hit testing: drag regions, resize edges, caption buttons, Snap Layouts        | windows-host, display-session | 9     |
+| [ ]    | D10 T01 §20 | Golden-image suite: headless renders at 100, 150 and 200 percent against SPEC boards     | windows-host                  | 9     |
+| [ ]    | D10 T02 §1  | `Control` base: visual states, tokens, automation name, tooltip and command hooks        | windows-host                  | 9     |
+| [ ]    | D10 T02 §2  | Buttons: standard, accent, danger, icon, toggle and hyperlink                            | windows-host                  | 12    |
+| [ ]    | D10 T02 §3  | `ToolTip` with name and shortcut text                                                    | windows-host, display-session | 9     |
+| [ ]    | D10 T02 §4  | `TextBox` editing core: caret, selection, undo, clipboard and placeholder                | windows-host                  | 12    |
+| [ ]    | D10 T02 §5  | Text Services Framework for `TextBox`: IME, dictation and touch keyboard                 | windows-host, display-session | 11    |
+| [ ]    | D10 T02 §6  | `PasswordBox` and `NumberBox`                                                            | windows-host                  | 11    |
+| [ ]    | D10 T02 §7  | `CheckBox`, `RadioButton` group and `ToggleSwitch`                                       | windows-host                  | 10    |
+| [ ]    | D10 T02 §8  | `Slider`, `ProgressBar` and `ProgressRing`                                               | windows-host                  | 11    |
+| [ ]    | D10 T02 §9  | `ComboBox` and `DropDownButton`                                                          | windows-host, display-session | 10    |
+| [ ]    | D10 T02 §10 | `ScrollViewer`: overlay scrollbars, smooth wheel, DirectManipulation pan and pinch       | windows-host, display-session | 11    |
+| [ ]    | D10 T02 §11 | Virtualized `ItemsView`: stack, filmstrip and grid layouts, selection, reorder hooks     | windows-host                  | 10    |
+| [ ]    | D10 T02 §12 | `TreeView`: expand, collapse, keyboard, selection bar and drag reorder                   | windows-host                  | 10    |
+| [ ]    | D10 T02 §13 | `TabStrip`: title-bar document tabs, close, add, overflow and drag reorder               | windows-host                  | 12    |
+| [ ]    | D10 T02 §14 | `Menu` and context menu: glyphs, shortcuts, separators, submenus and check items         | windows-host, display-session | 11    |
+| [ ]    | D10 T02 §15 | `MenuBar` with access keys and Alt activation                                            | windows-host, display-session | 10    |
+| [ ]    | D10 T02 §16 | `Flyout` popover and the floating `Card` container                                       | windows-host, display-session | 10    |
+| [ ]    | D10 T02 §17 | `Dialog`: modal overlay, smoke, alert and form layouts and Fluent motion                 | windows-host                  | 11    |
+| [ ]    | D10 T02 §18 | `SegmentedControl` and the underlined mode switcher                                      | windows-host                  | 10    |
+| [ ]    | D10 T02 §19 | `NavigationRail`, `Expander`, `SettingsGroup` and `SettingsCard`                         | windows-host                  | 11    |
+| [ ]    | D10 T02 §20 | `InfoBar`, in-app `Toast`, and the `Chip`, `Badge` and `Keycap` pills                    | windows-host                  | 12    |
+| [ ]    | D02 T01 §19 | `RectoChipStyle` pill style for chips, filter tags, keycaps, badges and counters         | windows-host, display-session | 11    |
+| [ ]    | D10 T02 §21 | `SearchBox` with a suggestion list for the command box and Find a setting                | windows-host, display-session | 11    |
+| [ ]    | D10 T02 §22 | `ColorSwatchPicker` from token swatches                                                  | windows-host                  | 10    |
+| [ ]    | D10 T02 §24 | Spell checking for `TextBox` through the Windows Spell Checking API                      | windows-host                  | 8     |
+| [ ]    | D10 T02 §25 | `CalendarFlyout` and `DatePicker` with locale-aware weeks and formats                    | windows-host, display-session | 7     |
+| [ ]    | D10 T02 §26 | `Splitter` for resizable panes with pointer, keyboard and limits                         | windows-host                  | 7     |
+| [ ]    | D10 T02 §27 | Custom colour entry: hex field, live preview and recent colours                          | windows-host                  | 7     |
+| [ ]    | D10 T02 §23 | Control gallery: every control in Light, Dark and HighContrast with golden images        | windows-host, display-session | 9     |
+| [ ]    | D06 T04 §1  | Board check script and single-board render option                                        | windows-host                  | 11    |
+| [ ]    | D06 T04 §2  | Outline editor, Layers, Attachments and Info editing panel board                         | windows-host                  | 7     |
+| [ ]    | D06 T04 §5  | Presentation mode, presenter view and slide navigator board                              | windows-host                  | 7     |
+| [ ]    | D06 T04 §6  | Auto-scroll, rulers, grid, line weights and split view board                             | windows-host                  | 7     |
+| [ ]    | D06 T04 §24 | Session board: crash recovery, session restore, tab commands and Share                   | windows-host                  | 7     |
+| [ ]    | D10 T03 §1  | UI Automation provider tree: fragment root, navigation, properties, focus events         | windows-host, display-session | 12    |
+| [ ]    | D10 T03 §2  | UIA control patterns for every recto-ui control                                          | windows-host, display-session | 11    |
+| [ ]    | D10 T03 §3  | UIA `TextPattern` for `TextBox` and a reusable text-range adapter                        | windows-host, display-session | 11    |
+| [ ]    | D10 T03 §4  | UIA notification and live-region announcements                                           | windows-host, display-session | 10    |
+| [ ]    | D10 T03 §5  | High contrast: system colour mapping, live switching and high-contrast focus visuals     | windows-host, display-session | 12    |
+| [ ]    | D10 T03 §6  | Windows text scaling applied to the type ramp and layout                                 | windows-host, display-session | 10    |
+| [ ]    | D10 T03 §7  | `Strings`: localized string tables, fallback and pseudo-localization                     | windows-host, display-session | 15    |
+| [ ]    | D02 T01 §2  | Custom title bar, brand lockup, drag regions and caption buttons                         | windows-host, display-session | 8     |
+| [ ]    | D02 T01 §3  | Document `ui::TabStrip`, tab session lifecycle, dirty state and actor teardown           | windows-host, display-session | 9     |
+| [ ]    | D02 T01 §4  | Named shell layout slots, Reading room mode switcher and Classic navigation rail         | windows-host, display-session | 9     |
+| [ ]    | D02 T01 §5  | File Open Picker (`Ctrl+O`) and shared `OpenDocumentPipeline`                            | windows-host, display-session | 9     |
+| [ ]    | D02 T01 §6  | Drag-and-drop file opening and full-window drop overlay                                  | windows-host, display-session | 8     |
+| [ ]    | D02 T01 §7  | Command-line arguments, Explorer `.pdf` activation and single-instance forwarding        | windows-host, display-session | 12    |
+| [ ]    | D02 T01 §8  | Save (`Ctrl+S`), Save As (`Ctrl+Shift+S`), Replace-Original and Unsaved-Changes dialogs  | windows-host, display-session | 9     |
+| [ ]    | D02 T01 §9  | Classic menu bar (`File`, `Edit`, `View`, `Tools`, `Window`, `Help`) and docked top bar  | windows-host, display-session | 9     |
+| [ ]    | D02 T01 §10 | Shared SPEC 9.9 `ui::Dialog` chrome and Password dialog                                  | windows-host, display-session | 8     |
+| [ ]    | D02 T01 §11 | Could-not-open error dialog and diagnostic clipboard copy                                | windows-host, display-session | 7     |
+| [ ]    | D02 T01 §13 | `SessionStore`: persist open tabs and the active tab                                     | windows-host                  | 6     |
+| [ ]    | D02 T02 §1  | `ui::SwapChainHost`, Direct3D 11 / Direct2D 1.3 device creation and presentation thread  | windows-host, display-session | 8     |
+| [ ]    | D02 T02 §2  | Lock-free viewport state channel, DPI scaling and page-outline loading placeholders      | windows-host, display-session | 7     |
+| [ ]    | D02 T02 §3  | Worker D3D11 texture upload and LRU budgeted tile texture cache                          | windows-host, display-session | 9     |
+| [ ]    | D02 T02 §4  | Viewport-to-scheduler tile driver and seam-free page compositing                         | windows-host, display-session | 8     |
+| [ ]    | D02 T02 §5  | Page geometry engine for Continuous, Single-Page and Two-Page Spread layouts             | windows-host                  | 9     |
+| [ ]    | D02 T02 §6  | Continuous scrolling, inertia, keyboard page nav, rotation and Go-to-Page (`Ctrl+G`)     | windows-host, display-session | 9     |
+| [ ]    | D02 T02 §7  | Zoom engine with in-frame stretched tile preview and anchor preservation                 | windows-host, display-session | 8     |
+| [ ]    | D02 T02 §8  | Floating Page Toolbar (`Focus`) and reading auto-fade behavior                           | windows-host, display-session | 10    |
+| [ ]    | D02 T02 §9  | Link hit-testing, internal navigation, `"Open this link?"` prompt and launch refusal     | windows-host, display-session | 8     |
+| [ ]    | D02 T02 §10 | Dark-theme page colour modes (`Original`, `Dimmed`, `Inverted`) and `F11` Full Screen    | windows-host, display-session | 10    |
+| [ ]    | D02 T02 §24 | Side-by-side view of two documents with synchronized scrolling                           | windows-host, display-session | 6     |
+| [ ]    | D02 T03 §1  | Recent files and remembered reading-position store (`RecentFilesStore`)                  | windows-host                  | 9     |
+| [ ]    | D02 T02 §19 | Reverse page order view and right-to-left spreads                                        | windows-host, display-session | 5     |
+| [ ]    | D02 T03 §2  | Home screen (`D-Home.png`), recent covers, inline command box host and empty state       | windows-host, display-session | 9     |
+| [ ]    | D02 T03 §3  | Side-panel card container (`SidePanelHost`), switcher header and narrow auto-close       | windows-host, display-session | 8     |
+| [ ]    | D02 T03 §4  | Pages thumbnail panel (`ThumbnailList`), filmstrip orientation and page context menu     | windows-host, display-session | 9     |
+| [ ]    | D02 T03 §5  | Outline tree panel (`OutlinePanel`) and bidirectional section tracking                   | windows-host, display-session | 9     |
+| [ ]    | D02 T03 §6  | Interactive Bookmark Editor and heading-based outline auto-generation                    | windows-host, display-session | 9     |
+| [ ]    | D02 T03 §7  | Optional Content Groups (`OCG` / Layers) engine and live Layers panel                    | windows-host, display-session | 9     |
+| [ ]    | D01 T02 §14 | `DocumentActor` optional-content edit session: stage, undo, redo, `ocg_generation`       | windows-host                  | 14    |
+| [ ]    | D02 T02 §22 | Line weights view toggle: true widths or uniform thin lines                              | windows-host, display-session | 5     |
+| [ ]    | D02 T03 §8  | Embedded Files and PDF Portfolios (`/EmbeddedFiles` and `/Collection`) engine and panel  | windows-host, display-session | 9     |
+| [ ]    | D02 T03 §9  | Document Info panel: metadata, security permissions and embedded font inventory          | windows-host, display-session | 8     |
+| [ ]    | D02 T03 §10 | Editable Document Info, XMP metadata synchronization and `/ViewerPreferences` editor     | windows-host, display-session | 8     |
+| [ ]    | D02 T03 §11 | Unified `CommandRegistry` across toolbars, menus, panels and keyboard accelerators       | windows-host, display-session | 7     |
+| [ ]    | D02 T01 §15 | Reopen closed tab (`Ctrl+Shift+T`) and close-other, left and right tab commands          | windows-host, display-session | 7     |
+| [ ]    | D02 T01 §16 | Drag to reorder tabs and move a tab by keyboard                                          | windows-host, display-session | 6     |
+| [ ]    | D02 T01 §17 | Share a copy through the Windows Share contract                                          | windows-host, display-session | 6     |
+| [ ]    | D02 T02 §13 | Presentation mode: full-screen slideshow, navigation and blank screen                    | windows-host, display-session | 6     |
+| [ ]    | D02 T02 §15 | Presentation pen and laser pointer                                                       | windows-host, display-session | 6     |
+| [ ]    | D02 T02 §20 | Rulers and cursor coordinates in chosen units                                            | windows-host, display-session | 6     |
+| [ ]    | D02 T02 §21 | Grid, guides and the view snap provider                                                  | windows-host, display-session | 5     |
+| [ ]    | D02 T03 §12 | Command Box (`Ctrl+K`) overlay and Home inline search experience                         | windows-host, display-session | 10    |
+| [ ]    | D02 T03 §18 | Bookmark import and export: JSON and plain-text outline, plus `recto-cli bookmarks`      | windows-host                  | 5     |
+| [ ]    | D02 T03 §19 | Import and export bookmarks from the Outline panel                                       | windows-host, display-session | 4     |
+| [ ]    | D02 T03 §20 | Per-bookmark style: colour, bold and italic (`/C` and `/F`)                              | windows-host, display-session | 4     |
+| [ ]    | D02 T03 §23 | `recto-pdf` layer authoring: create, rename, delete, properties and merge                | windows-host                  | 4     |
+| [ ]    | D02 T04 §3  | Layout preset engine (`Focus`, `Classic`, `Reading room`, `Custom`) over shell slots     | windows-host, display-session | 9     |
+| [ ]    | D02 T01 §20 | Classic status bar: current page, page size, PDF version and zoom slider                 | windows-host, display-session | 10    |
+| [ ]    | D02 T04 §4  | Settings page frame, `"Find a setting"` live filter, and Layout & Theme (`D-Layout.png`) | windows-host, display-session | 10    |
+| [ ]    | D02 T04 §5  | Settings page: Reading and Converting groups (`D-Settings.png`)                          | windows-host, display-session | 9     |
+| [ ]    | D02 T01 §14 | Restore the previous tab session on launch and the restore setting                       | windows-host, display-session | 6     |
+| [ ]    | D02 T02 §11 | Reading tints: sepia, eye-care green and a custom page colour                            | windows-host, display-session | 6     |
+| [ ]    | D02 T02 §14 | Render page transitions and honour automatic page timing                                 | windows-host, display-session | 5     |
+| [ ]    | D02 T02 §16 | Presenter view on a second display with page preview and timer                           | windows-host, display-session | 6     |
+| [ ]    | D02 T02 §17 | Slide navigator: jump to any page during a presentation                                  | windows-host, display-session | 4     |
+| [ ]    | D02 T02 §18 | Hands-free auto-scroll with speed control                                                | windows-host, display-session | 5     |
+| [ ]    | D02 T04 §6  | Settings: Signatures and security, Performance and privacy, Default PDF app, About       | windows-host, display-session | 9     |
+| [ ]    | D02 T02 §23 | Split view: two panes of one document with independent scroll and zoom                   | windows-host, display-session | 6     |
+| [ ]    | D02 T04 §7  | Live theme switching (`Light`, `Dark`, `Follow Windows`), Mica Alt and HighContrast      | windows-host, display-session | 8     |
+| [ ]    | D02 T04 §8  | Motion system (`167 ms` Fluent transitions) and Windows reduced-motion compliance        | windows-host, display-session | 7     |
+| [ ]    | D02 T04 §9  | Complete SPEC section 10 keyboard accelerator bindings and `Escape` layer stack          | windows-host, display-session | 10    |
+| [ ]    | D02 T04 §10 | End-to-end keyboard audit harness (`Keyboard.Audit`) and `docs/keyboard-shortcuts.md`    | windows-host, display-session | 7     |
+| [ ]    | D06 T01 §7  | Automated performance targets harness (`tests/perf/` and `recto-cli bench`)              | windows-host, display-session | 7     |
+| [ ]    | D06 T01 §8  | Primary reference-machine M2/M6 performance baseline record (`docs/perf/`)               | windows-host, display-session | 6     |
+| [ ]    | D06 T03 §3  | Page notice for recovered or truncated content                                           | windows-host, display-session | 6     |
+| [ ]    | D06 T03 §8  | UI glyph coverage, non-Latin file names and input conventions suite                      | windows-host, display-session | 7     |
+| [ ]    | D10 T03 §8  | Accessibility verification: UIA tree walk, keyboard traversal, scripted checks           | windows-host, display-session | 13    |
 
 ### Phase 3: M3 Text
 
@@ -640,71 +640,71 @@ Sections: 114 | Checklist items: 922
 
 ### Phase 6: M6 Ship
 
-Sections: 57 | Checklist items: 406
+Sections: 57 | Checklist items: 409
 
-| Status | Reference   | Deliverable                                                                              | Needs                                   | Items |
-| ------ | ----------- | ---------------------------------------------------------------------------------------- | --------------------------------------- | ----- |
-| [ ]    | D06 T02 §1  | Hostile-input audit Part 1 (`docs/security-audit.md`: zero-JS, `/Launch` & bomb bounds)  | windows-host                            | 6     |
-| [ ]    | D06 T02 §2  | Hostile-input audit Part 2 (macro suppression, HTML script block, link prompt, redact)   | windows-host, display-session           | 7     |
-| [ ]    | D06 T02 §5  | `recto-pdf` public API boundary inventory (`recto_pdf.h` ownership and mutability table) | none                                    | 6     |
-| [ ]    | D06 T02 §6  | Post-v1 AppContainer broker process design (`2026-10-14-broker-process-design.md`)       | none                                    | 8     |
-| [ ]    | D06 T04 §21 | Print options, print layouts and Recto PDF virtual printer board                         | windows-host                            | 7     |
-| [ ]    | D06 T04 §23 | Managed settings board: policy lock notes and disabled commands                          | windows-host                            | 7     |
-| [ ]    | D06 T04 §25 | Lifecycle board: Report a problem, What's new, language, RTL and scanner                 | windows-host                            | 7     |
-| [ ]    | D07 T01 §1  | Print API spike (`PrintManagerInterop` vs `ID2D1PrintControl`) & section 11 note         | windows-host, display-session           | 6     |
-| [ ]    | D07 T01 §2  | Non-blocking print pipeline (`src/app/printing/`, printer-DPI job, preview & `Ctrl+P`)   | windows-host, display-session           | 13    |
-| [ ]    | D07 T01 §3  | Automated `Print-to-PDF` verification seam (`Print.*` in `recto-tests`) against corpus   | windows-host                            | 6     |
-| [ ]    | D06 T03 §9  | Printer driver compatibility and print failure isolation suite                           | windows-host, display-session           | 11    |
-| [ ]    | D07 T01 §4  | Inno Setup installer (`installer/recto.iss`) for Full and Self-Contained Portable modes  | windows-host                            | 8     |
-| [ ]    | D07 T01 §5  | Release packaging pipeline (`build-installer.ps1`: Setup `.exe`, Portable `.zip` & MSIX) | windows-host                            | 7     |
-| [ ]    | D04 T08 §10 | Installer option, Portable layout and client configuration snippets                      | windows-host                            | 7     |
-| [ ]    | D07 T01 §6  | Automated Full Install, `.pdf` association, upgrade and uninstall proof (`installer`)    | windows-host, display-session           | 7     |
-| [ ]    | D07 T01 §7  | Automated Self-Contained Portable Install zero-registry and zero-`%LOCALAPPDATA%` proof  | windows-host, display-session           | 6     |
-| [ ]    | D07 T01 §8  | Explorer thumbnail and preview handlers (`IThumbnailProvider`, `IPreviewHandler`)        | windows-host, display-session           | 8     |
-| [ ]    | D07 T01 §9  | Explorer verbs: print, printto, Combine and Convert to PDF (`IExplorerCommand`)          | windows-host, display-session           | 10    |
-| [ ]    | D04 T07 §22 | `print` terminal step: batch print to a named printer                                    | windows-host                            | 11    |
-| [ ]    | D04 T07 §23 | Print step safeguards: run confirmation, page budget and CLI refusal                     | windows-host, display-session           | 7     |
-| [ ]    | D07 T01 §10 | Print layouts: booklet, multiple pages per sheet and poster tiling                       | windows-host, display-session           | 9     |
-| [ ]    | D07 T01 §11 | Print page selection: reverse order, pages with comments, a bookmark section, an area    | windows-host                            | 8     |
-| [ ]    | D07 T01 §12 | Print render modes: print as image, grayscale and text as outlines                       | windows-host                            | 6     |
-| [ ]    | D07 T01 §13 | Printer's marks: crop marks, bleed marks, registration marks and page information        | windows-host                            | 6     |
-| [ ]    | D07 T01 §14 | Print options pane and Ctrl+K commands for page selection, render modes and marks        | windows-host, display-session           | 9     |
-| [ ]    | D07 T01 §15 | Recto PDF virtual printer design: v4 driver, hand-off and trust boundary                 | windows-host, display-session           | 8     |
-| [ ]    | D07 T01 §16 | Recto PDF v4 driver package: manifest, INF, print capabilities and test-signed install   | windows-host, attended                  | 6     |
-| [ ]    | D07 T01 §17 | Virtual printer spool hand-off: XPS to PDF in the user's session                         | windows-host                            | 7     |
-| [ ]    | D06 T02 §3  | M3-M5 fuzz targets (`fuzz_text`, `fuzz_forms`, `fuzz_openxml_zip`) & scheduled workflow  | windows-host                            | 8     |
-| [ ]    | D06 T02 §4  | Crash triage runbook (`fuzz/README.md`) proven end-to-end on a planted crash input       | windows-host                            | 6     |
-| [ ]    | D07 T01 §18 | Recto PDF virtual printer settings and the save window                                   | windows-host, display-session           | 7     |
-| [ ]    | D07 T02 §1  | Build-time version and provenance generator (version, SHA, `Standard` vs `Portable`)     | windows-host                            | 7     |
-| [ ]    | D07 T02 §2  | `AboutPage` (`SPEC 9.8`, `D-About.png`: version truth, `LICENSE` modal and `Built-with`) | windows-host, display-session           | 7     |
-| [ ]    | D07 T02 §3  | Build-derived dependency enumeration script, `NOTICE.md` and `docs/license-audit.md`     | windows-host                            | 7     |
-| [ ]    | D07 T02 §4  | Opt-in local crash report bundle writer (`MiniDumpNormal` + D16 ring log `.zip` prompt)  | windows-host, display-session           | 7     |
-| [ ]    | D06 T02 §7  | FIPS mode detection and the algorithm policy in `recto-pdf`                              | windows-host                            | 5     |
-| [ ]    | D07 T02 §5  | Localization readiness (`en-US.rc` string extraction and 40% pseudolocale check)         | windows-host, display-session           | 6     |
-| [ ]    | D07 T02 §6  | GitHub Release runbook (`docs/release-and-store-runbook.md`) and Store submission kit    | windows-host, display-session           | 8     |
-| [ ]    | D07 T01 §19 | Full installer integration and end-to-end proof for the Recto PDF printer                | windows-host, display-session, attended | 7     |
-| [ ]    | D07 T01 §20 | Recto PDF driver signing through the Windows Hardware Dev Center and release gate        | third-party, operator                   | 5     |
-| [ ]    | D07 T02 §8  | Group Policy catalogue and templates: `policy/Recto.admx` and `Recto.adml`               | windows-host                            | 6     |
-| [ ]    | D07 T02 §9  | `PolicyProvider`: read machine and user policy values, typed and bounded                 | windows-host                            | 7     |
-| [ ]    | D07 T02 §10 | `SettingsStore` policy precedence: locked settings and policy gates                      | windows-host                            | 6     |
-| [ ]    | D07 T02 §11 | "Managed by your organization" notes on locked settings and `recto-cli policy show`      | windows-host, display-session           | 6     |
-| [ ]    | D07 T02 §12 | Policy templates release artifact and end-to-end Group Policy proof                      | windows-host, display-session           | 6     |
-| [ ]    | D07 T02 §13 | Translation catalogue: languages manifest, glossary, plural rules and the checker        | windows-host                            | 6     |
-| [ ]    | D07 T02 §14 | Interface language setting: Follow Windows or a shipped language                         | windows-host, display-session           | 6     |
-| [ ]    | D07 T02 §15 | Localised errors, plurals, dates and numbers: no English assembled in code               | windows-host                            | 5     |
-| [ ]    | D06 T02 §8  | Enforce the FIPS policy in decryption, encryption writers, signing digests and the CLI   | windows-host                            | 6     |
-| [ ]    | D06 T02 §9  | FIPS mode proof on a FIPS-enabled Windows host                                           | windows-host, attended                  | 4     |
-| [ ]    | D07 T02 §16 | Right-to-left readiness: flow direction, mirrored icons and a mirrored pseudolocale      | windows-host, display-session           | 5     |
-| [ ]    | D07 T02 §17 | First shipped language set: ten reviewed translations and installer languages            | third-party                             | 8     |
-| [ ]    | D07 T02 §7  | End-to-end v1 distribution bundle (`Setup.exe`, `Portable.zip`, `SHA256SUMS.txt`) & GPL  | windows-host, display-session           | 8     |
-| [ ]    | D06 T03 §12 | Clean-machine release smoke and upgrade persistence proof                                | windows-host, display-session, attended | 11    |
-| [ ]    | D07 T03 §2  | In-app `Report a problem` with privacy-safe diagnostics                                  | windows-host, display-session           | 7     |
-| [ ]    | D07 T03 §5  | Release gate for unreleased fixes, security advisories and CI integrity                  | windows-host                            | 8     |
-| [ ]    | D07 T03 §7  | What's new after update and opt-in update notice                                         | windows-host, display-session           | 7     |
+| Status | Reference   | Deliverable                                                                              | Needs                         | Items |
+| ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
+| [ ]    | D06 T02 §1  | Hostile-input audit Part 1 (`docs/security-audit.md`: zero-JS, `/Launch` & bomb bounds)  | windows-host                  | 6     |
+| [ ]    | D06 T02 §2  | Hostile-input audit Part 2 (macro suppression, HTML script block, link prompt, redact)   | windows-host, display-session | 7     |
+| [ ]    | D06 T02 §5  | `recto-pdf` public API boundary inventory (`recto_pdf.h` ownership and mutability table) | none                          | 6     |
+| [ ]    | D06 T02 §6  | Post-v1 AppContainer broker process design (`2026-10-14-broker-process-design.md`)       | none                          | 8     |
+| [ ]    | D06 T04 §21 | Print options, print layouts and Recto PDF virtual printer board                         | windows-host                  | 7     |
+| [ ]    | D06 T04 §23 | Managed settings board: policy lock notes and disabled commands                          | windows-host                  | 7     |
+| [ ]    | D06 T04 §25 | Lifecycle board: Report a problem, What's new, language, RTL and scanner                 | windows-host                  | 7     |
+| [ ]    | D07 T01 §1  | Print API spike (`PrintManagerInterop` vs `ID2D1PrintControl`) & section 11 note         | windows-host, display-session | 6     |
+| [ ]    | D07 T01 §2  | Non-blocking print pipeline (`src/app/printing/`, printer-DPI job, preview & `Ctrl+P`)   | windows-host, display-session | 13    |
+| [ ]    | D07 T01 §3  | Automated `Print-to-PDF` verification seam (`Print.*` in `recto-tests`) against corpus   | windows-host                  | 6     |
+| [ ]    | D06 T03 §9  | Printer driver compatibility and print failure isolation suite                           | windows-host, display-session | 11    |
+| [ ]    | D07 T01 §4  | Inno Setup installer (`installer/recto.iss`) for Full and Self-Contained Portable modes  | windows-host                  | 8     |
+| [ ]    | D07 T01 §5  | Release packaging pipeline (`build-installer.ps1`: Setup `.exe`, Portable `.zip` & MSIX) | windows-host                  | 7     |
+| [ ]    | D04 T08 §10 | Installer option, Portable layout and client configuration snippets                      | windows-host                  | 7     |
+| [ ]    | D07 T01 §6  | Automated Full Install, `.pdf` association, upgrade and uninstall proof (`installer`)    | windows-host, display-session | 7     |
+| [ ]    | D07 T01 §7  | Automated Self-Contained Portable Install zero-registry and zero-`%LOCALAPPDATA%` proof  | windows-host, display-session | 6     |
+| [ ]    | D07 T01 §8  | Explorer thumbnail and preview handlers (`IThumbnailProvider`, `IPreviewHandler`)        | windows-host, display-session | 8     |
+| [ ]    | D07 T01 §9  | Explorer verbs: print, printto, Combine and Convert to PDF (`IExplorerCommand`)          | windows-host, display-session | 10    |
+| [ ]    | D04 T07 §22 | `print` terminal step: batch print to a named printer                                    | windows-host                  | 11    |
+| [ ]    | D04 T07 §23 | Print step safeguards: run confirmation, page budget and CLI refusal                     | windows-host, display-session | 7     |
+| [ ]    | D07 T01 §10 | Print layouts: booklet, multiple pages per sheet and poster tiling                       | windows-host, display-session | 9     |
+| [ ]    | D07 T01 §11 | Print page selection: reverse order, pages with comments, a bookmark section, an area    | windows-host                  | 8     |
+| [ ]    | D07 T01 §12 | Print render modes: print as image, grayscale and text as outlines                       | windows-host                  | 6     |
+| [ ]    | D07 T01 §13 | Printer's marks: crop marks, bleed marks, registration marks and page information        | windows-host                  | 6     |
+| [ ]    | D07 T01 §14 | Print options pane and Ctrl+K commands for page selection, render modes and marks        | windows-host, display-session | 9     |
+| [ ]    | D07 T01 §15 | Recto PDF virtual printer design: v4 driver, hand-off and trust boundary                 | windows-host, display-session | 8     |
+| [ ]    | D07 T01 §16 | Recto PDF v4 driver package: manifest, INF, print capabilities and static validation     | windows-host                  | 7     |
+| [ ]    | D07 T01 §17 | Virtual printer spool hand-off: XPS to PDF in the user's session                         | windows-host                  | 7     |
+| [ ]    | D06 T02 §3  | M3-M5 fuzz targets (`fuzz_text`, `fuzz_forms`, `fuzz_openxml_zip`) & scheduled workflow  | windows-host                  | 8     |
+| [ ]    | D06 T02 §4  | Crash triage runbook (`fuzz/README.md`) proven end-to-end on a planted crash input       | windows-host                  | 6     |
+| [ ]    | D07 T01 §18 | Recto PDF virtual printer settings and the save window                                   | windows-host, display-session | 7     |
+| [ ]    | D07 T02 §1  | Build-time version and provenance generator (version, SHA, `Standard` vs `Portable`)     | windows-host                  | 7     |
+| [ ]    | D07 T02 §2  | `AboutPage` (`SPEC 9.8`, `D-About.png`: version truth, `LICENSE` modal and `Built-with`) | windows-host, display-session | 7     |
+| [ ]    | D07 T02 §3  | Build-derived dependency enumeration script, `NOTICE.md` and `docs/license-audit.md`     | windows-host                  | 7     |
+| [ ]    | D07 T02 §4  | Opt-in local crash report bundle writer (`MiniDumpNormal` + D16 ring log `.zip` prompt)  | windows-host, display-session | 7     |
+| [ ]    | D06 T02 §7  | FIPS mode detection and the algorithm policy in `recto-pdf`                              | windows-host                  | 5     |
+| [ ]    | D07 T02 §5  | Localization readiness (`en-US.rc` string extraction and 40% pseudolocale check)         | windows-host, display-session | 6     |
+| [ ]    | D07 T02 §6  | GitHub Release runbook (`docs/release-and-store-runbook.md`) and Store submission kit    | windows-host, display-session | 9     |
+| [ ]    | D07 T01 §19 | Full installer integration and end-to-end proof for the Recto PDF printer                | windows-host, display-session | 7     |
+| [ ]    | D07 T01 §20 | Recto PDF driver signature check, signing runbook and release gate                       | windows-host                  | 5     |
+| [ ]    | D07 T02 §8  | Group Policy catalogue and templates: `policy/Recto.admx` and `Recto.adml`               | windows-host                  | 6     |
+| [ ]    | D07 T02 §9  | `PolicyProvider`: read machine and user policy values, typed and bounded                 | windows-host                  | 7     |
+| [ ]    | D07 T02 §10 | `SettingsStore` policy precedence: locked settings and policy gates                      | windows-host                  | 6     |
+| [ ]    | D07 T02 §11 | "Managed by your organization" notes on locked settings and `recto-cli policy show`      | windows-host, display-session | 6     |
+| [ ]    | D07 T02 §12 | Policy templates release artifact and end-to-end Group Policy proof                      | windows-host, display-session | 6     |
+| [ ]    | D07 T02 §13 | Translation catalogue: languages manifest, glossary, plural rules and the checker        | windows-host                  | 6     |
+| [ ]    | D07 T02 §14 | Interface language setting: Follow Windows or a shipped language                         | windows-host, display-session | 6     |
+| [ ]    | D07 T02 §15 | Localised errors, plurals, dates and numbers: no English assembled in code               | windows-host                  | 5     |
+| [ ]    | D06 T02 §8  | Enforce the FIPS policy in decryption, encryption writers, signing digests and the CLI   | windows-host                  | 6     |
+| [ ]    | D06 T02 §9  | FIPS mode proof script, tested to refuse on an ordinary host                             | windows-host                  | 4     |
+| [ ]    | D07 T02 §16 | Right-to-left readiness: flow direction, mirrored icons and a mirrored pseudolocale      | windows-host, display-session | 5     |
+| [ ]    | D07 T02 §17 | First language set: ten drafted translations, reviewed flag and installer languages      | windows-host                  | 9     |
+| [ ]    | D07 T02 §7  | End-to-end v1 distribution bundle (`Setup.exe`, `Portable.zip`, `SHA256SUMS.txt`) & GPL  | windows-host, display-session | 8     |
+| [ ]    | D06 T03 §12 | Installed-build release smoke and upgrade persistence proof on the build host            | windows-host, display-session | 11    |
+| [ ]    | D07 T03 §2  | In-app `Report a problem` with privacy-safe diagnostics                                  | windows-host, display-session | 7     |
+| [ ]    | D07 T03 §5  | Release gate for unreleased fixes, security advisories and CI integrity                  | windows-host                  | 8     |
+| [ ]    | D07 T03 §7  | What's new after update and opt-in update notice                                         | windows-host, display-session | 7     |
 
 ### Phase 7: After v1
 
-Sections: 92 | Checklist items: 504
+Sections: 92 | Checklist items: 510
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -731,14 +731,14 @@ Sections: 92 | Checklist items: 504
 | [ ]    | D02 T05 §14 | Geo measure tools and coordinate export (CSV, GeoJSON)                                   | windows-host, display-session | 9     |
 | [ ]    | D02 T05 §17 | Add audio or video tool: pick a file, place it, choose a poster, preview                 | windows-host, display-session | 6     |
 | [ ]    | D06 T04 §22 | Cloud storage board: sign-in, browser, temporary copy, conflict, recents                 | windows-host                  | 7     |
-| [ ]    | D02 T06 §3  | OAuth 2.0 authorization code with PKCE through a loopback redirect                       | windows-host, display-session | 6     |
+| [ ]    | D02 T06 §3  | OAuth 2.0 authorization code with PKCE through a loopback redirect                       | windows-host, display-session | 8     |
 | [ ]    | D02 T06 §4  | Token store in Windows Credential Manager, refresh and sign-out                          | windows-host                  | 4     |
 | [ ]    | D02 T06 §5  | Cloud storage settings group: off by default, per-provider sign-out, policy lock         | windows-host, display-session | 5     |
-| [ ]    | D02 T06 §6  | OneDrive provider over Microsoft Graph                                                   | windows-host, third-party     | 5     |
-| [ ]    | D02 T06 §7  | SharePoint document libraries over Microsoft Graph                                       | windows-host, third-party     | 4     |
-| [ ]    | D02 T06 §8  | Google Drive provider over Drive API v3                                                  | windows-host, third-party     | 5     |
-| [ ]    | D02 T06 §9  | Dropbox provider over API v2                                                             | windows-host, third-party     | 4     |
-| [ ]    | D02 T06 §10 | Box provider over API 2.0                                                                | windows-host, third-party     | 4     |
+| [ ]    | D02 T06 §6  | OneDrive provider over Microsoft Graph                                                   | windows-host                  | 6     |
+| [ ]    | D02 T06 §7  | SharePoint document libraries over Microsoft Graph                                       | windows-host                  | 4     |
+| [ ]    | D02 T06 §8  | Google Drive provider over Drive API v3                                                  | windows-host                  | 6     |
+| [ ]    | D02 T06 §9  | Dropbox provider over API v2                                                             | windows-host                  | 5     |
+| [ ]    | D02 T06 §10 | Box provider over API 2.0                                                                | windows-host                  | 5     |
 | [ ]    | D02 T06 §11 | Open from cloud: provider and folder browser                                             | windows-host, display-session | 4     |
 | [ ]    | D02 T06 §12 | Open a cloud file as a temporary local copy                                              | windows-host, display-session | 5     |
 | [ ]    | D02 T06 §13 | Save and Save a copy to the cloud with conflict detection                                | windows-host, display-session | 5     |
@@ -803,15 +803,22 @@ Sections: 92 | Checklist items: 504
 
 ### Phase 99: Manual, operator only
 
-Sections: 4 | Checklist items: 22
+Sections: 11 | Checklist items: 64
 
-| Status | Reference  | Deliverable                                                          | Needs                   | Items |
-| ------ | ---------- | -------------------------------------------------------------------- | ----------------------- | ----- |
-| [ ]    | D99 T01 §1 | Trademark search and Store name reservation                          | operator                | 5     |
-| [ ]    | D99 T01 §2 | GitHub repository face and branch protection                         | operator                | 7     |
-| [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
-| [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
+| Status | Reference   | Deliverable                                                                 | Needs                                             | Items |
+| ------ | ----------- | --------------------------------------------------------------------------- | ------------------------------------------------- | ----- |
+| [ ]    | D99 T01 §1  | Trademark search and Store name reservation                                 | operator                                          | 5     |
+| [ ]    | D99 T01 §2  | GitHub repository face and branch protection                                | operator                                          | 7     |
+| [ ]    | D99 T01 §3  | Partner Center account and optional Store app reservation                   | operator, store-account                           | 5     |
+| [ ]    | D99 T01 §4  | Physical ARM64 reference machine and clean-machine host confirmation        | operator                                          | 5     |
+| [ ]    | D99 T01 §5  | Narrator listening pass and live Windows contrast and text size check       | operator, attended, windows-host, display-session | 6     |
+| [ ]    | D99 T01 §6  | Test-signed driver install and end-to-end print through the Recto PDF queue | operator, attended, windows-host                  | 6     |
+| [ ]    | D99 T01 §7  | Hardware Dev Center driver signing and signed catalog drop-in               | operator, third-party                             | 6     |
+| [ ]    | D99 T01 §8  | Native-speaker translation reviews and per-language reviewed flags          | operator, third-party                             | 5     |
+| [ ]    | D99 T01 §9  | OAuth app registrations and live cloud sign-in proofs for five providers    | operator, third-party, attended                   | 7     |
+| [ ]    | D99 T01 §10 | Clean-machine install smoke and FIPS-enabled host proof                     | operator, attended, windows-host                  | 5     |
+| [ ]    | D99 T01 §11 | v1 release checklist: publish the release candidate and record what ships   | operator, attended                                | 7     |
 
-Progress: 54/743 verified sections, 15 ready to run now.
+Progress: 54/750 verified sections, 15 ready to run now.
 
-Checklist: 308/5452 items completed (includes Commit items).
+Checklist: 308/5503 items completed (includes Commit items).

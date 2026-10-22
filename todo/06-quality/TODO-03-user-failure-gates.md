@@ -16,6 +16,7 @@ title: "TODO-03 -- User-Reported Failure Class Gates"
 
 - Foundation plan sections 4 (actor and `DisplayList` contract), 8 (performance) and 9 (hostile input); AGENTS.md architecture rules (typed `PdfResult<T>`, temp-file-then-replace, true redaction); ISO 32000-2 sections 7.8.2 (content streams), 8.9.7 (inline images), 9.10 (text extraction), 11 (transparency), 12.5 (annotations) and 14.8 (tagged PDF).
 - -> XREF: D01 T02 §4 -- the content-stream interpreter and `DisplayList` builder whose inline-image, operand and recovery behaviour §1, §2 and §4 here gate.
+- -> XREF: D99 T01 §10 -- the operator runs `tests/scripts/release_smoke.ps1 -CleanMachine` of `§12` on clean Windows 10 and Windows 11 machines and a WARP-only machine.
 - -> XREF: D06 T02 §3 -- the scheduled fuzz workflow that takes §1's fixtures as seeds.
 - -> XREF: D06 T01 §1 -- the golden harness §10 extends with user-reported render classes and §12 runs release over release.
 - -> XREF: D03 T01 §1 -- `PageText` extraction and reading order gated by §4 and §11.
@@ -37,7 +38,7 @@ title: "TODO-03 -- User-Reported Failure Class Gates"
 - `recto-tests.exe --gtest_filter=UserClasses.*` runs every gate in this file; each gate names the failure class it reproduces, and each fails on a planted regression of its class (proven once per gate with the `mutation-tester` agent).
 - A malformed or capped page never renders blank without a diagnostic, never reports `complete` after a truncation, and never lets a redaction apply past content it could not read.
 - Save, redaction and text authoring are proven on raw bytes, not on what Recto's own reader shows back.
-- The release candidate is smoke-tested as installed on a clean machine: launch, OCR from the packaged models, CJK UI, print, close and upgrade.
+- The release candidate is smoke-tested as installed on the build host (the clean-machine run is `D99 T01 §10`): launch, OCR from the packaged models, CJK UI, print, close and upgrade.
 
 **Adjacency:** all=not-applicable (test gates over behaviour owned by other sections; the one surface, §3, is a read-only page notice with no records, settings or exchange of its own)
 
@@ -58,7 +59,7 @@ title: "TODO-03 -- User-Reported Failure Class Gates"
 | 9 | §6 | Redaction completeness and audit suite on raw bytes | §4, D05 T01 §10 | [ ] |
 | 10 | §7 | Unicode authoring round-trip suite for every text-writing path | D03 T01 §9, D03 T03 §2, D03 T03 §6, D05 T01 §6, D05 T01 §8 | [ ] |
 | 11 | §9 | Printer driver compatibility and print failure isolation suite | D07 T01 §2, D07 T01 §3 | [ ] |
-| 12 | §12 | Clean-machine release smoke and upgrade persistence proof | D07 T01 §6, D07 T01 §7, D07 T01 §8, D07 T01 §9, D05 T02 §10, D07 T02 §7, §8, §10 | [ ] |
+| 12 | §12 | Installed-build release smoke and upgrade persistence proof on the build host | D07 T01 §6, D07 T01 §7, D07 T01 §8, D07 T01 §9, D05 T02 §10, D07 T02 §7, §8, §10 | [ ] |
 
 ## 1. Hostile-input fixture pack from user-reported failure classes
 
@@ -333,32 +334,34 @@ Common extraction failures are dropping glyph names outside the Adobe Glyph List
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=UserClasses.TextFidelity:UserClasses.SelectionFidelity` passes under ASan, and dropping the `Truncated` propagation in `SearchEngine` makes the capped-forms case fail.
 
-## 12. Clean-machine release smoke and upgrade persistence proof
+## 12. Installed-build release smoke and upgrade persistence proof on the build host
 
-Common release failures are shipping without the OCR models or a fallback font the code requires, a default download link to an old version, a launch that dies silently on older CPUs and GPUs, and upgrades that remove Start pins and saved signatures. This section runs the built installer and portable zip on clean virtual machines before a release is tagged.
+Common release failures are shipping without the OCR models or a fallback font the code requires, a default download link to an old version, a launch that dies silently on older CPUs and GPUs, and upgrades that remove Start pins and saved signatures. This section runs the built installer and portable zip on the campaign host (the Full install goes into a temporary folder and the Portable zip into a temporary extract, both removed afterwards) before a release is tagged. The same script runs on clean machines with `-CleanMachine` in the operator section `D99 T01 §10`.
+
+> **Groomed 2026-10-22:** removed `attended`. The report `D07 T03 §5` gates on is produced here by script on the build host; the clean Windows 10 and Windows 11 machines, the WARP-only machine, switching the Windows display language and pinning to Start are the operator release-checklist section `D99 T01 §10` (owner decision 2026-10-22 (foundation plan section 1)). That run is an extra proof, not a gate: no release-candidate section depends on a person.
 
 **Phase:** 6
-**Needs:** windows-host, display-session, attended
+**Needs:** windows-host, display-session
 **Surface:** no
 
 **Build order:**
 
-1. Author `tests/scripts/release_smoke.ps1` taking a release candidate folder and running the checks below in a clean Windows 10 and Windows 11 virtual machine, plus a machine with no DirectX 12 adapter (WARP only). Done when: the script exits 0 on the candidate and writes `build/release-smoke/<version>.json` naming the candidate commit SHA and the SHA-256 of every artifact it tested, taken from the bundle's `SHA256SUMS.txt` (`D07 T02 §7`).
+1. Author `tests/scripts/release_smoke.ps1` taking a release candidate folder and running the checks below against the Full install (silent, into a temporary folder) and the Portable zip (extracted to a temporary folder) on this host, plus a WARP-only launch (forced software adapter, the safe-mode relaunch path), with a `-CleanMachine` switch that records the host as clean for the operator run. Done when: the script exits 0 on the candidate and writes `build/release-smoke/<version>.json` naming the candidate commit SHA, the host kind (`build-host` or `clean-machine`) and the SHA-256 of every artifact it tested, taken from the bundle's `SHA256SUMS.txt` (`D07 T02 §7`).
 2. Gate `D07 T02 §6`'s release runbook on that report before tagging, and run the script's `-PostPublish` mode after the release is published. Done when: the runbook refuses to tag when the report is missing, red, or names a different commit or artifact digest, and the post-publish mode checks the public links.
 
-- [ ] Launch the installed and portable builds and assert a first frame, then close 100 times and assert exit code 0 and no crash dump each time. Done when: all launches and closes pass on both machines.
+- [ ] Launch the installed and portable builds and assert a first frame, then close 100 times and assert exit code 0 and no crash dump each time. Done when: all launches and closes pass for both layouts, and the WARP-only launch also reaches a first frame.
 - [ ] Assert a failure before the first frame shows a dialog with the log path and a safe-mode (WARP) relaunch. Done when: a planted startup failure produces the dialog, not a silent exit.
 - [ ] Run OCR on a French and a German fixture from the installed layout and assert the packaged models are found and accents survive. Done when: the extracted text matches the expected strings exactly.
-- [ ] Switch Windows display language to Simplified Chinese and Arabic and assert the UI glyph coverage check (§8) passes on the installed build. Done when: zero unmapped code points.
+- [ ] Run the UI glyph coverage check (§8) against the installed build with Simplified Chinese and Arabic sample text and file names, without changing the Windows display language (that switch is `D99 T01 §10`). Done when: zero unmapped code points.
 - [ ] Open a PDF from an Outlook-style temp attachment path and from a path with spaces and Unicode. Done when: both open as tabs.
 - [ ] Print to Microsoft Print to PDF from the installed build. Done when: the output page count matches the source.
-- [ ] Install version N, pin to Start, set preferences, save a signature appearance, then upgrade to N+1 and assert the pin, preferences, signature and file association survive. Done when: all four are present after the upgrade.
+- [ ] Install version N, set preferences, save a signature appearance, then upgrade to N+1 and assert the Start Menu shortcut, preferences, signature and file association survive (a manual Start pin is checked in `D99 T01 §10`). Done when: all four are present after the upgrade.
 - [ ] Diff the golden corpus rendered by version N against N+1 and fail on any unexplained change. Done when: the diff report lists no unexplained page.
 - [ ] Add `-PostPublish` mode, run by the runbook after the GitHub release is public, asserting the README download links and the releases page resolve to this release's assets and their digests match the report. Done when: post-publish mode passes on the published release and fails when a README link still names the previous version.
 - [ ] Exercise the features users asked for on the installed build: Explorer thumbnails and preview (`D07 T01 §8`), the print verb and multi-file Combine (`D07 T01 §9`), and a saved signature appearance (`D05 T02 §10`). Done when: each produces its expected result from the installed layout.
-- [ ] Commit: `test(release): smoke the installed artifacts on clean machines and prove upgrades keep user state`
+- [ ] Commit: `test(release): smoke the installed artifacts on the build host and prove upgrades keep user state`
 
-**Test checkpoint:** `pwsh tests/scripts/release_smoke.ps1 -Candidate build/release/<version>` exits 0 on the clean virtual machines and writes a green `build/release-smoke/<version>.json` whose commit SHA and artifact digests match the candidate bundle, and swapping one artifact after the run makes the runbook gate refuse the tag.
+**Test checkpoint:** `pwsh tests/scripts/release_smoke.ps1 -Candidate build/release/<version>` exits 0 on the build host and writes a green `build/release-smoke/<version>.json` whose commit SHA and artifact digests match the candidate bundle, and swapping one artifact after the run makes the runbook gate refuse the tag.
 
 ## Verification
 

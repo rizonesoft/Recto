@@ -25,6 +25,8 @@ track: M6
 - -> XREF: D06 T01 §8 -- the `TextTables.*` (`D06 T01 §4`), `RoundTrips.*` (`D06 T01 §6`), reference performance baseline (`D06 T01 §8`), and security/fuzz/broker gates (`D06 T02 §4`, `§6`) must all be green before assembling the v1 release kit and distribution bundle in `§6` and `§7`.
 - -> XREF: D07 T01 §7 -- the verified `RectoSetup-*.exe` and `Recto-Portable-*.zip` artifacts tested there are assembled into the signed-off v1 release bundle in `§6` and `§7`.
 - -> XREF: D99 T01 §3 -- the operator's optional Partner Center account and app reservation that `§6`'s optional Store submission kit prepares for.
+- -> XREF: D99 T01 §8 -- the operator's native-speaker review runs `scripts/set-language-reviewed.py` from `§17` here per language, and the next release picks up the flag.
+- -> XREF: D99 T01 §11 -- the v1 release checklist publishes the GitHub Release from the candidate built by `§7` here.
 - -> XREF: D07 T03 §2 -- `Report a problem` reuses §4's diagnostics text, and §4 and §5 there extend §6's release runbook with closing on release and the release gate.
 - -> XREF: D08 T02 §35 -- AssistantDisabled policy.
 - -> XREF: D07 T01 §19 -- runbook.
@@ -79,7 +81,7 @@ track: M6
 | 14 | §14 | Interface language setting: Follow Windows or a shipped language | §13, D02 T04 §2, D02 T04 §6, D02 T03 §11, D06 T04 §25, D10 T03 §7, D10 T02 §9, D10 T02 §20 | [ ] |
 | 15 | §15 | Localised errors, plurals, dates and numbers: no English assembled in code | §13, D01 T01 §1, D10 T03 §7 | [ ] |
 | 16 | §16 | Right-to-left readiness: flow direction, mirrored icons and a mirrored pseudolocale | §13, §14, D06 T04 §25, D10 T03 §7 | [ ] |
-| 17 | §17 | First shipped language set: ten reviewed translations and installer languages | §12, §14, §15, §16, D07 T01 §4, D07 T01 §19, D10 T03 §7 | [ ] |
+| 17 | §17 | First language set: ten drafted translations, reviewed flag and installer languages | §12, §14, §15, §16, D07 T01 §4, D10 T03 §7 | [ ] |
 
 ## 1. Build-time version and provenance generator (version, SHA, `Standard` vs `Portable`)
 
@@ -225,6 +227,8 @@ Prepare Recto for future translations without a UI refactor: move every user-fac
 ## 6. GitHub Release runbook (`docs/release-and-store-runbook.md`) and Store submission kit
 
 Author the step-by-step release engineering runbook (`docs/release-and-store-runbook.md`) and the optional Microsoft Store Partner Center submission kit (`docs/store-listing.md` and `docs/store-license-terms.txt`):
+
+> **Groomed 2026-10-22:** v1 ships unsigned (owner decision 2026-10-22 (foundation plan section 1)): the runbook and the release notes template state that `Setup.exe` and the Portable `.zip` carry no code signature, explain the SmartScreen notice and how to verify `SHA256SUMS.txt`, and say MSIX is signed by Microsoft only through the optional Store submission.
 - `docs/release-and-store-runbook.md`: exact commands for bumping `VERSION`, tagging `vX.Y.Z`, running `build/build-installer.ps1` and `tests/scripts/verify_installer.ps1`, generating and verifying `SHA256SUMS.txt`, publishing a GitHub Release (`gh release create v1.0.0`) with the four primary artifacts (`RectoSetup-x64.exe`, `RectoSetup-ARM64.exe`, `Recto-Portable-x64.zip`, `Recto-Portable-ARM64.zip`, plus `SHA256SUMS.txt`), rolling back a faulty release, and (when `D99 T01 §3` is completed by the operator) building and submitting the optional `x64`/`ARM64` MSIX package to Microsoft Partner Center.
 - `docs/store-listing.md` and `docs/store-license-terms.txt`: honest feature description (incorporating the PDF-to-Word quality scope statement from `D04 T03 §6`), privacy policy statement (100% offline local processing, zero telemetry, opt-in local-only crash bundles), age-rating questionnaire answers (`IARC` all-ages productivity utility), real-app screenshots captured from the built `Recto.exe` matching the `SPEC` boards, and custom Store license terms (`docs/store-license-terms.txt`) byte-for-byte identical to root `LICENSE` (`GPL-3.0-or-later`, explicitly replacing the Standard Microsoft Store Application License Terms per decision D6).
 
@@ -244,6 +248,7 @@ Author the step-by-step release engineering runbook (`docs/release-and-store-run
 - [ ] Capture real-app release screenshots from the built `Recto.exe` (`1440 x 900`) into `docs/release-screenshots/` covering `Home`, `DocumentView` (`Focus` and `Classic`), `Convert`, `Organize`, `Settings`, and `About`. Done when: `scripts/verify-release-kit.py` verifies all 7 PNG screenshots exist and have dimensions `1440 x 900`.
 - [ ] Add `tests/scripts/test_release_kit.py` testing `scripts/verify-release-kit.py` (including failure on a 1-byte drift between `docs/store-license-terms.txt` and `LICENSE`). Done when: `python -m unittest tests.scripts.test_release_kit` passes.
 - [ ] Add the Group Policy templates archive and the driver signing runbook to the release procedure: list `Recto-PolicyTemplates-<version>.zip` in the pre-release verification and `gh release create` asset list, and link `docs/driver-signing-runbook.md` from the Store and release steps. Done when: `docs/release-and-store-runbook.md` names both and `scripts/verify-release-kit.py` fails when the runbook text names neither (a reference check only; the check that the archive and the signing runbook exist runs in `scripts/verify-release-kit.py --artifacts` from §7, after they are produced).
+- [ ] Add the unsigned-release notice to `docs/store-listing.md` (release notes template) and the runbook: "Recto v1 installers and archives are not code signed, so Windows SmartScreen may show an unrecognized-app notice; choose More info, then Run anyway, or verify the download against SHA256SUMS.txt first", and add the same sentence under a Downloads heading in `README.md` when it describes downloads. Done when: `scripts/verify-release-kit.py` finds the sentence in `docs/store-listing.md` and the runbook, and fails when `README.md` has a Downloads heading without it.
 - [ ] Commit: `docs(release): add GitHub Release runbook, optional Store kit, and real-app release screenshots`
 
 **Test checkpoint:** `python scripts/verify-release-kit.py` exits `0` (confirming `docs/store-license-terms.txt` equals `LICENSE` byte-for-byte and all screenshots exist) and `python -m unittest tests.scripts.test_release_kit` passes.
@@ -491,29 +496,32 @@ Arabic and Hebrew users are part of the Windows install base and the same apps t
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Localization.RtlFlowDirection:Localization.RtlIconAudit:Localization.RtlSurfaceLayout` passes on the display-session host.
 
-## 17. First shipped language set: ten reviewed translations and installer languages
+## 17. First language set: ten drafted translations, reviewed flag and installer languages
 
-PDFelement, UPDF and Foxit PDF Editor ship many interface languages, and Recto needs a first set chosen on a stated basis. Default (a decision, with its cost of changing): the ten languages with the largest Windows install bases that Windows and Inno Setup both support well, `zh-Hans`, `es-ES`, `pt-BR`, `ru-RU`, `de-DE`, `fr-FR`, `ja-JP`, `it-IT`, `ko-KR` and `tr-TR`. Changing the set costs one folder and one `languages.json` entry per language plus a review; a second set (including `ar-SA` and `he-IL` for §16, `hi-IN`, `pl-PL`, `nl-NL`, `id-ID`, `uk-UA`, `vi-VN`) follows the same steps. This section needs native-speaker reviewers (`third-party`) and ships only languages that pass the checker with a named reviewer.
+PDFelement, UPDF and Foxit PDF Editor ship many interface languages, and Recto needs a first set chosen on a stated basis. Default (a decision, with its cost of changing): the ten languages with the largest Windows install bases that Windows and Inno Setup both support well, `zh-Hans`, `es-ES`, `pt-BR`, `ru-RU`, `de-DE`, `fr-FR`, `ja-JP`, `it-IT`, `ko-KR` and `tr-TR`. Changing the set costs one folder and one `languages.json` entry per language plus a review; a second set (including `ar-SA` and `he-IL` for §16, `hi-IN`, `pl-PL`, `nl-NL`, `id-ID`, `uk-UA`, `vi-VN`) follows the same steps. Agents draft all ten translations here and add them to `languages.json` as `draft`; a language ships only after its `status` is flipped to `reviewed` (the flag defined in `§13`) following a native-speaker review recorded by the operator in `D99 T01 §8`. Until then the release ships the languages already reviewed, English at least.
+
+> **Groomed 2026-10-22:** removed `third-party` and the dependency on `D07 T01 §19` (this section only needs the installer language list, `D07 T01 §4`). Agents draft all ten translations and the build and installer read the per-language `reviewed` flag, so the release is complete without a person; the native-speaker review and the scripted flip of the flag moved to `D99 T01 §8` (owner decision 2026-10-22 (foundation plan section 1)).
 
 **Phase:** 6
-**Needs:** third-party
+**Needs:** windows-host
 **Surface:** no
 
 **Build order:**
 
-1. Translate and review the ten `<tag>.rc` files and record them in `languages.json`. Done when: `python scripts/check-translations.py` exits `0` with ten `reviewed` entries.
-2. Add the installer languages and the layout test for every language. Done when: `python -m unittest tests.scripts.test_installer_script` and `Localization.AllShippedLanguagesLayout` pass.
+1. Draft the ten `<tag>.rc` files, record them in `languages.json` as `draft`, and add `scripts/set-language-reviewed.py`. Done when: `python scripts/check-translations.py` exits `0` with ten `draft` entries and `en-US` as the only `reviewed` entry.
+2. Add the installer languages (generated from the `reviewed` entries) and the layout test for every drafted and reviewed language. Done when: `python -m unittest tests.scripts.test_installer_script` and `Localization.AllShippedLanguagesLayout` pass.
 
-- [ ] Create `src/app/strings/<tag>.rc` for each of the ten tags from `en-US` using the glossary, and record a named native-speaker reviewer and review date for each in `languages.json`. Done when: `check-translations.py` exits `0` and every entry is `reviewed`. Cheaper substitute: an unreviewed machine translation listed as shipped.
-- [ ] Make the build compile only the `.rc` files of `reviewed` languages into `Recto.exe` (the include list is generated from `languages.json`), and make the Settings list (`§14`) read the same file. Done when: `Localization.ShippedListMatchesBuild` compares the Settings list and the string-table languages found in the built `Recto.exe`.
-- [ ] Add a `[Languages]` entry for each language in `installer/recto.iss` using the `.isl` files that ship with Inno Setup 7, vendoring any missing file under `installer/languages/` with its licence recorded in `NOTICE.md`, set `ShowLanguageDialog=auto`, and add `[CustomMessages]` for the Installation Mode page and the printer task in each language. Done when: `ISCC.exe` compiles with zero warnings and `tests/scripts/test_installer_script.py` finds every language has the custom messages.
-- [ ] Translate `policy/<tag>/Recto.adml` for the ten languages and include them in the templates archive (`§12`). Done when: `check-admx.py` finds a resolved string table for each tag.
-- [ ] Add `Localization.ShippedLanguagesErrorsAndPlurals` rendering a representative error (`Error_AlgorithmNotPermittedByFips`), a plural count and a formatted date in every shipped language and failing on any English fallback. Done when: it passes for all ten languages.
-- [ ] Add `Localization.AllShippedLanguagesLayout` running the surface layout survival check of `§5` for the `Home`, `Settings`, `Convert` and `About` pages in every shipped language at `1280 x 800`. Done when: it finds no clipped or overlapping control.
+- [ ] Create `src/app/strings/<tag>.rc` for each of the ten tags from `en-US` using the glossary, and add each to `languages.json` with `status` `draft`. Done when: `check-translations.py` exits `0` and the ten drafts are complete against `en-US`. Cheaper substitute: an unreviewed machine translation listed as shipped, or a draft that the build compiles into `Recto.exe`.
+- [ ] Make the build compile only the `.rc` files of `reviewed` languages into `Recto.exe` (the include list is generated from `languages.json`), and make the Settings list (`§14`) and the installer language list read the same file. Done when: `Localization.ShippedListMatchesBuild` compares the Settings list and the string-table languages found in the built `Recto.exe`, finds only `en-US` with the committed manifest, and finds exactly the flipped tags when a fixture manifest marks two languages `reviewed`.
+- [ ] Write `scripts/set-language-reviewed.py <tag> --reviewer <name> --date <YYYY-MM-DD>`, the scripted edit the operator runs after a native-speaker review: it refuses an unknown tag, a missing reviewer or date, and a language whose `.rc` fails `check-translations.py`, sets `status` to `reviewed` with `reviewer` and `reviewed_on`, and changes nothing else in `languages.json`. Done when: `tests/scripts/test_translations.py` flips a fixture language, asserts the diff is those three fields only, and exits `2` for each refusal.
+- [ ] Add a `[Languages]` entry in `installer/recto.iss` for each `reviewed` language (the list is generated from `languages.json`) using the `.isl` files that ship with Inno Setup 7, vendoring any missing file under `installer/languages/` with its licence recorded in `NOTICE.md`, set `ShowLanguageDialog=auto`, and write `[CustomMessages]` for the Installation Mode page and the printer task for all ten drafted languages so a flipped flag needs no further edit. Done when: `ISCC.exe` compiles with zero warnings and `tests/scripts/test_installer_script.py` finds the `[Languages]` list equal to the `reviewed` tags and custom messages for all ten.
+- [ ] Draft `policy/<tag>/Recto.adml` for the ten languages and include those of `reviewed` languages in the templates archive (`§12`). Done when: `check-admx.py` finds a resolved string table for each drafted tag and the archive holds only the `reviewed` ones.
+- [ ] Add `Localization.ShippedLanguagesErrorsAndPlurals` rendering a representative error (`Error_AlgorithmNotPermittedByFips`), a plural count and a formatted date in every drafted and reviewed language (drafts load through a test-only override) and failing on any English fallback. Done when: it passes for all ten languages.
+- [ ] Add `Localization.AllShippedLanguagesLayout` running the surface layout survival check of `§5` for the `Home`, `Settings`, `Convert` and `About` pages in every drafted and reviewed language at `1280 x 800`. Done when: it finds no clipped or overlapping control.
 - [ ] Record in `docs/store-listing.md` that the first Store listing is English only and that the listing languages follow the shipped set later. Done when: `scripts/verify-release-kit.py` finds the sentence.
-- [ ] Commit: `feat(i18n): ship ten reviewed interface languages and installer languages`
+- [ ] Commit: `feat(i18n): draft ten interface languages with a reviewed flag and installer languages`
 
-**Test checkpoint:** `python scripts/check-translations.py` exits `0`, `python -m unittest tests.scripts.test_installer_script` passes and `recto-tests.exe --gtest_filter=Localization.ShippedListMatchesBuild:Localization.ShippedLanguagesErrorsAndPlurals:Localization.AllShippedLanguagesLayout` passes.
+**Test checkpoint:** `python scripts/check-translations.py` exits `0`, `python -m unittest tests.scripts.test_installer_script tests.scripts.test_translations` passes and `recto-tests.exe --gtest_filter=Localization.ShippedListMatchesBuild:Localization.ShippedLanguagesErrorsAndPlurals:Localization.AllShippedLanguagesLayout` passes.
 
 ## Verification
 

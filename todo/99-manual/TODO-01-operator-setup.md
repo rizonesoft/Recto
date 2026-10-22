@@ -9,9 +9,9 @@ track: M0
 
 # TODO-01 -- Operator Setup (Manual)
 
-> **Goal:** Complete the external operator setup actions that only the project owner can execute, written so each can be performed from this file alone with zero assumed GitHub, trademark, or Partner Center background: clear and reserve the Recto name (`§1`), configure the public GitHub repository face and branch protection (`§2`), enroll in Microsoft Partner Center and reserve the optional Store app identity (`§3`), and confirm the physical `ARM64` device and clean-machine install-test host (`§4`), leaving committed or publicly verifiable proof for later agent sessions.
+> **Goal:** Complete the external operator setup actions that only the project owner can execute, written so each can be performed from this file alone with zero assumed GitHub, trademark, or Partner Center background: clear and reserve the Recto name (`§1`), configure the public GitHub repository face and branch protection (`§2`), enroll in Microsoft Partner Center and reserve the optional Store app identity (`§3`), and confirm the physical `ARM64` device and clean-machine install-test host (`§4`), then run the proofs that need a person, a separate machine or an outside party and that the unattended campaign deliberately leaves out (owner decision 2026-10-22 (foundation plan section 1)): the Narrator listening pass (`§5`), the test-signed printer driver install (`§6`), Hardware Dev Center driver signing (`§7`), native-speaker translation reviews (`§8`), OAuth app registrations with live cloud sign-in (`§9`), the clean-machine install smoke and FIPS host proof (`§10`) and the v1 release checklist (`§11`), leaving committed or publicly verifiable proof for later agent sessions.
 
-> **Current state:** Measured 2026-10-14. The name Recto, its banner, and its social preview exist as design assets (`design/brand/`; as of 2026-10-21 `design/tools/build_resources.py` generates both with `github.com/rizonesoft/Recto`, so nothing in them needs replacing); no trademark search, Store reservation, or Partner Center enrollment is recorded yet. On 2026-10-14, the primary `x64` benchmark host machine was recorded in `docs/reference-machines.md` (`D00 T01 §5`). Every section in this file carries `Needs: operator` (and `store-account` on `§3`): automated agent runners never claim these rows; the operator completes them, records the non-sensitive proof here, and stamps the section once complete. 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI references rewritten against `todo/10-ui/`.
+> **Current state:** Measured 2026-10-14. The name Recto, its banner, and its social preview exist as design assets (`design/brand/`; as of 2026-10-21 `design/tools/build_resources.py` generates both with `github.com/rizonesoft/Recto`, so nothing in them needs replacing); no trademark search, Store reservation, or Partner Center enrollment is recorded yet. On 2026-10-14, the primary `x64` benchmark host machine was recorded in `docs/reference-machines.md` (`D00 T01 §5`). 2026-10-22: sections `§5` to `§11` added by the unattended-campaign grooming (owner decision 2026-10-22 (foundation plan section 1)): the campaign builds and proves everything up to each of these steps with mocks, local fakes and test certificates, and none of them is a dependency of a development or release-candidate section. Every section in this file carries `Needs: operator` (and `store-account` on `§3`, `attended` or `third-party` where they apply): automated agent runners never claim these rows; the operator completes them, records the non-sensitive proof here, and stamps the section once complete. 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI references rewritten against `todo/10-ui/`.
 
 ## Inputs
 
@@ -21,6 +21,15 @@ track: M0
 - -> XREF: D00 T01 §5 -- records the primary `x64` benchmark host machine resolved on 2026-10-14 and defers naming a specific physical `ARM64` device to `§4` here.
 - -> XREF: D07 T02 §6 -- the optional Microsoft Store Partner Center submission kit in `D07 T02 §6` consumes the Partner Center app reservation and identity values created in `§3` here.
 - -> XREF: D07 T03 §1 -- `SECURITY.md` and the issue forms there rely on §2 here enabling private vulnerability reporting and syncing the labels.
+- -> XREF: D10 T03 §8 -- `§5` runs the Narrator script and the live contrast and text size switch that `D10 T03 §8` authors and cannot run unattended.
+- -> XREF: D07 T01 §16 -- `§6` installs the unsigned-catalog package and scripts that `D07 T01 §16` builds and validates statically, and `D07 T01 §19` supplies the installer and hand-off that `§6` proves with a real queue.
+- -> XREF: D07 T01 §20 -- `§7` performs the Hardware Dev Center submission documented by `D07 T01 §20` and drops the signed catalog into the folder its release gate reads.
+- -> XREF: D07 T02 §17 -- `§8` reviews the ten drafted translations of `D07 T02 §17` and flips each language's `reviewed` flag with `scripts/set-language-reviewed.py`.
+- -> XREF: D07 T02 §7 -- `§11` publishes the release candidate bundle built and verified by `D07 T02 §7`.
+- -> XREF: D02 T06 §6 -- `§9` registers the OAuth apps for the providers built in `D02 T06 §6` to `§10` and proves live sign-in, browse, open and save.
+- -> XREF: D06 T03 §12 -- `§10` runs `release_smoke.ps1 -CleanMachine` of `D06 T03 §12` on clean machines.
+- -> XREF: D06 T02 §9 -- `§10` runs `verify_fips.ps1` of `D06 T02 §9` on a FIPS-enabled host.
+- -> XREF: D07 T03 §5 -- `§11` runs after the release gate of `D07 T03 §5` passes and is not itself a gate.
 
 ## Outcome
 
@@ -28,6 +37,7 @@ track: M0
 - The public GitHub repository displays the description, topics, rendered banner, generated social preview image, and required branch-protection status checks on `main` (`§2`).
 - Microsoft Partner Center holds the optional Store app reservation whose non-sensitive identity values (`Package/Identity/Name`, `Publisher`, `PublisherDisplayName`) are recorded for `D07 T01 §5` and `D07 T02 §6` (`§3`).
 - The physical `ARM64` reference machine (when attached) and the clean-machine install-verification host (`D07 T01 §6`) are recorded in `docs/reference-machines.md` (`§4`).
+- The proofs that need a person, a separate machine or an outside party are recorded with dated evidence: the Narrator pass (`§5`), the test-signed driver install and print (`§6`), the Hardware Dev Center signed catalog (`§7`), reviewed translations (`§8`), live cloud sign-in for each provider (`§9`), the clean-machine smoke and FIPS host proof (`§10`), and the published v1 release with its record of what ships (`§11`).
 
 **Adjacency:** all=not-applicable (operator procedures executed in external web portals and hardware setups; their records are committed back into this file and `docs/reference-machines.md`, and none are Recto product surfaces)
 
@@ -41,6 +51,13 @@ track: M0
 | 2 | §2 | GitHub repository face and branch protection | D00 T01 §1 | [ ] |
 | 3 | §3 | Partner Center account and optional Store app reservation | §1 | [ ] |
 | 4 | §4 | Physical ARM64 reference machine and clean-machine host confirmation | -- | [ ] |
+| 5 | §5 | Narrator listening pass and live Windows contrast and text size check | D10 T03 §8 | [ ] |
+| 6 | §6 | Test-signed driver install and end-to-end print through the Recto PDF queue | D07 T01 §16, D07 T01 §19 | [ ] |
+| 7 | §7 | Hardware Dev Center driver signing and signed catalog drop-in | D07 T01 §20, §6 | [ ] |
+| 8 | §8 | Native-speaker translation reviews and per-language reviewed flags | D07 T02 §17 | [ ] |
+| 9 | §9 | OAuth app registrations and live cloud sign-in proofs for five providers | D02 T06 §6, D02 T06 §7, D02 T06 §8, D02 T06 §9, D02 T06 §10, D02 T06 §15 | [ ] |
+| 10 | §10 | Clean-machine install smoke and FIPS-enabled host proof | §4, D06 T03 §12, D06 T02 §9 | [ ] |
+| 11 | §11 | v1 release checklist: publish the release candidate and record what ships | §1, §2, §10, D07 T02 §7, D07 T03 §5 | [ ] |
 
 ## 1. Trademark search and Store name reservation
 
@@ -135,8 +152,163 @@ Complete the physical hardware records complementing `D00 T01 §5`'s primary `x6
 
 **Test checkpoint:** `docs/reference-machines.md` records both the primary `x64` machine (`D00 T01 §5`), the specific physical `ARM64` machine, and the clean-machine installer verification host, and `python scripts/todo-graph.py validate` exits `0`.
 
+## 5. Narrator listening pass and live Windows contrast and text size check
+
+`D10 T03 §8` proves the accessibility tree, the keyboard paths, the speech lines composed from UI Automation properties and the in-tree UIA rule check by script. A person still has to hear Narrator speak and judge it, and has to switch the real Windows contrast theme and text size, which the unattended campaign host must not do to its own session (owner decision 2026-10-22, foundation plan section 1). This section is that human pass, written so it can be followed from this file alone.
+
+**Phase:** 99
+**Needs:** operator, attended, windows-host, display-session
+**Surface:** no
+
+**Build order:**
+
+1. Run `docs/reviews/10-ui/narrator-smoke.md` step by step with Narrator on a Windows 11 machine with a display and speakers or headphones, and record each step as pass or fail with the speech heard. Done when: `docs/reviews/10-ui/accessibility-verification.md` holds a dated Narrator row for every step, with the machine and Windows build.
+2. Switch the real Windows contrast themes and text size and record the result per setting. Done when: the same file holds four theme rows and six text size rows marked as operator-checked.
+
+- [ ] Install the release candidate build (or `build/bin/x64/Release/Recto.exe`), start Narrator with `Win+Ctrl+Enter`, open the control gallery and perform every step of `docs/reviews/10-ui/narrator-smoke.md`, writing the speech line you heard beside the expected one. Done when: every step (at least 20) has a pass or fail and the heard line in `docs/reviews/10-ui/accessibility-verification.md`. Cheaper substitute: reading the `Ui.A11ySpeechLines` output instead of listening.
+- [ ] File each failing step in `todo/findings.md` with the control and the `file:line` of its automation name when known. Done when: every fail has a findings entry, or the record says there were none.
+- [ ] Switch Windows to each contrast theme (`Settings -> Accessibility -> Contrast themes`: Aquatic, Desert, Dusk, Night sky) with Recto open and record whether every window repaints live, the focus ring is visible, selection and disabled states are distinguishable and the page canvas is readable. Done when: four theme rows are recorded. Cheaper substitute: checking only one theme.
+- [ ] Set `Settings -> Accessibility -> Text size` to 100, 125, 150, 175, 200 and 225 percent with Recto open and record that the shell reflows without clipping. Done when: six size rows are recorded; then restore the original settings.
+- [ ] Run `python scripts/check-a11y-record.py --require-operator`. Done when: it exits `0`, meaning the Narrator, contrast and text size rows are dated results and not `pending-operator`.
+- [ ] Commit: `manual: record the Narrator listening pass and live contrast and text size check`
+
+**Test checkpoint:** `python scripts/check-a11y-record.py --require-operator` exits `0`, quoting the Narrator pass and fail counts, the four contrast theme rows and the six text size rows.
+
+## 6. Test-signed driver install and end-to-end print through the Recto PDF queue
+
+`D07 T01 §16` and `§19` build and statically validate the `Recto PDF` v4 driver package and the installer integration without installing a driver, because installing needs test-signing mode, a reboot and a machine the owner can afford to alter (owner decision 2026-10-22, foundation plan section 1). This section installs the test-signed package on a disposable test machine, prints from real programs through it and removes everything again.
+
+**Phase:** 99
+**Needs:** operator, attended, windows-host
+**Surface:** no
+
+**Build order:**
+
+1. On a disposable Windows 11 test machine or virtual machine (never the daily machine), enable test signing, sign the unsigned catalog with a throwaway test certificate and install the package with `scripts/install-test-printer.ps1`. Done when: `Get-Printer -Name "Recto PDF"` finds the queue and `pnputil /enum-drivers` lists the package.
+2. Run the automated live proofs, print from real programs, then remove everything and restore the machine. Done when: `verify_printer.ps1 -Mode Driver` and `verify_installer.ps1 -Mode Printer -Live` exit `0` and the removal leaves no queue, driver or test certificate.
+
+- [ ] Enable test signing with `bcdedit /set testsigning on` from an elevated prompt, reboot, create a self-signed code signing certificate in `Cert:\LocalMachine\TrustedPublisher` and `Root`, and sign `RectoPDF.cat` with `signtool sign` (never commit the certificate or its private key). Done when: `signtool verify /kp /v RectoPDF.cat` accepts the catalog on this machine only.
+- [ ] Run `scripts/install-test-printer.ps1` elevated, then query the queue's capabilities with `(Get-PrintCapabilities)` or `System.Printing` `PrintQueue.GetPrintCapabilitiesAsXml` and `Get-PrintConfiguration -PrinterName "Recto PDF"`. Done when: the six paper sizes (A3, A4, A5, Letter, Legal, Tabloid) are listed and the default ticket shows the paper size, orientation and colour defined in `D07 T01 §16`.
+- [ ] Run `pwsh -NoProfile -File tests/scripts/verify_printer.ps1 -Mode Driver` and `pwsh -NoProfile -File tests/scripts/verify_installer.ps1 -Mode Printer -Live`. Done when: both exit `0` with their `[PASS]` lines quoted in this section.
+- [ ] Print a web page from Edge, a text file from Notepad and an Office file (when Office is present) to `Recto PDF` in `SaveToFolder` and `AskEachTime` modes and open each result. Done when: each PDF opens with selectable text and the right page count, and the save window appears only in `AskEachTime` mode. Cheaper substitute: printing only the corpus fixture.
+- [ ] Remove everything with `scripts/remove-test-printer.ps1`, delete the test certificate, run `bcdedit /set testsigning off` and reboot. Done when: `Get-Printer`, `Get-PrinterDriver` and `pnputil /enum-drivers` show no Recto entry and `bcdedit` no longer shows test signing.
+- [ ] Commit: `manual: record the test-signed Recto PDF driver install and end-to-end print`
+
+**Test checkpoint:** the `[PASS]` output of `verify_printer.ps1 -Mode Driver` and `verify_installer.ps1 -Mode Printer -Live`, the six listed paper sizes and the empty `Get-Printer`/`pnputil` output after removal are quoted in this section.
+
+## 7. Hardware Dev Center driver signing and signed catalog drop-in
+
+Windows installs a printer driver without test mode only when Microsoft has signed it through the Windows Hardware Dev Center. `D07 T01 §20` writes the runbook, the signature check and the release-script rule; this section performs the submission, an outside-party step that cannot run unattended (owner decision 2026-10-22, foundation plan section 1). Until it is done the release candidate ships without the printer and Settings shows it as not installed, which is a complete release.
+
+**Phase:** 99
+**Needs:** operator, third-party
+**Surface:** no
+
+**Build order:**
+
+1. Follow `docs/driver-signing-runbook.md`: enroll in the Hardware Dev Center, build the `x64` and `ARM64` submission packages, submit them by the route chosen in `D07 T01 §15` (attestation or HLK) and download the signed packages. Done when: the signed `RectoPDF.cat` and driver files exist for both architectures.
+2. Place them in `installer/driver/signed/<arch>/`, verify them and rebuild the release. Done when: `pwsh scripts/check-driver-signature.ps1` exits `0` for both, a clean machine accepts `pnputil /add-driver` without test mode, and the next release build includes the printer task.
+
+- [ ] Create or reuse the Windows Hardware Dev Center account and the extended validation code signing certificate required by the runbook, keeping every credential in the owner's password vault and never in the repository. Done when: the dashboard shows an active hardware program account. Cheaper substitute: signing the driver with a self-issued certificate and calling it production.
+- [ ] Build and submit the `x64` and `ARM64` packages per the runbook, then download the Microsoft-signed results. Done when: the dashboard shows both submissions as signed and the signed files are saved locally.
+- [ ] Copy the signed catalogs and driver files into `installer/driver/signed/x64/` and `installer/driver/signed/arm64/` and commit them (signed driver files are public release artifacts, not secrets). Done when: `git ls-files installer/driver/signed` lists both folders.
+- [ ] Run `pwsh scripts/check-driver-signature.ps1 -Path installer/driver/signed/x64` and the `arm64` path, then on a clean Windows 11 machine without test signing run `pnputil /add-driver RectoPDF.inf /install` and `Add-Printer`. Done when: both checks exit `0` and the queue appears and prints a test page. Cheaper substitute: testing only on the machine that built the package.
+- [ ] Build the release with `build/build-installer.ps1` and run `tests/scripts/verify_installer.ps1 -Mode Printer`. Done when: the Full installer now carries the `printer` task and the Settings status line reads "Installed" after a Full install.
+- [ ] Commit: `manual: record the Hardware Dev Center signed Recto PDF driver and drop in the catalogs`
+
+**Test checkpoint:** `pwsh scripts/check-driver-signature.ps1 -Path installer/driver/signed/x64` exits `0` and the `pnputil` output from the clean machine is quoted in this section.
+
+## 8. Native-speaker translation reviews and per-language reviewed flags
+
+Agents draft all ten first translations (`D07 T02 §17`) and the release ships only the languages whose `status` is `reviewed` in `src/app/strings/languages.json`, English always (owner decision 2026-10-22, foundation plan section 1). Reviewing a translation needs a native speaker, which only the operator can arrange. The release can go out at any time with whatever is reviewed so far, and each later release picks up newly flipped languages.
+
+**Phase:** 99
+**Needs:** operator, third-party
+**Surface:** no
+
+**Build order:**
+
+1. For each of the ten languages (`zh-Hans`, `es-ES`, `pt-BR`, `ru-RU`, `de-DE`, `fr-FR`, `ja-JP`, `it-IT`, `ko-KR`, `tr-TR`), have a native speaker review `src/app/strings/<tag>.rc`, `policy/<tag>/Recto.adml` and the installer custom messages against the glossary, and apply their corrections. Done when: the reviewer's name and date are recorded in this section's table for that language.
+2. Flip the flag with `scripts/set-language-reviewed.py` and confirm the next build includes it. Done when: `python scripts/check-translations.py` exits `0` and `Localization.ShippedListMatchesBuild` lists the flipped tags.
+
+- [ ] Send each reviewer the `<tag>.rc` file, `src/app/strings/glossary.json` and `docs/translating.md`, and collect corrections as a diff or a marked-up copy. Done when: a correction set or an explicit "no changes" is recorded per language.
+- [ ] Apply the corrections to `src/app/strings/<tag>.rc` and the matching `.adml`, run `python scripts/check-translations.py`, and run `recto-tests.exe --gtest_filter=Localization.AllShippedLanguagesLayout` for that language. Done when: the checker exits `0` and the layout test finds no clipped control. Cheaper substitute: flipping the flag before applying the corrections.
+- [ ] Run `python scripts/set-language-reviewed.py <tag> --reviewer "<name>" --date <YYYY-MM-DD>` for each language whose review is complete, a small scripted edit that changes only that language's `status`, `reviewer` and `reviewed_on`. Done when: `git diff src/app/strings/languages.json` shows only those three fields per language.
+- [ ] Record a table in this section with the language, reviewer, date and flag state, and mark languages not yet reviewed as `draft`, which the next release leaves out. Done when: all ten rows are present with an explicit state.
+- [ ] Commit: `manual: record native-speaker reviews and flip the reviewed flags`
+
+**Test checkpoint:** `python scripts/check-translations.py` exits `0` and the list of `reviewed` tags from `src/app/strings/languages.json` is quoted, matching the language table in this section.
+
+## 9. OAuth app registrations and live cloud sign-in proofs for five providers
+
+`D02 T06 §6` to `§10` build the OneDrive, SharePoint, Google Drive, Dropbox and Box connectors against local fakes, reading a public client ID from `config/cloud-clients.json`; a provider with no client ID is reported as `Not configured` and hidden (owner decision 2026-10-22, foundation plan section 1). This section registers the apps, records the client IDs and proves each provider live. Client IDs of public desktop clients are not secrets and are committed; nothing secret goes in the repository.
+
+**Phase:** 99
+**Needs:** operator, third-party, attended
+**Surface:** no
+
+**Build order:**
+
+1. Register the OAuth apps: Microsoft Entra (one app for OneDrive and SharePoint), Google Cloud, Dropbox and Box, each as a public desktop client with a loopback redirect and the scopes named in `docs/cloud-connectors.md`. Done when: each provider's console shows the app and its client ID.
+2. Record the client IDs in `config/cloud-clients.json` and run each live smoke script with a test account. Done when: `python scripts/check-cloud-clients.py` exits `0` and each `tests/live/cloud_<provider>.ps1` run signs in, lists, downloads and uploads a test file.
+
+- [ ] Register the Microsoft Entra app (`Mobile and desktop applications` platform, redirect `http://localhost`, public client flows allowed, delegated `offline_access`, `Files.ReadWrite` and the SharePoint site scopes listed in `docs/cloud-connectors.md`, personal and work accounts). Done when: the Application (client) ID is recorded for `onedrive` and `sharepoint`. Cheaper substitute: using another product's client ID.
+- [ ] Create the Google Cloud project, configure the OAuth consent screen, create a `Desktop app` client, and start the verification for the restricted `drive` scope (it can take weeks; until it passes, only listed test users can sign in and the release leaves `gdrive` as `Not configured`). Done when: the client ID is recorded and the verification status is noted in this section; put any client secret only in the build environment variable that `D02 T06 §8` reads.
+- [ ] Create the Dropbox app (scoped access, `files.metadata.read`, `files.content.read`, `files.content.write`, PKCE, loopback redirect) and the Box app (`Custom App`, user authentication with OAuth 2.0 and PKCE, loopback redirect), and verify that Box accepts PKCE without a client secret, recording the result in `docs/cloud-connectors.md`. Done when: both client IDs are recorded, or Box is left `Not configured` with the reason written down.
+- [ ] Write the client IDs into `config/cloud-clients.json` and run `python scripts/check-cloud-clients.py` and `git grep -iE "client_secret|BEGIN.*PRIVATE KEY"`. Done when: the checker exits `0` and the search returns no match.
+- [ ] For each configured provider run `pwsh tests/live/cloud_<provider>.ps1` with a throwaway test account: sign in through the system browser, browse, open a PDF, edit and save it, and confirm a changed remote file produces the conflict dialog and no overwrite. Done when: each run's output (with tokens redacted) is quoted in this section.
+- [ ] Sign out of each provider in Settings and confirm the Credential Manager entry is gone. Done when: `cmdkey /list` shows no Recto cloud entry.
+- [ ] Commit: `manual: register the cloud OAuth apps and record live sign-in proofs`
+
+**Test checkpoint:** `python scripts/check-cloud-clients.py` exits `0` and the five live smoke outputs (or the stated `Not configured` reasons) are quoted in this section.
+
+## 10. Clean-machine install smoke and FIPS-enabled host proof
+
+The campaign runs the installed-build smoke on its own host (`D06 T03 §12`) and proves the FIPS script refuses on an ordinary machine (`D06 T02 §9`). Two proofs need other machines: the same smoke on clean Windows 10 and Windows 11 installs and a WARP-only machine, and the FIPS script on a machine with the FIPS policy on. No virtual machines or Windows Sandbox are used by the campaign (owner decision 2026-10-22, foundation plan section 1), so these are run by the operator on machines they provide, recorded in `docs/reference-machines.md` by `§4`.
+
+**Phase:** 99
+**Needs:** operator, attended, windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Run `pwsh tests/scripts/release_smoke.ps1 -CleanMachine -Candidate <release candidate folder>` on a clean Windows 10, a clean Windows 11 and a WARP-only machine, and do the manual extras. Done when: three `build/release-smoke/<version>.json` reports with `host` `clean-machine` name the candidate commit and digests, and the manual extras are ticked below.
+2. Enable FIPS mode on a test machine and run `tests/scripts/verify_fips.ps1`. Done when: the output is quoted in the `FIPS mode` section of `docs/security-audit.md` and the policy is switched back off.
+
+- [ ] Copy the release candidate bundle (`build/dist/` from `D07 T02 §7`) to each clean machine and run the smoke script elevated. Done when: each run exits `0` and its report is saved under `docs/reviews/99-manual/release-smoke-<host>.json`. Cheaper substitute: running the smoke only on the development machine.
+- [ ] On the Windows 11 machine switch the Windows display language to Simplified Chinese and then Arabic and open the installed build. Done when: the UI shows no missing-glyph boxes and Arabic mirrors the layout; restore the language afterwards.
+- [ ] Pin the installed build to Start, set a preference and save a signature appearance, upgrade to the next build and confirm the pin, preference, signature and `.pdf` association survive. Done when: all four are recorded as present.
+- [ ] Open `Local Security Policy -> Local Policies -> Security Options -> System cryptography: Use FIPS compliant algorithms for encryption, hashing, and signing`, enable it, reboot, run `pwsh -NoProfile -File tests/scripts/verify_fips.ps1`, then disable the policy and reboot. Done when: the `[PASS]` lines, host build and date are pasted into the `FIPS mode` section of `docs/security-audit.md` replacing the pending status.
+- [ ] Commit: `manual: record clean-machine release smoke and the FIPS host proof`
+
+**Test checkpoint:** the three smoke reports' commit SHAs and the FIPS script's `[PASS]` lines are quoted in this section, and `docs/security-audit.md` no longer says `pending operator run`.
+
+## 11. v1 release checklist: publish the release candidate and record what ships
+
+The unattended campaign ends with a verified release candidate bundle (`D07 T02 §7`) and a passing release gate (`D07 T03 §5`). Publishing is a person's decision. v1 ships unsigned: no Authenticode signing, a SmartScreen notice in the release notes, `SHA256SUMS.txt` beside the artifacts, and MSIX only through the optional Store submission (owner decision 2026-10-22, foundation plan section 1). Anything in `§5` to `§9` that is not finished simply ships in its fallback form: no printer driver (Settings shows "Not installed"), only the reviewed languages with English, and the cloud providers without a client ID hidden.
+
+**Phase:** 99
+**Needs:** operator, attended
+**Surface:** no
+
+**Build order:**
+
+1. Confirm the gates and record what ships. Done when: this section's table lists, for the printer driver (`§7`), each language (`§8`), each cloud provider (`§9`), the Narrator pass (`§5`) and the clean-machine smoke (`§10`), either `done` or the fallback that ships.
+2. Publish the GitHub Release from the candidate built by `D07 T02 §7` and verify the public downloads. Done when: the release page lists the artifacts and `release_smoke.ps1 -PostPublish` passes.
+
+- [ ] Run `python scripts/todo-graph.py validate`, `python scripts/release-gate.py` and `pwsh -NoProfile -File tests/scripts/release_smoke.ps1 -Candidate build/release/<version>` for the candidate commit. Done when: all three pass and `build/release-smoke/<version>.json` names the candidate commit and artifact digests.
+- [ ] Write the "what ships" table in this section from `§5` to `§10`. Done when: every row is `done` or names its fallback.
+- [ ] Follow `docs/release-and-store-runbook.md`: tag `vX.Y.Z` and run `gh release create vX.Y.Z` with `RectoSetup-x64.exe`, `RectoSetup-ARM64.exe`, `Recto-Portable-x64.zip`, `Recto-Portable-ARM64.zip`, `Recto-PolicyTemplates-<version>.zip` and `SHA256SUMS.txt` from `build/dist/` of the `D07 T02 §7` candidate, with release notes that include the unsigned-release and SmartScreen notice. Done when: `gh release view vX.Y.Z --json assets` lists every artifact and the notes carry the SmartScreen sentence. Cheaper substitute: rebuilding the artifacts after the candidate was verified.
+- [ ] Download the published artifacts and compare them with `SHA256SUMS.txt`, then run `pwsh tests/scripts/release_smoke.ps1 -PostPublish`. Done when: every digest matches and the post-publish check passes.
+- [ ] If `§3` is complete and the owner chooses the Store, build `-EnableMsix` and submit through Partner Center per the runbook (Microsoft signs the package); otherwise note "Store submission not made". Done when: the decision and any submission ID are recorded here.
+- [ ] Record the release URL, tag, commit SHA and digests in this section. Done when: a reader can verify the release without asking the operator.
+- [ ] Commit: `manual: publish v1 and record what ships`
+
+**Test checkpoint:** `gh release view vX.Y.Z --json assets,tagName` lists the artifacts, the digest comparison output and the `-PostPublish` result are quoted, and the "what ships" table is complete.
+
 ## Verification
 
 - Every outcome in `99-manual` is verifiable from a public page or a committed record in `todo/99-manual/TODO-01-operator-setup.md` and `docs/reference-machines.md` by a session that was not present when the operator performed it.
 - Zero secrets, private keys, or credentials appear anywhere in the repository (`git grep` clean).
 - `python scripts/todo-graph.py validate` passes.
+- No development or release-candidate section depends on `§5` to `§11`; a missing operator proof changes what the release contains (fallbacks stated in `§11`), never whether the unattended run can finish.

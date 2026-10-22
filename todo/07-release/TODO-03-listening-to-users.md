@@ -18,7 +18,8 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 - -> XREF: D07 T02 §4 -- the opt-in local crash bundle that §2 here reuses for its diagnostics text, and that links to §1's issue form.
 - -> XREF: D07 T02 §6 -- the GitHub release runbook that §4 and §5 here extend with closing-on-release and the release gate.
 - -> XREF: D02 T03 §11 -- `CommandRegistry`, through which §2's `Report a problem` and §7's `What's new` are reachable from `Ctrl+K`.
-- -> XREF: D06 T03 §12 -- the clean-machine release smoke whose report §5's gate requires.
+- -> XREF: D06 T03 §12 -- the installed-build release smoke (run by script on the build host) whose report §5's gate requires.
+- -> XREF: D99 T01 §11 -- the operator's v1 release checklist runs after this gate passes and is not itself a gate.
 - -> XREF: D99 T01 §2 -- the operator enables GitHub private vulnerability reporting that §1's `SECURITY.md` points to.
 - -> XREF: D08 T01 §9 -- diagnostics must never carry an assistant key (D08 T01 §9 scans for it).
 - -> XREF: D04 T07 §2 -- records the Action Wizard's watched-folder request (D04 T07 §2).
@@ -166,6 +167,8 @@ A common failure is closing issues when a fix merges while users on the release 
 ## 5. Release gate for unreleased fixes, security advisories and CI integrity
 
 Another is security and data-loss fixes sitting on main while the current release stays vulnerable with no advisory, and CI red or cancelled on main so regressions ship unseen. `scripts/release-gate.py` blocks tagging when the release would leave a `fixed-on-main` crash, data-loss or security fix unreleased for more than seven days without a patch release, when a security fix has no advisory draft, when the last main CI run was cancelled or red, or when the `D06 T03 §12` smoke report is missing.
+
+> **Groomed 2026-10-22:** `D06 T03 §12` now produces its report by script on the build host (no `attended`), so this gate still depends on it and no gate depends on a person. The clean-machine run, the FIPS host proof and the other operator proofs are the checklist `D99 T01 §11` (Phase 99, outside the phases 0 to 6 rule below) (owner decision 2026-10-22 (foundation plan section 1)).
 
 **Phase:** 6
 **Needs:** windows-host

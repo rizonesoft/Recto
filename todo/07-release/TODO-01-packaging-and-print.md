@@ -21,7 +21,9 @@ track: M6
 - -> XREF: D02 T02 §8 -- the Floating Page Toolbar's Print button and `file.print` (`Ctrl+P`) command invoke `§2`'s print pipeline.
 - -> XREF: D02 T04 §1 -- the Inno Setup Portable installer (`§4`) and `Recto-Portable-*.zip` archives (`§5`) pre-create `data\portable.mode` consumed by `AppPaths` (`D02 T04 §1`).
 - -> XREF: D05 T01 §1 -- the shared page-range parser (`parse_page_ranges("1-3, 5, 8-10", page_count)`) is reused by `§2` for custom print page ranges.
-- -> XREF: D07 T02 §3 -- the Authenticode release signing and `SHA256SUMS.txt` pipeline (`D07 T02 §3`) signs and hashes the installer, Portable `.zip`, and MSIX artifacts built in `§4`-`§7` here.
+- -> XREF: D07 T02 §7 -- v1 ships unsigned (owner decision 2026-10-22 (foundation plan section 1)): there is no Authenticode signing of `Setup.exe`, `Recto.exe` or the Portable `.zip`. `SHA256SUMS.txt` is written by `build/build-installer.ps1` (`§5` here) and verified, with the whole release bundle, in `D07 T02 §7`; the dependency audit `D07 T02 §3` is not part of signing. The Recto PDF driver is the one signed artefact, through the Hardware Dev Center (`§20`).
+- -> XREF: D99 T01 §6 -- the operator proves the test-signed install and the end-to-end print through an installed driver that `§16` and `§19` build but never install.
+- -> XREF: D99 T01 §7 -- the operator submits the driver to the Windows Hardware Dev Center and drops the signed catalog that the release gate of `§20` looks for.
 - -> XREF: D06 T03 §9 -- the printer driver compatibility and failure isolation suite gating §2's print pipeline, and the clean-machine smoke (§12 there) over §4 to §7.
 - -> XREF: D03 T01 §11 -- render_page_area for print area.
 - -> XREF: D03 T01 §4 -- print area marquee.
@@ -50,7 +52,7 @@ track: M6
 - `tests/scripts/verify_installer.ps1` proves silent **Full Install**, `.pdf` `ProgId` and icon registration, `v1.0.0 -> v1.0.1` upgrade continuity of `settings.json` and `recents.json`, clean silent uninstall (`§6`), and zero-registry, zero-`%LOCALAPPDATA%` **Self-Contained Portable Install** isolation (`§7`).
 - Explorer shows PDF thumbnails and a preview pane from a process-isolated `RectoShell.dll` (`§8`), and `print`, `printto`, `Combine in Recto` and `Convert to PDF with Recto` work on Explorer selections without ever changing the user's default PDF handler (`§9`).
 - Printing can select pages by reverse order, comments, bookmark section and area, print as image, in grayscale or with text as outlines, and add crop, bleed and registration marks, all from the print options pane or `Ctrl+K` (`§11` to `§14`).
-- The Full installer installs the signed `Recto PDF` v4 virtual printer, which converts any application's print job to a PDF in the user's session, with settings and a save window; Portable and per-user installs install nothing, and a missing driver signature removes the feature rather than shipping an untrusted driver (`§15` to `§20`).
+- The Full installer installs the `Recto PDF` v4 virtual printer when a Hardware Dev Center signed catalog is present, which converts any application's print job to a PDF in the user's session, with settings and a save window; Portable and per-user installs install nothing, and a missing driver signature removes the feature (the release builds without it and Settings shows "Not installed") rather than shipping an untrusted driver (`§15` to `§20`). Building, validating and gating the package is unattended; the test-signed install and the signing itself are operator sections `D99 T01 §6` and `§7`.
 
 **Adjacency:** list=not-applicable (installed apps are listed by Windows, not Recto); document=applicable @ D07 T01 §2; settings=not-applicable (print choices live in the Windows print dialog; Portable mode and Default PDF app rows live in D02 T04 §6); reporting=not-applicable (crash reporting is D07 T02 §4); notifications=not-applicable (none originate here); permissions=not-applicable (manifest capabilities are declared in D02 T01 §1 and audited in §5); audit=not-applicable (release provenance is D07 T02 §1 and §3); exchange=not-applicable (no data import); reverse=applicable @ D07 T01 §6
 
@@ -75,11 +77,11 @@ track: M6
 | 13 | §13 | Printer's marks: crop marks, bleed marks, registration marks and page information | §10 | [ ] |
 | 14 | §14 | Print options pane and Ctrl+K commands for page selection, render modes and marks | §11, §12, §13, D02 T03 §11, D06 T04 §21, D10 T02 §7, D10 T02 §9, D10 T02 §6, D10 T02 §12, D10 T02 §20 | [ ] |
 | 15 | §15 | Recto PDF virtual printer design: v4 driver, hand-off and trust boundary | §1, D04 T02 §5 | [ ] |
-| 16 | §16 | Recto PDF v4 driver package: manifest, INF, print capabilities and test-signed install | §15 | [ ] |
+| 16 | §16 | Recto PDF v4 driver package: manifest, INF, print capabilities and static validation | §15 | [ ] |
 | 17 | §17 | Virtual printer spool hand-off: XPS to PDF in the user's session | §3, §15, D04 T02 §5, D02 T01 §7 | [ ] |
 | 18 | §18 | Recto PDF virtual printer settings and the save window | §17, D02 T04 §2, D02 T04 §6, D02 T03 §11, D06 T04 §21, D10 T01 §4, D10 T02 §2, D10 T02 §4, D10 T02 §7, D10 T02 §9 | [ ] |
 | 19 | §19 | Full installer integration and end-to-end proof for the Recto PDF printer | §6, §9, §16, §17, §18, D07 T02 §6 | [ ] |
-| 20 | §20 | Recto PDF driver signing through the Windows Hardware Dev Center and release gate | §5, §16, D07 T02 §6 | [ ] |
+| 20 | §20 | Recto PDF driver signature check, signing runbook and release gate | §5, §16, D07 T02 §6 | [ ] |
 
 ## 1. Print API spike (`PrintManagerInterop` vs `ID2D1PrintControl`) & section 11 note
 
@@ -189,6 +191,8 @@ Author the primary Inno Setup 7 installer script (`installer/recto.iss` compiled
 
 Build the single-command release packaging pipeline in `build/build-installer.ps1` (and wire `-Package` and `-EnableMsix` in `build/build.ps1`): stage the `Release | x64` and `Release | ARM64` outputs (`Recto.exe`, `recto-cli.exe`, `LICENSE`, `NOTICE.md`; a plain Win32 app with no framework runtime DLLs and no `.pri` resources), invoke `ISCC.exe` on `installer/recto.iss` to produce `build/dist/RectoSetup-x64.exe` and `build/dist/RectoSetup-ARM64.exe`, build standalone `build/dist/Recto-Portable-x64.zip` and `build/dist/Recto-Portable-ARM64.zip` with `data\portable.mode` pre-created inside the archive, optionally produce `Recto-x64.msix` / `Recto-ARM64.msix` when `-EnableMsix` is passed, and run `scripts/check-package-assets.py` to audit every referenced icon, manifest asset, and capability.
 
+> **Groomed 2026-10-22:** v1 ships unsigned (owner decision 2026-10-22 (foundation plan section 1)): `build/build-installer.ps1` runs no `signtool` step on `Setup.exe`, `Recto.exe` or the Portable `.zip`, writes `SHA256SUMS.txt` beside the artifacts, and the release notes carry the SmartScreen notice (`D07 T02 §6`). MSIX is signed by Microsoft only through the optional Store submission.
+
 **Phase:** 6
 **Needs:** windows-host
 **Surface:** no
@@ -297,7 +301,9 @@ Users of comparable PDF apps ask for PDF thumbnails in Explorer and a preview pa
 
 ## 9. Explorer verbs: print, printto, Combine and Convert to PDF (`IExplorerCommand`)
 
-Users of comparable PDF apps ask repeatedly for "Combine" and "Convert to PDF" on a multi-file Explorer selection, for Outlook's Quick Print to print silently instead of opening the viewer, and object when the app makes itself the default PDF handler on first run. Recto registers `print` and `printto` verbs that print without a window, and a Windows 11 `IExplorerCommand` menu (with classic verbs for "Show more options") that hands the whole selection to one running instance in selection order. It never changes the user's default PDF handler.
+Users of comparable PDF apps ask repeatedly for "Combine" and "Convert to PDF" on a multi-file Explorer selection, for Outlook's Quick Print to print silently instead of opening the viewer, and object when the app makes itself the default PDF handler on first run. Recto registers `print` and `printto` verbs that print without a window, and `IExplorerCommand` classic shell verbs (Windows 10 menu and Windows 11 "Show more options") that hand the whole selection to one running instance in selection order. It never changes the user's default PDF handler.
+
+> **Groomed 2026-10-22:** the Windows 11 top-level (modern) context menu entry needed a signed sparse package, and v1 ships unsigned (owner decision 2026-10-22 (foundation plan section 1)), so v1 registers only the classic shell verbs (`HKCU\Software\Classes\...\shell`) from the Full installer; Portable mode registers nothing. Adding Trusted Signing or a certificate later restores the sparse package (cost: medium, one signing step plus the manifest).
 
 **Phase:** 6
 **Needs:** windows-host, display-session
@@ -305,21 +311,21 @@ Users of comparable PDF apps ask repeatedly for "Combine" and "Convert to PDF" o
 
 **Fidelity:** Genuinely new surface: the Windows Explorer context menu, not a SPEC screen. Labels follow `design/SPEC.md` section 2 voice ("Combine in Recto", "Convert to PDF with Recto"). Design board: `design/SPEC.md` section 9.16 with `design/screenshots/D-Print.png` (drawn by `D06 T04 §21`).
 **Job:** A user selects several files in Explorer and combines or converts them in one Recto window, or prints PDFs from Explorer or Outlook without opening Recto. Consumer: `D05 T02 §3` Combine mode, `D04 T01 §3` Convert page, and `D07 T01 §2` print pipeline.
-**Treatment:** `IExplorerCommand` entries with a `Recto` submenu on Windows 11 and classic `shell` verbs on Windows 10 and in "Show more options". Cheaper substitute that fails the checkpoint: one process launched per selected file, or a print verb that opens the viewer.
+**Treatment:** `IExplorerCommand` entries (registered through `ExplorerCommandHandler` under the classic `shell` verb keys) with a `Recto` submenu, shown in the Windows 10 menu and in Windows 11 "Show more options". Cheaper substitute that fails the checkpoint: one process launched per selected file, or a print verb that opens the viewer.
 **Chrome:** `resources/ico/recto.ico` for menu icons; no app chrome is shown for `print` and `printto`.
 
 **Build order:**
 
 1. Add `print` (`Recto.exe /p "%1"`) and `printto` (`Recto.exe /pt "%1" "%2" "%3" "%4"`) verbs to `installer/recto.iss`, executed by `LaunchArgs` (`D02 T01 §7`) through the `D07 T01 §2` print worker without creating a window. Done when: `ShellExecuteW(..., L"print", ...)` on a corpus PDF prints to Microsoft Print to PDF and no top-level window is created.
-2. Add `src/shell/ExplorerCommands.h/.cpp` in `RectoShell.dll` implementing `IExplorerCommand` for "Combine in Recto" (two or more PDF or image files) and "Convert to PDF with Recto" (Office, HTML, Markdown and image files), registered for Windows 11 and as classic verbs. Done when: invoking the command on five files opens one Recto window with five staged files in Explorer selection order.
+2. Add `src/shell/ExplorerCommands.h/.cpp` in `RectoShell.dll` implementing `IExplorerCommand` for "Combine in Recto" (two or more PDF or image files) and "Convert to PDF with Recto" (Office, HTML, Markdown and image files), registered as classic shell verbs. Done when: invoking the command on five files opens one Recto window with five staged files in Explorer selection order.
 
 - [ ] Parse `/p <file>` and `/pt <file> <printer> <driver> <port>` in `LaunchArgs` into a print-only request and run it headless through the print worker, exiting with 0 on success and a non-zero code with a logged reason on failure. Done when: `Shell.PrintVerbHeadless` asserts no window and the expected exit code.
 - [ ] When the document needs a password, show the password dialog and then print; when its permissions forbid printing, refuse with the reason and exit code 3 without opening any print dialog, matching §2's refusal. Done when: `Shell.PrintVerbHeadless` sees the password dialog for the encrypted fixture and exit code 3 with no dialog for the print-restricted fixture.
 - [ ] Implement `ExplorerCommands` returning `ECS_HIDDEN` for selections the command cannot handle and passing the full `IShellItemArray` to the running instance through the single-instance channel. Done when: a mixed selection shows only the applicable commands.
 - [ ] Preserve Explorer selection order and stage the files in Organize Combine or the Convert page without starting the job until the user confirms. Done when: the staged list matches the selection order in `Shell.ExplorerCombineOrder`.
-- [ ] Give the Full Inno Setup install package identity for the Windows 11 menu with a signed sparse package: author `installer/sparse/AppxManifest.xml` with `AllowExternalContent`, a `com:Extension Category="windows.comServer"` declaring `RectoShell.dll` as a `com:SurrogateServer` with the `IExplorerCommand` class ID, and a `desktop4:Extension Category="windows.fileExplorerContextMenus"` whose `desktop5:Verb` entries point at that class ID; sign the `.msix` with the release certificate. Done when: `MakeAppx`, `SignTool verify /pa` and a manifest schema check pass on the built package.
-- [ ] Register the sparse package per user, because `Add-AppxPackage` installs for the account that runs it: `Recto.exe` registers it for the signed-in user at first launch when `PackageManager.FindPackagesForUser` does not find it (`AddPackageByUriAsync` with `ExternalLocationUri` set to the install folder), the installer's `[Run]` step uses `runasoriginaluser` so the installing user is registered immediately, an upgrade re-registers the new version for each user at their next launch, and uninstall runs `Remove-AppxPackage -AllUsers` from the elevated uninstaller. The optional MSIX build carries the same declarations natively, and Portable mode registers nothing. Done when: on Windows 11 the installing user and a second standard user (after their first launch) both see the entries in the top-level menu, an upgrade keeps them, and uninstall leaves no package in `Get-AppxPackage -AllUsers`.
-- [ ] Register the classic `shell` verbs in `installer/recto.iss` for Windows 10 and "Show more options", and keep them as the fallback when sparse registration fails (logged, never fatal). Done when: both menus show the entries after install on Windows 11, the classic menu shows them on Windows 10, and none remain after uninstall.
+- [ ] Register `ExplorerCommands` as classic shell verbs under `HKCU\Software\Classes\SystemFileAssociations\.pdf\shell` (and the Office, HTML, Markdown and image extensions for Convert) from `installer/recto.iss`, each with `ExplorerCommandHandler` pointing at the `IExplorerCommand` class ID that `RectoShell.dll` registers under `HKCU\Software\Classes\CLSID`; the Windows 11 top-level menu entry (a signed sparse package) is not part of v1. Done when: on Windows 11 the entries appear under "Show more options" with the five-file selection order intact, and the install needs no certificate.
+- [ ] Make Portable mode (`/PORTABLE=1` and the `.zip`) register no verbs and no COM class, and make uninstall remove every key written above. Done when: `verify_installer.ps1` finds no `HKCU\Software\Classes` key added by a Portable run and none left after a Full uninstall.
+- [ ] Register the `print` and `printto` classic verbs and keep a failed `IExplorerCommand` registration non-fatal (logged), so the plain verbs still work. Done when: the `print` verb prints to Microsoft Print to PDF after a simulated `RectoShell.dll` registration failure and none remain after uninstall.
 - [ ] Assert install and first run never change the user's default PDF handler; only `Settings -> Default PDF app -> Make Recto your default PDF viewer` opens the Windows Default Apps page. Done when: `verify_installer.ps1` reads `UserChoice` before and after install and finds it unchanged.
 - [ ] Route the `print` and `printto` verbs through `PrintService::print_headless` with the `printto` printer argument as `PrintJobOptions::printer_name`. Done when: `Shell.PrintVerbHeadless` prints to the named queue given by `/pt` and `Print.NamedPrinterAndTicket` passes.
 - [ ] Commit: `shell: add print verbs and Explorer Combine and Convert commands for multi-file selections`
@@ -479,27 +485,30 @@ Foxit PDF Editor and PDFelement install a virtual PDF printer so any Windows app
 
 **Test checkpoint:** the dated decision section of `docs/specs/2026-10-21-virtual-printer-design.md` and the measured candidate runs are quoted verbatim.
 
-## 16. Recto PDF v4 driver package: manifest, INF, print capabilities and test-signed install
+## 16. Recto PDF v4 driver package: manifest, INF, print capabilities and static validation
 
-This section builds the driver package chosen in §15 so a developer can install `Recto PDF` on a test machine and the Full installer (§19) has a package to install. It is the Windows driver artefact of owner decision D21 and matches the virtual printers of Foxit PDF Editor and PDFelement. The package contains no code that parses documents; that stays in `Recto.exe` (§17), so a driver defect cannot become a parser exploit running as `SYSTEM`.
+This section builds the driver package chosen in §15 and validates it statically, so the Full installer (§19) has a package to install and the operator can prove a test-signed install (`D99 T01 §6`). Nothing here installs a driver or switches the machine into test-signing mode. It is the Windows driver artefact of owner decision D21 and matches the virtual printers of Foxit PDF Editor and PDFelement. The package contains no code that parses documents; that stays in `Recto.exe` (§17), so a driver defect cannot become a parser exploit running as `SYSTEM`.
+
+> **Groomed 2026-10-22:** removed `attended`. The package is authored and checked by script (`InfVerif`, `Inf2Cat` catalog generation, XML validation of the capabilities and ticket, the install scripts' dry-run and refusal paths); the test-signed install (`bcdedit` test signing, `pnputil /add-driver`, printing through the queue) moved to the operator section `D99 T01 §6` (owner decision 2026-10-22 (foundation plan section 1)).
 
 **Phase:** 6
-**Needs:** windows-host, attended
+**Needs:** windows-host
 **Surface:** no
 
 **Build order:**
 
-1. Add `src/printer/RectoPrinter.vcxproj` producing the package (`RectoPDF.inf`, the v4 manifest, print capabilities and catalog) for `x64` and `ARM64`. Done when: `build.cmd` builds both and `InfVerif` reports no errors.
-2. Add `scripts/install-test-printer.ps1` and `scripts/remove-test-printer.ps1` for developer machines in test-signing mode. Done when: `Get-Printer -Name "Recto PDF"` finds the queue after install and nothing after removal.
+1. Add `src/printer/RectoPrinter.vcxproj` producing the package (`RectoPDF.inf`, the v4 manifest, print capabilities and an unsigned catalog) for `x64` and `ARM64`. Done when: `build.cmd` builds both, `InfVerif` reports no errors and `Inf2Cat` generates the catalog without errors.
+2. Author `scripts/install-test-printer.ps1` and `scripts/remove-test-printer.ps1` for the operator's test-signing machine (run only in `D99 T01 §6`), each with a `-WhatIf` plan mode. Done when: `tests/scripts/test_printer_package.py` shows `-WhatIf` prints every planned step and changes nothing, and a real run on a host that is not in test-signing mode exits `2` without touching the machine.
 
 - [ ] Author `src/printer/RectoPDF.inf` and the v4 manifest with the §15 `PrinterDriverID`, `NotShareable`, the XPS formats and the port or extension wiring chosen there. Done when: `InfVerif /v` passes and the manifest parses with `MakeCat`. Cheaper substitute: reusing the name of another vendor's driver.
-- [ ] Author the `PrintDeviceCapabilities` and default `PrintTicket` files: paper sizes A3, A4, A5, Letter, Legal and Tabloid, portrait and landscape, colour, and no finishing or duplex features. Done when: `scripts/install-test-printer.ps1` followed by a query of the queue's PrintCapabilities document (through `System.Printing` `PrintQueue.GetPrintCapabilitiesAsXml`) lists those six sizes, and `Get-PrintConfiguration -PrinterName "Recto PDF"` shows the default ticket's paper size, orientation and colour as defined in the default `PrintTicket`.
-- [ ] Write `scripts/install-test-printer.ps1`, which refuses to run unless the machine is in test-signing mode and the shell is elevated, stages the package with `pnputil`, adds the driver and the queue, and prints each step. Done when: running it on a clean test VM creates the queue and a second run is a no-op.
-- [ ] Write `scripts/remove-test-printer.ps1`, which removes the queue, the driver and the staged package and reports anything left behind. Done when: after removal `pnputil /enum-drivers` and `Get-PrinterDriver` show no Recto entry.
-- [ ] Add `tests/scripts/verify_printer.ps1 -Mode Driver` that installs the test package, prints a one page test document to the queue with the §17 hand-off disabled, finds one spool file, and removes the package in a `try / finally`. Done when: it exits `0` and leaves no queue or file behind.
-- [ ] Commit: `feat(printer): add the Recto PDF v4 driver package and test-signed install scripts`
+- [ ] Generate the catalog with `Inf2Cat /driver:<package folder> /os:10_X64,10_ARM64` (unsigned) in `src/printer/RectoPrinter.vcxproj`, and record the catalog name that `D07 T01 §20` and `D99 T01 §7` submit and replace. Done when: `RectoPDF.cat` exists for both architectures and `Inf2Cat` exits `0`.
+- [ ] Author the `PrintDeviceCapabilities` and default `PrintTicket` files: paper sizes A3, A4, A5, Letter, Legal and Tabloid, portrait and landscape, colour, and no finishing or duplex features. Done when: `tests/scripts/test_printer_package.py` parses both XML files against the Print Schema namespaces, lists those six sizes, and finds the default ticket's paper size, orientation and colour as defined (the live query through `PrintQueue.GetPrintCapabilitiesAsXml` is part of `D99 T01 §6`).
+- [ ] Write `scripts/install-test-printer.ps1`, which refuses to run unless the machine is in test-signing mode and the shell is elevated, stages the package with `pnputil`, adds the driver and the queue, and prints each step. Done when: `-WhatIf` lists the steps and the refusal path exits `2` on this host in `test_printer_package.py`; the real install on a clean test machine is proven in `D99 T01 §6`.
+- [ ] Write `scripts/remove-test-printer.ps1`, which removes the queue, the driver and the staged package and reports anything left behind. Done when: `-WhatIf` lists the removal steps and a run with nothing installed exits `0` and reports nothing left (the real removal is proven in `D99 T01 §6`).
+- [ ] Author `tests/scripts/verify_printer.ps1 -Mode Driver`, which installs the test package, prints a one page test document to the queue with the §17 hand-off disabled, finds one spool file, and removes the package in a `try / finally`; it exits `2` before touching anything unless the host is in test-signing mode. Done when: `test_printer_package.py` runs it on this host and gets exit `2` with no queue, driver or file created (the passing run is `D99 T01 §6`).
+- [ ] Commit: `feat(printer): add the Recto PDF v4 driver package and static validation`
 
-**Test checkpoint:** `pwsh -NoProfile -File tests/scripts/verify_printer.ps1 -Mode Driver` exits `0` on a test-signing VM with its `[PASS]` lines quoted.
+**Test checkpoint:** `python -m unittest tests.scripts.test_printer_package` passes, and `InfVerif /v` and `Inf2Cat` exit `0` on the built `x64` and `ARM64` packages, with their output lines quoted.
 
 ## 17. Virtual printer spool hand-off: XPS to PDF in the user's session
 
@@ -554,47 +563,51 @@ When a user prints from another program to `Recto PDF`, the result is either sav
 
 ## 19. Full installer integration and end-to-end proof for the Recto PDF printer
 
-The Full installer installs the signed `Recto PDF` driver and queue; Portable mode and per-user installs install nothing, and uninstall removes everything (owner decision D21). This section wires the §16 package into `installer/recto.iss`, extends `tests/scripts/verify_installer.ps1`, and proves a real print from a real program reaches a PDF. The optional MSIX build cannot install a driver, so it omits the printer and says so.
+The Full installer installs the signed `Recto PDF` driver and queue; Portable mode and per-user installs install nothing, and uninstall removes everything (owner decision D21). This section wires the §16 package into `installer/recto.iss`, extends `tests/scripts/verify_installer.ps1`, and proves the hand-off from a spooled XPS reaches a PDF; the print through a really installed driver is proven by the operator in `D99 T01 §6`. The optional MSIX build cannot install a driver, so it omits the printer and says so.
+
+> **Groomed 2026-10-22:** removed `attended`. The installer task, the uninstall rows, the Settings install status and the hand-off are proven in this section with the installer built into a temporary folder with the printer task off and with the spool pipeline fed a recorded XPS spool; installing the driver and printing through the installed queue (including upgrade and uninstall of a real queue) is the operator section `D99 T01 §6` (owner decision 2026-10-22 (foundation plan section 1)).
 
 **Phase:** 6
-**Needs:** windows-host, display-session, attended
+**Needs:** windows-host, display-session
 **Surface:** no
 
 **Build order:**
 
 1. Add the printer task and the `[Run]` and `[UninstallRun]` steps to `installer/recto.iss`, all guarded by `Check: not IsPortableMode` and an elevation check. Done when: `python -m unittest tests.scripts.test_installer_printer` passes.
-2. Add `verify_installer.ps1 -Mode Printer`, which installs, prints, upgrades and uninstalls. Done when: it exits `0` on a test-signing VM.
+2. Add `verify_installer.ps1 -Mode Printer`, which installs the Full installer silently into a temporary folder with the printer task off, asserts no queue, driver or `pnputil` entry appears, runs the spool hand-off, and uninstalls; `-Mode Printer -Live` (operator, `D99 T01 §6`) installs the printer task, prints, upgrades and uninstalls on a test-signing machine. Done when: `-Mode Printer` exits `0` on this host.
 
 - [ ] Add a `printer` task to `installer/recto.iss` (checked by default, shown only when the installer runs elevated and the printer package is present in the stage folder) running the §15 install commands, and skip it with a logged message in `/CURRENTUSER` installs and in Portable mode. Done when: `tests/scripts/test_installer_printer.py` finds every printer `[Run]` row guarded and the task hidden when not elevated.
-- [ ] Add the matching `[UninstallRun]` removal (queue, driver, staged package) that tolerates a missing queue and reports a stuck job. Done when: `verify_installer.ps1 -Mode Printer` finds no queue, driver or `pnputil` entry after uninstall.
-- [ ] On upgrade, replace the driver package in place when the version is newer and keep the queue and the user's saved settings. Done when: `verify_installer.ps1 -Mode Printer` upgrades `1.0.0` to `1.0.1` and finds the same queue name with the new package version.
-- [ ] Print `tests/corpus/render/two-column-article.pdf` to the queue with `Recto.exe /pt` (the `printto` verb of §9) in `SaveToFolder` mode and compare the output PDF text and page images. Done when: the PDF exists, `recto-cli text` returns the fixture's words, and page `SSIM >= 0.95` against the source render.
+- [ ] Add the matching `[UninstallRun]` removal (queue, driver, staged package) that tolerates a missing queue and reports a stuck job. Done when: `tests/scripts/test_installer_printer.py` finds each removal row tolerant of a missing queue, and `verify_installer.ps1 -Mode Printer` finds no queue, driver or `pnputil` entry after uninstall (the real queue removal runs in `-Live`).
+- [ ] On upgrade, replace the driver package in place when the version is newer and keep the queue and the user's saved settings. Done when: `test_installer_printer.py` finds the upgrade rows compare package versions and keep the queue name; `verify_installer.ps1 -Mode Printer -Live` (operator) upgrades `1.0.0` to `1.0.1` and finds the same queue name with the new package version.
+- [ ] Feed the hand-off a spool made by printing `tests/corpus/render/two-column-article.pdf` with `Recto.exe /pt` to the in-box `Microsoft XPS Document Writer` queue when it is installed, otherwise the recorded `tests/corpus/render/printed-sample.xps`, through `Recto.exe /virtual-print --import` in `SaveToFolder` mode, and compare the output PDF text and page images. Done when: the PDF exists, `recto-cli text` returns the fixture's words, and page `SSIM >= 0.95` against the source render; the same print through the real `Recto PDF` queue is `D99 T01 §6`.
 - [ ] Assert Portable mode (`/PORTABLE=1` and the `.zip`) installs no queue and the Settings status line reads "Not available in Portable mode". Done when: `verify_installer.ps1 -Mode Printer` finds no Recto printer after a portable run.
 - [ ] Make `build/build-installer.ps1 -EnableMsix` skip the printer and write "The Recto PDF printer is not part of the MSIX package" to the build log and to `docs/store-listing.md`. Done when: the MSIX build log contains the line and `scripts/verify-release-kit.py` finds the sentence.
-- [ ] Commit: `release: install and prove the Recto PDF virtual printer in the Full installer only`
+- [ ] Commit: `release: integrate and prove the Recto PDF virtual printer in the Full installer`
 
-**Test checkpoint:** `pwsh -NoProfile -File tests/scripts/verify_installer.ps1 -Mode Printer` exits `0` with its `[PASS]` lines quoted.
+**Test checkpoint:** `pwsh -NoProfile -File tests/scripts/verify_installer.ps1 -Mode Printer` exits `0` with its `[PASS]` lines quoted, and `python -m unittest tests.scripts.test_installer_printer` passes.
 
-## 20. Recto PDF driver signing through the Windows Hardware Dev Center and release gate
+## 20. Recto PDF driver signature check, signing runbook and release gate
 
-A production printer driver must carry a signature that Windows accepts without test mode, and Microsoft issues it through the Windows Hardware Dev Center (owner decision D21; `third-party`). This section documents the signing procedure, adds the check that keeps an unsigned or test-signed driver out of a release, and defines what ships if signing is not finished: the Full installer ships without the printer and the Settings status line says it is not available, so a missing signature removes a feature and never ships a broken or untrusted driver.
+A production printer driver must carry a signature that Windows accepts without test mode, and Microsoft issues it through the Windows Hardware Dev Center (owner decision D21). This section documents the signing procedure, adds the check that keeps an unsigned or test-signed driver out of a release, and defines what ships without a signature: the release script includes the printer only when a Hardware Dev Center signed catalog is present, otherwise it builds the release without the printer and the Settings status line says "Not installed", so a missing signature removes a feature and never ships a broken or untrusted driver. The submission and signing itself is the operator section `D99 T01 §7`.
+
+> **Groomed 2026-10-22:** removed `third-party` and `operator`. The runbook, the signature check and the release-script rule are built and tested here without any account; submitting the package and signing it moved to `D99 T01 §7` (owner decision 2026-10-22 (foundation plan section 1)). No release-candidate section depends on that step.
 
 **Phase:** 6
-**Needs:** third-party, operator
+**Needs:** windows-host
 **Surface:** no
 
 **Build order:**
 
-1. Write `docs/driver-signing-runbook.md` and `scripts/check-driver-signature.ps1`. Done when: the script rejects a test-signed package and accepts a Microsoft-signed one.
-2. Gate `build/build-installer.ps1` on that check. Done when: a release build with a test-signed package omits the printer task.
+1. Write `docs/driver-signing-runbook.md` and `scripts/check-driver-signature.ps1`. Done when: the script rejects an unsigned or test-signed catalog and accepts a Microsoft-signed one (an in-box catalog under `%SystemRoot%\System32\CatRoot` is the positive fixture).
+2. Gate `build/build-installer.ps1` on that check and on the drop-in folder `installer/driver/signed/<arch>/` holding the signed catalog. Done when: a release build without a signed catalog, or with a test-signed one, omits the printer task and its files.
 
-- [ ] Write `docs/driver-signing-runbook.md` covering the Hardware Dev Center account and its extended validation code signing certificate, building the submission package for `x64` and `ARM64`, the route chosen in §15 (attestation or HLK), downloading the signed package, and verifying it on a clean machine without test mode. Done when: an operator can follow it without other documents, and the owner's account steps are listed as operator actions in `todo/99-manual`.
-- [ ] Write `scripts/check-driver-signature.ps1` running `signtool verify /kp /v` on the catalog and `pnputil /add-driver` on a clean VM, failing on test certificates. Done when: the script exits non-zero for the §16 test-signed package.
-- [ ] Add the gate to `build/build-installer.ps1`: a release build includes the printer task only when `check-driver-signature.ps1` passes; `-AllowTestSignedPrinter` exists for developer builds only and writes a banner to the log and the setup file name. Done when: `tests/scripts/test_installer_printer.py` finds a release build without a signature contains no printer task and no printer files.
+- [ ] Write `docs/driver-signing-runbook.md` covering the Hardware Dev Center account and its extended validation code signing certificate, building the submission package for `x64` and `ARM64`, the route chosen in §15 (attestation or HLK), downloading the signed package, placing it in `installer/driver/signed/<arch>/`, and verifying it on a clean machine without test mode. Done when: an operator can follow it without other documents, and the account steps are the operator actions of `D99 T01 §7`.
+- [ ] Write `scripts/check-driver-signature.ps1` running `signtool verify /kp /v` on the catalog and failing on a missing signature or a test certificate (the `pnputil /add-driver` check on a clean machine belongs to `D99 T01 §7`). Done when: `tests/scripts/test_installer_printer.py` gets a non-zero exit for the §16 unsigned catalog and for a catalog signed with a throwaway test certificate it creates, and exit `0` for the in-box Microsoft-signed catalog.
+- [ ] Add the gate to `build/build-installer.ps1`: a release build includes the printer task only when the signed catalog is present in `installer/driver/signed/<arch>/` and `check-driver-signature.ps1` passes; otherwise it builds the release without the printer task and files and logs "Recto PDF printer not included: no Hardware Dev Center signed catalog", so the Settings status line (`§18`) shows "Not installed". `-AllowTestSignedPrinter` exists for developer builds only and writes a banner to the log and the setup file name. Done when: `tests/scripts/test_installer_printer.py` finds a release build without a signature contains no printer task and no printer files.
 - [ ] Record the shipping default in `docs/release-and-store-runbook.md`: version 1 ships without the printer if the signature is missing (the cost is a missing feature, not a broken one). Done when: the runbook states the default and how to add the printer in a point release.
 - [ ] Commit: `release: gate the Recto PDF driver on a Hardware Dev Center signature`
 
-**Test checkpoint:** `python -m unittest tests.scripts.test_installer_printer` passes and `pwsh scripts/check-driver-signature.ps1 -Path build/stage/x64/printer` exits non-zero for a test-signed package and `0` for the Microsoft-signed one, with both outputs quoted.
+**Test checkpoint:** `python -m unittest tests.scripts.test_installer_printer` passes and `pwsh scripts/check-driver-signature.ps1 -Path build/stage/x64/printer` exits non-zero for the unsigned and test-signed fixtures and `0` for the Microsoft-signed one, with the outputs quoted.
 
 ## Verification
 
