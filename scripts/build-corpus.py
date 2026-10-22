@@ -2284,7 +2284,7 @@ def ascii85_decode_pdf(encoded: bytes) -> bytes:
     """An ASCII85Decode stream decoded as ISO 32000-1 7.4.3 defines it, refusing what a lenient decoder would pass:
     a character outside ! to u (whitespace aside), z anywhere but at the start of a group, a group worth 2**32 or
     more, a final group of one character, and anything but whitespace after the ~> EOD marker."""
-    body = encoded.strip()
+    body = encoded.strip(b" \t\r\n\f\x00")  # PDF white space only (ISO 32000-1 Table 1), never a vertical tab
     if not body.endswith(b"~>") or b"~" in body[:-2]:
         raise ValueError("ASCII85 stream must end at its one '~>' EOD marker")
     out, group = bytearray(), []
@@ -2528,6 +2528,8 @@ def ccitt_g4_decode(rel_path: str, data: bytes, columns: int, rows: int) -> list
                         runs.append(run)
                     a1 = max(a0, 0) + runs[0]
                     a2 = a1 + runs[1]
+                    if a2 <= max(a0, 0):
+                        raise ValueError(f"{rel_path}: CCITT horizontal runs on line {row} make no progress")
                     if a2 > columns:
                         raise ValueError(f"{rel_path}: CCITT horizontal runs on line {row} pass the end of the line")
                     changes += [x for x in (a1, a2) if x < columns]
@@ -2561,6 +2563,13 @@ CCITT_EXPECTED_16X16 = ([[0] * 4 + [1] * 8 + [0] * 4] * 2 + [[0] * 5 + [1] * 8 +
 
 
 def validate_jbig2_embedded(rel_path: str, data: bytes) -> None:
+    try:
+        _validate_jbig2_embedded(rel_path, data)
+    except (struct.error, IndexError) as exc:  # a header cut short: malformed input, reported like any other
+        raise ValueError(f"{rel_path}: JBIG2 header cut short ({exc})") from exc
+
+
+def _validate_jbig2_embedded(rel_path: str, data: bytes) -> None:
     """An embedded JBIG2 stream (ISO 32000-1 7.4.7, ISO/IEC 14492 7.2) read segment by segment: exactly a page
     information segment (48) for a 16x16 page, an immediate lossless generic region (38) of 16x16 at the origin coded
     with MMR, whose data decodes as CCITT Group 4 to the expected image, and an end of page (49), numbered 0 to 2 on
@@ -2599,9 +2608,16 @@ def validate_jpeg_baseline(rel_path: str, data: bytes, width: int, height: int, 
     length-prefixed segments including DQT, SOF0 (8-bit, width x height, the given component count, 1x1 sampling),
     DHT and SOS, then entropy-coded data holding exactly the MCUs the frame needs, padded with 1 bits, then EOI and
     nothing after."""
+    try:
+        _validate_jpeg_baseline(rel_path, data, width, height, components)
+    except (struct.error, IndexError) as exc:  # a header cut short: malformed input, reported like any other
+        raise ValueError(f"{rel_path}: JPEG header cut short ({exc})") from exc
+
+
+def _validate_jpeg_baseline(rel_path: str, data: bytes, width: int, height: int, components: int) -> None:
     if not data.startswith(b"\xFF\xD8"):
         raise ValueError(f"{rel_path}: JPEG does not start with SOI")
-    pos, seen, tables, frame, scan = 2, [], {}, None, None
+    pos, seen, tables, frame, scan, quant = 2, [], {}, None, None, set()
     while scan is None:
         if pos + 4 > len(data) or data[pos] != 0xFF:
             raise ValueError(f"{rel_path}: JPEG marker expected at byte {pos}")
@@ -2616,6 +2632,8 @@ def validate_jpeg_baseline(rel_path: str, data: bytes, width: int, height: int, 
             comps = [body[6 + 3 * i : 9 + 3 * i] for i in range(n)]
             if (p, y, x, n) != (8, height, width, components) or len(body) != 6 + 3 * n or any(c[1] != 0x11 for c in comps):
                 raise ValueError(f"{rel_path}: JPEG SOF0 is not 8-bit {width}x{height} with {components} 1x1 components")
+            if len({c[0] for c in comps}) != n or any(c[2] not in quant for c in comps):
+                raise ValueError(f"{rel_path}: JPEG SOF0 component ids repeat or name an undefined quantization table")
             frame = [c[0] for c in comps]
         elif marker == 0xC4:
             at = 0
@@ -2624,9 +2642,14 @@ def validate_jpeg_baseline(rel_path: str, data: bytes, width: int, height: int, 
                 symbols = body[at + 17 : at + 17 + sum(counts)]
                 if len(counts) != 16 or len(symbols) != sum(counts):
                     raise ValueError(f"{rel_path}: JPEG DHT table cut short")
+                if tc_th >> 4 > 1 or tc_th & 0x0F > 3:
+                    raise ValueError(f"{rel_path}: JPEG DHT class or id out of range")
                 codes, code = {}, 0
                 for bits_len, count in enumerate(counts, 1):
                     for _ in range(count):
+                        # Canonical codes (T.81 Annex C): each fits its length, and the all-ones code is reserved.
+                        if code >= (1 << bits_len) - 1:
+                            raise ValueError(f"{rel_path}: JPEG DHT code lengths overflow the code space")
                         codes[(code, bits_len)] = symbols[len(codes)]
                         code += 1
                     code <<= 1
@@ -2637,7 +2660,21 @@ def validate_jpeg_baseline(rel_path: str, data: bytes, width: int, height: int, 
             if frame is None or n != len(frame) or len(body) != 4 + 2 * n or body[-3:] != b"\x00\x3F\x00":
                 raise ValueError(f"{rel_path}: JPEG SOS is not one baseline scan of the frame's components")
             scan = [(body[1 + 2 * i], body[2 + 2 * i]) for i in range(n)]
-        elif marker not in (0xDB, 0xE0):
+            if [c for c, _ in scan] != frame:
+                raise ValueError(f"{rel_path}: JPEG SOS does not name the frame's components in order")
+        elif marker == 0xDB:
+            # Quantization tables (T.81 B.2.4.1): 8-bit precision, id 0 to 3, 64 values, none zero.
+            at = 0
+            while at < len(body):
+                pq_tq = body[at]
+                values = body[at + 1 : at + 65]
+                if pq_tq >> 4 != 0 or pq_tq & 0x0F > 3 or len(values) != 64 or 0 in values:
+                    raise ValueError(f"{rel_path}: JPEG DQT is not 8-bit tables of 64 non-zero values")
+                quant.add(pq_tq & 0x0F)
+                at += 65
+            if not body:
+                raise ValueError(f"{rel_path}: JPEG DQT defines no table")
+        elif marker != 0xE0:
             raise ValueError(f"{rel_path}: JPEG segment {marker:#04x} is not one a baseline corpus image uses")
         pos += 2 + length
     if not {0xDB, 0xC0, 0xC4, 0xDA} <= set(seen):
@@ -2680,9 +2717,16 @@ def validate_jpx_codestream(rel_path: str, data: bytes, width: int, height: int)
     """A JPEG 2000 codestream (ISO 32000-1 7.4.9, ISO/IEC 15444-1 Annex A) read marker by marker: SOC, SIZ for one
     8-bit unsigned component of width x height in one tile, COD and QCD in the main header, then one tile-part whose
     SOT Psot spans exactly from SOT to EOC, SOD, and EOC as the last two bytes."""
+    try:
+        _validate_jpx_codestream(rel_path, data, width, height)
+    except (struct.error, IndexError) as exc:  # a header cut short: malformed input, reported like any other
+        raise ValueError(f"{rel_path}: JPX header cut short ({exc})") from exc
+
+
+def _validate_jpx_codestream(rel_path: str, data: bytes, width: int, height: int) -> None:
     if not data.startswith(b"\xFF\x4F\xFF\x51"):
         raise ValueError(f"{rel_path}: JPX codestream does not start with SOC then SIZ")
-    pos, seen = 2, []
+    pos, seen, levels = 2, [], None
     while True:
         if pos + 4 > len(data) or data[pos] != 0xFF:
             raise ValueError(f"{rel_path}: JPX marker expected at byte {pos}")
@@ -2705,14 +2749,78 @@ def validate_jpx_codestream(rel_path: str, data: bytes, width: int, height: int)
                 raise ValueError(f"{rel_path}: JPX tile-part Psot {psot} does not span SOT to EOC")
             if data[pos + 12 : pos + 14] != b"\xFF\x93":
                 raise ValueError(f"{rel_path}: JPX tile-part header does not end in SOD")
+            _validate_jpx_single_packet(rel_path, data[pos + 14 : len(data) - 2])
             break
-        elif marker not in (0x52, 0x5C):
-            raise ValueError(f"{rel_path}: JPX main-header segment {marker:#04x} is not one the corpus image uses")
+        elif marker == 0x52:
+            # COD (T.800 A.6.1): default precincts, LRCP, one layer, no colour transform (one component), then the
+            # code-block size, style 0 and the reversible 5-3 transform the corpus writes.
+            if length != 12:
+                raise ValueError(f"{rel_path}: JPX COD length {length} is not 12 (no precinct sizes)")
+            scod, order, layers, mct, levels, xcb, ycb, style, transform = struct.unpack(">BBHBBBBBB", body)
+            if (scod, order, layers, mct, style, transform) != (0, 0, 1, 0, 0, 1) or levels > 32 \
+                    or xcb > 8 or ycb > 8 or xcb + ycb > 8:
+                raise ValueError(f"{rel_path}: JPX COD is not one layer, no transform, valid code-blocks, 5-3 reversible")
+        elif marker == 0x5C:
+            # QCD (T.800 A.6.4): no quantization (style 0, for the reversible transform), one exponent byte per subband.
+            if levels is None:
+                raise ValueError(f"{rel_path}: JPX QCD before COD")
+            if body[:1] == b"" or body[0] & 0x1F != 0 or length != 3 + 3 * levels + 1:
+                raise ValueError(f"{rel_path}: JPX QCD is not unquantized with one exponent per subband")
         pos += 2 + length
     if seen[:1] != [0x51] or not {0x52, 0x5C} <= set(seen):
         raise ValueError(f"{rel_path}: JPX main header lacks SIZ first, COD or QCD")
     if not data.endswith(b"\xFF\xD9") or len(data) - 2 <= pos + 14:
         raise ValueError(f"{rel_path}: JPX codestream does not end with EOC after tile data")
+
+
+def _validate_jpx_single_packet(rel_path: str, packet: bytes) -> None:
+    """The tile's one packet (one layer, one resolution, one component, one precinct, one code-block), read as T.800
+    B.10 codes it: the empty flag; for a non-empty packet the code-block's inclusion, zero bit-planes, pass count and
+    length; then byte alignment (a byte after 0xFF holds 7 bits). The tile-part must hold exactly the header and the
+    code-block data it announces."""
+    pos, bit, stuffed = 0, 0, False
+
+    def read() -> int:
+        nonlocal pos, bit, stuffed
+        if pos >= len(packet):
+            raise ValueError(f"{rel_path}: JPX packet header runs past the tile-part")
+        width = 7 if stuffed else 8
+        value = packet[pos] >> (width - 1 - bit) & 1
+        bit += 1
+        if bit == width:
+            stuffed, pos, bit = packet[pos] == 0xFF, pos + 1, 0
+        return value
+
+    length = 0
+    if read():
+        if read():  # included in layer 0 (a one-node inclusion tag tree)
+            zeros = 0
+            while not read():
+                zeros += 1
+                if zeros > 38:
+                    raise ValueError(f"{rel_path}: JPX zero bit-plane count out of range")
+            if read() == 0:
+                passes = 1
+            elif read() == 0:
+                passes = 2
+            else:
+                extra = (read() << 1) | read()
+                if extra != 3:
+                    passes = 3 + extra
+                else:
+                    extra = sum(read() << (4 - i) for i in range(5))
+                    passes = 6 + extra if extra != 31 else 37 + sum(read() << (6 - i) for i in range(7))
+            lblock = 3
+            while read():
+                lblock += 1
+            for _ in range(lblock + passes.bit_length() - 1):
+                length = (length << 1) | read()
+    if bit:
+        pos += 1
+    if stuffed and bit == 0 and pos < len(packet) and packet[pos - 1] == 0xFF:
+        pos += 1  # the header's last byte was 0xFF: one stuffed byte follows
+    if pos + length != len(packet):
+        raise ValueError(f"{rel_path}: JPX tile-part holds {len(packet)} bytes, not the packet's {pos + length}")
 
 
 def build_seed_classic_xref() -> bytes:
@@ -2991,7 +3099,7 @@ def make_minimal_jpx_8x8_gray() -> bytes:
     cod = b"\xFF\x52" + struct.pack(">H", len(cod_body) + 2) + cod_body
     qcd_body = bytes([0x00, 0x40])
     qcd = b"\xFF\x5C" + struct.pack(">H", len(qcd_body) + 2) + qcd_body
-    tile_bitstream = b"\x80\x00"
+    tile_bitstream = b"\x00"  # one empty packet (T.800 B.10.3): no code-block data
     psot = 12 + 2 + len(tile_bitstream)
     sot = b"\xFF\x90" + struct.pack(">HHIBB", 10, 0, psot, 0, 1)
     sod = b"\xFF\x93" + tile_bitstream

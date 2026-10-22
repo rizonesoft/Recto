@@ -772,20 +772,71 @@ class BuildCorpusTests(unittest.TestCase):
                         self.mod.generate_corpus(root)
                     prov.write_text(good, encoding="utf-8", newline="\n")
 
-    def test_ascii_hex_run_length_and_png_predictor_decoders_are_strict(self) -> None:
-        m = self.mod
-        self.assertEqual(m.asciihex_decode_pdf("x", b"48 65\n6c6C6>"), b"Hell`")  # odd final digit reads as x0
+    def test_ascii_hex_is_decoded_strictly(self) -> None:
+        self.assertEqual(self.mod.asciihex_decode_pdf("x", b"48 65\n6c6C6>"), b"Hell`")  # odd final digit reads as x0
         for bad in (b"4G>", b"48", b"48>x", b"4>8>"):
             with self.subTest(hex=bad), self.assertRaises(ValueError):
-                m.asciihex_decode_pdf("x", bad)
-        self.assertEqual(m.rle_decode_pdf(bytes([1]) + b"ab" + bytes([128])), b"ab")
+                self.mod.asciihex_decode_pdf("x", bad)
+
+    def test_run_length_refuses_data_after_eod(self) -> None:
+        self.assertEqual(self.mod.rle_decode_pdf(bytes([1]) + b"ab" + bytes([128])), b"ab")
         with self.assertRaisesRegex(ValueError, "after the RunLengthDecode EOD"):
-            m.rle_decode_pdf(bytes([1]) + b"ab" + bytes([128]) + b"x")
-        none_row = zlib.compress(bytes([0]) + b"abcdefgh")  # tag 0, a row the corpus never writes
+            self.mod.rle_decode_pdf(bytes([1]) + b"ab" + bytes([128]) + b"x")
+
+    def test_png_predictor_reads_only_up_rows(self) -> None:
         with self.assertRaisesRegex(ValueError, "not Up"):
-            m.flate_png_up_decompress(none_row, columns=8)
+            self.mod.flate_png_up_decompress(zlib.compress(bytes([0]) + b"abcdefgh"), columns=8)  # tag 0 (None)
         with self.assertRaisesRegex(ValueError, "whole rows"):
-            m.flate_png_up_decompress(zlib.compress(b""), columns=8)
+            self.mod.flate_png_up_decompress(zlib.compress(b""), columns=8)
+
+    def test_ascii85_strips_only_pdf_white_space(self) -> None:
+        seed = b"\x03" + b"\x0b" + self.mod.ascii85_encode_pdf(self.mod.KNOWN_FILTER_PLAINTEXT)  # vertical tab
+        with self.assertRaises(ValueError):
+            self.mod.validate_seed_filter_bin_structure("seeds/seed-filter-03-ascii85.bin", seed)
+
+    def test_ccitt_horizontal_mode_must_progress(self) -> None:
+        with self.assertRaisesRegex(ValueError, "make no progress"):
+            self.mod.validate_seed_filter_bin_structure("seeds/seed-filter-06-ccitt.bin",
+                                                        bytes.fromhex("06362fb74a3ffc9a86f0010010"))
+
+    def test_truncated_image_headers_are_value_errors(self) -> None:
+        for check, data in ((lambda d: self.mod.validate_jpeg_baseline("x", d, 8, 8, 3), "ffd8ffc00002"),
+                            (lambda d: self.mod.validate_jpeg_baseline("x", d, 8, 8, 3), "ffd8ffda0002"),
+                            (lambda d: self.mod.validate_jpx_codestream("x", d, 8, 8), "ff4fff510002"),
+                            (lambda d: self.mod.validate_jbig2_embedded("x", d), "0000000030")):
+            with self.subTest(data=data), self.assertRaises(ValueError):
+                check(bytes.fromhex(data))
+
+    def test_jpeg_tables_and_scan_components_are_checked(self) -> None:
+        jpeg = self.mod.make_minimal_jpeg_8x8_rgb()
+        dqt = jpeg.index(b"\xFF\xDB")
+        no_tables = jpeg[:dqt] + b"\xFF\xDB\x00\x02" + jpeg[dqt + 4 + 65 :]
+        sos = jpeg.index(b"\xFF\xDA")
+        wrong_component = jpeg[: sos + 5] + bytes([99]) + jpeg[sos + 6 :]
+        dht = jpeg.index(b"\xFF\xC4")
+        # The first table: one code of length 1 becomes two, the second being the reserved all-ones code.
+        table = jpeg[dht + 4 : dht + 4 + 18]
+        overflow_table = table[:1] + bytes([2]) + table[2:17] + b"\x00\x01"
+        rest = jpeg[dht + 4 + 18 : dht + 2 + int.from_bytes(jpeg[dht + 2 : dht + 4], "big")]
+        overflow = jpeg[:dht] + b"\xFF\xC4" + (len(overflow_table + rest) + 2).to_bytes(2, "big") + overflow_table + rest \
+            + jpeg[dht + 2 + int.from_bytes(jpeg[dht + 2 : dht + 4], "big") :]
+        for data, says in ((no_tables, "DQT"), (wrong_component, "SOS"), (overflow, "code space")):
+            with self.subTest(says=says), self.assertRaisesRegex(ValueError, says):
+                self.mod.validate_jpeg_baseline("x", data, 8, 8, 3)
+
+    def test_jpx_cod_qcd_and_packet_are_read(self) -> None:
+        jpx = self.mod.make_minimal_jpx_8x8_gray()
+        cod, qcd = jpx.index(b"\xFF\x52"), jpx.index(b"\xFF\x5C")
+        short_cod = jpx[:cod] + b"\xFF\x52\x00\x02" + jpx[cod + 14 :]
+        short_qcd = jpx[:qcd] + b"\xFF\x5C\x00\x02" + jpx[qcd + 6 :]
+        sod = jpx.index(b"\xFF\x93")
+        junk = jpx[: sod + 2] + b"\xFF\xFF" + b"\xFF\xD9"
+        junk = junk.replace(self.mod.struct.pack(">I", 15), self.mod.struct.pack(">I", 16), 1)  # Psot covers it
+        old_packet = jpx[: sod + 2] + b"\x80\x00" + b"\xFF\xD9"  # the generator's former 80 00 tile
+        old_packet = old_packet.replace(self.mod.struct.pack(">I", 15), self.mod.struct.pack(">I", 16), 1)
+        for data, says in ((short_cod, "COD"), (short_qcd, "QCD"), (junk, "packet"), (old_packet, "packet")):
+            with self.subTest(says=says), self.assertRaisesRegex(ValueError, says):
+                self.mod.validate_jpx_codestream("x", data, 8, 8)
 
     def test_image_codecs_are_read_by_their_own_structure(self) -> None:
         m = self.mod

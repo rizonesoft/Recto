@@ -474,6 +474,31 @@ TEST(PdfFilters, AsciiFilters)
 	}
 }
 
+// The image filter seeds the corpus validator reads by their own structure (scripts/build-corpus.py, D06 T05 §26) must
+// also decode in the engine: the two checks agree on what a well-formed seed is.
+TEST(PdfFilters, CorpusImageSeedsDecode)
+{
+	const auto jpx_seed = recto::test::read_file_bytes(recto::test::corpus_path("seeds/seed-filter-09-jpx.bin"));
+	ASSERT_GE(jpx_seed.size(), 2u);
+	ASSERT_EQ(jpx_seed[0], 0x09u);
+	auto jpx = decode_jpx_image(std::span<const uint8_t>(jpx_seed).subspan(1));
+	RECTO_ASSERT_OK(jpx);
+	EXPECT_EQ(jpx->width, 8u);
+	EXPECT_EQ(jpx->height, 8u);
+	EXPECT_EQ(jpx->components, 1u);
+	// One empty packet: no coded data, so every sample is the 8-bit level shift.
+	EXPECT_EQ(jpx->pixels, std::vector<uint8_t>(64, 128));
+
+	const auto dct_seed = recto::test::read_file_bytes(recto::test::corpus_path("seeds/seed-filter-08-dct.bin"));
+	ASSERT_GE(dct_seed.size(), 2u);
+	ASSERT_EQ(dct_seed[0], 0x08u);
+	auto dct = decode_dct_image(std::span<const uint8_t>(dct_seed).subspan(1));
+	RECTO_ASSERT_OK(dct);
+	EXPECT_EQ(dct->width, 8u);
+	EXPECT_EQ(dct->height, 8u);
+	EXPECT_EQ(dct->components, 3u);
+}
+
 TEST(PdfFilters, RunLengthDecode)
 {
 	// 1. Seed fixture seeds/seed-filter-05-runlength.bin.
