@@ -13,6 +13,8 @@ track: M2
 
 > **Current state:** Measured 2026-10-14. `D00 T01 §3` (stamped) created the compilable original scaffold (`src/app/Recto.vcxproj` and its application and window sources), which `D10 T01 §2` replaces with the Win32 `Recto.exe` host. `D01` provides `DocumentHandle` open, authenticate, incremental save and describe. All visual assets exist in `resources/` (`resources/msix/Assets/`, `resources/ico/`, `resources/svg/`) and all colour tokens live in `design/tokens/colors.json`, which `D10 T01 §8` generates into `src/ui/generated/recto_tokens.g.h`. Measured 2026-10-21: `resources/fonts/`, `scripts/build-icon-font.py`, any `RectoChipStyle` and any `ClassicStatusBar` do not exist yet, although SPEC sections 6, 7 and 8.4 (revised 2026-10-21) require them; §18 to §20 build them. 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); sections rewritten against `todo/10-ui/`
 
+> **Groomed 2026-10-23:** re-measured against the repository: `src/app/` still holds only the original WinUI scaffold (`App.xaml`, `MainWindow.xaml`, `MainWindow.idl`, `Generated Files/`), which `D10 T01 §2` retires; `src/ui/`, `resources/fonts/`, `scripts/build-icon-font.py` and `config/` do not exist; `tests/recto-tests/` holds engine tests only, so no `Shell.*` test exists yet. Every `Test checkpoint` that compared a rendering with a SPEC board now names golden entries run through `D10 T01 §20`, so no checkpoint needs a person to look at a screenshot. Filed `§21` (window placement) and `§22` (cold-launch path, foundation plan section 8 target `< 400 ms`).
+
 ## Inputs
 
 - `design/SPEC.md` sections 3 (brand and assets), 4 (colour), 5 (typography), 6 (icons), 7 (shape, spacing, elevation, 960x600 minimum window size), 8 and 8.1 (shell, named slots and title bar), 9.1 (drop overlay), 9.2 (loading, password), 9.6 and 9.9 (dialogs: Password, Could not open, Replace original, Unsaved changes), 10 (keyboard), 11 (accessibility); `design/tokens/colors.json` and the generated `src/ui/generated/recto_tokens.g.h`.
@@ -71,16 +73,16 @@ track: M2
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | App project, unpackaged/MSIX manifest, assets, tokens and minimum window size | D00 T01 §3, D10 T01 §2, D10 T01 §4, D10 T01 §8 | [ ] |
-| 2 | §2 | Custom title bar, brand lockup, drag regions and caption buttons | §1, §18, §19, D10 T01 §11, D10 T01 §19, D10 T02 §2, D10 T02 §3, D10 T03 §1, D10 T03 §5, D10 T03 §7 | [ ] |
-| 3 | §3 | Document `ui::TabStrip`, tab session lifecycle, dirty state and actor teardown | §2, D01 T02 §10, D10 T01 §3, D10 T01 §12, D10 T01 §16, D10 T02 §13 | [ ] |
+| 2 | §2 | Custom title bar, brand lockup, drag regions and caption buttons | §1, §18, §19, D10 T01 §11, D10 T01 §19, D10 T02 §2, D10 T02 §3, D10 T03 §1, D10 T03 §5, D10 T03 §7, D10 T01 §20 | [ ] |
+| 3 | §3 | Document `ui::TabStrip`, tab session lifecycle, dirty state and actor teardown | §2, D01 T02 §10, D10 T01 §3, D10 T01 §12, D10 T01 §16, D10 T02 §13, D10 T01 §20 | [ ] |
 | 4 | §4 | Named shell layout slots, Reading room mode switcher and Classic navigation rail | §2, D10 T01 §6, D10 T01 §7, D10 T01 §9, D10 T01 §13, D10 T02 §18, D10 T02 §19 | [ ] |
 | 5 | §5 | File Open Picker (`Ctrl+O`) and shared `OpenDocumentPipeline` | §3, D01 T02 §4, D10 T01 §3 | [ ] |
-| 6 | §6 | Drag-and-drop file opening and full-window drop overlay | §5, D10 T01 §11, D10 T01 §15, D10 T01 §17 | [ ] |
+| 6 | §6 | Drag-and-drop file opening and full-window drop overlay | §5, D10 T01 §11, D10 T01 §15, D10 T01 §17, D10 T01 §20 | [ ] |
 | 7 | §7 | Command-line arguments, Explorer `.pdf` activation and single-instance forwarding | §5, D10 T01 §3, D10 T01 §4 | [ ] |
 | 8 | §8 | Save (`Ctrl+S`), Save As (`Ctrl+Shift+S`), Replace-Original and Unsaved-Changes dialogs | §3, §5, D01 T02 §5, D10 T01 §4, D10 T02 §17 | [ ] |
-| 9 | §9 | Classic menu bar (`File`, `Edit`, `View`, `Tools`, `Window`, `Help`) and docked top bar | §4, §5, §8, D10 T01 §12, D10 T02 §2, D10 T02 §14, D10 T02 §15 | [ ] |
-| 10 | §10 | Shared SPEC 9.9 `ui::Dialog` chrome and Password dialog | §5, D10 T02 §6, D10 T02 §17 | [ ] |
-| 11 | §11 | Could-not-open error dialog and diagnostic clipboard copy | §5, §10, D10 T01 §17, D10 T03 §4 | [ ] |
+| 9 | §9 | Classic menu bar (`File`, `Edit`, `View`, `Tools`, `Window`, `Help`) and docked top bar | §4, §5, §8, D10 T01 §12, D10 T02 §2, D10 T02 §14, D10 T02 §15, D10 T01 §20 | [ ] |
+| 10 | §10 | Shared SPEC 9.9 `ui::Dialog` chrome and Password dialog | §5, D10 T02 §6, D10 T02 §17, D10 T01 §20 | [ ] |
+| 11 | §11 | Could-not-open error dialog and diagnostic clipboard copy | §5, §10, D10 T01 §17, D10 T03 §4, D10 T01 §20 | [ ] |
 | 12 | §12 | Crash recovery snapshots for unsaved edits | §3, §8, §10, D04 T02 §1, D02 T04 §6, D06 T04 §24, D10 T02 §11 | [ ] |
 | 13 | §13 | `SessionStore`: persist open tabs and the active tab | §3, D02 T04 §1 | [ ] |
 | 14 | §14 | Restore the previous tab session on launch and the restore setting | §5, §7, §13, D02 T04 §5, D02 T03 §11, D06 T04 §24, D10 T02 §7, D10 T02 §20 | [ ] |
@@ -89,7 +91,9 @@ track: M2
 | 17 | §17 | Share a copy through the Windows Share contract | §8, §9, D02 T03 §11, D06 T04 §24, D10 T02 §17 | [ ] |
 | 18 | §18 | `RectoIcons` subset icon font, stable code point map and glyph resources | §1 | [ ] |
 | 19 | §19 | `RectoChipStyle` pill style for chips, filter tags, keycaps, badges and counters | §1, §18, D10 T01 §9, D10 T02 §20 | [ ] |
-| 20 | §20 | Classic status bar: current page, page size, PDF version and zoom slider | §4, §9, D02 T02 §6, D02 T02 §7, D02 T03 §11, D02 T04 §3, D10 T02 §6, D10 T02 §8 | [ ] |
+| 20 | §20 | Classic status bar: current page, page size, PDF version and zoom slider | §4, §9, D02 T02 §6, D02 T02 §7, D02 T03 §11, D02 T04 §3, D10 T02 §6, D10 T02 §8, D10 T01 §20, D01 T02 §21 | [ ] |
+| 21 | §21 | Window placement: remember bounds and recover from a missing display | §1, §13, D02 T04 §1, D10 T01 §4 | [ ] |
+| 22 | §22 | Cold-launch path: Home interactive within the 400 ms budget | §14, §21, D02 T03 §2, D02 T04 §2, D10 T01 §3 | [ ] |
 
 ## 1. App project, unpackaged/MSIX manifest, assets, tokens and minimum window size
 
@@ -142,13 +146,14 @@ Build the SPEC section 8.1 custom title bar inside `src/app/shell_page.h/.cpp`: 
 - [ ] Author `src/app/shell_page.h/.cpp` and mount it as the root content of `MainWindow`. Done when: `Recto.exe` boots into `ShellPage` with no unresolved token, icon or string lookups.
 - [ ] Draw the caption buttons in `ui::Window` and configure their foreground, background and hover colours from the generated tokens in both Light and Dark themes, with the `D10 T03 §5` system colours in HighContrast. Done when: caption buttons remain legible in Light, Dark, and HighContrast themes.
 - [ ] Render the `20 epx` app icon (`resources/svg/app-icon-small.svg`, the same file in Light and Dark) and `17 epx` `"Recto"` wordmark (`resources/svg/wordmark-light.svg` / `wordmark-dark.svg`) via `ui::SvgImage` at the left of the title bar. Done when: the lockup matches `D-Focus-Light.png` and `D-Focus-Dark.png` metrics.
-- [ ] Add the icon-only `Home` button, centred Command Box trigger button (`"Search, open or run a command"` + `"Ctrl K"`), and `Settings` button in the exact SPEC 8.1 left-to-right order. Done when: visual inspection and element tree order match SPEC 8.1. Cheaper substitute that fails the checkpoint: omitting the automation name or shortcut tooltips on icon-only title bar buttons.
+- [ ] Add the icon-only `Home` button, centred Command Box trigger button (`"Search, open or run a command"` + `"Ctrl K"`), and `Settings` button in the exact SPEC 8.1 left-to-right order. Done when: the UIA child order of the title bar equals the SPEC 8.1 sequence (Home, tab strip, `+`, command box trigger, Settings) in `Shell.TitleBarLayoutAndHitRegions`. Cheaper substitute that fails the checkpoint: omitting the automation name or shortcut tooltips on icon-only title bar buttons.
 - [ ] Compute the non-client hit regions (`HTCLIENT` over every interactive title bar control, `HTCAPTION` over empty strip, caption-button codes over the three caption buttons) through `ui::Window` (`D10 T01 §19`) whenever the window or tab strip resizes. Done when: clicking buttons activates them while dragging empty title bar space moves the window.
-- [ ] Dim the title bar lockup and inactive tab labels to `RectoTextSecondaryBrush` when the `ui::Window` activation event (`D10 T01 §4`) reports deactivation. Done when: deactivating the window visually dims the title bar chrome per Windows conventions.
+- [ ] Dim the title bar lockup and inactive tab labels to `RectoTextSecondaryBrush` when the `ui::Window` activation event (`D10 T01 §4`) reports deactivation. Done when: after a synthetic `WM_ACTIVATE` deactivation the lockup and inactive tab label brushes resolve to `RectoTextSecondaryBrush` (read from the element tree) and revert on activation.
 - [ ] Add `Shell.TitleBarLayoutAndHitRegions` test in `tests/recto-tests/` verifying title bar control order, automation names, tooltips, and non-empty non-client hit regions (`WM_NCHITTEST` answers). Done when: `recto-tests.exe --gtest_filter=Shell.TitleBarLayoutAndHitRegions` passes.
+- [ ] Register the manifest entries `shell_titlebar_light` and `shell_titlebar_dark` in `tests/recto-tests/golden/ui/manifest.json` with the title bar crop rectangles of `D-Focus-Light.png` and `D-Focus-Dark.png` and the `ShellPage` title bar fixture. Done when: `Ui.Golden.Shell.TitleBar` passes at 100, 150 and 200 percent. Cheaper substitute that fails the checkpoint: a threshold so low that an empty title bar passes. Source: `D10 T01 §20`.
 - [ ] Commit: `app: build custom title bar with brand lockup, drag regions and caption buttons`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.TitleBarLayoutAndHitRegions` passes, and rendered screenshots in Light and Dark themes match `D-Focus-Light.png` and `D-Focus-Dark.png` title bars side by side.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.TitleBarLayoutAndHitRegions` passes, and golden entries `shell_titlebar_light` and `shell_titlebar_dark` (crops of the title bar of `D-Focus-Light.png` and `D-Focus-Dark.png`) pass through `recto::ui::test::golden::expect_matches(id)` at 100, 150 and 200 percent with SSIM at or above the manifest `ssim_min` (`D10 T01 §20`).
 
 ## 3. Document `ui::TabStrip`, tab session lifecycle, dirty state and actor teardown
 
@@ -176,9 +181,10 @@ Implement the document tab strip (`ui::TabStrip`, `D10 T02 §13`) in the title b
 - [ ] Ensure closing the last open document tab automatically selects the `Home` tab rather than leaving an empty window or closing the app. Done when: closing the sole open tab transitions smoothly to `Home`. Cheaper substitute that fails the checkpoint: exiting the app or showing a blank gray frame when the last tab closes.
 - [ ] Update the non-client hit regions (`D10 T01 §19`) dynamically as tabs are added, resized, or removed so every tab header and close button remains clickable while the remaining strip stays draggable. Done when: newly added tabs can be clicked, dragged, and closed immediately.
 - [ ] Add `Shell.TabLifecycleAndActorTeardown` test in `tests/recto-tests/` running 20 rapid tab open/close cycles and asserting zero leaked `DocumentActor` instances or live clones in Debug. Done when: `recto-tests.exe --gtest_filter=Shell.TabLifecycleAndActorTeardown` passes.
+- [ ] Register `shell_tabstrip_light` in `tests/recto-tests/golden/ui/manifest.json` for the tab strip crop of `D-Focus-Light.png` with three tabs, one active and one dirty. Done when: `Ui.Golden.Shell.TabStrip` passes at the three scales. Source: `D10 T01 §20`.
 - [ ] Commit: `app: implement title-bar ui::TabStrip, DocumentTabSession lifecycle and actor teardown`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.TabLifecycleAndActorTeardown` passes with 20 rapid open/close cycles leaving zero live actors or clones in Debug, and rendered tab strip matches `D-Focus-Light.png`.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.TabLifecycleAndActorTeardown` passes with 20 rapid open/close cycles leaving zero live actors or clones in Debug, and golden entries `shell_tabstrip_light` (crops of the tab strip of `D-Focus-Light.png`) pass through `recto::ui::test::golden::expect_matches(id)` at 100, 150 and 200 percent with SSIM at or above the manifest `ssim_min` (`D10 T01 §20`).
 
 ## 4. Named shell layout slots, Reading room mode switcher and Classic navigation rail
 
@@ -198,7 +204,7 @@ Implement the eight named layout slot containers in `ShellPage` required by SPEC
 1. Add the eight named slot containers (`TitleBarSlot`, `TopBarSlot`, `BottomOverlaySlot`, `LeftDockSlot`, `RightDockSlot`, `LeftOverlaySlot`, `RightOverlaySlot`, `BottomDockSlot`) and the central workspace host (`CenterCanvasSlot` for `Home`, `DocumentView`, `ConvertPage`, `OrganizePage`, `SettingsPage`) to `src/app/shell_page.cpp`, along with `ShellSlotManager` (`src/app/shell_slot_manager.h/.cpp`) to move live `ui::Element` instances between slots without destroying their state (reparenting the same element instance, `D10 T01 §6`). Done when: a stateful test control moved across all eight slots preserves its internal state and focusable children.
 2. Build the `Classic` left navigation rail (`ui::NavigationRail` in `LeftDockSlot`, `20 epx` `RectoIcons` glyphs `home`, `document`, `document_arrow_right`, `grid` and `settings` for `Home`, `Read`, `Convert`, `Organize`, `Settings`) and the `Reading room` title-bar mode switcher (`ui::ModeSwitcher`: `Home`, `Read`, `Convert`, `Organize` with `RectoAccentBrush` underline indicator and document tabs reparented to `TopBarSlot`). Done when: toggling slot configurations matches the shell chrome of `D-Focus-Light.png`, `D-Classic.png`, and `D-ReadingRoom.png`.
 
-- [ ] Declare `TitleBarSlot`, `TopBarSlot`, `BottomOverlaySlot`, `LeftDockSlot`, `RightDockSlot`, `LeftOverlaySlot`, `RightOverlaySlot`, `BottomDockSlot`, and `CenterCanvasSlot` in `src/app/shell_page.cpp`. Done when: all slot hosts exist in the element tree and collapse cleanly (`ui::Visibility::Collapsed`) when empty so they consume zero layout space.
+- [ ] Declare `TitleBarSlot`, `TopBarSlot`, `BottomOverlaySlot`, `LeftDockSlot`, `RightDockSlot`, `LeftOverlaySlot`, `RightOverlaySlot`, `BottomDockSlot`, and `CenterCanvasSlot` in `src/app/shell_page.cpp`. Done when: all slot hosts exist in the element tree and collapse cleanly (an invisible `ui::Element`, which the layout engine of `D10 T01 §7` measures as zero size) when empty so they consume zero layout space.
 - [ ] Style docked slots (`TopBarSlot`, `LeftDockSlot`, `RightDockSlot`, `BottomDockSlot`) with `RectoSurfaceBrush` backgrounds and `1 epx` `RectoBorderBrush` dividers (zero drop shadows per SPEC 7). Done when: docked panes render flat with crisp `1 epx` borders.
 - [ ] Style floating overlay slots (`BottomOverlaySlot`, `LeftOverlaySlot`, `RightOverlaySlot`) with `16 epx` canvas margins and `ui::Painter` elevation (Z=32 per SPEC 7, `D10 T01 §9`). Done when: floating cards cast the SPEC 7 elevation shadow over the page canvas.
 - [ ] Implement `ShellSlotManager::reparent_control(ui::Element&, SlotId, SlotOccupant)` in `src/app/shell_slot_manager.h/.cpp` that detaches a live control from its current slot panel and attaches it to the target slot panel in a single UI tick. `SlotOccupant` carries a stacking `order` (a slot holding several controls stacks them by ascending order, top to bottom, each at its own measured height, never overlapping) and a `focus_group` (`BeforeCanvas` by default, `AfterCanvas` for a control SPEC 11 places after the page, such as the Classic status bar of §20). Done when: reparenting `ui::TabStrip` or a test toolbar preserves selection and text input state, and two test controls placed in `BottomDockSlot` with orders 0 and 1 stack in that order with disjoint bounds. Cheaper substitute that fails the checkpoint: destroying and instantiating new controls on layout change.
@@ -265,9 +271,10 @@ Implement window-wide drag-and-drop file opening per SPEC section 9.1: dragging 
 - [ ] Extract the `HDROP` file paths in `ShellPage`'s `IDropTarget::Drop` and forward them in drop order to `OpenDocumentPipeline::open_files_async` (§5). Done when: dropping 3 PDFs opens 3 tabs in exact drop order.
 - [ ] Handle mixed drops (e.g., 2 valid PDFs + 1 corrupt PDF or `.exe` file) by opening the valid PDFs into tabs and routing the invalid file to the §11 error dialog without losing the valid tabs. Done when: mixed-drop tests preserve all valid tabs.
 - [ ] Add `Shell.DragAndDropOpen` test in `tests/recto-tests/` exercising `DragOver` overlay state transitions and multi-file/mixed-file drop routing through `OpenDocumentPipeline`. Done when: `recto-tests.exe --gtest_filter=Shell.DragAndDropOpen` passes.
+- [ ] Register `shell_dropoverlay_light` and `shell_dropoverlay_dark` in `tests/recto-tests/golden/ui/manifest.json` using the `drop-files-{light,dark}.svg` overlay fixture. Done when: `Ui.Golden.Shell.DropOverlay` passes at the three scales. Source: `D10 T01 §20`, SPEC 9.1.
 - [ ] Commit: `app: implement window-wide drag-and-drop file opening and SVG drop overlay`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.DragAndDropOpen` passes on the display-session host, and screenshots of the active drop overlay in Light and Dark themes match SPEC sections 3.4 and 9.1.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.DragAndDropOpen` passes on the display-session host, and golden entries `shell_dropoverlay_light` and `shell_dropoverlay_dark` (crops of the drop overlay of SPEC sections 3.4 and 9.1) pass through `recto::ui::test::golden::expect_matches(id)` at 100, 150 and 200 percent with SSIM at or above the manifest `ssim_min` (`D10 T01 §20`).
 
 ## 7. Command-line arguments, Explorer `.pdf` activation and single-instance forwarding
 
@@ -358,9 +365,10 @@ Build the Classic menu bar (`ui::MenuBar`, `D10 T02 §15`, with `File`, `Edit`, 
 - [ ] Populate the `Window` menu with a live radio list of open document tabs plus `Next Tab (Ctrl+Tab)` and `Previous Tab (Ctrl+Shift+Tab)`, and the `Help` menu with `Keyboard Shortcuts` and `About Recto`. Done when: selecting an open tab in `Window` switches to that tab.
 - [ ] Update menu item enabled states automatically whenever the active tab changes between `Home` (no document) and an open `DocumentTabSession`. Done when: `Save`, `Print`, `Rotate`, and `Tools` items disable on `Home` and enable when a PDF tab is active.
 - [ ] Add `Shell.MenuBarStructureAndState` test in `tests/recto-tests/` asserting all 6 top-level menus, item counts, shortcut labels, and enabled/disabled state transitions between `Home` and an open document tab. Done when: `recto-tests.exe --gtest_filter=Shell.MenuBarStructureAndState` passes.
+- [ ] Register `shell_menubar_classic` in `tests/recto-tests/golden/ui/manifest.json` for the menu bar and command bar crop of `D-Classic.png`. Done when: `Ui.Golden.Shell.MenuBar` passes at the three scales. Source: `D10 T01 §20`.
 - [ ] Commit: `app: build Classic menu bar (File, Edit, View, Tools, Window, Help) and TopBarSlot host`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.MenuBarStructureAndState` passes on the display-session host, and rendered `Classic` top bar matches `D-Classic.png`.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.MenuBarStructureAndState` passes on the display-session host, and golden entries `shell_menubar_classic` (crops of the top bar of `D-Classic.png`) pass through `recto::ui::test::golden::expect_matches(id)` at 100, 150 and 200 percent with SSIM at or above the manifest `ssim_min` (`D10 T01 §20`).
 
 ## 10. Shared SPEC 9.9 `ui::Dialog` chrome and Password dialog
 
@@ -389,9 +397,10 @@ Establish the shared `RectoDialogStyle` presets over `ui::Dialog` (`D10 T02 §17
 - [ ] On `ErrorCode::InvalidPassword`, keep `PasswordDialog` open in place, apply `RectoDangerBrush` to the password box border, show `"That password didn't work."` with a warning icon (colour is never the only signal per SPEC 11), and select the password text for immediate re-typing. Done when: a wrong password attempt never dismisses/re-animates the dialog.
 - [ ] On `Cancel` button click or `Esc`, dismiss `PasswordDialog` and tear down the pending `DocumentTabSession` and its `DocumentActor` through §3's close path. Done when: cancelling a password prompt leaves zero zombie tabs or actors.
 - [ ] Add `Shell.PasswordDialogFlow` test in `tests/recto-tests/` driving wrong-password retry, correct-password unlock, and cancel teardown against the encrypted corpus PDF. Done when: `recto-tests.exe --gtest_filter=Shell.PasswordDialogFlow` passes.
+- [ ] Register `shell_password_initial` and `shell_password_wrong` in `tests/recto-tests/golden/ui/manifest.json` for the Password dialog crops of `D-Dialogs.png`. Done when: `Ui.Golden.Shell.PasswordDialog` passes at the three scales and the wrong-password fixture shows the `RectoDangerBrush` border. Source: `D10 T01 §20`, SPEC 9.9.
 - [ ] Commit: `app: add shared SPEC 9.9 ui::Dialog presets and PasswordDialog retry/cancel flow`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.PasswordDialogFlow` passes on the display-session host, and screenshots of `PasswordDialog` (initial and wrong-password states) match `D-Dialogs.png`.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.PasswordDialogFlow` passes on the display-session host, and golden entries `shell_password_initial` and `shell_password_wrong` (crops of the Password dialog of `D-Dialogs.png`) pass through `recto::ui::test::golden::expect_matches(id)` at 100, 150 and 200 percent with SSIM at or above the manifest `ssim_min` (`D10 T01 §20`).
 
 ## 11. Could-not-open error dialog and diagnostic clipboard copy
 
@@ -417,9 +426,10 @@ Implement the SPEC section 9.9 `"Couldn't open this file"` alert `ui::Dialog` (`
 - [ ] Queue dialog presentations in `OpenDocumentPipeline` so dropping 3 broken files in one batch displays `CouldNotOpenDialog` sequentially rather than opening overlapping modal dialogs. Done when: dropping 3 corrupt files shows 3 dialogs in sequence with zero overlap or exceptions.
 - [ ] Ensure the failed tab's temporary `DocumentTabSession` and `DocumentActor` are completely torn down before or when `CouldNotOpenDialog` opens. Done when: no broken tab remains in `ui::TabStrip` after a failed open.
 - [ ] Add `Shell.CouldNotOpenAndDiagnostics` test in `tests/recto-tests/` opening `tests/corpus/broken/` files, asserting path-scrubbed diagnostic output on the clipboard, and verifying sequential multi-error dialog queuing. Done when: `recto-tests.exe --gtest_filter=Shell.CouldNotOpenAndDiagnostics` passes.
+- [ ] Register `shell_couldnotopen` in `tests/recto-tests/golden/ui/manifest.json` for the Could not open crop of `D-Dialogs.png`. Done when: `Ui.Golden.Shell.CouldNotOpen` passes at the three scales. Source: `D10 T01 §20`, SPEC 9.9.
 - [ ] Commit: `app: implement CouldNotOpenDialog with path-scrubbed diagnostic clipboard copy`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.CouldNotOpenAndDiagnostics` passes on the display-session host against `tests/corpus/broken/`, clipboard contents match the scrubbed diagnostic format, and screenshot matches `D-Dialogs.png`.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.CouldNotOpenAndDiagnostics` passes on the display-session host against `tests/corpus/broken/`, clipboard contents match the scrubbed diagnostic format, and golden entry `shell_couldnotopen` (crop of the Could not open dialog in `D-Dialogs.png`) passes through `recto::ui::test::golden::expect_matches(id)` at 100, 150 and 200 percent (`D10 T01 §20`).
 
 ## 12. Crash recovery snapshots for unsaved edits
 
@@ -649,6 +659,8 @@ UPDF, PDFelement and Foxit PDF Editor share or email the open file (Acrobat Pro 
 
 `design/SPEC.md` section 8.4 gives the Classic preset a status bar in the bottom dock slot: the current page (click to type a page), the page size, the PDF version, and the zoom percentage with a zoom slider, on `RectoSurfaceBrush` with a 1 epx `RectoBorderBrush` top edge, after the page in the keyboard order (section 11). `D03 T02 §4` already tests a `ClassicStatusBar` in the Classic tab order, but no section builds it; it belongs beside the Classic menu bar of §9. It reads and writes view state only through `CommandRegistry` and the viewport channel, never a second handler. Default recorded here: the status bar is shown exactly when `ShellMenuBar` is placed (the Classic preset, or a Custom layout whose page toolbar is the docked top command bar); changing that rule is a one-line change in the layout mapping. Because the page thumbnails setting is independent, a Custom layout can put the bottom filmstrip (`D02 T03 §4`) in `BottomDockSlot` together with the status bar; the composition rule is: the filmstrip stacks above the status bar (§4 `SlotOccupant` order 0 and 1), the status bar keeps a fixed 32 epx height (default recorded here, so its `NumberBox` and `Slider` meet the SPEC 11 32 epx hit target), the filmstrip keeps its own height, the canvas gives up the combined height, and in the keyboard order the filmstrip comes before the page and the status bar after it (§4 focus groups).
 
+> **Groomed 2026-10-23:** page sizes and actual-size zoom read `PageDescription::physical_width_pt` and `physical_height_pt` from `D01 T02 §21` so `/UserUnit` pages report their true physical size (cross-domain groom follow-up).
+
 **Phase:** 2
 **Needs:** windows-host, display-session
 **Surface:** yes
@@ -672,9 +684,62 @@ UPDF, PDFelement and Foxit PDF Editor share or email the open file (Acrobat Pro 
 - [ ] Give the page field, size, version and zoom controls automation names and tooltips, and place the bar after the page in the keyboard order through the §4 `AfterCanvas` focus group. Done when: `Tab` from the page canvas reaches the page field first, in Classic and in the Custom filmstrip layout (where the filmstrip is reached before the canvas).
 - [ ] Register placement with `LayoutPresetEngine` so the bar follows `ShellMenuBar`, as `BottomDockSlot` occupant order 1 below the filmstrip's order 0, at a fixed 32 epx height. Done when: switching Focus, Classic and Reading room shows the bar only in Classic, and the Custom layout (docked top command bar plus bottom filmstrip) shows both strips stacked filmstrip first.
 - [ ] Add `Shell.ClassicStatusBar` covering field updates on scroll and zoom, typed page jump and refusal, unit display, version text, preset visibility, the Custom filmstrip plus status bar composition (stacking order, disjoint bounds, 32 epx bar height, filmstrip before and status bar after the canvas in `Tab` and `Shift+Tab`), `Home` state and automation names. Done when: `recto-tests.exe --gtest_filter=Shell.ClassicStatusBar` passes.
+- [ ] Register `shell_statusbar_classic` in `tests/recto-tests/golden/ui/manifest.json` for the status strip crop of `D-Classic.png`. Done when: `Ui.Golden.Shell.StatusBar` passes at the three scales. Source: `D10 T01 §20`.
 - [ ] Commit: `app: build the Classic status bar with page, size, version and zoom`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.ClassicStatusBar` passes on the display-session host; making the page field ignore viewport changes, showing the bar in Focus, stacking it above the filmstrip in the Custom layout, or reaching it before the page makes the test fail.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.ClassicStatusBar` passes on the display-session host together with golden entry `shell_statusbar_classic` (`D10 T01 §20`); making the page field ignore viewport changes, showing the bar in Focus, stacking it above the filmstrip in the Custom layout, or reaching it before the page makes the test fail.
+
+## 21. Window placement: remember bounds and recover from a missing display
+
+> **Groomed 2026-10-23:** filed because no section owned the main window's position, size and maximized state, or what happens when the saved monitor is gone.
+
+A desktop reader that reopens on the wrong monitor, off screen or at the default size every launch feels unfinished. `WindowPlacementStore` (`src/services/window_placement.h/.cpp`, no `recto-ui` includes) keeps the main window's restored rectangle, its maximized state and the monitor identity in `window.json` under `AppPaths::data_dir()` (`D02 T04 §1`), written atomically when the window moves, resizes, maximizes or closes (debounced), and applied by `ShellPage` through `ui::Window` before the first show so the window never flashes at the default position. If the saved rectangle no longer intersects any attached monitor's work area (a display was unplugged, the resolution fell), the window is placed on the primary monitor, clamped to its work area and to the `960 x 600 epx` minimum of `§1`. Presentation and presenter windows (`D02 T02 §13`, `§16`) are not remembered here.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** no
+
+**Build order:**
+
+1. Implement `WindowPlacementStore` with `load`, `save` and `clamp_to_monitors(saved, monitors) -> Placement` as pure functions over a `MonitorInfo` list (`work_area`, `dpi`, `primary`), so the display-recovery rules are testable with fake monitors. Done when: `Shell.WindowPlacementClamp` passes for a rectangle on a removed second monitor (moved to the primary), a partly visible rectangle (nudged fully into view), a rectangle larger than the work area (shrunk) and a saved rectangle under the minimum size (raised to `960 x 600 epx`).
+2. Wire the store into `ShellPage` and `ui::Window` (`D10 T01 §4`): apply before first show, track changes through the window's move, size and state events, and store the rectangle in physical pixels with the monitor DPI so a DPI change between launches scales correctly. Done when: moving the window, quitting and relaunching reopens it at the same rectangle and maximized state on the display-session host.
+
+- [ ] Author `src/services/window_placement.h/.cpp` with the `Placement` type (`left`, `top`, `width`, `height`, `maximized`, `monitor_device_name`, `dpi`) and a `schema_version`. Done when: a round trip through `save` and `load` reproduces every field, and an unknown `schema_version` loads the defaults. Source: foundation plan section 4 (atomic writes).
+- [ ] Persist through temp-file-then-replace in `AppPaths::data_dir()` and read the file back after the replace. Done when: the failure-injection case (replace fails) leaves the previous `window.json` intact, and a corrupt or empty file loads the default placement without a crash. Cheaper substitute that fails the checkpoint: writing `window.json` in place.
+- [ ] Implement `clamp_to_monitors` with the four rules above. Done when: `Shell.WindowPlacementClamp` passes its four cases plus a zero-monitor list (falls back to a `960 x 600 epx` rectangle at the origin).
+- [ ] Debounce saves to one write per 500 ms of window activity and flush on close and on `WM_ENDSESSION`. Done when: 100 synthetic resize events produce at most one write, and the close path always writes the final rectangle.
+- [ ] Apply the placement before the first show, and with no stored placement centre the window at `1280 x 800 epx` on the primary monitor clamped to its work area (honouring a requested `SW_SHOWMAXIMIZED` from Explorer only in that case). Done when: a first launch with no `window.json` opens centred at that size.
+- [ ] Move `window.json` with the data folder when Portable mode is toggled (`D02 T04 §1`). Done when: toggling Portable mode migrates `window.json` together with `settings.json`.
+- [ ] Add `Shell.WindowPlacementClamp` and `Shell.WindowPlacementRestore` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=Shell.WindowPlacement*` passes, and fails when the clamp stops considering the work area.
+- [ ] Commit: `app: remember window bounds and recover from a missing display`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.WindowPlacement*` passes on the display-session host; removing the off-screen recovery (applying the saved rectangle unchecked) fails `Shell.WindowPlacementClamp`, and writing `window.json` in place fails the failure-injection case.
+
+## 22. Cold-launch path: Home interactive within the 400 ms budget
+
+> **Groomed 2026-10-23:** filed because foundation plan section 8 sets cold launch `< 400 ms` and `D06 T01 §7` only measures it; nothing owned the startup order that makes it pass.
+
+`D06 T01 §7` measures cold launch to an interactive Home window; this section owns the startup order that makes the measurement pass. `ShellApp::start` (`src/app/shell_app.h/.cpp`) runs three ordered stages: critical (`ui::Window`, `ShellPage`, `SettingsStore` and `WindowPlacementStore` load, first paint of `HomePage` with the recents list text), interactive (`HomePage` accepts input), and deferred, started from `ui::Dispatcher` idle only after `home_interactive`: recent cover decoding, `SessionStore` restore (`§14`), recovery snapshot scan (`§12`), the cloud, update and assistant services, and `Runtime` worker pools. `StartupTrace::mark(name)` records `QueryPerformanceCounter` marks (`process_start`, `window_created`, `first_paint`, `home_interactive`, `deferred_done`) that `D06 T01 §7` reads for `--perf-cold-start`.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** no
+
+**Build order:**
+
+1. Add `StartupTrace` (`src/app/startup_trace.h/.cpp`) and the three-stage `ShellApp::start` with a registry of deferred tasks (`defer(name, fn)`) that run one per idle tick. Done when: `Shell.StartupOrdering` shows every deferred task starting after the `home_interactive` mark.
+2. Move every non-critical initialiser behind `defer`, and make `Runtime` worker pools and `DocumentActor` threads start on first open or restore only. Done when: `Shell.StartupNoEagerWork` finds no `DocumentActor`, `RenderPool` worker, network or cover-decode activity before `home_interactive`.
+
+- [ ] Author `src/app/startup_trace.h/.cpp` with `mark(name)`, `elapsed_ms(from, to)` and `--startup-trace=<path>` JSON output of all marks. Done when: a launch with the flag writes the five marks in non-decreasing order.
+- [ ] Split `ShellApp::start` into the critical, interactive and deferred stages with the deferred task registry. Done when: the registry lists restore, covers, recovery scan, services and pool start as deferred tasks, each with a name.
+- [ ] Keep file and registry reads on the critical path to the settings, placement and recents files, each read once. Done when: a counting file-system shim in `Shell.StartupNoEagerWork` sees no other path opened before `home_interactive`. Cheaper substitute that fails the checkpoint: reading the whole recents cover cache before the first paint.
+- [ ] Paint `HomePage` first with recents text and placeholder covers, then fill covers as they decode (`D02 T03 §2`). Done when: `first_paint` precedes the first cover decode completion in the trace.
+- [ ] Defer `SessionStore` restore until after `home_interactive` while keeping the active tab opening first (`§14`). Done when: the restored active document's `DocumentActor` starts after the mark and the first page still appears within the `D02 T02` budget.
+- [ ] Add the budget assertion: median `home_interactive - process_start` over five launches `< 400 ms` on the reference host, with a relaxed ceiling of `< 800 ms` when the `RECTO_CI_SHARED_RUNNER` environment variable is set. Done when: `Shell.ColdLaunchBudget` passes and prints the five measured values. Source: foundation plan section 8.
+- [ ] Add `Shell.StartupOrdering`, `Shell.StartupNoEagerWork` and `Shell.ColdLaunchBudget` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=Shell.StartupOrdering:Shell.StartupNoEagerWork:Shell.ColdLaunchBudget` passes.
+- [ ] Commit: `app: order startup so Home is interactive within the cold-launch budget`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.StartupOrdering:Shell.StartupNoEagerWork:Shell.ColdLaunchBudget` passes on the display-session host; moving a deferred task (cover decoding) onto the critical path fails `Shell.StartupOrdering`, and starting a `DocumentActor` pool at launch fails `Shell.StartupNoEagerWork`.
 
 ## Verification
 
@@ -683,3 +748,4 @@ UPDF, PDFelement and Foxit PDF Editor share or email the open file (Acrobat Pro 
 - Zero `#` hex colour literals exist under `src/app` or `src/ui` outside `src/ui/generated/recto_tokens.g.h`.
 - The tab session, closed-tab, reorder and share behaviour of §13 to §17 is proven by `Shell.SessionStorePersistence`, `Shell.SessionRestoreOnLaunch`, `Shell.ClosedTabStackAndBatchClose`, `Shell.TabReorderAndKeyboardMove`, `Shell.ShareCopyForDirtyAndCloud` and `Audit.ShareNoDirectNetwork`.
 - The icon font, chip style and Classic status bar of §18 to §20 are proven by `python scripts/build-icon-font.py --check`, `tests.scripts.test_build_icon_font`, `Shell.IconFontSpecimen`, `Shell.ChipStyleShape`, `Audit.NoCornerRadiusLiterals` and `Shell.ClassicStatusBar`.
+- Window placement (§21) and the cold-launch order (§22) are proven by `Shell.WindowPlacement*`, `Shell.StartupOrdering`, `Shell.StartupNoEagerWork` and `Shell.ColdLaunchBudget`.

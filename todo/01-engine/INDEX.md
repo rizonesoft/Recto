@@ -8,7 +8,7 @@ Recto's native C++23 PDF engine (`recto-pdf` in `src/pdf`) and concurrency runti
 
 | TODO | Title | Status |
 | ---- | ----- | :----: |
-| [TODO-02](./TODO-02-actor-and-render.md) | Content Interpreter, Display Lists, Document Actor and Render Pool | active |
+| [TODO-02](./TODO-02-actor-and-render.md) | Content Interpreter, Display Lists, Incremental Writer, Document Actor and Render Pool | active |
 | [TODO-03](./TODO-03-cli-and-fuzz.md) | recto-cli, Fuzz Targets and the Thread-Safety Battery | active |
 
 ## Completed

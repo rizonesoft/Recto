@@ -14,6 +14,8 @@ frozen: true
 
 > **Current state:** Measured 2026-10-14. No code exists. The isolation contract is foundation plan 4.9 (a conversion never shares the viewer's document; progress via `CancelToken` and a progress sink that `src/app` marshals to the UI thread with `ui::Dispatcher::post`, `D10 T01 §3`), the writer pattern is plan section 5, and the surfaces are SPEC 9.5 (three-step Convert page, queue card states running, waiting, done, failed with `"Enter password"`) and 9.9 (finished-conversion notification and toast), boards `D-Convert.png` and `explorations/A-Convert.png`, `A-Dialogs.png`, `B-Dialogs.png`. Shutdown joins jobs at their registered point (`D01 T02 §10`). 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI sections rewritten against `todo/10-ui/`.
 
+> **Groomed 2026-10-23:** UI screenshot checkpoints (`QueueCard`, in-app toast) now use the `Ui.Golden` comparison of `D10 T01 §20` instead of a person comparing a screenshot, with `D10 T01 §20` added to the `§5` and `§6` rows; new `§8` gates cancel, atomic output, password refusal and `If file exists` for every card in the `ConverterRegistry`. D10 edges were checked against the controls each section consumes: no consumed control lacked an edge; the `D10 T02 §3` and `D10 T03 §1` extras are the tooltip and automation-name rules of `AGENTS.md`. Cost of reversing: none, the edges only constrain order.
+
 ## Inputs
 
 - `docs/plans/2026-10-13-recto-foundation.md` sections 3.3 (`ConversionJob`, `CancelToken`), 4.5, 4.9, 4.10, 5 (writer pattern and the atomic saving rule), 7 (M4).
@@ -52,9 +54,10 @@ frozen: true
 | 2 | §2 | Job result & recovery state machine (`Completed`..`NeedsPassword`) and temp cleanup | §1 | [ ] |
 | 3 | §3 | Convert Step 1 (`Files` drop zone & chips) and Step 2 (`What to make` card registry) | §2, D02 T01 §4, D10 T01 §7, D10 T01 §8, D10 T01 §17, D10 T02 §2, D10 T02 §20 | [ ] |
 | 4 | §4 | Convert Step 3 dynamic options host, capability hint line, and primary action button | §3, D02 T04 §5, D10 T01 §8, D10 T02 §2 | [ ] |
-| 5 | §5 | App-wide floating `QueueCard` (progress ring, job states, expanded list, per-job cancel) | §4, D10 T01 §3, D10 T01 §8, D10 T01 §16, D10 T02 §2, D10 T02 §8, D10 T02 §11 | [ ] |
-| 6 | §6 | Focus-aware completion notices (Windows toast vs in-app toast, `Open file` & folder) | §5, D03 T02 §6, D02 T01 §5, D10 T01 §4, D10 T01 §8, D10 T02 §2, D10 T02 §13, D10 T02 §20 | [ ] |
+| 5 | §5 | App-wide floating `QueueCard` (progress ring, job states, expanded list, per-job cancel) | §4, D10 T01 §3, D10 T01 §8, D10 T01 §16, D10 T01 §20, D10 T02 §2, D10 T02 §8, D10 T02 §11 | [ ] |
+| 6 | §6 | Focus-aware completion notices (Windows toast vs in-app toast, `Open file` & folder) | §5, D03 T02 §6, D02 T01 §5, D10 T01 §4, D10 T01 §8, D10 T01 §20, D10 T02 §2, D10 T02 §13, D10 T02 §20 | [ ] |
 | 7 | §7 | Queue error recovery (`Enter password` modal retry, transient retry, batch breakdown) | §6, D02 T01 §10, D10 T02 §2 | [ ] |
+| 8 | §8 | Registry-wide cancel, atomic output and password refusal gate | §2, §3, §7, D04 T02 §1, D04 T02 §12, D04 T02 §18, D04 T03 §5, D04 T04 §22, D04 T05 §2, D04 T05 §4, D04 T05 §9, D04 T05 §13 | [ ] |
 
 ## 1. Isolated `ConversionJob` 2-worker runtime, dedicated `pdf::Document` and `CancelToken`
 
@@ -182,7 +185,7 @@ Build the app-wide floating `QueueCard` (`src/app/controls/queue_card.h/.cpp` an
 **Build order:**
 
 1. Implement `QueueViewModel` (`src/services/queue_view_model.h/.cpp`) observing `ConversionRunner` job lifecycle events, maintaining an observable list of `QueueItemViewModel` (plain C++ change callbacks that `src/app` binds to `ui::Property<T>` and `ui::ItemsView`, `D10 T01 §16`), aggregate progress fraction, `"Converting k of N..."` summary text, per-job `cancel(JobId)`, `dismiss(JobId)`, and `clear_completed()`. Done when: `Jobs.QueueViewModel` verifies all four item states (`Running`, `Waiting`, `Done`, `Failed`) and aggregate progress calculations.
-2. Build `queue_card.h/.cpp` in `src/app/controls/` and host it in `app_shell.h/.cpp` (`D02 T01 §4`) so it persists across page switches. Done when: screenshots of the collapsed and expanded queue card match `D-Convert.png` and `explorations/A-Convert.png`, and switching from `ConvertPage` to `DocumentView` mid-job keeps the `QueueCard` updating smoothly.
+2. Build `queue_card.h/.cpp` in `src/app/controls/` and host it in `app_shell.h/.cpp` (`D02 T01 §4`) so it persists across page switches. Done when: the golden comparison `Ui.Golden.QueueCard` (entry in `tests/recto-tests/golden/ui/manifest.json`, `D10 T01 §20`) of the headless render against the crop of `D-Convert.png` scores SSIM at or above the entry's threshold for the collapsed card and the same for the expanded card against `explorations/A-Convert.png`, and switching from `ConvertPage` to `DocumentView` mid-job keeps the `QueueCard` updating smoothly.
 
 - [ ] Implement `QueueItemViewModel` (`job_id`, `title`, `input_filename`, `output_filename`, `state`, `progress_fraction`, `status_text`, `error_message`, `recovery_kind`) and `QueueViewModel` in `src/services/queue_view_model.h/.cpp`. Done when: `QueueViewModel` reflects `ConversionRunner` state transitions on the UI thread via `ui::Dispatcher::post` (`D10 T01 §3`) called from `src/app`.
 - [ ] Build the compact `QueueCard` header card (`OverlayCornerRadius` token, bottom-right `24 epx` inset): animated `ui::ProgressRing` while jobs run (respecting `D02 T04 §8` `ReducedMotion`), summary label (`"Converting 1 of 2..."` or `"2 conversions complete"`), expand/collapse chevron button, and close (`X`) button when all jobs are terminal. Done when: the compact header card matches `D-Convert.png`.
@@ -192,7 +195,7 @@ Build the app-wide floating `QueueCard` (`src/app/controls/queue_card.h/.cpp` an
 - [ ] Document and enforce session-scoped queue history (clearing completed items on app exit with zero persistent conversion history log on disk). Done when: restarting the app starts with a clean empty queue.
 - [ ] Commit: `convert: three-step Convert page and the job queue card`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Jobs.QueueViewModel:Jobs.QueueStatesUi:Jobs.CrossPageSurvival` passes, and display-session screenshots match `D-Convert.png` and `explorations/A-Convert.png`.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Jobs.QueueViewModel:Jobs.QueueStatesUi:Jobs.CrossPageSurvival` passes, and `Ui.Golden.QueueCard` scores SSIM at or above its manifest threshold against `D-Convert.png` and `explorations/A-Convert.png` (`D10 T01 §20`).
 **Freeze check:** `QueueCard` and `QueueViewModel` receive progress and state updates exclusively on the UI thread through `ui::Dispatcher::post` (`D10 T01 §3`, called from `src/app`) and cancel jobs through cooperative `CancelToken` signalling without blocking the UI thread.
 
 ## 6. Focus-aware completion notices (Windows toast vs in-app toast, `Open file` & folder)
@@ -215,7 +218,7 @@ Implement SPEC 9.9's focus-aware completion notification system (`src/app/notifi
 
 - [ ] Implement `JobOutputActions::open_output_file` and `show_in_folder` in `src/app/notifications/job_output_actions.cpp`, checking `std::filesystem::exists(path)` first and displaying an honest non-crashing message (`"The file '<name>' was moved or deleted."`) if the output file was removed after completion. Done when: `QueueCard`, `InAppCompletionToast`, and the Windows toast activator all call the exact same `JobOutputActions` methods.
 - [ ] Track window focus state (`is_window_focused()`) from the `ui::Window` activation events (`D10 T01 §4`: activated, deactivated, minimized) with an injectable test override (`set_simulated_focus_state`). Done when: `JobNotificationService` routes focused completions to `InAppCompletionToast` and unfocused completions to the Windows toast.
-- [ ] Build `InAppCompletionToast` (`src/app/controls/in_app_completion_toast.h/.cpp`) matching `explorations/B-Dialogs.png` (`"<output> is ready"`, `Open file` button, `Show in folder` button, dismiss `X`, auto-dismiss after `8 s` unless hovered or keyboard-focused). Done when: the focused toast screenshot matches `explorations/B-Dialogs.png`.
+- [ ] Build `InAppCompletionToast` (`src/app/controls/in_app_completion_toast.h/.cpp`) matching `explorations/B-Dialogs.png` (`"<output> is ready"`, `Open file` button, `Show in folder` button, dismiss `X`, auto-dismiss after `8 s` unless hovered or keyboard-focused). Done when: the focused toast render passes the golden comparison `Ui.Golden.InAppToast` (entry in `tests/recto-tests/golden/ui/manifest.json`, `D10 T01 §20`) of the headless render against the crop of `explorations/B-Dialogs.png` scores SSIM at or above the entry's threshold.
 - [ ] Build the Windows toast payload (`Windows.UI.Notifications` `ToastNotificationManager` via C++/WinRT, with the AppUserModelID carried by the installer's Start menu shortcut (`D07 T01 §4`); Portable mode registers no AppUserModelID and writes no registry key, so it shows the in-app toast instead (default 2026-10-22, matching the zero-registry proof of `D07 T01 §7`); `explorations/A-Dialogs.png`) with title `"<output> is ready"`, body `"Converted from <input>"`, and action buttons `action=open&path=<uri>` (`Open file`) and `action=reveal&path=<uri>` (`Show in folder`), plus a COM activator implementing `INotificationActivationCallback` that handles the buttons when the app is running or is re-launched by the toast. Done when: invoking the notification payload opens the output or reveals it in Explorer (`Jobs.WindowsNotificationPayload`). Cheaper substitute that fails the checkpoint: notifications that only inform without working `Open file` and `Show in folder` buttons.
 - [ ] Invoke `IAnnouncementSink::announce_job_completion` and `announce_job_failure` (`D03 T02 §6`) whenever a job reaches a terminal state so screen-reader users hear `"Conversion complete: <output> is ready"` politely. Done when: the `D03 T02 §6` announcement listener records the completion event.
 - [ ] Add `Jobs.OutputActions`, `Jobs.Notices`, and `Jobs.WindowsNotificationPayload` in `tests/recto-tests/`. Done when: `recto-tests.exe --gtest_filter=Jobs.OutputActions:Jobs.Notices:Jobs.WindowsNotificationPayload` passes.
@@ -252,6 +255,31 @@ Wire the interactive error recovery flows in the expanded `QueueCard` (`§5`): `
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Jobs.PasswordQueueRecoveryUi:Jobs.TransientRetryUi:Jobs.BatchErrorBreakdownUi` passes, proving in-place password recovery and batch breakdown in `QueueCard`.
 **Freeze check:** Queue recovery resubmissions (`resubmit_with_password`, `retry_job`, and per-file batch retry) re-enter the `ConversionRunner` 2-worker FIFO pool and open fresh isolated `pdf::Document` instances on worker threads.
+
+## 8. Registry-wide cancel, atomic output and password refusal gate
+
+The M4 milestone says every conversion round-trips the corpus and "cancelling a job mid-way leaves no partial output files". Each converter section tests its own cancel path; nothing proves it for every card the `ConverterRegistry` (`§3`) ends up holding, and a card added later could write straight to its final path. This gate enumerates the registry at run time, so a new card that has no gate fixture fails the build instead of shipping unchecked. It drives converters only through `ConversionRunner::submit` and `cancel`, so it exercises the same path the Convert page, the CLI and Action Wizard use.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Freeze check:** The gate submits jobs through `ConversionRunner::submit` and `cancel` only; every job still opens its own `recto::pdf::Document` on a pool worker and never touches a viewer `DocumentActor`, and the gate itself only reads directory listings and file hashes from the test thread.
+
+**Build order:**
+
+1. Implement `ConverterGateTable` in `tests/recto-tests/converter_gate.h/.cpp`, generated from `ConverterRegistry::all()` with a fixture and default options per card from `tests/corpus/convert/converter_gate.json`. Done when: `Jobs.GateEnumeratesRegistry` fails and names the card when a registered card has no entry.
+2. Implement the four gate cases (cancel, injected failure, password refusal, existing destination) over the table. Done when: `Jobs.Gate*` runs every case for every card under ASan.
+
+- [ ] Add `tests/corpus/convert/converter_gate.json` mapping each registered card id to an input fixture in `tests/corpus/convert/`, default options and the expected output extension, and a `skip_reason` only for cards that cannot run headless (none are allowed in phases 4 and 5). Done when: `Jobs.GateTableComplete` passes and a card with `skip_reason` in the table fails it.
+- [ ] Implement `Jobs.GateCancelLeavesNothing`: for each card start the job, cancel it through the progress sink at 0, 25 and 75 percent, and compare the destination folder before and after by name, size and SHA-256. Done when: all cases report `Cancelled` with an identical folder and no `*.tmp` sibling, and a seeded converter that writes to its final path makes the case fail. Cheaper substitute: checking only that the output file is absent, which misses a leftover temp sibling.
+- [ ] Implement `Jobs.GateInjectedWriteFailure` with a `FailingFileSystem` seam in `AtomicFileWriter` (`D04 T02 §1`) that fails the flush, the rename and a read-only destination once each. Done when: each case ends `Failed` with a plain message, the previous destination file is byte-identical and no temp file remains.
+- [ ] Implement `Jobs.GatePasswordRefusal` for every card that takes a PDF: an encrypted fixture ends `NeedsPassword` with no output, a wrong password ends `NeedsPassword` again, the right password completes through `resubmit_with_password` (`§7`). Done when: all PDF-input cards pass the three steps and no output exists after the first two.
+- [ ] Implement `Jobs.GateExistingDestination` for the three `If file exists` choices: `Skip` leaves the original byte-identical and reports `Skipped`, `Rename` writes `name (2)` beside an untouched original, `Replace` swaps atomically. Done when: every card passes all three choices and the original's SHA-256 matches after `Skip` and `Rename`.
+- [ ] Add the gate to the `RoundTrips` CI filter list so it runs with the converter suites. Done when: `python scripts/todo-graph.py validate` still exits 0 and the CI test filter file names `Jobs.Gate*`.
+- [ ] Commit: `convert: gate every registered converter on cancel, atomic output and password refusal`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Jobs.Gate*` passes under ASan for every registered card, and a seeded converter that writes straight to its final path makes `Jobs.GateCancelLeavesNothing` fail.
 
 ## Verification
 

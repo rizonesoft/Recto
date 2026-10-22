@@ -13,6 +13,8 @@ track: M0
 
 > **Current state:** Measured 2026-10-14. `tests/recto-tests` exists from `D00 T01 §3` with three scaffold ABI tests; `tests/corpus/` does not exist yet, and no ASan CI job runs yet.
 
+> **Groomed 2026-10-23:** all six sections are stamped and the tree has moved on: `tests/corpus/` holds `render/` (8 PDFs), `text/`, `convert/`, `broken/` (9 files), `seeds/`, `PROVENANCE.md` and `README.md`; `tests/recto-tests/` holds `test_support.h/.cpp`, `support_tests.cpp`, `corpus_tests.cpp` and the `D01 T01` suites; `.github/workflows/build.yml` has an `asan` job. Later engine sections add corpus fixtures (`D01 T02 §15` to `§17`, `§21`) through `scripts/build-corpus.py` under this file's provenance rule.
+
 ## Inputs
 
 - `docs/plans/2026-10-13-recto-foundation.md` sections 2 (GoogleTest via vcpkg manifest, MSVC ASan), 3.2 (`tests/recto-tests/`, `tests/corpus/`), 4.9 (thread-safety battery runs under ASan), 7 (M0 scope), 9 (fuzz crashes become regression files in `tests/corpus/broken/`), 10 (third-party license tracking).

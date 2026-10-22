@@ -13,6 +13,8 @@ Making page text, annotations and interactive forms usable on both digital and s
 | [TODO-03](./TODO-03-annotations-and-forms.md) | Interactive Annotations, Markup, AcroForms and Form Designer | active |
 | [TODO-04](./TODO-04-edit-pdf.md) | Edit PDF: Text, Image and Vector Object Editing | active |
 | [TODO-05](./TODO-05-multi-file-search.md) | Search Across Files and Local Index | active |
+| [TODO-06](./TODO-06-attachment-pin.md) | Attachment Pin Markup Tool | active |
+| [TODO-07](./TODO-07-command-box-sources.md) | Command Box Rows for Comments, Form Fields and Indexed Files | active |
 
 ## Completed
 
@@ -29,6 +31,8 @@ Making page text, annotations and interactive forms usable on both digital and s
 - Find engine (including Regex), content-stream Find and Replace (`Ctrl+H`), and `Compare PDFs` (`Ctrl+Shift+D`) side-by-side and visual diff overlay view
 - All 15 PDF annotation and markup types (`src/pdf/annotations.cpp`), `/AP` appearance synthesis, flattening, `XFDF`/`JSON` I/O, `Markup & Annotation Bar` (`Ctrl+Shift+A`), and `Comments / Annotations` side panel
 - AcroForm and XFA-to-AcroForm engine (`src/pdf/forms.cpp`), `/CO` calculations, `JSON`/`FDF`/`XFDF`/`XML` data I/O, on-canvas interactive form filling, and `Form Designer` mode
+- `Attachment Pin` markup tool (`FileAttachment` pins with ask-before-open and sanitized extraction)
+- Command box (`Ctrl+K`) `Go to` rows for comments and form fields and `Files` rows for indexed files
 - UIA text pattern on `ui::TextRangeAdapter`, form/annotation UIA providers, keyboard order audit on `ui::FocusManager`, announcements
 
 ## Out of scope

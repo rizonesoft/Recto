@@ -13,6 +13,8 @@ track: M0
 
 > **Current state:** Measured 2026-10-13 (updated 2026-10-18). Before 2026-10-13 the repository tracked work only as prose: the milestone table in `docs/plans/2026-10-13-recto-foundation.md` section 7 and the interface contract in `design/SPEC.md`. This file's three sections were built by porting the clean strict generation of the owner's TODO system (swisshotelschool-coza `scripts/lib/todo_graph.py`, itself a port of rizonetech-com `scripts/lib/workflow.py`), extended with the ScratchPad and Resolute rules that fit Recto (Adjacency, bidirectional XREFs, index coverage, frozen freeze checks, durable deferrals). The eight workflow skills were adapted from ScratchPad's `.claude/skills/` set. `D00 T01 §1` (`25ac228f`) and `D00 T02 §1` (`77a72bd9`) are now verified and stamped, and on 2026-10-14 the seeded graph expanded to 205 sections for the native C++23 `recto-pdf` engine and full converter/authoring scope.
 
+> **Groomed 2026-10-23:** the graph now holds 750 sections across 11 domains (`python scripts/todo-graph.py query stats`), not the 205 quoted above; the run guard (`scripts/campaign_guard.py`), review dispatch (`scripts/review-dispatch.py`) and the pin checks under `.conclave/` were added after this file shipped and are described in `AGENTS.md`.
+
 ## Inputs
 
 - swisshotelschool-coza `scripts/lib/todo_graph.py`, `scripts/todo-graph.py`, `tests/scripts/test_todo_graph.py`, `todo/README.md` and `todo/templates/TODO-template.md` (the strict core this port follows).

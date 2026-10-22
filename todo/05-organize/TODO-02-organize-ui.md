@@ -13,6 +13,8 @@ track: M4
 
 > **Current state:** Measured 2026-10-14. No code exists. The boards are `D-Organize.png` (reorder, the chosen design), `explorations/A-Organize.png` (combine) and `explorations/B-Organize.png` (split); SPEC 8.2, 8.3, 9.5, 9.6 and 9.9 define the Organize header, dark floating selection bar, live-preview authoring dialogs, redaction/sanitization bar, and digital signature surfaces. Page thumbnails reuse `D02 T03 §4`'s tile pipeline at grid size; saves run as `D04 T01` jobs. 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI sections rewritten against `todo/10-ui/`.
 
+> **Groomed 2026-10-23:** Screenshot checkpoints (`§2`, `§3`, `§4`, `§5`) now use the `Ui.Golden` comparison of `D10 T01 §20` instead of a person comparing a screenshot, with `D10 T01 §20` added to those rows. D10 edges were checked against the controls each section consumes: none missing; the `D10 T02 §3`, `D10 T03 §1` extras are the tooltip and automation-name rules of `AGENTS.md`.
+
 ## Inputs
 
 - `design/SPEC.md` sections 8.2 (`Redaction & Sanitize Bar`, `Signature Status Banner & Sign Mode`), 8.3 (`Signatures & Standards` side panel), 9.5 (`Protected & Signed PDF` and `Unlocked PDF` cards), 9.6 (`Organize` modes and tools), 9.9 (`unsaved-changes`, `Replace original`, `Watermark`, `Header/Footer & Bates`, `Crop & Resize`, `Sanitize Document`, and `Sign Document` dialogs), 7 (grid shape), 10 (`Ctrl+Shift+X`, `Ctrl+Shift+G`), 11 (keyboard operation).
@@ -68,10 +70,10 @@ track: M4
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | Virtualized Organize `PageGrid`, `OrganizeEditModel`, multi-select & `Undo`/`Redo` stack | D05 T01 §3, D02 T03 §4, D02 T01 §19, D10 T01 §8, D10 T02 §2, D10 T02 §11, D10 T02 §18, D10 T02 §20 | [ ] |
-| 2 | §2 | Drag-and-drop and keyboard page reordering, floating action bar & `90°` rotation badges | §1, D10 T02 §2, D10 T02 §14 | [ ] |
-| 3 | §3 | Organize **Combine** mode (`A-Organize.png`: per-source chips, `Add files` & edge tint) | §2, D05 T01 §2, D10 T01 §8, D10 T02 §2, D10 T02 §4 | [ ] |
-| 4 | §4 | Organize **Split** mode (`B-Organize.png`: click-between-pages dividers & part names) | §2, D05 T01 §2, D10 T02 §2, D10 T02 §4, D10 T02 §6, D10 T03 §1 | [ ] |
-| 5 | §5 | Organize `Save` (replace-original) and `Save as copy` jobs plus `Unsaved-Changes` guard | §2, §3, §4, D04 T01 §5, D02 T01 §10, D06 T04 §14, D10 T02 §2, D10 T02 §17 | [ ] |
+| 2 | §2 | Drag-and-drop and keyboard page reordering, floating action bar & `90°` rotation badges | §1, D10 T01 §20, D10 T02 §2, D10 T02 §14 | [ ] |
+| 3 | §3 | Organize **Combine** mode (`A-Organize.png`: per-source chips, `Add files` & edge tint) | §2, D05 T01 §2, D10 T01 §8, D10 T01 §20, D10 T02 §2, D10 T02 §4 | [ ] |
+| 4 | §4 | Organize **Split** mode (`B-Organize.png`: click-between-pages dividers & part names) | §2, D05 T01 §2, D10 T01 §20, D10 T02 §2, D10 T02 §4, D10 T02 §6, D10 T03 §1 | [ ] |
+| 5 | §5 | Organize `Save` (replace-original) and `Save as copy` jobs plus `Unsaved-Changes` guard | §2, §3, §4, D04 T01 §5, D02 T01 §10, D06 T04 §14, D10 T01 §20, D10 T02 §2, D10 T02 §17 | [ ] |
 | 6 | §6 | `Insert Blank Page` dialog and interactive `Crop & Resize Pages` dialog | §5, D05 T01 §4, D02 T01 §10, D06 T04 §14, D10 T02 §2, D10 T02 §6, D10 T02 §17 | [ ] |
 | 7 | §7 | Two-column `640 epx` `Watermark & Stamp` dialog (`SPEC 9.6` & `9.9` with live preview) | §5, D05 T01 §5, D02 T01 §10, D06 T04 §14, D10 T01 §8, D10 T02 §2, D10 T02 §8, D10 T02 §17, D10 T02 §18 | [ ] |
 | 8 | §8 | Two-column `640 epx` `Header, Footer & Bates Numbering` dialog with live page preview | §7, D05 T01 §6, D06 T04 §14, D10 T01 §8, D10 T02 §2, D10 T02 §4, D10 T02 §6, D10 T02 §17 | [ ] |
@@ -152,7 +154,7 @@ Implement **Reorder** mode interactions on `OrganizePage` (`SPEC 9.6` and `D-Org
 **Build order:**
 
 1. Implement `move_selected_pages(target_index)`, `rotate_selected_pages(delta_deg)`, `delete_selected_pages()`, and `compute_change_summary()` (`moved_count`, `rotated_count`, `deleted_count`, `inserted_count`, `formatted_summary`) in `src/services/organize_edit_model.cpp`. Done when: `OrganizeUi.ReorderRotateDeleteSummary` verifies that a scripted edit sequence and its undo (or `4 x 90°` full-circle rotation) report exact change counts and return to `"No changes"` when back at baseline.
-2. Build the drag-and-drop drop-indicator visual, the `Move to...` popover, the `90°` rotation badge on page cards, and the dark floating `OrganizeSelectionBar` in `src/app/views/organize_page.h/.cpp`. Done when: screenshots of `OrganizePage` with active selection, rotation badge, and drop indicator match `D-Organize.png`.
+2. Build the drag-and-drop drop-indicator visual, the `Move to...` popover, the `90°` rotation badge on page cards, and the dark floating `OrganizeSelectionBar` in `src/app/views/organize_page.h/.cpp`. Done when: `Ui.Golden.OrganizeReorder` (`D10 T01 §20`) scores SSIM at or above its manifest threshold against `D-Organize.png` for `OrganizePage` with an active selection, a rotation badge and a drop indicator.
 
 - [ ] Implement `move_selected_pages(size_t target_insertion_index)` in `OrganizeEditModel` preserving the relative order of multi-selected pages and recording an undo snapshot. Done when: moving pages `{2, 5}` to index `0` produces `[2, 5, 1, 3, 4, 6]` and `undo()` restores `[1, 2, 3, 4, 5, 6]`.
 - [ ] Implement `rotate_selected_pages(int delta_deg)` (`-90` or `+90`, normalized modulo `360`) and `delete_selected_pages()` (preventing deletion of the last remaining page with a polite message). Done when: rotating `+90°` sets `rotation_delta_deg = 90` and deleting all pages is refused cleanly.
@@ -192,7 +194,7 @@ Build **Combine** mode in `OrganizePage` (`SPEC 9.6` and `design/screenshots/exp
 - [ ] Provide the editable `Output file name` `ui::TextBox` (defaulting to `<first_file_stem>-combined.pdf`) and `Save combined PDF` primary button wired to `§5` and `D05 T01 §2`'s `merge_pdfs`. Done when: `OrganizeUi.CombineSaveRoundTrip` saves a combined PDF and verifies every output page pixel-matches (`expect_rgba_equal`) the grid order.
 - [ ] Commit: `organize: Combine mode with per-source colour`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=OrganizeUi.Combine*` passes, screenshot matches `explorations/A-Organize.png`, combined output renders match page-for-page, and the encrypted-source cancel path is verified.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OrganizeUi.Combine*` passes, `Ui.Golden.OrganizeCombine` scores SSIM at or above its manifest threshold against `explorations/A-Organize.png` (`D10 T01 §20`), combined output renders match page-for-page, and the encrypted-source cancel path is verified.
 
 ## 4. Organize **Split** mode (`B-Organize.png`: click-between-pages dividers & part names)
 
@@ -223,7 +225,7 @@ Build **Split** mode in `OrganizePage` (`SPEC 9.6` and `design/screenshots/explo
 - [ ] Compile the validated `SplitPartItem` list to `D05 T01 §2`'s `split_pdf` via `§5`'s save flow and verify each output file's name, page count, and rendered pixels. Done when: `OrganizeUi.SplitSaveRoundTrip` passes.
 - [ ] Commit: `organize: Split mode with visual breaks and named parts`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=OrganizeUi.Split*` passes, screenshot matches `explorations/B-Organize.png`, split outputs match by filename, page count, and renders, and duplicate-name refusal is verified.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OrganizeUi.Split*` passes, `Ui.Golden.OrganizeSplit` scores SSIM at or above its manifest threshold against `explorations/B-Organize.png` (`D10 T01 §20`), split outputs match by filename, page count, and renders, and duplicate-name refusal is verified.
 
 ## 5. Organize `Save` (replace-original) and `Save as copy` jobs plus `Unsaved-Changes` guard
 
@@ -250,11 +252,11 @@ Implement the Organize save pipeline and the `Unsaved-Changes` guard (`SPEC 9.6`
 - [ ] Implement `OrganizeSaveController::submit_save` and `submit_save_as_copy` in `src/services/organize_save_controller.h/.cpp` compiling an immutable snapshot of `OrganizeEditModel` into `D05 T01 §2`-`§3` operations and submitting it to `ConversionRunner` (`D04 T01 §1`). Done when: Organize saves show progress in `QueueCard` (`D04 T01 §5`) and raise completion notifications (`D04 T01 §6`).
 - [ ] Keep `OrganizeEditModel::is_dirty()` `true` while a save job is `Waiting` or `Running`, flipping to `false` (and resetting the baseline snapshot so the header summary clears) **only** when `ConversionRunner` reports `JobState::Completed`. Done when: cancelling a save job mid-write leaves `is_dirty() == true` and the file on disk untouched. Cheaper substitute that fails the checkpoint: clearing `is_dirty()` at job submission before the file is written.
 - [ ] Refresh any open viewer `DocumentActor` tab pointing to the replaced file path after an atomic `Save` (replace original) completes so switching back to `Document` view displays the newly saved page order and rotations. Done when: reordering pages in Organize, clicking `Save`, and switching to `Document` view displays the new page order.
-- [ ] Build `ReplaceOriginalDialog` and `UnsavedChangesDialog` (`src/app/dialogs/organize_guard_dialogs.h/.cpp`, hosted via `D02 T01 §10`) matching `D-Dialogs.png` (`"Save your changes first?"` with `Save` primary accent button, `Discard` button, and `Cancel` button). Done when: dialog screenshots match `D-Dialogs.png`.
+- [ ] Build `ReplaceOriginalDialog` and `UnsavedChangesDialog` (`src/app/dialogs/organize_guard_dialogs.h/.cpp`, hosted via `D02 T01 §10`) matching `D-Dialogs.png` (`"Save your changes first?"` with `Save` primary accent button, `Discard` button, and `Cancel` button). Done when: `Ui.Golden.OrganizeSaveDialogs` (`D10 T01 §20`) scores SSIM at or above its manifest threshold against `D-Dialogs.png`.
 - [ ] Intercept `AppShell` mode navigation (leaving `Organize`), tab close (`Ctrl+W` / tab `X`), and window close (`AppWindow::Closing`) whenever `OrganizeEditModel::is_dirty() == true`: `Cancel` aborts navigation/close and keeps the user in Organize; `Discard` discards in-memory edits, leaves the source file byte-for-byte untouched (verified by SHA-256), and proceeds with navigation/close; and `Save` runs the atomic save job to completion and proceeds only if the save succeeds (staying in Organize if the save fails or is cancelled). Done when: `OrganizeUi.UnsavedChangesGuard` tests all 3 exit paths x 3 button responses (9 combinations).
 - [ ] Commit: `organize: save flows as jobs with the unsaved-changes guard`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=OrganizeUi.Save*:OrganizeUi.UnsavedChangesGuard` passes, dialog screenshots match `D-Dialogs.png`, and the `Discard` byte-identity SHA-256 hash is verified.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OrganizeUi.Save*:OrganizeUi.UnsavedChangesGuard` passes, `Ui.Golden.OrganizeSaveDialogs` scores SSIM at or above its manifest threshold against `D-Dialogs.png` (`D10 T01 §20`), and the `Discard` byte-identity SHA-256 hash is verified.
 
 ## 6. `Insert Blank Page` dialog and interactive `Crop & Resize Pages` dialog
 

@@ -14,6 +14,8 @@ track: M1
 
 > **Current state:** **Corrected 2026-10-20:** (was: Corrected 2026-10-19 noting `D01 T01 §8-§10` pending) `src/core/recto-core.vcxproj` compiles the scaffold `recto::core::abi_version()` entry point, and `D01 T01 §1-§10` (`todo/01-engine/TODO-01-bridge-runtime.md`, `status: done`) are all verified (`PdfResult<T>`, `PdfValue`, `Lexer`, `Parser`, `XrefTable`, `ObjStm` & damaged-file recovery, stream filters, Windows CNG `bcrypt.dll` decryption, and `recto::pdf::Document`).
 
+> **Groomed 2026-10-23:** Measured against the tree: `src/pdf/display_list.h/.cpp` (`§1`) is the only part of this file built so far (with `tests/recto-tests/pdf_display_list_tests.cpp`); `font`, `interpreter`, `incremental_writer`, `rasterizer` and `src/core/document_actor`, `render_pool`, `tile_scheduler`, `runtime` do not exist yet. The build is C++23 (`/std:c++23preview`, `Directory.Build.targets`), `recto-ui` replaces WinUI (`todo/10-ui/`), and the engine has no UI dependency. Gaps filed as `§15` to `§21`: transparency and blend compositing, shadings, patterns and text clip, non-embedded fonts and CJK CMaps, the missing `ErrorCode::ResourceLimit` and `InvalidArgument`, interpreter work ceilings, tile failure isolation, and page `/UserUnit`.
+
 ## Inputs
 
 - `docs/plans/2026-10-13-recto-foundation.md` sections 3.3 (`TileKey`, `DisplayList`, `CancelToken`), 4.1 items 4 to 6 (content-stream interpreter, font loading, incremental save), 4.2 to 4.8 (thread ownership, runtime map, actor, tile rendering, shutdown order).
@@ -58,7 +60,7 @@ track: M1
 | 1 | §1 | Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`) | D01 T01 §10, D06 T05 §24 | [ ] |
 | 2 | §2 | DirectWrite in-memory font loader, Standard 14 metrics, Type 1/3 and `/ToUnicode` CMap | §1 | [ ] |
 | 3 | §3 | Content-stream graphics state machine, path construction/clipping and colour spaces | §1 | [ ] |
-| 4 | §4 | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects | §2, §3 | [ ] |
+| 4 | §4 | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects | §2, §3, D06 T05 §32, D06 T05 §33 | [ ] |
 | 5 | §5 | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`) | D01 T01 §10, D06 T05 §24 | [ ] |
 | 6 | §6 | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`) | §4 | [ ] |
 | 7 | §7 | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation | §6 | [ ] |
@@ -67,8 +69,15 @@ track: M1
 | 10 | §10 | `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters | §9 | [ ] |
 | 11 | §11 | `RenderOptions::line_weight_mode` in the rasterizer and the `TileKey` identity | §9 | [ ] |
 | 12 | §12 | `DocumentActor::get_page_transition` query for the parsed `/Trans` and `/Dur` | §8, D02 T02 §12 | [ ] |
-| 13 | §13 | `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter` | §5 | [ ] |
-| 14 | §14 | `DocumentActor` optional-content edit session: stage, undo, redo, `ocg_generation` | §8, §13, D02 T03 §7 | [ ] |
+| 13 | §13 | `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter` | §5, §18 | [ ] |
+| 14 | §14 | `DocumentActor` optional-content edit session: stage, undo, redo, `ocg_generation` | §8, §13, §18, D02 T03 §7 | [ ] |
+| 15 | §15 | Transparency groups, blend modes and soft masks in the DisplayList and rasterizer | §3, §4, §6 | [ ] |
+| 16 | §16 | Shading types 1 to 7, tiling patterns and text clip modes in the rasterizer | §4, §6 | [ ] |
+| 17 | §17 | Non-embedded font substitution, predefined CJK CMaps and vertical metrics | §2, §4 | [ ] |
+| 18 | §18 | `ErrorCode::ResourceLimit` and `ErrorCode::InvalidArgument` in `error.h` | D01 T01 §1 | [ ] |
+| 19 | §19 | Interpreter work, memory and wall-clock ceilings on hostile content streams | §4, §7, §8, §18 | [ ] |
+| 20 | §20 | Rasterizer failure isolation: typed tile errors, target recreation and retry | §7, §9, §19 | [ ] |
+| 21 | §21 | Page `/UserUnit` in `PageDescription`, physical page size and CLI output size | D01 T01 §10, §6 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
 
@@ -155,6 +164,8 @@ Implement the graphics-state, colour-space, and vector-path half of the content-
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.Graphics*:PdfInterpreter.Path*:PdfInterpreter.Clip*:PdfInterpreter.Color*:PdfInterpreter.Indexed*:PdfInterpreter.Shading*` passes under ASan.
 
 ## 4. Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects
+
+> **Groomed 2026-10-23:** added `D06 T05 §32` (JPX per-component decode) and `D06 T05 §33` (DCT `/ColorTransform`, Adobe CMYK and YCCK) to `Depends On`: `/Do` image decoding renders wrong colours and sizes until those decoder repairs ship, and the corpus sweep below would pin the wrong pixels.
 
 Complete `src/pdf/interpreter.cpp` with text state and positioning operators, image XObjects, inline images, and recursive Form XObjects (ISO 32000-1 sections 8.8, 8.9, and 9):
 - Text state and positioning (`BT` begin text, `ET` end text, `Tc` char spacing, `Tw` word spacing for ASCII `0x20`, `Tz` horizontal scaling, `TL` leading, `Tf` font and size, `Tr` rendering mode `0..7` including `3` invisible text and `4..7` text clipping, `Ts` text rise, `Td`, `TD`, `Tm`, `T*`, `Tj`, `TJ` with thousandths-of-em adjustments, `'`, `"`).
@@ -403,6 +414,8 @@ Acrobat Pro plays page transitions and honours automatic page timing in Full Scr
 
 ## 13. `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter`
 
+> **Groomed 2026-10-23:** the chain bound returned `ErrorCode::UnsupportedFeature`; it now returns `ErrorCode::ResourceLimit`, which `§18` adds (the code did not exist), and `§13` and `§14` depend on `§18`.
+
 Acrobat Pro keeps an edit (a new layer, a renamed destination) unsaved until the user saves, and undoes it on request. Recto's rule is stricter: authoring always works on a copy and never modifies the open viewer document in place, and `recto::pdf::Document` is read-only. This section gives the engine the two pieces an actor needs for that: `ObjectChangeSet`, a plain value listing replaced and newly allocated indirect objects, and `StagedRevisionChain`, which appends each change set as one incremental revision (`§5`) to an in-memory copy of the opened bytes, reopens a working `Document` from that copy, undoes by truncating the last revision, and exports one squashed revision for the save path. It writes no file. It must not break `§5`'s byte-prefix rule (existing signatures stay valid), the `PdfResult<T>` contract, or the bounds on hostile input. The Recto improvement it keeps: the original file and the viewer's opened bytes are never touched until the save path (`D02 T01 §8`) writes a new file by temp-file-then-replace.
 
 **Phase:** 1
@@ -422,12 +435,14 @@ Acrobat Pro keeps an edit (a new layer, a renamed destination) unsaved until the
 - [ ] Keep the base bytes as an untouched prefix of every working buffer. Done when: `PdfStagedRevisions.BasePrefixPreserved` finds `std::memcmp` of the base length equal to `0` after 3 pushes, 2 undos and 1 redo. Cheaper substitute: rewriting the whole file on each edit.
 - [ ] Implement `export_squashed` as the base bytes plus one revision holding the merged change set, writing allocated objects at their recorded numbers (extend `IncrementalWriter` in `src/pdf/incremental_writer.cpp` with `set_new_object(IndirectRef, PdfValue)` if `set_object` refuses numbers at or past the base `/Size`). Done when: `PdfStagedRevisions.SquashEquivalent` reopens the squashed buffer and resolves every changed and allocated object equal to the working document after 3 pushes that each allocate one object, at the same object numbers, and the export carries `current_revision()`.
 - [ ] Support classic `xref`, `/Type /XRef` stream and encrypted bases through `IncrementalWriter`'s existing paths. Done when: `PdfStagedRevisions.CompressedAndEncrypted` pushes and squashes on `render/compressed-xref-2p.pdf` and on `render/encrypted-aes-256.pdf` with `recto-test`, and both reopen.
-- [ ] Bound the chain at 1,000 pushed revisions, 100,000 objects per change set and 256 MiB of working bytes beyond the base, returning a typed `PdfError` with `ErrorCode::UnsupportedFeature` naming the limit, and zero the retained password with `SecureZeroMemory` on destruction. Done when: `PdfStagedRevisions.Bounds` hits each limit with a typed error and no partial revision left in the working bytes.
+- [ ] Bound the chain at 1,000 pushed revisions, 100,000 objects per change set and 256 MiB of working bytes beyond the base, returning a typed `PdfError` with `ErrorCode::ResourceLimit` (`§18`) naming the limit, and zero the retained password with `SecureZeroMemory` on destruction. Done when: `PdfStagedRevisions.Bounds` hits each limit with a typed error and no partial revision left in the working bytes.
 - [ ] Commit: `pdf: add ObjectChangeSet and the in-memory StagedRevisionChain`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfStagedRevisions.*` passes under ASan, and making `undo` reopen the working document without truncating the bytes fails `PdfStagedRevisions.PushPopRedo`.
 
 ## 14. `DocumentActor` optional-content edit session: stage, undo, redo, `ocg_generation`
+
+> **Groomed 2026-10-23:** `ErrorCode::ResourceLimit` did not exist in `src/pdf/error.h`; `§18` now adds it and this section depends on `§18`. The pending-export refusal below uses it.
 
 Acrobat Pro creates, renames, deletes, merges and imports layers from its Layers panel. Recto builds those operations in `D02 T03 §23` (create, rename, delete, usage, reorder, merge) and `§24` (import a page or an image as a layer), and the panel in `§25`; all of them must run where the `Document` lives, on a copy, undoably, and must make the canvas re-render at once. This section adds that edit session to the `DocumentActor`: each edit is a value describing the operation and a builder that runs on the actor thread against the working `Document` of a `StagedRevisionChain` (`§13`) and returns an `ObjectChangeSet` plus the reference of any layer it creates; the session tracks which revision was last saved, so dirty state, save acknowledgements and discard all refer to a revision identity rather than a flag; every stage, undo, redo or discard clears the `DisplayList` cache and publishes a new `ocg_generation` (the per-actor counter `D02 T03 §7` introduced for visibility toggles), so no stale tile or display list survives. It must not break the actor contract (`§8`), the visibility state of `D02 T03 §7`, or the shutdown order (`§10`). The Recto improvement it keeps: the original file and the opened bytes are never modified; the save path (`D02 T01 §8`) writes the exported revision to a new file by temp-file-then-replace.
 
@@ -458,9 +473,192 @@ Acrobat Pro creates, renames, deletes, merges and imports layers from its Layers
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Actor.OcgEdit*:Scheduler.TileKeyUsesCompiledGeneration` passes under ASan, and skipping the `DisplayList` cache clear on publish fails `Actor.OcgEditStageAndRender`.
 
+## 15. Transparency groups, blend modes and soft masks in the DisplayList and rasterizer
+
+> **Groomed 2026-10-23:** new section. `§3` records `/ca`, `/CA`, `/BM` and `/SMask` from `gs`, and `§6` replays paths, glyphs and images with plain alpha only, so a Word or PowerPoint export (luminosity soft masks, multiply shadows, isolated groups) would render wrong or as solid black, the failure class `D06 T03 §10` gates. Nothing in the tree owned the compositing half of ISO 32000-1 section 11, so this section does.
+
+Transparency is where exported Office and design-tool PDFs go wrong, and it must stay deterministic across worker counts and tile seams. This section adds the group and soft-mask commands to the immutable `DisplayList` (`§1`), parses them in the interpreter (`§3`, `§4`), and composites them in the rasterizer (`§6`) with Recto's own pixel formulas for the 16 PDF blend modes, so output does not depend on a Direct2D effect's rounding. Compositing is pixel-local, so a group is rendered into a bitmap clipped to the current tile and the group's `/BBox`, which keeps tile stitching seam-free. It must not break the freeze contract (`DisplayList` stays const, a sub-list is an immutable `std::shared_ptr<const DisplayList>`), 64-command cancellation (`§7`) or byte-identical output at any worker count. The Recto improvement it keeps: blend math lives in one tested file, `src/pdf/blend.cpp`, shared by the rasterizer and the print and export paths.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that group and soft-mask sub-lists are stored as `std::shared_ptr<const DisplayList>` inside the parent list, that the compositor allocates group bitmaps only inside the owning worker's `Rasterizer` and frees them before `render_tile` returns (also on cancel), and that no blend, group or mask state is cached on the `DisplayList`.
+
+**Build order:**
+
+1. Add `BeginGroup`, `EndGroup` and `SetSoftMask` commands and the sub-list storage to `src/pdf/display_list.h/.cpp`, and parse `/Group`, `/BM`, `/SMask` in `src/pdf/interpreter.cpp`. Done when: `PdfDisplayList.GroupCommands` and `PdfInterpreter.TransparencyOperators` pass under ASan.
+2. Add `src/pdf/blend.h/.cpp` and the group and mask compositing to `src/pdf/rasterizer.cpp`. Done when: `PdfBlend.*` and `PdfRasterizer.Transparency*` pass under ASan.
+
+- [ ] Add `BeginGroup { bbox, isolated, knockout, alpha, blend_mode }`, `EndGroup` and `SetSoftMask { sub_list, subtype, backdrop, transfer }` (or `None`) to `DisplayCommand` in `src/pdf/display_list.h`. Done when: `PdfDisplayList.GroupCommands` records a group nested three deep with a soft mask, reads it back from 8 threads under ASan, and finds zero non-`const` members.
+- [ ] Parse `/Group << /S /Transparency /I /K >>` on a page and on a `/Subtype /Form` XObject, the `/BM` name or array (first known name wins, unknown means `Normal`) and the `/SMask` dictionary (`/S /Alpha` or `/Luminosity`, `/G` form, `/BC`, `/TR` function, and `/None`) in `src/pdf/interpreter.cpp`. Done when: `PdfInterpreter.TransparencyOperators` records each variant and ignores a `/SMask` whose `/G` is not a form. (ISO 32000-1 11.4, 11.6.5)
+- [ ] Implement the 16 PDF blend modes (`Normal`, `Multiply`, `Screen`, `Overlay`, `Darken`, `Lighten`, `ColorDodge`, `ColorBurn`, `HardLight`, `SoftLight`, `Difference`, `Exclusion`, `Hue`, `Saturation`, `Color`, `Luminosity`) as integer premultiplied-BGRA functions in `src/pdf/blend.cpp`. Done when: `PdfBlend.AllModesMatchFormula` matches the table `scripts/build-corpus.py --blend-table` computes from the ISO 32000-1 11.3.5 formulas for 3 backdrop and source pairs per mode within 1 LSB. Cheaper substitute: the Direct2D blend effect with no formula check, whose rounding differs between GPUs and architectures.
+- [ ] Composite isolated, non-isolated and knockout groups in `Rasterizer::render_tile` into a bitmap clipped to the tile and the group `/BBox`, then blend it into the parent with the group's alpha and mode. Done when: `PdfRasterizer.GroupIsolatedKnockout` finds the expected probe pixels from ISO 32000-1 11.4.8 on `render/transparency-groups.pdf`. (ISO 32000-1 11.4.5, 11.4.6)
+- [ ] Apply `Alpha` and `Luminosity` soft masks (with `/BC` backdrop and `/TR` transfer function) per pixel inside the same tile bitmap, and apply image `/SMask` with `/Matte` un-premultiplication. Done when: `PdfRasterizer.SoftMaskLuminosityAlpha` renders a gradient under a luminosity mask with no solid black polygon and the probe pixels the formula predicts.
+- [ ] Cap group nesting at `kMaxGroupDepth = 16` in the interpreter and flatten deeper groups into their parent, setting `DisplayList::group_depth_truncated`. Done when: `PdfInterpreter.GroupDepthCap` records 16 groups for a 40-deep file and returns success with the flag set, under ASan.
+- [ ] Keep cancellation and tiling correct inside groups: poll `CancelToken` every 64 commands inside group and mask sub-lists, pop every group layer on abort, and render stitched tiles identically to a full page. Done when: `PdfRasterizer.CancelInsideGroup` aborts under 10 ms and renders the next tile exactly, and `PdfRasterizer.GroupTileStitchIdentity` is pixel-identical (`max_delta = 0`) at `0`, `90`, `180` and `270` degrees.
+- [ ] Add `render/transparency-groups.pdf`, `render/blend-modes-16.pdf` and `render/softmask-luminosity.pdf` to `scripts/build-corpus.py` with `tests/corpus/PROVENANCE.md` rows. Done when: `python scripts/build-corpus.py --check` regenerates them byte for byte and `Corpus.Provenance` passes.
+- [ ] Commit: `pdf: add transparency groups, the 16 blend modes and soft masks to the display list and rasterizer`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfBlend.*:PdfRasterizer.Transparency*:PdfRasterizer.GroupIsolatedKnockout:PdfRasterizer.SoftMask*:PdfRasterizer.CancelInsideGroup:PdfRasterizer.GroupTileStitchIdentity:PdfInterpreter.Transparency*:PdfInterpreter.GroupDepthCap:PdfDisplayList.GroupCommands` passes under ASan, and swapping the `Multiply` and `Screen` formulas fails `PdfBlend.AllModesMatchFormula`.
+
+## 16. Shading types 1 to 7, tiling patterns and text clip modes in the rasterizer
+
+> **Groomed 2026-10-23:** new section. `§3` records axial and radial shadings and tiling patterns into the `DisplayList` but `§6` never replays them, function-based shading (type 1) and the four mesh types (4 to 7) are in no section, and `§4` accepts `Tr` `4` to `7` without accumulating the clip. Fixes the gap by giving each its owner here.
+
+Gradients, patterns and clipped text are common in brochures, maps and CAD exports. This section parses all seven ISO 32000-1 shading types, replays shadings and tiling patterns in the rasterizer, and implements text clipping (`Tr` `4` to `7`). Axial and radial gradients use Direct2D gradient brushes fed from the sampled `/Function`; function-based and mesh shadings are rasterized on the CPU into the tile bitmap so output is identical at any worker count. Pattern cells render once per `(pattern, scale)` per worker and tile by `/XStep` and `/YStep`. It must not break seam-free tiling, the 64-command cancellation of `§7`, or the bounds that keep a hostile pattern from allocating without limit.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that shading and pattern data lives in immutable `std::shared_ptr<const ...>` objects inside the `DisplayList`, that pattern-cell bitmaps are per-worker and never shared, and that text-clip outlines are copied into `RecordedPath` at interpretation time so no `IDWriteFontFace` is touched by the rasterizer for clipping.
+
+**Build order:**
+
+1. Add the shading and pattern commands to `src/pdf/display_list.h`, the type 1 to 7 parsers to `src/pdf/shading.h/.cpp`, and text-clip accumulation to `src/pdf/interpreter.cpp`. Done when: `PdfShading.*` and `PdfInterpreter.TextClipModes` pass under ASan.
+2. Replay shadings, patterns and clips in `src/pdf/rasterizer.cpp`. Done when: `PdfRasterizer.Shading*`, `PdfRasterizer.TilingPattern*` and `PdfRasterizer.TextClip*` pass under ASan.
+
+- [ ] Add `FillShading { shading, matrix, bbox, background, alpha }` and `FillTilingPattern { cell_list, bbox, matrix, xstep, ystep, paint_type, color }` to `DisplayCommand` in `src/pdf/display_list.h`. Done when: `PdfDisplayList.ShadingAndPatternCommands` records both and reads them from 8 threads under ASan.
+- [ ] Parse `/ShadingType` 1 (function), 2 (axial), 3 (radial, with `/Extend`), and 4, 5, 6, 7 (free-form, lattice, Coons and tensor meshes with `/BitsPerCoordinate`, `/BitsPerFlag`, `/Decode`) in `src/pdf/shading.cpp`, refusing a mesh over `kMaxMeshPatches = 100000` or with bit sizes outside ISO 32000-1 Table 83 with a typed `PdfError`. Done when: `PdfShading.ParseAllTypes` parses one fixture of each type and `PdfShading.HostileMeshRefused` refuses an oversized patch count and a `/BitsPerCoordinate 40` in under 50 ms. (ISO 32000-1 8.7.4.5)
+- [ ] Replay types 2 and 3 through `ID2D1LinearGradientBrush` and `ID2D1RadialGradientBrush` with the `/Function` sampled to at most 256 stops, honouring `/Extend`, `/Domain` and `/Background`. Done when: `PdfRasterizer.ShadingAxialRadial` finds probe pixels at 0, 25, 50, 75 and 100 percent within 1 LSB of the function's value. Cheaper substitute: a two-colour gradient that ignores the `/Function`.
+- [ ] Rasterize types 1, 4, 5, 6 and 7 on the CPU into the tile bitmap (function evaluation per pixel for type 1, Gouraud triangles for types 4 and 5, Coons and tensor patches subdivided to at most 16 by 16 triangles each), clipped to the tile. Done when: `PdfRasterizer.ShadingMeshAndFunction` matches probe pixels computed in `scripts/build-corpus.py` for each type and is pixel-identical at 1 and 8 workers.
+- [ ] Render tiling pattern cells (`/PaintType 1` and `2`, `/TilingType`) once per `(pattern, device scale)` per worker and tile them by `/XStep` and `/YStep`, bounding the cell bitmap at 16 megapixels and a step of zero or beyond `2^31` by drawing nothing and setting `DisplayList::pattern_truncated`. Done when: `PdfRasterizer.TilingPatternSeamFree` is pixel-identical between a full page and stitched tiles at all four rotations, and `PdfRasterizer.TilingPatternBounds` handles a step of `2147483647` and a `/BBox` of `100000 x 10` in under 50 ms.
+- [ ] Accumulate glyph outlines for `Tr` `4` to `7` into a clip path applied at `ET` (ISO 32000-1 9.3.6), taking outlines from `IDWriteFontFace::GetGlyphRunOutline` and ignoring clipping for Type 3 fonts as the standard says. Done when: `PdfInterpreter.TextClipModes` and `PdfRasterizer.TextClipRender` show an image visible only inside the glyphs of `render/text-clip-modes.pdf`, and the state after `ET` restores correctly.
+- [ ] Add `render/shadings-1-to-7.pdf` and `render/text-clip-modes.pdf` to `scripts/build-corpus.py` with `tests/corpus/PROVENANCE.md` rows. Done when: `python scripts/build-corpus.py --check` regenerates them byte for byte and `Corpus.Provenance` passes.
+- [ ] Commit: `pdf: add shading types 1 to 7, tiling pattern replay and text clip modes`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfShading.*:PdfRasterizer.Shading*:PdfRasterizer.TilingPattern*:PdfRasterizer.TextClip*:PdfInterpreter.TextClipModes:PdfDisplayList.ShadingAndPatternCommands` passes under ASan, and ignoring `/Extend` fails `PdfRasterizer.ShadingAxialRadial`.
+
+## 17. Non-embedded font substitution, predefined CJK CMaps and vertical metrics
+
+> **Groomed 2026-10-23:** new section. `§2` resolves only embedded fonts and the Standard 14, so a PDF that names `ArialMT`, `Calibri` or an Adobe CJK collection without embedding it renders in the wrong face or with missing glyphs, and no section owned the predefined CMaps (`UniJIS-UCS2-H` and the rest) or vertical metrics. `D06 T03 §10` gates the result.
+
+A large share of real PDFs reference fonts they do not embed. This section adds the substitution resolver (system font by `/BaseFont` and `/FontDescriptor` flags, per code point system fallback for missing glyphs), the predefined CMaps for the four Adobe CJK collections, and vertical writing metrics. It must not break `§2`'s embedded and Standard 14 paths, and a substituted glyph must never be reported as an embedded one. The Recto improvement it keeps: a character no font can draw is counted on the `DisplayList` (`unmapped_glyph_count`, `substituted_font_count`) instead of drawing a missing-glyph box or nothing silently, so `D06 T03 §2` can turn it into a page notice.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that the resolver returns an immutable `LoadedFont` that shares the process-wide `DWRITE_FACTORY_TYPE_SHARED` factory, that CMap tables are `constexpr` or immutable static data safe to read from any worker, and that fallback resolution runs at `DisplayList` build time on the actor thread, never inside `Rasterizer::render_tile`.
+
+**Build order:**
+
+1. Add the substitution resolver to `src/pdf/font.cpp` and the CMap tables to `src/pdf/cmap_data.cpp` (generated by `scripts/gen-cmap-data.py`). Done when: `PdfFont.NonEmbeddedSubstitution` and `PdfFont.PredefinedCMapsCjk` pass under ASan.
+2. Add vertical metrics and the glyph-count fields. Done when: `PdfFont.VerticalMetrics` passes under ASan.
+
+- [ ] Resolve a non-embedded `/BaseFont` by stripping the subset tag, matching the family in the DirectWrite system collection (`ArialMT` to Arial, `TimesNewRomanPS-BoldMT` to Times New Roman, `Calibri` to Calibri), and otherwise choosing Times New Roman, Arial or Courier New from `/FontDescriptor /Flags` (Serif, FixedPitch) with weight and slant from `/FontWeight`, `/ItalicAngle`, `ForceBold` and Italic. Done when: `PdfFont.NonEmbeddedSubstitution` resolves the fixture's six font names to the expected family, weight and style on this host. (ISO 32000-1 9.6.2, 9.8.1)
+- [ ] Keep each substituted glyph's advance from `/Widths` and scale the glyph horizontally to fit when its natural advance differs by more than 1 percent, clamped to 0.5 to 2.0, in `src/pdf/font.cpp`. Done when: `PdfFont.SubstitutedAdvanceFromWidths` places a 20-glyph run at the `/Widths` positions to within 0.01 pt. Cheaper substitute: using the substitute font's own advances, which shifts every following glyph.
+- [ ] Resolve a code point that the chosen face lacks through `IDWriteFontFallback::MapCharacters` per code point (never by probing one character), and when no font draws it, skip the glyph and increment `DisplayList::unmapped_glyph_count`. Done when: `PdfFont.PerCodePointFallback` draws Cyrillic from non-embedded `ArialMT` with zero unmapped glyphs and counts exactly the one private-use code point planted in the fixture.
+- [ ] Generate `src/pdf/cmap_data.cpp` with `scripts/gen-cmap-data.py` from the pinned Adobe `cmap-resources` release (BSD-3-Clause, commit and SHA-256 recorded in `third_party/cmap-resources/SOURCE.md`, notice added to `NOTICE.md`) for `Identity-H/V`, `UniJIS-UCS2-H/V`, `UniJIS-UTF16-H/V`, `UniGB-UCS2-H/V`, `UniGB-UTF16-H/V`, `UniCNS-UCS2-H/V`, `UniCNS-UTF16-H/V`, `UniKS-UCS2-H/V`, `UniKS-UTF16-H/V` and the legacy `90ms-RKSJ`, `GBK-EUC`, `ETen-B5` and `KSCms-UHC` families, with `usecmap` resolved, and the reverse `Adobe-Japan1`, `Adobe-GB1`, `Adobe-CNS1` and `Adobe-Korea1` CID-to-Unicode maps. Done when: `python scripts/gen-cmap-data.py --check` regenerates the file byte for byte and the compiled data adds under 2 MB to `recto-pdf.lib`.
+- [ ] Decode a Type 0 font whose `/Encoding` is a predefined CMap name or an embedded CMap stream (with `usecmap`) to CIDs, and draw non-embedded CJK collections with a system face chosen by `/Registry-/Ordering` (Japan1 to Yu Gothic or MS Gothic, GB1 to Microsoft YaHei, CNS1 to Microsoft JhengHei, Korea1 to Malgun Gothic) by mapping CID to Unicode. Done when: `PdfFont.PredefinedCMapsCjk` draws the Japan1, GB1, CNS1 and Korea1 fixtures with zero unmapped glyphs and extracts the expected Unicode text.
+- [ ] Read vertical metrics (`/WMode 1`, `/DW2`, `/W2` and the position vector) and advance vertically in `src/pdf/font.cpp` and the text operators of `src/pdf/interpreter.cpp`. Done when: `PdfFont.VerticalMetrics` places an `Identity-V` run at the ISO 32000-1 9.7.4.3 positions. (ISO 32000-1 9.7.4.3)
+- [ ] Add `render/non-embedded-fonts.pdf` (Latin, Cyrillic, the four CJK collections, vertical and horizontal) to `scripts/build-corpus.py` with a `tests/corpus/PROVENANCE.md` row. Done when: `python scripts/build-corpus.py --check` regenerates it and `Corpus.Provenance` passes.
+- [ ] Commit: `pdf: substitute non-embedded fonts, add predefined CJK CMaps and vertical metrics`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFont.NonEmbeddedSubstitution:PdfFont.SubstitutedAdvanceFromWidths:PdfFont.PerCodePointFallback:PdfFont.PredefinedCMapsCjk:PdfFont.VerticalMetrics` passes under ASan, and mapping Cyrillic through a single probe character instead of per code point fails `PdfFont.PerCodePointFallback`.
+
+## 18. `ErrorCode::ResourceLimit` and `ErrorCode::InvalidArgument` in `error.h`
+
+> **Groomed 2026-10-23:** new section. `src/pdf/error.h` has 16 codes and neither `ResourceLimit` nor `InvalidArgument`, yet `§14` here and sections in `D03 T03` already return them. A section that returns a code that does not exist cannot compile, so the codes get one owner and every consumer waits for it.
+
+The owning layer is `src/pdf/error.h` (stamped in `D01 T01 §1`), so the fix is an additive change to the enum, its name table and the diagnostic mapping, with a regression test; no stamped checklist is rewritten. `ResourceLimit` means a bound that is not a decompression or recursion bound was reached (command count, change-set size, pending exports, wall-clock budget). `InvalidArgument` means the caller passed a value outside the documented domain (a page index past the end, a malformed password argument), distinct from a damaged file.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that the change adds enumerators after `InternalError` so every existing numeric value is unchanged, adds no state and touches no threading, and that `error_code_name` stays `constexpr noexcept`.
+
+**Build order:**
+
+1. Add the enumerators, names and `DiagnosticId` entries in `src/pdf/error.h/.cpp`. Done when: `PdfError.ErrorCodeNamesCoverEveryCode` passes.
+2. Map the codes in the CLI exit-code table and the diagnostic ring. Done when: `Cli.ExitCodeForResourceLimit` passes.
+
+- [ ] Append `ResourceLimit` and `InvalidArgument` after `InternalError` in `enum class ErrorCode` in `src/pdf/error.h`, with matching `DiagnosticId` entries and `error_code_name` cases (`"ResourceLimit"`, `"InvalidArgument"`). Done when: `PdfError.ErrorCodeNamesCoverEveryCode` iterates every enumerator, finds a non-empty unique name for each, and finds the 16 pre-existing numeric values unchanged.
+- [ ] Extend the existing diagnostic-ring and ETW code mapping in `src/pdf/error.cpp` so both new codes are recorded and traced like the others. Done when: `PdfError.DiagnosticRingRecordsNewCodes` records one `ResourceLimit` and one `InvalidArgument` and reads them back with their names.
+- [ ] Map `InvalidArgument` to CLI exit `1` and `ResourceLimit` to exit `2` in `src/cli/main.cpp` (or `src/cli/dispatcher.cpp` once `D01 T03 §8` moves it), with the code name in the JSON error. Done when: `Cli.ExitCodeForResourceLimit` and `Cli.ExitCodeForInvalidArgument` pass.
+- [ ] Commit: `pdf: add ErrorCode ResourceLimit and InvalidArgument`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*:Cli.ExitCodeFor*` passes under ASan, and renumbering an existing enumerator fails `PdfError.ErrorCodeNamesCoverEveryCode`.
+
+## 19. Interpreter work, memory and wall-clock ceilings on hostile content streams
+
+> **Groomed 2026-10-23:** new section. `§3` and `§4` cap only graphics-state depth (`64`), Form nesting (`32`) and pattern depth (`8`); nothing bounds operator count, `DisplayList` size, path size, operand stack, decoded image memory or time, so a hostile or merely huge page can exhaust memory or run for minutes on a `DocumentActor`. `D06 T03 §1` and `§2` expect these ceilings and their truncation evidence to exist.
+
+Foundation plan section 9 requires every recursive or data-driven walk to be bounded and to fail cleanly. This section gives the interpreter one options struct of ceilings, a cooperative wall-clock budget, and a defined result when a ceiling is reached: the page keeps what was interpreted and the `DisplayList` carries a truncation record that consumers must propagate (`D06 T03 §2` maps it to `Truncated` and a page notice). Very large images are decoded at a reduced scale instead of failing, so a 600 dpi A0 scan opens inside the working-set target. It must not change output for any file under the ceilings, and it must not weaken the cancellation of `§7`.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that `InterpretOptions` is a plain value copied into the interpreter, that the budget clock and counters are members of the stack-allocated `Interpreter` (no globals), that a truncated `DisplayList` is still sealed immutable by `finish()`, and that reduced-scale image decoding allocates only inside the interpreter call.
+
+**Build order:**
+
+1. Add `src/pdf/interpreter_limits.h` (`InterpretOptions` and the `kMax*` defaults) and enforce them in `src/pdf/interpreter.cpp`. Done when: `PdfInterpreter.Ceiling*` pass under ASan.
+2. Add truncation reporting to `DisplayList` and reduced-scale image decoding. Done when: `PdfInterpreter.ImageReduction` and `PdfDisplayList.TruncationRecord` pass under ASan.
+
+- [ ] Define `InterpretOptions { max_operators = 20'000'000; max_commands = 8'000'000; max_path_segments = 1'000'000; max_operand_stack = 8192; max_inline_image_bytes = 64 MiB; max_image_bytes = 128 MiB; max_page_image_bytes = 512 MiB; wall_clock_ms = 10'000 }` in `src/pdf/interpreter_limits.h`, with the named `constexpr` defaults documented against foundation plan section 9. Done when: the header compiles in `recto-pdf` and `PdfInterpreter.DefaultOptions` reads each default.
+- [ ] Count operators, commands and path segments in `Interpreter` and, when one is reached, stop interpreting that content stream, seal the `DisplayList` with what was recorded, and set `DisplayList::truncation()` to `{ reason, limit, observed }`. Done when: `PdfInterpreter.CeilingOperators`, `PdfInterpreter.CeilingCommands` and `PdfInterpreter.CeilingPathSegments` each render the content before the ceiling and report the reason, with options lowered to 1,000 so the tests run in under 1 second.
+- [ ] Bound the operand stack and inline image sizes: an operator with more than `max_operand_stack` operands is skipped with a note, and an inline image over `max_inline_image_bytes` ends the stream. Done when: `PdfInterpreter.CeilingOperandStack` handles 100,000 operands without growth beyond the cap under ASan.
+- [ ] Check a `std::chrono::steady_clock` deadline every 4,096 operators and at every image decode and Form entry, returning a truncated list with reason `WallClock`; take the clock through an injectable `ClockSource` so the test needs no sleeping. Done when: `PdfInterpreter.WallClockBudget` advances a fake clock past the budget mid-page and finds the truncation reason and the content recorded before it.
+- [ ] Decode an image whose bitmap would exceed `max_image_bytes`, or push the page total over `max_page_image_bytes`, at the largest power-of-two reduction that fits (WIC `IWICBitmapScaler` for DCT, resolution-level decode for JPX, box filter otherwise) and record `DrawImage::reduction`. Done when: `PdfInterpreter.ImageReduction` opens a generated 20,000 x 20,000 one-bit image with a peak working-set increase under 600 MB and a reduction of at least 2, and a bitmap under the cap has reduction 1. Cheaper substitute: failing the page with `OutOfMemory`.
+- [ ] Return `ErrorCode::ResourceLimit` (`§18`) from `get_display_list` only when not even the page's first command could be recorded, and otherwise return success with the truncation record. Done when: `Actor.TruncatedPageIsDelivered` receives a truncated list with its record and `Actor.UnrenderablePageIsAnError` receives `ResourceLimit`.
+- [ ] Commit: `pdf: bound interpreter work, memory and time and report truncation`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.Ceiling*:PdfInterpreter.WallClockBudget:PdfInterpreter.ImageReduction:PdfInterpreter.DefaultOptions:PdfDisplayList.TruncationRecord:Actor.TruncatedPageIsDelivered:Actor.UnrenderablePageIsAnError` passes under ASan, and removing the operator counter fails `PdfInterpreter.CeilingOperators`.
+
+## 20. Rasterizer failure isolation: typed tile errors, target recreation and retry
+
+> **Groomed 2026-10-23:** new section. `§6` and `§7` cover the happy path and cooperative abort only. A Direct2D `EndDraw` failure (`D2DERR_RECREATE_TARGET`), an out-of-memory tile buffer or a WIC error on one tile had no defined outcome, and the review failure mode "a tile cached after abort" has no counterpart for a failed tile.
+
+One bad tile must never take down a worker, poison the cache or loop forever. This section defines what `Rasterizer::render_tile` returns for each failure, recreates the render target once, and defines how `RenderPool` and `TileScheduler` report, retry and stop. It must not break `§7` (abort is not failure and is never retried) or the live-object counters of `§10`.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that a failed tile result carries no pixel buffer the scheduler could cache, that retry state is owned by the `TileScheduler` and never by a worker, that the fault-injection seam is compiled only into `recto-tests`, and that a worker thread survives every tile failure with its `Rasterizer` valid.
+
+**Build order:**
+
+1. Return typed errors from `Rasterizer::render_tile` and recreate the target once in `src/pdf/rasterizer.cpp`. Done when: `PdfRasterizer.RecreateTargetOnce` and `PdfRasterizer.TypedTileErrors` pass under ASan.
+2. Add result, retry and backoff handling to `src/core/render_pool.cpp` and `src/core/tile_scheduler.cpp`. Done when: `Scheduler.FailedTileNotCached`, `Scheduler.RetryBackoff` and `Runtime.WorkerSurvivesTileFailure` pass under ASan.
+
+- [ ] Map `EndDraw`, bitmap-creation and WIC `HRESULT`s in `Rasterizer::render_tile` to `OutOfMemory` (`E_OUTOFMEMORY`), `Cancelled` (never an error to retry) or `InternalError` with the `HRESULT` in the diagnostic ring, catching `std::bad_alloc` at the function boundary. Done when: `PdfRasterizer.TypedTileErrors` injects `E_OUTOFMEMORY`, `D2DERR_WRONG_FACTORY` and a `bad_alloc` through the test-only fault seam and finds the matching `ErrorCode` for each, with zero resource leaks.
+- [ ] On `D2DERR_RECREATE_TARGET` discard the worker's `ID2D1RenderTarget`, recreate it once and re-render the tile, returning `InternalError` if the second attempt fails. Done when: `PdfRasterizer.RecreateTargetOnce` injects one failure and gets a pixel-exact tile, injects two and gets `InternalError`, and renders the next tile normally.
+- [ ] Deliver a `TileResult` that holds either pixels or an `ErrorCode`, and never insert a failed or cancelled tile into the tile cache or mark its `TileKey` complete in `TileScheduler`. Done when: `Scheduler.FailedTileNotCached` fails a tile, then finds the key absent from the cache and requestable again.
+- [ ] Retry a failed tile at most 3 times per `TileKey` with a 250 ms, 500 ms, 1 s backoff, then leave the key in an `Error` state that `TileScheduler::tile_state(key)` exposes to the viewer, and clear every `Error` state of a document when `TileScheduler::invalidate_document(doc_id)` is called (the actor calls it when it publishes a new `ocg_generation`, `§14`). Done when: `Scheduler.RetryBackoff` (with an injected clock) counts exactly 3 retries, then the `Error` state, then a fresh attempt after `invalidate_document`.
+- [ ] Resolve every pending tile of a page with the page's `DisplayList` acquisition error (`§19`) without retrying it until `invalidate_document` is called. Done when: `Scheduler.DisplayListErrorFailsPendingTiles` fails page 3 and finds its tiles in `Error` with page 4's tiles delivered.
+- [ ] Keep workers alive: a failed tile leaves `debug_live_workers()` unchanged, and `Runtime::shutdown` after failures still reaches zero live objects. Done when: `Runtime.WorkerSurvivesTileFailure` fails 100 random tiles under load and shuts down with all three counters at `0`.
+- [ ] Commit: `core: isolate tile failures with typed errors, one target recreation and bounded retry`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfRasterizer.RecreateTargetOnce:PdfRasterizer.TypedTileErrors:Scheduler.FailedTileNotCached:Scheduler.RetryBackoff:Scheduler.DisplayListErrorFailsPendingTiles:Runtime.WorkerSurvivesTileFailure` passes under ASan, and caching a failed tile fails `Scheduler.FailedTileNotCached`.
+
+## 21. Page `/UserUnit` in `PageDescription`, physical page size and CLI output size
+
+> **Groomed 2026-10-23:** new section (coordinator gap from the viewer groom). `src/pdf/document.h` `PageDescription` has no `/UserUnit`, and `width_pt` is the unrotated crop-box width in default user-space units, so a page with `/UserUnit 2` reports half its physical size and renders at the wrong zoom-100 size. The owner `D01 T01 §10` is stamped, so the repair is a new section that adds to its struct without rewriting its checklist.
+
+ISO 32000-1 14.11.2 defines `/UserUnit` as the size of one default user-space unit in 1/72 inch (default 1.0), so the physical page size is the crop box size times `UserUnit`. Content coordinates stay in default user space, so `width_pt` and `height_pt` keep their meaning and a new `user_unit` plus derived physical sizes are added; the viewer and `recto-cli render` use the physical size for actual-size zoom and pixel dimensions. It must not change tile geometry (`§6`) or any file without `/UserUnit`.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that `user_unit` is a plain `double` in the value struct `PageDescription` copied out of the actor, that parsing happens on the owning thread inside `Document`, and that the rasterizer and tile identity are untouched.
+
+**Build order:**
+
+1. Add `user_unit`, `physical_width_pt` and `physical_height_pt` to `PageDescription` and parse `/UserUnit` in `src/pdf/document.cpp`. Done when: `PdfDocument.UserUnit*` pass under ASan.
+2. Use the physical size in `recto-cli info` and `recto-cli render`. Done when: `Cli.RenderUserUnit` and `Cli.InfoUserUnit` pass.
+
+- [ ] Add `double user_unit{1.0}`, `physical_width_pt()` and `physical_height_pt()` (unrotated crop size times `user_unit`) to `PageDescription` in `src/pdf/document.h`, keeping `operator==` defaulted. Done when: `PdfDocument.UserUnitDefaults` finds `user_unit == 1.0` and physical equal to `width_pt` for every page of `tests/corpus/render/`.
+- [ ] Parse the page `/UserUnit` (a direct or indirect number, inherited nowhere because it is page-level) in `src/pdf/document.cpp`, treating a non-finite, zero, negative or over `10000` value as `1.0` and recording a `DamagedDictionary` diagnostic. Done when: `PdfDocument.UserUnitParsing` reads `2.0` and `0.5`, and `PdfDocument.UserUnitHostile` reads `1.0` plus a diagnostic for `1e20`, `-1`, `0` and a name object. (ISO 32000-1 14.11.2)
+- [ ] Add `render/user-unit.pdf` (`/MediaBox [0 0 300 400]`, `/UserUnit 2`, plus a rotated variant) to `scripts/build-corpus.py` with a `tests/corpus/PROVENANCE.md` row. Done when: `python scripts/build-corpus.py --check` regenerates it and `Corpus.Provenance` passes.
+- [ ] Print `user_unit` and the physical size in `recto-cli info` text and `--json` (`user_unit`, `physical_width_pt`, `physical_height_pt`) in `src/cli/main.cpp`. Done when: `Cli.InfoUserUnit` reads `600 x 800` physical points for the fixture and `1.0` for `simple-1p.pdf`.
+- [ ] Size `recto-cli render` output as `round(physical_width_pt * dpi / 72)` by `round(physical_height_pt * dpi / 72)` (swapped at 90 and 270 degrees), keeping tile geometry in default user space. Done when: `Cli.RenderUserUnit` renders the fixture at `72` dpi to a `600 x 800` PNG and the rotated variant to `800 x 600`.
+- [ ] Commit: `pdf: read page UserUnit and report physical page size`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfDocument.UserUnit*:Cli.InfoUserUnit:Cli.RenderUserUnit` passes under ASan, and ignoring `/UserUnit` fails `Cli.RenderUserUnit`.
+
 ## Verification
 
 - `recto-tests.exe --gtest_filter=PdfDisplayList.*:PdfFont.*:PdfInterpreter.*:PdfIncrementalWriter.*:PdfRasterizer.*:Actor.*:Scheduler.*:Runtime.*` passes in Debug, Release, and ASan builds.
 - Debug live-object counters (`debug_live_documents()`, `debug_live_display_lists()`, `debug_live_workers()`) end at `0` after every test.
+- `recto-tests.exe --gtest_filter=PdfBlend.*:PdfShading.*:PdfRasterizer.Transparency*:PdfRasterizer.Shading*:PdfRasterizer.TilingPattern*:PdfFont.NonEmbedded*:PdfFont.PredefinedCMaps*:PdfError.*:PdfInterpreter.Ceiling*:Scheduler.FailedTileNotCached:PdfDocument.UserUnit*` passes under ASan once `§15` to `§21` ship.
 - `recto-tests.exe --gtest_filter=PdfStagedRevisions.*:Actor.PageTransition*:Actor.OcgEdit*:Scheduler.LineWeightMode*:Scheduler.TileKeyUsesCompiledGeneration` passes under ASan once `§11` to `§14` ship (`§12` and `§14` are phase 2).
 - `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` exit 0.

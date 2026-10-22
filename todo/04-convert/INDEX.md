@@ -31,6 +31,7 @@ One job frame for every conversion, then Recto's native C++23 converters: `PdfWr
 - 3-mode (`Flowing`, `Exact`, `Continuous`) native C++23 `DocxWriter` and `RtfWriter` (`PDF -> Word .docx & .rtf`) and 100% built-in C++23 OpenXML, legacy binary OLE2 (`.doc`, `.xls`, `.ppt`), RTF, HTML, Markdown and CSV `-> PDF` engines
 - Native C++23 `XlsxWriter` (`PDF -> .xlsx, .csv, .xml`), `WebDocWriter` (`PDF -> HTML5, .md, .epub, .tex`), and `ComplianceEngine` (`PDF/A`, `PDF/UA-1`, `ZUGFeRD / Factur-X` + Viewer `Standards & E-Invoice` side panel)
 - Equation detection with MathML and LaTeX export, colour contrast, PDF/UA-2 and WCAG 2.2 accessibility reports, whole-document greyscale conversion, the extended Action Wizard steps, and the `recto-cli` verb registry with the local stdio `recto-mcp` server (D21)
+- Machine-judged gates for the whole domain: the scripted 20-document PDF to Word rubric and read-back gate (`D04 T03 §8`), the registry-wide cancel, atomic output and password gate (`D04 T01 §8`), fuzz harnesses for every reader outside the container layer (`D04 T02 §26`, `D04 T04 §23`, `D04 T07 §25`) and the round-trip legs for the later converters (`D04 T04 §24`)
 
 ## Out of scope
 

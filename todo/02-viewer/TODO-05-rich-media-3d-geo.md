@@ -14,6 +14,8 @@ title: "TODO-05 -- Rich Media, 3D Models and Geospatial PDFs"
 
 > 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); sections rewritten against `todo/10-ui/`
 
+> **Groomed 2026-10-23:** re-measured: still nothing parses `/RichMedia`, `/3D` or `/VP` (`src/pdf/` has no media, 3D or geo sources) and `tests/corpus/rich/` does not exist. All sections are Phase 7, which the campaign includes; no section needs a person (the `Needs` lists carry only `windows-host` and `display-session`). The 3D and video surfaces draw into `ui::SwapChainHost`, so they are covered by the golden hook of `D06 T04 §7` once `D10 T01 §20` exists.
+
 ## Inputs
 
 - `AGENTS.md` architecture rules (hostile input, one `DocumentActor` per document, UI thread never parses, jobs open their own `recto::pdf::Document`, atomic writes, links ask first), `design/SPEC.md` sections 4 (tokens), 6 (glyphs), 8.2 and 8.3 (toolbars and panels), 9.7 (Settings), 9.9 (confirmation dialog chrome), 10 (keyboard).

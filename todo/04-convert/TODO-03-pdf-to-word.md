@@ -13,6 +13,8 @@ track: M5
 
 > **Current state:** Measured 2026-10-14. No DOCX or RTF writer exists yet. Recto owns the entire `PDF -> DOCX / RTF` pipeline in-house in C++23: `D01` provides vector paths, fonts and image XObjects, `D03 T01` provides `PageText` (`§1`) and `OcrPipeline` (`§8`, including vector-outlined text OCR), and `D04 T02` provides `AtomicFileWriter` (`§1`), `Flate` compression (`§2`), and `TableExtractor` (`§8`). 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI sections rewritten against `todo/10-ui/`.
 
+> **Groomed 2026-10-23:** The 20-document review (`§6`) is graded by a scripted rubric (`§8`: text recall, reading order, table cell accuracy, heading accuracy, `Exact` frame position) with measured thresholds and a generated report; "opens in Word and LibreOffice" became a read-back gate through the native reader of `D04 T04 §1` (no Office host exists, D10); the `§5` screenshot checkpoint uses the `Ui.Golden` comparison of `D10 T01 §20`. The oracle of `§7` now carries the words, reading order and table cells the rubric needs.
+
 ## Inputs
 
 - `docs/plans/2026-10-13-recto-foundation.md` sections 1 (D7), 5 (`PDF -> Word (.docx & .rtf)` row: native C++23 `DocxWriter` and `RtfWriter` with Flowing, Exact, and Continuous modes), 7 (M5 done-when), 11 (20-document PDF -> Word test corpus).
@@ -36,11 +38,11 @@ track: M5
 ## Outcome
 
 - `zip_archive.cpp` (`§1`) reads and writes standard PKZIP archives using `recto-pdf`'s RFC 1951 deflate codec and CRC-32 with zip-bomb decompression bounds.
-- `DocxWriter` (`src/core/docx_writer.cpp`, `§2`, `§3`) and `RtfWriter` (`src/core/rtf_writer.cpp`, `§4`) write valid ECMA-376 `.docx` ZIP packages and RTF 1.9.1 `.rtf` documents that open cleanly in Microsoft Word and LibreOffice Writer without repair prompts across all three reconstruction modes:
+- `DocxWriter` (`src/core/docx_writer.cpp`, `§2`, `§3`) and `RtfWriter` (`src/core/rtf_writer.cpp`, `§4`) write valid ECMA-376 `.docx` ZIP packages and RTF 1.9.1 `.rtf` documents that pass Recto's own strict package validator and re-open through the native reader of `D04 T04 §1` with the same text and structure, which is the machine-judged stand-in for a Word or LibreOffice repair prompt (no Office or LibreOffice host is used, D10), across all three reconstruction modes:
   1. **Flowing (Editable Paragraphs, Tables & Lists -- default):** Reconstructs reading order, multi-column section breaks (`w:cols`), headings (`Heading1`..`Heading3`), flowing paragraphs (`w:p`), bulleted/numbered lists (`w:numbering`), running headers/footers, and native tables (`w:tbl`, `w:tr`, `w:tc` with merged cells and borders).
   2. **Exact (Fixed-Position Frames):** Preserves exact 2D visual layout using positioned frames (`w:framePr` / DrawingML textboxes in `.docx` and `\absw`/`\posx`/`\posy` frames in `.rtf`) for complex brochures, forms and certificates.
   3. **Continuous:** Single continuous document stream without hard page breaks.
-- The Convert page's **Word document (`.docx` & `.rtf`)** card (`§5`) exposes all options matching `explorations/B-Convert.png`, and the 20-document quality review (`docs/reviews/pdf-to-word-corpus.md`, `§6`) measures and tunes paragraph flow, heading hierarchy, table structure, and editability across 20 diverse PDFs.
+- The Convert page's **Word document (`.docx` & `.rtf`)** card (`§5`) exposes all options matching `explorations/B-Convert.png`, and the 20-document quality review (`docs/reviews/pdf-to-word-corpus.md`, `§6`) is graded by the scripted rubric of `§8` (text recall, reading order, table cell accuracy and heading accuracy against the corpus oracle, with measured thresholds) and tunes paragraph flow, heading hierarchy, table structure, and editability across 20 diverse PDFs.
 
 **Adjacency:** all=not-applicable (converter engines and their quality evaluation inside `D04 T01`'s Convert frame; queue, notifications, and settings belong to `D04 T01` and `D02 T04 §5`)
 
@@ -54,9 +56,10 @@ track: M5
 | 2 | §2 | `DocxWriter` **Flowing** and **Continuous** layout engines (paragraphs, lists, `w:cols`) | §1, §7, D03 T01 §1, D03 T01 §8 | [ ] |
 | 3 | §3 | `DocxWriter` **Exact** frame mode, `w:tbl` table reconstruction, images & `pdf-to-docx` | §2, D04 T02 §8 | [ ] |
 | 4 | §4 | Native RTF 1.9.1 writer (`rtf_writer.cpp`: `Flowing`, `Exact` frames, `\trowd` tables) | §3, D04 T04 §1 | [ ] |
-| 5 | §5 | Convert page **Word document (`.docx` & `.rtf`)** card and Step 3 UI (`B-Convert.png`) | §4, D04 T01 §4, D02 T04 §5, D10 T02 §2, D10 T02 §3, D10 T02 §18 | [ ] |
+| 5 | §5 | Convert page **Word document (`.docx` & `.rtf`)** card and Step 3 UI (`B-Convert.png`) | §4, D04 T01 §4, D02 T04 §5, D10 T01 §20, D10 T02 §2, D10 T02 §3, D10 T02 §18 | [ ] |
 | 6 | §7 | 20-document PDF -> Word evaluation corpus, assembled before M5 | D00 T03 §3 | [ ] |
-| 7 | §6 | Foundation plan section 11 **20-document PDF -> Word quality review** and layout tuning | §5, §7, D04 T04 §1 | [ ] |
+| 7 | §8 | Word output read-back gate and scripted corpus scorer (recall, order, cells) | §4, §7, D04 T04 §1 | [ ] |
+| 8 | §6 | Foundation plan section 11 **20-document PDF -> Word quality review** and layout tuning | §5, §7, §8, D04 T04 §1 | [ ] |
 
 ## 1. C++23 ZIP archive reader/writer (`zip_archive.cpp`) and ECMA-376 OpenXML scaffold
 
@@ -76,6 +79,7 @@ Implement `src/core/zip_archive.h` and `src/core/zip_archive.cpp` in `recto-core
 - [ ] Enforce hostile-archive defenses in `ZipReader`: reject entry names containing `..` segments or leading `/` / `\`, cap total entry count (`<= 65535`), and abort decompression immediately with `PdfErrorCode::LimitExceeded` if uncompressed output exceeds `max_uncompressed_bytes` (`256 MB`) regardless of what the header claims. Done when: `ZipArchive.HostileBombAndTraversal` rejects a `1000:1` zip bomb and a `../../evil.dll` entry under ASan. Cheaper substitute: trusting `uncompressed_size` in the local file header without bounding actual decompressed bytes.
 - [ ] Implement `XmlWriter` in `src/core/openxml_package.h/.cpp` handling UTF-8 XML prolog (`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`), attribute/text entity escaping (`&amp;`, `&lt;`, `&gt;`, `&quot;`, `&apos;`), and stripping illegal XML 1.0 control characters (`0x00..0x08`, `0x0B`, `0x0C`, `0x0E..0x1F`) so stray PDF control codes never corrupt Word XML. Done when: `ZipArchive.XmlControlCharSanitization` proves control characters never produce malformed XML.
 - [ ] Implement `OpenXmlPackageBuilder` assembling `[Content_Types].xml`, `_rels/.rels`, and part-level `_rels/<part>.rels` with sequential `rId1..rIdN` relationship allocation. Done when: `OpenXmlPackageBuilder` serializes deterministic relationship tables.
+- [ ] Refuse structurally hostile archives in `ZipReader`: entries with the encryption flag or a method other than `0` and `8`, duplicate entry names (case-insensitive), local headers that overlap each other or the central directory, a central directory whose offsets point outside the file, a ZIP64 marker (unsupported, `Unsupported` error), and any entry whose CRC-32 differs from the header after decompression. Done when: `ZipArchive.HostileStructure` returns the matching typed error for each of the six cases and `ZipArchive.CrcMismatch` rejects a flipped byte. Cheaper substitute: checking only the `..` path and the size cap, which lets overlapping entries and duplicate names through.
 - [ ] Add `ZipArchive.*` unit tests in `tests/recto-tests/zip_archive_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=ZipArchive.*` passes under ASan.
 
 - [ ] Commit: C++23 ZIP archive reader/writer (`src/core/zip_archive.cpp`) and ECMA-376 OpenXML package scaffold
@@ -177,7 +181,7 @@ Register the **Word document (`.docx` & `.rtf`)** card and build its Step 3 opti
 2. Wire job submission for `.docx` and `.rtf` into `ConversionRunner` (`D04 T01 §1`) and verify progress, completion notifications (`D04 T01 §6`), and cancellation. Done when: `AppTests.ConvertWordUi` runs both `.docx` (`Flowing` and `Exact`) and `.rtf` jobs through the queue and verifies screenshot parity with `explorations/B-Convert.png`.
 
 - [ ] Implement `WordConvertOptionsViewModel` in `src/services/word_convert_options_view_model.h/.cpp` exposing `OutputFormat` (`Docx`, `Rtf`), `ReconstructionMode` (`Flowing`, `Exact`, `Continuous`, initialized from `SettingsModel::default_pdf_to_word_mode()` in `D02 T04 §5`), `ReconstructTables` (`true`), `IncludeImages` (`true`), and `OcrScannedAndVectorOutlines` (`true`). Done when: changing the default mode in Settings updates the initial selection for new Word conversion sessions.
-- [ ] Build `WordConvertOptionsControl` (`src/app/views/convert/word_convert_options_control.h/.cpp`) matching `explorations/B-Convert.png` with accessible labels, tooltips, and keyboard navigation (`D03 T02 §3`). Done when: `WordConvertOptionsControl` visual layout matches `explorations/B-Convert.png`. Cheaper substitute that fails the checkpoint: hard-coding `Flowing` `.docx` only with no mode or `.rtf` selector in Step 3.
+- [ ] Build `WordConvertOptionsControl` (`src/app/views/convert/word_convert_options_control.h/.cpp`) matching `explorations/B-Convert.png` with accessible labels, tooltips, and keyboard navigation (`D03 T02 §3`). Done when: the golden comparison `Ui.Golden.WordStep3` (entry in `tests/recto-tests/golden/ui/manifest.json`, `D10 T01 §20`) of the headless render against the crop of `explorations/B-Convert.png` scores SSIM at or above the entry's threshold in Light and Dark at 100 percent. Cheaper substitute that fails the checkpoint: hard-coding `Flowing` `.docx` only with no mode or `.rtf` selector in Step 3.
 - [ ] Display the SPEC Principle 4 honest capability hint line (`"PDF to Word works best on text documents and reports. Use Exact mode for complex brochures or forms; scanned pages use built-in Windows OCR."`). Done when: the hint text is visible in Step 3 and exposed to screen readers.
 - [ ] Update the primary action button label dynamically (`"Convert to Word (.docx)"` or `"Convert to Rich Text (.rtf)"`) and enqueue a `ConversionJob` invoking `DocxWriter` or `RtfWriter` on click. Done when: clicking the primary button starts the background job and updates `QueueCard`.
 - [ ] Verify that `Open file` on a completed `.docx` or `.rtf` job in `QueueCard` / toast (`D04 T01 §6`) launches the system `.docx`/`.rtf` handler (or opens in Recto if requested). Done when: `AppTests.ConvertWordUi` verifies job completion and output validity.
@@ -185,13 +189,15 @@ Register the **Word document (`.docx` & `.rtf`)** card and build its Step 3 opti
 
 - [ ] Commit: convert page **Word document (`.docx` & `.rtf`)** card and Step 3 options UI (`explorations/B-Convert.png`)
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=AppTests.ConvertWordUi` passes, and the Step 3 screenshot matches `design/screenshots/explorations/B-Convert.png`.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=AppTests.ConvertWordUi` passes, and the golden comparison `Ui.Golden.WordStep3` (entry in `tests/recto-tests/golden/ui/manifest.json`, `D10 T01 §20`) of the headless render against the crop of `design/screenshots/explorations/B-Convert.png` scores SSIM at or above the entry's threshold.
 
 ## 6. Foundation plan section 11 **20-document PDF -> Word quality review** and layout tuning
 
-Assemble and execute the foundation plan section 11 **20-document PDF -> Word evaluation corpus** across 7 document categories (single-column prose articles, two-column academic papers, bordered financial tables, borderless invoices/schedules, multi-field forms, mixed image+text brochures/certificates, and scanned/vector-outlined pages), run `DocxWriter` (`.docx`) and `RtfWriter` (`.rtf`) across all 20 documents, verify every output opens without repair prompts and round-trips through `D04 T04 §1`, tune paragraph/column/table reconstruction heuristics in `src/core/docx_writer.cpp` and `src/core/rtf_writer.cpp` for any defects found, and commit the scored 20-document report in `docs/reviews/pdf-to-word-corpus.md`.
+Run `DocxWriter` (`.docx`) and `RtfWriter` (`.rtf`) over the `§7` corpus in all three modes, grade every output with the scripted rubric of `§8` (no person grades anything), tune the paragraph, column and table heuristics in `src/core/docx_writer.cpp` and `src/core/rtf_writer.cpp` until every document meets its measured thresholds, and commit the generated report `docs/reviews/pdf-to-word-corpus.md`. The quality bar is the threshold table in `§8`; the report is output of the scorer, never hand-edited.
 
 > **Corrected 2026-10-21:** assembling the corpus moved to `§7` (Phase 4), because foundation plan section 11 item 3 requires it before M5 and the converter sections tune against it; this section keeps the evaluation, tuning and report. Cost of reversing: the corpus would again arrive after the code it should shape.
+
+> **Groomed 2026-10-23:** the review was graded by "heading, list, table and image fidelity scores" written by a person. It is now graded by the `§8` scorer with measured thresholds (text recall, reading order, table cell accuracy, heading accuracy), the report is generated by the test run and a second test fails when the committed report differs from a fresh run, and the "opens in Word" claim is the `§8` read-back gate. Cost of reversing: a person-graded review cannot run unattended.
 
 **Phase:** 5
 **Needs:** windows-host
@@ -199,18 +205,18 @@ Assemble and execute the foundation plan section 11 **20-document PDF -> Word ev
 
 **Build order:**
 
-1. Using the `§7` corpus (it previously said: assemble the deterministic 20-document evaluation suite (`tests/corpus/convert/word-eval-01..20.pdf` generated by `scripts/build-corpus.py` or sourced from `tests/corpus/`) covering all 7 layout archetypes, and add an automated evaluation harness (`DocxWriter.TwentyDocumentCorpusEval`) that converts all 20 PDFs in `Flowing`, `Exact`, and `Continuous` modes, validates ECMA-376 XML schema/relationships, and measures paragraph coalescing, heading accuracy, column reading order, and table cell counts. Done when: all 20 documents convert with zero XML/package errors under ASan.
-2. Tune paragraph line-joining, multi-column gutter detection, and table boundary heuristics in `src/core/docx_writer.cpp` and `src/core/rtf_writer.cpp` for any issues surfaced by the 20-document run, write `docs/reviews/pdf-to-word-corpus.md` with per-document metrics, and mark foundation plan section 11 item 3 resolved. Done when: `DocxWriter.TwentyDocumentCorpusEval` passes all quality thresholds and `docs/reviews/pdf-to-word-corpus.md` is committed.
+1. Run the `§8` scorer over `word-eval-01..20` in `Flowing`, `Exact` and `Continuous` modes for both formats. Done when: `DocxWriter.TwentyDocumentCorpusEval` reports 20 documents x 3 modes x 2 formats with zero package errors under ASan and prints the per-metric table.
+2. Tune the heuristics for every document under its threshold and regenerate `docs/reviews/pdf-to-word-corpus.md`. Done when: `DocxWriter.TwentyDocumentCorpusEval` passes every threshold of `§8` and `DocxWriter.CorpusReportIsCurrent` finds the committed report identical to a fresh run.
 
-- [ ] Implement `DocxWriter.TwentyDocumentCorpusEval` in `tests/recto-tests/pdf_to_word_corpus_tests.cpp` converting all 20 PDFs to `.docx` and `.rtf`, validating XML well-formedness, relationship integrity, zero orphan `rId`s, expected heading counts, expected `w:tbl` row/column counts, and 100% text preservation (`PageText` word recall `>= 99%`). Done when: `DocxWriter.TwentyDocumentCorpusEval` runs across all 20 PDFs under ASan. Cheaper substitute: declaring `DocxWriter` done on 1 toy test file without running and grading the 20-document corpus required by foundation plan sections 7 and 11.
-~~Moved to `§7` (2026-10-21): Define and build the 20-document PDF -> Word evaluation corpus (`word-eval-01` through `word-eval-20`) spanning: (1-4) single-column reports/contracts with headings and lists, (5-7) two-column and three-column academic papers with full-width abstracts/headers, (8-10) bordered tables with `rowspan`/`colspan` merges, (11-13) borderless financial statements and invoices, (14-15) forms and certificates (`Exact` mode target), (16-18) illustrated brochures with captions and running headers/footers, and (19-20) scanned and vector-curve-outlined pages. Done when: all 20 fixtures are tracked with SHA-256 entries in `tests/corpus/PROVENANCE.md`.~~
-- [ ] Tune paragraph line-spacing, indentation, column-gutter projection, and table header/cell heuristics in `src/core/docx_writer.cpp` and `src/core/rtf_writer.cpp` to resolve any layout regressions discovered across the 20 documents. Done when: all 20 documents meet their target structure assertions in `DocxWriter.TwentyDocumentCorpusEval`.
-- [ ] Author `docs/reviews/pdf-to-word-corpus.md` recording the 20-document table (filename, category, page count, recommended mode, heading/list/table/image fidelity scores, word recall %, and any honest limitations). Done when: `docs/reviews/pdf-to-word-corpus.md` is complete and contains zero em dashes.
-- [ ] Verify that the Convert Step 3 honest capability hint line (`§5`) accurately reflects the empirical findings from `docs/reviews/pdf-to-word-corpus.md`. Done when: the UI hint line and the review document agree.
-- [ ] Update `docs/plans/2026-10-13-recto-foundation.md` section 11 item 3 with a dated resolution note pointing to `docs/reviews/pdf-to-word-corpus.md`. Done when: `recto-tests.exe --gtest_filter=DocxWriter.TwentyDocumentCorpusEval` passes under ASan.
-- [ ] Commit: `convert: wire 3-mode PDF to Word/RTF UI and complete 20-document quality review`
+- [ ] Add `DocxWriter.TwentyDocumentCorpusEval` in `tests/recto-tests/pdf_to_word_corpus_tests.cpp`, a parameterised test over the 20 fixtures x 3 modes x 2 formats that calls the `§8` `WordCorpusScorer` and asserts each metric against the `§8` threshold row for the document's archetype. Done when: the test runs all 120 cases under ASan and a seeded regression (reading order shuffled in one fixture) fails exactly that case. Cheaper substitute: declaring `DocxWriter` done on 1 toy test file, or asserting only that the output opens.
+- [ ] Tune paragraph line-joining, line-spacing, indentation, column-gutter projection and table boundary and header heuristics in `src/core/docx_writer.cpp` and `src/core/rtf_writer.cpp` for every case under its threshold. Done when: every case passes `DocxWriter.TwentyDocumentCorpusEval` and `Corpus.*` still passes.
+- [ ] Add the `--write-corpus-report` option to `recto-tests.exe` that renders `docs/reviews/pdf-to-word-corpus.md` from the scorer output: one row per fixture (filename, archetype, page count, mode used, text recall, reading order, table cell accuracy, heading F1, pass or fail) and a generated "Limitations" list naming each archetype whose `Exact` threshold is the relaxed one. Done when: running it twice yields byte-identical files and the file has zero em dashes.
+- [ ] Add `DocxWriter.CorpusReportIsCurrent` that regenerates the report in memory and compares it with `docs/reviews/pdf-to-word-corpus.md`. Done when: editing one score in the committed file makes the test fail.
+- [ ] Check that the Step 3 hint line of `§5` states only what the report shows: add `AppTests.WordHintMatchesReport` asserting that the hint names `Exact` mode for the archetypes whose `Flowing` case is below its threshold in the report and claims nothing about archetypes the report lacks. Done when: the test fails when the hint is changed to promise scanned-page fidelity the report does not show.
+- [ ] Add a dated resolution note to section 11 item 3 of `docs/plans/2026-10-13-recto-foundation.md` pointing to `docs/reviews/pdf-to-word-corpus.md`. Done when: the note exists and `python scripts/todo-graph.py validate` exits 0.
+- [ ] Commit: `convert: grade the 20-document PDF to Word review with the scripted rubric`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=DocxWriter.*:RtfWriter.*:AppTests.ConvertWordUi` passes under ASan, and `docs/reviews/pdf-to-word-corpus.md` records all 20 documents passing validity and quality checks.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=DocxWriter.TwentyDocumentCorpusEval:DocxWriter.CorpusReportIsCurrent:AppTests.WordHintMatchesReport` passes under ASan, and a seeded column-gutter regression makes `DocxWriter.TwentyDocumentCorpusEval` fail on the two-column fixtures.
 
 ## 7. 20-document PDF -> Word evaluation corpus, assembled before M5
 
@@ -226,14 +232,48 @@ Foundation plan section 11 item 3 requires the 20-document PDF -> Word test corp
 2. Record each fixture's archetype, expected structure and SHA-256 in `tests/corpus/PROVENANCE.md`. Done when: `recto-tests.exe --gtest_filter=Corpus.*` verifies the 20 new files.
 
 - [ ] Add generators for `word-eval-01` to `word-eval-20` in `scripts/build-corpus.py`, deterministic byte for byte: (1-4) single-column reports and contracts with headings and lists, (5-7) two- and three-column papers with full-width abstracts, (8-10) bordered tables with merged cells, (11-13) borderless statements and invoices, (14-15) forms and certificates, (16-18) illustrated brochures with captions and running headers and footers, (19-20) image-only and vector-outlined pages. Done when: two runs of `python scripts/build-corpus.py` produce identical bytes for all 20.
-- [ ] Write each fixture's expected structure (heading count, list items, table rows and columns, column count, reading order) to `tests/corpus/convert/word-eval-expected.json`, the oracle `§6` grades against. Done when: the file has one entry per fixture and `python scripts/build-corpus.py --check` validates it against the fixtures.
+- [ ] Write each fixture's expected structure to `tests/corpus/convert/word-eval-expected.json`, the oracle `§8` grades against: `words` (the generator's own word list per page, so no extractor defines truth), `reading_order` (ordered block texts), `headings` (text and level), `list_items`, `tables` (every cell as row, column, spans and text) and `columns` per page. Done when: the file has one entry per fixture with all six keys and `python scripts/build-corpus.py --check` validates it against the fixtures.
 - [ ] Add the 20 fixtures and the oracle to `tests/corpus/PROVENANCE.md` with their SHA-256. Done when: `Corpus.Provenance` passes with the new files.
 - [ ] Commit: `corpus: generate the 20-document PDF to Word evaluation corpus`
 
 **Test checkpoint:** `python scripts/build-corpus.py --check` exits 0 with all 20 `word-eval` fixtures and the oracle verified, and `recto-tests.exe --gtest_filter=Corpus.*` passes.
 
+## 8. Word output read-back gate and scripted corpus scorer (recall, order, cells)
+
+Two machine judges that replace "opens in Word" and "a person scored it". The read-back gate runs inside `DocxWriter` and `RtfWriter` before the atomic replace: the finished temp file is validated (package parts, content types, relationships, XML well-formedness, balanced RTF groups) and re-opened through the native reader of `D04 T04 §1`, and a result whose re-read text differs from what was written is refused with a typed error and no output. The scorer, `WordCorpusScorer`, grades an output against the `§7` oracle with four metrics. Thresholds are defaults chosen from how the corpus archetypes behave; raising one is cheap, lowering one needs a recorded reason in `docs/reviews/pdf-to-word-corpus.md`.
+
+| Metric | Definition | Flowing | Continuous | Exact |
+| ------ | ---------- | ------- | ---------- | ----- |
+| Text recall | oracle words found in the output / oracle words | >= 0.99 (scanned fixtures 19 and 20: >= 0.95) | same | same |
+| Reading order | longest common subsequence of oracle block order against output block order / oracle blocks | >= 0.98 | >= 0.95 | not graded |
+| Table cell accuracy | oracle cells matched on row, column, spans and text / oracle cells | >= 0.97 bordered, >= 0.90 borderless | same | >= 0.90 |
+| Heading F1 | level-aware heading match | >= 0.95 | >= 0.90 | not graded |
+
+In `Exact` mode the scorer also requires every text frame origin to sit within `3 pt` of its oracle position.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Implement `verify_written_package` and `verify_written_rtf` in `src/core/word_readback.h/.cpp` and call them from `DocxWriter` and `RtfWriter` before `AtomicFileWriter` replaces the destination. Done when: `WordReadback.RefusesBrokenOutput` shows a writer seeded to drop a relationship, a seeded unbalanced RTF group and a seeded text loss each returning a typed error with no file at the destination.
+2. Implement `WordCorpusScorer` in `tests/recto-tests/word_corpus_scorer.h/.cpp` with the four metrics and the threshold table above. Done when: `WordScorer.MetricsKnownAnswers` scores hand-built output models to the expected numbers and `WordScorer.ThresholdsFail` fails each metric when its input is degraded.
+
+- [ ] Implement `verify_written_package(path, expected_text_hash)` in `src/core/word_readback.cpp`: open with `ZipReader` (`§1`), check `[Content_Types].xml` covers every part, every relationship target exists, every `rId` used in a part is declared, every XML part is well-formed, and the text re-read through the `D04 T04 §1` reader equals the text the writer emitted. Done when: `WordReadback.PackageChecks` passes a good `.docx` and fails one case per check.
+- [ ] Implement `verify_written_rtf(path)`: balanced braces, a valid header, every `\trowd` row consistent with its `\cell` count, and the re-read text equal to the emitted text. Done when: `WordReadback.RtfChecks` passes a good `.rtf` and fails one case per check.
+- [ ] Wire both checks into `DocxWriter` and `RtfWriter` so a failed check returns a `PdfError` with `ErrorCode::OutputInvalid` naming the failed rule and removes the temp file, and add the `--no-verify` switch to `recto-cli pdf-to-docx` and `pdf-to-rtf` for debugging only (the default verifies). Done when: `Cli.PdfToDocxVerifies` shows exit code `1` and no output for a seeded failure and exit code `0` with a file for a good run.
+- [ ] Implement the text recall and heading F1 metrics in `WordCorpusScorer`, reading the output through the `D04 T04 §1` readers (`.docx` and `.rtf`). Done when: `WordScorer.RecallAndHeadings` returns `1.0` for an identical model, `0.5` for half the words removed and the expected F1 for a one-level heading error.
+- [ ] Implement the reading order metric (LCS over block texts, normalised by oracle block count) and the table cell metric (cells matched on row, column, spans and text). Done when: `WordScorer.OrderAndCells` returns the expected values for a swapped-column case and a merged-cell case.
+- [ ] Implement the `Exact` frame position check (`3 pt` tolerance on each frame origin, converting twips and EMU to points once). Done when: `WordScorer.ExactFramePositions` fails a frame moved by `4 pt` and passes one moved by `2 pt`.
+- [ ] Add the threshold table as data in `tests/recto-tests/word_corpus_thresholds.json`, keyed by archetype and mode, read by `DocxWriter.TwentyDocumentCorpusEval`. Done when: `WordScorer.ThresholdFileComplete` finds a threshold for every archetype, mode and metric.
+- [ ] Add `DocxWriter.CancelAndFailureLeaveNothing` covering cancel at three points and a read-back refusal. Done when: the destination folder is byte-identical before and after each case.
+- [ ] Commit: `convert: add the Word read-back gate and the scripted corpus scorer`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=WordReadback.*:WordScorer.*:Cli.PdfToDocxVerifies:DocxWriter.CancelAndFailureLeaveNothing` passes under ASan, and removing the relationship check from `verify_written_package` makes `WordReadback.PackageChecks` fail.
+
 ## Verification
 
-- Every corpus PDF converted by `DocxWriter` and `RtfWriter` produces a valid `.docx` or `.rtf` file that parses cleanly and opens without repair prompts.
+- Every corpus PDF converted by `DocxWriter` and `RtfWriter` produces a valid `.docx` or `.rtf` file that passes the read-back gate of `§8` (strict package validation and a native re-open with matching text), with no output left behind on failure.
 - The 20-document evaluation record in `docs/reviews/pdf-to-word-corpus.md` is complete and foundation plan section 11 item 3 is closed.
 - `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` exit 0.

@@ -13,6 +13,8 @@ track: M2
 
 > **Current state:** Measured 2026-10-22. `src/ui` does not exist, and `Recto.sln` has no `recto-ui` project. `src/app` holds the WinUI 3 scaffold from `D00 T01 §3` (`App.xaml`, `App.xaml.h`, `App.xaml.cpp`, `MainWindow.xaml`, `MainWindow.xaml.h`, `MainWindow.xaml.cpp`, `MainWindow.idl`, `Package.appxmanifest`, `app.manifest`, `pch.h`, `pch.cpp`, `Recto.vcxproj`, `Assets/`) with a `Microsoft.WindowsAppSDK` package reference. `scripts/check-winui-pin.py`, `tests/scripts/test_check_winui_pin.py` and the `winui` matrix entry in `.github/workflows/pins.yml` (line 39) exist, and `scripts/merge_prs.py` (lines 39 to 41) accepts `winui/*` pin branches. `design/tokens/colors.json` and `design/tokens/RectoColors.xaml` both exist; no generator exists. `resources/ico/recto.ico` and `resources/svg/` exist; `resources/fonts/` does not (`D02 T01 §18` builds `RectoIcons.ttf`). `tests/recto-tests/test_support.h` already provides `compute_ssim`, `compare_rgba`, `expect_rgba_equal` and `sha256_hex`. `Directory.Build.props` applies `/W4 /WX` to every `recto-*` project and `Recto`. `design/screenshots/` holds `D-Brand.png`, `D-Focus-Light.png`, `D-Focus-Dark.png`, `D-Classic.png`, `D-ReadingRoom.png`, `D-Home.png`, `D-Search.png`, `D-Convert.png`, `D-Organize.png`, `D-Layout.png`, `D-Settings.png`, `D-About.png` and `D-Dialogs.png`. `docs/specs/2026-10-22-recto-ui-toolkit-design.md` is the approved design and none of its sections is built.
 
+> **Groomed 2026-10-23:** re-measured against today's tree. `Directory.Build.targets` already compiles every `recto-*` project and `Recto` with `stdcpp23` (`/std:c++23preview`) and `/W4 /WX`, so `§1` adds no language-standard setting. Binaries land in `build\bin\<platform>\<configuration>\<project>\<project>.exe`, so every command in this file now names `build\bin\x64\Debug\recto-tests\recto-tests.exe` and `build\bin\x64\Debug\Recto\Recto.exe` (it said `build\bin\x64\Debug\recto-tests.exe`, a path that does not exist). `§2` was extended to cover every tracked file that still names WinUI or the Windows App SDK and to convert `src/app/Recto.vcxproj` to a plain Win32 project; `§4` gained the full screen API the F11 command needs; `§12` gained the cursor resolution nothing owned. The wider SPEC check (sections 4 to 12 against `D10 T01` to `T03`) found every control, elevation level (Z 32 and Z 64, `§9`), motion (`§14`, 167 ms), high-contrast mapping (`D10 T03 §5`) and accessibility rule owned except the hit-target minimum, now `D10 T03 §8`.
+
 ## Inputs
 
 - `docs/specs/2026-10-22-recto-ui-toolkit-design.md` (approved 2026-10-22): section 4.1 (module rule), 4.2 (threads), 4.3 (window host), 4.4 (composition and drawing), 4.5 (elements and layout), 4.6 (tokens), 4.7 (text, icons, images), 4.8 (input, focus, motion), 4.9 (popups), 5 (WinUI to recto-ui mapping), 6 (this file's section list), 7 (changes to the existing plan).
@@ -107,11 +109,13 @@ Create the `recto-ui` C++23 static library in `src/ui/` (namespace `recto::ui`) 
 - [ ] Add `tests/recto-tests/ui_*_tests.cpp` to `recto-tests.vcxproj` through a wildcard `ClCompile` item so later sections add files without editing the project. Done when: a newly dropped `ui_x_tests.cpp` is compiled with no project edit.
 - [ ] Commit: `ui: add recto-ui static library, module boundary tests and headless render harness`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Project.*` passes (boundary, no WinRT UI types, harness stride, harness solid), and `msbuild Recto.sln /p:Configuration=Debug /p:Platform=ARM64 /t:recto-ui` exits 0.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Project.*` passes (boundary, no WinRT UI types, harness stride, harness solid), and `msbuild Recto.sln /p:Configuration=Debug /p:Platform=ARM64 /t:recto-ui` exits 0.
 
 ## 2. Win32 `Recto.exe` host replaces the WinUI scaffold; Windows App SDK pins retired
 
-Replace the WinUI scaffold from `D00 T01 §3` in `src/app/` with a plain Win32 host. Delete `App.xaml`, `App.xaml.h`, `App.xaml.cpp`, `MainWindow.xaml`, `MainWindow.xaml.h`, `MainWindow.xaml.cpp`, `MainWindow.idl`, the XAML and MIDL items in `Recto.vcxproj` and the `Microsoft.WindowsAppSDK` `PackageReference`. Add `src/app/main.cpp` with `wWinMain` that calls `ui::Application::run`. Keep `Microsoft.Windows.CppWinRT` and `Microsoft.Windows.SDK.BuildTools` only for the WinRT APIs Recto calls outside the UI (design spec section 1). `app.manifest` declares per-monitor v2 DPI awareness, long paths, UTF-8 code page and common-controls-free Windows 11 compatibility. `Package.appxmanifest` becomes a full-trust Win32 desktop package (`runFullTrust`, no Windows App SDK `PackageDependency`). The section also retires the WinUI pin machinery: `scripts/check-winui-pin.py`, `tests/scripts/test_check_winui_pin.py`, the `winui` entry in `.github/workflows/pins.yml`, the `winui/` branch pattern in `scripts/merge_prs.py`, any WinAppSDK handling in `build/build.ps1`, and the reference in `scripts/check-sdk-pins.py`'s docstring. `NOTICE.md` drops the Windows App SDK and `AGENTS.md` drops `check-winui-pin.py` from its validation list and the WinUI wording from its overview and interface rules.
+Replace the WinUI scaffold from `D00 T01 §3` in `src/app/` with a plain Win32 host. Delete `App.xaml`, `App.xaml.h`, `App.xaml.cpp`, `MainWindow.xaml`, `MainWindow.xaml.h`, `MainWindow.xaml.cpp`, `MainWindow.idl`, the XAML and MIDL items in `Recto.vcxproj` and the `Microsoft.WindowsAppSDK` `PackageReference`. Add `src/app/main.cpp` with `wWinMain` that calls `ui::Application::run`. Keep `Microsoft.Windows.CppWinRT` and `Microsoft.Windows.SDK.BuildTools` only for the WinRT APIs Recto calls outside the UI (design spec section 1). `app.manifest` declares per-monitor v2 DPI awareness, long paths, UTF-8 code page and common-controls-free Windows 11 compatibility. `Package.appxmanifest` becomes a full-trust Win32 desktop package (`runFullTrust`, no Windows App SDK `PackageDependency`). The section also retires the WinUI pin machinery: `scripts/check-winui-pin.py`, `tests/scripts/test_check_winui_pin.py`, the `winui` entry in `.github/workflows/pins.yml`, the `winui/` branch pattern in `scripts/merge_prs.py`, any WinAppSDK handling in `build/build.ps1`, and the reference in `scripts/check-sdk-pins.py`'s docstring. `NOTICE.md` drops the Windows App SDK and WebView2 rows and `AGENTS.md` drops `check-winui-pin.py` from its validation list and the WinUI wording from its overview and interface rules.
+
+> **Groomed 2026-10-23:** the section named the pin machinery but not every tracked file that still carries WinUI or Windows App SDK residue, and it did not turn `Recto.vcxproj` into a plain Win32 desktop project (today it is still `ApplicationType` `Windows Store`, `AppxPackage` `true`, `UseWinUI` `true`, with a NuGet moniker workaround, `module.g.cpp`, `Midl`, `Image` and `AppxManifest` items, and `src/app/pch.h` still includes ten `winrt/Microsoft.UI.*` headers). Measured today, the residue outside `docs/`, `todo/` and `design/mockups/` is: `src/app/*` (above), `scripts/check-winui-pin.py`, `tests/scripts/test_check_winui_pin.py`, `tests/scripts/test_check_sdk_pins.py` (lines 37 and 61 to 62), `tests/scripts/test_pin_automations.py` (lines 83 to 94), `.github/workflows/pins.yml` (lines 39 to 40), `scripts/merge_prs.py` (lines 39 to 41), `scripts/check-sdk-pins.py` (docstring lines 9 to 10), `build/build.ps1` (lines 22 to 23), `.conclave/automations/README.md` (line 21), `AGENTS.md` (overview, interface rules, validation line 89), `CONTRIBUTING.md` (line 43), `NOTICE.md` (lines 18 to 19), `docs/reference-machines.md` (lines 22 and 74), `docs/user-demand.md` (line 18) and `.gitattributes` (the `*.xaml` rule, removed by `§8` with `RectoColors.xaml`). `design/mockups/` is dated design history (three rejected directions that name WinUI 3) and is the one exception; `docs/plans/`, `docs/specs/`, `docs/reviews/` and `todo/` keep dated history notes. The micro-steps below add the missing files, the project conversion and a residue scan test so the cleanup is provable.
 
 **Phase:** 2
 **Needs:** windows-host, display-session
@@ -121,20 +125,29 @@ Replace the WinUI scaffold from `D00 T01 §3` in `src/app/` with a plain Win32 h
 
 1. Delete the XAML, MIDL and WinAppSDK items from `src/app/Recto.vcxproj`, delete the XAML and IDL files, and add `src/app/main.cpp` and `src/ui/include/recto/ui/application.h` (`Application::run`, message loop skeleton). Done when: `Recto.vcxproj` contains no `Page`, `Midl` or `Microsoft.WindowsAppSDK` item and builds.
 2. Rewrite `src/app/app.manifest` and `src/app/Package.appxmanifest`. Done when: `Ui.App.ManifestDpiAwareness` parses the manifest XML and finds `PerMonitorV2`, and no `Windows.Desktop` framework dependency or `WindowsAppRuntime` appears in the appx manifest.
-3. Remove the pin machinery and doc references. Done when: `python -m unittest discover -s tests/scripts` passes and `rg -n "check-winui-pin|WindowsAppSDK" --glob "!docs/**" --glob "!todo/**"` returns nothing outside history files.
+3. Remove the pin machinery and doc references. Done when: `python -m unittest discover -s tests/scripts` passes and `rg -n -i "check-winui-pin|WindowsAppSDK|windows app sdk|winui|webview2|microsoft\.ui|xaml" --glob "!docs/**" --glob "!todo/**" --glob "!design/mockups/**" --glob "!design/SPEC.md" --glob "!*.png"` returns nothing except the retained `Ui.Project.NoWinRtUiTypes` guard strings.
+4. Convert `src/app/Recto.vcxproj` and `src/app/pch.h` to a plain Win32 desktop executable that references `recto-ui` and `recto-services`. Done when: the project has no `ApplicationType`, `AppxPackage`, `UseWinUI`, `EnableMsixTooling`, `MinimalCoreWin`, `NuGetTarget*`, `Midl`, `Page`, `ApplicationDefinition` or `module.g.cpp` item, `Package.appxmanifest` is a `None` item that the build never packages, and `Ui.App.ProjectIsPlainWin32` passes.
+5. Update `Recto.sln` and the build scripts so the new graph still builds. Done when: `.\build.cmd -SkipTests` exits 0 for x64 and ARM64 and `Recto.exe` is produced in `build\bin\<platform>\<configuration>\`.
 
 - [ ] Delete `src/app/App.xaml*`, `src/app/MainWindow.xaml*`, `src/app/MainWindow.idl` and the matching `Recto.vcxproj` items; remove the `Microsoft.WindowsAppSDK` `PackageReference` and `WindowsAppSDKSelfContained`. Done when: `.\build.cmd` builds x64 and ARM64 with no XAML compiler step in the log.
 - [ ] Add `src/app/main.cpp` with `int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)` calling `recto::ui::Application::run` and returning its exit code; initialise COM as STA with `CoInitializeEx`. Done when: `Recto.exe` starts and exits with code 0 when the window closes.
-- [ ] Implement `ui::Application::run` in `src/ui/application.cpp`: `EnableMouseInPointer(TRUE)`, create the first `ui::Window` (empty, from §4 once it lands; a bare `CreateWindowExW` placeholder until then), pump messages through the §3 dispatcher hook. Done when: `Recto.exe` shows one empty window. Cheaper substitute: a hidden console-only exit.
+- [ ] Implement `ui::Application::run` in `src/ui/application.cpp`: `EnableMouseInPointer(TRUE)`, create the first `ui::Window` (empty, from §4 once it lands; a bare `CreateWindowExW` placeholder until then), pump messages through the §3 dispatcher hook, and honour `--self-test-exit` by posting `WM_CLOSE` after the first presented frame so a display-session test can launch and close it without a person. Done when: `Recto.exe` shows one empty window and `Recto.exe --self-test-exit` exits with code 0 within 5 seconds. Cheaper substitute: a hidden console-only exit.
 - [ ] Rewrite `src/app/app.manifest` for per-monitor v2 DPI (`<dpiAwareness>PerMonitorV2</dpiAwareness>`), `longPathAware`, `activeCodePage` UTF-8 and the Windows 10/11 supported-OS GUID. Done when: `Ui.App.ManifestDpiAwareness` passes. Source: Microsoft Learn "Setting the default DPI awareness for a process".
 - [ ] Rewrite `src/app/Package.appxmanifest` as a full-trust Win32 desktop app (`rescap:Capability Name="runFullTrust"`, `EntryPoint="Windows.FullTrustApplication"`) with no Windows App SDK framework dependency, keeping the asset and `.pdf` association entries. Done when: `Ui.App.AppxNoFramework` asserts the XML has `runFullTrust` and no `PackageDependency`.
 - [ ] Keep `Microsoft.Windows.CppWinRT` and `Microsoft.Windows.SDK.BuildTools` references in `src/app/Recto.vcxproj` only for WinRT APIs, and confirm `scripts/check-sdk-pins.py` still checks both pins. Done when: `python scripts/check-sdk-pins.py` exits 0 and `Ui.Project.NoWinRtUiTypes` still passes.
 - [ ] Remove `scripts/check-winui-pin.py`, `tests/scripts/test_check_winui_pin.py`, the `winui` matrix entry in `.github/workflows/pins.yml`, the `winui/` alternative in the branch regex of `scripts/merge_prs.py`, any WinAppSDK handling in `build/build.ps1`, and the WinUI sentence in the `scripts/check-sdk-pins.py` docstring; update `tests/scripts/test_merge_prs.py` and `test_build_ps1.py` if they referenced them. Done when: `python -m unittest discover -s tests/scripts` passes. Cheaper substitute: leaving the script and disabling its workflow job.
-- [ ] Update `NOTICE.md` (no Windows App SDK) and `AGENTS.md` (overview, interface rules, validation list without `check-winui-pin.py`, `source-defect` lens without WinUI). Done when: `rg -n -i "windows app sdk|winui" NOTICE.md AGENTS.md` returns no stale claim.
-- [ ] Add `Ui.App.*` tests in `tests/recto-tests/ui_app_tests.cpp` (manifest DPI, appx no framework, no `Microsoft.WindowsAppSDK` in `Recto.vcxproj`). Done when: `--gtest_filter=Ui.App.*` passes and fails when the package reference is restored.
+- [ ] Convert `src/app/Recto.vcxproj` to a plain Win32 desktop project: delete `ApplicationType`, `ApplicationTypeRevision`, `AppxPackage`, `UseWinUI`, `EnableMsixTooling`, `MinimalCoreWin`, the `CppWinRT*` globals, the `NuGetTarget*` and `RuntimeIdentifiers` workaround, the `Image`, `AppxManifest`, `Midl`, `Page` and `ApplicationDefinition` items and `$(GeneratedFilesDir)module.g.cpp`; keep `Package.appxmanifest` and `Assets\` as `None` items for `D07 T01 §5`; add `main.cpp`, a `ProjectReference` to `..\ui\recto-ui.vcxproj`, `..\ui\include` on the include path, and `d3d11.lib;dxgi.lib;dcomp.lib;d2d1.lib;dwrite.lib;windowscodecs.lib;dwmapi.lib;uxtheme.lib` as link inputs; rewrite the header comment (no "WinUI 3 packaged app"). Done when: `msbuild src/app/Recto.vcxproj /p:Configuration=Debug /p:Platform=x64` and the `ARM64` equivalent exit 0 with zero warnings and `Ui.App.ProjectIsPlainWin32` (new, in `ui_app_tests.cpp`) fails when `UseWinUI` is restored. Source: Microsoft Learn "Walkthrough: Create a traditional Windows Desktop application (C++)". Cheaper substitute: leaving `AppxPackage` on and ignoring the packaging warnings.
+- [ ] Rewrite `src/app/pch.h` to include only `<windows.h>`, `<unknwn.h>`, `<winrt/Windows.Foundation.h>` and `<winrt/Windows.Foundation.Collections.h>` (delete the ten `winrt/Microsoft.UI.*` includes and the `GetCurrentTime` undef comment about `Storyboard`) and keep `src/app/pch.cpp` as the creating unit. Done when: `Recto.exe` builds and `rg -n "Microsoft.UI" src/app` returns nothing. Cheaper substitute: leaving the unused includes, which fail once the Windows App SDK package is gone.
+- [ ] Rewrite the `Executable` and `EntryPoint` attributes in `src/app/Package.appxmanifest` to `Recto.exe` and `Windows.FullTrustApplication` (the scaffold's `$targetnametoken$` and `$targetentrypoint$` tokens exist only for the removed packaging build) and keep every `Assets\` logo entry, because `scripts/check-package-assets.py` (`D07 T01 §5`) audits them. Done when: `Ui.App.AppxNoFramework` also asserts `Executable="Recto.exe"` and no `$target` token.
+- [ ] Edit `build/build.ps1` and `Recto.sln`: confirm `recto-ui` builds before `Recto` and `recto-tests` through project dependencies, delete the comment lines 22 to 23 that say the Windows App SDK comes from NuGet, and confirm the `-restore` step restores only `Microsoft.Windows.CppWinRT` and `Microsoft.Windows.SDK.BuildTools`. Done when: `.\build.cmd -SkipTests` exits 0 for both platforms and `Select-String build/build.ps1 -Pattern "App SDK"` returns nothing.
+- [ ] Fix `tests/scripts/test_check_sdk_pins.py`: drop the `Microsoft.WindowsAppSDK` line from `REFERENCES` and replace `test_windows_app_sdk_is_left_to_check_winui_pin` with `test_only_the_two_toolchain_packages_are_tracked` asserting `set(mod.TRACKED) == {"Microsoft.Windows.CppWinRT", "Microsoft.Windows.SDK.BuildTools"}`; in `tests/scripts/test_pin_automations.py` retarget `NotifierTests.test_notify_passes_the_automations_sender` at `scripts/lib/pin_proposal.py` `notify(root, subject, body, alert_module=fake)` (the shared implementation the removed script delegated to). Done when: `python -m unittest tests.scripts.test_check_sdk_pins tests.scripts.test_pin_automations` passes and the notifier test fails when `alert_module.send` is called without the `From` line. Cheaper substitute: deleting the notifier test.
+- [ ] Rewrite the `scripts/merge_prs.py` `PRODUCERS` branch regex to `pins/(?:toolchain|vcpkg)-[\w.-]+` and its comment to "the toolchain and vcpkg pins", and add a `tests/scripts/test_merge_prs.py` case that a `winui/2.5.2` branch from `github-actions[bot]` is refused as an unknown producer. Done when: `python -m unittest tests.scripts.test_merge_prs` passes and the new case fails against the old regex.
+- [ ] Update the prose that names the retired pin: `.conclave/automations/README.md` (delete the WinUI table row at line 21), `CONTRIBUTING.md` (drop the "WinUI application development workload" parenthesis and the "until `D10 T01 §2` the Windows App SDK" clause from the prerequisites), `docs/reference-machines.md` (remove "Windows App SDK `2.5.1`" from both Compiler and SDK cells and replace the line-74 `Select-String` probe with one that lists the `Microsoft.Windows.CppWinRT` and `Microsoft.Windows.SDK.BuildTools` versions), `docs/user-demand.md` line 18 ("the app is WinUI 3" becomes "the app draws its own UI with recto-ui on Direct2D"), the `scripts/check-sdk-pins.py` docstring lines 9 to 10 and `.github/workflows/pins.yml` (the matrix entry and any comment naming the WinUI pin). Done when: the residue scan from build order step 3 returns nothing.
+- [ ] Update `NOTICE.md` (remove the Windows App SDK 2.5.1 mention from the row at line 18 so it names only `Microsoft.Windows.CppWinRT`, and delete the WebView2 SDK row at line 19, since `recto-ui` has no web view) and `AGENTS.md` (overview, interface rules, validation list without `check-winui-pin.py`, `source-defect` lens without WinUI). Done when: `rg -n -i "windows app sdk|winui|webview2" NOTICE.md AGENTS.md` returns no stale claim and `python scripts/todo-graph.py validate` passes. Source: `D07 T02 §3` regenerates `NOTICE.md` from the build, so this edit only keeps the interim file true.
+- [ ] Add `Ui.App.*` tests in `tests/recto-tests/ui_app_tests.cpp` (manifest DPI, appx no framework, no `Microsoft.WindowsAppSDK` in `Recto.vcxproj`, plain Win32 project, and `Ui.App.NoWinUiResidue`, which walks `git ls-files` minus `docs/`, `todo/`, `design/mockups/`, `design/SPEC.md` and binary files and fails on `Microsoft.UI`, `WindowsAppSDK`, `check-winui-pin` or an `.xaml` path). Done when: `--gtest_filter=Ui.App.*` passes and fails when the package reference or a planted `.xaml` file is restored.
 - [ ] Commit: `app: replace WinUI scaffold with Win32 wWinMain host; retire Windows App SDK pins`
 
-**Test checkpoint:** `.\build.cmd` builds x64 and ARM64, `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.App.*` passes, `python -m unittest discover -s tests/scripts` passes, and launching `build\bin\x64\Debug\Recto.exe` on the display-session host opens an empty window that closes cleanly with exit code 0.
+**Test checkpoint:** `.\build.cmd` builds x64 and ARM64, `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.App.*` passes, `python -m unittest discover -s tests/scripts` passes, `python scripts/check-sdk-pins.py` exits 0, and `build\bin\x64\Debug\Recto\Recto.exe --self-test-exit` on the display-session host opens the window and exits with code 0.
 
 ## 3. UI thread `Dispatcher`, timers and engine callback marshalling
 
@@ -158,11 +171,13 @@ Replace the WinUI scaffold from `D00 T01 §3` in `src/app/` with a plain Win32 h
 - [ ] Add a debug assertion `RECTO_UI_THREAD_ONLY()` used by later sections on element mutation. Done when: `Ui.Dispatcher.AssertsOffThread` death-test passes in Debug.
 - [ ] Commit: `ui: add UI thread Dispatcher, timers and thread-safe handle`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Dispatcher.*` passes (cross-thread post order, timers, shutdown, handle expiry) and the same run with `EnableASAN=true` reports no error.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Dispatcher.*` passes (cross-thread post order, timers, shutdown, handle expiry) and the same run with `EnableASAN=true` reports no error.
 
 ## 4. Top-level `Window`: custom frame, Mica Alt, dark mode, DPI and minimum size
 
-`ui::Window` creates a `WS_OVERLAPPEDWINDOW` HWND with `WS_EX_NOREDIRECTIONBITMAP`, extends the frame into the client area with `DwmExtendFrameIntoClientArea`, answers `WM_NCCALCSIZE` with the full client rectangle (keeping the system resize borders and shadow), and sets `DWMWA_SYSTEMBACKDROP_TYPE` to `DWMSBT_TABBEDWINDOW` (Mica Alt) and `DWMWA_USE_IMMERSIVE_DARK_MODE` from the theme (design spec section 4.3). It handles `WM_DPICHANGED` (relayout at the suggested rectangle), `WM_GETMINMAXINFO` (960 x 600 epx at the current scale, SPEC section 7), `WM_SETICON` from `resources/ico/recto.ico`, and activation events. Mica falls back to a solid `RectoWindowBrush` when unavailable or transparency effects are off. Files: `src/ui/window.h`, `src/ui/window.cpp`, `src/ui/window_backdrop.cpp`.
+`ui::Window` creates a `WS_OVERLAPPEDWINDOW` HWND with `WS_EX_NOREDIRECTIONBITMAP`, extends the frame into the client area with `DwmExtendFrameIntoClientArea`, answers `WM_NCCALCSIZE` with the full client rectangle (keeping the system resize borders and shadow), and sets `DWMWA_SYSTEMBACKDROP_TYPE` to `DWMSBT_TABBEDWINDOW` (Mica Alt) and `DWMWA_USE_IMMERSIVE_DARK_MODE` from the theme (design spec section 4.3). It handles `WM_DPICHANGED` (relayout at the suggested rectangle), `WM_GETMINMAXINFO` (960 x 600 epx at the current scale, SPEC section 7), `WM_SETICON` from `resources/ico/recto.ico`, and activation events. Mica falls back to a solid `RectoWindowBrush` when unavailable or transparency effects are off. Files: `src/ui/window.h`, `src/ui/window.cpp`, `src/ui/window_backdrop.cpp`, `src/ui/window_fullscreen.cpp`.
+
+> **Groomed 2026-10-23:** the SPEC `F11` Full Screen command (`design/SPEC.md` section 10) and `D02 T02 §10` already depend on `D10 T01 §4` for a full screen window, but no section built one (the file had no full screen, cursor or placement-restore step). The full screen API is added here as one more micro-step, not as a new section, so the existing `D02 T02` edge covers it. Revealing the chrome on screen-edge hover is the consumer's job (`D02 T02 §10`).
 
 **Phase:** 2
 **Needs:** windows-host, display-session
@@ -187,9 +202,10 @@ Replace the WinUI scaffold from `D00 T01 §3` in `src/app/` with a plain Win32 h
 - [ ] Send `WM_SETICON` (`ICON_BIG` and `ICON_SMALL`) from `resources/ico/recto.ico` loaded with `LoadImageW` at `GetSystemMetricsForDpi` sizes, embedded as a resource in `src/app/Recto.rc`. Done when: `Ui.Window.IconSet` finds both icons through `WM_GETICON`.
 - [ ] Raise `on_activated(bool)` from `WM_ACTIVATE` and `WM_NCACTIVATE` (return TRUE so DWM does not draw a caption) and track `is_active()`. Done when: `Ui.Window.ActivationEvents` observes deactivate then activate.
 - [ ] Expose `Window::set_root(std::shared_ptr<Element>)` as a declaration only (implemented in §6) and a `WM_GETOBJECT` hook point for D10 T03 §1. Done when: the header compiles and `Ui.Window.GetObjectHookIsCalled` passes with a stub provider.
-- [ ] Commit: `ui: add Window with custom frame, Mica Alt, dark mode, per-monitor DPI and minimum size`
+- [ ] Add `ui::Window::set_full_screen(bool)` and `is_full_screen()` in `src/ui/window_fullscreen.cpp`: save the `WINDOWPLACEMENT` and style, cover the current monitor (`MonitorFromWindow`, `GetMonitorInfoW` `rcMonitor`) with a borderless `WS_POPUP` frame, raise `on_full_screen_changed`, and restore the saved placement and style on exit, including when the window was maximized, when it is moved to another monitor in between and when the monitor DPI differs. Done when: `Ui.Window.FullScreenCoversMonitor`, `Ui.Window.FullScreenRestoresPlacement` (normal and maximized) and `Ui.Window.FullScreenAcrossDpi` pass on the display-session host and a second call with the same value changes nothing. Source: SPEC section 10 (`F11`); Microsoft Learn "How do I switch a window between normal and fullscreen?" (Raymond Chen, The Old New Thing). Cheaper substitute: resizing the window to the screen size without removing the frame, which leaves the title bar and shadow.
+- [ ] Commit: `ui: add Window with custom frame, Mica Alt, dark mode, per-monitor DPI, minimum size and full screen`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Window.*` passes on the display-session host (client rect, backdrop attributes, DPI change, minimum size at five scales, icon, activation), and `Recto.exe` shows a Mica Alt window in the screenshot compared by eye against the `D-Focus-Light.png` frame.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Window.*` passes on the display-session host (client rect, backdrop attributes, DPI change, minimum size at five scales, icon, activation), and `Recto.exe` shows a Mica Alt window in the screenshot compared by eye against the `D-Focus-Light.png` frame.
 
 ## 5. Compositor: shared D3D11 device, DirectComposition tree, D2D surfaces, device loss
 
@@ -214,7 +230,7 @@ Replace the WinUI scaffold from `D00 T01 §3` in `src/app/` with a plain Win32 h
 - [ ] Add a headless variant: `GraphicsDevice::create_headless` for the harness (no `IDCompositionTarget`). Done when: §1's `render_to_bitmap` can use it and `Ui.Project.HarnessSolid` still passes.
 - [ ] Commit: `ui: add GraphicsDevice and Compositor with virtual surfaces and device-loss recovery`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Compositor.*` passes (device creation, WARP fallback, dirty-rect isolation, device-lost recovery with exactly one notification per dependent).
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Compositor.*` passes (device creation, WARP fallback, dirty-rect isolation, device-lost recovery with exactly one notification per dependent).
 
 ## 6. `Element` tree: retained rendering, invalidation, hit testing and visual layers
 
@@ -239,7 +255,7 @@ Replace the WinUI scaffold from `D00 T01 §3` in `src/app/` with a plain Win32 h
 - [ ] Guard mutation to the UI thread with `RECTO_UI_THREAD_ONLY()` from §3. Done when: `Ui.Element.MutationOffThreadAsserts` passes in Debug.
 - [ ] Commit: `ui: add Element tree with invalidation, hit testing and composition layers`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Element.*` passes (identity-preserving reparent, coalesced invalidation, hit test order, layer move without redraw).
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Element.*` passes (identity-preserving reparent, coalesced invalidation, hit test order, layer move without redraw).
 
 ## 7. Layout engine: epx measure and arrange, pixel snapping, Stack, Grid, Dock, Overlay
 
@@ -265,7 +281,7 @@ Layout is measure then arrange in effective pixels (epx) with final positions ro
 - [ ] Add a layout stress test: 5,000 elements measure and arrange in under 16 ms on the Debug-less (Release) build. Done when: `Ui.Layout.StressBudget` passes in Release. Cheaper substitute: asserting only correctness.
 - [ ] Commit: `ui: add layout engine, panels, pixel snapping and shell slots`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Layout.*` passes at 100, 125, 150, 175 and 200 percent (snapping, panels, slot reparenting without recreation).
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Layout.*` passes at 100, 125, 150, 175 and 200 percent (snapping, panels, slot reparenting without recreation).
 
 ## 8. Design tokens generated from `design/tokens/colors.json` and `ThemeManager`
 
@@ -297,7 +313,7 @@ Layout is measure then arrange in effective pixels (epx) with final positions ro
 - [ ] Add `tests/scripts/test_build_ui_tokens.py` (determinism, `--check` failure, missing key). Done when: `python -m unittest tests.scripts.test_build_ui_tokens` passes.
 - [ ] Commit: `ui: generate design tokens from colors.json and add ThemeManager`
 
-**Test checkpoint:** `python scripts/build-ui-tokens.py --check` exits 0, `python -m unittest tests.scripts.test_build_ui_tokens` passes, and `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Tokens.*` passes (spec constants, system-colour mapping, live repaint, no hex literals outside the generated header).
+**Test checkpoint:** `python scripts/build-ui-tokens.py --check` exits 0, `python -m unittest tests.scripts.test_build_ui_tokens` passes, and `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Tokens.*` passes (spec constants, system-colour mapping, live repaint, no hex literals outside the generated header).
 
 ## 9. Drawing primitives: token radii, hairlines, borders, opacity, elevation shadows
 
@@ -328,7 +344,7 @@ Layout is measure then arrange in effective pixels (epx) with final positions ro
 - [ ] Add HighContrast painting rules (no shadow, 1 px `COLOR_WINDOWTEXT` border on elevated surfaces). Done when: `Ui.Painter.HighContrastNoShadow` passes under a forced contrast theme.
 - [ ] Commit: `ui: add Painter primitives, elevation shadows and acrylic backdrop`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Painter.*` passes: radii, snapped hairlines at 125 percent, Z 32 and Z 64 shadows against reference crops at SSIM thresholds from `test_support.h`'s `compute_ssim`, acrylic fallback.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Painter.*` passes: radii, snapped hairlines at 125 percent, Z 32 and Z 64 shadows against reference crops at SSIM thresholds from `test_support.h`'s `compute_ssim`, acrylic fallback.
 
 ## 10. Text: DirectWrite type ramp, `TextBlock`, trimming and highlighted ranges
 
@@ -359,7 +375,7 @@ Layout is measure then arrange in effective pixels (epx) with final positions ro
 - [ ] Add a text layout cache keyed on (text, style, width, scale) with LRU eviction of 512 entries. Done when: `Ui.Text.LayoutCacheHit` shows one `CreateTextLayout` for 100 renders of unchanged text.
 - [ ] Commit: `ui: add DirectWrite type ramp, TextBlock, ellipsis trimming and highlighted ranges`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Text.*` passes (ramp values, optical axis, wrap, ellipsis, highlight ranges, antialiasing mode, cache).
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Text.*` passes (ramp values, optical axis, wrap, ellipsis, highlight ranges, antialiasing mode, cache).
 
 ## 11. Icon, SVG and bitmap image elements
 
@@ -389,7 +405,7 @@ Layout is measure then arrange in effective pixels (epx) with final positions ro
 - [ ] Recreate device-dependent bitmaps and SVG documents through §5's `DeviceDependent`. Done when: `Ui.Image.SurvivesDeviceLoss` passes after a simulated device removal.
 - [ ] Commit: `ui: add Icon, SvgImage and BitmapImage elements`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Image.*` passes (private font load, concept lookup, Regular and Filled at three sizes, SVG theme switch, padded-stride bitmap, device-loss rebuild). It requires `resources/fonts/RectoIcons.ttf` from `D02 T01 §18`.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Image.*` passes (private font load, concept lookup, Regular and Filled at three sizes, SVG theme switch, padded-stride bitmap, device-loss rebuild). It requires `resources/fonts/RectoIcons.ttf` from `D02 T01 §18`.
 
 ## 12. Pointer and keyboard input: routing, capture, wheel, accelerators, access keys
 
@@ -413,9 +429,12 @@ Input arrives through `WM_POINTER*` with `EnableMouseInPointer(TRUE)` so mouse, 
 - [ ] Route keyboard events to the focused element then bubble to ancestors (`KeyEvent`, `CharEvent`, handled flag) in `src/ui/keyboard_router.cpp`. Done when: `Ui.Input.KeyBubbles` passes and a handled event stops bubbling.
 - [ ] Implement the accelerator table (`AcceleratorTable::bind(Key, Modifiers, Command*)`) evaluated before element delivery for global shortcuts and after for element-local ones, loaded from the SPEC section 10 list by `src/app`. Done when: `Ui.Input.AcceleratorInvokesCommand` runs a bound `Command` on `Ctrl+K` and refuses a disabled command.
 - [ ] Implement access keys: `Alt` press-release shows key tips on elements with an `access_key`, `Alt+letter` invokes. Done when: `Ui.Input.AccessKeysShowAndInvoke` passes. Source: SPEC sections 8.4, 11.
-- [ ] Commit: `ui: add pointer, wheel and keyboard routing, accelerators and access keys`
+- [ ] Add `Element::cursor()` (a `ui::Cursor` enum: `Arrow`, `IBeam`, `Hand`, `SizeWE`, `SizeNS`, `SizeAll`, `NotAllowed`, `Wait`, `AppStarting`) and answer `WM_SETCURSOR` in `src/ui/cursor.cpp` by walking up from the hit-tested element to the first one that sets a cursor, loading system cursors with `LoadCursorW(nullptr, IDC_*)`, falling back to `Arrow`, and showing `Wait` for the window while a modal `Dialog` operation declares itself busy. Done when: `Ui.Input.CursorFollowsElement` hit-tests a `TextBox`, a `Hyperlink`, a `Splitter` edge and plain text and reads `GetCursor()` as `IBeam`, `Hand`, `SizeWE` and `Arrow`, and `Ui.Input.CursorHiddenForTouchAndPen` shows no cursor change for touch and pen pointers. Source: Microsoft Learn "WM_SETCURSOR message". Cheaper substitute: each control calling `SetCursor` on `WM_MOUSEMOVE`, which flickers and breaks under capture.
+- [ ] Commit: `ui: add pointer, wheel and keyboard routing, accelerators, access keys and cursors`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Input.*` passes on the display-session host (pointer sequence, capture, pen pressure, system wheel lines, double-click settings, key bubbling, accelerators, access keys).
+> **Groomed 2026-10-23:** only the `Splitter` (`D10 T02 §26`) set a cursor and no section owned `WM_SETCURSOR`, so text fields, links and the page canvas would all show the arrow. The cursor micro-step above gives every control one place to declare its cursor; `D10 T02 §4`, `§2` and `§26` set `Element::cursor()` instead of calling `SetCursor`.
+
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Input.*` passes on the display-session host (pointer sequence, capture, pen pressure, system wheel lines, double-click settings, key bubbling, accelerators, access keys, cursor resolution).
 
 ## 13. Focus manager: tab order, focus scopes, arrow groups and the Fluent focus visual
 
@@ -446,7 +465,7 @@ Input arrives through `WM_POINTER*` with `EnableMouseInPointer(TRUE)` so mouse, 
 - [ ] Handle `WM_SETFOCUS`/`WM_KILLFOCUS` on the window so focus restores when the window reactivates. Done when: `Ui.Focus.WindowReactivationRestores` passes.
 - [ ] Commit: `ui: add FocusManager with scopes, arrow groups and the Fluent focus visual`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Focus.*` passes (tab order, scopes, arrow groups, keyboard-only visual at 100 and 200 percent, high contrast).
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Focus.*` passes (tab order, scopes, arrow groups, keyboard-only visual at 100 and 200 percent, high contrast).
 
 ## 14. Motion: frame clock, Fluent easing, panel motion and the Windows animation setting
 
@@ -476,7 +495,7 @@ Input arrives through `WM_POINTER*` with `EnableMouseInPointer(TRUE)` so mouse, 
 - [ ] Add `Motion::zoom_scale(Layer&, from, to)` for the page canvas tile scale (SPEC 12 "animated scale of existing tiles"). Done when: `Ui.Motion.ZoomScaleAnimates` passes.
 - [ ] Commit: `ui: add Motion with Fluent easing, panel and dialog curves and the animation setting`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Motion.*` passes on the display-session host (easing samples, 167 ms and 8 epx, dialog curve, no motion when the setting is off, cancel safety).
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Motion.*` passes on the display-session host (easing samples, 167 ms and 8 epx, dialog curve, no motion when the setting is off, cancel safety).
 
 ## 15. Popup host: owned popup windows, placement, light dismiss, in-window overlay layer
 
@@ -507,7 +526,7 @@ Menus, tooltips, combo box lists, suggestion lists and anchored flyouts can exte
 - [ ] Handle device loss and DPI change for popup windows. Done when: `Ui.Popup.SurvivesDpiChange` passes.
 - [ ] Commit: `ui: add PopupHost, work-area placement, light dismiss and in-window overlay layer`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Popup.*` passes on the display-session host (owned window, flip and clamp, three dismiss paths, focus return, nested close, smoke and focus trap).
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Popup.*` passes on the display-session host (owned window, flip and clamp, three dismiss paths, focus return, nested close, smoke and focus trap).
 
 ## 16. Observable properties, `Command` objects and view-model binding helpers
 
@@ -531,7 +550,7 @@ Menus, tooltips, combo box lists, suggestion lists and anchored flyouts can exte
 - [ ] Add a `CommandRegistry` (id to `Command`) that §12 accelerators and the command box in D02 T03 enumerate. Done when: `Ui.Binding.RegistryListsAllCommands` passes.
 - [ ] Commit: `ui: add observable Property, Command and binding helpers`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Binding.*` passes (change notification, unsubscribe safety, can-execute, two-way settle, off-thread marshalling), also under `EnableASAN=true`.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Binding.*` passes (change notification, unsubscribe safety, can-execute, two-way settle, off-thread marshalling), also under `EnableASAN=true`.
 
 ## 17. OLE drag-and-drop target and clipboard formats
 
@@ -555,7 +574,7 @@ Menus, tooltips, combo box lists, suggestion lists and anchored flyouts can exte
 - [ ] Retry on `CLIPBRD_E_CANT_OPEN` with bounded backoff (5 tries, 20 ms) and return a typed error after. Done when: `Ui.Drop.ClipboardBusyRetries` passes with a contending clipboard holder.
 - [ ] Commit: `ui: add OLE drop target and clipboard text, HTML and RTF formats`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Drop.*` passes (drag events, `CF_HDROP` and shell items, rejection, fast return, clipboard round trip, busy retry).
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Drop.*` passes (drag events, `CF_HDROP` and shell items, rejection, fast return, clipboard round trip, busy retry).
 
 ## 18. `SwapChainHost`: composition swap chain element for the page canvas
 
@@ -580,7 +599,7 @@ Menus, tooltips, combo box lists, suggestion lists and anchored flyouts can exte
 - [ ] Add an include-boundary assertion that `src/services` does not include `src/ui`. Done when: `Ui.Project.IncludeBoundary` still passes with the hand-off in place.
 - [ ] Commit: `ui: add SwapChainHost composition swap chain element with presentation hand-off`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.SwapChain.*` passes (creation, plain-COM hand-off, resize protocol, no UI-thread present, device-loss re-issue, scale change) and `Ui.Project.IncludeBoundary` passes.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.SwapChain.*` passes (creation, plain-COM hand-off, resize protocol, no UI-thread present, device-loss re-issue, scale change) and `Ui.Project.IncludeBoundary` passes.
 
 ## 19. Non-client hit testing: drag regions, resize edges, caption buttons, Snap Layouts
 
@@ -611,7 +630,7 @@ Menus, tooltips, combo box lists, suggestion lists and anchored flyouts can exte
 - [ ] Add the live Snap Layouts check: hover the maximize button for 1 second and detect the Snap Layouts flyout window (`ApplicationFrameInputSinkWindow`/`SnapLayouts` class via `EnumWindows`). Done when: `Ui.NonClient.SnapLayoutsFlyoutAppears` passes on Windows 11 with a display session.
 - [ ] Commit: `ui: add non-client hit testing, drawn caption buttons, Snap Layouts and system menu`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.NonClient.*` passes on the display-session host (hit codes at two scales, `HTMAXBUTTON`, caption button renders, double-click, system menu, deactivated dimming, Snap Layouts flyout detected).
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.NonClient.*` passes on the display-session host (hit codes at two scales, `HTMAXBUTTON`, caption button renders, double-click, system menu, deactivated dimming, Snap Layouts flyout detected).
 
 ## 20. Golden-image suite: headless renders at 100, 150 and 200 percent against SPEC boards
 
@@ -637,12 +656,12 @@ The golden suite renders toolkit fixtures headless through the §1 harness at 10
 - [ ] Expose `recto::ui::test::golden::expect_matches(id)` for D10 T02 §23 and D06 T04 §1 to add entries without new code. Done when: a sample entry added to the manifest in a scratch copy is picked up by the test with no C++ change.
 - [ ] Commit: `ui: add golden-image suite with SSIM thresholds and a review-only update path`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Golden.*` passes (crop and scale, manifest validation, deterministic fixtures, Light and Dark foundation crops at 100, 150 and 200 percent, HighContrast baselines, drift detection, update path leaves `design/screenshots/` unchanged).
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Golden.*` passes (crop and scale, manifest validation, deterministic fixtures, Light and Dark foundation crops at 100, 150 and 200 percent, HighContrast baselines, drift detection, update path leaves `design/screenshots/` unchanged).
 
 ## Verification
 
 - Build: `.\build.cmd` builds x64 and ARM64 Debug and Release with `recto-ui` and `Recto.exe` at zero warnings, and `Recto.exe` opens a Mica Alt window with working drag, resize, Snap Layouts and system menu on a Windows 11 display-session host.
-- Tests: `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.*` passes in full, and the headless subset (`Ui.Project.*`, `Ui.Dispatcher.*`, `Ui.Compositor.*`, `Ui.Element.*`, `Ui.Layout.*`, `Ui.Tokens.*`, `Ui.Painter.*`, `Ui.Text.*`, `Ui.Image.*`, `Ui.Binding.*`, `Ui.SwapChain.*`, `Ui.Golden.*`) passes without a display session; the same run under `EnableASAN=true` reports no error in `Ui.Dispatcher.*` and `Ui.Binding.*`.
+- Tests: `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.*` passes in full, and the headless subset (`Ui.Project.*`, `Ui.Dispatcher.*`, `Ui.Compositor.*`, `Ui.Element.*`, `Ui.Layout.*`, `Ui.Tokens.*`, `Ui.Painter.*`, `Ui.Text.*`, `Ui.Image.*`, `Ui.Binding.*`, `Ui.SwapChain.*`, `Ui.Golden.*`) passes without a display session; the same run under `EnableASAN=true` reports no error in `Ui.Dispatcher.*` and `Ui.Binding.*`.
 - Tokens and boundary: `python scripts/build-ui-tokens.py --check` exits 0, `Ui.Tokens.NoHexLiteralsOutsideGenerated` and `Ui.Project.IncludeBoundary` pass, and `rg -n "Microsoft.WindowsAppSDK|check-winui-pin" --glob "!docs/**" --glob "!todo/**"` returns nothing.
 - Tooling: `python -m unittest discover -s tests/scripts` and `python -m unittest discover -s scripts/tests` pass after the WinUI pin removal.
 - `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` pass.

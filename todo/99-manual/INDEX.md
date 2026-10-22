@@ -20,7 +20,7 @@ Steps only the project owner can take: trademark search, the GitHub repository f
 ## In scope
 
 - Name clearance and reservation, repository face, Partner Center identity, machine decisions
-- Proofs that need a person, a separate machine or an outside party (`D99 T01 §5` to `§11`)
+- Proofs that need a person, a separate machine or an outside party (`D99 T01 §5` to `§13`)
 
 ## Out of scope
 

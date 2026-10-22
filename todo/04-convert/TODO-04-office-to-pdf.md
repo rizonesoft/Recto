@@ -13,6 +13,8 @@ track: M5
 
 > **Current state:** Measured 2026-10-14. No Office-to-PDF or HTML/Markdown-to-PDF code exists yet. On 2026-10-19 decisions D3, D7, D9, D10 and D12 were locked so Recto is 100% self-contained in native C++23 across both modern OpenXML and legacy 97-2003 binary Office formats with zero Microsoft Office or LibreOffice dependencies. 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI sections rewritten against `todo/10-ui/`.
 
+> **Groomed 2026-10-23:** New `§23` adds fuzz targets for the RTF, HTML, Markdown, legacy Office and text readers (the container layers stay with `fuzz_openxml_zip` in `D06 T02 §3`); new `§24` adds round-trip legs for the ODF, OFD, email, MHTML, text, PPTX, image-only and PDF/X converters that `D06 T01 §5` and `§6` predate; Adjacency was corrected from `all=not-applicable` to owners that exist.
+
 ## Inputs
 
 - `docs/plans/2026-10-13-recto-foundation.md` sections 1 (D3, D7, D9, D10, D12), 5 (`Office, Legacy Office, HTML, Markdown & Data -> PDF` row) and 5.1 (`100% Pure Native C++23 OpenXML, Legacy Binary OLE2, RTF, HTML, Markdown, XPS & SVG Engine`), 7 (M5 done-when: `.docx`, `.docm`, `.doc`, `.xlsx`, `.xlsm`, `.xls`, `.pptx`, `.pptm`, `.ppt`, `.rtf`, `.html`, `.md`, `.csv` convert cleanly in 100% pure native C++23 and macro-bearing `.docm`/`.doc` verified never to execute macros), 9 (security rules 2, 3 and 7).
@@ -34,6 +36,7 @@ track: M5
 - -> XREF: D10 T01 §8 -- the Office to PDF Step 3 options control reads the generated `recto_tokens.g.h` tokens.
 - -> XREF: D10 T02 §9 -- the page size and orientation choices are `ui::ComboBox` and button controls.
 - -> XREF: D10 T03 §1 -- the options control exposes automation names through the `recto-ui` UIA provider tree.
+- -> XREF: D06 T02 §3 -- scheduled fuzz operations run the §23 harnesses alongside `fuzz_openxml_zip`.
 
 ## Outcome
 
@@ -43,7 +46,7 @@ track: M5
 - The Convert page (`§7`, `SPEC 9.5`) ties all native C++23 engines together cleanly.
 - OpenDocument (`.odt`, `.ods`, `.odp`), OFD, Outlook `.msg` and `.eml` email, MHTML and plain-text-family files convert to PDF through Recto's native engines (`§8` to `§22`), with macros stripped, nothing fetched from the network, and each refusal or approximation named, matching what PDFelement and Foxit PDF Editor accept beyond Acrobat.
 
-**Adjacency:** all=not-applicable (converter engines inside `D04 T01`'s Convert frame; default page-setup preference is owned by `D02 T04 §5` and read here)
+**Adjacency:** list=not-applicable (inputs are files the user picks; the queue list is D04 T01 §5); document=not-applicable (the outputs are the converted PDFs themselves); settings=applicable @ D02 T04 §5; reporting=not-applicable (conversion warnings are shown on the job row, D04 T01 §7); notifications=applicable @ D04 T01 §6; permissions=applicable @ D04 T04 §18; audit=not-applicable (no conversion history is kept on disk, D04 T01 §5); exchange=applicable @ D04 T04 §21; reverse=applicable @ D04 T01 §2
 
 **Adjacency rationale:** The `PDF from Office, HTML, Markdown & Images` card, queue UI, and settings selector live in `D04 T01` and `D02 T04 §5`. This file owns the 100% native C++23 OpenXML, OLE2 legacy binary Office, RTF, HTML, Markdown, and CSV engines and their macro/script-safety proofs.
 
@@ -73,6 +76,8 @@ track: M5
 | 20 | §20 | Plain-text family (`.txt`, `.log`, `.ini`, `.cfg`, `.xml`) to PDF, encoding detected | §1 | [ ] |
 | 21 | §21 | `recto-cli office-to-pdf` dispatch for the new input formats | §9, §10, §11, §15, §18, §19, §20, D04 T02 §23 | [ ] |
 | 22 | §22 | Convert card inputs for ODF, OFD, email, MHTML, text and images, and open `.ofd` | §7, §21, D04 T02 §15, D10 T01 §8, D10 T01 §11, D10 T02 §2, D10 T02 §3, D10 T03 §1 | [ ] |
+| 23 | §23 | Fuzz targets for the RTF, HTML, Markdown, legacy Office and text readers | §1, §3, §4, §5, §6, §20 | [ ] |
+| 24 | §24 | Round-trip matrix legs for ODF, OFD, email, MHTML, text, PPTX, image-only and PDF/X | §2, §9, §10, §11, §15, §18, §19, §20, D06 T01 §6, D04 T02 §14, D04 T02 §17, D04 T02 §24, D04 T05 §12, D04 T06 §6, D04 T06 §10 | [ ] |
 
 ## 1. Built-in C++23 Word (`.docx`, `.docm`) and Rich Text (`.rtf`) to PDF layout engine
 
@@ -592,6 +597,52 @@ Make the new formats usable on the Convert page and in the Open dialog. The **PD
 - [ ] Commit: `convert: accept ODF, OFD, email, MHTML, text and more image types on the Convert page and open OFD`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=OfficeToPdf.NewFormatsCardUi:AppTests.OpenOfdUi` passes on the display-session host, and display-session screenshots confirm the card and the conditional option rows.
+
+## 23. Fuzz targets for the RTF, HTML, Markdown, legacy Office and text readers
+
+The foundation plan asks for fuzzing of "OpenXML/OLE2 container readers", and `D06 T02 §3` builds `fuzz_openxml_zip` for the ZIP, OpenXML XML and CFB layers, with `fuzz_mime`, `fuzz_msg`, `fuzz_odf` and `fuzz_ofd` already owned by `§16`, `§17`, `§8` and `§12`. The readers that sit on top of those containers, and the text-format readers, have bounds in their own sections but no harness: the RTF reader (`§1`), the HTML and CSS parser and the Markdown parser (`§3`), the legacy `.doc`, `.xls` and `.ppt` record parsers (`§5`, `§6`) and the text encoding detector (`§20`). Legacy binary parsers are the classic memory-safety target, so each gets a harness here.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Give each reader a byte-span entry point (`parse_rtf_bytes`, `parse_html_bytes`, `parse_markdown_bytes`, `parse_doc_bytes`, `parse_xls_bytes`, `parse_ppt_bytes`, `detect_and_decode_text`) beside its path entry point, with `CancelToken` and an input size cap. Done when: each entry point has a unit test that parses a fixture from memory.
+2. Add the four harnesses and the deterministic smoke test. Done when: `Fuzz.OfficeReadersSmoke` runs every harness over its seed corpus plus 5000 seeded mutations per harness under ASan with no finding.
+
+- [ ] Add `fuzz/fuzz_rtf.cpp` driving `parse_rtf_bytes` (deeply nested groups, huge `\binN`, unterminated `\pict`, `\u` escape runs, control words with giant parameters) and assert the recursion cap and the output size cap hold. Done when: `Fuzz.RtfSmoke` passes and a 100000-deep `{` input returns `LimitExceeded` within `1 s`.
+- [ ] Add `fuzz/fuzz_html_md.cpp` driving `parse_html_bytes` and `parse_markdown_bytes` (first byte selects) with seeds that include nested tables, a 50000-level `<div>` chain, an unterminated comment, a CSS `@import` and a Markdown reference-link loop. Done when: `Fuzz.HtmlMdSmoke` passes, the DOM depth cap holds and no input causes a network or file read outside the input's folder (the recording resource provider of `§3` proves it).
+- [ ] Add `fuzz/fuzz_office_legacy.cpp` driving the `.doc` (`§5`), `.xls` and `.ppt` (`§6`) parsers over the CFB reader (`§4`) with the first byte selecting the format, seeded with `sample-legacy.*` and the `macro-canary` files. Done when: `Fuzz.OfficeLegacySmoke` passes and a seeded FIB `ccpText` larger than the stream returns `Damaged`, not an out-of-range read.
+- [ ] Add `fuzz/fuzz_textdecode.cpp` driving `detect_and_decode_text` (BOM sniffing, UTF-16 without BOM, invalid UTF-8, the binary check of `§20`). Done when: `Fuzz.TextDecodeSmoke` passes and every output is valid UTF-8.
+- [ ] Register the four harnesses in `fuzz/` and `recto-fuzz.vcxproj`, build their seed corpora in `scripts/build-corpus.py` with entries in `tests/corpus/PROVENANCE.md`, and add `tests/corpus/broken/` replay rows. Done when: `Corpus.Provenance` passes and `recto-fuzz.exe` lists the four new targets.
+- [ ] Add `Fuzz.OfficeReadersSmoke` in `tests/recto-tests/fuzz_smoke_tests.cpp`, a deterministic run (fixed seed, `5000` mutations per harness) so the gate is machine-judged without a long fuzz session. Done when: the test passes under ASan in under `120 s` and a seeded out-of-range read in the `.xls` parser makes it fail.
+- [ ] Commit: `convert: add fuzz targets for the RTF, HTML, Markdown, legacy Office and text readers`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Fuzz.RtfSmoke:Fuzz.HtmlMdSmoke:Fuzz.OfficeLegacySmoke:Fuzz.TextDecodeSmoke:Fuzz.OfficeReadersSmoke` passes under ASan, and removing the RTF group depth cap makes `Fuzz.RtfSmoke` fail.
+
+## 24. Round-trip matrix legs for ODF, OFD, email, MHTML, text, PPTX, image-only and PDF/X
+
+`D06 T01 §5` and `§6` build the conversion round-trip matrix for the converters that existed when they were written. The converters added afterwards (`PptxWriter`, ODF, OFD, email, MHTML, the plain-text family, the image-only PDF engine, the clipboard builder and the PDF/X conversion) are in no matrix leg, so the M4 and M5 "round-trips the corpus" claim would be silently narrower than it reads. `RoundTrips.EveryConvertCorpusFileMapped` already fails on any corpus file without a matrix entry; this section adds the entries and the legs, with machine-measured oracles only.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add fixtures and `round_trip_matrix.json` entries for each converter family. Done when: `RoundTrips.EveryConvertCorpusFileMapped` passes with the new files and `Corpus.Provenance` lists them.
+2. Implement `RoundTrips.Extended.*`. Done when: every leg passes under ASan and a seeded defect in one converter fails exactly its leg.
+
+- [ ] Add `RoundTrips.Extended.Pptx`: PDF to `.pptx` (`D04 T05 §12`) and back through the `.pptx` reader (`§2`), requiring slide count equal to page count and word recall at least `0.97` against `PageText`. Done when: the leg passes on `two-column-article.pdf` and `table-invoice.pdf` and fails when the writer drops one slide.
+- [ ] Add `RoundTrips.Extended.Odf`: fixtures `sample.odt`, `sample.ods`, `sample.odp` (made by `scripts/build-corpus.py`) to PDF (`§9` to `§11`), requiring the expected text from `tests/corpus/convert/odf-expected.json` at recall `1.0` and, for the macro-bearing variants, zero macro bytes in the output and a named warning. Done when: the three legs pass and a macro-bearing `.odt` that is not stripped fails.
+- [ ] Add `RoundTrips.Extended.Ofd`, `Email`, `Mhtml` and `TextFamily`: `sample.ofd` (`§13` to `§15`), `sample.eml` and `sample.msg` (`§18`), `sample.mht` (`§19`) and a UTF-16, a GB18030 and a Latin-1 text file (`§20`) to PDF, requiring expected text recall `1.0`, the attachment-asks-first behaviour for email and zero network reads. Done when: all legs pass and a seeded wrong-charset decode fails the text leg.
+- [ ] Add `RoundTrips.Extended.ImageOnly` and `RoundTrips.Extended.ClipboardAndBlank`: image-only PDF (`D04 T02 §17`) keeps `SSIM >= 0.98` per page with zero text operators, the clipboard builder (`D04 T02 §14`) and the blank PDF engine (`D04 T02 §24`) produce PDFs that reopen with the expected page count and size. Done when: the legs pass and an image-only output that keeps a `/Font` fails.
+- [ ] Add `RoundTrips.Extended.PdfX`: convert `tests/corpus/print/cmyk-in-form-xobject.pdf` to PDF/X-4 (`D04 T06 §10`) and re-run the preflight profile (`D04 T06 §6`) with zero errors. Done when: the leg passes and removing the output intent fails it.
+- [ ] Record the new rows in the applicability summary printed by `RoundTrips.*`. Done when: the summary lists every converter family of this domain with its leg or a named reason it has none.
+- [ ] Commit: `test: extend the conversion round-trip matrix to the later converters`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=RoundTrips.EveryConvertCorpusFileMapped:RoundTrips.Extended.*` passes under ASan, and a seeded defect in the ODF text mapping makes `RoundTrips.Extended.Odf` fail.
 
 ## Verification
 

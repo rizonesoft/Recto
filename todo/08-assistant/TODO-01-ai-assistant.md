@@ -10,7 +10,7 @@ title: "TODO-01 -- Opt-in AI Assistant with User-Supplied Provider Keys"
 
 > **Goal:** A user who adds their own key for Anthropic, OpenAI, OpenRouter or Google Gemini can summarize the open document, ask questions whose answers cite clickable page numbers, explain or translate a selection, and draft alternate text for figures, while a user who never adds a key sees no network traffic and no change to Recto. Every request shows exactly which text, pages, images, provider and model will leave the machine before it is sent, keys live only in Windows Credential Manager, redacted or unselected or password-protected content is never sent without explicit consent, and nothing the assistant writes changes the document except through an explicit, undoable Apply (foundation plan D19).
 
-> **Current state:** Measured 2026-10-21. `src/services/` holds no assistant code and the repository has no WinHTTP use. The inputs exist only as plans: `PageText` snapshots (`D03 T01 §1`, `§2`), `SidePanelHost` (`D02 T03 §3`), `SettingsStore` and the Portable mode `AppPaths` (`D02 T04 §1`, `§2`), `CommandRegistry` and the `Ctrl+K` box (`D02 T03 §11`, `§12`), the `CancelToken` (`D01 T02 §7`), the pending redaction marks of the Redaction Bar (`D05 T02 §9`), and the `PDF/UA` auto-tagger (`D04 T05 §7`). The domain index `todo/08-assistant/INDEX.md` lists this file and `TODO-02-assistant-workspace.md` (`D08 T02`), which builds on the provider, consent and panel sections here. Every section here is Phase 7 (After v1) unless the owner moves it earlier. 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI references rewritten against `todo/10-ui/`.
+> **Current state:** Measured 2026-10-21. `src/services/` holds no assistant code and the repository has no WinHTTP use. The inputs exist only as plans: `PageText` snapshots (`D03 T01 §1`, `§2`), `SidePanelHost` (`D02 T03 §3`), `SettingsStore` and the Portable mode `AppPaths` (`D02 T04 §1`, `§2`), `CommandRegistry` and the `Ctrl+K` box (`D02 T03 §11`, `§12`), the `CancelToken` (`D01 T02 §7`), the pending redaction marks of the Redaction Bar (`D05 T02 §9`), and the `PDF/UA` auto-tagger (`D04 T05 §7`). The domain index `todo/08-assistant/INDEX.md` lists this file and `TODO-02-assistant-workspace.md` (`D08 T02`), which builds on the provider, consent and panel sections here. Every section here is Phase 7 (After v1); the unattended campaign builds Phase 7 as well (owner decision 2026-10-22, foundation plan section 1). 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI references rewritten against `todo/10-ui/`.
 
 ## Inputs
 
@@ -29,6 +29,7 @@ title: "TODO-01 -- Opt-in AI Assistant with User-Supplied Provider Keys"
 - -> XREF: D08 T02 §2 -- NoEndpoint state.
 - -> XREF: D08 T02 §3 -- batch grants.
 - -> XREF: D07 T02 §10 -- AssistantDisabled policy.
+- -> XREF: D99 T01 §12 -- the operator runs the live provider smoke tests that `§20` builds, with their own API keys.
 - -> XREF: D02 T06 §2 -- separate transport.
 - -> XREF: D06 T04 §26 -- the `D-Assistant.png` board and `design/SPEC.md` section 9.20 that §15, §16, §17 here build against.
 - -> XREF: D10 T02 §17 -- the `ui::Dialog` that the request preview (§16) and the shared dialog chrome build on.
@@ -71,6 +72,7 @@ title: "TODO-01 -- Opt-in AI Assistant with User-Supplied Provider Keys"
 | 17 | §17 | Assistant side panel, clickable citations and Markdown export | §13, §16, D02 T03 §3, D06 T04 §26, D10 T02 §2, D10 T02 §11, D10 T03 §2 | [ ] |
 | 18 | §18 | `Ctrl+K` commands, UIA names and polite announcements | §17, D02 T03 §11, D03 T02 §5 | [ ] |
 | 19 | §19 | Privacy and security suite: zero network, key scan, consent gates, cancel | §14, §18 | [ ] |
+| 20 | §20 | Live provider smoke tests for the operator: disabled by default, key-safe | §10, §12, §19 | [ ] |
 
 ## 1. Provider interface, request model and typed `AssistantError` taxonomy
 
@@ -541,6 +543,29 @@ This suite proves the promises D19 makes, end to end, so a later change cannot q
 
 **Test checkpoint:** `build\bin\x64\Release\recto-tests\recto-tests.exe --gtest_filter=Assistant.NoKeyZeroNetwork:Assistant.KeyNeverLeaks:Assistant.ConsentGatesEndToEnd:Assistant.CancelEverywhere:Assistant.PortableKeepsKeysInCredentialManager` exits 0, and each mutation in the last item fails its named test.
 
+## 20. Live provider smoke tests for the operator: disabled by default, key-safe
+
+The four adapters (`§5` to `§8`) are proven against recorded wire fixtures because the unattended campaign has no API keys. A provider can change a header, an event name or an error body without notice, so before release the operator runs each adapter once against the real service (`D99 T01 §12`). This section builds those tests so they cannot run, spend money or leak a key unless the operator deliberately sets a key in the terminal environment, and so that the campaign itself proves they stay inert.
+
+> **Groomed 2026-10-23:** new section. The campaign scope now includes Phase 7 (owner decision 2026-10-22), which makes the assistant part of the product the operator publishes; without a live run the only evidence for four network adapters is documentation-derived fixtures. Defaults taken: the live tests are `DISABLED_` gtest cases enabled by an environment variable, not a separate executable (reversal cost: moving four test files).
+
+**Phase:** 7
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Author `tests/recto-tests/assistant_live_tests.cpp` with `AssistantLive.DISABLED_Anthropic`, `DISABLED_OpenAi`, `DISABLED_OpenRouter` and `DISABLED_Gemini`, each reading its key from `RECTO_LIVE_<PROVIDER>_KEY` and skipping with `GTEST_SKIP()` when it is absent. Done when: `recto-tests.exe --gtest_filter=AssistantLive.* --gtest_also_run_disabled_tests` with no variables set reports four skips and zero network connections (counted by the `§19` transport counter).
+2. Author `tests/live/assistant_smoke.ps1` that takes `-Provider`, checks the variable exists without printing it, runs the matching case and fails if the key text appears in the output. Done when: a planted echo of the key in a test makes the script fail.
+
+- [ ] Implement the four live cases, each running through the real `WinHttpTransport` and `ConsentGate` with a test authorizer: `Test connection` (`§10`), a streamed summary of `tests/corpus/render/hello-world.pdf` with `max` output limited to 200 tokens, a cancel after the first chunk that ends within 2 seconds with no further events, and a deliberately invalid key classified as the key-rejected `AssistantError` with its cause and next step (not a bare status). Done when: each case passes against a real account and, offline, `AssistantLive.*` is skipped. Source: the provider API references named in `§5` to `§8`. Cheaper substitute: a fixture replay that never touches the network.
+- [ ] Register the cases so `recto-tests.exe` without `--gtest_also_run_disabled_tests` never runs them, and add `Assistant.LiveTestsAreInertWithoutKeys` which runs them with the variables cleared and asserts zero connections and zero skipped-with-error. Done when: the test passes and fails when a live case drops its `GTEST_SKIP()`.
+- [ ] Write `tests/live/assistant_smoke.ps1` per build step 2 and add `tests/scripts/test_assistant_smoke.py` asserting that the script never accepts a key as an argument, never writes one to a file, and masks the key in output. Done when: `python -m unittest tests.scripts.test_assistant_smoke` passes and fails when a `-Key` parameter is added.
+- [ ] Extend the `§19` key scan to the live test sources and script (`sk-`, `AIza`, bearer-token shapes). Done when: `Assistant.KeyNeverLeaks` also scans `tests/live/` and fails on a planted key-shaped string.
+- [ ] Commit: `tests: add key-safe live provider smoke tests, inert without a key`
+
+**Test checkpoint:** `build\bin\x64\Release\recto-tests\recto-tests.exe --gtest_filter=Assistant.LiveTestsAreInertWithoutKeys:Assistant.KeyNeverLeaks` exits 0 and `python -m unittest tests.scripts.test_assistant_smoke` passes; the live run itself is `D99 T01 §12`.
+
 ## Verification
 
 - With no key, a profile that opens documents, visits Settings and presses every assistant command makes zero assistant network calls (`Assistant.NoKeyZeroNetwork`).
@@ -548,4 +573,5 @@ This suite proves the promises D19 makes, end to end, so a later change cannot q
 - A saved key lives only in Windows Credential Manager and is absent from settings, the Portable folder, logs, crash bundles, diagnostics and exports (`Assistant.KeyNeverLeaks`, `Assistant.KeyNeverInSettingsOrPortableFolder`).
 - The preview text equals the request text, exclusions and truncation are always shown, and every request needs its own fresh authorization with no remembered consent (`Assistant.PreviewTextEqualsRequestText`, `Assistant.ConsentGatesEndToEnd`, `Assistant.EveryRequestNeedsFreshAuthorization`).
 - Citations link only to pages that were sent, and an alt-text draft changes the document only through an undoable Apply (`Assistant.CitationsOnlyLinkSentPages`, `Assistant.AltApplyIsUndoable`).
+- The live provider tests (`§20`) are inert without a key (`Assistant.LiveTestsAreInertWithoutKeys`) and are run by the operator in `D99 T01 §12`.
 - `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` pass.

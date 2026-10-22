@@ -1,6 +1,6 @@
 # 08 Assistant
 
-> **Phase 7 (After v1) unless the owner moves it earlier**
+> **Phase 7 (After v1); built by the unattended campaign (owner decision 2026-10-22)**
 
 An opt-in AI assistant that works on the open document with the user's own provider key (Anthropic, OpenAI, OpenRouter or Google Gemini) or a local model on a loopback endpoint. It is off by default: Recto stays fully offline until the user adds a key, and every request shows what will leave the machine before it is sent (foundation plan D19).
 

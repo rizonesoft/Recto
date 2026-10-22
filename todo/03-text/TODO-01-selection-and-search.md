@@ -12,9 +12,11 @@ track: M3
 
 > **Goal:** Give every page (digital, scanned, or vector-curve-outlined) one shared `PageText` model in `recto-pdf` and `recto-core`: native structured text extraction from content streams and `/ToUnicode` maps, built-in High-Accuracy In-Process C++23 Neural OCR + `Windows.Media.Ocr` recognition (with deskew, Sauvola adaptive binarization, morphological line removal, recursive XY-cut/table layout segmentation, and per-character CTC quad alignment) for scanned pages and vector-outlined text curves, quad-precise pointer and keyboard selection with the SPEC floating toolbar and context menu (built from `recto-ui` controls), non-blocking `Ctrl+F` / `Ctrl+H` Find & Replace (with `Regex`), and the `Ctrl+Shift+D` Compare PDFs view (side-by-side synchronized scroll and visual diff overlay).
 
-> **Current state:** Measured 2026-10-14. No text or OCR code exists yet. `D01 T02` provides the content-stream interpreter, DirectWrite font loader and `DocumentActor`; `D02 T02` provides the page coordinate mapping (`§5`); `D02 T03` provides the panel hosting contract (`§3`). The UI boards are `design/screenshots/D-Search.png` and `design/screenshots/explorations/B-Search.png` (Reading room inspector search tab and filmstrip hit markers), governed by `design/SPEC.md` sections 9.3 and 9.3.1.
+> **Current state:** Measured 2026-10-23. No text or OCR code exists yet: `src/pdf` holds the parser, filters, crypto and display list (no `page_text.*`, no `annotations.*`), `src/core` and `src/services` are scaffold files, `src/ui` does not exist yet (`D10 T01 §1` creates it) and `src/app` still holds the retired WinUI scaffold until `D10 T01 §2` replaces it. `tests/corpus/text/` holds only `scanned.pdf` and `two-column-links-outline.pdf` (`D00 T03 §3`); every other fixture named below is built by `§23`. `D01 T02` provides the content-stream interpreter, DirectWrite font loader and `DocumentActor`; `D02 T02` provides the page coordinate mapping (`§5`); `D02 T03` provides the panel hosting contract (`§3`). The UI boards are `design/screenshots/D-Search.png` and `design/screenshots/explorations/B-Search.png` (Reading room inspector search tab and filmstrip hit markers), governed by `design/SPEC.md` sections 9.3 and 9.3.1.
 
 > 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); sections rewritten against `todo/10-ui/`. The floating selection toolbar, `ui::Menu` context menu, `FindCard`, `CompareView` and the area pickers are `recto-ui` elements under `src/app/`, drawn in Direct2D from `src/ui/generated/recto_tokens.g.h`, and the clipboard goes through `ui::Clipboard`; the extraction, OCR, search and comparison engines are unchanged.
+
+> **Groomed 2026-10-23:** (1) `Current state` above re-measured. (2) The `§4`, `§6` and `§10` checkpoints said "display-session screenshots verify/confirm" the boards, which no machine can judge; they now compare headless renders with crops of the SPEC boards through the `D10 T01 §20` golden suite (`recto::ui::test::golden::expect_matches`) and those rows depend on `D10 T01 §20`. (3) `§8` was an umbrella (recognizer, model weights, CTC alignment, Windows OCR, fusion, actor wiring, CLI): the recognizer, the trained weights and the alignment moved to the new `§20`, `§21` and `§22`, which `§8` now depends on. Nothing owned the trained model behind the `> 99%` accuracy claim. (4) Tests named fixtures (tagged, rotated, ligature, hyphenated, tilted scan, vector-outlined, revision pairs, flat form) that nothing built; new `§23` builds them and `§1`, `§5`, `§7`, `§9`, `§10` depend on it. (5) `§6` promised 60 fps while searching with no measurement; a frame-time step was added.
 
 ## Inputs
 
@@ -61,6 +63,7 @@ track: M3
 - -> XREF: D06 T04 §28 -- the `D-Compare.png` board and `design/SPEC.md` section 9.3.1 that §10 here builds against.
 - -> XREF: D10 T01 §12 -- pointer, keyboard and accelerator routing that selection, `Ctrl+F`, `Ctrl+H` and the area pickers are built on.
 - -> XREF: D10 T02 §14 -- `ui::Menu` is the selection context menu and the spell suggestion menu built here.
+- -> XREF: D07 T01 §23 -- the release packaging ships the `modelsecto-ocr-latin-v1.rocr` file §21 builds.
 
 ## Outcome
 
@@ -79,16 +82,16 @@ track: M3
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | Native `PageText` glyph-to-Unicode extraction and column reading-order clustering | D01 T02 §4 | [ ] |
+| 1 | §1 | Native `PageText` glyph-to-Unicode extraction and column reading-order clustering | D01 T02 §4, §23 | [ ] |
 | 2 | §2 | `DocumentActor::get_page_text` LRU cache and `recto-cli text` command | §1, D01 T02 §8, D01 T03 §1 | [ ] |
 | 3 | §3 | Quad-precise pointer and keyboard text selection (`SelectionModel`) | §2, D02 T02 §5, D10 T01 §9, D10 T01 §12 | [ ] |
-| 4 | §4 | Dark floating selection toolbar, right-click context menu and clipboard copy | §3, D10 T02 §2, D10 T02 §14, D10 T02 §16, D10 T01 §17 | [ ] |
-| 5 | §5 | Background find engine (`Match case`, `Whole word`, `Regex`) and `recto-cli find` | §2 | [ ] |
-| 6 | §6 | `Ctrl+F` floating `FindCard`, Reading room `Search` inspector tab and hit highlights | §4, §5, D02 T03 §3, D10 T02 §4, D10 T02 §11, D10 T02 §16, D10 T01 §10 | [ ] |
-| 7 | §7 | Scanned/outlined detector, C++23 OCR preprocessor, line removal & XY-cut layout | §2, D01 T02 §9 | [ ] |
-| 8 | §8 | Hybrid Neural OCR + `Windows.Media.Ocr` pipeline, CTC quad alignment & CLI | §6, §7, D02 T04 §5 | [ ] |
-| 9 | §9 | Content-stream Find & Replace (`text_replace.cpp`), `recto-cli replace` and `Ctrl+H` | §6, D01 T02 §5, D06 T04 §9, D10 T02 §4 | [ ] |
-| 10 | §10 | Two-document comparison (`pdf_compare.cpp`), `recto-cli compare` and `Ctrl+Shift+D` | §6, §8, D06 T04 §28, D10 T02 §11, D10 T02 §18 | [ ] |
+| 4 | §4 | Dark floating selection toolbar, right-click context menu and clipboard copy | §3, D10 T02 §2, D10 T02 §14, D10 T02 §16, D10 T01 §17, D10 T01 §20 | [ ] |
+| 5 | §5 | Background find engine (`Match case`, `Whole word`, `Regex`) and `recto-cli find` | §2, §23 | [ ] |
+| 6 | §6 | `Ctrl+F` floating `FindCard`, Reading room `Search` inspector tab and hit highlights | §4, §5, D02 T03 §3, D10 T02 §4, D10 T02 §11, D10 T02 §16, D10 T01 §10, D10 T01 §20 | [ ] |
+| 7 | §7 | Scanned/outlined detector, C++23 OCR preprocessor, line removal & XY-cut layout | §2, D01 T02 §9, §23 | [ ] |
+| 8 | §8 | Hybrid Neural OCR + `Windows.Media.Ocr` pipeline, CTC quad alignment & CLI | §6, §7, §20, §21, §22, D02 T04 §5 | [ ] |
+| 9 | §9 | Content-stream Find & Replace (`text_replace.cpp`), `recto-cli replace` and `Ctrl+H` | §6, D01 T02 §5, D06 T04 §9, D10 T02 §4, §23 | [ ] |
+| 10 | §10 | Two-document comparison (`pdf_compare.cpp`), `recto-cli compare` and `Ctrl+Shift+D` | §6, §8, D06 T04 §28, D10 T02 §11, D10 T02 §18, §23, D10 T01 §20 | [ ] |
 | 11 | §11 | Page-area render with chosen DPI, clipboard image and `recto-cli snapshot` | §2, D01 T02 §6, D01 T03 §1, D10 T01 §17 | [ ] |
 | 12 | §12 | Snapshot tool: drag an area, choose DPI, copy the image to the clipboard | §4, §11, D02 T02 §5, D02 T03 §11, D02 T04 §5, D03 T02 §5, D06 T04 §8, D10 T01 §12, D10 T02 §6, D10 T02 §9, D10 T02 §19 | [ ] |
 | 13 | §13 | Scrolling capture: stitch an area spanning pages into one tall image | §11, §12, D06 T04 §8, D10 T02 §6 | [ ] |
@@ -98,6 +101,10 @@ track: M3
 | 17 | §17 | Zone OCR tool: draw an area, review the text, copy or add it to the text layer | §12, §15, §16, D02 T03 §11, D06 T04 §9, D10 T01 §12, D10 T02 §4 | [ ] |
 | 18 | §18 | OCR review panel: word crop beside recognized text, accept or correct | §11, §16, D02 T03 §3, D02 T03 §11, D03 T02 §5, D06 T04 §9, D10 T01 §11, D10 T02 §4, D10 T02 §11 | [ ] |
 | 19 | §19 | Save OCR corrections and zone text into the text layer of a copy | §16, §18, §17, D04 T02 §7, D06 T03 §5, D02 T01 §8, D06 T04 §9, D10 T02 §17 | [ ] |
+| 20 | §20 | `NeuralOcrRecognizer`: model loader, SIMD kernels and CTC decoding | §7 | [ ] |
+| 21 | §21 | Neural OCR weights: synthetic line renderer, trainer, export and accuracy gate | §20, §23 | [ ] |
+| 22 | §22 | Per-character CTC quad alignment into tight `CharQuad`s | §7, §20 | [ ] |
+| 23 | §23 | Text fixtures for M3 in `scripts/build-corpus.py` | D00 T03 §3 | [ ] |
 
 ## 1. Native `PageText` glyph-to-Unicode extraction and column reading-order clustering
 
@@ -206,9 +213,10 @@ Build the SPEC 9.3 dark floating selection toolbar (`Copy`, `Highlight`, `Strike
 - [ ] Build the right-click `ui::Menu` context menu (`SPEC 9.3`) with `Copy`, `Copy with Formatting`, `Highlight`, `Underline`, `Strikeout`, `Add Note`, `Mark for Redaction`, `Find "<selection>"`, `Select all on page`, `Copy page link`, and `Export Selection as Table`. Done when: right-clicking an active selection opens the complete 11-item context menu.
 - [ ] Wire `Link` / `Copy page link` to copy `<filename>#page=<1-based-page>` to the clipboard and `Find` to open `FindCard` (`§6`) seeded with the selected string; record explicit command hooks for `Highlight`/`Underline`/`Strikeout`/`Add Note` (`-> XREF: D03 T03 §3`), `Redact` (`-> XREF: D05 T02 §9`), and `Export Selection as Table` (`-> XREF: D04 T02 §10`). Done when: clicking `Find` on the floating toolbar seeds the search query and clicking `Link` copies the page reference.
 - [ ] Dismiss `SelectionFloatingToolbar` and clear selection when pressing `Esc` or clicking outside any text quad. Done when: `Esc` closes the floating toolbar and clears `SelectionModel`.
+- [ ] Add the headless golden entry `selection_toolbar` to `tests/recto-tests/golden/ui/manifest.json` (the `D-Search.png` toolbar crop, Light and Dark, scales 100, 150, 200) and `Golden.TextSelectionToolbar`. Done when: the test passes and fails when `RectoFloatingBarBackgroundBrush` is replaced by `RectoRaisedBrush`. Cheaper substitute: a person comparing screenshots.
 - [ ] Commit: `text: add quad-precise text selection, floating toolbar and context menu`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=TextSelection.*` passes, and display-session screenshots verify the floating selection toolbar and quad highlight against `D-Search.png`.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=TextSelection.*:Golden.Text*` passes, where `Golden.TextSelectionToolbar` renders the floating toolbar and quad highlight headless at 100, 150 and 200 percent and must reach the `ssim_min` of its `tests/recto-tests/golden/ui/manifest.json` entry against the `D-Search.png` crop (a toolbar drawn in the wrong colour token or at the wrong offset drops the SSIM below it and fails).
 
 ## 5. Background find engine (`Match case`, `Whole word`, `Regex`) and `recto-cli find`
 
@@ -265,9 +273,11 @@ Build the SPEC 9.3 find surfaces and wire them to §5's background `SearchEngine
 - [ ] Host the same `SearchViewModel` inside the Reading room right inspector's `Search` tab (`D02 T03 §3`) and render accent hit-indicator dots/badges on matching page thumbnails in the bottom filmstrip (`D02 T03 §6`) when in the `Reading room` preset (`explorations/B-Search.png`). Done when: switching between `Focus` and `Reading room` preserves the active search query, results list, and current hit. Cheaper substitute that fails the checkpoint: showing the floating `FindCard` on top of the Reading room inspector instead of using the inspector `Search` tab and filmstrip markers.
 - [ ] Paint all page hits in `RectoSearchHitBrush` and the active hit in `RectoSearchHitCurrentBrush` over `PageText` character quads on `DocumentView`. Done when: `SearchUi.HitQuads` confirms distinct brush tokens for passive vs active hits.
 - [ ] Wire `Ctrl+F` (focus query box and select query text), `F3` / `Enter` (next hit), `Shift+F3` / `Shift+Enter` (previous hit), and `Esc` (close find and clear hit highlights when focus is in `FindCard`). Done when: all keyboard shortcuts operate end-to-end.
+- [ ] Add `SearchUi.ScrollFrameTime` in `tests/recto-tests/search_ui_tests.cpp`: open `tests/corpus/text/long-500.pdf` (`§23`), start a whole-document query for a word on every page, scroll the canvas at a fixed rate through the headless `ui::Window` harness while the search runs, and record per-frame times from the `D10 T01 §14` frame clock. Done when: the test fails if the p95 frame time exceeds `16.7 ms` and prints the measured p95 and maximum. Cheaper substitute: asserting only that the search runs on a worker thread. Source: foundation plan section 7 (M3 done-when: find without blocking scrolling).
+- [ ] Add the headless golden entries `find_card_focus` and `find_inspector_reading_room` to `tests/recto-tests/golden/ui/manifest.json` (`D-Search.png` and `explorations/B-Search.png` crops, Light theme, scales 100, 150, 200) and the `Golden.FindCard` and `Golden.FindInspectorTab` tests that call `recto::ui::test::golden::expect_matches`. Done when: both tests pass and fail when the current-hit fill is changed to `RectoSearchHitBrush`. Cheaper substitute: a person comparing screenshots.
 - [ ] Commit: `text: implement non-blocking find engine with regex and Ctrl+F search surfaces`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Search.*:SearchUi.*` passes, and display-session screenshots confirm both `D-Search.png` and `explorations/B-Search.png`.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Search.*:SearchUi.*:Golden.Find*` passes, where `Golden.FindCard` and `Golden.FindInspectorTab` compare headless renders with the `D-Search.png` and `explorations/B-Search.png` crops at 100, 150 and 200 percent against the manifest `ssim_min`, and `SearchUi.ScrollFrameTime` quotes a measured p95 frame time of at most `16.7 ms` while a 500-page search runs.
 
 ## 7. Scanned/outlined detector, C++23 OCR preprocessor, line removal & XY-cut layout
 
@@ -298,7 +308,7 @@ Implement `src/core/ocr_preprocess.h/.cpp` in `recto-core`: detect **scanned pag
 
 ## 8. Hybrid Neural OCR + `Windows.Media.Ocr` pipeline, CTC quad alignment & CLI
 
-Implement `src/core/ocr_pipeline.h/.cpp` (`OcrPipeline`) combining Recto's **High-Accuracy In-Process C++23 Neural OCR Engine** (`NeuralOcrRecognizer` with SIMD/DirectML sequence recognition and CTC Softmax posterior emission) alongside Windows 11's native **`Windows.Media.Ocr` (`OcrEngine`)** (`OcrEngineMode`: `HybridAuto` default, `NeuralHighAccuracy`, `WindowsMediaOcr`): recognize each segmented `OcrLayoutRegion` from §7, run **Per-Character CTC Quad Alignment** (`align_ctc_character_quads` combining CTC timestep posteriors with vertical connected-component ink bounds and mapping through `deskew_to_page_matrix` into tight page-point `CharQuad`s, `Span`s, `Line`s, `Block`s, and table `StructNode`s), populate `DocumentActor`'s `PageText` cache, add `recto-cli ocr <file.pdf> --text [--engine hybrid|neural|windows] [--vector-outlines] [--lang <tag>]`, and wire automatic/on-demand viewer OCR.
+Implement `src/core/ocr_pipeline.h/.cpp` (`OcrPipeline`) combining Recto's **High-Accuracy In-Process C++23 Neural OCR Engine** (`NeuralOcrRecognizer` from `§20` running the weights of `§21`) alongside Windows 11's native **`Windows.Media.Ocr` (`OcrEngine`)** (`OcrEngineMode`: `HybridAuto` default, `NeuralHighAccuracy`, `WindowsMediaOcr`): recognize each segmented `OcrLayoutRegion` from §7, run **Per-Character CTC Quad Alignment** (`align_ctc_character_quads` from `§22`, mapped through `deskew_to_page_matrix` into tight page-point `CharQuad`s, `Span`s, `Line`s, `Block`s, and table `StructNode`s), populate `DocumentActor`'s `PageText` cache, add `recto-cli ocr <file.pdf> --text [--engine hybrid|neural|windows] [--vector-outlines] [--lang <tag>]`, and wire automatic/on-demand viewer OCR.
 
 **Phase:** 3
 **Needs:** windows-host
@@ -312,14 +322,15 @@ Implement `src/core/ocr_pipeline.h/.cpp` (`OcrPipeline`) combining Recto's **Hig
 
 **Build order:**
 
-1. Implement `NeuralOcrRecognizer` (in-process C++23 SIMD/DirectML sequence recognizer over normalized line strips emitting per-timestep CTC Softmax posteriors and character probabilities), `Windows.Media.Ocr::OcrEngine` integration, and `align_ctc_character_quads` in `src/core/ocr_pipeline.cpp`, assembling `PageText` (`Block -> Line -> Span -> CharQuad` plus `StructNode` table cells from §7's `OcrLayoutRegion`s) and `recto-cli ocr <file.pdf> --text [--engine hybrid|neural|windows] [--vector-outlines] [--lang <bcp47>]`. Done when: `Ocr.*` tests run on `tests/corpus/text/scanned.pdf`, a two-column scan, and a vector-outlined-text fixture and extract expected text and tight per-character quads with `> 99%` character accuracy under ASan.
+1. Implement `Windows.Media.Ocr::OcrEngine` integration and the `HybridAuto` fusion in `src/core/ocr_pipeline.cpp` around the `NeuralOcrRecognizer` (`§20`, `§21`) and `align_ctc_character_quads` (`§22`), assembling `PageText` (`Block -> Line -> Span -> CharQuad` plus `StructNode` table cells from §7's `OcrLayoutRegion`s) and `recto-cli ocr <file.pdf> --text [--engine hybrid|neural|windows] [--vector-outlines] [--lang <bcp47>]`. Done when: `Ocr.*` tests run on `tests/corpus/text/scanned.pdf`, a two-column scan, and a vector-outlined-text fixture and extract expected text and tight per-character quads with `> 99%` character accuracy under ASan.
 2. Wire automatic and on-demand OCR into `DocumentActor` and `SearchViewModel` (honoring `Automatic OCR on scanned pages`, `OCR engine`, and `OCR language` from `D02 T04 §5`). Done when: opening `scanned.pdf` or a vector-outlined PDF in the viewer makes its words selectable by mouse and searchable via `Ctrl+F` with tight character highlight quads.
 
-- [ ] Implement `OcrEngineMode` (`HybridAuto`, `NeuralHighAccuracy`, `WindowsMediaOcr`) and engine initialization in `src/core/ocr_pipeline.h/.cpp`, initializing the in-process C++23 `NeuralOcrRecognizer` alongside `Windows::Media::Ocr::OcrEngine` (`TryCreateFromLanguage(Language(bcp47))` or `TryCreateFromUserProfileLanguages()`). Done when: `Ocr.EngineInit` initializes both the neural recognizer and Windows OCR cleanly across configured languages.
+- [ ] Implement `OcrEngineMode` (`HybridAuto`, `NeuralHighAccuracy`, `WindowsMediaOcr`) and engine initialization in `src/core/ocr_pipeline.h/.cpp`, loading the `NeuralOcrRecognizer` (`§20`) with the `§21` weights alongside `Windows::Media::Ocr::OcrEngine` (`TryCreateFromLanguage(Language(bcp47))` or `TryCreateFromUserProfileLanguages()`). Done when: `Ocr.EngineInit` initializes both the neural recognizer and Windows OCR cleanly across configured languages.
 - [ ] Run recognition per `OcrLayoutRegion` (`Heading`, `BodyColumn`, `TableCell`, `Caption`) from §7 on a background worker thread with `CancelToken` cancellation, using `HybridAuto` confidence fusion (combining `NeuralOcrRecognizer` sequence recognition with `Windows.Media.Ocr` and selecting the higher-confidence decoding on dense/degraded or numeric/tabular lines). Done when: `Ocr.HybridRecognition` achieves `> 99%` character accuracy on scanned body text, tabular numbers, and vector-outlined text without touching the UI thread.
-- [ ] Implement **Per-Character CTC Quad Alignment** (`align_ctc_character_quads`): extract horizontal character start/end frame boundaries from the CTC non-blank emission peaks (or proportional ink-projection sub-segmentation when running in `WindowsMediaOcr`-only mode), intersect with vertical connected-component ink bounds (`top`/`bottom` per glyph), and transform all 4 corners through §7's `deskew_to_page_matrix` into `PageText::CharQuad`s and `StructNode` table cells. Done when: `Ocr.CtcQuadAlignment` produces tight per-character `CharQuad`s on proportional words (such as `"iii"` vs `"mmm"`) that align within `1.0 pt` of the rendered glyph ink in PDF page points. Cheaper substitute that fails the checkpoint: dividing word bounding boxes into uniform `width / N` slices so narrow characters (`i`, `l`, `.`) and wide characters (`m`, `w`) have misaligned selection quads.
+- [ ] Call `align_ctc_character_quads` (`§22`) for every recognized line and assemble the resulting `CharQuad`s, `Span`s, `Line`s, `Block`s and table `StructNode` cells into one immutable `PageText` per page. Done when: `Ocr.PageTextAssembly` shows a recognized two-column scan and a bordered table yielding the same block order and cell structure as the digital twin fixtures. Cheaper substitute that fails the checkpoint: dividing word boxes into equal-width slices.
 - [ ] Populate `DocumentActor`'s `PageText` cache with the OCR-synthesized `std::shared_ptr<const PageText>` so `get_page_text` serves it to selection (`§3`), search (`§5`), UIA (`D03 T02 §1`), and converters (`D04`). Done when: calling `get_page_text` after OCR returns the recognized `PageText` snapshot. Cheaper substitute that fails the checkpoint: storing OCR output outside `PageText` so mouse selection and `Ctrl+F` still see an empty page.
 - [ ] Implement `recto-cli ocr <file.pdf> --text [--engine hybrid|neural|windows] [--vector-outlines] [--lang <tag>] [--pages <range>]` in `src/cli/cmd_ocr.cpp`. Done when: `recto-cli ocr tests/corpus/text/scanned.pdf --text` prints the recognized text with `> 99%` character accuracy.
+- [ ] Refuse and report instead of guessing: a missing or invalid `§21` weights file with `NeuralHighAccuracy` selected returns `OcrError::ModelUnavailable` with a plain message and falls back to Windows OCR only for `HybridAuto`; a missing Windows OCR language pack falls back to the neural engine and announces the language gap through `D03 T02 §5`. Done when: `Ocr.ModelUnavailable` and `Ocr.LanguagePackMissing` cover both paths and neither returns an empty page as success. Cheaper substitute: logging and returning empty text.
 - [ ] Trigger background OCR automatically when viewing or searching a `ScannedRaster` or `VectorOutlinedText` page if `Automatic OCR on scanned pages` (`D02 T04 §5`) is enabled, or via the command box (`Ctrl+K` -> `Recognize Text (OCR)`). Done when: `Ctrl+F` on `scanned.pdf` highlights the recognized words at their exact image coordinates.
 - [ ] Commit: `text: add hybrid C++23 Neural OCR + Windows.Media.Ocr pipeline and CTC quad alignment`
 
@@ -381,9 +392,10 @@ Implement `src/core/pdf_compare.h/.cpp` in `recto-core` (word/line Myers diff ov
 - [ ] Build `CompareView` (`src/app/views/compare_view.h/.cpp`, reachable via `Ctrl+Shift+D`, `Tools -> Compare PDFs`, and `Ctrl+K`) with header pickers for Document A (defaulting to the active viewer tab) and Document B, a `Side-by-Side` / `Visual Overlay` segmented switch, and a diff-count summary badge. Done when: `Ctrl+Shift+D` opens `CompareView` with the current document preloaded as Document A.
 - [ ] Implement **Side-by-Side Synchronized View** (two `DocumentView` canvases with locked scroll offset and zoom level, painting `RectoDangerBrush` over deletions on A and `RectoSuccessBrush` over insertions on B) and **Visual Overlay Diff View** (single composite canvas blending Document A and B with colour-coded diff highlights). Done when: scrolling or zooming Pane A updates Pane B in lockstep within the same frame.
 - [ ] Build the right **Changes panel** (`SPEC 9.3.1`) listing all `DiffEntry` cards grouped by page with filter chips (`All`, `Inserted`, `Deleted`, `Replaced`, `Graphics`) and click-to-jump navigation. Done when: `AppTests.ComparePdfsUi` drives opening two fixtures in `CompareView`, filtering changes, clicking a diff card to jump both panes, and toggling `Visual Overlay`.
+- [ ] Add the headless golden entries `compare_side_by_side` and `compare_overlay` to `tests/recto-tests/golden/ui/manifest.json` (`D-Compare.png` crops, Light theme, scales 100, 150, 200) and `Golden.CompareSideBySide` and `Golden.CompareOverlay` driving `CompareView` over `tests/corpus/text/revision-a.pdf` and `revision-b.pdf` (`§23`). Done when: both pass and fail when insertions are tinted with `RectoDangerBrush`. Cheaper substitute: a person comparing screenshots.
 - [ ] Commit: `text: add content-stream Find & Replace (Ctrl+H) and Compare PDFs view (Ctrl+Shift+D)`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfCompare.*:Cli.CompareCommand:AppTests.ComparePdfsUi` passes under ASan, and display-session screenshots verify the `Ctrl+Shift+D` Compare PDFs view.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfCompare.*:Cli.CompareCommand:AppTests.ComparePdfsUi:Golden.Compare*` passes under ASan, where `Golden.CompareSideBySide` and `Golden.CompareOverlay` compare headless renders of `CompareView` with the `D-Compare.png` crops at 100, 150 and 200 percent against the manifest `ssim_min`.
 
 ## 11. Page-area render with chosen DPI, clipboard image and `recto-cli snapshot`
 
@@ -637,8 +649,118 @@ Make the corrections of §16 and the zone text of §17 permanent: write them int
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=OcrWrite.*:AppTests.OcrSaveCopy:Cli.OcrCorrect` passes, appending a second layer instead of replacing the first makes `OcrWrite.CorrectedLayer` fail on the decoded-extraction duplicate check, and reopening the path in the writer instead of the snapshot fails `OcrWrite.SnapshotIdentity`.
 
+## 20. `NeuralOcrRecognizer`: model loader, SIMD kernels and CTC decoding
+
+> **Groomed 2026-10-23:** split out of `§8`, which bundled the recognizer with Windows OCR, fusion, alignment, actor wiring and the CLI. Default taken: the recognizer runs on the CPU with AVX2 on x64 and NEON on ARM64 plus a scalar reference; DirectML is not used in v1 (a GPU path would make results differ between machines, and reversing it costs one extra backend behind `NeuralBackend`).
+
+Implement `src/core/neural_ocr.h/.cpp`: a typed `.rocr` model format, a loader that refuses hostile or damaged files, inference kernels (convolution, bidirectional recurrent layers, linear, softmax) and a CTC decoder that returns the best-path text plus the per-timestep posteriors that `§22` aligns to ink. It reads normalized line strips cut from `§7`'s `OcrLayoutRegion`s and never touches a `Document`. The weights themselves come from `§21`; this section proves the engine with a tiny deterministic test model.
+
+**Phase:** 3
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Confirm that `NeuralOcrRecognizer` is immutable after `load`, shares its weights across worker threads read-only, keeps all activation buffers worker-local, and polls `CancelToken` between layers and every 64 timesteps without locking `DocumentActor`.
+
+**Build order:**
+
+1. Define the `.rocr` format (magic, version, layer table, dtype `int8` or `fp16`, alphabet, SHA-256 of the payload) and `load_neural_model(span<const std::byte>)` returning `OcrResult<NeuralModel>`. Done when: `NeuralOcr.ModelRoundTrip` loads a generated model and `NeuralOcr.ModelRefusesDamage` refuses truncated, oversized and hash-mismatched files with typed errors.
+2. Implement the scalar reference kernels and the AVX2 and NEON kernels behind one `NeuralBackend` interface. Done when: `NeuralOcr.KernelParity` shows every kernel within `1e-4` of the scalar reference on random inputs.
+3. Implement strip normalization and greedy CTC decoding with posterior output. Done when: `NeuralOcr.DecodeTinyModel` reproduces the golden text and posteriors of the committed test model.
+
+- [ ] Define `NeuralModel`, `NeuralLayer` and `OcrResult<T>` in `src/core/neural_ocr.h` and write the `.rocr` reader in `src/core/neural_ocr.cpp`, bounding layer count (`<= 64`), tensor elements (`<= 64 MiB` in total), alphabet size (`<= 512`) and every offset against the buffer length. Done when: `NeuralOcr.ModelRefusesDamage` feeds truncated, oversized-tensor, bad-offset and hash-mismatch inputs and gets a typed error each time under ASan. Cheaper substitute: trusting the header sizes. Source: foundation plan section 4 (hostile input bounds).
+- [ ] Implement the scalar kernels `conv2d_3x3`, `bidirectional_gru`, `linear` and `log_softmax` in `src/core/neural_kernels_scalar.cpp`. Done when: `NeuralOcr.ScalarKernels` matches hand-computed outputs for a `3 x 3` convolution and a two-step GRU.
+- [ ] Implement the AVX2 kernels in `src/core/neural_kernels_avx2.cpp` (x64 only, selected at runtime by `__cpuid`) and the NEON kernels in `src/core/neural_kernels_neon.cpp` (ARM64 only). Done when: `NeuralOcr.KernelParity` passes on x64 and the ARM64 build compiles with zero warnings.
+- [ ] Implement `normalize_strip(const GrayBitmap&, int target_height)` scaling a line crop to height `32` with the aspect ratio kept and the stride respected. Done when: `NeuralOcr.StripNormalize` passes on a strip whose stride is wider than its width times one. Cheaper substitute: assuming stride equals width.
+- [ ] Implement `ctc_greedy_decode` returning text, per-character confidence and the per-timestep posterior matrix. Done when: `NeuralOcr.CtcDecode` collapses repeats and blanks correctly on a hand-made posterior matrix.
+- [ ] Cap work: refuse a strip wider than `8192` px, allocate activations once per worker, and poll `CancelToken` as the freeze check states. Done when: `NeuralOcr.Cancellation` aborts a long strip within `10 ms` and `NeuralOcr.OversizedStrip` returns a typed error.
+- [ ] Add `tests/recto-tests/neural_ocr_tests.cpp` with a deterministic `4 KiB` test model generated by `scripts/build-corpus.py` as `tests/corpus/text/models/tiny.rocr`. Done when: `recto-tests.exe --gtest_filter=NeuralOcr.*` passes under ASan.
+- [ ] Commit: `ocr: add NeuralOcrRecognizer model loader, SIMD kernels and CTC decoding`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=NeuralOcr.*` passes under ASan, and swapping the AVX2 `linear` kernel for one with an off-by-one tail makes `NeuralOcr.KernelParity` fail.
+
+## 21. Neural OCR weights: synthetic line renderer, trainer, export and accuracy gate
+
+> **Groomed 2026-10-23:** new. The plan claims `> 99%` character accuracy from an in-process neural recognizer, but no section produced the trained weights. Defaults taken: Latin-script weights only (other scripts use `Windows.Media.Ocr` in `HybridAuto`; adding a script means rerunning this section with another alphabet); training data is synthetic text drawn with the fonts installed on every Windows 11 host, so nothing is downloaded and no third-party dataset licence applies; the trainer is a development-time Python tool outside the shipped product. Reversal cost: replacing the data source means editing `tools/ocr-train/synth` only.
+
+Build the pipeline that produces `models/recto-ocr-latin-v1.rocr`: a C++ line renderer that writes labelled training shards, a pinned PyTorch trainer that fits a small CRNN with CTC loss on the CPU, an exporter to the `§20` format, and an accuracy gate measured on text the trainer never saw. The shipped product contains only the `.rocr` file; the trainer and its Python packages never ship. The file is copied next to `Recto.exe`, `recto-cli.exe` and `recto-tests.exe` by their projects (packaging the `models` folder into the installer is owned by `D07 T01`).
+
+**Phase:** 3
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Confirm that the weights file is read-only data loaded once by `§20`, that nothing in the training tools is linked into `recto-core`, and that no code path downloads a model or contacts a network.
+
+**Build order:**
+
+1. Build `tools/ocr-train/synth/synth.vcxproj` (`recto-ocr-synth.exe`): deterministic line renderer using DirectWrite and WIC, with seeded augmentation. Done when: two runs with seed `1` produce shard files with identical SHA-256.
+2. Write `tools/ocr-train/train.py` (pinned in `tools/ocr-train/requirements.txt`, run in a virtual environment under `build/ocr-venv`) and `tools/ocr-train/export_rocr.py`. Done when: a one-epoch smoke run writes a loadable `.rocr`.
+3. Train, commit `models/recto-ocr-latin-v1.rocr` with its provenance, and add the accuracy gate. Done when: `NeuralOcrAccuracy.*` passes.
+
+- [ ] Implement `recto-ocr-synth.exe --count <n> --seed <s> --out <dir>` drawing lines from a public-domain word list in `tools/ocr-train/wordlist.txt` with installed fonts (sizes `6` to `24` pt, regular, bold, italic), then applying seeded blur, noise, skew within `3` degrees, contrast loss and JPEG artefacts, and writing image strips plus label files. Done when: `NeuralOcrSynth.Deterministic` regenerates `1000` lines twice with identical hashes. Cheaper substitute: using the corpus fixtures as training data.
+- [ ] Write `tools/ocr-train/train.py` defining the CRNN (three convolution blocks, a bidirectional GRU, a linear layer over the `§20` alphabet), CTC loss, a fixed seed and a CPU-only run. Done when: a `--epochs 1 --count 2000` smoke run finishes and prints a falling loss.
+- [ ] Write `tools/ocr-train/export_rocr.py` quantizing to `int8`, writing the `§20` layout and the payload SHA-256. Done when: `NeuralOcr.ModelRoundTrip` loads the exported smoke file.
+- [ ] Run the full training recipe recorded in `tools/ocr-train/RECIPE.md` (data count, epochs, seed, package versions) and commit the result as `models/recto-ocr-latin-v1.rocr` (size at most `8 MiB`) with a row in `tests/corpus/PROVENANCE.md` naming the recipe commit, the licence (`GPL-3.0-or-later`) and the SHA-256. Done when: `Corpus.Provenance` lists the file and passes.
+- [ ] Measure accuracy on held-out synthetic lines (seed `999`, `5000` lines) with `NeuralOcrAccuracy.HeldOutSynthetic` and on `tests/corpus/text/scanned.pdf` through `recto-cli ocr --engine neural`. Done when: character accuracy is at least `99.0%` on both and each test prints the measured value; if training misses the bar the section stays open and the recipe is adjusted, the bar is never lowered. Cheaper substitute: measuring only on training data.
+- [ ] Add `Ocr.WeightsPresent` asserting that `recto-core` finds the model next to the executable and that `OcrEngineMode::NeuralHighAccuracy` works from the `recto-cli` and `Recto.exe` output folders. Done when: the test passes in both and fails when the file is removed.
+- [ ] Keep the venv out of the tree: add `build/ocr-venv/` handling to `tools/ocr-train/RECIPE.md` and confirm `build/` is ignored. Done when: `git status --short` after a training run lists no untracked files outside `models/` and `tools/ocr-train/`.
+- [ ] Commit: `ocr: add synthetic training pipeline, Latin weights and the 99 percent accuracy gate`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=NeuralOcrSynth.*:NeuralOcrAccuracy.*:Ocr.WeightsPresent` passes, printing the measured held-out accuracy of at least `99.0%`, and a model file with one flipped weight byte makes `NeuralOcr.ModelRefusesDamage` fail the hash check.
+
+## 22. Per-character CTC quad alignment into tight `CharQuad`s
+
+> **Groomed 2026-10-23:** split out of `§8`.
+
+Implement `align_ctc_character_quads` in `src/core/ocr_align.h/.cpp`: turn the CTC posteriors of `§20` (or, in `WindowsMediaOcr`-only mode, the word boxes of `Windows.Media.Ocr`) into one tight page-point quad per character by combining the horizontal frame boundaries of the non-blank emission peaks with vertical connected-component ink bounds, then mapping the four corners through `deskew_to_page_matrix` from `§7`.
+
+**Phase:** 3
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Confirm that `align_ctc_character_quads` is a pure function of immutable posteriors, an immutable binarized strip and the matrix, and holds no reference to `Document` or `DocumentActor`.
+
+**Build order:**
+
+1. Implement the frame-to-column mapping and ink-bound intersection. Done when: `OcrAlign.ProportionalWords` aligns `"iii"` and `"mmm"` quads within `1.0 pt` of the rendered ink.
+2. Implement the projection-based fallback for word-box-only input and the corner transform. Done when: `OcrAlign.WordBoxFallback` and `OcrAlign.DeskewMapping` pass.
+
+- [ ] Extract each character's start and end frames from the non-blank posterior peaks in `src/core/ocr_align.cpp`. Done when: `OcrAlign.FrameBounds` matches hand-marked frames on the tiny test model.
+- [ ] Intersect each horizontal span with vertical connected-component ink bounds (`top`, `bottom`) of the binarized strip. Done when: `OcrAlign.InkBounds` gives distinct heights for `l` and `x`.
+- [ ] Implement the proportional ink-projection sub-segmentation used when only word boxes exist. Done when: `OcrAlign.WordBoxFallback` places narrow glyphs (`i`, `l`, `.`) narrower than wide glyphs (`m`, `w`). Cheaper substitute that fails the checkpoint: dividing the word box into `width / N` slices.
+- [ ] Map the four corners of every quad through `deskew_to_page_matrix` into page points and clamp to the page box. Done when: `OcrAlign.DeskewMapping` places quads of a `3.5` degree tilted scan within `0.5 pt` of the true glyph positions.
+- [ ] Handle empty, single-character and degenerate-ink lines without dividing by zero or emitting NaN. Done when: `OcrAlign.Degenerate` passes under ASan with a blank strip and a one-pixel strip.
+- [ ] Add `tests/recto-tests/ocr_align_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=OcrAlign.*` passes under ASan.
+- [ ] Commit: `ocr: add per-character CTC quad alignment`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=OcrAlign.*` passes under ASan, and using uniform `width / N` slices makes `OcrAlign.ProportionalWords` fail.
+
+## 23. Text fixtures for M3 in `scripts/build-corpus.py`
+
+> **Groomed 2026-10-23:** new. `D00 T03 §3` built only `scanned.pdf` and `two-column-links-outline.pdf`. The tests of `§1`, `§5`, `§7`, `§9`, `§10` and `D06 T01 §3` name fixtures that nothing built. The file names below match the list in `D06 T01 §3` so its expectation tables attach to them.
+
+Extend the deterministic generator `scripts/build-corpus.py` (stdlib only, fixed timestamps and `/ID` bytes) with the text fixtures M3 needs and register each in `tests/corpus/PROVENANCE.md`: `two-column-article.pdf`, `ligatures-and-hyphens.pdf`, `rotated-4way.pdf`, `cjk-rtl-bidi.pdf`, `tagged-structure.pdf`, `scanned-english.pdf`, `scanned-tilted.pdf`, `scanned-two-column.pdf`, `scanned-bordered-table.pdf`, `vector-outlined-text.pdf`, `flat-form.pdf`, `revision-a.pdf`, `revision-b.pdf`, `regex-cases.pdf` and `long-500.pdf`, plus the model `tiny.rocr` that `§20` tests load.
+
+**Phase:** 3
+**Needs:** none
+**Surface:** no
+**Freeze check:** Confirm that the generator only writes files under `tests/corpus/text/` and that re-running it produces byte-identical output.
+
+**Build order:**
+
+1. Add the born-digital fixtures (`two-column-article`, `ligatures-and-hyphens`, `rotated-4way`, `cjk-rtl-bidi`, `tagged-structure`, `regex-cases`, `revision-a`, `revision-b`, `long-500`). Done when: `python scripts/build-corpus.py --check` exits 0 and the files exist.
+2. Add the raster and outline fixtures (`scanned-english`, `scanned-tilted`, `scanned-two-column`, `scanned-bordered-table`, `vector-outlined-text`, `flat-form`) and `models/tiny.rocr`. Done when: each is listed in `PROVENANCE.md` with its SHA-256.
+
+- [ ] Generate `tagged-structure.pdf` with `/StructTreeRoot`, `/ParentTree`, `/H1`, `/Table` with `/TR`/`/TH`/`/TD`, `/L`/`/LI` and a `/Figure` with `/Alt`. Done when: `PdfText.TaggedFixture` reads every one of those node kinds from it.
+- [ ] Generate `rotated-4way.pdf` (`0`, `90`, `180`, `270` degree text runs) and `ligatures-and-hyphens.pdf` (`fi`, `fl`, `ffi` glyphs through `/ToUnicode`, soft hyphen line breaks, a hyphenated word across a line). Done when: `tests/scripts/test_build_corpus.py` decodes the files with a stdlib parser and finds the described runs.
+- [ ] Generate `cjk-rtl-bidi.pdf` with Latin, Arabic and Han runs and `/ToUnicode` maps, and `two-column-article.pdf` with a heading, two columns and a footnote. Done when: both validate through `scripts/build-corpus.py --check`.
+- [ ] Generate `regex-cases.pdf` and `long-500.pdf` (`500` pages, one fixed word on every page, under `1 MiB`). Done when: `tests/scripts/test_build_corpus.py` asserts the page counts.
+- [ ] Generate `revision-a.pdf` and `revision-b.pdf` differing by one inserted word, one deleted word, one replaced word and one moved vector figure. Done when: `PdfCompare.TextDiff` and `PdfCompare.GraphicDiff` find exactly those four changes.
+- [ ] Generate `scanned-english.pdf`, `scanned-tilted.pdf` (`3.5` degree tilt), `scanned-two-column.pdf` and `scanned-bordered-table.pdf` from rendered bitmap text (the `render_bitmap_banner` helper), `vector-outlined-text.pdf` (the same text as filled Bezier paths with no text operators) and `flat-form.pdf` (labelled boxes and underlines, no `/AcroForm`). Done when: `OcrPreprocess.Classify` reports `ScannedRaster` for the four scans, `VectorOutlinedText` for the outlines and `DigitalText` for the flat form.
+- [ ] Generate `models/tiny.rocr` (`4 KiB`, fixed weights, documented alphabet and a recorded golden decode of one hand-made strip). Done when: `NeuralOcr.DecodeTinyModel` reproduces the golden decode.
+- [ ] Register every new file in `tests/corpus/PROVENANCE.md` with SHA-256 and `CC0-1.0`. Done when: `Corpus.Provenance` passes with the new files listed.
+- [ ] Commit: `test: add M3 text fixtures to the deterministic corpus generator`
+
+**Test checkpoint:** `python scripts/build-corpus.py --check` exits 0, `python -m unittest tests.scripts.test_build_corpus` passes, and `recto-tests.exe --gtest_filter=Corpus.Provenance` passes with the sixteen new files listed; deleting one file makes the provenance test fail.
+
 ## Verification
 
 - M3 text and OCR obligations (`docs/plans/2026-10-13-recto-foundation.md` section 7): `Ctrl+F` and `Ctrl+H` find and replace across multi-hundred-page PDFs without blocking scrolling, scanned and vector-outlined PDFs become selectable and searchable via built-in OCR, and `Compare PDFs` highlights every text and graphic change.
-- `recto-tests` (`PdfText.*`, `ActorText.*`, `TextSelection.*`, `Search.*`, `SearchUi.*`, `OcrPreprocess.*`, `Ocr.*`, `TextReplace.*`, `PdfCompare.*`, `AppTests.ComparePdfsUi`, `AreaRender.*`, `Spell.*`, `OcrZone.*`, `OcrReview.*`, `OcrWrite.*`) green under ASan.
+- `recto-tests` (`PdfText.*`, `ActorText.*`, `TextSelection.*`, `Search.*`, `SearchUi.*`, `OcrPreprocess.*`, `Ocr.*`, `TextReplace.*`, `PdfCompare.*`, `AppTests.ComparePdfsUi`, `AreaRender.*`, `Spell.*`, `OcrZone.*`, `OcrReview.*`, `OcrWrite.*`, `NeuralOcr.*`, `NeuralOcrAccuracy.*`, `OcrAlign.*`) green under ASan.
 - `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` exit 0.

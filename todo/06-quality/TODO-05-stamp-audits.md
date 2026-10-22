@@ -10,6 +10,8 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 > **Goal:** Every section stamped before 2026-10-21 is re-verified under the current review process before later work builds further on it: its own Test checkpoint re-run at the current tip, and fresh independent audit rounds by the pinned reviewer with a 22-round cap and the severity cutoff. A confirmed stamp stays; a regression flips its row back with a dated blocking note, a filed repair and a list of suspect downstream stamps.
 
+> **Groomed 2026-10-23:** drift and sequence only; no audit verdict or stamped checklist was touched. `D01 T02 §4` now waits for `§32` and `§33` (image decode repairs), and `D01 T03 §5` (the 1-hour fuzz run) waits for `§29` to `§35`, so fuzzing starts on decoders whose known gaps are closed. `§22` is mid-audit (round 4 reached, 22-round cap, severity cutoff from round 9).
+
 > **Current state:** Measured 2026-10-21. 24 sections carry stamps from the earlier process (`python scripts/todo-graph.py query rounds` lists them with `round_cap` null): 14 in `00-workspace` and 10 in `01-engine`. They were reviewed under a three-round cap by a different reviewer; the operator asked on 2026-10-21 for them to be brought up to the current standard. 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI references rewritten against `todo/10-ui/`.
 
 ## Inputs
@@ -903,7 +905,7 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 2. Test Adobe APP14 CMYK and YCCK images with non-neutral samples. Done when: both decode to the expected colours.
 
 - [ ] Read `/ColorTransform` in the DCT decoder and decode with or without the YCbCr/YCCK transform accordingly, preferring the Adobe APP14 transform byte when present, in `src/pdf/filters.cpp`. Done when: a non-neutral three-component JPEG with `/ColorTransform 0` decodes to its raw samples.
-- [ ] Add JPEG fixtures with an Adobe APP14 marker for CMYK (transform 0) and YCCK (transform 2) with non-neutral samples under `tests/corpus/` with provenance rows. Done when: `python scripts/build-corpus.py check` passes with them.
+- [ ] Add JPEG fixtures with an Adobe APP14 marker for CMYK (transform 0) and YCCK (transform 2) with non-neutral samples under `tests/corpus/` with provenance rows. Done when: `python scripts/build-corpus.py --check` passes with them.
 - [ ] Add `PdfFilters.DctColorTransformAndAdobeCmykYcck` asserting the decoded colours. Done when: it fails on the code before this section.
 - [ ] Commit: `pdf: DCT /ColorTransform and Adobe CMYK and YCCK`
 

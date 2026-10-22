@@ -14,6 +14,8 @@ track: M1
 
 > **Current state:** Measured 2026-10-14. `src/cli` and `fuzz/` have their M0 scaffold `main.cpp` and `fuzz_smoke.cpp`. `D01 T01` and `D01 T02` build the `recto-pdf` and `recto-core` engine this file drives and proves.
 
+> **Groomed 2026-10-23:** Re-measured: `src/cli/main.cpp` still prints only the ABI, `fuzz/` holds only `fuzz_smoke.cpp` and `recto-fuzz.vcxproj`, and `src/core` has no `Runtime`. The fuzz layout is now one `recto-fuzz.exe` dispatcher (`recto-fuzz.exe <target> <libFuzzer args>`, the target name stripped in `LLVMFuzzerInitialize`) because `D06 T02`, `D02 T05` and `D03 T05` already name `recto-fuzz.exe`, replacing the three `fuzz_*.exe` names this file used. `§6` now waits for the transparency and shading sections (`D01 T02 §15`, `§16`) its fixtures need, `§5` waits for the decoder repairs `D06 T05 §29` to `§35` and the interpreter ceilings, and `§12` is new.
+
 ## Inputs
 
 - `docs/plans/2026-10-13-recto-foundation.md` sections 3.1 (`recto-cli`), 4.9 (Thread-Safety Verification Battery), 7 (M1 done-when), 9 (fuzzing rules).
@@ -46,16 +48,17 @@ track: M1
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | `recto-cli` command dispatcher, exit-code contract and `recto-cli info` (`--json`) | D01 T02 §10 | [ ] |
-| 2 | §2 | `recto-cli render` (full-page and stitched `512 x 512` tile modes, WIC PNG encoder) | §1 | [ ] |
+| 2 | §2 | `recto-cli render` (full-page and stitched `512 x 512` tile modes, WIC PNG encoder) | §1, D01 T02 §21 | [ ] |
 | 3 | §3 | `recto-cli bench` and `recto-cli stress` commands | §2 | [ ] |
-| 4 | §4 | libFuzzer targets (`fuzz_open`, `fuzz_filters`, `fuzz_render`) with AddressSanitizer | D01 T02 §7, D00 T03 §4, D00 T03 §6 | [ ] |
-| 5 | §5 | M1 1-hour `fuzz_open` acceptance run, regression promotion and CI 60s fuzz smoke | §4, D00 T03 §5 | [ ] |
-| 6 | §6 | Section 4.9 Thread-Safety Battery Part 1: `ThreadSafety.Determinism` (1 vs 8 workers) | §2, D00 T03 §6 | [ ] |
+| 4 | §4 | libFuzzer targets (`fuzz_open`, `fuzz_filters`, `fuzz_render`) with AddressSanitizer | D01 T02 §7, D01 T02 §19, D00 T03 §4, D00 T03 §6 | [ ] |
+| 5 | §5 | M1 1-hour `fuzz_open` acceptance run, regression promotion and CI 60s fuzz smoke | §4, D00 T03 §5, D01 T02 §20, D06 T05 §29, D06 T05 §30, D06 T05 §31, D06 T05 §32, D06 T05 §33, D06 T05 §34, D06 T05 §35 | [ ] |
+| 6 | §6 | Section 4.9 Thread-Safety Battery Part 1: `ThreadSafety.Determinism` (1 vs 8 workers) | §2, D00 T03 §6, D01 T02 §15, D01 T02 §16 | [ ] |
 | 7 | §7 | Section 4.9 Battery Part 2: `CancellationStorm` (30 s) and `MultiDocumentStress` | §6 | [ ] |
 | 8 | §8 | `recto::cli::Dispatcher` in its own unit and the read-only `Dispatcher::verb_names()` | §3 | [ ] |
 | 9 | §9 | `--password env:NAME` in the shared flag parser, never echoed or logged | §8 | [ ] |
 | 10 | §10 | Verb extension rule: later verb families register under the `§1` exit-code contract | §9 | [ ] |
 | 11 | §11 | Dispatcher and `recto-cli verbs --json` agreement gate for every registered verb | §10, D04 T08 §2 | [ ] |
+| 12 | §12 | `recto-cli` Ctrl+C cancellation, exit code 130 and unwritable output paths | §10 | [ ] |
 
 ## 1. `recto-cli` command dispatcher, exit-code contract and `recto-cli info` (`--json`)
 
@@ -86,6 +89,8 @@ Implement the extensible command dispatcher and `info` command in `src/cli/main.
 
 ## 2. `recto-cli render` (full-page and stitched `512 x 512` tile modes, WIC PNG encoder)
 
+> **Groomed 2026-10-23:** output pixel size uses the physical page size including `/UserUnit` (`D01 T02 §21`), which the old `width_pt` formula ignored; `D01 T02 §21` is now a dependency.
+
 Implement `recto-cli render <file.pdf> --out <dir_or_png>` in `src/cli/`:
 - Options: `--pages <all|1-3,5>` (default `all`), `--dpi <72..1200>` (default `150`), `--rotation <0|90|180|270>` (default `0`), `--workers <1..16>` (default hardware pool), `--mode <tiles|full>` (default `tiles` using `TileScheduler` + `RenderPool` `512 x 512` tiles stitched into the output page bitmap; `full` rendering the page in one pass), and `--password <pw>`.
 - Encode each rendered page bitmap (`GUID_WICPixelFormat32bppPBGRA` / `32bppBGRA`) to PNG via WIC (`GUID_ContainerFormatPng`) using atomic temp-then-replace writes.
@@ -103,7 +108,7 @@ Implement `recto-cli render <file.pdf> --out <dir_or_png>` in `src/cli/`:
 - [ ] Implement `--mode tiles` (default) dividing each target page at `--dpi` and `--rotation` into a grid of `512 x 512` `TileKey`s, dispatching them through `TileScheduler` and `RenderPool` (`--workers N`), and stitching completed tiles into the page buffer. Done when: multi-worker tiled rendering exercises `DocumentActor -> TileScheduler -> RenderPool`.
 - [ ] Implement `--mode full` rendering each page in a single `Rasterizer` buffer so tests can compare `--mode tiles` against `--mode full` directly from the CLI. Done when: `Cli.RenderFullVsTiledIdentity` verifies that `--mode tiles --workers 4` and `--mode full` produce pixel-identical PNGs.
 - [ ] Encode output page buffers to valid PNG files via WIC `GUID_ContainerFormatPng` (writing `<out_dir>/page-0001.png` when `--out` is a directory or multi-page, or `<out.png>` directly when rendering a single page to a `.png` path). Done when: WIC decodes the written PNG back to the exact expected `(width, height)` pixel dimensions.
-- [ ] Honor `--dpi <72..1200>` and `--rotation <0|90|180|270>`, computing output pixel dimensions `round(width_pt * dpi / 72.0)` x `round(height_pt * dpi / 72.0)` (swapped for `90`/`270` effective rotation). Done when: `Cli.RenderRotationsAndDpi` verifies a `612 x 792 pt` page at `144 DPI` and `--rotation 90` produces a `1584 x 1224 px` PNG.
+- [ ] Honor `--dpi <72..1200>` and `--rotation <0|90|180|270>`, computing output pixel dimensions `round(physical_width_pt * dpi / 72.0)` x `round(physical_height_pt * dpi / 72.0)` (`physical_*` is the crop size times page `/UserUnit`, `D01 T02 §21`; swapped for `90`/`270` effective rotation). Done when: `Cli.RenderRotationsAndDpi` verifies a `612 x 792 pt` page at `144 DPI` and `--rotation 90` produces a `1584 x 1224 px` PNG.
 - [ ] Honor `--pages <spec>` (`1`, `1-3`, `2,4`) and return exit code `1` on out-of-range page numbers (`0` or `> page_count`) before creating any output file. Done when: invalid `--pages` specs exit `1` with zero files written.
 - [ ] Commit: `cli: add recto-cli render with tiled RenderPool execution and WIC PNG output`
 
@@ -138,7 +143,7 @@ Implement the benchmarking and stress-testing CLI subcommands in `src/cli/`:
 Replace the M0 scaffold in `fuzz/` with three real libFuzzer targets over `recto-pdf`:
 - `fuzz/fuzz_open.cpp`: feeds `std::span<const uint8_t>(data, size)` into `recto::pdf::Document::open_memory`, and when open succeeds (or unlocks with `""` or `"recto-test"`), queries `description()`, `outline()`, `fonts()`, and `page_links(0)` (capped at the first 8 pages) to fuzz the lexer, parser, XRef tables/streams, damaged-file recovery, CNG crypto, and document model.
 - `fuzz/fuzz_filters.cpp`: uses the first byte of `data` to select a filter or 2-filter chain (`Flate`, `LZW`, `Predictors`, `ASCII85`, `ASCIIHex`, `RunLength`, `CCITTFax`, `JBIG2`, `DCT`, `JPX`) and feeds the remaining bytes into `decode_stream` with a tight 16 MB fuzz decompression cap.
-- `fuzz/fuzz_render.cpp`: opens `data` via `Document::open_memory`, compiles page 0 into a `DisplayList` (capped at 4,096 commands), and rasterizes one `256 x 256` tile at 72 DPI via a thread-local `Rasterizer`.
+- `fuzz/fuzz_render.cpp`: opens `data` via `Document::open_memory`, compiles page 0 into a `DisplayList` (with the `InterpretOptions` ceilings of `D01 T02 §19` lowered to 4,096 commands and a 2 s wall clock instead of a private cap), and rasterizes one `256 x 256` tile at 72 DPI via a thread-local `Rasterizer`.
 Wire `-BuildFuzz` into `build/build.ps1` compiling all three targets with `/fsanitize=fuzzer,address`.
 
 **Phase:** 1
@@ -148,17 +153,17 @@ Wire `-BuildFuzz` into `build/build.ps1` compiling all three targets with `/fsan
 
 **Build order:**
 
-1. Author `fuzz/fuzz_open.cpp`, `fuzz/fuzz_filters.cpp`, and `fuzz/fuzz_render.cpp`, configure `fuzz/recto-fuzz.vcxproj` (or per-target configurations / dispatcher) with `/fsanitize=fuzzer,address`, and add `-BuildFuzz` to `build/build.ps1`. Done when: `powershell -File build/build.ps1 -Platform x64 -Configuration Release -BuildFuzz` builds all three fuzz executables with 0 warnings.
+1. Author `fuzz/fuzz_open.cpp`, `fuzz/fuzz_filters.cpp`, and `fuzz/fuzz_render.cpp`, configure the single `fuzz/recto-fuzz.vcxproj` dispatcher (`LLVMFuzzerInitialize` consumes the first argument as the target name `open`, `filters` or `render` and `LLVMFuzzerTestOneInput` calls `fuzz_<target>`) with `/fsanitize=fuzzer,address`, and add `-BuildFuzz` to `build/build.ps1`. Done when: `powershell -File build/build.ps1 -Platform x64 -Configuration Release -BuildFuzz` builds `recto-fuzz.exe` with all three targets and 0 warnings.
 2. Run each target over `tests/corpus/seeds/` and `tests/corpus/broken/` (`-runs=1000`) to verify harness startup and corpus execution. Done when: all three targets complete 1,000 runs with 0 crashes and 0 leaks.
 
-- [ ] Implement `fuzz/fuzz_open.cpp` calling `Document::open_memory({data, size})`, attempting `authenticate("recto-test")` if `NeedsPassword`, and walking `description()`, `outline()`, `fonts()`, and the first 8 pages' `page_links` and `decoded_page_contents`. Done when: `fuzz_open.exe` executes over `tests/corpus/seeds/` and `tests/corpus/broken/`. Cheaper substitute: a dummy `LLVMFuzzerTestOneInput` that returns `0` without parsing or resolving objects.
-- [ ] Implement `fuzz/fuzz_filters.cpp` dispatching across all 10 stream filters (`Flate`, `LZW`, TIFF/PNG predictors, `ASCII85`, `ASCIIHex`, `RunLength`, `CCITTFax`, `JBIG2`, `DCT`, `JPX`) and 2-stage filter chains from the input buffer. Done when: `fuzz_filters.exe` exercises every filter branch without leaks.
-- [ ] Implement `fuzz/fuzz_render.cpp` compiling page 0's `DisplayList` and rasterizing a `256 x 256` tile via a persistent per-process `Rasterizer` instance. Done when: `fuzz_render.exe` executes over `tests/corpus/seeds/` and `tests/corpus/render/` with constant memory usage across 1,000 iterations.
-- [ ] Wire `-BuildFuzz` in `build/build.ps1` to build `fuzz_open.exe`, `fuzz_filters.exe`, and `fuzz_render.exe` under `build/bin/x64/Release/fuzz/` with `/fsanitize=fuzzer,address`. Done when: `-BuildFuzz` exits 0 with 0 warnings.
+- [ ] Implement `fuzz/fuzz_open.cpp` calling `Document::open_memory({data, size})`, attempting `authenticate("recto-test")` if `NeedsPassword`, and walking `description()`, `outline()`, `fonts()`, and the first 8 pages' `page_links` and `decoded_page_contents`. Done when: `recto-fuzz.exe open` executes over `tests/corpus/seeds/` and `tests/corpus/broken/`. Cheaper substitute: a dummy `LLVMFuzzerTestOneInput` that returns `0` without parsing or resolving objects.
+- [ ] Implement `fuzz/fuzz_filters.cpp` dispatching across all 10 stream filters (`Flate`, `LZW`, TIFF/PNG predictors, `ASCII85`, `ASCIIHex`, `RunLength`, `CCITTFax`, `JBIG2`, `DCT`, `JPX`) and 2-stage filter chains from the input buffer. Done when: `recto-fuzz.exe filters` exercises every filter branch without leaks.
+- [ ] Implement `fuzz/fuzz_render.cpp` compiling page 0's `DisplayList` and rasterizing a `256 x 256` tile via a persistent per-process `Rasterizer` instance. Done when: `recto-fuzz.exe render` executes over `tests/corpus/seeds/` and `tests/corpus/render/` with constant memory usage across 1,000 iterations.
+- [ ] Wire `-BuildFuzz` in `build/build.ps1` to build the single `recto-fuzz.exe` dispatcher under `build/bin/x64/Release/fuzz/` with `/fsanitize=fuzzer,address`. Done when: `-BuildFuzz` exits 0 with 0 warnings.
 - [ ] Verify that `debug_live_display_lists()` is `0` at the end of every `LLVMFuzzerTestOneInput` iteration in `fuzz_render` so no `DisplayList` leaks across fuzzer iterations. Done when: `-rss_limit_mb=512` holds steady across 5,000 runs.
 - [ ] Commit: `fuzz: implement fuzz_open, fuzz_filters and fuzz_render libFuzzer targets`
 
-**Test checkpoint:** `fuzz_open.exe`, `fuzz_filters.exe`, and `fuzz_render.exe` each run `-runs=2000` over `tests/corpus/seeds/` and `tests/corpus/broken/` under `/fsanitize=fuzzer,address` with 0 crashes and 0 leaks.
+**Test checkpoint:** `recto-fuzz.exe open`, `recto-fuzz.exe filters` and `recto-fuzz.exe render` each run `-runs=2000` over `tests/corpus/seeds/` and `tests/corpus/broken/` under `/fsanitize=fuzzer,address` with 0 crashes and 0 leaks.
 
 ## 5. M1 1-hour `fuzz_open` acceptance run, regression promotion and CI 60s fuzz smoke
 
@@ -174,13 +179,13 @@ Execute the foundation plan section 7 M1 fuzz gate:
 
 **Build order:**
 
-1. Run `fuzz_open.exe` for 3,600 seconds (`-max_total_time=3600`) against `tests/corpus/seeds/` + `broken/` (logging progress to `build/fuzz-open-1h.log`), fixing any discovered `src/pdf` defects and registering minimized regression inputs in `tests/corpus/broken/` and `PROVENANCE.md`. Done when: a continuous 3,600-second run exits `0` with `0` crashes and `0` leaks.
+1. Run `recto-fuzz.exe open` for 3,600 seconds as a detached process (`Start-Process -PassThru`, polled by log tail, because one foreground tool call is capped at 10 minutes) (`-max_total_time=3600`) against `tests/corpus/seeds/` + `broken/` (logging progress to `build/fuzz-open-1h.log`), fixing any discovered `src/pdf` defects and registering minimized regression inputs in `tests/corpus/broken/` and `PROVENANCE.md`. Done when: a continuous 3,600-second run exits `0` with `0` crashes and `0` leaks.
 2. Add the 60-second fuzz smoke step (`fuzz_open`, `fuzz_filters`, `fuzz_render` over `tests/corpus/seeds/` and `broken/`) to `.github/workflows/build.yml`. Done when: `.github/workflows/build.yml` passes the fuzz smoke step and `Corpus.Provenance` is green.
 
 - [ ] Execute `fuzz_open.exe -max_total_time=3600 -rss_limit_mb=2048 -timeout=10` over the seed and broken corpus, saving the run summary (`cov:`, `ft:`, `exec/s:`, total executions, peak RSS) to `build/fuzz-open-1h.log`. Done when: the 3,600-second run finishes with exit code `0`. Cheaper substitute: running for 30 seconds and claiming the 1-hour M1 gate is done.
 - [ ] Triage and fix any crash, assertion, OOM, or >10s timeout discovered during the run at the owning `src/pdf` parser/xref/filter layer. Done when: every discovered input returns a clean `PdfResult` error in `< 50 ms` under ASan.
 - [ ] Minimize any crash/timeout inputs found (`-minimize_crash=1`) and commit them to `tests/corpus/broken/` with SHA-256 and `CC0-1.0` synthetic provenance in `tests/corpus/PROVENANCE.md`. Done when: `recto-tests.exe --gtest_filter=Corpus.Provenance:PdfDocument.BrokenCorpusSweep` passes.
-- [ ] Run `fuzz_filters.exe` and `fuzz_render.exe` for `-max_total_time=300` each to verify filter and rasterizer stability before closing M1. Done when: both complete 300 seconds with 0 crashes and 0 leaks.
+- [ ] Run `recto-fuzz.exe filters` and `recto-fuzz.exe render` for `-max_total_time=300` each to verify filter and rasterizer stability before closing M1. Done when: both complete 300 seconds with 0 crashes and 0 leaks.
 - [ ] Add a `fuzz-smoke` step to `.github/workflows/build.yml` compiling the fuzz targets (`-BuildFuzz`) and running each target over `tests/corpus/seeds/` and `tests/corpus/broken/` (`-max_total_time=20`). Done when: the CI workflow syntax and local smoke run both succeed.
 - [ ] Commit: `fuzz: complete M1 1-hour fuzz_open pass and add CI fuzz smoke step`
 
@@ -330,8 +335,33 @@ Sections in D02 to D08 add verbs to `recto-cli`: `annot`, `forms`, `bookmarks`, 
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Cli.VerbsJson*` passes under ASan, and deleting one verb's spec fails `Cli.VerbsJsonListsEveryVerb`.
 
+## 12. `recto-cli` Ctrl+C cancellation, exit code 130 and unwritable output paths
+
+> **Groomed 2026-10-23:** new section. The CLI contract (`§1`, `§10`) defines success, usage, file and password outcomes but not an interrupted run or an output that cannot be written, so a Ctrl+C mid-render could leave a partial PNG and a half-torn-down `Runtime`, and a read-only `--out` had no defined exit.
+
+A scriptable tool must stop cleanly on interrupt and report write failures without leaving partial files (AGENTS.md: every write is temp-file-then-replace). This section adds a console control handler that trips the run's `CancelSource`, shuts the `Runtime` down in the section 4.8 order, removes any temporary file, and exits `130`; and it defines the exit for an output path that cannot be written. It must not change the meaning of exits `0` to `3` or any verb's output bytes.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that the control handler only sets the `CancelSource` and signals the main thread (it never calls into `Runtime` or `recto-pdf` from the handler thread), and that shutdown runs on the main thread through `Runtime::shutdown()` with the live-object counters ending at `0`.
+
+**Build order:**
+
+1. Add `SetConsoleCtrlHandler` wiring and `ExitCode::Cancelled = 130` to `src/cli/dispatcher.h/.cpp`. Done when: `Cli.CtrlCExitsCleanly` passes.
+2. Define the unwritable-output exit in the shared writer used by `render`. Done when: `Cli.RenderOutputUnwritable` passes.
+
+- [ ] Install a `SetConsoleCtrlHandler` handler for `CTRL_C_EVENT` and `CTRL_BREAK_EVENT` in `src/cli/dispatcher.cpp` that trips one process-wide `CancelSource` and returns `TRUE`, passed to every verb through `VerbContext`. Done when: `Cli.CtrlCExitsCleanly` starts `recto-cli stress` as a child, sends `GenerateConsoleCtrlEvent`, and finds exit `130` within 2 seconds.
+- [ ] Add `ExitCode::Cancelled = 130` to the enum of `§8`, outside the verdict range `4` to `63` of `§10`, and print `cancelled` to `stderr`. Done when: `Cli.DispatcherRegistration` still refuses a verb declaring `130` as a verdict and `Cli.CtrlCExitsCleanly` finds the message.
+- [ ] Remove every temporary output file and leave any existing destination byte-identical when a run is cancelled mid-render. Done when: `Cli.RenderCancelLeavesNoPartialFile` interrupts a 200-page render and finds only complete `page-NNNN.png` files or none, no `*.tmp`, and a pre-existing destination unchanged by SHA-256.
+- [ ] Run `Runtime::shutdown()` on the main thread after cancellation and assert `debug_live_documents() == 0`, `debug_live_display_lists() == 0` and `debug_live_workers() == 0` before exiting. Done when: `Cli.CtrlCExitsCleanly` reads the three counters as `0` from the child's `--json` footer.
+- [ ] Exit `2` with a `stderr` message naming the path and the Win32 error when `--out` cannot be created or replaced (read-only destination, missing parent folder, disk full), writing no partial file and leaving an existing destination unchanged. Done when: `Cli.RenderOutputUnwritable` covers a read-only existing PNG, a missing parent folder and an injected `ERROR_DISK_FULL`, and finds exit `2` and an unchanged destination in each.
+- [ ] Commit: `cli: handle Ctrl+C with exit 130 and report unwritable output paths`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Cli.CtrlCExitsCleanly:Cli.RenderCancelLeavesNoPartialFile:Cli.RenderOutputUnwritable` passes under ASan, and exiting `1` on interrupt fails `Cli.CtrlCExitsCleanly`.
+
 ## Verification
 
 - M1 definition of done (`docs/plans/2026-10-13-recto-foundation.md` section 7): all three tests in the section 4.9 Thread-Safety Verification Battery pass under ASan, and `fuzz_open` runs 1 hour clean on the seed corpus.
-- `recto-tests.exe --gtest_filter=Cli.Dispatcher*:Cli.PasswordEnv*:Cli.SecretFlagsShared:Cli.DispatcherContract` passes under ASan once `§8` to `§10` ship, and `Cli.VerbsJson*` passes once `§11` (phase 5) ships.
+- `recto-tests.exe --gtest_filter=Cli.Dispatcher*:Cli.PasswordEnv*:Cli.SecretFlagsShared:Cli.DispatcherContract` passes under ASan once `§8` to `§10` ship, `Cli.CtrlC*:Cli.RenderOutputUnwritable` once `§12` ships, and `Cli.VerbsJson*` passes once `§11` (phase 5) ships.
 - `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` exit 0.

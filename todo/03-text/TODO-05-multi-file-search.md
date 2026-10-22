@@ -14,6 +14,8 @@ title: "TODO-05 -- Search Across Files and Local Index"
 
 > 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); sections rewritten against `todo/10-ui/`. The grouped results list, scope picker, `Skipped` expander and the Settings index manager are `recto-ui` elements (`ui::ItemsView`, `ui::ComboBox`, `ui::Expander`, `ui::SettingsGroup`) under `src/app/`; the search, enumeration and index engines are unchanged.
 
+> **Groomed 2026-10-23:** `Current state` re-measured: none of `src/core/search.*`, `FileScope` or `SearchIndex` exists, `src/ui` is not built and `src/app` is the retired WinUI scaffold; the claims above hold. SPEC 9.4 also lists indexed files among the command box `Files` rows; that gap is filed as `D03 T07 §3`, which reads the `§4` index by file name only. Reviewed for human-judged checkpoints: none found.
+
 ## Inputs
 
 - `docs/specs/2026-10-22-recto-ui-toolkit-design.md` sections 4.10, 4.11, 5 and 6 (the `recto-ui` toolkit that replaces WinUI 3, the WinUI-to-`recto-ui` mapping and the `todo/10-ui/` sections this file consumes).
@@ -21,6 +23,7 @@ title: "TODO-05 -- Search Across Files and Local Index"
 - `docs/plans/2026-10-13-recto-foundation.md` sections 3.3 (`PageText`), 4 (actor and job contract), 9 (hostile input) and decisions D6 (Portable mode), D16 (diagnostics), D18 (Acrobat Pro parity).
 - The accent-insensitive default and offset-safe folding that `D03 T01 §5` already implements and this file reuses unchanged.
 - `todo/03-text/TODO-01-selection-and-search.md` (frozen): `§5` is the single-document engine every section here calls and never edits.
+- -> XREF: D03 T07 §3 -- the command box `Files` rows for indexed files read the `SearchIndex` of `§4` by file name only.
 - -> XREF: D03 T01 §5 -- multi-file search wraps `SearchEngine` and `SearchOptions` unchanged.
 - -> XREF: D02 T04 §1 -- the search index lives under `AppPaths` data and moves with Portable mode.
 - -> XREF: D04 T07 §8 -- the Action Wizard (D04 T07 §8) enumerates inputs with `FileScope`.

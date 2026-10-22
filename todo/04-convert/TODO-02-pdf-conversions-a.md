@@ -13,6 +13,8 @@ track: M4
 
 > **Current state:** Measured 2026-10-14. No writer or converter code exists yet. `D01` provides `recto-pdf` parsing and rendering, `D03 T01` provides `PageText` (`§1`) and `OcrPipeline` (`§8`), and `D04 T01` provides the isolated `ConversionRunner` (`§1`) and 3-step Convert page (`§3`-`§4`). 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI sections rewritten against `todo/10-ui/`.
 
+> **Groomed 2026-10-23:** The scanner section `§13` is now tested against an `IScanSource` seam with `FakeScanSource` (no scanner or WIA test driver needed; the live-scanner proof is an operator step); the `§4` Step 3 checkpoint uses the `Ui.Golden` comparison with `D10 T01 §20`; `recto-cli tables` is an alias of `extract-tables` (the foundation plan name); new `§26` bounds and fuzzes SVG, OpenXPS and image-header parsing (`fuzz_svg_xps`); Adjacency was corrected from `all=not-applicable` to owners that exist.
+
 ## Inputs
 
 - `docs/plans/2026-10-13-recto-foundation.md` sections 4.1 item 6 (`PdfWriter`, `linearizer.cpp`), 4.7 (job isolation), 5 (PDF <-> Images/SVG/XPS, PDF -> Plain text, Searchable PDF OCR, Table & Image Extraction, PDF Optimization & Linearization, atomic replace rule).
@@ -52,6 +54,7 @@ track: M4
 - -> XREF: D10 T01 §8 -- the Step 3 controls, extractor bar and dialogs read their colours from the generated `recto_tokens.g.h` tokens.
 - -> XREF: D10 T02 §17 -- the Optimize audit, Editable OCR report and New Blank PDF dialogs are `ui::Dialog`s.
 - -> XREF: D10 T03 §1 -- every control built here exposes its automation name and tooltip through the `recto-ui` UIA provider tree.
+- -> XREF: D99 T01 §14 -- the operator proves §13 on a real WIA 2.0 scanner.
 
 ## Outcome
 
@@ -65,7 +68,7 @@ track: M4
 - Create PDF from clipboard (`§14`-`§16`) turns an image, text, rich text, HTML or a copied file list on the Windows clipboard into a new unsaved PDF tab through the `Images, SVG & XPS -> PDF` path (`§5`) and the Office, HTML and text paths, from `Ctrl+V`, Home, the tab strip, the `File` menu or `Ctrl+K`, and never produces a silent empty document.
 - Image-only PDF (`§17`, `§18`), editable OCR output with live text in matched fonts (`§19`, `§20`), page area export to an image or text (`§21`, `§22`), more image inputs through installed WIC codecs (`§23`) and a blank PDF with page-size presets and paper styles (`§24`, `§25`) match the Foxit PDF Editor, PDFelement and UPDF conversion features that Acrobat lacks, offline and on copies.
 
-**Adjacency:** all=not-applicable (converter engines and option bindings inside `D04 T01`'s Convert frame plus the viewer's contextual extractor bar; queue, notifications and save-location settings are owned by `D04 T01` and `D02 T04 §5`)
+**Adjacency:** list=not-applicable (the converter inputs are files the user picks; the queue list is D04 T01 §5); document=not-applicable (the outputs are the converted files themselves); settings=applicable @ D04 T02 §25; reporting=applicable @ D04 T02 §12; notifications=applicable @ D04 T01 §6; permissions=applicable @ D04 T01 §7; audit=not-applicable (queue history is session state with no log on disk, D04 T01 §5); exchange=applicable @ D04 T02 §8; reverse=applicable @ D04 T01 §2
 
 **Adjacency rationale:** The Convert page list, queue card, completion notifications, and Replace-original dialog belong to `D04 T01`. This file supplies the `AtomicFileWriter` and `PdfWriter` foundations and twelve focused conversion/extraction/optimization sections that plug into that frame and the viewer.
 
@@ -76,7 +79,7 @@ track: M4
 | 1 | §1 | `AtomicFileWriter` (`src/core/atomic_file.cpp`) sibling temp-then-replace and rollback | D01 T02 §10, D04 T01 §1 | [ ] |
 | 2 | §2 | Native `PdfWriter` (`writer.cpp`: object allocation, `FlateDecode`, `/Pages`, `xref`) | §1, D01 T01 §10 | [ ] |
 | 3 | §3 | Streamed `PDF -> Images` (`PNG`, `JPEG`, `BMP`, Multipage `TIFF`, `GIF`) and CLI command | §2, D01 T03 §2 | [ ] |
-| 4 | §4 | Vector `PDF -> SVG (.svg)` and `PDF -> OpenXPS (.xps)` exporters and Convert Step 3 UI | §3, D04 T01 §4, D10 T02 §2, D10 T02 §8 | [ ] |
+| 4 | §4 | Vector `PDF -> SVG (.svg)` and `PDF -> OpenXPS (.xps)` exporters and Convert Step 3 UI | §3, D04 T01 §4, D10 T01 §20, D10 T02 §2, D10 T02 §8 | [ ] |
 | 5 | §5 | `Images, SVG & XPS -> PDF` converter (`DCTDecode` pass-through, TIFF, EXIF) & Convert UI | §2, D04 T01 §4, D10 T02 §2 | [ ] |
 | 6 | §6 | `PDF -> Plain Text (.txt)` exporter with automatic OCR fallback, CLI and Convert UI | §1, D03 T01 §8, D04 T01 §4, D10 T02 §2 | [ ] |
 | 7 | §7 | `Searchable PDF (OCR)` sandwich writer (`3 Tr` invisible text), `recto-cli ocr` & UI | §2, §6, D10 T02 §2 | [ ] |
@@ -98,6 +101,7 @@ track: M4
 | 23 | §23 | More image inputs to PDF: ICO, JFIF, DIB, HEIC, WebP, JPEG XL via installed codecs | §5 | [ ] |
 | 24 | §24 | New blank PDF engine: size presets, paper styles and `recto-cli new-pdf` | §2 | [ ] |
 | 25 | §25 | New blank PDF dialog, File menu entry and `Ctrl+K` command | §24, §15, D02 T01 §10, D02 T03 §1, D02 T03 §11, D02 T04 §5, D06 T04 §29, D10 T01 §8, D10 T02 §2, D10 T02 §3, D10 T02 §13, D10 T02 §17, D10 T03 §1 | [ ] |
+| 26 | §26 | Hostile-input bounds and fuzz target for SVG, OpenXPS and image-header parsing | §5 | [ ] |
 
 ## 1. `AtomicFileWriter` (`src/core/atomic_file.cpp`) sibling temp-then-replace and rollback
 
@@ -193,18 +197,18 @@ Implement `src/core/svg_xps_writer.h/.cpp` in `recto-core` (`PDF -> SVG (.svg)` 
 **Build order:**
 
 1. Implement `pdf_to_svg` and `pdf_to_xps` in `src/core/svg_xps_writer.cpp` plus `recto-cli pdf-to-svg` and `recto-cli pdf-to-xps`. Done when: `ConvertSvgXps.*` exports vector-and-text corpus pages to `.svg` and `.xps`, verifies valid XML structure containing `<path>` and `<text>`/`<Glyphs>` elements, and round-trips through §5's `images_to_pdf` reader under ASan.
-2. Register the **Images, TIFF, SVG & XPS** card and Step 3 options view (`Format`, `DPI`, `Colour space`, `TIFF compression`, `Transparent background`, `Pages`, `Save to`, `If file exists`, and dynamic `"Save N images"` primary action button) in `ConvertPage`. Done when: the rendered Step 3 options card matches `D-Dialogs.png` and completes raster, multipage TIFF, SVG, and XPS exports through `ConversionRunner`.
+2. Register the **Images, TIFF, SVG & XPS** card and Step 3 options view (`Format`, `DPI`, `Colour space`, `TIFF compression`, `Transparent background`, `Pages`, `Save to`, `If file exists`, and dynamic `"Save N images"` primary action button) in `ConvertPage`. Done when: the golden comparison `Ui.Golden.ConvertSvgXpsStep3` (entry in `tests/recto-tests/golden/ui/manifest.json`, `D10 T01 §20`) of the headless render against the crop of `D-Dialogs.png` scores SSIM at or above the entry's threshold, and the card completes raster, multipage TIFF, SVG, and XPS exports through `ConversionRunner`.
 
 - [ ] Implement `pdf_to_svg` in `src/core/svg_xps_writer.cpp` translating `DisplayList` operations (`Save`, `Restore`, `Transform`, `ClipPath`, `FillPath`, `StrokePath`, `DrawGlyphRun`, `DrawImage`, `LinearGradient`, `RadialGradient`) into standalone UTF-8 SVG 1.1 files (`viewBox="0 0 <w> <h>"`) committed via `AtomicFileWriter`. Done when: `ConvertSvgXps.SvgVectorElements` confirms exported `.svg` files contain vector `<path>` and `<text>` nodes rather than a full-page raster bitmap. Cheaper substitute that fails the checkpoint: wrapping a full-page PNG screenshot inside an `<svg><image/></svg>` shell.
 - [ ] Implement `pdf_to_xps` in `src/core/svg_xps_writer.cpp` generating a valid ECMA-388 OpenXPS package (`[Content_Types].xml`, `_rels/.rels`, `FixedDocumentSequence.fdseq`, `Documents/1/FixedDocument.fdoc`, `Documents/1/Pages/1..N.fpage` with `<FixedPage>`, `<Canvas>`, `<Path Data="...">`, `<Glyphs UnicodeString="..." FontUri="..."/>`, and embedded font/image resources). Done when: `ConvertSvgXps.OpenXpsPackage` validates package structure and `.fpage` XML across multi-page corpus PDFs.
 - [ ] Implement `recto-cli pdf-to-svg <in.pdf> --out <dir_or_file> [--pages <range>]` and `recto-cli pdf-to-xps <in.pdf> --out <out.xps> [--pages <range>]` in `src/cli/`. Done when: `Cli.PdfToSvgAndXps` passes under ASan.
 - [ ] Build the **Images, TIFF, SVG & XPS** Step 3 options control (`src/app/views/convert/images_convert_options_control.h/.cpp`) exposing `Format` (`PNG`, `JPEG`, `Multipage TIFF`, `Single-page TIFF`, `Animated GIF`, `BMP`, `Vector SVG (.svg)`, `OpenXPS (.xps)`), `Resolution` (`72`, `150`, `300`, `600`, `1200 DPI` for raster formats), `Colour` (`RGB`, `Grayscale`, `Black & White 1-bit`), `TIFF compression` (`LZW`, `CCITT Group 4`, `JPEG`, `None` when TIFF is selected), and `JPEG quality` slider. Done when: selecting `Vector SVG` or `OpenXPS` hides raster-only DPI controls and selecting `Multipage TIFF` reveals the compression dropdown.
-- [ ] Update the Step 3 primary action button label dynamically (`"Save 9 images"` for a 9-page single-page image export, `"Save Multipage TIFF"`, `"Save 9 SVG files"`, `"Save XPS document"`) matching `D-Dialogs.png`. Done when: `ConvertImagesUi.ButtonLabelAndOptions` verifies dynamic button labels and screenshot parity with `D-Dialogs.png`.
+- [ ] Update the Step 3 primary action button label dynamically (`"Save 9 images"` for a 9-page single-page image export, `"Save Multipage TIFF"`, `"Save 9 SVG files"`, `"Save XPS document"`) matching `D-Dialogs.png`. Done when: `ConvertImagesUi.ButtonLabelAndOptions` verifies dynamic button labels and `Ui.Golden.ConvertSvgXpsStep3` (`D10 T01 §20`) scores SSIM at or above its manifest threshold against `D-Dialogs.png`.
 - [ ] Add `Long image (one tall picture)` to the `Format` list of the Images options control with `Page gap` (`None`, `Small`, `Medium`) and `Maximum height` fields shown only for it, and the primary action label `"Save 1 long image"` (or `"Save N long image parts"` when the split applies). Done when: `ConvertImagesUi.LongImageOptions` shows the fields only for that format and the label changes with the page count. Cheaper substitute: a CLI-only format with no Step 3 option.
 - [ ] Verify that cancelling a multi-page image, SVG, or XPS export mid-job via `QueueCard` (`D04 T01 §5`) removes all uncommitted temp files. Done when: `ConvertImagesUi.CancelMidJob` passes.
 - [ ] Commit: `convert: implement PDF to images, multipage TIFF, GIF, vector SVG and OpenXPS`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=ConvertImages.*:ConvertSvgXps.*:ConvertImagesUi.*` passes under ASan, and the Convert Images UI screenshot matches `D-Dialogs.png`.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=ConvertImages.*:ConvertSvgXps.*:ConvertImagesUi.*` passes under ASan, and the golden comparison `Ui.Golden.ConvertSvgXpsStep3` (entry in `tests/recto-tests/golden/ui/manifest.json`, `D10 T01 §20`) of the headless render against the crop of `D-Dialogs.png` scores SSIM at or above the entry's threshold.
 
 ## 5. `Images, SVG & XPS -> PDF` converter (`DCTDecode` pass-through, TIFF, EXIF) & Convert UI
 
@@ -302,7 +306,7 @@ Implement `src/core/table_extractor.h/.cpp` (`recto::core::TableExtractor`) and 
 **Build order:**
 
 1. Implement the orthogonal ruling-line grid detector and the borderless whitespace column/row clusterer in `src/core/table_extractor.cpp`, producing `ExtractedTable` models (`rows`, `cols`, `cells` with `row_span`, `col_span`, `text`, `value_kind` `Text`/`Number`/`Currency`/`Percentage`/`Date`, `bounds_pt`, `bg_color`, `borders`). Done when: `TableExtractor.RuledAndBorderless` extracts both bordered grid tables (with merged `colspan`/`rowspan` header cells) and borderless multi-column financial tables under ASan.
-2. Implement `.csv` (RFC 4180), `.tsv`, and structured `.json` serializers plus `recto-cli extract-tables` and manual region/divider override support (`extract_table_in_rect(page_index, rect_pt, custom_col_splits, custom_row_splits)` for §10's interactive lasso). Done when: `TableExtractor.*` and `Cli.ExtractTables` pass under ASan.
+2. Implement `.csv` (RFC 4180), `.tsv`, and structured `.json` serializers plus `recto-cli extract-tables` (registered with the alias `recto-cli tables`, the name in foundation plan section 3.1, both resolving to one handler) and manual region/divider override support (`extract_table_in_rect(page_index, rect_pt, custom_col_splits, custom_row_splits)` for §10's interactive lasso). Done when: `TableExtractor.*` and `Cli.ExtractTables` pass under ASan.
 
 - [ ] Define `CellValueKind` (`Text`, `Number`, `Currency`, `Percentage`, `IsoDate`), `TableCell` (`row`, `col`, `row_span`, `col_span`, `rect_pt`, `text`, `numeric_value`, `currency_symbol`, `value_kind`, `background_rgba`, `border_mask`), and `ExtractedTable` (`page_index`, `table_index`, `bounds_pt`, `row_dividers_y`, `col_dividers_x`, `cells`) in `src/core/table_extractor.h`. Done when: `ExtractedTable` satisfies the input requirements of `DocxWriter` (`D04 T03 §3`), `XlsxWriter` (`D04 T05 §1`), and `WebDocWriter` (`D04 T05 §3`).
 - [ ] Implement Algorithm A (**Orthogonal vector ruling-line grid reconstruction**): collect horizontal and vertical stroke segments (`m`/`l`, `re`) and thin filled rule bars (`<= 3 pt` thick) from the page `DisplayList`, snap near-collinear segments within `1.5 pt`, find H-V intersections, build minimal closed grid rectangles, and detect `rowspan` / `colspan` merged cells where an interior ruling segment is absent. Done when: `TableExtractor.RuledGridWithMerges` reconstructs a bordered table with a 3-column merged title header and 2-row merged category cells.
@@ -442,17 +446,20 @@ Wire the **Optimize & Compress PDF** card and Step 3 options in `ConvertPage` (`
 **Build order:**
 
 1. Confirm the owner decision recorded 2026-10-21 in the foundation plan (v1.1, WIA 2.0 flatbed and feeder with duplex, no TWAIN) and keep this section in phase 7 (After v1). Done when: the decision line exists in the plan and this section's Phase is 7.
-2. Implement `src/services/scanner/WiaScanner.h/.cpp` enumerating WIA 2.0 devices and acquiring pages on a job worker with `CancelToken`, then convert through §5 and optionally §7. Done when: `Convert.ScannerToPdf` passes against the WIA test driver.
+2. Implement `src/services/scanner/WiaScanner.h/.cpp` enumerating WIA 2.0 devices and acquiring pages on a job worker with `CancelToken`, behind an `IScanSource` seam (`src/services/scanner/scan_source.h`) so every test runs against `FakeScanSource` on a machine with no scanner, then convert through §5 and optionally §7. Done when: `Convert.ScannerToPdf` passes against `FakeScanSource` (flatbed, five-page feeder and duplex fixtures that return the `tests/corpus/` page images).
 
 - [ ] Record the owner decision in `docs/plans/2026-10-13-recto-foundation.md` and in `docs/user-demand.md`. Done when: both files name the decision and its date.
-- [ ] Implement `WiaScanner::list_devices()` through `IWiaDevMgr2::EnumDeviceInfo` off the UI thread with a 3 s timeout per device. Done when: an unresponsive device shows as unavailable instead of blocking the card.
+- [ ] Define `IScanSource` (`list_devices()`, `acquire(DeviceId, ScanOptions, PageSink, CancelToken)`) and `FakeScanSource` (scripted devices, pages, delays and `WIA_ERROR_*` codes) in `src/services/scanner/scan_source.h` and `tests/recto-tests/fake_scan_source.h`, with `WiaScanner` as the only `IWiaDevMgr2` implementation. Done when: `Convert.ScannerSeam` drives the card view model with `FakeScanSource` alone and the build has no test that needs a scanner. Cheaper substitute that fails the checkpoint: a test that skips when no device is attached.
+- [ ] Implement `WiaScanner::list_devices()` through `IWiaDevMgr2::EnumDeviceInfo` off the UI thread with a 3 s timeout per device. Done when: `Convert.ScannerTimeout` shows a `FakeScanSource` device that never answers as unavailable after 3 s without blocking the card.
 - [ ] Implement page acquisition for flatbed and feeder sources with colour mode, resolution and duplex, streaming each page to a temp file through `AtomicFileWriter`. Done when: a five-page feeder job yields five page images.
 - [ ] Map WIA errors (paper empty, paper jam, device busy, cover open) to plain messages with next steps. Done when: each mapped `WIA_ERROR_*` code shows its message in `Convert.ScannerErrors`.
 - [ ] Add the `From scanner` card and options to the Convert page and the `convert.fromScanner` command to `CommandRegistry`. Done when: `Ctrl+K` "scan" finds the command. Cheaper substitute: a hidden menu entry with no command-box reach.
 - [ ] Feed acquired pages to §5's converter with EXIF orientation honoured and, when chosen, to §7's searchable OCR writer. Done when: the produced PDF has one page per scan and searchable text when OCR was selected.
 - [ ] Commit: `convert: create PDFs from WIA scanners with optional OCR`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Convert.ScannerToPdf:Convert.ScannerErrors` passes against the WIA sample test driver on the display-session host.
+> **Groomed 2026-10-23:** the checkpoint named a "WIA sample test driver", which an unattended host does not have. The tests now run against `FakeScanSource` behind `IScanSource`; the real `IWiaDevMgr2` path compiles in CI and its live-scanner proof is an operator step (reported as a cross-domain gap for `D99 T01`). Cost of reversing: re-adding a driver dependency to the test host.
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Convert.ScannerSeam:Convert.ScannerTimeout:Convert.ScannerToPdf:Convert.ScannerErrors` passes with no scanner attached, and removing the 3 s timeout makes `Convert.ScannerTimeout` fail.
 
 ## 14. `ClipboardPdfBuilder`: clipboard images and image or PDF file lists to PDF
 
@@ -773,6 +780,30 @@ Make the blank PDF engine (`§24`) a command: **New blank PDF** opens a small di
 - [ ] Commit: `app: add New blank PDF with page-size presets and paper styles`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=AppTests.NewBlankPdfUi` passes on the display-session host, and a tab that opens clean instead of dirty, or any file appearing in Documents or another user folder before Save, makes it fail.
+
+## 26. Hostile-input bounds and fuzz target for SVG, OpenXPS and image-header parsing
+
+`§5` turns `.svg`, `.xps` and image files into PDF pages, and every one of them is hostile input: an SVG is XML with `<use>` references and entity declarations, an OpenXPS file is a ZIP of XML parts, and an image header can promise a canvas far larger than the file. `§5` names no limits and `fuzz_openxml_zip` (`D06 T02 §3`) covers the Office readers, not these. This section adds the limits, the refusals and a `fuzz_svg_xps` harness, so a hostile file ends in a typed error and a named message, never a hang, an out-of-memory abort or a crash.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add `ImportLimits` to `src/core/images_to_pdf.h` and enforce it in the SVG, XPS and image paths of `src/core/images_to_pdf.cpp`. Done when: `ImportLimits.*` refuses each limit breach with `ErrorCode::LimitExceeded` naming the limit, under ASan.
+2. Add `fuzz/fuzz_svg_xps.cpp` and its seed corpus. Done when: `Fuzz.SvgXpsSmoke` runs the seed corpus and 5000 seeded mutations under ASan with no finding.
+
+- [ ] Define `ImportLimits` (`max_pixels` `268435456`, `max_tiff_frames` `1000`, `max_svg_nodes` `200000`, `max_use_depth` `16`, `max_use_expansions` `100000`, `max_path_commands` `1000000`, `max_xps_pages` `5000`, `max_xps_part_bytes` `64 MiB`) in `src/core/images_to_pdf.h`. Done when: `ImportLimits.Defaults` asserts every value and the header compiles in `recto-core` and `recto-cli`.
+- [ ] Refuse any `<!DOCTYPE`, `<!ENTITY` and external reference (`xlink:href` or `href` to anything but a `data:` URI or a fragment, `@import`, `file:`, `http:`, UNC paths) in SVG and XPS XML before parsing, and never fetch anything. Done when: `SvgImport.NoDoctypeNoExternal` refuses a billion-laughs SVG, an `href="https://..."` image and a `file:///C:/Windows/win.ini` reference, with zero network or file reads outside the input (a recording `IFileSystem` double proves it).
+- [ ] Bound `<use>` expansion by depth and by total expansions and bound path data by command count. Done when: `SvgImport.UseBombRefused` refuses a 20-level `<use>` chain and a 1000x1000 `<use>` grid within `1 s`, and `SvgImport.HugePathRefused` refuses a 2-million-command path.
+- [ ] Check the declared pixel size from the image header (WIC `GetSize` before `CopyPixels`) against `max_pixels`, and the TIFF frame count against `max_tiff_frames`, before decoding any frame. Done when: `ImagesToPdf.PixelBudget` refuses a 100000 x 100000 PNG header of 300 bytes and a 5000-frame TIFF without allocating the canvas (peak working set below `64 MiB`).
+- [ ] Bound OpenXPS packages: open parts only through `ZipReader` (`D04 T03 §1`), reject a `FixedPage` relationship target outside the package, cap page and part sizes, and treat a missing `FixedDocumentSequence` as `Damaged`. Done when: `XpsImport.HostilePackage` refuses a traversal target, a 6000-page sequence and a 100 MiB part, and `XpsImport.MissingSequence` returns `Damaged`.
+- [ ] Surface each refusal as a plain job error through `D04 T01 §7` with the file name and the limit in words, and leave no output (`AtomicFileWriter`). Done when: `ConvertImages.HostileInputMessages` shows one message per limit and an empty destination folder.
+- [ ] Add `fuzz/fuzz_svg_xps.cpp` whose first byte selects SVG, XPS `FixedPage` XML or an image header, seed it from `tests/corpus/convert/` through `scripts/build-corpus.py` and register it in `recto-fuzz.vcxproj`; add `Fuzz.SvgXpsSmoke`. Done when: the smoke test passes and a crash input added under `tests/corpus/broken/` replays as a regression.
+- [ ] Commit: `convert: bound SVG, XPS and image header parsing and add fuzz_svg_xps`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=ImportLimits.*:SvgImport.*:XpsImport.*:ImagesToPdf.PixelBudget:ConvertImages.HostileInputMessages:Fuzz.SvgXpsSmoke` passes under ASan, and removing the `<use>` expansion cap makes `SvgImport.UseBombRefused` fail.
 
 ## Verification
 

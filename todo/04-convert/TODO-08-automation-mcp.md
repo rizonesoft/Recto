@@ -13,6 +13,8 @@ track: M5
 
 > **Current state:** Measured 2026-10-21. No `recto-cli verbs`, `recto-mcp` or `src/mcp/` code exists. `recto-cli` is specified in `D01 T03 §1` (dispatcher, exit-code contract `0`, `1`, `2`, `3`, with `4` and `5` for verdicts in `D04 T06 §15`) and every later domain adds verbs to the same dispatch table (`info`, `render`, `merge`, `split`, `pages`, `forms`, `pdfa`, `preflight`, `a11y`, `math` and the conversion verbs). The pieces this file reuses are specified but not built: the bounded JSON reader and schema subset validator (`D04 T06 §2`), the checked opener and exclusive output publisher (`D04 T07 §6`), `AtomicFileWriter` (`D04 T02 §1`) and `FileScope` (`D03 T05 §2`). `D01 T03` is `frozen: true`: this file depends on its sections and does not edit them; the changes it needs there are listed as cross-references by the coordinator.
 
+> **Groomed 2026-10-23:** `§3` now depends on every phase 5 section that adds a `recto-cli` verb, and the LaTeX verb is `pdf-to-tex` (foundation plan section 3.1).
+
 ## Inputs
 
 - `docs/plans/2026-10-13-recto-foundation.md` decisions D9 (no PDF JavaScript), D16 (offline, no telemetry), D18 and D21, and section 4 (jobs open their own `pdf::Document`).
@@ -45,7 +47,7 @@ track: M5
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | `VerbSpec` model, argument kinds and the verb registry JSON schema | D01 T03 §1, D04 T06 §2 | [ ] |
 | 2 | §2 | `recto-cli verbs --json` export and the dispatcher coverage gate | §1, D01 T03 §1, D01 T03 §8 | [ ] |
-| 3 | §3 | Verb specifications for every `recto-cli` verb family | §2, D05 T01 §2, D04 T06 §15 | [ ] |
+| 3 | §3 | Verb specifications for every `recto-cli` verb family | §2, D05 T01 §2, D04 T03 §4, D04 T04 §3, D04 T04 §21, D04 T05 §1, D04 T05 §3, D04 T05 §4, D04 T05 §6, D04 T05 §8, D04 T05 §12, D04 T05 §14, D04 T05 §15, D04 T05 §19, D04 T05 §26, D04 T06 §15, D04 T06 §19, D04 T07 §11 | [ ] |
 | 4 | §4 | `recto-mcp` stdio server: framing, modern and legacy handshake, tool methods | §2, D04 T06 §2 | [ ] |
 | 5 | §5 | Tool schema generation, annotations and argument validation from the registry | §1, §4 | [ ] |
 | 6 | §6 | Path policy, allow-list, staged inputs and exclusive output publishing | §1, D04 T07 §6, D04 T02 §1 | [ ] |
@@ -105,6 +107,8 @@ The registry is useful only if it cannot drift from the dispatcher. This section
 
 ## 3. Verb specifications for every `recto-cli` verb family
 
+> **Groomed 2026-10-23:** the row depended only on `§2`, `D05 T01 §2` and `D04 T06 §15`, so with the phase 5 verbs of `D04 T03`, `D04 T04`, `D04 T05` and `D04 T07` built after it, `Cli.VerbsCoverage` would have gone red or the samples could not run. The row now depends on every phase 5 section that adds a `recto-cli` verb (earlier phases are already complete when phase 5 starts). Cost of reversing: none, the edges only constrain order.
+
 Write the specification of each verb as data, family by family, next to the verb's own `cmd_*.cpp` so that a verb's author sees both. A specification registers through `VerbRegistry::register_spec` and changes no behaviour of the verb. Verbs that must never be driven by an agent are specified with `exposure = Never` and a reason, so the registry still describes the whole CLI. The default is conservative: `bench`, `stress`, `trust`, `policy`, `virtual-print` and `action` are `Never` in v1 (`action` because the paths named inside an action file cannot be confined by the server; the cost of changing it is a path inventory step in the action model), and `sign` is `OptIn` because it uses the user's certificates.
 
 **Phase:** 5
@@ -117,7 +121,7 @@ Write the specification of each verb as data, family by family, next to the verb
 2. Register specs for the page, protect, compliance and remaining families, and the excluded verbs. Done when: `Cli.VerbsCoverage` reports no unspecified verb.
 
 - [ ] Register specs for the read-only verbs `info`, `render`, `text`, `find`, `ocr`, `compare`, `snapshot`, `extract-tables`, `extract-images` and `export-area` (each output file or folder as an `OutputFile` or `OutputDir`, document text results flagged `returns_document_text`). Done when: `VerbSpecs.ReadOnlyAndConvert` validates them and their samples exit as listed.
-- [ ] Register specs for the conversion verbs `pdf-to-docx`, `pdf-to-rtf`, `pdf-to-xlsx`, `pdf-to-csv`, `pdf-to-xml`, `pdf-to-html`, `pdf-to-md`, `pdf-to-epub`, `pdf-to-latex`, `pdf-to-pptx`, `pdf-to-images`, `pdf-to-svg`, `pdf-to-xps`, `pdf-to-text`, `rasterize-pdf`, `images-to-pdf` and `new-pdf`. Done when: the same test validates them and their samples exit as listed.
+- [ ] Register specs for the conversion verbs `pdf-to-docx`, `pdf-to-rtf`, `pdf-to-xlsx`, `pdf-to-csv`, `pdf-to-xml`, `pdf-to-html`, `pdf-to-md`, `pdf-to-epub`, `pdf-to-tex`, `pdf-to-pptx`, `pdf-to-images`, `pdf-to-svg`, `pdf-to-xps`, `pdf-to-text`, `rasterize-pdf`, `images-to-pdf` and `new-pdf`. Done when: the same test validates them and their samples exit as listed.
 - [ ] Register specs for the page and layout verbs `merge`, `split`, `pages`, `crop`, `watermark`, `bates`, `background`, `labels`, `blank-pages`, `replace` and `optimize`, with every input an `InputFile` and every output an `OutputFile` or `OutputDir`. Done when: `VerbSpecs.PageVerbs` validates them and `Cli.VerbsSamples` runs their samples.
 - [ ] Register specs for the protect verbs `encrypt`, `decrypt`, `sanitize`, `redact` and `scrub`, taking every password as a `Secret` accepted as `env:NAME`, and `verify` as read-only; register `sign` as `OptIn` with the reason that it uses the user's certificate store. Done when: `VerbSpecs.ProtectVerbs` rejects a literal password argument and shows `sign` as `OptIn`.
 - [ ] Register specs for the standards verbs `pdfa`, `einvoice`, `preflight` (each subverb with its verdict exit codes as `Diagnostic`), `a11y` (`D04 T05 §26`), `math` (`D04 T05 §19`, `§20`), `tags`, `reading-order`, `forms`, `annot` and `edit`. Done when: `VerbSpecs.StandardsVerbs` shows exit `4` and `5` of `preflight run` as `Diagnostic` with `publish_on_exit_codes` including them.

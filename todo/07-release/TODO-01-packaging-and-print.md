@@ -11,7 +11,7 @@ track: M6
 
 > **Goal:** Turn Recto into a printable, installable, and self-contained portable Windows product: verify the print API on the Windows SDK line in use via a side-by-side spike (`PrintManagerInterop` vs `ID2D1PrintControl`), build the non-blocking print pipeline (`Ctrl+P`, page ranges, copies, printer-DPI engine rendering, and automated `Print-to-PDF` verification), author the Inno Setup installer (`installer/recto.iss` built with `ISCC.exe`) supporting both **Full Installation** (`.pdf` file association, icons, Start Menu shortcut, and clean uninstaller) and **Self-Contained Portable Installation** (`/PORTABLE=1`, `<exe-dir>\data\portable.mode`, zero registry or `%LOCALAPPDATA%` footprint), build the release packaging pipeline (`build/build-installer.ps1` producing `RectoSetup-*.exe`, `Recto-Portable-*.zip`, and optional MSIX), and prove both Full Install and Portable Install end-to-end (`tests/scripts/verify_installer.ps1`).
 
-> **Current state:** Measured 2026-10-14. No packaging or print code exists yet. `D02 T01 §1` authors the plain Win32 desktop `Recto.vcxproj` (unpackaged and MSIX-ready, with no Windows App SDK runtime, `D10 T01 §2`), manifest, and visual assets; `D02 T04 §1` and `§6` implement `AppPaths` Portable mode path resolution (`<exe-dir>\data\portable.mode`) and the in-app Portable mode setting toggle; `D02 T02` provides the document canvas and floating page toolbar Print button (`§8`). On 2026-10-14 decision D6 made Inno Setup (`ISCC.exe` at `C:\Program Files\Inno Setup 7\ISCC.exe`) the primary distribution mechanism supporting both Full Install and Self-Contained Portable Install alongside standalone `Recto-Portable-*.zip` archives, with MSIX / Microsoft Store packaging as an optional extra. 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI references rewritten against `todo/10-ui/`.
+> **Current state:** Re-measured 2026-10-23: still true, no `installer/`, `src/app/printing/` or `build/build-installer.ps1` exists, and `src/app/Recto.vcxproj` is still the WinUI scaffold until `D10 T01 §2` converts it to a plain Win32 project (so `§4` to `§7` stage `Recto\Recto.exe` from `build\bin\<platform>\<configuration>\Recto\`). Originally measured 2026-10-14: no packaging or print code exists yet. `D02 T01 §1` authors the plain Win32 desktop `Recto.vcxproj` (unpackaged and MSIX-ready, with no Windows App SDK runtime, `D10 T01 §2`), manifest, and visual assets; `D02 T04 §1` and `§6` implement `AppPaths` Portable mode path resolution (`<exe-dir>\data\portable.mode`) and the in-app Portable mode setting toggle; `D02 T02` provides the document canvas and floating page toolbar Print button (`§8`). On 2026-10-14 decision D6 made Inno Setup (`ISCC.exe` at `C:\Program Files\Inno Setup 7\ISCC.exe`) the primary distribution mechanism supporting both Full Install and Self-Contained Portable Install alongside standalone `Recto-Portable-*.zip` archives, with MSIX / Microsoft Store packaging as an optional extra. 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI references rewritten against `todo/10-ui/`.
 
 ## Inputs
 
@@ -44,6 +44,7 @@ track: M6
 - -> XREF: D10 T01 §4 -- the `ui::Window` HWND that §1 and §2 here show the system print experience for.
 - -> XREF: D10 T02 §17 -- the `ui::Dialog` and the option controls (`D10 T02 §6`, `§7`, `§9`, `§12`, `§20`) that §10, §14 and §18 build on.
 - -> XREF: D10 T03 §7 -- the `ui::Strings` tables that §11's tooltip string key lives in.
+- -> XREF: D03 T01 §21 -- the neural OCR model file §23 packages.
 
 ## Outcome
 
@@ -54,9 +55,9 @@ track: M6
 - Printing can select pages by reverse order, comments, bookmark section and area, print as image, in grayscale or with text as outlines, and add crop, bleed and registration marks, all from the print options pane or `Ctrl+K` (`§11` to `§14`).
 - The Full installer installs the `Recto PDF` v4 virtual printer when a Hardware Dev Center signed catalog is present, which converts any application's print job to a PDF in the user's session, with settings and a save window; Portable and per-user installs install nothing, and a missing driver signature removes the feature (the release builds without it and Settings shows "Not installed") rather than shipping an untrusted driver (`§15` to `§20`). Building, validating and gating the package is unattended; the test-signed install and the signing itself are operator sections `D99 T01 §6` and `§7`.
 
-**Adjacency:** list=not-applicable (installed apps are listed by Windows, not Recto); document=applicable @ D07 T01 §2; settings=not-applicable (print choices live in the Windows print dialog; Portable mode and Default PDF app rows live in D02 T04 §6); reporting=not-applicable (crash reporting is D07 T02 §4); notifications=not-applicable (none originate here); permissions=not-applicable (manifest capabilities are declared in D02 T01 §1 and audited in §5); audit=not-applicable (release provenance is D07 T02 §1 and §3); exchange=not-applicable (no data import); reverse=applicable @ D07 T01 §6
+**Adjacency:** list=not-applicable (installed apps are listed by Windows, not Recto); document=applicable @ D07 T01 §2; settings=applicable @ D07 T01 §22; reporting=not-applicable (crash reporting is D07 T02 §4); notifications=not-applicable (none originate here); permissions=not-applicable (manifest capabilities are declared in D02 T01 §1 and audited in §5); audit=not-applicable (release provenance is D07 T02 §1 and §3); exchange=not-applicable (no data import); reverse=applicable @ D07 T01 §6
 
-**Adjacency rationale:** Printing (`§2`) is the viewer's physical/print document output surface delivered in M6 after `§1` resolves foundation plan section 11's print API open item. The reverse of installation is clean uninstallation for Full Install (`§6`) and directory deletion with zero host residue for Portable Install (`§7`).
+**Adjacency rationale:** Settings stored by earlier versions must survive an upgrade or downgrade, which `§22` owns (print choices live in the Windows print dialog; Portable mode and Default PDF app rows live in D02 T04 §6). Printing (`§2`) is the viewer's physical/print document output surface delivered in M6 after `§1` resolves foundation plan section 11's print API open item. The reverse of installation is clean uninstallation for Full Install (`§6`) and directory deletion with zero host residue for Portable Install (`§7`).
 
 ## Implementation Order
 
@@ -82,6 +83,9 @@ track: M6
 | 18 | §18 | Recto PDF virtual printer settings and the save window | §17, D02 T04 §2, D02 T04 §6, D02 T03 §11, D06 T04 §21, D10 T01 §4, D10 T02 §2, D10 T02 §4, D10 T02 §7, D10 T02 §9 | [ ] |
 | 19 | §19 | Full installer integration and end-to-end proof for the Recto PDF printer | §6, §9, §16, §17, §18, D07 T02 §6 | [ ] |
 | 20 | §20 | Recto PDF driver signature check, signing runbook and release gate | §5, §16, D07 T02 §6 | [ ] |
+| 21 | §21 | Installer edge cases: running app, user data on uninstall and shell registration | §6, §7, §8, §9 | [ ] |
+| 22 | §22 | Settings and recents across versions: schema stamp, migration and newer-file safety | §6, D02 T04 §2, D02 T03 §1 | [ ] |
+| 23 | §23 | Ship the neural OCR model: installer, Portable zip, bundle and a find check | §5, §7, D03 T01 §21 | [ ] |
 
 ## 1. Print API spike (`PrintManagerInterop` vs `ID2D1PrintControl`) & section 11 note
 
@@ -609,8 +613,85 @@ A production printer driver must carry a signature that Windows accepts without 
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_installer_printer` passes and `pwsh scripts/check-driver-signature.ps1 -Path build/stage/x64/printer` exits non-zero for the unsigned and test-signed fixtures and `0` for the Microsoft-signed one, with the outputs quoted.
 
+## 21. Installer edge cases: running app, user data on uninstall and shell registration
+
+`§6` and `§7` prove the happy path on a machine where Recto is not running. Real users upgrade while Recto is open, while Explorer holds `RectoShell.dll` for a thumbnail, and uninstall wanting either their settings kept or everything gone. This section proves those cases, and a registry and file residue diff, so "clean uninstall" in foundation plan milestone M6 is measured and not assumed. Per-machine (administrator) installs need an elevated session the unattended host does not have; that single run is the operator step in `D99 T01 §10`.
+
+> **Groomed 2026-10-23:** new section. The M6 done-when clause "clean-uninstall tests pass" and the brief's "uninstall leaving no data unless asked" were only partly covered: `§4` mentions an optional uninstall prompt but no step builds the silent switch or tests either answer, no step covers an upgrade over a running `Recto.exe` or a locked `RectoShell.dll`, and `§6` checks named keys instead of diffing everything the install touched.
+
+**Phase:** 6
+**Needs:** windows-host, display-session
+**Surface:** no
+
+**Build order:**
+
+1. Add `CloseApplications=yes`, `CloseApplicationsFilter=Recto.exe,recto-cli.exe,RectoShell.dll`, `RestartApplications=no` and the user-data uninstall switch to `installer/recto.iss`. Done when: `tests/scripts/test_installer_script.py` asserts the four settings and that the interactive prompt defaults to No.
+2. Add `-Mode Edge` to `tests/scripts/verify_installer.ps1` with the stages below, each in the `try / finally` isolation of `§6`. Done when: `pwsh -NoProfile -File tests/scripts/verify_installer.ps1 -Mode Edge` exits `0`.
+
+- [ ] Set `CloseApplications=yes`, `CloseApplicationsFilter=Recto.exe,recto-cli.exe,RectoShell.dll` and `RestartApplications=no` in `[Setup]` of `installer/recto.iss`, and add a static assertion for each to `tests/scripts/test_installer_script.py`. Done when: `python -m unittest tests.scripts.test_installer_script` passes and fails when `CloseApplications=no` is planted. Source: Inno Setup documentation, `CloseApplications`. Cheaper substitute: telling the user in the release notes to close Recto first.
+- [ ] Implement `Test-UpgradeWhileRunning`: install `1.0.0` per user, start the installed `Recto.exe` on `tests/corpus/render/hello-world.pdf`, wait for its main window (`Get-Process | MainWindowHandle`), run the `1.0.1` installer with `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART` and no force flag, and assert exit code `0`, the old process gone, the installed `Recto.exe` reporting `1.0.1`, and `settings.json` intact. Done when: the stage passes and fails when `CloseApplications` is removed (the installer then reports the file in use). Cheaper substitute: stopping the process from the script before upgrading.
+- [ ] Implement `Test-UpgradeWithLockedShellDll`: install `1.0.0`, request a thumbnail of a corpus PDF through `IShellItemImageFactory::GetImage` so the surrogate loads `RectoShell.dll` (`§8`), run the `1.0.1` installer silently, and assert exit code `0` with no reboot requested (`/NORESTART` exit code stays `0`, not `3010`), no `RectoShell.dll` entry in `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\PendingFileRenameOperations`, and a fresh thumbnail request succeeding afterwards. Done when: the stage passes with the surrogate holding the old DLL. Source: Inno Setup documentation, `restartreplace` and `CloseApplicationsFilter`.
+- [ ] Implement `Test-UninstallWhileRunning`: install, start `Recto.exe`, run `unins000.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`, and assert exit code `0`, the process gone and `{app}` absent. Done when: the stage passes and no `Recto.exe` process remains.
+- [ ] Add the uninstall switch `/REMOVEUSERDATA=1` in the `[Code]` section of `installer/recto.iss` (`CurUninstallStepChanged(usPostUninstall)`): interactive uninstall asks "Also remove your Recto settings, recent files and cache?" with No as the default button, silent uninstall keeps `%LOCALAPPDATA%\Recto` unless `/REMOVEUSERDATA=1` is passed, and neither path touches user PDFs or a Portable data folder. Done when: `Test-UninstallKeepsOrRemovesUserData` asserts `%LOCALAPPDATA%\Recto\settings.json` and `recents.json` survive a plain silent uninstall, are gone (directory removed) after `/REMOVEUSERDATA=1`, and `hello-world.pdf` is byte-identical in both runs. Cheaper substitute: always deleting user data, or never offering to.
+- [ ] Assert the Full install Start Menu shortcut carries `System.AppUserModel.ID` equal to the ID `D04 T01 §6` uses for toasts, read by `tests/scripts/Get-ShortcutAumid.ps1` through `IPropertyStore` (`Add-Type` P/Invoke), and that the Portable install creates no shortcut. Done when: the stage reads the same string from the shortcut and from `src/app/app_user_model_id.h` (or the constant `D04 T01 §6` defines) and fails when they differ.
+- [ ] Implement `Test-NoResidue`: before the first install snapshot the key names under `HKCU\Software`, the file list of `%LOCALAPPDATA%`, `%APPDATA%`, `%TEMP%` and the Start Menu `Programs` folder; after `Test-FullInstallLifecycle`, the edge stages and a `/REMOVEUSERDATA=1` uninstall, snapshot again and diff. Done when: the diff is empty apart from a named allow-list in `tests/scripts/installer_residue_allowlist.txt` (each entry with a reason, expected to hold only Windows-written MRU and shell-extension cache keys), and a planted `HKCU\Software\Recto` key makes the stage fail. Cheaper substitute: checking only the keys `§6` names.
+- [ ] Record in `docs/release-and-store-runbook.md` (`D07 T02 §6`) that the per-machine (elevated) install, upgrade and uninstall are verified by the operator in `D99 T01 §10`, and that a release whose operator run is missing ships with the note "per-machine install not verified on a clean machine". Done when: the runbook carries both statements.
+- [ ] Commit: `test(release): prove upgrade and uninstall over a running app, user-data choice and zero residue`
+
+**Test checkpoint:** `pwsh -NoProfile -File tests/scripts/verify_installer.ps1 -Mode Edge` exits `0` with the `[PASS]` lines for upgrade while running, locked shell DLL, uninstall while running, user data kept and removed, AUMID and no-residue quoted, and `python -m unittest tests.scripts.test_installer_script` passes.
+
+## 22. Settings and recents across versions: schema stamp, migration and newer-file safety
+
+A user upgrades Recto, or points two Recto versions at one Portable `data\` folder on a USB drive, or downgrades after a bad release. `D02 T04 §2` currently resets a "schema-mismatched" `settings.json` to defaults, which would silently erase the settings of anyone who ran a newer build. This section makes the stored files versioned and safe: `settings.json` and `recents.json` carry an integer `schema`; an older file is migrated by ordered steps after a one-time backup; a file from a newer build is read for the keys this build knows, written back with every unknown key preserved and the higher `schema` kept; and only an unparseable file is replaced, after being renamed aside and never deleted. Defaults taken 2026-10-23 (reversal cost: one `SettingsStore` load path and the fixtures): version 1 writes `"schema": 1`; a file with no `schema` field is schema 0 (pre-release builds) and migrates to 1.
+
+**Phase:** 6
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add the `schema` field and `SettingsMigrator` (`src/services/settings_migration.h/.cpp`, an ordered list of pure `json -> json` steps) to `SettingsStore`, and the same for `RecentFilesStore`. Done when: `Settings.Migration.V0ToV1` and `Recents.Migration.V0ToV1` pass on the fixtures in `tests/corpus/settings/`.
+2. Implement newer-file safety and the corrupt-file rename. Done when: `Settings.Migration.NewerSchemaRoundTrips` and `Settings.Migration.CorruptRenamedNotDeleted` pass.
+3. Extend the upgrade stage of `verify_installer.ps1` (`§6`) to plant a schema 2 file. Done when: the stage passes.
+
+- [ ] Write the fixtures `tests/corpus/settings/v0-prerelease.json` (no `schema`), `v1.json`, `v2-future.json` (schema 2 with an unknown top-level key, an unknown nested key and an unknown enum string) and `corrupt.json` (truncated), plus the same four for `recents.json`. Done when: each fixture parses or fails to parse as its name says in `Settings.Fixtures.AreWhatTheyClaim`. Cheaper substitute: building fixtures in test code, which hides the on-disk shape.
+- [ ] Add `schema` to `RectoSettings` persistence in `src/services/settings.cpp` and implement `SettingsMigrator::run(json, from, to)` with a `v0 -> v1` step (renames and defaults for any key whose name changed before 1.0; an empty step is allowed when none did, with the test proving the path runs). Done when: `Settings.Migration.V0ToV1` loads `v0-prerelease.json` into the SPEC values and the saved file carries `"schema": 1`.
+- [ ] Before the first migrating write, copy the old file to `settings.json.bak-v0` (once; never overwrite an existing backup), through temp-file-then-replace. Done when: `Settings.Migration.BackupOnce` migrates twice and finds one backup holding the original bytes.
+- [ ] Load a file whose `schema` is greater than this build knows: use the known keys, keep the unknown keys in a side `json` object and write them back unchanged on the next save with the higher `schema` preserved, and log one diagnostic naming the schema. Done when: `Settings.Migration.NewerSchemaRoundTrips` loads `v2-future.json`, changes one known setting, saves, and the saved file differs from the input only in that key.
+- [ ] Replace "reset to defaults on schema mismatch" in `SettingsStore` with: unparseable file -> rename to `settings.json.corrupt-<UTC yyyymmddThhmmss>`, load SPEC defaults, log a diagnostic; parseable file with a bad value -> clamp that value (existing rule) and keep the rest. Done when: `Settings.Migration.CorruptRenamedNotDeleted` finds the renamed file with the original bytes and defaults loaded, and the D02 T04 corrupt-file test still passes.
+- [ ] Apply the same schema, migration, newer-file and corrupt-rename rules to `recents.json` in `src/services/recent_files_store.cpp` (the `D02 T03 §1` store). Done when: `Recents.Migration.NewerSchemaRoundTrips` and `Recents.Migration.CorruptRenamedNotDeleted` pass.
+- [ ] Extend `Test-FullInstallLifecycle` in `tests/scripts/verify_installer.ps1`: after the `1.0.0 -> 1.0.1` upgrade, plant `v2-future.json` as `settings.json`, launch and close the installed `Recto.exe` without changing a setting, and assert the file is byte-identical. Done when: the assertion passes against the installed build and fails when the migrator rewrites a newer file.
+- [ ] Commit: `settings: version settings.json and recents.json, migrate with a backup and never reset a newer file`
+
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Settings.Migration.*:Recents.Migration.*:Settings.Fixtures.*` passes and `pwsh -NoProfile -File tests/scripts/verify_installer.ps1 -Mode Full` exits `0`, quoting the backup, round-trip and byte-identical lines.
+
+## 23. Ship the neural OCR model: installer, Portable zip, bundle and a find check
+
+Built-in OCR needs `models\recto-ocr-latin-v1.rocr` (built and gated by `D03 T01 §21`) beside `Recto.exe`. If a packaging step forgets it, OCR silently falls back or fails only on a user's machine. This section stages, installs, zips and hashes the model, and proves the installed and extracted apps find and load it.
+
+> **Groomed 2026-10-23:** new section, filed from the 03-text groom. `§4` and `§5` listed only `Recto.exe`, `recto-cli.exe`, `LICENSE` and `NOTICE.md`.
+
+**Phase:** 6
+**Needs:** windows-host, display-session
+**Surface:** no
+
+**Build order:**
+
+1. Stage `models\recto-ocr-latin-v1.rocr` in `build/build-installer.ps1`, install it in `{app}\models\` from `installer/recto.iss` for Full and Portable modes, and add it to `Recto-Portable-<arch>.zip` and `SHA256SUMS.txt`. Done when: both archives and the installer's file list contain it and the build fails if the file or its SHA-256 (from the `D03 T01 §21` manifest) differs.
+2. Add the find check to `tests/scripts/verify_installer.ps1`. Done when: `-Mode Full` and `-Mode Portable` pass it.
+
+- [ ] Make `build/build-installer.ps1` fail fast when `models\recto-ocr-latin-v1.rocr` is missing from the stage folder or its SHA-256 differs from the digest recorded by `D03 T01 §21`. Done when: a stage without the file and one with a flipped byte each fail the script. Cheaper substitute: copying whatever `.rocr` is in the build folder.
+- [ ] Add the model to `[Files]` in `installer/recto.iss` (`DestDir: {app}\models`, both modes) and to the Portable `.zip` layout. Done when: `tests/scripts/test_installer_script.py` asserts the entry and `python -m unittest tests.scripts.test_package_assets` also asserts the zip contains `models/recto-ocr-latin-v1.rocr`.
+- [ ] Extend `scripts/check-package-assets.py` and `scripts/audit-dependencies.py --check` to list the model with its license and provenance row in `NOTICE.md`. Done when: removing the NOTICE row fails the check.
+- [ ] Add `recto-cli ocr --self-check` call (the neural recognizer's `load_neural_model` on the file beside the executable, printing the model SHA-256) to `verify_installer.ps1` for the installed Full folder and the extracted Portable zip. Done when: both print the digest from `SHA256SUMS.txt`, and deleting the file makes the check fail.
+- [ ] Confirm `SHA256SUMS.txt` in `build/dist/` hashes the model-bearing archives (`D07 T02 §7`). Done when: `Get-FileHash` on both archives matches.
+- [ ] Commit: `release: ship and verify the neural OCR model in the installer, zip and bundle`
+
+**Test checkpoint:** `pwsh -NoProfile -File tests/scripts/verify_installer.ps1` exits `0` with the model digest printed from the installed and the extracted app, and `python -m unittest tests.scripts.test_installer_script tests.scripts.test_package_assets` passes.
+
 ## Verification
 
 - Milestone M6's printing, Inno Setup Full & Portable installer, Portable `.zip`, optional MSIX, `.pdf` file-association, upgrade continuity, clean uninstall, and portable zero-footprint clauses each carry dated, machine-verified evidence.
 - The exact `RectoSetup-x64.exe` and `Recto-Portable-x64.zip` binaries produced by `build/build-installer.ps1` (`§5`) are tested by `tests/scripts/verify_installer.ps1` (`§6` and `§7`) with matching SHA-256 digests.
+- Upgrade and uninstall over a running app, the user-data choice and the zero-residue diff (`§21`) and the settings and recents schema migration (`§22`) each carry machine-verified evidence; the per-machine elevated run is recorded by the operator in `D99 T01 §10`.
 - `python scripts/todo-graph.py validate` passes.

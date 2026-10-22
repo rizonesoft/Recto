@@ -14,6 +14,8 @@ title: "TODO-04 -- Edit PDF: Text, Image and Vector Object Editing"
 
 > 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); sections rewritten against `todo/10-ui/`. The Edit PDF bar, inline text editor, handles, menus and Appearance panel are `recto-ui` elements under `src/app/`; the inline editor reuses the `ui::TextBox` editing core and Text Services Framework store, and its text is exposed on the UIA provider tree of `D10 T03 §1`.
 
+> **Groomed 2026-10-23:** `Current state` re-measured: `src/pdf` still has no content-stream editor, object listing or writer, `src/ui` is not built (`D10 T01 §1`) and `src/app` is the retired WinUI scaffold; the claims above hold. Every `recto-ui` type the sections name (`ui::TextBox` editing core and Text Services Framework store `D10 T02 §4` and `§5`, `ui::Menu`, `ui::Flyout`, `ui::Slider`, `ui::ComboBox`, `ui::ColorSwatchPicker`) has an owner in `todo/10-ui/` that its row depends on. Reviewed for human-judged checkpoints and phantom dependencies: none found.
+
 ## Inputs
 
 - `docs/specs/2026-10-22-recto-ui-toolkit-design.md` sections 4.10, 4.11, 5 and 6 (the `recto-ui` toolkit that replaces WinUI 3, the WinUI-to-`recto-ui` mapping and the `todo/10-ui/` sections this file consumes).

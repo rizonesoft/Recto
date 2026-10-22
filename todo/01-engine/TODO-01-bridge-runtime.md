@@ -14,6 +14,8 @@ track: M1
 
 > **Current state:** Measured 2026-10-18. `src/pdf/recto-pdf.vcxproj` compiles the scaffold `recto::pdf::abi_version()` entry point (`src/pdf/pdf.cpp`, `src/pdf/recto_pdf.h`). `D00 T03` (`TODO-03-test-backbone.md`) is `done`, providing `tests/recto-tests/test_support.h`, the 39-file corpus in `tests/corpus/`, and the `-EnableASAN` build and CI job. No PDF parsing code exists yet.
 
+> **Groomed 2026-10-23:** all ten sections are stamped; `src/pdf` now holds `error`, `object`, `lexer`, `parser`, `xref`, `filters`, `crypto`, `document` and `display_list` (the last from `D01 T02 §1`). Open repairs against this file's stamps live in `D06 T05 §22` to `§24` (audits) and `§29` to `§35`; `D01 T02 §18` adds `ErrorCode::ResourceLimit` and `InvalidArgument` to `error.h` and `D01 T02 §21` adds `/UserUnit` to `PageDescription` without rewriting any checklist here.
+
 ## Inputs
 
 - `docs/plans/2026-10-13-recto-foundation.md` sections 1 (D3, D5, D9, D12, D14, D16), 3.1 to 3.3 (`src/pdf`, `PdfResult<T>`, `PdfError`, `ErrorCode`), 4.1 (what `recto-pdf` implements), 4.2 (thread ownership rules), 9 (security and untrusted input).

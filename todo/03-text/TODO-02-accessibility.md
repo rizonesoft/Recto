@@ -11,9 +11,11 @@ track: M3
 
 > **Goal:** Recto is operable and readable without sight or a mouse: page text exposed through a UI Automation text provider built on the `recto-ui` provider tree and `ui::TextRangeAdapter` (the M3 accessibility deliverable), two-way selection and form/annotation provider exposure, an automated control accessibility inventory (`ui::Element` automation name, shortcut tooltips, `32 epx` / `36 epx` target bounds), a logical keyboard order with visible accent focus across all three presets, and polite coalescing announcements for the states a sighted user would glance at.
 
-> **Current state:** Measured 2026-10-14. No code exists; the obligations are written down in SPEC section 11 and scattered through sections 9 and 10 (selection announced, hit targets at least `32 epx`, `36 epx` in the floating toolbar, colour never the only signal). Sections in `D02` and `D03 T01` each carry their own surface-level accessibility duties; this file builds the UIA text provider they cannot, and audits the whole app against section 11 as the M3 gate. Reduced motion and high contrast are owned by `D02 T04 §7` and `D02 T04 §8` and re-verified here where text surfaces touch them.
+> **Current state:** Measured 2026-10-23. No accessibility code exists: `src/ui` (and with it the `recto-ui` UIA provider tree of `D10 T03`) is not built yet and `src/app` still holds the retired WinUI scaffold; the obligations are written down in SPEC section 11 and scattered through sections 9 and 10 (selection announced, hit targets at least `32 epx`, `36 epx` in the floating toolbar, colour never the only signal). Sections in `D02` and `D03 T01` each carry their own surface-level accessibility duties; this file builds the UIA text provider they cannot, and audits the whole app against section 11 as the M3 gate. Reduced motion and high contrast are owned by `D02 T04 §7` and `D02 T04 §8` and re-verified here where text surfaces touch them.
 
 > 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); sections rewritten against `todo/10-ui/`. The page text provider, form and annotation providers, announcements and the inventory sit on the provider tree of `D10 T03 §1` and `ui::TextRangeAdapter` (`D10 T03 §3`) instead of a framework automation layer; the keyboard order audit uses `ui::FocusManager` (`D10 T01 §13`).
+
+> **Groomed 2026-10-23:** (1) `Current state` re-measured. (2) The file declared `all=not-applicable` adjacency but owns the Read Out Loud settings (`§9`), the announcement surface (`§5`) and stop and pause (`§8`); the `Adjacency` line now owns them. (3) `§6` ended with a live Narrator pass and a recorded table that only a person could produce; it is replaced by the table-driven `A11y.Section11Table` UIA test, and the listening pass with real Narrator is operator work already owned by `D99 T01 §5`, not a gate of this section.
 
 ## Inputs
 
@@ -45,9 +47,9 @@ track: M3
 - Read Out Loud speaks the current page, the rest of the document or the selection in `PageText` reading order (tagged structure when present, OCR text on scanned pages) through installed Windows voices with `Windows.Media.SpeechSynthesis`, with pause, stop, voice, rate and volume, a highlighted word that the page follows, `Ctrl+K` commands and shortcuts, and no work on the UI thread (`§7`, `§8`, `§9`).
 - The document text provider, child providers, announcements and the control inventory are built on the `recto-ui` UIA provider tree (`D10 T03 §1`), `ui::TextRangeAdapter` (`D10 T03 §3`), the notification helper (`D10 T03 §4`) and `ui::FocusManager` (`D10 T01 §13`), with no framework automation layer.
 
-**Adjacency:** all=not-applicable (an access layer over other files' records and surfaces; it owns no data, and its every element is the accessible twin of a surface owned elsewhere)
+**Adjacency:** list=not-applicable (no record list is owned here); document=not-applicable (the reflow view of `§12` shows an existing document and saves nothing); settings=applicable @ D03 T02 §9; reporting=not-applicable (the section 11 table of `§6` is a test artefact); notifications=applicable @ D03 T02 §5; permissions=not-applicable (no access rules); audit=not-applicable (no audit log); exchange=not-applicable (nothing is imported or exported); reverse=applicable @ D03 T02 §8
 
-**Adjacency rationale:** Accessibility here is a property of surfaces other sections build, plus one genuinely new surface (the UIA text provider), which is the accessible form of `D03 T01`'s text model. Declaring product adjacencies would double-own them; the file's contract is instead the section 11 audit in `§3` and `§4`, which checks each owning surface in place.
+**Adjacency rationale:** Accessibility is mostly a property of surfaces other sections build, plus the UIA text provider (the accessible form of `D03 T01`'s text model). Three surfaces are owned here: the Read Out Loud and Reflow settings rows (`§9`, `§12`), the announcements (`§5`, `§6`) and pause and stop of speech (`§8`, `§9`). The section 11 audit in `§3` and `§4` checks every other owning surface in place.
 
 ## Implementation Order
 
@@ -211,14 +213,14 @@ Implement `AnnouncementService` (`src/app/a11y/announcement_service.h/.cpp`) usi
 
 ## 6. Conversion job completion announcement sink (`D04 T01 §6`) and UIA verification pass
 
-Add the conversion and background-job completion announcement API (`AnnouncementService::announce_job_completion` and `announce_job_failure`) for `D04 T01 §6` to plug into, and run the complete SPEC section 11 end-to-end UI Automation and Windows Narrator verification pass across M2 and M3 surfaces.
+Add the conversion and background-job completion announcement API (`AnnouncementService::announce_job_completion` and `announce_job_failure`) for `D04 T01 §6` to plug into, and run the complete SPEC section 11 end-to-end UI Automation verification pass across M2 and M3 surfaces.
 
 **Phase:** 3
 **Needs:** windows-host, display-session
 **Surface:** yes
 
 **Fidelity:** SPEC sections 9.5 (conversion completion notifications) and 11 (complete accessibility contract across UIA text, keyboard focus, target bounds, high contrast, reduced motion, and polite announcements).
-**Job:** Background conversion and OCR jobs announce their completion or failure politely to screen readers, and every clause of SPEC section 11 is proven end-to-end by automated UIA tests and a recorded Narrator verification checklist. Consumer: `D04 T01 §6` job notifications and the M3 milestone sign-off.
+**Job:** Background conversion and OCR jobs announce their completion or failure politely to screen readers, and every clause of SPEC section 11 is proven end-to-end by automated UIA client tests that write a clause-by-clause table of measured values. Consumer: `D04 T01 §6` job notifications and the M3 milestone sign-off.
 **Treatment:** Typed `announce_job_completion` / `announce_job_failure` sink on `AnnouncementService` plus an end-to-end UIA client test (`A11y.EndToEndSection11`) verifying every SPEC section 11 clause in one continuous session. Cheaper substitute that fails the checkpoint: visual-only conversion toasts with no UIA notification sink.
 **Chrome:** consume `AnnouncementService` (`§5`), `DocumentViewProvider` (`§1`-`§2`), and `A11yInventory` (`§3`).
 
@@ -231,10 +233,10 @@ Add the conversion and background-job completion announcement API (`Announcement
 - [ ] Document and export the `IAnnouncementSink` interface in `src/services/announcement_sink.h` so `D04 T01 §6` invokes it directly from `ConversionQueueViewModel` without coupling `recto-services` to `recto-ui` headers. Done when: `src/services/announcement_sink.h` compiles in `recto-services` with zero `recto-ui` dependencies (`-> XREF: D04 T01 §6`). Cheaper substitute that fails the checkpoint: leaving conversion notifications visual-only with no service-level announcement sink.
 - [ ] Verify that every status badge and diff indicator in M2 and M3 (`Search` hits, `Compare PDFs` insertions/deletions in `D03 T01 §10`, required form fields in `D03 T03 §8`) pairs colour with a distinct icon glyph, border style, or text label (`SPEC 11`: colour is never the only signal). Done when: `A11y.ColourNotOnlySignal` inspects all status badges and diff rows.
 - [ ] Implement `A11y.EndToEndSection11` using Windows COM `CUIAutomation` (`IUIAutomation`, `IUIAutomationTextPattern`, `IUIAutomationNotificationEventHandler`) against the live `DocumentView` to verify UIA reading, selection sync, and notification events in one automated pass. Done when: `A11y.EndToEndSection11` passes on both digital and OCR-recognized corpus PDFs.
-- [ ] Run a live Windows Narrator smoke pass on the display-session host (reading a two-column PDF, selecting a sentence, running `Ctrl+F`, and tabbing through the toolbar) and record the clause-by-clause SPEC section 11 verification table. Done when: every clause of SPEC section 11 is verified and recorded.
-- [ ] Commit: `a11y: polite announcements for page, find and selection state`
+- [ ] Add `A11y.Section11Table` in `tests/recto-tests/a11y_e2e_tests.cpp`: one row per clause of SPEC section 11 (keyboard order, focus visual, icon-button names and tooltips, text and form and structure providers, `32` and `36 epx` targets, reduced motion, colour never the only signal), each asserting a measured value through the `IUIAutomation` client and writing the rows to `build/a11y/section11.json`. Done when: the test fails when any clause row is missing from the table or its measured value breaks the clause (a planted nameless button fails the names row). Cheaper substitute: a checklist a person ticks after listening with Narrator.
+- [ ] Commit: `a11y: job completion sink and the end-to-end section 11 UIA pass`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=A11y.*` passes 100%, quoting listener logs for the scripted session, fast-scroll coalescing, job completion sink, and `A11y.EndToEndSection11`.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=A11y.*` passes 100%, including `A11y.Section11Table`, quoting listener logs for the scripted session, fast-scroll coalescing, job completion sink, and `A11y.EndToEndSection11`.
 
 ## 7. Read Out Loud reading plan: current page, to end of document and selection
 
@@ -397,6 +399,6 @@ Add the reading surface: a `ReflowView` in the document slot of the one shell th
 
 ## Verification
 
-- SPEC section 11 read line by line against the findings: every clause proven by `A11y.*` tests (`TextRangeUnits`, `TextProvider`, `SelectionAndFind`, `Inventory`, `TabOrder`, `EscapeStack`, `Announcements`, `FastScrollCoalescing`, `JobAnnouncementSink`, `ColourNotOnlySignal`, `EndToEndSection11`, `ReadAloud*`, `Speech*`), `ReadAloudUi.*`, `Reflow.*`, `ReflowLayout.*`, `AppTests.Reflow*` and `A11y.ReflowPeer`.
-- M3's UIA deliverable demonstrable with Windows Narrator on the reference machine.
+- SPEC section 11 read line by line against the findings: every clause proven by `A11y.*` tests (`TextRangeUnits`, `TextProvider`, `SelectionAndFind`, `Inventory`, `TabOrder`, `EscapeStack`, `Announcements`, `FastScrollCoalescing`, `JobAnnouncementSink`, `ColourNotOnlySignal`, `EndToEndSection11`, `Section11Table`, `ReadAloud*`, `Speech*`), `ReadAloudUi.*`, `Reflow.*`, `ReflowLayout.*`, `AppTests.Reflow*` and `A11y.ReflowPeer`.
+- M3's UIA deliverable proven by the UIA client tests (`A11y.EndToEndSection11`, `A11y.Section11Table`); a listening pass with real Narrator is operator work owned by `D99 T01 §5`, not a gate here.
 - `recto-tests` full suite green; `python scripts/todo-graph.py validate` passes.

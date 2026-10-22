@@ -11,7 +11,7 @@ The evidence programs the milestones close on: golden renders, text and find tab
 | [TODO-01](./TODO-01-corpus-and-suites.md) | Golden, Text, Round-Trip and Performance Suites | active |
 | [TODO-02](./TODO-02-security-and-fuzzing.md) | Hostile-Input Rules, Fuzz Operations and the Broker Design | active |
 | [TODO-03](./TODO-03-user-failure-gates.md) | User-Reported Failure Class Gates | active |
-| [TODO-04](./TODO-04-design-boards.md) | Design Boards and SPEC Text for Undesigned Screens | draft |
+| [TODO-04](./TODO-04-design-boards.md) | Design Boards and SPEC Text for Undesigned Screens | active |
 | [TODO-05](./TODO-05-stamp-audits.md) | Audits of Sections Stamped Before the Current Review Process | active |
 
 ## Completed

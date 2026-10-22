@@ -22,7 +22,7 @@
 ## In scope
 
 - The `recto-ui` static library and its headless render harness, the Win32 `Recto.exe` host that replaces the WinUI scaffold, and retiring the Windows App SDK pins
-- Window host (custom frame, Mica Alt, dark mode, per-monitor DPI, Snap Layouts), DirectComposition compositor, element tree, layout, generated design tokens, drawing primitives and elevation, DirectWrite text, icons and images, input, focus, motion, popups, binding helpers, drag-and-drop and clipboard, and the page canvas `SwapChainHost`
+- Window host (custom frame, Mica Alt, dark mode, per-monitor DPI, Snap Layouts, full screen), DirectComposition compositor, element tree, layout, generated design tokens, drawing primitives and elevation, DirectWrite text, icons and images, input and cursors, focus, motion, popups, binding helpers, drag-and-drop and clipboard, and the page canvas `SwapChainHost`
 - The control set: buttons, tooltips, text input with TSF, password and number boxes, check, radio and toggle, sliders and progress, combo boxes, scrolling with DirectManipulation, virtualized lists and grids, tree, title-bar tabs, menus and the menu bar, flyouts and cards, dialogs, segmented controls and the mode switcher, navigation rail and settings cards, info bars, toasts and pills, search boxes, colour swatches and custom colour entry, spell checking, calendar and date picker, pane splitter, and the control gallery
 - UI Automation providers and patterns, the reusable text-range adapter, announcements, high contrast, text scaling, string tables and the accessibility verification suite
 

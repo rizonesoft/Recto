@@ -124,7 +124,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.Control.Golden` in `tests/recto-tests/ui/control_golden_test.cpp` rendering a probe control in every state at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.Control.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: Control base with visual states, token styles, automation and command hooks`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.Control.*` passes and the probe control's golden crops are identical to the stored images in all three themes.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.Control.*` passes and the probe control's golden crops are identical to the stored images in all three themes.
 
 ## 2. Buttons: standard, accent, danger, icon, toggle and hyperlink
 
@@ -158,7 +158,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.Button.Golden` in `tests/recto-tests/ui/button_golden_test.cpp` rendering every variant in rest, hover, pressed, disabled, focused and toggled at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.Button.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: Button family with accent, danger, icon, toggle and hyperlink variants`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.Button.*` passes and the accent fill samples `#C8431F` in Light and `#F0603C` in Dark.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.Button.*` passes and the accent fill samples `#C8431F` in Light and `#F0603C` in Dark.
 
 ## 3. `ToolTip` with name and shortcut text
 
@@ -189,7 +189,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.ToolTip.Golden` in `tests/recto-tests/ui/tooltip_golden_test.cpp` rendering a name-only and a name-plus-shortcut tooltip at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.ToolTip.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: ToolTip with name and shortcut text and Windows hover timing`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.ToolTip.*` passes and the placement test keeps the popup inside the monitor work area at all four screen edges.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.ToolTip.*` passes and the placement test keeps the popup inside the monitor work area at all four screen edges.
 
 ## 4. `TextBox` editing core: caret, selection, undo, clipboard and placeholder
 
@@ -223,7 +223,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.TextBox.Golden` in `tests/recto-tests/ui/textbox_golden_test.cpp` rendering empty with placeholder, filled, selected, focused and disabled boxes at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.TextBox.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: TextBox editing core with caret, selection, undo and clipboard`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.TextBox.*` passes and the undo test fails if typing coalescing is removed.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.TextBox.*` passes and the undo test fails if typing coalescing is removed.
 
 ## 5. Text Services Framework for `TextBox`: IME, dictation and touch keyboard
 
@@ -256,7 +256,7 @@ track: M2
 - [ ] Add the golden `Ui.Controls.TextBox.Tsf.Golden` for the composition underline styles (converted, target, input) in Light, Dark and HighContrast. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.TextBox.Tsf.Golden` passes and fails when the underline thickness changes.
 - [ ] Commit: `ui: TextBox Text Services Framework bridge for IME, dictation and touch keyboard`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.TextBox.Tsf.*` passes and a scripted Japanese composition commits the expected text.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.TextBox.Tsf.*` passes and a scripted Japanese composition commits the expected text.
 
 ## 6. `PasswordBox` and `NumberBox`
 
@@ -289,7 +289,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.PasswordBox.Golden` in `tests/recto-tests/ui/passwordbox_golden_test.cpp` rendering password in hidden, revealed and error states and a number box with spin buttons at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.PasswordBox.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: PasswordBox and NumberBox with reveal, clamp and validation`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.PasswordBox.*` passes and the clipboard test fails if copy is allowed.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.PasswordBox.*` passes and the clipboard test fails if copy is allowed.
 
 ## 7. `CheckBox`, `RadioButton` group and `ToggleSwitch`
 
@@ -321,7 +321,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.CheckBox.Golden` in `tests/recto-tests/ui/checkbox_golden_test.cpp` rendering check, radio and switch controls in all states at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.CheckBox.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: CheckBox, RadioButton group and ToggleSwitch`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.CheckBox.*` passes and clicking the label of a switch toggles it.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.CheckBox.*` passes and clicking the label of a switch toggles it.
 
 ## 8. `Slider`, `ProgressBar` and `ProgressRing`
 
@@ -354,7 +354,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.Slider.Golden` in `tests/recto-tests/ui/slider_golden_test.cpp` rendering slider, bar and ring at several values at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.Slider.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: Slider, ProgressBar and ProgressRing with reduced-motion fallback`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.Slider.*` passes and the ring renders two identical frames when animations are off.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.Slider.*` passes and the ring renders two identical frames when animations are off.
 
 ## 9. `ComboBox` and `DropDownButton`
 
@@ -386,7 +386,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.ComboBox.Golden` in `tests/recto-tests/ui/combobox_golden_test.cpp` rendering closed, open, hovered row and selected row at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.ComboBox.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: ComboBox and DropDownButton with popup list and type-ahead`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.ComboBox.*` passes and type-ahead selects the matching item.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.ComboBox.*` passes and type-ahead selects the matching item.
 
 ## 10. `ScrollViewer`: overlay scrollbars, smooth wheel, DirectManipulation pan and pinch
 
@@ -419,7 +419,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.ScrollViewer.Golden` in `tests/recto-tests/ui/scrollviewer_golden_test.cpp` rendering a content area with scrollbars at rest, hover and dragging at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.ScrollViewer.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: ScrollViewer with overlay scrollbars, smooth wheel and DirectManipulation`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.ScrollViewer.*` passes and the smooth wheel test fails if the offset jumps to the target in one step.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.ScrollViewer.*` passes and the smooth wheel test fails if the offset jumps to the target in one step.
 
 ## 11. Virtualized `ItemsView`: stack, filmstrip and grid layouts, selection, reorder hooks
 
@@ -451,7 +451,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.ItemsView.Golden` in `tests/recto-tests/ui/itemsview_golden_test.cpp` rendering each layout with selection, focus and the drop indicator at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.ItemsView.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: virtualized ItemsView with stack, filmstrip and grid layouts`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.ItemsView.*` passes and the realization test fails if all items are realized.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.ItemsView.*` passes and the realization test fails if all items are realized.
 
 ## 12. `TreeView`: expand, collapse, keyboard, selection bar and drag reorder
 
@@ -483,7 +483,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.TreeView.Golden` in `tests/recto-tests/ui/treeview_golden_test.cpp` rendering a three level outline with expanded, collapsed, selected and current rows at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.TreeView.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: TreeView with accent bar, keyboard model and drag reorder`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.TreeView.*` passes and the current-item crop fails without the 3 epx bar.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.TreeView.*` passes and the current-item crop fails without the 3 epx bar.
 
 ## 13. `TabStrip`: title-bar document tabs, close, add, overflow and drag reorder
 
@@ -517,7 +517,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.TabStrip.Golden` in `tests/recto-tests/ui/tabstrip_golden_test.cpp` rendering one, five and overflowing tab sets in the title bar strip with an active and a dirty tab at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.TabStrip.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: TabStrip for title-bar document tabs with close, add, overflow and reorder`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.TabStrip.*` passes and empty strip space reports caption while a tab reports client area.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.TabStrip.*` passes and empty strip space reports caption while a tab reports client area.
 
 ## 14. `Menu` and context menu: glyphs, shortcuts, separators, submenus and check items
 
@@ -550,7 +550,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.Menu.Golden` in `tests/recto-tests/ui/menu_golden_test.cpp` rendering a menu with glyphs, shortcuts, separators, check, radio and a submenu at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.Menu.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: Menu and context menu with glyph column, shortcuts and submenus`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.Menu.*` passes and a disabled command greys its item live.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.Menu.*` passes and a disabled command greys its item live.
 
 ## 15. `MenuBar` with access keys and Alt activation
 
@@ -582,7 +582,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.MenuBar.Golden` in `tests/recto-tests/ui/menubar_golden_test.cpp` rendering the bar with File open and Alt underlines shown at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.MenuBar.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: MenuBar with six menus, access keys and Alt activation`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.MenuBar.*` passes and Alt+F opens File while a TextBox has focus.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.MenuBar.*` passes and Alt+F opens File while a TextBox has focus.
 
 ## 16. `Flyout` popover and the floating `Card` container
 
@@ -614,7 +614,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.Card.Golden` in `tests/recto-tests/ui/card_golden_test.cpp` rendering a card at Z32 and Z64, an acrylic card and a flyout in three placements at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.Card.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: Flyout popover and floating Card container with SPEC motion`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.Card.*` passes and with transparency effects off the acrylic card renders opaque.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.Card.*` passes and with transparency effects off the acrylic card renders opaque.
 
 ## 17. `Dialog`: modal overlay, smoke, alert and form layouts and Fluent motion
 
@@ -647,7 +647,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.Dialog.Golden` in `tests/recto-tests/ui/dialog_golden_test.cpp` rendering the alert and form layouts with smoke over the shell backdrop at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.Dialog.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: Dialog with smoke, alert and form layouts, focus trap and ContentDialog motion`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.Dialog.*` passes and Tab never leaves the dialog.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.Dialog.*` passes and Tab never leaves the dialog.
 
 ## 18. `SegmentedControl` and the underlined mode switcher
 
@@ -679,7 +679,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.SegmentedControl.Golden` in `tests/recto-tests/ui/segmentedcontrol_golden_test.cpp` rendering a three segment control and the mode switcher in each selection at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.SegmentedControl.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: SegmentedControl and underlined ModeSwitcher`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.Segmented.*` passes and indicator rectangles are whole device pixels at 125 and 175 percent.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.Segmented.*` passes and indicator rectangles are whole device pixels at 125 and 175 percent.
 
 ## 19. `NavigationRail`, `Expander`, `SettingsGroup` and `SettingsCard`
 
@@ -712,7 +712,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.SettingsGroup.Golden` in `tests/recto-tests/ui/settingsgroup_golden_test.cpp` rendering a Layout group, a Theme group and a managed row, plus the navigation rail at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.SettingsGroup.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: NavigationRail, Expander, SettingsGroup and SettingsCard`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.Settings.*` passes and the managed row is disabled but still matched by the filter.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.Settings.*` passes and the managed row is disabled but still matched by the filter.
 
 ## 20. `InfoBar`, in-app `Toast`, and the `Chip`, `Badge` and `Keycap` pills
 
@@ -746,7 +746,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.InfoBar.Golden` in `tests/recto-tests/ui/infobar_golden_test.cpp` rendering three severities, a toast, chips, badges and keycaps at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.InfoBar.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: InfoBar, Toast and the Chip, Badge and Keycap pill primitives`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.Pills.*` passes and the radius test fails if a pill uses a literal radius.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.Pills.*` passes and the radius test fails if a pill uses a literal radius.
 
 ## 21. `SearchBox` with a suggestion list for the command box and Find a setting
 
@@ -779,7 +779,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.SearchBox.Golden` in `tests/recto-tests/ui/searchbox_golden_test.cpp` rendering empty, typing with sectioned results, selected row and a no-results state at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.SearchBox.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: SearchBox with suggestion list for the command box and Find a setting`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.SearchBox.*` passes and focus remains in the text field while arrows move the selected suggestion.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.SearchBox.*` passes and focus remains in the text field while arrows move the selected suggestion.
 
 ## 22. `ColorSwatchPicker` from token swatches
 
@@ -811,7 +811,7 @@ track: M2
 - [ ] Add the headless golden test `Ui.Controls.ColorSwatchPicker.Golden` in `tests/recto-tests/ui/colorswatchpicker_golden_test.cpp` rendering the grid for each purpose with a selected swatch at 100 and 200 percent in Light, Dark and HighContrast through the harness of `D10 T01 §1`. Done when: `recto-tests.exe --gtest_filter=Ui.Controls.ColorSwatchPicker.Golden` passes and fails when a token colour or a metric changes by one unit. Cheaper substitute: asserting only that rendering does not crash.
 - [ ] Commit: `ui: ColorSwatchPicker from token swatches`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.ColorSwatchPicker.*` passes and the control contains no colour literal.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.ColorSwatchPicker.*` passes and the control contains no colour literal.
 
 ## 23. Control gallery: every control in Light, Dark and HighContrast with golden images
 
@@ -842,7 +842,7 @@ track: M2
 - [ ] Add an accessibility smoke in the gallery that lists controls without automation names. Done when: the list is empty for the gallery build.
 - [ ] Commit: `ui: control gallery with golden images in Light, Dark and HighContrast`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Gallery.*` passes and the coverage test fails for an unregistered control.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Gallery.*` passes and the coverage test fails for an unregistered control.
 
 ## 24. Spell checking for `TextBox` through the Windows Spell Checking API
 
@@ -872,7 +872,7 @@ track: M2
 - [ ] Expose misspellings to UI Automation as the `AnnotationType_SpellingError` annotation on the text range (consumed by `D10 T03 §3`). Done when: the text range adapter test sees the annotation on the misspelled range.
 - [ ] Commit: `ui: spell checking for TextBox through the Windows Spell Checking API`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.SpellCheck.*` passes on a host with the `en-US` and `fr-FR` spelling resources, and the golden crop fails when the underline becomes straight.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.SpellCheck.*` passes on a host with the `en-US` and `fr-FR` spelling resources, and the golden crop fails when the underline becomes straight.
 
 ## 25. `CalendarFlyout` and `DatePicker` with locale-aware weeks and formats
 
@@ -901,7 +901,7 @@ track: M2
 - [ ] Expose Grid and GridItem semantics plus the selected date as the field value through the automation properties of `D10 T01 §6` (wrapped by `D10 T03 §2`). Done when: `Ui.Controls.Calendar.Automation` asserts row and column counts and the value.
 - [ ] Commit: `ui: CalendarFlyout and DatePicker with locale-aware weeks and formats`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.Calendar.*` passes, and the model test fails when the first day of week is forced to Sunday for `en-GB`.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.Calendar.*` passes, and the model test fails when the first day of week is forced to Sunday for `en-GB`.
 
 ## 26. `Splitter` for resizable panes with pointer, keyboard and limits
 
@@ -930,7 +930,7 @@ track: M2
 - [ ] Expose RangeValue semantics (value in epx, min, max) and the name "Resize <pane>" through the automation properties of `D10 T01 §6` (wrapped by `D10 T03 §2`). Done when: `Ui.Controls.Splitter.Automation` asserts the range and name.
 - [ ] Commit: `ui: Splitter for resizable panes with pointer, keyboard and limits`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.Splitter.*` passes, and the clamp test fails when the minimum is ignored.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.Splitter.*` passes, and the clamp test fails when the minimum is ignored.
 
 ## 27. Custom colour entry: hex field, live preview and recent colours
 
@@ -959,10 +959,10 @@ track: M2
 - [ ] Expose the field value, the preview's colour name or hex as its name and the recent colours as a list through the automation properties of `D10 T01 §6` (wrapped by `D10 T03 §2`). Done when: `Ui.Controls.ColourEntry.Automation` asserts names and values.
 - [ ] Commit: `ui: custom colour entry with hex field, live preview and recent colours`
 
-**Test checkpoint:** `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.ColourEntry.*` passes, and the parse test fails when a five-digit hex is accepted.
+**Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.ColourEntry.*` passes, and the parse test fails when a five-digit hex is accepted.
 ## Verification
 
-- Every SPEC control (sections 4 to 12 of `design/SPEC.md`) exists as a `recto-ui` control and appears in `recto-ui-gallery`: `build\bin\x64\Debug\recto-tests.exe --gtest_filter=Ui.Controls.*:Ui.Gallery.*` passes, with golden images matching in Light, Dark and HighContrast at 100, 150 and 200 percent.
+- Every SPEC control (sections 4 to 12 of `design/SPEC.md`) exists as a `recto-ui` control and appears in `recto-ui-gallery`: `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Controls.*:Ui.Gallery.*` passes, with golden images matching in Light, Dark and HighContrast at 100, 150 and 200 percent.
 - No colour or corner-radius literal exists under `src/ui/controls/` and `src/ui/gallery/`: `Audit.UiControlsNoLiterals` and `Audit.NoCornerRadiusLiterals` pass.
 - Every icon-only control has an automation name and a tooltip with its shortcut, and the gallery accessibility smoke lists no unnamed control.
 - `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` pass.

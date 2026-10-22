@@ -15,6 +15,8 @@ track: M2
 
 > 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); sections rewritten against `todo/10-ui/`
 
+> **Groomed 2026-10-23:** re-measured: `src/app/` holds only the retired WinUI scaffold, `src/ui/` does not exist, and `src/pdf/display_list.*` and `document.*` exist from `D01` but `TileScheduler`, `DocumentActor` and `Runtime` do not, so no viewer code exists. Added the missing `D02 T04 §2` (`SettingsStore`) edges for the sections that read `TileCacheBudgetMb`, `AskBeforeOpeningLinks` and `DarkPageColorMode`; every board comparison now runs through the golden suite (`D10 T01 §20`); filed `§25` (page render failure and extreme page sizes). The external link launch uses an `ILinkLauncher` seam over `ShellExecuteExW` instead of the WinRT `Launcher` (the toolkit has no WinRT activation in the UI path, `docs/specs/2026-10-22-recto-ui-toolkit-design.md` section 1).
+
 ## Inputs
 
 - `docs/plans/2026-10-13-recto-foundation.md` sections 4.5 (thread map: presentation thread owns its D3D11/D2D device contexts), 4.7 (tile path and stretched zoom preview), 4.8 (presentation thread and 512 MB starting texture-cache budget), 8 (performance targets), and 9 (link and launch-action security rules).
@@ -60,16 +62,16 @@ track: M2
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | `ui::SwapChainHost`, Direct3D 11 / Direct2D 1.3 device creation and presentation thread | D02 T01 §3, D02 T01 §4, D10 T01 §3, D10 T01 §5, D10 T01 §18 | [ ] |
-| 2 | §2 | Lock-free viewport state channel, DPI scaling and page-outline loading placeholders | §1, D01 T01 §10, D10 T01 §4 | [ ] |
-| 3 | §3 | Worker D3D11 texture upload and LRU budgeted tile texture cache | §2, D01 T02 §7 | [ ] |
+| 2 | §2 | Lock-free viewport state channel, DPI scaling and page-outline loading placeholders | §1, D01 T01 §10, D10 T01 §4, D10 T01 §20 | [ ] |
+| 3 | §3 | Worker D3D11 texture upload and LRU budgeted tile texture cache | §2, D01 T02 §7, D02 T04 §2 | [ ] |
 | 4 | §4 | Viewport-to-scheduler tile driver and seam-free page compositing | §3, D01 T02 §8 | [ ] |
 | 5 | §5 | Page geometry engine for Continuous, Single-Page and Two-Page Spread layouts | §2 | [ ] |
 | 6 | §6 | Continuous scrolling, inertia, keyboard page nav, rotation and Go-to-Page (`Ctrl+G`) | §4, §5, D10 T01 §12, D10 T02 §10 | [ ] |
-| 7 | §7 | Zoom engine with in-frame stretched tile preview and anchor preservation | §4, §5, D10 T01 §12, D10 T02 §10 | [ ] |
-| 8 | §8 | Floating Page Toolbar (`Focus`) and reading auto-fade behavior | §6, §7, D02 T01 §9, D10 T01 §9, D10 T01 §13, D10 T01 §14, D10 T02 §2, D10 T02 §3, D10 T02 §4, D10 T02 §14, D10 T02 §16, D10 T03 §1 | [ ] |
-| 9 | §9 | Link hit-testing, internal navigation, `"Open this link?"` prompt and launch refusal | §5, §6, D02 T01 §10, D10 T01 §12, D10 T02 §3, D10 T02 §17 | [ ] |
-| 10 | §10 | Dark-theme page colour modes (`Original`, `Dimmed`, `Inverted`) and `F11` Full Screen | §4, §8, D10 T01 §4, D10 T01 §8 | [ ] |
-| 11 | §11 | Reading tints: sepia, eye-care green and a custom page colour | §10, D02 T04 §5, D02 T03 §11, D10 T01 §8, D10 T02 §14, D10 T02 §16, D10 T02 §20, D10 T02 §22, D10 T03 §5, D10 T02 §27 | [ ] |
+| 7 | §7 | Zoom engine with in-frame stretched tile preview and anchor preservation | §4, §5, D10 T01 §12, D10 T02 §10, D01 T02 §21 | [ ] |
+| 8 | §8 | Floating Page Toolbar (`Focus`) and reading auto-fade behavior | §6, §7, D02 T01 §9, D10 T01 §9, D10 T01 §13, D10 T01 §14, D10 T02 §2, D10 T02 §3, D10 T02 §4, D10 T02 §14, D10 T02 §16, D10 T03 §1, D10 T01 §20 | [ ] |
+| 9 | §9 | Link hit-testing, internal navigation, `"Open this link?"` prompt and launch refusal | §5, §6, D02 T01 §10, D10 T01 §12, D10 T02 §3, D10 T02 §17, D02 T04 §2, D10 T01 §20 | [ ] |
+| 10 | §10 | Dark-theme page colour modes (`Original`, `Dimmed`, `Inverted`) and `F11` Full Screen | §4, §8, D10 T01 §4, D10 T01 §8, D02 T04 §2, D10 T01 §20 | [ ] |
+| 11 | §11 | Reading tints: sepia, eye-care green and a custom page colour | §10, D02 T04 §5, D02 T03 §11, D10 T01 §8, D10 T02 §14, D10 T02 §16, D10 T02 §20, D10 T02 §22, D10 T03 §5, D10 T02 §27, D10 T01 §20 | [ ] |
 | 12 | §12 | `recto-pdf` page transitions and timings: `/Trans` and `/Dur` | D01 T01 §10, D00 T03 §3 | [ ] |
 | 13 | §13 | Presentation mode: full-screen slideshow, navigation and blank screen | §6, §9, §10, §12, D02 T03 §11, D06 T04 §5, D10 T01 §4, D10 T01 §12, D10 T02 §17 | [ ] |
 | 14 | §14 | Render page transitions and honour automatic page timing | §12, §13, D02 T04 §5, D01 T02 §12, D06 T04 §5, D10 T01 §14 | [ ] |
@@ -83,6 +85,7 @@ track: M2
 | 22 | §22 | Line weights view toggle: true widths or uniform thin lines | §3, D02 T03 §7, D01 T02 §6, D01 T02 §11, D06 T04 §6, D10 T02 §14 | [ ] |
 | 23 | §23 | Split view: two panes of one document with independent scroll and zoom | §6, §7, D02 T04 §6, D02 T01 §13, D06 T04 §6, D10 T01 §7, D10 T01 §12, D10 T01 §13, D10 T02 §26 | [ ] |
 | 24 | §24 | Side-by-side view of two documents with synchronized scrolling | §6, D02 T01 §3, D02 T01 §13, D06 T04 §6, D10 T01 §7, D10 T01 §12, D10 T01 §13, D10 T02 §26 | [ ] |
+| 25 | §25 | Per-page render failure and extreme page sizes in the view | §4, §5, §7, D01 T02 §8, D10 T02 §16, D10 T01 §20 | [ ] |
 
 ## 1. `ui::SwapChainHost`, Direct3D 11 / Direct2D 1.3 device creation and presentation thread
 
@@ -135,11 +138,11 @@ Build the non-blocking UI-to-presentation viewport channel (`ViewportState`) and
 - [ ] Wire the `ui::SwapChainHost` size event and the `ui::Window` DPI-scale event in `src/app/document_view.cpp` to `ViewportChannel::post`, applying `IDXGISwapChain2::SetMatrixTransform` (`1.0f / dpi_scale_x`, `1.0f / dpi_scale_y`) and `ResizeBuffers` on the presentation thread. Done when: moving the window between a `100%` DPI monitor and a `200%` DPI monitor keeps the swap chain at native physical pixel resolution without flicker.
 - [ ] Clamp `ResizeBuffers` pixel dimensions to `[1, D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION]` (`16384`) so minimized (`0 x 0`) or extreme multi-monitor windows never trigger `DXGI_ERROR_INVALID_CALL`. Done when: minimizing and restoring the window produces zero DXGI errors.
 - [ ] Deliver `DocumentDescription` page dimensions (`width_pt`, `height_pt`, `rotation`) to `PresentationRenderer` immediately upon open completion. Done when: page placeholders have exact aspect ratios matching the PDF's `/MediaBox` and `/CropBox` before any tile renders.
-- [ ] Render the SPEC section 7 page shadow (`1 epx` key shadow + `24 epx` soft ambient shadow, square page corners) and paper background rectangle for every visible page in the viewport. Done when: page outlines and shadows visually match `D-Focus-Light.png` and `D-Focus-Dark.png`. Cheaper substitute that fails the checkpoint: showing a loading spinner instead of true-size page outlines.
+- [ ] Render the SPEC section 7 page shadow (`1 epx` key shadow + `24 epx` soft ambient shadow, square page corners) and paper background rectangle for every visible page in the viewport. Done when: golden entries `view_pageshadow_light` and `view_pageshadow_dark` (page edge crops of `D-Focus-Light.png` and `D-Focus-Dark.png`) pass `expect_matches(id)` (`D10 T01 §20`). Cheaper substitute that fails the checkpoint: showing a loading spinner instead of true-size page outlines.
 - [ ] Add `View.ViewportChannelAndPlaceholders` test in `tests/recto-tests/` verifying non-blocking resize/DPI storm coalescing, `0 x 0` minimize safety, and immediate page-outline placeholder geometry. Done when: `recto-tests.exe --gtest_filter=View.ViewportChannelAndPlaceholders` passes.
 - [ ] Commit: `viewer: add coalesced ViewportChannel, DPI scaling and page-outline placeholders`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=View.ViewportChannelAndPlaceholders` passes on the display-session host, and rendered page outlines with soft shadows match `D-Focus-Light.png`.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=View.ViewportChannelAndPlaceholders` passes on the display-session host, and golden entries `view_pageshadow_light` and `view_pageshadow_dark` (crops of the page edges of `D-Focus-Light.png` and `D-Focus-Dark.png`) pass through `recto::ui::test::golden::expect_matches(id)` at 100, 150 and 200 percent with SSIM at or above the manifest `ssim_min` (`D10 T01 §20`).
 
 ## 3. Worker D3D11 texture upload and LRU budgeted tile texture cache
 
@@ -254,6 +257,8 @@ Wire interactive scrolling, view rotation, and page navigation in `DocumentView`
 
 Implement foundation plan section 4.7's two-phase zoom engine in `DocumentView` and `PresentationRenderer`: discrete zoom buckets (`25%` to `500%`), `Fit Width` (`Ctrl+0`), `Fit Page`, `Actual Size 100%` (`Ctrl+1`), the SPEC section 8.2 preset dropdown (`Fit width`, `Fit page`, `50%`, `75%`, `100%`, `125%`, `150%`, `200%`, `300%`, `400%`), `Ctrl+Plus` / `Ctrl+Minus`, `Ctrl+Wheel`, and touchpad pinch-to-zoom (DirectManipulation, `D10 T02 §10`). During any zoom change, `PresentationRenderer` scales the nearest already-cached zoom bucket's textures in the exact same frame (`0 ms` blanking) while `TileScheduler` renders sharp target-bucket tiles within `150 ms`, keeping the document point under the cursor (or viewport centre) stationary.
 
+> **Groomed 2026-10-23:** page sizes and actual-size zoom read `PageDescription::physical_width_pt` and `physical_height_pt` from `D01 T02 §21` so `/UserUnit` pages report their true physical size (cross-domain groom follow-up).
+
 **Phase:** 2
 **Needs:** windows-host, display-session
 **Surface:** yes
@@ -311,9 +316,10 @@ Build the SPEC section 8.2 `PageToolbar` control (`src/app/controls/page_toolbar
 - [ ] Honor Windows `"Show animations in Windows"` (`SPI_GETCLIENTAREAANIMATION` through `ui::Motion`): when false, disable the 3-second toolbar fade so `PageToolbar` remains at `100%` opacity at all times per SPEC 11. Done when: toggling the animation flag in tests disables the fade completely.
 - [ ] Support seamless reparenting of `PageToolbar` between `BottomOverlaySlot` (`Focus` floating bar with `ui::Painter` elevation Z=32) and `TopBarSlot` (`Classic` and `Reading room` docked strip without shadow). Done when: moving `PageToolbar` to `TopBarSlot` matches `D-Classic.png` and `D-ReadingRoom.png`.
 - [ ] Add `View.PageToolbarAndAutoFade` test in `tests/recto-tests/` verifying control order, `36 x 36 epx` hit targets, automation names, `"3 / 9"` inline page entry, `More` menu completeness, 3-second fade to `0.4`, and reduced-motion override. Done when: `recto-tests.exe --gtest_filter=View.PageToolbarAndAutoFade` passes.
+- [ ] Register `view_toolbar_focus_light`, `view_toolbar_focus_dark` and `view_toolbar_classic` in `tests/recto-tests/golden/ui/manifest.json` with the toolbar crops of the three boards (fully opaque state). Done when: `Ui.Golden.View.Toolbar` passes at the three scales. Source: `D10 T01 §20`.
 - [ ] Commit: `viewer: build SPEC 8.2 Floating Page Toolbar with inline page box, More menu and 3s auto-fade`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=View.PageToolbarAndAutoFade` passes on the display-session host, and rendered toolbar screenshots match `D-Focus-Light.png`, `D-Focus-Dark.png`, and `D-Classic.png`.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=View.PageToolbarAndAutoFade` passes on the display-session host, and golden entries `view_toolbar_focus_light`, `view_toolbar_focus_dark` and `view_toolbar_classic` (crops of the toolbar of `D-Focus-Light.png`, `D-Focus-Dark.png` and `D-Classic.png`) pass through `recto::ui::test::golden::expect_matches(id)` at 100, 150 and 200 percent with SSIM at or above the manifest `ssim_min` (`D10 T01 §20`).
 
 ## 9. Link hit-testing, internal navigation, `"Open this link?"` prompt and launch refusal
 
@@ -331,18 +337,20 @@ Implement the viewer's link interaction and untrusted-action security boundary (
 **Build order:**
 
 1. Wire per-page `PdfLinkAnnotation` records from `DocumentActor` (`D01 T01 §4`) into `DocumentView`: transform link bounding rects via `PageLayoutGeometry`, change the pointer cursor to the system hand cursor on hover (`ui::Input`, `D10 T01 §12`), draw a subtle `RectoAccentTintBrush` hover/focus highlight, show a `ui::ToolTip` (`D10 T02 §3`) with `"Go to page N"` (internal) or the target domain/URI (external), and allow keyboard `Tab` and `Enter` activation across links on visible pages. Done when: hovering or tabbing onto internal and external links in the corpus link fixture highlights them and clicking an internal `GoTo` link scrolls to the target page and pushes the origin page onto §6's back-navigation stack (`Alt+Left`).
-2. Build `OpenLinkDialog` (`src/app/dialogs/open_link_dialog.h/.cpp`) per SPEC 9.9 (`"Open this link?"`, full un-truncated URL in a read-only selectable monospace box, `Cancel` and `Open in browser` buttons): when an external `http://`, `https://`, or `mailto:` link is activated, show `OpenLinkDialog` if `"Ask before opening links"` is enabled (default true) and launch via `Windows::System::Launcher::LaunchUriAsync` only if confirmed; for `file://` or unknown schemes, always refuse or prompt with an explicit warning; and for `/Launch`, `/JavaScript`, `/JS`, `/Rendition`, or `/SubmitForm` actions, never execute anything and log a diagnostic refusal entry. Done when: clicking an external URL opens `OpenLinkDialog` matching `D-Dialogs.png`, clicking `Cancel` opens nothing, and clicking a crafted `/Launch` (`cmd.exe`) or `/JavaScript` link in the hostile test corpus executes zero processes or scripts.
+2. Build `OpenLinkDialog` (`src/app/dialogs/open_link_dialog.h/.cpp`) per SPEC 9.9 (`"Open this link?"`, full un-truncated URL in a read-only selectable monospace box, `Cancel` and `Open in browser` buttons): when an external `http://`, `https://`, or `mailto:` link is activated, show `OpenLinkDialog` if `"Ask before opening links"` is enabled (default true) and launch through `ILinkLauncher` (`ShellExecuteExW`, no WinRT activation) only if confirmed; for `file://` or unknown schemes, always refuse or prompt with an explicit warning; and for `/Launch`, `/JavaScript`, `/JS`, `/Rendition`, or `/SubmitForm` actions, never execute anything and log a diagnostic refusal entry. Done when: clicking an external URL opens `OpenLinkDialog` matching `D-Dialogs.png`, clicking `Cancel` opens nothing, and clicking a crafted `/Launch` (`cmd.exe`) or `/JavaScript` link in the hostile test corpus executes zero processes or scripts.
 
 - [ ] Cache per-page `PdfLinkAnnotation` lists in `DocumentView` and hit-test pointer coordinates through `PageLayoutGeometry::viewport_to_page_point` (§5). Done when: pointer hover over a link switches cursor to `Hand` even when the page is zoomed or rotated `90°`/`180°`/`270°`.
 - [ ] Draw a subtle `RectoAccentTintBrush` fill and `1 epx` `RectoAccentBrush` outline on hovered or keyboard-focused links on the page canvas. Done when: keyboard `Tab` traversal visibly highlights each link on the current page.
 - [ ] Execute internal `GoTo` links by scrolling `DocumentView` to the destination page and `(top, zoom)` target while pushing the prior viewport position onto §6's `Alt+Left` history stack. Done when: clicking a table-of-contents link jumps to the chapter and `Alt+Left` returns to the table of contents.
 - [ ] Author `src/app/dialogs/open_link_dialog.h/.cpp` using `ui::Dialog` (`D02 T01 §10`) with title `"Open this link?"`, the complete URL in a monospace (`Cascadia Mono` / `Consolas`) box on `RectoSurfaceBrush` with `1 epx` `RectoBorderStrongBrush`, and `Cancel` / `Open in browser` buttons. Done when: the rendered dialog matches the `"Open this link?"` board in `D-Dialogs.png`.
-- [ ] Honor the `"Ask before opening links"` setting (`D02 T04 §5`, default `true`): when `true`, always show `OpenLinkDialog` before calling `Launcher::LaunchUriAsync`; when `false`, allow only `https://` and `http://` web links to open directly while still prompting or refusing `file://` and custom URI schemes. Done when: disabling `"Ask before opening links"` still blocks silent `file://` or custom-protocol execution. Cheaper substitute that fails the checkpoint: calling `ShellExecuteW` on arbitrary URI strings or skipping the prompt for `file://` paths when the toggle is off.
+- [ ] Honor the `"Ask before opening links"` setting (`D02 T04 §5`, default `true`): when `true`, always show `OpenLinkDialog` before calling `ILinkLauncher::launch`; when `false`, allow only `https://` and `http://` web links to open directly while still prompting or refusing `file://` and custom URI schemes. Done when: disabling `"Ask before opening links"` still blocks silent `file://` or custom-protocol execution. Cheaper substitute that fails the checkpoint: calling `ShellExecuteW` on arbitrary URI strings or skipping the prompt for `file://` paths when the toggle is off.
 - [ ] Unconditionally refuse `/Launch` (external program launch), `/JavaScript` / `/JS`, `/SubmitForm`, and `/ImportData` actions in both `recto-pdf` and `DocumentView`, recording the blocked action in `recto::pdf::diagnostics_tail()`. Done when: clicking a crafted `/Launch` (`calc.exe`) annotation does not spawn a process and logs the refusal.
 - [ ] Add `View.SafeLinksAndLaunchRefusal` test in `tests/recto-tests/` testing internal `GoTo` navigation + `Alt+Left` return, external URL dialog confirmation and cancellation, setting toggle behavior, and `/Launch` / `/JavaScript` refusal. Done when: `recto-tests.exe --gtest_filter=View.SafeLinksAndLaunchRefusal` passes.
+- [ ] Register `view_openlink` in `tests/recto-tests/golden/ui/manifest.json` for the Link dialog crop of `D-Dialogs.png`. Done when: `Ui.Golden.View.OpenLink` passes at the three scales. Source: `D10 T01 §20`, SPEC 9.9.
+- [ ] Define `ILinkLauncher` (`src/app/link_launcher.h`, `launch(const std::wstring& uri) -> LaunchResult`) with the production implementation over `ShellExecuteExW` (`open` verb, `SEE_MASK_NOASYNC` off, owner window the `ui::Window` HWND) and a recording fake for tests, and route `OpenLinkDialog`, `D02 T04 §6` (`ms-settings:defaultapps`) and `D02 T06 §3` (sign-in URL) through it. Done when: `View.SafeLinksAndLaunchRefusal` asserts the fake receives exactly the confirmed URL, zero calls after `Cancel`, and no test launches a real browser. Cheaper substitute that fails the checkpoint: calling `ShellExecuteW` directly from view code.
 - [ ] Commit: `viewer: implement link hit-testing, OpenLinkDialog prompt and Launch/JS refusal`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=View.SafeLinksAndLaunchRefusal` passes on the display-session host, `OpenLinkDialog` screenshot matches `D-Dialogs.png`, and crafted `/Launch` / `/JavaScript` annotations are proven inert.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=View.SafeLinksAndLaunchRefusal` passes on the display-session host, golden entry `view_openlink` (the Link in a document crop of `D-Dialogs.png`) passes `expect_matches(id)` (`D10 T01 §20`), and crafted `/Launch` / `/JavaScript` annotations are proven inert.
 
 ## 10. Dark-theme page colour modes (`Original`, `Dimmed`, `Inverted`) and `F11` Full Screen
 
@@ -371,9 +379,10 @@ Implement SPEC section 4's dark-theme page colour compositing modes (`Original`,
 - [ ] Add `View.PageColorModesAndFullScreen` test in `tests/recto-tests/` asserting zero tile re-renders across `Original` / `Dimmed` / `Inverted` switches, `#D9D5CE` dimmed paper sampling, un-inverted image preservation in `Inverted` mode, and `F11` / edge-hover / `Esc` Full Screen transitions. Done when: `recto-tests.exe --gtest_filter=View.PageColorModesAndFullScreen` passes.
 - [ ] Keep `Dimmed` and `Inverted` screen-only: printing (`D07 T01 §2`), export and saved files ignore `PageColorMode`, and highlight, underline and ink annotations keep at least 4.5:1 contrast against the text beneath them. Done when: `View.PageColorModesAndFullScreen` measures the contrast on a highlighted fixture in both modes and a print-to-PDF of the same page is byte-identical to `Original`.
 - [ ] Paint page placeholders in the active mode's paper colour from the first frame, so switching pages in a dark mode never flashes white. Done when: `View.PageColorModesAndFullScreen` captures 100 rapid page flips in `Inverted` with zero white frames.
+- [ ] Register `view_dimmed_page` in `tests/recto-tests/golden/ui/manifest.json` for the dimmed page area of `D-Focus-Dark.png`. Done when: `Ui.Golden.View.DimmedPage` passes at the three scales. Source: `D10 T01 §20`.
 - [ ] Commit: `viewer: add GPU Dimmed/Inverted dark page colour modes and F11 Full Screen`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=View.PageColorModesAndFullScreen` passes on the display-session host, `Dimmed` page matches `D-Focus-Dark.png`, `Inverted` leaves corpus images un-inverted, and `F11` Full Screen edge-reveal and `Esc` restore work end to end.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=View.PageColorModesAndFullScreen` passes on the display-session host, golden entry `view_dimmed_page` (the page area of `D-Focus-Dark.png`) passes `expect_matches(id)` (`D10 T01 §20`), `Inverted` leaves corpus images un-inverted, and `F11` Full Screen edge-reveal and `Esc` restore work end to end.
 
 ## 11. Reading tints: sepia, eye-care green and a custom page colour
 
@@ -400,7 +409,7 @@ UPDF's and PDFelement's page background colours (sepia, eye-care green, custom) 
 - [ ] Add `View.ReadingTints` in `tests/recto-tests/` covering token resolution, zero re-renders, custom colour persistence, `Inverted` precedence and HighContrast. Done when: `recto-tests.exe --gtest_filter=View.ReadingTints` passes. Cheaper substitute: re-rasterizing tiles on the CPU or painting a coloured rectangle behind transparent pages.
 - [ ] Commit: `viewer: add sepia, eye-care and custom reading tints`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=View.ReadingTints` passes on the display-session host and a sepia screenshot shows paper at `#F4ECD8`.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=View.ReadingTints` passes on the display-session host and the sepia render of the `View.ReadingTints` fixture samples the paper rectangle at `#F4ECD8` (pixel read from the offscreen target, tolerance 1 level per channel).
 
 ## 12. `recto-pdf` page transitions and timings: `/Trans` and `/Dur`
 
@@ -518,17 +527,17 @@ PowerPoint-style presenter views are in UPDF and Foxit's presentation features: 
 
 **Build order:**
 
-1. Add `PresenterWindow` (`src/app/presenter_window.h/.cpp`) shown by `Presenter view` in the presentation controls or the key `T`: pick the audience display as the one that does not hold the main window (`EnumDisplayMonitors`), place the audience window full screen there and the presenter window on the other, with a `Swap displays` button; with a single display open the presenter view as a normal movable window. Done when: on a two-display rig the audience page and the presenter window appear on different displays, and on one display a movable window opens.
+1. Add `PresenterWindow` (`src/app/presenter_window.h/.cpp`) shown by `Presenter view` in the presentation controls or the key `T`: pick the audience display as the one that does not hold the main window (`EnumDisplayMonitors`), place the audience window full screen there and the presenter window on the other, with a `Swap displays` button; with a single display open the presenter view as a normal movable window. Done when: against a fake `IMonitorProvider` (`src/app/monitor_provider.h`, production over `EnumDisplayMonitors`) with two monitors the audience window rectangle equals the second monitor's bounds and the presenter window sits on the first, with one monitor a movable presenter window opens, and no test needs real second display hardware.
 2. Show in the presenter window the current page, a next-page preview (a tile from `TileTextureCache`), `Page N of M`, the wall clock, and a timer: count up from zero by default, or count down from `PresentationCountdownMinutes` (setting, 0 means count up) with start, pause and reset buttons; turn the timer `RectoWarningBrush` with text `Under 1 minute` in the last minute and `RectoDangerBrush` with text `Over time` after zero. Done when: the timer advances with a fake clock, pauses and resets, and shows the state text at 60 s and 0 s.
 
-- [ ] React to monitor changes (`WM_DISPLAYCHANGE`) by moving both windows to a remaining display and showing a `ui::Toast` (`D10 T02 §20`), never closing the show. Done when: unplugging the audience display keeps the presentation running on the remaining one.
+- [ ] React to monitor changes (`WM_DISPLAYCHANGE`) by moving both windows to a remaining display and showing a `ui::Toast` (`D10 T02 §20`), never closing the show. Done when: removing the audience monitor from the fake `IMonitorProvider` and raising `WM_DISPLAYCHANGE` keeps the presentation running on the remaining one.
 - [ ] Mirror navigation both ways: keys in either window move both, and the presenter window shows the same page as the audience at all times. Done when: pressing `Right` in the presenter window advances the audience page within one frame.
 - [ ] Give every control a `ui::Element` automation name, tooltip and keyboard access, and announce `Next page, N of M` politely through a UIA notification (`D10 T03 §4`). Done when: the UIA tree lists every control with a name.
 - [ ] Add the `PresentationCountdownMinutes` row to Settings (`D02 T04 §5`). Done when: changing it changes the next presentation's timer.
 - [ ] Add `View.PresenterViewAndTimer` covering display placement with fake displays, mirror navigation, timer states and display removal. Done when: `recto-tests.exe --gtest_filter=View.PresenterViewAndTimer` passes. Cheaper substitute: a second `DocumentActor` for the presenter window.
 - [ ] Commit: `viewer: add presenter view with next-page preview and timer`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=View.PresenterViewAndTimer` passes on the display-session host, and a two-display manual run is recorded in the stamp.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=View.PresenterViewAndTimer` passes on the display-session host, with the fake two-monitor, one-monitor and monitor-removed cases asserted, so no manual two-display run is required.
 
 ## 17. Slide navigator: jump to any page during a presentation
 
@@ -740,9 +749,41 @@ PDFelement, Foxit and UPDF show two PDFs side by side to compare versions; Recto
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=View.ParallelViewAndSyncScroll` passes on the display-session host.
 
+## 25. Per-page render failure and extreme page sizes in the view
+
+> **Groomed 2026-10-23:** filed because no section said what the canvas shows when the engine returns a `PdfError` for one page's tile, or when a page is extremely large or small; a damaged page in an otherwise good document must not blank or hang the view.
+
+A real-world PDF has pages the engine cannot draw (a corrupt content stream, a missing resource past the limits, an aborted render) and pages with absurd sizes (a `14400 x 14400` pt map, a `1 x 1` pt placeholder). `TileDriver` (`§4`) treats a tile completion carrying a `PdfError` as a page-level `RenderFailed` state: the page keeps its true-size outline from `§2`, shows a centred `RectoWarningBrush` `warning` glyph (no tile behind it) with `This page couldn't be drawn` in `Body` text and the error's short code in `Caption`, appears once in `recto::pdf::diagnostics_tail()`, is retried at most once per zoom bucket (never in a loop), and never stops other pages from rendering, scrolling or being navigated to. Page sizes are clamped for geometry and tiling only: the layout uses the real size, the tile grid never asks the GPU for a texture over `D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION` (`16384`) on either axis, and the zoom range for such a page keeps the tile count per viewport under the `TileTextureCache` budget of `§3`.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** yes
+
+**Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 9.9 (status glyph drawn directly in the status colour, no tile, tinted box or circle behind it), section 4 tokens and section 11. No board draws it; the proof is a UIA name check and a golden entry rendered from the fixture.
+**Job:** A reader opens a PDF with one broken page, sees which page failed and why in one line, and keeps reading the rest. Consumer: `TileDriver` (`§4`), `PageLayoutGeometry` (`§5`), the zoom engine (`§7`).
+**Treatment:** A `RenderFailed` page state in the existing tile pipeline and a size clamp in the existing tiler. Cheaper substitute that fails the checkpoint: a whole-window error dialog or a blank page with no explanation, retrying the failed tile every frame, or letting an oversize page allocate an oversize texture.
+**Chrome:** `RectoWarningBrush`, `RectoTextBrush`, `RectoTextSecondaryBrush`, the `warning` glyph of `RectoIcons` through `ui::Icon`, the page outline of `§2`.
+
+**Build order:**
+
+1. Add the `RenderFailed` page state to `TileDriver` and `PageOutlineView` (`src/app/document_view.cpp`, `src/services/presentation.cpp`): a `PdfError` tile completion sets it, clears pending requests for that page, records one diagnostic entry, and schedules at most one retry per zoom bucket. Done when: `View.PageRenderFailure` opens a fixture whose page 3 content stream is corrupt, shows pages 1, 2 and 4 rendered and page 3 in the failed state, and counts exactly one diagnostic entry and one retry per bucket over 120 frames.
+2. Clamp tiling for extreme page sizes in `TileDriver`: tile edge, zoom bucket and the visible tile count are computed from the real page size but no tile exceeds `16384` px on an axis and the viewport never requests more tiles than the cache budget holds. Done when: `View.ExtremePageSizes` renders a `14400 x 14400` pt page at `25%` and `400%` and a `1 x 1` pt page at `400%` with no `DXGI_ERROR_INVALID_CALL`, no more than the budgeted tile count in flight, and correct page bounds.
+
+- [ ] Add the failed-page element (`warning` glyph, `This page couldn't be drawn`, short error code) drawn over the `§2` outline. Done when: the failed page's UIA name is `Page 3, couldn't be drawn` and the glyph is drawn without a tile or tinted box. Cheaper substitute that fails the checkpoint: a red rectangle with no text.
+- [ ] Register `view_pagefailed_light` and `view_pagefailed_dark` in `tests/recto-tests/golden/ui/manifest.json` from a baseline captured by the fixture (a reviewed baseline, since no SPEC board draws it). Done when: `Ui.Golden.View.PageFailed` passes at the three scales. Source: `D10 T01 §20`.
+- [ ] Keep navigation, thumbnails (`D02 T03 §4`) and the outline working across a failed page. Done when: `Go to page 3`, `Next page` and the thumbnail of page 3 (showing the same failed glyph at thumbnail size) behave normally.
+- [ ] Offer `Try again` in the page's context menu (`ui::Menu`, `D10 T02 §14`) that clears the retry guard for that page. Done when: choosing it re-requests the page once and a still-failing page returns to the failed state without a loop.
+- [ ] Generate the fixtures in `tests/recto-tests/view_fixtures.cpp` as in-memory minimal PDFs (a corrupt content stream page, a `14400 x 14400` pt page, a `1 x 1` pt page, and a rotated `90` oversize page) so no binary corpus file is added. Done when: `View.PageRenderFailure` and `View.ExtremePageSizes` open them through `OpenDocumentPipeline`.
+- [ ] Verify a failed page never reaches the `TileTextureCache` after `CancelToken` abort (no stale texture for a cancelled request). Done when: `View.PageRenderFailure` asserts zero cached entries keyed to the failed page.
+- [ ] Add `View.PageRenderFailure` and `View.ExtremePageSizes` and run them under AddressSanitizer. Done when: `recto-tests.exe --gtest_filter=View.PageRenderFailure:View.ExtremePageSizes` passes under ASan.
+- [ ] Commit: `viewer: show a failed-page state and clamp tiling for extreme page sizes`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=View.PageRenderFailure:View.ExtremePageSizes` passes on the display-session host and under ASan; retrying a failed tile every frame fails the single-retry assertion, and an unclamped `14400 x 14400` pt page at `400%` fails `View.ExtremePageSizes` on the texture-dimension check.
+
 ## Verification
 
 - Foundation plan section 8 targets owned here (first page `< 300 ms` on a 100-page text PDF, 60 fps scroll, in-frame stretched zoom preview with sharp tiles `< 150 ms`, one-document memory within the 512 MB texture cache budget) measured on the reference machines (`D00 T01 §5`) and quoted.
 - Rendered surfaces match `D-Focus-Light.png`, `D-Focus-Dark.png`, `D-Classic.png`, `D-ReadingRoom.png`, and `D-Dialogs.png`; every SPEC section 10 view shortcut (`Ctrl+Plus`, `Ctrl+Minus`, `Ctrl+0`, `Ctrl+1`, `Ctrl+R`, `Ctrl+Shift+R`, `Ctrl+G`, `Home`, `End`, `Page Up`, `Page Down`, `F11`, `Esc`) is exercised and proven.
 - Full `recto-tests` suite green; `python scripts/todo-graph.py validate` passes.
 - The viewing features of §11 to §24 are proven by `View.ReadingTints`, `PdfTransition.*`, `View.PresentationModeNavigation`, `View.PageTransitionsRender`, `View.PresentationInkAndLaser`, `View.PresenterViewAndTimer`, `View.SlideNavigator`, `View.AutoScroll`, `View.ReversePageOrder`, `View.RulersAndCoordinates`, `View.GridGuidesSnap`, `View.LineWeightsToggle`, `View.SplitViewSharedActor` and `View.ParallelViewAndSyncScroll`.
+- A damaged page and extreme page sizes (§25) leave the rest of the document readable, proven by `View.PageRenderFailure` and `View.ExtremePageSizes` under ASan.

@@ -13,6 +13,8 @@ track: M4
 
 > **Current state:** Measured 2026-10-14. No code exists. The mechanisms are plan section 5's rows: `recto::pdf::PdfWriter` with one `recto::pdf::GraftMap` per source for merge and split, page-tree functions on a copy for reorder, rotate, delete, blank-page insertion and box cropping, `src/core/stamp_watermark.cpp` for watermarks, headers/footers and Bates numbering, `src/pdf/crypto.cpp` for `AES-256` (`R=6`) encryption, `src/pdf/signature.cpp` for PKCS#7 / PAdES digital signatures, and `src/pdf/redactor.cpp` for physical redaction and sanitization, all saved through `AtomicFileWriter` (`D04 T02 §1`).
 
+> **Groomed 2026-10-23:** New `§31` fuzzes page-range text and arbitrary edit sequences and asserts that every accepted sequence yields a reopenable PDF with the planned page count and an untouched source; Adjacency was corrected from `all=not-applicable` to owners that exist (permissions of `§7`, exchange of `§26`, reports of `§27`).
+
 ## Inputs
 
 - `docs/plans/2026-10-13-recto-foundation.md` decisions D9 and D12; sections 4.1 (`graft.cpp`, `crypto.cpp`, `signature.cpp`, `redactor.cpp`), 4.9 (job isolation), 5 (Merge, Split, Rotate/delete/reorder/crop, Watermarks/headers/footers/Bates, Encrypt/decrypt, Digital Signatures, True Redaction & Sanitization), and 9 (security rules).
@@ -67,7 +69,7 @@ track: M4
 - Redaction and inspection beyond Acrobat parity (`§24` to `§27`): a labelled whiteout and whole-page redaction, country PII packs with checksums, versioned redaction profiles and a document inspector report, all local and never executing content.
 - Signature and binder tools (`§28` to `§30`): the signed version of a document and its comparison with the current one, a Recto-only trust store with opt-in download and manual import, and a PDF Binder with a linked table of contents and a rebuildable project.
 
-**Adjacency:** all=not-applicable (engine operations inside the `D04 T01` job frame; cards, queue, notices and save settings are owned there and by `D02 T04 §5`)
+**Adjacency:** list=not-applicable (the verbs act on files the caller names; finding records is the Organize grid, D05 T02 §1); document=applicable @ D05 T01 §27; settings=applicable @ D05 T01 §29; reporting=applicable @ D05 T01 §27; notifications=not-applicable (queue notices are D04 T01 §6); permissions=applicable @ D05 T01 §7; audit=applicable @ D05 T01 §28; exchange=applicable @ D05 T01 §26; reverse=applicable @ D05 T01 §3
 
 **Adjacency rationale:** This file is the verb library the Convert cards, Organize UI, and Viewer security bars (`D05 T02`) call. Its surfaces live in `D04 T01` and `D05 T02`.
 
@@ -75,9 +77,9 @@ track: M4
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | `GraftMap` object-graph cloner, resource deduplicator (`graft.cpp`) & page-range parser | D04 T02 §2 | [ ] |
+| 1 | §1 | `GraftMap` object-graph cloner, resource deduplicator (`graft.cpp`) & page-range parser | D04 T02 §2, D01 T02 §18 | [ ] |
 | 2 | §2 | Multi-document graft `merge` and multi-method `split` (`recto-cli merge` & `split`) | §1 | [ ] |
-| 3 | §3 | Copy-based page-tree edit list (`reorder`, `/Rotate` delta, `delete`, `extract`) | §2 | [ ] |
+| 3 | §3 | Copy-based page-tree edit list (`reorder`, `/Rotate` delta, `delete`, `extract`) | §2, D01 T02 §18 | [ ] |
 | 4 | §4 | `Insert Blank Page`, box cropping (`/MediaBox`..`/ArtBox`), margin detection & rescaling | §3 | [ ] |
 | 5 | §5 | Vector and image `Watermark & Stamp` engine (`stamp_watermark.cpp`, `cli watermark`) | §3 | [ ] |
 | 6 | §6 | 3-zone `Headers & Footers` and legal **Bates Numbering** (`stamp_watermark.cpp` & CLI) | §5, §13 | [ ] |
@@ -89,9 +91,9 @@ track: M4
 | 12 | §12 | `/Adobe.PubSec` decryption with a certificate private key through CNG on open | §11, D01 T01 §9, D01 T02 §8 | [ ] |
 | 13 | §13 | Page backgrounds engine: add, update, list and remove managed marks | §1, §3, §5 | [ ] |
 | 14 | §14 | `replace_pages`: replace pages from another PDF, remapping links, fields and tags | §1, §2, §3 | [ ] |
-| 15 | §15 | Split by maximum file size and by top-level bookmarks (engine and CLI) | §2, D01 T01 §10 | [ ] |
-| 16 | §16 | Split one page into several: grid or custom cut lines (engine and CLI) | §3, §10, §14, §19 | [ ] |
-| 17 | §17 | N-up sheets: several pages on one sheet as a new PDF (engine and CLI) | §1, §3 | [ ] |
+| 15 | §15 | Split by maximum file size and by top-level bookmarks (engine and CLI) | §2, D01 T01 §10, D01 T02 §18 | [ ] |
+| 16 | §16 | Split one page into several: grid or custom cut lines (engine and CLI) | §3, §10, §14, §19, D01 T02 §18 | [ ] |
+| 17 | §17 | N-up sheets: several pages on one sheet as a new PDF (engine and CLI) | §1, §3, D01 T02 §18 | [ ] |
 | 18 | §18 | Interleave two PDFs, swap odd and even pages, reverse page order (engine and CLI) | §2, §3, §19 | [ ] |
 | 19 | §19 | Page labels: read, edit, preview and carry through page operations (engine and CLI) | §2, §3, §14 | [ ] |
 | 20 | §20 | Blank page detection with a local heuristic and a deletion plan (engine and CLI) | §3, D01 T02 §1, D01 T02 §6 | [ ] |
@@ -105,12 +107,15 @@ track: M4
 | 28 | §28 | Signed revision extraction and comparison with the current document (engine and CLI) | §9, D03 T01 §10 | [ ] |
 | 29 | §29 | Trust lists: opt-in download and manual import into a Recto trust store (engine and CLI) | §9 | [ ] |
 | 30 | §30 | PDF Binder: combine files with a table-of-contents page and a project file | §2, §6, §19 | [ ] |
+| 31 | §31 | Page-range and edit-sequence fuzzing: operations always yield a reopenable PDF | §1, §2, §3, §4, §14 | [ ] |
 
 ## 1. `GraftMap` object-graph cloner, resource deduplicator (`graft.cpp`) & page-range parser
 
 Implement `src/pdf/graft.h` and `src/pdf/graft.cpp` (`recto::pdf::GraftMap`) and the shared page-range specification parser in `src/core/page_ops.h/.cpp`:
 - **`GraftMap`:** Clones a `/Page` dictionary and its reachable indirect object subgraph (`/Contents`, `/Resources` fonts, colour spaces, ICC profiles, `/XObject` images/forms, `/ExtGState`, `/Shading`, `/Pattern`, and `/Annots` excluding broken cross-page destination links) from a source `pdf::Document` into a target `PdfWriter` (`D04 T02 §2`), mapping each source `(obj_num, gen_num)` to a single allocated target `obj_num` so shared fonts and images across pages of the same source are written once and cycle-safe against circular indirect references.
 - **Shared Page-Range Parser (`parse_page_range_spec`):** Parses 1-based user specifications (`"1-5, 8, 11-13"`, `"odd"`, `"even"`, `"1-end"`) against `total_pages`, refusing inverted ranges (`"5-2"`), zero (`"0"`), or beyond-end page numbers (`"99"` on a 10-page file) with a descriptive `PdfError` before any output file is created.
+
+> **Groomed 2026-10-23:** depends on `D01 T02 §18`, which adds `ErrorCode::ResourceLimit` and `ErrorCode::InvalidArgument` used here (cross-domain groom follow-up).
 
 **Phase:** 4
 **Needs:** windows-host
@@ -161,6 +166,8 @@ Implement `merge_pdfs` and `split_pdf` in `src/core/page_ops.h/.cpp` and their C
 ## 3. Copy-based page-tree edit list (`reorder`, `/Rotate` delta, `delete`, `extract`)
 
 Implement the Organize edit vocabulary in `src/core/page_ops.h/.cpp` (`apply_page_edits` and `extract_pages`): apply a declarative `PageEditPlan` (an ordered list of kept source page indices with per-page `/Rotate` deltas `0`, `90`, `180`, `270` and blank-page insertion slots, with deleted pages omitted) to a fresh copy of the source document via `GraftMap` (`§1`) and `PdfWriter` (`D04 T02 §2`), leaving the source file and any open viewer `DocumentActor` instance untouched until `AtomicFileWriter::commit()` (`D04 T02 §1`).
+
+> **Groomed 2026-10-23:** depends on `D01 T02 §18`, which adds `ErrorCode::ResourceLimit` and `ErrorCode::InvalidArgument` used here (cross-domain groom follow-up).
 
 **Phase:** 4
 **Needs:** windows-host
@@ -487,6 +494,8 @@ Acrobat Pro replaces pages of one PDF with pages of another and keeps the docume
 
 Acrobat Pro's Split Document, Foxit PDF Editor's Split, PDFelement's Split and UPDF's Split can all cut a PDF by a maximum file size and by top-level bookmarks, which `§2` does not do (it splits by explicit ranges, every `N` pages and one file per page). This section adds both as `SplitMethod` values on the existing `split_pdf` so they share its graft, atomic-write and cancel behaviour. Each part is a copy written through `GraftMap` (`§1`) and `AtomicFileWriter` (`D04 T02 §1`) on an isolated `pdf::Document`, so the source is never touched, and the plan is computed before any file is created so a refusal leaves nothing on disk. The Recto improvement kept: bookmark titles become file names through a Windows-safe, Unicode-preserving name sanitizer (non-Latin titles stay readable, `D06 T03 §8`), and a part that cannot meet the size limit is reported, never silently split mid-page or dropped.
 
+> **Groomed 2026-10-23:** depends on `D01 T02 §18`, which adds `ErrorCode::ResourceLimit` and `ErrorCode::InvalidArgument` used here (cross-domain groom follow-up).
+
 **Phase:** 4
 **Needs:** windows-host
 **Surface:** no
@@ -513,6 +522,8 @@ Acrobat Pro's Split Document, Foxit PDF Editor's Split, PDFelement's Split and U
 ## 16. Split one page into several: grid or custom cut lines (engine and CLI)
 
 UPDF's Split Page, PDFelement's and Foxit PDF Editor's page division cut one page into several pages, which is how a two-page scan spread or an oversize sheet becomes separate pages; Acrobat Pro can only crop. `split_page` (`src/core/page_split.h/.cpp`) takes a page, a `rows x cols` grid or explicit horizontal and vertical cut lines in displayed-page points, and writes each cell as its own page. A page box alone only hides content, so by default the engine also removes the text, paths and image pixels that lie outside each cell (`Redactor::strip_outside_regions`, added here), keeping Recto's true-removal rule: a piece does not secretly carry the other pieces. Work is on an isolated copy through `GraftMap` (`§1`) and `AtomicFileWriter`, bookmarks, links and named destinations of the split page are remapped with the reference table of `§14`, and the open viewer document is never modified.
+
+> **Groomed 2026-10-23:** depends on `D01 T02 §18`, which adds `ErrorCode::ResourceLimit` and `ErrorCode::InvalidArgument` used here (cross-domain groom follow-up).
 
 **Phase:** 4
 **Needs:** windows-host
@@ -541,6 +552,8 @@ UPDF's Split Page, PDFelement's and Foxit PDF Editor's page division cut one pag
 ## 17. N-up sheets: several pages on one sheet as a new PDF (engine and CLI)
 
 PDFelement's page layout and Foxit PDF Editor's N-up put several pages on one sheet as a saved PDF; Acrobat Pro only does this when printing, and Recto's print layouts live in `D07 T01 §10`. `make_nup` (`src/core/nup.h/.cpp`) builds a new document in which each output sheet places `rows x cols` source pages as Form XObjects grafted once per source page (`GraftMap`, `§1`), so vector text stays vector and a repeated page is stored once. It runs on an isolated copy and never modifies the source. The sheets are flattened by nature: links, bookmarks and tags of the source are not carried, which the result reports, and visible annotation appearances are drawn so comments still show.
+
+> **Groomed 2026-10-23:** depends on `D01 T02 §18`, which adds `ErrorCode::ResourceLimit` and `ErrorCode::InvalidArgument` used here (cross-domain groom follow-up).
 
 **Phase:** 4
 **Needs:** windows-host
@@ -889,6 +902,28 @@ Foxit PDF Editor's PDF Binder combines files into one document with a generated 
 - [ ] Commit: `organize: PDF Binder with a linked table of contents and a rebuildable project`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Binder.*:Cli.BinderCommand` passes under ASan with the linked-entry page check and the changed-source report quoted.
+
+## 31. Page-range and edit-sequence fuzzing: operations always yield a reopenable PDF
+
+The M4 milestone requires every organize operation to round-trip the corpus. Each operation in `§1` to `§30` has fixed-case tests and a handful have their own fuzz targets (`fuzz_binder_project`, `fuzz_page_labels`, `fuzz_redaction_profile`, `fuzz_trust_list`, `fuzz_pubsec_open`), but two things that every user action reaches have none: the page-range text a person types into a dialog or the CLI, and arbitrary sequences of edits. The second matters most, because the edit list of `§3` is the shared contract of the Organize page, the CLI and Action Wizard, and a sequence nobody wrote a test for must still produce a PDF that reopens with the page count the plan promised, or refuse with a typed error and write nothing.
+
+**Phase:** 4
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add `fuzz/fuzz_page_ranges.cpp` for `parse_page_range_spec` (`§1`). Done when: `Fuzz.PageRangesSmoke` runs 5000 seeded mutations under ASan with no finding and every accepted spec yields strictly in-range, ordered-as-written pages.
+2. Add `fuzz/fuzz_page_ops.cpp` that decodes bytes into an edit list over a corpus PDF and checks the invariants. Done when: `Fuzz.PageOpsSmoke` runs 2000 seeded sequences under ASan with no invariant violation.
+
+- [ ] Write `fuzz/fuzz_page_ranges.cpp` calling `parse_page_range_spec(spec, total_pages)` with `total_pages` taken from the input, covering overflow digits (`99999999999`), unicode digits, whitespace, `end` arithmetic and empty segments. Done when: `Fuzz.PageRangesSmoke` passes and an accepted result never contains `0` or a page above `total_pages`.
+- [ ] Write `fuzz/fuzz_page_ops.cpp` that maps input bytes to a sequence of up to 16 operations from `reorder`, `rotate`, `delete`, `extract`, `insert_blank`, `crop`, `replace_pages`, `merge` and `split` over the seed PDFs in `tests/corpus/`, applying them through the copy-based edit list of `§3`. Done when: the harness builds and its operation decoder is covered by `PageOpsFuzz.DecodesEveryOperationKind`.
+- [ ] Assert the invariants after each accepted sequence: the output reopens through `recto::pdf::Document::open`, its page count equals the plan's computed count, every page renders without an error at 72 DPI, the source file is byte-identical (SHA-256) and no temp file remains; a refused sequence returns a typed `PdfError` and writes nothing. Done when: `PageOpsFuzz.InvariantsHold` passes on 200 seeded sequences and a seeded off-by-one in `extract` makes it fail.
+- [ ] Seed both corpora through `scripts/build-corpus.py` with entries in `tests/corpus/PROVENANCE.md` and register the harnesses in `recto-fuzz.vcxproj`. Done when: `Corpus.Provenance` passes and `recto-fuzz.exe` lists `fuzz_page_ranges` and `fuzz_page_ops`.
+- [ ] Add `Fuzz.PageRangesSmoke` and `Fuzz.PageOpsSmoke` with fixed seeds in `tests/recto-tests/fuzz_smoke_tests.cpp`. Done when: both pass under ASan in under `120 s` and removing the range clamp of `§1` makes `Fuzz.PageRangesSmoke` fail.
+- [ ] Commit: `organize: add fuzz targets for page ranges and edit sequences`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Fuzz.PageRangesSmoke:Fuzz.PageOpsSmoke:PageOpsFuzz.*` passes under ASan, and a seeded off-by-one in `extract` makes `PageOpsFuzz.InvariantsHold` fail.
 
 ## Verification
 

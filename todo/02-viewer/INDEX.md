@@ -1,6 +1,6 @@
 # 02 Viewer
 
-> **Phase 2 (M2 Viewer)**
+> **Phase 2 (M2 Viewer), with `TODO-05` and `TODO-06` in Phase 7 (included in the unattended campaign)**
 
 The `recto-ui` app (Recto's own Win32, DirectComposition and Direct2D toolkit, `todo/10-ui/`) as the SPEC's one shell: title-bar tabs, the tiled document view, Home and panels, the command box, settings and the three layout presets. Every surface section carries Fidelity to `design/SPEC.md` and its screenshot.
 
@@ -27,11 +27,12 @@ The `recto-ui` app (Recto's own Win32, DirectComposition and Direct2D toolkit, `
 - `src/app` shell, custom title bar, tabs, named slots, Classic menu bar (`File`, `Edit`, `View`, `Tools`, `Window`, `Help`), four open paths (`Ctrl+O` picker, drag-and-drop, CLI args, Explorer activation), `Save` / `Save a copy` / `Replace original` / `Unsaved changes`, and shell dialogs (Password, Could-not-open)
 - Presentation thread, worker D3D11 texture uploads, budgeted LRU tile cache, Continuous/Single-Page/Two-Page Spread geometry, scroll, zoom with stretched preview, Floating Page Toolbar with 3s auto-fade, safe links, dark page colour modes, `F11` Full Screen
 - `RecentFilesStore`, `HomePage`, `SidePanelHost`, `ThumbnailList` (with filmstrip orientation), `OutlinePanel`, interactive Bookmark Editor, `OCG` Layers panel, Attachments and PDF Portfolios (`/EmbeddedFiles` and `/Collection`), read-only and editable Info/XMP/ViewerPreferences, unified `CommandRegistry`, `Ctrl+K` Command Box, `AppPaths` Portable mode, `SettingsStore`, `LayoutPresetEngine`, `SettingsPage`, live `ThemeManager`, `MotionHelper`, and the audited SPEC section 10 keyboard map
-- Tab session restore, closed-tab stack, tab reorder and Share; reading tints, presentation mode with presenter view, auto-scroll, reverse order, rulers, grid and guides, line weights, split and side-by-side views; bookmark creation, import and export, contents page, layer authoring; media authoring; and opt-in cloud storage connectors (OneDrive, SharePoint, Google Drive, Dropbox, Box)
+- Tab session restore, closed-tab stack, tab reorder and Share; reading tints, presentation mode with presenter view, auto-scroll, reverse order, rulers, grid and guides, line weights, split and side-by-side views; bookmark creation, import and export, contents page, layer authoring; media authoring; and opt-in cloud storage connectors (OneDrive, SharePoint, Google Drive, Dropbox, Box), window placement memory, the cold-launch startup order and the failed-page view state
 
 ## Out of scope
 
 - Text selection, find and the UIA provider (03)
+- The `recto-ui` toolkit itself (10); this domain builds the shell, views and panels on top of it
 - Conversions (04), Organize authoring (05), printing (07)
 
 ---

@@ -12,6 +12,8 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 
 > **Current state:** Measured 2026-10-21. `.github/` holds `pull_request_template.md` and CI workflows only: there are no issue forms, no `SECURITY.md`, no triage or release-closing policy, no reproducer tooling, no demand ledger and no in-app path from a problem to a report. `D07 T02 §4` plans a local crash bundle and `D07 T02 §6` a release runbook; neither covers non-crash reports or closing issues on release. 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI references rewritten against `todo/10-ui/`.
 
+> **Groomed 2026-10-23:** re-measured. `§1`, `§4`, `§6`, `§8` and `§9` are stamped: `.github/ISSUE_TEMPLATE/` holds `bug_report.yml`, `feature_request.yml` and `config.yml`, `.github/labels.yml`, `SECURITY.md`, `docs/scope.md`, `docs/user-demand.md` and `docs/support/` exist. `scripts/release-gate.py`, `recto-cli scrub`, the in-app `Report a problem` dialog and the `What's new` page do not exist yet (`§2`, `§3`, `§5`, `§7`). `D06 T03 §12` runs by script, `D99 T01 §11` (operator) runs after `§5` passes and is not a gate, and the operator's one-time repository settings this file relies on (private vulnerability reporting, labels) are `D99 T01 §2`. Version 1 ships unsigned, so the release notes that `§4` maps carry the SmartScreen sentence of `D07 T02 §6`.
+
 ## Inputs
 
 - Foundation plan D16 (local diagnostics and zero network telemetry) and section 9 (hostile input); AGENTS.md "Tests prove claims" and "Fix at the owning layer".

@@ -15,6 +15,8 @@ track: M2
 
 > 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); sections rewritten against `todo/10-ui/`
 
+> **Groomed 2026-10-23:** re-measured: no `src/app/panels/`, `src/app/home_page.*` or `recents` code exists and `src/ui/` does not exist. Added the missing `D02 T04 §1` and `§2` edges to `§1` (`RecentFilesStore` resolves `recents_path()` through `AppPaths` and reads `RememberReadingPosition` from `SettingsStore`), and replaced every comparison with a SPEC board by golden entries run through `D10 T01 §20`.
+
 ## Inputs
 
 - `design/SPEC.md` sections 3.4 (in-app SVG graphics), 5 (typography), 6 (icons), 7 (`OverlayCornerRadius` 8 epx for panels and the command box, narrow-window `< 1100 epx` auto-close), 8.3 (Pages, Outline with Bookmark Editor, Comments, Layers, Attachments & Portfolio, Signatures & Standards), 9.1 (Home), 9.2 (Info, XMP & Viewer Preferences list and editor), 9.4 (Command box), 10 (`Ctrl+K`, `Ctrl+B`, `Ctrl+G`), 11; `resources/svg/drop-files-*.svg`, `resources/svg/ribbon-marker*.svg`, `resources/svg/filetype-pdf*.svg`.
@@ -73,18 +75,18 @@ track: M2
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | Recent files and remembered reading-position store (`RecentFilesStore`) | D02 T01 §5 | [ ] |
-| 2 | §2 | Home screen (`D-Home.png`), recent covers, inline command box host and empty state | §1, D02 T01 §6, D02 T02 §3, D10 T01 §10, D10 T01 §11, D10 T01 §13, D10 T02 §2, D10 T02 §11, D10 T02 §14, D10 T03 §1 | [ ] |
-| 3 | §3 | Side-panel card container (`SidePanelHost`), switcher header and narrow auto-close | D02 T01 §4, D02 T02 §8, D02 T01 §19, D10 T01 §9, D10 T01 §14, D10 T02 §9, D10 T02 §14, D10 T02 §16, D10 T02 §20 | [ ] |
-| 4 | §4 | Pages thumbnail panel (`ThumbnailList`), filmstrip orientation and page context menu | §3, D02 T02 §4, D02 T02 §6, D10 T01 §11, D10 T02 §10, D10 T02 §11, D10 T02 §14 | [ ] |
+| 1 | §1 | Recent files and remembered reading-position store (`RecentFilesStore`) | D02 T01 §5, D02 T04 §1, D02 T04 §2 | [ ] |
+| 2 | §2 | Home screen (`D-Home.png`), recent covers, inline command box host and empty state | §1, D02 T01 §6, D02 T02 §3, D10 T01 §10, D10 T01 §11, D10 T01 §13, D10 T02 §2, D10 T02 §11, D10 T02 §14, D10 T03 §1, D10 T01 §20 | [ ] |
+| 3 | §3 | Side-panel card container (`SidePanelHost`), switcher header and narrow auto-close | D02 T01 §4, D02 T02 §8, D02 T01 §19, D10 T01 §9, D10 T01 §14, D10 T02 §9, D10 T02 §14, D10 T02 §16, D10 T02 §20, D10 T01 §20 | [ ] |
+| 4 | §4 | Pages thumbnail panel (`ThumbnailList`), filmstrip orientation and page context menu | §3, D02 T02 §4, D02 T02 §6, D10 T01 §11, D10 T02 §10, D10 T02 §11, D10 T02 §14, D10 T01 §20 | [ ] |
 | 5 | §5 | Outline tree panel (`OutlinePanel`) and bidirectional section tracking | §3, D02 T02 §6, D01 T01 §10, D10 T01 §10, D10 T02 §12, D10 T03 §1 | [ ] |
 | 6 | §6 | Interactive Bookmark Editor and heading-based outline auto-generation | §5, D02 T01 §8, D01 T02 §5, D06 T04 §2, D10 T01 §12, D10 T02 §4, D10 T02 §12, D10 T02 §14 | [ ] |
 | 7 | §7 | Optional Content Groups (`OCG` / Layers) engine and live Layers panel | §3, D02 T02 §4, D01 T02 §5, D06 T04 §2, D10 T01 §11, D10 T02 §2, D10 T02 §12, D10 T03 §1 | [ ] |
 | 8 | §8 | Embedded Files and PDF Portfolios (`/EmbeddedFiles` and `/Collection`) engine and panel | §3, D02 T01 §8, D02 T01 §10, D06 T04 §2, D10 T01 §11, D10 T02 §11, D10 T02 §17 | [ ] |
-| 9 | §9 | Document Info panel: metadata, security permissions and embedded font inventory | §3, D01 T01 §10, D10 T01 §10, D10 T02 §4, D10 T02 §17, D10 T03 §1 | [ ] |
+| 9 | §9 | Document Info panel: metadata, security permissions and embedded font inventory | §3, D01 T01 §10, D10 T01 §10, D10 T02 §4, D10 T02 §17, D10 T03 §1, D10 T01 §20, D01 T02 §21 | [ ] |
 | 10 | §10 | Editable Document Info, XMP metadata synchronization and `/ViewerPreferences` editor | §9, D02 T01 §8, D01 T02 §5, D06 T04 §2, D10 T02 §4, D10 T02 §6, D10 T02 §7, D10 T02 §9 | [ ] |
 | 11 | §11 | Unified `CommandRegistry` across toolbars, menus, panels and keyboard accelerators | D02 T01 §9, D02 T02 §8, D10 T01 §12, D10 T01 §16, D10 T02 §1 | [ ] |
-| 12 | §12 | Command Box (`Ctrl+K`) overlay and Home inline search experience | §2, §5, §11, D02 T01 §19, D10 T01 §10, D10 T01 §15, D10 T02 §5, D10 T02 §20, D10 T02 §21, D10 T03 §4 | [ ] |
+| 12 | §12 | Command Box (`Ctrl+K`) overlay and Home inline search experience | §2, §5, §11, D02 T01 §19, D10 T01 §10, D10 T01 §15, D10 T02 §5, D10 T02 §20, D10 T02 §21, D10 T03 §4, D10 T01 §20 | [ ] |
 | 13 | §13 | Word, character, line and page counts for the document and the selection | §9, D03 T01 §2, D03 T01 §3, D02 T03 §11, D06 T04 §2 | [ ] |
 | 14 | §14 | Bookmark proposals from text styles (font, size, weight) | §6, D03 T01 §1 | [ ] |
 | 15 | §15 | Bookmark proposals from search strings and patterns | §6, D03 T01 §5 | [ ] |
@@ -150,9 +152,10 @@ Build `HomePage` (`src/app/home_page.h/.cpp`) matching `design/SPEC.md` section 
 - [ ] Implement the SPEC 9.1 empty state: when `RecentFilesStore::list_entries()` is empty, hide the `"Recent"` section header and grid completely and display `resources/svg/drop-files-{light,dark}.svg` with `"Drop a PDF anywhere in this window"` below the inline box. Done when: clearing recents transitions `HomePage` to the exact SPEC 9.1 empty state.
 - [ ] Ensure keyboard navigation (`Tab`, arrow keys across the recent cover grid, `Enter` to open, `Delete` to remove) works end to end without a mouse through `ui::FocusManager` arrow groups (`D10 T01 §13`). Done when: pressing `Down` from the inline box moves focus into the first recent card.
 - [ ] Add `Panels.HomePageAndCovers` test in `tests/recto-tests/` verifying cover generation, 6-item cap + `"See all"` expansion, item removal, and empty-state visibility. Done when: `recto-tests.exe --gtest_filter=Panels.HomePageAndCovers` passes.
+- [ ] Register `home_populated_light`, `home_populated_dark`, `home_empty_light` and `home_empty_dark` in `tests/recto-tests/golden/ui/manifest.json` (populated crops from `D-Home.png`, empty-state baselines under `tests/recto-tests/golden/ui/baselines/`). Done when: `Ui.Golden.Panels.Home` passes at the three scales. Source: `D10 T01 §20`, SPEC 9.1.
 - [ ] Commit: `viewer: build HomePage with rendered recent covers, See All and empty state`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Panels.HomePageAndCovers` passes on the display-session host, and rendered screenshots of `HomePage` (populated and empty states, Light and Dark) match `D-Home.png`.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Panels.HomePageAndCovers` passes on the display-session host, and golden entries `home_populated_light`, `home_populated_dark`, `home_empty_light` and `home_empty_dark` (crops of `D-Home.png`) pass through `recto::ui::test::golden::expect_matches(id)` at 100, 150 and 200 percent with SSIM at or above the manifest `ssim_min` (`D10 T01 §20`) (the empty-state entries are reviewed baselines because the board draws only the populated state).
 
 ## 3. Side-panel card container (`SidePanelHost`), switcher header and narrow auto-close
 
@@ -179,9 +182,10 @@ Build the shared `SidePanelHost` container (`src/app/controls/side_panel_host.h/
 - [ ] Animate panel open/close with the SPEC section 12 transition (`167 ms` fade + `8 epx` horizontal translation with Fluent cubic-bezier easing, or `0 ms` instant show/hide when OS animations are disabled). Done when: panel transitions respect `SPI_GETCLIENTAREAANIMATION` read through `ui::Motion` (`D10 T01 §14`).
 - [ ] Populate the panel switcher menu with all SPEC 8.3 and 9.2 panels (`Pages`, `Outline`, `Comments`, `Layers`, `Attachments & Portfolio`, `Signatures & Standards`, `Info`) with their `16 epx` `RectoIcons` glyphs and count badges (`ui::Badge`, `D10 T02 §20`) where applicable. Done when: every panel entry is selectable by mouse and keyboard.
 - [ ] Add `Panels.SidePanelHostAndNarrowWindow` test in `tests/recto-tests/` verifying `Ctrl+B` toggling, switcher menu navigation, floating vs. docked state adaptation on slot reparenting, and `< 1100 epx` page-click auto-close. Done when: `recto-tests.exe --gtest_filter=Panels.SidePanelHostAndNarrowWindow` passes.
+- [ ] Register `panel_floating_light` and `panel_docked_classic` in `tests/recto-tests/golden/ui/manifest.json` with the side panel crops of `D-Focus-Light.png` and `D-Classic.png`. Done when: `Ui.Golden.Panels.SidePanelHost` passes at the three scales. Source: `D10 T01 §20`, SPEC 8.3.
 - [ ] Commit: `viewer: build SidePanelHost container, panel switcher and <1100 epx auto-close`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Panels.SidePanelHostAndNarrowWindow` passes on the display-session host, and floating vs. docked panel chrome matches `D-Focus-Light.png` and `D-Classic.png`.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Panels.SidePanelHostAndNarrowWindow` passes on the display-session host, and golden entries `panel_floating_light` and `panel_docked_classic` (crops of the side panel of `D-Focus-Light.png` and `D-Classic.png`) pass through `recto::ui::test::golden::expect_matches(id)` at 100, 150 and 200 percent with SSIM at or above the manifest `ssim_min` (`D10 T01 §20`).
 
 ## 4. Pages thumbnail panel (`ThumbnailList`), filmstrip orientation and page context menu
 
@@ -211,9 +215,10 @@ Build the `Pages` thumbnail panel (`src/app/panels/thumbnail_list.h/.cpp`) per S
 - [ ] Implement `set_orientation(Orientation)` switching the `ui::ItemsView` layout between `Vertical` (for `LeftOverlaySlot` and `LeftDockSlot`) and `Horizontal` (for `BottomDockSlot` filmstrip in `Reading room`) without recreating `ThumbnailList` or losing scroll state. Done when: switching to `Horizontal` in `BottomDockSlot` matches `D-ReadingRoom.png`.
 - [ ] Attach the SPEC 8.3 right-click `ui::Menu` to each thumbnail (`Insert Blank Page`, `Rotate Right`, `Rotate Left`, `Crop Page`, `Extract Page`, `Delete Page`), with `Rotate Right`/`Rotate Left` wired live and the page-surgery items referencing `D05 T01 §2`. Done when: right-clicking any thumbnail opens the 6-item context menu with working rotation and named deferrals.
 - [ ] Add `Panels.ThumbnailListVirtualizationAndSync` test in `tests/recto-tests/` asserting virtualized element count on a 500-page document, `< 32 MB` thumbnail memory, two-way current-page sync, rotation refresh, and vertical/horizontal filmstrip switching. Done when: `recto-tests.exe --gtest_filter=Panels.ThumbnailListVirtualizationAndSync` passes.
+- [ ] Register `panel_thumbs_focus`, `panel_thumbs_classic` and `panel_filmstrip_readingroom` in `tests/recto-tests/golden/ui/manifest.json` with the thumbnail and filmstrip crops of the three boards (active thumbnail with ribbon marker). Done when: `Ui.Golden.Panels.Thumbnails` passes at the three scales. Source: `D10 T01 §20`, SPEC 8.3.
 - [ ] Commit: `viewer: add virtualized ThumbnailList with ribbon marker, filmstrip mode and context menu`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Panels.ThumbnailListVirtualizationAndSync` passes on the display-session host, 500-page scroll telemetry stays within budget, and screenshots match `D-Focus-Light.png`, `D-Classic.png`, and `D-ReadingRoom.png`.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Panels.ThumbnailListVirtualizationAndSync` passes on the display-session host, a 500-page document keeps at most 16 realized thumbnail items and under `32 MB` of thumbnail memory through a full scripted scroll, and golden entries `panel_thumbs_focus`, `panel_thumbs_classic` and `panel_filmstrip_readingroom` (crops of the thumbnails of `D-Focus-Light.png`, `D-Classic.png` and `D-ReadingRoom.png`) pass through `recto::ui::test::golden::expect_matches(id)` at 100, 150 and 200 percent with SSIM at or above the manifest `ssim_min` (`D10 T01 §20`).
 
 ## 5. Outline tree panel (`OutlinePanel`) and bidirectional section tracking
 
@@ -339,6 +344,8 @@ Implement embedded file attachments and PDF Portfolios (`/Names /EmbeddedFiles`,
 
 Build the read-only `DocumentInfoPanel` (`src/app/panels/document_info_panel.h/.cpp`) per `design/SPEC.md` section 9.2 and `design/screenshots/D-ReadingRoom.png`: displays formatted document metadata (`Title`, `Author`, `Subject`, `Keywords`, `Created`, `Modified`, `Creator`, `Producer`), structural properties (`Pages`, `Page size` in `mm`, `in`, and `pt`, `PDF version`, `File size`, `Fast Web View / Linearized` status, and `PDF/A` or `PDF/UA` conformance badge), the complete `Security & Permissions` summary (encryption algorithm and individual permission flags), and the `Fonts` inventory (font name, type, embedded/subset status, encoding), hosted both in the `Reading room` right inspector (`D-ReadingRoom.png`) and in the `Document Properties` dialog (`More -> Properties` / `File -> Document Properties`).
 
+> **Groomed 2026-10-23:** page sizes and actual-size zoom read `PageDescription::physical_width_pt` and `physical_height_pt` from `D01 T02 §21` so `/UserUnit` pages report their true physical size (cross-domain groom follow-up).
+
 **Phase:** 2
 **Needs:** windows-host, display-session
 **Surface:** yes
@@ -360,9 +367,10 @@ Build the read-only `DocumentInfoPanel` (`src/app/panels/document_info_panel.h/.
 - [ ] Wire `"Copy all info"` to copy a clean Markdown/plain-text table of all document properties, security flags, and fonts to the clipboard. Done when: clicking `"Copy all info"` places the full formatted summary on the system clipboard.
 - [ ] Set the automation name and the labelled-by relationship on every info row (`D10 T03 §1`) so Windows Narrator reads `"Pages: 12"`, `"Page size: 210 by 297 millimeters, A4"`, etc. in logical order. Done when: UIA property tree inspection confirms every value is paired with its label.
 - [ ] Add `Panels.DocumentInfoAndFonts` test in `tests/recto-tests/` comparing `DocumentInfoFormatter` and `DocumentInfoPanel` rows against `recto-cli info` across 3 corpus files (including encrypted and multi-font files). Done when: `recto-tests.exe --gtest_filter=Panels.DocumentInfoAndFonts` passes.
+- [ ] Register `panel_info_readingroom` in `tests/recto-tests/golden/ui/manifest.json` for the Info inspector crop of `D-ReadingRoom.png`, rendered from a fixture document whose values equal the board's text. Done when: `Ui.Golden.Panels.Info` passes at the three scales. Source: `D10 T01 §20`, SPEC 9.2.
 - [ ] Commit: `viewer: build DocumentInfoPanel with tri-unit page sizes, security permissions and font inventory`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Panels.DocumentInfoAndFonts` passes on the display-session host, values match `recto-cli info` across three corpus files, and rendered screenshot matches `D-ReadingRoom.png`.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Panels.DocumentInfoAndFonts` passes on the display-session host, values match `recto-cli info` across three corpus files, and golden entries `panel_info_readingroom` (crops of the Info inspector of `D-ReadingRoom.png`) pass through `recto::ui::test::golden::expect_matches(id)` at 100, 150 and 200 percent with SSIM at or above the manifest `ssim_min` (`D10 T01 §20`).
 
 ## 10. Editable Document Info, XMP metadata synchronization and `/ViewerPreferences` editor
 
@@ -443,9 +451,10 @@ Build `CommandBoxControl` (`src/app/controls/command_box_control.h/.cpp`) per `d
 - [ ] Announce result counts politely to screen readers as the user types (`"5 results, Rotate view right selected"`). Done when: UIA notification events (`D10 T03 §4`) fire on filter updates.
 - [ ] Add `Panels.CommandBoxFilterAndKeyboardFlow` test in `tests/recto-tests/` driving `Ctrl+K` queries for commands (`"rotate"`), outline titles, page numbers (`"page 3"`), and recent filenames, verifying bold span indices and end-to-end execution. Done when: `recto-tests.exe --gtest_filter=Panels.CommandBoxFilterAndKeyboardFlow` passes.
 - [ ] Keep IME composition intact in the command box: never re-request focus or rewrite the query while a TSF composition (`D10 T02 §5`) is active, and filter only on committed text. Done when: `Panels.CommandBoxFilterAndKeyboardFlow` composes a Microsoft Pinyin, Japanese and Korean query and executes the selected result.
+- [ ] Register `commandbox_overlay` and `commandbox_home_inline` in `tests/recto-tests/golden/ui/manifest.json` with the command box crops of `D-Dialogs.png` and `D-Home.png`. Done when: `Ui.Golden.Panels.CommandBox` passes at the three scales. Source: `D10 T01 §20`, SPEC 9.4.
 - [ ] Commit: `viewer: build Ctrl+K CommandBoxControl in overlay and Home inline modes`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Panels.CommandBoxFilterAndKeyboardFlow` passes on the display-session host, and screenshots of `CommandBoxControl` in overlay (`D-Dialogs.png`) and Home inline (`D-Home.png`) modes match the SPEC boards.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Panels.CommandBoxFilterAndKeyboardFlow` passes on the display-session host, and golden entries `commandbox_overlay` and `commandbox_home_inline` (crops of the command box of `D-Dialogs.png` and `D-Home.png`) pass through `recto::ui::test::golden::expect_matches(id)` at 100, 150 and 200 percent with SSIM at or above the manifest `ssim_min` (`D10 T01 §20`).
 
 ## 13. Word, character, line and page counts for the document and the selection
 

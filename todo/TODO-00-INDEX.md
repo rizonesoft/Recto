@@ -99,6 +99,8 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 - [02 Viewer] [TODO-06 Cloud Storage Connectors: OneDrive, SharePoint, Google Drive, Dropbox and Box](./02-viewer/TODO-06-cloud-storage-connectors.md): opt-in OAuth PKCE connectors, browse, open as temporary copy, conditional save, off by default.
 - [03 Text] [TODO-04 Edit PDF: Text, Image and Vector Object Editing](./03-text/TODO-04-edit-pdf.md): Acrobat-class Edit PDF over a stable paragraph model, images and vector objects.
 - [03 Text] [TODO-05 Search Across Files and Local Index](./03-text/TODO-05-multi-file-search.md): search a folder of PDFs, with an optional local index.
+- [03 Text] [TODO-06 Attachment Pin Markup Tool](./03-text/TODO-06-attachment-pin.md): the SPEC 8.2 `Attachment Pin` tool, embedding a file as a `FileAttachment` pin that asks before opening.
+- [03 Text] [TODO-07 Command Box Rows for Comments, Form Fields and Indexed Files](./03-text/TODO-07-command-box-sources.md): the SPEC 9.4 `Go to` and `Files` row kinds that `D02 T03 §12` does not cover.
 - [04 Convert] [TODO-06 Print Production: Preflight, PDF/X, Output Preview and Separations](./04-convert/TODO-06-print-production.md): preflight profiles and fixups, PDF/X, output preview, separations and ink coverage.
 - [04 Convert] [TODO-07 Action Wizard: Saved Multi-Step Actions over Files and Folders](./04-convert/TODO-07-action-wizard.md): saved action sequences run over files and folders.
 - [04 Convert] [TODO-08 Automation: recto-cli Verb Registry and the Local recto-mcp Server](./04-convert/TODO-08-automation-mcp.md): `recto-cli verbs --json` registry and a stdio-only `recto-mcp` server with an allow-list, staged inputs, new-file outputs and a call log (D21).

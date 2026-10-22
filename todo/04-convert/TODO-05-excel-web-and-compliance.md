@@ -13,6 +13,8 @@ track: M5
 
 > **Current state:** Measured 2026-10-14. No Excel, Web/EPUB/LaTeX, or PDF/A compliance code exists yet. `D04 T02 §8` provides `TableExtractor`, `D04 T03 §1` provides `zip_archive.cpp` for OpenXML/EPUB packages, and `D01` / `D04 T02 §2` provide `recto-pdf` object/font/XMP manipulation and `PdfWriter`. 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI sections rewritten against `todo/10-ui/`.
 
+> **Groomed 2026-10-23:** The LaTeX verb is `recto-cli pdf-to-tex` (the foundation plan section 3.1 name; the file said `pdf-to-latex`); Adjacency was corrected from `all=not-applicable` to owners that exist (the WCAG and compliance reports are the reporting and document surface, the e-invoice XML is the exchange surface).
+
 ## Inputs
 
 - `docs/plans/2026-10-13-recto-foundation.md` decisions D7, D9, D12; sections 3.2, 4.1 item 10 (`compliance.cpp`), 5 (`PDF -> Excel`, `PDF -> HTML5, Markdown, EPUB 3 & LaTeX`, `PDF/A, PDF/UA & ZUGFeRD / Factur-X`), 6 and 7 (M5 row).
@@ -57,7 +59,7 @@ track: M5
 - `MathRegionDetector`, `MathExporter` and `tag_formulas` (`§18`-`§21`) find equations, export them as MathML or LaTeX and tag them as `Formula` elements with MathML associated files, keeping uncertain regions as text.
 - `ContrastChecker`, the PDF/UA-2 rule set, the WCAG 2.2 report and `recto-cli a11y` (`§22`-`§27`) check accessibility beyond PDF/UA-1, and never report `Passed` or conformance for content they could not evaluate.
 
-**Adjacency:** all=not-applicable (converter engines, compliance validators and side-panel views inside `D04 T01`'s Convert frame and `D02 T03`'s side-panel host)
+**Adjacency:** list=not-applicable (inputs are files the user picks; the queue list is D04 T01 §5); document=applicable @ D04 T05 §25; settings=not-applicable (no setting of its own; the default output folder is D02 T04 §5); reporting=applicable @ D04 T05 §25; notifications=applicable @ D04 T01 §6; permissions=applicable @ D04 T01 §7; audit=not-applicable (no conversion history is kept on disk, D04 T01 §5); exchange=applicable @ D04 T05 §8; reverse=applicable @ D04 T01 §2
 
 **Adjacency rationale:** Queue management and notifications live in `D04 T01`; this file owns the spreadsheet, web/e-book, and compliance/e-invoicing engines and their Convert/Viewer surfaces.
 
@@ -173,7 +175,7 @@ Implement the HTML5 and Markdown exporters of `WebDocWriter` in `src/core/web_do
 
 ## 4. `WebDocWriter` EPUB 3 (`.epub`), LaTeX (`.tex`) and **HTML, Markdown, EPUB & LaTeX** UI
 
-Complete `WebDocWriter` in `src/core/web_doc_writer.cpp` with native **EPUB 3 (`.epub`)** (`mimetype` uncompressed first ZIP entry, `META-INF/container.xml`, `OEBPS/content.opf`, `OEBPS/nav.xhtml` + `OEBPS/toc.ncx`, reflowable chapter `.xhtml` files split at `/Outlines` or `H1` boundaries, `OEBPS/styles.css`, and `OEBPS/images/*`) and **LaTeX (`.tex`)** (`\documentclass{article}`, `\usepackage[utf8]{inputenc}`, `\usepackage{graphicx,booktabs,longtable,hyperref}`, `\section`/`\subsection`, `\textbf`/`\textit`, `tabular` environments, and `\includegraphics`) exporters, add `recto-cli pdf-to-epub` and `recto-cli pdf-to-latex`, and build the **HTML, Markdown, EPUB & LaTeX** card and Step 3 options UI in `ConvertPage` (`SPEC 9.5`).
+Complete `WebDocWriter` in `src/core/web_doc_writer.cpp` with native **EPUB 3 (`.epub`)** (`mimetype` uncompressed first ZIP entry, `META-INF/container.xml`, `OEBPS/content.opf`, `OEBPS/nav.xhtml` + `OEBPS/toc.ncx`, reflowable chapter `.xhtml` files split at `/Outlines` or `H1` boundaries, `OEBPS/styles.css`, and `OEBPS/images/*`) and **LaTeX (`.tex`)** (`\documentclass{article}`, `\usepackage[utf8]{inputenc}`, `\usepackage{graphicx,booktabs,longtable,hyperref}`, `\section`/`\subsection`, `\textbf`/`\textit`, `tabular` environments, and `\includegraphics`) exporters, add `recto-cli pdf-to-epub` and `recto-cli pdf-to-tex`, and build the **HTML, Markdown, EPUB & LaTeX** card and Step 3 options UI in `ConvertPage` (`SPEC 9.5`).
 
 **Phase:** 5
 **Needs:** windows-host, display-session
@@ -186,12 +188,12 @@ Complete `WebDocWriter` in `src/core/web_doc_writer.cpp` with native **EPUB 3 (`
 
 **Build order:**
 
-1. Implement `export_pdf_to_epub` and `export_pdf_to_latex` in `src/core/web_doc_writer.cpp`, plus `recto-cli pdf-to-epub` and `recto-cli pdf-to-latex`. Done when: `WebDocWriter.Epub3AndLatex` verifies the EPUB `mimetype` magic bytes at offset `30..58` (`"application/epub+zip"` stored uncompressed), valid XHTML chapters/navigation, and valid LaTeX `\section` and `\begin{tabular}` environments under ASan.
+1. Implement `export_pdf_to_epub` and `export_pdf_to_latex` in `src/core/web_doc_writer.cpp`, plus `recto-cli pdf-to-epub` and `recto-cli pdf-to-tex`. Done when: `WebDocWriter.Epub3AndLatex` verifies the EPUB `mimetype` magic bytes at offset `30..58` (`"application/epub+zip"` stored uncompressed), valid XHTML chapters/navigation, and valid LaTeX `\section` and `\begin{tabular}` environments under ASan.
 2. Register the **HTML, Markdown, EPUB & LaTeX** card and build `WebConvertOptionsControl` (`src/app/views/convert/web_convert_options_control.h/.cpp`) in `ConvertPage` (`SPEC 9.5`). Done when: `AppTests.ConvertWebDocUi` runs HTML (Flowing and Fixed), Markdown, EPUB 3, and LaTeX jobs through `ConversionRunner`.
 
 - [ ] Implement `export_pdf_to_epub` in `src/core/web_doc_writer.cpp` using `ZipWriter::add_stored_entry` (`D04 T03 §1`) to write `"mimetype"` (`"application/epub+zip"`, 20 bytes uncompressed, method `0`, first entry in the archive), `META-INF/container.xml`, `OEBPS/content.opf` (`package version="3.0"`, Dublin Core `<dc:title>`, `<dc:creator>`, `<dc:language>`, `<dc:identifier>`, `<manifest>`, `<spine>`), `OEBPS/nav.xhtml` (`epub:type="toc"`), and chapter `OEBPS/chapter-1..N.xhtml` split at top-level PDF `/Outlines` or `Heading1` boundaries. Done when: `WebDocWriter.Epub3PackageCompliance` verifies offset `30` is `"mimetype"`, compression method is `0`, and all manifest items exist and parse as strict XML. Cheaper substitute that fails the checkpoint: deflate-compressing `mimetype` or omitting `nav.xhtml`.
 - [ ] Implement `export_pdf_to_latex` in `src/core/web_doc_writer.cpp` escaping all 10 LaTeX reserved characters (`\textbackslash{}`, `\{`, `\}`, `\$`, `\&`, `\#`, `\_`, `\%`, `\textasciitilde{}`, `\textasciicircum{}`), mapping headings to `\section{...}` / `\subsection{...}` / `\subsubsection{...}`, lists to `\begin{itemize|enumerate}`, tables from `TableExtractor` to `\begin{tabular}{...}` with `\multicolumn`, and images to `\includegraphics`. Done when: `WebDocWriter.LatexStructureAndEscaping` produces balanced `\begin{...}` / `\end{...}` environments and escapes `$100% & #1_test` cleanly.
-- [ ] Implement `recto-cli pdf-to-epub <in.pdf> --out <out.epub>` and `recto-cli pdf-to-latex <in.pdf> --out <out.tex>` in `src/cli/cmd_pdf_to_web.cpp`. Done when: `Cli.PdfToEpubAndLatex` passes under ASan.
+- [ ] Implement `recto-cli pdf-to-epub <in.pdf> --out <out.epub>` and `recto-cli pdf-to-tex <in.pdf> --out <out.tex>` in `src/cli/cmd_pdf_to_web.cpp`. Done when: `Cli.PdfToEpubAndLatex` passes under ASan.
 - [ ] Build `WebConvertOptionsControl` (`src/app/views/convert/web_convert_options_control.h/.cpp`, `SPEC 9.5`) exposing `Format` (`HTML5 (.html)`, `Markdown (.md)`, `EPUB 3 E-Book (.epub)`, `LaTeX (.tex)`), `HTML layout` (`Flowing semantic HTML` | `Fixed exact page layout`), `Self-contained single HTML file (embed images as data URIs)` toggle, `Include images` toggle, and `OCR scanned pages` toggle. Done when: switching between `HTML5`, `Markdown`, `EPUB 3`, and `LaTeX` updates the visible option rows and primary button label (`"Convert to HTML"`, `"Convert to Markdown"`, `"Convert to EPUB"`, `"Convert to LaTeX"`).
 - [ ] Register the **HTML, Markdown, EPUB & LaTeX** card in `ConverterRegistry` (`D04 T01 §3`) with the SPEC Principle 4 honest capability hint line. Done when: `AppTests.ConvertWebDocUi` runs all 4 formats through the queue and verifies output files.
 - [ ] Commit: `convert: implement PDF to HTML5, Markdown, EPUB 3 and LaTeX writer and UI`

@@ -10,7 +10,7 @@ title: "TODO-03 -- User-Reported Failure Class Gates"
 
 > **Goal:** Every failure class that users of PDF tools hit hardest has a Recto gate that fails before the bug can ship: hostile-input and recovered-error fixtures in the engine, a differential proof that every consumer reads content the same way, fault-injected saves, provably complete redaction, Unicode authoring round trips, UI glyph coverage, a printer driver matrix, render and text fidelity fixtures, and a clean-machine smoke of the installed artifacts. The gates test behaviour owned by other sections; a failing gate is fixed in its owner, never by loosening the gate.
 
-> **Current state:** Measured 2026-10-20. No Recto section yet names these failure classes as test fixtures. `tests/corpus/broken/` (`D00 T03 §4`) holds generic malformed files, `D06 T01` holds goldens, text tables, round trips and performance, and `D06 T02` holds the hostile-input audit and fuzzing; none of them carries the failure classes this file lists (split `/Contents`, inline `EI`, silent truncation, save-before-verify, redaction side channels, `?` substitution, single-probe font fallback, printer enumeration hangs, nearest-neighbour shrink, packaged-model gaps). 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI references rewritten against `todo/10-ui/`.
+> **Current state:** Measured 2026-10-20 (re-measured 2026-10-23: no `UserClasses.*` test, `src/pdf/recovery.h` or `tests/corpus/broken/user-classes/` exists yet). No Recto section yet names these failure classes as test fixtures. `tests/corpus/broken/` (`D00 T03 §4`) holds generic malformed files, `D06 T01` holds goldens, text tables, round trips and performance, and `D06 T02` holds the hostile-input audit and fuzzing; none of them carries the failure classes this file lists (split `/Contents`, inline `EI`, silent truncation, save-before-verify, redaction side channels, `?` substitution, single-probe font fallback, printer enumeration hangs, nearest-neighbour shrink, packaged-model gaps). 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI references rewritten against `todo/10-ui/`.
 
 ## Inputs
 
@@ -32,6 +32,7 @@ title: "TODO-03 -- User-Reported Failure Class Gates"
 - -> XREF: D10 T02 §20 -- the `ui::InfoBar` that §3 here builds `RecoveredContentNotice` on.
 - -> XREF: D10 T03 §7 -- the `ui::Strings` tables whose code points §8 here checks for glyph coverage.
 - -> XREF: D10 T01 §11 -- `ui::Icon` and the text elements whose fallback §8 here asserts.
+- -> XREF: D99 T01 §13 -- the operator cross-viewer check runs the sample set script of §13.
 
 ## Outcome
 
@@ -48,9 +49,9 @@ title: "TODO-03 -- User-Reported Failure Class Gates"
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | Hostile-input fixture pack from user-reported failure classes | D01 T02 §4, D01 T03 §4 | [ ] |
-| 2 | §2 | Recovered-error and truncation contract in `recto-pdf` results | §1 | [ ] |
-| 3 | §10 | Render fidelity fixtures from user-reported failure classes | D06 T01 §1, §1 | [ ] |
+| 1 | §1 | Hostile-input fixture pack from user-reported failure classes | D01 T02 §4, D01 T02 §19, D01 T03 §4 | [ ] |
+| 2 | §2 | Recovered-error and truncation contract in `recto-pdf` results | §1, D01 T02 §19 | [ ] |
+| 3 | §10 | Render fidelity fixtures from user-reported failure classes | D06 T01 §1, §1, D01 T02 §15, D01 T02 §16, D01 T02 §17 | [ ] |
 | 4 | §3 | Page notice for recovered or truncated content | §2, D02 T02 §4, D10 T01 §8, D10 T02 §20 | [ ] |
 | 5 | §8 | UI glyph coverage, non-Latin file names and input conventions suite | D02 T01 §3, D02 T03 §1, D02 T03 §5, D02 T02 §6, D10 T01 §10, D10 T01 §11, D10 T03 §7 | [ ] |
 | 6 | §11 | Text extraction, reading order and selection fidelity fixtures | D06 T01 §3, D03 T01 §3, D03 T01 §5, §2 | [ ] |
@@ -60,8 +61,11 @@ title: "TODO-03 -- User-Reported Failure Class Gates"
 | 10 | §7 | Unicode authoring round-trip suite for every text-writing path | D03 T01 §9, D03 T03 §2, D03 T03 §6, D05 T01 §6, D05 T01 §8 | [ ] |
 | 11 | §9 | Printer driver compatibility and print failure isolation suite | D07 T01 §2, D07 T01 §3 | [ ] |
 | 12 | §12 | Installed-build release smoke and upgrade persistence proof on the build host | D07 T01 §6, D07 T01 §7, D07 T01 §8, D07 T01 §9, D05 T02 §10, D07 T02 §7, §8, §10 | [ ] |
+| 13 | §13 | Interoperability sample set script for the cross-viewer check | D03 T03 §5, D03 T03 §7, D05 T01 §8, D05 T01 §10, D04 T05 §6 | [ ] |
 
 ## 1. Hostile-input fixture pack from user-reported failure classes
+
+> **Groomed 2026-10-23:** added `D01 T02 §19` to `Depends On`: the memory and time bounds this pack asserts (the 1,000,000-deep chain, the `/MediaBox 1e30`, the 100,000-entry `/Kids`) are the interpreter and actor ceilings that section builds, so the pack cannot pass before they exist.
 
 PDF tools commonly crash, hang or silently drop content on malformed and hostile inputs met in the wild (hostile numbers and graphs, inline image `EI`, one bad page-tree entry). This section turns each reported shape into a deterministic fixture generated by `scripts/build-corpus.py`, so Recto's engine is proven against them before the viewer exists. Each fixture must open or fail with a typed `PdfError`, under AddressSanitizer and a hard memory cap; none may abort, recurse on document-controlled depth, or allocate past the plan section 9 bounds. Fixes land in the engine section that owns the code path (`D01 T01`, `D01 T02`), never by deleting a fixture.
 
@@ -89,6 +93,8 @@ PDF tools commonly crash, hang or silently drop content on malformed and hostile
 
 ## 2. Recovered-error and truncation contract in `recto-pdf` results
 
+> **Groomed 2026-10-23:** `DisplayList::truncation()` (`D01 T02 §19`), `unmapped_glyph_count` and `substituted_font_count` (`D01 T02 §17`) are the engine facts this contract turns into `RecoveryNote` and `Truncated`; `D01 T02 §19` is now a dependency so every capped walk has a ceiling to report.
+
 A common failure is a blank page with no message, or a search that says `complete: true` after a cap cut it short (silent truncation and success on failure). Recto's engine results carry the evidence instead: a page's `DisplayList` holds a bounded list of `RecoveryNote` records (skipped operator, capped stream, skipped page-tree entry, unmapped glyph), and any capped walk returns a typed `Truncated` outcome that every consumer must propagate. The owning code lives in `D01 T02`; this section adds the contract tests and the shared type at the engine level. Propagation into `PageText` and search results is proven in §11, once those exist (`D03 T01`).
 
 **Phase:** 1
@@ -114,8 +120,10 @@ A common failure is a blank page with no message, or a search that says `complet
 Users cannot tell a broken file from a broken viewer. When a visible page carries `RecoveryNote` records (§2), Recto shows a quiet, dismissible notice on that page naming what was skipped, with `Copy details` for a bug report. It never blocks reading and never appears for clean pages.
 
 **Phase:** 2
-**Needs:** windows-host, display-session
+**Needs:** windows-host
 **Surface:** yes
+
+> **Groomed 2026-10-23:** removed `display-session`: the notice is a `ui::InfoBar` asserted headless (UIA tree, golden image through `D10 T01 §20`, clipboard text), so no window is needed.
 
 **Fidelity:** Genuinely new surface: no SPEC screenshot shows it. It follows `design/SPEC.md` section 9.2 (page loading states) and section 4 tokens, using a `ui::InfoBar` (`D10 T02 §20`, informational severity) in the page overlay slot.
 **Job:** A reader opening a damaged PDF sees which page lost content and why, and can copy the details into an issue. Consumer: the reader and the `D07 T03 §2` diagnostics copy.
@@ -127,14 +135,14 @@ Users cannot tell a broken file from a broken viewer. When a visible page carrie
 1. Add `RecoveredContentNotice` in `src/app/controls/RecoveredContentNotice.h/.cpp`, bound to the visible page's `RecoveryNotes`. Done when: the bad-`/Kids` fixture shows one notice and a clean corpus file shows none.
 2. Wire `Copy details` to the clipboard through a formatter local to the control (`D07 T03 §2` later reuses it for `Report a problem`). Done when: the clipboard text names the page, note kinds, counts and Recto version, and no document text.
 
-- [ ] Author `src/app/controls/RecoveredContentNotice.h/.cpp` as a `ui::InfoBar` with title "Some content on this page could not be read" and a note list. Done when: the control renders in Light, Dark and HighContrast with token brushes only. Cheaper substitute: a toast that disappears before the user reads it.
+- [ ] Author `src/app/controls/RecoveredContentNotice.h/.cpp` as a `ui::InfoBar` with title "Some content on this page could not be read" and a note list. Done when: the control renders headless in Light, Dark and HighContrast, matching its golden images, with token brushes only. Cheaper substitute: a toast that disappears before the user reads it.
 - [ ] Show the notice only for pages whose `RecoveryNotes` are non-empty, keyed per page so scrolling does not re-announce it. Done when: scrolling a 200-page clean file shows zero notices.
 - [ ] Add `Copy details` writing page index, note kinds, counts and the version string (no document text) to the clipboard. Done when: the copied text contains no glyph text from the page.
-- [ ] Give the notice an automation name, keep it out of the tab order when collapsed, and announce it politely once per page. Done when: Narrator reads it once when the page becomes current.
+- [ ] Give the notice an automation name, keep it out of the tab order when collapsed, and announce it politely once per page. Done when: `UserClasses.RecoveredContentNotice` captures exactly one UIA notification event (`D10 T03 §4`) when the page becomes current and none when it is scrolled away and back.
 - [ ] Register `view.showRecoveryDetails` in `CommandRegistry` so it is reachable from `Ctrl+K`. Done when: typing "recovered" in the command box lists it while a noted page is current.
 - [ ] Commit: `viewer: show a page notice when content was recovered or truncated`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=UserClasses.RecoveredContentNotice` passes on the display-session host: one notice on the bad-`/Kids` fixture, none on `tests/corpus/render/hello-world.pdf`.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=UserClasses.RecoveredContentNotice` passes headless (UIA tree and a golden image through `D10 T01 §20`): one notice on the bad-`/Kids` fixture, none on `tests/corpus/render/simple-1p.pdf`.
 
 ## 4. Single-interpreter differential suite across every content consumer
 
@@ -204,7 +212,7 @@ Common redaction failures leave text in `/ActualText`, `/Alt`, the structure tre
 - [ ] Assert that apply removes every channel and the raw scan of the saved bytes finds nothing. Done when: all channel fixtures pass.
 - [ ] Assert a partly covered DCT, JPX, JBIG2, CCITT, Flate and inline image keeps every pixel outside the mark unchanged and no original stream, `/SMask` or EXIF thumbnail survives. Done when: a pixel diff outside the mark is zero and the raw scan finds no original image stream.
 - [ ] Assert any cap or unreadable object met during redaction refuses the whole apply and leaves the document unchanged. Done when: the capped-forms fixture yields an error and the file hash is unchanged.
-- [ ] Prove removal with oracles that do not depend on literal bytes: a fixture shows the secret through a custom CID encoding whose `/ToUnicode` rebuilds it, and after apply Recto's extractor, an independent extractor (Poppler `pdftotext` pinned in `tests/tools/`), the operator trace (no glyph-showing operator left inside the mark) and a render of the marked region (only the cover colour) all agree the secret is gone (review finding: literal-byte absence cannot prove removal). Done when: leaving the CID-encoded text in place makes at least two of the four oracles fail.
+- [ ] Prove removal with oracles that do not depend on literal bytes: a fixture shows the secret through a custom CID encoding whose `/ToUnicode` rebuilds it, and after apply Recto's extractor, an independent extractor (`pdftotext` when it is on `PATH`, as Git for Windows ships one; the oracle is recorded as skipped when it is absent), the operator trace (no glyph-showing operator left inside the mark) and a render of the marked region (only the cover colour) all agree the secret is gone (review finding: literal-byte absence cannot prove removal). Done when: leaving the CID-encoded text in place makes at least two of the three always-available oracles (Recto's extractor, the operator trace, the region render) fail, and the independent extractor too when present.
 - [ ] Assert pattern search finds E.164 and national phone formats, IBAN (mod-97), card numbers (Luhn) and national IDs with word boundaries, so no fragment of a match survives. Done when: a page with phone, IBAN, SIRET and NIR yields full matches only.
 - [ ] Assert the audit detects covers drawn as `re f`, `re h f`, `m l l l h f`, `b`, `b*`, thick strokes, black highlights, white rectangles, opaque square annotations and pending `/Redact` marks, and reports zero findings on Recto's own applied output. Done when: the positive and negative control tables pass.
 - [ ] Assert a pending mark renders unmistakably as pending and closing with unapplied marks asks first. Done when: the close path returns the unapplied-marks prompt.
@@ -240,13 +248,15 @@ Common text-writing failures put `?` for Polish, Czech, Greek, Cyrillic, Thai, A
 A common interface failure is boxes for Chinese, Thai, Korean, Hebrew and Arabic in the UI and in tab titles, recent files and bookmarks, because the fallback is chosen by probing one Arabic character, and scrolling that ignores Windows touchpad and wheel settings. This suite renders every localized string and a set of non-Latin file names in each shell surface and asserts real glyphs, and checks the input conventions users asked for.
 
 **Phase:** 2
-**Needs:** windows-host, display-session
+**Needs:** windows-host
 **Surface:** no
+
+> **Groomed 2026-10-23:** removed `display-session`: glyph coverage is measured with DirectWrite font fallback and headless `recto-ui` renders, and wheel and `Ctrl` handling with synthetic input, none of which needs a visible window.
 
 **Build order:**
 
 1. Author `tests/recto-tests/ui_glyph_coverage.cpp` using DirectWrite font fallback (`IDWriteFontFallback::MapCharacters`) to resolve every code point of every string in the `STRINGTABLE` resources under `src/app/strings/` loaded by `ui::Strings` (`D10 T03 §7`) and of a non-Latin file-name list. Done when: the test lists zero unmapped code points.
-2. Open fixtures named in Simplified and Traditional Chinese, Japanese, Korean, Thai, Hebrew, Arabic, Devanagari and with emoji, and capture the tab, title bar, recent list and outline panel. Done when: no capture contains a `.notdef` box.
+2. Open fixtures named in Simplified and Traditional Chinese, Japanese, Korean, Thai, Hebrew, Arabic, Devanagari and with emoji, and render the tab, title bar, recent list and outline panel headless. Done when: the `IDWriteTextLayout` cluster metrics of every rendered string show no cluster resolving to glyph index 0 (`.notdef`).
 
 - [ ] Assert UI fallback is resolved per code point through DirectWrite, never by a single probe character, and that no `ui::TextStyle` hard-codes a Latin-only font family and that every glyph is drawn through `ui::Icon` or `ui::TextBlock` (`D10 T01 §11`, `§10`). Done when: a source scan finds no hard-coded font file path in `src/app`.
 - [ ] Assert non-Latin file names round-trip through `RecentFilesStore` as wide paths and reopen. Done when: the recent list reopens every fixture.
@@ -256,7 +266,7 @@ A common interface failure is boxes for Chinese, Thai, Korean, Hebrew and Arabic
 - [ ] Assert collapsing a side panel keeps the visible page anchored. Done when: the top visible page index is unchanged after the collapse.
 - [ ] Commit: `test(quality): prove UI glyph coverage, non-Latin names and Windows input conventions`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=UserClasses.UiGlyphCoverage:UserClasses.InputConventions` passes on the display-session host with zero unmapped code points.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=UserClasses.UiGlyphCoverage:UserClasses.InputConventions` passes headless with zero unmapped code points.
 
 ## 9. Printer driver compatibility and print failure isolation suite
 
@@ -287,7 +297,9 @@ Printing is among the most reported failure classes in PDF tools: only "Save as 
 
 ## 10. Render fidelity fixtures from user-reported failure classes
 
-Common rendering failures are a nearest-neighbour image shrink that makes every scan jagged, blending against white, stencil masks drawn at the wrong alpha, an open five-point path taken for a rectangle (AutoCAD "M" drawn as a box), Type 3 glyphs drawn bold under `2 Tr` and Lab `/WhitePoint` ignored. This section adds those cases to the golden harness with reference images from MuPDF and Poppler.
+> **Groomed 2026-10-23:** references were MuPDF and Poppler renders, which are not installed on the campaign host and would need a download in an unattended run; MuPDF is also a retired dependency (`D00 T01 §2`). Analytic references computed from the ISO formulas are machine-judgeable, reproducible and independent of any renderer. `D01 T02 §15`, `§16` and `§17` (blend modes and soft masks, shadings, non-embedded fonts) are now dependencies, since this section cannot pass before they exist.
+
+Common rendering failures are a nearest-neighbour image shrink that makes every scan jagged, blending against white, stencil masks drawn at the wrong alpha, an open five-point path taken for a rectangle (AutoCAD "M" drawn as a box), Type 3 glyphs drawn bold under `2 Tr` and Lab `/WhitePoint` ignored. This section adds those cases to the golden harness with analytic references computed from the ISO 32000 formulas.
 
 **Phase:** 1
 **Needs:** windows-host
@@ -295,8 +307,8 @@ Common rendering failures are a nearest-neighbour image shrink that makes every 
 
 **Build order:**
 
-1. Generate the fixtures with `scripts/build-corpus.py` into `tests/corpus/render/user-classes/` and record reference images in `tests/goldens/user-classes/` from MuPDF and Poppler at 96 and 150 dpi. Done when: the provenance rows name the reference tool and version.
-2. Add `UserClasses.RenderFidelity` comparing Recto's tiles against the references with the `D06 T01 §1` tolerance. Done when: the suite passes and switching image minification to nearest-neighbour makes it fail.
+1. Generate the fixtures with `scripts/build-corpus.py` into `tests/corpus/render/user-classes/` together with analytic references computed in the same script from the ISO 32000-1 formulas (box-filter average for minification, section 11.3.5 blend formulas, section 8.6.5 Lab conversion), stored as probe-pixel tables and reference images in `tests/goldens/user-classes/` at 96 and 150 dpi. Done when: the provenance rows name the formula and ISO clause each reference comes from, and no reference depends on an external renderer.
+2. Add `UserClasses.RenderFidelity` comparing Recto's tiles against the references with the `D06 T01 §1` tolerance. Done when: the suite passes (probe pixels within 1 LSB, image error within the recorded bound) and switching image minification to nearest-neighbour makes it fail.
 
 - [ ] Add a 288 dpi scan and a 1-bit CCITT line-art page shown at 61 and 96 dpi, asserting area-filtered minification regardless of `/Interpolate`. Done when: mean absolute error against the reference is under the recorded bound.
 - [ ] Add all 16 blend modes over a transparent backdrop, knockout and isolated groups, stencil-mask alpha, pattern alpha set by a later `gs`, and fill-plus-stroke operators. Done when: each page matches the reference within tolerance.
@@ -362,6 +374,31 @@ Common release failures are shipping without the OCR models or a fallback font t
 - [ ] Commit: `test(release): smoke the installed artifacts on the build host and prove upgrades keep user state`
 
 **Test checkpoint:** `pwsh tests/scripts/release_smoke.ps1 -Candidate build/release/<version>` exits 0 on the build host and writes a green `build/release-smoke/<version>.json` whose commit SHA and artifact digests match the candidate bundle, and swapping one artifact after the run makes the runbook gate refuse the tag.
+
+## 13. Interoperability sample set script for the cross-viewer check
+
+The operator's cross-viewer check (`D99 T01 §13`) opens files Recto wrote in Adobe Acrobat Reader, Foxit and Chrome's viewer. Those files must come from a script, not from hand work, so every release candidate is checked against the same set. `scripts/make-interop-samples.ps1 -Candidate <folder> -Out <folder>` drives the candidate's `recto-cli` (never a development build) over the committed corpus to write one file per item: each of the 15 annotation types with a reply thread (`recto-cli annot`, `D03 T03 §5`), a filled and a flattened AcroForm with every field type (`recto-cli forms`, `D03 T03 §7`), a true-redacted page (`recto-cli redact`, `D05 T01 §10`), an invisible and a visible PAdES signature with the test certificate (`recto-cli sign`, `D05 T01 §8`), and PDF/A-2b and PDF/A-3b with a Factur-X attachment (`recto-cli pdfa`, `D04 T05 §6`). It writes `manifest.json` (file, feature, command line, SHA-256) through temp-file-then-replace so the operator's findings can name the exact file. Added by the groom of 2026-10-23: `D99 T01 §13` named this script, and no section built it.
+
+**Phase:** 6
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Author `scripts/make-interop-samples.ps1` with `-Candidate` and `-Out`, resolving `recto-cli.exe` inside the candidate folder and refusing (exit 2) when it is missing or when `-Out` is not empty. Done when: running it against `build\bin\x64\Release\recto-cli` writes every sample and `manifest.json`.
+2. Add `tests/scripts/test_make_interop_samples.py` that runs the script with a fake `recto-cli` recording its arguments, and with the real Release build when present. Done when: the test proves one command per manifest item, the refusals, and that each real output reopens with `recto-cli info` exit 0.
+
+- [ ] Author `scripts/make-interop-samples.ps1` resolving `recto-cli.exe` only from `-Candidate` and writing into an empty `-Out` folder. Done when: a missing `recto-cli.exe` or a non-empty `-Out` exits 2 with the reason. Cheaper substitute: calling whatever `recto-cli` is on `PATH`, which could test a development build instead of the candidate.
+- [ ] Write the 15 annotation-type samples with reply threads through `recto-cli annot` (`D03 T03 §5`). Done when: `recto-cli annot list` on the output reports all 15 subtypes and the replies.
+- [ ] Write filled and flattened form samples through `recto-cli forms` (`D03 T03 §7`). Done when: the filled sample keeps every field type with its value and the flattened sample has no `/AcroForm` fields left.
+- [ ] Write the true-redaction sample through `recto-cli redact` (`D05 T01 §10`). Done when: the redacted text is absent from the output's content streams (`recto-cli text` does not return it).
+- [ ] Write invisible and visible PAdES signature samples with the corpus test certificate through `recto-cli sign` (`D05 T01 §8`). Done when: `recto-cli verify` reports both signatures valid against the test root.
+- [ ] Write PDF/A-2b and PDF/A-3b with a Factur-X attachment through `recto-cli pdfa` (`D04 T05 §6`). Done when: Recto's own validator passes both.
+- [ ] Write `manifest.json` (file name, feature, exact command line, SHA-256) through a temporary file and `Move-Item -Force` in the output folder. Done when: the manifest hashes match the files and a killed run leaves no partial manifest. Cheaper substitute: writing the manifest in place, which can leave a truncated file.
+- [ ] Add `tests/scripts/test_make_interop_samples.py` with a fake `recto-cli` (argument recording, refusal paths) and a real-build leg skipped only when no Release build exists. Done when: `python -m unittest tests.scripts.test_make_interop_samples` passes and fails when one sample command is removed from the script.
+- [ ] Commit: `quality: interoperability sample set script for the cross-viewer check`
+
+**Test checkpoint:** `python -m unittest tests.scripts.test_make_interop_samples` passes (fake-CLI leg always; real-build leg on a host with a Release build), and the script exits 2 when `-Candidate` lacks `recto-cli.exe`.
 
 ## Verification
 

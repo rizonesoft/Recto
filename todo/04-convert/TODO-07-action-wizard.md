@@ -13,6 +13,8 @@ track: M5
 
 > **Current state:** Measured 2026-10-21. No action, step or batch code exists. Every operation an action can call is specified but not built: OCR and optimization (`D04 T02 §7`, `§11`), watermark, header and Bates, encryption and redaction (`D05 T01 §5`, `§6`, `§7`, `§10`), annotation and form flattening (`D03 T03 §2`, `§6`), editable metadata (`D02 T03 §10`), `PDF/A` (`D04 T05 §6`), preflight and `PDF/X` (`D04 T06 §6`, `§10`), converters (`D04 T01 §3`), and safe folder enumeration (`D03 T05 §2`). The job runtime and queue are `D04 T01 §1`, `§2`, `§5`, `§7`, and `D04 T01` is frozen: this file depends on its sections and does not edit them. 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI sections rewritten against `todo/10-ui/`.
 
+> **Groomed 2026-10-23:** New `§25` adds `fuzz_action_json` so action import is fuzzed like every other file-format reader.
+
 ## Inputs
 
 - `docs/plans/2026-10-13-recto-foundation.md` decisions D9 (no PDF JavaScript), D16 (offline, no telemetry), D17, D18, and section 4 (jobs open their own `pdf::Document`).
@@ -80,6 +82,7 @@ track: M5
 | 22 | §22 | `print` terminal step: batch print to a named printer | §3, §9, D07 T01 §2, D07 T01 §9 | [ ] |
 | 23 | §23 | Print step safeguards: run confirmation, page budget and CLI refusal | §11, §13, §22, D02 T01 §10, D06 T04 §20, D10 T01 §8, D10 T01 §11, D10 T02 §2, D10 T02 §3, D10 T02 §17, D10 T03 §1 | [ ] |
 | 24 | §24 | Gates for the new steps: no overwrite, fail closed, honest reports | §14, §15, §16, §17, §18, §19, §21 | [ ] |
+| 25 | §25 | Fuzz target for action file import and hostile action parsing | §2, §3, §14 | [ ] |
 
 ## 1. Action model, JSON schema and versioned migration
 
@@ -682,6 +685,27 @@ Prove the properties of the steps added in `§15` to `§21` the same way `§14` 
 - [ ] Commit: `test(quality): prove the new action steps never overwrite, fail closed and report honestly`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=ActionGates2.*:ActionGates.BuiltinsEndToEnd` passes under ASan, and replacing the exclusive publish with a replace makes `ActionGates2.NewStepsNeverOverwrite` fail.
+
+## 25. Fuzz target for action file import and hostile action parsing
+
+Action files are shared between people and imported from disk (`§2`), so the importer is a parser of untrusted JSON. `§2` bounds it by size, nesting, step count and string length and `§14` gates the hostile cases it thought of; every other file-format reader in this plan also has a fuzz harness, and this one does not. This section adds `fuzz_action_json` so the bounds are exercised by generated input and not only by the cases written by hand.
+
+**Phase:** 5
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add a byte-span entry point `import_action_bytes` to `src/services/actions/action_store.h/.cpp` that the file import calls. Done when: `ActionStore.ImportBytes` imports a fixture from memory and refuses an over-limit buffer.
+2. Add `fuzz/fuzz_action_json.cpp` and the deterministic smoke test. Done when: `Fuzz.ActionJsonSmoke` runs the seeds and 5000 seeded mutations under ASan with no finding.
+
+- [ ] Implement `import_action_bytes(std::span<const uint8_t>)` returning the validated action and its `validate_action` messages, with the limits of `§2` applied before any allocation proportional to the input. Done when: `ActionStore.ImportBytes` refuses a `1 MiB + 1` buffer without parsing it.
+- [ ] Write `fuzz/fuzz_action_json.cpp` calling `import_action_bytes` and then `validate_action` (`§3`) on every accepted action, asserting that nothing runs (no job submitted, no file read) through recording test doubles for job submission and file reads (the same doubles `§14` uses for its hostile-action cases, or new ones where `§14` has none). Done when: `Fuzz.ActionJsonSmoke` passes with the doubles recording zero calls.
+- [ ] Seed the corpus from the four built-in actions, one action per step kind and the hostile cases of `§14` through `scripts/build-corpus.py`, recorded in `tests/corpus/PROVENANCE.md`, and register the harness in `recto-fuzz.vcxproj`. Done when: `Corpus.Provenance` passes and `recto-fuzz.exe` lists `fuzz_action_json`.
+- [ ] Add `Fuzz.ActionJsonSmoke` with a fixed seed. Done when: the test passes under ASan in under `60 s` and removing the nesting limit of `§2` makes it fail.
+- [ ] Commit: `services: add fuzz_action_json for action file import`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=ActionStore.ImportBytes:Fuzz.ActionJsonSmoke` passes under ASan, and removing the nesting limit makes `Fuzz.ActionJsonSmoke` fail.
 
 ## Verification
 
