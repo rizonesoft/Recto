@@ -78,6 +78,8 @@ Define the foundational error-handling and diagnostic primitives in `src/pdf/err
 - [x] Automatically append a ring-buffer entry and emit a `TraceLoggingWrite` diagnostic event whenever `make_pdf_error(...)` constructs a `DamagedFormat`, `DecompressionLimitExceeded`, or `RecursionLimitExceeded` error. Done when: `diagnostics_tail(10)` reflects the error immediately after construction.
 - [x] Commit: `pdf: add PdfResult, PdfError, D16 diagnostic ring buffer and ETW TraceLogging`
 
+> **Audit 2026-10-22 (D06 T05 §15):** the concurrency item's "zero data races" overstates its evidence: AddressSanitizer finds memory errors, not races (Microsoft documents ThreadSanitizer separately), so the 8-thread tests prove counts and ordering under ASan, not race freedom. The audit also found production registration forcing the ETW provider on as if a session listened; registration now only registers (`etw_provider_enabled`, `force_enable_etw_provider_for_testing`), `value_or` returns a value, and `RECTO_PDF_TRY` needs a nothrow-movable payload, with `RECTO_PDF_TRY_REF` for the rest.
+
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*` passes under ASan with 0 warnings.
 
 > **Verified:** 2026-10-18 | §1 | a0b2e1721fb9fb1fe3662162c86301e84d74154d

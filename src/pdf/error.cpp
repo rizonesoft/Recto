@@ -783,21 +783,33 @@ bool ensure_etw_provider_registered() noexcept
 		static EtwProviderUnregistrar unregistrar{};
 		const HRESULT hr = TraceLoggingRegister(g_recto_etw_provider);
 		if (SUCCEEDED(hr)) {
-			if (g_recto_etw_provider->LevelPlus1 == 0) {
-				const GUID provider_id = TraceLoggingProviderId(g_recto_etw_provider);
-				_tlgEnableCallback(
-					&provider_id,
-					1u, // EVENT_CONTROL_CODE_ENABLE_PROVIDER
-					5u, // WINEVENT_LEVEL_VERBOSE
-					0ULL,
-					0ULL,
-					nullptr,
-					const_cast<_tlgProvider_t*>(g_recto_etw_provider));
-			}
+			// Registered only: TraceLoggingWrite builds and writes an event only while a session has enabled the
+			// provider, so with nobody listening, diagnostics cost nothing beyond the ring (D16).
 			g_etw_registered.store(true, std::memory_order_release);
 		}
 	}
 	return g_etw_registered.load(std::memory_order_relaxed);
+}
+
+bool etw_provider_enabled() noexcept
+{
+	return ensure_etw_provider_registered() && TraceLoggingProviderEnabled(g_recto_etw_provider, 0, 0);
+}
+
+void force_enable_etw_provider_for_testing() noexcept
+{
+	if (!ensure_etw_provider_registered() || g_recto_etw_provider->LevelPlus1 != 0) {
+		return;
+	}
+	const GUID provider_id = TraceLoggingProviderId(g_recto_etw_provider);
+	_tlgEnableCallback(
+		&provider_id,
+		1u, // EVENT_CONTROL_CODE_ENABLE_PROVIDER
+		5u, // WINEVENT_LEVEL_VERBOSE
+		0ULL,
+		0ULL,
+		nullptr,
+		const_cast<_tlgProvider_t*>(g_recto_etw_provider));
 }
 
 bool is_etw_provider_registered() noexcept

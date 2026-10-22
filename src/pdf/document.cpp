@@ -1295,15 +1295,15 @@ PdfResult<void> Document::initialize_xref_and_security(
 	std::optional<std::string_view> password,
 	bool allow_unauthenticated)
 {
-	RECTO_PDF_TRY(
-		XrefTable parsed_xref,
+	RECTO_PDF_TRY_REF(
+		parsed_xref,
 		XrefTable::parse(file_bytes_, kMaxXrefTotalEntries, /*allow_recovery=*/true));
 	xref_ = std::move(parsed_xref);
 	description_.pdf_version = std::string(xref_.pdf_version());
 	description_.is_recovered = xref_.recovered();
 
-	RECTO_PDF_TRY(
-		std::optional<SecurityHandler> sec,
+	RECTO_PDF_TRY_REF(
+		sec,
 		SecurityHandler::from_xref(xref_, file_bytes_));
 	security_handler_ = std::move(sec);
 

@@ -1370,7 +1370,7 @@ PdfResult<SecurityHandler> SecurityHandler::create(
 {
 	try {
 		check_crypto_alloc();
-		RECTO_PDF_TRY(EncryptDictParams parsed, parse_encrypt_dict(encrypt_dict));
+		RECTO_PDF_TRY_REF(parsed, parse_encrypt_dict(encrypt_dict));
 		SecurityHandler handler;
 		handler.params_ = std::move(parsed);
 		handler.permissions_ = PdfPermissions::from_bitmask(handler.params_.p, handler.params_.r);
@@ -1445,9 +1445,7 @@ PdfResult<std::optional<SecurityHandler>> SecurityHandler::from_xref(
 			}
 		}
 
-		RECTO_PDF_TRY(
-			SecurityHandler handler,
-			create(*enc_dict, id0, enc_ref));
+		RECTO_PDF_TRY_REF(handler, create(*enc_dict, id0, enc_ref));
 		return std::optional<SecurityHandler>{std::move(handler)};
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(

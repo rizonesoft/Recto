@@ -12,6 +12,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 namespace recto::pdf {
@@ -133,18 +134,39 @@ struct NonDefaultThrowingPayload {
 
 PdfResult<int> extract_non_default_lvalue(PdfResult<NonDefaultThrowingPayload>& r) noexcept
 {
-	RECTO_PDF_TRY(auto value, r);
+	RECTO_PDF_TRY_REF(value, r);
 	return value.v;
 }
 
 PdfResult<int> extract_non_default_rvalue(PdfResult<NonDefaultThrowingPayload>&& r) noexcept
 {
-	RECTO_PDF_TRY(auto value, std::move(r));
+	RECTO_PDF_TRY_REF(value, std::move(r));
 	return value.v;
+}
+
+// value_or returns a value, as std::expected does, so a temporary fallback cannot leave a dangling reference. On a
+// const result it copies, so it exists only for payloads whose copy cannot throw; others use try_value_or, which
+// returns a failed copy as PdfError, or the rvalue form, which moves.
+static_assert(std::is_same_v<decltype(std::declval<const PdfResult<int>&>().value_or(7)), int>);
+static_assert(std::is_same_v<decltype(std::declval<PdfResult<std::string>&&>().value_or(std::string{})), std::string>);
+
+TEST(PdfError, ValueOrReturnsAValue)
+{
+	PdfResult<std::string> failed{PdfError{ErrorCode::IoError}};
+	const std::string fallback = std::move(failed).value_or(std::string(1024, 'x'));
+	EXPECT_EQ(fallback, std::string(1024, 'x'));
+	const PdfResult<int> failed_int{PdfError{ErrorCode::IoError}};
+	EXPECT_EQ(failed_int.value_or(7), 7);
+	const PdfResult<std::string> ok{std::string("kept")};
+	const auto copied = ok.try_value_or(std::string("unused"));
+	ASSERT_TRUE(copied.has_value());
+	EXPECT_EQ(*copied, "kept");
 }
 
 TEST(PdfError, ResultValueAndError)
 {
+	// Counted events are the ones written, which needs an enabled provider; no session listens in tests.
+	force_enable_etw_provider_for_testing();
 	clear_diagnostics();
 
 	constexpr std::array<ErrorCode, 17> kAllCodes = {
@@ -275,13 +297,10 @@ TEST(PdfError, ResultValueAndError)
 	EXPECT_FALSE(bad_alloc_target.has_value());
 	EXPECT_EQ(bad_alloc_target.error().code, ErrorCode::OutOfMemory);
 
-	// value_or(const T&) returns const T& without copying T, while try_value_or
-	// captures copy/move/conversion failures into PdfResult<T>.
+	// value_or returns a value, so it exists only for payloads whose copy cannot throw (none
+	// of the reference-returning form that could dangle); try_value_or captures copy, move
+	// and conversion failures into PdfResult<T>.
 	const ThrowingPayload fallback_val{321};
-	const ThrowingPayload& fallback_ref = good_source.value_or(fallback_val);
-	EXPECT_EQ(fallback_ref.v, 99);
-	const ThrowingPayload& err_fallback_ref = bad_alloc_target.value_or(fallback_val);
-	EXPECT_EQ(err_fallback_ref.v, 321);
 
 	const auto tried_copy = good_source.try_value_or(fallback_val);
 	EXPECT_FALSE(tried_copy.has_value());
@@ -294,8 +313,8 @@ TEST(PdfError, ResultValueAndError)
 	EXPECT_EQ(tried_move.error().code, ErrorCode::InternalError);
 	ThrowingPayload::throw_non_std = false;
 
-	// Non-default-constructible payload throwing std::bad_alloc during value_or
-	// reference access, try_value_or, and RECTO_PDF_TRY extraction.
+	// Non-default-constructible payload throwing std::bad_alloc during try_value_or and
+	// RECTO_PDF_TRY_REF materialization.
 	NonDefaultThrowingPayload::fail_alloc = false;
 	NonDefaultThrowingPayload::fail_other = false;
 	PdfResult<NonDefaultThrowingPayload> nd_ok{NonDefaultThrowingPayload{11}};
@@ -303,9 +322,6 @@ TEST(PdfError, ResultValueAndError)
 	const NonDefaultThrowingPayload nd_fallback{22};
 
 	NonDefaultThrowingPayload::fail_alloc = true;
-	EXPECT_EQ(nd_ok.value_or(nd_fallback).v, 11);
-	EXPECT_EQ(nd_err.value_or(nd_fallback).v, 22);
-	EXPECT_EQ(std::move(nd_ok).value_or(nd_fallback).v, 11);
 	EXPECT_EQ(nd_ok.try_value_or(nd_fallback).error().code, ErrorCode::OutOfMemory);
 	EXPECT_EQ(extract_non_default_lvalue(nd_ok).error().code, ErrorCode::OutOfMemory);
 	EXPECT_EQ(extract_non_default_rvalue(std::move(nd_ok)).error().code, ErrorCode::OutOfMemory);
@@ -359,6 +375,8 @@ TEST(PdfError, ResultValueAndError)
 
 TEST(PdfError, DiagnosticRingWraparound)
 {
+	// Counted events are the ones written, which needs an enabled provider; no session listens in tests.
+	force_enable_etw_provider_for_testing();
 	clear_diagnostics();
 	EXPECT_EQ(diagnostics_total_recorded(), 0u);
 	EXPECT_TRUE(diagnostics_tail().empty());
@@ -480,6 +498,8 @@ TEST(PdfError, ConcurrentDiagnosticRecording)
 
 TEST(PdfError, EtwTraceLoggingProviderAndSpans)
 {
+	// Counted events are the ones written, which needs an enabled provider; no session listens in tests.
+	force_enable_etw_provider_for_testing();
 	clear_diagnostics();
 	EXPECT_TRUE(ensure_etw_provider_registered());
 	EXPECT_TRUE(is_etw_provider_registered());

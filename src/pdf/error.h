@@ -884,15 +884,9 @@ public:
 		return std::move(*ptr);
 	}
 
-	[[nodiscard]] const T& value_or(const T& default_value) const& noexcept
-	{
-		return has_value() ? value() : default_value;
-	}
-
 	template <typename U>
 	[[nodiscard]] T value_or(U&& default_value) const& noexcept
-		requires (!std::is_same_v<std::remove_cvref_t<U>, T> &&
-			std::is_nothrow_copy_constructible_v<T> &&
+		requires (std::is_nothrow_copy_constructible_v<T> &&
 			std::is_nothrow_convertible_v<U&&, T>)
 	{
 		return has_value() ? value() : static_cast<T>(std::forward<U>(default_value));
@@ -906,11 +900,6 @@ public:
 		return has_value() ? std::move(*this).value() : static_cast<T>(std::forward<U>(default_value));
 	}
 
-	[[nodiscard]] const T& value_or(const T& default_value) && noexcept
-		requires (!std::is_nothrow_move_constructible_v<T>)
-	{
-		return has_value() ? static_cast<const T&>(value()) : default_value;
-	}
 
 	template <typename U>
 	[[nodiscard]] PdfResult<T> try_value_or(U&& default_value) const& noexcept
@@ -944,25 +933,6 @@ public:
 		}
 	}
 
-	[[nodiscard]] bool prepare_extract() noexcept
-	{
-		if (!has_value()) {
-			return false;
-		}
-		if constexpr (!std::is_nothrow_move_constructible_v<T>) {
-			try {
-				T extracted(std::move(*std::get_if<1>(&storage_)));
-				storage_.template emplace<1>(std::move(extracted));
-			} catch (const std::bad_alloc&) {
-				storage_.template emplace<0>(PdfError{ErrorCode::OutOfMemory});
-				return false;
-			} catch (...) {
-				storage_.template emplace<0>(PdfError{ErrorCode::InternalError});
-				return false;
-			}
-		}
-		return true;
-	}
 
 private:
 	template <typename Arg>
@@ -1146,6 +1116,13 @@ void clear_diagnostics() noexcept;
 // Ensures the "Recto.Diagnostics" ETW TraceLogging provider is registered.
 bool ensure_etw_provider_registered() noexcept;
 
+// Whether an ETW session has enabled the provider (TraceLoggingProviderEnabled). Registration alone never enables it:
+// events are built and written only when a consumer listens (D16).
+[[nodiscard]] bool etw_provider_enabled() noexcept;
+
+// Tests only: enable the provider as a listening session would, so events are written and counted without one.
+void force_enable_etw_provider_for_testing() noexcept;
+
 [[nodiscard]] bool is_etw_provider_registered() noexcept;
 [[nodiscard]] std::string_view etw_provider_name() noexcept;
 [[nodiscard]] uint64_t etw_diagnostic_events_emitted() noexcept;
@@ -1244,15 +1221,32 @@ template <typename T>
 		}                                                                                \
 	} while (0)
 
+// RECTO_PDF_TRY(decl, expr) moves the value into decl, so it needs a payload whose move cannot throw (a move that
+// throws inside a noexcept function terminates). For a payload whose move may throw (MSVC's node-based containers
+// allocate when moved), RECTO_PDF_TRY_REF(name, expr) binds name to the value where it already is, with no move.
+// Materializing the result is PdfResult's own move or copy, which returns a failure as OutOfMemory or InternalError.
 #define RECTO_PDF_TRY_IMPL(tmp_var, var_decl, expr)                                      \
 	auto tmp_var = ::recto::pdf::detail::materialize_try_result((expr));                 \
-	if (!tmp_var.prepare_extract()) {                                                    \
+	static_assert(std::is_nothrow_move_constructible_v<                                  \
+		typename decltype(tmp_var)::value_type>,                                         \
+		"RECTO_PDF_TRY needs a payload whose move cannot throw; use RECTO_PDF_TRY_REF");  \
+	if (!tmp_var.has_value()) {                                                          \
 		return std::move(tmp_var).error();                                               \
 	}                                                                                    \
 	var_decl = std::move(tmp_var).value()
 
+#define RECTO_PDF_TRY_REF_IMPL(tmp_var, name, expr)                                      \
+	auto tmp_var = ::recto::pdf::detail::materialize_try_result((expr));                 \
+	if (!tmp_var.has_value()) {                                                          \
+		return std::move(tmp_var).error();                                               \
+	}                                                                                    \
+	auto& name = tmp_var.value()
+
 #define RECTO_PDF_TRY(var_decl, expr)                                                    \
 	RECTO_PDF_TRY_IMPL(RECTO_PDF_CONCAT(_recto_pdf_try_, __LINE__), var_decl, (expr))
+
+#define RECTO_PDF_TRY_REF(name, expr)                                                    \
+	RECTO_PDF_TRY_REF_IMPL(RECTO_PDF_CONCAT(_recto_pdf_try_, __LINE__), name, (expr))
 
 #define RECTO_ETW_SPAN(phase_name)                                                       \
 	::recto::pdf::EtwSpan RECTO_PDF_CONCAT(_recto_etw_span_, __LINE__)((phase_name))

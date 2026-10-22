@@ -71,6 +71,8 @@ jobs:
         run: python -m unittest tests.scripts.test_merge_prs
       - name: Build driver checks
         run: python -m unittest tests.scripts.test_build_ps1
+      - name: ETW registration guard
+        run: python -m unittest tests.scripts.test_etw_registration
       - name: Mockup renderer and design checks
         run: python -m unittest tests.scripts.test_render_mockups tests.scripts.test_engine_dependency_policy
       - name: Check the user demand ledger (D07 T03 §6)
