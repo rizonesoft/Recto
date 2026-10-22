@@ -97,3 +97,48 @@ OVERALL: needs-attention
 - Finding 1 (P1, rated by the reviewer): the value budget left payload unbounded except per token. Decoded payload never exceeds the input bytes it came from, so this was linear in file size, not an amplification, but plan section 9 asks for explicit byte caps and the fix is cheap. One top-level parse now charges every decoded string, name and dictionary key against `kMaxParsedBytes` (equal to `kMaxLexerTokenBytes`, so no object holds more payload than the largest single token already could), refusing with `ErrorCode::DamagedFormat`; the budget restarts with each top-level parse, like the value budget. `PdfParser.TotalByteBudgetSpansValues` refuses 11 bytes of literal and hex strings at a budget of 10, and 11 bytes of keys and a name in a dictionary, accepts exactly 11, and restarts per parse. With the check disabled it fails. The dated correction in `D01 T01 §4` names both budgets.
 
 Gates after round 2: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 110 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfParser.*:PdfXref.*:PdfDocument.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 28 tests.`
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T07:21:27Z
+- Effort: medium
+- Lines: 30
+- Digest: bbe7254361226417
+
+## adversarial: approve
+
+No new actionable defect established at `318b02d`.
+
+## consistency: approve
+
+No new violation established in the audited files.
+
+## integration: approve
+
+No new integration defect established.
+
+## source-defect: approve
+
+No specification defect established. Full ISO source verification was limited by the official PDF URL returning HTTP 404.
+
+## design: advisory
+
+Not applicable: this section owns no user surface.
+
+## record: advisory
+
+Independently ran the existing x64 Release binary with `--gtest_filter=PdfParser.*:Support.AsanActiveWhenEnabled:PdfXref.*:PdfDocument.*`: all 29 tests passed, including 10 parser tests; the activation check reported `ASan=enabled`.
+
+This verifies the available binary’s checkpoint behavior. A fresh build, ARM64 compilation, and the historical zero-warning claim were not independently reproduced because rebuilding would modify files. The existing build log records ASan compilation and zero warnings, but remains recorded evidence.
+
+No files were modified; the working tree remains clean.
+
+HIGHEST: none
+OVERALL: approve
+
+## Audit outcome
+
+The stamp on `D01 T01 §4` is confirmed. The audit found gaps present since that stamp, not regressions: the parser's ceilings applied only per container and per token, so one object could create about one value per two input bytes and hold payload bounded only by the file (fixed in `bd5c5c8` and `318b02d` with `kMaxParsedValues` and `kMaxParsedBytes` per top-level parse), and the stream terminator scan count was a `thread_local` contrary to the Freeze check (now a `Parser` member). The contract carries a dated correction. Dependants of `D01 T01 §4` are not suspect: the budgets sit at the existing per-container and per-token ceilings, so nothing the parser accepted under those limits as a single container or token is refused, and all 110 tests pass in x64 Debug and Release.
+
+Test checkpoint at `318b02d`: `python scripts/todo-graph.py resolve "D01 T01 §4"` -> exit 3 (still verified); round 3 approves (`OVERALL: approve`). `D01 T01 §4`'s own checkpoint: `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfParser.*:PdfXref.*:PdfDocument.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 28 tests.`
