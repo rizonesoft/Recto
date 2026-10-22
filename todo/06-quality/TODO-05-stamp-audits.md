@@ -586,6 +586,8 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 ## 21. Audit D01 T01 §6: PDF 1.5+ /Type /XRef streams, /Type /ObjStm streams and damaged-file
 
+> **Started:** 2026-10-22T14:30:00Z
+
 `D01 T01 §6` (PDF 1.5+ `/Type /XRef` streams, `/Type /ObjStm` streams and damaged-file recovery) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d01-t01-s6.json` records 10 rounds (fixed, fixed, fixed, fixed, fixed, fixed, fixed, fixed, fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
 
 **Phase:** 1
