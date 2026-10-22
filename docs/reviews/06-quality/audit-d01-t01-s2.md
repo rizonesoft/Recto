@@ -49,3 +49,55 @@ OVERALL: needs-attention
 - Finding 1 (P2): correct that text was dropped; the fix follows the decoder's existing policy for malformed units (an unpaired surrogate or an odd trailing byte becomes U+FFFD and decoding continues), not a failed result, since `pdf_string_to_utf8` decodes display text. A language escape is skipped only in the form ISO 32000-1 section 7.9.2.2 defines (ESC, a 2-letter ISO 639 code, an optional 2-letter ISO 3166 code, ESC), in both UTF-16BE and UTF-8 strings; any other ESC becomes U+FFFD and the text after it is decoded. The policy is stated in `src/pdf/object.h`. `PdfObject.StringEncoding` adds eight cases (well-formed with a country code, unterminated, one letter, digits, too long), and 12 of its assertions fail on the old decoder.
 
 Gates after round 1: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 107 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfObject.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 14 tests.`
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T06:13:46Z
+- Effort: medium
+- Lines: 37
+- Digest: 15fca77de49b1e3d
+
+### adversarial: needs-attention
+
+1. **P3: The encoder silently turns literal ESC characters into PDF language-control syntax.** `src/pdf/object.cpp:909` emits U+001B unchanged into UTF-16BE. The decoder at `src/pdf/object.cpp:756` then interprets it as an escape delimiter, so encoding and decoding valid UTF-8 can remove text.
+
+   Reproduce:
+   ```cpp
+   const std::string input = "A\x1B" "en\x1B" "B";
+   auto encoded = utf8_to_pdf_string(input);
+   auto decoded = encoded.value().to_utf8();
+   // Both succeed, but decoded.value() == "AB", not input.
+   ```
+   This is a source-traced reproduction, not an executed additional test. Literal ESC is an uncommon input, hence P3. The encoder needs an explicit handling policy and regression coverage rather than silently reporting a successful, lossy conversion.
+
+### consistency: approve
+
+No findings.
+
+### integration: approve
+
+No additional findings.
+
+### source-defect: needs-attention
+
+Finding **1 (P3)** also applies here: Unicode PDF text strings reserve these sequences for language metadata. The encoder must account for that syntax when accepting plain UTF-8. See [PDF Association’s explanation of Unicode text strings](https://pdfa.org/understanding-utf-8-in-pdf-2-0/).
+
+### design: advisory
+
+Not applicable; the section owns no user surface.
+
+### record: advisory
+
+Verified checkout `21aba18931af3357665fee618cd3f5067bbc03ff`. The existing x64 Release executable passed all six `PdfObject.*` tests, the decryption-key regression, and `Support.AsanActiveWhenEnabled`, which reported `ASan=enabled`.
+
+This corroborates the recorded runtime checkpoint. Warning-free compilation, ARM64 compilation, and correspondence of the existing binary to the current sources were not independently established: rebuilding would modify files. The encoder edge case above is absent from `PdfObject.StringEncoding`.
+
+HIGHEST: P3
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+- Finding 1 (P3): correct. `utf8_to_pdf_string` wrote a literal U+001B into UTF-16BE, where it delimits a language escape, so a round trip could drop text. U+001B has no form in any PDF text string (reserved in the Unicode forms, absent from PDFDocEncoding), so the encoder now writes U+FFFD for it, the policy it already applies to surrogates and values above U+10FFFF; `src/pdf/object.h` states it. `PdfObject.StringEncoding` round-trips `"A\x1Ben\x1BB"` to `A`, U+FFFD, `en`, U+FFFD, `B`, and fails on the round 1 encoder.
+
+Gates after round 2: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 107 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfObject.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 14 tests.`

@@ -371,6 +371,13 @@ TEST(PdfObject, StringEncoding)
 		EXPECT_EQ(decoded.value(), escape_case.expected);
 	}
 
+	// 5c. A literal U+001B has no PDF text string form; the encoder writes U+FFFD, so the text around it survives.
+	const auto encoded_esc = utf8_to_pdf_string("A\x1B" "en\x1B" "B");
+	RECTO_ASSERT_OK(encoded_esc);
+	const auto decoded_esc = encoded_esc.value().to_utf8();
+	RECTO_ASSERT_OK(decoded_esc);
+	EXPECT_EQ(decoded_esc.value(), "A" + fffd + "en" + fffd + "B");
+
 	// 6. Latin-1 string starting with U+00FE U+00FF ("þÿ") avoids colliding
 	// with the UTF-16BE BOM by upgrading to explicit UTF-16BE.
 	const std::string bom_collision_str = "\xC3\xBE\xC3\xBF";

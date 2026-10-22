@@ -602,6 +602,8 @@ private:
 //   PDFDocEncoding without colliding with the UTF-16BE / UTF-8 BOM prefixes.
 // - Uses UTF-16BE with a leading 0xFE 0xFF BOM (and surrogate pairs for
 //   U+10000..U+10FFFF) when any scalar value falls outside PDFDocEncoding.
+// A value no PDF text string can hold (a surrogate, one above U+10FFFF, or U+001B, which delimits language escapes)
+// is written as U+FFFD, so decoding never loses the text around it.
 [[nodiscard]] PdfResult<PdfString> utf8_to_pdf_string(std::string_view utf8) noexcept;
 
 } // namespace recto::pdf

@@ -907,7 +907,10 @@ PdfResult<PdfString> utf8_to_pdf_string(std::string_view utf8) noexcept
 		utf16_bytes.push_back(0xFEu);
 		utf16_bytes.push_back(0xFFu);
 		for (uint32_t c : codepoints) {
-			if (c > 0x10FFFFu || (c >= 0xD800u && c <= 0xDFFFu)) {
+			// U+001B delimits a language escape in a Unicode text string (ISO 32000-1 section 7.9.2.2) and has no
+			// PDFDocEncoding code, so like a surrogate it has no representation: written raw it would turn the text
+			// after it into an escape and drop it on decoding.
+			if (c > 0x10FFFFu || (c >= 0xD800u && c <= 0xDFFFu) || c == 0x001Bu) {
 				c = 0xFFFDu;
 			}
 			if (c <= 0xFFFFu) {
