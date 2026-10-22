@@ -44,22 +44,48 @@ def tracked(*pathspecs):
     return [name for name in out.split("\0") if name]
 
 
-# Office or LibreOffice presented as something Recto needs to convert (D5, D7, D10). Two rules over the boards'
-# visible text, read unit by unit (each block element and each sentence or clause):
-# - the suites by name, which a board never has a reason to show: LibreOffice, Microsoft Office or 365, Office COM;
-# - a unit naming Office, Word, Excel or PowerPoint together with a word of dependency (install, require, need,
-#   necessary, depend, through, via, using, uses, copy of), unless it is one of the reviewed sentences below, each
-#   read and found to describe Recto's own conversion. Any new such sentence fails until a reviewer adds it here.
+# Office or LibreOffice presented as something Recto needs to convert (D5, D7, D10). Over the boards' visible text,
+# read unit by unit (each element other than inline ones, and each sentence):
+# - the suites by name, which a board never has a reason to show, are refused: LibreOffice, Microsoft Office or 365,
+#   Office COM;
+# - every unit that names Office, Word, Excel or PowerPoint must be one of REVIEWED_OFFICE_UNITS, each read and found
+#   to describe Recto's own conversion or interface. A closed set rather than a list of forbidden phrasings: any new
+#   mention, in whatever wording or markup, fails until a reviewer reads it and adds it here.
 OFFICE_SUITE = re.compile(r"\b(libreoffice|microsoft (office|365)|office com)\b", re.IGNORECASE)
 OFFICE_PRODUCT = re.compile(r"\b(office|word|excel|powerpoint)\b", re.IGNORECASE)
-DEPENDENCY_WORD = re.compile(r"\b(install\w*|requir\w*|need\w*|necessar\w*|depend\w*|through|via|using|uses|copy of)\b",
-                             re.IGNORECASE)
-REVIEWED_SENTENCES = {
-    # B-Convert, PDF to Word: the user may tidy the converted document in Word; Recto does not need Word to convert.
+REVIEWED_OFFICE_UNITS = frozenset({
+    # Conversion features and their settings (Recto's built-in engines, foundation plan section 2 and SPEC 9.5, 9.7).
+    "3-mode PDF to Word (Flowing, Exact, Continuous), PDF to Excel, PDF to HTML5",
+    "3-mode PDF to Word, PDF to Excel/Data, PDF to Web/Docs, PDF to and from images, searchable PDF (OCR), 100% native"
+    " C++20 Office, HTML, Markdown, XPS and SVG to PDF",
+    "Converted 86 pages to Word",
+    "Default Office to PDF page setup",
+    "Default Office to PDF page setupUsed when converting Word, Excel and PowerPoint files",  # two inline spans
+    "Default PDF to Word reconstruction mode",
+    "Excel & Data Tables to",
+    "Images, text, merge, split, Office to PDF, PDF to Word",
+    "Office to PDF",
+    "Office to PDF Word, Excel, PowerPoint and OpenDocument files, with Recto's built-in layout engines",
+    "Office to PDF is built in",
+    "PDF from Office Add Word, Excel or PowerPoint files to use this",
+    "PDF from Office, HTML, Markdown & Images Add Word, Excel, PowerPoint, HTML or Markdown files to use this",
+    "PDF to Word",
+    "PDF to Word Editable DOCX",
+    "PowerPoint presentation One editable",
+    "To Word (DOCX) · page 53 of 86",
+    "Word document Editable",
+    "Word document Editable DOCX, one per PDF",
+    "Word works best on text documents",
+    "Word, Excel, PowerPoint and OpenDocument files convert with no other software",
+    "v1 Office import",
+    "v1 Word export",
+    # The user may tidy the converted document in Word afterwards; Recto does not need Word to convert.
     "Pages with several columns, tables or floating pictures may need tidying in Word afterwards",
-    # A-Convert and B-Convert, a failed job: the PDF being converted to Word needs a password.
+    # A failed job's status: the PDF being converted to Word needs a password.
     "To Word failed: the file needs a password",
-}
+    # The find options' "Whole word", not Microsoft Word.
+    "Whole word",
+})
 # The suites' install pages, matched in the raw text so a link counts whatever its anchor says.
 OFFICE_INSTALL_LINK = re.compile(r"libreoffice\.org|microsoft\.com/microsoft-365|office\.com", re.IGNORECASE)
 # Inline elements and comments do not break words when rendered (Libre<span>Office</span>, Libre<!-- x -->Office), so
@@ -81,10 +107,10 @@ def visible_units(markup: str) -> list[str]:
 
 
 def office_dependency(markup: str) -> str | None:
-    """The first unit that presents Office or LibreOffice as a converter Recto needs, or None."""
+    """The first unit that names an Office suite, or names Office, Word, Excel or PowerPoint without being one of
+    the reviewed units, or None."""
     for unit in visible_units(markup):
-        if OFFICE_SUITE.search(unit) or (OFFICE_PRODUCT.search(unit) and DEPENDENCY_WORD.search(unit)
-                                         and unit not in REVIEWED_SENTENCES):
+        if OFFICE_SUITE.search(unit) or (OFFICE_PRODUCT.search(unit) and unit not in REVIEWED_OFFICE_UNITS):
             return unit
     return None
 
@@ -151,7 +177,9 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                        "<p>Conversion requires an installed copy of Office.</p>",
                        "<p>Conversion uses Word to create the PDF.</p>", "<p>Converts through PowerPoint.</p>",
                        "<p>Office is\nrequired to convert documents.</p>", "<p>Required converter: Office.</p>",
-                       "<p>Required converter:<br>Office.</p>", "<p>Install <wbr>Office to convert documents.</p>"):
+                       "<p>Required converter:<br>Office.</p>", "<p>Install <wbr>Office to convert documents.</p>",
+                       "<p>Install <button>Office</button> to convert documents.</p>",
+                       "<p>Office must be present to convert documents.</p>"):
             with self.subTest(markup=markup):
                 self.assertIsNotNone(office_dependency(markup))
         for markup in ("<p>Office to PDF is built in.</p>", "<td>PDF to Word</td><td>needs a password</td>",
