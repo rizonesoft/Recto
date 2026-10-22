@@ -911,6 +911,16 @@ class BuildCorpusTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "more symbols"):
             self.mod.validate_jpeg_baseline("x", oversized, 8, 8, 3)
 
+    def test_jbig2_headers_and_jpeg_app0_are_the_corpus_form(self) -> None:
+        for retention in (0x02, 0x04, 0x08, 0x10, 0x1E):
+            payload = bytearray(self.mod.make_minimal_jbig2_16x16())
+            payload[5] = retention  # no references, yet a retention bit set
+            with self.subTest(retention=retention), self.assertRaisesRegex(ValueError, "header"):
+                self.mod.validate_jbig2_embedded("x", bytes(payload))
+        jpeg = self.mod.make_minimal_jpeg_8x8_rgb()
+        with self.assertRaisesRegex(ValueError, "APP0"):
+            self.mod.validate_jpeg_baseline("x", jpeg.replace(b"JFIF\x00", b"JFXX\x00", 1), 8, 8, 3)
+
     def test_jpx_cod_qcd_and_packet_are_read(self) -> None:
         jpx = self.mod.make_minimal_jpx_8x8_gray()
         cod, qcd = jpx.index(b"\xFF\x52"), jpx.index(b"\xFF\x5C")

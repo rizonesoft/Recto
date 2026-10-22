@@ -2619,12 +2619,14 @@ def _validate_jbig2_embedded(rel_path: str, data: bytes) -> None:
     while pos < len(data):
         if pos + 11 > len(data):
             raise ValueError(f"{rel_path}: JBIG2 segment header cut short at byte {pos}")
-        number, flags, referred = struct.unpack(">IBB", data[pos : pos + 6])
-        kind, long_page = flags & 0x3F, flags & 0x40
-        if referred >> 5 != 0 or long_page:
-            raise ValueError(f"{rel_path}: JBIG2 segment {number} refers to others or uses a 4-byte page association")
+        number, flags = struct.unpack(">IB", data[pos : pos + 5])
+        kind = flags & 0x3F
         page = data[pos + 6]
         (length,) = struct.unpack(">I", data[pos + 7 : pos + 11])
+        # The whole 11-byte header in the corpus form (T.88 7.2): number, type with a 1-byte page association and
+        # no deferred non-retain, a referred-to byte of 0 (no references and every retention bit 0), page, length.
+        if data[pos : pos + 11] != struct.pack(">IBBBI", number, kind, 0, page, length):
+            raise ValueError(f"{rel_path}: JBIG2 segment {number} header is not number, type, 0, page, length")
         body = data[pos + 11 : pos + 11 + length]
         if length == 0xFFFFFFFF or len(body) != length:
             raise ValueError(f"{rel_path}: JBIG2 segment {number} data length {length} does not fit the stream")
@@ -2722,7 +2724,10 @@ def _validate_jpeg_baseline(rel_path: str, data: bytes, width: int, height: int,
                 at += 65
             if not body:
                 raise ValueError(f"{rel_path}: JPEG DQT defines no table")
-        elif marker != 0xE0:
+        elif marker == 0xE0:
+            if body != b"JFIF\x00\x01\x01\x01\x00H\x00H\x00\x00":  # JFIF 1.01, 72 dpi, no thumbnail
+                raise ValueError(f"{rel_path}: JPEG APP0 is not the JFIF 1.01 segment the corpus writes")
+        else:
             raise ValueError(f"{rel_path}: JPEG segment {marker:#04x} is not one a baseline corpus image uses")
         pos += 2 + length
     if seen not in ([0xE0, 0xDB, 0xC0, 0xC4, 0xDA], [0xDB, 0xC0, 0xC4, 0xDA]):
