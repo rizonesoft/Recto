@@ -48,7 +48,7 @@ a{color:#4A3FD0}a:hover{color:#3529A8}
         <p style="margin:0;font-size:15px;line-height:23px">A PDF viewer and converter for Windows. Free software under the GNU Affero General Public License, version 3 or later.</p>
         <div style="display:flex;flex-direction:column;gap:8px;padding:14px 16px;border-radius:12px;background:#F6F5FB;font-size:13px">
           <div style="display:flex;justify-content:space-between"><span class="cap" style="font-size:13px">Windows App SDK</span><span>2.4.0</span></div>
-          <div style="display:flex;justify-content:space-between"><span class="cap" style="font-size:13px">MuPDF</span><span>[version]</span></div>
+          <div style="display:flex;justify-content:space-between"><span class="cap" style="font-size:13px">recto-pdf</span><span>[version]</span></div>
           <div style="display:flex;justify-content:space-between"><span class="cap" style="font-size:13px">Source</span><a href="https://github.com/">github.com/[OWNER]/recto @ v[X.Y.Z]</a></div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap"><a class="btn p" href="https://github.com/"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.code}}"></path></svg>View source</a><button class="btn">License</button><button class="btn"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.copy}}"></path></svg>Copy version info</button></div>
@@ -67,7 +67,7 @@ a{color:#4A3FD0}a:hover{color:#3529A8}
 class Component extends DCLogic {
 renderVals() {
 const i={gear:"M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1",x:"M6 6l12 12M18 6L6 18",min:"M5 12h14",max:"M5 5h14v14H5z",home:"M4 11l8-7 8 7v9h-5v-6H9v6H4z",info:"M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18zM12 11v6M12 7.5v.01",code:"M8 7l-5 5 5 5M16 7l5 5-5 5",copy:"M8 8h11v12H8zM5 16V4h11"};
-const libs=[{n:"MuPDF",l:"AGPL-3.0"},{n:"Windows App SDK",l:"MIT"},{n:"FreeType",l:"FTL"},{n:"HarfBuzz",l:"MIT"},{n:"libjpeg",l:"IJG"},{n:"OpenJPEG",l:"BSD-2-Clause"},{n:"zlib",l:"zlib"},{n:"Little CMS",l:"MIT"},{n:"jbig2dec",l:"AGPL-3.0"},{n:"extract",l:"AGPL-3.0"},{n:"Instrument Sans",l:"SIL OFL 1.1"}];
+const libs=[{n:"recto-pdf",l:"GPL-3.0-or-later"},{n:"recto-core",l:"GPL-3.0-or-later"},{n:"Windows App SDK",l:"MIT"},{n:"Instrument Sans",l:"SIL OFL 1.1"}];
 return {i,libs};
 }
 }

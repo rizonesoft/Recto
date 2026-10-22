@@ -58,7 +58,7 @@ a{color:#2459D6}a:hover{color:#1A47B0}
         <div style="display:flex;flex-direction:column;gap:6px;flex-grow:1">
           <div class="h" style="font-size:36px">Recto</div>
           <div style="font-size:14px;color:#3B3B3B">PDF viewer and converter for Windows</div>
-          <div class="cap" style="font-size:13px">Version [X.Y.Z] · Windows App SDK 2.4.0 · MuPDF [version] · x64</div>
+          <div class="cap" style="font-size:13px">Version [X.Y.Z] · Windows App SDK 2.5.1 · recto-pdf [version] · x64</div>
         </div>
         <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end">
           <button class="btn"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.copy}}"></path></svg>Copy version info</button>
@@ -96,7 +96,7 @@ a{color:#2459D6}a:hover{color:#1A47B0}
 class Component extends DCLogic {
 renderVals() {
 const i={convert:"M4 8h14l-4-4M20 16H6l4 4",grid:"M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",gear:"M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1",cr:"M9 6l6 6-6 6",x:"M6 6l12 12M18 6L6 18",min:"M5 12h14",max:"M5 5h14v14H5z",doc:"M6 3h8l5 5v13H6zM14 3v5h5",plus:"M12 5v14M5 12h14",home:"M4 11l8-7 8 7v9h-5v-6H9v6H4z",copy:"M8 8h11v12H8zM5 16V4h11",warn:"M12 4l9 16H3zM12 10v5M12 17.5v.01",code:"M8 7l-5 5 5 5M16 7l5 5-5 5"};
-const libs=[{n:"MuPDF, Artifex Software",l:"AGPL-3.0"},{n:"Windows App SDK, Microsoft",l:"MIT"},{n:"FreeType",l:"FreeType License"},{n:"HarfBuzz",l:"MIT"},{n:"libjpeg",l:"IJG License"},{n:"OpenJPEG",l:"BSD-2-Clause"},{n:"zlib",l:"zlib License"},{n:"Little CMS",l:"MIT"},{n:"jbig2dec",l:"AGPL-3.0"},{n:"extract (DOCX writer)",l:"AGPL-3.0"}];
+const libs=[{n:"recto-pdf",l:"GPL-3.0-or-later"},{n:"recto-core",l:"GPL-3.0-or-later"},{n:"Windows App SDK, Microsoft",l:"MIT"}];
 return {i,libs};
 }
 }

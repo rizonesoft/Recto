@@ -80,6 +80,17 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                 for text in texts:
                     self.assertIsNone(MUPDF.search(text))
 
+    def test_design_boards_name_no_mupdf_or_agpl(self):
+        # The mockup sources and their rendered HTML describe Recto: its engine is recto-pdf (D3) and its licence
+        # GPL-3.0-or-later (D2), so no board may present MuPDF, its components or AGPL as Recto's (D06 T05 §25).
+        files = [name for name in tracked("design/mockups") if name.endswith((".html", ".json"))]
+        self.assertTrue(files)
+        for name in files:
+            with self.subTest(file=name):
+                text = (REPO / name).read_text(encoding="utf-8")
+                self.assertIsNone(MUPDF.search(text))
+                self.assertIsNone(re.search(r"\bAGPL", text))
+
     @unittest.skipUnless(sys.platform == "win32", "the C++ build and MSBuild are Windows-only (foundation plan D15)")
     def test_every_module_compiles_as_cpp20_with_warnings_as_errors(self):
         # MSBuild itself evaluates each project, conditions included, and reports every source file's ClCompile

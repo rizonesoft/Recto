@@ -27,7 +27,7 @@ a{color:#B3ADFF}a:hover{color:#CFCBFF}
     <svg viewBox="0 0 64 64" width="20" height="20" aria-hidden="true" style="margin-right:10px"><rect x="2" y="2" width="60" height="60" rx="16" fill="#6C61F0"></rect><path fill-rule="evenodd" fill="#FFFFFF" d="M18 14 H35 A11 11 0 0 1 35 36 H27 V50 H18 Z M27 22 V28 H34 A3 3 0 0 0 34 22 Z"></path><path d="M31 36 H41 L49 50 H39 Z" fill="#C9C4FF"></path></svg>
     <a class="tb" href="C-Home.html"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"></path></svg></a>
     <div class="tb on"><span>Recto foundation plan.pdf</span><button class="tx" aria-label="Close tab"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>
-    <div class="tb"><span>MuPDF API reference.pdf</span><button class="tx" aria-label="Close tab"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>
+    <div class="tb"><span>PDF 2.0 reference.pdf</span><button class="tx" aria-label="Close tab"><svg class="ic" viewBox="0 0 24 24" style="width:11px" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>
     <button class="ib" aria-label="New tab" style="width:30px;height:30px"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></button>
     <div style="flex-grow:1"></div>
     <button style="display:flex;align-items:center;gap:10px;width:340px;height:30px;padding:0 10px;border-radius:8px;border:1px solid #34306A;background:#1C1A33;font:inherit;font-size:12px;color:#A9A6C4"><svg class="ic" viewBox="0 0 24 24" style="width:14px" aria-hidden="true"><path d="M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM20 20l-4.2-4.2"></path></svg><span style="flex-grow:1;text-align:left">Search, open or run a command</span><span style="font-size:11px">Ctrl K</span></button>
@@ -39,13 +39,13 @@ a{color:#B3ADFF}a:hover{color:#CFCBFF}
   </div>
   <div style="flex-grow:1;min-height:0;position:relative;background:#1A1830;border-top-left-radius:12px;border-top-right-radius:12px;margin:0 6px;overflow:hidden;display:flex;justify-content:center;align-items:flex-start;gap:4px;padding-top:44px;padding-left:200px">
     <article style="width:440px;height:570px;background:#E2E0EC;box-shadow:0 12px 40px rgba(0,0,0,.5);padding:40px 44px;box-sizing:border-box;font-family:Cambria,Georgia,serif;color:#17152B;display:flex;flex-direction:column;gap:8px">
-      <div style="font-size:12px;font-weight:700">4.5 Thread map</div>
+      <div style="font-size:12px;font-weight:700">4.5 Rendering tiles</div>
       <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:#B9B6CB;font-size:7px;line-height:10px">
         <span style="background:#D4D1E2;padding:3px;font-weight:700">Thread</span><span style="background:#D4D1E2;padding:3px;font-weight:700">Context</span><span style="background:#D4D1E2;padding:3px;font-weight:700">Owns</span>
         <span style="background:#E2E0EC;padding:3px">UI (XAML)</span><span style="background:#E2E0EC;padding:3px">none</span><span style="background:#E2E0EC;padding:3px">XAML tree, view models</span>
         <span style="background:#E2E0EC;padding:3px">Presentation</span><span style="background:#E2E0EC;padding:3px">none</span><span style="background:#E2E0EC;padding:3px">Swap chain, D2D context</span>
-        <span style="background:#E2E0EC;padding:3px">DocumentActor</span><span style="background:#E2E0EC;padding:3px">clone</span><span style="background:#E2E0EC;padding:3px">fz_document, pages, lists</span>
-        <span style="background:#E2E0EC;padding:3px">Render worker</span><span style="background:#E2E0EC;padding:3px">clone</span><span style="background:#E2E0EC;padding:3px">the pixmap it renders</span>
+        <span style="background:#E2E0EC;padding:3px">DocumentActor</span><span style="background:#E2E0EC;padding:3px">owner</span><span style="background:#E2E0EC;padding:3px">pdf::Document, page cache, display lists</span>
+        <span style="background:#E2E0EC;padding:3px">Render worker</span><span style="background:#E2E0EC;padding:3px">read-only</span><span style="background:#E2E0EC;padding:3px">the tile it rasterizes</span>
       </div>
       <div style="font-size:12px;font-weight:700;margin-top:8px">4.6 Opening and viewing a document</div>
       <span class="bar" style="width:100%"></span><span class="bar" style="width:94%"></span><span class="bar" style="width:97%"></span><span class="bar" style="width:60%"></span>
@@ -54,7 +54,7 @@ a{color:#B3ADFF}a:hover{color:#CFCBFF}
       <div style="margin-top:auto;font-size:7px;color:#55526B;text-align:center">6</div>
     </article>
     <article style="width:440px;height:570px;background:#E2E0EC;box-shadow:0 12px 40px rgba(0,0,0,.5);padding:40px 44px;box-sizing:border-box;font-family:Cambria,Georgia,serif;color:#17152B;display:flex;flex-direction:column;gap:8px">
-      <div style="font-size:12px;font-weight:700">4.7 Rendering one tile</div>
+      <div style="font-size:12px;font-weight:700">4.7 Jobs and shutdown</div>
       <div style="background:#D4D1E2;padding:10px;display:flex;flex-direction:column;gap:5px"><span class="bar" style="width:70%;background:#8E8AA8"></span><span class="bar" style="width:84%;background:#8E8AA8"></span><span class="bar" style="width:76%;background:#8E8AA8;margin-left:12px"></span><span class="bar" style="width:58%;background:#8E8AA8;margin-left:12px"></span><span class="bar" style="width:30%;background:#8E8AA8"></span></div>
       <div style="font-size:9px;font-weight:700;margin-top:6px">Notes on the tile path</div>
       <span class="bar" style="width:100%"></span><span class="bar" style="width:88%"></span><span class="bar" style="width:96%"></span><span class="bar" style="width:74%"></span>
@@ -70,21 +70,21 @@ a{color:#B3ADFF}a:hover{color:#CFCBFF}
       
         <button class="ol" style="padding-left:6px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span>3. Architecture</span></button>
       
-        <button class="ol" style="padding-left:6px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;transform:rotate(90deg)" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span>4. MuPDF thread-safety setup</span></button>
+        <button class="ol" style="padding-left:6px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;transform:rotate(90deg)" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span>4. Engine threading contract</span></button>
       
-        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.1 Why the C bridge</span></button>
+        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.1 What recto-pdf implements</span></button>
       
-        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.2 MuPDF's rules</span></button>
+        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.2 Thread ownership rules</span></button>
       
-        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.3 Lock implementation</span></button>
+        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.3 Runtime and thread map</span></button>
       
-        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.4 Error handling</span></button>
+        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.4 Opening a document</span></button>
       
-        <button class="ol" style="padding-left:26px;background:#34306A;color:#FFFFFF;font-weight:600"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.5 Thread map</span></button>
+        <button class="ol" style="padding-left:26px;background:#34306A;color:#FFFFFF;font-weight:600"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.5 Rendering tiles</span></button>
       
-        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.6 Opening a document</span></button>
+        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.6 Presentation thread</span></button>
       
-        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.7 Rendering one tile</span></button>
+        <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.7 Jobs and shutdown</span></button>
       
         <button class="ol" style="padding-left:26px;"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px;" aria-hidden="true"><path d=""></path></svg><span>4.8 Presentation thread</span></button>
       

@@ -43,7 +43,7 @@ a{color:#8AB0FF}a:hover{color:#B3CBFF}
     </div>
     <div class="tab"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.home}}"></path></svg><span>Home</span></div>
     <div class="tab on"><svg class="ic" viewBox="0 0 24 24" style="color:#8AB0FF" aria-hidden="true"><path d="{{i.doc}}"></path></svg><span>Recto foundation plan.pdf</span><button class="tx" aria-label="Close tab"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button></div>
-    <div class="tab"><svg class="ic" viewBox="0 0 24 24" style="color:#8AB0FF" aria-hidden="true"><path d="{{i.doc}}"></path></svg><span>MuPDF API reference.pdf</span><button class="tx" aria-label="Close tab"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button></div>
+    <div class="tab"><svg class="ic" viewBox="0 0 24 24" style="color:#8AB0FF" aria-hidden="true"><path d="{{i.doc}}"></path></svg><span>PDF 2.0 reference.pdf</span><button class="tx" aria-label="Close tab"><svg class="ic" viewBox="0 0 24 24" style="width:12px;height:12px" aria-hidden="true"><path d="{{i.x}}"></path></svg></button></div>
     <button class="tx" aria-label="New tab" style="margin:0 0 4px 4px"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="{{i.plus}}"></path></svg></button>
     <div style="flex-grow:1"></div>
     <button class="wc" aria-label="Minimize"><svg class="ic" viewBox="0 0 24 24" style="width:12px" aria-hidden="true"><path d="{{i.min}}"></path></svg></button>
@@ -89,14 +89,14 @@ a{color:#8AB0FF}a:hover{color:#B3CBFF}
         <div style="flex-grow:1;min-width:0;background:#1B1B1B;display:flex;justify-content:center;align-items:flex-start;gap:6px;padding-top:40px;overflow:hidden">
           <article style="width:460px;height:595px;background:#E4E4E4;box-shadow:0 8px 28px rgba(0,0,0,.5);padding:40px 46px;box-sizing:border-box;font-family:Cambria,Georgia,serif;color:#1B1B1B;display:flex;flex-direction:column;gap:8px">
             <div style="font-size:7px;color:#666;text-align:right">Recto: foundation plan</div>
-            <div style="font-size:12px;font-weight:700">4.5 Thread map</div>
+            <div style="font-size:12px;font-weight:700">4.5 Rendering tiles</div>
             <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:#BDBDBD;font-size:7px;line-height:10px">
               <span style="background:#D6D6D6;padding:3px;font-weight:700">Thread</span><span style="background:#D6D6D6;padding:3px;font-weight:700">Context</span><span style="background:#D6D6D6;padding:3px;font-weight:700">Owns</span>
               <span style="background:#E4E4E4;padding:3px">UI (XAML)</span><span style="background:#E4E4E4;padding:3px">none</span><span style="background:#E4E4E4;padding:3px">XAML tree, view models</span>
               <span style="background:#E4E4E4;padding:3px">Presentation</span><span style="background:#E4E4E4;padding:3px">none</span><span style="background:#E4E4E4;padding:3px">Swap chain, D2D context</span>
-              <span style="background:#E4E4E4;padding:3px">DocumentActor</span><span style="background:#E4E4E4;padding:3px">clone</span><span style="background:#E4E4E4;padding:3px">fz_document, pages, lists</span>
-              <span style="background:#E4E4E4;padding:3px">Render worker</span><span style="background:#E4E4E4;padding:3px">clone</span><span style="background:#E4E4E4;padding:3px">the pixmap it renders</span>
-              <span style="background:#E4E4E4;padding:3px">Conversion job</span><span style="background:#E4E4E4;padding:3px">clone</span><span style="background:#E4E4E4;padding:3px">its own fz_document</span>
+              <span style="background:#E4E4E4;padding:3px">DocumentActor</span><span style="background:#E4E4E4;padding:3px">owner</span><span style="background:#E4E4E4;padding:3px">pdf::Document, page cache, display lists</span>
+              <span style="background:#E4E4E4;padding:3px">Render worker</span><span style="background:#E4E4E4;padding:3px">read-only</span><span style="background:#E4E4E4;padding:3px">the tile it rasterizes</span>
+              <span style="background:#E4E4E4;padding:3px">Conversion job</span><span style="background:#E4E4E4;padding:3px">own copy</span><span style="background:#E4E4E4;padding:3px">its own pdf::Document</span>
             </div>
             <div style="font-size:12px;font-weight:700;margin-top:8px">4.6 Opening and viewing a document</div>
             <span class="bar" style="width:100%"></span><span class="bar" style="width:94%"></span><span class="bar" style="width:97%"></span><span class="bar" style="width:60%"></span>
@@ -108,7 +108,7 @@ a{color:#8AB0FF}a:hover{color:#B3CBFF}
           </article>
           <article style="width:460px;height:595px;background:#E4E4E4;box-shadow:0 8px 28px rgba(0,0,0,.5);padding:40px 46px;box-sizing:border-box;font-family:Cambria,Georgia,serif;color:#1B1B1B;display:flex;flex-direction:column;gap:8px">
             <div style="font-size:7px;color:#666;text-align:right">Recto: foundation plan</div>
-            <div style="font-size:12px;font-weight:700">4.7 Rendering one tile (render worker)</div>
+            <div style="font-size:12px;font-weight:700">4.7 Jobs and shutdown (render worker)</div>
             <div style="background:#D4D4D4;padding:10px;display:flex;flex-direction:column;gap:5px">
               <span class="bar" style="width:70%;background:#9C9C9C"></span><span class="bar" style="width:84%;background:#9C9C9C"></span><span class="bar" style="width:40%;background:#9C9C9C"></span><span class="bar" style="width:76%;background:#9C9C9C;margin-left:12px"></span><span class="bar" style="width:66%;background:#9C9C9C;margin-left:12px"></span><span class="bar" style="width:80%;background:#9C9C9C;margin-left:12px"></span><span class="bar" style="width:58%;background:#9C9C9C;margin-left:12px"></span><span class="bar" style="width:30%;background:#9C9C9C"></span>
             </div>
@@ -121,7 +121,7 @@ a{color:#8AB0FF}a:hover{color:#B3CBFF}
         </div>
       </div>
       <div style="height:28px;flex:none;display:flex;align-items:center;gap:20px;padding:0 14px;border-top:1px solid #333;font-size:12px;color:#BDBDBD">
-        <span>Pages 6 and 7 of 9</span><span>Section 4.5 Thread map</span><div style="flex-grow:1"></div><span>Two pages</span><span>Dimmed pages</span><span>62%</span>
+        <span>Pages 6 and 7 of 9</span><span>Section 4.5 Rendering tiles</span><div style="flex-grow:1"></div><span>Two pages</span><span>Dimmed pages</span><span>62%</span>
       </div>
     </main>
   </div>
@@ -131,7 +131,7 @@ a{color:#8AB0FF}a:hover{color:#B3CBFF}
 class Component extends DCLogic {
 renderVals() {
 const i={search:"M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM20 20l-4.2-4.2",folder:"M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",save:"M12 4v11M7 10l5 5 5-5M5 20h14",print:"M7 9V4h10v5M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M7 14h10v6H7z",convert:"M4 8h14l-4-4M20 16H6l4 4",grid:"M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",gear:"M12 9a3 3 0 1 0 0 6a3 3 0 0 0 0-6zM12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1",cr:"M9 6l6 6-6 6",cd:"M6 9l6 6 6-6",x:"M6 6l12 12M18 6L6 18",min:"M5 12h14",max:"M5 5h14v14H5z",doc:"M6 3h8l5 5v13H6zM14 3v5h5",more:"M5 12h.01M12 12h.01M19 12h.01",plus:"M12 5v14M5 12h14",home:"M4 11l8-7 8 7v9h-5v-6H9v6H4z",side:"M4 5h16v14H4zM9 5v14",spread:"M3 5h8v14H3zM13 5h8v14h-8z",moon:"M20 14a8 8 0 1 1-10-10 7 7 0 0 0 10 10z",dot:""};
-const rows=[["1. Decisions",0,"c"],["2. Tech stack",0,"c"],["3. Architecture",0,"o"],["3.1 Modules",1,""],["3.2 Repository layout",1,""],["3.3 Core types",1,""],["4. MuPDF thread-safety setup",0,"o"],["4.1 Why the C bridge",1,""],["4.2 MuPDF's rules",1,""],["4.3 Lock implementation",1,""],["4.4 Error handling",1,""],["4.5 Thread map",1,"sel"],["4.6 Opening a document",1,""],["4.7 Rendering one tile",1,""],["5. Conversions (v1)",0,"c"],["6. UI outline",0,"c"],["7. Milestones",0,"c"]];
+const rows=[["1. Decisions",0,"c"],["2. Tech stack",0,"c"],["3. Architecture",0,"o"],["3.1 Modules",1,""],["3.2 Repository layout",1,""],["3.3 Core types",1,""],["4. Engine threading contract",0,"o"],["4.1 What recto-pdf implements",1,""],["4.2 Thread ownership rules",1,""],["4.3 Runtime and thread map",1,""],["4.4 Opening a document",1,""],["4.5 Rendering tiles",1,"sel"],["4.6 Presentation thread",1,""],["4.7 Jobs and shutdown",1,""],["5. Conversions (v1)",0,"c"],["6. UI outline",0,"c"],["7. Milestones",0,"c"]];
 const outline=rows.map(([t,l,s])=>({t,icon:(s==="c"||s==="o")?i.cr:i.dot,chev:"width:12px;height:12px;"+(s==="o"?"transform:rotate(90deg)":""),st:"padding-left:"+(l*20+6)+"px;"+(s==="sel"?"background:rgba(138,176,255,.16);color:#FFFFFF;font-weight:600;box-shadow:inset 3px 0 0 #8AB0FF":"")}));
 return {i,outline};
 }

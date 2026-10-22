@@ -71,13 +71,13 @@ a{color:#F48A6E}a:hover{color:#F7A890}
     <div style="flex-grow:1;min-width:0;display:flex;flex-direction:column">
       <div style="flex-grow:1;min-height:0;background:#141312;display:flex;justify-content:center;padding-top:28px;overflow:hidden;position:relative">
         <article style="width:700px;height:860px;flex:none;background:#FFFFFF;box-shadow:0 10px 40px rgba(0,0,0,.6);padding:56px 70px;box-sizing:border-box;font-family:Cambria,Georgia,serif;color:#1F1D1B;display:flex;flex-direction:column;gap:12px;font-size:13px;line-height:21px">
-          <h3 style="margin:0;font-size:15px">4.2 MuPDF's rules, as Recto applies them</h3>
-          <p style="margin:0">1. <b>Locks first.</b> The base context is created with a lock table of FZ_LOCK_MAX locks. Without it, cloning a context is not allowed and nothing below is safe.</p>
-          <p style="margin:0">2. <b>One context per thread.</b> Every thread that calls MuPDF has its own fz_context, made with fz_clone_context(base) at thread start.</p>
-          <p style="margin:0">3. <b>A document belongs to one thread.</b> An fz_document and every fz_page loaded from it are used only on that document's actor thread.</p>
-          <p style="margin:0">4. <b><span class="cur">Display lists</span> are the hand-off.</b> The actor builds an fz_<span class="hit">display_list</span> for a page. <span class="selx">Once built, a <span class="hit">display list</span> is read-only and can be rendered by many threads at the same time, each with its own context.</span> This is how rendering runs in parallel while the document stays single-threaded.</p>
-          <p style="margin:0">5. <b>Other objects move, but are never shared.</b> A pixmap, buffer or stext page made on one thread may be passed to another, provided only one thread uses it at a time.</p>
-          <p style="margin:0">6. <b>Reference counts are thread-safe; the objects are not.</b> fz_keep and fz_drop may run on any thread with that thread's context.</p>
+          <h3 style="margin:0;font-size:15px">4.2 Thread ownership rules, as Recto applies them</h3>
+          <p style="margin:0">1. <b>One owner per document.</b> A parsed pdf::Document and its object cache belong to the one DocumentActor thread that opened it. No mutex sits inside the parser.</p>
+          <p style="margin:0">2. <b>Jobs open their own copy.</b> Conversion, OCR and authoring jobs open their own pdf::Document and never share the viewer's.</p>
+          <p style="margin:0">3. <b>Pages are read once.</b> The actor interprets a page's content stream once, on its own thread.</p>
+          <p style="margin:0">4. <b><span class="cur">Display lists</span> are the hand-off.</b> The actor builds an immutable <span class="hit">DisplayList</span> for a page. <span class="selx">Once built, a <span class="hit">display list</span> is read-only and can be rasterized by many RenderPool workers at the same time.</span> This is how rendering runs in parallel while the document stays single-threaded.</p>
+          <p style="margin:0">5. <b>Workers abort cooperatively.</b> Each worker checks its CancelToken between command batches, and a tile from an aborted render is never cached.</p>
+          <p style="margin:0">6. <b>Errors are values.</b> Malformed objects, truncated streams and bad passwords return PdfResult with a PdfError. Nothing throws across a boundary.</p>
         </article>
         <div role="toolbar" aria-label="Selection" style="position:absolute;left:318px;top:258px;display:flex;align-items:center;gap:2px;padding:4px;background:#2A2826;border:1px solid #4A4642;border-radius:22px;box-shadow:0 10px 28px rgba(0,0,0,.5)">
           <button class="fb" style="background:#3A3734"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h11v12H8zM5 16V4h11"></path></svg>Copy</button>
@@ -118,13 +118,13 @@ a{color:#F48A6E}a:hover{color:#F7A890}
       <div style="display:flex;align-items:center;gap:6px"><span class="cap" style="flex-grow:1;font-size:13px">2 of 14 results</span><button class="ib" aria-label="Previous result"><svg class="ic" viewBox="0 0 24 24" style="transform:rotate(-90deg)" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></button><button class="ib" aria-label="Next result"><svg class="ic" viewBox="0 0 24 24" style="transform:rotate(90deg)" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg></button></div>
       <div style="display:flex;flex-direction:column;gap:2px">
         <div class="serif" style="font-size:15px;padding:4px 12px 0;color:#B8B2A8">Page 5</div>
-        <button class="res">…for a page, builds an fz_<b>display_list</b>…</button>
+        <button class="res">…for a page, builds an immutable <b>DisplayList</b>…</button>
         <button class="res" style="background:#3A2620;box-shadow:inset 3px 0 0 #F0603C;color:#EDEAE4">4. <b>Display lists</b> are the hand-off. The actor builds…</button>
         <button class="res">…Once built, a <b>display list</b> is read-only…</button>
         <div class="serif" style="font-size:15px;padding:10px 12px 0;color:#B8B2A8">Page 6</div>
-        <button class="res">…builds an fz_<b>display_list</b> (fz_new_<b>display_list</b>…</button>
+        <button class="res">…records a reference-counted <b>DisplayList</b> (recto::pdf::<b>DisplayList</b>…</button>
         <div class="serif" style="font-size:15px;padding:10px 12px 0;color:#B8B2A8">Page 7</div>
-        <button class="res">rc_render_tile(fz_context *ctx, fz_<b>display_list</b> *list…</button>
+        <button class="res">render_tile(const <b>DisplayList</b> &amp;list, TileRect rect…</button>
       </div>
     </aside>
   </div>

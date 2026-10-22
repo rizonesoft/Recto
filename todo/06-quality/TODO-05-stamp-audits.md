@@ -58,6 +58,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 25 | §25 | Retired MuPDF and AGPL text removed from the A, B and C mockup boards | §2 | [ ] |
 | 26 | §26 | Corpus validator filter decoders conform to ISO 32000-1 7.4 | §12 | [ ] |
 | 27 | §27 | ARM64 Debug build free of the CS1668 LIB search-path warnings | §13 | [ ] |
+| 28 | §28 | Retired Office and LibreOffice converter surfaces removed from the A, B and C boards | §25 | [ ] |
 
 ## 1. Audit D00 T01 §1: Git repository and repo-face files
 
@@ -639,6 +640,10 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 ## 25. Retired MuPDF and AGPL text removed from the A, B and C mockup boards
 
+> **Started:** 2026-10-22T05:10:00Z
+>
+> **Deferred:** the retired Office and LibreOffice converter dialog and setting on the A, B and C boards, a design choice beyond a text swap -> XREF: D06 T05 §28
+
 The audit of `D00 T01 §2` (`docs/reviews/06-quality/audit-d00-t01-s2.md`) found the older A, B and C mockup boards under `design/mockups/source/` and their rendered `design/mockups/html/` copies still showing MuPDF as the engine and AGPL-3.0 as the licence (`A-About` lists MuPDF, jbig2dec and extract under AGPL, `A-Banner` shows `MuPDF` and `AGPL-3.0` chips, and about twenty boards in all mention MuPDF). Recto's engine is its own `recto-pdf` with zero MuPDF (D3, D9) and the licence is GPL-3.0-or-later (D2), so these boards contradict the plan. The `D-` boards are the current design; this section brings the older boards in line rather than leaving them to mislead.
 
 **Phase:** 0
@@ -648,11 +653,11 @@ The audit of `D00 T01 §2` (`docs/reviews/06-quality/audit-d00-t01-s2.md`) found
 **Build order:**
 
 1. Edit every `design/mockups/source/[ABC]-*.dc.html` that names MuPDF, AGPL or a MuPDF-only component. Done when: `git grep -n -i -E "mupdf|agpl|jbig2dec|artifex" -- design/mockups/source` prints nothing.
-2. Re-render the edited boards with `node design/tools/render-mockups.mjs --only <names>`. Done when: `git grep -n -i -E "mupdf|agpl" -- design/mockups/html design/screenshots` prints nothing and each edited board's PNG is newer than its source.
+2. Re-render the edited boards with `node design/tools/render-mockups.mjs --only <names>` (**Corrected 2026-10-22:** the renderer had no `--only`; this section added it). Done when: `git grep -n -i -E "mupdf|agpl" -- design/mockups/html design/screenshots` prints nothing and each edited board's PNG is newer than its source.
 
-- [ ] Replace MuPDF with `recto-pdf` and AGPL-3.0 with GPL-3.0-or-later in every `design/mockups/source/[ABC]-*.dc.html`, and drop MuPDF-only third-party rows (jbig2dec, extract, Artifex) from the About boards' licence lists, keeping the rows for components Recto still ships. Done when: `git grep -n -i -E "mupdf|agpl|jbig2dec|artifex" -- design/mockups/source` prints nothing.
-- [ ] Re-render those boards through `design/tools/render-mockups.mjs --only` so `design/mockups/html/` and `design/screenshots/` match their sources. Done when: `git grep -n -i -E "mupdf|agpl" -- design/mockups/html` prints nothing and the boards' PNG files are newer than their sources.
-- [ ] Add `tests/scripts/test_engine_dependency_policy.py`'s design check (no MuPDF or AGPL text in `design/mockups/`). Done when: restoring one MuPDF chip in a source makes the test fail.
+- [x] Replace MuPDF with `recto-pdf` and AGPL-3.0 with GPL-3.0-or-later in every `design/mockups/source/[ABC]-*.dc.html`, and drop MuPDF-only third-party rows (jbig2dec, extract, Artifex) from the About boards' licence lists, keeping the rows for components Recto still ships. Done when: `git grep -n -i -E "mupdf|agpl|jbig2dec|artifex" -- design/mockups/source` prints nothing.
+- [x] Re-render those boards through `design/tools/render-mockups.mjs --only` so `design/mockups/html/` and `design/screenshots/` match their sources. Done when: `git grep -n -i -E "mupdf|agpl" -- design/mockups/html` prints nothing and the boards' PNG files are newer than their sources.
+- [x] Add `tests/scripts/test_engine_dependency_policy.py`'s design check (no MuPDF or AGPL text in `design/mockups/`). Done when: restoring one MuPDF chip in a source makes the test fail.
 - [ ] Commit: `design: retire MuPDF and AGPL text from the A, B and C mockup boards`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_engine_dependency_policy` passes, and `git grep -n -i -E "mupdf|agpl" -- design/mockups` prints nothing.
@@ -698,6 +703,27 @@ The audit of `D00 T03 §5` (`docs/reviews/06-quality/audit-d00-t03-s5.md`, D06 T
 - [ ] Commit: `build: ARM64 Debug builds without CS1668 warnings`
 
 **Test checkpoint:** `.\build.cmd` exits 0 and its log shows `0 Warning(s)` for x64 and ARM64, Debug and Release.
+
+## 28. Retired Office and LibreOffice converter surfaces removed from the A, B and C boards
+
+While removing MuPDF and AGPL text from the older mockup boards (`D06 T05 §25`), the A, B and C boards were found to still show the retired Office and LibreOffice dependency as whole surfaces: an "Office to PDF needs Microsoft Office or LibreOffice" dialog (`A-Dialogs`, `B-Dialogs`, `C-Dialogs`, with "Get LibreOffice" links) and an "Office to PDF converter" setting reporting which suite is installed (`A-Settings`, `C-Settings`). Recto converts Office files with its own built-in engines and has no Office or LibreOffice dependency (D5, D7, D10), so these surfaces describe a product that no longer exists. Removing or replacing a dialog is a design choice the current `D-` boards and `design/SPEC.md` own, so it is its own section rather than a text swap. -> XREF: D06 T05 §25
+
+**Phase:** 0
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Decide each surface against `design/SPEC.md` and the `D-` boards: drop the dialog and the converter setting, or replace them with what the SPEC shows for Office import today. Done when: the choice and its SPEC section are recorded in this section's findings file.
+2. Edit the boards and re-render them. Done when: `git grep -n -i -E "libreoffice|office com|microsoft office" -- design/mockups` prints nothing.
+
+- [ ] Record, per surface, what `design/SPEC.md` and the `D-` boards show for Office import, and whether the old surface is dropped or replaced, in `docs/reviews/06-quality/D06-T05-s28.md`. Done when: each of the five boards has a recorded choice with its SPEC section.
+- [ ] Edit `design/mockups/source/[ABC]-Dialogs.dc.html` and `[AC]-Settings.dc.html` to that choice. Done when: `git grep -n -i -E "libreoffice|office com|microsoft office" -- design/mockups/source` prints nothing.
+- [ ] Re-render those boards with `node design/tools/render-mockups.mjs --only <names>`. Done when: the same grep over `design/mockups/html` prints nothing and each board's PNG is newer than its source.
+- [ ] Extend `tests/scripts/test_engine_dependency_policy.py`'s design check to refuse Office or LibreOffice named as a converter dependency in `design/mockups/`. Done when: restoring one "Get LibreOffice" link makes the test fail.
+- [ ] Commit: `design: retire the Office and LibreOffice converter surfaces from the A, B and C boards`
+
+**Test checkpoint:** `python -m unittest tests.scripts.test_engine_dependency_policy` passes, and `git grep -n -i -E "libreoffice|office com" -- design/mockups` prints nothing.
 
 ## Verification
 

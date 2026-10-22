@@ -1,13 +1,16 @@
 // Renders the .dc.html mockup sources in design/mockups/source into plain static HTML
 // (design/mockups/html) and PNG screenshots (design/screenshots) with headless Edge.
 //
-// Usage: node design/tools/render-mockups.mjs [--no-png]
+// Usage: node design/tools/render-mockups.mjs [--no-png] [--only A-About,B-Banner,...]
+//
+// --only renders just the named boards (file names without .dc.html), so an edit to a few boards
+// leaves every other board's HTML and PNG untouched.
 //
 // The sources use a small template format from the design canvas: {{path}} holes,
 // <sc-for list="{{x}}" as="y"> loops and <sc-if value="{{x}}"> conditionals, with the
 // data coming from the renderVals() method in each file's <script data-dc-script>.
 
-import { readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync, statSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, mkdirSync, existsSync, statSync, mkdtempSync, rmSync, renameSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -18,6 +21,8 @@ const srcDir = join(designDir, "mockups", "source");
 const htmlDir = join(designDir, "mockups", "html");
 const shotDir = join(designDir, "screenshots");
 const withPng = !process.argv.includes("--no-png");
+const onlyAt = process.argv.indexOf("--only");
+const only = onlyAt >= 0 ? new Set((process.argv[onlyAt + 1] ?? "").split(",").filter(Boolean)) : null;
 
 const canvas = JSON.parse(readFileSync(join(srcDir, "canvas.json"), "utf8"));
 
@@ -100,7 +105,13 @@ if (withPng && !browser) throw new Error("Edge or Chrome not found; run with --n
 // sharing the default profile makes the screenshot step exit without writing a file.
 const profileDir = browser ? mkdtempSync(join(tmpdir(), "recto-render-")) : null;
 
-for (const file of readdirSync(srcDir).filter((f) => f.endsWith(".dc.html"))) {
+const sources = readdirSync(srcDir).filter((f) => f.endsWith(".dc.html"));
+if (only) {
+  const known = new Set(sources.map((f) => f.replace(/\.dc\.html$/, "")));
+  const unknown = [...only].filter((n) => !known.has(n));
+  if (only.size === 0 || unknown.length) throw new Error(`--only names no board: ${unknown.join(", ") || "(empty)"}`);
+}
+for (const file of sources.filter((f) => !only || only.has(f.replace(/\.dc\.html$/, "")))) {
   const src = readFileSync(join(srcDir, file), "utf8");
   const xdc = between(src, "<x-dc>", "</x-dc>");
   const helmet = between(xdc, "<helmet>", "</helmet>");
@@ -113,7 +124,8 @@ for (const file of readdirSync(srcDir).filter((f) => f.endsWith(".dc.html"))) {
     .replace(/href="([\w-]+)\.dc\.html"/g, 'href="$1.html"');
   const name = file.replace(/\.dc\.html$/, "");
   const htmlPath = join(htmlDir, `${name}.html`);
-  writeFileSync(htmlPath, html);
+  writeFileSync(`${htmlPath}.tmp`, html);  // temp file, then replace: a failed run never leaves a torn board
+  renameSync(`${htmlPath}.tmp`, htmlPath);
 
   if (browser) {
     const board = canvas.boards[file];

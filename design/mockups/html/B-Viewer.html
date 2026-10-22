@@ -75,16 +75,16 @@ a{color:#F48A6E}a:hover{color:#F7A890}
         <article class="doc" style="width:620px;height:802px;flex:none;background:#FFFFFF;box-shadow:0 10px 40px rgba(0,0,0,.6);padding:64px 72px;box-sizing:border-box;font-family:Cambria,Georgia,serif;color:#1F1D1B;display:flex;flex-direction:column;gap:12px">
           <h1 style="margin:0;font-size:26px;font-weight:700">Recto: foundation plan</h1>
           <p style="margin:0;font-size:11px;color:#55504A">Status: draft for implementation. Written 2026-10-13. Review again at the end of milestone M1.</p>
-          <p style="margin:6px 0 0;font-size:12px;line-height:19px">Recto is an open-source PDF viewer and converter for Windows, written in C and C++ with a WinUI 3 interface. This plan records every decision made so far, the architecture, the MuPDF thread-safety setup, and the milestones to version 1.</p>
+          <p style="margin:6px 0 0;font-size:12px;line-height:19px">Recto is an open-source PDF viewer and converter for Windows, written in C++20 with a WinUI 3 interface. This plan records every decision made so far, the architecture, the engine threading contract, and the milestones to version 1.</p>
           <h2 style="margin:8px 0 0;font-size:17px">1. Decisions</h2>
           <table style="border-collapse:collapse;width:100%">
             <tr><th>#</th><th>Decision</th><th>Choice</th></tr>
             <tr><td>D1</td><td>Product name</td><td>Recto, the right-hand page of an open book</td></tr>
-            <tr><td>D2</td><td>License</td><td>AGPL-3.0-or-later, open source from the first public commit</td></tr>
-            <tr><td>D3</td><td>PDF engine</td><td>MuPDF, pinned to a release tag</td></tr>
-            <tr><td>D4</td><td>UI</td><td>WinUI 3 on Windows App SDK 2.4.0, C++/WinRT</td></tr>
-            <tr><td>D5</td><td>Languages</td><td>C17 for the bridge, C++20 for everything else</td></tr>
-            <tr><td>D6</td><td>Distribution</td><td>MSIX through the Microsoft Store</td></tr>
+            <tr><td>D2</td><td>License</td><td>GPL-3.0-or-later, open source from the first public commit</td></tr>
+            <tr><td>D3</td><td>PDF engine</td><td>recto-pdf, Recto's own native C++20 engine</td></tr>
+            <tr><td>D4</td><td>UI</td><td>WinUI 3 on Windows App SDK 2.5.1, C++/WinRT</td></tr>
+            <tr><td>D5</td><td>Languages</td><td>C++20 in every module</td></tr>
+            <tr><td>D6</td><td>Distribution</td><td>Inno Setup installer and portable zip; MSIX optional</td></tr>
             <tr><td>D7</td><td>v1 conversions</td><td>Images, text, merge, split, Office to PDF, PDF to Word</td></tr>
             <tr><td>D8</td><td>Target</td><td>Windows 11, x64 and ARM64</td></tr>
           </table>

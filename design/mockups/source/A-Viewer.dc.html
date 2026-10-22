@@ -99,24 +99,23 @@ a{color:#2459D6}a:hover{color:#1A47B0}
             <h2 style="margin:4px 0 0;font-size:18px">2. Tech stack</h2>
             <table style="border-collapse:collapse;width:100%">
               <tr><th>Layer</th><th>Technology</th><th>Purpose</th></tr>
-              <tr><td>UI framework</td><td>WinUI 3, Windows App SDK 2.4.0, C++/WinRT</td><td>Window, controls, navigation, dialogs</td></tr>
+              <tr><td>UI framework</td><td>WinUI 3, Windows App SDK 2.5.1, C++/WinRT</td><td>Window, controls, navigation, dialogs</td></tr>
               <tr><td>Page surface</td><td>SwapChainPanel, Direct3D 11, Direct2D, DXGI flip-model swap chain</td><td>Tiled page display with smooth zoom and scroll</td></tr>
-              <tr><td>PDF engine</td><td>MuPDF (C library)</td><td>Parsing, rendering, text, search, merge, split, encryption, document writers</td></tr>
-              <tr><td>Image I/O</td><td>Windows Imaging Component, MuPDF image loaders</td><td>PNG, JPEG, TIFF, BMP output; image input</td></tr>
-              <tr><td>PDF to DOCX</td><td>MuPDF docx document writer</td><td>v1 Word export</td></tr>
-              <tr><td>Office to PDF</td><td>Office COM automation, LibreOffice headless</td><td>v1 Office import</td></tr>
+              <tr><td>PDF engine</td><td>recto-pdf (in-tree C++20)</td><td>Parsing, filters, rendering, text, search, encryption, writers</td></tr>
+              <tr><td>Image I/O</td><td>Windows Imaging Component, recto-pdf image filters</td><td>PNG, JPEG, TIFF, BMP output; image input</td></tr>
+              <tr><td>PDF to DOCX</td><td>recto-services DOCX writer</td><td>v1 Word export</td></tr>
+              <tr><td>Office to PDF</td><td>recto-core OpenXML and OLE2 layout engines</td><td>v1 Office import</td></tr>
               <tr><td>Unit tests</td><td>GoogleTest</td><td>Engine and services</td></tr>
-              <tr><td>Packaging</td><td>MSIX, Microsoft Store</td><td>Install, update, .pdf file association</td></tr>
+              <tr><td>Packaging</td><td>Inno Setup, portable zip, optional MSIX</td><td>Install, update, .pdf file association</td></tr>
             </table>
             <h2 style="margin:10px 0 0;font-size:18px">3. Architecture</h2>
             <h3 style="margin:0;font-size:13px">3.1 Modules</h3>
-            <p style="margin:0;font-size:11px;line-height:17px">The rule behind the module table: only recto-bridge includes MuPDF headers. Everything above it sees Recto's own types. This keeps setjmp and longjmp error handling out of C++ and lets the bridge move into a separate sandbox process later.</p>
+            <p style="margin:0;font-size:11px;line-height:17px">The rule behind the module table: dependencies point one way only, recto-pdf to recto-core to recto-services to the app. Every module is Recto's own C++20, and every parser returns PdfResult values instead of throwing.</p>
             <p style="margin:0;font-size:11px;line-height:17px">recto-cli exists so the engine can be tested, profiled and fuzz-reproduced without the UI.</p>
             <h3 style="margin:4px 0 0;font-size:13px">3.2 Repository layout</h3>
             <div style="font-family:Consolas,monospace;font-size:10px;line-height:15px;background:#F6F6F6;padding:10px 12px;white-space:pre">Recto/
   Recto.sln
-  third_party/mupdf/        git submodule, pinned release tag
-  src/bridge/               C only
+  src/pdf/                  recto-pdf engine, C++20
   src/core/
   src/services/
   src/app/                  WinUI 3 project</div>
