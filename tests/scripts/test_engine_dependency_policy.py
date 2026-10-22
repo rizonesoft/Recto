@@ -55,7 +55,7 @@ def tracked(*pathspecs):
 #   mention, in element text or a visible attribute, fails until a reviewer reads it and adds it here.
 # What this cannot see: a sentence that states a dependency without naming Office, Word, Excel, PowerPoint or a suite
 # ("install the desktop suite first") is not tied to Office by any text check; that is design review's to catch.
-OFFICE_SUITE = re.compile(r"\b(libreoffice|microsoft (office|365)|office com)\b", re.IGNORECASE)
+OFFICE_SUITE = re.compile(r"\b(libre\s*office|microsoft\s*(office|365)|office\s*com)\b", re.IGNORECASE)
 OFFICE_PRODUCT = re.compile(r"\b(office|word|excel|powerpoint)\b", re.IGNORECASE)
 REVIEWED_OFFICE_UNITS = frozenset({
     # Conversion features and their settings (Recto's built-in engines, foundation plan section 2 and SPEC 9.5, 9.7).
@@ -249,6 +249,16 @@ SPLIT_NAME = re.compile(
              ("libreoffice", "office", "word", "excel", "powerpoint")), re.IGNORECASE)
 
 
+def suite_across_elements(markup: str) -> str | None:
+    """A suite name anywhere in the board's visible text with every element boundary removed ("Install Microsoft"
+    and "365 to convert" in two flex items read "Microsoft365"), or None."""
+    parser = _VisibleText()
+    parser.feed(markup)
+    parser.close()
+    m = OFFICE_SUITE.search(" ".join("".join(parser.marked).replace("\x01", "").split()))
+    return m.group(0) if m else None
+
+
 def split_office_name(markup: str) -> str | None:
     """The first Office product or suite name that an element boundary breaks, or None."""
     parser = _VisibleText()
@@ -272,7 +282,7 @@ def office_dependency(markup: str) -> str | None:
         for unit in visible_units(markup, split_every_element=split):
             if OFFICE_SUITE.search(unit) or (OFFICE_PRODUCT.search(unit) and unit not in REVIEWED_OFFICE_UNITS):
                 return unit
-    return split_office_name(markup)
+    return suite_across_elements(markup) or split_office_name(markup)
 
 
 class EngineDependencyPolicyTest(unittest.TestCase):
@@ -312,7 +322,6 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                 for text in texts:
                     self.assertIsNone(MUPDF.search(text))
 
-    @unittest.skipUnless(NODE, "needs Node.js for browser URL parsing")
     def test_design_boards_name_no_mupdf_agpl_or_office_dependency(self):
         # The mockup sources and their rendered HTML describe Recto: its engine is recto-pdf (D3) and its licence
         # GPL-3.0-or-later (D2), so no board may present MuPDF, its components or AGPL as Recto's (D06 T05 §25).
@@ -328,7 +337,10 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                 # Recto converts Office files with its own engines (D5, D7, D10): no board may present Office or
                 # LibreOffice as a converter Recto needs (D06 T05 §28).
                 self.assertIsNone(office_dependency(text))
-                self.assertEqual(office_install_links(board_links(text)), [])
+                if NODE:  # links are resolved by the browser URL algorithm, which needs Node
+                    self.assertEqual(office_install_links(board_links(text)), [])
+        if not NODE:
+            self.skipTest("Office install links not checked: needs Node.js (the text checks above ran)")
 
     @unittest.skipUnless(NODE, "needs Node.js for browser URL parsing")
     def test_office_install_links_are_found_however_written(self):
@@ -375,7 +387,10 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                        "<p>Install Wo<script></script>rd to convert documents.</p>",
                        "<p>Install Wo<template>x</template>rd to convert documents.</p>",
                        "<p>Install Wo<template><br></template>rd to convert documents.</p>",
-                       "<p>Install Wo<template><div title='x'>y</div></template>rd to convert documents.</p>"):
+                       "<p>Install Wo<template><div title='x'>y</div></template>rd to convert documents.</p>",
+                       '<div style="display:flex;gap:8px"><span>Install Microsoft</span>'
+                       '<span>365 to convert documents.</span></div>',
+                       "<div>Get Microsoft</div><div>Office</div>"):
             with self.subTest(markup=markup):
                 self.assertIsNotNone(office_dependency(markup))
         for markup in ("<p>Office to PDF is built in.</p>", "<td>PDF to Word</td><td>needs a password</td>",
