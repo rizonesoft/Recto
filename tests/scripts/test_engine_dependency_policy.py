@@ -63,10 +63,12 @@ REVIEWED_SENTENCES = {
 # The suites' install pages, matched in the raw text so a link counts whatever its anchor says.
 OFFICE_INSTALL_LINK = re.compile(r"libreoffice\.org|microsoft\.com/microsoft-365|office\.com", re.IGNORECASE)
 # Inline elements and comments do not break words when rendered (Libre<span>Office</span>, Libre<!-- x -->Office), so
-# they are removed without a space; every other tag ends a unit. White space, newlines included, is only a space, and a
+# they are removed without a space, as is a word-break opportunity (<wbr>); every other tag ends a unit. White space, newlines included, is only a space, and a
 # colon does not end a unit ("Required converter: Office" is one statement).
 INLINE_TAG = re.compile(r"</?(a|abbr|b|bdi|bdo|cite|code|data|dfn|em|i|kbd|mark|q|s|samp|small|span|strong|sub|sup|time"
-                        r"|u|var)\b[^>]*>", re.IGNORECASE)
+                        r"|u|var|wbr)\b[^>]*>", re.IGNORECASE)
+# A line break inside an element is a break within the same text, read as a space, not the end of a unit.
+LINE_BREAK = re.compile(r"<br\b[^>]*>", re.IGNORECASE)
 
 
 def visible_units(markup: str) -> list[str]:
@@ -74,7 +76,7 @@ def visible_units(markup: str) -> list[str]:
     punctuation (. ! ? ;), with entities decoded and white space, newlines included, collapsed to single spaces."""
     text = re.sub(r"(?s)<!--.*?-->", "", markup)
     text = re.sub(r"(?is)<(script|style)\b.*?</\1>", "\x00", text)
-    text = html.unescape(re.sub(r"<[^>]+>", "\x00", INLINE_TAG.sub("", text)))
+    text = html.unescape(re.sub(r"<[^>]+>", "\x00", LINE_BREAK.sub(" ", INLINE_TAG.sub("", text))))
     return [" ".join(unit.split()) for unit in re.split(r"[\x00.!?;]", text) if unit.strip()]
 
 
@@ -148,7 +150,8 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                        "<p>Office installation is required to convert documents.</p>",
                        "<p>Conversion requires an installed copy of Office.</p>",
                        "<p>Conversion uses Word to create the PDF.</p>", "<p>Converts through PowerPoint.</p>",
-                       "<p>Office is\nrequired to convert documents.</p>", "<p>Required converter: Office.</p>"):
+                       "<p>Office is\nrequired to convert documents.</p>", "<p>Required converter: Office.</p>",
+                       "<p>Required converter:<br>Office.</p>", "<p>Install <wbr>Office to convert documents.</p>"):
             with self.subTest(markup=markup):
                 self.assertIsNotNone(office_dependency(markup))
         for markup in ("<p>Office to PDF is built in.</p>", "<td>PDF to Word</td><td>needs a password</td>",
