@@ -50,7 +50,9 @@ def tracked(*pathspecs):
 #   Office COM;
 # - every unit that names Office, Word, Excel or PowerPoint must be one of REVIEWED_OFFICE_UNITS, each read and found
 #   to describe Recto's own conversion or interface. A closed set rather than a list of forbidden phrasings: any new
-#   mention, in whatever wording or markup, fails until a reviewer reads it and adds it here.
+#   mention, in element text or a visible attribute, fails until a reviewer reads it and adds it here.
+# What this cannot see: a sentence that states a dependency without naming Office, Word, Excel, PowerPoint or a suite
+# ("install the desktop suite first") is not tied to Office by any text check; that is design review's to catch.
 OFFICE_SUITE = re.compile(r"\b(libreoffice|microsoft (office|365)|office com)\b", re.IGNORECASE)
 OFFICE_PRODUCT = re.compile(r"\b(office|word|excel|powerpoint)\b", re.IGNORECASE)
 REVIEWED_OFFICE_UNITS = frozenset({
@@ -93,6 +95,7 @@ OFFICE_INSTALL_LINK = re.compile(r"libreoffice\.org|microsoft\.com/microsoft-365
 # colon does not end a unit ("Required converter: Office" is one statement).
 INLINE_TAG = re.compile(r"</?(a|abbr|b|bdi|bdo|cite|code|data|dfn|em|i|kbd|mark|q|s|samp|small|span|strong|sub|sup|time"
                         r"|u|var|wbr)\b[^>]*>", re.IGNORECASE)
+VISIBLE_ATTRIBUTE = re.compile(r"""\b(value|placeholder|alt|title|aria-label)\s*=\s*["']([^"']*)["']""", re.IGNORECASE)
 # A line break inside an element is a break within the same text, read as a space, not the end of a unit.
 LINE_BREAK = re.compile(r"<br\b[^>]*>", re.IGNORECASE)
 
@@ -102,8 +105,11 @@ def visible_units(markup: str) -> list[str]:
     punctuation (. ! ? ;), with entities decoded and white space, newlines included, collapsed to single spaces."""
     text = re.sub(r"(?s)<!--.*?-->", "", markup)
     text = re.sub(r"(?is)<(script|style)\b.*?</\1>", "\x00", text)
+    # Text a reader sees or hears that lives in attributes: a button's value, a field's placeholder, an image's alt,
+    # a tooltip, an accessible name. Each is a unit of its own.
+    shown = [html.unescape(m.group(2)) for m in VISIBLE_ATTRIBUTE.finditer(text)]
     text = html.unescape(re.sub(r"<[^>]+>", "\x00", LINE_BREAK.sub(" ", INLINE_TAG.sub("", text))))
-    return [" ".join(unit.split()) for unit in re.split(r"[\x00.!?;]", text) if unit.strip()]
+    return [" ".join(unit.split()) for unit in re.split(r"[\x00.!?;]", "\x00".join([text, *shown])) if unit.strip()]
 
 
 def office_dependency(markup: str) -> str | None:
@@ -179,7 +185,9 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                        "<p>Office is\nrequired to convert documents.</p>", "<p>Required converter: Office.</p>",
                        "<p>Required converter:<br>Office.</p>", "<p>Install <wbr>Office to convert documents.</p>",
                        "<p>Install <button>Office</button> to convert documents.</p>",
-                       "<p>Office must be present to convert documents.</p>"):
+                       "<p>Office must be present to convert documents.</p>",
+                       '<input type="button" value="Install Microsoft Office to convert">',
+                       '<button aria-label="Requires Word">Convert</button>'):
             with self.subTest(markup=markup):
                 self.assertIsNotNone(office_dependency(markup))
         for markup in ("<p>Office to PDF is built in.</p>", "<td>PDF to Word</td><td>needs a password</td>",
