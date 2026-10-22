@@ -111,9 +111,6 @@ mkdirSync(htmlDir, { recursive: true });
 mkdirSync(join(shotDir, "explorations"), { recursive: true });
 const browser = withPng ? edgePath() : null;
 if (withPng && !browser) throw new Error("Edge or Chrome not found; run with --no-png");
-// A private profile keeps headless runs independent of any browser window the user has open;
-// sharing the default profile makes the screenshot step exit without writing a file.
-const profileDir = browser ? mkdtempSync(join(tmpdir(), "recto-render-")) : null;
 
 const sources = readdirSync(srcDir).filter((f) => f.endsWith(".dc.html"));
 if (only) {
@@ -121,6 +118,11 @@ if (only) {
   const unknown = [...only].filter((n) => !known.has(n));
   if (only.size === 0 || unknown.length) throw new Error(`--only names no board: ${unknown.join(", ") || "(empty)"}`);
 }
+// A private profile keeps headless runs independent of any browser window the user has open;
+// sharing the default profile makes the screenshot step exit without writing a file. It is made only after the
+// arguments are checked and removed however the run ends.
+const profileDir = browser ? mkdtempSync(join(tmpdir(), "recto-render-")) : null;
+try {
 for (const file of sources.filter((f) => !only || only.has(f.replace(/\.dc\.html$/, "")))) {
   const src = readFileSync(join(srcDir, file), "utf8");
   const xdc = between(src, "<x-dc>", "</x-dc>");
@@ -153,4 +155,6 @@ for (const file of sources.filter((f) => !only || only.has(f.replace(/\.dc\.html
   }
   console.log(name);
 }
-if (profileDir) rmSync(profileDir, { recursive: true, force: true });
+} finally {
+  if (profileDir) rmSync(profileDir, { recursive: true, force: true });
+}
