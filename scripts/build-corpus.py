@@ -1585,6 +1585,44 @@ def validate_layout(rel_path: str, data: bytes) -> list[int]:
     return ends
 
 
+IMAGE_COMPONENTS = {b"/DeviceGray": 1, b"/DeviceRGB": 3, b"/DeviceCMYK": 4}
+
+
+def validate_image_stream(rel_path: str, num: int, entries: dict[bytes, bytes], payload: bytes) -> None:
+    """An image XObject's data read by its own filter and parameters (ISO 32000-1 8.9.5): a DCT image as a baseline
+    JPEG of its /Width, /Height and colour space's components, a CCITT image as Group 4 (/K -1) of its /Columns and
+    /Rows, which must be its /Width and /Height, and a Flate image as exactly the bytes its size, components and
+    /BitsPerComponent need. Any other image filter is not one the corpus validates."""
+    def whole(key: bytes) -> int:
+        value = entries.get(key, b"")
+        if re.fullmatch(rb"[1-9]\d{0,5}", value) is None:
+            raise ValueError(f"{rel_path}: image object {num} {key.decode()} is not a positive integer")
+        return int(value)
+
+    width, height = whole(b"/Width"), whole(b"/Height")
+    components = IMAGE_COMPONENTS.get(entries.get(b"/ColorSpace", b""))
+    if components is None:
+        raise ValueError(f"{rel_path}: image object {num} colour space is not DeviceGray, DeviceRGB or DeviceCMYK")
+    bits = whole(b"/BitsPerComponent")
+    flt = entries.get(b"/Filter")
+    if flt == b"/DCTDecode" and bits == 8 and b"/DecodeParms" not in entries:
+        validate_jpeg_baseline(f"{rel_path} (image object {num})", payload, width, height, components)
+    elif flt == b"/CCITTFaxDecode" and bits == 1 and components == 1:
+        parms = entries.get(b"/DecodeParms", b"")
+        fields = dict_entries(parms[2:-2]) if parms.startswith(b"<<") else {}
+        if not ({b"/K": b"-1", b"/Columns": str(width).encode(), b"/Rows": str(height).encode()}.items()
+                <= fields.items()) or set(fields) - {b"/K", b"/Columns", b"/Rows", b"/BlackIs1"} \
+                or fields.get(b"/BlackIs1", b"false") not in (b"true", b"false"):
+            raise ValueError(f"{rel_path}: image object {num} CCITT parameters are not /K -1 with its own size")
+        ccitt_g4_decode(f"{rel_path} (image object {num})", payload, width, height)
+    elif flt == b"/FlateDecode" and b"/DecodeParms" not in entries and bits in (1, 2, 4, 8, 16):
+        expected = (width * components * bits + 7) // 8 * height
+        if len(inflate(payload, f"{rel_path} (image object {num})")) != expected:
+            raise ValueError(f"{rel_path}: image object {num} Flate data is not {expected} bytes of samples")
+    else:
+        raise ValueError(f"{rel_path}: image object {num} filter {flt!r} is not one the corpus validates")
+
+
 def validate_pdf_structure(rel_path: str, data: bytes, earlier_revisions: bool = True, encrypted: bool = False) -> None:
     """Validate PDF header, stream /Length exactness, xref offsets, and content semantics. With encrypted, stream
     bodies are ciphertext, so their content is left to validate_encrypted_pdf_structure, which decrypts it; every
@@ -1606,6 +1644,9 @@ def validate_pdf_structure(rel_path: str, data: bytes, earlier_revisions: bool =
         if stream_start is None or encrypted:
             continue
         stream_entries = dict_entries(data[start + 2 : end - 2])
+        if stream_entries.get(b"/Subtype") == b"/Image":
+            validate_image_stream(rel_path, num, stream_entries, data[stream_start:end_pos])
+            continue
         # A plain Flate content stream (no predictor parameters, not an image, object or xref stream) is checked as
         # page content.
         if (

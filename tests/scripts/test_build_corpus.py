@@ -886,6 +886,21 @@ class BuildCorpusTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "bad Flate data"):
             self.mod.inflate_bounded(b"XX" + bytes(64), 1024)
 
+    def test_render_fixture_images_are_decoded(self) -> None:
+        name = "render/images-and-vectors.pdf"
+        pdf = self.mod.build_images_and_vectors()
+        self.mod.validate_corpus_entry(name, pdf)
+        for generator, says in (("make_minimal_jpeg_8x8_rgb", "image object 7"),
+                                ("make_ccitt_group4_16x16", "image object 10")):
+            original = getattr(self.mod, generator)()
+            with self.subTest(generator=generator), self.assertRaisesRegex(ValueError, says):
+                self.mod.validate_corpus_entry(name, pdf.replace(original, bytes(len(original))))
+        # A Flate image short of its samples.
+        with self.assertRaisesRegex(ValueError, "bytes of samples"):
+            self.mod.validate_image_stream("x", 1, {b"/Subtype": b"/Image", b"/Width": b"2", b"/Height": b"2",
+                                                    b"/ColorSpace": b"/DeviceGray", b"/BitsPerComponent": b"8",
+                                                    b"/Filter": b"/FlateDecode"}, zlib.compress(b"abc"))
+
     def test_jpx_cod_qcd_and_packet_are_read(self) -> None:
         jpx = self.mod.make_minimal_jpx_8x8_gray()
         cod, qcd = jpx.index(b"\xFF\x52"), jpx.index(b"\xFF\x5C")
