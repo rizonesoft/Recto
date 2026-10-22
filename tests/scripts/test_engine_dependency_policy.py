@@ -43,6 +43,14 @@ def tracked(*pathspecs):
     return [name for name in out.split("\0") if name]
 
 
+# Office or LibreOffice named as something Recto needs to convert: the suites by name, or Office, Word, Excel or
+# PowerPoint after a verb of need or a route ("Install Office", "requires Microsoft Office", "through PowerPoint").
+OFFICE_DEPENDENCY = re.compile(
+    r"libreoffice|office com|microsoft (word|excel|powerpoint|office|365)"
+    r"|\b(install|installs|installed|installing|need|needs|needed|require|requires|required|requiring|through|via|using)"
+    r" (the )?(microsoft )?(office|word|excel|powerpoint)\b", re.IGNORECASE)
+
+
 class EngineDependencyPolicyTest(unittest.TestCase):
     def test_no_submodule_or_vendored_engine(self):
         index = subprocess.run(["git", "-C", str(REPO), "ls-files", "--stage"], capture_output=True, text=True,
@@ -94,8 +102,9 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                 self.assertIsNone(re.search(r"\bfz_", text, re.IGNORECASE))  # MuPDF's API prefix, whatever follows it
                 # Recto converts Office files with its own engines (D5, D7, D10): no board may present Office or
                 # LibreOffice as a converter Recto needs (D06 T05 §28).
-                self.assertIsNone(re.search(r"libreoffice|office com|microsoft (word|excel|powerpoint|office)"
-                                            r"|through (word|excel|powerpoint|office)", text, re.IGNORECASE))
+                # Matched on the visible text (tags removed, white space collapsed), so markup cannot split a phrase.
+                visible = " ".join(re.sub(r"<[^>]+>", " ", text).split())
+                self.assertIsNone(OFFICE_DEPENDENCY.search(visible))
 
     @unittest.skipUnless(sys.platform == "win32", "the C++ build and MSBuild are Windows-only (foundation plan D15)")
     def test_every_module_compiles_as_cpp20_with_warnings_as_errors(self):
