@@ -1,0 +1,35 @@
+{
+  "ref": "D06 T05 \u00a717",
+  "title": "Audit D01 T01 \u00a73: Binary-safe PDF 1.7 and 2.0 lexer (src/pdf/lexer.cpp)",
+  "implementation_sha": "9d140561841f253c313904af97e6865f3ff000fe",
+  "date": "2026-10-22",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s3.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s3.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "python scripts/todo-graph.py resolve \"D01 T01 \u00a73\" -> exit 3 (still verified); audit round 4 OVERALL: approve",
+    ".\\build.cmd -> exit 0, 0 Warning(s) in all four configurations, [  PASSED  ] 108 tests. (x64 Debug and Release)",
+    "build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfLexer.* -> exit 0, 0 Warning(s), [  PASSED  ] 8 tests."
+  ],
+  "rounds_spent": 4,
+  "round_cap": 22
+}
