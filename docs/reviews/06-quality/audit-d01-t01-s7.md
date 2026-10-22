@@ -190,3 +190,48 @@ Round 4 is the first on the new pin (GPT-6.1 Sol at xhigh).
 Both tests fail on the round 4 code.
 
 Gates after round 4: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 117 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 45 tests.`
+
+## Round 5: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T09:02:09Z
+- Effort: xhigh
+- Lines: 28
+- Digest: 6a1914a7ea7f4b25
+
+### adversarial: needs-attention
+
+1. **P3: Parameters belonging to other filters still affect decoding.** `src/pdf/filters.cpp:9152` uses one allowlist for every filter, and `src/pdf/filters.cpp:9184` resolves matching keys before identifying the applicable filter. Reproduce using the builder at `tests/recto-tests/pdf_xref_tests.cpp:97`: call `build("2 0 R", "<< /Columns 1 0 R >>")`, then resolve object 1. ASCIIHex does not use `/Columns`, but resolving it re-enters the object stream and returns `DamagedFormat` instead of integer `42`. Round 4’s ignored-key repair remains incomplete. This reproduction is source-traced.
+
+### consistency: approve
+
+### integration: needs-attention
+
+2. **P2: Indirect filters are resolved too late for stream decryption.** `src/pdf/crypto.cpp:1932` recognizes `/Crypt` only through direct filter names or direct array elements. It selects and applies the default cipher before the pipeline resolves indirect filters.
+
+   Reproduce in an authenticated document whose default stream cipher is AESV2: use `/Filter 10 0 R`, object 10 containing `[/Crypt /FlateDecode]`, `/DecodeParms [<< /Name /Identity >> null]`, and stream bytes `78 9C 73 04 00 00 42 00 42`. These are valid unencrypted Flate bytes decoding to `A`. The unresolved filter causes default AES decryption, which rejects their nine-byte length at `src/pdf/crypto.cpp:1735`. The equivalent direct filter array selects Identity and works. This reproduction is source-traced.
+
+### source-defect: needs-attention
+
+1. **P3, `src/pdf/filters.cpp:9184`:** Finding 1 violates the ignored-entry behavior described in [Adobe PDF Reference, Appendix H.2](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.6.pdf#page=1026). The same `/Columns` reproduction demonstrates the violation.
+
+2. **P2, `src/pdf/crypto.cpp:1932`:** Finding 2 breaks direct/indirect equivalence for the filter array. The reference permits indirect objects unless explicitly restricted, and Crypt selects the stream’s decryption method. See [sections 3.2.9 and 3.3.9](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.6.pdf#page=61).
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: advisory
+
+Independently reran the existing Release executable: all 16 `PdfFilters.*` tests and 29 `PdfXref.*`, `PdfDocument.*`, and `PdfCrypto.*` tests passed. `Support.AsanActiveWhenEnabled` reported `ASan=enabled`. Graph validation and plan checks passed. These runs verify the existing executable’s results, not its correspondence to `7f6e3c9`, fresh-build warnings, or ARM64 compilation. No files were modified.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 5
+
+- Finding 1 (P3): correct, and round 4's fix had the wrong shape: one allowlist for every filter, applied before the stage's filter was known. Resolution of a parameter dictionary's values now happens per stage, in the pipeline loop, for the keys that stage's filter defines (`stage_parameter_keys`: Flate, LZW, CCITTFax, DCT and Crypt per ISO 32000-1 Tables 8, 11, 12 and 14; every other filter defines none). A key another filter would read, or none reads, is never resolved. `PdfXref.ObjStmIndirectDecodeParmsResolve` adds `<< /Columns 1 0 R >>` under ASCIIHex (which has no parameters) beside the unknown-key case; it fails on the round 4 code.
+- Finding 2 (P2): correct. Stream decryption chose the `/Crypt` cipher from a direct `/Filter` only, so an indirect filter chain starting with `/Crypt /Identity` was run through the document's default cipher. `SecurityHandler::decrypt_object_values` takes an optional resolver. With it, an indirect `/Filter` and its elements (and, when the chain starts with `/Crypt`, `/DecodeParms`, its first element and `/Name`) are written into the stream dictionary resolved one level, so the existing selection and strip logic sees what a direct chain would. `SecurityHandler`'s own resolution and `Document`'s two decryption sites pass a resolver with the object being decrypted already visited, so a self-reference fails as a cycle. `PdfCrypto.IndirectCryptFilterChoosesTheStreamCipher` decrypts a stream whose `/Filter` is `10 0 R` (`[/Crypt /FlateDecode]`, `/Name /Identity`) under an RC4 handler: the bytes stay as stored, `/Crypt` is stripped, and the stream decodes to `A`. With the inlining disabled it fails.
+- The contract note in `D01 T01 §7` now says how parameters resolve and which callers supply a resolver.
+
+Gates after round 5: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 118 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 46 tests.`; `python scripts/todo-graph.py validate` -> valid.

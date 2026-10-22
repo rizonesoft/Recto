@@ -134,13 +134,16 @@ TEST(PdfXref, ObjStmIndirectDecodeParmsResolve)
 	RECTO_ASSERT_OK(cyclic_xref);
 	RECTO_EXPECT_ERR(cyclic_xref->resolve_object(as_bytes(cyclic_pdf), IndirectRef{1u, 0u}), ErrorCode::DamagedFormat);
 
-	// A key no filter defines is never resolved, so even a reference back into the stream does not affect decoding.
-	const std::string vendor_pdf = build("2 0 R", "<< /VendorData 1 0 R >>");
-	auto vendor_xref = XrefTable::parse(as_bytes(vendor_pdf));
-	RECTO_ASSERT_OK(vendor_xref);
-	auto vendor_value = vendor_xref->resolve_object(as_bytes(vendor_pdf), IndirectRef{1u, 0u});
-	RECTO_ASSERT_OK(vendor_value);
-	EXPECT_EQ(vendor_value->as_int(), std::optional<int64_t>(42));
+	// A key this stage's filter does not define is never resolved, whether no filter reads it or another filter
+	// would (ASCIIHex has no parameters), so even a reference back into the stream does not affect decoding.
+	for (const std::string_view parms_body : {"<< /VendorData 1 0 R >>", "<< /Columns 1 0 R >>"}) {
+		const std::string other_pdf = build("2 0 R", parms_body);
+		auto other_xref = XrefTable::parse(as_bytes(other_pdf));
+		RECTO_ASSERT_OK(other_xref);
+		auto other_value = other_xref->resolve_object(as_bytes(other_pdf), IndirectRef{1u, 0u});
+		RECTO_ASSERT_OK(other_value);
+		EXPECT_EQ(other_value->as_int(), std::optional<int64_t>(42)) << parms_body;
+	}
 }
 
 TEST(PdfXref, ClassicEntriesAboveSizeAreMissing)

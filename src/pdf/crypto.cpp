@@ -1844,7 +1844,8 @@ PdfResult<std::vector<uint8_t>> SecurityHandler::decrypt_bytes(
 PdfResult<void> SecurityHandler::decrypt_value_recursive(
 	PdfValue& value,
 	IndirectRef ref,
-	size_t depth) const
+	size_t depth,
+	const IndirectObjectResolver* resolver) const
 {
 	if (depth > kMaxObjectCloneDepth) {
 		return make_crypto_error(
@@ -1867,7 +1868,7 @@ PdfResult<void> SecurityHandler::decrypt_value_recursive(
 
 	if (PdfArray* arr = value.as_array_mut()) {
 		for (PdfValue& elem : *arr) {
-			RECTO_PDF_RETURN_IF_ERROR(decrypt_value_recursive(elem, ref, depth + 1u));
+			RECTO_PDF_RETURN_IF_ERROR(decrypt_value_recursive(elem, ref, depth + 1u, resolver));
 		}
 		return {};
 	}
@@ -1892,7 +1893,7 @@ PdfResult<void> SecurityHandler::decrypt_value_recursive(
 			}
 			PdfValue* entry_val = dict->get_mut(key);
 			if (entry_val != nullptr) {
-				RECTO_PDF_RETURN_IF_ERROR(decrypt_value_recursive(*entry_val, ref, depth + 1u));
+				RECTO_PDF_RETURN_IF_ERROR(decrypt_value_recursive(*entry_val, ref, depth + 1u, resolver));
 			}
 		}
 		return {};
@@ -1910,7 +1911,7 @@ PdfResult<void> SecurityHandler::decrypt_value_recursive(
 			const PdfName& key = stm->dict.entries()[i].first; // exact lookup, as for dictionaries above
 			PdfValue* entry_val = stm->dict.get_mut(key);
 			if (entry_val != nullptr) {
-				RECTO_PDF_RETURN_IF_ERROR(decrypt_value_recursive(*entry_val, ref, depth + 1u));
+				RECTO_PDF_RETURN_IF_ERROR(decrypt_value_recursive(*entry_val, ref, depth + 1u, resolver));
 			}
 		}
 
@@ -1925,6 +1926,46 @@ PdfResult<void> SecurityHandler::decrypt_value_recursive(
 		CryptFilterMethod eff_method = params_.stream_method;
 		if (stm_type.has_value() && *stm_type == "EmbeddedFile" && !params_.eff_f.empty()) {
 			eff_method = params_.embedded_file_method;
+		}
+
+		// An indirect /Filter, or its elements, is written into the dictionary resolved (one level), and so is
+		// /DecodeParms with its first element and /Name when the chain starts with /Crypt, so the crypt filter is
+		// chosen from what the references name exactly as for direct values (ISO 32000-1 section 7.3.10).
+		if (resolver != nullptr && *resolver) {
+			const auto inline_ref = [&](PdfValue& slot) -> PdfResult<void> {
+				if (const auto target_ref = slot.as_ref()) {
+					RECTO_PDF_TRY_REF(target, (*resolver)(*target_ref));
+					slot = std::move(target);
+				}
+				return {};
+			};
+			const auto inline_entry = [&](PdfDict& dict, std::string_view key) -> PdfResult<void> {
+				if (PdfValue* slot = dict.get_mut(PdfName::from_decoded(key))) {
+					RECTO_PDF_RETURN_IF_ERROR(inline_ref(*slot));
+					if (PdfArray* arr = slot->as_array_mut(); arr != nullptr && arr->size() <= kMaxFilterChainDepth) {
+						for (PdfValue& elem : *arr) {
+							RECTO_PDF_RETURN_IF_ERROR(inline_ref(elem));
+						}
+					}
+				}
+				return {};
+			};
+			RECTO_PDF_RETURN_IF_ERROR(inline_entry(stm->dict, "Filter"));
+			const PdfValue* filter_now = stm->dict.get("Filter");
+			const bool starts_with_crypt = filter_now != nullptr &&
+				((filter_now->as_name() == std::optional<std::string_view>("Crypt")) ||
+				 (filter_now->as_array() != nullptr && !filter_now->as_array()->empty() &&
+				  (*filter_now->as_array())[0].as_name() == std::optional<std::string_view>("Crypt")));
+			if (starts_with_crypt) {
+				RECTO_PDF_RETURN_IF_ERROR(inline_entry(stm->dict, "DecodeParms"));
+				PdfValue* dp = stm->dict.get_mut(PdfName::from_decoded("DecodeParms"));
+				if (dp != nullptr && dp->as_array_mut() != nullptr && !dp->as_array_mut()->empty()) {
+					dp = &(*dp->as_array_mut())[0];
+				}
+				if (dp != nullptr && dp->as_dict_mut() != nullptr) {
+					RECTO_PDF_RETURN_IF_ERROR(inline_entry(*dp->as_dict_mut(), "Name"));
+				}
+			}
 		}
 
 		// Check if the stream's first `/Filter` is `/Crypt` (ISO 32000-1 section 7.4.10).
@@ -2008,7 +2049,8 @@ PdfResult<void> SecurityHandler::decrypt_value_recursive(
 PdfResult<void> SecurityHandler::decrypt_object_values(
 	PdfValue& value,
 	IndirectRef ref,
-	bool is_inside_obj_stm) const noexcept
+	bool is_inside_obj_stm,
+	const IndirectObjectResolver* resolver) const noexcept
 {
 	try {
 		check_crypto_alloc();
@@ -2028,7 +2070,7 @@ PdfResult<void> SecurityHandler::decrypt_object_values(
 			(encrypt_ref_.has_value() && *encrypt_ref_ == ref)) {
 			return {};
 		}
-		return decrypt_value_recursive(value, ref, 0u);
+		return decrypt_value_recursive(value, ref, 0u, resolver);
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(
 			ErrorCode::OutOfMemory,
@@ -2159,8 +2201,13 @@ PdfResult<PdfValue> SecurityHandler::resolve_and_decrypt_with_visited(
 					RECTO_PDF_TRY(
 						IndirectObject raw_stm_obj,
 						xref.read_indirect_object(file_bytes, stm_ref));
-					RECTO_PDF_RETURN_IF_ERROR(
-						decrypt_object_values(raw_stm_obj.value, stm_ref, /*is_inside_obj_stm=*/false));
+					const IndirectObjectResolver stm_filter_resolver = [&](IndirectRef r) -> PdfResult<PdfValue> {
+						std::vector<IndirectRef> hop_visited = visited_refs;
+						hop_visited.push_back(stm_ref);
+						return resolve_and_decrypt_with_visited(xref, file_bytes, r, hop_visited);
+					};
+					RECTO_PDF_RETURN_IF_ERROR(decrypt_object_values(
+						raw_stm_obj.value, stm_ref, /*is_inside_obj_stm=*/false, &stm_filter_resolver));
 					stm_obj_cache_it = decrypted_cache_.emplace(stm_cache_key, std::move(raw_stm_obj.value)).first;
 				}
 				const PdfStream* obj_stm = stm_obj_cache_it->second.as_stream();
@@ -2283,8 +2330,13 @@ PdfResult<PdfValue> SecurityHandler::resolve_and_decrypt_with_visited(
 			current = *next_ref;
 			continue;
 		}
+		const IndirectObjectResolver filter_resolver = [&](IndirectRef r) -> PdfResult<PdfValue> {
+			std::vector<IndirectRef> hop_visited = visited_refs;
+			hop_visited.push_back(current);
+			return resolve_and_decrypt_with_visited(xref, file_bytes, r, hop_visited);
+		};
 		RECTO_PDF_RETURN_IF_ERROR(
-			decrypt_object_values(raw_obj.value, current, /*is_inside_obj_stm=*/false));
+			decrypt_object_values(raw_obj.value, current, /*is_inside_obj_stm=*/false, &filter_resolver));
 		RECTO_PDF_TRY(PdfValue cloned, raw_obj.value.deep_clone());
 		decrypted_cache_.emplace(cache_key, std::move(cloned));
 		return std::move(raw_obj.value);

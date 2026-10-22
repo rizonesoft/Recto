@@ -784,6 +784,43 @@ TEST(PdfCrypto, EncryptedObjStmIndirectDecodeParmsResolve)
 	EXPECT_EQ(child->as_int(), std::optional<int64_t>(42));
 }
 
+// An indirect /Filter that starts with /Crypt chooses the stream's crypt filter exactly as a direct one: with
+// /Name /Identity the bytes stay as stored, and /Crypt is stripped from the chain.
+TEST(PdfCrypto, IndirectCryptFilterChoosesTheStreamCipher)
+{
+	const std::vector<uint8_t> file_bytes = read_corpus_bytes("render/encrypted-rc4-128.pdf");
+	auto xref_res = XrefTable::parse(file_bytes);
+	RECTO_ASSERT_OK(xref_res);
+	auto sh_opt = SecurityHandler::from_xref(*xref_res, file_bytes);
+	RECTO_ASSERT_OK(sh_opt);
+	ASSERT_TRUE(sh_opt->has_value());
+	SecurityHandler sh = std::move(**sh_opt);
+	RECTO_ASSERT_OK(sh.authenticate("recto-test"));
+
+	const std::vector<uint8_t> stored = {0x78u, 0x9Cu, 0x73u, 0x04u, 0x00u, 0x00u, 0x42u, 0x00u, 0x42u}; // Flate "A"
+	const IndirectObjectResolver resolver = [](IndirectRef ref) -> PdfResult<PdfValue> {
+		if (ref.obj_num == 10u) {
+			return PdfValue(PdfArray{
+				PdfValue(PdfName::from_decoded("Crypt")), PdfValue(PdfName::from_decoded("FlateDecode"))});
+		}
+		return PdfError{ErrorCode::DamagedFormat, "missing object"};
+	};
+	auto dict = parse_dict_literal("<< /Filter 10 0 R /DecodeParms [<< /Name /Identity >> null] >>");
+	RECTO_ASSERT_OK(dict);
+	PdfValue stream_val(PdfStream(std::move(*dict), stored));
+	RECTO_ASSERT_OK(sh.decrypt_object_values(stream_val, IndirectRef{12u, 0u}, false, &resolver));
+	const PdfStream* stm = stream_val.as_stream();
+	ASSERT_NE(stm, nullptr);
+	EXPECT_EQ(stm->raw_bytes, stored); // Identity: not run through the document's RC4 cipher
+	const PdfArray* filters = stm->dict.get_array("Filter");
+	ASSERT_NE(filters, nullptr);
+	ASSERT_EQ(filters->size(), 1u);
+	EXPECT_EQ((*filters)[0].as_name(), std::optional<std::string_view>("FlateDecode"));
+	auto decoded = decode_stream(*stm);
+	RECTO_ASSERT_OK(decoded);
+	EXPECT_EQ(*decoded, std::vector<uint8_t>{'A'});
+}
+
 TEST(PdfCrypto, PermissionsBitmask)
 {
 	// ISO 32000-1 Table 22 (1-indexed bit positions: 3, 4, 5, 6, 9, 10, 11, 12):

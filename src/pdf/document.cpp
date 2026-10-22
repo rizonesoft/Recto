@@ -1542,11 +1542,17 @@ PdfResult<Document::SingleHopResult> Document::resolve_single_indirect_hop(
 			RECTO_PDF_TRY(
 				IndirectObject raw_stm_obj,
 				xref_.read_indirect_object(file_bytes_, stm_ref));
+			const IndirectObjectResolver stm_filter_resolver = [&](IndirectRef r) -> PdfResult<PdfValue> {
+				std::vector<IndirectRef> hop_visited = visited_refs;
+				hop_visited.push_back(stm_ref);
+				return resolve_object_with_visited(r, hop_visited);
+			};
 			RECTO_PDF_RETURN_IF_ERROR(
 				security_handler_->decrypt_object_values(
 					raw_stm_obj.value,
 					stm_ref,
-					/*is_inside_obj_stm=*/false));
+					/*is_inside_obj_stm=*/false,
+					&stm_filter_resolver));
 			const PdfStream* obj_stm = raw_stm_obj.value.as_stream();
 			if (obj_stm == nullptr ||
 				obj_stm->dict.get_name("Type").value_or("") != "ObjStm") {
@@ -1662,11 +1668,17 @@ PdfResult<Document::SingleHopResult> Document::resolve_single_indirect_hop(
 		if (const auto next_ref = raw_obj.value.as_ref()) {
 			return SingleHopResult{*next_ref, PdfValue(PdfNull{})};
 		}
+		const IndirectObjectResolver filter_resolver = [&](IndirectRef r) -> PdfResult<PdfValue> {
+			std::vector<IndirectRef> hop_visited = visited_refs;
+			hop_visited.push_back(current);
+			return resolve_object_with_visited(r, hop_visited);
+		};
 		RECTO_PDF_RETURN_IF_ERROR(
 			security_handler_->decrypt_object_values(
 				raw_obj.value,
 				current,
-				/*is_inside_obj_stm=*/false));
+				/*is_inside_obj_stm=*/false,
+				&filter_resolver));
 		return SingleHopResult{std::nullopt, std::move(raw_obj.value)};
 	}
 

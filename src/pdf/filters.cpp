@@ -9133,6 +9133,35 @@ PdfResult<std::vector<uint8_t>> decode_single_filter(
 
 namespace {
 
+// The /DecodeParms keys each standard filter defines (ISO 32000-1 Tables 8, 11, 12 and 14, and /Crypt's Table 14
+// entries). /JBIG2Globals is absent: the JBIG2 decoder resolves it itself.
+[[nodiscard]] std::span<const std::string_view> stage_parameter_keys(std::string_view filter_name) noexcept
+{
+	static constexpr std::array<std::string_view, 4> kFlate = {"Predictor", "Colors", "BitsPerComponent", "Columns"};
+	static constexpr std::array<std::string_view, 5> kLzw = {
+		"Predictor", "Colors", "BitsPerComponent", "Columns", "EarlyChange"};
+	static constexpr std::array<std::string_view, 8> kCcitt = {
+		"K", "EndOfLine", "EncodedByteAlign", "Columns", "Rows", "EndOfBlock", "BlackIs1", "DamagedRowsBeforeError"};
+	static constexpr std::array<std::string_view, 1> kDct = {"ColorTransform"};
+	static constexpr std::array<std::string_view, 2> kCrypt = {"Type", "Name"};
+	if (filter_name == "FlateDecode" || filter_name == "Fl") {
+		return kFlate;
+	}
+	if (filter_name == "LZWDecode" || filter_name == "LZW") {
+		return kLzw;
+	}
+	if (filter_name == "CCITTFaxDecode" || filter_name == "CCF") {
+		return kCcitt;
+	}
+	if (filter_name == "DCTDecode" || filter_name == "DCT") {
+		return kDct;
+	}
+	if (filter_name == "Crypt") {
+		return kCrypt;
+	}
+	return {};
+}
+
 [[nodiscard]] PdfResult<std::vector<uint8_t>> execute_filter_pipeline(
 	std::span<const uint8_t> raw_bytes,
 	const PdfValue* filter_val,
@@ -9143,18 +9172,13 @@ namespace {
 	bool allow_jbig2 = true)
 {
 	// Any of /Filter, /DecodeParms, their array elements and the parameter values inside a /DecodeParms dictionary
-	// may be an indirect reference (ISO 32000-1 section 7.3.10). Each is resolved one level through the resolver into
-	// a deque, whose elements stay put as it grows, so the pointers taken below outlive the pipeline. Without a
-	// resolver a reference is left as it is and refused below as before. Arrays longer than the filter chain are
-	// left for the length checks below to refuse. Inside /DecodeParms only the parameters the standard filters define
-	// resolve (ISO 32000-1 Tables 8, 11 and 12, plus /Name and /Type of /Crypt), so an unknown key never affects
-	// decoding (Appendix H.2) and resolution stays bounded; /JBIG2Globals keeps its own resolution in the decoder.
-	static constexpr std::array<std::string_view, 15> kResolvableParms = {
-		"Predictor", "Colors", "BitsPerComponent", "Columns", "EarlyChange", "K", "EndOfLine", "EncodedByteAlign",
-		"Rows", "EndOfBlock", "BlackIs1", "DamagedRowsBeforeError", "ColorTransform", "Name", "Type"};
-	const auto resolvable = [](std::string_view key) {
-		return std::find(kResolvableParms.begin(), kResolvableParms.end(), key) != kResolvableParms.end();
-	};
+	// may be an indirect reference (ISO 32000-1 section 7.3.10). /Filter, /DecodeParms and their array elements are
+	// resolved one level here; a parameter dictionary's values are resolved later, per stage, for the keys that
+	// stage's filter defines (stage_parameter_keys), so a key another filter would read, or one no filter reads,
+	// never affects decoding (Appendix H.2), and resolution stays bounded. Resolved values live in a deque, whose
+	// elements stay put as it grows, so pointers into it outlive the pipeline. Without a resolver a reference is
+	// left as it is and refused below as before. Arrays longer than the filter chain are left for the length checks
+	// below to refuse.
 	std::deque<PdfValue> resolved;
 	const bool can_resolve = resolver != nullptr && static_cast<bool>(*resolver);
 	const auto deref = [&](const PdfValue* v) -> PdfResult<const PdfValue*> {
@@ -9168,27 +9192,7 @@ namespace {
 		resolved.push_back(std::move(*target));
 		return &resolved.back();
 	};
-	const auto deref_dict = [&](const PdfValue* v) -> PdfResult<const PdfValue*> {
-		const PdfDict* dict = v != nullptr ? v->as_dict() : nullptr;
-		if (dict == nullptr || !can_resolve) {
-			return v;
-		}
-		const bool any = std::any_of(dict->entries().begin(), dict->entries().end(), [&](const auto& entry) {
-			return entry.second.is_ref() && resolvable(entry.first.view());
-		});
-		if (!any) {
-			return v;
-		}
-		PdfDict copy;
-		for (const auto& [key, value] : dict->entries()) {
-			RECTO_PDF_TRY(const PdfValue* target, resolvable(key.view()) ? deref(&value) : PdfResult<const PdfValue*>(&value));
-			RECTO_PDF_TRY_REF(value_copy, target->deep_clone());
-			copy.set(key, std::move(value_copy));
-		}
-		resolved.emplace_back(std::move(copy));
-		return &resolved.back();
-	};
-	const auto deref_array = [&](const PdfValue* v, bool parms) -> PdfResult<const PdfValue*> {
+	const auto deref_array = [&](const PdfValue* v) -> PdfResult<const PdfValue*> {
 		const PdfArray* arr = v != nullptr ? v->as_array() : nullptr;
 		if (arr == nullptr || !can_resolve || arr->size() > kMaxFilterChainDepth) {
 			return v;
@@ -9197,10 +9201,6 @@ namespace {
 		bool changed = false;
 		for (const PdfValue& e : *arr) {
 			RECTO_PDF_TRY(const PdfValue* elem, deref(&e));
-			if (parms) {
-				RECTO_PDF_TRY(const PdfValue* elem_dict, deref_dict(elem));
-				elem = elem_dict;
-			}
 			changed = changed || elem != &e;
 			RECTO_PDF_TRY_REF(elem_copy, elem->deep_clone());
 			copy.push_back(std::move(elem_copy));
@@ -9213,13 +9213,41 @@ namespace {
 	};
 	{
 		RECTO_PDF_TRY(const PdfValue* f, deref(filter_val));
-		RECTO_PDF_TRY(const PdfValue* fa, deref_array(f, false));
+		RECTO_PDF_TRY(const PdfValue* fa, deref_array(f));
 		filter_val = fa;
 		RECTO_PDF_TRY(const PdfValue* p, deref(parms_val));
-		RECTO_PDF_TRY(const PdfValue* pd, deref_dict(p));
-		RECTO_PDF_TRY(const PdfValue* pa, deref_array(pd, true));
+		RECTO_PDF_TRY(const PdfValue* pa, deref_array(p));
 		parms_val = pa;
 	}
+	// A stage's parameter dictionary with the values its filter defines resolved one level.
+	const auto resolve_stage_parms = [&](std::string_view filter_name, const PdfDict* parms)
+		-> PdfResult<const PdfDict*> {
+		if (parms == nullptr || !can_resolve) {
+			return parms;
+		}
+		const std::span<const std::string_view> keys = stage_parameter_keys(filter_name);
+		const auto defined = [&](std::string_view key) {
+			return std::find(keys.begin(), keys.end(), key) != keys.end();
+		};
+		const bool any = std::any_of(parms->entries().begin(), parms->entries().end(), [&](const auto& entry) {
+			return entry.second.is_ref() && defined(entry.first.view());
+		});
+		if (!any) {
+			return parms;
+		}
+		PdfDict copy;
+		for (const auto& [key, value] : parms->entries()) {
+			const PdfValue* target = &value;
+			if (defined(key.view())) {
+				RECTO_PDF_TRY(const PdfValue* t, deref(&value));
+				target = t;
+			}
+			RECTO_PDF_TRY_REF(value_copy, target->deep_clone());
+			copy.set(key, std::move(value_copy));
+		}
+		resolved.emplace_back(std::move(copy));
+		return resolved.back().as_dict();
+	};
 
 	if (filter_val == nullptr || filter_val->is_null()) {
 		if (raw_bytes.size() > effective_limit) {
@@ -9344,7 +9372,7 @@ namespace {
 		}
 		const std::span<const uint8_t> stage_in =
 			(i == 0) ? raw_bytes : std::span<const uint8_t>(stage_buf);
-		const PdfDict* stage_parms = filter_parms[i];
+		RECTO_PDF_TRY(const PdfDict* stage_parms, resolve_stage_parms(filter_names[i], filter_parms[i]));
 		std::optional<PdfDict> merged_image_parms;
 		if (filter_names[i] == "DCTDecode" || filter_names[i] == "DCT" ||
 			filter_names[i] == "JPXDecode") {

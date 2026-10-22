@@ -11,6 +11,7 @@
 //   so decryption runs at most once per indirect object.
 
 #include "error.h"
+#include "filters.h"
 #include "object.h"
 #include "xref.h"
 
@@ -231,10 +232,14 @@ public:
 	//   section 7.5.8.1.
 	// - `/Type /Metadata` streams are skipped when `/EncryptMetadata` is `false`,
 	//   or when their `/Filter` array begins with `/Crypt` (`/Name /Identity`).
+	// `resolver`, when given, resolves an indirect `/Filter` (or `/DecodeParms`, when the chain starts with
+	// `/Crypt`) so the stream's crypt filter is chosen from what the reference names, as for a direct one; the
+	// resolved values are written into the stream dictionary in place of the references.
 	[[nodiscard]] PdfResult<void> decrypt_object_values(
 		PdfValue& value,
 		IndirectRef ref,
-		bool is_inside_obj_stm = false) const noexcept;
+		bool is_inside_obj_stm = false,
+		const IndirectObjectResolver* resolver = nullptr) const noexcept;
 
 	// Resolves indirect object `ref` from `xref` and `file_bytes`, decrypts its
 	// strings and stream payloads (and decompresses `/Type /ObjStm` containers
@@ -249,7 +254,8 @@ private:
 	[[nodiscard]] PdfResult<void> decrypt_value_recursive(
 		PdfValue& value,
 		IndirectRef ref,
-		size_t depth) const;
+		size_t depth,
+		const IndirectObjectResolver* resolver) const;
 
 	[[nodiscard]] PdfResult<PdfValue> resolve_and_decrypt_with_visited(
 		const XrefTable& xref,
