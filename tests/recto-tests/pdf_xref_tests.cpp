@@ -88,6 +88,55 @@ void verify_simple_1p_with_preamble(std::span<const uint8_t> preamble)
 	EXPECT_EQ(info_val->as_dict()->get_string("Title")->as_byte_view(), "Recto Simple 1P");
 }
 
+// ISO 32000-1 Table 15: /Size is required, and an object numbered above it is ignored and treated as missing.
+TEST(PdfXref, ClassicEntriesAboveSizeAreMissing)
+{
+	const auto build = [](std::string_view trailer) {
+		std::string pdf = "%PDF-1.7\n";
+		const size_t off1 = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 3 0 R >>\nendobj\n";
+		const size_t off3 = pdf.size();
+		pdf += "3 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+		const size_t off7 = pdf.size();
+		pdf += "7 2 obj\n(GenerationTwoObject)\nendobj\n";
+		const size_t xref_off = pdf.size();
+		char row[64]{};
+		pdf += "xref\n0 2\n0000000000 65535 f \n";
+		std::snprintf(row, sizeof(row), "%010zu 00000 n \n", off1);
+		pdf += row;
+		pdf += "3 1\n";
+		std::snprintf(row, sizeof(row), "%010zu 00000 n \n", off3);
+		pdf += row;
+		pdf += "7 1\n";
+		std::snprintf(row, sizeof(row), "%010zu 00002 n \n", off7);
+		pdf += row;
+		pdf += "trailer\n";
+		pdf += trailer;
+		pdf += "\nstartxref\n" + std::to_string(xref_off) + "\n%%EOF\n";
+		return pdf;
+	};
+
+	{
+		const std::string pdf = build("<< /Size 4 /Root 1 0 R >>");
+		auto xref = XrefTable::parse(as_bytes(pdf));
+		RECTO_ASSERT_OK(xref);
+		EXPECT_NE(xref->find(3), nullptr);
+		EXPECT_EQ(xref->find(7), nullptr); // 7 > /Size 4: missing
+		EXPECT_FALSE(xref->resolve_object(as_bytes(pdf), IndirectRef{7u, 2u}).has_value() &&
+			xref->resolve_object(as_bytes(pdf), IndirectRef{7u, 2u})->is_string());
+	}
+	{
+		const std::string pdf = build("<< /Size 7 /Root 1 0 R >>"); // 7 is not greater than 7: kept
+		auto xref = XrefTable::parse(as_bytes(pdf));
+		RECTO_ASSERT_OK(xref);
+		EXPECT_NE(xref->find(7), nullptr);
+	}
+	{
+		const std::string pdf = build("<< /Root 1 0 R >>"); // /Size missing
+		RECTO_EXPECT_ERR(XrefTable::parse(as_bytes(pdf)), ErrorCode::DamagedFormat);
+	}
+}
+
 TEST(PdfXref, ClassicSimple1pAndMultiSubsection)
 {
 	// 1. Standard simple-1p.pdf with 0-byte preamble.

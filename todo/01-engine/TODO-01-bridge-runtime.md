@@ -217,6 +217,8 @@ Implement classic cross-reference table and trailer parsing in `src/pdf/xref.h` 
 - [x] Maintain a per-resolution visited object set (`std::vector<IndirectRef>`) when resolving indirect references (`A -> B -> C`) capped at depth 32 so cyclic indirect object chains (`1 0 obj 2 0 R endobj`, `2 0 obj 1 0 R endobj`) return `ErrorCode::DamagedFormat`. Done when: `PdfXref.CyclicIndirectRef` passes under ASan.
 - [x] Commit: `pdf: implement classic xref tables, incremental /Prev chains and cycle guards`
 
+> **Corrected 2026-10-22 (D06 T05 §19):** the trailer's `/Size` was copied but never enforced for classic tables. ISO 32000-1 Table 15 makes it required and says an object in a cross-reference section numbered greater than it shall be ignored and treated as missing. The strict parse now refuses a missing or invalid `/Size` (handing it to recovery when allowed) and drops entries numbered above it with a `DamagedXRef` diagnostic. An object numbered exactly `/Size` is kept, as the text says only "greater than".
+
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfXref.Classic*:PdfXref.Incremental*:PdfXref.Cyclic*` passes under ASan.
 
 > **Verified:** 2026-10-18 | §5 | ff4810a6f584beef9962d33c29f5ccb9e373f185

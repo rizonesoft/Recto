@@ -1465,6 +1465,33 @@ PdfResult<XrefTable> XrefTable::parse(
 				raw_startxref + header_off));
 		}
 
+		// ISO 32000-1 Table 15: /Size is required, and an object in a cross-reference section whose number is greater
+		// than it shall be ignored and treated as missing (kept in ISO 32000-2 and its errata).
+		const auto trailer_size = table.trailer_.get_int("Size");
+		if (!trailer_size.has_value() || *trailer_size <= 0 ||
+			static_cast<uint64_t>(*trailer_size) >
+				static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) + 1ULL) {
+			return try_recover(make_xref_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedTrailer,
+				"Trailer dictionary is missing a valid /Size",
+				raw_startxref + header_off));
+		}
+		const uint64_t size_limit = static_cast<uint64_t>(*trailer_size);
+		for (auto it = table.entries_.begin(); it != table.entries_.end();) {
+			if (static_cast<uint64_t>(it->first) > size_limit) {
+				record_diagnostic(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedXRef,
+					std::nullopt,
+					it->first,
+					0);
+				it = table.entries_.erase(it);
+			} else {
+				++it;
+			}
+		}
+
 		return table;
 	} catch (const std::bad_alloc&) {
 		return make_pdf_error(
