@@ -182,6 +182,7 @@ class _VisibleText(html.parser.HTMLParser):
         super().__init__(convert_charrefs=True)
         self.split_every_element = split_every_element
         self.parts: list[str] = []
+        self.marked: list[str] = []  # the text with \x01 at every block-element boundary (see SPLIT_NAME)
         self.attributes: list[str] = []
         self.links: list[str] = []
         self.hidden = 0
@@ -196,6 +197,8 @@ class _VisibleText(html.parser.HTMLParser):
                 self.attributes.append(value)
             if name in LINK_ATTRIBUTES and value:
                 self.links.append(value)
+        if tag in BLOCK_ELEMENTS:
+            self.marked.append("\x01")
         if tag == "br":
             self.parts.append(" ")
         elif tag in BLOCK_ELEMENTS or self.split_every_element:
@@ -213,6 +216,7 @@ class _VisibleText(html.parser.HTMLParser):
     def handle_data(self, data):
         if not self.hidden:
             self.parts.append(data)
+            self.marked.append(data)
 
 
 def visible_units(markup: str, split_every_element: bool = False) -> list[str]:
@@ -234,6 +238,28 @@ def board_links(markup: str) -> list[str]:
     return parser.links
 
 
+# A product or suite name broken by a block element (Wo<div style="display:inline">rd</div>): the joined reading
+# treats that boundary as a break, but CSS can render the pieces as one word, and no board has a reason to split a
+# name with a block element, so such a name is refused. A name split by an inline element (a highlighted prefix,
+# <b>PDF to W</b>ord) is already read whole by the joined reading.
+SPLIT_NAME = re.compile(
+    "|".join("\x01*".join(re.escape(ch) for ch in name) for name in
+             ("libreoffice", "office", "word", "excel", "powerpoint")), re.IGNORECASE)
+
+
+def split_office_name(markup: str) -> str | None:
+    """The first Office product or suite name that an element boundary breaks, or None."""
+    parser = _VisibleText()
+    parser.feed(markup)
+    parser.close()
+    marked = "".join(parser.marked)
+    for m in SPLIT_NAME.finditer(marked):
+        before, after = marked[m.start() - 1 : m.start()], marked[m.end() : m.end() + 1]
+        if "\x01" in m.group(0) and not before.isalnum() and not after.isalnum():
+            return m.group(0).replace("\x01", "")
+    return None
+
+
 def office_dependency(markup: str) -> str | None:
     """The first unit that names an Office suite, or names Office, Word, Excel or PowerPoint without being one of
     the reviewed units, or None."""
@@ -244,7 +270,7 @@ def office_dependency(markup: str) -> str | None:
         for unit in visible_units(markup, split_every_element=split):
             if OFFICE_SUITE.search(unit) or (OFFICE_PRODUCT.search(unit) and unit not in REVIEWED_OFFICE_UNITS):
                 return unit
-    return None
+    return split_office_name(markup)
 
 
 class EngineDependencyPolicyTest(unittest.TestCase):
@@ -341,7 +367,9 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                        "<p>Install <label>Wo</label>rd to convert documents.</p>",
                        '<svg><text x="0" y="20">Install Wo<tspan>rd</tspan> to convert documents.</text></svg>',
                        '<div style="display:flex;gap:8px"><span>Install</span><span>Word</span>'
-                       '<span>to convert documents.</span></div>'):
+                       '<span>to convert documents.</span></div>',
+                       '<div>Install <div style="display:inline">Wo</div>rd to convert documents.</div>',
+                       '<div>Install <div style="display:inline">Office</div> to convert documents.</div>'):
             with self.subTest(markup=markup):
                 self.assertIsNotNone(office_dependency(markup))
         for markup in ("<p>Office to PDF is built in.</p>", "<td>PDF to Word</td><td>needs a password</td>",
