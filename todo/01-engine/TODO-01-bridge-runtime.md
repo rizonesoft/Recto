@@ -286,6 +286,8 @@ Implement the lossless stream filter pipeline in `src/pdf/filters.h` and `src/pd
 - [x] Implement chained filter execution (`/Filter [ /ASCII85Decode /FlateDecode ]`) passing `/DecodeParms` entry `i` to filter `i` and capping chained pipeline length at 8 filters. Done when: `PdfFilters.ChainedPipeline` decodes multi-stage streams and rejects 9-stage filter chains.
 - [x] Commit: `pdf: implement Flate, LZW, TIFF/PNG predictors, ASCII85/Hex, RunLength and 256 MB cap`
 
+> **Corrected 2026-10-22 (D06 T05 §20):** the ASCII85 item said invalid `u..y` characters; `u` is the highest base-85 digit and valid, so the invalid range is `v..y` (`PdfFilters.AsciiFilters` now rejects each of `v`, `w`, `x`, `y` and decodes `!!!!u~>`). Two gaps were also closed: `/Filter`, `/DecodeParms` and their array elements may be indirect references and are resolved through the caller's resolver, and a zlib stream whose Adler-32 trailer is missing or cut short keeps its data but records a `DamagedStream` diagnostic (a present, wrong checksum is still refused).
+
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan covering every lossless filter, predictor, and decompression-bomb refusal.
 
 > **Verified:** 2026-10-18 | §7 | 2d527326c7727bfb3603c5182eb139eafa5e4001

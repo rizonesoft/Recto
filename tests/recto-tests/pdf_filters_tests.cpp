@@ -58,6 +58,68 @@ constexpr std::string_view kKnownFilterPlaintext =
 	return out;
 }
 
+// A zlib stream whose Adler-32 trailer is missing or cut short keeps its data but records DamagedStream; a present
+// trailer must match (RFC 1950 section 2.3).
+TEST(PdfFilters, FlateTrailerDamageIsRecorded)
+{
+	const std::vector<uint8_t> body = {0x78u, 0x9Cu, 0x73u, 0x04u, 0x00u}; // "A", fixed Huffman
+	for (size_t trailer_bytes = 0; trailer_bytes <= 4; ++trailer_bytes) {
+		std::vector<uint8_t> input = body;
+		const std::array<uint8_t, 4> adler = {0x00u, 0x42u, 0x00u, 0x42u}; // Adler-32 of "A"
+		input.insert(input.end(), adler.begin(), adler.begin() + static_cast<std::ptrdiff_t>(trailer_bytes));
+		const uint64_t before = diagnostics_total_recorded();
+		auto res = decode_flate(input);
+		RECTO_ASSERT_OK(res);
+		EXPECT_EQ(*res, std::vector<uint8_t>{'A'});
+		if (trailer_bytes < 4) {
+			ASSERT_EQ(diagnostics_total_recorded(), before + 1) << trailer_bytes;
+			EXPECT_EQ(diagnostics_tail(1).back().diagnostic_id, DiagnosticId::DamagedStream);
+		} else {
+			EXPECT_EQ(diagnostics_total_recorded(), before);
+		}
+	}
+	std::vector<uint8_t> wrong = body;
+	wrong.insert(wrong.end(), {0x00u, 0x42u, 0x00u, 0x43u});
+	RECTO_EXPECT_ERR(decode_flate(wrong), ErrorCode::DamagedFormat);
+}
+
+// /Filter, /DecodeParms and their array elements may be indirect references, resolved through the caller's resolver.
+TEST(PdfFilters, IndirectFilterAndDecodeParmsResolve)
+{
+	const std::vector<uint8_t> raw = {0x78u, 0x9Cu, 0x73u, 0x04u, 0x00u, 0x00u, 0x42u, 0x00u, 0x42u};
+	PdfDict parms;
+	parms.set(PdfName::from_decoded("Predictor"), PdfValue(int64_t{1}));
+	const IndirectObjectResolver resolver = [&](IndirectRef ref) -> PdfResult<PdfValue> {
+		switch (ref.obj_num) {
+		case 10u:
+			return PdfValue(parms);
+		case 11u:
+			return PdfValue(PdfName::from_decoded("FlateDecode"));
+		default:
+			return PdfError{ErrorCode::DamagedFormat, "missing object"};
+		}
+	};
+	const auto make = [](PdfValue filter, PdfValue decode_parms) {
+		PdfDict d;
+		d.set(PdfName::from_decoded("Filter"), std::move(filter));
+		d.set(PdfName::from_decoded("DecodeParms"), std::move(decode_parms));
+		return d;
+	};
+	const PdfDict cases[] = {
+		make(PdfValue(PdfName::from_decoded("FlateDecode")), PdfValue(IndirectRef{10u, 0u})),
+		make(PdfValue(IndirectRef{11u, 0u}), PdfValue(IndirectRef{10u, 0u})),
+		make(PdfValue(PdfArray{PdfValue(IndirectRef{11u, 0u})}), PdfValue(PdfArray{PdfValue(IndirectRef{10u, 0u})})),
+	};
+	for (const PdfDict& dict : cases) {
+		auto dec = decode_stream(raw, dict, kMaxDecodedStreamBytes, &resolver);
+		RECTO_ASSERT_OK(dec);
+		EXPECT_EQ(*dec, std::vector<uint8_t>{'A'});
+		RECTO_EXPECT_ERR(decode_stream(raw, dict), ErrorCode::DamagedFormat); // no resolver: refused as before
+	}
+	const PdfDict missing = make(PdfValue(PdfName::from_decoded("FlateDecode")), PdfValue(IndirectRef{99u, 0u}));
+	RECTO_EXPECT_ERR(decode_stream(raw, missing, kMaxDecodedStreamBytes, &resolver), ErrorCode::DamagedFormat);
+}
+
 TEST(PdfFilters, FlateDecode)
 {
 	// 1. Seed fixture seeds/seed-filter-00-flate.bin (selector 0x00 + zlib payload).
@@ -467,6 +529,13 @@ TEST(PdfFilters, AsciiFilters)
 
 		// Invalid character 'v', 'z' inside tuple, 1-char final tuple, and 32-bit tuple overflow ("s8W-\"~>").
 		RECTO_EXPECT_ERR(decode_ascii85(as_bytes("9jqov~>")), ErrorCode::DamagedFormat);
+		for (const char* bad : {"9jqow~>", "9jqox~>", "9jqoy~>"}) {
+			RECTO_EXPECT_ERR(decode_ascii85(as_bytes(bad)), ErrorCode::DamagedFormat);
+		}
+		// 'u' is the highest base-85 digit (84), so it is valid: "!!!!u" is the value 84.
+		auto with_u = decode_ascii85(as_bytes("!!!!u~>"));
+		RECTO_ASSERT_OK(with_u);
+		EXPECT_EQ(*with_u, (std::vector<uint8_t>{0x00u, 0x00u, 0x00u, 0x54u}));
 		RECTO_EXPECT_ERR(decode_ascii85(as_bytes("9zqo^~>")), ErrorCode::DamagedFormat);
 		RECTO_EXPECT_ERR(decode_ascii85(as_bytes("5~>")), ErrorCode::DamagedFormat);
 		RECTO_EXPECT_ERR(decode_ascii85(as_bytes("s8W-\"~>")), ErrorCode::DamagedFormat);

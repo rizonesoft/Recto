@@ -948,6 +948,12 @@ PdfResult<std::vector<uint8_t>> decode_flate(
 			if (zlib_res.has_value()) {
 				// Verify the 4-byte RFC 1950 big-endian Adler-32 trailer when present.
 				const std::span<const uint8_t> after_deflate = input.subspan(2 + consumed);
+				if (after_deflate.size() < 4) {
+					// A missing or cut-short trailer: the data inflated completely, so it is kept, as other readers
+					// do, but the damage is recorded rather than passed over (RFC 1950 section 2.3 makes the
+					// checksum part of the format). A present but wrong checksum is refused below.
+					record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream, uint64_t{2 + consumed});
+				}
 				if (after_deflate.size() >= 4) {
 					const uint32_t expected_adler =
 						(static_cast<uint32_t>(after_deflate[0]) << 24u) |
@@ -9130,6 +9136,50 @@ namespace {
 	const IndirectObjectResolver* resolver = nullptr,
 	bool allow_jbig2 = true)
 {
+	// Any of /Filter, /DecodeParms and their array elements may be an indirect reference (ISO 32000-1 section
+	// 7.3.10). Each is resolved one level through the resolver into storage that outlives the pipeline (reserved
+	// up front, so the pointers taken below stay valid); without a resolver a reference is refused below as before.
+	std::vector<PdfValue> resolved;
+	resolved.reserve(2 + 2 * kMaxFilterChainDepth);
+	const auto deref = [&](const PdfValue* v) -> PdfResult<const PdfValue*> {
+		if (v == nullptr || !v->is_ref() || resolver == nullptr || !*resolver ||
+			resolved.size() == resolved.capacity()) {
+			return v;
+		}
+		auto target = (*resolver)(*v->as_ref());
+		if (!target.has_value()) {
+			return std::move(target).error();
+		}
+		resolved.push_back(std::move(*target));
+		return &resolved.back();
+	};
+	const auto deref_array = [&](const PdfValue* v) -> PdfResult<const PdfValue*> {
+		const PdfArray* arr = v != nullptr ? v->as_array() : nullptr;
+		if (arr == nullptr || resolver == nullptr || !*resolver ||
+			std::none_of(arr->begin(), arr->end(), [](const PdfValue& e) { return e.is_ref(); })) {
+			return v;
+		}
+		PdfArray copy;
+		for (const PdfValue& e : *arr) {
+			RECTO_PDF_TRY(const PdfValue* elem, deref(&e));
+			RECTO_PDF_TRY_REF(elem_copy, elem->deep_clone());
+			copy.push_back(std::move(elem_copy));
+		}
+		if (resolved.size() == resolved.capacity()) {
+			return v;
+		}
+		resolved.emplace_back(std::move(copy));
+		return &resolved.back();
+	};
+	{
+		RECTO_PDF_TRY(const PdfValue* f, deref(filter_val));
+		RECTO_PDF_TRY(const PdfValue* fa, deref_array(f));
+		filter_val = fa;
+		RECTO_PDF_TRY(const PdfValue* p, deref(parms_val));
+		RECTO_PDF_TRY(const PdfValue* pa, deref_array(p));
+		parms_val = pa;
+	}
+
 	if (filter_val == nullptr || filter_val->is_null()) {
 		if (raw_bytes.size() > effective_limit) {
 			return make_filter_error(
