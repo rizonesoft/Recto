@@ -706,7 +706,7 @@ The audit of `D00 T03 §5` (`docs/reviews/06-quality/audit-d00-t03-s5.md`, D06 T
 
 ## 28. Retired Office and LibreOffice converter surfaces removed from the A, B and C boards
 
-While removing MuPDF and AGPL text from the older mockup boards (`D06 T05 §25`), the A, B and C boards were found to still show the retired Office and LibreOffice dependency as whole surfaces: an "Office to PDF needs Microsoft Office or LibreOffice" dialog (`A-Dialogs`, `B-Dialogs`, `C-Dialogs`, with "Get LibreOffice" links) and an "Office to PDF converter" setting reporting which suite is installed (`A-Settings`, `C-Settings`). Recto converts Office files with its own built-in engines and has no Office or LibreOffice dependency (D5, D7, D10), so these surfaces describe a product that no longer exists. Removing or replacing a dialog is a design choice the current `D-` boards and `design/SPEC.md` own, so it is its own section rather than a text swap. -> XREF: D06 T05 §25
+While removing MuPDF and AGPL text from the older mockup boards (`D06 T05 §25`), the A, B and C boards were found to still show the retired Office and LibreOffice dependency as whole surfaces: an "Office to PDF needs Microsoft Office or LibreOffice" dialog (`A-Dialogs`, `B-Dialogs`, `C-Dialogs`, with "Get LibreOffice" links) and an "Office to PDF converter" setting reporting which suite is installed (`A-Settings`, `C-Settings`). Recto converts Office files with its own built-in engines and has no Office or LibreOffice dependency (D5, D7, D10), so these surfaces describe a product that no longer exists. (`D06 T05 §25` already reworded the Office readiness banner and the waiting jobs on `A-Convert` and `B-Convert`; this section's grep covers every such phrasing so none returns.) Removing or replacing a dialog is a design choice the current `D-` boards and `design/SPEC.md` own, so it is its own section rather than a text swap. -> XREF: D06 T05 §25
 
 **Phase:** 0
 **Needs:** windows-host
@@ -715,15 +715,15 @@ While removing MuPDF and AGPL text from the older mockup boards (`D06 T05 §25`)
 **Build order:**
 
 1. Decide each surface against `design/SPEC.md` and the `D-` boards: drop the dialog and the converter setting, or replace them with what the SPEC shows for Office import today. Done when: the choice and its SPEC section are recorded in this section's findings file.
-2. Edit the boards and re-render them. Done when: `git grep -n -i -E "libreoffice|office com|microsoft office" -- design/mockups` prints nothing.
+2. Edit the boards and re-render them. Done when: `git grep -n -i -E "libreoffice|office com|microsoft (word|excel|powerpoint|office)|through (word|excel|powerpoint|office)" -- design/mockups` prints nothing.
 
 - [ ] Record, per surface, what `design/SPEC.md` and the `D-` boards show for Office import, and whether the old surface is dropped or replaced, in `docs/reviews/06-quality/D06-T05-s28.md`. Done when: each of the five boards has a recorded choice with its SPEC section.
-- [ ] Edit `design/mockups/source/[ABC]-Dialogs.dc.html` and `[AC]-Settings.dc.html` to that choice. Done when: `git grep -n -i -E "libreoffice|office com|microsoft office" -- design/mockups/source` prints nothing.
+- [ ] Edit `design/mockups/source/[ABC]-Dialogs.dc.html` and `[AC]-Settings.dc.html` to that choice. Done when: `git grep -n -i -E "libreoffice|office com|microsoft (word|excel|powerpoint|office)|through (word|excel|powerpoint|office)" -- design/mockups/source` prints nothing.
 - [ ] Re-render those boards with `node design/tools/render-mockups.mjs --only <names>`. Done when: the same grep over `design/mockups/html` prints nothing and each board's PNG is newer than its source.
 - [ ] Extend `tests/scripts/test_engine_dependency_policy.py`'s design check to refuse Office or LibreOffice named as a converter dependency in `design/mockups/`. Done when: restoring one "Get LibreOffice" link makes the test fail.
 - [ ] Commit: `design: retire the Office and LibreOffice converter surfaces from the A, B and C boards`
 
-**Test checkpoint:** `python -m unittest tests.scripts.test_engine_dependency_policy` passes, and `git grep -n -i -E "libreoffice|office com" -- design/mockups` prints nothing.
+**Test checkpoint:** `python -m unittest tests.scripts.test_engine_dependency_policy` passes, and `git grep -n -i -E "libreoffice|office com|microsoft (word|excel|powerpoint|office)|through (word|excel|powerpoint|office)" -- design/mockups` prints nothing.
 
 ## Verification
 
