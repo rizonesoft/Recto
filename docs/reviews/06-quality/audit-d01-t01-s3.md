@@ -51,3 +51,46 @@ OVERALL: needs-attention
 - Finding 2 (P3): correct. `PdfLexer.LiteralStrings` now includes section 7.3.4.2 examples 3 and 4 as printed (an end-of-line kept raw and as `\n`, and octal escapes inside text), and the correction note records that the earlier claim was short of the test.
 
 Gates after round 1: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 108 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfLexer.*:PdfParser.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 16 tests.`; `python scripts/todo-graph.py validate` -> `valid: 681 sections`.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T06:42:01Z
+- Effort: medium
+- Lines: 28
+- Digest: ce20b46c44d3ff5b
+
+## adversarial: approve
+
+No new behavioral or hostile-input defect established.
+
+## consistency: approve
+
+No findings.
+
+## integration: approve
+
+No findings. The eight existing `PdfParser.*` tests passed.
+
+## source-defect: approve
+
+No additional specification mismatch established.
+
+## design: advisory
+
+Not applicable; this section owns no user surface.
+
+## record: needs-attention
+
+1. **P3: The literal-string coverage claim remains overstated.** `todo/01-engine/TODO-01-bridge-runtime.md:145` still requires **all** §7.3.4.2 examples byte-for-byte. `tests/recto-tests/pdf_lexer_tests.cpp:310` substitutes its own strings for several Example 1 inputs. Reproduce by comparing the test with [ISO 32000-1 §7.3.4.2, Example 1](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf): the multiline string beginning “Strings may contain newlines” and the complete balanced-parentheses/special-characters example are absent. Adding Examples 3 and 4 did not fully satisfy this explicit completion criterion. This is a coverage/evidence defect, not a demonstrated decoding failure.
+
+Checkpoint verification: the existing executable passed eight lexer tests plus `Support.AsanActiveWhenEnabled`, reporting `ASan=enabled`. Current-source build provenance, ARM64 compilation and zero compiler warnings remain unverified because rebuilding would violate the no-file-modification instruction.
+
+HIGHEST: P3
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+- Finding 1 (P3): correct. `PdfLexer.LiteralStrings` now carries section 7.3.4.2 examples 1 and 2 exactly as printed (all six example 1 strings, including raw newlines, the balanced parentheses with `(*!&}^% and so on)`, the empty string, and both example 2 strings with backslash-newline continuations). With examples 3 and 4 from round 1 and example 5's octal forms already present, every example in the section is covered. They pass on the existing lexer, so this closes a coverage gap rather than a decoding defect. The correction note in `D01 T01 §3` says examples 1 to 4.
+
+Gates after round 2: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 108 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfLexer.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 8 tests.`

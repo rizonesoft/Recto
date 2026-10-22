@@ -371,6 +371,38 @@ TEST(PdfLexer, LiteralStrings)
 		EXPECT_EQ(lex.next_token().value().bytes, expected_0053);
 	}
 
+	// 1b. ISO 32000-1 section 7.3.4.2, examples 1 and 2 as printed (raw newlines inside strings, a brace and a
+	// percent sign in text, and backslash-newline continuations).
+	{
+		const auto buf = to_bytes(
+			"(This is a string)\n"
+			"(Strings may contain newlines\nand such.)\n"
+			"(Strings may contain balanced parentheses ( ) and\nspecial characters (*!&}^% and so on).)\n"
+			"(The following is an empty string.)\n"
+			"()\n"
+			"(It has zero (0) length.)\n"
+			"(These \\\ntwo strings \\\nare the same.)\n"
+			"(These two strings are the same.)");
+		Lexer lex(buf);
+		const std::vector<std::string> expected = {
+			"This is a string",
+			"Strings may contain newlines\nand such.",
+			"Strings may contain balanced parentheses ( ) and\nspecial characters (*!&}^% and so on).",
+			"The following is an empty string.",
+			"",
+			"It has zero (0) length.",
+			"These two strings are the same.",
+			"These two strings are the same.",
+		};
+		for (const auto& text : expected) {
+			auto tok = lex.next_token();
+			RECTO_ASSERT_OK(tok);
+			EXPECT_EQ(tok.value().kind, TokenKind::LiteralString);
+			EXPECT_EQ(bytes_to_ascii(tok.value().bytes), text);
+		}
+		EXPECT_TRUE(lex.next_token().value().is_eof());
+	}
+
 	// 3b. ISO 32000-1 section 7.3.4.2, examples 3 and 4 as printed: an end-of-line kept at the end of a string,
 	// written raw and as \n, and octal escapes inside text.
 	{
