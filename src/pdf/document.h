@@ -163,7 +163,7 @@ struct FontSummary {
 	bool operator==(const FontSummary&) const noexcept = default;
 };
 
-// Plain C++20 summary of an opened `pdf::Document`.
+// Plain C++23 summary of an opened `pdf::Document`.
 struct DocumentDescription {
 	std::string pdf_version{"1.7"};
 	uint32_t page_count{0};

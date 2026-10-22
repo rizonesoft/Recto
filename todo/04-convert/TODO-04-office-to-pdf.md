@@ -3,19 +3,19 @@ schema_version: 1
 id: office-to-pdf
 domain: 04-convert
 status: active
-title: "TODO-04 -- Office, Legacy Binary Office, HTML and Markdown to PDF: 100% Native C++20 Engines"
+title: "TODO-04 -- Office, Legacy Binary Office, HTML and Markdown to PDF: 100% Native C++23 Engines"
 track: M5
 ---
 
-# TODO-04 -- Office, Legacy Binary Office, HTML and Markdown to PDF: 100% Native C++20 Engines
+# TODO-04 -- Office, Legacy Binary Office, HTML and Markdown to PDF: 100% Native C++23 Engines
 
-> **Goal:** Deliver 100% pure native C++20 `Office, Legacy Binary Office, HTML, Markdown & Data -> PDF` conversion that works out of the box on every Windows 11 machine with zero external installs, zero COM automation, and zero child subprocesses: Recto's built-in C++20 OpenXML (`.docx`, `.docm`, `.xlsx`, `.xlsm`, `.pptx`, `.pptm`), legacy binary OLE2 Compound File (`[MS-CFB]` + `[MS-DOC]` `.doc`, `[MS-XLS]` BIFF8 `.xls`, `[MS-PPT]` `.ppt`), `.rtf`, `HTML/CSS` (`.html`), `Markdown` (`.md`), `CSV` (`.csv`) and `XML/Text` parsers + DirectWrite/Direct2D PDF layout engines (`src/core/office_to_pdf.cpp`, `src/core/ole2_cfb.cpp`, `src/core/legacy_office_to_pdf.cpp`, and `src/core/html_md_to_pdf.cpp`).
+> **Goal:** Deliver 100% pure native C++23 `Office, Legacy Binary Office, HTML, Markdown & Data -> PDF` conversion that works out of the box on every Windows 11 machine with zero external installs, zero COM automation, and zero child subprocesses: Recto's built-in C++23 OpenXML (`.docx`, `.docm`, `.xlsx`, `.xlsm`, `.pptx`, `.pptm`), legacy binary OLE2 Compound File (`[MS-CFB]` + `[MS-DOC]` `.doc`, `[MS-XLS]` BIFF8 `.xls`, `[MS-PPT]` `.ppt`), `.rtf`, `HTML/CSS` (`.html`), `Markdown` (`.md`), `CSV` (`.csv`) and `XML/Text` parsers + DirectWrite/Direct2D PDF layout engines (`src/core/office_to_pdf.cpp`, `src/core/ole2_cfb.cpp`, `src/core/legacy_office_to_pdf.cpp`, and `src/core/html_md_to_pdf.cpp`).
 
-> **Current state:** Measured 2026-10-14. No Office-to-PDF or HTML/Markdown-to-PDF code exists yet. On 2026-10-19 decisions D3, D7, D9, D10 and D12 were locked so Recto is 100% self-contained in native C++20 across both modern OpenXML and legacy 97-2003 binary Office formats with zero Microsoft Office or LibreOffice dependencies.
+> **Current state:** Measured 2026-10-14. No Office-to-PDF or HTML/Markdown-to-PDF code exists yet. On 2026-10-19 decisions D3, D7, D9, D10 and D12 were locked so Recto is 100% self-contained in native C++23 across both modern OpenXML and legacy 97-2003 binary Office formats with zero Microsoft Office or LibreOffice dependencies. 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI sections rewritten against `todo/10-ui/`.
 
 ## Inputs
 
-- `docs/plans/2026-10-13-recto-foundation.md` sections 1 (D3, D7, D9, D10, D12), 5 (`Office, Legacy Office, HTML, Markdown & Data -> PDF` row) and 5.1 (`100% Pure Native C++20 OpenXML, Legacy Binary OLE2, RTF, HTML, Markdown, XPS & SVG Engine`), 7 (M5 done-when: `.docx`, `.docm`, `.doc`, `.xlsx`, `.xlsm`, `.xls`, `.pptx`, `.pptm`, `.ppt`, `.rtf`, `.html`, `.md`, `.csv` convert cleanly in 100% pure native C++20 and macro-bearing `.docm`/`.doc` verified never to execute macros), 9 (security rules 2, 3 and 7).
+- `docs/plans/2026-10-13-recto-foundation.md` sections 1 (D3, D7, D9, D10, D12), 5 (`Office, Legacy Office, HTML, Markdown & Data -> PDF` row) and 5.1 (`100% Pure Native C++23 OpenXML, Legacy Binary OLE2, RTF, HTML, Markdown, XPS & SVG Engine`), 7 (M5 done-when: `.docx`, `.docm`, `.doc`, `.xlsx`, `.xlsm`, `.xls`, `.pptx`, `.pptm`, `.ppt`, `.rtf`, `.html`, `.md`, `.csv` convert cleanly in 100% pure native C++23 and macro-bearing `.docm`/`.doc` verified never to execute macros), 9 (security rules 2, 3 and 7).
 - `design/SPEC.md` sections 2 (Principle 5: macros never run), 9.5 (`PDF from Office, HTML, Markdown & Images` card), 9.7 (Converting: Default Office to PDF page setup).
 - -> XREF: D02 T04 §5 -- the `Default Office to PDF page setup` selector in Settings (`D02 T04 §5`) seeds §7's default page size (`Match original document`, `A4`, `Letter`).
 - -> XREF: D04 T01 §4 -- registers the `PDF from Office, HTML, Markdown & Images` card and file-type applicability rules into the Convert page (`§4`).
@@ -31,35 +31,38 @@ track: M5
 - -> XREF: D06 T02 §3 -- fuzz_msg.
 - -> XREF: D02 T03 §8 -- attachments ask before opening.
 - -> XREF: D04 T03 §1 -- ZIP reader.
+- -> XREF: D10 T01 §8 -- the Office to PDF Step 3 options control reads the generated `recto_tokens.g.h` tokens.
+- -> XREF: D10 T02 §9 -- the page size and orientation choices are `ui::ComboBox` and button controls.
+- -> XREF: D10 T03 §1 -- the options control exposes automation names through the `recto-ui` UIA provider tree.
 
 ## Outcome
 
-- Any Windows 11 machine converts `.docx`, `.docm`, and `.rtf` (`§1`), `.xlsx`, `.xlsm`, `.csv`, `.pptx`, and `.pptm` (`§2`), `.html` and `.md` (`§3`), and legacy binary `.doc`, `.xls`, and `.ppt` (`§4`-`§6`) files to vector PDFs out of the box using Recto's 100% built-in C++20 layout engines (`src/core/office_to_pdf.cpp`, `src/core/ole2_cfb.cpp`, `src/core/legacy_office_to_pdf.cpp`, and `src/core/html_md_to_pdf.cpp`), with zero external software installed, zero COM calls, zero child processes, and zero remote network or script execution.
+- Any Windows 11 machine converts `.docx`, `.docm`, and `.rtf` (`§1`), `.xlsx`, `.xlsm`, `.csv`, `.pptx`, and `.pptm` (`§2`), `.html` and `.md` (`§3`), and legacy binary `.doc`, `.xls`, and `.ppt` (`§4`-`§6`) files to vector PDFs out of the box using Recto's 100% built-in C++23 layout engines (`src/core/office_to_pdf.cpp`, `src/core/ole2_cfb.cpp`, `src/core/legacy_office_to_pdf.cpp`, and `src/core/html_md_to_pdf.cpp`), with zero external software installed, zero COM calls, zero child processes, and zero remote network or script execution.
 - `Ole2Reader` (`§4`) parses `[MS-CFB]` Compound File Binary containers with strict sector-chain cycle detection and a `256 MB` allocation cap while stripping `_VBA_PROJECT_CUR`, `Macros`, and `VBA` macro storages by construction.
 - Legacy Word 97-2003 `.doc` (`§5`), Excel 97-2003 `.xls` BIFF8, and PowerPoint 97-2003 `.ppt` (`§6`) binary streams lower directly into the shared `FlowDocumentModel`, spreadsheet model, and slide model, with `macro-canary.docm` and `macro-canary.doc` proving that embedded VBA macros are completely inert.
-- The Convert page (`§7`, `SPEC 9.5`) ties all native C++20 engines together cleanly.
+- The Convert page (`§7`, `SPEC 9.5`) ties all native C++23 engines together cleanly.
 - OpenDocument (`.odt`, `.ods`, `.odp`), OFD, Outlook `.msg` and `.eml` email, MHTML and plain-text-family files convert to PDF through Recto's native engines (`§8` to `§22`), with macros stripped, nothing fetched from the network, and each refusal or approximation named, matching what PDFelement and Foxit PDF Editor accept beyond Acrobat.
 
 **Adjacency:** all=not-applicable (converter engines inside `D04 T01`'s Convert frame; default page-setup preference is owned by `D02 T04 §5` and read here)
 
-**Adjacency rationale:** The `PDF from Office, HTML, Markdown & Images` card, queue UI, and settings selector live in `D04 T01` and `D02 T04 §5`. This file owns the 100% native C++20 OpenXML, OLE2 legacy binary Office, RTF, HTML, Markdown, and CSV engines and their macro/script-safety proofs.
+**Adjacency rationale:** The `PDF from Office, HTML, Markdown & Images` card, queue UI, and settings selector live in `D04 T01` and `D02 T04 §5`. This file owns the 100% native C++23 OpenXML, OLE2 legacy binary Office, RTF, HTML, Markdown, and CSV engines and their macro/script-safety proofs.
 
 ## Implementation Order
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | Built-in C++20 Word (`.docx`, `.docm`) and Rich Text (`.rtf`) to PDF layout engine | D04 T02 §2, D04 T03 §1 | [ ] |
-| 2 | §2 | Built-in C++20 Excel (`.xlsx`), `.csv`, and PowerPoint (`.pptx`) to PDF layout engines | §1 | [ ] |
-| 3 | §3 | Built-in C++20 `HTML/CSS` (`.html`) and `Markdown` (`.md`) to PDF engine and CLI verbs | §1 | [ ] |
-| 4 | §4 | Native C++20 OLE2 Compound File (`[MS-CFB]`) reader and VBA macro stream stripper | §1 | [ ] |
-| 5 | §5 | Native C++20 legacy Word 97-2003 (`.doc`) binary parser to `FlowDocumentModel` & PDF | §4 | [ ] |
-| 6 | §6 | Native C++20 legacy Excel (`.xls` BIFF8) and PowerPoint (`.ppt`) binary parsers to PDF | §2, §4 | [ ] |
-| 7 | §7 | Convert **PDF from Office, HTML, Markdown & Images** card and Step 3 UI (`SPEC 9.5`) | §3, §5, §6, D04 T01 §4, D02 T04 §5, D04 T01 §6 | [ ] |
+| 1 | §1 | Built-in C++23 Word (`.docx`, `.docm`) and Rich Text (`.rtf`) to PDF layout engine | D04 T02 §2, D04 T03 §1 | [ ] |
+| 2 | §2 | Built-in C++23 Excel (`.xlsx`), `.csv`, and PowerPoint (`.pptx`) to PDF layout engines | §1 | [ ] |
+| 3 | §3 | Built-in C++23 `HTML/CSS` (`.html`) and `Markdown` (`.md`) to PDF engine and CLI verbs | §1 | [ ] |
+| 4 | §4 | Native C++23 OLE2 Compound File (`[MS-CFB]`) reader and VBA macro stream stripper | §1 | [ ] |
+| 5 | §5 | Native C++23 legacy Word 97-2003 (`.doc`) binary parser to `FlowDocumentModel` & PDF | §4 | [ ] |
+| 6 | §6 | Native C++23 legacy Excel (`.xls` BIFF8) and PowerPoint (`.ppt`) binary parsers to PDF | §2, §4 | [ ] |
+| 7 | §7 | Convert **PDF from Office, HTML, Markdown & Images** card and Step 3 UI (`SPEC 9.5`) | §3, §5, §6, D04 T01 §4, D02 T04 §5, D04 T01 §6, D10 T02 §2 | [ ] |
 | 8 | §8 | ODF package reader, style resolver and macro stripper (`odf_package.cpp`) | §1, D04 T03 §1 | [ ] |
 | 9 | §9 | OpenDocument Text (`.odt`) to PDF layout engine | §8, §1 | [ ] |
 | 10 | §10 | OpenDocument Spreadsheet (`.ods`) to PDF layout engine | §8, §2 | [ ] |
 | 11 | §11 | OpenDocument Presentation (`.odp`) to PDF layout engine | §8, §9, §2 | [ ] |
-| 12 | §12 | Native C++20 OFD (GB/T 33190) package and document reader | §1, D04 T03 §1 | [ ] |
+| 12 | §12 | Native C++23 OFD (GB/T 33190) package and document reader | §1, D04 T03 §1 | [ ] |
 | 13 | §13 | OFD page graphics to PDF: paths, images, clips, colours and templates | §12, D04 T02 §2 | [ ] |
 | 14 | §14 | OFD text and fonts to PDF with font subsets and Unicode mapping | §13, D03 T04 §4, D04 T02 §11 | [ ] |
 | 15 | §15 | OFD outlines, links, attachments, annotations and seal report | §14 | [ ] |
@@ -69,9 +72,9 @@ track: M5
 | 19 | §19 | MHTML (`.mht`, `.mhtml`) to PDF through the HTML engine | §16, §3 | [ ] |
 | 20 | §20 | Plain-text family (`.txt`, `.log`, `.ini`, `.cfg`, `.xml`) to PDF, encoding detected | §1 | [ ] |
 | 21 | §21 | `recto-cli office-to-pdf` dispatch for the new input formats | §9, §10, §11, §15, §18, §19, §20, D04 T02 §23 | [ ] |
-| 22 | §22 | Convert card inputs for ODF, OFD, email, MHTML, text and images, and open `.ofd` | §7, §21, D04 T02 §15 | [ ] |
+| 22 | §22 | Convert card inputs for ODF, OFD, email, MHTML, text and images, and open `.ofd` | §7, §21, D04 T02 §15, D10 T01 §8, D10 T01 §11, D10 T02 §2, D10 T02 §3, D10 T03 §1 | [ ] |
 
-## 1. Built-in C++20 Word (`.docx`, `.docm`) and Rich Text (`.rtf`) to PDF layout engine
+## 1. Built-in C++23 Word (`.docx`, `.docm`) and Rich Text (`.rtf`) to PDF layout engine
 
 Implement the WordprocessingML (`.docx` / `.docm`) and Rich Text Format (`.rtf`) to PDF layout engine in `src/core/office_to_pdf.h` and `src/core/office_to_pdf.cpp` using `ZipReader` (`D04 T03 §1`), a bounded XML/RTF parser (enforcing entity-expansion caps and stripping any `word/vbaProject.bin` macro streams by construction), DirectWrite text layout (`IDWriteTextLayout`), and `PdfWriter` (`D04 T02 §2`): parse page setup (`w:pgSz`, `w:pgMar`), styles (`word/styles.xml`), numbering/lists (`word/numbering.xml`), paragraphs, formatted runs, positioned frames (`w:framePr`), tables (`w:tbl` with merged cells, borders, and shading), headers/footers, and embedded images (`word/media/*`); paginate into vector PDF pages and emit `/Outlines` bookmarks from `Heading1`..`Heading3` paragraphs.
 
@@ -91,13 +94,13 @@ Implement the WordprocessingML (`.docx` / `.docm`) and Rich Text Format (`.rtf`)
 - [ ] Layout and paginate `<w:tbl>` and RTF `\trowd` tables (calculating column widths from `w:tblGrid` / `\cellx`, handling `w:gridSpan` and `w:vMerge` merged cells, drawing cell background fills and border strokes, and splitting multi-page tables across page boundaries). Done when: `OfficeToPdf.BuiltinDocxTables` renders multi-row tables with borders and cell shading into vector PDF pages.
 - [ ] Emit PDF `/Outlines` bookmark entries (`D01 T01 §10` format) pointing to the destination page and top Y coordinate of every `Heading1`, `Heading2`, and `Heading3` paragraph when `generate_heading_bookmarks == true`. Done when: opening the generated PDF in Recto populates the `Bookmarks` side panel (`D02 T03 §5`) with the document's heading tree.
 - [ ] Add `OfficeToPdf.BuiltinDocx*` and `OfficeToPdf.BuiltinRtf*` unit tests in `tests/recto-tests/office_to_pdf_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=OfficeToPdf.BuiltinDocx*:OfficeToPdf.BuiltinRtf*` passes under ASan.
-- [ ] Commit: `feat(convert): implement built-in C++20 Word (.docx, .docm) and RTF to PDF layout engine`
+- [ ] Commit: `feat(convert): implement built-in C++23 Word (.docx, .docm) and RTF to PDF layout engine`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=OfficeToPdf.BuiltinDocx*:OfficeToPdf.BuiltinRtf*` passes under ASan.
 
-## 2. Built-in C++20 Excel (`.xlsx`), `.csv`, and PowerPoint (`.pptx`) to PDF layout engines
+## 2. Built-in C++23 Excel (`.xlsx`), `.csv`, and PowerPoint (`.pptx`) to PDF layout engines
 
-Extend `src/core/office_to_pdf.cpp` with native C++20 layout engines for **Excel (`.xlsx`, `.xlsm`) and `.csv`** and **PowerPoint (`.pptx`, `.pptm`)**, plus `recto-cli office-to-pdf <in.docx|doc|xlsx|xls|pptx|ppt|rtf|csv> --out <out.pdf>`:
+Extend `src/core/office_to_pdf.cpp` with native C++23 layout engines for **Excel (`.xlsx`, `.xlsm`) and `.csv`** and **PowerPoint (`.pptx`, `.pptm`)**, plus `recto-cli office-to-pdf <in.docx|doc|xlsx|xls|pptx|ppt|rtf|csv> --out <out.pdf>`:
 - **Excel (`.xlsx` / `.xlsm`) & `.csv`:** Parse `xl/workbook.xml`, `xl/sharedStrings.xml`, `xl/styles.xml` (`numFmts`, `fonts`, `fills`, `borders`, `cellXfs`), and `xl/worksheets/sheet*.xml` (plus `<mergeCells>` and `<cols>`) or RFC 4180 `.csv` into `SpreadsheetWorkbookModel`; format numeric, currency, percentage, and date cells; compute column widths and row heights; and paginate worksheets onto portrait or landscape PDF pages (with `Fit all columns on one page` scaling and sheet-name `/Outlines` bookmarks).
 - **PowerPoint (`.pptx` / `.pptm`):** Parse `ppt/presentation.xml` (`p:sldSz` slide dimensions) and `ppt/slides/slide1..N.xml` (plus `slideLayouts` / `slideMasters` backgrounds, `<p:sp>` shapes, `<p:txBody>` DrawingML text frames, `<p:graphicFrame>` tables, and `<p:pic>` images) into `PresentationDeckModel`; emit one vector PDF page per slide via `PdfWriter`.
 
@@ -116,11 +119,11 @@ Extend `src/core/office_to_pdf.cpp` with native C++20 layout engines for **Excel
 - [ ] Render each slide in `PresentationDeckModel` to a PDF page matching the slide's aspect ratio (`16:9` widescreen or `4:3` standard in points: `EMU / 12700`), drawing vector shape geometries, solid/gradient fills, DirectWrite text frames, tables, and slide images via `PdfWriter`, plus a `/Outlines` bookmark per slide title. Done when: `OfficeToPdf.BuiltinPptxRender` converts a multi-slide `.pptx` into a multi-page vector PDF with selectable slide text and images. Cheaper substitute: failing on `.xlsx` and `.pptx` unless Microsoft Office is installed.
 - [ ] Support `combine_inputs_into_single_pdf` in `office_to_pdf` so a mixed batch of Office, RTF, and CSV files can be emitted into one combined PDF or individual PDFs, committed via `AtomicFileWriter` (`D04 T02 §1`). Done when: `OfficeToPdf.CombineMixedBatch` merges a `.docx`, `.xlsx`, and `.pptx` into one multi-page PDF.
 - [ ] Implement `recto-cli office-to-pdf <in> --out <out.pdf> [--fit-columns] [--orientation auto|portrait|landscape]` in `src/cli/cmd_office_to_pdf.cpp`. Done when: `recto-tests.exe --gtest_filter=OfficeToPdf.Builtin*:Cli.OfficeToPdf` passes under ASan.
-- [ ] Commit: `convert: implement built-in C++20 Excel (.xlsx, .csv) and PowerPoint (.pptx) to PDF engines`
+- [ ] Commit: `convert: implement built-in C++23 Excel (.xlsx, .csv) and PowerPoint (.pptx) to PDF engines`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=OfficeToPdf.Builtin*:Cli.OfficeToPdf` passes under ASan across `.docx`, `.docm`, `.rtf`, `.xlsx`, `.csv`, and `.pptx` corpus files.
 
-## 3. Built-in C++20 `HTML/CSS` (`.html`) and `Markdown` (`.md`) to PDF engine and CLI verbs
+## 3. Built-in C++23 `HTML/CSS` (`.html`) and `Markdown` (`.md`) to PDF engine and CLI verbs
 
 Implement `src/core/html_md_to_pdf.h` and `src/core/html_md_to_pdf.cpp` in `recto-core`, plus `recto-cli html-to-pdf` and `recto-cli md-to-pdf`: parse **HTML5 + CSS** (including `@page` size/margins, block/inline/table/flex box layout, typography, borders, backgrounds, local relative images and `data:` URI images, `<svg>` inline graphics, and `<a href>` links) and **GitHub-Flavored Markdown (`.md`)** (headings `#`..`######`, paragraphs, bold/italic/strikethrough/inline code, fenced code blocks, task lists `- [x]`, blockquotes `>`, pipe tables `|---|`, and images), paginate via DirectWrite, and emit vector PDFs via `PdfWriter` (`D04 T02 §2`) with clickable `/Link` annotations and `/Outlines` heading bookmarks, while strictly disabling all `<script>` execution and blocking all remote `http://` / `https://` network fetches (`foundation plan section 9`).
 
@@ -140,13 +143,13 @@ Implement `src/core/html_md_to_pdf.h` and `src/core/html_md_to_pdf.cpp` in `rect
 - [ ] Define `HtmlResourceProvider` in `src/core/html_md_to_pdf.h` (`resolve(url) -> bytes` or a typed miss) with a folder provider (the existing rule: relative files strictly under the input's folder) and an in-memory provider that serves only the parts of a MIME archive or email, so MHTML (`§19`) and email (`§18`) resolve `cid:` and `Content-Location` references from inside the file and nothing else. Done when: `HtmlMdToPdf.ResourceProviders` renders an image from each provider and a reference outside the provider is a typed miss with no file or network access.
 - [ ] Commit output PDFs via `AtomicFileWriter` (`D04 T02 §1`) and check `CancelToken` across layout and pagination passes. Done when: cancelling mid-render leaves zero temp files.
 - [ ] Implement `recto-cli html-to-pdf <in.html> --out <out.pdf> [--page-size a4|letter]` and `recto-cli md-to-pdf <in.md> --out <out.pdf> [--page-size a4|letter]` in `src/cli/`. Done when: `recto-tests.exe --gtest_filter=HtmlMdToPdf.*:Cli.HtmlAndMdToPdf` passes under ASan.
-- [ ] Commit: `feat(convert): implement built-in C++20 HTML/CSS and Markdown to PDF layout engine`
+- [ ] Commit: `feat(convert): implement built-in C++23 HTML/CSS and Markdown to PDF layout engine`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=HtmlMdToPdf.*:Cli.HtmlAndMdToPdf` passes under ASan.
 
-## 4. Native C++20 OLE2 Compound File (`[MS-CFB]`) reader and VBA macro stream stripper
+## 4. Native C++23 OLE2 Compound File (`[MS-CFB]`) reader and VBA macro stream stripper
 
-Implement `src/core/ole2_cfb.h` and `src/core/ole2_cfb.cpp` in `recto-core`: a 100% pure native C++20 reader for Microsoft Compound File Binary (`[MS-CFB]`, `D0 CF 11 E0 A1 B1 1A E1`) containers used by legacy `.doc`, `.xls`, and `.ppt` files, parsing v3 (`512`-byte sectors) and v4 (`4096`-byte sectors) headers, DIFAT, FAT, MiniFAT (`64`-byte mini-sectors below `4096` bytes), and the red-black directory tree with strict cycle detection, bounds checks, and a `256 MB` total stream allocation cap, while **stripping all VBA macro and ActiveX storages (`_VBA_PROJECT_CUR`, `Macros`, `VBA`, `\x01CompObj` executable controls)** during directory enumeration so macro bytecode is never exposed to higher layers.
+Implement `src/core/ole2_cfb.h` and `src/core/ole2_cfb.cpp` in `recto-core`: a 100% pure native C++23 reader for Microsoft Compound File Binary (`[MS-CFB]`, `D0 CF 11 E0 A1 B1 1A E1`) containers used by legacy `.doc`, `.xls`, and `.ppt` files, parsing v3 (`512`-byte sectors) and v4 (`4096`-byte sectors) headers, DIFAT, FAT, MiniFAT (`64`-byte mini-sectors below `4096` bytes), and the red-black directory tree with strict cycle detection, bounds checks, and a `256 MB` total stream allocation cap, while **stripping all VBA macro and ActiveX storages (`_VBA_PROJECT_CUR`, `Macros`, `VBA`, `\x01CompObj` executable controls)** during directory enumeration so macro bytecode is never exposed to higher layers.
 
 **Phase:** 5
 **Needs:** windows-host
@@ -162,13 +165,13 @@ Implement `src/core/ole2_cfb.h` and `src/core/ole2_cfb.cpp` in `recto-core`: a 1
 - [ ] Implement FAT and MiniFAT stream extraction (`follow_chain` with a `max_sectors` visited count and `256 MB` total allocation cap), reading streams `< 4096` bytes from the root entry's `MiniStream` via `MiniFAT` and streams `>= 4096` bytes directly from main sectors. Done when: `Ole2Cfb.MiniStreamAndRegularStream` extracts both `< 4096 B` and multi-sector streams byte-for-byte. Cheaper substitute: calling Win32 `StgOpenStorage` on untrusted files without sector-loop or allocation caps.
 - [ ] Traverse the directory entry red-black tree (`left_sibling`, `right_sibling`, `child_id`) with a visited-node bitset and `64`-level recursion limit, automatically filtering out any storage or stream named `Macros`, `VBA`, `_VBA_PROJECT_CUR`, or `_VBA_PROJECT` (case-insensitive UTF-16 comparison). Done when: `Ole2Cfb.MacroStorageStripped` verifies that VBA storages are stripped by construction and cyclic directory trees return `PdfErrorCode::CorruptStructure` without stack overflow.
 - [ ] Add `Ole2Cfb.*` unit tests in `tests/recto-tests/ole2_cfb_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=Ole2Cfb.*` passes under ASan.
-- [ ] Commit: `feat(convert): implement native C++20 OLE2 Compound File ([MS-CFB]) reader and macro stripper`
+- [ ] Commit: `feat(convert): implement native C++23 OLE2 Compound File ([MS-CFB]) reader and macro stripper`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Ole2Cfb.*` passes under ASan across valid, MiniStream, macro-bearing, and cyclic/malformed `[MS-CFB]` fixtures.
 
-## 5. Native C++20 legacy Word 97-2003 (`.doc`) binary parser to `FlowDocumentModel` & PDF
+## 5. Native C++23 legacy Word 97-2003 (`.doc`) binary parser to `FlowDocumentModel` & PDF
 
-Implement the native C++20 legacy Word 97-2003 (`.doc`, `[MS-DOC]`) binary parser in `src/core/legacy_office_to_pdf.h` and `src/core/legacy_office_to_pdf.cpp` over §4's `Ole2Reader`, lowering `.doc` files directly into §1's `FlowDocumentModel` and `PdfWriter`: parse the `WordDocument` stream File Information Block (`Fib`), locate the `0Table` or `1Table` stream (`fWhichTblStm`), parse the `Clx` piece table (`Prc` + `PlcfPcd` `Pcd` descriptors mapping CP character positions to compressed 8-bit Windows-1252 or uncompressed 16-bit UTF-16LE runs in `WordDocument`), apply `PlcfBtePapx` (`PAPX` paragraph formatting, heading styles, lists, and `inTable`/`itap` table cell/row markers `0x0007`) and `PlcfBteChpx` (`CHPX` character bold/italic/underline/font-size/colour sprms), and verify macro-inertness on both `macro-canary.docm` and `macro-canary.doc`.
+Implement the native C++23 legacy Word 97-2003 (`.doc`, `[MS-DOC]`) binary parser in `src/core/legacy_office_to_pdf.h` and `src/core/legacy_office_to_pdf.cpp` over §4's `Ole2Reader`, lowering `.doc` files directly into §1's `FlowDocumentModel` and `PdfWriter`: parse the `WordDocument` stream File Information Block (`Fib`), locate the `0Table` or `1Table` stream (`fWhichTblStm`), parse the `Clx` piece table (`Prc` + `PlcfPcd` `Pcd` descriptors mapping CP character positions to compressed 8-bit Windows-1252 or uncompressed 16-bit UTF-16LE runs in `WordDocument`), apply `PlcfBtePapx` (`PAPX` paragraph formatting, heading styles, lists, and `inTable`/`itap` table cell/row markers `0x0007`) and `PlcfBteChpx` (`CHPX` character bold/italic/underline/font-size/colour sprms), and verify macro-inertness on both `macro-canary.docm` and `macro-canary.doc`.
 
 **Phase:** 5
 **Needs:** windows-host
@@ -184,13 +187,13 @@ Implement the native C++20 legacy Word 97-2003 (`.doc`, `[MS-DOC]`) binary parse
 - [ ] Route `.doc` files in `convert_office_to_pdf` and `recto-cli office-to-pdf` through `Ole2Reader` -> `parse_legacy_doc_to_flow_model` -> §1's DirectWrite PDF layout engine. Done when: `recto-cli office-to-pdf` converts `.doc` files to vector PDFs with `/Outlines` bookmarks and selectable text.
 - [ ] Generate `tests/corpus/convert/macro-canary.docm` (OpenXML with `word/vbaProject.bin`) and `tests/corpus/convert/macro-canary.doc` (OLE2 `[MS-CFB]` with `Macros`/`VBA`/`_VBA_PROJECT_CUR` streams) and verify in `OfficeToPdf.MacroCanaryInert` that both convert cleanly to PDF while never touching the macro streams or creating the canary file. Done when: `OfficeToPdf.MacroCanaryInert` passes under ASan.
 - [ ] Add `OfficeToPdf.LegacyDoc*` and `OfficeToPdf.MacroCanaryInert` tests in `tests/recto-tests/office_to_pdf_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=OfficeToPdf.LegacyDoc*:OfficeToPdf.MacroCanaryInert` passes under ASan.
-- [ ] Commit: `feat(convert): implement native C++20 legacy Word (.doc) parser and macro-inertness proof`
+- [ ] Commit: `feat(convert): implement native C++23 legacy Word (.doc) parser and macro-inertness proof`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=OfficeToPdf.LegacyDoc*:OfficeToPdf.MacroCanaryInert` passes under ASan.
 
-## 6. Native C++20 legacy Excel (`.xls` BIFF8) and PowerPoint (`.ppt`) binary parsers to PDF
+## 6. Native C++23 legacy Excel (`.xls` BIFF8) and PowerPoint (`.ppt`) binary parsers to PDF
 
-Extend `src/core/legacy_office_to_pdf.cpp` with 100% native C++20 binary parsers for **legacy Excel 97-2003 (`.xls`, `[MS-XLS]` BIFF8)** and **legacy PowerPoint 97-2003 (`.ppt`, `[MS-PPT]`)** over §4's `Ole2Reader`, lowering them into §2's `SpreadsheetWorkbookModel` and `PresentationDeckModel`:
+Extend `src/core/legacy_office_to_pdf.cpp` with 100% native C++23 binary parsers for **legacy Excel 97-2003 (`.xls`, `[MS-XLS]` BIFF8)** and **legacy PowerPoint 97-2003 (`.ppt`, `[MS-PPT]`)** over §4's `Ole2Reader`, lowering them into §2's `SpreadsheetWorkbookModel` and `PresentationDeckModel`:
 - **Excel 97-2003 (`.xls` BIFF8):** Parse the `Workbook` (or `Book`) stream BIFF8 record sequence (`BOF` `0x0809`, `BoundSheet8` `0x0085`, `SST` `0x00FC` Shared String Table with `Continue` `0x003C` record spanning, `Font` `0x0031`, `Format` `0x041E`, `XF` `0x00E0`, `Dimension` `0x0200`, `ColInfo` `0x007D`, `LabelSst` `0x00FD`, `Label` `0x0204`, `RK` `0x027E`, `MulRK` `0x00BD`, `Number` `0x0203`, `Formula` `0x0006`, and `MergeCells` `0x00E5`) and paginate via §2's spreadsheet PDF layout engine.
 - **PowerPoint 97-2003 (`.ppt`):** Parse the `PowerPoint Document` (and `Pictures`) stream record tree (`RecordHeader` `recVer`/`recInstance`/`recType`/`recLen`: `DocumentContainer` `1000`, `SlideContainer` `1006`, `DrawingContainer` / OfficeArt `SpContainer` `0xF004`, `ClientTextbox` `0xF00D`, `TextHeaderAtom` `3999`, `TextCharsAtom` `4000` UTF-16LE, and `TextBytesAtom` `4008` CP1252) and render each slide via §2's presentation PDF layout engine.
 
@@ -208,30 +211,30 @@ Extend `src/core/legacy_office_to_pdf.cpp` with 100% native C++20 binary parsers
 - [ ] Implement the `[MS-PPT]` 8-byte `RecordHeader` walker (`recVer == 0xF` container recursion capped at `32` levels, atom payload bounds-checked against parent container length) extracting slide dimensions (`DocumentAtom` `1001`), slide order (`SlidePersistAtom` / `SlideContainer` `1006`), shape bounding boxes (`OfficeArtFSPGR` / `OfficeArtClientAnchor`), slide titles and body runs (`TextHeaderAtom` `3999` + `TextCharsAtom` `4000` / `TextBytesAtom` `4008`), and BLIP images from the `Pictures` stream into §2's `PresentationDeckModel`. Done when: `OfficeToPdf.LegacyPptRoundTrip` converts `.ppt` presentations into vector PDFs with selectable text and slide bookmarks.
 - [ ] Wire `.xls` and `.ppt` extensions into `convert_office_to_pdf` and `recto-cli office-to-pdf`. Done when: `Cli.OfficeToPdf` converts `.doc`, `.xls`, and `.ppt` alongside `.docx`, `.xlsx`, `.pptx`, `.rtf`, and `.csv` under ASan.
 - [ ] Add `OfficeToPdf.LegacyXls*` and `OfficeToPdf.LegacyPpt*` unit tests in `tests/recto-tests/office_to_pdf_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=OfficeToPdf.LegacyXls*:OfficeToPdf.LegacyPpt*` passes under ASan.
-- [ ] Commit: `convert: add native C++20 legacy Excel (.xls BIFF8) and PowerPoint (.ppt) binary parsers`
+- [ ] Commit: `convert: add native C++23 legacy Excel (.xls BIFF8) and PowerPoint (.ppt) binary parsers`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=OfficeToPdf.Legacy*:Cli.OfficeToPdf` passes under ASan across `.doc`, `.xls`, and `.ppt` fixtures.
 
 ## 7. Convert **PDF from Office, HTML, Markdown & Images** card and Step 3 UI (`SPEC 9.5`)
 
-Register the **PDF from Office, HTML, Markdown & Images** card in `ConverterRegistry` (`D04 T01 §3`) and build its Step 3 options control (`src/app/views/convert/OfficeToPdfOptionsControl.xaml/.cpp`, `SPEC 9.5`): page size (`Match original document`, `A4`, `Letter`, seeded from `D02 T04 §5`'s `Default Office to PDF page setup` setting), orientation (`Auto`, `Portrait`, `Landscape`), margins (`Default`, `Narrow`, `None`), `Fit all spreadsheet columns on one page` toggle, `Generate PDF bookmarks from headings and slide titles` toggle, `Combine all input files into a single PDF` toggle, and the SPEC Principle 4 capability hint line.
+Register the **PDF from Office, HTML, Markdown & Images** card in `ConverterRegistry` (`D04 T01 §3`) and build its Step 3 options control (`src/app/views/convert/office_to_pdf_options_control.h/.cpp`, `SPEC 9.5`): page size (`Match original document`, `A4`, `Letter`, seeded from `D02 T04 §5`'s `Default Office to PDF page setup` setting), orientation (`Auto`, `Portrait`, `Landscape`), margins (`Default`, `Narrow`, `None`), `Fit all spreadsheet columns on one page` toggle, `Generate PDF bookmarks from headings and slide titles` toggle, `Combine all input files into a single PDF` toggle, and the SPEC Principle 4 capability hint line.
 
 **Phase:** 5
 **Needs:** windows-host, display-session
 **Surface:** yes
 
 **Fidelity:** `design/SPEC.md` sections 9.5 (`PDF from Office, HTML, Markdown & Images` card enable/disable rule and Step 3 options) and 9.7 (Converting: `Default Office to PDF page setup`) with `D-Convert.png`.
-**Job:** The user can drop `.docx`, `.docm`, `.doc`, `.xlsx`, `.xlsm`, `.xls`, `.pptx`, `.pptm`, `.ppt`, `.rtf`, `.html`, `.md`, `.csv`, `.svg`, `.xps`, or image files into the Convert page, configure page setup, spreadsheet column fitting, bookmark generation, and single-PDF combining, and convert them to PDF through the queue using Recto's 100% built-in C++20 engines. Consumer: `ConvertPage` (`D04 T01 §3`-`§4`), `ConversionRunner` (`D04 T01 §1`), and `office_to_pdf` / `legacy_office_to_pdf` / `html_md_to_pdf` / `images_to_pdf`.
+**Job:** The user can drop `.docx`, `.docm`, `.doc`, `.xlsx`, `.xlsm`, `.xls`, `.pptx`, `.pptm`, `.ppt`, `.rtf`, `.html`, `.md`, `.csv`, `.svg`, `.xps`, or image files into the Convert page, configure page setup, spreadsheet column fitting, bookmark generation, and single-PDF combining, and convert them to PDF through the queue using Recto's 100% built-in C++23 engines. Consumer: `ConvertPage` (`D04 T01 §3`-`§4`), `ConversionRunner` (`D04 T01 §1`), and `office_to_pdf` / `legacy_office_to_pdf` / `html_md_to_pdf` / `images_to_pdf`.
 **Treatment:** Step 3 options control bound to `OfficeToPdfOptionsViewModel`, reading the default page size from `SettingsModel::default_office_page_setup()` (`D02 T04 §5`) and dispatching `.docx`/`.docm`/`.xlsx`/`.xlsm`/`.pptx`/`.pptm`/`.rtf`/`.csv` to `office_to_pdf` (`§1`, `§2`), `.doc`/`.xls`/`.ppt` to `legacy_office_to_pdf` (`§5`, `§6`), `.html`/`.md` to `html_md_to_pdf` (`§3`), and images/SVG/XPS to `images_to_pdf` (`D04 T02 §5`), optionally merging all outputs into a single combined PDF when `Combine all input files into a single PDF` is checked. Cheaper substitute that fails the checkpoint: requiring any external Office suite to be installed, or omitting spreadsheet column fitting and heading bookmark toggles.
 **Chrome:** consume the Convert Step 2 card and Step 3 options host from `D04 T01 §3`-`§4` and the default page setup setting from `D02 T04 §5`.
 
 **Build order:**
 
-1. Implement `OfficeToPdfOptionsViewModel` and `OfficeToPdfOptionsControl.xaml/.cpp` (`SPEC 9.5`), seeding its initial `Page size` from `D02 T04 §5`'s `Default Office to PDF page setup` preference and registering the **PDF from Office, HTML, Markdown & Images** card in `ConverterRegistry`. Done when: loading `.docx`, `.doc`, `.xlsx`, `.xls`, `.pptx`, `.ppt`, `.rtf`, `.html`, `.md`, `.csv`, or image files in Step 1 enables the card and renders the Step 3 options control.
-2. Wire the job factory to dispatch each input file to Recto's native C++20 engines (`office_to_pdf`, `legacy_office_to_pdf`, `html_md_to_pdf`, `images_to_pdf`) and merge outputs when `Combine all input files into a single PDF` is enabled. Done when: `OfficeToPdf.ConvertPageUi` converts `.docx`, `.doc`, `.xlsx`, `.xls`, `.pptx`, `.ppt`, `.rtf`, `.html`, and `.md` files through the Convert page with zero external dependencies.
+1. Implement `OfficeToPdfOptionsViewModel` and `office_to_pdf_options_control.h/.cpp` (`SPEC 9.5`), seeding its initial `Page size` from `D02 T04 §5`'s `Default Office to PDF page setup` preference and registering the **PDF from Office, HTML, Markdown & Images** card in `ConverterRegistry`. Done when: loading `.docx`, `.doc`, `.xlsx`, `.xls`, `.pptx`, `.ppt`, `.rtf`, `.html`, `.md`, `.csv`, or image files in Step 1 enables the card and renders the Step 3 options control.
+2. Wire the job factory to dispatch each input file to Recto's native C++23 engines (`office_to_pdf`, `legacy_office_to_pdf`, `html_md_to_pdf`, `images_to_pdf`) and merge outputs when `Combine all input files into a single PDF` is enabled. Done when: `OfficeToPdf.ConvertPageUi` converts `.docx`, `.doc`, `.xlsx`, `.xls`, `.pptx`, `.ppt`, `.rtf`, `.html`, and `.md` files through the Convert page with zero external dependencies.
 
 - [ ] Register the **PDF from Office, HTML, Markdown & Images** card in `ConverterRegistry` (`D04 T01 §3`), enabled whenever Step 1 contains at least one `.docx`, `.docm`, `.doc`, `.xlsx`, `.xlsm`, `.xls`, `.pptx`, `.pptm`, `.ppt`, `.rtf`, `.html`, `.htm`, `.md`, `.csv`, `.xml`, `.txt`, `.png`, `.jpg`, `.jpeg`, `.tif`, `.tiff`, `.bmp`, `.gif`, `.svg`, or `.xps` file, with disable reason `"Add Word, Excel, PowerPoint, HTML or Markdown files to use this"` when only PDFs are loaded. Done when: `OfficeToPdf.CardEnablement` verifies enablement and disable reasons.
-- [ ] Build `OfficeToPdfOptionsControl` (`src/app/views/convert/OfficeToPdfOptionsControl.xaml/.cpp`) exposing `Page size` (`Original`, `A4`, `Letter`, initialized from `D02 T04 §5`), `Orientation` (`Auto`, `Portrait`, `Landscape`), `Margins` (`Default`, `Narrow`, `None`), `Fit all spreadsheet columns on one page` (`true`), `Generate PDF bookmarks from headings` (`true`), `HTML/Markdown CSS print styling` (`true`), and `Combine all files into one PDF` (`false` for single input, toggleable for `>= 2` inputs). Done when: all controls pass `D03 T02 §3` accessibility checks.
+- [ ] Build `OfficeToPdfOptionsControl` (`src/app/views/convert/office_to_pdf_options_control.h/.cpp`) exposing `Page size` (`Original`, `A4`, `Letter`, initialized from `D02 T04 §5`), `Orientation` (`Auto`, `Portrait`, `Landscape`), `Margins` (`Default`, `Narrow`, `None`), `Fit all spreadsheet columns on one page` (`true`), `Generate PDF bookmarks from headings` (`true`), `HTML/Markdown CSS print styling` (`true`), and `Combine all files into one PDF` (`false` for single input, toggleable for `>= 2` inputs). Done when: all controls pass `D03 T02 §3` accessibility checks.
 - [ ] Render the SPEC Principle 4 capability hint line (`"Converts Office (.docx, .doc, .xlsx, .xls, .pptx, .ppt, .rtf), HTML, Markdown, CSV and images to vector PDF natively with zero external dependencies."`). Done when: the hint line is visible in Step 3.
 - [ ] Dispatch queued jobs across `office_to_pdf` (`§1`, `§2`), `legacy_office_to_pdf` (`§5`, `§6`), `html_md_to_pdf` (`§3`), and `images_to_pdf` (`D04 T02 §5`). Done when: `OfficeToPdf.ConvertPageUi` runs `.docx`, `.doc`, `.xlsx`, `.xls`, `.pptx`, `.ppt`, `.rtf`, `.html`, and `.md` conversions through `ConversionRunner` and verifies the produced PDFs. Cheaper substitute that fails the checkpoint: ignoring Step 3 page-setup options or failing on legacy `.doc`/`.xls`/`.ppt` inputs.
 - [ ] Support `Open file` in `QueueCard` and completion toasts (`D04 T01 §6`) so clicking `Open file` on a finished `Office -> PDF` job opens the newly created PDF directly in a Recto viewer tab through `JobOutputActions::open_output_file` (`D04 T01 §6`), which opens it with `OpenDocumentPipeline` (`D02 T01 §5`). Done when: clicking `Open file` opens the converted PDF in a new tab.
@@ -332,7 +335,7 @@ Lower an `.odp` (`§8`) into the `PresentationDeckModel` of `§2` and render one
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=OdfToPdf.Odp*` passes under ASan, and rasterizing the slides into pictures makes the `PageText` assertion in `OdfToPdf.OdpRender` fail.
 
-## 12. Native C++20 OFD (GB/T 33190) package and document reader
+## 12. Native C++23 OFD (GB/T 33190) package and document reader
 
 OFD is China's open fixed-layout document standard (GB/T 33190), used for e-invoices, government documents and archives, and PDFelement converts it to PDF; Acrobat does not open it. `OfdReader` (`src/core/ofd_reader.h/.cpp`, `recto::core`) opens the ZIP package through `ZipReader` (`D04 T03 §1`), reads `OFD.xml` (`DocBody`, `DocInfo`, `DocRoot`), `Document.xml` (`CommonData` with `PageArea` and its `PhysicalBox`, `PublicRes` and `DocumentRes`, `Pages`, `Outlines`, `Attachments`), each page's `Content.xml` (`Template` references, `Content` layers) and the resource files (fonts, colour spaces, draw parameters, multimedia), into a typed `OfdDocument` model, and records signatures and seals as present without verifying them. OFD lengths are millimetres; the model converts them to points. Everything is bounded and treated as hostile: no script, no external fetch, ID references resolved with cycle and depth limits. It keeps Recto's native, offline, no-subprocess rule.
 
@@ -573,7 +576,7 @@ Make the new formats usable on the Convert page and in the Open dialog. The **PD
 **Fidelity:** SPEC section 9.5 (the card enable and disable rule and the Step 3 options of the `PDF from Office, HTML, Markdown & Images` card) with `D-Convert.png`, and section 9.1 (the Home drop overlay and Open dialog) for opening `.ofd`; the conditional option rows are a genuinely new addition that follow the existing option row and hint line chrome.
 **Job:** The user can drop an ODF file, an OFD document, a saved email, a saved web page or a log file onto the Convert page and get a PDF, with the options that matter for that format and a clear message when a file cannot be converted, and can open an `.ofd` straight into the viewer. Consumer: `ConvertPage` (`D04 T01 §3`, `§4`), `ConversionRunner` (`D04 T01 §1`), the queue card (`D04 T01 §5`) and `OpenDocumentPipeline` (`D02 T01 §5`).
 **Treatment:** The extension list and disable reason of the card, per-format conditional option rows bound to the existing `OfficeToPdfOptionsViewModel`, the dispatch of `§21`, and a converted-on-open flow for `.ofd`. Cheaper substitute that fails the checkpoint: listing the new extensions without options or messages, or an `.ofd` open that writes the PDF next to the original.
-**Chrome:** consume the Convert Step 2 card registry and Step 3 options host (`D04 T01 §3`, `§4`), the queue card and notices (`D04 T01 §5`, `§6`), the Open pipeline (`D02 T01 §5`), `RectoColors.xaml` tokens and Fluent UI System Icons (`RectoIcons`).
+**Chrome:** consume the Convert Step 2 card registry and Step 3 options host (`D04 T01 §3`, `§4`), the queue card and notices (`D04 T01 §5`, `§6`), the Open pipeline (`D02 T01 §5`), `recto_tokens.g.h` tokens and Fluent UI System Icons (`RectoIcons` via `ui::Icon`).
 
 **Build order:**
 
@@ -592,6 +595,6 @@ Make the new formats usable on the Convert page and in the Open dialog. The **PD
 
 ## Verification
 
-- M5 Office/HTML/Markdown-to-PDF obligations (`docs/plans/2026-10-13-recto-foundation.md` section 7): `.docx`, `.docm`, `.doc`, `.xlsx`, `.xlsm`, `.xls`, `.pptx`, `.pptm`, `.ppt`, `.rtf`, `.html`, `.md`, and `.csv` convert cleanly to PDF via Recto's 100% built-in C++20 engines with zero external dependencies, and `macro-canary.docm` and `macro-canary.doc` are proven never to parse or execute VBA macros.
+- M5 Office/HTML/Markdown-to-PDF obligations (`docs/plans/2026-10-13-recto-foundation.md` section 7): `.docx`, `.docm`, `.doc`, `.xlsx`, `.xlsm`, `.xls`, `.pptx`, `.pptm`, `.ppt`, `.rtf`, `.html`, `.md`, and `.csv` convert cleanly to PDF via Recto's 100% built-in C++23 engines with zero external dependencies, and `macro-canary.docm` and `macro-canary.doc` are proven never to parse or execute VBA macros.
 - `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` exit 0.
 

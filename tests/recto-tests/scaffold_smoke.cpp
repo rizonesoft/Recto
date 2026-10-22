@@ -10,6 +10,15 @@
 
 #include <gtest/gtest.h>
 
+// D14 (revised 2026-10-22): every Recto project compiles past C++20, through
+// /std:c++23preview until MSVC ships a stable C++23 or C++26 switch.
+static_assert(_MSVC_LANG > 202002L, "Recto projects compile as C++23 or later (D14)");
+
+TEST(Toolchain, CompilesPastCpp20)
+{
+	EXPECT_GT(_MSVC_LANG, 202002L);
+}
+
 TEST(Scaffold, PdfEngineReportsAbiVersionOne)
 {
 	EXPECT_EQ(recto::pdf::abi_version(), 1);

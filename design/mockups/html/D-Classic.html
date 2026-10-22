@@ -144,27 +144,28 @@ a{color:#A93717}
             <h2 style="margin:0;font-size:18px">2. Tech Stack</h2>
             <table style="border-collapse:collapse;width:100%">
               <tr><th style="width:96px">Layer</th><th>Choice</th><th>Notes</th></tr>
-              <tr><td>UI</td><td>WinUI 3, Windows App SDK <code>2.5.1</code>, C++/WinRT</td><td>Stock controls, <code>RectoColors.xaml</code> tokens and the <code>RectoIcons.ttf</code> subset of Fluent UI System Icons</td></tr>
-              <tr><td>Page surface</td><td><code>SwapChainPanel</code> + Direct3D 11 + Direct2D 1.3 + DirectWrite</td><td>Tiled rendering from background presentation thread</td></tr>
-              <tr><td>PDF engine</td><td><code>recto-pdf</code> (<code>src/pdf</code>, in-tree C++20)</td><td>PDF 1.7 / 2.0 lexer, XRef tables and streams, incremental updates, damaged-file recovery</td></tr>
-              <tr><td>Built-in OCR</td><td>High-Accuracy In-Process C++20 Neural OCR + <code>Windows.Media.Ocr</code></td><td>Deskew, contrast normalization, adaptive Sauvola thresholding</td></tr>
-              <tr><td>Native converters</td><td>100% in-tree C++20 OpenXML, legacy OLE2 binary, RTF, HTML/CSS, Markdown, SVG and XPS engines</td><td>3-mode PDF to Word (Flowing, Exact, Continuous), PDF to Excel, PDF to HTML5</td></tr>
-              <tr><td>Packaging &amp; Installer</td><td>Inno Setup (Full Install + Self-Contained Portable) + Portable <code>.zip</code> + Optional MSIX</td><td>Self-contained Windows App SDK deployment with <code>&lt;exe-dir&gt;\data\</code> portable mode</td></tr>
+              <tr><td>UI</td><td><code>recto-ui</code> (in-tree C++23): Win32, DirectComposition, Direct2D, DirectWrite</td><td>Fluent controls, generated tokens and the <code>RectoIcons.ttf</code> subset of Fluent UI System Icons</td></tr>
+              <tr><td>Page surface</td><td><code>ui::SwapChainHost</code> + Direct3D 11 + Direct2D 1.3 + DirectWrite</td><td>Tiled rendering from background presentation thread</td></tr>
+              <tr><td>PDF engine</td><td><code>recto-pdf</code> (<code>src/pdf</code>, in-tree C++23)</td><td>PDF 1.7 / 2.0 lexer, XRef tables and streams, incremental updates, damaged-file recovery</td></tr>
+              <tr><td>Built-in OCR</td><td>High-Accuracy In-Process C++23 Neural OCR + <code>Windows.Media.Ocr</code></td><td>Deskew, contrast normalization, adaptive Sauvola thresholding</td></tr>
+              <tr><td>Native converters</td><td>100% in-tree C++23 OpenXML, legacy OLE2 binary, RTF, HTML/CSS, Markdown, SVG and XPS engines</td><td>3-mode PDF to Word (Flowing, Exact, Continuous), PDF to Excel, PDF to HTML5</td></tr>
+              <tr><td>Packaging &amp; Installer</td><td>Inno Setup (Full Install + Self-Contained Portable) + Portable <code>.zip</code> + Optional MSIX</td><td>A plain Win32 <code>Recto.exe</code> with <code>&lt;exe-dir&gt;\data\</code> portable mode</td></tr>
             </table>
             <h2 style="margin:8px 0 0;font-size:18px">3. Solution Structure</h2>
             <h3 style="margin:0;font-size:13px">3.1 Modules and Dependency Rule</h3>
-            <p style="margin:0;font-size:11px;line-height:17px">Dependencies flow strictly downward. No upward includes, no friend hacks, no XAML headers below <code>src/app</code>. Two additional executables link against <code>recto-core</code> and <code>recto-pdf</code> (never <code>src/app</code>): <code>recto-cli</code> and <code>recto-tests</code>.</p>
+            <p style="margin:0;font-size:11px;line-height:17px">Dependencies flow strictly downward. No upward includes, no friend hacks, no <code>recto-ui</code> headers in the engine libraries. Two additional executables link against <code>recto-core</code> and <code>recto-pdf</code> (never <code>src/app</code>): <code>recto-cli</code> and <code>recto-tests</code>.</p>
             <h3 style="margin:4px 0 0;font-size:13px">3.2 Repository Layout</h3>
             <div style="font-family:Consolas,monospace;font-size:10px;line-height:15px;background:#FAFAFA;padding:10px 12px;white-space:pre">Recto/
 |-- Recto.sln
 |-- src/
-|   |-- pdf/        # recto-pdf (C++20 static lib)
-|   |-- core/       # recto-core (C++20 static lib)
-|   |-- services/   # recto-services (C++20 static lib)
-|   |-- cli/        # recto-cli (C++20 console app)
-|   |-- mcp/        # recto-mcp (C++20 console app)
+|   |-- pdf/        # recto-pdf (C++23 static lib)
+|   |-- core/       # recto-core (C++23 static lib)
+|   |-- services/   # recto-services (C++23 static lib)
+|   |-- cli/        # recto-cli (C++23 console app)
+|   |-- mcp/        # recto-mcp (C++23 console app)
 |   |-- printer/    # Recto PDF v4 printer driver package
-|   \-- app/        # Recto (WinUI 3 packaged app)
+|   |-- ui/         # recto-ui (C++23 static lib)
+|   \-- app/        # Recto (Win32 desktop app)
 |-- tests/
 |-- fuzz/
 \-- installer/      # Inno Setup script and installer assets</div>

@@ -10,7 +10,7 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 
 > **Goal:** Recto hears its users and answers them in the open. A report arrives through one GitHub form with the version, install type, OS and steps it needs, prefilled from the app's own diagnostics; a user with a private file can share a structure-preserving reproducer after inspecting it; every user-reported bug gets a regression test before it closes; an issue closes when the release containing its fix ships; security reports have a private channel and an advisory; and what users ask for is recorded in a public demand ledger that is reviewed before every release.
 
-> **Current state:** Measured 2026-10-21. `.github/` holds `pull_request_template.md` and CI workflows only: there are no issue forms, no `SECURITY.md`, no triage or release-closing policy, no reproducer tooling, no demand ledger and no in-app path from a problem to a report. `D07 T02 §4` plans a local crash bundle and `D07 T02 §6` a release runbook; neither covers non-crash reports or closing issues on release.
+> **Current state:** Measured 2026-10-21. `.github/` holds `pull_request_template.md` and CI workflows only: there are no issue forms, no `SECURITY.md`, no triage or release-closing policy, no reproducer tooling, no demand ledger and no in-app path from a problem to a report. `D07 T02 §4` plans a local crash bundle and `D07 T02 §6` a release runbook; neither covers non-crash reports or closing issues on release. 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI references rewritten against `todo/10-ui/`.
 
 ## Inputs
 
@@ -24,6 +24,8 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 - -> XREF: D04 T07 §2 -- records the Action Wizard's watched-folder request (D04 T07 §2).
 - -> XREF: D07 T02 §10 -- update notice policy.
 - -> XREF: D06 T04 §25 -- the `D-Lifecycle.png` board and `design/SPEC.md` section 9.19 that §2, §7 here build against.
+- -> XREF: D10 T02 §17 -- the `ui::Dialog` that `ReportProblemDialog` (§2) builds on.
+- -> XREF: D10 T02 §20 -- the `ui::InfoBar` that the `Update available` notice (§7) builds on.
 
 ## Outcome
 
@@ -46,9 +48,9 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 | 3 | §4 | User-bug regression rule, closing on release and changelog mapping | §1, §9 | [x] |
 | 4 | §6 | Public scope page and user demand ledger | §1 | [x] |
 | 5 | §3 | Structure-preserving reproducer scrubber (`recto-cli scrub`) | D04 T02 §2 | [ ] |
-| 6 | §2 | In-app `Report a problem` with privacy-safe diagnostics | §1, D07 T02 §1, D07 T02 §4, D02 T03 §11, D06 T04 §25 | [ ] |
+| 6 | §2 | In-app `Report a problem` with privacy-safe diagnostics | §1, D07 T02 §1, D07 T02 §4, D02 T03 §11, D06 T04 §25, D10 T02 §17 | [ ] |
 | 7 | §5 | Release gate for unreleased fixes, security advisories and CI integrity | §4, D07 T02 §6, D07 T02 §7, D06 T03 §12, D06 T03 §5, D06 T03 §6 | [ ] |
-| 8 | §7 | What's new after update and opt-in update notice | §2, D02 T04 §6, D06 T04 §25 | [ ] |
+| 8 | §7 | What's new after update and opt-in update notice | §2, D02 T04 §6, D06 T04 §25, D10 T02 §20 | [ ] |
 | 9 | §8 | Strict issue-form YAML reader and top-level schema types | §1 | [x] |
 
 ## 1. Issue forms, triage policy and `SECURITY.md`
@@ -88,10 +90,10 @@ Reporters often cannot say which version, install type or GPU they had, and main
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface: a small `ContentDialog` on the `design/SPEC.md` section 9.9 dialog chrome; no screenshot exists. Design board: `design/SPEC.md` section 9.19 with `design/screenshots/D-Lifecycle.png` (drawn by `D06 T04 §25`).
+**Fidelity:** Genuinely new surface: a small `ui::Dialog` (`D10 T02 §17`) on the `design/SPEC.md` section 9.9 dialog chrome; no screenshot exists. Design board: `design/SPEC.md` section 9.19 with `design/screenshots/D-Lifecycle.png` (drawn by `D06 T04 §25`).
 **Job:** A user who hit a problem can copy accurate diagnostics and reach a prefilled GitHub form in two clicks. Consumer: the `bug_report.yml` form (§1) and the maintainer reading it.
 **Treatment:** One dialog listing exactly what will be copied, with `Copy diagnostics` and `Open bug form` buttons and a link to `recto-cli scrub` help. Cheaper substitute that fails the checkpoint: a raw log file the user must find in `%LOCALAPPDATA%`.
-**Chrome:** Shared `RectoDialogStyles.xaml` (`D02 T01 §10`), stock `ContentDialog`, `RectoColors.xaml` tokens, Fluent UI System Icons (`RectoIcons`: `question_circle`).
+**Chrome:** The shared dialog chrome (`D02 T01 §10`) on `ui::Dialog` (`D10 T02 §17`), `Recto*Brush` tokens (`D10 T01 §8`), Fluent UI System Icons (`RectoIcons`: `question_circle`).
 
 **Build order:**
 
@@ -100,7 +102,7 @@ Reporters often cannot say which version, install type or GPU they had, and main
 
 - [ ] Author `src/services/diagnostics_report.h/.cpp` composing version, commit, build flavour, install type, Windows build, GPU and driver, DPI and display count, renderer mode (hardware or WARP) and the redacted ring tail. Done when: the output contains each field and no file path or page text.
 - [ ] Strip document text, file names, folder paths, form values and passwords from ring entries with an allow-list of fields, never a block-list. Done when: `Diagnostics.ReportHasNoDocumentContent` finds none of the fixture's strings.
-- [ ] Build `src/app/dialogs/ReportProblemDialog.xaml/.h/.cpp` showing the exact text that will be copied, `Copy diagnostics`, `Open bug form` and a `How to share a file safely` link. Done when: the dialog renders in Light, Dark and HighContrast with token brushes only. Cheaper substitute: copying silently without showing the user what leaves their machine.
+- [ ] Build `src/app/dialogs/ReportProblemDialog.h/.cpp` showing the exact text that will be copied, `Copy diagnostics`, `Open bug form` and a `How to share a file safely` link. Done when: the dialog renders in Light, Dark and HighContrast with token brushes only. Cheaper substitute: copying silently without showing the user what leaves their machine.
 - [ ] Build the GitHub form URL with `template=bug_report.yml` and prefilled `version`, `install-type` and `windows-build` query fields, opened through the shared ask-before-open link path. Done when: the opened URL prefills those three fields on GitHub.
 - [ ] Register `help.reportProblem` in `CommandRegistry` with synonyms "bug", "report", "feedback" and add it to the Classic `Help` menu. Done when: each synonym finds the command in `Ctrl+K`.
 - [ ] Offer `Report a problem` from the `D07 T02 §4` crash bundle prompt and the `D06 T03 §3` page notice. Done when: both surfaces open this dialog.
@@ -223,19 +225,19 @@ Users stay on old builds and report bugs already fixed, and cannot find features
 
 **Fidelity:** `design/SPEC.md` section 9.8 (About) for placement; the `What's new` page is a genuinely new surface on the same chrome, with no screenshot. Design board: `design/SPEC.md` section 9.19 with `design/screenshots/D-Lifecycle.png` (drawn by `D06 T04 §25`).
 **Job:** A user who just upgraded sees what changed and which of their reported issues are fixed; a user who opted in learns a newer version exists. Consumer: the user, and the settings store that records the last seen version and the opt-in.
-**Treatment:** A `What's new` page in the About area listing release-note entries, and a dismissible `InfoBar` titled `Update available` (naming the new version) linking to the release page. Cheaper substitute that fails the checkpoint: silent auto-install, or a check that runs without consent.
-**Chrome:** Stock `InfoBar` and the About page layout from `D07 T02 §2`; the `Check for updates` toggle and `Check now` in the `Language and updates` group (SPEC 9.7), shared with the `Language` row of `D07 T02 §14` and placed by `kSettingsGroupOrder` (`D02 T04 §6`); `RectoColors.xaml` tokens only.
+**Treatment:** A `What's new` page in the About area listing release-note entries, and a dismissible `ui::InfoBar` titled `Update available` (naming the new version) linking to the release page. Cheaper substitute that fails the checkpoint: silent auto-install, or a check that runs without consent.
+**Chrome:** `ui::InfoBar` (`D10 T02 §20`) and the About page layout from `D07 T02 §2`; the `Check for updates` toggle and `Check now` in the `Language and updates` group (SPEC 9.7), shared with the `Language` row of `D07 T02 §14` and placed by `kSettingsGroupOrder` (`D02 T04 §6`); `Recto*Brush` tokens only (`D10 T01 §8`).
 
 **Build order:**
 
 1. Embed the release notes for the current version at build time (`build/generated/whats_new.json` from `scripts/release-notes.py`) and show the `What's new` page once when `SettingsStore` records a different last-seen version. Done when: `Shell.WhatsNewOncePerVersion` passes.
-2. Add `Check for updates` (off by default, owner decision 2026-10-21) that queries the GitHub Releases API at most once a day and shows an `InfoBar` linking to the release; it never downloads or installs. Done when: `Shell.UpdateNoticeOptIn` passes and no request is made while the setting is off.
+2. Add `Check for updates` (off by default, owner decision 2026-10-21) that queries the GitHub Releases API at most once a day and shows a `ui::InfoBar` linking to the release; it never downloads or installs. Done when: `Shell.UpdateNoticeOptIn` passes and no request is made while the setting is off.
 
 - [ ] Confirm the owner decision recorded 2026-10-21 in the foundation plan (v1, off by default, at most once a day) and use it as the `SettingsStore` default. Done when: the decision line exists in the plan and a fresh settings file reads `updates.check_enabled = false`.
 - [ ] Generate `build/generated/whats_new.json` from `scripts/release-notes.py` during the build and embed it as a resource. Done when: the built app contains the current version's entries.
 - [ ] Build the `What's new` page and show it once per version change, reachable later from `Help` and `Ctrl+K` ("what's new", "changelog"). Done when: the page appears once after a version change and never on a normal start. Cheaper substitute: a link to a web changelog the user must find.
 - [ ] Add the `Check for updates` setting to the `Language and updates` group with the decided default, reading it through `SettingsStore`, and a manual `Check now` command. Done when: the setting is read at startup and listed in the settings search.
-- [ ] Query `https://api.github.com/repos/rizonesoft/Recto/releases/latest` at most once per 24 hours only while the setting is on, compare versions, and show a dismissible `Update available` `InfoBar` linking to the release page; never download or install. Done when: a test with the setting off records zero network requests and with it on records one, and with a newer release fixture `Shell.UpdateNoticeOptIn` finds the `Update available` `InfoBar` naming that version.
+- [ ] Query `https://api.github.com/repos/rizonesoft/Recto/releases/latest` at most once per 24 hours only while the setting is on, compare versions, and show a dismissible `Update available` `ui::InfoBar` linking to the release page; never download or install. Done when: a test with the setting off records zero network requests and with it on records one, and with a newer release fixture `Shell.UpdateNoticeOptIn` finds the `Update available` `ui::InfoBar` naming that version.
 - [ ] Show a clear message on a failed check (cause and when it will retry) instead of a bare status code. Done when: a 403 fixture shows the rate-limit message.
 - [ ] Commit: `app: show What's new per version and an opt-in update notice`
 

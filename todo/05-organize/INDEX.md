@@ -22,7 +22,7 @@ Authoring PDF structure and security: graft-based page operations in the engine 
 
 - `recto-pdf` `PdfWriter` and `GraftMap` (`src/pdf/graft.cpp`), `recto-core` page operation lists, blank-page insertion, page-box cropping/rescaling, watermarks, headers/footers, and Bates numbering (`src/core/stamp_watermark.cpp`)
 - `AES-256` (`R=6`) encryption/decryption (`src/pdf/crypto.cpp`), `PKCS#7` / `PAdES` / `RFC 3161` digital signatures (`src/pdf/signature.cpp`), and true physical content-stream redaction and sanitization (`src/pdf/redactor.cpp`)
-- The Organize page grid (`Combine`, `Split`, `Reorder`), live-preview `Crop & Resize`, `Watermark`, and `Header/Footer & Bates` dialogs, and the Viewer's `Redaction & Sanitize Bar` (`Ctrl+Shift+X`), `Sign Document Dialog` (`Ctrl+Shift+G`), and `Signatures` side panel
+- The Organize page grid (`Combine`, `Split`, `Reorder`), live-preview `Crop & Resize`, `Watermark`, and `Header/Footer & Bates` dialogs, and the Viewer's `Redaction & Sanitize Bar` (`Ctrl+Shift+X`), `Sign Document Dialog` (`Ctrl+Shift+G`), and `Signatures` side panel, all built on `recto-ui` (`todo/10-ui/`)
 
 ## Out of scope
 

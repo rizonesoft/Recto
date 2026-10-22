@@ -1,6 +1,6 @@
 """Tests for the PDF engine dependency policy (D00 T01 §2, decisions D3 and D9): Recto builds its own recto-pdf engine
-in C++20 with warnings as errors, vendors no engine as a submodule or third_party tree, and names no MuPDF anywhere a
-user or the build would see it."""
+in C++23 (D14: /std:c++23preview until MSVC ships a stable switch) with warnings as errors, vendors no engine as a
+submodule or third_party tree, and names no MuPDF anywhere a user or the build would see it."""
 import html
 import html.parser
 import json
@@ -18,8 +18,8 @@ REPO = pathlib.Path(__file__).resolve().parents[2]
 # JBIG2Decode, which recto-pdf implements itself, contains it.
 MUPDF = re.compile(r"mupdf|artifex|\bjbig2dec\b", re.IGNORECASE)
 CONFIGURATIONS = [(configuration, platform) for configuration in ("Debug", "Release") for platform in ("x64", "ARM64")]
-REQUIRED = {"LanguageStandard": "stdcpp20", "WarningLevel": "Level4", "TreatWarningAsError": "true"}
-# The other metadata that could undermine C++20 with /W4 /WX, held to the values in use: CompileAs picks the language
+REQUIRED = {"LanguageStandard": "stdcpp23", "WarningLevel": "Level4", "TreatWarningAsError": "true"}
+# The other metadata that could undermine C++23 with /W4 /WX, held to the values in use: CompileAs picks the language
 # (CompileAsC is /TC), DisableSpecificWarnings silences warnings (/wd), WarningVersion caps them (/Wv), and the external
 # warning level could lower warnings for headers. Absent is allowed only where it means the default.
 ALLOWED_METADATA = {"CompileAs": {"Default", "CompileAsCpp"}, "DisableSpecificWarnings": {None, ""},
@@ -61,7 +61,7 @@ REVIEWED_OFFICE_UNITS = frozenset({
     # Conversion features and their settings (Recto's built-in engines, foundation plan section 2 and SPEC 9.5, 9.7).
     "3-mode PDF to Word (Flowing, Exact, Continuous), PDF to Excel, PDF to HTML5",
     "3-mode PDF to Word, PDF to Excel/Data, PDF to Web/Docs, PDF to and from images, searchable PDF (OCR), 100% native"
-    " C++20 Office, HTML, Markdown, XPS and SVG to PDF",
+    " C++23 Office, HTML, Markdown, XPS and SVG to PDF",
     "Converted 86 pages to Word",
     "Default Office to PDF page setup",
     "Default Office to PDF page setupUsed when converting Word, Excel and PowerPoint files",  # two inline spans
@@ -407,7 +407,7 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                 self.assertIsNone(office_dependency(markup))
 
     @unittest.skipUnless(sys.platform == "win32", "the C++ build and MSBuild are Windows-only (foundation plan D15)")
-    def test_every_module_compiles_as_cpp20_with_warnings_as_errors(self):
+    def test_every_module_compiles_as_cpp23_with_warnings_as_errors(self):
         # MSBuild itself evaluates each project, conditions included, and reports every source file's ClCompile
         # metadata at evaluation time, so a setting commented out, conditioned away or overridden per file fails, and
         # so does a switch in AdditionalOptions that would override it. Targets that rewrite flags during a build are

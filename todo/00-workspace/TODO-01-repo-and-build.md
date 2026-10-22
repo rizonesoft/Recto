@@ -9,9 +9,9 @@ track: M0
 
 # TODO-01 -- Repository, Native Engine Policy and Build Scaffold
 
-> **Goal:** Turn this folder into a building, CI-verified repository that satisfies M0 of the foundation plan: git initialized and pushed, `GPL-3.0-or-later` and contributor files in place, the native C++20 `recto-pdf` dependency policy established (zero MuPDF), the Visual Studio 2026 solution scaffold compiling for both x64 and ARM64 in one command, and reference benchmark machines recorded.
+> **Goal:** Turn this folder into a building, CI-verified repository that satisfies M0 of the foundation plan: git initialized and pushed, `GPL-3.0-or-later` and contributor files in place, the native C++23 `recto-pdf` dependency policy established (zero MuPDF), the Visual Studio 2026 solution scaffold compiling for both x64 and ARM64 in one command, and reference benchmark machines recorded.
 
-> **Current state:** Measured 2026-10-14. Sections §1 and §2 are verified in git history; on 2026-10-14 decisions D2, D3, D5, D7, D9, D10 and D12 were revised so Recto is licensed under `GPL-3.0-or-later` and builds its own native C++20 PDF engine (`recto-pdf` in `src/pdf`), built-in OCR (`Windows.Media.Ocr`), and native OpenXML converters instead of Artifex MuPDF. `Recto.sln` and `build.cmd` build the seven native C++20 projects (`recto-pdf`, `recto-core`, `recto-services`, `Recto`, `recto-cli`, `recto-tests`, `recto-fuzz`) across `Debug|x64`, `Release|x64`, `Debug|ARM64` and `Release|ARM64`.
+> **Current state:** Measured 2026-10-14. Sections §1 and §2 are verified in git history; on 2026-10-14 decisions D2, D3, D5, D7, D9, D10 and D12 were revised so Recto is licensed under `GPL-3.0-or-later` and builds its own native C++23 PDF engine (`recto-pdf` in `src/pdf`), built-in OCR (`Windows.Media.Ocr`), and native OpenXML converters instead of Artifex MuPDF. `Recto.sln` and `build.cmd` build the seven native C++23 projects (`recto-pdf`, `recto-core`, `recto-services`, `Recto`, `recto-cli`, `recto-tests`, `recto-fuzz`) across `Debug|x64`, `Release|x64`, `Debug|ARM64` and `Release|ARM64`. 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI references rewritten against `todo/10-ui/`.
 
 ## Inputs
 
@@ -19,6 +19,7 @@ track: M0
 - `design/SPEC.md` section 3.5 (`design/brand/github-banner.png` and `github-social-preview.png`) and `resources/README.md` (how `resources/` maps into `Package.appxmanifest`).
 - -> XREF: D00 T02 §3 -- the plan CI gate authored there runs beside the product CI workflow built in §4 here.
 - -> XREF: D99 T01 §2 -- the operator finishes the GitHub repo face (social preview upload, description, branch protection) once §1 here has pushed the initial tree.
+- -> XREF: D10 T01 §2 -- the WinUI scaffold built in §3 here is replaced by the Win32 `Recto.exe` host and the Windows App SDK pins are retired there.
 - -> XREF: D07 T02 §2 -- the `NOTICE.md` skeleton started in §1 here is completed and audited against the shipped dependency set before Store submission.
 
 ## Outcome
@@ -66,6 +67,7 @@ Initialize the repository (or verify the existing remote if already created), se
 
 **Test checkpoint:** in a fresh clone of the remote, `python scripts/todo-graph.py validate`, `python scripts/todo-graph.py plan --check` and `python -m unittest tests.scripts.test_todo_graph` all exit 0, and `LICENSE` is 35,149 bytes (`GPL-3.0`).
 
+> **Corrected 2026-10-22:** WinUI 3 is dropped for Recto's own UI toolkit `recto-ui` (foundation plan D4). The `.xaml` attribute and the Windows App SDK entry for `NOTICE.md` described here are superseded (`D10 T01 §2` retires the Windows App SDK and `D07 T02 §2` audits `NOTICE.md` without it); the stamp covers the section as built.
 > **Verified:** 2026-10-13 | §1 | 25ac228f91ce0b778fe49565da5ae1b551242d5b
 > **Review:** `docs/reviews/d00-t01-s1.json`
 
@@ -125,6 +127,8 @@ Create `Recto.sln`, `Directory.Build.props`, `Directory.Build.targets`, `vcpkg.j
 
 > **Verified:** 2026-10-14 | §3 | 5e3d9a687e2e23cb900032a929f1c280757ac6f0
 > **Review:** `docs/reviews/d00-t01-s3.json`
+
+> **Corrected 2026-10-22:** WinUI 3 is dropped for Recto's own UI toolkit `recto-ui` (foundation plan D4). The WinUI scaffold this section built in `src/app/` is replaced by `D10 T01 §2`; the stamp covers the scaffold as built.
 
 ## 4. Build CI for x64 and ARM64
 

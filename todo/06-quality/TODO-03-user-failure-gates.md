@@ -10,7 +10,7 @@ title: "TODO-03 -- User-Reported Failure Class Gates"
 
 > **Goal:** Every failure class that users of PDF tools hit hardest has a Recto gate that fails before the bug can ship: hostile-input and recovered-error fixtures in the engine, a differential proof that every consumer reads content the same way, fault-injected saves, provably complete redaction, Unicode authoring round trips, UI glyph coverage, a printer driver matrix, render and text fidelity fixtures, and a clean-machine smoke of the installed artifacts. The gates test behaviour owned by other sections; a failing gate is fixed in its owner, never by loosening the gate.
 
-> **Current state:** Measured 2026-10-20. No Recto section yet names these failure classes as test fixtures. `tests/corpus/broken/` (`D00 T03 §4`) holds generic malformed files, `D06 T01` holds goldens, text tables, round trips and performance, and `D06 T02` holds the hostile-input audit and fuzzing; none of them carries the failure classes this file lists (split `/Contents`, inline `EI`, silent truncation, save-before-verify, redaction side channels, `?` substitution, single-probe font fallback, printer enumeration hangs, nearest-neighbour shrink, packaged-model gaps).
+> **Current state:** Measured 2026-10-20. No Recto section yet names these failure classes as test fixtures. `tests/corpus/broken/` (`D00 T03 §4`) holds generic malformed files, `D06 T01` holds goldens, text tables, round trips and performance, and `D06 T02` holds the hostile-input audit and fuzzing; none of them carries the failure classes this file lists (split `/Contents`, inline `EI`, silent truncation, save-before-verify, redaction side channels, `?` substitution, single-probe font fallback, printer enumeration hangs, nearest-neighbour shrink, packaged-model gaps). 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI references rewritten against `todo/10-ui/`.
 
 ## Inputs
 
@@ -28,6 +28,9 @@ title: "TODO-03 -- User-Reported Failure Class Gates"
 - -> XREF: D03 T04 §9 -- Edit PDF's removal edits and orphan pruning are proven by this suite.
 - -> XREF: D04 T05 §15 -- the Reading Order engine (D04 T05 §15) is a consumer in this differential suite.
 - -> XREF: D04 T06 §16 -- print production's ink hook (D04 T06 §16) is checked by this suite.
+- -> XREF: D10 T02 §20 -- the `ui::InfoBar` that §3 here builds `RecoveredContentNotice` on.
+- -> XREF: D10 T03 §7 -- the `ui::Strings` tables whose code points §8 here checks for glyph coverage.
+- -> XREF: D10 T01 §11 -- `ui::Icon` and the text elements whose fallback §8 here asserts.
 
 ## Outcome
 
@@ -47,8 +50,8 @@ title: "TODO-03 -- User-Reported Failure Class Gates"
 | 1 | §1 | Hostile-input fixture pack from user-reported failure classes | D01 T02 §4, D01 T03 §4 | [ ] |
 | 2 | §2 | Recovered-error and truncation contract in `recto-pdf` results | §1 | [ ] |
 | 3 | §10 | Render fidelity fixtures from user-reported failure classes | D06 T01 §1, §1 | [ ] |
-| 4 | §3 | Page notice for recovered or truncated content | §2, D02 T02 §4 | [ ] |
-| 5 | §8 | UI glyph coverage, non-Latin file names and input conventions suite | D02 T01 §3, D02 T03 §1, D02 T03 §5, D02 T02 §6 | [ ] |
+| 4 | §3 | Page notice for recovered or truncated content | §2, D02 T02 §4, D10 T01 §8, D10 T02 §20 | [ ] |
+| 5 | §8 | UI glyph coverage, non-Latin file names and input conventions suite | D02 T01 §3, D02 T03 §1, D02 T03 §5, D02 T02 §6, D10 T01 §10, D10 T01 §11, D10 T03 §7 | [ ] |
 | 6 | §11 | Text extraction, reading order and selection fidelity fixtures | D06 T01 §3, D03 T01 §3, D03 T01 §5, §2 | [ ] |
 | 7 | §4 | Single-interpreter differential suite across every content consumer | §1, D03 T01 §9, D05 T01 §10 | [ ] |
 | 8 | §5 | Save integrity fault-injection suite | D04 T02 §1, D02 T01 §8 | [ ] |
@@ -113,17 +116,17 @@ Users cannot tell a broken file from a broken viewer. When a visible page carrie
 **Needs:** windows-host, display-session
 **Surface:** yes
 
-**Fidelity:** Genuinely new surface: no SPEC screenshot shows it. It follows `design/SPEC.md` section 9.2 (page loading states) and section 4 tokens, using a stock WinUI `InfoBar` (`Severity=Informational`) in the page overlay slot.
+**Fidelity:** Genuinely new surface: no SPEC screenshot shows it. It follows `design/SPEC.md` section 9.2 (page loading states) and section 4 tokens, using a `ui::InfoBar` (`D10 T02 §20`, informational severity) in the page overlay slot.
 **Job:** A reader opening a damaged PDF sees which page lost content and why, and can copy the details into an issue. Consumer: the reader and the `D07 T03 §2` diagnostics copy.
-**Treatment:** One `InfoBar` per page that has notes, collapsed to one line, expanding to the note list. Cheaper substitute that fails the checkpoint: a log-only record or a modal error dialog.
-**Chrome:** Stock `InfoBar`, `RectoColors.xaml` brushes, Fluent UI System Icons (`RectoIcons`: `info`); no new colours or glyph fonts.
+**Treatment:** One `ui::InfoBar` per page that has notes, collapsed to one line, expanding to the note list. Cheaper substitute that fails the checkpoint: a log-only record or a modal error dialog.
+**Chrome:** `ui::InfoBar`, `Recto*Brush` tokens from `recto_tokens.g.h` (`D10 T01 §8`), Fluent UI System Icons (`RectoIcons`: `info`); no new colours or glyph fonts.
 
 **Build order:**
 
-1. Add `RecoveredContentNotice` in `src/app/controls/RecoveredContentNotice.xaml/.h/.cpp`, bound to the visible page's `RecoveryNotes`. Done when: the bad-`/Kids` fixture shows one notice and a clean corpus file shows none.
+1. Add `RecoveredContentNotice` in `src/app/controls/RecoveredContentNotice.h/.cpp`, bound to the visible page's `RecoveryNotes`. Done when: the bad-`/Kids` fixture shows one notice and a clean corpus file shows none.
 2. Wire `Copy details` to the clipboard through a formatter local to the control (`D07 T03 §2` later reuses it for `Report a problem`). Done when: the clipboard text names the page, note kinds, counts and Recto version, and no document text.
 
-- [ ] Author `src/app/controls/RecoveredContentNotice.xaml/.h/.cpp` as a stock `InfoBar` with title "Some content on this page could not be read" and a note list. Done when: the control renders in Light, Dark and HighContrast with token brushes only. Cheaper substitute: a toast that disappears before the user reads it.
+- [ ] Author `src/app/controls/RecoveredContentNotice.h/.cpp` as a `ui::InfoBar` with title "Some content on this page could not be read" and a note list. Done when: the control renders in Light, Dark and HighContrast with token brushes only. Cheaper substitute: a toast that disappears before the user reads it.
 - [ ] Show the notice only for pages whose `RecoveryNotes` are non-empty, keyed per page so scrolling does not re-announce it. Done when: scrolling a 200-page clean file shows zero notices.
 - [ ] Add `Copy details` writing page index, note kinds, counts and the version string (no document text) to the clipboard. Done when: the copied text contains no glyph text from the page.
 - [ ] Give the notice an automation name, keep it out of the tab order when collapsed, and announce it politely once per page. Done when: Narrator reads it once when the page becomes current.
@@ -241,10 +244,10 @@ A common interface failure is boxes for Chinese, Thai, Korean, Hebrew and Arabic
 
 **Build order:**
 
-1. Author `tests/recto-tests/ui_glyph_coverage.cpp` using DirectWrite font fallback (`IDWriteFontFallback::MapCharacters`) to resolve every code point of every string in `src/app/Strings/*/Resources.resw` and of a non-Latin file-name list. Done when: the test lists zero unmapped code points.
+1. Author `tests/recto-tests/ui_glyph_coverage.cpp` using DirectWrite font fallback (`IDWriteFontFallback::MapCharacters`) to resolve every code point of every string in the `STRINGTABLE` resources under `src/app/strings/` loaded by `ui::Strings` (`D10 T03 §7`) and of a non-Latin file-name list. Done when: the test lists zero unmapped code points.
 2. Open fixtures named in Simplified and Traditional Chinese, Japanese, Korean, Thai, Hebrew, Arabic, Devanagari and with emoji, and capture the tab, title bar, recent list and outline panel. Done when: no capture contains a `.notdef` box.
 
-- [ ] Assert UI fallback is resolved per code point through DirectWrite, never by a single probe character, and that no XAML style hard-codes a Latin-only font family. Done when: a source scan finds no hard-coded font file path in `src/app`.
+- [ ] Assert UI fallback is resolved per code point through DirectWrite, never by a single probe character, and that no `ui::TextStyle` hard-codes a Latin-only font family and that every glyph is drawn through `ui::Icon` or `ui::TextBlock` (`D10 T01 §11`, `§10`). Done when: a source scan finds no hard-coded font file path in `src/app`.
 - [ ] Assert non-Latin file names round-trip through `RecentFilesStore` as wide paths and reopen. Done when: the recent list reopens every fixture.
 - [ ] Assert outline titles decode PDFDocEncoding, UTF-16BE and UTF-16LE with BOM and UTF-8 with BOM without `U+FFFD`. Done when: the outline fixture shows the expected titles.
 - [ ] Assert wheel scrolling honours the Windows "lines to scroll" setting and precision-touchpad deltas pass through without a second easing layer. Done when: a synthetic wheel notch moves the viewport by the system line count times the line height.

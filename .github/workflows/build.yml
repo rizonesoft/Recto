@@ -1,6 +1,6 @@
 name: build
 
-# Product build and test gate (D00 T01 §4): builds all seven C++20 modules
+# Product build and test gate (D00 T01 §4): builds all seven C++23 modules
 # across Debug|x64, Release|x64, Debug|ARM64, and Release|ARM64 with
 # /W4 /WX (/p:TreatWarningsAsErrors=true) and runs recto-tests on x64.
 

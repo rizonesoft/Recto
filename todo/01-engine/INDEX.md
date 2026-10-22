@@ -2,7 +2,7 @@
 
 > **Phase 1 (M1 Engine core)**
 
-Recto's native C++20 PDF engine (`recto-pdf` in `src/pdf`) and concurrency runtime (`recto-core` in `src/core`): PDF 1.7 and 2.0 lexer, XRef tables and streams, damaged-file recovery, stream filters, Windows CNG `bcrypt.dll` decryption, content-stream interpreter, DirectWrite font loader, immutable `DisplayList`s, document actors, parallel tile rendering, `recto-cli`, libFuzzer targets, and the thread-safety proof. This is the frozen domain: every file is `frozen: true` because it establishes or guards the foundation plan section 4 contract.
+Recto's native C++23 PDF engine (`recto-pdf` in `src/pdf`) and concurrency runtime (`recto-core` in `src/core`): PDF 1.7 and 2.0 lexer, XRef tables and streams, damaged-file recovery, stream filters, Windows CNG `bcrypt.dll` decryption, content-stream interpreter, DirectWrite font loader, immutable `DisplayList`s, document actors, parallel tile rendering, `recto-cli`, libFuzzer targets, and the thread-safety proof. This is the frozen domain: every file is `frozen: true` because it establishes or guards the foundation plan section 4 contract.
 
 ## TODOs
 

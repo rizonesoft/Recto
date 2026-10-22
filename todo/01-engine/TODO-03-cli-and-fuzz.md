@@ -67,7 +67,7 @@ Implement the extensible command dispatcher and `info` command in `src/cli/main.
 **Phase:** 1
 **Needs:** windows-host
 **Surface:** no
-**Freeze check:** Verify that `recto-cli` drives `recto-core` (`Runtime`, `DocumentHandle` / `DocumentActor`) through its public C++20 headers rather than calling `recto-pdf` single-threaded internals directly.
+**Freeze check:** Verify that `recto-cli` drives `recto-core` (`Runtime`, `DocumentHandle` / `DocumentActor`) through its public C++23 headers rather than calling `recto-pdf` single-threaded internals directly.
 
 **Build order:**
 

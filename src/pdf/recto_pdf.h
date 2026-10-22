@@ -1,4 +1,4 @@
-// Recto PDF engine (recto-pdf): native C++20 PDF 1.7 / 2.0 parser, filter
+// Recto PDF engine (recto-pdf): native C++23 PDF 1.7 / 2.0 parser, filter
 // pipeline, decryptor, content-stream interpreter, display-list builder,
 // structured text extractor, and writer/organizer (foundation plan 3.1,
 // section 4).

@@ -2,7 +2,7 @@
 
 > **Phase 0 (M0 Repository and build)**
 
-The git repository, the GPL-3.0 repo-face files, the native C++20 `recto-pdf` and solution scaffold, this TODO system, and the test backbone every later domain builds on. Nothing here ships to users; everything later depends on it being boring and green.
+The git repository, the GPL-3.0 repo-face files, the native C++23 `recto-pdf` and solution scaffold, this TODO system, and the test backbone every later domain builds on. Nothing here ships to users; everything later depends on it being boring and green.
 
 ## TODOs
 

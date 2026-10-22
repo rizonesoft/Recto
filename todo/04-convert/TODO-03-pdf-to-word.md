@@ -9,13 +9,13 @@ track: M5
 
 # TODO-03 -- PDF to Word (DOCX and RTF): 3-Mode Native OpenXML/RTF Writer and Quality Review
 
-> **Goal:** Build Recto's own native C++20 `PDF -> Word (.docx & .rtf)` converters (`DocxWriter` in `src/core/docx_writer.cpp` and `RtfWriter` in `src/core/rtf_writer.cpp`) with three reconstruction modes (**Flowing** editable paragraphs/lists/tables/columns, **Exact** fixed-position frames for brochures/forms, and **Continuous** single-stream layout), orthogonal-line + aligned-grid table reconstruction, font embedding/mapping, image DPI controls, and automatic OCR for scanned pages and vector-outlined text, then evaluate and tune reconstruction quality across the foundation plan's 20-document corpus.
+> **Goal:** Build Recto's own native C++23 `PDF -> Word (.docx & .rtf)` converters (`DocxWriter` in `src/core/docx_writer.cpp` and `RtfWriter` in `src/core/rtf_writer.cpp`) with three reconstruction modes (**Flowing** editable paragraphs/lists/tables/columns, **Exact** fixed-position frames for brochures/forms, and **Continuous** single-stream layout), orthogonal-line + aligned-grid table reconstruction, font embedding/mapping, image DPI controls, and automatic OCR for scanned pages and vector-outlined text, then evaluate and tune reconstruction quality across the foundation plan's 20-document corpus.
 
-> **Current state:** Measured 2026-10-14. No DOCX or RTF writer exists yet. Recto owns the entire `PDF -> DOCX / RTF` pipeline in-house in C++20: `D01` provides vector paths, fonts and image XObjects, `D03 T01` provides `PageText` (`§1`) and `OcrPipeline` (`§8`, including vector-outlined text OCR), and `D04 T02` provides `AtomicFileWriter` (`§1`), `Flate` compression (`§2`), and `TableExtractor` (`§8`).
+> **Current state:** Measured 2026-10-14. No DOCX or RTF writer exists yet. Recto owns the entire `PDF -> DOCX / RTF` pipeline in-house in C++23: `D01` provides vector paths, fonts and image XObjects, `D03 T01` provides `PageText` (`§1`) and `OcrPipeline` (`§8`, including vector-outlined text OCR), and `D04 T02` provides `AtomicFileWriter` (`§1`), `Flate` compression (`§2`), and `TableExtractor` (`§8`). 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI sections rewritten against `todo/10-ui/`.
 
 ## Inputs
 
-- `docs/plans/2026-10-13-recto-foundation.md` sections 1 (D7), 5 (`PDF -> Word (.docx & .rtf)` row: native C++20 `DocxWriter` and `RtfWriter` with Flowing, Exact, and Continuous modes), 7 (M5 done-when), 11 (20-document PDF -> Word test corpus).
+- `docs/plans/2026-10-13-recto-foundation.md` sections 1 (D7), 5 (`PDF -> Word (.docx & .rtf)` row: native C++23 `DocxWriter` and `RtfWriter` with Flowing, Exact, and Continuous modes), 7 (M5 done-when), 11 (20-document PDF -> Word test corpus).
 - `design/SPEC.md` sections 2 (Principle 4: `"Honest conversion. Say what a conversion is good at and what it is not (PDF to Word works best on text documents)"`), 9.5 (Word document `.docx`/`.rtf` card, Step 3 options including `Flowing` / `Exact` / `Continuous` mode selector, table detection, image handling, OCR for scanned and vector-outlined text, hint text), and `design/screenshots/explorations/B-Convert.png`.
 - ECMA-376 WordprocessingML (`[Content_Types].xml`, `_rels/.rels`, `word/document.xml`, `word/styles.xml`, `word/numbering.xml`, `word/header*.xml`, `word/footer*.xml`, `word/_rels/document.xml.rels`, `word/media/*`) and Rich Text Format (RTF 1.9.1) specification.
 - -> XREF: D02 T04 §5 -- the `Default PDF to Word reconstruction mode` row in Settings (`D02 T04 §5`) seeds §2 and §5's default mode (`Flowing`, `Exact`, or `Continuous`).
@@ -24,12 +24,14 @@ track: M5
 - -> XREF: D04 T01 §4 -- plugs into the Convert page's **Word document** card, Step 3 options (`explorations/B-Convert.png`), and `ConversionRunner`.
 - -> XREF: D04 T02 §1 -- `zip_archive.cpp` (§1) and `DocxWriter`/`RtfWriter` commit output packages through `D04 T02 §1`'s `AtomicFileWriter`.
 - -> XREF: D04 T02 §8 -- `DocxWriter` (§3) and `RtfWriter` (§4) consume `TableExtractor` grids from `D04 T02 §8`.
-- -> XREF: D04 T04 §1 -- `office_to_pdf.cpp` (`D04 T04 §1`) shares the C++20 `zip_archive.h/.cpp` reader/writer built in §1 here.
+- -> XREF: D04 T04 §1 -- `office_to_pdf.cpp` (`D04 T04 §1`) shares the C++23 `zip_archive.h/.cpp` reader/writer built in §1 here.
 - -> XREF: D04 T05 §1 -- `XlsxWriter` (`D04 T05 §1`) and `WebDocWriter` (`D04 T05 §4` EPUB 3) share the `zip_archive.h/.cpp` reader/writer built in §1 here.
 - -> XREF: D06 T01 §6 -- `RoundTrips.DocumentsAndSecurity` (`D06 T01 §6`) exercises `DocxWriter` (`§2`, `§3`) and `RtfWriter` (`§4`) built here.
 - -> XREF: D07 T02 §4 -- the local diagnostic crash-report `.zip` bundler (`D07 T02 §4`) reuses `zip_archive.h/.cpp` built in §1 here.
 - -> XREF: D04 T04 §8 -- ZIP reader.
 - -> XREF: D03 T03 §28 -- DocxWriter write_blocks.
+- -> XREF: D10 T01 §8 -- the Word Step 3 options control reads the generated `recto_tokens.g.h` tokens.
+- -> XREF: D10 T02 §18 -- the reconstruction mode selector is a `ui::SegmentedControl`.
 
 ## Outcome
 
@@ -42,23 +44,23 @@ track: M5
 
 **Adjacency:** all=not-applicable (converter engines and their quality evaluation inside `D04 T01`'s Convert frame; queue, notifications, and settings belong to `D04 T01` and `D02 T04 §5`)
 
-**Adjacency rationale:** The Word document card, Step 3 options panel, queue entry, and completion toast all live inside `D04 T01`'s Convert page and `ConversionRunner`. This file owns the C++20 ZIP package layer, the `.docx` and `.rtf` generators, and the 20-document M5 quality gate.
+**Adjacency rationale:** The Word document card, Step 3 options panel, queue entry, and completion toast all live inside `D04 T01`'s Convert page and `ConversionRunner`. This file owns the C++23 ZIP package layer, the `.docx` and `.rtf` generators, and the 20-document M5 quality gate.
 
 ## Implementation Order
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | C++20 ZIP archive reader/writer (`zip_archive.cpp`) and ECMA-376 OpenXML scaffold | D04 T02 §1, D04 T02 §2 | [ ] |
+| 1 | §1 | C++23 ZIP archive reader/writer (`zip_archive.cpp`) and ECMA-376 OpenXML scaffold | D04 T02 §1, D04 T02 §2 | [ ] |
 | 2 | §2 | `DocxWriter` **Flowing** and **Continuous** layout engines (paragraphs, lists, `w:cols`) | §1, §7, D03 T01 §1, D03 T01 §8 | [ ] |
 | 3 | §3 | `DocxWriter` **Exact** frame mode, `w:tbl` table reconstruction, images & `pdf-to-docx` | §2, D04 T02 §8 | [ ] |
 | 4 | §4 | Native RTF 1.9.1 writer (`rtf_writer.cpp`: `Flowing`, `Exact` frames, `\trowd` tables) | §3, D04 T04 §1 | [ ] |
-| 5 | §5 | Convert page **Word document (`.docx` & `.rtf`)** card and Step 3 UI (`B-Convert.png`) | §4, D04 T01 §4, D02 T04 §5 | [ ] |
+| 5 | §5 | Convert page **Word document (`.docx` & `.rtf`)** card and Step 3 UI (`B-Convert.png`) | §4, D04 T01 §4, D02 T04 §5, D10 T02 §2, D10 T02 §3, D10 T02 §18 | [ ] |
 | 6 | §7 | 20-document PDF -> Word evaluation corpus, assembled before M5 | D00 T03 §3 | [ ] |
 | 7 | §6 | Foundation plan section 11 **20-document PDF -> Word quality review** and layout tuning | §5, §7, D04 T04 §1 | [ ] |
 
-## 1. C++20 ZIP archive reader/writer (`zip_archive.cpp`) and ECMA-376 OpenXML scaffold
+## 1. C++23 ZIP archive reader/writer (`zip_archive.cpp`) and ECMA-376 OpenXML scaffold
 
-Implement `src/core/zip_archive.h` and `src/core/zip_archive.cpp` in `recto-core`: a self-contained C++20 PKZIP reader and writer using `recto-pdf`'s RFC 1951 raw deflate codec and IEEE 802.3 CRC-32 (shared across `.docx` here, `.xps` in `D04 T02 §4`, `.docx`/`.xlsx`/`.pptx` reader in `D04 T04 §1`, and `.xlsx`/`.epub` in `D04 T05`), enforcing a `256 MB` decompression-bomb cap and path-traversal (`..`) rejection when reading untrusted archives, plus the ECMA-376 OpenXML package builder (`[Content_Types].xml`, `_rels/.rels`, XML escaping helpers, and `AtomicFileWriter` commit).
+Implement `src/core/zip_archive.h` and `src/core/zip_archive.cpp` in `recto-core`: a self-contained C++23 PKZIP reader and writer using `recto-pdf`'s RFC 1951 raw deflate codec and IEEE 802.3 CRC-32 (shared across `.docx` here, `.xps` in `D04 T02 §4`, `.docx`/`.xlsx`/`.pptx` reader in `D04 T04 §1`, and `.xlsx`/`.epub` in `D04 T05`), enforcing a `256 MB` decompression-bomb cap and path-traversal (`..`) rejection when reading untrusted archives, plus the ECMA-376 OpenXML package builder (`[Content_Types].xml`, `_rels/.rels`, XML escaping helpers, and `AtomicFileWriter` commit).
 
 **Phase:** 5
 **Needs:** windows-host
@@ -76,7 +78,7 @@ Implement `src/core/zip_archive.h` and `src/core/zip_archive.cpp` in `recto-core
 - [ ] Implement `OpenXmlPackageBuilder` assembling `[Content_Types].xml`, `_rels/.rels`, and part-level `_rels/<part>.rels` with sequential `rId1..rIdN` relationship allocation. Done when: `OpenXmlPackageBuilder` serializes deterministic relationship tables.
 - [ ] Add `ZipArchive.*` unit tests in `tests/recto-tests/zip_archive_tests.cpp`. Done when: `recto-tests.exe --gtest_filter=ZipArchive.*` passes under ASan.
 
-- [ ] Commit: c++20 ZIP archive reader/writer (`src/core/zip_archive.cpp`) and ECMA-376 OpenXML package scaffold
+- [ ] Commit: C++23 ZIP archive reader/writer (`src/core/zip_archive.cpp`) and ECMA-376 OpenXML package scaffold
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=ZipArchive.*` passes under ASan.
 
@@ -152,13 +154,13 @@ Implement `src/core/rtf_writer.h/.cpp` (`recto::core::RtfWriter`) and `recto-cli
 - [ ] Emit native RTF tables (`\trowd\trgaph108`, cumulative right-edge `\cellx<twips>` definitions, `\clmgf`/`\clmrg` horizontal merges, `\clvmgf`/`\clvmrg` vertical merges, `\clbrdrt`/`\clbrdrb`/`\clbrdrl`/`\clbrdrr` borders, `\clcbpat` cell shading, `\intbl ... \cell`, `\row`). Done when: `RtfWriter.TablesWithMerges` converts a bordered and borderless table PDF into valid RTF table rows.
 - [ ] Embed page images as `\pict\pngblip\picw<px>\pich<px>\picwgoal<twips>\pichgoal<twips> <lowercase_hex>` or `\jpegblip` groups and commit output via `AtomicFileWriter` (`D04 T02 §1`). Done when: `RtfWriter.EmbeddedImages` embeds PNG and JPEG images cleanly.
 - [ ] Implement `recto-cli pdf-to-rtf <in.pdf> --out <out.rtf> [--mode flowing|exact|continuous] [--pages <range>] [--ocr]` in `src/cli/cmd_pdf_to_rtf.cpp` and add `RtfWriter.*` tests. Done when: `recto-tests.exe --gtest_filter=RtfWriter.*:Cli.PdfToRtf` passes under ASan.
-- [ ] Commit: `convert: implement 3-mode native C++20 DocxWriter and RtfWriter with table reconstruction`
+- [ ] Commit: `convert: implement 3-mode native C++23 DocxWriter and RtfWriter with table reconstruction`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=DocxWriter.*:RtfWriter.*:Cli.PdfToDocx:Cli.PdfToRtf` passes under ASan.
 
 ## 5. Convert page **Word document (`.docx` & `.rtf`)** card and Step 3 UI (`B-Convert.png`)
 
-Register the **Word document (`.docx` & `.rtf`)** card and build its Step 3 options control (`src/app/views/convert/WordConvertOptionsControl.xaml/.cpp`, `SPEC 9.5` and `design/screenshots/explorations/B-Convert.png`): output format selector (`Word Document (.docx)` | `Rich Text Format (.rtf)`), reconstruction mode radio/segmented selector (`Flowing -- Editable paragraphs, lists & tables`, `Exact -- Fixed-position frames matching page layout`, `Continuous -- Single continuous stream`), seeded from Settings `Default PDF to Word reconstruction mode` (`D02 T04 §5`), plus toggles for `Detect and reconstruct tables`, `Include images and graphics`, and `Recognize text (OCR) on scanned pages & vector outlines`, page range, save location, file-exists policy, and the SPEC Principle 4 honest capability hint line.
+Register the **Word document (`.docx` & `.rtf`)** card and build its Step 3 options control (`src/app/views/convert/word_convert_options_control.h/.cpp`, `SPEC 9.5` and `design/screenshots/explorations/B-Convert.png`): output format selector (`Word Document (.docx)` | `Rich Text Format (.rtf)`), reconstruction mode `ui::SegmentedControl` (`Flowing -- Editable paragraphs, lists & tables`, `Exact -- Fixed-position frames matching page layout`, `Continuous -- Single continuous stream`), seeded from Settings `Default PDF to Word reconstruction mode` (`D02 T04 §5`), plus toggles for `Detect and reconstruct tables`, `Include images and graphics`, and `Recognize text (OCR) on scanned pages & vector outlines`, page range, save location, file-exists policy, and the SPEC Principle 4 honest capability hint line.
 
 **Phase:** 5
 **Needs:** windows-host, display-session
@@ -171,11 +173,11 @@ Register the **Word document (`.docx` & `.rtf`)** card and build its Step 3 opti
 
 **Build order:**
 
-1. Implement `WordConvertOptionsViewModel` and `WordConvertOptionsControl.xaml/.cpp` matching `SPEC 9.5` and `explorations/B-Convert.png`, and register the **Word document** card in `ConverterRegistry` (`D04 T01 §3`). Done when: selecting the **Word document** card displays the exact Step 3 options from `B-Convert.png` with the default reconstruction mode seeded from Settings (`D02 T04 §5`).
+1. Implement `WordConvertOptionsViewModel` and `word_convert_options_control.h/.cpp` matching `SPEC 9.5` and `explorations/B-Convert.png`, and register the **Word document** card in `ConverterRegistry` (`D04 T01 §3`). Done when: selecting the **Word document** card displays the exact Step 3 options from `B-Convert.png` with the default reconstruction mode seeded from Settings (`D02 T04 §5`).
 2. Wire job submission for `.docx` and `.rtf` into `ConversionRunner` (`D04 T01 §1`) and verify progress, completion notifications (`D04 T01 §6`), and cancellation. Done when: `AppTests.ConvertWordUi` runs both `.docx` (`Flowing` and `Exact`) and `.rtf` jobs through the queue and verifies screenshot parity with `explorations/B-Convert.png`.
 
 - [ ] Implement `WordConvertOptionsViewModel` in `src/services/word_convert_options_view_model.h/.cpp` exposing `OutputFormat` (`Docx`, `Rtf`), `ReconstructionMode` (`Flowing`, `Exact`, `Continuous`, initialized from `SettingsModel::default_pdf_to_word_mode()` in `D02 T04 §5`), `ReconstructTables` (`true`), `IncludeImages` (`true`), and `OcrScannedAndVectorOutlines` (`true`). Done when: changing the default mode in Settings updates the initial selection for new Word conversion sessions.
-- [ ] Build `WordConvertOptionsControl` (`src/app/views/convert/WordConvertOptionsControl.xaml/.cpp`) matching `explorations/B-Convert.png` with accessible labels, tooltips, and keyboard navigation (`D03 T02 §3`). Done when: `WordConvertOptionsControl` visual layout matches `explorations/B-Convert.png`. Cheaper substitute that fails the checkpoint: hard-coding `Flowing` `.docx` only with no mode or `.rtf` selector in Step 3.
+- [ ] Build `WordConvertOptionsControl` (`src/app/views/convert/word_convert_options_control.h/.cpp`) matching `explorations/B-Convert.png` with accessible labels, tooltips, and keyboard navigation (`D03 T02 §3`). Done when: `WordConvertOptionsControl` visual layout matches `explorations/B-Convert.png`. Cheaper substitute that fails the checkpoint: hard-coding `Flowing` `.docx` only with no mode or `.rtf` selector in Step 3.
 - [ ] Display the SPEC Principle 4 honest capability hint line (`"PDF to Word works best on text documents and reports. Use Exact mode for complex brochures or forms; scanned pages use built-in Windows OCR."`). Done when: the hint text is visible in Step 3 and exposed to screen readers.
 - [ ] Update the primary action button label dynamically (`"Convert to Word (.docx)"` or `"Convert to Rich Text (.rtf)"`) and enqueue a `ConversionJob` invoking `DocxWriter` or `RtfWriter` on click. Done when: clicking the primary button starts the background job and updates `QueueCard`.
 - [ ] Verify that `Open file` on a completed `.docx` or `.rtf` job in `QueueCard` / toast (`D04 T01 §6`) launches the system `.docx`/`.rtf` handler (or opens in Recto if requested). Done when: `AppTests.ConvertWordUi` verifies job completion and output validity.

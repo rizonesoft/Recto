@@ -297,7 +297,7 @@ def github_social_preview(text):
     wm, _ = text.path("serif", "Recto", 132, 196, 236, D["text"], SERIF_DISPLAY, tracking_em=-1 / 48)
     l1, _ = text.path("serif", "Open-source PDF viewer and", 40, 80, 322, D["text"], SERIF_TEXT)
     l2, _ = text.path("serif", "converter for Windows.", 40, 80, 370, D["text"], SERIF_TEXT)
-    sub, _ = text.path("ui", "Free, offline by default. Native C++20 from engine to UI.", 20, 80, 420, D["textSecondary"])
+    sub, _ = text.path("ui", "Free, offline by default. Native C++ from engine to UI.", 20, 80, 420, D["textSecondary"])
     link, _ = text.path("ui", REPOSITORY, 20, 80, 536, D["accentText"])
     return w, h, (f'<rect width="{w}" height="{h}" fill="{D["window"]}"/>' + window_sketch(700, 96, 640, 600)
                   + ribbon(80, 36, 112, D["accent"]) + icon + wm + l1 + l2 + sub + chips_row(text, 80, 446) + link)

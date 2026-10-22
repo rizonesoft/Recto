@@ -10,7 +10,7 @@ track: M1
 
 # TODO-01 -- Native PDF Parser, Filters, Crypto and Document Model
 
-> **Goal:** Build the parser, stream-filter, decryption and document-model half of `recto-pdf` (`src/pdf`, C++20): `PdfResult<T>` and the D16 diagnostic ring buffer, the `PdfValue` object graph, a binary-safe PDF 1.7 and 2.0 lexer and bounded recursive-descent indirect object parser, classic `xref` tables, compressed `/Type /XRef` and `/Type /ObjStm` streams (`PDF 1.5+`), incremental updates and damaged-file linear object recovery, the full stream filter pipeline (`FlateDecode`, `PngPredictor`, `LZWDecode`, `ASCII85Decode`, `ASCIIHexDecode`, `RunLengthDecode`, `CCITTFaxDecode`, `JBIG2Decode`, `DCTDecode` and `JPXDecode` via WIC), Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via Windows CNG `bcrypt.dll`), and the `pdf::Document` page-tree, metadata, outline and link model.
+> **Goal:** Build the parser, stream-filter, decryption and document-model half of `recto-pdf` (`src/pdf`, C++23): `PdfResult<T>` and the D16 diagnostic ring buffer, the `PdfValue` object graph, a binary-safe PDF 1.7 and 2.0 lexer and bounded recursive-descent indirect object parser, classic `xref` tables, compressed `/Type /XRef` and `/Type /ObjStm` streams (`PDF 1.5+`), incremental updates and damaged-file linear object recovery, the full stream filter pipeline (`FlateDecode`, `PngPredictor`, `LZWDecode`, `ASCII85Decode`, `ASCIIHexDecode`, `RunLengthDecode`, `CCITTFaxDecode`, `JBIG2Decode`, `DCTDecode` and `JPXDecode` via WIC), Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via Windows CNG `bcrypt.dll`), and the `pdf::Document` page-tree, metadata, outline and link model.
 
 > **Current state:** Measured 2026-10-18. `src/pdf/recto-pdf.vcxproj` compiles the scaffold `recto::pdf::abi_version()` entry point (`src/pdf/pdf.cpp`, `src/pdf/recto_pdf.h`). `D00 T03` (`TODO-03-test-backbone.md`) is `done`, providing `tests/recto-tests/test_support.h`, the 39-file corpus in `tests/corpus/`, and the `-EnableASAN` build and CI job. No PDF parsing code exists yet.
 
@@ -30,9 +30,9 @@ track: M1
 - `recto::pdf::Document::open` parses valid and incrementally updated PDF 1.0 to 2.0 documents, reconstructs damaged XRef tables via the fallback object scanner, and returns typed `PdfError` values on corrupt or truncated inputs without throwing exceptions or leaking memory.
 - Every standard PDF stream filter (`FlateDecode`, predictors, `LZWDecode`, `ASCII85Decode`, `ASCIIHexDecode`, `RunLengthDecode`, `CCITTFaxDecode` Group 3/4, `JBIG2Decode`, `DCTDecode` JPEG, `JPXDecode` JPEG2000) decodes within enforced 256 MB byte ceilings.
 - Encrypted PDFs (`RC4` 40-128 bit, `AES-128` `R=4`, `AES-256` `R=5..6`) report `ErrorCode::NeedsPassword`, authenticate user and owner passwords via Windows CNG `bcrypt.dll`, and transparently decrypt indirect strings and streams.
-- Document description (page count, page boxes and rotations, metadata, security summary, font inventory, outline tree, page link annotations) is exposed in plain C++20 structs.
+- Document description (page count, page boxes and rotations, metadata, security summary, font inventory, outline tree, page link annotations) is exposed in plain C++23 structs.
 
-**Adjacency:** all=not-applicable (low-level C++20 PDF format parser and object model in `src/pdf`; all user surfaces live in domains 02 to 05 and 07)
+**Adjacency:** all=not-applicable (low-level C++23 PDF format parser and object model in `src/pdf`; all user surfaces live in domains 02 to 05 and 07)
 
 **Adjacency rationale:** `recto-pdf` has no UI, settings store or notification channel of its own. Its error diagnostics feed the D16 ring buffer and the viewer's `"Couldn't open this file -> Copy error details"` dialog owned by `D02 T01 §11`.
 

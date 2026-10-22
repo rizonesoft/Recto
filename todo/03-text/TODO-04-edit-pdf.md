@@ -12,8 +12,11 @@ title: "TODO-04 -- Edit PDF: Text, Image and Vector Object Editing"
 
 > **Current state:** Measured 2026-10-21. `src/pdf` holds the lexer, object model, filters, crypto, `display_list.cpp` and `document.cpp`; there is no content-stream editor, no object listing, no writer and no `src/app` document view yet. Recto's only text change today is content-stream Find and Replace (`D03 T01 §9`, planned), which rewrites matched `Tj` / `TJ` strings and cannot move, add, retype a paragraph or touch an image or path. `D06 T03 §4` makes the shared interpreter the only content reader, `D06 T03 §7` fixes the Unicode authoring rules and `D06 T03 §5` the save-integrity rules this file must satisfy. The corpus (`tests/corpus/text`, `scripts/build-corpus.py`) has no producer-idiom fixtures for editing.
 
+> 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); sections rewritten against `todo/10-ui/`. The Edit PDF bar, inline text editor, handles, menus and Appearance panel are `recto-ui` elements under `src/app/`; the inline editor reuses the `ui::TextBox` editing core and Text Services Framework store, and its text is exposed on the UIA provider tree of `D10 T03 §1`.
+
 ## Inputs
 
+- `docs/specs/2026-10-22-recto-ui-toolkit-design.md` sections 4.10, 4.11, 5 and 6 (the `recto-ui` toolkit that replaces WinUI 3, the WinUI-to-`recto-ui` mapping and the `todo/10-ui/` sections this file consumes).
 - `docs/plans/2026-10-13-recto-foundation.md` decisions D3, D9, D12 (native engine, zero PDF JavaScript, hostile input), D17 (one shell) and D18 (Acrobat Pro parity without weakening a Recto improvement).
 - The gates (editing text without destroying neighbours, font swaps, merged paragraphs): `D06 T03 §4`, `§5` and `§7`.
 - `design/SPEC.md` sections 8.2 (contextual mode bars and on-canvas selection), 9.9 (dialogs) and 10 (keyboard).
@@ -43,12 +46,16 @@ title: "TODO-04 -- Edit PDF: Text, Image and Vector Object Editing"
 - -> XREF: D02 T05 §16 -- staged edit session.
 - -> XREF: D01 T03 §10 -- edit verbs follow the registration rule.
 - -> XREF: D06 T04 §13 -- the `D-EditPdf.png` board and `design/SPEC.md` section 8.2.4 that §11, §12, §13, §17, §20, §27, §28 here build against.
+- -> XREF: D10 T02 §5 -- the Text Services Framework store of `ui::TextBox` gives the inline editor IME, dictation and touch keyboard input.
+- -> XREF: D10 T03 §3 -- `ui::TextRangeAdapter` exposes the inline editor's text to assistive technology.
+- -> XREF: D10 T01 §12 -- pointer and keyboard routing for object selection, handles and nudges.
 
 ## Outcome
 
 - A page opened in Edit PDF mode lists every text paragraph, image and path as an object with an identity that survives edits to other objects, and a retyped paragraph re-reads as exactly the typed text with unchanged neighbours.
 - Each text edit keeps the original embedded font for every glyph it contains and embeds a Unicode subset only for glyphs it lacks; an undrawable character is refused with its code point before anything changes.
 - Image and vector edits save into a copy in which the deleted or replaced occurrence is absent from the page content, and every resource with no remaining use (including its XObject, when no other occurrence or page uses it) is absent from the file bytes.
+- The Edit PDF bar, inline editor, handles, `ui::Menu` overflow and context menus, and the Appearance panel are `recto-ui` elements under `src/app/`, with the inline editor on the shared `ui::TextBox` core and Text Services Framework store.
 
 **Adjacency:** list=applicable @ D03 T04 §15; document=applicable @ D03 T04 §14; settings=not-applicable (no persistent edit setting exists; fonts, sizes and colours are chosen per edit); reporting=not-applicable (each edit reports its result inline in §11 and §15, with no cross-document report); notifications=applicable @ D03 T04 §11; permissions=applicable @ D03 T04 §11; audit=not-applicable (the undo journal is session-only and no edit history is stored in the PDF); exchange=applicable @ D03 T04 §15; reverse=applicable @ D03 T04 §3
 
@@ -68,24 +75,24 @@ title: "TODO-04 -- Edit PDF: Text, Image and Vector Object Editing"
 | 8 | §8 | Image objects: add, replace, move, resize, rotate, flip, crop and export | §3, D01 T01 §8, D04 T02 §5, D04 T02 §9 | [ ] |
 | 9 | §9 | Object removal, atomic marked content and full-rewrite save with orphan pruning | §3, §8, D06 T03 §5 | [ ] |
 | 10 | §10 | Vector objects: select, move, resize, rotate, flip, recolour, width and delete | §3, §9 | [ ] |
-| 11 | §11 | Edit PDF mode bar, object hit-testing and not-editable messages | §1, §2, D02 T02 §4, D03 T03 §3, D03 T01 §7, D06 T04 §13 | [ ] |
-| 12 | §12 | Inline on-canvas text editing with caret, selection and per-run formatting | §5, §6, §7, §11, D03 T01 §3, D06 T04 §13 | [ ] |
-| 13 | §13 | On-canvas image and vector handles, alignment guides, nudges and z-order | §8, §9, §10, §11, D03 T03 §4, D06 T04 §13 | [ ] |
-| 14 | §14 | Edit session commit, save, dirty state and Ctrl+K commands | §11, §12, §13, D02 T01 §8, D02 T01 §12, D02 T03 §11 | [ ] |
+| 11 | §11 | Edit PDF mode bar, object hit-testing and not-editable messages | §1, §2, D02 T02 §4, D03 T03 §3, D03 T01 §7, D06 T04 §13, D10 T01 §12, D10 T02 §2 | [ ] |
+| 12 | §12 | Inline on-canvas text editing with caret, selection and per-run formatting | §5, §6, §7, §11, D03 T01 §3, D06 T04 §13, D10 T01 §12, D10 T02 §4, D10 T02 §5, D10 T02 §9, D10 T02 §16, D10 T03 §1, D10 T03 §3 | [ ] |
+| 13 | §13 | On-canvas image and vector handles, alignment guides, nudges and z-order | §8, §9, §10, §11, D03 T03 §4, D06 T04 §13, D10 T01 §9, D10 T01 §12 | [ ] |
+| 14 | §14 | Edit session commit, save, dirty state and Ctrl+K commands | §11, §12, §13, D02 T01 §8, D02 T01 §12, D02 T03 §11, D10 T02 §17 | [ ] |
 | 15 | §15 | `recto-cli edit`: list, text, image and vector verbs | §5, §7, §8, §10, D01 T03 §1 | [ ] |
 | 16 | §16 | Producer fixture matrix and Edit PDF round-trip suite | §5, §6, §7, §9, §15, D06 T03 §4, D00 T03 §3 | [ ] |
-| 17 | §17 | Spell check in the inline Edit PDF text editor | §12, D03 T01 §14, D06 T04 §13 | [ ] |
+| 17 | §17 | Spell check in the inline Edit PDF text editor | §12, D03 T01 §14, D06 T04 §13, D10 T02 §4, D10 T02 §14, D10 T02 §24 | [ ] |
 | 18 | §18 | Vertical writing (`/WMode 1`) model: detection, metrics and editability classes | §1, §2 | [ ] |
 | 19 | §19 | Vertical paragraph rewrite with vertical metrics and embedded fallback fonts | §4, §5, §6, §18 | [ ] |
-| 20 | §20 | Vertical text in the inline editor: caret, hit testing and IME | §12, §18, §19, D06 T04 §13 | [ ] |
+| 20 | §20 | Vertical text in the inline editor: caret, hit testing and IME | §12, §18, §19, D06 T04 §13, D10 T02 §5 | [ ] |
 | 21 | §21 | Convert text to outlines (paths) for a selection or the page, on a copy | §3, §4, §9 | [ ] |
 | 22 | §22 | Linked text flows across boxes and pages, stored as article threads | §5, §6, D03 T03 §15 | [ ] |
 | 23 | §23 | Join and split text objects: paragraphs, lines and boxes | §5, §6 | [ ] |
 | 24 | §24 | Move objects to another page: text, images and paths | §3, §9 | [ ] |
 | 25 | §25 | Image filters: brightness, contrast, greyscale and invert on a copy | §3, §8, §9, D04 T02 §9 | [ ] |
 | 26 | §26 | Blend modes, opacity and shading objects for text, images and paths | §3, §10 | [ ] |
-| 27 | §27 | Arrange and convert commands: outlines, link flow, join, split and move to page | §11, §14, §21, §22, §23, §24, D02 T03 §11, D06 T04 §13 | [ ] |
-| 28 | §28 | Appearance panel: image filters, blend mode, opacity and gradient fill | §13, §25, §26, D03 T03 §3, D02 T03 §3, D06 T04 §13 | [ ] |
+| 27 | §27 | Arrange and convert commands: outlines, link flow, join, split and move to page | §11, §14, §21, §22, §23, §24, D02 T03 §11, D06 T04 §13, D10 T02 §14 | [ ] |
+| 28 | §28 | Appearance panel: image filters, blend mode, opacity and gradient fill | §13, §25, §26, D03 T03 §3, D02 T03 §3, D06 T04 §13, D10 T02 §6, D10 T02 §7, D10 T02 §8, D10 T02 §9, D10 T02 §16, D10 T02 §22 | [ ] |
 | 29 | §29 | `recto-cli edit` verbs for outlines, flows, join, split, move, filters and appearance | §15, §21, §22, §23, §24, §25, §26 | [ ] |
 | 30 | §30 | Fixtures and round-trip suite for the parity edits | §16, §18, §19, §21, §22, §25, §26 | [ ] |
 
@@ -337,18 +344,18 @@ Edit PDF is a mode of the one viewer shell (D17), not a new window. This section
 **Fidelity:** Genuinely new surface. It follows `design/SPEC.md` section 8.2 contextual mode bars (the Redaction & Sanitize Bar and the Markup & Annotation Bar, `D03 T03 §3`) in layout, `48 epx` height, tokens and floating-bar elevation. Design board: `design/SPEC.md` section 8.2.4 with `design/screenshots/D-EditPdf.png` (drawn by `D06 T04 §13`).
 **Job:** The user clicks `Edit PDF`, sees every editable object outlined on hover, clicks one to select it, and gets a plain-language message when the thing they click cannot be edited. Consumer: `§12` and `§13` interactions.
 **Treatment:** A contextual bar of icon buttons (`Text`, `Image`, `Path`, `Add Text`, `Add Image`, `Fonts`, `Colour`, `Done`) over a hit-test layer reading `EditModel`. Cheaper substitute that fails the checkpoint: a toolbar that always shows tools but does nothing on a scanned page, or a popup dialog for editing text.
-**Chrome:** consume `RectoRaisedBrush` with the stock `OverlayCornerRadius` (8 epx) and `6 epx` padding for the bar, as every SPEC 8.2 contextual mode bar does (`RectoFloatingBarBackgroundBrush` is reserved by SPEC 4 for the small dark selection toolbar and edit popovers over the page, such as the `§12` format flyout), `RectoAccentBrush` for selection outlines, Fluent UI System Icons (`RectoIcons`), `RectoDialogStyle`; no hex or `CornerRadius` literals.
+**Chrome:** consume `RectoRaisedBrush` with the `OverlayCornerRadius` token (8 epx) and `6 epx` padding for the bar, as every SPEC 8.2 contextual mode bar does (`RectoFloatingBarBackgroundBrush` is reserved by SPEC 4 for the small dark selection toolbar and edit popovers over the page, such as the `§12` format flyout), `RectoAccentBrush` for selection outlines, Fluent UI System Icons (`RectoIcons`), the `ui::Control` styles of `D10 T02 §1`; no hex or radius literals.
 
 **Build order:**
 
-1. Add `src/app/controls/EditPdfBar.xaml/.h/.cpp` and register the mode with the layout presets so it occupies the same slot as the other contextual bars. Done when: entering and leaving Edit PDF mode swaps the bar without moving the page.
+1. Add `src/app/controls/edit_pdf_bar.h/.cpp` and register the mode with the layout presets so it occupies the same slot as the other contextual bars. Done when: entering and leaving Edit PDF mode swaps the bar without moving the page.
 2. Add `src/services/edit_hit_test.h/.cpp` mapping a pointer in page space to the topmost `EditObject` or paragraph, with hover outline and selection. Done when: `AppTests.EditHitTest` returns the right object for text, image and path fixtures at several zoom and rotation settings.
 3. Add the not-editable classification and its messages. Done when: each class shows its own message once per page without blocking the viewer.
 
 - [ ] Detect scanned pages with the scanned/outlined detector (`D03 T01 §7`) and show "This page is a scanned image. Run OCR to make its text editable." with an `OCR this page` action. Done when: the scanned corpus page shows that message and the action starts OCR.
 - [ ] Show distinct messages for Type 3 fonts, text with `7 Tr` or only a clip, vertical writing, text inside an OFF layer and an encrypted file with a modify restriction, each naming the cause. Done when: `AppTests.EditNotEditableMessages` shows the five messages for the five fixtures.
-- [ ] Give every icon-only bar button an `AutomationProperties.Name` and a tooltip. Done when: the accessibility inventory (`D03 T02 §3`) finds none missing. Cheaper substitute: relying on tooltips only.
-- [ ] Style `EditPdfBar` from `RectoRaisedBrush`, the stock `OverlayCornerRadius` resource and `6 epx` padding, matching `MarkupAnnotationBar` (`D03 T03 §3`) in both themes. Done when: `AppTests.EditPdfBarChrome` reads the bar's `Background` as the `RectoRaisedBrush` resource (`#FFFFFF` light, `#2A2826` dark) and its `CornerRadius` as `OverlayCornerRadius`, and fails when the bar uses `RectoFloatingBarBackgroundBrush`. Cheaper substitute: the dark floating-bar brush of the selection toolbar.
+- [ ] Give every icon-only bar button a `ui::Element` automation name and a tooltip. Done when: the accessibility inventory (`D03 T02 §3`) finds none missing. Cheaper substitute: relying on tooltips only.
+- [ ] Style `EditPdfBar` from `RectoRaisedBrush`, the `OverlayCornerRadius` token and `6 epx` padding, matching `MarkupAnnotationBar` (`D03 T03 §3`) in both themes. Done when: `AppTests.EditPdfBarChrome` reads the bar's background as the `RectoRaisedBrush` token (`#FFFFFF` light, `#2A2826` dark) and its corner radius as the `OverlayCornerRadius` token, and fails when the bar uses `RectoFloatingBarBackgroundBrush`. Cheaper substitute: the dark floating-bar brush of the selection toolbar.
 - [ ] Show selection outlines with the accent colour and eight `8 x 8 epx` handles for the selected object (shared with `D03 T03 §4` visuals). Done when: the selected object matches the handle geometry in SPEC 8.2.
 - [ ] Keep the viewer responsive: hit-testing reads the `EditModel` snapshot, never calling `Document` on the UI thread. Done when: a 300-page document keeps frame time under 16 ms while hovering. Cheaper substitute: building the model on the UI thread.
 - [ ] Commit: `app: add Edit PDF mode bar with hit-testing and not-editable messages`
@@ -357,7 +364,7 @@ Edit PDF is a mode of the one viewer shell (D17), not a new window. This section
 
 ## 12. Inline on-canvas text editing with caret, selection and per-run formatting
 
-Acrobat edits text in place on the page, not in a popup. This section places a live `TextBox`-style editor over the paragraph with the page's own font metrics, caret, selection, IME composition and a small format flyout (font, size, colour, alignment), committing one undoable edit on blur, `Enter` on a new box or `Ctrl+Enter`. It matches Acrobat's inline text edit and keeps Recto's per-glyph font retention and refusal of undrawable characters (`§4`).
+Acrobat edits text in place on the page, not in a popup. This section places a live editor element that reuses the `ui::TextBox` editing core (`D10 T02 §4`) and its Text Services Framework store (`D10 T02 §5`) over the paragraph with the page's own font metrics, caret, selection, IME composition and a small format flyout (font, size, colour, alignment), committing one undoable edit on blur, `Enter` on a new box or `Ctrl+Enter`. It matches Acrobat's inline text edit and keeps Recto's per-glyph font retention and refusal of undrawable characters (`§4`).
 
 **Phase:** 4
 **Needs:** windows-host, display-session
@@ -370,15 +377,15 @@ Acrobat edits text in place on the page, not in a popup. This section places a l
 
 **Build order:**
 
-1. Add `src/app/controls/InlineTextEditor.xaml/.h/.cpp` bound to a `ParagraphId`, rendering the paragraph's lines at their page positions and the caret from `PageText` quads. Done when: entering a paragraph shows the original text exactly in place.
+1. Add `src/app/controls/inline_text_editor.h/.cpp` bound to a `ParagraphId`, rendering the paragraph's lines at their page positions and the caret from `PageText` quads. Done when: entering a paragraph shows the original text exactly in place.
 2. Wire typing to a debounced preview using the layout from `§5` without committing, then commit one `RewriteParagraph` on exit. Done when: `AppTests.InlineTextEdit` commits a single undo entry for a typing burst.
-3. Add the format flyout with the font picker (`§4` installed list, disabled entries with reasons), size, colour, alignment and line spacing. Done when: choosing a font applies to the selection runs only.
+3. Add the format flyout (`ui::Flyout`, `D10 T02 §16`) with the font picker (`ui::ComboBox`, `D10 T02 §9`) (`§4` installed list, disabled entries with reasons), size, colour, alignment and line spacing. Done when: choosing a font applies to the selection runs only.
 
 - [ ] Support IME composition, selection with mouse and keyboard, `Home`/`End`, word and line movement, clipboard paste as plain text, and right-to-left caret movement. Done when: composing Japanese text inserts correctly and arrow keys move logically in an Arabic line.
 - [ ] Show a character the font cannot draw immediately: when typing or pasting `U+XXXX` with no embeddable font, reject the character and show an inline note naming the code point. Done when: `AppTests.InlineTextUnsupported` rejects it and the buffer is unchanged.
 - [ ] Show a font-substitution notice when a typed character falls back to another font, naming that font, and keep the rest of the run in the original font. Done when: typing one Cyrillic letter shows "Cyrillic uses Segoe UI" and the other letters keep the original face.
 - [ ] Commit the edit when focus leaves, `Ctrl+Enter` is pressed or another object is selected, and cancel on `Esc` restoring the original. Done when: `Esc` leaves the document unchanged and the dirty flag unset.
-- [ ] Add an automation name and tooltip to every flyout control and expose the editor to UIA as an editable text element. Done when: `A11y.InlineTextEditor` finds a name on every control. Cheaper substitute: tooltips only.
+- [ ] Add an automation name and tooltip to every flyout control and expose the editor to UIA as an editable text element on the provider tree of `D10 T03 §1` with a `ui::TextRangeAdapter` (`D10 T03 §3`). Done when: `A11y.InlineTextEditor` finds a name on every control. Cheaper substitute: tooltips only.
 - [ ] Commit: `app: add inline on-canvas text editing with per-run formatting`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=AppTests.InlineTextEdit:AppTests.InlineTextUnsupported:A11y.InlineTextEditor` passes, and opening a popup editor instead makes `AppTests.InlineTextEdit` fail.
@@ -404,7 +411,7 @@ Direct manipulation of image and path objects needs the same handle behaviour us
 
 - [ ] Implement `Flip horizontal`, `Flip vertical`, `Crop` (drag the crop box, reversible by default) and `Apply crop` in a floating popover. Done when: each action appears as one undo entry and renders as `§8` defines.
 - [ ] Implement z-order commands `Bring to front`, `Forward`, `Backward`, `Send to back` by moving the object's operator range among siblings within the same `q ... Q` and optional-content scope, never across a clip group. Done when: a fixture reorders and the render order matches the new order.
-- [ ] Implement `Delete` and `Replace image...` (`FileOpenPicker`) with a confirmation-free undoable delete. Done when: `Delete` removes the object and `Ctrl+Z` brings it back identically.
+- [ ] Implement `Delete` and `Replace image...` (`IFileOpenDialog`) with a confirmation-free undoable delete. Done when: `Delete` removes the object and `Ctrl+Z` brings it back identically.
 - [ ] Show the vector controls: fill colour, stroke colour and line width in the floating popover using the colour picker of the annotation bar (`D03 T03 §3`). Done when: changing fill updates the page live and commits on close.
 - [ ] Give each handle, the rotation handle and every popover icon an automation name and tooltip and make the selection operable with the keyboard alone. Done when: `A11y.EditObjectSelection` finds all names and a keyboard-only test moves, resizes and deletes an object. Cheaper substitute: mouse-only handles.
 - [ ] Commit: `app: add on-canvas image and vector manipulation with guides and nudges`
@@ -487,7 +494,7 @@ Editing breaks differently per producer: Word writes one `Tj` per word with `TJ`
 
 ## 17. Spell check in the inline Edit PDF text editor
 
-Add spelling to the editor of `§12`, which draws its own text and so cannot use a stock text control's spell check. The squiggle, the suggestion menu and `Add to dictionary` come from `SpellService` (`D03 T01 §14`). This matches Acrobat Pro's `Check Spelling` while editing and the spell check in Foxit PDF Editor, PDFelement and UPDF. It must not break offline-by-default (only the Windows spelling API is used), and it keeps the rule that spelling never changes text on its own and never blocks a commit.
+Add spelling to the editor of `§12`, which draws its own text and so cannot use the `ui::TextBox` spell checking of `D10 T02 §24` directly; it calls the same `ui::SpellService` checkers and draws the same wavy underline. The squiggle, the suggestion menu and `Add to dictionary` come from `SpellService` (`D03 T01 §14`). This matches Acrobat Pro's `Check Spelling` while editing and the spell check in Foxit PDF Editor, PDFelement and UPDF. It must not break offline-by-default (only the Windows spelling API is used), and it keeps the rule that spelling never changes text on its own and never blocks a commit.
 
 **Phase:** 4
 **Needs:** windows-host, display-session
@@ -577,7 +584,7 @@ Make the editor of `§12` work on vertical paragraphs: the caret moves down a co
 
 - [ ] Open the vertical editor only for `Editable` vertical paragraphs and show the §18 refusal message otherwise. Done when: `AppTests.InlineVerticalRefusal` shows the message for a tate-chu-yoko fixture and no editor.
 - [ ] Show an inline note with the code point when a typed character has no vertical form (§19) and leave the buffer unchanged. Done when: `AppTests.InlineVerticalUnsupported` rejects it.
-- [ ] Expose the editor to UI Automation with the vertical reading direction in its text attributes. Done when: `A11y.InlineVerticalEditor` finds the names and the text pattern.
+- [ ] Expose the editor to UI Automation (`D10 T03 §1`, `ui::TextRangeAdapter` of `D10 T03 §3`) with the vertical reading direction in its text attributes. Done when: `A11y.InlineVerticalEditor` finds the names and the text pattern.
 - [ ] Add the tests named above. Done when: `recto-tests.exe --gtest_filter=AppTests.InlineVertical*:A11y.InlineVerticalEditor` passes on the display-session host.
 - [ ] Commit: `feat(app): edit vertical text in the inline editor with caret and IME`
 
@@ -730,7 +737,7 @@ Add the user commands for §21 to §24 to the Edit PDF mode: `Convert to outline
 **Fidelity:** Genuinely new surface. It adds a `Text` overflow menu to the `EditPdfBar` (`§11`) and context-menu entries on the selected object, following `design/SPEC.md` section 8.2. Design board: `design/SPEC.md` section 8.2.4 with `design/screenshots/D-EditPdf.png` (drawn by `D06 T04 §13`).
 **Job:** The user selects text, chooses `Convert to outlines` for the selection, the page or a range; drags a link handle from one box to the next to flow text; joins two paragraphs; splits one at the caret; or moves an object to page 7 from a dialog. Consumer: §21 to §24, `CommandRegistry`.
 **Treatment:** Buttons and menu items bound to commands, an overflow chevron on each text box that is full (drag to another box to link), a `Move to page` dialog with a page number box and a thumbnail picker, and a confirm step for `Convert to outlines` that names what will no longer be editable. Cheaper substitute that fails the checkpoint: commands reachable only from a context menu, or an outline conversion with no confirmation.
-**Chrome:** consume the `§11` `EditPdfBar` chrome (`RectoRaisedBrush`, `OverlayCornerRadius` 8 epx, SPEC 8.2) for the `Text` overflow menu and the stock `MenuFlyout` on `RectoRaisedBrush` for the object context menu (SPEC 4: menus), `RectoAccentBrush` for the link handle, `RectoDialogStyle`, Fluent UI System Icons (`RectoIcons`); no hex values and no `RectoFloatingBarBackgroundBrush`, which SPEC 4 reserves for the selection toolbar and edit popovers.
+**Chrome:** consume the `§11` `EditPdfBar` chrome (`RectoRaisedBrush`, `OverlayCornerRadius` 8 epx, SPEC 8.2) for the `Text` overflow menu and the `ui::Menu` on `RectoRaisedBrush` for the object context menu (SPEC 4: menus), `RectoAccentBrush` for the link handle, the `ui::Control` styles of `D10 T02 §1`, Fluent UI System Icons (`RectoIcons`); no hex values and no `RectoFloatingBarBackgroundBrush`, which SPEC 4 reserves for the selection toolbar and edit popovers.
 
 **Build order:**
 
@@ -740,7 +747,7 @@ Add the user commands for §21 to §24 to the Edit PDF mode: `Convert to outline
 - [ ] Show the `Convert to outlines` confirmation (`Selection`, `Page`, `Page range`, and the sentence `The text becomes shapes and can no longer be edited as text. It stays searchable.`) with `Convert` and `Cancel`. Done when: `AppTests.EditOutlinesDialog` cancels without a change and converts on confirm.
 - [ ] Show an overflow marker (a `+` glyph with the text `Text continues`) at the end of a full box and animate nothing when animations are off. Done when: `AppTests.EditFlowHandle` shows the marker only on overflow.
 - [ ] Give each command, handle and dialog control an automation name and tooltip. Done when: the inventory (`D03 T02 §3`) finds none missing. Cheaper substitute: tooltips only.
-- [ ] Host the `Text` overflow menu from the `§11` bar and the object context menu as stock `MenuFlyout`s on `RectoRaisedBrush`. Done when: `AppTests.EditArrange` opens both and reads `RectoRaisedBrush` as each presenter's background in light and dark themes. Cheaper substitute: a custom dark popup on `RectoFloatingBarBackgroundBrush`.
+- [ ] Host the `Text` overflow menu from the `§11` bar and the object context menu as `ui::Menu`s on `RectoRaisedBrush`. Done when: `AppTests.EditArrange` opens both and reads `RectoRaisedBrush` as each menu's background in light and dark themes. Cheaper substitute: a custom dark popup on `RectoFloatingBarBackgroundBrush`.
 - [ ] Mark the tab dirty on the first committed operation and clean it only after a verified save (`§14`). Done when: `AppTests.EditArrange` leaves the tab dirty after a forced save failure.
 - [ ] Add the tests named above. Done when: `recto-tests.exe --gtest_filter=AppTests.EditArrange:AppTests.EditOutlinesDialog:AppTests.EditFlowHandle:A11y.EditArrange` passes on the display-session host.
 - [ ] Commit: `app: add outline, link, join, split and move-to-page commands to Edit PDF`
@@ -756,7 +763,7 @@ Add one panel for the appearance of the selected object: image filter sliders, b
 **Surface:** yes
 **Fidelity:** Genuinely new surface. It follows `design/SPEC.md` section 8.3 (side-panel cards through `SidePanelHost`, `D02 T03 §3`) and the style popover of `D03 T03 §4`. Design board: `design/SPEC.md` section 8.2.4 with `design/screenshots/D-EditPdf.png` (drawn by `D06 T04 §13`).
 **Job:** The user selects an image and drags brightness and contrast with a live preview, picks `Multiply` and `60%` opacity, or edits a gradient's stops on a path and sees the page change. Consumer: §25 and §26.
-**Treatment:** An `Appearance` card in `SidePanelHost` with sliders (`Brightness`, `Contrast`), toggles (`Greyscale`, `Invert`), a blend mode combo, an opacity slider with a number box, and a gradient editor with stop markers, a type switch (`Linear`, `Radial`), an angle box and a colour picker (the annotation bar picker, `D03 T03 §3`). Cheaper substitute that fails the checkpoint: a dialog that applies only on OK with no preview, or committing every slider tick.
+**Treatment:** An `Appearance` card in `SidePanelHost` with `ui::Slider`s (`Brightness`, `Contrast`), `ui::ToggleSwitch`es (`Greyscale`, `Invert`), a blend mode `ui::ComboBox`, an opacity `ui::Slider` with a `ui::NumberBox`, and a gradient editor with stop markers, a type switch (`Linear`, `Radial`), an angle `ui::NumberBox` and a `ui::ColorSwatchPicker` (the annotation bar picker, `D03 T03 §3`). Cheaper substitute that fails the checkpoint: a dialog that applies only on OK with no preview, or committing every slider tick.
 **Chrome:** consume `SidePanelHost`, `RectoSurfaceBrush`, `RectoAccentBrush`, `RectoTextBrush`, Fluent UI System Icons (`RectoIcons`); no hex values.
 
 **Build order:**

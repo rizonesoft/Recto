@@ -10,13 +10,14 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 > **Goal:** Every section stamped before 2026-10-21 is re-verified under the current review process before later work builds further on it: its own Test checkpoint re-run at the current tip, and fresh independent audit rounds by the pinned reviewer with a 22-round cap and the severity cutoff. A confirmed stamp stays; a regression flips its row back with a dated blocking note, a filed repair and a list of suspect downstream stamps.
 
-> **Current state:** Measured 2026-10-21. 24 sections carry stamps from the earlier process (`python scripts/todo-graph.py query rounds` lists them with `round_cap` null): 14 in `00-workspace` and 10 in `01-engine`. They were reviewed under a three-round cap by a different reviewer; the operator asked on 2026-10-21 for them to be brought up to the current standard.
+> **Current state:** Measured 2026-10-21. 24 sections carry stamps from the earlier process (`python scripts/todo-graph.py query rounds` lists them with `round_cap` null): 14 in `00-workspace` and 10 in `01-engine`. They were reviewed under a three-round cap by a different reviewer; the operator asked on 2026-10-21 for them to be brought up to the current standard. 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI references rewritten against `todo/10-ui/`.
 
 ## Inputs
 
 - `.claude/skills/review-todo-section/SKILL.md` (audit stance, the 22-round cap and the severity cutoff) and `docs/review-round-prompt.md` (severity tags).
 - Each audited section's own contract and receipt (`python scripts/todo-graph.py resolve "<ref>"`, `docs/reviews/<ref>.json`).
 - The run file `docs/phase-runs/2026-10-21-phase-0.md` (the operator's request).
+- -> XREF: D10 T01 §2 -- replaces the WinUI scaffold of `D00 T01 §3` that §3 here audited.
 
 ## Outcome
 
@@ -144,6 +145,8 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 > **Verified:** 2026-10-21 | §3 | bf66a966e36f036d20461da54fe15d59f65847dd
 > **Review:** `docs/reviews/d06-t05-s3.json`
+
+> **Corrected 2026-10-22:** WinUI 3 is dropped for Recto's own UI toolkit `recto-ui` (foundation plan D4). The WinUI scaffold of `D00 T01 §3` that this section audited is replaced by `D10 T01 §2`; the audit verdict covers the scaffold as built and is unchanged.
 
 ## 4. Audit D00 T01 §5: Reference benchmark machines recorded
 

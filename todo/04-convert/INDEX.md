@@ -2,7 +2,7 @@
 
 > **Phases 4 and 5 (M4 Conversions A, M5 Conversions B)**
 
-One job frame for every conversion, then Recto's native C++20 converters: `PdfWriter` and atomic saves, PDF to images, multipage TIFF, animated GIF, vector SVG and OpenXPS, images/SVG/XPS to PDF, PDF to text, Searchable PDF (OCR), Table and Image Extraction, and PDF Optimization/Linearization in M4; 3-mode native C++20 `DocxWriter` and `RtfWriter` (`PDF -> Word .docx & .rtf`) with its 20-document quality review, 100% built-in C++20 OpenXML (`.docx`, `.xlsx`, `.pptx`), legacy binary OLE2 (`[MS-CFB]` `.doc`, `.xls`, `.ppt`), RTF, HTML, Markdown and CSV `-> PDF` engines, `XlsxWriter` (`PDF -> Excel .xlsx, .csv, .xml`), `WebDocWriter` (`PDF -> HTML5, Markdown, EPUB 3, LaTeX`), and `ComplianceEngine` (`PDF/A-1/2/3 a/b/u`, `PDF/UA-1`, `ZUGFeRD / Factur-X`) in M5. Honest conversion (SPEC principle 4) is this domain's standing rule.
+One job frame for every conversion, then Recto's native C++23 converters: `PdfWriter` and atomic saves, PDF to images, multipage TIFF, animated GIF, vector SVG and OpenXPS, images/SVG/XPS to PDF, PDF to text, Searchable PDF (OCR), Table and Image Extraction, and PDF Optimization/Linearization in M4; 3-mode native C++23 `DocxWriter` and `RtfWriter` (`PDF -> Word .docx & .rtf`) with its 20-document quality review, 100% built-in C++23 OpenXML (`.docx`, `.xlsx`, `.pptx`), legacy binary OLE2 (`[MS-CFB]` `.doc`, `.xls`, `.ppt`), RTF, HTML, Markdown and CSV `-> PDF` engines, `XlsxWriter` (`PDF -> Excel .xlsx, .csv, .xml`), `WebDocWriter` (`PDF -> HTML5, Markdown, EPUB 3, LaTeX`), and `ComplianceEngine` (`PDF/A-1/2/3 a/b/u`, `PDF/UA-1`, `ZUGFeRD / Factur-X`) in M5. Honest conversion (SPEC principle 4) is this domain's standing rule.
 
 ## TODOs
 
@@ -11,7 +11,7 @@ One job frame for every conversion, then Recto's native C++20 converters: `PdfWr
 | [TODO-01](./TODO-01-jobs-and-queue.md) | Conversion Jobs and the Queue | active |
 | [TODO-02](./TODO-02-pdf-conversions-a.md) | Conversions A: PDF Writer, Images/SVG/XPS, Text, OCR, Table/Image Extraction & Optimize | active |
 | [TODO-03](./TODO-03-pdf-to-word.md) | PDF to Word (DOCX and RTF): 3-Mode Native OpenXML/RTF Writer and Quality Review | active |
-| [TODO-04](./TODO-04-office-to-pdf.md) | Office, Legacy Binary Office, HTML and Markdown to PDF: 100% Native C++20 Engines | active |
+| [TODO-04](./TODO-04-office-to-pdf.md) | Office, Legacy Binary Office, HTML and Markdown to PDF: 100% Native C++23 Engines | active |
 | [TODO-05](./TODO-05-excel-web-and-compliance.md) | PDF to Excel/CSV/XML, HTML5/Markdown/EPUB/LaTeX, and PDF/A, PDF/UA & ZUGFeRD Compliance | active |
 | [TODO-06](./TODO-06-print-production.md) | Print Production: Preflight, PDF/X, Output Preview and Separations | active |
 | [TODO-07](./TODO-07-action-wizard.md) | Action Wizard: Saved Multi-Step Actions over Files and Folders | active |
@@ -26,10 +26,10 @@ One job frame for every conversion, then Recto's native C++20 converters: `PdfWr
 
 ## In scope
 
-- Isolated job runtime (`JobQueue`), the three-step Convert page, the queue card, completion notices
+- Isolated job runtime (`JobQueue`), the three-step Convert page, the queue card, completion notices (Windows toasts through `Windows.UI.Notifications`; every screen is built on `recto-ui`, `todo/10-ui/`)
 - Native `PdfWriter`, atomic saves, Searchable PDF (OCR) invisible-text sandwich export, `TableExtractor` and `ImageExtractor` (plus the Viewer `Table & Image Extractor Bar`), `PdfOptimizer`, font subsetter, and Fast Web View `Linearizer`
-- 3-mode (`Flowing`, `Exact`, `Continuous`) native C++20 `DocxWriter` and `RtfWriter` (`PDF -> Word .docx & .rtf`) and 100% built-in C++20 OpenXML, legacy binary OLE2 (`.doc`, `.xls`, `.ppt`), RTF, HTML, Markdown and CSV `-> PDF` engines
-- Native C++20 `XlsxWriter` (`PDF -> .xlsx, .csv, .xml`), `WebDocWriter` (`PDF -> HTML5, .md, .epub, .tex`), and `ComplianceEngine` (`PDF/A`, `PDF/UA-1`, `ZUGFeRD / Factur-X` + Viewer `Standards & E-Invoice` side panel)
+- 3-mode (`Flowing`, `Exact`, `Continuous`) native C++23 `DocxWriter` and `RtfWriter` (`PDF -> Word .docx & .rtf`) and 100% built-in C++23 OpenXML, legacy binary OLE2 (`.doc`, `.xls`, `.ppt`), RTF, HTML, Markdown and CSV `-> PDF` engines
+- Native C++23 `XlsxWriter` (`PDF -> .xlsx, .csv, .xml`), `WebDocWriter` (`PDF -> HTML5, .md, .epub, .tex`), and `ComplianceEngine` (`PDF/A`, `PDF/UA-1`, `ZUGFeRD / Factur-X` + Viewer `Standards & E-Invoice` side panel)
 - Equation detection with MathML and LaTeX export, colour contrast, PDF/UA-2 and WCAG 2.2 accessibility reports, whole-document greyscale conversion, the extended Action Wizard steps, and the `recto-cli` verb registry with the local stdio `recto-mcp` server (D21)
 
 ## Out of scope

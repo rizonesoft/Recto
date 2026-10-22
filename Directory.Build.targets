@@ -12,7 +12,9 @@
       <WarningLevel>Level4</WarningLevel>
       <TreatWarningAsError>true</TreatWarningAsError>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp20</LanguageStandard>
+      <!-- stdcpp23 is /std:c++23preview: MSVC 14.51 ships no stable /std:c++23 (D14, 2026-10-22). Move to the
+           stable C++23 or C++26 switch as soon as MSVC ships one. -->
+      <LanguageStandard>stdcpp23</LanguageStandard>
       <LanguageStandard_C>stdc17</LanguageStandard_C>
       <UseStandardPreprocessor>true</UseStandardPreprocessor>
       <AdditionalOptions>%(AdditionalOptions) /utf-8</AdditionalOptions>

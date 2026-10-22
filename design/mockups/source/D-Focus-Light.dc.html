@@ -59,18 +59,18 @@ a{color:#A93717}
         <tr><th style="width:96px">Layer</th><th>Choice</th><th>Notes</th></tr>
         <tr><td>OS</td><td>Windows 11 22H2+ (<code>10.0.22621.0</code> min, <code>10.0.26100.0</code> target SDK)</td><td>Required for Mica Alt, Segoe UI Variable, <code>Windows.Media.Ocr</code></td></tr>
         <tr><td>Architectures</td><td><code>x64</code>, <code>ARM64</code></td><td>Both built in CI on every push</td></tr>
-        <tr><td>Toolchain</td><td>Visual Studio 2026 (<code>v145</code>), MSVC C++20</td><td><code>/W4 /WX /permissive- /utf-8 /Zc:preprocessor</code></td></tr>
-        <tr><td>UI</td><td>WinUI 3, Windows App SDK <code>2.5.1</code>, C++/WinRT</td><td>Stock controls, <code>RectoColors.xaml</code> tokens and the <code>RectoIcons.ttf</code> subset of Fluent UI System Icons</td></tr>
-        <tr><td>Page surface</td><td><code>SwapChainPanel</code> + Direct3D 11 + Direct2D 1.3 + DirectWrite</td><td>Tiled rendering from background presentation thread</td></tr>
-        <tr><td>PDF engine</td><td><code>recto-pdf</code> (<code>src/pdf</code>, in-tree C++20)</td><td>PDF 1.7 / 2.0 lexer, XRef tables and streams, incremental updates, damaged-file recovery</td></tr>
-        <tr><td>Built-in OCR</td><td>High-Accuracy In-Process C++20 Neural OCR + <code>Windows.Media.Ocr</code></td><td>Deskew, contrast normalization, adaptive Sauvola thresholding</td></tr>
-        <tr><td>Native converters</td><td>100% in-tree C++20 OpenXML, legacy OLE2 binary, RTF, HTML/CSS, Markdown, SVG and XPS engines</td><td>3-mode PDF to Word (Flowing, Exact, Continuous), PDF to Excel, PDF to HTML5</td></tr>
-        <tr><td>Packaging &amp; Installer</td><td>Inno Setup (Full Install + Self-Contained Portable) + Portable <code>.zip</code> + Optional MSIX</td><td>Self-contained Windows App SDK deployment with <code>&lt;exe-dir&gt;\data\</code> portable mode</td></tr>
+        <tr><td>Toolchain</td><td>Visual Studio 2026 (<code>v145</code>), MSVC C++23</td><td><code>/W4 /WX /permissive- /utf-8 /Zc:preprocessor</code></td></tr>
+        <tr><td>UI</td><td><code>recto-ui</code> (in-tree C++23): Win32, DirectComposition, Direct2D, DirectWrite</td><td>Fluent controls, generated tokens and the <code>RectoIcons.ttf</code> subset of Fluent UI System Icons</td></tr>
+        <tr><td>Page surface</td><td><code>ui::SwapChainHost</code> + Direct3D 11 + Direct2D 1.3 + DirectWrite</td><td>Tiled rendering from background presentation thread</td></tr>
+        <tr><td>PDF engine</td><td><code>recto-pdf</code> (<code>src/pdf</code>, in-tree C++23)</td><td>PDF 1.7 / 2.0 lexer, XRef tables and streams, incremental updates, damaged-file recovery</td></tr>
+        <tr><td>Built-in OCR</td><td>High-Accuracy In-Process C++23 Neural OCR + <code>Windows.Media.Ocr</code></td><td>Deskew, contrast normalization, adaptive Sauvola thresholding</td></tr>
+        <tr><td>Native converters</td><td>100% in-tree C++23 OpenXML, legacy OLE2 binary, RTF, HTML/CSS, Markdown, SVG and XPS engines</td><td>3-mode PDF to Word (Flowing, Exact, Continuous), PDF to Excel, PDF to HTML5</td></tr>
+        <tr><td>Packaging &amp; Installer</td><td>Inno Setup (Full Install + Self-Contained Portable) + Portable <code>.zip</code> + Optional MSIX</td><td>A plain Win32 <code>Recto.exe</code> with <code>&lt;exe-dir&gt;\data\</code> portable mode</td></tr>
         <tr><td>Unit / integration tests</td><td>GoogleTest via vcpkg manifest mode</td><td>Runs in CI on every push, with and without ASan</td></tr>
       </table>
       <h2 style="margin:8px 0 0;font-size:18px">3. Solution Structure</h2>
       <h3 style="margin:0;font-size:13px">3.1 Modules and Dependency Rule</h3>
-      <p style="margin:0;font-size:11px;line-height:17px">Dependencies flow strictly downward. No upward includes, no friend hacks, no XAML headers below <code>src/app</code>.</p>
+      <p style="margin:0;font-size:11px;line-height:17px">Dependencies flow strictly downward. No upward includes, no friend hacks, no <code>recto-ui</code> headers in the engine libraries.</p>
       <p style="margin:0;font-size:11px;line-height:17px"><code>Recto</code> (<code>src/app</code>) uses <code>recto-services</code> (<code>src/services</code>), which uses <code>recto-core</code> (<code>src/core</code>), which uses <code>recto-pdf</code> (<code>src/pdf</code>). Two additional executables link against <code>recto-core</code> and <code>recto-pdf</code> (never <code>src/app</code>): <code>recto-cli</code> and <code>recto-tests</code>.</p>
     </article>
     <aside aria-label="Pages" style="position:absolute;left:16px;top:16px;bottom:96px;width:168px;background:rgba(255,255,255,.9);border:1px solid #E5E5E5;border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.10);display:flex;flex-direction:column;align-items:center;gap:14px;padding:10px 0 14px;box-sizing:border-box;overflow:hidden">

@@ -2,7 +2,7 @@
 
 > **Phase 2 (M2 Viewer)**
 
-The WinUI app as the SPEC's one shell: title-bar tabs, the tiled document view, Home and panels, the command box, settings and the three layout presets. Every surface section carries Fidelity to `design/SPEC.md` and its screenshot.
+The `recto-ui` app (Recto's own Win32, DirectComposition and Direct2D toolkit, `todo/10-ui/`) as the SPEC's one shell: title-bar tabs, the tiled document view, Home and panels, the command box, settings and the three layout presets. Every surface section carries Fidelity to `design/SPEC.md` and its screenshot.
 
 ## TODOs
 

@@ -2,7 +2,7 @@
 
 > **Phase 3 (M3 Text, OCR, Annotations, Forms and Accessibility)**
 
-Making page text, annotations and interactive forms usable on both digital and scanned documents: native extraction from `recto-pdf` into one shared `PageText` model, built-in High-Accuracy In-Process C++20 Neural OCR + `Windows.Media.Ocr` recognition (with deskew, Sauvola binarization, morphological line removal, recursive XY-cut/table layout segmentation, and per-character CTC quad alignment) for scanned pages and vector-outlined text, selection and copy, find with regex, content-stream Find and Replace (`Ctrl+H`), visual and text PDF Comparison (`Ctrl+Shift+D`), full interactive annotations and markup (`Ctrl+Shift+A`), AcroForm and XFA-to-AcroForm filling and visual Form Designer, and the accessibility layer (UIA text provider, keyboard order audit, announcements) that makes all of it operable without sight.
+Making page text, annotations and interactive forms usable on both digital and scanned documents: native extraction from `recto-pdf` into one shared `PageText` model, built-in High-Accuracy In-Process C++23 Neural OCR + `Windows.Media.Ocr` recognition (with deskew, Sauvola binarization, morphological line removal, recursive XY-cut/table layout segmentation, and per-character CTC quad alignment) for scanned pages and vector-outlined text, selection and copy, find with regex, content-stream Find and Replace (`Ctrl+H`), visual and text PDF Comparison (`Ctrl+Shift+D`), full interactive annotations and markup (`Ctrl+Shift+A`), AcroForm and XFA-to-AcroForm filling and visual Form Designer, and the accessibility layer (UIA text provider, keyboard order audit, announcements) that makes all of it operable without sight. Every surface is built from `recto-ui` controls (`todo/10-ui/`) and the accessibility layer sits on the `recto-ui` UI Automation provider tree; 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4), sections rewritten against `todo/10-ui/`.
 
 ## TODOs
 
@@ -24,12 +24,12 @@ Making page text, annotations and interactive forms usable on both digital and s
 ## In scope
 
 - Native `recto-pdf` text extraction and the `PageText` model (blocks, lines, words, character quads, reading order)
-- Built-in High-Accuracy C++20 Neural OCR + `Windows.Media.Ocr` (`OcrPipeline`) for scanned pages and vector-outlined text with image preprocessing (deskew, contrast, Sauvola thresholding, morphological ruling-line removal, XY-cut/table layout segmentation, and CTC per-character quad alignment) populating `PageText` transparently
-- Selection rendering, floating selection toolbar, context menu, clipboard, page links
+- Built-in High-Accuracy C++23 Neural OCR + `Windows.Media.Ocr` (`OcrPipeline`) for scanned pages and vector-outlined text with image preprocessing (deskew, contrast, Sauvola thresholding, morphological ruling-line removal, XY-cut/table layout segmentation, and CTC per-character quad alignment) populating `PageText` transparently
+- Selection rendering, floating selection toolbar, `ui::Menu` context menu, `ui::Clipboard` copy, page links
 - Find engine (including Regex), content-stream Find and Replace (`Ctrl+H`), and `Compare PDFs` (`Ctrl+Shift+D`) side-by-side and visual diff overlay view
 - All 15 PDF annotation and markup types (`src/pdf/annotations.cpp`), `/AP` appearance synthesis, flattening, `XFDF`/`JSON` I/O, `Markup & Annotation Bar` (`Ctrl+Shift+A`), and `Comments / Annotations` side panel
 - AcroForm and XFA-to-AcroForm engine (`src/pdf/forms.cpp`), `/CO` calculations, `JSON`/`FDF`/`XFDF`/`XML` data I/O, on-canvas interactive form filling, and `Form Designer` mode
-- UIA text pattern, form/annotation accessibility peers, keyboard order audit, announcements
+- UIA text pattern on `ui::TextRangeAdapter`, form/annotation UIA providers, keyboard order audit on `ui::FocusManager`, announcements
 
 ## Out of scope
 

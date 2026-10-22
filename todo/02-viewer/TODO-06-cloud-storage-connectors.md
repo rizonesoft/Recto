@@ -10,24 +10,38 @@ title: "TODO-06 -- Cloud Storage Connectors: OneDrive, SharePoint, Google Drive,
 
 > **Goal:** Opt-in, off-by-default connectors (D21) that let a user browse, open, save and save a copy of PDFs in OneDrive, SharePoint, Google Drive, Dropbox and Box. Sign-in is OAuth 2.0 authorization code with PKCE through the system browser and a loopback redirect; refresh tokens live in Windows Credential Manager; a downloaded file opens as a temporary local copy like any other; an upload is conditional on the provider's version token so a newer remote file is never overwritten. When the user never signs in, or Group Policy disables connectors, no request is ever made.
 
-> **Current state:** Measured 2026-10-21. Nothing exists. `D02 T01 §5` and `§8` provide `OpenDocumentPipeline` and `SavePipeline`, `D02 T01 §10` the dialog chrome, `D02 T03 §2` and `§12` Home and the command box, `D02 T04 §2` and `§6` the settings store and the `Performance and privacy` group. The assistant's HTTPS transport (`D08 T01 §2`) refuses every redirect and cannot be reused for downloads that redirect, so this file has its own client. The Group Policy templates and the `SettingsStore` policy layer are owned by `todo/07-release/TODO-02-store-and-compliance.md`; this file reads the policy name `CloudConnectorsDisabled` through an interface.
+> **Current state:** Measured 2026-10-21. Nothing exists. `D02 T01 §5` and `§8` provide `OpenDocumentPipeline` and `SavePipeline`, `D02 T01 §10` the dialog chrome, `D02 T03 §2` and `§12` Home and the command box, `D02 T04 §2` and `§6` the settings store and the `Performance and privacy` group. The assistant's HTTPS transport (`D08 T01 §2`) refuses every redirect and cannot be reused for downloads that redirect, so this file has its own client. The Group Policy templates and the `SettingsStore` policy layer are owned by `todo/07-release/TODO-02-store-and-compliance.md`; this file reads the policy name `CloudConnectorsDisabled` through an interface. 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); sections rewritten against `todo/10-ui/`.
 
 ## Inputs
 
 - `AGENTS.md` architecture rules (UI thread never blocks, atomic writes, links ask first, tokens and Fluent UI System Icons (`RectoIcons`), `Ctrl+K` reachability), foundation plan D16 (offline by default, no telemetry), D18 and D21.
 - RFC 7636 (PKCE) and RFC 8252 (OAuth 2.0 for native apps: system browser, loopback redirect); each provider's current developer documentation for endpoints, scopes and conflict handling, checked while building each provider section.
-- `design/SPEC.md` sections 4, 5, 6, 7, 9.1, 9.7, 9.9, 10 and 11; `design/tokens/RectoColors.xaml`.
+- `design/SPEC.md` sections 4, 5, 6, 7, 9.1, 9.7, 9.9, 10 and 11; `design/tokens/colors.json` and the generated `src/ui/generated/recto_tokens.g.h`.
 - Builds on D02 T01 §5: `OpenDocumentPipeline` opens the downloaded temporary copy (§12 here).
 - Builds on D02 T01 §8: `SavePipeline` writes the local save before the upload (§13 here).
 - Builds on D02 T01 §13: `SessionStore` excludes cloud temporary copies.
 - Builds on D02 T01 §17: sharing a cloud-origin document shares a fresh copy.
 - Builds on D02 T04 §6: the Cloud storage card (§5 here) sits in the `Performance and privacy` group.
 - Builds on D08 T01 §2: the assistant transport is deliberately not reused (redirect rule).
+- Builds on D10 T02 §17: the sign-in, browser and conflict dialogs are `ui::Dialog` (§3, §11, §13 here).
+- Builds on D10 T02 §19 and §7: the Cloud storage card is a `ui::SettingsCard` with a `ui::ToggleSwitch` (§5 here).
+- Builds on D10 T02 §11: the cloud browser list is a virtualized `ui::ItemsView` (§11 here).
+- Builds on D10 T02 §16, §8, §3 and §20: the waiting and progress cards are `ui::Card` with `ui::ProgressBar`, tab tooltips are `ui::ToolTip` and the cloud tab badge is `ui::Badge` (§3, §12 here).
+- Builds on D10 T02 §21: cloud recents appear in the `ui::SearchBox` command box results (§14 here).
+- Builds on D10 T01 §3: transfer completions reach the UI thread through `ui::Dispatcher` (§12 here).
+- Builds on D10 T03 §1 and §2: automation names and patterns come from `ui::Element` automation properties and the UIA providers (§3, §11 here).
 - -> XREF: D07 T02 §10 -- CloudConnectorsDisabled policy.
 - -> XREF: D02 T04 §6 -- cloud storage card.
 - -> XREF: D07 T02 §4 -- crash bundle scan.
 - -> XREF: D08 T01 §2 -- separate transport.
 - -> XREF: D02 T01 §13 -- session exclusion of cloud copies.
+- -> XREF: D10 T02 §17 -- the sign-in, browser and conflict dialogs build on ui::Dialog.
+- -> XREF: D10 T02 §19 -- the Cloud storage card builds on ui::SettingsCard.
+- -> XREF: D10 T02 §11 -- the cloud browser list builds on ui::ItemsView.
+- -> XREF: D10 T02 §16 -- the waiting and progress cards build on ui::Card.
+- -> XREF: D10 T02 §21 -- cloud recents appear in the ui::SearchBox command box.
+- -> XREF: D10 T01 §3 -- transfer completions marshal through ui::Dispatcher.
+- -> XREF: D10 T03 §1 -- automation names and the UIA tree for the cloud dialogs.
 - -> XREF: D06 T04 §22 -- the `D-Cloud.png` board and `design/SPEC.md` section 9.17 that §3, §5, §11, §12, §13, §14 here build against.
 
 ## Outcome
@@ -46,18 +60,18 @@ title: "TODO-06 -- Cloud Storage Connectors: OneDrive, SharePoint, Google Drive,
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | Provider-neutral connector interface, errors and the network gate | D02 T04 §2 | [ ] |
 | 2 | §2 | HTTPS client for connectors with same-provider redirects only | §1 | [ ] |
-| 3 | §3 | OAuth 2.0 authorization code with PKCE through a loopback redirect | §2, D02 T01 §10, D02 T02 §9, D06 T04 §22 | [ ] |
+| 3 | §3 | OAuth 2.0 authorization code with PKCE through a loopback redirect | §2, D02 T01 §10, D02 T02 §9, D10 T02 §16, D10 T02 §17, D10 T03 §1, D06 T04 §22 | [ ] |
 | 4 | §4 | Token store in Windows Credential Manager, refresh and sign-out | §3 | [ ] |
-| 5 | §5 | Cloud storage settings group: off by default, per-provider sign-out, policy lock | §1, §4, D02 T04 §6, D06 T04 §22 | [ ] |
+| 5 | §5 | Cloud storage settings group: off by default, per-provider sign-out, policy lock | §1, §4, D02 T04 §6, D10 T02 §7, D10 T02 §19, D06 T04 §22 | [ ] |
 | 6 | §6 | OneDrive provider over Microsoft Graph | §2, §3, §4, §5 | [ ] |
 | 7 | §7 | SharePoint document libraries over Microsoft Graph | §6 | [ ] |
 | 8 | §8 | Google Drive provider over Drive API v3 | §2, §3, §4, §5 | [ ] |
 | 9 | §9 | Dropbox provider over API v2 | §2, §3, §4, §5 | [ ] |
 | 10 | §10 | Box provider over API 2.0 | §2, §3, §4, §5 | [ ] |
-| 11 | §11 | Open from cloud: provider and folder browser | §1, §3, D02 T01 §9, D02 T01 §10, D02 T03 §2, D02 T03 §11, D06 T04 §22 | [ ] |
-| 12 | §12 | Open a cloud file as a temporary local copy | §11, D02 T01 §5, D02 T01 §11, D02 T01 §13, D02 T03 §8, D06 T04 §22 | [ ] |
-| 13 | §13 | Save and Save a copy to the cloud with conflict detection | §12, D02 T01 §8, D06 T04 §22 | [ ] |
-| 14 | §14 | Recent cloud files on Home and in the command box | §4, §12, D02 T03 §2, D02 T03 §12, D06 T04 §22 | [ ] |
+| 11 | §11 | Open from cloud: provider and folder browser | §1, §3, D02 T01 §9, D02 T01 §10, D02 T03 §2, D02 T03 §11, D10 T01 §13, D10 T02 §11, D10 T02 §17, D10 T02 §18, D10 T03 §1, D06 T04 §22 | [ ] |
+| 12 | §12 | Open a cloud file as a temporary local copy | §11, D02 T01 §5, D02 T01 §11, D02 T01 §13, D02 T03 §8, D10 T01 §3, D10 T02 §3, D10 T02 §8, D10 T02 §16, D10 T02 §20, D06 T04 §22 | [ ] |
+| 13 | §13 | Save and Save a copy to the cloud with conflict detection | §12, D02 T01 §8, D10 T02 §17, D06 T04 §22 | [ ] |
+| 14 | §14 | Recent cloud files on Home and in the command box | §4, §12, D02 T03 §2, D02 T03 §12, D10 T02 §11, D10 T02 §21, D06 T04 §22 | [ ] |
 | 15 | §15 | Privacy and security tests: zero requests until sign-in, no secrets on disk | §6, §7, §8, §9, §10, §13, §14, D07 T02 §4 | [ ] |
 
 ## 1. Provider-neutral connector interface, errors and the network gate
@@ -114,17 +128,17 @@ Sign-in follows RFC 7636 (PKCE, S256) and RFC 8252 (native apps use the system b
 **Fidelity:** `design/SPEC.md` section 9.9 form dialog layout. Design board: `design/SPEC.md` section 9.17 with `design/screenshots/D-Cloud.png` (drawn by `D06 T04 §22`).
 **Job:** A user signs in to a provider in their own browser and returns to Recto. Consumer: provider sections §6 to §10.
 **Treatment:** System browser plus loopback listener. Cheaper substitute that fails the checkpoint: an embedded browser control, or a listener bound to all interfaces.
-**Chrome:** `RectoDialogStyles.xaml`, tokens.
+**Chrome:** `ui::Dialog` (`D10 T02 §17`), `ui::Card` (`D10 T02 §16`), `recto_tokens.g.h` tokens.
 
 **Build order:**
 
 1. Implement `src/services/cloud/oauth_pkce.h/.cpp`: generate a 64-byte `code_verifier` and its S256 `code_challenge` with `BCryptGenRandom` and `BCryptHash`, a random `state`, build the authorization URL from a provider descriptor (`authorize_url`, `token_url`, `scopes`, `client_id`, `extra_params`), listen on `127.0.0.1` with an OS-chosen port for one request (Winsock, 120 s timeout, first line only parsed, 8 KB cap), verify `state` in constant time, exchange the code at `token_url` through the §2 client under the gate's `AuthorizationInProgress` token (so first sign-in passes through the real gate, not a bypass), and return `OAuthTokens { access, refresh, expires_in, scope }`. Done when: against a fake identity server and the real `CloudGate` the full flow returns tokens, a request outside the provider's authorize and token hosts is refused during sign-in, a wrong `state` is refused, and a second connection to the listener is refused.
-2. Show `SignInDialog` (`RectoDialogStyles.xaml`, `D02 T01 §10`) stating `Recto will open <host> in your browser to sign in to <provider>` with `Open browser` and `Cancel`, then open the URL with `Launcher.LaunchUriAsync`, show a waiting card with `Cancel`, and return a friendly page to the browser (`You can close this tab and return to Recto`) with no scripts. Done when: cancelling closes the listener within 500 ms and nothing is stored.
+2. Show `SignInDialog` (a `ui::Dialog`, `D10 T02 §17`, with the `D02 T01 §10` dialog chrome) stating `Recto will open <host> in your browser to sign in to <provider>` with `Open browser` and `Cancel`, then open the URL with `ShellExecuteExW` (`open` verb, default browser), show a waiting `ui::Card` with `Cancel`, and return a friendly page to the browser (`You can close this tab and return to Recto`) with no scripts. Done when: cancelling closes the listener within 500 ms and nothing is stored.
 
 - [ ] Handle `error=access_denied` and provider error pages without leaking the response into logs. Done when: a denied sign-in shows `Sign-in was cancelled` and stores nothing.
 - [ ] Bind the listener to loopback only and fail closed if binding to `127.0.0.1` fails. Done when: `Cloud.OAuthListenerLoopbackOnly` shows no other interface accepts.
 - [ ] Reject an authorization response that arrives after the timeout or twice. Done when: a late or repeated callback is ignored.
-- [ ] Give the dialog and waiting card automation names and keyboard access. Done when: the UIA tree lists both buttons with names.
+- [ ] Give the dialog and waiting card `ui::Element` automation names (`D10 T03 §1`) and keyboard access through `ui::FocusManager` (`D10 T01 §13`). Done when: the UIA tree lists both buttons with names.
 - [ ] Add `Cloud.OAuthPkceFlow` covering challenge maths against RFC 7636 test vectors, state checks, timeouts, cancel and denial. Done when: `recto-tests.exe --gtest_filter=Cloud.OAuth*` passes. Cheaper substitute: an embedded web view or a client secret in the URL.
 - [ ] Commit: `services: add OAuth PKCE sign-in through a loopback redirect`
 
@@ -160,12 +174,12 @@ The settings half of the opt-in. `CloudConnectorsEnabled` is off by default; wit
 
 **Fidelity:** `design/SPEC.md` section 9.7 (`Performance and privacy` group, Cloud storage card) with `design/screenshots/D-Settings.png`. Design board: `design/SPEC.md` section 9.17 with `design/screenshots/D-Cloud.png` (drawn by `D06 T04 §22`).
 **Job:** A user decides whether cloud connectors exist at all, sees what is signed in and signs out. Consumer: `CloudGate` (§1), `TokenStore` (§4), `SettingsPage` (`D02 T04 §6`).
-**Treatment:** Stock `ToggleSwitch` and list rows. Cheaper substitute that fails the checkpoint: a setting nothing reads, or a toggle that does not stop requests.
-**Chrome:** `RectoColors.xaml` tokens, Fluent UI System Icons (`RectoIcons`).
+**Treatment:** The `recto-ui` `ui::ToggleSwitch` (`D10 T02 §7`) and `ui::SettingsCard` rows (`D10 T02 §19`) matching the Fluent look. Cheaper substitute that fails the checkpoint: a setting nothing reads, or a toggle that does not stop requests.
+**Chrome:** `recto_tokens.g.h` tokens, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
-1. Add `CloudConnectorsEnabled` (default false) to `RectoSettings` and a `Cloud storage` card in the `Performance and privacy` group of the Settings page (`D02 T04 §6`): the master toggle, a list of the five providers each with state (`Not signed in`, `Signed in as <account>`), `Sign in` and `Sign out`, a `Sign out of all` button, and the sentence `Recto contacts a provider only after you sign in, and only to open or save files you choose.` Done when: the card renders with the toggle off, the provider buttons disabled and no request issued.
+1. Add `CloudConnectorsEnabled` (default false) to `RectoSettings` and a `Cloud storage` `ui::SettingsCard` in the `Performance and privacy` `ui::SettingsGroup` of the Settings page (`D02 T04 §6`, `D10 T02 §19`): the master toggle, a list of the five providers each with state (`Not signed in`, `Signed in as <account>`), `Sign in` and `Sign out`, a `Sign out of all` button, and the sentence `Recto contacts a provider only after you sign in, and only to open or save files you choose.` Done when: the card renders with the toggle off, the provider buttons disabled and no request issued.
 2. Implement `PolicyAwareCloudGate` wiring `IPolicySource` to `SettingsStore`'s policy precedence once that exists; when `CloudConnectorsDisabled` is set, force the toggle off and disabled, sign out nothing automatically, and show `Managed by your organization`. Done when: a fake policy source makes the toggle locked and `CloudGate::allowed` false even with the setting on.
 
 - [ ] Hide `Open from cloud`, `Save to cloud` and the cloud recents section while the master toggle is off. Done when: with the toggle off no cloud entry appears in menus, `Home` or `Ctrl+K`.
@@ -288,16 +302,16 @@ One browser for all providers, as in Foxit's and UPDF's cloud dialogs: pick a si
 
 **Fidelity:** Genuinely new surface; it follows `design/SPEC.md` section 9.9 form layout, section 5 type styles and the Home list styling of `D-Home.png`. Design board: `design/SPEC.md` section 9.17 with `design/screenshots/D-Cloud.png` (drawn by `D06 T04 §22`).
 **Job:** A user finds a PDF in their cloud storage and opens it. Consumer: `ICloudProvider` (§1), `OpenDocumentPipeline` (`D02 T01 §5`) through §12.
-**Treatment:** Virtualized list over paged provider calls. Cheaper substitute that fails the checkpoint: loading entire folders before showing anything, or one dialog per provider.
-**Chrome:** `RectoDialogStyles.xaml`, tokens, Fluent UI System Icons (`RectoIcons`).
+**Treatment:** The `recto-ui` virtualized `ui::ItemsView` over paged provider calls. Cheaper substitute that fails the checkpoint: loading entire folders before showing anything, or one dialog per provider.
+**Chrome:** `ui::Dialog` (`D10 T02 §17`), `recto_tokens.g.h` tokens, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
-1. Build `CloudBrowserDialog` (`src/app/dialogs/CloudBrowserDialog.xaml/.h/.cpp`): provider tabs for signed-in providers, a breadcrumb, a virtualized `ListView` with name, size and modified columns (folders first, then PDFs, other types hidden behind `Show all files`), a `Sign in to another provider` link that opens §3's dialog, loading and error states with `Retry`, and `Open` and `Cancel`. Done when: against a fake provider with 1,000 items the list pages in without a UI stall and `Open` returns the chosen item.
+1. Build `CloudBrowserDialog` (`src/app/dialogs/cloud_browser_dialog.h/.cpp`, a `ui::Dialog`): a provider switcher (`ui::SegmentedControl`, `D10 T02 §18`) for signed-in providers, a breadcrumb, a virtualized `ui::ItemsView` (`D10 T02 §11`) with name, size and modified columns (folders first, then PDFs, other types hidden behind `Show all files`), a `Sign in to another provider` link that opens §3's dialog, loading and error states with `Retry`, and `Open` and `Cancel`. Done when: against a fake provider with 1,000 items the list pages in without a UI stall and `Open` returns the chosen item.
 2. Cancel an in-flight listing when the user navigates or closes the dialog, and show `CloudError` messages inline (never a raw status code). Done when: navigating mid-load cancels the first request and shows only the second folder.
 
 - [ ] Add `Open from cloud...` to the `File` menu (`D02 T01 §9`), the Home actions (`D02 T03 §2`) and `CommandRegistry`, visible only when connectors are on and at least one provider is signed in. Done when: `Ctrl+K` finds it only in that state.
-- [ ] Support keyboard navigation (`Up`, `Down`, `Enter` to open a folder or file, `Backspace` up one level) and automation names including the file size and date. Done when: a keyboard-only run opens a nested file.
+- [ ] Support keyboard navigation (`Up`, `Down` from the `ui::ItemsView` arrow-key group, `Enter` to open a folder or file, `Backspace` up one level) and `ui::Element` automation names including the file size and date (`D10 T03 §1`). Done when: a keyboard-only run opens a nested file.
 - [ ] Add `Cloud.BrowserDialog` covering paging, cancellation, filtering, empty and error states. Done when: `recto-tests.exe --gtest_filter=Cloud.BrowserDialog` passes. Cheaper substitute: listing the whole drive eagerly.
 - [ ] Commit: `viewer: add the Open from cloud browser`
 
@@ -314,14 +328,14 @@ Opening downloads the file to a per-session temp folder and then opens that copy
 **Fidelity:** Genuinely new behaviour; the progress card follows `design/SPEC.md` section 9 toast and card chrome and the tab badge follows section 8.1. Design board: `design/SPEC.md` section 9.17 with `design/screenshots/D-Cloud.png` (drawn by `D06 T04 §22`).
 **Job:** A user opens a cloud PDF and works on it as if local. Consumer: `OpenDocumentPipeline` (`D02 T01 §5`), `DocumentTabSession` (`D02 T01 §3`).
 **Treatment:** Download to a managed temp copy then the normal open path. Cheaper substitute that fails the checkpoint: a second open pipeline, or leaving copies on disk.
-**Chrome:** `RectoColors.xaml` tokens, Fluent UI System Icons (`RectoIcons`).
+**Chrome:** `recto_tokens.g.h` tokens, Fluent UI System Icons (`RectoIcons`), `ui::Card`, `ui::ProgressBar` and `ui::Badge`.
 
 **Build order:**
 
-1. Implement `CloudOpenService::open_async(provider, item)` (`src/app/CloudOpenService.h/.cpp`): establish confinement before any byte is written: create `AppPaths::temp_dir()\cloud\<session>\<generated-guid>\` (the folder is application-generated, the name goes through the `D02 T03 §8` sanitiser, and the provider's item id is kept only as metadata in `CloudOrigin`, never in a path), open each folder component with `FILE_FLAG_OPEN_REPARSE_POINT` and refuse any that is a reparse point, create the destination with `CREATE_NEW` and `FILE_FLAG_OPEN_REPARSE_POINT`, and confirm through `GetFinalPathNameByHandleW` on the open handle that it lies inside the session folder; only then download through `ICloudProvider::download` into that handle, keeping the folder handles open through the write and the cleanup so no component can be swapped. Show a progress card with `Cancel`, verify the byte count against the provider's size, then call `OpenDocumentPipeline::open_file_async` and attach `CloudOrigin { provider, item_id, parent_id, version_token, display_path }` to the `DocumentTabSession`. Done when: opening a 50 MB fake file shows progress, opens a tab with a cloud badge, and cancelling deletes the partial file.
+1. Implement `CloudOpenService::open_async(provider, item)` (`src/app/cloud_open_service.h/.cpp`; completion and progress reach the UI thread only through `ui::Dispatcher`, `D10 T01 §3`): establish confinement before any byte is written: create `AppPaths::temp_dir()\cloud\<session>\<generated-guid>\` (the folder is application-generated, the name goes through the `D02 T03 §8` sanitiser, and the provider's item id is kept only as metadata in `CloudOrigin`, never in a path), open each folder component with `FILE_FLAG_OPEN_REPARSE_POINT` and refuse any that is a reparse point, create the destination with `CREATE_NEW` and `FILE_FLAG_OPEN_REPARSE_POINT`, and confirm through `GetFinalPathNameByHandleW` on the open handle that it lies inside the session folder; only then download through `ICloudProvider::download` into that handle, keeping the folder handles open through the write and the cleanup so no component can be swapped. Show a progress `ui::Card` with a `ui::ProgressBar` and `Cancel` (`D10 T02 §16`, `§8`), verify the byte count against the provider's size, then call `OpenDocumentPipeline::open_file_async` and attach `CloudOrigin { provider, item_id, parent_id, version_token, display_path }` to the `DocumentTabSession`. Done when: opening a 50 MB fake file shows progress, opens a tab with a cloud `ui::Badge` (`D10 T02 §20`), and cancelling deletes the partial file.
 2. Delete the copy on tab close, on exit, and via a sweep of stale session folders at launch; keep Portable mode's temp under its own data folder; open an item already open and unmodified by selecting its tab, while an explicit reload or fork (§13) always creates a separate local copy with its own generated folder and its own `CloudOrigin` revision. Done when: after closing the tab and restarting, the cloud temp folder is empty, and a second open of an unmodified item selects the existing tab; a hostile item id containing separators, `..` or `:stream` syntax yields a path inside the session folder, and a junction planted in the temp folder that points at an outside folder is refused before any write, with an outside sentinel file's bytes and timestamp unchanged afterwards.
 
-- [ ] Show a cloud badge and the provider path in the tab tooltip and an `Open in <provider>` label, never the temp path. Done when: the tab tooltip shows `OneDrive / Documents / a.pdf`.
+- [ ] Show a cloud badge and the provider path in the tab `ui::ToolTip` (`D10 T02 §3`) and an `Open in <provider>` label, never the temp path. Done when: the tab tooltip shows `OneDrive / Documents / a.pdf`.
 - [ ] Treat a failed or truncated download as `Could not open` (`D02 T01 §11`) with a cloud-specific message and no leftover file. Done when: a truncated fake download shows the dialog and leaves no file.
 - [ ] Exclude cloud-origin tabs from `SessionStore` (`D02 T01 §13`) and keep them out of local recents. Done when: relaunch does not reopen the temp path.
 - [ ] Add `Cloud.OpenAsTempCopy` covering download, cancel, verification, cleanup, dedup and exclusion from the session. Done when: `recto-tests.exe --gtest_filter=Cloud.OpenAsTempCopy` passes. Cheaper substitute: opening straight from a network stream.
@@ -340,11 +354,11 @@ For a cloud-origin tab, `Save` writes to the temp copy through `SavePipeline` (`
 **Fidelity:** `design/SPEC.md` section 9.9 (`Replace original` dialog layout reused for the conflict dialog). Design board: `design/SPEC.md` section 9.17 with `design/screenshots/D-Cloud.png` (drawn by `D06 T04 §22`).
 **Job:** A user saves edits back to the cloud file without silently overwriting someone else's changes. Consumer: `SavePipeline` (`D02 T01 §8`), `ICloudProvider::upload_replace` (§1).
 **Treatment:** Local atomic save first, then conditional upload. Cheaper substitute that fails the checkpoint: uploading without the version token, or treating a local save as uploaded.
-**Chrome:** `RectoDialogStyles.xaml` (`D02 T01 §10`).
+**Chrome:** `ui::Dialog` (`D10 T02 §17`, `D02 T01 §10`).
 
 **Build order:**
 
-1. Implement `CloudSaveService` (`src/app/CloudSaveService.h/.cpp`): after a successful local save of a cloud-origin tab, upload with `upload_replace(item, source, expected_version)`, bind each upload to an immutable snapshot of the saved revision (copied to a private upload file so a later save cannot change it), serialize saves per tab, update `CloudOrigin.version_token` from the response, and set `CloudOrigin.uploaded_revision` to the uploaded revision only when the upload succeeds (the actor's local dirty state is cleared by the local save as usual and is never touched here); on failure keep the temp copy, keep the tab `upload pending` with a tab badge `Not uploaded`, and show `Saved locally; upload failed` with `Retry`, and implement `save_copy_to_cloud` through `upload_new` with a `NameExists` rename prompt. Done when: `Cloud.SaveUploadPendingState`, driven through the real `SavePipeline` and `DocumentActor`, shows a successful save changes the fake server's bytes and version and clears both states; a failed upload leaves the tab locally clean but `upload pending` with a retry; and an edit or a second Save during a delayed upload leaves the tab `upload pending` with the newer revision uploaded next and the first upload's bytes unchanged.
+1. Implement `CloudSaveService` (`src/app/cloud_save_service.h/.cpp`): after a successful local save of a cloud-origin tab, upload with `upload_replace(item, source, expected_version)`, bind each upload to an immutable snapshot of the saved revision (copied to a private upload file so a later save cannot change it), serialize saves per tab, update `CloudOrigin.version_token` from the response, and set `CloudOrigin.uploaded_revision` to the uploaded revision only when the upload succeeds (the actor's local dirty state is cleared by the local save as usual and is never touched here); on failure keep the temp copy, keep the tab `upload pending` with a tab badge `Not uploaded`, and show `Saved locally; upload failed` with `Retry`, and implement `save_copy_to_cloud` through `upload_new` with a `NameExists` rename prompt. Done when: `Cloud.SaveUploadPendingState`, driven through the real `SavePipeline` and `DocumentActor`, shows a successful save changes the fake server's bytes and version and clears both states; a failed upload leaves the tab locally clean but `upload pending` with a retry; and an edit or a second Save during a delayed upload leaves the tab `upload pending` with the newer revision uploaded next and the first upload's bytes unchanged.
 2. Build `CloudConflictDialog` with `Save as a new file`, `Reload from <provider>`, `Cancel`; `Reload` calls the explicit fork operation of §12, which downloads the current remote revision to a new generated folder and opens it in a new tab, bypassing the deduplication, and keeps the edited tab (and its own local copy) until the user closes it. Done when: a fake version bump produces the dialog, the server file is untouched, and each button does what it says, and after `Reload` the two tabs hold different revisions and neither local copy is overwritten.
 
 - [ ] Show the one-time `Upload your changes to <provider>?` confirmation per tab session with `Upload` and `Cancel`. Done when: the second save in the same tab uploads without asking.
@@ -366,12 +380,12 @@ A short list of the cloud files the user opened lately, so they do not browse ag
 **Fidelity:** `design/SPEC.md` section 9.1 Home list with `design/screenshots/D-Home.png`. Design board: `design/SPEC.md` section 9.17 with `design/screenshots/D-Cloud.png` (drawn by `D06 T04 §22`).
 **Job:** A user reopens a cloud file in two clicks. Consumer: `HomePage` (`D02 T03 §2`), `CommandBoxControl` (`D02 T03 §12`).
 **Treatment:** A local metadata list with no network use. Cheaper substitute that fails the checkpoint: a list that contacts providers on startup.
-**Chrome:** `RectoColors.xaml` tokens, the Home recents card styling.
+**Chrome:** `recto_tokens.g.h` tokens, the Home recents card styling on `ui::ItemsView` rows (`D10 T02 §11`).
 
 **Build order:**
 
 1. Implement `CloudRecentsStore` (`src/services/cloud/cloud_recents.h/.cpp`) writing `cloud_recents.json` (cap 20, most recent first) through temp-file-then-replace in the data folder, with corrupt-file recovery to empty, and `remove_provider(provider)` called by sign-out (§4). Done when: sign-out removes the provider's entries and a corrupt file loads as empty.
-2. Show a `Cloud` row group on `HomePage` (`D02 T03 §2`) and in `Ctrl+K` results (`D02 T03 §12`) only while connectors are on and the provider is signed in; activating an entry calls §12 and shows `Sign in again` when the token is gone. Done when: with connectors off the group is absent, and with a signed-out provider the entry is hidden.
+2. Show a `Cloud` row group on `HomePage` (`D02 T03 §2`) and in `Ctrl+K` results (`D02 T03 §12`, `ui::SearchBox` results, `D10 T02 §21`) only while connectors are on and the provider is signed in; activating an entry calls §12 and shows `Sign in again` when the token is gone. Done when: with connectors off the group is absent, and with a signed-out provider the entry is hidden.
 
 - [ ] Add `Remove from recents` and `Clear cloud recents` commands. Done when: both update the file and the Home list.
 - [ ] Never preload or ping the provider to show recents. Done when: `Cloud.GateCounters` shows 0 requests while Home is shown.

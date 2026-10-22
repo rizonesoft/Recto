@@ -10,11 +10,11 @@ title: "TODO-02 -- Assistant Workspace: Translate, Rewrite, Chat, Search, Comman
 
 > **Goal:** The opt-in assistant of `D08 T01` grows into the AI toolset that UPDF and PDFelement ship, without giving up any Recto rule. A user can translate a whole document keeping its layout (with a bilingual side-by-side or interleaved output), rewrite, proofread, retone, expand or condense text and apply it through the undoable Edit PDF path, chat across several open files with per-file citations, search by meaning, ask `Ctrl+K` to find commands, get AI bookmarks and page-fix proposals, make mind maps, flashcards and quizzes, review contract risk, estimate whether text was machine-written, generate images, hear audio summaries and let AI suggest redactions, using Anthropic, OpenAI, OpenRouter, Gemini or a local model on a loopback endpoint. Every request, including each batch of a long job, is previewed and authorized by the user, nothing changes the document without an explicit undoable Apply, and a feature a provider cannot serve is disabled with the reason (foundation plan D19, widened 2026-10-21).
 
-> **Current state:** Measured 2026-10-21. `D08 T01` plans the provider interface, transport, key store, consent gate, `ContextBuilder`, `AssistantService`, the Assistant panel and the privacy suite for four cloud providers, and none of it is built. `D03 T04` plans the Edit PDF session, paragraph model, rewrite and full-rewrite save. `D03 T05` plans the local text index. `D05` plans page operations and the redaction review. This file adds no new principles: it extends those with a fifth (local) provider, job-level authorization, structured output, and the features above. Every section is Phase 7 (After v1).
+> **Current state:** Measured 2026-10-21. `D08 T01` plans the provider interface, transport, key store, consent gate, `ContextBuilder`, `AssistantService`, the Assistant panel and the privacy suite for four cloud providers, and none of it is built. `D03 T04` plans the Edit PDF session, paragraph model, rewrite and full-rewrite save. `D03 T05` plans the local text index. `D05` plans page operations and the redaction review. This file adds no new principles: it extends those with a fifth (local) provider, job-level authorization, structured output, and the features above. Every section is Phase 7 (After v1). 2026-10-22: WinUI 3 dropped for `recto-ui` (foundation plan D4); UI references rewritten against `todo/10-ui/`.
 
 ## Inputs
 
-- Foundation plan D19 (widened scope and the per-request confirmation rule), D16 (offline by default, no telemetry), D9 (no PDF JavaScript), D21 (Group Policy name `AssistantDisabled`), and `AGENTS.md` (document text is hostile input, the UI thread never blocks, every write is temp-file-then-replace, colours from `RectoColors.xaml`, every command reachable from `Ctrl+K`).
+- Foundation plan D19 (widened scope and the per-request confirmation rule), D16 (offline by default, no telemetry), D9 (no PDF JavaScript), D21 (Group Policy name `AssistantDisabled`), and `AGENTS.md` (document text is hostile input, the UI thread never blocks, every write is temp-file-then-replace, colours from `recto_tokens.g.h`, every command reachable from `Ctrl+K`).
 - `D08 T01`: `IAssistantProvider` (`§1`), the transport (`§2`), `RetryingSender` (`§3`), `CredentialStore` (`§9`), settings and catalog (`§10`), `ContextBuilder` and `OutboundPreview` (`§11`, `§12`), `AssistantService` and the citation parser (`§13`), the Assistant panel (`§17`) and the privacy suite (`§19`). This file builds on them and states each change it needs in them.
 - `D03 T04` (`EditSession`, paragraph model, `RewriteParagraph`, `AddImage`, full-rewrite save, `edit.*` commands), `D03 T05` (`SearchIndex`, `FileScope`, index jobs, grouped results), `D03 T03 §4` (annotation undo stack), `D02 T03 §5`, `§6`, `§11`, `§12` (outline panel, bookmark editor undo stack, `CommandRegistry`, command box), `D05 T01 §1`, `§2`, `§3`, `§4` (`GraftMap`, merge, page edit list, blank page), `D05 T02 §1`, `§9` (Organize model, redaction review), `D04 T01 §1`, `§5` (isolated jobs, `QueueCard`), `D03 T02 §5` (`AnnouncementService`).
 - Cross-references to the files above are added by the coordinator in both directions.
@@ -49,6 +49,8 @@ title: "TODO-02 -- Assistant Workspace: Translate, Rewrite, Chat, Search, Comman
 - -> XREF: D05 T02 §28 -- suggested marks.
 - -> XREF: D06 T04 §26 -- the `D-Assistant.png` board and `design/SPEC.md` section 9.20 that §7, §12, §33 here build against.
 - -> XREF: D06 T04 §27 -- the `D-AssistantReview.png` board and `design/SPEC.md` section 9.21 that §10, §17, §19, §21, §23, §27, §32 here build against.
+- -> XREF: D10 T02 §17 -- the `ui::Dialog` that the translation dialog (§10) builds on, with the list (`D10 T02 §11`) for its job preview.
+- -> XREF: D10 T02 §12 -- the `ui::TreeView` that the bookmark proposals review (§21) builds on.
 
 ## Outcome
 
@@ -72,10 +74,10 @@ title: "TODO-02 -- Assistant Workspace: Translate, Rewrite, Chat, Search, Comman
 | 4 | §4 | Structured output runner: bounded JSON, schema checks and verified quotes | D08 T01 §13 | [ ] |
 | 5 | §5 | Rewrite, proofread, tone, expand and condense suggestion engine | §4, D03 T04 §2 | [ ] |
 | 6 | §6 | Apply AI text suggestions through the undoable Edit PDF path | §5, D03 T04 §3, D03 T04 §5, D03 T04 §14 | [ ] |
-| 7 | §7 | Rewrite and proofread review in the Assistant panel | §6, D08 T01 §17, D06 T04 §26 | [ ] |
+| 7 | §7 | Rewrite and proofread review in the Assistant panel | §6, D08 T01 §17, D06 T04 §26, D10 T02 §9, D10 T02 §4, D10 T02 §11 | [ ] |
 | 8 | §8 | Whole-document translation on a copy keeping layout | §3, §4, D03 T04 §2, D03 T04 §5, D03 T04 §9 | [ ] |
 | 9 | §9 | Bilingual output: side-by-side wide pages and interleaved pages | §8, D05 T01 §1, D05 T01 §2 | [ ] |
-| 10 | §10 | Translation dialog: language, glossary, job preview, progress and report | §8, §9, D04 T01 §1, D04 T01 §5, D06 T04 §27 | [ ] |
+| 10 | §10 | Translation dialog: language, glossary, job preview, progress and report | §8, §9, D04 T01 §1, D04 T01 §5, D06 T04 §27, D10 T02 §17, D10 T02 §11 | [ ] |
 | 11 | §11 | Multi-document context builder with per-file citations | D08 T01 §11, D08 T01 §13 | [ ] |
 | 12 | §12 | Multi-document chat across chosen open files | §11, D08 T01 §17, D06 T04 §26 | [ ] |
 | 13 | §13 | Embeddings requests for providers and local models | §1, §3, D08 T01 §3 | [ ] |
@@ -84,9 +86,9 @@ title: "TODO-02 -- Assistant Workspace: Translate, Rewrite, Chat, Search, Comman
 | 16 | §16 | Semantic query: previewed query embedding, ranking and verified hits | §15 | [ ] |
 | 17 | §17 | Search by meaning mode, results and index controls | §16, D03 T05 §7, D03 T05 §8, D06 T04 §27 | [ ] |
 | 18 | §18 | Natural-language command planner over the command registry | §4, D02 T03 §11 | [ ] |
-| 19 | §19 | Command box: ask for a command, review the plan, run what you choose | §18, D02 T03 §12, D06 T04 §27 | [ ] |
+| 19 | §19 | Command box: ask for a command, review the plan, run what you choose | §18, D02 T03 §12, D06 T04 §27, D10 T02 §21, D10 T02 §20 | [ ] |
 | 20 | §20 | AI bookmark proposals and per-bookmark summaries | §4, D02 T03 §6 | [ ] |
-| 21 | §21 | Bookmark proposals review in the Outline panel | §20, D02 T03 §5, D06 T04 §27 | [ ] |
+| 21 | §21 | Bookmark proposals review in the Outline panel | §20, D02 T03 §5, D06 T04 §27, D10 T02 §12, D10 T02 §19 | [ ] |
 | 22 | §22 | AI page proposals: blank, misoriented and duplicate pages | §4, D05 T01 §3 | [ ] |
 | 23 | §23 | Page proposals review in the Organize grid | §22, D05 T02 §1, D06 T04 §27 | [ ] |
 | 24 | §24 | Mind map: outline, layout, Markdown, OPML and image exports | §4 | [ ] |
@@ -254,8 +256,8 @@ The user needs to see the original and the suggestion side by side, pick what to
 
 **Fidelity:** Genuinely new surface following `design/SPEC.md` section 8.3 (side-panel card and header action slot, `D02 T03 §3`) and section 9.3 (selection toolbar actions); no screenshot exists. Design board: `design/SPEC.md` section 9.20 with `design/screenshots/D-Assistant.png` (drawn by `D06 T04 §26`).
 **Job:** A user selects text, chooses Rewrite, Proofread, Tone, Expand or Condense, reviews the request preview, sees each paragraph's original and suggestion with changes marked, accepts or discards each, and applies the accepted ones as one undo step. Consumer: the person editing a document; `apply_text` (§6).
-**Treatment:** A `Rewrite` view in `AssistantPanel` (`D08 T01 §17`) with a mode selector (`Rewrite`, `Proofread`, `Tone`, `Expand`, `Condense`), a tone `ComboBox`, an instruction `TextBox`, a virtualized list of paragraph cards (original, suggestion, diff toggle, Accept and Discard), a skipped-with-reason list, and `Apply accepted (N)`. Cheaper substitute that fails the checkpoint: replacing the selection with the model's text on arrival.
-**Chrome:** `SidePanelHost` body (`D02 T03 §3`), the preview dialog of `D08 T01 §16`, `RectoColors.xaml` tokens for diff add and remove, Fluent UI System Icons (`RectoIcons`).
+**Treatment:** A `Rewrite` view in `AssistantPanel` (`D08 T01 §17`) with a mode selector (`Rewrite`, `Proofread`, `Tone`, `Expand`, `Condense`), a tone `ui::ComboBox`, an instruction `ui::TextBox`, a virtualized list of paragraph cards (original, suggestion, diff toggle, Accept and Discard), a skipped-with-reason list, and `Apply accepted (N)`. Cheaper substitute that fails the checkpoint: replacing the selection with the model's text on arrival.
+**Chrome:** `SidePanelHost` body (`D02 T03 §3`), the preview dialog of `D08 T01 §16`, `Recto*Brush` tokens for diff add and remove (`D10 T01 §8`), Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
@@ -264,7 +266,7 @@ The user needs to see the original and the suggestion side by side, pick what to
 3. Add Accept and Discard per card, `Accept all`, the diff toggle and `Apply accepted (N)` calling `apply_text`; show the skipped list with reasons after Apply. Done when: `Panels.AssistantRewriteApplyAndSkipped` applies two of three cards and lists one skipped with its reason.
 
 - [ ] Build the paragraph card with plain-text rendering and token-coloured diff spans. Done when: `Panels.AssistantRewriteCardsAreInert` renders `<b>` text literally and uses only token brushes.
-- [ ] Give every control `AutomationProperties.Name` and a tooltip, announce completion through `AnnouncementService`, and make Accept, Discard and Apply keyboard operable. Done when: the accessibility inventory (`D03 T02 §3`) reports zero missing names for the view and `Panels.AssistantRewriteKeyboard` passes.
+- [ ] Give every control an automation name and a tooltip, announce completion through `AnnouncementService`, and make Accept, Discard and Apply keyboard operable. Done when: the accessibility inventory (`D03 T02 §3`) reports zero missing names for the view and `Panels.AssistantRewriteKeyboard` passes.
 - [ ] Disable the view with the reason from §1 when the provider lacks `Chat`, and show the skipped-with-reason list. Done when: `Panels.AssistantRewriteDisabledReason` shows the reason text.
 - [ ] Commit: `app: add Rewrite and Proofread review view to the Assistant panel`
 
@@ -327,12 +329,12 @@ The user starts a translation from one dialog: pick the target language, the pag
 
 **Fidelity:** Genuinely new surface on the `design/SPEC.md` section 9.9 dialog chrome (`D02 T01 §10`) with the `QueueCard` of `D04 T01 §5` for progress; no screenshot exists. Design board: `design/SPEC.md` section 9.21 with `design/screenshots/D-AssistantReview.png` (drawn by `D06 T04 §27`).
 **Job:** A user translates a PDF into another language, sees exactly what will be sent for every batch before starting, watches progress, and opens the result and a report of paragraphs that stayed in the original language. Consumer: the person reading a foreign-language document.
-**Treatment:** A `Translate document` `ContentDialog` with the options `Target language`, pages, `Glossary` (the glossary editor) and `Output` (translated only, side by side or interleaved) and the fit policy, a virtualized job-preview list (every batch's exact text, totals of requests and characters), `Start` and `Cancel`; progress in the `QueueCard`; a completion notice with `Open file` and `View report`. Cheaper substitute that fails the checkpoint: a one-line "this will send your document" confirmation or a silent background start.
-**Chrome:** `RectoDialogStyles.xaml`, `QueueCard`, `RectoColors.xaml` tokens, Fluent UI System Icons (`RectoIcons`).
+**Treatment:** A `Translate document` `ui::Dialog` with the options `Target language`, pages, `Glossary` (the glossary editor) and `Output` (translated only, side by side or interleaved) and the fit policy, a virtualized job-preview list (every batch's exact text, totals of requests and characters), `Start` and `Cancel`; progress in the `QueueCard`; a completion notice with `Open file` and `View report`. Cheaper substitute that fails the checkpoint: a one-line "this will send your document" confirmation or a silent background start.
+**Chrome:** the shared dialog chrome on `ui::Dialog` (`D10 T02 §17`), `QueueCard`, `Recto*Brush` tokens (`D10 T01 §8`), Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
 
-1. Author `src/app/dialogs/TranslateDocumentDialog.xaml/.h/.cpp` with the options and glossary editor, enabling Start only after the job preview has been scrolled to its end or the user ticks "I have reviewed this". Done when: `Shell.TranslateDialogOptionsAndReview` asserts Start is disabled until review.
+1. Author `src/app/dialogs/TranslateDocumentDialog.h/.cpp` with the options and glossary editor, enabling Start only after the job preview has been scrolled to its end or the user ticks "I have reviewed this". Done when: `Shell.TranslateDialogOptionsAndReview` asserts Start is disabled until review.
 2. Run the job as a `ConversionJob` (`D04 T01 §1`) with its own `EditSession`, progress and per-job cancel in `QueueCard`, and completion through the focus-aware notice (`D04 T01 §6`). Done when: `Shell.TranslateJobQueueAndCancel` cancels mid-job and the copy is discarded.
 3. Show the report (translated, skipped with reason, shrunk, left in original) as a list that jumps to the page of each entry. Done when: `Shell.TranslateReportJumpsToPage` passes.
 
@@ -537,7 +539,7 @@ In the `Ctrl+K` box, when no command matches what the user typed, a row offers t
 
 **Fidelity:** Genuinely new surface inside the command box of `D02 T03 §12` (`design/SPEC.md` section 9.4 command box rows); no screenshot exists. Design board: `design/SPEC.md` section 9.21 with `design/screenshots/D-AssistantReview.png` (drawn by `D06 T04 §27`).
 **Job:** A user types "make this page landscape and save a copy", gets no direct match, asks the assistant, sees the request, then a list of commands to run or skip. Consumer: someone who does not know the command names.
-**Treatment:** An `Ask AI to find a command` row appears only when the assistant is enabled and ready; selecting it expands an inline preview (provider, model, exact text, catalog size with an expander) with `Send`; results are a checkbox list with a destructive badge and the explanation; `Run selected` executes them. Enter on the query never sends. Cheaper substitute that fails the checkpoint: running the first proposed command on Enter.
+**Treatment:** An `Ask AI to find a command` row appears only when the assistant is enabled and ready; selecting it expands an inline preview (provider, model, exact text, catalog size with a `ui::Expander`) with `Send`; results are a checkbox list with a destructive badge and the explanation; `Run selected` executes them. Enter on the query never sends. Cheaper substitute that fails the checkpoint: running the first proposed command on Enter.
 **Chrome:** command box overlay (`D02 T03 §12`), token brushes, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**
@@ -586,7 +588,7 @@ The Outline panel gets a `Suggest bookmarks with AI` action. The user reviews th
 
 **Fidelity:** Genuinely new surface extending `design/SPEC.md` section 8.3 (Outline with Bookmark Editor); no screenshot exists. Design board: `design/SPEC.md` section 9.21 with `design/screenshots/D-AssistantReview.png` (drawn by `D06 T04 §27`).
 **Job:** A user with an unstructured PDF gets a proposed table of contents, fixes a title, unticks two entries and applies the rest. Consumer: the person navigating a long document.
-**Treatment:** A header action in `OutlinePanel` opens a proposals `TreeView` with checkboxes, inline title edit, `Heading` or `Generated` badges, a summary expander per node, and `Apply (N)` with an `Add` or `Replace` choice; the standard preview dialog runs before sending. Cheaper substitute that fails the checkpoint: replacing the existing outline on arrival.
+**Treatment:** A header action in `OutlinePanel` opens a proposals `ui::TreeView` with checkboxes, inline title edit, `Heading` or `Generated` badges, a summary `ui::Expander` per node, and `Apply (N)` with an `Add` or `Replace` choice; the standard preview dialog runs before sending. Cheaper substitute that fails the checkpoint: replacing the existing outline on arrival.
 **Chrome:** `OutlinePanel` (`D02 T03 §5`), the preview dialog, token brushes, Fluent UI System Icons (`RectoIcons`).
 
 **Build order:**

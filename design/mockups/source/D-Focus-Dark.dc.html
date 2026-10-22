@@ -61,7 +61,7 @@ a{color:#F48A6E}
       <p style="margin:0">Recto creates one <code>recto::core::Runtime</code> at startup and destroys it after all documents, views, and jobs have closed.</p>
       <div class="tm">
         <b>Thread</b><b>How many</b><b>Owns and does</b>
-        <span>UI thread (WinUI 3 <code>DispatcherQueue</code>)</span><span>1</span><span>Never calls <code>recto-pdf</code>. Never blocks on an engine thread. Sends messages to DocumentActors; receives callbacks via queue.</span>
+        <span>UI thread (Win32 loop + <code>ui::Dispatcher</code>)</span><span>1</span><span>Never calls <code>recto-pdf</code>. Never blocks on an engine thread. Sends messages to DocumentActors; receives callbacks via queue.</span>
         <span>DocumentActor</span><span>1 per document</span><span>Owns <code>pdf::Document</code>. Parses XRef, pages, outlines. Builds <code>DisplayList</code> and <code>PageText</code>.</span>
         <span>Presentation</span><span>1 per view</span><span>Owns the D3D11/D2D context and the tile texture cache. Composites visible tiles.</span>
         <span>RenderPool worker</span><span><code>clamp(cores - 2, 2, 8)</code></span><span>Owns its own D2D/WIC raster target. Renders 512x512 tiles from a <code>DisplayList</code> with a <code>CancelToken</code>.</span>

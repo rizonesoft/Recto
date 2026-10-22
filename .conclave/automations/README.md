@@ -18,7 +18,7 @@ A weekly task starts when available: a run missed while this PC was off fires at
 
 | Check | Daily at 05:23 UTC | Becomes |
 | --- | --- | --- |
-| WinUI 3 (`Microsoft.WindowsAppSDK`) | `scripts/check-winui-pin.py pr` | a pull request on `winui/<version>` for each new stable `microsoft-ui-xaml` release |
+| WinUI 3 (`Microsoft.WindowsAppSDK`) | `scripts/check-winui-pin.py pr` | a pull request on `winui/<version>` for each new stable `microsoft-ui-xaml` release (retired with the WinUI scaffold by `D10 T01 §2`; Recto now draws its own UI, D4 revised 2026-10-22) |
 | C++/WinRT and Windows SDK build tools | `scripts/check-sdk-pins.py pr` | one pull request on `pins/toolchain-...` for the newer releases |
 | vcpkg baseline (test-only) | `scripts/check-vcpkg-baseline.py pr` | a pull request on `pins/vcpkg-<tag>` for each new vcpkg release |
 | Windows SDK line | `scripts/check-windows-sdk-line.py issue` | one issue per newer line (moving the target platform is your decision); closed automatically when Recto targets the newest line |
