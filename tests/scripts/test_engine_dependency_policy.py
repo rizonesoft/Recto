@@ -52,7 +52,12 @@ OFFICE_DEPENDENCY = re.compile(
     r"libreoffice|office com|microsoft (word|excel|powerpoint|office|365)"
     r"|\b(install|installs|installed|installing|need|needs|needed|require|requires|required|requiring|through|via"
     r"|using|uses?)( the)?( microsoft)? (office|word|excel|powerpoint)( to| installed| for|\b)"
-    r"|\b(office|word|excel|powerpoint) (must|has to|needs to|should) be installed\b", re.IGNORECASE)
+    r"|\b(office|word|excel|powerpoint) ((is|are) (required|needed|necessary)|(must|has to|needs to|should) be"
+    r" installed)\b", re.IGNORECASE)
+# Inline elements do not break words when rendered (Libre<span>Office</span> reads "LibreOffice"), so they are removed
+# without a space; every other tag separates words.
+INLINE_TAG = re.compile(r"</?(a|abbr|b|bdi|bdo|cite|code|data|dfn|em|i|kbd|mark|q|s|samp|small|span|strong|sub|sup|time"
+                        r"|u|var)\b[^>]*>", re.IGNORECASE)
 # The suites' install pages, matched in the raw text so a link counts whatever its anchor says.
 OFFICE_INSTALL_LINK = re.compile(r"libreoffice\.org|microsoft\.com/microsoft-365|office\.com", re.IGNORECASE)
 
@@ -110,7 +115,7 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                 # LibreOffice as a converter Recto needs (D06 T05 §28).
                 # Matched on the visible text (tags removed, entities decoded, white space collapsed), so markup cannot
                 # split or disguise a phrase; install links are matched in the raw text.
-                visible = " ".join(html.unescape(re.sub(r"<[^>]+>", " ", text)).split())
+                visible = " ".join(html.unescape(re.sub(r"<[^>]+>", " ", INLINE_TAG.sub("", text))).split())
                 self.assertIsNone(OFFICE_DEPENDENCY.search(visible))
                 self.assertIsNone(OFFICE_INSTALL_LINK.search(text))
 
