@@ -80,7 +80,7 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                 for text in texts:
                     self.assertIsNone(MUPDF.search(text))
 
-    def test_design_boards_name_no_mupdf_or_agpl(self):
+    def test_design_boards_name_no_mupdf_agpl_or_office_dependency(self):
         # The mockup sources and their rendered HTML describe Recto: its engine is recto-pdf (D3) and its licence
         # GPL-3.0-or-later (D2), so no board may present MuPDF, its components or AGPL as Recto's (D06 T05 §25).
         files = [name for name in tracked("design/mockups") if name.endswith((".html", ".json"))]
@@ -92,6 +92,10 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                 # The licence by acronym or by name, in any case (agpl-3.0, GNU Affero General Public License).
                 self.assertIsNone(re.search(r"agpl|affero", text, re.IGNORECASE))
                 self.assertIsNone(re.search(r"\bfz_", text, re.IGNORECASE))  # MuPDF's API prefix, whatever follows it
+                # Recto converts Office files with its own engines (D5, D7, D10): no board may present Office or
+                # LibreOffice as a converter Recto needs (D06 T05 §28).
+                self.assertIsNone(re.search(r"libreoffice|office com|microsoft (word|excel|powerpoint|office)"
+                                            r"|through (word|excel|powerpoint|office)", text, re.IGNORECASE))
 
     @unittest.skipUnless(sys.platform == "win32", "the C++ build and MSBuild are Windows-only (foundation plan D15)")
     def test_every_module_compiles_as_cpp20_with_warnings_as_errors(self):
