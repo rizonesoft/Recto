@@ -650,6 +650,9 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		// Dictionaries whose /Type is an indirect reference: the named object may lie after them in the file, so
 		// they are checked once the scan has found every object (generation, /Type reference).
 		std::unordered_map<uint32_t, std::pair<uint16_t, IndirectRef>> indirect_type_dicts;
+		// Objects the scan found to be the name /Catalog (generation), so an indirect /Type is checked with no further
+		// parsing, as recovered_integers serves an indirect /Length.
+		std::unordered_map<uint32_t, uint16_t> catalog_names;
 		std::vector<IndirectRef> catalog_history;
 		std::unordered_map<uint32_t, std::vector<uint32_t>> objstm_members;
 
@@ -668,6 +671,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 					recovered_integers.erase(member_id);
 					catalog_generations.erase(member_id);
 					indirect_type_dicts.erase(member_id);
+					catalog_names.erase(member_id);
 					if (info_candidate.has_value() && info_candidate->obj_num == member_id) {
 						info_candidate = std::nullopt;
 					}
@@ -849,11 +853,15 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 							recovered_integers.erase(obj_num);
 							catalog_generations.erase(obj_num);
 							indirect_type_dicts.erase(obj_num);
+							catalog_names.erase(obj_num);
 							if (info_candidate.has_value() &&
 								info_candidate->obj_num == obj_num) {
 								info_candidate = std::nullopt;
 							}
 
+							if (parsed_obj->value.as_name() == std::optional<std::string_view>("Catalog")) {
+								catalog_names[obj_num] = gen_num;
+							}
 							if (const auto int_val = parsed_obj->value.as_int()) {
 								recovered_integers[obj_num] = {gen_num, *int_val};
 							} else if (const PdfDict* dict_only = parsed_obj->value.as_dict()) {
@@ -1017,12 +1025,16 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 												recovered_integers.erase(inner_id);
 												catalog_generations.erase(inner_id);
 												indirect_type_dicts.erase(inner_id);
+												catalog_names.erase(inner_id);
 												if (info_candidate.has_value() &&
 													info_candidate->obj_num == inner_id) {
 													info_candidate = std::nullopt;
 												}
 												if (inner_id > max_obj_num) {
 													max_obj_num = inner_id;
+												}
+												if (inner_val->as_name() == std::optional<std::string_view>("Catalog")) {
+													catalog_names[inner_id] = 0u;
 												}
 												if (const auto int_v = inner_val->as_int()) {
 													recovered_integers[inner_id] = {uint16_t{0}, *int_v};
@@ -1063,28 +1075,15 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			++pos;
 		}
 
-		// A dictionary whose /Type is an indirect reference is a catalog when the object that reference names (read
-		// one level, as every indirect value in this engine is resolved, never following a further reference) is the
-		// name /Catalog (ISO 32000-1 section 7.3.10). The dictionaries already sit in catalog_history in file order, so
-		// the fallback below keeps preferring the latest; here they only become valid. Each distinct reference is read
-		// once, so every object is parsed at most once more, as in the forward scan.
-		std::unordered_map<uint64_t, bool> names_catalog;
+		// A dictionary whose /Type is an indirect reference is a catalog when the object that reference names (one
+		// level, never following a further reference) is the name /Catalog (ISO 32000-1 section 7.3.10). The scan
+		// already parsed every object once and recorded those names (catalog_names), so this step parses nothing and
+		// recovery stays linear. The dictionaries already sit in catalog_history in file order, so the fallback below
+		// keeps preferring the latest; here they only become valid.
 		for (const auto& [dict_num, gen_and_type] : indirect_type_dicts) {
 			const IndirectRef type_ref = gen_and_type.second;
-			const uint64_t key = (static_cast<uint64_t>(type_ref.obj_num) << 16u) | type_ref.gen_num;
-			auto known = names_catalog.find(key);
-			if (known == names_catalog.end()) {
-				++table.recovery_type_lookups_;
-				const auto type_obj = table.read_indirect_object(file_bytes, type_ref);
-				if (!type_obj.has_value() && type_obj.error().code == ErrorCode::OutOfMemory) {
-					return type_obj.error();
-				}
-				known = names_catalog.emplace(
-					key,
-					type_obj.has_value() &&
-						type_obj->value.as_name() == std::optional<std::string_view>("Catalog")).first;
-			}
-			if (known->second) {
+			if (const auto named = catalog_names.find(type_ref.obj_num);
+				named != catalog_names.end() && named->second == type_ref.gen_num) {
 				catalog_generations[dict_num] = gen_and_type.first;
 			}
 		}

@@ -233,13 +233,6 @@ public:
 		return revision_count_;
 	}
 
-	// How many objects damaged-file recovery read to learn what an indirect /Type names (each distinct reference
-	// once, one level). Shows the recovery stays linear in the file.
-	[[nodiscard]] size_t recovery_type_lookups() const noexcept
-	{
-		return recovery_type_lookups_;
-	}
-
 	[[nodiscard]] bool recovered() const noexcept
 	{
 		return recovered_;
@@ -338,7 +331,6 @@ private:
 	std::string pdf_version_{"1.7"};
 	size_t revision_count_{0};
 	bool recovered_{false};
-	size_t recovery_type_lookups_{0};
 	EntryMap entries_{};
 	PdfDict trailer_{};
 	mutable ObjStmCache obj_stm_cache_{};

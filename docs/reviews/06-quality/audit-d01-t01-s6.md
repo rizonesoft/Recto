@@ -241,3 +241,51 @@ OVERALL: needs-attention
 - Finding 3 (P2): filed, not fixed here. Recovery drops an intact xref stream's type-2 rows and decodes containers before authentication, which in an encrypted file is ciphertext. Fixing it means importing xref-stream rows under the scan's override order and deferring encrypted containers until after authentication, a recovery design change like `D06 T05 §29`. It is filed with an owner as `D06 T05 §30` (`Damaged-file recovery keeps an encrypted file's compressed objects`), and `D06 T05 §21` carries the deferral.
 
 Gates after round 5: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 123 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 34 tests.`; `python scripts/todo-graph.py validate` -> `valid: 683 sections`.
+
+## Round 6: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T12:26:10Z
+- Effort: xhigh
+- Lines: 32
+- Digest: 609f0700d94da1d2
+
+### adversarial: needs-attention
+
+1. **P1, recovery’s second pass still permits quadratic parsing.** At `src/pdf/xref.cpp:1078`, reading a `/Type` target can recursively resolve a stream’s `/Length` through `src/pdf/xref.cpp:2054`. Those additional reads bypass both `names_catalog` and `cumulative_parse_bytes`; `recovery_type_lookups` counts only the outer calls.
+
+   Reproduce with a valid catalog, object 4 containing an array of 100,000 integers, 20,000 distinct small streams each declaring `/Length 4 0 R`, and 20,000 dictionaries whose `/Type` references those streams. Remove `startxref` and call `recover_damaged_xref`. The forward scan uses its integer lookup and terminator fallback. The second pass reparses object 4 for every stream, approximately two billion array elements, without exhausting the recovery work budget. This requires neither object streams nor encryption, so §29 and §30 do not cover it.
+
+### consistency: approve
+
+No additional findings.
+
+### integration: approve
+
+No additional findings.
+
+### source-defect: approve
+
+No additional findings.
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: needs-attention
+
+2. **P3, the round 5 test does not detect restored alias following.** At `tests/recto-tests/pdf_xref_tests.cpp:1570`, object 8 is an array and object 9 aliases it. Following that alias or stopping after one level produces the same catalog decision. The counter at `src/pdf/xref.cpp:1077` also remains two because it counts outer calls.
+
+   Reproduce by restoring the previous `resolve_object` lookup while retaining the counter: these assertions remain satisfied. A distinguishing fixture would make object 8 `/Catalog` and assert that the later dictionary referencing alias 9 is excluded. The current test verifies memo reuse but misses the alias-following regression, contrary to the required regression-test rule.
+
+At clean `7b3f62d`, the existing Release binary passed 15 `PdfXref.*` tests, 19 document/crypto tests, and `Support.AsanActiveWhenEnabled` reported `ASan=enabled`. Graph validation and the plan check passed. No fresh compilation was performed. Both reproductions above are source-traced, not executed custom probes. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 6
+
+- Finding 1 (P1): correct, and the third work-bound finding against the indirect-`/Type` support I added in round 3. Re-reading objects after the scan was the wrong design: any read can reach further reads (a stream's `/Length` here). The step now reads nothing. The forward scan, which already parses every object once, records which objects are the name `/Catalog` (`catalog_names`, forgotten on redefinition like the other recovery maps), exactly as `recovered_integers` already serves indirect `/Length`. The post-scan step only consults that record, so the bound holds by construction, not by memo. Round 5's lookup counter measured reads that no longer exist and is removed with its assertions.
+- Finding 2 (P3): correct. `PdfXref.DamagedRecovery` now distinguishes one level from alias following: object 8 is `/Catalog`, object 9 is `8 0 R`, and a later dictionary with `/Type 9 0 R` must not become the root (the earlier direct catalog stays). Round 4's alias-following code fails it (root 13 instead of 1). A second case redefines the `/Catalog` name object later as `/Pages`, and recovery then finds no catalog.
+
+Gates after round 6: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 123 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 34 tests.`
