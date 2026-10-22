@@ -178,3 +178,40 @@ OVERALL: needs-attention
 - Finding 2 (P1), finding 3 (P1) and finding 5 (P2): fixed at their sites. Each symbol a text region refers to is charged (its pointer and Huffman code entry), compositing visits only the part of a source that lands inside the destination, and `HRX`/`HRY` are read unsigned (T.88 7.4.5.1, Table 20). These three shipped without a test that fails before them, because each needs a hand-built JBIG2 fixture (a text region listing a dictionary many times, a halftone grid far outside its region, an `HRX=0x8000` grid). Those fixtures are owed, each required to fail with its fix reverted, and are filed with a systematic JBIG2 allocation-and-loop pass as `D06 T05 §35`. JBIG2 has yielded a new resource site in each of rounds 2 and 3, and §35 replaces site-by-site discovery with an inventory.
 
 Gates after round 3: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 125 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 18 tests.`; `python scripts/todo-graph.py validate` -> `valid: 688 sections`.
+
+## Round 4: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T14:52:07Z
+- Effort: xhigh
+- Lines: 28
+- Digest: 3874a16a07a7580c
+
+## adversarial: needs-attention
+
+New reproductions below are source-derived and were not executed against the native decoder.
+
+1. **[P1] JPX tag-tree allocations exceed the default memory ceiling.** `src/pdf/filters.cpp:8536`, `:8578`, `:6759`: metadata accounting omits most storage allocated by the two tag trees per precinct. Reproduce through the native fallback with a 512×512 image, four components, one decomposition level, precinct exponents `(0,0)` at resolution 0 and `(1,1)` at resolution 1, and 524,288 empty LRCP packets. This creates 1,048,576 precinct/subband entries. Using the [MSVC vector layout](https://github.com/microsoft/STL/blob/main/stl/inc/vector), the guard charges approximately 209 MiB overall, while metadata alone requires at least 280 MiB, excluding allocator overhead. The 256 MiB ceiling therefore does not hold.
+
+2. **[P1] CCITT bounds transition storage separately from output and ignores capacity growth.** `src/pdf/filters.cpp:2148`, `:2194`: reproduce using the existing two-row, 131,072-column alternating fixture at `tests/recto-tests/pdf_filters_tests.cpp:4002`, but pass `1u << 20u` as the ceiling. Both guards accept it. The two transition vectors require at least 1,048,568 bytes and output requires another 32,768 bytes, exceeding 1 MiB before vector capacity overhead. The round-1 memory fix remains incomplete.
+
+## consistency: approve
+
+## integration: needs-attention
+
+3. **[P1] Direct malformed `/Decode` elements still bypass numeric validation before copying.** `src/pdf/filters.cpp:9559`, `:9590`, `:9594`: round 3 sanitizes only arrays containing references when a resolver exists. Reproduce with a tiny JPEG, no `/DecodeParms`, a direct `/Decode` array containing an 8 MiB literal string, and a 1 MiB decode ceiling. Copying the image dictionary duplicates that string; `deep_clone()` copies it again after the temporary entry is erased. The mapping is discarded only later by `apply_pdf_decode_array`. These allocations bypass the ceiling. `src/pdf/object.cpp:248` confirms string bytes are copied.
+
+## source-defect: advisory
+
+Previously identified conformance gaps remain owned by D06 T05 §31 through §34. The findings above concern allocation enforcement outside the deferred JBIG2 inventory.
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: advisory
+
+The existing x64 Release binary passed all 18 `PdfFilters.*` tests plus `Support.AsanActiveWhenEnabled`, reporting `ASan=enabled`. Graph validation returned `valid: 688 sections`; the plan check returned `plan current`. No rebuild was performed, so current compilation and warning claims were not independently verified. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
