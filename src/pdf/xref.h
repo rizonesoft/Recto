@@ -74,6 +74,29 @@ struct CachedObjStream {
 	std::vector<uint8_t> decoded_bytes{};
 };
 
+namespace detail {
+
+// Tests only: make ObjStmCache::insert's (fail_after)-th allocation throw std::bad_alloc, as the crypto seam does
+// (ScopedCryptoAllocFaultInjector); -1 disables it. Thread-local.
+void set_objstm_cache_alloc_fail_countdown(int countdown) noexcept;
+void check_objstm_cache_alloc();
+
+class ScopedObjStmCacheAllocFaultInjector {
+public:
+	explicit ScopedObjStmCacheAllocFaultInjector(int fail_after_n_allocations) noexcept
+	{
+		set_objstm_cache_alloc_fail_countdown(fail_after_n_allocations);
+	}
+	ScopedObjStmCacheAllocFaultInjector(const ScopedObjStmCacheAllocFaultInjector&) = delete;
+	ScopedObjStmCacheAllocFaultInjector& operator=(const ScopedObjStmCacheAllocFaultInjector&) = delete;
+	~ScopedObjStmCacheAllocFaultInjector() noexcept
+	{
+		set_objstm_cache_alloc_fail_countdown(-1);
+	}
+};
+
+} // namespace detail
+
 // Decoded object streams kept for reuse by one owner (an XrefTable, a SecurityHandler or a Document), bounded by
 // count (kMaxCachedObjStreams) and by decoded bytes (kMaxCachedObjStmBytes), oldest entries leaving first, so
 // hostile input cannot retain more than the budget however many containers it holds. Not thread-safe: each owner

@@ -155,3 +155,46 @@ OVERALL: needs-attention
 - Finding 3 (P2): correct, and separate from `D06 T05 §29`. Recovery recognized a catalog only by a direct `/Type /Catalog`. Dictionaries whose `/Type` is a reference are now remembered (and forgotten when their object is redefined, like the other recovery maps) and resolved after the scan, when every object is known; one naming `/Catalog` becomes a catalog candidate. `PdfXref.DamagedRecovery` adds a catalog with `/Type 4 0 R` where object 4 comes after it, and the root is recovered. It fails on the round 2 code.
 
 Gates after round 3: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 123 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 34 tests.`
+
+## Round 4: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T11:46:46Z
+- Effort: xhigh
+- Lines: 26
+- Digest: 112440092f80acd4
+
+### adversarial: needs-attention
+
+1. **P1, indirect catalog-type resolution bypasses recovery’s work budget.** `src/pdf/xref.cpp:1067` reparses each referenced object without charging `cumulative_parse_bytes` or reusing resolved values. Reproduce with a valid catalog, an uncompressed object containing an array of 100,000 integers, and 20,000 other dictionaries whose `/Type` references that array. Remove `startxref` and call `recover_damaged_xref`. The new pass parses approximately two billion array elements, despite the file passing the forward scan’s budget. This regresses the promised linear recovery scanner and hostile-input work bounds. No object-stream parameters are involved.
+
+### consistency: needs-attention
+
+2. **P3, the cache allocation-failure fix lacks the required regression test.** `tests/recto-tests/pdf_xref_tests.cpp:153` exercises successful cache operations; it cannot expose the bookkeeping corruption fixed in round 3. `docs/reviews/06-quality/audit-d01-t01-s6.md:154` explicitly records source inspection instead of fault injection. Reproduce the coverage gap by running `PdfXref.ObjStmCacheBoundsCountAndBytes` on the buggy parent: the unchanged test passes. The repository requires a regression test that fails before each code fix.
+
+### integration: needs-attention
+
+3. **P2, deferred catalog recognition loses revision order.** `src/pdf/xref.cpp:1076` appends indirect-type catalogs after every directly recognised catalog, using unordered-map iteration order. Fallback at line 1094 then prefers those appended candidates. Reproduce with an earlier catalog `1 0 obj << /Type 4 0 R /Pages 2 0 R >>`, object 4 containing `/Catalog`, and a later direct-type catalog pointing to a different page tree. Remove surviving trailers and `startxref`. Recovery selects the earlier catalog, whereas direct-type candidates preserve file order. Multiple indirect candidates also lack a defined chronological preference.
+
+### source-defect: approve
+
+No additional findings.
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: advisory
+
+At clean `3912140`, the existing Release binary passed all 15 `PdfXref.*` tests, 19 document/crypto tests, and `Support.AsanActiveWhenEnabled`, which reported `ASan=enabled`. Graph validation and plan checks passed. Fresh compilation and custom reproductions were not performed; findings 1 and 3 are source-traced. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 4
+
+- Finding 1 (P1): correct, introduced in round 3. The post-scan step resolved each dictionary's `/Type` reference separately, so 20,000 dictionaries pointing at one large array would reparse it 20,000 times. Each distinct reference is now resolved once (a memo keyed by the reference), so every object is parsed at most once more, as in the forward scan, keeping recovery's work linear. No test measures the work: a hostile-sized case would be slow or flaky in CI, so this rests on the memo's construction and is named here rather than claimed as tested.
+- Finding 3 (P2): correct, also from round 3. Indirect-type candidates were appended after every direct one, so they won the fallback regardless of file order. They now join `catalog_history` at scan time, in file order, and the post-scan step only marks them valid. `PdfXref.DamagedRecovery` adds both orders: a later direct-type catalog beats an earlier indirect-type one, and the reverse. Dropping the scan-time entries fails it.
+- Finding 2 (P3): correct, the round 3 fix had no test that fails before it. `ObjStmCache::insert` now has the same fault seam the crypto code uses (`detail::ScopedObjStmCacheAllocFaultInjector`, a check before each allocation). `PdfXref.ObjStmCacheBoundsCountAndBytes` fails each of the two allocations in turn and checks that the count and byte total still match what is stored, and that later inserts still evict. With the old order (bookkeeping before the second allocation) it fails.
+
+Gates after round 4: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 123 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 34 tests.`

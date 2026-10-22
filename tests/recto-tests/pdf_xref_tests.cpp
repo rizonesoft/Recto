@@ -173,6 +173,27 @@ TEST(PdfXref, ObjStmCacheBoundsCountAndBytes)
 	EXPECT_EQ(cache.find(9), nullptr);
 	EXPECT_EQ(cache.size(), 4u);
 
+	// An allocation failing inside insert (reserving the order, then inserting the entry) leaves the cache exactly
+	// as it was: the entry count and the byte total still agree with what is stored, and later inserts still evict.
+	for (const int failing_allocation : {0, 1}) {
+		ObjStmCache safe;
+		static_cast<void>(safe.insert(1, stream_of(10), overflow));
+		static_cast<void>(safe.insert(2, stream_of(20), overflow));
+		{
+			detail::ScopedObjStmCacheAllocFaultInjector fault(failing_allocation);
+			EXPECT_THROW(static_cast<void>(safe.insert(3, stream_of(30), overflow)), std::bad_alloc);
+		}
+		EXPECT_EQ(safe.size(), 2u) << failing_allocation;
+		EXPECT_EQ(safe.bytes(), 30u) << failing_allocation;
+		EXPECT_EQ(safe.find(3), nullptr);
+		static_cast<void>(safe.insert(3, stream_of(30), overflow));
+		EXPECT_EQ(safe.bytes(), 60u);
+		for (uint32_t i = 4; i <= static_cast<uint32_t>(kMaxCachedObjStreams) + 4u; ++i) {
+			static_cast<void>(safe.insert(i, stream_of(1), overflow));
+		}
+		EXPECT_EQ(safe.size(), kMaxCachedObjStreams);
+	}
+
 	ObjStmCache counted;
 	for (uint32_t i = 1; i <= static_cast<uint32_t>(kMaxCachedObjStreams) + 3u; ++i) {
 		static_cast<void>(counted.insert(i, stream_of(1), overflow));
@@ -1539,6 +1560,28 @@ TEST(PdfXref, DamagedRecovery)
 		auto rec_type = XrefTable::recover_damaged_xref(as_bytes(pdf_indirect_type));
 		RECTO_ASSERT_OK(rec_type);
 		EXPECT_EQ(rec_type->root_ref(), (IndirectRef{1u, 0u}));
+
+		// File order still decides between catalogs: with no trailer, the later direct-type catalog 6 wins over the
+		// earlier indirect-type catalog 1, as between two direct-type catalogs.
+		std::string pdf_order = "%PDF-1.7\n";
+		pdf_order += "1 0 obj\n<< /Type 4 0 R /Pages 2 0 R >>\nendobj\n";
+		pdf_order += "2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+		pdf_order += "4 0 obj\n/Catalog\nendobj\n";
+		pdf_order += "5 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+		pdf_order += "6 0 obj\n<< /Type /Catalog /Pages 5 0 R >>\nendobj\n%%EOF\n";
+		auto rec_order = XrefTable::recover_damaged_xref(as_bytes(pdf_order));
+		RECTO_ASSERT_OK(rec_order);
+		EXPECT_EQ(rec_order->root_ref(), (IndirectRef{6u, 0u}));
+		// And the reverse: the later indirect-type catalog wins over the earlier direct-type one.
+		std::string pdf_order_rev = "%PDF-1.7\n";
+		pdf_order_rev += "6 0 obj\n<< /Type /Catalog /Pages 5 0 R >>\nendobj\n";
+		pdf_order_rev += "5 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+		pdf_order_rev += "1 0 obj\n<< /Type 4 0 R /Pages 2 0 R >>\nendobj\n";
+		pdf_order_rev += "2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+		pdf_order_rev += "4 0 obj\n/Catalog\nendobj\n%%EOF\n";
+		auto rec_order_rev = XrefTable::recover_damaged_xref(as_bytes(pdf_order_rev));
+		RECTO_ASSERT_OK(rec_order_rev);
+		EXPECT_EQ(rec_order_rev->root_ref(), (IndirectRef{1u, 0u}));
 	}
 
 	// 8. Compressed `/Type /ObjStm` streams whose decoded payload exceeds `max(file_size * 4, 65536)`

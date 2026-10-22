@@ -861,6 +861,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 								if (const PdfValue* type_val = dict_only->get("Type");
 									type_val != nullptr && type_val->is_ref()) {
 									indirect_type_dicts[obj_num] = {gen_num, *type_val->as_ref()};
+									catalog_history.push_back(IndirectRef{obj_num, gen_num}); // file order
 								}
 								if (type_opt.has_value() && *type_opt == "Catalog") {
 									catalog_generations[obj_num] = gen_num;
@@ -1030,6 +1031,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 													if (const PdfValue* itype_val = idict->get("Type");
 														itype_val != nullptr && itype_val->is_ref()) {
 														indirect_type_dicts[inner_id] = {uint16_t{0}, *itype_val->as_ref()};
+														catalog_history.push_back(IndirectRef{inner_id, 0u}); // file order
 													}
 													if (itype.has_value() && *itype == "Catalog") {
 														catalog_generations[inner_id] = 0u;
@@ -1062,18 +1064,26 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		}
 
 		// A dictionary whose /Type is an indirect reference is a catalog when that reference, resolved now that the scan
-		// has found every object, names /Catalog (ISO 32000-1 section 7.3.10).
+		// has found every object, names /Catalog (ISO 32000-1 section 7.3.10). The dictionaries already sit in
+		// catalog_history in file order, so the fallback below keeps preferring the latest; here they only become
+		// valid. Each distinct reference is resolved once, so every object is parsed at most once more, as in the
+		// forward scan.
+		std::unordered_map<uint64_t, bool> names_catalog;
 		for (const auto& [dict_num, gen_and_type] : indirect_type_dicts) {
-			const auto type_val = table.resolve_object(file_bytes, gen_and_type.second);
-			if (!type_val.has_value()) {
-				if (type_val.error().code == ErrorCode::OutOfMemory) {
+			const IndirectRef type_ref = gen_and_type.second;
+			const uint64_t key = (static_cast<uint64_t>(type_ref.obj_num) << 16u) | type_ref.gen_num;
+			auto known = names_catalog.find(key);
+			if (known == names_catalog.end()) {
+				const auto type_val = table.resolve_object(file_bytes, type_ref);
+				if (!type_val.has_value() && type_val.error().code == ErrorCode::OutOfMemory) {
 					return type_val.error();
 				}
-				continue;
+				known = names_catalog.emplace(
+					key,
+					type_val.has_value() && type_val->as_name() == std::optional<std::string_view>("Catalog")).first;
 			}
-			if (type_val->as_name() == std::optional<std::string_view>("Catalog")) {
+			if (known->second) {
 				catalog_generations[dict_num] = gen_and_type.first;
-				catalog_history.push_back(IndirectRef{dict_num, gen_and_type.first});
 			}
 		}
 
@@ -1738,6 +1748,29 @@ PdfResult<IndirectObject> XrefTable::read_compressed_object_with_visited(
 	return IndirectObject{ref, std::move(member)};
 }
 
+namespace detail {
+
+thread_local int g_objstm_cache_alloc_fail_countdown = -1;
+
+void set_objstm_cache_alloc_fail_countdown(int countdown) noexcept
+{
+	g_objstm_cache_alloc_fail_countdown = countdown;
+}
+
+void check_objstm_cache_alloc()
+{
+	if (g_objstm_cache_alloc_fail_countdown < 0) {
+		return;
+	}
+	if (g_objstm_cache_alloc_fail_countdown == 0) {
+		g_objstm_cache_alloc_fail_countdown = -1;
+		throw std::bad_alloc{};
+	}
+	--g_objstm_cache_alloc_fail_countdown;
+}
+
+} // namespace detail
+
 const CachedObjStream& ObjStmCache::insert(uint32_t stm_obj_num, CachedObjStream stm, CachedObjStream& overflow)
 {
 	const size_t stm_bytes = stm.decoded_bytes.size();
@@ -1759,7 +1792,9 @@ const CachedObjStream& ObjStmCache::insert(uint32_t stm_obj_num, CachedObjStream
 	}
 	// Both allocations happen before any bookkeeping changes: if either throws, the cache is as it was after the
 	// evictions above, which keep order_, by_num_ and bytes_ in step.
+	detail::check_objstm_cache_alloc();
 	order_.reserve(order_.size() + 1u);
+	detail::check_objstm_cache_alloc();
 	auto& stored = by_num_.emplace(stm_obj_num, std::move(stm)).first->second;
 	order_.push_back(stm_obj_num); // cannot reallocate: capacity reserved above
 	bytes_ += stm_bytes;
