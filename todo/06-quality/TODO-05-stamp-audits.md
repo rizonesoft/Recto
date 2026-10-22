@@ -58,7 +58,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 25 | §25 | Retired MuPDF and AGPL text removed from the A, B and C mockup boards | §2 | [x] |
 | 26 | §26 | Corpus validator filter decoders conform to ISO 32000-1 7.4 | §12 | [x] |
 | 27 | §27 | ARM64 Debug build free of the CS1668 LIB search-path warnings | §13 | [x] |
-| 28 | §28 | Retired Office and LibreOffice converter surfaces removed from the A, B and C boards | §25 | [ ] |
+| 28 | §28 | Retired Office and LibreOffice converter surfaces removed from the A, B and C boards | §25 | [x] |
 
 ## 1. Audit D00 T01 §1: Git repository and repo-face files
 
@@ -736,9 +736,12 @@ While removing MuPDF and AGPL text from the older mockup boards (`D06 T05 §25`)
 - [x] Edit `design/mockups/source/[ABC]-Dialogs.dc.html` and `[AC]-Settings.dc.html` to that choice. Done when: `git grep -n -i -E "libreoffice|office com|microsoft (word|excel|powerpoint|office)|through (word|excel|powerpoint|office)" -- design/mockups/source` prints nothing.
 - [x] Re-render those boards with `node design/tools/render-mockups.mjs --only <names>`. Done when: the same grep over `design/mockups/html` prints nothing and each board's PNG is newer than its source.
 - [x] Extend `tests/scripts/test_engine_dependency_policy.py`'s design check to refuse Office or LibreOffice named as a converter dependency in `design/mockups/`. Done when: restoring one "Get LibreOffice" link makes the test fail.
-- [ ] Commit: `design: retire the Office and LibreOffice converter surfaces from the A, B and C boards`
+- [x] Commit: `design: retire the Office and LibreOffice converter surfaces from the A, B and C boards`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_engine_dependency_policy` passes, and `git grep -n -i -E "libreoffice|office com|microsoft (word|excel|powerpoint|office)|through (word|excel|powerpoint|office)" -- design/mockups` prints nothing.
+
+> **Verified:** 2026-10-22 | §28 | 7cda56b0c6b8400a8bae026f61241f293342ed13
+> **Review:** `docs/reviews/d06-t05-s28.json`
 
 ## Verification
 

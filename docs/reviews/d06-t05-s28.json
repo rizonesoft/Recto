@@ -1,0 +1,125 @@
+{
+  "ref": "D06 T05 \u00a728",
+  "title": "Retired Office and LibreOffice converter surfaces removed from the A, B and C boards",
+  "implementation_sha": "7cda56b0c6b8400a8bae026f61241f293342ed13",
+  "date": "2026-10-22",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 6,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 7,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 8,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 9,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 10,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 11,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 12,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 13,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 14,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 15,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 16,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 17,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 18,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 19,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 20,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 21,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 22,
+      "report": "docs/reviews/06-quality/D06-T05-s28.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "python -m unittest tests.scripts.test_engine_dependency_policy -> Ran 6 tests, OK",
+    "git grep -n -i -E \"libreoffice|office com|microsoft (word|excel|powerpoint|office)|through (word|excel|powerpoint|office)\" -- design/mockups -> no output",
+    "render-mockups.mjs --only on every edited board -> rendered; A-Dialogs.png and B-Dialogs.png inspected"
+  ],
+  "rounds_spent": 22,
+  "round_cap": 22
+}
