@@ -149,6 +149,8 @@ Implement the binary-safe PDF lexical analyzer in `src/pdf/lexer.h` and `src/pdf
 - [x] Run a byte-by-byte truncation sweep in `PdfLexer.TruncationSweep` cutting a complex token buffer at every offset `0..N` under ASan. Done when: zero out-of-bounds reads occur at any cut point.
 - [x] Commit: `pdf: implement binary-safe PDF 1.7/2.0 lexer`
 
+> **Corrected 2026-10-22 (D06 T05 §17):** the delimiter item listed `{` and `}` as delimiters everywhere. ISO 32000-2 section 7.2.2, as clarified by the PDF Association's errata, makes them delimiters only inside a Type 4 (PostScript calculator) function; in ordinary syntax they are regular characters, so `/A{B}` is one name. The lexer now reads them as tokens only under `LexerSyntax::PostScriptCalculator` (`Lexer::set_syntax`). The item's claim that `PdfLexer.LiteralStrings` matched all section 7.3.4.2 examples was also short of the test: examples 3 and 4 are now in it as printed.
+
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfLexer.*` passes under ASan with 0 warnings.
 
 > **Verified:** 2026-10-18 | §3 | e6f27c75cdb972ab32d912de8cc34ac8dae30e14

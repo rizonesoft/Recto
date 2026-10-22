@@ -1,5 +1,6 @@
 // Tests for the binary-safe PDF 1.7 and 2.0 lexer (D01 T01 section 3).
 #include "lexer.h"
+#include "parser.h"
 #include "test_support.h"
 
 #include <gtest/gtest.h>
@@ -91,9 +92,8 @@ TEST(PdfLexer, WhitespaceAndComments)
 	EXPECT_FALSE(tb2.value().bool_value);
 	EXPECT_EQ(lex.next_token().value().kind, TokenKind::Null);
 	EXPECT_EQ(lex.next_token().value().kind, TokenKind::ArrayClose);
-	EXPECT_EQ(lex.next_token().value().kind, TokenKind::BraceOpen);
-	EXPECT_EQ(lex.next_token().value().kind, TokenKind::BraceClose);
-	EXPECT_TRUE(lex.next_token().value().is_keyword("endobj"));
+	// Braces are regular characters in PDF syntax, so they join the keyword that follows them.
+	EXPECT_TRUE(lex.next_token().value().is_keyword("{}endobj"));
 	EXPECT_TRUE(lex.next_token().value().is_eof());
 
 	// 2. emit_comments = true preserves %PDF-1.7, binary comment, and %%EOF.
@@ -270,6 +270,43 @@ TEST(PdfLexer, Numbers)
 	}
 }
 
+// `{` and `}` delimit only in a Type 4 function's PostScript calculator syntax (ISO 32000-2 section 7.2.2 errata).
+TEST(PdfLexer, BracesDelimitOnlyInCalculatorSyntax)
+{
+	const auto pdf_buf = to_bytes("/A{B} /C}D {x}");
+	Lexer pdf_lex(pdf_buf);
+	EXPECT_EQ(pdf_lex.syntax(), LexerSyntax::Pdf);
+	auto n1 = pdf_lex.next_token();
+	RECTO_ASSERT_OK(n1);
+	EXPECT_EQ(n1.value().kind, TokenKind::Name);
+	EXPECT_EQ(n1.value().text, "A{B}");
+	auto n2 = pdf_lex.next_token();
+	RECTO_ASSERT_OK(n2);
+	EXPECT_EQ(n2.value().text, "C}D");
+	EXPECT_TRUE(pdf_lex.next_token().value().is_keyword("{x}"));
+	EXPECT_TRUE(pdf_lex.next_token().value().is_eof());
+
+	const auto calc_buf = to_bytes("{ 2 mul {x}if }");
+	Lexer calc_lex(calc_buf);
+	calc_lex.set_syntax(LexerSyntax::PostScriptCalculator);
+	EXPECT_EQ(calc_lex.next_token().value().kind, TokenKind::BraceOpen);
+	EXPECT_EQ(calc_lex.next_token().value().int_value, 2);
+	EXPECT_TRUE(calc_lex.next_token().value().is_keyword("mul"));
+	EXPECT_EQ(calc_lex.next_token().value().kind, TokenKind::BraceOpen);
+	EXPECT_TRUE(calc_lex.next_token().value().is_keyword("x"));
+	EXPECT_EQ(calc_lex.next_token().value().kind, TokenKind::BraceClose);
+	EXPECT_TRUE(calc_lex.next_token().value().is_keyword("if"));
+	EXPECT_EQ(calc_lex.next_token().value().kind, TokenKind::BraceClose);
+	EXPECT_TRUE(calc_lex.next_token().value().is_eof());
+
+	// The parser reads such a dictionary key as one name.
+	const auto dict_buf = to_bytes("<< /A{B} 1 >>");
+	Parser parser(dict_buf);
+	auto dict = parser.parse_dictionary();
+	RECTO_ASSERT_OK(dict);
+	EXPECT_EQ(dict.value().get_int("A{B}"), std::optional<int64_t>(1));
+}
+
 TEST(PdfLexer, LiteralStrings)
 {
 	// ISO 32000-1 section 7.3.4.2 examples:
@@ -332,6 +369,21 @@ TEST(PdfLexer, LiteralStrings)
 		EXPECT_EQ(bytes_to_ascii(lex.next_token().value().bytes), "+9");
 		const std::vector<uint8_t> expected_0053 = {0x05u, '3'};
 		EXPECT_EQ(lex.next_token().value().bytes, expected_0053);
+	}
+
+	// 3b. ISO 32000-1 section 7.3.4.2, examples 3 and 4 as printed: an end-of-line kept at the end of a string,
+	// written raw and as \n, and octal escapes inside text.
+	{
+		const auto buf = to_bytes(
+			"(This string has an end-of-line at the end of it.\n) "
+			"(So does this one.\\n) "
+			"(This string contains \\245two octal characters\\307.)");
+		Lexer lex(buf);
+		EXPECT_EQ(bytes_to_ascii(lex.next_token().value().bytes), "This string has an end-of-line at the end of it.\n");
+		EXPECT_EQ(bytes_to_ascii(lex.next_token().value().bytes), "So does this one.\n");
+		const std::string_view octal_text = "This string contains \xA5two octal characters\xC7.";
+		const std::vector<uint8_t> expected_octal(octal_text.begin(), octal_text.end());
+		EXPECT_EQ(lex.next_token().value().bytes, expected_octal);
 	}
 
 	// 4. Token byte ceiling enforced before growth.

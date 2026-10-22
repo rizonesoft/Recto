@@ -69,8 +69,8 @@ enum class TokenKind : uint8_t {
 	ArrayClose,   // ']'
 	DictOpen,     // '<<'
 	DictClose,    // '>>'
-	BraceOpen,    // '{'
-	BraceClose,   // '}'
+	BraceOpen,    // '{' (LexerSyntax::PostScriptCalculator only)
+	BraceClose,   // '}' (LexerSyntax::PostScriptCalculator only)
 	Keyword,      // 'obj', 'endobj', 'stream', 'endstream', 'xref', 'trailer', 'startxref', 'R', or content operator
 	Comment,      // '%...' (emitted when emit_comments is enabled)
 };
@@ -662,6 +662,14 @@ struct Token {
 	}
 };
 
+// What the lexer reads. `{` and `}` delimit only inside a Type 4 (PostScript calculator) function's stream (ISO
+// 32000-2 section 7.2.2 as clarified by the PDF Association's errata; ISO 32000-1 section 7.10.5): in ordinary PDF
+// syntax they are regular characters, so `/A{B}` is the name `A{B}`.
+enum class LexerSyntax : uint8_t {
+	Pdf,
+	PostScriptCalculator,
+};
+
 class Lexer {
 public:
 	explicit Lexer(
@@ -709,6 +717,17 @@ public:
 		return emit_comments_;
 	}
 
+	// Pdf by default; a Type 4 function's stream is read with PostScriptCalculator, where braces are tokens. Set it
+	// before reading: tokens already looked ahead keep the syntax they were read with.
+	void set_syntax(LexerSyntax syntax) noexcept
+	{
+		syntax_ = syntax;
+	}
+	[[nodiscard]] LexerSyntax syntax() const noexcept
+	{
+		return syntax_;
+	}
+
 	void set_max_token_bytes(size_t max_bytes) noexcept;
 	[[nodiscard]] size_t max_token_bytes() const noexcept
 	{
@@ -750,8 +769,13 @@ public:
 		return b == '(' || b == ')' ||
 			b == '<' || b == '>' ||
 			b == '[' || b == ']' ||
-			b == '{' || b == '}' ||
 			b == '/' || b == '%';
+	}
+
+	// Delimiters only in LexerSyntax::PostScriptCalculator.
+	[[nodiscard]] static constexpr bool is_calculator_delimiter(uint8_t b) noexcept
+	{
+		return b == '{' || b == '}';
 	}
 
 	[[nodiscard]] static constexpr bool is_pdf_regular(uint8_t b) noexcept
@@ -790,6 +814,7 @@ private:
 	size_t logical_cursor_{0};
 	size_t max_scanned_offset_{0};
 	bool emit_comments_{false};
+	LexerSyntax syntax_{LexerSyntax::Pdf};
 	size_t max_token_bytes_{kMaxLexerTokenBytes};
 	std::unique_ptr<LookaheadEntry[]> lookahead_buf_{};
 	size_t lookahead_head_{0};

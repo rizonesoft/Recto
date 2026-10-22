@@ -410,7 +410,7 @@ PdfResult<Token> Lexer::read_raw_token()
 			tok.byte_length = 1;
 			return tok;
 		}
-		if (b == '{') {
+		if (b == '{' && syntax_ == LexerSyntax::PostScriptCalculator) {
 			++cursor_;
 			Token tok;
 			tok.kind = TokenKind::BraceOpen;
@@ -418,7 +418,7 @@ PdfResult<Token> Lexer::read_raw_token()
 			tok.byte_length = 1;
 			return tok;
 		}
-		if (b == '}') {
+		if (b == '}' && syntax_ == LexerSyntax::PostScriptCalculator) {
 			++cursor_;
 			Token tok;
 			tok.kind = TokenKind::BraceClose;
@@ -520,7 +520,7 @@ PdfResult<Token> Lexer::read_name(size_t start_pos)
 	TokenText decoded;
 	while (cursor_ < input_.size()) {
 		const uint8_t b = input_[cursor_];
-		if (!is_pdf_regular(b)) {
+		if (!is_pdf_regular(b) || (syntax_ == LexerSyntax::PostScriptCalculator && is_calculator_delimiter(b))) {
 			break;
 		}
 		if (decoded.size() >= max_token_bytes_) {
@@ -742,7 +742,8 @@ PdfResult<Token> Lexer::read_hex_string(size_t start_pos)
 
 PdfResult<Token> Lexer::read_number_or_keyword(size_t start_pos)
 {
-	while (cursor_ < input_.size() && is_pdf_regular(input_[cursor_])) {
+	while (cursor_ < input_.size() && is_pdf_regular(input_[cursor_]) &&
+		!(syntax_ == LexerSyntax::PostScriptCalculator && is_calculator_delimiter(input_[cursor_]))) {
 		if ((cursor_ - start_pos) >= max_token_bytes_) {
 			return make_pdf_error(
 				ErrorCode::DecompressionLimitExceeded,
