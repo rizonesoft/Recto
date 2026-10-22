@@ -92,14 +92,24 @@ TEST(PdfFilters, FlateTrailerDamageIsRecorded)
 		EXPECT_EQ(*recovered, std::vector<uint8_t>{'A'});
 		EXPECT_GE(diagnostics_total_recorded(), before + 1); // the recovered header is recorded damage
 	}
-	// Bytes that also read as raw deflate from byte 0 ("7B 9C" happens to parse): the zlib-shaped body behind the
-	// header has a trailer, which decides, so "A" is recovered; with that trailer wrong the stream is refused.
+	// Bytes that also read as raw deflate from byte 0 ("7B 9C" happens to parse): the body behind the header has a
+	// matching Adler-32, which outranks the raw reading, so "A" is recovered.
 	std::vector<uint8_t> ambiguous = {0x7Bu, 0x9Cu, 0x73u, 0x04u, 0x00u, 0x00u, 0x42u, 0x00u, 0x42u};
 	auto ambiguous_res = decode_flate(ambiguous);
 	RECTO_ASSERT_OK(ambiguous_res);
 	EXPECT_EQ(*ambiguous_res, std::vector<uint8_t>{'A'});
+	// With that trailer wrong the zlib reading is unverified, so the valid raw reading from byte 0 stands.
 	ambiguous.back() = 0x43u;
-	RECTO_EXPECT_ERR(decode_flate(ambiguous), ErrorCode::DamagedFormat);
+	auto raw_reading = decode_flate(ambiguous);
+	RECTO_ASSERT_OK(raw_reading);
+	EXPECT_EQ(*raw_reading, (std::vector<uint8_t>{0xE3u, 0x6Cu, 0xC4u}));
+	// A valid raw stored block whose bytes from offset 2 also inflate (to nothing, with "FC 41 41 41" behind):
+	// those four bytes are no Adler-32 of that body, so the raw reading stands.
+	std::vector<uint8_t> stored = {0x01u, 0xFFu, 0x03u, 0x00u, 0xFCu};
+	stored.insert(stored.end(), 1023, 0x41u);
+	auto stored_res = decode_flate(stored);
+	RECTO_ASSERT_OK(stored_res);
+	EXPECT_EQ(*stored_res, std::vector<uint8_t>(1023, 0x41u));
 	// "B" (Adler-32 00430043) behind a damaged header and a trailer that names "A": refused, not recovered.
 	const std::vector<uint8_t> mismatched = {0x78u, 0x00u, 0x73u, 0x02u, 0x00u, 0x00u, 0x42u, 0x00u, 0x42u};
 	RECTO_EXPECT_ERR(decode_flate(mismatched), ErrorCode::DamagedFormat);

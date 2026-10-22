@@ -94,13 +94,14 @@ void verify_simple_1p_with_preamble(std::span<const uint8_t> preamble)
 // stream is a cycle that fails cleanly.
 TEST(PdfXref, ObjStmIndirectDecodeParmsResolve)
 {
-	const auto build = [](std::string_view parms_ref, std::string_view parms_body = "<< >>") {
-		const std::string payload = "312030203432>"; // ASCIIHex of "1 0 42": object 1 is the integer 42
+	const auto build = [](std::string_view parms_ref, std::string_view parms_body = "<< >>",
+		std::string_view filter = "/ASCIIHexDecode", std::string_view hex_payload = "312030203432>") {
+		const std::string payload(hex_payload); // decodes to "1 0 42": object 1 is the integer 42
 		std::string pdf = "%PDF-1.7\n";
 		const size_t off2 = pdf.size();
 		pdf += "2 0 obj\n" + std::string(parms_body) + "\nendobj\n";
 		const size_t off5 = pdf.size();
-		pdf += "5 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Filter /ASCIIHexDecode /DecodeParms ";
+		pdf += "5 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Filter " + std::string(filter) + " /DecodeParms ";
 		pdf += parms_ref;
 		pdf += " /Length " + std::to_string(payload.size()) + " >>\nstream\n" + payload + "\nendstream\nendobj\n";
 		const size_t off6 = pdf.size();
@@ -144,6 +145,15 @@ TEST(PdfXref, ObjStmIndirectDecodeParmsResolve)
 		RECTO_ASSERT_OK(other_value);
 		EXPECT_EQ(other_value->as_int(), std::optional<int64_t>(42)) << parms_body;
 	}
+
+	// Flate with the default /Predictor 1: /Columns shapes no predictor, so it is not resolved either.
+	const std::string flate_pdf = build("[null << /Columns 1 0 R >>]", "<< >>", "[/ASCIIHexDecode /FlateDecode]",
+		"789C335430503031020003860108>");
+	auto flate_xref = XrefTable::parse(as_bytes(flate_pdf));
+	RECTO_ASSERT_OK(flate_xref);
+	auto flate_value = flate_xref->resolve_object(as_bytes(flate_pdf), IndirectRef{1u, 0u});
+	RECTO_ASSERT_OK(flate_value);
+	EXPECT_EQ(flate_value->as_int(), std::optional<int64_t>(42));
 }
 
 TEST(PdfXref, ClassicEntriesAboveSizeAreMissing)

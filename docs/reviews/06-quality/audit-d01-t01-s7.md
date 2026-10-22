@@ -321,3 +321,44 @@ OVERALL: needs-attention
 - `PdfFilters.FlateTrailerDamageIsRecorded` adds the ambiguous `7B 9C` stream (recovered) and its wrong-trailer twin (refused). Both tests fail on the round 6 code.
 
 Gates after round 7: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 118 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 46 tests.`
+
+## Round 8: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T09:55:20Z
+- Effort: xhigh
+- Lines: 24
+- Digest: ecaa6879059e8e90
+
+### adversarial: needs-attention
+
+1. **P2: Header recovery rejects valid raw deflate.** `src/pdf/filters.cpp:1014` treats any four bytes following the alternate inflation as a zlib trailer, preventing raw fallback. Reproduce with `01 FF 03 00 FC` followed by 1,023 `41` bytes. This valid stored block decodes to 1,023 `A` bytes. From byte 2, however, `03 00` decodes to empty output; `FC 41 41 41` becomes its supposed checksum, causing `DamagedFormat`. Python zlib confirmed both interpretations; the Recto failure is source-traced. This breaks the section’s explicit raw-deflate promise.
+
+### consistency: approve
+
+### integration: needs-attention
+
+2. **P3: Unused predictor parameters can prevent object-stream decoding.** `src/pdf/filters.cpp:9251` resolves `/Columns`, `/Colors` and `/BitsPerComponent` even when `/Predictor` defaults to `1`, although `parse_predictor_params` ignores them at line 696. Reproduce with object stream 5 containing plaintext `1 0 42`, `/N 1 /First 4 /Filter /FlateDecode /DecodeParms << /Columns 1 0 R >>`. Its compressed payload is `78 9C 33 54 30 50 30 31 02 00 03 86 01 08`. Resolving contained object 1 should return integer `42`; instead, resolving the unused `/Columns` re-enters the container and returns `DamagedFormat`. This reproduction is source-traced.
+
+### source-defect: needs-attention
+
+2. **P3, same finding, `src/pdf/filters.cpp:9251`:** Predictor geometry parameters apply only when `Predictor` exceeds `1`. Eager resolution makes an unused parameter affect decoding. The object-stream reproduction above demonstrates the discrepancy. [Adobe PDF Reference, Table 3.7](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.6.pdf#page=72)
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: advisory
+
+The existing Release executable passed 16 filter tests and 30 XRef/document/crypto tests; the support test reported `ASan=enabled`. Graph validation and plan checks passed. These runs do not independently establish executable correspondence to `55ce750`, fresh-build warnings or ARM64 compilation. No files were modified.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 8
+
+- Finding 1 (P2): correct. Round 7 treated any four bytes behind an alternate inflation as a trailer, which turned a valid raw stored block into a refusal. Rounds 6 to 8 each patched one case of the same ambiguity: some bytes are valid both as raw deflate from byte 0 and as a zlib body after a damaged header. Rather than patch a fourth case, the rule is now stated once, in the code and in the `D01 T01 §7` note. (1) A body after the header whose 4 trailing bytes are its Adler-32 is verified zlib (an accidental match is a 2^-32 event) and wins. (2) Otherwise a raw-deflate reading from byte 0 wins: it is a valid reading, which an unverified zlib reading does not outrank. (3) Otherwise the body after the header is kept with recorded damage when it has no trailer, and refused when the trailer is wrong. This reverses one round 7 expectation: `7B 9C ...` with a wrong trailer now yields its valid raw reading (`E3 6C C4`) instead of a refusal, because a wrong checksum is no evidence for the zlib reading. `PdfFilters.FlateTrailerDamageIsRecorded` covers the verified recovery, that raw reading, and the stored block (1,023 `A` bytes).
+- Finding 2 (P3): correct. `/Colors`, `/BitsPerComponent` and `/Columns` shape a Flate or LZW predictor only, so they now resolve only when `/Predictor` (itself resolved first when indirect) is above 1. `PdfXref.ObjStmIndirectDecodeParmsResolve` adds a Flate object stream with `<< /Columns 1 0 R >>` and the default predictor, which decodes to 42.
+- Both tests fail on the round 7 code.
+
+Gates after round 8: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 118 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 46 tests.`; `python scripts/todo-graph.py validate` -> valid.

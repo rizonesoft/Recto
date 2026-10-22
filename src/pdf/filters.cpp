@@ -996,11 +996,14 @@ PdfResult<std::vector<uint8_t>> decode_flate(
 				inflated = std::move(*raw_res);
 			}
 		} else {
-			// The 2-byte RFC 1950 header is omitted or damaged (in either byte). The same bytes may read both as raw
-			// deflate from byte 0 and as a zlib body after the header, so the evidence decides: a body after the
-			// header that inflates with a 4-byte trailer behind it is zlib-shaped, and its trailer judges it (a match
-			// recovers the stream with the damaged header recorded, a mismatch refuses it). Only without such a
-			// trailer does raw deflate from byte 0 apply, then the body after the header with the damage recorded.
+			// The 2-byte RFC 1950 header is omitted or damaged (in either byte). The same bytes can be valid both as raw
+			// deflate from byte 0 and as a zlib body after the header, so one rule decides, in this order:
+			// 1. The body after the header inflates and the 4 bytes behind it are its Adler-32: verified zlib (an
+			//    accidental match is a 2^-32 event), recovered with the damaged header recorded.
+			// 2. Otherwise raw deflate from byte 0, if it inflates: a valid reading, which an unverified zlib reading
+			//    does not outrank.
+			// 3. Otherwise the body after the header, if it inflated: with no trailer it is kept and the damage
+			//    recorded; with a wrong one it is refused.
 			std::optional<std::vector<uint8_t>> body;
 			size_t consumed = 0;
 			if (input.size() > 2) {
@@ -1011,8 +1014,9 @@ PdfResult<std::vector<uint8_t>> decode_flate(
 					return skip2_res.error();
 				}
 			}
-			if (body.has_value() && input.size() - 2 - consumed >= 4) {
-				RECTO_PDF_RETURN_IF_ERROR(check_adler_trailer(consumed, *body));
+			const bool verified = body.has_value() && input.size() - 2 - consumed >= 4 &&
+				check_adler_trailer(consumed, *body).has_value();
+			if (verified) {
 				record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream, uint64_t{0}); // bad header
 				inflated = std::move(*body);
 			} else {
@@ -1022,7 +1026,7 @@ PdfResult<std::vector<uint8_t>> decode_flate(
 				} else if (is_resource_error(raw_res.error())) {
 					return raw_res.error();
 				} else if (body.has_value()) {
-					RECTO_PDF_RETURN_IF_ERROR(check_adler_trailer(consumed, *body)); // records the missing trailer
+					RECTO_PDF_RETURN_IF_ERROR(check_adler_trailer(consumed, *body)); // wrong: refused; none: recorded
 					record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream, uint64_t{0});
 					inflated = std::move(*body);
 				} else {
@@ -9235,7 +9239,20 @@ namespace {
 			return parms;
 		}
 		const std::span<const std::string_view> keys = stage_parameter_keys(filter_name);
+		// /Colors, /BitsPerComponent and /Columns shape a Flate or LZW predictor, so they matter only when
+		// /Predictor (itself resolved first when indirect) is above 1 (ISO 32000-1 Table 8).
+		bool predictor_active = true;
+		if (const bool flate_or_lzw = filter_name == "FlateDecode" || filter_name == "Fl" ||
+				filter_name == "LZWDecode" || filter_name == "LZW";
+			flate_or_lzw) {
+			RECTO_PDF_TRY(const PdfValue* predictor, deref(parms->get("Predictor")));
+			const auto predictor_int = predictor != nullptr ? predictor->as_int() : std::nullopt;
+			predictor_active = predictor_int.has_value() && *predictor_int > 1;
+		}
 		const auto defined = [&](std::string_view key) {
+			if (!predictor_active && (key == "Colors" || key == "BitsPerComponent" || key == "Columns")) {
+				return false;
+			}
 			return std::find(keys.begin(), keys.end(), key) != keys.end();
 		};
 		const bool any = std::any_of(parms->entries().begin(), parms->entries().end(), [&](const auto& entry) {
