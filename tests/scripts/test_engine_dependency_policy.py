@@ -89,6 +89,16 @@ REVIEWED_OFFICE_UNITS = frozenset({
     "To Word failed: the file needs a password",
     # The find options' "Whole word", not Microsoft Word.
     "Whole word",
+    # The same tiles and captions as read with every element boundary a break (see office_dependency).
+    "Add Word, Excel or PowerPoint files to use this",
+    "Add Word, Excel, PowerPoint, HTML or Markdown files to use this",
+    "Excel & Data",
+    "PDF from Office",
+    "PDF from Office, HTML, Markdown & Images",
+    "PowerPoint presentation",
+    "Used when converting Word, Excel and PowerPoint files",
+    "Word document",
+    "Word, Excel, PowerPoint and OpenDocument files, with Recto's built-in layout engines",
 })
 # The suites' pages, read from every link a board holds (href, src, action, formaction), entities decoded, and each
 # resolved by Node's WHATWG URL parser, the algorithm browsers use, so an entity, a percent-encoded or full-width host,
@@ -168,8 +178,9 @@ def _is_text_attribute(name: str) -> bool:
 
 
 class _VisibleText(html.parser.HTMLParser):
-    def __init__(self):
+    def __init__(self, split_every_element: bool = False):
         super().__init__(convert_charrefs=True)
+        self.split_every_element = split_every_element
         self.parts: list[str] = []
         self.attributes: list[str] = []
         self.links: list[str] = []
@@ -187,7 +198,7 @@ class _VisibleText(html.parser.HTMLParser):
                 self.links.append(value)
         if tag == "br":
             self.parts.append(" ")
-        elif tag in BLOCK_ELEMENTS:
+        elif tag in BLOCK_ELEMENTS or self.split_every_element:
             self.parts.append("\x00")
 
     def handle_starttag(self, tag, attrs):
@@ -204,11 +215,11 @@ class _VisibleText(html.parser.HTMLParser):
             self.parts.append(data)
 
 
-def visible_units(markup: str) -> list[str]:
+def visible_units(markup: str, split_every_element: bool = False) -> list[str]:
     """The text a reader sees or hears, as units split at element boundaries (other than inline elements) and at
     sentence punctuation, with white space, newlines included, collapsed to single spaces; visible attribute text
     follows as units of its own."""
-    parser = _VisibleText()
+    parser = _VisibleText(split_every_element)
     parser.feed(markup)
     parser.close()
     text = "\x00".join(["".join(parser.parts), *parser.attributes])
@@ -226,9 +237,13 @@ def board_links(markup: str) -> list[str]:
 def office_dependency(markup: str) -> str | None:
     """The first unit that names an Office suite, or names Office, Word, Excel or PowerPoint without being one of
     the reviewed units, or None."""
-    for unit in visible_units(markup):
-        if OFFICE_SUITE.search(unit) or (OFFICE_PRODUCT.search(unit) and unit not in REVIEWED_OFFICE_UNITS):
-            return unit
+    # Read both ways, since a stylesheet decides whether an element breaks the line (a flex row of spans renders as
+    # separate words): with inline elements joining their text, and with every element boundary a break. A unit from
+    # either reading must be reviewed or name no Office product.
+    for split in (False, True):
+        for unit in visible_units(markup, split_every_element=split):
+            if OFFICE_SUITE.search(unit) or (OFFICE_PRODUCT.search(unit) and unit not in REVIEWED_OFFICE_UNITS):
+                return unit
     return None
 
 
@@ -324,7 +339,9 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                        '<select><option label="Install Microsoft Office to convert">Converter</option></select>',
                        '<div aria-description="Requires Word">Convert</div>',
                        "<p>Install <label>Wo</label>rd to convert documents.</p>",
-                       '<svg><text x="0" y="20">Install Wo<tspan>rd</tspan> to convert documents.</text></svg>'):
+                       '<svg><text x="0" y="20">Install Wo<tspan>rd</tspan> to convert documents.</text></svg>',
+                       '<div style="display:flex;gap:8px"><span>Install</span><span>Word</span>'
+                       '<span>to convert documents.</span></div>'):
             with self.subTest(markup=markup):
                 self.assertIsNotNone(office_dependency(markup))
         for markup in ("<p>Office to PDF is built in.</p>", "<td>PDF to Word</td><td>needs a password</td>",
