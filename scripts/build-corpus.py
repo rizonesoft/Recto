@@ -2770,8 +2770,10 @@ def _validate_jpx_codestream(rel_path: str, data: bytes, width: int, height: int
             # QCD (T.800 A.6.4): no quantization (style 0, for the reversible transform), one exponent byte per subband.
             if levels is None:
                 raise ValueError(f"{rel_path}: JPX QCD before COD")
-            if body[:1] == b"" or body[0] & 0x1F != 0 or length != 3 + 3 * levels + 1:
-                raise ValueError(f"{rel_path}: JPX QCD is not unquantized with one exponent per subband")
+            # The one subband's reversible step size: exponent 8 (the 8-bit range) in the top five bits, the low
+            # three reserved and zero (T.800 Table A.29), as the generator writes and the engine requires.
+            if body != b"\x00\x40":
+                raise ValueError(f"{rel_path}: JPX QCD is not unquantized with the one exponent byte 0x40")
         else:
             raise ValueError(f"{rel_path}: JPX main-header marker {marker:#04x} is not one the corpus image uses")
         pos += 2 + length
@@ -3337,7 +3339,10 @@ def inflate_bounded(data: bytes, limit: int, keep: bool = True) -> tuple[int, by
     d = zlib.decompressobj()
     total, out, pending = 0, [], data
     while total <= limit:
-        chunk = d.decompress(pending, 1 << 20)
+        try:
+            chunk = d.decompress(pending, 1 << 20)
+        except zlib.error as exc:  # malformed data is a validation failure like any other
+            raise ValueError(f"bad Flate data in a bounded inflate: {exc}") from exc
         total += len(chunk)
         if keep and total <= limit:
             out.append(chunk)

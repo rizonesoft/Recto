@@ -877,6 +877,15 @@ class BuildCorpusTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "baseline"):
             self.mod.validate_jpeg_baseline("x", bytes(j), 8, 8, 3)
 
+    def test_jpx_qcd_exact_and_bounded_inflate_errors(self) -> None:
+        p = bytearray(self.mod.make_minimal_jpx_8x8_gray())
+        q = p.index(b"\xff\x5c")
+        p[q + 5] |= 1  # a reserved bit in the exponent byte: 00 40 becomes 00 41
+        with self.assertRaisesRegex(ValueError, "QCD"):
+            self.mod.validate_jpx_codestream("x", bytes(p), 8, 8)
+        with self.assertRaisesRegex(ValueError, "bad Flate data"):
+            self.mod.inflate_bounded(b"XX" + bytes(64), 1024)
+
     def test_jpx_cod_qcd_and_packet_are_read(self) -> None:
         jpx = self.mod.make_minimal_jpx_8x8_gray()
         cod, qcd = jpx.index(b"\xFF\x52"), jpx.index(b"\xFF\x5C")
