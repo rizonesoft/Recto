@@ -242,3 +242,46 @@ OVERALL: needs-attention
 - Finding 1 (P3): correct, and missed in round 4. `DiagnosticRingWraparound` no longer asserts non-decreasing `timestamp_utc_ms`; its sequence assertion stays. No timestamp-order assertion remains in `tests/recto-tests/` (`timestamp_utc_ms` is only checked as non-zero).
 
 Gates after round 5: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 106 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfError.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 7 tests.`
+
+## Round 6: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T05:55:58Z
+- Effort: medium
+- Lines: 28
+- Digest: ac27d76818e76190
+
+### adversarial: approve
+
+No additional findings.
+
+### consistency: approve
+
+No additional findings.
+
+### integration: approve
+
+No additional findings.
+
+### source-defect: approve
+
+No additional findings.
+
+### design: advisory
+
+Not applicable: the section owns no user surface.
+
+### record: advisory
+
+The complete checkpoint remains independently unverified. The existing x64 Release executable passed six `PdfError` tests plus `Support.AsanActiveWhenEnabled`, reporting `ASan=enabled`. Both Python ETW registration checks passed.
+
+`EtwProviderEnabledOnlyByASession` was excluded because its death-test helper writes temporary files. No rebuild was performed under the read-only instruction. These results establish neither binary correspondence to `5d13b57` nor a warning-free build. No files were modified.
+
+HIGHEST: none
+OVERALL: approve
+
+## Audit outcome
+
+The stamp on `D01 T01 §1` is confirmed. The audit found defects present since that stamp, not regressions: an unsafe final move in `RECTO_PDF_TRY`, a `value_or` that could return a dangling reference, production ETW registration faking an enabled session, refused ETW writes going uncounted, diagnostics written at the Verbose level, a section claim that ASan proves race freedom, and wall-clock timestamps asserted as ordered. Each was fixed at its owning layer in `bd78922`, `a20d27c`, `fdd66bd`, `54bcf70` and `5d13b57`, with tests that fail on the old behaviour. The Debug allocation scope is stated in the section's contract. Dependants of `D01 T01 §1` are not suspect: the API changes (`RECTO_PDF_TRY_REF`, `value_or` by value) were applied at every call site, and all 106 tests pass in x64 Debug and Release.
+
+Test checkpoint at `5d13b57`: `python scripts/todo-graph.py resolve "D01 T01 §1"` -> exit 3 (still verified); round 6 approves (`OVERALL: approve`). `D01 T01 §1`'s own checkpoint: `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfError.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 7 tests.`
