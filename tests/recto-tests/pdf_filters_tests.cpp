@@ -92,6 +92,14 @@ TEST(PdfFilters, FlateTrailerDamageIsRecorded)
 		EXPECT_EQ(*recovered, std::vector<uint8_t>{'A'});
 		EXPECT_GE(diagnostics_total_recorded(), before + 1); // the recovered header is recorded damage
 	}
+	// Bytes that also read as raw deflate from byte 0 ("7B 9C" happens to parse): the zlib-shaped body behind the
+	// header has a trailer, which decides, so "A" is recovered; with that trailer wrong the stream is refused.
+	std::vector<uint8_t> ambiguous = {0x7Bu, 0x9Cu, 0x73u, 0x04u, 0x00u, 0x00u, 0x42u, 0x00u, 0x42u};
+	auto ambiguous_res = decode_flate(ambiguous);
+	RECTO_ASSERT_OK(ambiguous_res);
+	EXPECT_EQ(*ambiguous_res, std::vector<uint8_t>{'A'});
+	ambiguous.back() = 0x43u;
+	RECTO_EXPECT_ERR(decode_flate(ambiguous), ErrorCode::DamagedFormat);
 	// "B" (Adler-32 00430043) behind a damaged header and a trailer that names "A": refused, not recovered.
 	const std::vector<uint8_t> mismatched = {0x78u, 0x00u, 0x73u, 0x02u, 0x00u, 0x00u, 0x42u, 0x00u, 0x42u};
 	RECTO_EXPECT_ERR(decode_flate(mismatched), ErrorCode::DamagedFormat);
@@ -1693,6 +1701,30 @@ TEST(PdfFilters, Jbig2Decode)
 		EXPECT_EQ((*dec)[1], 0x00u);
 		EXPECT_EQ((*dec)[2], 0x3Cu);
 		EXPECT_EQ((*dec)[3], 0x00u);
+
+		// The globals stream's own /Filter may be indirect too: its pipeline keeps the caller's resolver.
+		std::string globals_hex;
+		static constexpr char kHex[] = "0123456789ABCDEF";
+		for (const uint8_t b : globals_bytes) {
+			globals_hex += kHex[b >> 4u];
+			globals_hex += kHex[b & 0x0Fu];
+		}
+		globals_hex += '>';
+		const IndirectObjectResolver hex_resolver = [&](IndirectRef ref) -> PdfResult<PdfValue> {
+			if (ref.obj_num == 42u && ref.gen_num == 0u) {
+				PdfStream globals_stm;
+				globals_stm.raw_bytes.assign(globals_hex.begin(), globals_hex.end());
+				globals_stm.dict.set("Filter", PdfValue(IndirectRef{43u, 0u}));
+				return PdfValue(std::move(globals_stm));
+			}
+			if (ref.obj_num == 43u && ref.gen_num == 0u) {
+				return PdfValue(PdfName("ASCIIHexDecode"));
+			}
+			return make_pdf_error(ErrorCode::DamagedFormat, "Unexpected object reference");
+		};
+		auto hex_dec = decode_stream(page_bytes, stm_dict, kMaxDecodedStreamBytes, &hex_resolver);
+		RECTO_ASSERT_OK(hex_dec);
+		EXPECT_EQ(*hex_dec, *dec);
 
 		// A /JBIG2Globals stream with recursive /Filter /JBIG2Decode must be rejected with DamagedFormat.
 		const IndirectObjectResolver recursive_resolver = [&](IndirectRef ref) -> PdfResult<PdfValue> {

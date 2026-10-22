@@ -996,28 +996,38 @@ PdfResult<std::vector<uint8_t>> decode_flate(
 				inflated = std::move(*raw_res);
 			}
 		} else {
-			// The 2-byte RFC 1950 header is omitted or damaged (in either byte): try raw deflate from byte 0, then a
-			// zlib body after skipping the header. The recovered body's trailer is checked like any other, so a
-			// skipped header can only yield data its checksum vouches for (or, without one, recorded damage).
-			auto raw_res = inflate_raw_deflate(input, effective_limit);
-			if (raw_res.has_value()) {
-				inflated = std::move(*raw_res);
-			} else if (is_resource_error(raw_res.error())) {
-				return raw_res.error();
-			} else if (input.size() > 2) {
-				size_t consumed = 0;
+			// The 2-byte RFC 1950 header is omitted or damaged (in either byte). The same bytes may read both as raw
+			// deflate from byte 0 and as a zlib body after the header, so the evidence decides: a body after the
+			// header that inflates with a 4-byte trailer behind it is zlib-shaped, and its trailer judges it (a match
+			// recovers the stream with the damaged header recorded, a mismatch refuses it). Only without such a
+			// trailer does raw deflate from byte 0 apply, then the body after the header with the damage recorded.
+			std::optional<std::vector<uint8_t>> body;
+			size_t consumed = 0;
+			if (input.size() > 2) {
 				auto skip2_res = inflate_raw_deflate(input.subspan(2), effective_limit, &consumed);
-				if (!skip2_res.has_value()) {
-					if (is_resource_error(skip2_res.error())) {
-						return skip2_res.error();
-					}
+				if (skip2_res.has_value()) {
+					body = std::move(*skip2_res);
+				} else if (is_resource_error(skip2_res.error())) {
+					return skip2_res.error();
+				}
+			}
+			if (body.has_value() && input.size() - 2 - consumed >= 4) {
+				RECTO_PDF_RETURN_IF_ERROR(check_adler_trailer(consumed, *body));
+				record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream, uint64_t{0}); // bad header
+				inflated = std::move(*body);
+			} else {
+				auto raw_res = inflate_raw_deflate(input, effective_limit);
+				if (raw_res.has_value()) {
+					inflated = std::move(*raw_res);
+				} else if (is_resource_error(raw_res.error())) {
+					return raw_res.error();
+				} else if (body.has_value()) {
+					RECTO_PDF_RETURN_IF_ERROR(check_adler_trailer(consumed, *body)); // records the missing trailer
+					record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream, uint64_t{0});
+					inflated = std::move(*body);
+				} else {
 					return raw_res.error();
 				}
-				RECTO_PDF_RETURN_IF_ERROR(check_adler_trailer(consumed, *skip2_res));
-				record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream, uint64_t{0}); // bad header
-				inflated = std::move(*skip2_res);
-			} else {
-				return raw_res.error();
 			}
 		}
 
@@ -5710,7 +5720,8 @@ struct Jbig2DecoderState {
 
 [[nodiscard]] PdfResult<std::vector<uint8_t>> decode_jbig2_globals_stream(
 	const PdfStream& gstm,
-	size_t effective_limit);
+	size_t effective_limit,
+	const IndirectObjectResolver* resolver);
 
 } // namespace
 
@@ -5787,7 +5798,7 @@ PdfResult<std::vector<uint8_t>> decode_jbig2(
 				if (const PdfStream* gstm = gval->as_stream()) {
 					RECTO_PDF_TRY(
 						decoded_globals,
-						decode_jbig2_globals_stream(*gstm, effective_limit));
+						decode_jbig2_globals_stream(*gstm, effective_limit, resolver));
 					globals_span = decoded_globals;
 				} else if (const PdfString* gstr = gval->as_string()) {
 					globals_span = gstr->bytes;
@@ -5808,7 +5819,7 @@ PdfResult<std::vector<uint8_t>> decode_jbig2(
 					}
 					RECTO_PDF_TRY(
 						decoded_globals,
-						decode_jbig2_globals_stream(*resolved_stm, effective_limit));
+						decode_jbig2_globals_stream(*resolved_stm, effective_limit, resolver));
 					globals_span = decoded_globals;
 				} else {
 					return make_filter_error(
@@ -9401,7 +9412,8 @@ namespace {
 
 [[nodiscard]] PdfResult<std::vector<uint8_t>> decode_jbig2_globals_stream(
 	const PdfStream& gstm,
-	size_t effective_limit)
+	size_t effective_limit,
+	const IndirectObjectResolver* resolver)
 {
 	if (const PdfValue* f_spec = gstm.dict.get("F"); f_spec != nullptr && !f_spec->is_null()) {
 		return make_pdf_error(
@@ -9430,7 +9442,7 @@ namespace {
 		parms_val,
 		effective_limit,
 		&gstm.dict,
-		/*resolver=*/nullptr,
+		resolver,
 		/*allow_jbig2=*/false);
 }
 

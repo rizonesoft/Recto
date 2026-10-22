@@ -278,3 +278,46 @@ OVERALL: needs-attention
 - `PdfFilters.FlateTrailerDamageIsRecorded` covers all three cases and fails on the round 5 code.
 
 Gates after round 6: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 118 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 46 tests.`
+
+## Round 7: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T09:38:50Z
+- Effort: xhigh
+- Lines: 26
+- Digest: 73b5911d31dab5d3
+
+### adversarial: needs-attention
+
+1. **P1: Successful raw inflation still bypasses header recovery and checksum validation.** `src/pdf/filters.cpp:1002` accepts the raw interpretation immediately. Reproduce with `decode_flate` on `7B 9C 73 04 00 00 42 00 42`, a valid `A` stream with its first header byte damaged. It returns `E3 6C C4` successfully instead of recovering `A`, despite the intact body and matching Adler-32. Changing the final trailer byte to `43` also succeeds. The checksum routine is never reached. This is a source-traced reproduction; Python zlib independently confirmed both inflation interpretations.
+
+### consistency: approve
+
+### integration: needs-attention
+
+2. **P2: JBIG2 globals lose the caller’s filter resolver.** `src/pdf/filters.cpp:9433` explicitly passes `nullptr` into the globals stream’s lossless pipeline.
+
+   Reproduce using the globals fixture at `tests/recto-tests/pdf_filters_tests.cpp:1678`: ASCIIHex-encode `globals_bytes`, append `>`, and return that globals stream with `/Filter 43 0 R`. Extend the existing resolver so object 43 returns `/ASCIIHexDecode`. The page should still decode to `3C 00 3C 00`, but decoding returns `DamagedFormat` because the nested pipeline cannot resolve object 43. Using the direct filter name works. This reproduction is source-traced.
+
+### source-defect: needs-attention
+
+2. **P2, finding 2, `src/pdf/filters.cpp:9433`:** The globals path breaks direct/indirect equivalence for ordinary stream filter entries. The PDF reference permits indirect values and explicitly illustrates an ASCIIHex-filtered globals stream. The reproduction above exercises that combination. [Indirect objects](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.6.pdf#page=62), [JBIG2 globals example](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.6.pdf#page=80).
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: advisory
+
+Independently reran the existing Release executable: 16 filter tests and 30 XRef/document/crypto tests passed; the support test reported `ASan=enabled`. Graph validation and plan checks passed. These results do not establish executable correspondence to `d28a162`, fresh-build warning counts, or ARM64 compilation. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 7
+
+- Finding 1 (P1): correct. With a damaged header, raw deflate from byte 0 was tried first, and bytes that happen to parse as raw deflate (`7B 9C 73 04 00 ...`) came back as garbage without the trailer ever being consulted. The evidence now decides: if the body after the header inflates with a 4-byte trailer behind it, the stream is zlib-shaped and that trailer judges it (a match recovers `A` with the damaged header recorded; a mismatch is refused). Raw deflate from byte 0 applies only when there is no such trailer, and the body after the header (recorded as damaged, its missing trailer recorded too) only after raw deflate fails.
+- Finding 2 (P2): correct. `decode_jbig2_globals_stream` ran the globals stream's own pipeline with no resolver, so an indirect `/Filter` on it failed. It now takes and passes on the caller's resolver at both call sites. `PdfFilters.Jbig2Decode` adds a globals stream whose `/Filter` is `43 0 R` (ASCIIHex) and decodes the same page.
+- `PdfFilters.FlateTrailerDamageIsRecorded` adds the ambiguous `7B 9C` stream (recovered) and its wrong-trailer twin (refused). Both tests fail on the round 6 code.
+
+Gates after round 7: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 118 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 46 tests.`
