@@ -101,3 +101,46 @@ OVERALL: needs-attention
 - Finding 1 (P3): correct. `utf8_to_pdf_string` wrote a literal U+001B into UTF-16BE, where it delimits a language escape, so a round trip could drop text. U+001B has no form in any PDF text string (reserved in the Unicode forms, absent from PDFDocEncoding), so the encoder now writes U+FFFD for it, the policy it already applies to surrogates and values above U+10FFFF; `src/pdf/object.h` states it. `PdfObject.StringEncoding` round-trips `"A\x1Ben\x1BB"` to `A`, U+FFFD, `en`, U+FFFD, `B`, and fails on the round 1 encoder.
 
 Gates after round 2: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 107 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfObject.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 14 tests.`
+
+## Round 3: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T06:24:38Z
+- Effort: medium
+- Lines: 28
+- Digest: 0a0396b5ab34b01c
+
+### adversarial: approve
+
+No actionable findings in the audited implementation at `ab0ae28`.
+
+### consistency: approve
+
+No findings.
+
+### integration: approve
+
+No findings.
+
+### source-defect: approve
+
+No actionable findings.
+
+### design: advisory
+
+Not applicable; this section owns no user surface.
+
+### record: advisory
+
+The existing x64 Release binary passed the exact `--gtest_filter=PdfObject.*` checkpoint: six tests, exit 0. The separate ASan check reported `ASan=enabled`; the dictionary-key decryption regression also passed.
+
+This corroborates the recorded runtime result. Warning-free x64/ARM64 compilation and binary correspondence to HEAD were not independently established: rebuilding would violate the no-file-modification constraint.
+
+HIGHEST: none
+OVERALL: approve
+
+## Audit outcome
+
+The stamp on `D01 T01 §2` is confirmed. The audit found defects present since that stamp, not regressions: decryption looking dictionary entries up through the slash-stripping `string_view` overload (`/A` and `/#2FA` collided), the decoder dropping all text after a malformed language escape, and the encoder writing a literal U+001B that decoding then read as an escape. Each was fixed at its owning layer in `21aba18` and `ab0ae28`, with tests that fail on the old code. Dependants of `D01 T01 §2` are not suspect: the public API did not change, and all 107 tests pass in x64 Debug and Release.
+
+Test checkpoint at `ab0ae28`: `python scripts/todo-graph.py resolve "D01 T01 §2"` -> exit 3 (still verified); round 3 approves (`OVERALL: approve`). `D01 T01 §2`'s own checkpoint: `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfObject.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 14 tests.`
