@@ -847,6 +847,18 @@ class BuildCorpusTests(unittest.TestCase):
             with self.subTest(says=says), self.assertRaisesRegex(ValueError, says):
                 self.mod.validate_jpx_codestream("x", data, 8, 8)
 
+    def test_jpx_packet_header_limits_and_stuffing(self) -> None:
+        def with_packet(packet_hex):
+            p = bytearray(self.mod.make_minimal_jpx_8x8_gray())
+            sot, sod = p.index(b"\xff\x90"), p.index(b"\xff\x93")
+            p = p[: sod + 2] + bytes.fromhex(packet_hex) + b"\xff\xd9"
+            p[sot + 6 : sot + 10] = (len(p) - 2 - sot).to_bytes(4, "big")
+            return bytes(p)
+
+        for packet, says in (("efff7fff7000000000", "above"), ("efffffff7000000000", "stuffed 0")):
+            with self.subTest(packet=packet), self.assertRaisesRegex(ValueError, says):
+                self.mod.validate_jpx_codestream("x", with_packet(packet), 8, 8)
+
     def test_jpx_cod_qcd_and_packet_are_read(self) -> None:
         jpx = self.mod.make_minimal_jpx_8x8_gray()
         cod, qcd = jpx.index(b"\xFF\x52"), jpx.index(b"\xFF\x5C")

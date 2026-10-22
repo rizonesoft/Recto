@@ -2792,6 +2792,9 @@ def _validate_jpx_single_packet(rel_path: str, packet: bytes) -> None:
         if pos >= len(packet):
             raise ValueError(f"{rel_path}: JPX packet header runs past the tile-part")
         width = 7 if stuffed else 8
+        if stuffed and bit == 0 and packet[pos] & 0x80:
+            # After 0xFF the next byte carries 7 bits; its first bit is the stuffed 0 (T.800 B.10.1).
+            raise ValueError(f"{rel_path}: JPX packet header byte after 0xFF does not start with the stuffed 0")
         value = packet[pos] >> (width - 1 - bit) & 1
         bit += 1
         if bit == width:
@@ -2820,7 +2823,12 @@ def _validate_jpx_single_packet(rel_path: str, packet: bytes) -> None:
             lblock = 3
             while read():
                 lblock += 1
-            for _ in range(lblock + passes.bit_length() - 1):
+                if lblock > 32:  # the engine's limit (src/pdf/filters.cpp, "Excessive Lblock indicator")
+                    raise ValueError(f"{rel_path}: JPX packet header Lblock above 32")
+            length_bits = lblock + passes.bit_length() - 1
+            if length_bits > 31:  # the engine's limit ("Code-block length field bit count exceeds 31 bits")
+                raise ValueError(f"{rel_path}: JPX code-block length field of {length_bits} bits, above 31")
+            for _ in range(length_bits):
                 length = (length << 1) | read()
     if bit:
         pos += 1
