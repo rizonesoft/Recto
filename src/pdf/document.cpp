@@ -1542,8 +1542,9 @@ PdfResult<Document::SingleHopResult> Document::resolve_single_indirect_hop(
 			// Sibling objects share one decrypted, decoded container per document (decrypted_obj_stm_cache_); it is
 			// read through the same routines as XrefTable's and SecurityHandler's (parse_object_stream,
 			// extract_object_stream_member).
-			auto stm_cache_it = decrypted_obj_stm_cache_.find(stm_obj_num);
-			if (stm_cache_it == decrypted_obj_stm_cache_.end()) {
+			const CachedObjStream* cached_stm = decrypted_obj_stm_cache_.find(stm_obj_num);
+			CachedObjStream uncached; // holds a container too large for the cache, for this one read
+			if (cached_stm == nullptr) {
 				RECTO_PDF_TRY(
 					IndirectObject raw_stm_obj,
 					xref_.read_indirect_object(file_bytes_, stm_ref));
@@ -1561,8 +1562,12 @@ PdfResult<Document::SingleHopResult> Document::resolve_single_indirect_hop(
 						/*is_inside_obj_stm=*/false,
 						&stm_resolver));
 				const PdfStream* obj_stm = raw_stm_obj.value.as_stream();
-				if (obj_stm == nullptr ||
-					obj_stm->dict.get_name("Type").value_or("") != "ObjStm") {
+				bool is_objstm = false;
+				if (obj_stm != nullptr) {
+					RECTO_PDF_TRY(const bool type_ok, is_object_stream(obj_stm->dict, &stm_resolver));
+					is_objstm = type_ok;
+				}
+				if (!is_objstm) {
 					return make_doc_error(
 						ErrorCode::DamagedFormat,
 						DiagnosticId::DamagedObject,
@@ -1577,14 +1582,11 @@ PdfResult<Document::SingleHopResult> Document::resolve_single_indirect_hop(
 				RECTO_PDF_TRY_REF(
 					cached,
 					parse_object_stream(obj_stm->dict, std::move(decoded_stm), stm_obj_num, &stm_resolver));
-				if (decrypted_obj_stm_cache_.size() >= kMaxCachedObjStreams) {
-					decrypted_obj_stm_cache_.erase(decrypted_obj_stm_cache_.begin());
-				}
-				stm_cache_it = decrypted_obj_stm_cache_.emplace(stm_obj_num, std::move(cached)).first;
+				cached_stm = &decrypted_obj_stm_cache_.insert(stm_obj_num, std::move(cached), uncached);
 			}
 			RECTO_PDF_TRY_REF(
 				inner_val,
-				extract_object_stream_member(stm_cache_it->second, stm_index, current));
+				extract_object_stream_member(*cached_stm, stm_index, current));
 			return SingleHopResult{std::nullopt, std::move(inner_val)};
 		}
 

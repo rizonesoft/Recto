@@ -2184,8 +2184,9 @@ PdfResult<PdfValue> SecurityHandler::resolve_and_decrypt_with_visited(
 					current.gen_num);
 			}
 
-			auto stm_cache_it = decrypted_obj_stm_cache_.find(stm_obj_num);
-			if (stm_cache_it == decrypted_obj_stm_cache_.end()) {
+			const CachedObjStream* cached_stm = decrypted_obj_stm_cache_.find(stm_obj_num);
+			CachedObjStream uncached; // holds a container too large for the cache, for this one read
+			if (cached_stm == nullptr) {
 				const XrefEntry* stm_entry = xref.find(stm_obj_num);
 				if (stm_entry == nullptr || !stm_entry->is_uncompressed() || stm_entry->generation != 0u) {
 					return make_crypto_error(
@@ -2211,8 +2212,20 @@ PdfResult<PdfValue> SecurityHandler::resolve_and_decrypt_with_visited(
 					stm_obj_cache_it = decrypted_cache_.emplace(stm_cache_key, std::move(raw_stm_obj.value)).first;
 				}
 				const PdfStream* obj_stm = stm_obj_cache_it->second.as_stream();
-				if (obj_stm == nullptr ||
-					obj_stm->dict.get_name("Type").value_or("") != "ObjStm") {
+				// Indirect /Type, /Filter, /DecodeParms, /N and /First resolve (decrypted) with this container already
+				// visited, so a parameter pointing back into it fails as a cycle. obj_stm points into a node of
+				// decrypted_cache_, which a nested resolution may grow without moving it.
+				const IndirectObjectResolver parms_resolver = [&](IndirectRef parm_ref) -> PdfResult<PdfValue> {
+					std::vector<IndirectRef> hop_visited = visited_refs;
+					hop_visited.push_back(stm_ref);
+					return resolve_and_decrypt_with_visited(xref, file_bytes, parm_ref, hop_visited);
+				};
+				bool is_objstm = false;
+				if (obj_stm != nullptr) {
+					RECTO_PDF_TRY(const bool type_ok, is_object_stream(obj_stm->dict, &parms_resolver));
+					is_objstm = type_ok;
+				}
+				if (!is_objstm) {
 					return make_crypto_error(
 						ErrorCode::DamagedFormat,
 						DiagnosticId::DamagedObject,
@@ -2220,26 +2233,18 @@ PdfResult<PdfValue> SecurityHandler::resolve_and_decrypt_with_visited(
 						stm_obj_num,
 						0u);
 				}
-				// Indirect /Filter and /DecodeParms resolve (decrypted) with this container already visited, so a
-				// parameter pointing back into it fails as a cycle. obj_stm points into a node of decrypted_cache_,
-				// which a nested resolution may grow without moving it.
-				const IndirectObjectResolver parms_resolver = [&](IndirectRef parm_ref) -> PdfResult<PdfValue> {
-					std::vector<IndirectRef> hop_visited = visited_refs;
-					hop_visited.push_back(stm_ref);
-					return resolve_and_decrypt_with_visited(xref, file_bytes, parm_ref, hop_visited);
-				};
 				RECTO_PDF_TRY(
 					std::vector<uint8_t> decoded_stm,
 					decode_stream(*obj_stm, kMaxDecodedStreamBytes, &parms_resolver));
 				RECTO_PDF_TRY_REF(
 					cached,
 					parse_object_stream(obj_stm->dict, std::move(decoded_stm), stm_obj_num, &parms_resolver));
-				stm_cache_it = decrypted_obj_stm_cache_.emplace(stm_obj_num, std::move(cached)).first;
+				cached_stm = &decrypted_obj_stm_cache_.insert(stm_obj_num, std::move(cached), uncached);
 			}
 
 			RECTO_PDF_TRY_REF(
 				inner_val,
-				extract_object_stream_member(stm_cache_it->second, stm_index, current));
+				extract_object_stream_member(*cached_stm, stm_index, current));
 			// Inner objects of an `/ObjStm` are NOT decrypted again (`is_inside_obj_stm = true`).
 			RECTO_PDF_RETURN_IF_ERROR(
 				decrypt_object_values(inner_val, current, /*is_inside_obj_stm=*/true));

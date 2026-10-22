@@ -948,6 +948,17 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 												static_cast<size_t>(rel_u64)});
 										}
 										if (header_ok) {
+											// Members are read by the same routine as on every other path
+											// (extract_object_stream_member); recovery skips an invalid one instead
+											// of failing, and keeps the rest of the container.
+											CachedObjStream recovered_stm;
+											recovered_stm.first_offset = first_off;
+											recovered_stm.entries.reserve(inner_pairs.size());
+											for (const InnerPair& pair : inner_pairs) {
+												recovered_stm.entries.push_back(
+													CachedObjStream::HeaderPair{pair.obj_num, pair.rel_off});
+											}
+											recovered_stm.decoded_bytes = std::move(*dec_stm);
 											auto& member_vec = objstm_members[obj_num];
 											for (size_t idx = 0; idx < inner_pairs.size(); ++idx) {
 												if (candidate_attempts >= effective_max_entries) {
@@ -960,42 +971,17 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 												++candidate_attempts;
 												const uint32_t inner_id = inner_pairs[idx].obj_num;
 
-												const size_t slice_start = first_off + inner_pairs[idx].rel_off;
-												const size_t slice_end = (idx + 1u < inner_pairs.size())
-													? (first_off + inner_pairs[idx + 1u].rel_off)
-													: dec_stm->size();
-												const std::span<const uint8_t> slice_span(
-													dec_stm->data() + slice_start,
-													slice_end - slice_start);
-												Parser inner_parser(slice_span);
-												auto inner_val = inner_parser.parse_direct_object();
-												if (!inner_val.has_value()) {
-													if (inner_val.error().code == ErrorCode::OutOfMemory) {
-														return inner_val.error();
+												auto member = extract_object_stream_member(
+													recovered_stm,
+													static_cast<uint32_t>(idx),
+													IndirectRef{inner_id, 0u});
+												if (!member.has_value()) {
+													if (member.error().code == ErrorCode::OutOfMemory) {
+														return member.error();
 													}
 													continue;
 												}
-												Token trailing_tok;
-												PdfError terr;
-												if (!next_non_comment_token(
-														inner_parser.lexer(),
-														trailing_tok,
-														terr)) {
-													if (terr.code == ErrorCode::OutOfMemory) {
-														return terr;
-													}
-													continue;
-												}
-												if (!trailing_tok.is_eof()) {
-													continue;
-												}
-												if (const PdfDict* idict_chk = inner_val->as_dict()) {
-													if (const auto itype_chk = idict_chk->get_name("Type")) {
-														if (*itype_chk == "ObjStm" || *itype_chk == "XRef") {
-															continue;
-														}
-													}
-												}
+												const PdfValue* inner_val = &*member;
 
 												if (!table.entries_.contains(inner_id) &&
 													objects_discovered >= effective_max_entries) {
@@ -1640,8 +1626,9 @@ PdfResult<IndirectObject> XrefTable::read_compressed_object_with_visited(
 			stm_entry->generation);
 	}
 
-	auto cache_it = obj_stm_cache_.find(stm_obj_num);
-	if (cache_it == obj_stm_cache_.end()) {
+	const CachedObjStream* cached_stm = obj_stm_cache_.find(stm_obj_num);
+	CachedObjStream uncached; // holds a container too large for the cache, for this one read
+	if (cached_stm == nullptr) {
 		const IndirectRef stm_ref{stm_obj_num, 0u};
 		if (std::find(visited_refs.begin(), visited_refs.end(), stm_ref) != visited_refs.end()) {
 			return make_xref_error(
@@ -1678,8 +1665,17 @@ PdfResult<IndirectObject> XrefTable::read_compressed_object_with_visited(
 		}
 
 		const PdfStream& obj_stm = *stm_obj_res->value.as_stream();
-		const auto type_name = obj_stm.dict.get_name("Type");
-		if (!type_name.has_value() || *type_name != "ObjStm") {
+		// The container's /Type, /Filter, /DecodeParms, /N and /First may be indirect; they resolve with this stream already visited, so
+		// a parameter pointing back into it is a cycle rather than a recursion.
+		std::vector<IndirectRef> parms_visited = visited_refs;
+		parms_visited.push_back(stm_ref);
+		const IndirectObjectResolver parms_resolver = [&](IndirectRef ref) -> PdfResult<PdfValue> {
+			std::vector<IndirectRef> hop_visited = parms_visited;
+			RECTO_PDF_TRY_REF(target, read_indirect_object_with_visited(file_bytes, ref, hop_visited));
+			return std::move(target.value);
+		};
+		RECTO_PDF_TRY(const bool is_objstm, is_object_stream(obj_stm.dict, &parms_resolver));
+		if (!is_objstm) {
 			return make_xref_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedObject,
@@ -1689,15 +1685,6 @@ PdfResult<IndirectObject> XrefTable::read_compressed_object_with_visited(
 				0u);
 		}
 
-		// The container's /Filter, /DecodeParms, /N and /First may be indirect; they resolve with this stream already visited, so
-		// a parameter pointing back into it is a cycle rather than a recursion.
-		std::vector<IndirectRef> parms_visited = visited_refs;
-		parms_visited.push_back(stm_ref);
-		const IndirectObjectResolver parms_resolver = [&](IndirectRef ref) -> PdfResult<PdfValue> {
-			std::vector<IndirectRef> hop_visited = parms_visited;
-			RECTO_PDF_TRY_REF(target, read_indirect_object_with_visited(file_bytes, ref, hop_visited));
-			return std::move(target.value);
-		};
 		auto decoded_res = decode_stream(obj_stm, kMaxDecodedStreamBytes, &parms_resolver);
 		if (!decoded_res.has_value()) {
 			if (decoded_res.error().code == ErrorCode::DamagedFormat) {
@@ -1714,14 +1701,53 @@ PdfResult<IndirectObject> XrefTable::read_compressed_object_with_visited(
 		RECTO_PDF_TRY_REF(
 			cached,
 			parse_object_stream(obj_stm.dict, std::move(*decoded_res), stm_obj_num, &parms_resolver));
-		if (obj_stm_cache_.size() >= kMaxCachedObjStreams) {
-			obj_stm_cache_.erase(obj_stm_cache_.begin());
-		}
-		cache_it = obj_stm_cache_.emplace(stm_obj_num, std::move(cached)).first;
+		cached_stm = &obj_stm_cache_.insert(stm_obj_num, std::move(cached), uncached);
 	}
 
-	RECTO_PDF_TRY_REF(member, extract_object_stream_member(cache_it->second, stm_index, ref));
+	RECTO_PDF_TRY_REF(member, extract_object_stream_member(*cached_stm, stm_index, ref));
 	return IndirectObject{ref, std::move(member)};
+}
+
+const CachedObjStream& ObjStmCache::insert(uint32_t stm_obj_num, CachedObjStream stm, CachedObjStream& overflow)
+{
+	const size_t stm_bytes = stm.decoded_bytes.size();
+	if (stm_bytes > kMaxCachedObjStmBytes) {
+		overflow = std::move(stm);
+		return overflow;
+	}
+	if (const auto it = by_num_.find(stm_obj_num); it != by_num_.end()) {
+		bytes_ -= it->second.decoded_bytes.size();
+		by_num_.erase(it);
+		order_.erase(std::find(order_.begin(), order_.end(), stm_obj_num));
+	}
+	while (!order_.empty() && (by_num_.size() >= kMaxCachedObjStreams || bytes_ + stm_bytes > kMaxCachedObjStmBytes)) {
+		const auto oldest = by_num_.find(order_.front());
+		bytes_ -= oldest->second.decoded_bytes.size();
+		by_num_.erase(oldest);
+		order_.erase(order_.begin());
+	}
+	order_.push_back(stm_obj_num);
+	bytes_ += stm_bytes;
+	return by_num_.emplace(stm_obj_num, std::move(stm)).first->second;
+}
+
+PdfResult<bool> is_object_stream(const PdfDict& stm_dict, const IndirectObjectResolver* resolver) noexcept
+{
+	try {
+		const PdfValue* type = stm_dict.get("Type");
+		if (type == nullptr) {
+			return false;
+		}
+		if (const auto ref = type->as_ref(); ref.has_value() && resolver != nullptr && *resolver) {
+			RECTO_PDF_TRY_REF(target, (*resolver)(*ref));
+			return target.as_name() == std::optional<std::string_view>("ObjStm");
+		}
+		return type->as_name() == std::optional<std::string_view>("ObjStm");
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory while reading an object stream's /Type");
+	} catch (...) {
+		return make_pdf_error(ErrorCode::InternalError, "Unexpected exception while reading an object stream's /Type");
+	}
 }
 
 PdfResult<CachedObjStream> parse_object_stream(

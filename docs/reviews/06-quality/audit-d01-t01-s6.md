@@ -65,3 +65,48 @@ Tests, each failing on the code before this round: `PdfDocument.EncryptedObjectS
 Architecture check: the change keeps the foundation plan's actor contract. The new cache is an instance member of `Document`, owned by its `DocumentActor` thread like `XrefTable`'s cache, and no state is shared across documents or threads.
 
 Gates after round 1: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 122 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 33 tests.`; `python scripts/todo-graph.py validate` -> `valid: 682 sections`.
+
+## Round 2: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T11:06:46Z
+- Effort: xhigh
+- Lines: 28
+- Digest: 466715be2ab14e6f
+
+### adversarial: needs-attention
+
+1. **P1, encrypted object-stream retention has no cumulative limit.** [src/pdf/crypto.cpp:2237](/R:/GitHub/Recto/src/pdf/crypto.cpp:2237) inserts every decoded container into `decrypted_obj_stm_cache_` without eviction or a byte budget. The encrypted container and extracted values also remain in `decrypted_cache_`. Reproduce through `SecurityHandler::resolve_and_decrypt_object` with distinct encrypted Flate object streams, each containing an integer followed by 16 MiB of whitespace. Resolving one member per container retains approximately 16 GiB after 1,024 containers, despite every stream satisfying the individual decoding ceiling. This violates the hostile-input allocation contract.
+
+### consistency: approve
+
+No additional findings.
+
+### integration: needs-attention
+
+2. **P2, recovery accepts forbidden members and can invalidate an intact catalog.** [src/pdf/xref.cpp:971](/R:/GitHub/Recto/src/pdf/xref.cpp:971) still parses members independently and omits the shared reader’s bare-reference refusal. At [src/pdf/xref.cpp:1008](/R:/GitHub/Recto/src/pdf/xref.cpp:1008), that accepted member can invalidate another container. Reproduce using `PdfXref.DamagedRecovery`’s existing `pdf_rejected_inner` construction, replacing `bad_inner_stm` with `"9 0\n2 0 R"`. Recovery accepts the forbidden compressed reference, invalidates container 9 and its catalog, then returns `DamagedFormat`. The invalid member should be skipped, preserving the intact container. This requires no indirect stream parameters.
+
+### source-defect: needs-attention
+
+3. **P2, valid indirect `/Type` values remain unsupported.** [src/pdf/xref.cpp:1681](/R:/GitHub/Recto/src/pdf/xref.cpp:1681) requires a direct `/ObjStm` name. [src/pdf/document.cpp:1565](/R:/GitHub/Recto/src/pdf/document.cpp:1565) and [src/pdf/crypto.cpp:2215](/R:/GitHub/Recto/src/pdf/crypto.cpp:2215) repeat that restriction. Reproduce with an object stream using `/Type 2 0 R /N 1 /First 4`, uncompressed object 2 containing `/ObjStm`, and decoded payload `1 0 42`. Resolving compressed object 1 returns `DamagedFormat`. Object-stream dictionary values may reference uncompressed indirect objects, including `/Type`. [PDF specification errata, §7.5.7](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#7.5.7)
+
+### design: advisory
+
+Not applicable; this section owns no user surface.
+
+### record: advisory
+
+At clean `a5a1430`, reran the existing Release binary: all 14 `PdfXref.*` tests passed, and `Support.AsanActiveWhenEnabled` passed with `ASan=enabled`. All 19 `PdfDocument.*` and `PdfCrypto.*` tests also passed. Graph validation reported `valid: 682 sections`; the generated plan was current.
+
+The three reproductions above are source-traced, not executed. No fresh compilation was performed and no files were modified. The indirect recovery-parameter limitation is already owned by `D06 T05 §29`.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+- Finding 1 (P1): correct, and wider than `SecurityHandler`. `SecurityHandler`'s decoded-container cache had no bound, and `XrefTable`'s and `Document`'s were bounded by count only (64 containers of up to 256 MiB each). All three now use one `ObjStmCache` (`src/pdf/xref.h`), bounded by `kMaxCachedObjStreams` and by `kMaxCachedObjStmBytes` (256 MiB of decoded bytes), with the oldest entries leaving first. A container larger than the whole byte budget is used once and never kept. `SecurityHandler::decrypted_cache_` holds decrypted object values whose size is bounded by the file's own bytes, so it is unchanged. `PdfXref.ObjStmCacheBoundsCountAndBytes` checks both bounds, oldest-first eviction, the oversized container and `erase`; with the byte eviction disabled it fails.
+- Finding 2 (P2): correct. Recovery read object-stream members with its own copy of the checks, which lacked the bare-reference rule, so a forbidden member was accepted and then invalidated another container's catalog. Recovery now reads members through `extract_object_stream_member` too, skipping an invalid member (as it skipped unparsable ones) and keeping the rest. `PdfXref.DamagedRecovery` adds the reviewer's case (`9 0\n2 0 R` in container 10), and container 9's catalog survives. It fails on the round 1 code.
+- Finding 3 (P2): correct. `is_object_stream` resolves an indirect `/Type` one level through each path's cycle-safe resolver, and `XrefTable`, `SecurityHandler` and `Document` all use it. `PdfXref.ObjStmIndirectCountsAndBareReferences` adds `/Type 3 0 R` (object 3 holds `/ObjStm`); it fails with the resolution disabled.
+
+Gates after round 2: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 123 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 34 tests.`

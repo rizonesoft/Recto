@@ -11,6 +11,7 @@
 #include "object.h"
 #include "parser.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -72,6 +73,61 @@ struct CachedObjStream {
 	std::vector<HeaderPair> entries{};
 	std::vector<uint8_t> decoded_bytes{};
 };
+
+// Decoded object streams kept for reuse by one owner (an XrefTable, a SecurityHandler or a Document), bounded by
+// count (kMaxCachedObjStreams) and by decoded bytes (kMaxCachedObjStmBytes), oldest entries leaving first, so
+// hostile input cannot retain more than the budget however many containers it holds. Not thread-safe: each owner
+// is used by one thread (its DocumentActor).
+inline constexpr size_t kMaxCachedObjStmBytes = 256ull * 1024ull * 1024ull;
+
+class ObjStmCache {
+public:
+	[[nodiscard]] const CachedObjStream* find(uint32_t stm_obj_num) const noexcept
+	{
+		const auto it = by_num_.find(stm_obj_num);
+		return it != by_num_.end() ? &it->second : nullptr;
+	}
+
+	// Stores `stm` under `stm_obj_num`, evicting the oldest entries to stay within both bounds; returns the stored
+	// entry, valid until the next insert or clear. A container larger than the whole byte budget is not kept, and is
+	// returned through `overflow` for this one use.
+	const CachedObjStream& insert(uint32_t stm_obj_num, CachedObjStream stm, CachedObjStream& overflow);
+
+	void erase(uint32_t stm_obj_num) noexcept
+	{
+		if (const auto it = by_num_.find(stm_obj_num); it != by_num_.end()) {
+			bytes_ -= it->second.decoded_bytes.size();
+			by_num_.erase(it);
+			order_.erase(std::find(order_.begin(), order_.end(), stm_obj_num));
+		}
+	}
+
+	void clear() noexcept
+	{
+		by_num_.clear();
+		order_.clear();
+		bytes_ = 0;
+	}
+	[[nodiscard]] size_t size() const noexcept
+	{
+		return by_num_.size();
+	}
+	[[nodiscard]] size_t bytes() const noexcept
+	{
+		return bytes_;
+	}
+
+private:
+	std::unordered_map<uint32_t, CachedObjStream> by_num_{};
+	std::vector<uint32_t> order_{}; // insertion order, oldest first
+	size_t bytes_{0};
+};
+
+// Whether `stm_dict` is an object stream's dictionary: /Type is /ObjStm, directly or through an indirect reference
+// resolved one level by `resolver` (ISO 32000-1 section 7.3.10).
+[[nodiscard]] PdfResult<bool> is_object_stream(
+	const PdfDict& stm_dict,
+	const IndirectObjectResolver* resolver = nullptr) noexcept;
 
 // The one reading of an object stream (ISO 32000-1 section 7.5.7), shared by XrefTable, SecurityHandler and
 // Document so their checks cannot drift apart. parse_object_stream reads /N and /First (resolving indirect values
@@ -254,7 +310,7 @@ private:
 	bool recovered_{false};
 	EntryMap entries_{};
 	PdfDict trailer_{};
-	mutable std::unordered_map<uint32_t, CachedObjStream> obj_stm_cache_{};
+	mutable ObjStmCache obj_stm_cache_{};
 };
 
 } // namespace recto::pdf

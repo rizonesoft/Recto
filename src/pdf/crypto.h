@@ -273,7 +273,7 @@ private:
 	bool unlocked_as_owner_{false};
 	bool perms_verified_{false};
 	std::unordered_map<uint64_t, PdfValue> decrypted_cache_{};
-	std::unordered_map<uint32_t, CachedObjStream> decrypted_obj_stm_cache_{};
+	ObjStmCache decrypted_obj_stm_cache_{}; // bounded by count and decoded bytes
 };
 
 } // namespace recto::pdf

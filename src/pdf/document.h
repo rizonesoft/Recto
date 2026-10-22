@@ -424,8 +424,8 @@ private:
 	XrefTable xref_{};
 	std::optional<SecurityHandler> security_handler_{std::nullopt};
 	// Decrypted, decoded object streams of an encrypted document, keyed by container number, so sibling objects
-	// share one decode (bounded like XrefTable's cache). Owned, like every member, by the DocumentActor thread.
-	mutable std::unordered_map<uint32_t, CachedObjStream> decrypted_obj_stm_cache_{};
+	// share one decode (bounded by count and decoded bytes). Owned, like every member, by the DocumentActor thread.
+	mutable ObjStmCache decrypted_obj_stm_cache_{};
 	PdfDict catalog_{};
 	DocumentDescription description_{};
 	std::vector<ResolvedPageRecord> page_records_{};

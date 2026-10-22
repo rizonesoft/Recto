@@ -96,14 +96,16 @@ void verify_simple_1p_with_preamble(std::span<const uint8_t> preamble)
 // object reference is refused.
 TEST(PdfXref, ObjStmIndirectCountsAndBareReferences)
 {
-	const auto build = [](std::string_view n_first, std::string_view payload) {
+	const auto build = [](std::string_view n_first, std::string_view payload, std::string_view obj3 = "4",
+		std::string_view type = "/ObjStm") {
 		std::string pdf = "%PDF-1.7\n";
 		const size_t off2 = pdf.size();
 		pdf += "2 0 obj\n1\nendobj\n";
 		const size_t off3 = pdf.size();
-		pdf += "3 0 obj\n4\nendobj\n";
+		pdf += "3 0 obj\n" + std::string(obj3) + "\nendobj\n";
 		const size_t off5 = pdf.size();
-		pdf += "5 0 obj\n<< /Type /ObjStm " + std::string(n_first) + " /Length " + std::to_string(payload.size()) +
+		pdf += "5 0 obj\n<< /Type " + std::string(type) + " " + std::string(n_first) + " /Length " +
+			std::to_string(payload.size()) +
 			" >>\nstream\n" + std::string(payload) + "\nendstream\nendobj\n";
 		const size_t off6 = pdf.size();
 		std::string rows(7 * 4, '\0');
@@ -131,6 +133,14 @@ TEST(PdfXref, ObjStmIndirectCountsAndBareReferences)
 	RECTO_ASSERT_OK(value);
 	EXPECT_EQ(value->as_int(), std::optional<int64_t>(42));
 
+	// /Type may be indirect too (object 3 here holds the name).
+	const std::string indirect_type = build("/N 1 /First 4", "1 0 42", "/ObjStm", "3 0 R");
+	auto type_xref = XrefTable::parse(as_bytes(indirect_type));
+	RECTO_ASSERT_OK(type_xref);
+	auto type_value = type_xref->resolve_object(as_bytes(indirect_type), IndirectRef{1u, 0u});
+	RECTO_ASSERT_OK(type_value);
+	EXPECT_EQ(type_value->as_int(), std::optional<int64_t>(42));
+
 	const std::string bare = build("/N 1 /First 4", "1 0 2 0 R");
 	auto bare_xref = XrefTable::parse(as_bytes(bare));
 	RECTO_ASSERT_OK(bare_xref);
@@ -138,6 +148,41 @@ TEST(PdfXref, ObjStmIndirectCountsAndBareReferences)
 }
 
 // An xref stream entry numbered above /Size is missing, so even an offset outside the file in it is no error.
+// The decoded object-stream cache every owner uses is bounded by count and by decoded bytes, oldest out first, and
+// never keeps a container larger than the whole byte budget.
+TEST(PdfXref, ObjStmCacheBoundsCountAndBytes)
+{
+	const auto stream_of = [](size_t bytes) {
+		CachedObjStream s;
+		s.decoded_bytes.assign(bytes, 0x20u);
+		return s;
+	};
+	ObjStmCache cache;
+	CachedObjStream overflow;
+	const size_t quarter = kMaxCachedObjStmBytes / 4u;
+	for (uint32_t i = 1; i <= 5; ++i) {
+		static_cast<void>(cache.insert(i, stream_of(quarter), overflow));
+		EXPECT_LE(cache.bytes(), kMaxCachedObjStmBytes);
+	}
+	EXPECT_EQ(cache.size(), 4u);
+	EXPECT_EQ(cache.find(1), nullptr); // oldest left first
+	EXPECT_NE(cache.find(5), nullptr);
+
+	const CachedObjStream& huge = cache.insert(9, stream_of(kMaxCachedObjStmBytes + 1u), overflow);
+	EXPECT_EQ(&huge, &overflow);
+	EXPECT_EQ(cache.find(9), nullptr);
+	EXPECT_EQ(cache.size(), 4u);
+
+	ObjStmCache counted;
+	for (uint32_t i = 1; i <= static_cast<uint32_t>(kMaxCachedObjStreams) + 3u; ++i) {
+		static_cast<void>(counted.insert(i, stream_of(1), overflow));
+	}
+	EXPECT_EQ(counted.size(), kMaxCachedObjStreams);
+	EXPECT_EQ(counted.find(1), nullptr);
+	counted.erase(static_cast<uint32_t>(kMaxCachedObjStreams) + 3u);
+	EXPECT_EQ(counted.size(), kMaxCachedObjStreams - 1u);
+}
+
 TEST(PdfXref, XrefStreamEntriesAboveSizeAreMissing)
 {
 	std::string pdf = "%PDF-1.7\n";
@@ -1470,6 +1515,19 @@ TEST(PdfXref, DamagedRecovery)
 		auto rec_preserved = XrefTable::recover_damaged_xref(as_bytes(pdf_rejected_inner));
 		RECTO_ASSERT_OK(rec_preserved);
 		EXPECT_EQ(rec_preserved->root_ref(), (IndirectRef{1u, 0u}));
+
+		// The same holds for a member that is a bare object reference, which ISO 32000-1 section 7.5.7 forbids:
+		// recovery skips it, as every other path refuses it, and container 9's catalog survives.
+		const std::string bare_inner_stm = "9 0\n2 0 R";
+		std::string pdf_bare_inner = pdf_rejected_inner;
+		const size_t bad_at = pdf_bare_inner.find("10 0 obj");
+		pdf_bare_inner.erase(bad_at);
+		pdf_bare_inner += "10 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Length " +
+			std::to_string(bare_inner_stm.size()) + " >>\nstream\n" + bare_inner_stm +
+			"\nendstream\nendobj\nstartxref\n999999\n%%EOF\n";
+		auto rec_bare = XrefTable::recover_damaged_xref(as_bytes(pdf_bare_inner));
+		RECTO_ASSERT_OK(rec_bare);
+		EXPECT_EQ(rec_bare->root_ref(), (IndirectRef{1u, 0u}));
 	}
 
 	// 8. Compressed `/Type /ObjStm` streams whose decoded payload exceeds `max(file_size * 4, 65536)`
