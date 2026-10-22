@@ -199,3 +199,46 @@ OVERALL: needs-attention
 - Finding 2 (P3): correct. The non-decreasing timestamp assertion is removed from `ConcurrentDiagnosticRecording`: entries are ordered by sequence number (still asserted), and `timestamp_utc_ms` is wall-clock time for people reading the log, which can move backwards when system time is corrected. The timestamp stays under the lock (it narrows the gap between the two), with a comment saying what orders the ring.
 
 Gates after round 4: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 106 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfError.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 7 tests.`; `python scripts/todo-graph.py validate` -> `valid: 681 sections`.
+
+## Round 5: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T05:50:13Z
+- Effort: medium
+- Lines: 28
+- Digest: 86ab5f450616a9d3
+
+### adversarial: approve
+
+No additional findings.
+
+### consistency: approve
+
+No additional findings.
+
+### integration: approve
+
+No additional findings.
+
+### source-defect: needs-attention
+
+1. **P3** `tests/recto-tests/pdf_error_tests.cpp:483`: `DiagnosticRingWraparound` still asserts non-decreasing `timestamp_utc_ms`. Round 4 removed this assumption only from the concurrent test. UTC timestamps can move backwards while sequence ordering remains correct. Reproduce in an isolated environment by pausing the recording loop near iteration 900, moving system time backwards, then resuming: the retained entries cross the adjustment and this assertion fails. Static reproduction, not executed. Remove this remaining timestamp-order assertion. [Microsoft timing guidance](https://learn.microsoft.com/en-us/windows/win32/sysinfo/acquiring-high-resolution-time-stamps)
+
+### design: advisory
+
+Not applicable: no user surface.
+
+### record: advisory
+
+The complete checkpoint remains independently unverified. The existing x64 Release executable passed six `PdfError` tests plus `Support.AsanActiveWhenEnabled`, reporting `ASan=enabled`. Both Python ETW registration checks passed.
+
+`EtwProviderEnabledOnlyByASession` was excluded because its death-test helper writes temporary files. No rebuild was performed under the read-only instruction, so these results establish neither binary correspondence to `54bcf70` nor a warning-free build. No files were modified.
+
+HIGHEST: P3
+OVERALL: needs-attention
+
+## Fixes after round 5
+
+- Finding 1 (P3): correct, and missed in round 4. `DiagnosticRingWraparound` no longer asserts non-decreasing `timestamp_utc_ms`; its sequence assertion stays. No timestamp-order assertion remains in `tests/recto-tests/` (`timestamp_utc_ms` is only checked as non-zero).
+
+Gates after round 5: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 106 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfError.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 7 tests.`

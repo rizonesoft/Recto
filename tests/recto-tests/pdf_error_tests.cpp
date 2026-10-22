@@ -479,8 +479,8 @@ TEST(PdfError, DiagnosticRingWraparound)
 		EXPECT_GT(full_tail[idx].timestamp_utc_ms, 0u);
 		EXPECT_GT(full_tail[idx].thread_id, 0u);
 		if (idx > 0) {
+			// Ordered by sequence; timestamp_utc_ms is wall-clock time, which can be set back.
 			EXPECT_LT(full_tail[idx - 1].sequence, full_tail[idx].sequence);
-			EXPECT_LE(full_tail[idx - 1].timestamp_utc_ms, full_tail[idx].timestamp_utc_ms);
 		}
 	}
 
