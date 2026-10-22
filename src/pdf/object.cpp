@@ -723,6 +723,15 @@ PdfResult<PdfValue> PdfValue::deep_clone(size_t max_depth) const noexcept
 	return clone_value_recursive(*this, 0, effective_max_depth);
 }
 
+namespace {
+
+constexpr bool is_ascii_letter(uint32_t c) noexcept
+{
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+
+} // namespace
+
 PdfResult<std::string> pdf_string_to_utf8(std::span<const uint8_t> bytes) noexcept
 {
 	try {
@@ -741,17 +750,31 @@ PdfResult<std::string> pdf_string_to_utf8(std::span<const uint8_t> bytes) noexce
 					static_cast<uint16_t>(bytes[i + 1]));
 				i += 2;
 
-				// ISO 32000-1 section 7.9.2.2.2: 0x001B language escape sequence
-				// is delimited by a matching 0x001B code unit.
+				// ISO 32000-1 section 7.9.2.2: a language escape is 0x001B, a 2-letter ISO 639 language code, an
+				// optional 2-letter ISO 3166 country code, and 0x001B. A well-formed one is skipped; any other 0x001B
+				// is malformed and becomes U+FFFD, and the text after it is still decoded.
 				if (u1 == 0x001Bu) {
-					while (i + 1 < bytes.size()) {
+					size_t letters = 0;
+					size_t j = i;
+					bool closed = false;
+					while (j + 1 < bytes.size() && letters <= 4u) {
 						const uint16_t esc_unit = static_cast<uint16_t>(
-							(static_cast<uint16_t>(bytes[i]) << 8u) |
-							static_cast<uint16_t>(bytes[i + 1]));
-						i += 2;
+							(static_cast<uint16_t>(bytes[j]) << 8u) |
+							static_cast<uint16_t>(bytes[j + 1]));
+						j += 2;
 						if (esc_unit == 0x001Bu) {
+							closed = true;
 							break;
 						}
+						if (!is_ascii_letter(esc_unit)) {
+							break;
+						}
+						++letters;
+					}
+					if (closed && (letters == 2u || letters == 4u)) {
+						i = j;
+					} else {
+						append_utf8_codepoint(out, 0xFFFDu);
 					}
 					continue;
 				}
@@ -794,13 +817,27 @@ PdfResult<std::string> pdf_string_to_utf8(std::span<const uint8_t> bytes) noexce
 			size_t idx = 0;
 			uint32_t cp = 0;
 			while (decode_next_utf8(utf8_body, idx, cp)) {
-				// ISO 32000-2 section 7.9.2.2.2: 0x1B language escape sequence
-				// is delimited by a matching 0x1B byte.
+				// ISO 32000-2 section 7.9.2.2: the same language escape as in UTF-16BE, with 0x1B delimiters and
+				// single-byte letters. Well-formed, it is skipped; otherwise the 0x1B becomes U+FFFD.
 				if (cp == 0x001Bu) {
-					while (decode_next_utf8(utf8_body, idx, cp)) {
-						if (cp == 0x001Bu) {
+					size_t letters = 0;
+					size_t j = idx;
+					bool closed = false;
+					while (j < utf8_body.size() && letters <= 4u) {
+						const auto c = static_cast<uint8_t>(utf8_body[j++]);
+						if (c == 0x1Bu) {
+							closed = true;
 							break;
 						}
+						if (!is_ascii_letter(c)) {
+							break;
+						}
+						++letters;
+					}
+					if (closed && (letters == 2u || letters == 4u)) {
+						idx = j;
+					} else {
+						append_utf8_codepoint(out, 0xFFFDu);
 					}
 					continue;
 				}

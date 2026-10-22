@@ -592,6 +592,9 @@ private:
 // - UTF-8 when prefixed with BOM 0xEF 0xBB 0xBF (PDF 2.0, stripping embedded
 //   language escape sequences 0x1B ... 0x1B).
 // - PDFDocEncoding (ISO 32000-1 Table D.2) otherwise.
+// A language escape is stripped only when well formed (ESC, a 2-letter language code, an optional 2-letter country
+// code, ESC). Malformed input never drops text: an unpaired surrogate, an odd trailing byte or a malformed escape's
+// ESC each become U+FFFD, and decoding continues after it.
 [[nodiscard]] PdfResult<std::string> pdf_string_to_utf8(std::span<const uint8_t> bytes) noexcept;
 
 // Encodes a UTF-8 string into a PDF text string:

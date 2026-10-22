@@ -569,6 +569,52 @@ TEST(PdfCrypto, OutOfMemoryFaultInjection)
 	}
 }
 
+// `/A` and `/#2FA` are distinct keys (the second decodes to "/A"); decryption must reach each entry once.
+TEST(PdfCrypto, DecryptsKeysThatDifferOnlyByALeadingSlash)
+{
+	const std::vector<uint8_t> file_bytes = read_corpus_bytes("render/encrypted-rc4-128.pdf");
+	auto xref_res = XrefTable::parse(file_bytes);
+	RECTO_ASSERT_OK(xref_res);
+	auto sh_opt = SecurityHandler::from_xref(*xref_res, file_bytes);
+	RECTO_ASSERT_OK(sh_opt);
+	ASSERT_TRUE(sh_opt->has_value());
+	SecurityHandler sh = std::move(**sh_opt);
+	RECTO_ASSERT_OK(sh.authenticate("recto-test"));
+
+	const IndirectRef ref{6u, 0u};
+	const std::vector<uint8_t> cipher = {0xC0u, 0x4Bu, 0x99u, 0x3Au};
+	auto plain = sh.decrypt_bytes(cipher, ref, CryptFilterMethod::V2);
+	RECTO_ASSERT_OK(plain);
+	ASSERT_NE(*plain, cipher);
+
+	const auto expect_both_decrypted = [&](const PdfDict& dict) {
+		size_t seen = 0;
+		for (const auto& [name, value] : dict.entries()) {
+			if (name.view() == "A" || name.view() == "/A") {
+				const PdfString* s = value.as_string();
+				ASSERT_NE(s, nullptr) << name.view();
+				EXPECT_EQ(s->bytes, *plain) << name.view();
+				++seen;
+			}
+		}
+		EXPECT_EQ(seen, 2u);
+	};
+
+	auto dict_res = parse_dict_literal("<< /A <C04B993A> /#2FA <C04B993A> >>");
+	RECTO_ASSERT_OK(dict_res);
+	PdfValue dict_val(std::move(*dict_res));
+	RECTO_ASSERT_OK(sh.decrypt_object_values(dict_val, ref, false));
+	ASSERT_NE(dict_val.as_dict(), nullptr);
+	expect_both_decrypted(*dict_val.as_dict());
+
+	auto stm_dict_res = parse_dict_literal("<< /A <C04B993A> /#2FA <C04B993A> /Length 0 >>");
+	RECTO_ASSERT_OK(stm_dict_res);
+	PdfValue stm_val(PdfStream(std::move(*stm_dict_res), std::vector<uint8_t>{}));
+	RECTO_ASSERT_OK(sh.decrypt_object_values(stm_val, ref, false));
+	ASSERT_NE(stm_val.as_stream(), nullptr);
+	expect_both_decrypted(stm_val.as_stream()->dict);
+}
+
 TEST(PdfCrypto, Exemptions)
 {
 	// Load encrypted-rc4-128.pdf and authenticate with "recto-test":

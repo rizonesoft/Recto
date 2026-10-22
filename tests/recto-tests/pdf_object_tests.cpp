@@ -348,6 +348,29 @@ TEST(PdfObject, StringEncoding)
 	RECTO_ASSERT_OK(decoded_utf8_bom);
 	EXPECT_EQ(decoded_utf8_bom.value(), "PDF 2.0 \xCE\xA9");
 
+	// 5b. A language escape is stripped only when well formed: ESC, 2 letters, optional 2 more, ESC
+	// (ISO 32000-1 section 7.9.2.2). A malformed one keeps the text after it, its ESC shown as U+FFFD.
+	const std::string fffd = "\xEF\xBF\xBD";
+	struct EscapeCase {
+		std::vector<uint8_t> bytes;
+		std::string expected;
+	};
+	const std::vector<EscapeCase> escape_cases = {
+		{{0xFE, 0xFF, 0x00, 'A', 0x00, 0x1B, 0x00, 'e', 0x00, 'n', 0x00, 'U', 0x00, 'S', 0x00, 0x1B, 0x00, 'B'}, "AB"},
+		{{0xFE, 0xFF, 0x00, 'A', 0x00, 0x1B, 0x00, 'B'}, "A" + fffd + "B"}, // unterminated
+		{{0xFE, 0xFF, 0x00, 'A', 0x00, 0x1B, 0x00, 'B', 0x00, 'C', 0x00, 'D'}, "A" + fffd + "BCD"},
+		{{0xFE, 0xFF, 0x00, 0x1B, 0x00, 'e', 0x00, 0x1B, 0x00, 'B'}, fffd + "e" + fffd + "B"}, // one letter
+		{{0xFE, 0xFF, 0x00, 0x1B, 0x00, '1', 0x00, '2', 0x00, 0x1B}, fffd + "12" + fffd}, // not letters
+		{{0xEF, 0xBB, 0xBF, 'A', 0x1B, 'e', 'n', 'U', 'S', 0x1B, 'B'}, "AB"},
+		{{0xEF, 0xBB, 0xBF, 'A', 0x1B, 'B'}, "A" + fffd + "B"}, // unterminated
+		{{0xEF, 0xBB, 0xBF, 'A', 0x1B, 'a', 'b', 'c', 'd', 'e', 0x1B, 'Z'}, "A" + fffd + "abcde" + fffd + "Z"},
+	};
+	for (const auto& escape_case : escape_cases) {
+		const auto decoded = pdf_string_to_utf8(escape_case.bytes);
+		RECTO_ASSERT_OK(decoded);
+		EXPECT_EQ(decoded.value(), escape_case.expected);
+	}
+
 	// 6. Latin-1 string starting with U+00FE U+00FF ("þÿ") avoids colliding
 	// with the UTF-16BE BOM by upgrading to explicit UTF-16BE.
 	const std::string bom_collision_str = "\xC3\xBE\xC3\xBF";

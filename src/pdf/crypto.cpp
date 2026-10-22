@@ -1884,8 +1884,10 @@ PdfResult<void> SecurityHandler::decrypt_value_recursive(
 			 (dict->contains("Filter") || dict->contains("SubFilter")));
 
 		for (size_t i = 0; i < dict->size(); ++i) {
-			const std::string_view key = dict->entries()[i].first.view();
-			if (is_sig_dict && key == "Contents") {
+			// The entry's own PdfName, looked up exactly: the string_view overload strips a leading '/', so a key
+			// whose decoded name starts with one (`/#2FA`) would select a different entry (`/A`).
+			const PdfName& key = dict->entries()[i].first;
+			if (is_sig_dict && key.view() == "Contents") {
 				continue;
 			}
 			PdfValue* entry_val = dict->get_mut(key);
@@ -1905,7 +1907,7 @@ PdfResult<void> SecurityHandler::decrypt_value_recursive(
 
 		// Decrypt strings inside the stream dictionary first.
 		for (size_t i = 0; i < stm->dict.size(); ++i) {
-			const std::string_view key = stm->dict.entries()[i].first.view();
+			const PdfName& key = stm->dict.entries()[i].first; // exact lookup, as for dictionaries above
 			PdfValue* entry_val = stm->dict.get_mut(key);
 			if (entry_val != nullptr) {
 				RECTO_PDF_RETURN_IF_ERROR(decrypt_value_recursive(*entry_val, ref, depth + 1u));
