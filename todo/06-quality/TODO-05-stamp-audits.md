@@ -43,7 +43,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 10 | §10 | Audit D00 T03 §2: RGBA pixel comparison (expect_rgba_equal, compute_ssim) and test | D00 T03 §2, §9 | [x] |
 | 11 | §11 | Audit D00 T03 §3: Deterministic PDF corpus generator (scripts/build-corpus.py) for | D00 T03 §3, §10 | [x] |
 | 12 | §12 | Audit D00 T03 §4: Encrypted (RC4/AES-128/AES-256), broken/ and seeds/ corpus fixtures | D00 T03 §4, §11 | [x] |
-| 13 | §13 | Audit D00 T03 §5: tests/corpus/PROVENANCE.md and automated Corpus.Provenance SHA-256 | D00 T03 §5, §12 | [ ] |
+| 13 | §13 | Audit D00 T03 §5: tests/corpus/PROVENANCE.md and automated Corpus.Provenance SHA-256 | D00 T03 §5, §12 | [x] |
 | 14 | §14 | Audit D00 T03 §6: MSVC AddressSanitizer (/fsanitize=address) build configuration and CI | D00 T03 §6, §13 | [ ] |
 | 15 | §15 | Audit D01 T01 §1: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW | D01 T01 §1, §14 | [ ] |
 | 16 | §16 | Audit D01 T01 §2: PdfValue variant object model, dictionary/array helpers and deep | D01 T01 §2, §15 | [ ] |
@@ -394,9 +394,12 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 - [x] Run audit rounds on `D00 T03 §5`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d00-t03-s5.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
 - [x] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d00-t03-s5.md` is open without a fix commit or a filed section.
 - [x] On a confirmed regression, add a dated blocking note to `D00 T03 §5`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d00-t03-s5.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
-- [ ] Commit: `review: audit D00 T03 §5 under the current review process`
+- [x] Commit: `review: audit D00 T03 §5 under the current review process`
 
 **Test checkpoint:** `python scripts/todo-graph.py resolve "D00 T03 §5"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d00-t03-s5.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+> **Verified:** 2026-10-22 | §13 | 3c3b871460eb492dbe60c85ae3cba3ade989a37c
+> **Review:** `docs/reviews/d06-t05-s13.json`
 
 ## 14. Audit D00 T03 §6: MSVC AddressSanitizer (/fsanitize=address) build configuration and CI
 

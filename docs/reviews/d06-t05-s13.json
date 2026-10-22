@@ -1,0 +1,32 @@
+{
+  "ref": "D06 T05 \u00a713",
+  "title": "Audit D00 T03 \u00a75: tests/corpus/PROVENANCE.md and automated Corpus.Provenance SHA-256",
+  "implementation_sha": "3c3b871460eb492dbe60c85ae3cba3ade989a37c",
+  "date": "2026-10-22",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s5.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s5.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/audit-d00-t03-s5.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    ".\\build.cmd -> exit 0 (x64 and ARM64, Debug and Release; [  PASSED  ] 102 tests. for x64 Debug and Release)",
+    "build\\bin\\x64\\Release\\recto-tests\\recto-tests.exe --gtest_filter=Corpus.* -> Corpus.Provenance verified 39 corpus files; [  PASSED  ] 4 tests.",
+    "python scripts/build-corpus.py --check -> verified: 39 corpus fixtures in R:\\GitHub\\Recto\\tests\\corpus are current",
+    "python -m unittest tests.scripts.test_build_corpus -> Ran 54 tests, OK",
+    "python scripts/todo-graph.py resolve \"D00 T03 \u00a75\" -> exit 3 (still verified)"
+  ],
+  "rounds_spent": 3,
+  "round_cap": 22
+}
