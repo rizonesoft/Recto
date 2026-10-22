@@ -59,6 +59,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 26 | §26 | Corpus validator filter decoders conform to ISO 32000-1 7.4 | §12 | [x] |
 | 27 | §27 | ARM64 Debug build free of the CS1668 LIB search-path warnings | §13 | [x] |
 | 28 | §28 | Retired Office and LibreOffice converter surfaces removed from the A, B and C boards | §25 | [x] |
+| 29 | §29 | Damaged-file recovery resolves indirect object-stream parameters | §21 | [ ] |
 
 ## 1. Audit D00 T01 §1: Git repository and repo-face files
 
@@ -605,6 +606,8 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 - [ ] On a confirmed regression, add a dated blocking note to `D01 T01 §6`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s6.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
 - [ ] Commit: `review: audit D01 T01 §6 under the current review process`
 
+> **Deferred:** damaged-file recovery decoding object streams whose `/Filter`, `/DecodeParms`, `/N` or `/First` is indirect, which needs the recovery scan to defer unpacking -> XREF: D06 T05 §29
+
 **Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §6"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s6.md` ends in an approving round or a recorded stop with every finding fixed or filed.
 
 ## 22. Audit D01 T01 §8: Bi-level and image stream filters (CCITTFaxDecode, JBIG2Decode, WIC
@@ -774,6 +777,27 @@ While removing MuPDF and AGPL text from the older mockup boards (`D06 T05 §25`)
 
 > **Verified:** 2026-10-22 | §28 | 7cda56b0c6b8400a8bae026f61241f293342ed13
 > **Review:** `docs/reviews/d06-t05-s28.json`
+
+## 29. Damaged-file recovery resolves indirect object-stream parameters
+
+The audit of `D01 T01 §6` (`docs/reviews/06-quality/audit-d01-t01-s6.md`, D06 T05 §21) found damaged-file recovery decoding each `/Type /ObjStm` it meets with no resolver (`src/pdf/xref.cpp`, the recovery scan's `decode_stream(stm)`), so a container whose `/Filter`, `/DecodeParms`, `/N` or `/First` is an indirect reference loses every object in it, including a sole `/Catalog`, and recovery fails. Normal resolution handles these since D06 T05 §20 and §21. Recovery is a single forward scan, so a parameter object can lie after the container that needs it: the fix defers object-stream unpacking until the scan has found every uncompressed object, which changes when compressed objects enter the rebuilt table and must keep the scan's rule that later definitions override earlier ones. -> XREF: D06 T05 §21
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Defer object-stream unpacking in the recovery scan of `XrefTable::parse` until the forward scan ends, keeping each container's file position so the override order stays the file order. Done when: a recovered table built from a file whose containers and uncompressed objects interleave matches the order the scan used before, proven by the existing recovery tests.
+2. Decode each deferred container with a resolver over the uncompressed objects the scan found (cycle-safe, one level) and read it through `parse_object_stream` and `extract_object_stream_member`. Done when: a damaged file whose only `/Catalog` sits in a container with `/DecodeParms 2 0 R` recovers.
+
+- [ ] Record each `/Type /ObjStm` the recovery scan meets with its file offset instead of unpacking it in place in `src/pdf/xref.cpp`. Done when: `PdfXref.*` recovery tests pass unchanged.
+- [ ] Unpack the recorded containers after the scan in file order, with an `IndirectObjectResolver` over the scan's uncompressed entries, through `parse_object_stream` and `extract_object_stream_member`. Done when: a later uncompressed definition of an object still overrides an earlier compressed one, and the reverse, as before.
+- [ ] Keep the cumulative decoded `/ObjStm` byte budget and the per-container ceilings on the deferred path. Done when: `tests/corpus/broken/` files that hit the budget still fail with `DecompressionLimitExceeded`.
+- [ ] Add `PdfXref.RecoveryResolvesIndirectObjStmParameters`: a file with no `startxref` whose only `/Catalog` is compressed in an ASCIIHex container with `/DecodeParms 2 0 R` (object 2 after the container), and a variant with `/N 3 0 R /First 4 0 R`. Done when: both recover, and the test fails on the code before this section.
+- [ ] Commit: `pdf: recovery resolves indirect object-stream parameters`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfXref.*` passes under ASan with 0 warnings, including `PdfXref.RecoveryResolvesIndirectObjStmParameters`.
 
 ## Verification
 

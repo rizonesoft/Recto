@@ -401,6 +401,12 @@ PdfResult<void> XrefTable::unpack_xref_stream(
 				"Cross-reference stream dictionary has missing or invalid /Size");
 		}
 		const uint64_t dict_size = static_cast<uint64_t>(*size_opt);
+		// ISO 32000-1 Table 15 (and Table 17 for streams): an entry numbered above /Size is missing, so it is skipped
+		// before its fields are validated. The newest revision's /Size governs: it is already in the merged trailer
+		// when an older stream is read, and this stream's own when it is the newest.
+		const auto merged_size = table.trailer_.get_int("Size");
+		const uint64_t governing_size =
+			merged_size.has_value() && *merged_size > 0 ? static_cast<uint64_t>(*merged_size) : dict_size;
 
 		const PdfArray* w_arr = xref_dict.get_array("W");
 		if (w_arr == nullptr || w_arr->size() != 3u) {
@@ -508,6 +514,10 @@ PdfResult<void> XrefTable::unpack_xref_stream(
 				const uint64_t field2 = read_big_endian_field(rec + w[0], w[1]);
 				const uint64_t field3 = read_big_endian_field(rec + w[0] + w[1], w[2]);
 				const uint32_t obj_num = static_cast<uint32_t>(sub.first_id + i);
+				if (static_cast<uint64_t>(obj_num) > governing_size) {
+					record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedXRef, std::nullopt, obj_num, 0);
+					continue;
+				}
 
 				if (field1 == 0ULL) {
 					if (field3 > std::numeric_limits<uint16_t>::max()) {
@@ -1679,21 +1689,7 @@ PdfResult<IndirectObject> XrefTable::read_compressed_object_with_visited(
 				0u);
 		}
 
-		const auto n_opt = obj_stm.dict.get_int("N");
-		const auto first_opt = obj_stm.dict.get_int("First");
-		if (!n_opt.has_value() || *n_opt <= 0 ||
-			*n_opt > static_cast<int64_t>(kMaxObjStmEntries) ||
-			!first_opt.has_value() || *first_opt < 0) {
-			return make_xref_error(
-				ErrorCode::DamagedFormat,
-				DiagnosticId::DamagedObject,
-				"Invalid or missing /N or /First in /Type /ObjStm dictionary",
-				stm_entry->byte_offset,
-				stm_obj_num,
-				0u);
-		}
-
-		// The container's /Filter and /DecodeParms may be indirect; they resolve with this stream already visited, so
+		// The container's /Filter, /DecodeParms, /N and /First may be indirect; they resolve with this stream already visited, so
 		// a parameter pointing back into it is a cycle rather than a recursion.
 		std::vector<IndirectRef> parms_visited = visited_refs;
 		parms_visited.push_back(stm_ref);
@@ -1715,13 +1711,57 @@ PdfResult<IndirectObject> XrefTable::read_compressed_object_with_visited(
 			return decoded_res.error();
 		}
 
+		RECTO_PDF_TRY_REF(
+			cached,
+			parse_object_stream(obj_stm.dict, std::move(*decoded_res), stm_obj_num, &parms_resolver));
+		if (obj_stm_cache_.size() >= kMaxCachedObjStreams) {
+			obj_stm_cache_.erase(obj_stm_cache_.begin());
+		}
+		cache_it = obj_stm_cache_.emplace(stm_obj_num, std::move(cached)).first;
+	}
+
+	RECTO_PDF_TRY_REF(member, extract_object_stream_member(cache_it->second, stm_index, ref));
+	return IndirectObject{ref, std::move(member)};
+}
+
+PdfResult<CachedObjStream> parse_object_stream(
+	const PdfDict& stm_dict,
+	std::vector<uint8_t> decoded_bytes,
+	uint32_t stm_obj_num,
+	const IndirectObjectResolver* resolver) noexcept
+{
+	try {
+		// /N and /First may be indirect references to uncompressed objects (ISO 32000-1 section 7.3.10).
+		const auto read_int = [&](std::string_view key) -> PdfResult<std::optional<int64_t>> {
+			const PdfValue* v = stm_dict.get(key);
+			if (v == nullptr) {
+				return std::optional<int64_t>{};
+			}
+			if (const auto ref = v->as_ref(); ref.has_value() && resolver != nullptr && *resolver) {
+				RECTO_PDF_TRY_REF(target, (*resolver)(*ref));
+				return target.as_int();
+			}
+			return v->as_int();
+		};
+		RECTO_PDF_TRY(const std::optional<int64_t> n_opt, read_int("N"));
+		RECTO_PDF_TRY(const std::optional<int64_t> first_opt, read_int("First"));
+		if (!n_opt.has_value() || *n_opt <= 0 || *n_opt > static_cast<int64_t>(kMaxObjStmEntries) ||
+			!first_opt.has_value() || *first_opt < 0) {
+			return make_xref_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedObject,
+				"Invalid or missing /N or /First in /Type /ObjStm dictionary",
+				std::nullopt,
+				stm_obj_num,
+				0u);
+		}
 		const uint64_t first_off = static_cast<uint64_t>(*first_opt);
-		if (first_off > decoded_res->size()) {
+		if (first_off > decoded_bytes.size()) {
 			return make_xref_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedObject,
 				"/Type /ObjStm /First offset exceeds decoded stream length",
-				stm_entry->byte_offset,
+				std::nullopt,
 				stm_obj_num,
 				0u);
 		}
@@ -1730,13 +1770,9 @@ PdfResult<IndirectObject> XrefTable::read_compressed_object_with_visited(
 		CachedObjStream cached;
 		cached.first_offset = first_off;
 		cached.entries.reserve(n_count);
-
-		// Parse the `/N` pairs of `<obj_num> <relative_offset>` exclusively from
-		// `[0, first_off)` so a malformed header cannot bleed into object bodies.
-		const std::span<const uint8_t> header_bytes(
-			decoded_res->data(),
-			static_cast<size_t>(first_off));
-		Lexer hdr_lexer(header_bytes);
+		// The `/N` pairs of `<obj_num> <relative_offset>` come only from `[0, first_off)`, so a malformed header
+		// cannot bleed into object bodies.
+		Lexer hdr_lexer(std::span<const uint8_t>(decoded_bytes.data(), static_cast<size_t>(first_off)));
 		for (uint32_t i = 0; i < n_count; ++i) {
 			Token num_tok;
 			Token off_tok;
@@ -1750,133 +1786,129 @@ PdfResult<IndirectObject> XrefTable::read_compressed_object_with_visited(
 					ErrorCode::DamagedFormat,
 					DiagnosticId::DamagedObject,
 					"Truncated or malformed header table in /Type /ObjStm stream",
-					stm_entry->byte_offset,
+					std::nullopt,
 					stm_obj_num,
 					0u);
 			}
-			if (num_tok.kind != TokenKind::Integer ||
-				num_tok.int_value <= 0 ||
+			if (num_tok.kind != TokenKind::Integer || num_tok.int_value <= 0 ||
 				num_tok.int_value > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) ||
-				off_tok.kind != TokenKind::Integer ||
-				off_tok.int_value < 0) {
+				off_tok.kind != TokenKind::Integer || off_tok.int_value < 0) {
 				return make_xref_error(
 					ErrorCode::DamagedFormat,
 					DiagnosticId::DamagedObject,
 					"Invalid object number or relative offset in /Type /ObjStm header",
-					stm_entry->byte_offset,
+					std::nullopt,
 					stm_obj_num,
 					0u);
 			}
 			const uint64_t rel_off = static_cast<uint64_t>(off_tok.int_value);
-			if (rel_off > decoded_res->size() - first_off ||
+			if (rel_off > decoded_bytes.size() - first_off ||
 				(!cached.entries.empty() && rel_off < cached.entries.back().rel_offset)) {
 				return make_xref_error(
 					ErrorCode::DamagedFormat,
 					DiagnosticId::DamagedObject,
 					"/Type /ObjStm entry relative offset is out of bounds or non-monotonic",
-					stm_entry->byte_offset,
+					std::nullopt,
 					stm_obj_num,
 					0u);
 			}
-			cached.entries.push_back(CachedObjStream::HeaderPair{
-				static_cast<uint32_t>(num_tok.int_value),
-				rel_off});
+			cached.entries.push_back(CachedObjStream::HeaderPair{static_cast<uint32_t>(num_tok.int_value), rel_off});
 		}
-
-		cached.decoded_bytes = std::move(*decoded_res);
-		if (obj_stm_cache_.size() >= kMaxCachedObjStreams) {
-			obj_stm_cache_.erase(obj_stm_cache_.begin());
-		}
-		cache_it = obj_stm_cache_.emplace(stm_obj_num, std::move(cached)).first;
+		cached.decoded_bytes = std::move(decoded_bytes);
+		return cached;
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory while parsing /Type /ObjStm header");
+	} catch (...) {
+		return make_pdf_error(ErrorCode::InternalError, "Unexpected exception while parsing /Type /ObjStm header");
 	}
+}
 
-	const CachedObjStream& cached_stm = cache_it->second;
-	if (stm_index >= cached_stm.entries.size()) {
-		return make_xref_error(
-			ErrorCode::DamagedFormat,
-			DiagnosticId::DamagedObject,
-			"Compressed object index exceeds /Type /ObjStm /N entry count",
-			std::nullopt,
-			ref.obj_num,
-			ref.gen_num);
-	}
-
-	const CachedObjStream::HeaderPair& pair = cached_stm.entries[stm_index];
-	if (pair.obj_num != ref.obj_num) {
-		return make_xref_error(
-			ErrorCode::DamagedFormat,
-			DiagnosticId::DamagedObject,
-			"Compressed object number in /Type /ObjStm header does not match xref entry",
-			std::nullopt,
-			ref.obj_num,
-			ref.gen_num);
-	}
-
-	const size_t obj_start = static_cast<size_t>(cached_stm.first_offset + pair.rel_offset);
-	size_t obj_end = cached_stm.decoded_bytes.size();
-	if (stm_index + 1u < cached_stm.entries.size()) {
-		obj_end = static_cast<size_t>(
-			cached_stm.first_offset + cached_stm.entries[stm_index + 1u].rel_offset);
-	}
-
-	const std::span<const uint8_t> obj_slice(
-		cached_stm.decoded_bytes.data() + obj_start,
-		obj_end - obj_start);
-	Parser inner_parser(obj_slice);
-	auto val_res = inner_parser.parse_direct_object();
-	if (!val_res.has_value()) {
-		if (val_res.error().code == ErrorCode::DamagedFormat) {
-			record_diagnostic(
+PdfResult<PdfValue> extract_object_stream_member(
+	const CachedObjStream& stm,
+	uint32_t index,
+	IndirectRef ref) noexcept
+{
+	try {
+		if (index >= stm.entries.size()) {
+			return make_xref_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedObject,
+				"Compressed object index exceeds /Type /ObjStm /N entry count",
 				std::nullopt,
 				ref.obj_num,
 				ref.gen_num);
 		}
-		return val_res.error();
-	}
-
-	// Per ISO 32000-1 section 7.5.7, each slice `[obj_start, obj_end)` in an
-	// `/ObjStm` contains a single direct PDF object with no `N G obj` header,
-	// `stream` payload, `endobj` footer, or trailing tokens.
-	Token trailing_tok;
-	PdfError terr;
-	if (!next_non_comment_token(inner_parser.lexer(), trailing_tok, terr)) {
-		if (terr.code == ErrorCode::DamagedFormat) {
-			record_diagnostic(
+		const CachedObjStream::HeaderPair& pair = stm.entries[index];
+		if (pair.obj_num != ref.obj_num) {
+			return make_xref_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedObject,
+				"Compressed object number in /Type /ObjStm header does not match xref entry",
 				std::nullopt,
 				ref.obj_num,
 				ref.gen_num);
 		}
-		return terr;
-	}
-	if (!trailing_tok.is_eof()) {
-		return make_xref_error(
-			ErrorCode::DamagedFormat,
-			DiagnosticId::DamagedObject,
-			"Indirect stream, obj header, or trailing token is forbidden inside /Type /ObjStm",
-			std::nullopt,
-			ref.obj_num,
-			ref.gen_num);
-	}
-
-	if (const PdfDict* inner_dict = val_res->as_dict()) {
-		if (const auto inner_type = inner_dict->get_name("Type")) {
-			if (*inner_type == "ObjStm" || *inner_type == "XRef") {
-				return make_xref_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedObject,
-					"/Type /ObjStm or /Type /XRef object cannot be stored inside an /ObjStm",
-					std::nullopt,
-					ref.obj_num,
+		const size_t obj_start = static_cast<size_t>(stm.first_offset + pair.rel_offset);
+		const size_t obj_end = index + 1u < stm.entries.size()
+			? static_cast<size_t>(stm.first_offset + stm.entries[index + 1u].rel_offset)
+			: stm.decoded_bytes.size();
+		Parser inner_parser(std::span<const uint8_t>(stm.decoded_bytes.data() + obj_start, obj_end - obj_start));
+		auto val_res = inner_parser.parse_direct_object();
+		if (!val_res.has_value()) {
+			if (val_res.error().code == ErrorCode::DamagedFormat) {
+				record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedObject, std::nullopt, ref.obj_num,
 					ref.gen_num);
 			}
+			return val_res.error();
 		}
+		// ISO 32000-1 section 7.5.7: each slice holds a single direct object, with no `N G obj` header, `stream`
+		// payload, `endobj` footer or trailing tokens, and is never a bare object reference.
+		Token trailing_tok;
+		PdfError terr;
+		if (!next_non_comment_token(inner_parser.lexer(), trailing_tok, terr)) {
+			if (terr.code == ErrorCode::DamagedFormat) {
+				record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedObject, std::nullopt, ref.obj_num,
+					ref.gen_num);
+			}
+			return terr;
+		}
+		if (!trailing_tok.is_eof()) {
+			return make_xref_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedObject,
+				"Indirect stream, obj header, or trailing token is forbidden inside /Type /ObjStm",
+				std::nullopt,
+				ref.obj_num,
+				ref.gen_num);
+		}
+		if (val_res->is_ref()) {
+			return make_xref_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedObject,
+				"A compressed object cannot consist solely of an object reference (ISO 32000-1 section 7.5.7)",
+				std::nullopt,
+				ref.obj_num,
+				ref.gen_num);
+		}
+		if (const PdfDict* inner_dict = val_res->as_dict()) {
+			if (const auto inner_type = inner_dict->get_name("Type")) {
+				if (*inner_type == "ObjStm" || *inner_type == "XRef") {
+					return make_xref_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedObject,
+						"/Type /ObjStm or /Type /XRef object cannot be stored inside an /ObjStm",
+						std::nullopt,
+						ref.obj_num,
+						ref.gen_num);
+				}
+			}
+		}
+		return std::move(*val_res);
+	} catch (const std::bad_alloc&) {
+		return make_pdf_error(ErrorCode::OutOfMemory, "Out of memory while extracting a /Type /ObjStm member");
+	} catch (...) {
+		return make_pdf_error(ErrorCode::InternalError, "Unexpected exception while extracting a /Type /ObjStm member");
 	}
-
-	return IndirectObject{ref, std::move(*val_res)};
 }
 
 PdfResult<IndirectObject> XrefTable::read_indirect_object_with_visited(

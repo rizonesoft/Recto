@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 47 | Checklist items: 314
+Sections: 48 | Checklist items: 319
 
 | Status | Reference   | Deliverable                                                                              | Needs        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -103,6 +103,7 @@ Sections: 47 | Checklist items: 314
 | [ ]    | D06 T03 §1  | Hostile-input fixture pack from user-reported failure classes                            | windows-host | 10    |
 | [ ]    | D06 T03 §2  | Recovered-error and truncation contract in `recto-pdf` results                           | windows-host | 6     |
 | [ ]    | D06 T03 §10 | Render fidelity fixtures from user-reported failure classes                              | windows-host | 8     |
+| [ ]    | D06 T05 §29 | Damaged-file recovery resolves indirect object-stream parameters                         | windows-host | 5     |
 
 ### Phase 2: M2 Viewer
 
@@ -750,6 +751,6 @@ Sections: 4 | Checklist items: 22
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
-Progress: 53/681 verified sections, 13 ready to run now.
+Progress: 53/682 verified sections, 13 ready to run now.
 
-Checklist: 303/4880 items completed (includes Commit items).
+Checklist: 303/4885 items completed (includes Commit items).

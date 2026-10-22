@@ -2220,17 +2220,6 @@ PdfResult<PdfValue> SecurityHandler::resolve_and_decrypt_with_visited(
 						stm_obj_num,
 						0u);
 				}
-				const auto n_opt = obj_stm->dict.get_int("N");
-				const auto first_opt = obj_stm->dict.get_int("First");
-				if (!n_opt.has_value() || *n_opt <= 0 || *n_opt > kMaxObjStmEntries ||
-					!first_opt.has_value() || *first_opt < 0) {
-					return make_crypto_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedObject,
-						"Invalid /N or /First in decrypted /Type /ObjStm stream",
-						stm_obj_num,
-						0u);
-				}
 				// Indirect /Filter and /DecodeParms resolve (decrypted) with this container already visited, so a
 				// parameter pointing back into it fails as a cycle. obj_stm points into a node of decrypted_cache_,
 				// which a nested resolution may grow without moving it.
@@ -2242,81 +2231,18 @@ PdfResult<PdfValue> SecurityHandler::resolve_and_decrypt_with_visited(
 				RECTO_PDF_TRY(
 					std::vector<uint8_t> decoded_stm,
 					decode_stream(*obj_stm, kMaxDecodedStreamBytes, &parms_resolver));
-				const uint64_t first_off = static_cast<uint64_t>(*first_opt);
-				if (first_off > decoded_stm.size()) {
-					return make_crypto_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedObject,
-						"/Type /ObjStm /First offset exceeds decoded stream length",
-						stm_obj_num,
-						0u);
-				}
-
-				const uint32_t n_count = static_cast<uint32_t>(*n_opt);
-				CachedObjStream cached;
-				cached.first_offset = first_off;
-				cached.entries.reserve(n_count);
-				const std::span<const uint8_t> header_bytes(
-					decoded_stm.data(),
-					static_cast<size_t>(first_off));
-				Lexer hdr_lexer(header_bytes);
-				for (uint32_t i = 0; i < n_count; ++i) {
-					RECTO_PDF_TRY(const Token num_tok, hdr_lexer.next_token());
-					RECTO_PDF_TRY(const Token off_tok, hdr_lexer.next_token());
-					if (num_tok.kind != TokenKind::Integer || num_tok.int_value <= 0 ||
-						off_tok.kind != TokenKind::Integer || off_tok.int_value < 0) {
-						return make_crypto_error(
-							ErrorCode::DamagedFormat,
-							DiagnosticId::DamagedObject,
-							"Malformed header pair in decrypted /Type /ObjStm stream",
-							stm_obj_num,
-							0u);
-					}
-					const uint64_t rel_off = static_cast<uint64_t>(off_tok.int_value);
-					if (rel_off > decoded_stm.size() - first_off ||
-						(!cached.entries.empty() && rel_off < cached.entries.back().rel_offset)) {
-						return make_crypto_error(
-							ErrorCode::DamagedFormat,
-							DiagnosticId::DamagedObject,
-							"Out-of-bounds relative offset in decrypted /Type /ObjStm stream",
-							stm_obj_num,
-							0u);
-					}
-					cached.entries.push_back(CachedObjStream::HeaderPair{
-						static_cast<uint32_t>(num_tok.int_value),
-						rel_off});
-				}
-				cached.decoded_bytes = std::move(decoded_stm);
+				RECTO_PDF_TRY_REF(
+					cached,
+					parse_object_stream(obj_stm->dict, std::move(decoded_stm), stm_obj_num, &parms_resolver));
 				stm_cache_it = decrypted_obj_stm_cache_.emplace(stm_obj_num, std::move(cached)).first;
 			}
 
-			const CachedObjStream& cached_stm = stm_cache_it->second;
-			if (stm_index >= cached_stm.entries.size() ||
-				cached_stm.entries[stm_index].obj_num != current.obj_num) {
-				return make_crypto_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedObject,
-					"Compressed object index or number mismatch in decrypted /Type /ObjStm",
-					current.obj_num,
-					current.gen_num);
-			}
-			const size_t obj_start = static_cast<size_t>(
-				cached_stm.first_offset + cached_stm.entries[stm_index].rel_offset);
-			const size_t obj_end = (stm_index + 1u < cached_stm.entries.size())
-				? static_cast<size_t>(
-					  cached_stm.first_offset + cached_stm.entries[stm_index + 1u].rel_offset)
-				: cached_stm.decoded_bytes.size();
-			Parser inner_parser(std::span<const uint8_t>(
-				cached_stm.decoded_bytes.data() + obj_start,
-				obj_end - obj_start));
-			RECTO_PDF_TRY(PdfValue inner_val, inner_parser.parse_direct_object());
+			RECTO_PDF_TRY_REF(
+				inner_val,
+				extract_object_stream_member(stm_cache_it->second, stm_index, current));
 			// Inner objects of an `/ObjStm` are NOT decrypted again (`is_inside_obj_stm = true`).
 			RECTO_PDF_RETURN_IF_ERROR(
 				decrypt_object_values(inner_val, current, /*is_inside_obj_stm=*/true));
-			if (const auto next_ref = inner_val.as_ref()) {
-				current = *next_ref;
-				continue;
-			}
 			RECTO_PDF_TRY(PdfValue cloned, inner_val.deep_clone());
 			decrypted_cache_.emplace(cache_key, std::move(cloned));
 			return std::move(inner_val);

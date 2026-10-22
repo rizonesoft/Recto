@@ -7,6 +7,7 @@
 // (ISO 32000-1 sections 7.5.4, 7.5.6, 7.5.7, and 7.5.8; D01 T01 sections 5-6).
 
 #include "error.h"
+#include "filters.h"
 #include "object.h"
 #include "parser.h"
 
@@ -71,6 +72,22 @@ struct CachedObjStream {
 	std::vector<HeaderPair> entries{};
 	std::vector<uint8_t> decoded_bytes{};
 };
+
+// The one reading of an object stream (ISO 32000-1 section 7.5.7), shared by XrefTable, SecurityHandler and
+// Document so their checks cannot drift apart. parse_object_stream reads /N and /First (resolving indirect values
+// one level through `resolver`, when given) and the header table from the decoded bytes; stm_obj_num labels errors.
+[[nodiscard]] PdfResult<CachedObjStream> parse_object_stream(
+	const PdfDict& stm_dict,
+	std::vector<uint8_t> decoded_bytes,
+	uint32_t stm_obj_num,
+	const IndirectObjectResolver* resolver = nullptr) noexcept;
+
+// Member `index` of a parsed object stream, which must be object `ref`: exactly one direct object, never a stream,
+// an `N G obj` wrapper, trailing tokens, a bare object reference, or a /Type /ObjStm or /Type /XRef dictionary.
+[[nodiscard]] PdfResult<PdfValue> extract_object_stream_member(
+	const CachedObjStream& stm,
+	uint32_t index,
+	IndirectRef ref) noexcept;
 
 class XrefTable {
 public:

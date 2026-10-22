@@ -1,4 +1,5 @@
 // Unit tests for `recto::pdf::Document` (D01 T01 section 10).
+#include "crypto.h"
 #include "document.h"
 
 #include "test_support.h"
@@ -94,6 +95,83 @@ std::vector<uint8_t> build_synthetic_pdf_from_objects(
 	out += " >>\nstartxref\n" + std::to_string(xref_offset) + "\n%%EOF\n";
 
 	return std::vector<uint8_t>(out.begin(), out.end());
+}
+
+// An encrypted document's object streams are read by the same routine as an unencrypted one's: sibling objects
+// share one decrypted, decoded container, and forbidden members (a stream, here) are refused. Built as an
+// incremental update of the RC4 corpus file: two RC4-encrypted object streams and an xref stream with /Prev.
+TEST(PdfDocument, EncryptedObjectStreamsShareOneDecodeAndRefuseForbiddenMembers)
+{
+	std::vector<uint8_t> bytes = read_corpus_bytes("render/encrypted-rc4-128.pdf");
+	auto base_xref = XrefTable::parse(bytes);
+	ASSERT_TRUE(base_xref.has_value());
+	auto sh_opt = SecurityHandler::from_xref(*base_xref, bytes);
+	ASSERT_TRUE(sh_opt.has_value() && sh_opt->has_value());
+	SecurityHandler sh = std::move(**sh_opt);
+	ASSERT_TRUE(sh.authenticate("recto-test").has_value());
+
+	const auto encrypt = [&](std::string_view plain, uint32_t obj_num) {
+		const std::span<const uint8_t> span(reinterpret_cast<const uint8_t*>(plain.data()), plain.size());
+		auto cipher = sh.decrypt_bytes(span, IndirectRef{obj_num, 0u}, CryptFilterMethod::V2); // RC4 is symmetric
+		EXPECT_TRUE(cipher.has_value());
+		return cipher.has_value() ? *cipher : std::vector<uint8_t>{};
+	};
+	const auto append = [&](std::string_view sv) { bytes.insert(bytes.end(), sv.begin(), sv.end()); };
+	const auto append_objstm = [&](uint32_t num, std::string_view plain, size_t first, size_t n) {
+		const std::vector<uint8_t> cipher = encrypt(plain, num);
+		const uint64_t off = bytes.size();
+		append(std::to_string(num) + " 0 obj\n<< /Type /ObjStm /N " + std::to_string(n) + " /First " +
+			std::to_string(first) + " /Length " + std::to_string(cipher.size()) + " >>\nstream\n");
+		bytes.insert(bytes.end(), cipher.begin(), cipher.end());
+		append("\nendstream\nendobj\n");
+		return off;
+	};
+	append("\n");
+	const uint64_t off20 = append_objstm(20, "21 0 22 2 7 8", 10, 2);
+	const uint64_t off23 = append_objstm(23, "24 0 << /Length 4 >>\nstream\nabcd\nendstream", 5, 1);
+	const uint64_t off25 = bytes.size();
+	std::string rows;
+	const auto row = [&](uint8_t type, uint32_t f2, uint16_t f3) {
+		rows.push_back(static_cast<char>(type));
+		for (int s = 24; s >= 0; s -= 8) {
+			rows.push_back(static_cast<char>((f2 >> s) & 0xFFu));
+		}
+		rows.push_back(static_cast<char>((f3 >> 8) & 0xFFu));
+		rows.push_back(static_cast<char>(f3 & 0xFFu));
+	};
+	row(1, static_cast<uint32_t>(off20), 0); // 20: object stream
+	row(2, 20, 0);                           // 21 in 20, index 0
+	row(2, 20, 1);                           // 22 in 20, index 1
+	row(1, static_cast<uint32_t>(off23), 0); // 23: object stream with a forbidden member
+	row(2, 23, 0);                           // 24 in 23, index 0
+	row(1, static_cast<uint32_t>(off25), 0); // 25: this xref stream
+	append("25 0 obj\n<< /Type /XRef /Size 26 /Root 1 0 R /Info 6 0 R /Encrypt 7 0 R "
+		"/ID [<0CC47D6E8331B0D9BBEBAFED46D1A791> <0CC47D6E8331B0D9BBEBAFED46D1A791>] /Prev 961 "
+		"/Index [20 6] /W [1 4 2] /Length " + std::to_string(rows.size()) + " >>\nstream\n");
+	append(rows);
+	append("\nendstream\nendobj\nstartxref\n" + std::to_string(off25) + "\n%%EOF\n");
+
+	auto doc = Document::open_memory(bytes, "recto-test");
+	ASSERT_TRUE(doc.has_value()) << doc.error().message.view();
+	auto a = (*doc)->resolve_object(IndirectRef{21u, 0u});
+	auto b = (*doc)->resolve_object(IndirectRef{22u, 0u});
+	ASSERT_TRUE(a.has_value()) << a.error().message.view();
+	ASSERT_TRUE(b.has_value()) << b.error().message.view();
+	EXPECT_EQ(a->as_int(), std::optional<int64_t>(7));
+	EXPECT_EQ(b->as_int(), std::optional<int64_t>(8));
+	EXPECT_EQ((*doc)->cached_decrypted_obj_stream_count(), 1u); // one decode for both siblings
+
+	auto forbidden = (*doc)->resolve_object(IndirectRef{24u, 0u});
+	ASSERT_FALSE(forbidden.has_value());
+	EXPECT_EQ(forbidden.error().code, ErrorCode::DamagedFormat);
+
+	// SecurityHandler's own resolution refuses the same member.
+	auto updated_xref = XrefTable::parse(bytes);
+	ASSERT_TRUE(updated_xref.has_value());
+	sh.clear_decrypted_cache();
+	auto handler_forbidden = sh.resolve_and_decrypt_object(*updated_xref, bytes, IndirectRef{24u, 0u});
+	ASSERT_FALSE(handler_forbidden.has_value());
+	EXPECT_EQ(handler_forbidden.error().code, ErrorCode::DamagedFormat);
 }
 
 TEST(PdfDocument, OpenAndAuthenticate)
@@ -611,10 +689,12 @@ TEST(PdfDocument, PageTreeAndRotatedPages)
 			std::string cat_commented =
 				"<< /F1 << /Type /Font /Subtype /Type1 /BaseFont /Courier "
 				"/Pad (" + std::string(900u * 1024u, 'n') + ") >> >>";
-			// Object stream 5 holds compressed alias object 12 -> 10 0 R and
-			// compressed category alias 13 -> 11 0 R:
-			const std::string objstm_header = "12 0 13 6 ";
-			const std::string objstm_body = "10 0 R11 0 R";
+			// Object stream 5 holds the compressed `/Resources` dictionary 10 and the
+			// compressed category dictionary 11 (a compressed object cannot be a bare
+			// reference, ISO 32000-1 section 7.5.7, so the aliases stay uncompressed):
+			const std::string objstm_header =
+				"10 0 11 " + std::to_string(res_commented.size() + 1u) + " ";
+			const std::string objstm_body = res_commented + " " + cat_commented;
 			const std::string objstm_data = objstm_header + objstm_body;
 			const std::string objstm_obj =
 				"<< /Type /ObjStm /N 2 /First " +
@@ -623,11 +703,11 @@ TEST(PdfDocument, PageTreeAndRotatedPages)
 				" >>\nstream\n" + objstm_data + "\nendstream";
 
 			// Build hybrid PDF with:
-			// - 300 pages referencing commented -> compressed `/Resources` aliases
-			//   (`6 0 R -> 12 0 R -> 10 0 R` and `8 0 R -> 6 0 R -> 12 0 R -> 10 0 R`,
+			// - 300 pages referencing commented aliases of the compressed `/Resources`
+			//   (`6 0 R -> 10 0 R` and `8 0 R -> 6 0 R -> 10 0 R`,
 			//   64 KiB each; uncached = 18.75 MiB > 16 MiB budget)
-			// - 10 pages referencing commented -> compressed category aliases
-			//   (`7 0 R -> 13 0 R -> 11 0 R` and `9 0 R -> 7 0 R -> 13 0 R -> 11 0 R`,
+			// - 10 pages referencing commented aliases of the compressed category
+			//   (`7 0 R -> 11 0 R` and `9 0 R -> 7 0 R -> 11 0 R`,
 			//   900 KiB each; uncached category cache + page dict = 18 MiB > 16 MiB budget)
 			std::string pdf_sc = "%PDF-1.7\n%\xE2\xE3\xCF\xD3\n";
 			std::vector<uint64_t> offsets(340u, 0u);
@@ -663,12 +743,10 @@ TEST(PdfDocument, PageTreeAndRotatedPages)
 				"<< /Type /Pages /Count 310 /MediaBox [0 0 612 792] /Kids " +
 					kids_sc + " >>");
 			append_obj(5, objstm_obj);
-			append_obj(6, "% comment before alias\n12 0 R % trailing");
-			append_obj(7, "% comment before cat alias\n13 0 R");
+			append_obj(6, "% comment before alias\n10 0 R % trailing");
+			append_obj(7, "% comment before cat alias\n11 0 R");
 			append_obj(8, "% second commented alias\n6 0 R");
 			append_obj(9, "% second commented cat alias\n7 0 R");
-			append_obj(10, res_commented);
-			append_obj(11, cat_commented);
 			const uint64_t off_xref = static_cast<uint64_t>(pdf_sc.size());
 
 			std::string xref_bin;
@@ -683,9 +761,9 @@ TEST(PdfDocument, PageTreeAndRotatedPages)
 			};
 			push_xref(0, 0, 65535);
 			for (uint32_t id = 1u; id <= 329u; ++id) {
-				if (id == 12u) {
+				if (id == 10u) {
 					push_xref(2, 5, 0);
-				} else if (id == 13u) {
+				} else if (id == 11u) {
 					push_xref(2, 5, 1);
 				} else if (offsets[id] != 0u) {
 					push_xref(1, static_cast<uint32_t>(offsets[id]), 0);

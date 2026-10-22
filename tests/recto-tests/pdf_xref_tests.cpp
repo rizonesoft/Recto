@@ -92,6 +92,81 @@ void verify_simple_1p_with_preamble(std::span<const uint8_t> preamble)
 // ISO 32000-1 Table 15: /Size is required, and an object numbered above it is ignored and treated as missing.
 // An object stream's /DecodeParms may be an indirect reference: it resolves, and one pointing back into the same
 // stream is a cycle that fails cleanly.
+// ISO 32000-1 section 7.5.7: /N and /First may be indirect, and a compressed object consisting solely of an
+// object reference is refused.
+TEST(PdfXref, ObjStmIndirectCountsAndBareReferences)
+{
+	const auto build = [](std::string_view n_first, std::string_view payload) {
+		std::string pdf = "%PDF-1.7\n";
+		const size_t off2 = pdf.size();
+		pdf += "2 0 obj\n1\nendobj\n";
+		const size_t off3 = pdf.size();
+		pdf += "3 0 obj\n4\nendobj\n";
+		const size_t off5 = pdf.size();
+		pdf += "5 0 obj\n<< /Type /ObjStm " + std::string(n_first) + " /Length " + std::to_string(payload.size()) +
+			" >>\nstream\n" + std::string(payload) + "\nendstream\nendobj\n";
+		const size_t off6 = pdf.size();
+		std::string rows(7 * 4, '\0');
+		rows[3] = '\xFF';
+		rows[4] = 2;
+		rows[6] = 5;
+		const auto uncompressed = [&](size_t obj, size_t off) {
+			rows[obj * 4] = 1;
+			rows[obj * 4 + 1] = static_cast<char>((off >> 8) & 0xFF);
+			rows[obj * 4 + 2] = static_cast<char>(off & 0xFF);
+		};
+		uncompressed(2, off2);
+		uncompressed(3, off3);
+		uncompressed(5, off5);
+		uncompressed(6, off6);
+		pdf += "6 0 obj\n<< /Type /XRef /Size 7 /Root 1 0 R /W [1 2 1] /Length " + std::to_string(rows.size()) +
+			" >>\nstream\n" + rows + "\nendstream\nendobj\nstartxref\n" + std::to_string(off6) + "\n%%EOF\n";
+		return pdf;
+	};
+
+	const std::string indirect = build("/N 2 0 R /First 3 0 R", "1 0 42");
+	auto xref = XrefTable::parse(as_bytes(indirect));
+	RECTO_ASSERT_OK(xref);
+	auto value = xref->resolve_object(as_bytes(indirect), IndirectRef{1u, 0u});
+	RECTO_ASSERT_OK(value);
+	EXPECT_EQ(value->as_int(), std::optional<int64_t>(42));
+
+	const std::string bare = build("/N 1 /First 4", "1 0 2 0 R");
+	auto bare_xref = XrefTable::parse(as_bytes(bare));
+	RECTO_ASSERT_OK(bare_xref);
+	RECTO_EXPECT_ERR(bare_xref->read_indirect_object(as_bytes(bare), IndirectRef{1u, 0u}), ErrorCode::DamagedFormat);
+}
+
+// An xref stream entry numbered above /Size is missing, so even an offset outside the file in it is no error.
+TEST(PdfXref, XrefStreamEntriesAboveSizeAreMissing)
+{
+	std::string pdf = "%PDF-1.7\n";
+	const size_t off1 = pdf.size();
+	pdf += "1 0 obj\n<< /Type /Catalog >>\nendobj\n";
+	const size_t off3 = pdf.size();
+	std::string rows;
+	const auto row = [&](uint8_t type, uint32_t f2, uint8_t f3) {
+		rows.push_back(static_cast<char>(type));
+		rows.push_back(static_cast<char>((f2 >> 16) & 0xFF));
+		rows.push_back(static_cast<char>((f2 >> 8) & 0xFF));
+		rows.push_back(static_cast<char>(f2 & 0xFF));
+		rows.push_back(static_cast<char>(f3));
+	};
+	row(0, 0, 0xFF);
+	row(1, static_cast<uint32_t>(off1), 0);
+	row(0, 0, 0);
+	row(1, static_cast<uint32_t>(off3), 0);
+	row(1, 0xFFFFFFu, 0); // object 99: far outside the file, and above /Size
+	pdf += "3 0 obj\n<< /Type /XRef /Size 4 /Index [0 4 99 1] /Root 1 0 R /W [1 3 1] /Length " +
+		std::to_string(rows.size()) + " >>\nstream\n" + rows + "\nendstream\nendobj\nstartxref\n" +
+		std::to_string(off3) + "\n%%EOF\n";
+	auto xref = XrefTable::parse(as_bytes(pdf));
+	RECTO_ASSERT_OK(xref);
+	EXPECT_FALSE(xref->recovered());
+	EXPECT_EQ(xref->find(99), nullptr);
+	EXPECT_NE(xref->find(1), nullptr);
+}
+
 TEST(PdfXref, ObjStmIndirectDecodeParmsResolve)
 {
 	const auto build = [](std::string_view parms_ref, std::string_view parms_body = "<< >>",

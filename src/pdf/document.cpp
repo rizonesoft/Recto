@@ -1539,126 +1539,52 @@ PdfResult<Document::SingleHopResult> Document::resolve_single_indirect_hop(
 					stm_obj_num,
 					0u);
 			}
-			RECTO_PDF_TRY(
-				IndirectObject raw_stm_obj,
-				xref_.read_indirect_object(file_bytes_, stm_ref));
-			const IndirectObjectResolver stm_filter_resolver = [&](IndirectRef r) -> PdfResult<PdfValue> {
-				std::vector<IndirectRef> hop_visited = visited_refs;
-				hop_visited.push_back(stm_ref);
-				return resolve_object_with_visited(r, hop_visited);
-			};
-			RECTO_PDF_RETURN_IF_ERROR(
-				security_handler_->decrypt_object_values(
-					raw_stm_obj.value,
-					stm_ref,
-					/*is_inside_obj_stm=*/false,
-					&stm_filter_resolver));
-			const PdfStream* obj_stm = raw_stm_obj.value.as_stream();
-			if (obj_stm == nullptr ||
-				obj_stm->dict.get_name("Type").value_or("") != "ObjStm") {
-				return make_doc_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedObject,
-					"Compressed object target is not a /Type /ObjStm stream",
-					std::nullopt,
-					stm_obj_num,
-					0u);
-			}
-			const auto n_opt = obj_stm->dict.get_int("N");
-			const auto first_opt = obj_stm->dict.get_int("First");
-			if (!n_opt.has_value() || *n_opt <= 0 || *n_opt > kMaxObjStmEntries ||
-				!first_opt.has_value() || *first_opt < 0) {
-				return make_doc_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedObject,
-					"Invalid /N or /First in decrypted /Type /ObjStm stream",
-					std::nullopt,
-					stm_obj_num,
-					0u);
-			}
-			// Indirect /Filter and /DecodeParms resolve with this container already visited (a cycle back into it
-			// fails cleanly).
-			const IndirectObjectResolver parms_resolver = [&](IndirectRef ref) -> PdfResult<PdfValue> {
-				std::vector<IndirectRef> hop_visited = visited_refs;
-				hop_visited.push_back(stm_ref);
-				return resolve_object_with_visited(ref, hop_visited);
-			};
-			RECTO_PDF_TRY(
-				std::vector<uint8_t> decoded_stm,
-				recto::pdf::decode_stream(*obj_stm, kMaxDecodedStreamBytes, &parms_resolver));
-			const uint64_t first_off = static_cast<uint64_t>(*first_opt);
-			if (first_off > decoded_stm.size()) {
-				return make_doc_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedObject,
-					"/Type /ObjStm /First offset exceeds decoded stream length",
-					std::nullopt,
-					stm_obj_num,
-					0u);
-			}
-			const uint32_t n_count = static_cast<uint32_t>(*n_opt);
-			if (stm_index >= n_count) {
-				return make_doc_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedObject,
-					"Compressed object index exceeds /Type /ObjStm /N entry count",
-					std::nullopt,
-					current.obj_num,
-					current.gen_num);
-			}
-			std::vector<CachedObjStream::HeaderPair> pairs;
-			pairs.reserve(n_count);
-			Lexer hdr_lexer(std::span<const uint8_t>(
-				decoded_stm.data(),
-				static_cast<size_t>(first_off)));
-			for (uint32_t i = 0; i < n_count; ++i) {
-				RECTO_PDF_TRY(const Token num_tok, hdr_lexer.next_token());
-				RECTO_PDF_TRY(const Token off_tok, hdr_lexer.next_token());
-				if (num_tok.kind != TokenKind::Integer || num_tok.int_value <= 0 ||
-					off_tok.kind != TokenKind::Integer || off_tok.int_value < 0) {
+			// Sibling objects share one decrypted, decoded container per document (decrypted_obj_stm_cache_); it is
+			// read through the same routines as XrefTable's and SecurityHandler's (parse_object_stream,
+			// extract_object_stream_member).
+			auto stm_cache_it = decrypted_obj_stm_cache_.find(stm_obj_num);
+			if (stm_cache_it == decrypted_obj_stm_cache_.end()) {
+				RECTO_PDF_TRY(
+					IndirectObject raw_stm_obj,
+					xref_.read_indirect_object(file_bytes_, stm_ref));
+				// Indirect /Filter, /DecodeParms, /N and /First resolve with this container already visited (a cycle
+				// back into it fails cleanly).
+				const IndirectObjectResolver stm_resolver = [&](IndirectRef r) -> PdfResult<PdfValue> {
+					std::vector<IndirectRef> hop_visited = visited_refs;
+					hop_visited.push_back(stm_ref);
+					return resolve_object_with_visited(r, hop_visited);
+				};
+				RECTO_PDF_RETURN_IF_ERROR(
+					security_handler_->decrypt_object_values(
+						raw_stm_obj.value,
+						stm_ref,
+						/*is_inside_obj_stm=*/false,
+						&stm_resolver));
+				const PdfStream* obj_stm = raw_stm_obj.value.as_stream();
+				if (obj_stm == nullptr ||
+					obj_stm->dict.get_name("Type").value_or("") != "ObjStm") {
 					return make_doc_error(
 						ErrorCode::DamagedFormat,
 						DiagnosticId::DamagedObject,
-						"Malformed header pair in decrypted /Type /ObjStm stream",
+						"Compressed object target is not a /Type /ObjStm stream",
 						std::nullopt,
 						stm_obj_num,
 						0u);
 				}
-				const uint64_t rel_off = static_cast<uint64_t>(off_tok.int_value);
-				if (rel_off > decoded_stm.size() - first_off ||
-					(!pairs.empty() && rel_off < pairs.back().rel_offset)) {
-					return make_doc_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedObject,
-						"Out-of-bounds relative offset in decrypted /Type /ObjStm stream",
-						std::nullopt,
-						stm_obj_num,
-						0u);
+				RECTO_PDF_TRY(
+					std::vector<uint8_t> decoded_stm,
+					recto::pdf::decode_stream(*obj_stm, kMaxDecodedStreamBytes, &stm_resolver));
+				RECTO_PDF_TRY_REF(
+					cached,
+					parse_object_stream(obj_stm->dict, std::move(decoded_stm), stm_obj_num, &stm_resolver));
+				if (decrypted_obj_stm_cache_.size() >= kMaxCachedObjStreams) {
+					decrypted_obj_stm_cache_.erase(decrypted_obj_stm_cache_.begin());
 				}
-				pairs.push_back(CachedObjStream::HeaderPair{
-					static_cast<uint32_t>(num_tok.int_value),
-					rel_off});
+				stm_cache_it = decrypted_obj_stm_cache_.emplace(stm_obj_num, std::move(cached)).first;
 			}
-			if (pairs[stm_index].obj_num != current.obj_num) {
-				return make_doc_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedObject,
-					"Compressed object number in /Type /ObjStm does not match xref entry",
-					std::nullopt,
-					current.obj_num,
-					current.gen_num);
-			}
-			const size_t obj_start = static_cast<size_t>(first_off + pairs[stm_index].rel_offset);
-			const size_t obj_end = (stm_index + 1u < pairs.size())
-				? static_cast<size_t>(first_off + pairs[stm_index + 1u].rel_offset)
-				: decoded_stm.size();
-			Parser inner_parser(std::span<const uint8_t>(
-				decoded_stm.data() + obj_start,
-				obj_end - obj_start));
-			RECTO_PDF_TRY(PdfValue inner_val, inner_parser.parse_direct_object());
-			if (const auto next_ref = inner_val.as_ref()) {
-				return SingleHopResult{*next_ref, PdfValue(PdfNull{})};
-			}
+			RECTO_PDF_TRY_REF(
+				inner_val,
+				extract_object_stream_member(stm_cache_it->second, stm_index, current));
 			return SingleHopResult{std::nullopt, std::move(inner_val)};
 		}
 

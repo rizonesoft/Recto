@@ -330,6 +330,12 @@ public:
 	// streams when `is_encrypted()`).
 	[[nodiscard]] PdfResult<PdfValue> resolve_object(IndirectRef ref) const noexcept;
 
+	// How many decrypted object streams this document holds decoded (encrypted documents only); siblings share one.
+	[[nodiscard]] size_t cached_decrypted_obj_stream_count() const noexcept
+	{
+		return decrypted_obj_stm_cache_.size();
+	}
+
 	// If `value` is an `IndirectRef`, resolves it via `resolve_object`;
 	// otherwise returns a deep clone of `value`.
 	[[nodiscard]] PdfResult<PdfValue> resolve_value(const PdfValue& value) const noexcept;
@@ -417,6 +423,9 @@ private:
 	std::vector<uint8_t> file_bytes_{};
 	XrefTable xref_{};
 	std::optional<SecurityHandler> security_handler_{std::nullopt};
+	// Decrypted, decoded object streams of an encrypted document, keyed by container number, so sibling objects
+	// share one decode (bounded like XrefTable's cache). Owned, like every member, by the DocumentActor thread.
+	mutable std::unordered_map<uint32_t, CachedObjStream> decrypted_obj_stm_cache_{};
 	PdfDict catalog_{};
 	DocumentDescription description_{};
 	std::vector<ResolvedPageRecord> page_records_{};

@@ -7,3 +7,61 @@
 ## Checkpoint re-run
 
 At `6f80de1`: `powershell -File build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*` -> exit 0, `0 Warning(s)`, `Staged for recto-tests: clang_rt.asan_dynamic-x86_64.dll`, `[  PASSED  ] 12 tests.` (12 tests from 1 suite). The checkpoint holds.
+
+## Round 1: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T10:44:26Z
+- Effort: xhigh
+- Lines: 32
+- Digest: 5a6dcfbd27d642b7
+
+### adversarial: needs-attention
+
+1. **P2, recovery omits indirect stream-parameter resolution.** At [src/pdf/xref.cpp:872](/R:/GitHub/Recto/src/pdf/xref.cpp:872), recovery calls `decode_stream(stm)` without a resolver and skips ordinary decoding errors. Reproduce with a missing `startxref`, an otherwise intact ASCIIHex-encoded `/ObjStm` containing the only `/Catalog`, and `/DecodeParms 2 0 R` referencing an uncompressed empty dictionary. Recovery fails to discover the catalog and returns `DamagedFormat`. The normal resolver handles this case after D06 T05 §20, but recovery still cannot.
+
+2. **P2, ignored xref-stream entries can still fail parsing.** [src/pdf/xref.cpp:541](/R:/GitHub/Recto/src/pdf/xref.cpp:541) validates offsets before the `/Size` exclusion at line 1501. Reproduce with an otherwise readable xref-stream PDF using `/Size 4`, `/Index [0 4 99 1]`, and an out-of-file type-1 offset for object 99. Strict parsing returns `DamagedFormat` instead of ignoring object 99. D06 T05 §19 fixed this ordering for classic tables only. The required missing-object treatment also applies to cross-reference streams. [PDF specification errata, §7.5.5](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#7.5.5)
+
+### consistency: approve
+
+No findings.
+
+### integration: needs-attention
+
+3. **P1, encrypted extraction bypasses the promised forbidden-stream checks.** [src/pdf/document.cpp:1658](/R:/GitHub/Recto/src/pdf/document.cpp:1658) and [src/pdf/crypto.cpp:2312](/R:/GitHub/Recto/src/pdf/crypto.cpp:2312) parse one direct object and return without checking remaining tokens or forbidden object-stream dictionaries. Construct an encrypted `/ObjStm`, `/N 1`, `/First 4`, whose decrypted payload is `2 0 << /Length 4 >>\nstream\nabcd\nendstream`. Resolving object 2 succeeds with a dictionary, rather than returning `DamagedFormat`. The equivalent unencrypted case is explicitly refused by `PdfXref.ObjectStream`. Later encrypted consumers have lost §6’s refusal guarantee.
+
+4. **P2, encrypted documents repeatedly decompress sibling objects.** [src/pdf/document.cpp:1542](/R:/GitHub/Recto/src/pdf/document.cpp:1542) reparses and decrypts the container, then line 1588 decodes it into a local vector for every compressed-object resolution. This path uses neither decoded object-stream cache. Reproduce with two sibling objects in one encrypted `/ObjStm`: resolve both through `Document::resolve_object`, then resolve either again. A breakpoint on the decode call records three decompressions. This contradicts the ticked requirement that sibling objects share a decoded stream per document.
+
+### source-defect: needs-attention
+
+5. **P2, valid indirect `/N` and `/First` values are rejected.** [src/pdf/xref.cpp:1682](/R:/GitHub/Recto/src/pdf/xref.cpp:1682) requires direct integers; the encrypted implementations repeat that restriction. Reproduce with `/N 2 0 R /First 3 0 R`, uncompressed objects 2 and 3 containing integers `1` and `4`, and decoded payload `1 0 42`. Resolving compressed object 1 returns `DamagedFormat`. Object-stream dictionary values may reference uncompressed indirect objects. [PDF specification errata, §7.5.7](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#7.5.7)
+
+6. **P2, reference-only compressed objects are accepted and treated as valid test data.** [src/pdf/xref.cpp:1879](/R:/GitHub/Recto/src/pdf/xref.cpp:1879) returns an extracted `IndirectRef` without refusal, and resolution subsequently follows it. Reproduce with `/N 1 /First 4` and payload `1 0 2 0 R`. ISO 32000-1 §7.5.7 prohibits a compressed object consisting solely of an object reference. The existing fixture at [tests/recto-tests/pdf_document_tests.cpp:617](/R:/GitHub/Recto/tests/recto-tests/pdf_document_tests.cpp:617) explicitly depends on this prohibited representation; rerunning `PdfDocument.PageTreeAndRotatedPages` confirmed it currently passes. [ISO 32000-1, §7.5.7](https://opensource.adobe.com/dc-acrobat-sdk-docs/standards/pdfstandards/pdf/PDF32000_2008.pdf)
+
+### design: approve
+
+Not applicable; this section owns no user surface.
+
+### record: advisory
+
+At clean `8acebbe`, the existing Release binary passed all 12 `PdfXref.*` tests plus `Support.AsanActiveWhenEnabled`, which reported `ASan=enabled`. Only the audit Markdown changed since the recorded `6f80de1` checkpoint. A fresh build was not run because it writes files. Except for the reference-only fixture rerun, the reproductions above are source-traced. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 1
+
+Findings 3 to 6 share one root: an object stream was read by three copies of the same code (`XrefTable`, `SecurityHandler`, `Document`) that had drifted, the two encrypted copies lacking checks the first had. The fix is one reading, not three patches. `parse_object_stream` and `extract_object_stream_member` in `src/pdf/xref.h` hold every ISO 32000-1 section 7.5.7 check, built from `XrefTable`'s (the strictest) copy, and all three paths now call them.
+
+- Finding 3 (P1): correct. The encrypted paths parsed one direct object and returned it, skipping the forbidden-member checks. Through the shared routine they refuse a stream, an `N G obj` wrapper, trailing tokens and nested `/ObjStm` or `/XRef` dictionaries, as the unencrypted path did.
+- Finding 4 (P2): correct. `Document`'s encrypted path decrypted and decoded the container for every member. It now keeps a `decrypted_obj_stm_cache_` (bounded by `kMaxCachedObjStreams` like `XrefTable`'s, owned by the `DocumentActor` thread like every member), observable through `cached_decrypted_obj_stream_count()`.
+- Finding 5 (P2): correct. `/N` and `/First` resolve one level through each path's cycle-safe resolver.
+- Finding 6 (P2): correct. A compressed object that is solely a reference is refused, and the encrypted paths no longer follow one as a hop. `PdfDocument.PageTreeAndRotatedPages` relied on that prohibited form. Its alias chains are rewritten legally: the two large dictionaries are now the compressed objects (10 and 11 in stream 5), and the commented aliases stay uncompressed (6 to 10, 8 to 6, 7 to 11, 9 to 7). Its intent, one cache entry shared across alias chains through compressed objects, is unchanged.
+- Finding 2 (P2): correct. Cross-reference stream rows numbered above the governing `/Size` (the merged trailer's, else the stream's own) are skipped before their fields are validated, as D06 T05 §19 did for classic tables.
+- Finding 1 (P2): filed, not fixed here. Recovery is a single forward scan, so an indirect parameter can point at an object not yet found. Fixing it means deferring object-stream unpacking until the scan ends while keeping the scan's override order. It is filed with an owner as `D06 T05 §29` (`Damaged-file recovery resolves indirect object-stream parameters`), and `D06 T05 §21` carries the deferral.
+
+Tests, each failing on the code before this round: `PdfDocument.EncryptedObjectStreamsShareOneDecodeAndRefuseForbiddenMembers` (an incremental update of the RC4 corpus file with two encrypted object streams: siblings 21 and 22 resolve with one decode, a stream member is refused by `Document` and by `SecurityHandler`); `PdfXref.ObjStmIndirectCountsAndBareReferences` (`/N 2 0 R /First 3 0 R` resolve, a bare `2 0 R` member is refused); `PdfXref.XrefStreamEntriesAboveSizeAreMissing` (object 99 with an offset outside the file under `/Size 4` is missing, with no recovery).
+
+Architecture check: the change keeps the foundation plan's actor contract. The new cache is an instance member of `Document`, owned by its `DocumentActor` thread like `XrefTable`'s cache, and no state is shared across documents or threads.
+
+Gates after round 1: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 122 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 33 tests.`; `python scripts/todo-graph.py validate` -> `valid: 682 sections`.
