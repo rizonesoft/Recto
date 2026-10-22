@@ -235,3 +235,46 @@ OVERALL: needs-attention
 - The contract note in `D01 T01 §7` now says how parameters resolve and which callers supply a resolver.
 
 Gates after round 5: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 118 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 46 tests.`; `python scripts/todo-graph.py validate` -> valid.
+
+## Round 6: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T09:23:02Z
+- Effort: xhigh
+- Lines: 26
+- Digest: e07a3186059d858b
+
+### adversarial: needs-attention
+
+1. **P1: Corrupt-header recovery bypasses checksum validation.** `src/pdf/filters.cpp:1012` inflates after skipping two bytes without checking the remaining Adler-32 trailer. Reproduce with `decode_flate` on `78 00 73 02 00 00 42 00 42`: it returns `B`, whose checksum is `00430043`, despite the present trailer specifying `00420042`. Changing only the second byte to `9C` correctly returns `DamagedFormat`. This contradicts the section’s explicit promise to refuse present, incorrect checksums. This reproduction is source-traced; Python raw inflation independently confirmed the payload and checksum mismatch.
+
+2. **P2: Corrupt-header recovery excludes corruption of the first header byte.** `src/pdf/filters.cpp:1010` requires an intact compression-method field before trying the header-skipping fallback. Reproduce with `79 9C 73 04 00 00 42 00 42`, obtained by changing `78` to `79` in a valid stream containing `A`. Raw decoding fails and the fallback is skipped, returning `DamagedFormat` despite an intact body and checksum. The contract at `todo/01-engine/TODO-01-bridge-runtime.md:263` promises recovery for a corrupted two-byte header without this restriction. This reproduction is source-traced.
+
+### consistency: approve
+
+### integration: needs-attention
+
+1. **P1, finding 1:** `src/pdf/document.cpp:1786` passes ordinary document streams through the affected decoder. Put finding 1’s bytes in a `/FlateDecode` stream and call `Document::decode_stream`: the document receives unchecked bytes as successful output.
+
+### source-defect: needs-attention
+
+1. **P1, finding 1:** `src/pdf/filters.cpp:1020` accepts the recovered zlib body without validating its available checksum. Header recovery does not establish data integrity. [RFC 1950 §2.3](https://www.rfc-editor.org/rfc/rfc1950#section-2.3) requires an error indication for an incorrect Adler-32 value.
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: advisory
+
+The existing Release executable passed all 16 `PdfFilters.*` tests plus the ASan-support test, reporting `ASan=enabled`. The broader selection passed 47 tests; graph validation and plan checks passed. These runs do not establish executable correspondence to `f233e09`, fresh-build warnings, or ARM64 compilation. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 6
+
+- Finding 1 (P1): correct. The header-recovery path inflated the body after a damaged header with no trailer check, so a present, wrong Adler-32 passed there although the valid-header path refused it. The trailer check is now one routine (`check_adler_trailer`) used by every path that inflates a zlib body from byte 2: wrong is refused, missing or short keeps the data and records `DamagedStream`. `78 00 73 02 00 00 42 00 42` (the body inflates to `B`, the trailer names `A`) is refused.
+- Finding 2 (P2): correct. Recovery skipped the header only when byte 0 still looked like a deflate CMF byte, so damage to byte 0 was unrecoverable although the contract promises recovery from a corrupted two-byte header. When raw deflate from byte 0 fails, the body after the header is now tried whatever the header bytes are; the trailer check above means a skipped header yields only data its checksum vouches for (or, without a trailer, recorded damage), and a recovered header is itself recorded as `DamagedStream`. `79 9C ...` and `78 00 ...` around a valid `A` body now decode, each recording damage.
+- `PdfFilters.FlateTrailerDamageIsRecorded` covers all three cases and fails on the round 5 code.
+
+Gates after round 6: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 118 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 46 tests.`

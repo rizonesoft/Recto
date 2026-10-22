@@ -947,46 +947,48 @@ PdfResult<std::vector<uint8_t>> decode_flate(
 				0);
 		}
 
+		// Every path that inflates a zlib body (from byte 2, after a header that is valid or was recovered) checks its
+		// RFC 1950 section 2.3 Adler-32 trailer the same way: a present, wrong checksum is refused; a missing or
+		// cut-short one keeps the completely inflated data, as other readers do, and records the damage.
+		const auto check_adler_trailer = [&](size_t consumed, const std::vector<uint8_t>& body) -> PdfResult<void> {
+			const std::span<const uint8_t> after_deflate = input.subspan(2 + consumed);
+			if (after_deflate.size() < 4) {
+				record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream, uint64_t{2 + consumed});
+				return {};
+			}
+			const uint32_t expected_adler =
+				(static_cast<uint32_t>(after_deflate[0]) << 24u) |
+				(static_cast<uint32_t>(after_deflate[1]) << 16u) |
+				(static_cast<uint32_t>(after_deflate[2]) << 8u) |
+				static_cast<uint32_t>(after_deflate[3]);
+			if (expected_adler != compute_adler32(body)) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"FlateDecode RFC 1950 Adler-32 checksum mismatch",
+					2 + consumed);
+			}
+			return {};
+		};
+		const auto is_resource_error = [](const PdfError& e) {
+			return e.code == ErrorCode::DecompressionLimitExceeded || e.code == ErrorCode::OutOfMemory;
+		};
+
 		std::vector<uint8_t> inflated;
 		if (has_valid_zlib_header(input)) {
 			size_t consumed = 0;
 			auto zlib_res = inflate_raw_deflate(input.subspan(2), effective_limit, &consumed);
 			if (zlib_res.has_value()) {
-				// Verify the 4-byte RFC 1950 big-endian Adler-32 trailer when present.
-				const std::span<const uint8_t> after_deflate = input.subspan(2 + consumed);
-				if (after_deflate.size() < 4) {
-					// A missing or cut-short trailer: the data inflated completely, so it is kept, as other readers
-					// do, but the damage is recorded rather than passed over (RFC 1950 section 2.3 makes the
-					// checksum part of the format). A present but wrong checksum is refused below.
-					record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream, uint64_t{2 + consumed});
-				}
-				if (after_deflate.size() >= 4) {
-					const uint32_t expected_adler =
-						(static_cast<uint32_t>(after_deflate[0]) << 24u) |
-						(static_cast<uint32_t>(after_deflate[1]) << 16u) |
-						(static_cast<uint32_t>(after_deflate[2]) << 8u) |
-						static_cast<uint32_t>(after_deflate[3]);
-					const uint32_t actual_adler = compute_adler32(*zlib_res);
-					if (expected_adler != actual_adler) {
-						return make_filter_error(
-							ErrorCode::DamagedFormat,
-							DiagnosticId::DamagedStream,
-							"FlateDecode RFC 1950 Adler-32 checksum mismatch",
-							2 + consumed);
-					}
-				}
+				RECTO_PDF_RETURN_IF_ERROR(check_adler_trailer(consumed, *zlib_res));
 				inflated = std::move(*zlib_res);
-			} else if (
-				zlib_res.error().code == ErrorCode::DecompressionLimitExceeded ||
-				zlib_res.error().code == ErrorCode::OutOfMemory) {
+			} else if (is_resource_error(zlib_res.error())) {
 				return zlib_res.error();
 			} else {
 				// Fallback to raw RFC 1951 deflate from byte 0 in case a raw-deflate
 				// stream coincidentally passed the 2-byte modulo-31 check.
 				auto raw_res = inflate_raw_deflate(input, effective_limit);
 				if (!raw_res.has_value()) {
-					if (raw_res.error().code == ErrorCode::DecompressionLimitExceeded ||
-						raw_res.error().code == ErrorCode::OutOfMemory) {
+					if (is_resource_error(raw_res.error())) {
 						return raw_res.error();
 					}
 					return zlib_res.error();
@@ -994,29 +996,25 @@ PdfResult<std::vector<uint8_t>> decode_flate(
 				inflated = std::move(*raw_res);
 			}
 		} else {
-			// Automatic raw-deflate fallback when the 2-byte RFC 1950 header is
-			// omitted or fails checksum; if raw deflate from byte 0 fails and
-			// byte 0 looks like a deflate CMF byte (CM == 8, CINFO <= 7) with a
-			// corrupt FLG checksum byte, also try skipping the 2-byte header.
+			// The 2-byte RFC 1950 header is omitted or damaged (in either byte): try raw deflate from byte 0, then a
+			// zlib body after skipping the header. The recovered body's trailer is checked like any other, so a
+			// skipped header can only yield data its checksum vouches for (or, without one, recorded damage).
 			auto raw_res = inflate_raw_deflate(input, effective_limit);
 			if (raw_res.has_value()) {
 				inflated = std::move(*raw_res);
-			} else if (
-				raw_res.error().code == ErrorCode::DecompressionLimitExceeded ||
-				raw_res.error().code == ErrorCode::OutOfMemory) {
+			} else if (is_resource_error(raw_res.error())) {
 				return raw_res.error();
-			} else if (
-				input.size() > 2 &&
-				(input[0] & 0x0Fu) == 8u &&
-				((input[0] >> 4u) & 0x0Fu) <= 7u) {
-				auto skip2_res = inflate_raw_deflate(input.subspan(2), effective_limit);
+			} else if (input.size() > 2) {
+				size_t consumed = 0;
+				auto skip2_res = inflate_raw_deflate(input.subspan(2), effective_limit, &consumed);
 				if (!skip2_res.has_value()) {
-					if (skip2_res.error().code == ErrorCode::DecompressionLimitExceeded ||
-						skip2_res.error().code == ErrorCode::OutOfMemory) {
+					if (is_resource_error(skip2_res.error())) {
 						return skip2_res.error();
 					}
 					return raw_res.error();
 				}
+				RECTO_PDF_RETURN_IF_ERROR(check_adler_trailer(consumed, *skip2_res));
+				record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream, uint64_t{0}); // bad header
 				inflated = std::move(*skip2_res);
 			} else {
 				return raw_res.error();

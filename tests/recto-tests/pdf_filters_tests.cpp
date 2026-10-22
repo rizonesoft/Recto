@@ -81,6 +81,20 @@ TEST(PdfFilters, FlateTrailerDamageIsRecorded)
 	std::vector<uint8_t> wrong = body;
 	wrong.insert(wrong.end(), {0x00u, 0x42u, 0x00u, 0x43u});
 	RECTO_EXPECT_ERR(decode_flate(wrong), ErrorCode::DamagedFormat);
+
+	// A damaged header (in either byte) is recovered by skipping it, and the body's trailer is still checked.
+	for (const uint8_t bad_header_byte : {uint8_t{0}, uint8_t{1}}) {
+		std::vector<uint8_t> damaged = {0x78u, 0x9Cu, 0x73u, 0x04u, 0x00u, 0x00u, 0x42u, 0x00u, 0x42u};
+		damaged[bad_header_byte] = bad_header_byte == 0 ? 0x79u : 0x00u;
+		const uint64_t before = diagnostics_total_recorded();
+		auto recovered = decode_flate(damaged);
+		RECTO_ASSERT_OK(recovered);
+		EXPECT_EQ(*recovered, std::vector<uint8_t>{'A'});
+		EXPECT_GE(diagnostics_total_recorded(), before + 1); // the recovered header is recorded damage
+	}
+	// "B" (Adler-32 00430043) behind a damaged header and a trailer that names "A": refused, not recovered.
+	const std::vector<uint8_t> mismatched = {0x78u, 0x00u, 0x73u, 0x02u, 0x00u, 0x00u, 0x42u, 0x00u, 0x42u};
+	RECTO_EXPECT_ERR(decode_flate(mismatched), ErrorCode::DamagedFormat);
 }
 
 // /Filter, /DecodeParms and their array elements may be indirect references, resolved through the caller's resolver.
