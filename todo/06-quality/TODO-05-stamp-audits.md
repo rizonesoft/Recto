@@ -350,7 +350,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 > **Started:** 2026-10-22T00:40:00Z
 >
-> **Deferred:** a systematic pass over every corpus validator stream decoder against ISO 32000-1 7.4, the pattern rounds 19 to 22 found one decoder at a time -> XREF: D06 T05 §26
+> **Resolved:** a systematic pass over every corpus validator stream decoder against ISO 32000-1 7.4, the pattern rounds 19 to 22 found one decoder at a time -> XREF: D06 T05 §26 (2026-10-22: closed by D06 T05 §26, which reads every validator decoder against 7.4 and pins each image codec to the corpus form)
 
 `D00 T03 §4` (Encrypted (`RC4`/`AES-128`/`AES-256`), `broken/` and `seeds/` corpus fixtures) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d00-t03-s4.json` records 2 rounds (fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
 
