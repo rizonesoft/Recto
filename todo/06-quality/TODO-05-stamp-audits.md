@@ -601,10 +601,10 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 1. Re-run `D01 T01 §6`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d01-t01-s6.md`.
 2. Audit `D01 T01 §6` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d01-t01-s6.md` ends in an approving round or a recorded stop with every finding owned.
 
-- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D01 T01 §6"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d01-t01-s6.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
-- [ ] Run audit rounds on `D01 T01 §6`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d01-t01-s6.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
-- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d01-t01-s6.md` is open without a fix commit or a filed section.
-- [ ] On a confirmed regression, add a dated blocking note to `D01 T01 §6`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s6.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [x] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D01 T01 §6"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d01-t01-s6.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [x] Run audit rounds on `D01 T01 §6`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d01-t01-s6.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [x] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d01-t01-s6.md` is open without a fix commit or a filed section.
+- [x] On a confirmed regression, add a dated blocking note to `D01 T01 §6`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s6.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
 - [ ] Commit: `review: audit D01 T01 §6 under the current review process`
 
 > **Deferred:** damaged-file recovery decoding object streams whose `/Filter`, `/DecodeParms`, `/N` or `/First` is indirect, which needs the recovery scan to defer unpacking -> XREF: D06 T05 §29
