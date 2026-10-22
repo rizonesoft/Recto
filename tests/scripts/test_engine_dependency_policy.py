@@ -44,22 +44,44 @@ def tracked(*pathspecs):
     return [name for name in out.split("\0") if name]
 
 
-# Office or LibreOffice presented as something Recto needs to convert (D5, D7, D10): the suites by name, and the plain
-# sentence forms of a dependency ("Install Office", "requires Microsoft Office", "Office must be installed",
-# "uses Word to", "through PowerPoint"). A phrase check cannot prove what a sentence means, so other wording that states
-# a dependency remains a review matter, like the obfuscation noted above.
-OFFICE_DEPENDENCY = re.compile(
-    r"libreoffice|office com|microsoft (word|excel|powerpoint|office|365)"
-    r"|\b(install|installs|installed|installing|need|needs|needed|require|requires|required|requiring|through|via"
-    r"|using|uses?)( the)?( microsoft)? (office|word|excel|powerpoint)( to| installed| for|\b)"
-    r"|\b(office|word|excel|powerpoint) ((is|are) (required|needed|necessary)|(must|has to|needs to|should) be"
-    r" installed)\b", re.IGNORECASE)
-# Inline elements do not break words when rendered (Libre<span>Office</span> reads "LibreOffice"), so they are removed
-# without a space; every other tag separates words.
-INLINE_TAG = re.compile(r"</?(a|abbr|b|bdi|bdo|cite|code|data|dfn|em|i|kbd|mark|q|s|samp|small|span|strong|sub|sup|time"
-                        r"|u|var)\b[^>]*>", re.IGNORECASE)
+# Office or LibreOffice presented as something Recto needs to convert (D5, D7, D10). Two rules over the boards'
+# visible text, read unit by unit (each block element and each sentence or clause):
+# - the suites by name, which a board never has a reason to show: LibreOffice, Microsoft Office or 365, Office COM;
+# - a unit naming Office, Word, Excel or PowerPoint together with a word of dependency (install, require, need,
+#   necessary, depend, through, via, using, uses, copy of), unless it is one of the reviewed sentences below, each
+#   read and found to describe Recto's own conversion. Any new such sentence fails until a reviewer adds it here.
+OFFICE_SUITE = re.compile(r"\b(libreoffice|microsoft (office|365)|office com)\b", re.IGNORECASE)
+OFFICE_PRODUCT = re.compile(r"\b(office|word|excel|powerpoint)\b", re.IGNORECASE)
+DEPENDENCY_WORD = re.compile(r"\b(install\w*|requir\w*|need\w*|necessar\w*|depend\w*|through|via|using|uses|copy of)\b",
+                             re.IGNORECASE)
+REVIEWED_SENTENCES = {
+    # B-Convert, PDF to Word: the user may tidy the converted document in Word; Recto does not need Word to convert.
+    "Pages with several columns, tables or floating pictures may need tidying in Word afterwards",
+}
 # The suites' install pages, matched in the raw text so a link counts whatever its anchor says.
 OFFICE_INSTALL_LINK = re.compile(r"libreoffice\.org|microsoft\.com/microsoft-365|office\.com", re.IGNORECASE)
+# Inline elements and comments do not break words when rendered (Libre<span>Office</span>, Libre<!-- x -->Office), so
+# they are removed without a space; every other tag ends a unit.
+INLINE_TAG = re.compile(r"</?(a|abbr|b|bdi|bdo|cite|code|data|dfn|em|i|kbd|mark|q|s|samp|small|span|strong|sub|sup|time"
+                        r"|u|var)\b[^>]*>", re.IGNORECASE)
+
+
+def visible_units(markup: str) -> list[str]:
+    """The text a reader sees, as units split at block elements and at sentence or clause punctuation, with entities
+    decoded and white space collapsed."""
+    text = re.sub(r"(?s)<!--.*?-->", "", markup)
+    text = re.sub(r"(?is)<(script|style)\b.*?</\1>", "\n", text)
+    text = html.unescape(re.sub(r"<[^>]+>", "\n", INLINE_TAG.sub("", text)))
+    return [" ".join(unit.split()) for unit in re.split(r"[\n.!?:;]", text) if unit.strip()]
+
+
+def office_dependency(markup: str) -> str | None:
+    """The first unit that presents Office or LibreOffice as a converter Recto needs, or None."""
+    for unit in visible_units(markup):
+        if OFFICE_SUITE.search(unit) or (OFFICE_PRODUCT.search(unit) and DEPENDENCY_WORD.search(unit)
+                                         and unit not in REVIEWED_SENTENCES):
+            return unit
+    return None
 
 
 class EngineDependencyPolicyTest(unittest.TestCase):
@@ -113,11 +135,23 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                 self.assertIsNone(re.search(r"\bfz_", text, re.IGNORECASE))  # MuPDF's API prefix, whatever follows it
                 # Recto converts Office files with its own engines (D5, D7, D10): no board may present Office or
                 # LibreOffice as a converter Recto needs (D06 T05 §28).
-                # Matched on the visible text (tags removed, entities decoded, white space collapsed), so markup cannot
-                # split or disguise a phrase; install links are matched in the raw text.
-                visible = " ".join(html.unescape(re.sub(r"<[^>]+>", " ", INLINE_TAG.sub("", text))).split())
-                self.assertIsNone(OFFICE_DEPENDENCY.search(visible))
+                self.assertIsNone(office_dependency(text))
                 self.assertIsNone(OFFICE_INSTALL_LINK.search(text))
+
+    def test_office_dependency_wording_is_refused(self):
+        for markup in ("<p>Get LibreOffice (free)</p>", "<p>Get Libre<span>Office</span></p>",
+                       "<p>Get Libre<!-- branding -->Office</p>", "<p>Install Microsoft&nbsp;Office to convert.</p>",
+                       "<p>Office is required to convert documents.</p>",
+                       "<p>Office installation is required to convert documents.</p>",
+                       "<p>Conversion requires an installed copy of Office.</p>",
+                       "<p>Conversion uses Word to create the PDF.</p>", "<p>Converts through PowerPoint.</p>"):
+            with self.subTest(markup=markup):
+                self.assertIsNotNone(office_dependency(markup))
+        for markup in ("<p>Office to PDF is built in.</p>", "<td>PDF to Word</td><td>needs a password</td>",
+                       "<p>Updates come through the Microsoft Store.</p>",
+                       "<p>Pages with several columns, tables or floating pictures may need tidying in Word afterwards.</p>"):
+            with self.subTest(markup=markup):
+                self.assertIsNone(office_dependency(markup))
 
     @unittest.skipUnless(sys.platform == "win32", "the C++ build and MSBuild are Windows-only (foundation plan D15)")
     def test_every_module_compiles_as_cpp20_with_warnings_as_errors(self):
