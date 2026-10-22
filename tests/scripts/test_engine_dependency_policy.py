@@ -99,7 +99,14 @@ LINK_ATTRIBUTES = {"href", "src", "action", "formaction"}
 
 def office_install_link(url: str) -> bool:
     parts = urllib.parse.urlsplit(url.strip())
-    host = (parts.hostname or "").lower().rstrip(".")
+    # The host as a browser resolves it: percent-decoded, then IDNA-mapped (which also folds case and full-width
+    # dots), so www.%6cibreoffice.org and LIBREOFFICE\uff0eORG are libreoffice.org.
+    host = urllib.parse.unquote(parts.hostname or "")
+    try:
+        host = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        pass
+    host = host.lower().rstrip(".")
     if any(host == h or host.endswith("." + h) for h in OFFICE_HOSTS):
         return True
     path = urllib.parse.unquote(parts.path).lower()
@@ -258,7 +265,9 @@ class EngineDependencyPolicyTest(unittest.TestCase):
     def test_office_install_links_are_found_however_written(self):
         for markup in ('<a href="https://www.microsoft.com/en-us/microsoft-365">Install converter</a>',
                        '<a href="https://www.libreoffice&#46;org/">Install converter</a>',
-                       "<a href=https://www.office.com>Get it</a>", '<form action="https://download.libreoffice.org/x">'):
+                       "<a href=https://www.office.com>Get it</a>", '<form action="https://download.libreoffice.org/x">',
+                       '<a href="https://www.%6cibreoffice.org/download/download-libreoffice/">Install converter</a>',
+                       '<a href="https://WWW.LIBREOFFICE\uff0eORG/">Install converter</a>'):
             with self.subTest(markup=markup):
                 self.assertTrue(any(office_install_link(url) for url in board_links(markup)))
         for markup in ('<a href="https://learn.microsoft.com/windows/apps/windows-app-sdk/">Docs</a>',
