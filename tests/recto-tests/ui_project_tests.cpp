@@ -76,13 +76,34 @@ std::string read_text(const fs::path& path)
 	return buffer.str();
 }
 
+// For a raw string literal whose opening quote is at `quote` (the `"` after the
+// R), the index one past its closing quote; npos when it is not a well-formed
+// raw string (delimiters are at most 16 characters, none of space, ( ) or \).
+size_t raw_string_end(const std::string& text, size_t quote)
+{
+	const size_t open = text.find('(', quote + 1);
+	if (open == std::string::npos || open - quote - 1 > 16) {
+		return std::string::npos;
+	}
+	const std::string delimiter = text.substr(quote + 1, open - quote - 1);
+	if (delimiter.find_first_of(" ()\\\t\n\r") != std::string::npos) {
+		return std::string::npos;
+	}
+	const std::string closing = ")" + delimiter + "\"";
+	const size_t close = text.find(closing, open + 1);
+	return close == std::string::npos ? std::string::npos : close + closing.size();
+}
+
 // What the compiler's preprocessor sees (translation phases 2 and 3): lines
 // joined at a backslash-newline, then every comment replaced by one space. A
 // quoted literal is skipped so a "//" inside it does not start a comment. A
 // regex over physical lines misses `#include /* c */ "x.h"` and an include split
 // across a continuation, both of which the compiler accepts.
-std::string logical_source(const std::string& raw)
+std::string logical_source(const std::string& raw_with_bom)
 {
+	// A UTF-8 byte order mark is not part of the first line the compiler lexes.
+	const std::string_view bom = "\xEF\xBB\xBF";
+	const std::string raw = raw_with_bom.starts_with(bom) ? raw_with_bom.substr(bom.size()) : raw_with_bom;
 	std::string spliced;
 	spliced.reserve(raw.size());
 	for (size_t i = 0; i < raw.size(); ++i) {
@@ -118,6 +139,11 @@ std::string logical_source(const std::string& raw)
 			}
 			++i;
 			out.push_back(' ');
+		} else if (c == '"' && !out.empty() && out.back() == 'R' && raw_string_end(spliced, i) != std::string::npos) {
+			// R"delim( ... )delim": the body is opaque, whatever quotes or comment openers it holds.
+			const size_t end = raw_string_end(spliced, i);
+			out.append(spliced, i, end - i);
+			i = end - 1;
 		} else if (c == '"' || c == '\'') {
 			out.push_back(c);
 			for (++i; i < spliced.size() && spliced[i] != c && spliced[i] != '\n'; ++i) {
@@ -169,6 +195,7 @@ template <typename Predicate>
 std::vector<Finding> scan_includes(const fs::path& dir, Predicate forbidden)
 {
 	static const std::regex include_line(R"(^\s*#\s*include\s*[<"]([^>"]+)[>"])");
+	static const std::regex computed_include(R"(^\s*#\s*include\s*([^<"\s].*)$)");
 	std::vector<Finding> findings;
 	if (!fs::exists(dir)) {
 		return findings;
@@ -183,8 +210,14 @@ std::vector<Finding> scan_includes(const fs::path& dir, Predicate forbidden)
 		while (std::getline(lines, line)) {
 			++number;
 			std::smatch match;
-			if (std::regex_search(line, match, include_line) && forbidden(match[1].str())) {
-				findings.push_back({entry.path(), number, match[1].str()});
+			if (std::regex_search(line, match, include_line)) {
+				if (forbidden(match[1].str())) {
+					findings.push_back({entry.path(), number, match[1].str()});
+				}
+			} else if (std::regex_search(line, match, computed_include)) {
+				// #include MACRO hides its target from any text scan, so inside the
+				// guarded modules it is refused outright.
+				findings.push_back({entry.path(), number, "computed include " + match[1].str()});
 			}
 		}
 	}
@@ -331,7 +364,12 @@ RECTO_UI_TEST(Project, IncludeBoundary)
 		"#include \"recto_services.h\"\n"
 		"#include /* a comment */ \"../pdf/document.h\"\n"
 		"const char* literal = \"// not a comment\"; /* nor is this a hiding place */\n"
-		"#include \"recto_pdf.h\" // reached after a literal\n");
+		"#include \"recto_pdf.h\" // reached after a literal\n"
+		"const char* raw = R\"tag(\"/*)tag\";\n"
+		"#include \"recto_core.h\"\n"
+		"#define UI_HEADER \"recto_services.h\"\n"
+		"#include UI_HEADER\n");
+	write_text(scratch.path() / "src" / "ui" / "planted_bom.cpp", "\xEF\xBB\xBF#include \"recto_pdf.h\"\n");
 	write_text(scratch.path() / "src" / "ui" / "planted_splice.cpp", "#inc\\\nlude \"recto_pdf.h\"\n");
 	write_text(scratch.path() / "src" / "pdf" / "planted_pdf.cpp", "#include <recto/ui/ui.h>\n#include \"document.h\"\n#include /* toolkit */ \"../ui/include/recto/ui/ui.h\"\n");
 	write_text(scratch.path() / "src" / "core" / "planted_core.cpp", "#include \"../ui/application.h\"\n");
@@ -344,7 +382,7 @@ RECTO_UI_TEST(Project, IncludeBoundary)
 	}
 	const std::set<std::string> expected = {
 		"planted_ui.cpp:4", "planted_ui.cpp:5", "planted_ui.cpp:6", "planted_ui.cpp:7", "planted_ui.cpp:8", "planted_ui.cpp:9",
-		"planted_ui.cpp:10", "planted_ui.cpp:12", "planted_splice.cpp:1", "planted_pdf.cpp:1", "planted_pdf.cpp:3", "planted_core.cpp:1",
+		"planted_ui.cpp:10", "planted_ui.cpp:12", "planted_ui.cpp:14", "planted_ui.cpp:16", "planted_bom.cpp:1", "planted_splice.cpp:1", "planted_pdf.cpp:1", "planted_pdf.cpp:3", "planted_core.cpp:1",
 		"planted_services.h:2"};
 	EXPECT_EQ(caught, expected) << describe(planted);
 }
