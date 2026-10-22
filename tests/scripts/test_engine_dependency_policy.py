@@ -99,23 +99,30 @@ LINK_ATTRIBUTES = {"href", "src", "action", "formaction"}
 NODE = shutil.which("node")
 _RESOLVE_URLS = (
     "const urls = JSON.parse(require('fs').readFileSync(0, 'utf8'));"
-    "process.stdout.write(JSON.stringify(urls.map(u => { try { const p = new URL(u, 'https://recto.invalid/');"
-    " return [p.hostname, decodeURIComponent(p.pathname)]; } catch { return ['', '']; } })));")
+    "const decode = s => { try { return decodeURIComponent(s); } catch { return s; } };"
+    "process.stdout.write(JSON.stringify(urls.map(u => { let p; try { p = new URL(u, 'https://recto.invalid/'); }"
+    " catch { return null; } return [p.hostname, decode(p.pathname)]; })));")
 
 
-def resolve_urls(urls: list[str]) -> list[tuple[str, str]]:
-    """(hostname, path) for each URL as a browser resolves it, relative ones against a placeholder host."""
+def resolve_urls(urls: list[str]) -> list[tuple[str, str] | None]:
+    """(hostname, path) for each URL as a browser resolves it, relative ones against a placeholder host; the path is
+    percent-decoded where it can be and kept as written where it cannot; None for a URL a browser cannot parse."""
     if not urls:
         return []
     run = subprocess.run([NODE, "-e", _RESOLVE_URLS], input=json.dumps(urls), capture_output=True, text=True,
                          encoding="utf-8", timeout=60, check=True)
-    return [tuple(pair) for pair in json.loads(run.stdout)]
+    return [tuple(pair) if pair is not None else None for pair in json.loads(run.stdout)]
 
 
 def office_install_links(urls: list[str]) -> list[str]:
-    """The URLs among urls that lead to an Office suite's pages."""
+    """The URLs among urls that lead to an Office suite's pages, or that a browser cannot parse at all (a board has no
+    reason to hold a broken link, and one could not be judged)."""
     found = []
-    for url, (host, path) in zip(urls, resolve_urls(urls)):
+    for url, resolved in zip(urls, resolve_urls(urls)):
+        if resolved is None:
+            found.append(url)
+            continue
+        host, path = resolved
         host = host.lower().rstrip(".")
         if any(host == h or host.endswith("." + h) for h in OFFICE_HOSTS) or (
                 (host == "microsoft.com" or host.endswith(".microsoft.com"))
@@ -281,7 +288,9 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                        '<a href="https://www.%6cibreoffice.org/download/download-libreoffice/">Install converter</a>',
                        '<a href="https://WWW.LIBREOFFICE\uff0eORG/">Install converter</a>',
                        '<a href="https:///www.libreoffice.org/download/">Install converter</a>',
-                       '<a href="https://www.libreoffice.org\\@example.com/download/">Install converter</a>'):
+                       '<a href="https://www.libreoffice.org\\@example.com/download/">Install converter</a>',
+                       '<a href="https://www.libreoffice.org/download/%FF">Install converter</a>',
+                       '<a href="https://[not a host]/">Broken</a>'):
             with self.subTest(markup=markup):
                 self.assertTrue(office_install_links(board_links(markup)))
         for markup in ('<a href="https://learn.microsoft.com/windows/apps/windows-app-sdk/">Docs</a>',
