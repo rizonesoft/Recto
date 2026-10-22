@@ -57,7 +57,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 24 | §24 | Audit D01 T01 §10: pdf::Document page-tree resolver, metadata, /Outlines, font list and | D01 T01 §10, §23 | [ ] |
 | 25 | §25 | Retired MuPDF and AGPL text removed from the A, B and C mockup boards | §2 | [x] |
 | 26 | §26 | Corpus validator filter decoders conform to ISO 32000-1 7.4 | §12 | [x] |
-| 27 | §27 | ARM64 Debug build free of the CS1668 LIB search-path warnings | §13 | [ ] |
+| 27 | §27 | ARM64 Debug build free of the CS1668 LIB search-path warnings | §13 | [x] |
 | 28 | §28 | Retired Office and LibreOffice converter surfaces removed from the A, B and C boards | §25 | [ ] |
 
 ## 1. Audit D00 T01 §1: Git repository and repo-face files
@@ -710,9 +710,12 @@ The audit of `D00 T03 §5` (`docs/reviews/06-quality/audit-d00-t03-s5.md`, D06 T
 - [x] Capture a binary log of the ARM64 Debug `recto-tests` build through `build/build.ps1` (**Corrected 2026-10-22:** `MSBuildDebugEngine` binary logs and `-getProperty:LibraryPath` served; the warning reproduces only when vcpkg's install step runs, forced by back-dating its stamp) and name the inline task, its declaring `.targets` file and the `LIB` value it sees, in `docs/reviews/06-quality/D06-T05-s27.md`. Done when: the findings file names all three.
 - [x] Remove the absent ARM64 folders from `LIB` at their source (a project property, `Directory.Build.props`, or an installed but unused component), or update the package that declares the task. Done when: `.\build.cmd` logs `0 Warning(s)` for every configuration and no warning is suppressed or filtered.
 - [x] Add a check to `build/build.ps1` that fails the run when MSBuild reports any warning in any configuration. Done when: reintroducing an absent folder on `LIB` makes `.\build.cmd` exit non-zero.
-- [ ] Commit: `build: ARM64 Debug builds without CS1668 warnings`
+- [x] Commit: `build: ARM64 Debug builds without CS1668 warnings`
 
 **Test checkpoint:** `.\build.cmd` exits 0 and its log shows `0 Warning(s)` for x64 and ARM64, Debug and Release.
+
+> **Verified:** 2026-10-22 | §27 | b86dcd3141aafd057e082c2fe50553f6f7623671
+> **Review:** `docs/reviews/d06-t05-s27.json`
 
 ## 28. Retired Office and LibreOffice converter surfaces removed from the A, B and C boards
 
