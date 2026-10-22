@@ -90,6 +90,51 @@ void verify_simple_1p_with_preamble(std::span<const uint8_t> preamble)
 }
 
 // ISO 32000-1 Table 15: /Size is required, and an object numbered above it is ignored and treated as missing.
+// An object stream's /DecodeParms may be an indirect reference: it resolves, and one pointing back into the same
+// stream is a cycle that fails cleanly.
+TEST(PdfXref, ObjStmIndirectDecodeParmsResolve)
+{
+	const auto build = [](std::string_view parms_ref) {
+		const std::string payload = "312030203432>"; // ASCIIHex of "1 0 42": object 1 is the integer 42
+		std::string pdf = "%PDF-1.7\n";
+		const size_t off2 = pdf.size();
+		pdf += "2 0 obj\n<< >>\nendobj\n";
+		const size_t off5 = pdf.size();
+		pdf += "5 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Filter /ASCIIHexDecode /DecodeParms ";
+		pdf += parms_ref;
+		pdf += " /Length " + std::to_string(payload.size()) + " >>\nstream\n" + payload + "\nendstream\nendobj\n";
+		const size_t off6 = pdf.size();
+		std::string rows(7 * 4, '\0');
+		rows[3] = '\xFF';                                     // 0: free
+		rows[4] = 2;                                          // 1: in object stream 5, index 0
+		rows[6] = 5;
+		rows[8] = 1;                                          // 2: uncompressed
+		rows[9] = static_cast<char>((off2 >> 8) & 0xFF);
+		rows[10] = static_cast<char>(off2 & 0xFF);
+		rows[20] = 1;                                         // 5: uncompressed
+		rows[21] = static_cast<char>((off5 >> 8) & 0xFF);
+		rows[22] = static_cast<char>(off5 & 0xFF);
+		rows[24] = 1;                                         // 6: this xref stream
+		rows[25] = static_cast<char>((off6 >> 8) & 0xFF);
+		rows[26] = static_cast<char>(off6 & 0xFF);
+		pdf += "6 0 obj\n<< /Type /XRef /Size 7 /Root 1 0 R /W [1 2 1] /Length " + std::to_string(rows.size()) +
+			" >>\nstream\n" + rows + "\nendstream\nendobj\nstartxref\n" + std::to_string(off6) + "\n%%EOF\n";
+		return pdf;
+	};
+
+	const std::string ok_pdf = build("2 0 R");
+	auto xref = XrefTable::parse(as_bytes(ok_pdf));
+	RECTO_ASSERT_OK(xref);
+	auto value = xref->resolve_object(as_bytes(ok_pdf), IndirectRef{1u, 0u});
+	RECTO_ASSERT_OK(value);
+	EXPECT_EQ(value->as_int(), std::optional<int64_t>(42));
+
+	const std::string cyclic_pdf = build("1 0 R"); // object 1 lives in this very stream
+	auto cyclic_xref = XrefTable::parse(as_bytes(cyclic_pdf));
+	RECTO_ASSERT_OK(cyclic_xref);
+	RECTO_EXPECT_ERR(cyclic_xref->resolve_object(as_bytes(cyclic_pdf), IndirectRef{1u, 0u}), ErrorCode::DamagedFormat);
+}
+
 TEST(PdfXref, ClassicEntriesAboveSizeAreMissing)
 {
 	const auto build = [](std::string_view trailer, std::optional<size_t> seven_offset = std::nullopt) {

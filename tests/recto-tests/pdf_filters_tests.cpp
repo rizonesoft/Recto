@@ -120,6 +120,18 @@ TEST(PdfFilters, IndirectFilterAndDecodeParmsResolve)
 	RECTO_EXPECT_ERR(decode_stream(raw, missing, kMaxDecodedStreamBytes, &resolver), ErrorCode::DamagedFormat);
 }
 
+// An incomplete Huffman code is valid only as a single one-bit code (RFC 1951 section 3.2.7, zlib inftrees.c):
+// a lone two-bit literal/length or distance code is refused, as zlib refuses both vectors.
+TEST(PdfFilters, LoneHuffmanCodeLongerThanOneBitIsRefused)
+{
+	std::vector<uint8_t> literal = {0x05u, 0x80u, 0x01u, 0x04u, 0x00u, 0x00u, 0x00u, 0x40u};
+	literal.insert(literal.end(), 32, 0x00u);
+	literal.push_back(0x02u);
+	RECTO_EXPECT_ERR(decode_flate(literal), ErrorCode::DamagedFormat);
+	const std::vector<uint8_t> distance = {0x05u, 0xC0u, 0x81u, 0x00u, 0x00u, 0x00u, 0x00u, 0x80u, 0x20u, 0x7Fu, 0xEBu, 0x06u};
+	RECTO_EXPECT_ERR(decode_flate(distance), ErrorCode::DamagedFormat);
+}
+
 // The values inside /DecodeParms may be indirect too, and a full eight-stage chain of references resolves.
 TEST(PdfFilters, IndirectValuesAndFullChainsResolve)
 {

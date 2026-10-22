@@ -1570,9 +1570,16 @@ PdfResult<Document::SingleHopResult> Document::resolve_single_indirect_hop(
 					stm_obj_num,
 					0u);
 			}
+			// Indirect /Filter and /DecodeParms resolve with this container already visited (a cycle back into it
+			// fails cleanly).
+			const IndirectObjectResolver parms_resolver = [&](IndirectRef ref) -> PdfResult<PdfValue> {
+				std::vector<IndirectRef> hop_visited = visited_refs;
+				hop_visited.push_back(stm_ref);
+				return resolve_object_with_visited(ref, hop_visited);
+			};
 			RECTO_PDF_TRY(
 				std::vector<uint8_t> decoded_stm,
-				recto::pdf::decode_stream(*obj_stm));
+				recto::pdf::decode_stream(*obj_stm, kMaxDecodedStreamBytes, &parms_resolver));
 			const uint64_t first_off = static_cast<uint64_t>(*first_opt);
 			if (first_off > decoded_stm.size()) {
 				return make_doc_error(

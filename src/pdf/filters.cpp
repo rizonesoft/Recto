@@ -210,7 +210,9 @@ struct HuffmanTree {
 				return false;
 			}
 		}
-		if (left > 0 && !(allow_incomplete_single && total_nonzero == 1u)) {
+		// An incomplete code is valid only as one code of length 1 (RFC 1951 section 3.2.7: "one distance code of
+		// one bit"); zlib's inftrees.c refuses any other incomplete set, so a lone longer code is refused too.
+		if (left > 0 && !(allow_incomplete_single && total_nonzero == 1u && count[1] == 1u)) {
 			return false;
 		}
 
@@ -490,9 +492,9 @@ struct HuffmanTree {
 			const uint32_t hlit = hlit_raw + 257u;
 			const uint32_t hdist = hdist_raw + 1u;
 			const uint32_t hclen = hclen_raw + 4u;
-			// RFC 1951 section 3.2.7 lets HLIT reach 288 and HDIST 32 (the extra entries can only have length 0,
-			// since those symbols never occur). zlib, the reference inflater, refuses them ("too many length or
-			// distance symbols"), so no producer's output that other readers open is lost; Recto refuses the same.
+			// RFC 1951 section 3.2.7 caps HLIT at 286 but lets HDIST reach 32 (distance codes 30 and 31 can only
+			// have length 0, since they never occur). zlib, the reference inflater, refuses HDIST above 30 ("too
+			// many length or distance symbols"), so no producer's output other readers open is lost; Recto agrees.
 			if (hlit > 286u || hdist > 30u) {
 				return make_filter_error(
 					ErrorCode::DamagedFormat,

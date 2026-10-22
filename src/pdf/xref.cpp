@@ -1693,7 +1693,16 @@ PdfResult<IndirectObject> XrefTable::read_compressed_object_with_visited(
 				0u);
 		}
 
-		auto decoded_res = decode_stream(obj_stm);
+		// The container's /Filter and /DecodeParms may be indirect; they resolve with this stream already visited, so
+		// a parameter pointing back into it is a cycle rather than a recursion.
+		std::vector<IndirectRef> parms_visited = visited_refs;
+		parms_visited.push_back(stm_ref);
+		const IndirectObjectResolver parms_resolver = [&](IndirectRef ref) -> PdfResult<PdfValue> {
+			std::vector<IndirectRef> hop_visited = parms_visited;
+			RECTO_PDF_TRY_REF(target, read_indirect_object_with_visited(file_bytes, ref, hop_visited));
+			return std::move(target.value);
+		};
+		auto decoded_res = decode_stream(obj_stm, kMaxDecodedStreamBytes, &parms_resolver);
 		if (!decoded_res.has_value()) {
 			if (decoded_res.error().code == ErrorCode::DamagedFormat) {
 				record_diagnostic(

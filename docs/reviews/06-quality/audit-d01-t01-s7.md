@@ -129,6 +129,18 @@ OVERALL: needs-attention
 
 ## Fixes after round 3
 
-- Finding 1 (P3), kept as a deliberate refusal: RFC 1951 section 3.2.7 does allow HDIST up to 32 (and HLIT up to 288) when the extra entries have length 0. zlib's `inflate`, the reference implementation every producer is tested against, refuses those headers ("too many length or distance symbols") unless built with `PKZIP_BUG_WORKAROUND`, so no stream other readers open is lost by refusing the same; accepting them would make Recto read streams zlib rejects. The reason is now a comment at the check in `src/pdf/filters.cpp`. No behaviour change.
+- Finding 1 (P3), kept as a deliberate refusal: RFC 1951 section 3.2.7 does allow HDIST up to 32 when the extra entries have length 0 (**Corrected before round 4:** this note first also said HLIT up to 288; the RFC caps HLIT at 286). zlib's `inflate`, the reference implementation every producer is tested against, refuses those headers ("too many length or distance symbols") unless built with `PKZIP_BUG_WORKAROUND`, so no stream other readers open is lost by refusing the same; accepting them would make Recto read streams zlib rejects. The reason is now a comment at the check in `src/pdf/filters.cpp`. No behaviour change.
 
 Gates after round 3: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 114 tests.` for x64 Debug and Release.
+
+## Fixes before round 4 (found by the reviewer trial)
+
+The owner's reviewer trial (`.conclave/reviewer-trial-2026-10-22.md`) ran the round 4 prompt at `50af32b` through GPT-6 Astra at medium and GPT-6.1 Sol at high and xhigh, outside this record. Its three findings were verified against the source and fixed before the official round 4:
+
+- Incomplete single-code Huffman trees (P1 as Sol xhigh rated it on the distance table): `build_huffman` accepted a lone code of any length; RFC 1951 section 3.2.7 and zlib's `inftrees.c` accept an incomplete code only as one code of length 1. It now requires `count[1] == 1`. `PdfFilters.LoneHuffmanCodeLongerThanOneBitIsRefused` refuses both trial vectors (a lone two-bit literal/length code and a lone two-bit distance code, each also refused by zlib: `invalid literal/lengths set`, `invalid distances set`).
+- Object streams decoded without a resolver (P2): `XrefTable` and the encrypted-document path in `Document` called `decode_stream` with no resolver, so an indirect `/DecodeParms` on an object stream failed. Both now pass one that resolves with the container already visited, so a parameter pointing back into the same stream fails as a cycle. `PdfXref.ObjStmIndirectDecodeParmsResolve` resolves an object from a stream whose `/DecodeParms` is `2 0 R` and refuses one pointing at `1 0 R` inside the stream. The encrypted-document path is covered by the build and the shared resolver pattern only: no corpus file is an encrypted document with object streams.
+- My round 3 comment said RFC 1951 lets HLIT reach 288; it caps HLIT at 286, and only HDIST reaches 32. The comment is corrected, and so is round 3's note above, which repeated it.
+
+Both new tests fail on the round 3 code.
+
+Gates before round 4: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 116 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfXref.*:PdfDocument.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 36 tests.`
