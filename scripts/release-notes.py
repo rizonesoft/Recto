@@ -43,7 +43,9 @@ GROUPS = ("security", "data-loss", "crash", "regression", "bug")
 UNLABELLED = "unlabelled"
 # GitHub issue numbers fit in ten digits; a longer run of digits is not an issue number (and never reaches int()).
 ISSUE = re.compile(r"#([0-9]{1,10})\b")
-GTEST_ID = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$")
+# recto-ui tests are registered as suite `Ui`, case `<Area>.<Name>` (tests/recto-tests/ui_test.h), so their id has three
+# parts: `Ui` is the one suite allowed a dotted case, and no Python module is called Ui.
+GTEST_ID = re.compile(r"^(?:Ui\.[A-Za-z_][A-Za-z0-9_]*|[A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$")
 PYTHON_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){2,}$")
 TRAILER = re.compile(r"^([A-Za-z0-9-]+):\s*(.*)$", re.DOTALL)
 # Where CI records each main build's `--gtest_list_tests` output, one note per commit (D07 T03 §9).

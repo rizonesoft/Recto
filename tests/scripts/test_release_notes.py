@@ -443,5 +443,44 @@ class UserBugRuleDocsTest(unittest.TestCase):
         self.assertIn("docs/support/user-bugs.md", (REPO / "AGENTS.md").read_text(encoding="utf-8"))
 
 
+class UiTestIdTest(unittest.TestCase):
+    """recto-ui tests carry three-part gtest ids (Ui.Project.HarnessSolid): a gtest id, not a Python test id."""
+
+    LISTING = "Running main() from gtest_main.cc\nUi.\n  Project.HarnessSolid\n  Project.HarnessStride\nPdfXref.\n  ParsesTable\n"
+
+    class _Notes:
+        def __init__(self, listed):
+            self.listed = listed
+
+        def tests_at(self, sha):
+            return self.listed
+
+    class _NoPython:
+        def exists(self, sha, test_id):
+            raise AssertionError("a Ui.* id must not be probed as a Python test")
+
+    COMMIT = {"sha": "a" * 40, "short": "aaaaaaa"}
+
+    def test_the_list_parser_keeps_the_dotted_case(self):
+        names = release_notes.parse_gtest_list(self.LISTING, "listing")
+        self.assertIn("Ui.Project.HarnessSolid", names)
+        self.assertIn("PdfXref.ParsesTable", names)
+
+    def test_a_listed_ui_test_counts_and_an_unlisted_one_does_not(self):
+        notes = self._Notes(release_notes.parse_gtest_list(self.LISTING, "listing"))
+        self.assertIsNone(release_notes.test_problem(self._NoPython(), notes, self.COMMIT, "Ui.Project.HarnessSolid"))
+        problem = release_notes.test_problem(self._NoPython(), notes, self.COMMIT, "Ui.Project.Missing")
+        self.assertIn("is not in aaaaaaa's CI test list", problem)
+
+    def test_other_three_part_ids_are_still_python_ids(self):
+        class Python:
+            def exists(self, sha, test_id):
+                return False
+
+        notes = self._Notes({"Ui.Project.HarnessSolid"})
+        problem = release_notes.test_problem(Python(), notes, self.COMMIT, "tests.scripts.test_mod.ModTest")
+        self.assertIn("is not a unittest test at aaaaaaa", problem)
+
+
 if __name__ == "__main__":
     unittest.main()

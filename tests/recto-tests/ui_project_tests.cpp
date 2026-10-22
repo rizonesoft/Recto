@@ -20,6 +20,7 @@
 #include <regex>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -75,6 +76,77 @@ std::string read_text(const fs::path& path)
 	return buffer.str();
 }
 
+// What the compiler's preprocessor sees (translation phases 2 and 3): lines
+// joined at a backslash-newline, then every comment replaced by one space. A
+// quoted literal is skipped so a "//" inside it does not start a comment. A
+// regex over physical lines misses `#include /* c */ "x.h"` and an include split
+// across a continuation, both of which the compiler accepts.
+std::string logical_source(const std::string& raw)
+{
+	std::string spliced;
+	spliced.reserve(raw.size());
+	for (size_t i = 0; i < raw.size(); ++i) {
+		if (raw[i] == '\\') {
+			size_t j = i + 1;
+			if (j < raw.size() && raw[j] == '\r') {
+				++j;
+			}
+			if (j < raw.size() && raw[j] == '\n') {
+				i = j;
+				continue;
+			}
+		}
+		spliced.push_back(raw[i]);
+	}
+	std::string out;
+	out.reserve(spliced.size());
+	for (size_t i = 0; i < spliced.size(); ++i) {
+		const char c = spliced[i];
+		const char next = i + 1 < spliced.size() ? spliced[i + 1] : '\0';
+		if (c == '/' && next == '/') {
+			while (i < spliced.size() && spliced[i] != '\n') {
+				++i;
+			}
+			out.push_back('\n');
+		} else if (c == '/' && next == '*') {
+			i += 2;
+			while (i + 1 < spliced.size() && !(spliced[i] == '*' && spliced[i + 1] == '/')) {
+				if (spliced[i] == '\n') {
+					out.push_back('\n');
+				}
+				++i;
+			}
+			++i;
+			out.push_back(' ');
+		} else if (c == '"' || c == '\'') {
+			out.push_back(c);
+			for (++i; i < spliced.size() && spliced[i] != c && spliced[i] != '\n'; ++i) {
+				if (spliced[i] == '\\' && i + 1 < spliced.size()) {
+					out.push_back(spliced[i++]);
+				}
+				out.push_back(spliced[i]);
+			}
+			if (i < spliced.size()) {
+				out.push_back(spliced[i]);
+			}
+		} else {
+			out.push_back(c);
+		}
+	}
+	return out;
+}
+
+std::string without_whitespace(const std::string& text)
+{
+	std::string out;
+	for (const char c : text) {
+		if (!std::isspace(static_cast<unsigned char>(c))) {
+			out.push_back(c);
+		}
+	}
+	return out;
+}
+
 // Every header basename (lower case) under `dirs`.
 std::set<std::string> header_basenames(const std::vector<fs::path>& dirs)
 {
@@ -105,7 +177,7 @@ std::vector<Finding> scan_includes(const fs::path& dir, Predicate forbidden)
 		if (!entry.is_regular_file() || !is_source_file(entry.path())) {
 			continue;
 		}
-		std::istringstream lines(read_text(entry.path()));
+		std::istringstream lines(logical_source(read_text(entry.path())));
 		std::string line;
 		size_t number = 0;
 		while (std::getline(lines, line)) {
@@ -183,7 +255,10 @@ void write_text(const fs::path& path, std::string_view text)
 	stream << text;
 }
 
-// Source files under `dir` that contain any of `tokens`.
+// Files under `dir` that contain any of `tokens`. Whitespace is ignored (the
+// compiler accepts `Microsoft :: UI`), and in a source file so are comments, so
+// the check reads the code the compiler reads. The finding carries no line:
+// whitespace removal discards them.
 std::vector<Finding> scan_tokens(const fs::path& dir, const std::vector<std::string>& tokens)
 {
 	std::vector<Finding> findings;
@@ -194,15 +269,14 @@ std::vector<Finding> scan_tokens(const fs::path& dir, const std::vector<std::str
 		if (!entry.is_regular_file()) {
 			continue;
 		}
-		std::istringstream lines(read_text(entry.path()));
-		std::string line;
-		size_t number = 0;
-		while (std::getline(lines, line)) {
-			++number;
-			for (const std::string& token : tokens) {
-				if (line.find(token) != std::string::npos) {
-					findings.push_back({entry.path(), number, token});
-				}
+		std::string text = read_text(entry.path());
+		if (is_source_file(entry.path())) {
+			text = logical_source(text);
+		}
+		const std::string compact = without_whitespace(text);
+		for (const std::string& token : tokens) {
+			if (compact.find(token) != std::string::npos) {
+				findings.push_back({entry.path(), 0, token});
 			}
 		}
 	}
@@ -254,8 +328,12 @@ RECTO_UI_TEST(Project, IncludeBoundary)
 		"#include \"services\\anything.h\"\n"
 		"#include \"recto_pdf.h\"\n"
 		"#include \"recto_core.h\"\n"
-		"#include \"recto_services.h\"\n");
-	write_text(scratch.path() / "src" / "pdf" / "planted_pdf.cpp", "#include <recto/ui/ui.h>\n#include \"document.h\"\n");
+		"#include \"recto_services.h\"\n"
+		"#include /* a comment */ \"../pdf/document.h\"\n"
+		"const char* literal = \"// not a comment\"; /* nor is this a hiding place */\n"
+		"#include \"recto_pdf.h\" // reached after a literal\n");
+	write_text(scratch.path() / "src" / "ui" / "planted_splice.cpp", "#inc\\\nlude \"recto_pdf.h\"\n");
+	write_text(scratch.path() / "src" / "pdf" / "planted_pdf.cpp", "#include <recto/ui/ui.h>\n#include \"document.h\"\n#include /* toolkit */ \"../ui/include/recto/ui/ui.h\"\n");
 	write_text(scratch.path() / "src" / "core" / "planted_core.cpp", "#include \"../ui/application.h\"\n");
 	write_text(scratch.path() / "src" / "services" / "planted_services.h", "// #include <recto/ui/ui.h> in a comment is not an include\n#  include \"recto/ui/theme.h\"\n");
 
@@ -266,7 +344,8 @@ RECTO_UI_TEST(Project, IncludeBoundary)
 	}
 	const std::set<std::string> expected = {
 		"planted_ui.cpp:4", "planted_ui.cpp:5", "planted_ui.cpp:6", "planted_ui.cpp:7", "planted_ui.cpp:8", "planted_ui.cpp:9",
-		"planted_pdf.cpp:1", "planted_core.cpp:1", "planted_services.h:2"};
+		"planted_ui.cpp:10", "planted_ui.cpp:12", "planted_splice.cpp:1", "planted_pdf.cpp:1", "planted_pdf.cpp:3", "planted_core.cpp:1",
+		"planted_services.h:2"};
 	EXPECT_EQ(caught, expected) << describe(planted);
 }
 
@@ -281,12 +360,14 @@ RECTO_UI_TEST(Project, NoWinRtUiTypes)
 	fs::copy(root / "src" / "ui", scratch.path() / "src" / "ui", fs::copy_options::recursive);
 	write_text(scratch.path() / "src" / "ui" / "planted_a.h", "#include <winrt/Microsoft.UI.Xaml.h>\n");
 	write_text(scratch.path() / "src" / "ui" / "planted_b.cpp", "using namespace winrt::Microsoft::UI::Xaml;\nMicrosoft::UI::Xaml::Window w;\n");
+	write_text(scratch.path() / "src" / "ui" / "planted_c.cpp", "winrt::Microsoft  ::\n\tUI::Xaml::Window w; // spaced out\n");
+	write_text(scratch.path() / "src" / "ui" / "planted_d.cpp", "using namespace Microsoft . UI;\n");
 	const std::vector<Finding> planted = scan_tokens(scratch.path() / "src" / "ui", winrt_ui_tokens());
 	std::set<std::string> files;
 	for (const Finding& finding : planted) {
 		files.insert(finding.file.filename().string());
 	}
-	EXPECT_EQ(files, (std::set<std::string>{"planted_a.h", "planted_b.cpp"})) << describe(planted);
+	EXPECT_EQ(files, (std::set<std::string>{"planted_a.h", "planted_b.cpp", "planted_c.cpp", "planted_d.cpp"})) << describe(planted);
 }
 
 RECTO_UI_TEST(Project, HarnessSolid)
@@ -384,4 +465,14 @@ RECTO_UI_TEST(Project, HarnessStride)
 	const recto::test::PixelDiffResult assumed =
 		recto::test::compare_rgba(padded.bytes, natural.bytes, kSize, kSize, static_cast<size_t>(kSize) * 4, natural.stride, 0);
 	EXPECT_FALSE(assumed.matches);
+}
+
+RECTO_UI_TEST(Project, HarnessRejectsAbsurdStride)
+{
+	// A stride this wide would wrap stride * height and write past the allocation.
+	recto::ui::test::RenderOptions options;
+	options.min_stride = size_t{1} << 63;
+	EXPECT_THROW(
+		{ const auto bitmap = recto::ui::test::render_to_bitmap({}, 1, 2, 1.0F, options); (void)bitmap; },
+		std::runtime_error);
 }

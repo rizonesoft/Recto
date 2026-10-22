@@ -25,6 +25,9 @@ using Microsoft::WRL::ComPtr;
 // a value no real pixel path produces by accident.
 constexpr uint8_t kPaddingSentinel = 0xCD;
 
+// Widest row the harness will pad to (16 MiB), far beyond any test bitmap.
+constexpr size_t kMaxStride = size_t{1} << 24;
+
 void check(HRESULT hr, const char* step)
 {
 	if (FAILED(hr)) {
@@ -134,6 +137,11 @@ Bitmap render_to_bitmap(
 		throw std::runtime_error("render_to_bitmap: WIC buffer is smaller than the bitmap");
 	}
 
+	// A stride is a row length, never a size in the gigabytes: refuse one that
+	// cannot be a row of this bitmap rather than let stride * height overflow.
+	if (options.min_stride > kMaxStride) {
+		throw std::runtime_error("render_to_bitmap: min_stride is larger than any bitmap row");
+	}
 	Bitmap out;
 	out.width = width_px;
 	out.height = height_px;
