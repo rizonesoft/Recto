@@ -824,6 +824,29 @@ class BuildCorpusTests(unittest.TestCase):
             with self.subTest(says=says), self.assertRaisesRegex(ValueError, says):
                 self.mod.validate_jpeg_baseline("x", data, 8, 8, 3)
 
+    def test_image_marker_grammar_is_the_corpus_form(self) -> None:
+        jpeg = bytearray(self.mod.make_minimal_jpeg_8x8_rgb())
+        dht, sos = jpeg.index(b"\xff\xc4"), jpeg.index(b"\xff\xda")
+        reserved = bytearray(jpeg)
+        for offset in (18, 54):  # the two AC tables' one symbol becomes 0x20, a reserved zero-size run
+            reserved[dht + 4 + offset + 17] = 0x20
+        sof = jpeg.index(b"\xff\xc0")
+        sof_segment = bytes(jpeg[sof : sof + 2 + int.from_bytes(jpeg[sof + 2 : sof + 4], "big")])
+        two_frames = bytes(jpeg[:sof]) + sof_segment + bytes(jpeg[sof:])
+        for data, says in ((bytes(reserved), "reserved symbol"), (two_frames, "once each")):
+            with self.subTest(says=says), self.assertRaisesRegex(ValueError, says):
+                self.mod.validate_jpeg_baseline("x", data, 8, 8, 3)
+        jpx = bytearray(self.mod.make_minimal_jpx_8x8_gray())
+        cod, qcd = jpx.index(b"\xff\x52"), jpx.index(b"\xff\x5c")
+        levels = bytearray(jpx)
+        levels[cod + 9] = 1
+        levels[qcd + 2 : qcd + 4] = (7).to_bytes(2, "big")
+        levels[qcd + 6 : qcd + 6] = b"\x40" * 3
+        unknown = bytes(jpx[:cod]) + b"\xff\x00\x00\x02" + bytes(jpx[cod:])
+        for data, says in ((bytes(levels), "no decomposition"), (unknown, "not one the corpus image uses")):
+            with self.subTest(says=says), self.assertRaisesRegex(ValueError, says):
+                self.mod.validate_jpx_codestream("x", data, 8, 8)
+
     def test_jpx_cod_qcd_and_packet_are_read(self) -> None:
         jpx = self.mod.make_minimal_jpx_8x8_gray()
         cod, qcd = jpx.index(b"\xFF\x52"), jpx.index(b"\xFF\x5C")

@@ -2653,6 +2653,10 @@ def _validate_jpeg_baseline(rel_path: str, data: bytes, width: int, height: int,
                         codes[(code, bits_len)] = symbols[len(codes)]
                         code += 1
                     code <<= 1
+                if tc_th >> 4 == 0 and any(s > 11 for s in symbols):
+                    raise ValueError(f"{rel_path}: JPEG DC table holds a size above 11")
+                if tc_th >> 4 == 1 and any(s not in (0x00, 0xF0) and not 1 <= (s & 0x0F) <= 10 for s in symbols):
+                    raise ValueError(f"{rel_path}: JPEG AC table holds a reserved symbol")
                 tables[tc_th] = codes
                 at += 17 + sum(counts)
         elif marker == 0xDA:
@@ -2677,8 +2681,8 @@ def _validate_jpeg_baseline(rel_path: str, data: bytes, width: int, height: int,
         elif marker != 0xE0:
             raise ValueError(f"{rel_path}: JPEG segment {marker:#04x} is not one a baseline corpus image uses")
         pos += 2 + length
-    if not {0xDB, 0xC0, 0xC4, 0xDA} <= set(seen):
-        raise ValueError(f"{rel_path}: JPEG lacks one of DQT, SOF0, DHT, SOS")
+    if seen not in ([0xE0, 0xDB, 0xC0, 0xC4, 0xDA], [0xDB, 0xC0, 0xC4, 0xDA]):
+        raise ValueError(f"{rel_path}: JPEG segments are {[hex(s) for s in seen]}, not [APP0,] DQT, SOF0, DHT, SOS once each")
     if not data.endswith(b"\xFF\xD9"):
         raise ValueError(f"{rel_path}: JPEG does not end with EOI")
     entropy = data[pos:-2]
@@ -2757,18 +2761,21 @@ def _validate_jpx_codestream(rel_path: str, data: bytes, width: int, height: int
             if length != 12:
                 raise ValueError(f"{rel_path}: JPX COD length {length} is not 12 (no precinct sizes)")
             scod, order, layers, mct, levels, xcb, ycb, style, transform = struct.unpack(">BBHBBBBBB", body)
-            if (scod, order, layers, mct, style, transform) != (0, 0, 1, 0, 0, 1) or levels > 32 \
+            if (scod, order, layers, mct, levels, style, transform) != (0, 0, 1, 0, 0, 0, 1) \
                     or xcb > 8 or ycb > 8 or xcb + ycb > 8:
-                raise ValueError(f"{rel_path}: JPX COD is not one layer, no transform, valid code-blocks, 5-3 reversible")
+                raise ValueError(f"{rel_path}: JPX COD is not one layer, no transform, no decomposition (one resolution, "
+                                 f"so one packet), valid code-blocks and 5-3 reversible")
         elif marker == 0x5C:
             # QCD (T.800 A.6.4): no quantization (style 0, for the reversible transform), one exponent byte per subband.
             if levels is None:
                 raise ValueError(f"{rel_path}: JPX QCD before COD")
             if body[:1] == b"" or body[0] & 0x1F != 0 or length != 3 + 3 * levels + 1:
                 raise ValueError(f"{rel_path}: JPX QCD is not unquantized with one exponent per subband")
+        else:
+            raise ValueError(f"{rel_path}: JPX main-header marker {marker:#04x} is not one the corpus image uses")
         pos += 2 + length
-    if seen[:1] != [0x51] or not {0x52, 0x5C} <= set(seen):
-        raise ValueError(f"{rel_path}: JPX main header lacks SIZ first, COD or QCD")
+    if seen != [0x51, 0x52, 0x5C, 0x90]:
+        raise ValueError(f"{rel_path}: JPX markers are {[hex(s) for s in seen]}, not SIZ, COD, QCD, SOT once each")
     if not data.endswith(b"\xFF\xD9") or len(data) - 2 <= pos + 14:
         raise ValueError(f"{rel_path}: JPX codestream does not end with EOC after tile data")
 
