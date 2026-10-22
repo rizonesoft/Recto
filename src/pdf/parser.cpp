@@ -296,6 +296,7 @@ PdfResult<PdfValue> Parser::parse_direct_object() noexcept
 {
 	const size_t saved_pos = lexer_->position();
 	values_parsed_ = 0;
+	bytes_parsed_ = 0;
 	try {
 		PdfValue out;
 		PdfError err;
@@ -325,6 +326,7 @@ PdfResult<PdfArray> Parser::parse_array() noexcept
 {
 	const size_t saved_pos = lexer_->position();
 	values_parsed_ = 0;
+	bytes_parsed_ = 0;
 	try {
 		Token open_tok;
 		PdfError err;
@@ -367,6 +369,7 @@ PdfResult<PdfDict> Parser::parse_dictionary() noexcept
 {
 	const size_t saved_pos = lexer_->position();
 	values_parsed_ = 0;
+	bytes_parsed_ = 0;
 	try {
 		Token open_tok;
 		PdfError err;
@@ -439,6 +442,7 @@ PdfResult<IndirectObject> Parser::parse_indirect_object(
 {
 	const size_t saved_pos = lexer_->position();
 	values_parsed_ = 0;
+	bytes_parsed_ = 0;
 	try {
 		auto res = parse_indirect_object_impl(length_resolver);
 		if (!res.has_value() && res.error().code == ErrorCode::OutOfMemory) {
@@ -458,6 +462,19 @@ PdfResult<IndirectObject> Parser::parse_indirect_object(
 			"Unexpected failure in Parser::parse_indirect_object",
 			saved_pos};
 	}
+}
+
+bool Parser::charge_bytes(size_t n, uint64_t byte_offset, PdfError& err) noexcept
+{
+	if (n > max_total_bytes_ || bytes_parsed_ > max_total_bytes_ - n) {
+		err = make_pdf_error(
+			ErrorCode::DamagedFormat,
+			"PDF object exceeds maximum total string and name byte ceiling",
+			byte_offset);
+		return false;
+	}
+	bytes_parsed_ += n;
+	return true;
 }
 
 bool Parser::parse_direct_object_impl(
@@ -502,14 +519,23 @@ bool Parser::parse_direct_object_impl(
 		return parse_integer_or_ref(*lexer_, tok0, out, err);
 
 	case TokenKind::Name:
+		if (!charge_bytes(tok0.text.view().size(), tok0.byte_offset, err)) {
+			return false;
+		}
 		out = PdfValue(PdfName::from_decoded(tok0.text.view()));
 		return true;
 
 	case TokenKind::LiteralString:
+		if (!charge_bytes(tok0.bytes.span().size(), tok0.byte_offset, err)) {
+			return false;
+		}
 		out = PdfValue(PdfString(tok0.bytes.span(), false));
 		return true;
 
 	case TokenKind::HexString:
+		if (!charge_bytes(tok0.bytes.span().size(), tok0.byte_offset, err)) {
+			return false;
+		}
 		out = PdfValue(PdfString(tok0.bytes.span(), true));
 		return true;
 
@@ -630,6 +656,9 @@ bool Parser::parse_dictionary_body(
 				ErrorCode::DamagedFormat,
 				"Expected PDF name key in dictionary",
 				tok.byte_offset);
+			return false;
+		}
+		if (!charge_bytes(tok.text.view().size(), tok.byte_offset, err)) {
 			return false;
 		}
 		PdfName key = PdfName::from_decoded(tok.text.view());

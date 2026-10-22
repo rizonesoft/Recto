@@ -58,6 +58,37 @@ TEST(PdfParser, TotalValueBudgetSpansContainers)
 	EXPECT_EQ(Parser(as_bytes(nested)).max_total_values(), kMaxParsedValues);
 }
 
+// The decoded string, name and key bytes of one top-level parse share one byte budget, however few values carry them.
+TEST(PdfParser, TotalByteBudgetSpansValues)
+{
+	const std::string strings = "[(abcde) <6667686970> (k)]"; // 5 + 5 + 1 = 11 bytes
+	{
+		Parser parser(as_bytes(strings));
+		parser.set_max_total_bytes(10);
+		RECTO_EXPECT_ERR(parser.parse_direct_object(), ErrorCode::DamagedFormat);
+	}
+	{
+		Parser parser(as_bytes(strings));
+		parser.set_max_total_bytes(11);
+		RECTO_ASSERT_OK(parser.parse_direct_object());
+		RECTO_ASSERT_OK(Parser(as_bytes(strings)).parse_direct_object());
+	}
+	{
+		const std::string names = "<< /abcde /fghij /k 1 >>"; // key 5 + name 5 + key 1 = 11 bytes
+		Parser parser(as_bytes(names));
+		parser.set_max_total_bytes(10);
+		RECTO_EXPECT_ERR(parser.parse_dictionary(), ErrorCode::DamagedFormat);
+	}
+	{
+		const std::string two = strings + " " + strings;
+		Parser parser(as_bytes(two));
+		parser.set_max_total_bytes(11);
+		RECTO_ASSERT_OK(parser.parse_direct_object());
+		RECTO_ASSERT_OK(parser.parse_direct_object()); // the budget restarts with each parse
+	}
+	EXPECT_EQ(Parser(as_bytes(strings)).max_total_bytes(), kMaxParsedBytes);
+}
+
 TEST(PdfParser, PrimitivesAndComments)
 {
 	constexpr std::string_view kInput =

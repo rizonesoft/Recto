@@ -52,3 +52,48 @@ OVERALL: needs-attention
 - Finding 3 (P3): the legacy report `docs/reviews/01-engine/D01-T01-s4.md` is a record of that review and stays as written; its false freeze claim is corrected where the contract lives, in a dated note in `D01 T01 §4`, which also records the aggregate budget.
 
 Gates after round 1: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 109 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfParser.*:PdfXref.*:PdfDocument.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 27 tests.`; `python scripts/todo-graph.py validate` -> `valid: 681 sections`.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T07:10:40Z
+- Effort: medium
+- Lines: 30
+- Digest: de4eff7163e0506f
+
+## adversarial: needs-attention
+
+1. **P1: The new value-count budget still does not enforce an aggregate byte ceiling.** `src/pdf/parser.cpp:472` counts values, while `src/pdf/parser.cpp:509` copies each string’s bytes into independently owned storage. The 256 MiB limit in `src/pdf/lexer.h:54` applies per token. Consequently, very few values can retain gigabytes before the parser returns success or encounters allocator failure. This does not satisfy foundation plan section 9’s explicit byte-cap requirement.
+
+   Reproduce with `parse_direct_object()` over `"[" + ("(" + "A" * (16 * 1024 * 1024) + ") ") * 64 + "]"`. It contains only 65 counted values at depth one, but retains 1 GiB of string payload, additional to the input and temporary allocations. No aggregate byte check rejects it. **Static reproduction; the memory-exhaustion probe was not executed.** The owning parser needs a shared byte budget covering strings, names, dictionary keys and container storage.
+
+## consistency: approve
+
+No additional finding.
+
+## integration: needs-attention
+
+Finding 1 reaches document loading through `src/pdf/xref.cpp:1862`: `XrefTable::read_indirect_object_with_visited()` constructs the parser over document bytes without an aggregate byte budget. Wrapping the reproduction in an indirect object preserves the allocation path.
+
+## source-defect: approve
+
+No additional finding.
+
+## design: advisory
+
+Not applicable: this section owns no user surface.
+
+## record: advisory
+
+The available x64 Release binary passed all nine `PdfParser.*` tests and `Support.AsanActiveWhenEnabled`, which reported `ASan=enabled`. The 18 `PdfXref.*` and `PdfDocument.*` tests also passed.
+
+This verifies the available binary’s checkpoint behavior. A fresh build, ARM64 compilation and the historical zero-warning checkpoint were not independently reproduced because rebuilding would modify files. The existing build log records zero warnings and ASan compilation, but remains recorded evidence rather than a fresh build verification.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+- Finding 1 (P1, rated by the reviewer): the value budget left payload unbounded except per token. Decoded payload never exceeds the input bytes it came from, so this was linear in file size, not an amplification, but plan section 9 asks for explicit byte caps and the fix is cheap. One top-level parse now charges every decoded string, name and dictionary key against `kMaxParsedBytes` (equal to `kMaxLexerTokenBytes`, so no object holds more payload than the largest single token already could), refusing with `ErrorCode::DamagedFormat`; the budget restarts with each top-level parse, like the value budget. `PdfParser.TotalByteBudgetSpansValues` refuses 11 bytes of literal and hex strings at a budget of 10, and 11 bytes of keys and a name in a dictionary, accepts exactly 11, and restarts per parse. With the check disabled it fails. The dated correction in `D01 T01 §4` names both budgets.
+
+Gates after round 2: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 110 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfParser.*:PdfXref.*:PdfDocument.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 28 tests.`

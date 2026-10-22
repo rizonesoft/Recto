@@ -33,6 +33,10 @@ inline constexpr size_t kMaxContainerElements = 1'000'000;
 // single container already could; many containers each under kMaxContainerElements cannot add up past it.
 inline constexpr size_t kMaxParsedValues = kMaxContainerElements;
 
+// Maximum decoded string, name and dictionary key bytes one top-level parse may hold, so no object holds more
+// payload than the largest single token already could (foundation plan section 9's byte caps).
+inline constexpr size_t kMaxParsedBytes = kMaxLexerTokenBytes;
+
 struct IndirectObject {
 	IndirectRef ref{};
 	PdfValue value{};
@@ -93,6 +97,15 @@ public:
 		return max_total_values_;
 	}
 
+	void set_max_total_bytes(size_t max_bytes) noexcept
+	{
+		max_total_bytes_ = max_bytes;
+	}
+	[[nodiscard]] size_t max_total_bytes() const noexcept
+	{
+		return max_total_bytes_;
+	}
+
 	// Steps the last 'endstream' terminator scan of this parser took (0 before any). Diagnostics for tests: it
 	// shows the fallback scan stays linear.
 	[[nodiscard]] size_t last_stream_terminator_scan_steps() const noexcept
@@ -133,6 +146,8 @@ public:
 		const LengthResolver& length_resolver = {}) noexcept;
 
 private:
+	// Counts n payload bytes against the current parse's byte budget; false with err set when it is spent.
+	[[nodiscard]] bool charge_bytes(size_t n, uint64_t byte_offset, PdfError& err) noexcept;
 	[[nodiscard]] bool parse_direct_object_impl(
 		size_t depth,
 		PdfValue& out,
@@ -160,6 +175,8 @@ private:
 	size_t max_container_elements_{kMaxContainerElements};
 	size_t max_total_values_{kMaxParsedValues};
 	size_t values_parsed_{0};               // values created by the current top-level parse
+	size_t max_total_bytes_{kMaxParsedBytes};
+	size_t bytes_parsed_{0};                // string, name and key bytes held by the current top-level parse
 	size_t last_terminator_scan_steps_{0};
 };
 
