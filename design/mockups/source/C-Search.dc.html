@@ -52,7 +52,7 @@ a{color:#4A3FD0}a:hover{color:#3529A8}
       <p style="margin:0">1. <b>One owner per document.</b> A parsed pdf::Document and its object cache belong to the one DocumentActor thread that opened it. No mutex sits inside the parser.</p>
       <p style="margin:0">2. <b>Jobs open their own copy.</b> Conversion, OCR and authoring jobs open their own pdf::Document and never share the viewer's.</p>
       <p style="margin:0">3. <b>Pages are read once.</b> The actor interprets a page's content stream once, on its own thread.</p>
-      <p style="margin:0">4. <b><span class="cur">Display lists</span> are the hand-off.</b> The actor builds an immutable <span class="hit">DisplayList</span> for a page. <span class="selx">Once built, a <span class="hit">display list</span> is read-only and can be rasterized by many RenderPool workers at the same time.</span> This is how rendering runs in parallel while the document stays single-threaded.</p>
+      <p style="margin:0">4. <b><span class="cur">Display lists</span> are the hand-off.</b> The actor builds an immutable <span class="hit">display list</span> (a DisplayList) for a page. <span class="selx">Once built, a <span class="hit">display list</span> is read-only and can be rasterized by many RenderPool workers at the same time.</span> This is how rendering runs in parallel while the document stays single-threaded.</p>
       <p style="margin:0">5. <b>Workers abort cooperatively.</b> Each worker checks its CancelToken between command batches, and a tile from an aborted render is never cached.</p>
       <p style="margin:0">6. <b>Errors are values.</b> Malformed objects, truncated streams and bad passwords return PdfResult with a PdfError. Nothing throws across a boundary.</p>
     </article>
@@ -72,12 +72,12 @@ a{color:#4A3FD0}a:hover{color:#3529A8}
       </div>
       <div style="display:flex;gap:6px;padding:8px 14px;border-bottom:1px solid #EEEDF6"><button class="sb" aria-label="Match case" style="width:auto;padding:0 10px;border:1px solid #E4E2EF">Aa</button><button class="sb" aria-label="Whole words" style="width:auto;padding:0 10px;border:1px solid #E4E2EF">Whole word</button><div style="flex-grow:1"></div><span class="cap" style="align-self:center">4 pages</span></div>
       <div style="padding:6px;display:flex;flex-direction:column;gap:1px">
-        <button class="res"><em>p. 4</em><span>…immutable, reference-counted <b>DisplayList</b>…</span></button>
-        <button class="res"><em>p. 5</em><span>…for a page, builds an immutable <b>DisplayList</b>…</span></button>
+        <button class="res"><em>p. 4</em><span>…immutable, reference-counted <b>display list</b>…</span></button>
+        <button class="res"><em>p. 5</em><span>…for a page, builds an immutable <b>display list</b>…</span></button>
         <button class="res" style="background:#EFEDFF;color:#17152B"><em style="color:#4A3FD0;font-weight:600">p. 5</em><span>4. <b>Display lists</b> are the hand-off. The actor builds…</span></button>
         <button class="res"><em>p. 5</em><span>…Once built, a <b>display list</b> is read-only…</span></button>
-        <button class="res"><em>p. 6</em><span>…records a reference-counted <b>DisplayList</b> (recto::pdf::<b>DisplayList</b>…</span></button>
-        <button class="res"><em>p. 7</em><span>render_tile(const <b>DisplayList</b> &amp;list, TileRect rect…</span></button>
+        <button class="res"><em>p. 6</em><span>…records a reference-counted <b>display list</b> (recto::pdf::DisplayList)…</span></button>
+        <button class="res"><em>p. 7</em><span>…workers rasterize each <b>display list</b> into 512x512 tiles…</span></button>
         <a href="C-Search.dc.html" style="font-size:13px;padding:8px 12px">Show all 14 results</a>
       </div>
     </section>

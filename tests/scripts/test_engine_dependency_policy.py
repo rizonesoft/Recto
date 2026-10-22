@@ -89,7 +89,8 @@ class EngineDependencyPolicyTest(unittest.TestCase):
             with self.subTest(file=name):
                 text = (REPO / name).read_text(encoding="utf-8")
                 self.assertIsNone(MUPDF.search(text))
-                self.assertIsNone(re.search(r"agpl", text, re.IGNORECASE))  # any case: agpl-3.0 is the same licence
+                # The licence by acronym or by name, in any case (agpl-3.0, GNU Affero General Public License).
+                self.assertIsNone(re.search(r"agpl|affero", text, re.IGNORECASE))
                 self.assertIsNone(re.search(r"\bfz_", text, re.IGNORECASE))  # MuPDF's API prefix, whatever follows it
 
     @unittest.skipUnless(sys.platform == "win32", "the C++ build and MSBuild are Windows-only (foundation plan D15)")

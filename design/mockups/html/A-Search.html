@@ -89,15 +89,15 @@ a{color:#2459D6}a:hover{color:#1A47B0}
           </div>
           <div style="display:flex;flex-direction:column;gap:2px;overflow:hidden">
             <div class="cap" style="font-weight:600;padding:6px 10px 2px">Page 5</div>
-            <button class="res">…a page, builds an immutable <b>DisplayList</b>…</button>
+            <button class="res">…a page, builds an immutable <b>display list</b>…</button>
             <button class="res" style="background:#E8EEFC;box-shadow:inset 3px 0 0 #2459D6">4. <b>Display lists</b> are the hand-off. The actor builds…</button>
             <button class="res">…Once built, a <b>display list</b> is read-only and…</button>
             <div class="cap" style="font-weight:600;padding:10px 10px 2px">Page 6</div>
-            <button class="res">…records a reference-counted <b>DisplayList</b> (recto::pdf::<b>DisplayList</b>…</button>
+            <button class="res">…records a reference-counted <b>display list</b> (recto::pdf::DisplayList)…</button>
             <div class="cap" style="font-weight:600;padding:10px 10px 2px">Page 7</div>
-            <button class="res">render_tile(const <b>DisplayList</b> &amp;list, TileRect rect…</button>
+            <button class="res">…workers rasterize each <b>display list</b> into 512x512 tiles…</button>
             <div class="cap" style="font-weight:600;padding:10px 10px 2px">Page 4</div>
-            <button class="res">…immutable, reference-counted <b>DisplayList</b>…</button>
+            <button class="res">…immutable, reference-counted <b>display list</b>…</button>
           </div>
         </aside>
         <div style="flex-grow:1;min-width:0;background:#E6E7EA;display:flex;justify-content:center;padding-top:24px;overflow:hidden;position:relative">
@@ -107,7 +107,7 @@ a{color:#2459D6}a:hover{color:#1A47B0}
             <p style="margin:0">1. <b>One owner per document.</b> A parsed pdf::Document and its object cache belong to the one DocumentActor thread that opened it. No mutex sits inside the parser.</p>
             <p style="margin:0">2. <b>Jobs open their own copy.</b> Conversion, OCR and authoring jobs open their own pdf::Document and never share the viewer's.</p>
             <p style="margin:0">3. <b>Pages are read once.</b> The actor interprets a page's content stream once, on its own thread.</p>
-            <p style="margin:0">4. <b><span class="cur">Display lists</span> are the hand-off.</b> The actor builds an immutable <span class="hit">DisplayList</span> for a page. <span class="selx">Once built, a <span class="hit">display list</span> is read-only and can be rasterized by many RenderPool workers at the same time.</span> This is how rendering runs in parallel while the document stays single-threaded.</p>
+            <p style="margin:0">4. <b><span class="cur">Display lists</span> are the hand-off.</b> The actor builds an immutable <span class="hit">display list</span> (a DisplayList) for a page. <span class="selx">Once built, a <span class="hit">display list</span> is read-only and can be rasterized by many RenderPool workers at the same time.</span> This is how rendering runs in parallel while the document stays single-threaded.</p>
             <p style="margin:0">5. <b>Workers abort cooperatively.</b> Each worker checks its CancelToken between command batches, and a tile from an aborted render is never cached.</p>
             <p style="margin:0">6. <b>Errors are values.</b> Malformed objects, truncated streams and bad passwords return PdfResult with a PdfError. Nothing throws across a boundary.</p>
             <p style="margin:0">7. <b>Shutdown runs in order.</b> Every DocumentActor and RenderPool worker is joined before the Runtime shuts down.</p>
