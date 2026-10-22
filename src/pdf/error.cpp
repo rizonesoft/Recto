@@ -596,6 +596,11 @@ void process_tlg_write_transfer(
 
 } // namespace recto::pdf
 
+namespace recto::pdf::detail {
+std::atomic<uint64_t> g_etw_write_failures{0};
+std::atomic<ULONG> g_etw_injected_write_status{ERROR_SUCCESS};
+} // namespace recto::pdf::detail
+
 extern "C" ULONG WINAPI RectoTlgEventWriteTransfer(
 	REGHANDLE RegHandle,
 	PCEVENT_DESCRIPTOR EventDescriptor,
@@ -605,13 +610,20 @@ extern "C" ULONG WINAPI RectoTlgEventWriteTransfer(
 	PEVENT_DATA_DESCRIPTOR UserData) noexcept
 {
 	recto::pdf::process_tlg_write_transfer(UserDataCount, UserData);
-	return ::EventWriteTransfer(
+	// What Windows answers is counted too: an event counted as emitted but refused by EventWriteTransfer is a failure
+	// the tests can see (etw_write_failures).
+	const ULONG injected = recto::pdf::detail::g_etw_injected_write_status.load(std::memory_order_acquire);
+	const ULONG status = injected != ERROR_SUCCESS ? injected : ::EventWriteTransfer(
 		RegHandle,
 		EventDescriptor,
 		ActivityId,
 		RelatedActivityId,
 		UserDataCount,
 		UserData);
+	if (status != ERROR_SUCCESS) {
+		recto::pdf::detail::g_etw_write_failures.fetch_add(1, std::memory_order_relaxed);
+	}
+	return status;
 }
 
 namespace recto::pdf {
@@ -830,6 +842,16 @@ uint64_t etw_diagnostic_events_emitted() noexcept
 uint64_t etw_span_events_emitted() noexcept
 {
 	return g_etw_span_events.load(std::memory_order_relaxed);
+}
+
+uint64_t etw_write_failures() noexcept
+{
+	return detail::g_etw_write_failures.load(std::memory_order_relaxed);
+}
+
+void set_etw_write_status_for_testing(unsigned long status) noexcept
+{
+	detail::g_etw_injected_write_status.store(status, std::memory_order_release);
 }
 
 void set_etw_capture_for_testing(bool enabled) noexcept

@@ -3,10 +3,15 @@
 #include "error.h"
 #include "test_support.h"
 
+#include <windows.h>
+#include <evntrace.h>
+
+
 #include <gtest/gtest.h>
 
 #include <array>
 #include <atomic>
+#include <cstdlib>
 #include <memory>
 #include <new>
 #include <set>
@@ -161,6 +166,65 @@ TEST(PdfError, ValueOrReturnsAValue)
 	const auto copied = ok.try_value_or(std::string("unused"));
 	ASSERT_TRUE(copied.has_value());
 	EXPECT_EQ(*copied, "kept");
+}
+
+// Whether an ETW session enables the Recto.Diagnostics provider in this process, as the OS records it per provider
+// instance (EnumerateTraceGuidsEx, TraceGuidQueryInfo: no administrator rights needed). Enablement faked inside the
+// process never shows here.
+bool os_session_enables_recto_provider()
+{
+	GUID guid = {0x8c4e7f92, 0x3b1a, 0x4d5e, {0x9a, 0x21, 0x7c, 0x6b, 0x5d, 0x4e, 0x3f, 0x10}}; // error.cpp
+	ULONG size = 0;
+	ULONG rc = EnumerateTraceGuidsEx(TraceGuidQueryInfo, &guid, sizeof(guid), nullptr, 0, &size);
+	if (rc != ERROR_INSUFFICIENT_BUFFER || size == 0) {
+		return false; // no instance the OS knows of, so no session enables one
+	}
+	std::vector<BYTE> buffer(size);
+	rc = EnumerateTraceGuidsEx(TraceGuidQueryInfo, &guid, sizeof(guid), buffer.data(), size, &size);
+	if (rc != ERROR_SUCCESS) {
+		return false;
+	}
+	const auto* info = reinterpret_cast<const TRACE_GUID_INFO*>(buffer.data());
+	const auto* instance = reinterpret_cast<const TRACE_PROVIDER_INSTANCE_INFO*>(info + 1);
+	for (ULONG i = 0; i < info->InstanceCount; ++i) {
+		if (instance->Pid == GetCurrentProcessId() && instance->EnableCount > 0) {
+			return true;
+		}
+		if (instance->NextOffset == 0) {
+			break;
+		}
+		instance = reinterpret_cast<const TRACE_PROVIDER_INSTANCE_INFO*>(
+			reinterpret_cast<const BYTE*>(instance) + instance->NextOffset);
+	}
+	return false;
+}
+
+// Registration never enables the provider by itself: it is enabled exactly when a session listens (D16). Checked in a
+// fresh process (a death-test child), since other tests here force it on through the test seam, and compared with the
+// OS's own record, so a session that happens to listen on this machine does not change the answer.
+TEST(PdfError, EtwProviderEnabledOnlyByASession)
+{
+	EXPECT_EXIT(
+		{
+			if (!ensure_etw_provider_registered()) {
+				std::exit(2);
+			}
+			std::exit(etw_provider_enabled() == os_session_enables_recto_provider() ? 0 : 3);
+		},
+		::testing::ExitedWithCode(0), "");
+}
+
+// A write Windows refuses is counted as a failure, so the tests' "accepted every write" checks can fail.
+TEST(PdfError, EtwRefusedWritesAreCounted)
+{
+	force_enable_etw_provider_for_testing();
+	const uint64_t before = etw_write_failures();
+	set_etw_write_status_for_testing(ERROR_INVALID_PARAMETER);
+	record_diagnostic(ErrorCode::DamagedFormat, "refused write", 0, 1, 0);
+	set_etw_write_status_for_testing(0);
+	EXPECT_EQ(etw_write_failures(), before + 1);
+	record_diagnostic(ErrorCode::DamagedFormat, "accepted write", 0, 1, 0);
+	EXPECT_EQ(etw_write_failures(), before + 1);
 }
 
 TEST(PdfError, ResultValueAndError)
@@ -336,6 +400,7 @@ TEST(PdfError, ResultValueAndError)
 	// DecompressionLimitExceeded, and RecursionLimitExceeded.
 	clear_diagnostics();
 	const uint64_t diag_events_before = etw_diagnostic_events_emitted();
+	const uint64_t write_failures_before = etw_write_failures();
 
 	const PdfError non_auto = make_pdf_error(ErrorCode::FileNotFound, "missing.pdf");
 	EXPECT_EQ(non_auto.code, ErrorCode::FileNotFound);
@@ -371,6 +436,7 @@ TEST(PdfError, ResultValueAndError)
 	EXPECT_EQ(tail[2].generation_num, 1u);
 
 	EXPECT_GE(etw_diagnostic_events_emitted(), diag_events_before + 3);
+	EXPECT_EQ(etw_write_failures(), write_failures_before); // Windows accepted every write
 }
 
 TEST(PdfError, DiagnosticRingWraparound)
@@ -383,6 +449,7 @@ TEST(PdfError, DiagnosticRingWraparound)
 	EXPECT_TRUE(diagnostics_tail(0).empty());
 
 	const uint64_t events_before = etw_diagnostic_events_emitted();
+	const uint64_t failures_before = etw_write_failures();
 
 	for (uint64_t i = 0; i < 1000; ++i) {
 		record_diagnostic(
@@ -395,6 +462,7 @@ TEST(PdfError, DiagnosticRingWraparound)
 
 	EXPECT_EQ(diagnostics_total_recorded(), 1000u);
 	EXPECT_EQ(etw_diagnostic_events_emitted() - events_before, 1000u);
+	EXPECT_EQ(etw_write_failures(), failures_before); // Windows accepted every write
 
 	const auto full_tail = diagnostics_tail();
 	ASSERT_EQ(full_tail.size(), kDiagnosticRingCapacity);

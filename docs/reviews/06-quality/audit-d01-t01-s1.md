@@ -59,7 +59,53 @@ OVERALL: needs-attention
 
 - Finding 1 (P2): a payload whose move may throw cannot be moved out of a result safely in a `noexcept` function, and the engine has four (types holding MSVC's `std::unordered_map`, whose move allocates). `RECTO_PDF_TRY` now requires a nothrow-movable payload at compile time, and its pre-move (`prepare_extract`) is gone; the new `RECTO_PDF_TRY_REF(name, expr)` binds a reference to the value where it already is, with no move. The four call sites (`crypto.cpp` twice, `document.cpp` twice) and the two test helpers use it; materialization stays `PdfResult`'s own move or copy, which returns a failure as `OutOfMemory` or `InternalError`, so the existing out-of-memory tests hold unchanged.
 - Finding 2 (P2): `value_or` returns a value, as `std::expected` does, so a temporary fallback cannot dangle. On a const result it copies, so it exists only for payloads whose copy cannot throw; others use `try_value_or` (failures as `PdfError`) or the rvalue form (which moves). The old tests that took `value_or` results by reference on throwing payloads, the pattern the finding describes, now assert through `try_value_or`.
-- Finding 3 (P2): production registration no longer fakes an enabled session; `TraceLoggingWrite` now builds and writes events only while a consumer listens (D16). `etw_provider_enabled()` reports the real state, and the counting tests opt in through `force_enable_etw_provider_for_testing()`. The regression guard is in the source (`tests/scripts/test_etw_registration.py`): production registration calls neither `_tlgEnableCallback` nor the seam, and the one `_tlgEnableCallback` call lives in the seam. A runtime check was tried first, a gtest death-test child asserting the provider stays disabled after registration; it passed twice, then failed consistently: in a clean process this machine reports the provider enabled at registration while `EnumerateTraceGuidsEx` lists no session enabling it (`EnableCount = 0`), so enablement here comes from machine state an unprivileged test cannot see, and a runtime assertion would be flaky. It was replaced by the source guard.
+- Finding 3 (P2): production registration no longer fakes an enabled session; `TraceLoggingWrite` now builds and writes events only while a consumer listens (D16). `etw_provider_enabled()` reports the real state, and the counting tests opt in through `force_enable_etw_provider_for_testing()`. The regression guard is in the source (`tests/scripts/test_etw_registration.py`): production registration calls neither `_tlgEnableCallback` nor the seam, and the one `_tlgEnableCallback` call lives in the seam. **Corrected 2026-10-22 (after round 2):** a runtime check was written first and dropped on a wrong diagnosis. It "failed consistently" only because the mutation restores used `Copy-Item`, which keeps the source file's older timestamp, so MSBuild kept the mutant objects and every later run tested the forced-enable mutant. There was no machine state. The runtime check is restored in round 2's fixes.
 - Finding 4 (P3): a dated audit note in `D01 T01 §1` records that ASan does not establish race freedom, and the changes above.
 - Finding 5 (P3), recorded rather than changed: `docs/reviews/d01-t01-s1.json` is one of the 25 frozen legacy receipts (`docs/reviews/legacy-receipts.json`), so its round 3 `clean`, against a report whose round 3 lists fixes, stays as written; this audit's own record supersedes it.
 Gates after round 1: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 104 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfError.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 5 tests.`; `plan-gates` now runs `tests.scripts.test_etw_registration`.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T05:06:20Z
+- Effort: medium
+- Lines: 28
+- Digest: eec4480974ebc3df
+
+### adversarial: needs-attention
+
+1. **P2** `src/pdf/error.cpp:983`, `src/pdf/error.cpp:1001`, `src/pdf/error.cpp:622`: Diagnostic access can terminate under allocation failure in MSVC Debug builds. `diagnostics_tail()` constructs `std::vector`, and `PdfError::format()` constructs `std::string`. Their default constructors are `noexcept` but allocate iterator proxies with Debug iterator checking enabled. Allocation failure therefore terminates before the surrounding catch can handle it. The empty-return paths have the same problem. Reproduce in Debug by installing a CRT allocation hook that rejects allocations, then calling `diagnostics_tail(0)` or formatting a preconstructed `PdfError`. This is source-verified against the installed MSVC headers, not an executed fault-injection test.
+
+### consistency: approve
+
+No findings.
+
+### integration: approve
+
+No additional findings.
+
+### source-defect: approve
+
+No additional findings.
+
+### design: advisory
+
+Not applicable: this section owns no user surface.
+
+### record: needs-attention
+
+2. **P3** `src/pdf/error.cpp:607`, `tests/recto-tests/pdf_error_tests.cpp:636`: ETW counters measure attempted writes before `EventWriteTransfer` returns. The tests assert those counters and intercepted payloads, but never check whether Windows accepted the writes. Consequently, they do not establish the ticked promise that events emit “without error.” Reproduce the verification gap by making `EventWriteTransfer` return a failure in a test harness: the counters and captured-payload assertions still pass. This is a coverage defect, not evidence that production writes currently fail.
+
+Checkpoint verification: the existing x64 Release executable passed five `PdfError.*` tests and `Support.AsanActiveWhenEnabled`, reporting `ASan=enabled`. Both ETW source checks passed. A warning-free rebuild and the binary’s correspondence to `bd78922` were not independently established; rebuilding would modify files. No files were modified.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+- Finding 1 (P2), recorded without a code change: confirmed against the installed headers (`MSVC/14.44.35207/include/vector:670`, `vector() noexcept(...)` calling `_Alloc_proxy`). With `_ITERATOR_DEBUG_LEVEL=2`, MSVC's STL allocates an iterator-debugging proxy inside its `noexcept` container constructors, so in a Debug build an allocation failure while constructing any `std::vector` or `std::string` in a `noexcept` function terminates. That is a property of the Debug STL, shared by every such function in the engine, not something `diagnostics_tail` or `PdfError::format` can avoid locally (even an empty return constructs a container). Release builds (what ships, and the ASan checkpoint) have no proxy and the catch paths hold. Debug builds are a developer configuration where terminating on allocation failure is acceptable.
+- Finding 2 (P3): the hook now counts what Windows answers. `RectoTlgEventWriteTransfer` adds every non-zero `EventWriteTransfer` status to `etw_write_failures()`, and the counting tests (`ResultValueAndError`, `DiagnosticRingWraparound`) assert no write was refused. `set_etw_write_status_for_testing` lets `PdfError.EtwRefusedWritesAreCounted` inject a refusal and prove the counter sees it (one refused write counted, a following accepted write not). With the count removed from the hook, that test fails (`[  FAILED  ] PdfError.EtwRefusedWritesAreCounted`).
+- Runtime ETW check restored: `PdfError.EtwProviderEnabledOnlyByASession` registers in a fresh process (a gtest death-test child) and requires `etw_provider_enabled()` to equal what the OS records for this process (`EnumerateTraceGuidsEx`, `TraceGuidQueryInfo`, `EnableCount` of this process's instance), so a real session listening on the machine cannot fail it. With the forced enablement put back into production registration it fails (`[  FAILED  ] PdfError.EtwProviderEnabledOnlyByASession`). `tests/scripts/test_etw_registration.py` stays as the CI-side source guard, since `plan-gates` builds no C++.
+- Mutations now restore with `cp` and `touch`, and both mutants were re-run on rebuilt objects: x64 Debug `PdfError.*` -> `0 Warning(s)`, `[  PASSED  ] 7 tests.`
+
+Gates after round 2: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 106 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfError.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 7 tests.`; `python -m unittest tests.scripts.test_etw_registration` -> `OK`.

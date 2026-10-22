@@ -1126,6 +1126,12 @@ void force_enable_etw_provider_for_testing() noexcept;
 [[nodiscard]] bool is_etw_provider_registered() noexcept;
 [[nodiscard]] std::string_view etw_provider_name() noexcept;
 [[nodiscard]] uint64_t etw_diagnostic_events_emitted() noexcept;
+
+// Events EventWriteTransfer refused (a non-zero status), counted beside the events emitted.
+[[nodiscard]] uint64_t etw_write_failures() noexcept;
+
+// Tests only: make every ETW write report status instead of calling EventWriteTransfer (0 restores real writes).
+void set_etw_write_status_for_testing(unsigned long status) noexcept;
 [[nodiscard]] uint64_t etw_span_events_emitted() noexcept;
 
 struct CapturedEtwEvent {
