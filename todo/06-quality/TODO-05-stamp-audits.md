@@ -56,7 +56,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 23 | §23 | Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6 | D01 T01 §9, §22 | [ ] |
 | 24 | §24 | Audit D01 T01 §10: pdf::Document page-tree resolver, metadata, /Outlines, font list and | D01 T01 §10, §23 | [ ] |
 | 25 | §25 | Retired MuPDF and AGPL text removed from the A, B and C mockup boards | §2 | [x] |
-| 26 | §26 | Corpus validator filter decoders conform to ISO 32000-1 7.4 | §12 | [ ] |
+| 26 | §26 | Corpus validator filter decoders conform to ISO 32000-1 7.4 | §12 | [x] |
 | 27 | §27 | ARM64 Debug build free of the CS1668 LIB search-path warnings | §13 | [ ] |
 | 28 | §28 | Retired Office and LibreOffice converter surfaces removed from the A, B and C boards | §25 | [ ] |
 
@@ -685,9 +685,12 @@ The audit of `D00 T03 §4` (`docs/reviews/06-quality/audit-d00-t03-s4.md`, D06 T
 - [x] Make `rle_decode_pdf` refuse a run that reads past the data, a missing EOD (128) and data after EOD, per 7.4.5. Done when: a test with each malformation fails before the change and passes after.
 - [x] Make `flate_png_up_decompress` refuse a row whose predictor byte is not 2 (Up) and a length that is not whole rows, per 7.4.4.4. Done when: a test with each malformation fails before the change and passes after.
 - [x] Replace the CCITT, JBIG2, DCT and JPX seed checks that compare against the generator's own output or only markers with checks of the structure 7.4.6, 7.4.7, 7.4.8 and 7.4.9 define (CCITT `/K`, `/Columns` and EOFB; JBIG2 segment headers; DCT SOI, SOF, SOS, EOI order; JPX box and codestream markers). Done when: a test regenerating each seed with one structural fault fails before the change and passes after.
-- [ ] Commit: `corpus: validator filter decoders conform to ISO 32000-1 7.4`
+- [x] Commit: `corpus: validator filter decoders conform to ISO 32000-1 7.4`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_build_corpus` passes and `python scripts/build-corpus.py --check` prints `verified: 39 corpus fixtures`.
+
+> **Verified:** 2026-10-22 | §26 | b41612ceff57e39cb9bb4c4aa8e5472f1978a526
+> **Review:** `docs/reviews/d06-t05-s26.json`
 
 ## 27. ARM64 Debug build free of the CS1668 LIB search-path warnings
 

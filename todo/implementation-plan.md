@@ -41,7 +41,7 @@ Sections: 37 | Checklist items: 192
 | [x]    | D06 T05 §13 | Audit D00 T03 §5: tests/corpus/PROVENANCE.md and automated Corpus.Provenance SHA-256     | windows-host | 5     |
 | [x]    | D06 T05 §14 | Audit D00 T03 §6: MSVC AddressSanitizer (/fsanitize=address) build configuration and CI  | windows-host | 5     |
 | [x]    | D06 T05 §25 | Retired MuPDF and AGPL text removed from the A, B and C mockup boards                    | windows-host | 4     |
-| [ ]    | D06 T05 §26 | Corpus validator filter decoders conform to ISO 32000-1 7.4                              | none         | 6     |
+| [x]    | D06 T05 §26 | Corpus validator filter decoders conform to ISO 32000-1 7.4                              | none         | 6     |
 | [ ]    | D06 T05 §27 | ARM64 Debug build free of the CS1668 LIB search-path warnings                            | windows-host | 4     |
 | [ ]    | D06 T05 §28 | Retired Office and LibreOffice converter surfaces removed from the A, B and C boards     | windows-host | 5     |
 | [x]    | D07 T03 §1  | Issue forms, triage policy and `SECURITY.md`                                             | none         | 8     |
@@ -750,6 +750,6 @@ Sections: 4 | Checklist items: 22
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
-Progress: 44/681 verified sections, 16 ready to run now.
+Progress: 45/681 verified sections, 15 ready to run now.
 
-Checklist: 263/4880 items completed (includes Commit items).
+Checklist: 264/4880 items completed (includes Commit items).

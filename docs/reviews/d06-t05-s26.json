@@ -1,0 +1,66 @@
+{
+  "ref": "D06 T05 \u00a726",
+  "title": "Corpus validator filter decoders conform to ISO 32000-1 7.4",
+  "implementation_sha": "b41612ceff57e39cb9bb4c4aa8e5472f1978a526",
+  "date": "2026-10-22",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/D06-T05-s26.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/D06-T05-s26.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/D06-T05-s26.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/06-quality/D06-T05-s26.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/06-quality/D06-T05-s26.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 6,
+      "report": "docs/reviews/06-quality/D06-T05-s26.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 7,
+      "report": "docs/reviews/06-quality/D06-T05-s26.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 8,
+      "report": "docs/reviews/06-quality/D06-T05-s26.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 9,
+      "report": "docs/reviews/06-quality/D06-T05-s26.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 10,
+      "report": "docs/reviews/06-quality/D06-T05-s26.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "python -m unittest tests.scripts.test_build_corpus -> Ran 70 tests, OK",
+    "python scripts/build-corpus.py --check -> verified: 39 corpus fixtures in R:\\GitHub\\Recto\\tests\\corpus are current",
+    "build/build.ps1 -Platform x64 -Configuration Release -> exit 0, 0 Warning(s), [  PASSED  ] 103 tests. (PdfFilters.CorpusImageSeedsDecode OK)",
+    "CI build and plan-gates on ad50e6d -> success"
+  ],
+  "rounds_spent": 10,
+  "round_cap": 22
+}
