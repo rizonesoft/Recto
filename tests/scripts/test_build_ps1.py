@@ -1,7 +1,9 @@
 """Checks on build/build.ps1, the one-command build and test driver, and the ASan runtime staging it loads."""
+import os
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -85,6 +87,57 @@ class MSBuildWarningCheck(unittest.TestCase):
         self.assertIn("no warning summary", run.stdout + run.stderr)
 
 
+def _msbuild():
+    vswhere = pathlib.Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+    if not vswhere.exists():
+        return None
+    found = subprocess.run([str(vswhere), "-latest", "-prerelease", "-find", r"MSBuild\**\Bin\amd64\MSBuild.exe"],
+                           capture_output=True, text=True).stdout.splitlines()
+    return found[0] if found else None
+
+
+MSBUILD = _msbuild() if sys.platform == "win32" else None
+
+
+@unittest.skipUnless(MSBUILD, "needs MSBuild (Windows with Visual Studio)")
+class LibraryPathDefaults(unittest.TestCase):
+    """RectoDropAbsentUnusedLibraryPaths in Directory.Build.targets, run by MSBuild on a throwaway project: it drops the
+    ATL/MFC and .NET Framework library defaults only when absent, and keeps every other entry, an absent one included,
+    in order."""
+
+    def library_path(self, platform: str, atl_exists: bool) -> list[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            atl = tmp / "atlmfc" / "lib" / platform
+            netfx = tmp / "netfx"
+            kept, mistyped = tmp / "lib" / platform, tmp / "mistyped"
+            kept.mkdir(parents=True)
+            if atl_exists:
+                atl.mkdir(parents=True)
+            proj = tmp / "probe.proj"
+            proj.write_text(f"""<Project>
+  <PropertyGroup>
+    <PlatformTarget>{platform}</PlatformTarget>
+    <VC_LibraryPath_ATL_{platform}>{atl};</VC_LibraryPath_ATL_{platform}>
+    <NETFXKitsDir>{netfx}\\</NETFXKitsDir>
+    <LibraryPath>{kept};{atl};{mistyped};{netfx}\\lib\\um\\{platform.lower()};</LibraryPath>
+  </PropertyGroup>
+  <Import Project="{ROOT / 'Directory.Build.targets'}" />
+</Project>
+""", encoding="utf-8")
+            run = subprocess.run([MSBUILD, str(proj), "-nologo", "-t:RectoDropAbsentUnusedLibraryPaths",
+                                  "-getProperty:LibraryPath"], capture_output=True, text=True, timeout=300)
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+            names = {str(kept): "kept", str(atl): "atl", str(mistyped): "mistyped"}
+            return [names.get(p, "netfx" if p.endswith("um\\" + platform.lower()) else p)
+                    for p in run.stdout.strip().split(";") if p]
+
+    def test_absent_unused_defaults_go_and_everything_else_stays(self):
+        self.assertEqual(self.library_path("ARM64", atl_exists=False), ["kept", "mistyped"])
+        self.assertEqual(self.library_path("ARM64", atl_exists=True), ["kept", "atl", "mistyped"])
+        self.assertEqual(self.library_path("x64", atl_exists=False), ["kept", "mistyped"])
+
+
 class BuildScript(unittest.TestCase):
     @unittest.skipUnless(POWERSHELL, "needs PowerShell")
     def test_the_scripts_parse(self):
@@ -102,6 +155,7 @@ class BuildScript(unittest.TestCase):
         self.assertIn("Copy-AsanRuntime -ExePath $exe", text)
         self.assertIn(". (Join-Path $PSScriptRoot 'msbuild-log.ps1')", text)
         self.assertIn("Assert-NoMSBuildWarnings -LogFile $logFile", text)
+        self.assertIn("$env:VSLANG = '1033'", text)
         self.assertNotIn("asan_dbg_dynamic", text)
 
 

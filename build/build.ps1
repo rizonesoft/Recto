@@ -67,6 +67,9 @@ Write-Host "VCPKG_ROOT: $env:VCPKG_ROOT"
 
 . (Join-Path $PSScriptRoot 'asan-runtime.ps1')
 . (Join-Path $PSScriptRoot 'msbuild-log.ps1')
+# MSBuild's messages, its log summary ("N Warning(s)") included, in English whatever language Visual Studio is
+# installed in, so Assert-NoMSBuildWarnings reads the same text everywhere.
+$env:VSLANG = '1033'
 $asanBinDir = $null
 if ($EnableASAN) {
     $vcToolsRoot = Join-Path $vs 'VC\Tools\MSVC'

@@ -33,25 +33,30 @@
       <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
     </Link>
   </ItemDefinitionGroup>
-  <!-- Library folders Recto builds against are the ones that exist. The toolset's default LibraryPath names the
-       ATL/MFC and .NET Framework 4.8 library folders for every platform whether or not they are installed (on ARM64
-       they usually are not), and Recto links neither. SetBuildDefaultEnvironmentVariables copies LibraryPath into
-       LIB, so an absent folder there made the C# compiler behind vcpkg's inline MSBuild tasks warn CS1668
-       (D06 T05 §27). This runs just before LIB is set. -->
+  <!-- Two library folders the toolset's default LibraryPath always names, ATL/MFC and the .NET Framework 4.8 libraries
+       for the platform, are dropped when they are not installed (on ARM64 they usually are not): Recto links neither.
+       SetBuildDefaultEnvironmentVariables copies LibraryPath into LIB, and an absent folder there made the C# compiler
+       behind vcpkg's inline MSBuild tasks warn CS1668 (D06 T05 §27). Only these two defaults are touched; any other
+       entry, present or not, stays, so a mistyped library folder still shows. This runs just before LIB is set. -->
   <PropertyGroup>
-    <SetBuildDefaultEnvironmentVariablesDependsOn>$(SetBuildDefaultEnvironmentVariablesDependsOn);RectoKeepExistingLibraryPaths</SetBuildDefaultEnvironmentVariablesDependsOn>
+    <SetBuildDefaultEnvironmentVariablesDependsOn>$(SetBuildDefaultEnvironmentVariablesDependsOn);RectoDropAbsentUnusedLibraryPaths</SetBuildDefaultEnvironmentVariablesDependsOn>
   </PropertyGroup>
-  <Target Name="RectoKeepExistingLibraryPaths">
+  <Target Name="RectoDropAbsentUnusedLibraryPaths">
     <ItemGroup>
+      <_RectoUnusedLibraryPath Condition="'$(PlatformTarget)' == 'ARM64'" Include="$(VC_LibraryPath_ATL_ARM64)" />
+      <_RectoUnusedLibraryPath Condition="'$(PlatformTarget)' == 'x64'" Include="$(VC_LibraryPath_ATL_x64)" />
+      <_RectoUnusedLibraryPath Include="$(NETFXKitsDir)lib\um\$(PlatformTarget.ToLowerInvariant())" />
+      <_RectoAbsentLibraryPath Include="@(_RectoUnusedLibraryPath)" Condition="!Exists('%(Identity)')" />
       <_RectoLibraryPath Include="$(LibraryPath)" />
-      <_RectoExistingLibraryPath Include="@(_RectoLibraryPath)" Condition="Exists('%(Identity)')" />
+      <_RectoLibraryPath Remove="@(_RectoAbsentLibraryPath)" />
     </ItemGroup>
     <PropertyGroup>
-      <LibraryPath>@(_RectoExistingLibraryPath)</LibraryPath>
+      <LibraryPath>@(_RectoLibraryPath)</LibraryPath>
     </PropertyGroup>
     <ItemGroup>
+      <_RectoUnusedLibraryPath Remove="@(_RectoUnusedLibraryPath)" />
+      <_RectoAbsentLibraryPath Remove="@(_RectoAbsentLibraryPath)" />
       <_RectoLibraryPath Remove="@(_RectoLibraryPath)" />
-      <_RectoExistingLibraryPath Remove="@(_RectoExistingLibraryPath)" />
     </ItemGroup>
   </Target>
 </Project>
