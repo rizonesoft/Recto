@@ -1,8 +1,9 @@
 # Derived output: always reproducible from the tracked sources. The one
-# tracked file under build/ is Recto's one-command build driver at
-# build/build.ps1.
+# tracked files under build/ are Recto's one-command build driver at
+# build/build.ps1 and the ASan runtime staging it loads, build/asan-runtime.ps1.
 build/*
 !build/build.ps1
+!build/asan-runtime.ps1
 __pycache__/
 *.pyc
 

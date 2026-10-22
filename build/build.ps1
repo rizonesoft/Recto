@@ -65,6 +65,7 @@ if (-not $env:VCPKG_ROOT) {
 Write-Host "MSBuild:    $msbuild"
 Write-Host "VCPKG_ROOT: $env:VCPKG_ROOT"
 
+. (Join-Path $PSScriptRoot 'asan-runtime.ps1')
 $asanBinDir = $null
 if ($EnableASAN) {
     $vcToolsRoot = Join-Path $vs 'VC\Tools\MSVC'
@@ -120,23 +121,11 @@ foreach ($plat in $Platform) {
         if ($LASTEXITCODE -ne 0) { throw "build failed: $cfg|$plat (exit $LASTEXITCODE)" }
 
         if ($EnableASAN -and $plat -eq 'x64') {
-            # Stage the ASan runtime each executable actually imports, as dumpbin reports it. The toolset decides the
-            # name (since VS 2022 17.7 one clang_rt.asan_dynamic DLL serves Debug and Release alike), so naming it
-            # here per configuration would go stale.
-            $dumpbin = Join-Path $asanBinDir 'dumpbin.exe'
             foreach ($exeProj in @('recto-tests', 'recto-cli')) {
-                $destDir = Join-Path $root "build\bin\x64\$cfg\$exeProj"
-                $exe = Join-Path $destDir "$exeProj.exe"
-                if (-not (Test-Path $exe)) { continue }
-                $imports = @(& $dumpbin /nologo /dependents $exe | ForEach-Object { $_.Trim() } |
-                    Where-Object { $_ -match '^clang_rt\.asan[\w.-]*\.dll$' })
-                if ($LASTEXITCODE -ne 0 -or $imports.Count -eq 0) {
-                    throw "$exeProj.exe ($cfg) imports no ASan runtime: is it built with /fsanitize=address?"
-                }
-                foreach ($rtDllName in $imports) {
-                    $rtDllPath = Join-Path $asanBinDir $rtDllName
-                    if (-not (Test-Path $rtDllPath)) { throw "ASan runtime DLL not found: $rtDllPath" }
-                    Copy-Item -Path $rtDllPath -Destination (Join-Path $destDir $rtDllName) -Force
+                $exe = Join-Path $root "build\bin\x64\$cfg\$exeProj\$exeProj.exe"
+                if (Test-Path $exe) {
+                    $staged = Copy-AsanRuntime -ExePath $exe -AsanBinDir $asanBinDir -Dumpbin (Join-Path $asanBinDir 'dumpbin.exe')
+                    Write-Host "Staged for ${exeProj}: $($staged -join ', ')"
                 }
             }
         }

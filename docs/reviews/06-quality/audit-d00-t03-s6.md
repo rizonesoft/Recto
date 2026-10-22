@@ -43,3 +43,42 @@ OVERALL: needs-attention
 
 - Finding 1 (P3): confirmed against Microsoft Learn (ASan runtime and build reference: since VS 2022 17.7 Preview 3, `/MD` and `/MDd` both use `clang_rt.asan_dynamic-{arch}.dll`) and the binary itself: a Debug ASan `recto-tests.exe` imports `clang_rt.asan_dynamic-x86_64.dll`, so the script staged the wrong DLL for Debug and worked only because `PATH` held the right one. `build/build.ps1` now stages exactly the `clang_rt.asan*` DLLs `dumpbin /dependents` reports for each built executable, and refuses an executable that imports none, so the toolset, not the script, decides the name. `tests/scripts/test_build_ps1.py` guards it and runs in `plan-gates`.
 - Record advisory: the checkpoint is recorded above.
+
+## Round 2: astra (`gpt-6-astra` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T00:29:44Z
+- Effort: medium
+- Lines: 24
+- Digest: a358fffb333d6a18
+
+### adversarial: needs-attention
+
+1. **P3** `tests/scripts/test_build_ps1.py:14`: The new regression test checks source strings but never verifies runtime staging. Removing the staging `Copy-Item` operation still passes. Reproduced without modifying files: load `build/build.ps1`, remove its `Copy-Item -Path` line in memory, mock `pathlib.Path.read_text` to return that text, and run `AsanRuntimeStaging`. Result: `OK`. Add a behavioral check that fails when an imported runtime DLL is not copied.
+
+### consistency: approve
+
+### integration: approve
+
+### source-defect: approve
+
+The runtime naming correction matches [Microsoft’s ASan runtime specification](https://learn.microsoft.com/en-us/cpp/sanitizers/asan-runtime?view=msvc-170).
+
+### design: advisory
+
+Not applicable. No user surface.
+
+### record: advisory
+
+`docs/reviews/06-quality/audit-d00-t03-s6.md:10`: Full checkpoint verification remains limited. Existing logs report zero warnings/errors; Release XML records 102 passing tests. I independently verified the executable’s ASan import and ran `Support.AsanActiveWhenEnabled` successfully with `RECTO_EXPECT_ASAN=1`.
+
+I did not rerun the build because it writes files. The cited CI result could not be independently verified because `gh run view 39697676260` failed through the configured proxy.
+
+HIGHEST: P3
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+`python -m unittest tests.scripts.test_build_ps1` -> `Ran 5 tests`, `OK`; with the `Copy-Item` removed from the staging function, `test_the_imported_runtime_is_staged` fails; with a stray `}` appended to `build.ps1`, `test_the_scripts_parse` fails. `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN` and `-Configuration Debug -EnableASAN` -> exit 0, `[  PASSED  ] 102 tests.`, `Staged for recto-tests: clang_rt.asan_dynamic-x86_64.dll` (and for `recto-cli`), Release `0 Warning(s)`.
+
+- Finding 1 (P3): the staging is now `Copy-AsanRuntime` in `build/asan-runtime.ps1` (tracked beside `build.ps1`, which dot-sources it), and the test drives the real function with a fake `dumpbin` and temporary folders: it stages exactly the imported DLL (not the other one present), refuses an executable that imports none, and refuses a missing runtime. A parse check for both scripts was added after my own edit left a stray brace in `build.ps1` during this fix (caught by the Release ASan run before any commit). PowerShell is on GitHub's Ubuntu and Windows runners, so `plan-gates` runs these tests.
