@@ -1,0 +1,30 @@
+{
+  "ref": "D06 T05 \u00a716",
+  "title": "Audit D01 T01 \u00a72: PdfValue variant object model, dictionary/array helpers and deep",
+  "implementation_sha": "f9c1b2a6596bdfb91ba2152c9bc9b89fa50e5f8a",
+  "date": "2026-10-22",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s2.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s2.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "python scripts/todo-graph.py resolve \"D01 T01 \u00a72\" -> exit 3 (still verified); audit round 3 OVERALL: approve",
+    ".\\build.cmd -> exit 0, 0 Warning(s) in all four configurations, [  PASSED  ] 107 tests. (x64 Debug and Release)",
+    "build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfObject.*:PdfCrypto.* -> exit 0, 0 Warning(s), [  PASSED  ] 14 tests."
+  ],
+  "rounds_spent": 3,
+  "round_cap": 22
+}
