@@ -2742,9 +2742,9 @@ def _validate_jpx_codestream(rel_path: str, data: bytes, width: int, height: int
         seen.append(marker)
         if marker == 0x51:
             fields = struct.unpack(">HIIIIIIIIH", body[:36])
-            if length != 38 + 3 * fields[9] or fields[1:] != (width, height, 0, 0, width, height, 0, 0, 1) \
+            if length != 38 + 3 * fields[9] or fields != (0, width, height, 0, 0, width, height, 0, 0, 1) \
                     or body[36:39] != b"\x07\x01\x01":
-                raise ValueError(f"{rel_path}: JPX SIZ is not one 8-bit unsigned {width}x{height} component in one tile")
+                raise ValueError(f"{rel_path}: JPX SIZ is not Rsiz 0 with one 8-bit unsigned {width}x{height} component in one tile")
         elif marker == 0x90:
             if length != 10:
                 raise ValueError(f"{rel_path}: JPX SOT length {length} is not 10")
@@ -2782,61 +2782,12 @@ def _validate_jpx_codestream(rel_path: str, data: bytes, width: int, height: int
 
 
 def _validate_jpx_single_packet(rel_path: str, packet: bytes) -> None:
-    """The tile's one packet (one layer, one resolution, one component, one precinct, one code-block), read as T.800
-    B.10 codes it: the empty flag; for a non-empty packet the code-block's inclusion, zero bit-planes, pass count and
-    length; then byte alignment (a byte after 0xFF holds 7 bits). The tile-part must hold exactly the header and the
-    code-block data it announces."""
-    pos, bit, stuffed = 0, 0, False
-
-    def read() -> int:
-        nonlocal pos, bit, stuffed
-        if pos >= len(packet):
-            raise ValueError(f"{rel_path}: JPX packet header runs past the tile-part")
-        width = 7 if stuffed else 8
-        if stuffed and bit == 0 and packet[pos] & 0x80:
-            # After 0xFF the next byte carries 7 bits; its first bit is the stuffed 0 (T.800 B.10.1).
-            raise ValueError(f"{rel_path}: JPX packet header byte after 0xFF does not start with the stuffed 0")
-        value = packet[pos] >> (width - 1 - bit) & 1
-        bit += 1
-        if bit == width:
-            stuffed, pos, bit = packet[pos] == 0xFF, pos + 1, 0
-        return value
-
-    length = 0
-    if read():
-        if read():  # included in layer 0 (a one-node inclusion tag tree)
-            zeros = 0
-            while not read():
-                zeros += 1
-                if zeros > 38:
-                    raise ValueError(f"{rel_path}: JPX zero bit-plane count out of range")
-            if read() == 0:
-                passes = 1
-            elif read() == 0:
-                passes = 2
-            else:
-                extra = (read() << 1) | read()
-                if extra != 3:
-                    passes = 3 + extra
-                else:
-                    extra = sum(read() << (4 - i) for i in range(5))
-                    passes = 6 + extra if extra != 31 else 37 + sum(read() << (6 - i) for i in range(7))
-            lblock = 3
-            while read():
-                lblock += 1
-                if lblock > 32:  # the engine's limit (src/pdf/filters.cpp, "Excessive Lblock indicator")
-                    raise ValueError(f"{rel_path}: JPX packet header Lblock above 32")
-            length_bits = lblock + passes.bit_length() - 1
-            if length_bits > 31:  # the engine's limit ("Code-block length field bit count exceeds 31 bits")
-                raise ValueError(f"{rel_path}: JPX code-block length field of {length_bits} bits, above 31")
-            for _ in range(length_bits):
-                length = (length << 1) | read()
-    if bit:
-        pos += 1
-    if stuffed and bit == 0 and pos < len(packet) and packet[pos - 1] == 0xFF:
-        pos += 1  # the header's last byte was 0xFF: one stuffed byte follows
-    if pos + length != len(packet):
-        raise ValueError(f"{rel_path}: JPX tile-part holds {len(packet)} bytes, not the packet's {pos + length}")
+    """The tile's one packet (one layer, one resolution, one component, one precinct, one code-block) must be the empty
+    packet the corpus writes: a header whose empty flag is 0, padded to the byte (T.800 B.10.3), so the single byte 00,
+    and nothing after it. A non-empty packet is not the corpus form, so the validator never has to read code-block
+    inclusion, bit-plane, pass and length codes or their bit stuffing."""
+    if packet != b"\x00":
+        raise ValueError(f"{rel_path}: JPX tile-part data is not the one empty packet (00) the corpus writes")
 
 
 def build_seed_classic_xref() -> bytes:

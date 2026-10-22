@@ -843,7 +843,10 @@ class BuildCorpusTests(unittest.TestCase):
         levels[qcd + 2 : qcd + 4] = (7).to_bytes(2, "big")
         levels[qcd + 6 : qcd + 6] = b"\x40" * 3
         unknown = bytes(jpx[:cod]) + b"\xff\x00\x00\x02" + bytes(jpx[cod:])
-        for data, says in ((bytes(levels), "no decomposition"), (unknown, "not one the corpus image uses")):
+        reserved_rsiz = bytearray(jpx)
+        reserved_rsiz[6:8] = b"\xff\xff"
+        for data, says in ((bytes(levels), "no decomposition"), (unknown, "not one the corpus image uses"),
+                           (bytes(reserved_rsiz), "Rsiz 0")):
             with self.subTest(says=says), self.assertRaisesRegex(ValueError, says):
                 self.mod.validate_jpx_codestream("x", data, 8, 8)
 
@@ -855,7 +858,8 @@ class BuildCorpusTests(unittest.TestCase):
             p[sot + 6 : sot + 10] = (len(p) - 2 - sot).to_bytes(4, "big")
             return bytes(p)
 
-        for packet, says in (("efff7fff7000000000", "above"), ("efffffff7000000000", "stuffed 0")):
+        for packet, says in (("efff7fff7000000000", "empty packet"), ("efffffff7000000000", "empty packet"),
+                             ("f9f8ff80" + "00" * 255, "empty packet"), ("80", "empty packet"), ("0000", "empty packet")):
             with self.subTest(packet=packet), self.assertRaisesRegex(ValueError, says):
                 self.mod.validate_jpx_codestream("x", with_packet(packet), 8, 8)
 
