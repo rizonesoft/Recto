@@ -2184,9 +2184,17 @@ PdfResult<PdfValue> SecurityHandler::resolve_and_decrypt_with_visited(
 						stm_obj_num,
 						0u);
 				}
+				// Indirect /Filter and /DecodeParms resolve (decrypted) with this container already visited, so a
+				// parameter pointing back into it fails as a cycle. obj_stm points into a node of decrypted_cache_,
+				// which a nested resolution may grow without moving it.
+				const IndirectObjectResolver parms_resolver = [&](IndirectRef parm_ref) -> PdfResult<PdfValue> {
+					std::vector<IndirectRef> hop_visited = visited_refs;
+					hop_visited.push_back(stm_ref);
+					return resolve_and_decrypt_with_visited(xref, file_bytes, parm_ref, hop_visited);
+				};
 				RECTO_PDF_TRY(
 					std::vector<uint8_t> decoded_stm,
-					decode_stream(*obj_stm));
+					decode_stream(*obj_stm, kMaxDecodedStreamBytes, &parms_resolver));
 				const uint64_t first_off = static_cast<uint64_t>(*first_opt);
 				if (first_off > decoded_stm.size()) {
 					return make_crypto_error(

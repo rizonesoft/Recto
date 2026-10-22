@@ -144,3 +144,49 @@ The owner's reviewer trial (`.conclave/reviewer-trial-2026-10-22.md`) ran the ro
 Both new tests fail on the round 3 code.
 
 Gates before round 4: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 116 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfXref.*:PdfDocument.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 36 tests.`
+
+## Round 4: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T08:45:28Z
+- Effort: xhigh
+- Lines: 26
+- Digest: 88c82e2e8a548473
+
+### adversarial: needs-attention
+
+1. **P3: Unused parameter entries can prevent valid decoding.** `src/pdf/filters.cpp:9185` resolves every `/DecodeParms` value, including unknown keys. Reproduce using the builder in `tests/recto-tests/pdf_xref_tests.cpp:95`: change object 2 from `<< >>` to `<< /VendorData 1 0 R >>`, retaining `/DecodeParms 2 0 R`. ASCIIHex has no parameters and should decode object 1 to integer `42`. Instead, resolving the irrelevant reference enters the same object stream and returns `DamagedFormat`. This is a source-traced reproduction.
+
+### consistency: approve
+
+### integration: needs-attention
+
+2. **P2: The encrypted-object resolver still omits the filter resolver.** `src/pdf/crypto.cpp:2189` calls `decode_stream(*obj_stm)` without a resolver. The repairs in `XrefTable` and `Document` do not cover the public `SecurityHandler::resolve_and_decrypt_object` path.
+
+   Reproduce by authenticating a `SecurityHandler`, then resolving a compressed child from an encrypted object stream with `/Filter /FlateDecode /DecodeParms 10 0 R`, where object 10 is `<< /Predictor 1 >>`. After decryption, the pipeline leaves the parameter reference unresolved and returns `DamagedFormat`; the equivalent direct dictionary works. This is source-traced, not an executed custom regression.
+
+### source-defect: needs-attention
+
+Finding 1 makes an unknown dictionary entry affect decoding, contrary to the extension behavior described in [Adobe PDF Reference, Appendix H.2](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.6.pdf#page=1026).
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: advisory
+
+Independently reran the existing Release executable: all 16 `PdfFilters.*` tests passed, and `Support.AsanActiveWhenEnabled` reported `ASan=enabled`. The object-stream resolver regression also passed. These runs verify the existing executable’s results, not the recorded fresh-build warning counts or ARM64 compilation. Reviewed sources match `9b15890`; no files were modified.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 4
+
+Round 4 is the first on the new pin (GPT-6.1 Sol at xhigh).
+
+- Finding 1 (P3): correct. Resolving every `/DecodeParms` value let a key no filter reads (a reference back into the same object stream) fail decoding, contrary to ISO 32000-1 Appendix H.2's rule that unknown keys are ignored. Only the parameters the standard filters define now resolve (`Predictor`, `Colors`, `BitsPerComponent`, `Columns`, `EarlyChange`, the CCITT parameters, `ColorTransform`, and `/Crypt`'s `Name` and `Type`); `/JBIG2Globals` keeps its own resolution in the decoder. Because that set is closed, resolution stays bounded, and round 2's 16-reference refusal is gone. `PdfXref.ObjStmIndirectDecodeParmsResolve` adds an object stream whose parameter dictionary is `<< /VendorData 1 0 R >>`, which decodes to 42.
+- Finding 2 (P2): correct. `SecurityHandler::resolve_and_decrypt_with_visited` also decoded object streams without a resolver. It now passes one that resolves and decrypts through the same path with the container already visited. `obj_stm` points into a node of `decrypted_cache_`, which a nested resolution may grow without moving it, and the cache iterator is reassigned by `emplace` afterwards. `PdfCrypto.EncryptedObjStmIndirectDecodeParmsResolve` resolves a compressed integer from an RC4-encrypted object stream whose `/DecodeParms` is `4 0 R`. This also covers the shape of the `Document` path noted before round 4.
+
+Both tests fail on the round 4 code.
+
+Gates after round 4: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 117 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 45 tests.`

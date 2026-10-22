@@ -94,11 +94,11 @@ void verify_simple_1p_with_preamble(std::span<const uint8_t> preamble)
 // stream is a cycle that fails cleanly.
 TEST(PdfXref, ObjStmIndirectDecodeParmsResolve)
 {
-	const auto build = [](std::string_view parms_ref) {
+	const auto build = [](std::string_view parms_ref, std::string_view parms_body = "<< >>") {
 		const std::string payload = "312030203432>"; // ASCIIHex of "1 0 42": object 1 is the integer 42
 		std::string pdf = "%PDF-1.7\n";
 		const size_t off2 = pdf.size();
-		pdf += "2 0 obj\n<< >>\nendobj\n";
+		pdf += "2 0 obj\n" + std::string(parms_body) + "\nendobj\n";
 		const size_t off5 = pdf.size();
 		pdf += "5 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Filter /ASCIIHexDecode /DecodeParms ";
 		pdf += parms_ref;
@@ -133,6 +133,14 @@ TEST(PdfXref, ObjStmIndirectDecodeParmsResolve)
 	auto cyclic_xref = XrefTable::parse(as_bytes(cyclic_pdf));
 	RECTO_ASSERT_OK(cyclic_xref);
 	RECTO_EXPECT_ERR(cyclic_xref->resolve_object(as_bytes(cyclic_pdf), IndirectRef{1u, 0u}), ErrorCode::DamagedFormat);
+
+	// A key no filter defines is never resolved, so even a reference back into the stream does not affect decoding.
+	const std::string vendor_pdf = build("2 0 R", "<< /VendorData 1 0 R >>");
+	auto vendor_xref = XrefTable::parse(as_bytes(vendor_pdf));
+	RECTO_ASSERT_OK(vendor_xref);
+	auto vendor_value = vendor_xref->resolve_object(as_bytes(vendor_pdf), IndirectRef{1u, 0u});
+	RECTO_ASSERT_OK(vendor_value);
+	EXPECT_EQ(vendor_value->as_int(), std::optional<int64_t>(42));
 }
 
 TEST(PdfXref, ClassicEntriesAboveSizeAreMissing)

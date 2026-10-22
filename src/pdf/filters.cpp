@@ -9142,13 +9142,19 @@ namespace {
 	const IndirectObjectResolver* resolver = nullptr,
 	bool allow_jbig2 = true)
 {
-	// Any of /Filter, /DecodeParms, their array elements and the values inside a /DecodeParms dictionary may be an
-	// indirect reference (ISO 32000-1 section 7.3.10). Each is resolved one level through the resolver into a deque,
-	// whose elements stay put as it grows, so the pointers taken below outlive the pipeline. Without a resolver a
-	// reference is left as it is and refused below as before. Arrays longer than the filter chain are left for the
-	// length checks below to refuse, and a /DecodeParms dictionary with more references than any filter defines
-	// parameters is refused here, so hostile input cannot drive unbounded resolution.
-	constexpr size_t kMaxResolvedParmsEntries = 16;
+	// Any of /Filter, /DecodeParms, their array elements and the parameter values inside a /DecodeParms dictionary
+	// may be an indirect reference (ISO 32000-1 section 7.3.10). Each is resolved one level through the resolver into
+	// a deque, whose elements stay put as it grows, so the pointers taken below outlive the pipeline. Without a
+	// resolver a reference is left as it is and refused below as before. Arrays longer than the filter chain are
+	// left for the length checks below to refuse. Inside /DecodeParms only the parameters the standard filters define
+	// resolve (ISO 32000-1 Tables 8, 11 and 12, plus /Name and /Type of /Crypt), so an unknown key never affects
+	// decoding (Appendix H.2) and resolution stays bounded; /JBIG2Globals keeps its own resolution in the decoder.
+	static constexpr std::array<std::string_view, 15> kResolvableParms = {
+		"Predictor", "Colors", "BitsPerComponent", "Columns", "EarlyChange", "K", "EndOfLine", "EncodedByteAlign",
+		"Rows", "EndOfBlock", "BlackIs1", "DamagedRowsBeforeError", "ColorTransform", "Name", "Type"};
+	const auto resolvable = [](std::string_view key) {
+		return std::find(kResolvableParms.begin(), kResolvableParms.end(), key) != kResolvableParms.end();
+	};
 	std::deque<PdfValue> resolved;
 	const bool can_resolve = resolver != nullptr && static_cast<bool>(*resolver);
 	const auto deref = [&](const PdfValue* v) -> PdfResult<const PdfValue*> {
@@ -9167,22 +9173,15 @@ namespace {
 		if (dict == nullptr || !can_resolve) {
 			return v;
 		}
-		size_t refs = 0;
-		for (const auto& entry : dict->entries()) {
-			refs += entry.second.is_ref() ? 1u : 0u;
-		}
-		if (refs == 0) {
+		const bool any = std::any_of(dict->entries().begin(), dict->entries().end(), [&](const auto& entry) {
+			return entry.second.is_ref() && resolvable(entry.first.view());
+		});
+		if (!any) {
 			return v;
-		}
-		if (refs > kMaxResolvedParmsEntries) {
-			return make_filter_error(
-				ErrorCode::DamagedFormat,
-				DiagnosticId::DamagedStream,
-				"/DecodeParms dictionary holds more indirect values than any filter defines parameters");
 		}
 		PdfDict copy;
 		for (const auto& [key, value] : dict->entries()) {
-			RECTO_PDF_TRY(const PdfValue* target, deref(&value));
+			RECTO_PDF_TRY(const PdfValue* target, resolvable(key.view()) ? deref(&value) : PdfResult<const PdfValue*>(&value));
 			RECTO_PDF_TRY_REF(value_copy, target->deep_clone());
 			copy.set(key, std::move(value_copy));
 		}

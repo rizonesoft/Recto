@@ -736,6 +736,54 @@ TEST(PdfCrypto, Exemptions)
 	EXPECT_EQ(sh.cached_object_count(), 2u);
 }
 
+// An encrypted object stream's /DecodeParms may be an indirect reference: SecurityHandler resolves (and decrypts) it
+// through the same path, with the container already visited.
+TEST(PdfCrypto, EncryptedObjStmIndirectDecodeParmsResolve)
+{
+	const std::vector<uint8_t> file_bytes = read_corpus_bytes("render/encrypted-rc4-128.pdf");
+	auto xref_res = XrefTable::parse(file_bytes);
+	RECTO_ASSERT_OK(xref_res);
+	auto sh_opt = SecurityHandler::from_xref(*xref_res, file_bytes);
+	RECTO_ASSERT_OK(sh_opt);
+	ASSERT_TRUE(sh_opt->has_value());
+	SecurityHandler sh = std::move(**sh_opt);
+	RECTO_ASSERT_OK(sh.authenticate("recto-test"));
+
+	const std::string_view plain = "322030203432>"; // ASCIIHex of "2 0 42": object 2 is the integer 42
+	const std::span<const uint8_t> plain_span(reinterpret_cast<const uint8_t*>(plain.data()), plain.size());
+	auto cipher = sh.decrypt_bytes(plain_span, IndirectRef{1u, 0u}, CryptFilterMethod::V2); // RC4 is symmetric
+	RECTO_ASSERT_OK(cipher);
+
+	std::vector<uint8_t> pdf;
+	const auto append = [&](std::string_view sv) { pdf.insert(pdf.end(), sv.begin(), sv.end()); };
+	append("%PDF-1.5\n");
+	const uint16_t off1 = static_cast<uint16_t>(pdf.size());
+	append("1 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Filter /ASCIIHexDecode /DecodeParms 4 0 R /Length " +
+		std::to_string(cipher->size()) + " >>\nstream\n");
+	pdf.insert(pdf.end(), cipher->begin(), cipher->end());
+	append("\nendstream\nendobj\n");
+	const uint16_t off4 = static_cast<uint16_t>(pdf.size());
+	append("4 0 obj\n<< >>\nendobj\n");
+	const uint16_t off3 = static_cast<uint16_t>(pdf.size());
+	append("3 0 obj\n<< /Type /XRef /Size 5 /Root 2 0 R /W [1 2 1] /Index [0 5] /Length 20 >>\nstream\n");
+	const std::array<uint8_t, 20> rows = {
+		0x00u, 0x00u, 0x00u, 0xFFu,
+		0x01u, static_cast<uint8_t>(off1 >> 8u), static_cast<uint8_t>(off1 & 0xFFu), 0x00u,
+		0x02u, 0x00u, 0x01u, 0x00u,
+		0x01u, static_cast<uint8_t>(off3 >> 8u), static_cast<uint8_t>(off3 & 0xFFu), 0x00u,
+		0x01u, static_cast<uint8_t>(off4 >> 8u), static_cast<uint8_t>(off4 & 0xFFu), 0x00u,
+	};
+	pdf.insert(pdf.end(), rows.begin(), rows.end());
+	append("\nendstream\nendobj\nstartxref\n" + std::to_string(off3) + "\n%%EOF\n");
+
+	auto synth_xref = XrefTable::parse(pdf);
+	RECTO_ASSERT_OK(synth_xref);
+	sh.clear_decrypted_cache();
+	auto child = sh.resolve_and_decrypt_object(*synth_xref, pdf, IndirectRef{2u, 0u});
+	RECTO_ASSERT_OK(child);
+	EXPECT_EQ(child->as_int(), std::optional<int64_t>(42));
+}
+
 TEST(PdfCrypto, PermissionsBitmask)
 {
 	// ISO 32000-1 Table 22 (1-indexed bit positions: 3, 4, 5, 6, 9, 10, 11, 12):
