@@ -5,6 +5,7 @@ import json
 import os
 import pathlib
 import html
+import html.parser
 import re
 import subprocess
 import sys
@@ -90,26 +91,59 @@ REVIEWED_OFFICE_UNITS = frozenset({
 })
 # The suites' install pages, matched in the raw text so a link counts whatever its anchor says.
 OFFICE_INSTALL_LINK = re.compile(r"libreoffice\.org|microsoft\.com/microsoft-365|office\.com", re.IGNORECASE)
-# Inline elements and comments do not break words when rendered (Libre<span>Office</span>, Libre<!-- x -->Office), so
-# they are removed without a space, as is a word-break opportunity (<wbr>); every other tag ends a unit. White space, newlines included, is only a space, and a
-# colon does not end a unit ("Required converter: Office" is one statement).
-INLINE_TAG = re.compile(r"</?(a|abbr|b|bdi|bdo|cite|code|data|dfn|em|i|kbd|mark|q|s|samp|small|span|strong|sub|sup|time"
-                        r"|u|var|wbr)\b[^>]*>", re.IGNORECASE)
-VISIBLE_ATTRIBUTE = re.compile(r"""\b(value|placeholder|alt|title|aria-label)\s*=\s*["']([^"']*)["']""", re.IGNORECASE)
-# A line break inside an element is a break within the same text, read as a space, not the end of a unit.
-LINE_BREAK = re.compile(r"<br\b[^>]*>", re.IGNORECASE)
+# How rendered text breaks into units: inline elements (and a word-break opportunity, <wbr>) do not break words, a line
+# break (<br>) is a space within the same text, and every other element ends a unit, as do sentence punctuation
+# (. ! ? ;). Comments, scripts and styles are not shown. Text a reader sees or hears in attributes (a button's value,
+# a field's placeholder, an image's alt, a tooltip, an accessible name) is a unit of its own. Parsed with html.parser,
+# which reads quoting, unquoted attributes, entities and comments as a browser does.
+INLINE_ELEMENTS = {"a", "abbr", "b", "bdi", "bdo", "cite", "code", "data", "dfn", "em", "i", "kbd", "mark", "q", "s",
+                   "samp", "small", "span", "strong", "sub", "sup", "time", "u", "var", "wbr"}
+VISIBLE_ATTRIBUTES = {"value", "placeholder", "alt", "title", "aria-label"}
+
+
+class _VisibleText(html.parser.HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.attributes: list[str] = []
+        self.hidden = 0
+
+    def _tag(self, tag, attrs, closing=False):
+        if tag in ("script", "style"):
+            self.hidden += -1 if closing else 1
+            self.parts.append("\x00")
+            return
+        for name, value in attrs:
+            if name in VISIBLE_ATTRIBUTES and value:
+                self.attributes.append(value)
+        if tag == "br":
+            self.parts.append(" ")
+        elif tag not in INLINE_ELEMENTS:
+            self.parts.append("\x00")
+
+    def handle_starttag(self, tag, attrs):
+        self._tag(tag, attrs)
+
+    def handle_startendtag(self, tag, attrs):
+        self._tag(tag, attrs)
+
+    def handle_endtag(self, tag):
+        self._tag(tag, [], closing=True)
+
+    def handle_data(self, data):
+        if not self.hidden:
+            self.parts.append(data)
 
 
 def visible_units(markup: str) -> list[str]:
-    """The text a reader sees, as units split at element boundaries (other than inline elements) and at sentence
-    punctuation (. ! ? ;), with entities decoded and white space, newlines included, collapsed to single spaces."""
-    text = re.sub(r"(?s)<!--.*?-->", "", markup)
-    text = re.sub(r"(?is)<(script|style)\b.*?</\1>", "\x00", text)
-    # Text a reader sees or hears that lives in attributes: a button's value, a field's placeholder, an image's alt,
-    # a tooltip, an accessible name. Each is a unit of its own.
-    shown = [html.unescape(m.group(2)) for m in VISIBLE_ATTRIBUTE.finditer(text)]
-    text = html.unescape(re.sub(r"<[^>]+>", "\x00", LINE_BREAK.sub(" ", INLINE_TAG.sub("", text))))
-    return [" ".join(unit.split()) for unit in re.split(r"[\x00.!?;]", "\x00".join([text, *shown])) if unit.strip()]
+    """The text a reader sees or hears, as units split at element boundaries (other than inline elements) and at
+    sentence punctuation, with white space, newlines included, collapsed to single spaces; visible attribute text
+    follows as units of its own."""
+    parser = _VisibleText()
+    parser.feed(markup)
+    parser.close()
+    text = "\x00".join(["".join(parser.parts), *parser.attributes])
+    return [" ".join(unit.split()) for unit in re.split(r"[\x00.!?;]", text) if unit.strip()]
 
 
 def office_dependency(markup: str) -> str | None:
@@ -187,7 +221,10 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                        "<p>Install <button>Office</button> to convert documents.</p>",
                        "<p>Office must be present to convert documents.</p>",
                        '<input type="button" value="Install Microsoft Office to convert">',
-                       '<button aria-label="Requires Word">Convert</button>'):
+                       '<button aria-label="Requires Word">Convert</button>',
+                       """<button title="You'll need Microsoft Office to convert">Convert</button>""",
+                       "<button title=LibreOffice>Convert</button>",
+                       "<p>Get Libre<!-- branding -->Office</p>", "<p>Get Libre<span class='x'>Office</span></p>"):
             with self.subTest(markup=markup):
                 self.assertIsNotNone(office_dependency(markup))
         for markup in ("<p>Office to PDF is built in.</p>", "<td>PDF to Word</td><td>needs a password</td>",
