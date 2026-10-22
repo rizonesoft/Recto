@@ -183,6 +183,8 @@ Implement the recursive-descent PDF object parser in `src/pdf/parser.h` and `src
 - [x] Run a byte-by-byte truncation test across sample indirect objects, nested dictionaries, and streams under ASan. Done when: every truncated slice returns `ErrorCode::DamagedFormat` with zero memory errors.
 - [x] Commit: `pdf: add bounded recursive-descent PDF object and stream parser`
 
+> **Corrected 2026-10-22 (D06 T05 §18):** the bounds were per container only, so many containers each under `kMaxContainerElements` could together create about one value per two input bytes (a 200 MB array of arrays, 100 million values). One top-level parse now creates at most `kMaxParsedValues` values in total (`Parser::set_max_total_values`), so no object costs more than the largest single container already could. The Freeze check's claim of no shared mutable state was also untrue: the stream terminator scan count was a `thread_local` shared by every parser on a thread. It is now a `Parser` member (`Parser::last_stream_terminator_scan_steps`).
+
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfParser.*` passes under ASan with 0 warnings.
 
 > **Verified:** 2026-10-18 | §4 | 92005cad5d10e594fed6e96a600e367b0a50b129

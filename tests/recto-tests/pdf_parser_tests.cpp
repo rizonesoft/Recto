@@ -20,6 +20,44 @@ namespace {
 		sv.size()};
 }
 
+// One top-level parse creates at most max_total_values values across all its containers, however many containers
+// each stay under the per-container ceiling; the budget restarts with each parse.
+TEST(PdfParser, TotalValueBudgetSpansContainers)
+{
+	const std::string nested = "[[0 0 0 0] [0 0 0 0] [0 0 0 0]]"; // 1 + 3 + 12 = 16 values
+	{
+		Parser parser(as_bytes(nested));
+		parser.set_max_total_values(15);
+		auto res = parser.parse_direct_object();
+		RECTO_EXPECT_ERR(res, ErrorCode::DamagedFormat);
+	}
+	{
+		Parser parser(as_bytes(nested));
+		parser.set_max_total_values(16);
+		RECTO_ASSERT_OK(parser.parse_direct_object());
+	}
+	{
+		const std::string two = nested + " " + nested;
+		Parser parser(as_bytes(two));
+		parser.set_max_total_values(16);
+		RECTO_ASSERT_OK(parser.parse_direct_object());
+		RECTO_ASSERT_OK(parser.parse_direct_object());
+	}
+	{
+		const std::string obj = "7 0 obj\n<< /K " + nested + " >>\nendobj"; // 1 + 16 values
+		Parser parser(as_bytes(obj));
+		parser.set_max_total_values(16);
+		RECTO_EXPECT_ERR(parser.parse_indirect_object(), ErrorCode::DamagedFormat);
+	}
+	{
+		const std::string dict = "<< /A " + nested + " >>";
+		Parser parser(as_bytes(dict));
+		parser.set_max_total_values(15);
+		RECTO_EXPECT_ERR(parser.parse_dictionary(), ErrorCode::DamagedFormat);
+	}
+	EXPECT_EQ(Parser(as_bytes(nested)).max_total_values(), kMaxParsedValues);
+}
+
 TEST(PdfParser, PrimitivesAndComments)
 {
 	constexpr std::string_view kInput =
@@ -555,8 +593,15 @@ TEST(PdfParser, Streams)
 		const auto diags = diagnostics_tail();
 		ASSERT_FALSE(diags.empty());
 		EXPECT_EQ(diags.back().diagnostic_id, DiagnosticId::DamagedStream);
-		EXPECT_GT(detail::last_stream_terminator_scan_steps(), 0u);
-		EXPECT_LE(detail::last_stream_terminator_scan_steps(), full_obj.size() * 2);
+		EXPECT_GT(parser.last_stream_terminator_scan_steps(), 0u);
+		EXPECT_LE(parser.last_stream_terminator_scan_steps(), full_obj.size() * 2);
+		// The count belongs to the parser: another parser's scan leaves it alone.
+		const size_t steps = parser.last_stream_terminator_scan_steps();
+		const std::string short_obj = "12 0 obj\n<< >>\nstream\nab\nendstream\nendobj";
+		Parser other(as_bytes(short_obj));
+		RECTO_ASSERT_OK(other.parse_indirect_object());
+		EXPECT_NE(other.last_stream_terminator_scan_steps(), steps); // a different scan, so a shared count would show
+		EXPECT_EQ(parser.last_stream_terminator_scan_steps(), steps);
 	}
 }
 

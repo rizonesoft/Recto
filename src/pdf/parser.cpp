@@ -31,8 +31,6 @@ constexpr std::string_view kEndobjKeyword = "endobj";
 	return after == input.size() || !Lexer::is_pdf_regular(input[after]);
 }
 
-thread_local size_t g_last_terminator_scan_steps = 0;
-
 struct TerminatorScanner {
 	std::span<const uint8_t> input;
 	size_t cached_converge_limit{0};
@@ -113,7 +111,6 @@ struct TerminatorScanner {
 {
 	TerminatorScanner scanner{input};
 	const bool ok = scanner.is_followed_by_terminator(endstream_pos, require_endobj_terminator);
-	g_last_terminator_scan_steps = scanner.scan_steps;
 	if (out_max_offset != nullptr) {
 		*out_max_offset = scanner.max_offset;
 	}
@@ -298,6 +295,7 @@ void Parser::set_max_container_elements(size_t max_elements) noexcept
 PdfResult<PdfValue> Parser::parse_direct_object() noexcept
 {
 	const size_t saved_pos = lexer_->position();
+	values_parsed_ = 0;
 	try {
 		PdfValue out;
 		PdfError err;
@@ -326,6 +324,7 @@ PdfResult<PdfValue> Parser::parse_direct_object() noexcept
 PdfResult<PdfArray> Parser::parse_array() noexcept
 {
 	const size_t saved_pos = lexer_->position();
+	values_parsed_ = 0;
 	try {
 		Token open_tok;
 		PdfError err;
@@ -367,6 +366,7 @@ PdfResult<PdfArray> Parser::parse_array() noexcept
 PdfResult<PdfDict> Parser::parse_dictionary() noexcept
 {
 	const size_t saved_pos = lexer_->position();
+	values_parsed_ = 0;
 	try {
 		Token open_tok;
 		PdfError err;
@@ -438,6 +438,7 @@ PdfResult<IndirectObject> Parser::parse_indirect_object(
 	const LengthResolver& length_resolver) noexcept
 {
 	const size_t saved_pos = lexer_->position();
+	values_parsed_ = 0;
 	try {
 		auto res = parse_indirect_object_impl(length_resolver);
 		if (!res.has_value() && res.error().code == ErrorCode::OutOfMemory) {
@@ -468,6 +469,14 @@ bool Parser::parse_direct_object_impl(
 	if (!next_non_comment(*lexer_, tok0, err)) {
 		return false;
 	}
+	if (values_parsed_ >= max_total_values_) {
+		err = make_pdf_error(
+			ErrorCode::DamagedFormat,
+			"PDF object exceeds maximum total value count ceiling",
+			tok0.byte_offset);
+		return false;
+	}
+	++values_parsed_;
 
 	switch (tok0.kind) {
 	case TokenKind::Eof:
@@ -757,7 +766,7 @@ PdfResult<std::span<const uint8_t>> Parser::parse_stream_slice_impl(
 				break;
 			}
 		}
-		g_last_terminator_scan_steps = scanner.scan_steps;
+		last_terminator_scan_steps_ = scanner.scan_steps;
 		lexer_->record_scanned_offset(
 			strict_match.has_value()
 				? std::max(*strict_match + kEndstreamKeyword.size(), scanner.max_offset)
@@ -916,13 +925,5 @@ PdfResult<IndirectObject> Parser::parse_indirect_object_impl(
 		std::move(body)};
 }
 
-namespace detail {
-
-size_t last_stream_terminator_scan_steps() noexcept
-{
-	return g_last_terminator_scan_steps;
-}
-
-} // namespace detail
 
 } // namespace recto::pdf

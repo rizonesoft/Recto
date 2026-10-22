@@ -28,6 +28,11 @@ inline constexpr size_t kMaxParserRecursionDepth = 64;
 // single PDF dictionary to guard against container amplification attacks.
 inline constexpr size_t kMaxContainerElements = 1'000'000;
 
+// Maximum number of values one top-level parse (parse_direct_object, parse_array, parse_dictionary or
+// parse_indirect_object) may create across all its containers, so no object costs more memory than the largest
+// single container already could; many containers each under kMaxContainerElements cannot add up past it.
+inline constexpr size_t kMaxParsedValues = kMaxContainerElements;
+
 struct IndirectObject {
 	IndirectRef ref{};
 	PdfValue value{};
@@ -77,6 +82,22 @@ public:
 	[[nodiscard]] size_t max_recursion_depth() const noexcept
 	{
 		return max_recursion_depth_;
+	}
+
+	void set_max_total_values(size_t max_values) noexcept
+	{
+		max_total_values_ = max_values;
+	}
+	[[nodiscard]] size_t max_total_values() const noexcept
+	{
+		return max_total_values_;
+	}
+
+	// Steps the last 'endstream' terminator scan of this parser took (0 before any). Diagnostics for tests: it
+	// shows the fallback scan stays linear.
+	[[nodiscard]] size_t last_stream_terminator_scan_steps() const noexcept
+	{
+		return last_terminator_scan_steps_;
 	}
 
 	void set_max_container_elements(size_t max_elements) noexcept;
@@ -137,12 +158,10 @@ private:
 	Lexer* lexer_{nullptr};
 	size_t max_recursion_depth_{kMaxParserRecursionDepth};
 	size_t max_container_elements_{kMaxContainerElements};
+	size_t max_total_values_{kMaxParsedValues};
+	size_t values_parsed_{0};               // values created by the current top-level parse
+	size_t last_terminator_scan_steps_{0};
 };
 
-namespace detail {
-
-[[nodiscard]] size_t last_stream_terminator_scan_steps() noexcept;
-
-} // namespace detail
 
 } // namespace recto::pdf
