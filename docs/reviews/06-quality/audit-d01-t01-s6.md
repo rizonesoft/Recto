@@ -110,3 +110,48 @@ OVERALL: needs-attention
 - Finding 3 (P2): correct. `is_object_stream` resolves an indirect `/Type` one level through each path's cycle-safe resolver, and `XrefTable`, `SecurityHandler` and `Document` all use it. `PdfXref.ObjStmIndirectCountsAndBareReferences` adds `/Type 3 0 R` (object 3 holds `/ObjStm`); it fails with the resolution disabled.
 
 Gates after round 2: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 123 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 34 tests.`
+
+## Round 3: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T11:26:45Z
+- Effort: xhigh
+- Lines: 28
+- Digest: 9a8ea108790ddebb
+
+### adversarial: needs-attention
+
+1. **P1, extracted members bypass the cache byte budget.** `src/pdf/crypto.cpp:2252` retains each extracted member in the unbounded `decrypted_cache_`, independently of container eviction. Reproduce with 32 encrypted, RunLength-encoded object streams, each containing a 16 MiB literal string. Resolve each member through `SecurityHandler::resolve_and_decrypt_object`, discarding returned values. The member cache retains approximately 512 MiB despite the 256 MiB container budget. More containers keep increasing retention.
+
+### consistency: approve
+
+No additional findings.
+
+### integration: needs-attention
+
+2. **P2, allocation failure corrupts cache state and makes retry unsafe.** `src/pdf/xref.cpp:1729` updates `order_` and `bytes_` before `by_num_.emplace` succeeds. Reproduce by inserting a budget-sized container and injecting `std::bad_alloc` at the map insertion. After catching the exception, insert a one-byte container. Eviction finds the phantom entry in `order_`, then dereferences `by_num_.end()` at line 1725. Public resolver wrappers return `OutOfMemory` without clearing this corrupted cache, so a subsequent resolution can crash.
+
+### source-defect: needs-attention
+
+3. **P2, recovery rejects an intact catalog with an indirect `/Type`.** `src/pdf/xref.cpp:855` recognizes catalogs only through direct names; root validation at line 1053 subsequently depends exclusively on that recognition. Reproduce with an otherwise intact document whose catalog contains `/Type 4 0 R`, object 4 contains `/Catalog`, and the surviving trailer correctly references the catalog. Remove `startxref`: recovery returns `DamagedFormat`. Dictionary values may be indirect unless explicitly restricted. This case uses no object stream and is separate from D06 T05 §29. [PDF specification, indirect objects](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.5_v6.pdf)
+
+### design: advisory
+
+Not applicable.
+
+### record: needs-attention
+
+4. **P3, the recorded retention justification is false.** `docs/reviews/06-quality/audit-d01-t01-s6.md:108` states that `decrypted_cache_` values are bounded by the file’s own bytes. Finding 1 reproduces the contradiction: cached members contain expanded data.
+
+The existing Release binary passed all 15 `PdfXref.*` tests, 19 document/crypto tests, and the ASan activation check. Graph validation and plan checks passed. No fresh compilation was performed. Findings 1 to 3 are source-traced reproductions, not executed probes. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 3
+
+- Finding 1 (P1): correct, and finding 4 (P3) with it: my round 2 note said `decrypted_cache_` was bounded by the file's own bytes, which is false for object-stream members, since a member can expand far past its share of the file. Members are no longer kept in `decrypted_cache_`. They stay decoded in the bounded `decrypted_obj_stm_cache_` and are re-read from it (extraction is a parse of a slice). `decrypted_cache_` now holds only decrypted uncompressed objects and containers, whose size the file does bound, and `crypto.h` says so. `PdfCrypto.Exemptions` now expects one cached decrypted object (the container) after a member resolves, where it used to expect two, and adds a third resolution with no file bytes served from the decoded container. This is a deliberate change of what is cached, not a weakened test. It fails on the round 2 code.
+- Finding 2 (P2): correct. `ObjStmCache::insert` updated `order_` and `bytes_` before the map insert, so a `bad_alloc` there left a phantom entry that a later eviction would dereference. Both allocations (reserving `order_`, inserting into the map) now happen before any bookkeeping changes, and eviction tolerates a missing entry. No allocation fault injector reaches the standard containers, so this is verified by reading the ordering and by `PdfXref.ObjStmCacheBoundsCountAndBytes` covering the normal path, not by an injected failure.
+- Finding 3 (P2): correct, and separate from `D06 T05 §29`. Recovery recognized a catalog only by a direct `/Type /Catalog`. Dictionaries whose `/Type` is a reference are now remembered (and forgotten when their object is redefined, like the other recovery maps) and resolved after the scan, when every object is known; one naming `/Catalog` becomes a catalog candidate. `PdfXref.DamagedRecovery` adds a catalog with `/Type 4 0 R` where object 4 comes after it, and the root is recovered. It fails on the round 2 code.
+
+Gates after round 3: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 123 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 34 tests.`

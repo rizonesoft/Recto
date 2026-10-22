@@ -1528,6 +1528,17 @@ TEST(PdfXref, DamagedRecovery)
 		auto rec_bare = XrefTable::recover_damaged_xref(as_bytes(pdf_bare_inner));
 		RECTO_ASSERT_OK(rec_bare);
 		EXPECT_EQ(rec_bare->root_ref(), (IndirectRef{1u, 0u}));
+
+		// A catalog whose /Type is an indirect reference to an object later in the file is still recognized, once
+		// the scan has found that object (no object stream involved).
+		std::string pdf_indirect_type = "%PDF-1.7\n";
+		pdf_indirect_type += "1 0 obj\n<< /Type 4 0 R /Pages 2 0 R >>\nendobj\n";
+		pdf_indirect_type += "2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+		pdf_indirect_type += "4 0 obj\n/Catalog\nendobj\n";
+		pdf_indirect_type += "trailer\n<< /Size 5 /Root 1 0 R >>\n%%EOF\n";
+		auto rec_type = XrefTable::recover_damaged_xref(as_bytes(pdf_indirect_type));
+		RECTO_ASSERT_OK(rec_type);
+		EXPECT_EQ(rec_type->root_ref(), (IndirectRef{1u, 0u}));
 	}
 
 	// 8. Compressed `/Type /ObjStm` streams whose decoded payload exceeds `max(file_size * 4, 65536)`

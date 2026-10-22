@@ -714,7 +714,9 @@ TEST(PdfCrypto, Exemptions)
 	ASSERT_NE(child_a->as_dict(), nullptr);
 	ASSERT_NE(child_a->as_dict()->get_string("Title"), nullptr);
 	EXPECT_EQ(*child_a->as_dict()->get_string("Title")->to_utf8(), "Compressed Child");
-	EXPECT_EQ(sh.cached_object_count(), 2u);
+	// Only the container is kept as a decrypted object; the member is re-read from the bounded decoded container,
+	// since a member can expand far past its share of the file (D06 T05 §21).
+	EXPECT_EQ(sh.cached_object_count(), 1u);
 
 	auto stm_a = sh.resolve_and_decrypt_object(*synth_xref, {}, IndirectRef{1u, 0u});
 	RECTO_ASSERT_OK(stm_a);
@@ -733,7 +735,12 @@ TEST(PdfCrypto, Exemptions)
 	ASSERT_NE(child_b->as_dict(), nullptr);
 	ASSERT_NE(child_b->as_dict()->get_string("Title"), nullptr);
 	EXPECT_EQ(*child_b->as_dict()->get_string("Title")->to_utf8(), "Compressed Child");
-	EXPECT_EQ(sh.cached_object_count(), 2u);
+	EXPECT_EQ(sh.cached_object_count(), 1u); // the member is not kept (see order A)
+	// Read again with no file bytes at all: it comes from the decoded container still cached.
+	auto child_again = sh.resolve_and_decrypt_object(*synth_xref, {}, IndirectRef{2u, 0u});
+	RECTO_ASSERT_OK(child_again);
+	EXPECT_EQ(*child_again->as_dict()->get_string("Title")->to_utf8(), "Compressed Child");
+	EXPECT_EQ(sh.cached_object_count(), 1u);
 }
 
 // An encrypted object stream's /DecodeParms may be an indirect reference: SecurityHandler resolves (and decrypts) it

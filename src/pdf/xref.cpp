@@ -647,6 +647,9 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		std::optional<IndirectRef> info_candidate;
 		std::unordered_map<uint32_t, std::pair<uint16_t, int64_t>> recovered_integers;
 		std::unordered_map<uint32_t, uint16_t> catalog_generations;
+		// Dictionaries whose /Type is an indirect reference: the named object may lie after them in the file, so
+		// they are checked once the scan has found every object (generation, /Type reference).
+		std::unordered_map<uint32_t, std::pair<uint16_t, IndirectRef>> indirect_type_dicts;
 		std::vector<IndirectRef> catalog_history;
 		std::unordered_map<uint32_t, std::vector<uint32_t>> objstm_members;
 
@@ -664,6 +667,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 					}
 					recovered_integers.erase(member_id);
 					catalog_generations.erase(member_id);
+					indirect_type_dicts.erase(member_id);
 					if (info_candidate.has_value() && info_candidate->obj_num == member_id) {
 						info_candidate = std::nullopt;
 					}
@@ -844,6 +848,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 									gen_num});
 							recovered_integers.erase(obj_num);
 							catalog_generations.erase(obj_num);
+							indirect_type_dicts.erase(obj_num);
 							if (info_candidate.has_value() &&
 								info_candidate->obj_num == obj_num) {
 								info_candidate = std::nullopt;
@@ -853,6 +858,10 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 								recovered_integers[obj_num] = {gen_num, *int_val};
 							} else if (const PdfDict* dict_only = parsed_obj->value.as_dict()) {
 								const auto type_opt = dict_only->get_name("Type");
+								if (const PdfValue* type_val = dict_only->get("Type");
+									type_val != nullptr && type_val->is_ref()) {
+									indirect_type_dicts[obj_num] = {gen_num, *type_val->as_ref()};
+								}
 								if (type_opt.has_value() && *type_opt == "Catalog") {
 									catalog_generations[obj_num] = gen_num;
 									catalog_history.push_back(IndirectRef{obj_num, gen_num});
@@ -1006,6 +1015,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 												member_vec.push_back(inner_id);
 												recovered_integers.erase(inner_id);
 												catalog_generations.erase(inner_id);
+												indirect_type_dicts.erase(inner_id);
 												if (info_candidate.has_value() &&
 													info_candidate->obj_num == inner_id) {
 													info_candidate = std::nullopt;
@@ -1017,6 +1027,10 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 													recovered_integers[inner_id] = {uint16_t{0}, *int_v};
 												} else if (const PdfDict* idict = inner_val->as_dict()) {
 													const auto itype = idict->get_name("Type");
+													if (const PdfValue* itype_val = idict->get("Type");
+														itype_val != nullptr && itype_val->is_ref()) {
+														indirect_type_dicts[inner_id] = {uint16_t{0}, *itype_val->as_ref()};
+													}
 													if (itype.has_value() && *itype == "Catalog") {
 														catalog_generations[inner_id] = 0u;
 														catalog_history.push_back(IndirectRef{inner_id, 0u});
@@ -1045,6 +1059,22 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			}
 
 			++pos;
+		}
+
+		// A dictionary whose /Type is an indirect reference is a catalog when that reference, resolved now that the scan
+		// has found every object, names /Catalog (ISO 32000-1 section 7.3.10).
+		for (const auto& [dict_num, gen_and_type] : indirect_type_dicts) {
+			const auto type_val = table.resolve_object(file_bytes, gen_and_type.second);
+			if (!type_val.has_value()) {
+				if (type_val.error().code == ErrorCode::OutOfMemory) {
+					return type_val.error();
+				}
+				continue;
+			}
+			if (type_val->as_name() == std::optional<std::string_view>("Catalog")) {
+				catalog_generations[dict_num] = gen_and_type.first;
+				catalog_history.push_back(IndirectRef{dict_num, gen_and_type.first});
+			}
 		}
 
 		// Validate that a candidate `/Root` reference resolves with matching
@@ -1721,14 +1751,19 @@ const CachedObjStream& ObjStmCache::insert(uint32_t stm_obj_num, CachedObjStream
 		order_.erase(std::find(order_.begin(), order_.end(), stm_obj_num));
 	}
 	while (!order_.empty() && (by_num_.size() >= kMaxCachedObjStreams || bytes_ + stm_bytes > kMaxCachedObjStmBytes)) {
-		const auto oldest = by_num_.find(order_.front());
-		bytes_ -= oldest->second.decoded_bytes.size();
-		by_num_.erase(oldest);
+		if (const auto oldest = by_num_.find(order_.front()); oldest != by_num_.end()) {
+			bytes_ -= oldest->second.decoded_bytes.size();
+			by_num_.erase(oldest);
+		}
 		order_.erase(order_.begin());
 	}
-	order_.push_back(stm_obj_num);
+	// Both allocations happen before any bookkeeping changes: if either throws, the cache is as it was after the
+	// evictions above, which keep order_, by_num_ and bytes_ in step.
+	order_.reserve(order_.size() + 1u);
+	auto& stored = by_num_.emplace(stm_obj_num, std::move(stm)).first->second;
+	order_.push_back(stm_obj_num); // cannot reallocate: capacity reserved above
 	bytes_ += stm_bytes;
-	return by_num_.emplace(stm_obj_num, std::move(stm)).first->second;
+	return stored;
 }
 
 PdfResult<bool> is_object_stream(const PdfDict& stm_dict, const IndirectObjectResolver* resolver) noexcept

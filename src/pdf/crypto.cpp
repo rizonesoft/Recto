@@ -2248,8 +2248,8 @@ PdfResult<PdfValue> SecurityHandler::resolve_and_decrypt_with_visited(
 			// Inner objects of an `/ObjStm` are NOT decrypted again (`is_inside_obj_stm = true`).
 			RECTO_PDF_RETURN_IF_ERROR(
 				decrypt_object_values(inner_val, current, /*is_inside_obj_stm=*/true));
-			RECTO_PDF_TRY(PdfValue cloned, inner_val.deep_clone());
-			decrypted_cache_.emplace(cache_key, std::move(cloned));
+			// Not kept in decrypted_cache_: a member can expand far past its share of the file, and it is re-read
+			// from the bounded decoded container (decrypted_obj_stm_cache_) instead.
 			return std::move(inner_val);
 		}
 

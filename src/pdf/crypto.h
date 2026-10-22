@@ -272,6 +272,9 @@ private:
 	bool authenticated_{false};
 	bool unlocked_as_owner_{false};
 	bool perms_verified_{false};
+	// Decrypted uncompressed objects and object-stream containers, whose size is bounded by the file's own bytes.
+	// Members of an object stream are not kept here: they can expand far past their share of the file, and are
+	// re-read from decrypted_obj_stm_cache_ (bounded by count and decoded bytes).
 	std::unordered_map<uint64_t, PdfValue> decrypted_cache_{};
 	ObjStmCache decrypted_obj_stm_cache_{}; // bounded by count and decoded bytes
 };
