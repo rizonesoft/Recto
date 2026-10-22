@@ -192,6 +192,8 @@ class _VisibleText(html.parser.HTMLParser):
             # Never rendered: their content is dropped and they leave no break, so they cannot split a word.
             self.hidden = max(0, self.hidden + (-1 if closing else 1))
             return
+        if self.hidden:
+            return  # anything inside unrendered content has no effect on the text: no break, no attribute, no marker
         for name, value in attrs:
             if _is_text_attribute(name) and value:
                 self.attributes.append(value)
@@ -371,7 +373,9 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                        '<div>Install <div style="display:inline">Wo</div>rd to convert documents.</div>',
                        '<div>Install <div style="display:inline">Office</div> to convert documents.</div>',
                        "<p>Install Wo<script></script>rd to convert documents.</p>",
-                       "<p>Install Wo<template>x</template>rd to convert documents.</p>"):
+                       "<p>Install Wo<template>x</template>rd to convert documents.</p>",
+                       "<p>Install Wo<template><br></template>rd to convert documents.</p>",
+                       "<p>Install Wo<template><div title='x'>y</div></template>rd to convert documents.</p>"):
             with self.subTest(markup=markup):
                 self.assertIsNotNone(office_dependency(markup))
         for markup in ("<p>Office to PDF is built in.</p>", "<td>PDF to Word</td><td>needs a password</td>",
