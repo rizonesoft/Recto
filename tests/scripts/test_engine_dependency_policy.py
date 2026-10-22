@@ -143,7 +143,7 @@ def office_install_links(urls: list[str]) -> list[str]:
 
 # How rendered text breaks into units: block elements (BLOCK_ELEMENTS) end a unit, a line break (<br>) is a space
 # within the same text, every other element runs on without a break, and sentence punctuation also ends a unit
-# (. ! ? ;). Comments, scripts and styles are not shown. Text in attributes (a button's value, an option's label, a
+# (. ! ? ;). Comments, scripts, styles and templates are not shown and leave no break. Text in attributes (a button's value, an option's label, a
 # field's placeholder, an image's alt, a tooltip, an accessible name) is a unit of its own. Parsed with html.parser,
 # which reads quoting, unquoted attributes, entities and comments as a browser does.
 # The elements that end a unit: HTML's block, list, table and form-control elements, and each SVG text element.
@@ -188,9 +188,9 @@ class _VisibleText(html.parser.HTMLParser):
         self.hidden = 0
 
     def _tag(self, tag, attrs, closing=False):
-        if tag in ("script", "style"):
-            self.hidden += -1 if closing else 1
-            self.parts.append("\x00")
+        if tag in ("script", "style", "template"):
+            # Never rendered: their content is dropped and they leave no break, so they cannot split a word.
+            self.hidden = max(0, self.hidden + (-1 if closing else 1))
             return
         for name, value in attrs:
             if _is_text_attribute(name) and value:
@@ -369,7 +369,9 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                        '<div style="display:flex;gap:8px"><span>Install</span><span>Word</span>'
                        '<span>to convert documents.</span></div>',
                        '<div>Install <div style="display:inline">Wo</div>rd to convert documents.</div>',
-                       '<div>Install <div style="display:inline">Office</div> to convert documents.</div>'):
+                       '<div>Install <div style="display:inline">Office</div> to convert documents.</div>',
+                       "<p>Install Wo<script></script>rd to convert documents.</p>",
+                       "<p>Install Wo<template>x</template>rd to convert documents.</p>"):
             with self.subTest(markup=markup):
                 self.assertIsNotNone(office_dependency(markup))
         for markup in ("<p>Office to PDF is built in.</p>", "<td>PDF to Word</td><td>needs a password</td>",
