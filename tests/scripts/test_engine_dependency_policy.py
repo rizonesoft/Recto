@@ -4,6 +4,7 @@ user or the build would see it."""
 import json
 import os
 import pathlib
+import html
 import re
 import subprocess
 import sys
@@ -43,12 +44,17 @@ def tracked(*pathspecs):
     return [name for name in out.split("\0") if name]
 
 
-# Office or LibreOffice named as something Recto needs to convert: the suites by name, or Office, Word, Excel or
-# PowerPoint after a verb of need or a route ("Install Office", "requires Microsoft Office", "through PowerPoint").
+# Office or LibreOffice presented as something Recto needs to convert (D5, D7, D10): the suites by name, and the plain
+# sentence forms of a dependency ("Install Office", "requires Microsoft Office", "Office must be installed",
+# "uses Word to", "through PowerPoint"). A phrase check cannot prove what a sentence means, so other wording that states
+# a dependency remains a review matter, like the obfuscation noted above.
 OFFICE_DEPENDENCY = re.compile(
     r"libreoffice|office com|microsoft (word|excel|powerpoint|office|365)"
-    r"|\b(install|installs|installed|installing|need|needs|needed|require|requires|required|requiring|through|via|using)"
-    r" (the )?(microsoft )?(office|word|excel|powerpoint)\b", re.IGNORECASE)
+    r"|\b(install|installs|installed|installing|need|needs|needed|require|requires|required|requiring|through|via"
+    r"|using|uses?)( the)?( microsoft)? (office|word|excel|powerpoint)( to| installed| for|\b)"
+    r"|\b(office|word|excel|powerpoint) (must|has to|needs to|should) be installed\b", re.IGNORECASE)
+# The suites' install pages, matched in the raw text so a link counts whatever its anchor says.
+OFFICE_INSTALL_LINK = re.compile(r"libreoffice\.org|microsoft\.com/microsoft-365|office\.com", re.IGNORECASE)
 
 
 class EngineDependencyPolicyTest(unittest.TestCase):
@@ -102,9 +108,11 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                 self.assertIsNone(re.search(r"\bfz_", text, re.IGNORECASE))  # MuPDF's API prefix, whatever follows it
                 # Recto converts Office files with its own engines (D5, D7, D10): no board may present Office or
                 # LibreOffice as a converter Recto needs (D06 T05 §28).
-                # Matched on the visible text (tags removed, white space collapsed), so markup cannot split a phrase.
-                visible = " ".join(re.sub(r"<[^>]+>", " ", text).split())
+                # Matched on the visible text (tags removed, entities decoded, white space collapsed), so markup cannot
+                # split or disguise a phrase; install links are matched in the raw text.
+                visible = " ".join(html.unescape(re.sub(r"<[^>]+>", " ", text)).split())
                 self.assertIsNone(OFFICE_DEPENDENCY.search(visible))
+                self.assertIsNone(OFFICE_INSTALL_LINK.search(text))
 
     @unittest.skipUnless(sys.platform == "win32", "the C++ build and MSBuild are Windows-only (foundation plan D15)")
     def test_every_module_compiles_as_cpp20_with_warnings_as_errors(self):
