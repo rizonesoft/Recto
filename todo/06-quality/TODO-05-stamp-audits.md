@@ -482,6 +482,8 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 ## 17. Audit D01 T01 §3: Binary-safe PDF 1.7 and 2.0 lexer (src/pdf/lexer.cpp)
 
+> **Started:** 2026-10-22T09:10:00Z
+
 `D01 T01 §3` (Binary-safe PDF 1.7 and 2.0 lexer (`src/pdf/lexer.cpp`)) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d01-t01-s3.json` records 3 rounds (fixed, fixed, fixed). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
 
 **Phase:** 1
