@@ -71,7 +71,7 @@ Sections: 47 | Checklist items: 314
 | [x]    | D06 T05 §17 | Audit D01 T01 §3: Binary-safe PDF 1.7 and 2.0 lexer (src/pdf/lexer.cpp)                  | windows-host | 5     |
 | [x]    | D06 T05 §18 | Audit D01 T01 §4: Bounded recursive-descent indirect object parser (src/pdf/parser.cpp)  | windows-host | 5     |
 | [x]    | D06 T05 §19 | Audit D01 T01 §5: Classic xref tables, trailer merging and /Prev incremental update      | windows-host | 5     |
-| [ ]    | D06 T05 §20 | Audit D01 T01 §7: Lossless stream filters (Flate, LZW, predictors, ASCII85, ASCIIHex     | windows-host | 5     |
+| [x]    | D06 T05 §20 | Audit D01 T01 §7: Lossless stream filters (Flate, LZW, predictors, ASCII85, ASCIIHex     | windows-host | 5     |
 | [ ]    | D06 T05 §21 | Audit D01 T01 §6: PDF 1.5+ /Type /XRef streams, /Type /ObjStm streams and damaged-file   | windows-host | 5     |
 | [ ]    | D06 T05 §22 | Audit D01 T01 §8: Bi-level and image stream filters (CCITTFaxDecode, JBIG2Decode, WIC    | windows-host | 5     |
 | [ ]    | D06 T05 §23 | Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6     | windows-host | 5     |
@@ -750,6 +750,6 @@ Sections: 4 | Checklist items: 22
 | [ ]    | D99 T01 §3 | Partner Center account and optional Store app reservation            | operator, store-account | 5     |
 | [ ]    | D99 T01 §4 | Physical ARM64 reference machine and clean-machine host confirmation | operator                | 5     |
 
-Progress: 52/681 verified sections, 13 ready to run now.
+Progress: 53/681 verified sections, 13 ready to run now.
 
-Checklist: 302/4880 items completed (includes Commit items).
+Checklist: 303/4880 items completed (includes Commit items).

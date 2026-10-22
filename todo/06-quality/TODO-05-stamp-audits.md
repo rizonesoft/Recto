@@ -50,7 +50,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 17 | §17 | Audit D01 T01 §3: Binary-safe PDF 1.7 and 2.0 lexer (src/pdf/lexer.cpp) | D01 T01 §3, §16 | [x] |
 | 18 | §18 | Audit D01 T01 §4: Bounded recursive-descent indirect object parser (src/pdf/parser.cpp) | D01 T01 §4, §17 | [x] |
 | 19 | §19 | Audit D01 T01 §5: Classic xref tables, trailer merging and /Prev incremental update | D01 T01 §5, §18 | [x] |
-| 20 | §20 | Audit D01 T01 §7: Lossless stream filters (Flate, LZW, predictors, ASCII85, ASCIIHex | D01 T01 §7, §19 | [ ] |
+| 20 | §20 | Audit D01 T01 §7: Lossless stream filters (Flate, LZW, predictors, ASCII85, ASCIIHex | D01 T01 §7, §19 | [x] |
 | 21 | §21 | Audit D01 T01 §6: PDF 1.5+ /Type /XRef streams, /Type /ObjStm streams and damaged-file | D01 T01 §6, §20 | [ ] |
 | 22 | §22 | Audit D01 T01 §8: Bi-level and image stream filters (CCITTFaxDecode, JBIG2Decode, WIC | D01 T01 §8, §21 | [ ] |
 | 23 | §23 | Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6 | D01 T01 §9, §22 | [ ] |
@@ -577,9 +577,12 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 - [x] Run audit rounds on `D01 T01 §7`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d01-t01-s7.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
 - [x] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d01-t01-s7.md` is open without a fix commit or a filed section.
 - [x] On a confirmed regression, add a dated blocking note to `D01 T01 §7`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s7.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
-- [ ] Commit: `review: audit D01 T01 §7 under the current review process`
+- [x] Commit: `review: audit D01 T01 §7 under the current review process`
 
 **Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §7"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s7.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+> **Verified:** 2026-10-22 | §20 | 03839c42d13e229c55a9078012c4f9ac2bd4d9d9
+> **Review:** `docs/reviews/d06-t05-s20.json`
 
 ## 21. Audit D01 T01 §6: PDF 1.5+ /Type /XRef streams, /Type /ObjStm streams and damaged-file
 

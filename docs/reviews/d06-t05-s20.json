@@ -1,0 +1,66 @@
+{
+  "ref": "D06 T05 \u00a720",
+  "title": "Audit D01 T01 \u00a77: Lossless stream filters (Flate, LZW, predictors, ASCII85, ASCIIHex",
+  "implementation_sha": "03839c42d13e229c55a9078012c4f9ac2bd4d9d9",
+  "date": "2026-10-22",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s7.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s7.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s7.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s7.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s7.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 6,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s7.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 7,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s7.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 8,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s7.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 9,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s7.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 10,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s7.md",
+      "verdict": "stopped-low-severity"
+    }
+  ],
+  "checks": [
+    "python scripts/todo-graph.py resolve \"D01 T01 \u00a77\" -> exit 3 (still verified)",
+    ".\\build.cmd -> exit 0, 0 Warning(s) in all four configurations, [  PASSED  ] 119 tests. (x64 Debug and Release)",
+    "build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfXref.*:PdfDocument.*:PdfCrypto.* -> exit 0, 0 Warning(s), [  PASSED  ] 47 tests."
+  ],
+  "rounds_spent": 10,
+  "round_cap": 22,
+  "cap_outcome": "Round 10 found only P3 findings, so the loop stopped low-severity at round 10 of 22; its one finding (indirect null /F, /FFilter, /FDecodeParms) was fixed with a regression test, none filed."
+}
