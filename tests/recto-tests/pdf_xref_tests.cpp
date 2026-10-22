@@ -266,6 +266,14 @@ TEST(PdfXref, RecoveryChargesFailedObjStmDecodes)
 		EXPECT_EQ(image_rec->root_ref(), (IndirectRef{1u, 0u}));
 		EXPECT_EQ(outer.bytes(), 0u);
 	}
+	{
+		// Decoded directly, the same payload fails after allocating its page, and the meter sees it: the zero above
+		// is recovery not decoding, not the work going unmeasured.
+		detail::ScopedDecodeWorkMeter direct;
+		const std::vector<uint8_t> payload(jbig2.begin(), jbig2.end());
+		EXPECT_FALSE(decode_jbig2(payload).has_value());
+		EXPECT_GE(direct.bytes(), 2048u * 2048u / 8u);
+	}
 	PdfDict lossless;
 	lossless.set(PdfName::from_decoded("Filter"),
 		PdfValue(PdfArray{PdfValue(PdfName::from_decoded("AHx")), PdfValue(PdfName::from_decoded("FlateDecode"))}));

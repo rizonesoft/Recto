@@ -378,3 +378,65 @@ OVERALL: needs-attention
 - Finding 1 (P1): correct. The meter covered every decoder's output reservation, but the image decoders allocate their raster buffers elsewhere (JBIG2's page bitmap here), so a container behind an image filter could fail with its work uncharged. Metering every image buffer would chase allocation sites one round at a time. The rule instead closes the class: an object stream holds PDF syntax, which only the general-purpose lossless filters produce, so recovery (a speculative path) decodes a container only when `filters_are_metered_lossless` holds for its whole filter chain (`FlateDecode`, `LZWDecode`, `ASCIIHexDecode`, `ASCII85Decode`, `RunLengthDecode` and their abbreviations, all metered). Any other container is recorded as `DamagedStream` damage and left undecoded. Normal resolution is unchanged. JBIG2's page bitmap now also counts on the meter, which is what lets the test see an attempted decode. `PdfXref.RecoveryChargesFailedObjStmDecodes` adds three JBIG2 containers declaring 2048 x 2048 pages: recovery skips them, the catalog recovers, and the meter stays at zero. With the round 7 recovery it fails (the attempted decodes exhaust the budget). `filters_are_metered_lossless` is checked for an abbreviated chain, an image filter and no filter.
 
 Gates after round 8: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 124 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*:PdfCrypto.*:PdfFilters.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 52 tests.`
+
+## Round 9: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T13:28:33Z
+- Effort: xhigh
+- Lines: 28
+- Digest: bf03a4b5ab605fe3
+
+### adversarial: approve
+
+No new findings beyond the recovery gaps owned by D06 T05 §29 and §30.
+
+### consistency: approve
+
+No additional findings.
+
+### integration: approve
+
+No additional findings.
+
+### source-defect: approve
+
+No additional findings.
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: needs-attention
+
+1. **P3: Round 8’s regression test can miss restoration of the original vulnerability.** `tests/recto-tests/pdf_xref_tests.cpp:263` expects zero metered work because recovery skips JBIG2. It never checks that directly decoding the supplied payload records bitmap allocation. Reproduce by retaining the classifier helper and its assertions, removing recovery’s filter gate at `src/pdf/xref.cpp:894`, and removing the bitmap-meter increment at `src/pdf/filters.cpp:2454`: the failed decodes again charge zero, recovery succeeds, and the image-test assertions remain satisfied. This leaves the combined fix without a distinguishing regression test. This reproduction is source-traced; no mutation was executed.
+
+At clean `3f09c6d`, the existing Release binary passed 16 `PdfXref.*` tests and reported `ASan=enabled`. Three selected document/crypto integration tests and `PdfFilters.Jbig2Decode` also passed. Graph validation, the generated-plan check and the recovery source guard passed. No fresh build was performed, so these results verify the available binary. No files were modified.
+
+HIGHEST: P3
+OVERALL: needs-attention
+
+## Fixes after round 9
+
+Round 9's findings are all P3, so under the operator's rule (from round 9 on, an all-P3 round ends the loop) the loop stops here, `stopped-low-severity`. Its one finding is fixed rather than filed:
+
+- Finding 1 (P3): correct. The round 8 test showed recovery's meter staying at zero, but not that the same payload decoded directly is metered, so removing both the gate and the bitmap metering would pass it. The test now also decodes the JBIG2 payload directly under a meter and requires at least the 2048 x 2048 page's 512 KiB; with the bitmap metering removed it fails.
+
+Gates after round 9: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 124 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*:PdfCrypto.*:PdfFilters.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 52 tests.`; `python -m unittest tests.scripts.test_recovery_post_scan` -> `OK`.
+
+## Audit outcome
+
+The stamp on `D01 T01 §6` is confirmed. Every defect found existed at that stamp; none is a regression. Fixed at their owning layers:
+
+- Object streams were read by three drifted copies; they now share `parse_object_stream`, `extract_object_stream_member` and `is_object_stream`, so the encrypted paths refuse forbidden and bare-reference members and resolve indirect `/Type`, `/N` and `/First`.
+- Decoded containers were cached without a byte bound in `SecurityHandler`, and by count only elsewhere, and encrypted siblings were decoded repeatedly; one `ObjStmCache` bounded by count and bytes now serves all three owners, and expanded members are not cached.
+- Xref-stream rows above `/Size` failed the parse before being ignored.
+- Recovery accepted forbidden members, missed indirect-type catalogs, and left failed decodes uncharged; it now measures decode work, decodes containers only through metered lossless filters, and checks indirect catalog types against names the scan recorded.
+
+Each fix has a test that fails on the code before it.
+
+Filed with owners and recorded as deferrals in `D06 T05 §21`: `D06 T05 §29` (recovery with indirect object-stream parameters) and `D06 T05 §30` (recovery of an encrypted file's compressed objects).
+
+Dependants are not suspect: every change either refuses what ISO 32000-1 section 7.5.7 forbids or widens what resolves correctly. The only fixture that relied on a forbidden form (`PdfDocument.PageTreeAndRotatedPages`) was rewritten legally with its intent intact. All 124 tests pass. The loop stopped at round 9 with only P3 findings (`stopped-low-severity`), and that finding is fixed.
+
+Test checkpoint: `python scripts/todo-graph.py resolve "D01 T01 §6"` -> exit 3 (still verified). `D01 T01 §6`'s own checkpoint: `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*:PdfCrypto.*:PdfFilters.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 52 tests.`
