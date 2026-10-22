@@ -1,0 +1,61 @@
+{
+  "ref": "D06 T05 \u00a725",
+  "title": "Retired MuPDF and AGPL text removed from the A, B and C mockup boards",
+  "implementation_sha": "532df218d48d36006d02f1b649761b5bd8cbe567",
+  "date": "2026-10-22",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/D06-T05-s25.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/D06-T05-s25.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/D06-T05-s25.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/06-quality/D06-T05-s25.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/06-quality/D06-T05-s25.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 6,
+      "report": "docs/reviews/06-quality/D06-T05-s25.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 7,
+      "report": "docs/reviews/06-quality/D06-T05-s25.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 8,
+      "report": "docs/reviews/06-quality/D06-T05-s25.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 9,
+      "report": "docs/reviews/06-quality/D06-T05-s25.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "python -m unittest tests.scripts.test_engine_dependency_policy -> Ran 4 tests, OK",
+    "git grep -n -i -E \"mupdf|agpl\" -- design/mockups -> no output (exit 1)",
+    "python -m unittest tests.scripts.test_render_mockups -> Ran 4 tests, OK",
+    "plan-gates on 569855a -> success (Mockup renderer and design checks: success)"
+  ],
+  "rounds_spent": 9,
+  "round_cap": 22
+}

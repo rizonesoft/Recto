@@ -55,7 +55,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 22 | §22 | Audit D01 T01 §8: Bi-level and image stream filters (CCITTFaxDecode, JBIG2Decode, WIC | D01 T01 §8, §21 | [ ] |
 | 23 | §23 | Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6 | D01 T01 §9, §22 | [ ] |
 | 24 | §24 | Audit D01 T01 §10: pdf::Document page-tree resolver, metadata, /Outlines, font list and | D01 T01 §10, §23 | [ ] |
-| 25 | §25 | Retired MuPDF and AGPL text removed from the A, B and C mockup boards | §2 | [ ] |
+| 25 | §25 | Retired MuPDF and AGPL text removed from the A, B and C mockup boards | §2 | [x] |
 | 26 | §26 | Corpus validator filter decoders conform to ISO 32000-1 7.4 | §12 | [ ] |
 | 27 | §27 | ARM64 Debug build free of the CS1668 LIB search-path warnings | §13 | [ ] |
 | 28 | §28 | Retired Office and LibreOffice converter surfaces removed from the A, B and C boards | §25 | [ ] |
@@ -658,9 +658,12 @@ The audit of `D00 T01 §2` (`docs/reviews/06-quality/audit-d00-t01-s2.md`) found
 - [x] Replace MuPDF with `recto-pdf` and AGPL-3.0 with GPL-3.0-or-later in every `design/mockups/source/[ABC]-*.dc.html`, and drop MuPDF-only third-party rows (jbig2dec, extract, Artifex) from the About boards' licence lists, keeping the rows for components Recto still ships. Done when: `git grep -n -i -E "mupdf|agpl|jbig2dec|artifex" -- design/mockups/source` prints nothing.
 - [x] Re-render those boards through `design/tools/render-mockups.mjs --only` so `design/mockups/html/` and `design/screenshots/` match their sources. Done when: `git grep -n -i -E "mupdf|agpl" -- design/mockups/html` prints nothing and the boards' PNG files are newer than their sources.
 - [x] Add `tests/scripts/test_engine_dependency_policy.py`'s design check (no MuPDF or AGPL text in `design/mockups/`). Done when: restoring one MuPDF chip in a source makes the test fail.
-- [ ] Commit: `design: retire MuPDF and AGPL text from the A, B and C mockup boards`
+- [x] Commit: `design: retire MuPDF and AGPL text from the A, B and C mockup boards`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_engine_dependency_policy` passes, and `git grep -n -i -E "mupdf|agpl" -- design/mockups` prints nothing.
+
+> **Verified:** 2026-10-22 | §25 | 532df218d48d36006d02f1b649761b5bd8cbe567
+> **Review:** `docs/reviews/d06-t05-s25.json`
 
 ## 26. Corpus validator filter decoders conform to ISO 32000-1 7.4
 
