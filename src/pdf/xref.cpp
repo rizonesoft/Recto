@@ -1063,24 +1063,26 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			++pos;
 		}
 
-		// A dictionary whose /Type is an indirect reference is a catalog when that reference, resolved now that the scan
-		// has found every object, names /Catalog (ISO 32000-1 section 7.3.10). The dictionaries already sit in
-		// catalog_history in file order, so the fallback below keeps preferring the latest; here they only become
-		// valid. Each distinct reference is resolved once, so every object is parsed at most once more, as in the
-		// forward scan.
+		// A dictionary whose /Type is an indirect reference is a catalog when the object that reference names (read
+		// one level, as every indirect value in this engine is resolved, never following a further reference) is the
+		// name /Catalog (ISO 32000-1 section 7.3.10). The dictionaries already sit in catalog_history in file order, so
+		// the fallback below keeps preferring the latest; here they only become valid. Each distinct reference is read
+		// once, so every object is parsed at most once more, as in the forward scan.
 		std::unordered_map<uint64_t, bool> names_catalog;
 		for (const auto& [dict_num, gen_and_type] : indirect_type_dicts) {
 			const IndirectRef type_ref = gen_and_type.second;
 			const uint64_t key = (static_cast<uint64_t>(type_ref.obj_num) << 16u) | type_ref.gen_num;
 			auto known = names_catalog.find(key);
 			if (known == names_catalog.end()) {
-				const auto type_val = table.resolve_object(file_bytes, type_ref);
-				if (!type_val.has_value() && type_val.error().code == ErrorCode::OutOfMemory) {
-					return type_val.error();
+				++table.recovery_type_lookups_;
+				const auto type_obj = table.read_indirect_object(file_bytes, type_ref);
+				if (!type_obj.has_value() && type_obj.error().code == ErrorCode::OutOfMemory) {
+					return type_obj.error();
 				}
 				known = names_catalog.emplace(
 					key,
-					type_val.has_value() && type_val->as_name() == std::optional<std::string_view>("Catalog")).first;
+					type_obj.has_value() &&
+						type_obj->value.as_name() == std::optional<std::string_view>("Catalog")).first;
 			}
 			if (known->second) {
 				catalog_generations[dict_num] = gen_and_type.first;

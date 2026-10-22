@@ -1560,6 +1560,23 @@ TEST(PdfXref, DamagedRecovery)
 		auto rec_type = XrefTable::recover_damaged_xref(as_bytes(pdf_indirect_type));
 		RECTO_ASSERT_OK(rec_type);
 		EXPECT_EQ(rec_type->root_ref(), (IndirectRef{1u, 0u}));
+		EXPECT_EQ(rec_type->recovery_type_lookups(), 1u);
+
+		// The work stays linear: three dictionaries naming the same /Type object read it once, and an alias is read
+		// one level and not followed to the array behind it (so it names no catalog).
+		std::string pdf_shared = "%PDF-1.7\n";
+		pdf_shared += "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
+		pdf_shared += "2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+		pdf_shared += "8 0 obj\n[1 2 3 4 5 6 7 8]\nendobj\n";
+		pdf_shared += "9 0 obj\n8 0 R\nendobj\n";
+		for (int d = 10; d < 13; ++d) {
+			pdf_shared += std::to_string(d) + " 0 obj\n<< /Type 8 0 R >>\nendobj\n";
+		}
+		pdf_shared += "13 0 obj\n<< /Type 9 0 R >>\nendobj\n%%EOF\n";
+		auto rec_shared = XrefTable::recover_damaged_xref(as_bytes(pdf_shared));
+		RECTO_ASSERT_OK(rec_shared);
+		EXPECT_EQ(rec_shared->root_ref(), (IndirectRef{1u, 0u}));
+		EXPECT_EQ(rec_shared->recovery_type_lookups(), 2u); // 8 once for 10 to 12, 9 once for 13; 8 not again via 9
 
 		// File order still decides between catalogs: with no trailer, the later direct-type catalog 6 wins over the
 		// earlier indirect-type catalog 1, as between two direct-type catalogs.

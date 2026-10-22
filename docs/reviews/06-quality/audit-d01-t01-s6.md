@@ -198,3 +198,46 @@ OVERALL: needs-attention
 - Finding 2 (P3): correct, the round 3 fix had no test that fails before it. `ObjStmCache::insert` now has the same fault seam the crypto code uses (`detail::ScopedObjStmCacheAllocFaultInjector`, a check before each allocation). `PdfXref.ObjStmCacheBoundsCountAndBytes` fails each of the two allocations in turn and checks that the count and byte total still match what is stored, and that later inserts still evict. With the old order (bookkeeping before the second allocation) it fails.
 
 Gates after round 4: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 123 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 34 tests.`
+
+## Round 5: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-22T12:06:42Z
+- Effort: xhigh
+- Lines: 26
+- Digest: dce6881622579b71
+
+### adversarial: needs-attention
+
+1. **P1, distinct aliases bypass recovery’s work bound.** [src/pdf/xref.cpp:1077](/R:/GitHub/Recto/src/pdf/xref.cpp:1077) memoizes only the initial `/Type` reference. The resolver at line 2153 follows aliases without memoizing their shared target. Reproduce with a valid catalog, one object containing 100,000 integers, 20,000 distinct uncompressed aliases to that array, and 20,000 dictionaries whose `/Type` references those aliases. Remove `startxref` and call `recover_damaged_xref`. Every alias misses the memo, causing approximately two billion array-element parses outside `cumulative_parse_bytes`. Recovery still permits hostile CPU amplification.
+
+### consistency: needs-attention
+
+2. **P3, the round 4 work-bound fix lacks its required regression test.** [docs/reviews/06-quality/audit-d01-t01-s6.md:196](/R:/GitHub/Recto/docs/reviews/06-quality/audit-d01-t01-s6.md:196) explicitly substitutes source inspection for testing. The added `DamagedRecovery` cases assert catalog selection, so removing the memo while preserving file-order handling leaves those assertions satisfied. This violates `AGENTS.md`’s regression-test requirement. A deterministic resolution-count test could verify reuse without a large timed workload.
+
+### integration: needs-attention
+
+3. **P2, recovery loses encrypted compressed objects despite an intact xref stream.** [src/pdf/xref.cpp:881](/R:/GitHub/Recto/src/pdf/xref.cpp:881) copies only an encountered xref stream’s trailer keys, discarding its type-2 entries. Line 892 instead attempts to read encrypted object-stream payloads before authentication, which happens later at [src/pdf/document.cpp:1319](/R:/GitHub/Recto/src/pdf/document.cpp:1319). Reproduce using the PDF constructed by `PdfDocument.EncryptedObjectStreamsShareOneDecodeAndRefuseForbiddenMembers`: corrupt only its final `startxref` offset, open with the correct password, then resolve object 21. Recovery cannot reconstruct that compressed entry, so resolution returns null instead of `7`. All object-stream parameters are direct; this is separate from D06 T05 §29. Encrypted streams require decryption before decoding. [PDF specification errata, §7.6.3](https://pdf-issues.pdfa.org/32000-2-2020/clause07.html#7.6.3)
+
+### source-defect: approve
+
+No additional findings.
+
+### design: advisory
+
+Not applicable; no user surface.
+
+### record: advisory
+
+At clean `f7d26b5`, the existing Release binary passed all 15 `PdfXref.*` tests, 19 document/crypto tests, and the ASan activation check (`ASan=enabled`). Graph validation and the plan check passed. Fresh compilation was not performed. Findings 1 and 3 are source-traced reproductions, not executed custom probes. No files were modified.
+
+HIGHEST: P1  
+OVERALL: needs-attention
+
+## Fixes after round 5
+
+- Finding 1 (P1): correct. The memo keyed the first reference, but the lookup followed alias chains, so 20,000 distinct aliases of one large array each reparsed it. Recovery now reads the referenced object one level (`read_indirect_object`, never following a further reference), the same rule every indirect value in this engine follows. With the memo, every object is read at most once, so the work stays linear. An alias therefore names no catalog, a recorded default with the same one-level rule as `/Filter`, `/DecodeParms`, `/N`, `/First` and `/Type` elsewhere.
+- Finding 2 (P3): correct. The work bound is now testable. `XrefTable::recovery_type_lookups()` counts the objects recovery reads for this purpose, and `PdfXref.DamagedRecovery` asserts one lookup for the indirect-type catalog and two for three dictionaries sharing a `/Type` object plus one alias of it. With the memo bypassed it fails (4 lookups, not 2).
+- Finding 3 (P2): filed, not fixed here. Recovery drops an intact xref stream's type-2 rows and decodes containers before authentication, which in an encrypted file is ciphertext. Fixing it means importing xref-stream rows under the scan's override order and deferring encrypted containers until after authentication, a recovery design change like `D06 T05 §29`. It is filed with an owner as `D06 T05 §30` (`Damaged-file recovery keeps an encrypted file's compressed objects`), and `D06 T05 §21` carries the deferral.
+
+Gates after round 5: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 123 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfXref.*:PdfDocument.*:PdfCrypto.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 34 tests.`; `python scripts/todo-graph.py validate` -> `valid: 683 sections`.

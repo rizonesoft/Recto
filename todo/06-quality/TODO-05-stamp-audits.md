@@ -60,6 +60,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 27 | §27 | ARM64 Debug build free of the CS1668 LIB search-path warnings | §13 | [x] |
 | 28 | §28 | Retired Office and LibreOffice converter surfaces removed from the A, B and C boards | §25 | [x] |
 | 29 | §29 | Damaged-file recovery resolves indirect object-stream parameters | §21 | [ ] |
+| 30 | §30 | Damaged-file recovery keeps an encrypted file's compressed objects | §21 | [ ] |
 
 ## 1. Audit D00 T01 §1: Git repository and repo-face files
 
@@ -608,6 +609,8 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 > **Deferred:** damaged-file recovery decoding object streams whose `/Filter`, `/DecodeParms`, `/N` or `/First` is indirect, which needs the recovery scan to defer unpacking -> XREF: D06 T05 §29
 
+> **Deferred:** damaged-file recovery of an encrypted file's compressed objects (xref-stream rows dropped, containers decoded before authentication) -> XREF: D06 T05 §30
+
 **Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §6"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s6.md` ends in an approving round or a recorded stop with every finding fixed or filed.
 
 ## 22. Audit D01 T01 §8: Bi-level and image stream filters (CCITTFaxDecode, JBIG2Decode, WIC
@@ -798,6 +801,26 @@ The audit of `D01 T01 §6` (`docs/reviews/06-quality/audit-d01-t01-s6.md`, D06 T
 - [ ] Commit: `pdf: recovery resolves indirect object-stream parameters`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfXref.*` passes under ASan with 0 warnings, including `PdfXref.RecoveryResolvesIndirectObjStmParameters`.
+
+## 30. Damaged-file recovery keeps an encrypted file's compressed objects
+
+The audit of `D01 T01 §6` (`docs/reviews/06-quality/audit-d01-t01-s6.md`, D06 T05 §21, round 5) found damaged-file recovery losing every compressed object of an encrypted file. The recovery scan copies only the trailer keys of an intact `/Type /XRef` stream it meets and drops its type-2 rows, and it tries to decode each `/Type /ObjStm` it meets, which in an encrypted file is still encrypted because authentication happens after recovery (`Document` opens, recovers, then authenticates). So a file whose only damage is a wrong `startxref` offset, opened with the right password, resolves its compressed objects to null. Cross-reference streams are never encrypted (ISO 32000-1 section 7.5.8.1), so their rows are usable before authentication; containers are not. -> XREF: D06 T05 §21
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Import the type-2 rows of each intact cross-reference stream recovery meets, under the scan's rule that later definitions override earlier ones. Done when: a file with a wrong `startxref` and an intact xref stream recovers its compressed entries before any container is decoded.
+2. Leave encrypted containers undecoded during recovery, and let resolution decode them after authentication through `SecurityHandler` and `Document` (`parse_object_stream`, `extract_object_stream_member`). Done when: the encrypted fixture below resolves its compressed objects after recovery and authentication.
+
+- [ ] Import type-2 rows from intact `/Type /XRef` streams in the recovery scan of `src/pdf/xref.cpp`, keeping file-order override against uncompressed definitions. Done when: `PdfXref.*` recovery tests pass unchanged.
+- [ ] Skip decoding `/Type /ObjStm` streams during recovery when the file has an `/Encrypt` entry in any recovered trailer, recording the containers for resolution after authentication. Done when: recovery of an encrypted file no longer decodes ciphertext as a container.
+- [ ] Add `PdfDocument.RecoveredEncryptedObjectStreamsResolve`: the fixture of `PdfDocument.EncryptedObjectStreamsShareOneDecodeAndRefuseForbiddenMembers` with its final `startxref` offset corrupted, opened with the password. Done when: objects 21 and 22 resolve to 7 and 8, and the test fails on the code before this section.
+- [ ] Commit: `pdf: recovery keeps an encrypted file's compressed objects`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfXref.*:PdfDocument.*` passes under ASan with 0 warnings, including `PdfDocument.RecoveredEncryptedObjectStreamsResolve`.
 
 ## Verification
 
