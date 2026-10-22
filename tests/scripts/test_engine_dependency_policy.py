@@ -1,15 +1,16 @@
 """Tests for the PDF engine dependency policy (D00 T01 §2, decisions D3 and D9): Recto builds its own recto-pdf engine
 in C++20 with warnings as errors, vendors no engine as a submodule or third_party tree, and names no MuPDF anywhere a
 user or the build would see it."""
+import html
+import html.parser
 import json
 import os
 import pathlib
-import html
-import html.parser
 import re
 import subprocess
 import sys
 import unittest
+import urllib.parse
 import xml.etree.ElementTree as ElementTree
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
@@ -89,8 +90,23 @@ REVIEWED_OFFICE_UNITS = frozenset({
     # The find options' "Whole word", not Microsoft Word.
     "Whole word",
 })
-# The suites' install pages, matched in the raw text so a link counts whatever its anchor says.
-OFFICE_INSTALL_LINK = re.compile(r"libreoffice\.org|microsoft\.com/microsoft-365|office\.com", re.IGNORECASE)
+# The suites' pages, read from every link a board holds (href, src, action, formaction), decoded and parsed, so an
+# entity or a localized path cannot hide one: any LibreOffice, Office or Microsoft 365 host, or a Microsoft page whose
+# path names Microsoft 365 or Office.
+OFFICE_HOSTS = ("libreoffice.org", "office.com", "microsoft365.com", "office365.com")
+LINK_ATTRIBUTES = {"href", "src", "action", "formaction"}
+
+
+def office_install_link(url: str) -> bool:
+    parts = urllib.parse.urlsplit(url.strip())
+    host = (parts.hostname or "").lower().rstrip(".")
+    if any(host == h or host.endswith("." + h) for h in OFFICE_HOSTS):
+        return True
+    path = urllib.parse.unquote(parts.path).lower()
+    return (host == "microsoft.com" or host.endswith(".microsoft.com")) and bool(
+        re.search(r"(^|/)(microsoft-365|office|office-365)(/|$)", path))
+
+
 # How rendered text breaks into units: inline elements (and a word-break opportunity, <wbr>) do not break words, a line
 # break (<br>) is a space within the same text, and every other element ends a unit, as do sentence punctuation
 # (. ! ? ;). Comments, scripts and styles are not shown. Text a reader sees or hears in attributes (a button's value,
@@ -106,6 +122,7 @@ class _VisibleText(html.parser.HTMLParser):
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
         self.attributes: list[str] = []
+        self.links: list[str] = []
         self.hidden = 0
 
     def _tag(self, tag, attrs, closing=False):
@@ -116,6 +133,8 @@ class _VisibleText(html.parser.HTMLParser):
         for name, value in attrs:
             if name in VISIBLE_ATTRIBUTES and value:
                 self.attributes.append(value)
+            if name in LINK_ATTRIBUTES and value:
+                self.links.append(value)
         if tag == "br":
             self.parts.append(" ")
         elif tag not in INLINE_ELEMENTS:
@@ -144,6 +163,14 @@ def visible_units(markup: str) -> list[str]:
     parser.close()
     text = "\x00".join(["".join(parser.parts), *parser.attributes])
     return [" ".join(unit.split()) for unit in re.split(r"[\x00.!?;]", text) if unit.strip()]
+
+
+def board_links(markup: str) -> list[str]:
+    """Every link target the markup holds, entities decoded."""
+    parser = _VisibleText()
+    parser.feed(markup)
+    parser.close()
+    return parser.links
 
 
 def office_dependency(markup: str) -> str | None:
@@ -207,7 +234,18 @@ class EngineDependencyPolicyTest(unittest.TestCase):
                 # Recto converts Office files with its own engines (D5, D7, D10): no board may present Office or
                 # LibreOffice as a converter Recto needs (D06 T05 §28).
                 self.assertIsNone(office_dependency(text))
-                self.assertIsNone(OFFICE_INSTALL_LINK.search(text))
+                self.assertEqual([url for url in board_links(text) if office_install_link(url)], [])
+
+    def test_office_install_links_are_found_however_written(self):
+        for markup in ('<a href="https://www.microsoft.com/en-us/microsoft-365">Install converter</a>',
+                       '<a href="https://www.libreoffice&#46;org/">Install converter</a>',
+                       "<a href=https://www.office.com>Get it</a>", '<form action="https://download.libreoffice.org/x">'):
+            with self.subTest(markup=markup):
+                self.assertTrue(any(office_install_link(url) for url in board_links(markup)))
+        for markup in ('<a href="https://learn.microsoft.com/windows/apps/windows-app-sdk/">Docs</a>',
+                       '<a href="https://github.com/rizonesoft/Recto">Source</a>'):
+            with self.subTest(markup=markup):
+                self.assertFalse(any(office_install_link(url) for url in board_links(markup)))
 
     def test_office_dependency_wording_is_refused(self):
         for markup in ("<p>Get LibreOffice (free)</p>", "<p>Get Libre<span>Office</span></p>",
