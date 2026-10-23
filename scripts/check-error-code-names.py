@@ -3,8 +3,10 @@
 A section built from a TODO contract that names a missing code either fails to compile or invents one on the spot.
 Every `ErrorCode::<name>` under `todo/` (outside the generated `implementation-plan.md`) must be an `ErrorCode`
 enumerator, the `PdfErrorCode` scope, which does not exist, must not appear qualified at all, and a name the decision
-table (`docs/reviews/01-engine/D01-T02-s22.md`) retired must not come back unqualified (outside a dated correction
-note, and outside `D01 T02 §22`'s own account of them). CI (`plan.yml`) and the pre-commit hook run it; it prints
+table (`docs/reviews/01-engine/D01-T02-s22.md`) retired must not come back unqualified anywhere in the text (outside a
+dated correction note, and outside `D01 T02 §22`'s own account of them). A retired name is a compound identifier no
+prose uses, so it is read on every line, code span, fence or not: the check needs no Markdown structure, and no
+spelling of that structure can hide a name from it. CI (`plan.yml`) and the pre-commit hook run it; it prints
 each offending `path:line: name` and exits 1, or exits 0.
 """
 import argparse
@@ -17,16 +19,13 @@ ENUM = re.compile(r"enum class ErrorCode\b[^{]*\{(?P<body>.*?)\};", re.DOTALL)
 # A qualified name: `ErrorCode::Name`, or the nonexistent `PdfErrorCode::Name`. A placeholder such as
 # `ErrorCode::<code>` is not a name and does not match.
 QUALIFIED = re.compile(r"(?<![A-Za-z0-9_])(?P<scope>Pdf)?ErrorCode::(?P<name>[A-Za-z_][A-Za-z0-9_]*)")
-# Names the decision table mapped to other codes; written in backticks they read as a code.
+# Names the decision table mapped to other codes.
 RETIRED = ("PasswordRequired", "InvalidPassword", "LimitExceeded", "UndoBudgetExceeded", "CorruptStructure",
            "StructTreeMalformed", "OutputInvalid", "ClipboardEmpty", "ClipboardUnsupported", "UnsupportedRecipientType")
-# A retired word anywhere in a code span, except as a member or test name after a dot (`PubSec.UnsupportedRecipientType`).
-CODE_SPAN = re.compile(r"(?<!`)(?P<run>`+)(?!`)(?P<span>.+?)(?<!`)(?P=run)(?!`)", re.DOTALL)
-QUOTE_MARKERS = re.compile(r"^\s*(?:>\s?)*")
+# A retired word anywhere, except as a member or test name after a dot (`PubSec.UnsupportedRecipientType`).
 RETIRED_WORD = re.compile(r"(?<![A-Za-z0-9_.])(?P<name>" + "|".join(RETIRED) + r")(?![A-Za-z0-9_])")
 NOTE_MARKER = re.compile(r"\*\*Corrected \d{4}-\d{2}-\d{2}:\*\*\s*")
 SECTION = re.compile(r"^## (?P<number>\d+)\. ")
-FENCE = re.compile(r"^(?P<marker>`{3,}|~{3,})(?P<rest>.*)$")
 # The section that retired them lists them in its own context.
 EXEMPT_SECTION = ("01-engine/TODO-02-actor-and-render.md", "22")
 
@@ -86,57 +85,16 @@ def unknown_names(todo_root: pathlib.Path, known: set[str]) -> list[str]:
             continue
         relative = path.relative_to(todo_root).as_posix()
         section = None
-        fenced = None  # the opening fence while inside a fenced block
-        paragraph: list[tuple[int, str]] = []  # the current paragraph's lines (number, text without notes)
-
-        def scan_paragraph() -> None:
-            # Inline code spans (CommonMark 6.1) may run across a paragraph's lines and close only on a backtick run of
-            # the opening one's length; each retired word found is reported on the line it is on.
-            if not paragraph:
-                return
-            text = "\n".join(content for _, content in paragraph)
-            starts = []
-            offset = 0
-            for number, content in paragraph:
-                starts.append((offset, number))
-                offset += len(content) + 1
-            for span in CODE_SPAN.finditer(text):
-                for match in RETIRED_WORD.finditer(span.group("span")):
-                    at = span.start("span") + match.start()
-                    number = next(n for start, n in reversed(starts) if start <= at)
-                    found.append(f"{relative}:{number}: `{match.group('name')}`")
-            paragraph.clear()
-
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if heading := SECTION.match(line):
-                scan_paragraph()
                 section = heading.group("number")
             for match in QUALIFIED.finditer(line):
                 if match.group("scope") or match.group("name") not in known:
                     found.append(f"{relative}:{number}: {match.group(0)}")
-            # A block quote's markers (`>`) come before a fence inside it.
-            if fence := FENCE.match(QUOTE_MARKERS.sub("", line)):
-                marker = fence.group("marker")
-                if fenced is None:
-                    scan_paragraph()
-                    fenced = marker  # the opening fence: its character and length
-                    continue
-                # A closing fence uses the opening one's character, at least as many times, and nothing after it
-                # (CommonMark 4.5); any other fence line is code inside the block.
-                if marker[0] == fenced[0] and len(marker) >= len(fenced) and not fence.group("rest").strip():
-                    fenced = None
-                    continue
             if (relative, section) == EXEMPT_SECTION:
                 continue
-            if fenced is not None:
-                # A fenced block is code from end to end.
-                for match in RETIRED_WORD.finditer(without_notes(line)):
-                    found.append(f"{relative}:{number}: `{match.group('name')}`")
-            elif not line.strip():
-                scan_paragraph()
-            else:
-                paragraph.append((number, without_notes(line)))
-        scan_paragraph()
+            for match in RETIRED_WORD.finditer(without_notes(line)):
+                found.append(f"{relative}:{number}: `{match.group('name')}`")
     return found
 
 

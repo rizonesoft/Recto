@@ -1,6 +1,6 @@
 """Error codes the plan names are codes `src/pdf/error.h` has (D01 T02 §22), checked by
 `scripts/check-error-code-names.py`: qualified names must be `ErrorCode` enumerators, the `PdfErrorCode` scope must not
-appear, and a retired name must not come back unqualified outside a correction note."""
+appear, and a retired name must not come back anywhere outside a correction note."""
 import importlib.util
 import pathlib
 import re
@@ -67,19 +67,23 @@ class ErrorCodeNamesTests(unittest.TestCase):
                              f"````md\n```\nreturn {retired.strip('`')}; // a shorter fence does not close a longer one\n````\n"
                              f"\n- [ ] A code span may run `across a line,\n{retired.strip('`')} included` (CommonMark 6.1).\n"
                              f"\n- [ ] A double-backtick span ``holds a `{retired.strip('`')}` inside``.\n"
-                             f"\n> ```\n> return {retired.strip('`')}; // a fence inside a block quote\n> ```\n")
+                             f"\n> ```\n> return {retired.strip('`')}; // a fence inside a block quote\n> ```\n"
+                             f"\n- [ ] A literal unmatched backtick: `.\n- [ ] Return {retired}.\n"
+                             f"\n> ```\n> An example.\n\n```\nreturn {retired.strip('`')};\n```\n"
+                             f"\n- ```cpp\n  return {retired.strip('`')};\n  ```\n"
+                             f"\n- [ ] Or {retired.strip('`')} in plain prose.\n")
             found = self.mod.unknown_names(root / "todo", known)
-            self.assertEqual(len(found), 11, found)
+            self.assertEqual(len(found), 15, found)
             self.assertTrue(found[0].endswith(unknown), found)
             self.assertTrue(found[1].endswith(pdf_scoped), found)
             self.assertTrue(all(line.endswith(retired) for line in found[2:]), found)
             # The generated plan is a projection of the TODO files and is never read.
             (root / "todo" / "implementation-plan.md").write_text(f"`{unknown}`\n", encoding="utf-8")
-            self.assertEqual(len(self.mod.unknown_names(root / "todo", known)), 11)
+            self.assertEqual(len(self.mod.unknown_names(root / "todo", known)), 15)
             # The command line reports each one and exits 1.
             result = subprocess.run([sys.executable, str(SCRIPT), "--root", str(root)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 1)
-            self.assertEqual(len(result.stdout.splitlines()), 11, result.stdout)
+            self.assertEqual(len(result.stdout.splitlines()), 15, result.stdout)
 
 
 if __name__ == "__main__":
