@@ -8,6 +8,7 @@
 #include "filters.h"
 
 #include <algorithm>
+#include <functional>
 #include <array>
 #include <cstring>
 #include <limits>
@@ -932,8 +933,30 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 			return std::optional<CachedObjStream>(std::move(header));
 		};
 
+		// The /Length candidates and the streams waiting on them (see scan_length).
+		struct StreamUse {
+			uint64_t obj_pos = 0;
+			uint64_t key = 0; // object number << 16 | generation of the /Length target
+			uint32_t obj_num = 0;
+			uint64_t extent = 0; // the first pass's payload length
+		};
+		std::vector<StreamUse> stream_uses;
+		std::unordered_map<uint64_t, std::vector<int64_t>> length_candidates;
+		size_t length_candidate_count = 0;
+		std::optional<uint64_t> length_ref_used;
+		const auto note_integer = [&](uint32_t obj, uint16_t gen, int64_t value) {
+			if (length_oracle != nullptr || value < 0 || length_candidate_count >= effective_max_entries) {
+				return;
+			}
+			auto& values = length_candidates[(static_cast<uint64_t>(obj) << 16u) | gen];
+			if (std::find(values.begin(), values.end(), value) == values.end()) {
+				values.push_back(value);
+				++length_candidate_count;
+			}
+		};
+		std::vector<uint32_t> discarded_members;
 		auto unpack_objstm = [&](uint32_t obj_num, size_t container_pos, std::optional<int64_t> n_opt,
-			std::optional<int64_t> first_opt, std::vector<uint8_t> decoded) -> PdfResult<void> {
+			std::optional<int64_t> first_opt, std::vector<uint8_t> decoded, bool candidates_only) -> PdfResult<void> {
 			RECTO_PDF_TRY_REF(header_opt, read_objstm_header(obj_num, n_opt, first_opt, decoded));
 			const bool header_ok = header_opt.has_value();
 			{
@@ -951,7 +974,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 					for (const CachedObjStream::HeaderPair& pair : recovered_stm.entries) {
 						inner_pairs.push_back(InnerPair{pair.obj_num});
 					}
-					auto& member_vec = objstm_members[obj_num];
+					auto& member_vec = candidates_only ? discarded_members : objstm_members[obj_num];
 					for (size_t idx = 0; idx < inner_pairs.size(); ++idx) {
 						if (candidate_attempts >= effective_max_entries) {
 							return make_xref_error(
@@ -964,16 +987,14 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 						const uint32_t inner_id = inner_pairs[idx].obj_num;
 						// A definition later in the file than this container wins (only a container unpacked after the scan
 						// can meet one).
+						bool replaced_later = false;
 						if (const auto later = defined_at.find(inner_id);
 							later != defined_at.end() && later->second > container_pos) {
 							// A later xref row naming exactly this member (same container and index) is the same object:
 							// its content is still read below (a catalog, an integer). Any other later definition wins.
 							const XrefEntry* existing = table.find(inner_id);
-							const bool same_member = existing != nullptr && existing->is_compressed() &&
-								existing->obj_stm_num == obj_num && existing->obj_stm_index == static_cast<uint32_t>(idx);
-							if (!same_member) {
-								continue;
-							}
+							replaced_later = existing == nullptr || !existing->is_compressed() ||
+								existing->obj_stm_num != obj_num || existing->obj_stm_index != static_cast<uint32_t>(idx);
 						}
 
 						auto member = extract_object_stream_member(
@@ -984,6 +1005,14 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 							if (member.error().code == ErrorCode::OutOfMemory) {
 								return member.error();
 							}
+							continue;
+						}
+						// Still a /Length candidate when replaced: the later definition may sit inside a stream this value
+						// sizes (see scan_length).
+						if (const auto int_v = member->as_int()) {
+							note_integer(inner_id, 0u, *int_v);
+						}
+						if (replaced_later || candidates_only) {
 							continue;
 						}
 						const PdfValue* inner_val = &*member;
@@ -1062,13 +1091,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 		// parse, is null, as an undefined object is (ISO 32000-1 section 7.3.10), so resolution never recurses. Parsing is
 		// charged to the scan's cumulative parse budget.
 		bool resolver_over_budget = false;
-		const auto parse_target = [&](IndirectRef ref) -> PdfResult<PdfValue> {
-			const XrefEntry* entry = table.find(ref.obj_num);
-			if (entry == nullptr || !entry->is_uncompressed() || entry->generation != ref.gen_num ||
-				entry->byte_offset >= file_bytes.size()) {
-				return PdfValue(PdfNull{});
-			}
-			const size_t at = static_cast<size_t>(entry->byte_offset);
+		const auto parse_at = [&](size_t at, IndirectRef ref) -> PdfResult<PdfValue> {
 			Parser parser(file_bytes);
 			parser.seek(at);
 			auto parsed = parser.parse_indirect_object(
@@ -1099,6 +1122,14 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 				return PdfValue(PdfNull{});
 			}
 			return std::move(parsed->value);
+		};
+		const auto parse_target = [&](IndirectRef ref) -> PdfResult<PdfValue> {
+			const XrefEntry* entry = table.find(ref.obj_num);
+			if (entry == nullptr || !entry->is_uncompressed() || entry->generation != ref.gen_num ||
+				entry->byte_offset >= file_bytes.size()) {
+				return PdfValue(PdfNull{});
+			}
+			return parse_at(static_cast<size_t>(entry->byte_offset), ref);
 		};
 		// A resolver over `parse_target` that parses each target once into `targets`, kept reduced to what a parameter can
 		// use, so a parameter object many containers share is parsed and charged once and each lookup copies a few
@@ -1186,31 +1217,32 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 			return view;
 		};
 
-		// The scan's /Length lookup. A stream's indirect /Length can name an integer inside a container, which is unpacked
-		// only after the scan, once the table is final: a lookup that fails is noted, and if the final table then knows
-		// that integer, the whole scan runs again with the final integers as its lookup (`length_oracle`), so a stream
-		// is skipped by its true length instead of searched for `endstream`. The final table settles every question of
-		// which definition counts (rows, redefinitions, replaced containers, an encrypted file's containers), so the scan
-		// itself never guesses.
-		std::unordered_set<uint64_t> unresolved_lengths;
-		const auto scan_length = [&](IndirectRef len_ref, uint32_t stream_obj) -> PdfResult<int64_t> {
+		// The scan's /Length lookup. An indirect /Length's integer is only settled once the whole file is read (rows,
+		// redefinitions, containers unpacked after the scan), and data inside a stream sized wrongly can itself define
+		// that integer. So the first pass sizes such a stream by the integer it has met so far, if the parser accepts it,
+		// or else by its first `endstream`, and records the extent it got (stream_uses), while every integer definition
+		// the file holds is collected (length_candidates), including container members a later definition replaces.
+		// After the scan, each stream takes the largest candidate the parser accepts (one that lands on `endstream` and
+		// its terminator); when that is longer than the first pass's extent for any stream, the whole scan runs once
+		// more with those lengths keyed by the stream object's position (`length_oracle`). Bytes inside a stream can only
+		// add a shorter candidate, which the longer accepted one outranks, so they cannot cut their own stream short.
+		const auto scan_length = [&](IndirectRef len_ref, uint32_t stream_obj, uint64_t obj_pos) -> PdfResult<int64_t> {
 			if (len_ref.obj_num == stream_obj) {
 				return make_pdf_error(
 					ErrorCode::DamagedFormat,
 					"Indirect /Length target cannot reference its own stream object");
 			}
-			const uint64_t key = (static_cast<uint64_t>(len_ref.obj_num) << 16u) | len_ref.gen_num;
 			if (length_oracle != nullptr) {
-				if (const auto known = length_oracle->find(key); known != length_oracle->end()) {
+				if (const auto known = length_oracle->find(obj_pos); known != length_oracle->end()) {
 					return known->second;
 				}
+			} else {
+				length_ref_used = (static_cast<uint64_t>(len_ref.obj_num) << 16u) | len_ref.gen_num;
 			}
+			// The integer the scan has met so far, which the parser keeps only when it lands on `endstream`.
 			if (const auto it = recovered_integers.find(len_ref.obj_num);
 				it != recovered_integers.end() && it->second.first == len_ref.gen_num) {
 				return it->second.second;
-			}
-			if (unresolved_lengths.size() < effective_max_entries) {
-				unresolved_lengths.insert(key);
 			}
 			return make_pdf_error(
 				ErrorCode::DamagedFormat,
@@ -1322,10 +1354,18 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 							// or `/Type /ObjStm`, as well as advancing `pos` past any binary stream payload.
 							Parser obj_parser(file_bytes);
 							obj_parser.seek(pos);
+							length_ref_used = std::nullopt;
+							const uint64_t obj_pos = static_cast<uint64_t>(pos);
 							auto parsed_obj = obj_parser.parse_indirect_object(
-								[&scan_length, obj_num](IndirectRef len_ref) -> PdfResult<int64_t> {
-									return scan_length(len_ref, obj_num);
+								[&scan_length, obj_num, obj_pos](IndirectRef len_ref) -> PdfResult<int64_t> {
+									return scan_length(len_ref, obj_num, obj_pos);
 								});
+							if (parsed_obj.has_value() && length_ref_used.has_value() &&
+								stream_uses.size() < effective_max_entries) {
+								if (const PdfStream* used = parsed_obj->value.as_stream(); used != nullptr) {
+									stream_uses.push_back(StreamUse{obj_pos, *length_ref_used, obj_num, used->raw_length});
+								}
+							}
 							const size_t next_pos = std::max(obj_parser.lexer().position(), p + 3u);
 							const size_t obj_scan_end = std::max(
 								obj_parser.lexer().max_scanned_offset(),
@@ -1394,6 +1434,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 							}
 							if (const auto int_val = parsed_obj->value.as_int()) {
 								recovered_integers[obj_num] = {gen_num, *int_val};
+								note_integer(obj_num, gen_num, *int_val);
 							} else if (const PdfDict* dict_only = parsed_obj->value.as_dict()) {
 								const auto type_opt = dict_only->get_name("Type");
 								if (const PdfValue* type_val = dict_only->get("Type");
@@ -1603,14 +1644,17 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 			if (encrypted) {
 				break; // ciphertext until authentication; resolution decodes these containers afterwards
 			}
-			// A container redefined later in the file is not this object any more.
+			// A container redefined later in the file is not this object any more; while a stream waits on an indirect
+			// /Length it is still read for its integers (the redefinition may sit inside that stream; see scan_length).
 			const XrefEntry* self = table.find(deferred.obj_num);
-			if (self == nullptr || !self->is_uncompressed() || self->byte_offset != deferred.pos) {
+			const bool candidates_only = self == nullptr || !self->is_uncompressed() || self->byte_offset != deferred.pos;
+			if (candidates_only && (length_oracle != nullptr || stream_uses.empty())) {
 				continue;
 			}
-			// Parsed again here, through the resolver (which charges the parse budget and keeps the result), since the
-			// scan kept only the position.
-			auto container_value = scan_resolver(IndirectRef{deferred.obj_num, 0u});
+			// Parsed again here (charged to the parse budget), through the resolver, which keeps the result, when this
+			// is the table's definition, since the scan kept only the position.
+			auto container_value = candidates_only ? parse_at(deferred.pos, IndirectRef{deferred.obj_num, 0u})
+												   : scan_resolver(IndirectRef{deferred.obj_num, 0u});
 			if (!container_value.has_value()) {
 				return resolver_over_budget ? over_budget_error(deferred.pos) : container_value.error();
 			}
@@ -1654,19 +1698,64 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
 			}
 			if (dec_stm.has_value()) {
 				RECTO_PDF_RETURN_IF_ERROR(
-					unpack_objstm(deferred.obj_num, deferred.pos, n_opt, first_opt, std::move(*dec_stm)));
+					unpack_objstm(deferred.obj_num, deferred.pos, n_opt, first_opt, std::move(*dec_stm), candidates_only));
 			}
 		}
 
-		// The second pass (see scan_length): only from the first, only for a file not encrypted (its containers stay
-		// undecoded), and only when the final table now knows an integer some stream's /Length named.
-		if (length_oracle == nullptr && !encrypted && !unresolved_lengths.empty()) {
+		// The second pass (see scan_length): each stream that named an indirect /Length takes the largest candidate
+		// longer than its first-pass extent that the parser accepts, read by parsing the object with that length. The
+		// trial parses share what the scan's parse budget has left; when that runs out, the remaining streams keep their
+		// first-pass extents (recorded as damage) instead of failing recovery.
+		if (length_oracle == nullptr && !stream_uses.empty()) {
 			std::unordered_map<uint64_t, int64_t> oracle;
-			for (const uint64_t key : unresolved_lengths) {
-				const uint32_t obj = static_cast<uint32_t>(key >> 16u);
-				const uint16_t gen = static_cast<uint16_t>(key & 0xFFFFu);
-				if (const auto it = recovered_integers.find(obj); it != recovered_integers.end() && it->second.first == gen) {
-					oracle.emplace(key, it->second.second);
+			uint64_t trial_allowance = max_recovery_parse_bytes > cumulative_parse_bytes
+				? max_recovery_parse_bytes - cumulative_parse_bytes
+				: 0u;
+			bool trials_exhausted = false;
+			for (const StreamUse& use : stream_uses) {
+				if (trials_exhausted) {
+					break;
+				}
+				const auto found = length_candidates.find(use.key);
+				if (found == length_candidates.end()) {
+					continue;
+				}
+				std::vector<int64_t> longer;
+				for (const int64_t value : found->second) {
+					if (static_cast<uint64_t>(value) > use.extent) {
+						longer.push_back(value);
+					}
+				}
+				std::sort(longer.begin(), longer.end(), std::greater<>());
+				for (const int64_t value : longer) {
+					if (static_cast<uint64_t>(value) >= trial_allowance) {
+						trials_exhausted = true;
+						record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedXRef, use.obj_pos, use.obj_num, 0u);
+						break;
+					}
+					Parser trial(file_bytes);
+					trial.seek(static_cast<size_t>(use.obj_pos));
+					auto trial_obj = trial.parse_indirect_object(
+						[&use, value](IndirectRef len_ref) -> PdfResult<int64_t> {
+							if (len_ref.obj_num == use.obj_num) {
+								return make_pdf_error(ErrorCode::DamagedFormat, "Indirect /Length names its own stream");
+							}
+							return value;
+						});
+					const uint64_t trial_bytes = static_cast<uint64_t>(
+						std::max(trial.lexer().max_scanned_offset(), trial.lexer().position()) - use.obj_pos);
+					trial_allowance -= std::min(trial_allowance, trial_bytes);
+					if (!trial_obj.has_value()) {
+						if (trial_obj.error().code == ErrorCode::OutOfMemory) {
+							return trial_obj.error();
+						}
+						continue;
+					}
+					if (const PdfStream* sized = trial_obj->value.as_stream();
+						sized != nullptr && sized->raw_length == static_cast<uint64_t>(value)) {
+						oracle.emplace(use.obj_pos, value);
+						break;
+					}
 				}
 			}
 			if (!oracle.empty()) {

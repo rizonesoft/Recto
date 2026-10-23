@@ -810,6 +810,60 @@ TEST(PdfXref, RecoveryRoundThreeFixes)
 		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
 	}
 
+	// Round 11: an uncompressed integer the scan meets first is replaced by a container's after the stream; the
+	// container's value, which lands on the stream's own `endstream`, sizes it.
+	{
+		const std::string fake = "\nendstream\nendobj\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n";
+		std::string pdf = "%PDF-1.7\n";
+		const size_t genuine_at = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages + "88 0 obj\n0\nendobj\n" +
+			container(20u, "88 0 " + std::to_string(fake.size()), "/N 1 /First 5 /Filter /ASCIIHexDecode") +
+			"30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(1), nullptr);
+		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
+		ASSERT_NE(rec->find(88), nullptr);
+		EXPECT_TRUE(rec->find(88)->is_compressed());
+	}
+
+	// Round 11: the stream's payload defines object 88 itself (after its embedded `endstream`); the container's value
+	// still sizes the stream, and the payload's definition is stream data.
+	{
+		const std::string fake = "\nendstream\nendobj\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n"
+			"88 0 obj\n0\nendobj\n";
+		std::string pdf = "%PDF-1.7\n";
+		const size_t genuine_at = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages +
+			container(20u, "88 0 " + std::to_string(fake.size()), "/N 1 /First 5 /Filter /ASCIIHexDecode") +
+			"30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(1), nullptr);
+		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
+		ASSERT_NE(rec->find(88), nullptr);
+		EXPECT_TRUE(rec->find(88)->is_compressed());
+	}
+
+	// Round 11: the payload redefines the container itself, so the scan's table replaces it; its integer still sizes
+	// the stream, and the container stands.
+	{
+		const std::string fake = "\nendstream\nendobj\n20 0 obj\n<< >>\nendobj\n"
+			"1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n";
+		std::string pdf = "%PDF-1.7\n";
+		const size_t genuine_at = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages;
+		const size_t container_at = pdf.size();
+		pdf += container(20u, "88 0 " + std::to_string(fake.size()), "/N 1 /First 5 /Filter /ASCIIHexDecode") +
+			"30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(1), nullptr);
+		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
+		ASSERT_NE(rec->find(20), nullptr);
+		EXPECT_EQ(rec->find(20)->byte_offset, container_at);
+	}
+
 	// Round 4: object 1 defined three times in the file (a catalog, then two other dictionaries); an intact type-1
 	// row naming the first restores it, catalog and all, so root 1 is valid again.
 	{

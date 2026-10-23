@@ -208,9 +208,9 @@ public:
 		uint64_t max_total_entries = kMaxXrefTotalEntries) noexcept;
 
 private:
-	// One scan of recover_damaged_xref. The first runs with no `length_oracle`; when the final table knows integers a
-	// stream's indirect /Length named that the scan could not, recovery runs once more with those integers (keyed by
-	// object number << 16 | generation) as the /Length lookup.
+	// One scan of recover_damaged_xref. The first runs with no `length_oracle` and sizes every stream with an indirect
+	// /Length by its first `endstream`; when a longer length the file defines for such a stream lands on `endstream`,
+	// recovery runs once more with those lengths (keyed by the stream object's file position) as the /Length lookup.
 	[[nodiscard]] static PdfResult<XrefTable> recover_damaged_xref_with(
 		std::span<const uint8_t> file_bytes,
 		uint64_t max_total_entries,
