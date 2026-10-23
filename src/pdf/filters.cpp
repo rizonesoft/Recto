@@ -7702,6 +7702,9 @@ void idwt_97_2d_float(
 		}
 	};
 
+	// The most subbands a component can have: LL plus three per decomposition level, at most 32 levels (T.800 A.6.1).
+	constexpr size_t kMaxJ2kSubbands = 1u + 3u * 32u;
+
 	struct J2kQcdParams {
 		uint8_t guard_bits = 2u;
 		uint8_t qstyle = 0u;
@@ -7936,6 +7939,16 @@ void idwt_97_2d_float(
 		out_qcd.raw_len = static_cast<uint16_t>(body_len);
 		out_qcd.subband_exponents.clear();
 		out_qcd.subband_mantissas.clear();
+		// At most 1 + 3 x 32 subbands exist (T.800 A.6.4: 32 decomposition levels), so a longer table is refused here,
+		// before it is stored or copied per tile and component.
+		const size_t entry_bytes = (out_qcd.qstyle == 2u) ? 2u : 1u;
+		if (out_qcd.qstyle != 1u && (body_len - 1u) > entry_bytes * kMaxJ2kSubbands) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"QCD/QCC marker lists more subbands than 32 decomposition levels allow in JPXDecode",
+				sqcd_pos);
+		}
 		if (out_qcd.qstyle == 0u) { // Reversible no quantization (1 byte per subband)
 			for (size_t i = 1u; i < body_len; ++i) {
 				if ((cs[sqcd_pos + i] & 0x07u) != 0u) {
@@ -8026,6 +8039,18 @@ void idwt_97_2d_float(
 		return parse_qcd_body(seg_pos + 2u + c_bytes, seg_len - (2u + c_bytes), decomp_levels, out_qcc);
 	};
 
+	// Coding parameters held for the main header and each tile with an override share the decode ceiling with the
+	// image and tile buffers: per component a COD and a QCD record with at most kMaxJ2kSubbands entries.
+	const uint64_t per_component_coding_bytes =
+		sizeof(J2kCodParams) + sizeof(J2kQcdParams) + kMaxJ2kSubbands * (sizeof(uint8_t) + sizeof(uint16_t)) + 1u;
+	const uint64_t coding_set_bytes = static_cast<uint64_t>(num_comps) * per_component_coding_bytes;
+	uint64_t coding_param_bytes = coding_set_bytes + static_cast<uint64_t>(total_tiles) * sizeof(int32_t);
+	if (coding_param_bytes > effective_limit - total_wic_bytes - tile_spans_table_bytes) {
+		return make_filter_error(
+			ErrorCode::DecompressionLimitExceeded,
+			DiagnosticId::DecompressionLimitExceeded,
+			"JPXDecode coding parameters for every component exceed ceiling");
+	}
 	J2kCodParams main_cod{};
 	J2kQcdParams main_qcd{};
 	std::vector<bool> main_has_coc(num_comps, false);
@@ -8043,27 +8068,39 @@ void idwt_97_2d_float(
 		std::vector<bool> has_qcc;
 		std::vector<J2kQcdParams> qcc;
 	};
+	uint64_t total_tile_stream_bytes = 0u;
 	std::vector<TileCodingOverride> tile_overrides;
-	auto get_or_create_tile_override = [&](uint16_t isot) -> TileCodingOverride& {
-		for (auto& ov : tile_overrides) {
-			if (ov.isot == isot) {
-				return ov;
-			}
+	// Index of each tile's override in tile_overrides (-1 for none), so finding one is constant time per marker.
+	std::vector<int32_t> tile_override_index(total_tiles, -1);
+	// A tile's first override marker charges a whole per-component coding set to the ceiling before it is built.
+	// Its COD starts from the main COD (a COD marker updates it); its QCD is written whole by the QCD marker that sets
+	// has_qcd and read only then.
+	auto get_or_create_tile_override = [&](uint16_t isot) -> PdfResult<TileCodingOverride*> {
+		if (const int32_t at = tile_override_index[isot]; at >= 0) {
+			return &tile_overrides[static_cast<size_t>(at)];
 		}
+		const uint64_t override_bytes = sizeof(TileCodingOverride) + coding_set_bytes;
+		if (override_bytes > effective_limit - total_wic_bytes - tile_spans_table_bytes - total_tile_stream_bytes -
+				coding_param_bytes) {
+			return make_filter_error(
+				ErrorCode::DecompressionLimitExceeded,
+				DiagnosticId::DecompressionLimitExceeded,
+				"JPXDecode tile coding overrides exceed ceiling");
+		}
+		coding_param_bytes += override_bytes;
 		TileCodingOverride fresh{};
 		fresh.isot = isot;
 		fresh.cod = main_cod;
-		fresh.qcd = main_qcd;
 		fresh.has_coc.assign(num_comps, false);
 		fresh.coc.resize(num_comps);
 		fresh.has_qcc.assign(num_comps, false);
 		fresh.qcc.resize(num_comps);
+		tile_override_index[isot] = static_cast<int32_t>(tile_overrides.size());
 		tile_overrides.push_back(std::move(fresh));
-		return tile_overrides.back();
+		return &tile_overrides.back();
 	};
 
 	std::vector<std::vector<std::span<const uint8_t>>> tile_part_spans(total_tiles);
-	uint64_t total_tile_stream_bytes = 0u;
 
 	while (pos + 2u <= cs.size()) {
 		if (cs[pos] != 0xFFu) {
@@ -8165,23 +8202,27 @@ void idwt_97_2d_float(
 						pos);
 				}
 				if (tp_marker == 0x52u) { // Tile-part header COD override (ITU-T T.800 §A.6.1)
-					auto& ov = get_or_create_tile_override(isot);
+					RECTO_PDF_TRY(TileCodingOverride* const ov_ptr, get_or_create_tile_override(isot));
+					auto& ov = *ov_ptr;
 					RECTO_PDF_RETURN_IF_ERROR(parse_cod_segment(pos, tp_len, ov.cod));
 					ov.has_cod = true;
 				} else if (tp_marker == 0x53u) { // Tile-part header COC override (ITU-T T.800 §A.6.2)
-					auto& ov = get_or_create_tile_override(isot);
+					RECTO_PDF_TRY(TileCodingOverride* const ov_ptr, get_or_create_tile_override(isot));
+					auto& ov = *ov_ptr;
 					uint32_t comp_idx = 0u;
 					J2kCodParams coc_params{};
 					RECTO_PDF_RETURN_IF_ERROR(parse_coc_segment(pos, tp_len, comp_idx, coc_params));
 					ov.coc[comp_idx] = coc_params;
 					ov.has_coc[comp_idx] = true;
 				} else if (tp_marker == 0x5Cu) { // Tile-part header QCD override (ITU-T T.800 §A.6.4)
-					auto& ov = get_or_create_tile_override(isot);
+					RECTO_PDF_TRY(TileCodingOverride* const ov_ptr, get_or_create_tile_override(isot));
+					auto& ov = *ov_ptr;
 					const uint8_t eff_levels = ov.has_cod ? ov.cod.num_decomp_levels : main_cod.num_decomp_levels;
 					RECTO_PDF_RETURN_IF_ERROR(parse_qcd_segment(pos, tp_len, eff_levels, ov.qcd));
 					ov.has_qcd = true;
 				} else if (tp_marker == 0x5Du) { // Tile-part header QCC override (ITU-T T.800 §A.6.5)
-					auto& ov = get_or_create_tile_override(isot);
+					RECTO_PDF_TRY(TileCodingOverride* const ov_ptr, get_or_create_tile_override(isot));
+					auto& ov = *ov_ptr;
 					uint32_t comp_idx = 0u;
 					J2kQcdParams qcc_params{};
 					const uint8_t eff_levels = ov.has_cod ? ov.cod.num_decomp_levels : main_cod.num_decomp_levels;
@@ -8229,7 +8270,8 @@ void idwt_97_2d_float(
 				pos = data_end;
 			}
 			const uint64_t part_cost = static_cast<uint64_t>(part_span.size()) + 32ULL;
-			if (total_wic_bytes + tile_spans_table_bytes + total_tile_stream_bytes + part_cost > effective_limit) {
+			if (total_wic_bytes + tile_spans_table_bytes + total_tile_stream_bytes + coding_param_bytes + part_cost >
+				effective_limit) {
 				return make_filter_error(
 					ErrorCode::DecompressionLimitExceeded,
 					DiagnosticId::DecompressionLimitExceeded,
@@ -8328,13 +8370,9 @@ void idwt_97_2d_float(
 		for (uint32_t tx = 0; tx < num_tiles_x; ++tx) {
 			const uint32_t tile_idx = ty * num_tiles_x + tx;
 			const auto& parts = tile_part_spans[tile_idx];
-			const TileCodingOverride* tile_ov = nullptr;
-			for (const auto& ov : tile_overrides) {
-				if (ov.isot == tile_idx) {
-					tile_ov = &ov;
-					break;
-				}
-			}
+			const TileCodingOverride* tile_ov = tile_override_index[tile_idx] >= 0
+				? &tile_overrides[static_cast<size_t>(tile_override_index[tile_idx])]
+				: nullptr;
 			const J2kCodParams& tile_cod = (tile_ov != nullptr && tile_ov->has_cod) ? tile_ov->cod : main_cod;
 			const uint8_t prog_order = tile_cod.prog_order;
 			const uint16_t num_layers = tile_cod.num_layers;
@@ -8534,7 +8572,7 @@ void idwt_97_2d_float(
 			// Enforce cumulative live working-set budget (output buffers + per-tile subband, EBCOT/DWT scratch, and spatial buffers).
 			const uint64_t tile_px64 = static_cast<uint64_t>(tile_w) * tile_h;
 			const uint64_t tile_grid_overhead =
-				tile_spans_table_bytes + total_tile_stream_bytes +
+				tile_spans_table_bytes + total_tile_stream_bytes + coding_param_bytes + coding_set_bytes +
 				static_cast<uint64_t>(num_comps) * (static_cast<uint64_t>(max_decomp_levels) + 1ULL) * 128ULL;
 			const uint64_t dwt_scratch_bytes =
 				(max_decomp_levels > 0u) ? ((tile_px64 + 2ULL * tile_h + 16ULL) * sizeof(int32_t)) : 0ULL;
@@ -9429,72 +9467,89 @@ constexpr size_t kMaxImageDecodeComponents = 32;
 		resolved.push_back(std::move(*target));
 		return &resolved.back();
 	};
-	// An array's elements resolve one level into pointers (to the element itself or to its target in `resolved`),
-	// never into a copied array, so nothing inside an element (a large entry no filter reads, say) is copied.
-	using ElementPointers = std::array<const PdfValue*, kMaxFilterChainDepth>;
-	const auto deref_elements = [&](const PdfValue* v, ElementPointers& out) -> PdfResult<void> {
-		const PdfArray* arr = v != nullptr ? v->as_array() : nullptr;
-		if (arr == nullptr || arr->size() > kMaxFilterChainDepth) {
-			return {};
+	// Resolves one level into a value the caller owns and drops, so a resolver result nothing keeps is not retained.
+	const auto resolve_local = [&](const PdfValue& v) -> PdfResult<std::optional<PdfValue>> {
+		if (!v.is_ref() || !can_resolve) {
+			return std::optional<PdfValue>{};
 		}
-		for (size_t i = 0; i < arr->size(); ++i) {
-			RECTO_PDF_TRY(const PdfValue* elem, deref(&(*arr)[i]));
-			out[i] = elem;
+		auto target = (*resolver)(*v.as_ref());
+		if (!target.has_value()) {
+			return std::move(target).error();
 		}
-		return {};
+		return std::optional<PdfValue>(std::move(*target));
 	};
+	// /Filter array elements resolve to names: a referenced element keeps only its name (or a non-name marker the
+	// name check below refuses), never the resolver's whole result.
+	using ElementPointers = std::array<const PdfValue*, kMaxFilterChainDepth>;
 	ElementPointers filter_elems{};
-	ElementPointers parms_elems{};
 	{
 		RECTO_PDF_TRY(const PdfValue* f, deref(filter_val));
 		filter_val = f;
-		RECTO_PDF_RETURN_IF_ERROR(deref_elements(filter_val, filter_elems));
+		if (const PdfArray* arr = filter_val != nullptr ? filter_val->as_array() : nullptr;
+			arr != nullptr && arr->size() <= kMaxFilterChainDepth) {
+			for (size_t i = 0; i < arr->size(); ++i) {
+				RECTO_PDF_TRY(std::optional<PdfValue> target, resolve_local((*arr)[i]));
+				if (!target.has_value()) {
+					filter_elems[i] = &(*arr)[i];
+					continue;
+				}
+				const auto name = target->as_name();
+				resolved.push_back(name.has_value() ? PdfValue(PdfName::from_decoded(*name)) : PdfValue(int64_t{0}));
+				filter_elems[i] = &resolved.back();
+			}
+		}
 		RECTO_PDF_TRY(const PdfValue* p, deref(parms_val));
 		parms_val = p;
-		RECTO_PDF_RETURN_IF_ERROR(deref_elements(parms_val, parms_elems));
 	}
-	// A stage's parameter dictionary with the values its filter defines resolved one level.
-	const auto resolve_stage_parms = [&](std::string_view filter_name, const PdfDict* parms)
-		-> PdfResult<const PdfDict*> {
-		if (parms == nullptr || !can_resolve) {
-			return parms;
-		}
+	// /Colors, /BitsPerComponent and /Columns shape a Flate or LZW predictor, so they matter only when /Predictor
+	// (itself resolved first when indirect) is above 1 (ISO 32000-1 Table 8).
+	const auto defined_keys = [&](std::string_view filter_name, const PdfDict& parms)
+		-> PdfResult<std::function<bool(std::string_view)>> {
 		const std::span<const std::string_view> keys = stage_parameter_keys(filter_name);
-		// /Colors, /BitsPerComponent and /Columns shape a Flate or LZW predictor, so they matter only when
-		// /Predictor (itself resolved first when indirect) is above 1 (ISO 32000-1 Table 8).
 		bool predictor_active = true;
-		if (const bool flate_or_lzw = filter_name == "FlateDecode" || filter_name == "Fl" ||
-				filter_name == "LZWDecode" || filter_name == "LZW";
-			flate_or_lzw) {
-			RECTO_PDF_TRY(const PdfValue* predictor, deref(parms->get("Predictor")));
+		if (filter_name == "FlateDecode" || filter_name == "Fl" || filter_name == "LZWDecode" || filter_name == "LZW") {
+			const PdfValue* predictor = parms.get("Predictor");
+			std::optional<PdfValue> predictor_target;
+			if (predictor != nullptr) {
+				RECTO_PDF_TRY(std::optional<PdfValue> t, resolve_local(*predictor));
+				predictor_target = std::move(t);
+				if (predictor_target.has_value()) {
+					predictor = &*predictor_target;
+				}
+			}
 			const auto predictor_int = predictor != nullptr ? predictor->as_int() : std::nullopt;
 			predictor_active = predictor_int.has_value() && *predictor_int > 1;
 		}
-		const auto defined = [&](std::string_view key) {
+		return std::function<bool(std::string_view)>([keys, predictor_active](std::string_view key) {
 			if (!predictor_active && (key == "Colors" || key == "BitsPerComponent" || key == "Columns")) {
 				return false;
 			}
 			return std::find(keys.begin(), keys.end(), key) != keys.end();
-		};
-		const bool any = std::any_of(parms->entries().begin(), parms->entries().end(), [&](const auto& entry) {
-			return entry.second.is_ref() && defined(entry.first.view());
 		});
-		if (!any) {
-			return parms;
-		}
-		// Only the keys this filter defines are carried, each resolved one level: an entry no filter reads never
-		// affects decoding, so it is not copied either (a large unused string costs nothing). Every defined key is a
-		// number, boolean or name (ISO 32000-1 Tables 8, 11, 12 and 14), and the filters read them only through
-		// as_int, as_bool and as_name, so any other value is malformed by its type alone and is carried as an empty
-		// string, which those readers refuse the same way, without its payload.
+	};
+	// A copy of a stage's parameter dictionary holding only the keys its filter defines, each resolved one level: an
+	// entry no filter reads never affects decoding, so it is not copied either (a large unused string costs nothing).
+	// Every defined key is a number, boolean or name (ISO 32000-1 Tables 8, 11, 12 and 14), and the filters read them
+	// only through as_int, as_bool and as_name, so any other value is malformed by its type alone and is carried as an
+	// empty string, which those readers refuse the same way, without its payload. /JBIG2Globals, which the JBIG2
+	// decoder reads and resolves itself, is carried as it is.
+	const auto reduced_stage_parms = [&](std::string_view filter_name, const PdfDict& parms) -> PdfResult<const PdfDict*> {
+		RECTO_PDF_TRY(const std::function<bool(std::string_view)> defined, defined_keys(filter_name, parms));
+		const bool jbig2 = filter_name == "JBIG2Decode";
 		PdfDict copy;
-		for (const auto& [key, value] : parms->entries()) {
+		for (const auto& [key, value] : parms.entries()) {
+			if (jbig2 && key.view() == "JBIG2Globals") {
+				RECTO_PDF_TRY_REF(globals_copy, value.deep_clone());
+				copy.set(key, std::move(globals_copy));
+				continue;
+			}
 			if (!defined(key.view())) {
 				continue;
 			}
-			RECTO_PDF_TRY(const PdfValue* target, deref(&value));
-			if (target->is_null() || target->is_bool() || target->is_number() || target->is_name()) {
-				RECTO_PDF_TRY_REF(value_copy, target->deep_clone());
+			RECTO_PDF_TRY(std::optional<PdfValue> target_holder, resolve_local(value));
+			const PdfValue& target = target_holder.has_value() ? *target_holder : value;
+			if (target.is_null() || target.is_bool() || target.is_number() || target.is_name()) {
+				RECTO_PDF_TRY_REF(value_copy, target.deep_clone());
 				copy.set(key, std::move(value_copy));
 			} else {
 				copy.set(key, PdfValue(PdfString()));
@@ -9502,6 +9557,39 @@ constexpr size_t kMaxImageDecodeComponents = 32;
 		}
 		resolved.emplace_back(std::move(copy));
 		return resolved.back().as_dict();
+	};
+	// A stage's parameter dictionary with the values its filter defines resolved one level; a dictionary with nothing
+	// to resolve is used as it is.
+	const auto resolve_stage_parms = [&](std::string_view filter_name, const PdfDict* parms)
+		-> PdfResult<const PdfDict*> {
+		if (parms == nullptr || !can_resolve) {
+			return parms;
+		}
+		RECTO_PDF_TRY(const std::function<bool(std::string_view)> defined, defined_keys(filter_name, *parms));
+		const bool any = std::any_of(parms->entries().begin(), parms->entries().end(), [&](const auto& entry) {
+			return entry.second.is_ref() && defined(entry.first.view());
+		});
+		if (!any) {
+			return parms;
+		}
+		return reduced_stage_parms(filter_name, *parms);
+	};
+	// A /DecodeParms array element for the stage `filter_name`: a direct dictionary is used as it is; a referenced one
+	// is resolved, reduced to what that stage reads and the resolver's whole result dropped, so many elements naming
+	// one large dictionary cost it once at a time, not once each.
+	const auto element_stage_parms = [&](std::string_view filter_name, const PdfValue& element, bool& is_valid)
+		-> PdfResult<const PdfDict*> {
+		RECTO_PDF_TRY(std::optional<PdfValue> target_holder, resolve_local(element));
+		const PdfValue& target = target_holder.has_value() ? *target_holder : element;
+		is_valid = true;
+		if (const PdfDict* dict = target.as_dict()) {
+			if (!target_holder.has_value()) {
+				return dict;
+			}
+			return reduced_stage_parms(filter_name, *dict);
+		}
+		is_valid = target.is_null();
+		return static_cast<const PdfDict*>(nullptr);
 	};
 
 	if (filter_val == nullptr || filter_val->is_null()) {
@@ -9526,9 +9614,10 @@ constexpr size_t kMaxImageDecodeComponents = 32;
 				filter_parms[0] = d;
 			} else if (const PdfArray* a = parms_val->as_array()) {
 				if (a->size() == 1) {
-					if (parms_elems[0]->is_dict()) {
-						filter_parms[0] = parms_elems[0]->as_dict();
-					} else if (!parms_elems[0]->is_null()) {
+					bool element_ok = true;
+					RECTO_PDF_TRY(const PdfDict* element_parms, element_stage_parms(filter_names[0], (*a)[0], element_ok));
+					filter_parms[0] = element_parms;
+					if (!element_ok) {
 						return make_filter_error(
 							ErrorCode::DamagedFormat,
 							DiagnosticId::DamagedStream,
@@ -9575,9 +9664,11 @@ constexpr size_t kMaxImageDecodeComponents = 32;
 						"/DecodeParms array length does not match /Filter array length");
 				}
 				for (size_t i = 0; i < parms_arr->size(); ++i) {
-					if (parms_elems[i]->is_dict()) {
-						filter_parms[i] = parms_elems[i]->as_dict();
-					} else if (!parms_elems[i]->is_null()) {
+					bool element_ok = true;
+					RECTO_PDF_TRY(
+						const PdfDict* element_parms, element_stage_parms(filter_names[i], (*parms_arr)[i], element_ok));
+					filter_parms[i] = element_parms;
+					if (!element_ok) {
 						return make_filter_error(
 							ErrorCode::DamagedFormat,
 							DiagnosticId::DamagedStream,
@@ -9646,26 +9737,38 @@ constexpr size_t kMaxImageDecodeComponents = 32;
 			if (decode_entry == nullptr && base != stream_dict_context) {
 				decode_entry = decode_in(stream_dict_context);
 			}
+			// A JPXDecode image that is not an /ImageMask ignores /Decode (ISO 32000-2 Table 87), so that is decided
+			// first and an ignored /Decode is never resolved: a bad reference in it cannot fail the decode.
+			bool decode_applies = decode_entry != nullptr;
+			if (is_jpx && decode_applies) {
+				const PdfValue* mask_entry =
+					stream_dict_context != nullptr ? stream_dict_context->get("ImageMask") : nullptr;
+				std::optional<PdfValue> mask_target;
+				if (mask_entry != nullptr) {
+					RECTO_PDF_TRY(std::optional<PdfValue> t, resolve_local(*mask_entry));
+					mask_target = std::move(t);
+					if (mask_target.has_value()) {
+						mask_entry = &*mask_target;
+					}
+				}
+				decode_applies = mask_entry != nullptr && mask_entry->as_bool() == std::optional<bool>(true);
+			}
 			// The array and each element resolve one level and only numbers are kept: an entry that is not an array of
 			// at most 2 x kMaxImageDecodeComponents numbers drops the whole mapping, as apply_pdf_decode_array does for
 			// a malformed direct array, and nothing in it (a large string, say) is retained or copied first.
 			std::optional<PdfArray> decode_numbers;
-			if (decode_entry != nullptr) {
-				std::optional<PdfValue> decode_target;
-				if (const auto decode_ref = decode_entry->as_ref(); decode_ref.has_value() && can_resolve) {
-					RECTO_PDF_TRY_REF(target, (*resolver)(*decode_ref));
-					decode_target.emplace(std::move(target));
+			if (decode_applies) {
+				RECTO_PDF_TRY(std::optional<PdfValue> decode_target, resolve_local(*decode_entry));
+				if (decode_target.has_value()) {
 					decode_entry = &*decode_target;
 				}
 				if (const PdfArray* decode_arr = decode_entry->as_array();
 					decode_arr != nullptr && decode_arr->size() <= 2u * kMaxImageDecodeComponents) {
 					decode_numbers.emplace();
 					for (const PdfValue& e : *decode_arr) {
-						std::optional<double> n = e.as_number();
-						if (const auto elem_ref = e.as_ref(); elem_ref.has_value() && can_resolve) {
-							RECTO_PDF_TRY_REF(target, (*resolver)(*elem_ref));
-							n = target.as_number();
-						}
+						RECTO_PDF_TRY(std::optional<PdfValue> element_target, resolve_local(e));
+						const std::optional<double> n =
+							element_target.has_value() ? element_target->as_number() : e.as_number();
 						if (!n.has_value()) {
 							decode_numbers.reset();
 							break;
@@ -9674,13 +9777,7 @@ constexpr size_t kMaxImageDecodeComponents = 32;
 					}
 				}
 			}
-			bool apply_decode = decode_numbers.has_value();
-			if (is_jpx && apply_decode) {
-				const PdfValue* mask_entry =
-					stream_dict_context != nullptr ? stream_dict_context->get("ImageMask") : nullptr;
-				RECTO_PDF_TRY(const PdfValue* mask_value, deref(mask_entry));
-				apply_decode = mask_value != nullptr && mask_value->as_bool() == std::optional<bool>(true);
-			}
+			const bool apply_decode = decode_numbers.has_value();
 			// The image stages read /ColorTransform (a number) and /Decode from a document, so only those are carried:
 			// the source dictionary is never copied whole, and a hostile entry no stage reads costs nothing.
 			// /TargetFormat is not a PDF key but a direct caller's choice of output layout (decode_dct), so a

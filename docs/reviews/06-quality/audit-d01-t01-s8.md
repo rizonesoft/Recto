@@ -336,8 +336,8 @@ COMPLETION: gaps
 
 Disposition of the completion review's gaps (each verified against the code before acting):
 
-- Implemented: gap 7, parameter resolution copied what no filter reads (`resolve_stage_parms` cloned every entry of a `/DecodeParms` dictionary once one defined key was indirect, and `deref_array` cloned every element of an array holding a reference). Only the keys a filter defines are carried now, a non-scalar there as an empty string the readers refuse alike, and array elements resolve into pointers, never a copied array. The image stage also stops carrying the internal `/TargetFormat` key, which a document could set to change the layout the pipeline returns. `PdfFilters.ParameterResolutionCopiesOnlyWhatFiltersRead` (peaks under 1 MiB and 12 MiB; the mutants peak at 8,389,879 and 16,778,582 bytes) and `PdfFilters.DocumentCannotSetTargetFormat` fail with the fix reverted. Commit: see the line below.
-- Implemented: gap 14, `detail::ScopedJpxPath` pins the native or the WIC JPX decoder for a test, so a registered JPEG 2000 codec cannot bypass a native-path test; `PdfFilters.JpxTagTreesCharged` now pins the native decoder and `PdfFilters.JpxPathPinned` decodes through each path. Commit: see the line below.
+- Implemented: gap 7, parameter resolution copied what no filter reads (`resolve_stage_parms` cloned every entry of a `/DecodeParms` dictionary once one defined key was indirect, and `deref_array` cloned every element of an array holding a reference). Only the keys a filter defines are carried now, a non-scalar there as an empty string the readers refuse alike, and array elements resolve into pointers, never a copied array. The image stage also stops carrying the internal `/TargetFormat` key, which a document could set to change the layout the pipeline returns. `PdfFilters.ParameterResolutionCopiesOnlyWhatFiltersRead` (peaks under 1 MiB and 12 MiB; the mutants peak at 8,389,879 and 16,778,582 bytes) and `PdfFilters.DocumentCannotSetTargetFormat` fail with the fix reverted. Commit `906eeb2`.
+- Implemented: gap 14, `detail::ScopedJpxPath` pins the native or the WIC JPX decoder for a test, so a registered JPEG 2000 codec cannot bypass a native-path test; `PdfFilters.JpxTagTreesCharged` now pins the native decoder and `PdfFilters.JpxPathPinned` decodes through each path. Commit `906eeb2`.
 - Filed: D06 T05 §32 (gap 6: JP2 colour, palette and channel definitions, added as an item to the JPX conformance owner)
 - Filed: D06 T05 §36 (gap 8: a cumulative work budget for the native JPX decoder)
 - Filed: D06 T05 §37 (gap 10: WIC failures classified by HRESULT)
@@ -354,3 +354,60 @@ Disposition of the completion review's gaps (each verified against the code befo
 - Gap 11 (delivering decoded images to rendering, OCR, conversion and redaction) is the work of `D01 T02` and domains 03 to 05 as planned, with `D06 T01 §1` integration suites.
 
 Gates after the completion-review fixes: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 164 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfError.*:PdfFilters.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 31 tests.`
+
+## Round 5: none
+
+- Writer: claude
+- Run: 2026-10-23T07:51:19Z
+- Skipped: sol (exited 1)
+- Lines: 1
+- Digest: 0555d87060386853
+
+No reviewer returned a review. This round is not an approval.
+
+## Round 6: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-23T08:05:44Z
+- Effort: xhigh
+- Lines: 30
+- Digest: 373985b7057bbda1
+
+## adversarial: needs-attention
+
+New native reproductions below are source-derived, not executed.
+
+1. **[P1] JPX tile overrides can retain approximately 768 MiB outside the ceiling.** `src/pdf/filters.cpp:8056` copies `main_qcd` into every tile override without accounting for its vectors. Reproduce with a native 64×64 grayscale codestream, 1×1 tiles, zero decomposition levels, a main reversible QCD with `Lqcd=65535` and 65,532 `0x40` entries, and a COD override in each tile. A 184,382-byte stream retains at least 805,257,216 bytes of copied quantization vectors before the later entry-count validation rejects it. Header-stage accounting charges only 368,640 bytes. The tag-tree guard never protects this allocation path; neither §32 nor §36 owns this memory gap.
+
+2. **[P1] Parameter resolution still multiplies unused payloads.** `src/pdf/filters.cpp:9425`, `:9429`, `:9441` eagerly resolves and retains every parameter-array element, including repeated references to the same dictionary. Extend `ParameterResolutionCopiesOnlyWhatFiltersRead` with eight nested ASCIIHex stages and eight `/DecodeParms` references to its 8 MiB `/Unused` dictionary. The pipeline retains eight independent payloads, at least 64 MiB under a 1 MiB ceiling, although no stage reads them. Removing the additional array clone does not eliminate this amplification.
+
+## consistency: approve
+
+No additional findings.
+
+## integration: needs-attention
+
+3. **[P1] The global allocator replacement disables ASan allocation-mismatch checks throughout the test binary.** `tests/recto-tests/heap_meter.cpp:45`, `:69`, `:123` routes allocation through `malloc`, deletion through `free`, and discards the sized-delete argument. Under ASan, reproduce with `void* p = ::operator new(64); ::operator delete(p, size_t{1});`: the replacement erases the allocation type and deletion size needed to diagnose the mismatch. This affects every linked test even when no heap meter is active. Microsoft explicitly documents this limitation of [custom new/delete overrides](https://learn.microsoft.com/en-us/cpp/sanitizers/asan-known-issues?view=msvc-170#overriding-operator-new-and-delete).
+
+## source-defect: needs-attention
+
+4. **[P2] JPX resolves `/Decode` before deciding that it must ignore it.** `src/pdf/filters.cpp:9656`, `:9666`, `:9678` resolves the array and its elements before checking `/ImageMask`. Reproduce with the existing valid JPX seed, `/ImageMask false`, `/Decode [99 0 R 1]`, and a resolver returning `DamagedFormat` for object 99. Decoding fails before reaching either codec, although removing `/Decode` succeeds. The non-mask branch must ignore that entry before resolving it, as required by the [JPX image-dictionary rules](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.5_v6.pdf#page=87).
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: advisory
+
+The historical logs contain the recorded 164-test and 31-test passes and mutation peaks. Independently, the existing x64 Release binary passed 23 selected tests and reported ASan enabled. No rebuild or new native reproduction was run, so those passes do not disprove the findings above. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 6
+
+- Finding 1 (P1): correct, and wider than the override copy. A QCD or QCC body is now refused where it is parsed when it lists more subbands than 32 decomposition levels allow (1 + 3 x 32, T.800 A.6.1), so no table longer than 97 entries is ever stored or copied; before, the later entry-count check refused it only after every tile override and every component of every tile had copied it. Tile overrides no longer copy the main QCD at all (their QCD is written whole by the marker that sets `has_qcd`), each override charges a whole per-component coding set to the ceiling before it is built, the image, tile spans, tile streams and coding parameters share one remainder, and overrides are found through a per-tile index instead of a scan of all overrides per marker. `PdfFilters.JpxCodingParametersBounded`: the 65,532-entry QCD is refused with a peak under 1 MiB (3,635,641 bytes before), and 4,096 tiles each with a COD override are refused at 1 MiB (accepted before) and decode at 16 MiB.
+- Finding 2 (P1): correct. Every `/DecodeParms` and `/Filter` array element resolved into the pipeline's retained list, so eight references to one 8 MiB dictionary held 64 MiB. A referenced element is now resolved into a value the stage owns, reduced to the keys its filter defines (plus `/JBIG2Globals` for JBIG2, which that decoder reads), and the resolver's result dropped; a referenced `/Filter` element keeps only its name. `/Predictor` and the other defined keys resolve the same way. `ParameterResolutionCopiesOnlyWhatFiltersRead` adds the eight-stage case: peak under 12 MiB (67,112,696 bytes before).
+- Finding 3 (P1): correct. `heap_meter.cpp` replaces the global operator new and delete only outside AddressSanitizer builds, so ASan keeps its own allocation-type and sized-delete checks (Microsoft Learn, AddressSanitizer known issues: overriding operator new and delete). `ScopedHeapMeter::available()` says whether a build measures; the memory assertions run in the Debug and Release suites and are skipped under ASan, and `Support.HeapMeterOnlyOutsideAsan` checks both sides.
+- Finding 4 (P2): correct. The image stage now decides first whether `/Decode` applies (a JPX image that is not an `/ImageMask` ignores it, ISO 32000-2 Table 87) and resolves `/Decode` only when it does; `/ImageMask` itself resolves into a value the stage drops. `PdfFilters.JpxIgnoredDecodeIsNotResolved` decodes with `/Decode [99 0 R 1]` and with `/Decode 99 0 R` against a resolver that fails object 99; both failed before.
+- Proof that the tests can fail: with `src/pdf/filters.cpp` at `17bb0f4`, x64 Debug -> `ParameterResolutionCopiesOnlyWhatFiltersRead`, `JpxCodingParametersBounded` and `JpxIgnoredDecodeIsNotResolved` fail as quoted above.

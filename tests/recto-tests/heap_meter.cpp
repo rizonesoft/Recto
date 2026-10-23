@@ -1,6 +1,8 @@
 // Replaces the global operator new and delete for the test binary so ScopedHeapMeter can measure what a call holds
-// live on its thread. Every form forwards to malloc and free, the pair the MSVC runtime's own operators use, so a
-// block freed here was allocated here or by the runtime's malloc; the aligned forms are left to the runtime.
+// live on its thread, except under AddressSanitizer, whose own operators check allocation types and sized deletes
+// (a replacement would disable that for every test; Microsoft Learn, AddressSanitizer known issues). Every form
+// forwards to malloc and free, the pair the MSVC runtime's own operators use, so a block freed here was allocated
+// here or by the runtime's malloc; the aligned forms are left to the runtime.
 
 #include "test_support.h"
 
@@ -8,6 +10,8 @@
 
 #include <cstdlib>
 #include <new>
+
+#if !defined(__SANITIZE_ADDRESS__)
 
 namespace {
 
@@ -88,6 +92,11 @@ size_t ScopedHeapMeter::peak_bytes() const noexcept
 	return static_cast<size_t>(t_meter.peak);
 }
 
+bool ScopedHeapMeter::available() noexcept
+{
+	return true;
+}
+
 } // namespace recto::test
 
 void* operator new(std::size_t size)
@@ -139,3 +148,25 @@ void operator delete[](void* p, const std::nothrow_t&) noexcept
 {
 	release(p);
 }
+
+#else // __SANITIZE_ADDRESS__
+
+namespace recto::test {
+
+ScopedHeapMeter::ScopedHeapMeter() noexcept = default;
+
+ScopedHeapMeter::~ScopedHeapMeter() noexcept = default;
+
+size_t ScopedHeapMeter::peak_bytes() const noexcept
+{
+	return 0;
+}
+
+bool ScopedHeapMeter::available() noexcept
+{
+	return false;
+}
+
+} // namespace recto::test
+
+#endif // __SANITIZE_ADDRESS__

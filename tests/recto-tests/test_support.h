@@ -150,8 +150,8 @@ std::string sha256_hex(std::span<const uint8_t> data);
 // disk using Windows CNG (supporting extended-length paths).
 std::string sha256_file(const std::filesystem::path& path);
 
-// Measures the C++ heap the calling thread uses while the meter is in scope. The test binary replaces the global
-// operator new and delete (heap_meter.cpp) and counts each block's usable size, so a test can bound the peak a call
+// Measures the C++ heap the calling thread uses while the meter is in scope. Outside AddressSanitizer builds the test
+// binary replaces the global operator new and delete (heap_meter.cpp) and counts each block's usable size, so a test can bound the peak a call
 // holds live (allocations minus frees since the meter started) without relying on allocator internals. Memory taken
 // outside the C++ heap (COM, HeapAlloc) is not counted. One meter per thread at a time.
 class ScopedHeapMeter {
@@ -164,6 +164,11 @@ public:
 
 	// The largest net growth of the calling thread's C++ heap since construction, in bytes.
 	[[nodiscard]] size_t peak_bytes() const noexcept;
+
+	// Whether this build measures at all. AddressSanitizer builds keep the sanitizer's own operator new and delete,
+	// whose allocation-type and sized-delete checks a replacement would disable for the whole binary, so they do not
+	// measure; the memory bounds are proven by the Debug and Release runs.
+	[[nodiscard]] static bool available() noexcept;
 };
 
 namespace detail {

@@ -697,6 +697,21 @@ std::wstring query_env_var(const wchar_t* name)
 
 } // namespace
 
+// The heap meter measures in Debug and Release, and stays out of AddressSanitizer builds, whose own operator new and
+// delete keep their allocation-type and sized-delete checks.
+TEST(Support, HeapMeterOnlyOutsideAsan)
+{
+#if defined(__SANITIZE_ADDRESS__)
+	EXPECT_FALSE(recto::test::ScopedHeapMeter::available());
+#else
+	ASSERT_TRUE(recto::test::ScopedHeapMeter::available());
+	const recto::test::ScopedHeapMeter meter;
+	auto block = std::make_unique<std::array<uint8_t, 4096>>();
+	EXPECT_GE(meter.peak_bytes(), 4096u);
+	block.reset();
+#endif
+}
+
 TEST(Support, AsanActiveWhenEnabled)
 {
 #if defined(__SANITIZE_ADDRESS__)

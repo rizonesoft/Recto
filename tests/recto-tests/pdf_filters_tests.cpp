@@ -275,7 +275,9 @@ TEST(PdfFilters, ParameterResolutionCopiesOnlyWhatFiltersRead)
 		const size_t peak = meter.peak_bytes();
 		RECTO_ASSERT_OK(dec);
 		EXPECT_EQ(*dec, std::vector<uint8_t>{'A'});
-		EXPECT_LT(peak, size_t{1} << 20u);
+		if (test::ScopedHeapMeter::available()) {
+			EXPECT_LT(peak, size_t{1} << 20u);
+		}
 	}
 
 	// An indirect array element is used where the resolver put it: an element resolving to a dictionary that holds 8
@@ -297,7 +299,42 @@ TEST(PdfFilters, ParameterResolutionCopiesOnlyWhatFiltersRead)
 		const size_t peak = meter.peak_bytes();
 		RECTO_ASSERT_OK(dec);
 		EXPECT_EQ(*dec, std::vector<uint8_t>{'A'});
-		EXPECT_LT(peak, size_t{12} << 20u); // one 8 MiB resolver result, not two
+		if (test::ScopedHeapMeter::available()) {
+			EXPECT_LT(peak, size_t{12} << 20u); // one 8 MiB resolver result, not two
+		}
+	}
+
+	// Eight ASCIIHex stages whose /DecodeParms elements all name that dictionary: each resolver result is dropped once
+	// its stage has what it reads, so the eight cost one at a time, not 64 MiB together.
+	std::string encoded = "A";
+	for (int i = 0; i < 8; ++i) {
+		std::string next;
+		static constexpr char kHex[] = "0123456789ABCDEF";
+		for (const unsigned char c : encoded) {
+			next += kHex[c >> 4u];
+			next += kHex[c & 0x0Fu];
+		}
+		encoded = next + ">";
+	}
+	const std::vector<uint8_t> hex_raw(encoded.begin(), encoded.end());
+	PdfArray hex_filters;
+	PdfArray shared_parms;
+	for (int i = 0; i < 8; ++i) {
+		hex_filters.push_back(PdfValue(PdfName::from_decoded("ASCIIHexDecode")));
+		shared_parms.push_back(PdfValue(IndirectRef{13u, 0u}));
+	}
+	PdfDict eight_stages;
+	eight_stages.set(PdfName::from_decoded("Filter"), PdfValue(std::move(hex_filters)));
+	eight_stages.set(PdfName::from_decoded("DecodeParms"), PdfValue(std::move(shared_parms)));
+	{
+		const test::ScopedHeapMeter meter;
+		auto dec = decode_stream(hex_raw, eight_stages, 1u << 20u, &big_element);
+		const size_t peak = meter.peak_bytes();
+		RECTO_ASSERT_OK(dec);
+		EXPECT_EQ(*dec, std::vector<uint8_t>{'A'});
+		if (test::ScopedHeapMeter::available()) {
+			EXPECT_LT(peak, size_t{12} << 20u);
+		}
 	}
 
 	PdfDict wrong_type;
@@ -2874,7 +2911,9 @@ TEST(PdfFilters, DctRgbAndCmyk)
 			const size_t peak = meter.peak_bytes();
 			RECTO_ASSERT_OK(string_rgba);
 			EXPECT_EQ(*string_rgba, *plain_rgba); // the mapping is dropped, as for any malformed /Decode
-			EXPECT_LT(peak, size_t{1} << 20u);
+			if (test::ScopedHeapMeter::available()) {
+				EXPECT_LT(peak, size_t{1} << 20u);
+			}
 		}
 	}
 
@@ -4117,7 +4156,9 @@ TEST(PdfFilters, CcittAndMmrBounds)
 		const size_t peak = meter.peak_bytes();
 		RECTO_ASSERT_OK(bounded);
 		EXPECT_EQ(*bounded, *rows);
-		EXPECT_LE(peak, size_t{2} << 20u);
+		if (test::ScopedHeapMeter::available()) {
+			EXPECT_LE(peak, size_t{2} << 20u);
+		}
 	}
 	{
 		const auto make_page = [](const std::string& mmr_bits) {
@@ -4224,6 +4265,92 @@ TEST(PdfFilters, DocumentCannotSetTargetFormat)
 		RECTO_ASSERT_OK(dec);
 		EXPECT_EQ(*dec, *expected) << format;
 	}
+}
+
+// JPX coding parameters are bounded where they are parsed and charged where they are kept: a QCD listing more
+// subbands than 32 decomposition levels allow is refused at once (not copied into every tile first), and a COD
+// override in each of 4,096 tiles is charged to the ceiling (D06 T05 §22, round 6).
+TEST(PdfFilters, JpxCodingParametersBounded)
+{
+	const detail::ScopedJpxPath native(detail::JpxPath::NativeOnly);
+	// A 64x64 grayscale codestream with 1x1 tiles; `main_qcd` is the QCD body, and each listed tile gets a tile-part
+	// with an optional COD override and one empty packet.
+	const auto make = [](const std::vector<uint8_t>& main_qcd, uint32_t tiles, bool cod_override) {
+		std::vector<uint8_t> cs = {0xFFu, 0x4Fu, 0xFFu, 0x51u};
+		append_u16_be(cs, 41u);
+		append_u16_be(cs, 0u);
+		for (uint32_t v : {64u, 64u, 0u, 0u, 1u, 1u, 0u, 0u}) {
+			append_u32_be(cs, v);
+		}
+		append_u16_be(cs, 1u);
+		cs.insert(cs.end(), {7u, 1u, 1u});
+		const std::vector<uint8_t> cod_body = {0u, 0u, 0u, 1u, 0u, 0u, 4u, 4u, 0u, 1u};
+		cs.insert(cs.end(), {0xFFu, 0x52u});
+		append_u16_be(cs, static_cast<uint16_t>(2u + cod_body.size()));
+		cs.insert(cs.end(), cod_body.begin(), cod_body.end());
+		cs.insert(cs.end(), {0xFFu, 0x5Cu});
+		append_u16_be(cs, static_cast<uint16_t>(2u + main_qcd.size()));
+		cs.insert(cs.end(), main_qcd.begin(), main_qcd.end());
+		for (uint32_t t = 0; t < tiles; ++t) {
+			const uint32_t header = cod_override ? 4u + static_cast<uint32_t>(cod_body.size()) : 0u;
+			cs.insert(cs.end(), {0xFFu, 0x90u, 0x00u, 10u});
+			append_u16_be(cs, static_cast<uint16_t>(t));
+			append_u32_be(cs, 12u + header + 2u + 1u);
+			cs.insert(cs.end(), {0u, 1u});
+			if (cod_override) {
+				cs.insert(cs.end(), {0xFFu, 0x52u});
+				append_u16_be(cs, static_cast<uint16_t>(2u + cod_body.size()));
+				cs.insert(cs.end(), cod_body.begin(), cod_body.end());
+			}
+			cs.insert(cs.end(), {0xFFu, 0x93u, 0x00u});
+		}
+		cs.insert(cs.end(), {0xFFu, 0xD9u});
+		return cs;
+	};
+	const std::vector<uint8_t> valid_qcd = {0x40u, 0x40u};
+
+	// 65,532 subband entries: refused at the QCD, before any tile override copies the table.
+	std::vector<uint8_t> huge_qcd = {0x40u};
+	huge_qcd.insert(huge_qcd.end(), 65532u - 1u, 0x40u);
+	const auto huge = make(huge_qcd, 16u, true);
+	{
+		const test::ScopedHeapMeter meter;
+		auto refused = decode_jpx_image(huge);
+		const size_t peak = meter.peak_bytes();
+		RECTO_EXPECT_ERR(refused, ErrorCode::DamagedFormat);
+		if (test::ScopedHeapMeter::available()) {
+			EXPECT_LT(peak, size_t{1} << 20u);
+		}
+	}
+
+	// All 4,096 tiles decode without overrides at 1 MiB; with a COD override in each, the overrides' coding sets no
+	// longer fit and are refused, and 16 MiB holds them.
+	RECTO_ASSERT_OK(decode_jpx_image(make(valid_qcd, 4096u, false), nullptr, 1u << 20u));
+	RECTO_EXPECT_ERR(
+		decode_jpx_image(make(valid_qcd, 4096u, true), nullptr, 1u << 20u), ErrorCode::DecompressionLimitExceeded);
+	auto overrides = decode_jpx_image(make(valid_qcd, 4096u, true), nullptr, 16u << 20u);
+	RECTO_ASSERT_OK(overrides);
+	EXPECT_EQ(overrides->pixels, std::vector<uint8_t>(64u * 64u, 128u));
+}
+
+// A JPX image that is not an /ImageMask ignores /Decode, so a /Decode the resolver cannot resolve does not fail it.
+TEST(PdfFilters, JpxIgnoredDecodeIsNotResolved)
+{
+	const std::array<uint8_t, 12> rgb = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200};
+	const auto jp2 = make_genuine_jp2_2x2_rgb(rgb, true);
+	const IndirectObjectResolver failing = [](IndirectRef) -> PdfResult<PdfValue> {
+		return PdfError{ErrorCode::DamagedFormat, "missing object"};
+	};
+	PdfDict dict;
+	dict.set("Filter", PdfValue(PdfName("JPXDecode")));
+	dict.set("ImageMask", PdfValue(false));
+	PdfArray decode;
+	decode.push_back(PdfValue(IndirectRef{99u, 0u}));
+	decode.push_back(PdfValue(int64_t{1}));
+	dict.set("Decode", PdfValue(std::move(decode)));
+	RECTO_ASSERT_OK(decode_stream(jp2, dict, kMaxDecodedStreamBytes, &failing));
+	dict.set("Decode", PdfValue(IndirectRef{99u, 0u}));
+	RECTO_ASSERT_OK(decode_stream(jp2, dict, kMaxDecodedStreamBytes, &failing));
 }
 
 // Each JPX implementation is tested as itself: NativeOnly never reaches WIC, and WicOnly decodes through a registered
