@@ -279,6 +279,10 @@ private:
 	int32_t previous_hresult_{0};
 };
 
+// Test seam for the JPX hand-over's message: sets `error`'s message to `first` followed by the earlier attempt's
+// `cause`, falling back to a compact form from `cause`'s numbers when memory has run out.
+void compose_message_after(PdfError& error, std::string_view first, const PdfError& cause) noexcept;
+
 // Tests only: while the scope lives, a three-component DCT frame on this thread goes through IWICFormatConverter even
 // when WIC already gives 24-bit RGB or BGR, so the conversion step can be exercised (and failed) on any machine.
 class ScopedDctForceConverter {

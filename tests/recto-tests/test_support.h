@@ -174,6 +174,21 @@ public:
 	[[nodiscard]] static bool available() noexcept;
 };
 
+// Makes the calling thread's `nth` C++ heap allocation of at least `min_size` bytes from now on fail (throwing
+// std::bad_alloc, or returning null for the nothrow forms), once, for testing what code does when memory runs out at a
+// particular step. Smaller allocations are left alone: the Debug STL's iterator-debugging proxies are allocated in
+// noexcept constructors, which would terminate. Unavailable, like ScopedHeapMeter, in AddressSanitizer builds.
+class ScopedAllocationFailure {
+public:
+	ScopedAllocationFailure(uint32_t nth, size_t min_size) noexcept;
+	~ScopedAllocationFailure() noexcept;
+
+	ScopedAllocationFailure(const ScopedAllocationFailure&) = delete;
+	ScopedAllocationFailure& operator=(const ScopedAllocationFailure&) = delete;
+
+	[[nodiscard]] static bool available() noexcept;
+};
+
 namespace detail {
 
 template <typename E>

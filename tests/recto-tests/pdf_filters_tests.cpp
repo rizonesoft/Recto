@@ -5010,6 +5010,34 @@ TEST(PdfFilters, DctRepresentationsAreOneBufferEach)
 // Damaged Group 3 rows follow ISO 32000-1 Table 11 (D06 T05 §34): with /EndOfLine true each is found up to the next
 // EOL and replaced by the previous row if that row was good, or a white row if it was damaged too, up to
 // /DamagedRowsBeforeError; mixed Group 3 (K > 0) recovers the same way; without /EndOfLine nothing is recovered.
+// The JPX hand-over's message keeps WIC's step, class and HRESULT however memory runs out: when the full text's
+// buffer cannot be had (the first large allocation), and when the message's own storage cannot (the second), which the
+// message type would otherwise answer by cutting the text short (D06 T05 section 37, round 4).
+TEST(PdfFilters, WicCauseSurvivesAllocationFailure)
+{
+	if (!recto::test::ScopedAllocationFailure::available()) {
+		GTEST_SKIP() << "allocation failure injection is unavailable under AddressSanitizer";
+	}
+	PdfError cause = make_pdf_error(ErrorCode::UnsupportedFeature,
+		"WicCreateDecoder failed: no codec for this image format is installed (HRESULT 0x88982F50)");
+	cause.decoder_step = DecoderStep::WicCreateDecoder;
+	cause.platform_status = 0x88982F50u;
+	const std::string first(140, 'n'); // longer than the inline capacity, so the full text needs the heap
+	for (const uint32_t nth : {1u, 2u}) {
+		PdfError error = make_pdf_error(ErrorCode::OutOfMemory, "x");
+		{
+			recto::test::ScopedAllocationFailure fail(nth, PdfErrorMessage::kInlineCapacity);
+			recto::pdf::detail::compose_message_after(error, first, cause);
+		}
+		const std::string_view text = error.message.view();
+		EXPECT_NE(text.find("no codec"), std::string_view::npos) << "allocation " << nth << ": " << text;
+		EXPECT_NE(text.find("0x88982F50"), std::string_view::npos) << "allocation " << nth << ": " << text;
+	}
+	PdfError whole = make_pdf_error(ErrorCode::OutOfMemory, "x");
+	recto::pdf::detail::compose_message_after(whole, first, cause);
+	EXPECT_EQ(whole.message.view(), first + "; before it, " + std::string(cause.message.view()));
+}
+
 TEST(PdfFilters, CcittDamagedRowRecovery)
 {
 	const std::string eol = "000000000001";
@@ -5070,6 +5098,21 @@ TEST(PdfFilters, CcittDamagedRowRecovery)
 		auto decoded = decode_ccitt_fax(pack_bitstring(bits), &parms);
 		ASSERT_TRUE(decoded.has_value()) << decoded.error().message.view();
 		EXPECT_EQ(*decoded, (std::vector<uint8_t>{0xF0u, 0x0Fu, 0xF0u, 0x0Fu, 0xFFu, 0xFFu, 0xFFu, 0xFFu}));
+	}
+
+	// Mixed Group 3: an empty 2D row (`EOL + 0` straight into the next EOL) is a damaged row, not the start of RTC
+	// (six `EOL + 1`, T.4 4.2.4): it is substituted, the row after it decoded, and refused with no allowance.
+	{
+		std::string bits = eol + "1" + good + eol + "0" + eol + "1" + white;
+		for (int i = 0; i < 6; ++i) {
+			bits += eol + "1";
+		}
+		const PdfDict parms = parms_for(2, 3, 1);
+		auto decoded = decode_ccitt_fax(pack_bitstring(bits), &parms);
+		ASSERT_TRUE(decoded.has_value()) << decoded.error().message.view();
+		EXPECT_EQ(*decoded, (std::vector<uint8_t>{0xF0u, 0x0Fu, 0xF0u, 0x0Fu, 0xFFu, 0xFFu}));
+		const PdfDict none_allowed = parms_for(2, 3, 0);
+		RECTO_EXPECT_ERR(decode_ccitt_fax(pack_bitstring(bits), &none_allowed), ErrorCode::DamagedFormat);
 	}
 
 	// A good row resets the allowance: damaged, good, damaged under an allowance of one.

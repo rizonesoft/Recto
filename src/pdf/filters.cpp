@@ -1761,6 +1761,23 @@ struct MsbBitReader {
 		}
 		return false;
 	}
+
+	// An EOL with no fill bits before it: exactly eleven zeros and a one.
+	[[nodiscard]] bool try_consume_exact_eol() noexcept
+	{
+		if (total_bits() - bit_pos < 12u) {
+			return false;
+		}
+		for (size_t i = 0; i < 12u; ++i) {
+			const size_t p = bit_pos + i;
+			const uint32_t bit = (data[p >> 3u] >> (7u - (p & 7u))) & 1u;
+			if (bit != (i == 11u ? 1u : 0u)) {
+				return false;
+			}
+		}
+		bit_pos += 12u;
+		return true;
+	}
 };
 
 struct CcittLookupEntry {
@@ -2421,16 +2438,18 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 				// ITU-T T.4 Group 3 2D mixed 1D/2D decoding (`K > 0`).
 				const bool saw_eol = reader.try_consume_eol();
 				if (saw_eol) {
-					// Check for RTC (`EOL + 1` or `EOL` repeated).
+					// RTC is `EOL + 1` repeated (ITU-T T.4 4.2.4; `EOL` repeated with no tag, as Group 3 1D encoders write
+					// it, is accepted too, but only with no fill bits, since a tag bit always follows an EOL here). An
+					// `EOL + 0` followed by an EOL is an empty 2D row, which is damage for Table 11 recovery, not the end.
 					const size_t saved_after_eol = reader.bit_pos;
-					if (reader.try_consume_eol()) {
+					if (reader.try_consume_exact_eol()) {
 						break;
 					}
 					const int tag_peek = reader.read_bit();
 					if (tag_peek < 0) {
 						break;
 					}
-					if (reader.try_consume_eol()) {
+					if (tag_peek == 1 && reader.try_consume_eol()) {
 						break;
 					}
 					reader.bit_pos = saved_after_eol;
@@ -6451,6 +6470,21 @@ enum class WicFailureClass : uint8_t {
 // out, the text is built from the earlier attempt's step, class and HRESULT instead, short enough for the message's
 // inline capacity, which needs no allocation, so the enrichment itself can never lose the cause; the numbers stay on
 // the error either way.
+void set_message_without_allocation(PdfError& error, std::string_view first, const PdfError& cause) noexcept;
+
+} // namespace
+
+namespace detail {
+
+void compose_message_after(PdfError& error, std::string_view first, const PdfError& cause) noexcept
+{
+	set_message_without_allocation(error, first, cause);
+}
+
+} // namespace detail
+
+namespace {
+
 void set_message_without_allocation(PdfError& error, std::string_view first, const PdfError& cause) noexcept
 {
 	try {
@@ -6458,8 +6492,13 @@ void set_message_without_allocation(PdfError& error, std::string_view first, con
 		std::string both;
 		both.reserve(first.size() + second.size() + 13u);
 		both.append(first).append("; before it, ").append(second);
-		error.message = PdfErrorMessage(std::string_view(both));
-		return;
+		PdfErrorMessage stored{std::string_view(both)};
+		// The message type cuts to its inline capacity when its own storage cannot be allocated; that loses the cause
+		// as surely as a throw, so it takes the compact form too.
+		if (stored.view().size() == both.size()) {
+			error.message = std::move(stored);
+			return;
+		}
 	} catch (const std::bad_alloc&) {
 		// fall through to the compact form
 	}

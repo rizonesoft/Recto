@@ -23,6 +23,8 @@ struct HeapMeterState {
 };
 
 thread_local HeapMeterState t_meter;
+thread_local uint32_t t_fail_countdown = 0; // 0: no failure armed
+thread_local std::size_t t_fail_min_size = 0;
 
 void note_allocated(void* p) noexcept
 {
@@ -46,6 +48,9 @@ void* allocate(std::size_t size)
 {
 	if (size == 0u) {
 		size = 1u;
+	}
+	if (t_fail_countdown != 0u && size >= t_fail_min_size && --t_fail_countdown == 0u) {
+		throw std::bad_alloc();
 	}
 	while (true) {
 		if (void* p = std::malloc(size)) {
@@ -100,6 +105,22 @@ size_t ScopedHeapMeter::allocated_bytes() const noexcept
 }
 
 bool ScopedHeapMeter::available() noexcept
+{
+	return true;
+}
+
+ScopedAllocationFailure::ScopedAllocationFailure(uint32_t nth, size_t min_size) noexcept
+{
+	t_fail_min_size = min_size;
+	t_fail_countdown = nth;
+}
+
+ScopedAllocationFailure::~ScopedAllocationFailure() noexcept
+{
+	t_fail_countdown = 0u;
+}
+
+bool ScopedAllocationFailure::available() noexcept
 {
 	return true;
 }
@@ -175,6 +196,15 @@ size_t ScopedHeapMeter::allocated_bytes() const noexcept
 }
 
 bool ScopedHeapMeter::available() noexcept
+{
+	return false;
+}
+
+ScopedAllocationFailure::ScopedAllocationFailure(uint32_t, size_t) noexcept {}
+
+ScopedAllocationFailure::~ScopedAllocationFailure() noexcept = default;
+
+bool ScopedAllocationFailure::available() noexcept
 {
 	return false;
 }
