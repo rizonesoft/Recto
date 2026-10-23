@@ -2,14 +2,18 @@
 
 `Ui.Project.IncludeBoundary` (recto-tests) reads the `#include` lines. This test reads what MSBuild itself evaluates for
 each module project in all four configurations, before any native compilation (CI runs it ahead of the build): the
-include folders every source file is compiled with (`AdditionalIncludeDirectories` and the `IncludePath` property),
-the files it force-includes, the sources it compiles, and its project references followed transitively. recto-pdf,
+include folders every source file is compiled with (`AdditionalIncludeDirectories`, `AdditionalUsingDirectories` and
+the `IncludePath` and `ExternalIncludePath` properties), the files it force-includes (`ForcedIncludeFiles`,
+`ForcedUsingFiles`), every path its `AdditionalOptions` name (`/I`, `/FI`, `/external:I` and the like), the sources it
+compiles, and its project references followed transitively. recto-pdf,
 recto-core and recto-services may not see `src/ui`, force-include or compile a file there, or reach recto-ui; recto-ui
 may not do any of that with `src/pdf`, `src/core` or `src/services` and their projects. Every finding names the rule,
 the module, the configuration and, for a reference, the whole chain. A planted project proves each rule fails. Under
 ASan, every recto-ui source is compiled with /fsanitize=address."""
 import json
+import os
 import pathlib
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -28,13 +32,52 @@ PROJECTS = {name: folder / f"{name}.vcxproj" for name, folder in FOLDERS.items()
 class Evaluated:
     """What MSBuild evaluates for one project in one configuration, every path resolved."""
 
-    def __init__(self, folders, forced, sources, references):
+    def __init__(self, folders, forced, sources, references, options=frozenset()):
         self.folders, self.forced, self.sources, self.references = folders, forced, sources, references
+        self.options = options
+
+
+def resolved(path):
+    """`path` made absolute with links followed; a string no file system accepts is kept as its absolute spelling."""
+    try:
+        return path.resolve()
+    except (OSError, ValueError):
+        return pathlib.Path(os.path.abspath(path))
+
+
+# cl switches that take a path, longest first so /external:I is not read as /e... and /FI is not read as /F.
+PATH_SWITCHES = ("external:I", "ifcSearchDir", "headerUnit:angle", "headerUnit:quote", "headerUnit", "reference",
+                 "FU", "FI", "AI", "I")
+
+
+def option_paths(project, options):
+    """Every path an AdditionalOptions string names, resolved against the project folder.
+
+    Each token counts as a path as it stands, after a path switch (`/I`, `-FI`, `/external:I`, ...) and after any
+    `name=` part (`/reference ui=x.ifc`); a path switch with no attached value takes the next token. A token that is
+    not a path resolves to a harmless place beside the project, so this can only over-report a forbidden folder."""
+    tokens = [token.strip('"') for token in shlex.split(options, posix=False)]
+    found = set()
+    for index, token in enumerate(tokens):
+        candidates = [token]
+        if token[:1] in ("/", "-"):
+            for switch in PATH_SWITCHES:
+                if token[1:1 + len(switch)] == switch:
+                    value = token[1 + len(switch):]
+                    if not value and index + 1 < len(tokens):
+                        value = tokens[index + 1]
+                    candidates.append(value)
+                    break
+        candidates += [candidate.split("=", 1)[1] for candidate in list(candidates) if "=" in candidate]
+        found |= {resolved(project.parent / candidate) for candidate in candidates
+                  if candidate and not candidate.startswith(("%(", "$("))}
+    return found
 
 
 def evaluate(tool, project, configuration, platform, *extra):
     out = subprocess.run([tool, str(project), f"-p:Configuration={configuration}", f"-p:Platform={platform}", *extra,
-                          "-getItem:ClCompile", "-getItem:ProjectReference", "-getProperty:IncludePath", "-nologo"],
+                          "-getItem:ClCompile", "-getItem:ProjectReference", "-getProperty:IncludePath",
+                          "-getProperty:ExternalIncludePath", "-nologo"],
                          capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
     if out.returncode != 0:
         raise AssertionError(f"MSBuild could not evaluate {project}: {out.stdout[-400:]}{out.stderr[-400:]}")
@@ -44,29 +87,36 @@ def evaluate(tool, project, configuration, platform, *extra):
         raise AssertionError(f"{project} evaluated no ClCompile items; the check would see nothing")
 
     def paths(value):
-        return {(project.parent / entry.strip()).resolve() for entry in value.split(";")
+        return {resolved(project.parent / entry.strip()) for entry in value.split(";")
                 if entry.strip() and not entry.strip().startswith(("%(", "$("))}
 
-    base_folders = paths(data.get("Properties", {}).get("IncludePath", ""))
-    folders, forced, sources = set(base_folders), set(), set()
+    # MSBuild hands IncludePath to cl as INCLUDE, and the toolset's AddExternalIncludDirectoriesToPaths target appends
+    # ExternalIncludePath to it (and hands it as EXTERNAL_INCLUDE) at build time, after evaluation: both are header
+    # search folders for every source.
+    properties = data.get("Properties", {})
+    base_folders = paths(properties.get("IncludePath", "")) | paths(properties.get("ExternalIncludePath", ""))
+    folders, forced, sources, options = set(base_folders), set(), set(), set()
     for item in items["ClCompile"]:
-        source = (project.parent / item["Identity"]).resolve()
-        item_folders = paths(item.get("AdditionalIncludeDirectories", "")) | base_folders
+        source = resolved(project.parent / item["Identity"])
+        item_folders = (paths(item.get("AdditionalIncludeDirectories", "")) |
+                        paths(item.get("AdditionalUsingDirectories", "")) | base_folders)
         folders |= item_folders
         sources.add(source)
+        # AdditionalOptions reach cl unchanged, so a path any switch there names counts as a folder or file it sees.
+        options |= option_paths(project, item.get("AdditionalOptions", ""))
         # /FI names a file the way `#include "name"` does: an absolute path is itself, a relative one is looked up
         # beside the source and then along the include folders. Every place the compiler could find it counts, so a
         # crossing is caught whichever candidate exists.
-        for entry in item.get("ForcedIncludeFiles", "").split(";"):
+        for entry in f'{item.get("ForcedIncludeFiles", "")};{item.get("ForcedUsingFiles", "")}'.split(";"):
             entry = entry.strip()
             if not entry or entry.startswith(("%(", "$(")):
                 continue
             if pathlib.PureWindowsPath(entry).is_absolute():
-                forced.add(pathlib.Path(entry).resolve())
+                forced.add(resolved(pathlib.Path(entry)))
             else:
-                forced |= {(folder / entry).resolve() for folder in [source.parent, project.parent, *item_folders]}
-    references = {(project.parent / item["Identity"]).resolve() for item in items.get("ProjectReference", [])}
-    return Evaluated(folders, forced, sources, references), items["ClCompile"]
+                forced |= {resolved(folder / entry) for folder in [source.parent, project.parent, *item_folders]}
+    references = {resolved(project.parent / item["Identity"]) for item in items.get("ProjectReference", [])}
+    return Evaluated(folders, forced, sources, references, options), items["ClCompile"]
 
 
 def inside(path, folder):
@@ -92,6 +142,7 @@ def violations(name, configuration, evaluated, chains):
 
     found = [f"{where}: include folder {p} breaks: {rule}" for p in sorted(evaluated.folders) if crosses(p)]
     found += [f"{where}: forced include {p} breaks: {rule}" for p in sorted(evaluated.forced) if crosses(p)]
+    found += [f"{where}: compiler option names {p} breaks: {rule}" for p in sorted(evaluated.options) if crosses(p)]
     found += [f"{where}: compiles {p} breaks: {rule}" for p in sorted(evaluated.sources) if crosses(p)]
     found += [f"{where}: reaches {' -> '.join(c.stem for c in chains[p])} breaks: {rule}"
               for p in sorted(chains) if p in forbidden_projects]
@@ -174,6 +225,19 @@ class UiModuleBoundaryTests(unittest.TestCase):
         self.assertEqual(violations("recto-core", "Debug|x64", evaluated, chains),
                          [f"recto-core (Debug|x64): forced include {(src / 'ui' / 'include' / 'recto' / 'ui' / 'ui.h').resolve()}"
                           f" breaks: {rule}"])
+
+    def test_an_external_include_path_or_a_compiler_option_into_the_toolkit_fails(self):
+        # ExternalIncludePath joins the header search path at build time; AdditionalOptions reach cl as written.
+        ui = REPO / "src" / "ui"
+        evaluated, chains = self.planted(
+            f'    <ClCompile Include="a.cpp"><AdditionalOptions>/utf-8 /I "{ui / "include"}" -FI{ui / "pch.h"} '
+            f'/external:I {ui} /reference recto.ui={ui / "ui.ifc"} %(AdditionalOptions)</AdditionalOptions></ClCompile>',
+            f"<ExternalIncludePath>{ui / 'include' / 'recto'}</ExternalIncludePath>")
+        rule = "an engine library may not see, compile or reach recto-ui (D13)"
+        named = [(ui / "include").resolve(), (ui / "pch.h").resolve(), ui.resolve(), (ui / "ui.ifc").resolve()]
+        self.assertEqual(violations("recto-core", "Debug|x64", evaluated, chains),
+                         [f"recto-core (Debug|x64): include folder {(ui / 'include' / 'recto').resolve()} breaks: {rule}",
+                          *[f"recto-core (Debug|x64): compiler option names {p} breaks: {rule}" for p in sorted(named)]])
 
     def test_the_toolkit_seeing_an_engine_library_fails(self):
         pdf = REPO / "src" / "pdf"

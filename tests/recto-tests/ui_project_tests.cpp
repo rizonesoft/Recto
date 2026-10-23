@@ -107,8 +107,30 @@ std::string utf8_source(const std::string& bytes)
 	return out;
 }
 
-// Reads a whole file as UTF-8 text. A file that cannot be opened or read is a
-// failure, never empty text: an unreadable file would otherwise pass every scan.
+// Every end of line (CR LF, or a CR or LF alone) as one LF. Translation phase 1
+// ([lex.phases]) maps each of them to a new-line, and MSVC and Clang both end a
+// line, and so a // comment, at a bare CR; a scan that stops only at LF would
+// read the next line as part of the comment.
+std::string normalized_newlines(const std::string& text)
+{
+	std::string out;
+	out.reserve(text.size());
+	for (size_t i = 0; i < text.size(); ++i) {
+		if (text[i] == '\r') {
+			out.push_back('\n');
+			if (i + 1 < text.size() && text[i + 1] == '\n') {
+				++i;
+			}
+		} else {
+			out.push_back(text[i]);
+		}
+	}
+	return out;
+}
+
+// Reads a whole file as UTF-8 text with LF line ends, as the compiler's first
+// translation phase sees it. A file that cannot be opened or read is a failure,
+// never empty text: an unreadable file would otherwise pass every scan.
 std::string read_text(const fs::path& path)
 {
 	std::ifstream stream(recto::test::to_long_path(path), std::ios::binary);
@@ -120,7 +142,7 @@ std::string read_text(const fs::path& path)
 	if (stream.bad()) {
 		throw std::runtime_error("cannot read " + path.string() + " for the boundary scan");
 	}
-	return utf8_source(buffer.str());
+	return normalized_newlines(utf8_source(buffer.str()));
 }
 
 // For a raw string literal whose opening quote is at `quote` (the `"` after the
@@ -188,16 +210,11 @@ LogicalSource logical_source(const std::string& raw_with_bom)
 	spliced.reserve(raw.size());
 	size_t physical = 1;
 	for (size_t i = 0; i < raw.size(); ++i) {
-		if (raw[i] == '\\') {
-			size_t j = i + 1;
-			if (j < raw.size() && raw[j] == '\r') {
-				++j;
-			}
-			if (j < raw.size() && raw[j] == '\n') {
-				i = j;
-				++physical;
-				continue;
-			}
+		// (read_text has already made every line end a single LF.)
+		if (raw[i] == '\\' && i + 1 < raw.size() && raw[i + 1] == '\n') {
+			++i;
+			++physical;
+			continue;
 		}
 		spliced.push_back(raw[i]);
 		spliced_line.push_back(physical);
@@ -521,32 +538,88 @@ fs::path self_path()
 
 constexpr DWORD kChildDeadlineMs = 60000;
 
-// This process's environment for a child run of the test binary, without
-// GoogleTest's sharding variables: a probe names exactly the tests it runs,
-// and a sharded parent must not shard the child's selection again.
-std::wstring child_environment()
+using Variables = std::vector<std::pair<std::wstring, std::wstring>>;
+
+// The name part of an environment entry `NAME=value`. Entries such as
+// `=C:=C:\dir` begin with `=`, which is part of their name.
+std::wstring_view variable_name(std::wstring_view entry)
 {
-	std::wstring block;
+	const size_t equals = entry.find(L'=', 1);
+	return entry.substr(0, equals == std::wstring_view::npos ? entry.size() : equals);
+}
+
+// This process's environment for a child run of the test binary, without any
+// GTEST_ variable and with `variables` added. A probe states its whole
+// GoogleTest configuration on its command line (plus `variables`): a parent's
+// sharding, empty-selection or output settings must never change what a probe
+// selects or how it exits. The block is sorted by name, case-insensitively and
+// ordinally, as CreateProcessW expects.
+std::wstring child_environment(const Variables& variables)
+{
+	std::vector<std::wstring> entries;
 	wchar_t* strings = GetEnvironmentStringsW();
 	for (const wchar_t* entry = strings; entry != nullptr && *entry != L'\0'; entry += std::wcslen(entry) + 1) {
-		const std::wstring_view variable(entry);
-		const auto starts = [&](std::wstring_view name) {
-			return variable.size() > name.size() && _wcsnicmp(variable.data(), name.data(), name.size()) == 0 &&
-				variable[name.size()] == L'=';
-		};
-		if (starts(L"GTEST_TOTAL_SHARDS") || starts(L"GTEST_SHARD_INDEX") || starts(L"GTEST_SHARD_STATUS_FILE")) {
-			continue;
+		const std::wstring_view name = variable_name(entry);
+		const bool google_test = name.size() >= 6 && _wcsnicmp(name.data(), L"GTEST_", 6) == 0;
+		const bool replaced = std::any_of(variables.begin(), variables.end(), [&](const auto& variable) {
+			return CompareStringOrdinal(name.data(), static_cast<int>(name.size()), variable.first.data(),
+					   static_cast<int>(variable.first.size()), TRUE) == CSTR_EQUAL;
+		});
+		if (!google_test && !replaced) {
+			entries.emplace_back(entry);
 		}
-		block.append(variable);
-		block.push_back(L'\0');
 	}
 	FreeEnvironmentStringsW(strings);
+	for (const auto& [name, value] : variables) {
+		entries.push_back(name + L"=" + value);
+	}
+	std::sort(entries.begin(), entries.end(), [](const std::wstring& a, const std::wstring& b) {
+		const std::wstring_view left = variable_name(a);
+		const std::wstring_view right = variable_name(b);
+		return CompareStringOrdinal(left.data(), static_cast<int>(left.size()), right.data(), static_cast<int>(right.size()),
+				   TRUE) == CSTR_LESS_THAN;
+	});
+	std::wstring block;
+	for (const std::wstring& entry : entries) {
+		block.append(entry);
+		block.push_back(L'\0');
+	}
 	block.push_back(L'\0');
 	return block;
 }
 
-// Runs this test binary with `arguments` and returns its exit code and output.
-std::pair<DWORD, std::string> run_self(const std::wstring& arguments, DWORD deadline_ms = kChildDeadlineMs)
+// Sets one environment variable of this process for the object's lifetime,
+// then restores the value it had (or removes it), even when the test fails or
+// throws in between.
+class ScopedVariable {
+public:
+	ScopedVariable(std::wstring name, const wchar_t* value) : name_(std::move(name))
+	{
+		std::wstring old(GetEnvironmentVariableW(name_.c_str(), nullptr, 0), L'\0');
+		while (!old.empty()) {
+			const DWORD length = GetEnvironmentVariableW(name_.c_str(), old.data(), static_cast<DWORD>(old.size()));
+			if (length < old.size()) {
+				old.resize(length);
+				previous_ = old;
+				break;
+			}
+			old.resize(length);
+		}
+		SetEnvironmentVariableW(name_.c_str(), value);
+	}
+	~ScopedVariable() { SetEnvironmentVariableW(name_.c_str(), previous_ ? previous_->c_str() : nullptr); }
+	ScopedVariable(const ScopedVariable&) = delete;
+	ScopedVariable& operator=(const ScopedVariable&) = delete;
+
+private:
+	std::wstring name_;
+	std::optional<std::wstring> previous_;
+};
+
+// Runs this test binary with `arguments`, and `variables` in place of any
+// GTEST_ variable this process has, and returns its exit code and output.
+std::pair<DWORD, std::string> run_self(
+	const std::wstring& arguments, DWORD deadline_ms = kChildDeadlineMs, const Variables& variables = {})
 {
 	SECURITY_ATTRIBUTES inherit{sizeof(inherit), nullptr, TRUE};
 	HANDLE read_end = nullptr;
@@ -563,7 +636,7 @@ std::pair<DWORD, std::string> run_self(const std::wstring& arguments, DWORD dead
 	const fs::path exe = self_path();
 	std::wstring command = L"\"" + exe.wstring() + L"\" " + arguments;
 	PROCESS_INFORMATION process{};
-	std::wstring environment = child_environment();
+	std::wstring environment = child_environment(variables);
 	const BOOL started = CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, TRUE,
 		CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, environment.data(), nullptr, &startup, &process);
 	CloseHandle(write_end);
@@ -670,6 +743,8 @@ RECTO_UI_TEST(Project, IncludeBoundary)
 	write_text(scratch.path() / "src" / "core" / "planted_unicode.cpp",
 		"#define \xCE\xBBR\n[[maybe_unused]] const char* a = \xCE\xBBR\"(ordinary\";\n#include \"../ui/include/recto/ui/ui.h\"\n"
 		"[[maybe_unused]] const char* b = \")\";\n");
+	// A bare CR ends a line, and so a // comment ([lex.phases] phase 1).
+	write_text(scratch.path() / "src" / "core" / "planted_cr.cpp", "// comment\r#include \"../ui/include/recto/ui/ui.h\"\r");
 	// The digraph spelling of #include ([lex.digraph]).
 	write_text(scratch.path() / "src" / "services" / "planted_digraph.cpp", "%:include \"../ui/include/recto/ui/ui.h\"\n");
 	// `//` inside the header name of a toolkit file that reaches an engine header.
@@ -689,7 +764,7 @@ RECTO_UI_TEST(Project, IncludeBoundary)
 		"planted_pdf.cpp:1", "planted_pdf.cpp:3", "planted_pdf.cpp:5", "planted_bare.cpp:1", "planted_bare.cpp:2",
 		"planted_core.cpp:1", "planted_digits.cpp:2", "planted_angle.cpp:1", "planted_services.h:2",
 		"planted_fragment.inc:1", "planted_digraph.cpp:1", "planted_angle_ui.cpp:1", "planted_utf16.cpp:1",
-		"planted_ppnum.cpp:3", "planted_unicode.cpp:3"};
+		"planted_ppnum.cpp:3", "planted_unicode.cpp:3", "planted_cr.cpp:2"};
 	EXPECT_EQ(caught, expected) << describe(planted);
 }
 
@@ -724,13 +799,15 @@ RECTO_UI_TEST(Project, NoWinRtUiTypes)
 	write_text(scratch.path() / "src" / "ui" / "planted_f.cpp", "// Microsoft::UI in a comment is not code\nint x;\n");
 	write_text(scratch.path() / "src" / "ui" / "planted_g.cpp",
 		std::string_view("\xFE\xFF\0M\0i\0c\0r\0o\0s\0o\0f\0t\0:\0:\0U\0I\0\n", 30));
+	// A bare CR ends the // comment, so the next line is code.
+	write_text(scratch.path() / "src" / "ui" / "planted_h.cpp", "// comment\rusing namespace Microsoft::UI;\r");
 	const std::vector<Finding> planted = scan_tokens(scratch.path() / "src" / "ui", winrt_ui_tokens());
 	std::set<std::string> lines;
 	for (const Finding& finding : planted) {
 		lines.insert(finding.file.filename().string() + ":" + std::to_string(finding.line));
 	}
 	EXPECT_EQ(lines, (std::set<std::string>{"planted_a.h:1", "planted_b.cpp:1", "planted_b.cpp:2", "planted_c.cpp:1",
-						 "planted_d.cpp:1", "planted_e.cpp:2", "planted_g.cpp:1"}))
+						 "planted_d.cpp:1", "planted_e.cpp:2", "planted_g.cpp:1", "planted_h.cpp:2"}))
 		<< describe(planted);
 }
 
@@ -818,20 +895,10 @@ RECTO_UI_TEST(Project, StalledChildIsReaped)
 
 RECTO_UI_TEST(Project, ChildRunsIgnoreParentSharding)
 {
-	// A parent run on shard 1 of 2 still gets its probe's single test run. The
-	// parent's own values, if any, are put back afterwards.
-	const auto saved = [](const wchar_t* name) {
-		std::wstring value(64, L'\0');
-		const DWORD length = GetEnvironmentVariableW(name, value.data(), static_cast<DWORD>(value.size()));
-		return length == 0 || length >= value.size() ? std::optional<std::wstring>() : std::optional<std::wstring>(value.substr(0, length));
-	};
-	const std::optional<std::wstring> total = saved(L"GTEST_TOTAL_SHARDS");
-	const std::optional<std::wstring> index = saved(L"GTEST_SHARD_INDEX");
-	SetEnvironmentVariableW(L"GTEST_TOTAL_SHARDS", L"2");
-	SetEnvironmentVariableW(L"GTEST_SHARD_INDEX", L"1");
+	// A parent run on shard 1 of 2 still gets its probe's single test run.
+	const ScopedVariable total(L"GTEST_TOTAL_SHARDS", L"2");
+	const ScopedVariable index(L"gtest_shard_index", L"1");
 	const auto [code, output] = run_self(L"--gtest_filter=Ui.Project.LibraryLinks");
-	SetEnvironmentVariableW(L"GTEST_TOTAL_SHARDS", total ? total->c_str() : nullptr);
-	SetEnvironmentVariableW(L"GTEST_SHARD_INDEX", index ? index->c_str() : nullptr);
 	EXPECT_EQ(code, 0U) << output;
 	EXPECT_NE(output.find("[  PASSED  ] 1 test."), std::string::npos) << output;
 }
@@ -854,6 +921,14 @@ RECTO_UI_TEST(Project, EmptySelectionFails)
 	// part of the filter GoogleTest reads, and the run must still fail.
 	const auto [quoted, quoted_output] = run_self(L"--gtest_filter=Ui.Project.NoSuch\"\"\" --gtest_fail_if_no_test_selected=false");
 	EXPECT_NE(quoted, 0U) << quoted_output;
+	// GTEST_FAIL_IF_NO_TEST_SELECTED=0 in a run's own environment also permits the empty run...
+	const auto [variable, variable_output] =
+		run_self(L"--gtest_filter=Ui.Project.NoSuchTest", kChildDeadlineMs, {{L"GTEST_FAIL_IF_NO_TEST_SELECTED", L"0"}});
+	EXPECT_EQ(variable, 0U) << variable_output;
+	// ...but a parent's setting never reaches a probe, which keeps the default.
+	const ScopedVariable parent(L"GTEST_FAIL_IF_NO_TEST_SELECTED", L"0");
+	const auto [inherited, inherited_output] = run_self(L"--gtest_filter=Ui.Project.NoSuchTest");
+	EXPECT_NE(inherited, 0U) << inherited_output;
 }
 
 RECTO_UI_TEST(Project, HarnessSolid)
