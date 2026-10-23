@@ -47,12 +47,24 @@ def evaluate(tool, project, configuration, platform, *extra):
         return {(project.parent / entry.strip()).resolve() for entry in value.split(";")
                 if entry.strip() and not entry.strip().startswith(("%(", "$("))}
 
-    folders = paths(data.get("Properties", {}).get("IncludePath", ""))
-    forced, sources = set(), set()
+    base_folders = paths(data.get("Properties", {}).get("IncludePath", ""))
+    folders, forced, sources = set(base_folders), set(), set()
     for item in items["ClCompile"]:
-        folders |= paths(item.get("AdditionalIncludeDirectories", ""))
-        forced |= paths(item.get("ForcedIncludeFiles", ""))
-        sources.add((project.parent / item["Identity"]).resolve())
+        source = (project.parent / item["Identity"]).resolve()
+        item_folders = paths(item.get("AdditionalIncludeDirectories", "")) | base_folders
+        folders |= item_folders
+        sources.add(source)
+        # /FI names a file the way `#include "name"` does: an absolute path is itself, a relative one is looked up
+        # beside the source and then along the include folders. Every place the compiler could find it counts, so a
+        # crossing is caught whichever candidate exists.
+        for entry in item.get("ForcedIncludeFiles", "").split(";"):
+            entry = entry.strip()
+            if not entry or entry.startswith(("%(", "$(")):
+                continue
+            if pathlib.PureWindowsPath(entry).is_absolute():
+                forced.add(pathlib.Path(entry).resolve())
+            else:
+                forced |= {(folder / entry).resolve() for folder in [source.parent, project.parent, *item_folders]}
     references = {(project.parent / item["Identity"]).resolve() for item in items.get("ProjectReference", [])}
     return Evaluated(folders, forced, sources, references), items["ClCompile"]
 
@@ -151,6 +163,17 @@ class UiModuleBoundaryTests(unittest.TestCase):
             f"recto-core (Debug|x64): forced include {(ui / 'pch.h').resolve()} breaks: {rule}",
             f"recto-core (Debug|x64): compiles {(ui / 'ui.cpp').resolve()} breaks: {rule}",
             f"recto-core (Debug|x64): reaches planted -> recto-ui breaks: {rule}"])
+
+    def test_a_relative_forced_include_found_through_an_include_folder_fails(self):
+        # /FI ui/include/recto/ui/ui.h with src on the include path reaches the toolkit with no #include in any source.
+        src = REPO / "src"
+        evaluated, chains = self.planted(
+            f'    <ClCompile Include="a.cpp"><AdditionalIncludeDirectories>{src}</AdditionalIncludeDirectories>'
+            '<ForcedIncludeFiles>ui/include/recto/ui/ui.h</ForcedIncludeFiles></ClCompile>')
+        rule = "an engine library may not see, compile or reach recto-ui (D13)"
+        self.assertEqual(violations("recto-core", "Debug|x64", evaluated, chains),
+                         [f"recto-core (Debug|x64): forced include {(src / 'ui' / 'include' / 'recto' / 'ui' / 'ui.h').resolve()}"
+                          f" breaks: {rule}"])
 
     def test_the_toolkit_seeing_an_engine_library_fails(self):
         pdf = REPO / "src" / "pdf"

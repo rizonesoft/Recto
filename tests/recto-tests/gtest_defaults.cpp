@@ -17,9 +17,10 @@
 #include <gtest/gtest.h>
 
 #include <windows.h>
-#include <shellapi.h>
 
+#include <string>
 #include <string_view>
+#include <vector>
 
 GTEST_DECLARE_bool_(fail_if_no_test_selected);
 
@@ -40,15 +41,18 @@ bool is_flag_argument(std::wstring_view argument)
 	return false;
 }
 
+// Reads the very arguments GoogleTest parsed (InitGoogleTest keeps a copy,
+// testing::internal::GetArgvs). Re-splitting the Windows command line would
+// not do: CommandLineToArgvW reads some quoting (a run of three quotes)
+// differently from the C runtime, so it could see a flag that GoogleTest read
+// as part of a filter.
 bool chosen_elsewhere()
 {
-	int count = 0;
-	wchar_t** arguments = CommandLineToArgvW(GetCommandLineW(), &count);
 	bool chosen = false;
-	for (int i = 1; arguments != nullptr && i < count; ++i) {
-		chosen = chosen || is_flag_argument(arguments[i]);
+	const std::vector<std::string> arguments = ::testing::internal::GetArgvs();
+	for (size_t i = 1; i < arguments.size(); ++i) {
+		chosen = chosen || is_flag_argument(std::wstring(arguments[i].begin(), arguments[i].end()));
 	}
-	LocalFree(arguments);
 	return chosen || GetEnvironmentVariableW(L"GTEST_FAIL_IF_NO_TEST_SELECTED", nullptr, 0) != 0;
 }
 

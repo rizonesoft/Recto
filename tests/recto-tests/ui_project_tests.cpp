@@ -213,6 +213,8 @@ LogicalSource logical_source(const std::string& raw_with_bom)
 		static const std::regex directive(R"(^\s*(?:#|%:)\s*(include|import)\s*$)");
 		return std::regex_match(out.text.substr(start), directive);
 	};
+	// Where the last preprocessing number ended in `out.text`.
+	size_t number_end = std::string::npos;
 	for (size_t i = 0; i < spliced.size(); ++i) {
 		const char c = spliced[i];
 		const char next = i + 1 < spliced.size() ? spliced[i + 1] : '\0';
@@ -259,7 +261,11 @@ LogicalSource logical_source(const std::string& raw_with_bom)
 					break;
 				}
 			}
-		} else if (c == '"' && raw_string_prefix(out.text) && raw_string_end(spliced, i) != std::string::npos) {
+			number_end = out.text.size();
+		} else if (c == '"' && number_end != out.text.size() && raw_string_prefix(out.text) &&
+				   raw_string_end(spliced, i) != std::string::npos) {
+			// (An R that ends a preprocessing number, as in 0.R"x", is part of the
+			// number, so that quote opens an ordinary string, not a raw one.)
 			// R"delim( ... )delim": the body is opaque, whatever quotes, comment
 			// openers or directives it holds. Only its newlines are kept.
 			const size_t end = raw_string_end(spliced, i);
@@ -626,6 +632,9 @@ RECTO_UI_TEST(Project, IncludeBoundary)
 		"// #include <recto/ui/ui.h> in a comment is not an include\n#  include \"recto/ui/theme.h\"\n");
 	// An include fragment is scanned like any source file.
 	write_text(scratch.path() / "src" / "services" / "planted_fragment.inc", "#import <recto/ui/ui.h>\n");
+	// An R that ends a preprocessing number is not a raw-string prefix ([lex.pptoken]).
+	write_text(scratch.path() / "src" / "core" / "planted_ppnum.cpp",
+		"#define DROP(...)\nDROP(0.R\"(ordinary\")\n#include \"../ui/include/recto/ui/ui.h\"\n[[maybe_unused]] const char* b = \")\";\n");
 	// The digraph spelling of #include ([lex.digraph]).
 	write_text(scratch.path() / "src" / "services" / "planted_digraph.cpp", "%:include \"../ui/include/recto/ui/ui.h\"\n");
 	// `//` inside the header name of a toolkit file that reaches an engine header.
@@ -644,7 +653,8 @@ RECTO_UI_TEST(Project, IncludeBoundary)
 		"planted_ui.cpp:16", "planted_bom.cpp:1", "planted_splice.cpp:2", "planted_raw.cpp:4", "planted_lines.cpp:2",
 		"planted_pdf.cpp:1", "planted_pdf.cpp:3", "planted_pdf.cpp:5", "planted_bare.cpp:1", "planted_bare.cpp:2",
 		"planted_core.cpp:1", "planted_digits.cpp:2", "planted_angle.cpp:1", "planted_services.h:2",
-		"planted_fragment.inc:1", "planted_digraph.cpp:1", "planted_angle_ui.cpp:1", "planted_utf16.cpp:1"};
+		"planted_fragment.inc:1", "planted_digraph.cpp:1", "planted_angle_ui.cpp:1", "planted_utf16.cpp:1",
+		"planted_ppnum.cpp:3"};
 	EXPECT_EQ(caught, expected) << describe(planted);
 }
 
@@ -785,6 +795,10 @@ RECTO_UI_TEST(Project, EmptySelectionFails)
 	// Only the flag itself decides, never a filter that happens to contain its name.
 	const auto [lookalike, lookalike_output] = run_self(L"--gtest_filter=Ui.Project.NoSuch_gtest_fail_if_no_test_selected");
 	EXPECT_NE(lookalike, 0U) << lookalike_output;
+	// Three quotes keep the C runtime inside one argument, so the "override" is
+	// part of the filter GoogleTest reads, and the run must still fail.
+	const auto [quoted, quoted_output] = run_self(L"--gtest_filter=Ui.Project.NoSuch\"\"\" --gtest_fail_if_no_test_selected=false");
+	EXPECT_NE(quoted, 0U) << quoted_output;
 }
 
 RECTO_UI_TEST(Project, HarnessSolid)
