@@ -101,6 +101,11 @@ struct DiagnosticSlot {
 	bool has_object_num{false};
 	uint32_t object_num{0};
 	uint16_t generation_num{0};
+	RefusalReason refusal_reason{RefusalReason::None};
+	bool has_observed{false};
+	uint64_t observed{0};
+	bool has_bound{false};
+	uint64_t bound{0};
 };
 
 SRWLOCK g_ring_lock = SRWLOCK_INIT;
@@ -115,7 +120,7 @@ std::atomic<uint64_t> g_etw_diagnostic_events{0};
 std::atomic<uint64_t> g_etw_span_events{0};
 
 constexpr size_t kMaxCapturedEtwEvents = 128;
-constexpr size_t kMaxCapturedFields = 12;
+constexpr size_t kMaxCapturedFields = 20;
 constexpr size_t kMaxCapturedNameLen = 31;
 
 struct CapturedEtwSlot {
@@ -134,6 +139,12 @@ struct CapturedEtwSlot {
 	bool has_object_num{false};
 	uint32_t object_num{0};
 	uint16_t generation_num{0};
+	uint16_t refusal_reason{0};
+	std::array<char, kMaxCapturedNameLen + 1> refusal_reason_name{};
+	bool has_observed{false};
+	uint64_t observed{0};
+	bool has_bound{false};
+	uint64_t bound{0};
 	std::array<char, kMaxCapturedNameLen + 1> phase{};
 	uint64_t duration_us{0};
 	uint64_t document_id{0};
@@ -227,6 +238,29 @@ void append_context_suffix(
 	out += ')';
 }
 
+// A refusal's closed reason and its numbers, after the context: " [reason=CommandCount observed=5001 bound=5000]".
+void append_refusal_suffix(
+	std::string& out,
+	RefusalReason reason,
+	const std::optional<uint64_t>& observed,
+	const std::optional<uint64_t>& bound)
+{
+	if (reason == RefusalReason::None && !observed.has_value() && !bound.has_value()) {
+		return;
+	}
+	out += " [reason=";
+	out += refusal_reason_name(reason);
+	if (observed.has_value()) {
+		out += " observed=";
+		out += std::to_string(*observed);
+	}
+	if (bound.has_value()) {
+		out += " bound=";
+		out += std::to_string(*bound);
+	}
+	out += ']';
+}
+
 // ETW wants null-terminated names. Every name `error_code_name`, `diagnostic_id_name` and `etw_phase_name` return is a
 // string literal, so their data is null-terminated and the tables in error.h stay the only ones.
 const char* error_code_cstr(ErrorCode code) noexcept
@@ -242,6 +276,11 @@ const char* diagnostic_id_cstr(DiagnosticId id) noexcept
 const char* etw_phase_cstr(EtwPhaseId phase_id) noexcept
 {
 	return etw_phase_name(phase_id).data();
+}
+
+const char* refusal_reason_cstr(RefusalReason reason) noexcept
+{
+	return refusal_reason_name(reason).data();
 }
 
 bool ascii_iequals(std::string_view a, std::string_view b) noexcept
@@ -427,7 +466,7 @@ void process_tlg_write_transfer(
 	parse_event_metadata_into(slot, user_data[1]);
 	const std::string_view parsed_name(slot.event_name.data());
 
-	if (parsed_name == "Diagnostic" && user_data_count >= 13) {
+	if (parsed_name == "Diagnostic" && user_data_count >= 19) {
 		slot.sequence = read_descriptor_scalar<uint64_t>(user_data[2]);
 		slot.error_code = read_descriptor_scalar<uint32_t>(user_data[3]);
 		read_descriptor_cstr_into(slot.error_code_name, user_data[4]);
@@ -438,7 +477,13 @@ void process_tlg_write_transfer(
 		slot.has_object_num = read_descriptor_scalar<uint8_t>(user_data[9]) != 0;
 		slot.object_num = read_descriptor_scalar<uint32_t>(user_data[10]);
 		slot.generation_num = read_descriptor_scalar<uint16_t>(user_data[11]);
-		slot.thread_id = read_descriptor_scalar<uint32_t>(user_data[12]);
+		slot.refusal_reason = read_descriptor_scalar<uint16_t>(user_data[12]);
+		read_descriptor_cstr_into(slot.refusal_reason_name, user_data[13]);
+		slot.has_observed = read_descriptor_scalar<uint8_t>(user_data[14]) != 0;
+		slot.observed = read_descriptor_scalar<uint64_t>(user_data[15]);
+		slot.has_bound = read_descriptor_scalar<uint8_t>(user_data[16]) != 0;
+		slot.bound = read_descriptor_scalar<uint64_t>(user_data[17]);
+		slot.thread_id = read_descriptor_scalar<uint32_t>(user_data[18]);
 	} else if (parsed_name == "SpanStart" && user_data_count >= 6) {
 		read_descriptor_cstr_into(slot.phase, user_data[2]);
 		slot.document_id = read_descriptor_scalar<uint64_t>(user_data[3]);
@@ -508,6 +553,7 @@ std::string PdfError::format() const noexcept
 			out += message;
 		}
 		append_context_suffix(out, byte_offset, object_num, generation_num);
+		append_refusal_suffix(out, refusal_reason, observed, bound);
 		return out;
 	} catch (...) {
 		return {};
@@ -537,6 +583,7 @@ std::string DiagnosticEntry::format() const noexcept
 			out += message;
 		}
 		append_context_suffix(out, byte_offset, object_num, generation_num);
+		append_refusal_suffix(out, refusal_reason, observed, bound);
 		return out;
 	} catch (...) {
 		return {};
@@ -775,6 +822,12 @@ std::vector<CapturedEtwEvent> captured_etw_events_for_testing() noexcept
 			ev.has_object_num = s.has_object_num;
 			ev.object_num = s.object_num;
 			ev.generation_num = s.generation_num;
+			ev.refusal_reason = s.refusal_reason;
+			ev.refusal_reason_name = s.refusal_reason_name.data();
+			ev.has_observed = s.has_observed;
+			ev.observed = s.observed;
+			ev.has_bound = s.has_bound;
+			ev.bound = s.bound;
 			ev.phase = s.phase.data();
 			ev.duration_us = s.duration_us;
 			ev.document_id = s.document_id;
@@ -793,7 +846,10 @@ void record_diagnostic(
 	DiagnosticId diagnostic_id,
 	std::optional<uint64_t> byte_offset,
 	std::optional<uint32_t> object_num,
-	uint16_t generation_num) noexcept
+	uint16_t generation_num,
+	RefusalReason refusal_reason,
+	std::optional<uint64_t> observed,
+	std::optional<uint64_t> bound) noexcept
 {
 	ensure_etw_provider_registered();
 
@@ -815,6 +871,11 @@ void record_diagnostic(
 		slot.has_object_num = object_num.has_value();
 		slot.object_num = object_num.value_or(0);
 		slot.generation_num = generation_num;
+		slot.refusal_reason = refusal_reason;
+		slot.has_observed = observed.has_value();
+		slot.observed = observed.value_or(0);
+		slot.has_bound = bound.has_value();
+		slot.bound = bound.value_or(0);
 
 		g_ring_write_index = (g_ring_write_index + 1) % kDiagnosticRingCapacity;
 		if (g_ring_count < kDiagnosticRingCapacity) {
@@ -830,6 +891,12 @@ void record_diagnostic(
 	const uint64_t off_val = byte_offset.value_or(0);
 	const uint8_t has_obj = object_num.has_value() ? 1u : 0u;
 	const uint32_t obj_val = object_num.value_or(0);
+	const uint16_t reason_u16 = static_cast<uint16_t>(refusal_reason);
+	const char* const reason_name_str = refusal_reason_cstr(refusal_reason);
+	const uint8_t has_observed = observed.has_value() ? 1u : 0u;
+	const uint64_t observed_val = observed.value_or(0);
+	const uint8_t has_bound = bound.has_value() ? 1u : 0u;
+	const uint64_t bound_val = bound.value_or(0);
 
 	TraceLoggingWrite(
 		g_recto_etw_provider,
@@ -845,6 +912,12 @@ void record_diagnostic(
 		TraceLoggingUInt8(has_obj, "HasObjectNum"),
 		TraceLoggingUInt32(obj_val, "ObjectNum"),
 		TraceLoggingUInt16(generation_num, "GenerationNum"),
+		TraceLoggingUInt16(reason_u16, "RefusalReason"),
+		TraceLoggingString(reason_name_str, "RefusalReasonName"),
+		TraceLoggingUInt8(has_observed, "HasObserved"),
+		TraceLoggingUInt64(observed_val, "Observed"),
+		TraceLoggingUInt8(has_bound, "HasBound"),
+		TraceLoggingUInt64(bound_val, "Bound"),
 		TraceLoggingUInt32(tid, "ThreadId"));
 }
 
@@ -870,7 +943,10 @@ void record_diagnostic(const PdfError& err) noexcept
 		classify_diagnostic_id(err.code, err.message),
 		err.byte_offset,
 		err.object_num,
-		err.generation_num);
+		err.generation_num,
+		err.refusal_reason,
+		err.observed,
+		err.bound);
 }
 
 std::vector<DiagnosticEntry> diagnostics_tail(size_t max_entries) noexcept
@@ -912,6 +988,13 @@ std::vector<DiagnosticEntry> diagnostics_tail(size_t max_entries) noexcept
 				entry.object_num = slot.object_num;
 			}
 			entry.generation_num = slot.generation_num;
+			entry.refusal_reason = slot.refusal_reason;
+			if (slot.has_observed) {
+				entry.observed = slot.observed;
+			}
+			if (slot.has_bound) {
+				entry.bound = slot.bound;
+			}
 			result.push_back(std::move(entry));
 		}
 		return result;
@@ -948,6 +1031,23 @@ PdfError make_pdf_error(
 		byte_offset,
 		object_num,
 		generation_num);
+	if (should_auto_record_diagnostic(code)) {
+		record_diagnostic(err);
+	}
+	return err;
+}
+
+PdfError make_refusal_error(
+	ErrorCode code,
+	RefusalReason reason,
+	std::optional<uint64_t> observed,
+	std::optional<uint64_t> bound,
+	std::string_view message) noexcept
+{
+	PdfError err(code, message);
+	err.refusal_reason = reason;
+	err.observed = observed;
+	err.bound = bound;
 	if (should_auto_record_diagnostic(code)) {
 		record_diagnostic(err);
 	}

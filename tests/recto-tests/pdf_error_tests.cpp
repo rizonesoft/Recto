@@ -498,6 +498,100 @@ TEST(PdfError, ErrorCodeNamesCoverEveryCode)
 	EXPECT_NE(diagnostic_id_message(DiagnosticId::RollbackIncomplete).find("backup"), std::string_view::npos);
 }
 
+// Refusal reasons are only ever appended: every value from None up names its fixed reason, uniquely (D01 T02 section
+// 23).
+TEST(PdfError, RefusalReasonNamesCoverEveryReason)
+{
+	constexpr std::array<std::string_view, 9> kNamesByValue = {
+		"None",
+		"CommandCount",
+		"ChangeSetSize",
+		"PendingExports",
+		"WallClock",
+		"WorkingBytes",
+		"PageIndex",
+		"PageRange",
+		"OutputPath",
+	};
+	static_assert(noexcept(refusal_reason_name(RefusalReason::None)));
+	static_assert(refusal_reason_name(RefusalReason::OutputPath) == "OutputPath");
+	std::set<std::string_view> seen;
+	for (uint16_t value = 0; value < kNamesByValue.size(); ++value) {
+		const auto reason = static_cast<RefusalReason>(value);
+		EXPECT_EQ(refusal_reason_name(reason), kNamesByValue[value]) << "value " << value;
+		EXPECT_TRUE(seen.insert(refusal_reason_name(reason)).second) << "duplicate name at value " << value;
+	}
+	EXPECT_EQ(refusal_reason_name(static_cast<RefusalReason>(kNamesByValue.size())), "UnknownReason");
+	EXPECT_EQ(PdfError{}.refusal_reason, RefusalReason::None);
+	EXPECT_FALSE(PdfError{}.observed.has_value());
+	EXPECT_FALSE(PdfError{}.bound.has_value());
+}
+
+// A refusal's reason, observed value and bound reach the ring, its formatted line and the ETW Diagnostic event, and
+// the caller's message (here holding a path) reaches neither (D01 T02 section 23, D16).
+TEST(PdfError, RefusalContextReachesRingAndEtw)
+{
+	force_enable_etw_provider_for_testing();
+	clear_diagnostics();
+	clear_captured_etw_events_for_testing();
+	set_etw_capture_for_testing(true);
+	const PdfError limit = make_refusal_error(
+		ErrorCode::ResourceLimit, RefusalReason::CommandCount, 5001u, 5000u, "C:\\Users\\someone\\secret.pdf");
+	const PdfError argument =
+		make_refusal_error(ErrorCode::InvalidArgument, RefusalReason::PageIndex, 12u, 9u, "secret page");
+	record_diagnostic(argument);
+	const PdfError path_only = make_refusal_error(ErrorCode::InvalidArgument, RefusalReason::OutputPath, std::nullopt,
+		std::nullopt, "D:\\secret\\out.pdf");
+	record_diagnostic(path_only);
+	set_etw_capture_for_testing(false);
+
+	EXPECT_EQ(limit.refusal_reason, RefusalReason::CommandCount);
+	EXPECT_EQ(limit.observed, std::optional<uint64_t>(5001u));
+	EXPECT_EQ(limit.bound, std::optional<uint64_t>(5000u));
+	EXPECT_NE(limit.format().find("[reason=CommandCount observed=5001 bound=5000]"), std::string::npos) << limit.format();
+
+	const auto tail = diagnostics_tail(10);
+	ASSERT_EQ(tail.size(), 3u); // the ResourceLimit records itself; the two InvalidArgument refusals were logged
+	EXPECT_EQ(tail[0].refusal_reason, RefusalReason::CommandCount);
+	EXPECT_EQ(tail[0].observed, std::optional<uint64_t>(5001u));
+	EXPECT_EQ(tail[0].bound, std::optional<uint64_t>(5000u));
+	EXPECT_EQ(tail[1].code, ErrorCode::InvalidArgument);
+	EXPECT_EQ(tail[1].refusal_reason, RefusalReason::PageIndex);
+	EXPECT_EQ(tail[1].observed, std::optional<uint64_t>(12u));
+	EXPECT_EQ(tail[1].bound, std::optional<uint64_t>(9u));
+	EXPECT_EQ(tail[2].refusal_reason, RefusalReason::OutputPath);
+	EXPECT_FALSE(tail[2].observed.has_value());
+	EXPECT_FALSE(tail[2].bound.has_value());
+	EXPECT_NE(tail[0].format().find("[reason=CommandCount observed=5001 bound=5000]"), std::string::npos)
+		<< tail[0].format();
+	EXPECT_NE(tail[2].format().find("[reason=OutputPath]"), std::string::npos) << tail[2].format();
+	for (const DiagnosticEntry& entry : tail) {
+		EXPECT_EQ(entry.format().find("secret"), std::string::npos) << entry.format();
+	}
+
+	const auto captured = captured_etw_events_for_testing();
+	ASSERT_EQ(captured.size(), 3u);
+	EXPECT_EQ(captured[0].refusal_reason, static_cast<uint16_t>(RefusalReason::CommandCount));
+	EXPECT_EQ(captured[0].refusal_reason_name, "CommandCount");
+	EXPECT_TRUE(captured[0].has_observed);
+	EXPECT_EQ(captured[0].observed, 5001u);
+	EXPECT_TRUE(captured[0].has_bound);
+	EXPECT_EQ(captured[0].bound, 5000u);
+	EXPECT_EQ(captured[1].refusal_reason_name, "PageIndex");
+	EXPECT_EQ(captured[1].observed, 12u);
+	EXPECT_EQ(captured[1].bound, 9u);
+	EXPECT_EQ(captured[2].refusal_reason_name, "OutputPath");
+	EXPECT_FALSE(captured[2].has_observed);
+	EXPECT_FALSE(captured[2].has_bound);
+	for (const CapturedEtwEvent& event : captured) {
+		for (const std::string& text : {event.error_code_name, event.diagnostic_id_name, event.refusal_reason_name}) {
+			EXPECT_EQ(text.find("secret"), std::string::npos) << text;
+		}
+	}
+	clear_diagnostics();
+	clear_captured_etw_events_for_testing();
+}
+
 // ConversionFailed and RollbackIncomplete are recorded by the caller that knows the failed rule or the backup paths,
 // never automatically, and a message that reads like a damage hint never turns either into a damaged-file diagnostic
 // (D01 T02 section 22).
@@ -809,6 +903,12 @@ TEST(PdfError, EtwTraceLoggingProviderAndSpans)
 		"HasObjectNum",
 		"ObjectNum",
 		"GenerationNum",
+		"RefusalReason",
+		"RefusalReasonName",
+		"HasObserved",
+		"Observed",
+		"HasBound",
+		"Bound",
 		"ThreadId"};
 	EXPECT_EQ(captured[1].field_names, expected_diag_fields);
 	EXPECT_EQ(captured[1].sequence, 1u);

@@ -670,12 +670,57 @@ private:
 	char inline_[kInlineCapacity + 1]{};
 };
 
+// Which bound or argument a ResourceLimit or InvalidArgument refusal is about (D01 T02 section 23). A closed catalogue
+// of numbers and names, so support can see what stopped the work without the ring or ETW ever holding a path, a
+// password or document text. Values are only ever appended.
+enum class RefusalReason : uint16_t {
+	None = 0,
+	CommandCount,   // content-stream commands over the per-page budget
+	ChangeSetSize,  // objects in one change set over its budget
+	PendingExports, // exports queued at once over the limit
+	WallClock,      // work over its time budget, in milliseconds
+	WorkingBytes,   // working memory over its budget, in bytes
+	PageIndex,      // a page index past the document's last page
+	PageRange,      // a page range that is empty, reversed or past the end
+	OutputPath,     // an output path refused (the same as the input, or not writable); the path itself is never kept
+};
+
+[[nodiscard]] constexpr std::string_view refusal_reason_name(RefusalReason reason) noexcept
+{
+	switch (reason) {
+	case RefusalReason::None:
+		return "None";
+	case RefusalReason::CommandCount:
+		return "CommandCount";
+	case RefusalReason::ChangeSetSize:
+		return "ChangeSetSize";
+	case RefusalReason::PendingExports:
+		return "PendingExports";
+	case RefusalReason::WallClock:
+		return "WallClock";
+	case RefusalReason::WorkingBytes:
+		return "WorkingBytes";
+	case RefusalReason::PageIndex:
+		return "PageIndex";
+	case RefusalReason::PageRange:
+		return "PageRange";
+	case RefusalReason::OutputPath:
+		return "OutputPath";
+	}
+	return "UnknownReason";
+}
+
 struct PdfError {
 	ErrorCode code{ErrorCode::Ok};
 	PdfErrorMessage message{};
 	std::optional<uint64_t> byte_offset{std::nullopt};
 	std::optional<uint32_t> object_num{std::nullopt};
 	uint16_t generation_num{0};
+	// Appended (D01 T02 section 23): which bound or argument a refusal is about, the value observed and the bound it
+	// passed, numbers only.
+	RefusalReason refusal_reason{RefusalReason::None};
+	std::optional<uint64_t> observed{std::nullopt};
+	std::optional<uint64_t> bound{std::nullopt};
 
 	PdfError() noexcept = default;
 
@@ -1105,6 +1150,9 @@ struct DiagnosticEntry {
 	std::optional<uint64_t> byte_offset{std::nullopt};
 	std::optional<uint32_t> object_num{std::nullopt};
 	uint16_t generation_num{0};
+	RefusalReason refusal_reason{RefusalReason::None};
+	std::optional<uint64_t> observed{std::nullopt};
+	std::optional<uint64_t> bound{std::nullopt};
 
 	[[nodiscard]] std::string format() const noexcept;
 };
@@ -1118,13 +1166,16 @@ struct DiagnosticEntry {
 // Records an engine warning or error in the fixed-capacity 256-slot diagnostic
 // ring buffer without heap allocation and emits a structured ETW TraceLogging
 // event containing only error code, diagnostic ID, offsets, object ID, and
-// sequence metadata (zero document byte payloads).
+// sequence metadata (zero document byte payloads), and a refusal's reason, observed value and bound.
 void record_diagnostic(
 	ErrorCode code,
 	DiagnosticId diagnostic_id,
 	std::optional<uint64_t> byte_offset = std::nullopt,
 	std::optional<uint32_t> object_num = std::nullopt,
-	uint16_t generation_num = 0) noexcept;
+	uint16_t generation_num = 0,
+	RefusalReason refusal_reason = RefusalReason::None,
+	std::optional<uint64_t> observed = std::nullopt,
+	std::optional<uint64_t> bound = std::nullopt) noexcept;
 
 void record_diagnostic(
 	ErrorCode code,
@@ -1163,6 +1214,17 @@ void clear_diagnostics() noexcept;
 	std::optional<uint32_t> object_num = std::nullopt,
 	uint16_t generation_num = 0) noexcept;
 
+// A ResourceLimit or InvalidArgument refusal with its reason and numbers, recorded as make_pdf_error records its code
+// (ResourceLimit records itself, with the context; InvalidArgument is recorded by the caller through
+// record_diagnostic(const PdfError&), which carries the context too). The message stays with the caller: the ring and
+// ETW keep only the reason, the observed value and the bound.
+[[nodiscard]] PdfError make_refusal_error(
+	ErrorCode code,
+	RefusalReason reason,
+	std::optional<uint64_t> observed,
+	std::optional<uint64_t> bound,
+	std::string_view message = {}) noexcept;
+
 // Ensures the "Recto.Diagnostics" ETW TraceLogging provider is registered.
 bool ensure_etw_provider_registered() noexcept;
 
@@ -1199,6 +1261,12 @@ struct CapturedEtwEvent {
 	bool has_object_num{false};
 	uint32_t object_num{0};
 	uint16_t generation_num{0};
+	uint16_t refusal_reason{0};
+	std::string refusal_reason_name;
+	bool has_observed{false};
+	uint64_t observed{0};
+	bool has_bound{false};
+	uint64_t bound{0};
 	std::string phase;
 	uint64_t duration_us{0};
 	uint64_t document_id{0};
