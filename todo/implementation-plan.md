@@ -153,7 +153,7 @@ Sections: 148 | Checklist items: 1306
 | [ ]    | D01 T02 §12 | `DocumentActor::get_page_transition` query for the parsed `/Trans` and `/Dur`            | windows-host                  | 6     |
 | [ ]    | D02 T04 §1  | `AppPaths` Portable mode path resolver and live atomic data migration                    | windows-host                  | 8     |
 | [ ]    | D02 T04 §2  | Typed `SettingsStore` service with atomic persistence and change notifications           | windows-host                  | 10    |
-| [ ]    | D10 T01 §1  | `recto-ui` static library, module boundary and headless render harness                   | windows-host                  | 19    |
+| [x]    | D10 T01 §1  | `recto-ui` static library, module boundary and headless render harness                   | windows-host                  | 19    |
 | [ ]    | D10 T01 §2  | Win32 `Recto.exe` host replaces the WinUI scaffold; Windows App SDK pins retired         | windows-host, display-session | 17    |
 | [ ]    | D10 T04 §1  | Move `src/ui` to `libs/vellum`, rename to `vellum::`, own project and test executable    | windows-host                  | 17    |
 | [ ]    | D10 T01 §3  | UI thread `Dispatcher`, timers and engine callback marshalling                           | windows-host                  | 7     |
@@ -900,6 +900,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 63/831 verified sections, 29 ready to run now.
+Progress: 64/831 verified sections, 29 ready to run now.
 
-Checklist: 402/6098 items completed (includes Commit items).
+Checklist: 403/6098 items completed (includes Commit items).

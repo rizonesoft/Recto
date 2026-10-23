@@ -1,0 +1,116 @@
+{
+  "ref": "D10 T01 \u00a71",
+  "title": "`recto-ui` static library, module boundary and headless render harness",
+  "implementation_sha": "33bbc9bd2b07c74aa098012f20b56f99f04cbcd5",
+  "date": "2026-10-23",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/10-ui/D10-T01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/10-ui/D10-T01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/10-ui/D10-T01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/10-ui/D10-T01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/10-ui/D10-T01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 6,
+      "report": "docs/reviews/10-ui/D10-T01-s1.md",
+      "verdict": "clean"
+    },
+    {
+      "round": 7,
+      "report": "docs/reviews/10-ui/D10-T01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 8,
+      "report": "docs/reviews/10-ui/D10-T01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 9,
+      "report": "docs/reviews/10-ui/D10-T01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 10,
+      "report": "docs/reviews/10-ui/D10-T01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 11,
+      "report": "docs/reviews/10-ui/D10-T01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 12,
+      "report": "docs/reviews/10-ui/D10-T01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 13,
+      "report": "docs/reviews/10-ui/D10-T01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 14,
+      "report": "docs/reviews/10-ui/D10-T01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 15,
+      "report": "docs/reviews/10-ui/D10-T01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 16,
+      "report": "docs/reviews/10-ui/D10-T01-s1.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 17,
+      "report": "docs/reviews/10-ui/D10-T01-s1.md",
+      "verdict": "stopped-low-severity"
+    }
+  ],
+  "checks": [
+    "python scripts/check-ui-boundary.py --configuration Debug --platform x64 -> exit 0, the compiler and librarian report no engine/recto-ui crossing",
+    "recto-tests.exe --gtest_filter=Ui.Project.* -> [  PASSED  ] 23 tests.",
+    "python -m unittest tests.scripts.test_check_ui_boundary tests.scripts.test_ui_module_boundary tests.scripts.test_build_ps1 tests.scripts.test_release_notes -> Ran 80 tests OK",
+    "msbuild /t:recto-ui /p:Platform=ARM64 /p:Configuration=Debug -> exit 0",
+    ".\\build.cmd -> exit 0, [  PASSED  ] 195 tests."
+  ],
+  "completion": {
+    "report": "docs/reviews/10-ui/D10-T01-s1.md",
+    "verdict": "filed",
+    "candidate": "74ce94fe70c7efa9235a7036d6ce939c64fd3c18",
+    "reviewer": "sol",
+    "model": "gpt-6.1-sol",
+    "filed": [
+      "D10 T01 \u00a721",
+      "D10 T01 \u00a75",
+      "D10 T01 \u00a76",
+      "D10 T01 \u00a720"
+    ]
+  },
+  "rounds_spent": 17,
+  "round_cap": 33,
+  "cap_outcome": "Round 17 stopped on severity (HIGHEST: P3). Its one P3, the operator-required Co-authored-by trailer, was rejected with the reason in the findings file; nothing filed."
+}
