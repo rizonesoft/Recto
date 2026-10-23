@@ -14,11 +14,15 @@ Recto is an open-source (`GPL-3.0-or-later`) PDF viewer, OCR tool and document c
 | `todo/` | Live execution plan (`README.md`, generated plan). |
 | `scripts/` | TODO graph, review dispatch, run guard, pin checks; stdlib Python. |
 | `tests/scripts/` | Tooling tests; app suites land under `tests/`. |
-| `.claude/`, `.agents/`, `.codex/` | Agent kits per agent: skills, rules, subagents. |
+| `.claude/` | The agent kit: skills, rules, read-only subagents. |
 | `.conclave/` | Reviewer pin and scheduled `automations/` (pin checks). |
 | `build/` | Ignored derived output (plus `build/build.ps1`). |
 
 The repository layout is fixed by foundation plan section 3.2 (`src/pdf`, `src/core`, `src/services`, `src/ui`, `src/app`, `src/cli`, `tests/recto-tests`, `tests/corpus`, `fuzz`). Do not invent a different one.
+
+## Who writes and who reviews
+
+Opus 5.5 (`claude-opus-5-5` through Claude Code) is the only writer in this repository: code, tests, the plan and docs (owner decision 2026-10-23). Any subagent that writes code, tests, plan or docs runs on Opus 5.5; Sonnet or Haiku run only read-only helpers whose output the main session verifies. GPT-6.1 Sol, through the Codex CLI in its read-only sandbox (`.conclave/reviewers.toml`), is the only reviewer: it reads this file and never edits the repository.
 
 ## The TODO system
 

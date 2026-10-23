@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""Run one independent review round with the reviewers pinned in .conclave/reviewers.toml, failing over in order.
+"""Run one independent review round with the reviewer pinned in .conclave/reviewers.toml.
 
     python3 scripts/review-dispatch.py --writer claude --prompt review-prompt.md --record docs/reviews/x.md
     python3 scripts/review-dispatch.py --check-pin [--json] [--pin <path>]     the pin's verdict; runs no reviewer
     python3 scripts/review-dispatch.py --list-rounds [--json] [--records <dir>]  recorded rounds; runs no reviewer
 
-`--writer` is the agent whose work is under review (claude, codex or gemini); its route in the pin lists one reviewer
-of a different model family and at most one fallback, also of a different family. The first reviewer that runs and
-returns a review is the round. One that is not installed, exits non-zero, times out, returns nothing, or ends its
-reply `OVERALL: blocked` (it could not reach the candidate, for example a sandbox that cannot read the repository) is
-skipped and the reason recorded. When every reviewer fails there is no review: exit 1, which never counts as approval.
+`--writer` is the agent whose work is under review. Opus 5.5 through Claude Code (`claude`) is the only writer in this
+repository, and its route in the pin names exactly one reviewer of a different model family, run through the Codex CLI
+(owner decision 2026-10-23: one reviewer, no fallback). A reviewer that is not installed, exits non-zero, times out,
+returns nothing, or ends its reply `OVERALL: blocked` (it could not reach the candidate, for example a sandbox that
+cannot read the repository) returned no review, and the reason is recorded: exit 1, which never counts as approval.
 A review that finds problems is still a review (exit 0).
 
 `--check-pin` loads the pin with `load_pin`, the only place the rules live, and reports without running anything:
 with `--json`, `{"ok": true, "schema_version", "reviewers", "routes", "clis": {cli: on PATH}}` and exit 0, or
 `{"ok": false, "error": "<the Refused message>"}` and exit 2; without `--json`, `ok` or `refused: <message>`.
 
-Reviewers run read-only in the repository root: Codex in its read-only sandbox, Antigravity in plan mode inside its
-sandbox, Claude Code in plan mode. The script prints a JSON summary; `--record` also appends a `## Round N` section to
-the findings file with an atomic write, and writes nothing (exit 2, the summary still printed) to a findings file it
-cannot read back. Works the same from PowerShell and from WSL. Stdlib only.
+The reviewer runs read-only in the repository root, in the Codex read-only sandbox. The script prints a JSON summary;
+`--record` also appends a `## Round N` section to the findings file with an atomic write, and writes nothing (exit 2,
+the summary still printed) to a findings file it cannot read back. Works the same from PowerShell and from WSL.
+Stdlib only.
 """
 import argparse
 from datetime import datetime, timezone
@@ -39,17 +39,15 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 PIN = ROOT / ".conclave" / "reviewers.toml"
-WRITERS = ("claude", "codex", "gemini")
-CLIS = ("codex", "agy", "claude")
+# Opus 5.5 through Claude Code is the only writer, and the Codex CLI the only reviewer CLI (owner decision 2026-10-23).
+WRITERS = ("claude",)
+CLIS = ("codex",)
 # A reviewer is never of the writer's own model family: its CLI names the family, and so does the writer.
-FAMILY = {"codex": "openai", "agy": "google", "claude": "anthropic"}
-WRITER_FAMILY = {"claude": "anthropic", "codex": "openai", "gemini": "google"}
-EFFORTS = {"codex": ("low", "medium", "high", "xhigh"), "claude": ("low", "medium", "high", "xhigh", "max")}
+FAMILY = {"codex": "openai"}
+WRITER_FAMILY = {"claude": "anthropic"}
+EFFORTS = {"codex": ("low", "medium", "high", "xhigh")}
 MODEL = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-# Antigravity takes the prompt only as the -p value. Past this size it gets a pointer to the prompt file instead.
-# Windows caps a whole command line at 32,767 characters; Linux caps one argument at 128 KiB.
-ARGV_PROMPT_LIMIT = 24_000 if os.name == "nt" else 100_000
 # A review is prose. Output past this size is a runaway reviewer, not a review.
 MAX_OUTPUT_BYTES = 2_000_000
 # The prompt's reply format ends with an OVERALL line; `blocked` means the reviewer never saw the work.
@@ -100,25 +98,20 @@ def load_pin(path=PIN):
             raise Refused(f"reviewer {name!r} needs cli = one of {', '.join(CLIS)}")
         if not isinstance(model, str) or not MODEL.fullmatch(model):
             raise Refused(f"reviewer {name!r} has a malformed model")
-        if cli == "agy":
-            if effort is not None:
-                raise Refused(f"reviewer {name!r}: Antigravity carries the effort in the model name, so set no effort")
-        elif effort not in EFFORTS[cli]:
+        if effort not in EFFORTS[cli]:
             raise Refused(f"reviewer {name!r} needs effort = one of {', '.join(EFFORTS[cli])}")
     routes = pin["routes"]
     if not isinstance(routes, dict) or set(routes) - set(WRITERS):
         raise Refused(f"[routes] may only name the writers {', '.join(WRITERS)}")
     for writer, chain in routes.items():
-        if not isinstance(chain, list) or not 1 <= len(chain) <= 2 or not all(isinstance(r, str) for r in chain):
-            raise Refused(f"route {writer!r} must list one reviewer and at most one fallback")
-        if any(r not in reviewers for r in chain) or len(set(chain)) != len(chain):
-            raise Refused(f"route {writer!r} must list defined reviewers, each once")
-        same = [r for r in chain if FAMILY[reviewers[r]["cli"]] == WRITER_FAMILY[writer]]
-        if same:
-            raise Refused(f"route {writer!r} names {', '.join(same)}, of the writer's own family; "
+        # One reviewer, no fallback (owner decision 2026-10-23).
+        if not isinstance(chain, list) or len(chain) != 1 or not isinstance(chain[0], str):
+            raise Refused(f"route {writer!r} must list exactly one reviewer, with no fallback")
+        if chain[0] not in reviewers:
+            raise Refused(f"route {writer!r} must name a defined reviewer")
+        if FAMILY[reviewers[chain[0]]["cli"]] == WRITER_FAMILY[writer]:
+            raise Refused(f"route {writer!r} names {chain[0]}, of the writer's own family; "
                           f"a review comes from a different family")
-        if len({FAMILY[reviewers[r]["cli"]] for r in chain}) != len(chain):
-            raise Refused(f"route {writer!r}: the fallback must be of a third family, not the reviewer's own")
     return pin
 
 
@@ -158,21 +151,11 @@ def fully_qualified(directory):
     return drive.startswith(("\\\\", "//")) or (len(drive) == 2 and rest[:1] in ("\\", "/"))
 
 
-def command(reviewer, executable, prompt, prompt_path, output_path, timeout):
-    """The argv and stdin for one read-only review. The model and effort come only from the pin."""
-    cli, model, effort = reviewer["cli"], reviewer["model"], reviewer.get("effort")
-    if cli == "codex":
-        return [executable, "exec", "-m", model, "-c", f"model_reasoning_effort={effort}", "--sandbox", "read-only",
-                "--ephemeral", "--skip-git-repo-check", "-o", str(output_path), "-"], prompt
-    if cli == "claude":
-        return [executable, "-p", "--model", model, "--effort", effort, "--permission-mode", "plan"], prompt
-    text = prompt
-    # A Windows .cmd or .bat shim re-parses its arguments through cmd.exe, so prose there could become commands:
-    # it only ever gets a pointer to the prompt file. So does a prompt too long for a command line.
-    shim = Path(executable).suffix.lower() in (".cmd", ".bat")
-    if shim or len(prompt.encode()) > ARGV_PROMPT_LIMIT or len(prompt) > ARGV_PROMPT_LIMIT:
-        text = f"Follow the review instructions in the file {prompt_path} exactly. Do not modify any file."
-    return [executable, "--model", model, "--mode", "plan", "--sandbox", "--print-timeout", f"{timeout}s", f"-p={text}"], None
+def command(reviewer, executable, output_path):
+    """The argv for one read-only Codex review. The prompt goes on stdin, never on the command line, so a Windows
+    .cmd shim never re-parses prose as commands. The model and effort come only from the pin."""
+    return [executable, "exec", "-m", reviewer["model"], "-c", f"model_reasoning_effort={reviewer['effort']}",
+            "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check", "-o", str(output_path), "-"]
 
 
 def kill_tree(process):
@@ -219,19 +202,18 @@ def feed(pipe, text):
 def run(argv, stdin_text, timeout, watched):
     """Run one reviewer in its own process group, watching the size of every file it writes while it runs, so neither
     a hang nor a flood of output can take the dispatcher or the disk down. The group is ended afterwards whatever
-    happened. Returns (exit code, None) or (None, reason to fail over)."""
+    happened. Returns (exit code, None) or (None, the reason it returned no review)."""
     group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
     stdout_path = watched[0]
     with open(stdout_path, "wb") as output:
         try:
-            process = subprocess.Popen(argv, cwd=ROOT, stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
-                                       stdout=output, stderr=subprocess.DEVNULL, **group)
+            process = subprocess.Popen(argv, cwd=ROOT, stdin=subprocess.PIPE, stdout=output,
+                                       stderr=subprocess.DEVNULL, **group)
         except (OSError, ValueError) as exc:
             return None, f"could not start: {getattr(exc, 'strerror', None) or type(exc).__name__}"
         try:
-            if stdin_text is not None:
-                # Fed from a thread: a reviewer that never reads would otherwise block this write past any timeout.
-                threading.Thread(target=feed, args=(process.stdin, stdin_text), daemon=True).start()
+            # Fed from a thread: a reviewer that never reads would otherwise block this write past any timeout.
+            threading.Thread(target=feed, args=(process.stdin, stdin_text), daemon=True).start()
             deadline = time.monotonic() + timeout
             while process.poll() is None:
                 if any(path.is_file() and path.stat().st_size > MAX_OUTPUT_BYTES for path in watched):
@@ -250,43 +232,43 @@ def run(argv, stdin_text, timeout, watched):
 
 
 def review(pin, writer, prompt_path, timeout):
-    """Walk the writer's route until one reviewer returns a review. Returns the summary dict."""
+    """Run the writer's one reviewer. Returns the summary dict: `reviewer` is None when no review came back, and
+    `skipped` then names the reviewer and why (there is no fallback)."""
     if writer not in pin["routes"]:
         raise Refused(f"the reviewer pin has no route for writer {writer!r}")
     prompt = Path(prompt_path).read_text(encoding="utf-8")
     if not prompt.strip():
         raise Refused("the review prompt is empty")
     if "\0" in prompt:
-        raise Refused("the review prompt contains a NUL byte; no command line can carry it")
-    failover = []
-    for name in pin["routes"][writer]:
-        reviewer = pin["reviewers"][name]
-        # The resolved path, not the bare name: on Windows a CLI is often a .cmd shim that Popen cannot find by name.
-        executable = find_cli(reviewer["cli"])
-        if executable is None:
-            failover.append({"reviewer": name, "reason": f"{reviewer['cli']} is not installed"})
-            continue
-        stdout = None
-        tmp = Path(tempfile.mkdtemp())
-        try:
-            stdout_path, message_path = tmp / "stdout.txt", tmp / "last-message.md"
-            argv, stdin_text = command(reviewer, executable, prompt, Path(prompt_path).resolve(), message_path, timeout)
-            _, problem = run(argv, stdin_text, timeout, [stdout_path, message_path])
-            if problem is None:
-                source = message_path if reviewer["cli"] == "codex" else stdout_path
-                stdout = source.read_text(encoding="utf-8", errors="replace") if source.is_file() else ""
-        finally:
-            remove_scratch(tmp)
-        if problem is None and not (stdout or "").strip():
-            problem = "returned no review"
+        raise Refused("the review prompt contains a NUL byte; no reviewer can be given it")
+    (name,) = pin["routes"][writer]
+    reviewer = pin["reviewers"][name]
+
+    def none(reason):
+        return {"writer": writer, "reviewer": None, "skipped": [{"reviewer": name, "reason": reason}], "review": None}
+
+    # The resolved path, not the bare name: on Windows a CLI is often a .cmd shim that Popen cannot find by name.
+    executable = find_cli(reviewer["cli"])
+    if executable is None:
+        return none(f"{reviewer['cli']} is not installed")
+    text = None
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        stdout_path, message_path = tmp / "stdout.txt", tmp / "last-message.md"
+        _, problem = run(command(reviewer, executable, message_path), prompt, timeout, [stdout_path, message_path])
         if problem is None:
-            problem = blocked(stdout)
-        if problem:
-            failover.append({"reviewer": name, "reason": problem})
-            continue
-        return {"writer": writer, "reviewer": name, "cli": reviewer["cli"], "model": reviewer["model"],
-                "effort": reviewer.get("effort"), "failover": failover, "review": stdout.strip()}
-    return {"writer": writer, "reviewer": None, "failover": failover, "review": None}
+            # Codex writes its final message to the -o file; stdout carries its progress, not the review.
+            text = message_path.read_text(encoding="utf-8", errors="replace") if message_path.is_file() else ""
+    finally:
+        remove_scratch(tmp)
+    if problem is None and not (text or "").strip():
+        problem = "returned no review"
+    if problem is None:
+        problem = blocked(text)
+    if problem:
+        return none(problem)
+    return {"writer": writer, "reviewer": name, "cli": reviewer["cli"], "model": reviewer["model"],
+            "effort": reviewer.get("effort"), "skipped": [], "review": text.strip()}
 
 
 def blocked(text):
@@ -435,7 +417,7 @@ def record(path, result, when):
     lines = [f"## Round {number}: {who}", "", f"- Writer: {result['writer']}", f"- Run: {when}"]
     if result.get("effort"):
         lines.append(f"- Effort: {result['effort']}")
-    lines += [f"- Skipped: {f['reviewer']} ({f['reason']})" for f in result["failover"]]
+    lines += [f"- Skipped: {f['reviewer']} ({f['reason']})" for f in result["skipped"]]
     lines += [f"- Lines: {len(review)}", f"- Digest: {digest(review)}", "", *review, ""]
     # Always one blank line before the heading, even when the file already ends in one: a review whose last line is
     # empty also ends the file in "\n\n", and the reader needs a blank line after the review's own lines.
@@ -479,7 +461,8 @@ def main(argv=None):
     parser.add_argument("--writer", choices=WRITERS, help="The agent whose work is under review")
     parser.add_argument("--prompt", help="File holding the review prompt")
     parser.add_argument("--record", help="Findings file to append this round to")
-    parser.add_argument("--timeout", type=int, default=1800, help="Seconds per reviewer before failing over")
+    parser.add_argument("--timeout", type=int, default=1800,
+                        help="Seconds before the reviewer is stopped and the round records no review")
     parser.add_argument("--pin", default=str(PIN), help=argparse.SUPPRESS)
     parser.add_argument("--check-pin", action="store_true",
                         help="Report whether the pin loads, and each CLI's presence, instead of running a review; "

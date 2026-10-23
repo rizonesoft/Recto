@@ -969,11 +969,13 @@ class Stamp(Tree):
 
 
 class Repository(unittest.TestCase):
-    def test_the_authoring_template_copies_are_identical(self):
-        # todo/README.md and create-todo name todo/templates/TODO-template.md and the skill copies as the same file.
+    def test_the_authoring_template_copy_is_identical(self):
+        # todo/README.md and create-todo name todo/templates/TODO-template.md and the skill copy as the same file.
+        # .claude is the only agent kit since 2026-10-23 (Opus 5.5 is the sole writer).
         canonical = (tg.ROOT / "todo/templates/TODO-template.md").read_bytes()
-        for kit in (".claude", ".codex", ".agents"):
-            self.assertEqual((tg.ROOT / kit / "skills/create-todo/todo-template.md").read_bytes(), canonical, kit)
+        self.assertEqual((tg.ROOT / ".claude/skills/create-todo/todo-template.md").read_bytes(), canonical)
+        for kit in (".codex", ".agents"):
+            self.assertFalse((tg.ROOT / kit).exists(), f"the removed {kit} writer kit is back")
 
     def test_the_repository_graph_validates_and_its_plan_is_current(self):
         r = subprocess.run([sys.executable, str(REPO / "scripts/todo-graph.py"), "plan", "--check"],

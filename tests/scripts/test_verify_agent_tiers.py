@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -18,6 +19,18 @@ def read(lines):
     out = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True, check=True)
     result = json.loads(out.stdout)
     return result["ok"], result["error"]
+
+
+def verify(lines):
+    """verifyAgentTiers over one agent definition in a scratch repository: its error messages."""
+    with tempfile.TemporaryDirectory() as tmp:
+        agents = Path(tmp) / ".claude" / "agents"
+        agents.mkdir(parents=True)
+        (agents / "a.md").write_text("---\n" + "\n".join(lines) + "\n---\n\nBody.\n", encoding="utf-8")
+        script = (f"import {{ verifyAgentTiers }} from {json.dumps(MODULE)};"
+                  f"console.log(JSON.stringify(verifyAgentTiers({json.dumps(tmp)}).errors));")
+        out = subprocess.run(["node", "--input-type=module", "-e", script], capture_output=True, text=True, check=True)
+        return json.loads(out.stdout)
 
 
 @unittest.skipUnless(shutil.which("node"), "needs Node.js")
@@ -61,6 +74,20 @@ class AgentFrontmatter(unittest.TestCase):
             with self.subTest(lines=lines):
                 ok, error = read(["name: a", *lines, "model: sonnet"])
                 self.assertTrue(ok, error)
+
+    def test_only_an_opus_5_5_subagent_may_write(self):
+        # Owner decision 2026-10-23: Opus 5.5 is the only writer, so a subagent with edit tools pins claude-opus-5-5;
+        # Sonnet and Haiku subagents, and the floating opus alias, stay read-only.
+        cases = {"claude-opus-5-5": True, "claude-opus-5-5-20261001": True, "opus": False, "claude-opus-5": False,
+                 "claude-opus-6-0": False, "sonnet": False}
+        for model, allowed in cases.items():
+            for tools in ("Read, Edit", "Write", "'*'", "Edit(src/**)"):
+                with self.subTest(model=model, tools=tools):
+                    errors = verify(["name: writer", "description: writes code", f"model: {model}", f"tools: {tools}",
+                                     "model_rationale: the sole writer"])
+                    self.assertEqual(errors == [], allowed, errors)
+                    self.assertEqual(any("grants edit tools" in e for e in errors), not allowed, errors)
+        self.assertEqual(verify(["name: reader", "description: reads code", "model: sonnet", "tools: Read, Grep"]), [])
 
     def test_the_repository_agents_pass(self):
         result = subprocess.run(["node", str(ROOT / "scripts" / "verify-agent-tiers.mjs")], cwd=ROOT,

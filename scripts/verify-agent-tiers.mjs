@@ -4,13 +4,15 @@
 // The rule is in AGENTS.md: mechanical subtasks delegate to subagents on the
 // Sonnet tier; an elevated tier is reserved for work whose verdict quality
 // demands it; Haiku is allowed only for near-mechanical work (at least 90%
-// mechanical) whose output a script or the main loop verifies; and no subagent
-// writes: subagents read and run, and the main loop makes every change.
+// mechanical) whose output a script or the main loop verifies; and Opus 5.5 is
+// the only writer in this repository (owner decision 2026-10-23), so a subagent
+// that can edit files must pin `claude-opus-5-5`: every other subagent reads and
+// runs, and the main loop or an Opus 5.5 subagent makes every change.
 //
 // A rule stated in prose is protected by discipline. This makes it protected by
-// a check: an agent with no `model:` line, an agent that could edit files, or a
-// Haiku agent that does not meet every Haiku condition below, fails here instead
-// of passing every gate and being noticed later, or never.
+// a check: an agent with no `model:` line, an agent on any other model that could
+// edit files, or a Haiku agent that does not meet every Haiku condition below,
+// fails here instead of passing every gate and being noticed later, or never.
 //
 // An absent `model:` is an error rather than a default, because an unpinned
 // agent silently inherits the caller's model: mechanical work then runs on the
@@ -57,6 +59,13 @@ export const HAIKU_MECHANICAL_FIELD = "mechanical_share";
 export const HAIKU_MINIMUM_MECHANICAL_SHARE = 90;
 export const HAIKU_REPLAY_FIELD = "haiku_replay";
 export const HAIKU_JUDGMENT_TERMS = /\b(review|audit|research|secur|debug|diagnos|plan|design|architect|judg|verdict)/i;
+
+/**
+ * The one model a subagent that writes may run on: Opus 5.5, as an exact pin
+ * (optionally with a date suffix). The bare `opus` alias is refused because it
+ * follows whatever Opus is newest, and the decision names Opus 5.5.
+ */
+export const WRITER_AGENT_MODEL = /^claude-opus-5-5(?:-\d{8})?$/;
 
 /** Where an elevated pin must record why it is elevated. */
 export const ELEVATION_RATIONALE_FIELD = "model_rationale";
@@ -244,9 +253,9 @@ export function verifyAgentTiers(repoRoot = process.cwd(), relativeRoot = join("
       continue;
     }
 
-    errors.push(...toolProblems(fields).map((problem) => `${relative} ${problem}`));
-
     const model = tierPin(fields, "model")?.toLowerCase() ?? null;
+
+    errors.push(...toolProblems(fields, model).map((problem) => `${relative} ${problem}`));
 
     if (!model) {
       errors.push(
@@ -289,17 +298,19 @@ export function verifyAgentTiers(repoRoot = process.cwd(), relativeRoot = join("
 }
 
 /**
- * A subagent reads and runs; the main loop writes. A grant such as
- * `Edit(src/**)` is still Edit, so the rule spec after the name is ignored.
+ * Only an Opus 5.5 subagent writes; every other subagent reads and runs. A
+ * grant such as `Edit(src/**)` is still Edit, so the rule spec after the name
+ * is ignored.
  */
-export function toolProblems(fields) {
+export function toolProblems(fields, model = null) {
   const tools = recordedProse(fields, "tools");
   if (!tools) {
     return ['needs an explicit "tools:" list; without one the agent inherits every tool, edit tools included'];
   }
   const names = tools.split(",").map((tool) => tool.replace(/\(.*$/, "").trim().toLowerCase());
-  if (names.some((tool) => tool === "*" || EDIT_TOOLS.includes(tool))) {
-    return ["grants edit tools (Edit, Write, MultiEdit, NotebookEdit or *); subagents read and run, and the main loop writes"];
+  if (names.some((tool) => tool === "*" || EDIT_TOOLS.includes(tool)) && !WRITER_AGENT_MODEL.test(model ?? "")) {
+    return ["grants edit tools (Edit, Write, MultiEdit, NotebookEdit or *) without pinning claude-opus-5-5; "
+      + "Opus 5.5 is the only writer, and every other subagent reads and runs"];
   }
   return [];
 }

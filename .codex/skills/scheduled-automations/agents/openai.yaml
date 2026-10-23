@@ -1,4 +1,0 @@
-interface:
-  display_name: "Scheduled automations"
-  short_description: "Add, change or debug a scheduled job in .conclave/automations/ with its failure email."
-  default_prompt: "Add or fix this scheduled job in .conclave/automations/tasks.json with its README row and tests, run it once through run.py, then re-run the installer."

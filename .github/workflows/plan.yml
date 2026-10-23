@@ -19,8 +19,6 @@ on:
       - 'scripts/**'
       - 'tests/scripts/**'
       - '.claude/skills/**'
-      - '.codex/skills/**'
-      - '.agents/skills/**'
       - '.gitattributes'
       # Any workflow change, so a Dependabot action update gets plan-gates like every other pull request.
       - '.github/workflows/**'
@@ -38,8 +36,6 @@ on:
       - 'scripts/**'
       - 'tests/scripts/**'
       - '.claude/skills/**'
-      - '.codex/skills/**'
-      - '.agents/skills/**'
       - '.gitattributes'
       # Any workflow change, so a Dependabot action update gets plan-gates like every other pull request.
       - '.github/workflows/**'

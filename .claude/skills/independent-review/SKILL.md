@@ -1,25 +1,23 @@
 ---
 name: independent-review
-description: Get an independent review of your own work from the reviewer pinned in .conclave/reviewers.toml (a different model family from yours, with one fallback of the third family) through scripts/review-dispatch.py, then verify and act on every finding. Use before calling a nontrivial change done, before a commit that ships, or when a TODO section needs its review round.
+description: Get an independent review of your own work from GPT-6.1 Sol, the one reviewer pinned in .conclave/reviewers.toml (a different model family, no fallback), through scripts/review-dispatch.py, then verify and act on every finding. Use before calling a nontrivial change done, before a commit that ships, or when a TODO section needs its review round.
 ---
 
 # Independent review
 
-Your own review is not enough for a nontrivial change: a different model reviews it. `.conclave/reviewers.toml` names who reviews whose work, and `scripts/review-dispatch.py` runs the round and fails over when a reviewer is unavailable.
+Your own review is not enough for a nontrivial change: a different model reviews it. Opus 5.5 (writer `claude`) is the only writer in this repository and GPT-6.1 Sol, through the Codex CLI at `xhigh` in its read-only sandbox, is the only reviewer (owner decision 2026-10-23). `.conclave/reviewers.toml` pins that one route, and `scripts/review-dispatch.py` runs the round.
 
 | Work written by | Reviewer | Fallback |
 | --- | --- | --- |
-| Claude | GPT-6 Astra | Gemini 4 |
-| Codex | Sonnet 5.5 | Gemini 4 |
-| Gemini | GPT-6 Astra | Sonnet 5.5 |
+| Opus 5.5 (`claude`) | GPT-6.1 Sol (`codex`, `xhigh`) | none |
 
-A reviewer is never of the writer's own model family, and a route has one fallback at most: the pin refuses anything else. Gemini is only ever a fallback, at medium effort.
+The pin refuses any other writer, any other reviewer CLI, a second reviewer in a route, and a reviewer of the writer's own model family.
 
 ## Steps
 
 1. Review your own change first and fix what you find.
 2. Write the review prompt to a scratch file, not the repository, from `docs/review-round-prompt.md`: name the candidate commit or range, the governing documents, and the lenses that apply.
-3. Run the round, naming yourself as the writer (`claude`, `codex` or `gemini`):
+3. Run the round:
 
    ```bash
    python3 scripts/review-dispatch.py --writer claude --prompt <scratch>/review-prompt.md --record docs/reviews/<topic>.md
@@ -32,7 +30,7 @@ A reviewer is never of the writer's own model family, and a route has one fallba
 ## Rules
 
 - The dispatcher's JSON output and the `## Round N` section it appends are the evidence. A verdict with no record is an opinion.
-- Exit 1 means no reviewer returned a review. That is never an approval: say so, and do not ship on it.
-- A reviewer that could not reach the work (its sandbox could not read the repository) replies `OVERALL: blocked`, and the dispatcher fails over. If its sandbox keeps failing, put the diff in the prompt.
-- Reviewers run read-only. Never pass a reviewer a secret, and never ask it to edit files.
-- Change reviewers only in `.conclave/reviewers.toml`, never by calling a model directly.
+- Exit 1 means Sol returned no review (not installed, failed, timed out, empty or blocked), and nothing else runs. That is never an approval: say so, record the outage, and do not ship on it.
+- A reviewer that could not reach the work (its sandbox could not read the repository) replies `OVERALL: blocked`, which is recorded as no review. If its sandbox keeps failing, put the diff in the prompt and run the round again.
+- The reviewer runs read-only. Never pass it a secret, and never ask it to edit files.
+- Change the reviewer only in `.conclave/reviewers.toml`, never by calling a model directly.
