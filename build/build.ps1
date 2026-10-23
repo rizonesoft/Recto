@@ -102,6 +102,9 @@ foreach ($plat in $Platform) {
             }
         }
 
+        # The boundary manifests of this configuration come from this build only (scripts/check-ui-boundary.py).
+        $boundaryManifests = Join-Path $root "build\boundary\$plat\$cfg"
+        if (Test-Path $boundaryManifests) { Remove-Item $boundaryManifests -Recurse -Force }
         $logFile = Join-Path $root "build\msbuild-$cfg-$plat.log"
         $msbuildArgs = @(
             'Recto.sln',
@@ -128,10 +131,9 @@ foreach ($plat in $Platform) {
         Assert-NoMSBuildWarnings -LogFile $logFile -What "$cfg|$plat"
         # The D13 boundary between the engine libraries and recto-ui, proven from the compiler's /sourceDependencies
         # reports and the librarian's directives, members and symbols of this configuration's libraries (D10 T01 §1).
-        # The check evaluates the projects with every global property this build passed MSBuild, so a setting
-        # conditioned on any of them (EnableASAN, TreatWarningsAsErrors, ...) reads the same in both.
-        $boundaryProperties = @($msbuildArgs | Where-Object { $_ -like '/p:*' } | ForEach-Object { '--property'; $_.Substring(3) })
-        & python (Join-Path $root 'scripts\check-ui-boundary.py') --configuration $cfg --platform $plat --vs $vs @boundaryProperties
+        # It reads what this build compiled from the manifests the RectoBoundaryManifest target wrote (emptied below,
+        # before the build), never from a re-evaluation of the projects.
+        & python (Join-Path $root 'scripts\check-ui-boundary.py') --configuration $cfg --platform $plat --vs $vs
         if ($LASTEXITCODE -ne 0) { throw "the engine/recto-ui boundary check failed: $cfg|$plat (exit $LASTEXITCODE)" }
 
         if ($EnableASAN -and $plat -eq 'x64') {

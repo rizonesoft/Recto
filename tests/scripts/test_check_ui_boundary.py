@@ -59,21 +59,85 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(units[1].report, boundary.normalized(folder / "obj" / "b.cpp.json"))
         self.assertFalse(units[1].generates)
 
-    def test_the_build_properties_reach_the_evaluation(self):
-        arguments = boundary.evaluation_arguments("msbuild", "p.vcxproj", "Release", "x64",
-                                                  ["EnableASAN=true", "TreatWarningsAsErrors=true"])
-        self.assertIn("-p:EnableASAN=true", arguments)
-        self.assertIn("-p:TreatWarningsAsErrors=true", arguments)
-        # build.ps1 hands the check every /p: it gives MSBuild (round 14: TreatWarningsAsErrors was missing).
+    def test_an_existing_report_folder_needs_no_trailing_separator(self):
+        # Round 15: SourceDependenciesFile naming an existing folder without its final backslash is that folder.
+        with tempfile.TemporaryDirectory() as folder:
+            (pathlib.Path(folder) / "obj").mkdir()
+            units = boundary.compiled_units(folder, [{"Identity": "a.cpp", "ObjectFileName": "obj\\",
+                                                      "SourceDependenciesFile": "obj", "GenerateSourceDependencies": "true"}])
+            self.assertEqual(units[0].report, boundary.normalized(pathlib.Path(folder) / "obj" / "a.cpp.json"))
+
+    def test_a_manifest_is_read_as_written_and_a_missing_one_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            manifest = root / "recto-core.txt"
+            with self.assertRaisesRegex(boundary.EvidenceError, "no build manifest"):
+                boundary.read_manifest("recto-core", manifest)
+            manifest.write_text(f"project|{root / 'recto-core.vcxproj'}|obj\\|bin\\recto-core.lib\n"
+                                f"unit|{root / 'core.cpp'}||true|obj\\current-core.cpp.json|obj\\|Create|obj\\core.pch\n",
+                                encoding="utf-8")
+            project = boundary.read_manifest("recto-core", manifest)
+            self.assertEqual([u.report.name for u in project.units], ["current-core.cpp.json"])
+            self.assertEqual(project.produced, {boundary.normalized(root / "obj" / "core.pch")})
+            self.assertEqual(project.library, boundary.normalized(root / "bin" / "recto-core.lib"))
+
+    def test_build_ps1_checks_each_configuration_from_its_own_manifests(self):
         build = (REPO / "build" / "build.ps1").read_text(encoding="utf-8")
-        self.assertIn("$boundaryProperties = @($msbuildArgs | Where-Object { $_ -like '/p:*' } | ForEach-Object "
-                      "{ '--property'; $_.Substring(3) })", build)
-        self.assertIn("--configuration $cfg --platform $plat --vs $vs @boundaryProperties", build)
+        self.assertIn('$boundaryManifests = Join-Path $root "build\\boundary\\$plat\\$cfg"', build)
+        self.assertIn("if (Test-Path $boundaryManifests) { Remove-Item $boundaryManifests -Recurse -Force }", build)
+        self.assertLess(build.index("Remove-Item $boundaryManifests"), build.index("& $msbuild @msbuildArgs"))
+        self.assertIn("check-ui-boundary.py') --configuration $cfg --platform $plat --vs $vs", build)
 
     def test_win32_names_drop_trailing_dots_and_spaces(self):
         self.assertIn(boundary.win32_name("recto-ui.lib. "),
                       boundary.library_names([pathlib.Path(tempfile.gettempdir()) / "recto-ui.lib"]))
         self.assertIn("recto-ui", boundary.library_names([pathlib.Path(tempfile.gettempdir()) / "recto-ui.lib"]))
+
+    def test_directives_that_make_the_linker_resolve_a_symbol(self):
+        self.assertEqual(boundary.directive_symbols("/EXPORT:ui_bridge=?abi_version@core@recto@@YAHXZ"),
+                         {"?abi_version@core@recto@@YAHXZ"})
+        self.assertEqual(boundary.directive_symbols("/EXPORT:RectoThing,DATA"), {"RectoThing"})
+        self.assertEqual(boundary.directive_symbols("/INCLUDE:RectoThing"), {"RectoThing"})
+        self.assertEqual(boundary.directive_symbols("/ALTERNATENAME:a=RectoThing"), {"RectoThing"})
+        self.assertEqual(boundary.directive_symbols("/DEFAULTLIB:ole32.lib"), set())
+
+
+@unittest.skipUnless(sys.platform == "win32", "MSBuild is Windows-only (foundation plan D15)")
+class ManifestTargetTests(unittest.TestCase):
+    """The RectoBoundaryManifest target in Directory.Build.targets records what ClCompile was given."""
+
+    def test_metadata_a_target_changes_before_compiling_is_recorded(self):
+        # Round 15: a BeforeTargets="ClCompile" target moves the report; the manifest names the moved report, which is
+        # what the compiler would write, not the evaluated default.
+        try:
+            msbuild = boundary.visual_studio() / "MSBuild" / "Current" / "Bin" / "MSBuild.exe"
+        except boundary.EvidenceError as error:
+            self.fail(f"MSBuild is needed to prove the manifest target: {error}")
+        configuration = f"PlantedManifest{os.getpid()}"
+        manifests = REPO / "build" / "boundary" / "x64" / configuration
+        self.addCleanup(lambda: __import__("shutil").rmtree(manifests, ignore_errors=True))
+        with tempfile.TemporaryDirectory() as folder:
+            project = pathlib.Path(folder) / "recto-core.vcxproj"
+            project.write_text(f"""<Project DefaultTargets="Build">
+  <PropertyGroup><IntDir>$(MSBuildProjectDirectory)\\obj\\</IntDir><OutDir>$(MSBuildProjectDirectory)\\bin\\</OutDir>
+    <TargetName>recto-core</TargetName><TargetExt>.lib</TargetExt></PropertyGroup>
+  <ItemDefinitionGroup><ClCompile><ObjectFileName>$(IntDir)</ObjectFileName></ClCompile></ItemDefinitionGroup>
+  <ItemGroup><ClCompile Include="core.cpp" /></ItemGroup>
+  <Target Name="Redirect" BeforeTargets="ClCompile">
+    <ItemGroup><ClCompile><SourceDependenciesFile>$(IntDir)current-core.cpp.json</SourceDependenciesFile></ClCompile></ItemGroup>
+  </Target>
+  <Target Name="ClCompile" />
+  <Target Name="Build" DependsOnTargets="ClCompile" />
+  <Import Project="{REPO / 'Directory.Build.targets'}" />
+</Project>
+""", encoding="utf-8")
+            out = subprocess.run([str(msbuild), str(project), "-nologo", "-p:Platform=x64",
+                                  f"-p:Configuration={configuration}"], capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stdout[-2000:])
+            recorded = boundary.read_manifest("recto-core", manifests / "recto-core.txt")
+            self.assertEqual([u.report for u in recorded.units],
+                             [boundary.normalized(pathlib.Path(folder) / "obj" / "current-core.cpp.json")])
+            self.assertTrue(recorded.units[0].generates, "Directory.Build.targets turns report generation on")
 
 
 @unittest.skipUnless(sys.platform == "win32", "the C++ build tools are Windows-only (foundation plan D15)")
@@ -306,6 +370,43 @@ class CompilerReportedBoundaryTests(unittest.TestCase):
         needed = toolkit.undefined - toolkit.defined
         self.assertTrue(needed & engine.defined, "the fixture must leave the toolkit needing engine-defined symbols")
         self.assertEqual(boundary.symbol_crossings("recto-ui", toolkit, {"recto-core": engine}), [])
+
+    def test_a_toolkit_module_with_its_bmi_in_a_neutral_folder_is_caught_by_name(self):
+        # Round 15: the toolkit writes recto.ui.ifc to shared/, outside every forbidden folder; the engine imports it.
+        interface = self.root / "src/ui/toolkit.ixx"
+        interface.write_text("export module recto.ui;\nexport struct Widget { int width = 3; };\n", encoding="utf-8")
+        bmi = self.root / "shared/recto.ui.ifc"
+        toolkit_unit = self.compile(interface, self.root / "obj/ui", "/std:c++latest", "/interface", f"/ifcOutput{bmi}")
+        source = self.root / "src/core/w2.cpp"
+        source.write_text("import recto.ui;\nint w2() { return Widget{}.width; }\n", encoding="utf-8")
+        unit = self.compile(source, self.root / "obj/core", "/std:c++latest", "/reference", f"recto.ui={bmi}")
+        modules = boundary.provided_modules("recto-ui", [toolkit_unit])
+        self.assertEqual(modules, {"recto.ui"})
+        self.assertEqual(boundary.include_crossings("recto-core", [unit], self.forbidden, (), modules),
+                         [f"recto-core: {unit.source} imports module recto.ui, which the other side provides"])
+
+    def test_a_toolkit_pch_in_a_neutral_folder_is_caught_as_its_product(self):
+        # Round 15's ownership point for PCHs: the toolkit writes its PCH to shared/; the engine uses it.
+        (self.root / "shared/q.h").write_text("inline int q_thing() { return 6; }\n", encoding="utf-8")
+        (self.root / "src/ui/q.cpp").write_text('#include "q.h"\n', encoding="utf-8")
+        pch = self.root / "shared/q.pch"
+        self.compile(self.root / "src/ui/q.cpp", self.root / "obj/ui", f"/I{self.root / 'shared'}", "/Ycq.h", f"/Fp{pch}")
+        source = self.root / "src/core/q2.cpp"
+        source.write_text('#include "q.h"\nint q2() { return q_thing(); }\n', encoding="utf-8")
+        unit = self.compile(source, self.root / "obj/core", f"/I{self.root / 'shared'}", "/Yuq.h", f"/Fp{pch}")
+        self.assertEqual(boundary.include_crossings("recto-core", [unit], self.forbidden), [])
+        self.assertEqual(boundary.include_crossings("recto-core", [unit], self.forbidden, {pch}),
+                         [f"recto-core: {unit.source} used {boundary.normalized(pch)}"])
+
+    def test_an_export_directive_naming_an_engine_symbol_is_caught(self):
+        # Round 15: /EXPORT:alias=<engine symbol> makes LINK resolve the engine symbol with no UNDEF record.
+        engine, toolkit = self.tables(
+            "recto-core", "namespace recto::core { int abi_version() { return 7; } }\n",
+            '#define KIND linker\n#pragma comment(KIND, "/EXPORT:ui_bridge=?abi_version@core@recto@@YAHXZ")\n'
+            "namespace recto::ui { int nothing() { return 0; } }\n")
+        self.assertNotIn("?abi_version@core@recto@@YAHXZ", toolkit.defined)
+        self.assertEqual(boundary.symbol_crossings("recto-ui", toolkit, {"recto-core": engine}),
+                         ["recto-ui: needs ?abi_version@core@recto@@YAHXZ, which recto-core defines"])
 
     def test_a_stale_report_elsewhere_is_never_read_in_place_of_the_current_one(self):
         # Round 13: SourceDependenciesFile moved to 000-a.cpp.json; the old a.cpp.json (clean) is still in the folder.

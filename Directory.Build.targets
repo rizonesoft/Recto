@@ -33,6 +33,20 @@
       <SourceDependenciesFile>$(IntDir)</SourceDependenciesFile>
     </ClCompile>
   </ItemDefinitionGroup>
+  <!-- After ClCompile, each module project records what it compiled and with which settings: every ClCompile item with
+       the metadata cl was given (whatever a target changed before compiling), its IntDir and its library. The boundary
+       check reads this record instead of re-evaluating the project, so it checks the build that ran (D10 T01 §1).
+       build/build.ps1 empties build\boundary\<platform>\<configuration> before each configuration. -->
+  <Target Name="RectoBoundaryManifest" AfterTargets="ClCompile" Condition="'$(MSBuildProjectName)' == 'recto-pdf' Or '$(MSBuildProjectName)' == 'recto-core' Or '$(MSBuildProjectName)' == 'recto-services' Or '$(MSBuildProjectName)' == 'recto-ui'">
+    <ItemGroup>
+      <_RectoBoundaryLine Include="project|$(MSBuildProjectFullPath)|$(IntDir)|$(OutDir)$(TargetName)$(TargetExt)" />
+      <_RectoBoundaryLine Include="@(ClCompile->'unit|%(FullPath)|%(ExcludedFromBuild)|%(GenerateSourceDependencies)|%(SourceDependenciesFile)|%(ObjectFileName)|%(PrecompiledHeader)|%(PrecompiledHeaderOutputFile)')" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(MSBuildThisFileDirectory)build\boundary\$(Platform)\$(Configuration)\$(MSBuildProjectName).txt" Lines="@(_RectoBoundaryLine)" Overwrite="true" />
+    <ItemGroup>
+      <_RectoBoundaryLine Remove="@(_RectoBoundaryLine)" />
+    </ItemGroup>
+  </Target>
   <ItemDefinitionGroup Condition="($(MSBuildProjectName.StartsWith('recto-')) Or '$(MSBuildProjectName)' == 'Recto') And '$(EnableASAN)' == 'true' And '$(Platform)' == 'x64'">
     <ClCompile>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
