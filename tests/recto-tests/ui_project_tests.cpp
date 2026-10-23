@@ -18,6 +18,7 @@
 #include <array>
 #include <chrono>
 #include <cctype>
+#include <cstdint>
 #include <cwchar>
 #include <filesystem>
 #include <fstream>
@@ -424,15 +425,214 @@ HeaderNames header_names(const fs::path& root)
 	return names;
 }
 
+// One preprocessing token of a logical source ([lex.pptoken]), enough to find
+// linker directives: identifiers, string and character literals (with any
+// encoding prefix), numbers and punctuators. `at` indexes the logical text;
+// `line_start` is true for the first token of a line, where a directive's #
+// must stand.
+struct PpToken {
+	std::string text;
+	size_t at = 0;
+	bool literal = false;
+	bool line_start = false;
+};
+
+std::vector<PpToken> pp_tokens(const std::string& text)
+{
+	static const std::set<std::string> prefixes = {"l", "u", "u8", "lr", "ur", "u8r", "r"};
+	std::vector<PpToken> tokens;
+	bool line_start = true;
+	size_t i = 0;
+	const auto quoted = [&](size_t open) {
+		// From the opening quote at `open` to one past its closing quote (or the line end).
+		const char close = text[open];
+		size_t k = open + 1;
+		for (; k < text.size() && text[k] != close && text[k] != '\n'; ++k) {
+			if (text[k] == '\\' && k + 1 < text.size()) {
+				++k;
+			}
+		}
+		return k < text.size() && text[k] == close ? k + 1 : k;
+	};
+	while (i < text.size()) {
+		const char c = text[i];
+		if (c == '\n') {
+			line_start = true;
+			++i;
+			continue;
+		}
+		if (std::isspace(static_cast<unsigned char>(c)) != 0) {
+			++i;
+			continue;
+		}
+		PpToken token;
+		token.at = i;
+		token.line_start = line_start;
+		line_start = false;
+		size_t end = i + 1;
+		if (is_identifier_char(c) && std::isdigit(static_cast<unsigned char>(c)) == 0) {
+			while (end < text.size() && is_identifier_char(text[end])) {
+				++end;
+			}
+			if (end < text.size() && (text[end] == '"' || text[end] == '\'') && prefixes.contains(lower(text.substr(i, end - i)))) {
+				end = quoted(end);
+				token.literal = true;
+			}
+		} else if (std::isdigit(static_cast<unsigned char>(c)) != 0 || (c == '.' && i + 1 < text.size() && std::isdigit(static_cast<unsigned char>(text[i + 1])) != 0)) {
+			while (end < text.size() && (is_identifier_char(text[end]) || text[end] == '.' ||
+										 (text[end] == '\'' && end + 1 < text.size() && is_identifier_char(text[end + 1])))) {
+				++end;
+			}
+		} else if (c == '"' || c == '\'') {
+			end = quoted(i);
+			token.literal = true;
+		} else if (c == '%' && i + 1 < text.size() && text[i + 1] == ':') {
+			end = i + 2;
+		}
+		token.text = text.substr(i, end - i);
+		tokens.push_back(std::move(token));
+		i = end;
+	}
+	return tokens;
+}
+
+// Appends code point `code` to `out` as UTF-8.
+void append_utf8(std::string& out, uint32_t code)
+{
+	if (code < 0x80) {
+		out.push_back(static_cast<char>(code));
+	} else if (code < 0x800) {
+		out.push_back(static_cast<char>(0xC0 | (code >> 6)));
+		out.push_back(static_cast<char>(0x80 | (code & 0x3F)));
+	} else if (code < 0x10000) {
+		out.push_back(static_cast<char>(0xE0 | (code >> 12)));
+		out.push_back(static_cast<char>(0x80 | ((code >> 6) & 0x3F)));
+		out.push_back(static_cast<char>(0x80 | (code & 0x3F)));
+	} else {
+		out.push_back(static_cast<char>(0xF0 | (code >> 18)));
+		out.push_back(static_cast<char>(0x80 | ((code >> 12) & 0x3F)));
+		out.push_back(static_cast<char>(0x80 | ((code >> 6) & 0x3F)));
+		out.push_back(static_cast<char>(0x80 | (code & 0x3F)));
+	}
+}
+
+// The value of an ordinary string literal token ("..." with no prefix), escape
+// sequences decoded as the compiler decodes them ([lex.string], [lex.ccon]):
+// simple escapes, octal, \x hex, \u and \U. Nothing for any other token, or
+// for an escape this scan does not decode (the delimited \o{} \x{} \u{} \N{}
+// forms, or an unknown one), so such an argument is refused, never misread.
+std::optional<std::string> string_value(const PpToken& token)
+{
+	if (!token.literal || token.text.size() < 2 || token.text.front() != '"' || token.text.back() != '"') {
+		return std::nullopt;
+	}
+	const std::string_view body = std::string_view(token.text).substr(1, token.text.size() - 2);
+	static const std::string simple_from = "ntvbrfa\\?'\"";
+	static const std::string simple_to = "\n\t\v\b\r\f\a\\?'\"";
+	std::string out;
+	const auto is_octal = [](char c) { return c >= '0' && c <= '7'; };
+	for (size_t i = 0; i < body.size(); ++i) {
+		if (body[i] != '\\') {
+			out.push_back(body[i]);
+			continue;
+		}
+		if (++i >= body.size()) {
+			return std::nullopt;
+		}
+		const char e = body[i];
+		if (const size_t simple = simple_from.find(e); simple != std::string::npos) {
+			out.push_back(simple_to[simple]);
+		} else if (is_octal(e)) {
+			uint32_t value = 0;
+			size_t digits = 0;
+			for (; digits < 3 && i < body.size() && is_octal(body[i]); ++digits, ++i) {
+				value = value * 8 + static_cast<uint32_t>(body[i] - '0');
+			}
+			--i;
+			out.push_back(static_cast<char>(value & 0xFF));
+		} else if (e == 'x' || e == 'u' || e == 'U') {
+			const size_t want = e == 'u' ? 4 : e == 'U' ? 8 : 0;
+			if (i + 1 < body.size() && body[i + 1] == '{') {
+				return std::nullopt;
+			}
+			uint32_t value = 0;
+			size_t digits = 0;
+			for (; i + 1 < body.size() && std::isxdigit(static_cast<unsigned char>(body[i + 1])) != 0 && (want == 0 || digits < want); ++digits) {
+				++i;
+				const char h = static_cast<char>(std::tolower(static_cast<unsigned char>(body[i])));
+				value = value * 16 + static_cast<uint32_t>(h <= '9' ? h - '0' : h - 'a' + 10);
+				if (value > 0x10FFFF) {
+					return std::nullopt;
+				}
+			}
+			if (digits == 0 || (want != 0 && digits != want)) {
+				return std::nullopt;
+			}
+			if (e == 'x') {
+				out.push_back(static_cast<char>(value & 0xFF));
+			} else {
+				append_utf8(out, value);
+			}
+		} else {
+			return std::nullopt;
+		}
+	}
+	return out;
+}
+
+// A `comment(lib, ...)` or `comment(linker, ...)` pragma body starting at
+// tokens[i]: its kind, and its argument's value when the argument is one or
+// more ordinary string literals (adjacent literals concatenate), else nothing.
+struct LinkDirective {
+	std::string kind;
+	std::optional<std::string> value;
+	std::string spelling;
+};
+
+std::optional<LinkDirective> comment_directive(const std::vector<PpToken>& tokens, size_t i)
+{
+	if (i + 2 >= tokens.size() || lower(tokens[i].text) != "comment" || tokens[i + 1].text != "(") {
+		return std::nullopt;
+	}
+	LinkDirective directive{lower(tokens[i + 2].text), std::string(), std::string()};
+	if (directive.kind != "lib" && directive.kind != "linker") {
+		return std::nullopt;
+	}
+	size_t k = i + 3;
+	if (k >= tokens.size() || tokens[k].text != ",") {
+		directive.value.reset();
+		return directive;
+	}
+	bool plain = true;
+	size_t literals = 0;
+	for (++k; k < tokens.size() && tokens[k].text != ")"; ++k) {
+		directive.spelling += tokens[k].text;
+		const std::optional<std::string> value = string_value(tokens[k]);
+		if (value) {
+			*directive.value += *value;
+			++literals;
+		} else {
+			plain = false;
+		}
+	}
+	if (!plain || literals == 0) {
+		directive.value.reset();
+	}
+	return directive;
+}
+
 // Walks `dir` and reports each linker directive in source that could link a
-// library the module may not reach: `#pragma comment(lib, "...")` or
-// `comment(linker, "...")`, also spelled `__pragma(...)` or `_Pragma("...")`
-// ([cpp.pragma.op]). A directive links a library with no project setting at
-// all, so the MSBuild check (tests/scripts/test_ui_module_boundary.py) cannot
-// see it. Its argument must be one plain string literal that names none of
-// `forbidden_stems` (library names without .lib, lower case); any other
-// argument (a macro, concatenated literals) hides its target from a text scan
-// and is refused outright, like a computed include.
+// library the module may not reach: `comment(lib, ...)` or
+// `comment(linker, ...)` in a `#pragma` (or `%:pragma`) directive, a
+// `__pragma(...)` or a `_Pragma("...")` ([cpp.pragma.op]). A directive links
+// a library with no project setting at all, so the MSBuild check
+// (tests/scripts/test_ui_module_boundary.py) cannot see it. Directives are
+// found as tokens, so text inside an ordinary string literal is never one, and
+// the argument's literals are decoded as the compiler decodes them, so an
+// escape spells no name past the check. The decoded name may not be one of
+// `forbidden_stems` (library names without .lib, lower case); an argument that
+// is not plain string literals (a macro, a raw string, an escape not decoded
+// here) hides its target and is refused outright, like a computed include.
 std::vector<Finding> scan_link_directives(const fs::path& dir, const std::vector<std::string>& forbidden_stems)
 {
 	std::vector<Finding> findings;
@@ -444,43 +644,56 @@ std::vector<Finding> scan_link_directives(const fs::path& dir, const std::vector
 			continue;
 		}
 		const LogicalSource source = logical_source(read_text(entry.path()));
-		// Lower case, white space dropped, and \" read as " so the _Pragma
-		// spelling's inner literal looks like the #pragma one.
-		std::string compact;
-		std::vector<size_t> compact_line;
-		for (size_t i = 0; i < source.text.size(); ++i) {
-			const char c = source.text[i];
-			if (std::isspace(static_cast<unsigned char>(c)) != 0 || (c == '\\' && i + 1 < source.text.size() && source.text[i + 1] == '"')) {
-				continue;
+		const std::vector<PpToken> tokens = pp_tokens(source.text);
+		const auto report = [&](size_t at, const LinkDirective& directive) {
+			const size_t line = source.line.empty() ? 1 : source.line[std::min(at, source.line.size() - 1)];
+			if (!directive.value) {
+				findings.push_back({entry.path(), line, "computed linker directive " + directive.spelling});
+				return;
 			}
-			compact.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-			compact_line.push_back(source.line[i]);
-		}
-		for (const std::string_view kind : {std::string_view("comment(lib,"), std::string_view("comment(linker,")}) {
-			for (size_t at = compact.find(kind); at != std::string::npos; at = compact.find(kind, at + 1)) {
-				const size_t open = at + kind.size();
-				const size_t close = compact.find(')', open);
-				const std::string argument = compact.substr(open, close == std::string::npos ? std::string::npos : close - open);
-				const bool plain = argument.size() >= 2 && argument.front() == '"' && argument.back() == '"' &&
-					argument.find('"', 1) == argument.size() - 1;
-				if (!plain) {
-					findings.push_back({entry.path(), compact_line[at], "computed linker directive " + argument});
-					continue;
+			const std::string named = lower(*directive.value);
+			// comment(lib) names one library file (the linker adds .lib); a
+			// comment(linker) option such as /DEFAULTLIB: may name it anywhere.
+			const std::vector<std::string> parts = split_path(named);
+			std::string library = parts.empty() ? std::string() : parts.back();
+			if (library.ends_with(".lib")) {
+				library.resize(library.size() - 4);
+			}
+			const bool hit = std::any_of(forbidden_stems.begin(), forbidden_stems.end(), [&](const std::string& stem) {
+				return directive.kind == "lib" ? library == stem : named.find(stem) != std::string::npos;
+			});
+			if (hit) {
+				findings.push_back({entry.path(), line, "linker directive " + *directive.value});
+			}
+		};
+		for (size_t j = 0; j < tokens.size(); ++j) {
+			const PpToken& token = tokens[j];
+			const bool open = j + 1 < tokens.size() && tokens[j + 1].text == "(";
+			std::optional<LinkDirective> directive;
+			if ((token.text == "#" || token.text == "%:") && token.line_start && j + 1 < tokens.size() && tokens[j + 1].text == "pragma") {
+				directive = comment_directive(tokens, j + 2);
+			} else if (token.text == "__pragma" && open) {
+				directive = comment_directive(tokens, j + 2);
+			} else if (token.text == "_Pragma" && open && j + 2 < tokens.size() && tokens[j + 2].literal) {
+				// Destringize ([cpp.pragma.op]): drop an L prefix and the quotes, read
+				// \" as " and \\ as \, and lex the result as the pragma's tokens.
+				std::string body = tokens[j + 2].text;
+				if (body.starts_with("L")) {
+					body.erase(0, 1);
 				}
-				const std::string named = argument.substr(1, argument.size() - 2);
-				// comment(lib) names one library file (the linker adds .lib); a
-				// comment(linker) option such as /DEFAULTLIB: may name it anywhere.
-				const std::vector<std::string> parts = split_path(named);
-				std::string library = parts.empty() ? std::string() : parts.back();
-				if (library.ends_with(".lib")) {
-					library.resize(library.size() - 4);
+				if (body.size() >= 2 && body.front() == '"' && body.back() == '"') {
+					std::string pragma;
+					for (size_t k = 1; k + 1 < body.size(); ++k) {
+						if (body[k] == '\\' && k + 2 < body.size() && (body[k + 1] == '"' || body[k + 1] == '\\')) {
+							++k;
+						}
+						pragma.push_back(body[k]);
+					}
+					directive = comment_directive(pp_tokens(pragma), 0);
 				}
-				const bool hit = std::any_of(forbidden_stems.begin(), forbidden_stems.end(), [&](const std::string& stem) {
-					return kind == "comment(lib," ? library == stem : named.find(stem) != std::string::npos;
-				});
-				if (hit) {
-					findings.push_back({entry.path(), compact_line[at], "linker directive " + named});
-				}
+			}
+			if (directive) {
+				report(token.at, *directive);
 			}
 		}
 	}
@@ -825,8 +1038,16 @@ RECTO_UI_TEST(Project, IncludeBoundary)
 		"#pragma comment(linker, \"/DEFAULTLIB:recto-ui\")\n"
 		"#define UI_LIB \"recto-ui.lib\"\n"
 		"#pragma comment(lib, UI_LIB)\n"
-		"// #pragma comment(lib, \"recto-ui.lib\")\n");
-	write_text(scratch.path() / "src" / "ui" / "planted_pragma_ui.cpp", "#pragma comment(lib, \"recto-pdf.lib\")\n");
+		"// #pragma comment(lib, \"recto-ui.lib\")\n"
+		// Escapes and adjacent literals are decoded as the compiler decodes them.
+		"#pragma comment(lib, \"recto-\\165i.lib\")\n"
+		"#pragma comment(lib, \"recto-\" \"\\x75i\")\n"
+		// Directive text inside an ordinary string literal is data, not a directive.
+		"[[maybe_unused]] constexpr const char* help = \"comment(lib, windowscodecs.lib)\";\n"
+		"[[maybe_unused]] constexpr const char* text = \"#pragma comment(lib, \\\"recto-ui.lib\\\")\";\n"
+		"#pragma comment(lib, \"recto-\\u0075i\")\n");
+	write_text(scratch.path() / "src" / "ui" / "planted_pragma_ui.cpp",
+		"#pragma comment(lib, \"recto-pdf.lib\")\n[[maybe_unused]] constexpr const char* help = \"comment(lib, windowscodecs.lib)\";\n");
 	// The digraph spelling of #include ([lex.digraph]).
 	write_text(scratch.path() / "src" / "services" / "planted_digraph.cpp", "%:include \"../ui/include/recto/ui/ui.h\"\n");
 	// `//` inside the header name of a toolkit file that reaches an engine header.
@@ -847,7 +1068,8 @@ RECTO_UI_TEST(Project, IncludeBoundary)
 		"planted_core.cpp:1", "planted_digits.cpp:2", "planted_angle.cpp:1", "planted_services.h:2",
 		"planted_fragment.inc:1", "planted_digraph.cpp:1", "planted_angle_ui.cpp:1", "planted_utf16.cpp:1",
 		"planted_ppnum.cpp:3", "planted_unicode.cpp:3", "planted_cr.cpp:2", "planted_pragma.cpp:2", "planted_pragma.cpp:3",
-		"planted_pragma.cpp:4", "planted_pragma.cpp:5", "planted_pragma.cpp:7", "planted_pragma_ui.cpp:1"};
+		"planted_pragma.cpp:4", "planted_pragma.cpp:5", "planted_pragma.cpp:7", "planted_pragma.cpp:9",
+		"planted_pragma.cpp:10", "planted_pragma.cpp:13", "planted_pragma_ui.cpp:1"};
 	EXPECT_EQ(caught, expected) << describe(planted);
 }
 
