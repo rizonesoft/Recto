@@ -459,3 +459,45 @@ OVERALL: needs-attention
 - Finding 2 (P1): correct. Overrides were charged one estimated table per component while each QCD and QCC marker stored its own, in vectors that grew geometrically. `parse_qcd_body` now reserves each table exactly (its entry count follows from the body length), and every QCD and QCC parse, main or tile-part, charges what it stored; the tile being decoded charges one table per component. `JpxCodingParametersBounded` adds 4,096 tiles each with a 97-entry QCD and QCC: refused at 3.6 MiB (accepted on `38a4ba4`), decoded at 8 MiB.
 - Finding 3 (P1): correct. With `/Rows` unknown the CCITT output grows, and the old block is live until the new one is filled. A growth now gets only what the old block leaves of the output budget. `CcittAndMmrBounds` adds the reviewer's two white 126,000-pixel rows: refused at 1 MiB (accepted on `38a4ba4`), decoded at 2 MiB.
 - Rounds 4, 6 and 7 each found the next missing or short estimate in the image decoders' memory accounting. The skill's rule for a unit patched three rounds running applies: the owning-layer fix is to draw every decode allocation from one budgeted `std::pmr::memory_resource`, so the ceiling holds by construction. That is filed as `D06 T05 §40` (with a `Deferred:` line on this section), and the round prompts from round 8 state the contract: per-site estimates are early refusals, the resource is the ceiling, and an estimate short by a constant factor is `§40`'s, not a new P1, unless it lets allocation grow without bound.
+
+## Round 8: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-23T08:56:31Z
+- Effort: xhigh
+- Lines: 28
+- Digest: 420f4e1031c189dc
+
+## adversarial: needs-attention
+
+Reproductions below are source-derived, not newly executed.
+
+1. **[P1] Oversized Crypt names become successful Identity decodes.** `src/pdf/filters.cpp:9604` converts names longer than 127 bytes into `PdfString()`. The Crypt consumer at `:9405` treats a non-name as an omitted `/Name` and passes bytes through. Reproduce with `/Filter [/Crypt]`, `/DecodeParms [10 0 R]`, and a resolver returning `<< /Name /<128 ASCII X characters> >>`. Decoding reports success with unchanged bytes. The equivalent direct parameter dictionary returns `UnsupportedFeature`. The reduction must preserve refusal, rather than change the requested filter to Identity.
+
+## consistency: approve
+
+No additional findings.
+
+## integration: needs-attention
+
+2. **[P2] Indirect null JBIG2 globals reject an otherwise decodable image.** `src/pdf/filters.cpp:5978` resolves `/JBIG2Globals` but immediately requires a stream at `:5980`. Reproduce using the first standalone fixture in `PdfFilters.Jbig2Decode`, adding `/JBIG2Globals 42 0 R` and a resolver returning `PdfNull{}`. It returns `DamagedFormat`; omitting the entry or supplying direct null decodes successfully.
+
+## source-defect: needs-attention
+
+Finding 2 violates dictionary null semantics: a null value is equivalent to an omitted entry, including when reached through an indirect reference. This is separate from the filed JBIG2 codec gaps. [PDF Reference, §3.2.8](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.5_v6.pdf#page=61)
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: advisory
+
+Historical logs support the claimed 169-test build passes, 75-test ASan pass and round-7 mutation failures. Independently, existing binaries passed 25 selected Debug tests and 26 selected Release tests, with Release reporting ASan enabled. Graph validation and plan checks passed. No rebuild or new native reproduction was performed. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 8
+
+- Finding 1 (P1): correct, and a regression from my round 6 reduction: an over-long name became an empty string, which the `/Crypt` reader takes as an omitted `/Name` and so as Identity. An over-long name now stays a name (the empty name, which no filter, crypt filter or parameter value is called), so every reader refuses it as it refuses the original. `ParameterResolutionCopiesOnlyWhatFiltersRead` adds the reviewer's case, referenced and direct: both `UnsupportedFeature`.
+- Finding 2 (P2): correct. An indirect `/JBIG2Globals` resolving to null is now an absent entry (ISO 32000-1 section 7.3.9), as a direct null is. `PdfFilters.Jbig2Decode` decodes its first fixture with `/JBIG2Globals 42 0 R` resolving to null, to the same bitmap.

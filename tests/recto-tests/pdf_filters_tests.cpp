@@ -361,6 +361,31 @@ TEST(PdfFilters, ParameterResolutionCopiesOnlyWhatFiltersRead)
 		}
 	}
 
+	// A referenced /Crypt parameter dictionary whose /Name is over-long is still refused as a non-Identity crypt filter,
+	// as the same dictionary given directly is, not turned into an Identity pass-through.
+	const std::string long_name(128u, 'X');
+	const IndirectObjectResolver crypt_parms = [&long_name](IndirectRef ref) -> PdfResult<PdfValue> {
+		if (ref.obj_num != 10u) {
+			return PdfError{ErrorCode::DamagedFormat, "missing object"};
+		}
+		PdfDict d;
+		d.set(PdfName::from_decoded("Name"), PdfValue(PdfName::from_decoded(long_name)));
+		return PdfValue(std::move(d));
+	};
+	const std::vector<uint8_t> plain = {'A', 'B'};
+	PdfDict crypt_indirect;
+	crypt_indirect.set(PdfName::from_decoded("Filter"), PdfValue(PdfArray{PdfValue(PdfName::from_decoded("Crypt"))}));
+	crypt_indirect.set(PdfName::from_decoded("DecodeParms"), PdfValue(PdfArray{PdfValue(IndirectRef{10u, 0u})}));
+	RECTO_EXPECT_ERR(
+		decode_stream(plain, crypt_indirect, kMaxDecodedStreamBytes, &crypt_parms), ErrorCode::UnsupportedFeature);
+	PdfDict long_name_parms;
+	long_name_parms.set(PdfName::from_decoded("Name"), PdfValue(PdfName::from_decoded(long_name)));
+	PdfDict crypt_direct;
+	crypt_direct.set(PdfName::from_decoded("Filter"), PdfValue(PdfArray{PdfValue(PdfName::from_decoded("Crypt"))}));
+	crypt_direct.set(PdfName::from_decoded("DecodeParms"), PdfValue(PdfArray{PdfValue(std::move(long_name_parms))}));
+	RECTO_EXPECT_ERR(
+		decode_stream(plain, crypt_direct, kMaxDecodedStreamBytes, &crypt_parms), ErrorCode::UnsupportedFeature);
+
 	PdfDict wrong_type;
 	wrong_type.set(PdfName::from_decoded("Predictor"), PdfValue(IndirectRef{12u, 0u}));
 	PdfDict wrong;
@@ -1617,6 +1642,15 @@ TEST(PdfFilters, Jbig2Decode)
 		ASSERT_EQ(dec->size(), 32u);
 		EXPECT_EQ((*dec)[0], 0xF0u);
 		EXPECT_EQ((*dec)[1], 0x0Fu);
+
+		// An indirect /JBIG2Globals that resolves to null is an absent entry, as a direct null is (ISO 32000-1
+		// section 7.3.9): the image decodes the same.
+		const IndirectObjectResolver to_null = [](IndirectRef) -> PdfResult<PdfValue> { return PdfValue(PdfNull{}); };
+		PdfDict null_globals;
+		null_globals.set("JBIG2Globals", PdfValue(IndirectRef{42u, 0u}));
+		auto with_null_globals = decode_jbig2(stream, &null_globals, kMaxDecodedStreamBytes, &to_null);
+		RECTO_ASSERT_OK(with_null_globals);
+		EXPECT_EQ(*with_null_globals, *dec);
 		EXPECT_EQ((*dec)[4], 0xF8u);
 		EXPECT_EQ((*dec)[5], 0x07u);
 		EXPECT_EQ((*dec)[8], 0xFFu);

@@ -5977,16 +5977,19 @@ PdfResult<std::vector<uint8_t>> decode_jbig2(
 					}
 					RECTO_PDF_TRY(const PdfValue resolved_val, (*resolver)(*gref));
 					const PdfStream* resolved_stm = resolved_val.as_stream();
-					if (resolved_stm == nullptr) {
+					if (resolved_val.is_null()) {
+						// A reference to null is an absent entry (ISO 32000-1 section 7.3.9), as a direct null is.
+					} else if (resolved_stm == nullptr) {
 						return make_filter_error(
 							ErrorCode::DamagedFormat,
 							DiagnosticId::DamagedStream,
 							"Resolved /JBIG2Globals indirect object is not a PDF stream");
+					} else {
+						RECTO_PDF_TRY(
+							decoded_globals,
+							decode_jbig2_globals_stream(*resolved_stm, effective_limit, resolver));
+						globals_span = decoded_globals;
 					}
-					RECTO_PDF_TRY(
-						decoded_globals,
-						decode_jbig2_globals_stream(*resolved_stm, effective_limit, resolver));
-					globals_span = decoded_globals;
 				} else {
 					return make_filter_error(
 						ErrorCode::DamagedFormat,
@@ -9605,6 +9608,10 @@ constexpr size_t kMaxCopiedNameBytes = 127;
 				(target_name.has_value() && target_name->size() <= kMaxCopiedNameBytes)) {
 				RECTO_PDF_TRY_REF(value_copy, target.deep_clone());
 				copy.set(key, std::move(value_copy));
+			} else if (target_name.has_value()) {
+				// An over-long name stays a name, so a reader that refuses an unknown name (a /Crypt /Name, say)
+				// still refuses it: the empty name names no filter, crypt filter or parameter value.
+				copy.set(key, PdfValue(PdfName::from_decoded("")));
 			} else {
 				copy.set(key, PdfValue(PdfString()));
 			}
