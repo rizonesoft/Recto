@@ -25,6 +25,7 @@ CODE_SPAN = re.compile(r"`(?P<span>[^`]+)`")
 RETIRED_WORD = re.compile(r"(?<![A-Za-z0-9_.])(?P<name>" + "|".join(RETIRED) + r")(?![A-Za-z0-9_])")
 NOTE_MARKER = re.compile(r"\*\*Corrected \d{4}-\d{2}-\d{2}:\*\*\s*")
 SECTION = re.compile(r"^## (?P<number>\d+)\. ")
+FENCE = re.compile(r"^(?P<marker>`{3,}|~{3,})(?P<rest>.*)$")
 # The section that retired them lists them in its own context.
 EXEMPT_SECTION = ("01-engine/TODO-02-actor-and-render.md", "22")
 
@@ -84,20 +85,27 @@ def unknown_names(todo_root: pathlib.Path, known: set[str]) -> list[str]:
             continue
         relative = path.relative_to(todo_root).as_posix()
         section = None
-        fenced = False
+        fenced = None  # the opening fence while inside a fenced block
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if heading := SECTION.match(line):
                 section = heading.group("number")
             for match in QUALIFIED.finditer(line):
                 if match.group("scope") or match.group("name") not in known:
                     found.append(f"{relative}:{number}: {match.group(0)}")
-            if line.lstrip().startswith(("```", "~~~")):  # a backtick or tilde fence (CommonMark)
-                fenced = not fenced
-                continue
+            if fence := FENCE.match(line.lstrip()):
+                marker = fence.group("marker")
+                if fenced is None:
+                    fenced = marker  # the opening fence: its character and length
+                    continue
+                # A closing fence uses the opening one's character, at least as many times, and nothing after it
+                # (CommonMark 4.5); any other fence line is code inside the block.
+                if marker[0] == fenced[0] and len(marker) >= len(fenced) and not fence.group("rest").strip():
+                    fenced = None
+                    continue
             if (relative, section) == EXEMPT_SECTION:
                 continue
             # A fenced block is code from end to end; elsewhere only inline code spans are.
-            spans = [without_notes(line)] if fenced else [m.group("span") for m in CODE_SPAN.finditer(without_notes(line))]
+            spans = [without_notes(line)] if fenced is not None else [m.group("span") for m in CODE_SPAN.finditer(without_notes(line))]
             for span in spans:
                 for match in RETIRED_WORD.finditer(span):
                     found.append(f"{relative}:{number}: `{match.group('name')}`")
