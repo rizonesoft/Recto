@@ -2816,7 +2816,8 @@ private:
 	size_t effective_limit,
 	MqDecoder* shared_mq = nullptr,
 	std::vector<MqContext>* shared_cx = nullptr,
-	size_t* inout_mmr_bit_offset = nullptr)
+	size_t* inout_mmr_bit_offset = nullptr,
+	const Jbig2Bitmap* skip = nullptr)
 {
 	RECTO_PDF_TRY(Jbig2Bitmap bm, Jbig2Bitmap::create(width, height, 0u, effective_limit));
 
@@ -2876,7 +2877,9 @@ private:
 			}
 		}
 		if (inout_mmr_bit_offset != nullptr) {
-			*inout_mmr_bit_offset = reader.bit_pos;
+			// Each MMR invocation ends on a byte boundary (T.88 6.2.6), so the next one (a halftone's next gray-scale
+			// bitplane) starts at the following byte.
+			*inout_mmr_bit_offset = (reader.bit_pos + 7u) & ~size_t{7u};
 		}
 		return bm;
 	}
@@ -2939,6 +2942,9 @@ private:
 		const int32_t iy = static_cast<int32_t>(y);
 		for (uint32_t x = 0; x < width; ++x) {
 			const int32_t ix = static_cast<int32_t>(x);
+			if (skip != nullptr && skip->get_pixel(ix, iy) != 0u) {
+				continue; // USESKIP: a skipped pixel is 0 and not decoded (T.88 6.2.5.7)
+			}
 			uint32_t ctx = 0u;
 			if (gb_template == 0u) {
 				ctx |= static_cast<uint32_t>(bm.get_pixel(ix - 1, iy)) << 0u;
@@ -3493,6 +3499,13 @@ struct Jbig2DecoderState {
 	std::unordered_map<uint32_t, Jbig2Bitmap> aux_regions;
 	std::unordered_map<uint32_t, std::vector<Jbig2HuffEntry>> custom_tables;
 	size_t total_allocated_bytes{0};
+	// A page of unknown height (0xFFFFFFFF, T.88 7.4.8.2) grows as its stripes arrive, and its final height is one past
+	// the last row an End-of-Stripe segment names (T.88 7.4.10).
+	bool page_height_unknown{false};
+	uint64_t end_of_stripe_rows{0};
+	// The generic and refinement arithmetic contexts a symbol dictionary retained (flag bit 9, T.88 7.4.2.2), by its
+	// segment number, for a later dictionary that uses them (flag bit 8).
+	std::unordered_map<uint32_t, std::pair<std::vector<MqContext>, std::vector<MqContext>>> retained_sd_contexts;
 
 	[[nodiscard]] size_t remaining_limit(size_t effective_limit) const noexcept
 	{
@@ -3515,6 +3528,29 @@ struct Jbig2DecoderState {
 				offset);
 		}
 		total_allocated_bytes += bytes;
+		return {};
+	}
+
+	// Extends a page of unknown height to `rows`, filled with the page's default pixel and charged to the budget; a
+	// page of known height is left as it is (regions outside it are clipped).
+	[[nodiscard]] PdfResult<void> grow_page_to(uint64_t rows, size_t effective_limit, size_t offset)
+	{
+		if (!page_height_unknown || !page_bitmap.has_value() || rows <= page_bitmap->height) {
+			return {};
+		}
+		Jbig2Bitmap& page = *page_bitmap;
+		if (page.stride == 0u || rows > std::numeric_limits<uint32_t>::max() ||
+			rows > static_cast<uint64_t>(effective_limit) / page.stride) {
+			return make_filter_error(
+				ErrorCode::DecompressionLimitExceeded,
+				DiagnosticId::DecompressionLimitExceeded,
+				"JBIG2 striped page height exceeds maximum decoded stream byte ceiling",
+				offset);
+		}
+		const size_t new_bytes = static_cast<size_t>(rows) * page.stride;
+		RECTO_PDF_RETURN_IF_ERROR(account_bytes(new_bytes - page.data.size(), effective_limit, offset));
+		page.data.resize(new_bytes, default_pixel != 0u ? uint8_t{0xFFu} : uint8_t{0x00u});
+		page.height = static_cast<uint32_t>(rows);
 		return {};
 	}
 };
@@ -3702,8 +3738,10 @@ struct Jbig2DecoderState {
 			uint32_t page_h = read_u32_be(seg_data.data() + 4u);
 			const uint8_t page_flags = seg_data[16u];
 			const uint16_t striping = read_u16_be(seg_data.data() + 17u);
-			if (page_h == 0xFFFFFFFFu) {
-				page_h = static_cast<uint32_t>(striping & 0x7FFFu);
+			state.page_height_unknown = page_h == 0xFFFFFFFFu;
+			state.end_of_stripe_rows = 0u;
+			if (state.page_height_unknown) {
+				page_h = static_cast<uint32_t>(std::max<uint16_t>(1u, striping & 0x7FFFu)); // grows with the stripes
 			}
 			state.default_pixel = static_cast<uint8_t>((page_flags >> 2u) & 0x01u);
 			state.default_comb_op = static_cast<uint8_t>((page_flags >> 3u) & 0x03u);
@@ -3790,6 +3828,10 @@ struct Jbig2DecoderState {
 						state.account_bytes(jbig2_footprint(pbm), effective_limit, seg_header_start));
 					state.page_bitmap = std::move(pbm);
 				}
+				RECTO_PDF_RETURN_IF_ERROR(state.grow_page_to(
+					static_cast<uint64_t>(std::max<int64_t>(0, static_cast<int64_t>(reg_y) + rbm.height)),
+					effective_limit,
+					seg_header_start));
 				state.page_bitmap->composite(rbm, reg_x, reg_y, reg_comb_op);
 			}
 		} else if (seg_type == 0u) {
@@ -3866,6 +3908,30 @@ struct Jbig2DecoderState {
 				std::vector<MqContext> gb_cx(
 					(sd_template == 0u) ? 65536u : ((sd_template == 1u) ? 8192u : 1024u));
 				std::vector<MqContext> gr_cx((sd_r_template == 0u) ? 8192u : 1024u);
+				// Bitmap coding context used (flag bit 8, T.88 7.4.2.2): the generic and refinement statistics start from
+				// those the last referred-to dictionary retained, instead of fresh.
+				if ((sd_flags & 0x0100u) != 0u) {
+					const auto retained = std::find_if(ref_segments.rbegin(), ref_segments.rend(), [&](uint32_t ref_id) {
+						return state.retained_sd_contexts.contains(ref_id);
+					});
+					if (retained == ref_segments.rend()) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"JBIG2 symbol dictionary uses bitmap coding contexts no referred dictionary retained",
+							seg_header_start);
+					}
+					const auto& [kept_gb, kept_gr] = state.retained_sd_contexts.at(*retained);
+					if (kept_gb.size() != gb_cx.size() || kept_gr.size() != gr_cx.size()) {
+						return make_filter_error(
+							ErrorCode::DamagedFormat,
+							DiagnosticId::DamagedStream,
+							"JBIG2 symbol dictionary uses retained contexts of a different template",
+							seg_header_start);
+					}
+					gb_cx = kept_gb;
+					gr_cx = kept_gr;
+				}
 				Jbig2ArithIntDecoder iadh;
 				Jbig2ArithIntDecoder iadw;
 				Jbig2ArithIntDecoder iaex;
@@ -4139,6 +4205,12 @@ struct Jbig2DecoderState {
 						}
 						++decoded_new;
 					}
+				}
+				// Bitmap coding context retained (flag bit 9): keep the statistics for a later dictionary.
+				if ((sd_flags & 0x0200u) != 0u) {
+					RECTO_PDF_RETURN_IF_ERROR(state.account_bytes(
+						(gb_cx.size() + gr_cx.size()) * sizeof(MqContext), effective_limit, seg_header_start));
+					state.retained_sd_contexts[seg_num] = {gb_cx, gr_cx};
 				}
 
 				std::vector<Jbig2Bitmap> exported;
@@ -5409,6 +5481,10 @@ struct Jbig2DecoderState {
 						state.account_bytes(jbig2_footprint(pbm), effective_limit, seg_header_start));
 					state.page_bitmap = std::move(pbm);
 				}
+				RECTO_PDF_RETURN_IF_ERROR(state.grow_page_to(
+					static_cast<uint64_t>(std::max<int64_t>(0, static_cast<int64_t>(reg_y) + rbm.height)),
+					effective_limit,
+					seg_header_start));
 				state.page_bitmap->composite(rbm, reg_x, reg_y, reg_comb_op);
 			}
 		} else if (seg_type == 40u || seg_type == 42u || seg_type == 43u) {
@@ -5526,6 +5602,10 @@ struct Jbig2DecoderState {
 						state.account_bytes(jbig2_footprint(pbm), effective_limit, seg_header_start));
 					state.page_bitmap = std::move(pbm);
 				}
+				RECTO_PDF_RETURN_IF_ERROR(state.grow_page_to(
+					static_cast<uint64_t>(std::max<int64_t>(0, static_cast<int64_t>(reg_y) + rbm.height)),
+					effective_limit,
+					seg_header_start));
 				state.page_bitmap->composite(rbm, reg_x, reg_y, reg_comb_op);
 			}
 		} else if (seg_type == 16u) {
@@ -5618,6 +5698,7 @@ struct Jbig2DecoderState {
 			const uint8_t ht_template = static_cast<uint8_t>((ht_flags >> 1u) & 0x03u);
 			const uint8_t ht_comb_op = static_cast<uint8_t>((ht_flags >> 4u) & 0x07u);
 			const uint8_t ht_def_pixel = static_cast<uint8_t>((ht_flags >> 7u) & 0x01u);
+			const bool ht_enable_skip = (ht_flags & 0x08u) != 0u;
 			const uint32_t hgw = read_u32_be(seg_data.data() + 18u);
 			const uint32_t hgh = read_u32_be(seg_data.data() + 22u);
 			const int32_t hgx = read_i32_be(seg_data.data() + 26u);
@@ -5659,6 +5740,31 @@ struct Jbig2DecoderState {
 			const std::span<const int8_t> ht_at_span(
 				ht_at_coords,
 				(ht_template == 0u) ? 8u : 2u);
+			// HENABLESKIP: grid cells whose pattern would land wholly outside the region are skipped (T.88 6.6.5.1); the
+			// gray-scale bitplanes are decoded with that mask (USESKIP), so they spend no symbols on those cells. With
+			// MMR the flag must be 0 (T.88 7.4.5.1.1), and is ignored.
+			std::optional<Jbig2Bitmap> ht_skip;
+			if (ht_enable_skip && !ht_mmr) {
+				RECTO_PDF_TRY(
+					Jbig2Bitmap mask,
+					Jbig2Bitmap::create(hgw, hgh, 0u, state.remaining_limit(effective_limit)));
+				const int64_t hpw = static_cast<int64_t>(patterns.front().width);
+				const int64_t hph = static_cast<int64_t>(patterns.front().height);
+				for (uint32_t mg = 0; mg < hgh; ++mg) {
+					for (uint32_t ng = 0; ng < hgw; ++ng) {
+						const int64_t gx = (static_cast<int64_t>(hgx) + static_cast<int64_t>(mg) * hry +
+											   static_cast<int64_t>(ng) * hrx) >> 8;
+						const int64_t gy = (static_cast<int64_t>(hgy) + static_cast<int64_t>(mg) * hrx -
+											   static_cast<int64_t>(ng) * hry) >> 8;
+						if (gx + hpw <= 0 || gx >= static_cast<int64_t>(reg_w) || gy + hph <= 0 ||
+							gy >= static_cast<int64_t>(reg_h)) {
+							mask.set_pixel(ng, mg, 1u);
+						}
+					}
+				}
+				temp_plane_bytes += mask.data.size();
+				ht_skip = std::move(mask);
+			}
 			if (!ht_mmr) {
 				if (ht_body.empty()) {
 					return make_filter_error(
@@ -5685,7 +5791,9 @@ struct Jbig2DecoderState {
 							ht_body,
 							plane_limit,
 							&mq,
-							&cx));
+							&cx,
+							/*inout_mmr_bit_offset=*/nullptr,
+							ht_skip.has_value() ? &*ht_skip : nullptr));
 					temp_plane_bytes += plane.data.size();
 					bitplanes.push_back(std::move(plane));
 				}
@@ -5757,6 +5865,10 @@ struct Jbig2DecoderState {
 						state.account_bytes(jbig2_footprint(pbm), effective_limit, seg_header_start));
 					state.page_bitmap = std::move(pbm);
 				}
+				RECTO_PDF_RETURN_IF_ERROR(state.grow_page_to(
+					static_cast<uint64_t>(std::max<int64_t>(0, static_cast<int64_t>(reg_y) + rbm.height)),
+					effective_limit,
+					seg_header_start));
 				state.page_bitmap->composite(rbm, reg_x, reg_y, reg_comb_op);
 			}
 		} else if (seg_type == 53u) {
@@ -5872,6 +5984,12 @@ struct Jbig2DecoderState {
 			if (seg_type == 51u) {
 				break;
 			}
+			if (seg_type == 50u && seg_data.size() >= 4u && state.page_height_unknown) {
+				// End of Stripe names the stripe's last row (T.88 7.4.10): the page reaches at least that far.
+				const uint64_t rows = static_cast<uint64_t>(read_u32_be(seg_data.data())) + 1u;
+				RECTO_PDF_RETURN_IF_ERROR(state.grow_page_to(rows, effective_limit, seg_header_start));
+				state.end_of_stripe_rows = std::max(state.end_of_stripe_rows, rows);
+			}
 		} else {
 			return make_filter_error(
 				ErrorCode::DamagedFormat,
@@ -5922,6 +6040,11 @@ PdfResult<std::vector<uint8_t>> decode_jbig2(
 		// Per ISO 32000-1 section 7.4.7, JBIG2 treats 1 as black and 0 as white,
 		// whereas PDF DeviceGray treats 0 as black and 1 as white: invert bits.
 		Jbig2Bitmap& page = *state.page_bitmap;
+		if (state.page_height_unknown && state.end_of_stripe_rows > 0u && state.end_of_stripe_rows < page.height) {
+			// The last End-of-Stripe fixes the height of a page that started unknown (T.88 7.4.10).
+			page.height = static_cast<uint32_t>(state.end_of_stripe_rows);
+			page.data.resize(static_cast<size_t>(page.height) * page.stride);
+		}
 		const uint32_t rem = page.width & 7u;
 		const uint8_t tail_mask = (rem != 0u)
 			? static_cast<uint8_t>(0xFFu << (8u - rem))

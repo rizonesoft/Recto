@@ -1528,7 +1528,8 @@ private:
 	std::vector<uint8_t> bits_;
 };
 
-// Encodes a template-2 arithmetic Generic Region into `enc`.
+// Encodes a template-2 arithmetic Generic Region into `enc`. With `skip`, a pixel whose skip entry is set is not
+// coded (USESKIP, T.88 6.2.5.7) and must be 0 in `pixels_row_major`.
 void encode_test_generic_region_t2(
 	TestMqEncoder& enc,
 	std::vector<TestMqContext>& gb_cx,
@@ -1536,7 +1537,8 @@ void encode_test_generic_region_t2(
 	uint32_t h,
 	int8_t atx0,
 	int8_t aty0,
-	const std::vector<uint8_t>& pixels_row_major)
+	const std::vector<uint8_t>& pixels_row_major,
+	const std::vector<uint8_t>* skip = nullptr)
 {
 	auto get_px = [&](int32_t x, int32_t y) -> uint32_t {
 		if (x < 0 || x >= static_cast<int32_t>(w) || y < 0 || y >= static_cast<int32_t>(h)) {
@@ -1548,6 +1550,9 @@ void encode_test_generic_region_t2(
 		const int32_t iy = static_cast<int32_t>(y);
 		for (uint32_t x = 0; x < w; ++x) {
 			const int32_t ix = static_cast<int32_t>(x);
+			if (skip != nullptr && (*skip)[static_cast<size_t>(y) * w + x] != 0u) {
+				continue;
+			}
 			uint32_t ctx = 0u;
 			ctx |= get_px(ix - 1, iy) << 0u;
 			ctx |= get_px(ix - 2, iy) << 1u;
@@ -1833,10 +1838,11 @@ TEST(PdfFilters, Jbig2Decode)
 
 		// Segment 4: MMR Halftone Region (2 bitplanes: plane 1 = 1 [black], plane 0 = 0 [white] -> Gray 10_2 = binary 3)
 		{
-			// Plane 1 (1x1 = 1): H(001) + W0(00110101) + B1(010) + EOFB
+			// Plane 1 (1x1 = 1): H(001) + W0(00110101) + B1(010) + EOFB, padded from 38 to 40 bits: each MMR plane
+			// ends on a byte boundary (T.88 6.2.6).
 			// Plane 0 (1x1 = 0): V0(1) + EOFB
 			const auto grid_mmr_2planes = pack_bitstring(
-				std::string("001") + "00110101" + "010" + "000000000001000000000001" +
+				std::string("001") + "00110101" + "010" + "000000000001000000000001" + "00" +
 				"1" + "000000000001000000000001");
 			std::vector<uint8_t> ht_payload;
 			append_u32_be(ht_payload, 4u); // width = 4
@@ -4277,6 +4283,190 @@ TEST(PdfFilters, CcittAndMmrBounds)
 		RECTO_EXPECT_ERR(decode_jbig2(make_wide(200000u), nullptr, 1u << 20u), ErrorCode::DecompressionLimitExceeded);
 		RECTO_EXPECT_ERR(decode_jbig2(make_wide(131000u), nullptr, 1u << 20u), ErrorCode::DecompressionLimitExceeded);
 		RECTO_ASSERT_OK(decode_jbig2(make_wide(8192u), nullptr, 1u << 20u));
+	}
+}
+
+// JBIG2 conformance (D06 T05 §31): a page of unknown height grows with its stripes (T.88 7.4.8.2, 7.4.10); each MMR
+// halftone bitplane starts on a byte boundary (T.88 6.2.6); HENABLESKIP skips grid cells outside the region without
+// spending symbols on them (T.88 6.6.5.1); and a symbol dictionary can use the contexts another retained (7.4.2.2).
+TEST(PdfFilters, Jbig2StripesAlignmentAndSkip)
+{
+	const std::vector<uint8_t> header = {0x97u, 0x4Au, 0x42u, 0x32u, 0x0Du, 0x0Au, 0x1Au, 0x0Au, 0x01u, 0x00u, 0x00u, 0x00u, 0x01u};
+	const auto mmr_region = [](int32_t y, const std::string& bits) {
+		std::vector<uint8_t> payload;
+		append_u32_be(payload, 8u);
+		append_u32_be(payload, 1u);
+		append_u32_be(payload, 0u);
+		append_u32_be(payload, static_cast<uint32_t>(y));
+		payload.push_back(0u);
+		payload.push_back(0x01u); // MMR
+		const auto mmr = pack_bitstring(bits);
+		payload.insert(payload.end(), mmr.begin(), mmr.end());
+		return payload;
+	};
+
+	// 1. An 8-pixel page of unknown height, striped one row at a time: a black row then a white row.
+	{
+		std::vector<uint8_t> stream = header;
+		std::vector<uint8_t> page_info;
+		append_u32_be(page_info, 8u);
+		append_u32_be(page_info, 0xFFFFFFFFu);
+		append_u32_be(page_info, 72u);
+		append_u32_be(page_info, 72u);
+		page_info.push_back(0u);
+		append_u16_be(page_info, 0x8001u); // striped, at most one row per stripe
+		append_jbig2_segment(stream, 0u, 48u, {}, 1u, page_info);
+		const std::string eofb = "000000000001000000000001";
+		append_jbig2_segment(stream, 1u, 38u, {}, 1u, mmr_region(0, "001" + std::string("00110101") + "000101" + eofb));
+		std::vector<uint8_t> stripe0;
+		append_u32_be(stripe0, 0u);
+		append_jbig2_segment(stream, 2u, 50u, {}, 1u, stripe0);
+		append_jbig2_segment(stream, 3u, 38u, {}, 1u, mmr_region(1, "1" + eofb));
+		std::vector<uint8_t> stripe1;
+		append_u32_be(stripe1, 1u);
+		append_jbig2_segment(stream, 4u, 50u, {}, 1u, stripe1);
+		append_jbig2_segment(stream, 5u, 49u, {}, 1u, {});
+		auto dec = decode_jbig2(stream);
+		RECTO_ASSERT_OK(dec);
+		EXPECT_EQ(*dec, (std::vector<uint8_t>{0x00u, 0xFFu})); // black row, white row (PDF gray: 0 is black)
+	}
+
+	// The 4x2 patterns of the Jbig2Decode fixture: patterns 0 to 2 white, pattern 3 black.
+	const auto pattern_dict = [](std::vector<uint8_t>& stream) {
+		const auto pat_mmr = pack_bitstring(std::string("001") + "001000" + "011" + "11" + "000000000001000000000001");
+		std::vector<uint8_t> pd;
+		pd.push_back(0x01u);
+		pd.push_back(4u);
+		pd.push_back(2u);
+		append_u32_be(pd, 3u);
+		pd.insert(pd.end(), pat_mmr.begin(), pat_mmr.end());
+		append_jbig2_segment(stream, 1u, 16u, {}, 1u, pd);
+	};
+	const auto halftone_page = [&](uint8_t ht_flags, uint32_t hgw, uint16_t hrx, const std::vector<uint8_t>& data) {
+		std::vector<uint8_t> stream = header;
+		append_jbig2_segment(stream, 0u, 48u, {}, 1u, make_jbig2_page_info_payload(4u, 2u, 0u));
+		pattern_dict(stream);
+		std::vector<uint8_t> ht;
+		append_u32_be(ht, 4u);
+		append_u32_be(ht, 2u);
+		append_u32_be(ht, 0u);
+		append_u32_be(ht, 0u);
+		ht.push_back(0u);
+		ht.push_back(ht_flags);
+		append_u32_be(ht, hgw);
+		append_u32_be(ht, 1u);
+		append_u32_be(ht, 0u);
+		append_u32_be(ht, 0u);
+		append_u16_be(ht, hrx);
+		append_u16_be(ht, 0u);
+		ht.insert(ht.end(), data.begin(), data.end());
+		const uint8_t ref1[1] = {1u};
+		append_jbig2_segment(stream, 2u, 22u, ref1, 1u, ht);
+		append_jbig2_segment(stream, 3u, 49u, {}, 1u, {});
+		return stream;
+	};
+	const std::vector<uint8_t> all_black = {0x00u, 0x00u};
+
+	// 2. MMR bitplanes selecting pattern 3 (gray 10): byte-aligned planes decode; the unaligned form does not.
+	const std::string eofb = "000000000001000000000001";
+	const std::string plane1 = std::string("001") + "00110101" + "010" + eofb; // 38 bits
+	const std::string plane0 = "1" + eofb;
+	auto aligned = decode_jbig2(halftone_page(0x01u, 1u, 0x0400u, pack_bitstring(plane1 + "00" + plane0)));
+	RECTO_ASSERT_OK(aligned);
+	EXPECT_EQ(*aligned, all_black);
+	auto unaligned = decode_jbig2(halftone_page(0x01u, 1u, 0x0400u, pack_bitstring(plane1 + plane0)));
+	EXPECT_FALSE(unaligned.has_value() && *unaligned == all_black);
+
+	// 3. HENABLESKIP: a 16x2 region with a 4x2 grid at a 4-pixel pitch, whose second grid row (y = 4) lies outside
+	// the region and is skipped. Row 0 selects patterns 3, 2, 3, 1 (gray 10, 11, 10, 01), so black at x 0..3 and
+	// 8..11; a decoder that spends symbols on the skipped row reads gray plane 0 out of step.
+	{
+		TestMqEncoder enc;
+		std::vector<TestMqContext> cx(1024u);
+		const std::vector<uint8_t> skip = {0u, 0u, 0u, 0u, 1u, 1u, 1u, 1u};
+		encode_test_generic_region_t2(enc, cx, 4u, 2u, 2, -1, {1u, 1u, 1u, 0u, 0u, 0u, 0u, 0u}, &skip); // plane 1
+		encode_test_generic_region_t2(enc, cx, 4u, 2u, 2, -1, {0u, 1u, 0u, 1u, 0u, 0u, 0u, 0u}, &skip); // plane 0
+		const auto data = enc.finish();
+		std::vector<uint8_t> stream = header;
+		append_jbig2_segment(stream, 0u, 48u, {}, 1u, make_jbig2_page_info_payload(16u, 2u, 0u));
+		pattern_dict(stream);
+		std::vector<uint8_t> ht;
+		append_u32_be(ht, 16u);
+		append_u32_be(ht, 2u);
+		append_u32_be(ht, 0u);
+		append_u32_be(ht, 0u);
+		ht.push_back(0u);
+		ht.push_back(0x04u | 0x08u); // HTTEMPLATE = 2, HENABLESKIP
+		append_u32_be(ht, 4u);       // HGW
+		append_u32_be(ht, 2u);       // HGH
+		append_u32_be(ht, 0u);
+		append_u32_be(ht, 0u);
+		append_u16_be(ht, 0x0400u); // HRX: 4 pixels per cell across, and 4 rows down per grid row
+		append_u16_be(ht, 0u);
+		ht.insert(ht.end(), data.begin(), data.end());
+		const uint8_t ref1[1] = {1u};
+		append_jbig2_segment(stream, 2u, 22u, ref1, 1u, ht);
+		append_jbig2_segment(stream, 3u, 49u, {}, 1u, {});
+		auto skipped = decode_jbig2(stream);
+		RECTO_ASSERT_OK(skipped);
+		EXPECT_EQ(*skipped, (std::vector<uint8_t>{0x0Fu, 0x0Fu, 0x0Fu, 0x0Fu})); // black 0..3 and 8..11, both rows
+	}
+
+	// 4. Dictionary B uses the generic contexts dictionary A retained: B's symbol is coded with A's statistics.
+	{
+		const std::vector<uint8_t> sym_a = {1u, 1u, 0u, 0u, 1u, 1u, 0u, 0u};
+		const std::vector<uint8_t> sym_b = {0u, 0u, 1u, 1u, 0u, 0u, 1u, 1u};
+		std::vector<TestMqContext> gb_cx(1024u);
+		const auto dictionary = [&](const std::vector<uint8_t>& sym, uint16_t flags, uint32_t ex_skip) {
+			TestMqEncoder enc;
+			std::array<TestMqContext, 512> iadh{};
+			std::array<TestMqContext, 512> iadw{};
+			std::array<TestMqContext, 512> iaex{};
+			enc.encode_arith_int(iadh, 2);
+			enc.encode_arith_int(iadw, 4);
+			encode_test_generic_region_t2(enc, gb_cx, 4u, 2u, 2, -1, sym); // gb_cx carries on from the last dictionary
+			enc.encode_arith_int(iadw, 0, /*is_oob=*/true);
+			enc.encode_arith_int(iaex, static_cast<int32_t>(ex_skip));
+			enc.encode_arith_int(iaex, 1);
+			const auto arith = enc.finish();
+			std::vector<uint8_t> payload;
+			append_u16_be(payload, static_cast<uint16_t>(0x0800u | flags));
+			payload.push_back(2u);
+			payload.push_back(static_cast<uint8_t>(-1));
+			append_u32_be(payload, 1u);
+			append_u32_be(payload, 1u);
+			payload.insert(payload.end(), arith.begin(), arith.end());
+			return payload;
+		};
+		std::vector<uint8_t> stream = header;
+		append_jbig2_segment(stream, 0u, 0u, {}, 1u, dictionary(sym_a, 0x0200u, 0u)); // retains
+		const uint8_t ref_a[1] = {0u};
+		append_jbig2_segment(stream, 1u, 0u, ref_a, 1u, dictionary(sym_b, 0x0100u, 1u)); // uses; exports B's own
+		append_jbig2_segment(stream, 2u, 48u, {}, 1u, make_jbig2_page_info_payload(4u, 2u, 0u));
+		TestMqEncoder tr_enc;
+		std::array<TestMqContext, 512> iadt{};
+		std::array<TestMqContext, 512> iafs{};
+		std::vector<TestMqContext> iaid(2u);
+		tr_enc.encode_arith_int(iadt, 0);
+		tr_enc.encode_arith_int(iadt, 0);
+		tr_enc.encode_arith_int(iafs, 0);
+		tr_enc.encode_iaid(iaid, 1u, 0u);
+		const auto tr_arith = tr_enc.finish();
+		std::vector<uint8_t> tr;
+		append_u32_be(tr, 4u);
+		append_u32_be(tr, 2u);
+		append_u32_be(tr, 0u);
+		append_u32_be(tr, 0u);
+		tr.push_back(0u);
+		append_u16_be(tr, 0x0010u); // REFCORNER = TOPLEFT
+		append_u32_be(tr, 1u);
+		tr.insert(tr.end(), tr_arith.begin(), tr_arith.end());
+		const uint8_t ref_b[1] = {1u};
+		append_jbig2_segment(stream, 3u, 6u, ref_b, 1u, tr);
+		append_jbig2_segment(stream, 4u, 49u, {}, 1u, {});
+		auto dec = decode_jbig2(stream);
+		RECTO_ASSERT_OK(dec);
+		EXPECT_EQ(*dec, (std::vector<uint8_t>{0xC0u, 0xC0u})); // [0 0 1 1]: white white black black
 	}
 }
 

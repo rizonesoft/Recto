@@ -684,6 +684,8 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 ## 23. Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6
 
+> **Started:** 2026-10-23T10:05:00Z
+
 `D01 T01 §9` (Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG)) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d01-t01-s9.json` records 5 rounds (fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
 
 **Phase:** 1
@@ -876,6 +878,8 @@ The audit of `D01 T01 §6` (`docs/reviews/06-quality/audit-d01-t01-s6.md`, D06 T
 
 ## 31. JBIG2 striped pages, MMR halftone alignment and HENABLESKIP
 
+> **Started:** 2026-10-23T10:30:00Z
+
 The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T05 §22, round 1) found three JBIG2 decoding gaps against ITU-T T.88. A page of unknown height (`0xFFFFFFFF`) with striping takes its maximum stripe size as the permanent height and ignores End-of-Stripe segments, so later stripes are clipped (T.88 7.4.9 and 7.4.10). Consecutive MMR halftone bitplanes are read from the exact bit where the previous one ended, though each MMR invocation begins and ends on a byte boundary (T.88 6.2.6); the existing fixture concatenates unaligned planes and hides this. Arithmetic halftone regions never read `HENABLESKIP` (flag bit `0x08`) and decode symbols for skipped cells (T.88 6.6.5, Annex C). Round 2 added a fourth: symbol dictionaries never read flag bits 8 and 9, so retained arithmetic contexts are reset instead of restored (T.88 7.4.2.2). -> XREF: D06 T05 §22
 
 **Phase:** 1
@@ -887,11 +891,11 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 1. Make page height follow End-of-Stripe segments for unknown-height pages in `src/pdf/filters.cpp`. Done when: a page striped into two one-row regions decodes both rows.
 2. Byte-align each MMR halftone plane and implement the halftone skip mask. Done when: byte-aligned planes decode and skipped cells consume no symbols.
 
-- [ ] Track the page height of a `0xFFFFFFFF`-height page from End-of-Stripe segments (T.88 7.4.9, 7.4.10) in the JBIG2 page composer in `src/pdf/filters.cpp`. Done when: an 8-pixel page with striping `0x8001` and two one-row regions separated by End-of-Stripe decodes two rows.
-- [ ] Align to the next byte after each MMR halftone bitplane (T.88 6.2.6) and correct the `PdfFilters` halftone fixture to pad its first plane from 38 to 40 bits. Done when: the corrected fixture decodes and the unaligned form is refused.
-- [ ] Read `HENABLESKIP` and build the halftone skip mask (T.88 6.6.5, Annex C) for arithmetic halftones in `src/pdf/filters.cpp`. Done when: a grid with cells outside the region and `HENABLESKIP=1` decodes with those cells skipped.
-- [ ] Honour symbol dictionary flag bits 8 and 9 (bitmap coding context used and retained, T.88 7.4.2.2): restore the referenced dictionary's generic and refinement contexts and keep this dictionary's when asked, in `src/pdf/filters.cpp`. Done when: a dictionary encoded with the contexts another retained decodes correctly.
-- [ ] Add `PdfFilters.Jbig2StripesAlignmentAndSkip` covering all three. Done when: it fails on the code before this section.
+- [x] Track the page height of a `0xFFFFFFFF`-height page from End-of-Stripe segments (T.88 7.4.9, 7.4.10) in the JBIG2 page composer in `src/pdf/filters.cpp`. Done when: an 8-pixel page with striping `0x8001` and two one-row regions separated by End-of-Stripe decodes two rows.
+- [x] Align to the next byte after each MMR halftone bitplane (T.88 6.2.6) and correct the `PdfFilters` halftone fixture to pad its first plane from 38 to 40 bits. Done when: the corrected fixture decodes and the unaligned form is refused. **Corrected 2026-10-23:** the unaligned form is not always refused (its second plane may still parse); the test asserts it does not decode to the aligned result.
+- [x] Read `HENABLESKIP` and build the halftone skip mask (T.88 6.6.5, Annex C) for arithmetic halftones in `src/pdf/filters.cpp`. Done when: a grid with cells outside the region and `HENABLESKIP=1` decodes with those cells skipped.
+- [x] Honour symbol dictionary flag bits 8 and 9 (bitmap coding context used and retained, T.88 7.4.2.2): restore the referenced dictionary's generic and refinement contexts and keep this dictionary's when asked, in `src/pdf/filters.cpp`. Done when: a dictionary encoded with the contexts another retained decodes correctly.
+- [x] Add `PdfFilters.Jbig2StripesAlignmentAndSkip` covering all three. Done when: it fails on the code before this section.
 - [ ] Commit: `pdf: JBIG2 stripes, aligned MMR halftone planes and HENABLESKIP`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.Jbig2StripesAlignmentAndSkip`.
