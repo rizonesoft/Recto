@@ -6,6 +6,14 @@
 #include "recto_pdf.h"
 #include "test_support.h"
 
+#ifndef NOMINMAX
+#define NOMINMAX // std::min and std::max, not the Windows macros
+#endif
+#include <windows.h>
+#include <objbase.h>
+#include <wincodec.h>
+#include <wrl/client.h>
+
 #include <array>
 #include <chrono>
 #include <atomic>
@@ -4850,53 +4858,156 @@ TEST(PdfFilters, JpxPathPinned)
 	RECTO_ASSERT_OK(decode_jpx_image(jp2));
 }
 
-// WIC failures are classified by their HRESULT (D06 T05 §37): out of memory, an absent codec or pixel format, an abort,
-// or data the codec rejected, each with the HRESULT in hex; and only a codec or data failure hands a JPX stream to the
-// native decoder, never a resource failure.
+// A baseline RGB JPEG of `width` x `height` mid-gray pixels, encoded by WIC's own JPEG encoder (so the decoder under
+// test meets an encoder it did not write). Empty if this machine cannot encode one.
+std::vector<uint8_t> make_wic_rgb_jpeg(uint32_t width, uint32_t height)
+{
+	using Microsoft::WRL::ComPtr;
+	(void)CoInitializeEx(nullptr, COINIT_MULTITHREADED); // S_FALSE or a different mode already set is fine here
+	ComPtr<IWICImagingFactory> factory;
+	if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)))) {
+		return {};
+	}
+	const UINT stride = width * 3u;
+	std::vector<uint8_t> source(static_cast<size_t>(stride) * height, 0x80u);
+	ComPtr<IWICBitmap> bitmap;
+	ComPtr<IStream> stream;
+	ComPtr<IWICBitmapEncoder> encoder;
+	ComPtr<IWICBitmapFrameEncode> frame;
+	ComPtr<IPropertyBag2> options;
+	WICPixelFormatGUID format = GUID_WICPixelFormat24bppBGR;
+	if (FAILED(factory->CreateBitmapFromMemory(width, height, GUID_WICPixelFormat24bppBGR, stride,
+			static_cast<UINT>(source.size()), source.data(), &bitmap)) ||
+		FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stream)) ||
+		FAILED(factory->CreateEncoder(GUID_ContainerFormatJpeg, nullptr, &encoder)) ||
+		FAILED(encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache)) ||
+		FAILED(encoder->CreateNewFrame(&frame, &options)) || FAILED(frame->Initialize(options.Get())) ||
+		FAILED(frame->SetSize(width, height)) || FAILED(frame->SetPixelFormat(&format)) ||
+		FAILED(frame->WriteSource(bitmap.Get(), nullptr)) || FAILED(frame->Commit()) || FAILED(encoder->Commit())) {
+		return {};
+	}
+	HGLOBAL global = nullptr;
+	if (FAILED(GetHGlobalFromStream(stream.Get(), &global))) {
+		return {};
+	}
+	STATSTG stat{};
+	if (FAILED(stream->Stat(&stat, STATFLAG_NONAME))) {
+		return {};
+	}
+	const auto* bytes = static_cast<const uint8_t*>(GlobalLock(global));
+	std::vector<uint8_t> jpeg(bytes, bytes + static_cast<size_t>(stat.cbSize.QuadPart));
+	GlobalUnlock(global);
+	return jpeg;
+}
+
+// A camera-sized photo decodes under the default ceiling (D06 T05 §38): the stream filter builds one buffer, the
+// 81,000,000 bytes of RGB samples, not the samples plus an RGBA and a BGRA copy (297,000,000 bytes, refused before).
+TEST(PdfFilters, DctLargePhotoWithinCeiling)
+{
+	constexpr uint32_t kWidth = 6000u;
+	constexpr uint32_t kHeight = 4500u;
+	constexpr size_t kOneBuffer = size_t{kWidth} * kHeight * 3u;
+	const std::vector<uint8_t> jpeg = make_wic_rgb_jpeg(kWidth, kHeight);
+	ASSERT_FALSE(jpeg.empty()) << "WIC could not encode the test JPEG";
+	PdfDict dct;
+	dct.set("Filter", PdfValue(PdfName("DCTDecode")));
+	const test::ScopedHeapMeter meter;
+	auto decoded = decode_stream(jpeg, dct);
+	const size_t peak = meter.peak_bytes();
+	RECTO_ASSERT_OK(decoded);
+	EXPECT_EQ(decoded->size(), kOneBuffer);
+	EXPECT_EQ((*decoded)[0], 0x80u);
+	if (test::ScopedHeapMeter::available()) {
+		EXPECT_LT(peak, kOneBuffer + kOneBuffer / 10u) << "peak " << peak;
+	}
+
+	// One requested layout is one buffer: RGBA alone has no samples or BGRA beside it.
+	auto rgba_only = decode_dct_image(jpeg, nullptr, kMaxDecodedStreamBytes, DctOutput::Rgba);
+	RECTO_ASSERT_OK(rgba_only);
+	EXPECT_EQ(rgba_only->rgba_pixels.size(), size_t{kWidth} * kHeight * 4u);
+	EXPECT_TRUE(rgba_only->pixels.empty());
+	EXPECT_TRUE(rgba_only->bgra_pixels.empty());
+}
+
+// WIC failures are classified by their HRESULT at every step (D06 T05 §37): out of memory, a cancel, a missing
+// capability, rejected data, or a failure of WIC itself, each with its own code, words that match it and the HRESULT in
+// hex; only a missing capability or rejected data hands a JPX stream to the native decoder, and when that fails too
+// its error still names WIC's cause.
 TEST(PdfFilters, WicFailureClasses)
 {
-	constexpr int32_t kOutOfMemory = static_cast<int32_t>(0x8007000Eu);       // E_OUTOFMEMORY
-	constexpr int32_t kAbort = static_cast<int32_t>(0x80004004u);             // E_ABORT
-	constexpr int32_t kNoComponent = static_cast<int32_t>(0x88982F50u);       // WINCODEC_ERR_COMPONENTNOTFOUND
-	constexpr int32_t kBadImage = static_cast<int32_t>(0x88982F60u);          // WINCODEC_ERR_BADIMAGE
-	constexpr int32_t kNoPixelFormat = static_cast<int32_t>(0x88982F80u);     // WINCODEC_ERR_UNSUPPORTEDPIXELFORMAT
+	constexpr int32_t kOutOfMemory = static_cast<int32_t>(0x8007000Eu);     // E_OUTOFMEMORY
+	constexpr int32_t kAbort = static_cast<int32_t>(0x80004004u);           // E_ABORT
+	constexpr int32_t kNoComponent = static_cast<int32_t>(0x88982F50u);     // WINCODEC_ERR_COMPONENTNOTFOUND
+	constexpr int32_t kUnsupportedOp = static_cast<int32_t>(0x88982F81u);   // WINCODEC_ERR_UNSUPPORTEDOPERATION
+	constexpr int32_t kNoPixelFormat = static_cast<int32_t>(0x88982F80u);   // WINCODEC_ERR_UNSUPPORTEDPIXELFORMAT
+	constexpr int32_t kBadImage = static_cast<int32_t>(0x88982F60u);        // WINCODEC_ERR_BADIMAGE
+	constexpr int32_t kAccessDenied = static_cast<int32_t>(0x80070005u);    // E_ACCESSDENIED
 	struct Case {
 		int32_t hresult;
 		ErrorCode code;
 		std::string_view hex;
+		std::string_view words;
 	};
-	const std::array<Case, 5> cases = {{
-		{kOutOfMemory, ErrorCode::OutOfMemory, "0x8007000E"},
-		{kNoComponent, ErrorCode::UnsupportedFeature, "0x88982F50"},
-		{kNoPixelFormat, ErrorCode::UnsupportedFeature, "0x88982F80"},
-		{kAbort, ErrorCode::Cancelled, "0x80004004"},
-		{kBadImage, ErrorCode::DamagedFormat, "0x88982F60"},
+	const std::array<Case, 7> cases = {{
+		{kOutOfMemory, ErrorCode::OutOfMemory, "0x8007000E", "out of memory"},
+		{kAbort, ErrorCode::Cancelled, "0x80004004", "cancelled"},
+		{kNoComponent, ErrorCode::UnsupportedFeature, "0x88982F50", "no Windows Imaging Component codec"},
+		{kUnsupportedOp, ErrorCode::UnsupportedFeature, "0x88982F81", "no Windows Imaging Component codec"},
+		{kNoPixelFormat, ErrorCode::UnsupportedFeature, "0x88982F80", "no Windows Imaging Component codec"},
+		{kBadImage, ErrorCode::DamagedFormat, "0x88982F60", "rejected the image data"},
+		{kAccessDenied, ErrorCode::InternalError, "0x80070005", "Windows Imaging Component failed"},
 	}};
 	const auto jpeg = make_minimal_jpeg_8x8_cmyk();
 	PdfDict dct;
 	dct.set("Filter", PdfValue(PdfName("DCTDecode")));
-	for (const Case& c : cases) {
-		const detail::ScopedWicDecoderFailure fail(c.hresult);
-		auto dec = decode_stream(jpeg, dct);
-		ASSERT_FALSE(dec.has_value()) << c.hex;
-		EXPECT_EQ(dec.error().code, c.code) << c.hex;
-		EXPECT_NE(dec.error().message.view().find(c.hex), std::string_view::npos) << dec.error().message.view();
+	for (const detail::WicStage stage :
+		{detail::WicStage::Factory, detail::WicStage::CreateDecoder, detail::WicStage::GetFrame, detail::WicStage::CopyPixels}) {
+		for (const Case& c : cases) {
+			const detail::ScopedWicFailure fail(stage, c.hresult);
+			auto dec = decode_stream(jpeg, dct);
+			ASSERT_FALSE(dec.has_value()) << c.hex << " at stage " << static_cast<int>(stage);
+			const std::string_view message = dec.error().message.view();
+			EXPECT_EQ(dec.error().code, c.code) << message;
+			EXPECT_NE(message.find(c.hex), std::string_view::npos) << message;
+			EXPECT_NE(message.find(c.words), std::string_view::npos) << message;
+			if (c.code != ErrorCode::DamagedFormat) {
+				EXPECT_EQ(message.find("reject"), std::string_view::npos) << message; // no blame on the file
+				EXPECT_EQ(message.find("corrupt"), std::string_view::npos) << message;
+			}
+		}
 	}
-	RECTO_ASSERT_OK(decode_stream(jpeg, dct)); // the scope ended, so WIC decodes again
+	RECTO_ASSERT_OK(decode_stream(jpeg, dct)); // the scopes ended, so WIC decodes again
 
 	const std::array<uint8_t, 12> rgb = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200};
 	const auto jp2 = make_genuine_jp2_2x2_rgb(rgb, true);
-	for (const auto& [hresult, code] : {std::pair{kOutOfMemory, ErrorCode::OutOfMemory}, std::pair{kAbort, ErrorCode::Cancelled}}) {
-		const detail::ScopedWicDecoderFailure fail(hresult);
-		auto img = decode_jpx_image(jp2);
-		ASSERT_FALSE(img.has_value());
-		EXPECT_EQ(img.error().code, code); // returned, not retried natively
+	for (const detail::WicStage stage : {detail::WicStage::Factory, detail::WicStage::CreateDecoder}) {
+		for (const Case& c : cases) {
+			const detail::ScopedWicFailure fail(stage, c.hresult);
+			const uint64_t native_before = detail::native_jpx_attempts();
+			auto img = decode_jpx_image(jp2);
+			const bool hands_over = c.code == ErrorCode::UnsupportedFeature || c.code == ErrorCode::DamagedFormat;
+			EXPECT_EQ(detail::native_jpx_attempts() - native_before, hands_over ? 1u : 0u) << c.hex;
+			if (hands_over) {
+				RECTO_ASSERT_OK(img); // the native decoder took over
+				EXPECT_EQ(img->pixels, std::vector<uint8_t>(rgb.begin(), rgb.end()));
+			} else {
+				ASSERT_FALSE(img.has_value()) << c.hex;
+				EXPECT_EQ(img.error().code, c.code) << c.hex;
+				EXPECT_NE(img.error().message.view().find(c.hex), std::string_view::npos) << img.error().message.view();
+			}
+		}
 	}
-	for (const int32_t hresult : {kNoComponent, kBadImage}) {
-		const detail::ScopedWicDecoderFailure fail(hresult);
-		auto img = decode_jpx_image(jp2);
-		RECTO_ASSERT_OK(img); // the native decoder took over
-		EXPECT_EQ(img->pixels, std::vector<uint8_t>(rgb.begin(), rgb.end()));
+
+	// WIC rejects the data and the native decoder rejects the stream too: the native error stands, naming WIC's cause.
+	{
+		const auto bad_progression = make_genuine_jp2_2x2_rgb(rgb, true, 5u, 1u);
+		const detail::ScopedWicFailure fail(detail::WicStage::CreateDecoder, kBadImage);
+		auto img = decode_jpx_image(bad_progression);
+		ASSERT_FALSE(img.has_value());
+		EXPECT_EQ(img.error().code, ErrorCode::DamagedFormat);
+		const std::string_view message = img.error().message.view();
+		EXPECT_NE(message.find("progression order"), std::string_view::npos) << message;
+		EXPECT_NE(message.find("0x88982F60"), std::string_view::npos) << message;
 	}
 }
 

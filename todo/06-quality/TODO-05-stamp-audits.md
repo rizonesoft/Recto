@@ -1034,6 +1034,8 @@ The completion review of the `D01 T01 §8` audit (`docs/reviews/06-quality/audit
 
 ## 38. DCT decodes only the pixel representation the caller asked for
 
+> **Started:** 2026-10-23T13:39Z
+
 The completion review of the `D01 T01 §8` audit (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T05 §22, gap 15) found that a DCT decode keeps the raw samples, an RGBA copy and a BGRA copy at once: 11 bytes per pixel for RGB. A 6000 x 4500 camera photo needs 297,000,000 bytes and is refused under the default 256 MiB ceiling, although one display buffer of 108,000,000 bytes fits. -> XREF: D06 T05 §22
 
 **Phase:** 1
@@ -1045,9 +1047,9 @@ The completion review of the `D01 T01 §8` audit (`docs/reviews/06-quality/audit
 1. Let the caller name the representation it needs in `decode_dct_image` in `src/pdf/filters.h` and `src/pdf/filters.cpp`. Done when: only that buffer is allocated.
 2. Prove it on a large photo. Done when: the photo decodes within the default ceiling.
 
-- [ ] Add the requested representation (raw samples, RGBA or BGRA) to the DCT decode parameters and allocate only that buffer in `src/pdf/filters.cpp`. Done when: a decode allocates one image-sized buffer.
-- [ ] Charge the ceiling with the bytes of the requested representation only. Done when: the 6000 x 4500 RGB case is not refused.
-- [ ] Add `PdfFilters.DctLargePhotoWithinCeiling`: a generated 6000 x 4500 baseline JPEG decoded at the default ceiling, with `test::ScopedHeapMeter` showing a peak under one buffer plus 10 percent. Done when: the test fails on the code before this section.
+- [x] Add the requested representation (raw samples, RGBA or BGRA) to the DCT decode parameters and allocate only that buffer in `src/pdf/filters.cpp`. Done when: a decode allocates one image-sized buffer.
+- [x] Charge the ceiling with the bytes of the requested representation only. Done when: the 6000 x 4500 RGB case is not refused.
+- [x] Add `PdfFilters.DctLargePhotoWithinCeiling`: a generated 6000 x 4500 baseline JPEG decoded at the default ceiling, with `test::ScopedHeapMeter` showing a peak under one buffer plus 10 percent. Done when: the test fails on the code before this section.
 - [ ] Commit: `pdf: DCT decodes only the requested pixel representation`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.DctLargePhotoWithinCeiling`.

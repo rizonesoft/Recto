@@ -134,13 +134,25 @@ using DecodedImage = WicDecodedImage;
 // COM instance (initializing MTA COM + WIC on first call per thread).
 [[nodiscard]] uintptr_t current_thread_wic_factory_id() noexcept;
 
+// Which pixel buffers a DCT decode builds (D06 T05 §38). Each is image-sized, so a caller asks only for what it uses
+// and the decoded-bytes ceiling is charged with that alone.
+enum class DctOutput : uint8_t {
+	All,     // the samples, RGBA and BGRA
+	Samples, // the decoded samples: gray, RGB, or CMYK for a CMYK image
+	Rgba,    // 8-bit RGBA only
+	Bgra,    // 8-bit BGRA only
+	Stream,  // what DCTDecode returns as a stream filter: the samples, or for a CMYK image RGBA (or BGRA or the CMYK
+	         // samples when a direct caller's /TargetFormat asks)
+};
+
 // Decodes a `DCTDecode` (JPEG) stream via the calling thread's thread-local
 // `IWICImagingFactory`, handling Grayscale, RGB/YCbCr, and CMYK/YCCK (with
 // `/Decode` array inversion `[1 0 1 0 1 0 1 0]` for Adobe inverted CMYK JPEGs).
 [[nodiscard]] PdfResult<WicDecodedImage> decode_dct_image(
 	std::span<const uint8_t> input,
 	const PdfDict* decode_parms = nullptr,
-	size_t max_decoded_bytes = kMaxDecodedStreamBytes) noexcept;
+	size_t max_decoded_bytes = kMaxDecodedStreamBytes,
+	DctOutput output = DctOutput::All) noexcept;
 
 [[nodiscard]] PdfResult<std::vector<uint8_t>> decode_dct(
 	std::span<const uint8_t> input,
@@ -243,19 +255,33 @@ private:
 	JpxPath previous_{JpxPath::Default};
 };
 
-// Tests only: while the scope lives, every WIC `CreateDecoderFromStream` call on this thread (DCTDecode and the WIC
-// attempt of JPXDecode) fails with `hresult` instead of running, so each failure class can be exercised on a machine
-// whose codecs never fail (D06 T05 §37). Scopes nest; the previous injection returns on exit.
-class ScopedWicDecoderFailure {
+// The WIC steps a decode goes through, for tests that make one of them fail (D06 T05 §37).
+enum class WicStage : uint8_t {
+	Factory,       // the thread's IWICImagingFactory (COM initialization and creation)
+	CreateDecoder, // IWICImagingFactory::CreateDecoderFromStream
+	GetFrame,      // IWICBitmapDecoder::GetFrame
+	ConvertFormat, // IWICFormatConverter::Initialize
+	CopyPixels,    // IWICBitmapSource::CopyPixels (a frame or a converter)
+};
+
+// Tests only: while the scope lives, the WIC step `stage` on this thread fails with `hresult` instead of running, so
+// each failure class can be exercised at each step on a machine whose codecs never fail. Scopes nest; the previous
+// injection returns on exit.
+class ScopedWicFailure {
 public:
-	explicit ScopedWicDecoderFailure(int32_t hresult) noexcept;
-	~ScopedWicDecoderFailure() noexcept;
-	ScopedWicDecoderFailure(const ScopedWicDecoderFailure&) = delete;
-	ScopedWicDecoderFailure& operator=(const ScopedWicDecoderFailure&) = delete;
+	ScopedWicFailure(WicStage stage, int32_t hresult) noexcept;
+	~ScopedWicFailure() noexcept;
+	ScopedWicFailure(const ScopedWicFailure&) = delete;
+	ScopedWicFailure& operator=(const ScopedWicFailure&) = delete;
 
 private:
-	int32_t previous_{0};
+	WicStage previous_stage_{WicStage::Factory};
+	int32_t previous_hresult_{0};
 };
+
+// Tests only: how many native JPXDecode decodes this thread has started, so a test can tell whether WIC handed a
+// stream over.
+[[nodiscard]] uint64_t native_jpx_attempts() noexcept;
 
 } // namespace detail
 
