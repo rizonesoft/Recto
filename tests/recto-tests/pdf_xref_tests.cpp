@@ -396,6 +396,48 @@ TEST(PdfXref, RecoveryRoundOneFixes)
 		}
 	}
 
+	// Round 2: a shared dictionary 100,000 keys wide is kept as only the keys a filter reads, so eight lookups cost a
+	// few bytes each, not a copy of every key.
+	if (test::ScopedHeapMeter::available()) {
+		std::string wide = "2 0 obj\n<<";
+		for (int i = 0; i < 100000; ++i) {
+			wide += " /K" + std::to_string(i) + " 0";
+		}
+		wide += " >>\nendobj\n";
+		std::string pdf = "%PDF-1.7\n" + wide;
+		for (uint32_t n = 11u; n < 19u; ++n) {
+			pdf += container(n, std::to_string(n + 10u) + " 0 << /Type /Catalog /Pages 4 0 R >>",
+				"/N 1 /First 5 /Filter /ASCIIHexDecode /DecodeParms 2 0 R");
+		}
+		pdf += pages + "%%EOF\n";
+		const test::ScopedHeapMeter meter;
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		const size_t allocated = meter.allocated_bytes();
+		RECTO_ASSERT_OK(rec);
+		const test::ScopedHeapMeter one_parse;
+		auto alone = XrefTable::recover_damaged_xref(as_bytes("%PDF-1.7\n" + wide + pages + "%%EOF\n"), 64);
+		const size_t baseline = one_parse.allocated_bytes();
+		EXPECT_FALSE(alone.has_value());
+		EXPECT_LT(allocated, 3u * baseline + (size_t{4} << 20u)) << "baseline " << baseline;
+	}
+
+	// Round 2: a later xref row that names object 3 in container 1 keeps its authority after container 1 is unpacked,
+	// so container 5, between them in the file, does not take object 3 over.
+	{
+		std::string pdf = "%PDF-1.7\n" +
+			container(1u, "3 0 << /Type /Catalog /Pages 4 0 R >>", "/N 1 /First 4 /Filter /ASCIIHexDecode /DecodeParms 2 0 R") +
+			"2 0 obj\n<< >>\nendobj\n" + pages +
+			container(5u, "3 0 << /Type /Catalog /Pages 4 0 R /Second true >>",
+				"/N 1 /First 4 /Filter /ASCIIHexDecode /DecodeParms 2 0 R");
+		const std::string row("\x02\x00\x00\x00\x01\x00\x00", 7); // object 3: type 2, in container 1, index 0
+		pdf += "9 0 obj\n<< /Type /XRef /Size 10 /Root 3 0 R /Index [3 1] /W [1 4 2] /Length 7 >>\nstream\n" + row +
+			"\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(3), nullptr);
+		EXPECT_EQ(rec->find(3)->obj_stm_num, 1u);
+	}
+
 	// A deferred container's catalog member, also named by an intact xref stream's row after it.
 	{
 		std::string pdf = "%PDF-1.7\n" +

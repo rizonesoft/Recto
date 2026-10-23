@@ -248,9 +248,11 @@ constexpr std::string_view kXrefDefaultIndexBudgetExceeded =
 	"/Type /XRef default /Index [0 /Size] exceeds maximum entry budget";
 
 // What damaged-file recovery's resolver keeps of a parameter target (D06 T05 §29): numbers, booleans, null,
-// references and names up to 127 bytes as they are, and one level of a dictionary or a short array of them; any other
-// value becomes a placeholder of no use to a reader (the empty string, or the empty name for an over-long name). A
-// filter parameter, /N or /First never needs more, so a large target shared by many containers is copied cheaply.
+// references and names up to 127 bytes as they are; of a dictionary, only the keys a filter recovery decodes can
+// read (the Flate and LZW predictor keys and /EarlyChange); of a short array, its elements reduced the same way; any
+// other value becomes a placeholder of no use to a reader (the empty string, or the empty name for an over-long
+// name). A filter parameter, /N or /First never needs more, so a large target, however wide, shared by many
+// containers is copied in a few bytes.
 [[nodiscard]] PdfValue recovery_parameter_value(const PdfValue& value, int depth = 0)
 {
 	if (const auto b = value.as_bool()) {
@@ -273,9 +275,13 @@ constexpr std::string_view kXrefDefaultIndexBudgetExceeded =
 	}
 	if (depth == 0) {
 		if (const PdfDict* dict = value.as_dict()) {
+			static constexpr std::array<std::string_view, 5> kRecoveryFilterKeys = {
+				"Predictor", "Colors", "BitsPerComponent", "Columns", "EarlyChange"};
 			PdfDict reduced;
-			for (const auto& [key, entry] : dict->entries()) {
-				reduced.set(key, recovery_parameter_value(entry, depth + 1));
+			for (const std::string_view key : kRecoveryFilterKeys) {
+				if (const PdfValue* entry = dict->get(key)) {
+					reduced.set(PdfName::from_decoded(key), recovery_parameter_value(*entry, depth + 1));
+				}
 			}
 			return PdfValue(std::move(reduced));
 		}
@@ -957,7 +963,8 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 								static_cast<uint32_t>(idx),
 								0u});
 						member_vec.push_back(inner_id);
-						defined_at[inner_id] = container_pos;
+						// Never earlier than a later xref row that names this same member (its position keeps its authority).
+						defined_at[inner_id] = std::max(defined_at[inner_id], static_cast<uint64_t>(container_pos));
 						recovered_integers.erase(inner_id);
 						catalog_generations.erase(inner_id);
 						indirect_type_dicts.erase(inner_id);
