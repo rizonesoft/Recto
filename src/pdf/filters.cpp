@@ -1864,6 +1864,25 @@ enum class Ccitt2dMode : uint8_t {
 	return Ccitt2dMode::Invalid;
 }
 
+// Bytes the two CCITT/MMR row transition buffers need. A row holds at most `columns` changes: every decoder pushes
+// non-decreasing positions below `columns` through `push_change_point`, which cancels an equal pair, so the stored
+// positions are strictly increasing.
+[[nodiscard]] constexpr uint64_t ccitt_transition_bytes(uint64_t columns) noexcept
+{
+	return 2ULL * columns * sizeof(int32_t);
+}
+
+// Reserves both transition buffers at their exact maximum once, so no row grows them past what
+// `ccitt_transition_bytes` charged to the ceiling.
+void reserve_ccitt_transitions(
+	std::vector<int32_t>& ref_changes,
+	std::vector<int32_t>& cur_changes,
+	int32_t columns)
+{
+	ref_changes.reserve(static_cast<size_t>(columns));
+	cur_changes.reserve(static_cast<size_t>(columns));
+}
+
 void push_change_point(std::vector<int32_t>& changes, int32_t pos, int32_t columns)
 {
 	if (pos >= columns) {
@@ -2143,18 +2162,20 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 				"CCITTFaxDecode image dimensions exceed maximum decoded bitmap ceiling");
 		}
 
-		// The two transition buffers (`int32_t` per change, at most one change per column) are working memory held
-		// to the same ceiling as the output.
-		if (width_u64 > effective_limit / (2ULL * sizeof(int32_t))) {
+		// The two transition buffers are working memory under the same ceiling as the output: they are charged first
+		// and the packed output gets what remains.
+		const uint64_t transition_bytes = ccitt_transition_bytes(width_u64);
+		if (transition_bytes >= effective_limit) {
 			return make_filter_error(
 				ErrorCode::DecompressionLimitExceeded,
 				DiagnosticId::DecompressionLimitExceeded,
 				"CCITTFaxDecode /Columns exceed the working-memory ceiling for row transitions");
 		}
+		const size_t output_limit = effective_limit - static_cast<size_t>(transition_bytes);
 
 		const size_t row_bytes = static_cast<size_t>((width_u64 + 7ULL) / 8ULL);
 		if (params.rows > 0 &&
-			static_cast<uint64_t>(row_bytes) * static_cast<uint64_t>(params.rows) > effective_limit) {
+			static_cast<uint64_t>(row_bytes) * static_cast<uint64_t>(params.rows) > output_limit) {
 			return make_filter_error(
 				ErrorCode::DecompressionLimitExceeded,
 				DiagnosticId::DecompressionLimitExceeded,
@@ -2173,25 +2194,26 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 		if (params.rows > 0) {
 			const size_t reserve_bytes = std::min<size_t>(
 				row_bytes * static_cast<size_t>(params.rows),
-				std::min<size_t>(kMaxInitialReserveBytes, effective_limit));
+				std::min<size_t>(kMaxInitialReserveBytes, output_limit));
 			reserve_metered(out, reserve_bytes);
 		}
 
 		std::vector<int32_t> ref_changes;
 		std::vector<int32_t> cur_changes;
+		reserve_ccitt_transitions(ref_changes, cur_changes, params.columns);
 		uint64_t decoded_rows = 0;
 		int32_t consecutive_damaged_rows = 0;
 
 		auto append_current_row = [&]() -> PdfResult<void> {
 			const uint64_t next_rows = decoded_rows + 1ULL;
 			if (next_rows > (effective_limit / 4ULL) / width_u64 ||
-				row_bytes > effective_limit - out.size()) {
+				row_bytes > output_limit - out.size()) {
 				return make_filter_error(
 					ErrorCode::DecompressionLimitExceeded,
 					DiagnosticId::DecompressionLimitExceeded,
 					"CCITTFaxDecode row count exceeds maximum decoded stream byte ceiling");
 			}
-			ensure_bounded_capacity(out, row_bytes, effective_limit);
+			ensure_bounded_capacity(out, row_bytes, output_limit);
 			const size_t prev_size = out.size();
 			out.resize(prev_size + row_bytes);
 			pack_changes_to_row(
@@ -2776,9 +2798,11 @@ private:
 	RECTO_PDF_TRY(Jbig2Bitmap bm, Jbig2Bitmap::create(width, height, 0u, effective_limit));
 
 	if (mmr) {
-		// The two transition buffers (an `int32_t` per change, at most one per column) are working memory held to
-		// the same ceiling as the bitmap, as in CCITTFaxDecode.
-		if (static_cast<uint64_t>(width) > effective_limit / (2ULL * sizeof(int32_t))) {
+		// The two transition buffers are working memory under the same ceiling as the bitmap, charged together with
+		// it, as in CCITTFaxDecode.
+		const uint64_t transition_bytes = ccitt_transition_bytes(width);
+		const size_t bitmap_bytes = jbig2_footprint(bm);
+		if (bitmap_bytes > effective_limit || transition_bytes > effective_limit - bitmap_bytes) {
 			return make_filter_error(
 				ErrorCode::DecompressionLimitExceeded,
 				DiagnosticId::DecompressionLimitExceeded,
@@ -2789,6 +2813,7 @@ private:
 			(inout_mmr_bit_offset != nullptr) ? *inout_mmr_bit_offset : 0u};
 		std::vector<int32_t> ref_changes;
 		std::vector<int32_t> cur_changes;
+		reserve_ccitt_transitions(ref_changes, cur_changes, static_cast<int32_t>(width));
 		for (uint32_t y = 0; y < height; ++y) {
 			const int status = decode_ccitt_2d_row(
 				reader,
@@ -6745,11 +6770,44 @@ struct J2kTagTree {
 	};
 	std::vector<Level> levels;
 
+	// Heap bytes `init(w, h)` allocates: the level array (reserved exactly) and each level's two cell arrays, each
+	// allocation rounded to the heap's 16-byte granularity plus a 16-byte block header. A decoder charges this to its
+	// ceiling before building the tree, since a stream can ask for a million small trees.
+	[[nodiscard]] static uint64_t footprint(uint32_t w, uint32_t h) noexcept
+	{
+		const auto heap_block = [](uint64_t bytes) noexcept { return ((bytes + 15ULL) & ~15ULL) + 16ULL; };
+		uint64_t cw = std::max(1u, w);
+		uint64_t ch = std::max(1u, h);
+		uint64_t bytes = heap_block(static_cast<uint64_t>(level_count(w, h)) * sizeof(Level));
+		while (true) {
+			bytes += 2ULL * heap_block(cw * ch * sizeof(int32_t));
+			if (cw == 1u && ch == 1u) {
+				return bytes;
+			}
+			cw = (cw + 1u) >> 1u;
+			ch = (ch + 1u) >> 1u;
+		}
+	}
+
+	[[nodiscard]] static uint32_t level_count(uint32_t w, uint32_t h) noexcept
+	{
+		uint32_t cw = std::max(1u, w);
+		uint32_t ch = std::max(1u, h);
+		uint32_t count = 1u;
+		while (cw != 1u || ch != 1u) {
+			cw = (cw + 1u) >> 1u;
+			ch = (ch + 1u) >> 1u;
+			++count;
+		}
+		return count;
+	}
+
 	void init(uint32_t w, uint32_t h)
 	{
 		width = w;
 		height = h;
 		levels.clear();
+		levels.reserve(level_count(w, h));
 		uint32_t cw = std::max(1u, w);
 		uint32_t ch = std::max(1u, h);
 		while (true) {
@@ -8575,6 +8633,16 @@ void idwt_97_2d_float(
 									ps.cb_y0 = (pgy0 > cb_gy0) ? static_cast<uint32_t>(std::min<uint64_t>(pgy0 - cb_gy0, sb.num_cb_y)) : 0u;
 									ps.cb_y1 = (pgy1 > cb_gy0) ? static_cast<uint32_t>(std::min<uint64_t>(pgy1 - cb_gy0, sb.num_cb_y)) : 0u;
 									if (ps.cb_x1 > ps.cb_x0 && ps.cb_y1 > ps.cb_y0) {
+										// The inclusion and zero-bitplane tag trees are charged before they are built.
+										const uint64_t tree_bytes =
+											2ULL * J2kTagTree::footprint(ps.cb_x1 - ps.cb_x0, ps.cb_y1 - ps.cb_y0);
+										if (tree_bytes > effective_limit - tile_live_bytes) {
+											return make_filter_error(
+												ErrorCode::DecompressionLimitExceeded,
+												DiagnosticId::DecompressionLimitExceeded,
+												"JPXDecode precinct tag-tree allocation exceeds ceiling");
+										}
+										tile_live_bytes += tree_bytes;
 										ps.incl_tree.init(ps.cb_x1 - ps.cb_x0, ps.cb_y1 - ps.cb_y0);
 										ps.zbp_tree.init(ps.cb_x1 - ps.cb_x0, ps.cb_y1 - ps.cb_y0);
 									}
@@ -9552,47 +9620,57 @@ constexpr size_t kMaxImageDecodeComponents = 32;
 			if (decode_entry == nullptr && base != stream_dict_context) {
 				decode_entry = decode_in(stream_dict_context);
 			}
-			RECTO_PDF_TRY(const PdfValue* decode_value, deref(decode_entry));
-			// Its elements may be indirect numbers too. Each resolves one level and only its number is kept, so a
-			// reference to anything else (a large string, say) is never retained or copied; the first element that is
-			// not a number drops the whole mapping, as a malformed direct array does.
-			if (const PdfArray* decode_arr = decode_value != nullptr ? decode_value->as_array() : nullptr;
-				can_resolve && decode_arr != nullptr && decode_arr->size() <= 2u * kMaxImageDecodeComponents &&
-				std::any_of(decode_arr->begin(), decode_arr->end(), [](const PdfValue& e) { return e.is_ref(); })) {
-				PdfArray numbers;
-				bool all_numbers = true;
-				for (const PdfValue& e : *decode_arr) {
-					std::optional<double> n = e.as_number();
-					if (const auto elem_ref = e.as_ref()) {
-						RECTO_PDF_TRY_REF(target, (*resolver)(*elem_ref));
-						n = target.as_number();
-					}
-					if (!n.has_value()) {
-						all_numbers = false;
-						break;
-					}
-					numbers.push_back(PdfValue(*n));
+			// The array and each element resolve one level and only numbers are kept: an entry that is not an array of
+			// at most 2 x kMaxImageDecodeComponents numbers drops the whole mapping, as apply_pdf_decode_array does for
+			// a malformed direct array, and nothing in it (a large string, say) is retained or copied first.
+			std::optional<PdfArray> decode_numbers;
+			if (decode_entry != nullptr) {
+				std::optional<PdfValue> decode_target;
+				if (const auto decode_ref = decode_entry->as_ref(); decode_ref.has_value() && can_resolve) {
+					RECTO_PDF_TRY_REF(target, (*resolver)(*decode_ref));
+					decode_target.emplace(std::move(target));
+					decode_entry = &*decode_target;
 				}
-				if (all_numbers) {
-					resolved.emplace_back(std::move(numbers));
-					decode_value = &resolved.back();
-				} else {
-					decode_value = nullptr;
+				if (const PdfArray* decode_arr = decode_entry->as_array();
+					decode_arr != nullptr && decode_arr->size() <= 2u * kMaxImageDecodeComponents) {
+					decode_numbers.emplace();
+					for (const PdfValue& e : *decode_arr) {
+						std::optional<double> n = e.as_number();
+						if (const auto elem_ref = e.as_ref(); elem_ref.has_value() && can_resolve) {
+							RECTO_PDF_TRY_REF(target, (*resolver)(*elem_ref));
+							n = target.as_number();
+						}
+						if (!n.has_value()) {
+							decode_numbers.reset();
+							break;
+						}
+						decode_numbers->push_back(PdfValue(*n));
+					}
 				}
 			}
-			bool apply_decode = decode_value != nullptr && !decode_value->is_null();
+			bool apply_decode = decode_numbers.has_value();
 			if (is_jpx && apply_decode) {
 				const PdfValue* mask_entry =
 					stream_dict_context != nullptr ? stream_dict_context->get("ImageMask") : nullptr;
 				RECTO_PDF_TRY(const PdfValue* mask_value, deref(mask_entry));
 				apply_decode = mask_value != nullptr && mask_value->as_bool() == std::optional<bool>(true);
 			}
-			merged_image_parms = base != nullptr ? *base : PdfDict{};
-			merged_image_parms->erase("Decode");
-			merged_image_parms->erase("D");
+			// The image stages read /ColorTransform (a number), /TargetFormat (/BGRA or /CMYK) and /Decode, so only
+			// those are carried: the source dictionary is never copied whole, and a hostile entry no stage reads costs
+			// nothing.
+			merged_image_parms.emplace();
+			if (base != nullptr) {
+				if (const PdfValue* color_transform = base->get("ColorTransform");
+					color_transform != nullptr && color_transform->as_int().has_value()) {
+					merged_image_parms->set("ColorTransform", PdfValue(*color_transform->as_int()));
+				}
+				if (const auto target_format = base->get_name("TargetFormat");
+					target_format == "BGRA" || target_format == "CMYK") {
+					merged_image_parms->set("TargetFormat", PdfValue(PdfName(*target_format)));
+				}
+			}
 			if (apply_decode) {
-				RECTO_PDF_TRY_REF(decode_copy, decode_value->deep_clone());
-				merged_image_parms->set("Decode", std::move(decode_copy));
+				merged_image_parms->set("Decode", PdfValue(std::move(*decode_numbers)));
 			}
 			stage_parms = &(*merged_image_parms);
 		}

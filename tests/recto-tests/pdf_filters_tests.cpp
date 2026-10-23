@@ -2790,6 +2790,26 @@ TEST(PdfFilters, DctRgbAndCmyk)
 		EXPECT_EQ((*element_rgba)[0], 255u);
 		EXPECT_EQ((*element_rgba)[1], 0u);
 		EXPECT_EQ((*element_rgba)[2], 255u);
+
+		// A direct /Decode holding an 8 MiB string under a 1 MiB ceiling is dropped as malformed without the string
+		// (or the image dictionary that holds it) being copied first: the call never holds more than the ceiling.
+		PdfArray string_decode;
+		string_decode.push_back(PdfValue(PdfString(std::string(8u << 20u, 'x'))));
+		PdfDict string_stm_dict;
+		string_stm_dict.set("Filter", PdfValue(PdfName("DCTDecode")));
+		string_stm_dict.set("Decode", PdfValue(std::move(string_decode)));
+		PdfDict plain_stm_dict;
+		plain_stm_dict.set("Filter", PdfValue(PdfName("DCTDecode")));
+		auto plain_rgba = decode_stream(cmyk_jpeg, plain_stm_dict);
+		RECTO_ASSERT_OK(plain_rgba);
+		{
+			const test::ScopedHeapMeter meter;
+			auto string_rgba = decode_stream(cmyk_jpeg, string_stm_dict, 1u << 20u);
+			const size_t peak = meter.peak_bytes();
+			RECTO_ASSERT_OK(string_rgba);
+			EXPECT_EQ(*string_rgba, *plain_rgba); // the mapping is dropped, as for any malformed /Decode
+			EXPECT_LT(peak, size_t{1} << 20u);
+		}
 	}
 
 	// 3. Decode genuine ITU-T T.800 JPXDecode (JP2 box container and raw J2K codestream
@@ -4022,6 +4042,16 @@ TEST(PdfFilters, CcittAndMmrBounds)
 		EXPECT_TRUE(std::all_of(rows->begin(), rows->end(), [](uint8_t b) { return b == 0xAAu; }));
 		// Quadratic search takes billions of comparisons here; linear takes well under a second even under ASan.
 		EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 3000);
+
+		// The transition buffers (1 MiB at 131,072 columns) and the 32 KiB output share one ceiling: 1 MiB is refused,
+		// and at 2 MiB the decode holds no more than its ceiling.
+		RECTO_EXPECT_ERR(decode_ccitt_fax(g4, &parms, 1u << 20u), ErrorCode::DecompressionLimitExceeded);
+		const test::ScopedHeapMeter meter;
+		auto bounded = decode_ccitt_fax(g4, &parms, 2u << 20u);
+		const size_t peak = meter.peak_bytes();
+		RECTO_ASSERT_OK(bounded);
+		EXPECT_EQ(*bounded, *rows);
+		EXPECT_LE(peak, size_t{2} << 20u);
 	}
 	{
 		const auto make_page = [](const std::string& mmr_bits) {
@@ -4045,24 +4075,69 @@ TEST(PdfFilters, CcittAndMmrBounds)
 		RECTO_EXPECT_ERR(decode_jbig2(make_page("0000000000010000")), ErrorCode::DamagedFormat); // one EOL only
 		RECTO_ASSERT_OK(decode_jbig2(make_page("000000000001000000000001")));                 // a whole EOFB
 
-		// A one-row JBIG2 MMR region 200,000 pixels wide passes the bitmap ceiling (width x height x 4 within 1 MiB)
-		// but needs transition buffers past it: refused before decoding, as for CCITTFaxDecode.
-		std::vector<uint8_t> wide = {
-			0x97u, 0x4Au, 0x42u, 0x32u, 0x0Du, 0x0Au, 0x1Au, 0x0Au, 0x01u, 0x00u, 0x00u, 0x00u, 0x01u};
-		append_jbig2_segment(wide, 0u, 48u, {}, 1u, make_jbig2_page_info_payload(8u, 1u, 0u));
-		std::vector<uint8_t> wide_region;
-		append_u32_be(wide_region, 200000u);
-		append_u32_be(wide_region, 1u);
-		append_u32_be(wide_region, 0u);
-		append_u32_be(wide_region, 0u);
-		wide_region.push_back(0u);
-		wide_region.push_back(0x01u); // MMR
-		const auto wide_mmr = pack_bitstring("000000000001000000000001");
-		wide_region.insert(wide_region.end(), wide_mmr.begin(), wide_mmr.end());
-		append_jbig2_segment(wide, 1u, 38u, {}, 1u, wide_region);
-		append_jbig2_segment(wide, 2u, 49u, {}, 1u, {});
-		RECTO_EXPECT_ERR(decode_jbig2(wide, nullptr, 1u << 20u), ErrorCode::DecompressionLimitExceeded);
+		// A one-row JBIG2 MMR region passes the bitmap ceiling (width x height x 4 within 1 MiB) but needs
+		// transition buffers past it, alone at 200,000 pixels or together with its bitmap at 131,000 (1,048,000
+		// transition bytes plus a 16,375-byte row): refused before decoding, as for CCITTFaxDecode. An 8,192-pixel
+		// region fits and decodes.
+		const auto make_wide = [](uint32_t width) {
+			std::vector<uint8_t> wide = {
+				0x97u, 0x4Au, 0x42u, 0x32u, 0x0Du, 0x0Au, 0x1Au, 0x0Au, 0x01u, 0x00u, 0x00u, 0x00u, 0x01u};
+			append_jbig2_segment(wide, 0u, 48u, {}, 1u, make_jbig2_page_info_payload(8u, 1u, 0u));
+			std::vector<uint8_t> wide_region;
+			append_u32_be(wide_region, width);
+			append_u32_be(wide_region, 1u);
+			append_u32_be(wide_region, 0u);
+			append_u32_be(wide_region, 0u);
+			wide_region.push_back(0u);
+			wide_region.push_back(0x01u); // MMR
+			const auto wide_mmr = pack_bitstring("000000000001000000000001");
+			wide_region.insert(wide_region.end(), wide_mmr.begin(), wide_mmr.end());
+			append_jbig2_segment(wide, 1u, 38u, {}, 1u, wide_region);
+			append_jbig2_segment(wide, 2u, 49u, {}, 1u, {});
+			return wide;
+		};
+		RECTO_EXPECT_ERR(decode_jbig2(make_wide(200000u), nullptr, 1u << 20u), ErrorCode::DecompressionLimitExceeded);
+		RECTO_EXPECT_ERR(decode_jbig2(make_wide(131000u), nullptr, 1u << 20u), ErrorCode::DecompressionLimitExceeded);
+		RECTO_ASSERT_OK(decode_jbig2(make_wide(8192u), nullptr, 1u << 20u));
 	}
+}
+
+// JPX precinct tag trees are charged to the ceiling before they are built. A 256x256 grayscale codestream with 1x1
+// precincts at resolution 0 has 65,536 precincts, each a one-code-block subband with an inclusion and a zero-bitplane
+// tree, and 65,536 empty packets. Its code-block and precinct records take about 13 MB and the trees about 19 MB more,
+// so a 24 MiB ceiling refuses it, while 64 MiB decodes it to the level-shifted zero image.
+TEST(PdfFilters, JpxTagTreesCharged)
+{
+	std::vector<uint8_t> cs = {0xFFu, 0x4Fu, 0xFFu, 0x51u};
+	append_u16_be(cs, 41u);
+	append_u16_be(cs, 0u);
+	for (uint32_t v : {256u, 256u, 0u, 0u, 256u, 256u, 0u, 0u}) {
+		append_u32_be(cs, v);
+	}
+	append_u16_be(cs, 1u);
+	cs.insert(cs.end(), {7u, 1u, 1u});
+	// COD: user-defined precincts (Scod bit 0), LRCP, one layer, no MCT, no decomposition, 64x64 code blocks, 5-3
+	// reversible, and PPx = PPy = 0 at resolution 0 (T.800 A.6.1).
+	cs.insert(cs.end(), {0xFFu, 0x52u});
+	append_u16_be(cs, 13u);
+	cs.insert(cs.end(), {0x01u, 0u, 0u, 1u, 0u, 0u, 4u, 4u, 0u, 1u, 0x00u});
+	// QCD: no quantization, two guard bits, one subband exponent.
+	cs.insert(cs.end(), {0xFFu, 0x5Cu, 0x00u, 0x04u, 0x40u, 0x40u});
+	const std::vector<uint8_t> packets(65536u, 0x00u); // a zero header bit: every packet is empty
+	cs.insert(cs.end(), {0xFFu, 0x90u, 0x00u, 10u, 0x00u, 0x00u});
+	append_u32_be(cs, 14u + static_cast<uint32_t>(packets.size()));
+	cs.insert(cs.end(), {0u, 1u});
+	cs.insert(cs.end(), {0xFFu, 0x93u});
+	cs.insert(cs.end(), packets.begin(), packets.end());
+	cs.insert(cs.end(), {0xFFu, 0xD9u});
+
+	RECTO_EXPECT_ERR(decode_jpx_image(cs, nullptr, 24u << 20u), ErrorCode::DecompressionLimitExceeded);
+	auto img = decode_jpx_image(cs, nullptr, 64u << 20u);
+	RECTO_ASSERT_OK(img);
+	EXPECT_EQ(img->width, 256u);
+	EXPECT_EQ(img->height, 256u);
+	ASSERT_EQ(img->pixels.size(), 65536u);
+	EXPECT_TRUE(std::all_of(img->pixels.begin(), img->pixels.end(), [](uint8_t v) { return v == 128u; }));
 }
 
 } // namespace

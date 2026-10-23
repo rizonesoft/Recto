@@ -150,6 +150,22 @@ std::string sha256_hex(std::span<const uint8_t> data);
 // disk using Windows CNG (supporting extended-length paths).
 std::string sha256_file(const std::filesystem::path& path);
 
+// Measures the C++ heap the calling thread uses while the meter is in scope. The test binary replaces the global
+// operator new and delete (heap_meter.cpp) and counts each block's usable size, so a test can bound the peak a call
+// holds live (allocations minus frees since the meter started) without relying on allocator internals. Memory taken
+// outside the C++ heap (COM, HeapAlloc) is not counted. One meter per thread at a time.
+class ScopedHeapMeter {
+public:
+	ScopedHeapMeter() noexcept;
+	~ScopedHeapMeter() noexcept;
+
+	ScopedHeapMeter(const ScopedHeapMeter&) = delete;
+	ScopedHeapMeter& operator=(const ScopedHeapMeter&) = delete;
+
+	// The largest net growth of the calling thread's C++ heap since construction, in bytes.
+	[[nodiscard]] size_t peak_bytes() const noexcept;
+};
+
 namespace detail {
 
 template <typename E>
