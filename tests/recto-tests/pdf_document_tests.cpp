@@ -572,6 +572,31 @@ TEST(PdfDocument, ProductionBoxesArePageLocal)
 	EXPECT_FALSE(doc.pages()[1].bleed_box.has_value());
 }
 
+// A destination given as a name resolves through Catalog /Dests and one given as a string through the /Names /Dests
+// tree, even when both spell the same word (ISO 32000-1 12.3.2.3; D06 T05 section 24, round 2).
+TEST(PdfDocument, NamedDestinationSpacesStayApart)
+{
+	const auto bytes = build_synthetic_pdf_from_objects(
+		"1.7",
+		{
+			{1,
+			 "<< /Type /Catalog /Pages 2 0 R /Outlines 5 0 R /Dests << /chapter [3 0 R /Fit] >> "
+			 "/Names << /Dests << /Names [(chapter) [4 0 R /Fit]] >> >> >>"},
+			{2, "<< /Type /Pages /Count 2 /MediaBox [0 0 100 100] /Kids [3 0 R 4 0 R] >>"},
+			{3, "<< /Type /Page /Parent 2 0 R >>"},
+			{4, "<< /Type /Page /Parent 2 0 R >>"},
+			{5, "<< /Type /Outlines /First 6 0 R /Last 7 0 R /Count 2 >>"},
+			{6, "<< /Title (By name) /Parent 5 0 R /Next 7 0 R /Dest /chapter >>"},
+			{7, "<< /Title (By string) /Parent 5 0 R /Prev 6 0 R /Dest (chapter) >>"},
+		});
+	auto doc_res = Document::open_memory(bytes);
+	ASSERT_TRUE(doc_res.has_value()) << doc_res.error().message.view();
+	const auto& outline = (*doc_res)->outline();
+	ASSERT_EQ(outline.size(), 2u);
+	EXPECT_EQ(outline[0].page_index, 0);
+	EXPECT_EQ(outline[1].page_index, 1);
+}
+
 TEST(PdfDocument, PageTreeAndRotatedPages)
 {
 	// 1. `render/rotated-pages.pdf` has 4 pages with rotations 0, 90, 180, 270

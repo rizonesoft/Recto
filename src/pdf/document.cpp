@@ -2892,7 +2892,10 @@ PdfResult<void> Document::load_document_structure()
 		return parse_direct_dest_target(*resolved_res);
 	};
 
-	auto record_named_dest = [&](std::string&& name, const PdfValue& target_val) -> PdfResult<void> {
+	// Names (Catalog /Dests, PDF 1.1) and strings (the /Names /Dests name tree) are separate namespaces (ISO 32000-1
+	// 12.3.2.3): a destination given as a name is looked up only among names, one given as a string only among
+	// strings. One map holds both, each key led by its space, '/' for a name and '(' for a string.
+	auto record_named_dest = [&](char space, std::string&& name, const PdfValue& target_val) -> PdfResult<void> {
 		if (name.empty()) {
 			return {};
 		}
@@ -2920,6 +2923,7 @@ PdfResult<void> Document::load_document_structure()
 				DiagnosticId::DamagedDictionary,
 				"Named destinations exceed maximum entry or memory budget");
 		}
+		name.insert(name.begin(), space);
 		const auto [it, inserted] = named_dests_.insert_or_assign(std::move(name), std::move(pd));
 		if (inserted) {
 			total_named_dest_bytes += entry_bytes;
@@ -2933,7 +2937,7 @@ PdfResult<void> Document::load_document_structure()
 		if (dests_res.has_value()) {
 			if (const PdfDict* dests_dict = dests_res->as_dict()) {
 				for (const auto& [k, v] : *dests_dict) {
-					RECTO_PDF_RETURN_IF_ERROR(record_named_dest(std::string(k.view()), v));
+					RECTO_PDF_RETURN_IF_ERROR(record_named_dest('/', std::string(k.view()), v));
 				}
 			}
 		}
@@ -3013,7 +3017,7 @@ PdfResult<void> Document::load_document_structure()
 										}
 										if (!dest_name.empty()) {
 											RECTO_PDF_RETURN_IF_ERROR(
-												record_named_dest(std::move(dest_name), (*n_arr)[i + 1u]));
+												record_named_dest('(', std::move(dest_name), (*n_arr)[i + 1u]));
 										}
 									}
 								}
@@ -3047,14 +3051,12 @@ PdfResult<void> Document::load_document_structure()
 			}
 			std::string name_key;
 			if (const auto nm = dval.as_name()) {
-				name_key = std::string(*nm);
+				name_key = "/" + std::string(*nm);
 			} else if (const PdfString* s = dval.as_string()) {
 				auto utf8_res = pdf_string_to_utf8(s->span());
-				name_key = utf8_res.has_value()
-					? std::move(*utf8_res)
-					: std::string(s->as_byte_view());
+				name_key = "(" + (utf8_res.has_value() ? std::move(*utf8_res) : std::string(s->as_byte_view()));
 			}
-			if (!name_key.empty()) {
+			if (name_key.size() > 1u) {
 				const auto it = named_dests_.find(name_key);
 				if (it != named_dests_.end()) {
 					return it->second;

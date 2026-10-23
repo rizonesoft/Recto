@@ -182,3 +182,44 @@ OVERALL: needs-attention
 - Finding 7 (P2, relative URIs refused): correct; completion gap 7. Filed: `D06 T05 §50`.
 
 None of these is a regression of what `D01 T01 §10` stamped: each is behaviour its contract did not ask for, now owned by a section, apart from finding 6, a defect in what it did build, fixed here. The stamp is confirmed.
+
+## Round 2: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-23T18:04:56Z
+- Effort: medium
+- Lines: 28
+- Digest: 4d115ef630f32b7a
+
+Static review through `e82c8471184a71425e4c81809c010a587a07ac0d`. Reproductions are source-derived, not executed. No files were modified; no build or tests were run.
+
+### adversarial: approve
+
+No additional findings outside the explicitly excluded owners.
+
+### consistency: approve
+
+### integration: needs-attention
+
+1. **P2: Distinct named destinations overwrite each other, returning the wrong page.** `src/pdf/document.cpp:2923` inserts both Catalog `/Dests` names and `/Names /Dests` strings into the same `named_dests_` map. Lookup at `src/pdf/document.cpp:3049` discards the destination object's type.
+
+   Reproduce by opening a valid two-page PDF with Catalog `/Dests << /chapter [3 0 R /Fit] >>` and `/Names << /Dests << /Names [(chapter) [4 0 R /Fit]] >> >>`, where objects 3 and 4 are the two pages. Add two bookmarks, one with `/Dest /chapter`, the other with `/Dest (chapter)`. Inspect `outline()`: both resolve to page index 1. The name destination must resolve to index 0, while the string destination resolves to index 1. Preserve separate lookup namespaces or include object type in the key.
+
+### source-defect: advisory
+
+Finding 1 violates ISO 32000-1 §12.3.2.3: name objects resolve through Catalog `/Dests`; strings resolve through the destination name tree. Both forms may coexist. [ISO 32000-1](https://opensource.adobe.com/dc-acrobat-sdk-docs/standards/pdfstandards/pdf/PDF32000_2008.pdf?from=20423&from_column=20423)
+
+### design: advisory
+
+The audited section declares `Surface: no`; no rendered interface is included.
+
+### record: advisory
+
+The recorded checkpoint predates the newest candidate. This review does not independently establish its build or ASan results.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+- Finding 1 (P2): correct, a defect in what `D01 T01 §10` built. Catalog `/Dests` names and `/Names /Dests` strings shared one map, so a name and a string spelling the same word overwrote each other. They are separate namespaces (ISO 32000-1 12.3.2.3): each key now carries its space (`/` for a name, `(` for a string), and a destination is looked up only in the space its own type names. `PdfDocument.NamedDestinationSpacesStayApart`.
