@@ -283,6 +283,9 @@ private:
 // `cause`, falling back to a compact form from `cause`'s numbers when memory has run out.
 void compose_message_after(PdfError& error, std::string_view first, const PdfError& cause) noexcept;
 
+// Test seam for a WIC step's failure: the error `hr` at `step` (as decoder step WicCreateDecoder) is classified into.
+[[nodiscard]] PdfError wic_failure_error(long hr, std::string_view step) noexcept;
+
 // Tests only: while the scope lives, a three-component DCT frame on this thread goes through IWICFormatConverter even
 // when WIC already gives 24-bit RGB or BGR, so the conversion step can be exercised (and failed) on any machine.
 class ScopedDctForceConverter {

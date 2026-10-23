@@ -917,6 +917,8 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 
 ## 32. JPX per-component precision and sampling, and the full coding-style set
 
+> **Started:** 2026-10-23T17:12Z
+
 The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T05 §22, round 1) found the native JPEG 2000 decoder taking every component's bit depth and signedness from component zero and ignoring `XRsiz`/`YRsiz` subsampling (ITU-T T.800 A.5.1), and rejecting more than 10 decomposition levels and every nonzero code-block style, while `D01 T01 §8`'s original review recorded 32 levels and all six style flags as supported. Round 2 added region-of-interest scaling: `RGN` markers are skipped and coefficients are not realigned (T.800 A.6.3, Annex H). -> XREF: D06 T05 §22
 
 **Phase:** 1
@@ -928,14 +930,16 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 1. Carry `Ssiz`, `XRsiz` and `YRsiz` per component through decoding and reconstruction in `src/pdf/filters.cpp`. Done when: components of different precision and 2x2 chroma subsampling reconstruct correctly.
 2. Support up to 32 decomposition levels and the T.800 code-block style flags (selective arithmetic bypass, reset, termination, vertically causal context, predictable termination, segmentation symbols). Done when: a codestream using each decodes.
 
-- [ ] Read precision and signedness per component from SIZ and normalize each component by its own depth in the JPX reconstruction in `src/pdf/filters.cpp`. Done when: a codestream with components of 8 and 12 bits decodes each to its own range.
-- [ ] Apply `XRsiz`/`YRsiz` to component bounds and upsample subsampled components to the image grid. Done when: a 4:2:0 codestream reconstructs at full resolution.
-- [ ] Accept up to 32 decomposition levels and implement the six code-block style flags in the Tier-1 decoder. Done when: `seed-filter-09-jpx.bin` with byte 58 set to `0x02` (context reset) decodes, and each other flag has a decoding test.
-- [ ] Read `RGN` (`0xFF5E`) markers and apply the region-of-interest Maxshift realignment to coefficients (T.800 A.6.3, Annex H) in the native decoder in `src/pdf/filters.cpp`. Done when: a lossless grayscale codestream encoded with `-ROI c=0,U=4` decodes to its original samples.
-- [ ] Keep the JP2 header's colour (`colr`, enumerated and restricted ICC), palette (`pclr`, `cmap`) and channel definitions (`cdef`) in the native container reader in `src/pdf/filters.cpp`, expand palette indices, and return CMYK as four colour channels and an alpha only where `cdef` declares one, for both the native and the WIC path (ISO 32000-1 8.9.5.3, T.800 Annex I). Added 2026-10-23 from the `D06 T05 §22` completion review (gap 6). Done when: a palette image keeps its red, a four-component CMYK JP2 stays four colour channels, and a declared opacity channel becomes alpha.
-- [ ] Add `PdfFilters.JpxComponentsAndCodingStyles` for the cases above, and record in `docs/reviews/06-quality/audit-d01-t01-s8.md` that the original review's capability claims were corrected here. Done when: the test fails on the code before this section.
+- [x] Read precision and signedness per component from SIZ and normalize each component by its own depth in the JPX reconstruction in `src/pdf/filters.cpp`. Done when: a codestream with components of 8 and 12 bits decodes each to its own range.
+- [x] Apply `XRsiz`/`YRsiz` to component bounds and upsample subsampled components to the image grid. Done when: a 4:2:0 codestream reconstructs at full resolution.
+- [x] Accept up to 32 decomposition levels and implement the six code-block style flags in the Tier-1 decoder. Done when: `seed-filter-09-jpx.bin` with byte 58 set to `0x02` (context reset) decodes, and each other flag has a decoding test.
+- [x] Read `RGN` (`0xFF5E`) markers and apply the region-of-interest Maxshift realignment to coefficients (T.800 A.6.3, Annex H) in the native decoder in `src/pdf/filters.cpp`. Done when: a lossless grayscale codestream encoded with `-ROI c=0,U=4` decodes to its original samples.
+- [x] Keep the JP2 header's colour (`colr`, enumerated and restricted ICC), palette (`pclr`, `cmap`) and channel definitions (`cdef`) in the native container reader in `src/pdf/filters.cpp`, expand palette indices, and return CMYK as four colour channels and an alpha only where `cdef` declares one, for both the native and the WIC path (ISO 32000-1 8.9.5.3, T.800 Annex I). Added 2026-10-23 from the `D06 T05 §22` completion review (gap 6). Done when: a palette image keeps its red, a four-component CMYK JP2 stays four colour channels, and a declared opacity channel becomes alpha.
+- [x] Add `PdfFilters.JpxComponentsAndCodingStyles` for the cases above, and record in `docs/reviews/06-quality/audit-d01-t01-s8.md` that the original review's capability claims were corrected here. Done when: the test fails on the code before this section.
 - [ ] Commit: `pdf: JPX per-component geometry and the full coding-style set`
 
+
+> **Corrected 2026-10-23:** (built) a signed component is output unsigned by the same 2^(depth - 1) offset an unsigned one is level-shifted by, since PDF samples are unsigned; a palette index component above 8 bits and a component precision above 16 bits are refused as unsupported; a segmentation symbol that does not read 1010 drops its bitplane and stops that code-block; a JP2 header asking for CMYK or an opacity channel is decoded natively, since the WIC path converts to gray or RGB. The ROI test uses its own Maxshift shift (8) instead of an external encoder's `-ROI` option: the test codestreams come from an in-test Tier-1 encoder written from T.800 Annex D and checked against OpenJPEG 2.5.4 (through Pillow), which decodes all of them identically.
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.JpxComponentsAndCodingStyles`.
 
 ## 33. DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding

@@ -19,6 +19,9 @@
 #include <atomic>
 #include <bit>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <optional>
 #include <latch>
 #include <span>
 #include <string>
@@ -2643,6 +2646,482 @@ private:
 	return pkt;
 }
 
+// An EBCOT Tier-1 encoder for one code-block of an LL (or LH) subband, written from ITU-T T.800 Annex D (contexts from
+// Tables D.1 to D.4) rather than from the decoder, with every Part 1 code-block style: arithmetic bypass, context
+// reset, termination on each pass, vertically causal contexts and segmentation symbols. It codes every bitplane down
+// to zero, so a reversible decode is exact. Each codeword segment is returned with its pass count.
+struct EncodedJ2kSegment {
+	uint32_t passes = 0u;
+	std::vector<uint8_t> bytes;
+};
+
+struct EncodedJ2kBlock {
+	uint32_t zero_bitplanes = 0u;
+	uint32_t num_passes = 0u;
+	std::vector<EncodedJ2kSegment> segments;
+};
+
+[[nodiscard]] EncodedJ2kBlock encode_j2k_block(
+	std::span<const int32_t> coeffs, uint32_t w, uint32_t h, uint32_t mb_total, uint8_t cb_style,
+	bool wrong_last_symbol = false)
+{
+	const bool bypass = (cb_style & 0x01u) != 0u;
+	const bool reset = (cb_style & 0x02u) != 0u;
+	const bool term_all = (cb_style & 0x04u) != 0u;
+	const bool causal = (cb_style & 0x08u) != 0u;
+	const bool segsym = (cb_style & 0x20u) != 0u;
+	const auto at = [w](int32_t x, int32_t y) { return static_cast<size_t>(y) * w + static_cast<size_t>(x); };
+
+	uint32_t max_mag = 0u;
+	for (const int32_t c : coeffs) {
+		max_mag = std::max(max_mag, static_cast<uint32_t>(c < 0 ? -c : c));
+	}
+	EncodedJ2kBlock out;
+	if (max_mag == 0u) {
+		out.zero_bitplanes = mb_total;
+		return out;
+	}
+	const int32_t top = static_cast<int32_t>(std::bit_width(max_mag)) - 1;
+	out.zero_bitplanes = mb_total - 1u - static_cast<uint32_t>(top);
+	out.num_passes = 1u + 3u * static_cast<uint32_t>(top);
+
+	std::vector<uint8_t> sig(coeffs.size(), 0u);
+	std::vector<uint8_t> refined(coeffs.size(), 0u);
+	std::vector<uint8_t> coded(coeffs.size(), 0u); // coded in this bitplane's significance pass
+	std::array<TestMqContext, 19> ctxs{};
+	const auto init_ctxs = [&ctxs] {
+		ctxs = {};
+		ctxs[0].index = 4u;
+		ctxs[17].index = 3u;
+		ctxs[18].index = 46u;
+	};
+	init_ctxs();
+
+	int32_t ctx_h = static_cast<int32_t>(h);
+	const auto is_sig = [&](int32_t x, int32_t y) -> int32_t {
+		return (x >= 0 && x < static_cast<int32_t>(w) && y >= 0 && y < ctx_h && sig[at(x, y)] != 0u) ? 1 : 0;
+	};
+	const auto sign_of = [&](int32_t x, int32_t y) -> int32_t {
+		if (is_sig(x, y) == 0) {
+			return 0;
+		}
+		return coeffs[at(x, y)] < 0 ? -1 : 1;
+	};
+	const auto neighbours = [&](int32_t x, int32_t y) {
+		return is_sig(x - 1, y - 1) + is_sig(x, y - 1) + is_sig(x + 1, y - 1) + is_sig(x - 1, y) + is_sig(x + 1, y) +
+			is_sig(x - 1, y + 1) + is_sig(x, y + 1) + is_sig(x + 1, y + 1);
+	};
+	// Table D.1, LL and LH subbands: the horizontal sum leads.
+	const auto zc_context = [&](int32_t x, int32_t y) -> uint32_t {
+		const int32_t hs = is_sig(x - 1, y) + is_sig(x + 1, y);
+		const int32_t vs = is_sig(x, y - 1) + is_sig(x, y + 1);
+		const int32_t ds = is_sig(x - 1, y - 1) + is_sig(x + 1, y - 1) + is_sig(x - 1, y + 1) + is_sig(x + 1, y + 1);
+		if (hs == 2) {
+			return 8u;
+		}
+		if (hs == 1) {
+			return vs >= 1 ? 7u : (ds >= 1 ? 6u : 5u);
+		}
+		if (vs == 2) {
+			return 4u;
+		}
+		if (vs == 1) {
+			return 3u;
+		}
+		return ds >= 2 ? 2u : (ds == 1 ? 1u : 0u);
+	};
+	// Tables D.2 and D.3: the sign context and the bit it is XORed with.
+	const auto sc_context = [&](int32_t x, int32_t y, uint8_t& xor_bit) -> uint32_t {
+		const int32_t hc = std::clamp(sign_of(x - 1, y) + sign_of(x + 1, y), -1, 1);
+		const int32_t vc = std::clamp(sign_of(x, y - 1) + sign_of(x, y + 1), -1, 1);
+		static constexpr uint32_t kCtx[3][3] = {{13u, 12u, 11u}, {10u, 9u, 10u}, {11u, 12u, 13u}}; // [h+1][v+1]
+		static constexpr uint8_t kXor[3][3] = {{1u, 1u, 1u}, {1u, 0u, 0u}, {0u, 0u, 0u}};
+		xor_bit = kXor[hc + 1][vc + 1];
+		return kCtx[hc + 1][vc + 1];
+	};
+
+	// Segment bookkeeping: an MQ coder or a raw writer per codeword segment.
+	std::optional<TestMqEncoder> mq;
+	std::optional<TestBitWriter> raw;
+	uint32_t segment_passes = 0u;
+	const auto close_segment = [&] {
+		if (segment_passes == 0u) {
+			return;
+		}
+		EncodedJ2kSegment seg;
+		seg.passes = segment_passes;
+		if (mq.has_value()) {
+			seg.bytes = mq->finish();
+		} else if (raw.has_value()) {
+			raw->flush_aligned();
+			seg.bytes = raw->bytes();
+		}
+		out.segments.push_back(std::move(seg));
+		mq.reset();
+		raw.reset();
+		segment_passes = 0u;
+	};
+	const auto segment_end = [&](uint32_t pass) -> uint32_t {
+		if (term_all) {
+			return pass + 1u;
+		}
+		if (bypass) {
+			if (pass < 10u) {
+				return 10u;
+			}
+			return (pass - 1u) % 3u == 0u ? pass + 2u : pass + 1u;
+		}
+		return UINT32_MAX;
+	};
+
+	uint32_t pass = 0u;
+	uint32_t current_end = 0u;
+	const auto begin_pass = [&](bool is_raw) {
+		if (pass >= current_end) {
+			close_segment();
+			current_end = segment_end(pass);
+			if (is_raw) {
+				raw.emplace();
+			} else {
+				mq.emplace();
+			}
+		}
+		if (pass > 0u && reset) {
+			init_ctxs();
+		}
+	};
+	const auto end_pass = [&] {
+		++segment_passes;
+		++pass;
+	};
+	const auto code_sign = [&](int32_t x, int32_t y, bool is_raw) {
+		const uint8_t negative = coeffs[at(x, y)] < 0 ? 1u : 0u;
+		if (is_raw) {
+			raw->write_bit(negative);
+			return;
+		}
+		uint8_t xor_bit = 0u;
+		const uint32_t ctx = sc_context(x, y, xor_bit);
+		mq->encode(ctxs[ctx], static_cast<uint8_t>(negative ^ xor_bit));
+	};
+	const auto magnitude_bit = [&](int32_t x, int32_t y, int32_t bp) -> uint8_t {
+		const int32_t c = coeffs[at(x, y)];
+		return static_cast<uint8_t>(((c < 0 ? -c : c) >> bp) & 1);
+	};
+	const int32_t wi = static_cast<int32_t>(w);
+	const int32_t hi = static_cast<int32_t>(h);
+
+	for (int32_t bp = top; bp >= 0; --bp) {
+		if (bp != top) {
+			// Significance propagation.
+			const bool is_raw = bypass && pass >= 10u;
+			begin_pass(is_raw);
+			std::fill(coded.begin(), coded.end(), uint8_t{0});
+			for (int32_t y0 = 0; y0 < hi; y0 += 4) {
+				ctx_h = causal ? std::min(hi, y0 + 4) : hi;
+				for (int32_t x = 0; x < wi; ++x) {
+					for (int32_t y = y0; y < std::min(hi, y0 + 4); ++y) {
+						if (sig[at(x, y)] != 0u || neighbours(x, y) == 0) {
+							continue;
+						}
+						const uint8_t bit = magnitude_bit(x, y, bp);
+						if (is_raw) {
+							raw->write_bit(bit);
+						} else {
+							mq->encode(ctxs[zc_context(x, y)], bit);
+						}
+						if (bit != 0u) {
+							code_sign(x, y, is_raw);
+							sig[at(x, y)] = 1u;
+						}
+						coded[at(x, y)] = 1u;
+					}
+				}
+			}
+			end_pass();
+			// Magnitude refinement.
+			begin_pass(is_raw);
+			for (int32_t y0 = 0; y0 < hi; y0 += 4) {
+				ctx_h = causal ? std::min(hi, y0 + 4) : hi;
+				for (int32_t x = 0; x < wi; ++x) {
+					for (int32_t y = y0; y < std::min(hi, y0 + 4); ++y) {
+						if (sig[at(x, y)] == 0u || coded[at(x, y)] != 0u) {
+							continue;
+						}
+						const uint8_t bit = magnitude_bit(x, y, bp);
+						if (is_raw) {
+							raw->write_bit(bit);
+						} else {
+							const uint32_t ctx = refined[at(x, y)] != 0u ? 16u : (neighbours(x, y) > 0 ? 15u : 14u);
+							mq->encode(ctxs[ctx], bit);
+						}
+						refined[at(x, y)] = 1u;
+					}
+				}
+			}
+			end_pass();
+		}
+		// Cleanup, with the run-length mode on full stripe columns of insignificant samples with no significant
+		// neighbours (D.3.4).
+		begin_pass(false);
+		for (int32_t y0 = 0; y0 < hi; y0 += 4) {
+			ctx_h = causal ? std::min(hi, y0 + 4) : hi;
+			const int32_t stripe_h = std::min(4, hi - y0);
+			for (int32_t x = 0; x < wi; ++x) {
+				int32_t y = y0;
+				if (stripe_h == 4) {
+					bool run = true;
+					for (int32_t k = 0; k < 4; ++k) {
+						if (sig[at(x, y0 + k)] != 0u || coded[at(x, y0 + k)] != 0u || neighbours(x, y0 + k) != 0) {
+							run = false;
+						}
+					}
+					if (run) {
+						int32_t first = -1;
+						for (int32_t k = 0; k < 4 && first < 0; ++k) {
+							if (magnitude_bit(x, y0 + k, bp) != 0u) {
+								first = k;
+							}
+						}
+						mq->encode(ctxs[17], first >= 0 ? 1u : 0u);
+						if (first < 0) {
+							continue;
+						}
+						mq->encode(ctxs[18], static_cast<uint8_t>((first >> 1) & 1));
+						mq->encode(ctxs[18], static_cast<uint8_t>(first & 1));
+						code_sign(x, y0 + first, false);
+						sig[at(x, y0 + first)] = 1u;
+						y = y0 + first + 1;
+					}
+				}
+				for (; y < y0 + stripe_h; ++y) {
+					if (sig[at(x, y)] != 0u || coded[at(x, y)] != 0u) {
+						continue;
+					}
+					const uint8_t bit = magnitude_bit(x, y, bp);
+					mq->encode(ctxs[zc_context(x, y)], bit);
+					if (bit != 0u) {
+						code_sign(x, y, false);
+						sig[at(x, y)] = 1u;
+					}
+				}
+			}
+		}
+		if (segsym) {
+			// 1010, or 1011 on the last cleanup pass when the test asks for a damaged one.
+			const uint8_t last = (wrong_last_symbol && bp == 0) ? 1u : 0u;
+			for (const uint8_t bit : {uint8_t{1u}, uint8_t{0u}, uint8_t{1u}, last}) {
+				mq->encode(ctxs[18], bit);
+			}
+		}
+		std::fill(coded.begin(), coded.end(), uint8_t{0});
+		end_pass();
+	}
+	close_segment();
+	return out;
+}
+
+// One component of a test codestream: its samples on its own grid (`w` x `h`, already subsampled by `dx`, `dy`),
+// unsigned at `depth` bits.
+struct J2kTestComponent {
+	std::vector<uint16_t> samples;
+	uint32_t w = 0u;
+	uint32_t h = 0u;
+	uint8_t depth = 8u;
+	uint8_t dx = 1u;
+	uint8_t dy = 1u;
+};
+
+struct J2kTestOptions {
+	uint8_t cb_style = 0u;
+	uint8_t levels = 0u;         // decomposition levels; above 0 only for 1 x 1 components (every other band empty)
+	uint8_t roi_shift = 0u;      // Maxshift for component 0, with `roi` marking its region-of-interest samples
+	std::vector<uint8_t> roi;
+	bool wrong_last_symbol = false; // component 0's last segmentation symbol reads 1011
+};
+
+// A one-tile, one-layer LRCP JPEG 2000 codestream of reversible components with no decomposition (each component's
+// LL band is its samples less 2^(depth - 1)), one code-block each (components up to 64 x 64), a QCC per component for
+// its own depth, and an RGN marker when `roi_shift` is set. With `levels` above 0 every component must be 1 x 1: its
+// LL band, after any number of 5-3 levels, is its one sample, and every other band is empty (T.800 B.5).
+[[nodiscard]] std::vector<uint8_t> make_j2k_codestream(
+	std::span<const J2kTestComponent> comps, uint32_t img_w, uint32_t img_h, const J2kTestOptions& opt = {})
+{
+	std::vector<uint8_t> packets;
+	for (size_t ci = 0; ci < comps.size(); ++ci) {
+		const J2kTestComponent& comp = comps[ci];
+		std::vector<int32_t> coeffs(comp.samples.size());
+		for (size_t i = 0; i < coeffs.size(); ++i) {
+			coeffs[i] = static_cast<int32_t>(comp.samples[i]) - (1 << (comp.depth - 1u));
+			if (ci == 0u && opt.roi_shift > 0u && opt.roi[i] != 0u) {
+				coeffs[i] *= (1 << opt.roi_shift); // Maxshift: the region's coefficients above every background one
+			}
+		}
+		const uint32_t mb = comp.depth + (ci == 0u ? opt.roi_shift : 0u); // one guard bit + epsilon - 1, plus the shift
+		const EncodedJ2kBlock block =
+			encode_j2k_block(coeffs, comp.w, comp.h, mb, opt.cb_style, ci == 0u && opt.wrong_last_symbol);
+		TestBitWriter bw;
+		if (block.num_passes == 0u) {
+			bw.write_bit(0u); // an empty packet
+		} else {
+			bw.write_bit(1u);
+			bw.write_bit(1u);
+			for (uint32_t z = 0; z < block.zero_bitplanes; ++z) {
+				bw.write_bit(0u);
+			}
+			bw.write_bit(1u);
+			bw.encode_num_passes(block.num_passes);
+			uint32_t lblock = 3u;
+			for (const EncodedJ2kSegment& seg : block.segments) {
+				const uint32_t extra = seg.passes <= 1u ? 0u : static_cast<uint32_t>(std::bit_width(seg.passes) - 1u);
+				while (static_cast<uint32_t>(std::bit_width(seg.bytes.size())) > lblock + extra) {
+					++lblock;
+				}
+			}
+			for (uint32_t i = 3u; i < lblock; ++i) {
+				bw.write_bit(1u);
+			}
+			bw.write_bit(0u);
+			for (const EncodedJ2kSegment& seg : block.segments) {
+				const uint32_t extra = seg.passes <= 1u ? 0u : static_cast<uint32_t>(std::bit_width(seg.passes) - 1u);
+				bw.write_bits(static_cast<uint32_t>(seg.bytes.size()), lblock + extra);
+			}
+		}
+		bw.flush_aligned();
+		packets.insert(packets.end(), bw.bytes().begin(), bw.bytes().end());
+		for (const EncodedJ2kSegment& seg : block.segments) {
+			packets.insert(packets.end(), seg.bytes.begin(), seg.bytes.end());
+		}
+	}
+	// LRCP: resolution 0 of each component above, then every higher resolution's packets, all empty.
+	for (uint32_t r = 1u; r <= opt.levels; ++r) {
+		for (size_t ci = 0; ci < comps.size(); ++ci) {
+			packets.push_back(0x00u);
+		}
+	}
+
+	std::vector<uint8_t> cs = {0xFFu, 0x4Fu};
+	const auto u8 = [&cs](uint32_t v) { cs.push_back(static_cast<uint8_t>(v)); };
+	const auto u16 = [&cs](uint32_t v) {
+		cs.push_back(static_cast<uint8_t>(v >> 8u));
+		cs.push_back(static_cast<uint8_t>(v));
+	};
+	const auto u32 = [&u16](uint32_t v) {
+		u16(v >> 16u);
+		u16(v & 0xFFFFu);
+	};
+	const uint32_t n = static_cast<uint32_t>(comps.size());
+	u16(0xFF51u); // SIZ
+	u16(38u + 3u * n);
+	u16(0u);
+	u32(img_w);
+	u32(img_h);
+	u32(0u);
+	u32(0u);
+	u32(img_w);
+	u32(img_h);
+	u32(0u);
+	u32(0u);
+	u16(n);
+	for (const J2kTestComponent& comp : comps) {
+		u8(comp.depth - 1u);
+		u8(comp.dx);
+		u8(comp.dy);
+	}
+	u16(0xFF52u); // COD: LRCP, one layer, no MCT, 64 x 64 code-blocks, 5-3 reversible
+	u16(12u);
+	u8(0u);
+	u8(0u);
+	u16(1u);
+	u8(0u);
+	u8(opt.levels);
+	u8(4u);
+	u8(4u);
+	u8(opt.cb_style);
+	u8(1u);
+	const uint32_t bands = 1u + 3u * opt.levels;
+	for (size_t ci = 0; ci < comps.size(); ++ci) {
+		// QCC: one guard bit, no quantization; epsilon is the depth plus each band's gain (0 for LL, 1 for HL and LH,
+		// 2 for HH; T.800 E.1.1).
+		u16(0xFF5Du);
+		u16(4u + bands);
+		u8(static_cast<uint32_t>(ci));
+		u8(0x20u);
+		u8(static_cast<uint32_t>(comps[ci].depth) << 3u);
+		for (uint32_t l = 0; l < opt.levels; ++l) {
+			u8(static_cast<uint32_t>(comps[ci].depth + 1u) << 3u);
+			u8(static_cast<uint32_t>(comps[ci].depth + 1u) << 3u);
+			u8(static_cast<uint32_t>(comps[ci].depth + 2u) << 3u);
+		}
+	}
+	// The main header needs a QCD; the QCCs above override it for every component.
+	u16(0xFF5Cu);
+	u16(3u + bands);
+	u8(0x20u);
+	u8(8u << 3u);
+	for (uint32_t l = 0; l < opt.levels; ++l) {
+		u8(9u << 3u);
+		u8(9u << 3u);
+		u8(10u << 3u);
+	}
+	if (opt.roi_shift > 0u) {
+		u16(0xFF5Eu); // RGN: component 0, implicit (Maxshift), its shift
+		u16(5u);
+		u8(0u);
+		u8(0u);
+		u8(opt.roi_shift);
+	}
+	u16(0xFF90u); // SOT
+	u16(10u);
+	u16(0u);
+	u32(static_cast<uint32_t>(12u + 2u + packets.size()));
+	u8(0u);
+	u8(1u);
+	u16(0xFF93u); // SOD
+	cs.insert(cs.end(), packets.begin(), packets.end());
+	u16(0xFFD9u); // EOC
+	return cs;
+}
+
+// A JP2 file around `codestream`: signature, file type, a header with `ihdr` and the extra header boxes
+// (`colr`, `pclr`, `cmap`, `cdef`, each given as its type and payload), and the codestream box.
+[[nodiscard]] std::vector<uint8_t> make_jp2(std::span<const uint8_t> codestream, uint32_t w, uint32_t h, uint16_t comps,
+	std::span<const std::pair<std::string_view, std::vector<uint8_t>>> header_boxes)
+{
+	std::vector<uint8_t> out;
+	const auto u16 = [](std::vector<uint8_t>& v, uint32_t x) {
+		v.push_back(static_cast<uint8_t>(x >> 8u));
+		v.push_back(static_cast<uint8_t>(x));
+	};
+	const auto u32 = [&u16](std::vector<uint8_t>& v, uint32_t x) {
+		u16(v, x >> 16u);
+		u16(v, x & 0xFFFFu);
+	};
+	const auto box = [&u32](std::vector<uint8_t>& v, std::string_view type, std::span<const uint8_t> payload) {
+		u32(v, static_cast<uint32_t>(8u + payload.size()));
+		v.insert(v.end(), type.begin(), type.end());
+		v.insert(v.end(), payload.begin(), payload.end());
+	};
+	box(out, "jP  ", std::vector<uint8_t>{0x0Du, 0x0Au, 0x87u, 0x0Au});
+	box(out, "ftyp", std::vector<uint8_t>{'j', 'p', '2', ' ', 0u, 0u, 0u, 0u, 'j', 'p', '2', ' '});
+	std::vector<uint8_t> ihdr;
+	u32(ihdr, h);
+	u32(ihdr, w);
+	u16(ihdr, comps);
+	ihdr.push_back(7u); // 8 bits per component
+	ihdr.push_back(7u); // compression type: JPEG 2000
+	ihdr.push_back(0u);
+	ihdr.push_back(0u);
+	std::vector<uint8_t> jp2h;
+	box(jp2h, "ihdr", ihdr);
+	for (const auto& [type, payload] : header_boxes) {
+		box(jp2h, type, payload);
+	}
+	box(out, "jp2h", jp2h);
+	box(out, "jp2c", codestream);
+	return out;
+}
+
 // Forward 1D 5-3 reversible DWT for a 2-sample signal:
 // d[0] = x[1] - x[0], s[0] = x[0] + floor(d[0] / 2).
 void fdwt_53_2x2(const std::array<int32_t, 4>& img, int32_t& ll, int32_t& hl, int32_t& lh, int32_t& hh)
@@ -4842,6 +5321,249 @@ TEST(PdfFilters, JpxIgnoredDecodeIsNotResolved)
 
 // Each JPX implementation is tested as itself: NativeOnly never reaches WIC, and WicOnly decodes through a registered
 // JPEG 2000 codec or refuses with UnsupportedFeature, never falling back to the native decoder.
+// The style tests' image: one 8-bit component, no decomposition, coded in `cb_style`.
+[[nodiscard]] std::vector<uint8_t> make_j2k_gray_codestream(
+	std::span<const uint8_t> samples, uint32_t w, uint32_t h, uint8_t cb_style)
+{
+	const std::array<J2kTestComponent, 1> comps = {
+		J2kTestComponent{std::vector<uint16_t>(samples.begin(), samples.end()), w, h, 8u, 1u, 1u}};
+	J2kTestOptions opt;
+	opt.cb_style = cb_style;
+	return make_j2k_codestream(comps, w, h, opt);
+}
+
+// A 16 x 16 image whose samples use all eight bitplanes, so every style's raw passes (after the first ten) occur.
+std::vector<uint8_t> j2k_style_samples()
+{
+	std::vector<uint8_t> samples(16u * 16u);
+	for (uint32_t y = 0; y < 16u; ++y) {
+		for (uint32_t x = 0; x < 16u; ++x) {
+			samples[y * 16u + x] = static_cast<uint8_t>((x * 37u + y * 91u + (x * y) % 23u) & 0xFFu);
+		}
+	}
+	return samples;
+}
+
+constexpr std::array<uint8_t, 11> kJ2kStyles = {
+	0x00u, 0x01u, 0x02u, 0x04u, 0x08u, 0x10u, 0x20u, 0x05u, 0x29u, 0x0Eu, 0x3Fu,
+};
+
+// D06 T05 section 32: every ITU-T T.800 Part 1 code-block style decodes (bypass, context reset, termination on each
+// pass, vertically causal contexts, predictable termination, segmentation symbols, and combinations), exactly, since
+// the codestreams are reversible; the two bits later parts define are refused.
+TEST(PdfFilters, JpxComponentsAndCodingStyles)
+{
+	const detail::ScopedJpxPath native(detail::JpxPath::NativeOnly);
+	const std::vector<uint8_t> samples = j2k_style_samples();
+	for (const uint8_t style : kJ2kStyles) {
+		const auto cs = make_j2k_gray_codestream(samples, 16u, 16u, style);
+		auto img = decode_jpx_image(cs);
+		ASSERT_TRUE(img.has_value()) << "style 0x" << std::hex << int{style} << ": " << img.error().message.view();
+		EXPECT_EQ(img->pixels, samples) << "style 0x" << std::hex << int{style};
+	}
+	for (const uint8_t style : {uint8_t{0x40u}, uint8_t{0x80u}}) {
+		RECTO_EXPECT_ERR(decode_jpx_image(make_j2k_gray_codestream(samples, 16u, 16u, style)), ErrorCode::DamagedFormat);
+	}
+	// A segmentation symbol that does not read 1010 (here the last cleanup pass's) marks that bitplane damaged: it is
+	// dropped, so every sample stays within one of the original instead of taking the damaged pass's decisions.
+	{
+		const std::array<J2kTestComponent, 1> comps = {
+			J2kTestComponent{std::vector<uint16_t>(samples.begin(), samples.end()), 16u, 16u, 8u, 1u, 1u}};
+		J2kTestOptions opt;
+		opt.cb_style = 0x20u;
+		opt.wrong_last_symbol = true;
+		auto damaged = decode_jpx_image(make_j2k_codestream(comps, 16u, 16u, opt));
+		ASSERT_TRUE(damaged.has_value()) << damaged.error().message.view();
+		int max_diff = 0;
+		for (size_t i = 0; i < samples.size(); ++i) {
+			max_diff = std::max(max_diff, std::abs(int{damaged->pixels[i]} - int{samples[i]}));
+		}
+		EXPECT_EQ(max_diff, 1);
+	}
+	// Per-component precision: 8-, 12- and 4-bit components each decode from their own range to 8 bits.
+	{
+		J2kTestComponent eight{{}, 4u, 4u, 8u, 1u, 1u};
+		J2kTestComponent twelve{{}, 4u, 4u, 12u, 1u, 1u};
+		J2kTestComponent four{{}, 4u, 4u, 4u, 1u, 1u};
+		for (uint16_t i = 0; i < 16u; ++i) {
+			eight.samples.push_back(static_cast<uint16_t>(i * 17u));
+			twelve.samples.push_back(static_cast<uint16_t>(i * 273u)); // 0 .. 4095
+			four.samples.push_back(i);
+		}
+		const std::array<J2kTestComponent, 3> comps = {eight, twelve, four};
+		auto img = decode_jpx_image(make_j2k_codestream(comps, 4u, 4u));
+		ASSERT_TRUE(img.has_value()) << img.error().message.view();
+		ASSERT_EQ(img->components, 3u);
+		for (size_t i = 0; i < 16u; ++i) {
+			EXPECT_EQ(img->pixels[i * 3u + 0u], eight.samples[i]) << i;
+			EXPECT_EQ(img->pixels[i * 3u + 1u], twelve.samples[i] >> 4u) << i;
+			EXPECT_EQ(img->pixels[i * 3u + 2u], four.samples[i] * 255u / 15u) << i;
+		}
+	}
+	// 4:2:0: chroma components at half resolution reconstruct at full resolution, each chroma sample covering its
+	// 2 x 2 block (no MCT, as T.800 G.1 requires equal grids for it).
+	{
+		J2kTestComponent luma{{}, 4u, 4u, 8u, 1u, 1u};
+		J2kTestComponent cb{{}, 2u, 2u, 8u, 2u, 2u};
+		J2kTestComponent cr{{}, 2u, 2u, 8u, 2u, 2u};
+		for (uint16_t i = 0; i < 16u; ++i) {
+			luma.samples.push_back(static_cast<uint16_t>(10u + i * 15u));
+		}
+		cb.samples = {20u, 60u, 100u, 140u};
+		cr.samples = {200u, 160u, 120u, 80u};
+		const std::array<J2kTestComponent, 3> comps = {luma, cb, cr};
+		auto img = decode_jpx_image(make_j2k_codestream(comps, 4u, 4u));
+		ASSERT_TRUE(img.has_value()) << img.error().message.view();
+		ASSERT_EQ(img->components, 3u);
+		for (uint32_t y = 0; y < 4u; ++y) {
+			for (uint32_t x = 0; x < 4u; ++x) {
+				const size_t px = (static_cast<size_t>(y) * 4u + x) * 3u;
+				EXPECT_EQ(img->pixels[px + 0u], luma.samples[y * 4u + x]) << x << "," << y;
+				EXPECT_EQ(img->pixels[px + 1u], cb.samples[(y / 2u) * 2u + x / 2u]) << x << "," << y;
+				EXPECT_EQ(img->pixels[px + 2u], cr.samples[(y / 2u) * 2u + x / 2u]) << x << "," << y;
+			}
+		}
+	}
+	// 32 decomposition levels (T.800 A.6.1), on a 1 x 1 image whose every band but LL is empty.
+	{
+		const std::array<J2kTestComponent, 1> comps = {J2kTestComponent{{173u}, 1u, 1u, 8u, 1u, 1u}};
+		for (const uint8_t levels : {uint8_t{11u}, uint8_t{32u}}) {
+			J2kTestOptions opt;
+			opt.levels = levels;
+			auto img = decode_jpx_image(make_j2k_codestream(comps, 1u, 1u, opt));
+			ASSERT_TRUE(img.has_value()) << int{levels} << ": " << img.error().message.view();
+			EXPECT_EQ(img->pixels, std::vector<uint8_t>{173u}) << int{levels};
+		}
+		J2kTestOptions too_many;
+		too_many.levels = 33u;
+		RECTO_EXPECT_ERR(decode_jpx_image(make_j2k_codestream(comps, 1u, 1u, too_many)), ErrorCode::DamagedFormat);
+	}
+	// Region of interest (Maxshift, T.800 Annex H): the region's coefficients are coded 2^8 higher and come back.
+	{
+		J2kTestComponent gray{{}, 8u, 8u, 8u, 1u, 1u};
+		J2kTestOptions opt;
+		opt.roi_shift = 8u;
+		for (uint32_t i = 0; i < 64u; ++i) {
+			gray.samples.push_back(static_cast<uint16_t>((i * 53u) & 0xFFu));
+			opt.roi.push_back((i % 8u) < 4u ? 1u : 0u); // the left half is the region
+		}
+		const std::array<J2kTestComponent, 1> comps = {gray};
+		auto img = decode_jpx_image(make_j2k_codestream(comps, 8u, 8u, opt));
+		ASSERT_TRUE(img.has_value()) << img.error().message.view();
+		std::vector<uint8_t> expected;
+		for (const uint16_t v : gray.samples) {
+			expected.push_back(static_cast<uint8_t>(v));
+		}
+		EXPECT_EQ(img->pixels, expected);
+	}
+	// JP2 channels (T.800 Annex I): a palette image keeps its colours, a four-component CMYK image stays four colour
+	// channels, and only an opacity channel cdef declares becomes alpha.
+	{
+		const std::vector<uint8_t> enum_srgb = {1u, 0u, 0u, 0u, 0u, 0u, 16u};
+		const std::vector<uint8_t> enum_cmyk = {1u, 0u, 0u, 0u, 0u, 0u, 12u};
+		// Palette: two entries, three 8-bit columns (red, then blue); the index component maps through each column.
+		{
+			const std::array<J2kTestComponent, 1> idx = {J2kTestComponent{{0u, 1u, 1u, 0u}, 2u, 2u, 8u, 1u, 1u}};
+			const std::vector<uint8_t> pclr = {0u, 2u, 3u, 7u, 7u, 7u, 255u, 0u, 0u, 0u, 0u, 255u};
+			const std::vector<uint8_t> cmap = {0u, 0u, 1u, 0u, 0u, 0u, 1u, 1u, 0u, 0u, 1u, 2u};
+			const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 3> boxes = {{
+				{"colr", enum_srgb}, {"pclr", pclr}, {"cmap", cmap}}};
+			auto img = decode_jpx_image(make_jp2(make_j2k_codestream(idx, 2u, 2u), 2u, 2u, 1u, boxes));
+			ASSERT_TRUE(img.has_value()) << img.error().message.view();
+			ASSERT_EQ(img->components, 3u);
+			EXPECT_EQ(img->pixels, (std::vector<uint8_t>{255u, 0u, 0u, 0u, 0u, 255u, 0u, 0u, 255u, 255u, 0u, 0u}));
+		}
+		std::array<J2kTestComponent, 4> four{};
+		for (uint32_t c = 0; c < 4u; ++c) {
+			four[c] = J2kTestComponent{{static_cast<uint16_t>(40u * c), static_cast<uint16_t>(40u * c + 10u)}, 2u, 1u, 8u, 1u, 1u};
+		}
+		const auto cs4 = make_j2k_codestream(four, 2u, 1u);
+		const std::vector<uint8_t> interleaved = {0u, 40u, 80u, 120u, 10u, 50u, 90u, 130u};
+		// CMYK: four colour channels, and opaque.
+		{
+			const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 1> boxes = {{{"colr", enum_cmyk}}};
+			auto img = decode_jpx_image(make_jp2(cs4, 2u, 1u, 4u, boxes));
+			ASSERT_TRUE(img.has_value()) << img.error().message.view();
+			EXPECT_EQ(img->components, 4u);
+			EXPECT_TRUE(img->is_cmyk);
+			EXPECT_EQ(img->pixels, interleaved);
+			EXPECT_EQ(img->rgba_pixels[3], 255u);
+		}
+		// sRGB with a fourth channel cdef declares opacity: three colour channels and that alpha.
+		{
+			const std::vector<uint8_t> cdef = {0u, 4u, 0u, 0u, 0u, 0u, 0u, 1u, 0u, 1u, 0u, 0u, 0u, 2u,
+				0u, 2u, 0u, 0u, 0u, 3u, 0u, 3u, 0u, 1u, 0u, 0u};
+			const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 2> boxes = {{
+				{"colr", enum_srgb}, {"cdef", cdef}}};
+			auto img = decode_jpx_image(make_jp2(cs4, 2u, 1u, 4u, boxes));
+			ASSERT_TRUE(img.has_value()) << img.error().message.view();
+			EXPECT_EQ(img->components, 3u);
+			EXPECT_FALSE(img->is_cmyk);
+			EXPECT_EQ(img->pixels, (std::vector<uint8_t>{0u, 40u, 80u, 10u, 50u, 90u}));
+			EXPECT_EQ(img->rgba_pixels[3], 120u);
+			EXPECT_EQ(img->rgba_pixels[7], 130u);
+		}
+		// sRGB with a fourth channel and no cdef: that channel is not alpha.
+		{
+			const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 1> boxes = {{{"colr", enum_srgb}}};
+			auto img = decode_jpx_image(make_jp2(cs4, 2u, 1u, 4u, boxes));
+			ASSERT_TRUE(img.has_value()) << img.error().message.view();
+			EXPECT_EQ(img->components, 3u);
+			EXPECT_EQ(img->rgba_pixels[3], 255u);
+		}
+	}
+	// The corpus seed with context reset set in its COD marker (byte 58 of the seed file) still decodes.
+	{
+		auto seed = recto::test::read_file_bytes(recto::test::corpus_path("seeds/seed-filter-09-jpx.bin"));
+		ASSERT_GT(seed.size(), 58u);
+		seed[58] = 0x02u;
+		auto img = decode_jpx_image(std::span<const uint8_t>(seed).subspan(1u));
+		ASSERT_TRUE(img.has_value()) << img.error().message.view();
+		EXPECT_EQ(img->pixels, std::vector<uint8_t>(64u, 128u));
+	}
+}
+
+// Writes the style codestreams and their expected samples for a cross-check with an independent decoder (OpenJPEG,
+// through Pillow): run with --gtest_also_run_disabled_tests and decode the files it names.
+TEST(PdfFilters, DISABLED_JpxStyleCodestreamsForCrossCheck)
+{
+	const std::filesystem::path dir = std::filesystem::path(::testing::TempDir()) / "recto-j2k-styles";
+	std::filesystem::create_directories(dir);
+	const std::vector<uint8_t> samples = j2k_style_samples();
+	const auto write = [](const std::filesystem::path& path, std::span<const uint8_t> bytes) {
+		std::ofstream out(path, std::ios::binary);
+		out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+	};
+	for (const uint8_t style : kJ2kStyles) {
+		char name[32];
+		std::snprintf(name, sizeof(name), "style-%02X", unsigned{style});
+		write(dir / (std::string(name) + ".j2k"), make_j2k_gray_codestream(samples, 16u, 16u, style));
+		write(dir / (std::string(name) + ".raw"), samples);
+	}
+	{
+		const std::array<J2kTestComponent, 1> one = {J2kTestComponent{{173u}, 1u, 1u, 8u, 1u, 1u}};
+		J2kTestOptions opt;
+		opt.levels = 32u;
+		write(dir / "levels-32.j2k", make_j2k_codestream(one, 1u, 1u, opt));
+		write(dir / "levels-32.raw", std::vector<uint8_t>{173u});
+	}
+	{
+		J2kTestComponent gray{{}, 8u, 8u, 8u, 1u, 1u};
+		J2kTestOptions opt;
+		opt.roi_shift = 8u;
+		std::vector<uint8_t> expected;
+		for (uint32_t i = 0; i < 64u; ++i) {
+			gray.samples.push_back(static_cast<uint16_t>((i * 53u) & 0xFFu));
+			expected.push_back(static_cast<uint8_t>((i * 53u) & 0xFFu));
+			opt.roi.push_back((i % 8u) < 4u ? 1u : 0u);
+		}
+		const std::array<J2kTestComponent, 1> comps = {gray};
+		write(dir / "roi-8.j2k", make_j2k_codestream(comps, 8u, 8u, opt));
+		write(dir / "roi-8.raw", expected);
+	}
+	std::printf("wrote %s\n", dir.string().c_str());
+}
+
 TEST(PdfFilters, JpxPathPinned)
 {
 	const std::array<uint8_t, 12> rgb = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200};
@@ -5036,6 +5758,19 @@ TEST(PdfFilters, WicCauseSurvivesAllocationFailure)
 	PdfError whole = make_pdf_error(ErrorCode::OutOfMemory, "x");
 	recto::pdf::detail::compose_message_after(whole, first, cause);
 	EXPECT_EQ(whole.message.view(), first + "; before it, " + std::string(cause.message.view()));
+
+	// The first WIC message too: when its own storage cannot be had, it is the compact form, not a cut one (round 5).
+	const std::string step(90, 's');
+	PdfError cut = make_pdf_error(ErrorCode::OutOfMemory, "x");
+	{
+		recto::test::ScopedAllocationFailure fail(1u, PdfErrorMessage::kInlineCapacity);
+		cut = recto::pdf::detail::wic_failure_error(static_cast<long>(0x88982F50u), step);
+	}
+	EXPECT_EQ(cut.code, ErrorCode::UnsupportedFeature);
+	EXPECT_NE(cut.message.view().find("no codec"), std::string_view::npos) << cut.message.view();
+	EXPECT_NE(cut.message.view().find("0x88982F50"), std::string_view::npos) << cut.message.view();
+	const PdfError full = recto::pdf::detail::wic_failure_error(static_cast<long>(0x88982F50u), step);
+	EXPECT_NE(full.message.view().find("no Windows Imaging Component codec"), std::string_view::npos);
 }
 
 TEST(PdfFilters, CcittDamagedRowRecovery)
@@ -5112,6 +5847,23 @@ TEST(PdfFilters, CcittDamagedRowRecovery)
 		ASSERT_TRUE(decoded.has_value()) << decoded.error().message.view();
 		EXPECT_EQ(*decoded, (std::vector<uint8_t>{0xF0u, 0x0Fu, 0xF0u, 0x0Fu, 0xFFu, 0xFFu}));
 		const PdfDict none_allowed = parms_for(2, 3, 0);
+		RECTO_EXPECT_ERR(decode_ccitt_fax(pack_bitstring(bits), &none_allowed), ErrorCode::DamagedFormat);
+	}
+
+	// An empty 1D row (two signals with a row after them) is damage too, in mixed (`EOL + 1 + EOL + 1`) and pure
+	// (`EOL + EOL`) Group 3 alike: RTC needs six signals, or nothing but signals and fill after them (D06 T05 section
+	// 34, round 2).
+	for (const int64_t k : {int64_t{2}, int64_t{0}}) {
+		const std::string tag = k > 0 ? "1" : "";
+		std::string bits = eol + tag + good + eol + tag + eol + tag + white;
+		for (int i = 0; i < 6; ++i) {
+			bits += eol + tag;
+		}
+		const PdfDict parms = parms_for(k, 3, 1);
+		auto decoded = decode_ccitt_fax(pack_bitstring(bits), &parms);
+		ASSERT_TRUE(decoded.has_value()) << "K " << k << ": " << decoded.error().message.view();
+		EXPECT_EQ(*decoded, (std::vector<uint8_t>{0xF0u, 0x0Fu, 0xF0u, 0x0Fu, 0xFFu, 0xFFu})) << "K " << k;
+		const PdfDict none_allowed = parms_for(k, 3, 0);
 		RECTO_EXPECT_ERR(decode_ccitt_fax(pack_bitstring(bits), &none_allowed), ErrorCode::DamagedFormat);
 	}
 

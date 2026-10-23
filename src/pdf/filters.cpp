@@ -2347,6 +2347,49 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 			return append_current_row();
 		};
 
+		// Group 3's end of block, RTC (ITU-T T.4 4.1.4 and 4.2.4), called right after an EOL: six consecutive EOLs, each
+		// followed by a 1 tag in mixed mode (an EOL without a tag, as 1D encoders write it, counts too). Two EOLs with
+		// something after them are not RTC but an empty, damaged row for Table 11 recovery; a shortened RTC is accepted
+		// only when nothing but EOLs and fill remains. The reader is left after the RTC, or where it was.
+		const auto rtc_follows = [&reader](bool mixed) noexcept -> bool {
+			const size_t start = reader.bit_pos;
+			// In mixed mode an EOL is followed by a 1 tag in RTC; an EOL straight after it (no tag) counts too.
+			const auto after_signal = [&]() noexcept -> bool {
+				if (!mixed || reader.at_end()) {
+					return true;
+				}
+				const size_t at = reader.bit_pos;
+				if (reader.read_bit() == 1) {
+					return true;
+				}
+				reader.bit_pos = at;
+				const bool untagged_eol = reader.try_consume_exact_eol();
+				reader.bit_pos = at;
+				return untagged_eol;
+			};
+			uint32_t signals = 1u; // the EOL just read
+			bool ok = after_signal();
+			while (ok && signals < 6u && reader.try_consume_eol()) {
+				++signals;
+				ok = after_signal();
+			}
+			if (ok && signals >= 6u) {
+				return true;
+			}
+			// A shortened RTC: two or more signals with only fill after them, or a last EOL at the end of the data.
+			if (ok && (signals >= 2u || reader.at_end())) {
+				bool zero_tail = true;
+				for (size_t b = reader.bit_pos; b < reader.total_bits() && zero_tail; ++b) {
+					zero_tail = ((reader.data[b >> 3u] >> (7u - (b & 7u))) & 1u) == 0u;
+				}
+				if (zero_tail) {
+					return true;
+				}
+			}
+			reader.bit_pos = start;
+			return false;
+		};
+
 		// Per ISO 32000-1 section 7.4.6 Table 11, `/EndOfBlock true` overrides `/Rows`
 		// and decodes until an end-of-block marker (EOFB or RTC) or end of data.
 		while (params.end_of_block || params.rows == 0 ||
@@ -2404,8 +2447,7 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 				// ITU-T T.4 Group 3 1D decoding.
 				const bool saw_eol = reader.try_consume_eol();
 				if (saw_eol) {
-					// Two consecutive EOLs mark RTC / End-Of-Block.
-					if (reader.try_consume_eol()) {
+					if (rtc_follows(false)) {
 						break;
 					}
 				} else if (decoded_rows > 0 &&
@@ -2438,21 +2480,9 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 				// ITU-T T.4 Group 3 2D mixed 1D/2D decoding (`K > 0`).
 				const bool saw_eol = reader.try_consume_eol();
 				if (saw_eol) {
-					// RTC is `EOL + 1` repeated (ITU-T T.4 4.2.4; `EOL` repeated with no tag, as Group 3 1D encoders write
-					// it, is accepted too, but only with no fill bits, since a tag bit always follows an EOL here). An
-					// `EOL + 0` followed by an EOL is an empty 2D row, which is damage for Table 11 recovery, not the end.
-					const size_t saved_after_eol = reader.bit_pos;
-					if (reader.try_consume_exact_eol()) {
+					if (rtc_follows(true)) {
 						break;
 					}
-					const int tag_peek = reader.read_bit();
-					if (tag_peek < 0) {
-						break;
-					}
-					if (tag_peek == 1 && reader.try_consume_eol()) {
-						break;
-					}
-					reader.bit_pos = saved_after_eol;
 				} else if (decoded_rows > 0 &&
 						   (params.rows == 0 ||
 							decoded_rows >= static_cast<uint64_t>(params.rows))) {
@@ -6425,6 +6455,24 @@ enum class WicFailureClass : uint8_t {
 
 // The error for a failed WIC step: its class as the code, and a message naming the step, what the class means and the
 // HRESULT in hex, so a memory or cancel failure never reads as damage.
+// The class of a WIC failure in a word or two, for the compact messages that fit the message's inline capacity.
+[[nodiscard]] std::string_view wic_class_name(HRESULT hr) noexcept
+{
+	switch (classify_wic_failure(hr)) {
+	case WicFailureClass::Resource:
+		return "out of memory";
+	case WicFailureClass::Cancelled:
+		return "cancelled";
+	case WicFailureClass::Capability:
+		return "no codec";
+	case WicFailureClass::Data:
+		return "data rejected";
+	case WicFailureClass::System:
+		break;
+	}
+	return "WIC failure";
+}
+
 [[nodiscard]] PdfError wic_failure(HRESULT hr, std::string_view step, DecoderStep decoder_step) noexcept
 {
 	ErrorCode code = ErrorCode::InternalError;
@@ -6458,8 +6506,19 @@ enum class WicFailureClass : uint8_t {
 	const int written = std::snprintf(text, sizeof(text), "%.*s failed: %.*s (HRESULT 0x%08lX)",
 		static_cast<int>(std::min<size_t>(step.size(), 100u)), step.data(), static_cast<int>(meaning.size()), meaning.data(),
 		static_cast<unsigned long>(hr));
-	PdfError error = make_filter_error(
-		code, id, std::string_view(text, written > 0 ? std::min<size_t>(static_cast<size_t>(written), sizeof(text) - 1u) : 0u));
+	const size_t length = written > 0 ? std::min<size_t>(static_cast<size_t>(written), sizeof(text) - 1u) : 0u;
+	PdfError error = make_filter_error(code, id, std::string_view(text, length));
+	if (error.message.view().size() != length) {
+		// The message type cut the text to its inline capacity because its own storage could not be allocated; a
+		// compact form that fits keeps the step, class and HRESULT instead.
+		const std::string_view cls = wic_class_name(hr);
+		char compact[PdfErrorMessage::kInlineCapacity + 1u];
+		const int n = std::snprintf(compact, sizeof(compact), "%.*s failed: %.*s (HRESULT 0x%08lX)",
+			static_cast<int>(std::min<size_t>(step.size(), 64u)), step.data(), static_cast<int>(cls.size()), cls.data(),
+			static_cast<unsigned long>(hr));
+		error.message = PdfErrorMessage(
+			std::string_view(compact, n > 0 ? std::min<size_t>(static_cast<size_t>(n), sizeof(compact) - 1u) : 0u));
+	}
 	// The step and HRESULT as numbers, which the diagnostic ring and ETW keep (D01 T02 section 25).
 	error.decoder_step = decoder_step;
 	error.platform_status = static_cast<uint32_t>(hr);
@@ -6479,6 +6538,11 @@ namespace detail {
 void compose_message_after(PdfError& error, std::string_view first, const PdfError& cause) noexcept
 {
 	set_message_without_allocation(error, first, cause);
+}
+
+PdfError wic_failure_error(long hr, std::string_view step) noexcept
+{
+	return wic_failure(static_cast<HRESULT>(hr), step, DecoderStep::WicCreateDecoder);
 }
 
 } // namespace detail
@@ -6502,27 +6566,8 @@ void set_message_without_allocation(PdfError& error, std::string_view first, con
 	} catch (const std::bad_alloc&) {
 		// fall through to the compact form
 	}
-	std::string_view cls = "WIC failure";
-	if (cause.platform_status.has_value()) {
-		switch (classify_wic_failure(static_cast<HRESULT>(*cause.platform_status))) {
-		case WicFailureClass::Resource:
-			cls = "out of memory";
-			break;
-		case WicFailureClass::Cancelled:
-			cls = "cancelled";
-			break;
-		case WicFailureClass::Capability:
-			cls = "no codec";
-			break;
-		case WicFailureClass::Data:
-			cls = "data rejected";
-			break;
-		case WicFailureClass::System:
-			break;
-		}
-	} else {
-		cls = "no result";
-	}
+	const std::string_view cls =
+		cause.platform_status.has_value() ? wic_class_name(static_cast<HRESULT>(*cause.platform_status)) : "no result";
 	const std::string_view step = decoder_step_name(cause.decoder_step);
 	char text[PdfErrorMessage::kInlineCapacity + 1u];
 	const int n = std::snprintf(text, sizeof(text), "%.*s; before it, WIC %.*s: %.*s (HRESULT 0x%08X)",
@@ -7056,6 +7101,14 @@ struct JpxHeaderInfo {
 	uint16_t components{0};
 	uint8_t bpc{8};
 	std::span<const uint8_t> codestream{};
+	// The JP2 header's first colour specification, when it is enumerated (16 sRGB, 17 greyscale, 12 CMYK, 18 sYCC);
+	// 0 without one or for an ICC profile. The palette, component mapping and channel definition box payloads, empty
+	// when absent.
+	uint32_t enumerated_colour{0};
+	bool saw_colour{false};
+	std::span<const uint8_t> palette{};
+	std::span<const uint8_t> component_map{};
+	std::span<const uint8_t> channel_definition{};
 };
 
 // Inspects a JP2 box container (`00 00 00 0C 6A 50 20 20 0D 0A 87 0A`) or raw
@@ -7127,6 +7180,18 @@ struct JpxHeaderInfo {
 						info.components = read_u16_be(ihdr + 8u);
 						info.bpc = static_cast<uint8_t>((ihdr[10u] & 0x7Fu) + 1u);
 						saw_ihdr = true;
+					} else if (sub_type == 0x636F6C72u) { // 'colr': only the first counts (T.800 I.5.3.3)
+						const std::span<const uint8_t> colr = box_payload.subspan(sub_pos + 8u, sub_len - 8u);
+						if (!info.saw_colour && colr.size() >= 7u && colr[0] == 1u) {
+							info.enumerated_colour = read_u32_be(colr.data() + 3u);
+						}
+						info.saw_colour = true;
+					} else if (sub_type == 0x70636C72u) { // 'pclr'
+						info.palette = box_payload.subspan(sub_pos + 8u, sub_len - 8u);
+					} else if (sub_type == 0x636D6170u) { // 'cmap'
+						info.component_map = box_payload.subspan(sub_pos + 8u, sub_len - 8u);
+					} else if (sub_type == 0x63646566u) { // 'cdef'
+						info.channel_definition = box_payload.subspan(sub_pos + 8u, sub_len - 8u);
 					}
 					sub_pos += sub_len;
 				}
@@ -7588,7 +7653,77 @@ void compute_j2k_sc_context(
 	return false;
 }
 
-// Decode a single EBCOT Tier-1 code-block into signed wavelet coefficients.
+// Code-block style flags (ITU-T T.800 Table A.19).
+constexpr uint8_t kJ2kBypass = 0x01u;         // selective arithmetic coding bypass
+constexpr uint8_t kJ2kResetContexts = 0x02u;  // reset context probabilities on each pass boundary
+constexpr uint8_t kJ2kTerminateAll = 0x04u;   // termination on each coding pass
+constexpr uint8_t kJ2kVerticalCausal = 0x08u; // vertically stripe-causal context formation
+constexpr uint8_t kJ2kPredictable = 0x10u;    // predictable termination (an encoder promise; decoding is unchanged)
+constexpr uint8_t kJ2kSegmentationSymbols = 0x20u;
+constexpr uint8_t kJ2kPart1Styles = 0x3Fu;   // the two high bits belong to later parts (HT, Part 15)
+
+// The coding pass `pass` (0 is the first cleanup pass, then significance, refinement and cleanup per bitplane) is a
+// significance or refinement pass the bypass flag codes raw: every such pass after the first ten (four bitplanes).
+[[nodiscard]] constexpr bool j2k_pass_is_raw(uint32_t pass, uint8_t cb_style) noexcept
+{
+	return (cb_style & kJ2kBypass) != 0u && pass >= 10u && (pass - 1u) % 3u != 2u;
+}
+
+// One past the last coding pass of the codeword segment `pass` falls in (T.800 Table D.9): every pass is its own
+// segment under termination on each pass; with bypass alone, the first ten passes form one, then each raw
+// significance and refinement pair, and each cleanup pass, form their own; otherwise one segment holds every pass.
+[[nodiscard]] constexpr uint32_t j2k_segment_end(uint32_t pass, uint8_t cb_style) noexcept
+{
+	if ((cb_style & kJ2kTerminateAll) != 0u) {
+		return pass + 1u;
+	}
+	if ((cb_style & kJ2kBypass) != 0u) {
+		if (pass < 10u) {
+			return 10u;
+		}
+		return (pass - 1u) % 3u == 0u ? pass + 2u : pass + 1u; // a significance pass pairs with the refinement after it
+	}
+	return UINT32_MAX;
+}
+
+// A codeword segment of a code-block: how many coding passes it carries and where its bytes lie in the code-block's
+// concatenated data.
+struct J2kSegment {
+	uint32_t passes = 0u;
+	size_t begin = 0u;
+	size_t length = 0u;
+};
+
+// The raw bit reader for bypass passes (T.800 D.6): bits most significant first, and after an 0xFF byte the next
+// byte's top bit is a stuffed zero that is skipped. Past the segment's end it reads zeros.
+class J2kRawDecoder {
+public:
+	J2kRawDecoder() noexcept = default;
+	explicit J2kRawDecoder(std::span<const uint8_t> data) noexcept
+		: data_(data)
+	{
+	}
+
+	[[nodiscard]] uint8_t decode() noexcept
+	{
+		if (bits_ == 0u) {
+			const bool after_ff = last_ == 0xFFu;
+			last_ = pos_ < data_.size() ? data_[pos_++] : 0u;
+			bits_ = after_ff ? 7u : 8u;
+		}
+		--bits_;
+		return static_cast<uint8_t>((last_ >> bits_) & 1u);
+	}
+
+private:
+	std::span<const uint8_t> data_;
+	size_t pos_ = 0u;
+	uint8_t last_ = 0u;
+	uint32_t bits_ = 0u;
+};
+
+// Decode a single EBCOT Tier-1 code-block into signed wavelet coefficients. `segments` divides `cb_data` into its
+// codeword segments (at least one, covering `num_passes`); each starts a fresh MQ or raw decoder (T.800 D.4.1).
 void decode_j2k_codeblock(
 	std::span<const uint8_t> cb_data,
 	uint32_t cb_w,
@@ -7598,11 +7733,12 @@ void decode_j2k_codeblock(
 	uint32_t mb_total,
 	uint8_t band_type,
 	uint8_t cb_style,
+	std::span<const J2kSegment> segments,
 	std::vector<int32_t>& out_coeffs)
 {
 	const size_t total = static_cast<size_t>(cb_w) * cb_h;
 	out_coeffs.assign(total, 0);
-	if (cb_data.empty() || num_passes == 0u || cb_w == 0u || cb_h == 0u) {
+	if (cb_data.empty() || num_passes == 0u || cb_w == 0u || cb_h == 0u || segments.empty()) {
 		return;
 	}
 
@@ -7616,10 +7752,13 @@ void decode_j2k_codeblock(
 
 	std::array<MqContext, kJ2kNumContexts> ctxs{};
 	init_j2k_mq_contexts(ctxs);
-	MqDecoder mq(cb_data);
+	MqDecoder mq(std::span<const uint8_t>{});
+	J2kRawDecoder raw;
+	size_t next_segment = 0u;
+	uint32_t segment_end = 0u; // one past the current segment's last pass
+	const bool causal = (cb_style & kJ2kVerticalCausal) != 0u;
 
-	// Optional raw byte-aligned arithmetic-bypass mode if bit 7 (0x80, custom test/raw) is not set:
-	// Standard ITU-T T.800 uses MQ arithmetic coding starting with Cleanup pass on the highest non-zero bitplane.
+	// T.800 codes from a cleanup pass on the highest non-zero bitplane.
 	const uint32_t clamped_mb = std::min<uint32_t>(mb_total, 30u);
 	int32_t bitplane = static_cast<int32_t>(clamped_mb) - 1 - static_cast<int32_t>(std::min<uint32_t>(zero_bitplanes, 30u));
 	if (bitplane < 0) {
@@ -7629,17 +7768,36 @@ void decode_j2k_codeblock(
 		bitplane = 29;
 	}
 
+	// Context formation sees the rows below the current stripe only without vertical causality (T.800 D.7); those rows
+	// are cut off by passing the stripe's end as the height (the row stride stays `w`).
+	int32_t ctx_h = h;
 	auto decode_sign = [&](int32_t x, int32_t y, size_t idx) noexcept {
 		uint8_t sc_ctx = 9u;
 		uint8_t sc_xor = 0u;
-		compute_j2k_sc_context(x, y, w, h, sig, sgn, sc_ctx, sc_xor);
+		compute_j2k_sc_context(x, y, w, ctx_h, sig, sgn, sc_ctx, sc_xor);
 		const uint8_t bit = mq.decode(ctxs[sc_ctx]) ^ sc_xor;
 		sgn[idx] = bit;
 	};
 
 	uint32_t pass_type = 2u; // First pass is always Cleanup (CUP = 2, SPP = 0, MRP = 1)
 	for (uint32_t p = 0; p < num_passes && bitplane >= 0; ++p) {
-		if ((cb_style & 0x02u) != 0u) {
+		const bool raw_pass = j2k_pass_is_raw(p, cb_style);
+		if (p >= segment_end) {
+			if (next_segment >= segments.size()) {
+				break; // passes the packets never delivered
+			}
+			const J2kSegment& seg = segments[next_segment++];
+			const std::span<const uint8_t> bytes = seg.begin <= cb_data.size()
+				? cb_data.subspan(seg.begin, std::min(seg.length, cb_data.size() - seg.begin))
+				: std::span<const uint8_t>{};
+			segment_end = p + seg.passes;
+			if (raw_pass) {
+				raw = J2kRawDecoder(bytes);
+			} else {
+				mq = MqDecoder(bytes);
+			}
+		}
+		if (p > 0u && (cb_style & kJ2kResetContexts) != 0u) {
 			init_j2k_mq_contexts(ctxs);
 		}
 		const int32_t bp_mask = static_cast<int32_t>(uint32_t{1u} << static_cast<uint32_t>(bitplane));
@@ -7649,14 +7807,26 @@ void decode_j2k_codeblock(
 			std::fill(visited.begin(), visited.end(), uint8_t{0});
 			for (int32_t y0 = 0; y0 < h; y0 += 4) {
 				const int32_t stripe_h = std::min(4, h - y0);
+				ctx_h = causal ? std::min(h, y0 + 4) : h;
 				for (int32_t x = 0; x < w; ++x) {
 					for (int32_t dy = 0; dy < stripe_h; ++dy) {
 						const int32_t y = y0 + dy;
 						const size_t idx = static_cast<size_t>(y) * cb_w + static_cast<size_t>(x);
-						if (!sig[idx] && has_significant_neighbor(x, y, w, h, sig)) {
-							const uint8_t zc = compute_j2k_zc_context(x, y, w, h, sig, band_type);
-							if (mq.decode(ctxs[zc]) != 0u) {
-								decode_sign(x, y, idx);
+						if (!sig[idx] && has_significant_neighbor(x, y, w, ctx_h, sig)) {
+							bool significant = false;
+							if (raw_pass) {
+								significant = raw.decode() != 0u;
+								if (significant) {
+									sgn[idx] = raw.decode();
+								}
+							} else {
+								const uint8_t zc = compute_j2k_zc_context(x, y, w, ctx_h, sig, band_type);
+								significant = mq.decode(ctxs[zc]) != 0u;
+								if (significant) {
+									decode_sign(x, y, idx);
+								}
+							}
+							if (significant) {
 								sig[idx] = 1u;
 								mag[idx] |= bp_mask;
 							}
@@ -7670,16 +7840,23 @@ void decode_j2k_codeblock(
 			// Magnitude Refinement Pass (MRP, ITU-T T.800 §D.3.3)
 			for (int32_t y0 = 0; y0 < h; y0 += 4) {
 				const int32_t stripe_h = std::min(4, h - y0);
+				ctx_h = causal ? std::min(h, y0 + 4) : h;
 				for (int32_t x = 0; x < w; ++x) {
 					for (int32_t dy = 0; dy < stripe_h; ++dy) {
 						const int32_t y = y0 + dy;
 						const size_t idx = static_cast<size_t>(y) * cb_w + static_cast<size_t>(x);
 						if (sig[idx] && !visited[idx]) {
-							uint8_t mr_ctx = 16u;
-							if (!refined[idx]) {
-								mr_ctx = has_significant_neighbor(x, y, w, h, sig) ? 15u : 14u;
+							uint8_t bit = 0u;
+							if (raw_pass) {
+								bit = raw.decode();
+							} else {
+								uint8_t mr_ctx = 16u;
+								if (!refined[idx]) {
+									mr_ctx = has_significant_neighbor(x, y, w, ctx_h, sig) ? 15u : 14u;
+								}
+								bit = mq.decode(ctxs[mr_ctx]);
 							}
-							if (mq.decode(ctxs[mr_ctx]) != 0u) {
+							if (bit != 0u) {
 								mag[idx] |= bp_mask;
 							}
 							refined[idx] = 1u;
@@ -7692,6 +7869,7 @@ void decode_j2k_codeblock(
 			// Cleanup Pass (CUP, ITU-T T.800 §D.3.4)
 			for (int32_t y0 = 0; y0 < h; y0 += 4) {
 				const int32_t stripe_h = std::min(4, h - y0);
+				ctx_h = causal ? std::min(h, y0 + 4) : h;
 				for (int32_t x = 0; x < w; ++x) {
 					int32_t dy = 0;
 					if (stripe_h == 4) {
@@ -7699,7 +7877,7 @@ void decode_j2k_codeblock(
 						for (int32_t k = 0; k < 4; ++k) {
 							const int32_t y = y0 + k;
 							const size_t idx = static_cast<size_t>(y) * cb_w + static_cast<size_t>(x);
-							if (sig[idx] || visited[idx] || has_significant_neighbor(x, y, w, h, sig)) {
+							if (sig[idx] || visited[idx] || has_significant_neighbor(x, y, w, ctx_h, sig)) {
 								can_rlc = false;
 								break;
 							}
@@ -7723,7 +7901,7 @@ void decode_j2k_codeblock(
 						const int32_t y = y0 + dy;
 						const size_t idx = static_cast<size_t>(y) * cb_w + static_cast<size_t>(x);
 						if (!sig[idx] && !visited[idx]) {
-							const uint8_t zc = compute_j2k_zc_context(x, y, w, h, sig, band_type);
+							const uint8_t zc = compute_j2k_zc_context(x, y, w, ctx_h, sig, band_type);
 							if (mq.decode(ctxs[zc]) != 0u) {
 								decode_sign(x, y, idx);
 								sig[idx] = 1u;
@@ -7734,10 +7912,22 @@ void decode_j2k_codeblock(
 					}
 				}
 			}
-			if ((cb_style & 0x20u) != 0u) {
-				// SEGMARK (0x0A in context 18) at the end of Cleanup pass.
-				for (int s = 0; s < 4; ++s) {
-					(void)mq.decode(ctxs[18]);
+			if ((cb_style & kJ2kSegmentationSymbols) != 0u) {
+				// The segmentation symbol 1010 in the uniform context ends each cleanup pass (T.800 D.5). A different
+				// value means this bitplane's data is damaged: it is dropped and decoding stops at the bitplane above.
+				uint32_t symbol = 0u;
+				for (int k = 0; k < 4; ++k) {
+					symbol = (symbol << 1u) | mq.decode(ctxs[18]);
+				}
+				if (symbol != 0xAu) {
+					const int32_t keep = ~((bp_mask << 1) - 1);
+					for (size_t i = 0; i < total; ++i) {
+						mag[i] &= keep;
+						if (mag[i] == 0) {
+							sig[i] = 0u;
+						}
+					}
+					break;
 				}
 			}
 			--bitplane;
@@ -8048,7 +8238,16 @@ void idwt_97_2d_float(
 	// Why WIC did not decode the stream, kept so a native failure after it still names the first cause.
 	std::optional<PdfError> wic_cause;
 	IWICImagingFactory* factory = nullptr;
-	if (jpx_path != detail::JpxPath::NativeOnly) {
+	// WIC's output here is converted to gray or RGB, which would turn CMYK into RGB and drop an opacity channel; a JP2
+	// header that asks for either (CMYK enumerated, or four channels and no colour specification, or a cdef opacity
+	// channel) goes to the native decoder, which keeps the channels as the header defines them (T.800 Annex I).
+	bool wic_keeps_layout = !(hdr.enumerated_colour == 12u || (!hdr.saw_colour && hdr.components == 4u));
+	const std::span<const uint8_t> cdef = hdr.channel_definition;
+	for (size_t at = 2u; wic_keeps_layout && at + 6u <= cdef.size(); at += 6u) {
+		const uint16_t type = read_u16_be(cdef.data() + at + 2u);
+		wic_keeps_layout = type != 1u && type != 2u;
+	}
+	if (jpx_path != detail::JpxPath::NativeOnly && (wic_keeps_layout || jpx_path == detail::JpxPath::WicOnly)) {
 		if (const HRESULT factory_hr = thread_local_wic_factory(factory); FAILED(factory_hr)) {
 			if (!wic_failure_may_fall_back(factory_hr)) {
 				return wic_failure(factory_hr, "The Windows Imaging Component factory for JPXDecode", DecoderStep::WicFactory);
@@ -8202,6 +8401,63 @@ void idwt_97_2d_float(
 }
 
 // The native ISO/IEC 15444-1 decoder, after WIC did not decode the stream or was not asked to.
+// One output channel of a JP2 image: a component's samples, or a palette column looked up by them (cmap).
+struct Jp2Channel {
+	uint16_t component = 0u;
+	int32_t palette_column = -1; // -1: the component directly
+};
+
+// The palette: its entries per column, each normalized to 8 bits.
+struct Jp2Palette {
+	uint32_t entries = 0u;
+	std::vector<std::vector<uint8_t>> columns;
+};
+
+[[nodiscard]] PdfResult<Jp2Palette> read_jp2_palette(std::span<const uint8_t> box)
+{
+	const auto damaged = [] {
+		return make_filter_error(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream, "Invalid pclr palette box in JPXDecode");
+	};
+	if (box.size() < 3u) {
+		return damaged();
+	}
+	Jp2Palette palette;
+	palette.entries = read_u16_be(box.data());
+	const uint32_t columns = box[2];
+	if (palette.entries == 0u || palette.entries > 1024u || columns == 0u || box.size() < 3u + columns) {
+		return damaged();
+	}
+	std::vector<uint8_t> depth(columns);
+	size_t need = 3u + columns;
+	for (uint32_t j = 0; j < columns; ++j) {
+		depth[j] = static_cast<uint8_t>((box[3u + j] & 0x7Fu) + 1u);
+		if (depth[j] > 16u) {
+			return make_filter_error(ErrorCode::UnsupportedFeature, DiagnosticId::DamagedStream,
+				"JPXDecode palette precision above 16 bits is not supported");
+		}
+		need += static_cast<size_t>(palette.entries) * ((depth[j] + 7u) / 8u);
+	}
+	if (box.size() < need) {
+		return damaged();
+	}
+	palette.columns.assign(columns, std::vector<uint8_t>(palette.entries));
+	size_t at = 3u + columns;
+	// Entries are stored entry by entry, each entry's columns in order (T.800 I.5.3.4).
+	for (uint32_t e = 0; e < palette.entries; ++e) {
+		for (uint32_t j = 0; j < columns; ++j) {
+			const uint32_t bytes = (depth[j] + 7u) / 8u;
+			uint32_t v = 0u;
+			for (uint32_t b = 0; b < bytes; ++b) {
+				v = (v << 8u) | box[at++];
+			}
+			const uint32_t max = (1u << depth[j]) - 1u;
+			v = std::min(v, max);
+			palette.columns[j][e] = static_cast<uint8_t>(depth[j] >= 8u ? v >> (depth[j] - 8u) : (v * 255u) / max);
+		}
+	}
+	return palette;
+}
+
 [[nodiscard]] PdfResult<WicDecodedImage> decode_jpx_native(
 	const JpxHeaderInfo& hdr,
 	const PdfDict* decode_parms,
@@ -8256,15 +8512,75 @@ void idwt_97_2d_float(
 			"JPXDecode cumulative decoded image and tile-grid buffers exceed ceiling");
 	}
 
-	bool is_signed = false;
-	uint8_t bit_depth = hdr.bpc;
-	if (lsiz >= 39u && 4u + 38u < cs.size()) {
-		const uint8_t ssiz0 = cs[4u + 38u];
-		is_signed = ((ssiz0 & 0x80u) != 0u);
-		bit_depth = static_cast<uint8_t>((ssiz0 & 0x7Fu) + 1u);
+	// The JP2 channels (T.800 I.5.3.4 to I.5.3.6). Without a palette each component is a channel; with one, the
+	// component mapping box names each channel's component and palette column, and a component used as a palette
+	// index is output as its raw value (at most 8 bits) instead of normalized.
+	std::vector<Jp2Channel> channels;
+	Jp2Palette palette;
+	std::vector<bool> palette_index(num_comps, false);
+	if (!hdr.palette.empty()) {
+		RECTO_PDF_TRY_REF(read_palette, read_jp2_palette(hdr.palette));
+		palette = std::move(read_palette);
+		if (hdr.component_map.empty() || hdr.component_map.size() % 4u != 0u) {
+			return make_filter_error(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream,
+				"JPXDecode palette without a valid cmap component mapping box");
+		}
+		for (size_t at = 0; at < hdr.component_map.size(); at += 4u) {
+			Jp2Channel ch;
+			ch.component = read_u16_be(hdr.component_map.data() + at);
+			const uint8_t type = hdr.component_map[at + 2u];
+			const uint8_t column = hdr.component_map[at + 3u];
+			if (ch.component >= num_comps || type > 1u || (type == 1u && column >= palette.columns.size())) {
+				return make_filter_error(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream,
+					"Invalid cmap component mapping entry in JPXDecode");
+			}
+			if (type == 1u) {
+				ch.palette_column = column;
+				palette_index[ch.component] = true;
+			}
+			channels.push_back(ch);
+		}
+	} else {
+		for (uint32_t c = 0; c < num_comps; ++c) {
+			channels.push_back(Jp2Channel{static_cast<uint16_t>(c), -1});
+		}
 	}
-	if (bit_depth == 0u || bit_depth > 16u) {
-		bit_depth = 8u;
+
+	// Each component's precision and subsampling (SIZ Ssiz, XRsiz and YRsiz; T.800 A.5.1). Signedness changes nothing
+	// here: a signed component is made unsigned on output by the same 2^(depth - 1) offset an unsigned one is
+	// level-shifted by (T.800 G.1.2), as PDF samples are unsigned.
+	std::vector<uint8_t> comp_depth(num_comps, 8u);
+	std::vector<uint8_t> comp_dx(num_comps, 1u);
+	std::vector<uint8_t> comp_dy(num_comps, 1u);
+	for (uint32_t c = 0; c < num_comps; ++c) {
+		const size_t at = 4u + 38u + 3u * static_cast<size_t>(c);
+		if (static_cast<size_t>(lsiz) < 38u + 3u * (static_cast<size_t>(c) + 1u) || at + 2u >= cs.size()) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Truncated component list in J2K SIZ marker segment");
+		}
+		comp_depth[c] = static_cast<uint8_t>((cs[at] & 0x7Fu) + 1u);
+		comp_dx[c] = cs[at + 1u];
+		comp_dy[c] = cs[at + 2u];
+		if (comp_dx[c] == 0u || comp_dy[c] == 0u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"Zero component subsampling factor in J2K SIZ marker segment");
+		}
+		if (comp_depth[c] > 16u) {
+			return make_filter_error(
+				ErrorCode::UnsupportedFeature,
+				DiagnosticId::DamagedStream,
+				"JPXDecode component precision above 16 bits is not supported");
+		}
+		if (palette_index[c] && comp_depth[c] > 8u) {
+			return make_filter_error(
+				ErrorCode::UnsupportedFeature,
+				DiagnosticId::DamagedStream,
+				"JPXDecode palette index component above 8 bits is not supported");
+		}
 	}
 
 	size_t pos = 4u + lsiz;
@@ -8285,8 +8601,8 @@ void idwt_97_2d_float(
 		uint32_t cb_exp_h = 6u;
 		uint8_t cb_style = 0u;
 		uint8_t wavelet_type = 1u; // 1 = 5-3 reversible, 0 = 9-7 irreversible
-		std::array<uint8_t, 11> ppx_exp{};
-		std::array<uint8_t, 11> ppy_exp{};
+		std::array<uint8_t, 33> ppx_exp{}; // one per resolution: up to 32 decomposition levels
+		std::array<uint8_t, 33> ppy_exp{};
 		J2kCodParams() noexcept
 		{
 			ppx_exp.fill(15u);
@@ -8351,7 +8667,7 @@ void idwt_97_2d_float(
 		}
 		out_cod.mct_enabled = (raw_mct == 1u);
 		out_cod.num_decomp_levels = cs[seg_pos + 7u];
-		if (out_cod.num_decomp_levels > 10u) {
+		if (out_cod.num_decomp_levels > 32u) {
 			return make_filter_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedStream,
@@ -8370,7 +8686,7 @@ void idwt_97_2d_float(
 		out_cod.cb_exp_w = static_cast<uint32_t>(raw_xcb) + 2u;
 		out_cod.cb_exp_h = static_cast<uint32_t>(raw_ycb) + 2u;
 		out_cod.cb_style = cs[seg_pos + 10u];
-		if (out_cod.cb_style != 0u) {
+		if ((out_cod.cb_style & ~kJ2kPart1Styles) != 0u) {
 			return make_filter_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedStream,
@@ -8449,7 +8765,7 @@ void idwt_97_2d_float(
 		}
 		const size_t sp_off = scoc_off + 1u;
 		out_coc.num_decomp_levels = cs[sp_off + 0u];
-		if (out_coc.num_decomp_levels > 10u) {
+		if (out_coc.num_decomp_levels > 32u) {
 			return make_filter_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedStream,
@@ -8468,7 +8784,7 @@ void idwt_97_2d_float(
 		out_coc.cb_exp_w = static_cast<uint32_t>(raw_xcb) + 2u;
 		out_coc.cb_exp_h = static_cast<uint32_t>(raw_ycb) + 2u;
 		out_coc.cb_style = cs[sp_off + 3u];
-		if (out_coc.cb_style != 0u) {
+		if ((out_coc.cb_style & ~kJ2kPart1Styles) != 0u) {
 			return make_filter_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedStream,
@@ -8672,8 +8988,32 @@ void idwt_97_2d_float(
 		std::vector<J2kCodParams> coc;
 		std::vector<bool> has_qcc;
 		std::vector<J2kQcdParams> qcc;
+		std::vector<int16_t> roi_shift;
 	};
 	uint64_t total_tile_stream_bytes = 0u;
+	// Each component's region-of-interest shift from the main header's RGN markers (T.800 A.6.3); 0 is none.
+	std::vector<uint8_t> main_roi_shift(num_comps, 0u);
+	// Reads an RGN segment at `seg_pos` (after its marker): the component (one byte, or two with more than 256
+	// components), the style, which Part 1 defines only as 0 (implicit, Maxshift), and the shift.
+	auto parse_rgn_segment = [&](size_t seg_pos, uint16_t seg_len, uint32_t& out_comp, uint8_t& out_shift) -> PdfResult<void> {
+		const size_t comp_bytes = num_comps < 257u ? 1u : 2u;
+		if (seg_len != 2u + comp_bytes + 2u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat, DiagnosticId::DamagedStream, "Invalid RGN marker length in JPXDecode", seg_pos);
+		}
+		out_comp = comp_bytes == 1u ? cs[seg_pos + 2u] : read_u16_be(cs.data() + seg_pos + 2u);
+		const uint8_t style = cs[seg_pos + 2u + comp_bytes];
+		out_shift = cs[seg_pos + 3u + comp_bytes];
+		if (out_comp >= num_comps) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat, DiagnosticId::DamagedStream, "RGN component index exceeds Csiz in JPXDecode", seg_pos);
+		}
+		if (style != 0u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat, DiagnosticId::DamagedStream, "Unknown RGN region-of-interest style in JPXDecode", seg_pos);
+		}
+		return {};
+	};
 	// Charges the quantization tables one parse stored, on top of what the record held before it.
 	auto charge_qcd_payload = [&](uint64_t before, const J2kQcdParams& q) -> PdfResult<void> {
 		const uint64_t after = qcd_payload_bytes(q);
@@ -8714,6 +9054,7 @@ void idwt_97_2d_float(
 		fresh.coc.resize(num_comps);
 		fresh.has_qcc.assign(num_comps, false);
 		fresh.qcc.resize(num_comps);
+		fresh.roi_shift.assign(num_comps, int16_t{-1});
 		tile_override_index[isot] = static_cast<int32_t>(tile_overrides.size());
 		tile_overrides.push_back(std::move(fresh));
 		return &tile_overrides.back();
@@ -8771,6 +9112,11 @@ void idwt_97_2d_float(
 			RECTO_PDF_RETURN_IF_ERROR(charge_qcd_payload(qcd_payload_bytes(main_qcc[comp_idx]), qcc_params));
 			main_qcc[comp_idx] = std::move(qcc_params);
 			main_has_qcc[comp_idx] = true;
+		} else if (marker == 0x5Eu) { // RGN (ITU-T T.800 §A.6.3)
+			uint32_t comp_idx = 0u;
+			uint8_t shift = 0u;
+			RECTO_PDF_RETURN_IF_ERROR(parse_rgn_segment(pos, mlen, comp_idx, shift));
+			main_roi_shift[comp_idx] = shift;
 		} else if (marker == 0x90u) { // SOT
 			if (mlen < 10u) {
 				return make_filter_error(
@@ -8854,6 +9200,12 @@ void idwt_97_2d_float(
 					RECTO_PDF_RETURN_IF_ERROR(charge_qcd_payload(qcd_payload_bytes(ov.qcc[comp_idx]), qcc_params));
 					ov.qcc[comp_idx] = std::move(qcc_params);
 					ov.has_qcc[comp_idx] = true;
+				} else if (tp_marker == 0x5Eu) { // Tile-part header RGN override (ITU-T T.800 §A.6.3)
+					RECTO_PDF_TRY(TileCodingOverride* const ov_ptr, get_or_create_tile_override(isot));
+					uint32_t comp_idx = 0u;
+					uint8_t shift = 0u;
+					RECTO_PDF_RETURN_IF_ERROR(parse_rgn_segment(pos, tp_len, comp_idx, shift));
+					ov_ptr->roi_shift[comp_idx] = shift;
 				}
 				pos += tp_len;
 			}
@@ -8916,9 +9268,6 @@ void idwt_97_2d_float(
 			"Incomplete J2K codestream (missing COD, QCD, SOT, SOD, or EOC marker) in JPXDecode");
 	}
 
-	const int32_t dc_shift = is_signed ? 0 : (1 << (bit_depth - 1u));
-	const int32_t max_sample = (1 << bit_depth) - 1;
-
 	WicDecodedImage out_img{};
 	out_img.width = img_w;
 	out_img.height = img_h;
@@ -8971,6 +9320,7 @@ void idwt_97_2d_float(
 			uint32_t total_passes = 0u;
 			std::span<const uint8_t> single_segment;
 			std::vector<uint8_t> compressed;
+			std::vector<J2kSegment> segments;
 		};
 		std::vector<CodeBlock> cbs;
 		std::vector<int32_t> coeffs;
@@ -8984,6 +9334,11 @@ void idwt_97_2d_float(
 	};
 
 	struct ComponentState {
+		// The tile-component's bounds on the component's own grid (T.800 B-12): the tile's, divided by its subsampling.
+		uint32_t x0 = 0u;
+		uint32_t y0 = 0u;
+		uint32_t x1 = 0u;
+		uint32_t y1 = 0u;
 		std::vector<ResBounds> res_bounds;
 		std::vector<ResolutionState> resolutions;
 		std::vector<int32_t> spatial;
@@ -9157,18 +9512,35 @@ void idwt_97_2d_float(
 				return static_cast<uint32_t>((static_cast<uint64_t>(v) + add) >> p);
 			};
 
+			auto ceil_div = [](uint32_t v, uint32_t d) noexcept -> uint32_t {
+				return static_cast<uint32_t>((static_cast<uint64_t>(v) + d - 1u) / d);
+			};
+
+			std::vector<uint8_t> comp_roi_shift(main_roi_shift);
+			if (tile_ov != nullptr) {
+				for (uint32_t c = 0; c < num_comps; ++c) {
+					if (tile_ov->roi_shift[c] >= 0) {
+						comp_roi_shift[c] = static_cast<uint8_t>(tile_ov->roi_shift[c]);
+					}
+				}
+			}
+
 			std::vector<ComponentState> comps(num_comps);
 			uint64_t comp_working_bytes = 0ULL;
 			for (uint32_t c = 0; c < num_comps; ++c) {
 				const uint8_t c_levels = comp_cod[c].num_decomp_levels;
+				comps[c].x0 = ceil_div(tx0, comp_dx[c]);
+				comps[c].y0 = ceil_div(ty0, comp_dy[c]);
+				comps[c].x1 = ceil_div(tx1, comp_dx[c]);
+				comps[c].y1 = ceil_div(ty1, comp_dy[c]);
 				comps[c].res_bounds.resize(c_levels + 1u);
 				for (uint8_t r = 0u; r <= c_levels; ++r) {
 					const uint32_t shift = c_levels - r;
 					auto& rb = comps[c].res_bounds[r];
-					rb.x0 = ceil_div_pow2(tx0, shift);
-					rb.y0 = ceil_div_pow2(ty0, shift);
-					rb.x1 = ceil_div_pow2(tx1, shift);
-					rb.y1 = ceil_div_pow2(ty1, shift);
+					rb.x0 = ceil_div_pow2(comps[c].x0, shift);
+					rb.y0 = ceil_div_pow2(comps[c].y0, shift);
+					rb.x1 = ceil_div_pow2(comps[c].x1, shift);
+					rb.y1 = ceil_div_pow2(comps[c].y1, shift);
 					rb.w = (rb.x1 > rb.x0) ? (rb.x1 - rb.x0) : 0u;
 					rb.h = (rb.y1 > rb.y0) ? (rb.y1 - rb.y0) : 0u;
 					rb.ppx = comp_cod[c].ppx_exp[r];
@@ -9255,7 +9627,14 @@ void idwt_97_2d_float(
 						++sb_global_idx;
 						sb.mb_total = (sb.eps + guard_bits > 1u)
 							? static_cast<uint32_t>(sb.eps + guard_bits - 1u)
-							: static_cast<uint32_t>(bit_depth);
+							: static_cast<uint32_t>(comp_depth[c]);
+						sb.mb_total += comp_roi_shift[c];
+						if (sb.mb_total > 30u) {
+							return make_filter_error(
+								ErrorCode::UnsupportedFeature,
+								DiagnosticId::DamagedStream,
+								"JPXDecode subband magnitude bitplanes with the region-of-interest shift exceed 30");
+						}
 
 						uint32_t cb_gx0 = 0u;
 						uint32_t cb_gx1 = 0u;
@@ -9356,6 +9735,7 @@ void idwt_97_2d_float(
 			size_t stream_pos = 0u;
 			uint32_t packet_seq = 0u;
 			auto decode_packet = [&](uint16_t layer, uint8_t r, uint32_t c, uint32_t k) -> PdfResult<void> {
+				const uint8_t packet_cb_style = comp_cod[c].cb_style;
 				if (stream_pos >= tile_bitstream.size()) {
 					return make_filter_error(
 						ErrorCode::DamagedFormat,
@@ -9405,6 +9785,8 @@ void idwt_97_2d_float(
 				struct PendingBody {
 					SubbandState::CodeBlock* cb = nullptr;
 					uint32_t len = 0u;
+					uint32_t first_pass = 0u;
+					uint32_t passes = 0u;
 				};
 				std::vector<PendingBody> pending;
 
@@ -9489,30 +9871,40 @@ void idwt_97_2d_float(
 											"Excessive Lblock indicator in JPXDecode packet header");
 									}
 								}
-								const uint32_t pass_log2 =
-									(new_passes <= 1u) ? 0u : static_cast<uint32_t>(std::bit_width(new_passes) - 1u);
-								const uint32_t len_bits = cb.lblock + pass_log2;
-								if (len_bits > 31u) {
-									return make_filter_error(
-										ErrorCode::DamagedFormat,
-										DiagnosticId::DamagedStream,
-										"Code-block length field bit count exceeds 31 bits in JPXDecode");
-								}
-								uint32_t seg_len = 0u;
-								if (!br.read_bits(len_bits, seg_len)) {
-									return make_filter_error(
-										ErrorCode::DamagedFormat,
-										DiagnosticId::DamagedStream,
-										"Truncated code-block data length in JPXDecode packet header");
-								}
 								if (cb.total_passes + new_passes > 1024u) {
 									return make_filter_error(
 										ErrorCode::DamagedFormat,
 										DiagnosticId::DamagedStream,
 										"Excessive coding pass count in JPXDecode code-block");
 								}
+								// Each codeword segment the new passes reach has its own length, of Lblock plus
+								// floor(log2(passes in it)) bits.
+								uint32_t pass_at = cb.total_passes;
+								uint32_t passes_left = new_passes;
+								while (passes_left > 0u) {
+									const uint32_t in_segment =
+										std::min(passes_left, j2k_segment_end(pass_at, packet_cb_style) - pass_at);
+									const uint32_t pass_log2 =
+										(in_segment <= 1u) ? 0u : static_cast<uint32_t>(std::bit_width(in_segment) - 1u);
+									const uint32_t len_bits = cb.lblock + pass_log2;
+									if (len_bits > 31u) {
+										return make_filter_error(
+											ErrorCode::DamagedFormat,
+											DiagnosticId::DamagedStream,
+											"Code-block length field bit count exceeds 31 bits in JPXDecode");
+									}
+									uint32_t seg_len = 0u;
+									if (!br.read_bits(len_bits, seg_len)) {
+										return make_filter_error(
+											ErrorCode::DamagedFormat,
+											DiagnosticId::DamagedStream,
+											"Truncated code-block data length in JPXDecode packet header");
+									}
+									pending.push_back({&cb, seg_len, pass_at, in_segment});
+									pass_at += in_segment;
+									passes_left -= in_segment;
+								}
 								cb.total_passes += new_passes;
-								pending.push_back({&cb, seg_len});
 							}
 						}
 					}
@@ -9548,6 +9940,15 @@ void idwt_97_2d_float(
 							"Code-block body segment exceeds JPXDecode tile bitstream bounds");
 					}
 					const std::span<const uint8_t> seg_span = tile_bitstream.subspan(stream_pos, item.len);
+					const size_t held = item.cb->single_segment.size() + item.cb->compressed.size();
+					std::vector<J2kSegment>& segs = item.cb->segments;
+					if (!segs.empty() && item.first_pass > 0u &&
+						j2k_segment_end(item.first_pass - 1u, packet_cb_style) > item.first_pass) {
+						segs.back().passes += item.passes; // a later layer continues the unfinished segment
+						segs.back().length += seg_span.size();
+					} else {
+						segs.push_back(J2kSegment{item.passes, held, seg_span.size()});
+					}
 					if (item.cb->single_segment.empty() && item.cb->compressed.empty()) {
 						item.cb->single_segment = seg_span;
 					} else {
@@ -9587,8 +9988,8 @@ void idwt_97_2d_float(
 				const uint32_t shift = comp_cod[c].num_decomp_levels - r;
 				const uint32_t step_x_exp = rb.ppx + shift;
 				const uint32_t step_y_exp = rb.ppy + shift;
-				const uint64_t step_x = uint64_t{1u} << step_x_exp;
-				const uint64_t step_y = uint64_t{1u} << step_y_exp;
+				const uint64_t step_x = static_cast<uint64_t>(comp_dx[c]) << step_x_exp;
+				const uint64_t step_y = static_cast<uint64_t>(comp_dy[c]) << step_y_exp;
 				const uint32_t p_w = 1u << rb.ppx;
 				const uint32_t p_h = 1u << rb.ppy;
 				const bool hit_x = ((static_cast<uint64_t>(x) % step_x) == 0ULL) || (x == tx0 && ((rb.x0 % p_w) != 0u));
@@ -9596,8 +9997,8 @@ void idwt_97_2d_float(
 				if (!hit_x || !hit_y) {
 					return false;
 				}
-				const uint32_t trx = ceil_div_pow2(x, shift);
-				const uint32_t try_c = ceil_div_pow2(y, shift);
+				const uint32_t trx = ceil_div_pow2(ceil_div(x, comp_dx[c]), shift);
+				const uint32_t try_c = ceil_div_pow2(ceil_div(y, comp_dy[c]), shift);
 				const uint32_t px = (trx >> rb.ppx) - rb.prec_x0;
 				const uint32_t py = (try_c >> rb.ppy) - rb.prec_y0;
 				if (px >= rb.num_prec_x || py >= rb.num_prec_y) {
@@ -9715,7 +10116,7 @@ void idwt_97_2d_float(
 						} else {
 							sb.coeffs_f.assign(static_cast<size_t>(sb.w) * sb.h, 0.0f);
 						}
-						const int32_t rb = static_cast<int32_t>(bit_depth) + static_cast<int32_t>(sb.gain);
+						const int32_t rb = static_cast<int32_t>(comp_depth[c]) + static_cast<int32_t>(sb.gain);
 						const float delta_b = std::ldexp(
 							1.0f + static_cast<float>(sb.mu) / 2048.0f,
 							rb - static_cast<int32_t>(sb.eps));
@@ -9734,10 +10135,17 @@ void idwt_97_2d_float(
 								sb.mb_total,
 								sb.band_type,
 								c_cb_style,
+								cb.segments,
 								cb_coeffs);
 							for (uint32_t y = 0; y < cb.h; ++y) {
 								for (uint32_t x = 0; x < cb.w; ++x) {
-									const int32_t q = cb_coeffs[static_cast<size_t>(y) * cb.w + x];
+									int32_t q = cb_coeffs[static_cast<size_t>(y) * cb.w + x];
+									if (const uint32_t roi = comp_roi_shift[c]; roi > 0u) {
+										const int32_t magnitude = q < 0 ? -q : q;
+										if (magnitude >= (int32_t{1} << roi)) {
+											q = q < 0 ? -(magnitude >> roi) : (magnitude >> roi);
+										}
+									}
 									const size_t dst_idx = static_cast<size_t>(cb.y0 + y) * sb.w + (cb.x0 + x);
 									if (c_wavelet == 1u) {
 										sb.coeffs[dst_idx] = q;
@@ -9816,7 +10224,18 @@ void idwt_97_2d_float(
 				std::vector<ResolutionState>().swap(comps[c].resolutions);
 			}
 
-			const size_t tile_pixels = static_cast<size_t>(tile_w) * tile_h;
+			auto comp_pixels = [&comps](uint32_t c) noexcept -> size_t {
+				return static_cast<size_t>(comps[c].x1 - comps[c].x0) * (comps[c].y1 - comps[c].y0);
+			};
+			const size_t tile_pixels = comp_pixels(0u);
+			if (mct_enabled && num_comps >= 3u &&
+				(comp_dx[1] != comp_dx[0] || comp_dx[2] != comp_dx[0] || comp_dy[1] != comp_dy[0] ||
+				 comp_dy[2] != comp_dy[0])) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"JPXDecode multiple component transform over components of different subsampling");
+			}
 			const bool mct_reversible =
 				(num_comps >= 3u) &&
 				(comp_cod[0].wavelet_type == 1u) &&
@@ -9858,8 +10277,8 @@ void idwt_97_2d_float(
 				}
 				for (uint32_t c = 3u; c < num_comps; ++c) {
 					if (comp_cod[c].wavelet_type != 1u) {
-						comps[c].spatial.resize(tile_pixels);
-						for (size_t i = 0; i < tile_pixels; ++i) {
+						comps[c].spatial.resize(comp_pixels(c));
+						for (size_t i = 0; i < comp_pixels(c); ++i) {
 							comps[c].spatial[i] = static_cast<int32_t>(std::lrintf(comps[c].spatial_f[i]));
 						}
 					}
@@ -9867,8 +10286,8 @@ void idwt_97_2d_float(
 			} else {
 				for (uint32_t c = 0; c < num_comps; ++c) {
 					if (comp_cod[c].wavelet_type != 1u) {
-						comps[c].spatial.resize(tile_pixels);
-						for (size_t i = 0; i < tile_pixels; ++i) {
+						comps[c].spatial.resize(comp_pixels(c));
+						for (size_t i = 0; i < comp_pixels(c); ++i) {
 							comps[c].spatial[i] = static_cast<int32_t>(std::lrintf(comps[c].spatial_f[i]));
 						}
 					}
@@ -9879,13 +10298,22 @@ void idwt_97_2d_float(
 			const uint32_t dst_y0 = ty0 - yosiz;
 			for (uint32_t y = 0; y < tile_h; ++y) {
 				for (uint32_t x = 0; x < tile_w; ++x) {
-					const size_t t_idx = static_cast<size_t>(y) * tile_w + x;
 					const size_t img_idx = static_cast<size_t>(dst_y0 + y) * img_w + (dst_x0 + x);
 					for (uint32_t c = 0; c < num_comps; ++c) {
-						int32_t val = std::clamp(comps[c].spatial[t_idx] + dc_shift, 0, max_sample);
-						if (bit_depth > 8u) {
-							val >>= (bit_depth - 8u);
-						} else if (bit_depth < 8u) {
+						const ComponentState& comp = comps[c];
+						const uint32_t cx =
+							std::clamp((tx0 + x) / comp_dx[c], comp.x0, comp.x1 - 1u) - comp.x0;
+						const uint32_t cy =
+							std::clamp((ty0 + y) / comp_dy[c], comp.y0, comp.y1 - 1u) - comp.y0;
+						const size_t t_idx = static_cast<size_t>(cy) * (comp.x1 - comp.x0) + cx;
+						const uint32_t depth = comp_depth[c];
+						const int32_t max_sample = (1 << depth) - 1;
+						int32_t val = std::clamp(comp.spatial[t_idx] + (1 << (depth - 1u)), 0, max_sample);
+						if (palette_index[c]) {
+							// a palette index stays its value
+						} else if (depth > 8u) {
+							val >>= (depth - 8u);
+						} else if (depth < 8u) {
 							val = (val * 255) / max_sample;
 						}
 						out_img.pixels[img_idx * num_comps + c] = static_cast<uint8_t>(std::clamp(val, 0, 255));
@@ -9895,14 +10323,102 @@ void idwt_97_2d_float(
 		}
 	}
 
-	apply_pdf_decode_array(out_img.pixels, num_comps, decode_parms);
+	// Channel definitions (cdef, T.800 I.5.3.6): which channels are colour, in which order (their association), and
+	// which one is opacity. Without one, the colour space decides how many channels are colour (an enumerated sRGB or
+	// sYCC three, greyscale one, CMYK four; otherwise every channel), and none is opacity.
+	const size_t channel_count = channels.size();
+	std::vector<int32_t> colour_of(channel_count, -1); // the colour index each channel fills, or -1
+	int32_t opacity_channel = -1;
+	size_t colour_count = 0u;
+	if (!hdr.channel_definition.empty()) {
+		const std::span<const uint8_t> cdef = hdr.channel_definition;
+		const uint32_t n = cdef.size() >= 2u ? read_u16_be(cdef.data()) : 0u;
+		if (n == 0u || cdef.size() < 2u + 6u * static_cast<size_t>(n)) {
+			return make_filter_error(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream,
+				"Invalid cdef channel definition box in JPXDecode");
+		}
+		for (uint32_t i = 0; i < n; ++i) {
+			const uint16_t channel = read_u16_be(cdef.data() + 2u + 6u * i);
+			const uint16_t type = read_u16_be(cdef.data() + 4u + 6u * i);
+			const uint16_t association = read_u16_be(cdef.data() + 6u + 6u * i);
+			if (channel >= channel_count) {
+				return make_filter_error(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream,
+					"cdef channel index exceeds the image's channels in JPXDecode");
+			}
+			if (type == 0u && association >= 1u && association <= channel_count) {
+				colour_of[channel] = association - 1;
+				colour_count = std::max<size_t>(colour_count, association);
+			} else if ((type == 1u || type == 2u) && opacity_channel < 0) {
+				opacity_channel = channel;
+			}
+		}
+	} else {
+		size_t declared = channel_count;
+		switch (hdr.enumerated_colour) {
+		case 16u: // sRGB
+		case 18u: // sYCC
+			declared = 3u;
+			break;
+		case 17u: // greyscale
+			declared = 1u;
+			break;
+		case 12u: // CMYK
+			declared = 4u;
+			break;
+		default:
+			break;
+		}
+		colour_count = std::min(declared, channel_count);
+		for (size_t ch = 0; ch < colour_count; ++ch) {
+			colour_of[ch] = static_cast<int32_t>(ch);
+		}
+	}
+	if (colour_count == 0u || colour_count == 2u || colour_count > 4u) {
+		return make_filter_error(ErrorCode::UnsupportedFeature, DiagnosticId::DamagedStream,
+			"JPXDecode channel layout has no supported colour space");
+	}
+	std::vector<uint8_t> colour(pixels * colour_count, 0u);
+	std::vector<uint8_t> alpha(opacity_channel >= 0 ? pixels : 0u, 255u);
+	for (size_t ch = 0; ch < channel_count; ++ch) {
+		const Jp2Channel& source = channels[ch];
+		const bool is_colour = colour_of[ch] >= 0;
+		if (!is_colour && static_cast<int32_t>(ch) != opacity_channel) {
+			continue;
+		}
+		for (size_t px = 0; px < pixels; ++px) {
+			uint8_t v = out_img.pixels[px * num_comps + source.component];
+			if (source.palette_column >= 0) {
+				const std::vector<uint8_t>& column = palette.columns[static_cast<size_t>(source.palette_column)];
+				v = column[std::min<size_t>(v, column.size() - 1u)];
+			}
+			if (is_colour) {
+				colour[px * colour_count + static_cast<size_t>(colour_of[ch])] = v;
+			} else {
+				alpha[px] = v;
+			}
+		}
+	}
+	out_img.pixels = std::move(colour);
+	out_img.components = static_cast<uint32_t>(colour_count);
+	out_img.is_cmyk = colour_count == 4u;
+	const size_t out_comps = colour_count;
+
+	apply_pdf_decode_array(out_img.pixels, static_cast<uint32_t>(out_comps), decode_parms);
 	out_img.rgba_pixels.resize(pixels * 4u);
 	out_img.bgra_pixels.resize(pixels * 4u);
 	for (size_t p = 0; p < pixels; ++p) {
-		const uint8_t r = out_img.pixels[p * num_comps + 0u];
-		const uint8_t g = (num_comps >= 3u) ? out_img.pixels[p * num_comps + 1u] : r;
-		const uint8_t b = (num_comps >= 3u) ? out_img.pixels[p * num_comps + 2u] : r;
-		const uint8_t a = (num_comps >= 4u) ? out_img.pixels[p * num_comps + 3u] : 255u;
+		const uint8_t* px = out_img.pixels.data() + p * out_comps;
+		uint8_t r = px[0];
+		uint8_t g = out_comps >= 3u ? px[1] : r;
+		uint8_t b = out_comps >= 3u ? px[2] : r;
+		if (out_comps == 4u) {
+			// CMYK shown without a profile: each ink and black multiply away their share of white.
+			const uint32_t k = 255u - px[3];
+			r = static_cast<uint8_t>((255u - px[0]) * k / 255u);
+			g = static_cast<uint8_t>((255u - px[1]) * k / 255u);
+			b = static_cast<uint8_t>((255u - px[2]) * k / 255u);
+		}
+		const uint8_t a = alpha.empty() ? 255u : alpha[p];
 		out_img.rgba_pixels[p * 4u + 0u] = r;
 		out_img.rgba_pixels[p * 4u + 1u] = g;
 		out_img.rgba_pixels[p * 4u + 2u] = b;

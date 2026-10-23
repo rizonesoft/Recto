@@ -536,3 +536,5 @@ Existing binaries passed 25 selected Debug tests and 26 selected Release tests; 
 
 HIGHEST: none
 OVERALL: approve
+
+Capability claims corrected by `D06 T05 §32` (2026-10-23): `D01 T01 §8`'s original review recorded 32 decomposition levels and all six code-block style flags as supported; the native decoder then refused more than 10 levels and every nonzero style, read precision and signedness from component zero only, ignored `XRsiz`/`YRsiz` and RGN, and dropped the JP2 colour, palette, component mapping and channel definition boxes. `D06 T05 §32` builds all of them, proven by `PdfFilters.JpxComponentsAndCodingStyles` against codestreams OpenJPEG 2.5.4 decodes identically.
