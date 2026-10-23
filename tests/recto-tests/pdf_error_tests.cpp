@@ -528,7 +528,7 @@ TEST(PdfError, DiagnosticRingRecordsNewCodes)
 		EXPECT_EQ(message.find("amage"), std::string_view::npos) << message;
 		EXPECT_EQ(message.find("alformed"), std::string_view::npos) << message;
 	}
-	EXPECT_NE(diagnostic_id_message(DiagnosticId::InvalidArgument).find("file itself is fine"), std::string_view::npos);
+	EXPECT_NE(diagnostic_id_message(DiagnosticId::InvalidArgument).find("refused before any change"), std::string_view::npos);
 
 	// The ETW packets carry each code's own number, name and diagnostic, and the context given.
 	clear_diagnostics();

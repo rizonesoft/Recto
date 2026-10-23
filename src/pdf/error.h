@@ -269,7 +269,7 @@ enum class DiagnosticId : uint16_t {
 	case DiagnosticId::ResourceLimit:
 		return "Stopped at a safety limit on work or size; the file may be fine, so try fewer pages or a smaller selection";
 	case DiagnosticId::InvalidArgument:
-		return "The request was refused before any change because a value it gave is not allowed; the file itself is fine";
+		return "The request was refused before any change because one of its values is not allowed";
 	}
 	return "Engine diagnostic event";
 }

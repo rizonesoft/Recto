@@ -87,7 +87,7 @@ Implement the extensible command dispatcher and `info` command in `src/cli/main.
 - [ ] Map `ErrorCode::InvalidArgument` to exit code `1` and `ErrorCode::ResourceLimit` to exit code `2`, with the code name (`error_code_name`) in the `--json` error object. Done when: `Cli.ExitCodeForInvalidArgument` and `Cli.ExitCodeForResourceLimit` pass. **Corrected 2026-10-23:** moved here from `D01 T02 §18`, which adds the codes; this section owns the exit-code table. -> XREF: D01 T02 §18
 - [ ] Commit: `cli: implement recto-cli command dispatcher and info (--json) subcommand`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Cli.Info*:Cli.Unicode*` passes under ASan.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Cli.Info*:Cli.Unicode*:Cli.ExitCodeFor*` passes under ASan. **Corrected 2026-10-23:** (was: without `Cli.ExitCodeFor*`, which the mapping item moved here from `D01 T02 §18` names).
 
 ## 2. `recto-cli render` (full-page and stitched `512 x 512` tile modes, WIC PNG encoder)
 
