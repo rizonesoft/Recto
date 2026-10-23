@@ -7,6 +7,7 @@ by the librarian, an object added from a neutral folder, a renamed toolkit libra
 or module interface from the other side, a stale report left beside the current one, and a unit that reports nothing."""
 import importlib.util
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -80,6 +81,14 @@ class CompilerReportedBoundaryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tools = tools()
+        # The standard library and UCRT headers, for the fixtures that include <vector>: the MSVC include folder next
+        # to the tools and the Windows SDK line the projects target (Directory.Build.props).
+        cls.environment = dict(os.environ)
+        if cls.tools is not None:
+            sdk = pathlib.Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "Windows Kits", "10",
+                               "Include", "10.0.26100.0")
+            cls.environment["INCLUDE"] = ";".join(str(p) for p in [cls.tools.parents[2] / "include", sdk / "ucrt",
+                                                                   sdk / "shared", sdk / "um"])
 
     def setUp(self):
         self.assertIsNotNone(self.tools, "no Visual Studio 2026 MSVC tools were found; the boundary cannot be proven")
@@ -95,7 +104,7 @@ class CompilerReportedBoundaryTests(unittest.TestCase):
     def compile(self, source, out_dir, *options):
         out = subprocess.run([str(self.tools / "cl.exe"), "/nologo", "/c", "/sourceDependencies", f"{out_dir}\\",
                               *options, str(source), f"/Fo{out_dir}\\"], capture_output=True, text=True,
-                             cwd=self.root)
+                             cwd=self.root, env=self.environment)
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
         return boundary.Unit(boundary.normalized(source), boundary.normalized(out_dir / f"{source.stem}.obj"),
                              boundary.normalized(out_dir / f"{source.name}.json"), True)
@@ -251,6 +260,52 @@ class CompilerReportedBoundaryTests(unittest.TestCase):
         self.assertEqual(boundary.symbol_crossings("recto-ui", toolkit_table, {"recto-core": engine_table}),
                          ["recto-ui: needs ?abi_version@core@recto@@YAHXZ, which recto-core defines"])
         self.assertEqual(boundary.symbol_crossings("recto-core", engine_table, {"recto-ui": toolkit_table}), [])
+
+    def tables(self, engine, engine_text, toolkit_text, *options):
+        """Compile one engine unit and one toolkit unit into their libraries and return both SymbolTables."""
+        dumpbin = self.tools / "dumpbin.exe"
+        (self.root / "src/core/e1.cpp").write_text(engine_text, encoding="utf-8")
+        (self.root / "src/ui/t1.cpp").write_text(toolkit_text, encoding="utf-8")
+        shared = f"/I{self.root / 'shared'}"
+        engine_unit = self.compile(self.root / "src/core/e1.cpp", self.root / "obj/core", "/std:c++latest", "/EHsc",
+                                   shared, *options)
+        toolkit_unit = self.compile(self.root / "src/ui/t1.cpp", self.root / "obj/ui", "/std:c++latest", "/EHsc",
+                                    shared, *options)
+        engine_library = self.library(self.root / "obj/core" / f"{engine}.lib", engine_unit.obj)
+        toolkit_library = self.library(self.root / "obj/ui/recto-ui.lib", toolkit_unit.obj)
+        return boundary.symbol_table(engine_library, dumpbin), boundary.symbol_table(toolkit_library, dumpbin)
+
+    def test_a_forward_declared_pdf_function_is_caught_under_function_level_linking(self):
+        # recto::pdf::page_count, defined under /Gy (its own COMDAT section, selection "no duplicates"), still belongs
+        # to recto-pdf and is defined there uniquely.
+        engine, toolkit = self.tables(
+            "recto-pdf", "namespace recto::pdf { int page_count() { return 3; } }\n",
+            "namespace recto::pdf { int page_count(); }\n"
+            "namespace recto::ui { int pages() { return recto::pdf::page_count(); } }\n", "/Gy")
+        self.assertEqual(boundary.symbol_crossings("recto-ui", toolkit, {"recto-pdf": engine}),
+                         ["recto-ui: needs ?page_count@pdf@recto@@YAHXZ, which recto-pdf defines"])
+
+    def test_shared_std_templates_inline_functions_and_selectany_data_are_not_crossings(self):
+        # A header both sides may include: a std:: template the engine instantiates and the toolkit only declares
+        # (extern template), an inline function both use, and selectany data. Each leaves the toolkit with undefined
+        # symbols the engine library defines; none is code a module owns and defines uniquely.
+        (self.root / "shared/common.h").write_text(
+            "#pragma once\n#include <vector>\n"
+            "struct Shared { int v; };\n"
+            "extern template class std::vector<Shared>;\n"
+            "inline int shared_inline(int v) { return v + 1; }\n"
+            "namespace recto::core { extern const int kShared; }\n", encoding="utf-8")
+        engine, toolkit = self.tables(
+            "recto-core",
+            '#include "common.h"\ntemplate class std::vector<Shared>;\n'
+            "namespace recto::core { __declspec(selectany) extern const int kShared = 5; }\n"
+            "int engine_use() { return shared_inline(1); }\n",
+            '#include "common.h"\n'
+            "namespace recto::ui { int toolkit_use() { std::vector<Shared> v(2); v.push_back({1});\n"
+            "  return static_cast<int>(v.size()) + shared_inline(2) + recto::core::kShared; } }\n")
+        needed = toolkit.undefined - toolkit.defined
+        self.assertTrue(needed & engine.defined, "the fixture must leave the toolkit needing engine-defined symbols")
+        self.assertEqual(boundary.symbol_crossings("recto-ui", toolkit, {"recto-core": engine}), [])
 
     def test_a_stale_report_elsewhere_is_never_read_in_place_of_the_current_one(self):
         # Round 13: SourceDependenciesFile moved to 000-a.cpp.json; the old a.cpp.json (clean) is still in the folder.

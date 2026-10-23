@@ -15,8 +15,9 @@ option or a linker directive can matter:
   by its evaluated file name, stem or folder. `lib /list` lists the members the librarian put in it; each must be an
   object the project compiled itself (an allow list), so a merged library or an added object is refused wherever it is.
 - Symbols: `dumpbin /symbols` of each module library; no symbol a module needs from outside itself (or forces with
-  /INCLUDE:) may be one the other side defines. A library only contributes code that resolves an undefined symbol, so
-  this holds whatever library names reach the linker.
+  /INCLUDE:) may be one the other side owns (its recto:: namespace, or an extern "C" Recto* name) and defines uniquely
+  (not in a shareable COMDAT section). A library only contributes code that resolves an undefined symbol, so this holds
+  whatever library names reach the linker; std::, CRT and SDK names and shared inline or template code never count.
 - The projects are evaluated with every global property the build used (`--property Name=Value`, one per /p:).
 
 The text scanners (Ui.Project.IncludeBoundary, Ui.Project.NoWinRtUiTypes, tests/scripts/test_ui_module_boundary.py)
@@ -270,34 +271,87 @@ def directive_crossings(name, library, forbidden_libraries, forbidden_folders, d
     return sorted(set(found))
 
 
+# The namespace each module owns, as MSVC decorates a qualified name: recto::core::f is ?f@core@recto@@..., and any
+# name nested inside (recto::core::detail::g, a member of a recto::core class) carries "@core@recto@@" too.
+MODULE_NAMESPACES = {"recto-pdf": "pdf", "recto-core": "core", "recto-services": "services", "recto-ui": "ui"}
+# extern "C" names a module defines carry this prefix (recto-pdf's RectoTlgEventWriteTransfer); such a name is owned
+# by whichever module defines it.
+EXTERN_C_PREFIX = "Recto"
+# COMDAT selections a definition may share with other objects (pick any, same size, exact match, largest): inline
+# functions, template instantiations and selectany data, which every user may define. Selection 1 (no duplicates, a
+# function under /Gy) and 5 (associative) are a module's own unique definitions.
+SHARED_SELECTIONS = {2, 3, 4, 6}
+
+
+class SymbolTable:
+    """A library's external symbols: everything it defines, the subset it defines uniquely (not in a shareable COMDAT
+    section), and everything it leaves undefined (plus /INCLUDE: directives, which force a symbol in)."""
+
+    def __init__(self, defined, unique, undefined):
+        self.defined, self.unique, self.undefined = defined, unique, undefined
+
+
 def symbol_table(library, dumpbin):
-    """(defined, undefined) external symbols of `library`'s members, from `dumpbin /symbols`, plus the symbols its
-    /INCLUDE: directives force the linker to resolve (counted as undefined)."""
-    defined, undefined = set(), set()
+    """`library`'s SymbolTable from `dumpbin /symbols` and `dumpbin /directives`. Each member's section symbols are
+    followed by an auxiliary line giving the section's COMDAT selection; an external defined in a section with a
+    shareable selection is defined but not unique."""
+    defined, unique, undefined = set(), set(), set()
+    shared_sections, pending = set(), None
     for line in run([dumpbin, "/nologo", "/symbols", library]).splitlines():
+        if "COFF SYMBOL TABLE" in line:
+            shared_sections, pending = set(), None
+            continue
+        if "selection" in line and pending is not None:
+            number = line.split("selection", 1)[1].split()[0]
+            if number.isdigit() and int(number) in SHARED_SELECTIONS:
+                shared_sections.add(pending)
+            pending = None
+            continue
         left, bar, right = line.partition("|")
         fields = left.split()
-        if not bar or "External" not in fields or len(fields) < 3:
+        if not bar or len(fields) < 3:
             continue
-        symbol = right.strip().split(" ", 1)[0]
-        # UNDEF with a value is a COMMON symbol, which this member defines.
-        (undefined if "UNDEF" in fields and int(fields[1], 16) == 0 else defined).add(symbol)
+        section = fields[2] if fields[2].startswith("SECT") else None
+        name = right.strip().split(" ", 1)[0]
+        if "Static" in fields and section and name.startswith("."):
+            pending = section
+            continue
+        pending = None
+        if "External" not in fields:
+            continue
+        # UNDEF with a value is a COMMON symbol, which this member defines (shareable, like pick-any).
+        if fields[2] == "UNDEF" and int(fields[1], 16) == 0:
+            undefined.add(name)
+            continue
+        defined.add(name)
+        if section and section not in shared_sections:
+            unique.add(name)
     for line in run([dumpbin, "/nologo", "/directives", library]).splitlines():
         for token in line.split():
             if token[1:].lower().startswith("include:"):
                 undefined.add(token.split(":", 1)[1].strip('"'))
-    return defined, undefined
+    return SymbolTable(defined, unique, undefined)
+
+
+def owned_by(symbol, module):
+    """True when `symbol` belongs to `module`: a C++ name in its namespace, or an extern "C" name with Recto's prefix
+    (owned by the module that defines it). std::, the CRT, the Windows SDK and every other name belong to no module."""
+    if symbol.startswith("?"):
+        return f"@{MODULE_NAMESPACES[module]}@recto@@" in symbol
+    return symbol.lstrip("_").startswith(EXTERN_C_PREFIX)
 
 
 def symbol_crossings(name, table, forbidden_tables):
-    """Symbols module `name` needs from outside itself that the other side defines. A library only contributes code
-    that resolves an undefined symbol, so this is the link-level proof, whatever names or directives reach the linker:
-    a forward declaration of an engine function in recto-ui (or the reverse) shows here and nowhere else."""
-    defined, undefined = table
-    needed = undefined - defined
+    """Symbols module `name` needs from outside itself that another module owns and defines uniquely. A library only
+    contributes code that resolves an undefined symbol, so this is the link-level proof whatever names or directives
+    reach the linker: a forward declaration of an engine function in recto-ui (or the reverse) shows here and nowhere
+    else. Shared code is not a crossing: a std:: template both sides instantiate, an inline function from a header
+    both may include, a selectany constant (shareable COMDAT definitions, or names no module owns)."""
+    needed = table.undefined - table.defined
     found = []
-    for other, (other_defined, _) in sorted(forbidden_tables.items()):
-        found += [f"{name}: needs {symbol}, which {other} defines" for symbol in sorted(needed & other_defined)]
+    for other, other_table in sorted(forbidden_tables.items()):
+        found += [f"{name}: needs {symbol}, which {other} defines" for symbol in sorted(needed & other_table.unique)
+                  if owned_by(symbol, other)]
     return found
 
 
