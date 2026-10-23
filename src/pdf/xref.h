@@ -208,13 +208,19 @@ public:
 		uint64_t max_total_entries = kMaxXrefTotalEntries) noexcept;
 
 private:
-	// One scan of recover_damaged_xref. The first runs with no `length_oracle` and sizes every stream with an indirect
-	// /Length by its first `endstream`; when a longer length the file defines for such a stream lands on `endstream`,
-	// recovery runs once more with those lengths (keyed by the stream object's file position) as the /Length lookup.
+	// For each stream with an indirect /Length (by its object's file position), the lengths the parser accepts that
+	// are longer than the first pass gave it, longest first.
+	using LengthPlan = std::unordered_map<uint64_t, std::vector<int64_t>>;
+
+	// One scan of recover_damaged_xref. The first runs with no `length_oracle` and fills `plan_out`; a rescan sizes
+	// each planned stream by `length_oracle` (keyed by the stream object's file position) and lists in
+	// `inconsistent_out` each (position, length) its own final table does not define the length object as.
 	[[nodiscard]] static PdfResult<XrefTable> recover_damaged_xref_with(
 		std::span<const uint8_t> file_bytes,
 		uint64_t max_total_entries,
-		const std::unordered_map<uint64_t, int64_t>* length_oracle) noexcept;
+		const std::unordered_map<uint64_t, int64_t>* length_oracle,
+		LengthPlan* plan_out,
+		std::vector<std::pair<uint64_t, int64_t>>* inconsistent_out) noexcept;
 
 public:
 

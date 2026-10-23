@@ -931,6 +931,56 @@ TEST(PdfXref, RecoveryRoundThreeFixes)
 		EXPECT_FALSE(rec->trailer().contains("Encrypt"));
 	}
 
+	// Round 13: the redefined parameter is nested (`/Filter [2 0 R]`), or defined after the container; every reading
+	// of the container's named objects is tried, so the integer that sizes the stream is still found.
+	for (const bool nested : {true, false}) {
+		const std::string fake = "\nendstream\nendobj\n2 0 obj\n0\nendobj\n"
+			"1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n";
+		std::string pdf = "%PDF-1.7\n";
+		const size_t genuine_at = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages;
+		if (nested) {
+			pdf += "2 0 obj\n/ASCIIHexDecode\nendobj\n" +
+				container(20u, "88 0 " + std::to_string(fake.size()), "/N 1 /First 5 /Filter [2 0 R]");
+		} else {
+			pdf += container(20u, "88 0 " + std::to_string(fake.size()), "/N 2 0 R /First 5 /Filter /ASCIIHexDecode") +
+				"2 0 obj\n1\nendobj\n";
+		}
+		pdf += "30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(1), nullptr);
+		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at) << (nested ? "nested" : "forward");
+	}
+
+	// Round 13: an obsolete definition of the length object, which an update replaced, lands exactly on a later
+	// stream's `endstream`; a rescan with it would swallow the replacement catalog, but in that rescan's own table the
+	// length object is still the update's value, so the longer length is inconsistent and the first pass stands.
+	{
+		const auto build = [&](uint64_t m, size_t& replacement_at, size_t& payload_start, size_t& y_end) {
+			char obsolete[48];
+			std::snprintf(obsolete, sizeof(obsolete), "88 0 obj\n%06llu\nendobj\n", static_cast<unsigned long long>(m));
+			std::string pdf = "%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages + obsolete +
+				"88 0 obj\n1\nendobj\n30 0 obj\n<< /Length 88 0 R >>\nstream\n";
+			payload_start = pdf.size();
+			pdf += "x\nendstream\nendobj\n";
+			replacement_at = pdf.size();
+			pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Replaced true >>\nendobj\n31 0 obj\n<< /Length 1 >>\nstream\n";
+			y_end = pdf.size() + 1u;
+			pdf += "y\nendstream\nendobj\n%%EOF\n";
+			return pdf;
+		};
+		size_t replacement_at = 0;
+		size_t payload_start = 0;
+		size_t y_end = 0;
+		(void)build(0u, replacement_at, payload_start, y_end);
+		const std::string pdf = build(y_end - payload_start, replacement_at, payload_start, y_end);
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(1), nullptr);
+		EXPECT_EQ(rec->find(1)->byte_offset, replacement_at);
+	}
+
 	// Round 4: object 1 defined three times in the file (a catalog, then two other dictionaries); an intact type-1
 	// row naming the first restores it, catalog and all, so root 1 is valid again.
 	{
