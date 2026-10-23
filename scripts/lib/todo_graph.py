@@ -43,7 +43,9 @@ EARLIER_CAPS = {8, 13, 22}
 # (up to 16), so unlike their verdicts they are not bounded here; the digest is what binds them.
 LEGACY_RECEIPTS = "docs/reviews/legacy-receipts.json"
 LEGACY_VERDICTS = {"clean", "fixed", "stopped-at-3"}
-SEVERITY_CUTOFF_ROUND = 8
+# Owner decision 2026-10-23: the severity stop opens after the three fixed adversarial rounds of the review schedule
+# (.conclave/reviewers.toml severity_stop_after; it was 8). Lowering it only loosens the rule, so older receipts hold.
+SEVERITY_CUTOFF_ROUND = 3
 # The one-pass completion and excellence review (owner decision 2026-10-23), required for every new stamp: complete (no
 # gaps), completed (every gap implemented in the section) or filed (some gaps filed as new sections, each listed under
 # the completion review as "- Filed: DNN TNN §N"). A receipt without a completion field predates the requirement.

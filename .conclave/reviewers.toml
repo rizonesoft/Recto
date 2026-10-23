@@ -1,24 +1,59 @@
 # Independent reviewers for this repository, read by scripts/review-dispatch.py.
 #
 # Owner decision 2026-10-23: Opus 5.5 (Claude Code, writer `claude`) is the only
-# writer in this repository, and GPT-6.1 Sol through the Codex CLI is the only
+# writer in this repository, and GPT-6 Astra through the Codex CLI is the only
 # reviewer. One route, one reviewer, no fallback. A reviewer that is not
 # installed, fails, times out, returns nothing or replies OVERALL: blocked is
 # recorded with its reason: there is no review, never an approval.
 #
 # Loaded strictly: an unknown key, an unknown CLI, a malformed model, a route
 # naming an undefined reviewer, a second reviewer in a route, or a reviewer of
-# the writer's own model family refuses every dispatch.
+# the writer's own model family refuses every dispatch. The schedule is loaded
+# as strictly: an unknown lens or an effort the CLI does not take refuses too.
 
 schema_version = 1
 
-# GPT-6.1 Sol through the Codex CLI, read-only sandbox (owner decision 2026-10-22, replacing GPT-6 Astra; sole
-# reviewer since 2026-10-23). Effort medium (owner decision 2026-10-23, was xhigh), with the proportionality rule in
-# docs/review-round-prompt.md and docs/completion-review-prompt.md.
-[reviewers.sol]
+# GPT-6 Astra through the Codex CLI, read-only sandbox (owner decision 2026-10-23, replacing GPT-6.1 Sol). The
+# effort here is the default for a pass the schedule does not cover; [schedule] sets each pass's own effort.
+[reviewers.astra]
 cli = "codex"
-model = "gpt-6.1-sol"
+model = "gpt-6-astra"
 effort = "medium"
 
 [routes]
-claude = ["sol"]
+claude = ["astra"]
+
+# The review schedule (owner decision 2026-10-23). The dispatcher picks each pass's effort and lenses, so the loop
+# runs the same way every time: a plan review before the build, the completion review after it, three fixed
+# adversarial rounds at falling effort, then one low-effort lens per round in rotation until the loop stops. From
+# round 4 on (past severity_stop_after) a round whose worst finding is P3 stops the loop; a low-effort round that
+# finds a P1 is followed by one medium-effort adversarial round. The cap stays 33 rounds.
+[schedule]
+severity_stop_after = 3
+
+[schedule.plan]
+effort = "medium"
+lenses = ["plan"]
+
+[schedule.completion]
+effort = "medium"
+
+[[schedule.rounds]]
+effort = "high"
+lenses = ["adversarial", "integration", "source-defect", "plan-delivery"]
+
+[[schedule.rounds]]
+effort = "medium"
+lenses = ["adversarial"]
+
+[[schedule.rounds]]
+effort = "low"
+lenses = ["adversarial"]
+
+[schedule.rotation]
+effort = "low"
+lenses = ["consistency", "quality", "design", "optimization", "record"]
+
+[schedule.escalation]
+effort = "medium"
+lenses = ["adversarial"]

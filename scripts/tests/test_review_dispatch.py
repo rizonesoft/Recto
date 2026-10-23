@@ -65,6 +65,8 @@ FAKE_CLI = textwrap.dedent('''\
         text = "## record: needs-attention\\n\\nI could not read the repository: setup refresh had errors.\\n\\nOVERALL: blocked"
     if mode == "completion":
         text = "## Completeness\\n\\n1. Ctrl+O: missing-in-scope.\\n2. Recent files: missing-out-of-scope.\\n\\n## Round 7: none\\n\\nCOMPLETION: gaps"
+    if mode == "say":
+        text = os.environ["FAKE_SAY"]
     if mode == "completionblocked":
         text = "I could not read the candidate commit.\\n\\nCOMPLETION: blocked"
     open(args[args.index("-o") + 1], "w").write(text)
@@ -90,7 +92,9 @@ def write_launcher(directory, name, fake):
     return path
 
 
-class Dispatch(unittest.TestCase):
+class Harness(unittest.TestCase):
+    """A scratch repository with the dispatcher, a pin and a fake CLI on PATH; holds no tests itself."""
+
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.repo = Path(self._tmp.name) / "repo"
@@ -132,6 +136,8 @@ class Dispatch(unittest.TestCase):
         spec.loader.exec_module(module)
         return module
 
+
+class Dispatch(Harness):
     RESULT = {"writer": "claude", "reviewer": "sol", "model": "gpt-6.1-sol", "cli": "codex", "effort": "xhigh",
               "skipped": []}
 
@@ -789,6 +795,192 @@ def bad_pins(good):
             good + 'gemini = ["sol"]\n')
 
 
+SCHEDULED_PIN = FIXTURE_PIN + textwrap.dedent('''
+    [schedule]
+    severity_stop_after = 3
+
+    [schedule.plan]
+    effort = "medium"
+    lenses = ["plan"]
+
+    [schedule.completion]
+    effort = "medium"
+
+    [[schedule.rounds]]
+    effort = "high"
+    lenses = ["adversarial", "integration"]
+
+    [[schedule.rounds]]
+    effort = "medium"
+    lenses = ["adversarial"]
+
+    [[schedule.rounds]]
+    effort = "low"
+    lenses = ["adversarial"]
+
+    [schedule.rotation]
+    effort = "low"
+    lenses = ["consistency", "design", "record"]
+
+    [schedule.escalation]
+    effort = "medium"
+    lenses = ["adversarial"]
+''')
+
+
+class Schedule(Harness):
+    """The pin's [schedule]: the dispatcher picks each pass's effort and lenses from the rounds already recorded."""
+
+    def setUp(self):
+        super().setUp()
+        (self.repo / ".conclave/reviewers.toml").write_text(SCHEDULED_PIN, encoding="utf-8")
+        self.findings = self.repo / "findings.md"
+
+    def round(self, say="OVERALL: approve", *extra):
+        self.log.unlink(missing_ok=True)
+        result, summary = self.dispatch("--writer", "claude", "--prompt", str(self.prompt), "--record",
+                                        str(self.findings), *extra, codex="say", say=say)
+        self.assertIn(result.returncode, (0, 1), result.stderr)
+        return summary, self.calls()
+
+    def effort_of(self, call):
+        return next(a.split("=", 1)[1] for a in call["argv"] if a.startswith("model_reasoning_effort="))
+
+    def test_rounds_follow_the_fixed_list_then_rotate_one_lens_each(self):
+        seen = []
+        for _ in range(7):
+            summary, (call,) = self.round()
+            seen.append((summary["position"], self.effort_of(call), summary["lenses"]))
+            self.assertIn("## Lenses for this pass", call["stdin"])
+            for name in summary["lenses"]:
+                self.assertIn(f"- `{name}`:", call["stdin"])
+        self.assertEqual(seen, [(1, "high", ["adversarial", "integration"]), (2, "medium", ["adversarial"]),
+                                (3, "low", ["adversarial"]), (4, "low", ["consistency"]), (5, "low", ["record"]),
+                                (6, "low", ["consistency"]), (7, "low", ["record"])],
+                         "without --surface the rotation skips the design lens")
+        rounds = self.module().read_rounds(self.findings.read_text(encoding="utf-8"))
+        self.assertEqual([(r["effort"], r["lenses"]) for r in rounds][:2],
+                         [("high", ["adversarial", "integration"]), ("medium", ["adversarial"])])
+
+    def test_surface_puts_design_in_the_rotation(self):
+        lenses = [self.round("OVERALL: approve", "--surface")[0]["lenses"] for _ in range(6)]
+        self.assertEqual(lenses[3:], [["consistency"], ["design"], ["record"]])
+
+    def test_an_outage_round_does_not_move_the_position(self):
+        self.round()
+        self.log.unlink(missing_ok=True)
+        result, summary = self.dispatch("--writer", "claude", "--prompt", str(self.prompt), "--record",
+                                        str(self.findings), codex="fail")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(summary["position"], 2)
+        summary, (call,) = self.round()
+        self.assertEqual((summary["position"], summary["round"], self.effort_of(call)), (2, 3, "medium"))
+
+    def test_a_low_effort_p1_escalates_the_next_round(self):
+        for _ in range(3):
+            self.round()
+        summary, _ = self.round("1. P1 calc.py:2 subtracts.\n\nHIGHEST: P1\nOVERALL: needs-attention")
+        self.assertEqual((summary["position"], summary["escalated"]), (4, False))
+        summary, (call,) = self.round()
+        self.assertEqual((summary["position"], summary["escalated"], self.effort_of(call), summary["lenses"]),
+                         (5, True, "medium", ["adversarial"]))
+        self.assertIn("escalated after a low-effort round found a P1", call["stdin"])
+        summary, (call,) = self.round()
+        self.assertEqual((summary["escalated"], self.effort_of(call)), (False, "low"),
+                         "a medium escalation that finds a P1 does not escalate again")
+
+    def test_severity_stop_only_past_the_fixed_rounds_and_only_on_p3(self):
+        p3 = "1. P3 calc.py:2 a name.\n\nHIGHEST: P3\nOVERALL: approve"
+        stops = [self.round(p3)[0]["severity_stop"] for _ in range(4)]
+        self.assertEqual(stops, [False, False, False, True])
+        self.assertFalse(self.round("1. P2 calc.py:2.\n\nHIGHEST: P2\nOVERALL: needs-attention")[0]["severity_stop"])
+        self.assertFalse(self.round("1. calc.py:2 untagged.\n\nOVERALL: needs-attention")[0]["severity_stop"],
+                         "a round with no HIGHEST line never stops the loop")
+
+    def test_an_unreadable_findings_file_is_refused_before_a_review_runs(self):
+        self.findings.write_text("## Round one\n\nnot a record\n", encoding="utf-8")
+        result, _ = self.dispatch("--writer", "claude", "--prompt", str(self.prompt), "--record", str(self.findings))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("so no round was run", result.stderr)
+        self.assertEqual(self.calls(), [], "no review is spent that could not be recorded")
+
+    def test_the_plan_review_is_one_pass_recorded_with_its_lens(self):
+        candidate = "a" * 40
+        result, summary = self.dispatch("--writer", "claude", "--prompt", str(self.prompt), "--kind", "plan",
+                                        "--candidate", candidate, "--record", str(self.findings), codex="say",
+                                        say="1. Ctrl+K reach: missing.\n\nPLAN: gaps\nOVERALL: needs-attention")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((summary["kind"], summary["effort"], summary["lenses"]), ("plan", "medium", ["plan"]))
+        self.assertNotIn("position", summary)
+        (call,) = self.calls()
+        self.assertEqual(self.effort_of(call), "medium")
+        self.assertIn("- `plan`:", call["stdin"])
+        text = self.findings.read_text(encoding="utf-8")
+        self.assertIn("## Plan review: sol (`gpt-6.1-sol` via `codex`)", text)
+        (plan,) = self.module().read_plans(text)
+        self.assertEqual((plan["candidate"], plan["lenses"], plan["effort"]), (candidate, ["plan"], "medium"))
+        self.assertEqual(self.module().read_rounds(text), [], "a plan review is not a round")
+        result, summary = self.dispatch("--writer", "claude", "--prompt", str(self.prompt), "--kind", "plan",
+                                        "--candidate", candidate, "--record", str(self.findings))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("already holds a plan review", result.stderr)
+        summary, _ = self.round()
+        self.assertEqual(summary["position"], 1, "the plan review does not move the round position")
+
+    def test_a_plan_review_needs_a_full_candidate(self):
+        for extra in ((), ("--candidate", "abc123")):
+            with self.subTest(extra=extra):
+                result, _ = self.dispatch("--writer", "claude", "--prompt", str(self.prompt), "--kind", "plan", *extra)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("--kind plan needs --candidate", result.stderr)
+
+    def test_the_completion_review_takes_its_scheduled_effort_and_no_lenses(self):
+        result, summary = self.dispatch("--writer", "claude", "--prompt", str(self.prompt), "--kind", "completion",
+                                        "--candidate", "b" * 40, codex="say", say="COMPLETION: complete")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        (call,) = self.calls()
+        self.assertEqual(self.effort_of(call), "medium")
+        self.assertNotIn("## Lenses for this pass", call["stdin"])
+        self.assertEqual(call["stdin"], self.prompt.read_text())
+
+    def test_a_pin_without_a_schedule_keeps_the_reviewers_effort_and_prompt(self):
+        (self.repo / ".conclave/reviewers.toml").write_text(FIXTURE_PIN, encoding="utf-8")
+        summary, (call,) = self.round()
+        self.assertEqual(self.effort_of(call), "xhigh")
+        self.assertEqual(call["stdin"], self.prompt.read_text())
+        self.assertNotIn("position", summary)
+
+    def test_check_pin_reports_the_schedule(self):
+        result, summary = self.dispatch("--check-pin", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(summary["schedule"]["severity_stop_after"], 3)
+
+    def test_a_malformed_schedule_refuses_every_dispatch(self):
+        module = self.module()
+        good = tomllib.loads(SCHEDULED_PIN)["schedule"]
+        bad = {
+            "unknown lens": {**good, "plan": {"effort": "medium", "lenses": ["vibes"]}},
+            "bad effort": {**good, "completion": {"effort": "extreme"}},
+            "completion lenses": {**good, "completion": {"effort": "medium", "lenses": ["plan"]}},
+            "no rounds": {**good, "rounds": []},
+            "duplicate lens": {**good, "rotation": {"effort": "low", "lenses": ["record", "record"]}},
+            "missing key": {k: v for k, v in good.items() if k != "escalation"},
+            "unknown key": {**good, "extra": 1},
+            "stop zero": {**good, "severity_stop_after": 0},
+            "stop bool": {**good, "severity_stop_after": True},
+        }
+        module.check_schedule(good, ["codex"])
+        for name, schedule in bad.items():
+            with self.subTest(name), self.assertRaises(module.Refused):
+                module.check_schedule(schedule, ["codex"])
+        broken = SCHEDULED_PIN.replace('lenses = ["plan"]', 'lenses = ["vibes"]')
+        (self.repo / ".conclave/reviewers.toml").write_text(broken, encoding="utf-8")
+        result, _ = self.dispatch("--writer", "claude", "--prompt", str(self.prompt))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("[schedule] plan", result.stderr)
+        self.assertEqual(self.calls(), [])
+
+
 class RepositoryPin(unittest.TestCase):
     def test_the_repository_pin_loads_under_the_dispatchers_rules(self):
         spec = importlib.util.spec_from_file_location("dispatch_pin_check", SCRIPTS / "review-dispatch.py")
@@ -797,13 +989,35 @@ class RepositoryPin(unittest.TestCase):
         pin = module.load_pin(REPO_PIN)
         self.assertTrue(pin["routes"], "the repository pin routes no writer")
 
-    def test_the_repository_pin_is_sol_reviewing_claude_and_nothing_else(self):
-        # Owner decisions 2026-10-23: Opus 5.5 is the sole writer and GPT-6.1 Sol through Codex the sole reviewer, at
-        # medium effort with the proportionality rule in the prompts.
+    def test_the_repository_pin_is_astra_reviewing_claude_and_nothing_else(self):
+        # Owner decisions 2026-10-23: Opus 5.5 is the sole writer and GPT-6 Astra through Codex the sole reviewer, on
+        # the dispatcher-owned schedule: a medium plan review, a medium completion review, rounds at high, medium and
+        # low adversarial effort, then one low-effort lens per round.
         with open(REPO_PIN, "rb") as handle:
             pin = tomllib.load(handle)
-        self.assertEqual(pin["reviewers"], {"sol": {"cli": "codex", "model": "gpt-6.1-sol", "effort": "medium"}})
-        self.assertEqual(pin["routes"], {"claude": ["sol"]})
+        self.assertEqual(pin["reviewers"], {"astra": {"cli": "codex", "model": "gpt-6-astra", "effort": "medium"}})
+        self.assertEqual(pin["routes"], {"claude": ["astra"]})
+        schedule = pin["schedule"]
+        self.assertEqual(schedule["plan"], {"effort": "medium", "lenses": ["plan"]})
+        self.assertEqual(schedule["completion"], {"effort": "medium"})
+        self.assertEqual([(r["effort"], r["lenses"][0]) for r in schedule["rounds"]],
+                         [("high", "adversarial"), ("medium", "adversarial"), ("low", "adversarial")])
+        self.assertEqual(schedule["rotation"]["effort"], "low")
+        self.assertEqual(schedule["escalation"], {"effort": "medium", "lenses": ["adversarial"]})
+
+    def test_the_pins_severity_stop_is_the_stamps_cutoff(self):
+        # The dispatcher reports severity_stop from the pin and `stamp` re-checks it against SEVERITY_CUTOFF_ROUND: the
+        # two numbers must agree, or the dispatcher would stop a loop the stamp then refuses.
+        spec = importlib.util.spec_from_file_location("todo_graph_cutoff", SCRIPTS / "lib" / "todo_graph.py")
+        todo_graph = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = todo_graph
+        try:
+            spec.loader.exec_module(todo_graph)
+        finally:
+            del sys.modules[spec.name]
+        with open(REPO_PIN, "rb") as handle:
+            pin = tomllib.load(handle)
+        self.assertEqual(pin["schedule"]["severity_stop_after"], todo_graph.SEVERITY_CUTOFF_ROUND)
 
 
 if __name__ == "__main__":

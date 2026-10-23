@@ -60,7 +60,7 @@ Then check CI, red first: run `python scripts/ci_status.py` (the latest complete
 
 Long jobs never stall the run (owner direction 2026-10-23, after a review job died silently and a build was killed for memory):
 
-- One heavy job at a time: a build, the AddressSanitizer build, a Sol round and a long test suite never overlap, because other sessions share this machine. Before each, read `(Get-Counter '\Memory\Available MBytes').CounterSamples[0].CookedValue`; under 3000 MB, wait (re-check every minute, up to 30 minutes) instead of starting a job the host may kill.
+- One heavy job at a time: a build, the AddressSanitizer build, a review round and a long test suite never overlap, because other sessions share this machine. Before each, read `(Get-Counter '\Memory\Available MBytes').CounterSamples[0].CookedValue`; under 3000 MB, wait (re-check every minute, up to 30 minutes) instead of starting a job the host may kill.
 - After launching a background job, confirm within a few minutes that its process exists and its output file is growing or it has finished. Never wait on a job whose process is gone: a job that ended without its result (killed, no output, no notification) is relaunched once, alone, and the relaunch recorded in the findings file and the run file; a second loss is a Critical event, and the row continues with the next step that does not need that result or parks as a leftover.
 - An idle wait longer than 15 minutes with no job alive is a stall: re-check the job, resume the row, and record it.
 

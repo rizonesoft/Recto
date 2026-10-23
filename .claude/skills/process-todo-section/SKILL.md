@@ -84,6 +84,16 @@ Fix findings in the TODO file, before implementation, so plan and build never di
 
 Correct the plan, never the goalpost: narrowing a section so the code you were about to write happens to satisfy it is fitting the contract to the implementation. Report every plan correction alongside the implementation. If step 2 finds nothing, say so in one line and move on.
 
+### 3a. Plan review by the pinned reviewer (one pass, before any code)
+
+Once the section is corrected, commit it (with `plan --sync`) so the reviewer reads the exact contract you will build, then have the pinned reviewer judge whether that contract produces a 100% complete feature. Write the prompt to a scratch file from `docs/plan-review-prompt.md`, then run:
+
+```powershell
+python scripts/review-dispatch.py --kind plan --candidate <full SHA of that commit> --writer claude --prompt <scratch-plan-prompt.md> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md
+```
+
+The dispatcher sets the effort and the `plan` lens from the pin's `[schedule] plan` step and appends a `## Plan review` section; it is not a round, it does not move the round schedule, and a findings file takes one returned plan review. Fix every `P1` and `P2` gap in the section the same way as step 3 (corrected in place, dated), and file a `P3` you do not take through `add-todo`. Under the plan review in the findings file, add one line per gap: `- Planned: <gap> in <commit>` or `- Filed: DNN TNN §N (<gap>)`. When the dispatcher exits 1, run the pass again before building. A section stamped before 2026-10-23 has no plan review and stays valid.
+
 ### 4. Build the corrected contract
 
 Work the Build order and micro-step checklist top to bottom. Tick each micro-step item as its `Done when:` becomes true, in the file, as you go; never tick a partially finished item (`partial-flip-shipped` is fatal). If every micro-step in the section was already 100% implemented in the codebase, do not churn working code just to manufacture a diff: verify every `Done when:` and `Cheaper substitute:`, write any missing falsifiable test, run the checkpoint in Step 6, commit the ticked checklist and verification evidence in Step 7, and hand to `review-todo-section`. Write the failing test first where the section names one. Build the cheaper substitute's failure into the checkpoint so the wrong thing cannot pass. UI sections consume the shared controls and slots named in `**Chrome:**` (one `ShellPage`, named slots, `recto-ui` controls from `src/ui`); a second toolbar, panel or dialog shape is a defect.
@@ -92,7 +102,7 @@ Run gates while iterating, bounded to the touched area: the build for the touche
 
 ### 5. Surface and feature completeness
 
-Before the checkpoint, account for 100% of every control, menu item, dialog and state on the Fidelity screenshot and SPEC section: each is working (proven on the rendered surface with real data and read-back) or deferred to a named, resolving section (`python scripts/todo-graph.py resolve '<ref>'` must not exit 1 or 2). A control disabled with a reason that names no section is missing, not deferred. Confirm the refusal/error/recovery path and undo/reverse path required by the section hold. `review-todo-section` refuses the stamp for an unaccounted control, so decide here. This pass is yours; after the commit, `review-todo-section` step 3 has Sol run the one-pass completion and excellence review on the built feature, and every in-scope gap it finds is built in this section before the regular rounds.
+Before the checkpoint, account for 100% of every control, menu item, dialog and state on the Fidelity screenshot and SPEC section: each is working (proven on the rendered surface with real data and read-back) or deferred to a named, resolving section (`python scripts/todo-graph.py resolve '<ref>'` must not exit 1 or 2). A control disabled with a reason that names no section is missing, not deferred. Confirm the refusal/error/recovery path and undo/reverse path required by the section hold. `review-todo-section` refuses the stamp for an unaccounted control, so decide here. This pass is yours; after the commit, `review-todo-section` step 3 has the pinned reviewer run the one-pass completion and excellence review on the built feature, and every in-scope gap it finds is built in this section before the regular rounds.
 
 ### 6. Run the Test checkpoint, for real
 

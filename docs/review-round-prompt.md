@@ -1,6 +1,6 @@
 # Review round prompt
 
-Copy this into a scratch file, fill in the placeholders, delete the lines that do not apply, and pass it to `scripts/review-dispatch.py --prompt`.
+Copy this into a scratch file, fill in the placeholders, delete the lines that do not apply, and pass it to `scripts/review-dispatch.py --prompt` (add `--surface` when the section has `Surface: yes`). The prompt does not pick the lenses or the effort: the pin's `[schedule]` in `.conclave/reviewers.toml` does. The dispatcher counts the rounds already in the `--record` file, sets the reasoning effort and appends a `## Lenses for this pass` block naming this round's lenses, so the same prompt file serves every round. The lens list below is the fallback for a pin without a schedule.
 
 ---
 
@@ -25,6 +25,9 @@ Proportionality: a `P1` or `P2` finding must be a failure that can happen in thi
 - `source-defect`: whether the governing spec or upstream documentation is read accurately, with deviations named.
 - `design`: for user-facing surfaces, whether the rendered result matches the design source and every control works.
 - `record`: whether the claimed test output and evidence match what actually ran, and nothing is marked done that is not.
+- `plan-delivery`: whether the build delivered every checklist item and `Done when:` of the section, with nothing partial or stubbed.
+- `quality`: whether the code is clear, minimal and maintainable, and every test exercises the behaviour it names.
+- `optimization`: where the change wastes time, memory, I/O or redraws on the paths users hit.
 
 ## Reply format
 
