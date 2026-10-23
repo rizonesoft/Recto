@@ -74,12 +74,31 @@ class EvaluationTests(unittest.TestCase):
             with self.assertRaisesRegex(boundary.EvidenceError, "no build manifest"):
                 boundary.read_manifest("recto-core", manifest)
             manifest.write_text(f"project|{root / 'recto-core.vcxproj'}|obj\\|bin\\recto-core.lib\n"
-                                f"unit|{root / 'core.cpp'}||true|obj\\current-core.cpp.json|obj\\|Create|obj\\core.pch\n",
+                                f"unit|{root / 'core.cpp'}||true|obj\\current-core.cpp.json|obj\\|Create|obj\\core.pch|/utf-8 /DX=a|b\n",
                                 encoding="utf-8")
             project = boundary.read_manifest("recto-core", manifest)
             self.assertEqual([u.report.name for u in project.units], ["current-core.cpp.json"])
             self.assertEqual(project.produced, {boundary.normalized(root / "obj" / "core.pch")})
             self.assertEqual(project.library, boundary.normalized(root / "bin" / "recto-core.lib"))
+            # AdditionalOptions is the last field and keeps a "|" of its own.
+            self.assertEqual(project.units[0].options, "/utf-8 /DX=a|b")
+
+    def test_options_that_could_move_or_hide_a_report_are_refused(self):
+        # Round 15: a later /sourceDependencies- sends the fresh report to stdout and leaves an older one in place.
+        with tempfile.TemporaryDirectory() as folder:
+            source = pathlib.Path(folder) / "a.cpp"
+            report = pathlib.Path(folder) / "a.cpp.json"
+            report.write_text(json.dumps({"Version": "1.2", "Data": {"Source": str(source), "Includes": []}}),
+                              encoding="utf-8")
+            for options in ("/utf-8 /sourceDependencies-", '-SourceDependencies "x.json"', "/utf-8 @more.rsp"):
+                with self.subTest(options=options):
+                    unit = boundary.Unit(boundary.normalized(source), boundary.normalized(pathlib.Path(folder) / "a.obj"),
+                                         boundary.normalized(report), True, None, options)
+                    with self.assertRaisesRegex(boundary.EvidenceError, "may not be where the build recorded it"):
+                        boundary.include_crossings("recto-core", [unit], [])
+            clean = boundary.Unit(boundary.normalized(source), boundary.normalized(pathlib.Path(folder) / "a.obj"),
+                                  boundary.normalized(report), True, None, "/utf-8 /DSOURCE_DEPENDENCIES=1")
+            self.assertEqual(boundary.include_crossings("recto-core", [clean], []), [])
 
     def test_build_ps1_checks_each_configuration_from_its_own_manifests(self):
         build = (REPO / "build" / "build.ps1").read_text(encoding="utf-8")
@@ -92,6 +111,12 @@ class EvaluationTests(unittest.TestCase):
         self.assertIn(boundary.win32_name("recto-ui.lib. "),
                       boundary.library_names([pathlib.Path(tempfile.gettempdir()) / "recto-ui.lib"]))
         self.assertIn("recto-ui", boundary.library_names([pathlib.Path(tempfile.gettempdir()) / "recto-ui.lib"]))
+
+    def test_a_directive_line_keeps_a_name_with_a_space_whole(self):
+        # dumpbin prints cl's /DEFAULTLIB:"ui kit.lib" without quotes; Clang's quoted form may appear as written.
+        self.assertEqual(boundary.directive_tokens("   /DEFAULTLIB:ui kit.lib"), ["/DEFAULTLIB:ui kit.lib"])
+        self.assertEqual(boundary.directive_tokens('/DEFAULTLIB:"ui kit.lib" /DEFAULTLIB:ole32.lib'),
+                         ["/DEFAULTLIB:ui kit.lib", "/DEFAULTLIB:ole32.lib"])
 
     def test_directives_that_make_the_linker_resolve_a_symbol(self):
         self.assertEqual(boundary.directive_symbols("/EXPORT:ui_bridge=?abi_version@core@recto@@YAHXZ"),
@@ -358,15 +383,15 @@ class CompilerReportedBoundaryTests(unittest.TestCase):
             "struct Shared { int v; };\n"
             "extern template class std::vector<Shared>;\n"
             "inline int shared_inline(int v) { return v + 1; }\n"
-            "namespace recto::core { extern const int kShared; }\n", encoding="utf-8")
+            "extern const int kShared;\n", encoding="utf-8")
         engine, toolkit = self.tables(
             "recto-core",
             '#include "common.h"\ntemplate class std::vector<Shared>;\n'
-            "namespace recto::core { __declspec(selectany) extern const int kShared = 5; }\n"
+            "__declspec(selectany) extern const int kShared = 5;\n"
             "int engine_use() { return shared_inline(1); }\n",
             '#include "common.h"\n'
             "namespace recto::ui { int toolkit_use() { std::vector<Shared> v(2); v.push_back({1});\n"
-            "  return static_cast<int>(v.size()) + shared_inline(2) + recto::core::kShared; } }\n")
+            "  return static_cast<int>(v.size()) + shared_inline(2) + kShared; } }\n")
         needed = toolkit.undefined - toolkit.defined
         self.assertTrue(needed & engine.defined, "the fixture must leave the toolkit needing engine-defined symbols")
         self.assertEqual(boundary.symbol_crossings("recto-ui", toolkit, {"recto-core": engine}), [])
@@ -407,6 +432,29 @@ class CompilerReportedBoundaryTests(unittest.TestCase):
         self.assertNotIn("?abi_version@core@recto@@YAHXZ", toolkit.defined)
         self.assertEqual(boundary.symbol_crossings("recto-ui", toolkit, {"recto-core": engine}),
                          ["recto-ui: needs ?abi_version@core@recto@@YAHXZ, which recto-core defines"])
+
+    def test_an_owned_explicit_instantiation_or_selectany_constant_is_caught(self):
+        # Round 15: both sit in pick-any COMDAT sections, yet the toolkit defines neither and needs the engine's.
+        engine, toolkit = self.tables(
+            "recto-core",
+            "namespace recto::core {\ntemplate <class T> int secret(T v) { return v + 7; }\ntemplate int secret<int>(int);\n"
+            "__declspec(selectany) extern const int kLimit = 9;\n}\n",
+            "namespace recto::core {\ntemplate <class T> int secret(T);\nextern template int secret<int>(int);\n"
+            "extern const int kLimit;\n}\n"
+            "namespace recto::ui { int probe() { return recto::core::secret(3) + recto::core::kLimit; } }\n")
+        found = boundary.symbol_crossings("recto-ui", toolkit, {"recto-core": engine})
+        self.assertEqual(len(found), 2, found)
+        self.assertTrue(any("secret" in line for line in found), found)
+        self.assertTrue(any("kLimit" in line for line in found), found)
+
+    def test_a_quoted_library_name_with_a_space_is_caught(self):
+        # Round 15: the toolkit's TargetName is `ui kit`; cl writes /DEFAULTLIB:"ui kit.lib".
+        source = self.root / "src/core/space.cpp"
+        source.write_text('#define KIND lib\n#pragma comment(KIND, "ui kit.lib")\nint space() { return 0; }\n',
+                          encoding="utf-8")
+        unit = self.compile(source, self.root / "obj/core")
+        library = self.library(self.root / "obj/core/space.lib", unit.obj)
+        self.assertEqual(len(self.directives(library, [self.root / "obj/ui/ui kit.lib"])), 1)
 
     def test_a_stale_report_elsewhere_is_never_read_in_place_of_the_current_one(self):
         # Round 13: SourceDependenciesFile moved to 000-a.cpp.json; the old a.cpp.json (clean) is still in the folder.

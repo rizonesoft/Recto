@@ -17,9 +17,11 @@ option or a linker directive can matter:
   by its recorded file name, stem or folder. `lib /list` lists the members the librarian put in it; each must be an
   object the project compiled itself (an allow list), so a merged library or an added object is refused wherever it is.
 - Symbols: `dumpbin /symbols` of each module library; no symbol a module needs from outside itself (or makes the
-  linker resolve with a /INCLUDE:, /EXPORT: or /ALTERNATENAME: directive) may be one the other side owns (its recto:: namespace, or an extern "C" Recto* name) and defines uniquely
-  (not in a shareable COMDAT section). A library only contributes code that resolves an undefined symbol, so this holds
-  whatever library names reach the linker; std::, CRT and SDK names and shared inline or template code never count.
+  linker resolve with a /INCLUDE:, /EXPORT: or /ALTERNATENAME: directive) may be one the other side owns (its
+  recto:: namespace, or an extern "C" Recto* name) and defines, however
+  it stores it. A library only contributes code that resolves an undefined symbol, so this holds whatever library
+  names reach the linker; std::, CRT and SDK names never count, and shared inline or template code is defined by each
+  module that uses it, so it is never needed from the other side.
 - What the build compiled comes from the build itself: the RectoBoundaryManifest target in Directory.Build.targets
   runs after ClCompile in each module project and records every ClCompile item with the metadata it was compiled with
   (target-time changes included) and the IntDir and library it wrote, in build/boundary/<platform>/<configuration>/.
@@ -102,12 +104,66 @@ def run(arguments):
     return out.stdout
 
 
+def command_line_tokens(text):
+    """`text` split into arguments the way the Microsoft C runtime splits a command line, which is how cl, link and lib
+    read their options and their directives: white space outside quotes separates; a quote opens or closes quoting anywhere in an argument
+    (`/I"a b"` is `/Ia b`) and is dropped; `""` inside quotes is one literal quote; 2n backslashes before a quote are n
+    backslashes and the quote still counts, 2n+1 are n backslashes and a literal quote; other backslashes are literal."""
+    tokens, current, quoted, started, i = [], [], False, False, 0
+    while i < len(text):
+        c = text[i]
+        if c == "\\":
+            j = i
+            while j < len(text) and text[j] == "\\":
+                j += 1
+            if j < len(text) and text[j] == '"':
+                current.append("\\" * ((j - i) // 2))
+                if (j - i) % 2:
+                    current.append('"')
+                    j += 1
+            else:
+                current.append("\\" * (j - i))
+            i, started = j, True
+        elif c == '"':
+            if quoted and text[i + 1:i + 2] == '"':
+                current.append('"')
+                i += 2
+            else:
+                quoted, i = not quoted, i + 1
+            started = True
+        elif c in " \t\r\n" and not quoted:
+            if started:
+                tokens.append("".join(current))
+            current, started, i = [], False, i + 1
+        else:
+            current.append(c)
+            started, i = True, i + 1
+    if started:
+        tokens.append("".join(current))
+    return tokens
+
+
+def directive_tokens(line):
+    """The linker directives on one line of `dumpbin /directives`. dumpbin prints each directive on its own line and
+    without the quotes it was written with (`/DEFAULTLIB:ui kit.lib` for "ui kit.lib"), while a quoted spelling may
+    also appear; so the line is split as LINK splits a command line and every piece that does not start a switch is
+    joined back to the switch before it."""
+    tokens = []
+    for token in command_line_tokens(line.strip()):
+        if tokens and token[:1] not in ("/", "-"):
+            tokens[-1] += " " + token
+        else:
+            tokens.append(token)
+    return tokens
+
+
 class Unit:
     """One compiled source as the build compiled it: where cl wrote its object and its /sourceDependencies report,
     whether it wrote one, and the precompiled header it created, if any."""
 
-    def __init__(self, source, obj, report, generates, pch=None):
+    def __init__(self, source, obj, report, generates, pch=None, options=""):
         self.source, self.obj, self.report, self.generates, self.pch = source, obj, report, generates, pch
+        self.options = options
 
 
 class Project:
@@ -143,7 +199,7 @@ def output_path(project_folder, value, filename, extension, completes):
 # every value is what the build compiled with, target-time changes included:
 #   project|<project file>|<IntDir>|<library file>
 #   unit|<source>|<ExcludedFromBuild>|<GenerateSourceDependencies>|<SourceDependenciesFile>|<ObjectFileName>|
-#        <PrecompiledHeader>|<PrecompiledHeaderOutputFile>
+#        <PrecompiledHeader>|<PrecompiledHeaderOutputFile>|<AdditionalOptions, the rest of the line>
 MANIFESTS = REPO / "build" / "boundary"
 
 
@@ -163,12 +219,12 @@ def compiled_units(project_folder, items):
         if item.get("PrecompiledHeader", "").strip().lower() == "create" and item.get("PrecompiledHeaderOutputFile"):
             pch = normalized(pathlib.Path(project_folder) / item["PrecompiledHeaderOutputFile"])
         units.append(Unit(source, obj, report, item.get("GenerateSourceDependencies", "").strip().lower() == "true",
-                          pch))
+                          pch, item.get("AdditionalOptions", "")))
     return units
 
 
 UNIT_FIELDS = ("Identity", "ExcludedFromBuild", "GenerateSourceDependencies", "SourceDependenciesFile",
-               "ObjectFileName", "PrecompiledHeader", "PrecompiledHeaderOutputFile")
+               "ObjectFileName", "PrecompiledHeader", "PrecompiledHeaderOutputFile", "AdditionalOptions")
 
 
 def read_manifest(name, path):
@@ -183,8 +239,10 @@ def read_manifest(name, path):
         fields = line.split("|")
         if fields[0] == "project" and len(fields) == 4:
             project = fields[1:]
-        elif fields[0] == "unit" and len(fields) == 1 + len(UNIT_FIELDS):
-            items.append(dict(zip(UNIT_FIELDS, fields[1:])))
+        elif fields[0] == "unit" and len(fields) >= 1 + len(UNIT_FIELDS):
+            # AdditionalOptions is last and may itself hold a "|".
+            values = fields[1:len(UNIT_FIELDS)] + ["|".join(fields[len(UNIT_FIELDS):])]
+            items.append(dict(zip(UNIT_FIELDS, values)))
         elif line.strip():
             raise EvidenceError(f"{path}: unreadable manifest line {line!r}")
     if project is None:
@@ -234,6 +292,22 @@ def read_report(path):
     return report_paths(report)
 
 
+def redirects_reports(options):
+    """Why cl might not have written a unit's report where its SourceDependenciesFile says, or None. A
+    /sourceDependencies switch in the unit's AdditionalOptions comes after the one MSBuild generates and wins (with `-`
+    it sends the report to standard output, leaving an older report in place); a response file (`@file`) may hold one;
+    and the CL and _CL_ environment variables add switches to every compile. Each is refused rather than guessed at."""
+    for token in command_line_tokens(options):
+        if token[:1] in ("/", "-") and token[1:].lower().startswith("sourcedependencies"):
+            return f"its AdditionalOptions hold {token}"
+        if token.startswith("@"):
+            return f"its AdditionalOptions name the response file {token}"
+    for variable in ("CL", "_CL_"):
+        if "sourcedependencies" in os.environ.get(variable, "").lower():
+            return f"the {variable} environment variable holds a /sourceDependencies switch"
+    return None
+
+
 def unit_reports(name, units):
     """Each compiled unit's report, read from exactly where the build wrote it, so an older report elsewhere is never
     read in its place. A unit that does not generate a report, or whose report is missing or about another source, is
@@ -243,6 +317,10 @@ def unit_reports(name, units):
         if not unit.generates:
             raise EvidenceError(f"{name}: {unit.source} is compiled without GenerateSourceDependencies, so the compiler "
                                 "reports nothing about it")
+        redirected = redirects_reports(unit.options)
+        if redirected:
+            raise EvidenceError(f"{name}: the report for {unit.source} may not be where the build recorded it: "
+                                f"{redirected}")
         if not unit.report.is_file():
             missing.append(str(unit.report))
             continue
@@ -311,8 +389,8 @@ def directive_crossings(name, library, forbidden_libraries, forbidden_folders, d
         text = line.strip()
         if not text.startswith(("/", "-")):
             continue
-        for token in text.split():
-            spelled = token.replace('"', "")
+        for token in directive_tokens(text):
+            spelled = token
             _, _, value = spelled.partition(":")
             candidates = [spelled, value] if value else [spelled]
             hit = False
@@ -331,59 +409,29 @@ MODULE_NAMESPACES = {"recto-pdf": "pdf", "recto-core": "core", "recto-services":
 # extern "C" names a module defines carry this prefix (recto-pdf's RectoTlgEventWriteTransfer); such a name is owned
 # by whichever module defines it.
 EXTERN_C_PREFIX = "Recto"
-# COMDAT selections a definition may share with other objects (pick any, same size, exact match, largest): inline
-# functions, template instantiations and selectany data, which every user may define. Selection 1 (no duplicates, a
-# function under /Gy) and 5 (associative) are a module's own unique definitions.
-SHARED_SELECTIONS = {2, 3, 4, 6}
-
-
 class SymbolTable:
-    """A library's external symbols: everything it defines, the subset it defines uniquely (not in a shareable COMDAT
-    section), and everything it leaves undefined (plus /INCLUDE: directives, which force a symbol in)."""
+    """A library's external symbols: everything it defines and everything it leaves undefined (plus the symbols its
+    /INCLUDE:, /EXPORT: and /ALTERNATENAME: directives make the linker resolve)."""
 
-    def __init__(self, defined, unique, undefined):
-        self.defined, self.unique, self.undefined = defined, unique, undefined
+    def __init__(self, defined, undefined):
+        self.defined, self.undefined = defined, undefined
 
 
 def symbol_table(library, dumpbin):
-    """`library`'s SymbolTable from `dumpbin /symbols` and `dumpbin /directives`. Each member's section symbols are
-    followed by an auxiliary line giving the section's COMDAT selection; an external defined in a section with a
-    shareable selection is defined but not unique."""
-    defined, unique, undefined = set(), set(), set()
-    shared_sections, pending = set(), None
+    """`library`'s SymbolTable from `dumpbin /symbols` and `dumpbin /directives`."""
+    defined, undefined = set(), set()
     for line in run([dumpbin, "/nologo", "/symbols", library]).splitlines():
-        if "COFF SYMBOL TABLE" in line:
-            shared_sections, pending = set(), None
-            continue
-        if "selection" in line and pending is not None:
-            number = line.split("selection", 1)[1].split()[0]
-            if number.isdigit() and int(number) in SHARED_SELECTIONS:
-                shared_sections.add(pending)
-            pending = None
-            continue
         left, bar, right = line.partition("|")
         fields = left.split()
-        if not bar or len(fields) < 3:
+        if not bar or len(fields) < 3 or "External" not in fields:
             continue
-        section = fields[2] if fields[2].startswith("SECT") else None
         name = right.strip().split(" ", 1)[0]
-        if "Static" in fields and section and name.startswith("."):
-            pending = section
-            continue
-        pending = None
-        if "External" not in fields:
-            continue
-        # UNDEF with a value is a COMMON symbol, which this member defines (shareable, like pick-any).
-        if fields[2] == "UNDEF" and int(fields[1], 16) == 0:
-            undefined.add(name)
-            continue
-        defined.add(name)
-        if section and section not in shared_sections:
-            unique.add(name)
+        # UNDEF with a value is a COMMON symbol, which this member defines.
+        (undefined if fields[2] == "UNDEF" and int(fields[1], 16) == 0 else defined).add(name)
     for line in run([dumpbin, "/nologo", "/directives", library]).splitlines():
-        for token in line.split():
+        for token in directive_tokens(line):
             undefined |= directive_symbols(token)
-    return SymbolTable(defined, unique, undefined)
+    return SymbolTable(defined, undefined)
 
 
 def directive_symbols(token):
@@ -414,15 +462,18 @@ def owned_by(symbol, module):
 
 
 def symbol_crossings(name, table, forbidden_tables):
-    """Symbols module `name` needs from outside itself that another module owns and defines uniquely. A library only
+    """Symbols module `name` needs from outside itself that another module owns and defines. A library only
     contributes code that resolves an undefined symbol, so this is the link-level proof whatever names or directives
     reach the linker: a forward declaration of an engine function in recto-ui (or the reverse) shows here and nowhere
-    else. Shared code is not a crossing: a std:: template both sides instantiate, an inline function from a header
-    both may include, a selectany constant (shareable COMDAT definitions, or names no module owns)."""
+    else. Ownership decides, not how the definition is stored: an explicit instantiation or selectany data the other
+    side owns sits in a shareable COMDAT section, yet a module that needs it and does not define it itself depends on
+    the other side's code. Shared code is never a crossing, for two reasons: names no module owns (std::, the CRT, the
+    Windows SDK, the global namespace) never count, and a module that instantiates a template or emits an inline
+    function itself defines it, so it does not need it from anyone."""
     needed = table.undefined - table.defined
     found = []
     for other, other_table in sorted(forbidden_tables.items()):
-        found += [f"{name}: needs {symbol}, which {other} defines" for symbol in sorted(needed & other_table.unique)
+        found += [f"{name}: needs {symbol}, which {other} defines" for symbol in sorted(needed & other_table.defined)
                   if owned_by(symbol, other)]
     return found
 

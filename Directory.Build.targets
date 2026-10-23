@@ -40,7 +40,7 @@
   <Target Name="RectoBoundaryManifest" AfterTargets="ClCompile" Condition="'$(MSBuildProjectName)' == 'recto-pdf' Or '$(MSBuildProjectName)' == 'recto-core' Or '$(MSBuildProjectName)' == 'recto-services' Or '$(MSBuildProjectName)' == 'recto-ui'">
     <ItemGroup>
       <_RectoBoundaryLine Include="project|$(MSBuildProjectFullPath)|$(IntDir)|$(OutDir)$(TargetName)$(TargetExt)" />
-      <_RectoBoundaryLine Include="@(ClCompile->'unit|%(FullPath)|%(ExcludedFromBuild)|%(GenerateSourceDependencies)|%(SourceDependenciesFile)|%(ObjectFileName)|%(PrecompiledHeader)|%(PrecompiledHeaderOutputFile)')" />
+      <_RectoBoundaryLine Include="@(ClCompile->'unit|%(FullPath)|%(ExcludedFromBuild)|%(GenerateSourceDependencies)|%(SourceDependenciesFile)|%(ObjectFileName)|%(PrecompiledHeader)|%(PrecompiledHeaderOutputFile)|%(AdditionalOptions)')" />
     </ItemGroup>
     <WriteLinesToFile File="$(MSBuildThisFileDirectory)build\boundary\$(Platform)\$(Configuration)\$(MSBuildProjectName).txt" Lines="@(_RectoBoundaryLine)" Overwrite="true" />
     <ItemGroup>
