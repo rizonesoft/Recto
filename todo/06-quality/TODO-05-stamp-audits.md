@@ -64,14 +64,14 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 28 | §28 | Retired Office and LibreOffice converter surfaces removed from the A, B and C boards | §25 | [x] |
 | 29 | §29 | Damaged-file recovery resolves indirect object-stream parameters | §21 | [ ] |
 | 30 | §30 | Damaged-file recovery keeps an encrypted file's compressed objects | §21 | [ ] |
-| 31 | §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP | §22 | [ ] |
+| 31 | §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP | §22 | [x] |
 | 32 | §32 | JPX per-component precision and sampling, and the full coding-style set | §22 | [ ] |
 | 33 | §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding | §22 | [ ] |
 | 34 | §34 | CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies | §22 | [ ] |
 | 35 | §35 | JBIG2 decoder work and memory bounded at every allocation and loop | §22 | [ ] |
 | 36 | §36 | Native JPX decoder bounded by a cumulative work budget | §22 | [ ] |
 | 37 | §37 | WIC decode failures classified by HRESULT, not reported as damage | §22 | [ ] |
-| 38 | §38 | DCT decodes only the pixel representation the caller asked for | §22 | [ ] |
+| 38 | §38 | DCT decodes only the pixel representation the caller asked for | §22 | [x] |
 | 39 | §39 | Per-codec decode latency measured on valid, large and damaged fixtures | §22 | [ ] |
 | 40 | §40 | Image decoder allocations drawn from one budgeted memory resource per decode | §22 | [ ] |
 | 41 | §41 | Recovery resolves compressed parameter targets and an indirect container /Type | §29 | [ ] |
@@ -660,7 +660,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 - [x] On a confirmed regression, add a dated blocking note to `D01 T01 §8`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s8.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp. Confirmed 2026-10-23: no regression since the stamp; the audit's findings were defects present at the stamped candidate, fixed in place in `88f54a4` to `716eaa5` or filed as `D06 T05 §31` to `§40`, so `D01 T01 §8` keeps its stamp.
 - [x] Commit: `review: audit D01 T01 §8 under the current review process`
 
-> **Deferred:** JBIG2 striped pages, MMR halftone plane alignment and HENABLESKIP -> XREF: D06 T05 §31
+> **Resolved:** JBIG2 striped pages, MMR halftone plane alignment and HENABLESKIP -> XREF: D06 T05 §31 (2026-10-23: closed by D06 T05 §31, which grows a page of unknown height with its stripes under T.88's stripe rules, aligns and terminates MMR halftone bitplanes, and honours HENABLESKIP)
 
 > **Deferred:** JPX per-component precision and sampling, and the full coding-style set -> XREF: D06 T05 §32
 
@@ -674,7 +674,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 > **Deferred:** WIC failures classified by HRESULT -> XREF: D06 T05 §37
 
-> **Deferred:** DCT decoding only the requested pixel representation -> XREF: D06 T05 §38
+> **Resolved:** DCT decoding only the requested pixel representation -> XREF: D06 T05 §38 (2026-10-23: closed by D06 T05 §38, which builds one image-sized buffer per requested representation and charges the ceiling with exactly that)
 
 > **Deferred:** measured per-codec decode latency -> XREF: D06 T05 §39
 
@@ -902,9 +902,12 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 - [x] Read `HENABLESKIP` and build the halftone skip mask (T.88 6.6.5, Annex C) for arithmetic halftones in `src/pdf/filters.cpp`. Done when: a grid with cells outside the region and `HENABLESKIP=1` decodes with those cells skipped.
 - [x] Honour symbol dictionary flag bits 8 and 9 (bitmap coding context used and retained, T.88 7.4.2.2): restore the referenced dictionary's generic and refinement contexts and keep this dictionary's when asked, in `src/pdf/filters.cpp`. Done when: a dictionary encoded with the contexts another retained decodes correctly.
 - [x] Add `PdfFilters.Jbig2StripesAlignmentAndSkip` covering all three. Done when: it fails on the code before this section.
-- [ ] Commit: `pdf: JBIG2 stripes, aligned MMR halftone planes and HENABLESKIP`
+- [x] Commit: `pdf: JBIG2 stripes, aligned MMR halftone planes and HENABLESKIP`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.Jbig2StripesAlignmentAndSkip`.
+
+> **Verified:** 2026-10-23 | §31 | ecfc931222bacfd5fe3b62fec0a6fba14f0094be
+> **Review:** `docs/reviews/d06-t05-s31.json`
 
 ## 32. JPX per-component precision and sampling, and the full coding-style set
 
@@ -1052,9 +1055,12 @@ The completion review of the `D01 T01 §8` audit (`docs/reviews/06-quality/audit
 - [x] Add the requested representation (raw samples, RGBA or BGRA) to the DCT decode parameters and allocate only that buffer in `src/pdf/filters.cpp`. Done when: a decode allocates one image-sized buffer.
 - [x] Charge the ceiling with the bytes of the requested representation only. Done when: the 6000 x 4500 RGB case is not refused.
 - [x] Add `PdfFilters.DctLargePhotoWithinCeiling`: a generated 6000 x 4500 baseline JPEG decoded at the default ceiling, with `test::ScopedHeapMeter` showing a peak under one buffer plus 10 percent. Done when: the test fails on the code before this section.
-- [ ] Commit: `pdf: DCT decodes only the requested pixel representation`
+- [x] Commit: `pdf: DCT decodes only the requested pixel representation`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.DctLargePhotoWithinCeiling`.
+
+> **Verified:** 2026-10-23 | §38 | ecfc931222bacfd5fe3b62fec0a6fba14f0094be
+> **Review:** `docs/reviews/d06-t05-s38.json`
 
 ## 39. Per-codec decode latency measured on valid, large and damaged fixtures
 

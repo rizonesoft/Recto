@@ -1,0 +1,69 @@
+{
+  "ref": "D06 T05 \u00a731",
+  "title": "JBIG2 striped pages, MMR halftone alignment and HENABLESKIP",
+  "implementation_sha": "ecfc931222bacfd5fe3b62fec0a6fba14f0094be",
+  "date": "2026-10-23",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/D06-T05-s31.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/D06-T05-s31.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/D06-T05-s31.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/06-quality/D06-T05-s31.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/06-quality/D06-T05-s31.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 6,
+      "report": "docs/reviews/06-quality/D06-T05-s31.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 7,
+      "report": "docs/reviews/06-quality/D06-T05-s31.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 8,
+      "report": "docs/reviews/06-quality/D06-T05-s31.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfCrypto.*:PdfFilters.*:PdfXref.*:PdfDocument.*:PdfObject.*:PdfError.*:Support.* -> exit 0, [  PASSED  ] 112 tests.",
+    ".\\build.cmd -> exit 0, 0 Warning(s) in all four configurations, [  PASSED  ] 190 tests."
+  ],
+  "completion": {
+    "report": "docs/reviews/06-quality/D06-T05-s31.md",
+    "verdict": "filed",
+    "candidate": "7910fd05ec7683d434a538b74c310211ebd9c4da",
+    "reviewer": "sol",
+    "model": "gpt-6.1-sol",
+    "filed": [
+      "D06 T05 \u00a748",
+      "D06 T05 \u00a735",
+      "D06 T05 \u00a740",
+      "D06 T05 \u00a739",
+      "D01 T02 \u00a77",
+      "D02 T01 \u00a711"
+    ]
+  },
+  "rounds_spent": 8,
+  "round_cap": 33
+}

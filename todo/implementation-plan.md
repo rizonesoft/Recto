@@ -88,7 +88,7 @@ Sections: 79 | Checklist items: 479
 | [ ]    | D01 T02 §13 | `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter`       | windows-host                 | 9     |
 | [ ]    | D06 T05 §29 | Damaged-file recovery resolves indirect object-stream parameters                         | windows-host                 | 5     |
 | [ ]    | D06 T05 §30 | Damaged-file recovery keeps an encrypted file's compressed objects                       | windows-host                 | 4     |
-| [ ]    | D06 T05 §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP                              | windows-host                 | 6     |
+| [x]    | D06 T05 §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP                              | windows-host                 | 6     |
 | [ ]    | D06 T05 §32 | JPX per-component precision and sampling, and the full coding-style set                  | windows-host                 | 7     |
 | [ ]    | D06 T05 §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding                               | windows-host                 | 4     |
 | [ ]    | D01 T02 §4  | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects   | windows-host                 | 8     |
@@ -124,7 +124,7 @@ Sections: 79 | Checklist items: 479
 | [ ]    | D01 T03 §5  | M1 1-hour `fuzz_open` acceptance run, regression promotion and CI 60s fuzz smoke         | windows-host                 | 6     |
 | [ ]    | D06 T05 §36 | Native JPX decoder bounded by a cumulative work budget                                   | windows-host                 | 4     |
 | [ ]    | D06 T05 §37 | WIC decode failures classified by HRESULT, not reported as damage                        | windows-host                 | 4     |
-| [ ]    | D06 T05 §38 | DCT decodes only the pixel representation the caller asked for                           | windows-host                 | 4     |
+| [x]    | D06 T05 §38 | DCT decodes only the pixel representation the caller asked for                           | windows-host                 | 4     |
 | [ ]    | D06 T05 §39 | Per-codec decode latency measured on valid, large and damaged fixtures                   | windows-host                 | 3     |
 | [ ]    | D06 T05 §40 | Image decoder allocations drawn from one budgeted memory resource per decode             | windows-host                 | 5     |
 | [ ]    | D06 T05 §41 | Recovery resolves compressed parameter targets and an indirect container /Type           | windows-host                 | 4     |
@@ -882,6 +882,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 58/813 verified sections, 31 ready to run now.
+Progress: 60/813 verified sections, 29 ready to run now.
 
-Checklist: 388/5971 items completed (includes Commit items).
+Checklist: 390/5971 items completed (includes Commit items).
