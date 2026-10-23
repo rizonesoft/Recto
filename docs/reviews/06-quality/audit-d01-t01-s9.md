@@ -171,3 +171,5 @@ OVERALL: needs-attention
 
 - Finding 1 (P1): correct. Writing an indirect `/Filter` in resolved whatever the reference named, a stream included, and the resolver decrypted that stream, inlining its own references in turn, so a chain of streams each naming the next eight times grew as 8^n. A value is now written in only when it has the kind the slot uses (a name for `/Filter` and `/Name`, a dictionary or array for `/DecodeParms`), and a decryption nested inside that resolution does not inline again. Tested through `Document::open_memory` with five such streams: refused as damaged in 21 ms with under 4 MiB allocated (5,355 ms and 234,720,508 bytes on `9ba7cc9`).
 - Finding 2 (P2): correct. The legacy password conversion used the text-string encoder, which turns a leading `þÿ` into UTF-16BE to avoid a byte-order-mark collision. It now uses `utf8_to_pdf_doc_encoding` (exact PDFDocEncoding, no BOM handling). Tested: a V2/R3 user password `FE FF` authenticates from UTF-8 `C3 BE C3 BF` (refused on `9ba7cc9`).
+
+Commit: `3d558a7` (one commit with the D06 T05 §23 round 2, §31 round 1 and §29/§30 round 3 fixes; its message names only §29 and §30).
