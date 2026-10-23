@@ -128,7 +128,7 @@ foreach ($plat in $Platform) {
         Assert-NoMSBuildWarnings -LogFile $logFile -What "$cfg|$plat"
         # The D13 boundary between the engine libraries and recto-ui, proven from the compiler's /sourceDependencies
         # reports and the librarian's directives and members of this configuration's libraries (D10 T01 §1).
-        & python (Join-Path $root 'scripts\check-ui-boundary.py') --configuration $cfg --platform $plat --vs $vs
+        & python (Join-Path $root 'scripts\check-ui-boundary.py') --configuration $cfg --platform $plat --vs $vs --property "EnableASAN=$desiredAsanState"
         if ($LASTEXITCODE -ne 0) { throw "the engine/recto-ui boundary check failed: $cfg|$plat (exit $LASTEXITCODE)" }
 
         if ($EnableASAN -and $plat -eq 'x64') {

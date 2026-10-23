@@ -5,13 +5,16 @@ option or a linker directive can matter:
 
 - Includes: every translation unit of recto-pdf, recto-core, recto-services and recto-ui is compiled with
   /sourceDependencies (`GenerateSourceDependencies` in Directory.Build.targets), so cl writes a JSON report per source
-  into the project's IntDir listing every file it actually opened, forced includes, header units and module interfaces
-  included. No engine translation unit may have opened a file under src/ui, and no recto-ui one a file under src/pdf,
-  src/core or src/services. A compiled source without a report is refused: the proof must cover every source.
+  listing every file it actually used: includes and forced includes, the precompiled header, imported modules and
+  header units with their compiled BMIs. No engine unit may have used a file under src/ui or recto-ui's IntDir or
+  OutDir, and no recto-ui unit one under src/pdf, src/core, src/services or their IntDirs and OutDirs. Each unit's
+  report is read where its evaluated SourceDependenciesFile puts it; a compiled unit (ExcludedFromBuild items are not
+  compiled) without generation enabled or without its report is refused: the proof covers every unit.
 - Links: `dumpbin /directives` on each module library lists the linker directives its objects carry
-  (`#pragma comment(lib)` and `comment(linker)` as the compiler resolved them); none may name the other side's library.
-  `lib /list` lists the members the librarian put in it; none may come from the other side's IntDir, OutDir or source
-  folder (a library named in Lib.AdditionalDependencies is merged member by member).
+  (`#pragma comment(lib)` and `comment(linker)` as the compiler resolved them); none may name the other side's library
+  by its evaluated file name, stem or folder. `lib /list` lists the members the librarian put in it; each must be an
+  object the project compiled itself (an allow list), so a merged library or an added object is refused wherever it is.
+- The projects are evaluated with the global properties the build used (`--property EnableASAN=true`).
 
 The text scanners (Ui.Project.IncludeBoundary, Ui.Project.NoWinRtUiTypes, tests/scripts/test_ui_module_boundary.py)
 stay as fast early warnings; this check is the proof. build/build.ps1 runs it after each configuration it builds.
@@ -88,29 +91,74 @@ def run(arguments):
     return out.stdout
 
 
+class Unit:
+    """One compiled source: where cl writes its object and its /sourceDependencies report, and whether it writes one."""
+
+    def __init__(self, source, obj, report, generates):
+        self.source, self.obj, self.report, self.generates = source, obj, report, generates
+
+
 class Project:
-    """One module project in one configuration: its compiled sources and where its outputs go."""
+    """One module project in one configuration: its compiled units and where its outputs go."""
 
-    def __init__(self, name, sources, int_dir, library):
-        self.name, self.sources, self.int_dir, self.library = name, sources, int_dir, library
+    def __init__(self, name, units, int_dir, library):
+        self.name, self.units, self.int_dir, self.library = name, units, int_dir, library
+
+    @property
+    def sources(self):
+        return {unit.source for unit in self.units}
 
 
-def evaluate(msbuild, name, configuration, platform):
+def output_path(project_folder, value, filename, extension):
+    """A cl output switch's evaluated value as one file: a value ending in a separator is a folder, so the file is
+    `<folder>/<source file name><extension>`; a value with no extension gets one, as cl does."""
+    if not value:
+        raise EvidenceError(f"no output location evaluated for {filename}")
+    if value.endswith(("\\", "/")):
+        return normalized(pathlib.Path(project_folder) / value / f"{filename}{extension}")
+    path = pathlib.Path(project_folder) / value
+    return normalized(path if path.suffix else path.with_suffix(extension))
+
+
+def compiled_units(project_folder, items):
+    """The ClCompile items the build compiles (an item excluded from the build is never compiled), with their evaluated
+    object file, report location and GenerateSourceDependencies setting."""
+    units = []
+    for item in items:
+        if item.get("ExcludedFromBuild", "").strip().lower() == "true":
+            continue
+        source = normalized(pathlib.Path(project_folder) / item["Identity"])
+        name = pathlib.Path(item["Identity"]).name
+        stem = pathlib.Path(item["Identity"]).stem
+        obj = output_path(project_folder, item.get("ObjectFileName", ""), stem, ".obj")
+        report = output_path(project_folder, item.get("SourceDependenciesFile", ""), name, ".json")
+        units.append(Unit(source, obj, report, item.get("GenerateSourceDependencies", "").strip().lower() == "true"))
+    return units
+
+
+def evaluation_arguments(msbuild, project, configuration, platform, properties):
+    """MSBuild's evaluation of `project` with the same global properties the build used (EnableASAN above all: an
+    item, a setting or an output path may depend on it)."""
+    return [msbuild, project, f"-p:Configuration={configuration}", f"-p:Platform={platform}",
+            *[f"-p:{p}" for p in properties], "-getItem:ClCompile", "-getProperty:IntDir", "-getProperty:OutDir",
+            "-getProperty:TargetName", "-getProperty:TargetExt", "-nologo"]
+
+
+def evaluate(msbuild, name, configuration, platform, properties=()):
     project = PROJECTS[name]
-    data = json.loads(run([msbuild, project, f"-p:Configuration={configuration}", f"-p:Platform={platform}",
-                           "-getItem:ClCompile", "-getProperty:IntDir", "-getProperty:OutDir",
-                           "-getProperty:TargetName", "-getProperty:TargetExt", "-nologo"]))
-    properties = data["Properties"]
-    sources = {normalized(project.parent / item["Identity"]) for item in data["Items"].get("ClCompile", [])}
-    if not sources:
-        raise EvidenceError(f"{name} evaluated no ClCompile items")
-    int_dir = normalized(project.parent / properties["IntDir"])
-    library = normalized(project.parent / properties["OutDir"] / (properties["TargetName"] + properties["TargetExt"]))
-    return Project(name, sources, int_dir, library)
+    data = json.loads(run(evaluation_arguments(msbuild, project, configuration, platform, properties)))
+    props = data["Properties"]
+    units = compiled_units(project.parent, data["Items"].get("ClCompile", []))
+    if not units:
+        raise EvidenceError(f"{name} evaluated no compiled ClCompile items")
+    int_dir = normalized(project.parent / props["IntDir"])
+    library = normalized(project.parent / props["OutDir"] / (props["TargetName"] + props["TargetExt"]))
+    return Project(name, units, int_dir, library)
 
 
 def report_paths(report):
-    """Every file a /sourceDependencies report says the compiler opened or imported, the source itself included."""
+    """Every file a /sourceDependencies report says the compiler used: the source, its includes, the precompiled
+    header it used and the module interfaces and header units it imported (their sources and compiled BMIs)."""
     data = report.get("Data")
     if not isinstance(data, dict) or "Source" not in data:
         raise EvidenceError("a /sourceDependencies report has no Data.Source")
@@ -127,83 +175,106 @@ def report_paths(report):
             for entry in value.values():
                 walk(entry)
 
-    for key in ("Source", "Includes", "ImportedModules", "ImportedHeaderUnits"):
-        walk(data.get(key, []))
+    for key, value in data.items():
+        if key != "ProvidedModule":
+            walk(value)
     return normalized(data["Source"]), found
 
 
-def include_crossings(name, sources, report_folder, forbidden_folders):
-    """Crossings in the /sourceDependencies reports under `report_folder` for the compiled `sources` of module `name`.
-    Reports for sources no longer compiled are ignored; a compiled source without a report is an EvidenceError."""
-    reports = {}
-    for path in sorted(pathlib.Path(report_folder).glob("*.json")):
-        try:
-            report = json.loads(path.read_text(encoding="utf-8-sig"))
-        except (OSError, ValueError) as error:
-            raise EvidenceError(f"cannot read {path}: {error}") from error
-        if isinstance(report, dict) and "Data" in report:
-            source, opened = report_paths(report)
-            reports[source] = opened
-    missing = sorted(str(s) for s in sources if normalized(s) not in reports)
+def read_report(path):
+    """The source a /sourceDependencies report file is about, and every path it lists."""
+    try:
+        report = json.loads(pathlib.Path(path).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as error:
+        raise EvidenceError(f"cannot read the /sourceDependencies report {path}: {error}") from error
+    if not isinstance(report, dict):
+        raise EvidenceError(f"{path} is not a /sourceDependencies report")
+    return report_paths(report)
+
+
+def include_crossings(name, units, forbidden_folders):
+    """Crossings in the /sourceDependencies reports of module `name`'s compiled `units`: any file under a forbidden
+    folder (the other side's sources, IntDirs and OutDirs, where its precompiled headers and BMIs are) that a unit used.
+    Each unit's report is read from exactly where its evaluated SourceDependenciesFile puts it, so an older report left
+    elsewhere is never read in its place. A unit that does not generate a report, or whose report is missing or about
+    another source, is an EvidenceError: the proof covers every compiled unit."""
+    found, missing = [], []
+    for unit in sorted(units, key=lambda u: str(u.source)):
+        if not unit.generates:
+            raise EvidenceError(f"{name}: {unit.source} is compiled without GenerateSourceDependencies, so the compiler "
+                                "reports nothing about it")
+        if not unit.report.is_file():
+            missing.append(str(unit.report))
+            continue
+        source, opened = read_report(unit.report)
+        if source != unit.source:
+            raise EvidenceError(f"{name}: {unit.report} reports on {source}, not {unit.source}; two sources share a "
+                                "report name")
+        found += [f"{name}: {unit.source} used {normalized(p)}" for p in opened
+                  if any(inside(p, folder) for folder in forbidden_folders)]
     if missing:
-        raise EvidenceError(f"{name}: no /sourceDependencies report for {', '.join(missing)} in {report_folder}; "
-                            "rebuild the configuration")
-    found = []
-    for source in sorted(normalized(s) for s in sources):
-        for opened in reports[source]:
-            if any(inside(opened, folder) for folder in forbidden_folders):
-                found.append(f"{name}: {source} opened {normalized(opened)}")
+        raise EvidenceError(f"{name}: no /sourceDependencies report at {', '.join(missing)}; rebuild the configuration")
     return sorted(set(found))
 
 
-def directive_crossings(name, library, forbidden_stems, dumpbin):
-    """Linker directives in `library` that name a forbidden library (`recto-ui`, `recto-ui.lib`, any folder)."""
+def library_names(libraries):
+    """File names and stems a linker directive could use for each of `libraries` (`recto-ui.lib`, `recto-ui`)."""
+    return {library.name.lower() for library in libraries} | {library.stem.lower() for library in libraries}
+
+
+def directive_crossings(name, library, forbidden_libraries, forbidden_folders, dumpbin):
+    """Linker directives in `library` that name one of `forbidden_libraries` (the other side's evaluated outputs) by
+    file name, stem or path, or any file under `forbidden_folders`."""
+    names = library_names(forbidden_libraries)
     found = []
     for line in run([dumpbin, "/nologo", "/directives", library]).splitlines():
         text = line.strip()
         if not text.startswith(("/", "-")):
             continue
         for token in text.split():
-            lowered = token.lower().replace('"', "")
-            value = lowered.split(":", 1)[1] if lowered[1:].startswith("defaultlib:") else None
-            if value is not None:
-                stem = pathlib.PureWindowsPath(value).name
-                stem = stem[:-4] if stem.endswith(".lib") else stem
-                hit = stem in forbidden_stems
-            else:
-                hit = any(s in lowered for s in forbidden_stems)
+            spelled = token.replace('"', "")
+            _, _, value = spelled.partition(":")
+            candidates = [spelled, value] if value else [spelled]
+            hit = False
+            for candidate in candidates:
+                file = pathlib.PureWindowsPath(candidate).name.lower()
+                hit = hit or file in names or (pathlib.PureWindowsPath(candidate).is_absolute() and
+                                               any(inside(candidate, folder) for folder in forbidden_folders))
             if hit:
                 found.append(f"{name}: {normalized(library)} carries the linker directive {token}")
     return sorted(set(found))
 
 
-def member_crossings(name, library, project_folder, forbidden_folders, lib):
-    """Members of static library `library` that came from a forbidden folder (a source folder, IntDir or OutDir)."""
+def member_crossings(name, library, project_folder, own_objects, lib):
+    """Members of static library `library` that are not objects module `name` compiled itself. An allow list, so a
+    member the librarian took from anywhere else (another library merged in, an object added as a Lib item, an object
+    written to an unexpected folder) is refused whatever its path."""
+    own = {normalized(o) for o in own_objects}
     found = []
     for line in run([lib, "/nologo", "/list", library]).splitlines():
         member = line.strip()
-        if not member:
-            continue
-        path = normalized(pathlib.Path(project_folder) / member)
-        if any(inside(path, folder) for folder in forbidden_folders):
-            found.append(f"{name}: {normalized(library)} holds the member {member}")
+        if member and normalized(pathlib.Path(project_folder) / member) not in own:
+            found.append(f"{name}: {normalized(library)} holds the member {member}, which {name} did not compile")
     return sorted(set(found))
 
 
-def check(configuration, platform, vs=None):
+def check(configuration, platform, vs=None, properties=()):
     vs = visual_studio(vs)
     tools = tool_folder(vs)
     msbuild = vs / "MSBuild" / "Current" / "Bin" / "MSBuild.exe"
-    projects = {name: evaluate(msbuild, name, configuration, platform) for name in PROJECTS}
+    projects = {name: evaluate(msbuild, name, configuration, platform, properties) for name in PROJECTS}
     found = []
     for name, project in projects.items():
         folders, names = forbidden(name)
         if not project.library.is_file():
             raise EvidenceError(f"{project.library} does not exist; build {configuration}|{platform} first")
-        found += include_crossings(name, project.sources, project.int_dir, folders)
-        found += directive_crossings(name, project.library, names, tools / "dumpbin.exe")
-        outputs = [p for n in names for p in (projects[n].int_dir, projects[n].library.parent)]
-        found += member_crossings(name, project.library, PROJECTS[name].parent, folders + outputs, tools / "lib.exe")
+        others = [projects[n] for n in names]
+        outputs = [p for other in others for p in (other.int_dir, other.library.parent)]
+        found += include_crossings(name, project.units, folders + outputs)
+        found += directive_crossings(name, project.library, [other.library for other in others], folders + outputs,
+                                     tools / "dumpbin.exe")
+        found += member_crossings(name, project.library, PROJECTS[name].parent, [unit.obj for unit in project.units],
+                                  tools / "lib.exe")
     return found
 
 
@@ -212,9 +283,11 @@ def main(argv=None):
     parser.add_argument("--configuration", required=True)
     parser.add_argument("--platform", required=True)
     parser.add_argument("--vs", help="the Visual Studio installation folder (default: the newest Visual Studio 2026)")
+    parser.add_argument("--property", action="append", default=[], metavar="NAME=VALUE",
+                        help="a global MSBuild property the build used (EnableASAN=true); repeat for each")
     args = parser.parse_args(argv)
     try:
-        found = check(args.configuration, args.platform, args.vs)
+        found = check(args.configuration, args.platform, args.vs, args.property)
     except EvidenceError as error:
         print(f"check-ui-boundary: {error}", file=sys.stderr)
         return 2
