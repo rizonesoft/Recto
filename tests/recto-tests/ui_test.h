@@ -12,6 +12,9 @@
 
 #include <gtest/gtest.h>
 
+#include <string>
+#include <string_view>
+
 namespace recto::ui::test {
 
 // Runs one registered body. The body is a plain function, so a test cannot
@@ -25,13 +28,27 @@ private:
 	void (*body_)();
 };
 
+// The test name registered for RECTO_UI_TEST(area, name): "<area>.<name>". GoogleTest
+// disables a test whose case name starts with DISABLED_, and the case name here
+// starts with the area, so a disabled test moves the marker to the front
+// ("DISABLED_<area>.<rest>") and RECTO_UI_TEST(Project, DISABLED_Probe) stays
+// disabled like any other test.
+inline std::string registered_name(std::string_view area, std::string_view name)
+{
+	constexpr std::string_view kDisabled = "DISABLED_";
+	if (name.starts_with(kDisabled)) {
+		return std::string(kDisabled) + std::string(area) + "." + std::string(name.substr(kDisabled.size()));
+	}
+	return std::string(area) + "." + std::string(name);
+}
+
 } // namespace recto::ui::test
 
 #define RECTO_UI_TEST(area, name)                                                                \
 	static void recto_ui_body_##area##_##name();                                                 \
 	[[maybe_unused]] static const ::testing::TestInfo* const recto_ui_info_##area##_##name =     \
 		::testing::RegisterTest(                                                                 \
-			"Ui", #area "." #name, nullptr, nullptr, __FILE__, __LINE__,                         \
+			"Ui", ::recto::ui::test::registered_name(#area, #name).c_str(), nullptr, nullptr, __FILE__, __LINE__,                         \
 			[]() -> ::testing::Test* {                                                           \
 				return new ::recto::ui::test::FunctionTest(&recto_ui_body_##area##_##name);      \
 			});                                                                                  \

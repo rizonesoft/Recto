@@ -514,3 +514,10 @@ RECTO_UI_TEST(Project, HarnessRejectsAbsurdStride)
 		{ const auto bitmap = recto::ui::test::render_to_bitmap({}, 1, 2, 1.0F, options); (void)bitmap; },
 		std::runtime_error);
 }
+
+RECTO_UI_TEST(Project, DisabledMarkerStaysAtTheFront)
+{
+	EXPECT_EQ(recto::ui::test::registered_name("Project", "IncludeBoundary"), "Project.IncludeBoundary");
+	// GoogleTest disables on a DISABLED_ prefix of the case name, so it must lead.
+	EXPECT_EQ(recto::ui::test::registered_name("Project", "DISABLED_Probe"), "DISABLED_Project.Probe");
+}
