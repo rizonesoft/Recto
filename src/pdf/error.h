@@ -670,8 +670,8 @@ private:
 	char inline_[kInlineCapacity + 1]{};
 };
 
-// Which bound or argument a ResourceLimit or InvalidArgument refusal is about (D01 T02 section 23). A closed catalogue
-// of numbers and names, so support can see what stopped the work without the ring or ETW ever holding a path, a
+// Which bound, argument or conversion check a ResourceLimit, InvalidArgument or ConversionFailed refusal is about (D01
+// T02 sections 23 and 24). A closed catalogue of numbers and names, so support can see what stopped the work without the ring or ETW ever holding a path, a
 // password or document text. Values are only ever appended.
 enum class RefusalReason : uint16_t {
 	None = 0,
@@ -687,6 +687,12 @@ enum class RefusalReason : uint16_t {
 	PageRangeEmpty,    // a page range selecting no page
 	PageRangeReversed, // a page range whose first page is after its last
 	OutputUnwritable,  // the output folder cannot be written; the path itself is never kept
+	// Appended (D01 T02 section 24): the conversion read-back checks, so a ConversionFailed error names its check.
+	TextRecall,          // re-read text short of the source words, per mille of words matched
+	ReadingOrder,        // every word present but out of order, per mille of matched words in order
+	EmptyResult,         // a page or the whole output came out empty
+	PackageInvalid,      // the written package or file breaks its format's structure
+	RelationshipMissing, // an undeclared relationship id or a missing relationship target
 };
 
 [[nodiscard]] constexpr std::string_view refusal_reason_name(RefusalReason reason) noexcept
@@ -716,6 +722,16 @@ enum class RefusalReason : uint16_t {
 		return "PageRangeReversed";
 	case RefusalReason::OutputUnwritable:
 		return "OutputUnwritable";
+	case RefusalReason::TextRecall:
+		return "TextRecall";
+	case RefusalReason::ReadingOrder:
+		return "ReadingOrder";
+	case RefusalReason::EmptyResult:
+		return "EmptyResult";
+	case RefusalReason::PackageInvalid:
+		return "PackageInvalid";
+	case RefusalReason::RelationshipMissing:
+		return "RelationshipMissing";
 	}
 	return "UnknownReason";
 }
@@ -756,6 +772,20 @@ enum class RefusalReason : uint16_t {
 			   "the lower page first";
 	case RefusalReason::OutputUnwritable:
 		return "The output folder cannot be written; choose another folder or check its permissions";
+	case RefusalReason::TextRecall:
+		return "The converted file lost or changed words (observed is the per mille of source words read back, bound "
+			   "the per mille required); convert the page again or use the exact layout";
+	case RefusalReason::ReadingOrder:
+		return "The converted file keeps every word but out of order (observed is the per mille of words in reading "
+			   "order, bound the per mille required); convert the page again or use the exact layout";
+	case RefusalReason::EmptyResult:
+		return "The converted file came out empty; check that the page has text, or run OCR on a scanned page first";
+	case RefusalReason::PackageInvalid:
+		return "The converted file breaks its format's structure and was not kept; convert again, and report it if it "
+			   "repeats";
+	case RefusalReason::RelationshipMissing:
+		return "The converted file refers to a part it does not contain and was not kept; convert again, and report "
+			   "it if it repeats";
 	}
 	return "";
 }
@@ -830,6 +860,8 @@ struct PdfError {
 	std::optional<uint32_t> platform_status{std::nullopt};
 	DecoderStep prior_step{DecoderStep::None};
 	std::optional<uint32_t> prior_status{std::nullopt};
+	// The zero-based page a refusal is about (D01 T02 section 24); format() shows it one-based.
+	std::optional<uint32_t> page_index{std::nullopt};
 
 	PdfError() noexcept = default;
 
@@ -1266,6 +1298,7 @@ struct DiagnosticEntry {
 	std::optional<uint32_t> platform_status{std::nullopt};
 	DecoderStep prior_step{DecoderStep::None};
 	std::optional<uint32_t> prior_status{std::nullopt};
+	std::optional<uint32_t> page_index{std::nullopt};
 
 	[[nodiscard]] std::string format() const noexcept;
 };
@@ -1287,7 +1320,7 @@ struct DecoderContext {
 // Records an engine warning or error in the fixed-capacity 256-slot diagnostic
 // ring buffer without heap allocation and emits a structured ETW TraceLogging
 // event containing only error code, diagnostic ID, offsets, object ID, and
-// sequence metadata (zero document byte payloads), and a refusal's reason, observed value and bound.
+// sequence metadata (zero document byte payloads), and a refusal's reason, observed value, bound and zero-based page.
 void record_diagnostic(
 	ErrorCode code,
 	DiagnosticId diagnostic_id,
@@ -1297,7 +1330,8 @@ void record_diagnostic(
 	RefusalReason refusal_reason = RefusalReason::None,
 	std::optional<uint64_t> observed = std::nullopt,
 	std::optional<uint64_t> bound = std::nullopt,
-	const DecoderContext& decoder = {}) noexcept;
+	const DecoderContext& decoder = {},
+	std::optional<uint32_t> page_index = std::nullopt) noexcept;
 
 void record_diagnostic(
 	ErrorCode code,
@@ -1336,16 +1370,17 @@ void clear_diagnostics() noexcept;
 	std::optional<uint32_t> object_num = std::nullopt,
 	uint16_t generation_num = 0) noexcept;
 
-// A ResourceLimit or InvalidArgument refusal with its reason and numbers, recorded as make_pdf_error records its code
-// (ResourceLimit records itself, with the context; InvalidArgument is recorded by the caller through
-// record_diagnostic(const PdfError&), which carries the context too). The message stays with the caller: the ring and
-// ETW keep only the reason, the observed value and the bound.
+// A ResourceLimit, InvalidArgument or ConversionFailed refusal with its reason, numbers and zero-based page, recorded as
+// make_pdf_error records its code (ResourceLimit records itself, with the context; InvalidArgument and ConversionFailed
+// are recorded by the caller through record_diagnostic(const PdfError&), which carries the context too). The message
+// stays with the caller: the ring and ETW keep only the reason, the observed value, the bound and the page.
 [[nodiscard]] PdfError make_refusal_error(
 	ErrorCode code,
 	RefusalReason reason,
 	std::optional<uint64_t> observed,
 	std::optional<uint64_t> bound,
-	std::string_view message = {}) noexcept;
+	std::string_view message = {},
+	std::optional<uint32_t> page_index = std::nullopt) noexcept;
 
 // Ensures the "Recto.Diagnostics" ETW TraceLogging provider is registered.
 bool ensure_etw_provider_registered() noexcept;
@@ -1397,6 +1432,9 @@ struct CapturedEtwEvent {
 	std::string prior_step_name;
 	bool has_prior_status{false};
 	uint32_t prior_status{0};
+	// A Diagnostic event's zero-based page (D01 T02 section 24), separate from a span's page_index below.
+	bool has_diagnostic_page{false};
+	uint32_t diagnostic_page_index{0};
 	std::string phase;
 	uint64_t duration_us{0};
 	uint64_t document_id{0};

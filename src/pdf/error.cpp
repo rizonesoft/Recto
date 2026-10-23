@@ -109,6 +109,8 @@ struct DiagnosticSlot {
 	bool has_bound{false};
 	uint64_t bound{0};
 	DecoderContext decoder{};
+	bool has_page_index{false};
+	uint32_t page_index{0};
 };
 
 SRWLOCK g_ring_lock = SRWLOCK_INIT;
@@ -123,7 +125,7 @@ std::atomic<uint64_t> g_etw_diagnostic_events{0};
 std::atomic<uint64_t> g_etw_span_events{0};
 
 constexpr size_t kMaxCapturedEtwEvents = 128;
-constexpr size_t kMaxCapturedFields = 28;
+constexpr size_t kMaxCapturedFields = 32;
 constexpr size_t kMaxCapturedNameLen = 31;
 
 struct CapturedEtwSlot {
@@ -156,6 +158,8 @@ struct CapturedEtwSlot {
 	std::array<char, kMaxCapturedNameLen + 1> prior_step_name{};
 	bool has_prior_status{false};
 	uint32_t prior_status{0};
+	bool has_diagnostic_page{false};
+	uint32_t diagnostic_page_index{0};
 	std::array<char, kMaxCapturedNameLen + 1> phase{};
 	uint64_t duration_us{0};
 	uint64_t document_id{0};
@@ -249,18 +253,24 @@ void append_context_suffix(
 	out += ')';
 }
 
-// A refusal's closed reason and its numbers, after the context: " [reason=CommandCount observed=5001 bound=5000]".
+// A refusal's closed reason, its page (one-based for people) and its numbers, after the context:
+// " [reason=TextRecall page=3 observed=910 bound=990]".
 void append_refusal_suffix(
 	std::string& out,
 	RefusalReason reason,
 	const std::optional<uint64_t>& observed,
-	const std::optional<uint64_t>& bound)
+	const std::optional<uint64_t>& bound,
+	const std::optional<uint32_t>& page_index)
 {
-	if (reason == RefusalReason::None && !observed.has_value() && !bound.has_value()) {
+	if (reason == RefusalReason::None && !observed.has_value() && !bound.has_value() && !page_index.has_value()) {
 		return;
 	}
 	out += " [reason=";
 	out += refusal_reason_name(reason);
+	if (page_index.has_value()) {
+		out += " page=";
+		out += std::to_string(static_cast<uint64_t>(*page_index) + 1u);
+	}
 	if (observed.has_value()) {
 		out += " observed=";
 		out += std::to_string(*observed);
@@ -527,6 +537,10 @@ void process_tlg_write_transfer(
 		read_descriptor_cstr_into(slot.prior_step_name, user_data[24]);
 		slot.has_prior_status = read_descriptor_scalar<uint8_t>(user_data[25]) != 0;
 		slot.prior_status = read_descriptor_scalar<uint32_t>(user_data[26]);
+		if (user_data_count >= 29) {
+			slot.has_diagnostic_page = read_descriptor_scalar<uint8_t>(user_data[27]) != 0;
+			slot.diagnostic_page_index = read_descriptor_scalar<uint32_t>(user_data[28]);
+		}
 	} else if (parsed_name == "SpanStart" && user_data_count >= 6) {
 		read_descriptor_cstr_into(slot.phase, user_data[2]);
 		slot.document_id = read_descriptor_scalar<uint64_t>(user_data[3]);
@@ -596,7 +610,7 @@ std::string PdfError::format() const noexcept
 			out += message;
 		}
 		append_context_suffix(out, byte_offset, object_num, generation_num);
-		append_refusal_suffix(out, refusal_reason, observed, bound);
+		append_refusal_suffix(out, refusal_reason, observed, bound, page_index);
 		append_decoder_suffix(out, decoder_step, platform_status, "");
 		append_decoder_suffix(out, prior_step, prior_status, "after ");
 		return out;
@@ -628,7 +642,7 @@ std::string DiagnosticEntry::format() const noexcept
 			out += message;
 		}
 		append_context_suffix(out, byte_offset, object_num, generation_num);
-		append_refusal_suffix(out, refusal_reason, observed, bound);
+		append_refusal_suffix(out, refusal_reason, observed, bound, page_index);
 		append_decoder_suffix(out, decoder_step, platform_status, "");
 		append_decoder_suffix(out, prior_step, prior_status, "after ");
 		return out;
@@ -883,6 +897,8 @@ std::vector<CapturedEtwEvent> captured_etw_events_for_testing() noexcept
 			ev.prior_step_name = s.prior_step_name.data();
 			ev.has_prior_status = s.has_prior_status;
 			ev.prior_status = s.prior_status;
+			ev.has_diagnostic_page = s.has_diagnostic_page;
+			ev.diagnostic_page_index = s.diagnostic_page_index;
 			ev.phase = s.phase.data();
 			ev.duration_us = s.duration_us;
 			ev.document_id = s.document_id;
@@ -905,7 +921,8 @@ void record_diagnostic(
 	RefusalReason refusal_reason,
 	std::optional<uint64_t> observed,
 	std::optional<uint64_t> bound,
-	const DecoderContext& decoder) noexcept
+	const DecoderContext& decoder,
+	std::optional<uint32_t> page_index) noexcept
 {
 	ensure_etw_provider_registered();
 
@@ -933,6 +950,8 @@ void record_diagnostic(
 		slot.has_bound = bound.has_value();
 		slot.bound = bound.value_or(0);
 		slot.decoder = decoder;
+		slot.has_page_index = page_index.has_value();
+		slot.page_index = page_index.value_or(0u);
 
 		g_ring_write_index = (g_ring_write_index + 1) % kDiagnosticRingCapacity;
 		if (g_ring_count < kDiagnosticRingCapacity) {
@@ -962,6 +981,8 @@ void record_diagnostic(
 	const char* const prior_name_str = decoder_step_cstr(decoder.prior_step);
 	const uint8_t has_prior = decoder.prior_status.has_value() ? 1u : 0u;
 	const uint32_t prior_val = decoder.prior_status.value_or(0u);
+	const uint8_t has_page = page_index.has_value() ? 1u : 0u;
+	const uint32_t page_val = page_index.value_or(0u);
 
 	TraceLoggingWrite(
 		g_recto_etw_provider,
@@ -992,7 +1013,10 @@ void record_diagnostic(
 		TraceLoggingUInt16(prior_u16, "PriorDecoderStep"),
 		TraceLoggingString(prior_name_str, "PriorDecoderStepName"),
 		TraceLoggingUInt8(has_prior, "HasPriorPlatformStatus"),
-		TraceLoggingUInt32(prior_val, "PriorPlatformStatus"));
+		TraceLoggingUInt32(prior_val, "PriorPlatformStatus"),
+		// Appended after section 25's fields (D01 T02 section 24): zero-based, as the span events keep pages.
+		TraceLoggingUInt8(has_page, "HasPageIndex"),
+		TraceLoggingUInt32(page_val, "PageIndex"));
 }
 
 void record_diagnostic(
@@ -1021,7 +1045,8 @@ void record_diagnostic(const PdfError& err) noexcept
 		err.refusal_reason,
 		err.observed,
 		err.bound,
-		DecoderContext{err.decoder_step, err.platform_status, err.prior_step, err.prior_status});
+		DecoderContext{err.decoder_step, err.platform_status, err.prior_step, err.prior_status},
+		err.page_index);
 }
 
 std::vector<DiagnosticEntry> diagnostics_tail(size_t max_entries) noexcept
@@ -1079,6 +1104,9 @@ std::vector<DiagnosticEntry> diagnostics_tail(size_t max_entries) noexcept
 			entry.platform_status = slot.decoder.status;
 			entry.prior_step = slot.decoder.prior_step;
 			entry.prior_status = slot.decoder.prior_status;
+			if (slot.has_page_index) {
+				entry.page_index = slot.page_index;
+			}
 			result.push_back(std::move(entry));
 		}
 		return result;
@@ -1126,12 +1154,14 @@ PdfError make_refusal_error(
 	RefusalReason reason,
 	std::optional<uint64_t> observed,
 	std::optional<uint64_t> bound,
-	std::string_view message) noexcept
+	std::string_view message,
+	std::optional<uint32_t> page_index) noexcept
 {
 	PdfError err(code, message);
 	err.refusal_reason = reason;
 	err.observed = observed;
 	err.bound = bound;
+	err.page_index = page_index;
 	if (should_auto_record_diagnostic(code)) {
 		record_diagnostic(err);
 	}
