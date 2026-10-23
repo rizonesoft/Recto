@@ -70,6 +70,18 @@ ScopedDecodeWorkMeter::~ScopedDecodeWorkMeter() noexcept
 	}
 }
 
+thread_local JpxPath g_jpx_path = JpxPath::Default;
+
+ScopedJpxPath::ScopedJpxPath(JpxPath path) noexcept : previous_(g_jpx_path)
+{
+	g_jpx_path = path;
+}
+
+ScopedJpxPath::~ScopedJpxPath() noexcept
+{
+	g_jpx_path = previous_;
+}
+
 } // namespace detail
 
 namespace {
@@ -7514,8 +7526,11 @@ void idwt_97_2d_float(
 	const size_t effective_limit = std::min<size_t>(max_decoded_bytes, kMaxDecodedStreamBytes);
 	RECTO_PDF_TRY(const JpxHeaderInfo hdr, inspect_jpx_header(input, effective_limit));
 
-	// First attempt decoding through the thread-local WIC factory if a JP2 codec is registered.
-	if (IWICImagingFactory* factory = get_thread_local_wic_factory(); factory != nullptr) {
+	// First attempt decoding through the thread-local WIC factory if a JP2 codec is registered, unless a test pinned
+	// the native decoder (detail::ScopedJpxPath).
+	const detail::JpxPath jpx_path = detail::g_jpx_path;
+	if (IWICImagingFactory* factory = jpx_path != detail::JpxPath::NativeOnly ? get_thread_local_wic_factory() : nullptr;
+		factory != nullptr) {
 		ComPtr<IWICStream> wic_stream;
 		if (SUCCEEDED(factory->CreateStream(&wic_stream)) && wic_stream) {
 			if (SUCCEEDED(wic_stream->InitializeFromMemory(
@@ -7594,6 +7609,12 @@ void idwt_97_2d_float(
 				}
 			}
 		}
+	}
+
+	if (jpx_path == detail::JpxPath::WicOnly) {
+		return make_pdf_error(
+			ErrorCode::UnsupportedFeature,
+			"JPXDecode through WIC was required but no registered codec decoded the stream");
 	}
 
 	// Native ISO/IEC 15444-1 (ITU-T T.800) Part 1 JPEG 2000 codestream decoder.
@@ -9408,32 +9429,29 @@ constexpr size_t kMaxImageDecodeComponents = 32;
 		resolved.push_back(std::move(*target));
 		return &resolved.back();
 	};
-	const auto deref_array = [&](const PdfValue* v) -> PdfResult<const PdfValue*> {
+	// An array's elements resolve one level into pointers (to the element itself or to its target in `resolved`),
+	// never into a copied array, so nothing inside an element (a large entry no filter reads, say) is copied.
+	using ElementPointers = std::array<const PdfValue*, kMaxFilterChainDepth>;
+	const auto deref_elements = [&](const PdfValue* v, ElementPointers& out) -> PdfResult<void> {
 		const PdfArray* arr = v != nullptr ? v->as_array() : nullptr;
-		if (arr == nullptr || !can_resolve || arr->size() > kMaxFilterChainDepth) {
-			return v;
+		if (arr == nullptr || arr->size() > kMaxFilterChainDepth) {
+			return {};
 		}
-		PdfArray copy;
-		bool changed = false;
-		for (const PdfValue& e : *arr) {
-			RECTO_PDF_TRY(const PdfValue* elem, deref(&e));
-			changed = changed || elem != &e;
-			RECTO_PDF_TRY_REF(elem_copy, elem->deep_clone());
-			copy.push_back(std::move(elem_copy));
+		for (size_t i = 0; i < arr->size(); ++i) {
+			RECTO_PDF_TRY(const PdfValue* elem, deref(&(*arr)[i]));
+			out[i] = elem;
 		}
-		if (!changed) {
-			return v;
-		}
-		resolved.emplace_back(std::move(copy));
-		return &resolved.back();
+		return {};
 	};
+	ElementPointers filter_elems{};
+	ElementPointers parms_elems{};
 	{
 		RECTO_PDF_TRY(const PdfValue* f, deref(filter_val));
-		RECTO_PDF_TRY(const PdfValue* fa, deref_array(f));
-		filter_val = fa;
+		filter_val = f;
+		RECTO_PDF_RETURN_IF_ERROR(deref_elements(filter_val, filter_elems));
 		RECTO_PDF_TRY(const PdfValue* p, deref(parms_val));
-		RECTO_PDF_TRY(const PdfValue* pa, deref_array(p));
-		parms_val = pa;
+		parms_val = p;
+		RECTO_PDF_RETURN_IF_ERROR(deref_elements(parms_val, parms_elems));
 	}
 	// A stage's parameter dictionary with the values its filter defines resolved one level.
 	const auto resolve_stage_parms = [&](std::string_view filter_name, const PdfDict* parms)
@@ -9464,15 +9482,23 @@ constexpr size_t kMaxImageDecodeComponents = 32;
 		if (!any) {
 			return parms;
 		}
+		// Only the keys this filter defines are carried, each resolved one level: an entry no filter reads never
+		// affects decoding, so it is not copied either (a large unused string costs nothing). Every defined key is a
+		// number, boolean or name (ISO 32000-1 Tables 8, 11, 12 and 14), and the filters read them only through
+		// as_int, as_bool and as_name, so any other value is malformed by its type alone and is carried as an empty
+		// string, which those readers refuse the same way, without its payload.
 		PdfDict copy;
 		for (const auto& [key, value] : parms->entries()) {
-			const PdfValue* target = &value;
-			if (defined(key.view())) {
-				RECTO_PDF_TRY(const PdfValue* t, deref(&value));
-				target = t;
+			if (!defined(key.view())) {
+				continue;
 			}
-			RECTO_PDF_TRY_REF(value_copy, target->deep_clone());
-			copy.set(key, std::move(value_copy));
+			RECTO_PDF_TRY(const PdfValue* target, deref(&value));
+			if (target->is_null() || target->is_bool() || target->is_number() || target->is_name()) {
+				RECTO_PDF_TRY_REF(value_copy, target->deep_clone());
+				copy.set(key, std::move(value_copy));
+			} else {
+				copy.set(key, PdfValue(PdfString()));
+			}
 		}
 		resolved.emplace_back(std::move(copy));
 		return resolved.back().as_dict();
@@ -9500,9 +9526,9 @@ constexpr size_t kMaxImageDecodeComponents = 32;
 				filter_parms[0] = d;
 			} else if (const PdfArray* a = parms_val->as_array()) {
 				if (a->size() == 1) {
-					if ((*a)[0].is_dict()) {
-						filter_parms[0] = (*a)[0].as_dict();
-					} else if (!(*a)[0].is_null()) {
+					if (parms_elems[0]->is_dict()) {
+						filter_parms[0] = parms_elems[0]->as_dict();
+					} else if (!parms_elems[0]->is_null()) {
 						return make_filter_error(
 							ErrorCode::DamagedFormat,
 							DiagnosticId::DamagedStream,
@@ -9530,7 +9556,7 @@ constexpr size_t kMaxImageDecodeComponents = 32;
 		}
 		num_filters = filter_arr->size();
 		for (size_t i = 0; i < num_filters; ++i) {
-			const auto fname = (*filter_arr)[i].as_name();
+			const auto fname = filter_elems[i]->as_name();
 			if (!fname.has_value()) {
 				return make_filter_error(
 					ErrorCode::DamagedFormat,
@@ -9549,9 +9575,9 @@ constexpr size_t kMaxImageDecodeComponents = 32;
 						"/DecodeParms array length does not match /Filter array length");
 				}
 				for (size_t i = 0; i < parms_arr->size(); ++i) {
-					if ((*parms_arr)[i].is_dict()) {
-						filter_parms[i] = (*parms_arr)[i].as_dict();
-					} else if (!(*parms_arr)[i].is_null()) {
+					if (parms_elems[i]->is_dict()) {
+						filter_parms[i] = parms_elems[i]->as_dict();
+					} else if (!parms_elems[i]->is_null()) {
 						return make_filter_error(
 							ErrorCode::DamagedFormat,
 							DiagnosticId::DamagedStream,
@@ -9655,18 +9681,15 @@ constexpr size_t kMaxImageDecodeComponents = 32;
 				RECTO_PDF_TRY(const PdfValue* mask_value, deref(mask_entry));
 				apply_decode = mask_value != nullptr && mask_value->as_bool() == std::optional<bool>(true);
 			}
-			// The image stages read /ColorTransform (a number), /TargetFormat (/BGRA or /CMYK) and /Decode, so only
-			// those are carried: the source dictionary is never copied whole, and a hostile entry no stage reads costs
-			// nothing.
+			// The image stages read /ColorTransform (a number) and /Decode from a document, so only those are carried:
+			// the source dictionary is never copied whole, and a hostile entry no stage reads costs nothing.
+			// /TargetFormat is not a PDF key but a direct caller's choice of output layout (decode_dct), so a
+			// document cannot set it here; the pipeline always returns the documented layout.
 			merged_image_parms.emplace();
 			if (base != nullptr) {
 				if (const PdfValue* color_transform = base->get("ColorTransform");
 					color_transform != nullptr && color_transform->as_int().has_value()) {
 					merged_image_parms->set("ColorTransform", PdfValue(*color_transform->as_int()));
-				}
-				if (const auto target_format = base->get_name("TargetFormat");
-					target_format == "BGRA" || target_format == "CMYK") {
-					merged_image_parms->set("TargetFormat", PdfValue(PdfName(*target_format)));
 				}
 			}
 			if (apply_decode) {

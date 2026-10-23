@@ -69,6 +69,10 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 33 | §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding | §22 | [ ] |
 | 34 | §34 | CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies | §22 | [ ] |
 | 35 | §35 | JBIG2 decoder work and memory bounded at every allocation and loop | §22 | [ ] |
+| 36 | §36 | Native JPX decoder bounded by a cumulative work budget | §22 | [ ] |
+| 37 | §37 | WIC decode failures classified by HRESULT, not reported as damage | §22 | [ ] |
+| 38 | §38 | DCT decodes only the pixel representation the caller asked for | §22 | [ ] |
+| 39 | §39 | Per-codec decode latency measured on valid, large and damaged fixtures | §22 | [ ] |
 
 ## 1. Audit D00 T01 §1: Git repository and repo-face files
 
@@ -657,6 +661,14 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 > **Deferred:** a systematic JBIG2 work-and-memory pass, and the regression fixtures for the round-3 reference-charging, compositing-clip and unsigned HRX/HRY fixes -> XREF: D06 T05 §35
 
+> **Deferred:** a cumulative work budget for the native JPX decoder -> XREF: D06 T05 §36
+
+> **Deferred:** WIC failures classified by HRESULT -> XREF: D06 T05 §37
+
+> **Deferred:** DCT decoding only the requested pixel representation -> XREF: D06 T05 §38
+
+> **Deferred:** measured per-codec decode latency -> XREF: D06 T05 §39
+
 **Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §8"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s8.md` ends in an approving round or a recorded stop with every finding fixed or filed.
 
 ## 23. Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6
@@ -886,6 +898,7 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 - [ ] Apply `XRsiz`/`YRsiz` to component bounds and upsample subsampled components to the image grid. Done when: a 4:2:0 codestream reconstructs at full resolution.
 - [ ] Accept up to 32 decomposition levels and implement the six code-block style flags in the Tier-1 decoder. Done when: `seed-filter-09-jpx.bin` with byte 58 set to `0x02` (context reset) decodes, and each other flag has a decoding test.
 - [ ] Read `RGN` (`0xFF5E`) markers and apply the region-of-interest Maxshift realignment to coefficients (T.800 A.6.3, Annex H) in the native decoder in `src/pdf/filters.cpp`. Done when: a lossless grayscale codestream encoded with `-ROI c=0,U=4` decodes to its original samples.
+- [ ] Keep the JP2 header's colour (`colr`, enumerated and restricted ICC), palette (`pclr`, `cmap`) and channel definitions (`cdef`) in the native container reader in `src/pdf/filters.cpp`, expand palette indices, and return CMYK as four colour channels and an alpha only where `cdef` declares one, for both the native and the WIC path (ISO 32000-1 8.9.5.3, T.800 Annex I). Added 2026-10-23 from the `D06 T05 §22` completion review (gap 6). Done when: a palette image keeps its red, a four-component CMYK JP2 stays four colour channels, and a declared opacity channel becomes alpha.
 - [ ] Add `PdfFilters.JpxComponentsAndCodingStyles` for the cases above, and record in `docs/reviews/06-quality/audit-d01-t01-s8.md` that the original review's capability claims were corrected here. Done when: the test fails on the code before this section.
 - [ ] Commit: `pdf: JPX per-component geometry and the full coding-style set`
 
@@ -951,6 +964,85 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 - [ ] Commit: `pdf: JBIG2 decoder bounded at every allocation and loop`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including the three fixtures above, and `docs/reviews/06-quality/D06-T05-s35.md` lists no unbounded entry.
+
+## 36. Native JPX decoder bounded by a cumulative work budget
+
+The completion review of the `D01 T01 §8` audit (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T05 §22, gap 8) found that the native JPEG 2000 decoder bounds its memory but not its work: packet, code-block and Tier-1 loops iterate layers, resolutions, components and precincts with no cumulative budget, so a small damaged or hostile codestream can keep a decode thread busy far past any useful time. -> XREF: D06 T05 §22
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Charge a cumulative work budget in the native JPX decoder in `src/pdf/filters.cpp`. Done when: every data-driven loop charges it.
+2. Prove the refusal with a fixture. Done when: the fixture is refused and fails with the charge removed.
+
+- [ ] Inventory every loop in the native JPX decoder whose trip count comes from codestream data, in `docs/reviews/06-quality/D06-T05-s36.md`, with the charge or structural bound that holds each. Done when: no entry is unbounded.
+- [ ] Charge each such loop to one per-decode work budget derived from the decode ceiling, refusing with `ErrorCode::ResourceLimit` when it runs out, in `src/pdf/filters.cpp`. Done when: the inventory names the charge for every entry.
+- [ ] Add `PdfFilters.JpxWorkBudget`: a small codestream with many layers and empty packets that costs far more work than its size. Done when: it is refused with `ResourceLimit` within one second, and decodes (slowly) with the charge removed, so the test fails then.
+- [ ] Commit: `pdf: native JPX decoder bounded by a work budget`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.JpxWorkBudget`.
+
+## 37. WIC decode failures classified by HRESULT, not reported as damage
+
+The completion review of the `D01 T01 §8` audit (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T05 §22, gap 10) found that every WIC failure in the DCT and JPX paths becomes `DamagedFormat` without reading the HRESULT, so an `E_OUTOFMEMORY` is reported as file corruption and a JPX resource failure falls through to the native decoder. A user then sees "damaged" for a file that is fine. -> XREF: D06 T05 §22
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Classify WIC HRESULTs in one helper in `src/pdf/filters.cpp`. Done when: every WIC call site uses it.
+2. Prove the classes with injected failures. Done when: each class has a test.
+
+- [ ] Add one helper in `src/pdf/filters.cpp` that maps a WIC HRESULT to `OutOfMemory` (`E_OUTOFMEMORY`), `UnsupportedFeature` (`WINCODEC_ERR_COMPONENTNOTFOUND`, `WINCODEC_ERR_UNSUPPORTEDPIXELFORMAT`), `Cancelled` (`E_ABORT`) or `DamagedFormat` (data errors such as `WINCODEC_ERR_BADIMAGE`), with the HRESULT in hex in the message. Done when: every WIC failure path in the DCT and JPX decoders returns through it.
+- [ ] Fall back from WIC to the native JPX decoder only for codec-absent and data-format failures, never after a resource failure. Done when: an injected `E_OUTOFMEMORY` from WIC returns `OutOfMemory` without a native attempt.
+- [ ] Add a test-only HRESULT injection point for the WIC calls and `PdfFilters.WicFailureClasses` covering each class. Done when: the test fails on the code before this section.
+- [ ] Commit: `pdf: WIC failures classified by HRESULT`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.WicFailureClasses`.
+
+## 38. DCT decodes only the pixel representation the caller asked for
+
+The completion review of the `D01 T01 §8` audit (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T05 §22, gap 15) found that a DCT decode keeps the raw samples, an RGBA copy and a BGRA copy at once: 11 bytes per pixel for RGB. A 6000 x 4500 camera photo needs 297,000,000 bytes and is refused under the default 256 MiB ceiling, although one display buffer of 108,000,000 bytes fits. -> XREF: D06 T05 §22
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Let the caller name the representation it needs in `decode_dct_image` in `src/pdf/filters.h` and `src/pdf/filters.cpp`. Done when: only that buffer is allocated.
+2. Prove it on a large photo. Done when: the photo decodes within the default ceiling.
+
+- [ ] Add the requested representation (raw samples, RGBA or BGRA) to the DCT decode parameters and allocate only that buffer in `src/pdf/filters.cpp`. Done when: a decode allocates one image-sized buffer.
+- [ ] Charge the ceiling with the bytes of the requested representation only. Done when: the 6000 x 4500 RGB case is not refused.
+- [ ] Add `PdfFilters.DctLargePhotoWithinCeiling`: a generated 6000 x 4500 baseline JPEG decoded at the default ceiling, with `test::ScopedHeapMeter` showing a peak under one buffer plus 10 percent. Done when: the test fails on the code before this section.
+- [ ] Commit: `pdf: DCT decodes only the requested pixel representation`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.DctLargePhotoWithinCeiling`.
+
+## 39. Per-codec decode latency measured on valid, large and damaged fixtures
+
+The completion review of the `D01 T01 §8` audit (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T05 §22, gap 16) found no measurement behind any speed claim for the image decoders: the one timing assertion only catches quadratic CCITT behaviour. Product ambition (`AGENTS.md`) asks for measured claims, not adjectives. -> XREF: D06 T05 §22
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add a decoder benchmark over fixed fixtures. Done when: it prints cold and warm p50 and p95 per codec.
+2. Record the baseline. Done when: the numbers are committed with the machine they ran on.
+
+- [ ] Add `PdfFiltersBench.*` to `tests/recto-tests/` (disabled by default, run explicitly) timing CCITT, JBIG2, DCT and JPX decodes on one valid, one large and one damaged fixture each from `tests/corpus/`, reporting cold and warm p50 and p95. Done when: the benchmark prints a table of twelve rows.
+- [ ] Record the baseline on the reference machine `D00 T01 §5` names, in `docs/benchmarks/decoders.md`, with the build configuration and date. Done when: the file holds the table and a rerun lands within 10 percent of it.
+- [ ] Commit: `bench: per-codec decode latency baseline`
+
+**Test checkpoint:** `recto-tests.exe --gtest_also_run_disabled_tests --gtest_filter=PdfFiltersBench.*` prints twelve rows and `docs/benchmarks/decoders.md` holds the recorded baseline.
 
 ## Verification
 

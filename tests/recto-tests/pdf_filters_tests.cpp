@@ -242,6 +242,72 @@ TEST(PdfFilters, IndirectValuesAndFullChainsResolve)
 	EXPECT_EQ(*chained_dec, std::vector<uint8_t>{'A'});
 }
 
+// Resolving /Filter and /DecodeParms copies nothing a filter does not read: an 8 MiB string beside an indirect
+// /Predictor, as a dictionary or as the element of a /DecodeParms array, is never copied under a 1 MiB ceiling, and a
+// defined key of the wrong type is still refused.
+TEST(PdfFilters, ParameterResolutionCopiesOnlyWhatFiltersRead)
+{
+	const std::vector<uint8_t> raw = {0x78u, 0x9Cu, 0x73u, 0x04u, 0x00u, 0x00u, 0x42u, 0x00u, 0x42u};
+	const IndirectObjectResolver resolver = [](IndirectRef ref) -> PdfResult<PdfValue> {
+		switch (ref.obj_num) {
+		case 10u:
+			return PdfValue(int64_t{1});
+		case 11u:
+			return PdfValue(PdfName::from_decoded("FlateDecode"));
+		case 12u:
+			return PdfValue(PdfArray{PdfValue(int64_t{12})});
+		default:
+			return PdfError{ErrorCode::DamagedFormat, "missing object"};
+		}
+	};
+	PdfDict parms;
+	parms.set(PdfName::from_decoded("Predictor"), PdfValue(IndirectRef{10u, 0u}));
+	parms.set(PdfName::from_decoded("Unused"), PdfValue(PdfString(std::string(8u << 20u, 'x'))));
+	PdfDict direct;
+	direct.set(PdfName::from_decoded("Filter"), PdfValue(PdfName::from_decoded("FlateDecode")));
+	direct.set(PdfName::from_decoded("DecodeParms"), PdfValue(parms));
+	PdfDict in_array;
+	in_array.set(PdfName::from_decoded("Filter"), PdfValue(PdfArray{PdfValue(IndirectRef{11u, 0u})}));
+	in_array.set(PdfName::from_decoded("DecodeParms"), PdfValue(PdfArray{PdfValue(parms)}));
+	for (const PdfDict* dict : {&direct, &in_array}) {
+		const test::ScopedHeapMeter meter;
+		auto dec = decode_stream(raw, *dict, 1u << 20u, &resolver);
+		const size_t peak = meter.peak_bytes();
+		RECTO_ASSERT_OK(dec);
+		EXPECT_EQ(*dec, std::vector<uint8_t>{'A'});
+		EXPECT_LT(peak, size_t{1} << 20u);
+	}
+
+	// An indirect array element is used where the resolver put it: an element resolving to a dictionary that holds 8
+	// MiB costs that dictionary once, not again as a copied array.
+	const IndirectObjectResolver big_element = [](IndirectRef ref) -> PdfResult<PdfValue> {
+		if (ref.obj_num != 13u) {
+			return PdfError{ErrorCode::DamagedFormat, "missing object"};
+		}
+		PdfDict element;
+		element.set(PdfName::from_decoded("Unused"), PdfValue(PdfString(std::vector<uint8_t>(8u << 20u, 'x'))));
+		return PdfValue(std::move(element));
+	};
+	PdfDict element_dict;
+	element_dict.set(PdfName::from_decoded("Filter"), PdfValue(PdfArray{PdfValue(PdfName::from_decoded("FlateDecode"))}));
+	element_dict.set(PdfName::from_decoded("DecodeParms"), PdfValue(PdfArray{PdfValue(IndirectRef{13u, 0u})}));
+	{
+		const test::ScopedHeapMeter meter;
+		auto dec = decode_stream(raw, element_dict, 1u << 20u, &big_element);
+		const size_t peak = meter.peak_bytes();
+		RECTO_ASSERT_OK(dec);
+		EXPECT_EQ(*dec, std::vector<uint8_t>{'A'});
+		EXPECT_LT(peak, size_t{12} << 20u); // one 8 MiB resolver result, not two
+	}
+
+	PdfDict wrong_type;
+	wrong_type.set(PdfName::from_decoded("Predictor"), PdfValue(IndirectRef{12u, 0u}));
+	PdfDict wrong;
+	wrong.set(PdfName::from_decoded("Filter"), PdfValue(PdfName::from_decoded("FlateDecode")));
+	wrong.set(PdfName::from_decoded("DecodeParms"), PdfValue(std::move(wrong_type)));
+	RECTO_EXPECT_ERR(decode_stream(raw, wrong, kMaxDecodedStreamBytes, &resolver), ErrorCode::DamagedFormat);
+}
+
 TEST(PdfFilters, FlateDecode)
 {
 	// 1. Seed fixture seeds/seed-filter-00-flate.bin (selector 0x00 + zlib payload).
@@ -4131,6 +4197,7 @@ TEST(PdfFilters, JpxTagTreesCharged)
 	cs.insert(cs.end(), packets.begin(), packets.end());
 	cs.insert(cs.end(), {0xFFu, 0xD9u});
 
+	const detail::ScopedJpxPath native(detail::JpxPath::NativeOnly); // the native decoder's budget is under test
 	RECTO_EXPECT_ERR(decode_jpx_image(cs, nullptr, 24u << 20u), ErrorCode::DecompressionLimitExceeded);
 	auto img = decode_jpx_image(cs, nullptr, 64u << 20u);
 	RECTO_ASSERT_OK(img);
@@ -4138,6 +4205,50 @@ TEST(PdfFilters, JpxTagTreesCharged)
 	EXPECT_EQ(img->height, 256u);
 	ASSERT_EQ(img->pixels.size(), 65536u);
 	EXPECT_TRUE(std::all_of(img->pixels.begin(), img->pixels.end(), [](uint8_t v) { return v == 128u; }));
+}
+
+// A document cannot pick the DCT output layout: /TargetFormat is a direct caller's choice, so in a stream dictionary
+// it is ignored and a CMYK JPEG still decodes to RGBA.
+TEST(PdfFilters, DocumentCannotSetTargetFormat)
+{
+	const auto cmyk_jpeg = make_minimal_jpeg_8x8_cmyk();
+	PdfDict plain;
+	plain.set("Filter", PdfValue(PdfName("DCTDecode")));
+	auto expected = decode_stream(cmyk_jpeg, plain);
+	RECTO_ASSERT_OK(expected);
+	for (const char* format : {"BGRA", "CMYK"}) {
+		PdfDict with_format;
+		with_format.set("Filter", PdfValue(PdfName("DCTDecode")));
+		with_format.set("TargetFormat", PdfValue(PdfName(format)));
+		auto dec = decode_stream(cmyk_jpeg, with_format);
+		RECTO_ASSERT_OK(dec);
+		EXPECT_EQ(*dec, *expected) << format;
+	}
+}
+
+// Each JPX implementation is tested as itself: NativeOnly never reaches WIC, and WicOnly decodes through a registered
+// JPEG 2000 codec or refuses with UnsupportedFeature, never falling back to the native decoder.
+TEST(PdfFilters, JpxPathPinned)
+{
+	const std::array<uint8_t, 12> rgb = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200};
+	const auto jp2 = make_genuine_jp2_2x2_rgb(rgb, true);
+	{
+		const detail::ScopedJpxPath native(detail::JpxPath::NativeOnly);
+		auto img = decode_jpx_image(jp2);
+		RECTO_ASSERT_OK(img);
+		EXPECT_EQ(img->pixels, std::vector<uint8_t>(rgb.begin(), rgb.end()));
+	}
+	{
+		const detail::ScopedJpxPath wic(detail::JpxPath::WicOnly);
+		auto img = decode_jpx_image(jp2);
+		if (img.has_value()) {
+			EXPECT_EQ(img->pixels, std::vector<uint8_t>(rgb.begin(), rgb.end()));
+		} else {
+			EXPECT_EQ(img.error().code, ErrorCode::UnsupportedFeature);
+		}
+	}
+	// The pin is scoped: after both scopes the default path decodes again.
+	RECTO_ASSERT_OK(decode_jpx_image(jp2));
 }
 
 } // namespace

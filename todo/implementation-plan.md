@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 62 | Checklist items: 407
+Sections: 66 | Checklist items: 423
 
 | Status | Reference   | Deliverable                                                                              | Needs        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -85,7 +85,7 @@ Sections: 62 | Checklist items: 407
 | [ ]    | D06 T05 §29 | Damaged-file recovery resolves indirect object-stream parameters                         | windows-host | 5     |
 | [ ]    | D06 T05 §30 | Damaged-file recovery keeps an encrypted file's compressed objects                       | windows-host | 4     |
 | [ ]    | D06 T05 §31 | JBIG2 striped pages, MMR halftone alignment and HENABLESKIP                              | windows-host | 6     |
-| [ ]    | D06 T05 §32 | JPX per-component precision and sampling, and the full coding-style set                  | windows-host | 6     |
+| [ ]    | D06 T05 §32 | JPX per-component precision and sampling, and the full coding-style set                  | windows-host | 7     |
 | [ ]    | D06 T05 §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding                               | windows-host | 4     |
 | [ ]    | D01 T02 §4  | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects   | windows-host | 8     |
 | [ ]    | D01 T02 §6  | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`)       | windows-host | 7     |
@@ -118,6 +118,10 @@ Sections: 62 | Checklist items: 407
 | [ ]    | D06 T05 §34 | CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies                             | windows-host | 4     |
 | [ ]    | D06 T05 §35 | JBIG2 decoder work and memory bounded at every allocation and loop                       | windows-host | 6     |
 | [ ]    | D01 T03 §5  | M1 1-hour `fuzz_open` acceptance run, regression promotion and CI 60s fuzz smoke         | windows-host | 6     |
+| [ ]    | D06 T05 §36 | Native JPX decoder bounded by a cumulative work budget                                   | windows-host | 4     |
+| [ ]    | D06 T05 §37 | WIC decode failures classified by HRESULT, not reported as damage                        | windows-host | 4     |
+| [ ]    | D06 T05 §38 | DCT decodes only the pixel representation the caller asked for                           | windows-host | 4     |
+| [ ]    | D06 T05 §39 | Per-codec decode latency measured on valid, large and damaged fixtures                   | windows-host | 3     |
 
 ### Phase 2: M2 Viewer
 
@@ -863,6 +867,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 54/794 verified sections, 17 ready to run now.
+Progress: 54/798 verified sections, 17 ready to run now.
 
-Checklist: 346/5887 items completed (includes Commit items).
+Checklist: 346/5903 items completed (includes Commit items).

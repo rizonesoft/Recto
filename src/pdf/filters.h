@@ -223,6 +223,26 @@ private:
 	uint64_t bytes_{0};
 };
 
+// Which JPXDecode implementation a decode on this thread may use. WIC is tried first when a JPEG 2000 codec is
+// registered, and the native decoder otherwise, so which one ran depends on the machine. Tests pin it while the
+// scope lives (and restore the previous choice on exit) so a test of either path cannot silently run the other.
+enum class JpxPath : uint8_t {
+	Default, // WIC when a codec is registered, else native
+	NativeOnly,
+	WicOnly, // refused with UnsupportedFeature when no codec is registered
+};
+
+class ScopedJpxPath {
+public:
+	explicit ScopedJpxPath(JpxPath path) noexcept;
+	~ScopedJpxPath() noexcept;
+	ScopedJpxPath(const ScopedJpxPath&) = delete;
+	ScopedJpxPath& operator=(const ScopedJpxPath&) = delete;
+
+private:
+	JpxPath previous_{JpxPath::Default};
+};
+
 } // namespace detail
 
 } // namespace recto::pdf

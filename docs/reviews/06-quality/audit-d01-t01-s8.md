@@ -224,3 +224,133 @@ OVERALL: needs-attention
 - Proof that the tests can fail: with only `src/pdf/filters.cpp` reverted to `ddbd06b`, x64 Debug `PdfFilters.*` -> `[  FAILED  ] 3 tests` (`DctRgbAndCmyk`: `actual: 16778510 vs 1048576`; `CcittAndMmrBounds`: the 1 MiB CCITT and 131,000-pixel MMR cases succeeded; `JpxTagTreesCharged`: the 24 MiB case succeeded); with the fix, `[  PASSED  ] 19 tests.`
 
 Gates after round 4: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 159 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 19 tests.`
+
+## Completion review: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-23T07:09:10Z
+- Candidate: 9f9b9e68ee5a4ade2ae72c64520ea07dadc6d268
+- Effort: xhigh
+- Lines: 99
+- Digest: 7b8d67fae7373f67
+
+The candidate is incomplete for users, and superiority over Acrobat Pro is unproven. The existing x64 binary passed all 19 `PdfFilters.*` tests plus `Support.AsanActiveWhenEnabled`, reporting ASan enabled. I did not rebuild, execute new reproductions or modify files. New defect findings below are source-derived.
+
+**Part 1: completeness**
+
+1. **present: Standard fax decoding and parameter readers.** Group 3 1D/2D, Group 4, polarity and alignment have coverage in `PdfFilters.CcittGroup4` and `PdfFilters.CcittGroup3AndBlackIs1`. Defaults live in `src/pdf/filters.h:81`; readers for all eight CCITT parameters are at `src/pdf/filters.cpp:2125`. No additional user setting is required.
+
+2. **missing-out-of-scope: Correct damaged-fax recovery.** Consecutive damaged rows repeat the previous row instead of substituting white after the first recovery; mixed Group 3 refuses recoverable rows. Evidence: `src/pdf/filters.cpp:2308` and `:2393`. Existing owner: **D06 T05 §34**, including the missing regression tests.
+
+3. **present: Basic JBIG2 archive decoding and globals resolution.** Generic, symbol, text and halftone cases, `/JBIG2Globals`, malformed segment lengths and empty arithmetic payloads are exercised by `PdfFilters.Jbig2Decode` at `tests/recto-tests/pdf_filters_tests.cpp:1451`. Indirect globals retain the caller’s resolver at `src/pdf/filters.cpp:5944`.
+
+4. **missing-out-of-scope: Remaining JBIG2 conformance.** Striped pages, byte-aligned MMR halftone planes, `HENABLESKIP` and retained dictionary contexts remain incomplete. Existing owner: **D06 T05 §31**, detailed at `todo/06-quality/TODO-05-stamp-audits.md:852`.
+
+5. **missing-out-of-scope: Complete JBIG2 resource enforcement and regression evidence.** The systematic allocation and loop inventory remains outstanding, as do tests for repeated dictionary references, off-page compositing and unsigned `HRX`/`HRY`. Existing owner: **D06 T05 §35**, explicitly recorded at `todo/06-quality/TODO-05-stamp-audits.md:935`.
+
+6. **present: Basic camera JPEG decoding and `/Decode` mappings.** Grayscale/RGB and basic CMYK paths, direct and indirect `/Decode` values, and expected pixels are exercised by `PdfFilters.DctRgbAndCmyk` at `tests/recto-tests/pdf_filters_tests.cpp:2662`. This does not establish the Adobe CMYK/YCCK claims covered by the next item.
+
+7. **missing-out-of-scope: JPEG colour-transform correctness.** `/ColorTransform` reaches the pipeline but does not control WIC decoding. Non-neutral Adobe APP14 CMYK and YCCK verification is missing. Existing owner: **D06 T05 §33**, with its precise cases at `todo/06-quality/TODO-05-stamp-audits.md:896`.
+
+8. **present: Basic native JPEG 2000 fallback.** Native decoding follows unsuccessful WIC decoding at `src/pdf/filters.cpp:7599`. `PdfFilters.CorpusImageSeedsDecode` and the JPX cases inside `PdfFilters.DctRgbAndCmyk` exercise decoded samples; `PdfFilters.JpxTagTreesCharged` checks a native metadata budget case.
+
+9. **missing-out-of-scope: Remaining JPX component and coding support.** Mixed precision/signedness, subsampling, the full decomposition/style set and ROI realignment remain incomplete. Existing owner: **D06 T05 §32**, including regression fixtures, at `todo/06-quality/TODO-05-stamp-audits.md:874`.
+
+10. **missing-in-scope: Embedded JPX colour, palette and channel semantics.** The native container reader extracts `ihdr` but discards colour, palette and channel-definition information (`src/pdf/filters.cpp:6594`). Output assumes RGB and treats component four as alpha (`:9217`). A palette image can consequently become grayscale, and four colour components can be misinterpreted as RGBA. The WIC path also chooses grayscale/RGB from codestream component count (`:7540`). Tests must cover a coloured palette, embedded colour specifications, CMYK and declared opacity. This is separate from §32’s component geometry and coding styles. [Adobe’s PDF reference](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/pdfreference1.5_v6.pdf) specifies these JPX colour requirements.
+
+11. **present: Filter dispatch, wrappers and indirect parameters.** The eight-stage chain limit, filter abbreviations, matching parameters and indirect resolution have coverage in `PdfFilters.ChainedPipeline`, `IndirectFilterAndDecodeParmsResolve` and `IndirectValuesAndFullChainsResolve`. See `src/pdf/filters.cpp:9389`.
+
+12. **missing-in-scope: Bounded parameter resolution before decoding.** `deref_array` deep-clones every element before checking whether resolution changed anything (`src/pdf/filters.cpp:9418`). Resolving one recognised dictionary parameter also deep-clones unrelated entries (`:9468`). A tiny JPEG with `/DecodeParms [<< /Unused (8 MiB string) >>]`, a resolver and a 1 MiB decode ceiling therefore copies well beyond that ceiling before decoding. The new image-dictionary protection does not cover these paths. Neither reproduction has a regression test.
+
+13. **present: Image-size refusals and several working-memory guards.** Oversized headers return `DecompressionLimitExceeded`; malformed headers return `DamagedFormat`. Evidence includes `src/pdf/filters.cpp:2162`, `:6132` and `:6680`, plus the oversized cases in `PdfFilters.DctRgbAndCmyk`. `CcittAndMmrBounds` and `JpxTagTreesCharged` test combined transition/output and tag-tree accounting. The default 256 MiB ceiling and caller overrides are read by the decoders. These checks do not prove the unresolved paths above are bounded.
+
+14. **missing-in-scope: A cumulative decoder work ceiling outside the deferred JBIG2 pass.** Native JPX iterates layers, resolutions, components and precincts without a cumulative work budget (`src/pdf/filters.cpp:8942`). The byte meter measures allocations rather than enforcing execution limits. Memory limits and one CCITT timing assertion do not bound a large or damaged decode. No typed work-exhaustion outcome or regression test exists.
+
+15. **missing-out-of-scope: Cooperative cancellation through an active decode.** None of the public decoder signatures accepts cancellation (`src/pdf/filters.h:100`, `:110`, `:140`, `:153`), and the implementations never return `Cancelled`. Existing integration owner: **D01 T02 §7**, which must carry cancellation into decoder loops and WIC work, beyond checks between interpreter commands.
+
+16. **present: Typed C++ failure boundaries.** JPEG and JPX entry points translate `std::bad_alloc` into `OutOfMemory` and unexpected exceptions into `InternalError` (`src/pdf/filters.cpp:6493`, `:9242`). Malformed-input and budget tests assert named errors. WIC HRESULT failures remain a separate deficiency.
+
+17. **missing-in-scope: Accurate WIC failure classification and supporting tests.** Failures from WIC decoding and pixel copying become `DamagedFormat` without inspecting the HRESULT (`src/pdf/filters.cpp:6271`, `:6339`, `:6467`). Thus `E_OUTOFMEMORY` can be reported as file corruption; JPX can fall through to another decoding attempt after a resource failure (`:7527`). Preserve resource, unsupported-codec and corrupt-data distinctions, retain the HRESULT for support, and add injected-failure tests.
+
+18. **present: Thread-local WIC ownership and concurrent decoding evidence.** Factory storage is thread-local at `src/pdf/filters.cpp:6037`. `PdfFilters.ConcurrentWicDecode` runs eight simultaneous threads with repeated pixel comparisons and distinct live factory identities (`tests/recto-tests/pdf_filters_tests.cpp:2207`). This does not prove application thread routing.
+
+19. **missing-out-of-scope: Delivery into the viewer, OCR, conversion and redaction.** Decoded streams are not yet an implemented document-to-display pipeline. Existing owners include **D01 T02 §4, §8 and §9**, followed by domains **03, 04 and 05**. Integration evidence belongs to **D06 T01 §1, §3, §5 and §6**. Decoder unit tests cannot establish these user workflows.
+
+20. **missing-out-of-scope: Opening images larger than the full-resolution budget.** Current entry points refuse oversized images. The decided reduced-scale decoding path is owned by **D01 T02 §19**, specifically `todo/01-engine/TODO-02-actor-and-render.md:605`. Its large-image regression must demonstrate useful rendering within the existing memory target.
+
+21. **missing-out-of-scope: Partial-document recovery and user/support diagnostics.** Typed decoder messages alone do not establish that readable pages survive, skipped images are disclosed, or users can copy useful details. Existing owners: **D06 T03 §2** for recovery records, **§3** for page notices, **D02 T01 §11** for the error report, and **D02 T02 §25** for per-page failures. Relevant contracts include `todo/06-quality/TODO-03-user-failure-gates.md:98` and `:120`.
+
+22. **missing-in-scope: Deterministic tests of both JPX implementations.** WIC is attempted first (`src/pdf/filters.cpp:7517`), but tests cannot force the native path. A registered JPEG 2000 codec can bypass the implementation that `PdfFilters.JpxTagTreesCharged` intends to verify (`tests/recto-tests/pdf_filters_tests.cpp:4109`). Add explicit path selection or dependency injection and verify both configurations.
+
+**Part 2: excellence**
+
+**Competitor: Adobe Acrobat Pro.** It is the strongest documented comparison baseline here. Adobe documents JPEG, JPEG 2000, CCITT and JBIG2 workflows, embedded JPX colour handling, partial opening after image errors, and support diagnostics. Its image-error recovery can require changing zoom or optimising the file, leaving an opportunity for Recto to improve recovery. [Image settings](https://developer.adobe.com/acrobat-pdfl-sdk/guides/pdfcreation/pdf-create-usingsettings), [JBIG2 scan settings](https://helpx.adobe.com/acrobat/desktop/create-documents/scan-documents-to-pdfs/scanned-pdf-settings.html), [JPX handling](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdflsdk/apireference/Samples/CodeSamples/JPXEncode/sources/JPXEncode.cpp.html), [image-error behaviour](https://helpx.adobe.com/acrobat/kb/insufficient-data-image.html), [diagnostics](https://helpx.adobe.com/acrobat/kb/acrobat-diagnostics.html).
+
+Foxit also documents JPEG 2000/JBIG2 scan workflows; PDFelement and UPDF document scanned-document processing. Their cited documentation supplies no comparable decoder latency or hostile-input measurements, so a speed ranking would be unsupported. [Foxit](https://www.foxit.com/resource-hub/user-guide/foxit-pdf-editor-for-windows/scan-with-custom-settings/), [PDFelement](https://pdf.wondershare.com/pdfelement/PDFelement-v12-user-guide-win.pdf), [UPDF](https://updf.com/tech-spec/).
+
+Targets below are proposed unless already specified by Recto’s plan.
+
+1. **Default fidelity remains below the required baseline.** The fax, JBIG2, JPEG and JPX gaps in Part 1 can reject valid documents or change their pixels. **Target:** every fixture specified by §31 to §34 produces the required pixels without user intervention. **out-of-scope**, retaining those existing owners.
+
+2. **Native JPX colour handling cannot match Acrobat’s documented embedded-colour behaviour.** **Target:** palette-red remains red, CMYK remains four colour channels, and opacity follows channel declarations; lossless reference fixtures match exactly. **in-scope**, Part 1 item 10.
+
+3. **Duplicate buffers unnecessarily reject ordinary camera images and delay the first result.** RGB JPEG decoding reserves raw, RGBA and BGRA storage, totalling 11 bytes per pixel (`src/pdf/filters.cpp:6321`, `:6475`). A 6000 × 4500 image therefore requires 297,000,000 bytes and is refused under 256 MiB, despite one display buffer fitting comfortably. **Target:** decode that image within the unchanged ceiling, allocating only requested representations; verify peak memory and elapsed time. **in-scope**. Reduced-scale handling of genuinely oversized images remains with D01 T02 §19.
+
+4. **Hostile-file responsiveness has no complete enforceable guarantee.** Unbudgeted parameter copies and uncapped decoder work prevent a defensible advantage over mature viewers. **Target:** the 1 MiB parameter-copy reproduction stays within budget or refuses before copying; deterministic work-budget tests stop expensive native JPX processing with a typed resource refusal. **in-scope**. JBIG2’s systematic pass remains with §35.
+
+5. **Cancel cannot interrupt an image decode.** **Target:** propagate cancellation through active decoding, return `Cancelled`, release temporary buffers and publish no cancelled result. Preserve Recto’s decided sub-10 ms cooperative cancellation objective. **out-of-scope**, D01 T02 §7.
+
+6. **Keeping the readable document open is unproven.** Acrobat documents opening a PDF despite damaged images. Recto currently has no delivered equivalent around these decoders. **Target:** one corrupt image in a multi-page fixture leaves every healthy page readable, identifies the affected page and permits retry without reopening the document. **out-of-scope**, D01 T02 and D06 T03 §2, plus D02 T02 §25.
+
+7. **Error wording can misdiagnose resource exhaustion as corruption.** **Target:** injected WIC allocation failures consistently return `OutOfMemory`; unsupported codecs and damaged data remain distinguishable, with the HRESULT available in technical details. **in-scope**, Part 1 item 17.
+
+8. **User diagnostics and recovery polish are not delivered.** **Target:** one nonblocking notice identifies the affected page/image and refusal reason; one Copy details action includes filter, typed error, relevant limit and version, with paths scrubbed and no automatic upload. **out-of-scope**, the diagnostic owners in Part 1 item 21.
+
+9. **Installed-codec-dependent coverage prevents a reliable default experience.** **Target:** execute forced-native and WIC configurations, with lossless pixel equality and documented tolerances for lossy paths; native budget tests must execute native code. **in-scope**, Part 1 item 22.
+
+10. **No measurement demonstrates faster decoding than Acrobat.** The 3-second CCITT assertion (`tests/recto-tests/pdf_filters_tests.cpp:4044`) detects quadratic behaviour, but supplies no competitive latency evidence. **Target:** publish reproducible cold/warm p50 and p95 measurements per codec on valid, large and damaged fixtures; a proposed winning threshold is at least 20% lower p95 with equal fidelity and enforced limits. **in-scope** for decoder measurements.
+
+11. **First-page latency and zero UI-thread decoding remain unverified.** **Target:** prove zero decoding on the UI thread and retain the foundation’s existing frame, sharp-tile and working-set targets. Add an explicit scanned-first-page benchmark; the existing <300 ms requirement names a text PDF. **out-of-scope**, D01 T02 §8/§9 and D06 T01 §7/§8.
+
+**Gap list**
+
+1. **missing-out-of-scope; out-of-scope:** Correct damaged-fax recovery and regressions, D06 T05 §34.
+2. **missing-out-of-scope; out-of-scope:** JBIG2 stripes, plane alignment, skip masks and retained contexts, D06 T05 §31.
+3. **missing-out-of-scope:** Systematic JBIG2 resource enforcement and three owed regression fixtures, D06 T05 §35.
+4. **missing-out-of-scope; out-of-scope:** JPEG `/ColorTransform`, Adobe CMYK and YCCK correctness, D06 T05 §33.
+5. **missing-out-of-scope; out-of-scope:** JPX component geometry, coding styles, decomposition levels and ROI, D06 T05 §32.
+6. **missing-in-scope; in-scope:** Preserve and interpret embedded JPX colour, palette and channel semantics.
+7. **missing-in-scope; in-scope:** Eliminate unbudgeted deep copies during parameter resolution and add regressions.
+8. **missing-in-scope; in-scope:** Enforce cumulative decoder work limits with typed exhaustion and deterministic tests.
+9. **missing-out-of-scope; out-of-scope:** Carry cooperative cancellation through active decodes, D01 T02 §7.
+10. **missing-in-scope; in-scope:** Classify WIC failures accurately, retain HRESULT details and test injected failures.
+11. **missing-out-of-scope:** Deliver decoded images into rendering, OCR, conversion and redaction, D01 T02 and domains 03 to 05, with D06 T01 integration suites.
+12. **missing-out-of-scope:** Deliver reduced-scale decoding for genuinely oversized images, D01 T02 §19.
+13. **missing-out-of-scope; out-of-scope:** Preserve healthy document content and expose recovery notices/details, D06 T03 §2/§3, D02 T01 §11 and D02 T02 §25.
+14. **missing-in-scope; in-scope:** Make native and WIC JPX paths explicitly testable and verify both.
+15. **in-scope:** Avoid unconditional duplicate pixel buffers that reject otherwise manageable camera images.
+16. **in-scope:** Establish reproducible decoder latency evidence against Acrobat.
+17. **out-of-scope:** Verify scanned-first-page performance and zero UI-thread decoding, D01 T02 §8/§9 and D06 T01 §7/§8.
+
+COMPLETION: gaps
+
+Disposition of the completion review's gaps (each verified against the code before acting):
+
+- Implemented: gap 7, parameter resolution copied what no filter reads (`resolve_stage_parms` cloned every entry of a `/DecodeParms` dictionary once one defined key was indirect, and `deref_array` cloned every element of an array holding a reference). Only the keys a filter defines are carried now, a non-scalar there as an empty string the readers refuse alike, and array elements resolve into pointers, never a copied array. The image stage also stops carrying the internal `/TargetFormat` key, which a document could set to change the layout the pipeline returns. `PdfFilters.ParameterResolutionCopiesOnlyWhatFiltersRead` (peaks under 1 MiB and 12 MiB; the mutants peak at 8,389,879 and 16,778,582 bytes) and `PdfFilters.DocumentCannotSetTargetFormat` fail with the fix reverted. Commit: see the line below.
+- Implemented: gap 14, `detail::ScopedJpxPath` pins the native or the WIC JPX decoder for a test, so a registered JPEG 2000 codec cannot bypass a native-path test; `PdfFilters.JpxTagTreesCharged` now pins the native decoder and `PdfFilters.JpxPathPinned` decodes through each path. Commit: see the line below.
+- Filed: D06 T05 §32 (gap 6: JP2 colour, palette and channel definitions, added as an item to the JPX conformance owner)
+- Filed: D06 T05 §36 (gap 8: a cumulative work budget for the native JPX decoder)
+- Filed: D06 T05 §37 (gap 10: WIC failures classified by HRESULT)
+- Filed: D06 T05 §38 (gap 15: DCT decodes only the requested pixel representation)
+- Filed: D06 T05 §39 (gap 16: measured per-codec decode latency)
+- Filed: D06 T05 §31 (gaps 2 and 4, existing owner)
+- Filed: D06 T05 §33 (gap 4, existing owner)
+- Filed: D06 T05 §34 (gap 1, existing owner)
+- Filed: D06 T05 §35 (gap 3, existing owner)
+- Filed: D01 T02 §7 (gap 9, cancellation through an active decode, existing owner)
+- Filed: D01 T02 §19 (gap 12, reduced-scale decoding of oversized images, existing owner)
+- Filed: D06 T03 §2 (gap 13, healthy pages kept and recovery disclosed, existing owner with D02 T01 §11 and D02 T02 §25)
+- Filed: D06 T01 §7 (gap 17, scanned first-page performance, existing owner with D01 T02 §8 and §9)
+- Gap 11 (delivering decoded images to rendering, OCR, conversion and redaction) is the work of `D01 T02` and domains 03 to 05 as planned, with `D06 T01 §1` integration suites.
+
+Gates after the completion-review fixes: `.\build.cmd` -> exit 0, `0 Warning(s)` in all four configurations, `[  PASSED  ] 164 tests.` for x64 Debug and Release; `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfError.*:PdfFilters.*` -> exit 0, `0 Warning(s)`, `[  PASSED  ] 31 tests.`
