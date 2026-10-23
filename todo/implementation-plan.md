@@ -145,7 +145,7 @@ Sections: 86 | Checklist items: 514
 
 ### Phase 2: M2 Viewer
 
-Sections: 148 | Checklist items: 1306
+Sections: 148 | Checklist items: 1307
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -154,7 +154,7 @@ Sections: 148 | Checklist items: 1306
 | [ ]    | D02 T04 §1  | `AppPaths` Portable mode path resolver and live atomic data migration                    | windows-host                  | 8     |
 | [ ]    | D02 T04 §2  | Typed `SettingsStore` service with atomic persistence and change notifications           | windows-host                  | 10    |
 | [x]    | D10 T01 §1  | `recto-ui` static library, module boundary and headless render harness                   | windows-host                  | 19    |
-| [ ]    | D10 T01 §2  | Win32 `Recto.exe` host replaces the WinUI scaffold; Windows App SDK pins retired         | windows-host, display-session | 17    |
+| [ ]    | D10 T01 §2  | Win32 `Recto.exe` host replaces the WinUI scaffold; Windows App SDK pins retired         | windows-host, display-session | 18    |
 | [ ]    | D10 T04 §1  | Move `src/ui` to `libs/vellum`, rename to `vellum::`, own project and test executable    | windows-host                  | 17    |
 | [ ]    | D10 T01 §3  | UI thread `Dispatcher`, timers and engine callback marshalling                           | windows-host                  | 7     |
 | [ ]    | D10 T01 §4  | Top-level `Window`: custom frame, Mica Alt, dark mode, DPI and minimum size              | windows-host, display-session | 10    |
@@ -902,4 +902,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 64/831 verified sections, 29 ready to run now.
 
-Checklist: 403/6098 items completed (includes Commit items).
+Checklist: 404/6099 items completed (includes Commit items).
