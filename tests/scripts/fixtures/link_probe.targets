@@ -1,0 +1,13 @@
+<!--
+  Imported only by tests/scripts/test_ui_module_boundary.py, through the toolset's ForceImportAfterCppTargets hook, and
+  never by a build. MSBuild creates no Link or Lib item until a target runs, so the item definitions that decide which
+  libraries a project links (Link) or bundles into its static library (Lib) are invisible to evaluation. One item of
+  each type picks up those definitions, every configuration's Condition already applied, so `-getItem:Link` and
+  `-getItem:Lib` show AdditionalDependencies, AdditionalLibraryDirectories and AdditionalOptions as the build sees them.
+-->
+<Project>
+  <ItemGroup>
+    <Link Include="$(MSBuildProjectFullPath)" />
+    <Lib Include="$(MSBuildProjectFullPath)" />
+  </ItemGroup>
+</Project>

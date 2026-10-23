@@ -424,6 +424,69 @@ HeaderNames header_names(const fs::path& root)
 	return names;
 }
 
+// Walks `dir` and reports each linker directive in source that could link a
+// library the module may not reach: `#pragma comment(lib, "...")` or
+// `comment(linker, "...")`, also spelled `__pragma(...)` or `_Pragma("...")`
+// ([cpp.pragma.op]). A directive links a library with no project setting at
+// all, so the MSBuild check (tests/scripts/test_ui_module_boundary.py) cannot
+// see it. Its argument must be one plain string literal that names none of
+// `forbidden_stems` (library names without .lib, lower case); any other
+// argument (a macro, concatenated literals) hides its target from a text scan
+// and is refused outright, like a computed include.
+std::vector<Finding> scan_link_directives(const fs::path& dir, const std::vector<std::string>& forbidden_stems)
+{
+	std::vector<Finding> findings;
+	if (!fs::exists(dir)) {
+		return findings;
+	}
+	for (const auto& entry : fs::recursive_directory_iterator(dir)) {
+		if (!entry.is_regular_file() || !is_source_file(entry.path())) {
+			continue;
+		}
+		const LogicalSource source = logical_source(read_text(entry.path()));
+		// Lower case, white space dropped, and \" read as " so the _Pragma
+		// spelling's inner literal looks like the #pragma one.
+		std::string compact;
+		std::vector<size_t> compact_line;
+		for (size_t i = 0; i < source.text.size(); ++i) {
+			const char c = source.text[i];
+			if (std::isspace(static_cast<unsigned char>(c)) != 0 || (c == '\\' && i + 1 < source.text.size() && source.text[i + 1] == '"')) {
+				continue;
+			}
+			compact.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+			compact_line.push_back(source.line[i]);
+		}
+		for (const std::string_view kind : {std::string_view("comment(lib,"), std::string_view("comment(linker,")}) {
+			for (size_t at = compact.find(kind); at != std::string::npos; at = compact.find(kind, at + 1)) {
+				const size_t open = at + kind.size();
+				const size_t close = compact.find(')', open);
+				const std::string argument = compact.substr(open, close == std::string::npos ? std::string::npos : close - open);
+				const bool plain = argument.size() >= 2 && argument.front() == '"' && argument.back() == '"' &&
+					argument.find('"', 1) == argument.size() - 1;
+				if (!plain) {
+					findings.push_back({entry.path(), compact_line[at], "computed linker directive " + argument});
+					continue;
+				}
+				const std::string named = argument.substr(1, argument.size() - 2);
+				// comment(lib) names one library file (the linker adds .lib); a
+				// comment(linker) option such as /DEFAULTLIB: may name it anywhere.
+				const std::vector<std::string> parts = split_path(named);
+				std::string library = parts.empty() ? std::string() : parts.back();
+				if (library.ends_with(".lib")) {
+					library.resize(library.size() - 4);
+				}
+				const bool hit = std::any_of(forbidden_stems.begin(), forbidden_stems.end(), [&](const std::string& stem) {
+					return kind == "comment(lib," ? library == stem : named.find(stem) != std::string::npos;
+				});
+				if (hit) {
+					findings.push_back({entry.path(), compact_line[at], "linker directive " + named});
+				}
+			}
+		}
+	}
+	return findings;
+}
+
 // Boundary scan over one repository tree rooted at `root` (a checkout or a
 // scratch copy), with the header names of the real tree.
 std::vector<Finding> boundary_findings(const fs::path& root, const HeaderNames& names)
@@ -440,6 +503,12 @@ std::vector<Finding> boundary_findings(const fs::path& root, const HeaderNames& 
 			 })) {
 			all.push_back(finding);
 		}
+		for (const Finding& finding : scan_link_directives(root / "src" / engine_dir, {"recto-ui"})) {
+			all.push_back(finding);
+		}
+	}
+	for (const Finding& finding : scan_link_directives(root / "src" / "ui", {"recto-pdf", "recto-core", "recto-services"})) {
+		all.push_back(finding);
 	}
 	return all;
 }
@@ -745,6 +814,19 @@ RECTO_UI_TEST(Project, IncludeBoundary)
 		"[[maybe_unused]] const char* b = \")\";\n");
 	// A bare CR ends a line, and so a // comment ([lex.phases] phase 1).
 	write_text(scratch.path() / "src" / "core" / "planted_cr.cpp", "// comment\r#include \"../ui/include/recto/ui/ui.h\"\r");
+	// A linker directive links the other side's library with no project setting:
+	// each spelling is caught, a computed argument is refused, and a system
+	// library or a directive in a comment is not a crossing.
+	write_text(scratch.path() / "src" / "core" / "planted_pragma.cpp",
+		"#pragma comment(lib, \"windowscodecs.lib\")\n"
+		"#pragma comment( lib , \"..\\\\..\\\\build\\\\bin\\\\x64\\\\Debug\\\\recto-ui\\\\Recto-UI.lib\" )\n"
+		"__pragma(comment(lib, \"recto-ui\"))\n"
+		"_Pragma(\"comment(lib, \\\"recto-ui.lib\\\")\")\n"
+		"#pragma comment(linker, \"/DEFAULTLIB:recto-ui\")\n"
+		"#define UI_LIB \"recto-ui.lib\"\n"
+		"#pragma comment(lib, UI_LIB)\n"
+		"// #pragma comment(lib, \"recto-ui.lib\")\n");
+	write_text(scratch.path() / "src" / "ui" / "planted_pragma_ui.cpp", "#pragma comment(lib, \"recto-pdf.lib\")\n");
 	// The digraph spelling of #include ([lex.digraph]).
 	write_text(scratch.path() / "src" / "services" / "planted_digraph.cpp", "%:include \"../ui/include/recto/ui/ui.h\"\n");
 	// `//` inside the header name of a toolkit file that reaches an engine header.
@@ -764,7 +846,8 @@ RECTO_UI_TEST(Project, IncludeBoundary)
 		"planted_pdf.cpp:1", "planted_pdf.cpp:3", "planted_pdf.cpp:5", "planted_bare.cpp:1", "planted_bare.cpp:2",
 		"planted_core.cpp:1", "planted_digits.cpp:2", "planted_angle.cpp:1", "planted_services.h:2",
 		"planted_fragment.inc:1", "planted_digraph.cpp:1", "planted_angle_ui.cpp:1", "planted_utf16.cpp:1",
-		"planted_ppnum.cpp:3", "planted_unicode.cpp:3", "planted_cr.cpp:2"};
+		"planted_ppnum.cpp:3", "planted_unicode.cpp:3", "planted_cr.cpp:2", "planted_pragma.cpp:2", "planted_pragma.cpp:3",
+		"planted_pragma.cpp:4", "planted_pragma.cpp:5", "planted_pragma.cpp:7", "planted_pragma_ui.cpp:1"};
 	EXPECT_EQ(caught, expected) << describe(planted);
 }
 
