@@ -4564,6 +4564,54 @@ TEST(PdfFilters, Jbig2StripesAlignmentAndSkip)
 		append_jbig2_segment(trailing, 3u, 38u, {}, 1u, mmr_region(1, "1" + eofb));
 		append_jbig2_segment(trailing, 4u, 49u, {}, 1u, {});
 		RECTO_EXPECT_ERR(decode_jbig2(trailing), ErrorCode::DamagedFormat);
+
+		// Round 2: the same with an intermediate region (type 36), which is still a region of the page.
+		std::vector<uint8_t> trailing_intermediate = header;
+		append_jbig2_segment(trailing_intermediate, 0u, 48u, {}, 1u, page_info);
+		append_jbig2_segment(trailing_intermediate, 1u, 38u, {}, 1u, mmr_region(0, "1" + eofb));
+		append_jbig2_segment(trailing_intermediate, 2u, 50u, {}, 1u, row0);
+		append_jbig2_segment(trailing_intermediate, 3u, 36u, {}, 1u, mmr_region(1, "1" + eofb));
+		append_jbig2_segment(trailing_intermediate, 4u, 49u, {}, 1u, {});
+		RECTO_EXPECT_ERR(decode_jbig2(trailing_intermediate), ErrorCode::DamagedFormat);
+
+		// Round 2: a refinement of the page reads rows the page grows to as its default pixel (black here), exactly as
+		// on a page whose height is known (T.88 7.4.7.4): the fixed arithmetic stream decodes differently on white. The
+		// region is in the second stripe, past the rows the page starts with (one maximum stripe).
+		const auto refine_page = [&](bool unknown_height) {
+			std::vector<uint8_t> stream = header;
+			std::vector<uint8_t> info;
+			append_u32_be(info, 8u);
+			append_u32_be(info, unknown_height ? 0xFFFFFFFFu : 4u);
+			append_u32_be(info, 72u);
+			append_u32_be(info, 72u);
+			info.push_back(0x04u); // page default pixel 1
+			append_u16_be(info, unknown_height ? 0x8002u : 0u);
+			append_jbig2_segment(stream, 0u, 48u, {}, 1u, info);
+			if (unknown_height) {
+				append_jbig2_segment(stream, 1u, 50u, {}, 1u, std::vector<uint8_t>{0u, 0u, 0u, 1u});
+			}
+			std::vector<uint8_t> grr;
+			append_u32_be(grr, 8u);
+			append_u32_be(grr, 2u);
+			append_u32_be(grr, 0u);
+			append_u32_be(grr, 2u);
+			grr.push_back(4u);    // REPLACE
+			grr.push_back(0x01u); // GRTEMPLATE 1, TPGRON 0
+			grr.push_back(0xFFu);
+			grr.push_back(0xFFu);
+			append_jbig2_segment(stream, 2u, 42u, {}, 1u, grr);
+			if (unknown_height) {
+				append_jbig2_segment(stream, 3u, 50u, {}, 1u, std::vector<uint8_t>{0u, 0u, 0u, 3u});
+			}
+			append_jbig2_segment(stream, 4u, 49u, {}, 1u, {});
+			return stream;
+		};
+		auto known_height = decode_jbig2(refine_page(false));
+		auto grown = decode_jbig2(refine_page(true));
+		RECTO_ASSERT_OK(known_height);
+		RECTO_ASSERT_OK(grown);
+		ASSERT_EQ(known_height->size(), 4u);
+		EXPECT_EQ(*grown, *known_height);
 	}
 }
 

@@ -3851,6 +3851,8 @@ struct Jbig2DecoderState {
 					state.remaining_limit(effective_limit)));
 
 			if (seg_type == 36u) {
+				// An intermediate region is still a region of the page: it lies in the open stripe (T.88 7.4.9).
+				RECTO_PDF_RETURN_IF_ERROR(state.place_region(reg_y, rbm.height, effective_limit, seg_header_start));
 				RECTO_PDF_RETURN_IF_ERROR(
 					state.account_bytes(jbig2_footprint(rbm), effective_limit, seg_header_start));
 				state.aux_regions[seg_num] = std::move(rbm);
@@ -5510,6 +5512,8 @@ struct Jbig2DecoderState {
 			}
 
 			if (seg_type == 4u) {
+				// An intermediate region is still a region of the page: it lies in the open stripe (T.88 7.4.9).
+				RECTO_PDF_RETURN_IF_ERROR(state.place_region(reg_y, rbm.height, effective_limit, seg_header_start));
 				RECTO_PDF_RETURN_IF_ERROR(
 					state.account_bytes(jbig2_footprint(rbm), effective_limit, seg_header_start));
 				state.aux_regions[seg_num] = std::move(rbm);
@@ -5573,6 +5577,9 @@ struct Jbig2DecoderState {
 			} else if (state.page_bitmap.has_value()) {
 				// ITU-T T.88 §7.4.7.4: When a generic refinement region refers to no other segments,
 				// GRREFERENCE is the region of the page buffer with the same width, height, and (reg_x, reg_y) location.
+				// On a page of unknown height the rows the region reaches are grown first, filled with the page's default
+				// pixel, so the reference reads them as the page holds them rather than as white.
+				RECTO_PDF_RETURN_IF_ERROR(state.place_region(reg_y, reg_h, effective_limit, seg_header_start));
 				RECTO_PDF_TRY(
 					Jbig2Bitmap page_crop,
 					Jbig2Bitmap::create(
@@ -5628,6 +5635,8 @@ struct Jbig2DecoderState {
 					remaining_for_rbm - ref_crop_bytes));
 
 			if (seg_type == 40u) {
+				// An intermediate region is still a region of the page: it lies in the open stripe (T.88 7.4.9).
+				RECTO_PDF_RETURN_IF_ERROR(state.place_region(reg_y, rbm.height, effective_limit, seg_header_start));
 				RECTO_PDF_RETURN_IF_ERROR(
 					state.account_bytes(jbig2_footprint(rbm), effective_limit, seg_header_start));
 				state.aux_regions[seg_num] = std::move(rbm);
@@ -5888,6 +5897,8 @@ struct Jbig2DecoderState {
 				}
 			}
 			if (seg_type == 20u) {
+				// An intermediate region is still a region of the page: it lies in the open stripe (T.88 7.4.9).
+				RECTO_PDF_RETURN_IF_ERROR(state.place_region(reg_y, rbm.height, effective_limit, seg_header_start));
 				RECTO_PDF_RETURN_IF_ERROR(
 					state.account_bytes(jbig2_footprint(rbm), effective_limit, seg_header_start));
 				state.aux_regions[seg_num] = std::move(rbm);
