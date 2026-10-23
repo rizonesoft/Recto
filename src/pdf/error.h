@@ -760,6 +760,39 @@ enum class RefusalReason : uint16_t {
 	return "";
 }
 
+// Which decoder step failed (D01 T02 section 25), so support can see where a decode stopped without the message the
+// ring never keeps. A closed catalogue of numbers and names; values are only ever appended.
+enum class DecoderStep : uint16_t {
+	None = 0,
+	WicFactory,       // the Windows Imaging Component factory
+	WicCreateDecoder, // the WIC stream and decoder
+	WicGetFrame,      // the frame and its size and pixel format
+	WicConvertFormat, // a format converter
+	WicCopyPixels,    // copying the pixels out
+	NativeJpx,        // Recto's own JPEG 2000 decoder
+};
+
+[[nodiscard]] constexpr std::string_view decoder_step_name(DecoderStep step) noexcept
+{
+	switch (step) {
+	case DecoderStep::None:
+		return "None";
+	case DecoderStep::WicFactory:
+		return "WicFactory";
+	case DecoderStep::WicCreateDecoder:
+		return "WicCreateDecoder";
+	case DecoderStep::WicGetFrame:
+		return "WicGetFrame";
+	case DecoderStep::WicConvertFormat:
+		return "WicConvertFormat";
+	case DecoderStep::WicCopyPixels:
+		return "WicCopyPixels";
+	case DecoderStep::NativeJpx:
+		return "NativeJpx";
+	}
+	return "UnknownStep";
+}
+
 struct PdfError {
 	ErrorCode code{ErrorCode::Ok};
 	PdfErrorMessage message{};
@@ -771,6 +804,12 @@ struct PdfError {
 	RefusalReason refusal_reason{RefusalReason::None};
 	std::optional<uint64_t> observed{std::nullopt};
 	std::optional<uint64_t> bound{std::nullopt};
+	// Appended (D01 T02 section 25): the decoder step that failed and the platform status it returned (a Windows
+	// HRESULT), and the same for an earlier attempt this failure followed (WIC before the native JPEG 2000 decoder).
+	DecoderStep decoder_step{DecoderStep::None};
+	std::optional<uint32_t> platform_status{std::nullopt};
+	DecoderStep prior_step{DecoderStep::None};
+	std::optional<uint32_t> prior_status{std::nullopt};
 
 	PdfError() noexcept = default;
 
@@ -1203,8 +1242,20 @@ struct DiagnosticEntry {
 	RefusalReason refusal_reason{RefusalReason::None};
 	std::optional<uint64_t> observed{std::nullopt};
 	std::optional<uint64_t> bound{std::nullopt};
+	DecoderStep decoder_step{DecoderStep::None};
+	std::optional<uint32_t> platform_status{std::nullopt};
+	DecoderStep prior_step{DecoderStep::None};
+	std::optional<uint32_t> prior_status{std::nullopt};
 
 	[[nodiscard]] std::string format() const noexcept;
+};
+
+// The decoder context a diagnostic carries (D01 T02 section 25): what PdfError's decoder fields hold.
+struct DecoderContext {
+	DecoderStep step{DecoderStep::None};
+	std::optional<uint32_t> status{std::nullopt};
+	DecoderStep prior_step{DecoderStep::None};
+	std::optional<uint32_t> prior_status{std::nullopt};
 };
 
 // Maps an ErrorCode and optional diagnostic hint/tag to a closed DiagnosticId
@@ -1225,7 +1276,8 @@ void record_diagnostic(
 	uint16_t generation_num = 0,
 	RefusalReason refusal_reason = RefusalReason::None,
 	std::optional<uint64_t> observed = std::nullopt,
-	std::optional<uint64_t> bound = std::nullopt) noexcept;
+	std::optional<uint64_t> bound = std::nullopt,
+	const DecoderContext& decoder = {}) noexcept;
 
 void record_diagnostic(
 	ErrorCode code,
@@ -1317,6 +1369,14 @@ struct CapturedEtwEvent {
 	uint64_t observed{0};
 	bool has_bound{false};
 	uint64_t bound{0};
+	uint16_t decoder_step{0};
+	std::string decoder_step_name;
+	bool has_platform_status{false};
+	uint32_t platform_status{0};
+	uint16_t prior_step{0};
+	std::string prior_step_name;
+	bool has_prior_status{false};
+	uint32_t prior_status{0};
 	std::string phase;
 	uint64_t duration_us{0};
 	uint64_t document_id{0};

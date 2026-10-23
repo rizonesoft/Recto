@@ -4863,9 +4863,69 @@ TEST(PdfFilters, JpxPathPinned)
 	RECTO_ASSERT_OK(decode_jpx_image(jp2));
 }
 
+// A WIC failure keeps its step and HRESULT as numbers in the diagnostic ring, its line and the ETW event, where the
+// message is never kept; a native JPEG 2000 failure after WIC's keeps WIC's step and HRESULT beside its own (D01 T02
+// section 25).
+TEST(PdfError, DecoderContextReachesRingAndEtw)
+{
+	constexpr int32_t kOutOfMemory = static_cast<int32_t>(0x8007000Eu);
+	constexpr int32_t kBadImage = static_cast<int32_t>(0x88982F60u);
+	const auto jpeg = make_minimal_jpeg_8x8_cmyk();
+	PdfDict dct;
+	dct.set("Filter", PdfValue(PdfName("DCTDecode")));
+	const std::array<std::pair<detail::WicStage, DecoderStep>, 4> stages = {{
+		{detail::WicStage::Factory, DecoderStep::WicFactory},
+		{detail::WicStage::CreateDecoder, DecoderStep::WicCreateDecoder},
+		{detail::WicStage::GetFrame, DecoderStep::WicGetFrame},
+		{detail::WicStage::CopyPixels, DecoderStep::WicCopyPixels},
+	}};
+	force_enable_etw_provider_for_testing();
+	clear_diagnostics();
+	clear_captured_etw_events_for_testing();
+	set_etw_capture_for_testing(true);
+	for (const auto& [stage, step] : stages) {
+		const detail::ScopedWicFailure fail(stage, kOutOfMemory);
+		auto dec = decode_stream(jpeg, dct);
+		ASSERT_FALSE(dec.has_value());
+		EXPECT_EQ(dec.error().decoder_step, step);
+		record_diagnostic(dec.error());
+	}
+	const std::array<uint8_t, 12> rgb = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200};
+	{
+		const detail::ScopedWicFailure fail(detail::WicStage::CreateDecoder, kBadImage);
+		auto img = decode_jpx_image(make_genuine_jp2_2x2_rgb(rgb, true, 5u, 1u)); // the native decoder refuses it too
+		ASSERT_FALSE(img.has_value());
+		record_diagnostic(img.error());
+	}
+	set_etw_capture_for_testing(false);
+
+	const auto tail = diagnostics_tail(10);
+	const auto captured = captured_etw_events_for_testing();
+	ASSERT_EQ(tail.size(), stages.size() + 1u);
+	ASSERT_EQ(captured.size(), stages.size() + 1u);
+	for (size_t i = 0; i < stages.size(); ++i) {
+		EXPECT_EQ(tail[i].decoder_step, stages[i].second);
+		EXPECT_EQ(tail[i].platform_status, std::optional<uint32_t>(0x8007000Eu));
+		EXPECT_NE(tail[i].format().find("hresult=0x8007000E"), std::string::npos) << tail[i].format();
+		EXPECT_EQ(captured[i].decoder_step_name, decoder_step_name(stages[i].second));
+		EXPECT_TRUE(captured[i].has_platform_status);
+		EXPECT_EQ(captured[i].platform_status, 0x8007000Eu);
+	}
+	const DiagnosticEntry& handed_over = tail.back();
+	EXPECT_EQ(handed_over.decoder_step, DecoderStep::NativeJpx);
+	EXPECT_EQ(handed_over.prior_step, DecoderStep::WicCreateDecoder);
+	EXPECT_EQ(handed_over.prior_status, std::optional<uint32_t>(0x88982F60u));
+	EXPECT_NE(handed_over.format().find("[after step=WicCreateDecoder hresult=0x88982F60]"), std::string::npos)
+		<< handed_over.format();
+	EXPECT_EQ(captured.back().prior_step_name, "WicCreateDecoder");
+	EXPECT_EQ(captured.back().prior_status, 0x88982F60u);
+	clear_diagnostics();
+	clear_captured_etw_events_for_testing();
+}
+
 // A baseline RGB JPEG of `width` x `height` mid-gray pixels, encoded by WIC's own JPEG encoder (so the decoder under
 // test meets an encoder it did not write). Empty if this machine cannot encode one.
-std::vector<uint8_t> make_wic_rgb_jpeg(uint32_t width, uint32_t height)
+std::vector<uint8_t> make_wic_rgb_jpeg(uint32_t width, uint32_t height, bool gray = false)
 {
 	using Microsoft::WRL::ComPtr;
 	(void)CoInitializeEx(nullptr, COINIT_MULTITHREADED); // S_FALSE or a different mode already set is fine here
@@ -4873,15 +4933,18 @@ std::vector<uint8_t> make_wic_rgb_jpeg(uint32_t width, uint32_t height)
 	if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)))) {
 		return {};
 	}
-	const UINT stride = width * 3u;
+	const UINT stride = width * (gray ? 1u : 3u);
 	std::vector<uint8_t> source(static_cast<size_t>(stride) * height, 0x80u);
+	for (size_t i = 0; i < source.size(); ++i) {
+		source[i] = static_cast<uint8_t>(0x40u + (i * 7u) % 0x80u); // varied, so channel order shows
+	}
 	ComPtr<IWICBitmap> bitmap;
 	ComPtr<IStream> stream;
 	ComPtr<IWICBitmapEncoder> encoder;
 	ComPtr<IWICBitmapFrameEncode> frame;
 	ComPtr<IPropertyBag2> options;
-	WICPixelFormatGUID format = GUID_WICPixelFormat24bppBGR;
-	if (FAILED(factory->CreateBitmapFromMemory(width, height, GUID_WICPixelFormat24bppBGR, stride,
+	WICPixelFormatGUID format = gray ? GUID_WICPixelFormat8bppGray : GUID_WICPixelFormat24bppBGR;
+	if (FAILED(factory->CreateBitmapFromMemory(width, height, format, stride,
 			static_cast<UINT>(source.size()), source.data(), &bitmap)) ||
 		FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stream)) ||
 		FAILED(factory->CreateEncoder(GUID_ContainerFormatJpeg, nullptr, &encoder)) ||
@@ -4921,7 +4984,6 @@ TEST(PdfFilters, DctLargePhotoWithinCeiling)
 	const size_t peak = meter.peak_bytes();
 	RECTO_ASSERT_OK(decoded);
 	EXPECT_EQ(decoded->size(), kOneBuffer);
-	EXPECT_EQ((*decoded)[0], 0x80u);
 	if (test::ScopedHeapMeter::available()) {
 		EXPECT_LT(peak, kOneBuffer + kOneBuffer / 10u) << "peak " << peak;
 	}
@@ -4932,6 +4994,74 @@ TEST(PdfFilters, DctLargePhotoWithinCeiling)
 	EXPECT_EQ(rgba_only->rgba_pixels.size(), size_t{kWidth} * kHeight * 4u);
 	EXPECT_TRUE(rgba_only->pixels.empty());
 	EXPECT_TRUE(rgba_only->bgra_pixels.empty());
+}
+
+// Each DCT representation is exactly one buffer, for RGB, gray and CMYK alike (D06 T05 §38, completion review): it
+// matches what All builds (channel order, alpha, /Decode applied), it decodes when it fits the ceiling exactly and is
+// refused one byte under with its numbers, and its measured peak is that one buffer.
+TEST(PdfFilters, DctRepresentationsAreOneBufferEach)
+{
+	struct Fixture {
+		const char* name;
+		std::vector<uint8_t> jpeg;
+		uint32_t components;
+	};
+	const std::array<Fixture, 3> fixtures = {{
+		{"rgb", make_wic_rgb_jpeg(512u, 256u), 3u},
+		{"gray", make_wic_rgb_jpeg(512u, 256u, true), 1u},
+		{"cmyk", make_minimal_jpeg_8x8_cmyk(), 4u},
+	}};
+	PdfDict inverted;
+	for (const Fixture& fx : fixtures) {
+		ASSERT_FALSE(fx.jpeg.empty()) << fx.name;
+		PdfArray decode;
+		for (uint32_t c = 0; c < fx.components; ++c) {
+			decode.push_back(PdfValue(int64_t{1}));
+			decode.push_back(PdfValue(int64_t{0}));
+		}
+		inverted.set("Decode", PdfValue(std::move(decode)));
+		for (const PdfDict* parms : {static_cast<const PdfDict*>(nullptr), static_cast<const PdfDict*>(&inverted)}) {
+			auto all = decode_dct_image(fx.jpeg, parms, kMaxDecodedStreamBytes, DctOutput::All);
+			RECTO_ASSERT_OK(all);
+			const size_t pixels = size_t{all->width} * all->height;
+			const std::array<std::pair<DctOutput, size_t>, 4> outputs = {{
+				{DctOutput::Samples, fx.components},
+				{DctOutput::Rgba, 4u},
+				{DctOutput::Bgra, 4u},
+				{DctOutput::Stream, fx.components == 4u ? 4u : fx.components},
+			}};
+			for (const auto& [output, bpp] : outputs) {
+				const size_t required = pixels * bpp;
+				const test::ScopedHeapMeter meter;
+				auto one = decode_dct_image(fx.jpeg, parms, required, output);
+				const size_t peak = meter.peak_bytes();
+				ASSERT_TRUE(one.has_value()) << fx.name << " output " << static_cast<int>(output) << ": "
+											 << one.error().message.view();
+				const std::vector<uint8_t>* built = output == DctOutput::Rgba ? &one->rgba_pixels
+					: output == DctOutput::Bgra || (output == DctOutput::Stream && fx.components == 4u) ? nullptr
+					: &one->pixels;
+				if (output == DctOutput::Stream && fx.components == 4u) {
+					built = &one->rgba_pixels; // a CMYK stream is RGBA by default
+				} else if (output == DctOutput::Bgra) {
+					built = &one->bgra_pixels;
+				}
+				const std::vector<uint8_t>& expected = output == DctOutput::Rgba || (output == DctOutput::Stream && fx.components == 4u)
+					? all->rgba_pixels
+					: output == DctOutput::Bgra ? all->bgra_pixels : all->pixels;
+				EXPECT_EQ(*built, expected) << fx.name << " output " << static_cast<int>(output);
+				EXPECT_EQ(one->pixels.size() + one->rgba_pixels.size() + one->bgra_pixels.size(), required) << fx.name;
+				if (test::ScopedHeapMeter::available() && required >= 65536u) {
+					EXPECT_LT(peak, required + required / 10u) << fx.name << " output " << static_cast<int>(output);
+				}
+				auto under = decode_dct_image(fx.jpeg, parms, required - 1u, output);
+				ASSERT_FALSE(under.has_value()) << fx.name;
+				EXPECT_EQ(under.error().code, ErrorCode::DecompressionLimitExceeded);
+				EXPECT_EQ(under.error().refusal_reason, RefusalReason::WorkingBytes);
+				EXPECT_EQ(under.error().observed, std::optional<uint64_t>(required));
+				EXPECT_EQ(under.error().bound, std::optional<uint64_t>(required - 1u));
+			}
+		}
+	}
 }
 
 // WIC failures are classified by their HRESULT at every step (D06 T05 §37): out of memory, a cancel, a missing
@@ -5013,6 +5143,31 @@ TEST(PdfFilters, WicFailureClasses)
 		const std::string_view message = img.error().message.view();
 		EXPECT_NE(message.find("progression order"), std::string_view::npos) << message;
 		EXPECT_NE(message.find("0x88982F60"), std::string_view::npos) << message;
+		EXPECT_NE(message.find("(WicCreateDecoder)"), std::string_view::npos) << message; // the step that stopped WIC
+	}
+
+	// With a JPEG 2000 codec registered, the later WIC steps (frame, conversion, pixel copy) classify and hand over the
+	// same way; without one, WIC stops at the decoder, which the cases above cover.
+	bool codec_registered = false;
+	{
+		const detail::ScopedJpxPath wic_only(detail::JpxPath::WicOnly);
+		codec_registered = decode_jpx_image(jp2).has_value();
+	}
+	if (codec_registered) {
+		for (const detail::WicStage stage :
+			{detail::WicStage::GetFrame, detail::WicStage::ConvertFormat, detail::WicStage::CopyPixels}) {
+			for (const Case& c : cases) {
+				const detail::ScopedWicFailure fail(stage, c.hresult);
+				const uint64_t native_before = detail::native_jpx_attempts();
+				auto img = decode_jpx_image(jp2);
+				const bool hands_over = c.code == ErrorCode::UnsupportedFeature || c.code == ErrorCode::DamagedFormat;
+				EXPECT_EQ(detail::native_jpx_attempts() - native_before, hands_over ? 1u : 0u) << c.hex;
+				if (!hands_over) {
+					ASSERT_FALSE(img.has_value()) << c.hex;
+					EXPECT_EQ(img.error().code, c.code) << c.hex;
+				}
+			}
+		}
 	}
 }
 

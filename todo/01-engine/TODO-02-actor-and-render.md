@@ -738,6 +738,8 @@ The completion review of `D01 T02 §22` (`docs/reviews/01-engine/D01-T02-s22.md`
 
 ## 25. Decoder failures keep their step and Windows HRESULT in the diagnostic ring and ETW
 
+> **Started:** 2026-10-23T14:19Z
+
 The completion review of `D06 T05 §37` (`docs/reviews/06-quality/D06-T05-s37.md`, gap G4) found that a WIC decode failure reaches the user with its step and HRESULT in the message, but the diagnostic ring and ETW keep only the code (D16: never the message), so support cannot see which step failed, which HRESULT Windows returned, or whether JPXDecode handed the stream to the native decoder. Acrobat's log collection records the failing component; Recto should keep the same evidence as numbers and closed names, never document bytes.
 
 **Phase:** 1
@@ -750,9 +752,9 @@ The completion review of `D06 T05 §37` (`docs/reviews/06-quality/D06-T05-s37.md
 1. Add a closed decoder step and an optional `platform_status` (`uint32_t`, the HRESULT) to `PdfError`, the ring and the ETW event in `src/pdf/error.h` and `src/pdf/error.cpp`, set by `wic_failure` in `src/pdf/filters.cpp`. Done when: a WIC failure carries step and HRESULT end to end.
 2. Record the JPX hand-over. Done when: a native failure after a WIC data failure keeps both steps.
 
-- [ ] Add `enum class DecoderStep : uint16_t` (`None`, `WicFactory`, `WicCreateDecoder`, `WicGetFrame`, `WicConvertFormat`, `WicCopyPixels`, `NativeJpx`) with a `constexpr noexcept` name table, and `decoder_step` and `platform_status` (optional `uint32_t`) on `PdfError` and `DiagnosticEntry`. Done when: `PdfError.DecoderStepNamesCoverEveryStep` passes.
-- [ ] Carry them into the ring entry, `DiagnosticEntry::format()` (`[step=WicCopyPixels hresult=0x8007000E]`) and the ETW `Diagnostic` event (`DecoderStep`, `DecoderStepName`, `HasPlatformStatus`, `PlatformStatus`), and set them in `wic_failure` (`src/pdf/filters.cpp`). Done when: `PdfError.DecoderContextReachesRingAndEtw` injects a failure at each WIC step (`detail::ScopedWicFailure`) and reads step and HRESULT back from the ring and the captured packet.
-- [ ] When JPXDecode falls back and the native decoder also fails, keep WIC's step and HRESULT on the returned error beside the native failure. Done when: the test reads both from the ring entry. Cheaper substitute that fails the checkpoint: the HRESULT only in the English message, which the ring drops.
+- [x] Add `enum class DecoderStep : uint16_t` (`None`, `WicFactory`, `WicCreateDecoder`, `WicGetFrame`, `WicConvertFormat`, `WicCopyPixels`, `NativeJpx`) with a `constexpr noexcept` name table, and `decoder_step` and `platform_status` (optional `uint32_t`) on `PdfError` and `DiagnosticEntry`. Done when: `PdfError.DecoderStepNamesCoverEveryStep` passes.
+- [x] Carry them into the ring entry, `DiagnosticEntry::format()` (`[step=WicCopyPixels hresult=0x8007000E]`) and the ETW `Diagnostic` event (`DecoderStep`, `DecoderStepName`, `HasPlatformStatus`, `PlatformStatus`), and set them in `wic_failure` (`src/pdf/filters.cpp`). Done when: `PdfError.DecoderContextReachesRingAndEtw` injects a failure at each WIC step (`detail::ScopedWicFailure`) and reads step and HRESULT back from the ring and the captured packet.
+- [x] When JPXDecode falls back and the native decoder also fails, keep WIC's step and HRESULT on the returned error beside the native failure. Done when: the test reads both from the ring entry. Cheaper substitute that fails the checkpoint: the HRESULT only in the English message, which the ring drops.
 - [ ] Commit: `pdf: decoder failures keep their step and HRESULT in diagnostics`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*:PdfFilters.WicFailureClasses` passes under ASan, including `PdfError.DecoderContextReachesRingAndEtw`.

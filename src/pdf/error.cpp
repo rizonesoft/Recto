@@ -1,6 +1,8 @@
 // Recto PDF engine error-handling and D16 diagnostic implementation (D01 T01 section 1).
 #include "error.h"
 
+#include <cstdio>
+
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -106,6 +108,7 @@ struct DiagnosticSlot {
 	uint64_t observed{0};
 	bool has_bound{false};
 	uint64_t bound{0};
+	DecoderContext decoder{};
 };
 
 SRWLOCK g_ring_lock = SRWLOCK_INIT;
@@ -120,7 +123,7 @@ std::atomic<uint64_t> g_etw_diagnostic_events{0};
 std::atomic<uint64_t> g_etw_span_events{0};
 
 constexpr size_t kMaxCapturedEtwEvents = 128;
-constexpr size_t kMaxCapturedFields = 20;
+constexpr size_t kMaxCapturedFields = 28;
 constexpr size_t kMaxCapturedNameLen = 31;
 
 struct CapturedEtwSlot {
@@ -145,6 +148,14 @@ struct CapturedEtwSlot {
 	uint64_t observed{0};
 	bool has_bound{false};
 	uint64_t bound{0};
+	uint16_t decoder_step{0};
+	std::array<char, kMaxCapturedNameLen + 1> decoder_step_name{};
+	bool has_platform_status{false};
+	uint32_t platform_status{0};
+	uint16_t prior_step{0};
+	std::array<char, kMaxCapturedNameLen + 1> prior_step_name{};
+	bool has_prior_status{false};
+	uint32_t prior_status{0};
 	std::array<char, kMaxCapturedNameLen + 1> phase{};
 	uint64_t duration_us{0};
 	uint64_t document_id{0};
@@ -261,6 +272,25 @@ void append_refusal_suffix(
 	out += ']';
 }
 
+// A decoder failure's step and platform status, and the earlier attempt's: " [step=WicCopyPixels hresult=0x8007000E]".
+void append_decoder_suffix(std::string& out, DecoderStep step, const std::optional<uint32_t>& status, const char* label)
+{
+	if (step == DecoderStep::None && !status.has_value()) {
+		return;
+	}
+	out += " [";
+	out += label;
+	out += "step=";
+	out += decoder_step_name(step);
+	if (status.has_value()) {
+		char hex[16];
+		const int n = std::snprintf(hex, sizeof(hex), "0x%08X", *status);
+		out += " hresult=";
+		out.append(hex, n > 0 ? static_cast<size_t>(n) : 0u);
+	}
+	out += ']';
+}
+
 // ETW wants null-terminated names. Every name `error_code_name`, `diagnostic_id_name` and `etw_phase_name` return is a
 // string literal, so their data is null-terminated and the tables in error.h stay the only ones.
 const char* error_code_cstr(ErrorCode code) noexcept
@@ -281,6 +311,11 @@ const char* etw_phase_cstr(EtwPhaseId phase_id) noexcept
 const char* refusal_reason_cstr(RefusalReason reason) noexcept
 {
 	return refusal_reason_name(reason).data();
+}
+
+const char* decoder_step_cstr(DecoderStep step) noexcept
+{
+	return decoder_step_name(step).data();
 }
 
 bool ascii_iequals(std::string_view a, std::string_view b) noexcept
@@ -466,7 +501,7 @@ void process_tlg_write_transfer(
 	parse_event_metadata_into(slot, user_data[1]);
 	const std::string_view parsed_name(slot.event_name.data());
 
-	if (parsed_name == "Diagnostic" && user_data_count >= 19) {
+	if (parsed_name == "Diagnostic" && user_data_count >= 27) {
 		slot.sequence = read_descriptor_scalar<uint64_t>(user_data[2]);
 		slot.error_code = read_descriptor_scalar<uint32_t>(user_data[3]);
 		read_descriptor_cstr_into(slot.error_code_name, user_data[4]);
@@ -483,7 +518,15 @@ void process_tlg_write_transfer(
 		slot.observed = read_descriptor_scalar<uint64_t>(user_data[15]);
 		slot.has_bound = read_descriptor_scalar<uint8_t>(user_data[16]) != 0;
 		slot.bound = read_descriptor_scalar<uint64_t>(user_data[17]);
-		slot.thread_id = read_descriptor_scalar<uint32_t>(user_data[18]);
+		slot.decoder_step = read_descriptor_scalar<uint16_t>(user_data[18]);
+		read_descriptor_cstr_into(slot.decoder_step_name, user_data[19]);
+		slot.has_platform_status = read_descriptor_scalar<uint8_t>(user_data[20]) != 0;
+		slot.platform_status = read_descriptor_scalar<uint32_t>(user_data[21]);
+		slot.prior_step = read_descriptor_scalar<uint16_t>(user_data[22]);
+		read_descriptor_cstr_into(slot.prior_step_name, user_data[23]);
+		slot.has_prior_status = read_descriptor_scalar<uint8_t>(user_data[24]) != 0;
+		slot.prior_status = read_descriptor_scalar<uint32_t>(user_data[25]);
+		slot.thread_id = read_descriptor_scalar<uint32_t>(user_data[26]);
 	} else if (parsed_name == "SpanStart" && user_data_count >= 6) {
 		read_descriptor_cstr_into(slot.phase, user_data[2]);
 		slot.document_id = read_descriptor_scalar<uint64_t>(user_data[3]);
@@ -554,6 +597,8 @@ std::string PdfError::format() const noexcept
 		}
 		append_context_suffix(out, byte_offset, object_num, generation_num);
 		append_refusal_suffix(out, refusal_reason, observed, bound);
+		append_decoder_suffix(out, decoder_step, platform_status, "");
+		append_decoder_suffix(out, prior_step, prior_status, "after ");
 		return out;
 	} catch (...) {
 		return {};
@@ -584,6 +629,8 @@ std::string DiagnosticEntry::format() const noexcept
 		}
 		append_context_suffix(out, byte_offset, object_num, generation_num);
 		append_refusal_suffix(out, refusal_reason, observed, bound);
+		append_decoder_suffix(out, decoder_step, platform_status, "");
+		append_decoder_suffix(out, prior_step, prior_status, "after ");
 		return out;
 	} catch (...) {
 		return {};
@@ -828,6 +875,14 @@ std::vector<CapturedEtwEvent> captured_etw_events_for_testing() noexcept
 			ev.observed = s.observed;
 			ev.has_bound = s.has_bound;
 			ev.bound = s.bound;
+			ev.decoder_step = s.decoder_step;
+			ev.decoder_step_name = s.decoder_step_name.data();
+			ev.has_platform_status = s.has_platform_status;
+			ev.platform_status = s.platform_status;
+			ev.prior_step = s.prior_step;
+			ev.prior_step_name = s.prior_step_name.data();
+			ev.has_prior_status = s.has_prior_status;
+			ev.prior_status = s.prior_status;
 			ev.phase = s.phase.data();
 			ev.duration_us = s.duration_us;
 			ev.document_id = s.document_id;
@@ -849,7 +904,8 @@ void record_diagnostic(
 	uint16_t generation_num,
 	RefusalReason refusal_reason,
 	std::optional<uint64_t> observed,
-	std::optional<uint64_t> bound) noexcept
+	std::optional<uint64_t> bound,
+	const DecoderContext& decoder) noexcept
 {
 	ensure_etw_provider_registered();
 
@@ -876,6 +932,7 @@ void record_diagnostic(
 		slot.observed = observed.value_or(0);
 		slot.has_bound = bound.has_value();
 		slot.bound = bound.value_or(0);
+		slot.decoder = decoder;
 
 		g_ring_write_index = (g_ring_write_index + 1) % kDiagnosticRingCapacity;
 		if (g_ring_count < kDiagnosticRingCapacity) {
@@ -897,6 +954,14 @@ void record_diagnostic(
 	const uint64_t observed_val = observed.value_or(0);
 	const uint8_t has_bound = bound.has_value() ? 1u : 0u;
 	const uint64_t bound_val = bound.value_or(0);
+	const uint16_t step_u16 = static_cast<uint16_t>(decoder.step);
+	const char* const step_name_str = decoder_step_cstr(decoder.step);
+	const uint8_t has_status = decoder.status.has_value() ? 1u : 0u;
+	const uint32_t status_val = decoder.status.value_or(0u);
+	const uint16_t prior_u16 = static_cast<uint16_t>(decoder.prior_step);
+	const char* const prior_name_str = decoder_step_cstr(decoder.prior_step);
+	const uint8_t has_prior = decoder.prior_status.has_value() ? 1u : 0u;
+	const uint32_t prior_val = decoder.prior_status.value_or(0u);
 
 	TraceLoggingWrite(
 		g_recto_etw_provider,
@@ -918,6 +983,14 @@ void record_diagnostic(
 		TraceLoggingUInt64(observed_val, "Observed"),
 		TraceLoggingUInt8(has_bound, "HasBound"),
 		TraceLoggingUInt64(bound_val, "Bound"),
+		TraceLoggingUInt16(step_u16, "DecoderStep"),
+		TraceLoggingString(step_name_str, "DecoderStepName"),
+		TraceLoggingUInt8(has_status, "HasPlatformStatus"),
+		TraceLoggingUInt32(status_val, "PlatformStatus"),
+		TraceLoggingUInt16(prior_u16, "PriorDecoderStep"),
+		TraceLoggingString(prior_name_str, "PriorDecoderStepName"),
+		TraceLoggingUInt8(has_prior, "HasPriorPlatformStatus"),
+		TraceLoggingUInt32(prior_val, "PriorPlatformStatus"),
 		TraceLoggingUInt32(tid, "ThreadId"));
 }
 
@@ -946,7 +1019,8 @@ void record_diagnostic(const PdfError& err) noexcept
 		err.generation_num,
 		err.refusal_reason,
 		err.observed,
-		err.bound);
+		err.bound,
+		DecoderContext{err.decoder_step, err.platform_status, err.prior_step, err.prior_status});
 }
 
 std::vector<DiagnosticEntry> diagnostics_tail(size_t max_entries) noexcept
@@ -998,6 +1072,10 @@ std::vector<DiagnosticEntry> diagnostics_tail(size_t max_entries) noexcept
 			if (slot.has_bound) {
 				entry.bound = slot.bound;
 			}
+			entry.decoder_step = slot.decoder.step;
+			entry.platform_status = slot.decoder.status;
+			entry.prior_step = slot.decoder.prior_step;
+			entry.prior_status = slot.decoder.prior_status;
 			result.push_back(std::move(entry));
 		}
 		return result;

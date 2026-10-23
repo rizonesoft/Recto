@@ -647,6 +647,24 @@ TEST(PdfError, RefusalReasonsDistinguishRangeAndOutputCauses)
 	clear_captured_etw_events_for_testing();
 }
 
+// Decoder steps are only ever appended: every value from None up names its fixed step, uniquely (D01 T02 section 25).
+TEST(PdfError, DecoderStepNamesCoverEveryStep)
+{
+	constexpr std::array<std::string_view, 7> kNamesByValue = {
+		"None", "WicFactory", "WicCreateDecoder", "WicGetFrame", "WicConvertFormat", "WicCopyPixels", "NativeJpx"};
+	static_assert(noexcept(decoder_step_name(DecoderStep::None)));
+	static_assert(decoder_step_name(DecoderStep::NativeJpx) == "NativeJpx");
+	std::set<std::string_view> seen;
+	for (uint16_t value = 0; value < kNamesByValue.size(); ++value) {
+		const auto step = static_cast<DecoderStep>(value);
+		EXPECT_EQ(decoder_step_name(step), kNamesByValue[value]) << "value " << value;
+		EXPECT_TRUE(seen.insert(decoder_step_name(step)).second) << "duplicate name at value " << value;
+	}
+	EXPECT_EQ(decoder_step_name(static_cast<DecoderStep>(kNamesByValue.size())), "UnknownStep");
+	EXPECT_EQ(PdfError{}.decoder_step, DecoderStep::None);
+	EXPECT_FALSE(PdfError{}.platform_status.has_value());
+}
+
 // ConversionFailed and RollbackIncomplete are recorded by the caller that knows the failed rule or the backup paths,
 // never automatically, and a message that reads like a damage hint never turns either into a damaged-file diagnostic
 // (D01 T02 section 22).
@@ -964,6 +982,14 @@ TEST(PdfError, EtwTraceLoggingProviderAndSpans)
 		"Observed",
 		"HasBound",
 		"Bound",
+		"DecoderStep",
+		"DecoderStepName",
+		"HasPlatformStatus",
+		"PlatformStatus",
+		"PriorDecoderStep",
+		"PriorDecoderStepName",
+		"HasPriorPlatformStatus",
+		"PriorPlatformStatus",
 		"ThreadId"};
 	EXPECT_EQ(captured[1].field_names, expected_diag_fields);
 	EXPECT_EQ(captured[1].sequence, 1u);
