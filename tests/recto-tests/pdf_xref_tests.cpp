@@ -552,7 +552,9 @@ TEST(PdfXref, RecoveryRoundThreeFixes)
 	// is never read as a definition.
 	for (const std::string mention : {"% notes on /Encrypt 5 0 R\n", "6 0 obj\n(see /Encrypt)\nendobj\n",
 			 "6 0 obj\n(see (nested) /Encrypt 5 0 R)\nendobj\n",
-			 "7 0 obj\n<< /Length 14 >>\nstream\n/Encrypt 5 0 R\nendstream\nendobj\n"}) {
+			 "7 0 obj\n<< /Length 14 >>\nstream\n/Encrypt 5 0 R\nendstream\nendobj\n",
+			 "8 0 obj\n[/Encrypt 5 0 R]\nendobj\n",
+			 "7 0 obj\n<< /Length 47 >>\nstream\nx\nendstream\ntrailer\n<< /Encrypt 5 0 R >> %%EOF\n\nendstream\nendobj\n"}) {
 		const std::string fake = "\nendstream\nendobj\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n";
 		std::string pdf = "%PDF-1.7\n" + mention;
 		const size_t genuine_at = pdf.size();
@@ -597,6 +599,24 @@ TEST(PdfXref, RecoveryRoundThreeFixes)
 		EXPECT_EQ(rec->find(21), nullptr);
 		ASSERT_NE(rec->find(22), nullptr);
 		EXPECT_EQ(rec->find(22)->obj_stm_num, 20u);
+	}
+
+	// Round 5: an encrypted file whose three 400 KiB containers would pass the 1 MiB decode budget of a 16-entry
+	// recovery: nothing is decoded before the parsed trailer decides, and a stream whose /Length names a member of one
+	// reads what the budget allows and then stops, so the file recovers.
+	{
+		std::string pdf = "%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages;
+		for (uint32_t n = 40u; n < 43u; ++n) {
+			const std::string cipher(409600u, static_cast<char>(0xA5));
+			pdf += std::to_string(n) + " 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Length 409600 >>\nstream\n" + cipher +
+				"\nendstream\nendobj\n";
+		}
+		pdf += "50 0 obj\n<< /Length 60 0 R >>\nstream\nabcd\nendstream\nendobj\n"
+			   "junk (unbalanced\n9 0 obj\n<< /Filter /Standard /V 1 /R 2 /O <00> /U <00> /P -4 >>\nendobj\n"
+			   "trailer\n<< /Size 61 /Root 1 0 R /Encrypt 9 0 R >>\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 16);
+		RECTO_ASSERT_OK(rec);
+		EXPECT_EQ(rec->root_ref(), (IndirectRef{1u, 0u}));
 	}
 
 	// Round 4: object 1 defined three times in the file (a catalog, then two other dictionaries); an intact type-1
