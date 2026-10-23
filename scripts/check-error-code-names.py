@@ -21,7 +21,8 @@ QUALIFIED = re.compile(r"(?<![A-Za-z0-9_])(?P<scope>Pdf)?ErrorCode::(?P<name>[A-
 RETIRED = ("PasswordRequired", "InvalidPassword", "LimitExceeded", "UndoBudgetExceeded", "CorruptStructure",
            "StructTreeMalformed", "OutputInvalid", "ClipboardEmpty", "ClipboardUnsupported", "UnsupportedRecipientType")
 # A retired word anywhere in a code span, except as a member or test name after a dot (`PubSec.UnsupportedRecipientType`).
-CODE_SPAN = re.compile(r"`(?P<span>[^`]+)`")
+CODE_SPAN = re.compile(r"(?<!`)(?P<run>`+)(?!`)(?P<span>.+?)(?<!`)(?P=run)(?!`)", re.DOTALL)
+QUOTE_MARKERS = re.compile(r"^\s*(?:>\s?)*")
 RETIRED_WORD = re.compile(r"(?<![A-Za-z0-9_.])(?P<name>" + "|".join(RETIRED) + r")(?![A-Za-z0-9_])")
 NOTE_MARKER = re.compile(r"\*\*Corrected \d{4}-\d{2}-\d{2}:\*\*\s*")
 SECTION = re.compile(r"^## (?P<number>\d+)\. ")
@@ -86,15 +87,38 @@ def unknown_names(todo_root: pathlib.Path, known: set[str]) -> list[str]:
         relative = path.relative_to(todo_root).as_posix()
         section = None
         fenced = None  # the opening fence while inside a fenced block
+        paragraph: list[tuple[int, str]] = []  # the current paragraph's lines (number, text without notes)
+
+        def scan_paragraph() -> None:
+            # Inline code spans (CommonMark 6.1) may run across a paragraph's lines and close only on a backtick run of
+            # the opening one's length; each retired word found is reported on the line it is on.
+            if not paragraph:
+                return
+            text = "\n".join(content for _, content in paragraph)
+            starts = []
+            offset = 0
+            for number, content in paragraph:
+                starts.append((offset, number))
+                offset += len(content) + 1
+            for span in CODE_SPAN.finditer(text):
+                for match in RETIRED_WORD.finditer(span.group("span")):
+                    at = span.start("span") + match.start()
+                    number = next(n for start, n in reversed(starts) if start <= at)
+                    found.append(f"{relative}:{number}: `{match.group('name')}`")
+            paragraph.clear()
+
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if heading := SECTION.match(line):
+                scan_paragraph()
                 section = heading.group("number")
             for match in QUALIFIED.finditer(line):
                 if match.group("scope") or match.group("name") not in known:
                     found.append(f"{relative}:{number}: {match.group(0)}")
-            if fence := FENCE.match(line.lstrip()):
+            # A block quote's markers (`>`) come before a fence inside it.
+            if fence := FENCE.match(QUOTE_MARKERS.sub("", line)):
                 marker = fence.group("marker")
                 if fenced is None:
+                    scan_paragraph()
                     fenced = marker  # the opening fence: its character and length
                     continue
                 # A closing fence uses the opening one's character, at least as many times, and nothing after it
@@ -104,11 +128,15 @@ def unknown_names(todo_root: pathlib.Path, known: set[str]) -> list[str]:
                     continue
             if (relative, section) == EXEMPT_SECTION:
                 continue
-            # A fenced block is code from end to end; elsewhere only inline code spans are.
-            spans = [without_notes(line)] if fenced is not None else [m.group("span") for m in CODE_SPAN.finditer(without_notes(line))]
-            for span in spans:
-                for match in RETIRED_WORD.finditer(span):
+            if fenced is not None:
+                # A fenced block is code from end to end.
+                for match in RETIRED_WORD.finditer(without_notes(line)):
                     found.append(f"{relative}:{number}: `{match.group('name')}`")
+            elif not line.strip():
+                scan_paragraph()
+            else:
+                paragraph.append((number, without_notes(line)))
+        scan_paragraph()
     return found
 
 

@@ -64,19 +64,22 @@ class ErrorCodeNamesTests(unittest.TestCase):
                              f"- [ ] A test name is not a code: `PubSec.{retired.strip('`')}`.\n"
                              f"```cpp\nreturn {retired.strip('`')}; // a fenced block is code throughout\n```\n"
                              f"~~~\nreturn {retired.strip('`')}; // a tilde fence too\n~~~\n"
-                             f"````md\n```\nreturn {retired.strip('`')}; // a shorter fence does not close a longer one\n````\n")
+                             f"````md\n```\nreturn {retired.strip('`')}; // a shorter fence does not close a longer one\n````\n"
+                             f"\n- [ ] A code span may run `across a line,\n{retired.strip('`')} included` (CommonMark 6.1).\n"
+                             f"\n- [ ] A double-backtick span ``holds a `{retired.strip('`')}` inside``.\n"
+                             f"\n> ```\n> return {retired.strip('`')}; // a fence inside a block quote\n> ```\n")
             found = self.mod.unknown_names(root / "todo", known)
-            self.assertEqual(len(found), 8, found)
+            self.assertEqual(len(found), 11, found)
             self.assertTrue(found[0].endswith(unknown), found)
             self.assertTrue(found[1].endswith(pdf_scoped), found)
             self.assertTrue(all(line.endswith(retired) for line in found[2:]), found)
             # The generated plan is a projection of the TODO files and is never read.
             (root / "todo" / "implementation-plan.md").write_text(f"`{unknown}`\n", encoding="utf-8")
-            self.assertEqual(len(self.mod.unknown_names(root / "todo", known)), 8)
+            self.assertEqual(len(self.mod.unknown_names(root / "todo", known)), 11)
             # The command line reports each one and exits 1.
             result = subprocess.run([sys.executable, str(SCRIPT), "--root", str(root)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 1)
-            self.assertEqual(len(result.stdout.splitlines()), 8, result.stdout)
+            self.assertEqual(len(result.stdout.splitlines()), 11, result.stdout)
 
 
 if __name__ == "__main__":
