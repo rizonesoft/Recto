@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 68 | Checklist items: 431
+Sections: 69 | Checklist items: 436
 
 | Status | Reference   | Deliverable                                                                              | Needs        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -124,6 +124,7 @@ Sections: 68 | Checklist items: 431
 | [ ]    | D06 T05 §37 | WIC decode failures classified by HRESULT, not reported as damage                        | windows-host | 4     |
 | [ ]    | D06 T05 §38 | DCT decodes only the pixel representation the caller asked for                           | windows-host | 4     |
 | [ ]    | D06 T05 §39 | Per-codec decode latency measured on valid, large and damaged fixtures                   | windows-host | 3     |
+| [ ]    | D06 T05 §40 | Image decoder allocations drawn from one budgeted memory resource per decode             | windows-host | 5     |
 
 ### Phase 2: M2 Viewer
 
@@ -870,6 +871,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 54/801 verified sections, 17 ready to run now.
+Progress: 54/802 verified sections, 17 ready to run now.
 
-Checklist: 353/5915 items completed (includes Commit items).
+Checklist: 353/5920 items completed (includes Commit items).

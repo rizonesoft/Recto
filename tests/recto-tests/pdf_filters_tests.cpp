@@ -337,6 +337,30 @@ TEST(PdfFilters, ParameterResolutionCopiesOnlyWhatFiltersRead)
 		}
 	}
 
+	// Eight /Filter elements naming one 8 MiB name: a name longer than any filter's is kept as a marker, not copied
+	// eight times, and the chain is refused.
+	const IndirectObjectResolver big_name = [](IndirectRef ref) -> PdfResult<PdfValue> {
+		if (ref.obj_num != 14u) {
+			return PdfError{ErrorCode::DamagedFormat, "missing object"};
+		}
+		return PdfValue(PdfName::from_decoded(std::string(8u << 20u, 'F')));
+	};
+	PdfArray named_filters;
+	for (int i = 0; i < 8; ++i) {
+		named_filters.push_back(PdfValue(IndirectRef{14u, 0u}));
+	}
+	PdfDict big_names;
+	big_names.set(PdfName::from_decoded("Filter"), PdfValue(std::move(named_filters)));
+	{
+		const test::ScopedHeapMeter meter;
+		auto dec = decode_stream(raw, big_names, 1u << 20u, &big_name);
+		const size_t peak = meter.peak_bytes();
+		EXPECT_FALSE(dec.has_value());
+		if (test::ScopedHeapMeter::available()) {
+			EXPECT_LT(peak, size_t{20} << 20u); // one or two 8 MiB resolver results in flight, not eight kept
+		}
+	}
+
 	PdfDict wrong_type;
 	wrong_type.set(PdfName::from_decoded("Predictor"), PdfValue(IndirectRef{12u, 0u}));
 	PdfDict wrong;
@@ -4151,6 +4175,19 @@ TEST(PdfFilters, CcittAndMmrBounds)
 		// The transition buffers (1 MiB at 131,072 columns) and the 32 KiB output share one ceiling: 1 MiB is refused,
 		// and at 2 MiB the decode holds no more than its ceiling.
 		RECTO_EXPECT_ERR(decode_ccitt_fax(g4, &parms, 1u << 20u), ErrorCode::DecompressionLimitExceeded);
+
+		// With /Rows unknown the output grows, and while it does the old block is live beside the new one: two white
+		// 126,000-pixel rows fit 1 MiB with the transition buffers only if that is not counted, so they are refused
+		// there and decode at 2 MiB.
+		PdfDict open_rows;
+		open_rows.set("K", PdfValue(int64_t{-1}));
+		open_rows.set("Columns", PdfValue(int64_t{126000}));
+		const std::vector<uint8_t> two_white_rows = {0xC0u, 0x04u, 0x00u, 0x40u};
+		RECTO_EXPECT_ERR(
+			decode_ccitt_fax(two_white_rows, &open_rows, 1u << 20u), ErrorCode::DecompressionLimitExceeded);
+		auto two_rows = decode_ccitt_fax(two_white_rows, &open_rows, 2u << 20u);
+		RECTO_ASSERT_OK(two_rows);
+		EXPECT_EQ(two_rows->size(), 2u * 15750u);
 		const test::ScopedHeapMeter meter;
 		auto bounded = decode_ccitt_fax(g4, &parms, 2u << 20u);
 		const size_t peak = meter.peak_bytes();
@@ -4331,6 +4368,37 @@ TEST(PdfFilters, JpxCodingParametersBounded)
 	auto overrides = decode_jpx_image(make(valid_qcd, 4096u, true), nullptr, 16u << 20u);
 	RECTO_ASSERT_OK(overrides);
 	EXPECT_EQ(overrides->pixels, std::vector<uint8_t>(64u * 64u, 128u));
+
+	// Each tile also carrying a 97-entry QCD and a 97-entry QCC for component 0: the tables each parse stores are
+	// charged too, so 3.6 MiB no longer holds them (it held the per-component estimate), and 8 MiB does.
+	std::vector<uint8_t> tables;
+	{
+		std::vector<uint8_t> qcd_body = {0x40u};
+		qcd_body.insert(qcd_body.end(), 97u, 0x40u);
+		std::vector<uint8_t> qcc_body = {0x00u, 0x40u}; // Cqcc = 0, then the same table
+		qcc_body.insert(qcc_body.end(), 97u, 0x40u);
+		const auto base = make(valid_qcd, 0u, false);
+		tables.assign(base.begin(), base.end() - 2); // drop EOC
+		for (uint32_t t = 0; t < 4096u; ++t) {
+			const uint32_t header = 4u + static_cast<uint32_t>(qcd_body.size()) + 4u + static_cast<uint32_t>(qcc_body.size());
+			tables.insert(tables.end(), {0xFFu, 0x90u, 0x00u, 10u});
+			append_u16_be(tables, static_cast<uint16_t>(t));
+			append_u32_be(tables, 12u + header + 2u + 1u);
+			tables.insert(tables.end(), {0u, 1u});
+			tables.insert(tables.end(), {0xFFu, 0x5Cu});
+			append_u16_be(tables, static_cast<uint16_t>(2u + qcd_body.size()));
+			tables.insert(tables.end(), qcd_body.begin(), qcd_body.end());
+			tables.insert(tables.end(), {0xFFu, 0x5Du});
+			append_u16_be(tables, static_cast<uint16_t>(2u + qcc_body.size()));
+			tables.insert(tables.end(), qcc_body.begin(), qcc_body.end());
+			tables.insert(tables.end(), {0xFFu, 0x93u, 0x00u});
+		}
+		tables.insert(tables.end(), {0xFFu, 0xD9u});
+	}
+	RECTO_EXPECT_ERR(decode_jpx_image(tables, nullptr, (36u << 20u) / 10u), ErrorCode::DecompressionLimitExceeded);
+	auto with_tables = decode_jpx_image(tables, nullptr, 8u << 20u);
+	RECTO_ASSERT_OK(with_tables);
+	EXPECT_EQ(with_tables->pixels, std::vector<uint8_t>(64u * 64u, 128u));
 }
 
 // A JPX image that is not an /ImageMask ignores /Decode, so a /Decode the resolver cannot resolve does not fail it.

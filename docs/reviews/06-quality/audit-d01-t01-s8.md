@@ -411,3 +411,51 @@ OVERALL: needs-attention
 - Finding 3 (P1): correct. `heap_meter.cpp` replaces the global operator new and delete only outside AddressSanitizer builds, so ASan keeps its own allocation-type and sized-delete checks (Microsoft Learn, AddressSanitizer known issues: overriding operator new and delete). `ScopedHeapMeter::available()` says whether a build measures; the memory assertions run in the Debug and Release suites and are skipped under ASan, and `Support.HeapMeterOnlyOutsideAsan` checks both sides.
 - Finding 4 (P2): correct. The image stage now decides first whether `/Decode` applies (a JPX image that is not an `/ImageMask` ignores it, ISO 32000-2 Table 87) and resolves `/Decode` only when it does; `/ImageMask` itself resolves into a value the stage drops. `PdfFilters.JpxIgnoredDecodeIsNotResolved` decodes with `/Decode [99 0 R 1]` and with `/Decode 99 0 R` against a resolver that fails object 99; both failed before.
 - Proof that the tests can fail: with `src/pdf/filters.cpp` at `17bb0f4`, x64 Debug -> `ParameterResolutionCopiesOnlyWhatFiltersRead`, `JpxCodingParametersBounded` and `JpxIgnoredDecodeIsNotResolved` fail as quoted above.
+
+## Round 7: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-23T08:35:25Z
+- Effort: xhigh
+- Lines: 32
+- Digest: e1e237adcdeaad0c
+
+## adversarial: needs-attention
+
+These reproductions are source-derived, not executed against newly built fixtures.
+
+1. **[P1] Parameter reduction still amplifies large names.** `src/pdf/filters.cpp:9497` copies every resolved `/Filter` name into retained storage before checking whether it names a supported filter. Reproduce with eight `/Filter` array elements referencing one object whose value is an 8 MiB `PdfName`, and a 1 MiB decode ceiling. The pipeline retains at least 64 MiB before rejecting the unknown filter. The scalar-copy branch at `:9551` also retains arbitrarily large names in parameters that require integers. Reducing values to names does not bound their payloads.
+
+2. **[P1] JPX’s coding-parameter charge omits simultaneous QCD storage.** `src/pdf/filters.cpp:8044`, `:8082` charge one quantization payload per component, but each override can retain both its default QCD payload and every component’s QCC payload. `sizeof(TileCodingOverride)` covers vector objects, not their backing allocations. Those vectors also grow geometrically beyond the charged 97 entries. Reproduce in x64 Release by extending `JpxCodingParametersBounded` with 4,096 tiles, each containing a reversible QCD and component-zero QCC with 97 entries, correcting `Psot`, and decoding natively with a 3 MiB ceiling. The accounting remains below that ceiling while retained coding allocations exceed it. Neither the tag-tree guard nor the deferred JPX work budget protects this header allocation.
+
+3. **[P1] CCITT output reallocation exceeds the combined ceiling.** `src/pdf/filters.cpp:2186`, `:2228` subtract transition storage but allow output growth without charging the old output allocation that remains live during `reserve`. Reproduce with `/K -1`, `/Columns 126000`, `/Rows 0`, default `/EndOfBlock true`, bytes `C0 04 00 40` (two white rows and EOFB), and a 1 MiB ceiling. Transition buffers occupy 1,008,000 bytes; growing output from 15,750 to 31,500 bytes temporarily requires **1,055,250 bytes**, exceeding 1,048,576. MSVC allocates replacement vector storage before releasing the original. [MSVC vector implementation](https://github.com/microsoft/STL/blob/main/stl/inc/vector)
+
+## consistency: approve
+
+No additional findings.
+
+## integration: approve
+
+No additional findings.
+
+## source-defect: approve
+
+No additional findings beyond the already assigned conformance work.
+
+## design: advisory
+
+Not applicable: no user surface.
+
+## record: advisory
+
+The historical logs contain the claimed 168-test and 65-test passes and mutation failures. Independently, the existing Debug and Release binaries each passed 25 selected tests. No rebuild or new native reproduction was performed, so these passes do not establish the memory bounds above. No files were modified.
+
+HIGHEST: P1  
+OVERALL: needs-attention
+
+## Fixes after round 7
+
+- Finding 1 (P1): correct. A referenced `/Filter` element kept its resolved name, and a defined parameter kept a resolved name value, whatever its length. A name longer than 127 bytes (ISO 32000-1 Annex C.2; every filter and parameter name is far shorter) is now kept as a marker the readers refuse alike, never copied. `ParameterResolutionCopiesOnlyWhatFiltersRead` adds eight `/Filter` elements naming one 8 MiB name: refused, peak under 20 MiB (75,499,447 bytes on `38a4ba4`).
+- Finding 2 (P1): correct. Overrides were charged one estimated table per component while each QCD and QCC marker stored its own, in vectors that grew geometrically. `parse_qcd_body` now reserves each table exactly (its entry count follows from the body length), and every QCD and QCC parse, main or tile-part, charges what it stored; the tile being decoded charges one table per component. `JpxCodingParametersBounded` adds 4,096 tiles each with a 97-entry QCD and QCC: refused at 3.6 MiB (accepted on `38a4ba4`), decoded at 8 MiB.
+- Finding 3 (P1): correct. With `/Rows` unknown the CCITT output grows, and the old block is live until the new one is filled. A growth now gets only what the old block leaves of the output budget. `CcittAndMmrBounds` adds the reviewer's two white 126,000-pixel rows: refused at 1 MiB (accepted on `38a4ba4`), decoded at 2 MiB.
+- Rounds 4, 6 and 7 each found the next missing or short estimate in the image decoders' memory accounting. The skill's rule for a unit patched three rounds running applies: the owning-layer fix is to draw every decode allocation from one budgeted `std::pmr::memory_resource`, so the ceiling holds by construction. That is filed as `D06 T05 §40` (with a `Deferred:` line on this section), and the round prompts from round 8 state the contract: per-site estimates are early refusals, the resource is the ceiling, and an estimate short by a constant factor is `§40`'s, not a new P1, unless it lets allocation grow without bound.

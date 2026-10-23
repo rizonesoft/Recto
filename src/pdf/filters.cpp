@@ -2225,7 +2225,18 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 					DiagnosticId::DecompressionLimitExceeded,
 					"CCITTFaxDecode row count exceeds maximum decoded stream byte ceiling");
 			}
-			ensure_bounded_capacity(out, row_bytes, output_limit);
+			if (out.size() + row_bytes > out.capacity()) {
+				// Growing keeps the old block live until the new one is filled, so the new block gets only what the
+				// old one leaves of the output budget (capacity never exceeds output_limit, so this cannot wrap).
+				const size_t room = output_limit - out.capacity();
+				if (out.size() + row_bytes > room) {
+					return make_filter_error(
+						ErrorCode::DecompressionLimitExceeded,
+						DiagnosticId::DecompressionLimitExceeded,
+						"CCITTFaxDecode output growth exceeds maximum decoded stream byte ceiling");
+				}
+				ensure_bounded_capacity(out, row_bytes, room);
+			}
 			const size_t prev_size = out.size();
 			out.resize(prev_size + row_bytes);
 			pack_changes_to_row(
@@ -7949,6 +7960,14 @@ void idwt_97_2d_float(
 				"QCD/QCC marker lists more subbands than 32 decomposition levels allow in JPXDecode",
 				sqcd_pos);
 		}
+		{
+			const size_t entries = out_qcd.qstyle == 0u ? body_len - 1u
+				: out_qcd.qstyle == 2u                   ? (body_len - 1u) / 2u
+				: out_qcd.qstyle == 1u                   ? 1u + 3u * static_cast<size_t>(decomp_levels)
+														 : 0u;
+			out_qcd.subband_exponents.reserve(entries);
+			out_qcd.subband_mantissas.reserve(entries);
+		}
 		if (out_qcd.qstyle == 0u) { // Reversible no quantization (1 byte per subband)
 			for (size_t i = 1u; i < body_len; ++i) {
 				if ((cs[sqcd_pos + i] & 0x07u) != 0u) {
@@ -8040,9 +8059,14 @@ void idwt_97_2d_float(
 	};
 
 	// Coding parameters held for the main header and each tile with an override share the decode ceiling with the
-	// image and tile buffers: per component a COD and a QCD record with at most kMaxJ2kSubbands entries.
-	const uint64_t per_component_coding_bytes =
-		sizeof(J2kCodParams) + sizeof(J2kQcdParams) + kMaxJ2kSubbands * (sizeof(uint8_t) + sizeof(uint16_t)) + 1u;
+	// image and tile buffers: per component a COD and a QCD record, and every quantization table a QCD or QCC marker
+	// stores (charged by charge_qcd_payload as it is parsed).
+	const uint64_t per_component_coding_bytes = sizeof(J2kCodParams) + sizeof(J2kQcdParams) + 1u;
+	// The heap bytes a quantization record's two tables hold (each reserved exactly by parse_qcd_body).
+	const auto qcd_payload_bytes = [](const J2kQcdParams& q) noexcept -> uint64_t {
+		return static_cast<uint64_t>(q.subband_exponents.capacity()) * sizeof(uint8_t) +
+			static_cast<uint64_t>(q.subband_mantissas.capacity()) * sizeof(uint16_t);
+	};
 	const uint64_t coding_set_bytes = static_cast<uint64_t>(num_comps) * per_component_coding_bytes;
 	uint64_t coding_param_bytes = coding_set_bytes + static_cast<uint64_t>(total_tiles) * sizeof(int32_t);
 	if (coding_param_bytes > effective_limit - total_wic_bytes - tile_spans_table_bytes) {
@@ -8069,6 +8093,20 @@ void idwt_97_2d_float(
 		std::vector<J2kQcdParams> qcc;
 	};
 	uint64_t total_tile_stream_bytes = 0u;
+	// Charges the quantization tables one parse stored, on top of what the record held before it.
+	auto charge_qcd_payload = [&](uint64_t before, const J2kQcdParams& q) -> PdfResult<void> {
+		const uint64_t after = qcd_payload_bytes(q);
+		const uint64_t added = after > before ? after - before : 0u;
+		if (added > effective_limit - total_wic_bytes - tile_spans_table_bytes - total_tile_stream_bytes -
+				coding_param_bytes) {
+			return make_filter_error(
+				ErrorCode::DecompressionLimitExceeded,
+				DiagnosticId::DecompressionLimitExceeded,
+				"JPXDecode quantization tables exceed ceiling");
+		}
+		coding_param_bytes += added;
+		return {};
+	};
 	std::vector<TileCodingOverride> tile_overrides;
 	// Index of each tile's override in tile_overrides (-1 for none), so finding one is constant time per marker.
 	std::vector<int32_t> tile_override_index(total_tiles, -1);
@@ -8141,12 +8179,15 @@ void idwt_97_2d_float(
 			main_coc[comp_idx] = coc_params;
 			main_has_coc[comp_idx] = true;
 		} else if (marker == 0x5Cu) { // QCD (ITU-T T.800 §A.6.4)
+			const uint64_t before = qcd_payload_bytes(main_qcd);
 			RECTO_PDF_RETURN_IF_ERROR(parse_qcd_segment(pos, mlen, main_cod.num_decomp_levels, main_qcd));
+			RECTO_PDF_RETURN_IF_ERROR(charge_qcd_payload(before, main_qcd));
 			saw_qcd = true;
 		} else if (marker == 0x5Du) { // QCC (ITU-T T.800 §A.6.5)
 			uint32_t comp_idx = 0u;
 			J2kQcdParams qcc_params{};
 			RECTO_PDF_RETURN_IF_ERROR(parse_qcc_segment(pos, mlen, main_cod.num_decomp_levels, comp_idx, qcc_params));
+			RECTO_PDF_RETURN_IF_ERROR(charge_qcd_payload(qcd_payload_bytes(main_qcc[comp_idx]), qcc_params));
 			main_qcc[comp_idx] = std::move(qcc_params);
 			main_has_qcc[comp_idx] = true;
 		} else if (marker == 0x90u) { // SOT
@@ -8218,7 +8259,9 @@ void idwt_97_2d_float(
 					RECTO_PDF_TRY(TileCodingOverride* const ov_ptr, get_or_create_tile_override(isot));
 					auto& ov = *ov_ptr;
 					const uint8_t eff_levels = ov.has_cod ? ov.cod.num_decomp_levels : main_cod.num_decomp_levels;
+					const uint64_t before = qcd_payload_bytes(ov.qcd);
 					RECTO_PDF_RETURN_IF_ERROR(parse_qcd_segment(pos, tp_len, eff_levels, ov.qcd));
+					RECTO_PDF_RETURN_IF_ERROR(charge_qcd_payload(before, ov.qcd));
 					ov.has_qcd = true;
 				} else if (tp_marker == 0x5Du) { // Tile-part header QCC override (ITU-T T.800 §A.6.5)
 					RECTO_PDF_TRY(TileCodingOverride* const ov_ptr, get_or_create_tile_override(isot));
@@ -8227,6 +8270,7 @@ void idwt_97_2d_float(
 					J2kQcdParams qcc_params{};
 					const uint8_t eff_levels = ov.has_cod ? ov.cod.num_decomp_levels : main_cod.num_decomp_levels;
 					RECTO_PDF_RETURN_IF_ERROR(parse_qcc_segment(pos, tp_len, eff_levels, comp_idx, qcc_params));
+					RECTO_PDF_RETURN_IF_ERROR(charge_qcd_payload(qcd_payload_bytes(ov.qcc[comp_idx]), qcc_params));
 					ov.qcc[comp_idx] = std::move(qcc_params);
 					ov.has_qcc[comp_idx] = true;
 				}
@@ -8573,6 +8617,7 @@ void idwt_97_2d_float(
 			const uint64_t tile_px64 = static_cast<uint64_t>(tile_w) * tile_h;
 			const uint64_t tile_grid_overhead =
 				tile_spans_table_bytes + total_tile_stream_bytes + coding_param_bytes + coding_set_bytes +
+				static_cast<uint64_t>(num_comps) * kMaxJ2kSubbands * (sizeof(uint8_t) + sizeof(uint16_t)) +
 				static_cast<uint64_t>(num_comps) * (static_cast<uint64_t>(max_decomp_levels) + 1ULL) * 128ULL;
 			const uint64_t dwt_scratch_bytes =
 				(max_decomp_levels > 0u) ? ((tile_px64 + 2ULL * tile_h + 16ULL) * sizeof(int32_t)) : 0ULL;
@@ -9437,6 +9482,11 @@ namespace {
 // An image /Decode array holds two numbers per colour component; DeviceN allows up to 32 components.
 constexpr size_t kMaxImageDecodeComponents = 32;
 
+// The longest name a filter or a parameter value can usefully be: PDF names are at most 127 bytes (ISO 32000-1
+// Annex C.2), and every filter name and parameter name value is far shorter. A longer name is malformed by its
+// length alone, so the pipeline keeps a marker for it instead of copying it.
+constexpr size_t kMaxCopiedNameBytes = 127;
+
 [[nodiscard]] PdfResult<std::vector<uint8_t>> execute_filter_pipeline(
 	std::span<const uint8_t> raw_bytes,
 	const PdfValue* filter_val,
@@ -9494,7 +9544,9 @@ constexpr size_t kMaxImageDecodeComponents = 32;
 					continue;
 				}
 				const auto name = target->as_name();
-				resolved.push_back(name.has_value() ? PdfValue(PdfName::from_decoded(*name)) : PdfValue(int64_t{0}));
+				resolved.push_back(name.has_value() && name->size() <= kMaxCopiedNameBytes
+						? PdfValue(PdfName::from_decoded(*name))
+						: PdfValue(int64_t{0}));
 				filter_elems[i] = &resolved.back();
 			}
 		}
@@ -9548,7 +9600,9 @@ constexpr size_t kMaxImageDecodeComponents = 32;
 			}
 			RECTO_PDF_TRY(std::optional<PdfValue> target_holder, resolve_local(value));
 			const PdfValue& target = target_holder.has_value() ? *target_holder : value;
-			if (target.is_null() || target.is_bool() || target.is_number() || target.is_name()) {
+			const auto target_name = target.as_name();
+			if (target.is_null() || target.is_bool() || target.is_number() ||
+				(target_name.has_value() && target_name->size() <= kMaxCopiedNameBytes)) {
 				RECTO_PDF_TRY_REF(value_copy, target.deep_clone());
 				copy.set(key, std::move(value_copy));
 			} else {

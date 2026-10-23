@@ -73,6 +73,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 37 | §37 | WIC decode failures classified by HRESULT, not reported as damage | §22 | [ ] |
 | 38 | §38 | DCT decodes only the pixel representation the caller asked for | §22 | [ ] |
 | 39 | §39 | Per-codec decode latency measured on valid, large and damaged fixtures | §22 | [ ] |
+| 40 | §40 | Image decoder allocations drawn from one budgeted memory resource per decode | §22 | [ ] |
 
 ## 1. Audit D00 T01 §1: Git repository and repo-face files
 
@@ -669,6 +670,8 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 > **Deferred:** measured per-codec decode latency -> XREF: D06 T05 §39
 
+> **Deferred:** every image decoder allocation drawn from one budgeted memory resource, replacing per-site estimates -> XREF: D06 T05 §40
+
 **Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §8"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s8.md` ends in an approving round or a recorded stop with every finding fixed or filed.
 
 ## 23. Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6
@@ -1047,6 +1050,27 @@ The completion review of the `D01 T01 §8` audit (`docs/reviews/06-quality/audit
 - [ ] Commit: `bench: per-codec decode latency baseline`
 
 **Test checkpoint:** `recto-tests.exe --gtest_also_run_disabled_tests --gtest_filter=PdfFiltersBench.*` prints twelve rows and `docs/benchmarks/decoders.md` holds the recorded baseline.
+
+## 40. Image decoder allocations drawn from one budgeted memory resource per decode
+
+The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T05 §22) found a memory-accounting gap in the image decoders in each of rounds 4, 6 and 7: CCITT transitions charged apart from the output, then the output's reallocation peak; JPX tag trees, then tile coding overrides, then their quantization tables; parameter values copied per stage. Each was fixed where found by estimating an allocation and charging the estimate, and each round found the next estimate that was missing or short. As `D06 T05 §35` does for JBIG2's site inventory, this section ends the site-by-site pattern at the owning layer: every allocation a decode makes is drawn from one `std::pmr::memory_resource` that counts bytes against the decode's ceiling and refuses past it, so the ceiling holds by construction and no estimate can be missing. -> XREF: D06 T05 §22
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add a budgeted upstream resource and route the image decoders' containers through it in `src/pdf/filters.cpp`. Done when: CCITT, JBIG2, DCT (Recto's buffers; WIC's own are outside), JPX and the filter pipeline allocate through it.
+2. Prove the ceiling holds by measurement. Done when: the tests below pass and fail with the resource bypassed.
+
+- [ ] Add `detail::DecodeBudgetResource` (a `std::pmr::memory_resource` over the default resource that counts live bytes, records the peak, and throws `std::bad_alloc` past the decode's ceiling) and a scoped installer for the decode thread, in `src/pdf/filters.h` and `src/pdf/filters.cpp`. Done when: a unit test allocates past a 1 MiB budget and sees the refusal, and the peak it reports matches what was allocated.
+- [ ] Convert the image decoders' working containers (`std::vector`, `std::deque`, the JPX and JBIG2 state structs) to `std::pmr` types bound to that resource, and map its refusal to `ErrorCode::DecompressionLimitExceeded` at each decoder's existing `std::bad_alloc` boundary. Done when: no image decoder allocates through the global heap during a decode (checked with `test::ScopedHeapMeter` outside ASan: under 64 KiB of global allocation for a decode that uses megabytes).
+- [ ] Keep the existing per-site estimates only as early refusals and say so beside each; the resource is the ceiling. Done when: each estimate's comment names the resource as the bound.
+- [ ] Add `PdfFilters.DecodeBudgetHoldsByConstruction`: the round 4, 6 and 7 reproductions in `docs/reviews/06-quality/audit-d01-t01-s8.md` decoded at their ceilings, each refused or within the ceiling by the resource's own peak. Done when: the test fails with the decoders on the global heap.
+- [ ] Commit: `pdf: image decoders allocate from one budgeted memory resource`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.DecodeBudgetHoldsByConstruction`, and in x64 Debug the global-heap check of the second item holds.
 
 ## Verification
 
