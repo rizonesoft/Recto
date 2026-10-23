@@ -4565,14 +4565,42 @@ TEST(PdfFilters, Jbig2StripesAlignmentAndSkip)
 		append_jbig2_segment(trailing, 4u, 49u, {}, 1u, {});
 		RECTO_EXPECT_ERR(decode_jbig2(trailing), ErrorCode::DamagedFormat);
 
-		// Round 2: the same with an intermediate region (type 36), which is still a region of the page.
+		// Round 3: an intermediate region does not modify the page, so it takes no stripe check: after the last End of
+		// Stripe it changes nothing, and one for a later stripe is drawn there by the refinement that refers to it.
 		std::vector<uint8_t> trailing_intermediate = header;
 		append_jbig2_segment(trailing_intermediate, 0u, 48u, {}, 1u, page_info);
 		append_jbig2_segment(trailing_intermediate, 1u, 38u, {}, 1u, mmr_region(0, "1" + eofb));
 		append_jbig2_segment(trailing_intermediate, 2u, 50u, {}, 1u, row0);
 		append_jbig2_segment(trailing_intermediate, 3u, 36u, {}, 1u, mmr_region(1, "1" + eofb));
 		append_jbig2_segment(trailing_intermediate, 4u, 49u, {}, 1u, {});
-		RECTO_EXPECT_ERR(decode_jbig2(trailing_intermediate), ErrorCode::DamagedFormat);
+		auto intermediate_after = decode_jbig2(trailing_intermediate);
+		EXPECT_TRUE(intermediate_after.has_value());
+		if (intermediate_after.has_value()) {
+			EXPECT_EQ(intermediate_after->size(), 1u); // one row, as if the intermediate region were not there
+		}
+		std::vector<uint8_t> later_stripe = header;
+		append_jbig2_segment(later_stripe, 0u, 48u, {}, 1u, page_info);
+		append_jbig2_segment(later_stripe, 1u, 38u, {}, 1u, mmr_region(0, "1" + eofb));
+		append_jbig2_segment(later_stripe, 2u, 50u, {}, 1u, row0);
+		append_jbig2_segment(later_stripe, 3u, 36u, {}, 1u, mmr_region(2, "1" + eofb)); // for the stripe after next
+		append_jbig2_segment(later_stripe, 4u, 38u, {}, 1u, mmr_region(1, "1" + eofb));
+		append_jbig2_segment(later_stripe, 5u, 50u, {}, 1u, std::vector<uint8_t>{0u, 0u, 0u, 1u});
+		std::vector<uint8_t> refine_intermediate;
+		append_u32_be(refine_intermediate, 8u);
+		append_u32_be(refine_intermediate, 1u);
+		append_u32_be(refine_intermediate, 0u);
+		append_u32_be(refine_intermediate, 2u);
+		refine_intermediate.push_back(4u);    // REPLACE
+		refine_intermediate.push_back(0x01u); // GRTEMPLATE 1, TPGRON 0
+		refine_intermediate.push_back(0xFFu);
+		refine_intermediate.push_back(0xFFu);
+		const uint8_t refers_to_3[1] = {3u};
+		append_jbig2_segment(later_stripe, 6u, 42u, refers_to_3, 1u, refine_intermediate);
+		append_jbig2_segment(later_stripe, 7u, 50u, {}, 1u, std::vector<uint8_t>{0u, 0u, 0u, 2u});
+		append_jbig2_segment(later_stripe, 8u, 49u, {}, 1u, {});
+		auto drawn_later = decode_jbig2(later_stripe);
+		RECTO_ASSERT_OK(drawn_later);
+		EXPECT_EQ(drawn_later->size(), 3u);
 
 		// Round 2: a refinement of the page reads rows the page grows to as its default pixel (black here), exactly as
 		// on a page whose height is known (T.88 7.4.7.4): the fixed arithmetic stream decodes differently on white. The
