@@ -723,12 +723,14 @@ The completion review of `D01 T02 §18` (`docs/reviews/01-engine/D01-T02-s18.md`
 
 ## 24. Conversion-check failures name the check, the page and the measured value
 
+> **Started:** 2026-10-23T22:44Z
+
 The completion review of `D01 T02 §22` (`docs/reviews/01-engine/D01-T02-s22.md`, gaps 7 and 12) found that a `ConversionFailed` error cannot say which check failed, on which page, or by how much: the ring and ETW keep only the code (D16: never the message), and Acrobat's Preflight names each failed check and its location. This section appends the conversion checks to `RefusalReason` (`§23`) and gives `PdfError`, the ring and the ETW `Diagnostic` event a page index, so a failure reads, for example, `TextRecall` on page 3 with `observed=910` and `bound=990` (per mille). Consumers: `D04 T03 §8` (`DocxWriter` and `RtfWriter` checks) and `D04 T05 §12` (`PptxWriter` checks), and `D07 T03 §2`'s report.
 
 **Phase:** 1
 **Needs:** windows-host
 **Surface:** no
-**Freeze check:** Verify that reasons are appended after the last reason (`OutputUnwritable`) and the page field after `bound`, so every existing numeric value and field is unchanged, that no threading changes, and that the ring stays free of document bytes.
+**Freeze check:** Verify that reasons are appended after the last reason (`OutputUnwritable`) and the page field after `prior_status` (the last field since `§25`), so every existing numeric value and field is unchanged, that no threading changes, and that the ring stays free of document bytes. **Corrected 2026-10-23:** was "the page field after `bound`", written before `§25` appended the decoder fields after `bound`.
 
 **Build order:**
 
@@ -736,8 +738,8 @@ The completion review of `D01 T02 §22` (`docs/reviews/01-engine/D01-T02-s22.md`
 2. Prove it through the ring and ETW capture. Done when: the tests below pass.
 
 - [ ] Append `TextRecall`, `ReadingOrder`, `EmptyResult`, `PackageInvalid` and `RelationshipMissing` to `RefusalReason` after `OutputUnwritable`, each with its `refusal_reason_description`, with their names, and extend `PdfError.RefusalReasonNamesCoverEveryReason`. Done when: the test names every value.
-- [ ] Add `page_index` (optional `uint32_t`) to `PdfError` and `DiagnosticEntry`, carry it in the ring slot, `format()` (`page=3`, one-based for people) and the ETW event (`HasPageIndex`, `PageIndex`), and accept it in `make_refusal_error`. Done when: `PdfError.ConversionCheckContextReachesRingAndEtw` reads check, page, observed and bound back from the ring and the captured packet, and finds no caller text in either.
-- [ ] Name the reason each consumer returns: `D04 T03 §8` and `D04 T05 §12` return `make_refusal_error(ErrorCode::ConversionFailed, <check>, observed, bound)` with the page, per mille for ratios. Done when: their items name the reason (written here so the consumers build against it). Cheaper substitute that fails the checkpoint: a reason only in the English message, which the ring drops.
+- [ ] Add `page_index` (optional `uint32_t`) to `PdfError` and `DiagnosticEntry`, carry it in the ring slot, `format()` (`page=3`, one-based for people) and the ETW event (`HasPageIndex`, `PageIndex`), and accept it in `make_refusal_error` (a trailing `page_index` parameter, so no existing call changes). The ring and ETW keep the page zero-based as `D01 T02 §16` spans do; only `format()` adds one. Done when: `PdfError.ConversionCheckContextReachesRingAndEtw` reads check, page, observed and bound back from the ring and the captured packet, and finds no caller text in either.
+- [ ] Name the reason each consumer returns: `D04 T03 §8` and `D04 T05 §12` return `make_refusal_error(ErrorCode::ConversionFailed, <check>, observed, bound)` with the page, per mille for ratios. Map: a missing part, content type, unbalanced RTF group or malformed XML is `PackageInvalid` (no page); an undeclared `rId` or missing relationship target is `RelationshipMissing` (no page); re-read text missing words is `TextRecall` (observed and bound per mille of words found, page of the first short page); every word present but out of order is `ReadingOrder` (per mille of blocks in order, page); an empty slide or presentation is `EmptyResult` (page of the first empty content slide, none when the whole output is empty). `D07 T03 §2` reports the page beside the numbers. Done when: their items name the reason (written here so the consumers build against it). **Corrected 2026-10-23:** the consumers said only "its `RefusalReason`", or offered `TextRecall` or `EmptyResult` for both `D04 T05 §12` checks, so the mapping is fixed here. Cheaper substitute that fails the checkpoint: a reason only in the English message, which the ring drops.
 - [ ] Commit: `pdf: conversion-check failures name the check, page and measured value`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*` passes under ASan, including `PdfError.ConversionCheckContextReachesRingAndEtw`.
