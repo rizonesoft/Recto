@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "check-ui-boundary.py"
@@ -99,6 +100,26 @@ class EvaluationTests(unittest.TestCase):
             clean = boundary.Unit(boundary.normalized(source), boundary.normalized(pathlib.Path(folder) / "a.obj"),
                                   boundary.normalized(report), True, None, "/utf-8 /DSOURCE_DEPENDENCIES=1")
             self.assertEqual(boundary.include_crossings("recto-core", [clean], []), [])
+
+    def test_compiler_environment_switches_are_read_as_arguments(self):
+        # Round 16: CL and _CL_ get the AdditionalOptions argument rules, so a quoted spelling and a response file
+        # are refused, not missed by a substring search; an unrelated switch is not.
+        with tempfile.TemporaryDirectory() as folder:
+            source = pathlib.Path(folder) / "a.cpp"
+            report = pathlib.Path(folder) / "a.cpp.json"
+            report.write_text(json.dumps({"Version": "1.2", "Data": {"Source": str(source), "Includes": []}}),
+                              encoding="utf-8")
+            unit = boundary.Unit(boundary.normalized(source), boundary.normalized(pathlib.Path(folder) / "a.obj"),
+                                 boundary.normalized(report), True, None, "/utf-8")
+            cases = [("_CL_", '/source"Dependencies"- /FI"x.h"'), ("CL", "/utf-8 @local-cl.rsp"),
+                     ("_CL_", "@R:\\build\\local-cl.rsp"), ("CL", '"-sourceDependencies" x.json')]
+            for variable, value in cases:
+                with self.subTest(variable=variable, value=value), \
+                        unittest.mock.patch.dict(os.environ, {"CL": "", "_CL_": "", variable: value}):
+                    with self.assertRaisesRegex(boundary.EvidenceError, f"the {variable} environment variable"):
+                        boundary.include_crossings("recto-core", [unit], [])
+            with unittest.mock.patch.dict(os.environ, {"CL": "/DSOURCE_DEPENDENCIES=1", "_CL_": "/W4"}):
+                self.assertEqual(boundary.include_crossings("recto-core", [unit], []), [])
 
     def test_build_ps1_checks_each_configuration_from_its_own_manifests(self):
         build = (REPO / "build" / "build.ps1").read_text(encoding="utf-8")

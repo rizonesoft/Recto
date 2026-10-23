@@ -296,15 +296,17 @@ def redirects_reports(options):
     """Why cl might not have written a unit's report where its SourceDependenciesFile says, or None. A
     /sourceDependencies switch in the unit's AdditionalOptions comes after the one MSBuild generates and wins (with `-`
     it sends the report to standard output, leaving an older report in place); a response file (`@file`) may hold one;
-    and the CL and _CL_ environment variables add switches to every compile. Each is refused rather than guessed at."""
-    for token in command_line_tokens(options):
-        if token[:1] in ("/", "-") and token[1:].lower().startswith("sourcedependencies"):
-            return f"its AdditionalOptions hold {token}"
-        if token.startswith("@"):
-            return f"its AdditionalOptions name the response file {token}"
-    for variable in ("CL", "_CL_"):
-        if "sourcedependencies" in os.environ.get(variable, "").lower():
-            return f"the {variable} environment variable holds a /sourceDependencies switch"
+    and the CL and _CL_ environment variables add switches to every compile, read with the same argument rules (so a
+    quoted spelling such as `/source"Dependencies"-` and a response file are both caught). Each is refused rather than
+    guessed at."""
+    sources = [("its AdditionalOptions", options)]
+    sources += [(f"the {variable} environment variable", os.environ.get(variable, "")) for variable in ("CL", "_CL_")]
+    for where, text in sources:
+        for token in command_line_tokens(text):
+            if token[:1] in ("/", "-") and token[1:].lower().startswith("sourcedependencies"):
+                return f"{where} holds {token}"
+            if token.startswith("@"):
+                return f"{where} names the response file {token}"
     return None
 
 
