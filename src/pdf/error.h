@@ -267,9 +267,9 @@ enum class DiagnosticId : uint16_t {
 	case DiagnosticId::CorruptSettingsStore:
 		return "Recovered from corrupted settings store";
 	case DiagnosticId::ResourceLimit:
-		return "Engine resource limit reached";
+		return "Stopped at a safety limit on work or size; the file may be fine, so try fewer pages or a smaller selection";
 	case DiagnosticId::InvalidArgument:
-		return "Argument outside the documented range";
+		return "The request was refused before any change because a value it gave is not allowed; the file itself is fine";
 	}
 	return "Engine diagnostic event";
 }
@@ -1126,8 +1126,10 @@ void clear_diagnostics() noexcept;
 [[nodiscard]] uint64_t diagnostics_total_recorded() noexcept;
 
 // Constructs a PdfError and automatically appends a diagnostic ring entry and
-// emits a TraceLoggingWrite event when code is DamagedFormat,
-// DecompressionLimitExceeded, or RecursionLimitExceeded.
+// emits a TraceLoggingWrite event when should_auto_record_diagnostic(code):
+// DamagedFormat, DecompressionLimitExceeded, RecursionLimitExceeded and
+// ResourceLimit. Other codes, InvalidArgument among them (a caller's error,
+// not a damaged file), are recorded only through record_diagnostic.
 [[nodiscard]] PdfError make_pdf_error(
 	ErrorCode code,
 	std::string_view message = {},

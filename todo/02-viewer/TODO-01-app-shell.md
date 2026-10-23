@@ -82,7 +82,7 @@ track: M2
 | 8 | §8 | Save (`Ctrl+S`), Save As (`Ctrl+Shift+S`), Replace-Original and Unsaved-Changes dialogs | §3, §5, D01 T02 §5, D10 T01 §4, D10 T02 §17 | [ ] |
 | 9 | §9 | Classic menu bar (`File`, `Edit`, `View`, `Tools`, `Window`, `Help`) and docked top bar | §4, §5, §8, D10 T01 §12, D10 T02 §2, D10 T02 §14, D10 T02 §15, D10 T01 §20 | [ ] |
 | 10 | §10 | Shared SPEC 9.9 `ui::Dialog` chrome and Password dialog | §5, D10 T02 §6, D10 T02 §17, D10 T01 §20 | [ ] |
-| 11 | §11 | Could-not-open error dialog and diagnostic clipboard copy | §5, §10, D10 T01 §17, D10 T03 §4, D10 T01 §20 | [ ] |
+| 11 | §11 | Could-not-open error dialog and diagnostic clipboard copy | §5, §10, D10 T01 §17, D10 T03 §4, D10 T01 §20, D06 T04 §30 | [ ] |
 | 12 | §12 | Crash recovery snapshots for unsaved edits | §3, §8, §10, D04 T02 §1, D02 T04 §6, D06 T04 §24, D10 T02 §11 | [ ] |
 | 13 | §13 | `SessionStore`: persist open tabs and the active tab | §3, D02 T04 §1 | [ ] |
 | 14 | §14 | Restore the previous tab session on launch and the restore setting | §5, §7, §13, D02 T04 §5, D02 T03 §11, D06 T04 §24, D10 T02 §7, D10 T02 §20 | [ ] |
@@ -425,6 +425,7 @@ Implement the SPEC section 9.9 `"Couldn't open this file"` alert `ui::Dialog` (`
 - [ ] Wire `Copy error details` to copy the formatted report to the Windows clipboard (`ui::Clipboard`) and update the button label briefly to `"Copied"` with a screen-reader announcement (UIA notification, `D10 T03 §4`). Done when: clicking `Copy error details` places the exact diagnostic block on the system clipboard.
 - [ ] Queue dialog presentations in `OpenDocumentPipeline` so dropping 3 broken files in one batch displays `CouldNotOpenDialog` sequentially rather than opening overlapping modal dialogs. Done when: dropping 3 corrupt files shows 3 dialogs in sequence with zero overlap or exceptions.
 - [ ] Ensure the failed tab's temporary `DocumentTabSession` and `DocumentActor` are completely torn down before or when `CouldNotOpenDialog` opens. Done when: no broken tab remains in `ui::TabStrip` after a failed open.
+- [ ] Show the body sentence and next step SPEC 9.9 gives for the `PdfError` code's category (`D06 T04 §30`), so a `ResourceLimit`, `AccessDenied` or `UnsupportedEncryption` failure is never described as a damaged file. Added 2026-10-23 from the `D01 T02 §18` completion review (gap 10). -> XREF: D06 T04 §30. Done when: `Shell.CouldNotOpenAndDiagnostics` opens one file per category and asserts its sentence. Cheaper substitute: one sentence for every code.
 - [ ] Add `Shell.CouldNotOpenAndDiagnostics` test in `tests/recto-tests/` opening `tests/corpus/broken/` files, asserting path-scrubbed diagnostic output on the clipboard, and verifying sequential multi-error dialog queuing. Done when: `recto-tests.exe --gtest_filter=Shell.CouldNotOpenAndDiagnostics` passes.
 - [ ] Register `shell_couldnotopen` in `tests/recto-tests/golden/ui/manifest.json` for the Could not open crop of `D-Dialogs.png`. Done when: `Ui.Golden.Shell.CouldNotOpen` passes at the three scales. Source: `D10 T01 §20`, SPEC 9.9.
 - [ ] Commit: `app: implement CouldNotOpenDialog with path-scrubbed diagnostic clipboard copy`

@@ -512,6 +512,49 @@ TEST(PdfError, DiagnosticRingRecordsNewCodes)
 	EXPECT_NE(tail[0].format().find("ResourceLimit/ResourceLimit"), std::string::npos) << tail[0].format();
 	EXPECT_NE(tail[1].format().find("InvalidArgument/InvalidArgument"), std::string::npos) << tail[1].format();
 	EXPECT_GE(etw_diagnostic_events_emitted(), events_before + 2);
+
+	// A message that reads like a damage hint never turns either code into a damaged-file diagnostic, and neither
+	// code's wording blames the file.
+	clear_diagnostics();
+	const PdfError hinted = make_pdf_error(ErrorCode::ResourceLimit, "bad stream");
+	record_diagnostic(ErrorCode::InvalidArgument, "bad xref");
+	tail = diagnostics_tail(10);
+	ASSERT_EQ(tail.size(), 2u);
+	EXPECT_EQ(tail[0].diagnostic_id, DiagnosticId::ResourceLimit);
+	EXPECT_EQ(tail[1].diagnostic_id, DiagnosticId::InvalidArgument);
+	EXPECT_EQ(hinted.code, ErrorCode::ResourceLimit);
+	for (const DiagnosticId id : {DiagnosticId::ResourceLimit, DiagnosticId::InvalidArgument}) {
+		const std::string_view message = diagnostic_id_message(id);
+		EXPECT_EQ(message.find("amage"), std::string_view::npos) << message;
+		EXPECT_EQ(message.find("alformed"), std::string_view::npos) << message;
+	}
+	EXPECT_NE(diagnostic_id_message(DiagnosticId::InvalidArgument).find("file itself is fine"), std::string_view::npos);
+
+	// The ETW packets carry each code's own number, name and diagnostic, and the context given.
+	clear_diagnostics();
+	clear_captured_etw_events_for_testing();
+	set_etw_capture_for_testing(true);
+	(void)make_pdf_error(ErrorCode::ResourceLimit, "command count over budget", 64, 3, 0);
+	record_diagnostic(ErrorCode::InvalidArgument, "page index past the end", 128, 5, 1);
+	set_etw_capture_for_testing(false);
+	const auto captured = captured_etw_events_for_testing();
+	ASSERT_EQ(captured.size(), 2u);
+	EXPECT_EQ(captured[0].event_name, "Diagnostic");
+	EXPECT_EQ(captured[0].error_code, static_cast<uint32_t>(ErrorCode::ResourceLimit));
+	EXPECT_EQ(captured[0].error_code_name, "ResourceLimit");
+	EXPECT_EQ(captured[0].diagnostic_id, static_cast<uint16_t>(DiagnosticId::ResourceLimit));
+	EXPECT_EQ(captured[0].diagnostic_id_name, "ResourceLimit");
+	EXPECT_EQ(captured[0].byte_offset, 64u);
+	EXPECT_EQ(captured[0].object_num, 3u);
+	EXPECT_EQ(captured[1].event_name, "Diagnostic");
+	EXPECT_EQ(captured[1].error_code, static_cast<uint32_t>(ErrorCode::InvalidArgument));
+	EXPECT_EQ(captured[1].error_code_name, "InvalidArgument");
+	EXPECT_EQ(captured[1].diagnostic_id, static_cast<uint16_t>(DiagnosticId::InvalidArgument));
+	EXPECT_EQ(captured[1].diagnostic_id_name, "InvalidArgument");
+	EXPECT_EQ(captured[1].byte_offset, 128u);
+	EXPECT_EQ(captured[1].object_num, 5u);
+	EXPECT_EQ(captured[1].generation_num, 1u);
+	clear_captured_etw_events_for_testing();
 	clear_diagnostics();
 }
 

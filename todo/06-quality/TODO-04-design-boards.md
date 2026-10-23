@@ -103,6 +103,7 @@ title: "TODO-04 -- Design Boards and SPEC Text for Undesigned Screens"
 | 27 | §26 | Assistant board: panel, request preview, settings group and tools | §1 | [ ] |
 | 28 | §27 | Assistant review flows board: translate, proposals, contract, redaction | §1 | [ ] |
 | 29 | §29 | Extractor bar, area export, editable OCR output and New blank PDF board | §1 | [ ] |
+| 30 | §30 | Could-not-open dialog wording for each error category (SPEC 9.9) | §1 | [ ] |
 
 ## 1. Board check script and single-board render option
 
@@ -775,6 +776,25 @@ SPEC 8.2 describes the Table & Image Extractor Bar and its live bottom preview d
 - [ ] Commit: `design: draw D-Extract and SPEC section 8.2.6`
 
 **Test checkpoint:** `node design/tools/render-mockups.mjs --only D-Extract` then `python scripts/check-design-board.py D-Extract` exits 0 and reports every manifest control found in SPEC section 8.2.6; deleting one control label from section 8.2.6, a consumer's board citation, a consumer-named control from the manifest, or one control's `data-control` element from the source makes it exit 1.
+
+## 30. Could-not-open dialog wording for each error category (SPEC 9.9)
+
+The completion review of `D01 T02 §18` (`docs/reviews/01-engine/D01-T02-s18.md`, gap 10) found that SPEC section 9.9 gives the `Could not open` dialog one sentence for every failure, `"<file> is damaged or isn't a PDF."`, so a file stopped by a safety limit (`ResourceLimit`), a locked or missing file (`AccessDenied`, `FileNotFound`) or an unsupported encryption handler is blamed as damaged. This section writes the wording per error category into SPEC 9.9 and redraws the dialog on its board before `D02 T01 §11` builds it. -> XREF: D02 T01 §11
+
+**Phase:** 2
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Write the body text per error category in `design/SPEC.md` section 9.9's `Could not open` row and the `D-Dialogs` entry of `design/mockups/source/board-controls.json`. Done when: `python scripts/check-design-board.py D-Dialogs --manifest-only` exits 0.
+2. Redraw the dialog variants on `design/mockups/source/D-Dialogs.dc.html` and render it. Done when: `python scripts/check-design-board.py D-Dialogs` exits 0.
+
+- [ ] Write in SPEC 9.9 one body sentence and one next step for each category: damaged or not a PDF (`NotAPdf`, `DamagedFormat`), stopped at a safety limit (`ResourceLimit`, `DecompressionLimitExceeded`, `RecursionLimitExceeded`: the file may be fine), cannot be read (`FileNotFound`, `AccessDenied`, `IoError`), unsupported (`UnsupportedEncryption`, `UnsupportedFeature`), and out of memory, each naming no internal code. Done when: `--manifest-only` exits 0 and no category but the first says damaged. Cheaper substitute: keeping the one damaged sentence for every code, which the check refuses once the categories are listed.
+- [ ] Draw the safety-limit and cannot-be-read variants beside the existing dialog on `D-Dialogs.dc.html` and render with `node design/tools/render-mockups.mjs --only D-Dialogs`. Done when: `python scripts/check-design-board.py D-Dialogs` exits 0.
+- [ ] Commit: `design: could-not-open wording for each error category`
+
+**Test checkpoint:** `node design/tools/render-mockups.mjs --only D-Dialogs` then `python scripts/check-design-board.py D-Dialogs` exits 0, and removing one category's sentence from SPEC 9.9 makes it exit 1.
 
 ## Verification
 

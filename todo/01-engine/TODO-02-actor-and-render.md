@@ -79,6 +79,8 @@ track: M1
 | 19 | §19 | Interpreter work, memory and wall-clock ceilings on hostile content streams | §4, §7, §8, §18 | [ ] |
 | 20 | §20 | Rasterizer failure isolation: typed tile errors, target recreation and retry | §7, §9, §19 | [ ] |
 | 21 | §21 | Page `/UserUnit` in `PageDescription`, physical page size and CLI output size | D01 T01 §10, §6 | [ ] |
+| 22 | §22 | Error codes named by later sections reconciled with `error.h` | §18 | [ ] |
+| 23 | §23 | Closed refusal reasons and numeric context on limit and argument errors | §18 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
 
@@ -658,6 +660,48 @@ ISO 32000-1 14.11.2 defines `/UserUnit` as the size of one default user-space un
 - [ ] Commit: `pdf: read page UserUnit and report physical page size`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfDocument.UserUnit*:Cli.InfoUserUnit:Cli.RenderUserUnit` passes under ASan, and ignoring `/UserUnit` fails `Cli.RenderUserUnit`.
+
+## 22. Error codes named by later sections reconciled with `error.h`
+
+The completion review of `D01 T02 §18` (`docs/reviews/01-engine/D01-T02-s18.md`, gap 8) found TODO contracts naming error codes `src/pdf/error.h` does not have: `PdfErrorCode::` throughout `todo/04-convert/`, `todo/05-organize/` and `todo/06-quality/` (`InvalidArgument`, `PasswordRequired`, `InvalidPassword`, `CertificateRequired`, `UnsupportedRecipientType`, `RollbackIncomplete`, `LimitExceeded`, `CorruptStructure`, `Cancelled`, `ClipboardEmpty`, `AlgorithmNotPermittedByFips`, `ConversionFailed`, `StructTreeMalformed`, `UndoBudgetExceeded`), and `ErrorCode::CorruptStructure`, `ErrorCode::LimitExceeded`, `ErrorCode::InvalidPassword` and `ErrorCode::OutputInvalid` in `todo/02-viewer/`, `todo/03-text/` and `todo/04-convert/`. A section built from such a contract either fails to compile or invents a code on the spot. This section decides each name once and keeps the plan honest with a check.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that any code added is appended after `InvalidArgument` so every existing numeric value is unchanged, adds no state and touches no threading, and that `error_code_name` stays `constexpr noexcept`.
+
+**Build order:**
+
+1. Decide each name: an existing code where its meaning matches (for example `PasswordRequired` to `NeedsPassword`, `InvalidPassword` to `WrongPassword`, `LimitExceeded` and `UndoBudgetExceeded` to `ResourceLimit`, `CorruptStructure` and `StructTreeMalformed` to `DamagedFormat`), or a new appended code where no existing one distinguishes a case a caller must act on differently. Done when: the decision table is in `docs/reviews/01-engine/D01-T02-s22.md`.
+2. Correct every TODO reference and add a check. Done when: the check passes on the tree and fails on a planted wrong name.
+
+- [ ] Write the decision table (name, files, the code it becomes, why) in `docs/reviews/01-engine/D01-T02-s22.md`, preferring an existing code and adding one only with the caller behaviour that needs it. Done when: every name listed above has a row.
+- [ ] Append any new codes to `ErrorCode` in `src/pdf/error.h` with their names, `DiagnosticId` entries, messages and recording decision, as `§18` did, and extend `PdfError.ErrorCodeNamesCoverEveryCode`. Done when: the test names every value.
+- [ ] Replace each wrong name in the TODO files with `ErrorCode::<code>` from the table, with a dated `**Corrected YYYY-MM-DD:**` note naming what it said. Done when: no `PdfErrorCode::` remains under `todo/`.
+- [ ] Add `tests/scripts/test_error_code_names.py`, which reads the `ErrorCode` enumerators from `src/pdf/error.h` and fails on any `ErrorCode::<name>` or `PdfErrorCode::<name>` under `todo/` (outside `implementation-plan.md`) that is not one of them. Done when: it passes on the tree and fails when `ErrorCode::NoSuchCode` is planted in a TODO file.
+- [ ] Commit: `pdf: error codes named by later sections reconciled with error.h`
+
+**Test checkpoint:** `python -m unittest tests.scripts.test_error_code_names` passes and fails with a planted unknown code name, and `recto-tests.exe --gtest_filter=PdfError.*` passes under ASan.
+
+## 23. Closed refusal reasons and numeric context on limit and argument errors
+
+The completion review of `D01 T02 §18` (`docs/reviews/01-engine/D01-T02-s18.md`, Part 2 shortfall 2) found that support cannot tell which limit or which argument caused a `ResourceLimit` or `InvalidArgument`: the diagnostic ring replaces the caller's text with a generic message (by design, D16: no document bytes), and ETW carries no reason, observed value or bound. Acrobat's Diagnostics tool lets support see what failed; Recto should say which bound stopped the work, with numbers only, never a path, password or document text.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that the change adds fields to `PdfError` and `DiagnosticEntry` without changing any existing field or numeric value, touches no threading, and keeps the ring free of document bytes.
+
+**Build order:**
+
+1. Add a closed `RefusalReason` catalogue and optional numeric context to `PdfError`, the diagnostic ring and the ETW `Diagnostic` event in `src/pdf/error.h` and `src/pdf/error.cpp`. Done when: a refusal carries reason, observed value and bound end to end.
+2. Prove it through the ring and ETW capture. Done when: the tests below pass.
+
+- [ ] Add `enum class RefusalReason : uint16_t` (starting with `None`, `CommandCount`, `ChangeSetSize`, `PendingExports`, `WallClock`, `WorkingBytes`, `PageIndex`, `PageRange`, `OutputPath`) with a `constexpr noexcept` name table, and `refusal_reason`, `observed` and `bound` (optional `uint64_t`) on `PdfError` and `DiagnosticEntry` in `src/pdf/error.h`. Done when: `PdfError.RefusalReasonNamesCoverEveryReason` passes.
+- [ ] Carry them into the ring entry, `DiagnosticEntry::format()` and the ETW `Diagnostic` event (`RefusalReason`, `RefusalReasonName`, `Observed`, `Bound` fields) in `src/pdf/error.cpp`. Done when: `PdfError.RefusalContextReachesRingAndEtw` reads them back from the ring and the captured packet, and finds no caller text in either.
+- [ ] Commit: `pdf: closed refusal reasons with numeric context`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*` passes under ASan, including `PdfError.RefusalContextReachesRingAndEtw`.
 
 ## Verification
 

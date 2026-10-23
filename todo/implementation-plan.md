@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 66 | Checklist items: 423
+Sections: 68 | Checklist items: 431
 
 | Status | Reference   | Deliverable                                                                              | Needs        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------ | ----- |
@@ -67,6 +67,8 @@ Sections: 66 | Checklist items: 423
 | [x]    | D01 T01 §9  | Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG)      | windows-host | 8     |
 | [x]    | D01 T01 §10 | `pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links | windows-host | 9     |
 | [ ]    | D01 T02 §18 | `ErrorCode::ResourceLimit` and `ErrorCode::InvalidArgument` in `error.h`                 | windows-host | 5     |
+| [ ]    | D01 T02 §22 | Error codes named by later sections reconciled with `error.h`                            | windows-host | 5     |
+| [ ]    | D01 T02 §23 | Closed refusal reasons and numeric context on limit and argument errors                  | windows-host | 3     |
 | [x]    | D06 T05 §15 | Audit D01 T01 §1: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW         | windows-host | 5     |
 | [x]    | D06 T05 §16 | Audit D01 T01 §2: PdfValue variant object model, dictionary/array helpers and deep       | windows-host | 5     |
 | [x]    | D06 T05 §17 | Audit D01 T01 §3: Binary-safe PDF 1.7 and 2.0 lexer (src/pdf/lexer.cpp)                  | windows-host | 5     |
@@ -125,7 +127,7 @@ Sections: 66 | Checklist items: 423
 
 ### Phase 2: M2 Viewer
 
-Sections: 139 | Checklist items: 1225
+Sections: 140 | Checklist items: 1229
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -189,6 +191,7 @@ Sections: 139 | Checklist items: 1225
 | [ ]    | D06 T04 §5  | Presentation mode, presenter view and slide navigator board                              | windows-host                  | 7     |
 | [ ]    | D06 T04 §6  | Auto-scroll, rulers, grid, line weights and split view board                             | windows-host                  | 7     |
 | [ ]    | D06 T04 §24 | Session board: crash recovery, session restore, tab commands and Share                   | windows-host                  | 7     |
+| [ ]    | D06 T04 §30 | Could-not-open dialog wording for each error category (SPEC 9.9)                         | windows-host                  | 3     |
 | [ ]    | D10 T03 §1  | UI Automation provider tree: fragment root, navigation, properties, focus events         | windows-host, display-session | 12    |
 | [ ]    | D10 T03 §2  | UIA control patterns for every recto-ui control                                          | windows-host, display-session | 11    |
 | [ ]    | D10 T03 §3  | UIA `TextPattern` for `TextBox` and a reusable text-range adapter                        | windows-host, display-session | 11    |
@@ -205,7 +208,7 @@ Sections: 139 | Checklist items: 1225
 | [ ]    | D02 T01 §8  | Save (`Ctrl+S`), Save As (`Ctrl+Shift+S`), Replace-Original and Unsaved-Changes dialogs  | windows-host, display-session | 9     |
 | [ ]    | D02 T01 §9  | Classic menu bar (`File`, `Edit`, `View`, `Tools`, `Window`, `Help`) and docked top bar  | windows-host, display-session | 10    |
 | [ ]    | D02 T01 §10 | Shared SPEC 9.9 `ui::Dialog` chrome and Password dialog                                  | windows-host, display-session | 9     |
-| [ ]    | D02 T01 §11 | Could-not-open error dialog and diagnostic clipboard copy                                | windows-host, display-session | 8     |
+| [ ]    | D02 T01 §11 | Could-not-open error dialog and diagnostic clipboard copy                                | windows-host, display-session | 9     |
 | [ ]    | D02 T01 §13 | `SessionStore`: persist open tabs and the active tab                                     | windows-host                  | 6     |
 | [ ]    | D02 T01 §21 | Window placement: remember bounds and recover from a missing display                     | windows-host, display-session | 8     |
 | [ ]    | D02 T02 §1  | `ui::SwapChainHost`, Direct3D 11 / Direct2D 1.3 device creation and presentation thread  | windows-host, display-session | 8     |
@@ -867,6 +870,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 54/798 verified sections, 17 ready to run now.
+Progress: 54/801 verified sections, 17 ready to run now.
 
-Checklist: 346/5903 items completed (includes Commit items).
+Checklist: 346/5915 items completed (includes Commit items).
