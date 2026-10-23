@@ -3506,6 +3506,9 @@ struct Jbig2DecoderState {
 	// The declared maximum stripe size (T.88 7.4.8.6) and the lowest row any region of the open stripe reaches.
 	uint64_t max_stripe_rows{0};
 	uint64_t open_stripe_bottom{0};
+	// Whether any region segment, immediate or intermediate, came after the last End of Stripe: the last stripe must
+	// end before End of Page (T.88 7.4.9), whatever the region draws.
+	bool region_since_stripe_end{false};
 	// The generic and refinement arithmetic contexts a symbol dictionary retained (flag bit 9, T.88 7.4.2.2), by its
 	// segment number, for a later dictionary that uses them (flag bit 8), with the coding parameters they were
 	// learned under (SDHUFF, SDREFAGG, both templates and every adaptive-template byte), which the user must share.
@@ -3558,6 +3561,7 @@ struct Jbig2DecoderState {
 				offset);
 		}
 		open_stripe_bottom = std::max(open_stripe_bottom, static_cast<uint64_t>(bottom));
+		region_since_stripe_end = true;
 		return grow_page_to(static_cast<uint64_t>(bottom), effective_limit, offset);
 	}
 
@@ -3771,6 +3775,7 @@ struct Jbig2DecoderState {
 			state.page_height_unknown = page_h == 0xFFFFFFFFu;
 			state.end_of_stripe_rows = 0u;
 			state.open_stripe_bottom = 0u;
+			state.region_since_stripe_end = false;
 			state.max_stripe_rows = static_cast<uint64_t>(striping & 0x7FFFu);
 			if (state.page_height_unknown && (striping & 0x8000u) == 0u) {
 				return make_filter_error(
@@ -3851,6 +3856,8 @@ struct Jbig2DecoderState {
 					state.remaining_limit(effective_limit)));
 
 			if (seg_type == 36u) {
+				// An intermediate region takes no placement check, but still belongs to the open stripe's segments.
+				state.region_since_stripe_end = state.page_height_unknown;
 				RECTO_PDF_RETURN_IF_ERROR(
 					state.account_bytes(jbig2_footprint(rbm), effective_limit, seg_header_start));
 				state.aux_regions[seg_num] = std::move(rbm);
@@ -5510,6 +5517,8 @@ struct Jbig2DecoderState {
 			}
 
 			if (seg_type == 4u) {
+				// An intermediate region takes no placement check, but still belongs to the open stripe's segments.
+				state.region_since_stripe_end = state.page_height_unknown;
 				RECTO_PDF_RETURN_IF_ERROR(
 					state.account_bytes(jbig2_footprint(rbm), effective_limit, seg_header_start));
 				state.aux_regions[seg_num] = std::move(rbm);
@@ -5641,6 +5650,8 @@ struct Jbig2DecoderState {
 					remaining_for_rbm - ref_crop_bytes));
 
 			if (seg_type == 40u) {
+				// An intermediate region takes no placement check, but still belongs to the open stripe's segments.
+				state.region_since_stripe_end = state.page_height_unknown;
 				RECTO_PDF_RETURN_IF_ERROR(
 					state.account_bytes(jbig2_footprint(rbm), effective_limit, seg_header_start));
 				state.aux_regions[seg_num] = std::move(rbm);
@@ -5901,6 +5912,8 @@ struct Jbig2DecoderState {
 				}
 			}
 			if (seg_type == 20u) {
+				// An intermediate region takes no placement check, but still belongs to the open stripe's segments.
+				state.region_since_stripe_end = state.page_height_unknown;
 				RECTO_PDF_RETURN_IF_ERROR(
 					state.account_bytes(jbig2_footprint(rbm), effective_limit, seg_header_start));
 				state.aux_regions[seg_num] = std::move(rbm);
@@ -6053,6 +6066,7 @@ struct Jbig2DecoderState {
 				}
 				RECTO_PDF_RETURN_IF_ERROR(state.grow_page_to(rows, effective_limit, seg_header_start));
 				state.end_of_stripe_rows = rows;
+				state.region_since_stripe_end = false;
 			}
 		} else {
 			return make_filter_error(
@@ -6104,7 +6118,7 @@ PdfResult<std::vector<uint8_t>> decode_jbig2(
 		// Per ISO 32000-1 section 7.4.7, JBIG2 treats 1 as black and 0 as white,
 		// whereas PDF DeviceGray treats 0 as black and 1 as white: invert bits.
 		Jbig2Bitmap& page = *state.page_bitmap;
-		if (state.page_height_unknown && state.open_stripe_bottom > state.end_of_stripe_rows) {
+		if (state.page_height_unknown && (state.open_stripe_bottom > state.end_of_stripe_rows || state.region_since_stripe_end)) {
 			return make_filter_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedStream,

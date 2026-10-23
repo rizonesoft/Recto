@@ -4565,19 +4565,16 @@ TEST(PdfFilters, Jbig2StripesAlignmentAndSkip)
 		append_jbig2_segment(trailing, 4u, 49u, {}, 1u, {});
 		RECTO_EXPECT_ERR(decode_jbig2(trailing), ErrorCode::DamagedFormat);
 
-		// Round 3: an intermediate region does not modify the page, so it takes no stripe check: after the last End of
-		// Stripe it changes nothing, and one for a later stripe is drawn there by the refinement that refers to it.
+		// Round 3: an intermediate region does not modify the page, so it takes no placement check: one for a later stripe
+		// is drawn there by the refinement that refers to it. Round 4: it is still a region segment, so one after the last
+		// End of Stripe and before End of Page is out of order (T.88 7.4.9) and refused.
 		std::vector<uint8_t> trailing_intermediate = header;
 		append_jbig2_segment(trailing_intermediate, 0u, 48u, {}, 1u, page_info);
 		append_jbig2_segment(trailing_intermediate, 1u, 38u, {}, 1u, mmr_region(0, "1" + eofb));
 		append_jbig2_segment(trailing_intermediate, 2u, 50u, {}, 1u, row0);
 		append_jbig2_segment(trailing_intermediate, 3u, 36u, {}, 1u, mmr_region(1, "1" + eofb));
 		append_jbig2_segment(trailing_intermediate, 4u, 49u, {}, 1u, {});
-		auto intermediate_after = decode_jbig2(trailing_intermediate);
-		EXPECT_TRUE(intermediate_after.has_value());
-		if (intermediate_after.has_value()) {
-			EXPECT_EQ(intermediate_after->size(), 1u); // one row, as if the intermediate region were not there
-		}
+		RECTO_EXPECT_ERR(decode_jbig2(trailing_intermediate), ErrorCode::DamagedFormat);
 		std::vector<uint8_t> later_stripe = header;
 		append_jbig2_segment(later_stripe, 0u, 48u, {}, 1u, page_info);
 		append_jbig2_segment(later_stripe, 1u, 38u, {}, 1u, mmr_region(0, "1" + eofb));
