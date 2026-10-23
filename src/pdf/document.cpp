@@ -2361,6 +2361,11 @@ PdfResult<void> Document::load_document_structure()
 		InheritedPageAttrs current_attrs = parent_attrs;
 		RECTO_PDF_RETURN_IF_ERROR(extract_box_attr(*node_dict, "MediaBox", current_attrs.media_box));
 		RECTO_PDF_RETURN_IF_ERROR(extract_box_attr(*node_dict, "CropBox", current_attrs.crop_box));
+		// BleedBox, TrimBox and ArtBox belong to the page alone (ISO 32000-1 Table 30 lists only Resources, MediaBox,
+		// CropBox and Rotate as inheritable): a node's own value is read, and an ancestor's never reaches a page.
+		current_attrs.bleed_box = std::nullopt;
+		current_attrs.trim_box = std::nullopt;
+		current_attrs.art_box = std::nullopt;
 		RECTO_PDF_RETURN_IF_ERROR(extract_box_attr(*node_dict, "BleedBox", current_attrs.bleed_box));
 		RECTO_PDF_RETURN_IF_ERROR(extract_box_attr(*node_dict, "TrimBox", current_attrs.trim_box));
 		RECTO_PDF_RETURN_IF_ERROR(extract_box_attr(*node_dict, "ArtBox", current_attrs.art_box));

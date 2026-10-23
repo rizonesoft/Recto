@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 80 | Checklist items: 482
+Sections: 84 | Checklist items: 502
 
 | Status | Reference   | Deliverable                                                                              | Needs                        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ---------------------------- | ----- |
@@ -130,12 +130,16 @@ Sections: 80 | Checklist items: 482
 | [ ]    | D06 T05 §40 | Image decoder allocations drawn from one budgeted memory resource per decode             | windows-host                 | 5     |
 | [ ]    | D06 T05 §41 | Recovery resolves compressed parameter targets and an indirect container /Type           | windows-host                 | 4     |
 | [ ]    | D06 T05 §42 | Cancellable damaged-file recovery with progress                                          | windows-host                 | 3     |
-| [ ]    | D06 T05 §43 | Repaired copy of a recovered file, and salvage of a damaged page tree                    | windows-host                 | 4     |
+| [ ]    | D06 T05 §43 | Repaired copy of a recovered file, and salvage of a damaged page tree                    | windows-host                 | 5     |
 | [ ]    | D06 T05 §44 | Damaged-file recovery measured against competitors on one corpus                         | windows-host, owner-decision | 5     |
 | [ ]    | D06 T05 §45 | Encrypted recovery without an intact xref stream: containers read after authentication   | windows-host                 | 4     |
 | [ ]    | D06 T05 §46 | Attachment-only encryption: public pages open, `/EFOpen` asks only for attachments       | windows-host                 | 4     |
 | [ ]    | D06 T05 §47 | Standard security handler interoperability matrix and cancellable decryption             | windows-host                 | 4     |
 | [ ]    | D06 T05 §48 | JBIG2 interoperability fixtures from an independent encoder, Huffman retained contexts   | windows-host, third-party    | 5     |
+| [ ]    | D06 T05 §49 | Opening keeps readable pages, reports what it skipped, names OS read failures            | windows-host                 | 6     |
+| [ ]    | D06 T05 §50 | Destinations and links keep view, remote targets, base URI, flags and quadrilaterals     | windows-host                 | 6     |
+| [ ]    | D06 T05 §51 | Font inventory over every resource path, with checked embedding and Type3 classification | windows-host                 | 4     |
+| [ ]    | D06 T05 §52 | Cancellable document opening and extraction                                              | windows-host                 | 3     |
 
 ### Phase 2: M2 Viewer
 
@@ -884,6 +888,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 62/815 verified sections, 30 ready to run now.
+Progress: 62/819 verified sections, 30 ready to run now.
 
-Checklist: 392/5980 items completed (includes Commit items).
+Checklist: 392/6000 items completed (includes Commit items).

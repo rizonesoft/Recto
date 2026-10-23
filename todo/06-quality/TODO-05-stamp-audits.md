@@ -82,6 +82,10 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 46 | §46 | Attachment-only encryption: public pages open, `/EFOpen` asks only for attachments | §23 | [ ] |
 | 47 | §47 | Standard security handler interoperability matrix and cancellable decryption | §23 | [ ] |
 | 48 | §48 | JBIG2 interoperability fixtures from an independent encoder, Huffman retained contexts | §31 | [ ] |
+| 49 | §49 | Opening keeps readable pages, reports what it skipped, names OS read failures | §24 | [ ] |
+| 50 | §50 | Destinations and links keep view, remote targets, base URI, flags and quadrilaterals | §24 | [ ] |
+| 51 | §51 | Font inventory over every resource path, with checked embedding and Type3 classification | §24 | [ ] |
+| 52 | §52 | Cancellable document opening and extraction | §24 | [ ] |
 
 ## 1. Audit D00 T01 §1: Git repository and repo-face files
 
@@ -1157,6 +1161,7 @@ The completion review of `D06 T05 §29` (`docs/reviews/06-quality/D06-T05-s29.md
 2. Write a repaired copy through the existing writer, temp-file-then-replace, original untouched. Done when: the copy reopens without recovery.
 
 - [ ] When the page tree from the recovered catalog is broken (a missing `/Kids` target, a cycle, a wrong `/Count`), collect the `/Type /Page` objects the scan found, in file order, as the document's pages, recording the salvage as a recovered-error (`D06 T03 §2`). Done when: a file with a broken `/Pages` node opens with every surviving page.
+- [ ] When only part of the page tree is broken, keep every reachable valid sibling in order around the damaged branch (with `D06 T05 §49`'s issue records) before falling back to the scan's page objects. Done when: a tree with one cyclic branch among valid ones opens every valid page in tree order. **Corrected 2026-10-23:** (`D06 T05 §24` completion review, gap 1: filed here).
 - [ ] Add `Document::save_repaired_copy(path)` writing a full rewrite with a fresh cross-reference table through the writer's temp-file-then-replace path. Done when: the copy reopens with `recovered() == false`, its pages render the same, and the original file's bytes are unchanged.
 - [ ] Add `PdfDocument.SalvagedPagesAndRepairedCopy` covering both, with a failed write leaving no partial file. Done when: the test fails on the code before this section.
 - [ ] Commit: `pdf: salvage damaged page trees and save a repaired copy`
@@ -1264,6 +1269,85 @@ The completion review of `D06 T05 §31` (`docs/reviews/06-quality/D06-T05-s31.md
 - [ ] Commit: `pdf: JBIG2 decodes an independent encoder's corpus, Huffman retained contexts`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.Jbig2IndependentCorpus`.
+
+## 49. Opening keeps readable pages, reports what it skipped, names OS read failures
+
+The completion review of `D06 T05 §24` (`docs/reviews/06-quality/audit-d01-t01-s10.md`, the audit of `D01 T01 §10`) found that local damage turns into total refusal or silent omission: the first failing page-tree child aborts the traversal and discards the pages already read (gap 1), null children, unresolved outline items and fonts are skipped with no record (gap 2), and an oversized `/Info` field, an XMP decompression limit or an outline limit aborts opening although the pages are readable (gap 3). Lock, access-denied and failed-read conditions have no regression (gap 11). Recto's ambition is to open as much as safely can be opened and say exactly what was left out.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Keep traversal and extraction going past damage in `src/pdf/document.cpp`, within the existing bounds, and record each omission. Done when: mixed good and bad fixtures open with their readable content and a report of the rest.
+
+- [ ] Continue the `/Pages` traversal past a child that is missing, cyclic or malformed, keeping every reachable valid sibling in order, and fail with `DamagedFormat` only when no page is usable. Done when: a tree whose second of three `/Kids` is cyclic opens with pages one and three.
+- [ ] Add `DocumentDescription::issues`, a bounded list of `DocumentIssue { category (page tree, metadata, outline, links, fonts), object, page, ErrorCode }`, filled wherever traversal or extraction skips an object. Done when: each skip path in `document.cpp` adds one, and the list stops at its cap with a final overflow entry.
+- [ ] Compare each `/Pages` node's `/Count` with the leaves found beneath it and record a mismatch (missing, negative or wrong) as an issue, keeping the leaves as the page list, since the leaves are authoritative and a wrong `/Count` is common in damaged files. Done when: a root declaring `/Count 2` over one valid page opens with one page and one page-tree issue. **Corrected 2026-10-23:** (`D06 T05 §24` round 1, finding 2: filed here).
+- [ ] Stop only the affected extraction when `/Info`, XMP or `/Outlines` exceeds its limit or is malformed, recording an issue instead of refusing the document. Done when: a file with an over-budget XMP stream and valid pages opens with its pages and one metadata issue.
+- [ ] Add `PdfDocument.PartialOpenAndIssues` for the cases above, and `PdfDocument.OpenFileSystemFailures` for a file held open without sharing (`ERROR_SHARING_VIOLATION`), one whose ACL denies read, and a read that fails part-way (a test read seam), each returning its typed error. Done when: both tests fail on the code before this section.
+- [ ] Commit: `pdf: document opening keeps readable pages and reports what it skipped`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfDocument.*` passes under ASan, including `PdfDocument.PartialOpenAndIssues` and `PdfDocument.OpenFileSystemFailures`.
+
+## 50. Destinations and links keep view, remote targets, base URI, flags and quadrilaterals
+
+The completion review of `D06 T05 §24` (`docs/reviews/06-quality/audit-d01-t01-s10.md`, the audit of `D01 T01 §10`) found the document model losing navigation detail before the viewer sees it: `/FitR` keeps only left and top, null `/XYZ`, `/FitH` and `/FitV` operands become concrete values instead of "keep the current one", and `PageLink` has no fit mode (gap 5); `/GoToR` keeps the file and the first page integer only, named remote destinations, view and new-window preference are lost, `/GoToE` targets are absent and outline items handle only `/GoTo` and `/URI` (gap 6); relative URIs are refused instead of resolved against the catalog's `/URI /Base` (gap 7, ISO 32000-1 Table 207); and link annotation flags and `/QuadPoints` are not kept (gap 8, ISO 32000-1 12.5.3 and Table 173).
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. One destination representation for outlines and links, and complete link data, in `src/pdf/document.h` and `src/pdf/document.cpp`. Done when: every destination mode and link target round-trips into the model.
+
+- [ ] Add `Destination { page or named target, FitMode (XYZ, Fit, FitH, FitV, FitR, FitB, FitBH, FitBV), optional left, top, right, bottom, zoom }` keeping a null operand as absent, and use it in `OutlineNode` and `PageLink`. Done when: each mode with and without null operands reads back exactly.
+- [ ] Extract `/GoToR` (file, page number or named destination, view, `/NewWindow`) and `/GoToE` (target path, destination) for links and outline items, bounded like the other action chains. Done when: remote and embedded targets read back complete from fixtures.
+- [ ] Resolve a relative `/URI` against the catalog's `/URI /Base` before the existing scheme safety check. Done when: `chapter2.html` with an `https://` base becomes a safe absolute link and with a `file:` base stays refused.
+- [ ] Keep each link's `/F` flags and `/QuadPoints` (validated, at most a bounded count), so hidden and no-view links are reported as such. Done when: a hidden link and a two-quadrilateral link read back with their flags and quadrilaterals.
+- [ ] Add `PdfDocument.DestinationAndLinkFidelity` covering the four items. Done when: it fails on the code before this section.
+- [ ] Commit: `pdf: destinations and links keep their full target and geometry`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfDocument.*` passes under ASan, including `PdfDocument.DestinationAndLinkFidelity`.
+
+## 51. Font inventory over every resource path, with checked embedding and Type3 classification
+
+The completion review of `D06 T05 §24` (`docs/reviews/06-quality/audit-d01-t01-s10.md`, the audit of `D01 T01 §10`) found the font inventory missing fonts reachable only through annotation appearance streams, tiling-pattern resources and Type3 glyph resources, taking a non-null `/FontFile` reference as embedded without checking it resolves to a stream, and giving Type3 fonts no classification of their own (gap 9). Acrobat's Fonts tab lists every font a document uses; Recto's must be complete and truthful.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Walk every resource path and check embedding in `src/pdf/document.cpp`. Done when: the inventory lists every font in the fixtures with the right embedding state.
+
+- [ ] Visit annotation appearance streams (`/AP` `/N`, `/R`, `/D`, including state dictionaries), tiling-pattern resources and Type3 `/Resources`, with the existing visited-object guard and budget. Done when: a font used only in a link's appearance, only in a pattern and only inside a Type3 glyph each appear.
+- [ ] Report `is_embedded` only when `/FontFile`, `/FontFile2` or `/FontFile3` resolves to a stream, and add `FontKind::Type3` for Type3 fonts (whose glyphs are content streams, so embedding does not apply). Done when: a dangling `/FontFile2` reports not embedded and a Type3 font reports `Type3`.
+- [ ] Add `PdfDocument.FontInventoryEveryPath` for the cases above. Done when: it fails on the code before this section.
+- [ ] Commit: `pdf: font inventory over every resource path`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfDocument.*` passes under ASan, including `PdfDocument.FontInventoryEveryPath`.
+
+## 52. Cancellable document opening and extraction
+
+The completion review of `D06 T05 §24` (`docs/reviews/06-quality/audit-d01-t01-s10.md`, the audit of `D01 T01 §10`) found that `Document::open` and `open_memory` take no cancellation and run the file read, structure scan and outline, link and font extraction synchronously, so closing a tab waits for them (gap 10, Part 2 shortfall 4).
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Thread a `CancelToken` through opening in `src/pdf/document.h` and `src/pdf/document.cpp`. Done when: a cancelled open returns `Cancelled` promptly and publishes nothing.
+
+- [ ] Add an optional `CancelToken` to `Document::open` and `open_memory`, polled between file-read chunks, per object in the cross-reference load and recovery scan, and per node in page-tree, outline, link and font walks. Done when: a cancel during each phase returns `ErrorCode::Cancelled`.
+- [ ] Measure: on a large and a hostile fixture, cancel at a random point and record the time to return. Done when: `PdfDocument.CancelledOpen` asserts return within 100 ms (Release) and no `Document` is produced.
+- [ ] Commit: `pdf: cancellable document opening`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfDocument.CancelledOpen` passes under ASan.
 
 ## Verification
 

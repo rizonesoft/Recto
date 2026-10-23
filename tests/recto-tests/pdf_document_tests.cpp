@@ -545,6 +545,33 @@ TEST(PdfDocument, OpenAndAuthenticate)
 	}
 }
 
+// BleedBox, TrimBox and ArtBox are page-local (ISO 32000-1 Table 30): a /Pages node's values never reach its pages,
+// and each page keeps its own (D06 T05 section 24, the audit of D01 T01 section 10).
+TEST(PdfDocument, ProductionBoxesArePageLocal)
+{
+	const auto bytes = build_synthetic_pdf_from_objects(
+		"1.7",
+		{
+			{1, "<< /Type /Catalog /Pages 2 0 R >>"},
+			{2,
+			 "<< /Type /Pages /Count 2 /MediaBox [0 0 600 800] /BleedBox [1 1 599 799] /TrimBox [9 9 591 791] "
+			 "/ArtBox [20 20 580 780] /Kids [3 0 R 4 0 R] >>"},
+			{3, "<< /Type /Page /Parent 2 0 R >>"},
+			{4, "<< /Type /Page /Parent 2 0 R /TrimBox [30 30 570 770] >>"},
+		});
+	auto doc_res = Document::open_memory(bytes);
+	ASSERT_TRUE(doc_res.has_value()) << doc_res.error().message.view();
+	const Document& doc = **doc_res;
+	ASSERT_EQ(doc.page_count(), 2u);
+	EXPECT_FALSE(doc.pages()[0].bleed_box.has_value());
+	EXPECT_FALSE(doc.pages()[0].trim_box.has_value());
+	EXPECT_FALSE(doc.pages()[0].art_box.has_value());
+	EXPECT_DOUBLE_EQ(doc.pages()[0].media_box.width(), 600.0); // MediaBox still inherits
+	ASSERT_TRUE(doc.pages()[1].trim_box.has_value());
+	EXPECT_DOUBLE_EQ(doc.pages()[1].trim_box->width(), 540.0);
+	EXPECT_FALSE(doc.pages()[1].bleed_box.has_value());
+}
+
 TEST(PdfDocument, PageTreeAndRotatedPages)
 {
 	// 1. `render/rotated-pages.pdf` has 4 pages with rotations 0, 90, 180, 270
