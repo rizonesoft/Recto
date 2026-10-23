@@ -205,7 +205,20 @@ Bitmap render_to_bitmap(
 
 std::vector<uint8_t> rgba_bytes(const Bitmap& bitmap)
 {
-	std::vector<uint8_t> rgba(static_cast<size_t>(bitmap.width) * bitmap.height * 4);
+	// A Bitmap is a plain struct a caller can change, so its shape is checked
+	// before any pixel is read: a row must fit in the stride, the buffer must
+	// hold every row, and no product may overflow.
+	if (bitmap.width == 0 || bitmap.height == 0) {
+		return {};
+	}
+	const size_t row_bytes = static_cast<size_t>(bitmap.width) * 4;
+	if (bitmap.stride < row_bytes || bitmap.stride > kMaxStride) {
+		throw std::runtime_error("rgba_bytes: the stride does not fit a row of this bitmap");
+	}
+	if (bitmap.bytes.size() < bitmap.stride * (static_cast<size_t>(bitmap.height) - 1) + row_bytes) {
+		throw std::runtime_error("rgba_bytes: the buffer is smaller than the bitmap");
+	}
+	std::vector<uint8_t> rgba(row_bytes * bitmap.height);
 	for (uint32_t y = 0; y < bitmap.height; ++y) {
 		const uint8_t* row = bitmap.bytes.data() + static_cast<size_t>(y) * bitmap.stride;
 		uint8_t* out = rgba.data() + static_cast<size_t>(y) * bitmap.width * 4;

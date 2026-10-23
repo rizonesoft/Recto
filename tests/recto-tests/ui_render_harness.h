@@ -70,6 +70,9 @@ struct RenderOptions {
 // premultiplied, for the recto::test comparison helpers (compare_rgba,
 // expect_rgba_equal, compute_ssim), which read red first. The harness itself
 // returns BGRA, so pass this, never Bitmap::bytes, to an RGBA helper.
+// Throws std::runtime_error, reading nothing, when the stride is narrower
+// than a row or wider than 16 MiB, or the buffer is shorter than the rows it
+// claims; an empty bitmap gives an empty vector.
 [[nodiscard]] std::vector<uint8_t> rgba_bytes(const Bitmap& bitmap);
 
 } // namespace recto::ui::test

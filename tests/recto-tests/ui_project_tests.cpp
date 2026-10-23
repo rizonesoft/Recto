@@ -18,10 +18,12 @@
 #include <array>
 #include <chrono>
 #include <cctype>
+#include <cwchar>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -139,9 +141,13 @@ size_t raw_string_end(const std::string& text, size_t quote)
 	return close == std::string::npos ? std::string::npos : close + closing.size();
 }
 
+// An identifier character as the lexer needs it: ASCII letters, digits and _,
+// and every byte of a UTF-8 multi-byte character, since identifiers may hold
+// Unicode letters ([lex.name]; MSVC reads this source as UTF-8 under /utf-8).
 bool is_identifier_char(char c)
 {
-	return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_';
+	const auto byte = static_cast<unsigned char>(c);
+	return std::isalnum(byte) != 0 || c == '_' || byte >= 0x80;
 }
 
 // True when `text` ends with a whole raw-string prefix token (R, LR, uR, UR or
@@ -515,6 +521,30 @@ fs::path self_path()
 
 constexpr DWORD kChildDeadlineMs = 60000;
 
+// This process's environment for a child run of the test binary, without
+// GoogleTest's sharding variables: a probe names exactly the tests it runs,
+// and a sharded parent must not shard the child's selection again.
+std::wstring child_environment()
+{
+	std::wstring block;
+	wchar_t* strings = GetEnvironmentStringsW();
+	for (const wchar_t* entry = strings; entry != nullptr && *entry != L'\0'; entry += std::wcslen(entry) + 1) {
+		const std::wstring_view variable(entry);
+		const auto starts = [&](std::wstring_view name) {
+			return variable.size() > name.size() && _wcsnicmp(variable.data(), name.data(), name.size()) == 0 &&
+				variable[name.size()] == L'=';
+		};
+		if (starts(L"GTEST_TOTAL_SHARDS") || starts(L"GTEST_SHARD_INDEX") || starts(L"GTEST_SHARD_STATUS_FILE")) {
+			continue;
+		}
+		block.append(variable);
+		block.push_back(L'\0');
+	}
+	FreeEnvironmentStringsW(strings);
+	block.push_back(L'\0');
+	return block;
+}
+
 // Runs this test binary with `arguments` and returns its exit code and output.
 std::pair<DWORD, std::string> run_self(const std::wstring& arguments, DWORD deadline_ms = kChildDeadlineMs)
 {
@@ -533,8 +563,9 @@ std::pair<DWORD, std::string> run_self(const std::wstring& arguments, DWORD dead
 	const fs::path exe = self_path();
 	std::wstring command = L"\"" + exe.wstring() + L"\" " + arguments;
 	PROCESS_INFORMATION process{};
-	const BOOL started = CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
-		nullptr, &startup, &process);
+	std::wstring environment = child_environment();
+	const BOOL started = CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, TRUE,
+		CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, environment.data(), nullptr, &startup, &process);
 	CloseHandle(write_end);
 	if (started == FALSE) {
 		CloseHandle(read_end);
@@ -635,6 +666,10 @@ RECTO_UI_TEST(Project, IncludeBoundary)
 	// An R that ends a preprocessing number is not a raw-string prefix ([lex.pptoken]).
 	write_text(scratch.path() / "src" / "core" / "planted_ppnum.cpp",
 		"#define DROP(...)\nDROP(0.R\"(ordinary\")\n#include \"../ui/include/recto/ui/ui.h\"\n[[maybe_unused]] const char* b = \")\";\n");
+	// A Unicode identifier ending in R (λR) is one identifier, not a raw-string prefix ([lex.name]).
+	write_text(scratch.path() / "src" / "core" / "planted_unicode.cpp",
+		"#define \xCE\xBBR\n[[maybe_unused]] const char* a = \xCE\xBBR\"(ordinary\";\n#include \"../ui/include/recto/ui/ui.h\"\n"
+		"[[maybe_unused]] const char* b = \")\";\n");
 	// The digraph spelling of #include ([lex.digraph]).
 	write_text(scratch.path() / "src" / "services" / "planted_digraph.cpp", "%:include \"../ui/include/recto/ui/ui.h\"\n");
 	// `//` inside the header name of a toolkit file that reaches an engine header.
@@ -654,7 +689,7 @@ RECTO_UI_TEST(Project, IncludeBoundary)
 		"planted_pdf.cpp:1", "planted_pdf.cpp:3", "planted_pdf.cpp:5", "planted_bare.cpp:1", "planted_bare.cpp:2",
 		"planted_core.cpp:1", "planted_digits.cpp:2", "planted_angle.cpp:1", "planted_services.h:2",
 		"planted_fragment.inc:1", "planted_digraph.cpp:1", "planted_angle_ui.cpp:1", "planted_utf16.cpp:1",
-		"planted_ppnum.cpp:3"};
+		"planted_ppnum.cpp:3", "planted_unicode.cpp:3"};
 	EXPECT_EQ(caught, expected) << describe(planted);
 }
 
@@ -779,6 +814,26 @@ RECTO_UI_TEST(Project, StalledChildIsReaped)
 		{ const auto result = run_self(L"--gtest_filter=Ui.DISABLED_Project.Stall --gtest_also_run_disabled_tests", 1000); (void)result; },
 		std::runtime_error);
 	EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(10));
+}
+
+RECTO_UI_TEST(Project, ChildRunsIgnoreParentSharding)
+{
+	// A parent run on shard 1 of 2 still gets its probe's single test run. The
+	// parent's own values, if any, are put back afterwards.
+	const auto saved = [](const wchar_t* name) {
+		std::wstring value(64, L'\0');
+		const DWORD length = GetEnvironmentVariableW(name, value.data(), static_cast<DWORD>(value.size()));
+		return length == 0 || length >= value.size() ? std::optional<std::wstring>() : std::optional<std::wstring>(value.substr(0, length));
+	};
+	const std::optional<std::wstring> total = saved(L"GTEST_TOTAL_SHARDS");
+	const std::optional<std::wstring> index = saved(L"GTEST_SHARD_INDEX");
+	SetEnvironmentVariableW(L"GTEST_TOTAL_SHARDS", L"2");
+	SetEnvironmentVariableW(L"GTEST_SHARD_INDEX", L"1");
+	const auto [code, output] = run_self(L"--gtest_filter=Ui.Project.LibraryLinks");
+	SetEnvironmentVariableW(L"GTEST_TOTAL_SHARDS", total ? total->c_str() : nullptr);
+	SetEnvironmentVariableW(L"GTEST_SHARD_INDEX", index ? index->c_str() : nullptr);
+	EXPECT_EQ(code, 0U) << output;
+	EXPECT_NE(output.find("[  PASSED  ] 1 test."), std::string::npos) << output;
 }
 
 RECTO_UI_TEST(Project, EmptySelectionFails)
@@ -1156,6 +1211,13 @@ RECTO_UI_TEST(Project, HarnessRgbaAdapter)
 	std::vector<uint8_t> blue = rgba;
 	std::swap(blue[0], blue[2]);
 	EXPECT_FALSE(recto::test::compare_rgba(rgba, blue, 4, 4, 16, 16, 0).matches);
+	// A bitmap whose fields disagree is refused before any byte is read.
+	EXPECT_THROW({ const auto r = recto::ui::test::rgba_bytes(recto::ui::test::Bitmap{1, 1, 4, {}}); (void)r; }, std::runtime_error);
+	EXPECT_THROW({ const auto r = recto::ui::test::rgba_bytes(recto::ui::test::Bitmap{4, 4, 8, bitmap.bytes}); (void)r; }, std::runtime_error);
+	recto::ui::test::Bitmap truncated = bitmap;
+	truncated.bytes.resize(truncated.bytes.size() - 1);
+	EXPECT_THROW({ const auto r = recto::ui::test::rgba_bytes(truncated); (void)r; }, std::runtime_error);
+	EXPECT_TRUE(recto::ui::test::rgba_bytes(recto::ui::test::Bitmap{0, 4, 0, {}}).empty());
 }
 
 RECTO_UI_TEST(Project, DisabledMarkerStaysAtTheFront)
