@@ -48,13 +48,28 @@ struct RenderOptions {
 };
 
 // Renders `root` into a width_px x height_px bitmap at `dpi_scale` (1.0 is 96
-// DPI). The target is cleared to transparent black first. Throws
-// std::runtime_error naming the failed step when a COM call fails.
+// DPI). The target is cleared to transparent black first.
+//
+// Refusals and failures throw std::runtime_error, and a refused request never
+// calls `root`: a zero or larger-than-16384 side, a scale that is not finite or
+// outside 0.25 to 16, or a min_stride wider than 16 MiB. A failed COM call
+// names its step and HRESULT; a failed EndDraw also names the two tags the
+// failing drawing call carried (ID2D1RenderTarget::SetTags) and the request.
+// An exception thrown by `root` reaches the caller unchanged.
+//
+// COM: the calling thread keeps its apartment. A thread with none gets a
+// multithreaded one for the call only; an STA or MTA caller is left as it was.
 [[nodiscard]] Bitmap render_to_bitmap(
 	const DrawRoot& root,
 	uint32_t width_px,
 	uint32_t height_px,
 	float dpi_scale,
 	const RenderOptions& options = {});
+
+// The bitmap as packed RGBA rows (width * 4 bytes, no padding), still
+// premultiplied, for the recto::test comparison helpers (compare_rgba,
+// expect_rgba_equal, compute_ssim), which read red first. The harness itself
+// returns BGRA, so pass this, never Bitmap::bytes, to an RGBA helper.
+[[nodiscard]] std::vector<uint8_t> rgba_bytes(const Bitmap& bitmap);
 
 } // namespace recto::ui::test

@@ -12,4 +12,9 @@ inline constexpr int kVersion = 1;
 // proves the static library links.
 [[nodiscard]] int version() noexcept;
 
+// True when the library's own objects were compiled with AddressSanitizer
+// (/fsanitize=address, the build's -EnableASAN), so a test can prove the
+// toolkit, not only the test binary, is instrumented.
+[[nodiscard]] bool built_with_address_sanitizer() noexcept;
+
 } // namespace recto::ui

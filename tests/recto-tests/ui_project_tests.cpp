@@ -10,6 +10,8 @@
 #include "ui_render_harness.h"
 #include "ui_test.h"
 
+#include <windows.h>
+#include <objbase.h>
 #include <wrl/client.h>
 
 #include <algorithm>
@@ -17,12 +19,16 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <limits>
 #include <regex>
 #include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <utility>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -43,14 +49,17 @@ std::string lower(std::string value)
 
 bool is_source_file(const fs::path& path)
 {
-	const std::string ext = lower(path.extension().string());
-	return ext == ".h" || ext == ".hpp" || ext == ".inl" || ext == ".cpp" || ext == ".cc" || ext == ".cxx";
+	// Every extension MSVC compiles or a directive can include: headers, inline
+	// and template implementation files, include fragments and module units.
+	static const std::set<std::string> extensions = {".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp", ".tpp", ".inc",
+		".c", ".cc", ".cpp", ".cxx", ".ixx", ".cppm"};
+	return extensions.contains(lower(path.extension().string()));
 }
 
 bool is_header_file(const fs::path& path)
 {
-	const std::string ext = lower(path.extension().string());
-	return ext == ".h" || ext == ".hpp" || ext == ".inl";
+	static const std::set<std::string> extensions = {".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp", ".tpp", ".inc"};
+	return extensions.contains(lower(path.extension().string()));
 }
 
 std::vector<std::string> split_path(const std::string& include_path)
@@ -68,12 +77,45 @@ std::vector<std::string> split_path(const std::string& include_path)
 	return parts;
 }
 
+// UTF-16 source text (MSVC compiles a file that starts with a UTF-16 byte
+// order mark, whatever /utf-8 says) as UTF-8, so the scans read what the
+// compiler reads; anything else is returned as it is.
+std::string utf8_source(const std::string& bytes)
+{
+	const bool little = bytes.size() >= 2 && static_cast<unsigned char>(bytes[0]) == 0xFF && static_cast<unsigned char>(bytes[1]) == 0xFE;
+	const bool big = bytes.size() >= 2 && static_cast<unsigned char>(bytes[0]) == 0xFE && static_cast<unsigned char>(bytes[1]) == 0xFF;
+	if (!little && !big) {
+		return bytes;
+	}
+	std::wstring wide;
+	for (size_t i = 2; i + 1 < bytes.size(); i += 2) {
+		const auto lo = static_cast<unsigned char>(bytes[little ? i : i + 1]);
+		const auto hi = static_cast<unsigned char>(bytes[little ? i + 1 : i]);
+		wide.push_back(static_cast<wchar_t>(lo | (hi << 8)));
+	}
+	if (wide.empty()) {
+		return {};
+	}
+	const int size = WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()), nullptr, 0, nullptr, nullptr);
+	std::string out(static_cast<size_t>(size), '\0');
+	WideCharToMultiByte(CP_UTF8, 0, wide.data(), static_cast<int>(wide.size()), out.data(), size, nullptr, nullptr);
+	return out;
+}
+
+// Reads a whole file as UTF-8 text. A file that cannot be opened or read is a
+// failure, never empty text: an unreadable file would otherwise pass every scan.
 std::string read_text(const fs::path& path)
 {
 	std::ifstream stream(recto::test::to_long_path(path), std::ios::binary);
+	if (!stream) {
+		throw std::runtime_error("cannot open " + path.string() + " for the boundary scan");
+	}
 	std::ostringstream buffer;
 	buffer << stream.rdbuf();
-	return buffer.str();
+	if (stream.bad()) {
+		throw std::runtime_error("cannot read " + path.string() + " for the boundary scan");
+	}
+	return utf8_source(buffer.str());
 }
 
 // For a raw string literal whose opening quote is at `quote` (the `"` after the
@@ -94,18 +136,35 @@ size_t raw_string_end(const std::string& text, size_t quote)
 	return close == std::string::npos ? std::string::npos : close + closing.size();
 }
 
-// What the compiler's preprocessor sees (translation phases 2 and 3): lines
-// joined at a backslash-newline, then every comment replaced by one space. A
-// quoted literal is skipped so a "//" inside it does not start a comment. A
-// regex over physical lines misses `#include /* c */ "x.h"` and an include split
-// across a continuation, both of which the compiler accepts.
-std::string logical_source(const std::string& raw_with_bom)
+bool is_identifier_char(char c)
+{
+	return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_';
+}
+
+// What the compiler's preprocessor sees (translation phases 1 to 3), with the
+// physical line of every character kept so a finding names the line a person
+// opens the file at.
+struct LogicalSource {
+	std::string text;
+	std::vector<size_t> line; // physical line (1-based) of each character of `text`
+};
+
+// Lines joined at a backslash-newline, then every comment replaced by one
+// space. Literals, preprocessing numbers (`1'000` is one number, not a
+// character literal) and the header name of an #include or #import directive
+// are copied whole, so a comment opener inside them starts no comment, and a
+// raw string's body is dropped (its newlines kept) so text inside it is never
+// read as code. A regex over physical lines misses `#include /* c */ "x.h"` and
+// an include split across a continuation, both of which the compiler accepts.
+LogicalSource logical_source(const std::string& raw_with_bom)
 {
 	// A UTF-8 byte order mark is not part of the first line the compiler lexes.
 	const std::string_view bom = "\xEF\xBB\xBF";
 	const std::string raw = raw_with_bom.starts_with(bom) ? raw_with_bom.substr(bom.size()) : raw_with_bom;
 	std::string spliced;
+	std::vector<size_t> spliced_line;
 	spliced.reserve(raw.size());
+	size_t physical = 1;
 	for (size_t i = 0; i < raw.size(); ++i) {
 		if (raw[i] == '\\') {
 			size_t j = i + 1;
@@ -114,60 +173,102 @@ std::string logical_source(const std::string& raw_with_bom)
 			}
 			if (j < raw.size() && raw[j] == '\n') {
 				i = j;
+				++physical;
 				continue;
 			}
 		}
 		spliced.push_back(raw[i]);
+		spliced_line.push_back(physical);
+		if (raw[i] == '\n') {
+			++physical;
+		}
 	}
-	std::string out;
-	out.reserve(spliced.size());
+	LogicalSource out;
+	out.text.reserve(spliced.size());
+	const auto emit = [&](char c, size_t at) {
+		out.text.push_back(c);
+		out.line.push_back(spliced_line.empty() ? 1 : spliced_line[std::min(at, spliced_line.size() - 1)]);
+	};
+	// True when the current output line so far is `#include` or `#import` and
+	// optional white space: the next `<` or `"` opens a header name.
+	const auto at_header_name = [&]() {
+		const size_t newline = out.text.rfind('\n');
+		const size_t start = newline == std::string::npos ? 0 : newline + 1;
+		static const std::regex directive(R"(^\s*(?:#|%:)\s*(include|import)\s*$)");
+		return std::regex_match(out.text.substr(start), directive);
+	};
 	for (size_t i = 0; i < spliced.size(); ++i) {
 		const char c = spliced[i];
 		const char next = i + 1 < spliced.size() ? spliced[i + 1] : '\0';
-		if (c == '/' && next == '/') {
-			while (i < spliced.size() && spliced[i] != '\n') {
+		const char previous = out.text.empty() ? '\0' : out.text.back();
+		if ((c == '<' || c == '"') && at_header_name()) {
+			// A header name: no escapes and no comments inside it.
+			const char close = c == '<' ? '>' : '"';
+			emit(c, i);
+			for (++i; i < spliced.size() && spliced[i] != close && spliced[i] != '\n'; ++i) {
+				emit(spliced[i], i);
+			}
+			if (i < spliced.size()) {
+				emit(spliced[i], i);
+			}
+		} else if (c == '/' && next == '/') {
+			while (i + 1 < spliced.size() && spliced[i + 1] != '\n') {
 				++i;
 			}
-			out.push_back('\n');
 		} else if (c == '/' && next == '*') {
+			const size_t opened = i;
 			i += 2;
 			while (i + 1 < spliced.size() && !(spliced[i] == '*' && spliced[i + 1] == '/')) {
 				++i;
 			}
 			++i;
 			// One space for the whole comment, newlines inside it included: a comment
-			// that spans lines does not split the directive around it. Line numbers
-			// in a finding are therefore those of the comment-free text.
-			out.push_back(' ');
-		} else if (c == '"' && !out.empty() && out.back() == 'R' && raw_string_end(spliced, i) != std::string::npos) {
-			// R"delim( ... )delim": the body is opaque, whatever quotes or comment openers it holds.
+			// that spans lines does not split the directive around it.
+			emit(' ', opened);
+		} else if ((std::isdigit(static_cast<unsigned char>(c)) != 0 ||
+					   (c == '.' && std::isdigit(static_cast<unsigned char>(next)) != 0)) &&
+				   !is_identifier_char(previous)) {
+			// A preprocessing number ([lex.ppnumber]): digits, identifier characters,
+			// dots, a digit separator ' before a digit or letter, and a sign after e, E, p or P.
+			emit(c, i);
+			while (i + 1 < spliced.size()) {
+				const char n = spliced[i + 1];
+				const char after = i + 2 < spliced.size() ? spliced[i + 2] : '\0';
+				const char last = spliced[i];
+				if (is_identifier_char(n) || n == '.' || (n == '\'' && is_identifier_char(after)) ||
+					((n == '+' || n == '-') && (last == 'e' || last == 'E' || last == 'p' || last == 'P'))) {
+					++i;
+					emit(n, i);
+				} else {
+					break;
+				}
+			}
+		} else if (c == '"' && previous == 'R' && raw_string_end(spliced, i) != std::string::npos) {
+			// R"delim( ... )delim": the body is opaque, whatever quotes, comment
+			// openers or directives it holds. Only its newlines are kept.
 			const size_t end = raw_string_end(spliced, i);
-			out.append(spliced, i, end - i);
+			emit('"', i);
+			for (size_t k = i + 1; k + 1 < end; ++k) {
+				if (spliced[k] == '\n') {
+					emit('\n', k);
+				}
+			}
+			emit('"', end - 1);
 			i = end - 1;
 		} else if (c == '"' || c == '\'') {
-			out.push_back(c);
+			emit(c, i);
 			for (++i; i < spliced.size() && spliced[i] != c && spliced[i] != '\n'; ++i) {
 				if (spliced[i] == '\\' && i + 1 < spliced.size()) {
-					out.push_back(spliced[i++]);
+					emit(spliced[i], i);
+					++i;
 				}
-				out.push_back(spliced[i]);
+				emit(spliced[i], i);
 			}
 			if (i < spliced.size()) {
-				out.push_back(spliced[i]);
+				emit(spliced[i], i);
 			}
 		} else {
-			out.push_back(c);
-		}
-	}
-	return out;
-}
-
-std::string without_whitespace(const std::string& text)
-{
-	std::string out;
-	for (const char c : text) {
-		if (!std::isspace(static_cast<unsigned char>(c))) {
-			out.push_back(c);
+			emit(c, i);
 		}
 	}
 	return out;
@@ -190,12 +291,14 @@ std::set<std::string> header_basenames(const std::vector<fs::path>& dirs)
 	return names;
 }
 
-// Walks `dir` and reports each #include line whose target `forbidden` rejects.
+// Walks `dir` and reports each #include line whose target `forbidden` rejects,
+// at the physical line of the included name.
 template <typename Predicate>
 std::vector<Finding> scan_includes(const fs::path& dir, Predicate forbidden)
 {
-	static const std::regex include_line(R"(^\s*#\s*include\s*[<"]([^>"]+)[>"])");
-	static const std::regex computed_include(R"(^\s*#\s*include\s*([^<"\s].*)$)");
+	// `%:` is the alternative spelling of `#` ([lex.digraph]).
+	static const std::regex include_line(R"(^\s*(?:#|%:)\s*(?:include|import)\s*[<"]([^>"]+)[>"])");
+	static const std::regex computed_include(R"(^\s*(?:#|%:)\s*(?:include|import)\s*([^<"\s].*)$)");
 	std::vector<Finding> findings;
 	if (!fs::exists(dir)) {
 		return findings;
@@ -204,21 +307,23 @@ std::vector<Finding> scan_includes(const fs::path& dir, Predicate forbidden)
 		if (!entry.is_regular_file() || !is_source_file(entry.path())) {
 			continue;
 		}
-		std::istringstream lines(logical_source(read_text(entry.path())));
-		std::string line;
-		size_t number = 0;
-		while (std::getline(lines, line)) {
-			++number;
+		const LogicalSource source = logical_source(read_text(entry.path()));
+		size_t start = 0;
+		while (start < source.text.size()) {
+			const size_t end = std::min(source.text.find('\n', start), source.text.size());
+			const std::string line = source.text.substr(start, end - start);
 			std::smatch match;
 			if (std::regex_search(line, match, include_line)) {
 				if (forbidden(match[1].str())) {
-					findings.push_back({entry.path(), number, match[1].str()});
+					findings.push_back({entry.path(), source.line[start + static_cast<size_t>(match.position(1))], match[1].str()});
 				}
 			} else if (std::regex_search(line, match, computed_include)) {
 				// #include MACRO hides its target from any text scan, so inside the
 				// guarded modules it is refused outright.
-				findings.push_back({entry.path(), number, "computed include " + match[1].str()});
+				findings.push_back({entry.path(), source.line[start + static_cast<size_t>(match.position(1))],
+					"computed include " + match[1].str()});
 			}
+			start = end + 1;
 		}
 	}
 	return findings;
@@ -241,44 +346,57 @@ bool ui_includes_engine(const std::string& include_path, const std::set<std::str
 	return engine_headers.contains(parts.back());
 }
 
-// The engine libraries may not include recto-ui by any path.
-bool engine_includes_ui(const std::string& include_path)
+// The engine libraries may not include recto-ui by any path, nor any header
+// the toolkit owns by bare name (ui.h, application.h and the rest).
+bool engine_includes_ui(const std::string& include_path, const std::set<std::string>& ui_headers)
 {
 	const std::vector<std::string> parts = split_path(include_path);
-	for (size_t i = 0; i < parts.size(); ++i) {
-		if (parts[i] == "ui" || parts[i] == "recto_ui.h") {
+	if (parts.empty()) {
+		return false;
+	}
+	for (const std::string& part : parts) {
+		if (part == "ui") {
 			return true;
 		}
 	}
-	return false;
+	return ui_headers.contains(parts.back());
+}
+
+// Header names one side owns and the other does not (a name both own, such as
+// pch.h, is each side's own header, not a crossing).
+struct HeaderNames {
+	std::set<std::string> engine;
+	std::set<std::string> ui;
+};
+
+HeaderNames header_names(const fs::path& root)
+{
+	const std::set<std::string> engine = header_basenames({root / "src" / "pdf", root / "src" / "core", root / "src" / "services"});
+	const std::set<std::string> ui = header_basenames({root / "src" / "ui"});
+	HeaderNames names;
+	std::set_difference(engine.begin(), engine.end(), ui.begin(), ui.end(), std::inserter(names.engine, names.engine.end()));
+	std::set_difference(ui.begin(), ui.end(), engine.begin(), engine.end(), std::inserter(names.ui, names.ui.end()));
+	return names;
 }
 
 // Boundary scan over one repository tree rooted at `root` (a checkout or a
-// scratch copy). `engine_headers` is the set of names the engine libraries own.
-std::vector<Finding> boundary_findings(const fs::path& root, const std::set<std::string>& engine_headers)
+// scratch copy), with the header names of the real tree.
+std::vector<Finding> boundary_findings(const fs::path& root, const HeaderNames& names)
 {
 	std::vector<Finding> all;
 	for (const Finding& finding : scan_includes(root / "src" / "ui", [&](const std::string& include_path) {
-			 return ui_includes_engine(include_path, engine_headers);
+			 return ui_includes_engine(include_path, names.engine);
 		 })) {
 		all.push_back(finding);
 	}
 	for (const char* engine_dir : {"pdf", "core", "services"}) {
-		for (const Finding& finding : scan_includes(root / "src" / engine_dir, engine_includes_ui)) {
+		for (const Finding& finding : scan_includes(root / "src" / engine_dir, [&](const std::string& include_path) {
+				 return engine_includes_ui(include_path, names.ui);
+			 })) {
 			all.push_back(finding);
 		}
 	}
 	return all;
-}
-
-std::set<std::string> engine_header_names(const fs::path& root)
-{
-	std::set<std::string> names = header_basenames({root / "src" / "pdf", root / "src" / "core", root / "src" / "services"});
-	// A name the toolkit also owns is its own header, not an engine include.
-	for (const std::string& own : header_basenames({root / "src" / "ui"})) {
-		names.erase(own);
-	}
-	return names;
 }
 
 void write_text(const fs::path& path, std::string_view text)
@@ -288,10 +406,10 @@ void write_text(const fs::path& path, std::string_view text)
 	stream << text;
 }
 
-// Files under `dir` that contain any of `tokens`. Whitespace is ignored (the
-// compiler accepts `Microsoft :: UI`), and in a source file so are comments, so
-// the check reads the code the compiler reads. The finding carries no line:
-// whitespace removal discards them.
+// Files under `dir` that contain any of `tokens`, each at the physical line
+// where the token starts. Whitespace is ignored (the compiler accepts
+// `Microsoft :: UI`), and in a source file so are comments, so the check reads
+// the code the compiler reads.
 std::vector<Finding> scan_tokens(const fs::path& dir, const std::vector<std::string>& tokens)
 {
 	std::vector<Finding> findings;
@@ -302,14 +420,29 @@ std::vector<Finding> scan_tokens(const fs::path& dir, const std::vector<std::str
 		if (!entry.is_regular_file()) {
 			continue;
 		}
-		std::string text = read_text(entry.path());
+		const std::string raw = read_text(entry.path());
+		LogicalSource source;
 		if (is_source_file(entry.path())) {
-			text = logical_source(text);
+			source = logical_source(raw);
+		} else {
+			source.text = raw;
+			size_t line = 1;
+			for (const char c : raw) {
+				source.line.push_back(line);
+				line += c == '\n' ? 1 : 0;
+			}
 		}
-		const std::string compact = without_whitespace(text);
+		std::string compact;
+		std::vector<size_t> compact_line;
+		for (size_t i = 0; i < source.text.size(); ++i) {
+			if (!std::isspace(static_cast<unsigned char>(source.text[i]))) {
+				compact.push_back(source.text[i]);
+				compact_line.push_back(source.line[i]);
+			}
+		}
 		for (const std::string& token : tokens) {
-			if (compact.find(token) != std::string::npos) {
-				findings.push_back({entry.path(), 0, token});
+			for (size_t at = compact.find(token); at != std::string::npos; at = compact.find(token, at + 1)) {
+				findings.push_back({entry.path(), compact_line[at], token});
 			}
 		}
 	}
@@ -331,6 +464,73 @@ const std::vector<std::string>& winrt_ui_tokens()
 	return tokens;
 }
 
+// Full names that occur more than once in `names`.
+std::set<std::string> duplicate_names(const std::vector<std::string>& names)
+{
+	std::set<std::string> seen;
+	std::set<std::string> duplicates;
+	for (const std::string& name : names) {
+		if (!seen.insert(name).second) {
+			duplicates.insert(name);
+		}
+	}
+	return duplicates;
+}
+
+// This test binary's own path.
+fs::path self_path()
+{
+	std::wstring self(MAX_PATH, L'\0');
+	for (;;) {
+		const DWORD length = GetModuleFileNameW(nullptr, self.data(), static_cast<DWORD>(self.size()));
+		if (length < self.size()) {
+			self.resize(length);
+			return fs::path(self);
+		}
+		self.resize(self.size() * 2);
+	}
+}
+
+// Runs this test binary with `arguments` and returns its exit code and output.
+std::pair<DWORD, std::string> run_self(const std::wstring& arguments)
+{
+	SECURITY_ATTRIBUTES inherit{sizeof(inherit), nullptr, TRUE};
+	HANDLE read_end = nullptr;
+	HANDLE write_end = nullptr;
+	if (CreatePipe(&read_end, &write_end, &inherit, 0) == FALSE) {
+		throw std::runtime_error("CreatePipe failed");
+	}
+	SetHandleInformation(read_end, HANDLE_FLAG_INHERIT, 0);
+	STARTUPINFOW startup{};
+	startup.cb = sizeof(startup);
+	startup.dwFlags = STARTF_USESTDHANDLES;
+	startup.hStdOutput = write_end;
+	startup.hStdError = write_end;
+	const fs::path exe = self_path();
+	std::wstring command = L"\"" + exe.wstring() + L"\" " + arguments;
+	PROCESS_INFORMATION process{};
+	const BOOL started = CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
+		nullptr, &startup, &process);
+	CloseHandle(write_end);
+	if (started == FALSE) {
+		CloseHandle(read_end);
+		throw std::runtime_error("could not start the test binary");
+	}
+	std::string output;
+	std::array<char, 4096> buffer{};
+	DWORD got = 0;
+	while (ReadFile(read_end, buffer.data(), static_cast<DWORD>(buffer.size()), &got, nullptr) != FALSE && got > 0) {
+		output.append(buffer.data(), got);
+	}
+	CloseHandle(read_end);
+	WaitForSingleObject(process.hProcess, 60000);
+	DWORD code = 0;
+	GetExitCodeProcess(process.hProcess, &code);
+	CloseHandle(process.hProcess);
+	CloseHandle(process.hThread);
+	return {code, output};
+}
+
 } // namespace
 
 RECTO_UI_TEST(Project, LibraryLinks)
@@ -341,14 +541,17 @@ RECTO_UI_TEST(Project, LibraryLinks)
 RECTO_UI_TEST(Project, IncludeBoundary)
 {
 	const fs::path root = recto::test::repo_root();
-	const std::set<std::string> engine_headers = engine_header_names(root);
-	ASSERT_TRUE(engine_headers.contains("recto_pdf.h")) << "the engine header set must come from the real tree";
+	const HeaderNames names = header_names(root);
+	ASSERT_TRUE(names.engine.contains("recto_pdf.h")) << "the engine header set must come from the real tree";
+	ASSERT_TRUE(names.ui.contains("ui.h")) << "the toolkit header set must come from the real tree";
+	ASSERT_FALSE(names.engine.contains("pch.h")) << "a name both sides own is neither side's crossing";
 
 	// The real tree is clean.
-	const std::vector<Finding> real = boundary_findings(root, engine_headers);
+	const std::vector<Finding> real = boundary_findings(root, names);
 	EXPECT_TRUE(real.empty()) << describe(real);
 
-	// A scratch copy of src/ui, with every forbidden shape planted, is caught.
+	// A scratch copy of src/ui, with every forbidden shape planted, is caught at
+	// the physical line of the included name, and nothing else is.
 	recto::test::TempDir scratch;
 	fs::create_directories(scratch.path() / "src");
 	fs::copy(root / "src" / "ui", scratch.path() / "src" / "ui", fs::copy_options::recursive);
@@ -371,20 +574,61 @@ RECTO_UI_TEST(Project, IncludeBoundary)
 		"#include UI_HEADER\n");
 	write_text(scratch.path() / "src" / "ui" / "planted_bom.cpp", "\xEF\xBB\xBF#include \"recto_pdf.h\"\n");
 	write_text(scratch.path() / "src" / "ui" / "planted_splice.cpp", "#inc\\\nlude \"recto_pdf.h\"\n");
-	write_text(scratch.path() / "src" / "pdf" / "planted_pdf.cpp", "#include <recto/ui/ui.h>\n#include \"document.h\"\n#include /* toolkit */ \"../ui/include/recto/ui/ui.h\"\n#include /* a comment\nspanning lines */ \"../ui/include/recto/ui/ui.h\"\n");
+	// A raw string's body is text, not code; the include after it is code.
+	write_text(scratch.path() / "src" / "ui" / "planted_raw.cpp",
+		"const char* text = R\"x(\n#include \"recto_pdf.h\"\n)x\";\n#include \"recto_core.h\"\n");
+	// A comment that ends on the directive's line: the finding names line 2.
+	write_text(scratch.path() / "src" / "ui" / "planted_lines.cpp", "/* a\nb */ #include \"recto_pdf.h\"\n");
+	write_text(scratch.path() / "src" / "pdf" / "planted_pdf.cpp",
+		"#include <recto/ui/ui.h>\n#include \"document.h\"\n#include /* toolkit */ \"../ui/include/recto/ui/ui.h\"\n"
+		"#include /* a comment\nspanning lines */ \"../ui/include/recto/ui/ui.h\"\n");
+	// Toolkit headers by bare name, from an engine library.
+	write_text(scratch.path() / "src" / "pdf" / "planted_bare.cpp", "#include \"ui.h\"\n#include <application.h>\n");
 	write_text(scratch.path() / "src" / "core" / "planted_core.cpp", "#include \"../ui/application.h\"\n");
-	write_text(scratch.path() / "src" / "services" / "planted_services.h", "// #include <recto/ui/ui.h> in a comment is not an include\n#  include \"recto/ui/theme.h\"\n");
+	// A digit separator is part of a number, not a character literal that hides
+	// a comment opener ([lex.ppnumber]).
+	write_text(scratch.path() / "src" / "core" / "planted_digits.cpp",
+		"[[maybe_unused]] constexpr auto n = 1'000; // ' /*\n#include \"../ui/include/recto/ui/ui.h\"\n");
+	// `//` inside a header name is part of the name ([lex.header]).
+	write_text(scratch.path() / "src" / "core" / "planted_angle.cpp", "#include <../ui/include/recto//ui/ui.h>\n");
+	write_text(scratch.path() / "src" / "services" / "planted_services.h",
+		"// #include <recto/ui/ui.h> in a comment is not an include\n#  include \"recto/ui/theme.h\"\n");
+	// An include fragment is scanned like any source file.
+	write_text(scratch.path() / "src" / "services" / "planted_fragment.inc", "#import <recto/ui/ui.h>\n");
+	// The digraph spelling of #include ([lex.digraph]).
+	write_text(scratch.path() / "src" / "services" / "planted_digraph.cpp", "%:include \"../ui/include/recto/ui/ui.h\"\n");
+	// `//` inside the header name of a toolkit file that reaches an engine header.
+	write_text(scratch.path() / "src" / "ui" / "planted_angle_ui.cpp", "#include <../../pdf//error.h>\n");
+	// UTF-16 source with a byte order mark, which MSVC compiles.
+	write_text(scratch.path() / "src" / "core" / "planted_utf16.cpp",
+		std::string_view("\xFF\xFE#\0i\0n\0c\0l\0u\0d\0e\0 \0\"\0u\0i\0.\0h\0\"\0\n\0", 34));
 
-	const std::vector<Finding> planted = boundary_findings(scratch.path(), engine_headers);
+	const std::vector<Finding> planted = boundary_findings(scratch.path(), names);
 	std::set<std::string> caught;
 	for (const Finding& finding : planted) {
 		caught.insert(finding.file.filename().string() + ":" + std::to_string(finding.line));
 	}
-	const std::set<std::string> expected = {
-		"planted_ui.cpp:4", "planted_ui.cpp:5", "planted_ui.cpp:6", "planted_ui.cpp:7", "planted_ui.cpp:8", "planted_ui.cpp:9",
-		"planted_ui.cpp:10", "planted_ui.cpp:12", "planted_ui.cpp:14", "planted_ui.cpp:16", "planted_bom.cpp:1", "planted_splice.cpp:1", "planted_pdf.cpp:1", "planted_pdf.cpp:3", "planted_pdf.cpp:4","planted_core.cpp:1",
-		"planted_services.h:2"};
+	const std::set<std::string> expected = {"planted_ui.cpp:4", "planted_ui.cpp:5", "planted_ui.cpp:6", "planted_ui.cpp:7",
+		"planted_ui.cpp:8", "planted_ui.cpp:9", "planted_ui.cpp:10", "planted_ui.cpp:12", "planted_ui.cpp:14",
+		"planted_ui.cpp:16", "planted_bom.cpp:1", "planted_splice.cpp:2", "planted_raw.cpp:4", "planted_lines.cpp:2",
+		"planted_pdf.cpp:1", "planted_pdf.cpp:3", "planted_pdf.cpp:5", "planted_bare.cpp:1", "planted_bare.cpp:2",
+		"planted_core.cpp:1", "planted_digits.cpp:2", "planted_angle.cpp:1", "planted_services.h:2",
+		"planted_fragment.inc:1", "planted_digraph.cpp:1", "planted_angle_ui.cpp:1", "planted_utf16.cpp:1"};
 	EXPECT_EQ(caught, expected) << describe(planted);
+}
+
+RECTO_UI_TEST(Project, ScanRefusesUnreadableFile)
+{
+	// A file the scan cannot read fails the scan; it is never read as empty.
+	recto::test::TempDir scratch;
+	const fs::path locked = scratch.path() / "src" / "ui" / "locked.cpp";
+	write_text(locked, "#include \"recto_pdf.h\"\n");
+	const HANDLE handle = CreateFileW(locked.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+	const HeaderNames names = header_names(recto::test::repo_root());
+	EXPECT_THROW({ const auto findings = boundary_findings(scratch.path(), names); (void)findings; }, std::runtime_error);
+	CloseHandle(handle);
+	EXPECT_EQ(boundary_findings(scratch.path(), names).size(), 1U);
 }
 
 RECTO_UI_TEST(Project, NoWinRtUiTypes)
@@ -400,12 +644,90 @@ RECTO_UI_TEST(Project, NoWinRtUiTypes)
 	write_text(scratch.path() / "src" / "ui" / "planted_b.cpp", "using namespace winrt::Microsoft::UI::Xaml;\nMicrosoft::UI::Xaml::Window w;\n");
 	write_text(scratch.path() / "src" / "ui" / "planted_c.cpp", "winrt::Microsoft  ::\n\tUI::Xaml::Window w; // spaced out\n");
 	write_text(scratch.path() / "src" / "ui" / "planted_d.cpp", "using namespace Microsoft . UI;\n");
+	write_text(scratch.path() / "src" / "ui" / "planted_e.cpp", "constexpr auto n = 1'000; // ' /*\nwinrt::Microsoft::UI::Xaml::Window* w;\n");
+	write_text(scratch.path() / "src" / "ui" / "planted_f.cpp", "// Microsoft::UI in a comment is not code\nint x;\n");
+	write_text(scratch.path() / "src" / "ui" / "planted_g.cpp",
+		std::string_view("\xFE\xFF\0M\0i\0c\0r\0o\0s\0o\0f\0t\0:\0:\0U\0I\0\n", 30));
 	const std::vector<Finding> planted = scan_tokens(scratch.path() / "src" / "ui", winrt_ui_tokens());
-	std::set<std::string> files;
+	std::set<std::string> lines;
 	for (const Finding& finding : planted) {
-		files.insert(finding.file.filename().string());
+		lines.insert(finding.file.filename().string() + ":" + std::to_string(finding.line));
 	}
-	EXPECT_EQ(files, (std::set<std::string>{"planted_a.h", "planted_b.cpp", "planted_c.cpp", "planted_d.cpp"})) << describe(planted);
+	EXPECT_EQ(lines, (std::set<std::string>{"planted_a.h:1", "planted_b.cpp:1", "planted_b.cpp:2", "planted_c.cpp:1",
+						 "planted_d.cpp:1", "planted_e.cpp:2", "planted_g.cpp:1"}))
+		<< describe(planted);
+}
+
+RECTO_UI_TEST(Project, ToolkitInstrumentedLikeTests)
+{
+	// The toolkit's own objects carry AddressSanitizer exactly when this test
+	// binary does, and when the build says which (RECTO_EXPECT_ASAN), as it says.
+#if defined(__SANITIZE_ADDRESS__)
+	constexpr bool kTestsInstrumented = true;
+#else
+	constexpr bool kTestsInstrumented = false;
+#endif
+	EXPECT_EQ(recto::ui::built_with_address_sanitizer(), kTestsInstrumented);
+	wchar_t expect[8]{};
+	const DWORD length = GetEnvironmentVariableW(L"RECTO_EXPECT_ASAN", expect, 8);
+	if (length == 1) {
+		EXPECT_EQ(recto::ui::built_with_address_sanitizer(), expect[0] == L'1');
+	}
+}
+
+RECTO_UI_TEST(Project, UniqueTestIds)
+{
+	// RECTO_UI_TEST registers file-local symbols, so two files could register the
+	// same Ui.<Area>.<Name> without a link error; this catches it.
+	std::vector<std::string> names;
+	const ::testing::UnitTest& unit = *::testing::UnitTest::GetInstance();
+	for (int s = 0; s < unit.total_test_suite_count(); ++s) {
+		const ::testing::TestSuite& suite = *unit.GetTestSuite(s);
+		for (int t = 0; t < suite.total_test_count(); ++t) {
+			names.push_back(std::string(suite.name()) + "." + suite.GetTestInfo(t)->name());
+		}
+	}
+	const std::set<std::string> duplicates = duplicate_names(names);
+	EXPECT_TRUE(duplicates.empty()) << *duplicates.begin();
+	EXPECT_EQ(duplicate_names({"Ui.Project.A", "Ui.Project.B", "Ui.Project.A"}), (std::set<std::string>{"Ui.Project.A"}));
+}
+
+// Registered for Ui.Project.DisabledTestsRunOnlyWhenAsked: never runs by default.
+RECTO_UI_TEST(Project, DISABLED_Probe)
+{
+	SUCCEED();
+}
+
+RECTO_UI_TEST(Project, DisabledTestsRunOnlyWhenAsked)
+{
+	// A disabled test is Ui.DISABLED_<Area>.<Name> (ui_test.h): `Ui.<Area>.*`
+	// never lists it, `Ui.DISABLED_<Area>.*` does, and it runs only with
+	// --gtest_also_run_disabled_tests.
+	const auto [area_code, area_list] = run_self(L"--gtest_list_tests --gtest_filter=Ui.Project.*");
+	EXPECT_EQ(area_code, 0U);
+	EXPECT_EQ(area_list.find("DISABLED_Project.Probe"), std::string::npos);
+	const auto [disabled_code, disabled_list] = run_self(L"--gtest_list_tests --gtest_filter=Ui.DISABLED_Project.*");
+	EXPECT_EQ(disabled_code, 0U);
+	EXPECT_NE(disabled_list.find("DISABLED_Project.Probe"), std::string::npos);
+	const auto [skip_code, skipped] = run_self(L"--gtest_filter=Ui.DISABLED_Project.Probe --gtest_fail_if_no_test_selected=false");
+	EXPECT_EQ(skip_code, 0U);
+	EXPECT_NE(skipped.find("1 DISABLED TEST"), std::string::npos) << skipped;
+	const auto [run_code, ran] = run_self(L"--gtest_filter=Ui.DISABLED_Project.Probe --gtest_also_run_disabled_tests");
+	EXPECT_EQ(run_code, 0U);
+	EXPECT_NE(ran.find("[  PASSED  ] 1 test."), std::string::npos) << ran;
+}
+
+RECTO_UI_TEST(Project, EmptySelectionFails)
+{
+	// A checkpoint filter that matches nothing fails instead of passing with no
+	// tests run (gtest_defaults.cpp); asking for the old behaviour still works.
+	const auto [code, output] = run_self(L"--gtest_filter=Ui.Project.NoSuchTest");
+	EXPECT_NE(code, 0U);
+	EXPECT_NE(output.find("No tests ran"), std::string::npos) << output;
+	const auto [permitted, ignored] = run_self(L"--gtest_filter=Ui.Project.NoSuchTest --gtest_fail_if_no_test_selected=false");
+	EXPECT_EQ(permitted, 0U) << ignored;
+	const auto [listed, listing] = run_self(L"--gtest_list_tests --gtest_filter=Ui.Project.NoSuchTest");
+	EXPECT_EQ(listed, 0U) << listing;
 }
 
 RECTO_UI_TEST(Project, HarnessSolid)
@@ -513,6 +835,203 @@ RECTO_UI_TEST(Project, HarnessRejectsAbsurdStride)
 	EXPECT_THROW(
 		{ const auto bitmap = recto::ui::test::render_to_bitmap({}, 1, 2, 1.0F, options); (void)bitmap; },
 		std::runtime_error);
+}
+
+RECTO_UI_TEST(Project, HarnessRefusesBeforeDrawing)
+{
+	// Every refused request throws before the callback runs.
+	int calls = 0;
+	const recto::ui::test::DrawRoot count = [&](const recto::ui::test::RenderContext&) { ++calls; };
+	recto::ui::test::RenderOptions wide;
+	wide.min_stride = (size_t{1} << 24) + 1;
+	const float infinity = std::numeric_limits<float>::infinity();
+	const float nan = std::numeric_limits<float>::quiet_NaN();
+	struct Request {
+		uint32_t width;
+		uint32_t height;
+		float scale;
+		recto::ui::test::RenderOptions options;
+	};
+	const std::array<Request, 8> refused = {{{0, 8, 1.0F, {}}, {8, 0, 1.0F, {}}, {16385, 8, 1.0F, {}}, {8, 8, infinity, {}},
+		{8, 8, nan, {}}, {8, 8, 0.0F, {}}, {8, 8, 32.0F, {}}, {8, 8, 1.0F, wide}}};
+	for (const Request& request : refused) {
+		EXPECT_THROW(
+			{ const auto bitmap = recto::ui::test::render_to_bitmap(count, request.width, request.height, request.scale, request.options); (void)bitmap; },
+			std::runtime_error);
+	}
+	EXPECT_EQ(calls, 0);
+	const recto::ui::test::Bitmap accepted = recto::ui::test::render_to_bitmap(count, 8, 8, 16.0F);
+	EXPECT_EQ(calls, 1);
+	EXPECT_EQ(accepted.width, 8U);
+}
+
+RECTO_UI_TEST(Project, HarnessReportsDrawFailure)
+{
+	// A failed EndDraw names its HRESULT, the tags of the failing call and the request.
+	try {
+		const auto bitmap = recto::ui::test::render_to_bitmap(
+			[](const recto::ui::test::RenderContext& context) {
+				context.target->SetTags(7, 9);
+				context.target->PopAxisAlignedClip(); // no matching push: the target enters an error state
+			},
+			64, 32, 1.5F);
+		(void)bitmap;
+		ADD_FAILURE() << "an unmatched PopAxisAlignedClip must fail EndDraw";
+	} catch (const std::runtime_error& error) {
+		const std::string what = error.what();
+		EXPECT_NE(what.find("EndDraw failed, HRESULT 0x"), std::string::npos) << what;
+		EXPECT_NE(what.find("tags 7, 9"), std::string::npos) << what;
+		EXPECT_NE(what.find("64 x 32 px at scale 1.5"), std::string::npos) << what;
+	}
+	// The harness recovers: the next render succeeds.
+	EXPECT_EQ(recto::ui::test::render_to_bitmap({}, 4, 4, 1.0F).width, 4U);
+}
+
+RECTO_UI_TEST(Project, HarnessPassesCallbackExceptions)
+{
+	// The callback's own exception reaches the caller unchanged, and the next render works.
+	try {
+		const auto bitmap = recto::ui::test::render_to_bitmap(
+			[](const recto::ui::test::RenderContext&) { throw std::logic_error("callback failed"); }, 8, 8, 1.0F);
+		(void)bitmap;
+		ADD_FAILURE() << "the callback's exception was swallowed";
+	} catch (const std::logic_error& error) {
+		EXPECT_STREQ(error.what(), "callback failed");
+	}
+	EXPECT_EQ(recto::ui::test::render_to_bitmap({}, 4, 4, 1.0F).height, 4U);
+}
+
+namespace {
+
+struct Apartment {
+	HRESULT hr{E_FAIL};
+	APTTYPE type{APTTYPE_CURRENT};
+	APTTYPEQUALIFIER qualifier{APTTYPEQUALIFIER_NONE};
+	bool operator==(const Apartment&) const = default;
+};
+
+Apartment current_apartment()
+{
+	Apartment apartment;
+	apartment.hr = CoGetApartmentType(&apartment.type, &apartment.qualifier);
+	return apartment;
+}
+
+recto::ui::test::Bitmap render_split()
+{
+	return recto::ui::test::render_to_bitmap(
+		[](const recto::ui::test::RenderContext& context) {
+			Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+			if (SUCCEEDED(context.target->CreateSolidColorBrush(D2D1::ColorF(0.2F, 0.6F, 0.9F, 1.0F), &brush))) {
+				context.target->FillRectangle(D2D1::RectF(3.0F, 5.0F, 27.0F, 19.0F), brush.Get());
+			}
+		},
+		32, 24, 1.0F);
+}
+
+} // namespace
+
+RECTO_UI_TEST(Project, HarnessKeepsCallerApartment)
+{
+	// A thread with no apartment, an STA caller and an MTA caller each leave the
+	// render in the apartment they entered it with.
+	const auto in_thread = [](DWORD init) {
+		Apartment before;
+		Apartment after;
+		std::thread worker([&] {
+			const HRESULT entered = init == 0xFFFFFFFF ? S_FALSE : CoInitializeEx(nullptr, init);
+			before = current_apartment();
+			const recto::ui::test::Bitmap bitmap = render_split();
+			after = current_apartment();
+			if (entered == S_OK) {
+				CoUninitialize();
+			}
+			(void)bitmap;
+		});
+		worker.join();
+		return std::pair{before, after};
+	};
+	for (const DWORD init : {DWORD{0xFFFFFFFF}, DWORD{COINIT_APARTMENTTHREADED}, DWORD{COINIT_MULTITHREADED}}) {
+		const auto [before, after] = in_thread(init);
+		EXPECT_EQ(before, after) << "init " << init;
+	}
+	const Apartment sta = in_thread(COINIT_APARTMENTTHREADED).first;
+	// The first STA in a process is the main STA, whichever thread it is on.
+	EXPECT_TRUE(sta.hr == S_OK && (sta.type == APTTYPE_STA || sta.type == APTTYPE_MAINSTA))
+		<< "the STA case must run in an STA (hr " << sta.hr << ", type " << sta.type << ")";
+}
+
+RECTO_UI_TEST(Project, HarnessRendersConcurrently)
+{
+	// Independent renders on four threads produce the same image as one alone.
+	const recto::ui::test::Bitmap reference = render_split();
+	std::array<recto::ui::test::Bitmap, 4> results;
+	std::vector<std::thread> threads;
+	for (size_t i = 0; i < results.size(); ++i) {
+		threads.emplace_back([&results, i] { results[i] = render_split(); });
+	}
+	for (std::thread& thread : threads) {
+		thread.join();
+	}
+	for (const recto::ui::test::Bitmap& result : results) {
+		EXPECT_EQ(result.bytes, reference.bytes);
+	}
+}
+
+RECTO_UI_TEST(Project, HarnessScaleMatrix)
+{
+	// A non-square bitmap at 125, 150 and 175 percent: the epx extents and every
+	// pixel of an aliased epx rectangle follow the scale.
+	for (const float scale : {1.25F, 1.5F, 1.75F}) {
+		constexpr uint32_t kWidth = 96;
+		constexpr uint32_t kHeight = 40;
+		const recto::ui::test::Bitmap bitmap = recto::ui::test::render_to_bitmap(
+			[&](const recto::ui::test::RenderContext& context) {
+				EXPECT_FLOAT_EQ(context.width_epx, static_cast<float>(kWidth) / scale);
+				EXPECT_FLOAT_EQ(context.height_epx, static_cast<float>(kHeight) / scale);
+				Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+				ASSERT_HRESULT_SUCCEEDED(context.target->CreateSolidColorBrush(D2D1::ColorF(1.0F, 1.0F, 1.0F, 1.0F), &brush));
+				context.target->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
+				context.target->FillRectangle(D2D1::RectF(8.0F, 4.0F, 24.0F, 12.0F), brush.Get());
+			},
+			kWidth, kHeight, scale);
+		size_t wrong = 0;
+		for (uint32_t y = 0; y < kHeight; ++y) {
+			for (uint32_t x = 0; x < kWidth; ++x) {
+				const float cx = static_cast<float>(x) + 0.5F;
+				const float cy = static_cast<float>(y) + 0.5F;
+				const bool inside = cx >= 8.0F * scale && cx < 24.0F * scale && cy >= 4.0F * scale && cy < 12.0F * scale;
+				const uint8_t alpha = bitmap.bytes[static_cast<size_t>(y) * bitmap.stride + static_cast<size_t>(x) * 4 + 3];
+				wrong += (alpha == (inside ? 255 : 0)) ? 0 : 1;
+			}
+		}
+		EXPECT_EQ(wrong, 0U) << "scale " << scale;
+	}
+}
+
+RECTO_UI_TEST(Project, HarnessRgbaAdapter)
+{
+	// Half-transparent red, premultiplied: BGRA from the harness, RGBA for the
+	// comparison helpers, and red and blue never trade places.
+	const recto::ui::test::Bitmap bitmap = recto::ui::test::render_to_bitmap(
+		[](const recto::ui::test::RenderContext& context) {
+			Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+			ASSERT_HRESULT_SUCCEEDED(context.target->CreateSolidColorBrush(D2D1::ColorF(1.0F, 0.0F, 0.0F, 0.5F), &brush));
+			context.target->FillRectangle(D2D1::RectF(0.0F, 0.0F, 4.0F, 4.0F), brush.Get());
+		},
+		4, 4, 1.0F);
+	const std::vector<uint8_t> rgba = recto::ui::test::rgba_bytes(bitmap);
+	ASSERT_EQ(rgba.size(), 4U * 4U * 4U);
+	EXPECT_NEAR(rgba[0], 128, 1); // red, premultiplied by one half
+	EXPECT_EQ(rgba[1], 0);
+	EXPECT_EQ(rgba[2], 0);
+	EXPECT_NEAR(rgba[3], 128, 1);
+	EXPECT_EQ(bitmap.bytes[0], 0);       // BGRA: blue first
+	EXPECT_EQ(bitmap.bytes[2], rgba[0]); // red third
+	EXPECT_TRUE(recto::test::expect_rgba_equal(rgba, rgba, 4, 4, 16, 16, 0).matches);
+	std::vector<uint8_t> blue = rgba;
+	std::swap(blue[0], blue[2]);
+	EXPECT_FALSE(recto::test::compare_rgba(rgba, blue, 4, 4, 16, 16, 0).matches);
 }
 
 RECTO_UI_TEST(Project, DisabledMarkerStaysAtTheFront)

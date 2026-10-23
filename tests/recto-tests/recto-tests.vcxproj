@@ -76,6 +76,7 @@
     <ClCompile Include="scaffold_smoke.cpp" />
     <ClCompile Include="support_tests.cpp" />
     <ClCompile Include="test_support.cpp" />
+    <ClCompile Include="gtest_defaults.cpp" />
     <ClCompile Include="ui_render_harness.cpp" />
     <!-- Every ui_*_tests.cpp is compiled with no project edit, so later recto-ui sections add files freely. -->
     <ClCompile Include="ui_*_tests.cpp" />

@@ -1,6 +1,7 @@
 """Checks on build/build.ps1, the one-command build and test driver, and the ASan runtime staging it loads."""
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -163,6 +164,33 @@ class BuildScript(unittest.TestCase):
         self.assertIn("Assert-NoMSBuildWarnings -LogFile $logFile", text)
         self.assertIn("$env:VSLANG = '1033'", text)
         self.assertNotIn("asan_dbg_dynamic", text)
+
+
+class AsanCoverage(unittest.TestCase):
+    """-EnableASAN instruments, rebuilds on a state change and stages the runtime for every C++ project in Recto.sln,
+    so a module added to the solution cannot silently stay uninstrumented (D10 T01 §1 and §2)."""
+
+    # Projects built with their own sanitizer setup instead, and why.
+    OWN_INSTRUMENTATION = {"recto-fuzz": "built Release|x64 with /fsanitize=address,fuzzer by its own job (D06 T02 §3)"}
+
+    @staticmethod
+    def solution_projects():
+        text = (ROOT / "Recto.sln").read_text(encoding="utf-8-sig")
+        return set(re.findall(r'^Project\("\{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942\}"\) = "([^"]+)"', text, re.M))
+
+    def test_every_solution_project_is_instrumented_and_cleaned(self):
+        text = BUILD_PS1.read_text(encoding="utf-8")
+        cleaned = set(re.findall(r"'([^']+)'", re.search(r"\$asanProjects = @\(([^)]*)\)", text).group(1)))
+        targets = set(re.search(r"'-t:([^']+)'", text).group(1).split(";"))
+        projects = self.solution_projects() - set(self.OWN_INSTRUMENTATION)
+        self.assertTrue({"recto-ui", "Recto", "recto-tests"} <= projects)
+        self.assertEqual(cleaned, projects)
+        self.assertEqual(targets, projects)
+
+    def test_every_executable_the_tests_launch_gets_the_runtime(self):
+        text = BUILD_PS1.read_text(encoding="utf-8")
+        staged = set(re.findall(r"'([^']+)'", re.search(r"foreach \(\$exeProj in @\(([^)]*)\)\)", text).group(1)))
+        self.assertEqual(staged, {"recto-tests", "recto-cli", "Recto"})
 
 
 if __name__ == "__main__":

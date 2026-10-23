@@ -472,6 +472,11 @@ class UiTestIdTest(unittest.TestCase):
         problem = release_notes.test_problem(self._NoPython(), notes, self.COMMIT, "Ui.Project.Missing")
         self.assertIn("is not in aaaaaaa's CI test list", problem)
 
+    def test_a_disabled_ui_test_is_not_evidence(self):
+        listing = "Ui.\n  DISABLED_Project.Probe\n  Project.HarnessSolid\n"
+        names = release_notes.parse_gtest_list(listing, "listing")
+        self.assertEqual(names, {"Ui.Project.HarnessSolid"})
+
     def test_other_three_part_ids_are_still_python_ids(self):
         class Python:
             def exists(self, sha, test_id):

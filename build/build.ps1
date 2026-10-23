@@ -86,7 +86,7 @@ if ($EnableASAN) {
 }
 
 New-Item -ItemType Directory -Path (Join-Path $root 'build') -Force | Out-Null
-$asanProjects = @('recto-pdf', 'recto-core', 'recto-services', 'recto-ui', 'recto-cli', 'recto-tests')
+$asanProjects = @('recto-pdf', 'recto-core', 'recto-services', 'recto-ui', 'Recto', 'recto-cli', 'recto-tests')
 
 foreach ($plat in $Platform) {
     foreach ($cfg in $Configuration) {
@@ -116,7 +116,7 @@ foreach ($plat in $Platform) {
             '/nologo'
         )
         if ($EnableASAN) {
-            $msbuildArgs += '-t:recto-pdf;recto-core;recto-services;recto-ui;recto-cli;recto-tests'
+            $msbuildArgs += '-t:recto-pdf;recto-core;recto-services;recto-ui;Recto;recto-cli;recto-tests'
             Write-Host "=== Recto $cfg|$plat (ASan)"
         } else {
             Write-Host "=== Recto $cfg|$plat"
@@ -128,7 +128,8 @@ foreach ($plat in $Platform) {
         Assert-NoMSBuildWarnings -LogFile $logFile -What "$cfg|$plat"
 
         if ($EnableASAN -and $plat -eq 'x64') {
-            foreach ($exeProj in @('recto-tests', 'recto-cli')) {
+            # Recto.exe too: recto-tests launches it (Ui.App tests).
+            foreach ($exeProj in @('recto-tests', 'recto-cli', 'Recto')) {
                 $exe = Join-Path $root "build\bin\x64\$cfg\$exeProj\$exeProj.exe"
                 if (Test-Path $exe) {
                     $staged = Copy-AsanRuntime -ExePath $exe -AsanBinDir $asanBinDir -Dumpbin (Join-Path $asanBinDir 'dumpbin.exe')

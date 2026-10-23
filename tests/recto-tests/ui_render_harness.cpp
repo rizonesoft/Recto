@@ -10,6 +10,7 @@
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -27,6 +28,13 @@ constexpr uint8_t kPaddingSentinel = 0xCD;
 
 // Widest row the harness will pad to (16 MiB), far beyond any test bitmap.
 constexpr size_t kMaxStride = size_t{1} << 24;
+
+// Largest bitmap side the harness renders (Direct2D's own software limit is
+// far above any test image) and the scale range Windows can apply (25 to 1600
+// percent), so a request outside them is refused before anything is drawn.
+constexpr uint32_t kMaxDimension = 16384;
+constexpr float kMinScale = 0.25F;
+constexpr float kMaxScale = 16.0F;
 
 void check(HRESULT hr, const char* step)
 {
@@ -65,6 +73,23 @@ private:
 
 } // namespace
 
+namespace {
+
+std::string describe_request(uint32_t width_px, uint32_t height_px, float dpi_scale, const RenderOptions& options)
+{
+	char text[160]{};
+	std::snprintf(text, sizeof(text), "%u x %u px at scale %g, min_stride %zu", width_px, height_px,
+		static_cast<double>(dpi_scale), options.min_stride);
+	return text;
+}
+
+[[noreturn]] void refuse(const char* why, uint32_t width_px, uint32_t height_px, float dpi_scale, const RenderOptions& options)
+{
+	throw std::runtime_error(std::string("render_to_bitmap: ") + why + " (" + describe_request(width_px, height_px, dpi_scale, options) + ")");
+}
+
+} // namespace
+
 Bitmap render_to_bitmap(
 	const DrawRoot& root,
 	uint32_t width_px,
@@ -72,11 +97,20 @@ Bitmap render_to_bitmap(
 	float dpi_scale,
 	const RenderOptions& options)
 {
+	// Every refusal happens here, before COM, any allocation or the callback.
 	if (width_px == 0 || height_px == 0) {
-		throw std::runtime_error("render_to_bitmap: width_px and height_px must be non-zero");
+		refuse("width_px and height_px must be non-zero", width_px, height_px, dpi_scale, options);
 	}
-	if (!(dpi_scale > 0.0F)) {
-		throw std::runtime_error("render_to_bitmap: dpi_scale must be positive");
+	if (width_px > kMaxDimension || height_px > kMaxDimension) {
+		refuse("width_px and height_px must be at most 16384", width_px, height_px, dpi_scale, options);
+	}
+	if (!std::isfinite(dpi_scale) || !(dpi_scale >= kMinScale && dpi_scale <= kMaxScale)) {
+		refuse("dpi_scale must be finite and between 0.25 and 16", width_px, height_px, dpi_scale, options);
+	}
+	// A stride is a row length, never a size in the gigabytes: refuse one that
+	// cannot be a row of this bitmap rather than let stride * height overflow.
+	if (options.min_stride > kMaxStride) {
+		refuse("min_stride is larger than any bitmap row", width_px, height_px, dpi_scale, options);
 	}
 
 	const ComScope com;
@@ -115,9 +149,28 @@ Bitmap render_to_bitmap(
 	target->BeginDraw();
 	target->Clear(D2D1::ColorF(0.0F, 0.0F, 0.0F, 0.0F));
 	if (root) {
-		root(context);
+		try {
+			root(context);
+		} catch (...) {
+			// Close the draw before the target is released, then hand the
+			// callback's own exception to the caller unchanged.
+			(void)target->EndDraw();
+			throw;
+		}
 	}
-	check(target->EndDraw(), "ID2D1RenderTarget::EndDraw");
+	D2D1_TAG tag1 = 0;
+	D2D1_TAG tag2 = 0;
+	const HRESULT drawn = target->EndDraw(&tag1, &tag2);
+	if (FAILED(drawn)) {
+		// The tags name the drawing call that failed (ID2D1RenderTarget::SetTags).
+		char detail[96]{};
+		std::snprintf(detail, sizeof(detail), ", tags %llu, %llu", static_cast<unsigned long long>(tag1),
+			static_cast<unsigned long long>(tag2));
+		char code[16]{};
+		std::snprintf(code, sizeof(code), "%08lX", static_cast<unsigned long>(drawn));
+		throw std::runtime_error(std::string("ID2D1RenderTarget::EndDraw failed, HRESULT 0x") + code + detail + " (" +
+			describe_request(width_px, height_px, dpi_scale, options) + ")");
+	}
 
 	const WICRect rect{0, 0, static_cast<INT>(width_px), static_cast<INT>(height_px)};
 	ComPtr<IWICBitmapLock> lock;
@@ -137,11 +190,6 @@ Bitmap render_to_bitmap(
 		throw std::runtime_error("render_to_bitmap: WIC buffer is smaller than the bitmap");
 	}
 
-	// A stride is a row length, never a size in the gigabytes: refuse one that
-	// cannot be a row of this bitmap rather than let stride * height overflow.
-	if (options.min_stride > kMaxStride) {
-		throw std::runtime_error("render_to_bitmap: min_stride is larger than any bitmap row");
-	}
 	Bitmap out;
 	out.width = width_px;
 	out.height = height_px;
@@ -153,6 +201,22 @@ Bitmap render_to_bitmap(
 			row_bytes);
 	}
 	return out;
+}
+
+std::vector<uint8_t> rgba_bytes(const Bitmap& bitmap)
+{
+	std::vector<uint8_t> rgba(static_cast<size_t>(bitmap.width) * bitmap.height * 4);
+	for (uint32_t y = 0; y < bitmap.height; ++y) {
+		const uint8_t* row = bitmap.bytes.data() + static_cast<size_t>(y) * bitmap.stride;
+		uint8_t* out = rgba.data() + static_cast<size_t>(y) * bitmap.width * 4;
+		for (uint32_t x = 0; x < bitmap.width; ++x) {
+			out[x * 4 + 0] = row[x * 4 + 2];
+			out[x * 4 + 1] = row[x * 4 + 1];
+			out[x * 4 + 2] = row[x * 4 + 0];
+			out[x * 4 + 3] = row[x * 4 + 3];
+		}
+	}
+	return rgba;
 }
 
 } // namespace recto::ui::test

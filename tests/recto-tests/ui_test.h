@@ -8,6 +8,14 @@
 // the test name "<area>.<name>", so the full name is exactly Ui.<area>.<name>
 // and --gtest_filter=Ui.<area>.* selects it. Later ui sections use the same
 // macro: RECTO_UI_TEST(Dispatcher, CrossThreadPost) { ... }.
+//
+// A disabled test, RECTO_UI_TEST(Project, DISABLED_Probe), is registered as
+// Ui.DISABLED_Project.Probe so GoogleTest sees the marker. `Ui.Project.*` never
+// selects it, even with --gtest_also_run_disabled_tests; run it with
+// --gtest_filter=Ui.DISABLED_Project.* --gtest_also_run_disabled_tests.
+// Release notes leave it out of the test list (a DISABLED_ case is not
+// evidence). Each Ui.<area>.<name> must be unique across files: the symbols
+// are file-local, so Ui.Project.UniqueTestIds catches a repeat the linker cannot.
 #pragma once
 
 #include <gtest/gtest.h>
