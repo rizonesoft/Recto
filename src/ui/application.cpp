@@ -11,6 +11,10 @@
 
 #include <dwmapi.h>
 
+// The library names the system import it needs, so every consumer that calls
+// Application::run links without repeating it.
+#pragma comment(lib, "dwmapi.lib")
+
 namespace recto::ui {
 
 namespace {
@@ -24,17 +28,20 @@ struct WindowState {
 	int exit_code{kExitOk};
 };
 
-// What the running process proves about its manifest. The XML on disk can be
-// right while the linker never embedded it, so the process checks itself.
-int self_test_verdict(HWND window) noexcept
+// What the running process proves about itself. The manifest XML on disk can
+// be right while the linker never embedded it, and a painted frame can still
+// fail to reach the screen, so the process checks itself.
+SelfTestFacts observe_self_test(HWND window) noexcept
 {
-	if (AreDpiAwarenessContextsEqual(GetWindowDpiAwarenessContext(window), DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) == FALSE) {
-		return kExitSelfTestDpiAwareness;
-	}
-	if (GetACP() != CP_UTF8) {
-		return kExitSelfTestCodePage;
-	}
-	return kExitOk;
+	SelfTestFacts facts;
+	facts.window_visible = IsWindowVisible(window) != FALSE;
+	// Wait for the desktop compositor to present the frame just painted, so
+	// "first frame" means on screen, not merely drawn.
+	facts.flush_result = DwmFlush();
+	facts.per_monitor_v2 =
+		AreDpiAwarenessContextsEqual(GetWindowDpiAwarenessContext(window), DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) != FALSE;
+	facts.code_page = GetACP();
+	return facts;
 }
 
 LRESULT CALLBACK bootstrap_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
@@ -53,10 +60,7 @@ LRESULT CALLBACK bootstrap_window_proc(HWND window, UINT message, WPARAM wparam,
 		EndPaint(window, &paint);
 		if (state != nullptr && state->self_test_exit && !state->first_frame_done) {
 			state->first_frame_done = true;
-			// Wait for the desktop compositor to present the frame just painted, so
-			// "first frame" means on screen, not merely drawn.
-			(void)DwmFlush();
-			state->exit_code = self_test_verdict(window);
+			state->exit_code = self_test_verdict(observe_self_test(window));
 			PostMessageW(window, WM_CLOSE, 0, 0);
 		}
 		return 0;
@@ -69,15 +73,62 @@ LRESULT CALLBACK bootstrap_window_proc(HWND window, UINT message, WPARAM wparam,
 	}
 }
 
+void report(StartupFailure* failure, const wchar_t* operation, unsigned long error) noexcept
+{
+	if (failure != nullptr) {
+		failure->operation = operation;
+		failure->error = error;
+	}
+}
+
 } // namespace
 
-int Application::run(const ApplicationOptions& options, int show_command)
+int self_test_verdict(const SelfTestFacts& facts) noexcept
 {
-	// Mouse input arrives as WM_POINTER messages like touch and pen, so the
-	// toolkit has one input path (D10 T01 section 12). Failure is not fatal:
-	// the window still receives mouse messages.
-	(void)EnableMouseInPointer(TRUE);
+	if (!facts.window_visible || FAILED(facts.flush_result)) {
+		return kExitSelfTestPresentation;
+	}
+	if (!facts.per_monitor_v2) {
+		return kExitSelfTestDpiAwareness;
+	}
+	if (facts.code_page != CP_UTF8) {
+		return kExitSelfTestCodePage;
+	}
+	return kExitOk;
+}
 
+std::wstring describe_startup_failure(const StartupFailure& failure)
+{
+	const wchar_t* operation = failure.operation != nullptr ? failure.operation : L"Startup";
+	wchar_t code[16]{};
+	swprintf_s(code, L"0x%08lX", failure.error);
+
+	wchar_t* system_text = nullptr;
+	const DWORD length = FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+		nullptr, failure.error, 0, reinterpret_cast<wchar_t*>(&system_text), 0, nullptr);
+	std::wstring message(operation);
+	message += L" failed";
+	if (length > 0 && system_text != nullptr) {
+		std::wstring text(system_text, length);
+		while (!text.empty() && (text.back() == L'\r' || text.back() == L'\n' || text.back() == L' ' || text.back() == L'.')) {
+			text.pop_back();
+		}
+		if (!text.empty()) {
+			message += L": ";
+			message += text;
+		}
+	}
+	if (system_text != nullptr) {
+		LocalFree(system_text);
+	}
+	message += L" (";
+	message += code;
+	message += L")";
+	return message;
+}
+
+int Application::run(const ApplicationOptions& options, int show_command, StartupFailure* failure)
+{
 	const HINSTANCE instance = GetModuleHandleW(nullptr);
 	WNDCLASSEXW window_class{};
 	window_class.cbSize = sizeof(window_class);
@@ -87,18 +138,25 @@ int Application::run(const ApplicationOptions& options, int show_command)
 	window_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
 	window_class.lpszClassName = kWindowClass;
 	if (RegisterClassExW(&window_class) == 0) {
+		report(failure, L"RegisterClassExW", GetLastError());
 		return kExitStartupFailed;
 	}
+
+	// Mouse input arrives as WM_POINTER messages like touch and pen, so the
+	// toolkit has one input path (D10 T01 section 12). Failure is not fatal:
+	// the window still receives mouse messages.
+	(void)EnableMouseInPointer(TRUE);
 
 	WindowState state;
 	state.self_test_exit = options.self_test_exit;
 	const HWND window = CreateWindowExW(0, kWindowClass, kWindowTitle, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
 		CW_USEDEFAULT, CW_USEDEFAULT, nullptr, nullptr, instance, &state);
 	if (window == nullptr) {
+		report(failure, L"CreateWindowExW", GetLastError());
 		UnregisterClassW(kWindowClass, instance);
 		return kExitStartupFailed;
 	}
-	ShowWindow(window, show_command);
+	ShowWindow(window, options.self_test_exit ? SW_SHOWNOACTIVATE : show_command);
 	UpdateWindow(window);
 
 	MSG message{};
@@ -110,6 +168,7 @@ int Application::run(const ApplicationOptions& options, int show_command)
 			break;
 		}
 		if (got == -1) {
+			report(failure, L"GetMessageW", GetLastError());
 			// The loop cannot continue; take the window down so the process exits.
 			DestroyWindow(window);
 			exit_code = kExitStartupFailed;

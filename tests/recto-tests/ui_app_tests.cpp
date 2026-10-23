@@ -578,7 +578,10 @@ fs::path recto_exe()
 	return fs::path(self).parent_path().parent_path() / "Recto" / "Recto.exe";
 }
 
-void launch(Process& process, const fs::path& exe, std::wstring_view arguments)
+// `show` is the SW_ value Recto.exe receives as its wWinMain show command;
+// SW_SHOWNOACTIVATE shows it, so it paints, without taking focus from the
+// person at the desk.
+void launch(Process& process, const fs::path& exe, std::wstring_view arguments, WORD show = SW_SHOWNOACTIVATE)
 {
 	std::wstring command = L"\"" + exe.wstring() + L"\"";
 	if (!arguments.empty()) {
@@ -588,7 +591,7 @@ void launch(Process& process, const fs::path& exe, std::wstring_view arguments)
 	STARTUPINFOW startup{};
 	startup.cb = sizeof(startup);
 	startup.dwFlags = STARTF_USESHOWWINDOW;
-	startup.wShowWindow = SW_SHOWNOACTIVATE; // shown, so it paints, without taking focus from the person at the desk
+	startup.wShowWindow = show;
 	ASSERT_NE(CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, exe.parent_path().c_str(),
 				  &startup, &process.info()),
 		FALSE)
@@ -750,9 +753,138 @@ RECTO_UI_TEST(App, SelfTestExit)
 	const std::optional<DWORD> code = process.wait(5000);
 	const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
 	ASSERT_TRUE(code.has_value()) << "Recto.exe --self-test-exit was still running after 5 s";
-	EXPECT_EQ(*code, static_cast<DWORD>(recto::ui::kExitOk)) << "exit code " << *code << " (2: not per-monitor v2 DPI aware, 3: not UTF-8)";
+	EXPECT_EQ(*code, static_cast<DWORD>(recto::ui::kExitOk)) << "exit code " << *code
+		<< " (1: startup failed, 2: not per-monitor v2 DPI aware, 3: not UTF-8, 4: first frame not presented)";
 	::testing::Test::RecordProperty("launch_to_exit_ms", static_cast<int>(elapsed));
 	std::printf("Recto.exe --self-test-exit: launch to exit %lld ms\n", static_cast<long long>(elapsed));
+}
+
+RECTO_UI_TEST(App, SelfTestVerdict)
+{
+	// The verdict is a pure function of what the process observed, so every
+	// failure shape is proven here, including the ones a healthy machine never
+	// produces on demand: a frame that was painted but never presented must not
+	// pass.
+	using recto::ui::SelfTestFacts;
+	using recto::ui::self_test_verdict;
+	const SelfTestFacts healthy{true, S_OK, true, CP_UTF8};
+	EXPECT_EQ(self_test_verdict(healthy), recto::ui::kExitOk);
+
+	SelfTestFacts flush_failed = healthy;
+	flush_failed.flush_result = DWM_E_COMPOSITIONDISABLED;
+	EXPECT_EQ(self_test_verdict(flush_failed), recto::ui::kExitSelfTestPresentation);
+	flush_failed.flush_result = E_FAIL;
+	EXPECT_EQ(self_test_verdict(flush_failed), recto::ui::kExitSelfTestPresentation);
+
+	SelfTestFacts hidden = healthy;
+	hidden.window_visible = false;
+	EXPECT_EQ(self_test_verdict(hidden), recto::ui::kExitSelfTestPresentation);
+
+	SelfTestFacts not_v2 = healthy;
+	not_v2.per_monitor_v2 = false;
+	EXPECT_EQ(self_test_verdict(not_v2), recto::ui::kExitSelfTestDpiAwareness);
+
+	SelfTestFacts ansi = healthy;
+	ansi.code_page = 1252;
+	EXPECT_EQ(self_test_verdict(ansi), recto::ui::kExitSelfTestCodePage);
+
+	// Presentation is judged first: nothing else means anything without a frame.
+	const SelfTestFacts everything_wrong{false, E_FAIL, false, 1252};
+	EXPECT_EQ(self_test_verdict(everything_wrong), recto::ui::kExitSelfTestPresentation);
+	// A default-constructed fact set never passes.
+	EXPECT_NE(self_test_verdict(SelfTestFacts{}), recto::ui::kExitOk);
+}
+
+RECTO_UI_TEST(App, SelfTestIgnoresHiddenShowCommand)
+{
+	// A launcher that starts Recto.exe hidden or minimised must still get a
+	// verdict: a window that never shows never paints, and the self-test would
+	// wait for a frame that never comes.
+	const fs::path exe = recto_exe();
+	ASSERT_TRUE(fs::exists(exe)) << exe.string() << " is not built";
+	for (const WORD show : {static_cast<WORD>(SW_HIDE), static_cast<WORD>(SW_SHOWMINNOACTIVE)}) {
+		Process process;
+		ASSERT_NO_FATAL_FAILURE(launch(process, exe, L"--self-test-exit", show));
+		const std::optional<DWORD> code = process.wait(5000);
+		ASSERT_TRUE(code.has_value()) << "show command " << show << ": Recto.exe --self-test-exit was still running after 5 s";
+		EXPECT_EQ(*code, static_cast<DWORD>(recto::ui::kExitOk)) << "show command " << show;
+	}
+}
+
+RECTO_UI_TEST(App, StartupFailureIsReported)
+{
+	// A failed startup names the step and the Windows error instead of
+	// collapsing to a bare exit code. The class Application::run registers is
+	// taken first, in this process, so its RegisterClassExW fails for real.
+	constexpr wchar_t kTakenClass[] = L"Recto.Bootstrap";
+	const HINSTANCE instance = GetModuleHandleW(nullptr);
+	WNDCLASSEXW taken{};
+	taken.cbSize = sizeof(taken);
+	taken.lpfnWndProc = DefWindowProcW;
+	taken.hInstance = instance;
+	taken.lpszClassName = kTakenClass;
+	ASSERT_NE(RegisterClassExW(&taken), 0) << "could not take the window class first";
+
+	recto::ui::StartupFailure failure;
+	const int code = recto::ui::Application::run(recto::ui::ApplicationOptions{}, SW_SHOWNOACTIVATE, &failure);
+	UnregisterClassW(kTakenClass, instance);
+
+	EXPECT_EQ(code, recto::ui::kExitStartupFailed);
+	ASSERT_NE(failure.operation, nullptr);
+	EXPECT_EQ(std::wstring_view(failure.operation), L"RegisterClassExW");
+	EXPECT_EQ(failure.error, static_cast<unsigned long>(ERROR_CLASS_ALREADY_EXISTS));
+	EXPECT_EQ(FindWindowW(kTakenClass, nullptr), nullptr) << "a failed startup left a window behind";
+
+	// A null out-parameter is allowed and still fails cleanly.
+	ASSERT_NE(RegisterClassExW(&taken), 0);
+	EXPECT_EQ(recto::ui::Application::run(recto::ui::ApplicationOptions{}, SW_SHOWNOACTIVATE), recto::ui::kExitStartupFailed);
+	UnregisterClassW(kTakenClass, instance);
+}
+
+RECTO_UI_TEST(App, DescribesStartupFailure)
+{
+	using recto::ui::describe_startup_failure;
+	const std::wstring known = describe_startup_failure({L"RegisterClassExW", ERROR_CLASS_ALREADY_EXISTS});
+	EXPECT_EQ(known.rfind(L"RegisterClassExW failed: ", 0), 0U) << narrow(known);
+	EXPECT_NE(known.find(L"(0x00000582)"), std::wstring::npos) << narrow(known);
+	EXPECT_EQ(known.find(L'\r'), std::wstring::npos) << "the system text's line break was kept";
+	EXPECT_EQ(known.find(L'\n'), std::wstring::npos) << "the system text's line break was kept";
+	EXPECT_EQ(known.find(L"Recto"), std::wstring::npos) << "the toolkit text names a product";
+
+	const std::wstring com = describe_startup_failure({L"CoInitializeEx", static_cast<unsigned long>(RPC_E_CHANGED_MODE)});
+	EXPECT_EQ(com.rfind(L"CoInitializeEx failed: ", 0), 0U) << narrow(com);
+	EXPECT_NE(com.find(L"(0x80010106)"), std::wstring::npos) << narrow(com);
+
+	// A code Windows has no text for still names the step and the code.
+	EXPECT_EQ(describe_startup_failure({L"GetMessageW", 0x2FFFFFFFUL}), L"GetMessageW failed (0x2FFFFFFF)");
+	EXPECT_EQ(describe_startup_failure({}).rfind(L"Startup failed", 0), 0U);
+}
+
+RECTO_UI_TEST(App, SelfTestStartupBudget)
+{
+	// The host's share of the cold launch target (foundation plan section 8,
+	// < 400 ms to an interactive Home window): the median of five warm
+	// launch-to-presented-frame-and-exit runs stays under it. The cold,
+	// Release, reference-machine measurement with the Home screen belongs to
+	// D06 T01 section 7; the 5 s wait in SelfTestExit is only a hang guard.
+	constexpr long long kBudgetMs = 400;
+	const fs::path exe = recto_exe();
+	ASSERT_TRUE(fs::exists(exe)) << exe.string() << " is not built";
+	std::vector<long long> runs;
+	for (int run = 0; run < 5; ++run) {
+		const auto started = std::chrono::steady_clock::now();
+		Process process;
+		ASSERT_NO_FATAL_FAILURE(launch(process, exe, L"--self-test-exit"));
+		const std::optional<DWORD> code = process.wait(5000);
+		ASSERT_TRUE(code.has_value()) << "Recto.exe --self-test-exit was still running after 5 s";
+		ASSERT_EQ(*code, static_cast<DWORD>(recto::ui::kExitOk));
+		runs.push_back(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count());
+	}
+	std::sort(runs.begin(), runs.end());
+	const long long median = runs[runs.size() / 2];
+	::testing::Test::RecordProperty("startup_median_ms", static_cast<int>(median));
+	std::printf("Recto.exe --self-test-exit: median of 5 launches %lld ms (min %lld, max %lld)\n", median, runs.front(), runs.back());
+	EXPECT_LT(median, kBudgetMs) << "the host's startup exceeds the cold launch budget";
 }
 
 RECTO_UI_TEST(App, ClosesWithExitCodeZero)
