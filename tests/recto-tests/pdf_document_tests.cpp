@@ -245,6 +245,44 @@ TEST(PdfDocument, RecoveredEncryptedObjectStreamsResolve)
 	EXPECT_EQ(kept_21->as_int(), std::optional<int64_t>(7));
 }
 
+// The audit of D01 T01 §9, round 2 (D06 T05 §23): in an encrypted file (Identity crypt filters, empty user password),
+// a chain of streams each naming the next one eight times in /Filter is not copied into each dictionary while it is
+// decrypted: only a resolved name is written in, so resolving the first costs a few objects, not 8^5 copies.
+TEST(PdfDocument, EncryptedFilterReferenceChainIsNotInlined)
+{
+	std::string pdf = "%PDF-1.7\n"
+					  "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+					  "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+					  "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents 10 0 R >>\nendobj\n";
+	for (uint32_t n = 10u; n < 15u; ++n) {
+		std::string refs;
+		for (int i = 0; i < 8; ++i) {
+			refs += " " + std::to_string(n + 1u) + " 0 R";
+		}
+		pdf += std::to_string(n) + " 0 obj\n<< /Length 0 /Filter [" + refs + " ] >>\nstream\n\nendstream\nendobj\n";
+	}
+	pdf += "15 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n"
+		   "9 0 obj\n<< /Filter /Standard /V 4 /R 4 /Length 128 /P -3904 "
+		   "/CF << /StdCF << /CFM /V2 /Length 16 >> >> /StmF /Identity /StrF /Identity "
+		   "/O <CE9D51ECC479711BE707AD379A54A0F4B30916D3240087ECA5E23F15B28393F3> "
+		   "/U <B51910F4BB473091A4774F51E269263700000000000000000000000000000000> >>\nendobj\n"
+		   "trailer\n<< /Size 16 /Root 1 0 R /Encrypt 9 0 R "
+		   "/ID [<000102030405060708090A0B0C0D0E0F> <000102030405060708090A0B0C0D0E0F>] >>\n%%EOF\n";
+	const std::vector<uint8_t> bytes(pdf.begin(), pdf.end());
+	// The first page's content has streams for filters, so opening refuses it; what matters is what that costs.
+	const test::ScopedHeapMeter meter;
+	const auto started = std::chrono::steady_clock::now();
+	auto doc = Document::open_memory(bytes);
+	const auto elapsed = std::chrono::steady_clock::now() - started;
+	const size_t allocated = meter.allocated_bytes();
+	ASSERT_FALSE(doc.has_value());
+	EXPECT_EQ(doc.error().code, ErrorCode::DamagedFormat);
+	EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 2000);
+	if (test::ScopedHeapMeter::available()) {
+		EXPECT_LT(allocated, size_t{4} << 20u);
+	}
+}
+
 // An unencrypted file whose catalog is compressed, with only its startxref offset wrong, opens with both pages:
 // the xref stream's rows name the same objects the scan already unpacked, and what the scan learned stands.
 TEST(PdfDocument, RecoveredCompressedCatalogKeepsItsPages)

@@ -4546,6 +4546,24 @@ TEST(PdfFilters, Jbig2StripesAlignmentAndSkip)
 		RECTO_EXPECT_ERR(decode_jbig2(striped(0x8001u, {{0u, 0u}})), ErrorCode::DamagedFormat);  // short record
 		RECTO_EXPECT_ERR(decode_jbig2(striped(0x8001u, {row0, row0})), ErrorCode::DamagedFormat); // not advancing
 		RECTO_EXPECT_ERR(decode_jbig2(striped(0x8001u, {})), ErrorCode::DamagedFormat);          // no stripe end
+		const std::vector<uint8_t> row3 = {0u, 0u, 0u, 3u};
+		RECTO_EXPECT_ERR(decode_jbig2(striped(0x8001u, {row0, row3})), ErrorCode::DamagedFormat); // longer than 1 row
+
+		// A region after the last End of Stripe (round 1 of D06 T05 §31): refused, not trimmed away.
+		std::vector<uint8_t> trailing = header;
+		std::vector<uint8_t> page_info;
+		append_u32_be(page_info, 8u);
+		append_u32_be(page_info, 0xFFFFFFFFu);
+		append_u32_be(page_info, 72u);
+		append_u32_be(page_info, 72u);
+		page_info.push_back(0u);
+		append_u16_be(page_info, 0x8001u);
+		append_jbig2_segment(trailing, 0u, 48u, {}, 1u, page_info);
+		append_jbig2_segment(trailing, 1u, 38u, {}, 1u, mmr_region(0, "1" + eofb));
+		append_jbig2_segment(trailing, 2u, 50u, {}, 1u, row0);
+		append_jbig2_segment(trailing, 3u, 38u, {}, 1u, mmr_region(1, "1" + eofb));
+		append_jbig2_segment(trailing, 4u, 49u, {}, 1u, {});
+		RECTO_EXPECT_ERR(decode_jbig2(trailing), ErrorCode::DamagedFormat);
 	}
 }
 

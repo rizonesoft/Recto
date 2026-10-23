@@ -606,4 +606,9 @@ private:
 // is written as U+FFFD, so decoding never loses the text around it.
 [[nodiscard]] PdfResult<PdfString> utf8_to_pdf_string(std::string_view utf8) noexcept;
 
+// Converts UTF-8 to PDFDocEncoding bytes (ISO 32000-1 Annex D, Table D.2) exactly, with no text-string BOM
+// handling: the bytes a legacy password or other PDFDocEncoding value holds. Returns nullopt when the input is not
+// valid UTF-8 or a character has no PDFDocEncoding code.
+[[nodiscard]] std::optional<std::vector<uint8_t>> utf8_to_pdf_doc_encoding(std::string_view utf8);
+
 } // namespace recto::pdf

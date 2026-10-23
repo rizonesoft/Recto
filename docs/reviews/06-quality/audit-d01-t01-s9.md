@@ -137,3 +137,37 @@ Disposition of the completion review's gaps (each verified against the code befo
 - Finding 1 (P2): correct, fixed as completion gap 3 above. `PdfCrypto.AuditOwnerFirstEncodingLengthAndIndirectType` decrypts a stream whose `/Type` is a reference to `/XRef` and leaves it unchanged.
 - Finding 2 (P2): correct. A `/V 4` crypt filter's `/Length` now sets the key length when the `/Encrypt` dictionary has none (in bytes as Table 25 says, bits accepted as for `/Length`); tested with `/CFM /V2 /Length 5` -> 40 bits.
 - Finding 3 (P2): correct, and R=2 to R=4 had the same order. Both families now check the owner password first (ISO 32000-2 Algorithm 2.A), so a password that is both unlocks as the owner; tested in R=3 and R=6 with vectors computed independently by `scripts/build-corpus.py`'s own crypto code.
+
+## Round 2: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-23T10:58:40Z
+- Effort: medium
+- Lines: 20
+- Digest: 0aafb1bdaf5a053d
+
+## adversarial: needs-attention
+
+1. **[P1] Indirect filters permit exponential memory and CPU expansion.** `src/pdf/crypto.cpp:1982` accepts any resolved value, and line 1992 inlines every filter-array element before checking that it names a filter. Reproduce with an empty-password encrypted PDF using Identity encryption: point a page’s `/Contents` at stream S0, and give each S0 through S9 `/Filter [next next next next next next next next]`, with all eight references targeting the next stream. S10 has no filter; all streams can have empty bodies. Resolving the content through `Document::resolve_object` recursively constructs eight copies of each subtree, approaching `8^10` leaf values before decoding can reject the malformed filters. The depth and eight-filter limits do not bound this expansion. The separate SecurityHandler resolver also clones these expanded values into its cache. A small hostile PDF can exhaust memory or monopolize processing.
+
+## consistency: approve
+
+## integration: needs-attention
+
+2. **[P2] Valid legacy passwords beginning with BOM-like bytes cannot authenticate through UTF-8 input.** `src/pdf/crypto.cpp:1484` uses the PDF *text-string* encoder, whose BOM-collision protection changes representable PDFDocEncoding bytes into UTF-16BE. Lines 1486-1490 then discard that candidate. Reproduce with a V2/R3 PDF whose user password is `þÿ`, generated using password bytes `FE FF`, and a distinct owner password. Call `Document::open` with UTF-8 bytes `C3 BE C3 BF`: the converted candidate is discarded, and the remaining raw UTF-8 candidate returns `WrongPassword`. Supplying raw `FE FF` succeeds. Password conversion needs PDFDocEncoding bytes without text-string BOM handling.
+
+## source-defect: approve
+
+## design: approve
+
+## record: advisory
+
+Both findings are source-derived; the proposed reproductions were not executed. The existing x64 Release executable passed 13 selected tests (`PdfCrypto.*`, `PdfDocument.OpenAndAuthenticate`, and `Support.AsanActiveWhenEnabled`), with ASan enabled. No rebuild was performed, so this does not establish candidate binary provenance. The three reviewed working-tree files match `9ba7cc9`. No files were modified.
+
+HIGHEST: P1
+OVERALL: needs-attention
+
+## Fixes after round 2
+
+- Finding 1 (P1): correct. Writing an indirect `/Filter` in resolved whatever the reference named, a stream included, and the resolver decrypted that stream, inlining its own references in turn, so a chain of streams each naming the next eight times grew as 8^n. A value is now written in only when it has the kind the slot uses (a name for `/Filter` and `/Name`, a dictionary or array for `/DecodeParms`), and a decryption nested inside that resolution does not inline again. Tested through `Document::open_memory` with five such streams: refused as damaged in 21 ms with under 4 MiB allocated (5,355 ms and 234,720,508 bytes on `9ba7cc9`).
+- Finding 2 (P2): correct. The legacy password conversion used the text-string encoder, which turns a leading `þÿ` into UTF-16BE to avoid a byte-order-mark collision. It now uses `utf8_to_pdf_doc_encoding` (exact PDFDocEncoding, no BOM handling). Tested: a V2/R3 user password `FE FF` authenticates from UTF-8 `C3 BE C3 BF` (refused on `9ba7cc9`).

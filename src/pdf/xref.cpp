@@ -11,6 +11,7 @@
 #include <array>
 #include <cstring>
 #include <limits>
+#include <map>
 #include <new>
 #include <unordered_set>
 #include <utility>
@@ -297,7 +298,9 @@ constexpr std::string_view kXrefDefaultIndexBudgetExceeded =
 }
 
 // Whether `bytes` holds a name token whose decoded value is /Encrypt, in any spelling ISO 32000-1 7.3.5 allows
-// (`#xx` escapes included), so recovery can tell a file may be encrypted before it meets the trailer.
+// (`#xx` escapes included), used as a key: outside a comment and followed by an indirect reference (`7 0 R`) or a
+// dictionary (`<<`), as in a trailer or cross-reference stream. A mere mention is not a key, so an ordinary file that
+// mentions /Encrypt keeps its containers decoded during the scan, where its compressed /Length integers are needed.
 [[nodiscard]] bool names_encrypt_key(std::span<const uint8_t> bytes) noexcept
 {
 	static constexpr std::string_view kKey = "Encrypt";
@@ -313,8 +316,14 @@ constexpr std::string_view kXrefDefaultIndexBudgetExceeded =
 		}
 		return -1;
 	};
+	bool in_comment = false;
 	for (size_t i = 0; i < bytes.size(); ++i) {
-		if (bytes[i] != '/') {
+		if (bytes[i] == '\r' || bytes[i] == '\n') {
+			in_comment = false;
+		} else if (bytes[i] == '%') {
+			in_comment = true;
+		}
+		if (in_comment || bytes[i] != '/') {
 			continue;
 		}
 		size_t matched = 0;
@@ -337,7 +346,32 @@ constexpr std::string_view kXrefDefaultIndexBudgetExceeded =
 			++matched;
 		}
 		if (matched == kKey.size()) {
-			return true;
+			size_t k = j;
+			const auto skip_space = [&]() {
+				while (k < bytes.size() && Lexer::is_pdf_whitespace(bytes[k])) {
+					++k;
+				}
+			};
+			const auto digits = [&]() {
+				const size_t start = k;
+				while (k < bytes.size() && bytes[k] >= '0' && bytes[k] <= '9') {
+					++k;
+				}
+				return k > start;
+			};
+			skip_space();
+			if (k + 1 < bytes.size() && bytes[k] == '<' && bytes[k + 1] == '<') {
+				return true;
+			}
+			if (digits()) {
+				skip_space();
+				if (digits()) {
+					skip_space();
+					if (k < bytes.size() && bytes[k] == 'R') {
+						return true;
+					}
+				}
+			}
 		}
 	}
 	return false;
@@ -813,6 +847,87 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		// decoded after the scan as any deferred container is.
 		const bool may_be_encrypted = names_encrypt_key(file_bytes);
 
+		// What the scan learned about one definition of an object (ISO 32000-1 7.5.8: a later xref row may name an older
+		// definition again), kept when a later definition replaces it so that row restores what was learned.
+		struct ObjectFacts {
+			std::optional<uint16_t> catalog_name;
+			std::optional<std::pair<uint16_t, int64_t>> integer;
+			std::optional<std::pair<uint16_t, IndirectRef>> indirect_type;
+			std::optional<uint16_t> catalog_generation;
+			std::optional<IndirectRef> info;
+
+			[[nodiscard]] bool empty() const noexcept
+			{
+				return !catalog_name && !integer && !indirect_type && !catalog_generation && !info;
+			}
+		};
+		const auto facts_of = [&](uint32_t id) {
+			ObjectFacts facts;
+			if (const auto it = catalog_names.find(id); it != catalog_names.end()) {
+				facts.catalog_name = it->second;
+			}
+			if (const auto it = recovered_integers.find(id); it != recovered_integers.end()) {
+				facts.integer = it->second;
+			}
+			if (const auto it = indirect_type_dicts.find(id); it != indirect_type_dicts.end()) {
+				facts.indirect_type = it->second;
+			}
+			if (const auto it = catalog_generations.find(id); it != catalog_generations.end()) {
+				facts.catalog_generation = it->second;
+			}
+			if (info_candidate.has_value() && info_candidate->obj_num == id) {
+				facts.info = *info_candidate;
+			}
+			return facts;
+		};
+		const auto restore_facts = [&](uint32_t id, const ObjectFacts& facts, uint64_t at) {
+			if (facts.catalog_name) {
+				catalog_names[id] = *facts.catalog_name;
+			}
+			if (facts.integer) {
+				recovered_integers[id] = *facts.integer;
+			}
+			if (facts.indirect_type) {
+				indirect_type_dicts[id] = *facts.indirect_type;
+			}
+			if (facts.catalog_generation) {
+				catalog_generations[id] = *facts.catalog_generation;
+			}
+			if (facts.info && (!info_candidate.has_value() || at >= info_candidate_pos)) {
+				info_candidate = *facts.info;
+				info_candidate_pos = at;
+			}
+		};
+		// A replaced container member's facts, by (container position, index), with the member's object number; kept only
+		// when there are facts, so bounded by the members the scan decoded.
+		std::map<std::pair<uint64_t, uint32_t>, std::pair<uint32_t, ObjectFacts>> replaced_members;
+		// The uncompressed definition a container member or an xref row replaced, per object. The scan's own uncompressed
+		// redefinitions are not kept (a later one in the file is the newer revision), so this is bounded by members and rows.
+		struct ReplacedDefinition {
+			uint64_t offset = 0;
+			uint16_t generation = 0;
+			ObjectFacts facts;
+		};
+		std::unordered_map<uint32_t, ReplacedDefinition> replaced_uncompressed;
+		const auto remember_replaced = [&](uint32_t id, bool keep_uncompressed) {
+			const XrefEntry* before = table.find(id);
+			if (before == nullptr) {
+				return;
+			}
+			if (before->is_uncompressed()) {
+				if (keep_uncompressed) {
+					replaced_uncompressed[id] = ReplacedDefinition{before->byte_offset, before->generation, facts_of(id)};
+				}
+			} else if (before->is_compressed()) {
+				const XrefEntry* container = table.find(before->obj_stm_num);
+				if (container != nullptr && container->is_uncompressed()) {
+					ObjectFacts facts = facts_of(id);
+					if (!facts.empty()) {
+						replaced_members[{container->byte_offset, before->obj_stm_index}] = {id, std::move(facts)};
+					}
+				}
+			}
+		};
 		auto invalidate_objstm_container = [&](uint32_t container_id) {
 			auto m_it = objstm_members.find(container_id);
 			if (m_it == objstm_members.end()) {
@@ -950,6 +1065,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 								"Damaged-file recovery exceeded maximum object entry budget",
 								container_pos);
 						}
+						remember_replaced(inner_id, true);
 						invalidate_objstm_container(inner_id);
 						if (!table.entries_.contains(inner_id)) {
 							++objects_discovered;
@@ -1162,6 +1278,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 
 							// If `obj_num` previously acted as a `/Type /ObjStm` container, redefining
 							// `obj_num` invalidates all compressed objects that pointed into that container.
+							remember_replaced(obj_num, false);
 							invalidate_objstm_container(obj_num);
 
 							if (!table.entries_.contains(obj_num)) {
@@ -1267,7 +1384,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 											unusable_xref_stream();
 										} else {
 											for (const auto& [member_id, row] : rows.entries_) {
-												if (member_id == 0u || (!row.is_compressed() && !row.is_free())) {
+												if (member_id == 0u) {
 													continue;
 												}
 												const XrefEntry* existing = table.find(member_id);
@@ -1275,6 +1392,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 													// A later revision deleted the object: an earlier definition goes, and an earlier container's
 													// member unpacked after the scan stays out (defined_at).
 													if (existing != nullptr) {
+														remember_replaced(member_id, true);
 														invalidate_objstm_container(member_id);
 														table.entries_.erase(member_id);
 														if (objects_discovered > 0u) {
@@ -1289,6 +1407,42 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 														}
 													}
 													defined_at[member_id] = static_cast<uint64_t>(pos);
+													continue;
+												}
+												if (row.is_uncompressed()) {
+													// A type-1 row is taken only for a definition the scan found (ISO 32000-1 7.5.8.3, Table 18): the one already in
+													// the table, whose position it then vouches for, or the one a member or an earlier row replaced, which it restores.
+													if (existing != nullptr && existing->is_uncompressed() && existing->byte_offset == row.byte_offset &&
+														existing->generation == row.generation) {
+														defined_at[member_id] = std::max(defined_at[member_id], static_cast<uint64_t>(pos));
+													} else if (const auto replaced = replaced_uncompressed.find(member_id);
+															   replaced != replaced_uncompressed.end() && replaced->second.offset == row.byte_offset &&
+															   replaced->second.generation == row.generation) {
+														const ReplacedDefinition restored = replaced->second;
+														remember_replaced(member_id, true);
+														invalidate_objstm_container(member_id);
+														if (existing == nullptr) {
+															if (objects_discovered >= effective_max_entries) {
+																return make_xref_error(
+																	ErrorCode::DamagedFormat,
+																	DiagnosticId::DamagedXRef,
+																	"Damaged-file recovery exceeded maximum object entry budget",
+																	pos);
+															}
+															++objects_discovered;
+														}
+														table.set_entry(member_id, row);
+														defined_at[member_id] = static_cast<uint64_t>(pos);
+														recovered_integers.erase(member_id);
+														catalog_generations.erase(member_id);
+														indirect_type_dicts.erase(member_id);
+														catalog_names.erase(member_id);
+														if (info_candidate.has_value() && info_candidate->obj_num == member_id) {
+															info_candidate = std::nullopt;
+														}
+														restore_facts(member_id, restored.facts, static_cast<uint64_t>(pos));
+														max_obj_num = std::max(max_obj_num, member_id);
+													}
 													continue;
 												}
 												if (existing != nullptr && existing->is_compressed() && existing->obj_stm_num == row.obj_stm_num &&
@@ -1309,6 +1463,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 												}
 												// A row names its container by number, not by one version of it, so it is not one of
 												// objstm_members: the container's own (re)definition does not invalidate it.
+												remember_replaced(member_id, true);
 												invalidate_objstm_container(member_id);
 												table.set_entry(member_id, row);
 												defined_at[member_id] = static_cast<uint64_t>(pos);
@@ -1318,6 +1473,12 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 												catalog_names.erase(member_id);
 												if (info_candidate.has_value() && info_candidate->obj_num == member_id) {
 													info_candidate = std::nullopt;
+												}
+												if (const XrefEntry* container = table.find(row.obj_stm_num); container != nullptr && container->is_uncompressed()) {
+													if (const auto known = replaced_members.find({container->byte_offset, row.obj_stm_index});
+														known != replaced_members.end() && known->second.first == member_id) {
+														restore_facts(member_id, known->second.second, static_cast<uint64_t>(pos));
+													}
 												}
 												max_obj_num = std::max(max_obj_num, member_id);
 											}

@@ -393,6 +393,15 @@ TEST(PdfCrypto, AuditOwnerFirstEncodingLengthAndIndirectType)
 	RECTO_ASSERT_OK(r3_cafe->authenticate("caf\xE9")); // the PDFDocEncoding bytes themselves still match
 	RECTO_EXPECT_ERR(r3_cafe->authenticate("cafe"), ErrorCode::WrongPassword);
 
+	// Round 2: a legacy password whose PDFDocEncoding bytes look like a UTF-16 BOM (þÿ, FE FF) still authenticates
+	// from UTF-8: the conversion is plain PDFDocEncoding, not the text-string encoder that guards BOMs.
+	auto r3_bom = handler(
+		"<< /Filter /Standard /V 2 /R 3 /Length 128 /P -3904 "
+		"/O <18DD370DC452B52F094687612BF85E069C2F384BF4DE6904B46EB9E77F2E9EDA> "
+		"/U <AF6CF068305310E7C1CC603E7F9F034600000000000000000000000000000000> >>");
+	RECTO_ASSERT_OK(r3_bom);
+	RECTO_ASSERT_OK(r3_bom->authenticate("\xC3\xBE\xC3\xBF"));
+
 	auto v4_dict = parse_dict_literal(
 		"<< /Filter /Standard /V 4 /R 4 /P -3904 /CF << /StdCF << /CFM /V2 /Length 5 >> >> "
 		"/StmF /StdCF /StrF /StdCF /O <0000000000000000000000000000000000000000000000000000000000000000> "

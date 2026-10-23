@@ -1481,12 +1481,9 @@ PdfResult<void> SecurityHandler::authenticate(std::string_view password) noexcep
 			// a). A UTF-8 password is tried in PDFDocEncoding first, then exactly as given, so a caller that already
 			// passes PDFDocEncoding bytes still matches.
 			std::vector<std::string> candidates;
-			if (auto encoded = utf8_to_pdf_string(password); encoded.has_value()) {
-				const std::vector<uint8_t>& bytes = encoded->bytes;
-				const bool unicode_bom = (bytes.size() >= 2u && bytes[0] == 0xFEu && bytes[1] == 0xFFu) ||
-					(bytes.size() >= 3u && bytes[0] == 0xEFu && bytes[1] == 0xBBu && bytes[2] == 0xBFu);
-				std::string pdf_doc(bytes.begin(), bytes.end());
-				if (!unicode_bom && pdf_doc != password) {
+			if (const auto encoded = utf8_to_pdf_doc_encoding(password); encoded.has_value()) {
+				std::string pdf_doc(encoded->begin(), encoded->end());
+				if (pdf_doc != password) {
 					candidates.push_back(std::move(pdf_doc));
 				}
 			}
@@ -1976,39 +1973,58 @@ PdfResult<void> SecurityHandler::decrypt_value_recursive(
 		// An indirect /Filter, or its elements, is written into the dictionary resolved (one level), and so is
 		// /DecodeParms with its first element and /Name when the chain starts with /Crypt, so the crypt filter is
 		// chosen from what the references name exactly as for direct values (ISO 32000-1 section 7.3.10).
-		if (resolver != nullptr && *resolver) {
-			const auto inline_ref = [&](PdfValue& slot) -> PdfResult<void> {
+		if (resolver != nullptr && *resolver && !inlining_) {
+			inlining_ = true;
+			struct InliningScope {
+				bool& flag;
+				~InliningScope() { flag = false; }
+			} inlining_scope{inlining_};
+			// A resolved value is written in only when it has the kind the slot can use (a name for /Filter and /Name,
+			// a dictionary or array for /DecodeParms); anything else, a stream say, stays the reference it was, so a
+			// chain of references to streams is never copied into the dictionary (each copy carrying its own).
+			enum class SlotKind { Name, Parameters };
+			const auto inline_ref = [&](PdfValue& slot, SlotKind kind) -> PdfResult<void> {
 				if (const auto target_ref = slot.as_ref()) {
 					RECTO_PDF_TRY_REF(target, (*resolver)(*target_ref));
-					slot = std::move(target);
+					const bool usable = kind == SlotKind::Name ? target.is_name() : (target.is_dict() || target.is_array());
+					if (usable) {
+						slot = std::move(target);
+					}
 				}
 				return {};
 			};
-			const auto inline_entry = [&](PdfDict& dict, std::string_view key) -> PdfResult<void> {
+			const auto inline_entry = [&](PdfDict& dict, std::string_view key, SlotKind kind) -> PdfResult<void> {
 				if (PdfValue* slot = dict.get_mut(PdfName::from_decoded(key))) {
-					RECTO_PDF_RETURN_IF_ERROR(inline_ref(*slot));
+					// The whole entry may be an array of names or of dictionaries; its elements take the entry's kind.
+					if (slot->is_ref()) {
+						RECTO_PDF_TRY_REF(target, (*resolver)(*slot->as_ref()));
+						const bool usable = target.is_array() || (kind == SlotKind::Name ? target.is_name() : target.is_dict());
+						if (usable) {
+							*slot = std::move(target);
+						}
+					}
 					if (PdfArray* arr = slot->as_array_mut(); arr != nullptr && arr->size() <= kMaxFilterChainDepth) {
 						for (PdfValue& elem : *arr) {
-							RECTO_PDF_RETURN_IF_ERROR(inline_ref(elem));
+							RECTO_PDF_RETURN_IF_ERROR(inline_ref(elem, kind));
 						}
 					}
 				}
 				return {};
 			};
-			RECTO_PDF_RETURN_IF_ERROR(inline_entry(stm->dict, "Filter"));
+			RECTO_PDF_RETURN_IF_ERROR(inline_entry(stm->dict, "Filter", SlotKind::Name));
 			const PdfValue* filter_now = stm->dict.get("Filter");
 			const bool starts_with_crypt = filter_now != nullptr &&
 				((filter_now->as_name() == std::optional<std::string_view>("Crypt")) ||
 				 (filter_now->as_array() != nullptr && !filter_now->as_array()->empty() &&
 				  (*filter_now->as_array())[0].as_name() == std::optional<std::string_view>("Crypt")));
 			if (starts_with_crypt) {
-				RECTO_PDF_RETURN_IF_ERROR(inline_entry(stm->dict, "DecodeParms"));
+				RECTO_PDF_RETURN_IF_ERROR(inline_entry(stm->dict, "DecodeParms", SlotKind::Parameters));
 				PdfValue* dp = stm->dict.get_mut(PdfName::from_decoded("DecodeParms"));
 				if (dp != nullptr && dp->as_array_mut() != nullptr && !dp->as_array_mut()->empty()) {
 					dp = &(*dp->as_array_mut())[0];
 				}
 				if (dp != nullptr && dp->as_dict_mut() != nullptr) {
-					RECTO_PDF_RETURN_IF_ERROR(inline_entry(*dp->as_dict_mut(), "Name"));
+					RECTO_PDF_RETURN_IF_ERROR(inline_entry(*dp->as_dict_mut(), "Name", SlotKind::Name));
 				}
 			}
 		}

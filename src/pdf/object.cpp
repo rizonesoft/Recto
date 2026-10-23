@@ -860,6 +860,22 @@ PdfResult<std::string> pdf_string_to_utf8(std::span<const uint8_t> bytes) noexce
 	}
 }
 
+std::optional<std::vector<uint8_t>> utf8_to_pdf_doc_encoding(std::string_view utf8)
+{
+	std::vector<uint8_t> out;
+	out.reserve(utf8.size());
+	size_t idx = 0;
+	uint32_t cp = 0;
+	while (decode_next_utf8(utf8, idx, cp)) {
+		const auto code = unicode_to_pdf_doc_encoding(cp); // invalid UTF-8 decodes to U+FFFD, which has no code
+		if (!code.has_value()) {
+			return std::nullopt;
+		}
+		out.push_back(*code);
+	}
+	return out;
+}
+
 PdfResult<PdfString> utf8_to_pdf_string(std::string_view utf8) noexcept
 {
 	try {

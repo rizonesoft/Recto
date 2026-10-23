@@ -468,6 +468,102 @@ TEST(PdfXref, RecoveryRoundOneFixes)
 	}
 }
 
+// Round 3 of D06 T05 §29 and §30: a later xref row that names a definition the scan replaced restores it with what
+// the scan learned of it, a type-1 row vouches for the definition it names, and a mere mention of /Encrypt does not
+// defer an ordinary file's containers.
+TEST(PdfXref, RecoveryRoundThreeFixes)
+{
+	const auto hex = [](const std::string& text) {
+		static constexpr char kHex[] = "0123456789ABCDEF";
+		std::string out;
+		for (const unsigned char c : text) {
+			out += kHex[c >> 4u];
+			out += kHex[c & 0x0Fu];
+		}
+		return out + ">";
+	};
+	const auto container = [&](uint32_t num, const std::string& members, const std::string& keys) {
+		const std::string data = hex(members);
+		return std::to_string(num) + " 0 obj\n<< /Type /ObjStm " + keys + " /Length " + std::to_string(data.size()) +
+			" >>\nstream\n" + data + "\nendstream\nendobj\n";
+	};
+	const auto type1_row = [](size_t offset) {
+		std::string row("\x01", 1);
+		for (int shift = 24; shift >= 0; shift -= 8) {
+			row.push_back(static_cast<char>((offset >> shift) & 0xFFu));
+		}
+		return row + std::string(2u, '\0');
+	};
+	const std::string pages = "4 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+
+	// Both containers decode during the scan, container 5 replacing container 1's catalog 3; the intact row that names
+	// container 1 again restores that catalog, so the file recovers with root 3 in container 1.
+	{
+		std::string pdf = "%PDF-1.7\n" + container(1u, "3 0 << /Type /Catalog /Pages 4 0 R >>", "/N 1 /First 4 /Filter /ASCIIHexDecode") +
+			pages + container(5u, "3 0 << /Type /Catalog /Pages 4 0 R /Second true >>", "/N 1 /First 4 /Filter /ASCIIHexDecode");
+		const std::string row("\x02\x00\x00\x00\x01\x00\x00", 7); // object 3: type 2, in container 1, index 0
+		pdf += "9 0 obj\n<< /Type /XRef /Size 10 /Root 3 0 R /Index [3 1] /W [1 4 2] /Length 7 >>\nstream\n" + row +
+			"\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		EXPECT_EQ(rec->root_ref(), (IndirectRef{3u, 0u}));
+		ASSERT_NE(rec->find(3), nullptr);
+		EXPECT_EQ(rec->find(3)->obj_stm_num, 1u);
+	}
+
+	// Object 3 uncompressed, then xref stream 9 naming it in container 20, then xref stream 10 naming the uncompressed
+	// definition again with a type-1 row: the last row wins (ISO 32000-1 7.5.8.3).
+	{
+		std::string pdf = "%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 3 0 R >>\nendobj\n" +
+			container(20u, "3 0 << /Type /Pages /Kids [] /Count 0 >>", "/N 1 /First 4 /Filter /ASCIIHexDecode");
+		const size_t uncompressed_at = pdf.size();
+		pdf += "3 0 obj\n<< /Type /Pages /Kids [] /Count 0 /Second true >>\nendobj\n";
+		const std::string row_a("\x02\x00\x00\x00\x14\x00\x00", 7); // object 3: type 2, in container 20, index 0
+		pdf += "9 0 obj\n<< /Type /XRef /Size 21 /Root 1 0 R /Index [3 1] /W [1 4 2] /Length 7 >>\nstream\n" + row_a +
+			"\nendstream\nendobj\n";
+		pdf += "10 0 obj\n<< /Type /XRef /Size 21 /Root 1 0 R /Index [3 1] /W [1 4 2] /Length 7 >>\nstream\n" +
+			type1_row(uncompressed_at) + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(3), nullptr);
+		EXPECT_TRUE(rec->find(3)->is_uncompressed());
+		EXPECT_EQ(rec->find(3)->byte_offset, uncompressed_at);
+	}
+
+	// Object 3 uncompressed, then a deferred container holding object 3 (its parameters are indirect), then a type-1
+	// row naming the uncompressed definition: the row's position keeps it, so the container does not take it over.
+	{
+		std::string pdf = "%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages +
+			"2 0 obj\n<< >>\nendobj\n";
+		const size_t uncompressed_at = pdf.size();
+		pdf += "3 0 obj\n42\nendobj\n" +
+			container(20u, "3 0 7", "/N 1 /First 4 /Filter /ASCIIHexDecode /DecodeParms 2 0 R");
+		pdf += "10 0 obj\n<< /Type /XRef /Size 21 /Root 1 0 R /Index [3 1] /W [1 4 2] /Length 7 >>\nstream\n" +
+			type1_row(uncompressed_at) + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(3), nullptr);
+		EXPECT_TRUE(rec->find(3)->is_uncompressed());
+		EXPECT_EQ(rec->find(3)->byte_offset, uncompressed_at);
+	}
+
+	// A file that mentions /Encrypt in a comment or a string keeps its containers decoded during the scan, so a
+	// stream whose /Length is a compressed integer is skipped by that length, and the catalog written inside its data
+	// is never read as a definition.
+	for (const std::string mention : {"% notes on /Encrypt 5 0 R\n", "6 0 obj\n(see /Encrypt)\nendobj\n"}) {
+		const std::string fake = "\nendstream\nendobj\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n";
+		std::string pdf = "%PDF-1.7\n" + mention;
+		const size_t genuine_at = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages +
+			container(20u, "88 0 " + std::to_string(fake.size()), "/N 1 /First 5 /Filter /ASCIIHexDecode") +
+			"30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(1), nullptr);
+		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at) << mention;
+	}
+}
+
 // Recovered cross-reference streams (D06 T05 §30): their rows count against one budget for the whole recovery, their
 // decoding stops at what the cumulative budget has left, an unusable one is recorded with its object number and
 // offset, and a file that may be encrypted keeps no container bytes while it is scanned.

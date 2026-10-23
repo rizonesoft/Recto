@@ -3503,6 +3503,9 @@ struct Jbig2DecoderState {
 	// the last row an End-of-Stripe segment names (T.88 7.4.10).
 	bool page_height_unknown{false};
 	uint64_t end_of_stripe_rows{0};
+	// The declared maximum stripe size (T.88 7.4.8.6) and the lowest row any region of the open stripe reaches.
+	uint64_t max_stripe_rows{0};
+	uint64_t open_stripe_bottom{0};
 	// The generic and refinement arithmetic contexts a symbol dictionary retained (flag bit 9, T.88 7.4.2.2), by its
 	// segment number, for a later dictionary that uses them (flag bit 8), with the coding parameters they were
 	// learned under (SDHUFF, SDREFAGG, both templates and every adaptive-template byte), which the user must share.
@@ -3535,6 +3538,27 @@ struct Jbig2DecoderState {
 		}
 		total_allocated_bytes += bytes;
 		return {};
+	}
+
+	// Places a region of rows [top, top + height) on a striped page of unknown height: it must lie in the open stripe,
+	// not in one an End of Stripe already completed (T.88 7.4.10), and the page grows to hold it. A page of known
+	// height takes any region (one outside it is clipped).
+	[[nodiscard]] PdfResult<void> place_region(int32_t top, uint32_t height, size_t effective_limit, size_t offset)
+	{
+		if (!page_height_unknown) {
+			return {};
+		}
+		const int64_t bottom = static_cast<int64_t>(top) + height;
+		if (static_cast<int64_t>(top) < static_cast<int64_t>(end_of_stripe_rows) ||
+			bottom - static_cast<int64_t>(end_of_stripe_rows) > static_cast<int64_t>(max_stripe_rows)) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"JBIG2 region lies outside the open stripe of a page of unknown height",
+				offset);
+		}
+		open_stripe_bottom = std::max(open_stripe_bottom, static_cast<uint64_t>(bottom));
+		return grow_page_to(static_cast<uint64_t>(bottom), effective_limit, offset);
 	}
 
 	// Extends a page of unknown height to `rows`, filled with the page's default pixel and charged to the budget; a
@@ -3746,6 +3770,8 @@ struct Jbig2DecoderState {
 			const uint16_t striping = read_u16_be(seg_data.data() + 17u);
 			state.page_height_unknown = page_h == 0xFFFFFFFFu;
 			state.end_of_stripe_rows = 0u;
+			state.open_stripe_bottom = 0u;
+			state.max_stripe_rows = static_cast<uint64_t>(striping & 0x7FFFu);
 			if (state.page_height_unknown && (striping & 0x8000u) == 0u) {
 				return make_filter_error(
 					ErrorCode::DamagedFormat,
@@ -3841,10 +3867,7 @@ struct Jbig2DecoderState {
 						state.account_bytes(jbig2_footprint(pbm), effective_limit, seg_header_start));
 					state.page_bitmap = std::move(pbm);
 				}
-				RECTO_PDF_RETURN_IF_ERROR(state.grow_page_to(
-					static_cast<uint64_t>(std::max<int64_t>(0, static_cast<int64_t>(reg_y) + rbm.height)),
-					effective_limit,
-					seg_header_start));
+				RECTO_PDF_RETURN_IF_ERROR(state.place_region(reg_y, rbm.height, effective_limit, seg_header_start));
 				state.page_bitmap->composite(rbm, reg_x, reg_y, reg_comb_op);
 			}
 		} else if (seg_type == 0u) {
@@ -5503,10 +5526,7 @@ struct Jbig2DecoderState {
 						state.account_bytes(jbig2_footprint(pbm), effective_limit, seg_header_start));
 					state.page_bitmap = std::move(pbm);
 				}
-				RECTO_PDF_RETURN_IF_ERROR(state.grow_page_to(
-					static_cast<uint64_t>(std::max<int64_t>(0, static_cast<int64_t>(reg_y) + rbm.height)),
-					effective_limit,
-					seg_header_start));
+				RECTO_PDF_RETURN_IF_ERROR(state.place_region(reg_y, rbm.height, effective_limit, seg_header_start));
 				state.page_bitmap->composite(rbm, reg_x, reg_y, reg_comb_op);
 			}
 		} else if (seg_type == 40u || seg_type == 42u || seg_type == 43u) {
@@ -5624,10 +5644,7 @@ struct Jbig2DecoderState {
 						state.account_bytes(jbig2_footprint(pbm), effective_limit, seg_header_start));
 					state.page_bitmap = std::move(pbm);
 				}
-				RECTO_PDF_RETURN_IF_ERROR(state.grow_page_to(
-					static_cast<uint64_t>(std::max<int64_t>(0, static_cast<int64_t>(reg_y) + rbm.height)),
-					effective_limit,
-					seg_header_start));
+				RECTO_PDF_RETURN_IF_ERROR(state.place_region(reg_y, rbm.height, effective_limit, seg_header_start));
 				state.page_bitmap->composite(rbm, reg_x, reg_y, reg_comb_op);
 			}
 		} else if (seg_type == 16u) {
@@ -5887,10 +5904,7 @@ struct Jbig2DecoderState {
 						state.account_bytes(jbig2_footprint(pbm), effective_limit, seg_header_start));
 					state.page_bitmap = std::move(pbm);
 				}
-				RECTO_PDF_RETURN_IF_ERROR(state.grow_page_to(
-					static_cast<uint64_t>(std::max<int64_t>(0, static_cast<int64_t>(reg_y) + rbm.height)),
-					effective_limit,
-					seg_header_start));
+				RECTO_PDF_RETURN_IF_ERROR(state.place_region(reg_y, rbm.height, effective_limit, seg_header_start));
 				state.page_bitmap->composite(rbm, reg_x, reg_y, reg_comb_op);
 			}
 		} else if (seg_type == 53u) {
@@ -6016,11 +6030,12 @@ struct Jbig2DecoderState {
 						seg_header_start);
 				}
 				const uint64_t rows = static_cast<uint64_t>(read_u32_be(seg_data.data())) + 1u;
-				if (rows <= state.end_of_stripe_rows) {
+				if (rows <= state.end_of_stripe_rows || rows - state.end_of_stripe_rows > state.max_stripe_rows ||
+					rows < state.open_stripe_bottom) {
 					return make_filter_error(
 						ErrorCode::DamagedFormat,
 						DiagnosticId::DamagedStream,
-						"JBIG2 End of Stripe row does not follow the previous stripe",
+						"JBIG2 End of Stripe row does not end the open stripe within the maximum stripe size",
 						seg_header_start);
 				}
 				RECTO_PDF_RETURN_IF_ERROR(state.grow_page_to(rows, effective_limit, seg_header_start));
@@ -6076,6 +6091,12 @@ PdfResult<std::vector<uint8_t>> decode_jbig2(
 		// Per ISO 32000-1 section 7.4.7, JBIG2 treats 1 as black and 0 as white,
 		// whereas PDF DeviceGray treats 0 as black and 1 as white: invert bits.
 		Jbig2Bitmap& page = *state.page_bitmap;
+		if (state.page_height_unknown && state.open_stripe_bottom > state.end_of_stripe_rows) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"JBIG2 region after the last End of Stripe of a page of unknown height");
+		}
 		if (state.page_height_unknown && state.end_of_stripe_rows == 0u) {
 			return make_filter_error(
 				ErrorCode::DamagedFormat,

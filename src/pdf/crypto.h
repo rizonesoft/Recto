@@ -277,6 +277,9 @@ private:
 	// re-read from decrypted_obj_stm_cache_ (bounded by count and decoded bytes).
 	std::unordered_map<uint64_t, PdfValue> decrypted_cache_{};
 	ObjStmCache decrypted_obj_stm_cache_{}; // bounded by count and decoded bytes
+	// Whether a stream's indirect /Filter or /DecodeParms is being written in: a decryption nested inside that
+	// resolution does not inline again, so a chain of references costs each object once (D06 T05 §23).
+	mutable bool inlining_ = false;
 };
 
 } // namespace recto::pdf
