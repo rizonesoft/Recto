@@ -697,6 +697,14 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			PdfStream stream;
 		};
 		std::vector<DeferredObjStm> deferred_objstms;
+		// An encrypted file's containers are ciphertext until authentication, which happens after recovery, so when the
+		// file may be encrypted (it names /Encrypt anywhere) every container is deferred, and none is decoded if a
+		// recovered trailer turns out to have /Encrypt: its compressed objects come from the rows of the intact xref
+		// streams instead, and are read after authentication. A file that merely mentions /Encrypt has its containers
+		// decoded after the scan as any deferred container is.
+		static constexpr std::string_view kEncryptKey = "/Encrypt";
+		const bool may_be_encrypted = std::search(file_bytes.begin(), file_bytes.end(), kEncryptKey.begin(),
+			kEncryptKey.end()) != file_bytes.end();
 
 		auto invalidate_objstm_container = [&](uint32_t container_id) {
 			auto m_it = objstm_members.find(container_id);
@@ -1095,8 +1103,67 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 									if (!ov_res.has_value()) {
 										return ov_res.error();
 									}
+									// Cross-reference streams are never encrypted (ISO 32000-1 section 7.5.8.1), so their type-2 rows say where
+									// compressed objects live even when the containers cannot be read before authentication. Each row is a
+									// definition at this stream's position, under the scan's later-wins rule; a stream that does not decode or
+									// unpack contributes only its trailer keys, as before.
+									detail::ScopedDecodeWorkMeter rows_work;
+									auto rows_bytes = decode_stream(stm);
+									if (!rows_bytes.has_value() &&
+										(rows_bytes.error().code == ErrorCode::OutOfMemory ||
+										 rows_bytes.error().code == ErrorCode::DecompressionLimitExceeded)) {
+										return rows_bytes.error();
+									}
+									cumulative_decoded_objstm_bytes += std::max<uint64_t>(
+										rows_work.bytes(), rows_bytes.has_value() ? static_cast<uint64_t>(rows_bytes->size()) : 0u);
+									if (cumulative_decoded_objstm_bytes > max_recovery_decoded_objstm_bytes) {
+										return make_xref_error(
+											ErrorCode::DecompressionLimitExceeded,
+											DiagnosticId::DamagedStream,
+											"Damaged-file recovery exceeded cumulative decoded stream byte budget",
+											pos);
+									}
+									if (rows_bytes.has_value()) {
+										XrefTable rows;
+										uint64_t rows_parsed = 0;
+										const auto unpacked = unpack_xref_stream(
+											sdict, *rows_bytes, file_bytes.size(), header_off, rows, rows_parsed, effective_max_entries);
+										if (!unpacked.has_value() && unpacked.error().code == ErrorCode::OutOfMemory) {
+											return unpacked.error();
+										}
+										if (unpacked.has_value()) {
+											for (const auto& [member_id, row] : rows.entries_) {
+												if (!row.is_compressed()) {
+													continue;
+												}
+												if (!table.entries_.contains(member_id)) {
+													if (objects_discovered >= effective_max_entries) {
+														return make_xref_error(
+															ErrorCode::DamagedFormat,
+															DiagnosticId::DamagedXRef,
+															"Damaged-file recovery exceeded maximum object entry budget",
+															pos);
+													}
+													++objects_discovered;
+												}
+												// A row names its container by number, not by one version of it, so it is not one of
+												// objstm_members: the container's own (re)definition does not invalidate it.
+												invalidate_objstm_container(member_id);
+												table.set_entry(member_id, row);
+												defined_at[member_id] = static_cast<uint64_t>(pos);
+												recovered_integers.erase(member_id);
+												catalog_generations.erase(member_id);
+												indirect_type_dicts.erase(member_id);
+												catalog_names.erase(member_id);
+												if (info_candidate.has_value() && info_candidate->obj_num == member_id) {
+													info_candidate = std::nullopt;
+												}
+												max_obj_num = std::max(max_obj_num, member_id);
+											}
+										}
+									}
 								} else if (type_opt.has_value() && *type_opt == "ObjStm" && gen_num == 0u &&
-									objstm_needs_resolver(sdict)) {
+									(may_be_encrypted || objstm_needs_resolver(sdict))) {
 									deferred_objstms.push_back(DeferredObjStm{obj_num, pos, stm});
 								} else if (type_opt.has_value() && *type_opt == "ObjStm" && gen_num == 0u &&
 									!filters_are_metered_lossless(sdict)) {
@@ -1219,7 +1286,11 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			}
 			return v->as_int();
 		};
+		const bool encrypted = table.trailer_.contains("Encrypt");
 		for (DeferredObjStm& deferred : deferred_objstms) {
+			if (encrypted) {
+				break; // ciphertext until authentication; resolution decodes these containers afterwards
+			}
 			// A container redefined later in the file is not this object any more.
 			const XrefEntry* self = table.find(deferred.obj_num);
 			if (self == nullptr || !self->is_uncompressed() || self->byte_offset != deferred.pos) {
@@ -1313,9 +1384,16 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		// Validate that a candidate `/Root` reference resolves with matching
 		// generation to a dictionary whose `/Type` is `/Catalog` using the
 		// single-pass `catalog_generations` map (zero secondary reparsing).
-		auto is_valid_catalog_ref = [&catalog_generations](IndirectRef ref) noexcept -> bool {
+		// An encrypted file's containers cannot be read before authentication, so a /Root naming a compressed object
+		// an intact xref stream lists cannot be checked here; it is taken on that stream's word, and resolution checks
+		// it after authentication.
+		auto is_valid_catalog_ref = [&catalog_generations, &table, encrypted](IndirectRef ref) noexcept -> bool {
 			const auto it = catalog_generations.find(ref.obj_num);
-			return it != catalog_generations.end() && it->second == ref.gen_num;
+			if (it != catalog_generations.end() && it->second == ref.gen_num) {
+				return true;
+			}
+			const XrefEntry* entry = table.find(ref.obj_num);
+			return encrypted && ref.gen_num == 0u && entry != nullptr && entry->is_compressed();
 		};
 
 		auto has_valid_root_entry = [&table, &is_valid_catalog_ref]() noexcept -> bool {

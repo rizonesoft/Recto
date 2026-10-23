@@ -843,6 +843,8 @@ The audit of `D01 T01 §6` (`docs/reviews/06-quality/audit-d01-t01-s6.md`, D06 T
 
 ## 30. Damaged-file recovery keeps an encrypted file's compressed objects
 
+> **Started:** 2026-10-23T09:05:00Z
+
 The audit of `D01 T01 §6` (`docs/reviews/06-quality/audit-d01-t01-s6.md`, D06 T05 §21, round 5) found damaged-file recovery losing every compressed object of an encrypted file. The recovery scan copies only the trailer keys of an intact `/Type /XRef` stream it meets and drops its type-2 rows, and it tries to decode each `/Type /ObjStm` it meets, which in an encrypted file is still encrypted because authentication happens after recovery (`Document` opens, recovers, then authenticates). So a file whose only damage is a wrong `startxref` offset, opened with the right password, resolves its compressed objects to null. Cross-reference streams are never encrypted (ISO 32000-1 section 7.5.8.1), so their rows are usable before authentication; containers are not. -> XREF: D06 T05 §21
 
 **Phase:** 1
@@ -854,9 +856,9 @@ The audit of `D01 T01 §6` (`docs/reviews/06-quality/audit-d01-t01-s6.md`, D06 T
 1. Import the type-2 rows of each intact cross-reference stream recovery meets, under the scan's rule that later definitions override earlier ones. Done when: a file with a wrong `startxref` and an intact xref stream recovers its compressed entries before any container is decoded.
 2. Leave encrypted containers undecoded during recovery, and let resolution decode them after authentication through `SecurityHandler` and `Document` (`parse_object_stream`, `extract_object_stream_member`). Done when: the encrypted fixture below resolves its compressed objects after recovery and authentication.
 
-- [ ] Import type-2 rows from intact `/Type /XRef` streams in the recovery scan of `src/pdf/xref.cpp`, keeping file-order override against uncompressed definitions. Done when: `PdfXref.*` recovery tests pass unchanged.
-- [ ] Skip decoding `/Type /ObjStm` streams during recovery when the file has an `/Encrypt` entry in any recovered trailer, recording the containers for resolution after authentication. Done when: recovery of an encrypted file no longer decodes ciphertext as a container.
-- [ ] Add `PdfDocument.RecoveredEncryptedObjectStreamsResolve`: the fixture of `PdfDocument.EncryptedObjectStreamsShareOneDecodeAndRefuseForbiddenMembers` with its final `startxref` offset corrupted, opened with the password. Done when: objects 21 and 22 resolve to 7 and 8, and the test fails on the code before this section.
+- [x] Import type-2 rows from intact `/Type /XRef` streams in the recovery scan of `src/pdf/xref.cpp`, keeping file-order override against uncompressed definitions. Done when: `PdfXref.*` recovery tests pass unchanged.
+- [x] Skip decoding `/Type /ObjStm` streams during recovery when the file has an `/Encrypt` entry in any recovered trailer, recording the containers for resolution after authentication. Done when: recovery of an encrypted file no longer decodes ciphertext as a container. **Corrected 2026-10-23:** the trailer usually follows the containers, so a single forward scan cannot know in time; a file that names `/Encrypt` anywhere defers every container (the `D06 T05 §29` path), and none is decoded once a recovered trailer has `/Encrypt`. A trailer `/Root` naming a compressed object an xref stream lists is accepted in an encrypted file, since its container cannot be read before authentication.
+- [x] Add `PdfDocument.RecoveredEncryptedObjectStreamsResolve`: the fixture of `PdfDocument.EncryptedObjectStreamsShareOneDecodeAndRefuseForbiddenMembers` with its final `startxref` offset corrupted, opened with the password. Done when: objects 21 and 22 resolve to 7 and 8, and the test fails on the code before this section.
 - [ ] Commit: `pdf: recovery keeps an encrypted file's compressed objects`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfXref.*:PdfDocument.*` passes under ASan with 0 warnings, including `PdfDocument.RecoveredEncryptedObjectStreamsResolve`.

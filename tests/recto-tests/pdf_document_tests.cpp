@@ -97,18 +97,12 @@ std::vector<uint8_t> build_synthetic_pdf_from_objects(
 	return std::vector<uint8_t>(out.begin(), out.end());
 }
 
-// An encrypted document's object streams are read by the same routine as an unencrypted one's: sibling objects
-// share one decrypted, decoded container, and forbidden members (a stream, here) are refused. Built as an
-// incremental update of the RC4 corpus file: two RC4-encrypted object streams and an xref stream with /Prev.
-TEST(PdfDocument, EncryptedObjectStreamsShareOneDecodeAndRefuseForbiddenMembers)
+// The RC4 corpus file with an incremental update: two RC4-encrypted object streams (20 holding 21 = 7 and 22 = 8,
+// 23 holding a forbidden stream member 24) and an xref stream (25) with /Prev. `sh` is authenticated with the
+// file's password and is the handler that encrypted the containers.
+std::vector<uint8_t> encrypted_objstm_update(SecurityHandler& sh)
 {
 	std::vector<uint8_t> bytes = read_corpus_bytes("render/encrypted-rc4-128.pdf");
-	auto base_xref = XrefTable::parse(bytes);
-	ASSERT_TRUE(base_xref.has_value());
-	auto sh_opt = SecurityHandler::from_xref(*base_xref, bytes);
-	ASSERT_TRUE(sh_opt.has_value() && sh_opt->has_value());
-	SecurityHandler sh = std::move(**sh_opt);
-	ASSERT_TRUE(sh.authenticate("recto-test").has_value());
 
 	const auto encrypt = [&](std::string_view plain, uint32_t obj_num) {
 		const std::span<const uint8_t> span(reinterpret_cast<const uint8_t*>(plain.data()), plain.size());
@@ -150,6 +144,22 @@ TEST(PdfDocument, EncryptedObjectStreamsShareOneDecodeAndRefuseForbiddenMembers)
 		"/Index [20 6] /W [1 4 2] /Length " + std::to_string(rows.size()) + " >>\nstream\n");
 	append(rows);
 	append("\nendstream\nendobj\nstartxref\n" + std::to_string(off25) + "\n%%EOF\n");
+	return bytes;
+}
+
+// An encrypted document's object streams are read by the same routine as an unencrypted one's: sibling objects
+// share one decrypted, decoded container, and forbidden members (a stream, here) are refused. Built as an
+// incremental update of the RC4 corpus file: two RC4-encrypted object streams and an xref stream with /Prev.
+TEST(PdfDocument, EncryptedObjectStreamsShareOneDecodeAndRefuseForbiddenMembers)
+{
+	const std::vector<uint8_t> base = read_corpus_bytes("render/encrypted-rc4-128.pdf");
+	auto base_xref = XrefTable::parse(base);
+	ASSERT_TRUE(base_xref.has_value());
+	auto sh_opt = SecurityHandler::from_xref(*base_xref, base);
+	ASSERT_TRUE(sh_opt.has_value() && sh_opt->has_value());
+	SecurityHandler sh = std::move(**sh_opt);
+	ASSERT_TRUE(sh.authenticate("recto-test").has_value());
+	const std::vector<uint8_t> bytes = encrypted_objstm_update(sh);
 
 	auto doc = Document::open_memory(bytes, "recto-test");
 	ASSERT_TRUE(doc.has_value()) << doc.error().message.view();
@@ -172,6 +182,42 @@ TEST(PdfDocument, EncryptedObjectStreamsShareOneDecodeAndRefuseForbiddenMembers)
 	auto handler_forbidden = sh.resolve_and_decrypt_object(*updated_xref, bytes, IndirectRef{24u, 0u});
 	ASSERT_FALSE(handler_forbidden.has_value());
 	EXPECT_EQ(handler_forbidden.error().code, ErrorCode::DamagedFormat);
+}
+
+// The same file with its final startxref offset wrong, so the cross-reference data is recovered by scanning: the
+// containers are ciphertext until authentication, so recovery takes their members from the xref stream's rows, and
+// after opening with the password the compressed objects resolve (D06 T05 §30).
+TEST(PdfDocument, RecoveredEncryptedObjectStreamsResolve)
+{
+	const std::vector<uint8_t> base = read_corpus_bytes("render/encrypted-rc4-128.pdf");
+	auto base_xref = XrefTable::parse(base);
+	ASSERT_TRUE(base_xref.has_value());
+	auto sh_opt = SecurityHandler::from_xref(*base_xref, base);
+	ASSERT_TRUE(sh_opt.has_value() && sh_opt->has_value());
+	SecurityHandler sh = std::move(**sh_opt);
+	ASSERT_TRUE(sh.authenticate("recto-test").has_value());
+	std::vector<uint8_t> bytes = encrypted_objstm_update(sh);
+	const std::string text(bytes.begin(), bytes.end());
+	const size_t number_at = text.rfind("startxref\n") + 10u;
+	const size_t number_end = text.find('\n', number_at);
+	bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(number_at), bytes.begin() + static_cast<std::ptrdiff_t>(number_end));
+	bytes.insert(bytes.begin() + static_cast<std::ptrdiff_t>(number_at), '1');
+
+	auto recovered = XrefTable::parse(bytes, kMaxXrefTotalEntries, /*allow_recovery=*/true);
+	ASSERT_TRUE(recovered.has_value()) << recovered.error().message.view();
+	EXPECT_TRUE(recovered->recovered());
+	ASSERT_NE(recovered->find(21), nullptr);
+	EXPECT_TRUE(recovered->find(21)->is_compressed());
+	EXPECT_EQ(recovered->find(21)->obj_stm_num, 20u);
+
+	auto doc = Document::open_memory(bytes, "recto-test");
+	ASSERT_TRUE(doc.has_value()) << doc.error().message.view();
+	auto a = (*doc)->resolve_object(IndirectRef{21u, 0u});
+	auto b = (*doc)->resolve_object(IndirectRef{22u, 0u});
+	ASSERT_TRUE(a.has_value()) << a.error().message.view();
+	ASSERT_TRUE(b.has_value()) << b.error().message.view();
+	EXPECT_EQ(a->as_int(), std::optional<int64_t>(7));
+	EXPECT_EQ(b->as_int(), std::optional<int64_t>(8));
 }
 
 TEST(PdfDocument, OpenAndAuthenticate)
