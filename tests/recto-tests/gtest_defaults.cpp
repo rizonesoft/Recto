@@ -17,6 +17,7 @@
 #include <gtest/gtest.h>
 
 #include <windows.h>
+#include <shellapi.h>
 
 #include <string_view>
 
@@ -24,12 +25,31 @@ GTEST_DECLARE_bool_(fail_if_no_test_selected);
 
 namespace {
 
+// True when an argument is the flag itself (`--gtest_fail_if_no_test_selected`
+// or `...=<value>`, with GoogleTest's `-`, `--` and `/` prefixes), never when a
+// filter or another argument merely contains its name.
+bool is_flag_argument(std::wstring_view argument)
+{
+	constexpr std::wstring_view kName = L"gtest_fail_if_no_test_selected";
+	for (const std::wstring_view prefix : {L"--", L"-", L"/"}) {
+		if (argument.starts_with(prefix)) {
+			const std::wstring_view rest = argument.substr(prefix.size());
+			return rest == kName || (rest.starts_with(kName) && rest.substr(kName.size()).starts_with(L"="));
+		}
+	}
+	return false;
+}
+
 bool chosen_elsewhere()
 {
-	if (std::wstring_view(GetCommandLineW()).find(L"gtest_fail_if_no_test_selected") != std::wstring_view::npos) {
-		return true;
+	int count = 0;
+	wchar_t** arguments = CommandLineToArgvW(GetCommandLineW(), &count);
+	bool chosen = false;
+	for (int i = 1; arguments != nullptr && i < count; ++i) {
+		chosen = chosen || is_flag_argument(arguments[i]);
 	}
-	return GetEnvironmentVariableW(L"GTEST_FAIL_IF_NO_TEST_SELECTED", nullptr, 0) != 0;
+	LocalFree(arguments);
+	return chosen || GetEnvironmentVariableW(L"GTEST_FAIL_IF_NO_TEST_SELECTED", nullptr, 0) != 0;
 }
 
 // The flags are parsed before the program starts its run and read after, so

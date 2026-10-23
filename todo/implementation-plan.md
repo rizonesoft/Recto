@@ -121,7 +121,7 @@ Sections: 62 | Checklist items: 405
 
 ### Phase 2: M2 Viewer
 
-Sections: 138 | Checklist items: 1219
+Sections: 139 | Checklist items: 1225
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -129,7 +129,7 @@ Sections: 138 | Checklist items: 1219
 | [ ]    | D01 T02 §12 | `DocumentActor::get_page_transition` query for the parsed `/Trans` and `/Dur`            | windows-host                  | 6     |
 | [ ]    | D02 T04 §1  | `AppPaths` Portable mode path resolver and live atomic data migration                    | windows-host                  | 8     |
 | [ ]    | D02 T04 §2  | Typed `SettingsStore` service with atomic persistence and change notifications           | windows-host                  | 10    |
-| [ ]    | D10 T01 §1  | `recto-ui` static library, module boundary and headless render harness                   | windows-host                  | 17    |
+| [ ]    | D10 T01 §1  | `recto-ui` static library, module boundary and headless render harness                   | windows-host                  | 18    |
 | [ ]    | D10 T01 §2  | Win32 `Recto.exe` host replaces the WinUI scaffold; Windows App SDK pins retired         | windows-host, display-session | 17    |
 | [ ]    | D10 T01 §3  | UI thread `Dispatcher`, timers and engine callback marshalling                           | windows-host                  | 7     |
 | [ ]    | D10 T01 §4  | Top-level `Window`: custom frame, Mica Alt, dark mode, DPI and minimum size              | windows-host, display-session | 10    |
@@ -151,6 +151,7 @@ Sections: 138 | Checklist items: 1219
 | [ ]    | D10 T01 §18 | `SwapChainHost`: composition swap chain element for the page canvas                      | windows-host                  | 8     |
 | [ ]    | D10 T01 §19 | Non-client hit testing: drag regions, resize edges, caption buttons, Snap Layouts        | windows-host, display-session | 9     |
 | [ ]    | D10 T01 §20 | Golden-image suite: headless renders at 100, 150 and 200 percent against SPEC boards     | windows-host                  | 10    |
+| [ ]    | D10 T01 §21 | Compiler-resolved include boundary for the engine and toolkit modules                    | windows-host                  | 5     |
 | [ ]    | D10 T02 §1  | `Control` base: visual states, tokens, automation name, tooltip and command hooks        | windows-host                  | 9     |
 | [ ]    | D10 T02 §2  | Buttons: standard, accent, danger, icon, toggle and hyperlink                            | windows-host                  | 12    |
 | [ ]    | D10 T02 §3  | `ToolTip` with name and shortcut text                                                    | windows-host, display-session | 9     |
@@ -862,6 +863,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 54/793 verified sections, 17 ready to run now.
+Progress: 54/794 verified sections, 17 ready to run now.
 
-Checklist: 340/5879 items completed (includes Commit items).
+Checklist: 341/5885 items completed (includes Commit items).

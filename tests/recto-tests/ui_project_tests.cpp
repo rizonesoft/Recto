@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
@@ -47,13 +48,15 @@ std::string lower(std::string value)
 	return value;
 }
 
+// Every file a directive could include, whatever its extension (`.def`, `.txt`
+// or none): everything under a module folder except the MSBuild, manifest and
+// binary resource files that no compiler reads as source. A deny list, so a new
+// kind of fragment is scanned by default.
 bool is_source_file(const fs::path& path)
 {
-	// Every extension MSVC compiles or a directive can include: headers, inline
-	// and template implementation files, include fragments and module units.
-	static const std::set<std::string> extensions = {".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp", ".tpp", ".inc",
-		".c", ".cc", ".cpp", ".cxx", ".ixx", ".cppm"};
-	return extensions.contains(lower(path.extension().string()));
+	static const std::set<std::string> not_source = {".vcxproj", ".filters", ".user", ".props", ".targets", ".md",
+		".json", ".png", ".ico", ".bmp", ".ttf", ".otf", ".manifest", ".appxmanifest", ".pdb", ".lib", ".obj"};
+	return !not_source.contains(lower(path.extension().string()));
 }
 
 bool is_header_file(const fs::path& path)
@@ -139,6 +142,19 @@ size_t raw_string_end(const std::string& text, size_t quote)
 bool is_identifier_char(char c)
 {
 	return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_';
+}
+
+// True when `text` ends with a whole raw-string prefix token (R, LR, uR, UR or
+// u8R) rather than an identifier that merely ends in R: `OUTR"x("` is the
+// identifier OUTR followed by an ordinary string literal ([lex.string]).
+bool raw_string_prefix(const std::string& text)
+{
+	size_t start = text.size();
+	while (start > 0 && is_identifier_char(text[start - 1])) {
+		--start;
+	}
+	const std::string_view token(text.data() + start, text.size() - start);
+	return token == "R" || token == "LR" || token == "uR" || token == "UR" || token == "u8R";
 }
 
 // What the compiler's preprocessor sees (translation phases 1 to 3), with the
@@ -243,7 +259,7 @@ LogicalSource logical_source(const std::string& raw_with_bom)
 					break;
 				}
 			}
-		} else if (c == '"' && previous == 'R' && raw_string_end(spliced, i) != std::string::npos) {
+		} else if (c == '"' && raw_string_prefix(out.text) && raw_string_end(spliced, i) != std::string::npos) {
 			// R"delim( ... )delim": the body is opaque, whatever quotes, comment
 			// openers or directives it holds. Only its newlines are kept.
 			const size_t end = raw_string_end(spliced, i);
@@ -491,8 +507,10 @@ fs::path self_path()
 	}
 }
 
+constexpr DWORD kChildDeadlineMs = 60000;
+
 // Runs this test binary with `arguments` and returns its exit code and output.
-std::pair<DWORD, std::string> run_self(const std::wstring& arguments)
+std::pair<DWORD, std::string> run_self(const std::wstring& arguments, DWORD deadline_ms = kChildDeadlineMs)
 {
 	SECURITY_ATTRIBUTES inherit{sizeof(inherit), nullptr, TRUE};
 	HANDLE read_end = nullptr;
@@ -516,18 +534,31 @@ std::pair<DWORD, std::string> run_self(const std::wstring& arguments)
 		CloseHandle(read_end);
 		throw std::runtime_error("could not start the test binary");
 	}
+	// The pipe is drained on its own thread so a child that stalls cannot block
+	// this test past its deadline; a child still running at the deadline is
+	// terminated and reaped, and the run fails.
 	std::string output;
-	std::array<char, 4096> buffer{};
-	DWORD got = 0;
-	while (ReadFile(read_end, buffer.data(), static_cast<DWORD>(buffer.size()), &got, nullptr) != FALSE && got > 0) {
-		output.append(buffer.data(), got);
+	std::thread reader([&] {
+		std::array<char, 4096> buffer{};
+		DWORD got = 0;
+		while (ReadFile(read_end, buffer.data(), static_cast<DWORD>(buffer.size()), &got, nullptr) != FALSE && got > 0) {
+			output.append(buffer.data(), got);
+		}
+	});
+	const bool finished = WaitForSingleObject(process.hProcess, deadline_ms) == WAIT_OBJECT_0;
+	if (!finished) {
+		TerminateProcess(process.hProcess, 124);
+		WaitForSingleObject(process.hProcess, INFINITE);
 	}
+	reader.join();
 	CloseHandle(read_end);
-	WaitForSingleObject(process.hProcess, 60000);
 	DWORD code = 0;
 	GetExitCodeProcess(process.hProcess, &code);
 	CloseHandle(process.hProcess);
 	CloseHandle(process.hThread);
+	if (!finished) {
+		throw std::runtime_error("the test binary was still running at its deadline and was terminated");
+	}
 	return {code, output};
 }
 
@@ -690,6 +721,11 @@ RECTO_UI_TEST(Project, UniqueTestIds)
 	const std::set<std::string> duplicates = duplicate_names(names);
 	EXPECT_TRUE(duplicates.empty()) << *duplicates.begin();
 	EXPECT_EQ(duplicate_names({"Ui.Project.A", "Ui.Project.B", "Ui.Project.A"}), (std::set<std::string>{"Ui.Project.A"}));
+	// The registration-time refusal: a second claim of the same name fails.
+	std::set<std::string> seen;
+	EXPECT_TRUE(recto::ui::test::claim_name(seen, "Project.A"));
+	EXPECT_TRUE(recto::ui::test::claim_name(seen, "Project.B"));
+	EXPECT_FALSE(recto::ui::test::claim_name(seen, "Project.A"));
 }
 
 // Registered for Ui.Project.DisabledTestsRunOnlyWhenAsked: never runs by default.
@@ -711,10 +747,28 @@ RECTO_UI_TEST(Project, DisabledTestsRunOnlyWhenAsked)
 	EXPECT_NE(disabled_list.find("DISABLED_Project.Probe"), std::string::npos);
 	const auto [skip_code, skipped] = run_self(L"--gtest_filter=Ui.DISABLED_Project.Probe --gtest_fail_if_no_test_selected=false");
 	EXPECT_EQ(skip_code, 0U);
-	EXPECT_NE(skipped.find("1 DISABLED TEST"), std::string::npos) << skipped;
+	EXPECT_NE(skipped.find("DISABLED TEST"), std::string::npos) << skipped;
+	EXPECT_EQ(skipped.find("[ RUN      ] Ui.DISABLED_Project.Probe"), std::string::npos) << skipped;
 	const auto [run_code, ran] = run_self(L"--gtest_filter=Ui.DISABLED_Project.Probe --gtest_also_run_disabled_tests");
 	EXPECT_EQ(run_code, 0U);
 	EXPECT_NE(ran.find("[  PASSED  ] 1 test."), std::string::npos) << ran;
+}
+
+// Registered for Ui.Project.StalledChildIsReaped: a child that never finishes.
+RECTO_UI_TEST(Project, DISABLED_Stall)
+{
+	Sleep(30000);
+}
+
+RECTO_UI_TEST(Project, StalledChildIsReaped)
+{
+	// A child test run that stalls is terminated at its deadline and the run
+	// fails; nothing waits forever on its output.
+	const auto started = std::chrono::steady_clock::now();
+	EXPECT_THROW(
+		{ const auto result = run_self(L"--gtest_filter=Ui.DISABLED_Project.Stall --gtest_also_run_disabled_tests", 1000); (void)result; },
+		std::runtime_error);
+	EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(10));
 }
 
 RECTO_UI_TEST(Project, EmptySelectionFails)
@@ -728,13 +782,16 @@ RECTO_UI_TEST(Project, EmptySelectionFails)
 	EXPECT_EQ(permitted, 0U) << ignored;
 	const auto [listed, listing] = run_self(L"--gtest_list_tests --gtest_filter=Ui.Project.NoSuchTest");
 	EXPECT_EQ(listed, 0U) << listing;
+	// Only the flag itself decides, never a filter that happens to contain its name.
+	const auto [lookalike, lookalike_output] = run_self(L"--gtest_filter=Ui.Project.NoSuch_gtest_fail_if_no_test_selected");
+	EXPECT_NE(lookalike, 0U) << lookalike_output;
 }
 
 RECTO_UI_TEST(Project, HarnessSolid)
 {
 	constexpr uint32_t kSize = 64;
-	// Premultiplied BGRA of an opaque colour: 0xE0 blue, 0x80 green, 0x20 red.
-	const std::array<uint8_t, 4> fill_bgra{0xE0, 0x80, 0x20, 0xFF};
+	// Premultiplied RGBA of an opaque colour: 0x20 red, 0x80 green, 0xE0 blue.
+	const std::array<uint8_t, 4> fill_rgba{0x20, 0x80, 0xE0, 0xFF};
 
 	const auto render = [&](float r, float g, float b) {
 		return recto::ui::test::render_to_bitmap(
@@ -751,7 +808,7 @@ RECTO_UI_TEST(Project, HarnessSolid)
 	std::vector<uint8_t> expected(static_cast<size_t>(kSize) * kSize * 4, 0);
 	for (uint32_t y = 16; y < 48; ++y) {
 		for (uint32_t x = 16; x < 48; ++x) {
-			std::copy(fill_bgra.begin(), fill_bgra.end(), expected.begin() + (static_cast<size_t>(y) * kSize + x) * 4);
+			std::copy(fill_rgba.begin(), fill_rgba.end(), expected.begin() + (static_cast<size_t>(y) * kSize + x) * 4);
 		}
 	}
 
@@ -760,16 +817,18 @@ RECTO_UI_TEST(Project, HarnessSolid)
 	ASSERT_EQ(bitmap.height, kSize);
 	ASSERT_GE(bitmap.stride, static_cast<size_t>(kSize) * 4);
 	const recto::test::PixelDiffResult same =
-		recto::test::expect_rgba_equal(bitmap.bytes, expected, kSize, kSize, bitmap.stride, 0, 0);
+		recto::test::expect_rgba_equal(recto::ui::test::rgba_bytes(bitmap), expected, kSize, kSize, kSize * 4, kSize * 4, 0);
 	EXPECT_TRUE(same.matches);
 
 	// The test can fail: a different fill colour is a different image.
 	const recto::ui::test::Bitmap other = render(0xE0 / 255.0F, 0x80 / 255.0F, 0x20 / 255.0F);
 	const recto::test::PixelDiffResult different =
-		recto::test::compare_rgba(other.bytes, expected, kSize, kSize, other.stride, 0, 0);
+		recto::test::compare_rgba(recto::ui::test::rgba_bytes(other), expected, kSize, kSize, kSize * 4, kSize * 4, 0);
 	EXPECT_FALSE(different.matches);
 	EXPECT_EQ(different.first_x, 16U);
 	EXPECT_EQ(different.first_y, 16U);
+	// The diagnostic names the channels in RGBA order, so red reads as red.
+	EXPECT_NE(recto::test::format_rgba_diff(different).find("actual [224, 128, 32, 255]"), std::string::npos) << recto::test::format_rgba_diff(different);
 }
 
 RECTO_UI_TEST(Project, HarnessScalesEffectivePixels)
@@ -793,38 +852,47 @@ RECTO_UI_TEST(Project, HarnessScalesEffectivePixels)
 
 RECTO_UI_TEST(Project, HarnessStride)
 {
-	constexpr uint32_t kSize = 64;
+	// A non-square bitmap whose every row differs, red on the left and blue on
+	// the right with a moving boundary: a reader that assumes stride == width * 4
+	// sees rows shifted, and one that swaps red and blue sees other colours.
+	constexpr uint32_t kWidth = 48;
+	constexpr uint32_t kHeight = 20;
 	constexpr size_t kPadding = 80;
 	const auto draw = [](const recto::ui::test::RenderContext& context) {
-		// Left half one colour, right half another: a reader that assumes
-		// stride == width * 4 sees every row shifted and cannot match.
-		Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> left;
-		Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> right;
-		ASSERT_HRESULT_SUCCEEDED(context.target->CreateSolidColorBrush(D2D1::ColorF(1.0F, 0.0F, 0.0F, 1.0F), &left));
-		ASSERT_HRESULT_SUCCEEDED(context.target->CreateSolidColorBrush(D2D1::ColorF(0.0F, 0.0F, 1.0F, 1.0F), &right));
+		Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> red;
+		Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> blue;
+		ASSERT_HRESULT_SUCCEEDED(context.target->CreateSolidColorBrush(D2D1::ColorF(1.0F, 0.0F, 0.0F, 1.0F), &red));
+		ASSERT_HRESULT_SUCCEEDED(context.target->CreateSolidColorBrush(D2D1::ColorF(0.0F, 0.0F, 1.0F, 1.0F), &blue));
 		context.target->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
-		context.target->FillRectangle(D2D1::RectF(0.0F, 0.0F, 32.0F, 64.0F), left.Get());
-		context.target->FillRectangle(D2D1::RectF(32.0F, 0.0F, 64.0F, 64.0F), right.Get());
+		for (uint32_t y = 0; y < kHeight; ++y) {
+			const float split = static_cast<float>(4 + y);
+			const float top = static_cast<float>(y);
+			context.target->FillRectangle(D2D1::RectF(0.0F, top, split, top + 1.0F), red.Get());
+			context.target->FillRectangle(D2D1::RectF(split, top, static_cast<float>(kWidth), top + 1.0F), blue.Get());
+		}
 	};
 
-	const recto::ui::test::Bitmap natural = recto::ui::test::render_to_bitmap(draw, kSize, kSize, 1.0F);
+	const recto::ui::test::Bitmap natural = recto::ui::test::render_to_bitmap(draw, kWidth, kHeight, 1.0F);
 	recto::ui::test::RenderOptions options;
-	options.min_stride = static_cast<size_t>(kSize) * 4 + kPadding;
-	const recto::ui::test::Bitmap padded = recto::ui::test::render_to_bitmap(draw, kSize, kSize, 1.0F, options);
+	options.min_stride = static_cast<size_t>(kWidth) * 4 + kPadding;
+	const recto::ui::test::Bitmap padded = recto::ui::test::render_to_bitmap(draw, kWidth, kHeight, 1.0F, options);
 
-	ASSERT_GT(padded.stride, static_cast<size_t>(kSize) * 4) << "the harness must honour a wider stride";
-	ASSERT_EQ(padded.bytes.size(), padded.stride * kSize);
+	ASSERT_GT(padded.stride, static_cast<size_t>(kWidth) * 4) << "the harness must honour a wider stride";
+	ASSERT_EQ(padded.bytes.size(), padded.stride * kHeight);
 
-	// Respecting each side's own stride, the pixels are equal.
-	const recto::test::PixelDiffResult respected =
-		recto::test::expect_rgba_equal(padded.bytes, natural.bytes, kSize, kSize, padded.stride, natural.stride, 0);
-	EXPECT_TRUE(respected.matches);
+	// Read through the adapter, which honours each bitmap's own stride, the
+	// images are equal and their first pixel is red in RGBA order.
+	const std::vector<uint8_t> natural_rgba = recto::ui::test::rgba_bytes(natural);
+	const std::vector<uint8_t> padded_rgba = recto::ui::test::rgba_bytes(padded);
+	EXPECT_EQ(padded_rgba, natural_rgba);
+	EXPECT_EQ(padded_rgba[0], 255);
+	EXPECT_EQ(padded_rgba[2], 0);
 
 	// Assuming stride == width * 4 does not: this is the cheaper substitute the
-	// section forbids, and it must fail.
-	const recto::test::PixelDiffResult assumed =
-		recto::test::compare_rgba(padded.bytes, natural.bytes, kSize, kSize, static_cast<size_t>(kSize) * 4, natural.stride, 0);
-	EXPECT_FALSE(assumed.matches);
+	// section forbids, and it must fail, in the adapter as in a direct reader.
+	recto::ui::test::Bitmap assumed = padded;
+	assumed.stride = static_cast<size_t>(kWidth) * 4;
+	EXPECT_NE(recto::ui::test::rgba_bytes(assumed), natural_rgba);
 }
 
 RECTO_UI_TEST(Project, HarnessRejectsAbsurdStride)
@@ -959,6 +1027,48 @@ RECTO_UI_TEST(Project, HarnessKeepsCallerApartment)
 	// The first STA in a process is the main STA, whichever thread it is on.
 	EXPECT_TRUE(sta.hr == S_OK && (sta.type == APTTYPE_STA || sta.type == APTTYPE_MAINSTA))
 		<< "the STA case must run in an STA (hr " << sta.hr << ", type " << sta.type << ")";
+}
+
+RECTO_UI_TEST(Project, HarnessBalancesComReferences)
+{
+	// A caller that initialised COM twice, renders (once normally, once with a
+	// throwing callback) and uninitialises twice is back to no apartment of its
+	// own: the harness kept no reference, not even on the exception path.
+	const auto fresh_state = [] {
+		Apartment state;
+		std::thread probe([&] { state = current_apartment(); });
+		probe.join();
+		return state;
+	};
+	for (const DWORD init : {DWORD{COINIT_MULTITHREADED}, DWORD{COINIT_APARTMENTTHREADED}}) {
+		Apartment after;
+		Apartment baseline;
+		bool threw = false;
+		std::thread worker([&] {
+			const HRESULT first = CoInitializeEx(nullptr, init);
+			const HRESULT second = CoInitializeEx(nullptr, init);
+			const recto::ui::test::Bitmap bitmap = render_split();
+			try {
+				const auto failed = recto::ui::test::render_to_bitmap(
+					[](const recto::ui::test::RenderContext&) { throw std::logic_error("unwind"); }, 8, 8, 1.0F);
+				(void)failed;
+			} catch (const std::logic_error& error) {
+				threw = std::string_view(error.what()) == "unwind"; // the expected exception, checked below
+			}
+			if (SUCCEEDED(second)) {
+				CoUninitialize();
+			}
+			if (SUCCEEDED(first)) {
+				CoUninitialize();
+			}
+			after = current_apartment();
+			baseline = fresh_state();
+			(void)bitmap;
+		});
+		worker.join();
+		EXPECT_TRUE(threw) << "the callback's exception did not reach the caller";
+		EXPECT_EQ(after, baseline) << "init " << init << ": hr " << after.hr << ", type " << after.type;
+	}
 }
 
 RECTO_UI_TEST(Project, HarnessRendersConcurrently)

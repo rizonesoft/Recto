@@ -85,6 +85,7 @@ track: M2
 | 18 | §18 | `SwapChainHost`: composition swap chain element for the page canvas | §5, §6 | [ ] |
 | 19 | §19 | Non-client hit testing: drag regions, resize edges, caption buttons, Snap Layouts | §4, §9, §10, §12 | [ ] |
 | 20 | §20 | Golden-image suite: headless renders at 100, 150 and 200 percent against SPEC boards | §1, §9, §10 | [ ] |
+| 21 | §21 | Compiler-resolved include boundary for the engine and toolkit modules | §1 | [ ] |
 
 ## 1. `recto-ui` static library, module boundary and headless render harness
 
@@ -122,6 +123,7 @@ Create the `recto-ui` C++23 static library in `src/ui/` (namespace `recto::ui`) 
 - [x] Make test ids reliable: document disabled-test filtering in `tests/recto-tests/ui_test.h`, add `Ui.Project.UniqueTestIds`, `Ui.Project.DisabledTestsRunOnlyWhenAsked` (over a registered `Ui.DISABLED_Project.Probe`) and a `tests/scripts/test_release_notes.py` case that a disabled `Ui` test is not evidence. Done when: the three tests pass.
 - [x] Make a run whose filter selects no test fail in `tests/recto-tests/gtest_defaults.cpp` (GoogleTest's `fail_if_no_test_selected`, unless the command line or `GTEST_FAIL_IF_NO_TEST_SELECTED` decides). Done when: `Ui.Project.EmptySelectionFails` passes (a filter matching nothing exits non-zero with "No tests ran", `--gtest_fail_if_no_test_selected=false` exits 0, listing is unaffected).
 - [x] Prove `recto-ui` itself is instrumented under ASan: `recto::ui::built_with_address_sanitizer()` in `src/ui/include/recto/ui/ui.h`, `Ui.Project.ToolkitInstrumentedLikeTests`, and `tests/scripts/test_build_ps1.py` `AsanCoverage` (every C++ project in `Recto.sln`, except `recto-fuzz`, which `D06 T02 §3` builds with its own fuzzer instrumentation, is in the ASan clean list and target list). Done when: both pass, and `ToolkitInstrumentedLikeTests` passes in the `-EnableASAN` run.
+- [x] Close the re-stamp completion review's in-scope gaps (`docs/reviews/10-ui/D10-T01-s1.md`): raw-string prefixes as whole tokens, every file under a module folder scanned except MSBuild, manifest and binary resource files, the project check reading `IncludePath`, forced includes and compiled sources with the rule, configuration and full reference chain in every finding and run in `.github/workflows/build.yml` before the build, every `recto-ui` source evaluated with `/fsanitize=address` under ASan, nested COM references balanced on the exception path, the comparison helpers fed through `rgba_bytes`, a padded and row-varying stride fixture, duplicate test ids refused at registration, the empty-selection override read as an exact argument, and child processes reaped at a deadline. Done when: `Ui.Project.*` (22 tests) and `python -m unittest tests.scripts.test_ui_module_boundary` pass, including `Ui.Project.HarnessBalancesComReferences`, `Ui.Project.StalledChildIsReaped` and the lookalike-filter case in `Ui.Project.EmptySelectionFails`. The compiler-resolved check (raw-string line splices and every future spelling) is filed as `§21`.
 - [ ] Commit: `ui: add recto-ui static library, module boundary tests and headless render harness`
 
 **Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Project.*` passes (every `Ui.Project` test, the count quoted), `python -m unittest tests.scripts.test_ui_module_boundary tests.scripts.test_build_ps1 tests.scripts.test_release_notes` passes, and `msbuild Recto.sln /p:Configuration=Debug /p:Platform=ARM64 /t:recto-ui` exits 0 (corrected 2026-10-23: the repair added the Python checks).
@@ -683,6 +685,28 @@ The golden suite renders toolkit fixtures headless through the §1 harness at 10
 - [ ] Commit: `ui: add golden-image suite with SSIM thresholds and a review-only update path`
 
 **Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Golden.*` passes (crop and scale, manifest validation, deterministic fixtures, Light and Dark foundation crops at 100, 150 and 200 percent, HighContrast baselines, drift detection, update path leaves `design/screenshots/` unchanged).
+
+## 21. Compiler-resolved include boundary for the engine and toolkit modules
+
+`Ui.Project.IncludeBoundary` (`§1`) models the preprocessor with a text lexer, and every audit round of `§1` found one more shape the compiler accepts that a lexer misreads (digit separators, header names, digraphs, UTF-16, raw-string prefixes). Shapes still outside the lexer's model: a line splice inside a raw string, whose body reverts phase 2 ([lex.pptoken] and [lex.string]), a header reached through a macro the scan refuses but cannot resolve, and any future lexical rule. This section makes the compiler the oracle: every translation unit of `recto-pdf`, `recto-core`, `recto-services` and `recto-ui` is preprocessed with its own evaluated flags and `/showIncludes`, and every header the compiler actually opened is checked against the D13 rule, so no spelling can hide a crossing. The text lexer stays as the fast first check inside `recto-tests`; this check is the authority and runs before the native build in CI. Filed 2026-10-23 from the `§1` re-stamp completion review (items 6 and 7 and excellence item 1).
+
+**Phase:** 2
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Write `scripts/check-module-includes.py` (stdlib Python): evaluate each module project's `ClCompile` items for one configuration with MSBuild (as `tests/scripts/test_ui_module_boundary.py` does), run `cl.exe /Zs /showIncludes` with each item's evaluated include folders, defines, forced includes and language switches, and collect every opened header path. Done when: the script prints one line per translation unit and exits 0 on the tree.
+2. Apply the rule to the opened headers: an engine translation unit that opened a file under `src/ui`, or a `recto-ui` translation unit that opened a file under `src/pdf`, `src/core` or `src/services`, is a finding naming the unit, the header and the include chain `/showIncludes` reports. Done when: a planted unit with a line splice inside a raw string followed by a toolkit include fails with that chain.
+3. Run it in CI before the build and from `tests/scripts`. Done when: `.github/workflows/build.yml` runs it ahead of `build/build.ps1` and `python -m unittest tests.scripts.test_check_module_includes` passes.
+
+- [ ] Add `scripts/check-module-includes.py` that preprocesses every `ClCompile` item of the four module projects with `cl.exe /Zs /showIncludes` and its evaluated flags (Debug|x64). Done when: `python scripts/check-module-includes.py` exits 0 and lists every translation unit. Source: Microsoft Learn "/showIncludes (List include files)".
+- [ ] Report every opened header that crosses the D13 rule with the unit, the header and the full include chain. Done when: `tests/scripts/test_check_module_includes.py` plants a raw string with a line splice before a toolkit include, a macro-named include and a bare toolkit header, and each fails with its chain. Cheaper substitute: another lexer rule in `Ui.Project.IncludeBoundary`, which the next unmodelled spelling defeats.
+- [ ] Run the check in `.github/workflows/build.yml` before the native build. Done when: the workflow step exists and a planted crossing fails the job in a dry run of the step's command.
+- [ ] Record the time the check takes on the reference machine in `docs/reference-machines.md`. Done when: the measured seconds for the full tree are in the file and under 120 seconds.
+- [ ] Commit: `build: check the module boundary with the compiler's own include list`
+
+**Test checkpoint:** `python scripts/check-module-includes.py` exits 0 on the tree and `python -m unittest tests.scripts.test_check_module_includes` passes, including the planted raw-string splice, macro and bare-name crossings that must fail.
 
 ## Verification
 

@@ -1,10 +1,13 @@
 """The D13 boundary between the engine libraries and recto-ui, at the project level (D10 T01 §1).
 
 `Ui.Project.IncludeBoundary` (recto-tests) reads the `#include` lines. This test reads what MSBuild itself evaluates for
-each module project in all four configurations, before any native compilation: the include directories every source
-file is compiled with, and the project references, followed transitively. recto-pdf, recto-core and recto-services may
-not see `src/ui` or reach recto-ui; recto-ui may not see `src/pdf`, `src/core` or `src/services` or reach their
-projects. A planted project proves each rule fails."""
+each module project in all four configurations, before any native compilation (CI runs it ahead of the build): the
+include folders every source file is compiled with (`AdditionalIncludeDirectories` and the `IncludePath` property),
+the files it force-includes, the sources it compiles, and its project references followed transitively. recto-pdf,
+recto-core and recto-services may not see `src/ui`, force-include or compile a file there, or reach recto-ui; recto-ui
+may not do any of that with `src/pdf`, `src/core` or `src/services` and their projects. Every finding names the rule,
+the module, the configuration and, for a reference, the whole chain. A planted project proves each rule fails. Under
+ASan, every recto-ui source is compiled with /fsanitize=address."""
 import json
 import pathlib
 import subprocess
@@ -14,62 +17,93 @@ import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from test_engine_dependency_policy import CONFIGURATIONS, msbuild  # noqa: E402
+from test_engine_dependency_policy import CONFIGURATIONS, msbuild  # noqa: E402  (sibling test module, shared helpers)
 
 ENGINE = {"recto-pdf": REPO / "src" / "pdf", "recto-core": REPO / "src" / "core", "recto-services": REPO / "src" / "services"}
 UI = {"recto-ui": REPO / "src" / "ui"}
-PROJECTS = {name: folder / f"{name}.vcxproj" for name, folder in {**ENGINE, **UI}.items()}
+FOLDERS = {**ENGINE, **UI}
+PROJECTS = {name: folder / f"{name}.vcxproj" for name, folder in FOLDERS.items()}
 
 
-def evaluate(tool, project, configuration, platform):
-    """(include directories, referenced project paths) as MSBuild evaluates `project`, every path resolved."""
-    out = subprocess.run([tool, str(project), f"-p:Configuration={configuration}", f"-p:Platform={platform}",
-                          "-getItem:ClCompile", "-getItem:ProjectReference", "-nologo"],
-                         capture_output=True, text=True, encoding="utf-8", errors="replace")
+class Evaluated:
+    """What MSBuild evaluates for one project in one configuration, every path resolved."""
+
+    def __init__(self, folders, forced, sources, references):
+        self.folders, self.forced, self.sources, self.references = folders, forced, sources, references
+
+
+def evaluate(tool, project, configuration, platform, *extra):
+    out = subprocess.run([tool, str(project), f"-p:Configuration={configuration}", f"-p:Platform={platform}", *extra,
+                          "-getItem:ClCompile", "-getItem:ProjectReference", "-getProperty:IncludePath", "-nologo"],
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
     if out.returncode != 0:
         raise AssertionError(f"MSBuild could not evaluate {project}: {out.stdout[-400:]}{out.stderr[-400:]}")
-    items = json.loads(out.stdout)["Items"]
+    data = json.loads(out.stdout)
+    items = data["Items"]
     if not items.get("ClCompile"):
         raise AssertionError(f"{project} evaluated no ClCompile items; the check would see nothing")
-    folders = set()
-    for item in items.get("ClCompile", []):
-        for entry in item.get("AdditionalIncludeDirectories", "").split(";"):
-            entry = entry.strip()
-            if entry and not entry.startswith("%("):
-                folders.add((project.parent / entry).resolve())
+
+    def paths(value):
+        return {(project.parent / entry.strip()).resolve() for entry in value.split(";")
+                if entry.strip() and not entry.strip().startswith(("%(", "$("))}
+
+    folders = paths(data.get("Properties", {}).get("IncludePath", ""))
+    forced, sources = set(), set()
+    for item in items["ClCompile"]:
+        folders |= paths(item.get("AdditionalIncludeDirectories", ""))
+        forced |= paths(item.get("ForcedIncludeFiles", ""))
+        sources.add((project.parent / item["Identity"]).resolve())
     references = {(project.parent / item["Identity"]).resolve() for item in items.get("ProjectReference", [])}
-    return folders, references
+    return Evaluated(folders, forced, sources, references), items["ClCompile"]
 
 
 def inside(path, folder):
     return path == folder.resolve() or folder.resolve() in path.parents
 
 
-def violations(name, folders, reachable):
-    """What crosses the boundary for module `name`, given its include folders and every project it reaches."""
+def rules(name):
+    """(the rule's wording, the folders module `name` may not touch, the projects it may not reach)."""
     if name in ENGINE:
-        forbidden_folders, forbidden_projects = list(UI.values()), {PROJECTS["recto-ui"].resolve()}
-    else:
-        forbidden_folders, forbidden_projects = list(ENGINE.values()), {PROJECTS[n].resolve() for n in ENGINE}
-    found = [f"{name} includes {folder}" for folder in sorted(folders)
-             if any(inside(folder, bad) for bad in forbidden_folders)]
-    found += [f"{name} reaches {project.name}" for project in sorted(reachable) if project in forbidden_projects]
+        return ("an engine library may not see, compile or reach recto-ui (D13)", list(UI.values()),
+                {PROJECTS["recto-ui"].resolve()})
+    return ("recto-ui may not see, compile or reach an engine library (D13)", list(ENGINE.values()),
+            {PROJECTS[n].resolve() for n in ENGINE})
+
+
+def violations(name, configuration, evaluated, chains):
+    """Every crossing for module `name`; `chains` maps each reachable project to the reference chain that reaches it."""
+    rule, forbidden_folders, forbidden_projects = rules(name)
+    where = f"{name} ({configuration})"
+
+    def crosses(path):
+        return any(inside(path, bad) for bad in forbidden_folders)
+
+    found = [f"{where}: include folder {p} breaks: {rule}" for p in sorted(evaluated.folders) if crosses(p)]
+    found += [f"{where}: forced include {p} breaks: {rule}" for p in sorted(evaluated.forced) if crosses(p)]
+    found += [f"{where}: compiles {p} breaks: {rule}" for p in sorted(evaluated.sources) if crosses(p)]
+    found += [f"{where}: reaches {' -> '.join(c.stem for c in chains[p])} breaks: {rule}"
+              for p in sorted(chains) if p in forbidden_projects]
     return found
 
 
-def reachable_from(tool, project, configuration, platform, cache):
-    """Every project `project` references, directly or through others."""
-    seen, pending = set(), [project.resolve()]
+def reference_chains(tool, project, configuration, platform, cache, first=None):
+    """Every project `project` reaches, mapped to the chain of projects from `project` to it."""
+    root = project.resolve()
+    chains, pending = {}, [(root, [root])]
     while pending:
-        current = pending.pop()
+        current, chain = pending.pop()
         key = (current, configuration, platform)
-        if key not in cache:
-            cache[key] = evaluate(tool, current, configuration, platform)
-        for reference in cache[key][1]:
-            if reference not in seen:
-                seen.add(reference)
-                pending.append(reference)
-    return seen
+        if current == root and first is not None:
+            references = first.references
+        else:
+            if key not in cache:
+                cache[key] = evaluate(tool, current, configuration, platform)[0]
+            references = cache[key].references
+        for reference in references:
+            if reference not in chains:
+                chains[reference] = chain + [reference]
+                pending.append((reference, chain + [reference]))
+    return chains
 
 
 @unittest.skipUnless(sys.platform == "win32", "the C++ build and MSBuild are Windows-only (foundation plan D15)")
@@ -87,43 +121,60 @@ class UiModuleBoundaryTests(unittest.TestCase):
             for configuration, platform in CONFIGURATIONS:
                 with self.subTest(project=name, configuration=configuration, platform=platform):
                     key = (project.resolve(), configuration, platform)
-                    cache.setdefault(key, evaluate(self.tool, project, configuration, platform))
-                    folders = cache[key][0]
-                    reachable = reachable_from(self.tool, project, configuration, platform, cache)
-                    self.assertEqual(violations(name, folders, reachable), [])
+                    if key not in cache:
+                        cache[key] = evaluate(self.tool, project, configuration, platform)[0]
+                    chains = reference_chains(self.tool, project, configuration, platform, cache)
+                    self.assertEqual(violations(name, f"{configuration}|{platform}", cache[key], chains), [])
 
-    def planted(self, body):
-        """A throwaway project with `body` inside its ItemGroup, evaluated as Debug|x64."""
+    def planted(self, body, *properties):
+        """A throwaway project with `body` in its ItemGroup, evaluated as Debug|x64."""
         with tempfile.TemporaryDirectory() as folder:
             project = pathlib.Path(folder) / "planted.vcxproj"
+            groups = "".join(f"  <PropertyGroup>{p}</PropertyGroup>\n" for p in properties)
             project.write_text('<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">\n'
-                               f"  <ItemGroup>\n{body}\n  </ItemGroup>\n</Project>\n", encoding="utf-8")
-            folders, references = evaluate(self.tool, project, "Debug", "x64")
-        return folders, references
+                               f"{groups}  <ItemGroup>\n{body}\n  </ItemGroup>\n</Project>\n", encoding="utf-8")
+            evaluated = evaluate(self.tool, project, "Debug", "x64")[0]
+            return evaluated, reference_chains(self.tool, project, "Debug", "x64", {}, first=evaluated)
 
     def test_an_engine_project_that_sees_the_toolkit_fails(self):
-        ui_include = REPO / "src" / "ui" / "include"
-        folders, references = self.planted(
-            f'    <ClCompile Include="a.cpp"><AdditionalIncludeDirectories>{ui_include};%(AdditionalIncludeDirectories)'
-            f'</AdditionalIncludeDirectories></ClCompile>\n'
-            f'    <ProjectReference Include="{PROJECTS["recto-ui"]}" />')
-        self.assertEqual(violations("recto-core", folders, references),
-                         [f"recto-core includes {ui_include.resolve()}", "recto-core reaches recto-ui.vcxproj"])
+        ui = REPO / "src" / "ui"
+        evaluated, chains = self.planted(
+            f'    <ClCompile Include="{ui / "ui.cpp"}"><AdditionalIncludeDirectories>{ui / "include"}</AdditionalIncludeDirectories>'
+            f'<ForcedIncludeFiles>{ui / "pch.h"}</ForcedIncludeFiles></ClCompile>\n'
+            f'    <ProjectReference Include="{PROJECTS["recto-ui"]}" />',
+            f"<IncludePath>{ui / 'include' / 'recto'}</IncludePath>")
+        found = violations("recto-core", "Debug|x64", evaluated, chains)
+        rule = "an engine library may not see, compile or reach recto-ui (D13)"
+        self.assertEqual(found, [
+            f"recto-core (Debug|x64): include folder {(ui / 'include').resolve()} breaks: {rule}",
+            f"recto-core (Debug|x64): include folder {(ui / 'include' / 'recto').resolve()} breaks: {rule}",
+            f"recto-core (Debug|x64): forced include {(ui / 'pch.h').resolve()} breaks: {rule}",
+            f"recto-core (Debug|x64): compiles {(ui / 'ui.cpp').resolve()} breaks: {rule}",
+            f"recto-core (Debug|x64): reaches planted -> recto-ui breaks: {rule}"])
 
     def test_the_toolkit_seeing_an_engine_library_fails(self):
         pdf = REPO / "src" / "pdf"
-        folders, references = self.planted(
+        evaluated, chains = self.planted(
             f'    <ClCompile Include="a.cpp"><AdditionalIncludeDirectories>{pdf}</AdditionalIncludeDirectories></ClCompile>\n'
             f'    <ProjectReference Include="{PROJECTS["recto-services"]}" />')
-        self.assertEqual(violations("recto-ui", folders, references),
-                         [f"recto-ui includes {pdf.resolve()}", "recto-ui reaches recto-services.vcxproj"])
+        found = violations("recto-ui", "Debug|x64", evaluated, chains)
+        rule = "recto-ui may not see, compile or reach an engine library (D13)"
+        # recto-services reaches recto-pdf only through recto-core: the chain names every step.
+        self.assertEqual(found, [
+            f"recto-ui (Debug|x64): include folder {pdf.resolve()} breaks: {rule}",
+            f"recto-ui (Debug|x64): reaches planted -> recto-services -> recto-core breaks: {rule}",
+            f"recto-ui (Debug|x64): reaches planted -> recto-services -> recto-core -> recto-pdf breaks: {rule}",
+            f"recto-ui (Debug|x64): reaches planted -> recto-services breaks: {rule}"])
 
-    def test_a_transitive_reference_is_followed(self):
-        # recto-services reaches recto-pdf only through recto-core: the walk must find it.
-        reachable = reachable_from(self.tool, PROJECTS["recto-services"], "Debug", "x64", {})
-        self.assertIn(PROJECTS["recto-pdf"].resolve(), reachable)
-        self.assertEqual(violations("recto-ui", set(), reachable), ["recto-ui reaches recto-core.vcxproj",
-                                                                    "recto-ui reaches recto-pdf.vcxproj"])
+    def test_every_toolkit_source_is_instrumented_under_asan(self):
+        # Each recto-ui source compiled under -EnableASAN carries /fsanitize=address (x64; ARM64 has no ASan).
+        for configuration in ("Debug", "Release"):
+            with self.subTest(configuration=configuration):
+                items = evaluate(self.tool, PROJECTS["recto-ui"], configuration, "x64", "-p:EnableASAN=true")[1]
+                missing = [i["Identity"] for i in items if "/fsanitize=address" not in i.get("AdditionalOptions", "")]
+                self.assertEqual(missing, [])
+                normal = evaluate(self.tool, PROJECTS["recto-ui"], configuration, "x64", "-p:EnableASAN=false")[1]
+                self.assertFalse(any("/fsanitize=address" in i.get("AdditionalOptions", "") for i in normal))
 
 
 if __name__ == "__main__":

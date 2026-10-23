@@ -15,11 +15,15 @@
 // --gtest_filter=Ui.DISABLED_Project.* --gtest_also_run_disabled_tests.
 // Release notes leave it out of the test list (a DISABLED_ case is not
 // evidence). Each Ui.<area>.<name> must be unique across files: the symbols
-// are file-local, so Ui.Project.UniqueTestIds catches a repeat the linker cannot.
+// are file-local, so the linker cannot catch a repeat; registration refuses it
+// and stops the program (unique_registered_name), whatever the filter.
 #pragma once
 
 #include <gtest/gtest.h>
 
+#include <cstdio>
+#include <cstdlib>
+#include <set>
 #include <string>
 #include <string_view>
 
@@ -50,13 +54,33 @@ inline std::string registered_name(std::string_view area, std::string_view name)
 	return std::string(area) + "." + std::string(name);
 }
 
+// Records `name` in `seen`; false when it was already there.
+inline bool claim_name(std::set<std::string>& seen, const std::string& name)
+{
+	return seen.insert(name).second;
+}
+
+// The registered name, refused at registration when another RECTO_UI_TEST in
+// any file already took it: the program stops before any filter, listing or
+// run, because GoogleTest itself would register both silently.
+inline std::string unique_registered_name(std::string_view area, std::string_view name)
+{
+	static std::set<std::string> seen; // one set for the whole binary: an inline function's static
+	std::string full = registered_name(area, name);
+	if (!claim_name(seen, full)) {
+		std::fprintf(stderr, "RECTO_UI_TEST: Ui.%s is registered twice\n", full.c_str());
+		std::abort();
+	}
+	return full;
+}
+
 } // namespace recto::ui::test
 
 #define RECTO_UI_TEST(area, name)                                                                \
 	static void recto_ui_body_##area##_##name();                                                 \
 	[[maybe_unused]] static const ::testing::TestInfo* const recto_ui_info_##area##_##name =     \
 		::testing::RegisterTest(                                                                 \
-			"Ui", ::recto::ui::test::registered_name(#area, #name).c_str(), nullptr, nullptr, __FILE__, __LINE__,                         \
+			"Ui", ::recto::ui::test::unique_registered_name(#area, #name).c_str(), nullptr, nullptr, __FILE__, __LINE__,                         \
 			[]() -> ::testing::Test* {                                                           \
 				return new ::recto::ui::test::FunctionTest(&recto_ui_body_##area##_##name);      \
 			});                                                                                  \

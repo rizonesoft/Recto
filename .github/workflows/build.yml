@@ -74,6 +74,10 @@ jobs:
         shell: pwsh
         run: python -m unittest tests.scripts.test_engine_dependency_policy
 
+      - name: Check the engine and recto-ui project boundary before building (D10 T01 §1)
+        shell: pwsh
+        run: python -m unittest tests.scripts.test_ui_module_boundary
+
       - name: Configure NuGet and vcpkg cache directories
         shell: pwsh
         run: |
