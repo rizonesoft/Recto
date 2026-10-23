@@ -1012,6 +1012,8 @@ The completion review of the `D01 T01 §8` audit (`docs/reviews/06-quality/audit
 
 ## 37. WIC decode failures classified by HRESULT, not reported as damage
 
+> **Started:** 2026-10-23T13:00Z
+
 The completion review of the `D01 T01 §8` audit (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T05 §22, gap 10) found that every WIC failure in the DCT and JPX paths becomes `DamagedFormat` without reading the HRESULT, so an `E_OUTOFMEMORY` is reported as file corruption and a JPX resource failure falls through to the native decoder. A user then sees "damaged" for a file that is fine. -> XREF: D06 T05 §22
 
 **Phase:** 1
@@ -1023,9 +1025,9 @@ The completion review of the `D01 T01 §8` audit (`docs/reviews/06-quality/audit
 1. Classify WIC HRESULTs in one helper in `src/pdf/filters.cpp`. Done when: every WIC call site uses it.
 2. Prove the classes with injected failures. Done when: each class has a test.
 
-- [ ] Add one helper in `src/pdf/filters.cpp` that maps a WIC HRESULT to `OutOfMemory` (`E_OUTOFMEMORY`), `UnsupportedFeature` (`WINCODEC_ERR_COMPONENTNOTFOUND`, `WINCODEC_ERR_UNSUPPORTEDPIXELFORMAT`), `Cancelled` (`E_ABORT`) or `DamagedFormat` (data errors such as `WINCODEC_ERR_BADIMAGE`), with the HRESULT in hex in the message. Done when: every WIC failure path in the DCT and JPX decoders returns through it.
-- [ ] Fall back from WIC to the native JPX decoder only for codec-absent and data-format failures, never after a resource failure. Done when: an injected `E_OUTOFMEMORY` from WIC returns `OutOfMemory` without a native attempt.
-- [ ] Add a test-only HRESULT injection point for the WIC calls and `PdfFilters.WicFailureClasses` covering each class. Done when: the test fails on the code before this section.
+- [x] Add one helper in `src/pdf/filters.cpp` that maps a WIC HRESULT to `OutOfMemory` (`E_OUTOFMEMORY`), `UnsupportedFeature` (`WINCODEC_ERR_COMPONENTNOTFOUND`, `WINCODEC_ERR_UNSUPPORTEDPIXELFORMAT`), `Cancelled` (`E_ABORT`) or `DamagedFormat` (data errors such as `WINCODEC_ERR_BADIMAGE`), with the HRESULT in hex in the message. Done when: every WIC failure path in the DCT and JPX decoders returns through it.
+- [x] Fall back from WIC to the native JPX decoder only for codec-absent and data-format failures, never after a resource failure. Done when: an injected `E_OUTOFMEMORY` from WIC returns `OutOfMemory` without a native attempt.
+- [x] Add a test-only HRESULT injection point for the WIC calls and `PdfFilters.WicFailureClasses` covering each class. Done when: the test fails on the code before this section.
 - [ ] Commit: `pdf: WIC failures classified by HRESULT`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.WicFailureClasses`.

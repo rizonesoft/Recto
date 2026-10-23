@@ -25,6 +25,7 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -80,6 +81,18 @@ ScopedJpxPath::ScopedJpxPath(JpxPath path) noexcept : previous_(g_jpx_path)
 ScopedJpxPath::~ScopedJpxPath() noexcept
 {
 	g_jpx_path = previous_;
+}
+
+thread_local int32_t g_wic_decoder_failure = 0;
+
+ScopedWicDecoderFailure::ScopedWicDecoderFailure(int32_t hresult) noexcept : previous_(g_wic_decoder_failure)
+{
+	g_wic_decoder_failure = hresult;
+}
+
+ScopedWicDecoderFailure::~ScopedWicDecoderFailure() noexcept
+{
+	g_wic_decoder_failure = previous_;
 }
 
 } // namespace detail
@@ -6271,6 +6284,55 @@ private:
 	bool should_uninit_{false};
 };
 
+// Whether a WIC failure is the machine's (out of memory, an abort) rather than the codec's or the data's. A resource
+// failure is returned as it is and never retried through another decoder (D06 T05 §37).
+[[nodiscard]] bool wic_resource_failure(HRESULT hr) noexcept
+{
+	return hr == E_OUTOFMEMORY || hr == E_ABORT;
+}
+
+// What a failed WIC call means to the caller, read from its HRESULT, never from which call failed: out of memory, a
+// codec or pixel format this machine does not have, an abort, or (anything else) data the codec rejected. The HRESULT
+// is kept in hex in the message for support.
+[[nodiscard]] PdfError wic_failure(HRESULT hr, std::string_view call) noexcept
+{
+	ErrorCode code = ErrorCode::DamagedFormat;
+	DiagnosticId id = DiagnosticId::DamagedStream;
+	switch (hr) {
+	case E_OUTOFMEMORY:
+		code = ErrorCode::OutOfMemory;
+		id = DiagnosticId::OutOfMemory;
+		break;
+	case WINCODEC_ERR_COMPONENTNOTFOUND:
+	case WINCODEC_ERR_UNSUPPORTEDPIXELFORMAT:
+		code = ErrorCode::UnsupportedFeature;
+		id = DiagnosticId::UnsupportedFeature;
+		break;
+	case E_ABORT:
+		code = ErrorCode::Cancelled;
+		id = DiagnosticId::Cancelled;
+		break;
+	default:
+		break;
+	}
+	char text[192];
+	const int written = std::snprintf(text, sizeof(text), "%.*s (HRESULT 0x%08lX)",
+		static_cast<int>(std::min<size_t>(call.size(), 120u)), call.data(), static_cast<unsigned long>(hr));
+	return make_filter_error(code, id, std::string_view(text, written > 0 ? std::min<size_t>(static_cast<size_t>(written), sizeof(text) - 1u) : 0u));
+}
+
+// `IWICImagingFactory::CreateDecoderFromStream`, or the failure a test injected (detail::ScopedWicDecoderFailure).
+[[nodiscard]] HRESULT create_wic_decoder(
+	IWICImagingFactory* factory,
+	IWICStream* stream,
+	Microsoft::WRL::ComPtr<IWICBitmapDecoder>& decoder) noexcept
+{
+	if (detail::g_wic_decoder_failure != 0) {
+		return static_cast<HRESULT>(detail::g_wic_decoder_failure);
+	}
+	return factory->CreateDecoderFromStream(stream, nullptr, WICDecodeMetadataCacheOnDemand, &decoder);
+}
+
 [[nodiscard]] IWICImagingFactory* get_thread_local_wic_factory() noexcept
 {
 	thread_local ThreadLocalWicFactoryHolder holder;
@@ -6485,9 +6547,8 @@ PdfResult<WicDecodedImage> decode_dct_image(
 		ComPtr<IWICStream> wic_stream;
 		HRESULT hr = factory->CreateStream(&wic_stream);
 		if (FAILED(hr) || !wic_stream) {
-			return make_pdf_error(
-				ErrorCode::InternalError,
-				"IWICImagingFactory::CreateStream failed in DCTDecode");
+			return FAILED(hr) ? wic_failure(hr, "IWICImagingFactory::CreateStream failed in DCTDecode")
+							  : make_pdf_error(ErrorCode::InternalError, "IWICImagingFactory::CreateStream returned no stream in DCTDecode");
 		}
 		hr = wic_stream->InitializeFromMemory(
 			const_cast<BYTE*>(input.data()),
@@ -6495,42 +6556,38 @@ PdfResult<WicDecodedImage> decode_dct_image(
 				input.size(),
 				static_cast<size_t>(std::numeric_limits<DWORD>::max()))));
 		if (FAILED(hr)) {
-			return make_filter_error(
-				ErrorCode::DamagedFormat,
-				DiagnosticId::DamagedStream,
-				"IWICStream::InitializeFromMemory failed in DCTDecode");
+			return wic_failure(hr, "IWICStream::InitializeFromMemory failed in DCTDecode");
 		}
 
 		ComPtr<IWICBitmapDecoder> decoder;
-		hr = factory->CreateDecoderFromStream(
-			wic_stream.Get(),
-			nullptr,
-			WICDecodeMetadataCacheOnDemand,
-			&decoder);
+		hr = create_wic_decoder(factory, wic_stream.Get(), decoder);
 		if (FAILED(hr) || !decoder) {
-			return make_filter_error(
-				ErrorCode::DamagedFormat,
-				DiagnosticId::DamagedStream,
-				"WIC rejected corrupt or unsupported JPEG stream in DCTDecode");
+			return FAILED(hr) ? wic_failure(hr, "WIC rejected corrupt or unsupported JPEG stream in DCTDecode")
+							  : make_filter_error(
+									ErrorCode::DamagedFormat,
+									DiagnosticId::DamagedStream,
+									"WIC rejected corrupt or unsupported JPEG stream in DCTDecode");
 		}
 
 		ComPtr<IWICBitmapFrameDecode> frame;
 		hr = decoder->GetFrame(0, &frame);
 		if (FAILED(hr) || !frame) {
-			return make_filter_error(
-				ErrorCode::DamagedFormat,
-				DiagnosticId::DamagedStream,
-				"IWICBitmapDecoder::GetFrame(0) failed in DCTDecode");
+			return FAILED(hr) ? wic_failure(hr, "IWICBitmapDecoder::GetFrame(0) failed in DCTDecode")
+							  : make_filter_error(
+									ErrorCode::DamagedFormat,
+									DiagnosticId::DamagedStream,
+									"IWICBitmapDecoder::GetFrame(0) failed in DCTDecode");
 		}
 
 		UINT w = 0;
 		UINT h = 0;
 		hr = frame->GetSize(&w, &h);
 		if (FAILED(hr) || w == 0u || h == 0u) {
-			return make_filter_error(
-				ErrorCode::DamagedFormat,
-				DiagnosticId::DamagedStream,
-				"IWICBitmapFrameDecode::GetSize failed in DCTDecode");
+			return FAILED(hr) ? wic_failure(hr, "IWICBitmapFrameDecode::GetSize failed in DCTDecode")
+							  : make_filter_error(
+									ErrorCode::DamagedFormat,
+									DiagnosticId::DamagedStream,
+									"IWICBitmapFrameDecode::GetSize failed in DCTDecode");
 		}
 		const uint64_t w64 = w;
 		const uint64_t h64 = h;
@@ -6544,10 +6601,7 @@ PdfResult<WicDecodedImage> decode_dct_image(
 		WICPixelFormatGUID pixel_format{};
 		hr = frame->GetPixelFormat(&pixel_format);
 		if (FAILED(hr)) {
-			return make_filter_error(
-				ErrorCode::DamagedFormat,
-				DiagnosticId::DamagedStream,
-				"IWICBitmapFrameDecode::GetPixelFormat failed in DCTDecode");
+			return wic_failure(hr, "IWICBitmapFrameDecode::GetPixelFormat failed in DCTDecode");
 		}
 
 		WicDecodedImage result;
@@ -6576,10 +6630,7 @@ PdfResult<WicDecodedImage> decode_dct_image(
 				static_cast<UINT>(cmyk_bytes),
 				cmyk_buf.data());
 			if (FAILED(hr)) {
-				return make_filter_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedStream,
-					"IWICBitmapFrameDecode::CopyPixels failed on CMYK JPEG");
+				return wic_failure(hr, "IWICBitmapFrameDecode::CopyPixels failed on CMYK JPEG");
 			}
 
 			// Apply explicit `/Decode` array (such as `[1 0 1 0 1 0 1 0]` for
@@ -6623,10 +6674,7 @@ PdfResult<WicDecodedImage> decode_dct_image(
 				static_cast<UINT>(pixel_count),
 				result.pixels.data());
 			if (FAILED(hr)) {
-				return make_filter_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedStream,
-					"IWICBitmapFrameDecode::CopyPixels failed on Grayscale JPEG");
+				return wic_failure(hr, "IWICBitmapFrameDecode::CopyPixels failed on Grayscale JPEG");
 			}
 			apply_pdf_decode_array(result.pixels, 1u, decode_parms);
 			result.rgba_pixels.resize(pixel_count * 4u);
@@ -6657,10 +6705,7 @@ PdfResult<WicDecodedImage> decode_dct_image(
 				static_cast<UINT>(rgb_bytes),
 				result.pixels.data());
 			if (FAILED(hr)) {
-				return make_filter_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedStream,
-					"IWICBitmapFrameDecode::CopyPixels failed on 24bppBGR JPEG");
+				return wic_failure(hr, "IWICBitmapFrameDecode::CopyPixels failed on 24bppBGR JPEG");
 			}
 			for (size_t p = 0; p < pixel_count; ++p) {
 				std::swap(result.pixels[p * 3u + 0u], result.pixels[p * 3u + 2u]);
@@ -6672,18 +6717,17 @@ PdfResult<WicDecodedImage> decode_dct_image(
 				static_cast<UINT>(rgb_bytes),
 				result.pixels.data());
 			if (FAILED(hr)) {
-				return make_filter_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedStream,
-					"IWICBitmapFrameDecode::CopyPixels failed on 24bppRGB JPEG");
+				return wic_failure(hr, "IWICBitmapFrameDecode::CopyPixels failed on 24bppRGB JPEG");
 			}
 		} else {
 			ComPtr<IWICFormatConverter> converter;
 			hr = factory->CreateFormatConverter(&converter);
 			if (FAILED(hr) || !converter) {
-				return make_pdf_error(
-					ErrorCode::InternalError,
-					"IWICImagingFactory::CreateFormatConverter failed in DCTDecode");
+				return FAILED(hr) ? wic_failure(hr, "IWICImagingFactory::CreateFormatConverter failed in DCTDecode")
+								  : make_filter_error(
+										ErrorCode::DamagedFormat,
+										DiagnosticId::DamagedStream,
+										"IWICImagingFactory::CreateFormatConverter failed in DCTDecode");
 			}
 			hr = converter->Initialize(
 				frame.Get(),
@@ -6693,10 +6737,7 @@ PdfResult<WicDecodedImage> decode_dct_image(
 				0.0,
 				WICBitmapPaletteTypeCustom);
 			if (FAILED(hr)) {
-				return make_filter_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedStream,
-					"IWICFormatConverter::Initialize failed in DCTDecode");
+				return wic_failure(hr, "IWICFormatConverter::Initialize failed in DCTDecode");
 			}
 			hr = converter->CopyPixels(
 				nullptr,
@@ -6704,10 +6745,7 @@ PdfResult<WicDecodedImage> decode_dct_image(
 				static_cast<UINT>(rgb_bytes),
 				result.pixels.data());
 			if (FAILED(hr)) {
-				return make_filter_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedStream,
-					"IWICFormatConverter::CopyPixels failed in DCTDecode");
+				return wic_failure(hr, "IWICFormatConverter::CopyPixels failed in DCTDecode");
 			}
 		}
 
@@ -7758,83 +7796,95 @@ void idwt_97_2d_float(
 	const detail::JpxPath jpx_path = detail::g_jpx_path;
 	if (IWICImagingFactory* factory = jpx_path != detail::JpxPath::NativeOnly ? get_thread_local_wic_factory() : nullptr;
 		factory != nullptr) {
-		ComPtr<IWICStream> wic_stream;
-		if (SUCCEEDED(factory->CreateStream(&wic_stream)) && wic_stream) {
-			if (SUCCEEDED(wic_stream->InitializeFromMemory(
-					const_cast<BYTE*>(input.data()),
-					static_cast<DWORD>(std::min<size_t>(
-						input.size(),
-						static_cast<size_t>(std::numeric_limits<DWORD>::max())))))) {
-				ComPtr<IWICBitmapDecoder> decoder;
-				if (SUCCEEDED(factory->CreateDecoderFromStream(
-						wic_stream.Get(),
-						nullptr,
-						WICDecodeMetadataCacheOnDemand,
-						&decoder)) &&
-					decoder) {
-					ComPtr<IWICBitmapFrameDecode> frame;
-					if (SUCCEEDED(decoder->GetFrame(0, &frame)) && frame) {
-						UINT w = 0;
-						UINT h = 0;
-						if (SUCCEEDED(frame->GetSize(&w, &h)) && w > 0u && h > 0u) {
-							const uint64_t w64 = w;
-							const uint64_t h64 = h;
-							const uint32_t out_ch = (hdr.components == 1u) ? 1u : 3u;
-							if (w64 > effective_limit / (out_ch + 8ULL) ||
-								h64 > (effective_limit / (out_ch + 8ULL)) / w64) {
-								return make_filter_error(
-									ErrorCode::DecompressionLimitExceeded,
-									DiagnosticId::DecompressionLimitExceeded,
-									"JPXDecode WIC frame dimensions exceed ceiling");
-							}
-							ComPtr<IWICFormatConverter> converter;
-							if (SUCCEEDED(factory->CreateFormatConverter(&converter)) &&
-								converter) {
-								const GUID target_guid = (hdr.components == 1u)
-									? GUID_WICPixelFormat8bppGray
-									: GUID_WICPixelFormat24bppRGB;
-								if (SUCCEEDED(converter->Initialize(
-										frame.Get(),
-										target_guid,
-										WICBitmapDitherTypeNone,
-										nullptr,
-										0.0,
-										WICBitmapPaletteTypeCustom))) {
-									WicDecodedImage img{};
-									img.width = w;
-									img.height = h;
-									img.components = out_ch;
-									img.pixels.resize(static_cast<size_t>(w64 * h64 * out_ch));
-									if (SUCCEEDED(converter->CopyPixels(
-											nullptr,
-											w * out_ch,
-											static_cast<UINT>(img.pixels.size()),
-											img.pixels.data()))) {
-										apply_pdf_decode_array(img.pixels, out_ch, decode_parms);
-										const size_t px_count = static_cast<size_t>(w64 * h64);
-										img.rgba_pixels.resize(px_count * 4u);
-										img.bgra_pixels.resize(px_count * 4u);
-										for (size_t p = 0; p < px_count; ++p) {
-											const uint8_t r = img.pixels[p * out_ch + 0u];
-											const uint8_t g = (out_ch >= 3u) ? img.pixels[p * out_ch + 1u] : r;
-											const uint8_t b = (out_ch >= 3u) ? img.pixels[p * out_ch + 2u] : r;
-											img.rgba_pixels[p * 4u + 0u] = r;
-											img.rgba_pixels[p * 4u + 1u] = g;
-											img.rgba_pixels[p * 4u + 2u] = b;
-											img.rgba_pixels[p * 4u + 3u] = 255u;
-											img.bgra_pixels[p * 4u + 0u] = b;
-											img.bgra_pixels[p * 4u + 1u] = g;
-											img.bgra_pixels[p * 4u + 2u] = r;
-											img.bgra_pixels[p * 4u + 3u] = 255u;
-										}
-										return img;
-									}
-								}
-							}
-						}
-					}
-				}
+		// The WIC attempt: an image, a ceiling refusal, or nothing with the HRESULT that stopped it.
+		HRESULT wic_hr = S_OK;
+		const auto through_wic = [&]() -> PdfResult<std::optional<WicDecodedImage>> {
+			const auto stopped = [&](HRESULT hr) {
+				wic_hr = FAILED(hr) ? hr : WINCODEC_ERR_BADIMAGE; // a call that succeeded without its result
+				return std::optional<WicDecodedImage>{};
+			};
+			ComPtr<IWICStream> wic_stream;
+			HRESULT hr = factory->CreateStream(&wic_stream);
+			if (FAILED(hr) || !wic_stream) {
+				return stopped(hr);
 			}
+			hr = wic_stream->InitializeFromMemory(
+				const_cast<BYTE*>(input.data()),
+				static_cast<DWORD>(std::min<size_t>(input.size(), static_cast<size_t>(std::numeric_limits<DWORD>::max()))));
+			if (FAILED(hr)) {
+				return stopped(hr);
+			}
+			ComPtr<IWICBitmapDecoder> decoder;
+			hr = create_wic_decoder(factory, wic_stream.Get(), decoder);
+			if (FAILED(hr) || !decoder) {
+				return stopped(hr);
+			}
+			ComPtr<IWICBitmapFrameDecode> frame;
+			hr = decoder->GetFrame(0, &frame);
+			if (FAILED(hr) || !frame) {
+				return stopped(hr);
+			}
+			UINT w = 0;
+			UINT h = 0;
+			hr = frame->GetSize(&w, &h);
+			if (FAILED(hr) || w == 0u || h == 0u) {
+				return stopped(hr);
+			}
+			const uint64_t w64 = w;
+			const uint64_t h64 = h;
+			const uint32_t out_ch = (hdr.components == 1u) ? 1u : 3u;
+			if (w64 > effective_limit / (out_ch + 8ULL) || h64 > (effective_limit / (out_ch + 8ULL)) / w64) {
+				return make_filter_error(
+					ErrorCode::DecompressionLimitExceeded,
+					DiagnosticId::DecompressionLimitExceeded,
+					"JPXDecode WIC frame dimensions exceed ceiling");
+			}
+			ComPtr<IWICFormatConverter> converter;
+			hr = factory->CreateFormatConverter(&converter);
+			if (FAILED(hr) || !converter) {
+				return stopped(hr);
+			}
+			const GUID target_guid = (hdr.components == 1u) ? GUID_WICPixelFormat8bppGray : GUID_WICPixelFormat24bppRGB;
+			hr = converter->Initialize(frame.Get(), target_guid, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
+			if (FAILED(hr)) {
+				return stopped(hr);
+			}
+			WicDecodedImage img{};
+			img.width = w;
+			img.height = h;
+			img.components = out_ch;
+			img.pixels.resize(static_cast<size_t>(w64 * h64 * out_ch));
+			hr = converter->CopyPixels(nullptr, w * out_ch, static_cast<UINT>(img.pixels.size()), img.pixels.data());
+			if (FAILED(hr)) {
+				return stopped(hr);
+			}
+			apply_pdf_decode_array(img.pixels, out_ch, decode_parms);
+			const size_t px_count = static_cast<size_t>(w64 * h64);
+			img.rgba_pixels.resize(px_count * 4u);
+			img.bgra_pixels.resize(px_count * 4u);
+			for (size_t p = 0; p < px_count; ++p) {
+				const uint8_t r = img.pixels[p * out_ch + 0u];
+				const uint8_t g = (out_ch >= 3u) ? img.pixels[p * out_ch + 1u] : r;
+				const uint8_t b = (out_ch >= 3u) ? img.pixels[p * out_ch + 2u] : r;
+				img.rgba_pixels[p * 4u + 0u] = r;
+				img.rgba_pixels[p * 4u + 1u] = g;
+				img.rgba_pixels[p * 4u + 2u] = b;
+				img.rgba_pixels[p * 4u + 3u] = 255u;
+				img.bgra_pixels[p * 4u + 0u] = b;
+				img.bgra_pixels[p * 4u + 1u] = g;
+				img.bgra_pixels[p * 4u + 2u] = r;
+				img.bgra_pixels[p * 4u + 3u] = 255u;
+			}
+			return std::optional<WicDecodedImage>(std::move(img));
+		};
+		RECTO_PDF_TRY(std::optional<WicDecodedImage> wic_image, through_wic());
+		if (wic_image.has_value()) {
+			return std::move(*wic_image);
+		}
+		// Only a codec that is absent or rejects the data hands over to the native decoder; a resource failure is
+		// returned as it is (D06 T05 §37).
+		if (wic_resource_failure(wic_hr)) {
+			return wic_failure(wic_hr, "JPXDecode through WIC");
 		}
 	}
 

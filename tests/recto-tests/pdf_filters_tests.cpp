@@ -4840,5 +4840,55 @@ TEST(PdfFilters, JpxPathPinned)
 	RECTO_ASSERT_OK(decode_jpx_image(jp2));
 }
 
+// WIC failures are classified by their HRESULT (D06 T05 §37): out of memory, an absent codec or pixel format, an abort,
+// or data the codec rejected, each with the HRESULT in hex; and only a codec or data failure hands a JPX stream to the
+// native decoder, never a resource failure.
+TEST(PdfFilters, WicFailureClasses)
+{
+	constexpr int32_t kOutOfMemory = static_cast<int32_t>(0x8007000Eu);       // E_OUTOFMEMORY
+	constexpr int32_t kAbort = static_cast<int32_t>(0x80004004u);             // E_ABORT
+	constexpr int32_t kNoComponent = static_cast<int32_t>(0x88982F50u);       // WINCODEC_ERR_COMPONENTNOTFOUND
+	constexpr int32_t kBadImage = static_cast<int32_t>(0x88982F60u);          // WINCODEC_ERR_BADIMAGE
+	constexpr int32_t kNoPixelFormat = static_cast<int32_t>(0x88982F80u);     // WINCODEC_ERR_UNSUPPORTEDPIXELFORMAT
+	struct Case {
+		int32_t hresult;
+		ErrorCode code;
+		std::string_view hex;
+	};
+	const std::array<Case, 5> cases = {{
+		{kOutOfMemory, ErrorCode::OutOfMemory, "0x8007000E"},
+		{kNoComponent, ErrorCode::UnsupportedFeature, "0x88982F50"},
+		{kNoPixelFormat, ErrorCode::UnsupportedFeature, "0x88982F80"},
+		{kAbort, ErrorCode::Cancelled, "0x80004004"},
+		{kBadImage, ErrorCode::DamagedFormat, "0x88982F60"},
+	}};
+	const auto jpeg = make_minimal_jpeg_8x8_cmyk();
+	PdfDict dct;
+	dct.set("Filter", PdfValue(PdfName("DCTDecode")));
+	for (const Case& c : cases) {
+		const detail::ScopedWicDecoderFailure fail(c.hresult);
+		auto dec = decode_stream(jpeg, dct);
+		ASSERT_FALSE(dec.has_value()) << c.hex;
+		EXPECT_EQ(dec.error().code, c.code) << c.hex;
+		EXPECT_NE(dec.error().message.view().find(c.hex), std::string_view::npos) << dec.error().message.view();
+	}
+	RECTO_ASSERT_OK(decode_stream(jpeg, dct)); // the scope ended, so WIC decodes again
+
+	const std::array<uint8_t, 12> rgb = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200};
+	const auto jp2 = make_genuine_jp2_2x2_rgb(rgb, true);
+	for (const auto& [hresult, code] : {std::pair{kOutOfMemory, ErrorCode::OutOfMemory}, std::pair{kAbort, ErrorCode::Cancelled}}) {
+		const detail::ScopedWicDecoderFailure fail(hresult);
+		auto img = decode_jpx_image(jp2);
+		ASSERT_FALSE(img.has_value());
+		EXPECT_EQ(img.error().code, code); // returned, not retried natively
+	}
+	for (const int32_t hresult : {kNoComponent, kBadImage}) {
+		const detail::ScopedWicDecoderFailure fail(hresult);
+		auto img = decode_jpx_image(jp2);
+		RECTO_ASSERT_OK(img); // the native decoder took over
+		EXPECT_EQ(img->pixels, std::vector<uint8_t>(rgb.begin(), rgb.end()));
+	}
+}
+
 } // namespace
 } // namespace recto::pdf

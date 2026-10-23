@@ -243,6 +243,20 @@ private:
 	JpxPath previous_{JpxPath::Default};
 };
 
+// Tests only: while the scope lives, every WIC `CreateDecoderFromStream` call on this thread (DCTDecode and the WIC
+// attempt of JPXDecode) fails with `hresult` instead of running, so each failure class can be exercised on a machine
+// whose codecs never fail (D06 T05 §37). Scopes nest; the previous injection returns on exit.
+class ScopedWicDecoderFailure {
+public:
+	explicit ScopedWicDecoderFailure(int32_t hresult) noexcept;
+	~ScopedWicDecoderFailure() noexcept;
+	ScopedWicDecoderFailure(const ScopedWicDecoderFailure&) = delete;
+	ScopedWicDecoderFailure& operator=(const ScopedWicDecoderFailure&) = delete;
+
+private:
+	int32_t previous_{0};
+};
+
 } // namespace detail
 
 } // namespace recto::pdf
