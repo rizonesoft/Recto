@@ -117,10 +117,10 @@ Reporters often cannot say which version, install type or GPU they had, and main
 - [ ] Build the GitHub form URL with `template=bug_report.yml` and prefilled `version`, `install-type` and `windows-build` query fields, opened through the shared ask-before-open link path. Done when: the opened URL prefills those three fields on GitHub.
 - [ ] Register `help.reportProblem` in `CommandRegistry` with synonyms "bug", "report", "feedback" and add it to the Classic `Help` menu. Done when: each synonym finds the command in `Ctrl+K`.
 - [ ] Offer `Report a problem` from the `D07 T02 §4` crash bundle prompt and the `D06 T03 §3` page notice. Done when: both surfaces open this dialog.
-- [ ] Include each ring entry's code, diagnostic and refusal reason names with its observed value, bound and one-based page (`D01 T02 §23`, `§24`), numbers only. **Corrected 2026-10-23:** (`D01 T02 §24`: the page was not named). Done when: `Diagnostics.ReportCarriesRefusalContext` records a `ResourceLimit` refusal with a path in its message and finds the reason and numbers in the report and the path nowhere. **Corrected 2026-10-23:** (`D01 T02 §22` completion review).
+- [ ] Include each ring entry's code, diagnostic and refusal reason names with its observed value, bound and one-based page (`D01 T02 §23`, `§24`), numbers only. **Corrected 2026-10-23:** (`D01 T02 §24`: the page was not named). Done when: `Diagnostics.ReportCarriesRefusalContext` records a `ResourceLimit` refusal with a path in its message and finds the reason and numbers in the report and the path nowhere, and records a `ConversionFailed` `TextRecall` refusal on zero-based page `2` and a page-less `PackageInvalid` refusal and finds `page 3` for the first and no page for the second. **Corrected 2026-10-23:** (`D01 T02 §24` plan review: the page was promised but not proved). **Corrected 2026-10-23:** (`D01 T02 §22` completion review).
 - [ ] Commit: `app: add Report a problem with privacy-safe diagnostics and a prefilled bug form`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Diagnostics.ReportHasNoDocumentContent:Shell.ReportProblemDialog` passes on the display-session host.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Diagnostics.ReportHasNoDocumentContent:Diagnostics.ReportCarriesRefusalContext:Shell.ReportProblemDialog` passes on the display-session host.
 
 ## 3. Structure-preserving reproducer scrubber (`recto-cli scrub`)
 
