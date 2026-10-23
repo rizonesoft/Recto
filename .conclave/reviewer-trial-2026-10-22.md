@@ -2,6 +2,7 @@
 
 - **Date:** 2026-10-22
 - **Asked by:** the owner, to decide the reviewer pinned in `.conclave/reviewers.toml` for Claude-written work.
+- **Superseded 2026-10-23:** owner decision, Sol now runs at `medium` with the proportionality rule in `docs/review-round-prompt.md` and `docs/completion-review-prompt.md`; this record stays as the trial's history.
 - **Outcome:** the pin moves to GPT-6.1 Sol at xhigh (`[reviewers.sol]`, owner decision the same day). Codex accepts `low` to `xhigh`; there is no `max`, and `scripts/review-dispatch.py` allows the same four.
 
 ## How it was run

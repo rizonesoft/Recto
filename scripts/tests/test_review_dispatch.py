@@ -798,10 +798,11 @@ class RepositoryPin(unittest.TestCase):
         self.assertTrue(pin["routes"], "the repository pin routes no writer")
 
     def test_the_repository_pin_is_sol_reviewing_claude_and_nothing_else(self):
-        # Owner decision 2026-10-23: Opus 5.5 is the sole writer and GPT-6.1 Sol through Codex the sole reviewer.
+        # Owner decisions 2026-10-23: Opus 5.5 is the sole writer and GPT-6.1 Sol through Codex the sole reviewer, at
+        # medium effort with the proportionality rule in the prompts.
         with open(REPO_PIN, "rb") as handle:
             pin = tomllib.load(handle)
-        self.assertEqual(pin["reviewers"], {"sol": {"cli": "codex", "model": "gpt-6.1-sol", "effort": "xhigh"}})
+        self.assertEqual(pin["reviewers"], {"sol": {"cli": "codex", "model": "gpt-6.1-sol", "effort": "medium"}})
         self.assertEqual(pin["routes"], {"claude": ["sol"]})
 
 

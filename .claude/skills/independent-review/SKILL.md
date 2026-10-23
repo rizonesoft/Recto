@@ -5,11 +5,11 @@ description: Get an independent review of your own work from GPT-6.1 Sol, the on
 
 # Independent review
 
-Your own review is not enough for a nontrivial change: a different model reviews it. Opus 5.5 (writer `claude`) is the only writer in this repository and GPT-6.1 Sol, through the Codex CLI at `xhigh` in its read-only sandbox, is the only reviewer (owner decision 2026-10-23). `.conclave/reviewers.toml` pins that one route, and `scripts/review-dispatch.py` runs the round.
+Your own review is not enough for a nontrivial change: a different model reviews it. Opus 5.5 (writer `claude`) is the only writer in this repository and GPT-6.1 Sol, through the Codex CLI at `medium` effort in its read-only sandbox, is the only reviewer (owner decisions 2026-10-23; effort lowered from `xhigh` with a proportionality rule in the round and completion prompts: only failures that can happen in real operation are `P1` or `P2`, contrived scenarios are `P3`). `.conclave/reviewers.toml` pins that one route, and `scripts/review-dispatch.py` runs the round.
 
 | Work written by | Reviewer | Fallback |
 | --- | --- | --- |
-| Opus 5.5 (`claude`) | GPT-6.1 Sol (`codex`, `xhigh`) | none |
+| Opus 5.5 (`claude`) | GPT-6.1 Sol (`codex`, `medium`) | none |
 
 The pin refuses any other writer, any other reviewer CLI, a second reviewer in a route, and a reviewer of the writer's own model family.
 

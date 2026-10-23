@@ -30,6 +30,8 @@ List every piece the feature needs to be complete for a user, then mark each one
 
 Mark each item `present` (name the `file:line` or test that shows it), `missing-in-scope` (the section's contract, its Fidelity surface or its Goal covers it, so the section must build it) or `missing-out-of-scope` (a real need the section's contract does not cover, so it is filed as a new section; say which domain owns it).
 
+Proportionality: list only needs that arise in this repository's real operation: a document a user can open (every PDF, Office and HTML file is treated as hostile, so a crafted file a user receives is real), a real user action, or a real operating-system, disk or hardware condition. Do not list a need that only a contrived scenario creates (an attacker who already controls the machine, the clock, the repository, the build or the tools, or a precondition no real file, user or system produces).
+
 ## Part 2: excellence
 
 Recto takes on Adobe Acrobat Pro, Foxit PDF Editor, Wondershare PDFelement and UPDF and must do each job better, not only reach parity. For this feature, name how the strongest competitor does the same job (Acrobat Pro first, then Foxit, PDFelement, UPDF; say which you are comparing with and what you know of its behaviour), then list each concrete way Recto's delivered feature falls short of beating it:
