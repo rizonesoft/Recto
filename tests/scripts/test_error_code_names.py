@@ -61,19 +61,20 @@ class ErrorCodeNamesTests(unittest.TestCase):
                              f"- [ ] Fine. **Corrected 2026-10-23:** (was {retired}).\n"
                              f"- [ ] Or `JobState::{retired.strip('`')} (missing)`, a larger span.\n"
                              f"- [ ] A note **Corrected 2026-10-23:** (was {retired} (twice)). Then {retired} again.\n"
-                             f"- [ ] A test name is not a code: `PubSec.{retired.strip('`')}`.\n")
+                             f"- [ ] A test name is not a code: `PubSec.{retired.strip('`')}`.\n"
+                             f"```cpp\nreturn {retired.strip('`')}; // a fenced block is code throughout\n```\n")
             found = self.mod.unknown_names(root / "todo", known)
-            self.assertEqual(len(found), 5, found)
+            self.assertEqual(len(found), 6, found)
             self.assertTrue(found[0].endswith(unknown), found)
             self.assertTrue(found[1].endswith(pdf_scoped), found)
             self.assertTrue(all(line.endswith(retired) for line in found[2:]), found)
             # The generated plan is a projection of the TODO files and is never read.
             (root / "todo" / "implementation-plan.md").write_text(f"`{unknown}`\n", encoding="utf-8")
-            self.assertEqual(len(self.mod.unknown_names(root / "todo", known)), 5)
+            self.assertEqual(len(self.mod.unknown_names(root / "todo", known)), 6)
             # The command line reports each one and exits 1.
             result = subprocess.run([sys.executable, str(SCRIPT), "--root", str(root)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 1)
-            self.assertEqual(len(result.stdout.splitlines()), 5, result.stdout)
+            self.assertEqual(len(result.stdout.splitlines()), 6, result.stdout)
 
 
 if __name__ == "__main__":

@@ -70,6 +70,22 @@ class PreCommitHook(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("src/pdf/error.h has unstaged or untracked changes", result.stderr)
 
+    def test_an_error_header_change_that_removes_a_named_code_is_refused(self):
+        path = self.root / "todo/00-workspace/TODO-01-a.md"
+        code = "Error" + "Code::" + "InvalidArgument"  # assembled, so no TODO text in this repository holds it
+        path.write_text(path.read_text(encoding="utf-8").replace("- [ ] Work.", f"- [ ] Work, returning `{code}`."),
+                        encoding="utf-8")
+        self.sync()
+        self.git("add", "-A")
+        self.assertEqual(self.commit().returncode, 0)  # the code exists
+        header = self.root / "src/pdf/error.h"
+        header.write_text(header.read_text(encoding="utf-8").replace("\tInvalidArgument,", "\tRenamedArgument,", 1),
+                          encoding="utf-8")
+        self.git("add", "src/pdf/error.h")  # only the header is staged
+        result = self.commit()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(code, result.stderr)
+
     def test_a_todo_naming_an_unknown_error_code_is_refused(self):
         path = self.root / "todo/00-workspace/TODO-01-a.md"
         unknown = "Error" + "Code::" + "NoSuch" + "Code"  # assembled, so no TODO text in this repository holds it

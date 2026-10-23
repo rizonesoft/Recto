@@ -3,7 +3,8 @@
 # is stale or the TODO graph is invalid. Enabled per clone with `git config core.hooksPath scripts/hooks`
 # (CONTRIBUTING.md). Ticking a checklist item changes the generated plan, so every TODO edit needs `plan --sync`.
 # Receipts and findings files are graph evidence too: a commit touching only docs/reviews/ is checked as well.
-git diff --cached --name-only -- todo/ docs/reviews/ | grep -q . || exit 0
+# src/pdf/error.h too: removing or renaming a code can leave a TODO naming one that no longer exists.
+git diff --cached --name-only -- todo/ docs/reviews/ src/pdf/error.h | grep -q . || exit 0
 
 # The check reads the working tree, so the TODO files and the review receipts and findings they cite
 # (docs/reviews/) must be exactly what is being committed: nothing unstaged and nothing untracked, ignored files

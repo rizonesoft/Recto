@@ -84,16 +84,22 @@ def unknown_names(todo_root: pathlib.Path, known: set[str]) -> list[str]:
             continue
         relative = path.relative_to(todo_root).as_posix()
         section = None
+        fenced = False
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if heading := SECTION.match(line):
                 section = heading.group("number")
             for match in QUALIFIED.finditer(line):
                 if match.group("scope") or match.group("name") not in known:
                     found.append(f"{relative}:{number}: {match.group(0)}")
+            if line.lstrip().startswith("```"):
+                fenced = not fenced
+                continue
             if (relative, section) == EXEMPT_SECTION:
                 continue
-            for span in CODE_SPAN.finditer(without_notes(line)):
-                for match in RETIRED_WORD.finditer(span.group("span")):
+            # A fenced block is code from end to end; elsewhere only inline code spans are.
+            spans = [without_notes(line)] if fenced else [m.group("span") for m in CODE_SPAN.finditer(without_notes(line))]
+            for span in spans:
+                for match in RETIRED_WORD.finditer(span):
                     found.append(f"{relative}:{number}: `{match.group('name')}`")
     return found
 
