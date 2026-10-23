@@ -63,6 +63,10 @@ SelfTestFacts observe_self_test(HWND window) noexcept
 	// composes, so a successful flush after EndPaint is the first present that
 	// can carry the frame. It proves nothing on its own: the checks above say
 	// whether that present reaches a displayed desktop.
+	// Occlusion is deliberately not checked: a window another app covers is
+	// still composed into the displayed desktop's scene, so its frame was
+	// presented. Requiring the top of the z-order would fail ordinary launches
+	// under a topmost window and could only be met by stealing the foreground.
 	facts.flush_result = DwmFlush();
 	facts.per_monitor_v2 =
 		AreDpiAwarenessContextsEqual(GetWindowDpiAwarenessContext(window), DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) != FALSE;

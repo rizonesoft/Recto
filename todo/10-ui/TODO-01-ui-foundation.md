@@ -189,6 +189,8 @@ Replace the WinUI scaffold from `D00 T01 §3` in `src/app/` with a plain Win32 h
 - [x] Close the completion review gaps in `src/ui/application.cpp` and `src/app/main.cpp`: `ui::self_test_verdict` fails a hidden window or a failed `DwmFlush` with `kExitSelfTestPresentation`, `ui::StartupFailure` names the failing call and its code for the debugger and an interactive `MessageBoxW` (never under `--self-test-exit`), and `Ui.App.SelfTestStartupBudget` holds the median launch under 400 ms. Done when: `Ui.App.SelfTestVerdict`, `Ui.App.SelfTestIgnoresHiddenShowCommand`, `Ui.App.StartupFailureIsReported`, `Ui.App.DescribesStartupFailure` and `Ui.App.SelfTestStartupBudget` pass.
 - [ ] Commit: `app: replace WinUI scaffold with Win32 wWinMain host; retire Windows App SDK pins`
 
+> **Corrected 2026-10-23:** "presented frame" in the self-test means DWM composed the frame on the displayed input desktop: the window is visible, on the input desktop of a visible window station, not cloaked, and `DwmFlush` succeeded after the paint (review rounds 1 and 2, `docs/reviews/10-ui/D10-T01-s2.md`). Occlusion by another window is not a failure: an occluded window is still composed, and requiring the top of the z-order would fail ordinary launches and need foreground stealing.
+
 **Test checkpoint:** `.\build.cmd` builds x64 and ARM64, `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.App.*` passes, `python -m unittest discover -s tests/scripts` passes, `python scripts/check-sdk-pins.py` exits 0, and `build\bin\x64\Debug\Recto\Recto.exe --self-test-exit` on the display-session host opens the window and exits with code 0.
 
 ## 3. UI thread `Dispatcher`, timers and engine callback marshalling
