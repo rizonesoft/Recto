@@ -4467,6 +4467,85 @@ TEST(PdfFilters, Jbig2StripesAlignmentAndSkip)
 		auto dec = decode_jbig2(stream);
 		RECTO_ASSERT_OK(dec);
 		EXPECT_EQ(*dec, (std::vector<uint8_t>{0xC0u, 0xC0u})); // [0 0 1 1]: white white black black
+
+		// Reuse is refused when the coding parameters differ (template 3 against A's template 2, the same table
+		// size) and when the last dictionary referred to did not retain its contexts, though an earlier one did.
+		// Each user below is encoded from A's contexts and placed on a page, so the stream would decode if the reuse
+		// were (wrongly) allowed. Its symbol has an empty top row, so the adaptive pixel reads 0 wherever it sits.
+		const auto place_on_page = [&](std::vector<uint8_t>& s, uint32_t dict_seg, uint32_t first_seg) {
+			append_jbig2_segment(s, first_seg, 48u, {}, 1u, make_jbig2_page_info_payload(4u, 2u, 0u));
+			TestMqEncoder place;
+			std::array<TestMqContext, 512> dt{};
+			std::array<TestMqContext, 512> fs{};
+			std::vector<TestMqContext> id(2u);
+			place.encode_arith_int(dt, 0);
+			place.encode_arith_int(dt, 0);
+			place.encode_arith_int(fs, 0);
+			place.encode_iaid(id, 1u, 0u);
+			const auto data = place.finish();
+			std::vector<uint8_t> region;
+			append_u32_be(region, 4u);
+			append_u32_be(region, 2u);
+			append_u32_be(region, 0u);
+			append_u32_be(region, 0u);
+			region.push_back(0u);
+			append_u16_be(region, 0x0010u);
+			append_u32_be(region, 1u);
+			region.insert(region.end(), data.begin(), data.end());
+			const uint8_t ref[1] = {static_cast<uint8_t>(dict_seg)};
+			append_jbig2_segment(s, first_seg + 1u, 6u, ref, 1u, region);
+			append_jbig2_segment(s, first_seg + 2u, 49u, {}, 1u, {});
+		};
+		const std::vector<uint8_t> sym_flat = {0u, 0u, 0u, 0u, 1u, 1u, 1u, 1u};
+		std::vector<uint8_t> other_at = header;
+		gb_cx.assign(1024u, TestMqContext{});
+		append_jbig2_segment(other_at, 0u, 0u, {}, 1u, dictionary(sym_a, 0x0200u, 0u));
+		std::vector<uint8_t> b_other_at = dictionary(sym_flat, 0x0100u, 1u);
+		b_other_at[2] = 3u; // SDATX1 3 instead of A's 2: a different coding parameter, the same table size
+		append_jbig2_segment(other_at, 1u, 0u, ref_a, 1u, b_other_at);
+		place_on_page(other_at, 1u, 2u);
+		RECTO_EXPECT_ERR(decode_jbig2(other_at), ErrorCode::DamagedFormat);
+
+		std::vector<uint8_t> not_last = header;
+		gb_cx.assign(1024u, TestMqContext{});
+		append_jbig2_segment(not_last, 0u, 0u, {}, 1u, dictionary(sym_a, 0x0200u, 0u)); // retains
+		const std::vector<TestMqContext> after_a = gb_cx;
+		gb_cx.assign(1024u, TestMqContext{});
+		append_jbig2_segment(not_last, 1u, 0u, {}, 1u, dictionary(sym_a, 0x0000u, 0u)); // does not
+		gb_cx = after_a;
+		const uint8_t ref_both[2] = {0u, 1u};
+		append_jbig2_segment(not_last, 2u, 0u, ref_both, 1u, dictionary(sym_b, 0x0100u, 2u));
+		place_on_page(not_last, 2u, 3u);
+		RECTO_EXPECT_ERR(decode_jbig2(not_last), ErrorCode::DamagedFormat);
+	}
+
+	// 5. Stripe framing is checked: an unknown height without striping, a short or non-advancing End of Stripe, and
+	// a striped page that never ends a stripe are refused (T.88 7.4.8.6, 7.4.9, 7.4.10).
+	{
+		const auto striped = [&](uint16_t striping, const std::vector<std::vector<uint8_t>>& stripes) {
+			std::vector<uint8_t> stream = header;
+			std::vector<uint8_t> page_info;
+			append_u32_be(page_info, 8u);
+			append_u32_be(page_info, 0xFFFFFFFFu);
+			append_u32_be(page_info, 72u);
+			append_u32_be(page_info, 72u);
+			page_info.push_back(0u);
+			append_u16_be(page_info, striping);
+			append_jbig2_segment(stream, 0u, 48u, {}, 1u, page_info);
+			append_jbig2_segment(stream, 1u, 38u, {}, 1u, mmr_region(0, "1" + eofb));
+			uint32_t seg = 2u;
+			for (const auto& eos : stripes) {
+				append_jbig2_segment(stream, seg++, 50u, {}, 1u, eos);
+			}
+			append_jbig2_segment(stream, seg, 49u, {}, 1u, {});
+			return stream;
+		};
+		const std::vector<uint8_t> row0 = {0u, 0u, 0u, 0u};
+		RECTO_ASSERT_OK(decode_jbig2(striped(0x8001u, {row0})));
+		RECTO_EXPECT_ERR(decode_jbig2(striped(0x0001u, {row0})), ErrorCode::DamagedFormat);      // not striped
+		RECTO_EXPECT_ERR(decode_jbig2(striped(0x8001u, {{0u, 0u}})), ErrorCode::DamagedFormat);  // short record
+		RECTO_EXPECT_ERR(decode_jbig2(striped(0x8001u, {row0, row0})), ErrorCode::DamagedFormat); // not advancing
+		RECTO_EXPECT_ERR(decode_jbig2(striped(0x8001u, {})), ErrorCode::DamagedFormat);          // no stripe end
 	}
 }
 

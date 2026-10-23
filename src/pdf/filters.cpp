@@ -3504,8 +3504,14 @@ struct Jbig2DecoderState {
 	bool page_height_unknown{false};
 	uint64_t end_of_stripe_rows{0};
 	// The generic and refinement arithmetic contexts a symbol dictionary retained (flag bit 9, T.88 7.4.2.2), by its
-	// segment number, for a later dictionary that uses them (flag bit 8).
-	std::unordered_map<uint32_t, std::pair<std::vector<MqContext>, std::vector<MqContext>>> retained_sd_contexts;
+	// segment number, for a later dictionary that uses them (flag bit 8), with the coding parameters they were
+	// learned under (SDHUFF, SDREFAGG, both templates and every adaptive-template byte), which the user must share.
+	struct RetainedSdContexts {
+		std::vector<MqContext> gb;
+		std::vector<MqContext> gr;
+		std::vector<int8_t> coding;
+	};
+	std::unordered_map<uint32_t, RetainedSdContexts> retained_sd_contexts;
 
 	[[nodiscard]] size_t remaining_limit(size_t effective_limit) const noexcept
 	{
@@ -3740,6 +3746,13 @@ struct Jbig2DecoderState {
 			const uint16_t striping = read_u16_be(seg_data.data() + 17u);
 			state.page_height_unknown = page_h == 0xFFFFFFFFu;
 			state.end_of_stripe_rows = 0u;
+			if (state.page_height_unknown && (striping & 0x8000u) == 0u) {
+				return make_filter_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedStream,
+					"JBIG2 page of unknown height is not striped (T.88 7.4.8.6)",
+					seg_header_start);
+			}
 			if (state.page_height_unknown) {
 				page_h = static_cast<uint32_t>(std::max<uint16_t>(1u, striping & 0x7FFFu)); // grows with the stripes
 			}
@@ -3872,6 +3885,12 @@ struct Jbig2DecoderState {
 				reinterpret_cast<const int8_t*>(seg_data.data() + 2u + gb_at_len),
 				(sd_ref_agg && sd_r_template == 0u) ? 4u : 0u);
 			const size_t counts_off = 2u + sd_at_bytes;
+			// The parameters retained contexts must match (T.88 7.4.2.2): flags, templates and adaptive pixels.
+			std::vector<int8_t> sd_coding = {
+				static_cast<int8_t>(sd_huff), static_cast<int8_t>(sd_ref_agg), static_cast<int8_t>(sd_template),
+				static_cast<int8_t>(sd_r_template)};
+			sd_coding.insert(sd_coding.end(), sd_at_span.begin(), sd_at_span.end());
+			sd_coding.insert(sd_coding.end(), sd_rat_span.begin(), sd_rat_span.end());
 			const uint32_t sd_num_ex_syms = read_u32_be(seg_data.data() + counts_off);
 			const uint32_t sd_num_new_syms = read_u32_be(seg_data.data() + counts_off + 4u);
 			if (sd_num_ex_syms > 65536u || sd_num_new_syms > 65536u) {
@@ -3911,26 +3930,29 @@ struct Jbig2DecoderState {
 				// Bitmap coding context used (flag bit 8, T.88 7.4.2.2): the generic and refinement statistics start from
 				// those the last referred-to dictionary retained, instead of fresh.
 				if ((sd_flags & 0x0100u) != 0u) {
-					const auto retained = std::find_if(ref_segments.rbegin(), ref_segments.rend(), [&](uint32_t ref_id) {
-						return state.retained_sd_contexts.contains(ref_id);
+					// The source is the last symbol dictionary this segment refers to, which must have retained its
+					// contexts under the same coding parameters.
+					const auto last_dict = std::find_if(ref_segments.rbegin(), ref_segments.rend(), [&](uint32_t ref_id) {
+						return state.symbol_dicts.contains(ref_id);
 					});
-					if (retained == ref_segments.rend()) {
+					const auto kept = last_dict == ref_segments.rend() ? state.retained_sd_contexts.end()
+																	   : state.retained_sd_contexts.find(*last_dict);
+					if (kept == state.retained_sd_contexts.end()) {
 						return make_filter_error(
 							ErrorCode::DamagedFormat,
 							DiagnosticId::DamagedStream,
-							"JBIG2 symbol dictionary uses bitmap coding contexts no referred dictionary retained",
+							"JBIG2 symbol dictionary uses bitmap coding contexts its last referred dictionary did not retain",
 							seg_header_start);
 					}
-					const auto& [kept_gb, kept_gr] = state.retained_sd_contexts.at(*retained);
-					if (kept_gb.size() != gb_cx.size() || kept_gr.size() != gr_cx.size()) {
+					if (kept->second.coding != sd_coding) {
 						return make_filter_error(
 							ErrorCode::DamagedFormat,
 							DiagnosticId::DamagedStream,
-							"JBIG2 symbol dictionary uses retained contexts of a different template",
+							"JBIG2 symbol dictionary uses retained contexts learned under different coding parameters",
 							seg_header_start);
 					}
-					gb_cx = kept_gb;
-					gr_cx = kept_gr;
+					gb_cx = kept->second.gb;
+					gr_cx = kept->second.gr;
 				}
 				Jbig2ArithIntDecoder iadh;
 				Jbig2ArithIntDecoder iadw;
@@ -4210,7 +4232,7 @@ struct Jbig2DecoderState {
 				if ((sd_flags & 0x0200u) != 0u) {
 					RECTO_PDF_RETURN_IF_ERROR(state.account_bytes(
 						(gb_cx.size() + gr_cx.size()) * sizeof(MqContext), effective_limit, seg_header_start));
-					state.retained_sd_contexts[seg_num] = {gb_cx, gr_cx};
+					state.retained_sd_contexts[seg_num] = {gb_cx, gr_cx, sd_coding};
 				}
 
 				std::vector<Jbig2Bitmap> exported;
@@ -5984,11 +6006,25 @@ struct Jbig2DecoderState {
 			if (seg_type == 51u) {
 				break;
 			}
-			if (seg_type == 50u && seg_data.size() >= 4u && state.page_height_unknown) {
-				// End of Stripe names the stripe's last row (T.88 7.4.10): the page reaches at least that far.
+			if (seg_type == 50u && state.page_height_unknown) {
+				// End of Stripe names the stripe's last row (T.88 7.4.10): 4 bytes, each stripe ending below the last.
+				if (seg_data.size() < 4u) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"JBIG2 End of Stripe segment is shorter than 4 bytes",
+						seg_header_start);
+				}
 				const uint64_t rows = static_cast<uint64_t>(read_u32_be(seg_data.data())) + 1u;
+				if (rows <= state.end_of_stripe_rows) {
+					return make_filter_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedStream,
+						"JBIG2 End of Stripe row does not follow the previous stripe",
+						seg_header_start);
+				}
 				RECTO_PDF_RETURN_IF_ERROR(state.grow_page_to(rows, effective_limit, seg_header_start));
-				state.end_of_stripe_rows = std::max(state.end_of_stripe_rows, rows);
+				state.end_of_stripe_rows = rows;
 			}
 		} else {
 			return make_filter_error(
@@ -6040,7 +6076,13 @@ PdfResult<std::vector<uint8_t>> decode_jbig2(
 		// Per ISO 32000-1 section 7.4.7, JBIG2 treats 1 as black and 0 as white,
 		// whereas PDF DeviceGray treats 0 as black and 1 as white: invert bits.
 		Jbig2Bitmap& page = *state.page_bitmap;
-		if (state.page_height_unknown && state.end_of_stripe_rows > 0u && state.end_of_stripe_rows < page.height) {
+		if (state.page_height_unknown && state.end_of_stripe_rows == 0u) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"JBIG2 page of unknown height has no End of Stripe segment to give its height");
+		}
+		if (state.page_height_unknown && state.end_of_stripe_rows < page.height) {
 			// The last End-of-Stripe fixes the height of a page that started unknown (T.88 7.4.10).
 			page.height = static_cast<uint32_t>(state.end_of_stripe_rows);
 			page.data.resize(static_cast<size_t>(page.height) * page.stride);
