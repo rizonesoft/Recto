@@ -475,6 +475,74 @@ def make_minimal_jpeg_8x8_rgb() -> bytes:
     )
 
 
+# Baseline DC luminance Huffman table (ITU-T T.81 Table K.3): code lengths per category 0..11.
+_DC_BITS = [0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0]
+_DC_VALUES = list(range(12))
+
+
+def _canonical_codes(bits: list[int], values: list[int]) -> dict[int, str]:
+    """The Huffman codes T.81 Annex C assigns to `values` from the counts per length in `bits`."""
+    codes: dict[int, str] = {}
+    code = 0
+    k = 0
+    for length in range(1, 17):
+        for _ in range(bits[length - 1]):
+            codes[values[k]] = format(code, f"0{length}b")
+            code += 1
+            k += 1
+        code <<= 1
+    return codes
+
+
+def make_dc_only_jpeg(width_blocks: int, component_blocks: list[list[int]], app14_transform: int | None) -> bytes:
+    """A baseline JPEG of `width_blocks` x 1 blocks of 8x8 whose every block is flat: block b of component c is the
+    sample value `component_blocks[c][b]`. Only DC coefficients are coded (quantizer 1, so a flat block of value v has
+    DC 8 * (v - 128); T.81 A.3.3), each component at 1x1 sampling, interleaved, with an Adobe APP14 marker carrying
+    `app14_transform` (0 none, 1 YCbCr, 2 YCCK) when it is not None, and no JFIF marker."""
+    ncomp = len(component_blocks)
+    dc_codes = _canonical_codes(_DC_BITS, _DC_VALUES)
+    bits = []
+    previous = [0] * ncomp
+    for b in range(width_blocks):
+        for c in range(ncomp):
+            dc = 8 * (component_blocks[c][b] - 128)
+            diff = dc - previous[c]
+            previous[c] = dc
+            size = abs(diff).bit_length()
+            bits.append(dc_codes[size])
+            if size:
+                bits.append(format(diff if diff > 0 else diff + (1 << size) - 1, f"0{size}b"))
+            bits.append("0")  # AC: end of block, the only AC symbol
+    stream = "".join(bits)
+    stream += "1" * (-len(stream) % 8)
+    scan = bytearray()
+    for i in range(0, len(stream), 8):
+        byte = int(stream[i : i + 8], 2)
+        scan.append(byte)
+        if byte == 0xFF:
+            scan.append(0x00)
+
+    def segment(marker: int, payload: bytes) -> bytes:
+        return bytes([0xFF, marker]) + struct.pack(">H", len(payload) + 2) + payload
+
+    dqt = bytes([0] + [1] * 64)
+    sof0 = struct.pack(">BHHB", 8, 8, 8 * width_blocks, ncomp)
+    for c in range(ncomp):
+        sof0 += bytes([c + 1, 0x11, 0])
+    dht = bytes([0x00]) + bytes(_DC_BITS) + bytes(_DC_VALUES)
+    dht += bytes([0x10]) + bytes([1] + [0] * 15) + bytes([0x00])
+    sos = bytes([ncomp]) + b"".join(bytes([c + 1, 0x00]) for c in range(ncomp)) + bytes([0, 63, 0])
+    out = b"\xFF\xD8"
+    if app14_transform is not None:
+        out += segment(0xEE, b"Adobe" + struct.pack(">HHHB", 100, 0, 0, app14_transform))
+    return out + segment(0xDB, dqt) + segment(0xC0, sof0) + segment(0xC4, dht) + segment(0xDA, sos) + bytes(scan) + b"\xFF\xD9"
+
+
+# The colour fixtures of D06 T05 section 33: two flat blocks per component with distinct, non-neutral values.
+DCT_THREE = [[200, 30], [90, 160], [40, 220]]
+DCT_FOUR = [[20, 230], [200, 10], [120, 90], [60, 180]]
+
+
 def make_ccitt_group4_16x16() -> bytes:
     """Create a valid ITU-T T.6 Group 4 2D bitstream for a 16x16 monochrome bitmap.
 
@@ -2727,11 +2795,16 @@ def _validate_jpeg_baseline(rel_path: str, data: bytes, width: int, height: int,
         elif marker == 0xE0:
             if body != b"JFIF\x00\x01\x01\x01\x00H\x00H\x00\x00":  # JFIF 1.01, 72 dpi, no thumbnail
                 raise ValueError(f"{rel_path}: JPEG APP0 is not the JFIF 1.01 segment the corpus writes")
+        elif marker == 0xEE:
+            # Adobe APP14: "Adobe", version 100, two flag words, and the colour transform (0 none, 1 YCbCr, 2 YCCK).
+            if len(body) != 12 or body[:5] != b"Adobe" or body[11] > 2:
+                raise ValueError(f"{rel_path}: JPEG APP14 is not an Adobe segment with a transform of 0, 1 or 2")
         else:
             raise ValueError(f"{rel_path}: JPEG segment {marker:#04x} is not one a baseline corpus image uses")
         pos += 2 + length
-    if seen not in ([0xE0, 0xDB, 0xC0, 0xC4, 0xDA], [0xDB, 0xC0, 0xC4, 0xDA]):
-        raise ValueError(f"{rel_path}: JPEG segments are {[hex(s) for s in seen]}, not [APP0,] DQT, SOF0, DHT, SOS once each")
+    if seen not in ([0xE0, 0xDB, 0xC0, 0xC4, 0xDA], [0xEE, 0xDB, 0xC0, 0xC4, 0xDA], [0xDB, 0xC0, 0xC4, 0xDA]):
+        raise ValueError(
+            f"{rel_path}: JPEG segments are {[hex(s) for s in seen]}, not [APP0 or APP14,] DQT, SOF0, DHT, SOS once each")
     if not data.endswith(b"\xFF\xD9"):
         raise ValueError(f"{rel_path}: JPEG does not end with EOI")
     entropy = data[pos:-2]
@@ -4064,6 +4137,8 @@ def validate_corpus_entry(rel_path: str, data: bytes) -> None:
         validate_pdf_structure(rel_path, data)
     elif rel_path.endswith((".docx", ".xlsx")):
         validate_openxml_structure(rel_path, data)
+    elif rel_path.startswith("images/dct-") and rel_path.endswith(".jpg"):
+        validate_jpeg_baseline(rel_path, data, 16, 8, 4 if "-4c-" in rel_path else 3)
     else:
         raise ValueError(f"unrecognized corpus entry {rel_path}")
 
@@ -4085,6 +4160,10 @@ def validate_openxml_structure(rel_path: str, data: bytes) -> None:
 
 
 CORPUS_PURPOSES: dict[str, str] = {
+    "images/dct-3c-no-marker.jpg": "Baseline JPEG, 3 components, two flat non-neutral blocks, no JFIF or Adobe marker (/ColorTransform decides)",
+    "images/dct-3c-adobe-rgb.jpg": "Baseline JPEG, 3 components, the same blocks, Adobe APP14 transform 0 (stored as RGB)",
+    "images/dct-4c-adobe-cmyk.jpg": "Baseline JPEG, 4 components, two flat non-neutral blocks, Adobe APP14 transform 0 (CMYK)",
+    "images/dct-4c-adobe-ycck.jpg": "Baseline JPEG, 4 components, the same values, Adobe APP14 transform 2 (YCCK)",
     "render/simple-1p.pdf": "Single-page PDF 1.7 with Helvetica text and stroked/filled vector rectangle",
     "render/compressed-xref-2p.pdf": "Two-page PDF 1.7 using Type 2 ObjStm and Flate-compressed /XRef stream",
     "render/incremental-2rev.pdf": "Two-revision incremental PDF with /Prev xref chain overriding page 1 content",
@@ -4169,6 +4248,10 @@ def expected_corpus_files() -> dict[str, bytes]:
         "seeds/seed-filter-08-dct.bin": build_seed_filter_08_dct(),
         "seeds/seed-filter-09-jpx.bin": build_seed_filter_09_jpx(),
         "seeds/seed-filter-0a-chain-a85-flate.bin": build_seed_filter_0a_chain_a85_flate(),
+        "images/dct-3c-no-marker.jpg": make_dc_only_jpeg(2, DCT_THREE, None),
+        "images/dct-3c-adobe-rgb.jpg": make_dc_only_jpeg(2, DCT_THREE, 0),
+        "images/dct-4c-adobe-cmyk.jpg": make_dc_only_jpeg(2, DCT_FOUR, 0),
+        "images/dct-4c-adobe-ycck.jpg": make_dc_only_jpeg(2, DCT_FOUR, 2),
     }
     if set(files.keys()) != set(CORPUS_PURPOSES.keys()):
         missing = sorted(set(files.keys()) - set(CORPUS_PURPOSES.keys()))

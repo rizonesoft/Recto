@@ -2376,8 +2376,9 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 			if (ok && signals >= 6u) {
 				return true;
 			}
-			// A shortened RTC: two or more signals with only fill after them, or a last EOL at the end of the data.
-			if (ok && (signals >= 2u || reader.at_end())) {
+			// A shortened RTC: signals with only fill after them (the scan stops at the first 1 bit, so a row costs a few
+			// bits here), down to a last EOL with padding after it.
+			if (ok) {
 				bool zero_tail = true;
 				for (size_t b = reader.bit_pos; b < reader.total_bits() && zero_tail; ++b) {
 					zero_tail = ((reader.data[b >> 3u] >> (7u - (b & 7u))) & 1u) == 0u;
@@ -2388,6 +2389,30 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 			}
 			reader.bit_pos = start;
 			return false;
+		};
+
+		// After /Rows rows a row that fails to decode ends the image, as /Rows says, unless /EndOfBlock true overrides
+		// /Rows (Table 11) and Table 11 recovery can apply: /EndOfLine true, K non-negative and an EOL ahead of the
+		// damaged row to resynchronize at. Then the row is damage, recovered or refused, and the rows after it decoded.
+		// Without that, what follows /Rows rows is not rows (leftover code bits, padding), so the image ends there.
+		const auto rows_done_without_recovery = [&](size_t from) noexcept -> bool {
+			if (params.rows <= 0 || decoded_rows < static_cast<uint64_t>(params.rows)) {
+				return false;
+			}
+			if (!params.end_of_block || !params.end_of_line || params.k < 0) {
+				return true;
+			}
+			uint32_t zeros = 0;
+			for (size_t b = from; b < reader.total_bits(); ++b) {
+				if (((reader.data[b >> 3u] >> (7u - (b & 7u))) & 1u) == 0u) {
+					++zeros;
+				} else if (zeros >= 11u) {
+					return false; // an EOL: recovery resynchronizes there
+				} else {
+					zeros = 0;
+				}
+			}
+			return true;
 		};
 
 		// Per ISO 32000-1 section 7.4.6 Table 11, `/EndOfBlock true` overrides `/Rows`
@@ -2468,7 +2493,7 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 				const bool eol_ok = !params.end_of_line || saw_eol;
 				const size_t row_start = reader.bit_pos;
 				if (!eol_ok || !decode_ccitt_1d_row(reader, params.columns, cur_changes)) {
-					if (params.rows > 0 && decoded_rows >= static_cast<uint64_t>(params.rows)) {
+					if (rows_done_without_recovery(row_start)) {
 						break;
 					}
 					RECTO_PDF_RETURN_IF_ERROR(recover_damaged_row(row_start));
@@ -2498,7 +2523,7 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 					}
 				}
 				if (params.end_of_line && !saw_eol) {
-					if (params.rows > 0 && decoded_rows >= static_cast<uint64_t>(params.rows)) {
+					if (rows_done_without_recovery(reader.bit_pos)) {
 						break;
 					}
 					// The previous row ran past its end: this row is damaged.
@@ -2521,7 +2546,7 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 						cur_changes) == 1);
 				}
 				if (!row_ok) {
-					if (params.rows > 0 && decoded_rows >= static_cast<uint64_t>(params.rows)) {
+					if (rows_done_without_recovery(row_start)) {
 						break;
 					}
 					RECTO_PDF_RETURN_IF_ERROR(recover_damaged_row(row_start));
@@ -6864,6 +6889,67 @@ uintptr_t current_thread_wic_factory_id() noexcept
 	return refusal;
 }
 
+namespace {
+
+// JFIF YCbCr to RGB (ITU-T T.871 7), rounded and clamped.
+void ycbcr_to_rgb_pixel(uint8_t y, uint8_t cb, uint8_t cr, uint8_t& r, uint8_t& g, uint8_t& b) noexcept
+{
+	const float yy = y;
+	const float u = static_cast<float>(cb) - 128.0f;
+	const float v = static_cast<float>(cr) - 128.0f;
+	r = static_cast<uint8_t>(std::clamp(std::lrintf(yy + 1.402f * v), 0L, 255L));
+	g = static_cast<uint8_t>(std::clamp(std::lrintf(yy - 0.344136f * u - 0.714136f * v), 0L, 255L));
+	b = static_cast<uint8_t>(std::clamp(std::lrintf(yy + 1.772f * u), 0L, 255L));
+}
+
+// Reads a three-component JPEG's planes as stored, before any colour conversion, through WIC's planar transform
+// (IWICPlanarBitmapSourceTransform, Windows 8.1 and later), into `samples` interleaved, a subsampled plane repeated
+// over the pixels it covers. False when WIC offers no planar transform for this image.
+[[nodiscard]] PdfResult<bool> read_jpeg_planes(IWICBitmapFrameDecode* frame, UINT w, UINT h, std::span<uint8_t> samples)
+{
+	ComPtr<IWICPlanarBitmapSourceTransform> planar;
+	if (FAILED(frame->QueryInterface(IID_PPV_ARGS(&planar))) || !planar) {
+		return false;
+	}
+	const WICPixelFormatGUID formats[3] = {GUID_WICPixelFormat8bppY, GUID_WICPixelFormat8bppCb, GUID_WICPixelFormat8bppCr};
+	WICBitmapPlaneDescription desc[3]{};
+	UINT pw = w;
+	UINT ph = h;
+	BOOL supported = FALSE;
+	if (FAILED(planar->DoesSupportTransform(&pw, &ph, WICBitmapTransformRotate0, WICPlanarOptionsDefault, formats, desc, 3u,
+			&supported)) ||
+		!supported || pw != w || ph != h) {
+		return false;
+	}
+	std::array<std::vector<uint8_t>, 3> planes;
+	WICBitmapPlane wic_planes[3]{};
+	for (size_t i = 0; i < 3u; ++i) {
+		if (desc[i].Width == 0u || desc[i].Height == 0u || desc[i].Width > w || desc[i].Height > h) {
+			return false;
+		}
+		planes[i].resize(static_cast<size_t>(desc[i].Width) * desc[i].Height);
+		wic_planes[i] = WICBitmapPlane{desc[i].Format, planes[i].data(), desc[i].Width, static_cast<UINT>(planes[i].size())};
+	}
+	const HRESULT hr = wic_step(detail::WicStage::CopyPixels, [&] {
+		return planar->CopyPixels(nullptr, w, h, WICBitmapTransformRotate0, WICPlanarOptionsDefault, wic_planes, 3u);
+	});
+	if (FAILED(hr)) {
+		return wic_failure(hr, "IWICPlanarBitmapSourceTransform::CopyPixels in DCTDecode", DecoderStep::WicCopyPixels);
+	}
+	for (size_t y = 0; y < h; ++y) {
+		for (size_t x = 0; x < w; ++x) {
+			for (size_t i = 0; i < 3u; ++i) {
+				const size_t py = y * desc[i].Height / h;
+				const size_t px = x * desc[i].Width / w;
+				samples[(y * w + x) * 3u + i] = planes[i][py * desc[i].Width + px];
+			}
+		}
+	}
+	return true;
+}
+
+} // namespace
+
 PdfResult<WicDecodedImage> decode_dct_image(
 	std::span<const uint8_t> input,
 	const PdfDict* decode_parms,
@@ -6934,6 +7020,22 @@ PdfResult<WicDecodedImage> decode_dct_image(
 		const bool is_cmyk = IsEqualGUID(pixel_format, GUID_WICPixelFormat32bppCMYK) || hdr.components == 4u;
 		const bool is_gray = !is_cmyk && (IsEqualGUID(pixel_format, GUID_WICPixelFormat8bppGray) || hdr.components == 1u);
 		const uint64_t comp_bytes = is_cmyk ? 4ULL : (is_gray ? 1ULL : 3ULL);
+		// The colour transform the encoder applied (ISO 32000-1 Table 13): an Adobe APP14 marker's when there is one
+		// (0 none, 1 YCbCr, 2 YCCK), otherwise /ColorTransform, which defaults to 1 for three components and 0 for any
+		// other count. WIC decides by itself: it converts any three-component JPEG without an Adobe transform of 0
+		// from YCbCr, and returns every four-component JPEG complemented (255 - v; and for an Adobe transform of 2,
+		// converted from YCCK first), so the decoder reads WIC's choice back to what the stream says.
+		uint8_t transform = hdr.components == 3u ? 1u : 0u;
+		if (hdr.has_adobe_app14) {
+			transform = hdr.adobe_transform;
+		} else if (decode_parms != nullptr) {
+			if (const auto ct = decode_parms->get_int("ColorTransform"); ct.has_value()) {
+				transform = *ct == 0 ? 0u : 1u;
+			}
+		}
+		// Three components the stream says were not transformed, where WIC transforms: the samples are read as the
+		// codestream's planes (IWICPlanarBitmapSourceTransform), three more bytes per pixel at the peak.
+		const bool raw_three = !is_cmyk && !is_gray && transform == 0u && !hdr.has_adobe_app14;
 
 		// The buffers this decode builds. A stream filter returns the samples, or for CMYK one 8-bit layout: RGBA unless
 		// a direct caller's /TargetFormat asks for BGRA or the CMYK samples (a stream dictionary's is dropped before it
@@ -6945,7 +7047,8 @@ PdfResult<WicDecodedImage> decode_dct_image(
 		// One 8-bit layout alone is one buffer: the samples are decoded into its tail and expanded in place, front to
 		// back, which never overwrites a sample not yet read. Otherwise the samples are their own buffer.
 		const bool single_layout = !keep_samples;
-		RECTO_PDF_RETURN_IF_ERROR(dct_fits(w64, h64, dct_peak_bpp(output, decode_parms, is_cmyk, comp_bytes), effective_limit));
+		RECTO_PDF_RETURN_IF_ERROR(dct_fits(
+			w64, h64, dct_peak_bpp(output, decode_parms, is_cmyk, comp_bytes) + (raw_three ? 3ULL : 0ULL), effective_limit));
 		std::vector<uint8_t>& store = !single_layout ? result.pixels : (want == DctOutput::Rgba ? result.rgba_pixels : result.bgra_pixels);
 		store.resize(single_layout ? pixel_count * 4u : pixel_count * static_cast<size_t>(comp_bytes));
 		const size_t sample_bytes = pixel_count * static_cast<size_t>(comp_bytes);
@@ -7008,8 +7111,26 @@ PdfResult<WicDecodedImage> decode_dct_image(
 			result.components = 4u;
 			result.is_cmyk = true;
 			RECTO_PDF_RETURN_IF_ERROR(copy_frame(frame.Get(), w * 4u, "IWICBitmapFrameDecode::CopyPixels on CMYK JPEG"));
-			// Apply explicit `/Decode` array (such as `[1 0 1 0 1 0 1 0]` for
-			// Adobe inverted CMYK JPEGs) if provided in `decode_parms`.
+			// WIC's four-component output is complemented; the stream's samples are what DCTDecode returns (an Adobe
+			// file's inverted inks are the image's /Decode array's business, applied below).
+			for (uint8_t& v : samples) {
+				v = static_cast<uint8_t>(255u - v);
+			}
+			if (transform == 1u && !hdr.has_adobe_app14) {
+				// YCCK by /ColorTransform alone, which WIC does not know: YCbCr to RGB on the first three, each
+				// complemented, K as stored (what an Adobe transform of 2 gives).
+				for (size_t p = 0; p < pixel_count; ++p) {
+					uint8_t* px = samples.data() + p * 4u;
+					uint8_t r = 0;
+					uint8_t g = 0;
+					uint8_t b = 0;
+					ycbcr_to_rgb_pixel(px[0], px[1], px[2], r, g, b);
+					px[0] = static_cast<uint8_t>(255u - r);
+					px[1] = static_cast<uint8_t>(255u - g);
+					px[2] = static_cast<uint8_t>(255u - b);
+				}
+			}
+			// The image's /Decode array (such as `[1 0 1 0 1 0 1 0]` for an Adobe inverted CMYK JPEG).
 			apply_pdf_decode_array(samples, 4u, decode_parms);
 			finish([&](size_t p, uint8_t& r, uint8_t& g, uint8_t& b) {
 				const uint8_t* px = samples.data() + p * 4u;
@@ -7031,7 +7152,13 @@ PdfResult<WicDecodedImage> decode_dct_image(
 		// 3-component JPEG: convert via `IWICFormatConverter` to `24bppRGB` if not already `24bppBGR`/`24bppRGB`.
 		result.components = 3u;
 		bool bgr_order = false;
-		if (IsEqualGUID(pixel_format, GUID_WICPixelFormat24bppBGR) && !detail::g_dct_force_converter) {
+		bool raw_read = false;
+		if (raw_three) {
+			RECTO_PDF_TRY(raw_read, read_jpeg_planes(frame.Get(), w, h, samples));
+		}
+		if (raw_read) {
+			// the samples are the codestream's planes, as stored
+		} else if (IsEqualGUID(pixel_format, GUID_WICPixelFormat24bppBGR) && !detail::g_dct_force_converter) {
 			RECTO_PDF_RETURN_IF_ERROR(copy_frame(frame.Get(), w * 3u, "IWICBitmapFrameDecode::CopyPixels on 24bppBGR JPEG"));
 			bgr_order = true;
 		} else if (IsEqualGUID(pixel_format, GUID_WICPixelFormat24bppRGB) && !detail::g_dct_force_converter) {
@@ -7055,6 +7182,20 @@ PdfResult<WicDecodedImage> decode_dct_image(
 		if (bgr_order) {
 			for (size_t p = 0; p < pixel_count; ++p) {
 				std::swap(samples[p * 3u + 0u], samples[p * 3u + 2u]);
+			}
+		}
+		if (raw_three && !raw_read) {
+			// WORKAROUND: WIC offers no planar transform for this JPEG (it does from Windows 8.1 for baseline YCbCr
+			// JPEGs), so its YCbCr-to-RGB conversion is undone by the forward JFIF equations; a channel WIC clipped at 0
+			// or 255 comes back approximate.
+			for (size_t p = 0; p < pixel_count; ++p) {
+				uint8_t* px = samples.data() + p * 3u;
+				const float r = px[0];
+				const float g = px[1];
+				const float b = px[2];
+				px[0] = static_cast<uint8_t>(std::clamp(std::lrintf(0.299f * r + 0.587f * g + 0.114f * b), 0L, 255L));
+				px[1] = static_cast<uint8_t>(std::clamp(std::lrintf(-0.168736f * r - 0.331264f * g + 0.5f * b + 128.0f), 0L, 255L));
+				px[2] = static_cast<uint8_t>(std::clamp(std::lrintf(0.5f * r - 0.418688f * g - 0.081312f * b + 128.0f), 0L, 255L));
 			}
 		}
 		apply_pdf_decode_array(samples, 3u, decode_parms);
@@ -7106,6 +7247,7 @@ struct JpxHeaderInfo {
 	// when absent.
 	uint32_t enumerated_colour{0};
 	bool saw_colour{false};
+	std::span<const uint8_t> icc_profile{}; // the first colour specification's profile (method 2 or 3)
 	std::span<const uint8_t> palette{};
 	std::span<const uint8_t> component_map{};
 	std::span<const uint8_t> channel_definition{};
@@ -7184,6 +7326,8 @@ struct JpxHeaderInfo {
 						const std::span<const uint8_t> colr = box_payload.subspan(sub_pos + 8u, sub_len - 8u);
 						if (!info.saw_colour && colr.size() >= 7u && colr[0] == 1u) {
 							info.enumerated_colour = read_u32_be(colr.data() + 3u);
+						} else if (!info.saw_colour && colr.size() > 3u && (colr[0] == 2u || colr[0] == 3u)) {
+							info.icc_profile = colr.subspan(3u);
 						}
 						info.saw_colour = true;
 					} else if (sub_type == 0x70636C72u) { // 'pclr'
@@ -8238,10 +8382,12 @@ void idwt_97_2d_float(
 	// Why WIC did not decode the stream, kept so a native failure after it still names the first cause.
 	std::optional<PdfError> wic_cause;
 	IWICImagingFactory* factory = nullptr;
-	// WIC's output here is converted to gray or RGB, which would turn CMYK into RGB and drop an opacity channel; a JP2
-	// header that asks for either (CMYK enumerated, or four channels and no colour specification, or a cdef opacity
-	// channel) goes to the native decoder, which keeps the channels as the header defines them (T.800 Annex I).
-	bool wic_keeps_layout = !(hdr.enumerated_colour == 12u || (!hdr.saw_colour && hdr.components == 4u));
+	// WIC's output here is converted to gray or RGB by the codestream's component count, which would turn CMYK into
+	// RGB, drop an opacity channel and reduce a palette image to gray; a JP2 header that asks for any of them (CMYK
+	// enumerated, or four channels and no colour specification, a palette, or a cdef opacity channel) goes to the
+	// native decoder, which keeps the channels as the header defines them (T.800 Annex I).
+	bool wic_keeps_layout =
+		!(hdr.enumerated_colour == 12u || (!hdr.saw_colour && hdr.components == 4u) || !hdr.palette.empty());
 	const std::span<const uint8_t> cdef = hdr.channel_definition;
 	for (size_t at = 2u; wic_keeps_layout && at + 6u <= cdef.size(); at += 6u) {
 		const uint16_t type = read_u16_be(cdef.data() + at + 2u);
@@ -8428,9 +8574,11 @@ struct Jp2Palette {
 		return damaged();
 	}
 	std::vector<uint8_t> depth(columns);
+	std::vector<bool> is_signed(columns);
 	size_t need = 3u + columns;
 	for (uint32_t j = 0; j < columns; ++j) {
 		depth[j] = static_cast<uint8_t>((box[3u + j] & 0x7Fu) + 1u);
+		is_signed[j] = (box[3u + j] & 0x80u) != 0u;
 		if (depth[j] > 16u) {
 			return make_filter_error(ErrorCode::UnsupportedFeature, DiagnosticId::DamagedStream,
 				"JPXDecode palette precision above 16 bits is not supported");
@@ -8451,7 +8599,10 @@ struct Jp2Palette {
 				v = (v << 8u) | box[at++];
 			}
 			const uint32_t max = (1u << depth[j]) - 1u;
-			v = std::min(v, max);
+			v &= max;
+			if (is_signed[j]) {
+				v ^= 1u << (depth[j] - 1u); // two's complement plus 2^(depth - 1): flip the sign bit
+			}
 			palette.columns[j][e] = static_cast<uint8_t>(depth[j] >= 8u ? v >> (depth[j] - 8u) : (v * 255u) / max);
 		}
 	}
@@ -8518,6 +8669,7 @@ struct Jp2Palette {
 	std::vector<Jp2Channel> channels;
 	Jp2Palette palette;
 	std::vector<bool> palette_index(num_comps, false);
+	bool any_palette_index = false;
 	if (!hdr.palette.empty()) {
 		RECTO_PDF_TRY_REF(read_palette, read_jp2_palette(hdr.palette));
 		palette = std::move(read_palette);
@@ -8537,6 +8689,7 @@ struct Jp2Palette {
 			if (type == 1u) {
 				ch.palette_column = column;
 				palette_index[ch.component] = true;
+				any_palette_index = true;
 			}
 			channels.push_back(ch);
 		}
@@ -9272,6 +9425,14 @@ struct Jp2Palette {
 	out_img.width = img_w;
 	out_img.height = img_h;
 	out_img.components = num_comps;
+	// The raw values of components used as palette indices (cmap), apart from their normalized samples.
+	if (any_palette_index && static_cast<uint64_t>(pixels) * num_comps > effective_limit - total_wic_bytes) {
+		return make_filter_error(
+			ErrorCode::DecompressionLimitExceeded,
+			DiagnosticId::DecompressionLimitExceeded,
+			"JPXDecode palette index buffer exceeds ceiling");
+	}
+	std::vector<uint8_t> raw_index(any_palette_index ? pixels * num_comps : 0u, 0u);
 	out_img.pixels.assign(total_samples, 0u);
 
 	struct ResBounds {
@@ -10301,6 +10462,14 @@ struct Jp2Palette {
 					const size_t img_idx = static_cast<size_t>(dst_y0 + y) * img_w + (dst_x0 + x);
 					for (uint32_t c = 0; c < num_comps; ++c) {
 						const ComponentState& comp = comps[c];
+						if (comp.x1 <= comp.x0 || comp.y1 <= comp.y0 || comp.spatial.empty()) {
+							// Subsampling left this tile no sample of the component (T.800 B.2): its mid value.
+							out_img.pixels[img_idx * num_comps + c] = 128u;
+							if (any_palette_index) {
+								raw_index[img_idx * num_comps + c] = 0u;
+							}
+							continue;
+						}
 						const uint32_t cx =
 							std::clamp((tx0 + x) / comp_dx[c], comp.x0, comp.x1 - 1u) - comp.x0;
 						const uint32_t cy =
@@ -10310,8 +10479,9 @@ struct Jp2Palette {
 						const int32_t max_sample = (1 << depth) - 1;
 						int32_t val = std::clamp(comp.spatial[t_idx] + (1 << (depth - 1u)), 0, max_sample);
 						if (palette_index[c]) {
-							// a palette index stays its value
-						} else if (depth > 8u) {
+							raw_index[img_idx * num_comps + c] = static_cast<uint8_t>(val); // at most 8 bits here
+						}
+						if (depth > 8u) {
 							val >>= (depth - 8u);
 						} else if (depth < 8u) {
 							val = (val * 255) / max_sample;
@@ -10329,6 +10499,7 @@ struct Jp2Palette {
 	const size_t channel_count = channels.size();
 	std::vector<int32_t> colour_of(channel_count, -1); // the colour index each channel fills, or -1
 	int32_t opacity_channel = -1;
+	bool premultiplied = false;
 	size_t colour_count = 0u;
 	if (!hdr.channel_definition.empty()) {
 		const std::span<const uint8_t> cdef = hdr.channel_definition;
@@ -10337,19 +10508,40 @@ struct Jp2Palette {
 			return make_filter_error(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream,
 				"Invalid cdef channel definition box in JPXDecode");
 		}
+		const auto inconsistent = [](std::string_view why) {
+			return make_filter_error(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream, why);
+		};
+		std::vector<bool> defined(channel_count, false);
+		std::vector<bool> association_used(channel_count, false);
 		for (uint32_t i = 0; i < n; ++i) {
 			const uint16_t channel = read_u16_be(cdef.data() + 2u + 6u * i);
 			const uint16_t type = read_u16_be(cdef.data() + 4u + 6u * i);
 			const uint16_t association = read_u16_be(cdef.data() + 6u + 6u * i);
 			if (channel >= channel_count) {
-				return make_filter_error(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream,
-					"cdef channel index exceeds the image's channels in JPXDecode");
+				return inconsistent("cdef channel index exceeds the image's channels in JPXDecode");
 			}
+			if (defined[channel]) {
+				return inconsistent("cdef defines a channel twice in JPXDecode");
+			}
+			defined[channel] = true;
 			if (type == 0u && association >= 1u && association <= channel_count) {
+				if (association_used[association - 1u]) {
+					return inconsistent("cdef gives two colour channels the same association in JPXDecode");
+				}
+				association_used[association - 1u] = true;
 				colour_of[channel] = association - 1;
 				colour_count = std::max<size_t>(colour_count, association);
-			} else if ((type == 1u || type == 2u) && opacity_channel < 0) {
+			} else if (type == 1u || type == 2u) {
+				if (opacity_channel >= 0) {
+					return inconsistent("cdef declares more than one opacity channel, which JPXDecode does not combine");
+				}
 				opacity_channel = channel;
+				premultiplied = type == 2u;
+			}
+		}
+		for (size_t a = 0; a < colour_count; ++a) {
+			if (!association_used[a]) {
+				return inconsistent("cdef leaves a colour of the image's colour space without a channel in JPXDecode");
 			}
 		}
 	} else {
@@ -10386,7 +10578,8 @@ struct Jp2Palette {
 			continue;
 		}
 		for (size_t px = 0; px < pixels; ++px) {
-			uint8_t v = out_img.pixels[px * num_comps + source.component];
+			uint8_t v = source.palette_column >= 0 ? raw_index[px * num_comps + source.component]
+												   : out_img.pixels[px * num_comps + source.component];
 			if (source.palette_column >= 0) {
 				const std::vector<uint8_t>& column = palette.columns[static_cast<size_t>(source.palette_column)];
 				v = column[std::min<size_t>(v, column.size() - 1u)];
@@ -10398,9 +10591,32 @@ struct Jp2Palette {
 			}
 		}
 	}
+	// Premultiplied opacity (cdef type 2): colour is divided back out, so every consumer sees straight alpha.
+	if (premultiplied) {
+		for (size_t px = 0; px < pixels; ++px) {
+			const uint32_t a = alpha[px];
+			for (size_t c = 0; c < colour_count; ++c) {
+				uint8_t& v = colour[px * colour_count + c];
+				v = a == 0u ? 0u : static_cast<uint8_t>(std::min<uint32_t>(255u, (v * 255u + a / 2u) / a));
+			}
+		}
+	}
+	// sYCC (enumerated colour 18, IEC 61966-2-1 Amendment 1) is YCbCr; its channels become sRGB here.
+	if (hdr.enumerated_colour == 18u && colour_count == 3u) {
+		for (size_t px = 0; px < pixels; ++px) {
+			uint8_t* v = colour.data() + px * 3u;
+			const float yy = v[0];
+			const float cb = static_cast<float>(v[1]) - 128.0f;
+			const float cr = static_cast<float>(v[2]) - 128.0f;
+			v[0] = static_cast<uint8_t>(std::clamp(std::lrintf(yy + 1.402f * cr), 0L, 255L));
+			v[1] = static_cast<uint8_t>(std::clamp(std::lrintf(yy - 0.344136f * cb - 0.714136f * cr), 0L, 255L));
+			v[2] = static_cast<uint8_t>(std::clamp(std::lrintf(yy + 1.772f * cb), 0L, 255L));
+		}
+	}
 	out_img.pixels = std::move(colour);
 	out_img.components = static_cast<uint32_t>(colour_count);
 	out_img.is_cmyk = colour_count == 4u;
+	out_img.icc_profile.assign(hdr.icc_profile.begin(), hdr.icc_profile.end());
 	const size_t out_comps = colour_count;
 
 	apply_pdf_decode_array(out_img.pixels, static_cast<uint32_t>(out_comps), decode_parms);

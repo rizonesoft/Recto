@@ -2938,6 +2938,7 @@ struct J2kTestOptions {
 	uint8_t roi_shift = 0u;      // Maxshift for component 0, with `roi` marking its region-of-interest samples
 	std::vector<uint8_t> roi;
 	bool wrong_last_symbol = false; // component 0's last segmentation symbol reads 1011
+	uint32_t origin = 0u;           // XOsiz and YOsiz: the image area starts here on the reference grid
 };
 
 // A one-tile, one-layer LRCP JPEG 2000 codestream of reversible components with no decomposition (each component's
@@ -2950,6 +2951,9 @@ struct J2kTestOptions {
 	std::vector<uint8_t> packets;
 	for (size_t ci = 0; ci < comps.size(); ++ci) {
 		const J2kTestComponent& comp = comps[ci];
+		if (comp.w == 0u || comp.h == 0u) {
+			continue; // a component with no samples in the tile has no precinct, so no packet (T.800 B.6)
+		}
 		std::vector<int32_t> coeffs(comp.samples.size());
 		for (size_t i = 0; i < coeffs.size(); ++i) {
 			coeffs[i] = static_cast<int32_t>(comp.samples[i]) - (1 << (comp.depth - 1u));
@@ -3011,15 +3015,15 @@ struct J2kTestOptions {
 		u16(v & 0xFFFFu);
 	};
 	const uint32_t n = static_cast<uint32_t>(comps.size());
-	u16(0xFF51u); // SIZ
+	u16(0xFF51u); // SIZ: the image from `origin`, one tile from the reference grid's corner covering it
 	u16(38u + 3u * n);
 	u16(0u);
-	u32(img_w);
-	u32(img_h);
-	u32(0u);
-	u32(0u);
-	u32(img_w);
-	u32(img_h);
+	u32(opt.origin + img_w);
+	u32(opt.origin + img_h);
+	u32(opt.origin);
+	u32(opt.origin);
+	u32(opt.origin + img_w);
+	u32(opt.origin + img_h);
 	u32(0u);
 	u32(0u);
 	u16(n);
@@ -3312,6 +3316,75 @@ void fdwt_53_2x2(const std::array<int32_t, 4>& img, int32_t& ll, int32_t& hl, in
 }
 
 } // namespace
+
+// D06 T05 section 33: the colour transform a DCT image's samples went through is undone only when it was applied.
+// Without an Adobe marker, /ColorTransform decides (default 1 for three components: YCbCr); an Adobe APP14 marker's
+// transform takes precedence (0 none, 1 YCbCr, 2 YCCK). The fixtures are flat, non-neutral 8x8 blocks
+// (scripts/build-corpus.py, make_dc_only_jpeg), so each block's expected colour is exact; converted values are
+// allowed one level for rounding. The YCCK values are libjpeg's (Pillow before its Adobe inversion).
+TEST(PdfFilters, DctColorTransformAndAdobeCmykYcck)
+{
+	const auto pixel = [](const WicDecodedImage& img, uint32_t x) {
+		return std::vector<int>(img.pixels.begin() + x * img.components, img.pixels.begin() + (x + 1u) * img.components);
+	};
+	const auto within = [](const std::vector<int>& got, const std::vector<int>& want, int tolerance) {
+		if (got.size() != want.size()) {
+			return false;
+		}
+		for (size_t i = 0; i < got.size(); ++i) {
+			if (std::abs(got[i] - want[i]) > tolerance) {
+				return false;
+			}
+		}
+		return true;
+	};
+	const auto decode = [](std::string_view name, std::optional<int64_t> color_transform) {
+		const auto bytes = recto::test::read_file_bytes(recto::test::corpus_path(std::string("images/") + std::string(name)));
+		PdfDict parms;
+		if (color_transform.has_value()) {
+			parms.set("ColorTransform", PdfValue(*color_transform));
+		}
+		return decode_dct_image(bytes, color_transform.has_value() ? &parms : nullptr, kMaxDecodedStreamBytes,
+			DctOutput::Samples);
+	};
+
+	// Three components, no marker: YCbCr by default and with /ColorTransform 1, the samples as stored with 0.
+	for (const std::optional<int64_t> ct : {std::optional<int64_t>{}, std::optional<int64_t>{1}}) {
+		auto img = decode("dct-3c-no-marker.jpg", ct);
+		ASSERT_TRUE(img.has_value()) << img.error().message.view();
+		EXPECT_TRUE(within(pixel(*img, 0u), {77, 255, 133}, 1));
+		EXPECT_TRUE(within(pixel(*img, 8u), {159, 0, 87}, 1));
+	}
+	{
+		auto img = decode("dct-3c-no-marker.jpg", 0);
+		ASSERT_TRUE(img.has_value()) << img.error().message.view();
+		EXPECT_EQ(pixel(*img, 0u), (std::vector<int>{200, 90, 40}));
+		EXPECT_EQ(pixel(*img, 8u), (std::vector<int>{30, 160, 220}));
+	}
+	// Adobe transform 0 wins over /ColorTransform 1: the samples are RGB as stored.
+	{
+		auto img = decode("dct-3c-adobe-rgb.jpg", 1);
+		ASSERT_TRUE(img.has_value()) << img.error().message.view();
+		EXPECT_EQ(pixel(*img, 0u), (std::vector<int>{200, 90, 40}));
+		EXPECT_EQ(pixel(*img, 8u), (std::vector<int>{30, 160, 220}));
+	}
+	// Adobe CMYK (transform 0): the four samples as stored (an Adobe file's inversion is the PDF /Decode's business).
+	{
+		auto img = decode("dct-4c-adobe-cmyk.jpg", std::nullopt);
+		ASSERT_TRUE(img.has_value()) << img.error().message.view();
+		EXPECT_TRUE(img->is_cmyk);
+		EXPECT_EQ(pixel(*img, 0u), (std::vector<int>{20, 200, 120, 60}));
+		EXPECT_EQ(pixel(*img, 8u), (std::vector<int>{230, 10, 90, 180}));
+	}
+	// Adobe YCCK (transform 2): YCbCr to RGB on the first three, each complemented, K as stored.
+	{
+		auto img = decode("dct-4c-adobe-ycck.jpg", std::nullopt);
+		ASSERT_TRUE(img.has_value()) << img.error().message.view();
+		EXPECT_TRUE(img->is_cmyk);
+		EXPECT_TRUE(within(pixel(*img, 0u), {246, 254, 107, 60}, 1));
+		EXPECT_TRUE(within(pixel(*img, 8u), {78, 0, 234, 180}, 1));
+	}
+}
 
 TEST(PdfFilters, DctRgbAndCmyk)
 {
@@ -5512,6 +5585,94 @@ TEST(PdfFilters, JpxComponentsAndCodingStyles)
 			EXPECT_EQ(img->rgba_pixels[3], 255u);
 		}
 	}
+	// Completion review gaps (D06 T05 section 32).
+	{
+		const std::vector<uint8_t> enum_srgb = {1u, 0u, 0u, 0u, 0u, 0u, 16u};
+		// C1: a 1 x 1 image at origin 1 whose 2 x 2 subsampled components have no sample in the tile decodes, those
+		// components at their mid value, instead of indexing an empty buffer.
+		{
+			const std::array<J2kTestComponent, 3> comps = {J2kTestComponent{{90u}, 1u, 1u, 8u, 1u, 1u},
+				J2kTestComponent{{}, 0u, 0u, 8u, 2u, 2u}, J2kTestComponent{{}, 0u, 0u, 8u, 2u, 2u}};
+			J2kTestOptions opt;
+			opt.origin = 1u;
+			auto img = decode_jpx_image(make_j2k_codestream(comps, 1u, 1u, opt));
+			ASSERT_TRUE(img.has_value()) << img.error().message.view();
+			EXPECT_EQ(img->pixels, (std::vector<uint8_t>{90u, 128u, 128u}));
+		}
+		// C3: sYCC channels become sRGB (a mid-gray Y with zero chroma stays gray; a red-shifted one turns red).
+		{
+			const std::array<J2kTestComponent, 3> ycc = {J2kTestComponent{{128u, 100u}, 2u, 1u, 8u, 1u, 1u},
+				J2kTestComponent{{128u, 128u}, 2u, 1u, 8u, 1u, 1u}, J2kTestComponent{{128u, 228u}, 2u, 1u, 8u, 1u, 1u}};
+			const std::vector<uint8_t> enum_sycc = {1u, 0u, 0u, 0u, 0u, 0u, 18u};
+			const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 1> boxes = {{{"colr", enum_sycc}}};
+			auto img = decode_jpx_image(make_jp2(make_j2k_codestream(ycc, 2u, 1u), 2u, 1u, 3u, boxes));
+			ASSERT_TRUE(img.has_value()) << img.error().message.view();
+			EXPECT_EQ(img->pixels, (std::vector<uint8_t>{128u, 128u, 128u, 240u, 29u, 100u}));
+		}
+		// C4: a restricted ICC profile (colr method 2) comes back byte for byte.
+		{
+			const std::array<J2kTestComponent, 1> gray = {J2kTestComponent{{10u, 20u}, 2u, 1u, 8u, 1u, 1u}};
+			const std::vector<uint8_t> profile = {0u, 0u, 0u, 9u, 'p', 'r', 'o', 'f', 0xA5u};
+			std::vector<uint8_t> colr = {2u, 0u, 0u};
+			colr.insert(colr.end(), profile.begin(), profile.end());
+			const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 1> boxes = {{{"colr", colr}}};
+			auto img = decode_jpx_image(make_jp2(make_j2k_codestream(gray, 2u, 1u), 2u, 1u, 1u, boxes));
+			ASSERT_TRUE(img.has_value()) << img.error().message.view();
+			EXPECT_EQ(img->icc_profile, profile);
+		}
+		// C5: signed 8-bit palette entries (-128 and 127) become 0 and 255; C6: one 4-bit component drives a palette
+		// column and a direct channel, and the direct one is still normalized.
+		{
+			const std::array<J2kTestComponent, 1> idx = {J2kTestComponent{{0u, 1u, 15u}, 3u, 1u, 4u, 1u, 1u}};
+			// 16 entries, 2 signed 8-bit columns: column 0 is -128 for entry 0 and 127 otherwise; column 1 counts up.
+			std::vector<uint8_t> pclr = {0u, 16u, 2u, 0x87u, 0x87u};
+			for (uint32_t e = 0; e < 16u; ++e) {
+				pclr.push_back(e == 0u ? 0x80u : 0x7Fu);
+				pclr.push_back(static_cast<uint8_t>(static_cast<int8_t>(static_cast<int32_t>(e) * 16 - 128)));
+			}
+			// Channel 0: palette column 0; channel 1: the component directly; channel 2: palette column 1.
+			const std::vector<uint8_t> cmap = {0u, 0u, 1u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 1u, 1u};
+			const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 3> boxes = {{
+				{"colr", enum_srgb}, {"pclr", pclr}, {"cmap", cmap}}};
+			auto img = decode_jpx_image(make_jp2(make_j2k_codestream(idx, 3u, 1u), 3u, 1u, 1u, boxes));
+			ASSERT_TRUE(img.has_value()) << img.error().message.view();
+			EXPECT_EQ(img->pixels, (std::vector<uint8_t>{0u, 0u, 0u, 255u, 17u, 16u, 255u, 255u, 240u}));
+		}
+		std::array<J2kTestComponent, 4> rgba{};
+		rgba[0] = J2kTestComponent{{100u, 0u}, 2u, 1u, 8u, 1u, 1u};
+		rgba[1] = J2kTestComponent{{50u, 0u}, 2u, 1u, 8u, 1u, 1u};
+		rgba[2] = J2kTestComponent{{25u, 0u}, 2u, 1u, 8u, 1u, 1u};
+		rgba[3] = J2kTestComponent{{128u, 0u}, 2u, 1u, 8u, 1u, 1u};
+		const auto cs_rgba = make_j2k_codestream(rgba, 2u, 1u);
+		const auto cdef_of = [](std::initializer_list<std::array<uint16_t, 3>> entries) {
+			std::vector<uint8_t> out = {0u, static_cast<uint8_t>(entries.size())};
+			for (const auto& e : entries) {
+				for (const uint16_t v : e) {
+					out.push_back(static_cast<uint8_t>(v >> 8u));
+					out.push_back(static_cast<uint8_t>(v));
+				}
+			}
+			return out;
+		};
+		// C7: premultiplied opacity (type 2) is divided back out: 100, 50, 25 at alpha 128 are straight 199, 100, 50.
+		{
+			const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 2> boxes = {{{"colr", enum_srgb},
+				{"cdef", cdef_of({{0u, 0u, 1u}, {1u, 0u, 2u}, {2u, 0u, 3u}, {3u, 2u, 0u}})}}};
+			auto img = decode_jpx_image(make_jp2(cs_rgba, 2u, 1u, 4u, boxes));
+			ASSERT_TRUE(img.has_value()) << img.error().message.view();
+			EXPECT_EQ(img->pixels, (std::vector<uint8_t>{199u, 100u, 50u, 0u, 0u, 0u}));
+			EXPECT_EQ(img->rgba_pixels[3], 128u);
+		}
+		// C8: a colour association used twice, a colour left without a channel, a channel defined twice and two
+		// opacity channels are refused instead of inventing pixels.
+		for (const auto& cdef : {cdef_of({{0u, 0u, 1u}, {1u, 0u, 1u}, {2u, 0u, 3u}}),
+				 cdef_of({{0u, 0u, 1u}, {1u, 0u, 3u}, {2u, 1u, 0u}}),
+				 cdef_of({{0u, 0u, 1u}, {0u, 0u, 2u}, {2u, 0u, 3u}}),
+				 cdef_of({{0u, 0u, 1u}, {1u, 1u, 0u}, {2u, 1u, 0u}})}) {
+			const std::array<std::pair<std::string_view, std::vector<uint8_t>>, 2> boxes = {{{"colr", enum_srgb}, {"cdef", cdef}}};
+			RECTO_EXPECT_ERR(decode_jpx_image(make_jp2(cs_rgba, 2u, 1u, 4u, boxes)), ErrorCode::DamagedFormat);
+		}
+	}
 	// The corpus seed with context reset set in its COD marker (byte 58 of the seed file) still decodes.
 	{
 		auto seed = recto::test::read_file_bytes(recto::test::corpus_path("seeds/seed-filter-09-jpx.bin"));
@@ -5865,6 +6026,32 @@ TEST(PdfFilters, CcittDamagedRowRecovery)
 		EXPECT_EQ(*decoded, (std::vector<uint8_t>{0xF0u, 0x0Fu, 0xF0u, 0x0Fu, 0xFFu, 0xFFu})) << "K " << k;
 		const PdfDict none_allowed = parms_for(k, 3, 0);
 		RECTO_EXPECT_ERR(decode_ccitt_fax(pack_bitstring(bits), &none_allowed), ErrorCode::DamagedFormat);
+	}
+
+	// /EndOfBlock true overrides /Rows throughout (Table 11): damage after /Rows rows still goes through recovery and
+	// the rows after it are decoded, in both Group 3 modes; and a last EOL with padding after it ends the data (D06
+	// T05 section 34, round 3).
+	for (const int64_t k : {int64_t{0}, int64_t{2}}) {
+		const std::string tag = k > 0 ? "1" : "";
+		std::string bits = eol + tag + good + eol + tag + damaged + eol + tag + white;
+		for (int i = 0; i < 6; ++i) {
+			bits += eol + tag;
+		}
+		PdfDict parms = parms_for(k, 1, 1);
+		parms.set("EndOfBlock", PdfValue(true));
+		auto decoded = decode_ccitt_fax(pack_bitstring(bits), &parms);
+		ASSERT_TRUE(decoded.has_value()) << "K " << k << ": " << decoded.error().message.view();
+		EXPECT_EQ(*decoded, (std::vector<uint8_t>{0xF0u, 0x0Fu, 0xF0u, 0x0Fu, 0xFFu, 0xFFu})) << "K " << k;
+		PdfDict none_allowed = parms_for(k, 1, 0);
+		none_allowed.set("EndOfBlock", PdfValue(true));
+		RECTO_EXPECT_ERR(decode_ccitt_fax(pack_bitstring(bits), &none_allowed), ErrorCode::DamagedFormat);
+	}
+	{
+		const std::string bits = eol + good + eol + "00"; // a last EOL, then padding to the byte
+		const PdfDict parms = parms_for(0, 0, 0);
+		auto decoded = decode_ccitt_fax(pack_bitstring(bits), &parms);
+		ASSERT_TRUE(decoded.has_value()) << decoded.error().message.view();
+		EXPECT_EQ(*decoded, (std::vector<uint8_t>{0xF0u, 0x0Fu}));
 	}
 
 	// A good row resets the allowance: damaged, good, damaged under an allowance of one.

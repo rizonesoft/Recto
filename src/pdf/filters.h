@@ -126,6 +126,8 @@ struct WicDecodedImage {
 	std::vector<uint8_t> pixels;
 	std::vector<uint8_t> rgba_pixels;
 	std::vector<uint8_t> bgra_pixels;
+	// The ICC profile the image's own colour specification carries (a JP2 colr box of method 2 or 3), empty without one.
+	std::vector<uint8_t> icc_profile;
 };
 
 using DecodedImage = WicDecodedImage;
