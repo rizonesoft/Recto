@@ -12,6 +12,7 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <tuple>
 #include <new>
 #include <unordered_set>
 #include <utility>
@@ -1047,6 +1048,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			return {};
 		};
 
+		using TargetCache = std::map<std::tuple<uint32_t, uint16_t, uint64_t>, PdfValue>;
 		// A container's parameters resolve one level through the objects the scan found uncompressed (the latest
 		// definition of each, as far as the scan has come); a reference to anything else, or to an object that does not
 		// parse, is null, as an undefined object is (ISO 32000-1 section 7.3.10), so resolution never recurses. Parsing is
@@ -1090,12 +1092,17 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			}
 			return std::move(parsed->value);
 		};
-		// A resolver over `parse_target` that parses each target once into `targets` (keyed by object and generation, so
-		// a lookup with the wrong generation never answers the right one), kept reduced to what a parameter can use, so
-		// a parameter object many containers share is parsed and charged once and each lookup copies a few scalars.
-		const auto caching_resolver = [&parse_target](std::unordered_map<uint64_t, PdfValue>& targets) -> IndirectObjectResolver {
-			return [&parse_target, &targets](IndirectRef ref) -> PdfResult<PdfValue> {
-				const uint64_t target_key = (static_cast<uint64_t>(ref.obj_num) << 16u) | ref.gen_num;
+		// A resolver over `parse_target` that parses each target once into `targets`, kept reduced to what a parameter can
+		// use, so a parameter object many containers share is parsed and charged once and each lookup copies a few
+		// scalars. A target is keyed by the definition it was read from (object, generation and offset), so a later
+		// definition is read afresh, and a target with no definition yet is not remembered.
+		const auto caching_resolver = [&table, &parse_target](TargetCache& targets) -> IndirectObjectResolver {
+			return [&table, &parse_target, &targets](IndirectRef ref) -> PdfResult<PdfValue> {
+				const XrefEntry* entry = table.find(ref.obj_num);
+				if (entry == nullptr || !entry->is_uncompressed() || entry->generation != ref.gen_num) {
+					return PdfValue(PdfNull{});
+				}
+				const auto target_key = std::tuple{ref.obj_num, ref.gen_num, entry->byte_offset};
 				if (const auto known = targets.find(target_key); known != targets.end()) {
 					return known->second.deep_clone();
 				}
@@ -1193,8 +1200,38 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		// Probes have an allowance of their own, the size of the recovery's decode budget, so decoding what may turn out
 		// to be ciphertext never spends what the xref streams and the unpack after the scan need.
 		uint64_t cumulative_probe_bytes = 0;
-		std::unordered_map<uint64_t, PdfValue> probe_targets;
+		TargetCache probe_targets;
 		const IndirectObjectResolver probe_resolver = caching_resolver(probe_targets);
+		// Containers a probe met before the scan had defined a parameter they name, each with the count of definitions
+		// the scan had made then: tried again once something new has been defined, never dropped for being early.
+		std::vector<std::pair<size_t, uint64_t>> probe_waiting;
+		uint64_t definitions_made = 0;
+		// Whether a parameter the dictionary names by reference (one level: /Filter, /DecodeParms and their elements,
+		// /N, /First) has no uncompressed definition yet.
+		const auto names_undefined_parameter = [&](const PdfDict& dict) {
+			const auto undefined = [&](const PdfValue* v) {
+				const auto ref = v != nullptr ? v->as_ref() : std::nullopt;
+				if (!ref.has_value()) {
+					return false;
+				}
+				const XrefEntry* entry = table.find(ref->obj_num);
+				return entry == nullptr || !entry->is_uncompressed() || entry->generation != ref->gen_num;
+			};
+			for (const std::string_view key : {"Filter", "DecodeParms", "N", "First"}) {
+				const PdfValue* value = dict.get(PdfName::from_decoded(key));
+				if (undefined(value)) {
+					return true;
+				}
+				if (const PdfArray* arr = value != nullptr ? value->as_array() : nullptr; arr != nullptr) {
+					for (const PdfValue& e : *arr) {
+						if (undefined(&e)) {
+							return true;
+						}
+					}
+				}
+			}
+			return false;
+		};
 		const auto integers_only = [&recovered_integers](IndirectRef len_ref) -> PdfResult<int64_t> {
 			const auto it = recovered_integers.find(len_ref.obj_num);
 			if (it == recovered_integers.end() || it->second.first != len_ref.gen_num) {
@@ -1204,9 +1241,9 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			}
 			return it->second.second;
 		};
-		const auto probe_containers = [&]() -> PdfResult<void> {
-			for (; containers_probed < deferred_objstms.size() && !probe_budget_spent; ++containers_probed) {
-				const DeferredObjStm container_at = deferred_objstms[containers_probed];
+		enum class ProbeOutcome : uint8_t { Done, Waiting };
+		const auto probe_one = [&](const DeferredObjStm container_at) -> PdfResult<ProbeOutcome> {
+			{
 				Parser parser(file_bytes);
 				parser.seek(container_at.pos);
 				auto parsed = parser.parse_indirect_object(integers_only);
@@ -1216,11 +1253,14 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 					if (parsed.error().code == ErrorCode::OutOfMemory) {
 						return parsed.error();
 					}
-					continue;
+					return ProbeOutcome::Done;
 				}
 				const PdfStream* container = parsed->value.as_stream();
 				if (container == nullptr) {
-					continue;
+					return ProbeOutcome::Done;
+				}
+				if (names_undefined_parameter(container->dict)) {
+					return ProbeOutcome::Waiting; // a parameter the scan has not reached yet
 				}
 				// Indirect parameters resolve through what the scan has found so far, so such a container is unpacked
 				// again after the scan with what the whole file says; a container with direct parameters reuses the
@@ -1231,10 +1271,10 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 					if (resolver_over_budget) {
 						return over_budget_error(container_at.pos);
 					}
-					continue;
+					return ProbeOutcome::Done;
 				}
 				if (!filters_are_metered_lossless(view->filters)) {
-					continue;
+					return ProbeOutcome::Done;
 				}
 				const uint64_t left = max_recovery_decoded_objstm_bytes - cumulative_probe_bytes;
 				detail::ScopedDecodeWorkMeter decode_work;
@@ -1251,7 +1291,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 				if (!decoded.has_value()) {
 					// Out of budget, the probe stops; any other failure leaves this container to the unpack after the scan.
 					probe_budget_spent = decoded.error().code == ErrorCode::DecompressionLimitExceeded;
-					continue;
+					return ProbeOutcome::Done;
 				}
 				const std::optional<int64_t> n_opt = view->n;
 				const std::optional<int64_t> first_opt = view->first;
@@ -1270,7 +1310,12 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 							continue;
 						}
 						if (const auto value = member->as_int()) {
-							container_integers[members.entries[idx].obj_num] = {static_cast<uint64_t>(container_at.pos), *value};
+							// The latest container in the file holds an object, whichever order the probe read them in.
+							auto [latest, fresh] = container_integers.try_emplace(
+								members.entries[idx].obj_num, static_cast<uint64_t>(container_at.pos), *value);
+							if (!fresh && latest->second.first <= static_cast<uint64_t>(container_at.pos)) {
+								latest->second = {static_cast<uint64_t>(container_at.pos), *value};
+							}
 							probed_members[{static_cast<uint64_t>(container_at.pos), static_cast<uint32_t>(idx)}] =
 								{members.entries[idx].obj_num, *value};
 						}
@@ -1279,6 +1324,30 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 				}
 				if (!indirect_parameters) {
 					probed_containers[{container_at.obj_num, container_at.pos}] = ProbedContainer{n_opt, first_opt, std::move(bytes)};
+				}
+			}
+			return ProbeOutcome::Done;
+		};
+		const auto probe_containers = [&]() -> PdfResult<void> {
+			// First the containers that waited, once the scan has defined something since they last tried.
+			for (size_t i = 0; i < probe_waiting.size() && !probe_budget_spent;) {
+				auto& [index, seen] = probe_waiting[i];
+				if (seen == definitions_made) {
+					++i;
+					continue;
+				}
+				RECTO_PDF_TRY_REF(outcome, probe_one(deferred_objstms[index]));
+				if (outcome == ProbeOutcome::Waiting) {
+					seen = definitions_made;
+					++i;
+				} else {
+					probe_waiting.erase(probe_waiting.begin() + static_cast<std::ptrdiff_t>(i));
+				}
+			}
+			for (; containers_probed < deferred_objstms.size() && !probe_budget_spent; ++containers_probed) {
+				RECTO_PDF_TRY_REF(outcome, probe_one(deferred_objstms[containers_probed]));
+				if (outcome == ProbeOutcome::Waiting) {
+					probe_waiting.emplace_back(containers_probed, definitions_made);
 				}
 			}
 			return {};
@@ -1492,6 +1561,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 							if (scanned_definitions.size() < effective_max_entries) {
 								scanned_definitions.push_back(ScannedDefinition{static_cast<uint64_t>(pos), obj_num, gen_num});
 							}
+							++definitions_made;
 							recovered_integers.erase(obj_num);
 							catalog_generations.erase(obj_num);
 							indirect_type_dicts.erase(obj_num);
@@ -1708,7 +1778,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		}
 
 		// Unpack the deferred containers in file order, their parameters resolved one level as `parse_target` describes.
-		std::unordered_map<uint64_t, PdfValue> resolved_targets;
+		TargetCache resolved_targets;
 		const IndirectObjectResolver scan_resolver = caching_resolver(resolved_targets);
 		const bool encrypted = table.trailer_.contains("Encrypt");
 		for (DeferredObjStm& deferred : deferred_objstms) {

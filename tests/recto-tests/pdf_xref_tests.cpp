@@ -671,6 +671,23 @@ TEST(PdfXref, RecoveryRoundThreeFixes)
 		EXPECT_EQ(rec->root_ref(), (IndirectRef{1u, 0u}));
 	}
 
+	// Round 7: a probe that meets a container before the scan has defined its parameter object waits instead of giving
+	// up, and reads the parameter afresh once it is defined, so a later stream's /Length still comes from it.
+	{
+		const std::string fake = "\nendstream\nendobj\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n";
+		std::string pdf = "%PDF-1.7\n";
+		const size_t genuine_at = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages +
+			container(20u, "88 0 " + std::to_string(fake.size()), "/N 1 /First 5 /Filter 2 0 R") +
+			"25 0 obj\n<< /Length 99 0 R >>\nstream\nab\nendstream\nendobj\n" // probes before object 2 exists
+			"2 0 obj\n/ASCIIHexDecode\nendobj\n" +
+			"30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(1), nullptr);
+		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
+	}
+
 	// Round 4: object 1 defined three times in the file (a catalog, then two other dictionaries); an intact type-1
 	// row naming the first restores it, catalog and all, so root 1 is valid again.
 	{
