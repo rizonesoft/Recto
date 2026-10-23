@@ -79,7 +79,7 @@ track: M1
 | 19 | §19 | Interpreter work, memory and wall-clock ceilings on hostile content streams | §4, §7, §8, §18 | [ ] |
 | 20 | §20 | Rasterizer failure isolation: typed tile errors, target recreation and retry | §7, §9, §19 | [ ] |
 | 21 | §21 | Page `/UserUnit` in `PageDescription`, physical page size and CLI output size | D01 T01 §10, §6 | [ ] |
-| 22 | §22 | Error codes named by later sections reconciled with `error.h` | §18 | [ ] |
+| 22 | §22 | Error codes named by later sections reconciled with `error.h` | §18 | [x] |
 | 23 | §23 | Closed refusal reasons and numeric context on limit and argument errors | §18 | [x] |
 | 24 | §24 | Conversion-check failures name the check, the page and the measured value | §22, §23 | [ ] |
 | 25 | §25 | Decoder failures keep their step and Windows HRESULT in the diagnostic ring and ETW | §23 | [x] |
@@ -687,9 +687,12 @@ The completion review of `D01 T02 §18` (`docs/reviews/01-engine/D01-T02-s18.md`
 - [x] Append any new codes to `ErrorCode` in `src/pdf/error.h` with their names, `DiagnosticId` entries, messages and recording decision, as `§18` did, and extend `PdfError.ErrorCodeNamesCoverEveryCode`. Done when: the test names every value.
 - [x] Replace each wrong name in the TODO files with `ErrorCode::<code>` from the table, with a dated `**Corrected YYYY-MM-DD:**` note naming the old name without its scope prefix, so the check below does not read the note as a use. Done when: no `PdfErrorCode` scope remains under `todo/`.
 - [x] Add `tests/scripts/test_error_code_names.py`, which reads the `ErrorCode` enumerators from `src/pdf/error.h` and fails on any `ErrorCode::<name>` or `PdfErrorCode::<name>` under `todo/` (outside `implementation-plan.md`) that is not one of them. Done when: it passes on the tree and fails when an unknown qualified name, assembled in the test so no TODO text holds one, is planted in a TODO file. **Corrected 2026-10-23:** (round 2 of `D01 T02 §18`: this item and the context paragraph named unknown codes in their qualified form, which the check would refuse).
-- [ ] Commit: `pdf: error codes named by later sections reconciled with error.h`
+- [x] Commit: `pdf: error codes named by later sections reconciled with error.h`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_error_code_names` passes and fails with a planted unknown code name, and `recto-tests.exe --gtest_filter=PdfError.*` passes under ASan.
+
+> **Verified:** 2026-10-23 | §22 | 9117d02df00ebe9b8a319c92602b7dbe65798baf
+> **Review:** `docs/reviews/d01-t02-s22.json`
 
 ## 23. Closed refusal reasons and numeric context on limit and argument errors
 

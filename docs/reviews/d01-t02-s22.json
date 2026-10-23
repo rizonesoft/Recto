@@ -1,0 +1,68 @@
+{
+  "ref": "D01 T02 \u00a722",
+  "title": "Error codes named by later sections reconciled with `error.h`",
+  "implementation_sha": "9117d02df00ebe9b8a319c92602b7dbe65798baf",
+  "date": "2026-10-23",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s22.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s22.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T02-s22.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/01-engine/D01-T02-s22.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/01-engine/D01-T02-s22.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 6,
+      "report": "docs/reviews/01-engine/D01-T02-s22.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 7,
+      "report": "docs/reviews/01-engine/D01-T02-s22.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "python -m unittest tests.scripts.test_error_code_names tests.scripts.test_pre_commit_hook -> OK (13 tests)",
+    "build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfCrypto.*:PdfFilters.*:PdfXref.*:PdfDocument.*:PdfObject.*:PdfError.*:Support.* -> exit 0, [  PASSED  ] 112 tests.",
+    ".\\build.cmd -> exit 0, 0 Warning(s) in all four configurations, [  PASSED  ] 191 tests."
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s22.md",
+    "verdict": "filed",
+    "candidate": "8010fe052f506240e4b30ce897bfaae7a236a512",
+    "reviewer": "sol",
+    "model": "gpt-6.1-sol",
+    "filed": [
+      "D04 T03 \u00a78",
+      "D04 T05 \u00a712",
+      "D05 T01 \u00a715",
+      "D01 T03 \u00a71",
+      "D04 T01 \u00a72",
+      "D01 T02 \u00a724",
+      "D05 T02 \u00a716",
+      "D07 T02 \u00a715",
+      "D07 T03 \u00a72"
+    ]
+  },
+  "rounds_spent": 7,
+  "round_cap": 33
+}
