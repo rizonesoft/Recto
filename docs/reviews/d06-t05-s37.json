@@ -1,0 +1,57 @@
+{
+  "ref": "D06 T05 \u00a737",
+  "title": "WIC decode failures classified by HRESULT, not reported as damage",
+  "implementation_sha": "e82c8471184a71425e4c81809c010a587a07ac0d",
+  "date": "2026-10-23",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/D06-T05-s37.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/D06-T05-s37.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/D06-T05-s37.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/06-quality/D06-T05-s37.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 5,
+      "report": "docs/reviews/06-quality/D06-T05-s37.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 6,
+      "report": "docs/reviews/06-quality/D06-T05-s37.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfCrypto.*:PdfFilters.*:PdfXref.*:PdfDocument.*:PdfObject.*:PdfError.*:PdfLexer.*:PdfParser.*:Support.* -> exit 0, [  PASSED  ] 132 tests.",
+    ".\\build.cmd -> exit 0, 0 Warning(s) in all four configurations, [  PASSED  ] 193 tests."
+  ],
+  "completion": {
+    "report": "docs/reviews/06-quality/D06-T05-s37.md",
+    "verdict": "filed",
+    "candidate": "49566c39e1b466f0cd2cd79d5fe8102c49b06b8f",
+    "reviewer": "sol",
+    "model": "gpt-6.1-sol",
+    "filed": [
+      "D01 T02 \u00a725",
+      "D01 T03 \u00a71",
+      "D07 T02 \u00a715",
+      "D07 T03 \u00a72"
+    ]
+  },
+  "rounds_spent": 6,
+  "round_cap": 33
+}

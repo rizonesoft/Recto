@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 84 | Checklist items: 502
+Sections: 86 | Checklist items: 514
 
 | Status | Reference   | Deliverable                                                                              | Needs                        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ---------------------------- | ----- |
@@ -71,7 +71,7 @@ Sections: 84 | Checklist items: 502
 | [x]    | D01 T02 §23 | Closed refusal reasons and numeric context on limit and argument errors                  | windows-host                 | 3     |
 | [ ]    | D01 T02 §24 | Conversion-check failures name the check, the page and the measured value                | windows-host                 | 4     |
 | [x]    | D01 T02 §25 | Decoder failures keep their step and Windows HRESULT in the diagnostic ring and ETW      | windows-host                 | 4     |
-| [ ]    | D01 T02 §26 | Image decoder recovery outcomes in diagnostics: substituted rows and refusal causes      | windows-host                 | 3     |
+| [ ]    | D01 T02 §26 | Image decoder recovery outcomes in diagnostics: substituted rows and refusal causes      | windows-host                 | 4     |
 | [x]    | D06 T05 §15 | Audit D01 T01 §1: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW         | windows-host                 | 5     |
 | [x]    | D06 T05 §16 | Audit D01 T01 §2: PdfValue variant object model, dictionary/array helpers and deep       | windows-host                 | 5     |
 | [x]    | D06 T05 §17 | Audit D01 T01 §3: Binary-safe PDF 1.7 and 2.0 lexer (src/pdf/lexer.cpp)                  | windows-host                 | 5     |
@@ -84,7 +84,7 @@ Sections: 84 | Checklist items: 502
 | [ ]    | D06 T05 §24 | Audit D01 T01 §10: pdf::Document page-tree resolver, metadata, /Outlines, font list and  | windows-host                 | 5     |
 | [ ]    | D01 T02 §1  | Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)     | windows-host                 | 7     |
 | [ ]    | D01 T02 §2  | DirectWrite in-memory font loader, Standard 14 metrics, Type 1/3 and `/ToUnicode` CMap   | windows-host                 | 7     |
-| [ ]    | D01 T02 §3  | Content-stream graphics state machine, path construction/clipping and colour spaces      | windows-host                 | 8     |
+| [ ]    | D01 T02 §3  | Content-stream graphics state machine, path construction/clipping and colour spaces      | windows-host                 | 9     |
 | [ ]    | D01 T02 §5  | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`)                       | windows-host                 | 7     |
 | [ ]    | D01 T02 §13 | `ObjectChangeSet` and the in-memory `StagedRevisionChain` over `IncrementalWriter`       | windows-host                 | 9     |
 | [ ]    | D06 T05 §29 | Damaged-file recovery resolves indirect object-stream parameters                         | windows-host                 | 5     |
@@ -94,7 +94,7 @@ Sections: 84 | Checklist items: 502
 | [ ]    | D06 T05 §33 | DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding                               | windows-host                 | 4     |
 | [ ]    | D01 T02 §4  | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects   | windows-host                 | 8     |
 | [ ]    | D01 T02 §6  | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`)       | windows-host                 | 7     |
-| [ ]    | D01 T02 §7  | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation                     | windows-host                 | 6     |
+| [ ]    | D01 T02 §7  | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation                     | windows-host                 | 7     |
 | [ ]    | D01 T02 §8  | `DocumentActor` thread, MPSC queue, 32-page `DisplayList` cache and password state       | windows-host                 | 7     |
 | [ ]    | D01 T02 §9  | `RenderPool` worker threads and 4-tier priority `TileScheduler` with jump cancellation   | windows-host                 | 7     |
 | [ ]    | D01 T02 §10 | `Runtime` coordinator, section 4.8 ordered shutdown sequence and live-object counters    | windows-host                 | 7     |
@@ -124,7 +124,7 @@ Sections: 84 | Checklist items: 502
 | [ ]    | D06 T05 §35 | JBIG2 decoder work and memory bounded at every allocation and loop                       | windows-host                 | 6     |
 | [ ]    | D01 T03 §5  | M1 1-hour `fuzz_open` acceptance run, regression promotion and CI 60s fuzz smoke         | windows-host                 | 6     |
 | [ ]    | D06 T05 §36 | Native JPX decoder bounded by a cumulative work budget                                   | windows-host                 | 4     |
-| [ ]    | D06 T05 §37 | WIC decode failures classified by HRESULT, not reported as damage                        | windows-host                 | 4     |
+| [x]    | D06 T05 §37 | WIC decode failures classified by HRESULT, not reported as damage                        | windows-host                 | 4     |
 | [x]    | D06 T05 §38 | DCT decodes only the pixel representation the caller asked for                           | windows-host                 | 4     |
 | [ ]    | D06 T05 §39 | Per-codec decode latency measured on valid, large and damaged fixtures                   | windows-host                 | 3     |
 | [ ]    | D06 T05 §40 | Image decoder allocations drawn from one budgeted memory resource per decode             | windows-host                 | 5     |
@@ -140,6 +140,8 @@ Sections: 84 | Checklist items: 502
 | [ ]    | D06 T05 §50 | Destinations and links keep view, remote targets, base URI, flags and quadrilaterals     | windows-host                 | 6     |
 | [ ]    | D06 T05 §51 | Font inventory over every resource path, with checked embedding and Type3 classification | windows-host                 | 4     |
 | [ ]    | D06 T05 §52 | Cancellable document opening and extraction                                              | windows-host                 | 3     |
+| [ ]    | D06 T05 §53 | JPX over the full Part 1 range: 38-bit precision, 37 ROI bitplanes, five+ channels       | windows-host                 | 5     |
+| [ ]    | D06 T05 §54 | JPX conformance against ITU-T T.803 codestreams and an independent encoder               | windows-host, third-party    | 4     |
 
 ### Phase 2: M2 Viewer
 
@@ -690,7 +692,7 @@ Sections: 119 | Checklist items: 959
 
 ### Phase 6: M6 Ship
 
-Sections: 72 | Checklist items: 526
+Sections: 73 | Checklist items: 529
 
 | Status | Reference   | Deliverable                                                                              | Needs                               | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------------- | ----- |
@@ -703,6 +705,7 @@ Sections: 72 | Checklist items: 526
 | [ ]    | D06 T04 §21 | Print options, print layouts and Recto PDF virtual printer board                         | windows-host                        | 7     |
 | [ ]    | D06 T04 §23 | Managed settings board: policy lock notes and disabled commands                          | windows-host                        | 7     |
 | [ ]    | D06 T04 §25 | Lifecycle board: Report a problem, What's new, language, RTL and scanner                 | windows-host                        | 7     |
+| [ ]    | D06 T05 §55 | HTJ2K (ISO/IEC 15444-15) and JPX Part 2 codestreams in JPXDecode                         | windows-host                        | 3     |
 | [ ]    | D07 T01 §1  | Print API spike (`PrintManagerInterop` vs `ID2D1PrintControl`) & section 11 note         | windows-host, display-session       | 6     |
 | [ ]    | D07 T01 §2  | Non-blocking print pipeline (`src/app/printing/`, printer-DPI job, preview & `Ctrl+P`)   | windows-host, display-session       | 13    |
 | [ ]    | D07 T01 §3  | Automated `Print-to-PDF` verification seam (`Print.*` in `recto-tests`) against corpus   | windows-host                        | 6     |
@@ -888,6 +891,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 62/819 verified sections, 30 ready to run now.
+Progress: 63/822 verified sections, 29 ready to run now.
 
-Checklist: 398/6000 items completed (includes Commit items).
+Checklist: 402/6015 items completed (includes Commit items).

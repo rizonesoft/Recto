@@ -70,7 +70,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 34 | §34 | CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies | §22 | [ ] |
 | 35 | §35 | JBIG2 decoder work and memory bounded at every allocation and loop | §22 | [ ] |
 | 36 | §36 | Native JPX decoder bounded by a cumulative work budget | §22 | [ ] |
-| 37 | §37 | WIC decode failures classified by HRESULT, not reported as damage | §22 | [ ] |
+| 37 | §37 | WIC decode failures classified by HRESULT, not reported as damage | §22 | [x] |
 | 38 | §38 | DCT decodes only the pixel representation the caller asked for | §22 | [x] |
 | 39 | §39 | Per-codec decode latency measured on valid, large and damaged fixtures | §22 | [ ] |
 | 40 | §40 | Image decoder allocations drawn from one budgeted memory resource per decode | §22 | [ ] |
@@ -86,6 +86,9 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 50 | §50 | Destinations and links keep view, remote targets, base URI, flags and quadrilaterals | §24 | [ ] |
 | 51 | §51 | Font inventory over every resource path, with checked embedding and Type3 classification | §24 | [ ] |
 | 52 | §52 | Cancellable document opening and extraction | §24 | [ ] |
+| 53 | §53 | JPX over the full Part 1 range: 38-bit precision, 37 ROI bitplanes, five+ channels | §32 | [ ] |
+| 54 | §54 | JPX conformance against ITU-T T.803 codestreams and an independent encoder | §32 | [ ] |
+| 55 | §55 | HTJ2K (ISO/IEC 15444-15) and JPX Part 2 codestreams in JPXDecode | §32 | [ ] |
 
 ## 1. Audit D00 T01 §1: Git repository and repo-face files
 
@@ -676,7 +679,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 > **Deferred:** a cumulative work budget for the native JPX decoder -> XREF: D06 T05 §36
 
-> **Deferred:** WIC failures classified by HRESULT -> XREF: D06 T05 §37
+> **Resolved:** WIC failures classified by HRESULT -> XREF: D06 T05 §37 (2026-10-23: closed by D06 T05 §37, which maps each WIC HRESULT class to its error code, keeps the step and HRESULT in every message however memory runs out, and hands JPX to the native decoder only on a capability or data failure)
 
 > **Resolved:** DCT decoding only the requested pixel representation -> XREF: D06 T05 §38 (2026-10-23: closed by D06 T05 §38, which builds one image-sized buffer per requested representation and charges the ceiling with exactly that)
 
@@ -944,6 +947,8 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 
 ## 33. DCT /ColorTransform and Adobe APP14 CMYK and YCCK decoding
 
+> **Started:** 2026-10-23T18:02Z
+
 The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T05 §22, round 1) found DCT decoding ignoring `/ColorTransform` (WIC's interpretation is always used), so a three-component JPEG without an Adobe marker and `/ColorTransform 0` is colour-converted when it must not be (PDF Reference Table 3.11). It also found that the checked Adobe CMYK/YCCK verification of `D01 T01 §8` never existed: the generated JPEG has no APP14 marker, its samples are neutral and no YCCK case is tested. -> XREF: D06 T05 §22
 
 **Phase:** 1
@@ -955,11 +960,12 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 1. Honour `/ColorTransform` (and the Adobe APP14 transform flag when present) when decoding through WIC in `src/pdf/filters.cpp`. Done when: `/ColorTransform 0` yields untransformed samples.
 2. Test Adobe APP14 CMYK and YCCK images with non-neutral samples. Done when: both decode to the expected colours.
 
-- [ ] Read `/ColorTransform` in the DCT decoder and decode with or without the YCbCr/YCCK transform accordingly, preferring the Adobe APP14 transform byte when present, in `src/pdf/filters.cpp`. Done when: a non-neutral three-component JPEG with `/ColorTransform 0` decodes to its raw samples.
-- [ ] Add JPEG fixtures with an Adobe APP14 marker for CMYK (transform 0) and YCCK (transform 2) with non-neutral samples under `tests/corpus/` with provenance rows. Done when: `python scripts/build-corpus.py --check` passes with them.
-- [ ] Add `PdfFilters.DctColorTransformAndAdobeCmykYcck` asserting the decoded colours. Done when: it fails on the code before this section.
+- [x] Read `/ColorTransform` in the DCT decoder and decode with or without the YCbCr/YCCK transform accordingly, preferring the Adobe APP14 transform byte when present, in `src/pdf/filters.cpp`. Done when: a non-neutral three-component JPEG with `/ColorTransform 0` decodes to its raw samples.
+- [x] Add JPEG fixtures with an Adobe APP14 marker for CMYK (transform 0) and YCCK (transform 2) with non-neutral samples under `tests/corpus/` with provenance rows. Done when: `python scripts/build-corpus.py --check` passes with them.
+- [x] Add `PdfFilters.DctColorTransformAndAdobeCmykYcck` asserting the decoded colours. Done when: it fails on the code before this section.
 - [ ] Commit: `pdf: DCT /ColorTransform and Adobe CMYK and YCCK`
 
+> **Corrected 2026-10-23:** (built) the fixtures live in `tests/corpus/images/` (`dct-3c-no-marker.jpg`, `dct-3c-adobe-rgb.jpg`, `dct-4c-adobe-cmyk.jpg`, `dct-4c-adobe-ycck.jpg`), written by `make_dc_only_jpeg` in `scripts/build-corpus.py` and checked against libjpeg through Pillow. Building it found that WIC returns every four-component JPEG complemented (255 - v, with or without an Adobe marker), so Recto's CMYK samples were inverted, and a PDF carrying the usual `/Decode [1 0 1 0 1 0 1 0]` for an Adobe file was inverted twice; DCTDecode now returns the stored samples and leaves inversion to `/Decode`, as libjpeg, pdf.js and MuPDF do. Raw three-component samples come from WIC's planar transform (`IWICPlanarBitmapSourceTransform`); where WIC offers none, a marked WORKAROUND undoes its conversion with the forward JFIF equations. YCCK declared by `/ColorTransform 1` alone (no Adobe marker) is converted by Recto, since WIC does not know it.
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.DctColorTransformAndAdobeCmykYcck`.
 
 ## 34. CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies
@@ -1043,9 +1049,12 @@ The completion review of the `D01 T01 §8` audit (`docs/reviews/06-quality/audit
 - [x] Add one helper in `src/pdf/filters.cpp` that maps a WIC HRESULT to `OutOfMemory` (`E_OUTOFMEMORY`), `UnsupportedFeature` (`WINCODEC_ERR_COMPONENTNOTFOUND`, `WINCODEC_ERR_UNSUPPORTEDPIXELFORMAT`), `Cancelled` (`E_ABORT`) or `DamagedFormat` (data errors such as `WINCODEC_ERR_BADIMAGE`), with the HRESULT in hex in the message. Done when: every WIC failure path in the DCT and JPX decoders returns through it.
 - [x] Fall back from WIC to the native JPX decoder only for codec-absent and data-format failures, never after a resource failure. Done when: an injected `E_OUTOFMEMORY` from WIC returns `OutOfMemory` without a native attempt.
 - [x] Add a test-only HRESULT injection point for the WIC calls and `PdfFilters.WicFailureClasses` covering each class. Done when: the test fails on the code before this section.
-- [ ] Commit: `pdf: WIC failures classified by HRESULT`
+- [x] Commit: `pdf: WIC failures classified by HRESULT`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.WicFailureClasses`.
+
+> **Verified:** 2026-10-23 | §37 | e82c8471184a71425e4c81809c010a587a07ac0d
+> **Review:** `docs/reviews/d06-t05-s37.json`
 
 ## 38. DCT decodes only the pixel representation the caller asked for
 
@@ -1352,6 +1361,63 @@ The completion review of `D06 T05 §24` (`docs/reviews/06-quality/audit-d01-t01-
 - [ ] Commit: `pdf: cancellable document opening`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfDocument.CancelledOpen` passes under ASan.
+
+## 53. JPX over the full Part 1 range: 38-bit precision, 37 ROI bitplanes, five+ channels
+
+The completion review of `D06 T05 §32` (`docs/reviews/06-quality/D06-T05-s32.md`), gap C9) found the native decoder refusing component and palette precision above 16 bits, palette indices above 8 bits and region-of-interest magnitudes above 30 bits, and the header check refusing more than four components (so four colours plus opacity). T.800 Part 1 allows 38-bit components and 37 magnitude bitplanes.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Widen the arithmetic and channel handling in `src/pdf/filters.cpp`. Done when: boundary fixtures decode exactly.
+
+- [ ] Carry coefficients and magnitudes in 64-bit where precision plus guard bits plus ROI shift exceed 31, through Tier-1, dequantization and the inverse transforms. Done when: a 38-bit component and a 37-bitplane ROI codestream decode to their samples (normalized to 8 bits).
+- [ ] Accept palette indices up to 16 bits (1024 entries, T.800 I.5.3.4) and palette columns up to 38 bits. Done when: a 10-bit index palette decodes.
+- [ ] Accept up to 16384 components in the header check, keeping the channel boxes to choose what is output, so CMYK plus opacity and RGB plus spot channels decode. Done when: a five-component CMYK plus alpha JP2 decodes to four colour channels and alpha.
+- [ ] Add `PdfFilters.JpxFullPart1Range` for the cases above. Done when: it fails on the code before this section.
+- [ ] Commit: `pdf: JPX over the full Part 1 numeric and channel range`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.Jpx*` passes under ASan, including `PdfFilters.JpxFullPart1Range`.
+
+## 54. JPX conformance against ITU-T T.803 codestreams and an independent encoder
+
+The completion review of `D06 T05 §32` (`docs/reviews/06-quality/D06-T05-s32.md`), gaps C10 and E2) found the coding-style and reconstruction claims proven only by Recto's own test encoder (checked against OpenJPEG for what it writes), which never writes predictable termination, multiple tiles, layers or progression orders, signed components, irreversible coding or non-empty detail bands at many levels. Independent conformance codestreams are the proof.
+
+**Phase:** 1
+**Needs:** windows-host, third-party
+**Surface:** no
+
+**Build order:**
+
+1. Bring in conformance codestreams and compare. Done when: every one decodes within T.803's tolerance.
+
+- [ ] Third party: obtain the ITU-T T.803 (ISO/IEC 15444-4) Profile 0 and Profile 1 conformance codestreams and their reference images, with licence terms recorded, into `tests/corpus/jpx-conformance/` with provenance rows. Done when: `python scripts/build-corpus.py --check` lists them.
+- [ ] Add `Corpus.JpxConformance` decoding each and comparing with its reference within the peak and mean-square error T.803 allows. Done when: it passes, and fails when any style flag's handling is disabled.
+- [ ] Teach the test encoder predictable termination (T.800 D.4.2) and cross-check it with OpenJPEG. Done when: the style tests include `0x10` codestreams OpenJPEG decodes identically.
+- [ ] Commit: `corpus: JPX conformance codestreams`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Corpus.JpxConformance` passes.
+
+## 55. HTJ2K (ISO/IEC 15444-15) and JPX Part 2 codestreams in JPXDecode
+
+The completion review of `D06 T05 §32` (`docs/reviews/06-quality/D06-T05-s32.md`), gap C17) found Part 2 extensions and high-throughput JPEG 2000 (HTJ2K, the code-block style bits 0x40 and 0x80 the decoder refuses) unsupported. Newer producers write HTJ2K; Recto refuses them with a typed error today.
+
+**Phase:** 6
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Add the HT block decoder and the Part 2 features PDF producers use. Done when: HTJ2K conformance codestreams decode.
+
+- [ ] Implement the HTJ2K block decoder (MEL, VLC and MagSgn decoding, the cleanup and refinement passes; ISO/IEC 15444-15 Clause 7) behind code-block style bit 0x40. Done when: the HTJ2K conformance codestreams decode within tolerance.
+- [ ] Decide which Part 2 features (multiple component transforms, arbitrary wavelets, extended ROI) appear in PDFs in practice, record the decision with its evidence, and decode those. Done when: each decided feature has a fixture that decodes.
+- [ ] Commit: `pdf: HTJ2K and JPX Part 2 decoding`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.Jpx*` passes under ASan, including the HTJ2K fixtures.
 
 ## Verification
 
