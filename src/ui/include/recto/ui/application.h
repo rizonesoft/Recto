@@ -26,13 +26,18 @@ inline constexpr int kExitSelfTestPresentation = 4;
 struct SelfTestFacts {
 	// The first window is visible, so the compositor has a frame to present.
 	bool window_visible{false};
-	// The HRESULT DwmFlush returned: the wait for the composition pass that
-	// presents the frame just painted.
+	// The HRESULT DwmFlush returned: the wait for the compositor's next present,
+	// the first that can carry the frame just painted.
 	long flush_result{-1};
 	// The window's DPI awareness context is per-monitor v2.
 	bool per_monitor_v2{false};
 	// GetACP().
 	unsigned code_page{0};
+	// The thread's desktop receives user input on a visible window station, so
+	// a present reaches the screen (not a desktop that is never switched to).
+	bool on_input_desktop{false};
+	// DWMWA_CLOAKED reads 0: the compositor is not hiding the window.
+	bool not_cloaked{false};
 };
 
 // The self-test exit code for `facts`: presentation is checked first, because

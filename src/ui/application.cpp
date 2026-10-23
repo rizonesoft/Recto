@@ -28,6 +28,24 @@ struct WindowState {
 	int exit_code{kExitOk};
 };
 
+// True when `desktop` is the desktop that receives user input, on a window
+// station the person at the desk can see. A window on any other desktop (one
+// made with CreateDesktopW and never switched to, or the default desktop while
+// the secure desktop is up) is never displayed, however visible its style.
+bool desktop_is_displayed(HDESK desktop) noexcept
+{
+	BOOL receives_input = FALSE;
+	DWORD needed = 0;
+	if (desktop == nullptr || GetUserObjectInformationW(desktop, UOI_IO, &receives_input, sizeof(receives_input), &needed) == FALSE ||
+		receives_input == FALSE) {
+		return false;
+	}
+	USEROBJECTFLAGS flags{};
+	const HWINSTA station = GetProcessWindowStation();
+	return station != nullptr && GetUserObjectInformationW(station, UOI_FLAGS, &flags, sizeof(flags), &needed) != FALSE &&
+		(flags.dwFlags & WSF_VISIBLE) != 0;
+}
+
 // What the running process proves about itself. The manifest XML on disk can
 // be right while the linker never embedded it, and a painted frame can still
 // fail to reach the screen, so the process checks itself.
@@ -35,8 +53,16 @@ SelfTestFacts observe_self_test(HWND window) noexcept
 {
 	SelfTestFacts facts;
 	facts.window_visible = IsWindowVisible(window) != FALSE;
-	// Wait for the desktop compositor to present the frame just painted, so
-	// "first frame" means on screen, not merely drawn.
+	// The window's style says nothing about where it is shown: it must sit on
+	// the input desktop and must not be cloaked by the compositor.
+	facts.on_input_desktop = desktop_is_displayed(GetThreadDesktop(GetCurrentThreadId()));
+	DWORD cloaked = 1;
+	facts.not_cloaked = SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked == 0;
+	// DwmFlush blocks until the compositor's next present. The bootstrap paints
+	// through GDI into the window's redirection surface, which that present
+	// composes, so a successful flush after EndPaint is the first present that
+	// can carry the frame. It proves nothing on its own: the checks above say
+	// whether that present reaches a displayed desktop.
 	facts.flush_result = DwmFlush();
 	facts.per_monitor_v2 =
 		AreDpiAwarenessContextsEqual(GetWindowDpiAwarenessContext(window), DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) != FALSE;
@@ -85,7 +111,7 @@ void report(StartupFailure* failure, const wchar_t* operation, unsigned long err
 
 int self_test_verdict(const SelfTestFacts& facts) noexcept
 {
-	if (!facts.window_visible || FAILED(facts.flush_result)) {
+	if (!facts.window_visible || !facts.on_input_desktop || !facts.not_cloaked || FAILED(facts.flush_result)) {
 		return kExitSelfTestPresentation;
 	}
 	if (!facts.per_monitor_v2) {

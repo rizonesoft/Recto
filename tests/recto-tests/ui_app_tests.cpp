@@ -581,7 +581,10 @@ fs::path recto_exe()
 // `show` is the SW_ value Recto.exe receives as its wWinMain show command;
 // SW_SHOWNOACTIVATE shows it, so it paints, without taking focus from the
 // person at the desk.
-void launch(Process& process, const fs::path& exe, std::wstring_view arguments, WORD show = SW_SHOWNOACTIVATE)
+// `desktop` names the desktop (station\desktop) the process starts on; empty
+// keeps this process's own.
+void launch(Process& process, const fs::path& exe, std::wstring_view arguments, WORD show = SW_SHOWNOACTIVATE,
+	const wchar_t* desktop = nullptr)
 {
 	std::wstring command = L"\"" + exe.wstring() + L"\"";
 	if (!arguments.empty()) {
@@ -592,10 +595,29 @@ void launch(Process& process, const fs::path& exe, std::wstring_view arguments, 
 	startup.cb = sizeof(startup);
 	startup.dwFlags = STARTF_USESHOWWINDOW;
 	startup.wShowWindow = show;
+	startup.lpDesktop = const_cast<wchar_t*>(desktop);
 	ASSERT_NE(CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, exe.parent_path().c_str(),
 				  &startup, &process.info()),
 		FALSE)
 		<< "could not start " << exe.string();
+}
+
+// True when this test process sits on the desktop that receives user input on
+// a visible window station. A locked workstation or a run on a non-interactive
+// desktop is not a place a frame can be presented, so the launch tests skip
+// there with the reason instead of failing.
+bool own_desktop_is_displayed()
+{
+	BOOL receives_input = FALSE;
+	DWORD needed = 0;
+	if (GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()), UOI_IO, &receives_input, sizeof(receives_input), &needed) ==
+			FALSE ||
+		receives_input == FALSE) {
+		return false;
+	}
+	USEROBJECTFLAGS flags{};
+	return GetUserObjectInformationW(GetProcessWindowStation(), UOI_FLAGS, &flags, sizeof(flags), &needed) != FALSE &&
+		(flags.dwFlags & WSF_VISIBLE) != 0;
 }
 
 struct WindowSearch {
@@ -747,6 +769,9 @@ RECTO_UI_TEST(App, SelfTestExit)
 	// and exits 0 by itself, with no person at the desk.
 	const fs::path exe = recto_exe();
 	ASSERT_TRUE(fs::exists(exe)) << exe.string() << " is not built";
+	if (!own_desktop_is_displayed()) {
+		GTEST_SKIP() << "this process is not on the displayed input desktop (locked or non-interactive session)";
+	}
 	const auto started = std::chrono::steady_clock::now();
 	Process process;
 	ASSERT_NO_FATAL_FAILURE(launch(process, exe, L"--self-test-exit"));
@@ -767,7 +792,7 @@ RECTO_UI_TEST(App, SelfTestVerdict)
 	// pass.
 	using recto::ui::SelfTestFacts;
 	using recto::ui::self_test_verdict;
-	const SelfTestFacts healthy{true, S_OK, true, CP_UTF8};
+	const SelfTestFacts healthy{true, S_OK, true, CP_UTF8, true, true};
 	EXPECT_EQ(self_test_verdict(healthy), recto::ui::kExitOk);
 
 	SelfTestFacts flush_failed = healthy;
@@ -780,6 +805,14 @@ RECTO_UI_TEST(App, SelfTestVerdict)
 	hidden.window_visible = false;
 	EXPECT_EQ(self_test_verdict(hidden), recto::ui::kExitSelfTestPresentation);
 
+	SelfTestFacts other_desktop = healthy;
+	other_desktop.on_input_desktop = false;
+	EXPECT_EQ(self_test_verdict(other_desktop), recto::ui::kExitSelfTestPresentation);
+
+	SelfTestFacts cloaked = healthy;
+	cloaked.not_cloaked = false;
+	EXPECT_EQ(self_test_verdict(cloaked), recto::ui::kExitSelfTestPresentation);
+
 	SelfTestFacts not_v2 = healthy;
 	not_v2.per_monitor_v2 = false;
 	EXPECT_EQ(self_test_verdict(not_v2), recto::ui::kExitSelfTestDpiAwareness);
@@ -789,7 +822,7 @@ RECTO_UI_TEST(App, SelfTestVerdict)
 	EXPECT_EQ(self_test_verdict(ansi), recto::ui::kExitSelfTestCodePage);
 
 	// Presentation is judged first: nothing else means anything without a frame.
-	const SelfTestFacts everything_wrong{false, E_FAIL, false, 1252};
+	const SelfTestFacts everything_wrong{false, E_FAIL, false, 1252, false, false};
 	EXPECT_EQ(self_test_verdict(everything_wrong), recto::ui::kExitSelfTestPresentation);
 	// A default-constructed fact set never passes.
 	EXPECT_NE(self_test_verdict(SelfTestFacts{}), recto::ui::kExitOk);
@@ -802,6 +835,9 @@ RECTO_UI_TEST(App, SelfTestIgnoresHiddenShowCommand)
 	// wait for a frame that never comes.
 	const fs::path exe = recto_exe();
 	ASSERT_TRUE(fs::exists(exe)) << exe.string() << " is not built";
+	if (!own_desktop_is_displayed()) {
+		GTEST_SKIP() << "this process is not on the displayed input desktop (locked or non-interactive session)";
+	}
 	for (const WORD show : {static_cast<WORD>(SW_HIDE), static_cast<WORD>(SW_SHOWMINNOACTIVE)}) {
 		Process process;
 		ASSERT_NO_FATAL_FAILURE(launch(process, exe, L"--self-test-exit", show));
@@ -809,6 +845,39 @@ RECTO_UI_TEST(App, SelfTestIgnoresHiddenShowCommand)
 		ASSERT_TRUE(code.has_value()) << "show command " << show << ": Recto.exe --self-test-exit was still running after 5 s";
 		EXPECT_EQ(*code, static_cast<DWORD>(recto::ui::kExitOk)) << "show command " << show;
 	}
+}
+
+RECTO_UI_TEST(App, SelfTestFailsOnUndisplayedDesktop)
+{
+	// A frame painted on a desktop nobody can see was never presented. Start
+	// Recto.exe on a desktop made for the test and never switched to: the
+	// window is visible by style and DwmFlush succeeds, yet the self-test must
+	// report exit 4, not 0.
+	const fs::path exe = recto_exe();
+	ASSERT_TRUE(fs::exists(exe)) << exe.string() << " is not built";
+	wchar_t desktop_name[64]{};
+	swprintf_s(desktop_name, L"VellumSelfTest%lu", GetCurrentProcessId());
+	const HDESK desktop = CreateDesktopW(desktop_name, nullptr, nullptr, 0, GENERIC_ALL, nullptr);
+	ASSERT_NE(desktop, nullptr) << "CreateDesktopW failed: " << GetLastError();
+	wchar_t station_name[64]{};
+	DWORD needed = 0;
+	ASSERT_NE(GetUserObjectInformationW(GetProcessWindowStation(), UOI_NAME, station_name, sizeof(station_name), &needed), FALSE);
+	const std::wstring target = std::wstring(station_name) + L"\\" + desktop_name;
+	std::optional<DWORD> code;
+	{
+		Process process;
+		launch(process, exe, L"--self-test-exit", SW_SHOWNOACTIVATE, target.c_str());
+		if (!::testing::Test::HasFatalFailure()) {
+			code = process.wait(5000);
+			if (!code.has_value()) {
+				TerminateProcess(process.info().hProcess, 124);
+				WaitForSingleObject(process.info().hProcess, INFINITE);
+			}
+		}
+	}
+	CloseDesktop(desktop);
+	ASSERT_TRUE(code.has_value()) << "Recto.exe --self-test-exit on an undisplayed desktop was still running after 5 s";
+	EXPECT_EQ(*code, static_cast<DWORD>(recto::ui::kExitSelfTestPresentation)) << "exit code " << *code;
 }
 
 RECTO_UI_TEST(App, StartupFailureIsReported)
@@ -870,6 +939,9 @@ RECTO_UI_TEST(App, SelfTestStartupBudget)
 	constexpr long long kBudgetMs = 400;
 	const fs::path exe = recto_exe();
 	ASSERT_TRUE(fs::exists(exe)) << exe.string() << " is not built";
+	if (!own_desktop_is_displayed()) {
+		GTEST_SKIP() << "this process is not on the displayed input desktop (locked or non-interactive session)";
+	}
 	std::vector<long long> runs;
 	for (int run = 0; run < 5; ++run) {
 		const auto started = std::chrono::steady_clock::now();
