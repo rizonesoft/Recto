@@ -340,7 +340,7 @@ def digest(lines):
     return hashlib.sha256("\n".join(canonical(line) for line in lines).encode("utf-8")).hexdigest()[:16]
 
 
-def read_findings(text):
+def _read_findings(text):
     """The rounds and completion reviews `record` and `record_completion` wrote in one findings file, as
     `{"rounds": [...], "completions": [...]}`, or None when anything they write is not as they write it.
 
@@ -361,9 +361,10 @@ def read_findings(text):
         if not lines[i].startswith("## Round") and not completion:
             i += 1
             continue
+        head = i
         heading = (COMPLETION_HEADING if completion else ROUND_HEADING).match(lines[i])
         if not heading or i + 1 >= len(lines) or lines[i + 1] != "":
-            return None
+            return None, head
         if completion:
             entry = {"reviewer": heading.group(2), "model": heading.group(3), "cli": heading.group(4), "writer": None,
                      "run": None, "candidate": None, "effort": None, "skipped": []}
@@ -375,38 +376,38 @@ def read_findings(text):
         while i < len(lines) and lines[i] != "":
             field = (COMPLETION_LINE if completion else ROUND_LINE).match(lines[i])
             if not field:
-                return None
+                return None, head
             key, value = field.group(1).lower(), field.group(2)
             if key == "skipped":
                 skipped = SKIPPED.match(value)
                 if not skipped:
-                    return None
+                    return None, head
                 entry["skipped"].append({"reviewer": skipped.group(1), "reason": skipped.group(2)})
             elif key == "lines":
                 # ASCII digits only: "²" passes str.isdigit and int() raises on it.
                 if count is not None or not COUNT.fullmatch(value):
-                    return None
+                    return None, head
                 count = int(value)
             elif key == "digest":
                 if sealed is not None or not DIGEST.fullmatch(value):
-                    return None
+                    return None, head
                 sealed = value
             elif entry[key] is not None or (key == "candidate" and not CANDIDATE.fullmatch(value)):
-                return None
+                return None, head
             else:
                 entry[key] = value
             i += 1
         if entry["writer"] is None or entry["run"] is None or (sealed is not None and count is None):
-            return None
+            return None, head
         if completion and (entry["candidate"] is None or sealed is None):
-            return None
+            return None, head
         if count is not None:
             start = i + 1  # the blank line after the metadata, then the review, unread
             i = start + count
             if i > len(lines) or (i < len(lines) and lines[i] != ""):
-                return None
+                return None, head
             if sealed is not None and digest(raw[start:i]) != sealed:
-                return None
+                return None, head
             entry["review"] = "\n".join(lines[start:i])
         else:
             end = next((j for j in range(i, len(lines))
@@ -420,7 +421,23 @@ def read_findings(text):
             completions.append(entry)
         else:
             rounds.append(entry)
-    return {"rounds": rounds, "completions": completions}
+    return {"rounds": rounds, "completions": completions}, None
+
+
+def read_findings(text):
+    """See `_read_findings`: the parsed rounds and completion reviews, or None when the file cannot be read back."""
+    return _read_findings(text)[0]
+
+
+def unreadable_heading(text):
+    """The line where a findings file stops being readable, as `line N: <text>`, so a refusal can name it. A writer's
+    own note under a heading that starts `## Round` or `## Completion review` is the usual cause: those prefixes are
+    reserved for what `--record` writes."""
+    found, head = _read_findings(text)
+    if found is not None or head is None:
+        return ""
+    lines = raw_lines(text)
+    return f"; the first unreadable record starts at line {head + 1}: {canonical(lines[head])!r}" if head < len(lines) else ""
 
 
 def read_rounds(text):
@@ -463,8 +480,9 @@ def record(path, result, when):
     existing = existing_findings(path, "round")
     known = read_rounds(existing)
     if known is None:
-        raise Unrecorded(f"{path} cannot be read back (a round heading or line is not in the format --record writes), "
-                         f"so the round was not recorded")
+        raise Unrecorded(f"{path} cannot be read back (a round heading or line is not in the format --record writes"
+                         f"{unreadable_heading(existing)}; headings starting `## Round` or `## Completion review` are "
+                         f"reserved for --record), so the round was not recorded")
     number = len(known) + 1
     who = f"{result['reviewer']} (`{result['model']}` via `{result['cli']}`)" if result["reviewer"] else "none"
     review = raw_lines(result["review"] or "No reviewer returned a review. This round is not an approval.")
@@ -486,8 +504,9 @@ def record_completion(path, result, when, candidate):
     existing = existing_findings(path, "completion review")
     known = read_completions(existing)
     if known is None:
-        raise Unrecorded(f"{path} cannot be read back (a heading or line is not in the format --record writes), "
-                         f"so the completion review was not recorded")
+        raise Unrecorded(f"{path} cannot be read back (a heading or line is not in the format --record writes"
+                         f"{unreadable_heading(existing)}; headings starting `## Round` or `## Completion review` are "
+                         f"reserved for --record), so the completion review was not recorded")
     if any(entry["reviewer"] for entry in known):
         raise Unrecorded(f"{path} already holds a completion review; it is one pass, so this one was not recorded")
     who = f"{result['reviewer']} (`{result['model']}` via `{result['cli']}`)" if result["reviewer"] else "none"

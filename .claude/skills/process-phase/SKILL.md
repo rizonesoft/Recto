@@ -58,6 +58,12 @@ Then check CI, red first: run `python scripts/ci_status.py` (the latest complete
 - Exit 3 (`gh` missing, unauthenticated or failing): the state is unknown, never green. Record it in the run file and carry on; the next boundary checks again.
 - Record every red in the run file's Sections or Critical events: workflow, commit, run URL, failed jobs, the cause and the outcome (rerun green, fix commit, or the section filed).
 
+Long jobs never stall the run (owner direction 2026-10-23, after a review job died silently and a build was killed for memory):
+
+- One heavy job at a time: a build, the AddressSanitizer build, a Sol round and a long test suite never overlap, because other sessions share this machine. Before each, read `(Get-Counter '\Memory\Available MBytes').CounterSamples[0].CookedValue`; under 3000 MB, wait (re-check every minute, up to 30 minutes) instead of starting a job the host may kill.
+- After launching a background job, confirm within a few minutes that its process exists and its output file is growing or it has finished. Never wait on a job whose process is gone: a job that ended without its result (killed, no output, no notification) is relaunched once, alone, and the relaunch recorded in the findings file and the run file; a second loss is a Critical event, and the row continues with the next step that does not need that result or parks as a leftover.
+- An idle wait longer than 15 minutes with no job alive is a stall: re-check the job, resume the row, and record it.
+
 Skip rows whose `resolve` is not exit 0 here, and rows whose Needs name a host this session cannot reach (`resolve` and `query ready` do not know which hosts are reachable, so a host-bound row can exit 0 and still be a leftover; step 1.3 records which), and re-check them after each stamp: the graph moves as rows flip. When every remaining open row is a leftover, the phase parks: write a column-0 `PARKED <UTC stamp> run=<run id> <one-line reason>` line in the run file (the run id `acquire` printed, so the Stop hook lets the turn end) followed by the park record (each leftover, what blocks it, where the blocker lives), commit the run file, and return to `process-plan`. A phase started on its own ends its guard here: `python scripts/campaign_guard.py end --session $CLAUDE_CODE_SESSION_ID --reason park`, `CronDelete` the job it names, confirm with `CronList`, then `cancel-confirmed`.
 
 ## Step 4: closeout

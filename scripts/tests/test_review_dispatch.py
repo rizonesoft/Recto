@@ -376,6 +376,25 @@ class Dispatch(unittest.TestCase):
         self.assertEqual([r["number"] for r in listing["records"][0]["rounds"]], [1, 2])
         self.assertNotIn("unreadable", listing)
 
+    def test_a_writer_note_under_a_reserved_heading_is_refused_by_name(self):
+        # A writer's own `## Round budget` note made a returned review vanish with a bare "cannot be read back"
+        # (2026-10-23): the refusal now names the line, and says the prefixes are reserved for --record.
+        module = self.module()
+        path = self.repo / "docs/reviews/n.md"
+        module.record(path, {**self.RESULT, "review": "Plain."}, "2026-10-23T00:00:00Z")
+        path.write_text(path.read_text(encoding="utf-8") + "\n## Round budget (writer)\n\nCap 33.\n", encoding="utf-8")
+        with self.assertRaises(module.Unrecorded) as caught:
+            module.record(path, {**self.RESULT, "review": "Next."}, "2026-10-23T00:00:01Z")
+        message = str(caught.exception)
+        self.assertIn("'## Round budget (writer)'", message)
+        self.assertIn("reserved for --record", message)
+        self.assertRegex(message, r"line [0-9]+:")
+        with self.assertRaises(module.Unrecorded) as caught:
+            module.record_completion(path, {**self.RESULT, "review": "Gaps."}, "2026-10-23T00:00:02Z", "a" * 40)
+        self.assertIn("'## Round budget (writer)'", str(caught.exception))
+        # A readable file names nothing.
+        self.assertEqual(module.unreadable_heading("# Findings\n\n## Writer note\n\nText.\n"), "")
+
     def test_the_line_count_envelope_holds_against_other_line_breaks_and_hand_edits(self):
         module = self.module()
         path = self.repo / "docs/reviews/u.md"
