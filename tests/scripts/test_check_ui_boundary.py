@@ -46,8 +46,12 @@ class EvaluationTests(unittest.TestCase):
             {"Identity": "x64_only.cpp", "ObjectFileName": "obj\\", "SourceDependenciesFile": "obj\\",
              "GenerateSourceDependencies": "true", "ExcludedFromBuild": "true"},
             {"Identity": "sub\\b.cpp", "ObjectFileName": "obj\\b2", "SourceDependenciesFile": "obj\\",
-             "GenerateSourceDependencies": "false"}])
-        self.assertEqual([u.source.name for u in units], ["a.cpp", "b.cpp"])
+             "GenerateSourceDependencies": "false"},
+            {"Identity": "c.cpp", "ObjectFileName": "obj\\", "SourceDependenciesFile": "obj\\deps",
+             "GenerateSourceDependencies": "true"}])
+        self.assertEqual([u.source.name for u in units], ["a.cpp", "b.cpp", "c.cpp"])
+        # /sourceDependencies writes a named file exactly as named (round 14); /Fo completes a bare name with .obj.
+        self.assertEqual(units[2].report, boundary.normalized(folder / "obj" / "deps"))
         self.assertEqual(units[0].report, boundary.normalized(folder / "obj" / "000-a.cpp.json"))
         self.assertEqual(units[0].obj, boundary.normalized(folder / "obj" / "a.obj"))
         self.assertEqual(units[1].obj, boundary.normalized(folder / "obj" / "b2.obj"))
@@ -55,11 +59,20 @@ class EvaluationTests(unittest.TestCase):
         self.assertFalse(units[1].generates)
 
     def test_the_build_properties_reach_the_evaluation(self):
-        arguments = boundary.evaluation_arguments("msbuild", "p.vcxproj", "Release", "x64", ["EnableASAN=true"])
+        arguments = boundary.evaluation_arguments("msbuild", "p.vcxproj", "Release", "x64",
+                                                  ["EnableASAN=true", "TreatWarningsAsErrors=true"])
         self.assertIn("-p:EnableASAN=true", arguments)
+        self.assertIn("-p:TreatWarningsAsErrors=true", arguments)
+        # build.ps1 hands the check every /p: it gives MSBuild (round 14: TreatWarningsAsErrors was missing).
         build = (REPO / "build" / "build.ps1").read_text(encoding="utf-8")
-        self.assertIn('check-ui-boundary.py\') --configuration $cfg --platform $plat --vs $vs --property '
-                      '"EnableASAN=$desiredAsanState"', build)
+        self.assertIn("$boundaryProperties = @($msbuildArgs | Where-Object { $_ -like '/p:*' } | ForEach-Object "
+                      "{ '--property'; $_.Substring(3) })", build)
+        self.assertIn("--configuration $cfg --platform $plat --vs $vs @boundaryProperties", build)
+
+    def test_win32_names_drop_trailing_dots_and_spaces(self):
+        self.assertIn(boundary.win32_name("recto-ui.lib. "),
+                      boundary.library_names([pathlib.Path(tempfile.gettempdir()) / "recto-ui.lib"]))
+        self.assertIn("recto-ui", boundary.library_names([pathlib.Path(tempfile.gettempdir()) / "recto-ui.lib"]))
 
 
 @unittest.skipUnless(sys.platform == "win32", "the C++ build tools are Windows-only (foundation plan D15)")
@@ -173,20 +186,71 @@ class CompilerReportedBoundaryTests(unittest.TestCase):
         self.assertEqual(len(found), 1, found)
         self.assertIn("shared", found[0])
 
-    def test_the_other_sides_precompiled_header_or_module_counts(self):
-        # Round 13: a PCH or an imported module's BMI built by the toolkit is a crossing with no toolkit header opened.
+    def test_the_other_sides_precompiled_header_is_caught(self):
+        # Round 13, compiled for real (round 14): the toolkit builds a PCH in its IntDir from a header in a neutral
+        # folder, and an engine unit uses it. The unit opens no file under src/ui; its report names the toolkit's PCH.
+        (self.root / "shared/p.h").write_text("inline int shared_thing() { return 4; }\n", encoding="utf-8")
+        (self.root / "src/ui/p.cpp").write_text('#include "p.h"\n', encoding="utf-8")
+        pch = self.root / "obj/ui/p.pch"
+        self.compile(self.root / "src/ui/p.cpp", self.root / "obj/ui", f"/I{self.root / 'shared'}", "/Ycp.h", f"/Fp{pch}")
+        source = self.root / "src/core/e.cpp"
+        source.write_text('#include "p.h"\nint e() { return shared_thing(); }\n', encoding="utf-8")
+        unit = self.compile(source, self.root / "obj/core", f"/I{self.root / 'shared'}", "/Yup.h", f"/Fp{pch}")
+        found = boundary.include_crossings("recto-core", [unit], self.forbidden)
+        self.assertEqual(found, [f"recto-core: {unit.source} used {boundary.normalized(pch)}"])
+
+    def test_the_other_sides_module_interface_is_caught(self):
+        # Round 13, compiled for real (round 14): the toolkit compiles a module interface into its IntDir and an engine
+        # unit imports it by /reference, with no toolkit header anywhere.
+        interface = self.root / "src/ui/toolkit.ixx"
+        interface.write_text("export module recto.ui;\nexport int toolkit_value() { return 5; }\n", encoding="utf-8")
+        bmi = self.root / "obj/ui/recto.ui.ifc"
+        self.compile(interface, self.root / "obj/ui", "/std:c++latest", "/interface", f"/ifcOutput{bmi}")
+        source = self.root / "src/core/m.cpp"
+        source.write_text("import recto.ui;\nint m() { return toolkit_value(); }\n", encoding="utf-8")
+        unit = self.compile(source, self.root / "obj/core", "/std:c++latest", "/reference", f"recto.ui={bmi}")
+        found = boundary.include_crossings("recto-core", [unit], self.forbidden)
+        self.assertTrue(found, "an imported toolkit module must be a crossing")
+        self.assertTrue(any(str(boundary.normalized(bmi)) in line for line in found), found)
+
+    def test_report_parsing_counts_header_units(self):
+        # Parser coverage only (no compile): an imported header unit's header and BMI are paths the unit used.
         source = self.root / "src/core/d.cpp"
         report = self.root / "obj/core/d.cpp.json"
+        report.write_text(json.dumps({"Version": "1.2", "Data": {"Source": str(source), "Includes": [],
+                                      "ImportedHeaderUnits": [{"Header": str(self.root / "src/ui/x.h"),
+                                                               "BMI": str(self.root / "obj/x.h.ifc")}]}}),
+                          encoding="utf-8")
         unit = boundary.Unit(boundary.normalized(source), boundary.normalized(self.root / "obj/core/d.obj"),
                              boundary.normalized(report), True)
-        for key, value in {"PCH": str(self.root / "obj/ui/pch.pch"),
-                           "ImportedModules": [{"Name": "recto.ui", "BMI": str(self.root / "obj/ui/toolkit.ixx.ifc")}],
-                           "ImportedHeaderUnits": [{"Header": str(self.root / "src/ui/x.h"),
-                                                    "BMI": str(self.root / "obj/x.h.ifc")}]}.items():
-            with self.subTest(key=key):
-                report.write_text(json.dumps({"Version": "1.2", "Data": {"Source": str(source), "Includes": [],
-                                                                        key: value}}), encoding="utf-8")
-                self.assertEqual(len(boundary.include_crossings("recto-core", [unit], self.forbidden)), 1)
+        self.assertEqual(len(boundary.include_crossings("recto-core", [unit], self.forbidden)), 1)
+
+    def test_a_linker_option_naming_the_toolkit_with_a_trailing_dot_is_caught(self):
+        # Round 14: /DEFAULTLIB:recto-ui.lib. through a macro kind; LINK opens recto-ui.lib for it.
+        source = self.root / "src/core/dot.cpp"
+        source.write_text('#define KIND linker\n#pragma comment(KIND, "/DEFAULTLIB:recto-ui.lib.")\nint dot() { return 0; }\n',
+                          encoding="utf-8")
+        unit = self.compile(source, self.root / "obj/core")
+        library = self.library(self.root / "obj/core/dot.lib", unit.obj)
+        self.assertEqual(len(self.directives(library)), 1)
+
+    def test_a_symbol_the_other_side_defines_is_caught(self):
+        # Round 14: recto-ui forward-declares an engine function. No header, directive or member crosses; the toolkit
+        # library's undefined symbol is defined by the engine library, which is what the linker would resolve.
+        (self.root / "src/core/abi.cpp").write_text("namespace recto::core { int abi_version() { return 7; } }\n",
+                                                    encoding="utf-8")
+        engine_unit = self.compile(self.root / "src/core/abi.cpp", self.root / "obj/core", "/std:c++latest")
+        engine = self.library(self.root / "obj/core/recto-core.lib", engine_unit.obj)
+        (self.root / "src/ui/v.cpp").write_text("namespace recto::core { int abi_version(); }\n"
+                                                "namespace recto::ui { int version() { return recto::core::abi_version(); } }\n",
+                                                encoding="utf-8")
+        toolkit_unit = self.compile(self.root / "src/ui/v.cpp", self.root / "obj/ui", "/std:c++latest")
+        toolkit = self.library(self.root / "obj/ui/recto-ui.lib", toolkit_unit.obj)
+        dumpbin = self.tools / "dumpbin.exe"
+        engine_table, toolkit_table = boundary.symbol_table(engine, dumpbin), boundary.symbol_table(toolkit, dumpbin)
+        self.assertEqual(boundary.symbol_crossings("recto-ui", toolkit_table, {"recto-core": engine_table}),
+                         ["recto-ui: needs ?abi_version@core@recto@@YAHXZ, which recto-core defines"])
+        self.assertEqual(boundary.symbol_crossings("recto-core", engine_table, {"recto-ui": toolkit_table}), [])
 
     def test_a_stale_report_elsewhere_is_never_read_in_place_of_the_current_one(self):
         # Round 13: SourceDependenciesFile moved to 000-a.cpp.json; the old a.cpp.json (clean) is still in the folder.

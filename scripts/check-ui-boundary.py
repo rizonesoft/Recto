@@ -14,7 +14,10 @@ option or a linker directive can matter:
   (`#pragma comment(lib)` and `comment(linker)` as the compiler resolved them); none may name the other side's library
   by its evaluated file name, stem or folder. `lib /list` lists the members the librarian put in it; each must be an
   object the project compiled itself (an allow list), so a merged library or an added object is refused wherever it is.
-- The projects are evaluated with the global properties the build used (`--property EnableASAN=true`).
+- Symbols: `dumpbin /symbols` of each module library; no symbol a module needs from outside itself (or forces with
+  /INCLUDE:) may be one the other side defines. A library only contributes code that resolves an undefined symbol, so
+  this holds whatever library names reach the linker.
+- The projects are evaluated with every global property the build used (`--property Name=Value`, one per /p:).
 
 The text scanners (Ui.Project.IncludeBoundary, Ui.Project.NoWinRtUiTypes, tests/scripts/test_ui_module_boundary.py)
 stay as fast early warnings; this check is the proof. build/build.ps1 runs it after each configuration it builds.
@@ -109,15 +112,16 @@ class Project:
         return {unit.source for unit in self.units}
 
 
-def output_path(project_folder, value, filename, extension):
-    """A cl output switch's evaluated value as one file: a value ending in a separator is a folder, so the file is
-    `<folder>/<source file name><extension>`; a value with no extension gets one, as cl does."""
+def output_path(project_folder, value, filename, extension, completes):
+    """A cl output switch's evaluated value as one file, the way cl names it: a value ending in a separator is a folder,
+    so the file is `<folder>/<filename><extension>`; a file name is used as written, except that a switch that
+    `completes` (/Fo) adds the extension to a name that has none. /sourceDependencies does not: `deps` is `deps`."""
     if not value:
         raise EvidenceError(f"no output location evaluated for {filename}")
     if value.endswith(("\\", "/")):
         return normalized(pathlib.Path(project_folder) / value / f"{filename}{extension}")
     path = pathlib.Path(project_folder) / value
-    return normalized(path if path.suffix else path.with_suffix(extension))
+    return normalized(path.with_suffix(extension) if completes and not path.suffix else path)
 
 
 def compiled_units(project_folder, items):
@@ -130,8 +134,8 @@ def compiled_units(project_folder, items):
         source = normalized(pathlib.Path(project_folder) / item["Identity"])
         name = pathlib.Path(item["Identity"]).name
         stem = pathlib.Path(item["Identity"]).stem
-        obj = output_path(project_folder, item.get("ObjectFileName", ""), stem, ".obj")
-        report = output_path(project_folder, item.get("SourceDependenciesFile", ""), name, ".json")
+        obj = output_path(project_folder, item.get("ObjectFileName", ""), stem, ".obj", completes=True)
+        report = output_path(project_folder, item.get("SourceDependenciesFile", ""), name, ".json", completes=False)
         units.append(Unit(source, obj, report, item.get("GenerateSourceDependencies", "").strip().lower() == "true"))
     return units
 
@@ -217,9 +221,30 @@ def include_crossings(name, units, forbidden_folders):
     return sorted(set(found))
 
 
+def win32_name(name):
+    """A file name as Win32 resolves it: case ignored, and trailing dots and spaces dropped (`recto-ui.lib.` opens
+    `recto-ui.lib`), which is how LINK finds a /DEFAULTLIB library."""
+    return name.rstrip(". ").lower()
+
+
+def short_name(path):
+    """The 8.3 short name of an existing file, which LINK also accepts, or the long name when there is none."""
+    if sys.platform != "win32" or not pathlib.Path(path).exists():
+        return pathlib.Path(path).name
+    import ctypes
+    buffer = ctypes.create_unicode_buffer(1024)
+    length = ctypes.windll.kernel32.GetShortPathNameW(str(path), buffer, len(buffer))
+    return pathlib.PureWindowsPath(buffer.value).name if 0 < length < len(buffer) else pathlib.Path(path).name
+
+
 def library_names(libraries):
-    """File names and stems a linker directive could use for each of `libraries` (`recto-ui.lib`, `recto-ui`)."""
-    return {library.name.lower() for library in libraries} | {library.stem.lower() for library in libraries}
+    """Every name a linker directive could use for each of `libraries`: the file name, its short name and the stem
+    (LINK adds .lib to a name with no extension), compared as Win32 compares them."""
+    names = set()
+    for library in libraries:
+        library = pathlib.Path(library)
+        names |= {win32_name(library.name), win32_name(short_name(library)), win32_name(library.stem)}
+    return names
 
 
 def directive_crossings(name, library, forbidden_libraries, forbidden_folders, dumpbin):
@@ -237,12 +262,43 @@ def directive_crossings(name, library, forbidden_libraries, forbidden_folders, d
             candidates = [spelled, value] if value else [spelled]
             hit = False
             for candidate in candidates:
-                file = pathlib.PureWindowsPath(candidate).name.lower()
+                file = win32_name(pathlib.PureWindowsPath(candidate).name)
                 hit = hit or file in names or (pathlib.PureWindowsPath(candidate).is_absolute() and
                                                any(inside(candidate, folder) for folder in forbidden_folders))
             if hit:
                 found.append(f"{name}: {normalized(library)} carries the linker directive {token}")
     return sorted(set(found))
+
+
+def symbol_table(library, dumpbin):
+    """(defined, undefined) external symbols of `library`'s members, from `dumpbin /symbols`, plus the symbols its
+    /INCLUDE: directives force the linker to resolve (counted as undefined)."""
+    defined, undefined = set(), set()
+    for line in run([dumpbin, "/nologo", "/symbols", library]).splitlines():
+        left, bar, right = line.partition("|")
+        fields = left.split()
+        if not bar or "External" not in fields or len(fields) < 3:
+            continue
+        symbol = right.strip().split(" ", 1)[0]
+        # UNDEF with a value is a COMMON symbol, which this member defines.
+        (undefined if "UNDEF" in fields and int(fields[1], 16) == 0 else defined).add(symbol)
+    for line in run([dumpbin, "/nologo", "/directives", library]).splitlines():
+        for token in line.split():
+            if token[1:].lower().startswith("include:"):
+                undefined.add(token.split(":", 1)[1].strip('"'))
+    return defined, undefined
+
+
+def symbol_crossings(name, table, forbidden_tables):
+    """Symbols module `name` needs from outside itself that the other side defines. A library only contributes code
+    that resolves an undefined symbol, so this is the link-level proof, whatever names or directives reach the linker:
+    a forward declaration of an engine function in recto-ui (or the reverse) shows here and nowhere else."""
+    defined, undefined = table
+    needed = undefined - defined
+    found = []
+    for other, (other_defined, _) in sorted(forbidden_tables.items()):
+        found += [f"{name}: needs {symbol}, which {other} defines" for symbol in sorted(needed & other_defined)]
+    return found
 
 
 def member_crossings(name, library, project_folder, own_objects, lib):
@@ -275,6 +331,9 @@ def check(configuration, platform, vs=None, properties=()):
                                      tools / "dumpbin.exe")
         found += member_crossings(name, project.library, PROJECTS[name].parent, [unit.obj for unit in project.units],
                                   tools / "lib.exe")
+    tables = {name: symbol_table(project.library, tools / "dumpbin.exe") for name, project in projects.items()}
+    for name in projects:
+        found += symbol_crossings(name, tables[name], {n: tables[n] for n in forbidden(name)[1]})
     return found
 
 
