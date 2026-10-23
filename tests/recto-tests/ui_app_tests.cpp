@@ -28,6 +28,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -530,15 +531,27 @@ std::vector<std::string> git_listing(const fs::path& root)
 		CloseHandle(read_end);
 		throw std::runtime_error("git could not be started; the residue scan needs git on PATH");
 	}
+	// Drained on its own thread, so a git that stalls cannot hold the test past
+	// its deadline; at the deadline Process's destructor terminates and reaps it.
 	std::string output;
-	std::array<char, 65536> buffer{};
-	DWORD got = 0;
-	while (ReadFile(read_end, buffer.data(), static_cast<DWORD>(buffer.size()), &got, nullptr) != FALSE && got > 0) {
-		output.append(buffer.data(), got);
-	}
-	CloseHandle(read_end);
+	std::thread reader([&] {
+		std::array<char, 65536> buffer{};
+		DWORD got = 0;
+		while (ReadFile(read_end, buffer.data(), static_cast<DWORD>(buffer.size()), &got, nullptr) != FALSE && got > 0) {
+			output.append(buffer.data(), got);
+		}
+	});
 	const std::optional<DWORD> code = git.wait(60000);
-	if (!code.has_value() || *code != 0) {
+	if (!code.has_value()) {
+		TerminateProcess(git.info().hProcess, 124);
+		WaitForSingleObject(git.info().hProcess, INFINITE);
+	}
+	reader.join();
+	CloseHandle(read_end);
+	if (!code.has_value()) {
+		throw std::runtime_error("git ls-files was still running after 60 s and was terminated");
+	}
+	if (*code != 0) {
 		throw std::runtime_error("git ls-files failed");
 	}
 	std::vector<std::string> paths;
