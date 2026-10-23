@@ -19,8 +19,8 @@
 # VS 2022 cannot substitute: the projects use the v145 toolset, which
 # only VS 2026 ships. The installation must have the C++ x64 and ARM64
 # tools; vswhere picks the newest one that does. The Windows SDK comes
-# from its own install and the Windows App SDK from NuGet, so neither is
-# asked of Visual Studio (MSBuild names a missing SDK itself).
+# from its own install and C++/WinRT and the SDK build tools from NuGet,
+# so neither is asked of Visual Studio (MSBuild names a missing SDK itself).
 param(
     [ValidateSet('x64', 'ARM64', 'x64,ARM64', 'ARM64,x64')][string[]]$Platform = @('x64', 'ARM64'),
     [ValidateSet('Debug', 'Release', 'Debug,Release', 'Release,Debug')][string[]]$Configuration = @('Debug', 'Release'),

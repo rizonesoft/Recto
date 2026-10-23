@@ -1,5 +1,5 @@
 // Recto services: presentation, conversion jobs, Office conversion,
-// settings (foundation plan 3.1). No XAML below this line. Scaffold state
+// settings (foundation plan 3.1). No UI types below this line. Scaffold state
 // (D00 T01 section 3): the ABI version entry point only.
 #pragma once
 

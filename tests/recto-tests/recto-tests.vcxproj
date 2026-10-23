@@ -51,7 +51,7 @@
            integration's auto-link does not pull an unreferenced main. -->
       <!-- Same file names in both configurations; vcpkg puts the Debug
            build under debug/lib and its props select the directory. -->
-      <AdditionalDependencies>bcrypt.lib;d2d1.lib;windowscodecs.lib;ole32.lib;gtest_main.lib;gtest.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>bcrypt.lib;d2d1.lib;windowscodecs.lib;ole32.lib;xmllite.lib;gtest_main.lib;gtest.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -93,6 +93,12 @@
     </ProjectReference>
     <ProjectReference Include="..\..\src\ui\recto-ui.vcxproj">
       <Project>{DC06AE43-AD42-4200-81C2-CB2E3893EC23}</Project>
+    </ProjectReference>
+    <!-- Build order only: the Ui.App tests read and launch Recto.exe from the same build (D10 T01 section 2). -->
+    <ProjectReference Include="..\..\src\app\Recto.vcxproj">
+      <Project>{887D97EF-8B4F-5CA9-88AA-89ECAC482C5D}</Project>
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <LinkLibraryDependencies>false</LinkLibraryDependencies>
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VcpkgRoot)\scripts\buildsystems\msbuild\vcpkg.targets" Condition="Exists('$(VcpkgRoot)\scripts\buildsystems\msbuild\vcpkg.targets')" />

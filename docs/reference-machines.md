@@ -19,7 +19,7 @@ Milestone M2 and M6 performance claims (measured by the `D06 T01 §7` harness an
 | **OS Drive (`C:\`)** | Corsair MP600 PRO XT NVMe SSD (`1000.2 GB` decimal / `1,000,204,886,016` B physical (`Get-Disk` `Size`), `930.4 GiB` NTFS partition) | PCIe Gen4 NVMe SSD |
 | **Workspace Drive (`R:\`)** | Micron `MTFDKCD512QFM-1BD1AABLA` NVMe SSD (`512.1 GB` decimal / `512,110,190,592` B physical (`Get-Disk` `Size`), `474.7 GiB` NTFS partition) | Local PCIe Gen4 NVMe SSD |
 | **Operating System** | Microsoft Windows 11 Business 64-bit, Version `10.0.26300` (Build `26300`) | Microsoft Windows 11 64-bit (`ARM64`), Version `24H2` or later (`Build >= 26100`) |
-| **Compiler & SDK** | Visual Studio 2026 `18.11.1` (`18.11.12315.225`, MSBuild `18.11.1.51303`, toolset `v145`, MSVC `14.51.36231`), Windows 11 SDK `10.0.26100.0` (min `10.0.22621.0`), Windows App SDK `2.5.1` | Visual Studio 2026 `18.11.1` (`18.11.12315.225`, toolset `v145`, MSVC `14.51.36231` `Hostx64\arm64`), Windows 11 SDK `10.0.26100.0` (min `10.0.22621.0`), Windows App SDK `2.5.1` |
+| **Compiler & SDK** | Visual Studio 2026 `18.11.1` (`18.11.12315.225`, MSBuild `18.11.1.51303`, toolset `v145`, MSVC `14.51.36231`), Windows 11 SDK `10.0.26100.0` (min `10.0.22621.0`), C++/WinRT `3.0.260818.1`, SDK build tools `10.0.26100.9169` | Visual Studio 2026 `18.11.1` (`18.11.12315.225`, toolset `v145`, MSVC `14.51.36231` `Hostx64\arm64`), Windows 11 SDK `10.0.26100.0` (min `10.0.22621.0`), C++/WinRT `3.0.260818.1`, SDK build tools `10.0.26100.9169` |
 
 ## 2. Section 8 Performance Targets Bound to This Baseline
 
@@ -71,5 +71,5 @@ $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.
 Get-ChildItem "$vsPath\VC\Tools\MSVC" | Select-Object -ExpandProperty Name
 & "$vsPath\MSBuild\Current\Bin\MSBuild.exe" -version -nologo
 Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Include" | Select-Object -ExpandProperty Name
-Select-String -Path src\app\Recto.vcxproj -Pattern 'Microsoft.WindowsAppSDK"' | ForEach-Object { $_.Line.Trim() }
+Select-String -Path src\app\Recto.vcxproj -Pattern '<PackageReference ' | ForEach-Object { $_.Line.Trim() }
 ```

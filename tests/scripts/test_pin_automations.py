@@ -82,14 +82,15 @@ class GitRepo(unittest.TestCase):
 
 class NotifierTests(unittest.TestCase):
     def test_notify_passes_the_automations_sender(self):
-        """Regression: alert.send takes the From line; the WinUI notifier once called it with three arguments."""
+        """Regression: alert.send takes the From line; a pin notifier once called it with three arguments."""
         calls = []
         fake = types.ModuleType("alert")
         fake.key = lambda: "k"
         fake.sender = lambda folder: f"{folder.strip(chr(92))} automations <x@example.invalid>"
         fake.send = lambda api_key, subject, body, from_: calls.append((api_key, subject, body, from_))
-        with mock.patch.dict(sys.modules, {"alert": fake}):
-            load("check-winui-pin").notify("subject", "body")
+        sys.path.insert(0, str(REPO / "scripts" / "lib"))
+        import pin_proposal
+        pin_proposal.notify(REPO, "subject", "body", alert_module=fake)
         self.assertEqual(calls, [("k", "subject", "body", "Recto automations <x@example.invalid>")])
 
 

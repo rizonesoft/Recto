@@ -121,7 +121,7 @@ Sections: 62 | Checklist items: 405
 
 ### Phase 2: M2 Viewer
 
-Sections: 138 | Checklist items: 1218
+Sections: 138 | Checklist items: 1219
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -136,7 +136,7 @@ Sections: 138 | Checklist items: 1218
 | [ ]    | D10 T01 §5  | Compositor: shared D3D11 device, DirectComposition tree, D2D surfaces, device loss       | windows-host                  | 9     |
 | [ ]    | D10 T01 §6  | `Element` tree: retained rendering, invalidation, hit testing and visual layers          | windows-host                  | 8     |
 | [ ]    | D10 T01 §7  | Layout engine: epx measure and arrange, pixel snapping, Stack, Grid, Dock, Overlay       | windows-host                  | 9     |
-| [ ]    | D10 T01 §8  | Design tokens generated from `design/tokens/colors.json` and `ThemeManager`              | windows-host                  | 10    |
+| [ ]    | D10 T01 §8  | Design tokens generated from `design/tokens/colors.json` and `ThemeManager`              | windows-host                  | 11    |
 | [ ]    | D02 T01 §1  | App project, unpackaged/MSIX manifest, assets, tokens and minimum window size            | windows-host, display-session | 9     |
 | [ ]    | D02 T01 §18 | `RectoIcons` subset icon font, stable code point map and glyph resources                 | windows-host, display-session | 12    |
 | [ ]    | D10 T01 §9  | Drawing primitives: token radii, hairlines, borders, opacity, elevation shadows          | windows-host                  | 9     |
@@ -864,4 +864,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 54/793 verified sections, 17 ready to run now.
 
-Checklist: 324/5878 items completed (includes Commit items).
+Checklist: 336/5879 items completed (includes Commit items).

@@ -270,6 +270,14 @@ class MergePrs(unittest.TestCase):
         self.assertEqual(self.main(fake), 0)
         self.assertEqual(fake.merges(), ["4"])
 
+    def test_a_retired_winui_pin_branch_is_refused(self):
+        """D10 T01 §2 retired the WinUI pin: a winui/ branch from the pins workflow is no producer's any more."""
+        retired = pr(1, branch="winui/2.5.2", author="github-actions[bot]")
+        retired["files"] = [{"path": "src/app/Recto.vcxproj"}]
+        fake = FakeRun([retired, pr(2)])
+        self.assertEqual(self.main(fake), 0)
+        self.assertEqual(fake.merges(), ["2"])
+
     def test_a_queued_merge_stops_the_run(self):
         fake = FakeRun([pr(1), pr(2)])
         fake.lands = False

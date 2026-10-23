@@ -36,8 +36,6 @@ jobs:
       max-parallel: 1
       matrix:
         include:
-          - check: winui
-            run: python scripts/check-winui-pin.py pr
           - check: toolchain
             run: python scripts/check-sdk-pins.py pr
           - check: vcpkg

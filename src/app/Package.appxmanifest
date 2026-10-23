@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Scaffold package manifest (D00 T01 section 3) so the packaged app
-     builds. Identity is deliberately a development placeholder: D02 T01
-     section 1 authors the real manifest against the Store reservation
-     (D99 T01 section 3) and the generated assets in resources/msix. -->
+<!-- Package manifest for the optional MSIX build (D07 T01 section 5): a
+     full-trust Win32 desktop app (runFullTrust, Windows.FullTrustApplication)
+     that depends on no framework package. The build never packages it; it is a
+     None item in Recto.vcxproj. Identity is a development placeholder: D02 T01
+     section 1 authors the real manifest (Store identity from D99 T01 section 3,
+     the generated assets in resources/msix and the .pdf file type association).
+     Checked by Ui.App.AppxNoFramework. -->
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
@@ -26,7 +29,7 @@
   </Resources>
 
   <Applications>
-    <Application Id="App" Executable="$targetnametoken$.exe" EntryPoint="$targetentrypoint$">
+    <Application Id="App" Executable="Recto.exe" EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
         DisplayName="Recto"
         Description="Open-source PDF viewer and converter for Windows"

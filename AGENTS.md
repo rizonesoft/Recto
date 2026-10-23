@@ -4,7 +4,7 @@ Agent instructions for this repository. Claude Code loads this file through the 
 
 ## What is here
 
-Recto is an open-source (`GPL-3.0-or-later`) PDF viewer, OCR tool and document converter for Windows: Recto's own native C++23 PDF engine (`recto-pdf`), C++23 concurrency, OCR and conversion runtime (`recto-core` and `recto-services`), and a Win32 app drawn by Recto's own UI toolkit (`recto-ui`: DirectComposition, Direct2D, DirectWrite, UI Automation; WinUI 3 dropped 2026-10-22, D4), distributed via Inno Setup (full installer and self-contained portable mode, plus an in-app Portable mode setting) and GitHub Releases, with optional MSIX packaging for the Microsoft Store. The repository holds the approved design, the foundation plan, the shipping graphics, the module scaffold, and the TODO execution plan that builds version 1 milestone by milestone (M0 to M6).
+Recto is an open-source (`GPL-3.0-or-later`) PDF viewer, OCR tool and document converter for Windows: Recto's own native C++23 PDF engine (`recto-pdf`), C++23 concurrency, OCR and conversion runtime (`recto-core` and `recto-services`), and a Win32 app drawn by Recto's own UI toolkit (`recto-ui`: DirectComposition, Direct2D, DirectWrite, UI Automation; D4), distributed via Inno Setup (full installer and self-contained portable mode, plus an in-app Portable mode setting) and GitHub Releases, with optional MSIX packaging for the Microsoft Store. The repository holds the approved design, the foundation plan, the shipping graphics, the module scaffold, and the TODO execution plan that builds version 1 milestone by milestone (M0 to M6).
 
 | Path | Purpose |
 | ---- | ------- |
@@ -99,7 +99,6 @@ python scripts/todo-graph.py query blocked   # sections waiting, and on what
 python scripts/todo-graph.py query stats     # tree health
 python scripts/todo-graph.py query deferred  # open and resolved deferrals
 python -m unittest tests.scripts.test_todo_graph   # tooling tests, including the live tree
-python scripts/check-winui-pin.py check       # the WinUI 3 pin is the latest stable release (retired with the scaffold by D10 T01 §2)
 python scripts/check-sdk-pins.py             # C++/WinRT and build tools pins are the latest stable (D4)
 python scripts/check-windows-sdk-line.py check   # Recto targets the newest Windows SDK line (D4)
 python scripts/check-actions-pins.py check     # GitHub Actions are on their latest stable majors (D4)

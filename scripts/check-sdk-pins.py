@@ -6,10 +6,9 @@
     python scripts/check-sdk-pins.py pr       # (GitHub pins workflow) open one PR bumping every newer release
 
 Policy (foundation plan D4): every pin is an exact version, set to the latest stable release on
-nuget.org, never a floating range and never a preview or experimental build. The Windows App SDK pin
-follows the newest stable WinUI 3 GitHub release through scripts/check-winui-pin.py, so it is not
-checked here. The Windows SDK build tools track the Windows SDK named by WindowsTargetPlatformVersion,
-so that pin is compared only against releases in its own 10.0.<build> line; moving to a new Windows
+nuget.org, never a floating range and never a preview or experimental build. These two are the only
+NuGet packages Recto.exe restores. The Windows SDK build tools track the Windows SDK named by
+WindowsTargetPlatformVersion, so that pin is compared only against releases in its own 10.0.<build> line; moving to a new Windows
 SDK is its own decision (`scripts/check-windows-sdk-line.py` files an issue for a new line). The daily
 `.github/workflows/pins.yml` runs `pr`: the newer releases become one pull request with CI dispatched on its branch,
 through `scripts/lib/pin_proposal.py`; `notify` emails once per version for local use. A pin that is not an exact

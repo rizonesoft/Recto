@@ -36,9 +36,9 @@ import campaign_guard  # noqa: E402
 
 # Who may open a pull request this merges, the branch that producer uses, and the files it may change. An author
 # alone proves nothing (any workflow can open a pull request as github-actions), so branch and files must also be the
-# producer's own: the pins workflow edits only the WinUI, build-tools and vcpkg pins, Dependabot only GitHub Actions.
+# producer's own: the pins workflow edits only the toolchain and vcpkg pins, Dependabot only GitHub Actions.
 PRODUCERS = (
-    ({"app/github-actions", "github-actions[bot]"}, re.compile(r"winui/[\w.-]+|pins/(?:toolchain|vcpkg)-[\w.-]+"),
+    ({"app/github-actions", "github-actions[bot]"}, re.compile(r"pins/(?:toolchain|vcpkg)-[\w.-]+"),
      {"src/app/Recto.vcxproj", "vcpkg-configuration.json"}),
     ({"app/dependabot", "dependabot[bot]"}, re.compile(r"dependabot/[\w./-]+"), None),
 )

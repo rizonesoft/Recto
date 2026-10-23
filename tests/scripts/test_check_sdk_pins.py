@@ -34,8 +34,7 @@ def project(references, target="10.0.26100.0"):
             f'  <ItemGroup>\n{references}  </ItemGroup>\n</Project>\n')
 
 
-REFERENCES = ('    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />\n'
-              '    <PackageReference Include="Microsoft.Windows.CppWinRT" Version="3.0.260818.1" />\n'
+REFERENCES = ('    <PackageReference Include="Microsoft.Windows.CppWinRT" Version="3.0.260818.1" />\n'
               '    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.9169" />\n')
 
 
@@ -58,8 +57,8 @@ class CheckSdkPinsTests(unittest.TestCase):
     def test_newer_preview_release_is_ignored(self):
         self.assertEqual(self.mod.latest_stable(["10.0.26100.9169", "10.0.29648.1000-preview"]), "10.0.26100.9169")
 
-    def test_windows_app_sdk_is_left_to_check_winui_pin(self):
-        self.assertNotIn("Microsoft.WindowsAppSDK", self.mod.TRACKED)
+    def test_only_the_two_toolchain_packages_are_tracked(self):
+        self.assertEqual(set(self.mod.TRACKED), {"Microsoft.Windows.CppWinRT", "Microsoft.Windows.SDK.BuildTools"})
 
     def test_experimental_or_floating_pin_fails(self):
         for pinned in ("3.0.260818.1-preview", "3.*", "[3.0.260818.1,)"):
