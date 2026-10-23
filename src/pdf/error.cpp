@@ -227,159 +227,21 @@ void append_context_suffix(
 	out += ')';
 }
 
+// ETW wants null-terminated names. Every name `error_code_name`, `diagnostic_id_name` and `etw_phase_name` return is a
+// string literal, so their data is null-terminated and the tables in error.h stay the only ones.
 const char* error_code_cstr(ErrorCode code) noexcept
 {
-	switch (code) {
-	case ErrorCode::Ok:
-		return "Ok";
-	case ErrorCode::FileNotFound:
-		return "FileNotFound";
-	case ErrorCode::AccessDenied:
-		return "AccessDenied";
-	case ErrorCode::NotAPdf:
-		return "NotAPdf";
-	case ErrorCode::DamagedFormat:
-		return "DamagedFormat";
-	case ErrorCode::NeedsPassword:
-		return "NeedsPassword";
-	case ErrorCode::WrongPassword:
-		return "WrongPassword";
-	case ErrorCode::UnsupportedEncryption:
-		return "UnsupportedEncryption";
-	case ErrorCode::UnsupportedFeature:
-		return "UnsupportedFeature";
-	case ErrorCode::DecompressionLimitExceeded:
-		return "DecompressionLimitExceeded";
-	case ErrorCode::RecursionLimitExceeded:
-		return "RecursionLimitExceeded";
-	case ErrorCode::SignatureInvalid:
-		return "SignatureInvalid";
-	case ErrorCode::ComplianceFailed:
-		return "ComplianceFailed";
-	case ErrorCode::OutOfMemory:
-		return "OutOfMemory";
-	case ErrorCode::IoError:
-		return "IoError";
-	case ErrorCode::Cancelled:
-		return "Cancelled";
-	case ErrorCode::InternalError:
-		return "InternalError";
-	}
-	return "UnknownError";
+	return error_code_name(code).data();
 }
 
 const char* diagnostic_id_cstr(DiagnosticId id) noexcept
 {
-	switch (id) {
-	case DiagnosticId::GenericStatus:
-		return "GenericStatus";
-	case DiagnosticId::FileNotFound:
-		return "FileNotFound";
-	case DiagnosticId::AccessDenied:
-		return "AccessDenied";
-	case DiagnosticId::NotAPdfHeader:
-		return "NotAPdfHeader";
-	case DiagnosticId::DamagedFormat:
-		return "DamagedFormat";
-	case DiagnosticId::DamagedHeader:
-		return "DamagedHeader";
-	case DiagnosticId::DamagedToken:
-		return "DamagedToken";
-	case DiagnosticId::DamagedObject:
-		return "DamagedObject";
-	case DiagnosticId::DamagedDictionary:
-		return "DamagedDictionary";
-	case DiagnosticId::DamagedXRef:
-		return "DamagedXRef";
-	case DiagnosticId::DamagedStream:
-		return "DamagedStream";
-	case DiagnosticId::DamagedTrailer:
-		return "DamagedTrailer";
-	case DiagnosticId::RecoveredViaLinearScan:
-		return "RecoveredViaLinearScan";
-	case DiagnosticId::NeedsPassword:
-		return "NeedsPassword";
-	case DiagnosticId::WrongPassword:
-		return "WrongPassword";
-	case DiagnosticId::UnsupportedEncryption:
-		return "UnsupportedEncryption";
-	case DiagnosticId::UnsupportedFeature:
-		return "UnsupportedFeature";
-	case DiagnosticId::DecompressionLimitExceeded:
-		return "DecompressionLimitExceeded";
-	case DiagnosticId::RecursionLimitExceeded:
-		return "RecursionLimitExceeded";
-	case DiagnosticId::SignatureInvalid:
-		return "SignatureInvalid";
-	case DiagnosticId::ComplianceFailed:
-		return "ComplianceFailed";
-	case DiagnosticId::OutOfMemory:
-		return "OutOfMemory";
-	case DiagnosticId::IoError:
-		return "IoError";
-	case DiagnosticId::Cancelled:
-		return "Cancelled";
-	case DiagnosticId::InternalError:
-		return "InternalError";
-	case DiagnosticId::BlockedLaunchAction:
-		return "BlockedLaunchAction";
-	case DiagnosticId::BlockedJavaScriptAction:
-		return "BlockedJavaScriptAction";
-	case DiagnosticId::BlockedSubmitFormAction:
-		return "BlockedSubmitFormAction";
-	case DiagnosticId::BlockedImportDataAction:
-		return "BlockedImportDataAction";
-	case DiagnosticId::CorruptRecentsStore:
-		return "CorruptRecentsStore";
-	case DiagnosticId::CorruptSettingsStore:
-		return "CorruptSettingsStore";
-	}
-	return "GenericStatus";
+	return diagnostic_id_name(id).data();
 }
 
 const char* etw_phase_cstr(EtwPhaseId phase_id) noexcept
 {
-	switch (phase_id) {
-	case EtwPhaseId::UnspecifiedPhase:
-		return "UnspecifiedPhase";
-	case EtwPhaseId::OpenDocument:
-		return "OpenDocument";
-	case EtwPhaseId::ParseXRef:
-		return "ParseXRef";
-	case EtwPhaseId::RecoverXRef:
-		return "RecoverXRef";
-	case EtwPhaseId::DecodeFilter:
-		return "DecodeFilter";
-	case EtwPhaseId::DecryptObject:
-		return "DecryptObject";
-	case EtwPhaseId::InterpretPage:
-		return "InterpretPage";
-	case EtwPhaseId::BuildDisplayList:
-		return "BuildDisplayList";
-	case EtwPhaseId::LoadFont:
-		return "LoadFont";
-	case EtwPhaseId::RenderTile:
-		return "RenderTile";
-	case EtwPhaseId::ExtractPageText:
-		return "ExtractPageText";
-	case EtwPhaseId::RunOcr:
-		return "RunOcr";
-	case EtwPhaseId::ConvertDocument:
-		return "ConvertDocument";
-	case EtwPhaseId::OrganizeDocument:
-		return "OrganizeDocument";
-	case EtwPhaseId::SaveDocument:
-		return "SaveDocument";
-	case EtwPhaseId::SignDocument:
-		return "SignDocument";
-	case EtwPhaseId::VerifySignature:
-		return "VerifySignature";
-	case EtwPhaseId::RedactDocument:
-		return "RedactDocument";
-	case EtwPhaseId::ValidateCompliance:
-		return "ValidateCompliance";
-	}
-	return "UnspecifiedPhase";
+	return etw_phase_name(phase_id).data();
 }
 
 bool ascii_iequals(std::string_view a, std::string_view b) noexcept

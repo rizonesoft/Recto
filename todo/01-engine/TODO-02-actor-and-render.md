@@ -22,6 +22,7 @@ track: M1
 - `design/SPEC.md` section 9.2 (page outlines immediately, tiles fill in, stretched zoom preview, dark-theme page colour modes).
 - -> XREF: D01 T01 §1 -- consumes `recto::pdf::Document` (`§10`), `PdfResult<T>` (`§1`), and decoded page content and resource streams (`§7`, `§8`) from `src/pdf`.
 - -> XREF: D01 T03 §6 -- the thread-safety verification battery in `D01 T03 §6` and `§7` stress-tests the actor, display-list, render-pool and cancellation machinery built here.
+- -> XREF: D01 T03 §1 -- the CLI exit-code contract in `D01 T03 §1` maps the `ResourceLimit` and `InvalidArgument` codes added in `§18`.
 - -> XREF: D02 T01 §3 -- `DocumentTabSession` in `D02 T01 §3` owns a per-tab `DocumentHandle` and closes its `DocumentActor` (`§8`) on tab close; `OpenDocumentPipeline` in `D02 T01 §5` drives the actor's async open/authenticate flow, and `Save` in `D02 T01 §8` invokes `§5`'s incremental writer.
 - -> XREF: D02 T02 §3 -- the viewer's presentation thread, `TileTextureCache` (`D02 T02 §3`), and viewport-to-scheduler driver (`D02 T02 §4`) consume the `TileKey`, BGRA premultiplied tile buffers, and `TileScheduler` (`§9`) built here.
 - -> XREF: D02 T03 §7 -- Optional Content Groups (`D02 T03 §7`) filter `BDC`/`EMC` layer blocks during `DisplayList` compilation (`§3`, `§4`), and `FontInventory` (`D02 T03 §9`) inspects `§2`'s font descriptors.
@@ -557,6 +558,8 @@ A large share of real PDFs reference fonts they do not embed. This section adds 
 
 ## 18. `ErrorCode::ResourceLimit` and `ErrorCode::InvalidArgument` in `error.h`
 
+> **Started:** 2026-10-23T07:05:00Z
+
 > **Groomed 2026-10-23:** new section. `src/pdf/error.h` has 16 codes and neither `ResourceLimit` nor `InvalidArgument`, yet `§14` here and sections in `D03 T03` already return them. A section that returns a code that does not exist cannot compile, so the codes get one owner and every consumer waits for it.
 
 The owning layer is `src/pdf/error.h` (stamped in `D01 T01 §1`), so the fix is an additive change to the enum, its name table and the diagnostic mapping, with a regression test; no stamped checklist is rewritten. `ResourceLimit` means a bound that is not a decompression or recursion bound was reached (command count, change-set size, pending exports, wall-clock budget). `InvalidArgument` means the caller passed a value outside the documented domain (a page index past the end, a malformed password argument), distinct from a damaged file.
@@ -569,14 +572,15 @@ The owning layer is `src/pdf/error.h` (stamped in `D01 T01 §1`), so the fix is 
 **Build order:**
 
 1. Add the enumerators, names and `DiagnosticId` entries in `src/pdf/error.h/.cpp`. Done when: `PdfError.ErrorCodeNamesCoverEveryCode` passes.
-2. Map the codes in the CLI exit-code table and the diagnostic ring. Done when: `Cli.ExitCodeForResourceLimit` passes.
+2. Map the codes in the diagnostic ring and ETW names in `src/pdf/error.cpp`. Done when: `PdfError.DiagnosticRingRecordsNewCodes` passes. **Corrected 2026-10-23:** (was: also the CLI exit-code table, which moved to `D01 T03 §1`).
 
-- [ ] Append `ResourceLimit` and `InvalidArgument` after `InternalError` in `enum class ErrorCode` in `src/pdf/error.h`, with matching `DiagnosticId` entries and `error_code_name` cases (`"ResourceLimit"`, `"InvalidArgument"`). Done when: `PdfError.ErrorCodeNamesCoverEveryCode` iterates every enumerator, finds a non-empty unique name for each, and finds the 16 pre-existing numeric values unchanged.
-- [ ] Extend the existing diagnostic-ring and ETW code mapping in `src/pdf/error.cpp` so both new codes are recorded and traced like the others. Done when: `PdfError.DiagnosticRingRecordsNewCodes` records one `ResourceLimit` and one `InvalidArgument` and reads them back with their names.
-- [ ] Map `InvalidArgument` to CLI exit `1` and `ResourceLimit` to exit `2` in `src/cli/main.cpp` (or `src/cli/dispatcher.cpp` once `D01 T03 §8` moves it), with the code name in the JSON error. Done when: `Cli.ExitCodeForResourceLimit` and `Cli.ExitCodeForInvalidArgument` pass.
+- [x] Append `ResourceLimit` and `InvalidArgument` after `InternalError` in `enum class ErrorCode` in `src/pdf/error.h`, with matching `DiagnosticId` entries and `error_code_name` cases (`"ResourceLimit"`, `"InvalidArgument"`). Done when: `PdfError.ErrorCodeNamesCoverEveryCode` iterates every enumerator, finds a non-empty unique name for each, and finds the 16 pre-existing numeric values unchanged.
+- [x] Extend the existing diagnostic-ring and ETW code mapping in `src/pdf/error.cpp` so both new codes are recorded and traced like the others. Done when: `PdfError.DiagnosticRingRecordsNewCodes` records one `ResourceLimit` and one `InvalidArgument` and reads them back with their names.
+- [x] ~~Map `InvalidArgument` to CLI exit `1` and `ResourceLimit` to exit `2` in `src/cli/main.cpp`.~~ **Corrected 2026-10-23:** struck here and moved to `D01 T03 §1`, which owns the CLI exit-code contract: `src/cli/main.cpp` is still the `D00 T01 §3` scaffold with no dispatcher or exit-code table, so the mapping can only land where that table is built. -> XREF: D01 T03 §1. Done when: `D01 T03 §1` carries the mapping item and depends on `§18`.
+- [x] Decide which new code records itself: `should_auto_record_diagnostic` in `src/pdf/error.h` returns `true` for `ResourceLimit` (a bound reached on document content, like `DecompressionLimitExceeded`) and `false` for `InvalidArgument` (a caller's error, not a damaged file, like `FileNotFound`). Done when: `PdfError.DiagnosticRingRecordsNewCodes` sees `make_pdf_error(ResourceLimit, ...)` in the ring and `make_pdf_error(InvalidArgument, ...)` not, until it is recorded explicitly. Default taken 2026-10-23 (industry practice: trace hostile-input bounds, not caller misuse); changing it is one `case` line.
 - [ ] Commit: `pdf: add ErrorCode ResourceLimit and InvalidArgument`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*:Cli.ExitCodeFor*` passes under ASan, and renumbering an existing enumerator fails `PdfError.ErrorCodeNamesCoverEveryCode`.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*` passes under ASan, and renumbering an existing enumerator fails `PdfError.ErrorCodeNamesCoverEveryCode`. **Corrected 2026-10-23:** (was: also `Cli.ExitCodeFor*`, now `D01 T03 §1`'s).
 
 ## 19. Interpreter work, memory and wall-clock ceilings on hostile content streams
 

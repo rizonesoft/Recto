@@ -20,6 +20,7 @@ track: M1
 
 - `docs/plans/2026-10-13-recto-foundation.md` sections 3.1 (`recto-cli`), 4.9 (Thread-Safety Verification Battery), 7 (M1 done-when), 9 (fuzzing rules).
 - -> XREF: D01 T02 §6 -- `recto-cli render` (`§2`), `fuzz_render` (`§4`) and the determinism test (`§6`) drive the `DisplayList`, `Rasterizer`, `DocumentActor`, and `RenderPool` pipeline built in `D01 T02`.
+- -> XREF: D01 T02 §18 -- `§1` maps the `ResourceLimit` and `InvalidArgument` codes `D01 T02 §18` adds to `error.h`.
 - -> XREF: D00 T03 §4 -- consumes `tests/corpus/` (`render/`, `broken/`, `seeds/`) from `D00 T03 §3-§4` and promotes any fuzz findings under `D00 T03 §5`'s provenance rule.
 - -> XREF: D06 T01 §1 -- the golden render suite in `D06 T01 §1` and the performance harness in `D06 T01 §7` invoke `recto-cli` verbs defined in `§1-§3` here.
 - -> XREF: D06 T02 §3 -- continuous fuzzing operations in `D06 T02 §3` and `§4` run the fuzz targets built in `§4` here.
@@ -47,7 +48,7 @@ track: M1
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | `recto-cli` command dispatcher, exit-code contract and `recto-cli info` (`--json`) | D01 T02 §10 | [ ] |
+| 1 | §1 | `recto-cli` command dispatcher, exit-code contract and `recto-cli info` (`--json`) | D01 T02 §10, D01 T02 §18 | [ ] |
 | 2 | §2 | `recto-cli render` (full-page and stitched `512 x 512` tile modes, WIC PNG encoder) | §1, D01 T02 §21 | [ ] |
 | 3 | §3 | `recto-cli bench` and `recto-cli stress` commands | §2 | [ ] |
 | 4 | §4 | libFuzzer targets (`fuzz_open`, `fuzz_filters`, `fuzz_render`) with AddressSanitizer | D01 T02 §7, D01 T02 §19, D00 T03 §4, D00 T03 §6 | [ ] |
@@ -64,7 +65,7 @@ track: M1
 
 Implement the extensible command dispatcher and `info` command in `src/cli/main.cpp` (using `wmain(int argc, wchar_t* argv[])` for full Unicode path support on Windows):
 - Command table architecture supporting `--help`, `--version`, and subcommands (`info`, `render`, `bench`, `stress`, with slots for M2-M5 subcommands).
-- Deterministic exit codes: `0` success, `1` invalid CLI arguments, `2` `NotAPdf` / `DamagedFormat` / `IoError`, `3` `NeedsPassword` / `WrongPassword`.
+- Deterministic exit codes: `0` success, `1` invalid CLI arguments and `InvalidArgument`, `2` `NotAPdf` / `DamagedFormat` / `IoError` / `ResourceLimit`, `3` `NeedsPassword` / `WrongPassword`.
 - `recto-cli info <file.pdf> [--password <pw>] [--json]`: opens the file via `recto::core::Runtime` and `DocumentActor`, printing PDF version, page count, per-page `[width_pt, height_pt, rotation]`, encryption status (`method`, `r_revision`, permissions), metadata (`title`, `author`, `subject`, `keywords`, `creator`, `producer`, `creation_date`, `mod_date`), outline entry count, link count, and embedded font inventory in human-readable text or structured JSON (`--json`).
 
 **Phase:** 1
@@ -83,6 +84,7 @@ Implement the extensible command dispatcher and `info` command in `src/cli/main.
 - [ ] Implement `--json` output mode in `recto-cli info` with proper JSON string escaping (`\"`, `\\`, `\n`, `\uXXXX`). Done when: `Cli.InfoPlainAndJson` parses the `--json` stdout and verifies exact field values for `text/two-column-links-outline.pdf`.
 - [ ] Map `ErrorCode::NeedsPassword` and `ErrorCode::WrongPassword` to exit code `3` with a clear diagnostic message on `stderr`, and unlock when `--password recto-test` is passed. Done when: `Cli.InfoEncryptedPasswordHandling` verifies exit `3` without `--password`, exit `3` with `--password wrong`, and exit `0` with `--password recto-test` on `render/encrypted-aes-256.pdf`.
 - [ ] Map `NotAPdf` and `DamagedFormat` to exit code `2` and print the `PdfError` message plus `diagnostics_tail()` summary to `stderr`. Done when: every unrecoverable file in `tests/corpus/broken/` exits with code `2` and zero crashes under ASan.
+- [ ] Map `ErrorCode::InvalidArgument` to exit code `1` and `ErrorCode::ResourceLimit` to exit code `2`, with the code name (`error_code_name`) in the `--json` error object. Done when: `Cli.ExitCodeForInvalidArgument` and `Cli.ExitCodeForResourceLimit` pass. **Corrected 2026-10-23:** moved here from `D01 T02 §18`, which adds the codes; this section owns the exit-code table. -> XREF: D01 T02 §18
 - [ ] Commit: `cli: implement recto-cli command dispatcher and info (--json) subcommand`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=Cli.Info*:Cli.Unicode*` passes under ASan.

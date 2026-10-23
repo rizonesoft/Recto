@@ -440,6 +440,81 @@ TEST(PdfError, ResultValueAndError)
 	EXPECT_EQ(etw_write_failures(), write_failures_before); // Windows accepted every write
 }
 
+// Codes are only ever appended: every numeric value from Ok up names its fixed code, uniquely, and maps to a
+// diagnostic of its own, so a renumbered or unnamed enumerator fails here (D01 T02 section 18).
+TEST(PdfError, ErrorCodeNamesCoverEveryCode)
+{
+	constexpr std::array<std::string_view, 19> kNamesByValue = {
+		"Ok",
+		"FileNotFound",
+		"AccessDenied",
+		"NotAPdf",
+		"DamagedFormat",
+		"NeedsPassword",
+		"WrongPassword",
+		"UnsupportedEncryption",
+		"UnsupportedFeature",
+		"DecompressionLimitExceeded",
+		"RecursionLimitExceeded",
+		"SignatureInvalid",
+		"ComplianceFailed",
+		"OutOfMemory",
+		"IoError",
+		"Cancelled",
+		"InternalError",
+		"ResourceLimit",
+		"InvalidArgument",
+	};
+	static_assert(noexcept(error_code_name(ErrorCode::Ok)));
+	static_assert(error_code_name(ErrorCode::ResourceLimit) == "ResourceLimit");
+	static_assert(error_code_name(ErrorCode::InvalidArgument) == "InvalidArgument");
+
+	std::set<std::string_view> seen;
+	for (uint32_t value = 0; value < kNamesByValue.size(); ++value) {
+		const auto code = static_cast<ErrorCode>(value);
+		EXPECT_EQ(error_code_name(code), kNamesByValue[value]) << "value " << value;
+		EXPECT_TRUE(seen.insert(error_code_name(code)).second) << "duplicate name at value " << value;
+		if (code != ErrorCode::Ok) {
+			EXPECT_NE(default_diagnostic_id(code), DiagnosticId::GenericStatus) << kNamesByValue[value];
+		}
+	}
+	EXPECT_EQ(error_code_name(static_cast<ErrorCode>(kNamesByValue.size())), "UnknownError");
+	EXPECT_EQ(default_diagnostic_id(ErrorCode::ResourceLimit), DiagnosticId::ResourceLimit);
+	EXPECT_EQ(default_diagnostic_id(ErrorCode::InvalidArgument), DiagnosticId::InvalidArgument);
+	EXPECT_EQ(diagnostic_id_name(DiagnosticId::ResourceLimit), "ResourceLimit");
+	EXPECT_EQ(diagnostic_id_name(DiagnosticId::InvalidArgument), "InvalidArgument");
+	EXPECT_NE(diagnostic_id_message(DiagnosticId::ResourceLimit), diagnostic_id_message(DiagnosticId::GenericStatus));
+	EXPECT_NE(diagnostic_id_message(DiagnosticId::InvalidArgument), diagnostic_id_message(DiagnosticId::GenericStatus));
+}
+
+// ResourceLimit is a bound reached on document content and records itself like the other limits; InvalidArgument is
+// a caller's error and records only when logged. Both read back from the ring with their names.
+TEST(PdfError, DiagnosticRingRecordsNewCodes)
+{
+	force_enable_etw_provider_for_testing();
+	clear_diagnostics();
+	const uint64_t events_before = etw_diagnostic_events_emitted();
+
+	const PdfError limit = make_pdf_error(ErrorCode::ResourceLimit, "command count over budget", 64, 3, 0);
+	const PdfError bad_argument = make_pdf_error(ErrorCode::InvalidArgument, "page index past the end");
+	auto tail = diagnostics_tail(10);
+	ASSERT_EQ(tail.size(), 1u);
+	EXPECT_EQ(tail[0].code, limit.code);
+	EXPECT_EQ(tail[0].diagnostic_id, DiagnosticId::ResourceLimit);
+	EXPECT_EQ(tail[0].byte_offset, std::optional<uint64_t>(64));
+	EXPECT_EQ(tail[0].object_num, std::optional<uint32_t>(3));
+
+	record_diagnostic(bad_argument);
+	tail = diagnostics_tail(10);
+	ASSERT_EQ(tail.size(), 2u);
+	EXPECT_EQ(tail[1].code, ErrorCode::InvalidArgument);
+	EXPECT_EQ(tail[1].diagnostic_id, DiagnosticId::InvalidArgument);
+	EXPECT_NE(tail[0].format().find("ResourceLimit/ResourceLimit"), std::string::npos) << tail[0].format();
+	EXPECT_NE(tail[1].format().find("InvalidArgument/InvalidArgument"), std::string::npos) << tail[1].format();
+	EXPECT_GE(etw_diagnostic_events_emitted(), events_before + 2);
+	clear_diagnostics();
+}
+
 TEST(PdfError, DiagnosticRingWraparound)
 {
 	// Counted events are the ones written, which needs an enabled provider; no session listens in tests.

@@ -39,6 +39,9 @@ enum class ErrorCode : uint32_t {
 	IoError,
 	Cancelled,
 	InternalError,
+	// Appended after InternalError so every earlier numeric value is unchanged (D01 T02 section 18).
+	ResourceLimit,   // a bound other than decompression or recursion was reached (commands, change sets, time)
+	InvalidArgument, // the caller passed a value outside the documented domain, not a damaged file
 };
 
 [[nodiscard]] constexpr std::string_view error_code_name(ErrorCode code) noexcept
@@ -78,6 +81,10 @@ enum class ErrorCode : uint32_t {
 		return "Cancelled";
 	case ErrorCode::InternalError:
 		return "InternalError";
+	case ErrorCode::ResourceLimit:
+		return "ResourceLimit";
+	case ErrorCode::InvalidArgument:
+		return "InvalidArgument";
 	}
 	return "UnknownError";
 }
@@ -117,6 +124,8 @@ enum class DiagnosticId : uint16_t {
 	BlockedImportDataAction,
 	CorruptRecentsStore,
 	CorruptSettingsStore,
+	ResourceLimit,
+	InvalidArgument,
 };
 
 [[nodiscard]] constexpr std::string_view diagnostic_id_name(DiagnosticId id) noexcept
@@ -184,6 +193,10 @@ enum class DiagnosticId : uint16_t {
 		return "CorruptRecentsStore";
 	case DiagnosticId::CorruptSettingsStore:
 		return "CorruptSettingsStore";
+	case DiagnosticId::ResourceLimit:
+		return "ResourceLimit";
+	case DiagnosticId::InvalidArgument:
+		return "InvalidArgument";
 	}
 	return "GenericStatus";
 }
@@ -253,6 +266,10 @@ enum class DiagnosticId : uint16_t {
 		return "Recovered from corrupted recent files store";
 	case DiagnosticId::CorruptSettingsStore:
 		return "Recovered from corrupted settings store";
+	case DiagnosticId::ResourceLimit:
+		return "Engine resource limit reached";
+	case DiagnosticId::InvalidArgument:
+		return "Argument outside the documented range";
 	}
 	return "Engine diagnostic event";
 }
@@ -294,6 +311,10 @@ enum class DiagnosticId : uint16_t {
 		return DiagnosticId::Cancelled;
 	case ErrorCode::InternalError:
 		return DiagnosticId::InternalError;
+	case ErrorCode::ResourceLimit:
+		return DiagnosticId::ResourceLimit;
+	case ErrorCode::InvalidArgument:
+		return DiagnosticId::InvalidArgument;
 	}
 	return DiagnosticId::GenericStatus;
 }
@@ -376,6 +397,7 @@ enum class EtwPhaseId : uint16_t {
 	case ErrorCode::DamagedFormat:
 	case ErrorCode::DecompressionLimitExceeded:
 	case ErrorCode::RecursionLimitExceeded:
+	case ErrorCode::ResourceLimit:
 		return true;
 	default:
 		return false;
