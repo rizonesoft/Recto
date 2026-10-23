@@ -279,7 +279,8 @@ class GitHubModeTests(GitRepo):
     def test_pr_mode_pushes_the_branch_opens_a_pr_and_dispatches_ci(self):
         gh = FakeGh()
         self.assertEqual(self.vcpkg.main(["pr"], fetch=self.fetch, root=self.root, run_gh=gh), 0)
-        remote = subprocess.run(["git", "show", "pins/vcpkg-2026.10.16:vcpkg-configuration.json"], cwd=self.origin,
+        remote = subprocess.run(["git", f"--git-dir={self.origin}", "show",
+                                 "pins/vcpkg-2026.10.16:vcpkg-configuration.json"],
                                 capture_output=True, text=True, check=True).stdout
         self.assertIn(self.NEW, remote)
         self.assertEqual(len(gh.made("pr", "create")), 1)
@@ -291,7 +292,8 @@ class GitHubModeTests(GitRepo):
         gh = FakeGh(prs='[{"number": 7, "state": "CLOSED"}]')
         self.assertEqual(self.vcpkg.main(["pr"], fetch=self.fetch, root=self.root, run_gh=gh), 0)
         self.assertEqual(gh.made("pr", "create"), [])
-        listed = subprocess.run(["git", "branch", "--list", "pins/*"], cwd=self.origin, capture_output=True, text=True)
+        listed = subprocess.run(["git", f"--git-dir={self.origin}", "branch", "--list", "pins/*"],
+                                capture_output=True, text=True, check=True)
         self.assertEqual(listed.stdout.strip(), "")
 
     def test_issue_mode_files_once_supersedes_older_and_resolves(self):
