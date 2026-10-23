@@ -16,7 +16,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 ## Inputs
 
-- `.claude/skills/review-todo-section/SKILL.md` (audit stance, the 22-round cap and the severity cutoff) and `docs/review-round-prompt.md` (severity tags).
+- `.claude/skills/review-todo-section/SKILL.md` (audit stance, the review-round cap and the severity cutoff) and `docs/review-round-prompt.md` (severity tags).
 - Each audited section's own contract and receipt (`python scripts/todo-graph.py resolve "<ref>"`, `docs/reviews/<ref>.json`).
 - The run file `docs/phase-runs/2026-10-21-phase-0.md` (the operator's request).
 - -> XREF: D10 T01 §2 -- replaces the WinUI scaffold of `D00 T01 §3` that §3 here audited.

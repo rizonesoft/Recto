@@ -29,13 +29,15 @@ NEEDS = {"windows-host", "arm64-host", "display-session", "office", "libreoffice
          "attended", "owner-decision", "third-party", "operator"}
 WAITING = {"owner-decision", "third-party", "operator"}
 STATUSES = {"draft", "active", "blocked", "done", "superseded"}
-# stopped-at-22 is the current review-round cap; stopped-at-13, -8 and -3 stay valid on earlier receipts.
+# stopped-at-33 is the current review-round cap (owner decision 2026-10-23); stopped-at-22, -13, -8 and -3 stay valid on
+# receipts written under earlier caps.
 # stopped-low-severity: after SEVERITY_CUTOFF_ROUND, a round whose findings are all P3 or advisory ends the loop and
 # its findings are filed as leftovers (review-todo-section).
-VERDICTS = {"clean", "fixed", "stopped-at-22", "stopped-at-13", "stopped-at-8", "stopped-at-3", "stopped-low-severity"}
-REVIEW_ROUND_CAP = 22
+VERDICTS = {"clean", "fixed", "stopped-at-33", "stopped-at-22", "stopped-at-13", "stopped-at-8", "stopped-at-3",
+            "stopped-low-severity"}
+REVIEW_ROUND_CAP = 33
 # Caps a receipt that records round_cap may name: the current one and the earlier ones this repository used.
-EARLIER_CAPS = {8, 13}
+EARLIER_CAPS = {8, 13, 22}
 # Receipts older than the rounds_spent field (stamped before 2026-10-21 under the earlier process). Each is frozen by the
 # digest of its content in LEGACY_RECEIPTS, so a new receipt cannot pass by dropping the field. Their round counts vary
 # (up to 16), so unlike their verdicts they are not bounded here; the digest is what binds them.
@@ -302,7 +304,7 @@ def receipt_data_ok(data, ref, stamp_sha, root=None, building=False):
                             and ([x.strip() for x in e["review"].splitlines() if x.strip()] or [""])[-1]
                             in ("OVERALL: approve", "OVERALL: needs-attention")}
                 require(reviewed, f"{report} holds no returned review: {ref}")
-                # The cap bounds every loop, however it ends: a clean round after review 22 is past the cap.
+                # The cap bounds every loop, however it ends: a clean round after the cap's last review is past it.
                 require(len(reviewed) <= cap,
                         f"{report} holds {len(reviewed)} returned reviews, over the {cap}-round cap: {ref}")
                 claimed = sorted((r for r in rounds if r["report"] == report), key=lambda r: r["round"])

@@ -426,10 +426,39 @@ class Stamp(Tree):
         (self.root / report).write_text("".join(envelope(n, overall="needs-attention") for n in range(1, last + 1)),
                                         encoding="utf-8")
 
-    def test_a_stopped_review_must_say_what_was_done(self):
+    def test_the_cap_is_33_and_earlier_caps_stay_valid(self):
+        # Owner decision 2026-10-23: the review-round cap moved from 22 to 33.
+        self.assertEqual(tg.REVIEW_ROUND_CAP, 33)
+        self.assertIn("stopped-at-33", tg.VERDICTS)
+        for earlier in (22, 13, 8, 3):
+            self.assertIn(f"stopped-at-{earlier}", tg.VERDICTS)
+        self.assertEqual(tg.EARLIER_CAPS, {8, 13, 22})
+
+    def test_a_receipt_written_under_the_22_round_cap_still_validates(self):
         self.tick_work()
         self.record_rounds(22)
         stopped = [{"round": 22, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": "stopped-at-22"}]
+        with self.assertRaises(tg.Refused):  # a new stamp stops only at the current cap
+            tg.stamp(self.root, "D00 T01 §1", self.sha, stopped, ["true -> ok"], "2026-10-13", cap_outcome="filed")
+        self.record_rounds(33)
+        receipt = self.root / tg.stamp(self.root, "D00 T01 §1", self.sha, [
+            {"round": 33, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": "stopped-at-33"}],
+            ["true -> ok"], "2026-10-13", cap_outcome="filed")
+        # The same section as a receipt from the 22-round era: 22 rounds, stopped-at-22, round_cap 22.
+        self.record_rounds(22)
+        data = json.loads(receipt.read_text(encoding="utf-8"))
+        data.update(reviews=stopped, rounds_spent=22, round_cap=22)
+        receipt.write_text(json.dumps(data), encoding="utf-8")
+        tg.graph(self.root)
+        data["round_cap"] = 33  # but a 22-round stop is not a stop at the 33-round cap
+        receipt.write_text(json.dumps(data), encoding="utf-8")
+        self.refuses("must be stopped-at-33")
+
+    def test_a_stopped_review_must_say_what_was_done(self):
+        self.tick_work()
+        cap = tg.REVIEW_ROUND_CAP
+        self.record_rounds(cap)
+        stopped = [{"round": cap, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": f"stopped-at-{cap}"}]
         with self.assertRaises(tg.Refused) as ctx:
             tg.stamp(self.root, "D00 T01 §1", self.sha, stopped, ["true -> ok"], "2026-10-13")
         self.assertIn("--cap-outcome", str(ctx.exception))
@@ -439,7 +468,7 @@ class Stamp(Tree):
         receipt = tg.stamp(self.root, "D00 T01 §1", self.sha, stopped, ["true -> ok"], "2026-10-13",
                            cap_outcome="filed two leftovers as D00 T01 §2")
         data = json.loads((self.root / receipt).read_text(encoding="utf-8"))
-        self.assertEqual((data["rounds_spent"], data["cap_outcome"]), (22, "filed two leftovers as D00 T01 §2"))
+        self.assertEqual((data["rounds_spent"], data["cap_outcome"]), (cap, "filed two leftovers as D00 T01 §2"))
         self.assertEqual(tg.review_rounds(self.root)["summary"]["stopped_at_cap"], 1)
         # A receipt that drops the outcome no longer validates.
         del data["cap_outcome"]
@@ -466,7 +495,7 @@ class Stamp(Tree):
             tg.graph(self.root)
         report = "docs/reviews/00-workspace/D00-T01-s1.md"
         for rounds in ([{"round": 9, "report": report, "verdict": "stopped-low-severity"}],
-                       [{"round": 1, "report": report, "verdict": "stopped-at-22"}]):
+                       [{"round": 1, "report": report, "verdict": "stopped-at-33"}]):
             data["reviews"] = rounds
             receipt.write_text(json.dumps(data), encoding="utf-8")
             with self.subTest(rounds=rounds), self.assertRaises(tg.Refused) as ctx:
@@ -595,14 +624,15 @@ class Stamp(Tree):
     def test_rounds_spent_add_up_across_review_loops(self):
         self.tick_work()
         first = self.root / "docs/reviews/00-workspace/D00-T01-s1.md"
-        first.write_text("".join(envelope(n, overall="needs-attention") for n in range(1, 23)), encoding="utf-8")
+        cap = tg.REVIEW_ROUND_CAP
+        first.write_text("".join(envelope(n, overall="needs-attention") for n in range(1, cap + 1)), encoding="utf-8")
         second = self.root / "docs/reviews/00-workspace/D00-T01-s1-loop2.md"
         second.write_text(envelope(1) + envelope(2), encoding="utf-8")
-        reviews = [{"round": 22, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": "stopped-at-22"},
+        reviews = [{"round": cap, "report": "docs/reviews/00-workspace/D00-T01-s1.md", "verdict": f"stopped-at-{cap}"},
                    {"round": 2, "report": "docs/reviews/00-workspace/D00-T01-s1-loop2.md", "verdict": "clean"}]
         receipt = tg.stamp(self.root, "D00 T01 §1", self.sha, reviews, ["true -> ok"], "2026-10-13",
                            cap_outcome="loop 1 hit the cap; the repair was filed and a second loop ran clean")
-        self.assertEqual(json.loads((self.root / receipt).read_text(encoding="utf-8"))["rounds_spent"], 24)
+        self.assertEqual(json.loads((self.root / receipt).read_text(encoding="utf-8"))["rounds_spent"], cap + 2)
 
     def test_a_severity_stop_records_its_outcome(self):
         self.tick_work()
@@ -674,7 +704,7 @@ class Stamp(Tree):
                          [{"round": last, "report": report, "verdict": "stopped-low-severity"}],
                          ["true -> ok"], "2026-10-13", cap_outcome="filed")
             self.assertIn("follows only 1 returned reviews", str(ctx.exception))
-        # An outage before the cap moves the cap stop to the round that returns review 22.
+        # An outage before the cap moves the cap stop to the round that returns the cap's last review.
         (self.root / report).write_text(envelope(1, "none") + "".join(
             envelope(n, overall="needs-attention") for n in range(2, cap + 2)), encoding="utf-8")
         tg.stamp(self.root, "D00 T01 §1", self.sha, [{"round": cap + 1, "report": report, "verdict": f"stopped-at-{cap}"}],

@@ -11,7 +11,7 @@
                                                              # 4 waiting; a pasted plan row works too
     python scripts/todo-graph.py classify 'D02 T01 §1' ...   # dispositions as JSON
     python scripts/todo-graph.py stamp 'D02 T01 §1' --sha <40-char commit> \
-        --review '<round>:<report path>:<clean|fixed|stopped-at-22|stopped-low-severity>' --check '<command> -> <result>' \
+        --review '<round>:<report path>:<clean|fixed|stopped-at-33|stopped-low-severity>' --check '<command> -> <result>' \
         [--cap-outcome '<what was done when the review cap was reached>']   # required with a stopped verdict
     python scripts/todo-graph.py unstamp 'D02 T01 §1' --reason '<what regressed, and the repair section>'
 
