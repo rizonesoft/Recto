@@ -720,6 +720,58 @@ TEST(PdfXref, RecoveryRoundThreeFixes)
 		EXPECT_EQ(rec->root_ref(), (IndirectRef{1u, 0u}));
 	}
 
+	// Round 9: what a probe waits on includes references inside a resolved parameter: /Filter 2 0 R names [3 0 R], and
+	// object 3 is defined after the first probe.
+	{
+		const std::string fake = "\nendstream\nendobj\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n";
+		std::string pdf = "%PDF-1.7\n";
+		const size_t genuine_at = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages +
+			container(20u, "88 0 " + std::to_string(fake.size()), "/N 1 /First 5 /Filter 2 0 R") + "2 0 obj\n[3 0 R]\nendobj\n" +
+			"25 0 obj\n<< /Length 99 0 R >>\nstream\nab\nendstream\nendobj\n" + "3 0 obj\n/ASCIIHexDecode\nendobj\n" +
+			"30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(1), nullptr);
+		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
+	}
+
+	// Round 9: a container definition the table no longer holds is not probed: object 20 is a container, then a plain
+	// object, so object 88's uncompressed definition (the right length) stands.
+	{
+		const std::string fake = "\nendstream\nendobj\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n";
+		std::string pdf = "%PDF-1.7\n";
+		const size_t genuine_at = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages + "88 0 obj\n" + std::to_string(fake.size()) +
+			"\nendobj\n" + container(20u, "88 0 3", "/N 1 /First 5 /Filter /ASCIIHexDecode") + "20 0 obj\n<< >>\nendobj\n" +
+			"30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(1), nullptr);
+		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
+	}
+
+	// Round 9: an xref row that restores a parameter object's earlier definition reaches the probe as a scanned
+	// definition does: object 2 is /ASCIIHexDecode, then /ASCII85Decode; the container is probed with the second; a row
+	// then restores the first, and the container is probed again with it.
+	{
+		const std::string fake = "\nendstream\nendobj\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n";
+		std::string pdf = "%PDF-1.7\n";
+		const size_t genuine_at = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages;
+		const size_t first_two = pdf.size();
+		pdf += "2 0 obj\n/ASCIIHexDecode\nendobj\n2 0 obj\n/ASCII85Decode\nendobj\n" +
+			container(20u, "88 0 " + std::to_string(fake.size()), "/N 1 /First 5 /Filter 2 0 R") +
+			"25 0 obj\n<< /Length 99 0 R >>\nstream\nab\nendstream\nendobj\n";
+		pdf += "40 0 obj\n<< /Type /XRef /Size 89 /Root 1 0 R /Index [2 1] /W [1 4 2] /Length 7 >>\nstream\n" +
+			type1_row(first_two) + "\nendstream\nendobj\n";
+		pdf += "30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(1), nullptr);
+		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
+	}
+
 	// Round 4: object 1 defined three times in the file (a catalog, then two other dictionaries); an intact type-1
 	// row naming the first restores it, catalog and all, so root 1 is valid again.
 	{

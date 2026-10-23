@@ -1237,6 +1237,9 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		// A later definition of such an object takes the integers back and queues the container to be probed again.
 		std::unordered_map<uint32_t, std::vector<size_t>> parameter_users;
 		std::unordered_map<size_t, std::vector<uint32_t>> probe_provided;
+		// The probed containers that gave integers, by the container's object number, so a later definition of that object
+		// (a newer container, or something else) takes them back.
+		std::unordered_map<uint32_t, std::vector<size_t>> probed_by_object;
 		const auto integers_only = [&recovered_integers](IndirectRef len_ref) -> PdfResult<int64_t> {
 			const auto it = recovered_integers.find(len_ref.obj_num);
 			if (it == recovered_integers.end() || it->second.first != len_ref.gen_num) {
@@ -1249,6 +1252,11 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		enum class ProbeOutcome : uint8_t { Done, Waiting };
 		const auto probe_one = [&](size_t index, std::vector<IndirectRef>& waiting_on) -> PdfResult<ProbeOutcome> {
 			const DeferredObjStm container_at = deferred_objstms[index];
+			// Only the definition the table holds now is read; one a later definition replaced is not this container.
+			if (const XrefEntry* self = table.find(container_at.obj_num);
+				self == nullptr || !self->is_uncompressed() || self->byte_offset != container_at.pos) {
+				return ProbeOutcome::Done;
+			}
 			{
 				Parser parser(file_bytes);
 				parser.seek(container_at.pos);
@@ -1265,7 +1273,36 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 				if (container == nullptr) {
 					return ProbeOutcome::Done;
 				}
-				const std::vector<IndirectRef> refs = parameter_refs(container->dict);
+				std::vector<IndirectRef> refs = parameter_refs(container->dict);
+				// A parameter object read through a reference may itself name others by reference (an indirect /Filter
+				// array, a /DecodeParms dictionary's values): decoding reads those too, so they are dependencies as well.
+				const size_t direct_refs = refs.size();
+				for (size_t r = 0; r < direct_refs; ++r) {
+					if (!defined_now(refs[r])) {
+						continue;
+					}
+					auto target = probe_resolver(refs[r]);
+					if (!target.has_value()) {
+						if (resolver_over_budget) {
+							return over_budget_error(container_at.pos);
+						}
+						continue;
+					}
+					if (const PdfArray* arr = target->as_array(); arr != nullptr && arr->size() <= kMaxFilterChainDepth) {
+						for (const PdfValue& e : *arr) {
+							if (const auto element_ref = e.as_ref()) {
+								refs.push_back(*element_ref);
+							}
+						}
+					} else if (const PdfDict* dict = target->as_dict(); dict != nullptr) {
+						for (const auto& [key, value] : *dict) {
+							(void)key;
+							if (const auto value_ref = value.as_ref()) {
+								refs.push_back(*value_ref);
+							}
+						}
+					}
+				}
 				waiting_on.clear();
 				for (const IndirectRef ref : refs) {
 					if (!defined_now(ref)) {
@@ -1334,6 +1371,9 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 								latest->second = {static_cast<uint64_t>(container_at.pos), *value};
 							}
 							probe_provided[index].push_back(members.entries[idx].obj_num);
+							if (probe_provided[index].size() == 1u) {
+								probed_by_object[container_at.obj_num].push_back(index);
+							}
 							probed_members[{static_cast<uint64_t>(container_at.pos), static_cast<uint32_t>(idx)}] =
 								{members.entries[idx].obj_num, *value};
 						}
@@ -1370,27 +1410,36 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			}
 			return {};
 		};
-		// A new definition of an object some probed containers used as a parameter: what they gave is taken back, and they
-		// are probed again at the next probe with the new definition.
-		const auto parameter_redefined = [&](uint32_t obj_num, uint16_t gen_num) {
-			const auto users = parameter_users.find(obj_num);
-			if (users == parameter_users.end()) {
-				return;
-			}
-			for (const size_t index : users->second) {
-				const uint64_t pos = static_cast<uint64_t>(deferred_objstms[index].pos);
-				if (const auto provided = probe_provided.find(index); provided != probe_provided.end()) {
-					for (const uint32_t member : provided->second) {
-						if (const auto held = container_integers.find(member); held != container_integers.end() && held->second.first == pos) {
-							container_integers.erase(held);
-						}
+		// What a probed container gave is taken back: its integers no longer stand.
+		const auto take_back = [&](size_t index) {
+			const uint64_t pos = static_cast<uint64_t>(deferred_objstms[index].pos);
+			if (const auto provided = probe_provided.find(index); provided != probe_provided.end()) {
+				for (const uint32_t member : provided->second) {
+					if (const auto held = container_integers.find(member); held != container_integers.end() && held->second.first == pos) {
+						container_integers.erase(held);
 					}
-					probe_provided.erase(provided);
 				}
-				probed_members.erase(probed_members.lower_bound({pos, 0u}), probed_members.lower_bound({pos + 1u, 0u}));
-				probe_waiting.push_back(ProbeWait{index, {IndirectRef{obj_num, gen_num}}});
+				probe_provided.erase(provided);
 			}
-			parameter_users.erase(users);
+			probed_members.erase(probed_members.lower_bound({pos, 0u}), probed_members.lower_bound({pos + 1u, 0u}));
+		};
+		// The table's entry for an object changed (a scanned definition, or an xref row restoring, importing or freeing
+		// it): containers that used it as a parameter are taken back and probed again with what it is now, and a probed
+		// container defined by that object number is not that object any more, so what it gave goes.
+		const auto table_changed = [&](uint32_t obj_num, uint16_t gen_num) {
+			if (const auto users = parameter_users.find(obj_num); users != parameter_users.end()) {
+				for (const size_t index : users->second) {
+					take_back(index);
+					probe_waiting.push_back(ProbeWait{index, {IndirectRef{obj_num, gen_num}}});
+				}
+				parameter_users.erase(users);
+			}
+			if (const auto containers = probed_by_object.find(obj_num); containers != probed_by_object.end()) {
+				for (const size_t index : containers->second) {
+					take_back(index);
+				}
+				probed_by_object.erase(containers);
+			}
 		};
 		// The scan's /Length lookup: an uncompressed integer, or a container member the scan has passed that is later in
 		// the file than it.
@@ -1601,7 +1650,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 							if (scanned_definitions.size() < effective_max_entries) {
 								scanned_definitions.push_back(ScannedDefinition{static_cast<uint64_t>(pos), obj_num, gen_num});
 							}
-							parameter_redefined(obj_num, gen_num);
+							table_changed(obj_num, gen_num);
 							recovered_integers.erase(obj_num);
 							catalog_generations.erase(obj_num);
 							indirect_type_dicts.erase(obj_num);
@@ -1700,6 +1749,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 														remember_replaced(member_id);
 														invalidate_objstm_container(member_id);
 														table.entries_.erase(member_id);
+														table_changed(member_id, 0u);
 														if (objects_discovered > 0u) {
 															--objects_discovered;
 														}
@@ -1735,6 +1785,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 															++objects_discovered;
 														}
 														table.set_entry(member_id, row);
+														table_changed(member_id, row.generation);
 														defined_at[member_id] = static_cast<uint64_t>(pos);
 														recovered_integers.erase(member_id);
 														catalog_generations.erase(member_id);
@@ -1771,6 +1822,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 												remember_replaced(member_id);
 												invalidate_objstm_container(member_id);
 												table.set_entry(member_id, row);
+												table_changed(member_id, 0u);
 												defined_at[member_id] = static_cast<uint64_t>(pos);
 												recovered_integers.erase(member_id);
 												catalog_generations.erase(member_id);
