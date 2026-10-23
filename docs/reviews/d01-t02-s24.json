@@ -1,0 +1,32 @@
+{
+  "ref": "D01 T02 \u00a724",
+  "title": "Conversion-check failures name the check, the page and the measured value",
+  "implementation_sha": "2bebc59dc7eac76d78c5048bcfde536562399f9b",
+  "date": "2026-10-24",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s24.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "build\\build.ps1 -EnableASAN -Configuration Debug -TestFilter 'PdfError.*' -> [  PASSED  ] 16 tests.",
+    ".\\build.cmd -> exit 0, [  PASSED  ] 202 tests. (x64 Debug and Release)",
+    "python scripts/todo-graph.py validate -> valid"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s24.md",
+    "verdict": "filed",
+    "candidate": "2a205afa11e0e80497b6dc2a04462298ddac304e",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D04 T03 \u00a78",
+      "D04 T05 \u00a712",
+      "D07 T03 \u00a72"
+    ]
+  },
+  "rounds_spent": 1,
+  "round_cap": 33
+}
