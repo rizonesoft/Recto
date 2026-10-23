@@ -297,13 +297,17 @@ constexpr std::string_view kXrefDefaultIndexBudgetExceeded =
 	return PdfValue(PdfString());
 }
 
-// Whether `bytes` holds a name token whose decoded value is /Encrypt, in any spelling ISO 32000-1 7.3.5 allows
-// (`#xx` escapes included), used as a key: outside a comment and followed by an indirect reference (`7 0 R`) or a
-// dictionary (`<<`), as in a trailer or cross-reference stream. A mere mention is not a key, so an ordinary file that
-// mentions /Encrypt keeps its containers decoded during the scan, where its compressed /Length integers are needed.
+// Whether `bytes` holds the key /Encrypt, in any spelling ISO 32000-1 7.3.5 allows (`#xx` escapes included), followed
+// by an indirect reference (`7 0 R`) or a dictionary (`<<`), with whitespace or comments between the tokens, as in a
+// trailer or cross-reference stream. It reads the bytes as the lexer does (7.2.3 comments, 7.3.4.2 literal strings,
+// 7.3.8 stream data are skipped), so a mention in any of them is not a key. It is an early warning only: recovery
+// decides from the trailers it parsed (`table.trailer_`), and discards what any container decoded before that
+// decision taught when the file turns out to be encrypted.
 [[nodiscard]] bool names_encrypt_key(std::span<const uint8_t> bytes) noexcept
 {
 	static constexpr std::string_view kKey = "Encrypt";
+	static constexpr std::string_view kStream = "stream";
+	static constexpr std::string_view kEndstream = "endstream";
 	const auto hex = [](uint8_t c) -> int {
 		if (c >= '0' && c <= '9') {
 			return c - '0';
@@ -316,63 +320,102 @@ constexpr std::string_view kXrefDefaultIndexBudgetExceeded =
 		}
 		return -1;
 	};
-	bool in_comment = false;
-	for (size_t i = 0; i < bytes.size(); ++i) {
-		if (bytes[i] == '\r' || bytes[i] == '\n') {
-			in_comment = false;
-		} else if (bytes[i] == '%') {
-			in_comment = true;
+	const auto skip_space_and_comments = [&](size_t k) {
+		while (k < bytes.size()) {
+			if (Lexer::is_pdf_whitespace(bytes[k])) {
+				++k;
+			} else if (bytes[k] == '%') {
+				while (k < bytes.size() && bytes[k] != '\r' && bytes[k] != '\n') {
+					++k;
+				}
+			} else {
+				break;
+			}
 		}
-		if (in_comment || bytes[i] != '/') {
+		return k;
+	};
+	const auto skip_digits = [&](size_t k) {
+		while (k < bytes.size() && bytes[k] >= '0' && bytes[k] <= '9') {
+			++k;
+		}
+		return k;
+	};
+	size_t i = 0;
+	while (i < bytes.size()) {
+		const uint8_t c = bytes[i];
+		if (c == '%') {
+			while (i < bytes.size() && bytes[i] != '\r' && bytes[i] != '\n') {
+				++i;
+			}
+			continue;
+		}
+		if (c == '(') {
+			// A literal string: balanced parentheses, a backslash escaping the next byte.
+			size_t depth = 1;
+			++i;
+			while (i < bytes.size() && depth > 0u) {
+				if (bytes[i] == '\\') {
+					i += 2;
+					continue;
+				}
+				if (bytes[i] == '(') {
+					++depth;
+				} else if (bytes[i] == ')') {
+					--depth;
+				}
+				++i;
+			}
+			continue;
+		}
+		if (c == 's' && matches_token_at(bytes, i, kStream)) {
+			// Stream data runs to the next `endstream` keyword.
+			size_t k = i + kStream.size();
+			while (k < bytes.size() && !(bytes[k] == 'e' && matches_token_at(bytes, k, kEndstream))) {
+				++k;
+			}
+			i = k < bytes.size() ? k + kEndstream.size() : k;
+			continue;
+		}
+		if (c != '/') {
+			++i;
 			continue;
 		}
 		size_t matched = 0;
 		size_t j = i + 1;
 		while (j < bytes.size() && matched <= kKey.size()) {
-			uint8_t c = bytes[j];
-			if (!Lexer::is_pdf_regular(c)) {
+			uint8_t d = bytes[j];
+			if (!Lexer::is_pdf_regular(d)) {
 				break;
 			}
-			if (c == '#' && j + 2 < bytes.size() && hex(bytes[j + 1]) >= 0 && hex(bytes[j + 2]) >= 0) {
-				c = static_cast<uint8_t>(hex(bytes[j + 1]) * 16 + hex(bytes[j + 2]));
+			if (d == '#' && j + 2 < bytes.size() && hex(bytes[j + 1]) >= 0 && hex(bytes[j + 2]) >= 0) {
+				d = static_cast<uint8_t>(hex(bytes[j + 1]) * 16 + hex(bytes[j + 2]));
 				j += 3;
 			} else {
 				++j;
 			}
-			if (matched == kKey.size() || c != static_cast<uint8_t>(kKey[matched])) {
+			if (matched == kKey.size() || d != static_cast<uint8_t>(kKey[matched])) {
 				matched = kKey.size() + 1; // not this name
 				break;
 			}
 			++matched;
 		}
 		if (matched == kKey.size()) {
-			size_t k = j;
-			const auto skip_space = [&]() {
-				while (k < bytes.size() && Lexer::is_pdf_whitespace(bytes[k])) {
-					++k;
-				}
-			};
-			const auto digits = [&]() {
-				const size_t start = k;
-				while (k < bytes.size() && bytes[k] >= '0' && bytes[k] <= '9') {
-					++k;
-				}
-				return k > start;
-			};
-			skip_space();
+			size_t k = skip_space_and_comments(j);
 			if (k + 1 < bytes.size() && bytes[k] == '<' && bytes[k + 1] == '<') {
 				return true;
 			}
-			if (digits()) {
-				skip_space();
-				if (digits()) {
-					skip_space();
+			if (const size_t after_num = skip_digits(k); after_num > k) {
+				k = skip_space_and_comments(after_num);
+				if (const size_t after_gen = skip_digits(k); after_gen > k) {
+					k = skip_space_and_comments(after_gen);
 					if (k < bytes.size() && bytes[k] == 'R') {
 						return true;
 					}
 				}
 			}
 		}
+		// Past the name's own bytes; a regular byte cannot start another token inside it.
+		i = std::max(j, i + 1);
 	}
 	return false;
 }
@@ -901,33 +944,47 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		// A replaced container member's facts, by (container position, index), with the member's object number; kept only
 		// when there are facts, so bounded by the members the scan decoded.
 		std::map<std::pair<uint64_t, uint32_t>, std::pair<uint32_t, ObjectFacts>> replaced_members;
-		// The uncompressed definition a container member or an xref row replaced, per object. The scan's own uncompressed
-		// redefinitions are not kept (a later one in the file is the newer revision), so this is bounded by members and rows.
-		struct ReplacedDefinition {
+		// Every uncompressed definition the scan found, in file order (so sorted by offset), and the facts of one a later
+		// definition replaced, by offset: a later type-1 xref row naming an older definition restores it. Both are capped
+		// at the recovery's entry budget; a definition past the cap is not restorable by a row (the scan's own choice,
+		// the later definition, stands).
+		struct ScannedDefinition {
 			uint64_t offset = 0;
+			uint32_t obj_num = 0;
 			uint16_t generation = 0;
-			ObjectFacts facts;
 		};
-		std::unordered_map<uint32_t, ReplacedDefinition> replaced_uncompressed;
-		const auto remember_replaced = [&](uint32_t id, bool keep_uncompressed) {
+		std::vector<ScannedDefinition> scanned_definitions;
+		std::unordered_map<uint64_t, ObjectFacts> definition_facts;
+		const auto find_definition = [&](uint64_t offset) -> const ScannedDefinition* {
+			const auto it = std::lower_bound(scanned_definitions.begin(), scanned_definitions.end(), offset,
+				[](const ScannedDefinition& d, uint64_t value) { return d.offset < value; });
+			return it != scanned_definitions.end() && it->offset == offset ? &*it : nullptr;
+		};
+		const auto remember_replaced = [&](uint32_t id) {
 			const XrefEntry* before = table.find(id);
 			if (before == nullptr) {
 				return;
 			}
+			ObjectFacts facts = facts_of(id);
+			if (facts.empty()) {
+				return;
+			}
 			if (before->is_uncompressed()) {
-				if (keep_uncompressed) {
-					replaced_uncompressed[id] = ReplacedDefinition{before->byte_offset, before->generation, facts_of(id)};
+				if (definition_facts.size() < effective_max_entries) {
+					definition_facts[before->byte_offset] = std::move(facts);
 				}
 			} else if (before->is_compressed()) {
 				const XrefEntry* container = table.find(before->obj_stm_num);
 				if (container != nullptr && container->is_uncompressed()) {
-					ObjectFacts facts = facts_of(id);
-					if (!facts.empty()) {
-						replaced_members[{container->byte_offset, before->obj_stm_index}] = {id, std::move(facts)};
-					}
+					replaced_members[{container->byte_offset, before->obj_stm_index}] = {id, std::move(facts)};
 				}
 			}
 		};
+		// Containers the scan decoded at once (the file did not look encrypted) and the members an intact xref row
+		// named: if the parsed trailers say the file is encrypted after all, what those containers taught is
+		// discarded, keeping only the entries the rows name.
+		std::vector<uint32_t> eager_containers;
+		std::unordered_set<uint32_t> row_named_members;
 		auto invalidate_objstm_container = [&](uint32_t container_id) {
 			auto m_it = objstm_members.find(container_id);
 			if (m_it == objstm_members.end()) {
@@ -1065,7 +1122,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 								"Damaged-file recovery exceeded maximum object entry budget",
 								container_pos);
 						}
-						remember_replaced(inner_id, true);
+						remember_replaced(inner_id);
 						invalidate_objstm_container(inner_id);
 						if (!table.entries_.contains(inner_id)) {
 							++objects_discovered;
@@ -1278,7 +1335,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 
 							// If `obj_num` previously acted as a `/Type /ObjStm` container, redefining
 							// `obj_num` invalidates all compressed objects that pointed into that container.
-							remember_replaced(obj_num, false);
+							remember_replaced(obj_num);
 							invalidate_objstm_container(obj_num);
 
 							if (!table.entries_.contains(obj_num)) {
@@ -1297,6 +1354,9 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 									0u,
 									gen_num});
 							defined_at[obj_num] = static_cast<uint64_t>(pos);
+							if (scanned_definitions.size() < effective_max_entries) {
+								scanned_definitions.push_back(ScannedDefinition{static_cast<uint64_t>(pos), obj_num, gen_num});
+							}
 							recovered_integers.erase(obj_num);
 							catalog_generations.erase(obj_num);
 							indirect_type_dicts.erase(obj_num);
@@ -1392,7 +1452,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 													// A later revision deleted the object: an earlier definition goes, and an earlier container's
 													// member unpacked after the scan stays out (defined_at).
 													if (existing != nullptr) {
-														remember_replaced(member_id, true);
+														remember_replaced(member_id);
 														invalidate_objstm_container(member_id);
 														table.entries_.erase(member_id);
 														if (objects_discovered > 0u) {
@@ -1411,15 +1471,13 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 												}
 												if (row.is_uncompressed()) {
 													// A type-1 row is taken only for a definition the scan found (ISO 32000-1 7.5.8.3, Table 18): the one already in
-													// the table, whose position it then vouches for, or the one a member or an earlier row replaced, which it restores.
+													// the table, whose position it then vouches for, or an earlier one something later replaced, which it restores.
 													if (existing != nullptr && existing->is_uncompressed() && existing->byte_offset == row.byte_offset &&
 														existing->generation == row.generation) {
 														defined_at[member_id] = std::max(defined_at[member_id], static_cast<uint64_t>(pos));
-													} else if (const auto replaced = replaced_uncompressed.find(member_id);
-															   replaced != replaced_uncompressed.end() && replaced->second.offset == row.byte_offset &&
-															   replaced->second.generation == row.generation) {
-														const ReplacedDefinition restored = replaced->second;
-														remember_replaced(member_id, true);
+													} else if (const ScannedDefinition* seen = find_definition(row.byte_offset);
+															   seen != nullptr && seen->obj_num == member_id && seen->generation == row.generation) {
+														remember_replaced(member_id);
 														invalidate_objstm_container(member_id);
 														if (existing == nullptr) {
 															if (objects_discovered >= effective_max_entries) {
@@ -1440,7 +1498,9 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 														if (info_candidate.has_value() && info_candidate->obj_num == member_id) {
 															info_candidate = std::nullopt;
 														}
-														restore_facts(member_id, restored.facts, static_cast<uint64_t>(pos));
+														if (const auto known = definition_facts.find(row.byte_offset); known != definition_facts.end()) {
+															restore_facts(member_id, known->second, static_cast<uint64_t>(pos));
+														}
 														max_obj_num = std::max(max_obj_num, member_id);
 													}
 													continue;
@@ -1449,6 +1509,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 													existing->obj_stm_index == row.obj_stm_index) {
 													// The same object the scan already unpacked: what it learned (a catalog, an integer) stands.
 													defined_at[member_id] = static_cast<uint64_t>(pos);
+													row_named_members.insert(member_id);
 													continue;
 												}
 												if (existing == nullptr) {
@@ -1463,9 +1524,10 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 												}
 												// A row names its container by number, not by one version of it, so it is not one of
 												// objstm_members: the container's own (re)definition does not invalidate it.
-												remember_replaced(member_id, true);
+												remember_replaced(member_id);
 												invalidate_objstm_container(member_id);
 												table.set_entry(member_id, row);
+												row_named_members.insert(member_id);
 												defined_at[member_id] = static_cast<uint64_t>(pos);
 												recovered_integers.erase(member_id);
 												catalog_generations.erase(member_id);
@@ -1521,6 +1583,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 											pos);
 									}
 									if (dec_stm.has_value()) {
+										eager_containers.push_back(obj_num);
 										RECTO_PDF_RETURN_IF_ERROR(
 											unpack_objstm(obj_num, pos, n_opt, first_opt, std::move(*dec_stm)));
 									}
@@ -1628,6 +1691,37 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			return v->as_int();
 		};
 		const bool encrypted = table.trailer_.contains("Encrypt");
+		if (encrypted) {
+			// The early warning missed this file's /Encrypt, so some containers were decoded as ciphertext: what they
+			// taught goes, and of their members only the entries an intact xref row named stay (read after
+			// authentication).
+			for (const uint32_t container_id : eager_containers) {
+				const auto members = objstm_members.find(container_id);
+				if (members == objstm_members.end()) {
+					continue;
+				}
+				for (const uint32_t member_id : members->second) {
+					const XrefEntry* me = table.find(member_id);
+					if (me == nullptr || !me->is_compressed() || me->obj_stm_num != container_id) {
+						continue;
+					}
+					recovered_integers.erase(member_id);
+					catalog_generations.erase(member_id);
+					indirect_type_dicts.erase(member_id);
+					catalog_names.erase(member_id);
+					if (info_candidate.has_value() && info_candidate->obj_num == member_id) {
+						info_candidate = std::nullopt;
+					}
+					if (!row_named_members.contains(member_id)) {
+						table.entries_.erase(member_id);
+						defined_at.erase(member_id);
+						if (objects_discovered > 0u) {
+							--objects_discovered;
+						}
+					}
+				}
+			}
+		}
 		for (DeferredObjStm& deferred : deferred_objstms) {
 			if (encrypted) {
 				break; // ciphertext until authentication; resolution decodes these containers afterwards

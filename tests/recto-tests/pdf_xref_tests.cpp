@@ -550,7 +550,9 @@ TEST(PdfXref, RecoveryRoundThreeFixes)
 	// A file that mentions /Encrypt in a comment or a string keeps its containers decoded during the scan, so a
 	// stream whose /Length is a compressed integer is skipped by that length, and the catalog written inside its data
 	// is never read as a definition.
-	for (const std::string mention : {"% notes on /Encrypt 5 0 R\n", "6 0 obj\n(see /Encrypt)\nendobj\n"}) {
+	for (const std::string mention : {"% notes on /Encrypt 5 0 R\n", "6 0 obj\n(see /Encrypt)\nendobj\n",
+			 "6 0 obj\n(see (nested) /Encrypt 5 0 R)\nendobj\n",
+			 "7 0 obj\n<< /Length 14 >>\nstream\n/Encrypt 5 0 R\nendstream\nendobj\n"}) {
 		const std::string fake = "\nendstream\nendobj\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n";
 		std::string pdf = "%PDF-1.7\n" + mention;
 		const size_t genuine_at = pdf.size();
@@ -561,6 +563,56 @@ TEST(PdfXref, RecoveryRoundThreeFixes)
 		RECTO_ASSERT_OK(rec);
 		ASSERT_NE(rec->find(1), nullptr);
 		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at) << mention;
+	}
+
+	// Round 4: a trailer key with a comment between its tokens still defers an encrypted file's containers: three
+	// 400 KiB containers under a 1 MiB decode budget recover instead of exhausting it on ciphertext.
+	{
+		std::string pdf = "%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages;
+		for (uint32_t n = 40u; n < 43u; ++n) {
+			const std::string cipher(409600u, static_cast<char>(0xA5));
+			pdf += std::to_string(n) + " 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Length 409600 >>\nstream\n" + cipher +
+				"\nendstream\nendobj\n";
+		}
+		pdf += "9 0 obj\n<< /Filter /Standard /V 1 /R 2 /O <00> /U <00> /P -4 >>\nendobj\n"
+			   "trailer\n<< /Size 43 /Root 1 0 R /Encrypt % the handler\n9 0 R >>\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 16);
+		RECTO_ASSERT_OK(rec);
+		EXPECT_EQ(rec->root_ref(), (IndirectRef{1u, 0u}));
+	}
+
+	// Round 4: when the early warning misses the key (an unbalanced parenthesis before the trailer reads as one long
+	// string), the parsed trailer still decides: what the container decoded during the scan taught is discarded, and
+	// only the member an intact xref row names keeps its entry.
+	{
+		std::string pdf = "%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages +
+			container(20u, "21 0 22 2 7 8", "/N 2 /First 10 /Filter /ASCIIHexDecode");
+		const std::string row("\x02\x00\x00\x00\x14\x00\x01", 7); // object 22: type 2, in container 20, index 1
+		pdf += "30 0 obj\n<< /Type /XRef /Size 31 /Index [22 1] /W [1 4 2] /Length 7 >>\nstream\n" + row +
+			"\nendstream\nendobj\n";
+		pdf += "junk (unbalanced\n9 0 obj\n<< /Filter /Standard /V 1 /R 2 /O <00> /U <00> /P -4 >>\nendobj\n"
+			   "trailer\n<< /Size 31 /Root 1 0 R /Encrypt 9 0 R >>\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		EXPECT_EQ(rec->find(21), nullptr);
+		ASSERT_NE(rec->find(22), nullptr);
+		EXPECT_EQ(rec->find(22)->obj_stm_num, 20u);
+	}
+
+	// Round 4: object 1 defined three times in the file (a catalog, then two other dictionaries); an intact type-1
+	// row naming the first restores it, catalog and all, so root 1 is valid again.
+	{
+		std::string pdf = "%PDF-1.7\n";
+		const size_t first_at = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages +
+			"1 0 obj\n<< /Type /Bogus >>\nendobj\n1 0 obj\n<< /Type /Bogus /Again true >>\nendobj\n";
+		pdf += "10 0 obj\n<< /Type /XRef /Size 11 /Root 1 0 R /Index [1 1] /W [1 4 2] /Length 7 >>\nstream\n" +
+			type1_row(first_at) + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		EXPECT_EQ(rec->root_ref(), (IndirectRef{1u, 0u}));
+		ASSERT_NE(rec->find(1), nullptr);
+		EXPECT_EQ(rec->find(1)->byte_offset, first_at);
 	}
 }
 
