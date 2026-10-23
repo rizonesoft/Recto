@@ -60,6 +60,16 @@ class PreCommitHook(unittest.TestCase):
         self.git("add", "-A")
         self.assertEqual(self.commit().returncode, 0)
 
+    def test_an_unstaged_error_header_beside_a_todo_change_is_refused(self):
+        self.tick()
+        self.sync()
+        self.git("add", "todo")
+        header = self.root / "src/pdf/error.h"
+        header.write_text(header.read_text(encoding="utf-8") + "\n// unstaged\n", encoding="utf-8")
+        result = self.commit()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("src/pdf/error.h has unstaged or untracked changes", result.stderr)
+
     def test_a_todo_naming_an_unknown_error_code_is_refused(self):
         path = self.root / "todo/00-workspace/TODO-01-a.md"
         unknown = "Error" + "Code::" + "NoSuch" + "Code"  # assembled, so no TODO text in this repository holds it

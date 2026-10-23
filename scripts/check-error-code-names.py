@@ -20,8 +20,10 @@ QUALIFIED = re.compile(r"(?<![A-Za-z0-9_])(?P<scope>Pdf)?ErrorCode::(?P<name>[A-
 # Names the decision table mapped to other codes; written in backticks they read as a code.
 RETIRED = ("PasswordRequired", "InvalidPassword", "LimitExceeded", "UndoBudgetExceeded", "CorruptStructure",
            "StructTreeMalformed", "OutputInvalid", "ClipboardEmpty", "ClipboardUnsupported", "UnsupportedRecipientType")
-RETIRED_USE = re.compile(r"`(?P<name>" + "|".join(RETIRED) + r")`")
-NOTE = re.compile(r"\*\*Corrected \d{4}-\d{2}-\d{2}:\*\*.*$")
+# A retired word anywhere in a code span, except as a member or test name after a dot (`PubSec.UnsupportedRecipientType`).
+CODE_SPAN = re.compile(r"`(?P<span>[^`]+)`")
+RETIRED_WORD = re.compile(r"(?<![A-Za-z0-9_.])(?P<name>" + "|".join(RETIRED) + r")(?![A-Za-z0-9_])")
+NOTE_MARKER = re.compile(r"\*\*Corrected \d{4}-\d{2}-\d{2}:\*\*\s*")
 SECTION = re.compile(r"^## (?P<number>\d+)\. ")
 # The section that retired them lists them in its own context.
 EXEMPT_SECTION = ("01-engine/TODO-02-actor-and-render.md", "22")
@@ -42,6 +44,37 @@ def error_codes(header: pathlib.Path) -> set[str]:
     return names
 
 
+def without_notes(line: str) -> str:
+    """The line with each dated correction note removed: the marker and the parenthesis that follows it (nested
+    parentheses included), or, without one, the rest of that sentence. Text after a note is still read."""
+    out = []
+    at = 0
+    for marker in NOTE_MARKER.finditer(line):
+        if marker.start() < at:
+            continue
+        out.append(line[at:marker.start()])
+        end = marker.end()
+        if end < len(line) and line[end] == "(":
+            depth = 0
+            while end < len(line):
+                if line[end] == "(":
+                    depth += 1
+                elif line[end] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        end += 1
+                        break
+                end += 1
+            if end < len(line) and line[end] == ".":
+                end += 1
+        else:
+            stop = line.find(". ", end)
+            end = len(line) if stop < 0 else stop + 1
+        at = end
+    out.append(line[at:])
+    return "".join(out)
+
+
 def unknown_names(todo_root: pathlib.Path, known: set[str]) -> list[str]:
     """Every qualified error code under `todo_root` that is not in `known` or uses the `PdfErrorCode` scope, and every
     retired name used unqualified, as `path:line: name`."""
@@ -59,8 +92,9 @@ def unknown_names(todo_root: pathlib.Path, known: set[str]) -> list[str]:
                     found.append(f"{relative}:{number}: {match.group(0)}")
             if (relative, section) == EXEMPT_SECTION:
                 continue
-            for match in RETIRED_USE.finditer(NOTE.sub("", line)):
-                found.append(f"{relative}:{number}: {match.group(0)}")
+            for span in CODE_SPAN.finditer(without_notes(line)):
+                for match in RETIRED_WORD.finditer(span.group("span")):
+                    found.append(f"{relative}:{number}: `{match.group('name')}`")
     return found
 
 
