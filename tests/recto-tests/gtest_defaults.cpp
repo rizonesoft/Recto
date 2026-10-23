@@ -3,10 +3,13 @@
 // Every TODO checkpoint runs recto-tests.exe with a --gtest_filter. GoogleTest
 // exits 0 when a filter matches no test, so a misspelt or stale filter would
 // pass a checkpoint with nothing run. This binary fails that run instead, the
-// way GoogleTest's own --gtest_fail_if_no_test_selected does. An explicit
-// --gtest_fail_if_no_test_selected=... on the command line, or the
-// GTEST_FAIL_IF_NO_TEST_SELECTED environment variable, still decides.
-// Listing (--gtest_list_tests) is not a run and is unaffected.
+// way GoogleTest's own --gtest_fail_if_no_test_selected does, by changing the
+// flag's default and nothing else: it is set during static initialization,
+// after gtest.dll has initialized the flag (from GTEST_FAIL_IF_NO_TEST_SELECTED
+// when that variable is set) and before InitGoogleTest parses the command line
+// and any --gtest_flagfile. So the environment variable, the command line and
+// a flag file all still decide, exactly as GoogleTest reads them. Listing
+// (--gtest_list_tests) is not a run and is unaffected.
 // Proven by Ui.Project.EmptySelectionFails.
 //
 // The flag is data exported from gtest.dll (the vcpkg x64-windows and
@@ -18,58 +21,18 @@
 
 #include <windows.h>
 
-#include <string>
-#include <string_view>
-#include <vector>
-
 GTEST_DECLARE_bool_(fail_if_no_test_selected);
 
 namespace {
 
-// True when an argument is the flag itself (`--gtest_fail_if_no_test_selected`
-// or `...=<value>`, with GoogleTest's `-`, `--` and `/` prefixes), never when a
-// filter or another argument merely contains its name.
-bool is_flag_argument(std::wstring_view argument)
-{
-	constexpr std::wstring_view kName = L"gtest_fail_if_no_test_selected";
-	for (const std::wstring_view prefix : {L"--", L"-", L"/"}) {
-		if (argument.starts_with(prefix)) {
-			const std::wstring_view rest = argument.substr(prefix.size());
-			return rest == kName || (rest.starts_with(kName) && rest.substr(kName.size()).starts_with(L"="));
-		}
+// gtest.dll is initialized before this executable's static objects, and main
+// (gtest_main) calls InitGoogleTest after them: this is the default, set
+// between the two. GoogleTest has already read the environment variable into
+// the flag, so it is left alone when the variable is set.
+[[maybe_unused]] const bool kDefaulted = [] {
+	if (GetEnvironmentVariableW(L"GTEST_FAIL_IF_NO_TEST_SELECTED", nullptr, 0) == 0) {
+		GTEST_FLAG_SET(fail_if_no_test_selected, true);
 	}
-	return false;
-}
-
-// Reads the very arguments GoogleTest parsed (InitGoogleTest keeps a copy,
-// testing::internal::GetArgvs). Re-splitting the Windows command line would
-// not do: CommandLineToArgvW reads some quoting (a run of three quotes)
-// differently from the C runtime, so it could see a flag that GoogleTest read
-// as part of a filter.
-bool chosen_elsewhere()
-{
-	bool chosen = false;
-	const std::vector<std::string> arguments = ::testing::internal::GetArgvs();
-	for (size_t i = 1; i < arguments.size(); ++i) {
-		chosen = chosen || is_flag_argument(std::wstring(arguments[i].begin(), arguments[i].end()));
-	}
-	return chosen || GetEnvironmentVariableW(L"GTEST_FAIL_IF_NO_TEST_SELECTED", nullptr, 0) != 0;
-}
-
-// The flags are parsed before the program starts its run and read after, so
-// the default is applied here, between the two.
-class FailIfNoTestSelected final : public ::testing::EmptyTestEventListener {
-public:
-	void OnTestProgramStart(const ::testing::UnitTest&) override
-	{
-		if (!chosen_elsewhere()) {
-			GTEST_FLAG_SET(fail_if_no_test_selected, true);
-		}
-	}
-};
-
-[[maybe_unused]] const bool kRegistered = [] {
-	::testing::UnitTest::GetInstance()->listeners().Append(new FailIfNoTestSelected);
 	return true;
 }();
 

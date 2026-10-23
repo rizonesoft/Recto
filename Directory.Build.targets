@@ -23,6 +23,16 @@
       <RuntimeLibrary Condition="'$(Configuration)' != 'Debug'">MultiThreadedDLL</RuntimeLibrary>
     </ClCompile>
   </ItemDefinitionGroup>
+  <!-- The module libraries on either side of the D13 boundary have cl write, for each source, a JSON report of every
+       file it opened (/sourceDependencies, into IntDir). scripts/check-ui-boundary.py reads those reports after the
+       build (build/build.ps1 runs it): they are the proof that no engine source opened a recto-ui file and no recto-ui
+       source an engine file, whatever spelling an include, a forced include or an option uses (D10 T01 §1). -->
+  <ItemDefinitionGroup Condition="'$(MSBuildProjectName)' == 'recto-pdf' Or '$(MSBuildProjectName)' == 'recto-core' Or '$(MSBuildProjectName)' == 'recto-services' Or '$(MSBuildProjectName)' == 'recto-ui'">
+    <ClCompile>
+      <GenerateSourceDependencies>true</GenerateSourceDependencies>
+      <SourceDependenciesFile>$(IntDir)</SourceDependenciesFile>
+    </ClCompile>
+  </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="($(MSBuildProjectName.StartsWith('recto-')) Or '$(MSBuildProjectName)' == 'Recto') And '$(EnableASAN)' == 'true' And '$(Platform)' == 'x64'">
     <ClCompile>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>

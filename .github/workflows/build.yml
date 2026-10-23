@@ -78,6 +78,12 @@ jobs:
         shell: pwsh
         run: python -m unittest tests.scripts.test_ui_module_boundary
 
+      # build/build.ps1 proves the boundary after each configuration from the compiler's /sourceDependencies reports and
+      # the libraries' directives and members (scripts/check-ui-boundary.py); this proves that check catches crossings.
+      - name: Check that the compiler-reported boundary check catches crossings (D10 T01 §1)
+        shell: pwsh
+        run: python -m unittest tests.scripts.test_check_ui_boundary
+
       - name: Configure NuGet and vcpkg cache directories
         shell: pwsh
         run: |

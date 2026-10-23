@@ -1226,6 +1226,12 @@ RECTO_UI_TEST(Project, EmptySelectionFails)
 	// part of the filter GoogleTest reads, and the run must still fail.
 	const auto [quoted, quoted_output] = run_self(L"--gtest_filter=Ui.Project.NoSuch\"\"\" --gtest_fail_if_no_test_selected=false");
 	EXPECT_NE(quoted, 0U) << quoted_output;
+	// A flag file GoogleTest loads (--gtest_flagfile) decides like the command line.
+	recto::test::TempDir flags;
+	write_text(flags.path() / "flags.txt", "--gtest_fail_if_no_test_selected=false\n");
+	const auto [from_file, from_file_output] =
+		run_self(L"--gtest_filter=Ui.Project.NoSuchTest \"--gtest_flagfile=" + (flags.path() / "flags.txt").wstring() + L"\"");
+	EXPECT_EQ(from_file, 0U) << from_file_output;
 	// GTEST_FAIL_IF_NO_TEST_SELECTED=0 in a run's own environment also permits the empty run...
 	const auto [variable, variable_output] =
 		run_self(L"--gtest_filter=Ui.Project.NoSuchTest", kChildDeadlineMs, {{L"GTEST_FAIL_IF_NO_TEST_SELECTED", L"0"}});

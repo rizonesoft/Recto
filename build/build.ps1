@@ -126,6 +126,10 @@ foreach ($plat in $Platform) {
         # A warning from any tool MSBuild runs (not only the compiler, which /WX already stops) fails the build: the
         # build is warning-free on x64 and ARM64 by contract (D00 T01 §3, D06 T05 §27).
         Assert-NoMSBuildWarnings -LogFile $logFile -What "$cfg|$plat"
+        # The D13 boundary between the engine libraries and recto-ui, proven from the compiler's /sourceDependencies
+        # reports and the librarian's directives and members of this configuration's libraries (D10 T01 §1).
+        & python (Join-Path $root 'scripts\check-ui-boundary.py') --configuration $cfg --platform $plat --vs $vs
+        if ($LASTEXITCODE -ne 0) { throw "the engine/recto-ui boundary check failed: $cfg|$plat (exit $LASTEXITCODE)" }
 
         if ($EnableASAN -and $plat -eq 'x64') {
             # Recto.exe too: recto-tests launches it (Ui.App tests).
