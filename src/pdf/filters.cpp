@@ -3567,6 +3567,13 @@ struct Jbig2DecoderState {
 		return {};
 	}
 
+	// The rows the open stripe may span (T.88 7.4.8.6): a stripe's end row is at most the maximum stripe size past the
+	// previous stripe's end row, and the first stripe's previous end row is row 0, so the first may hold one row more.
+	[[nodiscard]] uint64_t stripe_allowance() const noexcept
+	{
+		return max_stripe_rows + (end_of_stripe_rows == 0u ? 1u : 0u);
+	}
+
 	// Places a region of rows [top, top + height) on a striped page of unknown height: it must lie in the open stripe,
 	// not in one an End of Stripe already completed (T.88 7.4.10), and the page grows to hold it. A page of known
 	// height takes any region (one outside it is clipped).
@@ -3577,7 +3584,7 @@ struct Jbig2DecoderState {
 		}
 		const int64_t bottom = static_cast<int64_t>(top) + height;
 		if (static_cast<int64_t>(top) < static_cast<int64_t>(end_of_stripe_rows) ||
-			bottom - static_cast<int64_t>(end_of_stripe_rows) > static_cast<int64_t>(max_stripe_rows)) {
+			bottom - static_cast<int64_t>(end_of_stripe_rows) > static_cast<int64_t>(stripe_allowance())) {
 			return make_filter_error(
 				ErrorCode::DamagedFormat,
 				DiagnosticId::DamagedStream,
@@ -6081,7 +6088,7 @@ struct Jbig2DecoderState {
 						seg_header_start);
 				}
 				const uint64_t rows = static_cast<uint64_t>(read_u32_be(seg_data.data())) + 1u;
-				if (rows <= state.end_of_stripe_rows || rows - state.end_of_stripe_rows > state.max_stripe_rows ||
+				if (rows <= state.end_of_stripe_rows || rows - state.end_of_stripe_rows > state.stripe_allowance() ||
 					rows < state.open_stripe_bottom) {
 					return make_filter_error(
 						ErrorCode::DamagedFormat,

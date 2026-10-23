@@ -4550,6 +4550,11 @@ TEST(PdfFilters, Jbig2StripesAlignmentAndSkip)
 		};
 		const std::vector<uint8_t> row0 = {0u, 0u, 0u, 0u};
 		RECTO_ASSERT_OK(decode_jbig2(striped(0x8001u, {row0})));
+		// Round 6: the first stripe's end row is measured from row 0, so with a maximum of 1 it may end at row 1 (two rows);
+		// a later stripe still spans at most one row past the previous end.
+		const std::vector<uint8_t> row1 = {0u, 0u, 0u, 1u};
+		RECTO_ASSERT_OK(decode_jbig2(striped(0x8001u, {row1})));
+		RECTO_EXPECT_ERR(decode_jbig2(striped(0x8001u, {row1, std::vector<uint8_t>{0u, 0u, 0u, 3u}})), ErrorCode::DamagedFormat);
 		RECTO_EXPECT_ERR(decode_jbig2(striped(0x0001u, {row0})), ErrorCode::DamagedFormat);      // not striped
 		RECTO_EXPECT_ERR(decode_jbig2(striped(0x8001u, {{0u, 0u}})), ErrorCode::DamagedFormat);  // short record
 		RECTO_EXPECT_ERR(decode_jbig2(striped(0x8001u, {row0, row0})), ErrorCode::DamagedFormat); // not advancing
