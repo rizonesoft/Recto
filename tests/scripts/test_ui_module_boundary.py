@@ -15,7 +15,6 @@ ASan, every recto-ui source is compiled with /fsanitize=address."""
 import json
 import os
 import pathlib
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -48,35 +47,81 @@ def resolved(path):
         return pathlib.Path(os.path.abspath(path))
 
 
-# cl, link and lib switches that take a path, longest first so /external:I is not read as /e... and /FI is not read as
-# /F. Matching ignores case: link and lib accept any case, and for cl that can only over-report.
-PATH_SWITCHES = ("external:I", "ifcSearchDir", "headerUnit:angle", "headerUnit:quote", "headerUnit", "reference",
-                 "DEFAULTLIB:", "LIBPATH:", "FU", "FI", "AI", "I")
+# cl, link and lib switches that take a path, by what the path is: a search folder, a file looked up the way a quoted
+# #include is (/FI, /FU), or any other file. Matching ignores case (link and lib accept any case; for cl it can only
+# over-report) and tries the longest switch first, so /external:I is not read as /e... and /FI is not read as /F.
+FOLDER_SWITCHES = ("external:I", "ifcSearchDir", "LIBPATH:", "imsvc", "AI", "I")
+LOOKUP_SWITCHES = ("FU", "FI")
+FILE_SWITCHES = ("headerUnit:angle", "headerUnit:quote", "headerUnit", "reference", "DEFAULTLIB:")
+SWITCHES = sorted([(s, "folder") for s in FOLDER_SWITCHES] + [(s, "lookup") for s in LOOKUP_SWITCHES] +
+                  [(s, "file") for s in FILE_SWITCHES], key=lambda pair: -len(pair[0]))
 LINK_PROBE = pathlib.Path(__file__).resolve().parent / "fixtures" / "link_probe.targets"
 
 
-def option_paths(project, options):
-    """Every path an AdditionalOptions string names, resolved against the project folder.
+def command_line_tokens(text):
+    """`text` split into arguments the way the Microsoft C runtime splits a command line, which is how cl, link and lib
+    read their options: white space outside quotes separates; a quote opens or closes quoting anywhere in an argument
+    (`/I"a b"` is `/Ia b`) and is dropped; `""` inside quotes is one literal quote; 2n backslashes before a quote are n
+    backslashes and the quote still counts, 2n+1 are n backslashes and a literal quote; other backslashes are literal."""
+    tokens, current, quoted, started, i = [], [], False, False, 0
+    while i < len(text):
+        c = text[i]
+        if c == "\\":
+            j = i
+            while j < len(text) and text[j] == "\\":
+                j += 1
+            if j < len(text) and text[j] == '"':
+                current.append("\\" * ((j - i) // 2))
+                if (j - i) % 2:
+                    current.append('"')
+                    j += 1
+            else:
+                current.append("\\" * (j - i))
+            i, started = j, True
+        elif c == '"':
+            if quoted and text[i + 1:i + 2] == '"':
+                current.append('"')
+                i += 2
+            else:
+                quoted, i = not quoted, i + 1
+            started = True
+        elif c in " \t\r\n" and not quoted:
+            if started:
+                tokens.append("".join(current))
+            current, started, i = [], False, i + 1
+        else:
+            current.append(c)
+            started, i = True, i + 1
+    if started:
+        tokens.append("".join(current))
+    return tokens
 
-    Each token counts as a path as it stands, after a path switch (`/I`, `-FI`, `/external:I`, ...) and after any
-    `name=` part (`/reference ui=x.ifc`); a path switch with no attached value takes the next token. A token that is
-    not a path resolves to a harmless place beside the project, so this can only over-report a forbidden folder."""
-    tokens = [token.strip('"') for token in shlex.split(options, posix=False)]
-    found = set()
-    for index, token in enumerate(tokens):
-        candidates = [token]
-        if token[:1] in ("/", "-"):
-            for switch in PATH_SWITCHES:
-                if token[1:1 + len(switch)].lower() == switch.lower():
-                    value = token[1 + len(switch):]
-                    if not value and index + 1 < len(tokens):
-                        value = tokens[index + 1]
-                    candidates.append(value)
-                    break
-        candidates += [candidate.split("=", 1)[1] for candidate in list(candidates) if "=" in candidate]
-        found |= {resolved(project.parent / candidate) for candidate in candidates
-                  if candidate and not candidate.startswith(("%(", "$("))}
-    return found
+
+class Options:
+    """What one AdditionalOptions string names: `folders` searched for headers or libraries, `lookups` named like a
+    quoted #include (/FI, /FU: found beside the source or along the include folders), and `paths`, every token read as
+    a path (the token itself, a switch's value, the part after `name=`), each resolved against the project folder."""
+
+    def __init__(self, project, options):
+        self.folders, self.lookups, self.paths = set(), [], set()
+        tokens = command_line_tokens(options)
+        for index, token in enumerate(tokens):
+            candidates = [token]
+            if token[:1] in ("/", "-"):
+                for switch, kind in SWITCHES:
+                    if token[1:1 + len(switch)].lower() == switch.lower():
+                        value = token[1 + len(switch):]
+                        if not value and index + 1 < len(tokens):
+                            value = tokens[index + 1]
+                        candidates.append(value)
+                        if value and kind == "folder":
+                            self.folders.add(resolved(project.parent / value))
+                        elif value and kind == "lookup":
+                            self.lookups.append(value)
+                        break
+            candidates += [candidate.split("=", 1)[1] for candidate in list(candidates) if "=" in candidate]
+            self.paths |= {resolved(project.parent / candidate) for candidate in candidates
+                           if candidate and not candidate.startswith(("%(", "$("))}
 
 
 def evaluate(tool, project, configuration, platform, *extra):
@@ -95,8 +140,17 @@ def evaluate(tool, project, configuration, platform, *extra):
         raise AssertionError(f"{project} evaluated no ClCompile items; the check would see nothing")
 
     def paths(value):
-        return {resolved(project.parent / entry.strip()) for entry in value.split(";")
-                if entry.strip() and not entry.strip().startswith(("%(", "$("))}
+        # A quote is never part of a Windows path; MSBuild and the tools drop the quotes around an entry.
+        entries = (entry.replace('"', "").strip() for entry in value.split(";"))
+        return {resolved(project.parent / entry) for entry in entries if entry and not entry.startswith(("%(", "$("))}
+
+    def forced_candidates(entry, source, search):
+        # /FI and /FU name a file the way `#include "name"` does: an absolute path is itself, a relative one is looked up
+        # beside the source and then along the include folders. Every place the tool could find it counts, so a
+        # crossing is caught whichever candidate exists.
+        if pathlib.PureWindowsPath(entry).is_absolute():
+            return {resolved(pathlib.Path(entry))}
+        return {resolved(folder / entry) for folder in [source.parent, project.parent, *search]}
 
     # MSBuild hands IncludePath to cl as INCLUDE, and the toolset's AddExternalIncludDirectoriesToPaths target appends
     # ExternalIncludePath to it (and hands it as EXTERNAL_INCLUDE) at build time, after evaluation: both are header
@@ -106,23 +160,18 @@ def evaluate(tool, project, configuration, platform, *extra):
     folders, forced, sources, options = set(base_folders), set(), set(), set()
     for item in items["ClCompile"]:
         source = resolved(project.parent / item["Identity"])
+        # AdditionalOptions reach cl unchanged: every path they name is reported, the folders their /I-style switches
+        # add join the search path, and their /FI and /FU files are looked up along it like ForcedIncludeFiles.
+        item_options = Options(project, item.get("AdditionalOptions", ""))
+        options |= item_options.paths
         item_folders = (paths(item.get("AdditionalIncludeDirectories", "")) |
-                        paths(item.get("AdditionalUsingDirectories", "")) | base_folders)
+                        paths(item.get("AdditionalUsingDirectories", "")) | item_options.folders | base_folders)
         folders |= item_folders
         sources.add(source)
-        # AdditionalOptions reach cl unchanged, so a path any switch there names counts as a folder or file it sees.
-        options |= option_paths(project, item.get("AdditionalOptions", ""))
-        # /FI names a file the way `#include "name"` does: an absolute path is itself, a relative one is looked up
-        # beside the source and then along the include folders. Every place the compiler could find it counts, so a
-        # crossing is caught whichever candidate exists.
-        for entry in f'{item.get("ForcedIncludeFiles", "")};{item.get("ForcedUsingFiles", "")}'.split(";"):
-            entry = entry.strip()
-            if not entry or entry.startswith(("%(", "$(")):
-                continue
-            if pathlib.PureWindowsPath(entry).is_absolute():
-                forced.add(resolved(pathlib.Path(entry)))
-            else:
-                forced |= {resolved(folder / entry) for folder in [source.parent, project.parent, *item_folders]}
+        entries = f'{item.get("ForcedIncludeFiles", "")};{item.get("ForcedUsingFiles", "")}'.split(";")
+        for entry in [e.replace('"', "").strip() for e in entries] + item_options.lookups:
+            if entry and not entry.startswith(("%(", "$(")):
+                forced |= forced_candidates(entry, source, item_folders)
     references = {resolved(project.parent / item["Identity"]) for item in items.get("ProjectReference", [])}
 
     # Link and Lib: what the linker or librarian takes in. The probe adds one item of each type to a C++ project; a
@@ -135,7 +184,9 @@ def evaluate(tool, project, configuration, platform, *extra):
     for item in link_items:
         libraries |= paths(item.get("AdditionalDependencies", ""))
         library_folders |= paths(item.get("AdditionalLibraryDirectories", ""))
-        options |= option_paths(project, item.get("AdditionalOptions", ""))
+        link_options = Options(project, item.get("AdditionalOptions", ""))
+        options |= link_options.paths
+        library_folders |= link_options.folders
     output = None
     if properties.get("OutDir") and properties.get("TargetName"):
         output = resolved(project.parent / properties["OutDir"] /
@@ -287,9 +338,12 @@ class UiModuleBoundaryTests(unittest.TestCase):
             f'/external:I {ui} /reference recto.ui={ui / "ui.ifc"} %(AdditionalOptions)</AdditionalOptions></ClCompile>',
             f"<ExternalIncludePath>{ui / 'include' / 'recto'}</ExternalIncludePath>")
         rule = "an engine library may not see, compile or reach recto-ui (D13)"
+        # /I and /external:I folders also join the search path, and -FI is also a forced include.
+        searched = [ui.resolve(), (ui / "include").resolve(), (ui / "include" / "recto").resolve()]
         named = [(ui / "include").resolve(), (ui / "pch.h").resolve(), ui.resolve(), (ui / "ui.ifc").resolve()]
         self.assertEqual(violations("recto-core", "Debug|x64", evaluated, chains),
-                         [f"recto-core (Debug|x64): include folder {(ui / 'include' / 'recto').resolve()} breaks: {rule}",
+                         [*[f"recto-core (Debug|x64): include folder {p} breaks: {rule}" for p in sorted(searched)],
+                          f"recto-core (Debug|x64): forced include {(ui / 'pch.h').resolve()} breaks: {rule}",
                           *[f"recto-core (Debug|x64): tool option names {p} breaks: {rule}" for p in sorted(named)]])
 
     def test_an_engine_project_that_links_the_toolkit_library_fails(self):
@@ -322,6 +376,26 @@ class UiModuleBoundaryTests(unittest.TestCase):
         # A C++ project whose Link and Lib settings cannot be read fails the check instead of passing it unseen.
         with self.assertRaisesRegex(AssertionError, "no Link and Lib probe items"):
             self.planted('    <ClCompile Include="a.cpp" />', "<ConfigurationType>StaticLibrary</ConfigurationType>")
+
+    def test_quoted_paths_and_an_option_forced_include_found_along_the_search_path_fail(self):
+        # /I"dir" is /Idir to cl, and a quoted AdditionalIncludeDirectories entry is the folder itself; /FI in the
+        # options is looked up along the include folders (here src, added by the options themselves) like /FI anywhere.
+        src, ui = REPO / "src", REPO / "src" / "ui"
+        evaluated, chains = self.planted(
+            f'    <ClCompile Include="a.cpp"><AdditionalIncludeDirectories>"{ui / "include" / "recto"}";%(AdditionalIncludeDirectories)'
+            f'</AdditionalIncludeDirectories><AdditionalOptions>/I"{ui / "include"}" -I "{src}" /FIui/include/recto/ui/ui.h '
+            '%(AdditionalOptions)</AdditionalOptions></ClCompile>')
+        rule = "an engine library may not see, compile or reach recto-ui (D13)"
+        found = violations("recto-core", "Debug|x64", evaluated, chains)
+        self.assertIn(f"recto-core (Debug|x64): include folder {(ui / 'include').resolve()} breaks: {rule}", found)
+        self.assertIn(f"recto-core (Debug|x64): include folder {(ui / 'include' / 'recto').resolve()} breaks: {rule}", found)
+        self.assertIn(f"recto-core (Debug|x64): forced include {(ui / 'include' / 'recto' / 'ui' / 'ui.h').resolve()} "
+                      f"breaks: {rule}", found)
+        self.assertIn(f"recto-core (Debug|x64): tool option names {(ui / 'include').resolve()} breaks: {rule}", found)
+
+    def test_options_split_like_the_c_runtime(self):
+        self.assertEqual(command_line_tokens(r'/I"a b" -FI x.h "c d"e /D"q\"r" \\srv\share  /x"" ""'),
+                         ["/Ia b", "-FI", "x.h", "c de", '/Dq"r', r"\\srv\share", "/x", ""])
 
     def test_the_toolkit_seeing_an_engine_library_fails(self):
         pdf = REPO / "src" / "pdf"
