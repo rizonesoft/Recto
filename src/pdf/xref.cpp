@@ -1202,36 +1202,41 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		uint64_t cumulative_probe_bytes = 0;
 		TargetCache probe_targets;
 		const IndirectObjectResolver probe_resolver = caching_resolver(probe_targets);
-		// Containers a probe met before the scan had defined a parameter they name, each with the count of definitions
-		// the scan had made then: tried again once something new has been defined, never dropped for being early.
-		std::vector<std::pair<size_t, uint64_t>> probe_waiting;
-		uint64_t definitions_made = 0;
-		// Whether a parameter the dictionary names by reference (one level: /Filter, /DecodeParms and their elements,
-		// /N, /First) has no uncompressed definition yet.
-		const auto names_undefined_parameter = [&](const PdfDict& dict) {
-			const auto undefined = [&](const PdfValue* v) {
-				const auto ref = v != nullptr ? v->as_ref() : std::nullopt;
-				if (!ref.has_value()) {
-					return false;
-				}
-				const XrefEntry* entry = table.find(ref->obj_num);
-				return entry == nullptr || !entry->is_uncompressed() || entry->generation != ref->gen_num;
-			};
+		// The parameters a container names by reference, one level: /Filter, /DecodeParms and their elements, /N, /First.
+		const auto parameter_refs = [](const PdfDict& dict) {
+			std::vector<IndirectRef> refs;
 			for (const std::string_view key : {"Filter", "DecodeParms", "N", "First"}) {
 				const PdfValue* value = dict.get(PdfName::from_decoded(key));
-				if (undefined(value)) {
-					return true;
+				if (value == nullptr) {
+					continue;
 				}
-				if (const PdfArray* arr = value != nullptr ? value->as_array() : nullptr; arr != nullptr) {
+				if (const auto ref = value->as_ref()) {
+					refs.push_back(*ref);
+				} else if (const PdfArray* arr = value->as_array(); arr != nullptr && arr->size() <= kMaxFilterChainDepth) {
 					for (const PdfValue& e : *arr) {
-						if (undefined(&e)) {
-							return true;
+						if (const auto element_ref = e.as_ref()) {
+							refs.push_back(*element_ref);
 						}
 					}
 				}
 			}
-			return false;
+			return refs;
 		};
+		const auto defined_now = [&](IndirectRef ref) {
+			const XrefEntry* entry = table.find(ref.obj_num);
+			return entry != nullptr && entry->is_uncompressed() && entry->generation == ref.gen_num;
+		};
+		// Containers a probe met before the scan had defined a parameter they name, with the references they wait on:
+		// tried again (and only then parsed again) once one of them is defined, never dropped for being early.
+		struct ProbeWait {
+			size_t index = 0;
+			std::vector<IndirectRef> refs;
+		};
+		std::vector<ProbeWait> probe_waiting;
+		// For each object a probed container used as a parameter, those containers; and what each probed container gave.
+		// A later definition of such an object takes the integers back and queues the container to be probed again.
+		std::unordered_map<uint32_t, std::vector<size_t>> parameter_users;
+		std::unordered_map<size_t, std::vector<uint32_t>> probe_provided;
 		const auto integers_only = [&recovered_integers](IndirectRef len_ref) -> PdfResult<int64_t> {
 			const auto it = recovered_integers.find(len_ref.obj_num);
 			if (it == recovered_integers.end() || it->second.first != len_ref.gen_num) {
@@ -1242,7 +1247,8 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			return it->second.second;
 		};
 		enum class ProbeOutcome : uint8_t { Done, Waiting };
-		const auto probe_one = [&](const DeferredObjStm container_at) -> PdfResult<ProbeOutcome> {
+		const auto probe_one = [&](size_t index, std::vector<IndirectRef>& waiting_on) -> PdfResult<ProbeOutcome> {
+			const DeferredObjStm container_at = deferred_objstms[index];
 			{
 				Parser parser(file_bytes);
 				parser.seek(container_at.pos);
@@ -1259,8 +1265,19 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 				if (container == nullptr) {
 					return ProbeOutcome::Done;
 				}
-				if (names_undefined_parameter(container->dict)) {
+				const std::vector<IndirectRef> refs = parameter_refs(container->dict);
+				waiting_on.clear();
+				for (const IndirectRef ref : refs) {
+					if (!defined_now(ref)) {
+						waiting_on.push_back(ref);
+					}
+				}
+				if (!waiting_on.empty()) {
 					return ProbeOutcome::Waiting; // a parameter the scan has not reached yet
+				}
+				// Each parameter this probe reads is noted, so a later definition of it brings the container back.
+				for (const IndirectRef ref : refs) {
+					parameter_users[ref.obj_num].push_back(index);
 				}
 				// Indirect parameters resolve through what the scan has found so far, so such a container is unpacked
 				// again after the scan with what the whole file says; a container with direct parameters reuses the
@@ -1316,6 +1333,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 							if (!fresh && latest->second.first <= static_cast<uint64_t>(container_at.pos)) {
 								latest->second = {static_cast<uint64_t>(container_at.pos), *value};
 							}
+							probe_provided[index].push_back(members.entries[idx].obj_num);
 							probed_members[{static_cast<uint64_t>(container_at.pos), static_cast<uint32_t>(idx)}] =
 								{members.entries[idx].obj_num, *value};
 						}
@@ -1329,28 +1347,50 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			return ProbeOutcome::Done;
 		};
 		const auto probe_containers = [&]() -> PdfResult<void> {
-			// First the containers that waited, once the scan has defined something since they last tried.
+			// First the containers that waited, once a reference they wait on is defined.
 			for (size_t i = 0; i < probe_waiting.size() && !probe_budget_spent;) {
-				auto& [index, seen] = probe_waiting[i];
-				if (seen == definitions_made) {
+				ProbeWait& wait = probe_waiting[i];
+				if (std::none_of(wait.refs.begin(), wait.refs.end(), defined_now)) {
 					++i;
 					continue;
 				}
-				RECTO_PDF_TRY_REF(outcome, probe_one(deferred_objstms[index]));
+				RECTO_PDF_TRY_REF(outcome, probe_one(wait.index, wait.refs));
 				if (outcome == ProbeOutcome::Waiting) {
-					seen = definitions_made;
 					++i;
 				} else {
 					probe_waiting.erase(probe_waiting.begin() + static_cast<std::ptrdiff_t>(i));
 				}
 			}
 			for (; containers_probed < deferred_objstms.size() && !probe_budget_spent; ++containers_probed) {
-				RECTO_PDF_TRY_REF(outcome, probe_one(deferred_objstms[containers_probed]));
+				std::vector<IndirectRef> waiting_on;
+				RECTO_PDF_TRY_REF(outcome, probe_one(containers_probed, waiting_on));
 				if (outcome == ProbeOutcome::Waiting) {
-					probe_waiting.emplace_back(containers_probed, definitions_made);
+					probe_waiting.push_back(ProbeWait{containers_probed, std::move(waiting_on)});
 				}
 			}
 			return {};
+		};
+		// A new definition of an object some probed containers used as a parameter: what they gave is taken back, and they
+		// are probed again at the next probe with the new definition.
+		const auto parameter_redefined = [&](uint32_t obj_num, uint16_t gen_num) {
+			const auto users = parameter_users.find(obj_num);
+			if (users == parameter_users.end()) {
+				return;
+			}
+			for (const size_t index : users->second) {
+				const uint64_t pos = static_cast<uint64_t>(deferred_objstms[index].pos);
+				if (const auto provided = probe_provided.find(index); provided != probe_provided.end()) {
+					for (const uint32_t member : provided->second) {
+						if (const auto held = container_integers.find(member); held != container_integers.end() && held->second.first == pos) {
+							container_integers.erase(held);
+						}
+					}
+					probe_provided.erase(provided);
+				}
+				probed_members.erase(probed_members.lower_bound({pos, 0u}), probed_members.lower_bound({pos + 1u, 0u}));
+				probe_waiting.push_back(ProbeWait{index, {IndirectRef{obj_num, gen_num}}});
+			}
+			parameter_users.erase(users);
 		};
 		// The scan's /Length lookup: an uncompressed integer, or a container member the scan has passed that is later in
 		// the file than it.
@@ -1561,7 +1601,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 							if (scanned_definitions.size() < effective_max_entries) {
 								scanned_definitions.push_back(ScannedDefinition{static_cast<uint64_t>(pos), obj_num, gen_num});
 							}
-							++definitions_made;
+							parameter_redefined(obj_num, gen_num);
 							recovered_integers.erase(obj_num);
 							catalog_generations.erase(obj_num);
 							indirect_type_dicts.erase(obj_num);

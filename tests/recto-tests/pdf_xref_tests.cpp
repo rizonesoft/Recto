@@ -688,6 +688,38 @@ TEST(PdfXref, RecoveryRoundThreeFixes)
 		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
 	}
 
+	// Round 8: a container probed with a parameter that a later definition replaces is probed again with the new one,
+	// so a stream after the redefinition reads its /Length from it.
+	{
+		const std::string fake = "\nendstream\nendobj\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n";
+		std::string pdf = "%PDF-1.7\n";
+		const size_t genuine_at = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages + "2 0 obj\n/ASCII85Decode\nendobj\n" +
+			container(20u, "88 0 " + std::to_string(fake.size()), "/N 1 /First 5 /Filter 2 0 R") +
+			"25 0 obj\n<< /Length 99 0 R >>\nstream\nab\nendstream\nendobj\n" // probes with the first object 2
+			"2 0 obj\n/ASCIIHexDecode\nendobj\n" +
+			"30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(1), nullptr);
+		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
+	}
+
+	// Round 8: a container waiting for a parameter is not parsed again until that parameter is defined, so ten probes
+	// after it, each after a new definition, stay within the parse budget (four times the file).
+	{
+		std::string pdf = "%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages +
+			container(20u, "88 0 " + std::string(100000u, '7'), "/N 1 /First 5 /Filter 2 0 R");
+		for (uint32_t n = 0; n < 10u; ++n) {
+			pdf += std::to_string(50u + n) + " 0 obj\n7\nendobj\n" + std::to_string(70u + n) +
+				" 0 obj\n<< /Length 99 0 R >>\nstream\nab\nendstream\nendobj\n";
+		}
+		pdf += "%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		EXPECT_EQ(rec->root_ref(), (IndirectRef{1u, 0u}));
+	}
+
 	// Round 4: object 1 defined three times in the file (a catalog, then two other dictionaries); an intact type-1
 	// row naming the first restores it, catalog and all, so root 1 is valid again.
 	{
