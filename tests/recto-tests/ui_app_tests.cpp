@@ -416,11 +416,9 @@ struct Allowed {
 };
 
 // Each file allowed to name the retired stack, and why. A new entry needs a
-// reason a reviewer accepts; D10 T01 section 8 removes the two token entries.
-constexpr std::array<Allowed, 6> kAllowed = {{
+// reason a reviewer accepts.
+constexpr std::array<Allowed, 4> kAllowed = {{
 	{"design/SPEC.md", "names WinUI 3 as the Fluent look recto-ui reproduces"},
-	{"design/tokens/RectoColors.xaml", "retired by D10 T01 section 8, which generates the tokens from colors.json"},
-	{".gitattributes", "its *.xaml line rule leaves with RectoColors.xaml in D10 T01 section 8"},
 	{"tests/recto-tests/ui_project_tests.cpp", "the Ui.Project.NoWinRtUiTypes guard tokens"},
 	{"tests/recto-tests/ui_app_tests.cpp", "this guard's own tokens"},
 	{"tests/scripts/test_merge_prs.py", "the refused winui/ pin branch regression case"},
