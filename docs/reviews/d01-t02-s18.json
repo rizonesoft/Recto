@@ -1,0 +1,46 @@
+{
+  "ref": "D01 T02 \u00a718",
+  "title": "`ErrorCode::ResourceLimit` and `ErrorCode::InvalidArgument` in `error.h`",
+  "implementation_sha": "d3365a93e7cd56b6e26ec695871cdd7bac9387cc",
+  "date": "2026-10-23",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s18.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s18.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/01-engine/D01-T02-s18.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfXref.*:PdfDocument.*:PdfError.*:Support.* -> exit 0, 0 Warning(s), [  PASSED  ] 79 tests. (PdfError.* included)",
+    ".\\build.cmd -> exit 0, 0 Warning(s) in all four configurations, [  PASSED  ] 173 tests. (x64 Debug and Release)",
+    "renumbering an enumerator (one inserted before InternalError) fails PdfError.ErrorCodeNamesCoverEveryCode at values 16 to 18"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s18.md",
+    "verdict": "filed",
+    "candidate": "3d08000e9b566db464d334652edd29108edb710d",
+    "reviewer": "sol",
+    "model": "gpt-6.1-sol",
+    "filed": [
+      "D01 T02 \u00a722",
+      "D01 T02 \u00a723",
+      "D06 T04 \u00a730",
+      "D01 T02 \u00a713",
+      "D01 T02 \u00a719",
+      "D01 T03 \u00a71",
+      "D02 T01 \u00a711"
+    ]
+  },
+  "rounds_spent": 3,
+  "round_cap": 33
+}

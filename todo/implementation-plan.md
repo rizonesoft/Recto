@@ -66,7 +66,7 @@ Sections: 74 | Checklist items: 456
 | [x]    | D01 T01 §8  | Bi-level and image stream filters (`CCITTFaxDecode`, `JBIG2Decode`, WIC `DCT` and `JPX`) | windows-host                 | 7     |
 | [x]    | D01 T01 §9  | Standard Security Handler decryption (`RC4`, `AES-128`, `AES-256` `R=2..6` via CNG)      | windows-host                 | 8     |
 | [x]    | D01 T01 §10 | `pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links | windows-host                 | 9     |
-| [ ]    | D01 T02 §18 | `ErrorCode::ResourceLimit` and `ErrorCode::InvalidArgument` in `error.h`                 | windows-host                 | 5     |
+| [x]    | D01 T02 §18 | `ErrorCode::ResourceLimit` and `ErrorCode::InvalidArgument` in `error.h`                 | windows-host                 | 5     |
 | [ ]    | D01 T02 §22 | Error codes named by later sections reconciled with `error.h`                            | windows-host                 | 5     |
 | [ ]    | D01 T02 §23 | Closed refusal reasons and numeric context on limit and argument errors                  | windows-host                 | 3     |
 | [x]    | D06 T05 §15 | Audit D01 T01 §1: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW         | windows-host                 | 5     |
@@ -876,6 +876,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 55/807 verified sections, 27 ready to run now.
+Progress: 56/807 verified sections, 29 ready to run now.
 
-Checklist: 358/5940 items completed (includes Commit items).
+Checklist: 359/5940 items completed (includes Commit items).

@@ -75,7 +75,7 @@ track: M1
 | 15 | §15 | Transparency groups, blend modes and soft masks in the DisplayList and rasterizer | §3, §4, §6 | [ ] |
 | 16 | §16 | Shading types 1 to 7, tiling patterns and text clip modes in the rasterizer | §4, §6 | [ ] |
 | 17 | §17 | Non-embedded font substitution, predefined CJK CMaps and vertical metrics | §2, §4 | [ ] |
-| 18 | §18 | `ErrorCode::ResourceLimit` and `ErrorCode::InvalidArgument` in `error.h` | D01 T01 §1 | [ ] |
+| 18 | §18 | `ErrorCode::ResourceLimit` and `ErrorCode::InvalidArgument` in `error.h` | D01 T01 §1 | [x] |
 | 19 | §19 | Interpreter work, memory and wall-clock ceilings on hostile content streams | §4, §7, §8, §18 | [ ] |
 | 20 | §20 | Rasterizer failure isolation: typed tile errors, target recreation and retry | §7, §9, §19 | [ ] |
 | 21 | §21 | Page `/UserUnit` in `PageDescription`, physical page size and CLI output size | D01 T01 §10, §6 | [ ] |
@@ -580,9 +580,12 @@ The owning layer is `src/pdf/error.h` (stamped in `D01 T01 §1`), so the fix is 
 - [x] Extend the existing diagnostic-ring and ETW code mapping in `src/pdf/error.cpp` so both new codes are recorded and traced like the others. Done when: `PdfError.DiagnosticRingRecordsNewCodes` records one `ResourceLimit` and one `InvalidArgument` and reads them back with their names.
 - [x] ~~Map `InvalidArgument` to CLI exit `1` and `ResourceLimit` to exit `2` in `src/cli/main.cpp`.~~ **Corrected 2026-10-23:** struck here and moved to `D01 T03 §1`, which owns the CLI exit-code contract: `src/cli/main.cpp` is still the `D00 T01 §3` scaffold with no dispatcher or exit-code table, so the mapping can only land where that table is built. -> XREF: D01 T03 §1. Done when: `D01 T03 §1` carries the mapping item and depends on `§18`.
 - [x] Decide which new code records itself: `should_auto_record_diagnostic` in `src/pdf/error.h` returns `true` for `ResourceLimit` (a bound reached on document content, like `DecompressionLimitExceeded`) and `false` for `InvalidArgument` (a caller's error, not a damaged file, like `FileNotFound`). Done when: `PdfError.DiagnosticRingRecordsNewCodes` sees `make_pdf_error(ResourceLimit, ...)` in the ring and `make_pdf_error(InvalidArgument, ...)` not, until it is recorded explicitly. Default taken 2026-10-23 (industry practice: trace hostile-input bounds, not caller misuse); changing it is one `case` line.
-- [ ] Commit: `pdf: add ErrorCode ResourceLimit and InvalidArgument`
+- [x] Commit: `pdf: add ErrorCode ResourceLimit and InvalidArgument`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*` passes under ASan, and renumbering an existing enumerator fails `PdfError.ErrorCodeNamesCoverEveryCode`. **Corrected 2026-10-23:** (was: also `Cli.ExitCodeFor*`, now `D01 T03 §1`'s).
+
+> **Verified:** 2026-10-23 | §18 | d3365a93e7cd56b6e26ec695871cdd7bac9387cc
+> **Review:** `docs/reviews/d01-t02-s18.json`
 
 ## 19. Interpreter work, memory and wall-clock ceilings on hostile content streams
 
