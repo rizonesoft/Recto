@@ -1,0 +1,77 @@
+{
+  "ref": "D06 T05 \u00a722",
+  "title": "Audit D01 T01 \u00a78: Bi-level and image stream filters (CCITTFaxDecode, JBIG2Decode, WIC",
+  "implementation_sha": "716eaa5acd0bac73f8af681dc8ef6a02370274fe",
+  "date": "2026-10-23",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s8.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s8.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 3,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s8.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 4,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s8.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 6,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s8.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 7,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s8.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 8,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s8.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 9,
+      "report": "docs/reviews/06-quality/audit-d01-t01-s8.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "python scripts/todo-graph.py resolve \"D01 T01 \u00a78\" -> exit 3 (still verified)",
+    ".\\build.cmd -> exit 0, 0 Warning(s) in all four configurations, [  PASSED  ] 173 tests. (x64 Debug and Release)",
+    "build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfFilters.*:PdfXref.*:PdfDocument.*:PdfError.*:Support.* -> exit 0, 0 Warning(s), [  PASSED  ] 79 tests."
+  ],
+  "completion": {
+    "report": "docs/reviews/06-quality/audit-d01-t01-s8.md",
+    "verdict": "filed",
+    "candidate": "9f9b9e68ee5a4ade2ae72c64520ea07dadc6d268",
+    "reviewer": "sol",
+    "model": "gpt-6.1-sol",
+    "filed": [
+      "D06 T05 \u00a732",
+      "D06 T05 \u00a736",
+      "D06 T05 \u00a737",
+      "D06 T05 \u00a738",
+      "D06 T05 \u00a739",
+      "D06 T05 \u00a731",
+      "D06 T05 \u00a733",
+      "D06 T05 \u00a734",
+      "D06 T05 \u00a735",
+      "D01 T02 \u00a77",
+      "D01 T02 \u00a719",
+      "D06 T03 \u00a72",
+      "D06 T01 \u00a77"
+    ]
+  },
+  "rounds_spent": 9,
+  "round_cap": 33
+}

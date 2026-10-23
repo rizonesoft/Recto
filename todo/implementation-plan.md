@@ -76,7 +76,7 @@ Sections: 74 | Checklist items: 456
 | [x]    | D06 T05 §19 | Audit D01 T01 §5: Classic xref tables, trailer merging and /Prev incremental update      | windows-host                 | 5     |
 | [x]    | D06 T05 §20 | Audit D01 T01 §7: Lossless stream filters (Flate, LZW, predictors, ASCII85, ASCIIHex     | windows-host                 | 5     |
 | [x]    | D06 T05 §21 | Audit D01 T01 §6: PDF 1.5+ /Type /XRef streams, /Type /ObjStm streams and damaged-file   | windows-host                 | 5     |
-| [ ]    | D06 T05 §22 | Audit D01 T01 §8: Bi-level and image stream filters (CCITTFaxDecode, JBIG2Decode, WIC    | windows-host                 | 5     |
+| [x]    | D06 T05 §22 | Audit D01 T01 §8: Bi-level and image stream filters (CCITTFaxDecode, JBIG2Decode, WIC    | windows-host                 | 5     |
 | [ ]    | D06 T05 §23 | Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6     | windows-host                 | 5     |
 | [ ]    | D06 T05 §24 | Audit D01 T01 §10: pdf::Document page-tree resolver, metadata, /Outlines, font list and  | windows-host                 | 5     |
 | [ ]    | D01 T02 §1  | Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)     | windows-host                 | 7     |
@@ -876,6 +876,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 54/807 verified sections, 17 ready to run now.
+Progress: 55/807 verified sections, 27 ready to run now.
 
-Checklist: 353/5940 items completed (includes Commit items).
+Checklist: 358/5940 items completed (includes Commit items).

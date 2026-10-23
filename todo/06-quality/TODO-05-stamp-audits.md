@@ -55,7 +55,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 19 | §19 | Audit D01 T01 §5: Classic xref tables, trailer merging and /Prev incremental update | D01 T01 §5, §18 | [x] |
 | 20 | §20 | Audit D01 T01 §7: Lossless stream filters (Flate, LZW, predictors, ASCII85, ASCIIHex | D01 T01 §7, §19 | [x] |
 | 21 | §21 | Audit D01 T01 §6: PDF 1.5+ /Type /XRef streams, /Type /ObjStm streams and damaged-file | D01 T01 §6, §20 | [x] |
-| 22 | §22 | Audit D01 T01 §8: Bi-level and image stream filters (CCITTFaxDecode, JBIG2Decode, WIC | D01 T01 §8, §21 | [ ] |
+| 22 | §22 | Audit D01 T01 §8: Bi-level and image stream filters (CCITTFaxDecode, JBIG2Decode, WIC | D01 T01 §8, §21 | [x] |
 | 23 | §23 | Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6 | D01 T01 §9, §22 | [ ] |
 | 24 | §24 | Audit D01 T01 §10: pdf::Document page-tree resolver, metadata, /Outlines, font list and | D01 T01 §10, §23 | [ ] |
 | 25 | §25 | Retired MuPDF and AGPL text removed from the A, B and C mockup boards | §2 | [x] |
@@ -651,11 +651,11 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 1. Re-run `D01 T01 §8`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d01-t01-s8.md`.
 2. Audit `D01 T01 §8` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d01-t01-s8.md` ends in an approving round or a recorded stop with every finding owned.
 
-- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D01 T01 §8"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d01-t01-s8.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
-- [ ] Run audit rounds on `D01 T01 §8`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d01-t01-s8.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
-- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d01-t01-s8.md` is open without a fix commit or a filed section.
-- [ ] On a confirmed regression, add a dated blocking note to `D01 T01 §8`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s8.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
-- [ ] Commit: `review: audit D01 T01 §8 under the current review process`
+- [x] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D01 T01 §8"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d01-t01-s8.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
+- [x] Run audit rounds on `D01 T01 §8`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d01-t01-s8.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
+- [x] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d01-t01-s8.md` is open without a fix commit or a filed section.
+- [x] On a confirmed regression, add a dated blocking note to `D01 T01 §8`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s8.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp. Confirmed 2026-10-23: no regression since the stamp; the audit's findings were defects present at the stamped candidate, fixed in place in `88f54a4` to `716eaa5` or filed as `D06 T05 §31` to `§40`, so `D01 T01 §8` keeps its stamp.
+- [x] Commit: `review: audit D01 T01 §8 under the current review process`
 
 > **Deferred:** JBIG2 striped pages, MMR halftone plane alignment and HENABLESKIP -> XREF: D06 T05 §31
 
@@ -678,6 +678,9 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 > **Deferred:** every image decoder allocation drawn from one budgeted memory resource, replacing per-site estimates -> XREF: D06 T05 §40
 
 **Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §8"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s8.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+
+> **Verified:** 2026-10-23 | §22 | 716eaa5acd0bac73f8af681dc8ef6a02370274fe
+> **Review:** `docs/reviews/d06-t05-s22.json`
 
 ## 23. Audit D01 T01 §9: Standard Security Handler decryption (RC4, AES-128, AES-256 R=2..6
 

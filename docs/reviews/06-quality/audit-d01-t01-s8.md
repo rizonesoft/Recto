@@ -501,3 +501,38 @@ OVERALL: needs-attention
 
 - Finding 1 (P1): correct, and a regression from my round 6 reduction: an over-long name became an empty string, which the `/Crypt` reader takes as an omitted `/Name` and so as Identity. An over-long name now stays a name (the empty name, which no filter, crypt filter or parameter value is called), so every reader refuses it as it refuses the original. `ParameterResolutionCopiesOnlyWhatFiltersRead` adds the reviewer's case, referenced and direct: both `UnsupportedFeature`.
 - Finding 2 (P2): correct. An indirect `/JBIG2Globals` resolving to null is now an absent entry (ISO 32000-1 section 7.3.9), as a direct null is. `PdfFilters.Jbig2Decode` decodes its first fixture with `/JBIG2Globals 42 0 R` resolving to null, to the same bitmap.
+
+## Round 9: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-23T09:52:24Z
+- Effort: medium
+- Lines: 26
+- Digest: 8e6f2450182d421a
+
+## adversarial: approve
+
+No new findings outside the already owned sections.
+
+## consistency: approve
+
+No findings.
+
+## integration: approve
+
+No findings.
+
+## source-defect: approve
+
+No additional findings beyond the assigned codec conformance work.
+
+## design: advisory
+
+No user-facing surface in this candidate.
+
+## record: advisory
+
+Existing binaries passed 25 selected Debug tests and 26 selected Release tests; Release reported ASan enabled. The restricted source files match the candidate. No rebuild or new reproduction was performed, so historical build and mutation claims were not independently re-established. No files were modified.
+
+HIGHEST: none
+OVERALL: approve
