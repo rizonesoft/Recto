@@ -512,21 +512,21 @@ void process_tlg_write_transfer(
 		slot.has_object_num = read_descriptor_scalar<uint8_t>(user_data[9]) != 0;
 		slot.object_num = read_descriptor_scalar<uint32_t>(user_data[10]);
 		slot.generation_num = read_descriptor_scalar<uint16_t>(user_data[11]);
-		slot.refusal_reason = read_descriptor_scalar<uint16_t>(user_data[12]);
-		read_descriptor_cstr_into(slot.refusal_reason_name, user_data[13]);
-		slot.has_observed = read_descriptor_scalar<uint8_t>(user_data[14]) != 0;
-		slot.observed = read_descriptor_scalar<uint64_t>(user_data[15]);
-		slot.has_bound = read_descriptor_scalar<uint8_t>(user_data[16]) != 0;
-		slot.bound = read_descriptor_scalar<uint64_t>(user_data[17]);
-		slot.decoder_step = read_descriptor_scalar<uint16_t>(user_data[18]);
-		read_descriptor_cstr_into(slot.decoder_step_name, user_data[19]);
-		slot.has_platform_status = read_descriptor_scalar<uint8_t>(user_data[20]) != 0;
-		slot.platform_status = read_descriptor_scalar<uint32_t>(user_data[21]);
-		slot.prior_step = read_descriptor_scalar<uint16_t>(user_data[22]);
-		read_descriptor_cstr_into(slot.prior_step_name, user_data[23]);
-		slot.has_prior_status = read_descriptor_scalar<uint8_t>(user_data[24]) != 0;
-		slot.prior_status = read_descriptor_scalar<uint32_t>(user_data[25]);
-		slot.thread_id = read_descriptor_scalar<uint32_t>(user_data[26]);
+		slot.thread_id = read_descriptor_scalar<uint32_t>(user_data[12]);
+		slot.refusal_reason = read_descriptor_scalar<uint16_t>(user_data[13]);
+		read_descriptor_cstr_into(slot.refusal_reason_name, user_data[14]);
+		slot.has_observed = read_descriptor_scalar<uint8_t>(user_data[15]) != 0;
+		slot.observed = read_descriptor_scalar<uint64_t>(user_data[16]);
+		slot.has_bound = read_descriptor_scalar<uint8_t>(user_data[17]) != 0;
+		slot.bound = read_descriptor_scalar<uint64_t>(user_data[18]);
+		slot.decoder_step = read_descriptor_scalar<uint16_t>(user_data[19]);
+		read_descriptor_cstr_into(slot.decoder_step_name, user_data[20]);
+		slot.has_platform_status = read_descriptor_scalar<uint8_t>(user_data[21]) != 0;
+		slot.platform_status = read_descriptor_scalar<uint32_t>(user_data[22]);
+		slot.prior_step = read_descriptor_scalar<uint16_t>(user_data[23]);
+		read_descriptor_cstr_into(slot.prior_step_name, user_data[24]);
+		slot.has_prior_status = read_descriptor_scalar<uint8_t>(user_data[25]) != 0;
+		slot.prior_status = read_descriptor_scalar<uint32_t>(user_data[26]);
 	} else if (parsed_name == "SpanStart" && user_data_count >= 6) {
 		read_descriptor_cstr_into(slot.phase, user_data[2]);
 		slot.document_id = read_descriptor_scalar<uint64_t>(user_data[3]);
@@ -977,6 +977,8 @@ void record_diagnostic(
 		TraceLoggingUInt8(has_obj, "HasObjectNum"),
 		TraceLoggingUInt32(obj_val, "ObjectNum"),
 		TraceLoggingUInt16(generation_num, "GenerationNum"),
+		TraceLoggingUInt32(tid, "ThreadId"),
+		// Appended after the original fields, so an existing consumer's field positions never move.
 		TraceLoggingUInt16(reason_u16, "RefusalReason"),
 		TraceLoggingString(reason_name_str, "RefusalReasonName"),
 		TraceLoggingUInt8(has_observed, "HasObserved"),
@@ -990,8 +992,7 @@ void record_diagnostic(
 		TraceLoggingUInt16(prior_u16, "PriorDecoderStep"),
 		TraceLoggingString(prior_name_str, "PriorDecoderStepName"),
 		TraceLoggingUInt8(has_prior, "HasPriorPlatformStatus"),
-		TraceLoggingUInt32(prior_val, "PriorPlatformStatus"),
-		TraceLoggingUInt32(tid, "ThreadId"));
+		TraceLoggingUInt32(prior_val, "PriorPlatformStatus"));
 }
 
 void record_diagnostic(
@@ -1054,10 +1055,12 @@ std::vector<DiagnosticEntry> diagnostics_tail(size_t max_entries) noexcept
 			entry.thread_id = slot.thread_id;
 			entry.code = slot.code;
 			entry.diagnostic_id = slot.diagnostic_id;
-			// A refusal reads as its reason (cause, units, remedy); anything else as its diagnostic.
+			// A refusal reads as its reason (cause, units, remedy), a decoder failure as what it means for an image, anything
+			// else as its diagnostic.
 			entry.message = std::string(slot.refusal_reason != RefusalReason::None
 					? refusal_reason_description(slot.refusal_reason)
-					: diagnostic_id_message(slot.diagnostic_id));
+					: slot.decoder.step != DecoderStep::None ? decoder_failure_message(slot.code)
+															: diagnostic_id_message(slot.diagnostic_id));
 			if (slot.has_byte_offset) {
 				entry.byte_offset = slot.byte_offset;
 			}

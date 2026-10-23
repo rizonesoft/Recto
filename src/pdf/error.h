@@ -772,6 +772,26 @@ enum class DecoderStep : uint16_t {
 	NativeJpx,        // Recto's own JPEG 2000 decoder
 };
 
+// What a decoder failure means to a person reading the log, by its code, when a decoder step is known: the ring uses it
+// in place of the diagnostic's general message, which speaks of documents and configured limits (D01 T02 section 25).
+[[nodiscard]] constexpr std::string_view decoder_failure_message(ErrorCode code) noexcept
+{
+	switch (code) {
+	case ErrorCode::OutOfMemory:
+		return "Windows ran out of memory while decoding an image; close other documents or try fewer pages";
+	case ErrorCode::UnsupportedFeature:
+		return "This machine's Windows Imaging Component has no codec or format for an image; the file may be fine";
+	case ErrorCode::Cancelled:
+		return "An image decode was cancelled; nothing needs repair";
+	case ErrorCode::DamagedFormat:
+		return "An image decoder rejected the image data";
+	case ErrorCode::DecompressionLimitExceeded:
+		return "An image needed more memory than its decode limit allows; the file may be fine";
+	default:
+		return "An image decoder failed";
+	}
+}
+
 [[nodiscard]] constexpr std::string_view decoder_step_name(DecoderStep step) noexcept
 {
 	switch (step) {

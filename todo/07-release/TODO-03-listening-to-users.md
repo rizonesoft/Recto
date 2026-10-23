@@ -62,6 +62,7 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 | 9 | §8 | Strict issue-form YAML reader and top-level schema types | §1 | [x] |
 | 10 | §10 | Changelog and release body from stamped sections and `Fixes-User:` trailers | §4, D07 T02 §18 | [ ] |
 | 11 | §11 | Contract snapshots and `scripts/next-version.py` SemVer bump suggestion | §10, D07 T02 §18, D07 T02 §21, D04 T08 §2, D04 T08 §5, D07 T02 §8, D02 T04 §2, D07 T01 §22, D07 T01 §26, D02 T01 §13, D02 T03 §11 | [ ] |
+| 12 | §12 | Offline decoder diagnostic reference: steps, failure classes and next actions | D01 T02 §25 | [ ] |
 
 ## 1. Issue forms, triage policy and `SECURITY.md`
 
@@ -367,6 +368,26 @@ SemVer only means something if "breaking" is checked, not remembered. Recto's pu
 - [ ] Commit: `release: snapshot public contracts and suggest the next SemVer from what shipped`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_next_version` passes, `python scripts/export-contracts.py --check` exits `0`, `recto-tests --gtest_filter=Contracts.*` passes, and `python scripts/next-version.py --json` on the repository is quoted.
+
+## 12. Offline decoder diagnostic reference: steps, failure classes and next actions
+
+The completion review of `D01 T02 §25` (`docs/reviews/01-engine/D01-T02-s25.md`, excellence E2) found that the diagnostic ring and ETW now name a decoder step and a Windows HRESULT, but nothing tells a supporter or a user what each means or what to do. Acrobat publishes recovery guidance for its errors; Recto ships an offline reference that covers every decoder step and every WIC failure class, with a safe next action for each, and that Report a problem (`§2`) links to.
+
+**Phase:** 6
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Write `docs/support/decoder-diagnostics.md` from the closed catalogues in `src/pdf/error.h`. Done when: every `DecoderStep` and every failure class has an entry.
+2. Keep it complete with a check. Done when: the check fails when a step or class has no entry.
+
+- [ ] Write `docs/support/decoder-diagnostics.md`: for each `DecoderStep` what Recto was doing, and for each WIC failure class (resource, cancel, capability, data, system) the HRESULTs it covers, what it means for the file (the file may be fine for resource, cancel and capability) and a safe next step (close other documents, install the Windows codec or the HEIF/JPEG 2000 extension, use the original file, report it), with no step that could change or upload a document. Done when: every enumerator of `DecoderStep` and every class has a heading.
+- [ ] Add `tests/scripts/test_decoder_diagnostics_doc.py`, which reads the `DecoderStep` enumerators from `src/pdf/error.h` and the class list from `src/pdf/filters.cpp`'s `WicFailureClass` and fails on any without a heading in the document. Done when: it passes and fails with a planted enumerator.
+- [ ] Link the document from Report a problem's `How to share a file safely` area (`§2`) and from `docs/support/triage.md`. Done when: both links resolve.
+- [ ] Commit: `docs: offline decoder diagnostic reference with next actions`
+
+**Test checkpoint:** `python -m unittest tests.scripts.test_decoder_diagnostics_doc` passes and fails with a planted enumerator.
 
 ## Verification
 

@@ -685,7 +685,7 @@ Sections: 119 | Checklist items: 959
 
 ### Phase 6: M6 Ship
 
-Sections: 70 | Checklist items: 517
+Sections: 71 | Checklist items: 521
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -759,6 +759,7 @@ Sections: 70 | Checklist items: 517
 | [ ]    | D07 T02 §7  | End-to-end v1 distribution bundle (`Setup.exe`, `Portable.zip`, `SHA256SUMS.txt`) & GPL  | windows-host, display-session | 9     |
 | [ ]    | D06 T03 §12 | Installed-build release smoke and upgrade persistence proof on the build host            | windows-host, display-session | 11    |
 | [ ]    | D07 T03 §5  | Release gate for unreleased fixes, security advisories and CI integrity                  | windows-host                  | 9     |
+| [ ]    | D07 T03 §12 | Offline decoder diagnostic reference: steps, failure classes and next actions            | windows-host                  | 4     |
 
 ### Phase 7: After v1
 
@@ -881,6 +882,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 58/812 verified sections, 31 ready to run now.
+Progress: 58/813 verified sections, 31 ready to run now.
 
-Checklist: 385/5967 items completed (includes Commit items).
+Checklist: 388/5971 items completed (includes Commit items).

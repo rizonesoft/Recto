@@ -2274,6 +2274,37 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 			return {};
 		};
 
+		// A damaged Group 3 row (ISO 32000-1 section 7.4.6, Table 11, /DamagedRowsBeforeError): with /EndOfLine true and
+		// K non-negative, its end is found at the next EOL and it is replaced by the previous row if that row was good, or
+		// by a white row if it was damaged too, up to /DamagedRowsBeforeError rows in a row. Returns whether the row was
+		// recovered; false leaves the caller to refuse the stream.
+		const auto recover_damaged_row = [&]() -> PdfResult<bool> {
+			if (!params.end_of_line || params.k < 0 || consecutive_damaged_rows >= params.damaged_rows_before_error) {
+				return false;
+			}
+			bool found_sync = false;
+			while (!reader.at_end()) {
+				const size_t sync_pos = reader.bit_pos;
+				if (reader.try_consume_eol()) {
+					reader.bit_pos = sync_pos; // the EOL starts the next row
+					found_sync = true;
+					break;
+				}
+				++reader.bit_pos;
+			}
+			if (!found_sync) {
+				return false;
+			}
+			if (consecutive_damaged_rows == 0) {
+				cur_changes = ref_changes; // the previous row, which was good
+			} else {
+				cur_changes.clear(); // a white row: the previous row was damaged too
+			}
+			++consecutive_damaged_rows;
+			RECTO_PDF_RETURN_IF_ERROR(append_current_row());
+			return true;
+		};
+
 		// Per ISO 32000-1 section 7.4.6 Table 11, `/EndOfBlock true` overrides `/Rows`
 		// and decodes until an end-of-block marker (EOFB or RTC) or end of data.
 		while (params.end_of_block || params.rows == 0 ||
@@ -2352,24 +2383,9 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 
 				const bool eol_ok = !params.end_of_line || saw_eol;
 				if (!eol_ok || !decode_ccitt_1d_row(reader, params.columns, cur_changes)) {
-					if (consecutive_damaged_rows < params.damaged_rows_before_error) {
-						// Resynchronize to the start of the next EOL and substitute the reference line.
-						bool found_sync = false;
-						while (!reader.at_end()) {
-							const size_t sync_pos = reader.bit_pos;
-							if (reader.try_consume_eol()) {
-								reader.bit_pos = sync_pos;
-								found_sync = true;
-								break;
-							}
-							++reader.bit_pos;
-						}
-						if (found_sync) {
-							++consecutive_damaged_rows;
-							cur_changes = ref_changes;
-							RECTO_PDF_RETURN_IF_ERROR(append_current_row());
-							continue;
-						}
+					RECTO_PDF_TRY(const bool recovered, recover_damaged_row());
+					if (recovered) {
+						continue;
 					}
 					if (params.rows > 0 && decoded_rows >= static_cast<uint64_t>(params.rows)) {
 						break;
@@ -2417,6 +2433,11 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 					if (params.rows > 0 && decoded_rows >= static_cast<uint64_t>(params.rows)) {
 						break;
 					}
+					// The previous row ran past its end: this row is damaged.
+					RECTO_PDF_TRY(const bool recovered, recover_damaged_row());
+					if (recovered) {
+						continue;
+					}
 					return make_filter_error(
 						ErrorCode::DamagedFormat,
 						DiagnosticId::DamagedStream,
@@ -2441,12 +2462,17 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 					if (params.rows > 0 && decoded_rows >= static_cast<uint64_t>(params.rows)) {
 						break;
 					}
+					RECTO_PDF_TRY(const bool recovered, recover_damaged_row());
+					if (recovered) {
+						continue;
+					}
 					return make_filter_error(
 						ErrorCode::DamagedFormat,
 						DiagnosticId::DamagedStream,
 						"Corrupt row in CCITTFaxDecode Group 3 2D stream",
 						reader.bit_pos >> 3u);
 				}
+				consecutive_damaged_rows = 0;
 				RECTO_PDF_RETURN_IF_ERROR(append_current_row());
 			}
 		}
@@ -2862,6 +2888,7 @@ private:
 		std::vector<int32_t> ref_changes;
 		std::vector<int32_t> cur_changes;
 		reserve_ccitt_transitions(ref_changes, cur_changes, static_cast<int32_t>(width));
+		bool saw_eofb = false;
 		for (uint32_t y = 0; y < height; ++y) {
 			const int status = decode_ccitt_2d_row(
 				reader,
@@ -2877,6 +2904,7 @@ private:
 						DiagnosticId::DamagedStream,
 						"Incomplete EOFB inside JBIG2 Generic Region MMR data");
 				}
+				saw_eofb = true;
 				break;
 			}
 			if (status < 0) {
@@ -2893,12 +2921,22 @@ private:
 				bm.stride);
 			ref_changes.swap(cur_changes); // the next row's decoder clears cur_changes before use
 		}
-		// Consume optional trailing EOFB (`000000000001000000000001`) if present after `height` rows.
+		// Consume the trailing EOFB (`000000000001000000000001`) after `height` rows: optional in a region whose data
+		// length the segment gives, required in a halftone's gray-scale bitplane, whose length nothing else gives
+		// (T.88 6.2.6, C.5).
 		const size_t saved_bit_pos = reader.bit_pos;
-		if (reader.try_consume_eol()) {
-			if (!reader.try_consume_eol()) {
+		if (!saw_eofb && reader.try_consume_eol()) {
+			if (reader.try_consume_eol()) {
+				saw_eofb = true;
+			} else {
 				reader.bit_pos = saved_bit_pos;
 			}
+		}
+		if (inout_mmr_bit_offset != nullptr && !saw_eofb) {
+			return make_filter_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedStream,
+				"JBIG2 halftone MMR bitplane does not end with EOFB");
 		}
 		if (inout_mmr_bit_offset != nullptr) {
 			// Each MMR invocation ends on a byte boundary (T.88 6.2.6), so the next one (a halftone's next gray-scale
@@ -6281,7 +6319,10 @@ public:
 			CLSCTX_INPROC_SERVER,
 			IID_PPV_ARGS(&factory_));
 		// Why there is no factory, kept for the caller: the creation's failure, or COM's when it could not start.
-		status_ = factory_ ? S_OK : (FAILED(created) ? created : (FAILED(hr) ? hr : E_FAIL));
+		// COM could not start (out of memory, say): that is the cause, not the creation failure it leads to. A thread already
+		// in another apartment mode (RPC_E_CHANGED_MODE) still has COM, so the creation's own failure stands.
+		const bool com_failed = FAILED(hr) && hr != RPC_E_CHANGED_MODE;
+		status_ = factory_ ? S_OK : (com_failed ? hr : (FAILED(created) ? created : E_FAIL));
 	}
 
 	~ThreadLocalWicFactoryHolder() noexcept
@@ -6400,6 +6441,35 @@ enum class WicFailureClass : uint8_t {
 	return error;
 }
 
+// Sets `error`'s message to `first`, "; before it, " and `second`. When memory has run out, the text is cut to the
+// message's inline capacity, which needs no allocation, so the enrichment itself can never lose the error: the numbers
+// (step, HRESULT and the prior attempt's) stay on the error whatever the text keeps.
+void set_message_without_allocation(PdfError& error, std::string_view first, std::string_view second) noexcept
+{
+	try {
+		std::string both;
+		both.reserve(first.size() + second.size() + 13u);
+		both.append(first).append("; before it, ").append(second);
+		error.message = PdfErrorMessage(std::string_view(both));
+		return;
+	} catch (const std::bad_alloc&) {
+		// fall through to the fixed buffer
+	}
+	char text[PdfErrorMessage::kInlineCapacity + 1u];
+	const int n = std::snprintf(text, sizeof(text), "%.*s; before it, %.*s", static_cast<int>(std::min<size_t>(first.size(), 96u)),
+		first.data(), static_cast<int>(std::min<size_t>(second.size(), 120u)), second.data());
+	error.message = PdfErrorMessage(std::string_view(text, n > 0 ? std::min<size_t>(static_cast<size_t>(n), sizeof(text) - 1u) : 0u));
+}
+
+// A WIC step that succeeded without its result (no stream, decoder, frame or converter, or an empty size): the codec
+// rejected the data, with the step kept and no HRESULT, since Windows reported none.
+[[nodiscard]] PdfError wic_no_result(std::string_view step, DecoderStep decoder_step) noexcept
+{
+	PdfError error = make_filter_error(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream, step);
+	error.decoder_step = decoder_step;
+	return error;
+}
+
 // Runs one WIC step, or returns the failure a test injected for it (detail::ScopedWicFailure).
 template <typename Step>
 [[nodiscard]] HRESULT wic_step(detail::WicStage stage, Step&& step)
@@ -6457,11 +6527,9 @@ struct JpegHeaderInfo {
 };
 
 // Scans a JPEG byte stream for `SOF0..SOF15` and Adobe `APP14` markers BEFORE
-// passing the stream to WIC so oversized dimensions (`width * height * 4 > limit`)
-// are rejected before any bitmap allocation.
-[[nodiscard]] PdfResult<JpegHeaderInfo> inspect_jpeg_header(
-	std::span<const uint8_t> input,
-	size_t effective_limit) noexcept
+// passing the stream to WIC, so decode_dct_image can charge the representation it
+// will build against the ceiling before any bitmap allocation (D06 T05 §38).
+[[nodiscard]] PdfResult<JpegHeaderInfo> inspect_jpeg_header(std::span<const uint8_t> input) noexcept
 {
 	if (input.size() < 4u || input[0] != 0xFFu || input[1] != 0xD8u) {
 		return make_filter_error(
@@ -6535,20 +6603,6 @@ struct JpegHeaderInfo {
 					DiagnosticId::DamagedStream,
 					"Invalid width, height, or component count in JPEG SOF header",
 					pos);
-			}
-			const uint64_t w64 = info.width;
-			const uint64_t h64 = info.height;
-			// At least one byte per pixel whatever is asked for; the decode charges the exact representation later.
-			if (w64 > effective_limit || h64 > effective_limit / w64) {
-				PdfError refusal = make_filter_error(
-					ErrorCode::DecompressionLimitExceeded,
-					DiagnosticId::DecompressionLimitExceeded,
-					"DCTDecode JPEG header dimensions exceed maximum decoded bitmap ceiling",
-					pos);
-				refusal.refusal_reason = RefusalReason::WorkingBytes; // at least one byte per pixel was needed
-				refusal.observed = w64 * h64;
-				refusal.bound = static_cast<uint64_t>(effective_limit);
-				return refusal;
 			}
 		}
 
@@ -6641,6 +6695,60 @@ uintptr_t current_thread_wic_factory_id() noexcept
 	return reinterpret_cast<uintptr_t>(get_thread_local_wic_factory());
 }
 
+// The single representation a DCT decode builds: a stream filter's output is the samples, or for a CMYK image RGBA (or
+// BGRA or the CMYK samples when a direct caller's /TargetFormat asks; a stream dictionary's is dropped before here).
+[[nodiscard]] DctOutput dct_resolved_output(DctOutput output, const PdfDict* decode_parms, bool is_cmyk) noexcept
+{
+	if (output != DctOutput::Stream) {
+		return output;
+	}
+	if (!is_cmyk) {
+		return DctOutput::Samples;
+	}
+	if (decode_parms != nullptr) {
+		if (const auto target_fmt = decode_parms->get_name("TargetFormat")) {
+			if (*target_fmt == "BGRA") {
+				return DctOutput::Bgra;
+			}
+			if (*target_fmt == "CMYK") {
+				return DctOutput::Samples;
+			}
+		}
+	}
+	return DctOutput::Rgba;
+}
+
+// Bytes per pixel a DCT decode holds at its peak: one buffer for a single representation (the samples, or an 8-bit
+// layout the samples are expanded into in place), the samples and both layouts for All.
+[[nodiscard]] uint64_t dct_peak_bpp(DctOutput output, const PdfDict* decode_parms, bool is_cmyk, uint64_t comp_bytes) noexcept
+{
+	switch (dct_resolved_output(output, decode_parms, is_cmyk)) {
+	case DctOutput::All:
+		return comp_bytes + 8ULL;
+	case DctOutput::Samples:
+		return comp_bytes;
+	default:
+		return 4ULL;
+	}
+}
+
+// Whether `w` x `h` pixels at `bpp` bytes fit `limit`, exactly (an exact fit decodes); a refusal carries the bytes
+// needed and the ceiling as numbers the diagnostic ring keeps (D01 T02 section 23).
+[[nodiscard]] PdfResult<void> dct_fits(uint64_t w, uint64_t h, uint64_t bpp, size_t limit) noexcept
+{
+	if (w == 0u || (w <= limit / bpp && h <= (limit / bpp) / w)) {
+		return {};
+	}
+	PdfError refusal = make_filter_error(
+		ErrorCode::DecompressionLimitExceeded,
+		DiagnosticId::DecompressionLimitExceeded,
+		"DCTDecode decoded image buffers exceed the decoded-bytes ceiling");
+	refusal.refusal_reason = RefusalReason::WorkingBytes;
+	refusal.observed = w * h * bpp; // JPEG dimensions are 16-bit, so this cannot wrap
+	refusal.bound = static_cast<uint64_t>(limit);
+	return refusal;
+}
+
 PdfResult<WicDecodedImage> decode_dct_image(
 	std::span<const uint8_t> input,
 	const PdfDict* decode_parms,
@@ -6649,7 +6757,10 @@ PdfResult<WicDecodedImage> decode_dct_image(
 {
 	try {
 		const size_t effective_limit = std::min<size_t>(max_decoded_bytes, kMaxDecodedStreamBytes);
-		RECTO_PDF_TRY(const JpegHeaderInfo hdr, inspect_jpeg_header(input, effective_limit));
+		RECTO_PDF_TRY(const JpegHeaderInfo hdr, inspect_jpeg_header(input));
+		RECTO_PDF_RETURN_IF_ERROR(dct_fits(hdr.width, hdr.height,
+			dct_peak_bpp(output, decode_parms, hdr.components == 4u, hdr.components == 4u ? 4ULL : (hdr.components == 1u ? 1ULL : 3ULL)),
+			effective_limit));
 
 		IWICImagingFactory* factory = nullptr;
 		if (const HRESULT factory_hr = thread_local_wic_factory(factory); FAILED(factory_hr)) {
@@ -6660,7 +6771,7 @@ PdfResult<WicDecodedImage> decode_dct_image(
 		HRESULT hr = factory->CreateStream(&wic_stream);
 		if (FAILED(hr) || !wic_stream) {
 			return FAILED(hr) ? wic_failure(hr, "IWICImagingFactory::CreateStream in DCTDecode", DecoderStep::WicCreateDecoder)
-							  : make_pdf_error(ErrorCode::InternalError, "IWICImagingFactory::CreateStream returned no stream in DCTDecode");
+							  : wic_no_result("IWICImagingFactory::CreateStream returned no stream in DCTDecode", DecoderStep::WicCreateDecoder);
 		}
 		hr = wic_stream->InitializeFromMemory(
 			const_cast<BYTE*>(input.data()),
@@ -6675,20 +6786,14 @@ PdfResult<WicDecodedImage> decode_dct_image(
 		hr = create_wic_decoder(factory, wic_stream.Get(), decoder);
 		if (FAILED(hr) || !decoder) {
 			return FAILED(hr) ? wic_failure(hr, "IWICImagingFactory::CreateDecoderFromStream in DCTDecode", DecoderStep::WicCreateDecoder)
-							  : make_filter_error(
-									ErrorCode::DamagedFormat,
-									DiagnosticId::DamagedStream,
-									"IWICImagingFactory::CreateDecoderFromStream in DCTDecode");
+							  : wic_no_result("IWICImagingFactory::CreateDecoderFromStream in DCTDecode", DecoderStep::WicCreateDecoder);
 		}
 
 		ComPtr<IWICBitmapFrameDecode> frame;
 		hr = wic_step(detail::WicStage::GetFrame, [&] { return decoder->GetFrame(0, &frame); });
 		if (FAILED(hr) || !frame) {
 			return FAILED(hr) ? wic_failure(hr, "IWICBitmapDecoder::GetFrame(0) in DCTDecode", DecoderStep::WicGetFrame)
-							  : make_filter_error(
-									ErrorCode::DamagedFormat,
-									DiagnosticId::DamagedStream,
-									"IWICBitmapDecoder::GetFrame(0) failed in DCTDecode");
+							  : wic_no_result("IWICBitmapDecoder::GetFrame(0) failed in DCTDecode", DecoderStep::WicGetFrame);
 		}
 
 		UINT w = 0;
@@ -6696,23 +6801,10 @@ PdfResult<WicDecodedImage> decode_dct_image(
 		hr = frame->GetSize(&w, &h);
 		if (FAILED(hr) || w == 0u || h == 0u) {
 			return FAILED(hr) ? wic_failure(hr, "IWICBitmapFrameDecode::GetSize in DCTDecode", DecoderStep::WicGetFrame)
-							  : make_filter_error(
-									ErrorCode::DamagedFormat,
-									DiagnosticId::DamagedStream,
-									"IWICBitmapFrameDecode::GetSize failed in DCTDecode");
+							  : wic_no_result("IWICBitmapFrameDecode::GetSize failed in DCTDecode", DecoderStep::WicGetFrame);
 		}
 		const uint64_t w64 = w;
 		const uint64_t h64 = h;
-		if (w64 > effective_limit || h64 > effective_limit / w64) { // one byte per pixel; exact charge below
-			PdfError refusal = make_filter_error(
-				ErrorCode::DecompressionLimitExceeded,
-				DiagnosticId::DecompressionLimitExceeded,
-				"DCTDecode frame dimensions exceed maximum decoded bitmap ceiling");
-			refusal.refusal_reason = RefusalReason::WorkingBytes;
-			refusal.observed = w64 * h64;
-			refusal.bound = static_cast<uint64_t>(effective_limit);
-			return refusal;
-		}
 
 		WICPixelFormatGUID pixel_format{};
 		hr = frame->GetPixelFormat(&pixel_format);
@@ -6731,42 +6823,14 @@ PdfResult<WicDecodedImage> decode_dct_image(
 		// The buffers this decode builds. A stream filter returns the samples, or for CMYK one 8-bit layout: RGBA unless
 		// a direct caller's /TargetFormat asks for BGRA or the CMYK samples (a stream dictionary's is dropped before it
 		// gets here, decode_stream).
-		DctOutput want = output;
-		if (want == DctOutput::Stream) {
-			want = DctOutput::Samples;
-			if (is_cmyk) {
-				want = DctOutput::Rgba;
-				if (decode_parms != nullptr) {
-					if (const auto target_fmt = decode_parms->get_name("TargetFormat")) {
-						if (*target_fmt == "BGRA") {
-							want = DctOutput::Bgra;
-						} else if (*target_fmt == "CMYK") {
-							want = DctOutput::Samples;
-						}
-					}
-				}
-			}
-		}
+		const DctOutput want = dct_resolved_output(output, decode_parms, is_cmyk);
 		const bool keep_samples = want == DctOutput::All || want == DctOutput::Samples;
 		const bool want_rgba = want == DctOutput::All || want == DctOutput::Rgba;
 		const bool want_bgra = want == DctOutput::All || want == DctOutput::Bgra;
 		// One 8-bit layout alone is one buffer: the samples are decoded into its tail and expanded in place, front to
 		// back, which never overwrites a sample not yet read. Otherwise the samples are their own buffer.
 		const bool single_layout = !keep_samples;
-		// Bytes per pixel this decode holds at its peak: the exact representation asked for, charged against the
-		// ceiling, so an exact fit decodes and one byte less is refused.
-		const uint64_t peak_bpp = single_layout ? 4ULL : comp_bytes + (want_rgba ? 4ULL : 0ULL) + (want_bgra ? 4ULL : 0ULL);
-		if (w64 > effective_limit / peak_bpp || h64 > (effective_limit / peak_bpp) / w64) {
-			PdfError refusal = make_filter_error(
-				ErrorCode::DecompressionLimitExceeded,
-				DiagnosticId::DecompressionLimitExceeded,
-				"DCTDecode cumulative decoded image buffers exceed ceiling");
-			// What was needed and what was allowed, as numbers the diagnostic ring keeps (D01 T02 section 23).
-			refusal.refusal_reason = RefusalReason::WorkingBytes;
-			refusal.observed = w64 * h64 * peak_bpp; // at most effective_limit * 4 (one byte per pixel was checked above)
-			refusal.bound = static_cast<uint64_t>(effective_limit);
-			return refusal;
-		}
+		RECTO_PDF_RETURN_IF_ERROR(dct_fits(w64, h64, dct_peak_bpp(output, decode_parms, is_cmyk, comp_bytes), effective_limit));
 		std::vector<uint8_t>& store = !single_layout ? result.pixels : (want == DctOutput::Rgba ? result.rgba_pixels : result.bgra_pixels);
 		store.resize(single_layout ? pixel_count * 4u : pixel_count * static_cast<size_t>(comp_bytes));
 		const size_t sample_bytes = pixel_count * static_cast<size_t>(comp_bytes);
@@ -6862,10 +6926,7 @@ PdfResult<WicDecodedImage> decode_dct_image(
 			hr = factory->CreateFormatConverter(&converter);
 			if (FAILED(hr) || !converter) {
 				return FAILED(hr) ? wic_failure(hr, "IWICImagingFactory::CreateFormatConverter in DCTDecode", DecoderStep::WicConvertFormat)
-								  : make_filter_error(
-										ErrorCode::DamagedFormat,
-										DiagnosticId::DamagedStream,
-										"IWICImagingFactory::CreateFormatConverter failed in DCTDecode");
+								  : wic_no_result("IWICImagingFactory::CreateFormatConverter failed in DCTDecode", DecoderStep::WicConvertFormat);
 			}
 			hr = wic_step(detail::WicStage::ConvertFormat, [&] {
 				return converter->Initialize(
@@ -7931,7 +7992,7 @@ void idwt_97_2d_float(
 		DecoderStep wic_stopped_at = DecoderStep::None;
 		const auto through_wic = [&]() -> PdfResult<std::optional<WicDecodedImage>> {
 			const auto stopped = [&](HRESULT hr, DecoderStep at) {
-				wic_hr = FAILED(hr) ? hr : WINCODEC_ERR_BADIMAGE; // a call that succeeded without its result
+				wic_hr = hr; // S_OK: the call succeeded without its result, which is the data's failure
 				wic_stopped_at = at;
 				return std::optional<WicDecodedImage>{};
 			};
@@ -8022,10 +8083,13 @@ void idwt_97_2d_float(
 		const int step_len = std::snprintf(step_text, sizeof(step_text), "JPXDecode through the Windows Imaging Component (%.*s)",
 			static_cast<int>(decoder_step_name(wic_stopped_at).size()), decoder_step_name(wic_stopped_at).data());
 		const std::string_view step_view(step_text, step_len > 0 ? std::min<size_t>(static_cast<size_t>(step_len), sizeof(step_text) - 1u) : 0u);
-		if (!wic_failure_may_fall_back(wic_hr)) {
+		if (SUCCEEDED(wic_hr)) {
+			wic_cause = wic_no_result(step_view, wic_stopped_at); // rejected data: the native decoder takes over
+		} else if (!wic_failure_may_fall_back(wic_hr)) {
 			return wic_failure(wic_hr, step_view, wic_stopped_at);
+		} else {
+			wic_cause = wic_failure(wic_hr, step_view, wic_stopped_at);
 		}
-		wic_cause = wic_failure(wic_hr, step_view, wic_stopped_at);
 	}
 
 	if (jpx_path == detail::JpxPath::WicOnly) {
@@ -8046,22 +8110,16 @@ void idwt_97_2d_float(
 		if (!wic_cause.has_value()) {
 			throw;
 		}
-		char text[320];
-		const std::string_view cause = wic_cause->message.view();
-		const int n = std::snprintf(text, sizeof(text), "Out of memory while decoding JPXDecode natively; before it, %.*s",
-			static_cast<int>(std::min<size_t>(cause.size(), 240u)), cause.data());
-		PdfError error(ErrorCode::OutOfMemory, std::string_view(text, n > 0 ? std::min<size_t>(static_cast<size_t>(n), sizeof(text) - 1u) : 0u));
+		PdfError error(ErrorCode::OutOfMemory);
+		set_message_without_allocation(error, "Out of memory while decoding JPXDecode natively", wic_cause->message.view());
 		error.decoder_step = DecoderStep::NativeJpx;
 		error.prior_step = wic_cause->decoder_step;
 		error.prior_status = wic_cause->platform_status;
 		return error;
 	}
 	if (!native.has_value() && wic_cause.has_value()) {
-		std::string both(native.error().message.view());
-		both += "; before it, ";
-		both += wic_cause->message.view();
 		PdfError error = native.error();
-		error.message = PdfErrorMessage(std::string_view(both));
+		set_message_without_allocation(error, native.error().message.view(), wic_cause->message.view());
 		// The native step failed after WIC's: both are kept as numbers (D01 T02 section 25).
 		if (error.decoder_step == DecoderStep::None) {
 			error.decoder_step = DecoderStep::NativeJpx;

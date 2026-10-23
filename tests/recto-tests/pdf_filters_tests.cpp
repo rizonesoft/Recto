@@ -4384,6 +4384,8 @@ TEST(PdfFilters, Jbig2StripesAlignmentAndSkip)
 	EXPECT_EQ(*aligned, all_black);
 	auto unaligned = decode_jbig2(halftone_page(0x01u, 1u, 0x0400u, pack_bitstring(plane1 + plane0)));
 	EXPECT_FALSE(unaligned.has_value() && *unaligned == all_black);
+	// Round 7: a gray-scale bitplane has no length of its own, so it must end with EOFB (T.88 C.5).
+	RECTO_EXPECT_ERR(decode_jbig2(halftone_page(0x01u, 1u, 0x0400u, pack_bitstring(plane1 + "00" + "1"))), ErrorCode::DamagedFormat);
 
 	// 3. HENABLESKIP: a 16x2 region with a 4x2 grid at a 4-pixel pitch, whose second grid row (y = 4) lies outside
 	// the region and is skipped. Row 0 selects patterns 3, 2, 3, 1 (gray 10, 11, 10, 01), so black at x 0..3 and
@@ -4908,8 +4910,13 @@ TEST(PdfError, DecoderContextReachesRingAndEtw)
 		EXPECT_EQ(tail[i].platform_status, std::optional<uint32_t>(0x8007000Eu));
 		EXPECT_NE(tail[i].format().find("hresult=0x8007000E"), std::string::npos) << tail[i].format();
 		EXPECT_EQ(captured[i].decoder_step_name, decoder_step_name(stages[i].second));
+		EXPECT_EQ(captured[i].decoder_step, static_cast<uint16_t>(stages[i].second));
 		EXPECT_TRUE(captured[i].has_platform_status);
 		EXPECT_EQ(captured[i].platform_status, 0x8007000Eu);
+		EXPECT_FALSE(captured[i].has_prior_status); // no earlier attempt
+		EXPECT_EQ(captured[i].prior_step, static_cast<uint16_t>(DecoderStep::None));
+		// The ring speaks of Windows running out of memory for an image, not of a configured limit or a document.
+		EXPECT_EQ(tail[i].message, decoder_failure_message(ErrorCode::OutOfMemory));
 	}
 	const DiagnosticEntry& handed_over = tail.back();
 	EXPECT_EQ(handed_over.decoder_step, DecoderStep::NativeJpx);
@@ -4919,13 +4926,17 @@ TEST(PdfError, DecoderContextReachesRingAndEtw)
 		<< handed_over.format();
 	EXPECT_EQ(captured.back().prior_step_name, "WicCreateDecoder");
 	EXPECT_EQ(captured.back().prior_status, 0x88982F60u);
+	EXPECT_TRUE(captured.back().has_prior_status);
+	EXPECT_EQ(captured.back().decoder_step, static_cast<uint16_t>(DecoderStep::NativeJpx));
+	EXPECT_FALSE(captured.back().has_platform_status); // the native decoder reports no Windows status
+	EXPECT_FALSE(handed_over.platform_status.has_value());
 	clear_diagnostics();
 	clear_captured_etw_events_for_testing();
 }
 
 // A baseline RGB JPEG of `width` x `height` mid-gray pixels, encoded by WIC's own JPEG encoder (so the decoder under
 // test meets an encoder it did not write). Empty if this machine cannot encode one.
-std::vector<uint8_t> make_wic_rgb_jpeg(uint32_t width, uint32_t height, bool gray = false)
+std::vector<uint8_t> make_wic_rgb_jpeg(uint32_t width, uint32_t height, bool gray = false, bool cmyk = false)
 {
 	using Microsoft::WRL::ComPtr;
 	(void)CoInitializeEx(nullptr, COINIT_MULTITHREADED); // S_FALSE or a different mode already set is fine here
@@ -4933,7 +4944,7 @@ std::vector<uint8_t> make_wic_rgb_jpeg(uint32_t width, uint32_t height, bool gra
 	if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)))) {
 		return {};
 	}
-	const UINT stride = width * (gray ? 1u : 3u);
+	const UINT stride = width * (gray ? 1u : (cmyk ? 4u : 3u));
 	std::vector<uint8_t> source(static_cast<size_t>(stride) * height, 0x80u);
 	for (size_t i = 0; i < source.size(); ++i) {
 		source[i] = static_cast<uint8_t>(0x40u + (i * 7u) % 0x80u); // varied, so channel order shows
@@ -4943,7 +4954,7 @@ std::vector<uint8_t> make_wic_rgb_jpeg(uint32_t width, uint32_t height, bool gra
 	ComPtr<IWICBitmapEncoder> encoder;
 	ComPtr<IWICBitmapFrameEncode> frame;
 	ComPtr<IPropertyBag2> options;
-	WICPixelFormatGUID format = gray ? GUID_WICPixelFormat8bppGray : GUID_WICPixelFormat24bppBGR;
+	WICPixelFormatGUID format = gray ? GUID_WICPixelFormat8bppGray : (cmyk ? GUID_WICPixelFormat32bppCMYK : GUID_WICPixelFormat24bppBGR);
 	if (FAILED(factory->CreateBitmapFromMemory(width, height, format, stride,
 			static_cast<UINT>(source.size()), source.data(), &bitmap)) ||
 		FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stream)) ||
@@ -5006,10 +5017,11 @@ TEST(PdfFilters, DctRepresentationsAreOneBufferEach)
 		std::vector<uint8_t> jpeg;
 		uint32_t components;
 	};
-	const std::array<Fixture, 3> fixtures = {{
+	const std::array<Fixture, 4> fixtures = {{
 		{"rgb", make_wic_rgb_jpeg(512u, 256u), 3u},
 		{"gray", make_wic_rgb_jpeg(512u, 256u, true), 1u},
 		{"cmyk", make_minimal_jpeg_8x8_cmyk(), 4u},
+		{"cmyk-large", make_wic_rgb_jpeg(512u, 256u, false, true), 4u}, // large enough for the memory check
 	}};
 	PdfDict inverted;
 	for (const Fixture& fx : fixtures) {
@@ -5061,6 +5073,56 @@ TEST(PdfFilters, DctRepresentationsAreOneBufferEach)
 				EXPECT_EQ(under.error().bound, std::optional<uint64_t>(required - 1u));
 			}
 		}
+	}
+}
+
+// Damaged Group 3 rows follow ISO 32000-1 Table 11 (D06 T05 §34): with /EndOfLine true each is found up to the next
+// EOL and replaced by the previous row if that row was good, or a white row if it was damaged too, up to
+// /DamagedRowsBeforeError; mixed Group 3 (K > 0) recovers the same way; without /EndOfLine nothing is recovered.
+TEST(PdfFilters, CcittDamagedRowRecovery)
+{
+	const std::string eol = "000000000001";
+	const std::string good = "1011" "000101" "1011"; // 4 white, 8 black, 4 white: 0xF0 0x0F
+	const std::string damaged = "00000001";          // no valid code
+	const std::string white = "101010";               // 16 white
+	const std::vector<uint8_t> expected = {0xF0u, 0x0Fu, 0xF0u, 0x0Fu, 0xFFu, 0xFFu, 0xFFu, 0xFFu};
+	for (const int64_t k : {int64_t{0}, int64_t{2}}) {
+		const std::string tag = k > 0 ? "1" : ""; // every row 1D in mixed Group 3
+		const std::string bits = eol + tag + good + eol + tag + damaged + eol + tag + damaged + eol + tag + white +
+			(k > 0 ? eol + "1" + eol + "1" : eol + eol);
+		const auto bytes = pack_bitstring(bits);
+		PdfDict parms;
+		parms.set("K", PdfValue(k));
+		parms.set("Columns", PdfValue(int64_t{16}));
+		parms.set("Rows", PdfValue(int64_t{4}));
+		parms.set("EndOfLine", PdfValue(true));
+		parms.set("DamagedRowsBeforeError", PdfValue(int64_t{2}));
+		auto decoded = decode_ccitt_fax(bytes, &parms);
+		ASSERT_TRUE(decoded.has_value()) << "K " << k << ": " << decoded.error().message.view();
+		EXPECT_EQ(*decoded, expected) << "K " << k; // the good row once, then white
+
+		PdfDict one_allowed = parms;
+		one_allowed.set("DamagedRowsBeforeError", PdfValue(int64_t{1}));
+		RECTO_EXPECT_ERR(decode_ccitt_fax(bytes, &one_allowed), ErrorCode::DamagedFormat);
+
+		PdfDict no_eol = parms;
+		no_eol.set("EndOfLine", PdfValue(false));
+		RECTO_EXPECT_ERR(decode_ccitt_fax(bytes, &no_eol), ErrorCode::DamagedFormat);
+	}
+}
+
+// The DCT ceiling is charged with what the representation needs before any WIC work, and a refusal says so: an 8 x 8 RGB
+// image needs 192 bytes of samples or 256 of RGBA, not its 64 pixels (D06 T05 §38, round 1).
+TEST(PdfFilters, DctRefusalNamesTheRepresentationsNeed)
+{
+	const std::vector<uint8_t> jpeg = make_wic_rgb_jpeg(8u, 8u);
+	ASSERT_FALSE(jpeg.empty());
+	for (const auto& [output, needed] : {std::pair{DctOutput::Samples, uint64_t{192}}, std::pair{DctOutput::Rgba, uint64_t{256}}}) {
+		auto refused = decode_dct_image(jpeg, nullptr, 63u, output);
+		ASSERT_FALSE(refused.has_value());
+		EXPECT_EQ(refused.error().code, ErrorCode::DecompressionLimitExceeded);
+		EXPECT_EQ(refused.error().observed, std::optional<uint64_t>(needed));
+		EXPECT_EQ(refused.error().bound, std::optional<uint64_t>(63u));
 	}
 }
 

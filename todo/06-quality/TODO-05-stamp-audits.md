@@ -951,6 +951,8 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 
 ## 34. CCITT damaged-row recovery as ISO 32000-1 Table 11 specifies
 
+> **Started:** 2026-10-23T14:59Z
+
 The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T05 §22, round 1) found CCITT damaged-row handling diverging from `/DamagedRowsBeforeError` (ISO 32000-1 Table 11): consecutive damaged rows each repeat the last recovered row (a second consecutive substitution should be white), and mixed Group 3 (`K > 0`) decoding has no recovery and refuses the stream. -> XREF: D06 T05 §22
 
 **Phase:** 1
@@ -961,9 +963,9 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 
 1. Implement Table 11's damaged-row substitution for pure and mixed Group 3 in `src/pdf/filters.cpp`. Done when: two consecutive damaged rows after a non-white good row produce the good row then white, for `K = 0` and `K > 0`.
 
-- [ ] Resynchronize at the next EOL after a damaged row and substitute per Table 11 (the previous good row once, then white) up to `/DamagedRowsBeforeError`, in the CCITT decoder in `src/pdf/filters.cpp`. Done when: the `K = 0` case yields the good row followed by a white row.
-- [ ] Apply the same recovery to mixed Group 3 (`K > 0`), honouring each row's 1D/2D tag bit. Done when: the `K > 0` case recovers instead of being refused.
-- [ ] Add `PdfFilters.CcittDamagedRowRecovery` for both cases and for exceeding `/DamagedRowsBeforeError`. Done when: it fails on the code before this section.
+- [x] Resynchronize at the next EOL after a damaged row and substitute per Table 11 (the previous good row once, then white) up to `/DamagedRowsBeforeError`, in the CCITT decoder in `src/pdf/filters.cpp`. Done when: the `K = 0` case yields the good row followed by a white row.
+- [x] Apply the same recovery to mixed Group 3 (`K > 0`), honouring each row's 1D/2D tag bit. Done when: the `K > 0` case recovers instead of being refused.
+- [x] Add `PdfFilters.CcittDamagedRowRecovery` for both cases and for exceeding `/DamagedRowsBeforeError`. Done when: it fails on the code before this section.
 - [ ] Commit: `pdf: CCITT damaged-row recovery per ISO 32000-1 Table 11`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.CcittDamagedRowRecovery`.
