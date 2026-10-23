@@ -32,3 +32,8 @@ if ! "$python" "$root/scripts/todo-graph.py" validate >/dev/null || ! "$python" 
     echo "pre-commit: run 'python scripts/todo-graph.py plan --sync', stage todo/implementation-plan.md, and commit again" >&2
     exit 1
 fi
+# Every error code a TODO contract names must be one src/pdf/error.h has (D01 T02 §22).
+if ! "$python" "$root/scripts/check-error-code-names.py" --root "$root" >&2; then
+    echo "pre-commit: a TODO names an error code src/pdf/error.h does not have (listed above)" >&2
+    exit 1
+fi

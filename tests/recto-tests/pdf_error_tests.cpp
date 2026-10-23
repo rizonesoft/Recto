@@ -517,7 +517,34 @@ TEST(PdfError, ConversionAndRollbackCodesRecordOnlyWhenLogged)
 		const std::string_view message = diagnostic_id_message(id);
 		EXPECT_EQ(message.find("amage"), std::string_view::npos) << message;
 	}
+	// No promise the log cannot keep: the ring never holds the backup paths, so the message does not say it names them.
+	EXPECT_EQ(diagnostic_id_message(DiagnosticId::RollbackIncomplete).find("named"), std::string_view::npos);
+
+	// Their ETW packets carry each code's own number, name and diagnostic, and the context given.
+	force_enable_etw_provider_for_testing();
 	clear_diagnostics();
+	clear_captured_etw_events_for_testing();
+	set_etw_capture_for_testing(true);
+	record_diagnostic(make_pdf_error(ErrorCode::ConversionFailed, "page 3 recall 0.91"));
+	record_diagnostic(ErrorCode::RollbackIncomplete, "C:\\backup.pdf", std::nullopt, 7, 0);
+	set_etw_capture_for_testing(false);
+	const auto captured = captured_etw_events_for_testing();
+	ASSERT_EQ(captured.size(), 2u);
+	EXPECT_EQ(captured[0].error_code, static_cast<uint32_t>(ErrorCode::ConversionFailed));
+	EXPECT_EQ(captured[0].error_code, 19u);
+	EXPECT_EQ(captured[0].error_code_name, "ConversionFailed");
+	EXPECT_EQ(captured[0].diagnostic_id, static_cast<uint16_t>(DiagnosticId::ConversionFailed));
+	EXPECT_EQ(captured[0].diagnostic_id_name, "ConversionFailed");
+	EXPECT_FALSE(captured[0].has_object_num);
+	EXPECT_EQ(captured[1].error_code, static_cast<uint32_t>(ErrorCode::RollbackIncomplete));
+	EXPECT_EQ(captured[1].error_code, 20u);
+	EXPECT_EQ(captured[1].error_code_name, "RollbackIncomplete");
+	EXPECT_EQ(captured[1].diagnostic_id, static_cast<uint16_t>(DiagnosticId::RollbackIncomplete));
+	EXPECT_EQ(captured[1].diagnostic_id_name, "RollbackIncomplete");
+	EXPECT_TRUE(captured[1].has_object_num);
+	EXPECT_EQ(captured[1].object_num, 7u);
+	clear_diagnostics();
+	clear_captured_etw_events_for_testing();
 }
 
 // ResourceLimit is a bound reached on document content and records itself like the other limits; InvalidArgument is

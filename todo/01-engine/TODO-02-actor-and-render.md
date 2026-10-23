@@ -81,6 +81,7 @@ track: M1
 | 21 | §21 | Page `/UserUnit` in `PageDescription`, physical page size and CLI output size | D01 T01 §10, §6 | [ ] |
 | 22 | §22 | Error codes named by later sections reconciled with `error.h` | §18 | [ ] |
 | 23 | §23 | Closed refusal reasons and numeric context on limit and argument errors | §18 | [ ] |
+| 24 | §24 | Conversion-check failures name the check, the page and the measured value | §22, §23 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
 
@@ -690,6 +691,8 @@ The completion review of `D01 T02 §18` (`docs/reviews/01-engine/D01-T02-s18.md`
 
 ## 23. Closed refusal reasons and numeric context on limit and argument errors
 
+> **Started:** 2026-10-23T12:14Z
+
 The completion review of `D01 T02 §18` (`docs/reviews/01-engine/D01-T02-s18.md`, Part 2 shortfall 2) found that support cannot tell which limit or which argument caused a `ResourceLimit` or `InvalidArgument`: the diagnostic ring replaces the caller's text with a generic message (by design, D16: no document bytes), and ETW carries no reason, observed value or bound. Acrobat's Diagnostics tool lets support see what failed; Recto should say which bound stopped the work, with numbers only, never a path, password or document text.
 
 **Phase:** 1
@@ -707,6 +710,27 @@ The completion review of `D01 T02 §18` (`docs/reviews/01-engine/D01-T02-s18.md`
 - [ ] Commit: `pdf: closed refusal reasons with numeric context`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*` passes under ASan, including `PdfError.RefusalContextReachesRingAndEtw`.
+
+## 24. Conversion-check failures name the check, the page and the measured value
+
+The completion review of `D01 T02 §22` (`docs/reviews/01-engine/D01-T02-s22.md`, gaps 7 and 12) found that a `ConversionFailed` error cannot say which check failed, on which page, or by how much: the ring and ETW keep only the code (D16: never the message), and Acrobat's Preflight names each failed check and its location. This section appends the conversion checks to `RefusalReason` (`§23`) and gives `PdfError`, the ring and the ETW `Diagnostic` event a page index, so a failure reads, for example, `TextRecall` on page 3 with `observed=910` and `bound=990` (per mille). Consumers: `D04 T03 §8` (`DocxWriter` and `RtfWriter` checks) and `D04 T05 §12` (`PptxWriter` checks), and `D07 T03 §2`'s report.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that reasons are appended after `OutputPath` and the page field after `bound`, so every existing numeric value and field is unchanged, that no threading changes, and that the ring stays free of document bytes.
+
+**Build order:**
+
+1. Append the conversion checks to `RefusalReason` and add the page index to `PdfError`, `DiagnosticEntry`, the ring slot and the ETW `Diagnostic` event in `src/pdf/error.h` and `src/pdf/error.cpp`. Done when: a conversion failure carries check, page, observed and bound end to end.
+2. Prove it through the ring and ETW capture. Done when: the tests below pass.
+
+- [ ] Append `TextRecall`, `ReadingOrder`, `EmptyResult`, `PackageInvalid` and `RelationshipMissing` to `RefusalReason` after `OutputPath`, with their names, and extend `PdfError.RefusalReasonNamesCoverEveryReason`. Done when: the test names every value.
+- [ ] Add `page_index` (optional `uint32_t`) to `PdfError` and `DiagnosticEntry`, carry it in the ring slot, `format()` (`page=3`, one-based for people) and the ETW event (`HasPageIndex`, `PageIndex`), and accept it in `make_refusal_error`. Done when: `PdfError.ConversionCheckContextReachesRingAndEtw` reads check, page, observed and bound back from the ring and the captured packet, and finds no caller text in either.
+- [ ] Name the reason each consumer returns: `D04 T03 §8` and `D04 T05 §12` return `make_refusal_error(ErrorCode::ConversionFailed, <check>, observed, bound)` with the page, per mille for ratios. Done when: their items name the reason (written here so the consumers build against it). Cheaper substitute that fails the checkpoint: a reason only in the English message, which the ring drops.
+- [ ] Commit: `pdf: conversion-check failures name the check, page and measured value`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*` passes under ASan, including `PdfError.ConversionCheckContextReachesRingAndEtw`.
 
 ## Verification
 

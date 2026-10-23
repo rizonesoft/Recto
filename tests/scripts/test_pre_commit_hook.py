@@ -18,7 +18,7 @@ class PreCommitHook(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.tmp.name)
         for rel in ("scripts/todo-graph.py", "scripts/lib/todo_graph.py", "scripts/review-dispatch.py",
-                    "scripts/hooks/pre-commit"):
+                    "scripts/hooks/pre-commit", "scripts/check-error-code-names.py", "src/pdf/error.h"):
             (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / rel, self.root / rel)
         (self.root / "scripts/hooks/pre-commit").chmod(0o755)  # git runs only an executable hook on Linux
@@ -59,6 +59,18 @@ class PreCommitHook(unittest.TestCase):
         self.sync()
         self.git("add", "-A")
         self.assertEqual(self.commit().returncode, 0)
+
+    def test_a_todo_naming_an_unknown_error_code_is_refused(self):
+        path = self.root / "todo/00-workspace/TODO-01-a.md"
+        unknown = "Error" + "Code::" + "NoSuch" + "Code"  # assembled, so no TODO text in this repository holds it
+        path.write_text(path.read_text(encoding="utf-8").replace("- [ ] Work.", f"- [ ] Work, returning `{unknown}`."),
+                        encoding="utf-8")
+        self.sync()
+        self.git("add", "-A")
+        result = self.commit()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("error code src/pdf/error.h does not have", result.stderr)
+        self.assertIn(unknown, result.stderr)
 
     def test_unstaged_todo_changes_are_refused(self):
         self.tick()

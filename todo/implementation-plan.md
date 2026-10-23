@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 77 | Checklist items: 469
+Sections: 78 | Checklist items: 474
 
 | Status | Reference   | Deliverable                                                                              | Needs                        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ---------------------------- | ----- |
@@ -69,6 +69,7 @@ Sections: 77 | Checklist items: 469
 | [x]    | D01 T02 §18 | `ErrorCode::ResourceLimit` and `ErrorCode::InvalidArgument` in `error.h`                 | windows-host                 | 5     |
 | [ ]    | D01 T02 §22 | Error codes named by later sections reconciled with `error.h`                            | windows-host                 | 5     |
 | [ ]    | D01 T02 §23 | Closed refusal reasons and numeric context on limit and argument errors                  | windows-host                 | 3     |
+| [ ]    | D01 T02 §24 | Conversion-check failures name the check, the page and the measured value                | windows-host                 | 4     |
 | [x]    | D06 T05 §15 | Audit D01 T01 §1: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW         | windows-host                 | 5     |
 | [x]    | D06 T05 §16 | Audit D01 T01 §2: PdfValue variant object model, dictionary/array helpers and deep       | windows-host                 | 5     |
 | [x]    | D06 T05 §17 | Audit D01 T01 §3: Binary-safe PDF 1.7 and 2.0 lexer (src/pdf/lexer.cpp)                  | windows-host                 | 5     |
@@ -102,7 +103,7 @@ Sections: 77 | Checklist items: 469
 | [ ]    | D01 T02 §19 | Interpreter work, memory and wall-clock ceilings on hostile content streams              | windows-host                 | 7     |
 | [ ]    | D01 T02 §20 | Rasterizer failure isolation: typed tile errors, target recreation and retry             | windows-host                 | 7     |
 | [ ]    | D01 T02 §21 | Page `/UserUnit` in `PageDescription`, physical page size and CLI output size            | windows-host                 | 6     |
-| [ ]    | D01 T03 §1  | `recto-cli` command dispatcher, exit-code contract and `recto-cli info` (`--json`)       | windows-host                 | 8     |
+| [ ]    | D01 T03 §1  | `recto-cli` command dispatcher, exit-code contract and `recto-cli info` (`--json`)       | windows-host                 | 9     |
 | [ ]    | D01 T03 §2  | `recto-cli render` (full-page and stitched `512 x 512` tile modes, WIC PNG encoder)      | windows-host                 | 6     |
 | [ ]    | D01 T03 §3  | `recto-cli bench` and `recto-cli stress` commands                                        | windows-host                 | 5     |
 | [ ]    | D01 T03 §4  | libFuzzer targets (`fuzz_open`, `fuzz_filters`, `fuzz_render`) with AddressSanitizer     | windows-host                 | 6     |
@@ -401,12 +402,12 @@ Sections: 111 | Checklist items: 828
 
 ### Phase 4: M4 Conversions A
 
-Sections: 149 | Checklist items: 1158
+Sections: 149 | Checklist items: 1160
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
 | [ ]    | D04 T01 §1  | Isolated `ConversionJob` 2-worker runtime, dedicated `pdf::Document` and `CancelToken`   | windows-host                  | 8     |
-| [ ]    | D04 T01 §2  | Job result & recovery state machine (`Completed`..`NeedsPassword`) and temp cleanup      | windows-host                  | 7     |
+| [ ]    | D04 T01 §2  | Job result & recovery state machine (`Completed`..`NeedsPassword`) and temp cleanup      | windows-host                  | 8     |
 | [ ]    | D04 T01 §3  | Convert Step 1 (`Files` drop zone & chips) and Step 2 (`What to make` card registry)     | windows-host, display-session | 9     |
 | [ ]    | D04 T01 §4  | Convert Step 3 dynamic options host, capability hint line, and primary action button     | windows-host, display-session | 8     |
 | [ ]    | D04 T01 §5  | App-wide floating `QueueCard` (progress ring, job states, expanded list, per-job cancel) | windows-host, display-session | 7     |
@@ -541,7 +542,7 @@ Sections: 149 | Checklist items: 1158
 | [ ]    | D05 T02 §21 | Blank page review: find, check and remove blank pages from the grid                      | windows-host, display-session | 7     |
 | [ ]    | D05 T02 §26 | Paging Seal dialog: a seal image split across page edges                                 | windows-host, display-session | 8     |
 | [ ]    | D06 T04 §17 | Combine contents page, split methods and page image copy board                           | windows-host                  | 7     |
-| [ ]    | D05 T02 §16 | Split mode: split by file size and by top-level bookmarks                                | windows-host, display-session | 9     |
+| [ ]    | D05 T02 §16 | Split mode: split by file size and by top-level bookmarks                                | windows-host, display-session | 10    |
 | [ ]    | D05 T02 §23 | Copy a page as an image from the Organize grid                                           | windows-host, display-session | 8     |
 | [ ]    | D05 T02 §24 | Combine mode: table of contents page and a rebuildable binder project                    | windows-host, display-session | 9     |
 | [ ]    | D06 T04 §18 | Redaction review board: profiles, match list, suggestions, Inspect Document              | windows-host                  | 7     |
@@ -683,7 +684,7 @@ Sections: 119 | Checklist items: 959
 
 ### Phase 6: M6 Ship
 
-Sections: 70 | Checklist items: 515
+Sections: 70 | Checklist items: 516
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -745,7 +746,7 @@ Sections: 70 | Checklist items: 515
 | [ ]    | D07 T01 §25 | Downgrade warning and silent downgrade refusal (`/ALLOWDOWNGRADE=1`)                     | windows-host, display-session | 9     |
 | [ ]    | D07 T01 §26 | Writer version in settings, recents and session files and newer-writer notes             | windows-host                  | 5     |
 | [ ]    | D07 T02 §21 | Version surfaces: `recto-cli --version --json`, `recto-mcp` server info and crash JSON   | windows-host                  | 5     |
-| [ ]    | D07 T03 §2  | In-app `Report a problem` with privacy-safe diagnostics                                  | windows-host, display-session | 7     |
+| [ ]    | D07 T03 §2  | In-app `Report a problem` with privacy-safe diagnostics                                  | windows-host, display-session | 8     |
 | [ ]    | D07 T03 §10 | Changelog and release body from stamped sections and `Fixes-User:` trailers              | none                          | 9     |
 | [ ]    | D07 T03 §7  | What's new after update and opt-in update notice                                         | windows-host, display-session | 8     |
 | [ ]    | D07 T03 §11 | Contract snapshots and `scripts/next-version.py` SemVer bump suggestion                  | windows-host                  | 9     |
@@ -879,6 +880,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 56/810 verified sections, 29 ready to run now.
+Progress: 56/811 verified sections, 29 ready to run now.
 
-Checklist: 368/5953 items completed (includes Commit items).
+Checklist: 368/5961 items completed (includes Commit items).

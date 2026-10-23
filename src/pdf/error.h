@@ -286,8 +286,8 @@ enum class DiagnosticId : uint16_t {
 	case DiagnosticId::ConversionFailed:
 		return "The converted file did not pass its own check, so it was not saved; another conversion mode may work";
 	case DiagnosticId::RollbackIncomplete:
-		return "The operation failed and some original files could not be put back; their contents are kept in the "
-			   "backup files named";
+		return "The operation failed and some original files could not be put back; their contents are kept in backup "
+			   "files beside them";
 	}
 	return "Engine diagnostic event";
 }
@@ -1152,8 +1152,10 @@ void clear_diagnostics() noexcept;
 // DamagedFormat, DecompressionLimitExceeded, RecursionLimitExceeded and
 // ResourceLimit. Other codes, InvalidArgument among them (a caller's error,
 // not a damaged file), are recorded only through record_diagnostic. So are
-// ConversionFailed and RollbackIncomplete: the caller records them with the
-// failed rule or the backup paths, which only it knows.
+// ConversionFailed and RollbackIncomplete, recorded by the caller once it has
+// reported them: the ring and ETW keep the code and its diagnostic, never the
+// message, so the failed rule or the original and backup paths reach the user
+// through the error's message and the operation's result, not the log.
 [[nodiscard]] PdfError make_pdf_error(
 	ErrorCode code,
 	std::string_view message = {},
