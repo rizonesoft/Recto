@@ -4599,6 +4599,16 @@ TEST(PdfFilters, Jbig2StripesAlignmentAndSkip)
 		RECTO_ASSERT_OK(drawn_later);
 		EXPECT_EQ(drawn_later->size(), 3u);
 
+		// Round 5: End of Page ends the page, so an End of Stripe after it cannot close the stripe a region left open.
+		std::vector<uint8_t> after_page_end = header;
+		append_jbig2_segment(after_page_end, 0u, 48u, {}, 1u, page_info);
+		append_jbig2_segment(after_page_end, 1u, 38u, {}, 1u, mmr_region(0, "1" + eofb));
+		append_jbig2_segment(after_page_end, 2u, 50u, {}, 1u, row0);
+		append_jbig2_segment(after_page_end, 3u, 38u, {}, 1u, mmr_region(1, "1" + eofb));
+		append_jbig2_segment(after_page_end, 4u, 49u, {}, 1u, {});
+		append_jbig2_segment(after_page_end, 5u, 50u, {}, 1u, std::vector<uint8_t>{0u, 0u, 0u, 1u});
+		RECTO_EXPECT_ERR(decode_jbig2(after_page_end), ErrorCode::DamagedFormat);
+
 		// Round 2: a refinement of the page reads rows the page grows to as its default pixel (black here), exactly as
 		// on a page whose height is known (T.88 7.4.7.4): the fixed arithmetic stream decodes differently on white. The
 		// region is in the second stripe, past the rows the page starts with (one maximum stripe).

@@ -6055,8 +6055,9 @@ struct Jbig2DecoderState {
 		} else if (seg_type == 49u || seg_type == 50u || seg_type == 51u ||
 				   seg_type == 52u || seg_type == 62u) {
 			// End of Page (49), End of Stripe (50), End of File (51), Profiles (52),
-			// and Extension (62).
-			if (seg_type == 51u) {
+			// and Extension (62). A PDF JBIG2 stream holds one page, so End of Page ends it as End of File does:
+			// nothing after it (an End of Stripe, a region) can change the page or its stripe checks (T.88 7.4.9).
+			if (seg_type == 49u || seg_type == 51u) {
 				break;
 			}
 			if (seg_type == 50u && state.page_height_unknown) {
