@@ -89,6 +89,18 @@ The three candidate files match `d3365a9`. I ran the existing x64 Release execut
 
 COMPLETION: gaps
 
+Disposition of the completion review's gaps (each verified against the code before acting):
+
+- Implemented: gap 1, a non-ASCII password for R=2 to R=4: the legacy algorithms hash PDFDocEncoding bytes (ISO 32000-1 7.6.3.3, Algorithm 2 step a), so a UTF-8 password is tried in PDFDocEncoding first, then as given. Commit `9ba7cc9`.
+- Implemented: gap 3, an indirect stream `/Type` resolves one level before the `/XRef`, `/Metadata` and `/EmbeddedFile` rules (also round 1, finding 1). Commit `9ba7cc9`.
+- Filed: D06 T05 §46 (gap 2, attachment-only `/AuthEvent /EFOpen` scope; the prompt belongs to D02 T03 §8)
+- Filed: D06 T05 §47 (gaps 4, 10, 11 and 12: the R=2 to R=6 interoperability matrix with independently generated files, cancellable decryption, measured cost)
+- Filed: D02 T01 §10 (gaps 7 and 14, the password dialog, its states and accessibility, existing owner)
+- Filed: D01 T02 §8 (gap 5, actor-owned asynchronous authentication, existing owner with D01 T02 §10)
+- Filed: D02 T03 §8 (gap 8 in part, attachment prompts, existing owner)
+- Filed: D05 T01 §12 (gap 9, certificate security, existing owner with D05 T01 §11)
+- Gaps 6 and 13 (open entry points and the opening journey) are the planned work of `D02 T01` and `D02 T03`.
+
 ## Round 1: sol (`gpt-6.1-sol` via `codex`)
 
 - Writer: claude
@@ -119,18 +131,6 @@ The findings are source-derived; their proposed reproductions were not executed.
 
 HIGHEST: P2
 OVERALL: needs-attention
-
-Disposition of the completion review's gaps (each verified against the code before acting):
-
-- Implemented: gap 1, a non-ASCII password for R=2 to R=4: the legacy algorithms hash PDFDocEncoding bytes (ISO 32000-1 7.6.3.3, Algorithm 2 step a), so a UTF-8 password is tried in PDFDocEncoding first, then as given. Commit `9ba7cc9`.
-- Implemented: gap 3, an indirect stream `/Type` resolves one level before the `/XRef`, `/Metadata` and `/EmbeddedFile` rules (also round 1, finding 1). Commit `9ba7cc9`.
-- Filed: D06 T05 §46 (gap 2, attachment-only `/AuthEvent /EFOpen` scope; the prompt belongs to D02 T03 §8)
-- Filed: D06 T05 §47 (gaps 4, 10, 11 and 12: the R=2 to R=6 interoperability matrix with independently generated files, cancellable decryption, measured cost)
-- Filed: D02 T01 §10 (gaps 7 and 14, the password dialog, its states and accessibility, existing owner)
-- Filed: D01 T02 §8 (gap 5, actor-owned asynchronous authentication, existing owner with D01 T02 §10)
-- Filed: D02 T03 §8 (gap 8 in part, attachment prompts, existing owner)
-- Filed: D05 T01 §12 (gap 9, certificate security, existing owner with D05 T01 §11)
-- Gaps 6 and 13 (open entry points and the opening journey) are the planned work of `D02 T01` and `D02 T03`.
 
 ## Fixes after round 1
 
@@ -212,3 +212,34 @@ OVERALL: needs-attention
 ## Fixes after round 3
 
 - Finding 1 (P2): correct. Suppressing every nested inlining was too broad: a container decrypted inside another stream's filter resolution must still resolve its own indirect crypt filter. Each reference is now resolved once per outermost decryption and remembered (its value when a slot can use it, otherwise nothing; a reference being resolved reads as nothing, which also ends a cycle), and nested decryptions inline as usual. The 8^n chain stays linear (`PdfDocument.EncryptedFilterReferenceChainIsNotInlined` passes unchanged). Tested with the reviewer's file (`PdfDocument.NestedDecryptionResolvesItsOwnIndirectCryptFilter`): it opens and its content stream reads `q Q`; on `3d558a7` the open is refused.
+
+## Round 4: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-23T12:23:16Z
+- Effort: medium
+- Lines: 16
+- Digest: 28ed474de679cad1
+
+## adversarial: approve
+
+## consistency: approve
+
+## integration: approve
+
+## source-defect: approve
+
+## design: approve
+
+## record: advisory
+
+No additional substantiated findings. The six reviewed files match `9aeb2cf`. The existing x64 Release executable passed 15 selected tests, including both filter-resolution regressions; ASan reported enabled. No rebuild was performed, so these results do not establish candidate binary provenance or independently verify the recorded full-build claims. No files were modified.
+
+HIGHEST: none
+OVERALL: approve
+
+## Writer note: closing the audit
+
+- Round 4 approved at medium (`HIGHEST: none`). Rounds spent: 4, every finding fixed in `9ba7cc9`, `3d558a7` and `9aeb2cf`; the completion review's gaps were built (`9ba7cc9`) or filed (`D06 T05 §46`, `§47` and the existing owners named above).
+- Checkpoint at the current tip: `python scripts/todo-graph.py resolve "D01 T01 §9"` -> exit 3 (still verified); `build/build.ps1 -Platform x64 -Configuration Release -EnableASAN -TestFilter PdfCrypto.*:PdfFilters.*:PdfXref.*:PdfDocument.*:PdfObject.*:PdfError.*:Support.*` -> exit 0, `[  PASSED  ] 104 tests.`; `.uild.cmd` -> exit 0, 0 Warning(s) in all four configurations, `[  PASSED  ] 182 tests.`
+- No confirmed regression: every finding was a defect present at `D01 T01 §9`'s stamped candidate (password order and encoding, the V4 crypt filter length, an indirect stream `/Type`, filter-chain expansion), not a later change breaking it, and each is fixed at its owning layer with a test that fails on the old code. `D01 T01 §9` keeps its stamp; no dependent section is suspect.
