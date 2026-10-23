@@ -240,6 +240,12 @@ constexpr std::string_view kEofMarker = "%%EOF";
 	return holds_ref(dict.get("Filter")) || holds_ref(dict.get("DecodeParms")) || holds_ref(dict.get("DP")) ||
 		holds_ref(dict.get("N")) || holds_ref(dict.get("First"));
 }
+
+// The two refusals unpack_xref_stream gives when the cumulative row budget runs out; recovery passes them on as a
+// budget refusal instead of dropping the stream.
+constexpr std::string_view kXrefRowBudgetExceeded = "Cumulative /Type /XRef entry count exceeds maximum budget";
+constexpr std::string_view kXrefDefaultIndexBudgetExceeded =
+	"/Type /XRef default /Index [0 /Size] exceeds maximum entry budget";
 } // namespace
 
 PdfResult<uint64_t> XrefTable::locate_header_offset(
@@ -505,7 +511,7 @@ PdfResult<void> XrefTable::unpack_xref_stream(
 					return make_xref_error(
 						ErrorCode::DamagedFormat,
 						DiagnosticId::DamagedXRef,
-						"Cumulative /Type /XRef entry count exceeds maximum budget");
+						kXrefRowBudgetExceeded);
 				}
 				total_rows_parsed += count;
 				stream_row_count += count;
@@ -517,7 +523,7 @@ PdfResult<void> XrefTable::unpack_xref_stream(
 				return make_xref_error(
 					ErrorCode::DamagedFormat,
 					DiagnosticId::DamagedXRef,
-					"/Type /XRef default /Index [0 /Size] exceeds maximum entry budget");
+					kXrefDefaultIndexBudgetExceeded);
 			}
 			total_rows_parsed += dict_size;
 			stream_row_count = dict_size;
@@ -673,6 +679,9 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			std::max<uint64_t>(effective_max_entries, 1ULL) * 65536ULL);
 		uint32_t max_obj_num = 0;
 		std::optional<IndirectRef> info_candidate;
+		// The file position of info_candidate's definition, so a member unpacked after the scan replaces it only when
+		// it comes later in the file.
+		uint64_t info_candidate_pos = 0;
 		std::unordered_map<uint32_t, std::pair<uint16_t, int64_t>> recovered_integers;
 		std::unordered_map<uint32_t, uint16_t> catalog_generations;
 		// Dictionaries whose /Type is an indirect reference: the named object may lie after them in the file, so
@@ -691,11 +700,14 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		// Containers whose /Filter, /DecodeParms, /N or /First is indirect: the object a reference names may lie after
 		// the container, so they are unpacked once the scan has found every object. Every other container is still
 		// unpacked where the scan meets it, so its integers keep serving a later indirect /Length.
+		// Only where each one is: an encrypted file's containers are never decoded during recovery, so their bytes are
+		// not kept; a container that is decoded is parsed again at its position after the scan.
 		struct DeferredObjStm {
 			uint32_t obj_num = 0;
 			size_t pos = 0;
-			PdfStream stream;
 		};
+		// Rows read from every recovered cross-reference stream, against one budget for the whole recovery.
+		uint64_t recovered_xref_rows = 0;
 		std::vector<DeferredObjStm> deferred_objstms;
 		// An encrypted file's containers are ciphertext until authentication, which happens after recovery, so when the
 		// file may be encrypted (it names /Encrypt anywhere) every container is deferred, and none is decoded if a
@@ -882,7 +894,10 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 								 idict->contains("Author") ||
 								 idict->contains("Producer") ||
 								 idict->contains("CreationDate"))) {
+								if (!info_candidate.has_value() || container_pos >= info_candidate_pos) {
 								info_candidate = IndirectRef{inner_id, 0u};
+								info_candidate_pos = container_pos;
+							}
 							}
 						}
 					}
@@ -1093,6 +1108,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 									 dict_only->contains("Producer") ||
 									 dict_only->contains("CreationDate"))) {
 									info_candidate = IndirectRef{obj_num, gen_num};
+									info_candidate_pos = static_cast<uint64_t>(pos);
 								}
 							} else if (parsed_obj->value.is_stream()) {
 								const PdfStream& stm = *parsed_obj->value.as_stream();
@@ -1103,40 +1119,82 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 									if (!ov_res.has_value()) {
 										return ov_res.error();
 									}
-									// Cross-reference streams are never encrypted (ISO 32000-1 section 7.5.8.1), so their type-2 rows say where
-									// compressed objects live even when the containers cannot be read before authentication. Each row is a
-									// definition at this stream's position, under the scan's later-wins rule; a stream that does not decode or
-									// unpack contributes only its trailer keys, as before.
-									detail::ScopedDecodeWorkMeter rows_work;
-									auto rows_bytes = decode_stream(stm);
-									if (!rows_bytes.has_value() &&
-										(rows_bytes.error().code == ErrorCode::OutOfMemory ||
-										 rows_bytes.error().code == ErrorCode::DecompressionLimitExceeded)) {
-										return rows_bytes.error();
-									}
-									cumulative_decoded_objstm_bytes += std::max<uint64_t>(
-										rows_work.bytes(), rows_bytes.has_value() ? static_cast<uint64_t>(rows_bytes->size()) : 0u);
-									if (cumulative_decoded_objstm_bytes > max_recovery_decoded_objstm_bytes) {
-										return make_xref_error(
-											ErrorCode::DecompressionLimitExceeded,
-											DiagnosticId::DamagedStream,
-											"Damaged-file recovery exceeded cumulative decoded stream byte budget",
-											pos);
-									}
-									if (rows_bytes.has_value()) {
+									// Cross-reference streams are never encrypted (ISO 32000-1 section 7.5.8.1), so their rows say where compressed
+									// objects live (type 2) and which objects a later revision deleted (type 0) even when the containers cannot be read
+									// before authentication. Each row is a definition at this stream's position, under the scan's later-wins rule. A
+									// stream behind an unmetered filter, or one that does not decode or unpack, contributes only its trailer keys and
+									// is recorded as damage with its object number and offset.
+									const auto unusable_xref_stream = [&]() {
+										record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedXRef, static_cast<uint64_t>(pos), obj_num, gen_num);
+									};
+									if (!filters_are_metered_lossless(sdict)) {
+										unusable_xref_stream();
+									} else {
+										// Decoded within what the cumulative budget has left, so the work stops at the budget instead of after it.
+										detail::ScopedDecodeWorkMeter rows_work;
+										auto rows_bytes = decode_stream(stm, static_cast<size_t>(std::min<uint64_t>(
+											kMaxDecodedStreamBytes, max_recovery_decoded_objstm_bytes - cumulative_decoded_objstm_bytes)));
+										if (!rows_bytes.has_value() &&
+											(rows_bytes.error().code == ErrorCode::OutOfMemory ||
+											 rows_bytes.error().code == ErrorCode::DecompressionLimitExceeded)) {
+											return rows_bytes.error();
+										}
+										cumulative_decoded_objstm_bytes += std::max<uint64_t>(
+											rows_work.bytes(), rows_bytes.has_value() ? static_cast<uint64_t>(rows_bytes->size()) : 0u);
+										if (cumulative_decoded_objstm_bytes > max_recovery_decoded_objstm_bytes) {
+											return make_xref_error(
+												ErrorCode::DecompressionLimitExceeded,
+												DiagnosticId::DamagedStream,
+												"Damaged-file recovery exceeded cumulative decoded stream byte budget",
+												pos);
+										}
 										XrefTable rows;
-										uint64_t rows_parsed = 0;
-										const auto unpacked = unpack_xref_stream(
-											sdict, *rows_bytes, file_bytes.size(), header_off, rows, rows_parsed, effective_max_entries);
-										if (!unpacked.has_value() && unpacked.error().code == ErrorCode::OutOfMemory) {
+										PdfResult<void> unpacked = PdfResult<void>::ok();
+										if (rows_bytes.has_value()) {
+											unpacked = unpack_xref_stream(
+												sdict, *rows_bytes, file_bytes.size(), header_off, rows, recovered_xref_rows, effective_max_entries);
+										}
+										if (!unpacked.has_value() &&
+											(unpacked.error().code == ErrorCode::OutOfMemory ||
+											 unpacked.error().message.view() == kXrefRowBudgetExceeded ||
+											 unpacked.error().message.view() == kXrefDefaultIndexBudgetExceeded)) {
 											return unpacked.error();
 										}
-										if (unpacked.has_value()) {
+										if (!rows_bytes.has_value() || !unpacked.has_value()) {
+											unusable_xref_stream();
+										} else {
 											for (const auto& [member_id, row] : rows.entries_) {
-												if (!row.is_compressed()) {
+												if (member_id == 0u || (!row.is_compressed() && !row.is_free())) {
 													continue;
 												}
-												if (!table.entries_.contains(member_id)) {
+												const XrefEntry* existing = table.find(member_id);
+												if (row.is_free()) {
+													// A later revision deleted the object: an earlier definition goes, and an earlier container's
+													// member unpacked after the scan stays out (defined_at).
+													if (existing != nullptr) {
+														invalidate_objstm_container(member_id);
+														table.entries_.erase(member_id);
+														if (objects_discovered > 0u) {
+															--objects_discovered;
+														}
+														recovered_integers.erase(member_id);
+														catalog_generations.erase(member_id);
+														indirect_type_dicts.erase(member_id);
+														catalog_names.erase(member_id);
+														if (info_candidate.has_value() && info_candidate->obj_num == member_id) {
+															info_candidate = std::nullopt;
+														}
+													}
+													defined_at[member_id] = static_cast<uint64_t>(pos);
+													continue;
+												}
+												if (existing != nullptr && existing->is_compressed() && existing->obj_stm_num == row.obj_stm_num &&
+													existing->obj_stm_index == row.obj_stm_index) {
+													// The same object the scan already unpacked: what it learned (a catalog, an integer) stands.
+													defined_at[member_id] = static_cast<uint64_t>(pos);
+													continue;
+												}
+												if (existing == nullptr) {
 													if (objects_discovered >= effective_max_entries) {
 														return make_xref_error(
 															ErrorCode::DamagedFormat,
@@ -1164,7 +1222,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 									}
 								} else if (type_opt.has_value() && *type_opt == "ObjStm" && gen_num == 0u &&
 									(may_be_encrypted || objstm_needs_resolver(sdict))) {
-									deferred_objstms.push_back(DeferredObjStm{obj_num, pos, stm});
+									deferred_objstms.push_back(DeferredObjStm{obj_num, pos});
 								} else if (type_opt.has_value() && *type_opt == "ObjStm" && gen_num == 0u &&
 									!filters_are_metered_lossless(sdict)) {
 									// Recovery decodes a container only through filters whose work the decode meter
@@ -1181,7 +1239,8 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 									// Every decode is charged to the cumulative budget, including one that fails after
 									// expanding (a bad checksum after inflation): the meter counts the work either way.
 									detail::ScopedDecodeWorkMeter decode_work;
-									auto dec_stm = decode_stream(stm);
+									auto dec_stm = decode_stream(stm, static_cast<size_t>(std::min<uint64_t>(
+										kMaxDecodedStreamBytes, max_recovery_decoded_objstm_bytes - cumulative_decoded_objstm_bytes)));
 									if (!dec_stm.has_value() &&
 										(dec_stm.error().code == ErrorCode::OutOfMemory ||
 										 dec_stm.error().code == ErrorCode::DecompressionLimitExceeded)) {
@@ -1221,43 +1280,60 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		// parse, is null, as an undefined object is (ISO 32000-1 section 7.3.10), so resolution never recurses. Parsing
 		// is charged to the scan's cumulative parse budget.
 		bool resolver_over_budget = false;
+		// Each target is parsed once and kept, so a parameter object many containers share is parsed and charged once.
+		// Keyed by object and generation number, so a lookup with the wrong generation never answers the right one.
+		std::unordered_map<uint64_t, PdfValue> resolved_targets;
 		const IndirectObjectResolver scan_resolver = [&](IndirectRef ref) -> PdfResult<PdfValue> {
-			const XrefEntry* entry = table.find(ref.obj_num);
-			if (entry == nullptr || !entry->is_uncompressed() || entry->generation != ref.gen_num ||
-				entry->byte_offset >= file_bytes.size()) {
-				return PdfValue(PdfNull{});
+			const uint64_t target_key = (static_cast<uint64_t>(ref.obj_num) << 16u) | ref.gen_num;
+			if (const auto known = resolved_targets.find(target_key); known != resolved_targets.end()) {
+				return known->second.deep_clone();
 			}
-			const size_t at = static_cast<size_t>(entry->byte_offset);
-			Parser parser(file_bytes);
-			parser.seek(at);
-			auto parsed = parser.parse_indirect_object(
-				[&recovered_integers, ref](IndirectRef len_ref) -> PdfResult<int64_t> {
-					const auto it = recovered_integers.find(len_ref.obj_num);
-					if (len_ref.obj_num == ref.obj_num || it == recovered_integers.end() ||
-						it->second.first != len_ref.gen_num) {
-						return make_pdf_error(
-							ErrorCode::DamagedFormat,
-							"Indirect /Length target not available as an integer object during recovery");
-					}
-					return it->second.second;
-				});
-			cumulative_parse_bytes += static_cast<uint64_t>(
-				std::max(parser.lexer().max_scanned_offset(), parser.lexer().position()) - at);
-			if (cumulative_parse_bytes > max_recovery_parse_bytes) {
-				resolver_over_budget = true;
-				return make_xref_error(
-					ErrorCode::DamagedFormat,
-					DiagnosticId::DamagedXRef,
-					"Damaged-file recovery exceeded cumulative parse byte budget",
-					at);
-			}
-			if (!parsed.has_value()) {
-				if (parsed.error().code == ErrorCode::OutOfMemory) {
-					return parsed.error();
+			auto parsed_value = [&]() -> PdfResult<PdfValue> {
+				const XrefEntry* entry = table.find(ref.obj_num);
+				if (entry == nullptr || !entry->is_uncompressed() || entry->generation != ref.gen_num ||
+					entry->byte_offset >= file_bytes.size()) {
+					return PdfValue(PdfNull{});
 				}
-				return PdfValue(PdfNull{});
+				const size_t at = static_cast<size_t>(entry->byte_offset);
+				Parser parser(file_bytes);
+				parser.seek(at);
+				auto parsed = parser.parse_indirect_object(
+					[&recovered_integers, ref](IndirectRef len_ref) -> PdfResult<int64_t> {
+						const auto it = recovered_integers.find(len_ref.obj_num);
+						if (len_ref.obj_num == ref.obj_num || it == recovered_integers.end() ||
+							it->second.first != len_ref.gen_num) {
+							return make_pdf_error(
+								ErrorCode::DamagedFormat,
+								"Indirect /Length target not available as an integer object during recovery");
+						}
+						return it->second.second;
+					});
+				cumulative_parse_bytes += static_cast<uint64_t>(
+					std::max(parser.lexer().max_scanned_offset(), parser.lexer().position()) - at);
+				if (cumulative_parse_bytes > max_recovery_parse_bytes) {
+					resolver_over_budget = true;
+					return make_xref_error(
+						ErrorCode::DamagedFormat,
+						DiagnosticId::DamagedXRef,
+						"Damaged-file recovery exceeded cumulative parse byte budget",
+						at);
+				}
+				if (!parsed.has_value()) {
+					if (parsed.error().code == ErrorCode::OutOfMemory) {
+						return parsed.error();
+					}
+					return PdfValue(PdfNull{});
+				}
+				return std::move(parsed->value);
+			}();
+			if (!parsed_value.has_value()) {
+				return parsed_value;
 			}
-			return std::move(parsed->value);
+			if (!parsed_value->is_stream()) { // a container is parsed once anyway; its bytes are not kept twice
+				RECTO_PDF_TRY_REF(kept, parsed_value->deep_clone());
+				resolved_targets.emplace(target_key, std::move(kept));
+			}
+			return parsed_value;
 		};
 		const auto over_budget_error = [&](size_t at) {
 			return make_xref_error(
@@ -1296,9 +1372,19 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			if (self == nullptr || !self->is_uncompressed() || self->byte_offset != deferred.pos) {
 				continue;
 			}
+			// Parsed again here, through the resolver (which charges the parse budget and keeps the result), since the
+			// scan kept only the position.
+			auto container_value = scan_resolver(IndirectRef{deferred.obj_num, 0u});
+			if (!container_value.has_value()) {
+				return resolver_over_budget ? over_budget_error(deferred.pos) : container_value.error();
+			}
+			const PdfStream* container = container_value->as_stream();
+			if (container == nullptr) {
+				continue;
+			}
 			// The metered-filter rule above, read through the resolved /Filter.
 			PdfDict filter_view;
-			if (const PdfValue* filter = deferred.stream.dict.get("Filter"); filter != nullptr && !filter->is_null()) {
+			if (const PdfValue* filter = container->dict.get("Filter"); filter != nullptr && !filter->is_null()) {
 				const PdfValue* filter_value = filter;
 				std::optional<PdfValue> filter_target;
 				if (const auto ref = filter->as_ref()) {
@@ -1334,8 +1420,8 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 					static_cast<uint64_t>(deferred.pos), deferred.obj_num, 0u);
 				continue;
 			}
-			auto n_opt = resolved_int(deferred.stream.dict.get("N"));
-			auto first_opt = resolved_int(deferred.stream.dict.get("First"));
+			auto n_opt = resolved_int(container->dict.get("N"));
+			auto first_opt = resolved_int(container->dict.get("First"));
 			if (!n_opt.has_value() || !first_opt.has_value()) {
 				if (resolver_over_budget) {
 					return over_budget_error(deferred.pos);
@@ -1343,7 +1429,9 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 				return !n_opt.has_value() ? n_opt.error() : first_opt.error();
 			}
 			detail::ScopedDecodeWorkMeter decode_work;
-			auto dec_stm = decode_stream(deferred.stream, kMaxDecodedStreamBytes, &scan_resolver);
+			auto dec_stm = decode_stream(*container, static_cast<size_t>(std::min<uint64_t>(
+				kMaxDecodedStreamBytes, max_recovery_decoded_objstm_bytes - cumulative_decoded_objstm_bytes)),
+				&scan_resolver);
 			if (resolver_over_budget) {
 				return over_budget_error(deferred.pos);
 			}
@@ -1402,14 +1490,16 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		};
 
 		if (!has_valid_root_entry()) {
-			std::stable_sort(catalog_history.begin(), catalog_history.end(), [](const auto& a, const auto& b) {
-				return a.first < b.first;
-			});
-			for (auto it = catalog_history.rbegin(); it != catalog_history.rend(); ++it) {
-				if (is_valid_catalog_ref(it->second)) {
-					table.trailer_.set("Root", PdfValue(it->second));
-					break;
+			// The latest valid candidate in the file wins; among equal positions (members of one container), the one
+			// recorded last, as before.
+			const std::pair<uint64_t, IndirectRef>* latest = nullptr;
+			for (const auto& candidate : catalog_history) {
+				if (is_valid_catalog_ref(candidate.second) && (latest == nullptr || candidate.first >= latest->first)) {
+					latest = &candidate;
 				}
+			}
+			if (latest != nullptr) {
+				table.trailer_.set("Root", PdfValue(latest->second));
 			}
 		}
 		if (!table.trailer_.contains("Info") && info_candidate.has_value()) {

@@ -270,6 +270,169 @@ TEST(PdfXref, RecoveryResolvesIndirectObjStmParameters)
 	EXPECT_EQ(before_rec->root_ref(), (IndirectRef{3u, 0u}));
 }
 
+// The deferred path's other parameter forms and its refusals: an indirect /Filter, a /Filter array of references and
+// a /DecodeParms array of references recover; a missing, wrong-generation or self-referencing target and an invalid
+// indirect count leave the container out and keep an independent catalog; a parameter dictionary four containers
+// share is parsed once, so a file it dominates still recovers; and the /Info fallback keeps file order like /Root.
+TEST(PdfXref, RecoveryDeferredContainerEdges)
+{
+	const auto hex = [](const std::string& text) {
+		static constexpr char kHex[] = "0123456789ABCDEF";
+		std::string out;
+		for (const unsigned char c : text) {
+			out += kHex[c >> 4u];
+			out += kHex[c & 0x0Fu];
+		}
+		return out + ">";
+	};
+	// `keys` holds /N, /First and the filter keys, so each case states its own.
+	const auto container = [&](uint32_t num, const std::string& members, const std::string& keys) {
+		const std::string data = hex(members);
+		return std::to_string(num) + " 0 obj\n<< /Type /ObjStm " + keys + " /Length " + std::to_string(data.size()) +
+			" >>\nstream\n" + data + "\nendstream\nendobj\n";
+	};
+	const std::string catalog3 = "3 0 << /Type /Catalog /Pages 4 0 R >>";
+	const std::string pages = "4 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+	const std::string header = "%PDF-1.7\n";
+	const auto recover = [](const std::string& pdf) { return XrefTable::recover_damaged_xref(as_bytes(pdf), 64); };
+
+	// Indirect /Filter, a /Filter array of references, and a /DecodeParms array of references.
+	for (const std::string keys : {std::string("/N 1 /First 4 /Filter 8 0 R"), std::string("/N 1 /First 4 /Filter [8 0 R]"),
+			 std::string("/N 1 /First 4 /Filter [/ASCIIHexDecode] /DecodeParms [2 0 R]")}) {
+		const std::string pdf = header + container(1u, catalog3, keys) + "2 0 obj\n<< >>\nendobj\n" + pages +
+			"8 0 obj\n/ASCIIHexDecode\nendobj\n%%EOF\n";
+		auto rec = recover(pdf);
+		RECTO_ASSERT_OK(rec);
+		EXPECT_EQ(rec->root_ref(), (IndirectRef{3u, 0u})) << keys;
+	}
+
+	// Targets that cannot serve: the container is left out, and the independent uncompressed catalog 7 is the root.
+	const std::string catalog7 = "7 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n";
+	for (const std::string keys : {std::string("/N 1 /First 4 /Filter /ASCIIHexDecode /DecodeParms 1 0 R"),
+			 std::string("/N 5 0 R /First 4 /Filter /ASCIIHexDecode"),
+			 std::string("/N 1 /First 9 1 R /Filter /ASCIIHexDecode /DecodeParms [99 0 R]")}) {
+		const std::string pdf = header + catalog7 + container(1u, catalog3, keys) + pages +
+			"5 0 obj\n(not a count)\nendobj\n9 0 obj\n4\nendobj\n%%EOF\n";
+		auto rec = recover(pdf);
+		RECTO_ASSERT_OK(rec);
+		EXPECT_EQ(rec->root_ref(), (IndirectRef{7u, 0u})) << keys;
+		EXPECT_EQ(rec->find(3), nullptr) << keys;
+	}
+
+	// One 16 KiB parameter dictionary shared by four containers dominates the file; it is parsed once, so the
+	// recovery parse budget (four times the file) is not spent on reparsing it.
+	{
+		std::string pdf = header + "2 0 obj\n<< /Unused (" + std::string(16384u, 'u') + ") >>\nendobj\n";
+		for (uint32_t n = 11u; n < 15u; ++n) {
+			pdf += container(n, std::to_string(n + 10u) + " 0 << /Type /Catalog /Pages 4 0 R >>",
+				"/N 1 /First 5 /Filter /ASCIIHexDecode /DecodeParms 2 0 R");
+		}
+		pdf += pages + "%%EOF\n";
+		auto rec = recover(pdf);
+		RECTO_ASSERT_OK(rec);
+		EXPECT_EQ(rec->root_ref(), (IndirectRef{24u, 0u}));
+	}
+
+	// /Info: the later of a compressed and an uncompressed metadata dictionary, in either order.
+	const std::string info_member = "6 0 << /Title (Compressed) >>";
+	const std::string info_plain = "9 0 obj\n<< /Title (Plain) >>\nendobj\n";
+	const std::string deferred_info =
+		container(1u, info_member, "/N 1 /First 4 /Filter /ASCIIHexDecode /DecodeParms 2 0 R") + "2 0 obj\n<< >>\nendobj\n";
+	auto plain_later = recover(header + catalog7 + pages + deferred_info + info_plain + "%%EOF\n");
+	RECTO_ASSERT_OK(plain_later);
+	EXPECT_EQ(plain_later->info_ref(), (IndirectRef{9u, 0u}));
+	auto compressed_later = recover(header + catalog7 + pages + info_plain + deferred_info + "%%EOF\n");
+	RECTO_ASSERT_OK(compressed_later);
+	EXPECT_EQ(compressed_later->info_ref(), (IndirectRef{6u, 0u}));
+}
+
+// Recovered cross-reference streams (D06 T05 §30): their rows count against one budget for the whole recovery, their
+// decoding stops at what the cumulative budget has left, an unusable one is recorded with its object number and
+// offset, and a file that may be encrypted keeps no container bytes while it is scanned.
+TEST(PdfXref, RecoveryXrefStreamRowsAndBudgets)
+{
+	const std::string head = "%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+							 "2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+	const auto free_rows_stream = [](uint32_t num) {
+		const std::string rows(10u * 7u, '\0'); // ten type-0 rows
+		return std::to_string(num) + " 0 obj\n<< /Type /XRef /Size 110 /Index [100 10] /W [1 4 2] /Length " +
+			std::to_string(rows.size()) + " >>\nstream\n" + rows + "\nendstream\nendobj\n";
+	};
+
+	// Thirty rows in three streams under a 16-entry recovery: refused as a budget, not dropped stream by stream.
+	std::string rows_pdf = head;
+	for (uint32_t n = 10; n < 13; ++n) {
+		rows_pdf += free_rows_stream(n);
+	}
+	rows_pdf += "%%EOF\n";
+	RECTO_ASSERT_OK(XrefTable::recover_damaged_xref(as_bytes(head + free_rows_stream(10) + "%%EOF\n"), 16));
+	RECTO_EXPECT_ERR(XrefTable::recover_damaged_xref(as_bytes(rows_pdf), 16), ErrorCode::DamagedFormat);
+
+	// An xref stream that does not decode is recorded as damage at its object number and offset.
+	const std::string broken = "20 0 obj\n<< /Type /XRef /Size 3 /W [1 4 2] /Filter /FlateDecode /Length 4 >>\nstream\n"
+							   "\x01\x02\x03\x04\nendstream\nendobj\n";
+	const std::string broken_pdf = head + broken + "%%EOF\n";
+	clear_diagnostics();
+	RECTO_ASSERT_OK(XrefTable::recover_damaged_xref(as_bytes(broken_pdf), 64));
+	bool named = false;
+	for (const auto& d : diagnostics_tail()) {
+		named = named || (d.diagnostic_id == DiagnosticId::DamagedXRef && d.object_num == std::optional<uint32_t>(20u) &&
+							 d.byte_offset == std::optional<uint64_t>(head.size()));
+	}
+	EXPECT_TRUE(named);
+	clear_diagnostics();
+
+	// Three xref streams that inflate about 400 KiB each and then fail their checksum, under the 1 MiB budget of a
+	// 16-entry recovery: refused, and the decoding done never exceeds that budget.
+	const auto inflating_xref = [](uint32_t num) {
+		std::string body(410000u, '\0');
+		std::string z = "\x78\x01";
+		for (size_t at = 0; at < body.size(); at += 60000u) {
+			const size_t len = std::min<size_t>(60000u, body.size() - at);
+			z.push_back(at + len == body.size() ? '\x01' : '\x00');
+			z.push_back(static_cast<char>(len & 0xFF));
+			z.push_back(static_cast<char>((len >> 8) & 0xFF));
+			z.push_back(static_cast<char>(~len & 0xFF));
+			z.push_back(static_cast<char>((~len >> 8) & 0xFF));
+			z.append(body, at, len);
+		}
+		z.append("\x00\x00\x00\x00", 4);
+		return std::to_string(num) + " 0 obj\n<< /Type /XRef /Size 3 /W [1 4 2] /Filter /FlateDecode /Length " +
+			std::to_string(z.size()) + " >>\nstream\n" + z + "\nendstream\nendobj\n";
+	};
+	std::string inflating_pdf = head;
+	for (uint32_t n = 30; n < 33; ++n) {
+		inflating_pdf += inflating_xref(n);
+	}
+	inflating_pdf += "%%EOF\n";
+	{
+		detail::ScopedDecodeWorkMeter work;
+		RECTO_EXPECT_ERR(
+			XrefTable::recover_damaged_xref(as_bytes(inflating_pdf), 16), ErrorCode::DecompressionLimitExceeded);
+		EXPECT_LE(work.bytes(), uint64_t{16} * 65536u);
+	}
+
+	// Twenty 64 KiB containers in a file whose trailer has /Encrypt: none is decoded and none is kept while scanning.
+	std::string encrypted = head;
+	for (uint32_t n = 40; n < 60; ++n) {
+		const std::string cipher(65536u, static_cast<char>(0xA5));
+		encrypted += std::to_string(n) + " 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Length 65536 >>\nstream\n" + cipher +
+			"\nendstream\nendobj\n";
+	}
+	encrypted += "9 0 obj\n<< /Filter /Standard /V 1 /R 2 /O <00> /U <00> /P -4 >>\nendobj\n"
+				 "trailer\n<< /Size 60 /Root 1 0 R /Encrypt 9 0 R >>\n%%EOF\n";
+	{
+		const test::ScopedHeapMeter meter;
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(encrypted), 64);
+		const size_t peak = meter.peak_bytes();
+		RECTO_ASSERT_OK(rec);
+		EXPECT_EQ(rec->root_ref(), (IndirectRef{1u, 0u}));
+		if (test::ScopedHeapMeter::available()) {
+			EXPECT_LT(peak, size_t{512} << 10u);
+		}
+	}
+}
+
 // Recovery charges a container that inflates and then fails its checksum to the cumulative decoded budget too:
 // three such containers of about 400 KiB each exceed the 1 MiB budget of a 16-entry recovery.
 TEST(PdfXref, RecoveryChargesFailedObjStmDecodes)

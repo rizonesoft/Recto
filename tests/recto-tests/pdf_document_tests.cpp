@@ -218,6 +218,77 @@ TEST(PdfDocument, RecoveredEncryptedObjectStreamsResolve)
 	ASSERT_TRUE(b.has_value()) << b.error().message.view();
 	EXPECT_EQ(a->as_int(), std::optional<int64_t>(7));
 	EXPECT_EQ(b->as_int(), std::optional<int64_t>(8));
+
+	// The recovered stream member is still refused, and the wrong password still fails.
+	auto forbidden = (*doc)->resolve_object(IndirectRef{24u, 0u});
+	ASSERT_FALSE(forbidden.has_value());
+	EXPECT_EQ(forbidden.error().code, ErrorCode::DamagedFormat);
+	auto wrong = Document::open_memory(bytes, "wrong");
+	ASSERT_FALSE(wrong.has_value());
+	EXPECT_EQ(wrong.error().code, ErrorCode::WrongPassword);
+
+	// A later xref stream whose row frees object 22 deletes it, and recovery honours that: 22 resolves to null.
+	std::string text_freed(bytes.begin(), bytes.end());
+	text_freed.erase(text_freed.rfind("startxref"));
+	const std::string free_row("\x00\x00\x00\x00\x00\x00\x01", 7); // type 0, next free 0, generation 1
+	text_freed += "26 0 obj\n<< /Type /XRef /Size 27 /Root 1 0 R /Info 6 0 R /Encrypt 7 0 R "
+		"/ID [<0CC47D6E8331B0D9BBEBAFED46D1A791> <0CC47D6E8331B0D9BBEBAFED46D1A791>] /Index [22 1] /W [1 4 2] "
+		"/Length 7 >>\nstream\n" + free_row + "\nendstream\nendobj\nstartxref\n1\n%%EOF\n";
+	const std::vector<uint8_t> freed(text_freed.begin(), text_freed.end());
+	auto freed_doc = Document::open_memory(freed, "recto-test");
+	ASSERT_TRUE(freed_doc.has_value()) << freed_doc.error().message.view();
+	auto freed_22 = (*freed_doc)->resolve_object(IndirectRef{22u, 0u});
+	ASSERT_TRUE(freed_22.has_value()) << freed_22.error().message.view();
+	EXPECT_TRUE(freed_22->is_null());
+	auto kept_21 = (*freed_doc)->resolve_object(IndirectRef{21u, 0u});
+	ASSERT_TRUE(kept_21.has_value());
+	EXPECT_EQ(kept_21->as_int(), std::optional<int64_t>(7));
+}
+
+// An unencrypted file whose catalog is compressed, with only its startxref offset wrong, opens with both pages:
+// the xref stream's rows name the same objects the scan already unpacked, and what the scan learned stands.
+TEST(PdfDocument, RecoveredCompressedCatalogKeepsItsPages)
+{
+	std::vector<uint8_t> bytes = read_corpus_bytes("render/compressed-xref-2p.pdf");
+	auto intact = Document::open_memory(bytes);
+	ASSERT_TRUE(intact.has_value()) << intact.error().message.view();
+	const size_t pages = (*intact)->page_count();
+	std::string text(bytes.begin(), bytes.end());
+	const size_t number_at = text.rfind("startxref") + 10u;
+	text.replace(number_at, text.find('\n', number_at) - number_at, "1");
+	const std::vector<uint8_t> damaged(text.begin(), text.end());
+	auto recovered = XrefTable::parse(damaged, kMaxXrefTotalEntries, /*allow_recovery=*/true);
+	ASSERT_TRUE(recovered.has_value()) << recovered.error().message.view();
+	EXPECT_TRUE(recovered->recovered());
+	auto doc = Document::open_memory(damaged);
+	ASSERT_TRUE(doc.has_value()) << doc.error().message.view();
+	EXPECT_EQ((*doc)->page_count(), pages);
+	EXPECT_EQ(pages, 2u);
+}
+
+// A damaged file (no cross-reference data at all) whose only catalog sits in an object stream with an indirect
+// /DecodeParms opens as a document with both of its pages (D06 T05 §29).
+TEST(PdfDocument, RecoveredDeferredContainerOpensWithItsPages)
+{
+	const std::string members = "3 0 << /Type /Catalog /Pages 4 0 R >>";
+	std::string data;
+	static constexpr char kHex[] = "0123456789ABCDEF";
+	for (const unsigned char c : members) {
+		data += kHex[c >> 4u];
+		data += kHex[c & 0x0Fu];
+	}
+	data += ">";
+	const std::string pdf = "%PDF-1.7\n"
+		"1 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Filter /ASCIIHexDecode /DecodeParms 2 0 R /Length " +
+		std::to_string(data.size()) + " >>\nstream\n" + data + "\nendstream\nendobj\n" +
+		"2 0 obj\n<< >>\nendobj\n"
+		"4 0 obj\n<< /Type /Pages /Kids [5 0 R 6 0 R] /Count 2 >>\nendobj\n"
+		"5 0 obj\n<< /Type /Page /Parent 4 0 R /MediaBox [0 0 200 100] >>\nendobj\n"
+		"6 0 obj\n<< /Type /Page /Parent 4 0 R /MediaBox [0 0 100 200] >>\nendobj\n%%EOF\n";
+	const std::vector<uint8_t> bytes(pdf.begin(), pdf.end());
+	auto doc = Document::open_memory(bytes);
+	ASSERT_TRUE(doc.has_value()) << doc.error().message.view();
+	EXPECT_EQ((*doc)->page_count(), 2u);
 }
 
 TEST(PdfDocument, OpenAndAuthenticate)

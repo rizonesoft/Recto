@@ -74,6 +74,11 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 | 38 | §38 | DCT decodes only the pixel representation the caller asked for | §22 | [ ] |
 | 39 | §39 | Per-codec decode latency measured on valid, large and damaged fixtures | §22 | [ ] |
 | 40 | §40 | Image decoder allocations drawn from one budgeted memory resource per decode | §22 | [ ] |
+| 41 | §41 | Recovery resolves compressed parameter targets and an indirect container /Type | §29 | [ ] |
+| 42 | §42 | Cancellable damaged-file recovery with progress | §29 | [ ] |
+| 43 | §43 | Repaired copy of a recovered file, and salvage of a damaged page tree | §29 | [ ] |
+| 44 | §44 | Damaged-file recovery measured against competitors on one corpus | §29 | [ ] |
+| 45 | §45 | Encrypted recovery without an intact xref stream: containers read after authentication | §30 | [ ] |
 
 ## 1. Audit D00 T01 §1: Git repository and repo-face files
 
@@ -1071,6 +1076,106 @@ The audit of `D01 T01 §8` (`docs/reviews/06-quality/audit-d01-t01-s8.md`, D06 T
 - [ ] Commit: `pdf: image decoders allocate from one budgeted memory resource`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.*` passes under ASan with 0 warnings, including `PdfFilters.DecodeBudgetHoldsByConstruction`, and in x64 Debug the global-heap check of the second item holds.
+
+## 41. Recovery resolves compressed parameter targets and an indirect container /Type
+
+The completion review of `D06 T05 §29` (`docs/reviews/06-quality/D06-T05-s29.md`, gap 6) found two layouts damaged-file recovery still loses: a container whose `/Type` is an indirect reference to `/ObjStm`, and a container whose parameter (`/DecodeParms`, `/N`, `/First`) is itself compressed in another recoverable container. `§29` resolves parameters only through uncompressed objects, one level. -> XREF: D06 T05 §29
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Recognise an indirect container `/Type` once the scan has found every object, as the catalog check does with `catalog_names`. Done when: such a container is unpacked.
+2. Resolve a parameter through a member of another container, decoding containers in dependency order with a cycle guard, inside the existing budgets. Done when: an acyclic two-container chain recovers and a cycle is refused.
+
+- [ ] Record streams whose `/Type` is a reference in the recovery scan of `src/pdf/xref.cpp`, and treat them as containers when the named object is the name `/ObjStm`. Done when: a container with `/Type 9 0 R` (object 9 is `/ObjStm`, after it) recovers its members.
+- [ ] Let the deferred-container resolver answer a reference to a compressed object from a container already unpacked, ordering the deferred containers by their dependencies and refusing a cycle, in `src/pdf/xref.cpp`. Done when: container A whose `/DecodeParms` is a member of container B recovers, and A and B naming each other leave both out without failing recovery.
+- [ ] Add `PdfXref.RecoveryResolvesCompressedParameters` covering both cases and the cycle. Done when: the test fails on the code before this section.
+- [ ] Commit: `pdf: recovery resolves compressed parameters and indirect container types`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfXref.*` passes under ASan with 0 warnings, including `PdfXref.RecoveryResolvesCompressedParameters`.
+
+## 42. Cancellable damaged-file recovery with progress
+
+The completion review of `D06 T05 §29` (`docs/reviews/06-quality/D06-T05-s29.md`, gap 9 and Part 2 shortfall 6) found that `XrefTable::recover_damaged_xref` has no cancellation or progress: its budgets bound the work, but a user opening a large damaged file cannot stop it. -> XREF: D06 T05 §29
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Thread a `CancelToken` and a progress callback through recovery in `src/pdf/xref.h` and `src/pdf/xref.cpp`. Done when: the scan, the deferred pass and decoding poll it.
+2. Prove the response time. Done when: cancellation is acknowledged within 100 ms on the reference machine.
+
+- [ ] Add an optional `CancelToken` (the engine's existing type) and a progress callback (bytes scanned of total) to `recover_damaged_xref` and `XrefTable::parse`, polled at least every 64 KiB scanned, per deferred container and between decode stages, returning `ErrorCode::Cancelled`. Done when: no partially built table escapes a cancelled call.
+- [ ] Add `PdfXref.RecoveryIsCancellable`: a large generated damaged file cancelled from another thread during the scan and during the deferred pass. Done when: each returns `Cancelled` within 100 ms, and the test fails with the polls removed.
+- [ ] Commit: `pdf: cancellable damaged-file recovery with progress`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfXref.*` passes under ASan with 0 warnings, including `PdfXref.RecoveryIsCancellable`.
+
+## 43. Repaired copy of a recovered file, and salvage of a damaged page tree
+
+The completion review of `D06 T05 §29` (`docs/reviews/06-quality/D06-T05-s29.md`, gap 10 and Part 2 shortfall 5) found that recovery rebuilds the object table only: a damaged page tree is not salvaged, and nothing writes a repaired copy that reopens without recovery. Acrobat repairs on open and offers to save the repaired file. -> XREF: D06 T05 §29
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Salvage pages from a damaged page tree in `src/pdf/document.cpp`. Done when: page objects the tree no longer reaches are found and ordered.
+2. Write a repaired copy through the existing writer, temp-file-then-replace, original untouched. Done when: the copy reopens without recovery.
+
+- [ ] When the page tree from the recovered catalog is broken (a missing `/Kids` target, a cycle, a wrong `/Count`), collect the `/Type /Page` objects the scan found, in file order, as the document's pages, recording the salvage as a recovered-error (`D06 T03 §2`). Done when: a file with a broken `/Pages` node opens with every surviving page.
+- [ ] Add `Document::save_repaired_copy(path)` writing a full rewrite with a fresh cross-reference table through the writer's temp-file-then-replace path. Done when: the copy reopens with `recovered() == false`, its pages render the same, and the original file's bytes are unchanged.
+- [ ] Add `PdfDocument.SalvagedPagesAndRepairedCopy` covering both, with a failed write leaving no partial file. Done when: the test fails on the code before this section.
+- [ ] Commit: `pdf: salvage damaged page trees and save a repaired copy`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfDocument.*` passes under ASan with 0 warnings, including `PdfDocument.SalvagedPagesAndRepairedCopy`.
+
+## 44. Damaged-file recovery measured against competitors on one corpus
+
+The completion review of `D06 T05 §29` (`docs/reviews/06-quality/D06-T05-s29.md`, Part 2 shortfalls 1 and 2) found no measurement behind a recovery claim: which damaged files Recto recovers that Acrobat, Foxit, PDFelement and UPDF do not, and how fast. Product ambition (`AGENTS.md`) asks for measured claims. Running the competitors needs their installed products, so the comparison waits on the owner. -> XREF: D06 T05 §29
+
+**Phase:** 1
+**Needs:** windows-host, owner-decision
+**Surface:** no
+
+**Build order:**
+
+1. Assemble a damaged corpus and measure Recto. Done when: files recovered, pages kept, median and p95 time and peak memory are recorded.
+2. Run the competitors on the same files. Done when: a table compares them with versions named.
+
+- [ ] Add `tests/corpus/damaged/` (generated by `scripts/build-corpus.py`, with provenance rows): wrong `startxref`, truncated tails, broken xref streams, indirect container parameters, encrypted files with damaged xref, broken page trees. Done when: `Corpus.Provenance` covers every file.
+- [ ] Record Recto's results (recovered, pages kept, median and p95 time, peak working set) on the reference machine in `docs/benchmarks/recovery.md`. Done when: the table is committed with the machine and build named.
+- [ ] Owner decision: which competitor versions to install for the comparison. Done when: recorded here and the Need removed.
+- [ ] Record each competitor's outcome on the same files beside Recto's. Done when: the table names every product and version.
+- [ ] Commit: `bench: damaged-file recovery against competitors`
+
+**Test checkpoint:** `docs/benchmarks/recovery.md` holds Recto's and each named competitor's results on every file in `tests/corpus/damaged/`.
+
+## 45. Encrypted recovery without an intact xref stream: containers read after authentication
+
+The completion review of `D06 T05 §30` (`docs/reviews/06-quality/D06-T05-s30.md`, gap 10) found that an encrypted file whose cross-reference streams are themselves damaged still loses its compressed objects: `§30` takes their locations from intact xref stream rows, and without them nothing says which members a container holds until it is decrypted, which happens after recovery. -> XREF: D06 T05 §30
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Keep the deferred containers' positions in the recovered table for an encrypted file. Done when: the table carries them past recovery.
+2. Unpack them once authentication succeeds, through `SecurityHandler` and the recovery's member rules. Done when: the fixture below resolves its compressed objects.
+
+- [ ] Record the positions of the containers an encrypted recovery left undecoded in the recovered `XrefTable` in `src/pdf/xref.cpp`, with the file positions their later-wins rule needs. Done when: `XrefTable` exposes them only for a recovered table.
+- [ ] After `Document` authenticates a recovered encrypted file, decrypt and unpack those containers in file order with `parse_object_stream`, adding members only where no later definition exists, in `src/pdf/document.cpp`. Done when: objects compressed in them resolve.
+- [ ] Add `PdfDocument.RecoveredEncryptedWithoutXrefStream`: the `encrypted_objstm_update` fixture with its xref stream's data damaged and `startxref` wrong, opened with the password. Done when: objects 21 and 22 resolve to 7 and 8, a wrong password still fails, and the test fails on the code before this section.
+- [ ] Commit: `pdf: encrypted recovery reads its containers after authentication`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfDocument.*:PdfXref.*` passes under ASan with 0 warnings, including `PdfDocument.RecoveredEncryptedWithoutXrefStream`.
 
 ## Verification
 
