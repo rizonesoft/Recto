@@ -173,3 +173,42 @@ OVERALL: needs-attention
 - Finding 2 (P2): correct. The legacy password conversion used the text-string encoder, which turns a leading `þÿ` into UTF-16BE to avoid a byte-order-mark collision. It now uses `utf8_to_pdf_doc_encoding` (exact PDFDocEncoding, no BOM handling). Tested: a V2/R3 user password `FE FF` authenticates from UTF-8 `C3 BE C3 BF` (refused on `9ba7cc9`).
 
 Commit: `3d558a7` (one commit with the D06 T05 §23 round 2, §31 round 1 and §29/§30 round 3 fixes; its message names only §29 and §30).
+
+## Round 3: sol (`gpt-6.1-sol` via `codex`)
+
+- Writer: claude
+- Run: 2026-10-23T11:40:02Z
+- Effort: medium
+- Lines: 26
+- Digest: 2009df4259ff943c
+
+## adversarial: approve
+
+## consistency: approve
+
+## integration: needs-attention
+
+1. **[P2] Nested resolution skips a required crypt-filter lookup.** `src/pdf/crypto.cpp:1976` suppresses filter resolution throughout the handler while another stream’s filter is being resolved. A valid dependency through an object stream consequently receives the default cipher instead of its explicit Identity filter.
+
+   Reproduce with a V4/R4 AES-128 PDF using `/StmF /StdCF`:
+   - A page content stream has `/Filter 20 0 R` and `/DecodeParms << /Name /Identity >>`.
+   - Object 20 is the name `/Crypt`, stored inside object stream 30.
+   - Object stream 30 has `/Filter 40 0 R`, `/DecodeParms << /Name /Identity >>`, `/N 1`, `/First 5`, and cleartext body `20 0 /Crypt`.
+   - Uncompressed object 40 is `/Crypt`.
+
+   Opening through `Document::open_memory` resolves object 20 while `inlining_` is true. Decrypting its container skips resolving object 40, selects default AES, and rejects the cleartext container’s length at `crypto.cpp:1761`. The correct password cannot open this document. The container must select its own crypt filter during nested resolution.
+
+## source-defect: approve
+
+## design: approve
+
+## record: advisory
+
+The finding is source-derived; its proposed fixture was not executed. The existing x64 Release executable passed 14 selected tests, including `PdfCrypto.*`, the filter-chain regression, document authentication, and the ASan check. No rebuild was performed, so those results do not establish candidate binary provenance. All six reviewed working-tree files match `3d558a7`. No files were modified.
+
+HIGHEST: P2
+OVERALL: needs-attention
+
+## Fixes after round 3
+
+- Finding 1 (P2): correct. Suppressing every nested inlining was too broad: a container decrypted inside another stream's filter resolution must still resolve its own indirect crypt filter. Each reference is now resolved once per outermost decryption and remembered (its value when a slot can use it, otherwise nothing; a reference being resolved reads as nothing, which also ends a cycle), and nested decryptions inline as usual. The 8^n chain stays linear (`PdfDocument.EncryptedFilterReferenceChainIsNotInlined` passes unchanged). Tested with the reviewer's file (`PdfDocument.NestedDecryptionResolvesItsOwnIndirectCryptFilter`): it opens and its content stream reads `q Q`; on `3d558a7` the open is refused.

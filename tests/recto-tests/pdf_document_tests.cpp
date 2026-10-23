@@ -283,6 +283,63 @@ TEST(PdfDocument, EncryptedFilterReferenceChainIsNotInlined)
 	}
 }
 
+// Round 3 of the same audit: a decryption nested inside that resolution still resolves its own indirect filter. A V4
+// AES-128 file (/StmF /StdCF, empty user password) whose content stream names its filter through object 20, which
+// sits in object stream 30, whose own /Filter is object 40: both name /Crypt with the Identity crypt filter, so the
+// cleartext container must not be read as AES.
+TEST(PdfDocument, NestedDecryptionResolvesItsOwnIndirectCryptFilter)
+{
+	std::string pdf = "%PDF-1.7\n";
+	std::vector<size_t> offsets(51u, 0u);
+	const auto object = [&](uint32_t num, const std::string& body) {
+		offsets[num] = pdf.size();
+		pdf += std::to_string(num) + " 0 obj\n" + body + "\nendobj\n";
+	};
+	object(1u, "<< /Type /Catalog /Pages 2 0 R >>");
+	object(2u, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+	object(3u, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] /Contents 5 0 R >>");
+	object(5u, "<< /Length 3 /Filter 20 0 R /DecodeParms << /Name /Identity >> >>\nstream\nq Q\nendstream");
+	object(9u, "<< /Filter /Standard /V 4 /R 4 /Length 128 /P -3904 "
+			   "/CF << /StdCF << /CFM /AESV2 /Length 16 >> >> /StmF /StdCF /StrF /StdCF "
+			   "/O <CE9D51ECC479711BE707AD379A54A0F4B30916D3240087ECA5E23F15B28393F3> "
+			   "/U <B51910F4BB473091A4774F51E269263700000000000000000000000000000000> >>");
+	object(30u, "<< /Type /ObjStm /N 1 /First 5 /Filter 40 0 R /DecodeParms << /Name /Identity >> /Length 11 >>\n"
+				"stream\n20 0 /Crypt\nendstream");
+	object(40u, "/Crypt");
+	std::string rows;
+	const auto row = [&](uint8_t type, uint32_t f2, uint16_t f3) {
+		rows.push_back(static_cast<char>(type));
+		for (int s = 24; s >= 0; s -= 8) {
+			rows.push_back(static_cast<char>((f2 >> s) & 0xFFu));
+		}
+		rows.push_back(static_cast<char>((f3 >> 8) & 0xFFu));
+		rows.push_back(static_cast<char>(f3 & 0xFFu));
+	};
+	offsets[50] = pdf.size();
+	for (uint32_t num = 0u; num < 51u; ++num) {
+		if (num == 20u) {
+			row(2u, 30u, 0u);
+		} else if (offsets[num] != 0u) {
+			row(1u, static_cast<uint32_t>(offsets[num]), 0u);
+		} else {
+			row(0u, 0u, num == 0u ? 0xFFFFu : 0u);
+		}
+	}
+	pdf += "50 0 obj\n<< /Type /XRef /Size 51 /W [1 4 2] /Root 1 0 R /Encrypt 9 0 R "
+		   "/ID [<000102030405060708090A0B0C0D0E0F> <000102030405060708090A0B0C0D0E0F>] /Length " +
+		std::to_string(rows.size()) + " >>\nstream\n" + rows + "\nendstream\nendobj\nstartxref\n" +
+		std::to_string(offsets[50]) + "\n%%EOF\n";
+	const std::vector<uint8_t> bytes(pdf.begin(), pdf.end());
+	auto doc = Document::open_memory(bytes);
+	ASSERT_TRUE(doc.has_value()) << doc.error().message.view();
+	auto content = (*doc)->resolve_object(IndirectRef{5u, 0u});
+	ASSERT_TRUE(content.has_value()) << content.error().message.view();
+	ASSERT_NE(content->as_stream(), nullptr);
+	// The Identity crypt filter left the bytes as they are, and its /Crypt entry is gone once applied.
+	EXPECT_EQ(std::string(content->as_stream()->raw_bytes.begin(), content->as_stream()->raw_bytes.end()), "q Q");
+	EXPECT_EQ(content->as_stream()->dict.get("Filter"), nullptr);
+}
+
 // An unencrypted file whose catalog is compressed, with only its startxref offset wrong, opens with both pages:
 // the xref stream's rows name the same objects the scan already unpacked, and what the scan learned stands.
 TEST(PdfDocument, RecoveredCompressedCatalogKeepsItsPages)

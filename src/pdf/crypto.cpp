@@ -1973,22 +1973,48 @@ PdfResult<void> SecurityHandler::decrypt_value_recursive(
 		// An indirect /Filter, or its elements, is written into the dictionary resolved (one level), and so is
 		// /DecodeParms with its first element and /Name when the chain starts with /Crypt, so the crypt filter is
 		// chosen from what the references name exactly as for direct values (ISO 32000-1 section 7.3.10).
-		if (resolver != nullptr && *resolver && !inlining_) {
-			inlining_ = true;
+		if (resolver != nullptr && *resolver) {
+			++inline_depth_;
 			struct InliningScope {
-				bool& flag;
-				~InliningScope() { flag = false; }
-			} inlining_scope{inlining_};
+				const SecurityHandler& handler;
+				~InliningScope()
+				{
+					if (--handler.inline_depth_ == 0u) {
+						handler.inline_memo_.clear();
+					}
+				}
+			} inlining_scope{*this};
+			// One resolution per reference: a reference being resolved (a cycle) or naming a kind no slot uses reads
+			// as nothing, and a usable value is copied out of the memo, so the memo is never changed through a slot.
+			const auto resolve_once = [&](IndirectRef target_ref) -> PdfResult<std::optional<PdfValue>> {
+				const uint64_t key = (static_cast<uint64_t>(target_ref.obj_num) << 16u) | target_ref.gen_num;
+				if (const auto known = inline_memo_.find(key); known != inline_memo_.end()) {
+					if (!known->second.has_value()) {
+						return std::optional<PdfValue>{};
+					}
+					RECTO_PDF_TRY_REF(copy, known->second->deep_clone());
+					return std::optional<PdfValue>(std::move(copy));
+				}
+				inline_memo_.emplace(key, std::nullopt);
+				RECTO_PDF_TRY_REF(target, (*resolver)(target_ref));
+				if (!target.is_name() && !target.is_dict() && !target.is_array()) {
+					return std::optional<PdfValue>{};
+				}
+				RECTO_PDF_TRY_REF(copy, target.deep_clone());
+				inline_memo_[key] = std::move(copy);
+				return std::optional<PdfValue>(std::move(target));
+			};
 			// A resolved value is written in only when it has the kind the slot can use (a name for /Filter and /Name,
 			// a dictionary or array for /DecodeParms); anything else, a stream say, stays the reference it was, so a
 			// chain of references to streams is never copied into the dictionary (each copy carrying its own).
 			enum class SlotKind { Name, Parameters };
 			const auto inline_ref = [&](PdfValue& slot, SlotKind kind) -> PdfResult<void> {
 				if (const auto target_ref = slot.as_ref()) {
-					RECTO_PDF_TRY_REF(target, (*resolver)(*target_ref));
-					const bool usable = kind == SlotKind::Name ? target.is_name() : (target.is_dict() || target.is_array());
+					RECTO_PDF_TRY_REF(target, resolve_once(*target_ref));
+					const bool usable = target.has_value() &&
+						(kind == SlotKind::Name ? target->is_name() : (target->is_dict() || target->is_array()));
 					if (usable) {
-						slot = std::move(target);
+						slot = std::move(*target);
 					}
 				}
 				return {};
@@ -1997,10 +2023,11 @@ PdfResult<void> SecurityHandler::decrypt_value_recursive(
 				if (PdfValue* slot = dict.get_mut(PdfName::from_decoded(key))) {
 					// The whole entry may be an array of names or of dictionaries; its elements take the entry's kind.
 					if (slot->is_ref()) {
-						RECTO_PDF_TRY_REF(target, (*resolver)(*slot->as_ref()));
-						const bool usable = target.is_array() || (kind == SlotKind::Name ? target.is_name() : target.is_dict());
+						RECTO_PDF_TRY_REF(target, resolve_once(*slot->as_ref()));
+						const bool usable = target.has_value() &&
+							(target->is_array() || (kind == SlotKind::Name ? target->is_name() : target->is_dict()));
 						if (usable) {
-							*slot = std::move(target);
+							*slot = std::move(*target);
 						}
 					}
 					if (PdfArray* arr = slot->as_array_mut(); arr != nullptr && arr->size() <= kMaxFilterChainDepth) {
