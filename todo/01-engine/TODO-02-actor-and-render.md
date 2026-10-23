@@ -705,7 +705,7 @@ The completion review of `D01 T02 §18` (`docs/reviews/01-engine/D01-T02-s18.md`
 1. Add a closed `RefusalReason` catalogue and optional numeric context to `PdfError`, the diagnostic ring and the ETW `Diagnostic` event in `src/pdf/error.h` and `src/pdf/error.cpp`. Done when: a refusal carries reason, observed value and bound end to end.
 2. Prove it through the ring and ETW capture. Done when: the tests below pass.
 
-- [x] Add `enum class RefusalReason : uint16_t` (starting with `None`, `CommandCount`, `ChangeSetSize`, `PendingExports`, `WallClock`, `WorkingBytes`, `PageIndex`, `PageRange`, `OutputPath`) with a `constexpr noexcept` name table, and `refusal_reason`, `observed` and `bound` (optional `uint64_t`) on `PdfError` and `DiagnosticEntry` in `src/pdf/error.h`. Done when: `PdfError.RefusalReasonNamesCoverEveryReason` passes.
+- [x] Add `enum class RefusalReason : uint16_t` (starting with `None`, `CommandCount`, `ChangeSetSize`, `PendingExports`, `WallClock`, `WorkingBytes`, `PageIndex`, `PageRangePastEnd`, `OutputSameAsInput`, then appended `PageRangeEmpty`, `PageRangeReversed`, `OutputUnwritable`) with a `constexpr noexcept` name table, and `refusal_reason`, `observed` and `bound` (optional `uint64_t`) on `PdfError` and `DiagnosticEntry` in `src/pdf/error.h`. Done when: `PdfError.RefusalReasonNamesCoverEveryReason` passes. **Corrected 2026-10-23:** (completion review: `PageRange` and `OutputPath` each covered several causes with different remedies, so each cause has its own reason, with a description giving units and remedy in `refusal_reason_description`).
 - [x] Carry them into the ring entry, `DiagnosticEntry::format()` and the ETW `Diagnostic` event (`RefusalReason`, `RefusalReasonName`, `Observed`, `Bound` fields) in `src/pdf/error.cpp`. Done when: `PdfError.RefusalContextReachesRingAndEtw` reads them back from the ring and the captured packet, and finds no caller text in either.
 - [ ] Commit: `pdf: closed refusal reasons with numeric context`
 
@@ -718,14 +718,14 @@ The completion review of `D01 T02 §22` (`docs/reviews/01-engine/D01-T02-s22.md`
 **Phase:** 1
 **Needs:** windows-host
 **Surface:** no
-**Freeze check:** Verify that reasons are appended after `OutputPath` and the page field after `bound`, so every existing numeric value and field is unchanged, that no threading changes, and that the ring stays free of document bytes.
+**Freeze check:** Verify that reasons are appended after the last reason (`OutputUnwritable`) and the page field after `bound`, so every existing numeric value and field is unchanged, that no threading changes, and that the ring stays free of document bytes.
 
 **Build order:**
 
 1. Append the conversion checks to `RefusalReason` and add the page index to `PdfError`, `DiagnosticEntry`, the ring slot and the ETW `Diagnostic` event in `src/pdf/error.h` and `src/pdf/error.cpp`. Done when: a conversion failure carries check, page, observed and bound end to end.
 2. Prove it through the ring and ETW capture. Done when: the tests below pass.
 
-- [ ] Append `TextRecall`, `ReadingOrder`, `EmptyResult`, `PackageInvalid` and `RelationshipMissing` to `RefusalReason` after `OutputPath`, with their names, and extend `PdfError.RefusalReasonNamesCoverEveryReason`. Done when: the test names every value.
+- [ ] Append `TextRecall`, `ReadingOrder`, `EmptyResult`, `PackageInvalid` and `RelationshipMissing` to `RefusalReason` after `OutputUnwritable`, each with its `refusal_reason_description`, with their names, and extend `PdfError.RefusalReasonNamesCoverEveryReason`. Done when: the test names every value.
 - [ ] Add `page_index` (optional `uint32_t`) to `PdfError` and `DiagnosticEntry`, carry it in the ring slot, `format()` (`page=3`, one-based for people) and the ETW event (`HasPageIndex`, `PageIndex`), and accept it in `make_refusal_error`. Done when: `PdfError.ConversionCheckContextReachesRingAndEtw` reads check, page, observed and bound back from the ring and the captured packet, and finds no caller text in either.
 - [ ] Name the reason each consumer returns: `D04 T03 §8` and `D04 T05 §12` return `make_refusal_error(ErrorCode::ConversionFailed, <check>, observed, bound)` with the page, per mille for ratios. Done when: their items name the reason (written here so the consumers build against it). Cheaper substitute that fails the checkpoint: a reason only in the English message, which the ring drops.
 - [ ] Commit: `pdf: conversion-check failures name the check, page and measured value`

@@ -980,7 +980,10 @@ std::vector<DiagnosticEntry> diagnostics_tail(size_t max_entries) noexcept
 			entry.thread_id = slot.thread_id;
 			entry.code = slot.code;
 			entry.diagnostic_id = slot.diagnostic_id;
-			entry.message = std::string(diagnostic_id_message(slot.diagnostic_id));
+			// A refusal reads as its reason (cause, units, remedy); anything else as its diagnostic.
+			entry.message = std::string(slot.refusal_reason != RefusalReason::None
+					? refusal_reason_description(slot.refusal_reason)
+					: diagnostic_id_message(slot.diagnostic_id));
 			if (slot.has_byte_offset) {
 				entry.byte_offset = slot.byte_offset;
 			}

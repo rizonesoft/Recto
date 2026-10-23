@@ -502,7 +502,7 @@ TEST(PdfError, ErrorCodeNamesCoverEveryCode)
 // 23).
 TEST(PdfError, RefusalReasonNamesCoverEveryReason)
 {
-	constexpr std::array<std::string_view, 9> kNamesByValue = {
+	constexpr std::array<std::string_view, 12> kNamesByValue = {
 		"None",
 		"CommandCount",
 		"ChangeSetSize",
@@ -510,11 +510,15 @@ TEST(PdfError, RefusalReasonNamesCoverEveryReason)
 		"WallClock",
 		"WorkingBytes",
 		"PageIndex",
-		"PageRange",
-		"OutputPath",
+		"PageRangePastEnd",
+		"OutputSameAsInput",
+		"PageRangeEmpty",
+		"PageRangeReversed",
+		"OutputUnwritable",
 	};
 	static_assert(noexcept(refusal_reason_name(RefusalReason::None)));
-	static_assert(refusal_reason_name(RefusalReason::OutputPath) == "OutputPath");
+	static_assert(refusal_reason_name(RefusalReason::OutputUnwritable) == "OutputUnwritable");
+	static_assert(noexcept(refusal_reason_description(RefusalReason::None)));
 	std::set<std::string_view> seen;
 	for (uint16_t value = 0; value < kNamesByValue.size(); ++value) {
 		const auto reason = static_cast<RefusalReason>(value);
@@ -522,6 +526,18 @@ TEST(PdfError, RefusalReasonNamesCoverEveryReason)
 		EXPECT_TRUE(seen.insert(refusal_reason_name(reason)).second) << "duplicate name at value " << value;
 	}
 	EXPECT_EQ(refusal_reason_name(static_cast<RefusalReason>(kNamesByValue.size())), "UnknownReason");
+
+	// Every reason but None has its own description, and none borrows another cause's remedy.
+	std::set<std::string_view> descriptions;
+	for (uint16_t value = 1; value < kNamesByValue.size(); ++value) {
+		const std::string_view text = refusal_reason_description(static_cast<RefusalReason>(value));
+		EXPECT_FALSE(text.empty()) << kNamesByValue[value];
+		EXPECT_TRUE(descriptions.insert(text).second) << "shared description at " << kNamesByValue[value];
+	}
+	EXPECT_TRUE(refusal_reason_description(RefusalReason::None).empty());
+	EXPECT_EQ(refusal_reason_description(RefusalReason::PendingExports).find("fewer pages"), std::string_view::npos);
+	EXPECT_NE(refusal_reason_description(RefusalReason::WallClock).find("milliseconds"), std::string_view::npos);
+	EXPECT_NE(refusal_reason_description(RefusalReason::PageIndex).find("zero-based"), std::string_view::npos);
 	EXPECT_EQ(PdfError{}.refusal_reason, RefusalReason::None);
 	EXPECT_FALSE(PdfError{}.observed.has_value());
 	EXPECT_FALSE(PdfError{}.bound.has_value());
@@ -540,7 +556,7 @@ TEST(PdfError, RefusalContextReachesRingAndEtw)
 	const PdfError argument =
 		make_refusal_error(ErrorCode::InvalidArgument, RefusalReason::PageIndex, 12u, 9u, "secret page");
 	record_diagnostic(argument);
-	const PdfError path_only = make_refusal_error(ErrorCode::InvalidArgument, RefusalReason::OutputPath, std::nullopt,
+	const PdfError path_only = make_refusal_error(ErrorCode::InvalidArgument, RefusalReason::OutputSameAsInput, std::nullopt,
 		std::nullopt, "D:\\secret\\out.pdf");
 	record_diagnostic(path_only);
 	set_etw_capture_for_testing(false);
@@ -559,12 +575,12 @@ TEST(PdfError, RefusalContextReachesRingAndEtw)
 	EXPECT_EQ(tail[1].refusal_reason, RefusalReason::PageIndex);
 	EXPECT_EQ(tail[1].observed, std::optional<uint64_t>(12u));
 	EXPECT_EQ(tail[1].bound, std::optional<uint64_t>(9u));
-	EXPECT_EQ(tail[2].refusal_reason, RefusalReason::OutputPath);
+	EXPECT_EQ(tail[2].refusal_reason, RefusalReason::OutputSameAsInput);
 	EXPECT_FALSE(tail[2].observed.has_value());
 	EXPECT_FALSE(tail[2].bound.has_value());
 	EXPECT_NE(tail[0].format().find("[reason=CommandCount observed=5001 bound=5000]"), std::string::npos)
 		<< tail[0].format();
-	EXPECT_NE(tail[2].format().find("[reason=OutputPath]"), std::string::npos) << tail[2].format();
+	EXPECT_NE(tail[2].format().find("[reason=OutputSameAsInput]"), std::string::npos) << tail[2].format();
 	for (const DiagnosticEntry& entry : tail) {
 		EXPECT_EQ(entry.format().find("secret"), std::string::npos) << entry.format();
 	}
@@ -580,7 +596,7 @@ TEST(PdfError, RefusalContextReachesRingAndEtw)
 	EXPECT_EQ(captured[1].refusal_reason_name, "PageIndex");
 	EXPECT_EQ(captured[1].observed, 12u);
 	EXPECT_EQ(captured[1].bound, 9u);
-	EXPECT_EQ(captured[2].refusal_reason_name, "OutputPath");
+	EXPECT_EQ(captured[2].refusal_reason_name, "OutputSameAsInput");
 	EXPECT_FALSE(captured[2].has_observed);
 	EXPECT_FALSE(captured[2].has_bound);
 	for (const CapturedEtwEvent& event : captured) {
@@ -588,6 +604,45 @@ TEST(PdfError, RefusalContextReachesRingAndEtw)
 			EXPECT_EQ(text.find("secret"), std::string::npos) << text;
 		}
 	}
+	clear_diagnostics();
+	clear_captured_etw_events_for_testing();
+}
+
+// Each page-range and output cause is its own reason through the ring, its line and ETW, so support can tell an empty
+// range from a reversed one from one past the end, and an output that is the input from a folder that cannot be
+// written, without any path (D01 T02 section 23, completion review).
+TEST(PdfError, RefusalReasonsDistinguishRangeAndOutputCauses)
+{
+	force_enable_etw_provider_for_testing();
+	clear_diagnostics();
+	clear_captured_etw_events_for_testing();
+	set_etw_capture_for_testing(true);
+	const std::array<std::pair<RefusalReason, std::string_view>, 5> causes = {{
+		{RefusalReason::PageRangeEmpty, "PageRangeEmpty"},
+		{RefusalReason::PageRangeReversed, "PageRangeReversed"},
+		{RefusalReason::PageRangePastEnd, "PageRangePastEnd"},
+		{RefusalReason::OutputSameAsInput, "OutputSameAsInput"},
+		{RefusalReason::OutputUnwritable, "OutputUnwritable"},
+	}};
+	for (const auto& [reason, name] : causes) {
+		record_diagnostic(make_refusal_error(ErrorCode::InvalidArgument, reason, std::nullopt, std::nullopt, "C:\\secret"));
+	}
+	set_etw_capture_for_testing(false);
+	const auto tail = diagnostics_tail(10);
+	const auto captured = captured_etw_events_for_testing();
+	ASSERT_EQ(tail.size(), causes.size());
+	ASSERT_EQ(captured.size(), causes.size());
+	std::set<std::string> lines;
+	for (size_t i = 0; i < causes.size(); ++i) {
+		EXPECT_EQ(tail[i].refusal_reason, causes[i].first);
+		EXPECT_EQ(tail[i].message, refusal_reason_description(causes[i].first)); // the reason's own words
+		EXPECT_EQ(captured[i].refusal_reason_name, causes[i].second);
+		const std::string line = tail[i].format();
+		EXPECT_NE(line.find(std::string("[reason=") + std::string(causes[i].second)), std::string::npos) << line;
+		EXPECT_EQ(line.find("secret"), std::string::npos) << line;
+		lines.insert(line.substr(line.find(']') + 1)); // past the sequence and time
+	}
+	EXPECT_EQ(lines.size(), causes.size());
 	clear_diagnostics();
 	clear_captured_etw_events_for_testing();
 }

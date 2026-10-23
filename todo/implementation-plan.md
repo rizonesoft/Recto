@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 78 | Checklist items: 474
+Sections: 78 | Checklist items: 475
 
 | Status | Reference   | Deliverable                                                                              | Needs                        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ---------------------------- | ----- |
@@ -103,7 +103,7 @@ Sections: 78 | Checklist items: 474
 | [ ]    | D01 T02 §19 | Interpreter work, memory and wall-clock ceilings on hostile content streams              | windows-host                 | 7     |
 | [ ]    | D01 T02 §20 | Rasterizer failure isolation: typed tile errors, target recreation and retry             | windows-host                 | 7     |
 | [ ]    | D01 T02 §21 | Page `/UserUnit` in `PageDescription`, physical page size and CLI output size            | windows-host                 | 6     |
-| [ ]    | D01 T03 §1  | `recto-cli` command dispatcher, exit-code contract and `recto-cli info` (`--json`)       | windows-host                 | 9     |
+| [ ]    | D01 T03 §1  | `recto-cli` command dispatcher, exit-code contract and `recto-cli info` (`--json`)       | windows-host                 | 10    |
 | [ ]    | D01 T03 §2  | `recto-cli render` (full-page and stitched `512 x 512` tile modes, WIC PNG encoder)      | windows-host                 | 6     |
 | [ ]    | D01 T03 §3  | `recto-cli bench` and `recto-cli stress` commands                                        | windows-host                 | 5     |
 | [ ]    | D01 T03 §4  | libFuzzer targets (`fuzz_open`, `fuzz_filters`, `fuzz_render`) with AddressSanitizer     | windows-host                 | 6     |
@@ -882,4 +882,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 57/811 verified sections, 31 ready to run now.
 
-Checklist: 375/5961 items completed (includes Commit items).
+Checklist: 375/5962 items completed (includes Commit items).

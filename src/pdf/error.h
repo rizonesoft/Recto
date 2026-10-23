@@ -680,9 +680,13 @@ enum class RefusalReason : uint16_t {
 	PendingExports, // exports queued at once over the limit
 	WallClock,      // work over its time budget, in milliseconds
 	WorkingBytes,   // working memory over its budget, in bytes
-	PageIndex,      // a page index past the document's last page
-	PageRange,      // a page range that is empty, reversed or past the end
-	OutputPath,     // an output path refused (the same as the input, or not writable); the path itself is never kept
+	PageIndex,        // a page index past the document's last page
+	PageRangePastEnd, // a page range reaching past the last page
+	OutputSameAsInput, // the output path is the file being read; the path itself is never kept
+	// Appended (D01 T02 section 23, completion review): one reason per cause, so each has its own remedy.
+	PageRangeEmpty,    // a page range selecting no page
+	PageRangeReversed, // a page range whose first page is after its last
+	OutputUnwritable,  // the output folder cannot be written; the path itself is never kept
 };
 
 [[nodiscard]] constexpr std::string_view refusal_reason_name(RefusalReason reason) noexcept
@@ -702,12 +706,58 @@ enum class RefusalReason : uint16_t {
 		return "WorkingBytes";
 	case RefusalReason::PageIndex:
 		return "PageIndex";
-	case RefusalReason::PageRange:
-		return "PageRange";
-	case RefusalReason::OutputPath:
-		return "OutputPath";
+	case RefusalReason::PageRangePastEnd:
+		return "PageRangePastEnd";
+	case RefusalReason::OutputSameAsInput:
+		return "OutputSameAsInput";
+	case RefusalReason::PageRangeEmpty:
+		return "PageRangeEmpty";
+	case RefusalReason::PageRangeReversed:
+		return "PageRangeReversed";
+	case RefusalReason::OutputUnwritable:
+		return "OutputUnwritable";
 	}
 	return "UnknownReason";
+}
+
+// What a refusal reason means to a person reading the log: the cause, the units and conventions of its observed value
+// and bound, and what to do. The ring's line for a refusal uses it in place of its diagnostic's general message, so
+// every representation says the same thing (D01 T02 section 23). Empty for None.
+[[nodiscard]] constexpr std::string_view refusal_reason_description(RefusalReason reason) noexcept
+{
+	switch (reason) {
+	case RefusalReason::None:
+		return "";
+	case RefusalReason::CommandCount:
+		return "The page has more drawing commands than Recto processes at once (observed and bound count commands); "
+			   "simplify or split the page";
+	case RefusalReason::ChangeSetSize:
+		return "One change touches more objects than its limit (observed and bound count objects); make the change in "
+			   "smaller steps";
+	case RefusalReason::PendingExports:
+		return "Too many exports are waiting (observed and bound count exports); wait for some to finish";
+	case RefusalReason::WallClock:
+		return "The work ran past its time limit (observed and bound are milliseconds); try fewer pages";
+	case RefusalReason::WorkingBytes:
+		return "The work needed more memory than its limit (observed and bound are bytes); try fewer pages or a smaller "
+			   "selection";
+	case RefusalReason::PageIndex:
+		return "A page past the last one was asked for (observed is the zero-based page index, bound the page count); "
+			   "choose a page that exists";
+	case RefusalReason::PageRangePastEnd:
+		return "The page range reaches past the last page (observed is its last page, one-based, bound the page "
+			   "count); end the range at the last page";
+	case RefusalReason::OutputSameAsInput:
+		return "The output would replace the file being read; choose another name or folder";
+	case RefusalReason::PageRangeEmpty:
+		return "The page range selects no page; give at least one page";
+	case RefusalReason::PageRangeReversed:
+		return "The page range starts after it ends (observed is its first page and bound its last, one-based); put "
+			   "the lower page first";
+	case RefusalReason::OutputUnwritable:
+		return "The output folder cannot be written; choose another folder or check its permissions";
+	}
+	return "";
 }
 
 struct PdfError {
