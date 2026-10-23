@@ -119,3 +119,21 @@ The findings are source-derived; their proposed reproductions were not executed.
 
 HIGHEST: P2
 OVERALL: needs-attention
+
+Disposition of the completion review's gaps (each verified against the code before acting):
+
+- Implemented: gap 1, a non-ASCII password for R=2 to R=4: the legacy algorithms hash PDFDocEncoding bytes (ISO 32000-1 7.6.3.3, Algorithm 2 step a), so a UTF-8 password is tried in PDFDocEncoding first, then as given. Commit: see the line below.
+- Implemented: gap 3, an indirect stream `/Type` resolves one level before the `/XRef`, `/Metadata` and `/EmbeddedFile` rules (also round 1, finding 1). Commit: see the line below.
+- Filed: D06 T05 §46 (gap 2, attachment-only `/AuthEvent /EFOpen` scope; the prompt belongs to D02 T03 §8)
+- Filed: D06 T05 §47 (gaps 4, 10, 11 and 12: the R=2 to R=6 interoperability matrix with independently generated files, cancellable decryption, measured cost)
+- Filed: D02 T01 §10 (gaps 7 and 14, the password dialog, its states and accessibility, existing owner)
+- Filed: D01 T02 §8 (gap 5, actor-owned asynchronous authentication, existing owner with D01 T02 §10)
+- Filed: D02 T03 §8 (gap 8 in part, attachment prompts, existing owner)
+- Filed: D05 T01 §12 (gap 9, certificate security, existing owner with D05 T01 §11)
+- Gaps 6 and 13 (open entry points and the opening journey) are the planned work of `D02 T01` and `D02 T03`.
+
+## Fixes after round 1
+
+- Finding 1 (P2): correct, fixed as completion gap 3 above. `PdfCrypto.AuditOwnerFirstEncodingLengthAndIndirectType` decrypts a stream whose `/Type` is a reference to `/XRef` and leaves it unchanged.
+- Finding 2 (P2): correct. A `/V 4` crypt filter's `/Length` now sets the key length when the `/Encrypt` dictionary has none (in bytes as Table 25 says, bits accepted as for `/Length`); tested with `/CFM /V2 /Length 5` -> 40 bits.
+- Finding 3 (P2): correct, and R=2 to R=4 had the same order. Both families now check the owner password first (ISO 32000-2 Algorithm 2.A), so a password that is both unlocks as the owner; tested in R=3 and R=6 with vectors computed independently by `scripts/build-corpus.py`'s own crypto code.

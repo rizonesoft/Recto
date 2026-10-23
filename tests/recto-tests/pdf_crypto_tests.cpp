@@ -346,6 +346,82 @@ TEST(PdfCrypto, EmptyUserPasswordAutoUnlock)
 		ErrorCode::DamagedFormat);
 }
 
+// The audit of D01 T01 §9 (D06 T05 §23): a password that is both owner and user unlocks as the owner (ISO 32000-2
+// Algorithm 2.A order) in R=3 and R=6; a non-ASCII R=3 password given in UTF-8 matches its PDFDocEncoding bytes; a
+// /V 4 crypt filter's /Length sets the key length when the dictionary has none; and an indirect stream /Type gets the
+// treatment its direct form gets. The /O, /U, /UE, /OE and /Perms values were computed independently with
+// scripts/build-corpus.py's own RC4, MD5 and Algorithm 2.B code (ID 00..0F, /P -3904).
+TEST(PdfCrypto, AuditOwnerFirstEncodingLengthAndIndirectType)
+{
+	std::array<uint8_t, 16> id0{};
+	for (uint8_t i = 0; i < 16u; ++i) {
+		id0[i] = i;
+	}
+	const auto handler = [&](const std::string& dict) {
+		auto parsed = parse_dict_literal(dict);
+		EXPECT_TRUE(parsed.has_value());
+		return SecurityHandler::create(*parsed, id0, IndirectRef{7u, 0u});
+	};
+
+	auto r3_same = handler(
+		"<< /Filter /Standard /V 2 /R 3 /Length 128 /P -3904 "
+		"/O <72D80447DAB347EF4A5AE93CB806D4A069F2FE2A30C58BDF9E241180FEB9CD08> "
+		"/U <0C189AF3F5A7DF8C9A5E1A08F95F047E00000000000000000000000000000000> >>");
+	RECTO_ASSERT_OK(r3_same);
+	RECTO_ASSERT_OK(r3_same->authenticate("same"));
+	EXPECT_TRUE(r3_same->unlocked_as_owner());
+
+	auto r6_same = handler(
+		"<< /Filter /Standard /V 5 /R 6 /Length 256 /P -3904 /EncryptMetadata true "
+		"/CF << /StdCF << /Type /CryptFilter /CFM /AESV3 /Length 32 >> >> /StmF /StdCF /StrF /StdCF "
+		"/O <5E44B2FB30CC4458958D5391B5E4E7D0F1B37F860B141CD5F36815664D0628604F5653414C5430314F4B53414C543031> "
+		"/U <07EEEFA132E578815744594BD3F3356C7800D536AF464742D2DAF7868D805EFA555653414C543031554B53414C543031> "
+		"/OE <1B8BD7D5CB7F4DF2A92C8DD845284EEA3E494E60F984EBEFFC82E883F3561A56> "
+		"/UE <95331891284D14DEEEFFC892E7FED399603ED493AED86243F6B4029756BE0D20> "
+		"/Perms <42451D7FEE06C420C0A8A87584FA69D3> >>");
+	RECTO_ASSERT_OK(r6_same);
+	RECTO_ASSERT_OK(r6_same->authenticate("same"));
+	EXPECT_TRUE(r6_same->unlocked_as_owner());
+
+	auto r3_cafe = handler(
+		"<< /Filter /Standard /V 2 /R 3 /Length 128 /P -3904 "
+		"/O <8543795BA2B3B504CD72692001AEEFAA62DD176DDA46B9DA5A86A86BF9DC5377> "
+		"/U <9BDDF19C2DD96291E2D35AA0F38B39EF00000000000000000000000000000000> >>");
+	RECTO_ASSERT_OK(r3_cafe);
+	RECTO_ASSERT_OK(r3_cafe->authenticate("caf\xC3\xA9")); // UTF-8 "café", stored as PDFDocEncoding 63 61 66 E9
+	EXPECT_FALSE(r3_cafe->unlocked_as_owner());
+	RECTO_ASSERT_OK(r3_cafe->authenticate("caf\xE9")); // the PDFDocEncoding bytes themselves still match
+	RECTO_EXPECT_ERR(r3_cafe->authenticate("cafe"), ErrorCode::WrongPassword);
+
+	auto v4_dict = parse_dict_literal(
+		"<< /Filter /Standard /V 4 /R 4 /P -3904 /CF << /StdCF << /CFM /V2 /Length 5 >> >> "
+		"/StmF /StdCF /StrF /StdCF /O <0000000000000000000000000000000000000000000000000000000000000000> "
+		"/U <0000000000000000000000000000000000000000000000000000000000000000> >>");
+	RECTO_ASSERT_OK(v4_dict);
+	auto v4 = SecurityHandler::parse_encrypt_dict(*v4_dict);
+	RECTO_ASSERT_OK(v4);
+	EXPECT_EQ(v4->key_length_bits, 40);
+
+	// A stream whose /Type is a reference to /XRef is left as it is, as a direct /Type /XRef is.
+	const std::vector<uint8_t> file_bytes = read_corpus_bytes("render/encrypted-rc4-128.pdf");
+	auto xref_res = XrefTable::parse(file_bytes);
+	RECTO_ASSERT_OK(xref_res);
+	auto sh_opt = SecurityHandler::from_xref(*xref_res, file_bytes);
+	RECTO_ASSERT_OK(sh_opt);
+	ASSERT_TRUE(sh_opt->has_value());
+	SecurityHandler sh = std::move(**sh_opt);
+	RECTO_ASSERT_OK(sh.authenticate("recto-test"));
+	auto indirect_type = parse_dict_literal("<< /Type 20 0 R /Size 10 /W [1 2 1] >>");
+	RECTO_ASSERT_OK(indirect_type);
+	const std::vector<uint8_t> raw = {0x01u, 0x02u, 0x03u, 0x04u};
+	PdfValue stream(PdfStream(std::move(*indirect_type), raw));
+	const IndirectObjectResolver to_xref = [](IndirectRef) -> PdfResult<PdfValue> {
+		return PdfValue(PdfName::from_decoded("XRef"));
+	};
+	RECTO_ASSERT_OK(sh.decrypt_object_values(stream, IndirectRef{11u, 0u}, false, &to_xref));
+	EXPECT_EQ(stream.as_stream()->raw_bytes, raw);
+}
+
 TEST(PdfCrypto, SaslprepAndTruncatedAesCiphertext)
 {
 	// 1. Direct RFC 4013 SASLprep preparation tests (`SecurityHandler::prepare_saslprep_password`):

@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 74 | Checklist items: 456
+Sections: 77 | Checklist items: 469
 
 | Status | Reference   | Deliverable                                                                              | Needs                        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ---------------------------- | ----- |
@@ -130,6 +130,9 @@ Sections: 74 | Checklist items: 456
 | [ ]    | D06 T05 §43 | Repaired copy of a recovered file, and salvage of a damaged page tree                    | windows-host                 | 4     |
 | [ ]    | D06 T05 §44 | Damaged-file recovery measured against competitors on one corpus                         | windows-host, owner-decision | 5     |
 | [ ]    | D06 T05 §45 | Encrypted recovery without an intact xref stream: containers read after authentication   | windows-host                 | 4     |
+| [ ]    | D06 T05 §46 | Attachment-only encryption: public pages open, `/EFOpen` asks only for attachments       | windows-host                 | 4     |
+| [ ]    | D06 T05 §47 | Standard security handler interoperability matrix and cancellable decryption             | windows-host                 | 4     |
+| [ ]    | D06 T05 §48 | JBIG2 interoperability fixtures from an independent encoder, Huffman retained contexts   | windows-host, third-party    | 5     |
 
 ### Phase 2: M2 Viewer
 
@@ -876,6 +879,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 56/807 verified sections, 29 ready to run now.
+Progress: 56/810 verified sections, 29 ready to run now.
 
-Checklist: 364/5940 items completed (includes Commit items).
+Checklist: 364/5953 items completed (includes Commit items).

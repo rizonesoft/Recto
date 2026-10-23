@@ -1308,6 +1308,20 @@ PdfResult<EncryptDictParams> SecurityHandler::parse_encrypt_dict(
 					}
 					const auto cfm_name = sub_cf->get_name("CFM").value_or("None");
 					RECTO_PDF_TRY(const CryptFilterMethod method, parse_cfm_name(cfm_name));
+					// A /V 4 file key is as long as its crypt filter says when the /Encrypt dictionary gives no /Length
+					// (ISO 32000-1 Table 25: in bytes for the Standard handler; some producers write bits, as for /Length).
+					if (params.v == 4 && !encrypt_dict.contains("Length") && method == CryptFilterMethod::V2) {
+						if (const auto cf_len = sub_cf->get_int("Length")) {
+							const int64_t bits = (*cf_len >= 5 && *cf_len <= 16) ? *cf_len * 8 : *cf_len;
+							if (bits < 40 || bits > 128 || (bits % 8) != 0) {
+								return make_crypto_error(
+									ErrorCode::UnsupportedEncryption,
+									DiagnosticId::UnsupportedEncryption,
+									"Invalid crypt filter /Length in /Encrypt /CF dictionary");
+							}
+							params.key_length_bits = static_cast<int32_t>(bits);
+						}
+					}
 					if (params.v == 4 && method == CryptFilterMethod::AESV3) {
 						return make_crypto_error(
 							ErrorCode::UnsupportedEncryption,
@@ -1463,63 +1477,77 @@ PdfResult<void> SecurityHandler::authenticate(std::string_view password) noexcep
 	try {
 		check_crypto_alloc();
 		if (params_.r <= 4) {
-			// 1. Try as user password (ISO 32000-1 section 7.6.3.4 Algorithm 6):
-			const auto padded_user = pad_password_r2_r4(password);
-			std::vector<uint8_t> cand_key;
-			if (!derive_file_key_r2_r4(padded_user, params_, file_id_0_, cand_key)) {
-				return make_crypto_error(
-					ErrorCode::InternalError,
-					DiagnosticId::InternalError,
-					"CNG MD5 key derivation failed during R=2..4 user authentication");
+			// Legacy revisions hash the password's PDFDocEncoding bytes (ISO 32000-1 section 7.6.3.3, Algorithm 2 step
+			// a). A UTF-8 password is tried in PDFDocEncoding first, then exactly as given, so a caller that already
+			// passes PDFDocEncoding bytes still matches.
+			std::vector<std::string> candidates;
+			if (auto encoded = utf8_to_pdf_string(password); encoded.has_value()) {
+				const std::vector<uint8_t>& bytes = encoded->bytes;
+				const bool unicode_bom = (bytes.size() >= 2u && bytes[0] == 0xFEu && bytes[1] == 0xFFu) ||
+					(bytes.size() >= 3u && bytes[0] == 0xEFu && bytes[1] == 0xBBu && bytes[2] == 0xBFu);
+				std::string pdf_doc(bytes.begin(), bytes.end());
+				if (!unicode_bom && pdf_doc != password) {
+					candidates.push_back(std::move(pdf_doc));
+				}
 			}
-			std::array<uint8_t, 32> computed_u{};
-			if (!compute_u_value_r2_r4(params_.r, cand_key, file_id_0_, computed_u)) {
-				return make_crypto_error(
-					ErrorCode::InternalError,
-					DiagnosticId::InternalError,
-					"CNG RC4/MD5 computation failed during R=2..4 user authentication");
-			}
+			candidates.emplace_back(password);
 			const size_t cmp_len = (params_.r == 2) ? 32u : 16u;
-			if (std::memcmp(computed_u.data(), params_.u_bytes.data(), cmp_len) == 0) {
+			std::array<uint8_t, 32> computed_u{};
+			std::vector<uint8_t> cand_key;
+			const auto unlock = [&](bool as_owner) {
 				file_key_ = std::move(cand_key);
 				authenticated_ = true;
-				unlocked_as_owner_ = false;
+				unlocked_as_owner_ = as_owner;
 				perms_verified_ = true;
 				permissions_ = PdfPermissions::from_bitmask(params_.p, params_.r);
 				decrypted_cache_.clear();
 				decrypted_obj_stm_cache_.clear();
-				return {};
-			}
+			};
+			for (const std::string& candidate : candidates) {
+				// 1. The owner password first (Algorithm 7), so a password that is both unlocks as the owner, as ISO
+				// 32000-2 Algorithm 2.A orders it for every revision.
+				std::array<uint8_t, 32> unwrapped_user{};
+				if (!unwrap_owner_password_r2_r4(candidate, params_, unwrapped_user)) {
+					return make_crypto_error(
+						ErrorCode::InternalError,
+						DiagnosticId::InternalError,
+						"CNG RC4/MD5 unwrap failed during R=2..4 owner authentication");
+				}
+				if (!derive_file_key_r2_r4(unwrapped_user, params_, file_id_0_, cand_key)) {
+					return make_crypto_error(
+						ErrorCode::InternalError,
+						DiagnosticId::InternalError,
+						"CNG MD5 key derivation failed during R=2..4 owner verification");
+				}
+				if (!compute_u_value_r2_r4(params_.r, cand_key, file_id_0_, computed_u)) {
+					return make_crypto_error(
+						ErrorCode::InternalError,
+						DiagnosticId::InternalError,
+						"CNG RC4/MD5 computation failed during R=2..4 owner verification");
+				}
+				if (std::memcmp(computed_u.data(), params_.u_bytes.data(), cmp_len) == 0) {
+					unlock(/*as_owner=*/true);
+					return {};
+				}
 
-			// 2. Try as owner password (ISO 32000-1 section 7.6.3.4 Algorithm 7):
-			std::array<uint8_t, 32> unwrapped_user{};
-			if (!unwrap_owner_password_r2_r4(password, params_, unwrapped_user)) {
-				return make_crypto_error(
-					ErrorCode::InternalError,
-					DiagnosticId::InternalError,
-					"CNG RC4/MD5 unwrap failed during R=2..4 owner authentication");
-			}
-			if (!derive_file_key_r2_r4(unwrapped_user, params_, file_id_0_, cand_key)) {
-				return make_crypto_error(
-					ErrorCode::InternalError,
-					DiagnosticId::InternalError,
-					"CNG MD5 key derivation failed during R=2..4 owner verification");
-			}
-			if (!compute_u_value_r2_r4(params_.r, cand_key, file_id_0_, computed_u)) {
-				return make_crypto_error(
-					ErrorCode::InternalError,
-					DiagnosticId::InternalError,
-					"CNG RC4/MD5 computation failed during R=2..4 owner verification");
-			}
-			if (std::memcmp(computed_u.data(), params_.u_bytes.data(), cmp_len) == 0) {
-				file_key_ = std::move(cand_key);
-				authenticated_ = true;
-				unlocked_as_owner_ = true;
-				perms_verified_ = true;
-				permissions_ = PdfPermissions::from_bitmask(params_.p, params_.r);
-				decrypted_cache_.clear();
-				decrypted_obj_stm_cache_.clear();
-				return {};
+				// 2. Then the user password (Algorithm 6).
+				const auto padded_user = pad_password_r2_r4(candidate);
+				if (!derive_file_key_r2_r4(padded_user, params_, file_id_0_, cand_key)) {
+					return make_crypto_error(
+						ErrorCode::InternalError,
+						DiagnosticId::InternalError,
+						"CNG MD5 key derivation failed during R=2..4 user authentication");
+				}
+				if (!compute_u_value_r2_r4(params_.r, cand_key, file_id_0_, computed_u)) {
+					return make_crypto_error(
+						ErrorCode::InternalError,
+						DiagnosticId::InternalError,
+						"CNG RC4/MD5 computation failed during R=2..4 user authentication");
+				}
+				if (std::memcmp(computed_u.data(), params_.u_bytes.data(), cmp_len) == 0) {
+					unlock(/*as_owner=*/false);
+					return {};
+				}
 			}
 
 			return make_crypto_error(
@@ -1535,42 +1563,9 @@ PdfResult<void> SecurityHandler::authenticate(std::string_view password) noexcep
 		bool matched_user = false;
 		bool matched_owner = false;
 
-		// 1. Test against `/U` (validation salt `U[32..39]`, key salt `U[40..47]`):
+		// 1. The owner password first (ISO 32000-2 Algorithm 2.A): `/O` (`O[32..39]`, `O[40..47]`, `U[0..47]`), so a
+		// password that is both unlocks as the owner.
 		{
-			const std::span<const uint8_t, 8> u_val_salt(params_.u_bytes.data() + 32u, 8u);
-			const std::span<const uint8_t, 8> u_key_salt(params_.u_bytes.data() + 40u, 8u);
-			std::array<uint8_t, 32> u_hash{};
-			if (!compute_hash_r5_r6(params_.r, pwd_bytes, u_val_salt, {}, u_hash)) {
-				return make_crypto_error(
-					ErrorCode::InternalError,
-					DiagnosticId::InternalError,
-					"CNG hash failed during R=5..6 user password validation");
-			}
-			if (std::memcmp(u_hash.data(), params_.u_bytes.data(), 32u) == 0) {
-				std::array<uint8_t, 32> ue_key{};
-				if (!compute_hash_r5_r6(params_.r, pwd_bytes, u_key_salt, {}, ue_key)) {
-					return make_crypto_error(
-						ErrorCode::InternalError,
-						DiagnosticId::InternalError,
-						"CNG hash failed during R=5..6 /UE key derivation");
-				}
-				if (!cng_aes_cbc_raw(
-						/*encrypt=*/false,
-						ue_key,
-						zero_iv,
-						std::span<const uint8_t>(params_.ue_bytes.data(), 32u),
-						unwrapped_key)) {
-					return make_crypto_error(
-						ErrorCode::InternalError,
-						DiagnosticId::InternalError,
-						"CNG AES-256-CBC unwrap failed for /UE");
-				}
-				matched_user = true;
-			}
-		}
-
-		// 2. If user password did not match, test against `/O` (`O[32..39]`, `O[40..47]`, `U[0..47]`):
-		if (!matched_user) {
 			const std::span<const uint8_t, 8> o_val_salt(params_.o_bytes.data() + 32u, 8u);
 			const std::span<const uint8_t, 8> o_key_salt(params_.o_bytes.data() + 40u, 8u);
 			const std::span<const uint8_t> u_first_48(params_.u_bytes.data(), 48u);
@@ -1601,6 +1596,40 @@ PdfResult<void> SecurityHandler::authenticate(std::string_view password) noexcep
 						"CNG AES-256-CBC unwrap failed for /OE");
 				}
 				matched_owner = true;
+			}
+		}
+
+		// 2. If the owner password did not match, `/U` (validation salt `U[32..39]`, key salt `U[40..47]`):
+		if (!matched_owner) {
+			const std::span<const uint8_t, 8> u_val_salt(params_.u_bytes.data() + 32u, 8u);
+			const std::span<const uint8_t, 8> u_key_salt(params_.u_bytes.data() + 40u, 8u);
+			std::array<uint8_t, 32> u_hash{};
+			if (!compute_hash_r5_r6(params_.r, pwd_bytes, u_val_salt, {}, u_hash)) {
+				return make_crypto_error(
+					ErrorCode::InternalError,
+					DiagnosticId::InternalError,
+					"CNG hash failed during R=5..6 user password validation");
+			}
+			if (std::memcmp(u_hash.data(), params_.u_bytes.data(), 32u) == 0) {
+				std::array<uint8_t, 32> ue_key{};
+				if (!compute_hash_r5_r6(params_.r, pwd_bytes, u_key_salt, {}, ue_key)) {
+					return make_crypto_error(
+						ErrorCode::InternalError,
+						DiagnosticId::InternalError,
+						"CNG hash failed during R=5..6 /UE key derivation");
+				}
+				if (!cng_aes_cbc_raw(
+						/*encrypt=*/false,
+						ue_key,
+						zero_iv,
+						std::span<const uint8_t>(params_.ue_bytes.data(), 32u),
+						unwrapped_key)) {
+					return make_crypto_error(
+						ErrorCode::InternalError,
+						DiagnosticId::InternalError,
+						"CNG AES-256-CBC unwrap failed for /UE");
+				}
+				matched_user = true;
 			}
 		}
 
@@ -1900,7 +1929,23 @@ PdfResult<void> SecurityHandler::decrypt_value_recursive(
 	}
 
 	if (PdfStream* stm = value.as_stream_mut()) {
-		const auto stm_type = stm->dict.get_name("Type");
+		// /Type resolves one level when it is a reference (ISO 32000-1 7.3.10), so an indirect /XRef, /Metadata or
+		// /EmbeddedFile type gets the same treatment as a direct one; a reference that does not resolve to a name
+		// is no type.
+		std::optional<std::string_view> stm_type = stm->dict.get_name("Type");
+		std::string resolved_type;
+		if (!stm_type.has_value() && resolver != nullptr && *resolver) {
+			if (const PdfValue* type_val = stm->dict.get("Type"); type_val != nullptr && type_val->is_ref()) {
+				if (auto target = (*resolver)(*type_val->as_ref()); target.has_value()) {
+					if (const auto name = target->as_name()) {
+						resolved_type.assign(name->begin(), name->end());
+						stm_type = resolved_type;
+					}
+				} else if (target.error().code == ErrorCode::OutOfMemory) {
+					return target.error();
+				}
+			}
+		}
 		// ISO 32000-1 section 7.5.8.1: Cross-reference streams (`/Type /XRef`) are never encrypted.
 		if (stm_type.has_value() && *stm_type == "XRef") {
 			return {};
