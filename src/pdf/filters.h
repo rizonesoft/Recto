@@ -279,6 +279,19 @@ private:
 	int32_t previous_hresult_{0};
 };
 
+// Tests only: while the scope lives, a three-component DCT frame on this thread goes through IWICFormatConverter even
+// when WIC already gives 24-bit RGB or BGR, so the conversion step can be exercised (and failed) on any machine.
+class ScopedDctForceConverter {
+public:
+	ScopedDctForceConverter() noexcept;
+	~ScopedDctForceConverter() noexcept;
+	ScopedDctForceConverter(const ScopedDctForceConverter&) = delete;
+	ScopedDctForceConverter& operator=(const ScopedDctForceConverter&) = delete;
+
+private:
+	bool previous_{false};
+};
+
 // Tests only: how many native JPXDecode decodes this thread has started, so a test can tell whether WIC handed a
 // stream over.
 [[nodiscard]] uint64_t native_jpx_attempts() noexcept;

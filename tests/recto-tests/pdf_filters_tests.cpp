@@ -4865,75 +4865,6 @@ TEST(PdfFilters, JpxPathPinned)
 	RECTO_ASSERT_OK(decode_jpx_image(jp2));
 }
 
-// A WIC failure keeps its step and HRESULT as numbers in the diagnostic ring, its line and the ETW event, where the
-// message is never kept; a native JPEG 2000 failure after WIC's keeps WIC's step and HRESULT beside its own (D01 T02
-// section 25).
-TEST(PdfError, DecoderContextReachesRingAndEtw)
-{
-	constexpr int32_t kOutOfMemory = static_cast<int32_t>(0x8007000Eu);
-	constexpr int32_t kBadImage = static_cast<int32_t>(0x88982F60u);
-	const auto jpeg = make_minimal_jpeg_8x8_cmyk();
-	PdfDict dct;
-	dct.set("Filter", PdfValue(PdfName("DCTDecode")));
-	const std::array<std::pair<detail::WicStage, DecoderStep>, 4> stages = {{
-		{detail::WicStage::Factory, DecoderStep::WicFactory},
-		{detail::WicStage::CreateDecoder, DecoderStep::WicCreateDecoder},
-		{detail::WicStage::GetFrame, DecoderStep::WicGetFrame},
-		{detail::WicStage::CopyPixels, DecoderStep::WicCopyPixels},
-	}};
-	force_enable_etw_provider_for_testing();
-	clear_diagnostics();
-	clear_captured_etw_events_for_testing();
-	set_etw_capture_for_testing(true);
-	for (const auto& [stage, step] : stages) {
-		const detail::ScopedWicFailure fail(stage, kOutOfMemory);
-		auto dec = decode_stream(jpeg, dct);
-		ASSERT_FALSE(dec.has_value());
-		EXPECT_EQ(dec.error().decoder_step, step);
-		record_diagnostic(dec.error());
-	}
-	const std::array<uint8_t, 12> rgb = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200};
-	{
-		const detail::ScopedWicFailure fail(detail::WicStage::CreateDecoder, kBadImage);
-		auto img = decode_jpx_image(make_genuine_jp2_2x2_rgb(rgb, true, 5u, 1u)); // the native decoder refuses it too
-		ASSERT_FALSE(img.has_value());
-		record_diagnostic(img.error());
-	}
-	set_etw_capture_for_testing(false);
-
-	const auto tail = diagnostics_tail(10);
-	const auto captured = captured_etw_events_for_testing();
-	ASSERT_EQ(tail.size(), stages.size() + 1u);
-	ASSERT_EQ(captured.size(), stages.size() + 1u);
-	for (size_t i = 0; i < stages.size(); ++i) {
-		EXPECT_EQ(tail[i].decoder_step, stages[i].second);
-		EXPECT_EQ(tail[i].platform_status, std::optional<uint32_t>(0x8007000Eu));
-		EXPECT_NE(tail[i].format().find("hresult=0x8007000E"), std::string::npos) << tail[i].format();
-		EXPECT_EQ(captured[i].decoder_step_name, decoder_step_name(stages[i].second));
-		EXPECT_EQ(captured[i].decoder_step, static_cast<uint16_t>(stages[i].second));
-		EXPECT_TRUE(captured[i].has_platform_status);
-		EXPECT_EQ(captured[i].platform_status, 0x8007000Eu);
-		EXPECT_FALSE(captured[i].has_prior_status); // no earlier attempt
-		EXPECT_EQ(captured[i].prior_step, static_cast<uint16_t>(DecoderStep::None));
-		// The ring speaks of Windows running out of memory for an image, not of a configured limit or a document.
-		EXPECT_EQ(tail[i].message, decoder_failure_message(ErrorCode::OutOfMemory));
-	}
-	const DiagnosticEntry& handed_over = tail.back();
-	EXPECT_EQ(handed_over.decoder_step, DecoderStep::NativeJpx);
-	EXPECT_EQ(handed_over.prior_step, DecoderStep::WicCreateDecoder);
-	EXPECT_EQ(handed_over.prior_status, std::optional<uint32_t>(0x88982F60u));
-	EXPECT_NE(handed_over.format().find("[after step=WicCreateDecoder hresult=0x88982F60]"), std::string::npos)
-		<< handed_over.format();
-	EXPECT_EQ(captured.back().prior_step_name, "WicCreateDecoder");
-	EXPECT_EQ(captured.back().prior_status, 0x88982F60u);
-	EXPECT_TRUE(captured.back().has_prior_status);
-	EXPECT_EQ(captured.back().decoder_step, static_cast<uint16_t>(DecoderStep::NativeJpx));
-	EXPECT_FALSE(captured.back().has_platform_status); // the native decoder reports no Windows status
-	EXPECT_FALSE(handed_over.platform_status.has_value());
-	clear_diagnostics();
-	clear_captured_etw_events_for_testing();
-}
-
 // A baseline RGB JPEG of `width` x `height` mid-gray pixels, encoded by WIC's own JPEG encoder (so the decoder under
 // test meets an encoder it did not write). Empty if this machine cannot encode one.
 std::vector<uint8_t> make_wic_rgb_jpeg(uint32_t width, uint32_t height, bool gray = false, bool cmyk = false)
@@ -5108,6 +5039,74 @@ TEST(PdfFilters, CcittDamagedRowRecovery)
 		PdfDict no_eol = parms;
 		no_eol.set("EndOfLine", PdfValue(false));
 		RECTO_EXPECT_ERR(decode_ccitt_fax(bytes, &no_eol), ErrorCode::DamagedFormat);
+
+		// Why recovery stopped is said, with the row and the allowance.
+		auto used_up = decode_ccitt_fax(bytes, &one_allowed);
+		ASSERT_FALSE(used_up.has_value());
+		EXPECT_NE(used_up.error().message.view().find("allowance of damaged rows is used up"), std::string_view::npos)
+			<< used_up.error().message.view();
+		EXPECT_NE(used_up.error().message.view().find("row 2"), std::string_view::npos) << used_up.error().message.view();
+		auto not_allowed = decode_ccitt_fax(bytes, &no_eol);
+		ASSERT_FALSE(not_allowed.has_value());
+		EXPECT_NE(not_allowed.error().message.view().find("/EndOfLine true"), std::string_view::npos)
+			<< not_allowed.error().message.view();
+	}
+
+	const auto parms_for = [](int64_t k, int64_t rows, int64_t allowance) {
+		PdfDict parms;
+		parms.set("K", PdfValue(k));
+		parms.set("Columns", PdfValue(int64_t{16}));
+		parms.set("Rows", PdfValue(rows));
+		parms.set("EndOfLine", PdfValue(true));
+		parms.set("DamagedRowsBeforeError", PdfValue(allowance));
+		return parms;
+	};
+
+	// Mixed Group 3: a damaged 2D row (tag 0, one VR1 code, then nothing) runs into the next row's EOL, which the 2D
+	// decoder reads; that next row is still decoded, and a good 2D row (V0 on a white reference) follows the recovery.
+	{
+		const std::string bits = eol + "1" + good + eol + "0" + "011" + eol + "1" + white + eol + "0" + "1" + eol + "1" + eol + "1";
+		const PdfDict parms = parms_for(2, 4, 1);
+		auto decoded = decode_ccitt_fax(pack_bitstring(bits), &parms);
+		ASSERT_TRUE(decoded.has_value()) << decoded.error().message.view();
+		EXPECT_EQ(*decoded, (std::vector<uint8_t>{0xF0u, 0x0Fu, 0xF0u, 0x0Fu, 0xFFu, 0xFFu, 0xFFu, 0xFFu}));
+	}
+
+	// A good row resets the allowance: damaged, good, damaged under an allowance of one.
+	{
+		const std::string bits = eol + good + eol + damaged + eol + white + eol + damaged + eol + eol;
+		const PdfDict parms = parms_for(0, 4, 1);
+		auto decoded = decode_ccitt_fax(pack_bitstring(bits), &parms);
+		ASSERT_TRUE(decoded.has_value()) << decoded.error().message.view();
+		EXPECT_EQ(*decoded, (std::vector<uint8_t>{0xF0u, 0x0Fu, 0xF0u, 0x0Fu, 0xFFu, 0xFFu, 0xFFu, 0xFFu}));
+	}
+
+	// A damaged first row has no previous row, so it is white (the reference line before the first row).
+	{
+		const std::string bits = eol + damaged + eol + good + eol + eol;
+		const PdfDict parms = parms_for(0, 2, 1);
+		auto decoded = decode_ccitt_fax(pack_bitstring(bits), &parms);
+		ASSERT_TRUE(decoded.has_value()) << decoded.error().message.view();
+		EXPECT_EQ(*decoded, (std::vector<uint8_t>{0xFFu, 0xFFu, 0xF0u, 0x0Fu}));
+	}
+
+	// No EOL after the damaged row: nothing to resynchronize at, so the stream is refused and says so.
+	{
+		const std::string bits = eol + good + eol + damaged;
+		const PdfDict parms = parms_for(0, 2, 1);
+		auto decoded = decode_ccitt_fax(pack_bitstring(bits), &parms);
+		ASSERT_FALSE(decoded.has_value());
+		EXPECT_NE(decoded.error().message.view().find("no EOL follows"), std::string_view::npos) << decoded.error().message.view();
+	}
+
+	// /BlackIs1 applies to a substituted row as to any other.
+	{
+		const std::string bits = eol + good + eol + damaged + eol + eol;
+		PdfDict parms = parms_for(0, 2, 1);
+		parms.set("BlackIs1", PdfValue(true));
+		auto decoded = decode_ccitt_fax(pack_bitstring(bits), &parms);
+		ASSERT_TRUE(decoded.has_value()) << decoded.error().message.view();
+		EXPECT_EQ(*decoded, (std::vector<uint8_t>{0x0Fu, 0xF0u, 0x0Fu, 0xF0u}));
 	}
 }
 
@@ -5124,6 +5123,88 @@ TEST(PdfFilters, DctRefusalNamesTheRepresentationsNeed)
 		EXPECT_EQ(refused.error().observed, std::optional<uint64_t>(needed));
 		EXPECT_EQ(refused.error().bound, std::optional<uint64_t>(63u));
 	}
+}
+
+// A WIC failure keeps its step and HRESULT as numbers in the diagnostic ring, its line and the ETW event, where the
+// message is never kept; a native JPEG 2000 failure after WIC's keeps WIC's step and HRESULT beside its own (D01 T02
+// section 25).
+TEST(PdfError, DecoderContextReachesRingAndEtw)
+{
+	constexpr int32_t kOutOfMemory = static_cast<int32_t>(0x8007000Eu);
+	constexpr int32_t kBadImage = static_cast<int32_t>(0x88982F60u);
+	const auto jpeg = make_minimal_jpeg_8x8_cmyk();
+	PdfDict dct;
+	dct.set("Filter", PdfValue(PdfName("DCTDecode")));
+	const std::array<std::pair<detail::WicStage, DecoderStep>, 4> stages = {{
+		{detail::WicStage::Factory, DecoderStep::WicFactory},
+		{detail::WicStage::CreateDecoder, DecoderStep::WicCreateDecoder},
+		{detail::WicStage::GetFrame, DecoderStep::WicGetFrame},
+		{detail::WicStage::CopyPixels, DecoderStep::WicCopyPixels},
+	}};
+	force_enable_etw_provider_for_testing();
+	clear_diagnostics();
+	clear_captured_etw_events_for_testing();
+	set_etw_capture_for_testing(true);
+	for (const auto& [stage, step] : stages) {
+		const detail::ScopedWicFailure fail(stage, kOutOfMemory);
+		auto dec = decode_stream(jpeg, dct);
+		ASSERT_FALSE(dec.has_value());
+		EXPECT_EQ(dec.error().decoder_step, step);
+		record_diagnostic(dec.error());
+	}
+	// The conversion step, reached on any machine by sending an RGB frame through the converter.
+	{
+		const std::vector<uint8_t> rgb_jpeg = make_wic_rgb_jpeg(8u, 8u);
+		const detail::ScopedDctForceConverter convert;
+		const detail::ScopedWicFailure fail(detail::WicStage::ConvertFormat, kOutOfMemory);
+		auto dec = decode_stream(rgb_jpeg, dct);
+		ASSERT_FALSE(dec.has_value());
+		EXPECT_EQ(dec.error().decoder_step, DecoderStep::WicConvertFormat);
+		record_diagnostic(dec.error());
+	}
+	const std::array<uint8_t, 12> rgb = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200};
+	{
+		const detail::ScopedWicFailure fail(detail::WicStage::CreateDecoder, kBadImage);
+		auto img = decode_jpx_image(make_genuine_jp2_2x2_rgb(rgb, true, 5u, 1u)); // the native decoder refuses it too
+		ASSERT_FALSE(img.has_value());
+		record_diagnostic(img.error());
+	}
+	set_etw_capture_for_testing(false);
+
+	const auto tail = diagnostics_tail(10);
+	const auto captured = captured_etw_events_for_testing();
+	ASSERT_EQ(tail.size(), stages.size() + 2u);
+	ASSERT_EQ(captured.size(), stages.size() + 2u);
+	EXPECT_EQ(tail[stages.size()].decoder_step, DecoderStep::WicConvertFormat);
+	EXPECT_EQ(tail[stages.size()].platform_status, std::optional<uint32_t>(0x8007000Eu));
+	EXPECT_EQ(captured[stages.size()].decoder_step_name, "WicConvertFormat");
+	for (size_t i = 0; i < stages.size(); ++i) {
+		EXPECT_EQ(tail[i].decoder_step, stages[i].second);
+		EXPECT_EQ(tail[i].platform_status, std::optional<uint32_t>(0x8007000Eu));
+		EXPECT_NE(tail[i].format().find("hresult=0x8007000E"), std::string::npos) << tail[i].format();
+		EXPECT_EQ(captured[i].decoder_step_name, decoder_step_name(stages[i].second));
+		EXPECT_EQ(captured[i].decoder_step, static_cast<uint16_t>(stages[i].second));
+		EXPECT_TRUE(captured[i].has_platform_status);
+		EXPECT_EQ(captured[i].platform_status, 0x8007000Eu);
+		EXPECT_FALSE(captured[i].has_prior_status); // no earlier attempt
+		EXPECT_EQ(captured[i].prior_step, static_cast<uint16_t>(DecoderStep::None));
+		// The ring speaks of Windows running out of memory for an image, not of a configured limit or a document.
+		EXPECT_EQ(tail[i].message, decoder_failure_message(ErrorCode::OutOfMemory));
+	}
+	const DiagnosticEntry& handed_over = tail.back();
+	EXPECT_EQ(handed_over.decoder_step, DecoderStep::NativeJpx);
+	EXPECT_EQ(handed_over.prior_step, DecoderStep::WicCreateDecoder);
+	EXPECT_EQ(handed_over.prior_status, std::optional<uint32_t>(0x88982F60u));
+	EXPECT_NE(handed_over.format().find("[after step=WicCreateDecoder hresult=0x88982F60]"), std::string::npos)
+		<< handed_over.format();
+	EXPECT_EQ(captured.back().prior_step_name, "WicCreateDecoder");
+	EXPECT_EQ(captured.back().prior_status, 0x88982F60u);
+	EXPECT_TRUE(captured.back().has_prior_status);
+	EXPECT_EQ(captured.back().decoder_step, static_cast<uint16_t>(DecoderStep::NativeJpx));
+	EXPECT_FALSE(captured.back().has_platform_status); // the native decoder reports no Windows status
+	EXPECT_FALSE(handed_over.platform_status.has_value());
+	clear_diagnostics();
+	clear_captured_etw_events_for_testing();
 }
 
 // WIC failures are classified by their HRESULT at every step (D06 T05 §37): out of memory, a cancel, a missing
@@ -5174,6 +5255,18 @@ TEST(PdfFilters, WicFailureClasses)
 		}
 	}
 	RECTO_ASSERT_OK(decode_stream(jpeg, dct)); // the scopes ended, so WIC decodes again
+	{
+		const std::vector<uint8_t> rgb_jpeg = make_wic_rgb_jpeg(8u, 8u);
+		const detail::ScopedDctForceConverter convert;
+		RECTO_ASSERT_OK(decode_stream(rgb_jpeg, dct)); // the converter path itself decodes
+		for (const Case& c : cases) {
+			const detail::ScopedWicFailure fail(detail::WicStage::ConvertFormat, c.hresult);
+			auto dec = decode_stream(rgb_jpeg, dct);
+			ASSERT_FALSE(dec.has_value()) << c.hex << " at the conversion step";
+			EXPECT_EQ(dec.error().code, c.code) << dec.error().message.view();
+			EXPECT_NE(dec.error().message.view().find(c.hex), std::string_view::npos) << dec.error().message.view();
+		}
+	}
 
 	const std::array<uint8_t, 12> rgb = {10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 150, 200};
 	const auto jp2 = make_genuine_jp2_2x2_rgb(rgb, true);

@@ -86,6 +86,17 @@ ScopedJpxPath::~ScopedJpxPath() noexcept
 thread_local WicStage g_wic_failure_stage = WicStage::Factory;
 thread_local int32_t g_wic_failure_hresult = 0;
 thread_local uint64_t g_native_jpx_attempts = 0;
+thread_local bool g_dct_force_converter = false;
+
+ScopedDctForceConverter::ScopedDctForceConverter() noexcept : previous_(g_dct_force_converter)
+{
+	g_dct_force_converter = true;
+}
+
+ScopedDctForceConverter::~ScopedDctForceConverter() noexcept
+{
+	g_dct_force_converter = previous_;
+}
 
 ScopedWicFailure::ScopedWicFailure(WicStage stage, int32_t hresult) noexcept
 	: previous_stage_(g_wic_failure_stage)
@@ -2275,13 +2286,28 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 		};
 
 		// A damaged Group 3 row (ISO 32000-1 section 7.4.6, Table 11, /DamagedRowsBeforeError): with /EndOfLine true and
-		// K non-negative, its end is found at the next EOL and it is replaced by the previous row if that row was good, or
-		// by a white row if it was damaged too, up to /DamagedRowsBeforeError rows in a row. Returns whether the row was
-		// recovered; false leaves the caller to refuse the stream.
-		const auto recover_damaged_row = [&]() -> PdfResult<bool> {
-			if (!params.end_of_line || params.k < 0 || consecutive_damaged_rows >= params.damaged_rows_before_error) {
-				return false;
+		// K non-negative, its end is found at the next EOL after where the row began (a failed 2D row may already have
+		// read that EOL, so the search starts from the row's own start) and it is replaced by the previous row if that row
+		// was good, or by a white row if it was damaged too, up to /DamagedRowsBeforeError rows in a row. Otherwise the
+		// stream is refused with why recovery stopped, the row and the allowance.
+		const auto recover_damaged_row = [&](size_t row_start) -> PdfResult<void> {
+			const auto refuse = [&](const char* why) -> PdfError {
+				char text[200];
+				const int n = std::snprintf(text, sizeof(text),
+					"CCITTFaxDecode row %llu is damaged and %s (/DamagedRowsBeforeError %d, %d damaged in a row)",
+					static_cast<unsigned long long>(decoded_rows), why, params.damaged_rows_before_error,
+					consecutive_damaged_rows + 1);
+				return make_filter_error(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream,
+					std::string_view(text, n > 0 ? std::min<size_t>(static_cast<size_t>(n), sizeof(text) - 1u) : 0u),
+					reader.bit_pos >> 3u);
+			};
+			if (!params.end_of_line || params.k < 0) {
+				return refuse("Table 11 recovery needs /EndOfLine true and K non-negative");
 			}
+			if (consecutive_damaged_rows >= params.damaged_rows_before_error) {
+				return refuse("the allowance of damaged rows is used up");
+			}
+			reader.bit_pos = row_start;
 			bool found_sync = false;
 			while (!reader.at_end()) {
 				const size_t sync_pos = reader.bit_pos;
@@ -2293,16 +2319,15 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 				++reader.bit_pos;
 			}
 			if (!found_sync) {
-				return false;
+				return refuse("no EOL follows it to resynchronize at");
 			}
 			if (consecutive_damaged_rows == 0) {
-				cur_changes = ref_changes; // the previous row, which was good
+				cur_changes = ref_changes; // the previous row, which was good (or the white line before the first row)
 			} else {
 				cur_changes.clear(); // a white row: the previous row was damaged too
 			}
 			++consecutive_damaged_rows;
-			RECTO_PDF_RETURN_IF_ERROR(append_current_row());
-			return true;
+			return append_current_row();
 		};
 
 		// Per ISO 32000-1 section 7.4.6 Table 11, `/EndOfBlock true` overrides `/Rows`
@@ -2382,19 +2407,13 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 				}
 
 				const bool eol_ok = !params.end_of_line || saw_eol;
+				const size_t row_start = reader.bit_pos;
 				if (!eol_ok || !decode_ccitt_1d_row(reader, params.columns, cur_changes)) {
-					RECTO_PDF_TRY(const bool recovered, recover_damaged_row());
-					if (recovered) {
-						continue;
-					}
 					if (params.rows > 0 && decoded_rows >= static_cast<uint64_t>(params.rows)) {
 						break;
 					}
-					return make_filter_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedStream,
-						"Corrupt 1D Huffman run in CCITTFaxDecode Group 3 stream",
-						reader.bit_pos >> 3u);
+					RECTO_PDF_RETURN_IF_ERROR(recover_damaged_row(row_start));
+					continue;
 				}
 				consecutive_damaged_rows = 0;
 				RECTO_PDF_RETURN_IF_ERROR(append_current_row());
@@ -2434,20 +2453,14 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 						break;
 					}
 					// The previous row ran past its end: this row is damaged.
-					RECTO_PDF_TRY(const bool recovered, recover_damaged_row());
-					if (recovered) {
-						continue;
-					}
-					return make_filter_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedStream,
-						"Missing required EOL in CCITTFaxDecode Group 3 2D stream",
-						reader.bit_pos >> 3u);
+					RECTO_PDF_RETURN_IF_ERROR(recover_damaged_row(reader.bit_pos));
+					continue;
 				}
 				const int tag_bit = reader.read_bit();
 				if (tag_bit < 0) {
 					break;
 				}
+				const size_t row_start = reader.bit_pos;
 				bool row_ok = false;
 				if (tag_bit == 1) {
 					row_ok = decode_ccitt_1d_row(reader, params.columns, cur_changes);
@@ -2462,15 +2475,8 @@ PdfResult<std::vector<uint8_t>> decode_ccitt_fax(
 					if (params.rows > 0 && decoded_rows >= static_cast<uint64_t>(params.rows)) {
 						break;
 					}
-					RECTO_PDF_TRY(const bool recovered, recover_damaged_row());
-					if (recovered) {
-						continue;
-					}
-					return make_filter_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedStream,
-						"Corrupt row in CCITTFaxDecode Group 3 2D stream",
-						reader.bit_pos >> 3u);
+					RECTO_PDF_RETURN_IF_ERROR(recover_damaged_row(row_start));
+					continue;
 				}
 				consecutive_damaged_rows = 0;
 				RECTO_PDF_RETURN_IF_ERROR(append_current_row());
@@ -6441,23 +6447,48 @@ enum class WicFailureClass : uint8_t {
 	return error;
 }
 
-// Sets `error`'s message to `first`, "; before it, " and `second`. When memory has run out, the text is cut to the
-// message's inline capacity, which needs no allocation, so the enrichment itself can never lose the error: the numbers
-// (step, HRESULT and the prior attempt's) stay on the error whatever the text keeps.
-void set_message_without_allocation(PdfError& error, std::string_view first, std::string_view second) noexcept
+// Sets `error`'s message to `first`, "; before it, " and the earlier attempt's message `cause`. When memory has run
+// out, the text is built from the earlier attempt's step, class and HRESULT instead, short enough for the message's
+// inline capacity, which needs no allocation, so the enrichment itself can never lose the cause; the numbers stay on
+// the error either way.
+void set_message_without_allocation(PdfError& error, std::string_view first, const PdfError& cause) noexcept
 {
 	try {
+		const std::string_view second = cause.message.view();
 		std::string both;
 		both.reserve(first.size() + second.size() + 13u);
 		both.append(first).append("; before it, ").append(second);
 		error.message = PdfErrorMessage(std::string_view(both));
 		return;
 	} catch (const std::bad_alloc&) {
-		// fall through to the fixed buffer
+		// fall through to the compact form
 	}
+	std::string_view cls = "WIC failure";
+	if (cause.platform_status.has_value()) {
+		switch (classify_wic_failure(static_cast<HRESULT>(*cause.platform_status))) {
+		case WicFailureClass::Resource:
+			cls = "out of memory";
+			break;
+		case WicFailureClass::Cancelled:
+			cls = "cancelled";
+			break;
+		case WicFailureClass::Capability:
+			cls = "no codec";
+			break;
+		case WicFailureClass::Data:
+			cls = "data rejected";
+			break;
+		case WicFailureClass::System:
+			break;
+		}
+	} else {
+		cls = "no result";
+	}
+	const std::string_view step = decoder_step_name(cause.decoder_step);
 	char text[PdfErrorMessage::kInlineCapacity + 1u];
-	const int n = std::snprintf(text, sizeof(text), "%.*s; before it, %.*s", static_cast<int>(std::min<size_t>(first.size(), 96u)),
-		first.data(), static_cast<int>(std::min<size_t>(second.size(), 120u)), second.data());
+	const int n = std::snprintf(text, sizeof(text), "%.*s; before it, WIC %.*s: %.*s (HRESULT 0x%08X)",
+		static_cast<int>(std::min<size_t>(first.size(), 48u)), first.data(), static_cast<int>(step.size()), step.data(),
+		static_cast<int>(cls.size()), cls.data(), cause.platform_status.value_or(0u));
 	error.message = PdfErrorMessage(std::string_view(text, n > 0 ? std::min<size_t>(static_cast<size_t>(n), sizeof(text) - 1u) : 0u));
 }
 
@@ -6916,10 +6947,10 @@ PdfResult<WicDecodedImage> decode_dct_image(
 		// 3-component JPEG: convert via `IWICFormatConverter` to `24bppRGB` if not already `24bppBGR`/`24bppRGB`.
 		result.components = 3u;
 		bool bgr_order = false;
-		if (IsEqualGUID(pixel_format, GUID_WICPixelFormat24bppBGR)) {
+		if (IsEqualGUID(pixel_format, GUID_WICPixelFormat24bppBGR) && !detail::g_dct_force_converter) {
 			RECTO_PDF_RETURN_IF_ERROR(copy_frame(frame.Get(), w * 3u, "IWICBitmapFrameDecode::CopyPixels on 24bppBGR JPEG"));
 			bgr_order = true;
-		} else if (IsEqualGUID(pixel_format, GUID_WICPixelFormat24bppRGB)) {
+		} else if (IsEqualGUID(pixel_format, GUID_WICPixelFormat24bppRGB) && !detail::g_dct_force_converter) {
 			RECTO_PDF_RETURN_IF_ERROR(copy_frame(frame.Get(), w * 3u, "IWICBitmapFrameDecode::CopyPixels on 24bppRGB JPEG"));
 		} else {
 			ComPtr<IWICFormatConverter> converter;
@@ -8111,7 +8142,7 @@ void idwt_97_2d_float(
 			throw;
 		}
 		PdfError error(ErrorCode::OutOfMemory);
-		set_message_without_allocation(error, "Out of memory while decoding JPXDecode natively", wic_cause->message.view());
+		set_message_without_allocation(error, "Out of memory while decoding JPXDecode natively", *wic_cause);
 		error.decoder_step = DecoderStep::NativeJpx;
 		error.prior_step = wic_cause->decoder_step;
 		error.prior_status = wic_cause->platform_status;
@@ -8119,7 +8150,7 @@ void idwt_97_2d_float(
 	}
 	if (!native.has_value() && wic_cause.has_value()) {
 		PdfError error = native.error();
-		set_message_without_allocation(error, native.error().message.view(), wic_cause->message.view());
+		set_message_without_allocation(error, native.error().message.view(), *wic_cause);
 		// The native step failed after WIC's: both are kept as numbers (D01 T02 section 25).
 		if (error.decoder_step == DecoderStep::None) {
 			error.decoder_step = DecoderStep::NativeJpx;

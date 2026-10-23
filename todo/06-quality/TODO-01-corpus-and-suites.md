@@ -55,6 +55,7 @@ track: M1
 | 6 | §6 | Conversion round-trip matrix Part 2 (`RoundTrips.DocumentsAndSecurity`: Word, Sign) | §5, D04 T01 §7, D04 T03 §4, D04 T04 §5, D04 T04 §6, D04 T04 §7, D04 T05 §2, D04 T05 §4, D04 T05 §8, D04 T05 §9, D05 T01 §10, D05 T02 §6, D05 T02 §8, D05 T02 §9, D05 T02 §11 | [ ] |
 | 7 | §7 | Automated performance targets harness (`tests/perf/` and `recto-cli bench`) | §2, D01 T03 §3, D01 T03 §7, D02 T01 §7, D02 T01 §11, D02 T02 §6, D02 T03 §6, D02 T03 §7, D02 T03 §8, D02 T03 §10, D02 T04 §7, D02 T04 §8, D00 T01 §5, D10 T01 §2, D10 T01 §5 | [ ] |
 | 8 | §8 | Primary reference-machine M2/M6 performance baseline record (`docs/perf/`) | §7 | [ ] |
+| 9 | §9 | Damaged-fax corpus compared with Acrobat Pro, Foxit, PDFelement and UPDF | D06 T05 §34 | [ ] |
 
 ## 1. Pixel-exact golden render comparison harness (`Goldens.*` in `recto-tests`)
 
@@ -255,6 +256,25 @@ Execute `tests/perf/run_perf.ps1` on the `D00 T01 §5` primary reference host ma
 - [ ] Commit: `docs: record primary reference-machine performance baseline in docs/perf/`
 
 **Test checkpoint:** the 5-row summary table from `docs/perf/<YYYY-MM-DD>-reference-baseline.md` (with all 5 rows `PASS`) is quoted verbatim alongside `recto-tests --gtest_filter=PerfSmoke.*` passing.
+
+## 9. Damaged-fax corpus compared with Acrobat Pro, Foxit, PDFelement and UPDF
+
+The completion review of `D06 T05 §34` (`docs/reviews/06-quality/D06-T05-s34.md`, excellence 4) found no comparative evidence behind Recto's damaged-fax recovery: Table 11 says what must happen, but nothing shows what users of the competitors get for the same file. Product ambition (`AGENTS.md`) asks for measured claims; this section measures them.
+
+**Phase:** 6
+**Needs:** windows-host, attended, third-party
+**Surface:** no
+
+**Build order:**
+
+1. Build a damaged-fax corpus and record each reader's result. Done when: the table in `docs/benchmarks/damaged-fax.md` has a row per file and reader.
+
+- [ ] Add CCITT Group 3 (`K = 0` and `K > 0`) and Group 4 fixtures with damaged rows, missing EOLs and exhausted allowances to `tests/corpus/fax/` through `scripts/build-corpus.py`, with provenance rows. Done when: `python scripts/build-corpus.py --check` passes with them.
+- [ ] Third party: open each fixture in recorded versions of Acrobat Pro, Foxit PDF Editor, PDFelement and UPDF and record the rows recovered, the content lost, whether it refused and what it said, in `docs/benchmarks/damaged-fax.md`, beside Recto's result. Done when: every file has a row per reader with the version and date.
+- [ ] Add `Corpus.DamagedFaxMatchesTable11` asserting Recto's recovered rows for every fixture. Done when: it passes and fails with recovery disabled.
+- [ ] Commit: `corpus: damaged-fax fixtures compared with four readers`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Corpus.DamagedFaxMatchesTable11` passes and `docs/benchmarks/damaged-fax.md` holds the comparison table.
 
 ## Verification
 

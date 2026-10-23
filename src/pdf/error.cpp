@@ -512,13 +512,13 @@ void process_tlg_write_transfer(
 		slot.has_object_num = read_descriptor_scalar<uint8_t>(user_data[9]) != 0;
 		slot.object_num = read_descriptor_scalar<uint32_t>(user_data[10]);
 		slot.generation_num = read_descriptor_scalar<uint16_t>(user_data[11]);
-		slot.thread_id = read_descriptor_scalar<uint32_t>(user_data[12]);
-		slot.refusal_reason = read_descriptor_scalar<uint16_t>(user_data[13]);
-		read_descriptor_cstr_into(slot.refusal_reason_name, user_data[14]);
-		slot.has_observed = read_descriptor_scalar<uint8_t>(user_data[15]) != 0;
-		slot.observed = read_descriptor_scalar<uint64_t>(user_data[16]);
-		slot.has_bound = read_descriptor_scalar<uint8_t>(user_data[17]) != 0;
-		slot.bound = read_descriptor_scalar<uint64_t>(user_data[18]);
+		slot.refusal_reason = read_descriptor_scalar<uint16_t>(user_data[12]);
+		read_descriptor_cstr_into(slot.refusal_reason_name, user_data[13]);
+		slot.has_observed = read_descriptor_scalar<uint8_t>(user_data[14]) != 0;
+		slot.observed = read_descriptor_scalar<uint64_t>(user_data[15]);
+		slot.has_bound = read_descriptor_scalar<uint8_t>(user_data[16]) != 0;
+		slot.bound = read_descriptor_scalar<uint64_t>(user_data[17]);
+		slot.thread_id = read_descriptor_scalar<uint32_t>(user_data[18]);
 		slot.decoder_step = read_descriptor_scalar<uint16_t>(user_data[19]);
 		read_descriptor_cstr_into(slot.decoder_step_name, user_data[20]);
 		slot.has_platform_status = read_descriptor_scalar<uint8_t>(user_data[21]) != 0;
@@ -977,14 +977,14 @@ void record_diagnostic(
 		TraceLoggingUInt8(has_obj, "HasObjectNum"),
 		TraceLoggingUInt32(obj_val, "ObjectNum"),
 		TraceLoggingUInt16(generation_num, "GenerationNum"),
-		TraceLoggingUInt32(tid, "ThreadId"),
-		// Appended after the original fields, so an existing consumer's field positions never move.
 		TraceLoggingUInt16(reason_u16, "RefusalReason"),
 		TraceLoggingString(reason_name_str, "RefusalReasonName"),
 		TraceLoggingUInt8(has_observed, "HasObserved"),
 		TraceLoggingUInt64(observed_val, "Observed"),
 		TraceLoggingUInt8(has_bound, "HasBound"),
 		TraceLoggingUInt64(bound_val, "Bound"),
+		TraceLoggingUInt32(tid, "ThreadId"),
+		// Appended after the event as D01 T02 section 23 left it, so no earlier field moves (D01 T02 section 25).
 		TraceLoggingUInt16(step_u16, "DecoderStep"),
 		TraceLoggingString(step_name_str, "DecoderStepName"),
 		TraceLoggingUInt8(has_status, "HasPlatformStatus"),

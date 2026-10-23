@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 79 | Checklist items: 479
+Sections: 80 | Checklist items: 482
 
 | Status | Reference   | Deliverable                                                                              | Needs                        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ---------------------------- | ----- |
@@ -71,6 +71,7 @@ Sections: 79 | Checklist items: 479
 | [x]    | D01 T02 §23 | Closed refusal reasons and numeric context on limit and argument errors                  | windows-host                 | 3     |
 | [ ]    | D01 T02 §24 | Conversion-check failures name the check, the page and the measured value                | windows-host                 | 4     |
 | [ ]    | D01 T02 §25 | Decoder failures keep their step and Windows HRESULT in the diagnostic ring and ETW      | windows-host                 | 4     |
+| [ ]    | D01 T02 §26 | Image decoder recovery outcomes in diagnostics: substituted rows and refusal causes      | windows-host                 | 3     |
 | [x]    | D06 T05 §15 | Audit D01 T01 §1: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW         | windows-host                 | 5     |
 | [x]    | D06 T05 §16 | Audit D01 T01 §2: PdfValue variant object model, dictionary/array helpers and deep       | windows-host                 | 5     |
 | [x]    | D06 T05 §17 | Audit D01 T01 §3: Binary-safe PDF 1.7 and 2.0 lexer (src/pdf/lexer.cpp)                  | windows-host                 | 5     |
@@ -138,7 +139,7 @@ Sections: 79 | Checklist items: 479
 
 ### Phase 2: M2 Viewer
 
-Sections: 140 | Checklist items: 1229
+Sections: 140 | Checklist items: 1230
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -202,7 +203,7 @@ Sections: 140 | Checklist items: 1229
 | [ ]    | D06 T04 §5  | Presentation mode, presenter view and slide navigator board                              | windows-host                  | 7     |
 | [ ]    | D06 T04 §6  | Auto-scroll, rulers, grid, line weights and split view board                             | windows-host                  | 7     |
 | [ ]    | D06 T04 §24 | Session board: crash recovery, session restore, tab commands and Share                   | windows-host                  | 7     |
-| [ ]    | D06 T04 §30 | Could-not-open dialog wording for each error category (SPEC 9.9)                         | windows-host                  | 3     |
+| [ ]    | D06 T04 §30 | Could-not-open dialog wording for each error category (SPEC 9.9)                         | windows-host                  | 4     |
 | [ ]    | D10 T03 §1  | UI Automation provider tree: fragment root, navigation, properties, focus events         | windows-host, display-session | 12    |
 | [ ]    | D10 T03 §2  | UIA control patterns for every recto-ui control                                          | windows-host, display-session | 11    |
 | [ ]    | D10 T03 §3  | UIA `TextPattern` for `TextBox` and a reusable text-range adapter                        | windows-host, display-session | 11    |
@@ -685,81 +686,82 @@ Sections: 119 | Checklist items: 959
 
 ### Phase 6: M6 Ship
 
-Sections: 71 | Checklist items: 521
+Sections: 72 | Checklist items: 526
 
-| Status | Reference   | Deliverable                                                                              | Needs                         | Items |
-| ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
-| [ ]    | D06 T02 §1  | Hostile-input audit Part 1 (`docs/security-audit.md`: zero-JS, `/Launch` & bomb bounds)  | windows-host                  | 7     |
-| [ ]    | D06 T02 §2  | Hostile-input audit Part 2 (macro suppression, HTML script block, link prompt, redact)   | windows-host                  | 7     |
-| [ ]    | D06 T02 §5  | `recto-pdf` public API boundary inventory (`recto_pdf.h` ownership and mutability table) | none                          | 6     |
-| [ ]    | D06 T02 §6  | Post-v1 AppContainer broker process design (`2026-10-14-broker-process-design.md`)       | none                          | 8     |
-| [ ]    | D06 T03 §13 | Interoperability sample set script for the cross-viewer check                            | windows-host                  | 9     |
-| [ ]    | D06 T04 §21 | Print options, print layouts and Recto PDF virtual printer board                         | windows-host                  | 7     |
-| [ ]    | D06 T04 §23 | Managed settings board: policy lock notes and disabled commands                          | windows-host                  | 7     |
-| [ ]    | D06 T04 §25 | Lifecycle board: Report a problem, What's new, language, RTL and scanner                 | windows-host                  | 7     |
-| [ ]    | D07 T01 §1  | Print API spike (`PrintManagerInterop` vs `ID2D1PrintControl`) & section 11 note         | windows-host, display-session | 6     |
-| [ ]    | D07 T01 §2  | Non-blocking print pipeline (`src/app/printing/`, printer-DPI job, preview & `Ctrl+P`)   | windows-host, display-session | 13    |
-| [ ]    | D07 T01 §3  | Automated `Print-to-PDF` verification seam (`Print.*` in `recto-tests`) against corpus   | windows-host                  | 6     |
-| [ ]    | D06 T03 §9  | Printer driver compatibility and print failure isolation suite                           | windows-host, display-session | 11    |
-| [ ]    | D07 T01 §4  | Inno Setup installer (`installer/recto.iss`) for Full and Self-Contained Portable modes  | windows-host                  | 8     |
-| [ ]    | D07 T01 §5  | Release packaging pipeline (`build-installer.ps1`: Setup `.exe`, Portable `.zip` & MSIX) | windows-host                  | 7     |
-| [ ]    | D04 T08 §10 | Installer option, Portable layout and client configuration snippets                      | windows-host                  | 7     |
-| [ ]    | D07 T01 §6  | Automated Full Install, `.pdf` association, upgrade and uninstall proof (`installer`)    | windows-host, display-session | 7     |
-| [ ]    | D07 T01 §7  | Automated Self-Contained Portable Install zero-registry and zero-`%LOCALAPPDATA%` proof  | windows-host, display-session | 6     |
-| [ ]    | D07 T01 §8  | Explorer thumbnail and preview handlers (`IThumbnailProvider`, `IPreviewHandler`)        | windows-host, display-session | 8     |
-| [ ]    | D07 T01 §9  | Explorer verbs: print, printto, Combine and Convert to PDF (`IExplorerCommand`)          | windows-host, display-session | 10    |
-| [ ]    | D04 T07 §22 | `print` terminal step: batch print to a named printer                                    | windows-host                  | 11    |
-| [ ]    | D04 T07 §23 | Print step safeguards: run confirmation, page budget and CLI refusal                     | windows-host, display-session | 7     |
-| [ ]    | D07 T01 §10 | Print layouts: booklet, multiple pages per sheet and poster tiling                       | windows-host, display-session | 9     |
-| [ ]    | D07 T01 §11 | Print page selection: reverse order, pages with comments, a bookmark section, an area    | windows-host                  | 8     |
-| [ ]    | D07 T01 §12 | Print render modes: print as image, grayscale and text as outlines                       | windows-host                  | 6     |
-| [ ]    | D07 T01 §13 | Printer's marks: crop marks, bleed marks, registration marks and page information        | windows-host                  | 6     |
-| [ ]    | D07 T01 §14 | Print options pane and Ctrl+K commands for page selection, render modes and marks        | windows-host, display-session | 9     |
-| [ ]    | D07 T01 §15 | Recto PDF virtual printer design: v4 driver, hand-off and trust boundary                 | windows-host, display-session | 8     |
-| [ ]    | D07 T01 §16 | Recto PDF v4 driver package: manifest, INF, print capabilities and static validation     | windows-host                  | 7     |
-| [ ]    | D07 T01 §17 | Virtual printer spool hand-off: XPS to PDF in the user's session                         | windows-host                  | 7     |
-| [ ]    | D06 T02 §3  | M3-M5 fuzz targets (`fuzz_text`, `fuzz_forms`, `fuzz_openxml_zip`) & scheduled workflow  | windows-host                  | 8     |
-| [ ]    | D06 T02 §4  | Crash triage runbook (`fuzz/README.md`) proven end-to-end on a planted crash input       | windows-host                  | 6     |
-| [ ]    | D07 T01 §18 | Recto PDF virtual printer settings and the save window                                   | windows-host, display-session | 7     |
-| [ ]    | D07 T01 §21 | Installer edge cases: running app, user data on uninstall and shell registration         | windows-host, display-session | 9     |
-| [ ]    | D07 T01 §22 | Settings and recents across versions: schema stamp, migration and newer-file safety      | windows-host                  | 8     |
-| [ ]    | D07 T01 §23 | Ship the neural OCR model: installer, Portable zip, bundle and a find check              | windows-host, display-session | 6     |
-| [ ]    | D07 T02 §8  | Group Policy catalogue and templates: `policy/Recto.admx` and `Recto.adml`               | windows-host                  | 6     |
-| [ ]    | D07 T02 §9  | `PolicyProvider`: read machine and user policy values, typed and bounded                 | windows-host                  | 7     |
-| [ ]    | D07 T02 §10 | `SettingsStore` policy precedence: locked settings and policy gates                      | windows-host                  | 6     |
-| [ ]    | D07 T02 §11 | "Managed by your organization" notes on locked settings and `recto-cli policy show`      | windows-host, display-session | 6     |
-| [ ]    | D07 T02 §18 | Version derivation from git tags, `VERSION` and the release version check                | none                          | 9     |
-| [ ]    | D07 T02 §19 | `recto::core::SemVer`: constexpr parser, precedence comparator, property tests and fuzz  | windows-host                  | 7     |
-| [ ]    | D07 T02 §1  | Build-time version and provenance generator (version, SHA, `Standard` vs `Portable`)     | windows-host                  | 7     |
-| [ ]    | D07 T02 §2  | `AboutPage` (`SPEC 9.8`, `D-About.png`: version truth, `LICENSE` modal and `Built-with`) | windows-host, display-session | 8     |
-| [ ]    | D07 T02 §3  | Build-derived dependency enumeration script, `NOTICE.md` and `docs/license-audit.md`     | windows-host                  | 7     |
-| [ ]    | D07 T02 §4  | Opt-in local crash report bundle writer (`MiniDumpNormal` + D16 ring log `.zip` prompt)  | windows-host, display-session | 7     |
-| [ ]    | D06 T02 §7  | FIPS mode detection and the algorithm policy in `recto-pdf`                              | windows-host                  | 5     |
-| [ ]    | D07 T02 §5  | Localization readiness (`en-US.rc` string extraction and 40% pseudolocale check)         | windows-host, display-session | 6     |
-| [ ]    | D07 T02 §13 | Translation catalogue: languages manifest, glossary, plural rules and the checker        | windows-host                  | 6     |
-| [ ]    | D07 T02 §14 | Interface language setting: Follow Windows or a shipped language                         | windows-host, display-session | 6     |
-| [ ]    | D07 T02 §15 | Localised errors, plurals, dates and numbers: no English assembled in code               | windows-host                  | 6     |
-| [ ]    | D06 T02 §8  | Enforce the FIPS policy in decryption, encryption writers, signing digests and the CLI   | windows-host                  | 6     |
-| [ ]    | D06 T02 §9  | FIPS mode proof script, tested to refuse on an ordinary host                             | windows-host                  | 4     |
-| [ ]    | D07 T02 §16 | Right-to-left readiness: flow direction, mirrored icons and a mirrored pseudolocale      | windows-host, display-session | 5     |
-| [ ]    | D07 T02 §20 | Generated `VERSIONINFO` resources in every shipped binary and a read-back check          | windows-host                  | 7     |
-| [ ]    | D07 T01 §24 | Installer and package version stamping, versioned artifact names and the manifest        | windows-host                  | 8     |
-| [ ]    | D07 T01 §25 | Downgrade warning and silent downgrade refusal (`/ALLOWDOWNGRADE=1`)                     | windows-host, display-session | 9     |
-| [ ]    | D07 T01 §26 | Writer version in settings, recents and session files and newer-writer notes             | windows-host                  | 5     |
-| [ ]    | D07 T02 §21 | Version surfaces: `recto-cli --version --json`, `recto-mcp` server info and crash JSON   | windows-host                  | 5     |
-| [ ]    | D07 T03 §2  | In-app `Report a problem` with privacy-safe diagnostics                                  | windows-host, display-session | 8     |
-| [ ]    | D07 T03 §10 | Changelog and release body from stamped sections and `Fixes-User:` trailers              | none                          | 9     |
-| [ ]    | D07 T03 §7  | What's new after update and opt-in update notice                                         | windows-host, display-session | 8     |
-| [ ]    | D07 T03 §11 | Contract snapshots and `scripts/next-version.py` SemVer bump suggestion                  | windows-host                  | 9     |
-| [ ]    | D07 T02 §6  | GitHub Release runbook (`docs/release-and-store-runbook.md`) and Store submission kit    | windows-host, display-session | 10    |
-| [ ]    | D07 T01 §19 | Full installer integration and end-to-end proof for the Recto PDF printer                | windows-host, display-session | 7     |
-| [ ]    | D07 T01 §20 | Recto PDF driver signature check, signing runbook and release gate                       | windows-host                  | 5     |
-| [ ]    | D07 T02 §12 | Policy templates release artifact and end-to-end Group Policy proof                      | windows-host, display-session | 6     |
-| [ ]    | D07 T02 §17 | First language set: ten drafted translations, reviewed flag and installer languages      | windows-host                  | 9     |
-| [ ]    | D07 T02 §7  | End-to-end v1 distribution bundle (`Setup.exe`, `Portable.zip`, `SHA256SUMS.txt`) & GPL  | windows-host, display-session | 9     |
-| [ ]    | D06 T03 §12 | Installed-build release smoke and upgrade persistence proof on the build host            | windows-host, display-session | 11    |
-| [ ]    | D07 T03 §5  | Release gate for unreleased fixes, security advisories and CI integrity                  | windows-host                  | 9     |
-| [ ]    | D07 T03 §12 | Offline decoder diagnostic reference: steps, failure classes and next actions            | windows-host                  | 4     |
+| Status | Reference   | Deliverable                                                                              | Needs                               | Items |
+| ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------------- | ----- |
+| [ ]    | D06 T01 §9  | Damaged-fax corpus compared with Acrobat Pro, Foxit, PDFelement and UPDF                 | windows-host, attended, third-party | 4     |
+| [ ]    | D06 T02 §1  | Hostile-input audit Part 1 (`docs/security-audit.md`: zero-JS, `/Launch` & bomb bounds)  | windows-host                        | 7     |
+| [ ]    | D06 T02 §2  | Hostile-input audit Part 2 (macro suppression, HTML script block, link prompt, redact)   | windows-host                        | 7     |
+| [ ]    | D06 T02 §5  | `recto-pdf` public API boundary inventory (`recto_pdf.h` ownership and mutability table) | none                                | 6     |
+| [ ]    | D06 T02 §6  | Post-v1 AppContainer broker process design (`2026-10-14-broker-process-design.md`)       | none                                | 8     |
+| [ ]    | D06 T03 §13 | Interoperability sample set script for the cross-viewer check                            | windows-host                        | 9     |
+| [ ]    | D06 T04 §21 | Print options, print layouts and Recto PDF virtual printer board                         | windows-host                        | 7     |
+| [ ]    | D06 T04 §23 | Managed settings board: policy lock notes and disabled commands                          | windows-host                        | 7     |
+| [ ]    | D06 T04 §25 | Lifecycle board: Report a problem, What's new, language, RTL and scanner                 | windows-host                        | 7     |
+| [ ]    | D07 T01 §1  | Print API spike (`PrintManagerInterop` vs `ID2D1PrintControl`) & section 11 note         | windows-host, display-session       | 6     |
+| [ ]    | D07 T01 §2  | Non-blocking print pipeline (`src/app/printing/`, printer-DPI job, preview & `Ctrl+P`)   | windows-host, display-session       | 13    |
+| [ ]    | D07 T01 §3  | Automated `Print-to-PDF` verification seam (`Print.*` in `recto-tests`) against corpus   | windows-host                        | 6     |
+| [ ]    | D06 T03 §9  | Printer driver compatibility and print failure isolation suite                           | windows-host, display-session       | 11    |
+| [ ]    | D07 T01 §4  | Inno Setup installer (`installer/recto.iss`) for Full and Self-Contained Portable modes  | windows-host                        | 8     |
+| [ ]    | D07 T01 §5  | Release packaging pipeline (`build-installer.ps1`: Setup `.exe`, Portable `.zip` & MSIX) | windows-host                        | 7     |
+| [ ]    | D04 T08 §10 | Installer option, Portable layout and client configuration snippets                      | windows-host                        | 7     |
+| [ ]    | D07 T01 §6  | Automated Full Install, `.pdf` association, upgrade and uninstall proof (`installer`)    | windows-host, display-session       | 7     |
+| [ ]    | D07 T01 §7  | Automated Self-Contained Portable Install zero-registry and zero-`%LOCALAPPDATA%` proof  | windows-host, display-session       | 6     |
+| [ ]    | D07 T01 §8  | Explorer thumbnail and preview handlers (`IThumbnailProvider`, `IPreviewHandler`)        | windows-host, display-session       | 8     |
+| [ ]    | D07 T01 §9  | Explorer verbs: print, printto, Combine and Convert to PDF (`IExplorerCommand`)          | windows-host, display-session       | 10    |
+| [ ]    | D04 T07 §22 | `print` terminal step: batch print to a named printer                                    | windows-host                        | 11    |
+| [ ]    | D04 T07 §23 | Print step safeguards: run confirmation, page budget and CLI refusal                     | windows-host, display-session       | 7     |
+| [ ]    | D07 T01 §10 | Print layouts: booklet, multiple pages per sheet and poster tiling                       | windows-host, display-session       | 9     |
+| [ ]    | D07 T01 §11 | Print page selection: reverse order, pages with comments, a bookmark section, an area    | windows-host                        | 8     |
+| [ ]    | D07 T01 §12 | Print render modes: print as image, grayscale and text as outlines                       | windows-host                        | 6     |
+| [ ]    | D07 T01 §13 | Printer's marks: crop marks, bleed marks, registration marks and page information        | windows-host                        | 6     |
+| [ ]    | D07 T01 §14 | Print options pane and Ctrl+K commands for page selection, render modes and marks        | windows-host, display-session       | 9     |
+| [ ]    | D07 T01 §15 | Recto PDF virtual printer design: v4 driver, hand-off and trust boundary                 | windows-host, display-session       | 8     |
+| [ ]    | D07 T01 §16 | Recto PDF v4 driver package: manifest, INF, print capabilities and static validation     | windows-host                        | 7     |
+| [ ]    | D07 T01 §17 | Virtual printer spool hand-off: XPS to PDF in the user's session                         | windows-host                        | 7     |
+| [ ]    | D06 T02 §3  | M3-M5 fuzz targets (`fuzz_text`, `fuzz_forms`, `fuzz_openxml_zip`) & scheduled workflow  | windows-host                        | 8     |
+| [ ]    | D06 T02 §4  | Crash triage runbook (`fuzz/README.md`) proven end-to-end on a planted crash input       | windows-host                        | 6     |
+| [ ]    | D07 T01 §18 | Recto PDF virtual printer settings and the save window                                   | windows-host, display-session       | 7     |
+| [ ]    | D07 T01 §21 | Installer edge cases: running app, user data on uninstall and shell registration         | windows-host, display-session       | 9     |
+| [ ]    | D07 T01 §22 | Settings and recents across versions: schema stamp, migration and newer-file safety      | windows-host                        | 8     |
+| [ ]    | D07 T01 §23 | Ship the neural OCR model: installer, Portable zip, bundle and a find check              | windows-host, display-session       | 6     |
+| [ ]    | D07 T02 §8  | Group Policy catalogue and templates: `policy/Recto.admx` and `Recto.adml`               | windows-host                        | 6     |
+| [ ]    | D07 T02 §9  | `PolicyProvider`: read machine and user policy values, typed and bounded                 | windows-host                        | 7     |
+| [ ]    | D07 T02 §10 | `SettingsStore` policy precedence: locked settings and policy gates                      | windows-host                        | 6     |
+| [ ]    | D07 T02 §11 | "Managed by your organization" notes on locked settings and `recto-cli policy show`      | windows-host, display-session       | 6     |
+| [ ]    | D07 T02 §18 | Version derivation from git tags, `VERSION` and the release version check                | none                                | 9     |
+| [ ]    | D07 T02 §19 | `recto::core::SemVer`: constexpr parser, precedence comparator, property tests and fuzz  | windows-host                        | 7     |
+| [ ]    | D07 T02 §1  | Build-time version and provenance generator (version, SHA, `Standard` vs `Portable`)     | windows-host                        | 7     |
+| [ ]    | D07 T02 §2  | `AboutPage` (`SPEC 9.8`, `D-About.png`: version truth, `LICENSE` modal and `Built-with`) | windows-host, display-session       | 8     |
+| [ ]    | D07 T02 §3  | Build-derived dependency enumeration script, `NOTICE.md` and `docs/license-audit.md`     | windows-host                        | 7     |
+| [ ]    | D07 T02 §4  | Opt-in local crash report bundle writer (`MiniDumpNormal` + D16 ring log `.zip` prompt)  | windows-host, display-session       | 7     |
+| [ ]    | D06 T02 §7  | FIPS mode detection and the algorithm policy in `recto-pdf`                              | windows-host                        | 5     |
+| [ ]    | D07 T02 §5  | Localization readiness (`en-US.rc` string extraction and 40% pseudolocale check)         | windows-host, display-session       | 6     |
+| [ ]    | D07 T02 §13 | Translation catalogue: languages manifest, glossary, plural rules and the checker        | windows-host                        | 6     |
+| [ ]    | D07 T02 §14 | Interface language setting: Follow Windows or a shipped language                         | windows-host, display-session       | 6     |
+| [ ]    | D07 T02 §15 | Localised errors, plurals, dates and numbers: no English assembled in code               | windows-host                        | 6     |
+| [ ]    | D06 T02 §8  | Enforce the FIPS policy in decryption, encryption writers, signing digests and the CLI   | windows-host                        | 6     |
+| [ ]    | D06 T02 §9  | FIPS mode proof script, tested to refuse on an ordinary host                             | windows-host                        | 4     |
+| [ ]    | D07 T02 §16 | Right-to-left readiness: flow direction, mirrored icons and a mirrored pseudolocale      | windows-host, display-session       | 5     |
+| [ ]    | D07 T02 §20 | Generated `VERSIONINFO` resources in every shipped binary and a read-back check          | windows-host                        | 7     |
+| [ ]    | D07 T01 §24 | Installer and package version stamping, versioned artifact names and the manifest        | windows-host                        | 8     |
+| [ ]    | D07 T01 §25 | Downgrade warning and silent downgrade refusal (`/ALLOWDOWNGRADE=1`)                     | windows-host, display-session       | 9     |
+| [ ]    | D07 T01 §26 | Writer version in settings, recents and session files and newer-writer notes             | windows-host                        | 5     |
+| [ ]    | D07 T02 §21 | Version surfaces: `recto-cli --version --json`, `recto-mcp` server info and crash JSON   | windows-host                        | 5     |
+| [ ]    | D07 T03 §2  | In-app `Report a problem` with privacy-safe diagnostics                                  | windows-host, display-session       | 8     |
+| [ ]    | D07 T03 §10 | Changelog and release body from stamped sections and `Fixes-User:` trailers              | none                                | 9     |
+| [ ]    | D07 T03 §7  | What's new after update and opt-in update notice                                         | windows-host, display-session       | 8     |
+| [ ]    | D07 T03 §11 | Contract snapshots and `scripts/next-version.py` SemVer bump suggestion                  | windows-host                        | 9     |
+| [ ]    | D07 T02 §6  | GitHub Release runbook (`docs/release-and-store-runbook.md`) and Store submission kit    | windows-host, display-session       | 10    |
+| [ ]    | D07 T01 §19 | Full installer integration and end-to-end proof for the Recto PDF printer                | windows-host, display-session       | 7     |
+| [ ]    | D07 T01 §20 | Recto PDF driver signature check, signing runbook and release gate                       | windows-host                        | 5     |
+| [ ]    | D07 T02 §12 | Policy templates release artifact and end-to-end Group Policy proof                      | windows-host, display-session       | 6     |
+| [ ]    | D07 T02 §17 | First language set: ten drafted translations, reviewed flag and installer languages      | windows-host                        | 9     |
+| [ ]    | D07 T02 §7  | End-to-end v1 distribution bundle (`Setup.exe`, `Portable.zip`, `SHA256SUMS.txt`) & GPL  | windows-host, display-session       | 9     |
+| [ ]    | D06 T03 §12 | Installed-build release smoke and upgrade persistence proof on the build host            | windows-host, display-session       | 11    |
+| [ ]    | D07 T03 §5  | Release gate for unreleased fixes, security advisories and CI integrity                  | windows-host                        | 9     |
+| [ ]    | D07 T03 §12 | Offline decoder diagnostic reference: steps, failure classes and next actions            | windows-host                        | 5     |
 
 ### Phase 7: After v1
 
@@ -882,6 +884,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 60/813 verified sections, 29 ready to run now.
+Progress: 60/815 verified sections, 29 ready to run now.
 
-Checklist: 390/5971 items completed (includes Commit items).
+Checklist: 390/5980 items completed (includes Commit items).

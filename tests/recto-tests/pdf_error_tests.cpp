@@ -977,13 +977,13 @@ TEST(PdfError, EtwTraceLoggingProviderAndSpans)
 		"HasObjectNum",
 		"ObjectNum",
 		"GenerationNum",
-		"ThreadId",
 		"RefusalReason",
 		"RefusalReasonName",
 		"HasObserved",
 		"Observed",
 		"HasBound",
 		"Bound",
+		"ThreadId",
 		"DecoderStep",
 		"DecoderStepName",
 		"HasPlatformStatus",
@@ -993,9 +993,10 @@ TEST(PdfError, EtwTraceLoggingProviderAndSpans)
 		"HasPriorPlatformStatus",
 		"PriorPlatformStatus"};
 	EXPECT_EQ(captured[1].field_names, expected_diag_fields);
-	// The original event's fields keep their positions; everything later is appended after them (D01 T02 section 25).
+	// The event as D01 T02 section 23 left it keeps every field's position; section 25's fields come after it.
 	const std::vector<std::string> original_diag_fields = {"Sequence", "ErrorCode", "ErrorCodeName", "DiagnosticId",
-		"DiagnosticIdName", "HasByteOffset", "ByteOffset", "HasObjectNum", "ObjectNum", "GenerationNum", "ThreadId"};
+		"DiagnosticIdName", "HasByteOffset", "ByteOffset", "HasObjectNum", "ObjectNum", "GenerationNum", "RefusalReason",
+		"RefusalReasonName", "HasObserved", "Observed", "HasBound", "Bound", "ThreadId"};
 	ASSERT_GE(captured[1].field_names.size(), original_diag_fields.size());
 	EXPECT_TRUE(std::equal(original_diag_fields.begin(), original_diag_fields.end(), captured[1].field_names.begin()));
 	EXPECT_EQ(captured[1].sequence, 1u);

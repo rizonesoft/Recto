@@ -83,6 +83,7 @@ track: M1
 | 23 | §23 | Closed refusal reasons and numeric context on limit and argument errors | §18 | [x] |
 | 24 | §24 | Conversion-check failures name the check, the page and the measured value | §22, §23 | [ ] |
 | 25 | §25 | Decoder failures keep their step and Windows HRESULT in the diagnostic ring and ETW | §23 | [ ] |
+| 26 | §26 | Image decoder recovery outcomes in diagnostics: substituted rows and refusal causes | §25 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
 
@@ -758,6 +759,25 @@ The completion review of `D06 T05 §37` (`docs/reviews/06-quality/D06-T05-s37.md
 - [ ] Commit: `pdf: decoder failures keep their step and HRESULT in diagnostics`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*:PdfFilters.WicFailureClasses` passes under ASan, including `PdfError.DecoderContextReachesRingAndEtw`.
+
+## 26. Image decoder recovery outcomes in diagnostics: substituted rows and refusal causes
+
+The completion review of `D06 T05 §34` (`docs/reviews/06-quality/D06-T05-s34.md`, gap 10) found that CCITT damaged-row recovery is silent: a successful substitution records nothing, and a refusal's cause (allowance used up, no EOL to resynchronize at, recovery not allowed without `/EndOfLine`) lives only in the English message, which the ring and ETW never keep (D16). Support therefore cannot tell a page that opened with substituted rows from one that opened intact, or why one was refused.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that reasons and fields are appended after the existing ones, so every existing numeric value and field is unchanged, that no threading changes, and that the ring stays free of document bytes.
+
+**Build order:**
+
+1. Append the CCITT refusal causes to `RefusalReason` and record a recovery outcome (rows substituted, the first substituted row) as a diagnostic with numbers only, in `src/pdf/error.h` and `src/pdf/filters.cpp`. Done when: a recovered stream and each refusal cause reach the ring and ETW.
+
+- [ ] Append `DamagedRowAllowance`, `DamagedRowNoSync` and `DamagedRowRecoveryOff` to `RefusalReason` with their descriptions (cause, units, a safe next step: another scan or the original), and return them on the matching CCITT refusals with the row as `observed` and the allowance as `bound`. Done when: `PdfError.RefusalReasonNamesCoverEveryReason` names them and the CCITT refusals carry them.
+- [ ] Record one diagnostic per recovered stream (a new `DiagnosticId::RecoveredDamagedRows`, never automatic for a refusal) carrying the rows substituted and the first such row as numbers. Done when: `PdfFilters.CcittRecoveryReachesRingAndEtw` reads the count and the row back from the ring and the captured ETW packet, and finds none for an intact stream.
+- [ ] Commit: `pdf: image decoder recovery outcomes in diagnostics`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*:PdfFilters.Ccitt*` passes under ASan, including `PdfFilters.CcittRecoveryReachesRingAndEtw`.
 
 ## Verification
 
