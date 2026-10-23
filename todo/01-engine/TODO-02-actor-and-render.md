@@ -82,7 +82,7 @@ track: M1
 | 22 | §22 | Error codes named by later sections reconciled with `error.h` | §18 | [ ] |
 | 23 | §23 | Closed refusal reasons and numeric context on limit and argument errors | §18 | [x] |
 | 24 | §24 | Conversion-check failures name the check, the page and the measured value | §22, §23 | [ ] |
-| 25 | §25 | Decoder failures keep their step and Windows HRESULT in the diagnostic ring and ETW | §23 | [ ] |
+| 25 | §25 | Decoder failures keep their step and Windows HRESULT in the diagnostic ring and ETW | §23 | [x] |
 | 26 | §26 | Image decoder recovery outcomes in diagnostics: substituted rows and refusal causes | §25 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
@@ -756,9 +756,12 @@ The completion review of `D06 T05 §37` (`docs/reviews/06-quality/D06-T05-s37.md
 - [x] Add `enum class DecoderStep : uint16_t` (`None`, `WicFactory`, `WicCreateDecoder`, `WicGetFrame`, `WicConvertFormat`, `WicCopyPixels`, `NativeJpx`) with a `constexpr noexcept` name table, and `decoder_step` and `platform_status` (optional `uint32_t`) on `PdfError` and `DiagnosticEntry`. Done when: `PdfError.DecoderStepNamesCoverEveryStep` passes.
 - [x] Carry them into the ring entry, `DiagnosticEntry::format()` (`[step=WicCopyPixels hresult=0x8007000E]`) and the ETW `Diagnostic` event (`DecoderStep`, `DecoderStepName`, `HasPlatformStatus`, `PlatformStatus`), and set them in `wic_failure` (`src/pdf/filters.cpp`). Done when: `PdfError.DecoderContextReachesRingAndEtw` injects a failure at each WIC step (`detail::ScopedWicFailure`) and reads step and HRESULT back from the ring and the captured packet.
 - [x] When JPXDecode falls back and the native decoder also fails, keep WIC's step and HRESULT on the returned error beside the native failure. Done when: the test reads both from the ring entry. Cheaper substitute that fails the checkpoint: the HRESULT only in the English message, which the ring drops.
-- [ ] Commit: `pdf: decoder failures keep their step and HRESULT in diagnostics`
+- [x] Commit: `pdf: decoder failures keep their step and HRESULT in diagnostics`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*:PdfFilters.WicFailureClasses` passes under ASan, including `PdfError.DecoderContextReachesRingAndEtw`.
+
+> **Verified:** 2026-10-23 | §25 | d5625d80cb1160d755aaef8bfca6c780d2eeab91
+> **Review:** `docs/reviews/d01-t02-s25.json`
 
 ## 26. Image decoder recovery outcomes in diagnostics: substituted rows and refusal causes
 
