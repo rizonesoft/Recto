@@ -91,7 +91,7 @@ def unknown_names(todo_root: pathlib.Path, known: set[str]) -> list[str]:
             for match in QUALIFIED.finditer(line):
                 if match.group("scope") or match.group("name") not in known:
                     found.append(f"{relative}:{number}: {match.group(0)}")
-            if line.lstrip().startswith("```"):
+            if line.lstrip().startswith(("```", "~~~")):  # a backtick or tilde fence (CommonMark)
                 fenced = not fenced
                 continue
             if (relative, section) == EXEMPT_SECTION:
