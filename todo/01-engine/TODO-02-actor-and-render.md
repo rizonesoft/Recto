@@ -666,6 +666,8 @@ ISO 32000-1 14.11.2 defines `/UserUnit` as the size of one default user-space un
 
 ## 22. Error codes named by later sections reconciled with `error.h`
 
+> **Started:** 2026-10-23T11:41Z
+
 The completion review of `D01 T02 §18` (`docs/reviews/01-engine/D01-T02-s18.md`, gap 8) found TODO contracts naming error codes `src/pdf/error.h` does not have: a `PdfErrorCode` scope throughout `todo/04-convert/`, `todo/05-organize/` and `todo/06-quality/` (`InvalidArgument`, `PasswordRequired`, `InvalidPassword`, `CertificateRequired`, `UnsupportedRecipientType`, `RollbackIncomplete`, `LimitExceeded`, `CorruptStructure`, `Cancelled`, `ClipboardEmpty`, `AlgorithmNotPermittedByFips`, `ConversionFailed`, `StructTreeMalformed`, `UndoBudgetExceeded`), and `CorruptStructure`, `LimitExceeded`, `InvalidPassword` and `OutputInvalid` as `ErrorCode` members in `todo/02-viewer/`, `todo/03-text/` and `todo/04-convert/`. A section built from such a contract either fails to compile or invents a code on the spot. This section decides each name once and keeps the plan honest with a check.
 
 **Phase:** 1
@@ -678,10 +680,10 @@ The completion review of `D01 T02 §18` (`docs/reviews/01-engine/D01-T02-s18.md`
 1. Decide each name: an existing code where its meaning matches (for example `PasswordRequired` to `NeedsPassword`, `InvalidPassword` to `WrongPassword`, `LimitExceeded` and `UndoBudgetExceeded` to `ResourceLimit`, `CorruptStructure` and `StructTreeMalformed` to `DamagedFormat`), or a new appended code where no existing one distinguishes a case a caller must act on differently. Done when: the decision table is in `docs/reviews/01-engine/D01-T02-s22.md`.
 2. Correct every TODO reference and add a check. Done when: the check passes on the tree and fails on a planted wrong name.
 
-- [ ] Write the decision table (name, files, the code it becomes, why) in `docs/reviews/01-engine/D01-T02-s22.md`, preferring an existing code and adding one only with the caller behaviour that needs it. Done when: every name listed above has a row.
-- [ ] Append any new codes to `ErrorCode` in `src/pdf/error.h` with their names, `DiagnosticId` entries, messages and recording decision, as `§18` did, and extend `PdfError.ErrorCodeNamesCoverEveryCode`. Done when: the test names every value.
-- [ ] Replace each wrong name in the TODO files with `ErrorCode::<code>` from the table, with a dated `**Corrected YYYY-MM-DD:**` note naming the old name without its scope prefix, so the check below does not read the note as a use. Done when: no `PdfErrorCode` scope remains under `todo/`.
-- [ ] Add `tests/scripts/test_error_code_names.py`, which reads the `ErrorCode` enumerators from `src/pdf/error.h` and fails on any `ErrorCode::<name>` or `PdfErrorCode::<name>` under `todo/` (outside `implementation-plan.md`) that is not one of them. Done when: it passes on the tree and fails when an unknown qualified name, assembled in the test so no TODO text holds one, is planted in a TODO file. **Corrected 2026-10-23:** (round 2 of `D01 T02 §18`: this item and the context paragraph named unknown codes in their qualified form, which the check would refuse).
+- [x] Write the decision table (name, files, the code it becomes, why) in `docs/reviews/01-engine/D01-T02-s22.md`, preferring an existing code and adding one only with the caller behaviour that needs it. Done when: every name listed above has a row.
+- [x] Append any new codes to `ErrorCode` in `src/pdf/error.h` with their names, `DiagnosticId` entries, messages and recording decision, as `§18` did, and extend `PdfError.ErrorCodeNamesCoverEveryCode`. Done when: the test names every value.
+- [x] Replace each wrong name in the TODO files with `ErrorCode::<code>` from the table, with a dated `**Corrected YYYY-MM-DD:**` note naming the old name without its scope prefix, so the check below does not read the note as a use. Done when: no `PdfErrorCode` scope remains under `todo/`.
+- [x] Add `tests/scripts/test_error_code_names.py`, which reads the `ErrorCode` enumerators from `src/pdf/error.h` and fails on any `ErrorCode::<name>` or `PdfErrorCode::<name>` under `todo/` (outside `implementation-plan.md`) that is not one of them. Done when: it passes on the tree and fails when an unknown qualified name, assembled in the test so no TODO text holds one, is planted in a TODO file. **Corrected 2026-10-23:** (round 2 of `D01 T02 §18`: this item and the context paragraph named unknown codes in their qualified form, which the check would refuse).
 - [ ] Commit: `pdf: error codes named by later sections reconciled with error.h`
 
 **Test checkpoint:** `python -m unittest tests.scripts.test_error_code_names` passes and fails with a planted unknown code name, and `recto-tests.exe --gtest_filter=PdfError.*` passes under ASan.

@@ -441,10 +441,10 @@ TEST(PdfError, ResultValueAndError)
 }
 
 // Codes are only ever appended: every numeric value from Ok up names its fixed code, uniquely, and maps to a
-// diagnostic of its own, so a renumbered or unnamed enumerator fails here (D01 T02 section 18).
+// diagnostic of its own, so a renumbered or unnamed enumerator fails here (D01 T02 sections 18 and 22).
 TEST(PdfError, ErrorCodeNamesCoverEveryCode)
 {
-	constexpr std::array<std::string_view, 19> kNamesByValue = {
+	constexpr std::array<std::string_view, 21> kNamesByValue = {
 		"Ok",
 		"FileNotFound",
 		"AccessDenied",
@@ -464,10 +464,15 @@ TEST(PdfError, ErrorCodeNamesCoverEveryCode)
 		"InternalError",
 		"ResourceLimit",
 		"InvalidArgument",
+		"ConversionFailed",
+		"RollbackIncomplete",
 	};
 	static_assert(noexcept(error_code_name(ErrorCode::Ok)));
 	static_assert(error_code_name(ErrorCode::ResourceLimit) == "ResourceLimit");
 	static_assert(error_code_name(ErrorCode::InvalidArgument) == "InvalidArgument");
+	static_assert(error_code_name(ErrorCode::ConversionFailed) == "ConversionFailed");
+	static_assert(error_code_name(ErrorCode::RollbackIncomplete) == "RollbackIncomplete");
+	static_assert(static_cast<uint32_t>(ErrorCode::InvalidArgument) == 18u); // appended after it, nothing renumbered
 
 	std::set<std::string_view> seen;
 	for (uint32_t value = 0; value < kNamesByValue.size(); ++value) {
@@ -485,6 +490,34 @@ TEST(PdfError, ErrorCodeNamesCoverEveryCode)
 	EXPECT_EQ(diagnostic_id_name(DiagnosticId::InvalidArgument), "InvalidArgument");
 	EXPECT_NE(diagnostic_id_message(DiagnosticId::ResourceLimit), diagnostic_id_message(DiagnosticId::GenericStatus));
 	EXPECT_NE(diagnostic_id_message(DiagnosticId::InvalidArgument), diagnostic_id_message(DiagnosticId::GenericStatus));
+	EXPECT_EQ(default_diagnostic_id(ErrorCode::ConversionFailed), DiagnosticId::ConversionFailed);
+	EXPECT_EQ(default_diagnostic_id(ErrorCode::RollbackIncomplete), DiagnosticId::RollbackIncomplete);
+	EXPECT_EQ(diagnostic_id_name(DiagnosticId::ConversionFailed), "ConversionFailed");
+	EXPECT_EQ(diagnostic_id_name(DiagnosticId::RollbackIncomplete), "RollbackIncomplete");
+	EXPECT_NE(diagnostic_id_message(DiagnosticId::ConversionFailed).find("not saved"), std::string_view::npos);
+	EXPECT_NE(diagnostic_id_message(DiagnosticId::RollbackIncomplete).find("backup"), std::string_view::npos);
+}
+
+// ConversionFailed and RollbackIncomplete are recorded by the caller that knows the failed rule or the backup paths,
+// never automatically, and a message that reads like a damage hint never turns either into a damaged-file diagnostic
+// (D01 T02 section 22).
+TEST(PdfError, ConversionAndRollbackCodesRecordOnlyWhenLogged)
+{
+	clear_diagnostics();
+	const PdfError failed = make_pdf_error(ErrorCode::ConversionFailed, "bad stream");
+	const PdfError rollback = make_pdf_error(ErrorCode::RollbackIncomplete, "bad xref");
+	EXPECT_TRUE(diagnostics_tail(10).empty());
+	record_diagnostic(failed);
+	record_diagnostic(rollback);
+	const auto tail = diagnostics_tail(10);
+	ASSERT_EQ(tail.size(), 2u);
+	EXPECT_EQ(tail[0].diagnostic_id, DiagnosticId::ConversionFailed);
+	EXPECT_EQ(tail[1].diagnostic_id, DiagnosticId::RollbackIncomplete);
+	for (const DiagnosticId id : {DiagnosticId::ConversionFailed, DiagnosticId::RollbackIncomplete}) {
+		const std::string_view message = diagnostic_id_message(id);
+		EXPECT_EQ(message.find("amage"), std::string_view::npos) << message;
+	}
+	clear_diagnostics();
 }
 
 // ResourceLimit is a bound reached on document content and records itself like the other limits; InvalidArgument is

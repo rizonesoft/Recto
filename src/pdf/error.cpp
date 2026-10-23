@@ -545,9 +545,10 @@ std::string DiagnosticEntry::format() const noexcept
 
 DiagnosticId classify_diagnostic_id(ErrorCode code, std::string_view hint) noexcept
 {
-	// The hints name damaged-file, blocked-action and store categories. A resource limit or an invalid argument is
-	// neither, so its own diagnostic stands whatever the message says.
-	if (code == ErrorCode::ResourceLimit || code == ErrorCode::InvalidArgument) {
+	// The hints name damaged-file, blocked-action and store categories. A resource limit, an invalid argument, a failed
+	// conversion check or an incomplete rollback is none of them, so its own diagnostic stands whatever the message says.
+	if (code == ErrorCode::ResourceLimit || code == ErrorCode::InvalidArgument || code == ErrorCode::ConversionFailed ||
+		code == ErrorCode::RollbackIncomplete) {
 		return default_diagnostic_id(code);
 	}
 	if (!hint.empty()) {

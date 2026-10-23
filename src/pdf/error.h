@@ -42,6 +42,9 @@ enum class ErrorCode : uint32_t {
 	// Appended after InternalError so every earlier numeric value is unchanged (D01 T02 section 18).
 	ResourceLimit,   // a bound other than decompression or recursion was reached (commands, change sets, time)
 	InvalidArgument, // the caller passed a value outside the documented domain, not a damaged file
+	// Appended after InvalidArgument (D01 T02 section 22).
+	ConversionFailed,   // a conversion's output failed its own fidelity or validity check and was not written
+	RollbackIncomplete, // an operation that replaces files failed and could not restore every original in place
 };
 
 [[nodiscard]] constexpr std::string_view error_code_name(ErrorCode code) noexcept
@@ -85,6 +88,10 @@ enum class ErrorCode : uint32_t {
 		return "ResourceLimit";
 	case ErrorCode::InvalidArgument:
 		return "InvalidArgument";
+	case ErrorCode::ConversionFailed:
+		return "ConversionFailed";
+	case ErrorCode::RollbackIncomplete:
+		return "RollbackIncomplete";
 	}
 	return "UnknownError";
 }
@@ -126,6 +133,8 @@ enum class DiagnosticId : uint16_t {
 	CorruptSettingsStore,
 	ResourceLimit,
 	InvalidArgument,
+	ConversionFailed,
+	RollbackIncomplete,
 };
 
 [[nodiscard]] constexpr std::string_view diagnostic_id_name(DiagnosticId id) noexcept
@@ -197,6 +206,10 @@ enum class DiagnosticId : uint16_t {
 		return "ResourceLimit";
 	case DiagnosticId::InvalidArgument:
 		return "InvalidArgument";
+	case DiagnosticId::ConversionFailed:
+		return "ConversionFailed";
+	case DiagnosticId::RollbackIncomplete:
+		return "RollbackIncomplete";
 	}
 	return "GenericStatus";
 }
@@ -270,6 +283,11 @@ enum class DiagnosticId : uint16_t {
 		return "Stopped at a safety limit on work or size; the file may be fine, so try fewer pages or a smaller selection";
 	case DiagnosticId::InvalidArgument:
 		return "The request was refused before any change because one of its values is not allowed";
+	case DiagnosticId::ConversionFailed:
+		return "The converted file did not pass its own check, so it was not saved; another conversion mode may work";
+	case DiagnosticId::RollbackIncomplete:
+		return "The operation failed and some original files could not be put back; their contents are kept in the "
+			   "backup files named";
 	}
 	return "Engine diagnostic event";
 }
@@ -315,6 +333,10 @@ enum class DiagnosticId : uint16_t {
 		return DiagnosticId::ResourceLimit;
 	case ErrorCode::InvalidArgument:
 		return DiagnosticId::InvalidArgument;
+	case ErrorCode::ConversionFailed:
+		return DiagnosticId::ConversionFailed;
+	case ErrorCode::RollbackIncomplete:
+		return DiagnosticId::RollbackIncomplete;
 	}
 	return DiagnosticId::GenericStatus;
 }
@@ -1129,7 +1151,9 @@ void clear_diagnostics() noexcept;
 // emits a TraceLoggingWrite event when should_auto_record_diagnostic(code):
 // DamagedFormat, DecompressionLimitExceeded, RecursionLimitExceeded and
 // ResourceLimit. Other codes, InvalidArgument among them (a caller's error,
-// not a damaged file), are recorded only through record_diagnostic.
+// not a damaged file), are recorded only through record_diagnostic. So are
+// ConversionFailed and RollbackIncomplete: the caller records them with the
+// failed rule or the backup paths, which only it knows.
 [[nodiscard]] PdfError make_pdf_error(
 	ErrorCode code,
 	std::string_view message = {},

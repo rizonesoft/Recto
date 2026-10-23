@@ -551,7 +551,7 @@ Add certificate (public-key) encryption to the existing **Protected & Signed PDF
 
 ## 15. Certificate prompt when opening a public-key encrypted PDF
 
-Make files from `§14` (and other readers' certificate encryption) open in the UI. When `OpenDocumentPipeline` (`D02 T01 §5`) or a Convert job receives `PdfErrorCode::CertificateRequired` (`D05 T01 §12`), it shows a **Choose a certificate** dialog beside the SPEC 9.9 Password dialog instead of the password prompt. The dialog lists the user's certificates that match the file's recipients, lets the user pick another certificate or a `.pfx` file (imported for this session only, never into the store), and waits visibly while Windows asks for a smart-card or token PIN. The file is never opened as a damaged or blank document, and a wrong certificate is a clear message with a way to try another.
+Make files from `§14` (and other readers' certificate encryption) open in the UI. When `OpenDocumentPipeline` (`D02 T01 §5`) or a Convert job receives the `CertificateRequired` code (`D05 T01 §12` appends it), it shows a **Choose a certificate** dialog beside the SPEC 9.9 Password dialog instead of the password prompt. The dialog lists the user's certificates that match the file's recipients, lets the user pick another certificate or a `.pfx` file (imported for this session only, never into the store), and waits visibly while Windows asks for a smart-card or token PIN. The file is never opened as a damaged or blank document, and a wrong certificate is a clear message with a way to try another. **Corrected 2026-10-23:** (`D01 T02 §22`: named unqualified until `D05 T01 §12` appends the code).
 
 **Phase:** 4
 **Needs:** windows-host, display-session
