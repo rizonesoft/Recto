@@ -619,6 +619,58 @@ TEST(PdfXref, RecoveryRoundThreeFixes)
 		EXPECT_EQ(rec->root_ref(), (IndirectRef{1u, 0u}));
 	}
 
+	// Round 6: a probe reads a container whose parameters are indirect, through the objects scanned so far, so the
+	// stream after it is skipped by its true /Length and the catalog in its data is never read.
+	{
+		const std::string fake = "\nendstream\nendobj\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n";
+		std::string pdf = "%PDF-1.7\n";
+		const size_t genuine_at = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages + "2 0 obj\n<< >>\nendobj\n" +
+			container(20u, "88 0 " + std::to_string(fake.size()), "/N 1 /First 5 /Filter /ASCIIHexDecode /DecodeParms 2 0 R") +
+			"30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(1), nullptr);
+		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
+	}
+
+	// Round 6: two containers hold object 88, and an intact xref row selects the first: the stream's /Length is that
+	// member's value, not the later container's.
+	{
+		const std::string fake = "\nendstream\nendobj\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n";
+		std::string pdf = "%PDF-1.7\n";
+		const size_t genuine_at = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages +
+			container(20u, "88 0 " + std::to_string(fake.size()), "/N 1 /First 5 /Filter /ASCIIHexDecode") +
+			container(21u, "88 0 3", "/N 1 /First 5 /Filter /ASCIIHexDecode");
+		const std::string row("\x02\x00\x00\x00\x14\x00\x00", 7); // object 88: type 2, in container 20, index 0
+		pdf += "40 0 obj\n<< /Type /XRef /Size 89 /Root 1 0 R /Index [88 1] /W [1 4 2] /Length 7 >>\nstream\n" + row +
+			"\nendstream\nendobj\n";
+		pdf += "30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(1), nullptr);
+		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
+	}
+
+	// Round 6: probes have their own allowance, so ciphertext they decode never leaves an intact xref stream after
+	// them without the budget to read it.
+	{
+		std::string pdf = "%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages;
+		for (uint32_t n = 40u; n < 42u; ++n) { // two 512 KiB containers: the whole 1 MiB of a 16-entry recovery
+			const std::string cipher(524288u, static_cast<char>(0xA5));
+			pdf += std::to_string(n) + " 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Length 524288 >>\nstream\n" + cipher +
+				"\nendstream\nendobj\n";
+		}
+		pdf += "50 0 obj\n<< /Length 60 0 R >>\nstream\nabcd\nendstream\nendobj\n";
+		const std::string row("\x01\x00\x00\x00\x09\x00\x00", 7); // object 1: type 1 at offset 9
+		pdf += "70 0 obj\n<< /Type /XRef /Size 71 /Root 1 0 R /Encrypt 9 0 R /Index [1 1] /W [1 4 2] /Length 7 >>\nstream\n" +
+			row + "\nendstream\nendobj\n9 0 obj\n<< /Filter /Standard /V 1 /R 2 /O <00> /U <00> /P -4 >>\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 16);
+		RECTO_ASSERT_OK(rec);
+		EXPECT_EQ(rec->root_ref(), (IndirectRef{1u, 0u}));
+	}
+
 	// Round 4: object 1 defined three times in the file (a catalog, then two other dictionaries); an intact type-1
 	// row naming the first restores it, catalog and all, so root 1 is valid again.
 	{

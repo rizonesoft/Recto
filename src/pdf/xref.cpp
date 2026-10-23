@@ -1047,6 +1047,130 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			return {};
 		};
 
+		// A container's parameters resolve one level through the objects the scan found uncompressed (the latest
+		// definition of each, as far as the scan has come); a reference to anything else, or to an object that does not
+		// parse, is null, as an undefined object is (ISO 32000-1 section 7.3.10), so resolution never recurses. Parsing is
+		// charged to the scan's cumulative parse budget.
+		bool resolver_over_budget = false;
+		const auto parse_target = [&](IndirectRef ref) -> PdfResult<PdfValue> {
+			const XrefEntry* entry = table.find(ref.obj_num);
+			if (entry == nullptr || !entry->is_uncompressed() || entry->generation != ref.gen_num ||
+				entry->byte_offset >= file_bytes.size()) {
+				return PdfValue(PdfNull{});
+			}
+			const size_t at = static_cast<size_t>(entry->byte_offset);
+			Parser parser(file_bytes);
+			parser.seek(at);
+			auto parsed = parser.parse_indirect_object(
+				[&recovered_integers, ref](IndirectRef len_ref) -> PdfResult<int64_t> {
+					const auto it = recovered_integers.find(len_ref.obj_num);
+					if (len_ref.obj_num == ref.obj_num || it == recovered_integers.end() ||
+						it->second.first != len_ref.gen_num) {
+						return make_pdf_error(
+							ErrorCode::DamagedFormat,
+							"Indirect /Length target not available as an integer object during recovery");
+					}
+					return it->second.second;
+				});
+			cumulative_parse_bytes += static_cast<uint64_t>(
+				std::max(parser.lexer().max_scanned_offset(), parser.lexer().position()) - at);
+			if (cumulative_parse_bytes > max_recovery_parse_bytes) {
+				resolver_over_budget = true;
+				return make_xref_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedXRef,
+					"Damaged-file recovery exceeded cumulative parse byte budget",
+					at);
+			}
+			if (!parsed.has_value()) {
+				if (parsed.error().code == ErrorCode::OutOfMemory) {
+					return parsed.error();
+				}
+				return PdfValue(PdfNull{});
+			}
+			return std::move(parsed->value);
+		};
+		// A resolver over `parse_target` that parses each target once into `targets` (keyed by object and generation, so
+		// a lookup with the wrong generation never answers the right one), kept reduced to what a parameter can use, so
+		// a parameter object many containers share is parsed and charged once and each lookup copies a few scalars.
+		const auto caching_resolver = [&parse_target](std::unordered_map<uint64_t, PdfValue>& targets) -> IndirectObjectResolver {
+			return [&parse_target, &targets](IndirectRef ref) -> PdfResult<PdfValue> {
+				const uint64_t target_key = (static_cast<uint64_t>(ref.obj_num) << 16u) | ref.gen_num;
+				if (const auto known = targets.find(target_key); known != targets.end()) {
+					return known->second.deep_clone();
+				}
+				RECTO_PDF_TRY_REF(parsed_value, parse_target(ref));
+				if (parsed_value.is_stream()) {
+					return parsed_value; // a container is parsed once anyway; its bytes are not kept
+				}
+				const auto kept = targets.emplace(target_key, recovery_parameter_value(parsed_value)).first;
+				return kept->second.deep_clone();
+			};
+		};
+		const auto over_budget_error = [&](size_t at) {
+			return make_xref_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedXRef,
+				"Damaged-file recovery exceeded cumulative parse byte budget",
+				at);
+		};
+		// What deciding to decode a container reads, each value resolved one level through `resolve`: its filter chain as
+		// names (anything else reads as 0, which no filter is), and /N and /First.
+		struct ContainerView {
+			PdfDict filters;
+			std::optional<int64_t> n;
+			std::optional<int64_t> first;
+		};
+		const auto container_view = [&](const PdfDict& dict, const IndirectObjectResolver& resolve) -> PdfResult<ContainerView> {
+			const auto filter_name = [&](const PdfValue& v) -> PdfResult<PdfValue> {
+				if (const auto ref = v.as_ref()) {
+					RECTO_PDF_TRY_REF(target, resolve(*ref));
+					const auto name = target.as_name();
+					return name.has_value() ? PdfValue(PdfName::from_decoded(*name)) : PdfValue(int64_t{0});
+				}
+				const auto name = v.as_name();
+				return name.has_value() ? PdfValue(PdfName::from_decoded(*name)) : PdfValue(int64_t{0});
+			};
+			const auto int_value = [&](const PdfValue* v) -> PdfResult<std::optional<int64_t>> {
+				if (v == nullptr) {
+					return std::optional<int64_t>{};
+				}
+				if (const auto ref = v->as_ref()) {
+					RECTO_PDF_TRY_REF(target, resolve(*ref));
+					return target.as_int();
+				}
+				return v->as_int();
+			};
+			ContainerView view;
+			if (const PdfValue* filter = dict.get("Filter"); filter != nullptr && !filter->is_null()) {
+				const PdfValue* filter_value = filter;
+				std::optional<PdfValue> filter_target;
+				if (const auto ref = filter->as_ref()) {
+					RECTO_PDF_TRY_REF(target, resolve(*ref));
+					filter_target.emplace(std::move(target));
+					filter_value = &*filter_target;
+				}
+				if (const PdfArray* arr = filter_value->as_array(); arr != nullptr && arr->size() <= kMaxFilterChainDepth) {
+					PdfArray names;
+					for (const PdfValue& e : *arr) {
+						RECTO_PDF_TRY_REF(name, filter_name(e));
+						names.push_back(std::move(name));
+					}
+					view.filters.set("Filter", PdfValue(std::move(names)));
+				} else if (filter_value->is_null()) {
+					view.filters.set("Filter", PdfValue(PdfNull{}));
+				} else {
+					RECTO_PDF_TRY_REF(name, filter_name(*filter_value));
+					view.filters.set("Filter", std::move(name));
+				}
+			}
+			RECTO_PDF_TRY_REF(n, int_value(dict.get("N")));
+			RECTO_PDF_TRY_REF(first, int_value(dict.get("First")));
+			view.n = n;
+			view.first = first;
+			return view;
+		};
+
 		// A stream's indirect /Length can name an integer inside a container the scan has passed but not unpacked. Such
 		// integers are read on demand: the containers met so far are decoded once each, in file order, within what the
 		// decode budget has left, and their integer members kept with the container's position. A container that cannot
@@ -1060,9 +1184,17 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			std::vector<uint8_t> decoded;
 		};
 		std::map<std::pair<uint32_t, size_t>, ProbedContainer> probed_containers;
+		// Integer members read by a probe: by object (the latest container in the file holding it, with that
+		// container's position) and by (container position, index), the address a compressed xref entry names.
 		std::unordered_map<uint32_t, std::pair<uint64_t, int64_t>> container_integers;
+		std::map<std::pair<uint64_t, uint32_t>, std::pair<uint32_t, int64_t>> probed_members;
 		size_t containers_probed = 0;
 		bool probe_budget_spent = false;
+		// Probes have an allowance of their own, the size of the recovery's decode budget, so decoding what may turn out
+		// to be ciphertext never spends what the xref streams and the unpack after the scan need.
+		uint64_t cumulative_probe_bytes = 0;
+		std::unordered_map<uint64_t, PdfValue> probe_targets;
+		const IndirectObjectResolver probe_resolver = caching_resolver(probe_targets);
 		const auto integers_only = [&recovered_integers](IndirectRef len_ref) -> PdfResult<int64_t> {
 			const auto it = recovered_integers.find(len_ref.obj_num);
 			if (it == recovered_integers.end() || it->second.first != len_ref.gen_num) {
@@ -1087,33 +1219,50 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 					continue;
 				}
 				const PdfStream* container = parsed->value.as_stream();
-				if (container == nullptr || objstm_needs_resolver(container->dict) ||
-					!filters_are_metered_lossless(container->dict)) {
+				if (container == nullptr) {
 					continue;
 				}
-				const uint64_t left = max_recovery_decoded_objstm_bytes - cumulative_decoded_objstm_bytes;
+				// Indirect parameters resolve through what the scan has found so far, so such a container is unpacked
+				// again after the scan with what the whole file says; a container with direct parameters reuses the
+				// probe's bytes.
+				const bool indirect_parameters = objstm_needs_resolver(container->dict);
+				auto view = container_view(container->dict, probe_resolver);
+				if (!view.has_value()) {
+					if (resolver_over_budget) {
+						return over_budget_error(container_at.pos);
+					}
+					continue;
+				}
+				if (!filters_are_metered_lossless(view->filters)) {
+					continue;
+				}
+				const uint64_t left = max_recovery_decoded_objstm_bytes - cumulative_probe_bytes;
 				detail::ScopedDecodeWorkMeter decode_work;
-				auto decoded = decode_stream(*container, static_cast<size_t>(std::min<uint64_t>(kMaxDecodedStreamBytes, left)));
+				auto decoded = decode_stream(*container, static_cast<size_t>(std::min<uint64_t>(kMaxDecodedStreamBytes, left)),
+					&probe_resolver);
+				if (resolver_over_budget) {
+					return over_budget_error(container_at.pos);
+				}
 				if (!decoded.has_value() && decoded.error().code == ErrorCode::OutOfMemory) {
 					return decoded.error();
 				}
-				cumulative_decoded_objstm_bytes += std::min<uint64_t>(left,
+				cumulative_probe_bytes += std::min<uint64_t>(left,
 					std::max<uint64_t>(decode_work.bytes(), decoded.has_value() ? static_cast<uint64_t>(decoded->size()) : 0u));
 				if (!decoded.has_value()) {
 					// Out of budget, the probe stops; any other failure leaves this container to the unpack after the scan.
 					probe_budget_spent = decoded.error().code == ErrorCode::DecompressionLimitExceeded;
 					continue;
 				}
-				const auto n_opt = container->dict.get_int("N");
-				const auto first_opt = container->dict.get_int("First");
+				const std::optional<int64_t> n_opt = view->n;
+				const std::optional<int64_t> first_opt = view->first;
 				std::vector<uint8_t> bytes = std::move(*decoded);
 				RECTO_PDF_TRY_REF(header_opt, read_objstm_header(container_at.obj_num, n_opt, first_opt, bytes));
 				if (header_opt.has_value()) {
-					CachedObjStream view = std::move(*header_opt);
-					view.decoded_bytes = std::move(bytes);
-					for (size_t idx = 0; idx < view.entries.size(); ++idx) {
+					CachedObjStream members = std::move(*header_opt);
+					members.decoded_bytes = std::move(bytes);
+					for (size_t idx = 0; idx < members.entries.size(); ++idx) {
 						auto member = extract_object_stream_member(
-							view, static_cast<uint32_t>(idx), IndirectRef{view.entries[idx].obj_num, 0u});
+							members, static_cast<uint32_t>(idx), IndirectRef{members.entries[idx].obj_num, 0u});
 						if (!member.has_value()) {
 							if (member.error().code == ErrorCode::OutOfMemory) {
 								return member.error();
@@ -1121,12 +1270,16 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 							continue;
 						}
 						if (const auto value = member->as_int()) {
-							container_integers[view.entries[idx].obj_num] = {static_cast<uint64_t>(container_at.pos), *value};
+							container_integers[members.entries[idx].obj_num] = {static_cast<uint64_t>(container_at.pos), *value};
+							probed_members[{static_cast<uint64_t>(container_at.pos), static_cast<uint32_t>(idx)}] =
+								{members.entries[idx].obj_num, *value};
 						}
 					}
-					bytes = std::move(view.decoded_bytes);
+					bytes = std::move(members.decoded_bytes);
 				}
-				probed_containers[{container_at.obj_num, container_at.pos}] = ProbedContainer{n_opt, first_opt, std::move(bytes)};
+				if (!indirect_parameters) {
+					probed_containers[{container_at.obj_num, container_at.pos}] = ProbedContainer{n_opt, first_opt, std::move(bytes)};
+				}
 			}
 			return {};
 		};
@@ -1138,24 +1291,42 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 					ErrorCode::DamagedFormat,
 					"Indirect /Length target cannot reference its own stream object");
 			}
+			const auto unavailable = [] {
+				return make_pdf_error(
+					ErrorCode::DamagedFormat,
+					"Indirect /Length target not available as an integer object during recovery");
+			};
+			const XrefEntry* entry = table.find(len_ref.obj_num);
+			// An intact xref row selected a member: that member, and no other container's object of the same number.
+			if (entry != nullptr && entry->is_compressed()) {
+				const XrefEntry* container = table.find(entry->obj_stm_num);
+				if (len_ref.gen_num != 0u || container == nullptr || !container->is_uncompressed()) {
+					return unavailable();
+				}
+				RECTO_PDF_RETURN_IF_ERROR(probe_containers());
+				if (const auto member = probed_members.find({container->byte_offset, entry->obj_stm_index});
+					member != probed_members.end() && member->second.first == len_ref.obj_num) {
+					return member->second.second;
+				}
+				return unavailable();
+			}
 			const auto it = recovered_integers.find(len_ref.obj_num);
 			const bool uncompressed = it != recovered_integers.end() && it->second.first == len_ref.gen_num;
 			const auto defined = defined_at.find(len_ref.obj_num);
-			const uint64_t uncompressed_at = uncompressed && defined != defined_at.end() ? defined->second : 0u;
-			if (len_ref.gen_num == 0u && !deferred_objstms.empty() &&
-				(!uncompressed || deferred_objstms.back().pos > uncompressed_at)) {
+			const uint64_t defined_pos = defined != defined_at.end() ? defined->second : 0u;
+			// A container met after the object's current definition (or after its deletion by a row) replaces it, as the
+			// unpack after the scan will.
+			if (len_ref.gen_num == 0u && !deferred_objstms.empty() && deferred_objstms.back().pos > defined_pos) {
 				RECTO_PDF_RETURN_IF_ERROR(probe_containers());
 				if (const auto member = container_integers.find(len_ref.obj_num);
-					member != container_integers.end() && (!uncompressed || member->second.first > uncompressed_at)) {
+					member != container_integers.end() && member->second.first > defined_pos) {
 					return member->second.second;
 				}
 			}
 			if (uncompressed) {
 				return it->second.second;
 			}
-			return make_pdf_error(
-				ErrorCode::DamagedFormat,
-				"Indirect /Length target not available as an integer object during recovery");
+			return unavailable();
 		};
 
 		// Linearly scan from header_off for `<N> <G> obj` and `trailer << ... >>`.
@@ -1536,94 +1707,9 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			++pos;
 		}
 
-		// Unpack the deferred containers in file order. Their parameters resolve one level through the objects the scan
-		// found uncompressed (the latest definition of each); a reference to anything else, or to an object that does not
-		// parse, is null, as an undefined object is (ISO 32000-1 section 7.3.10), so resolution never recurses. Parsing
-		// is charged to the scan's cumulative parse budget.
-		bool resolver_over_budget = false;
-		// Each target is parsed once and kept, so a parameter object many containers share is parsed and charged once.
-		// Keyed by object and generation number, so a lookup with the wrong generation never answers the right one.
+		// Unpack the deferred containers in file order, their parameters resolved one level as `parse_target` describes.
 		std::unordered_map<uint64_t, PdfValue> resolved_targets;
-		const IndirectObjectResolver scan_resolver = [&](IndirectRef ref) -> PdfResult<PdfValue> {
-			const uint64_t target_key = (static_cast<uint64_t>(ref.obj_num) << 16u) | ref.gen_num;
-			if (const auto known = resolved_targets.find(target_key); known != resolved_targets.end()) {
-				return known->second.deep_clone(); // a reduced value: a few scalars
-			}
-			auto parsed_value = [&]() -> PdfResult<PdfValue> {
-				const XrefEntry* entry = table.find(ref.obj_num);
-				if (entry == nullptr || !entry->is_uncompressed() || entry->generation != ref.gen_num ||
-					entry->byte_offset >= file_bytes.size()) {
-					return PdfValue(PdfNull{});
-				}
-				const size_t at = static_cast<size_t>(entry->byte_offset);
-				Parser parser(file_bytes);
-				parser.seek(at);
-				auto parsed = parser.parse_indirect_object(
-					[&recovered_integers, ref](IndirectRef len_ref) -> PdfResult<int64_t> {
-						const auto it = recovered_integers.find(len_ref.obj_num);
-						if (len_ref.obj_num == ref.obj_num || it == recovered_integers.end() ||
-							it->second.first != len_ref.gen_num) {
-							return make_pdf_error(
-								ErrorCode::DamagedFormat,
-								"Indirect /Length target not available as an integer object during recovery");
-						}
-						return it->second.second;
-					});
-				cumulative_parse_bytes += static_cast<uint64_t>(
-					std::max(parser.lexer().max_scanned_offset(), parser.lexer().position()) - at);
-				if (cumulative_parse_bytes > max_recovery_parse_bytes) {
-					resolver_over_budget = true;
-					return make_xref_error(
-						ErrorCode::DamagedFormat,
-						DiagnosticId::DamagedXRef,
-						"Damaged-file recovery exceeded cumulative parse byte budget",
-						at);
-				}
-				if (!parsed.has_value()) {
-					if (parsed.error().code == ErrorCode::OutOfMemory) {
-						return parsed.error();
-					}
-					return PdfValue(PdfNull{});
-				}
-				return std::move(parsed->value);
-			}();
-			if (!parsed_value.has_value()) {
-				return parsed_value;
-			}
-			if (parsed_value->is_stream()) {
-				return parsed_value; // a container is parsed once anyway; its bytes are not kept
-			}
-			// Kept reduced to what a parameter can use, so each later lookup copies a few scalars, not the target.
-			const auto kept = resolved_targets.emplace(target_key, recovery_parameter_value(*parsed_value)).first;
-			return kept->second.deep_clone();
-		};
-		const auto over_budget_error = [&](size_t at) {
-			return make_xref_error(
-				ErrorCode::DamagedFormat,
-				DiagnosticId::DamagedXRef,
-				"Damaged-file recovery exceeded cumulative parse byte budget",
-				at);
-		};
-		// A name, or null for anything else, after one level of resolution: what the metered-filter check reads.
-		const auto resolved_filter_name = [&](const PdfValue& v) -> PdfResult<PdfValue> {
-			if (const auto ref = v.as_ref()) {
-				RECTO_PDF_TRY_REF(target, scan_resolver(*ref));
-				const auto name = target.as_name();
-				return name.has_value() ? PdfValue(PdfName::from_decoded(*name)) : PdfValue(int64_t{0});
-			}
-			const auto name = v.as_name();
-			return name.has_value() ? PdfValue(PdfName::from_decoded(*name)) : PdfValue(int64_t{0});
-		};
-		const auto resolved_int = [&](const PdfValue* v) -> PdfResult<std::optional<int64_t>> {
-			if (v == nullptr) {
-				return std::optional<int64_t>{};
-			}
-			if (const auto ref = v->as_ref()) {
-				RECTO_PDF_TRY_REF(target, scan_resolver(*ref));
-				return target.as_int();
-			}
-			return v->as_int();
-		};
+		const IndirectObjectResolver scan_resolver = caching_resolver(resolved_targets);
 		const bool encrypted = table.trailer_.contains("Encrypt");
 		for (DeferredObjStm& deferred : deferred_objstms) {
 			if (encrypted) {
@@ -1650,51 +1736,17 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 				continue;
 			}
 			// The metered-filter rule above, read through the resolved /Filter.
-			PdfDict filter_view;
-			if (const PdfValue* filter = container->dict.get("Filter"); filter != nullptr && !filter->is_null()) {
-				const PdfValue* filter_value = filter;
-				std::optional<PdfValue> filter_target;
-				if (const auto ref = filter->as_ref()) {
-					auto target = scan_resolver(*ref);
-					if (!target.has_value()) {
-						return resolver_over_budget ? over_budget_error(deferred.pos) : target.error();
-					}
-					filter_target.emplace(std::move(*target));
-					filter_value = &*filter_target;
-				}
-				if (const PdfArray* arr = filter_value->as_array(); arr != nullptr && arr->size() <= kMaxFilterChainDepth) {
-					PdfArray names;
-					for (const PdfValue& e : *arr) {
-						auto name = resolved_filter_name(e);
-						if (!name.has_value()) {
-							return resolver_over_budget ? over_budget_error(deferred.pos) : name.error();
-						}
-						names.push_back(std::move(*name));
-					}
-					filter_view.set("Filter", PdfValue(std::move(names)));
-				} else if (filter_value->is_null()) {
-					filter_view.set("Filter", PdfValue(PdfNull{}));
-				} else {
-					auto name = resolved_filter_name(*filter_value);
-					if (!name.has_value()) {
-						return resolver_over_budget ? over_budget_error(deferred.pos) : name.error();
-					}
-					filter_view.set("Filter", std::move(*name));
-				}
+			auto view = container_view(container->dict, scan_resolver);
+			if (!view.has_value()) {
+				return resolver_over_budget ? over_budget_error(deferred.pos) : view.error();
 			}
-			if (!filters_are_metered_lossless(filter_view)) {
+			if (!filters_are_metered_lossless(view->filters)) {
 				record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream,
 					static_cast<uint64_t>(deferred.pos), deferred.obj_num, 0u);
 				continue;
 			}
-			auto n_opt = resolved_int(container->dict.get("N"));
-			auto first_opt = resolved_int(container->dict.get("First"));
-			if (!n_opt.has_value() || !first_opt.has_value()) {
-				if (resolver_over_budget) {
-					return over_budget_error(deferred.pos);
-				}
-				return !n_opt.has_value() ? n_opt.error() : first_opt.error();
-			}
+			const std::optional<int64_t> n_opt = view->n;
+			const std::optional<int64_t> first_opt = view->first;
 			detail::ScopedDecodeWorkMeter decode_work;
 			auto dec_stm = decode_stream(*container, static_cast<size_t>(std::min<uint64_t>(
 				kMaxDecodedStreamBytes, max_recovery_decoded_objstm_bytes - cumulative_decoded_objstm_bytes)),
@@ -1719,7 +1771,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			}
 			if (dec_stm.has_value()) {
 				RECTO_PDF_RETURN_IF_ERROR(
-					unpack_objstm(deferred.obj_num, deferred.pos, *n_opt, *first_opt, std::move(*dec_stm)));
+					unpack_objstm(deferred.obj_num, deferred.pos, n_opt, first_opt, std::move(*dec_stm)));
 			}
 		}
 
