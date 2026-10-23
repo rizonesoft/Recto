@@ -11,6 +11,8 @@ track: M2
 
 > **Goal:** `recto-ui` (`src/ui`), Recto's own C++23 UI toolkit, exists as a static library beside the engine and replaces the WinUI scaffold: `Recto.exe` is a Win32 `wWinMain` host that runs `ui::Application`, opens a custom-frame `ui::Window` with Mica Alt, dark mode and per-monitor DPI, composes it with DirectComposition and Direct2D on one shared D3D11 device, and lays out and paints a retained element tree in effective pixels. Design tokens are generated from `design/tokens/colors.json` and resolved by `ThemeManager` (Light, Dark, Follow Windows, high contrast). Text, icons, SVG and bitmaps draw through DirectWrite and Direct2D. Pointer, keyboard, focus, motion, popups, observable properties, commands, drag-and-drop, the clipboard, the page canvas `SwapChainHost` and Windows 11 non-client behaviour (drag regions, Snap Layouts) all work, and a headless golden-image suite proves the look against `design/screenshots/D-*.png` at 100, 150 and 200 percent. Every control in `todo/10-ui/TODO-02-ui-controls.md` and every shell surface builds on this file.
 
+> **Corrected 2026-10-23:** this toolkit is Vellum, the shared Rizonesoft UI engine (foundation plan D22 to D26). After `D10 T04 §1` moves it, read `recto-ui`, `src/ui`, `ui::` and `Ui.*` test names in this file as `vellum`, `libs/vellum`, `vellum::` and `Vellum.*` in `vellum-tests.exe`. Vellum owns the engine and the token role schema; Recto's palette, `RectoIcons`, identity and shell stay in `src/app` (D24). The full pen and ink path (`§22`, `§23`) is built in M2 (D25). Sections already ticked keep their text; unticked sections are built at the new paths.
+
 > **Current state:** Measured 2026-10-22. `src/ui` does not exist, and `Recto.sln` has no `recto-ui` project. `src/app` holds the WinUI 3 scaffold from `D00 T01 §3` (`App.xaml`, `App.xaml.h`, `App.xaml.cpp`, `MainWindow.xaml`, `MainWindow.xaml.h`, `MainWindow.xaml.cpp`, `MainWindow.idl`, `Package.appxmanifest`, `app.manifest`, `pch.h`, `pch.cpp`, `Recto.vcxproj`, `Assets/`) with a `Microsoft.WindowsAppSDK` package reference. `scripts/check-winui-pin.py`, `tests/scripts/test_check_winui_pin.py` and the `winui` matrix entry in `.github/workflows/pins.yml` (line 39) exist, and `scripts/merge_prs.py` (lines 39 to 41) accepts `winui/*` pin branches. `design/tokens/colors.json` and `design/tokens/RectoColors.xaml` both exist; no generator exists. `resources/ico/recto.ico` and `resources/svg/` exist; `resources/fonts/` does not (`D02 T01 §18` builds `RectoIcons.ttf`). `tests/recto-tests/test_support.h` already provides `compute_ssim`, `compare_rgba`, `expect_rgba_equal` and `sha256_hex`. `Directory.Build.props` applies `/W4 /WX` to every `recto-*` project and `Recto`. `design/screenshots/` holds `D-Brand.png`, `D-Focus-Light.png`, `D-Focus-Dark.png`, `D-Classic.png`, `D-ReadingRoom.png`, `D-Home.png`, `D-Search.png`, `D-Convert.png`, `D-Organize.png`, `D-Layout.png`, `D-Settings.png`, `D-About.png` and `D-Dialogs.png`. `docs/specs/2026-10-22-recto-ui-toolkit-design.md` is the approved design and none of its sections is built.
 
 > **Groomed 2026-10-23:** re-measured against today's tree. `Directory.Build.targets` already compiles every `recto-*` project and `Recto` with `stdcpp23` (`/std:c++23preview`) and `/W4 /WX`, so `§1` adds no language-standard setting. Binaries land in `build\bin\<platform>\<configuration>\<project>\<project>.exe`, so every command in this file now names `build\bin\x64\Debug\recto-tests\recto-tests.exe` and `build\bin\x64\Debug\Recto\Recto.exe` (it said `build\bin\x64\Debug\recto-tests.exe`, a path that does not exist). `§2` was extended to cover every tracked file that still names WinUI or the Windows App SDK and to convert `src/app/Recto.vcxproj` to a plain Win32 project; `§4` gained the full screen API the F11 command needs; `§12` gained the cursor resolution nothing owned. The wider SPEC check (sections 4 to 12 against `D10 T01` to `T03`) found every control, elevation level (Z 32 and Z 64, `§9`), motion (`§14`, 167 ms), high-contrast mapping (`D10 T03 §5`) and accessibility rule owned except the hit-target minimum, now `D10 T03 §8`.
@@ -28,6 +30,10 @@ track: M2
 - -> XREF: D06 T04 §1 -- the design-board checks use §20's golden-image harness and `--update` path.
 - -> XREF: D10 T02 §1 -- the `Control` base and every control build on §9, §10, §13 and §16 here.
 - -> XREF: D10 T03 §1 -- the UI Automation provider tree builds on §6's element tree and §4's `WM_GETOBJECT` hook.
+- -> XREF: D10 T04 §1 -- moves this library to `libs/vellum` as `vellum::` after §1 and §2; §3, §8 and §21 are built at the new paths.
+- -> XREF: D10 T04 §3 -- the neutral token role schema and generic generator that §8's `ThemeManager` reads.
+- -> XREF: D10 T04 §4 -- `vellum::IconSet`, through which §11's `Icon` resolves the `RectoIcons` font Recto registers.
+- -> XREF: D03 T03 §43 -- the Ink tool's pen input consumes §22's pen model and §23's low-latency ink presenter.
 - -> XREF: D00 T01 §1 -- `TODO-01-repo-and-build.md` consumes sections of this file (first use in the section named).
 - -> XREF: D02 T03 §2 -- `TODO-03-home-and-panels.md` consumes sections of this file (first use in the section named).
 - -> XREF: D02 T04 §2 -- `TODO-04-settings-and-layout.md` consumes sections of this file (first use in the section named).
@@ -67,15 +73,15 @@ track: M2
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | `recto-ui` static library, module boundary and headless render harness | D00 T01 §3 | [ ] |
 | 2 | §2 | Win32 `Recto.exe` host replaces the WinUI scaffold; Windows App SDK pins retired | §1 | [ ] |
-| 3 | §3 | UI thread `Dispatcher`, timers and engine callback marshalling | §1 | [ ] |
+| 3 | §3 | UI thread `Dispatcher`, timers and engine callback marshalling | §1, D10 T04 §1 | [ ] |
 | 4 | §4 | Top-level `Window`: custom frame, Mica Alt, dark mode, DPI and minimum size | §2, §3 | [ ] |
 | 5 | §5 | Compositor: shared D3D11 device, DirectComposition tree, D2D surfaces, device loss | §4 | [ ] |
 | 6 | §6 | `Element` tree: retained rendering, invalidation, hit testing and visual layers | §5 | [ ] |
 | 7 | §7 | Layout engine: epx measure and arrange, pixel snapping, Stack, Grid, Dock, Overlay | §6 | [ ] |
-| 8 | §8 | Design tokens generated from `design/tokens/colors.json` and `ThemeManager` | §1 | [ ] |
+| 8 | §8 | Token role schema and `ThemeManager` | §1, D10 T04 §1, D10 T04 §3 | [ ] |
 | 9 | §9 | Drawing primitives: token radii, hairlines, borders, opacity, elevation shadows | §5, §8 | [ ] |
 | 10 | §10 | Text: DirectWrite type ramp, `TextBlock`, trimming and highlighted ranges | §7, §8 | [ ] |
-| 11 | §11 | Icon, SVG and bitmap image elements | §10, D02 T01 §18 | [ ] |
+| 11 | §11 | Icon, SVG and bitmap image elements | §10, D02 T01 §18, D10 T04 §4 | [ ] |
 | 12 | §12 | Pointer and keyboard input: routing, capture, wheel, accelerators, access keys | §6 | [ ] |
 | 13 | §13 | Focus manager: tab order, focus scopes, arrow groups and the Fluent focus visual | §9, §12 | [ ] |
 | 14 | §14 | Motion: frame clock, Fluent easing, panel motion and the Windows animation setting | §6 | [ ] |
@@ -85,7 +91,9 @@ track: M2
 | 18 | §18 | `SwapChainHost`: composition swap chain element for the page canvas | §5, §6 | [ ] |
 | 19 | §19 | Non-client hit testing: drag regions, resize edges, caption buttons, Snap Layouts | §4, §9, §10, §12 | [ ] |
 | 20 | §20 | Golden-image suite: headless renders at 100, 150 and 200 percent against SPEC boards | §1, §9, §10 | [ ] |
-| 21 | §21 | Include chain for compiler-reported module boundary crossings | §1 | [ ] |
+| 21 | §21 | Include chain for compiler-reported module boundary crossings | §1, D10 T04 §1 | [ ] |
+| 22 | §22 | Pen and ink: coalesced pen history, eraser, barrel button and pen cursors | §12 | [ ] |
+| 23 | §23 | Low-latency ink presenter: wet ink layer, prediction and dry handoff | §5, §22 | [ ] |
 
 ## 1. `recto-ui` static library, module boundary and headless render harness
 
@@ -312,7 +320,9 @@ Layout is measure then arrange in effective pixels (epx) with final positions ro
 
 **Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Layout.*` passes at 100, 125, 150, 175 and 200 percent (snapping, panels, slot reparenting without recreation).
 
-## 8. Design tokens generated from `design/tokens/colors.json` and `ThemeManager`
+## 8. Token role schema and `ThemeManager`
+
+> **Corrected 2026-10-23:** retitled from "Design tokens generated from `design/tokens/colors.json` and `ThemeManager`" (D24). The generator is `libs/vellum/scripts/build-tokens.py` and the roles come from `libs/vellum/tokens/schema.json`, both built by `D10 T04 §3`; Recto's values live in `src/app/theme/recto_theme.json` and generate `src/app/generated/recto_theme.g.h`, which `src/app` hands to `vellum::ThemeManager`. Read `scripts/build-ui-tokens.py`, `src/ui/generated/recto_tokens.g.h`, `Recto*Brush` names and `Ui.Tokens.*` below as that generator, the Recto theme header, the schema's neutral role names and `Vellum.Tokens.*`. This section builds `ThemeManager` (mode resolution, high contrast, transparency, animation setting, live repaint) and the no-hex test over `libs/vellum` and `src/app`; the `RectoColors.xaml` retirement moved to `D10 T04 §3`. Cost of reversing: regenerating one header per consumer.
 
 `design/tokens/colors.json` becomes the single colour source (design spec section 4.6). `scripts/build-ui-tokens.py` (stdlib Python only, `--check` mode for CI) generates `src/ui/generated/recto_tokens.g.h` with every `Recto*Brush` colour for Light and Dark, the HighContrast mapping of each brush to a system colour (`COLOR_WINDOW`, `COLOR_WINDOWTEXT`, `COLOR_HIGHLIGHT`, `COLOR_HIGHLIGHTTEXT`, `COLOR_HOTLIGHT`, `COLOR_GRAYTEXT`, `COLOR_BTNFACE`, `COLOR_BTNTEXT`), the radii (`ControlCornerRadius` 4, `OverlayCornerRadius` 8, pill), the 4 epx spacing grid, the elevations (Z 32 and Z 64), the type ramp (SPEC section 5) and the motion constants (167 ms, 8 epx; SPEC section 12). Token names stay the SPEC's names. `ui::ThemeManager` resolves Light, Dark or Follow Windows (registry `AppsUseLightTheme`, `WM_SETTINGCHANGE` `ImmersiveColorSet`), high contrast (`SPI_GETHIGHCONTRAST`, `WM_SYSCOLORCHANGE`), transparency effects (`EnableTransparency`) and the animation setting (`SPI_GETCLIENTAREAANIMATION`), and repaints every window live. `design/tokens/RectoColors.xaml` is deleted, and SPEC sections 1 and 4 and `design/tokens/README` text point at `colors.json`. A test proves no hex colour literal appears in `src/ui` or `src/app` outside the generated header.
 
@@ -420,6 +430,8 @@ Layout is measure then arrange in effective pixels (epx) with final positions ro
 **Treatment:** Private font set by concept name, Segoe Fluent Icons for stock glyphs, native D2D SVG, strided bitmaps. Cheaper substitute that fails the checkpoint: PNG exports of icons, hard-coded code points in controls, rasterising SVG through a third-party library, or `width * 4` strides that skew padded buffers.
 **Chrome:** consumes `resources/fonts/RectoIcons.ttf` and its `RectoIcons.map.json` code point map (D02 T01 §18), `resources/svg/`, and §8 tokens for state colours; no glyph inside a filled or tinted tile.
 
+> **Corrected 2026-10-23:** Vellum ships no icon font (D24). `vellum::Icon` resolves `set:name` through `vellum::IconSet` (`D10 T04 §4`); Recto registers `RectoIcons.ttf` and its map under the set `recto` from `src/app` at start-up. The private font-set loader below lives in `IconSet`, and Vellum's `Image` tests use the open-licence test font from `D10 T04 §4`, so `Vellum.Image.*` no longer requires `D02 T01 §18`; Recto's `App.Icons.*` test proves the real font. `SystemGlyph`, `SvgImage` and `BitmapImage` are unchanged.
+
 **Build order:**
 
 1. Implement the private font-set loader and concept-name lookup in `src/ui/icon_font.cpp`. Done when: `Ui.Image.IconLookupByName` finds every concept in the map and refuses an unknown name with a typed error.
@@ -461,6 +473,8 @@ Input arrives through `WM_POINTER*` with `EnableMouseInPointer(TRUE)` so mouse, 
 - [ ] Implement access keys: `Alt` press-release shows key tips on elements with an `access_key`, `Alt+letter` invokes. Done when: `Ui.Input.AccessKeysShowAndInvoke` passes. Source: SPEC sections 8.4, 11.
 - [ ] Add `Element::cursor()` (a `ui::Cursor` enum: `Arrow`, `IBeam`, `Hand`, `SizeWE`, `SizeNS`, `SizeAll`, `NotAllowed`, `Wait`, `AppStarting`) and answer `WM_SETCURSOR` in `src/ui/cursor.cpp` by walking up from the hit-tested element to the first one that sets a cursor, loading system cursors with `LoadCursorW(nullptr, IDC_*)`, falling back to `Arrow`, and showing `Wait` for the window while a modal `Dialog` operation declares itself busy. Done when: `Ui.Input.CursorFollowsElement` hit-tests a `TextBox`, a `Hyperlink`, a `Splitter` edge and plain text and reads `GetCursor()` as `IBeam`, `Hand`, `SizeWE` and `Arrow`, and `Ui.Input.CursorHiddenForTouchAndPen` shows no cursor change for touch and pen pointers. Source: Microsoft Learn "WM_SETCURSOR message". Cheaper substitute: each control calling `SetCursor` on `WM_MOUSEMOVE`, which flickers and breaks under capture.
 - [ ] Commit: `ui: add pointer, wheel and keyboard routing, accelerators, access keys and cursors`
+
+> **Corrected 2026-10-23:** this section keeps the shared pointer path and basic pen pressure; the full pen model (coalesced history, tilt, twist, eraser, barrel button, hover, pen cursors) is `§22`, and low-latency wet ink is `§23` (D25).
 
 > **Groomed 2026-10-23:** only the `Splitter` (`D10 T02 §26`) set a cursor and no section owned `WM_SETCURSOR`, so text fields, links and the page canvas would all show the arrow. The cursor micro-step above gives every control one place to declare its cursor; `D10 T02 §4`, `§2` and `§26` set `Element::cursor()` instead of calling `SetCursor`.
 
@@ -712,7 +726,58 @@ The golden suite renders toolkit fixtures headless through the §1 harness at 10
 
 **Test checkpoint:** `python scripts/check-ui-boundary.py --configuration Debug --platform x64` exits 0 after the Debug x64 build and `python -m unittest tests.scripts.test_check_ui_boundary` passes, including the planted raw-string splice, macro and bare-name crossings, each reported with its include chain.
 
+## 22. Pen and ink: coalesced pen history, eraser, barrel button and pen cursors
+
+A drawing or annotation canvas needs every pen sample, not one per frame, so Vellum delivers the full pen model through `§12`'s pointer path (D25). `vellum::PenEvent` extends `PointerEvent` with the coalesced samples of each `WM_POINTERUPDATE` (`GetPointerPenInfoHistory`, oldest first, each with position, pressure 0 to 1024 normalised to 0.0 to 1.0, tilt X and Y, twist and timestamp), the eraser state (`PEN_FLAG_ERASER`, `PEN_FLAG_INVERTED`), the barrel button (`PEN_FLAG_BARREL`), hover (in range, not in contact) and a pen cursor the element chooses. Recto's Ink tool (`D03 T03 §43`) and Isotone's brushes consume it; Vellum never interprets a stroke. Files: `libs/vellum/include/vellum/pen.h`, `libs/vellum/src/pen_router.cpp`, `libs/vellum/src/pen_cursor.cpp`.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** no
+
+**Build order:**
+
+1. Read coalesced pen history and pen properties into `PenEvent` in `libs/vellum/src/pen_router.cpp`. Done when: `Vellum.Pen.CoalescedHistory` receives every injected sample in order with pressure, tilt and twist.
+2. Report eraser, barrel and hover states. Done when: `Vellum.Pen.EraserAndBarrel` and `Vellum.Pen.HoverInRange` pass with injected pen input.
+3. Add pen cursors and the tests in `libs/vellum/tests/pen_tests.cpp`. Done when: `Vellum.Pen.*` passes on the display-session host.
+
+- [ ] Read `GetPointerPenInfoHistory` for each `WM_POINTERUPDATE` and deliver the samples oldest first in `PenEvent::samples`, falling back to one sample from `GetPointerPenInfo` when history is unavailable. Done when: `Vellum.Pen.CoalescedHistory` injects eight samples in one frame through `InjectSyntheticPointerInput` and receives all eight in order. Source: Microsoft Learn `GetPointerPenInfoHistory`. Cheaper substitute: one sample per message, which draws polygonal strokes at speed.
+- [ ] Normalise pressure (0 to 1024 to 0.0 to 1.0), tilt X and Y (degrees, -90 to 90), twist (0 to 359) and carry the `PEN_MASK_*` validity of each. Done when: `Vellum.Pen.PropertiesNormalised` passes for a pen that reports no tilt (validity false, value 0).
+- [ ] Report the eraser end (`PEN_FLAG_ERASER` or `PEN_FLAG_INVERTED`) and the barrel button (`PEN_FLAG_BARREL`) per sample, with an `eraser_changed` edge when the pen is turned over in range. Done when: `Vellum.Pen.EraserAndBarrel` passes.
+- [ ] Deliver hover (`WM_POINTERUPDATE` without `POINTER_FLAG_INCONTACT`) and leave-range events so a canvas can draw a brush outline before contact. Done when: `Vellum.Pen.HoverInRange` receives hover moves and one leave.
+- [ ] Add `vellum::PenCursor` (system pen cursor, a crosshair, or a consumer-drawn outline of a given diameter in epx) chosen by `Element::pen_cursor()` and drawn on a composition visual, hidden for touch. Done when: `Vellum.Pen.CursorOutlineFollows` moves the outline with hover at 100 and 200 percent. Cheaper substitute: the arrow cursor under a pen.
+- [ ] Report touch contacts while a pen is in range with a `pen_in_range` flag so a consumer can reject palms. Done when: `Vellum.Pen.TouchWhilePenInRange` marks the touch contact.
+- [ ] Commit: `vellum: add coalesced pen history, eraser, barrel, hover and pen cursors`
+
+**Test checkpoint:** `build\bin\x64\Debug\vellum-tests\vellum-tests.exe --gtest_filter=Vellum.Pen.*` passes on the display-session host (coalesced order, normalisation, eraser and barrel edges, hover, cursor outline, touch flag). Fails if history is dropped to one sample per message.
+
+## 23. Low-latency ink presenter: wet ink layer, prediction and dry handoff
+
+Ink must appear under the pen tip, not a frame behind it (D25). `vellum::InkPresenter` draws wet ink (the stroke in progress) on its own DirectComposition visual backed by a composition surface updated from the input path, independent of the element tree's frame and of the consumer's canvas, so a busy page render or document thread never delays the stroke. It extends the stroke by a short predicted segment from recent velocity, replaced by real samples as they arrive, and on pen up hands the finished stroke (all samples and the stroke style) to the consumer through a callback, which renders it into its own canvas (dry ink) before the wet visual clears without a gap or a double. Recto's Ink tool (`D03 T03 §43`) and Isotone's canvases consume it. Files: `libs/vellum/include/vellum/ink_presenter.h`, `libs/vellum/src/ink_presenter.cpp`.
+
+**Phase:** 2
+**Needs:** windows-host, display-session
+**Surface:** no
+
+**Build order:**
+
+1. Draw wet ink from `§22` samples on a dedicated visual over a host element in `libs/vellum/src/ink_presenter.cpp`. Done when: `Vellum.Ink.WetStrokeDraws` renders an injected stroke with the given width, colour and pressure curve.
+2. Add prediction and the dry handoff. Done when: `Vellum.Ink.PredictionReplaced` and `Vellum.Ink.DryHandoffNoGap` pass.
+3. Measure latency. Done when: input-to-present latency is recorded on the reference machine.
+
+- [ ] Create the wet ink visual (`IDCompositionVisual2` with a `IDCompositionSurface` on `§5`'s shared device) above the host element, updated with `BeginDraw` dirty rects for each new segment. Done when: `Vellum.Ink.WetStrokeDraws` matches a reference stroke at SSIM 0.98 or better. Source: Microsoft Learn `IDCompositionSurface::BeginDraw`.
+- [ ] Update the wet visual from the pen event handler without waiting for the element tree frame, and commit the composition device immediately. Done when: `Vellum.Ink.IndependentOfTree` draws a stroke while the tree's frame is blocked for 100 ms.
+- [ ] Predict up to 16 ms of stroke from the last samples' velocity, drawn as a separate replaceable segment. Done when: `Vellum.Ink.PredictionReplaced` shows no predicted pixels after the real samples arrive. Cheaper substitute: no prediction, which leaves the stroke a frame behind.
+- [ ] Hand the finished stroke (`InkStroke`: samples, width, colour, pressure curve) to the consumer's `on_stroke_complete` callback on pen up, and clear the wet visual only after the consumer signals its dry render is committed. Done when: `Vellum.Ink.DryHandoffNoGap` finds the stroke visible in every frame across the handoff and never doubled.
+- [ ] Cancel a stroke on `WM_POINTERCAPTURECHANGED` or pointer cancel and clear the wet visual without a callback. Done when: `Vellum.Ink.CancelClears` passes.
+- [ ] Rebuild the wet surface on device loss through `§5`'s `DeviceDependent`, keeping the samples of the stroke in progress. Done when: `Vellum.Ink.SurvivesDeviceLoss` passes.
+- [ ] Record input-to-present latency for a 120 Hz pen on the reference machine in `docs/reference-machines.md`. Done when: the median and 95th percentile are in the file.
+- [ ] Commit: `vellum: add low-latency ink presenter with prediction and dry handoff`
+
+**Test checkpoint:** `build\bin\x64\Debug\vellum-tests\vellum-tests.exe --gtest_filter=Vellum.Ink.*` passes on the display-session host (wet stroke, independence from the tree frame, prediction replaced, gapless dry handoff, cancel, device loss). Fails if the wet stroke waits for the tree's frame.
+
 ## Verification
+
+> **Corrected 2026-10-23:** after `D10 T04 §1`, read `recto-tests.exe --gtest_filter=Ui.*` below as `build\bin\x64\Debug\vellum-tests\vellum-tests.exe --gtest_filter=Vellum.*` (which adds `Vellum.Pen.*` and `Vellum.Ink.*` from `§22` and `§23`), and `python scripts/build-ui-tokens.py --check` as `python libs/vellum/scripts/build-tokens.py --check` for the test theme and Recto's theme (`D10 T04 §3`).
 
 - Build: `.\build.cmd` builds x64 and ARM64 Debug and Release with `recto-ui` and `Recto.exe` at zero warnings, and `Recto.exe` opens a Mica Alt window with working drag, resize, Snap Layouts and system menu on a Windows 11 display-session host.
 - Tests: `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.*` passes in full, and the headless subset (`Ui.Project.*`, `Ui.Dispatcher.*`, `Ui.Compositor.*`, `Ui.Element.*`, `Ui.Layout.*`, `Ui.Tokens.*`, `Ui.Painter.*`, `Ui.Text.*`, `Ui.Image.*`, `Ui.Binding.*`, `Ui.SwapChain.*`, `Ui.Golden.*`) passes without a display session; the same run under `EnableASAN=true` reports no error in `Ui.Dispatcher.*` and `Ui.Binding.*`.

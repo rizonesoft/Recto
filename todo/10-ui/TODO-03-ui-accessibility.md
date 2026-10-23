@@ -20,6 +20,7 @@ track: M2
 - -> XREF: D10 T01 §8 -- the generated `recto_tokens.g.h` carries the high contrast mapping of each brush to a `COLOR_*` index that `§5` applies and verifies.
 - -> XREF: D10 T01 §13 -- `ui::FocusManager` owns the Fluent focus visual and arrow groups that `§5` restyles for high contrast and `§8` walks.
 - -> XREF: D99 T01 §5 -- the operator Narrator listening pass runs the script that `§8` authors (`docs/reviews/10-ui/narrator-smoke.md`) after `§8` is stamped.
+- -> XREF: D10 T04 §1 -- moves this library to `libs/vellum` as `vellum::`; `§7` is built at the new path with string tables supplied by the consumer.
 - -> XREF: D10 T02 §1 -- the `Control` base declares the automation name, role and tooltip hooks that `§1` turns into providers; `D10 T02 §23` is the control gallery that `§2` and `§8` walk.
 - -> XREF: D03 T02 §1 -- the document text provider (`DocumentViewAutomationPeer` over `PageText`) is rebuilt on `§1` (fragment root and element provider) and `§3` (`ui::TextRangeAdapter`) instead of a WinUI `AutomationPeer`.
 - -> XREF: D03 T02 §5 -- the `AnnouncementService` raises its polite page, find, selection and job messages through the notification sink that `§4` builds.
@@ -67,7 +68,7 @@ track: M2
 | 4 | §4 | UIA notification and live-region announcements | §1 | [ ] |
 | 5 | §5 | High contrast: system colour mapping, live switching and high-contrast focus visuals | D10 T01 §8, D10 T01 §13 | [ ] |
 | 6 | §6 | Windows text scaling applied to the type ramp and layout | D10 T01 §7, D10 T01 §10 | [ ] |
-| 7 | §7 | `Strings`: localized string tables, fallback and pseudo-localization | D10 T01 §1 | [ ] |
+| 7 | §7 | `Strings`: localized string tables, fallback and pseudo-localization | D10 T01 §1, D10 T04 §1 | [ ] |
 | 8 | §8 | Accessibility verification: UIA tree walk, keyboard traversal, scripted checks | §2, §3, §4, §5, §6 | [ ] |
 
 ## 1. UI Automation provider tree: fragment root, navigation, properties, focus events
@@ -251,6 +252,8 @@ Windows has a Text size slider (Settings, Accessibility, Text size) from 100 to 
 
 WinUI used `.resw` files and MRT Core to pick a language; both leave with the Windows App SDK. `recto-ui` uses the Win32 standard instead: `STRINGTABLE` resources compiled into `Recto.exe`, one `.rc` per language under `src/app/strings/`, loaded explicitly by language id. This section builds `ui::Strings`, the selection by the Language setting then the Windows display language, the English fallback, a generated pseudo-locale for layout tests, a check that every id exists in every shipped language, and the layout mirroring that right-to-left languages need. The release plan answers the right-to-left question: `D07 T02 §16` ships right-to-left readiness (no right-to-left language in the first set of ten), so mirroring is in scope here as the engine capability, with the first right-to-left language a translation task. Default chosen: `Win32 STRINGTABLE`, because it needs no runtime and is the Win32 standard; cost of changing later is one loader and a resource conversion script. This section must not break `recto-cli` (it keeps English, stable output) or `recto-core` (no UI strings in engine libraries).
 
+> **Corrected 2026-10-23:** `vellum::Strings` is the engine (loader, language selection, fallback, pseudo-locale generator, mirroring) and holds no product strings (D24): the `.rc` tables under `src/app/strings/` and `scripts/check-strings.py` stay Recto's, and Vellum's tests load a test table from `libs/vellum/tests/strings/`. It is built after `D10 T04 §1`, so read `ui::Strings` as `vellum::Strings`.
+
 **Phase:** 2
 **Needs:** windows-host, display-session
 **Surface:** yes
@@ -289,6 +292,8 @@ WinUI used `.resw` files and MRT Core to pick a language; both leave with the Wi
 Each section above proves its own piece. This section proves the whole: that the control gallery presents the tree, names and patterns a screen reader expects, that every control can be reached and operated with the keyboard alone, that the speech Narrator would read is right, and that the in-tree UIA rule check (`Ui.A11yRules`, modelled on the Accessibility Insights for Windows automated rules) finds no failures. It must not weaken any earlier test to pass. Every step is scripted and runs unattended on the display-session host; the human Narrator listening pass is the operator section `D99 T01 §5`.
 
 > **Groomed 2026-10-22:** removed `attended`. The tree walk, keyboard traversal, a speech-line check built from UIA properties and the in-tree UIA rule check all run by script with results in `build/a11y/` and `docs/reviews/10-ui/`; contrast and text size are exercised through the injected sources of `§5` and `§6`. Hearing Narrator speak and switching the real Windows contrast theme moved to `D99 T01 §5` (operator), so this section no longer blocks the 25 sections downstream of it (owner decision 2026-10-22 (foundation plan section 1)).
+
+> **Corrected 2026-10-23:** after `D10 T04 §1`, read `Ui.A11yRules` and the other `Ui.*` filters here as `Vellum.A11yRules` and `Vellum.*` in `vellum-tests.exe`; the gallery it walks is `vellum-gallery` (`D10 T02 §23`).
 
 **Phase:** 2
 **Needs:** windows-host, display-session

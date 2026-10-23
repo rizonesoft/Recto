@@ -1,8 +1,10 @@
-# 10 UI Toolkit
+# 10 UI Toolkit (Vellum)
 
 > **Phase 2 (M2 Viewer)**
 
-`recto-ui` (`src/ui`), Recto's own C++23 UI toolkit on a Win32 window with DirectComposition, Direct2D and DirectWrite, which replaces WinUI 3 (owner decision 2026-10-22, foundation plan D4; design: `docs/specs/2026-10-22-recto-ui-toolkit-design.md`). It reproduces the Fluent look `design/SPEC.md` was written against, so every M2 to M6 surface builds on these sections instead of stock WinUI controls. Domain number 09 belonged to the withdrawn Recto Cloud domain (D20) and is not reused.
+`recto-ui` (`src/ui`), Recto's own C++23 UI toolkit on a Win32 window with DirectComposition, Direct2D and DirectWrite, which replaces WinUI 3 (owner decision 2026-10-22, foundation plan D4; design: `docs/specs/2026-10-22-recto-ui-toolkit-design.md`). It reproduces the Fluent look `design/SPEC.md` was written against, so every M2 to M6 surface builds on these sections instead of stock WinUI controls. > **Corrected 2026-10-23:** the toolkit is Vellum (foundation plan D22 to D26): the shared Rizonesoft UI engine, built first inside this repository at `libs/vellum/` (namespace `vellum`) behind a strict boundary, with Recto's theme, `RectoIcons` and shells supplied as a client. `D10 T04` moves and renames it; sections written before that name `recto-ui`, `src/ui` and `ui::`, which read as Vellum, `libs/vellum` and `vellum::` once `D10 T04 §1` lands.
+
+Domain number 09 belonged to the withdrawn Recto Cloud domain (D20) and is not reused.
 
 ## TODOs
 
@@ -11,6 +13,7 @@
 | [TODO-01](./TODO-01-ui-foundation.md) | recto-ui Foundation: Window, Composition, Elements, Layout, Tokens, Text and Input | active |
 | [TODO-02](./TODO-02-ui-controls.md) | recto-ui Controls: the Fluent Control Set the SPEC Uses | active |
 | [TODO-03](./TODO-03-ui-accessibility.md) | recto-ui Accessibility: UI Automation, High Contrast, Text Scale and Strings | active |
+| [TODO-04](./TODO-04-vellum-boundary.md) | Vellum Boundary: Move, Rename, Neutral Theming, Identity, Versioning and Extraction | active |
 
 ## Completed
 
@@ -25,9 +28,11 @@
 - Window host (custom frame, Mica Alt, dark mode, per-monitor DPI, Snap Layouts, full screen), DirectComposition compositor, element tree, layout, generated design tokens, drawing primitives and elevation, DirectWrite text, icons and images, input and cursors, focus, motion, popups, binding helpers, drag-and-drop and clipboard, and the page canvas `SwapChainHost`
 - The control set: buttons, tooltips, text input with TSF, password and number boxes, check, radio and toggle, sliders and progress, combo boxes, scrolling with DirectManipulation, virtualized lists and grids, tree, title-bar tabs, menus and the menu bar, flyouts and cards, dialogs, segmented controls and the mode switcher, navigation rail and settings cards, info bars, toasts and pills, search boxes, colour swatches and custom colour entry, spell checking, calendar and date picker, pane splitter, and the control gallery
 - UI Automation providers and patterns, the reusable text-range adapter, announcements, high contrast, text scaling, string tables and the accessibility verification suite
+- The Vellum boundary: the move to `libs/vellum`, the `vellum::` rename, its own test executable and boundary and brand checks, the neutral token schema with Recto's theme as a client file, application identity and icon sets, versioning and API surface, the extraction dry run and the post-extraction pin
 
 ## Out of scope
 
+- Office and Isotone themes, shells and canvases (each app owns them, D23), and the real extraction before a second app adopts Vellum (D25)
 - Screens and view models (02 to 08 build them on this toolkit), the document text provider (D03 T02), notifications, printing and the Share contract (owned by the sections that use them)
 
 ---

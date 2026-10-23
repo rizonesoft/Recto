@@ -46,6 +46,7 @@ track: M2
 - -> XREF: D10 T01 §4 -- `ui::Window` frame, DPI, minimum size, icon and close request used by §1, §7 and §8.
 - -> XREF: D10 T01 §8 -- generated `recto_tokens.g.h` and `ui::ThemeManager` consumed by every section here.
 - -> XREF: D10 T01 §11 -- `ui::Icon` loads the `RectoIcons.ttf` that §18 builds; `ui::SvgImage` draws the brand and drop assets.
+- -> XREF: D10 T04 §4 -- `vellum::IconSet`, with which §18 registers `RectoIcons.ttf` and its map under the set `recto`; `§3` there is the token role schema that `recto_theme.json` maps.
 - -> XREF: D10 T01 §19 -- non-client hit testing, drag regions and Snap Layouts for the title bar of §2 and §16.
 - -> XREF: D10 T02 §13 -- the document tabs of §3, §15 and §16 build on `ui::TabStrip`.
 - -> XREF: D10 T02 §14 -- tab and menu popups of §9 and §15 build on `ui::Menu`; the Classic menu bar of §9 on `ui::MenuBar` (D10 T02 §15).
@@ -89,7 +90,7 @@ track: M2
 | 15 | §15 | Reopen closed tab (`Ctrl+Shift+T`) and close-other, left and right tab commands | §3, §8, §13, D02 T03 §11, D06 T04 §24, D10 T01 §12, D10 T02 §13, D10 T02 §14, D10 T02 §20 | [ ] |
 | 16 | §16 | Drag to reorder tabs and move a tab by keyboard | §3, §13, D02 T03 §11, D06 T04 §24, D10 T01 §14, D10 T01 §19, D10 T02 §13, D10 T03 §4 | [ ] |
 | 17 | §17 | Share a copy through the Windows Share contract | §8, §9, D02 T03 §11, D06 T04 §24, D10 T02 §17 | [ ] |
-| 18 | §18 | `RectoIcons` subset icon font, stable code point map and glyph resources | §1 | [ ] |
+| 18 | §18 | `RectoIcons` subset icon font, stable code point map and glyph resources | §1, D10 T04 §4 | [ ] |
 | 19 | §19 | `RectoChipStyle` pill style for chips, filter tags, keycaps, badges and counters | §1, §18, D10 T01 §9, D10 T02 §20 | [ ] |
 | 20 | §20 | Classic status bar: current page, page size, PDF version and zoom slider | §4, §9, D02 T02 §6, D02 T02 §7, D02 T03 §11, D02 T04 §3, D10 T02 §6, D10 T02 §8, D10 T01 §20, D01 T02 §21 | [ ] |
 | 21 | §21 | Window placement: remember bounds and recover from a missing display | §1, §13, D02 T04 §1, D10 T01 §4 | [ ] |
@@ -596,6 +597,8 @@ UPDF, PDFelement and Foxit PDF Editor share or email the open file (Acrobat Pro 
 ## 18. `RectoIcons` subset icon font, stable code point map and glyph resources
 
 `design/SPEC.md` section 6 (owner decision 2026-10-21, foundation plan D15 and the 2026-10-21 icons entry) makes Fluent UI System Icons (Microsoft, MIT, npm `@fluentui/svg-icons` pinned at `1.1.344`) the only source of Recto glyphs, delivered as the subset font `resources/fonts/RectoIcons.ttf` that holds exactly the section 6 table's glyphs (Regular and Filled) plus the two custom glyphs (Redact, Squiggly underline), drawn by `ui::Icon` (`D10 T01 §11`) from a private DirectWrite font set. No section built it, yet §2 and every later surface consume it, so it lands before §2. The build downloads nothing: the SVGs it needs are vendored into `resources/fonts/fluent-svg/` with the package's MIT licence by a separate, repeatable `--vendor` step, and custom glyphs live in `resources/fonts/custom/`. The SPEC table is the only glyph list: the script parses it, so a row added to SPEC section 6 becomes a glyph in the font through one documented workflow that later sections (the design boards of `D06 T04`) reuse: add the row, run `--vendor` (which copies the new name's two SVGs from the same pinned package and records their hashes in `SOURCE.md` and their names in `NOTICE.md`), or for a concept the set lacks draw a custom glyph under the SPEC section 6 acceptance rule, then rebuild. Default recorded here: the outlines are compiled with `fontTools` (the standard OpenType library for Python), pinned to one exact version in `scripts/requirements-icon-font.txt`; changing it later only rewrites the outline step of the script.
+
+> **Corrected 2026-10-23:** `RectoIcons` is Recto's, not the toolkit's (D24). It stays in `resources/fonts/` and is registered by `src/app` at start-up with `vellum::IconSet::register_font` (`D10 T04 §4`) under the set `recto`, so `ui::Icon` below reads as `vellum::Icon` resolving `recto:<concept>`. Add `App.Icons.RectoSetRegistered` in `tests/recto-tests/` proving every SPEC section 6 concept resolves through the registered set.
 
 **Phase:** 2
 **Needs:** windows-host, display-session

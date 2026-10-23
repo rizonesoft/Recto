@@ -58,6 +58,7 @@ title: "TODO-04 -- Design Boards and SPEC Text for Undesigned Screens"
 - -> XREF: D08 T02 §7 -- §26 here draws `D-Assistant.png` and SPEC section 9.20 for §7, §12, §33 there.
 - -> XREF: D08 T02 §10 -- §27 here draws `D-AssistantReview.png` and SPEC section 9.21 for §10, §17, §19, §21, §23, §27, §32 there.
 - -> XREF: D10 T01 §20 -- the golden-image harness that check (j) in §1 here drives to compare a headless `recto-ui` render against each board PNG.
+- -> XREF: D10 T04 §3 -- Recto's theme mapping `src/app/theme/recto_theme.json`, whose roles check (j) in §1 here renders boards with.
 - -> XREF: D10 T02 §23 -- the control gallery whose controls check (j) in §1 here requires every `ui::`-drawn board control to appear in.
 
 ## Outcome
@@ -74,7 +75,7 @@ title: "TODO-04 -- Design Boards and SPEC Text for Undesigned Screens"
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | Board check script and single-board render option | D02 T01 §18, D10 T01 §20, D10 T02 §23 | [ ] |
+| 1 | §1 | Board check script and single-board render option | D02 T01 §18, D10 T01 §20, D10 T02 §23, D10 T04 §3 | [ ] |
 | 2 | §2 | Outline editor, Layers, Attachments and Info editing panel board | §1 | [ ] |
 | 3 | §5 | Presentation mode, presenter view and slide navigator board | §1 | [ ] |
 | 4 | §6 | Auto-scroll, rulers, grid, line weights and split view board | §1 | [ ] |
@@ -108,6 +109,8 @@ title: "TODO-04 -- Design Boards and SPEC Text for Undesigned Screens"
 ## 1. Board check script and single-board render option
 
 Every board section below ends with the same falsifiable proof, so the proof is built once: a stdlib Python check that a board is rendered at its canvas size and is not blank, cited by its SPEC subsection, complete against the controls its consumer sections name, drawn with every listed control visible on the rendered board, styled with token colours and the SPEC section 7 radii on the right element roles only (no icon tiles), and cited back by every consumer. Completeness is measured against an inventory the manifest does not author: the check reads each consumer section's own text, so a control a consumer names that the manifest, the SPEC subsection or the rendered board omits fails. Shape and colour are measured on the rendered page, not on source literals alone, so a style supplied through `renderVals()` data or as `rgb()` cannot slip past. `render-mockups.mjs` today rewrites every board on each run, which churns unrelated PNGs; a `--only` filter lets a section render its own board.
+
+> **Corrected 2026-10-23:** the toolkit is Vellum (D22). Check (j) renders the headless board with Recto's theme (`src/app/theme/recto_theme.json` through `vellum::ThemeManager`, `D10 T04 §3`), not Vellum's neutral test theme, and treats `ui::`-drawn controls as `vellum::` controls; the token colour checks still resolve against `design/tokens/colors.json`.
 
 **Phase:** 2
 **Needs:** windows-host

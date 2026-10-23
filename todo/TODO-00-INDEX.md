@@ -23,7 +23,7 @@ The live execution plan for building Recto to version 1. Format spec: [README.md
 | 06 | [Quality](./06-quality/INDEX.md) | all | Golden, text, round-trip and performance suites; hostile-input audit, fuzz & broker spec. |
 | 07 | [Release](./07-release/INDEX.md) | M6 | Printing, Inno Setup (Full & Portable), Portable `.zip`, MSIX, About, GPL & crash bundle. |
 | 08 | [Assistant](./08-assistant/INDEX.md) | 7 | Opt-in AI assistant with the user's own Anthropic, OpenAI, OpenRouter or Gemini key, or a local model on loopback. |
-| 10 | [UI Toolkit](./10-ui/INDEX.md) | M2 | `recto-ui`: Win32 window, composition, layout, tokens, text, input, Fluent controls & UIA. |
+| 10 | [UI Toolkit (Vellum)](./10-ui/INDEX.md) | M2 | Vellum: shared Win32 UI engine, layout, tokens, text, input, pen, controls & UIA. |
 | 99 | [Manual](./99-manual/INDEX.md) | 99 | Operator-only steps: name, repo face, Partner Center, machines, proofs and release. |
 
 ## Coverage: every promise in the governing documents, and who owns it
@@ -110,6 +110,7 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 - [10 UI Toolkit] [TODO-01 recto-ui Foundation: Window, Composition, Elements, Layout, Tokens, Text and Input](./10-ui/TODO-01-ui-foundation.md): `recto-ui` library and headless harness, the Win32 host replacing the WinUI scaffold, window frame, Mica Alt, DPI, DirectComposition, elements, layout, generated tokens, drawing and elevation, DirectWrite text, icons, input, focus, motion, popups, binding, drag-and-drop, the page canvas `SwapChainHost`, Snap Layouts hit testing and golden images.
 - [10 UI Toolkit] [TODO-02 recto-ui Controls: the Fluent Control Set the SPEC Uses](./10-ui/TODO-02-ui-controls.md): buttons, tooltips, `TextBox` with TSF, password and number boxes, check, radio and toggle, sliders and progress, combo boxes, `ScrollViewer` with DirectManipulation, virtualized `ItemsView`, `TreeView`, `TabStrip`, menus and `MenuBar`, flyouts and cards, `Dialog`, segmented controls, settings cards, info bars, toasts and pills, `SearchBox`, colour swatches and custom colour entry, spell checking, calendar and date picker, pane splitter and the control gallery.
 - [10 UI Toolkit] [TODO-03 recto-ui Accessibility: UI Automation, High Contrast, Text Scale and Strings](./10-ui/TODO-03-ui-accessibility.md): UIA provider tree and patterns, the reusable text-range adapter, announcements, high contrast, text scaling, string tables with pseudo-localization and right-to-left readiness, and the accessibility verification suite.
+- [10 UI Toolkit] [TODO-04 Vellum Boundary: Move, Rename, Neutral Theming, Identity, Versioning and Extraction](./10-ui/TODO-04-vellum-boundary.md): move `src/ui` to `libs/vellum` as `vellum::` with its own tests, boundary and brand checks, a neutral token schema with Recto's theme as a client, identity and icon-set interfaces, semver and API surface, the extraction dry run and the post-extraction pin (D22 to D26).
 - [99 Manual] [TODO-01 Operator Setup (Manual)](./99-manual/TODO-01-operator-setup.md): trademark search, repository face, optional Partner Center reservation, reference machines, then the Narrator pass, driver install and signing, translation reviews, OAuth app registrations, clean-machine and FIPS proofs and the v1 release checklist. Operator only.
 
 ## Completed TODOs

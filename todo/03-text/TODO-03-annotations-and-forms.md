@@ -55,6 +55,7 @@ track: M3
 - -> XREF: D06 T04 §10 -- the `D-Markup.png` board and `design/SPEC.md` section 8.2.1 that §3, §4, §13, §16 (the `Article` button), §21, §22, §31, §33, §43, §44, §49, §50, §53, §55 here build against.
 - -> XREF: D06 T04 §11 -- the `D-Forms.png` board and `design/SPEC.md` section 8.2.2 that §8, §9, §10, §35, §37, §39, §41 here build against.
 - -> XREF: D06 T04 §12 -- the `D-Measure.png` board and `design/SPEC.md` section 8.2.3 that §14, §16, §19, §51 here build against.
+- -> XREF: D10 T01 §23 -- Vellum's pen model (`D10 T01 §22`) and low-latency ink presenter that §43 draws wet ink with and receives finished strokes from.
 - -> XREF: D10 T01 §12 -- `WM_POINTER` pen, touch and mouse routing (pressure, eraser flag, capture) that on-canvas annotation creation, ink and pen input are built on.
 - -> XREF: D10 T02 §16 -- `ui::Flyout` and `ui::Card` are the colour, stamp, link and style pickers and floating annotation chrome built here.
 - -> XREF: D10 T03 §1 -- form widgets and annotation comments register as children of the UIA provider tree.
@@ -122,7 +123,7 @@ track: M3
 | 40 | §40 | Combine form data from many filled PDFs: engine, CSV and `recto-cli forms combine` | §6, §7, D01 T03 §1 | [ ] |
 | 41 | §41 | `Combine Form Data` dialog and `.xlsx` output | §8, §40, D02 T01 §10, D04 T05 §1, D06 T04 §11, D10 T02 §11, D10 T02 §17 | [ ] |
 | 42 | §42 | Pressure-sensitive ink appearance engine | §2, D01 T02 §18 | [ ] |
-| 43 | §43 | Pen input in the Ink tool: pressure, pen eraser and touch rejection | §4, §42, D02 T04 §5, D06 T04 §10, D10 T01 §12 | [ ] |
+| 43 | §43 | Pen input in the Ink tool: pressure, pen eraser and touch rejection | §4, §42, D02 T04 §5, D06 T04 §10, D10 T01 §12, D10 T01 §23 | [ ] |
 | 44 | §44 | Touch mode: larger targets for the annotation bar, handles and popovers | §3, §4, §5, D02 T04 §5, D06 T04 §10, D10 T01 §7, D10 T02 §1 | [ ] |
 | 45 | §45 | Cloud border effect (`/BE`) for Square, Circle, Polygon and FreeText | §2, D01 T02 §18 | [ ] |
 | 46 | §46 | Arc annotation engine | §2, D01 T02 §18 | [ ] |
@@ -1255,6 +1256,8 @@ Add variable-width ink to `recto-pdf`: strokes that keep a pressure value per po
 ## 43. Pen input in the Ink tool: pressure, pen eraser and touch rejection
 
 Wire pen hardware into the `Ink` tool: read pressure from `WM_POINTER` pen input (`POINTER_PEN_INFO.pressure`, `D10 T01 §12`) for pen pointers, switch to the eraser when the pen is turned over (`PEN_FLAG_ERASER`), and ignore touch contacts while a pen is in range. It matches the Windows Ink pen support in Foxit PDF Editor. It must not break mouse and touch ink of `§4`, and keeps Recto's rules that a setting is read by the code that uses it and the stroke is committed on pointer release.
+
+> **Corrected 2026-10-23:** the full pen path is built in the toolkit in M2 (D25): `vellum::PenEvent` (`D10 T01 §22`) supplies coalesced samples, pressure, tilt, the eraser and barrel states and a `pen_in_range` flag for touch rejection, and `vellum::InkPresenter` (`D10 T01 §23`) draws the wet stroke and hands the finished stroke to `AnnotationInteraction` on pen up. This section maps those to `PointerSample`, the settings and the annotation model; it does not read `POINTER_PEN_INFO` itself.
 
 **Phase:** 3
 **Needs:** windows-host, display-session

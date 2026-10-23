@@ -47,6 +47,7 @@ track: M6
 - -> XREF: D10 T03 §7 -- `ui::Strings`, the `STRINGTABLE` `.rc` layout, `scripts/check-strings.py`, the pseudo-locale generator and the right-to-left mirroring that §5, §13, §14, §15, §16 and §17 here build on.
 - -> XREF: D10 T02 §23 -- the control gallery whose headless `qps-ploc` render §5 here extends to the real screens.
 - -> XREF: D10 T02 §17 -- the `ui::Dialog` that `LicenseDialog` (§2) and the control set (`D10 T01 §11`, `D10 T02 §16`) of the About page build on.
+- -> XREF: D10 T04 §5 -- Vellum's `VERSION` and licence, listed in `NOTICE.md` (§3) and the About page's `Built with` list (§2) as a first-party component.
 - -> XREF: D10 T01 §8 -- the generated `Recto*Brush` tokens that the About page, language row and right-to-left surfaces consume.
 - -> XREF: D07 T01 §24 -- installer and package stamping, versioned artifact names and `build/dist/artifacts.json`, built from §1's `version.json` and §18's release check.
 - -> XREF: D07 T01 §25 -- the installer's downgrade check, which reads §20's `ProductVersion` resource and §18's precedence vectors.
@@ -132,6 +133,8 @@ Implement `src/app/views/AboutPage.h/.cpp` as `recto-ui` elements matching `desi
 
 > **Groomed 2026-10-23:** the caption names the build channel (owner decision 2026-10-23, foundation plan section 1). A `Release` build shows exactly what `D-About.png` shows (`Version 1.0.0, x64`); a `Preview` build (a pre-release tag) shows `Version 1.1.0-rc.1 (Preview), x64`; a `Dev` build (an untagged commit) shows `Version 1.1.0-dev.14 (Dev, 1a2b3c4d5e6f), x64`, the SemVer without its build metadata plus the 12-digit commit. `Source` and `View source` open the tag for `Release` and `Preview` and the commit for `Dev` (`VersionInfo::source_url`, `§1`), so foundation plan section 10's "exact source" item holds for every build.
 
+> **Corrected 2026-10-23:** the `Built with` list names Vellum (the shared Rizonesoft UI toolkit, GPL-3.0-or-later) with its version from `libs/vellum/VERSION` (`D10 T04 §5`), beside `recto-pdf`; while Vellum lives in this repository it is a first-party component, and after `D10 T04 §7` it is a pinned dependency with its own tag.
+
 **Phase:** 6
 **Needs:** windows-host, display-session
 **Surface:** yes
@@ -160,6 +163,8 @@ Implement `src/app/views/AboutPage.h/.cpp` as `recto-ui` elements matching `desi
 ## 3. Build-derived dependency enumeration script, `NOTICE.md` and `docs/license-audit.md`
 
 Complete the documentary and automated compliance half of foundation plan section 10: write `scripts/audit-dependencies.py` (with unit tests in `tests/scripts/test_dependency_audit.py`) that inspects the actual repository build inputs (`vcpkg.json`, `src/app/packages.config`, every `.vcxproj` `<AdditionalDependencies>` and `<ProjectReference>`, `resources/`, and `dumpbin /dependents` on staged `Recto.exe` and `recto-cli.exe`), enumerates every third-party and system dependency, and verifies 100% 3-way parity between (1) the build-derived dependency set, (2) `NOTICE.md` and `docs/license-audit.md`, and (3) `recto::core::built_with_components()` rendered by `AboutPage` (`§2`).
+
+> **Corrected 2026-10-23:** `scripts/audit-dependencies.py` enumerates `libs/vellum` (and after `D10 T04 §7` its vcpkg port) as a component with its own licence and version, and the 3-way parity includes it.
 
 **Phase:** 6
 **Needs:** windows-host

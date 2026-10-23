@@ -21,6 +21,7 @@ track: M2
 - -> XREF: D10 T03 §2 -- the UIA pattern providers wrap the automation hooks these controls expose, after the gallery of §23.
 - -> XREF: D10 T03 §1 -- the UIA fragment tree reads the automation name, role and bounds that `Control` of §1 carries.
 - -> XREF: D10 T03 §3 -- the text-range adapter wraps `TextBox` of §4.
+- -> XREF: D10 T04 §1 -- moves this library to `libs/vellum` as `vellum::`; `§3` there supplies the neutral test theme the gallery renders against.
 - -> XREF: D10 T03 §4 -- notification and live-region announcements are raised by the toast, info bar and search box of §20 and §21.
 - -> XREF: D02 T01 §19 -- the `RectoChip` variants build on the pill primitives of §20.
 - -> XREF: D02 T01 §3 -- the document tabs use the `TabStrip` of §13.
@@ -89,7 +90,7 @@ track: M2
 | 20 | §20 | `InfoBar`, in-app `Toast`, and the `Chip`, `Badge` and `Keycap` pills | §2, D10 T01 §14 | [ ] |
 | 21 | §21 | `SearchBox` with a suggestion list for the command box and Find a setting | §4, §11, D10 T01 §15 | [ ] |
 | 22 | §22 | `ColorSwatchPicker` from token swatches | §16 | [ ] |
-| 23 | §23 | Control gallery: every control in Light, Dark and HighContrast with golden images | §2, §3, §4, §5, §6, §7, §8, §9, §10, §11, §12, §13, §14, §15, §16, §17, §18, §19, §20, §21, §22, §24, §25, §26, §27, D10 T01 §20 | [ ] |
+| 23 | §23 | Control gallery: every control in Light, Dark and HighContrast with golden images | §2, §3, §4, §5, §6, §7, §8, §9, §10, §11, §12, §13, §14, §15, §16, §17, §18, §19, §20, §21, §22, §24, §25, §26, §27, D10 T01 §20, D10 T04 §3 | [ ] |
 | 24 | §24 | Spell checking for `TextBox` through the Windows Spell Checking API | §4, §14 | [ ] |
 | 25 | §25 | `CalendarFlyout` and `DatePicker` with locale-aware weeks and formats | §11, §16 | [ ] |
 | 26 | §26 | `Splitter` for resizable panes with pointer, keyboard and limits | §1 | [ ] |
@@ -816,6 +817,8 @@ track: M2
 ## 23. Control gallery: every control in Light, Dark and HighContrast with golden images
 
 `src/ui/gallery/` holds the control gallery: a small executable `recto-ui-gallery` and a headless test page that render every control of this file in every state, in Light, Dark and HighContrast, at 100, 150 and 200 percent. It is the single place where look drift is caught: each control section's golden test renders its own crop, and the gallery renders the composed board and compares it to stored golden images through the golden-image suite of `D10 T01 §20`. The executable also lets a reviewer open the real window and operate every control (tab order, popups, dialogs, IME) on a display-session host. `D10 T03 §2` needs the gallery before it wires UIA patterns, and a control that is missing from the gallery fails the coverage test.
+
+> **Corrected 2026-10-23:** after `D10 T04 §1` the gallery lives in `libs/vellum/gallery/` as `vellum-gallery`, and read `Ui.Gallery.*` and other `Ui.*` filters in this file as `Vellum.*` in `vellum-tests.exe`. Its goldens render with Vellum's neutral test theme (`D10 T04 §3`), so no Vellum golden depends on Recto's palette; Recto's own look is proved by the board checks of `D06 T04 §1` against `src/app/theme/recto_theme.json` (D24).
 
 **Phase:** 2
 **Needs:** windows-host, display-session
