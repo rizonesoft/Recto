@@ -80,8 +80,9 @@ track: M1
 | 20 | §20 | Rasterizer failure isolation: typed tile errors, target recreation and retry | §7, §9, §19 | [ ] |
 | 21 | §21 | Page `/UserUnit` in `PageDescription`, physical page size and CLI output size | D01 T01 §10, §6 | [ ] |
 | 22 | §22 | Error codes named by later sections reconciled with `error.h` | §18 | [ ] |
-| 23 | §23 | Closed refusal reasons and numeric context on limit and argument errors | §18 | [ ] |
+| 23 | §23 | Closed refusal reasons and numeric context on limit and argument errors | §18 | [x] |
 | 24 | §24 | Conversion-check failures name the check, the page and the measured value | §22, §23 | [ ] |
+| 25 | §25 | Decoder failures keep their step and Windows HRESULT in the diagnostic ring and ETW | §23 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
 
@@ -707,9 +708,12 @@ The completion review of `D01 T02 §18` (`docs/reviews/01-engine/D01-T02-s18.md`
 
 - [x] Add `enum class RefusalReason : uint16_t` (starting with `None`, `CommandCount`, `ChangeSetSize`, `PendingExports`, `WallClock`, `WorkingBytes`, `PageIndex`, `PageRangePastEnd`, `OutputSameAsInput`, then appended `PageRangeEmpty`, `PageRangeReversed`, `OutputUnwritable`) with a `constexpr noexcept` name table, and `refusal_reason`, `observed` and `bound` (optional `uint64_t`) on `PdfError` and `DiagnosticEntry` in `src/pdf/error.h`. Done when: `PdfError.RefusalReasonNamesCoverEveryReason` passes. **Corrected 2026-10-23:** (completion review: `PageRange` and `OutputPath` each covered several causes with different remedies, so each cause has its own reason, with a description giving units and remedy in `refusal_reason_description`).
 - [x] Carry them into the ring entry, `DiagnosticEntry::format()` and the ETW `Diagnostic` event (`RefusalReason`, `RefusalReasonName`, `Observed`, `Bound` fields) in `src/pdf/error.cpp`. Done when: `PdfError.RefusalContextReachesRingAndEtw` reads them back from the ring and the captured packet, and finds no caller text in either.
-- [ ] Commit: `pdf: closed refusal reasons with numeric context`
+- [x] Commit: `pdf: closed refusal reasons with numeric context`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*` passes under ASan, including `PdfError.RefusalContextReachesRingAndEtw`.
+
+> **Verified:** 2026-10-23 | §23 | 3d14d5b5f8e51b5bddf6b8a8a1a34583dece2ad9
+> **Review:** `docs/reviews/d01-t02-s23.json`
 
 ## 24. Conversion-check failures name the check, the page and the measured value
 
@@ -731,6 +735,27 @@ The completion review of `D01 T02 §22` (`docs/reviews/01-engine/D01-T02-s22.md`
 - [ ] Commit: `pdf: conversion-check failures name the check, page and measured value`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*` passes under ASan, including `PdfError.ConversionCheckContextReachesRingAndEtw`.
+
+## 25. Decoder failures keep their step and Windows HRESULT in the diagnostic ring and ETW
+
+The completion review of `D06 T05 §37` (`docs/reviews/06-quality/D06-T05-s37.md`, gap G4) found that a WIC decode failure reaches the user with its step and HRESULT in the message, but the diagnostic ring and ETW keep only the code (D16: never the message), so support cannot see which step failed, which HRESULT Windows returned, or whether JPXDecode handed the stream to the native decoder. Acrobat's log collection records the failing component; Recto should keep the same evidence as numbers and closed names, never document bytes.
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that fields are appended to `PdfError`, `DiagnosticEntry` and the ETW `Diagnostic` event after the existing ones, so every existing numeric value and field is unchanged, that no threading changes, and that the ring stays free of document bytes.
+
+**Build order:**
+
+1. Add a closed decoder step and an optional `platform_status` (`uint32_t`, the HRESULT) to `PdfError`, the ring and the ETW event in `src/pdf/error.h` and `src/pdf/error.cpp`, set by `wic_failure` in `src/pdf/filters.cpp`. Done when: a WIC failure carries step and HRESULT end to end.
+2. Record the JPX hand-over. Done when: a native failure after a WIC data failure keeps both steps.
+
+- [ ] Add `enum class DecoderStep : uint16_t` (`None`, `WicFactory`, `WicCreateDecoder`, `WicGetFrame`, `WicConvertFormat`, `WicCopyPixels`, `NativeJpx`) with a `constexpr noexcept` name table, and `decoder_step` and `platform_status` (optional `uint32_t`) on `PdfError` and `DiagnosticEntry`. Done when: `PdfError.DecoderStepNamesCoverEveryStep` passes.
+- [ ] Carry them into the ring entry, `DiagnosticEntry::format()` (`[step=WicCopyPixels hresult=0x8007000E]`) and the ETW `Diagnostic` event (`DecoderStep`, `DecoderStepName`, `HasPlatformStatus`, `PlatformStatus`), and set them in `wic_failure` (`src/pdf/filters.cpp`). Done when: `PdfError.DecoderContextReachesRingAndEtw` injects a failure at each WIC step (`detail::ScopedWicFailure`) and reads step and HRESULT back from the ring and the captured packet.
+- [ ] When JPXDecode falls back and the native decoder also fails, keep WIC's step and HRESULT on the returned error beside the native failure. Done when: the test reads both from the ring entry. Cheaper substitute that fails the checkpoint: the HRESULT only in the English message, which the ring drops.
+- [ ] Commit: `pdf: decoder failures keep their step and HRESULT in diagnostics`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfError.*:PdfFilters.WicFailureClasses` passes under ASan, including `PdfError.DecoderContextReachesRingAndEtw`.
 
 ## Verification
 

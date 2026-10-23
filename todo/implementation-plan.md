@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 78 | Checklist items: 475
+Sections: 79 | Checklist items: 479
 
 | Status | Reference   | Deliverable                                                                              | Needs                        | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ---------------------------- | ----- |
@@ -68,8 +68,9 @@ Sections: 78 | Checklist items: 475
 | [x]    | D01 T01 §10 | `pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links | windows-host                 | 9     |
 | [x]    | D01 T02 §18 | `ErrorCode::ResourceLimit` and `ErrorCode::InvalidArgument` in `error.h`                 | windows-host                 | 5     |
 | [ ]    | D01 T02 §22 | Error codes named by later sections reconciled with `error.h`                            | windows-host                 | 5     |
-| [ ]    | D01 T02 §23 | Closed refusal reasons and numeric context on limit and argument errors                  | windows-host                 | 3     |
+| [x]    | D01 T02 §23 | Closed refusal reasons and numeric context on limit and argument errors                  | windows-host                 | 3     |
 | [ ]    | D01 T02 §24 | Conversion-check failures name the check, the page and the measured value                | windows-host                 | 4     |
+| [ ]    | D01 T02 §25 | Decoder failures keep their step and Windows HRESULT in the diagnostic ring and ETW      | windows-host                 | 4     |
 | [x]    | D06 T05 §15 | Audit D01 T01 §1: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW         | windows-host                 | 5     |
 | [x]    | D06 T05 §16 | Audit D01 T01 §2: PdfValue variant object model, dictionary/array helpers and deep       | windows-host                 | 5     |
 | [x]    | D06 T05 §17 | Audit D01 T01 §3: Binary-safe PDF 1.7 and 2.0 lexer (src/pdf/lexer.cpp)                  | windows-host                 | 5     |
@@ -684,7 +685,7 @@ Sections: 119 | Checklist items: 959
 
 ### Phase 6: M6 Ship
 
-Sections: 70 | Checklist items: 516
+Sections: 70 | Checklist items: 517
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -737,7 +738,7 @@ Sections: 70 | Checklist items: 516
 | [ ]    | D07 T02 §5  | Localization readiness (`en-US.rc` string extraction and 40% pseudolocale check)         | windows-host, display-session | 6     |
 | [ ]    | D07 T02 §13 | Translation catalogue: languages manifest, glossary, plural rules and the checker        | windows-host                  | 6     |
 | [ ]    | D07 T02 §14 | Interface language setting: Follow Windows or a shipped language                         | windows-host, display-session | 6     |
-| [ ]    | D07 T02 §15 | Localised errors, plurals, dates and numbers: no English assembled in code               | windows-host                  | 5     |
+| [ ]    | D07 T02 §15 | Localised errors, plurals, dates and numbers: no English assembled in code               | windows-host                  | 6     |
 | [ ]    | D06 T02 §8  | Enforce the FIPS policy in decryption, encryption writers, signing digests and the CLI   | windows-host                  | 6     |
 | [ ]    | D06 T02 §9  | FIPS mode proof script, tested to refuse on an ordinary host                             | windows-host                  | 4     |
 | [ ]    | D07 T02 §16 | Right-to-left readiness: flow direction, mirrored icons and a mirrored pseudolocale      | windows-host, display-session | 5     |
@@ -880,6 +881,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 57/811 verified sections, 31 ready to run now.
+Progress: 58/812 verified sections, 31 ready to run now.
 
-Checklist: 378/5962 items completed (includes Commit items).
+Checklist: 379/5967 items completed (includes Commit items).
