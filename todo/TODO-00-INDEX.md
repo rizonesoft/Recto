@@ -60,10 +60,11 @@ Seeded 2026-10-13 from the foundation plan and the SPEC, and revised 2026-10-14 
 | Gates for user-reported failure classes common in PDF tools | D06 T03 §1-§12 |
 | SPEC subsections and `D-*.png` boards for every undesigned screen, with the board check | D06 T04 §1-§29 |
 | `RectoIcons` font, `RectoChipStyle` and the Classic status bar (SPEC 6, 7, 8.4) | D02 T01 §18-§20 |
-| Printing, Inno Setup (`Full` & `Portable`) installer, Portable `.zip`, MSIX & proof | D07 T01 §1-§9 |
-| About, NOTICE and GPL-3.0 audit, opt-in local crash bundle & GitHub Release / Store kit | D07 T02 §1-§7 |
+| Printing, Inno Setup (`Full` & `Portable`) installer, Portable `.zip`, MSIX & proof | D07 T01 §1-§26 |
+| About, NOTICE and GPL-3.0 audit, opt-in local crash bundle & GitHub Release / Store kit | D07 T02 §1-§21 |
 | Group Policy templates and locks (D21), ten interface languages and right-to-left readiness | D07 T02 §8-§17 |
-| Listening to users: intake, triage, diagnostics, reproducers, releases, demand | D07 T03 §1-§7 |
+| Listening to users: intake, triage, diagnostics, reproducers, releases, demand | D07 T03 §1-§11 |
+| Versioning: SemVer from git tags, VERSIONINFO, downgrade guard, changelog, next version | D07 T01 §24-§26, D07 T02 §18-§21, D07 T03 §10-§11 |
 | Opt-in AI assistant with the user's own key or a loopback local model, and its tools (D19) | D08 T01 §1-§19, D08 T02 §1-§35 |
 | Trademark search, repo face, optional Partner Center, reference machines (D1, plan 11) | D99 T01 §1-§4 |
 | Operator proofs left out of the unattended run, and the v1 release checklist (plan 1) | D99 T01 §5-§11 |

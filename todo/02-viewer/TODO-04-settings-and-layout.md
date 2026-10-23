@@ -33,7 +33,7 @@ track: M2
 - -> XREF: D04 T04 §7 -- `Default Office to PDF page setup` setting in §5 here is consumed by `D04 T04 §7`.
 - -> XREF: D05 T01 §6 -- `Default timestamp server URL` setting in §6 here is consumed by `D05 T01 §6`.
 - -> XREF: D05 T02 §9 -- `Verify signatures when opening` setting in §6 here is consumed by `D05 T02 §9`.
-- -> XREF: D07 T01 §5 -- the Inno Setup Portable installer and `Recto-Portable-*.zip` archives pre-create `data\portable.mode` consumed by `AppPaths` (§1) here.
+- -> XREF: D07 T01 §5 -- the Inno Setup Portable installer and `Recto-<version>-<arch>-Portable.zip` archives pre-create `data\portable.mode` consumed by `AppPaths` (§1) here.
 - -> XREF: D07 T02 §2 -- the `About Recto` page (`D07 T02 §2`) and the `Save local crash report bundles` bundle writer (`D07 T02 §4`) complete the navigation and toggle in §6 here, and the About page's `Keyboard shortcuts` link opens §10's dialog.
 - -> XREF: D08 T01 §15 -- hosts the assistant's settings group (D08 T01 §15).
 - -> XREF: D03 T05 §4 -- the multi-file search index (D03 T05 §4) is stored under these paths.

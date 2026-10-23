@@ -23,6 +23,7 @@ From a working app to a shippable desktop and portable product: printing on the 
 
 - Print path decision and implementation, Inno Setup installer (`Full` + `Self-Contained Portable`) and Portable `.zip` for x64 and ARM64, optional MSIX packaging, automated install, portable and upgrade proof, upgrade and uninstall edge cases with a zero-residue diff, and versioned settings and recents migration
 - About, NOTICE and license audit, opt-in local minidump-plus-log crash bundle, localization readiness, GitHub Release bundle and optional Store submission runbook
+- Versioning: SemVer 2.0.0 derived from annotated git tags with `VERSION` naming the next release, the release version check, `recto::core::SemVer`, `VERSIONINFO` in every binary, versioned installer and archive names, the downgrade warning, writer versions in stored files, and the generated changelog and next-version suggestion
 - Listening to users: issue forms, `SECURITY.md`, triage policy, in-app `Report a problem`, reproducer scrubber, closing on release, release gate, scope page and demand ledger
 
 ## Out of scope

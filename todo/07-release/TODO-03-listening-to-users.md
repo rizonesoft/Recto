@@ -29,6 +29,10 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 - -> XREF: D06 T04 §25 -- the `D-Lifecycle.png` board and `design/SPEC.md` section 9.19 that §2, §7 here build against.
 - -> XREF: D10 T02 §17 -- the `ui::Dialog` that `ReportProblemDialog` (§2) builds on.
 - -> XREF: D10 T02 §20 -- the `ui::InfoBar` that the `Update available` notice (§7) builds on.
+- -> XREF: D07 T02 §18 -- the version derivation, `docs/versioning.md` and `scripts/check-release-version.py` that §5's gate runs and §10 and §11 read tags through.
+- -> XREF: D07 T02 §19 -- the `recto::core::SemVer` comparison §7's update notice and `What's new` use.
+- -> XREF: D07 T02 §21 -- the `recto-cli --version --json` key set that §11 snapshots as a contract.
+- -> XREF: D07 T01 §26 -- the writer version field that §11's settings, recents and session snapshots include.
 
 ## Outcome
 
@@ -36,6 +40,7 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 - `Help -> Report a problem` (and `Ctrl+K`) copies diagnostics with no document content and opens the bug form prefilled; `recto-cli scrub` turns a private PDF into a structure-preserving reproducer, reports what it kept, and renders preview pages the user inspects before sharing.
 - A user-reported bug closes only with a regression test that fails before the fix, and only when the release containing the fix is published, with "Fixed in vX.Y.Z".
 - No release is tagged while a closed-on-main data-loss, crash or security fix is unreleased past seven days, and each security fix ships with an advisory.
+- Each release's `CHANGELOG.md` block (Keep a Changelog 1.1.0) and GitHub Release body are generated from the sections stamped since the last tag and the `Fixes-User:` trailers, with no new commit rule, and `scripts/next-version.py` suggests the next SemVer from checked contract snapshots and what shipped (`§10`, `§11`).
 - `docs/scope.md` says what Recto does and does not do, and `docs/user-demand.md` maps every recurring request to a TODO section or a recorded decision, reviewed before each release.
 
 **Adjacency:** list=applicable @ D07 T03 §6; document=applicable @ D07 T03 §3; settings=applicable @ D07 T03 §7; reporting=applicable @ D07 T03 §6; notifications=applicable @ D07 T03 §7; permissions=applicable @ D07 T03 §1; audit=applicable @ D07 T03 §4; exchange=applicable @ D07 T03 §2; reverse=not-applicable (an issue or report is reversed on GitHub by closing or editing it; Recto keeps no local record to undo)
@@ -52,9 +57,11 @@ title: "TODO-03 -- Listening to Users: Intake, Triage, Diagnostics, Releases and
 | 4 | §6 | Public scope page and user demand ledger | §1 | [x] |
 | 5 | §3 | Structure-preserving reproducer scrubber (`recto-cli scrub`) | D04 T02 §2 | [ ] |
 | 6 | §2 | In-app `Report a problem` with privacy-safe diagnostics | §1, D07 T02 §1, D07 T02 §4, D02 T03 §11, D06 T04 §25, D10 T02 §17 | [ ] |
-| 7 | §5 | Release gate for unreleased fixes, security advisories and CI integrity | §4, D07 T02 §6, D07 T02 §7, D06 T03 §12, D06 T03 §5, D06 T03 §6 | [ ] |
-| 8 | §7 | What's new after update and opt-in update notice | §2, D02 T04 §6, D06 T04 §25, D10 T02 §20 | [ ] |
+| 7 | §5 | Release gate for unreleased fixes, security advisories and CI integrity | §4, §10, §11, D07 T02 §6, D07 T02 §18, D07 T02 §7, D06 T03 §12, D06 T03 §5, D06 T03 §6 | [ ] |
+| 8 | §7 | What's new after update and opt-in update notice | §2, §10, D07 T02 §19, D02 T04 §6, D06 T04 §25, D10 T02 §20 | [ ] |
 | 9 | §8 | Strict issue-form YAML reader and top-level schema types | §1 | [x] |
+| 10 | §10 | Changelog and release body from stamped sections and `Fixes-User:` trailers | §4, D07 T02 §18 | [ ] |
+| 11 | §11 | Contract snapshots and `scripts/next-version.py` SemVer bump suggestion | §10, D07 T02 §18, D07 T02 §21, D04 T08 §2, D04 T08 §5, D07 T02 §8, D02 T04 §2, D07 T01 §22, D07 T01 §26, D02 T01 §13, D02 T03 §11 | [ ] |
 
 ## 1. Issue forms, triage policy and `SECURITY.md`
 
@@ -172,6 +179,8 @@ Another is security and data-loss fixes sitting on main while the current releas
 
 > **Groomed 2026-10-22:** `D06 T03 §12` now produces its report by script on the build host (no `attended`), so this gate still depends on it and no gate depends on a person. The clean-machine run, the FIPS host proof and the other operator proofs are the checklist `D99 T01 §11` (Phase 99, outside the phases 0 to 6 rule below) (owner decision 2026-10-22 (foundation plan section 1)).
 
+> **Groomed 2026-10-23:** the gate also enforces the versioning scheme (owner decision 2026-10-23, `docs/versioning.md`): the candidate's tag must pass `scripts/check-release-version.py` (`D07 T02 §18`, which runs `scripts/next-version.py --check` from `§11`), and `CHANGELOG.md` must hold the generated block for the version (`§10`).
+
 **Phase:** 6
 **Needs:** windows-host
 **Surface:** no
@@ -187,6 +196,7 @@ Another is security and data-loss fixes sitting on main while the current releas
 - [ ] Add a standard-user (non-administrator) test leg to `.github/workflows/build.yml` so privilege-dependent tests cannot pass only as admin. Done when: the workflow defines the leg and the gate requires its result.
 - [ ] Fail when `build/release-smoke/<version>.json` from `D06 T03 §12` is missing, not green, names a commit other than the candidate, or lists an artifact digest that differs from the bundle's `SHA256SUMS.txt` (`D07 T02 §7`). Done when: the missing-report, wrong-commit and rebuilt-artifact fixtures each fail.
 - [ ] Fail when any section in phases 0 to 6 other than this gate is unstamped, read from `python scripts/todo-graph.py query plan`, so no v1 feature or quality suite (save-integrity `D06 T03 §5` and raw-byte redaction `D06 T03 §6` among them, which this section also depends on directly) is left behind the tag. Done when: a fixture with one open phase 4 section fails the gate and the all-verified fixture passes.
+- [ ] Fail when `python scripts/check-release-version.py` (`D07 T02 §18`) exits non-zero for the candidate (a tag that disagrees with `VERSION`, a lightweight tag, a dirty tree, a disallowed pre-release label, or a version below `scripts/next-version.py`'s suggestion, `§11`), or when `python scripts/changelog.py <previous tag> <candidate tag> --check CHANGELOG.md --version <version>` (`§10`) exits `1`. Done when: fixtures with a mismatched tag, an understated bump and a stale changelog block each fail the gate, and the consistent fixture passes.
 - [ ] Add `tests/scripts/test_release_gate.py` with JSON fixtures for each rule. Done when: each rule has a passing and a failing fixture.
 - [ ] Commit: `release: gate tags on unreleased critical fixes, advisories, green CI and the smoke report`
 
@@ -224,6 +234,8 @@ Users file bugs for features that exist but are hidden, ask scope questions nobo
 
 Users stay on old builds and report bugs already fixed, and cannot find features that have shipped. Recto shows a `What's new` page once after each version change, built from §4's release notes embedded at build time (no network), and offers an opt-in update notice that checks GitHub Releases at most once a day only when the user turns it on. Because the notice is outbound network access, the owner decided on 2026-10-21 (foundation plan, owner decisions after the decision table): it ships in v1, off by default, and checks at most once a day while on.
 
+> **Groomed 2026-10-23:** versions are compared as SemVer 2.0.0 through `recto::core::SemVer` (`D07 T02 §19`), never as strings, and the comparison follows the build's channel (owner decision 2026-10-23): a `Release` install is offered only newer releases and never a pre-release; a `Preview` install is offered the newest newer release or pre-release; a `Dev` build is offered only a release newer than itself. A tag that does not parse, a draft and an equal version are ignored. `What's new` now embeds the changelog entries of `§10` (which include `§4`'s release notes) and appears once per newer `Release` or `Preview` version, never for a `Dev` build, whose version changes with every commit.
+
 **Phase:** 6
 **Needs:** windows-host, display-session
 **Surface:** yes
@@ -235,18 +247,19 @@ Users stay on old builds and report bugs already fixed, and cannot find features
 
 **Build order:**
 
-1. Embed the release notes for the current version at build time (`build/generated/whats_new.json` from `scripts/release-notes.py`) and show the `What's new` page once when `SettingsStore` records a different last-seen version. Done when: `Shell.WhatsNewOncePerVersion` passes.
+1. Embed the changelog entries for the current version at build time (`build/generated/whats_new.json` from `scripts/changelog.py --json`, `§10`) and show the `What's new` page once when the running `Release` or `Preview` version is newer by SemVer precedence than the last-seen version `SettingsStore` records. Done when: `Shell.WhatsNewOncePerVersion` passes.
 2. Add `Check for updates` (off by default, owner decision 2026-10-21) that queries the GitHub Releases API at most once a day and shows a `ui::InfoBar` linking to the release; it never downloads or installs. Done when: `Shell.UpdateNoticeOptIn` passes and no request is made while the setting is off.
 
 - [ ] Confirm the owner decision recorded 2026-10-21 in the foundation plan (v1, off by default, at most once a day) and use it as the `SettingsStore` default. Done when: the decision line exists in the plan and a fresh settings file reads `updates.check_enabled = false`.
-- [ ] Generate `build/generated/whats_new.json` from `scripts/release-notes.py` during the build and embed it as a resource. Done when: the built app contains the current version's entries.
-- [ ] Build the `What's new` page and show it once per version change, reachable later from `Help` and `Ctrl+K` ("what's new", "changelog"). Done when: the page appears once after a version change and never on a normal start. Cheaper substitute: a link to a web changelog the user must find.
+- [ ] Generate `build/generated/whats_new.json` from `scripts/changelog.py --json` (`§10`) during the build and embed it as a resource. Done when: the built app contains the current version's entries.
+- [ ] Build the `What's new` page and show it once per newer `Release` or `Preview` version (compared with `recto::core::SemVer`, `D07 T02 §19`; a `Dev` build never opens it by itself), reachable later from `Help` and `Ctrl+K` ("what's new", "changelog"). Done when: the page appears once after an upgrade from `1.0.0` to `1.1.0`, not after a downgrade to `1.0.0`, not for a `Dev` build, and never on a normal start. Cheaper substitute: a link to a web changelog the user must find.
 - [ ] Add the `Check for updates` setting to the `Language and updates` group with the decided default, reading it through `SettingsStore`, and a manual `Check now` command. Done when: the setting is read at startup and listed in the settings search.
-- [ ] Query `https://api.github.com/repos/rizonesoft/Recto/releases/latest` at most once per 24 hours only while the setting is on, compare versions, and show a dismissible `Update available` `ui::InfoBar` linking to the release page; never download or install. Done when: a test with the setting off records zero network requests and with it on records one, and with a newer release fixture `Shell.UpdateNoticeOptIn` finds the `Update available` `ui::InfoBar` naming that version.
+- [ ] Query `https://api.github.com/repos/rizonesoft/Recto/releases/latest` (`Release` and `Dev` builds) or `releases?per_page=20` (`Preview` builds) at most once per 24 hours only while the setting is on, compare versions, and show a dismissible `Update available` `ui::InfoBar` linking to the release page; never download or install. Done when: a test with the setting off records zero network requests and with it on records one, and with a newer release fixture `Shell.UpdateNoticeOptIn` finds the `Update available` `ui::InfoBar` naming that version.
+- [ ] Compare in `UpdateCheck::pick_offer(running, releases)` in `src/services/update_check.h/.cpp`: parse each `tag_name` with `SemVer::from_tag` (`D07 T02 §19`), skip drafts, unparseable tags and, for a `Release` install, every pre-release (by the API's `prerelease` flag and by the parsed version), and offer the highest remaining version that is strictly newer by precedence; bound the response at 1 MiB and parse it with the bounded JSON reader. Done when: `Shell.UpdateOfferRules` checks a `Release` `1.0.0` install against `1.1.0-rc.1` (no offer) and `1.0.1` (offer), a `Preview` `1.1.0-rc.1` install against `1.1.0-rc.2` (offer), a `Dev` `1.1.0-dev.4` build against `1.1.0` (offer) and `1.1.0-rc.1` (no offer), `1.0.0+other` against `1.0.0` (no offer), a `vfoo` tag (skipped) and a 2 MiB body (refused). Cheaper substitute: comparing `tag_name` strings, which ranks `v1.10.0` below `v1.9.0`.
 - [ ] Show a clear message on a failed check (cause and when it will retry) instead of a bare status code. Done when: a 403 fixture shows the rate-limit message.
 - [ ] Commit: `app: show What's new per version and an opt-in update notice`
 
-**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.WhatsNewOncePerVersion:Shell.UpdateNoticeOptIn` passes on the display-session host, with zero network requests recorded while the setting is off.
+**Test checkpoint:** `recto-tests.exe --gtest_filter=Shell.WhatsNewOncePerVersion:Shell.UpdateNoticeOptIn:Shell.UpdateOfferRules` passes on the display-session host, with zero network requests recorded while the setting is off.
 
 ## 8. Strict issue-form YAML reader and top-level schema types
 
@@ -304,9 +317,60 @@ Users stay on old builds and report bugs already fixed, and cannot find features
 > **Verified:** 2026-10-21 | §9 | c3f23b0d40af9891ead03b0b326146232af65435
 > **Review:** `docs/reviews/d07-t03-s9.json`
 
+## 10. Changelog and release body from stamped sections and `Fixes-User:` trailers
+
+Recto already records what shipped: every finished TODO section has a stamp receipt (`docs/reviews/<ref>.json`, with its `implementation_sha`, `title` and `date`), each section declares `Surface: yes` or `no`, and every user-reported fix carries a `Fixes-User:` trailer (`§4`). This section turns those records into `CHANGELOG.md` in Keep a Changelog 1.1.0 format and the GitHub Release body, with no new commit rule, so the unattended campaign keeps working exactly as it does (owner decision 2026-10-23). Sections stamped between two tags become entries: `Surface: yes` under `Added`, `Surface: no` under `Changed` (with build, test and tooling domains grouped as internal), a section's `> **Breaking:**` note under `Changed` or `Removed`, `Fixes-User:` trailers under `Fixed`, and fixes whose issue carries the `security` label under `Security`. Everything is read from git at the two refs, never from the working tree or the clock, so one range always produces the same bytes.
+
+**Phase:** 6
+**Needs:** none
+**Surface:** no
+
+**Build order:**
+
+1. Write `scripts/changelog.py <from> <to> [--version <v>] [--issues <file>] [--json] [--update <file>] [--release-body <file>] [--check <file>]` reusing `scripts/release-notes.py` for the trailer and issue logic. Done when: `python -m unittest tests.scripts.test_changelog` passes on a fixture repository.
+2. Seed `CHANGELOG.md` and add the `--check` mode the release gate uses (`§5`). Done when: `Changelog.SeedIsValid` parses the committed `CHANGELOG.md` as Keep a Changelog 1.1.0.
+
+- [ ] Collect the sections shipped in `<from>..<to>`: list `docs/reviews/*.json` at `<to>` with `git ls-tree` (skipping `*.revoked-*.json`), keep each receipt whose `implementation_sha` is an ancestor of `<to>` and not of `<from>` (`git merge-base --is-ancestor`; `root` as `<from>` means the first release), and read each section's `Surface`, domain and any `> **Breaking:**` line from the TODO file at `<to>` (`git show <to>:<path>`, parsed with `scripts/lib/todo_graph.py`). Done when: `Changelog.CollectsStampsInRange` builds a fixture with a receipt before `<from>`, two inside the range and one revoked, and gets exactly the two. Cheaper substitute: grepping commit subjects, which misses sections stamped in a later commit and lists reverted work.
+- [ ] Classify each section: `Surface: yes` to `Added` with the section title; `Surface: no` to `Changed`, prefixed with its domain name, except domains `00-workspace`, `06-quality` and `99-manual`, which go to one nested `Internal (build, tests and tooling)` item under `Changed`; a `> **Breaking:** <text>` line adds a `Changed` entry starting `**Breaking:**`, or a `Removed` entry when the text starts with `Removed`. Done when: `Changelog.Classifies` checks one fixture section per rule.
+- [ ] Add the fixes from `release-notes.py`'s `Fixes-User:` reader (loaded with `importlib`, never copied): an issue labelled `security` in the `--issues` export goes to `Security`, every other one to `Fixed` as "<issue title> (#N)", and with no `--issues` file every fix goes to `Fixed` as "#N". Done when: `Changelog.FixesAndSecurity` places a `security` fixture under `Security` and two others under `Fixed`.
+- [ ] Render Keep a Changelog 1.1.0: the `# Changelog` heading and its two standard sentences (linking `https://keepachangelog.com/en/1.1.0/` and `https://semver.org/spec/v2.0.0.html`), `## [Unreleased]`, then `## [<version>] - <YYYY-MM-DD>` per release with the date taken from the annotated tag's tagger date (the commit date of `<to>` when it is untagged), the groups in the order `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`, empty groups omitted, and compare links at the end (`[1.1.0]: https://github.com/rizonesoft/Recto/compare/v1.0.0...v1.1.0`). Done when: `Changelog.KeepAChangelogFormat` matches a committed expected file byte for byte. Source: Keep a Changelog 1.1.0.
+- [ ] Implement `--update <file>`: insert or replace exactly the block of `--version` and its compare link, keep every other byte, write through temp-file-then-replace, and produce identical bytes on a second run. Done when: `Changelog.UpdateIsIdempotent` runs it twice on a changelog with two earlier releases and a hand-edited `Unreleased` block, and finds both untouched and the second run a no-op.
+- [ ] Implement `--release-body <file>` (the version block, the unsigned-release SmartScreen sentence of `D07 T02 §6`, the line "Verify downloads against SHA256SUMS.txt", and the "Fixed in v<version>" list of `§4`) and `--json` (the entries as data, which `§7` embeds as `whats_new.json`). Done when: `Changelog.ReleaseBodyAndJson` finds the sentence and each entry in both outputs.
+- [ ] Implement `--check <file> --version <v>`: exit `1` when the file's block for that version differs from a fresh render, `0` when equal. Done when: `Changelog.CheckDetectsDrift` changes one word in a fixture block and gets exit `1`.
+- [ ] Seed `CHANGELOG.md` at the repository root with the heading, the two sentences and an empty `## [Unreleased]`, and link it from `README.md` and `docs/versioning.md` (`D07 T02 §18`). Done when: `Changelog.SeedIsValid` parses the committed file (heading, both sentences, an `Unreleased` block, no release block) and fails on a copy missing the `Unreleased` heading.
+- [ ] Commit: `release: generate CHANGELOG.md and the release body from stamps and Fixes-User trailers`
+
+**Test checkpoint:** `python -m unittest tests.scripts.test_changelog` passes and `python scripts/changelog.py root HEAD --json` on the repository is quoted, listing the stamped sections and fixes so far.
+
+## 11. Contract snapshots and `scripts/next-version.py` SemVer bump suggestion
+
+SemVer only means something if "breaking" is checked, not remembered. Recto's public contracts (owner decision 2026-10-23, `docs/versioning.md`) are the `recto-cli` flags and JSON output, the `recto-mcp` tool schemas, the settings, recents and session file schemas, the Group Policy keys, and the features reachable from `Ctrl+K`. This section commits a canonical snapshot of each under `docs/contracts/`, keeps them current with tests so a contract change always shows up in a diff, and writes `scripts/next-version.py`, which compares the snapshots at the last release tag with `HEAD` and combines that with what shipped (`§10`) to suggest the next version: a removed or changed contract item or a `> **Breaking:**` note means major, any new contract item or `Surface: yes` section means minor, anything else patch.
+
+**Phase:** 6
+**Needs:** windows-host
+**Surface:** no
+
+**Build order:**
+
+1. Write `scripts/export-contracts.py` and the `Contracts.SnapshotsCurrent` test, and commit the first snapshots. Done when: `python scripts/export-contracts.py --check` and `recto-tests --gtest_filter=Contracts.*` pass on the built tree.
+2. Write `scripts/lib/contract_diff.py` and `scripts/next-version.py`, and wire `--check` into `scripts/check-release-version.py` (`D07 T02 §18`). Done when: `python -m unittest tests.scripts.test_next_version` passes.
+
+- [ ] Write `scripts/export-contracts.py [--check]` producing, in canonical form (sorted keys, two-space indent, LF, volatile fields such as `registry_hash` and `recto_version` removed), `docs/contracts/cli-verbs.json` from `recto-cli verbs --json` (`D04 T08 §2`), `docs/contracts/cli-version.json` from the key set of `recto-cli --version --json` (`D07 T02 §21`), `docs/contracts/mcp-tools.json` from the `tools/list` reply of `recto-mcp` driven through stdin (`D04 T08 §5`), and `docs/contracts/policies.json` from `policy/Recto.admx` (`D07 T02 §8`); `--check` exits `1` when a committed file differs. Done when: `tests/scripts/test_next_version.py` finds `--check` failing after a planted edit to each file. Cheaper substitute: a reviewer's memory of what the CLI accepted last release.
+- [ ] Add `Contracts.SnapshotsCurrent` in `tests/recto-tests/contract_tests.cpp`, which renders `docs/contracts/settings-schema.json` (every `SettingsStore` key with type, enum values and default, `D02 T04 §2`), `recents-schema.json` and `session-schema.json` (field tables of `RecentFilesStore` and `SessionStore` with their `schema` numbers, `D07 T01 §22`, `D02 T01 §13`) and `commands.json` (every `CommandRegistry` command id, `D02 T03 §11`) in process and compares them with the committed files, rewriting them only when `RECTO_UPDATE_CONTRACTS=1`. Done when: the test passes, and fails naming the key when a settings key is added in a scratch build without updating the snapshot.
+- [ ] Write `scripts/lib/contract_diff.py` classifying the difference between two snapshot sets: a removed verb, flag, tool, argument, key, field, enum value, policy or command id, a changed type, an optional argument made required, a new required argument, or a changed exit-code meaning is `major`; an added item, optional argument or enum value is `minor`; a change to descriptions or help text only is `patch`; an item newly marked `"deprecated": true` is a `Deprecated` note. Done when: `NextVersion.ContractDiffRules` has one passing fixture pair per rule.
+- [ ] Write `scripts/next-version.py [--from <tag>] [--to HEAD] [--json] [--check]`: `--from` defaults to the highest `Release` tag; the level is the highest of the contract diff (`git show <tag>:docs/contracts/...` against `<to>`), a `> **Breaking:**` note in a section shipped in the range (major), a `Surface: yes` section shipped in the range (minor), and any shipped section or `Fixes-User:` fix (patch); the output is the suggested version and one reason line per finding; with nothing shipped it prints "no changes" and exits `0`. Done when: `NextVersion.Suggests` gets `2.0.0` for a removed verb after `v1.4.2`, `1.5.0` for an added optional flag, `1.4.3` for a fix only, and `2.0.0` for a `Breaking:` note.
+- [ ] Implement `--check`: exit `1` when `VERSION`'s core is below the suggestion (for example `1.4.3` when a contract break suggests `2.0.0`), `0` otherwise, and call it from `scripts/check-release-version.py` (`D07 T02 §18`) so a release tag can never understate a break. Done when: `NextVersion.CheckRefusesUnderstatedBump` fails a fixture tagged `v1.4.3` over a removed verb and passes one tagged `v2.0.0`.
+- [ ] Feed the contract findings into the changelog (`§10`): breaking items under `Removed` or as `**Breaking:**` entries under `Changed`, deprecations under `Deprecated`. Done when: `Changelog.ContractFindings` lists a removed fixture verb under `Removed`.
+- [ ] Document the `> **Breaking:** <what breaks and how to migrate>` section note in `docs/versioning.md` and among the optional stamp companions of `todo/README.md`, written by hand before stamping a section that breaks a contract. Done when: both files describe the note and `NextVersion.DocNamesBreakingNote` finds it in each.
+- [ ] Run `python scripts/export-contracts.py --check` in `.github/workflows/build.yml` after the x64 build. Done when: `tests/scripts/test_next_version.py` finds the step in the workflow.
+- [ ] Commit: `release: snapshot public contracts and suggest the next SemVer from what shipped`
+
+**Test checkpoint:** `python -m unittest tests.scripts.test_next_version` passes, `python scripts/export-contracts.py --check` exits `0`, `recto-tests --gtest_filter=Contracts.*` passes, and `python scripts/next-version.py --json` on the repository is quoted.
+
 ## Verification
 
 - A new GitHub issue can only be a bug form, a feature form or a security report, and `python -m unittest tests.scripts.test_issue_forms tests.scripts.test_release_notes tests.scripts.test_release_gate tests.scripts.test_user_demand` passes.
 - `Help -> Report a problem` copies diagnostics with no document content, and `recto-cli scrub` produces a reproducer with the same structural trace, a kept-channel report and preview pages.
 - The release runbook runs `scripts/release-gate.py`, publishes "Fixed in vX.Y.Z" comments from `scripts/release-notes.py`, and reviews `docs/user-demand.md`.
+- `python -m unittest tests.scripts.test_changelog tests.scripts.test_next_version` passes, `python scripts/export-contracts.py --check` exits `0`, and the release gate refuses a tag that understates a contract break.
 - `python scripts/todo-graph.py validate` and `python scripts/todo-graph.py plan --check` pass.

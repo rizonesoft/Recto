@@ -666,7 +666,7 @@ Sections: 119 | Checklist items: 959
 
 ### Phase 6: M6 Ship
 
-Sections: 61 | Checklist items: 443
+Sections: 70 | Checklist items: 515
 
 | Status | Reference   | Deliverable                                                                              | Needs                         | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ----------------------------- | ----- |
@@ -705,32 +705,41 @@ Sections: 61 | Checklist items: 443
 | [ ]    | D07 T01 §21 | Installer edge cases: running app, user data on uninstall and shell registration         | windows-host, display-session | 9     |
 | [ ]    | D07 T01 §22 | Settings and recents across versions: schema stamp, migration and newer-file safety      | windows-host                  | 8     |
 | [ ]    | D07 T01 §23 | Ship the neural OCR model: installer, Portable zip, bundle and a find check              | windows-host, display-session | 6     |
-| [ ]    | D07 T02 §1  | Build-time version and provenance generator (version, SHA, `Standard` vs `Portable`)     | windows-host                  | 7     |
-| [ ]    | D07 T02 §2  | `AboutPage` (`SPEC 9.8`, `D-About.png`: version truth, `LICENSE` modal and `Built-with`) | windows-host, display-session | 7     |
-| [ ]    | D07 T02 §3  | Build-derived dependency enumeration script, `NOTICE.md` and `docs/license-audit.md`     | windows-host                  | 7     |
-| [ ]    | D07 T02 §4  | Opt-in local crash report bundle writer (`MiniDumpNormal` + D16 ring log `.zip` prompt)  | windows-host, display-session | 7     |
-| [ ]    | D06 T02 §7  | FIPS mode detection and the algorithm policy in `recto-pdf`                              | windows-host                  | 5     |
-| [ ]    | D07 T02 §5  | Localization readiness (`en-US.rc` string extraction and 40% pseudolocale check)         | windows-host, display-session | 6     |
-| [ ]    | D07 T02 §6  | GitHub Release runbook (`docs/release-and-store-runbook.md`) and Store submission kit    | windows-host, display-session | 9     |
-| [ ]    | D07 T01 §19 | Full installer integration and end-to-end proof for the Recto PDF printer                | windows-host, display-session | 7     |
-| [ ]    | D07 T01 §20 | Recto PDF driver signature check, signing runbook and release gate                       | windows-host                  | 5     |
 | [ ]    | D07 T02 §8  | Group Policy catalogue and templates: `policy/Recto.admx` and `Recto.adml`               | windows-host                  | 6     |
 | [ ]    | D07 T02 §9  | `PolicyProvider`: read machine and user policy values, typed and bounded                 | windows-host                  | 7     |
 | [ ]    | D07 T02 §10 | `SettingsStore` policy precedence: locked settings and policy gates                      | windows-host                  | 6     |
 | [ ]    | D07 T02 §11 | "Managed by your organization" notes on locked settings and `recto-cli policy show`      | windows-host, display-session | 6     |
-| [ ]    | D07 T02 §12 | Policy templates release artifact and end-to-end Group Policy proof                      | windows-host, display-session | 6     |
+| [ ]    | D07 T02 §18 | Version derivation from git tags, `VERSION` and the release version check                | none                          | 9     |
+| [ ]    | D07 T02 §19 | `recto::core::SemVer`: constexpr parser, precedence comparator, property tests and fuzz  | windows-host                  | 7     |
+| [ ]    | D07 T02 §1  | Build-time version and provenance generator (version, SHA, `Standard` vs `Portable`)     | windows-host                  | 7     |
+| [ ]    | D07 T02 §2  | `AboutPage` (`SPEC 9.8`, `D-About.png`: version truth, `LICENSE` modal and `Built-with`) | windows-host, display-session | 8     |
+| [ ]    | D07 T02 §3  | Build-derived dependency enumeration script, `NOTICE.md` and `docs/license-audit.md`     | windows-host                  | 7     |
+| [ ]    | D07 T02 §4  | Opt-in local crash report bundle writer (`MiniDumpNormal` + D16 ring log `.zip` prompt)  | windows-host, display-session | 7     |
+| [ ]    | D06 T02 §7  | FIPS mode detection and the algorithm policy in `recto-pdf`                              | windows-host                  | 5     |
+| [ ]    | D07 T02 §5  | Localization readiness (`en-US.rc` string extraction and 40% pseudolocale check)         | windows-host, display-session | 6     |
 | [ ]    | D07 T02 §13 | Translation catalogue: languages manifest, glossary, plural rules and the checker        | windows-host                  | 6     |
 | [ ]    | D07 T02 §14 | Interface language setting: Follow Windows or a shipped language                         | windows-host, display-session | 6     |
 | [ ]    | D07 T02 §15 | Localised errors, plurals, dates and numbers: no English assembled in code               | windows-host                  | 5     |
 | [ ]    | D06 T02 §8  | Enforce the FIPS policy in decryption, encryption writers, signing digests and the CLI   | windows-host                  | 6     |
 | [ ]    | D06 T02 §9  | FIPS mode proof script, tested to refuse on an ordinary host                             | windows-host                  | 4     |
 | [ ]    | D07 T02 §16 | Right-to-left readiness: flow direction, mirrored icons and a mirrored pseudolocale      | windows-host, display-session | 5     |
+| [ ]    | D07 T02 §20 | Generated `VERSIONINFO` resources in every shipped binary and a read-back check          | windows-host                  | 7     |
+| [ ]    | D07 T01 §24 | Installer and package version stamping, versioned artifact names and the manifest        | windows-host                  | 8     |
+| [ ]    | D07 T01 §25 | Downgrade warning and silent downgrade refusal (`/ALLOWDOWNGRADE=1`)                     | windows-host, display-session | 9     |
+| [ ]    | D07 T01 §26 | Writer version in settings, recents and session files and newer-writer notes             | windows-host                  | 5     |
+| [ ]    | D07 T02 §21 | Version surfaces: `recto-cli --version --json`, `recto-mcp` server info and crash JSON   | windows-host                  | 5     |
+| [ ]    | D07 T03 §2  | In-app `Report a problem` with privacy-safe diagnostics                                  | windows-host, display-session | 7     |
+| [ ]    | D07 T03 §10 | Changelog and release body from stamped sections and `Fixes-User:` trailers              | none                          | 9     |
+| [ ]    | D07 T03 §7  | What's new after update and opt-in update notice                                         | windows-host, display-session | 8     |
+| [ ]    | D07 T03 §11 | Contract snapshots and `scripts/next-version.py` SemVer bump suggestion                  | windows-host                  | 9     |
+| [ ]    | D07 T02 §6  | GitHub Release runbook (`docs/release-and-store-runbook.md`) and Store submission kit    | windows-host, display-session | 10    |
+| [ ]    | D07 T01 §19 | Full installer integration and end-to-end proof for the Recto PDF printer                | windows-host, display-session | 7     |
+| [ ]    | D07 T01 §20 | Recto PDF driver signature check, signing runbook and release gate                       | windows-host                  | 5     |
+| [ ]    | D07 T02 §12 | Policy templates release artifact and end-to-end Group Policy proof                      | windows-host, display-session | 6     |
 | [ ]    | D07 T02 §17 | First language set: ten drafted translations, reviewed flag and installer languages      | windows-host                  | 9     |
 | [ ]    | D07 T02 §7  | End-to-end v1 distribution bundle (`Setup.exe`, `Portable.zip`, `SHA256SUMS.txt`) & GPL  | windows-host, display-session | 9     |
 | [ ]    | D06 T03 §12 | Installed-build release smoke and upgrade persistence proof on the build host            | windows-host, display-session | 11    |
-| [ ]    | D07 T03 §2  | In-app `Report a problem` with privacy-safe diagnostics                                  | windows-host, display-session | 7     |
-| [ ]    | D07 T03 §5  | Release gate for unreleased fixes, security advisories and CI integrity                  | windows-host                  | 8     |
-| [ ]    | D07 T03 §7  | What's new after update and opt-in update notice                                         | windows-host, display-session | 7     |
+| [ ]    | D07 T03 §5  | Release gate for unreleased fixes, security advisories and CI integrity                  | windows-host                  | 9     |
 
 ### Phase 7: After v1
 
@@ -853,6 +862,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 55/784 verified sections, 19 ready to run now.
+Progress: 55/793 verified sections, 20 ready to run now.
 
-Checklist: 316/5795 items completed (includes Commit items).
+Checklist: 316/5867 items completed (includes Commit items).
