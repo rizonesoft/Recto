@@ -212,6 +212,34 @@ constexpr std::string_view kEofMarker = "%%EOF";
 	return obj_res;
 }
 
+
+// Whether a recovered `/Type /ObjStm` container needs other objects to be decoded or read: its /Filter, /DecodeParms,
+// /N or /First is an indirect reference or holds one (an array element, or a value inside a parameter dictionary).
+[[nodiscard]] bool objstm_needs_resolver(const PdfDict& dict) noexcept
+{
+	const auto dict_holds_ref = [](const PdfDict& d) {
+		return std::any_of(d.entries().begin(), d.entries().end(), [](const auto& e) { return e.second.is_ref(); });
+	};
+	const auto holds_ref = [&](const PdfValue* v) {
+		if (v == nullptr) {
+			return false;
+		}
+		if (v->is_ref()) {
+			return true;
+		}
+		if (const PdfDict* d = v->as_dict()) {
+			return dict_holds_ref(*d);
+		}
+		if (const PdfArray* a = v->as_array()) {
+			return std::any_of(a->begin(), a->end(), [&](const PdfValue& e) {
+				return e.is_ref() || (e.as_dict() != nullptr && dict_holds_ref(*e.as_dict()));
+			});
+		}
+		return false;
+	};
+	return holds_ref(dict.get("Filter")) || holds_ref(dict.get("DecodeParms")) || holds_ref(dict.get("DP")) ||
+		holds_ref(dict.get("N")) || holds_ref(dict.get("First"));
+}
 } // namespace
 
 PdfResult<uint64_t> XrefTable::locate_header_offset(
@@ -653,8 +681,22 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		// Objects the scan found to be the name /Catalog (generation), so an indirect /Type is checked with no further
 		// parsing, as recovered_integers serves an indirect /Length.
 		std::unordered_map<uint32_t, uint16_t> catalog_names;
-		std::vector<IndirectRef> catalog_history;
+		// Catalog candidates with the file position of their definition (a compressed one has its container's), so
+		// the fallback below can prefer the latest in the file even for members unpacked after the scan.
+		std::vector<std::pair<uint64_t, IndirectRef>> catalog_history;
 		std::unordered_map<uint32_t, std::vector<uint32_t>> objstm_members;
+		// The file position of the definition each entry came from (an uncompressed object's own, or its container's),
+		// so a container unpacked after the scan overrides exactly the definitions before it in the file and none after.
+		std::unordered_map<uint32_t, uint64_t> defined_at;
+		// Containers whose /Filter, /DecodeParms, /N or /First is indirect: the object a reference names may lie after
+		// the container, so they are unpacked once the scan has found every object. Every other container is still
+		// unpacked where the scan meets it, so its integers keep serving a later indirect /Length.
+		struct DeferredObjStm {
+			uint32_t obj_num = 0;
+			size_t pos = 0;
+			PdfStream stream;
+		};
+		std::vector<DeferredObjStm> deferred_objstms;
 
 		auto invalidate_objstm_container = [&](uint32_t container_id) {
 			auto m_it = objstm_members.find(container_id);
@@ -665,6 +707,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 				const XrefEntry* me = table.find(member_id);
 				if (me != nullptr && me->is_compressed() && me->obj_stm_num == container_id) {
 					table.entries_.erase(member_id);
+					defined_at.erase(member_id);
 					if (objects_discovered > 0u) {
 						--objects_discovered;
 					}
@@ -678,6 +721,166 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 				}
 			}
 			objstm_members.erase(m_it);
+		};
+
+		// Reads a decoded container's header and records its members, as the scan does for one it meets. Members are
+		// read by the same routine as on every other path (extract_object_stream_member).
+		auto unpack_objstm = [&](uint32_t obj_num, size_t container_pos, std::optional<int64_t> n_opt,
+			std::optional<int64_t> first_opt, std::vector<uint8_t> decoded) -> PdfResult<void> {
+			if (n_opt.has_value() &&
+				*n_opt > 0 &&
+				*n_opt <= static_cast<int64_t>(kMaxObjStmEntries) &&
+				first_opt.has_value() &&
+				*first_opt >= 0 &&
+				static_cast<size_t>(*first_opt) <= decoded.size()) {
+				const size_t first_off = static_cast<size_t>(*first_opt);
+				const std::span<const uint8_t> hdr_span(
+					decoded.data(),
+					first_off);
+				Lexer hdr_lex(hdr_span);
+				struct InnerPair {
+					uint32_t obj_num = 0;
+					size_t rel_off = 0;
+				};
+				std::vector<InnerPair> inner_pairs;
+				inner_pairs.reserve(static_cast<size_t>(*n_opt));
+				bool header_ok = true;
+				for (int64_t idx = 0; idx < *n_opt; ++idx) {
+					Token id_tok;
+					Token off_tok;
+					PdfError herr;
+					if (!next_non_comment_token(hdr_lex, id_tok, herr) ||
+						!next_non_comment_token(hdr_lex, off_tok, herr)) {
+						if (herr.code == ErrorCode::OutOfMemory) {
+							return herr;
+						}
+						header_ok = false;
+						break;
+					}
+					if (id_tok.kind != TokenKind::Integer ||
+						id_tok.int_value <= 0 ||
+						id_tok.int_value >
+							static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) ||
+						id_tok.int_value == static_cast<int64_t>(obj_num) ||
+						off_tok.kind != TokenKind::Integer ||
+						off_tok.int_value < 0) {
+						header_ok = false;
+						break;
+					}
+					const uint64_t rel_u64 = static_cast<uint64_t>(off_tok.int_value);
+					if (rel_u64 > decoded.size() - first_off ||
+						(!inner_pairs.empty() &&
+						 static_cast<size_t>(rel_u64) < inner_pairs.back().rel_off)) {
+						header_ok = false;
+						break;
+					}
+					inner_pairs.push_back(InnerPair{
+						static_cast<uint32_t>(id_tok.int_value),
+						static_cast<size_t>(rel_u64)});
+				}
+				if (header_ok) {
+					// Members are read by the same routine as on every other path
+					// (extract_object_stream_member); recovery skips an invalid one instead
+					// of failing, and keeps the rest of the container.
+					CachedObjStream recovered_stm;
+					recovered_stm.first_offset = first_off;
+					recovered_stm.entries.reserve(inner_pairs.size());
+					for (const InnerPair& pair : inner_pairs) {
+						recovered_stm.entries.push_back(
+							CachedObjStream::HeaderPair{pair.obj_num, pair.rel_off});
+					}
+					recovered_stm.decoded_bytes = std::move(decoded);
+					auto& member_vec = objstm_members[obj_num];
+					for (size_t idx = 0; idx < inner_pairs.size(); ++idx) {
+						if (candidate_attempts >= effective_max_entries) {
+							return make_xref_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedXRef,
+								"Damaged-file recovery exceeded maximum object entry budget",
+								container_pos);
+						}
+						++candidate_attempts;
+						const uint32_t inner_id = inner_pairs[idx].obj_num;
+						// A definition later in the file than this container wins (only a container unpacked after the scan
+						// can meet one).
+						if (const auto later = defined_at.find(inner_id);
+							later != defined_at.end() && later->second > container_pos) {
+							continue;
+						}
+
+						auto member = extract_object_stream_member(
+							recovered_stm,
+							static_cast<uint32_t>(idx),
+							IndirectRef{inner_id, 0u});
+						if (!member.has_value()) {
+							if (member.error().code == ErrorCode::OutOfMemory) {
+								return member.error();
+							}
+							continue;
+						}
+						const PdfValue* inner_val = &*member;
+
+						if (!table.entries_.contains(inner_id) &&
+							objects_discovered >= effective_max_entries) {
+							return make_xref_error(
+								ErrorCode::DamagedFormat,
+								DiagnosticId::DamagedXRef,
+								"Damaged-file recovery exceeded maximum object entry budget",
+								container_pos);
+						}
+						invalidate_objstm_container(inner_id);
+						if (!table.entries_.contains(inner_id)) {
+							++objects_discovered;
+						}
+						table.set_entry(
+							inner_id,
+							XrefEntry{
+								XrefEntryKind::Compressed,
+								0u,
+								obj_num,
+								static_cast<uint32_t>(idx),
+								0u});
+						member_vec.push_back(inner_id);
+						defined_at[inner_id] = container_pos;
+						recovered_integers.erase(inner_id);
+						catalog_generations.erase(inner_id);
+						indirect_type_dicts.erase(inner_id);
+						catalog_names.erase(inner_id);
+						if (info_candidate.has_value() &&
+							info_candidate->obj_num == inner_id) {
+							info_candidate = std::nullopt;
+						}
+						if (inner_id > max_obj_num) {
+							max_obj_num = inner_id;
+						}
+						if (inner_val->as_name() == std::optional<std::string_view>("Catalog")) {
+							catalog_names[inner_id] = 0u;
+						}
+						if (const auto int_v = inner_val->as_int()) {
+							recovered_integers[inner_id] = {uint16_t{0}, *int_v};
+						} else if (const PdfDict* idict = inner_val->as_dict()) {
+							const auto itype = idict->get_name("Type");
+							if (const PdfValue* itype_val = idict->get("Type");
+								itype_val != nullptr && itype_val->is_ref()) {
+								indirect_type_dicts[inner_id] = {uint16_t{0}, *itype_val->as_ref()};
+								catalog_history.push_back({container_pos, IndirectRef{inner_id, 0u}});
+							}
+							if (itype.has_value() && *itype == "Catalog") {
+								catalog_generations[inner_id] = 0u;
+								catalog_history.push_back({container_pos, IndirectRef{inner_id, 0u}});
+							} else if (
+								!itype.has_value() &&
+								(idict->contains("Title") ||
+								 idict->contains("Author") ||
+								 idict->contains("Producer") ||
+								 idict->contains("CreationDate"))) {
+								info_candidate = IndirectRef{inner_id, 0u};
+							}
+						}
+					}
+				}
+			}
+			return {};
 		};
 
 		// Linearly scan from header_off for `<N> <G> obj` and `trailer << ... >>`.
@@ -850,6 +1053,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 									0u,
 									0u,
 									gen_num});
+							defined_at[obj_num] = static_cast<uint64_t>(pos);
 							recovered_integers.erase(obj_num);
 							catalog_generations.erase(obj_num);
 							indirect_type_dicts.erase(obj_num);
@@ -869,11 +1073,11 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 								if (const PdfValue* type_val = dict_only->get("Type");
 									type_val != nullptr && type_val->is_ref()) {
 									indirect_type_dicts[obj_num] = {gen_num, *type_val->as_ref()};
-									catalog_history.push_back(IndirectRef{obj_num, gen_num}); // file order
+									catalog_history.push_back({static_cast<uint64_t>(pos), IndirectRef{obj_num, gen_num}});
 								}
 								if (type_opt.has_value() && *type_opt == "Catalog") {
 									catalog_generations[obj_num] = gen_num;
-									catalog_history.push_back(IndirectRef{obj_num, gen_num});
+									catalog_history.push_back({static_cast<uint64_t>(pos), IndirectRef{obj_num, gen_num}});
 								} else if (
 									!type_opt.has_value() &&
 									(dict_only->contains("Title") ||
@@ -891,6 +1095,9 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 									if (!ov_res.has_value()) {
 										return ov_res.error();
 									}
+								} else if (type_opt.has_value() && *type_opt == "ObjStm" && gen_num == 0u &&
+									objstm_needs_resolver(sdict)) {
+									deferred_objstms.push_back(DeferredObjStm{obj_num, pos, stm});
 								} else if (type_opt.has_value() && *type_opt == "ObjStm" && gen_num == 0u &&
 									!filters_are_metered_lossless(sdict)) {
 									// Recovery decodes a container only through filters whose work the decode meter
@@ -923,152 +1130,9 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 											"Damaged-file recovery exceeded cumulative decoded /ObjStm byte budget",
 											pos);
 									}
-									if (n_opt.has_value() &&
-										*n_opt > 0 &&
-										*n_opt <= static_cast<int64_t>(kMaxObjStmEntries) &&
-										first_opt.has_value() &&
-										*first_opt >= 0 &&
-										dec_stm.has_value() &&
-										static_cast<size_t>(*first_opt) <= dec_stm->size()) {
-										const size_t first_off = static_cast<size_t>(*first_opt);
-										const std::span<const uint8_t> hdr_span(
-											dec_stm->data(),
-											first_off);
-										Lexer hdr_lex(hdr_span);
-										struct InnerPair {
-											uint32_t obj_num = 0;
-											size_t rel_off = 0;
-										};
-										std::vector<InnerPair> inner_pairs;
-										inner_pairs.reserve(static_cast<size_t>(*n_opt));
-										bool header_ok = true;
-										for (int64_t idx = 0; idx < *n_opt; ++idx) {
-											Token id_tok;
-											Token off_tok;
-											PdfError herr;
-											if (!next_non_comment_token(hdr_lex, id_tok, herr) ||
-												!next_non_comment_token(hdr_lex, off_tok, herr)) {
-												if (herr.code == ErrorCode::OutOfMemory) {
-													return herr;
-												}
-												header_ok = false;
-												break;
-											}
-											if (id_tok.kind != TokenKind::Integer ||
-												id_tok.int_value <= 0 ||
-												id_tok.int_value >
-													static_cast<int64_t>(std::numeric_limits<uint32_t>::max()) ||
-												id_tok.int_value == static_cast<int64_t>(obj_num) ||
-												off_tok.kind != TokenKind::Integer ||
-												off_tok.int_value < 0) {
-												header_ok = false;
-												break;
-											}
-											const uint64_t rel_u64 = static_cast<uint64_t>(off_tok.int_value);
-											if (rel_u64 > dec_stm->size() - first_off ||
-												(!inner_pairs.empty() &&
-												 static_cast<size_t>(rel_u64) < inner_pairs.back().rel_off)) {
-												header_ok = false;
-												break;
-											}
-											inner_pairs.push_back(InnerPair{
-												static_cast<uint32_t>(id_tok.int_value),
-												static_cast<size_t>(rel_u64)});
-										}
-										if (header_ok) {
-											// Members are read by the same routine as on every other path
-											// (extract_object_stream_member); recovery skips an invalid one instead
-											// of failing, and keeps the rest of the container.
-											CachedObjStream recovered_stm;
-											recovered_stm.first_offset = first_off;
-											recovered_stm.entries.reserve(inner_pairs.size());
-											for (const InnerPair& pair : inner_pairs) {
-												recovered_stm.entries.push_back(
-													CachedObjStream::HeaderPair{pair.obj_num, pair.rel_off});
-											}
-											recovered_stm.decoded_bytes = std::move(*dec_stm);
-											auto& member_vec = objstm_members[obj_num];
-											for (size_t idx = 0; idx < inner_pairs.size(); ++idx) {
-												if (candidate_attempts >= effective_max_entries) {
-													return make_xref_error(
-														ErrorCode::DamagedFormat,
-														DiagnosticId::DamagedXRef,
-														"Damaged-file recovery exceeded maximum object entry budget",
-														pos);
-												}
-												++candidate_attempts;
-												const uint32_t inner_id = inner_pairs[idx].obj_num;
-
-												auto member = extract_object_stream_member(
-													recovered_stm,
-													static_cast<uint32_t>(idx),
-													IndirectRef{inner_id, 0u});
-												if (!member.has_value()) {
-													if (member.error().code == ErrorCode::OutOfMemory) {
-														return member.error();
-													}
-													continue;
-												}
-												const PdfValue* inner_val = &*member;
-
-												if (!table.entries_.contains(inner_id) &&
-													objects_discovered >= effective_max_entries) {
-													return make_xref_error(
-														ErrorCode::DamagedFormat,
-														DiagnosticId::DamagedXRef,
-														"Damaged-file recovery exceeded maximum object entry budget",
-														pos);
-												}
-												invalidate_objstm_container(inner_id);
-												if (!table.entries_.contains(inner_id)) {
-													++objects_discovered;
-												}
-												table.set_entry(
-													inner_id,
-													XrefEntry{
-														XrefEntryKind::Compressed,
-														0u,
-														obj_num,
-														static_cast<uint32_t>(idx),
-														0u});
-												member_vec.push_back(inner_id);
-												recovered_integers.erase(inner_id);
-												catalog_generations.erase(inner_id);
-												indirect_type_dicts.erase(inner_id);
-												catalog_names.erase(inner_id);
-												if (info_candidate.has_value() &&
-													info_candidate->obj_num == inner_id) {
-													info_candidate = std::nullopt;
-												}
-												if (inner_id > max_obj_num) {
-													max_obj_num = inner_id;
-												}
-												if (inner_val->as_name() == std::optional<std::string_view>("Catalog")) {
-													catalog_names[inner_id] = 0u;
-												}
-												if (const auto int_v = inner_val->as_int()) {
-													recovered_integers[inner_id] = {uint16_t{0}, *int_v};
-												} else if (const PdfDict* idict = inner_val->as_dict()) {
-													const auto itype = idict->get_name("Type");
-													if (const PdfValue* itype_val = idict->get("Type");
-														itype_val != nullptr && itype_val->is_ref()) {
-														indirect_type_dicts[inner_id] = {uint16_t{0}, *itype_val->as_ref()};
-														catalog_history.push_back(IndirectRef{inner_id, 0u}); // file order
-													}
-													if (itype.has_value() && *itype == "Catalog") {
-														catalog_generations[inner_id] = 0u;
-														catalog_history.push_back(IndirectRef{inner_id, 0u});
-													} else if (
-														!itype.has_value() &&
-														(idict->contains("Title") ||
-														 idict->contains("Author") ||
-														 idict->contains("Producer") ||
-														 idict->contains("CreationDate"))) {
-														info_candidate = IndirectRef{inner_id, 0u};
-													}
-												}
-											}
-										}
+									if (dec_stm.has_value()) {
+										RECTO_PDF_RETURN_IF_ERROR(
+											unpack_objstm(obj_num, pos, n_opt, first_opt, std::move(*dec_stm)));
 									}
 								}
 							}
@@ -1085,11 +1149,159 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			++pos;
 		}
 
+		// Unpack the deferred containers in file order. Their parameters resolve one level through the objects the scan
+		// found uncompressed (the latest definition of each); a reference to anything else, or to an object that does not
+		// parse, is null, as an undefined object is (ISO 32000-1 section 7.3.10), so resolution never recurses. Parsing
+		// is charged to the scan's cumulative parse budget.
+		bool resolver_over_budget = false;
+		const IndirectObjectResolver scan_resolver = [&](IndirectRef ref) -> PdfResult<PdfValue> {
+			const XrefEntry* entry = table.find(ref.obj_num);
+			if (entry == nullptr || !entry->is_uncompressed() || entry->generation != ref.gen_num ||
+				entry->byte_offset >= file_bytes.size()) {
+				return PdfValue(PdfNull{});
+			}
+			const size_t at = static_cast<size_t>(entry->byte_offset);
+			Parser parser(file_bytes);
+			parser.seek(at);
+			auto parsed = parser.parse_indirect_object(
+				[&recovered_integers, ref](IndirectRef len_ref) -> PdfResult<int64_t> {
+					const auto it = recovered_integers.find(len_ref.obj_num);
+					if (len_ref.obj_num == ref.obj_num || it == recovered_integers.end() ||
+						it->second.first != len_ref.gen_num) {
+						return make_pdf_error(
+							ErrorCode::DamagedFormat,
+							"Indirect /Length target not available as an integer object during recovery");
+					}
+					return it->second.second;
+				});
+			cumulative_parse_bytes += static_cast<uint64_t>(
+				std::max(parser.lexer().max_scanned_offset(), parser.lexer().position()) - at);
+			if (cumulative_parse_bytes > max_recovery_parse_bytes) {
+				resolver_over_budget = true;
+				return make_xref_error(
+					ErrorCode::DamagedFormat,
+					DiagnosticId::DamagedXRef,
+					"Damaged-file recovery exceeded cumulative parse byte budget",
+					at);
+			}
+			if (!parsed.has_value()) {
+				if (parsed.error().code == ErrorCode::OutOfMemory) {
+					return parsed.error();
+				}
+				return PdfValue(PdfNull{});
+			}
+			return std::move(parsed->value);
+		};
+		const auto over_budget_error = [&](size_t at) {
+			return make_xref_error(
+				ErrorCode::DamagedFormat,
+				DiagnosticId::DamagedXRef,
+				"Damaged-file recovery exceeded cumulative parse byte budget",
+				at);
+		};
+		// A name, or null for anything else, after one level of resolution: what the metered-filter check reads.
+		const auto resolved_filter_name = [&](const PdfValue& v) -> PdfResult<PdfValue> {
+			if (const auto ref = v.as_ref()) {
+				RECTO_PDF_TRY_REF(target, scan_resolver(*ref));
+				const auto name = target.as_name();
+				return name.has_value() ? PdfValue(PdfName::from_decoded(*name)) : PdfValue(int64_t{0});
+			}
+			const auto name = v.as_name();
+			return name.has_value() ? PdfValue(PdfName::from_decoded(*name)) : PdfValue(int64_t{0});
+		};
+		const auto resolved_int = [&](const PdfValue* v) -> PdfResult<std::optional<int64_t>> {
+			if (v == nullptr) {
+				return std::optional<int64_t>{};
+			}
+			if (const auto ref = v->as_ref()) {
+				RECTO_PDF_TRY_REF(target, scan_resolver(*ref));
+				return target.as_int();
+			}
+			return v->as_int();
+		};
+		for (DeferredObjStm& deferred : deferred_objstms) {
+			// A container redefined later in the file is not this object any more.
+			const XrefEntry* self = table.find(deferred.obj_num);
+			if (self == nullptr || !self->is_uncompressed() || self->byte_offset != deferred.pos) {
+				continue;
+			}
+			// The metered-filter rule above, read through the resolved /Filter.
+			PdfDict filter_view;
+			if (const PdfValue* filter = deferred.stream.dict.get("Filter"); filter != nullptr && !filter->is_null()) {
+				const PdfValue* filter_value = filter;
+				std::optional<PdfValue> filter_target;
+				if (const auto ref = filter->as_ref()) {
+					auto target = scan_resolver(*ref);
+					if (!target.has_value()) {
+						return resolver_over_budget ? over_budget_error(deferred.pos) : target.error();
+					}
+					filter_target.emplace(std::move(*target));
+					filter_value = &*filter_target;
+				}
+				if (const PdfArray* arr = filter_value->as_array(); arr != nullptr && arr->size() <= kMaxFilterChainDepth) {
+					PdfArray names;
+					for (const PdfValue& e : *arr) {
+						auto name = resolved_filter_name(e);
+						if (!name.has_value()) {
+							return resolver_over_budget ? over_budget_error(deferred.pos) : name.error();
+						}
+						names.push_back(std::move(*name));
+					}
+					filter_view.set("Filter", PdfValue(std::move(names)));
+				} else if (filter_value->is_null()) {
+					filter_view.set("Filter", PdfValue(PdfNull{}));
+				} else {
+					auto name = resolved_filter_name(*filter_value);
+					if (!name.has_value()) {
+						return resolver_over_budget ? over_budget_error(deferred.pos) : name.error();
+					}
+					filter_view.set("Filter", std::move(*name));
+				}
+			}
+			if (!filters_are_metered_lossless(filter_view)) {
+				record_diagnostic(ErrorCode::DamagedFormat, DiagnosticId::DamagedStream,
+					static_cast<uint64_t>(deferred.pos), deferred.obj_num, 0u);
+				continue;
+			}
+			auto n_opt = resolved_int(deferred.stream.dict.get("N"));
+			auto first_opt = resolved_int(deferred.stream.dict.get("First"));
+			if (!n_opt.has_value() || !first_opt.has_value()) {
+				if (resolver_over_budget) {
+					return over_budget_error(deferred.pos);
+				}
+				return !n_opt.has_value() ? n_opt.error() : first_opt.error();
+			}
+			detail::ScopedDecodeWorkMeter decode_work;
+			auto dec_stm = decode_stream(deferred.stream, kMaxDecodedStreamBytes, &scan_resolver);
+			if (resolver_over_budget) {
+				return over_budget_error(deferred.pos);
+			}
+			if (!dec_stm.has_value() &&
+				(dec_stm.error().code == ErrorCode::OutOfMemory ||
+				 dec_stm.error().code == ErrorCode::DecompressionLimitExceeded)) {
+				return dec_stm.error();
+			}
+			cumulative_decoded_objstm_bytes += std::max<uint64_t>(
+				decode_work.bytes(),
+				dec_stm.has_value() ? static_cast<uint64_t>(dec_stm->size()) : 0u);
+			if (cumulative_decoded_objstm_bytes > max_recovery_decoded_objstm_bytes) {
+				return make_xref_error(
+					ErrorCode::DecompressionLimitExceeded,
+					DiagnosticId::DamagedStream,
+					"Damaged-file recovery exceeded cumulative decoded /ObjStm byte budget",
+					deferred.pos);
+			}
+			if (dec_stm.has_value()) {
+				RECTO_PDF_RETURN_IF_ERROR(
+					unpack_objstm(deferred.obj_num, deferred.pos, *n_opt, *first_opt, std::move(*dec_stm)));
+			}
+		}
+
 		// A dictionary whose /Type is an indirect reference is a catalog when the object that reference names (one
 		// level, never following a further reference) is the name /Catalog (ISO 32000-1 section 7.3.10). The scan
 		// already parsed every object once and recorded those names (catalog_names), so this step parses nothing and
-		// recovery stays linear. The dictionaries already sit in catalog_history in file order, so the fallback below
-		// keeps preferring the latest; here they only become valid.
+		// recovery stays linear. The dictionaries already sit in catalog_history with their file positions, so the
+		// fallback below keeps preferring the latest; here they only become valid.
 		for (const auto& [dict_num, gen_and_type] : indirect_type_dicts) {
 			const IndirectRef type_ref = gen_and_type.second;
 			if (const auto named = catalog_names.find(type_ref.obj_num);
@@ -1112,9 +1324,12 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		};
 
 		if (!has_valid_root_entry()) {
+			std::stable_sort(catalog_history.begin(), catalog_history.end(), [](const auto& a, const auto& b) {
+				return a.first < b.first;
+			});
 			for (auto it = catalog_history.rbegin(); it != catalog_history.rend(); ++it) {
-				if (is_valid_catalog_ref(*it)) {
-					table.trailer_.set("Root", PdfValue(*it));
+				if (is_valid_catalog_ref(it->second)) {
+					table.trailer_.set("Root", PdfValue(it->second));
 					break;
 				}
 			}

@@ -820,6 +820,8 @@ While removing MuPDF and AGPL text from the older mockup boards (`D06 T05 §25`)
 
 ## 29. Damaged-file recovery resolves indirect object-stream parameters
 
+> **Started:** 2026-10-23T08:20:00Z
+
 The audit of `D01 T01 §6` (`docs/reviews/06-quality/audit-d01-t01-s6.md`, D06 T05 §21) found damaged-file recovery decoding each `/Type /ObjStm` it meets with no resolver (`src/pdf/xref.cpp`, the recovery scan's `decode_stream(stm)`), so a container whose `/Filter`, `/DecodeParms`, `/N` or `/First` is an indirect reference loses every object in it, including a sole `/Catalog`, and recovery fails. Normal resolution handles these since D06 T05 §20 and §21. Recovery is a single forward scan, so a parameter object can lie after the container that needs it: the fix defers object-stream unpacking until the scan has found every uncompressed object, which changes when compressed objects enter the rebuilt table and must keep the scan's rule that later definitions override earlier ones. -> XREF: D06 T05 §21
 
 **Phase:** 1
@@ -828,13 +830,13 @@ The audit of `D01 T01 §6` (`docs/reviews/06-quality/audit-d01-t01-s6.md`, D06 T
 
 **Build order:**
 
-1. Defer object-stream unpacking in the recovery scan of `XrefTable::parse` until the forward scan ends, keeping each container's file position so the override order stays the file order. Done when: a recovered table built from a file whose containers and uncompressed objects interleave matches the order the scan used before, proven by the existing recovery tests.
+1. Defer object-stream unpacking in the recovery scan of `XrefTable::parse` until the forward scan ends, keeping each container's file position so the override order stays the file order. Done when: a recovered table built from a file whose containers and uncompressed objects interleave matches the order the scan used before, proven by the existing recovery tests. **Corrected 2026-10-23:** only containers whose `/Filter`, `/DecodeParms`, `/N` or `/First` is or holds a reference are deferred (`objstm_needs_resolver` in `src/pdf/xref.cpp`); every other container is still unpacked where the scan meets it, because its integers can be the indirect `/Length` of a later stream (deferring all of them would lose that). The file order holds through `defined_at`, the file position of the definition each entry came from, and catalog candidates carry their position so the fallback still prefers the latest in the file.
 2. Decode each deferred container with a resolver over the uncompressed objects the scan found (cycle-safe, one level) and read it through `parse_object_stream` and `extract_object_stream_member`. Done when: a damaged file whose only `/Catalog` sits in a container with `/DecodeParms 2 0 R` recovers.
 
-- [ ] Record each `/Type /ObjStm` the recovery scan meets with its file offset instead of unpacking it in place in `src/pdf/xref.cpp`. Done when: `PdfXref.*` recovery tests pass unchanged.
-- [ ] Unpack the recorded containers after the scan in file order, with an `IndirectObjectResolver` over the scan's uncompressed entries, through `parse_object_stream` and `extract_object_stream_member`. Done when: a later uncompressed definition of an object still overrides an earlier compressed one, and the reverse, as before.
-- [ ] Keep the cumulative decoded `/ObjStm` byte budget and the per-container ceilings on the deferred path. Done when: `tests/corpus/broken/` files that hit the budget still fail with `DecompressionLimitExceeded`.
-- [ ] Add `PdfXref.RecoveryResolvesIndirectObjStmParameters`: a file with no `startxref` whose only `/Catalog` is compressed in an ASCIIHex container with `/DecodeParms 2 0 R` (object 2 after the container), and a variant with `/N 3 0 R /First 4 0 R`. Done when: both recover, and the test fails on the code before this section.
+- [x] Record each `/Type /ObjStm` the recovery scan meets with its file offset instead of unpacking it in place in `src/pdf/xref.cpp`. Done when: `PdfXref.*` recovery tests pass unchanged. **Corrected 2026-10-23:** recorded only when its parameters need resolving (see build order step 1); the others unpack in place as before.
+- [x] Unpack the recorded containers after the scan in file order, with an `IndirectObjectResolver` over the scan's uncompressed entries, through `parse_object_stream` and `extract_object_stream_member`. Done when: a later uncompressed definition of an object still overrides an earlier compressed one, and the reverse, as before. **Corrected 2026-10-23:** the header is read by the scan's existing header reader, moved unchanged into `unpack_objstm` and shared by both paths, and members through `extract_object_stream_member`, so a deferred container is read exactly as one unpacked in place.
+- [x] Keep the cumulative decoded `/ObjStm` byte budget and the per-container ceilings on the deferred path. Done when: `tests/corpus/broken/` files that hit the budget still fail with `DecompressionLimitExceeded`.
+- [x] Add `PdfXref.RecoveryResolvesIndirectObjStmParameters`: a file with no `startxref` whose only `/Catalog` is compressed in an ASCIIHex container with `/DecodeParms 2 0 R` (object 2 after the container), and a variant with `/N 3 0 R /First 4 0 R`. Done when: both recover, and the test fails on the code before this section.
 - [ ] Commit: `pdf: recovery resolves indirect object-stream parameters`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfXref.*` passes under ASan with 0 warnings, including `PdfXref.RecoveryResolvesIndirectObjStmParameters`.

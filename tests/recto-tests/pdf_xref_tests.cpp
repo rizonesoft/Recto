@@ -204,6 +204,72 @@ TEST(PdfXref, ObjStmCacheBoundsCountAndBytes)
 	EXPECT_EQ(counted.size(), kMaxCachedObjStreams - 1u);
 }
 
+// Recovery decodes a container whose /DecodeParms, /N or /First is an indirect reference to an object later in the
+// file, so a sole compressed /Catalog survives; definitions keep the file's order (a later one wins, either way), and
+// the catalog fallback prefers the latest in the file, wherever its container was unpacked (D06 T05 §29).
+TEST(PdfXref, RecoveryResolvesIndirectObjStmParameters)
+{
+	const auto hex = [](const std::string& text) {
+		static constexpr char kHex[] = "0123456789ABCDEF";
+		std::string out;
+		for (const unsigned char c : text) {
+			out += kHex[c >> 4u];
+			out += kHex[c & 0x0Fu];
+		}
+		return out + ">";
+	};
+	const std::string members = "3 0 << /Type /Catalog /Pages 4 0 R >>";
+	const auto container = [&](const std::string& n_and_first, const std::string& parms) {
+		const std::string data = hex(members);
+		return "1 0 obj\n<< /Type /ObjStm " + n_and_first + " /Filter /ASCIIHexDecode" + parms + " /Length " +
+			std::to_string(data.size()) + " >>\nstream\n" + data + "\nendstream\nendobj\n";
+	};
+	const std::string pages = "4 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+	const std::string header = "%PDF-1.7\n";
+
+	// /DecodeParms 2 0 R, with object 2 after the container.
+	const std::string by_parms =
+		header + container("/N 1 /First 4", " /DecodeParms 2 0 R") + "2 0 obj\n<< >>\nendobj\n" + pages + "%%EOF\n";
+	auto parms_rec = XrefTable::recover_damaged_xref(as_bytes(by_parms), 64);
+	RECTO_ASSERT_OK(parms_rec);
+	EXPECT_EQ(parms_rec->root_ref(), (IndirectRef{3u, 0u}));
+	ASSERT_NE(parms_rec->find(3), nullptr);
+	EXPECT_TRUE(parms_rec->find(3)->is_compressed());
+
+	// /N 5 0 R /First 6 0 R, both after the container.
+	const std::string by_counts = header + container("/N 5 0 R /First 6 0 R", "") + pages +
+		"5 0 obj\n1\nendobj\n6 0 obj\n4\nendobj\n%%EOF\n";
+	auto counts_rec = XrefTable::recover_damaged_xref(as_bytes(by_counts), 64);
+	RECTO_ASSERT_OK(counts_rec);
+	EXPECT_EQ(counts_rec->root_ref(), (IndirectRef{3u, 0u}));
+
+	// A later uncompressed definition of object 3 overrides the deferred member; an earlier one is overridden by it.
+	const std::string later_plain = by_parms.substr(0, by_parms.rfind("%%EOF")) +
+		"3 0 obj\n<< /Type /Catalog /Pages 4 0 R /Later true >>\nendobj\n%%EOF\n";
+	auto later_rec = XrefTable::recover_damaged_xref(as_bytes(later_plain), 64);
+	RECTO_ASSERT_OK(later_rec);
+	ASSERT_NE(later_rec->find(3), nullptr);
+	EXPECT_TRUE(later_rec->find(3)->is_uncompressed());
+	const std::string earlier_plain = header + "3 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" +
+		by_parms.substr(header.size());
+	auto earlier_rec = XrefTable::recover_damaged_xref(as_bytes(earlier_plain), 64);
+	RECTO_ASSERT_OK(earlier_rec);
+	ASSERT_NE(earlier_rec->find(3), nullptr);
+	EXPECT_TRUE(earlier_rec->find(3)->is_compressed());
+
+	// Two catalogs, no trailer: the one later in the file is the root, whichever is compressed.
+	const std::string catalog_after =
+		by_parms.substr(0, by_parms.rfind("%%EOF")) + "7 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n%%EOF\n";
+	auto after_rec = XrefTable::recover_damaged_xref(as_bytes(catalog_after), 64);
+	RECTO_ASSERT_OK(after_rec);
+	EXPECT_EQ(after_rec->root_ref(), (IndirectRef{7u, 0u}));
+	const std::string catalog_before =
+		header + "7 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + by_parms.substr(header.size());
+	auto before_rec = XrefTable::recover_damaged_xref(as_bytes(catalog_before), 64);
+	RECTO_ASSERT_OK(before_rec);
+	EXPECT_EQ(before_rec->root_ref(), (IndirectRef{3u, 0u}));
+}
+
 // Recovery charges a container that inflates and then fails its checksum to the cumulative decoded budget too:
 // three such containers of about 400 KiB each exceed the 1 MiB budget of a 16-entry recovery.
 TEST(PdfXref, RecoveryChargesFailedObjStmDecodes)
@@ -236,6 +302,18 @@ TEST(PdfXref, RecoveryChargesFailedObjStmDecodes)
 	}
 	pdf += "trailer\n<< /Size 8 /Root 1 0 R >>\n%%EOF\n";
 	RECTO_EXPECT_ERR(XrefTable::recover_damaged_xref(as_bytes(pdf), 16), ErrorCode::DecompressionLimitExceeded);
+
+	// The same containers with an indirect /DecodeParms are unpacked after the scan (D06 T05 §29) and charged to the
+	// same budget.
+	std::string deferred = base.substr(0, base.find("trailer"));
+	for (uint32_t n = 5; n < 8; ++n) {
+		std::string c = failing_container(n);
+		c.replace(c.find("/Filter /FlateDecode"), 20, "/Filter /FlateDecode /DecodeParms 9 0 R");
+		deferred += c;
+	}
+	deferred += "9 0 obj\n<< >>\nendobj\ntrailer\n<< /Size 10 /Root 1 0 R >>\n%%EOF\n";
+	RECTO_EXPECT_ERR(
+		XrefTable::recover_damaged_xref(as_bytes(deferred), 16), ErrorCode::DecompressionLimitExceeded);
 
 	// A container behind an image filter (JBIG2 here: a 2048 x 2048 page, then a truncated segment) is never decoded
 	// by recovery, so no unmetered raster allocation happens; the catalog still recovers.
