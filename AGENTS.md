@@ -106,6 +106,7 @@ python scripts/check-actions-pins.py check     # GitHub Actions are on their lat
 python scripts/check-vcpkg-baseline.py check   # the vcpkg baseline is the latest vcpkg release (D4)
 python scripts/check-python-pin.py check       # CI and local Python are the newest stable CPython (D4)
 python scripts/check-visual-studio.py check    # this machine's Visual Studio is at its latest servicing release
+python scripts/ci_status.py                   # main's latest build.yml and plan.yml runs: 0 not red, 1 red, 3 unknown
 python -m unittest discover -s tests/scripts  # Recto tooling tests (graph, pins, corpus, run guard)
 python -m unittest discover -s scripts/tests  # agent tooling tests (review-dispatch.py, automations)
 .\build.cmd                                  # one-command x64 + ARM64 Debug/Release build and x64 tests
