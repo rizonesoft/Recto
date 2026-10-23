@@ -45,7 +45,19 @@ Work the three questions across the diff and its blast radius. Fix what you find
 - A setting nothing reads, a command nothing reaches, or a link or automation that acts without asking.
 - A test that passes without exercising the behavior.
 
-### 3. Independent review rounds (the pinned reviewer)
+### 3. Completion and excellence review (one pass)
+
+Before the regular rounds, once per section, Sol reviews the built feature as a user meets it and against the strongest competitor (owner decision 2026-10-23; `AGENTS.md`, Product ambition). Write the prompt to a scratch file from `docs/completion-review-prompt.md` (the candidate SHA, the section contract, the TODO file's Goal and Outcome, the SPEC sections and board named in Fidelity, the delivered diff), then run it:
+
+```bash
+python3 scripts/review-dispatch.py --kind completion --candidate <full candidate SHA> --writer claude --prompt <scratch-completion-prompt.md> --record docs/reviews/<NN-domain>/D<NN>-T<NN>-s<N>.md
+```
+
+The dispatcher appends a `## Completion review` section (reviewer, model, candidate SHA), not a round: it is not counted against the cap, and a findings file takes one returned completion review. Part 1 lists every control, menu item, toolbar entry, `Ctrl+K` command, dialog, state, setting consumer, error and refusal path, undo or reverse path and persistence read-back the feature needs, each `present`, `missing-in-scope` or `missing-out-of-scope`. Part 2 names how the strongest competitor (Acrobat Pro first, then Foxit, PDFelement, UPDF) does the job and lists where Recto's feature falls short of beating it (speed, steps, defaults, error recovery, accessibility, polish), each `in-scope` or `out-of-scope`. The review ends `COMPLETION: complete` or `COMPLETION: gaps`.
+
+Then, before any regular round, implement every `missing-in-scope` gap and every `in-scope` excellence item in this section (new commits appended to the candidate, the section's checklist and gates covering them), and file every `missing-out-of-scope` gap and `out-of-scope` item through `add-todo` as a new section (an improvement that changes the designed surface is filed as a `design/SPEC.md` subsection and board first, the `D06 T04` way). Under the completion review in the findings file, add one line per gap: `- Implemented: <gap> in <commit>`, or `- Filed: DNN TNN §N (<gap>)` for each section filed (the stamp reads these lines and refuses a ref that does not resolve), and add a `> **Deferred:** <what> -> XREF: DNN TNN §N` line to the section when its surface shows the filed item. The stamp takes `--completion '<findings file>:complete'` (no gaps), `:completed` (every gap implemented in the section) or `:filed` (some gaps filed as new sections, each on a `- Filed:` line). When the dispatcher exits 1 (Sol returned no completion review), run the pass again; the regular rounds wait for it.
+
+### 4. Independent review rounds (the pinned reviewer)
 
 Run the lenses as separate passes over the candidate, at least one round by the pinned independent reviewer. Write the prompt to a scratch file from `docs/review-round-prompt.md` (candidate SHA, section contract, governing documents, lenses), then run it with the writer `claude`:
 
@@ -68,31 +80,31 @@ The loop is bounded: at most 33 rounds (owner decision 2026-10-23) (a round that
 
 Architecture check: on sections touching an architectural boundary the foundation plan names (process or thread contracts, data ownership, module seams), one findings-file paragraph answers whether the change keeps the foundation plan architecture intact, naming any decision it effectively revises. A revision is recorded as a plan correction, never smuggled in as code.
 
-### 4. Re-run the gates
+### 5. Re-run the gates
 
 After the last fix, re-run the section's Test checkpoint and its owed gates (affected test suites, build warnings clean, `validate`, the Freeze check in frozen files, ASan where the section names it). Quote the outputs in the findings file. A fix verified by reasoning is not verified. A red gate reopens the candidate: fix, re-run to green, and re-run the affected lens, because earlier verdicts rested on the broken candidate.
 
-### 5. Surface, feature, and frozen checks
+### 6. Surface, feature, and frozen checks
 
 Surface and feature completeness: 100% of every control, menu item, dialog and state on the Fidelity counterpart is working (proven on the rendered surface with real data and read-back in this review) or deferred to a named, resolving section, and every required refusal/error/undo path is exercised. Refuse the stamp for an unaccounted control or a `Cheaper substitute` shortcut. Frozen files: every `**Freeze check:**` ran and passed with the result quoted; a frozen behavior that moved without a recorded operator approval means no stamp and a question for the operator.
 
-### 6. Stamp
+### 7. Stamp
 
 Tick nothing by hand. Confirm every checklist item except `Commit:` is `[x]`, then:
 
 ```powershell
-python scripts/todo-graph.py stamp 'DNN TNN §N' --sha <full candidate tip SHA> --review '1:docs/reviews/<domain>/D<NN>-T<NN>-s<N>.md:clean' --check '<checkpoint command> -> <quoted result>'
+python scripts/todo-graph.py stamp 'DNN TNN §N' --sha <full candidate tip SHA> --completion 'docs/reviews/<domain>/D<NN>-T<NN>-s<N>.md:complete' --review '1:docs/reviews/<domain>/D<NN>-T<NN>-s<N>.md:clean' --check '<checkpoint command> -> <quoted result>'
 ```
 
-One `--review` per round, one `--check` per gate actually run. With a `stopped-at-33` or `stopped-low-severity` verdict add `--cap-outcome '<what was done when the cap was reached>'` (which leftovers were filed where, or why the section stays unstamped); `stamp` refuses a stopped verdict without it. The receipt records `rounds_spent` (every round the dispatcher recorded in the findings file, outage rounds included), `round_cap` and `cap_outcome`; `python scripts/todo-graph.py query rounds` lists them across stamped sections so the cap can be tuned. `stamp` writes the receipt `docs/reviews/<ref>.json`, ticks the `Commit:` item and the Implementation Order row, appends the `Verified:` and `Review:` lines, marks the file `done` when its last section stamps, and the CLI syncs the plan. Commit the stamp, receipt, findings file and regenerated plan together as `todo: stamp <ref>`. Add any `Deferred:` lines (each with its `-> XREF:` owner) and `Started:` to `Duration:` notes to the section before stamping, since a stamped section's checklist is never rewritten; a later change is a new section that names the old one.
+One `--completion` (required; `stamp` refuses without it, with an unknown verdict, with a findings file that holds no returned `## Completion review`, with a verdict the review's `COMPLETION:` line does not support, or with a `filed` verdict whose `- Filed:` refs are missing or do not resolve), one `--review` per round, one `--check` per gate actually run. With a `stopped-at-33` or `stopped-low-severity` verdict add `--cap-outcome '<what was done when the cap was reached>'` (which leftovers were filed where, or why the section stays unstamped); `stamp` refuses a stopped verdict without it. The receipt records the completion review (`completion`: findings file, verdict, candidate, reviewer, model, filed sections), `rounds_spent` (every round the dispatcher recorded in the findings file, outage rounds included), `round_cap` and `cap_outcome`; `python scripts/todo-graph.py query rounds` lists them across stamped sections so the cap can be tuned. `stamp` writes the receipt `docs/reviews/<ref>.json`, ticks the `Commit:` item and the Implementation Order row, appends the `Verified:` and `Review:` lines, marks the file `done` when its last section stamps, and the CLI syncs the plan. Commit the stamp, receipt, findings file and regenerated plan together as `todo: stamp <ref>`. Add any `Deferred:` lines (each with its `-> XREF:` owner) and `Started:` to `Duration:` notes to the section before stamping, since a stamped section's checklist is never rewritten; a later change is a new section that names the old one.
 
-### 7. Audit stance
+### 8. Audit stance
 
-On an already-`[x]` section: run steps 1 to 5 against the section's own candidate and receipt, changing nothing in the section itself until `unstamp` has reopened it. Record the audit's rounds in a findings file of their own, `docs/reviews/<NN-domain>/audit-d<NN>-t<NN>-s<N>.md` (`--record` that path), never in the section's stamped findings file: its receipt names that file's last round, so a round appended there makes the receipt refuse validation and blocks `unstamp`. Confirm the stamp's evidence still holds (re-run the checkpoint) or find the regression. The only permitted row change is `[x]` back to `[ ]`, and only through `python scripts/todo-graph.py unstamp '<ref>' --reason '<what regressed; repair -> XREF: <ref>>'`, which removes the stamp lines, unticks the `Commit:` item and the row, reopens the file, keeps the receipt as `docs/reviews/<ref>.revoked-<date>.json` and adds a dated `Unstamped:` note (a hand edit leaves the graph refusing a checkbox/stamp mismatch). File the repair with `add-todo` first so the reason can name it, and say plainly that downstream sections stamped on this one are suspect until it re-stamps: they keep their stamps (the graph accepts a stamped section whose prerequisite carries an `Unstamped:` note) and `unstamp` prints them. A re-confirmed row keeps its stamp; say so in one line.
+On an already-`[x]` section: run steps 1, 2 and 4 to 6 against the section's own candidate and receipt (an audit may add a completion review, step 3, in its own audit findings file; a receipt stamped before 2026-10-23 has none and stays valid without one), changing nothing in the section itself until `unstamp` has reopened it. Record the audit's rounds in a findings file of their own, `docs/reviews/<NN-domain>/audit-d<NN>-t<NN>-s<N>.md` (`--record` that path), never in the section's stamped findings file: its receipt names that file's last round, so a round appended there makes the receipt refuse validation and blocks `unstamp`. Confirm the stamp's evidence still holds (re-run the checkpoint) or find the regression. The only permitted row change is `[x]` back to `[ ]`, and only through `python scripts/todo-graph.py unstamp '<ref>' --reason '<what regressed; repair -> XREF: <ref>>'`, which removes the stamp lines, unticks the `Commit:` item and the row, reopens the file, keeps the receipt as `docs/reviews/<ref>.revoked-<date>.json` and adds a dated `Unstamped:` note (a hand edit leaves the graph refusing a checkbox/stamp mismatch). File the repair with `add-todo` first so the reason can name it, and say plainly that downstream sections stamped on this one are suspect until it re-stamps: they keep their stamps (the graph accepts a stamped section whose prerequisite carries an `Unstamped:` note) and `unstamp` prints them. A re-confirmed row keeps its stamp; say so in one line.
 
 ## Guardrails
 
-- Do not stamp without a findings file and at least one independent round.
+- Do not stamp without a findings file, its one completion review, and at least one independent round.
 - Do not stamp an unaccounted control on a surface section, or a moved frozen behavior.
 - Do not hand-write `Verified:` lines, hand-flip rows, or edit a receipt. `stamp` owns the record.
 - Do not review the working tree when the candidate is a commit or range. Name the hashes.

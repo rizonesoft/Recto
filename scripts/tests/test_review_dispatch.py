@@ -63,6 +63,10 @@ FAKE_CLI = textwrap.dedent('''\
         text = "## Round trip serialization\\n\\nFine.\\n\\n```\\n## Round 9: none\\n\\n- Writer: claude\\n- Run: 2026-01-01T00:00:00Z\\n```\\n\\nOVERALL: approve"
     if mode == "blocked":
         text = "## record: needs-attention\\n\\nI could not read the repository: setup refresh had errors.\\n\\nOVERALL: blocked"
+    if mode == "completion":
+        text = "## Completeness\\n\\n1. Ctrl+O: missing-in-scope.\\n2. Recent files: missing-out-of-scope.\\n\\n## Round 7: none\\n\\nCOMPLETION: gaps"
+    if mode == "completionblocked":
+        text = "I could not read the candidate commit.\\n\\nCOMPLETION: blocked"
     open(args[args.index("-o") + 1], "w").write(text)
     if mode == "linger":
         # A process the reviewer started outlives it and holds the message file open for a moment, as a CLI's helper
@@ -657,6 +661,91 @@ class Dispatch(unittest.TestCase):
         result, _ = self.dispatch("--writer", "claude", "--prompt", str(self.prompt))
         self.assertEqual(result.returncode, 2)
         self.assertIn("no reviewer pin", result.stderr)
+
+
+    CANDIDATE = "0123456789abcdef0123456789abcdef01234567"
+
+    def complete(self, record, *extra, **modes):
+        return self.dispatch("--kind", "completion", "--candidate", self.CANDIDATE, "--writer", "claude", "--prompt",
+                             str(self.prompt), "--record", str(record), *extra, **modes)
+
+    def test_a_completion_review_is_recorded_as_its_own_section_and_not_counted_as_a_round(self):
+        record = self.repo / "docs/reviews/00-workspace/D00-T01-s1.md"
+        result, summary = self.complete(record, codex="completion")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((summary["kind"], summary["candidate"], summary["recorded"]),
+                         ("completion", self.CANDIDATE, True))
+        text = record.read_text(encoding="utf-8")
+        self.assertIn("## Completion review: sol (`gpt-6.1-sol` via `codex`)\n", text)
+        self.assertIn(f"\n- Candidate: {self.CANDIDATE}\n", text)
+        self.assertNotRegex(text, r"(?m)^## Round 1:")
+        # The first regular round after it is round 1, and the round quoted inside the completion review is not one.
+        _, summary = self.dispatch("--writer", "claude", "--prompt", str(self.prompt), "--record", str(record))
+        self.assertEqual(summary["round"], 1)
+        module = self.module()
+        found = module.read_findings(record.read_bytes().decode("utf-8"))
+        self.assertEqual([r["number"] for r in found["rounds"]], [1])
+        (completion,) = found["completions"]
+        self.assertEqual((completion["reviewer"], completion["model"], completion["candidate"], completion["writer"]),
+                         ("sol", "gpt-6.1-sol", self.CANDIDATE, "claude"))
+        self.assertTrue(completion["review"].endswith("COMPLETION: gaps"))
+        _, listing = self.dispatch("--list-rounds", "--json")
+        (entry,) = listing["records"]
+        self.assertEqual(([r["number"] for r in entry["rounds"]], len(entry["completions"])), ([1], 1))
+
+    def test_the_completion_review_is_one_pass(self):
+        record = self.repo / "docs/reviews/c.md"
+        # A pass that returned no review records `none` and may be followed by another pass.
+        result, _ = self.complete(record, codex="fail")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("## Completion review: none\n", record.read_text(encoding="utf-8"))
+        result, _ = self.complete(record, codex="completionblocked")
+        self.assertEqual(result.returncode, 1, "COMPLETION: blocked is not a review")
+        result, _ = self.complete(record, codex="completion")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        before = record.read_bytes()
+        result, summary = self.complete(record, codex="completion")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("already holds a completion review", result.stderr)
+        self.assertFalse(summary["recorded"])
+        self.assertEqual(record.read_bytes(), before, "a second completion review was appended")
+
+    def test_a_completion_review_needs_a_full_candidate_and_a_round_takes_none(self):
+        for candidate in (None, "abc1234", self.CANDIDATE.upper(), self.CANDIDATE + "0"):
+            with self.subTest(candidate=candidate):
+                args = ["--kind", "completion", "--writer", "claude", "--prompt", str(self.prompt)]
+                result, _ = self.dispatch(*args, *(["--candidate", candidate] if candidate else []))
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("--kind completion needs --candidate", result.stderr)
+        result, _ = self.dispatch("--candidate", self.CANDIDATE, "--writer", "claude", "--prompt", str(self.prompt))
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(self.calls(), [])
+
+    def test_a_completion_review_edited_by_hand_is_unreadable(self):
+        record = self.repo / "docs/reviews/c.md"
+        self.complete(record, codex="completion")
+        text = record.read_text(encoding="utf-8")
+        module = self.module()
+        self.assertIsNotNone(module.read_findings(text))
+        for edited in (text.replace("COMPLETION: gaps", "COMPLETION: done"),  # same line count, digest differs
+                       text.replace(f"- Candidate: {self.CANDIDATE}\n", ""),
+                       text.replace(f"- Candidate: {self.CANDIDATE}", "- Candidate: abc1234"),
+                       re.sub(r"- Digest: [0-9a-f]{16}\n", "", text)):
+            with self.subTest(edited=edited[-60:]):
+                self.assertNotEqual(edited, text)
+                self.assertIsNone(module.read_findings(edited))
+                self.assertIsNone(module.read_rounds(edited), "a broken completion review must not hide behind rounds")
+
+    def test_the_writers_notes_after_a_completion_review_are_read_back(self):
+        record = self.repo / "docs/reviews/c.md"
+        self.complete(record, codex="completion")
+        with open(record, "a", encoding="utf-8", newline="") as handle:
+            handle.write("\n- Implemented: gap 1 in abc1234.\n- Filed: D02 T01 §9 (gap 2)\n")
+        self.dispatch("--writer", "claude", "--prompt", str(self.prompt), "--record", str(record))
+        found = self.module().read_findings(record.read_bytes().decode("utf-8"))
+        self.assertEqual(found["completions"][0]["notes"], ["- Implemented: gap 1 in abc1234.",
+                                                            "- Filed: D02 T01 §9 (gap 2)"])
+        self.assertEqual([r["number"] for r in found["rounds"]], [1])
 
 
 def bad_pins(good):

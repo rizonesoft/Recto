@@ -11,6 +11,7 @@
                                                              # 4 waiting; a pasted plan row works too
     python scripts/todo-graph.py classify 'D02 T01 §1' ...   # dispositions as JSON
     python scripts/todo-graph.py stamp 'D02 T01 §1' --sha <40-char commit> \
+        --completion '<findings file>:<complete|completed|filed>' \
         --review '<round>:<report path>:<clean|fixed|stopped-at-33|stopped-low-severity>' --check '<command> -> <result>' \
         [--cap-outcome '<what was done when the review cap was reached>']   # required with a stopped verdict
     python scripts/todo-graph.py unstamp 'D02 T01 §1' --reason '<what regressed, and the repair section>'
@@ -35,6 +36,12 @@ def review_round(value):
     require(len(parts) == 3 and parts[0].isdigit() and parts[1],
             f"--review takes round:report:verdict, not {value!r}")
     return {"round": int(parts[0]), "report": parts[1], "verdict": parts[2]}
+
+
+def completion_review(value):
+    report, _, verdict = value.rpartition(":")
+    require(bool(report) and bool(verdict), f"--completion takes <findings file>:<verdict>, not {value!r}")
+    return {"report": report, "verdict": verdict}
 
 
 def plan_status(row, rows):
@@ -68,6 +75,8 @@ def main():
     s.add_argument("--check", dest="checks", action="append", default=[])
     s.add_argument("--date", default=date.today().isoformat())
     s.add_argument("--cap-outcome", help="with a stopped-at verdict: what was done when the review cap was reached")
+    s.add_argument("--completion", type=completion_review,
+                   help="required: <findings file>:<complete|completed|filed>, the one-pass completion review")
     u = sub.add_parser("unstamp", help="an audit found a stamped section regressed: reopen it, keeping the receipt")
     u.add_argument("ref")
     u.add_argument("--reason", required=True)
@@ -81,7 +90,7 @@ def main():
         return 0
     if args.command == "stamp":
         receipt = stamp(ROOT, args.ref, args.sha, args.review, args.checks, args.date, sync_plan=True,
-                        cap_outcome=args.cap_outcome)
+                        cap_outcome=args.cap_outcome, completion=args.completion)
         print(f"stamped {args.ref}; receipt {receipt}; plan synchronized")
         return 0
     rows = graph()

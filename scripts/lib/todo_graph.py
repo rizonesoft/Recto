@@ -44,6 +44,11 @@ EARLIER_CAPS = {8, 13, 22}
 LEGACY_RECEIPTS = "docs/reviews/legacy-receipts.json"
 LEGACY_VERDICTS = {"clean", "fixed", "stopped-at-3"}
 SEVERITY_CUTOFF_ROUND = 8
+# The one-pass completion and excellence review (owner decision 2026-10-23), required for every new stamp: complete (no
+# gaps), completed (every gap implemented in the section) or filed (some gaps filed as new sections, each listed under
+# the completion review as "- Filed: DNN TNN §N"). A receipt without a completion field predates the requirement.
+COMPLETION_VERDICTS = ("complete", "completed", "filed")
+FILED = re.compile(r"^- Filed: (D\d{2} T\d{2} §[1-9]\d*)(?![\w§]|\.\d)")
 # A round scripts/review-dispatch.py recorded in a findings file, reviewed or not ("## Round 2: none").
 ROUND_RECORD = re.compile(r"^## Round ([0-9]+): ", re.M)
 ADJACENCY_KEYS = ["list", "document", "settings", "reporting", "notifications", "permissions",
@@ -181,6 +186,7 @@ def _head_commits(root):
 
 
 def receipt_ok(root, receipt, ref, stamp_sha, commits=None):
+    """Check one receipt against its stamp and return it."""
     require(re.fullmatch(r"docs/reviews/[a-z0-9][a-z0-9.-]*\.json", receipt or "") is not None,
             f"invalid receipt path: {ref}")
     path = Path(root) / receipt
@@ -189,9 +195,11 @@ def receipt_ok(root, receipt, ref, stamp_sha, commits=None):
         data = json.loads(read_text(path))
     except ValueError:
         raise Refused(f"receipt is not JSON: {ref}") from None
-    receipt_data_ok(data, ref, stamp_sha, root=root)
+    # The stamped commit first: a fabricated SHA is named as such before anything the receipt says is compared.
     if commits is None or stamp_sha not in commits:
         commit_ok(root, stamp_sha)
+    receipt_data_ok(data, ref, stamp_sha, root=root, commits=commits)
+    return data
 
 
 _REVIEW_DISPATCH = []
@@ -230,7 +238,69 @@ def legacy_receipts(root):
     return receipts
 
 
-def receipt_data_ok(data, ref, stamp_sha, root=None, building=False):
+def report_ok(root, raw_report, ref):
+    """A findings file path inside docs/reviews/, reached through no symlink, holding text."""
+    root_path = Path(root)
+    report = Path(raw_report)
+    require(isinstance(raw_report, str) and re.fullmatch(r"docs/reviews/[A-Za-z0-9_./-]+\.md", raw_report) is not None
+            and not report.is_absolute() and not report.drive and not report.root and ".." not in report.parts,
+            f"invalid review report path ({raw_report}): {ref}")
+    cur = root_path
+    for part in report.parts:
+        cur = cur / part
+        require(not cur.is_symlink(), f"invalid review report path ({raw_report}): {ref}")
+    report_path = root_path / report
+    require(report_path.is_file() and report_path.resolve().is_relative_to(root_path.resolve())
+            and bool(read_text(report_path).strip()),
+            f"missing or empty review report ({raw_report}): {ref}")
+    return report_path
+
+
+def completion_record(root, completion, ref, stamp_sha, commits=None):
+    """The receipt's record of the section's completion review, from `--completion <findings file>:<verdict>`: the
+    findings file holds exactly one completion review returned by a reviewer of another model family, its last line
+    `COMPLETION: complete` (verdict complete) or `COMPLETION: gaps` (completed or filed), its candidate a commit at or
+    before the stamped one, and, for filed, the `- Filed: DNN TNN §N` lines the writer added under it. Whether each
+    filed section resolves is checked against the whole graph by the caller."""
+    require(isinstance(completion, dict) and isinstance(completion.get("report"), str)
+            and isinstance(completion.get("verdict"), str), f"receipt completion is malformed: {ref}")
+    report, verdict = completion["report"], completion["verdict"]
+    require(verdict in COMPLETION_VERDICTS,
+            f"--completion verdict must be one of {', '.join(COMPLETION_VERDICTS)}, not {verdict!r}: {ref}")
+    path = report_ok(root, report, ref)
+    dispatch = review_dispatch()
+    found = dispatch.read_completions(path.read_bytes().decode("utf-8"))
+    require(found is not None, f"{report} is not a findings file the dispatcher can read: {ref}")
+    require(bool(found), f"{report} holds no ## Completion review; run review-dispatch.py --kind completion: {ref}")
+    returned = [e for e in found if e["reviewer"] and e["writer"] in dispatch.WRITER_FAMILY
+                and dispatch.FAMILY.get(e["cli"]) not in (None, dispatch.WRITER_FAMILY[e["writer"]])
+                and ([x.strip() for x in e["review"].splitlines() if x.strip()] or [""])[-1]
+                in ("COMPLETION: complete", "COMPLETION: gaps")]
+    require(len(returned) == 1, f"{report} must hold exactly one completion review returned by another model family "
+                                f"and ending COMPLETION: complete or COMPLETION: gaps, not {len(returned)}: {ref}")
+    (entry,) = returned
+    last = [x.strip() for x in entry["review"].splitlines() if x.strip()][-1]
+    expected = "COMPLETION: complete" if verdict == "complete" else "COMPLETION: gaps"
+    require(last == expected, f"completion verdict {verdict} needs a review ending {expected}, and {report} ends "
+                              f"{last}: {ref}")
+    filed = list(dict.fromkeys(m[1] for m in (FILED.match(line) for line in entry["notes"]) if m))
+    require(bool(filed) == (verdict == "filed"),
+            f"completion verdict filed needs each filed section listed as '- Filed: DNN TNN §N' under the completion "
+            f"review in {report}, and only filed lists any: {ref}")
+    require(ref not in filed, f"{ref} cannot file a completion gap to itself: {ref}")
+    candidate = entry["candidate"]
+    if commits is None or candidate not in commits:
+        commit_ok(root, candidate)
+    if commits is None:  # stamping: the candidate is the stamped commit or one before it
+        ancestor = subprocess.run(["git", "-C", str(root), "merge-base", "--is-ancestor", candidate, stamp_sha],
+                                  capture_output=True, timeout=30)
+        require(ancestor.returncode == 0,
+                f"the completion review's candidate {candidate} is not the stamped commit or an ancestor of it: {ref}")
+    return {"report": report, "verdict": verdict, "candidate": candidate, "reviewer": entry["reviewer"],
+            "model": entry["model"], "filed": filed}
+
+
+def receipt_data_ok(data, ref, stamp_sha, root=None, building=False, commits=None):
     """building: stamp's first pass over its arguments, before it adds rounds_spent and round_cap."""
     require(isinstance(data, dict), f"receipt is not an object: {ref}")
     require(data.get("ref") == ref and data.get("implementation_sha") == stamp_sha,
@@ -244,24 +314,8 @@ def receipt_data_ok(data, ref, stamp_sha, root=None, building=False):
     require(all(r["round"] > SEVERITY_CUTOFF_ROUND for r in rounds if r["verdict"] == "stopped-low-severity"),
             f"stopped-low-severity is allowed only after round {SEVERITY_CUTOFF_ROUND}: {ref}")
     if root is not None:
-        root_path = Path(root)
-        root_resolved = root_path.resolve()
         for r in rounds:
-            raw_report = r["report"]
-            report = Path(raw_report)
-            require(re.fullmatch(r"docs/reviews/[A-Za-z0-9_./-]+\.md", raw_report) is not None
-                    and not report.is_absolute() and not report.drive and not report.root
-                    and ".." not in report.parts,
-                    f"invalid review report path ({raw_report}): {ref}")
-            cur = root_path
-            for part in report.parts:
-                cur = cur / part
-                require(not cur.is_symlink(), f"invalid review report path ({raw_report}): {ref}")
-            report_path = root_path / report
-            require(report_path.is_file()
-                    and report_path.resolve().is_relative_to(root_resolved)
-                    and bool(read_text(report_path).strip()),
-                    f"missing or empty review report ({raw_report}): {ref}")
+            report_ok(root, r["report"], ref)
     # Receipts written since 2026-10-21 record the rounds spent against the cap, and what was done when a review
     # stopped at the cap; earlier receipts carry neither field.
     if "rounds_spent" not in data and not building:
@@ -352,6 +406,16 @@ def receipt_data_ok(data, ref, stamp_sha, root=None, building=False):
         outcome = data.get("cap_outcome")
         require((isinstance(outcome, str) and bool(outcome.strip())) == stopped,
                 f"receipt needs cap_outcome exactly when a review stopped (at the cap or on severity): {ref}")
+    # Receipts stamped since 2026-10-23 record the completion review; a receipt without the field predates it. The
+    # record must be what the findings file still says, so an edit to either refuses.
+    if "completion" in data:
+        recorded = data["completion"]
+        require(isinstance(recorded, dict) and set(recorded) == {"report", "verdict", "candidate", "reviewer", "model",
+                                                                 "filed"},
+                f"receipt completion is malformed: {ref}")
+        if root is not None:
+            require(completion_record(root, recorded, ref, stamp_sha, commits if commits is not None else set())
+                    == recorded, f"receipt completion does not match its findings file {recorded['report']}: {ref}")
     checks = data.get("checks")
     require(isinstance(checks, list) and checks and all(isinstance(c, str) and c.strip() for c in checks),
             f"receipt has no checks: {ref}")
@@ -415,6 +479,7 @@ def graph(root=ROOT):
     legacy_receipts(root)  # a malformed freeze list refuses even before any old receipt is read against it
     sections, ids, files = {}, {}, {}
     head_commits = None
+    filed_gaps = {}
     paths = sorted((root / "todo").glob("[0-9][0-9]-*/TODO-*.md"))
     require(bool(paths), "canonical TODO tree is missing or empty")
     for path in paths:
@@ -545,7 +610,9 @@ def graph(root=ROOT):
                 require(m is not None, f"invalid stamp: {ref}")
                 if head_commits is None:
                     head_commits = _head_commits(root)
-                receipt_ok(root, receipt, ref, m[1], head_commits)
+                data = receipt_ok(root, receipt, ref, m[1], head_commits)
+                if "completion" in data:
+                    filed_gaps[ref] = data["completion"]["filed"]
             sections[ref] = Section(ref, relative, n, h[2], int(phase), deps, needs, done,
                                     front["status"], section_body, receipt, int(rows[n][1]))
             files[relative][2].append(ref)
@@ -593,6 +660,9 @@ def graph(root=ROOT):
                 if marker == "Deferred":
                     require(not sections[owner].done,
                             f"stale deferral, owner {owner} shipped; close it as Resolved: {row.ref}")
+    for ref, filed in filed_gaps.items():
+        for target in filed:
+            require(target in sections, f"completion gap filed as {target}, which does not resolve: {ref}")
     _index_coverage(root, files)
     visiting, visited = set(), set()
     for start in sections:
@@ -814,7 +884,8 @@ def review_rounds(root=ROOT):
         spent = data.get("rounds_spent") or rounds_recorded(root, data["reviews"])
         sections.append({"ref": row.ref, "rounds_spent": spent, "round_cap": data.get("round_cap"),
                          "verdicts": [r["verdict"] for r in data["reviews"]],
-                         "cap_outcome": data.get("cap_outcome")})
+                         "cap_outcome": data.get("cap_outcome"),
+                         "completion": (data.get("completion") or {}).get("verdict")})
     spent = [s["rounds_spent"] for s in sections]
     return {"cap": REVIEW_ROUND_CAP, "sections": sections,
             "summary": {"stamped": len(sections), "rounds": sum(spent),
@@ -825,9 +896,10 @@ def review_rounds(root=ROOT):
                         "stopped_low_severity": sum("stopped-low-severity" in s["verdicts"] for s in sections)}}
 
 
-def stamp(root, ref, sha, reviews, checks, date, sync_plan=False, cap_outcome=None):
+def stamp(root, ref, sha, reviews, checks, date, sync_plan=False, cap_outcome=None, completion=None):
     """Close a section: write its receipt, tick its row and checklist, add the Verified and Review lines. The receipt
-    records the review rounds spent against the cap and, when a review stopped at the cap, what was done about it."""
+    records the completion review (`completion`: {"report", "verdict"}, required), the review rounds spent against the
+    cap and, when a review stopped at the cap, what was done about it."""
     root = Path(root)
     rows = graph(root)
     require(ref in rows, "unresolved section: " + ref)
@@ -845,6 +917,9 @@ def stamp(root, ref, sha, reviews, checks, date, sync_plan=False, cap_outcome=No
             f"unticked checklist items in {ref}: {open_items[0] if open_items else ''}")
     slug = re.sub(r"[^a-z0-9]+", "-", ref.lower().replace("§", "s")).strip("-")
     receipt = f"docs/reviews/{slug}.json"
+    require(completion is not None,
+            f"--completion '<findings file>:<{'|'.join(COMPLETION_VERDICTS)}>' is required: run the one-pass completion "
+            f"review (scripts/review-dispatch.py --kind completion) before the rounds and name its verdict: {ref}")
     stopped = any(isinstance(r, dict) and str(r.get("verdict", "")).startswith("stopped-") for r in reviews)
     require(stopped == bool((cap_outcome or "").strip()),
             "--cap-outcome is required with a stopped verdict (what was done when the review stopped at the cap or on "
@@ -853,6 +928,9 @@ def stamp(root, ref, sha, reviews, checks, date, sync_plan=False, cap_outcome=No
             "reviews": reviews, "checks": checks}
     # Every argument is checked before anything is read or written.
     receipt_data_ok(data, ref, sha, root=root, building=True)
+    data["completion"] = completion_record(root, completion, ref, sha)
+    for target in data["completion"]["filed"]:
+        require(target in rows, f"completion gap filed as {target}, which does not resolve: {ref}")
     data["rounds_spent"] = rounds_recorded(root, reviews)
     data["round_cap"] = REVIEW_ROUND_CAP
     if stopped:

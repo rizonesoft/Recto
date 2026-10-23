@@ -59,7 +59,7 @@ Read the entire TODO file, not just the section: Goal, Current state, Inputs and
 
 ### 2. Validate the plan before building it
 
-Seven questions, each answered against the repository and the governing documents rather than from memory:
+Eight questions, each answered against the repository and the governing documents rather than from memory:
 
 | Check | What you are asking | The failure it catches |
 | ----- | ------------------- | ---------------------- |
@@ -70,8 +70,11 @@ Seven questions, each answered against the repository and the governing document
 | Sufficiency | Can this build without inventing decisions? | Section becomes a design session |
 | Verifiability | Can the checkpoint run and fail on fixtures? | Unfalsifiable checkpoint passes |
 | Accuracy | Are paths, counts, refs, and deferrals true? | Authority citing moved facts |
+| Ambition | Does it, as planned, beat the best competitor? | A plan that only reaches parity |
 
 Ground each answer: `python scripts/todo-graph.py validate`, searches over `src/` and `tests/` for the named symbols, `git log --oneline -5 -- <touched paths>`. Check deferrals in both directions with `python scripts/todo-graph.py query deferred`: deferrals this section owns are part of its scope; deferrals this section wrote get re-read against today's tree (owner shipped means close it as `Resolved:`; description drifted means correct it; work quietly done elsewhere means verify it, close the deferral, and tick the owner's item).
+
+Ambition (owner decision 2026-10-23, `AGENTS.md` Product ambition): look at how the best competitor does this job (Acrobat Pro first, then Foxit, PDFelement, UPDF). If the plan would only reach parity, raise it within the section's surface before building (speed, fewer steps, smarter defaults, better errors and recovery, keyboard paths, accessibility, polish, each with a measurable target), recorded as a dated `**Corrected YYYY-MM-DD:**` note, or file the larger improvement through `add-todo` (a change to the designed surface goes through a SPEC subsection and board first).
 
 Anything unclear becomes a question answered from the source. Where the source is silent, take the industry-standard option, record that it is a default with the cost of changing it, and carry on.
 
@@ -89,7 +92,7 @@ Run gates while iterating, bounded to the touched area: the build for the touche
 
 ### 5. Surface and feature completeness
 
-Before the checkpoint, account for 100% of every control, menu item, dialog and state on the Fidelity screenshot and SPEC section: each is working (proven on the rendered surface with real data and read-back) or deferred to a named, resolving section (`python scripts/todo-graph.py resolve '<ref>'` must not exit 1 or 2). A control disabled with a reason that names no section is missing, not deferred. Confirm the refusal/error/recovery path and undo/reverse path required by the section hold. `review-todo-section` refuses the stamp for an unaccounted control, so decide here.
+Before the checkpoint, account for 100% of every control, menu item, dialog and state on the Fidelity screenshot and SPEC section: each is working (proven on the rendered surface with real data and read-back) or deferred to a named, resolving section (`python scripts/todo-graph.py resolve '<ref>'` must not exit 1 or 2). A control disabled with a reason that names no section is missing, not deferred. Confirm the refusal/error/recovery path and undo/reverse path required by the section hold. `review-todo-section` refuses the stamp for an unaccounted control, so decide here. This pass is yours; after the commit, `review-todo-section` step 3 has Sol run the one-pass completion and excellence review on the built feature, and every in-scope gap it finds is built in this section before the regular rounds.
 
 ### 6. Run the Test checkpoint, for real
 
@@ -106,7 +109,7 @@ Commit the section work (in one or more commits as steps complete), recording th
 <plan corrections, if any>
 ```
 
-Then invoke `review-todo-section` on the same ref. Review writes the stamp (through `stamp`, which flips the row and syncs the plan). Commit the stamp and the regenerated plan as the stamp commit (`todo: stamp <ref>`).
+Then invoke `review-todo-section` on the same ref. It runs the one-pass completion and excellence review first (`scripts/review-dispatch.py --kind completion`): implement every in-scope gap and excellence item it lists in this section, file the rest through `add-todo`, then the regular rounds run. Review writes the stamp through `stamp --completion`, which flips the row and syncs the plan. Commit the stamp and the regenerated plan as the stamp commit (`todo: stamp <ref>`).
 
 ### 8. Report
 
