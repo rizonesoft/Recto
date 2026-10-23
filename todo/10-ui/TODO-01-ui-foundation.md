@@ -65,7 +65,7 @@ track: M2
 
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
-| 1 | §1 | `recto-ui` static library, module boundary and headless render harness | D00 T01 §3 | [ ] |
+| 1 | §1 | `recto-ui` static library, module boundary and headless render harness | D00 T01 §3 | [x] |
 | 2 | §2 | Win32 `Recto.exe` host replaces the WinUI scaffold; Windows App SDK pins retired | §1 | [ ] |
 | 3 | §3 | UI thread `Dispatcher`, timers and engine callback marshalling | §1 | [ ] |
 | 4 | §4 | Top-level `Window`: custom frame, Mica Alt, dark mode, DPI and minimum size | §2, §3 | [ ] |
@@ -111,9 +111,12 @@ Create the `recto-ui` C++23 static library in `src/ui/` (namespace `recto::ui`) 
 - [x] Implement `recto::ui::test::render_to_bitmap` in `tests/recto-tests/ui_render_harness.cpp` using `IWICImagingFactory2::CreateBitmap` (`GUID_WICPixelFormat32bppPBGRA`) and `ID2D1Factory7::CreateWicBitmapRenderTarget`, returning bytes plus the WIC stride. Done when: `Ui.Project.HarnessStride` renders into a bitmap whose stride is deliberately wider than `width * 4` and the pixels still compare equal. Source: Microsoft Learn `ID2D1Factory::CreateWicBitmapRenderTarget`. Cheaper substitute: assuming `stride == width * 4`.
 - [x] Add `Ui.Project.HarnessSolid` rendering a filled rectangle and comparing it with `compare_rgba` at max delta 0. Done when: the test passes and fails when the fill colour is changed.
 - [x] Add `tests/recto-tests/ui_*_tests.cpp` to `recto-tests.vcxproj` through a wildcard `ClCompile` item so later sections add files without editing the project. Done when: a newly dropped `ui_x_tests.cpp` is compiled with no project edit.
-- [ ] Commit: `ui: add recto-ui static library, module boundary tests and headless render harness`
+- [x] Commit: `ui: add recto-ui static library, module boundary tests and headless render harness`
 
 **Test checkpoint:** `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.Project.*` passes (boundary, no WinRT UI types, harness stride, harness solid), and `msbuild Recto.sln /p:Configuration=Debug /p:Platform=ARM64 /t:recto-ui` exits 0.
+
+> **Verified:** 2026-10-23 | §1 | b5ba9aa70715d5dc423d08e13ee00d3bbc6a2a6c
+> **Review:** `docs/reviews/d10-t01-s1.json`
 
 ## 2. Win32 `Recto.exe` host replaces the WinUI scaffold; Windows App SDK pins retired
 
