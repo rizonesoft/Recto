@@ -122,8 +122,8 @@ OVERALL: needs-attention
 
 Disposition of the completion review's gaps (each verified against the code before acting):
 
-- Implemented: gap 1, a non-ASCII password for R=2 to R=4: the legacy algorithms hash PDFDocEncoding bytes (ISO 32000-1 7.6.3.3, Algorithm 2 step a), so a UTF-8 password is tried in PDFDocEncoding first, then as given. Commit: see the line below.
-- Implemented: gap 3, an indirect stream `/Type` resolves one level before the `/XRef`, `/Metadata` and `/EmbeddedFile` rules (also round 1, finding 1). Commit: see the line below.
+- Implemented: gap 1, a non-ASCII password for R=2 to R=4: the legacy algorithms hash PDFDocEncoding bytes (ISO 32000-1 7.6.3.3, Algorithm 2 step a), so a UTF-8 password is tried in PDFDocEncoding first, then as given. Commit `9ba7cc9`.
+- Implemented: gap 3, an indirect stream `/Type` resolves one level before the `/XRef`, `/Metadata` and `/EmbeddedFile` rules (also round 1, finding 1). Commit `9ba7cc9`.
 - Filed: D06 T05 §46 (gap 2, attachment-only `/AuthEvent /EFOpen` scope; the prompt belongs to D02 T03 §8)
 - Filed: D06 T05 §47 (gaps 4, 10, 11 and 12: the R=2 to R=6 interoperability matrix with independently generated files, cancellable decryption, measured cost)
 - Filed: D02 T01 §10 (gaps 7 and 14, the password dialog, its states and accessibility, existing owner)
