@@ -773,11 +773,11 @@ enum class RefusalReason : uint16_t {
 	case RefusalReason::OutputUnwritable:
 		return "The output folder cannot be written; choose another folder or check its permissions";
 	case RefusalReason::TextRecall:
-		return "The converted file lost or changed words (observed is the per mille of source words read back, bound "
-			   "the per mille required); convert the page again or use the exact layout";
+		return "The converted file lost, added or changed words (observed is the per mille of words matched against the "
+			   "larger of the source and the result, bound the per mille required); convert the page again or use the exact layout";
 	case RefusalReason::ReadingOrder:
-		return "The converted file keeps every word but out of order (observed is the per mille of words in reading "
-			   "order, bound the per mille required); convert the page again or use the exact layout";
+		return "The converted file has its words out of order (observed is the per mille of matched words still in "
+			   "reading order, bound the per mille required); convert the page again or use the exact layout";
 	case RefusalReason::EmptyResult:
 		return "The converted file came out empty; check that the page has text, or run OCR on a scanned page first";
 	case RefusalReason::PackageInvalid:

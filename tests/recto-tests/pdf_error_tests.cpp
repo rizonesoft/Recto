@@ -550,6 +550,12 @@ TEST(PdfError, RefusalReasonNamesCoverEveryReason)
 	// The conversion checks state the unit their numbers are in (D01 T02 section 24).
 	EXPECT_NE(refusal_reason_description(RefusalReason::TextRecall).find("per mille"), std::string_view::npos);
 	EXPECT_NE(refusal_reason_description(RefusalReason::ReadingOrder).find("per mille"), std::string_view::npos);
+	// The descriptions match the metrics: recall divides by the larger word count, so added words count too, and an
+	// order failure can follow an imperfect but passing recall, so it never claims every word survived.
+	EXPECT_NE(refusal_reason_description(RefusalReason::TextRecall).find("added"), std::string_view::npos);
+	EXPECT_NE(refusal_reason_description(RefusalReason::TextRecall).find("larger of the source and the result"), std::string_view::npos);
+	EXPECT_EQ(refusal_reason_description(RefusalReason::ReadingOrder).find("every word"), std::string_view::npos);
+	EXPECT_NE(refusal_reason_description(RefusalReason::ReadingOrder).find("matched words"), std::string_view::npos);
 	EXPECT_EQ(PdfError{}.refusal_reason, RefusalReason::None);
 	EXPECT_FALSE(PdfError{}.page_index.has_value());
 	EXPECT_FALSE(PdfError{}.observed.has_value());
@@ -666,83 +672,103 @@ TEST(PdfError, RefusalReasonsDistinguishRangeAndOutputCauses)
 // reaches neither the ring nor ETW (D01 T02 section 24, D16).
 TEST(PdfError, ConversionCheckContextReachesRingAndEtw)
 {
+	struct Case {
+		ErrorCode code;
+		RefusalReason reason;
+		std::optional<uint32_t> observed;
+		std::optional<uint32_t> bound;
+		std::optional<uint32_t> page;
+		bool caller_records; // ConversionFailed is logged by its caller; ResourceLimit records itself
+		std::string_view expected_context;
+	};
+	constexpr uint32_t kLastPage = (std::numeric_limits<uint32_t>::max)();
+	const std::array<Case, 7> cases = {{
+		{ErrorCode::ConversionFailed, RefusalReason::TextRecall, 910u, 990u, 0u, true,
+			"[reason=TextRecall page=1 observed=910 bound=990]"},
+		{ErrorCode::ConversionFailed, RefusalReason::ReadingOrder, 700u, 1000u, 2u, true,
+			"[reason=ReadingOrder page=3 observed=700 bound=1000]"},
+		{ErrorCode::ConversionFailed, RefusalReason::EmptyResult, std::nullopt, std::nullopt, std::nullopt, true,
+			"[reason=EmptyResult]"},
+		{ErrorCode::ResourceLimit, RefusalReason::WorkingBytes, 9000u, 8000u, 0u, false,
+			"[reason=WorkingBytes page=1 observed=9000 bound=8000]"},
+		{ErrorCode::ResourceLimit, RefusalReason::CommandCount, 5001u, 5000u, 2u, false,
+			"[reason=CommandCount page=3 observed=5001 bound=5000]"},
+		{ErrorCode::ResourceLimit, RefusalReason::WorkingBytes, 9001u, 8000u, std::nullopt, false,
+			"[reason=WorkingBytes observed=9001 bound=8000]"},
+		{ErrorCode::ConversionFailed, RefusalReason::PackageInvalid, std::nullopt, std::nullopt, kLastPage, true,
+			"[reason=PackageInvalid page=4294967296]"},
+	}};
+
 	force_enable_etw_provider_for_testing();
 	clear_diagnostics();
 	clear_captured_etw_events_for_testing();
 	set_etw_capture_for_testing(true);
-	const PdfError recall = make_refusal_error(
-		ErrorCode::ConversionFailed, RefusalReason::TextRecall, 910u, 990u, "C:\\secret\\deck.pptx", 2u);
-	record_diagnostic(recall);
-	const PdfError limit =
-		make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::WorkingBytes, 9000u, 8000u, "secret", 0u);
-	const PdfError empty = make_refusal_error(
-		ErrorCode::ConversionFailed, RefusalReason::EmptyResult, std::nullopt, std::nullopt, "C:\\secret\\out.docx");
-	record_diagnostic(empty);
-	const PdfError unpaged_limit =
-		make_refusal_error(ErrorCode::ResourceLimit, RefusalReason::CommandCount, 5001u, 5000u, "secret");
-	const PdfError last_page = make_refusal_error(ErrorCode::ConversionFailed, RefusalReason::ReadingOrder, 700u,
-		1000u, "secret", (std::numeric_limits<uint32_t>::max)());
-	record_diagnostic(last_page);
-	set_etw_capture_for_testing(false);
-
-	EXPECT_EQ(recall.page_index, std::optional<uint32_t>(2u));
-	EXPECT_NE(recall.format().find("[reason=TextRecall page=3 observed=910 bound=990]"), std::string::npos)
-		<< recall.format();
-	EXPECT_NE(limit.format().find("[reason=WorkingBytes page=1 observed=9000 bound=8000]"), std::string::npos)
-		<< limit.format();
-	EXPECT_FALSE(empty.page_index.has_value());
-	EXPECT_EQ(empty.format().find("page="), std::string::npos) << empty.format();
-	EXPECT_NE(last_page.format().find("page=4294967296 "), std::string::npos) << last_page.format();
-
-	const auto tail = diagnostics_tail(10);
-	ASSERT_EQ(tail.size(), 5u);
-	const std::array<std::optional<uint32_t>, 5> pages = {
-		2u, 0u, std::nullopt, std::nullopt, (std::numeric_limits<uint32_t>::max)()};
-	const std::array<RefusalReason, 5> reasons = {RefusalReason::TextRecall, RefusalReason::WorkingBytes,
-		RefusalReason::EmptyResult, RefusalReason::CommandCount, RefusalReason::ReadingOrder};
-	for (size_t i = 0; i < tail.size(); ++i) {
-		EXPECT_EQ(tail[i].refusal_reason, reasons[i]) << i;
-		EXPECT_EQ(tail[i].page_index, pages[i]) << i;
-		EXPECT_EQ(tail[i].format().find("secret"), std::string::npos) << tail[i].format();
-		if (!pages[i].has_value()) {
-			EXPECT_EQ(tail[i].format().find("page="), std::string::npos) << tail[i].format();
+	std::vector<PdfError> errors;
+	for (const Case& c : cases) {
+		errors.push_back(
+			make_refusal_error(c.code, c.reason, c.observed, c.bound, "C:\\secret\\deck.pptx", c.page));
+		if (c.caller_records) {
+			record_diagnostic(errors.back());
 		}
 	}
-	EXPECT_EQ(tail[0].code, ErrorCode::ConversionFailed);
-	EXPECT_EQ(tail[0].diagnostic_id, DiagnosticId::ConversionFailed);
-	EXPECT_NE(tail[0].format().find("[reason=TextRecall page=3 observed=910 bound=990]"), std::string::npos)
-		<< tail[0].format();
-	EXPECT_NE(tail[1].format().find("[reason=WorkingBytes page=1 observed=9000 bound=8000]"), std::string::npos)
-		<< tail[1].format();
-	EXPECT_EQ(tail[0].message, refusal_reason_description(RefusalReason::TextRecall));
-	EXPECT_EQ(tail[2].message, refusal_reason_description(RefusalReason::EmptyResult));
+	set_etw_capture_for_testing(false);
 
-	// The same entries wrap the ring: a reused slot drops the page it held before.
-	clear_diagnostics();
-	for (size_t i = 0; i < 300; ++i) {
-		record_diagnostic(recall);
-	}
-	for (size_t i = 0; i < 300; ++i) {
-		record_diagnostic(empty);
-	}
-	for (const DiagnosticEntry& entry : diagnostics_tail(300)) {
-		EXPECT_FALSE(entry.page_index.has_value());
-	}
-
+	const auto tail = diagnostics_tail(10);
 	const auto captured = captured_etw_events_for_testing();
-	ASSERT_EQ(captured.size(), 5u);
-	for (size_t i = 0; i < captured.size(); ++i) {
-		EXPECT_EQ(captured[i].has_diagnostic_page, pages[i].has_value()) << i;
-		EXPECT_EQ(captured[i].diagnostic_page_index, pages[i].value_or(0u)) << i;
-		EXPECT_EQ(captured[i].refusal_reason_name, refusal_reason_name(reasons[i])) << i;
+	ASSERT_EQ(tail.size(), cases.size());
+	ASSERT_EQ(captured.size(), cases.size());
+	for (size_t i = 0; i < cases.size(); ++i) {
+		const Case& c = cases[i];
+		const PdfError& err = errors[i];
+		EXPECT_EQ(err.refusal_reason, c.reason) << i;
+		EXPECT_EQ(err.page_index, c.page) << i;
+		EXPECT_EQ(err.observed, c.observed) << i;
+		EXPECT_EQ(err.bound, c.bound) << i;
+		const std::string err_line = err.format();
+		EXPECT_NE(err_line.find(c.expected_context), std::string::npos) << err_line;
+
+		EXPECT_EQ(tail[i].code, c.code) << i;
+		EXPECT_EQ(tail[i].refusal_reason, c.reason) << i;
+		EXPECT_EQ(tail[i].page_index, c.page) << i;
+		EXPECT_EQ(tail[i].observed, c.observed) << i;
+		EXPECT_EQ(tail[i].bound, c.bound) << i;
+		EXPECT_EQ(tail[i].message, refusal_reason_description(c.reason)) << i;
+		const std::string ring_line = tail[i].format();
+		EXPECT_NE(ring_line.find(c.expected_context), std::string::npos) << ring_line;
+		EXPECT_EQ(ring_line.find("secret"), std::string::npos) << ring_line;
+		if (!c.page.has_value()) {
+			EXPECT_EQ(err_line.find("page="), std::string::npos) << err_line;
+			EXPECT_EQ(ring_line.find("page="), std::string::npos) << ring_line;
+		}
+
+		EXPECT_EQ(captured[i].refusal_reason_name, refusal_reason_name(c.reason)) << i;
+		EXPECT_EQ(captured[i].error_code_name, error_code_name(c.code)) << i;
+		EXPECT_EQ(captured[i].has_diagnostic_page, c.page.has_value()) << i;
+		EXPECT_EQ(captured[i].diagnostic_page_index, c.page.value_or(0u)) << i;
+		EXPECT_EQ(captured[i].has_observed, c.observed.has_value()) << i;
+		EXPECT_EQ(captured[i].has_bound, c.bound.has_value()) << i;
+		EXPECT_EQ(captured[i].observed, c.observed.value_or(0u)) << i;
+		EXPECT_EQ(captured[i].bound, c.bound.value_or(0u)) << i;
 		for (const std::string& text :
 			{captured[i].error_code_name, captured[i].diagnostic_id_name, captured[i].refusal_reason_name}) {
 			EXPECT_EQ(text.find("secret"), std::string::npos) << text;
 		}
 	}
-	EXPECT_EQ(captured[0].observed, 910u);
-	EXPECT_EQ(captured[0].bound, 990u);
-	EXPECT_EQ(captured[0].error_code_name, "ConversionFailed");
+	EXPECT_EQ(tail[0].diagnostic_id, DiagnosticId::ConversionFailed);
+
+	// The same entries wrap the ring: a reused slot drops the page it held before.
+	clear_diagnostics();
+	for (size_t i = 0; i < kDiagnosticRingCapacity + 44; ++i) {
+		record_diagnostic(errors[0]);
+	}
+	for (size_t i = 0; i < kDiagnosticRingCapacity + 44; ++i) {
+		record_diagnostic(errors[2]);
+	}
+	const auto wrapped = diagnostics_tail(kDiagnosticRingCapacity);
+	ASSERT_EQ(wrapped.size(), kDiagnosticRingCapacity);
+	for (const DiagnosticEntry& entry : wrapped) {
+		EXPECT_FALSE(entry.page_index.has_value());
+	}
 	clear_diagnostics();
 	clear_captured_etw_events_for_testing();
 }
