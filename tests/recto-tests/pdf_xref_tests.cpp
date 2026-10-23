@@ -772,6 +772,44 @@ TEST(PdfXref, RecoveryRoundThreeFixes)
 		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
 	}
 
+	// Round 10: two containers hold object 88 and the later one is replaced by a plain object 21, so the earlier
+	// container's value sizes the stream (the final table decides, in the second pass).
+	{
+		const std::string fake = "\nendstream\nendobj\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n";
+		std::string pdf = "%PDF-1.7\n";
+		const size_t genuine_at = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages +
+			container(20u, "88 0 " + std::to_string(fake.size()), "/N 1 /First 5 /Filter /ASCIIHexDecode") +
+			container(21u, "88 0 3", "/N 1 /First 5 /Filter /ASCIIHexDecode") +
+			"25 0 obj\n<< /Length 99 0 R >>\nstream\nab\nendstream\nendobj\n" + // a lookup while both containers stand
+			"21 0 obj\n<< >>\nendobj\n" +
+			"30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(1), nullptr);
+		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
+	}
+
+	// Round 10: a row restoring an earlier definition of container 20 restores its members, so its object 88 (not the
+	// replaced definition's) sizes the stream.
+	{
+		const std::string fake = "\nendstream\nendobj\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R /Fake true >>\nendobj\n";
+		std::string pdf = "%PDF-1.7\n";
+		const size_t genuine_at = pdf.size();
+		pdf += "1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages;
+		const size_t first_container = pdf.size();
+		pdf += container(20u, "88 0 " + std::to_string(fake.size()), "/N 1 /First 5 /Filter /ASCIIHexDecode") +
+			container(20u, "88 0 3", "/N 1 /First 5 /Filter /ASCIIHexDecode") +
+			"25 0 obj\n<< /Length 99 0 R >>\nstream\nab\nendstream\nendobj\n"; // a lookup before the row
+		pdf += "40 0 obj\n<< /Type /XRef /Size 89 /Root 1 0 R /Index [20 1] /W [1 4 2] /Length 7 >>\nstream\n" +
+			type1_row(first_container) + "\nendstream\nendobj\n";
+		pdf += "30 0 obj\n<< /Length 88 0 R >>\nstream\n" + fake + "\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		ASSERT_NE(rec->find(1), nullptr);
+		EXPECT_EQ(rec->find(1)->byte_offset, genuine_at);
+	}
+
 	// Round 4: object 1 defined three times in the file (a catalog, then two other dictionaries); an intact type-1
 	// row naming the first restores it, catalog and all, so root 1 is valid again.
 	{

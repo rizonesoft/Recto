@@ -699,6 +699,14 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 	std::span<const uint8_t> file_bytes,
 	uint64_t max_total_entries) noexcept
 {
+	return recover_damaged_xref_with(file_bytes, max_total_entries, nullptr);
+}
+
+PdfResult<XrefTable> XrefTable::recover_damaged_xref_with(
+	std::span<const uint8_t> file_bytes,
+	uint64_t max_total_entries,
+	const std::unordered_map<uint64_t, int64_t>* length_oracle) noexcept
+{
 	try {
 		const uint64_t effective_max_entries =
 			std::min<uint64_t>(max_total_entries, kMaxXrefTotalEntries);
@@ -1178,313 +1186,35 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			return view;
 		};
 
-		// A stream's indirect /Length can name an integer inside a container the scan has passed but not unpacked. Such
-		// integers are read on demand: the containers met so far are decoded once each, in file order, within what the
-		// decode budget has left, and their integer members kept with the container's position. A container that cannot
-		// be decoded here (indirect parameters, a filter the decode meter does not measure, too little budget left) is
-		// skipped, and a probe never fails recovery for the file's sake. What a probe decodes is kept, so unpacking the
-		// container after the scan decodes nothing twice; an encrypted file's containers are never unpacked, and an
-		// integer read from ciphertext only ever sizes a stream the parser then checks for `endstream`.
-		struct ProbedContainer {
-			std::optional<int64_t> n;
-			std::optional<int64_t> first;
-			std::vector<uint8_t> decoded;
-		};
-		std::map<std::pair<uint32_t, size_t>, ProbedContainer> probed_containers;
-		// Integer members read by a probe: by object (the latest container in the file holding it, with that
-		// container's position) and by (container position, index), the address a compressed xref entry names.
-		std::unordered_map<uint32_t, std::pair<uint64_t, int64_t>> container_integers;
-		std::map<std::pair<uint64_t, uint32_t>, std::pair<uint32_t, int64_t>> probed_members;
-		size_t containers_probed = 0;
-		bool probe_budget_spent = false;
-		// Probes have an allowance of their own, the size of the recovery's decode budget, so decoding what may turn out
-		// to be ciphertext never spends what the xref streams and the unpack after the scan need.
-		uint64_t cumulative_probe_bytes = 0;
-		TargetCache probe_targets;
-		const IndirectObjectResolver probe_resolver = caching_resolver(probe_targets);
-		// The parameters a container names by reference, one level: /Filter, /DecodeParms and their elements, /N, /First.
-		const auto parameter_refs = [](const PdfDict& dict) {
-			std::vector<IndirectRef> refs;
-			for (const std::string_view key : {"Filter", "DecodeParms", "N", "First"}) {
-				const PdfValue* value = dict.get(PdfName::from_decoded(key));
-				if (value == nullptr) {
-					continue;
-				}
-				if (const auto ref = value->as_ref()) {
-					refs.push_back(*ref);
-				} else if (const PdfArray* arr = value->as_array(); arr != nullptr && arr->size() <= kMaxFilterChainDepth) {
-					for (const PdfValue& e : *arr) {
-						if (const auto element_ref = e.as_ref()) {
-							refs.push_back(*element_ref);
-						}
-					}
-				}
-			}
-			return refs;
-		};
-		const auto defined_now = [&](IndirectRef ref) {
-			const XrefEntry* entry = table.find(ref.obj_num);
-			return entry != nullptr && entry->is_uncompressed() && entry->generation == ref.gen_num;
-		};
-		// Containers a probe met before the scan had defined a parameter they name, with the references they wait on:
-		// tried again (and only then parsed again) once one of them is defined, never dropped for being early.
-		struct ProbeWait {
-			size_t index = 0;
-			std::vector<IndirectRef> refs;
-		};
-		std::vector<ProbeWait> probe_waiting;
-		// For each object a probed container used as a parameter, those containers; and what each probed container gave.
-		// A later definition of such an object takes the integers back and queues the container to be probed again.
-		std::unordered_map<uint32_t, std::vector<size_t>> parameter_users;
-		std::unordered_map<size_t, std::vector<uint32_t>> probe_provided;
-		// The probed containers that gave integers, by the container's object number, so a later definition of that object
-		// (a newer container, or something else) takes them back.
-		std::unordered_map<uint32_t, std::vector<size_t>> probed_by_object;
-		const auto integers_only = [&recovered_integers](IndirectRef len_ref) -> PdfResult<int64_t> {
-			const auto it = recovered_integers.find(len_ref.obj_num);
-			if (it == recovered_integers.end() || it->second.first != len_ref.gen_num) {
-				return make_pdf_error(
-					ErrorCode::DamagedFormat,
-					"Indirect /Length target not available as an integer object during recovery");
-			}
-			return it->second.second;
-		};
-		enum class ProbeOutcome : uint8_t { Done, Waiting };
-		const auto probe_one = [&](size_t index, std::vector<IndirectRef>& waiting_on) -> PdfResult<ProbeOutcome> {
-			const DeferredObjStm container_at = deferred_objstms[index];
-			// Only the definition the table holds now is read; one a later definition replaced is not this container.
-			if (const XrefEntry* self = table.find(container_at.obj_num);
-				self == nullptr || !self->is_uncompressed() || self->byte_offset != container_at.pos) {
-				return ProbeOutcome::Done;
-			}
-			{
-				Parser parser(file_bytes);
-				parser.seek(container_at.pos);
-				auto parsed = parser.parse_indirect_object(integers_only);
-				cumulative_parse_bytes += static_cast<uint64_t>(
-					std::max(parser.lexer().max_scanned_offset(), parser.lexer().position()) - container_at.pos);
-				if (!parsed.has_value()) {
-					if (parsed.error().code == ErrorCode::OutOfMemory) {
-						return parsed.error();
-					}
-					return ProbeOutcome::Done;
-				}
-				const PdfStream* container = parsed->value.as_stream();
-				if (container == nullptr) {
-					return ProbeOutcome::Done;
-				}
-				std::vector<IndirectRef> refs = parameter_refs(container->dict);
-				// A parameter object read through a reference may itself name others by reference (an indirect /Filter
-				// array, a /DecodeParms dictionary's values): decoding reads those too, so they are dependencies as well.
-				const size_t direct_refs = refs.size();
-				for (size_t r = 0; r < direct_refs; ++r) {
-					if (!defined_now(refs[r])) {
-						continue;
-					}
-					auto target = probe_resolver(refs[r]);
-					if (!target.has_value()) {
-						if (resolver_over_budget) {
-							return over_budget_error(container_at.pos);
-						}
-						continue;
-					}
-					if (const PdfArray* arr = target->as_array(); arr != nullptr && arr->size() <= kMaxFilterChainDepth) {
-						for (const PdfValue& e : *arr) {
-							if (const auto element_ref = e.as_ref()) {
-								refs.push_back(*element_ref);
-							}
-						}
-					} else if (const PdfDict* dict = target->as_dict(); dict != nullptr) {
-						for (const auto& [key, value] : *dict) {
-							(void)key;
-							if (const auto value_ref = value.as_ref()) {
-								refs.push_back(*value_ref);
-							}
-						}
-					}
-				}
-				waiting_on.clear();
-				for (const IndirectRef ref : refs) {
-					if (!defined_now(ref)) {
-						waiting_on.push_back(ref);
-					}
-				}
-				if (!waiting_on.empty()) {
-					return ProbeOutcome::Waiting; // a parameter the scan has not reached yet
-				}
-				// Each parameter this probe reads is noted, so a later definition of it brings the container back.
-				for (const IndirectRef ref : refs) {
-					parameter_users[ref.obj_num].push_back(index);
-				}
-				// Indirect parameters resolve through what the scan has found so far, so such a container is unpacked
-				// again after the scan with what the whole file says; a container with direct parameters reuses the
-				// probe's bytes.
-				const bool indirect_parameters = objstm_needs_resolver(container->dict);
-				auto view = container_view(container->dict, probe_resolver);
-				if (!view.has_value()) {
-					if (resolver_over_budget) {
-						return over_budget_error(container_at.pos);
-					}
-					return ProbeOutcome::Done;
-				}
-				if (!filters_are_metered_lossless(view->filters)) {
-					return ProbeOutcome::Done;
-				}
-				const uint64_t left = max_recovery_decoded_objstm_bytes - cumulative_probe_bytes;
-				detail::ScopedDecodeWorkMeter decode_work;
-				auto decoded = decode_stream(*container, static_cast<size_t>(std::min<uint64_t>(kMaxDecodedStreamBytes, left)),
-					&probe_resolver);
-				if (resolver_over_budget) {
-					return over_budget_error(container_at.pos);
-				}
-				if (!decoded.has_value() && decoded.error().code == ErrorCode::OutOfMemory) {
-					return decoded.error();
-				}
-				cumulative_probe_bytes += std::min<uint64_t>(left,
-					std::max<uint64_t>(decode_work.bytes(), decoded.has_value() ? static_cast<uint64_t>(decoded->size()) : 0u));
-				if (!decoded.has_value()) {
-					// Out of budget, the probe stops; any other failure leaves this container to the unpack after the scan.
-					probe_budget_spent = decoded.error().code == ErrorCode::DecompressionLimitExceeded;
-					return ProbeOutcome::Done;
-				}
-				const std::optional<int64_t> n_opt = view->n;
-				const std::optional<int64_t> first_opt = view->first;
-				std::vector<uint8_t> bytes = std::move(*decoded);
-				RECTO_PDF_TRY_REF(header_opt, read_objstm_header(container_at.obj_num, n_opt, first_opt, bytes));
-				if (header_opt.has_value()) {
-					CachedObjStream members = std::move(*header_opt);
-					members.decoded_bytes = std::move(bytes);
-					for (size_t idx = 0; idx < members.entries.size(); ++idx) {
-						auto member = extract_object_stream_member(
-							members, static_cast<uint32_t>(idx), IndirectRef{members.entries[idx].obj_num, 0u});
-						if (!member.has_value()) {
-							if (member.error().code == ErrorCode::OutOfMemory) {
-								return member.error();
-							}
-							continue;
-						}
-						if (const auto value = member->as_int()) {
-							// The latest container in the file holds an object, whichever order the probe read them in.
-							auto [latest, fresh] = container_integers.try_emplace(
-								members.entries[idx].obj_num, static_cast<uint64_t>(container_at.pos), *value);
-							if (!fresh && latest->second.first <= static_cast<uint64_t>(container_at.pos)) {
-								latest->second = {static_cast<uint64_t>(container_at.pos), *value};
-							}
-							probe_provided[index].push_back(members.entries[idx].obj_num);
-							if (probe_provided[index].size() == 1u) {
-								probed_by_object[container_at.obj_num].push_back(index);
-							}
-							probed_members[{static_cast<uint64_t>(container_at.pos), static_cast<uint32_t>(idx)}] =
-								{members.entries[idx].obj_num, *value};
-						}
-					}
-					bytes = std::move(members.decoded_bytes);
-				}
-				if (!indirect_parameters) {
-					probed_containers[{container_at.obj_num, container_at.pos}] = ProbedContainer{n_opt, first_opt, std::move(bytes)};
-				}
-			}
-			return ProbeOutcome::Done;
-		};
-		const auto probe_containers = [&]() -> PdfResult<void> {
-			// First the containers that waited, once a reference they wait on is defined.
-			for (size_t i = 0; i < probe_waiting.size() && !probe_budget_spent;) {
-				ProbeWait& wait = probe_waiting[i];
-				if (std::none_of(wait.refs.begin(), wait.refs.end(), defined_now)) {
-					++i;
-					continue;
-				}
-				RECTO_PDF_TRY_REF(outcome, probe_one(wait.index, wait.refs));
-				if (outcome == ProbeOutcome::Waiting) {
-					++i;
-				} else {
-					probe_waiting.erase(probe_waiting.begin() + static_cast<std::ptrdiff_t>(i));
-				}
-			}
-			for (; containers_probed < deferred_objstms.size() && !probe_budget_spent; ++containers_probed) {
-				std::vector<IndirectRef> waiting_on;
-				RECTO_PDF_TRY_REF(outcome, probe_one(containers_probed, waiting_on));
-				if (outcome == ProbeOutcome::Waiting) {
-					probe_waiting.push_back(ProbeWait{containers_probed, std::move(waiting_on)});
-				}
-			}
-			return {};
-		};
-		// What a probed container gave is taken back: its integers no longer stand.
-		const auto take_back = [&](size_t index) {
-			const uint64_t pos = static_cast<uint64_t>(deferred_objstms[index].pos);
-			if (const auto provided = probe_provided.find(index); provided != probe_provided.end()) {
-				for (const uint32_t member : provided->second) {
-					if (const auto held = container_integers.find(member); held != container_integers.end() && held->second.first == pos) {
-						container_integers.erase(held);
-					}
-				}
-				probe_provided.erase(provided);
-			}
-			probed_members.erase(probed_members.lower_bound({pos, 0u}), probed_members.lower_bound({pos + 1u, 0u}));
-		};
-		// The table's entry for an object changed (a scanned definition, or an xref row restoring, importing or freeing
-		// it): containers that used it as a parameter are taken back and probed again with what it is now, and a probed
-		// container defined by that object number is not that object any more, so what it gave goes.
-		const auto table_changed = [&](uint32_t obj_num, uint16_t gen_num) {
-			if (const auto users = parameter_users.find(obj_num); users != parameter_users.end()) {
-				for (const size_t index : users->second) {
-					take_back(index);
-					probe_waiting.push_back(ProbeWait{index, {IndirectRef{obj_num, gen_num}}});
-				}
-				parameter_users.erase(users);
-			}
-			if (const auto containers = probed_by_object.find(obj_num); containers != probed_by_object.end()) {
-				for (const size_t index : containers->second) {
-					take_back(index);
-				}
-				probed_by_object.erase(containers);
-			}
-		};
-		// The scan's /Length lookup: an uncompressed integer, or a container member the scan has passed that is later in
-		// the file than it.
+		// The scan's /Length lookup. A stream's indirect /Length can name an integer inside a container, which is unpacked
+		// only after the scan, once the table is final: a lookup that fails is noted, and if the final table then knows
+		// that integer, the whole scan runs again with the final integers as its lookup (`length_oracle`), so a stream
+		// is skipped by its true length instead of searched for `endstream`. The final table settles every question of
+		// which definition counts (rows, redefinitions, replaced containers, an encrypted file's containers), so the scan
+		// itself never guesses.
+		std::unordered_set<uint64_t> unresolved_lengths;
 		const auto scan_length = [&](IndirectRef len_ref, uint32_t stream_obj) -> PdfResult<int64_t> {
 			if (len_ref.obj_num == stream_obj) {
 				return make_pdf_error(
 					ErrorCode::DamagedFormat,
 					"Indirect /Length target cannot reference its own stream object");
 			}
-			const auto unavailable = [] {
-				return make_pdf_error(
-					ErrorCode::DamagedFormat,
-					"Indirect /Length target not available as an integer object during recovery");
-			};
-			const XrefEntry* entry = table.find(len_ref.obj_num);
-			// An intact xref row selected a member: that member, and no other container's object of the same number.
-			if (entry != nullptr && entry->is_compressed()) {
-				const XrefEntry* container = table.find(entry->obj_stm_num);
-				if (len_ref.gen_num != 0u || container == nullptr || !container->is_uncompressed()) {
-					return unavailable();
-				}
-				RECTO_PDF_RETURN_IF_ERROR(probe_containers());
-				if (const auto member = probed_members.find({container->byte_offset, entry->obj_stm_index});
-					member != probed_members.end() && member->second.first == len_ref.obj_num) {
-					return member->second.second;
-				}
-				return unavailable();
-			}
-			const auto it = recovered_integers.find(len_ref.obj_num);
-			const bool uncompressed = it != recovered_integers.end() && it->second.first == len_ref.gen_num;
-			const auto defined = defined_at.find(len_ref.obj_num);
-			const uint64_t defined_pos = defined != defined_at.end() ? defined->second : 0u;
-			// A container met after the object's current definition (or after its deletion by a row) replaces it, as the
-			// unpack after the scan will.
-			if (len_ref.gen_num == 0u && !deferred_objstms.empty() && deferred_objstms.back().pos > defined_pos) {
-				RECTO_PDF_RETURN_IF_ERROR(probe_containers());
-				if (const auto member = container_integers.find(len_ref.obj_num);
-					member != container_integers.end() && member->second.first > defined_pos) {
-					return member->second.second;
+			const uint64_t key = (static_cast<uint64_t>(len_ref.obj_num) << 16u) | len_ref.gen_num;
+			if (length_oracle != nullptr) {
+				if (const auto known = length_oracle->find(key); known != length_oracle->end()) {
+					return known->second;
 				}
 			}
-			if (uncompressed) {
+			if (const auto it = recovered_integers.find(len_ref.obj_num);
+				it != recovered_integers.end() && it->second.first == len_ref.gen_num) {
 				return it->second.second;
 			}
-			return unavailable();
+			if (unresolved_lengths.size() < effective_max_entries) {
+				unresolved_lengths.insert(key);
+			}
+			return make_pdf_error(
+				ErrorCode::DamagedFormat,
+				"Indirect /Length target not available as an integer object during recovery");
 		};
 
 		// Linearly scan from header_off for `<N> <G> obj` and `trailer << ... >>`.
@@ -1650,7 +1380,6 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 							if (scanned_definitions.size() < effective_max_entries) {
 								scanned_definitions.push_back(ScannedDefinition{static_cast<uint64_t>(pos), obj_num, gen_num});
 							}
-							table_changed(obj_num, gen_num);
 							recovered_integers.erase(obj_num);
 							catalog_generations.erase(obj_num);
 							indirect_type_dicts.erase(obj_num);
@@ -1749,7 +1478,6 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 														remember_replaced(member_id);
 														invalidate_objstm_container(member_id);
 														table.entries_.erase(member_id);
-														table_changed(member_id, 0u);
 														if (objects_discovered > 0u) {
 															--objects_discovered;
 														}
@@ -1785,7 +1513,6 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 															++objects_discovered;
 														}
 														table.set_entry(member_id, row);
-														table_changed(member_id, row.generation);
 														defined_at[member_id] = static_cast<uint64_t>(pos);
 														recovered_integers.erase(member_id);
 														catalog_generations.erase(member_id);
@@ -1822,7 +1549,6 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 												remember_replaced(member_id);
 												invalidate_objstm_container(member_id);
 												table.set_entry(member_id, row);
-												table_changed(member_id, 0u);
 												defined_at[member_id] = static_cast<uint64_t>(pos);
 												recovered_integers.erase(member_id);
 												catalog_generations.erase(member_id);
@@ -1882,11 +1608,6 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			if (self == nullptr || !self->is_uncompressed() || self->byte_offset != deferred.pos) {
 				continue;
 			}
-			if (const auto probed = probed_containers.find({deferred.obj_num, deferred.pos}); probed != probed_containers.end()) {
-				RECTO_PDF_RETURN_IF_ERROR(unpack_objstm(deferred.obj_num, deferred.pos, probed->second.n,
-					probed->second.first, std::move(probed->second.decoded)));
-				continue;
-			}
 			// Parsed again here, through the resolver (which charges the parse budget and keeps the result), since the
 			// scan kept only the position.
 			auto container_value = scan_resolver(IndirectRef{deferred.obj_num, 0u});
@@ -1934,6 +1655,22 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			if (dec_stm.has_value()) {
 				RECTO_PDF_RETURN_IF_ERROR(
 					unpack_objstm(deferred.obj_num, deferred.pos, n_opt, first_opt, std::move(*dec_stm)));
+			}
+		}
+
+		// The second pass (see scan_length): only from the first, only for a file not encrypted (its containers stay
+		// undecoded), and only when the final table now knows an integer some stream's /Length named.
+		if (length_oracle == nullptr && !encrypted && !unresolved_lengths.empty()) {
+			std::unordered_map<uint64_t, int64_t> oracle;
+			for (const uint64_t key : unresolved_lengths) {
+				const uint32_t obj = static_cast<uint32_t>(key >> 16u);
+				const uint16_t gen = static_cast<uint16_t>(key & 0xFFFFu);
+				if (const auto it = recovered_integers.find(obj); it != recovered_integers.end() && it->second.first == gen) {
+					oracle.emplace(key, it->second.second);
+				}
+			}
+			if (!oracle.empty()) {
+				return recover_damaged_xref_with(file_bytes, max_total_entries, &oracle);
 			}
 		}
 

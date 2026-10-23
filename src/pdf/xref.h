@@ -207,6 +207,17 @@ public:
 		std::span<const uint8_t> file_bytes,
 		uint64_t max_total_entries = kMaxXrefTotalEntries) noexcept;
 
+private:
+	// One scan of recover_damaged_xref. The first runs with no `length_oracle`; when the final table knows integers a
+	// stream's indirect /Length named that the scan could not, recovery runs once more with those integers (keyed by
+	// object number << 16 | generation) as the /Length lookup.
+	[[nodiscard]] static PdfResult<XrefTable> recover_damaged_xref_with(
+		std::span<const uint8_t> file_bytes,
+		uint64_t max_total_entries,
+		const std::unordered_map<uint64_t, int64_t>* length_oracle) noexcept;
+
+public:
+
 	// Parses the PDF header, `startxref`, classic `xref` subsections and/or
 	// PDF 1.5+ `/Type /XRef` streams, `trailer` dictionaries, hybrid `/XRefStm`,
 	// and `/Prev` incremental update chain (capped at 256 revisions with cycle
