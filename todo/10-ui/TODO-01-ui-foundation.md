@@ -72,7 +72,7 @@ track: M2
 | Order | Section | Deliverable | Depends On | Status |
 | ----- | ------- | ----------- | ---------- | ------ |
 | 1 | §1 | `recto-ui` static library, module boundary and headless render harness | D00 T01 §3 | [x] |
-| 2 | §2 | Win32 `Recto.exe` host replaces the WinUI scaffold; Windows App SDK pins retired | §1 | [ ] |
+| 2 | §2 | Win32 `Recto.exe` host replaces the WinUI scaffold; Windows App SDK pins retired | §1 | [x] |
 | 3 | §3 | UI thread `Dispatcher`, timers and engine callback marshalling | §1, D10 T04 §1 | [ ] |
 | 4 | §4 | Top-level `Window`: custom frame, Mica Alt, dark mode, DPI and minimum size | §2, §3 | [ ] |
 | 5 | §5 | Compositor: shared D3D11 device, DirectComposition tree, D2D surfaces, device loss | §4 | [ ] |
@@ -187,11 +187,14 @@ Replace the WinUI scaffold from `D00 T01 §3` in `src/app/` with a plain Win32 h
 - [x] Update `NOTICE.md` (remove the Windows App SDK 2.5.1 mention from the row at line 18 so it names only `Microsoft.Windows.CppWinRT`, and delete the WebView2 SDK row at line 19, since `recto-ui` has no web view) and `AGENTS.md` (overview, interface rules, validation list without `check-winui-pin.py`, `source-defect` lens without WinUI). Done when: `rg -n -i "windows app sdk|winui|webview2" NOTICE.md AGENTS.md` returns no stale claim and `python scripts/todo-graph.py validate` passes. Source: `D07 T02 §3` regenerates `NOTICE.md` from the build, so this edit only keeps the interim file true.
 - [x] Add `Ui.App.*` tests in `tests/recto-tests/ui_app_tests.cpp` (manifest DPI, appx no framework, no `Microsoft.WindowsAppSDK` in `Recto.vcxproj`, plain Win32 project, and `Ui.App.NoWinUiResidue`, which walks `git ls-files` minus `docs/`, `todo/`, `design/mockups/`, `design/SPEC.md` and binary files and fails on `Microsoft.UI`, `WindowsAppSDK`, `check-winui-pin` or an `.xaml` path). Done when: `--gtest_filter=Ui.App.*` passes and fails when the package reference or a planted `.xaml` file is restored.
 - [x] Close the completion review gaps in `src/ui/application.cpp` and `src/app/main.cpp`: `ui::self_test_verdict` fails a hidden window or a failed `DwmFlush` with `kExitSelfTestPresentation`, `ui::StartupFailure` names the failing call and its code for the debugger and an interactive `MessageBoxW` (never under `--self-test-exit`), and `Ui.App.SelfTestStartupBudget` holds the median launch under 400 ms. Done when: `Ui.App.SelfTestVerdict`, `Ui.App.SelfTestIgnoresHiddenShowCommand`, `Ui.App.StartupFailureIsReported`, `Ui.App.DescribesStartupFailure` and `Ui.App.SelfTestStartupBudget` pass.
-- [ ] Commit: `app: replace WinUI scaffold with Win32 wWinMain host; retire Windows App SDK pins`
+- [x] Commit: `app: replace WinUI scaffold with Win32 wWinMain host; retire Windows App SDK pins`
 
 > **Corrected 2026-10-23:** "presented frame" in the self-test means DWM composed the frame on the displayed input desktop: the window is visible, on the input desktop of a visible window station, not cloaked, and `DwmFlush` succeeded after the paint (review rounds 1 and 2, `docs/reviews/10-ui/D10-T01-s2.md`). Occlusion by another window is not a failure: an occluded window is still composed, and requiring the top of the z-order would fail ordinary launches and need foreground stealing.
 
 **Test checkpoint:** `.\build.cmd` builds x64 and ARM64, `build\bin\x64\Debug\recto-tests\recto-tests.exe --gtest_filter=Ui.App.*` passes, `python -m unittest discover -s tests/scripts` passes, `python scripts/check-sdk-pins.py` exits 0, and `build\bin\x64\Debug\Recto\Recto.exe --self-test-exit` on the display-session host opens the window and exits with code 0.
+
+> **Verified:** 2026-10-24 | §2 | 4c3a92877b69f4b9c16401ae6cc19e63917c2193
+> **Review:** `docs/reviews/d10-t01-s2.json`
 
 ## 3. UI thread `Dispatcher`, timers and engine callback marshalling
 
