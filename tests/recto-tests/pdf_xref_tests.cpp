@@ -346,6 +346,86 @@ TEST(PdfXref, RecoveryDeferredContainerEdges)
 	EXPECT_EQ(compressed_later->info_ref(), (IndirectRef{6u, 0u}));
 }
 
+// Round 1 of D06 T05 §29 and §30: a huge parameter object eight deferred containers share is kept reduced, so the
+// lookups after the first copy a few scalars, not the object; an intact xref row naming a deferred container's
+// member does not stop that member's catalog being recognised; and an escaped /Encr#79pt key still marks the file
+// as possibly encrypted, so its containers are not decoded before authentication.
+TEST(PdfXref, RecoveryRoundOneFixes)
+{
+	const auto hex = [](const std::string& text) {
+		static constexpr char kHex[] = "0123456789ABCDEF";
+		std::string out;
+		for (const unsigned char c : text) {
+			out += kHex[c >> 4u];
+			out += kHex[c & 0x0Fu];
+		}
+		return out + ">";
+	};
+	const auto container = [&](uint32_t num, const std::string& members, const std::string& keys) {
+		const std::string data = hex(members);
+		return std::to_string(num) + " 0 obj\n<< /Type /ObjStm " + keys + " /Length " + std::to_string(data.size()) +
+			" >>\nstream\n" + data + "\nendstream\nendobj\n";
+	};
+	const std::string pages = "4 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n";
+
+	// Eight containers share /DecodeParms 2 0 R, a dictionary holding 200,000 integers.
+	{
+		std::string big = "2 0 obj\n<< /Unused [";
+		for (int i = 0; i < 200000; ++i) {
+			big += "0 ";
+		}
+		big += "] >>\nendobj\n";
+		std::string pdf = "%PDF-1.7\n" + big;
+		for (uint32_t n = 11u; n < 19u; ++n) {
+			pdf += container(n, std::to_string(n + 10u) + " 0 << /Type /Catalog /Pages 4 0 R >>",
+				"/N 1 /First 5 /Filter /ASCIIHexDecode /DecodeParms 2 0 R");
+		}
+		pdf += pages + "%%EOF\n";
+		const test::ScopedHeapMeter meter;
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		const size_t allocated = meter.allocated_bytes();
+		RECTO_ASSERT_OK(rec);
+		EXPECT_EQ(rec->root_ref(), (IndirectRef{28u, 0u}));
+		if (test::ScopedHeapMeter::available()) {
+			// The scan's own parse of object 2 and the resolver's one parse, not one more copy per container.
+			const test::ScopedHeapMeter one_parse;
+			auto alone = XrefTable::recover_damaged_xref(as_bytes("%PDF-1.7\n" + big + pages + "%%EOF\n"), 64);
+			const size_t baseline = one_parse.allocated_bytes();
+			EXPECT_FALSE(alone.has_value()); // no catalog: it only measures what one parse of object 2 costs
+			EXPECT_LT(allocated, 3u * baseline + (size_t{4} << 20u)) << "baseline " << baseline;
+		}
+	}
+
+	// A deferred container's catalog member, also named by an intact xref stream's row after it.
+	{
+		std::string pdf = "%PDF-1.7\n" +
+			container(1u, "3 0 << /Type /Catalog /Pages 4 0 R >>", "/N 1 /First 4 /Filter /ASCIIHexDecode /DecodeParms 2 0 R") +
+			"2 0 obj\n<< >>\nendobj\n" + pages;
+		const std::string row("\x02\x00\x00\x00\x01\x00\x00", 7); // object 3: type 2, in container 1, index 0
+		pdf += "9 0 obj\n<< /Type /XRef /Size 10 /Root 3 0 R /Index [3 1] /W [1 4 2] /Length 7 >>\nstream\n" + row +
+			"\nendstream\nendobj\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 64);
+		RECTO_ASSERT_OK(rec);
+		EXPECT_EQ(rec->root_ref(), (IndirectRef{3u, 0u}));
+	}
+
+	// Three 400 KiB containers in a file whose trailer key is escaped as /Encr#79pt, under a 1 MiB decode budget:
+	// they are deferred and left undecoded, so the file recovers instead of exhausting the budget on ciphertext.
+	{
+		std::string pdf = "%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 4 0 R >>\nendobj\n" + pages;
+		for (uint32_t n = 40u; n < 43u; ++n) {
+			const std::string cipher(409600u, static_cast<char>(0xA5));
+			pdf += std::to_string(n) + " 0 obj\n<< /Type /ObjStm /N 1 /First 4 /Length 409600 >>\nstream\n" + cipher +
+				"\nendstream\nendobj\n";
+		}
+		pdf += "9 0 obj\n<< /Filter /Standard /V 1 /R 2 /O <00> /U <00> /P -4 >>\nendobj\n"
+			   "trailer\n<< /Size 43 /Root 1 0 R /Encr#79pt 9 0 R >>\n%%EOF\n";
+		auto rec = XrefTable::recover_damaged_xref(as_bytes(pdf), 16);
+		RECTO_ASSERT_OK(rec);
+		EXPECT_EQ(rec->root_ref(), (IndirectRef{1u, 0u}));
+	}
+}
+
 // Recovered cross-reference streams (D06 T05 §30): their rows count against one budget for the whole recovery, their
 // decoding stops at what the cumulative budget has left, an unusable one is recorded with its object number and
 // offset, and a file that may be encrypted keeps no container bytes while it is scanned.

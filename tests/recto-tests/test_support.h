@@ -165,6 +165,9 @@ public:
 	// The largest net growth of the calling thread's C++ heap since construction, in bytes.
 	[[nodiscard]] size_t peak_bytes() const noexcept;
 
+	// Every byte the calling thread's C++ heap handed out since construction, freed or not: the work a call did.
+	[[nodiscard]] size_t allocated_bytes() const noexcept;
+
 	// Whether this build measures at all. AddressSanitizer builds keep the sanitizer's own operator new and delete,
 	// whose allocation-type and sized-delete checks a replacement would disable for the whole binary, so they do not
 	// measure; the memory bounds are proven by the Debug and Release runs.

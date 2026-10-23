@@ -246,6 +246,96 @@ constexpr std::string_view kEofMarker = "%%EOF";
 constexpr std::string_view kXrefRowBudgetExceeded = "Cumulative /Type /XRef entry count exceeds maximum budget";
 constexpr std::string_view kXrefDefaultIndexBudgetExceeded =
 	"/Type /XRef default /Index [0 /Size] exceeds maximum entry budget";
+
+// What damaged-file recovery's resolver keeps of a parameter target (D06 T05 §29): numbers, booleans, null,
+// references and names up to 127 bytes as they are, and one level of a dictionary or a short array of them; any other
+// value becomes a placeholder of no use to a reader (the empty string, or the empty name for an over-long name). A
+// filter parameter, /N or /First never needs more, so a large target shared by many containers is copied cheaply.
+[[nodiscard]] PdfValue recovery_parameter_value(const PdfValue& value, int depth = 0)
+{
+	if (const auto b = value.as_bool()) {
+		return PdfValue(*b);
+	}
+	if (const auto i = value.as_int()) {
+		return PdfValue(*i);
+	}
+	if (const auto n = value.as_number()) {
+		return PdfValue(*n);
+	}
+	if (const auto r = value.as_ref()) {
+		return PdfValue(*r);
+	}
+	if (value.is_null()) {
+		return PdfValue(PdfNull{});
+	}
+	if (const auto name = value.as_name()) {
+		return name->size() <= 127u ? PdfValue(PdfName::from_decoded(*name)) : PdfValue(PdfName::from_decoded(""));
+	}
+	if (depth == 0) {
+		if (const PdfDict* dict = value.as_dict()) {
+			PdfDict reduced;
+			for (const auto& [key, entry] : dict->entries()) {
+				reduced.set(key, recovery_parameter_value(entry, depth + 1));
+			}
+			return PdfValue(std::move(reduced));
+		}
+		if (const PdfArray* arr = value.as_array(); arr != nullptr && arr->size() <= kMaxFilterChainDepth) {
+			PdfArray reduced;
+			for (const PdfValue& e : *arr) {
+				reduced.push_back(e.is_dict() ? recovery_parameter_value(e, 0) : recovery_parameter_value(e, depth + 1));
+			}
+			return PdfValue(std::move(reduced));
+		}
+	}
+	return PdfValue(PdfString());
+}
+
+// Whether `bytes` holds a name token whose decoded value is /Encrypt, in any spelling ISO 32000-1 7.3.5 allows
+// (`#xx` escapes included), so recovery can tell a file may be encrypted before it meets the trailer.
+[[nodiscard]] bool names_encrypt_key(std::span<const uint8_t> bytes) noexcept
+{
+	static constexpr std::string_view kKey = "Encrypt";
+	const auto hex = [](uint8_t c) -> int {
+		if (c >= '0' && c <= '9') {
+			return c - '0';
+		}
+		if (c >= 'a' && c <= 'f') {
+			return c - 'a' + 10;
+		}
+		if (c >= 'A' && c <= 'F') {
+			return c - 'A' + 10;
+		}
+		return -1;
+	};
+	for (size_t i = 0; i < bytes.size(); ++i) {
+		if (bytes[i] != '/') {
+			continue;
+		}
+		size_t matched = 0;
+		size_t j = i + 1;
+		while (j < bytes.size() && matched <= kKey.size()) {
+			uint8_t c = bytes[j];
+			if (!Lexer::is_pdf_regular(c)) {
+				break;
+			}
+			if (c == '#' && j + 2 < bytes.size() && hex(bytes[j + 1]) >= 0 && hex(bytes[j + 2]) >= 0) {
+				c = static_cast<uint8_t>(hex(bytes[j + 1]) * 16 + hex(bytes[j + 2]));
+				j += 3;
+			} else {
+				++j;
+			}
+			if (matched == kKey.size() || c != static_cast<uint8_t>(kKey[matched])) {
+				matched = kKey.size() + 1; // not this name
+				break;
+			}
+			++matched;
+		}
+		if (matched == kKey.size()) {
+			return true;
+		}
+	}
+	return false;
+}
 } // namespace
 
 PdfResult<uint64_t> XrefTable::locate_header_offset(
@@ -710,13 +800,12 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		uint64_t recovered_xref_rows = 0;
 		std::vector<DeferredObjStm> deferred_objstms;
 		// An encrypted file's containers are ciphertext until authentication, which happens after recovery, so when the
-		// file may be encrypted (it names /Encrypt anywhere) every container is deferred, and none is decoded if a
+		// file may be encrypted (it names /Encrypt anywhere, in any escaped spelling) every container is deferred, and
+		// none is decoded if a
 		// recovered trailer turns out to have /Encrypt: its compressed objects come from the rows of the intact xref
 		// streams instead, and are read after authentication. A file that merely mentions /Encrypt has its containers
 		// decoded after the scan as any deferred container is.
-		static constexpr std::string_view kEncryptKey = "/Encrypt";
-		const bool may_be_encrypted = std::search(file_bytes.begin(), file_bytes.end(), kEncryptKey.begin(),
-			kEncryptKey.end()) != file_bytes.end();
+		const bool may_be_encrypted = names_encrypt_key(file_bytes);
 
 		auto invalidate_objstm_container = [&](uint32_t container_id) {
 			auto m_it = objstm_members.find(container_id);
@@ -825,7 +914,14 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 						// can meet one).
 						if (const auto later = defined_at.find(inner_id);
 							later != defined_at.end() && later->second > container_pos) {
-							continue;
+							// A later xref row naming exactly this member (same container and index) is the same object:
+							// its content is still read below (a catalog, an integer). Any other later definition wins.
+							const XrefEntry* existing = table.find(inner_id);
+							const bool same_member = existing != nullptr && existing->is_compressed() &&
+								existing->obj_stm_num == obj_num && existing->obj_stm_index == static_cast<uint32_t>(idx);
+							if (!same_member) {
+								continue;
+							}
 						}
 
 						auto member = extract_object_stream_member(
@@ -1286,7 +1382,7 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 		const IndirectObjectResolver scan_resolver = [&](IndirectRef ref) -> PdfResult<PdfValue> {
 			const uint64_t target_key = (static_cast<uint64_t>(ref.obj_num) << 16u) | ref.gen_num;
 			if (const auto known = resolved_targets.find(target_key); known != resolved_targets.end()) {
-				return known->second.deep_clone();
+				return known->second.deep_clone(); // a reduced value: a few scalars
 			}
 			auto parsed_value = [&]() -> PdfResult<PdfValue> {
 				const XrefEntry* entry = table.find(ref.obj_num);
@@ -1329,11 +1425,12 @@ PdfResult<XrefTable> XrefTable::recover_damaged_xref(
 			if (!parsed_value.has_value()) {
 				return parsed_value;
 			}
-			if (!parsed_value->is_stream()) { // a container is parsed once anyway; its bytes are not kept twice
-				RECTO_PDF_TRY_REF(kept, parsed_value->deep_clone());
-				resolved_targets.emplace(target_key, std::move(kept));
+			if (parsed_value->is_stream()) {
+				return parsed_value; // a container is parsed once anyway; its bytes are not kept
 			}
-			return parsed_value;
+			// Kept reduced to what a parameter can use, so each later lookup copies a few scalars, not the target.
+			const auto kept = resolved_targets.emplace(target_key, recovery_parameter_value(*parsed_value)).first;
+			return kept->second.deep_clone();
 		};
 		const auto over_budget_error = [&](size_t at) {
 			return make_xref_error(

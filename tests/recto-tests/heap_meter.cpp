@@ -19,6 +19,7 @@ struct HeapMeterState {
 	bool active = false;
 	int64_t live = 0;
 	int64_t peak = 0;
+	uint64_t allocated = 0;
 };
 
 thread_local HeapMeterState t_meter;
@@ -27,6 +28,7 @@ void note_allocated(void* p) noexcept
 {
 	if (t_meter.active && p != nullptr) {
 		t_meter.live += static_cast<int64_t>(_msize(p));
+		t_meter.allocated += _msize(p);
 		if (t_meter.live > t_meter.peak) {
 			t_meter.peak = t_meter.live;
 		}
@@ -79,7 +81,7 @@ namespace recto::test {
 
 ScopedHeapMeter::ScopedHeapMeter() noexcept
 {
-	t_meter = HeapMeterState{true, 0, 0};
+	t_meter = HeapMeterState{true, 0, 0, 0};
 }
 
 ScopedHeapMeter::~ScopedHeapMeter() noexcept
@@ -90,6 +92,11 @@ ScopedHeapMeter::~ScopedHeapMeter() noexcept
 size_t ScopedHeapMeter::peak_bytes() const noexcept
 {
 	return static_cast<size_t>(t_meter.peak);
+}
+
+size_t ScopedHeapMeter::allocated_bytes() const noexcept
+{
+	return static_cast<size_t>(t_meter.allocated);
 }
 
 bool ScopedHeapMeter::available() noexcept
@@ -158,6 +165,11 @@ ScopedHeapMeter::ScopedHeapMeter() noexcept = default;
 ScopedHeapMeter::~ScopedHeapMeter() noexcept = default;
 
 size_t ScopedHeapMeter::peak_bytes() const noexcept
+{
+	return 0;
+}
+
+size_t ScopedHeapMeter::allocated_bytes() const noexcept
 {
 	return 0;
 }
