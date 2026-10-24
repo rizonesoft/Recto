@@ -8,7 +8,7 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 # TODO-05 -- Audits of Sections Stamped Before the Current Review Process
 
-> **Goal:** Every section stamped before 2026-10-21 is re-verified under the current review process before later work builds further on it: its own Test checkpoint re-run at the current tip, and fresh independent audit rounds by the pinned reviewer with a 22-round cap and the severity cutoff. A confirmed stamp stays; a regression flips its row back with a dated blocking note, a filed repair and a list of suspect downstream stamps.
+> **Goal:** Every section stamped before 2026-10-21 is re-verified under the current review process before later work builds further on it: its own Test checkpoint re-run at the current tip, and fresh independent audit rounds by the pinned reviewer with the current round cap (33 rounds since 2026-10-23) and the severity cutoff. A confirmed stamp stays; a regression flips its row back with a dated blocking note, a filed repair and a list of suspect downstream stamps.
 
 > **Groomed 2026-10-23:** drift and sequence only; no audit verdict or stamped checklist was touched. `D01 T02 §4` now waits for `§32` and `§33` (image decode repairs), and `D01 T03 §5` (the 1-hour fuzz run) waits for `§29` to `§35`, so fuzzing starts on decoders whose known gaps are closed. `§22` is mid-audit (round 4 reached, 22-round cap, severity cutoff from round 9).
 
@@ -722,7 +722,9 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 > **Started:** 2026-10-23T16:36Z
 
-`D01 T01 §10` (`pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d01-t01-s10.json` records 14 rounds (fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the current tip, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 22 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back with a dated blocking note and a filed repair.
+> **Corrected 2026-10-24:** the plan review (`docs/reviews/06-quality/D06-T05-s24.md`) found three gaps, fixed here: the cap is the current 33 rounds, the confirmation branch needs the checkpoint's execution evidence at the final audited commit, and the regression branch runs `unstamp` and proves the stamp is gone. The regular rounds moved to `docs/reviews/06-quality/audit-d01-t01-s10-astra.md` when the Astra pin's review schedule (`5dc13f9`, checked by `stamp` since `eff2a1b`) made the GPT-6.1 Sol rounds 1 and 2 unreplayable; those rounds and their fixes stay on record in `docs/reviews/06-quality/audit-d01-t01-s10.md`.
+
+`D01 T01 §10` (`pdf::Document` page-tree resolver, metadata, `/Outlines`, font list and `/Annots` links) was stamped before 2026-10-21 under the earlier review process: reviews by a different reviewer with a three-round cap. Its receipt `docs/reviews/d01-t01-s10.json` records 14 rounds (fixed, clean). This section re-verifies it under the current process (operator request, 2026-10-21): the section's own Test checkpoint re-run at the final audited commit, and fresh independent rounds by the pinned reviewer in `review-todo-section`'s audit stance, at most 33 rounds with the severity cutoff. A confirmed stamp stays; a regression flips the row back through `unstamp` with a filed repair and a suspect list.
 
 **Phase:** 1
 **Needs:** windows-host
@@ -730,16 +732,16 @@ title: "TODO-05 -- Audits of Sections Stamped Before the Current Review Process"
 
 **Build order:**
 
-1. Re-run `D01 T01 §10`'s Test checkpoint at the current tip. Done when: its output is quoted in `docs/reviews/06-quality/audit-d01-t01-s10.md`.
-2. Audit `D01 T01 §10` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d01-t01-s10.md` ends in an approving round or a recorded stop with every finding owned.
+1. Re-run `D01 T01 §10`'s Test checkpoint at the final audited commit. Done when: its output is quoted in `docs/reviews/06-quality/audit-d01-t01-s10-astra.md` with that commit's SHA.
+2. Audit `D01 T01 §10` with independent rounds through `scripts/review-dispatch.py`. Done when: `docs/reviews/06-quality/audit-d01-t01-s10-astra.md` ends in an approving round or a recorded stop with every finding owned.
 
-- [ ] Re-run the Test checkpoint `python scripts/todo-graph.py resolve "D01 T01 §10"` prints, at the current tip, and quote its result in `docs/reviews/06-quality/audit-d01-t01-s10.md`. Done when: the quoted output shows the checkpoint passing, or the failure is recorded as a regression.
-- [ ] Run audit rounds on `D01 T01 §10`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d01-t01-s10.md`. Done when: a round approves, or the severity cutoff or the 22-round cap stops the loop with its outcome recorded.
-- [ ] Fix each finding at its owning layer in a new commit, or file it through `add-todo` with an owner. Done when: no finding in `docs/reviews/06-quality/audit-d01-t01-s10.md` is open without a fix commit or a filed section.
-- [ ] On a confirmed regression, add a dated blocking note to `D01 T01 §10`, file the repair, and list the stamped sections that depend on it as suspect in `docs/reviews/06-quality/audit-d01-t01-s10.md`. Done when: the note, the repair section and the suspect list exist, or the audit confirms the stamp.
+- [ ] Run audit rounds on `D01 T01 §10`'s stamped candidate and every later change to the files it owns, recording each with `--record docs/reviews/06-quality/audit-d01-t01-s10-astra.md`. Done when: a round approves, or the severity cutoff or the 33-round cap stops the loop with its outcome recorded, and no leftover is safety, data-integrity or stamp-invalidating.
+- [ ] Fix each finding at its owning layer in a new commit with a test that fails before it, or file it through `add-todo` with an owner. Done when: no finding in either audit findings file is open without a fix commit or a filed section.
+- [ ] After the last fix, re-run the Test checkpoint `python scripts/todo-graph.py resolve "D01 T01 §10"` prints on the x64 Release AddressSanitizer build (`build/build.ps1 -Platform x64 -Configuration Release -EnableASAN`), and the full `.\build.cmd` gate, at the final audited commit. Done when: `docs/reviews/06-quality/audit-d01-t01-s10-astra.md` quotes that commit's SHA, `ASan=enabled`, the `PdfDocument.*` and sibling suites' pass count, and `0 Warning(s)`; missing or stale output counts as a failed checkpoint, not a confirmation.
+- [ ] On a confirmed regression, file the repair through `add-todo`, run `python scripts/todo-graph.py unstamp "D01 T01 §10" --reason '<what regressed and the repair section that owns it>'`, and list the stamped sections it prints as suspect in `docs/reviews/06-quality/audit-d01-t01-s10-astra.md`. Done when: `resolve "D01 T01 §10"` no longer exits 3, its `Verified:` line is gone, `docs/reviews/d01-t01-s10.revoked-<date>.json` exists and the suspect list is recorded; or the audit confirms the stamp.
 - [ ] Commit: `review: audit D01 T01 §10 under the current review process`
 
-**Test checkpoint:** `python scripts/todo-graph.py resolve "D01 T01 §10"` exits 3 (still verified) or the blocking note is present, and `docs/reviews/06-quality/audit-d01-t01-s10.md` ends in an approving round or a recorded stop with every finding fixed or filed.
+**Test checkpoint:** either the stamp is confirmed (`python scripts/todo-graph.py resolve "D01 T01 §10"` exits 3, and `docs/reviews/06-quality/audit-d01-t01-s10-astra.md` quotes the ASan checkpoint passing and `.\build.cmd` at 0 warnings at the final audited commit, then ends in an approving round or a recorded stop with every finding fixed or filed), or it is revoked (`resolve` does not exit 3, the revoked receipt exists, and the repair and suspect list are recorded). A note beside a still-valid stamp, or a confirmation without the quoted checkpoint, fails.
 
 ## 25. Retired MuPDF and AGPL text removed from the A, B and C mockup boards
 
