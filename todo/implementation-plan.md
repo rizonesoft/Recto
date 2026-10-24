@@ -72,7 +72,7 @@ Sections: 98 | Checklist items: 577
 | [x]    | D01 T02 §24 | Conversion-check failures name the check, the page and the measured value                | windows-host              | 4     |
 | [x]    | D01 T02 §25 | Decoder failures keep their step and Windows HRESULT in the diagnostic ring and ETW      | windows-host              | 4     |
 | [x]    | D01 T02 §26 | Image decoder recovery outcomes in diagnostics: substituted rows and refusal causes      | windows-host              | 4     |
-| [ ]    | D01 T02 §34 | Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper)           | windows-host              | 6     |
+| [x]    | D01 T02 §34 | Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper)           | windows-host              | 6     |
 | [ ]    | D01 T02 §35 | Canonical `PdfValue` serializer for indirect objects and streams                         | windows-host              | 3     |
 | [ ]    | D01 T02 §36 | Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256)       | windows-host              | 3     |
 | [ ]    | D01 T02 §37 | Flate compressor at zlib-ng speed and size, with a fast `Best` on long chains            | windows-host              | 3     |
@@ -912,6 +912,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 71/843 verified sections, 37 ready to run now.
+Progress: 72/843 verified sections, 37 ready to run now.
 
 Checklist: 450/6164 items completed (includes Commit items).

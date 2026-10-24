@@ -91,7 +91,7 @@ track: M1
 | 31 | §31 | Type 3 fonts: `/CharProcs` recorded as per-glyph sub-display-lists | §4, §19 | [ ] |
 | 32 | §32 | Colour spaces: CalGray, CalRGB, Lab, ICCBased and calibrated CMYK through Windows colour | §3 | [ ] |
 | 33 | §33 | Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4 | §32 | [ ] |
-| 34 | §34 | Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper) | D01 T01 §10 | [ ] |
+| 34 | §34 | Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper) | D01 T01 §10 | [x] |
 | 35 | §35 | Canonical `PdfValue` serializer for indirect objects and streams | D01 T01 §10 | [ ] |
 | 36 | §36 | Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256) | D01 T01 §10 | [ ] |
 | 37 | §37 | Flate compressor at zlib-ng speed and size, with a fast `Best` on long chains | §34 | [ ] |
@@ -1023,6 +1023,9 @@ Recto writes PDFs (`§5`'s revisions, `D04 T02 §2`'s `PdfWriter`, the optimizer
 - [x] Commit: `pdf: add a native Flate compressor`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.FlateCompress*` passes under ASan with 0 warnings, and `build/build.ps1 -Platform x64 -Configuration Release -TestFilter PdfFilters.FlateCompressSpeed` passes.
+
+> **Verified:** 2026-10-24 | §34 | 5eed8f8bb444134d2c992849137ac837a9eadcbd
+> **Review:** `docs/reviews/d01-t02-s34.json`
 
 ## 35. Canonical `PdfValue` serializer for indirect objects and streams
 

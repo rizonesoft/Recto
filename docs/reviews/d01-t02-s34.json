@@ -1,0 +1,104 @@
+{
+  "ref": "D01 T02 \u00a734",
+  "title": "Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper)",
+  "implementation_sha": "5eed8f8bb444134d2c992849137ac837a9eadcbd",
+  "date": "2026-10-24",
+  "reviews": [
+    {
+      "round": 1,
+      "report": "docs/reviews/01-engine/D01-T02-s34.md",
+      "verdict": "fixed"
+    },
+    {
+      "round": 2,
+      "report": "docs/reviews/01-engine/D01-T02-s34.md",
+      "verdict": "clean"
+    }
+  ],
+  "checks": [
+    "build/build.ps1 -EnableASAN -Configuration Debug -TestFilter PdfFilters.FlateCompress* -> 0 Warning(s), [  PASSED  ] 5 tests (FlateCompressSpeed skipped under ASan)",
+    "build/build.ps1 -Platform x64 -Configuration Release -TestFilter PdfFilters.FlateCompress* -> [  PASSED  ] 6 tests, Default 38.1 MB/s median on flate/content-stream.txt",
+    ".\\build.cmd -> exit 0, 0 Warning(s), [  PASSED  ] 248 tests (Debug), [  PASSED  ] 249 tests (Release)",
+    "python -m unittest discover -s tests/scripts -> Ran 445 tests, OK"
+  ],
+  "completion": {
+    "report": "docs/reviews/01-engine/D01-T02-s34.md",
+    "verdict": "filed",
+    "candidate": "9b69ca8f7985846e4b7b79af29387f12dfba0110",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "filed": [
+      "D01 T02 \u00a737",
+      "D01 T02 \u00a738",
+      "D01 T02 \u00a75",
+      "D04 T02 \u00a72",
+      "D04 T02 \u00a711",
+      "D02 T01 \u00a78",
+      "D04 T02 \u00a712",
+      "D06 T01 \u00a77"
+    ]
+  },
+  "rounds_spent": 2,
+  "round_cap": 33,
+  "plan": {
+    "report": "docs/reviews/01-engine/D01-T02-s34.md",
+    "candidate": "059238dbbc939c5401d59a890cd381a2727381ae",
+    "reviewer": "astra",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "lenses": [
+      "plan"
+    ]
+  },
+  "schedule": {
+    "severity_stop_after": 3,
+    "plan": {
+      "effort": "medium",
+      "lenses": [
+        "plan"
+      ]
+    },
+    "completion": {
+      "effort": "medium"
+    },
+    "rounds": [
+      {
+        "effort": "high",
+        "lenses": [
+          "adversarial",
+          "integration",
+          "source-defect",
+          "plan-delivery"
+        ]
+      },
+      {
+        "effort": "medium",
+        "lenses": [
+          "adversarial"
+        ]
+      },
+      {
+        "effort": "low",
+        "lenses": [
+          "adversarial"
+        ]
+      }
+    ],
+    "rotation": {
+      "effort": "low",
+      "lenses": [
+        "consistency",
+        "quality",
+        "design",
+        "optimization",
+        "record"
+      ]
+    },
+    "escalation": {
+      "effort": "medium",
+      "lenses": [
+        "adversarial"
+      ]
+    }
+  }
+}
