@@ -275,6 +275,54 @@ constexpr uint64_t kMaxBitmapBytes = 256ull * 1024ull * 1024ull;
 		t * t * t * p3;
 }
 
+// The parameters where the cubic `p0..p3` has a 1D extremum: the roots of
+// `a t^2 + 2 b t + c` (its derivative over 3), by the cancellation-free form
+// `q = -(b + sign(b) sqrt(b^2 - a c))`, roots `q / a` and `c / q`, so a large
+// coefficient never swallows a small root. Writes up to two finite roots,
+// unfiltered, to `roots`; false when the arithmetic overflows.
+[[nodiscard]] bool cubic_extremum_roots(
+	double p0,
+	double p1,
+	double p2,
+	double p3,
+	std::array<double, 2>& roots,
+	size_t& root_count) noexcept
+{
+	root_count = 0u;
+	const double a = -p0 + 3.0 * p1 - 3.0 * p2 + p3;
+	const double b = p0 - 2.0 * p1 + p2;
+	const double c = p1 - p0;
+	if (!std::isfinite(a) || !std::isfinite(b) || !std::isfinite(c)) {
+		return false;
+	}
+	const auto add = [&](double t) noexcept {
+		if (std::isfinite(t)) {
+			roots[root_count++] = t;
+		}
+	};
+	if (a == 0.0) {
+		if (b != 0.0) {
+			add(-c / (2.0 * b));
+		}
+		return true;
+	}
+	const double disc = b * b - a * c;
+	if (!std::isfinite(disc)) {
+		return false;
+	}
+	if (disc < 0.0) {
+		return true;
+	}
+	const double q = -(b + std::copysign(std::sqrt(disc), b));
+	if (q == 0.0) {
+		add(0.0); // b == 0 and a c == 0: the double root t = 0
+		return true;
+	}
+	add(q / a);
+	add(c / q);
+	return true;
+}
+
 void expand_cubic_1d_bounds(
 	double p0,
 	double p1,
@@ -303,43 +351,15 @@ void expand_cubic_1d_bounds(
 		inout_max = std::max(inout_max, val);
 	};
 
-	const double a = -p0 + 3.0 * p1 - 3.0 * p2 + p3;
-	const double b = p0 - 2.0 * p1 + p2;
-	const double c = p1 - p0;
-	if (!std::isfinite(a) || !std::isfinite(b) || !std::isfinite(c)) {
+	std::array<double, 2> roots{};
+	size_t root_count = 0u;
+	if (!cubic_extremum_roots(p0, p1, p2, p3, roots, root_count)) {
 		include_hull();
 		return;
 	}
-
-	constexpr double kEps = 1e-12;
-	if (std::abs(a) <= kEps) {
-		if (std::abs(b) > kEps) {
-			const double t = -c / (2.0 * b);
-			if (!std::isfinite(t)) {
-				include_hull();
-			} else if (t > 0.0 && t < 1.0) {
-				include_value(t);
-			}
-		}
-		return;
-	}
-
-	const double disc = b * b - a * c;
-	if (!std::isfinite(disc)) {
-		include_hull();
-		return;
-	}
-	if (disc < 0.0) {
-		return;
-	}
-	const double sqrt_disc = std::sqrt(disc);
-	const double t1 = (-b - sqrt_disc) / a;
-	const double t2 = (-b + sqrt_disc) / a;
-	for (double t : {t1, t2}) {
-		if (!std::isfinite(t)) {
-			include_hull();
-		} else if (t > 0.0 && t < 1.0) {
-			include_value(t);
+	for (size_t i = 0u; i < root_count; ++i) {
+		if (roots[i] > 0.0 && roots[i] < 1.0) {
+			include_value(roots[i]);
 		}
 	}
 }
@@ -378,32 +398,15 @@ void include_point_in_bounds(
 	std::array<double, 16>& cuts,
 	size_t& cut_count) noexcept
 {
-	const double a = -p0 + 3.0 * p1 - 3.0 * p2 + p3;
-	const double b = p0 - 2.0 * p1 + p2;
-	const double c = p1 - p0;
-	if (!std::isfinite(a) || !std::isfinite(b) || !std::isfinite(c)) {
+	std::array<double, 2> roots{};
+	size_t root_count = 0u;
+	if (!cubic_extremum_roots(p0, p1, p2, p3, roots, root_count)) {
 		return false;
 	}
-	const auto add = [&](double t) noexcept {
-		if (std::isfinite(t) && t > 0.0 && t < 1.0 && cut_count < cuts.size()) {
-			cuts[cut_count++] = t;
+	for (size_t i = 0u; i < root_count; ++i) {
+		if (roots[i] > 0.0 && roots[i] < 1.0 && cut_count < cuts.size()) {
+			cuts[cut_count++] = roots[i];
 		}
-	};
-	constexpr double kEps = 1e-12;
-	if (std::abs(a) <= kEps) {
-		if (std::abs(b) > kEps) {
-			add(-c / (2.0 * b));
-		}
-		return true;
-	}
-	const double disc = b * b - a * c;
-	if (!std::isfinite(disc)) {
-		return false;
-	}
-	if (disc >= 0.0) {
-		const double sqrt_disc = std::sqrt(disc);
-		add((-b - sqrt_disc) / a);
-		add((-b + sqrt_disc) / a);
 	}
 	return true;
 }
@@ -886,15 +889,20 @@ private:
 			include_disk(v, 1.0);
 			break;
 		case LineJoin::Miter: {
-			const double dot = t_in.x * t_out.x + t_in.y * t_out.y;
 			const double cross = t_in.x * t_out.y - t_in.y * t_out.x;
-			const double sin_half_phi = std::sqrt(std::max(0.0, 0.5 * (1.0 + dot)));
+			// `1 + t_in . t_out` is `|t_in + t_out|^2 / 2` for unit tangents; the
+			// sum keeps its precision where the dot product of two nearly
+			// opposite directions rounds to -1 and would lose an allowed miter.
+			const double sum_x = t_in.x + t_out.x;
+			const double sum_y = t_in.y + t_out.y;
+			const double one_plus_dot = 0.5 * (sum_x * sum_x + sum_y * sum_y);
+			const double sin_half_phi = 0.5 * std::hypot(sum_x, sum_y);
 			// The small tolerance keeps the apex when rounding puts a ratio that
 			// equals the limit a hair over it, where a renderer may still miter.
 			if (g_.miter_limit * sin_half_phi >= 1.0 - 1e-9 && sin_half_phi > 0.0) {
 				const PdfPoint u_in = cross <= 0.0 ? n_in : PdfPoint{-n_in.x, -n_in.y};
 				const PdfPoint u_out = cross <= 0.0 ? n_out : PdfPoint{-n_out.x, -n_out.y};
-				const double denom = 1.0 + dot; // 2 sin^2(phi / 2) > 0
+				const double denom = one_plus_dot; // 2 sin^2(phi / 2) > 0
 				include_user(
 					v,
 					PdfPoint{(u_in.x + u_out.x) / denom, (u_in.y + u_out.y) / denom},

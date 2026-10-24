@@ -2387,5 +2387,43 @@ TEST(PdfDisplayList, CurveStrokesWidenOnlyByTheirNormals)
 	EXPECT_LT(box.height(), 1.01 * (y_max - y_min));
 }
 
+TEST(PdfDisplayList, CubicRootsSurviveCancellation)
+{
+	// Round 2 finding 1: `0 100 m 1e16 100 1e16 200 1 200 c h f`. The textbook
+	// root formula cancels to t = 0 and t = 2e16 and loses the extremum at
+	// t = 0.5 (x = 7.5e15); the stable form keeps it, so the fill reaches the
+	// page's right edge.
+	PathBuilder loop;
+	loop.move_to(0.0, 100.0);
+	loop.cubic_bezier_to(PdfPoint{1e16, 100.0}, PdfPoint{1e16, 200.0}, PdfPoint{1.0, 200.0});
+	loop.close_subpath();
+	DisplayListBuilder builder(PdfRect{0.0, 0.0, 300.0, 300.0});
+	const auto pid = builder.add_path(loop);
+	ASSERT_TRUE(pid.has_value());
+	ASSERT_TRUE(builder.draw_path(*pid, ColorRgba::black(), ColorRgba::black(), false, true).has_value());
+	const auto dl = finish_ok(builder);
+	ASSERT_TRUE(dl->has_content_bounds());
+	EXPECT_EQ(dl->content_bounds_pt(), (PdfRect{0.0, 100.0, 300.0, 200.0}));
+}
+
+TEST(PdfDisplayList, NearReversingMiterKeepsItsApex)
+{
+	// Round 2 finding 2: `2 w 0 J 0 j 1e9 M 100 150 m 150 150 l 100 150.0000005 l S`.
+	// The turn's miter ratio is about 2e8, inside the 1e9 limit, so the apex
+	// reaches x = 2e8 + 150; `1 + dot` rounded to 0 had dropped it.
+	PathBuilder spike;
+	spike.move_to(100.0, 150.0);
+	spike.line_to(150.0, 150.0);
+	spike.line_to(100.0, 150.0000005);
+	DisplayListBuilder builder(PdfRect{0.0, 0.0, 300.0, 300.0});
+	const auto pid = builder.add_path(spike);
+	ASSERT_TRUE(pid.has_value());
+	ASSERT_TRUE(builder.set_stroke_style(2.0f, LineCap::Butt, LineJoin::Miter, 1e9f).has_value());
+	ASSERT_TRUE(builder.draw_path(*pid, ColorRgba::black(), ColorRgba::black(), true, false).has_value());
+	const auto dl = finish_ok(builder);
+	ASSERT_TRUE(dl->has_content_bounds());
+	EXPECT_EQ(dl->content_bounds_pt().x_max, 300.0);
+}
+
 } // namespace
 } // namespace recto::pdf
