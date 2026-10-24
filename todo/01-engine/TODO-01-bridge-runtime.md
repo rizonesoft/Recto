@@ -23,7 +23,7 @@ track: M1
 - -> XREF: D01 T02 §1 -- the `DisplayList` builder (`§1`), DirectWrite font loader (`§2`), content-stream interpreter (`§3`, `§4`), incremental writer (`§5`) and `DocumentActor` (`§8`) in `D01 T02` consume `pdf::Document`, decoded content streams, and page resource dictionaries produced here.
 - -> XREF: D02 T01 §11 -- the viewer's `"Couldn't open this file"` dialog (`D02 T01 §11`) maps `ErrorCode` values and copies `diagnostics_tail()` entries from `§1` here.
 - -> XREF: D02 T03 §5 -- `OutlinePanel` (`D02 T03 §5`) and `DocumentInfoPanel` (`D02 T03 §9`) consume `DocumentDescription` from `§10` here.
-- -> XREF: D04 T02 §2 -- `PdfWriter` in `D04 T02 §2` shares the `PdfValue` object model, filter encoders and CNG cryptographic primitives built here.
+- -> XREF: D04 T02 §2 -- `PdfWriter` in `D04 T02 §2` shares the `PdfValue` object model and CNG cryptographic primitives built here; its Flate compressor, serializer and object encryption are `D01 T02 §34`, `§35` and `§36`. **Corrected 2026-10-24:** (was: "filter encoders" built here, which no section of this file builds).
 - -> XREF: D05 T01 §7 -- the `AES-256` (`V=5, R=6`) encryption writer in `D05 T01 §7` extends `src/pdf/crypto.cpp` built in `§9` here.
 - -> XREF: D06 T02 §1 -- the hostile-input audit in `D06 T02 §1` verifies the 64-level recursion cap, 256 MB stream decompression ceiling, and absence of JavaScript execution implemented here.
 

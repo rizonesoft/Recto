@@ -62,7 +62,7 @@ track: M1
 | 2 | §2 | DirectWrite in-memory font loader, `LoadedFont`, glyph metrics and `glyf` fallback | §1 | [x] |
 | 3 | §3 | Content-stream interpreter: graphics state, paths, painting, clipping and device colour | §1 | [x] |
 | 4 | §4 | Content-stream text positioning, `/Subtype /Image`, inline images and `/Form` XObjects | §2, §3, §27, §28, §29, §30, §32, §33, D06 T05 §32, D06 T05 §33 | [ ] |
-| 5 | §5 | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`) | D01 T01 §10, D06 T05 §24 | [ ] |
+| 5 | §5 | Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`) | D01 T01 §10, D06 T05 §24, §34, §35, §36 | [ ] |
 | 6 | §6 | Per-worker Direct2D / WIC `DisplayList` tile rasterizer (`src/pdf/rasterizer.cpp`) | §4 | [ ] |
 | 7 | §7 | Cooperative `CancelToken` and sub-10 ms mid-replay tile cancellation | §6 | [ ] |
 | 8 | §8 | `DocumentActor` thread, MPSC queue, 32-page `DisplayList` cache and password state | §4, §5 | [ ] |
@@ -91,6 +91,9 @@ track: M1
 | 31 | §31 | Type 3 fonts: `/CharProcs` recorded as per-glyph sub-display-lists | §4, §19 | [ ] |
 | 32 | §32 | Colour spaces: CalGray, CalRGB, Lab, ICCBased and calibrated CMYK through Windows colour | §3 | [ ] |
 | 33 | §33 | Indexed, Separation and DeviceN colour with PDF functions 0, 2, 3 and 4 | §32 | [ ] |
+| 34 | §34 | Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper) | D01 T01 §10 | [ ] |
+| 35 | §35 | Canonical `PdfValue` serializer for indirect objects and streams | D01 T01 §10 | [ ] |
+| 36 | §36 | Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256) | D01 T01 §10 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
 
@@ -237,9 +240,11 @@ Complete `src/pdf/interpreter.cpp` with text state and positioning operators, im
 
 ## 5. Incremental PDF revision writer (`src/pdf/incremental_writer.cpp`)
 
+> **Corrected 2026-10-24:** split before the build. The engine had no object serializer, no Flate encoder and no encryption path (only `decode_flate`, `SecurityHandler::decrypt_bytes`), so this section would have built three shared modules inside a revision writer. They are `§34` (the Flate compressor), `§35` (the `PdfValue` serializer) and `§36` (encrypting new objects); `D04 T02 §2`'s `PdfWriter` consumes the same three instead of building its own. This section is the revision writer on top of them.
+
 Implement `src/pdf/incremental_writer.h` and `src/pdf/incremental_writer.cpp` (`recto::pdf::IncrementalWriter`, foundation plan section 4.1 item 6):
 - Append a non-destructive PDF revision to the end of an existing PDF byte buffer (preserving the original bytes `0..original_size` untouched so existing cryptographic digital signatures `/ByteRange` remain valid when adding a counter-signature or filling allowed form/annotation fields).
-- Allocate new object numbers (`>= prev_size`) and write modified indirect objects (`N G obj ... endobj` with `FlateDecode` compression for modified streams and CNG encryption matching the document's active `SecurityHandler` when encrypted).
+- Allocate new object numbers (`>= prev_size`) and write modified indirect objects (`N G obj ... endobj` through `§35`'s serializer, with `FlateDecode` compression from `§34` for modified streams that carry no filter, and `§36`'s encryption matching the document's active `SecurityHandler` when encrypted).
 - Write a new `xref` subsection (or `/Type /XRef` stream when the source file uses cross-reference streams) chained to the previous `startxref` via `/Prev`, updated `/ID [<id0> <new_id1>]`, and `startxref` / `%%EOF`.
 
 **Phase:** 1
@@ -256,7 +261,7 @@ Implement `src/pdf/incremental_writer.h` and `src/pdf/incremental_writer.cpp` (`
 - [ ] Track dirty/modified indirect objects (`set_object(IndirectRef, PdfValue)`) and newly allocated objects (`allocate_object(PdfValue)` starting at `max_object_id + 1`). Done when: unmodified objects are not duplicated in the appended revision.
 - [ ] Emit sorted `xref` subsections covering only the modified and newly allocated object IDs (plus `0 1` free head) and a `trailer` dictionary with `/Prev <old_startxref>`, updated `/Size`, and updated `/ID[1]`. Done when: `Document::open_memory` on the incremental output resolves both the modified objects and all untouched objects from the base revision.
 - [ ] Emit a `/Type /XRef` cross-reference stream (instead of an ASCII `xref` table) when the source PDF's previous revision used a `/Type /XRef` stream (required by ISO 32000-1 section 7.5.8.4 for pure XRef-stream files). Done when: `PdfIncrementalWriter.CompressedXrefFile` updates `render/compressed-xref-2p.pdf` and re-opens cleanly.
-- [ ] Encrypt modified strings and streams in the appended revision using the document's `SecurityHandler` (`RC4`, `AES-128`, or `AES-256` `R=6`) when the base document is encrypted. Done when: `PdfIncrementalWriter.EncryptedDocument` incrementally updates `render/encrypted-aes-256.pdf` and re-opens it with `"recto-test"`.
+- [ ] Encrypt modified strings and streams in the appended revision through `§36`'s `SecurityHandler::encrypt_object_values` (`RC4`, `AES-128`, or `AES-256` `R=6`) when the base document is encrypted, leaving the cross-reference stream and the trailer `/ID` unencrypted (ISO 32000-1 7.5.8.1, 7.6.1). Done when: `PdfIncrementalWriter.EncryptedDocument` incrementally updates `render/encrypted-aes-256.pdf` and re-opens it with `"recto-test"`.
 - [ ] Support chaining 3 consecutive incremental revisions (`Rev 1 -> Rev 2 -> Rev 3`) and verify `Document::open_memory` sees the latest state from each revision. Done when: `PdfIncrementalWriter.MultiRevisionChain` passes under ASan.
 - [ ] Commit: `pdf: add IncrementalWriter for non-destructive PDF revisions`
 
@@ -988,6 +993,67 @@ Spot colours and palettes (ISO 32000-1 sections 7.10, 8.6.6 and 8.6.6.5): `Index
 - [ ] Commit: `pdf: Indexed, Separation and DeviceN colour with PDF functions`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfInterpreter.Functions:PdfInterpreter.IndexedColors:PdfInterpreter.SeparationAndDeviceN` passes under ASan with 0 warnings.
+
+## 34. Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper)
+
+Recto writes PDFs (`§5`'s revisions, `D04 T02 §2`'s `PdfWriter`, the optimizer) and needs its own RFC 1950 and 1951 compressor: the engine takes no external runtime (D5, D7), and `filters.cpp` holds only the inflater (`decode_flate`, `inflate_raw_deflate`). -> XREF: D04 T02 §2 (its `PdfWriter` compresses through this function)
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that `flate_compress` is a pure function of its input and level, allocates against its stated bound, and shares no state between calls or threads.
+
+**Build order:**
+
+1. Implement `flate_compress` in `src/pdf/filters.h` and `src/pdf/filters.cpp`. Done when: it compiles on `x64` and `ARM64`.
+2. Add the tests below to `tests/recto-tests/pdf_filters_tests.cpp`. Done when: they pass under ASan.
+
+- [ ] `flate_compress(std::span<const uint8_t> input, FlateLevel level = FlateLevel::Default)` returning `PdfResult<std::vector<uint8_t>>`: a zlib stream (RFC 1950 header, Adler-32 trailer) of RFC 1951 blocks, with LZ77 over a 32 KiB window through hash chains bounded per level, lazy matching, and each block written stored, fixed-Huffman or dynamic-Huffman (length-limited to 15 bits, RFC 1951 3.2.7), whichever is smallest. Done when: `PdfFilters.FlateCompressRoundTrip` round-trips empty, one-byte, repetitive, random and 1 MiB inputs through `decode_flate` and checks each block type occurs.
+- [ ] Bounded output and work: incompressible input grows by at most 5 bytes per 65,535 plus 6; input over `kMaxDecodedStreamBytes` is refused with `ResourceLimit`; memory is the window, the chains and the output. Done when: `PdfFilters.FlateCompressBounds` checks the growth bound on random data and the refusal.
+- [ ] Ratio and speed measured: on the content streams and fonts in `tests/corpus/`, compressed size is at most 1.05 times the size Python's `zlib.compress(level=6)` gives (sizes written to `tests/corpus/flate/reference-sizes.json` by `scripts/build-corpus.py`), and Release x64 compresses the 1 MiB text sample at 20 MB/s or more. Done when: `PdfFilters.FlateCompressRatio` passes and records both numbers.
+- [ ] Commit: `pdf: add a native Flate compressor`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.FlateCompress*` passes under ASan with 0 warnings.
+
+## 35. Canonical `PdfValue` serializer for indirect objects and streams
+
+Every PDF Recto writes goes through one serializer of the object model (ISO 32000-1 sections 7.3 and 7.5), shared by `§5` and `D04 T02 §2`, so a value written is always a value read back the same. -> XREF: D04 T02 §2 (its `PdfWriter` writes every object through it)
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that serialization reads the value without changing it and bounds its nesting.
+
+**Build order:**
+
+1. Implement `src/pdf/serialize.h` and `src/pdf/serialize.cpp`. Done when: they compile on `x64` and `ARM64`.
+2. Add `tests/recto-tests/pdf_serialize_tests.cpp`. Done when: its tests pass under ASan.
+
+- [ ] `serialize_value(const PdfValue&, std::string& out)`: null, booleans, integers, reals in the shortest form that reads back exactly, with no exponent (ISO 32000-1 7.3.3), names with `#XX` for delimiters, whitespace, `#` and bytes outside `!`..`~` (7.3.5), strings as literal strings with `(`, `)`, `\` and non-printing bytes escaped or as hex strings when most bytes are binary (7.3.4), arrays, dictionaries and references; nesting refused past 64 levels. Done when: `PdfSerialize.ValuesRoundTrip` parses every serialized value back equal (all object kinds, every corpus file's objects) and `PdfSerialize.RealsAndNames` checks exponent-free reals and name escapes.
+- [ ] `serialize_indirect(IndirectRef, const PdfValue&, std::string& out)` writing `N G obj ... endobj`, with a stream's `/Length` set to its exact byte count and `stream` followed by a line feed (7.3.8.1). Done when: `PdfSerialize.IndirectAndStreams` reopens a document built from serialized objects and reads each stream's bytes back exactly.
+- [ ] Commit: `pdf: add the canonical PdfValue serializer`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfSerialize.*` passes under ASan with 0 warnings.
+
+## 36. Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256)
+
+The decrypting half exists (`SecurityHandler::decrypt_bytes`, `decrypt_object_values`, `D01 T01`); writing into an encrypted document (`§5`) and writing an encrypted one (`D05 T01`) need the encrypting half, with the same exemptions (ISO 32000-1 7.6, ISO 32000-2 7.6.3).
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that encryption reads the authenticated handler's key without changing the handler, takes a fresh IV from `BCryptGenRandom` for every AES string and stream, and leaves the value unchanged on failure.
+
+**Build order:**
+
+1. Add the encrypting functions to `src/pdf/crypto.h` and `src/pdf/crypto.cpp`. Done when: they compile on `x64` and `ARM64`.
+2. Add the tests below to `tests/recto-tests/pdf_crypto_tests.cpp`. Done when: they pass under ASan.
+
+- [ ] `SecurityHandler::encrypt_bytes(std::span<const uint8_t> plaintext, IndirectRef ref, CryptFilterMethod method)`: RC4 and AESV2 with the per-object key (ISO 32000-1 Algorithm 1, `sAlT` for AES), AESV3 with the file key, AES in CBC with PKCS#7 padding behind a fresh 16-byte IV; refused before authentication. Done when: `PdfCrypto.EncryptRoundTrip` checks each method decrypts back through `decrypt_bytes`, two encryptions of one string differ, and an unauthenticated handler refuses.
+- [ ] `SecurityHandler::encrypt_object_values(PdfValue&, IndirectRef)`: every string and stream payload, with `decrypt_object_values`'s exemptions (the `/Encrypt` dictionary, cross-reference streams, `/Sig` and `/DocTimeStamp` `/Contents`, `/Metadata` when `/EncryptMetadata` is false, the `Identity` crypt filter). Done when: `PdfCrypto.EncryptExemptions` checks each exemption and that `decrypt_object_values` restores the original value.
+- [ ] Commit: `pdf: encrypt new objects with the document's security handler`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfCrypto.Encrypt*` passes under ASan with 0 warnings.
 
 ## Verification
 
