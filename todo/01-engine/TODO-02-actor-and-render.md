@@ -94,6 +94,8 @@ track: M1
 | 34 | §34 | Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper) | D01 T01 §10 | [ ] |
 | 35 | §35 | Canonical `PdfValue` serializer for indirect objects and streams | D01 T01 §10 | [ ] |
 | 36 | §36 | Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256) | D01 T01 §10 | [ ] |
+| 37 | §37 | Flate compressor at zlib-ng speed and size, with a fast `Best` on long chains | §34 | [ ] |
+| 38 | §38 | Cancellable Flate compression (`CancelToken` polled per block) | §7, §34 | [ ] |
 
 ## 1. Immutable `DisplayList` command buffer and `DisplayListBuilder` (`display_list.cpp`)
 
@@ -1000,7 +1002,7 @@ Spot colours and palettes (ISO 32000-1 sections 7.10, 8.6.6 and 8.6.6.5): `Index
 
 > **Corrected 2026-10-24 (plan review, `docs/reviews/01-engine/D01-T02-s34.md`):** five gaps folded in. A round trip through `decode_flate` proves little because it accepts a missing Adler-32 trailer and recovers damaged headers, so the stream is checked strictly; memory, search work and allocation failure have stated bounds and tests; the ratio and speed fixtures are generated and identified, and speed has its own Release gate; `FlateLevel` has a defined contract; block selection is checked against the costs.
 
-Recto writes PDFs (`§5`'s revisions, `D04 T02 §2`'s `PdfWriter`, the optimizer) and needs its own RFC 1950 and 1951 compressor: the engine takes no external runtime (D5, D7), and `filters.cpp` holds only the inflater (`decode_flate`, `inflate_raw_deflate`). -> XREF: D04 T02 §2 (its `PdfWriter` compresses through this function)
+Recto writes PDFs (`§5`'s revisions, `D04 T02 §2`'s `PdfWriter`, the optimizer) and needs its own RFC 1950 and 1951 compressor: the engine takes no external runtime (D5, D7), and `filters.cpp` holds only the inflater (`decode_flate`, `inflate_raw_deflate`). -> XREF: D04 T02 §2 (its `PdfWriter` compresses through this function) -> XREF: D01 T02 §37 (zlib-ng speed parity) -> XREF: D01 T02 §38 (cancellation)
 
 **Phase:** 1
 **Needs:** windows-host
@@ -1013,11 +1015,11 @@ Recto writes PDFs (`§5`'s revisions, `D04 T02 §2`'s `PdfWriter`, the optimizer
 2. Implement `FlateLevel`, `FlateCompressStats` and `flate_compress` in `src/pdf/filters.h` and `src/pdf/filters.cpp`. Done when: it compiles on `x64` and `ARM64`.
 3. Add the tests below to `tests/recto-tests/pdf_filters_tests.cpp`. Done when: the checkpoint passes under ASan and the speed gate passes in Release.
 
-- [x] Fixtures: `scripts/build-corpus.py` writes `tests/corpus/flate/content-stream.txt` (1 MiB of page content operators from a fixed-seed generator: paths, text, colours and numbers, as a producer writes them) and `tests/corpus/flate/random.bin` (64 KiB from a fixed seed), and `tests/corpus/flate/reference-sizes.json` listing, for those two and every `tests/corpus/fonts/*.ttf` and `*.otf`, the file's SHA-256 and its size under Python's `zlib.compress(data, 6)`. Done when: `build-corpus.py --check` regenerates them byte for byte, and `PdfFilters.FlateCompressRatio` fails when a listed file is missing or its SHA-256 differs.
+- [x] Fixtures: `scripts/build-corpus.py` writes `tests/corpus/flate/content-stream.txt` (1 MiB of page content operators from a fixed-seed generator: paths, text, colours and numbers, as a producer writes them), `tests/corpus/flate/random.bin` (64 KiB from a fixed seed), `tests/corpus/flate/image-rows.bin` (a 256 by 256 RGB gradient with noise as PNG Up predictor rows) and `tests/corpus/flate/collisions.bin` (256 KiB over a three-symbol alphabet, the longest-chain worst case; these two added from the completion review), and `tests/corpus/flate/reference-sizes.json` listing, for those two and every `tests/corpus/fonts/*.ttf` and `*.otf`, the file's SHA-256 and its size under Python's `zlib.compress(data, 6)`. Done when: `build-corpus.py --check` regenerates them byte for byte, and `PdfFilters.FlateCompressRatio` fails when a listed file is missing or its SHA-256 differs.
 - [x] `enum class FlateLevel : uint8_t { Fast, Default, Best }` with stated search budgets: hash-chain steps per position 8, 32 and 1,024 (a quarter once the held match is 8 or 32 bytes, for `Default` and `Best`, as zlib's `good_length`); lazy matching off, up to a 32-byte match and up to 258 bytes; stop on a match of 16, 128 and 258 bytes. Done when: `PdfFilters.FlateCompressLevels` round-trips every level and checks on `content-stream.txt` that `Best` is no larger than `Default`, `Default` no larger than `Fast`, and the chain steps counted in `FlateCompressStats` stay within the level's budget times the input length.
 - [x] `flate_compress(std::span<const uint8_t> input, FlateLevel level = FlateLevel::Default, FlateCompressStats* stats = nullptr)` returning `PdfResult<std::vector<uint8_t>>`: a zlib stream (RFC 1950: `CMF` `0x78`, `FLG` with a valid `FCHECK` and `FLEVEL`, Adler-32 of the input in the trailer) of RFC 1951 blocks, LZ77 over a 32 KiB window through hash chains, each block written stored, fixed-Huffman or dynamic-Huffman (code lengths limited to 15 bits, the code-length alphabet to 7, RFC 1951 3.2.7), whichever costs fewest bits including the dynamic tree and the stored block's byte alignment. `FlateCompressStats` reports per block its type and the three costs. Done when: `PdfFilters.FlateCompressStrict` checks the header bytes and `FCHECK`, that the trailer is the input's Adler-32, that strict inflation consumes exactly the stream with the last block marked final (`detail::inflate_zlib_strict`, which refuses a missing or wrong trailer and trailing bytes), and that the output equals the input, for empty, one-byte, repetitive, random and `content-stream.txt` inputs; and `PdfFilters.FlateCompressBlocks` checks that each block's type is its cheapest by the reported costs, that all three types occur, and that inputs crossing the 32 KiB window, matching across a block boundary and needing several 65,535-byte stored blocks round-trip strictly.
-- [x] Bounded output, memory and work: incompressible input grows by at most 5 bytes per 65,535 plus 6; input over `kMaxDecodedStreamBytes` is refused with `ResourceLimit`; working memory beside the output is at most 256 KiB (the window, `2^15` hash heads and `2^15` chain links), reported in `FlateCompressStats`; an allocation failure returns `OutOfMemory`. Done when: `PdfFilters.FlateCompressBounds` checks the growth bound on `random.bin`, the refusal, the working-memory figure on repetitive and mixed inputs, and `OutOfMemory` under `detail::ScopedFlateCompressAllocFailure`.
-- [x] Ratio and speed: on every file `reference-sizes.json` lists, the `Default` level's output is at most 1.05 times the listed zlib size; and in Release x64, `Default` compresses `content-stream.txt` at 20 MB/s or more, the best of five timed runs on `std::chrono::steady_clock`. Done when: `PdfFilters.FlateCompressRatio` passes in every configuration and `PdfFilters.FlateCompressSpeed` passes in Release x64 (it skips, saying why, in Debug and under ASan). **Corrected 2026-10-24:** the `Default` chain budget is 32, not 128: measured on `content-stream.txt` in Release x64, 128 links gave 0.99 of zlib's size at 20 to 22 MB/s (at the floor, 10 links per byte) and 32 give 1.017 at 31 MB/s, libdeflate's level-6 choice (search depth 35); the ratio and speed targets are unchanged. The speed test reports without asserting on GitHub Actions runners, whose throughput is not a measurement (D06 T01 §7 owns per-machine baselines); the gate is this checkpoint's Release command on the Windows host.
+- [x] Bounded output, memory and work: incompressible input grows by at most 5 bytes per 65,535 plus 6; input over `kMaxDecodedStreamBytes` is refused with `ResourceLimit`; working memory beside the output is at most 256 KiB (`2^14` heads of a one-slot 3-byte table, `2^14` heads of 4-byte hash chains and `2^15` chain links, as libdeflate's hash-chain finder splits them), reported in `FlateCompressStats`; **Corrected 2026-10-24:** was one 3-byte hash with `2^15` heads, whose chains filled with candidates sharing only three bytes; the split took predictor image rows from 1.249 to 1.000 of zlib's size and the content sample from 31 to 39 MB/s, measured by the completion review's broader samples; an allocation failure returns `OutOfMemory`. Done when: `PdfFilters.FlateCompressBounds` checks the growth bound on `random.bin`, the refusal, the working-memory figure on repetitive and mixed inputs, and `OutOfMemory` under `detail::ScopedFlateCompressAllocFailure`.
+- [x] Ratio and speed: on every file `reference-sizes.json` lists, the `Default` level's output is at most 1.05 times the listed zlib size; and in Release x64, `Default` compresses `content-stream.txt` at 20 MB/s or more, the median of seven timed runs on `std::chrono::steady_clock` (stricter than the best of five first stated), with the median and slowest run of every level on the content, image and collision samples reported. Done when: `PdfFilters.FlateCompressRatio` passes in every configuration and `PdfFilters.FlateCompressSpeed` passes in Release x64 (it skips, saying why, in Debug and under ASan). **Corrected 2026-10-24:** the `Default` chain budget is 32, not 128: measured on `content-stream.txt` in Release x64, 128 links gave 0.99 of zlib's size at 20 to 22 MB/s (at the floor, 10 links per byte) and 32 give 1.017 at 31 MB/s, libdeflate's level-6 choice (search depth 35); the ratio and speed targets are unchanged. The speed test reports without asserting on GitHub Actions runners, whose throughput is not a measurement (D06 T01 §7 owns per-machine baselines); the gate is this checkpoint's Release command on the Windows host.
 - [x] Commit: `pdf: add a native Flate compressor`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.FlateCompress*` passes under ASan with 0 warnings, and `build/build.ps1 -Platform x64 -Configuration Release -TestFilter PdfFilters.FlateCompressSpeed` passes.
@@ -1061,6 +1063,45 @@ The decrypting half exists (`SecurityHandler::decrypt_bytes`, `decrypt_object_va
 - [ ] Commit: `pdf: encrypt new objects with the document's security handler`
 
 **Test checkpoint:** `recto-tests.exe --gtest_filter=PdfCrypto.Encrypt*` passes under ASan with 0 warnings.
+
+## 37. Flate compressor at zlib-ng speed and size, with a fast `Best` on long chains
+
+Filed 2026-10-24 by the `D01 T02 §34` completion review (`docs/reviews/01-engine/D01-T02-s34.md`): `§34`'s compressor meets its targets (at most 1.05 of zlib's size, 20 MB/s) but on this host Python's zlib-ng 2.2.4 compresses the content sample at 65 MB/s at level 6 against `Default`'s 39 MB/s, and `Best` falls to 1.9 MB/s on `flate/collisions.bin`, where every chain is long and every match short. -> XREF: D01 T02 §34
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that `flate_compress` stays a pure function of its input and level with the same API, output format and bounds as `§34`.
+
+**Build order:**
+
+1. Speed up `src/pdf/flate_compress.cpp` behind the existing API. Done when: it compiles on `x64` and `ARM64` and every `PdfFilters.FlateCompress*` test still passes.
+2. Raise the gates in `tests/recto-tests/pdf_filters_tests.cpp`. Done when: the new targets below hold in Release x64.
+
+- [ ] `Default` at zlib-ng level 6's throughput or better on `flate/content-stream.txt`, `flate/image-rows.bin` and `flate/collisions.bin`, at no larger output, both measured on the same host (throughput is not a fixture): candidates such as SIMD match comparison (SSE2 and NEON), a medium-effort parser and hashing tuned per level, each kept only when it measures. Done when: a new `scripts/flate-bench.py` times Python's zlib-ng at level 6 on the three samples (median of seven runs), runs `recto-tests.exe --gtest_filter=PdfFilters.FlateCompressSpeed`, and passes only when `Default` is at least as fast and no larger on each, and `PdfFilters.FlateCompressRatio` holds `Default` to at most 1.00 of the recorded level-6 sizes.
+- [ ] `Best` at 10 MB/s or more on `flate/collisions.bin` without larger output on any sample: a search that stops when longer candidates stop appearing, or a binary-tree match finder as libdeflate's high levels use. Done when: `PdfFilters.FlateCompressSpeed` holds the floor.
+- [ ] Commit: `pdf: Flate compressor at zlib-ng speed`
+
+**Test checkpoint:** `build/build.ps1 -Platform x64 -Configuration Release -TestFilter PdfFilters.FlateCompress*` passes with the raised gates, and `recto-tests.exe --gtest_filter=PdfFilters.FlateCompress*` passes under ASan.
+
+## 38. Cancellable Flate compression (`CancelToken` polled per block)
+
+Filed 2026-10-24 by the `D01 T02 §34` completion review: a caller can only discard a compression it no longer needs, so a large stream holds a save, an optimize job or shutdown until it ends. -> XREF: D01 T02 §34
+
+**Phase:** 1
+**Needs:** windows-host
+**Surface:** no
+**Freeze check:** Verify that a cancelled compression publishes no partial output and leaves no state behind.
+
+**Build order:**
+
+1. Add a `CancelToken` (`§7`) parameter to `flate_compress` in `src/pdf/filters.h` and `src/pdf/flate_compress.cpp`, polled before each block. Done when: it compiles and `§34`'s tests pass unchanged.
+2. Add `PdfFilters.FlateCompressCancel`. Done when: it passes under ASan.
+
+- [ ] A token cancelled before the call returns `Cancelled` without work; one cancelled mid-stream returns `Cancelled` within 10 ms in Release x64 on `flate/collisions.bin` at `Best` (the slowest case), with no output; the next call compresses normally. Done when: `PdfFilters.FlateCompressCancel` checks the three cases and the latency.
+- [ ] Commit: `pdf: cancellable Flate compression`
+
+**Test checkpoint:** `recto-tests.exe --gtest_filter=PdfFilters.FlateCompressCancel` passes under ASan with 0 warnings.
 
 ## Verification
 

@@ -4593,6 +4593,38 @@ def build_flate_random() -> bytes:
     return bytes(out[:FLATE_RANDOM_BYTES])
 
 
+FLATE_IMAGE_SIDE = 256
+FLATE_COLLISION_BYTES = 262_144
+
+
+def build_flate_image_rows() -> bytes:
+    """A 256 by 256 RGB image as a PDF writer feeds it to FlateDecode with /Predictor 12: each row the PNG Up filter
+    tag 2, then the bytes less the row above. Smooth gradients with sensor-like noise, so the residuals are small and
+    skewed but not runs."""
+    rng = Xorshift32(0x1A6E5)
+    rows = []
+    for y in range(FLATE_IMAGE_SIDE):
+        row = bytearray()
+        for x in range(FLATE_IMAGE_SIDE):
+            noise = rng.below(9) - 4
+            row += bytes(((x + noise) & 0xFF, (y + noise) & 0xFF, ((x + y) // 2 + noise) & 0xFF))
+        rows.append(bytes(row))
+    out = bytearray()
+    previous = bytes(len(rows[0]))
+    for row in rows:
+        out.append(2)
+        out += bytes((b - a) & 0xFF for a, b in zip(previous, row))
+        previous = row
+    return bytes(out)
+
+
+def build_flate_collisions() -> bytes:
+    """256 KiB over a three-symbol alphabet: all 27 three-byte strings recur everywhere, so every hash chain is long
+    and most matches are short, the compressor's worst case for search work."""
+    rng = Xorshift32(0xC0111)
+    return bytes(b"01 "[rng.below(3)] for _ in range(FLATE_COLLISION_BYTES))
+
+
 def build_flate_reference_sizes(files: dict[str, bytes]) -> bytes:
     """`tests/corpus/flate/reference-sizes.json`: for each compressor input, its SHA-256, size and zlib level-6 size."""
     entries = []
@@ -4613,6 +4645,13 @@ def validate_flate_fixture(rel_path: str, data: bytes, files: dict[str, bytes] |
     elif rel_path == "flate/random.bin":
         if len(data) != FLATE_RANDOM_BYTES or len(zlib.compress(data, 9)) < len(data):
             raise ValueError(f"{rel_path}: expected {FLATE_RANDOM_BYTES} incompressible bytes")
+    elif rel_path == "flate/image-rows.bin":
+        if len(data) != FLATE_IMAGE_SIDE * (1 + 3 * FLATE_IMAGE_SIDE) or any(
+                data[r * (1 + 3 * FLATE_IMAGE_SIDE)] != 2 for r in range(FLATE_IMAGE_SIDE)):
+            raise ValueError(f"{rel_path}: expected {FLATE_IMAGE_SIDE} PNG Up rows of {3 * FLATE_IMAGE_SIDE} bytes")
+    elif rel_path == "flate/collisions.bin":
+        if len(data) != FLATE_COLLISION_BYTES or set(data) != set(b"01 "):
+            raise ValueError(f"{rel_path}: expected {FLATE_COLLISION_BYTES} bytes over the alphabet '01 '")
     elif rel_path == "flate/reference-sizes.json":
         listed = json.loads(data)
         if listed.get("zlib_level") != 6 or not listed.get("files"):
@@ -4772,6 +4811,8 @@ CORPUS_PURPOSES: dict[str, str] = {
         "fonts/truetype-composites.ttf": "TrueType composites: byte args, x/y and 2x2 transforms, scaled offsets, own metrics, phantom anchors",
     "flate/content-stream.txt": "1 MiB of generated page content operators, the Flate compressor's ratio and speed sample",
     "flate/random.bin": "64 KiB of incompressible bytes from a fixed seed, the Flate compressor's stored-block sample",
+    "flate/image-rows.bin": "A 256 by 256 RGB gradient with noise as PNG Up predictor rows, the Flate compressor's image sample",
+    "flate/collisions.bin": "256 KiB over a three-symbol alphabet, the Flate compressor's longest-chain worst case",
     "flate/reference-sizes.json": "SHA-256, size and Python zlib level-6 size of each Flate compressor input",
 }
 
@@ -4830,6 +4871,8 @@ def expected_corpus_files() -> dict[str, bytes]:
         "fonts/truetype-composites.ttf": build_truetype_composites(),
         "flate/content-stream.txt": build_flate_content_stream(),
         "flate/random.bin": build_flate_random(),
+        "flate/image-rows.bin": build_flate_image_rows(),
+        "flate/collisions.bin": build_flate_collisions(),
     }
     files["flate/reference-sizes.json"] = build_flate_reference_sizes(files)
     if set(files.keys()) != set(CORPUS_PURPOSES.keys()):

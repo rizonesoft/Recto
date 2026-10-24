@@ -18,13 +18,18 @@ thread_local bool t_fail_compress_alloc = false;
 
 constexpr size_t kWindow = 32'768u;
 constexpr size_t kWindowMask = kWindow - 1u;
-constexpr unsigned kHashBits = 15u;
+// Two match finders, as libdeflate's hash-chain finder keeps them: a one-slot table of the latest position per 3-byte
+// hash for length-3 matches, and chains over a 4-byte hash for longer ones, so a chain holds only candidates that
+// share four bytes. Each table has 2^14 heads, which keeps the working memory under 256 KiB.
+constexpr unsigned kHashBits = 14u;
 constexpr size_t kHashSize = size_t{1} << kHashBits;
 constexpr uint32_t kNoPosition = UINT32_MAX;
 constexpr size_t kMinMatch = 3u;
 constexpr size_t kMaxMatch = 258u;
 constexpr size_t kBlockSymbols = 8'192u;
 constexpr size_t kMaxStoredBlock = 65'535u;
+// A 3-byte match this far back costs more than its three literals (zlib's TOO_FAR): it is not taken.
+constexpr size_t kTooFar = 4'096u;
 constexpr size_t kLitLenCodes = 286u; // 0..255 literals, 256 end of block, 257..285 lengths
 constexpr size_t kDistCodes = 30u;
 constexpr size_t kCodeLengthCodes = 19u;
@@ -420,6 +425,13 @@ constexpr std::array<uint8_t, kDistCodes> kFixedDistLengths = [] {
 	return bits;
 }
 
+// The stack tables the deepest step holds at once: `write_block`'s frequencies and their copies, the fixed codes, and
+// inside it `build_dynamic`'s run-length buffer and `build_lengths`' sort and depth arrays.
+constexpr size_t kStackBytes = 4u * sizeof(std::array<uint32_t, kLitLenCodes + kDistCodes>) +
+	sizeof(std::array<uint16_t, kLitLenCodes + kDistCodes>) + sizeof(std::array<uint8_t, kLitLenCodes + kDistCodes>) +
+	sizeof(std::array<uint32_t, kCodeLengthCodes>) + sizeof(std::array<std::pair<uint32_t, uint16_t>, kLitLenCodes>) +
+	sizeof(std::array<int64_t, kLitLenCodes>) + sizeof(std::array<uint32_t, 64>) + 2u * sizeof(std::array<uint16_t, kMaxCodeBits + 2u>);
+
 class Compressor {
 public:
 	Compressor(std::span<const uint8_t> input, FlateLevel level, std::vector<uint8_t>& out, FlateCompressStats* stats)
@@ -428,6 +440,7 @@ public:
 		, out_(out)
 		, bits_(out)
 		, stats_(stats)
+		, head3_(kHashSize, kNoPosition)
 		, head_(kHashSize, kNoPosition)
 		, prev_(kWindow, uint16_t{0})
 	{
@@ -456,38 +469,72 @@ public:
 		if (stats_ != nullptr) {
 			stats_->chain_steps = chain_steps_;
 			stats_->max_chain_steps = max_chain_steps_;
-			stats_->working_bytes = head_.capacity() * sizeof(uint32_t) + prev_.capacity() * sizeof(uint16_t) +
-				symbols_.capacity() * sizeof(Symbol) + sizeof(DynamicTrees) +
-				2u * (sizeof(uint32_t) * (kLitLenCodes + kDistCodes));
+			stats_->working_bytes = (head3_.capacity() + head_.capacity()) * sizeof(uint32_t) + prev_.capacity() * sizeof(uint16_t) +
+				symbols_.capacity() * sizeof(Symbol) + sizeof(*this) + kStackBytes;
 		}
 	}
 
 private:
-	[[nodiscard]] uint32_t hash_at(size_t p) const noexcept
+	struct Hashes {
+		uint32_t h3;
+		uint32_t h4; // only when four bytes remain
+	};
+
+	// The 3-byte and 4-byte hashes at `p`, which has at least three bytes after it.
+	[[nodiscard]] Hashes hashes_at(size_t p) const noexcept
 	{
-		const uint32_t v = static_cast<uint32_t>(input_[p]) | (static_cast<uint32_t>(input_[p + 1u]) << 8u) |
-			(static_cast<uint32_t>(input_[p + 2u]) << 16u);
-		return (v * 2'654'435'761u) >> (32u - kHashBits);
+		const uint8_t* d = input_.data() + p;
+		const uint32_t v3 = static_cast<uint32_t>(d[0]) | (static_cast<uint32_t>(d[1]) << 8u) | (static_cast<uint32_t>(d[2]) << 16u);
+		uint32_t v4 = 0;
+		if (p + 4u <= input_.size()) {
+			std::memcpy(&v4, d, 4u);
+		}
+		return {(v3 * 2'654'435'761u) >> (32u - kHashBits), (v4 * 2'246'822'519u) >> (32u - kHashBits)};
 	}
 
 	void insert(size_t p) noexcept
 	{
 		if (p + kMinMatch <= input_.size()) {
-			insert(p, hash_at(p));
+			insert(p, hashes_at(p));
 		}
 	}
 
-	void insert(size_t p, uint32_t h) noexcept
+	void insert(size_t p, Hashes h) noexcept
 	{
-		const uint32_t old = head_[h];
+		head3_[h.h3] = static_cast<uint32_t>(p);
+		if (p + 4u > input_.size()) {
+			prev_[p & kWindowMask] = 0u;
+			return;
+		}
+		const uint32_t old = head_[h.h4];
 		prev_[p & kWindowMask] = old != kNoPosition && p - old <= kWindow ? static_cast<uint16_t>(p - old) : uint16_t{0};
-		head_[h] = static_cast<uint32_t>(p);
+		head_[h.h4] = static_cast<uint32_t>(p);
+	}
+
+	// Common length of `a` and `b` from `from`, up to `max_len`: eight bytes at a time while eight remain.
+	[[nodiscard]] static size_t extend(const uint8_t* a, const uint8_t* b, size_t from, size_t max_len) noexcept
+	{
+		size_t len = from;
+		while (len + 8u <= max_len) {
+			uint64_t x = 0;
+			uint64_t y = 0;
+			std::memcpy(&x, a + len, 8u);
+			std::memcpy(&y, b + len, 8u);
+			if (x != y) {
+				return len + (static_cast<size_t>(std::countr_zero(x ^ y)) >> 3u);
+			}
+			len += 8u;
+		}
+		while (len < max_len && a[len] == b[len]) {
+			++len;
+		}
+		return len;
 	}
 
 	// The longest match at `p` longer than `beat` within the level's chain budget, as (length, distance), or a
-	// length of 0.
-	// `h` is `hash_at(p)`; the caller inserts `p` with it after the search.
-	[[nodiscard]] std::pair<size_t, size_t> longest_match(size_t p, size_t beat, uint32_t h) noexcept
+	// length of 0. `h` is `hashes_at(p)`; the caller inserts `p` with it after the search. The 3-byte table's one
+	// candidate counts as a step.
+	[[nodiscard]] std::pair<size_t, size_t> longest_match(size_t p, size_t beat, Hashes h) noexcept
 	{
 		const size_t max_len = std::min(kMaxMatch, input_.size() - p);
 		size_t best = std::max(beat, kMinMatch - 1u);
@@ -501,50 +548,54 @@ private:
 		const size_t limit = p > kWindow ? p - kWindow : 0u; // the oldest position a distance can reach
 		// A match already good enough is worth a shorter search for a better one (as zlib's good_length).
 		const uint32_t chain = params_.good != 0u && beat >= params_.good ? params_.chain / 4u : params_.chain;
-		uint8_t end0 = b[best - 1u];
-		uint8_t end1 = b[best];
-		uint32_t cand = head_[h];
 		uint32_t steps = 0;
-		while (cand != kNoPosition && cand >= limit && steps < chain) {
+		if (best < kMinMatch) {
+			const uint32_t cand3 = head3_[h.h3];
 			++steps;
-			const uint8_t* a = base + cand;
-			// The two bytes that would make a longer match first (zlib's scan_end), then the start.
-			if (a[best] == end1 && a[best - 1u] == end0 && a[0] == b[0] && a[1] == b[1]) {
-				// Eight bytes at a time while eight remain, then byte by byte.
-				size_t len = 2;
-				while (len + 8u <= max_len) {
-					uint64_t x = 0;
-					uint64_t y = 0;
-					std::memcpy(&x, a + len, 8u);
-					std::memcpy(&y, b + len, 8u);
-					if (x != y) {
-						len += static_cast<size_t>(std::countr_zero(x ^ y)) >> 3u;
-						break;
-					}
-					len += 8u;
-				}
-				while (len < max_len && a[len] == b[len]) {
-					++len;
-				}
-				if (len > best) {
-					best = len;
-					best_dist = p - cand;
-					if (len >= params_.nice || len == max_len) {
-						break;
-					}
-					end0 = b[best - 1u];
-					end1 = b[best];
+			if (cand3 != kNoPosition && cand3 >= limit) {
+				const uint8_t* a = base + cand3;
+				if (a[0] == b[0] && a[1] == b[1] && a[2] == b[2]) {
+					best = extend(a, b, 3u, max_len);
+					best_dist = p - cand3;
 				}
 			}
-			const uint16_t delta = prev[cand & kWindowMask];
-			if (delta == 0u || delta > cand) {
-				break;
+		}
+		if (p + 4u <= input_.size() && best < max_len && !(best >= params_.nice)) {
+			uint8_t end0 = b[best - 1u];
+			uint8_t end1 = b[best];
+			uint32_t first4 = 0;
+			std::memcpy(&first4, b, 4u);
+			uint32_t cand = head_[h.h4];
+			while (cand != kNoPosition && cand >= limit && steps < chain) {
+				++steps;
+				const uint8_t* a = base + cand;
+				// The two bytes that would make a longer match first (zlib's scan_end), then the first four.
+				uint32_t a4 = 0;
+				if (a[best] == end1 && a[best - 1u] == end0 && (std::memcpy(&a4, a, 4u), a4 == first4)) {
+					const size_t len = extend(a, b, 4u, max_len);
+					if (len > best) {
+						best = len;
+						best_dist = p - cand;
+						if (len >= params_.nice || len == max_len) {
+							break;
+						}
+						end0 = b[best - 1u];
+						end1 = b[best];
+					}
+				}
+				const uint16_t delta = prev[cand & kWindowMask];
+				if (delta == 0u || delta > cand) {
+					break;
+				}
+				cand -= delta;
 			}
-			cand -= delta;
 		}
 		chain_steps_ += steps;
 		max_chain_steps_ = std::max(max_chain_steps_, steps);
-		return best_dist == 0u ? std::pair<size_t, size_t>{0u, 0u} : std::pair<size_t, size_t>{best, best_dist};
+		if (best_dist == 0u || (best == kMinMatch && best_dist > kTooFar)) {
+			return {0u, 0u};
+		}
+		return {best, best_dist};
 	}
 
 	void literal(size_t p)
@@ -563,7 +614,7 @@ private:
 		while (p < input_.size() && symbols_.size() < kBlockSymbols) {
 			std::pair<size_t, size_t> found{0u, 0u};
 			if (p + kMinMatch <= input_.size()) {
-				const uint32_t h = hash_at(p);
+				const Hashes h = hashes_at(p);
 				found = longest_match(p, 0u, h);
 				insert(p, h);
 			}
@@ -592,7 +643,7 @@ private:
 		while (p < input_.size() && symbols_.size() + 1u < kBlockSymbols) {
 			std::pair<size_t, size_t> found{0u, 0u};
 			if (p + kMinMatch <= input_.size()) {
-				const uint32_t h = hash_at(p);
+				const Hashes h = hashes_at(p);
 				if (!(held && held_len >= params_.lazy)) {
 					found = longest_match(p, held ? held_len : 0u, h);
 				}
@@ -820,7 +871,8 @@ private:
 	std::vector<uint8_t>& out_;
 	BitWriter bits_;
 	FlateCompressStats* stats_;
-	std::vector<uint32_t> head_;
+	std::vector<uint32_t> head3_; // latest position per 3-byte hash
+	std::vector<uint32_t> head_;  // chain heads per 4-byte hash
 	std::vector<uint16_t> prev_;
 	std::vector<Symbol> symbols_{};
 	DynamicTrees trees_{};

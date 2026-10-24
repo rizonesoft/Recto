@@ -6991,6 +6991,16 @@ TEST(PdfFilters, FlateCompressBounds)
 			EXPECT_LE(stats.working_bytes, 256u * 1024u);
 		}
 	}
+	// The bound holds however long the input, statistics on: 16 MiB of incompressible bytes, about 2,000 blocks.
+	{
+		const std::vector<uint8_t> large = pseudo_random(16u * 1024u * 1024u, 21u);
+		FlateCompressStats stats;
+		auto compressed = flate_compress(large, FlateLevel::Default, &stats);
+		ASSERT_TRUE(compressed.has_value());
+		EXPECT_GE(stats.blocks.size(), 2'000u);
+		EXPECT_LE(stats.working_bytes, 256u * 1024u);
+		EXPECT_LE(compressed->size(), large.size() + 5u * ((large.size() + 65'534u) / 65'535u) + 6u);
+	}
 	// Input larger than a stream may be is refused before any work.
 	const std::span<const uint8_t> oversized(noise.data(), kMaxDecodedStreamBytes + 1u); // never read
 	auto refused = flate_compress(oversized);
@@ -7054,31 +7064,33 @@ TEST(PdfFilters, FlateCompressSpeed)
 	// throughput baselines belong to D06 T01 section 7.
 	char ci[8]{};
 	const bool on_ci = GetEnvironmentVariableA("GITHUB_ACTIONS", ci, sizeof(ci)) > 0u;
-	const std::vector<uint8_t> text = flate_fixture("flate/content-stream.txt");
-	double best = 1e9;
-	for (int run = 0; run < 5; ++run) {
-		const auto start = std::chrono::steady_clock::now();
-		auto compressed = flate_compress(text);
-		const auto stop = std::chrono::steady_clock::now();
-		ASSERT_TRUE(compressed.has_value());
-		best = std::min(best, std::chrono::duration<double>(stop - start).count());
-	}
-	const double mb_per_s = static_cast<double>(text.size()) / 1e6 / best;
-	RecordProperty("flate_default_mb_per_s", std::to_string(mb_per_s));
-	for (const FlateLevel other : {FlateLevel::Fast, FlateLevel::Best}) {
-		double other_best = 1e9;
-		for (int run = 0; run < 3; ++run) {
+	// The floor is held on the content sample at `Default`; every level on every sample is reported as the median and
+	// the slowest of seven runs, so a regression on images or long chains shows in the log.
+	const auto measure = [](const std::vector<uint8_t>& data, FlateLevel level) {
+		std::array<double, 7> seconds{};
+		for (double& s : seconds) {
 			const auto start = std::chrono::steady_clock::now();
-			ASSERT_TRUE(flate_compress(text, other).has_value());
-			other_best = std::min(other_best, std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+			EXPECT_TRUE(flate_compress(data, level).has_value());
+			s = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 		}
-		std::printf("flate_compress %s: %.1f MB/s\n", other == FlateLevel::Fast ? "Fast" : "Best",
-			static_cast<double>(text.size()) / 1e6 / other_best);
+		std::sort(seconds.begin(), seconds.end());
+		const double mb = static_cast<double>(data.size()) / 1e6;
+		return std::pair<double, double>{mb / seconds[3], mb / seconds.back()};
+	};
+	double mb_per_s = 0.0;
+	for (const std::string_view name : {"flate/content-stream.txt", "flate/image-rows.bin", "flate/collisions.bin"}) {
+		const std::vector<uint8_t> data = flate_fixture(name);
+		for (const FlateLevel level : kLevels) {
+			const auto [median, slowest] = measure(data, level);
+			const char* level_name = level == FlateLevel::Fast ? "Fast" : level == FlateLevel::Default ? "Default" : "Best";
+			std::printf("flate_compress %-7s %-26s median %6.1f MB/s, slowest %6.1f MB/s\n", level_name,
+				std::string(name).c_str(), median, slowest);
+			RecordProperty(std::string("mb_per_s:") + level_name + ":" + std::string(name), std::to_string(median));
+			if (name == "flate/content-stream.txt" && level == FlateLevel::Default) {
+				mb_per_s = median;
+			}
+		}
 	}
-	FlateCompressStats stats;
-	ASSERT_TRUE(flate_compress(text, FlateLevel::Default, &stats).has_value());
-	std::printf("flate_compress Default: %.1f MB/s on %zu bytes, %.1f chain links per byte, %zu blocks\n", mb_per_s,
-		text.size(), static_cast<double>(stats.chain_steps) / static_cast<double>(text.size()), stats.blocks.size());
 	if (on_ci) {
 		GTEST_SKIP() << "measured " << mb_per_s << " MB/s on a shared CI runner, not held to the 20 MB/s floor";
 	}

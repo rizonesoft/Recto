@@ -358,7 +358,10 @@ struct FlateCompressStats {
 	size_t stored_runs{0};         // stored blocks written (a run longer than 65,535 bytes takes several)
 	uint64_t chain_steps{0};       // hash-chain links followed, all positions together
 	uint32_t max_chain_steps{0};   // the most links followed for any one position
-	size_t working_bytes{0};       // memory the compressor held beside its output
+	// Memory the compressor itself held beside its output: the hash heads and chain links, the symbol buffer, the
+	// block's trees and the largest set of stack tables any step uses. The `blocks` records above are this output's,
+	// as the compressed bytes are, and production callers ask for no statistics.
+	size_t working_bytes{0};
 };
 
 // Compresses `input` into a zlib stream (RFC 1950) of deflate blocks (RFC 1951) for a `/FlateDecode` stream (ISO

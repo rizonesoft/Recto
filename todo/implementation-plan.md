@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 96 | Checklist items: 572
+Sections: 98 | Checklist items: 577
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -75,6 +75,7 @@ Sections: 96 | Checklist items: 572
 | [ ]    | D01 T02 §34 | Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper)           | windows-host              | 6     |
 | [ ]    | D01 T02 §35 | Canonical `PdfValue` serializer for indirect objects and streams                         | windows-host              | 3     |
 | [ ]    | D01 T02 §36 | Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256)       | windows-host              | 3     |
+| [ ]    | D01 T02 §37 | Flate compressor at zlib-ng speed and size, with a fast `Best` on long chains            | windows-host              | 3     |
 | [x]    | D06 T05 §15 | Audit D01 T01 §1: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW         | windows-host              | 5     |
 | [x]    | D06 T05 §16 | Audit D01 T01 §2: PdfValue variant object model, dictionary/array helpers and deep       | windows-host              | 5     |
 | [x]    | D06 T05 §17 | Audit D01 T01 §3: Binary-safe PDF 1.7 and 2.0 lexer (src/pdf/lexer.cpp)                  | windows-host              | 5     |
@@ -115,6 +116,7 @@ Sections: 96 | Checklist items: 572
 | [ ]    | D01 T02 §20 | Rasterizer failure isolation: typed tile errors, target recreation and retry             | windows-host              | 7     |
 | [ ]    | D01 T02 §21 | Page `/UserUnit` in `PageDescription`, physical page size and CLI output size            | windows-host              | 6     |
 | [ ]    | D01 T02 §31 | Type 3 fonts: `/CharProcs` recorded as per-glyph sub-display-lists                       | windows-host              | 3     |
+| [ ]    | D01 T02 §38 | Cancellable Flate compression (`CancelToken` polled per block)                           | windows-host              | 2     |
 | [ ]    | D01 T03 §1  | `recto-cli` command dispatcher, exit-code contract and `recto-cli info` (`--json`)       | windows-host              | 10    |
 | [ ]    | D01 T03 §2  | `recto-cli render` (full-page and stitched `512 x 512` tile modes, WIC PNG encoder)      | windows-host              | 6     |
 | [ ]    | D01 T03 §3  | `recto-cli bench` and `recto-cli stress` commands                                        | windows-host              | 5     |
@@ -910,6 +912,6 @@ Sections: 14 | Checklist items: 86
 | [ ]    | D99 T01 §13 | Cross-viewer interoperability check: Acrobat Reader, Foxit and Chrome       | operator, attended                                | 7     |
 | [ ]    | D99 T01 §14 | Real scanner smoke for Create PDF from Scanner (WIA 2.0 flatbed and feeder) | operator, attended                                | 6     |
 
-Progress: 71/841 verified sections, 37 ready to run now.
+Progress: 71/843 verified sections, 37 ready to run now.
 
-Checklist: 450/6159 items completed (includes Commit items).
+Checklist: 450/6164 items completed (includes Commit items).

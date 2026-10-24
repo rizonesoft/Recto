@@ -1,10 +1,22 @@
 {
   "files": [
     {
+      "bytes": 262144,
+      "path": "flate/collisions.bin",
+      "sha256": "078a7bf74b19e31ae1edddb52dbd16edfd615d528d34561e4fecfe34137cadce",
+      "zlib6": 61593
+    },
+    {
       "bytes": 1048576,
       "path": "flate/content-stream.txt",
       "sha256": "1085977c5e5c0040ee6cce8f8da1784ff67b7a7bb14746e95a6ac411d6310db7",
       "zlib6": 363179
+    },
+    {
+      "bytes": 196864,
+      "path": "flate/image-rows.bin",
+      "sha256": "347daed521ca10402ef38e38967cd3194648662b231545d78319dc5e05dc1095",
+      "zlib6": 48947
     },
     {
       "bytes": 65536,
