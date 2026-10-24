@@ -824,8 +824,9 @@ enum class RefusalReason : uint16_t {
 		return "A fax image has a damaged row with no end-of-line code after it to resume at (observed is the zero-based "
 			   "row, bound the /DamagedRowsBeforeError allowance); scan the page again or ask for the original";
 	case RefusalReason::DamagedRowRecoveryOff:
-		return "A fax image has a damaged row and its encoding gives no end-of-line codes to resume at (observed is the "
-			   "zero-based row, bound the /DamagedRowsBeforeError allowance); scan the page again or ask for the original";
+		return "A fax image has a damaged row and its decode settings do not allow damaged rows to be replaced: "
+			   "/EndOfLine is false or the image is Group 4 (observed is the zero-based row, bound the "
+			   "/DamagedRowsBeforeError allowance); scan the page again or ask for the original";
 	}
 	return "";
 }

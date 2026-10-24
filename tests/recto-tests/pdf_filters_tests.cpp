@@ -6341,7 +6341,7 @@ TEST(PdfFilters, CcittRecoveryReachesRingAndEtw)
 	EXPECT_NE(refusal_reason_description(RefusalReason::DamagedRowAllowance).find("more damaged rows"), std::string_view::npos);
 	EXPECT_NE(refusal_reason_description(RefusalReason::DamagedRowNoSync).find("no end-of-line code after"),
 		std::string_view::npos);
-	EXPECT_NE(refusal_reason_description(RefusalReason::DamagedRowRecoveryOff).find("gives no end-of-line codes"),
+	EXPECT_NE(refusal_reason_description(RefusalReason::DamagedRowRecoveryOff).find("do not allow damaged rows to be replaced"),
 		std::string_view::npos);
 	clear_diagnostics();
 	clear_captured_etw_events_for_testing();
