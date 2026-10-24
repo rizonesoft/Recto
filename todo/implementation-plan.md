@@ -52,7 +52,7 @@ Sections: 37 | Checklist items: 192
 
 ### Phase 1: M1 Engine core
 
-Sections: 96 | Checklist items: 570
+Sections: 96 | Checklist items: 572
 
 | Status | Reference   | Deliverable                                                                              | Needs                     | Items |
 | ------ | ----------- | ---------------------------------------------------------------------------------------- | ------------------------- | ----- |
@@ -72,7 +72,7 @@ Sections: 96 | Checklist items: 570
 | [x]    | D01 T02 §24 | Conversion-check failures name the check, the page and the measured value                | windows-host              | 4     |
 | [x]    | D01 T02 §25 | Decoder failures keep their step and Windows HRESULT in the diagnostic ring and ETW      | windows-host              | 4     |
 | [x]    | D01 T02 §26 | Image decoder recovery outcomes in diagnostics: substituted rows and refusal causes      | windows-host              | 4     |
-| [ ]    | D01 T02 §34 | Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper)           | windows-host              | 4     |
+| [ ]    | D01 T02 §34 | Native Flate compressor (`flate_compress`: LZ77, Huffman blocks, zlib wrapper)           | windows-host              | 6     |
 | [ ]    | D01 T02 §35 | Canonical `PdfValue` serializer for indirect objects and streams                         | windows-host              | 3     |
 | [ ]    | D01 T02 §36 | Encrypting new objects with a document's `SecurityHandler` (RC4, AES-128, AES-256)       | windows-host              | 3     |
 | [x]    | D06 T05 §15 | Audit D01 T01 §1: PdfResult<T>, PdfError, ErrorCode, D16 diagnostic ring and ETW         | windows-host              | 5     |
@@ -912,4 +912,4 @@ Sections: 14 | Checklist items: 86
 
 Progress: 71/841 verified sections, 37 ready to run now.
 
-Checklist: 444/6157 items completed (includes Commit items).
+Checklist: 444/6159 items completed (includes Commit items).
